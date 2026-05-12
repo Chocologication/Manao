@@ -1,0 +1,723 @@
+ <!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>码瑙 / MANAO — 开发工作台</title>
+
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link
+  href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght,SOFT@9..144,300..900,30..100&family=Bricolage+Grotesque:opsz,wght@12..96,300..700&family=JetBrains+Mono:wght@300;400;500;700&display=swap"
+  rel="stylesheet"
+/>
+
+<link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+
+<!-- 顶部信号条:微动效 + 集群心跳 -->
+<div class="signal-bar" aria-hidden="true">
+  <div class="signal-bar__track">
+    <span class="signal-bar__beam"></span>
+  </div>
+</div>
+
+<div class="app">
+
+  <!-- ============== TOPBAR ============== -->
+  <header class="topbar">
+    <div class="topbar__left">
+      <div class="brand">
+        <div class="brand__mark">
+          <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+            <path d="M3 21V5l9 6 9-6v16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="miter"/>
+            <circle cx="12" cy="13" r="1.6" fill="currentColor"/>
+          </svg>
+        </div>
+        <div class="brand__text">
+          <div class="brand__cn">码瑙</div>
+          <div class="brand__en">MANAO <span>/ cloud lab</span></div>
+        </div>
+      </div>
+
+      <nav class="breadcrumbs" aria-label="path">
+        <span class="breadcrumbs__seg muted">workspace</span>
+        <span class="breadcrumbs__sep">›</span>
+        <span class="breadcrumbs__seg muted">陆潇然</span>
+        <span class="breadcrumbs__sep">›</span>
+        <span class="breadcrumbs__seg">distributed-fault-tolerance</span>
+        <span class="breadcrumbs__chip">main</span>
+      </nav>
+    </div>
+
+    <div class="topbar__center">
+      <div class="run-cluster">
+        <button class="run-btn run-btn--primary" type="button">
+          <svg viewBox="0 0 16 16" width="11" height="11" aria-hidden="true">
+            <path d="M3 2l11 6-11 6V2z" fill="currentColor"/>
+          </svg>
+          <span>RUN</span>
+          <kbd>⌘ ⏎</kbd>
+        </button>
+        <button class="run-btn" type="button">
+          <svg viewBox="0 0 16 16" width="10" height="10" aria-hidden="true"><rect x="3" y="3" width="10" height="10" fill="currentColor"/></svg>
+          <span>STOP</span>
+        </button>
+        <button class="run-btn run-btn--ghost" type="button">
+          <svg viewBox="0 0 16 16" width="11" height="11" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.4">
+            <path d="M2 8a6 6 0 0 1 11-3.5L15 3M14 8a6 6 0 0 1-11 3.5L1 13"/>
+          </svg>
+          <span>RESTART</span>
+        </button>
+        <div class="run-divider"></div>
+        <div class="env-pill" title="运行环境">
+          <span class="env-pill__dot"></span>
+          <span class="env-pill__label">python:3.11-slim</span>
+          <span class="env-pill__caret">▾</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="topbar__right">
+      <div class="cluster-stat" title="集群延迟">
+        <span class="stat-tag">cluster</span>
+        <span class="stat-val">42<span class="stat-unit">ms</span></span>
+      </div>
+      <div class="cluster-stat" title="资源配额">
+        <span class="stat-tag">quota</span>
+        <span class="stat-val">68<span class="stat-unit">%</span></span>
+      </div>
+      <button class="icon-btn" title="通知" type="button">
+        <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.4">
+          <path d="M3 12h10l-1.5-2V6a3.5 3.5 0 1 0-7 0v4L3 12z"/>
+          <path d="M6 13a2 2 0 0 0 4 0"/>
+        </svg>
+        <span class="icon-btn__badge"></span>
+      </button>
+      <button class="icon-btn" title="设置" type="button">
+        <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.4">
+          <circle cx="8" cy="8" r="2.4"/>
+          <path d="M8 1v2M8 13v2M1 8h2M13 8h2M3 3l1.5 1.5M11.5 11.5L13 13M3 13l1.5-1.5M11.5 4.5L13 3"/>
+        </svg>
+      </button>
+      <div class="user-chip">
+        <div class="user-chip__avatar">LX</div>
+        <div class="user-chip__meta">
+          <div class="user-chip__name">陆潇然</div>
+          <div class="user-chip__role">DEVELOPER</div>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <!-- ============== MAIN GRID ============== -->
+  <main class="grid">
+
+    <!-- ============== LEFT RAIL ============== -->
+    <aside class="rail rail--left">
+
+      <section class="panel">
+        <header class="panel__head">
+          <div class="panel__num">01</div>
+          <h2 class="panel__title">Files</h2>
+          <div class="panel__tools">
+            <button class="tiny-btn" title="新建文件">+</button>
+            <button class="tiny-btn" title="刷新">↻</button>
+          </div>
+        </header>
+
+        <div class="filetree">
+          <div class="ft-row ft-row--folder open">
+            <span class="ft-twig">▾</span>
+            <svg class="ft-icon" viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M1.5 4l1.5-1.5h3L7.5 4h7v8.5h-13V4z"/></svg>
+            <span class="ft-name">distributed-fault-tolerance</span>
+          </div>
+
+          <div class="ft-row ft-row--folder open" style="padding-left:18px;">
+            <span class="ft-twig">▾</span>
+            <svg class="ft-icon" viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M1.5 4l1.5-1.5h3L7.5 4h7v8.5h-13V4z"/></svg>
+            <span class="ft-name">manao</span>
+          </div>
+
+          <div class="ft-row" style="padding-left:36px;">
+            <span class="ft-twig"></span>
+            <span class="ft-icon ft-icon--py">py</span>
+            <span class="ft-name">__init__.py</span>
+          </div>
+          <div class="ft-row ft-row--active" style="padding-left:36px;">
+            <span class="ft-twig"></span>
+            <span class="ft-icon ft-icon--py">py</span>
+            <span class="ft-name">task.py</span>
+            <span class="ft-mark">M</span>
+          </div>
+          <div class="ft-row" style="padding-left:36px;">
+            <span class="ft-twig"></span>
+            <span class="ft-icon ft-icon--py">py</span>
+            <span class="ft-name">scheduler.py</span>
+          </div>
+          <div class="ft-row" style="padding-left:36px;">
+            <span class="ft-twig"></span>
+            <span class="ft-icon ft-icon--py">py</span>
+            <span class="ft-name">quota.py</span>
+            <span class="ft-mark ft-mark--add">A</span>
+          </div>
+
+          <div class="ft-row ft-row--folder" style="padding-left:18px;">
+            <span class="ft-twig">▸</span>
+            <svg class="ft-icon" viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M1.5 4l1.5-1.5h3L7.5 4h7v8.5h-13V4z"/></svg>
+            <span class="ft-name">tests</span>
+          </div>
+
+          <div class="ft-row ft-row--folder" style="padding-left:18px;">
+            <span class="ft-twig">▸</span>
+            <svg class="ft-icon" viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M1.5 4l1.5-1.5h3L7.5 4h7v8.5h-13V4z"/></svg>
+            <span class="ft-name">k8s</span>
+          </div>
+
+          <div class="ft-row" style="padding-left:18px;">
+            <span class="ft-twig"></span>
+            <span class="ft-icon ft-icon--cfg">·</span>
+            <span class="ft-name">pyproject.toml</span>
+          </div>
+          <div class="ft-row" style="padding-left:18px;">
+            <span class="ft-twig"></span>
+            <span class="ft-icon ft-icon--md">md</span>
+            <span class="ft-name">README.md</span>
+          </div>
+          <div class="ft-row" style="padding-left:18px;">
+            <span class="ft-twig"></span>
+            <span class="ft-icon ft-icon--cfg">·</span>
+            <span class="ft-name">Dockerfile</span>
+            <span class="ft-mark ft-mark--add">A</span>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel">
+        <header class="panel__head">
+          <div class="panel__num">02</div>
+          <h2 class="panel__title">Templates</h2>
+          <button class="tiny-btn" title="模板库">⤴</button>
+        </header>
+
+        <div class="tpl-list">
+          <a class="tpl-card tpl-card--active" href="#">
+            <div class="tpl-card__top">
+              <span class="tpl-card__lang">PY</span>
+              <span class="tpl-card__pulse"></span>
+            </div>
+            <div class="tpl-card__name">Python · K8s Job</div>
+            <div class="tpl-card__meta">2 vCPU · 4 GiB · 实验室认证</div>
+          </a>
+          <a class="tpl-card" href="#">
+            <div class="tpl-card__top">
+              <span class="tpl-card__lang">JV</span>
+            </div>
+            <div class="tpl-card__name">Java 17 · Maven</div>
+            <div class="tpl-card__meta">2 vCPU · 4 GiB</div>
+          </a>
+          <a class="tpl-card" href="#">
+            <div class="tpl-card__top">
+              <span class="tpl-card__lang">GO</span>
+            </div>
+            <div class="tpl-card__name">Go 1.22 · 静态编译</div>
+            <div class="tpl-card__meta">1 vCPU · 2 GiB</div>
+          </a>
+          <a class="tpl-card" href="#">
+            <div class="tpl-card__top">
+              <span class="tpl-card__lang">NODE</span>
+            </div>
+            <div class="tpl-card__name">Node 20 · pnpm</div>
+            <div class="tpl-card__meta">1 vCPU · 2 GiB</div>
+          </a>
+          <a class="tpl-card" href="#">
+            <div class="tpl-card__top">
+              <span class="tpl-card__lang">SQL</span>
+            </div>
+            <div class="tpl-card__name">MySQL 8 · 临时实例</div>
+            <div class="tpl-card__meta">长时 Deployment</div>
+          </a>
+        </div>
+      </section>
+
+    </aside>
+
+    <!-- ============== EDITOR AREA ============== -->
+    <section class="editor">
+      <div class="editor__tabs">
+        <div class="tab tab--active">
+          <span class="tab__icon">py</span>
+          <span class="tab__name">task.py</span>
+          <span class="tab__dot" title="未保存"></span>
+          <button class="tab__close">×</button>
+        </div>
+        <div class="tab">
+          <span class="tab__icon">py</span>
+          <span class="tab__name">scheduler.py</span>
+          <button class="tab__close">×</button>
+        </div>
+        <div class="tab">
+          <span class="tab__icon ft-icon--cfg">·</span>
+          <span class="tab__name">Dockerfile</span>
+          <button class="tab__close">×</button>
+        </div>
+        <div class="tab tab--ghost">
+          <span class="tab__icon">+</span>
+        </div>
+
+        <div class="tabbar-tools">
+          <span class="path-crumb">manao / task.py</span>
+          <button class="tiny-btn" title="拆分">⫾</button>
+          <button class="tiny-btn" title="全屏">⤢</button>
+        </div>
+      </div>
+
+      <!-- Monaco Editor 占位:静态语法高亮模拟真实编辑器 -->
+      <div class="monaco" data-placeholder="Monaco Editor (占位)">
+        <div class="monaco__gutter">
+          <span>1</span><span>2</span><span>3</span><span>4</span><span>5</span>
+          <span>6</span><span>7</span><span>8</span><span>9</span><span>10</span>
+          <span>11</span><span>12</span><span class="cur">13</span><span>14</span><span>15</span>
+          <span>16</span><span>17</span><span>18</span><span>19</span><span>20</span>
+          <span>21</span><span>22</span><span>23</span><span>24</span><span>25</span>
+          <span>26</span><span>27</span><span>28</span><span>29</span><span>30</span>
+        </div>
+
+        <div class="monaco__diff" aria-hidden="true">
+          <span></span><span></span><span></span><span></span><span></span>
+          <span></span><span class="add"></span><span class="add"></span><span></span><span></span>
+          <span></span><span></span><span></span><span></span><span></span>
+          <span></span><span></span><span></span><span></span><span></span>
+          <span class="mod"></span><span class="mod"></span><span class="mod"></span><span></span><span></span>
+          <span></span><span></span><span></span><span></span><span></span>
+        </div>
+
+        <pre class="monaco__code"><code><span class="c">"""
+manao.task — 提交云端任务到 K8S Job
+   每个任务挂载用户代码 + 配额上下文,完成后写回 MongoDB / MinIO
+"""</span>
+<span class="kw">from</span> kubernetes <span class="kw">import</span> client, config
+<span class="kw">from</span> pydantic <span class="kw">import</span> BaseModel
+<span class="kw">from</span> typing <span class="kw">import</span> Literal
+<span class="kw">from</span> manao.core <span class="kw">import</span> ResourceQuota, QuotaExceeded
+
+
+<span class="kw">class</span> <span class="cls">TaskSpec</span>(BaseModel):
+    project_id: <span class="cls">str</span>
+    runtime: Literal[<span class="s">"python:3.11"</span>, <span class="s">"java:17"</span>, <span class="s">"node:20"</span>]
+    <span class="cur-line">cpu_limit: <span class="cls">str</span> <span class="op">=</span> <span class="s">"1000m"</span><span class="caret">▎</span></span>
+    memory_limit: <span class="cls">str</span> <span class="op">=</span> <span class="s">"2Gi"</span>
+    ttl_seconds: <span class="cls">int</span> <span class="op">=</span> <span class="n">3600</span>
+
+
+<span class="kw">async def</span> <span class="fn">submit</span>(spec: TaskSpec) <span class="op">-&gt;</span> <span class="cls">str</span>:
+    <span class="c">"""提交任务前先校验配额,再生成 Job 清单。"""</span>
+    quota <span class="op">=</span> <span class="kw">await</span> ResourceQuota.fetch(spec.project_id)
+    <span class="kw">if not</span> quota.has_capacity(spec):
+        <span class="kw">raise</span> QuotaExceeded(<span class="s">f"项目 {spec.project_id} 已用尽配额"</span>)
+
+    job <span class="op">=</span> build_job_manifest(spec)
+    api <span class="op">=</span> client.BatchV1Api()
+    created <span class="op">=</span> api.create_namespaced_job(
+        namespace<span class="op">=</span><span class="s">f"manao-{spec.project_id}"</span>,
+        body<span class="op">=</span>job,
+    )
+    <span class="kw">return</span> created.metadata.name
+</code></pre>
+
+        <!-- 一个 inlay hint 浮动提示,展示 AI 联动 -->
+        <div class="inlay">
+          <span class="inlay__tag">AI</span>
+          <span class="inlay__text">建议把 <code>cpu_limit</code> 抽成 <code>ResourceProfile</code> 枚举,可与配额服务直接对账。</span>
+        </div>
+
+        <!-- 右侧悬浮微缩地图 -->
+        <div class="minimap" aria-hidden="true">
+          <div class="minimap__track">
+            <div class="minimap__viewport"></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============== RIGHT RAIL: AI ============== -->
+    <aside class="rail rail--right">
+
+      <header class="ai-head">
+        <div class="ai-head__top">
+          <div class="ai-head__num">03</div>
+          <h2 class="ai-head__title">AI Co-pilot</h2>
+          <div class="ai-head__pulse">
+            <span></span><span></span><span></span>
+          </div>
+        </div>
+        <div class="ai-head__sub">
+          连接到 <strong>manao-orchestrator</strong>
+          · 上下文 14k / 128k
+        </div>
+        <div class="ai-tabs">
+          <button class="ai-tabs__item ai-tabs__item--active">对话</button>
+          <button class="ai-tabs__item">报错分析</button>
+          <button class="ai-tabs__item">测试样例</button>
+        </div>
+      </header>
+
+      <div class="ai-stream">
+
+        <!-- 用户消息 -->
+        <article class="msg msg--user">
+          <div class="msg__head">
+            <span class="msg__who">你</span>
+            <span class="msg__time">14:02:31</span>
+          </div>
+          <div class="msg__body">
+            把 <code>submit()</code> 改成可以接受批量任务,并在配额不足时降级到队列。
+          </div>
+        </article>
+
+        <!-- AI 推理过程 -->
+        <article class="msg msg--ai">
+          <div class="msg__head">
+            <span class="msg__avatar">M</span>
+            <span class="msg__who">码瑙 · gpt-5</span>
+            <span class="msg__time">14:02:33</span>
+          </div>
+          <div class="msg__body">
+            <div class="msg__think">
+              <span class="msg__think-label">思考</span>
+              检查 <code>ResourceQuota</code> 当前的容量计算是否支持批量;若不支持,需要扩展 <code>has_capacity()</code> 接受 <code>list[TaskSpec]</code>,并新增 <code>QueueFallback</code> 路径。
+            </div>
+            <p>建议拆为 3 步:</p>
+            <ol class="msg__list">
+              <li>新增 <code>BatchTaskSpec</code> 包装类,语义和单条 <code>TaskSpec</code> 解耦。</li>
+              <li>在配额服务实现 <code>partition_by_capacity()</code>,把超额任务分到 RabbitMQ。</li>
+              <li><code>submit_batch()</code> 返回 <code>SubmitResult{accepted, queued}</code>,前端可直接展示。</li>
+            </ol>
+
+            <div class="codeblock">
+              <div class="codeblock__head">
+                <span class="codeblock__lang">python</span>
+                <span class="codeblock__file">manao/task.py</span>
+                <button class="codeblock__copy">复制</button>
+              </div>
+              <pre><code><span class="kw">async def</span> <span class="fn">submit_batch</span>(specs: <span class="cls">list</span>[TaskSpec]) <span class="op">-&gt;</span> SubmitResult:
+    accepted, queued <span class="op">=</span> <span class="kw">await</span> quota.partition_by_capacity(specs)
+    jobs <span class="op">=</span> [<span class="kw">await</span> _create_job(s) <span class="kw">for</span> s <span class="kw">in</span> accepted]
+    <span class="kw">await</span> queue.publish(<span class="s">"manao.task.queued"</span>, queued)
+    <span class="kw">return</span> SubmitResult(accepted<span class="op">=</span>jobs, queued<span class="op">=</span>queued)</code></pre>
+            </div>
+
+            <div class="msg__actions">
+              <button class="msg-act">应用差异</button>
+              <button class="msg-act">在新分支提交</button>
+              <button class="msg-act msg-act--ghost">解释</button>
+            </div>
+          </div>
+        </article>
+
+        <!-- 报错分析卡 -->
+        <article class="msg msg--ai msg--diag">
+          <div class="msg__head">
+            <span class="msg__avatar msg__avatar--alert">!</span>
+            <span class="msg__who">运行诊断</span>
+            <span class="msg__time">14:02:58</span>
+          </div>
+          <div class="msg__body">
+            <div class="diag-tree">
+              <div class="diag-row diag-row--ok">
+                <span class="diag-row__bar"></span>
+                <span class="diag-row__lvl">L1</span>
+                <span class="diag-row__txt">Pod 调度 / 镜像拉取 ······ 成功 · 1.2s</span>
+              </div>
+              <div class="diag-row diag-row--ok">
+                <span class="diag-row__bar"></span>
+                <span class="diag-row__lvl">L2</span>
+                <span class="diag-row__txt">容器启动 / 健康探针 ······ 成功 · 0.4s</span>
+              </div>
+              <div class="diag-row diag-row--err">
+                <span class="diag-row__bar"></span>
+                <span class="diag-row__lvl">L3</span>
+                <span class="diag-row__txt">应用层报错: <code>KeyError: "QUOTA_KEY"</code></span>
+              </div>
+            </div>
+            <p class="diag-note">
+              很可能是 <code>os.environ</code> 缺少注入,K8S 模板里没把 ConfigMap 挂上。点下面按钮可一键修复:
+            </p>
+            <div class="msg__actions">
+              <button class="msg-act">挂载 ConfigMap</button>
+              <button class="msg-act msg-act--ghost">查看 yaml</button>
+            </div>
+          </div>
+        </article>
+
+      </div>
+
+      <!-- AI 输入框 -->
+      <div class="ai-input">
+        <div class="ai-input__chips">
+          <span class="chip">@task.py</span>
+          <span class="chip chip--ghost">+ 上下文</span>
+        </div>
+        <div class="ai-input__box">
+          <textarea
+            class="ai-input__area"
+            placeholder="向 AI 描述需求 · 引用文件 / 报错 / 运行结果……"
+            rows="2"
+          ></textarea>
+          <div class="ai-input__bar">
+            <div class="ai-input__model">
+              <span class="dot"></span>gpt-5 <span class="muted">/</span> claude-opus-4-7
+            </div>
+            <button class="send-btn">
+              发送 <kbd>⏎</kbd>
+            </button>
+          </div>
+        </div>
+      </div>
+
+    </aside>
+
+  </main>
+
+  <!-- ============== BOTTOM PANEL ============== -->
+  <section class="dock">
+    <div class="dock__tabs">
+      <button class="dock-tab dock-tab--active">
+        <span class="dock-tab__num">01</span>
+        <span class="dock-tab__name">日志流</span>
+        <span class="dock-tab__live">LIVE</span>
+      </button>
+      <button class="dock-tab">
+        <span class="dock-tab__num">02</span>
+        <span class="dock-tab__name">资源监控</span>
+      </button>
+      <button class="dock-tab">
+        <span class="dock-tab__num">03</span>
+        <span class="dock-tab__name">容器实例</span>
+        <span class="dock-tab__count">3</span>
+      </button>
+      <button class="dock-tab">
+        <span class="dock-tab__num">04</span>
+        <span class="dock-tab__name">评测结果</span>
+      </button>
+      <button class="dock-tab">
+        <span class="dock-tab__num">05</span>
+        <span class="dock-tab__name">终端</span>
+        <span class="dock-tab__placeholder">xterm 占位</span>
+      </button>
+
+      <div class="dock__tools">
+        <button class="tiny-btn" title="清空">⌫</button>
+        <button class="tiny-btn" title="过滤">⫶</button>
+        <button class="tiny-btn" title="折叠">▽</button>
+      </div>
+    </div>
+
+    <div class="dock__split">
+
+      <!-- 左:日志流 -->
+      <div class="dock-logs">
+        <div class="log-line">
+          <span class="log-line__t">14:02:31.044</span>
+          <span class="log-line__lvl log-line__lvl--info">INFO</span>
+          <span class="log-line__src">scheduler</span>
+          <span class="log-line__msg">提交 1 个任务到命名空间 <em>manao-luxr</em></span>
+        </div>
+        <div class="log-line">
+          <span class="log-line__t">14:02:31.611</span>
+          <span class="log-line__lvl log-line__lvl--info">INFO</span>
+          <span class="log-line__src">k8s.batch</span>
+          <span class="log-line__msg">Job <em>task-7f2b1c</em> 已创建,等待 Pod 调度</span>
+        </div>
+        <div class="log-line">
+          <span class="log-line__t">14:02:32.220</span>
+          <span class="log-line__lvl log-line__lvl--info">INFO</span>
+          <span class="log-line__src">kubelet</span>
+          <span class="log-line__msg">Pulling image <em>registry.manao.io/python:3.11-slim</em></span>
+        </div>
+        <div class="log-line">
+          <span class="log-line__t">14:02:33.917</span>
+          <span class="log-line__lvl log-line__lvl--ok">SUCC</span>
+          <span class="log-line__src">kubelet</span>
+          <span class="log-line__msg">Image 已就绪 (cached, 0 layers fetched)</span>
+        </div>
+        <div class="log-line">
+          <span class="log-line__t">14:02:34.305</span>
+          <span class="log-line__lvl log-line__lvl--info">INFO</span>
+          <span class="log-line__src">manao.task</span>
+          <span class="log-line__msg">挂载用户代码 <em>/workspace/distributed-fault-tolerance</em></span>
+        </div>
+        <div class="log-line">
+          <span class="log-line__t">14:02:34.602</span>
+          <span class="log-line__lvl log-line__lvl--warn">WARN</span>
+          <span class="log-line__src">app</span>
+          <span class="log-line__msg">未找到 .env,使用默认配置</span>
+        </div>
+        <div class="log-line">
+          <span class="log-line__t">14:02:34.788</span>
+          <span class="log-line__lvl log-line__lvl--err">ERR</span>
+          <span class="log-line__src">app</span>
+          <span class="log-line__msg">Traceback (most recent call last): KeyError: <em>"QUOTA_KEY"</em></span>
+        </div>
+        <div class="log-line">
+          <span class="log-line__t">14:02:34.920</span>
+          <span class="log-line__lvl log-line__lvl--info">INFO</span>
+          <span class="log-line__src">manao.diag</span>
+          <span class="log-line__msg">已生成诊断报告 → AI 面板</span>
+        </div>
+        <div class="log-line log-line--cursor">
+          <span class="log-line__t">14:02:35.118</span>
+          <span class="log-line__lvl log-line__lvl--info">INFO</span>
+          <span class="log-line__src">stream</span>
+          <span class="log-line__msg">等待新输出 <span class="caret">▎</span></span>
+        </div>
+      </div>
+
+      <!-- 右:资源 + 容器 -->
+      <div class="dock-side">
+
+        <div class="metrics">
+          <div class="metric">
+            <div class="metric__head">
+              <span class="metric__label">CPU</span>
+              <span class="metric__value">0.42<span class="metric__unit">vCPU</span></span>
+            </div>
+            <div class="metric__bar metric__bar--cpu">
+              <span style="width: 42%"></span>
+            </div>
+            <div class="metric__spark">
+              <svg viewBox="0 0 120 26" preserveAspectRatio="none">
+                <polyline fill="none" stroke="currentColor" stroke-width="1.2"
+                  points="0,20 10,18 20,21 30,15 40,17 50,12 60,14 70,10 80,9 90,11 100,7 110,9 120,5"/>
+              </svg>
+            </div>
+          </div>
+
+          <div class="metric">
+            <div class="metric__head">
+              <span class="metric__label">Memory</span>
+              <span class="metric__value">1.31<span class="metric__unit">GiB</span></span>
+            </div>
+            <div class="metric__bar metric__bar--mem">
+              <span style="width: 65%"></span>
+            </div>
+            <div class="metric__spark">
+              <svg viewBox="0 0 120 26" preserveAspectRatio="none">
+                <polyline fill="none" stroke="currentColor" stroke-width="1.2"
+                  points="0,22 12,21 24,19 36,18 48,17 60,16 72,15 84,14 96,12 108,11 120,10"/>
+              </svg>
+            </div>
+          </div>
+
+          <div class="metric">
+            <div class="metric__head">
+              <span class="metric__label">Network</span>
+              <span class="metric__value">2.1<span class="metric__unit">MB/s</span></span>
+            </div>
+            <div class="metric__bar metric__bar--net">
+              <span style="width: 28%"></span>
+            </div>
+            <div class="metric__spark">
+              <svg viewBox="0 0 120 26" preserveAspectRatio="none">
+                <polyline fill="none" stroke="currentColor" stroke-width="1.2"
+                  points="0,15 10,22 20,8 30,18 40,5 50,20 60,9 70,14 80,3 90,17 100,11 110,20 120,8"/>
+              </svg>
+            </div>
+          </div>
+
+          <div class="metric">
+            <div class="metric__head">
+              <span class="metric__label">配额</span>
+              <span class="metric__value">68<span class="metric__unit">%</span></span>
+            </div>
+            <div class="metric__bar metric__bar--quota">
+              <span style="width: 68%"></span>
+            </div>
+            <div class="metric__caption">3 / 5 实例 · 6.8 / 10 vCPU · 13 / 20 GiB</div>
+          </div>
+        </div>
+
+        <div class="containers">
+          <header class="containers__head">
+            <span class="panel__num panel__num--sm">·</span>
+            <span class="containers__title">容器实例</span>
+            <span class="containers__count">3 active</span>
+          </header>
+          <div class="ctn">
+            <span class="ctn__dot ctn__dot--run"></span>
+            <div class="ctn__body">
+              <div class="ctn__name">task-7f2b1c</div>
+              <div class="ctn__meta">python:3.11 · 0.42 vCPU · 1.3 GiB · 14s</div>
+            </div>
+            <span class="ctn__tag">Job</span>
+          </div>
+          <div class="ctn">
+            <span class="ctn__dot ctn__dot--idle"></span>
+            <div class="ctn__body">
+              <div class="ctn__name">dev-shell-9a01</div>
+              <div class="ctn__meta">node:20 · idle · 4 m 12 s</div>
+            </div>
+            <span class="ctn__tag">Pod</span>
+          </div>
+          <div class="ctn">
+            <span class="ctn__dot ctn__dot--err"></span>
+            <div class="ctn__body">
+              <div class="ctn__name">test-run-3e8f</div>
+              <div class="ctn__meta">java:17 · CrashLoopBackOff · 2 重启</div>
+            </div>
+            <span class="ctn__tag">Pod</span>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </section>
+
+  <!-- ============== STATUS BAR ============== -->
+  <footer class="statusbar">
+    <div class="sb sb--cluster">
+      <span class="sb__dot"></span>
+      <span class="sb__k">cluster</span>
+      <span class="sb__v">manao-prod-01</span>
+    </div>
+    <div class="sb">
+      <span class="sb__k">ns</span>
+      <span class="sb__v">manao-luxr</span>
+    </div>
+    <div class="sb">
+      <span class="sb__k">node</span>
+      <span class="sb__v">worker-03 / amd64</span>
+    </div>
+    <div class="sb">
+      <span class="sb__k">latency</span>
+      <span class="sb__v">42 ms</span>
+    </div>
+
+    <div class="sb-sep"></div>
+
+    <div class="sb sb--right">
+      <span class="sb__k">git</span>
+      <span class="sb__v">main · 2 ahead</span>
+    </div>
+    <div class="sb sb--right">
+      <span class="sb__k">enc</span>
+      <span class="sb__v">UTF-8 · LF</span>
+    </div>
+    <div class="sb sb--right">
+      <span class="sb__k">ln</span>
+      <span class="sb__v">13 : 22</span>
+    </div>
+    <div class="sb sb--right">
+      <span class="sb__k">build</span>
+      <span class="sb__v">v3.0 · 2026.04.26</span>
+    </div>
+  </footer>
+
+</div>
+
+<!-- 装饰用胶片颗粒层 -->
+<div class="grain" aria-hidden="true"></div>
+
+</body>
+</html>
