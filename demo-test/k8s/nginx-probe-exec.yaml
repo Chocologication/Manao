@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: probenginx
+  labels:
+    role: probenginx
+spec:
+  containers:
+    - name: probenginx
+      image: nginx
+      imagePullPolicy: IfNotPresent
+      ports:
+        - containerPort: 80
+          protocol: TCP
+  restartPolicy: Always
+  
