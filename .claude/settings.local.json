@@ -1,0 +1,34 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__mcpServers__xmind_create_map",
+      "mcp__mcpServers__xmind_open_map",
+      "mcp__mcpServers__xmind_get_subtree",
+      "mcp__mcpServers__xmind_add_topics_bulk",
+      "mcp__mcpServers__xmind_add_topic",
+      "mcp__mcpServers__xmind_import_from_outline",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:docs.micuapi.ai)",
+      "mcp__grok-search__web_fetch",
+      "mcp__grok-search__switch_model",
+      "mcp__grok-search__web_search",
+      "Bash(curl -sL \"https://docs.micuapi.ai/claude-code/grok-search-mcp.md\")",
+      "Bash(ver)",
+      "Bash(claude mcp *)",
+      "Bash(node --check \"C:/Users/shili/AppData/Local/npm-cache/_npx/04cb16f3444e2e9a/node_modules/grok-search-mcp/dist/providers/grok.js\")",
+      "Skill(firecrawl-search)",
+      "mcp__grok-search__get_config_info",
+      "Bash(where uvx *)",
+      "Read(//c/Users/shili/AppData/Local/uv/**)",
+      "Read(//c/Users/shili/.local/pipx/**)",
+      "Read(//c/Users/shili/AppData/Roaming/uv/tools/**)",
+      "Read(//c/Users/shili/.cache/**)",
+      "Bash(uv tool *)",
+      "Bash([ -d \"$d/node_modules/grok-search-mcp\" ])",
+      "Bash(node -e \"JSON.parse\\(require\\('fs'\\).readFileSync\\('C:/Users/shili/.claude.json','utf8'\\)\\); console.log\\('JSON OK'\\)\")",
+      "Bash(curl -s -H \"Authorization: Bearer sk-t3hu5XCEqtCaChn4cAhQDOpjhmFL6yUQHum5rahVfU8mWgEp\" https://www.micuapi.ai/v1/models)",
+      "Bash(node -e ' *)",
+      "Bash(curl -sS -i -X POST https://www.micuapi.ai/v1/responses -H 'Authorization: Bearer sk-t3hu5XCEqtCaChn4cAhQDOpjhmFL6yUQHum5rahVfU8mWgEp' -H 'Content-Type: application/json' -d '{\"model\":\"grok-4.20-fast\",\"tools\":[{\"type\":\"web_search\"}],\"instructions\":\"test\",\"input\":\"hello\"}')"
+    ]
+  }
+}

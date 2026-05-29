@@ -1,0 +1,6 @@
+manao:
+  poc1:
+    namespace: ${MANAO_POC1_NAMESPACE:default}
+    image: ${MANAO_POC1_IMAGE:eclipse-temurin:17-jdk}
+    timeout: ${MANAO_POC1_TIMEOUT:30s}
+    cleanup: ${MANAO_POC1_CLEANUP:true}
