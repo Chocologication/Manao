@@ -3,9 +3,10 @@ target/
 !.mvn/wrapper/maven-wrapper.jar
 !**/src/main/**/target/
 !**/src/test/**/target/
-/.claude
-/.codex
-
+#/.claude
+#/.codex
+#/.firecrawl
+/demo-test
 
 ### STS ###
 .apt_generated
