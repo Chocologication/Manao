@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Manao POC2 WebSocket Client</title>
+  <style>
+    body {
+      margin: 0;
+      font-family: Arial, "Microsoft YaHei", sans-serif;
+      background: #f6f7f9;
+      color: #1f2937;
+    }
+
+    main {
+      max-width: 960px;
+      margin: 32px auto;
+      padding: 0 20px;
+    }
+
+    label {
+      display: block;
+      margin: 16px 0 8px;
+      font-weight: 600;
+    }
+
+    input,
+    textarea,
+    button {
+      font: inherit;
+    }
+
+    input,
+    textarea,
+    pre {
+      box-sizing: border-box;
+      width: 100%;
+      border: 1px solid #d1d5db;
+      border-radius: 6px;
+      background: #fff;
+    }
+
+    input {
+      padding: 10px 12px;
+    }
+
+    textarea {
+      min-height: 180px;
+      padding: 12px;
+      font-family: Consolas, monospace;
+      line-height: 1.5;
+    }
+
+    button {
+      margin-top: 12px;
+      padding: 10px 16px;
+      border: 0;
+      border-radius: 6px;
+      background: #0f766e;
+      color: #fff;
+      cursor: pointer;
+    }
+
+    button:disabled {
+      background: #9ca3af;
+      cursor: not-allowed;
+    }
+
+    pre {
+      min-height: 260px;
+      padding: 12px;
+      overflow: auto;
+      white-space: pre-wrap;
+      font-family: Consolas, monospace;
+      line-height: 1.5;
+    }
+  </style>
+</head>
+<body>
+<main>
+  <h1>Manao POC2 WebSocket Client</h1>
+
+  <label for="url">WebSocket URL</label>
+  <input id="url" value="ws://localhost:8081/ws/run">
+
+  <label for="code">Java Code</label>
+  <textarea id="code">public class Main {
+    public static void main(String[] args) throws Exception {
+        for (int i = 1; i <= 3; i++) {
+            System.out.println("Hello from POC2 " + i);
+            Thread.sleep(1000);
+        }
+    }
+}</textarea>
+
+  <button id="run">Run</button>
+
+  <label for="output">Events</label>
+  <pre id="output"></pre>
+</main>
+
+<script>
+  const runButton = document.getElementById('run');
+  const output = document.getElementById('output');
+
+  function append(line) {
+    output.textContent += line + '\n';
+    output.scrollTop = output.scrollHeight;
+  }
+
+  runButton.addEventListener('click', () => {
+    output.textContent = '';
+    runButton.disabled = true;
+
+    const ws = new WebSocket(document.getElementById('url').value);
+    ws.addEventListener('open', () => {
+      append('[open]');
+      ws.send(JSON.stringify({ code: document.getElementById('code').value }));
+    });
+    ws.addEventListener('message', event => {
+      append(event.data);
+      try {
+        const payload = JSON.parse(event.data);
+        if (payload.type === 'exit' || payload.type === 'error') {
+          ws.close();
+        }
+      } catch (_) {
+        append('[warn] failed to parse event');
+      }
+    });
+    ws.addEventListener('close', () => {
+      append('[closed]');
+      runButton.disabled = false;
+    });
+    ws.addEventListener('error', () => {
+      append('[error]');
+      runButton.disabled = false;
+    });
+  });
+</script>
+</body>
+</html>

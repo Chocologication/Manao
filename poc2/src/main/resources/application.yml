@@ -1,0 +1,9 @@
+server:
+  port: 8081
+
+manao:
+  poc2:
+    namespace: ${MANAO_POC2_NAMESPACE:default}
+    image: ${MANAO_POC2_IMAGE:eclipse-temurin:17-jdk}
+    timeout: ${MANAO_POC2_TIMEOUT:180s}
+    cleanup: ${MANAO_POC2_CLEANUP:true}
