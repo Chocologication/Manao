@@ -36,3 +36,4 @@ build/
 ### VS Code ###
 .vscode/
 /full_backup.sql
+/.codex/mcp/mysql-toolbox.env
