@@ -38,3 +38,4 @@ build/
 /full_backup.sql
 /.codex/mcp/mysql-toolbox.env
 /.codex/skills
+/.firecrawl/
