@@ -37,3 +37,4 @@ build/
 .vscode/
 /full_backup.sql
 /.codex/mcp/mysql-toolbox.env
+/.codex/skills
