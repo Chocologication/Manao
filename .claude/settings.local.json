@@ -28,7 +28,14 @@
       "Bash(node -e \"JSON.parse\\(require\\('fs'\\).readFileSync\\('C:/Users/shili/.claude.json','utf8'\\)\\); console.log\\('JSON OK'\\)\")",
       "Bash(curl -s -H \"Authorization: Bearer sk-t3hu5XCEqtCaChn4cAhQDOpjhmFL6yUQHum5rahVfU8mWgEp\" https://www.micuapi.ai/v1/models)",
       "Bash(node -e ' *)",
-      "Bash(curl -sS -i -X POST https://www.micuapi.ai/v1/responses -H 'Authorization: Bearer sk-t3hu5XCEqtCaChn4cAhQDOpjhmFL6yUQHum5rahVfU8mWgEp' -H 'Content-Type: application/json' -d '{\"model\":\"grok-4.20-fast\",\"tools\":[{\"type\":\"web_search\"}],\"instructions\":\"test\",\"input\":\"hello\"}')"
+      "Bash(curl -sS -i -X POST https://www.micuapi.ai/v1/responses -H 'Authorization: Bearer sk-t3hu5XCEqtCaChn4cAhQDOpjhmFL6yUQHum5rahVfU8mWgEp' -H 'Content-Type: application/json' -d '{\"model\":\"grok-4.20-fast\",\"tools\":[{\"type\":\"web_search\"}],\"instructions\":\"test\",\"input\":\"hello\"}')",
+      "PowerShell(oh-my-posh version *)",
+      "Skill(firecrawl-scrape)",
+      "PowerShell(oh-my-posh claude *)",
+      "PowerShell(oh-my-posh print *)",
+      "Bash(firecrawl scrape *)",
+      "Bash(oh-my-posh claude *)",
+      "Bash(echo \"Exit: $?\")"
     ]
   }
 }
