@@ -1,10 +1,3 @@
-[mcp_servers.chat2db]
-url = "http://127.0.0.1:10825/mcp"
-env_http_headers = { "x-chat2db-mcp-token" = "CHAT2DB_MCP_TOKEN" }
-startup_timeout_sec = 20
-tool_timeout_sec = 60
-enabled = true
-
 [mcp_servers.mysql_toolbox]
 command = "powershell.exe"
 args = ["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", "D:\\DeepLearning\\MyProjects\\Project_Manao\\.codex\\mcp\\start-mysql-toolbox.ps1"]

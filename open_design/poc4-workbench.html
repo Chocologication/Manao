@@ -1,0 +1,455 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Manao Cloud Lab · POC4 工作台</title>
+  <style>
+    :root {
+      --bg: oklch(0.145 0.016 255);
+      --surface: oklch(0.19 0.018 255);
+      --surface-raised: oklch(0.235 0.021 255);
+      --fg: oklch(0.925 0.012 220);
+      --muted: oklch(0.66 0.022 240);
+      --border: oklch(0.34 0.024 250);
+      --accent: oklch(0.77 0.142 180);
+      --danger: oklch(0.69 0.17 28);
+      --warning: oklch(0.8 0.14 82);
+      --mono: "Cascadia Code", "SFMono-Regular", Consolas, monospace;
+      --body: "Segoe UI Variable", "Microsoft YaHei", sans-serif;
+      --display: "Iowan Old Style", Georgia, "Songti SC", serif;
+    }
+
+    * { box-sizing: border-box; }
+    html, body { min-height: 100%; margin: 0; }
+    body {
+      background: var(--bg);
+      color: var(--fg);
+      font-family: var(--body);
+      overflow: hidden;
+    }
+    button, input { font: inherit; }
+    button { cursor: pointer; }
+    button:focus-visible, [tabindex]:focus-visible, textarea:focus-visible, input:focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 2px;
+    }
+
+    .app-shell {
+      min-width: 1080px;
+      min-height: 100vh;
+      display: grid;
+      grid-template-rows: 58px minmax(0, 1fr) 242px;
+      background-color: var(--bg);
+      background-image: linear-gradient(oklch(0.27 0.018 250 / 0.22) 1px, transparent 1px), linear-gradient(90deg, oklch(0.27 0.018 250 / 0.22) 1px, transparent 1px);
+      background-size: 28px 28px;
+    }
+    .topbar {
+      display: flex;
+      align-items: center;
+      gap: 20px;
+      min-width: 0;
+      padding: 0 20px;
+      border-bottom: 1px solid var(--border);
+      background: oklch(0.15 0.016 255 / 0.94);
+    }
+    .brand {
+      display: flex;
+      align-items: baseline;
+      gap: 9px;
+      min-width: 238px;
+    }
+    .brand-mark {
+      width: 16px;
+      height: 16px;
+      background: var(--accent);
+      box-shadow: 0 0 0 4px oklch(0.77 0.142 180 / .12);
+    }
+    .brand-name { font-family: var(--display); font-size: 19px; letter-spacing: 0; }
+    .brand-subtitle { color: var(--muted); font-family: var(--mono); font-size: 11px; }
+    .crumbs { flex: 1; min-width: 0; display: flex; gap: 8px; align-items: center; color: var(--muted); font-size: 13px; }
+    .crumbs strong { color: var(--fg); font-weight: 600; }
+    .crumb-sep { color: var(--border); }
+    .session { display: flex; align-items: center; gap: 9px; font-family: var(--mono); font-size: 11px; color: var(--muted); white-space: nowrap; }
+    .live-dot { width: 7px; height: 7px; background: var(--accent); border-radius: 50%; box-shadow: 0 0 0 4px oklch(0.77 0.142 180 / .12); }
+
+    .workspace { min-height: 0; display: grid; grid-template-columns: 265px minmax(490px, 1fr) 310px; gap: 1px; background: var(--border); }
+    .pane { min-width: 0; min-height: 0; background: var(--surface); }
+    .explorer { display: flex; flex-direction: column; }
+    .pane-head { min-height: 46px; display: flex; align-items: center; justify-content: space-between; padding: 0 15px; border-bottom: 1px solid var(--border); }
+    .pane-title { color: var(--muted); font-family: var(--mono); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; }
+    .icon-action { width: 30px; height: 30px; display: inline-grid; place-items: center; border: 1px solid transparent; background: transparent; color: var(--muted); font-family: var(--mono); font-size: 18px; line-height: 1; }
+    .icon-action:hover { border-color: var(--border); background: var(--surface-raised); color: var(--fg); }
+    .project-card { margin: 13px 12px; padding: 13px; border: 1px solid var(--border); background: oklch(0.175 0.018 255); }
+    .project-kicker { color: var(--accent); font-family: var(--mono); font-size: 10px; letter-spacing: .07em; }
+    .project-card h2 { margin: 6px 0 2px; font-size: 15px; font-weight: 650; }
+    .project-card p { margin: 0; color: var(--muted); font-family: var(--mono); font-size: 11px; }
+    .tree { padding: 3px 8px; overflow: auto; }
+    .tree-row { width: 100%; min-height: 32px; display: flex; align-items: center; gap: 7px; padding: 0 8px; border: 1px solid transparent; background: transparent; color: var(--muted); text-align: left; font-size: 13px; }
+    .tree-row:hover { color: var(--fg); background: var(--surface-raised); }
+    .tree-row.active { border-color: oklch(0.77 0.142 180 / .35); background: oklch(0.77 0.142 180 / .09); color: var(--fg); }
+    .tree-row.nested { padding-left: 26px; }
+    .file-type { color: var(--accent); font-family: var(--mono); font-size: 10px; width: 28px; }
+    .file-type.muted { color: var(--muted); }
+    .tree-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .explorer-foot { margin-top: auto; padding: 13px 15px; border-top: 1px solid var(--border); color: var(--muted); font-family: var(--mono); font-size: 10px; line-height: 1.6; }
+    .explorer-foot strong { color: var(--fg); font-weight: 500; }
+
+    .editor-pane { display: grid; grid-template-rows: 42px minmax(0, 1fr) 28px; }
+    .tabs { display: flex; overflow: auto; border-bottom: 1px solid var(--border); background: oklch(0.17 0.017 255); }
+    .tab { flex: 0 0 auto; min-width: 140px; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 0 12px; color: var(--muted); border: 0; border-right: 1px solid var(--border); border-bottom: 2px solid transparent; background: transparent; font-family: var(--mono); font-size: 11px; text-align: left; }
+    .tab:hover { background: var(--surface-raised); color: var(--fg); }
+    .tab.active { background: var(--surface); border-bottom-color: var(--accent); color: var(--fg); }
+    .tab .close { color: var(--muted); font-size: 14px; }
+    .editor-wrap { min-height: 0; display: grid; grid-template-columns: 52px minmax(0, 1fr); background: oklch(0.16 0.017 255); }
+    .line-nos { margin: 0; padding: 17px 12px 17px 0; border-right: 1px solid var(--border); color: oklch(0.48 0.02 250); font-family: var(--mono); font-size: 12px; line-height: 1.7; text-align: right; user-select: none; overflow: hidden; }
+    .code-editor { width: 100%; height: 100%; resize: none; border: 0; padding: 17px 20px; background: transparent; color: oklch(0.88 0.035 205); font-family: var(--mono); font-size: 12px; line-height: 1.7; tab-size: 2; }
+    .code-editor[readonly] { color: var(--muted); cursor: not-allowed; }
+    .editor-status { display: flex; align-items: center; justify-content: space-between; padding: 0 12px; border-top: 1px solid var(--border); background: oklch(0.17 0.017 255); color: var(--muted); font-family: var(--mono); font-size: 10px; }
+    .save-state { color: var(--accent); }
+    .save-state.dirty { color: var(--warning); }
+
+    .command-pane { display: flex; flex-direction: column; }
+    .run-summary { padding: 16px; border-bottom: 1px solid var(--border); }
+    .run-summary h2 { margin: 0 0 5px; font-family: var(--display); font-size: 19px; font-weight: 500; }
+    .run-summary p { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.55; }
+    .run-button { width: 100%; min-height: 44px; margin-top: 15px; border: 1px solid var(--accent); background: var(--accent); color: oklch(0.17 0.025 190); font-weight: 750; letter-spacing: .02em; }
+    .run-button:hover { background: oklch(0.86 0.142 180); border-color: oklch(0.86 0.142 180); }
+    .run-button:disabled { cursor: not-allowed; border-color: var(--border); background: var(--surface-raised); color: var(--muted); }
+    .stop-button { width: 100%; min-height: 38px; margin-top: 8px; border: 1px solid oklch(0.69 0.17 28 / .55); background: transparent; color: oklch(0.82 0.09 28); font-size: 13px; }
+    .stop-button:hover { background: oklch(0.69 0.17 28 / .13); color: oklch(0.94 0.06 28); }
+    .stop-button[hidden] { display: none; }
+    .status-block { padding: 16px; border-bottom: 1px solid var(--border); }
+    .status-row { display: flex; justify-content: space-between; align-items: center; padding: 7px 0; border-bottom: 1px solid oklch(0.34 0.024 250 / .5); font-family: var(--mono); font-size: 11px; }
+    .status-row:last-child { border-bottom: 0; }
+    .status-key { color: var(--muted); }
+    .status-value { color: var(--fg); text-align: right; }
+    .status-value.waiting { color: var(--warning); }
+    .status-value.running { color: var(--accent); }
+    .status-value.done { color: var(--accent); }
+    .resource-box { padding: 16px; }
+    .resource-caption { display: flex; justify-content: space-between; margin-bottom: 11px; color: var(--muted); font-family: var(--mono); font-size: 10px; }
+    .resource-caption b { color: var(--fg); font-weight: 500; }
+    .meter { height: 5px; margin-bottom: 15px; background: oklch(0.3 0.022 250); overflow: hidden; }
+    .meter > span { display: block; height: 100%; width: var(--value); background: var(--accent); transition: width .4s ease; }
+    .run-note { margin: 4px 16px 16px; padding: 10px 12px; border: 1px solid var(--border); color: var(--muted); font-family: var(--mono); font-size: 10px; line-height: 1.55; }
+
+    .bottom-panel { display: grid; grid-template-columns: minmax(0, 1fr) 330px; gap: 1px; border-top: 1px solid var(--border); background: var(--border); min-height: 0; }
+    .console, .terminal { min-height: 0; background: oklch(0.145 0.016 255 / .98); }
+    .console-head { min-height: 41px; display: flex; align-items: center; justify-content: space-between; padding: 0 15px; border-bottom: 1px solid var(--border); }
+    .console-tabs { display: flex; align-items: center; gap: 19px; }
+    .console-tab { padding: 13px 0 10px; border: 0; border-bottom: 2px solid transparent; background: transparent; color: var(--muted); font-family: var(--mono); font-size: 11px; }
+    .console-tab.active { border-bottom-color: var(--accent); color: var(--fg); }
+    .console-action { border: 0; background: transparent; color: var(--muted); font-family: var(--mono); font-size: 11px; }
+    .console-action:hover { color: var(--fg); }
+    .log-stream { height: calc(100% - 41px); padding: 12px 16px; overflow: auto; font-family: var(--mono); font-size: 11px; line-height: 1.75; }
+    .log-line { display: grid; grid-template-columns: 64px 50px minmax(0, 1fr); column-gap: 11px; }
+    .log-time { color: oklch(0.5 0.02 250); }
+    .log-level { color: var(--accent); }
+    .log-level.warn { color: var(--warning); }
+    .log-level.error { color: oklch(0.82 0.1 28); }
+    .log-message { color: oklch(0.79 0.018 230); overflow-wrap: anywhere; }
+    .terminal { display: grid; grid-template-rows: 41px minmax(0, 1fr) 39px; }
+    .terminal-title { display: flex; align-items: center; justify-content: space-between; padding: 0 15px; border-bottom: 1px solid var(--border); color: var(--muted); font-family: var(--mono); font-size: 11px; }
+    .terminal-body { padding: 12px 15px; overflow: auto; color: oklch(0.76 0.04 186); font-family: var(--mono); font-size: 11px; line-height: 1.7; }
+    .terminal-body .muted { color: var(--muted); }
+    .terminal-form { display: flex; align-items: center; gap: 8px; padding: 0 13px; border-top: 1px solid var(--border); }
+    .terminal-form span { color: var(--accent); font-family: var(--mono); font-size: 12px; }
+    .terminal-input { min-width: 0; flex: 1; border: 0; outline: 0; background: transparent; color: var(--fg); font-family: var(--mono); font-size: 11px; }
+    .terminal-input:disabled { color: var(--muted); }
+
+    .toast { position: fixed; right: 20px; top: 72px; z-index: 10; padding: 10px 13px; border: 1px solid var(--accent); background: oklch(0.2 0.026 230); color: var(--fg); box-shadow: 0 12px 30px oklch(0.08 0.02 250 / .38); font-family: var(--mono); font-size: 11px; opacity: 0; transform: translateY(-8px); pointer-events: none; transition: .2s ease; }
+    .toast.visible { opacity: 1; transform: translateY(0); }
+
+    @media (max-width: 1180px) {
+      .workspace { grid-template-columns: 220px minmax(430px, 1fr) 275px; }
+      .bottom-panel { grid-template-columns: minmax(0, 1fr) 290px; }
+      .brand { min-width: 205px; }
+    }
+  </style>
+</head>
+<body>
+  <main class="app-shell" data-od-id="poc4-workbench">
+    <header class="topbar" data-od-id="workbench-topbar">
+      <div class="brand" data-od-id="product-brand">
+        <span class="brand-mark" aria-hidden="true"></span>
+        <span class="brand-name">Manao Cloud Lab</span>
+        <span class="brand-subtitle">POC4</span>
+      </div>
+      <nav class="crumbs" aria-label="项目路径" data-od-id="project-breadcrumb">
+        <span>我的项目</span><span class="crumb-sep">/</span><strong>order-service</strong><span class="crumb-sep">/</span><span>workspace</span>
+      </nav>
+      <div class="session" data-od-id="session-status"><span class="live-dot"></span><span>演示会话 · 已连接</span></div>
+    </header>
+
+    <section class="workspace" aria-label="开发工作台" data-od-id="workspace-layout">
+      <aside class="pane explorer" data-od-id="file-explorer">
+        <div class="pane-head">
+          <span class="pane-title" data-od-id="explorer-heading">工作区</span>
+          <button class="icon-action" type="button" title="新建文件" aria-label="新建文件" data-od-id="new-file-button">+</button>
+        </div>
+        <div class="project-card" data-od-id="project-summary">
+          <div class="project-kicker">JAVA 17 · MAVEN 3.9</div>
+          <h2>订单服务实验</h2>
+          <p>private · workspace-pod</p>
+        </div>
+        <div class="tree" role="tree" aria-label="项目文件" data-od-id="project-file-tree">
+          <button class="tree-row" type="button" role="treeitem" aria-expanded="true" data-file="folder"><span class="file-type muted">DIR</span><span class="tree-label">order-service</span></button>
+          <button class="tree-row nested" type="button" role="treeitem" data-file="pom"><span class="file-type">XML</span><span class="tree-label">pom.xml</span></button>
+          <button class="tree-row nested" type="button" role="treeitem" aria-expanded="true" data-file="folder"><span class="file-type muted">DIR</span><span class="tree-label">src</span></button>
+          <button class="tree-row nested" type="button" role="treeitem" aria-expanded="true" data-file="folder"><span class="file-type muted">DIR</span><span class="tree-label">main</span></button>
+          <button class="tree-row nested" type="button" role="treeitem" aria-expanded="true" data-file="folder"><span class="file-type muted">DIR</span><span class="tree-label">java</span></button>
+          <button class="tree-row nested active" type="button" role="treeitem" data-file="application"><span class="file-type">JAVA</span><span class="tree-label">OrderApplication.java</span></button>
+          <button class="tree-row nested" type="button" role="treeitem" data-file="controller"><span class="file-type">JAVA</span><span class="tree-label">OrderController.java</span></button>
+          <button class="tree-row nested" type="button" role="treeitem" data-file="test"><span class="file-type">JAVA</span><span class="tree-label">OrderApplicationTests.java</span></button>
+          <button class="tree-row nested" type="button" role="treeitem" data-file="readme"><span class="file-type">MD</span><span class="tree-label">README.md</span></button>
+        </div>
+        <div class="explorer-foot" data-od-id="workspace-pod-status"><strong>工作区 Pod</strong><br>manao-ws-82c1 · Ready</div>
+      </aside>
+
+      <section class="pane editor-pane" data-od-id="code-editor-region">
+        <div class="tabs" role="tablist" aria-label="打开的文件" data-od-id="editor-tabs">
+          <button class="tab active" type="button" role="tab" aria-selected="true" data-tab="application"><span>OrderApplication.java</span><span class="close">×</span></button>
+          <button class="tab" type="button" role="tab" aria-selected="false" data-tab="pom"><span>pom.xml</span><span class="close">×</span></button>
+        </div>
+        <div class="editor-wrap" data-od-id="monaco-editor-surface">
+          <pre class="line-nos" aria-hidden="true" id="lineNos">1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13\n14</pre>
+          <textarea class="code-editor" id="codeEditor" aria-label="代码编辑器" spellcheck="false" data-od-id="code-editor">package com.manao.order;
+
+import org.springframework.boot.SpringApplication;
+import org.springframework.boot.autoconfigure.SpringBootApplication;
+
+@SpringBootApplication
+public class OrderApplication {
+  public static void main(String[] args) {
+    SpringApplication.run(OrderApplication.class, args);
+  }
+}</textarea>
+        </div>
+        <div class="editor-status" data-od-id="editor-status-bar"><span id="cursorPosition">Ln 1, Col 1</span><span id="saveState" class="save-state">已保存</span><span>UTF-8 · Java</span></div>
+      </section>
+
+      <aside class="pane command-pane" data-od-id="run-control-panel">
+        <div class="pane-head"><span class="pane-title" data-od-id="run-heading">运行控制</span><span class="pane-title" id="taskTag">READY</span></div>
+        <div class="run-summary" data-od-id="run-summary">
+          <h2 id="taskTitle">准备执行</h2>
+          <p id="taskDescription">保存后的代码将提交至专属 Job，并以 <code>mvn clean test</code> 验证。</p>
+          <button class="run-button" id="runButton" type="button" data-od-id="run-task-button">运行任务</button>
+          <button class="stop-button" id="stopButton" type="button" hidden data-od-id="stop-task-button">终止任务</button>
+        </div>
+        <div class="status-block" data-od-id="task-details">
+          <div class="status-row"><span class="status-key">任务状态</span><span class="status-value" id="taskStatus">待执行</span></div>
+          <div class="status-row"><span class="status-key">运行标识</span><span class="status-value" id="runId">—</span></div>
+          <div class="status-row"><span class="status-key">执行命令</span><span class="status-value">mvn clean test</span></div>
+          <div class="status-row"><span class="status-key">工作区锁</span><span class="status-value" id="lockStatus">未锁定</span></div>
+        </div>
+        <div class="resource-box" data-od-id="resource-monitor">
+          <div class="resource-caption"><span>CPU</span><b id="cpuValue">0.0 / 8 vCPU</b></div><div class="meter"><span id="cpuMeter" style="--value: 0%"></span></div>
+          <div class="resource-caption"><span>MEMORY</span><b id="memoryValue">0.0 / 6 GiB</b></div><div class="meter"><span id="memoryMeter" style="--value: 0%"></span></div>
+          <div class="resource-caption"><span>EPHEMERAL</span><b id="diskValue">0.0 / 10 GiB</b></div><div class="meter"><span id="diskMeter" style="--value: 0%"></span></div>
+        </div>
+        <p class="run-note" id="runNote" data-od-id="run-policy-note">同一项目仅允许一个活动 Job。任务运行期间，编辑器将自动锁定。</p>
+      </aside>
+    </section>
+
+    <section class="bottom-panel" data-od-id="runtime-output-panel">
+      <section class="console" data-od-id="live-log-console">
+        <div class="console-head">
+          <div class="console-tabs" role="tablist" aria-label="输出视图"><button class="console-tab active" type="button" role="tab" data-od-id="logs-tab">实时日志</button><button class="console-tab" type="button" role="tab" data-od-id="test-tab">测试结果</button></div>
+          <button class="console-action" id="clearLogs" type="button" data-od-id="clear-logs-button">清空输出</button>
+        </div>
+        <div class="log-stream" id="logStream" aria-live="polite" data-od-id="log-stream">
+          <div class="log-line"><span class="log-time">09:42:10</span><span class="log-level">INFO</span><span class="log-message">工作区已就绪，等待提交任务。</span></div>
+          <div class="log-line"><span class="log-time">09:42:11</span><span class="log-level">INFO</span><span class="log-message">当前分支内容已加载至 Monaco 编辑器。</span></div>
+        </div>
+      </section>
+      <aside class="terminal" data-od-id="interactive-shell">
+        <div class="terminal-title"><span>容器 Shell</span><span id="shellState">任务启动后可用</span></div>
+        <div class="terminal-body" id="terminalBody"><span class="muted">$ 等待活动 Job…</span></div>
+        <form class="terminal-form" id="terminalForm" data-od-id="terminal-command-form"><span>›</span><input class="terminal-input" id="terminalInput" aria-label="输入 Shell 命令" placeholder="任务运行后可输入命令" disabled autocomplete="off"></form>
+      </aside>
+    </section>
+  </main>
+  <div class="toast" id="toast" role="status" aria-live="polite" data-od-id="action-toast"></div>
+
+  <script>
+    const files = {
+      application: { name: 'OrderApplication.java', language: 'Java', content: `package com.manao.order;
+
+import org.springframework.boot.SpringApplication;
+import org.springframework.boot.autoconfigure.SpringBootApplication;
+
+@SpringBootApplication
+public class OrderApplication {
+  public static void main(String[] args) {
+    SpringApplication.run(OrderApplication.class, args);
+  }
+}` },
+      controller: { name: 'OrderController.java', language: 'Java', content: `package com.manao.order;
+
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RestController;
+
+@RestController
+public class OrderController {
+  @GetMapping("/health")
+  public String health() { return "ok"; }
+}` },
+      pom: { name: 'pom.xml', language: 'XML', content: `<project xmlns="http://maven.apache.org/POM/4.0.0">
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>com.manao</groupId>
+  <artifactId>order-service</artifactId>
+  <version>0.0.1-SNAPSHOT</version>
+  <properties><java.version>17</java.version></properties>
+</project>` },
+      test: { name: 'OrderApplicationTests.java', language: 'Java', content: `package com.manao.order;
+
+import org.junit.jupiter.api.Test;
+
+class OrderApplicationTests {
+  @Test
+  void contextLoads() { }
+}` },
+      readme: { name: 'README.md', language: 'Markdown', content: `# Order Service
+
+POC4 演示项目。使用 Maven Job 执行测试，并将实时日志推送至工作台。` }
+    };
+
+    const editor = document.getElementById('codeEditor');
+    const lineNos = document.getElementById('lineNos');
+    const saveState = document.getElementById('saveState');
+    const cursorPosition = document.getElementById('cursorPosition');
+    const logStream = document.getElementById('logStream');
+    const toast = document.getElementById('toast');
+    const runButton = document.getElementById('runButton');
+    const stopButton = document.getElementById('stopButton');
+    const terminalInput = document.getElementById('terminalInput');
+    const terminalBody = document.getElementById('terminalBody');
+    let activeFile = 'application';
+    let dirty = false;
+    let running = false;
+    let runTimer;
+    let toastTimer;
+
+    function refreshLineNumbers() {
+      const count = Math.max(1, editor.value.split('\n').length);
+      lineNos.textContent = Array.from({ length: count }, (_, i) => i + 1).join('\n');
+    }
+    function setDirty(value) {
+      dirty = value;
+      saveState.textContent = value ? '未保存' : '已保存';
+      saveState.classList.toggle('dirty', value);
+    }
+    function showToast(message) {
+      toast.textContent = message;
+      toast.classList.add('visible');
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => toast.classList.remove('visible'), 2200);
+    }
+    function log(level, message) {
+      const time = new Date().toLocaleTimeString('zh-CN', { hour12: false });
+      const row = document.createElement('div');
+      row.className = 'log-line';
+      row.innerHTML = `<span class="log-time">${time}</span><span class="log-level ${level === 'WARN' ? 'warn' : level === 'ERROR' ? 'error' : ''}">${level}</span><span class="log-message"></span>`;
+      row.querySelector('.log-message').textContent = message;
+      logStream.appendChild(row);
+      logStream.scrollTop = logStream.scrollHeight;
+    }
+    function setResource(cpu, memory, disk) {
+      document.getElementById('cpuValue').textContent = `${cpu.toFixed(1)} / 8 vCPU`;
+      document.getElementById('memoryValue').textContent = `${memory.toFixed(1)} / 6 GiB`;
+      document.getElementById('diskValue').textContent = `${disk.toFixed(1)} / 10 GiB`;
+      document.getElementById('cpuMeter').style.setProperty('--value', `${cpu / 8 * 100}%`);
+      document.getElementById('memoryMeter').style.setProperty('--value', `${memory / 6 * 100}%`);
+      document.getElementById('diskMeter').style.setProperty('--value', `${disk / 10 * 100}%`);
+    }
+    function updateCursor() {
+      const before = editor.value.slice(0, editor.selectionStart).split('\n');
+      cursorPosition.textContent = `Ln ${before.length}, Col ${before.at(-1).length + 1}`;
+    }
+    function selectFile(key) {
+      if (running || !files[key]) return;
+      activeFile = key;
+      editor.value = files[key].content;
+      document.querySelectorAll('.tree-row').forEach(item => item.classList.toggle('active', item.dataset.file === key));
+      document.querySelectorAll('.tab').forEach(item => item.classList.toggle('active', item.dataset.tab === key));
+      document.querySelectorAll('.tab').forEach(item => item.setAttribute('aria-selected', item.dataset.tab === key));
+      document.querySelector('.tab.active span:first-child').textContent = files[key].name;
+      document.querySelector('.editor-status span:last-child').textContent = `UTF-8 · ${files[key].language}`;
+      setDirty(false); refreshLineNumbers(); updateCursor();
+    }
+    function saveFile() {
+      if (running) return;
+      files[activeFile].content = editor.value;
+      setDirty(false);
+      log('INFO', `${files[activeFile].name} 已显式保存至项目工作区。`);
+      showToast('保存成功 · revision 已更新');
+    }
+    function setRunState(state) {
+      const title = document.getElementById('taskTitle');
+      const description = document.getElementById('taskDescription');
+      const status = document.getElementById('taskStatus');
+      const lock = document.getElementById('lockStatus');
+      const taskTag = document.getElementById('taskTag');
+      if (state === 'running') {
+        title.textContent = '任务正在运行'; description.textContent = 'Job 已创建，日志通过 WebSocket 持续回传。';
+        status.textContent = '运行中'; status.className = 'status-value running'; lock.textContent = '已锁定'; lock.className = 'status-value running'; taskTag.textContent = 'RUNNING';
+      } else if (state === 'done') {
+        title.textContent = '测试通过'; description.textContent = 'Job 已正常结束。工作区已解除锁定，可继续编辑。';
+        status.textContent = '成功'; status.className = 'status-value done'; lock.textContent = '未锁定'; lock.className = 'status-value'; taskTag.textContent = 'PASSED';
+      } else if (state === 'stopped') {
+        title.textContent = '任务已终止'; description.textContent = '后端确认 Job 已停止，工作区重新开放。';
+        status.textContent = '已终止'; status.className = 'status-value waiting'; lock.textContent = '未锁定'; lock.className = 'status-value'; taskTag.textContent = 'STOPPED';
+      }
+    }
+    function finishRun(stopped = false) {
+      clearInterval(runTimer);
+      running = false;
+      editor.readOnly = false;
+      runButton.disabled = false;
+      runButton.textContent = '再次运行';
+      stopButton.hidden = true;
+      terminalInput.disabled = true;
+      terminalInput.placeholder = '任务结束，Shell 会话已关闭';
+      document.getElementById('shellState').textContent = '会话已关闭';
+      setResource(0, 0, 0);
+      if (stopped) { log('WARN', '收到终止请求，Job 已停止。'); setRunState('stopped'); showToast('任务已终止'); }
+      else { log('INFO', 'Tests run: 1, Failures: 0, Errors: 0, Skipped: 0'); log('INFO', 'BUILD SUCCESS · exit code 0'); setRunState('done'); showToast('任务成功完成'); }
+    }
+    function runTask() {
+      if (dirty) { showToast('请先保存当前修改，再运行任务'); return; }
+      running = true; editor.readOnly = true; runButton.disabled = true; stopButton.hidden = false;
+      const id = `run-${Date.now().toString().slice(-6)}`;
+      document.getElementById('runId').textContent = id;
+      document.getElementById('runNote').textContent = '任务活动中：文件切换、编辑与 AI 操作已锁定。可进入活动容器 Shell 进行只读排查。';
+      document.getElementById('shellState').textContent = '活动 Job · 已连接';
+      terminalInput.disabled = false; terminalInput.placeholder = '例如：pwd 或 ls -la';
+      terminalBody.innerHTML = '<span class="muted">$ 已连接至 job/order-service-test</span><br>$ pwd<br>/workspace';
+      setRunState('running');
+      log('INFO', `已创建 Kubernetes Job：${id}`); log('INFO', '已挂载项目 PVC，开始执行 mvn clean test。');
+      let step = 0;
+      const steps = [
+        () => { log('INFO', 'Downloading dependencies…'); setResource(1.8, 1.2, 0.4); },
+        () => { log('INFO', 'Compiling 2 source files with javac [debug release 17]'); setResource(3.7, 2.1, 0.8); },
+        () => { log('INFO', 'Running com.manao.order.OrderApplicationTests'); setResource(2.4, 1.7, 0.9); },
+        () => finishRun(false)
+      ];
+      runTimer = setInterval(() => { steps[step++](); if (step >= steps.length) clearInterval(runTimer); }, 1100);
+    }
+    document.querySelectorAll('.tree-row').forEach(button => button.addEventListener('click', () => selectFile(button.dataset.file)));
+    document.querySelectorAll('.tab').forEach(button => button.addEventListener('click', () => selectFile(button.dataset.tab)));
+    editor.addEventListener('input', () => { setDirty(true); refreshLineNumbers(); updateCursor(); });
+    editor.addEventListener('click', updateCursor); editor.addEventListener('keyup', updateCursor);
+    editor.addEventListener('keydown', event => { if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') { event.preventDefault(); saveFile(); } });
+    runButton.addEventListener('click', runTask); stopButton.addEventListener('click', () => finishRun(true));
+    document.getElementById('clearLogs').addEventListener('click', () => { logStream.innerHTML = ''; showToast('输出已清空'); });
+    document.getElementById('new-file-button').addEventListener('click', () => showToast('POC4 范围：文件创建将在后续工作区 CRUD 中交付'));
+    document.getElementById('terminalForm').addEventListener('submit', event => {
+      event.preventDefault(); const command = terminalInput.value.trim(); if (!command || !running) return;
+      const safeReply = command === 'pwd' ? '/workspace' : command === 'ls -la' ? 'pom.xml  src  README.md' : `命令已发送：${command}`;
+      terminalBody.insertAdjacentHTML('beforeend', `<br>$ ${command}<br><span class="muted">${safeReply}</span>`); terminalInput.value = ''; terminalBody.scrollTop = terminalBody.scrollHeight;
+    });
+    refreshLineNumbers(); updateCursor();
+  </script>
+</body>
+</html>
