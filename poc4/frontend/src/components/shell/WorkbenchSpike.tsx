@@ -1,5 +1,6 @@
 import { FileCode, Play, SquareTerminal } from 'lucide-react';
 import { useState } from 'react';
+import { MonacoPanel } from '@/components/files/MonacoPanel';
 import { cn } from '@/lib/utils';
 
 const panels = [
@@ -51,7 +52,7 @@ export function WorkbenchSpike() {
         <main className="min-h-0 min-w-0 flex-1 overflow-hidden">
           {activePanel === 'file' && (
             <div data-testid="file-spike-panel" className="h-full min-h-0 min-w-0">
-              File panel
+              <MonacoPanel />
             </div>
           )}
           {activePanel === 'run' && (
