@@ -1,6 +1,6 @@
 import '@/lib/monacoSetup';
 import Editor from '@monaco-editor/react';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { EditorTab } from '@/features/editor/editorTypes';
 import { disposeAllPoc4Models, disposeModel, toModelUri } from '@/lib/monacoModels';
 import { mockFiles, type MockFile } from '@/spike/mockFiles';
@@ -14,6 +14,7 @@ export function MonacoPanel() {
     mockFiles.map((file) => ({ ...file, isDirty: false }))
   );
   const [activePath, setActivePath] = useState(mockFiles[0].path);
+  const pendingDisposeRef = useRef<string[]>([]);
 
   const tabs: EditorTab[] = files.map(({ path, title, isDirty }) => ({ path, title, isDirty }));
   const activeFile = files.find((file) => file.path === activePath);
@@ -31,17 +32,24 @@ export function MonacoPanel() {
     [originals]
   );
 
-  const handleClose = useCallback(
-    (path: string) => {
-      setFiles((current) => {
-        const next = current.filter((file) => file.path !== path);
-        setActivePath((active) => (active === path ? (next[0]?.path ?? '') : active));
-        return next;
-      });
-      disposeModel(path);
-    },
-    []
-  );
+  const handleClose = useCallback((path: string) => {
+    const remaining = files.filter((file) => file.path !== path);
+    setFiles(remaining);
+    setActivePath((active) => (active === path ? (remaining[0]?.path ?? '') : active));
+    pendingDisposeRef.current.push(path);
+  }, [files]);
+
+  useEffect(() => {
+    const pending = pendingDisposeRef.current;
+    if (pending.length === 0) return;
+    const stillPending: string[] = [];
+    pendingDisposeRef.current = [];
+    for (const path of pending) {
+      if (path === activePath) stillPending.push(path);
+      else disposeModel(path);
+    }
+    pendingDisposeRef.current = stillPending;
+  }, [activePath, files]);
 
   const handleReorder = useCallback((fromIndex: number, toIndex: number) => {
     setFiles((current) => {

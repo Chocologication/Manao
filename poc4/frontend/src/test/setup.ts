@@ -20,11 +20,15 @@ if (typeof window.matchMedia !== 'function') {
   });
 }
 
-vi.mock('@monaco-editor/react', () => ({
-  default: () => null,
-  loader: {
-    config() {},
-    init: () => Promise.resolve({}),
-  },
-}));
+vi.mock('@monaco-editor/react', async () => {
+  const { createElement } = await import('react');
+  return {
+    default: ({ path }: { path?: string }) =>
+      createElement('div', { 'data-testid': 'mock-editor', 'data-path': path ?? '' }),
+    loader: {
+      config() {},
+      init: () => Promise.resolve({}),
+    },
+  };
+});
 
