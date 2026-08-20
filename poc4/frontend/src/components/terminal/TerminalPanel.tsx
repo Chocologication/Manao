@@ -108,6 +108,10 @@ export function TerminalPanel() {
       teardown();
       setStatus('error');
     });
+    transport.onClose(() => {
+      teardown();
+      setStatus('disconnected');
+    });
 
     const session = new TerminalSession(createXtermAdapter(terminal), transport);
     sessionRef.current = session;

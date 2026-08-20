@@ -13,6 +13,7 @@ export class WebSocketTerminalTransport implements TerminalTransport {
   private readonly outputListeners = new Set<(data: Uint8Array) => void>();
   private readonly controlListeners = new Set<(control: TerminalServerControl) => void>();
   private readonly errorListeners = new Set<(event: Event) => void>();
+  private readonly closeListeners = new Set<() => void>();
 
   constructor(url: string) {
     this.url = url;
@@ -24,6 +25,7 @@ export class WebSocketTerminalTransport implements TerminalTransport {
     socket.binaryType = 'arraybuffer';
     socket.addEventListener('message', (event) => this.handleMessage(event));
     socket.addEventListener('error', (event) => this.handleError(event));
+    socket.addEventListener('close', () => this.handleClose());
     this.socket = socket;
   }
 
@@ -58,6 +60,13 @@ export class WebSocketTerminalTransport implements TerminalTransport {
     };
   }
 
+  onClose(listener: () => void): () => void {
+    this.closeListeners.add(listener);
+    return () => {
+      this.closeListeners.delete(listener);
+    };
+  }
+
   close(): void {
     if (this.closed) return;
     this.closed = true;
@@ -66,6 +75,7 @@ export class WebSocketTerminalTransport implements TerminalTransport {
     this.outputListeners.clear();
     this.controlListeners.clear();
     this.errorListeners.clear();
+    this.closeListeners.clear();
     if (!socket) return;
     if (socket.readyState === WebSocket.OPEN) {
       socket.send(encodeClientControl({ type: 'terminal.close' }));
@@ -99,5 +109,10 @@ export class WebSocketTerminalTransport implements TerminalTransport {
   private handleError(event: Event): void {
     if (this.closed) return;
     for (const listener of [...this.errorListeners]) listener(event);
+  }
+
+  private handleClose(): void {
+    if (this.closed) return;
+    for (const listener of [...this.closeListeners]) listener();
   }
 }
