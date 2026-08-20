@@ -10,7 +10,7 @@ POC 通过的依据不是静态界面，而是完整真实链路能够稳定运�
 
 ### 包含
 
-- 桌面端 React + TypeScript + Vite 工作台。
+- React + TypeScript + Vite 工作台。
 - 固定测试账号登录和短期 JWT。
 - 私有项目创建、最小 Java 17 Maven 模板、每项目 10 GiB RWX PVC。
 - 目录树、文本文件读取/保存、文件与目录创建、重命名、删除确认。
