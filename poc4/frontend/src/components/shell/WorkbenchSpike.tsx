@@ -1,6 +1,7 @@
 import { FileCode, Play, SquareTerminal } from 'lucide-react';
 import { useState } from 'react';
 import { MonacoPanel } from '@/components/files/MonacoPanel';
+import { TerminalPanel } from '@/components/terminal/TerminalPanel';
 import { cn } from '@/lib/utils';
 
 const panels = [
@@ -62,7 +63,7 @@ export function WorkbenchSpike() {
           )}
           {activePanel === 'terminal' && (
             <div data-testid="terminal-spike-panel" className="h-full min-h-0 min-w-0">
-              Terminal panel
+              <TerminalPanel />
             </div>
           )}
         </main>
