@@ -2,29 +2,30 @@
 
 ## Source
 
-- 日期：`2026-08-20`
+- 日期：`2026-08-21`
 - 分支：`poc4/ensoai-stage-0-spike`
-- 本轮验证树：`399f778`（`git rev-parse --short HEAD`，含 Vitest 最小排除提交）
+- 本轮验证树：`7c3caa5`（`git rev-parse --short HEAD`，含面板保持挂载与跨面板 E2E）
+- 前一报告树：`d92885a`（阶段 0 初版决策）；本轮在其上追加 `7c3caa5`
 - EnsoAI 来源：`D:\DeepLearning\MyProjects\Enso_AI` 提交 `5aa294a`
 - 许可证记录：`poc4/frontend/THIRD_PARTY_NOTICES.md`（MIT，来源提交 `5aa294a`）
-- 行数统计：`git diff --numstat fbfddb2..HEAD -- poc4/frontend` → 51 个文件，+6131 / -0。其中 `pnpm-lock.yaml` +3586；其余前端源与配置 +2545。
+- 行数统计：`git diff --shortstat fbfddb2 HEAD -- poc4/frontend` → 51 个文件，+6277。其中 `pnpm-lock.yaml` +3586；其余前端源与配置 +2691。
 
-本报告所有退出码、测试数、构建时间、worker 资源和扫描结果均来自该提交上的新鲜运行，不复用先前任务日志。
+本报告所有退出码、测试数、构建时间、worker 资源和扫描结果均来自 `7c3caa5` 上的新鲜运行，不复用先前任务日志。
 
 ## Automated Verification
 
 工作目录：`poc4/frontend`。六条命令均退出 0。
 
-| 命令 | 退出码 | 墙钟 | 观察结果 |
-|---|---:|---:|---|
-| `pnpm test:boundary` | 0 | 1257 ms | node:test 3 pass / 0 fail（`duration_ms 109.1474`）；随后打印 `Browser boundary check passed.` |
-| `pnpm typecheck` | 0 | 2368 ms | `tsc -b --pretty false` 无诊断输出 |
-| `pnpm test` | 0 | 16313 ms | Vitest 3.2.7：Test Files 7 passed (7)；Tests 16 passed (16)；Duration 14.85s。stderr 仅 jsdom `HTMLCanvasElement.getContext` 未实现提示，不计入失败 |
-| `pnpm build` | 0 | 45012 ms | 内含 typecheck；Vite 7.3.6 production client；`3363 modules transformed`；`built in 41.14s`。存在 >500 kB chunk 提示，构建仍成功 |
-| `pnpm test:e2e` | 0 | 52625 ms | Playwright Chromium：Running 4 tests using 1 worker；1 passed（spike workbench workflow 2.0s）；3 skipped（截图仅 chrome/edge）；合计 51.6s |
-| `pnpm test:e2e:channels` | 0 | 56875 ms | Playwright chrome + edge：Running 8 tests using 2 workers；8 passed（两浏览器工作流 + 六张 viewport 截图）；合计 55.9s |
+| 命令 | 退出码 | 观察结果 |
+|---|---:|---|
+| `pnpm test:boundary` | 0 | node:test 3 pass / 0 fail（`duration_ms 126.0317`）；随后打印 `Browser boundary check passed.` |
+| `pnpm typecheck` | 0 | `tsc -b --pretty false` 无诊断输出 |
+| `pnpm test` | 0 | Vitest 3.2.7：Test Files 7 passed (7)；Tests 17 passed (17)；Duration 18.10s。stderr 仅 jsdom `HTMLCanvasElement.getContext` 未实现提示，不计入失败 |
+| `pnpm build` | 0 | 内含 typecheck；Vite 7.3.6 production client；`3363 modules transformed`；`built in 51.53s`。存在 >500 kB chunk 提示，构建仍成功 |
+| `pnpm test:e2e` | 0 | Playwright Chromium：Running 6 tests using 1 worker；3 passed（工作流 + dirty 跨面板 + 终端会话保持）；3 skipped（截图仅 chrome/edge）；合计 1.1m |
+| `pnpm test:e2e:channels` | 0 | Playwright chrome + edge：Running 12 tests using 2 workers；12 passed（两浏览器 × 3 条工作流/生命周期 + 六张 viewport 截图）；合计 1.2m |
 
-Vitest 在 `399f778` 之前会把 `scripts/browser-boundary-lib.test.mjs`（node:test）和 `tests/e2e/spike.spec.ts`（Playwright）收进 `vitest run`，导致 `pnpm test` 退出 1。该提交将 `test.exclude` 扩展为 `[...configDefaults.exclude, 'scripts/**', 'tests/e2e/**']`，不削弱 `src/**` 下 16 个真实单测。上表 `pnpm test` 是排除之后的新鲜运行。
+Vitest 排除 `scripts/**` 与 `tests/e2e/**` 仍有效。本轮 `src/**` 单测为 17 个（新增 WorkbenchSpike 保持挂载用例）。
 
 生产构建独立 Monaco Worker（本次 `dist/assets`）：
 
@@ -36,9 +37,9 @@ Vitest 在 `399f778` 之前会把 `scripts/browser-boundary-lib.test.mjs`（node
 | `css.worker-NZNbQL3P.js` | 1030.32 kB（1030315 B） |
 | `ts.worker-BfwyojP3.js` | 7010.07 kB（7010073 B） |
 
-无 Electron Worker URL，无 CDN loader path。主包 `index-CTELHjqv.js` 4784.99 kB / gzip 1254.58 kB。
+无 Electron Worker URL，无 CDN loader path。主包 `index-CjHsX4jR.js` 4785.28 kB / gzip 1254.62 kB。
 
-浏览器用例：Chromium 工作流 1 通过；Chrome 与 Edge 工作流各 1 通过；六张 channel 截图测试全部通过。E2E 由 Playwright webServer 执行 `pnpm build && pnpm preview`（4173）与 `pnpm dev:echo`（4174），未连接真实 POC4 后端。
+浏览器用例：Chromium 3 通过（含 dirty 跨面板与终端会话保持）；Chrome / Edge 各 3 条功能用例通过，并发送 `terminal.resize` 帧；六张 channel 截图测试全部通过。E2E 由 Playwright webServer 执行 `pnpm build && pnpm preview`（4173）与 `pnpm dev:echo`（4174），未连接真实 POC4 后端。
 
 ## Visual Verification
 
@@ -83,13 +84,13 @@ $matches = Select-String -Path ($targets.FullName) -Pattern $patterns
 ```
 
 结果：`FORBIDDEN_MATCH_COUNT=0`，脚本正常结束。
-3. `git diff --check` 无输出，退出 0。
-4. `git status --short` 在验证后为空（无未提交改动）。
-5. UTF-8 BOM：字面 `Get-ChildItem poc4\frontend -Recurse` 会进入 `node_modules`（超长路径无法读取，且依赖 README 可能带 BOM）。对仓库跟踪文本与排除 `node_modules`/`dist`/`test-results`/`playwright-report` 后的工程文件扫描：48 个 `.ts/.tsx/.js/.mjs/.json/.css/.md/.html/.yaml/.yml`，BOM_FOUND=0。
+3. `git diff --check` 与 `git diff --check d92885a HEAD` 均无空白错误输出。本轮在最终验证树 `7c3caa5` 上执行，不是 `399f778`。`src/test/setup.ts` 末尾已去掉多余空行。
+4. `git status --short` 在验证后为空（无未提交改动；六张 PNG 无新 git 差异）。
+5. UTF-8 BOM：排除 `node_modules`/`dist`/`test-results`/`playwright-report` 后扫描 49 个 `.ts/.tsx/.js/.mjs/.json/.css/.md/.html/.yaml/.yml`，BOM_FOUND=0。
 
 ## Observed Migration Cost
 
-`fbfddb2..399f778` 的 `poc4/frontend` 共 51 文件、+6131 行。去掉 lockfile 后约 +2545 行，覆盖脚手架、边界守卫、设计系统、Tabs、Monaco、xterm、echo server 与 E2E。
+`fbfddb2..7c3caa5` 的 `poc4/frontend` 共 51 文件、+6277 行。去掉 lockfile 后约 +2691 行，覆盖脚手架、边界守卫、设计系统、Tabs、Monaco、xterm、echo server、跨面板生命周期与 E2E。
 
 从 EnsoAI `5aa294a` 裁剪迁入的显示层（numstat 新增行）：
 
@@ -113,9 +114,9 @@ $matches = Select-String -Path ($targets.FullName) -Pattern $patterns
 
 对照阶段 0 决策门六项，依据本轮证据逐项判定：
 
-1. `pnpm build` 与 `pnpm typecheck` 通过：是。退出码均为 0；Vite `built in 41.14s`，并产出五个独立 Monaco Worker。
-2. Chrome/Edge 中 Monaco Worker、模型切换和 dirty 状态正常：是。channel 工作流在两浏览器通过：`.monaco-editor` 可见，console error 为空，`pom.xml` 写入 `SPIKEDIRTY` 后 tab 带 `*`，切到 `App.java` 再切回内容与 dirty 仍在；截图显示 XML 着色而非空白画布。
-3. xterm 输入、输出、resize、disconnect、dispose 和新会话正常：是。E2E 验证 Connect 后 status=`connected` 且 last-output 含 `POC4 browser terminal ready`，输入 `K` 回显一次，Disconnect 后旧 `/terminal` WebSocket 关闭，再 Connect 仅 1 条打开 socket 且 `Q` 不加倍。`TerminalSession` 单测覆盖 dispose 一次、dispose 后不转发输出、仅活动会话 resize。面板在 FitAddon.fit 后调用 `session.resize`。
+1. `pnpm build` 与 `pnpm typecheck` 通过：是。退出码均为 0；Vite `built in 51.53s`，并产出五个独立 Monaco Worker。
+2. Chrome/Edge 中 Monaco Worker、模型切换和 dirty 状态正常：是。channel 工作流在两浏览器通过：`.monaco-editor` 可见，console error 为空，`pom.xml` 写入 `SPIKEDIRTY` 后 tab 带 `*`，切到 `App.java` 再切回、以及切到 Run 再切回 File，内容与 dirty 仍在；截图显示 XML 着色而非空白画布。
+3. xterm 输入、输出、resize、disconnect、dispose 和新会话正常：是。E2E 验证 Connect 后 status=`connected` 且 last-output 含 `POC4 browser terminal ready`，出站 JSON 含 `terminal.resize` 且 cols/rows > 0，输入 `K` 回显一次，Disconnect 后旧 `/terminal` WebSocket 关闭，再 Connect 仅 1 条打开 socket 且 `Q` 不加倍。切到 File 后再回到 Terminal，socket 仍为 1 且 status 仍为 `connected`。`TerminalSession` 单测覆盖 dispose 一次、dispose 后不转发输出、仅活动会话 resize。File / Run / Terminal 三个主面板保持挂载，仅隐藏非活动面板；未保存的 `SPIKEDIRTY` 缓冲在切 Run 后仍在。
 4. 1280 px 无重叠和不可达操作：是。Chromium/Chrome/Edge 工作流断言无横向溢出且侧栏不覆盖主区；1280 截图中 File / Run / Terminal 与编辑器 tabs 均可点到。
 5. 生产依赖和源码没有 Electron、Node PTY 或本机绝对路径：是。`pnpm test:boundary` 通过；`package.json` + `src` 的 Select-String 禁止项扫描 0 匹配。
 6. 实际迁移仍比仅复用设计变量有明显收益：是。已迁入并跑通 Tabs / 图标 / 搜索条 / 主题，同时用较短的浏览器 transport 替换了 Electron PTY；丢掉这些已验证组件会把已通过的编辑器与终端工作再做一遍。
@@ -128,7 +129,7 @@ $matches = Select-String -Path ($targets.FullName) -Pattern $patterns
 
 ## Confidence
 
-设计文档在 Spike 前将整体置信度写为 84%，缺口是浏览器生产构建尚未跑过。本轮六条自动命令、禁止项扫描和六张截图补上了该缺口。对“继续选择性迁移、而不是放弃工作台组件”的置信度更新为 **90%**。
+设计文档在 Spike 前将整体置信度写为 84%。初版 `d92885a` 补上了生产构建与 Chrome/Edge 证据，但主面板条件卸载会丢掉 dirty buffer 与终端会话。`7c3caa5` 改为三个面板保持挂载、仅隐藏非活动面板，并用失败先于修复的 E2E 锁住跨 File/Run/Terminal 行为，以及出站 `terminal.resize` 帧。对“继续选择性迁移、而不是放弃工作台组件”的置信度保持 **90%**。当前提交作为阶段 1 起点的置信度为 **80%**（不再是未修正生命周期时的 60%）。
 
 仍未由阶段 0 覆盖、因此不能提高到接近确定的事项：
 
