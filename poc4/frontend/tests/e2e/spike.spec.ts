@@ -68,6 +68,14 @@ function openSockets(sockets: Array<{ closed: boolean }>) {
   return sockets.filter((socket) => !socket.closed);
 }
 
+function isBrowserChrome404(pathname: string): boolean {
+  return (
+    pathname === '/favicon.ico' ||
+    pathname === '/apple-touch-icon.png' ||
+    pathname === '/apple-touch-icon-precomposed.png'
+  );
+}
+
 function sentResizeFrames(sockets: Array<{ sent: string[] }>) {
   const frames: Array<{ cols: number; rows: number }> = [];
   for (const socket of sockets) {
@@ -91,8 +99,17 @@ function sentResizeFrames(sockets: Array<{ sent: string[] }>) {
 
 test('spike workbench workflow', async ({ page }) => {
   const consoleErrors: string[] = [];
+  const notFoundPaths: string[] = [];
+  page.on('response', (response) => {
+    if (response.status() === 404) {
+      notFoundPaths.push(new URL(response.url()).pathname);
+    }
+  });
   page.on('console', (message) => {
-    if (message.type() === 'error') consoleErrors.push(message.text());
+    if (message.type() !== 'error') return;
+    const text = message.text();
+    if (text.includes('Failed to load resource') && text.includes('404')) return;
+    consoleErrors.push(text);
   });
   const sockets = trackTerminalSockets(page);
 
@@ -165,6 +182,7 @@ test('spike workbench workflow', async ({ page }) => {
     expect(asideBox.x + asideBox.width).toBeLessThanOrEqual(mainBox.x + 1);
   }
 
+  expect(notFoundPaths.filter((pathname) => !isBrowserChrome404(pathname))).toEqual([]);
   expect(consoleErrors).toEqual([]);
 });
 
