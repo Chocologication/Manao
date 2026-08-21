@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { login } from '../api/authApi';
+import { ApiRequestError } from '../api/ApiRequestError';
 import { getProject, listProjects } from '../api/projectApi';
 import { ALICE_SEED_PROJECT_ID } from '../mocks/state';
 import { server } from '../mocks/node';
@@ -93,6 +94,53 @@ describe('appRuntime unauthorized recovery', () => {
     expect(alerts[0]).not.toHaveTextContent('mem-token');
     expect(alerts[0]).not.toHaveTextContent(UNAUTHENTICATED_BODY.traceId);
     expect(screen.queryByText('Alice Notebook')).not.toBeInTheDocument();
+  });
+});
+
+describe('appRuntime login 401', () => {
+  it('does not clear cache or connections when login credentials are invalid', async () => {
+    await authenticateAsAlice();
+    await seedCachedProjectQueries();
+    expect(queryClient.getQueryCache().getAll()).toHaveLength(2);
+
+    const closer = vi.fn();
+    connectionRegistry.register(closer);
+
+    const error = await login({ username: 'alice', password: 'wrong-pass' }).catch(
+      (reason: unknown) => reason,
+    );
+
+    expect(error).toBeInstanceOf(ApiRequestError);
+    expect(error).toMatchObject({ status: 401 });
+    expect(closer).not.toHaveBeenCalled();
+    expect(queryClient.getQueryCache().getAll()).toHaveLength(2);
+    expect(queryClient.getQueryData(projectKeys.all)).toBeDefined();
+    expect(authSession.getSnapshot().status).toBe('authenticated');
+    expect(authSession.getAccessToken()).not.toBeNull();
+  });
+
+  it('shows invalid credentials without an expired-session banner or cache clear', async () => {
+    const user = userEvent.setup();
+    queryClient.setQueryData(projectKeys.all, { items: [], limit: 3 });
+    const closer = vi.fn();
+    connectionRegistry.register(closer);
+
+    renderApp({ initialEntries: ['/login'] });
+    await user.type(screen.getByLabelText('Username'), 'alice');
+    await user.type(screen.getByLabelText('Password'), 'wrong-pass');
+    await user.click(screen.getByRole('button', { name: /sign in/i }));
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent(/invalid username or password/i);
+    expect(alert).not.toHaveTextContent(/session has expired/i);
+    expect(screen.getAllByRole('alert')).toHaveLength(1);
+    expect(closer).not.toHaveBeenCalled();
+    expect(queryClient.getQueryData(projectKeys.all)).toEqual({ items: [], limit: 3 });
+    const snapshot = authSession.getSnapshot();
+    expect(snapshot.status).toBe('anonymous');
+    expect(snapshot).not.toMatchObject({ reason: 'unauthorized' });
+    expect(snapshot).not.toMatchObject({ reason: 'expired' });
+    expect(screen.getByLabelText('Username')).toBeInTheDocument();
   });
 });
 

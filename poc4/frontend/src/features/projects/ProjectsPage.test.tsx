@@ -240,6 +240,39 @@ describe('ProjectsPage', () => {
     expect(authSession.getSnapshot().status).toBe('authenticated');
     expect(screen.getByText('alice')).toBeInTheDocument();
   });
+
+  it('retries a list 5xx without calling it a network failure', async () => {
+    const user = userEvent.setup();
+    server.use(
+      http.get('/api/v1/projects', () =>
+        HttpResponse.json(
+          {
+            code: 'INTERNAL_ERROR',
+            message: 'stack-trace-should-not-leak',
+            traceId: 'mock-trace-list-internal',
+          },
+          { status: 500 },
+        ),
+      ),
+    );
+    await authenticateAsAlice();
+    renderApp();
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent(/unable to load projects/i);
+    expect(alert).not.toHaveTextContent(/network request failed/i);
+    expect(alert).not.toHaveTextContent('stack-trace-should-not-leak');
+    expect(alert).not.toHaveTextContent('mock-trace-list-internal');
+    expect(screen.getByRole('button', { name: /retry/i })).toBeInTheDocument();
+    expect(screen.getByText('alice')).toBeInTheDocument();
+    expect(authSession.getSnapshot().status).toBe('authenticated');
+
+    server.resetHandlers();
+    await user.click(screen.getByRole('button', { name: /retry/i }));
+
+    expect(await screen.findByRole('article', { name: 'Alice Notebook' })).toBeInTheDocument();
+    expect(authSession.getSnapshot().status).toBe('authenticated');
+  });
 });
 
 describe('ProjectRoutePage', () => {

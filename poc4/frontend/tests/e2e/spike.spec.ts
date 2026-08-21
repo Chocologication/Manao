@@ -23,11 +23,24 @@ function disconnectButton(page: Page): Locator {
 }
 
 async function typeInMonaco(page: Page, text: string): Promise<void> {
-  const editor = page.locator('.monaco-editor');
+  const editor = page.locator('.monaco-editor').first();
   await expect(editor).toBeVisible();
+  const input = page.getByRole('textbox', { name: 'Editor content' });
+  await expect(input).toBeAttached();
   await editor.click();
+  await input.focus();
+  await expect(input).toBeFocused();
   await page.keyboard.press('Control+End');
-  await page.keyboard.type(text, { delay: 20 });
+
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const visible = await page.locator('.view-lines').innerText();
+    if (visible.includes(text)) {
+      return;
+    }
+    await page.keyboard.type(text, { delay: 50 });
+  }
+
+  await expect(page.locator('.view-lines')).toContainText(text);
 }
 
 async function typeInXterm(page: Page, text: string): Promise<void> {
@@ -189,6 +202,7 @@ test('spike workbench workflow', async ({ page }) => {
 test('keeps dirty editor buffer when switching workbench panels', async ({ page }) => {
   await page.goto('/stage0.html');
   await expect(page.locator('.monaco-editor')).toBeVisible();
+  await expect(page.locator('.view-lines')).toContainText('artifactId');
 
   const dirtyMarker = 'SPIKEDIRTY';
   await typeInMonaco(page, dirtyMarker);

@@ -3,6 +3,7 @@ import type { ApiErrorBody } from '../contracts/api';
 import type { AuthUser, LoginRequest } from '../contracts/auth';
 import {
   createOwnedProject,
+  expireCurrentToken,
   listOwnedProjectSummaries,
   loginWithCredentials,
   readOwnedProjectSummary,
@@ -89,6 +90,14 @@ export const handlers = [
       return jsonError(401, LOGIN_UNAUTHENTICATED);
     }
     return HttpResponse.json(session);
+  }),
+
+  // Mock-only: invalidate the presented token so the next real GET 401s.
+  http.post('/api/v1/session/expire', ({ request }) => {
+    if (!expireCurrentToken(readBearerToken(request))) {
+      return jsonError(401, REQUEST_UNAUTHENTICATED);
+    }
+    return new HttpResponse(null, { status: 204 });
   }),
 
   http.get('/api/v1/projects', ({ request }) => {

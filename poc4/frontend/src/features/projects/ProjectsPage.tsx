@@ -9,6 +9,10 @@ import { CreateProjectForm } from './CreateProjectForm';
 import { ProjectCard } from './ProjectCard';
 import { useProjectsQuery } from './projectQueries';
 
+function isNetworkError(error: unknown): boolean {
+  return error instanceof Error && /network request failed/i.test(error.message);
+}
+
 export function AppChrome({ title, children }: { title: string; children: ReactNode }) {
   const { snapshot } = useAuth();
   const username = snapshot.status === 'authenticated' ? snapshot.user.username : '';
@@ -49,7 +53,9 @@ export function ProjectsPage() {
       {query.isPending ? <LoadingState label="Loading projects" /> : null}
       {query.isError ? (
         <div className="flex flex-col items-start gap-2">
-          <InlineAlert>Network request failed</InlineAlert>
+          <InlineAlert>
+            {isNetworkError(query.error) ? 'Network request failed' : 'Unable to load projects'}
+          </InlineAlert>
           <Button type="button" variant="outline" onClick={() => void query.refetch()}>
             Retry
           </Button>

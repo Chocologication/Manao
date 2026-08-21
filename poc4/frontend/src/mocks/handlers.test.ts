@@ -105,6 +105,22 @@ describe('MSW auth handlers', () => {
     expect(unknownBody.code).toBe('UNAUTHENTICATED');
     expect(expiredBody.code).toBe('UNAUTHENTICATED');
   });
+
+  it('makes the next list GET 401 after the current token is expired', async () => {
+    const alice = await loginOk(ALICE.username, ALICE.password);
+    expect((await listProjects(alice.accessToken)).status).toBe(200);
+
+    const expire = await fetch('/api/v1/session/expire', {
+      method: 'POST',
+      headers: bearerHeaders(alice.accessToken),
+    });
+    expect(expire.status).toBe(204);
+
+    const listed = await listProjects(alice.accessToken);
+    expect(listed.status).toBe(401);
+    const body = await readJson<ApiErrorBody>(listed);
+    expect(body.code).toBe('UNAUTHENTICATED');
+  });
 });
 
 describe('MSW project handlers', () => {

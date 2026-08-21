@@ -102,6 +102,13 @@ export function loginWithCredentials(
   };
 }
 
+export function expireCurrentToken(token: string | null): boolean {
+  if (token === null || token.length === 0) {
+    return false;
+  }
+  return tokens.delete(token);
+}
+
 export function resolveUserByAccessToken(token: string | null): AuthUser | null {
   if (token === null || token.length === 0) {
     return null;

@@ -263,32 +263,31 @@ test('three projects disable creation and a bypassed fourth request returns the 
 });
 
 test('forced 401 clears cached projects and redirects to login', async ({ page }) => {
-  await signInAsAliceOnProjects(page);
+  const accessToken = await signInAsAliceOnProjects(page);
 
   const probe = await createProject(page, 'Session Probe');
   await expect(probe.getByText('CREATING', { exact: true })).toBeVisible();
 
-  await page.route(
-    (url) => new URL(url).pathname.replace(/\/$/, '') === '/api/v1/projects',
-    async (route) => {
-      if (route.request().method() !== 'GET') {
-        await route.continue();
-        return;
-      }
-      await route.fulfill({
-        status: 401,
-        json: {
-          code: 'UNAUTHENTICATED',
-          message: 'Authentication required',
-          traceId: 'dummy-trace-401',
-        },
-      });
-    },
-  );
-
-  await page.evaluate(() => {
-    navigator.serviceWorker.controller?.postMessage('CLIENT_CLOSED');
+  const unauthorizedList = page.waitForResponse((response) => {
+    const { pathname } = new URL(response.url());
+    return (
+      pathname.replace(/\/$/, '') === '/api/v1/projects' &&
+      response.request().method() === 'GET' &&
+      response.status() === 401
+    );
   });
+
+  const expireStatus = await page.evaluate(async (token) => {
+    const response = await fetch('/api/v1/session/expire', {
+      method: 'POST',
+      headers: {
+        Accept: 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+    });
+    return response.status;
+  }, accessToken);
+  expect(expireStatus).toBe(204);
 
   await page.evaluate(() => {
     Object.defineProperty(document, 'visibilityState', {
@@ -304,12 +303,14 @@ test('forced 401 clears cached projects and redirects to login', async ({ page }
     window.dispatchEvent(new Event('focus'));
   });
 
+  expect((await unauthorizedList).status()).toBe(401);
+
   await expect(page.getByLabel('Username')).toBeVisible();
   await expect(page).toHaveURL(/\/login$/);
   const alerts = page.getByRole('alert');
   await expect(alerts).toHaveCount(1);
   await expect(alerts).toHaveText(SESSION_EXPIRED);
-  await expect(alerts).not.toHaveText('dummy-trace-401');
+  await expect(alerts).not.toHaveText('mock-trace-unauthenticated');
   await expect(page.getByText('Alice Notebook')).toHaveCount(0);
   await expect(page.getByText('Session Probe')).toHaveCount(0);
 });

@@ -161,6 +161,51 @@ describe('HttpClient', () => {
     expect(onUnauthorized).toHaveBeenCalledTimes(2);
   });
 
+  it('does not invoke onUnauthorized for 401 when auth is false', async () => {
+    const body = {
+      code: 'UNAUTHENTICATED' as const,
+      message: 'Invalid username or password',
+      traceId: 'trace-login-401',
+    };
+    const fetchImpl = vi.fn<typeof fetch>(async () => jsonResponse(body, 401));
+    const onUnauthorized = vi.fn();
+    const client = createClient(fetchImpl, { onUnauthorized });
+
+    const error = await expectRejection(
+      client.request('/api/v1/auth/login', {
+        method: 'POST',
+        body: { username: 'alice', password: 'wrong' },
+        auth: false,
+      }),
+    );
+
+    expect(error).toBeInstanceOf(ApiRequestError);
+    expect(error).toMatchObject({ status: 401, body });
+    expect(onUnauthorized).not.toHaveBeenCalled();
+    expect(authorizationHeader(fetchImpl.mock.calls[0]?.[1])).toBeNull();
+  });
+
+  it('does not invoke onUnauthorized for 401 when no Authorization header is sent', async () => {
+    const body = {
+      code: 'UNAUTHENTICATED' as const,
+      message: 'Authentication required',
+      traceId: 'trace-anon-401',
+    };
+    const fetchImpl = vi.fn<typeof fetch>(async () => jsonResponse(body, 401));
+    const onUnauthorized = vi.fn();
+    const client = createClient(fetchImpl, {
+      getAccessToken: () => null,
+      onUnauthorized,
+    });
+
+    const error = await expectRejection(client.request('/api/v1/projects'));
+
+    expect(error).toBeInstanceOf(ApiRequestError);
+    expect(error).toMatchObject({ status: 401, body });
+    expect(onUnauthorized).not.toHaveBeenCalled();
+    expect(authorizationHeader(fetchImpl.mock.calls[0]?.[1])).toBeNull();
+  });
+
   it('maps generic network errors without claiming a mutation succeeded', async () => {
     const fetchImpl = vi.fn<typeof fetch>(async () => {
       throw new TypeError('Failed to fetch');

@@ -75,7 +75,9 @@ export class HttpClient {
 
     if (!response.ok) {
       const body = await readApiErrorBody(response);
-      if (response.status === 401) {
+      // Login 401 is invalid credentials. Session cleanup is only for a
+      // rejected authenticated request that actually sent Authorization.
+      if (response.status === 401 && headers.has('Authorization')) {
         this.onUnauthorized();
       }
       throw new ApiRequestError(response.status, body);
