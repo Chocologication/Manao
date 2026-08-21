@@ -1,5 +1,5 @@
 import { WorkbenchSpike } from '@/components/shell/WorkbenchSpike';
 
-export default function App() {
+export function Stage0SpikeApp() {
   return <WorkbenchSpike />;
 }

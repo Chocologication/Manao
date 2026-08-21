@@ -1,13 +1,10 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
-import { AppProviders } from './app/AppProviders';
-import { AppRouter } from './app/AppRouter';
+import { Stage0SpikeApp } from './spike/Stage0SpikeApp';
 import './styles/globals.css';
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <AppProviders>
-      <AppRouter />
-    </AppProviders>
+    <Stage0SpikeApp />
   </StrictMode>
 );

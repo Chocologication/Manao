@@ -96,7 +96,7 @@ test('spike workbench workflow', async ({ page }) => {
   });
   const sockets = trackTerminalSockets(page);
 
-  await page.goto('/');
+  await page.goto('/stage0.html');
   await expect(page.getByRole('tab', { name: 'File' })).toHaveAttribute('aria-selected', 'true');
   await expect(page.locator('.monaco-editor')).toBeVisible();
 
@@ -169,7 +169,7 @@ test('spike workbench workflow', async ({ page }) => {
 });
 
 test('keeps dirty editor buffer when switching workbench panels', async ({ page }) => {
-  await page.goto('/');
+  await page.goto('/stage0.html');
   await expect(page.locator('.monaco-editor')).toBeVisible();
 
   const dirtyMarker = 'SPIKEDIRTY';
@@ -191,7 +191,7 @@ test('keeps dirty editor buffer when switching workbench panels', async ({ page 
 test('keeps terminal session when switching workbench panels', async ({ page }) => {
   const sockets = trackTerminalSockets(page);
 
-  await page.goto('/');
+  await page.goto('/stage0.html');
   await page.getByRole('tab', { name: 'Terminal' }).click();
   await connectButton(page).click();
   await expect(page.getByRole('status')).toHaveText('connected');
@@ -214,7 +214,7 @@ test('keeps terminal session when switching workbench panels', async ({ page }) 
 });
 
 test('inactive terminal does not intercept Ctrl+F from the File panel', async ({ page }) => {
-  await page.goto('/');
+  await page.goto('/stage0.html');
   await expect(page.getByRole('tab', { name: 'File' })).toHaveAttribute('aria-selected', 'true');
   await expect(page.locator('.monaco-editor')).toBeVisible();
 
@@ -238,7 +238,7 @@ for (const viewport of viewports) {
   test(`captures ${viewport.name}`, async ({ page }, testInfo) => {
     test.skip(!['chrome', 'edge'].includes(testInfo.project.name));
     await page.setViewportSize(viewport);
-    await page.goto('/');
+    await page.goto('/stage0.html');
     await expect(page.locator('.monaco-editor')).toBeVisible();
     await expect(page.locator('.view-lines')).toContainText('artifactId');
     await page.screenshot({
