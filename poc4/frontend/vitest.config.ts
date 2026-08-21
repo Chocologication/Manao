@@ -7,6 +7,11 @@ export default defineConfig({
   resolve: { alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) } },
   test: {
     environment: 'jsdom',
+    environmentOptions: {
+      jsdom: {
+        url: 'http://localhost/',
+      },
+    },
     setupFiles: ['./src/test/setup.ts'],
     restoreMocks: true,
     exclude: [...configDefaults.exclude, 'scripts/**', 'tests/e2e/**'],

@@ -4,10 +4,19 @@ import { AppProviders } from './app/AppProviders';
 import { AppRouter } from './app/AppRouter';
 import './styles/globals.css';
 
-createRoot(document.getElementById('root')!).render(
-  <StrictMode>
-    <AppProviders>
-      <AppRouter />
-    </AppProviders>
-  </StrictMode>
-);
+async function bootstrap(): Promise<void> {
+  if (import.meta.env.VITE_ENABLE_MOCK_API === 'true') {
+    const { startMockWorker } = await import('./mocks/browser');
+    await startMockWorker();
+  }
+
+  createRoot(document.getElementById('root')!).render(
+    <StrictMode>
+      <AppProviders>
+        <AppRouter />
+      </AppProviders>
+    </StrictMode>,
+  );
+}
+
+void bootstrap();
