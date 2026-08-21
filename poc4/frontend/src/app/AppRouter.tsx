@@ -1,9 +1,7 @@
-import { createBrowserRouter, Navigate, Outlet } from 'react-router';
+import { createBrowserRouter, Navigate } from 'react-router';
 import { RouterProvider } from 'react-router/dom';
-
-function LoginPage() {
-  return <main>Login</main>;
-}
+import { LoginPage } from '../features/auth/LoginPage';
+import { RequireAuth } from '../features/auth/RequireAuth';
 
 function ProjectsPage() {
   return <main>Projects</main>;
@@ -17,10 +15,6 @@ function NotFoundPage() {
   return <main>Not found</main>;
 }
 
-function ProtectedLayout() {
-  return <Outlet />;
-}
-
 const router = createBrowserRouter([
   {
     path: '/',
@@ -32,7 +26,7 @@ const router = createBrowserRouter([
   },
   {
     path: '/projects',
-    element: <ProtectedLayout />,
+    element: <RequireAuth />,
     children: [
       { index: true, element: <ProjectsPage /> },
       { path: ':projectId', element: <ProjectRoutePage /> },
