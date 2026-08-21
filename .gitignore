@@ -40,3 +40,4 @@ build/
 /.codex/mcp/mysql-toolbox.env
 /.codex/skills
 /.firecrawl/
+/.npm-cache-tmp/
