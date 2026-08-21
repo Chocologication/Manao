@@ -213,6 +213,27 @@ test('keeps terminal session when switching workbench panels', async ({ page }) 
   await expect(page.getByTestId('terminal-last-output')).toHaveText('K');
 });
 
+test('inactive terminal does not intercept Ctrl+F from the File panel', async ({ page }) => {
+  await page.goto('/');
+  await expect(page.getByRole('tab', { name: 'File' })).toHaveAttribute('aria-selected', 'true');
+  await expect(page.locator('.monaco-editor')).toBeVisible();
+
+  const dispatched = await page.evaluate(() => {
+    const event = new KeyboardEvent('keydown', {
+      key: 'f',
+      ctrlKey: true,
+      bubbles: true,
+      cancelable: true,
+    });
+    window.dispatchEvent(event);
+    return { defaultPrevented: event.defaultPrevented };
+  });
+
+  expect(dispatched.defaultPrevented).toBe(false);
+  await page.getByRole('tab', { name: 'Terminal' }).click();
+  await expect(page.getByPlaceholder('Search...')).toHaveCount(0);
+});
+
 for (const viewport of viewports) {
   test(`captures ${viewport.name}`, async ({ page }, testInfo) => {
     test.skip(!['chrome', 'edge'].includes(testInfo.project.name));

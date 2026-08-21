@@ -43,24 +43,24 @@ Vitest 排除 `scripts/**` 与 `tests/e2e/**` 仍有效。本轮 `src/**` 单测
 
 ## Visual Verification
 
-六张 PNG 由本轮 `pnpm test:e2e:channels` 再次写出，字节与像素与仓库已提交证据一致（未产生新的 git 差异）：
+六张 PNG 由本轮 `pnpm test:e2e:channels` 再次写出，用于人工核对视觉不变量，不是 golden-file 断言。PNG 字节可能因浏览器渲染时机变化，不能用文件大小、像素哈希或“与仓库已提交证据字节一致”来证明通过。
 
-| 文件 | 字节 | 像素 |
-|---|---:|---|
-| `poc4/docs/evidence/stage-0/chrome-1280x720.png` | 26479 | 1280×720 |
-| `poc4/docs/evidence/stage-0/chrome-1440x900.png` | 28423 | 1440×900 |
-| `poc4/docs/evidence/stage-0/chrome-1920x1080.png` | 31098 | 1920×1080 |
-| `poc4/docs/evidence/stage-0/edge-1280x720.png` | 26479 | 1280×720 |
-| `poc4/docs/evidence/stage-0/edge-1440x900.png` | 28423 | 1440×900 |
-| `poc4/docs/evidence/stage-0/edge-1920x1080.png` | 31098 | 1920×1080 |
+| 文件 | 尺寸 |
+|---|---|
+| `poc4/docs/evidence/stage-0/chrome-1280x720.png` | 1280×720 |
+| `poc4/docs/evidence/stage-0/chrome-1440x900.png` | 1440×900 |
+| `poc4/docs/evidence/stage-0/chrome-1920x1080.png` | 1920×1080 |
+| `poc4/docs/evidence/stage-0/edge-1280x720.png` | 1280×720 |
+| `poc4/docs/evidence/stage-0/edge-1440x900.png` | 1440×900 |
+| `poc4/docs/evidence/stage-0/edge-1920x1080.png` | 1920×1080 |
 
-同 viewport 的 Chrome / Edge 文件大小相同。人工打开 1280 / 1440 / 1920 画面：
+人工打开 1280 / 1440 / 1920 画面，核对以下视觉不变量：
 
-- 左侧 Workspace + Mock file tree 非空；顶部 File / Run / Terminal 三个主 tab 完整，File 为选中态。
-- 编辑器 tabs（pom.xml / App.java / AppTest.java）可见；Monaco 为 vs-dark，有行号、XML 语法着色和 minimap，不是纯色空白。
-- 1280 px 侧栏与主区分离，按钮与 tab 未被截断；E2E 断言 `documentElement`/`body` 无横向溢出，且 `aside` 右缘不超过 `main` 左缘。
-- 1440 / 1920 px 侧栏保持约 256 px，剩余宽度给编辑器画布，不是面板被不合理拉扁。
-- 侧栏是阶段 0 mock 文案，视觉偏空，但不空白、不重叠、不挡住操作。
+- 尺寸正确：每张截图对应其文件名中的 viewport。
+- Monaco 画布非空白：编辑器 tabs（pom.xml / App.java / AppTest.java）可见；Monaco 为 vs-dark，有行号、XML 语法着色和 minimap，不是纯色空白。
+- 无重叠：左侧 Workspace + Mock file tree 与主区分离；顶部 File / Run / Terminal 三个主 tab 完整，File 为选中态；`aside` 右缘不超过 `main` 左缘。
+- 无溢出：E2E 断言 `documentElement`/`body` 无横向溢出；1440 / 1920 px 侧栏保持约 256 px，剩余宽度给编辑器画布，不是面板被不合理拉扁。
+- 控件可达：1280 px 下按钮与 tab 未被截断，File / Run / Terminal 与编辑器 tabs 均可点到。侧栏是阶段 0 mock 文案，视觉偏空，但不空白、不重叠、不挡住操作。
 
 ## Boundary Verification
 
@@ -85,7 +85,7 @@ $matches = Select-String -Path ($targets.FullName) -Pattern $patterns
 
 结果：`FORBIDDEN_MATCH_COUNT=0`，脚本正常结束。
 3. `git diff --check` 与 `git diff --check d92885a HEAD` 均无空白错误输出。本轮在最终验证树 `7c3caa5` 上执行，不是 `399f778`。`src/test/setup.ts` 末尾已去掉多余空行。
-4. `git status --short` 在验证后为空（无未提交改动；六张 PNG 无新 git 差异）。
+4. `git status --short` 在验证后为空（无未提交改动）。六张 PNG 不是 golden-file；字节差异不单独构成失败。
 5. UTF-8 BOM：排除 `node_modules`/`dist`/`test-results`/`playwright-report` 后扫描 49 个 `.ts/.tsx/.js/.mjs/.json/.css/.md/.html/.yaml/.yml`，BOM_FOUND=0。
 
 ## Observed Migration Cost
