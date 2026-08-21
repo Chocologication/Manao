@@ -30,6 +30,10 @@ export function LoginPage() {
   }
 
   const submitDisabled = pending || username.length === 0 || password.length === 0;
+  const sessionExpired =
+    snapshot.reason === 'unauthorized' || snapshot.reason === 'expired';
+  const alertMessage =
+    error ?? (sessionExpired ? 'Your session has expired. Please sign in again.' : null);
 
   async function onSubmit(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
@@ -80,7 +84,7 @@ export function LoginPage() {
           value={password}
           onChange={(event) => setPassword(event.target.value)}
         />
-        {error ? <p role="alert">{error}</p> : null}
+        {alertMessage ? <p role="alert">{alertMessage}</p> : null}
         <Button type="submit" disabled={submitDisabled}>
           Sign in
         </Button>

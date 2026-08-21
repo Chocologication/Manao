@@ -308,4 +308,49 @@ describe('ProjectRoutePage', () => {
     expect(unknownAlert).not.toHaveTextContent(ACCESS_DENIED_LEAK);
     expect(unknownAlert.textContent).toBe(foreignCopy);
   });
+
+  it('shows a retryable local error for network failure on the project route', async () => {
+    const user = userEvent.setup();
+    await authenticateAsAlice();
+    server.use(http.get('/api/v1/projects/:projectId', () => HttpResponse.error()));
+    renderApp({ initialEntries: [`/projects/${ALICE_SEED_PROJECT_ID}`] });
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent(/network request failed/i);
+    expect(alert).not.toHaveTextContent(/access denied/i);
+    expect(screen.getByRole('button', { name: /retry/i })).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: /something went wrong/i })).not.toBeInTheDocument();
+    expect(authSession.getSnapshot().status).toBe('authenticated');
+
+    server.resetHandlers();
+    await user.click(screen.getByRole('button', { name: /retry/i }));
+
+    expect(await screen.findByRole('heading', { name: 'Alice Notebook' })).toBeInTheDocument();
+    expect(authSession.getSnapshot().status).toBe('authenticated');
+  });
+
+  it('shows a retryable local error for 5xx on the project route, not access denied', async () => {
+    await authenticateAsAlice();
+    server.use(
+      http.get('/api/v1/projects/:projectId', () =>
+        HttpResponse.json(
+          {
+            code: 'INTERNAL_ERROR',
+            message: 'stack-trace-should-not-leak',
+            traceId: 'mock-trace-internal',
+          },
+          { status: 500 },
+        ),
+      ),
+    );
+    renderApp({ initialEntries: [`/projects/${ALICE_SEED_PROJECT_ID}`] });
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).not.toHaveTextContent(/access denied/i);
+    expect(alert).not.toHaveTextContent('stack-trace-should-not-leak');
+    expect(alert).not.toHaveTextContent('mock-trace-internal');
+    expect(screen.getByRole('button', { name: /retry/i })).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: /something went wrong/i })).not.toBeInTheDocument();
+    expect(authSession.getSnapshot().status).toBe('authenticated');
+  });
 });

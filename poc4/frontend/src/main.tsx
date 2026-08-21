@@ -2,6 +2,7 @@ import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { AppProviders } from './app/AppProviders';
 import { AppRouter } from './app/AppRouter';
+import { AppErrorBoundary } from './components/feedback/AppErrorBoundary';
 import './styles/globals.css';
 
 async function bootstrap(): Promise<void> {
@@ -12,9 +13,11 @@ async function bootstrap(): Promise<void> {
 
   createRoot(document.getElementById('root')!).render(
     <StrictMode>
-      <AppProviders>
-        <AppRouter />
-      </AppProviders>
+      <AppErrorBoundary>
+        <AppProviders>
+          <AppRouter />
+        </AppProviders>
+      </AppErrorBoundary>
     </StrictMode>,
   );
 }

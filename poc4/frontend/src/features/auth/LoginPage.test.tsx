@@ -268,6 +268,41 @@ describe('LoginPage', () => {
     expect(readLocation().pathname).toBe('/projects');
   });
 
+  it('shows one expired-session alert when the session reason is unauthorized', () => {
+    const session = createAuthSession();
+    session.authenticate(loginResponse);
+    session.clear('unauthorized');
+    renderAuthApp({ session, initialEntries: ['/login'] });
+
+    const alerts = screen.getAllByRole('alert');
+    expect(alerts).toHaveLength(1);
+    expect(alerts[0]).toHaveTextContent(/session has expired/i);
+    expect(alerts[0]).not.toHaveTextContent('mem-token');
+    expect(screen.getByLabelText('Username')).toBeInTheDocument();
+  });
+
+  it('shows one expired-session alert when the session reason is expired', () => {
+    const session = createAuthSession();
+    session.authenticate(loginResponse);
+    session.clear('expired');
+    renderAuthApp({ session, initialEntries: ['/login'] });
+
+    const alerts = screen.getAllByRole('alert');
+    expect(alerts).toHaveLength(1);
+    expect(alerts[0]).toHaveTextContent(/session has expired/i);
+  });
+
+  it('does not show an expired-session message after logout', () => {
+    const session = createAuthSession();
+    session.authenticate(loginResponse);
+    session.clear('logout');
+    renderAuthApp({ session, initialEntries: ['/login'] });
+
+    expect(screen.getByLabelText('Username')).toBeInTheDocument();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(screen.queryByText(/session has expired/i)).not.toBeInTheDocument();
+  });
+
   it('redirects anonymous users from protected routes to /login with in-app pathname state', async () => {
     const user = userEvent.setup();
     const session = createAuthSession();
