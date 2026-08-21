@@ -134,6 +134,7 @@ export function TerminalPanel() {
       const activeFit = fitAddonRef.current;
       const activeTerminal = terminalRef.current;
       if (!activeSession || !activeFit || !activeTerminal) return;
+      if (container.clientWidth === 0 || container.clientHeight === 0) return;
       activeFit.fit();
       activeSession.resize(activeTerminal.cols, activeTerminal.rows);
     });

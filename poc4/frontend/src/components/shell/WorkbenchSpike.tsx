@@ -50,22 +50,37 @@ export function WorkbenchSpike() {
           </div>
         </header>
 
-        <main className="min-h-0 min-w-0 flex-1 overflow-hidden">
-          {activePanel === 'file' && (
-            <div data-testid="file-spike-panel" className="h-full min-h-0 min-w-0">
-              <MonacoPanel />
-            </div>
-          )}
-          {activePanel === 'run' && (
-            <div data-testid="run-spike-panel" className="h-full min-h-0 min-w-0">
-              Run panel
-            </div>
-          )}
-          {activePanel === 'terminal' && (
-            <div data-testid="terminal-spike-panel" className="h-full min-h-0 min-w-0">
-              <TerminalPanel />
-            </div>
-          )}
+        <main className="relative min-h-0 min-w-0 flex-1 overflow-hidden">
+          <div
+            data-testid="file-spike-panel"
+            aria-hidden={activePanel !== 'file'}
+            className={cn(
+              'absolute inset-0 min-h-0 min-w-0',
+              activePanel === 'file' ? 'z-10' : 'invisible pointer-events-none'
+            )}
+          >
+            <MonacoPanel />
+          </div>
+          <div
+            data-testid="run-spike-panel"
+            aria-hidden={activePanel !== 'run'}
+            className={cn(
+              'absolute inset-0 min-h-0 min-w-0',
+              activePanel === 'run' ? 'z-10' : 'invisible pointer-events-none'
+            )}
+          >
+            Run panel
+          </div>
+          <div
+            data-testid="terminal-spike-panel"
+            aria-hidden={activePanel !== 'terminal'}
+            className={cn(
+              'absolute inset-0 min-h-0 min-w-0',
+              activePanel === 'terminal' ? 'z-10' : 'invisible pointer-events-none'
+            )}
+          >
+            <TerminalPanel />
+          </div>
         </main>
       </div>
     </div>

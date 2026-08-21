@@ -37,17 +37,56 @@ async function typeInXterm(page: Page, text: string): Promise<void> {
   await page.keyboard.type(text);
 }
 
+function framePayloadText(payload: unknown): string {
+  if (typeof payload === 'string') return payload;
+  if (payload && typeof payload === 'object' && 'payload' in payload) {
+    const inner = (payload as { payload: unknown }).payload;
+    if (typeof inner === 'string') return inner;
+    if (inner instanceof Uint8Array) return new TextDecoder().decode(inner);
+  }
+  if (payload instanceof Uint8Array) return new TextDecoder().decode(payload);
+  return String(payload);
+}
+
 function trackTerminalSockets(page: Page) {
-  const sockets: Array<{ closed: boolean }> = [];
+  const sockets: Array<{ closed: boolean; sent: string[] }> = [];
   page.on('websocket', (ws) => {
     if (!ws.url().includes('/terminal')) return;
-    const record = { closed: false };
+    const record = { closed: false, sent: [] as string[] };
     sockets.push(record);
+    ws.on('framesent', (payload) => {
+      record.sent.push(framePayloadText(payload));
+    });
     ws.on('close', () => {
       record.closed = true;
     });
   });
   return sockets;
+}
+
+function openSockets(sockets: Array<{ closed: boolean }>) {
+  return sockets.filter((socket) => !socket.closed);
+}
+
+function sentResizeFrames(sockets: Array<{ sent: string[] }>) {
+  const frames: Array<{ cols: number; rows: number }> = [];
+  for (const socket of sockets) {
+    for (const payload of socket.sent) {
+      try {
+        const parsed = JSON.parse(payload) as { type?: unknown; cols?: unknown; rows?: unknown };
+        if (
+          parsed.type === 'terminal.resize' &&
+          typeof parsed.cols === 'number' &&
+          typeof parsed.rows === 'number'
+        ) {
+          frames.push({ cols: parsed.cols, rows: parsed.rows });
+        }
+      } catch {
+        // Binary terminal input is not JSON.
+      }
+    }
+  }
+  return frames;
 }
 
 test('spike workbench workflow', async ({ page }) => {
@@ -91,12 +130,12 @@ test('spike workbench workflow', async ({ page }) => {
 
   await disconnectButton(page).click();
   await expect(page.getByRole('status')).toHaveText('disconnected');
-  await expect.poll(() => sockets.filter((socket) => !socket.closed)).toHaveLength(0);
+  await expect.poll(() => openSockets(sockets)).toHaveLength(0);
 
   await connectButton(page).click();
   await expect(page.getByRole('status')).toHaveText('connected');
   await expect(page.getByTestId('terminal-last-output')).toContainText('POC4 browser terminal ready');
-  await expect.poll(() => sockets.filter((socket) => !socket.closed)).toHaveLength(1);
+  await expect.poll(() => openSockets(sockets)).toHaveLength(1);
 
   const echoOnce = 'Q';
   await typeInXterm(page, echoOnce);
@@ -104,6 +143,8 @@ test('spike workbench workflow', async ({ page }) => {
 
   await page.getByRole('tab', { name: 'File' }).click();
   await expect(page.locator('.monaco-editor')).toBeVisible();
+  await expect(page.locator('.view-lines')).toContainText(dirtyMarker);
+  await expect(editorTab(page, /pom\.xml/)).toContainText('*');
 
   const scrollOverflow = await page.evaluate(() => {
     const root = document.documentElement;
@@ -125,6 +166,51 @@ test('spike workbench workflow', async ({ page }) => {
   }
 
   expect(consoleErrors).toEqual([]);
+});
+
+test('keeps dirty editor buffer when switching workbench panels', async ({ page }) => {
+  await page.goto('/');
+  await expect(page.locator('.monaco-editor')).toBeVisible();
+
+  const dirtyMarker = 'SPIKEDIRTY';
+  await typeInMonaco(page, dirtyMarker);
+  await expect(page.locator('.view-lines')).toContainText(dirtyMarker);
+  await expect(editorTab(page, /pom\.xml/)).toContainText('*');
+
+  await page.getByRole('tab', { name: 'Run' }).click();
+  await expect(page.getByRole('tab', { name: 'Run' })).toHaveAttribute('aria-selected', 'true');
+  await expect(page.getByTestId('run-spike-panel')).toBeVisible();
+
+  await page.getByRole('tab', { name: 'File' }).click();
+  await expect(page.getByRole('tab', { name: 'File' })).toHaveAttribute('aria-selected', 'true');
+  await expect(page.locator('.monaco-editor')).toBeVisible();
+  await expect(page.locator('.view-lines')).toContainText(dirtyMarker);
+  await expect(editorTab(page, /pom\.xml/)).toContainText('*');
+});
+
+test('keeps terminal session when switching workbench panels', async ({ page }) => {
+  const sockets = trackTerminalSockets(page);
+
+  await page.goto('/');
+  await page.getByRole('tab', { name: 'Terminal' }).click();
+  await connectButton(page).click();
+  await expect(page.getByRole('status')).toHaveText('connected');
+  await expect(page.getByTestId('terminal-last-output')).toContainText('POC4 browser terminal ready');
+  await expect.poll(() => sentResizeFrames(sockets).length).toBeGreaterThan(0);
+  const resize = sentResizeFrames(sockets)[0];
+  expect(resize.cols).toBeGreaterThan(0);
+  expect(resize.rows).toBeGreaterThan(0);
+
+  await page.getByRole('tab', { name: 'File' }).click();
+  await expect(page.getByRole('tab', { name: 'File' })).toHaveAttribute('aria-selected', 'true');
+  await expect.poll(() => openSockets(sockets)).toHaveLength(1);
+
+  await page.getByRole('tab', { name: 'Terminal' }).click();
+  await expect(page.getByRole('status')).toHaveText('connected');
+  await expect.poll(() => openSockets(sockets)).toHaveLength(1);
+
+  await typeInXterm(page, 'K');
+  await expect(page.getByTestId('terminal-last-output')).toHaveText('K');
 });
 
 for (const viewport of viewports) {

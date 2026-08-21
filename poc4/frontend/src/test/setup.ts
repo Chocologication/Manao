@@ -5,6 +5,29 @@ if (typeof document.queryCommandSupported !== 'function') {
   document.queryCommandSupported = () => false;
 }
 
+if (typeof globalThis.ClipboardItem === 'undefined') {
+  globalThis.ClipboardItem = class {
+    readonly items: Record<string, Blob | string | Promise<Blob | string>>;
+    constructor(items: Record<string, Blob | string | Promise<Blob | string>> = {}) {
+      this.items = items;
+    }
+    static supports() {
+      return false;
+    }
+  } as unknown as typeof ClipboardItem;
+}
+
+if (typeof navigator.clipboard?.write !== 'function') {
+  Object.defineProperty(navigator, 'clipboard', {
+    configurable: true,
+    value: {
+      write: async () => {},
+      writeText: async () => {},
+      readText: async () => '',
+    },
+  });
+}
+
 if (typeof window.matchMedia !== 'function') {
   window.matchMedia = (query) => ({
     matches: false,
@@ -31,4 +54,3 @@ vi.mock('@monaco-editor/react', async () => {
     },
   };
 });
-
