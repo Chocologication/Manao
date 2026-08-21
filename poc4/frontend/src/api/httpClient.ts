@@ -43,7 +43,8 @@ export class HttpClient {
   constructor(options: HttpClientOptions) {
     this.getAccessToken = options.getAccessToken;
     this.onUnauthorized = options.onUnauthorized;
-    this.fetchImpl = options.fetchImpl ?? fetch.bind(globalThis);
+    // Look up fetch per request so MSW can patch globalThis.fetch after module init.
+    this.fetchImpl = options.fetchImpl ?? ((input, init) => globalThis.fetch(input, init));
   }
 
   async request<T = unknown>(url: string, options: HttpRequestOptions = {}): Promise<T> {

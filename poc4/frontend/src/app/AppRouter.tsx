@@ -2,14 +2,8 @@ import { createBrowserRouter, Navigate } from 'react-router';
 import { RouterProvider } from 'react-router/dom';
 import { LoginPage } from '../features/auth/LoginPage';
 import { RequireAuth } from '../features/auth/RequireAuth';
-
-function ProjectsPage() {
-  return <main>Projects</main>;
-}
-
-function ProjectRoutePage() {
-  return <main>Project</main>;
-}
+import { ProjectRoutePage } from '../features/projects/ProjectRoutePage';
+import { ProjectsPage } from '../features/projects/ProjectsPage';
 
 function NotFoundPage() {
   return <main>Not found</main>;

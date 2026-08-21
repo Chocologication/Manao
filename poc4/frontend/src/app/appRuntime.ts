@@ -23,6 +23,12 @@ function handleUnauthorized(): void {
   }
 }
 
+export function logout(): void {
+  connectionRegistry.closeAll();
+  queryClient.clear();
+  authSession.clear('logout');
+}
+
 export const httpClient = new HttpClient({
   getAccessToken: () => authSession.getAccessToken(),
   onUnauthorized: handleUnauthorized,
