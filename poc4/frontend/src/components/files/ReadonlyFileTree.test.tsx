@@ -43,6 +43,12 @@ async function loadedRoot(): Promise<void> {
   expect(await screen.findByRole('treeitem', { name: 'src' })).toBeInTheDocument();
 }
 
+function groupAfter(treeitem: HTMLElement): HTMLElement {
+  const group = treeitem.nextElementSibling;
+  expect(group).toHaveAttribute('role', 'group');
+  return group as HTMLElement;
+}
+
 beforeEach(() => {
   resetAppRuntime();
 });
@@ -163,7 +169,7 @@ describe('ReadonlyFileTree scoped states', () => {
 
     await user.click(screen.getByRole('treeitem', { name: 'src' }));
     const src = await screen.findByRole('treeitem', { name: 'src' });
-    expect(within(src).getByText(/^empty$/i)).toBeInTheDocument();
+    expect(within(groupAfter(src)).getByText(/^empty$/i)).toBeInTheDocument();
     expect(screen.getByRole('treeitem', { name: 'pom.xml' })).toBeInTheDocument();
     expect(screen.queryByText(/no files/i)).not.toBeInTheDocument();
   });
@@ -202,12 +208,13 @@ describe('ReadonlyFileTree scoped states', () => {
 
     await user.click(screen.getByRole('treeitem', { name: 'src' }));
     const src = await screen.findByRole('treeitem', { name: 'src' });
-    expect(within(src).getByRole('alert')).toHaveTextContent(/unable to load directory/i);
+    const srcGroup = groupAfter(src);
+    expect(within(srcGroup).getByRole('alert')).toHaveTextContent(/unable to load directory/i);
     expect(screen.getByRole('treeitem', { name: 'docs' })).toBeInTheDocument();
     expect(screen.queryByRole('treeitem', { name: 'main' })).not.toBeInTheDocument();
 
     failSrc = false;
-    await user.click(within(src).getByRole('button', { name: 'Retry' }));
+    await user.click(within(srcGroup).getByRole('button', { name: 'Retry' }));
     expect(await screen.findByRole('treeitem', { name: 'main' })).toBeInTheDocument();
     expect(getFileRequestCount('tree', ALICE_SEED_PROJECT_ID, 'src')).toBe(2);
     expect(getFileRequestCount('tree', ALICE_SEED_PROJECT_ID, '')).toBe(rootCount);
@@ -399,5 +406,55 @@ describe('ReadonlyFileTree accessibility', () => {
     expect(items[srcIndex + 1]).toHaveFocus();
     await user.keyboard('{ArrowUp}');
     expect(items[srcIndex]).toHaveFocus();
+  });
+
+  it('puts the focus ring on the focused directory treeitem itself', async () => {
+    await authenticateAsAlice();
+    renderTree();
+    await loadedRoot();
+
+    const src = screen.getByRole('treeitem', { name: 'src' });
+    src.focus();
+    expect(src).toHaveFocus();
+    expect(src.className).toMatch(/focus-visible:ring-2/);
+    expect(src.querySelector('[class*="focus-visible:ring-2"]')).toBeNull();
+  });
+
+  it('keeps a visible treeitem tabbable after collapse-all from a nested file', async () => {
+    const user = userEvent.setup();
+    await authenticateAsAlice();
+    renderTree();
+    await loadedRoot();
+
+    await user.click(screen.getByRole('treeitem', { name: 'src' }));
+    expect(await screen.findByRole('treeitem', { name: 'main' })).toBeInTheDocument();
+    await user.click(screen.getByRole('treeitem', { name: 'main' }));
+    expect(await screen.findByRole('treeitem', { name: 'java' })).toBeInTheDocument();
+    await user.click(screen.getByRole('treeitem', { name: 'java' }));
+    expect(await screen.findByRole('treeitem', { name: 'demo' })).toBeInTheDocument();
+    await user.click(screen.getByRole('treeitem', { name: 'demo' }));
+    expect(await screen.findByRole('treeitem', { name: 'App.java' })).toBeInTheDocument();
+    await user.click(screen.getByRole('treeitem', { name: 'App.java' }));
+    expect(workspaceSessionStore.getState().selectedPath).toBe(
+      parseProjectRelativePath('src/main/java/demo/App.java'),
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Collapse all folders' }));
+    await waitFor(() => {
+      expect(screen.queryByRole('treeitem', { name: 'App.java' })).not.toBeInTheDocument();
+    });
+
+    const visible = screen.getAllByRole('treeitem');
+    expect(visible.length).toBeGreaterThan(1);
+    const tabbable = visible.find((item) => item.tabIndex === 0);
+    expect(tabbable).toBeDefined();
+    expect(visible.filter((item) => item.tabIndex === 0)).toHaveLength(1);
+
+    tabbable!.focus();
+    const index = visible.indexOf(tabbable!);
+    await user.keyboard('{ArrowDown}');
+    expect(visible[index + 1] ?? visible[index]).toHaveFocus();
+    await user.keyboard('{ArrowUp}');
+    expect(tabbable).toHaveFocus();
   });
 });

@@ -78,24 +78,30 @@ function DirectoryTreeNode({
   const children = query.data ? sortFileTreeEntries(query.data.entries) : [];
 
   return (
-    <div
-      role="treeitem"
-      aria-label={entry.name}
-      aria-expanded={isExpanded}
-      aria-selected={isSelected}
-      aria-level={depth + 1}
-      tabIndex={isFocused ? 0 : -1}
-      data-path={entry.path}
-      data-kind="directory"
-      className="outline-none"
-      onClick={(event) => {
-        event.stopPropagation();
-        onFocusedPath(entry.path);
-        toggleDirectory(entry.path);
-      }}
-      onFocus={() => onFocusedPath(entry.path)}
-    >
-      <div className={rowClassName(isSelected)} style={{ paddingLeft: `${depth * 12 + 8}px` }}>
+    <>
+      <div
+        role="treeitem"
+        aria-label={entry.name}
+        aria-expanded={isExpanded}
+        aria-selected={isSelected}
+        aria-level={depth + 1}
+        tabIndex={isFocused ? 0 : -1}
+        data-path={entry.path}
+        data-kind="directory"
+        className={rowClassName(isSelected)}
+        style={{ paddingLeft: `${depth * 12 + 8}px` }}
+        onClick={(event) => {
+          event.stopPropagation();
+          onFocusedPath(entry.path);
+          toggleDirectory(entry.path);
+        }}
+        onFocus={(event) => {
+          if (event.target !== event.currentTarget) {
+            return;
+          }
+          onFocusedPath(entry.path);
+        }}
+      >
         <ChevronRight
           className={cn(
             'h-4 w-4 shrink-0 text-muted-foreground transition-transform motion-reduce:transition-none',
@@ -111,7 +117,7 @@ function DirectoryTreeNode({
         <span className="min-w-0 flex-1 truncate">{entry.name}</span>
       </div>
       {isExpanded ? (
-        <div role="group" onClick={(event) => event.stopPropagation()}>
+        <div role="group">
           {query.isError ? (
             <div
               className="flex flex-col items-start gap-2 py-1 pr-2"
@@ -152,7 +158,7 @@ function DirectoryTreeNode({
           ))}
         </div>
       ) : null}
-    </div>
+    </>
   );
 }
 
@@ -191,7 +197,12 @@ function FileTreeLeaf({
         selectPath(entry.path);
         openFile(entry.path);
       }}
-      onFocus={() => onFocusedPath(entry.path)}
+      onFocus={(event) => {
+        if (event.target !== event.currentTarget) {
+          return;
+        }
+        onFocusedPath(entry.path);
+      }}
     >
       <span className="w-4 shrink-0" />
       <Icon className={cn('h-4 w-4 shrink-0', iconColor)} aria-hidden />

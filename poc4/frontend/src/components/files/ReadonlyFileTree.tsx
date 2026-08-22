@@ -39,6 +39,63 @@ function collapseAllDirectories(): void {
   }
 }
 
+function isVisibleTreePath(
+  path: ProjectRelativePath,
+  expandedPaths: Set<ProjectRelativePath>,
+): boolean {
+  let start = 0;
+  while (start < path.length) {
+    const slash = path.indexOf('/', start);
+    if (slash === -1) {
+      return true;
+    }
+    const ancestor = path.slice(0, slash);
+    if (!expandedPaths.has(ancestor as ProjectRelativePath)) {
+      return false;
+    }
+    start = slash + 1;
+  }
+  return true;
+}
+
+function visibleAncestorPath(
+  path: ProjectRelativePath,
+  expandedPaths: Set<ProjectRelativePath>,
+): ProjectRelativePath | null {
+  if (isVisibleTreePath(path, expandedPaths)) {
+    return path;
+  }
+  let ancestor: ProjectDirectoryPath = parentDirectory(path);
+  while (ancestor !== '') {
+    if (isVisibleTreePath(ancestor, expandedPaths)) {
+      return ancestor;
+    }
+    ancestor = parentDirectory(ancestor);
+  }
+  return null;
+}
+
+function resolveTabbablePath(
+  focusedPath: ProjectRelativePath | null,
+  selectedPath: ProjectRelativePath | null,
+  firstVisible: ProjectRelativePath | null,
+  expandedPaths: Set<ProjectRelativePath>,
+): ProjectRelativePath | null {
+  if (focusedPath !== null) {
+    const visible = visibleAncestorPath(focusedPath, expandedPaths);
+    if (visible !== null) {
+      return visible;
+    }
+  }
+  if (selectedPath !== null) {
+    const visible = visibleAncestorPath(selectedPath, expandedPaths);
+    if (visible !== null) {
+      return visible;
+    }
+  }
+  return firstVisible;
+}
+
 const iconButtonClassName =
   'inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none';
 
@@ -46,9 +103,15 @@ export function ReadonlyFileTree({ projectId }: { projectId: string }) {
   const queryClient = useQueryClient();
   const rootQuery = useDirectoryTreeQuery(projectId, parseProjectDirectoryPath(''));
   const selectedPath = useWorkspaceSession((state) => state.selectedPath);
+  const expandedPaths = useWorkspaceSession((state) => state.expandedPaths);
   const [focusedPath, setFocusedPath] = useState<ProjectRelativePath | null>(null);
   const entries = rootQuery.data ? sortFileTreeEntries(rootQuery.data.entries) : [];
-  const tabbablePath = focusedPath ?? selectedPath ?? entries[0]?.path ?? null;
+  const tabbablePath = resolveTabbablePath(
+    focusedPath,
+    selectedPath,
+    entries[0]?.path ?? null,
+    expandedPaths,
+  );
 
   useEffect(() => {
     if (selectedPath === null) {
