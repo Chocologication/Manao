@@ -28,8 +28,26 @@ export default defineConfig({
     },
   ],
   projects: [
-    { name: 'chromium', use: { ...devices['Desktop Chrome'] } },
-    { name: 'chrome', use: { channel: 'chrome' } },
-    { name: 'edge', use: { channel: 'msedge' } },
+    {
+      name: 'chromium',
+      testIgnore: /stage2-large-files\.spec\.ts/,
+      use: { ...devices['Desktop Chrome'] },
+    },
+    {
+      name: 'chrome',
+      testIgnore: /stage2-large-files\.spec\.ts/,
+      use: { channel: 'chrome' },
+    },
+    {
+      name: 'edge',
+      testIgnore: /stage2-large-files\.spec\.ts/,
+      use: { channel: 'msedge' },
+    },
+    {
+      name: 'chromium-large-files',
+      testMatch: /stage2-large-files\.spec\.ts/,
+      timeout: 120_000,
+      use: { ...devices['Desktop Chrome'] },
+    },
   ],
 });

@@ -17,3 +17,6 @@ self.MonacoEnvironment = {
 };
 
 loader.config({ monaco });
+
+const monacoGlobal = globalThis as typeof globalThis & { monaco?: typeof monaco };
+monacoGlobal.monaco = monaco;

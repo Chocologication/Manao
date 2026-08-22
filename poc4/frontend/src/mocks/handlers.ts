@@ -25,6 +25,7 @@ import {
   readOwnedProjectSummary,
   recordFileRequest,
   resolveUserByAccessToken,
+  setLargeFileBodiesEnabled,
 } from './state';
 
 const LOGIN_UNAUTHENTICATED: ApiErrorBody = {
@@ -199,6 +200,15 @@ export const handlers = [
     return new HttpResponse(null, { status: 204 });
   }),
 
+  // Mock-only: serve actual 20 MiB bodies. Core Stage 2 e2e must not call this.
+  http.post('/api/v1/session/large-files', ({ request }) => {
+    if (resolveUserByAccessToken(readBearerToken(request)) === null) {
+      return jsonError(401, REQUEST_UNAUTHENTICATED);
+    }
+    setLargeFileBodiesEnabled(true);
+    return new HttpResponse(null, { status: 204 });
+  }),
+
   http.get('/api/v1/projects', ({ request }) => {
     const auth = authorize(request);
     if ('response' in auth) {
@@ -303,10 +313,17 @@ export const handlers = [
       }
       return jsonError(400, FILE_VALIDATION_ERROR);
     }
-    return HttpResponse.json({
+    const payload = JSON.stringify({
       path: file.path,
       content: resolveFileText(file, isLargeFileBodiesEnabled()),
       workspaceRevision: getWorkspaceRevision(access.projectId),
+    });
+    return new HttpResponse(payload, {
+      status: 200,
+      headers: {
+        'Content-Type': 'application/json',
+        'Content-Length': String(payload.length),
+      },
     });
   }),
 

@@ -81,6 +81,9 @@ export function EditorTabs({ tabs, activePath, onSelect, onClose, onReorder }: E
               onDrop={(e) => handleDrop(e, index)}
               onClick={() => onSelect(tab.path)}
               onKeyDown={(e) => {
+                if (e.target !== e.currentTarget) {
+                  return;
+                }
                 if (e.key === 'Enter' || e.key === ' ') {
                   e.preventDefault();
                   onSelect(tab.path);
@@ -118,6 +121,9 @@ export function EditorTabs({ tabs, activePath, onSelect, onClose, onReorder }: E
                 onClick={(e) => {
                   e.stopPropagation();
                   onClose(tab.path);
+                }}
+                onKeyDown={(e) => {
+                  e.stopPropagation();
                 }}
                 className={cn(
                   'shrink-0 rounded p-0.5 text-primary opacity-0 transition-opacity hover:bg-primary/20',
