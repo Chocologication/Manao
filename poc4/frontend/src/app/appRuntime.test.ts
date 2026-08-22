@@ -8,8 +8,16 @@ import { getProject, listProjects } from '../api/projectApi';
 import { ALICE_SEED_PROJECT_ID } from '../mocks/state';
 import { server } from '../mocks/node';
 import { renderApp, resetAppRuntime } from '../test/renderApp';
+import { useWorkspaceSession, workspaceSessionStore } from '../features/editor/workspaceSession';
+import { parseProjectRelativePath } from '../features/files/pathPolicy';
 import { projectKeys } from '../features/projects/projectQueries';
-import { authSession, connectionRegistry, logout, queryClient } from './appRuntime';
+import {
+  authSession,
+  connectionRegistry,
+  logout,
+  queryClient,
+  workspaceResourceRegistry,
+} from './appRuntime';
 
 const ALICE = { username: 'alice', password: 'demo-pass' };
 
@@ -37,6 +45,21 @@ async function seedCachedProjectQueries(): Promise<void> {
   });
 }
 
+function seedWorkspaceSession(projectId: string, relativePath: string): void {
+  const store = workspaceSessionStore.getState();
+  store.activateProject(projectId);
+  store.openFile(parseProjectRelativePath(relativePath));
+}
+
+function expectEmptyWorkspaceSession(): void {
+  const state = workspaceSessionStore.getState();
+  expect(state.projectId).toBeNull();
+  expect(state.openPaths).toEqual([]);
+  expect(state.activePath).toBeNull();
+  expect(state.selectedPath).toBeNull();
+  expect(state.expandedPaths.size).toBe(0);
+}
+
 beforeEach(() => {
   resetAppRuntime();
 });
@@ -51,12 +74,15 @@ describe('appRuntime unauthorized recovery', () => {
   it('handles two concurrent 401s once and shows a single expired-session alert', async () => {
     await authenticateAsAlice();
     await seedCachedProjectQueries();
+    seedWorkspaceSession(ALICE_SEED_PROJECT_ID, 'pom.xml');
     expect(queryClient.getQueryCache().getAll()).toHaveLength(2);
 
     const closerA = vi.fn();
     const closerB = vi.fn();
+    const workspaceDispose = vi.fn();
     connectionRegistry.register(closerA);
     connectionRegistry.register(closerB);
+    workspaceResourceRegistry.register(workspaceDispose);
 
     renderApp({ initialEntries: ['/projects'] });
     expect(await screen.findByRole('article', { name: 'Alice Notebook' })).toBeInTheDocument();
@@ -78,6 +104,8 @@ describe('appRuntime unauthorized recovery', () => {
 
     expect(closerA).toHaveBeenCalledTimes(1);
     expect(closerB).toHaveBeenCalledTimes(1);
+    expect(workspaceDispose).toHaveBeenCalledTimes(1);
+    expectEmptyWorkspaceSession();
     expect(queryClient.getQueryCache().getAll()).toHaveLength(0);
     expect(queryClient.getQueryData(projectKeys.all)).toBeUndefined();
     expect(queryClient.getQueryData(projectKeys.detail(ALICE_SEED_PROJECT_ID))).toBeUndefined();
@@ -140,8 +168,11 @@ describe('appRuntime stale session 401', () => {
       expect(await screen.findByRole('article', { name: 'Bob Lab' })).toBeInTheDocument();
       expect(screen.queryByText('Alice Notebook')).not.toBeInTheDocument();
 
+      seedWorkspaceSession('prj-bob-lab', 'lab-notes.md');
       const closer = vi.fn();
+      const workspaceDispose = vi.fn();
       connectionRegistry.register(closer);
+      workspaceResourceRegistry.register(workspaceDispose);
 
       releaseAlice();
       const aliceError = await pendingAliceList.catch((reason: unknown) => reason);
@@ -149,6 +180,11 @@ describe('appRuntime stale session 401', () => {
       expect(aliceError).toMatchObject({ status: 401 });
 
       expect(closer).not.toHaveBeenCalled();
+      expect(workspaceDispose).not.toHaveBeenCalled();
+      expect(workspaceSessionStore.getState().projectId).toBe('prj-bob-lab');
+      expect(workspaceSessionStore.getState().openPaths).toEqual([
+        parseProjectRelativePath('lab-notes.md'),
+      ]);
       expect(authSession.getSnapshot()).toMatchObject({
         status: 'authenticated',
         user: { username: 'bob' },
@@ -166,10 +202,13 @@ describe('appRuntime login 401', () => {
   it('does not clear cache or connections when login credentials are invalid', async () => {
     await authenticateAsAlice();
     await seedCachedProjectQueries();
+    seedWorkspaceSession(ALICE_SEED_PROJECT_ID, 'pom.xml');
     expect(queryClient.getQueryCache().getAll()).toHaveLength(2);
 
     const closer = vi.fn();
+    const workspaceDispose = vi.fn();
     connectionRegistry.register(closer);
+    workspaceResourceRegistry.register(workspaceDispose);
 
     const error = await login({ username: 'alice', password: 'wrong-pass' }).catch(
       (reason: unknown) => reason,
@@ -178,6 +217,8 @@ describe('appRuntime login 401', () => {
     expect(error).toBeInstanceOf(ApiRequestError);
     expect(error).toMatchObject({ status: 401 });
     expect(closer).not.toHaveBeenCalled();
+    expect(workspaceDispose).not.toHaveBeenCalled();
+    expect(workspaceSessionStore.getState().projectId).toBe(ALICE_SEED_PROJECT_ID);
     expect(queryClient.getQueryCache().getAll()).toHaveLength(2);
     expect(queryClient.getQueryData(projectKeys.all)).toBeDefined();
     expect(authSession.getSnapshot().status).toBe('authenticated');
@@ -214,12 +255,15 @@ describe('appRuntime explicit logout', () => {
     const user = userEvent.setup();
     await authenticateAsAlice();
     await seedCachedProjectQueries();
+    seedWorkspaceSession(ALICE_SEED_PROJECT_ID, 'pom.xml');
     expect(queryClient.getQueryCache().getAll()).toHaveLength(2);
 
     const closerA = vi.fn();
     const closerB = vi.fn();
+    const workspaceDispose = vi.fn();
     connectionRegistry.register(closerA);
     connectionRegistry.register(closerB);
+    workspaceResourceRegistry.register(workspaceDispose);
 
     renderApp({ initialEntries: ['/projects'] });
     expect(await screen.findByRole('article', { name: 'Alice Notebook' })).toBeInTheDocument();
@@ -228,6 +272,8 @@ describe('appRuntime explicit logout', () => {
 
     expect(closerA).toHaveBeenCalledTimes(1);
     expect(closerB).toHaveBeenCalledTimes(1);
+    expect(workspaceDispose).toHaveBeenCalledTimes(1);
+    expectEmptyWorkspaceSession();
     expect(queryClient.getQueryCache().getAll()).toHaveLength(0);
     expect(queryClient.getQueryData(projectKeys.all)).toBeUndefined();
     expect(authSession.getSnapshot()).toEqual({ status: 'anonymous', reason: 'logout' });
@@ -241,6 +287,45 @@ describe('appRuntime explicit logout', () => {
     const echo = screen.getByTestId('location-echo');
     expect(echo).toHaveAttribute('data-pathname', '/login');
     expect(echo).toHaveAttribute('data-history-action', 'REPLACE');
+  });
+
+  it('disposes connections, workspace resources, session, query cache and auth in order', async () => {
+    await authenticateAsAlice();
+    await seedCachedProjectQueries();
+    seedWorkspaceSession(ALICE_SEED_PROJECT_ID, 'pom.xml');
+
+    const order: string[] = [];
+    connectionRegistry.register(() => {
+      order.push('connection');
+    });
+    workspaceResourceRegistry.register(() => {
+      order.push('workspace');
+    });
+    const unsubscribe = useWorkspaceSession.subscribe((state, previous) => {
+      if (previous.projectId !== null && state.projectId === null) {
+        order.push('session');
+      }
+    });
+    const clearQuery = queryClient.clear.bind(queryClient);
+    queryClient.clear = () => {
+      order.push('query');
+      clearQuery();
+    };
+    const clearAuth = authSession.clear.bind(authSession);
+    authSession.clear = (reason) => {
+      order.push('auth');
+      clearAuth(reason);
+    };
+
+    try {
+      logout();
+      expect(order).toEqual(['connection', 'workspace', 'session', 'query', 'auth']);
+      expectEmptyWorkspaceSession();
+    } finally {
+      queryClient.clear = clearQuery;
+      authSession.clear = clearAuth;
+      unsubscribe();
+    }
   });
 });
 

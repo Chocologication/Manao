@@ -9,7 +9,14 @@ import {
 } from 'react-router';
 import { setHttpClient } from '../api/httpClient';
 import { AppProviders } from '../app/AppProviders';
-import { authSession, connectionRegistry, httpClient, queryClient } from '../app/appRuntime';
+import {
+  authSession,
+  connectionRegistry,
+  httpClient,
+  queryClient,
+  workspaceResourceRegistry,
+} from '../app/appRuntime';
+import { workspaceSessionStore } from '../features/editor/workspaceSession';
 import { NotFoundPage } from '../components/feedback/NotFoundPage';
 import { LoginPage } from '../features/auth/LoginPage';
 import { RequireAuth } from '../features/auth/RequireAuth';
@@ -19,6 +26,8 @@ import { ProjectsPage } from '../features/projects/ProjectsPage';
 export function resetAppRuntime(): void {
   setHttpClient(httpClient);
   connectionRegistry.closeAll();
+  workspaceResourceRegistry.disposeAll();
+  workspaceSessionStore.getState().reset();
   queryClient.clear();
   if (authSession.getSnapshot().status === 'authenticated') {
     authSession.clear('logout');
