@@ -1,69 +1,39 @@
-# React + TypeScript + Vite
+# EnsoAI Stage 1 Frontend Foundation
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+阶段 1 是纯浏览器前端：登录、内存中的短期 JWT、项目列表与创建状态机。不连接真实 Spring Boot、MySQL、PVC、Pod 或 Kubernetes。MSW 只在 mock 模式与自动化测试中启用。本目录一律使用 pnpm，禁止 npm。
 
-Currently, two official plugins are available:
+工作目录：`poc4/frontend`。需要 Node.js >= 20 与 pnpm 10。`pnpm test:e2e:channels` 还需要本机已安装 Chrome 与 Edge。
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+## 工作命令
 
-## Expanding the ESLint configuration
+| 命令 | 作用 |
+|---|---|
+| `pnpm dev:mock` | Vite mock 模式，端口 4173，启用 MSW 与阶段 0 `/stage0.html` |
+| `pnpm typecheck` | `tsc -b --pretty false` |
+| `pnpm test` | Vitest 单测 |
+| `pnpm test:boundary` | 浏览器边界检查（禁止 Electron / Node PTY / 本机绝对路径） |
+| `pnpm build` | 生产构建（不含 MSW worker、mock 密码、`127.0.0.1:4174`、`stage0.html`） |
+| `pnpm build:mock` | mock 生产构建（含 `stage0.html` 与 MSW worker，供 E2E） |
+| `pnpm test:e2e` | Playwright Chromium |
+| `pnpm test:e2e:channels` | Playwright 本机 Chrome 与 Edge |
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
+## 合成 mock 凭据
 
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
+仅用于 `pnpm dev:mock` 与自动化测试，**不是真实后端凭据**：
 
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
+| 用户名 | 密码 |
+|---|---|
+| `alice` | `demo-pass` |
+| `bob` | `demo-pass` |
 
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-```
+## 阶段 1 边界
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+包含：`/login`、`/projects`、`/projects/:projectId`、匿名受保护路由重定向、内存 JWT、项目 `CREATING` / `READY` / `FAILED`、每用户 3 个项目上限、一次 401 全局退出、403 通用拒绝文案。
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+不包含：真实 JWT 签名与授权、PVC 创建、Kubernetes 集成、文件树、Run / 日志 / 真实 PTY、refresh token、浏览器持久化登录。阶段 0 xterm 只作为 mock 构建里的独立 `/stage0.html` Spike 存在，不能当成真实 Job 终端。
 
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-```
+跨用户 403 与项目上限只验证前端契约与 mock handler（**mock contract verified**），不能写成真实所有权隔离或集群验收已通过。
+
+## 已知体积问题
+
+生产 `pnpm build` 主包约 370 kB（gzip 约 118 kB）。mock / 阶段 0 Spike 的 `stage0` chunk 约 4.5 MB（gzip 约 1.2 MB），与历史约 4.8 MB 主包同一数量级。后续若把 Monaco 工作台并入生产路由，需要单独做懒加载与 Worker / 语言包计量；阶段 1 不把该体积当作生产应用失败。

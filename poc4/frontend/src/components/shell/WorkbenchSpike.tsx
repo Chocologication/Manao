@@ -79,7 +79,7 @@ export function WorkbenchSpike() {
               activePanel === 'terminal' ? 'z-10' : 'invisible pointer-events-none'
             )}
           >
-            <TerminalPanel />
+            <TerminalPanel active={activePanel === 'terminal'} />
           </div>
         </main>
       </div>

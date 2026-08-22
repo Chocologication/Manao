@@ -34,7 +34,7 @@ function createXtermAdapter(terminal: Terminal): TerminalAdapter {
   };
 }
 
-export function TerminalPanel() {
+export function TerminalPanel({ active }: { active: boolean }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const sessionRef = useRef<TerminalSession | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
@@ -157,6 +157,7 @@ export function TerminalPanel() {
   }, []);
 
   useEffect(() => {
+    if (!active) return;
     const onKeyDown = (event: KeyboardEvent) => {
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'f') {
         event.preventDefault();
@@ -165,7 +166,7 @@ export function TerminalPanel() {
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, []);
+  }, [active]);
 
   useEffect(() => () => teardown(), [teardown]);
 

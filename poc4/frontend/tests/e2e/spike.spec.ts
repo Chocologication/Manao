@@ -23,11 +23,24 @@ function disconnectButton(page: Page): Locator {
 }
 
 async function typeInMonaco(page: Page, text: string): Promise<void> {
-  const editor = page.locator('.monaco-editor');
+  const editor = page.locator('.monaco-editor').first();
   await expect(editor).toBeVisible();
+  const input = page.getByRole('textbox', { name: 'Editor content' });
+  await expect(input).toBeAttached();
   await editor.click();
+  await input.focus();
+  await expect(input).toBeFocused();
   await page.keyboard.press('Control+End');
-  await page.keyboard.type(text, { delay: 20 });
+
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const visible = await page.locator('.view-lines').innerText();
+    if (visible.includes(text)) {
+      return;
+    }
+    await page.keyboard.type(text, { delay: 50 });
+  }
+
+  await expect(page.locator('.view-lines')).toContainText(text);
 }
 
 async function typeInXterm(page: Page, text: string): Promise<void> {
@@ -68,6 +81,14 @@ function openSockets(sockets: Array<{ closed: boolean }>) {
   return sockets.filter((socket) => !socket.closed);
 }
 
+function isBrowserChrome404(pathname: string): boolean {
+  return (
+    pathname === '/favicon.ico' ||
+    pathname === '/apple-touch-icon.png' ||
+    pathname === '/apple-touch-icon-precomposed.png'
+  );
+}
+
 function sentResizeFrames(sockets: Array<{ sent: string[] }>) {
   const frames: Array<{ cols: number; rows: number }> = [];
   for (const socket of sockets) {
@@ -91,12 +112,21 @@ function sentResizeFrames(sockets: Array<{ sent: string[] }>) {
 
 test('spike workbench workflow', async ({ page }) => {
   const consoleErrors: string[] = [];
+  const notFoundPaths: string[] = [];
+  page.on('response', (response) => {
+    if (response.status() === 404) {
+      notFoundPaths.push(new URL(response.url()).pathname);
+    }
+  });
   page.on('console', (message) => {
-    if (message.type() === 'error') consoleErrors.push(message.text());
+    if (message.type() !== 'error') return;
+    const text = message.text();
+    if (text.includes('Failed to load resource') && text.includes('404')) return;
+    consoleErrors.push(text);
   });
   const sockets = trackTerminalSockets(page);
 
-  await page.goto('/');
+  await page.goto('/stage0.html');
   await expect(page.getByRole('tab', { name: 'File' })).toHaveAttribute('aria-selected', 'true');
   await expect(page.locator('.monaco-editor')).toBeVisible();
 
@@ -165,12 +195,14 @@ test('spike workbench workflow', async ({ page }) => {
     expect(asideBox.x + asideBox.width).toBeLessThanOrEqual(mainBox.x + 1);
   }
 
+  expect(notFoundPaths.filter((pathname) => !isBrowserChrome404(pathname))).toEqual([]);
   expect(consoleErrors).toEqual([]);
 });
 
 test('keeps dirty editor buffer when switching workbench panels', async ({ page }) => {
-  await page.goto('/');
+  await page.goto('/stage0.html');
   await expect(page.locator('.monaco-editor')).toBeVisible();
+  await expect(page.locator('.view-lines')).toContainText('artifactId');
 
   const dirtyMarker = 'SPIKEDIRTY';
   await typeInMonaco(page, dirtyMarker);
@@ -191,7 +223,7 @@ test('keeps dirty editor buffer when switching workbench panels', async ({ page 
 test('keeps terminal session when switching workbench panels', async ({ page }) => {
   const sockets = trackTerminalSockets(page);
 
-  await page.goto('/');
+  await page.goto('/stage0.html');
   await page.getByRole('tab', { name: 'Terminal' }).click();
   await connectButton(page).click();
   await expect(page.getByRole('status')).toHaveText('connected');
@@ -213,11 +245,32 @@ test('keeps terminal session when switching workbench panels', async ({ page }) 
   await expect(page.getByTestId('terminal-last-output')).toHaveText('K');
 });
 
+test('inactive terminal does not intercept Ctrl+F from the File panel', async ({ page }) => {
+  await page.goto('/stage0.html');
+  await expect(page.getByRole('tab', { name: 'File' })).toHaveAttribute('aria-selected', 'true');
+  await expect(page.locator('.monaco-editor')).toBeVisible();
+
+  const dispatched = await page.evaluate(() => {
+    const event = new KeyboardEvent('keydown', {
+      key: 'f',
+      ctrlKey: true,
+      bubbles: true,
+      cancelable: true,
+    });
+    window.dispatchEvent(event);
+    return { defaultPrevented: event.defaultPrevented };
+  });
+
+  expect(dispatched.defaultPrevented).toBe(false);
+  await page.getByRole('tab', { name: 'Terminal' }).click();
+  await expect(page.getByPlaceholder('Search...')).toHaveCount(0);
+});
+
 for (const viewport of viewports) {
   test(`captures ${viewport.name}`, async ({ page }, testInfo) => {
     test.skip(!['chrome', 'edge'].includes(testInfo.project.name));
     await page.setViewportSize(viewport);
-    await page.goto('/');
+    await page.goto('/stage0.html');
     await expect(page.locator('.monaco-editor')).toBeVisible();
     await expect(page.locator('.view-lines')).toContainText('artifactId');
     await page.screenshot({
