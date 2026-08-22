@@ -24,6 +24,11 @@ describe('EditorTabs', () => {
     );
 
     expect(screen.getByRole('tab', { name: /pom.xml/ })).toHaveTextContent('*');
+    expect(screen.getByRole('tab', { name: /pom.xml/ })).toHaveAttribute('title', 'pom.xml');
+    expect(screen.getByRole('tab', { name: /App.java/ })).toHaveAttribute(
+      'title',
+      'src/main/App.java',
+    );
     await user.click(screen.getByRole('tab', { name: /App.java/ }));
     expect(onSelect).toHaveBeenCalledWith('src/main/App.java');
     await user.click(screen.getByRole('button', { name: 'Close pom.xml' }));

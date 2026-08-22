@@ -41,14 +41,20 @@ export function EditorTabs({ tabs, activePath, onSelect, onClose, onReorder }: E
     [onReorder]
   );
 
+  const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
   useEffect(() => {
     if (!activePath) return;
     const frameId = requestAnimationFrame(() => {
       const tabEl = tabRefsRef.current.get(activePath);
-      tabEl?.scrollIntoView?.({ behavior: 'smooth', inline: 'nearest', block: 'nearest' });
+      tabEl?.scrollIntoView?.({
+        behavior: reduceMotion ? 'auto' : 'smooth',
+        inline: 'nearest',
+        block: 'nearest',
+      });
     });
     return () => cancelAnimationFrame(frameId);
-  }, [activePath]);
+  }, [activePath, reduceMotion]);
 
   if (tabs.length === 0) {
     return null;
@@ -81,6 +87,7 @@ export function EditorTabs({ tabs, activePath, onSelect, onClose, onReorder }: E
                 }
               }}
               role="tab"
+              title={tab.path}
               aria-selected={isActive}
               tabIndex={0}
               className={cn(
@@ -94,7 +101,7 @@ export function EditorTabs({ tabs, activePath, onSelect, onClose, onReorder }: E
                 <motion.div
                   layoutId="editor-tab-indicator"
                   className="absolute inset-x-0 top-0 h-[2px] bg-primary"
-                  transition={springFast}
+                  transition={reduceMotion ? { duration: 0 } : springFast}
                 />
               )}
 

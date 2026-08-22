@@ -56,17 +56,22 @@ export function useDirectoryTreeQuery(projectId: string, path: ProjectDirectoryP
   });
 }
 
+function isCurrentProject(projectId: string, sessionProjectId: string | null): boolean {
+  return sessionProjectId === null || sessionProjectId === projectId;
+}
+
 export function useFileMetadataQuery(
   projectId: string,
   path: ProjectRelativePath,
   enabled: boolean,
 ) {
+  const sessionProjectId = useWorkspaceSession((state) => state.projectId);
   return useQuery({
     queryKey: fileKeys.meta(projectId, path),
     queryFn: () => getFileMetadata(projectId, path),
     retry: false,
     staleTime: FILE_STALE_TIME_MS,
-    enabled: enabled && projectId.length > 0,
+    enabled: enabled && projectId.length > 0 && isCurrentProject(projectId, sessionProjectId),
   });
 }
 
@@ -75,13 +80,14 @@ export function useFileContentQuery(
   path: ProjectRelativePath,
   renderMode: FileRenderMode | undefined,
 ) {
+  const sessionProjectId = useWorkspaceSession((state) => state.projectId);
   const authorized = renderMode === 'MONACO_TEXT' || renderMode === 'PLAIN_TEXT';
   return useQuery({
     queryKey: fileKeys.content(projectId, path),
     queryFn: () => getFileContent(projectId, path),
     retry: false,
     staleTime: FILE_STALE_TIME_MS,
-    enabled: authorized && projectId.length > 0,
+    enabled: authorized && projectId.length > 0 && isCurrentProject(projectId, sessionProjectId),
   });
 }
 
