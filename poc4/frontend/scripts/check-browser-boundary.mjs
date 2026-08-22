@@ -1,7 +1,12 @@
 import { readFile, readdir } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { findForbiddenDependencies, findForbiddenSource } from './browser-boundary-lib.mjs';
+import {
+  findForbiddenContractNames,
+  findForbiddenDependencies,
+  findForbiddenSource,
+  findForbiddenStage2Imports,
+} from './browser-boundary-lib.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const extensions = new Set(['.ts', '.tsx', '.js', '.jsx', '.css']);
@@ -23,9 +28,15 @@ const dependencyViolations = findForbiddenDependencies(packageJson).map(
 );
 const sourceFiles = await listSourceFiles(path.join(root, 'src'));
 const sourceViolations = (
-  await Promise.all(sourceFiles.map(async (file) =>
-    findForbiddenSource(path.relative(root, file), await readFile(file, 'utf8'))
-  ))
+  await Promise.all(sourceFiles.map(async (file) => {
+    const relative = path.relative(root, file).replaceAll('\\', '/');
+    const source = await readFile(file, 'utf8');
+    return [
+      ...findForbiddenSource(relative, source),
+      ...findForbiddenStage2Imports(relative, source),
+      ...findForbiddenContractNames(relative, source),
+    ];
+  }))
 ).flat();
 const violations = [...dependencyViolations, ...sourceViolations];
 
