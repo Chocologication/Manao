@@ -24,7 +24,9 @@ export function ProjectCard({ project }: { project: ProjectSummary }) {
         <div className="flex shrink-0 items-center gap-2">
           {project.state === 'CREATING' ? <Spinner /> : null}
           {project.state === 'READY' ? (
-            <Button render={<Link to={`/projects/${project.id}`} />}>Open</Button>
+            <Button render={<Link to={`/projects/${encodeURIComponent(project.id)}`} />}>
+              Open
+            </Button>
           ) : null}
           {project.state === 'CREATING' ? (
             <Button type="button" disabled>

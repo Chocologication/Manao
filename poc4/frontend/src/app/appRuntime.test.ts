@@ -9,7 +9,7 @@ import { ALICE_SEED_PROJECT_ID } from '../mocks/state';
 import { server } from '../mocks/node';
 import { renderApp, resetAppRuntime } from '../test/renderApp';
 import { projectKeys } from '../features/projects/projectQueries';
-import { authSession, connectionRegistry, queryClient } from './appRuntime';
+import { authSession, connectionRegistry, logout, queryClient } from './appRuntime';
 
 const ALICE = { username: 'alice', password: 'demo-pass' };
 
@@ -94,6 +94,71 @@ describe('appRuntime unauthorized recovery', () => {
     expect(alerts[0]).not.toHaveTextContent('mem-token');
     expect(alerts[0]).not.toHaveTextContent(UNAUTHENTICATED_BODY.traceId);
     expect(screen.queryByText('Alice Notebook')).not.toBeInTheDocument();
+  });
+});
+
+describe('appRuntime stale session 401', () => {
+  it('does not clear Bob when a delayed Alice 401 arrives', async () => {
+    await authenticateAsAlice();
+    const aliceToken = authSession.getAccessToken();
+    expect(aliceToken).toBeTruthy();
+
+    let releaseAlice: () => void = () => {};
+    const aliceHold = new Promise<void>((resolve) => {
+      releaseAlice = resolve;
+    });
+    let interceptedAliceList = false;
+    const originalFetch = globalThis.fetch;
+
+    globalThis.fetch = (async (input, init) => {
+      const url =
+        typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+      const authorization = new Headers(init?.headers).get('Authorization');
+      if (
+        !interceptedAliceList &&
+        /\/api\/v1\/projects\/?$/.test(url) &&
+        authorization === `Bearer ${aliceToken}`
+      ) {
+        interceptedAliceList = true;
+        await aliceHold;
+        return new Response(JSON.stringify(UNAUTHENTICATED_BODY), {
+          status: 401,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      return originalFetch(input, init);
+    }) as typeof fetch;
+
+    try {
+      const pendingAliceList = listProjects();
+      logout();
+
+      const bob = await login({ username: 'bob', password: 'demo-pass' });
+      authSession.authenticate(bob);
+
+      renderApp({ initialEntries: ['/projects'] });
+      expect(await screen.findByRole('article', { name: 'Bob Lab' })).toBeInTheDocument();
+      expect(screen.queryByText('Alice Notebook')).not.toBeInTheDocument();
+
+      const closer = vi.fn();
+      connectionRegistry.register(closer);
+
+      releaseAlice();
+      const aliceError = await pendingAliceList.catch((reason: unknown) => reason);
+      expect(aliceError).toBeInstanceOf(ApiRequestError);
+      expect(aliceError).toMatchObject({ status: 401 });
+
+      expect(closer).not.toHaveBeenCalled();
+      expect(authSession.getSnapshot()).toMatchObject({
+        status: 'authenticated',
+        user: { username: 'bob' },
+      });
+      expect(screen.getByRole('article', { name: 'Bob Lab' })).toBeInTheDocument();
+      expect(screen.queryByText(/session has expired/i)).not.toBeInTheDocument();
+      expect(screen.queryByLabelText('Username')).not.toBeInTheDocument();
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 });
 

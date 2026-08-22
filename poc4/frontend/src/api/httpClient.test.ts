@@ -206,6 +206,35 @@ describe('HttpClient', () => {
     expect(authorizationHeader(fetchImpl.mock.calls[0]?.[1])).toBeNull();
   });
 
+  it('does not invoke onUnauthorized when a delayed 401 belongs to a previous token', async () => {
+    const body = {
+      code: 'UNAUTHENTICATED' as const,
+      message: 'Token expired',
+      traceId: 'trace-stale-401',
+    };
+    let currentToken = 'alice-token';
+    let release: ((response: Response) => void) | undefined;
+    const delayed = new Promise<Response>((resolve) => {
+      release = resolve;
+    });
+    const fetchImpl = vi.fn<typeof fetch>(async () => delayed);
+    const onUnauthorized = vi.fn();
+    const client = createClient(fetchImpl, {
+      getAccessToken: () => currentToken,
+      onUnauthorized,
+    });
+
+    const pending = client.request('/api/v1/projects');
+    expect(authorizationHeader(fetchImpl.mock.calls[0]?.[1])).toBe('Bearer alice-token');
+    currentToken = 'bob-token';
+    release?.(jsonResponse(body, 401));
+
+    const error = await expectRejection(pending);
+    expect(error).toBeInstanceOf(ApiRequestError);
+    expect(error).toMatchObject({ status: 401, body, traceId: 'trace-stale-401' });
+    expect(onUnauthorized).not.toHaveBeenCalled();
+  });
+
   it('maps generic network errors without claiming a mutation succeeded', async () => {
     const fetchImpl = vi.fn<typeof fetch>(async () => {
       throw new TypeError('Failed to fetch');

@@ -55,11 +55,9 @@ export class HttpClient {
     if (options.body !== undefined) {
       headers.set('Content-Type', 'application/json');
     }
-    if (options.auth !== false) {
-      const token = this.getAccessToken();
-      if (token) {
-        headers.set('Authorization', `Bearer ${token}`);
-      }
+    const sentToken = options.auth === false ? null : this.getAccessToken();
+    if (sentToken) {
+      headers.set('Authorization', `Bearer ${sentToken}`);
     }
 
     let response: Response;
@@ -75,9 +73,9 @@ export class HttpClient {
 
     if (!response.ok) {
       const body = await readApiErrorBody(response);
-      // Login 401 is invalid credentials. Session cleanup is only for a
-      // rejected authenticated request that actually sent Authorization.
-      if (response.status === 401 && headers.has('Authorization')) {
+      // Login 401 is invalid credentials. Session cleanup only runs when the
+      // rejected Bearer token is still the current session credential.
+      if (response.status === 401 && sentToken !== null && sentToken === this.getAccessToken()) {
         this.onUnauthorized();
       }
       throw new ApiRequestError(response.status, body);
