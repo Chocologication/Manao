@@ -21,6 +21,7 @@ export function ReadonlyMonacoEditor({
       value={content}
       language={language}
       theme="vs-dark"
+      keepCurrentModel
       options={{
         readOnly: true,
         domReadOnly: true,

@@ -1,7 +1,8 @@
 import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
-import { createElement } from 'react';
+import * as monaco from 'monaco-editor';
+import { createElement, useEffect } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { login } from '../../api/authApi';
 import { AppProviders } from '../../app/AppProviders';
@@ -10,7 +11,7 @@ import type { ProjectRelativePath } from '../../contracts/file';
 import { workspaceSessionStore } from '../../features/editor/workspaceSession';
 import { parseProjectRelativePath } from '../../features/files/pathPolicy';
 import * as projectMonacoModels from '../../lib/projectMonacoModels';
-import { toProjectModelUri } from '../../lib/projectMonacoModels';
+import { disposeAllProjectModels, toProjectModelUri } from '../../lib/projectMonacoModels';
 import { getMockFile } from '../../mocks/fileFixtures';
 import { server } from '../../mocks/node';
 import {
@@ -32,7 +33,9 @@ const LATIN1 = parseProjectRelativePath('docs/latin1.txt');
 
 type RecordedEditorProps = {
   path?: string;
+  value?: string;
   language?: string;
+  keepCurrentModel?: boolean;
   options?: {
     readOnly?: boolean;
     domReadOnly?: boolean;
@@ -46,25 +49,45 @@ const recordedEditor = vi.hoisted(() => ({
   last: null as RecordedEditorProps | null,
 }));
 
-vi.mock('@monaco-editor/react', () => ({
-  default: (props: RecordedEditorProps) => {
+vi.mock('@monaco-editor/react', () => {
+  function MockEditor(props: RecordedEditorProps) {
     recordedEditor.last = {
       path: props.path,
+      value: props.value,
       language: props.language,
+      keepCurrentModel: props.keepCurrentModel,
       options: props.options,
       onChange: props.onChange,
     };
+    useEffect(() => {
+      const modelPath = props.path;
+      if (modelPath === undefined || modelPath === '') {
+        return undefined;
+      }
+      const uri = monaco.Uri.parse(modelPath);
+      if (monaco.editor.getModel(uri) === null) {
+        monaco.editor.createModel(props.value ?? '', props.language, uri);
+      }
+      return () => {
+        if (props.keepCurrentModel !== true) {
+          monaco.editor.getModel(uri)?.dispose();
+        }
+      };
+    }, [props.path, props.value, props.language, props.keepCurrentModel]);
     return createElement('div', {
       className: 'monaco-editor',
       'data-testid': 'mock-editor',
       'data-path': props.path ?? '',
     });
-  },
-  loader: {
-    config() {},
-    init: () => Promise.resolve({}),
-  },
-}));
+  }
+  return {
+    default: MockEditor,
+    loader: {
+      config() {},
+      init: () => Promise.resolve({}),
+    },
+  };
+});
 
 async function authenticateAsAlice(): Promise<void> {
   const response = await login(ALICE);
@@ -147,6 +170,7 @@ beforeEach(() => {
 afterEach(async () => {
   globalThis.ClipboardItem = originalClipboardItem;
   cleanup();
+  disposeAllProjectModels();
   await queryClient.cancelQueries();
   resetAppRuntime();
 });
@@ -171,6 +195,7 @@ describe('ReadonlyEditorWorkspace metadata-gated views', () => {
     expect(recordedEditor.last?.path).toBe(
       toProjectModelUri(ALICE_SEED_PROJECT_ID, POM).toString(),
     );
+    expect(recordedEditor.last?.keepCurrentModel).toBe(true);
     expect(recordedEditor.last?.options).toEqual({
       readOnly: true,
       domReadOnly: true,
@@ -247,6 +272,46 @@ describe('ReadonlyEditorWorkspace metadata-gated views', () => {
       expect(getFileRequestCount('content', ALICE_SEED_PROJECT_ID, rawPath)).toBe(0);
     },
   );
+
+  it('does not leak blocked download error or in-flight state across files', async () => {
+    const user = userEvent.setup();
+    let releaseLogo = () => {};
+    const logoGate = new Promise<void>((resolve) => {
+      releaseLogo = resolve;
+    });
+    server.use(
+      http.get('/api/v1/projects/:projectId/files/download', async ({ request }) => {
+        const path = new URL(request.url).searchParams.get('path') ?? '';
+        if (path === 'assets/logo.png') {
+          recordFileRequest('download', ALICE_SEED_PROJECT_ID, path);
+          await logoGate;
+          return HttpResponse.json(
+            { code: 'INTERNAL_ERROR', message: 'Mock download failure', traceId: 'trace-dl' },
+            { status: 500 },
+          );
+        }
+        return undefined;
+      }),
+    );
+    ensureObjectUrlFns();
+    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
+    await authenticateAsAlice();
+    renderWorkspace();
+    openFile(LOGO);
+    const download = await screen.findByRole('button', { name: 'Download' });
+    await user.click(download);
+    expect(download).toBeDisabled();
+
+    openFile(LATIN1);
+    expect(await screen.findByText(/utf-8|encoding/i)).toBeInTheDocument();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Download' })).toBeEnabled();
+
+    releaseLogo();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Download' })).toBeEnabled();
+  });
 });
 
 describe('ReadonlyEditorWorkspace scoped loading and errors', () => {
@@ -417,6 +482,58 @@ describe('ReadonlyEditorWorkspace model and request cleanup', () => {
       toProjectModelUri(ALICE_SEED_PROJECT_ID, APP).toString(),
     );
     expect(projectMonacoModels.disposeProjectModels).not.toHaveBeenCalled();
+  });
+
+  it('keeps monaco models across tab switches and disposes only on close', async () => {
+    const user = userEvent.setup();
+    const pomUri = toProjectModelUri(ALICE_SEED_PROJECT_ID, POM);
+    const { release } = delayThenPassthrough(
+      '/api/v1/projects/:projectId/files/content',
+      'src/main/java/demo/App.java',
+    );
+    await authenticateAsAlice();
+    renderWorkspace();
+    openFile(POM);
+    await screen.findByTestId('mock-editor');
+    await waitFor(() => {
+      expect(monaco.editor.getModel(pomUri)).not.toBeNull();
+    });
+    expect(recordedEditor.last?.keepCurrentModel).toBe(true);
+
+    openFile(APP);
+    expect(await screen.findByRole('status', { name: 'Loading file content' })).toBeInTheDocument();
+    expect(document.querySelector('.monaco-editor')).toBeNull();
+    expect(monaco.editor.getModel(pomUri)).not.toBeNull();
+
+    release();
+    await waitFor(() => {
+      expect(screen.getByTestId('mock-editor')).toHaveAttribute(
+        'data-path',
+        toProjectModelUri(ALICE_SEED_PROJECT_ID, APP).toString(),
+      );
+    });
+    expect(monaco.editor.getModel(pomUri)).not.toBeNull();
+
+    openFile(LARGE_NOTES);
+    await screen.findByRole('textbox');
+    expect(document.querySelector('.monaco-editor')).toBeNull();
+    expect(monaco.editor.getModel(pomUri)).not.toBeNull();
+
+    await user.click(screen.getByRole('tab', { name: /pom.xml/ }));
+    await screen.findByTestId('mock-editor');
+    expect(monaco.editor.getModel(pomUri)).not.toBeNull();
+
+    openFile(LOGO);
+    expect(await screen.findByRole('button', { name: 'Download' })).toBeInTheDocument();
+    expect(document.querySelector('.monaco-editor')).toBeNull();
+    expect(monaco.editor.getModel(pomUri)).not.toBeNull();
+
+    await user.click(screen.getByRole('tab', { name: /pom.xml/ }));
+    await screen.findByTestId('mock-editor');
+    await user.click(screen.getByRole('button', { name: 'Close pom.xml' }));
+    await waitFor(() => {
+      expect(monaco.editor.getModel(pomUri)).toBeNull();
+    });
   });
 
   it('does not duplicate tabs or content requests on a duplicate click while fresh', async () => {

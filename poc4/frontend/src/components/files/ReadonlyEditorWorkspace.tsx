@@ -89,7 +89,7 @@ function ActiveFileSurface({
   }
 
   if (meta.data.renderMode === 'BLOCKED') {
-    return <BlockedFileView projectId={projectId} metadata={meta.data} />;
+    return <BlockedFileView key={meta.data.path} projectId={projectId} metadata={meta.data} />;
   }
 
   if (content.isPending) {
