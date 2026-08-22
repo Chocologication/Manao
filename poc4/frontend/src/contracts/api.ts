@@ -3,7 +3,10 @@ export type ApiErrorCode =
   | 'FORBIDDEN'
   | 'PROJECT_LIMIT_REACHED'
   | 'VALIDATION_ERROR'
-  | 'INTERNAL_ERROR';
+  | 'INTERNAL_ERROR'
+  | 'INVALID_PATH'
+  | 'FILE_TOO_LARGE'
+  | 'BINARY_FILE';
 
 export type ApiErrorBody = {
   code: ApiErrorCode;

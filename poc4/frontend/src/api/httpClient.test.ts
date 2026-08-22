@@ -266,6 +266,162 @@ describe('HttpClient', () => {
     ).rejects.toThrow(/network request failed/i);
     expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
+
+  it('parses INVALID_PATH, FILE_TOO_LARGE and BINARY_FILE error codes', async () => {
+    const cases = [
+      { code: 'INVALID_PATH' as const, status: 400, message: 'Path rejected' },
+      { code: 'FILE_TOO_LARGE' as const, status: 413, message: 'File too large' },
+      { code: 'BINARY_FILE' as const, status: 415, message: 'Binary file' },
+    ];
+    for (const item of cases) {
+      const body = { code: item.code, message: item.message, traceId: `trace-${item.code}` };
+      const fetchImpl = vi.fn<typeof fetch>(async () => jsonResponse(body, item.status));
+      const client = createClient(fetchImpl);
+      const error = await expectRejection(client.request('/api/v1/projects/prj/files/meta?path=a'));
+      expect(error).toBeInstanceOf(ApiRequestError);
+      expect(error).toMatchObject({ status: item.status, body, traceId: body.traceId });
+    }
+  });
+
+  it('does not treat UNSUPPORTED_ENCODING as a server error code', async () => {
+    const body = {
+      code: 'UNSUPPORTED_ENCODING',
+      message: 'Not UTF-8',
+      traceId: 'trace-enc',
+    };
+    const fetchImpl = vi.fn<typeof fetch>(async () => jsonResponse(body, 415));
+    const client = createClient(fetchImpl);
+
+    const error = await expectRejection(client.request('/api/v1/projects/prj/files/content?path=a'));
+
+    expect(error).toBeInstanceOf(ApiRequestError);
+    expect(error).toMatchObject({ status: 415, body: null });
+  });
+
+  it('requestBlob uses relative URLs, Bearer auth, and a byte Accept header', async () => {
+    const fetchImpl = vi.fn<typeof fetch>(
+      async () =>
+        new Response('payload', {
+          status: 200,
+          headers: {
+            'Content-Type': 'application/octet-stream',
+            'Content-Disposition': 'attachment; filename="App.java"',
+          },
+        }),
+    );
+    const client = createClient(fetchImpl);
+
+    const result = await client.requestBlob('/api/v1/projects/prj/files/download?path=App.java', {
+      fallbackName: 'fallback.java',
+    });
+
+    expect(result.filename).toBe('App.java');
+    expect(await result.blob.text()).toBe('payload');
+    expect(fetchImpl.mock.calls[0]?.[0]).toBe('/api/v1/projects/prj/files/download?path=App.java');
+    expect(String(fetchImpl.mock.calls[0]?.[0])).not.toContain('access-token');
+    expect(authorizationHeader(fetchImpl.mock.calls[0]?.[1])).toBe('Bearer access-token');
+    const accept = new Headers(fetchImpl.mock.calls[0]?.[1]?.headers).get('Accept');
+    expect(accept).not.toBe('application/json');
+    expect(accept).toMatch(/octet-stream|\*\/*/);
+
+    await expect(client.requestBlob('https://example.com/api/v1/projects/prj/files/download')).rejects.toThrow(
+      'Relative /api/v1/ URL required',
+    );
+  });
+
+  it('requestBlob prefers a validated Content-Disposition filename and sanitizes fallbacks', async () => {
+    const fetchImpl = vi.fn<typeof fetch>();
+    fetchImpl
+      .mockResolvedValueOnce(
+        new Response('a', {
+          status: 200,
+          headers: { 'Content-Disposition': 'attachment; filename="src/App.java"' },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response('b', {
+          status: 200,
+          headers: { 'Content-Disposition': 'attachment; filename="App\t.java"' },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response('c', {
+          status: 200,
+          headers: { 'Content-Disposition': 'attachment; filename=""' },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response('d', {
+          status: 200,
+          headers: { 'Content-Disposition': "attachment; filename*=UTF-8''%E6%B5%8B%E8%AF%95.txt" },
+        }),
+      )
+      .mockResolvedValueOnce(new Response('e', { status: 200 }));
+    const client = createClient(fetchImpl);
+    const url = '/api/v1/projects/prj/files/download?path=f';
+
+    expect((await client.requestBlob(url, { fallbackName: 'fallback.java' })).filename).toBe(
+      'App.java',
+    );
+    expect((await client.requestBlob(url, { fallbackName: 'fallback.java' })).filename).toBe(
+      'App.java',
+    );
+    expect((await client.requestBlob(url, { fallbackName: 'dir/out.bin' })).filename).toBe('out.bin');
+    expect((await client.requestBlob(url, { fallbackName: 'fallback.java' })).filename).toBe(
+      '测试.txt',
+    );
+    expect((await client.requestBlob(url, { fallbackName: '\n\t' })).filename).toBe('download');
+  });
+
+  it('requestBlob invokes onUnauthorized for a current-token 401', async () => {
+    const body = {
+      code: 'UNAUTHENTICATED' as const,
+      message: 'Token expired',
+      traceId: 'trace-blob-401',
+    };
+    const fetchImpl = vi.fn<typeof fetch>(async () => jsonResponse(body, 401));
+    const onUnauthorized = vi.fn();
+    const client = createClient(fetchImpl, { onUnauthorized });
+
+    const error = await expectRejection(
+      client.requestBlob('/api/v1/projects/prj/files/download?path=a', { fallbackName: 'a.bin' }),
+    );
+
+    expect(error).toBeInstanceOf(ApiRequestError);
+    expect(error).toMatchObject({ status: 401, body, traceId: 'trace-blob-401' });
+    expect(onUnauthorized).toHaveBeenCalledTimes(1);
+  });
+
+  it('requestBlob does not invoke onUnauthorized when a delayed 401 belongs to a previous token', async () => {
+    const body = {
+      code: 'UNAUTHENTICATED' as const,
+      message: 'Token expired',
+      traceId: 'trace-blob-stale-401',
+    };
+    let currentToken = 'alice-token';
+    let release: ((response: Response) => void) | undefined;
+    const delayed = new Promise<Response>((resolve) => {
+      release = resolve;
+    });
+    const fetchImpl = vi.fn<typeof fetch>(async () => delayed);
+    const onUnauthorized = vi.fn();
+    const client = createClient(fetchImpl, {
+      getAccessToken: () => currentToken,
+      onUnauthorized,
+    });
+
+    const pending = client.requestBlob('/api/v1/projects/prj/files/download?path=a', {
+      fallbackName: 'a.bin',
+    });
+    expect(authorizationHeader(fetchImpl.mock.calls[0]?.[1])).toBe('Bearer alice-token');
+    currentToken = 'bob-token';
+    release?.(jsonResponse(body, 401));
+
+    const error = await expectRejection(pending);
+    expect(error).toBeInstanceOf(ApiRequestError);
+    expect(error).toMatchObject({ status: 401, body, traceId: 'trace-blob-stale-401' });
+    expect(onUnauthorized).not.toHaveBeenCalled();
+  });
 });
 
 describe('auth and project APIs', () => {

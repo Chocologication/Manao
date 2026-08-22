@@ -8,6 +8,9 @@ const API_ERROR_CODES: ReadonlySet<string> = new Set([
   'PROJECT_LIMIT_REACHED',
   'VALIDATION_ERROR',
   'INTERNAL_ERROR',
+  'INVALID_PATH',
+  'FILE_TOO_LARGE',
+  'BINARY_FILE',
 ]);
 
 export type HttpClientOptions = {
@@ -20,6 +23,17 @@ export type HttpRequestOptions = {
   method?: string;
   body?: unknown;
   auth?: boolean;
+};
+
+export type BlobRequestOptions = {
+  method?: string;
+  auth?: boolean;
+  fallbackName?: string;
+};
+
+export type BlobResponse = {
+  blob: Blob;
+  filename: string;
 };
 
 let configuredClient: HttpClient | null = null;
@@ -48,24 +62,55 @@ export class HttpClient {
   }
 
   async request<T = unknown>(url: string, options: HttpRequestOptions = {}): Promise<T> {
-    assertRelativeApiV1Url(url);
-
     const headers = new Headers();
     headers.set('Accept', 'application/json');
     if (options.body !== undefined) {
       headers.set('Content-Type', 'application/json');
     }
+    const response = await this.send(url, {
+      method: options.method ?? 'GET',
+      headers,
+      body: options.body === undefined ? undefined : JSON.stringify(options.body),
+      auth: options.auth,
+    });
+    return readSuccessBody<T>(response);
+  }
+
+  async requestBlob(url: string, options: BlobRequestOptions = {}): Promise<BlobResponse> {
+    const headers = new Headers();
+    headers.set('Accept', 'application/octet-stream');
+    const response = await this.send(url, {
+      method: options.method ?? 'GET',
+      headers,
+      auth: options.auth,
+    });
+    const blob = await response.blob();
+    return {
+      blob,
+      filename: resolveDownloadFilename(
+        response.headers.get('Content-Disposition'),
+        options.fallbackName,
+      ),
+    };
+  }
+
+  private async send(
+    url: string,
+    options: { method: string; headers: Headers; body?: string; auth?: boolean },
+  ): Promise<Response> {
+    assertRelativeApiV1Url(url);
+
     const sentToken = options.auth === false ? null : this.getAccessToken();
     if (sentToken) {
-      headers.set('Authorization', `Bearer ${sentToken}`);
+      options.headers.set('Authorization', `Bearer ${sentToken}`);
     }
 
     let response: Response;
     try {
       response = await this.fetchImpl(url, {
-        method: options.method ?? 'GET',
-        headers,
-        body: options.body === undefined ? undefined : JSON.stringify(options.body),
+        method: options.method,
+        headers: options.headers,
+        body: options.body,
       });
     } catch {
       throw new Error('Network request failed');
@@ -81,7 +126,7 @@ export class HttpClient {
       throw new ApiRequestError(response.status, body);
     }
 
-    return readSuccessBody<T>(response);
+    return response;
   }
 }
 
@@ -132,4 +177,56 @@ async function readSuccessBody<T>(response: Response): Promise<T> {
     return undefined as T;
   }
   return JSON.parse(text) as T;
+}
+
+function parseContentDispositionFilename(header: string | null): string | null {
+  if (!header) {
+    return null;
+  }
+  const extended = /filename\*\s*=\s*(?:UTF-8)''([^;]+)/i.exec(header);
+  if (extended?.[1]) {
+    try {
+      return decodeURIComponent(extended[1].trim());
+    } catch {
+      // Invalid percent-encoding is ignored; fall back to filename= or caller name.
+    }
+  }
+  const quoted = /filename\s*=\s*"((?:\\.|[^"\\])*)"/i.exec(header);
+  if (quoted) {
+    return quoted[1].replace(/\\(.)/g, '$1');
+  }
+  const unquoted = /filename\s*=\s*([^;]+)/i.exec(header);
+  if (!unquoted) {
+    return null;
+  }
+  return unquoted[1].trim();
+}
+
+function sanitizeDownloadFilename(raw: string | null | undefined): string | null {
+  if (raw == null) {
+    return null;
+  }
+  const segments = raw.split(/[/\\]/);
+  const last = segments[segments.length - 1] ?? '';
+  let cleaned = '';
+  for (const char of last) {
+    const code = char.charCodeAt(0);
+    if (code < 32 || code === 127) {
+      continue;
+    }
+    cleaned += char;
+  }
+  cleaned = cleaned.trim();
+  return cleaned === '' ? null : cleaned;
+}
+
+function resolveDownloadFilename(
+  contentDisposition: string | null,
+  fallbackName: string | undefined,
+): string {
+  return (
+    sanitizeDownloadFilename(parseContentDispositionFilename(contentDisposition)) ??
+    sanitizeDownloadFilename(fallbackName) ??
+    'download'
+  );
 }
