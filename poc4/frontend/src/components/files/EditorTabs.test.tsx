@@ -1,6 +1,6 @@
-import { render, screen } from '@testing-library/react';
+import { cleanup, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { EditorTabs } from './EditorTabs';
 
 const tabs = [
@@ -9,6 +9,10 @@ const tabs = [
 ];
 
 describe('EditorTabs', () => {
+  afterEach(() => {
+    cleanup();
+  });
+
   it('shows dirty state and emits relative paths', async () => {
     const user = userEvent.setup();
     const onSelect = vi.fn();
@@ -33,5 +37,24 @@ describe('EditorTabs', () => {
     expect(onSelect).toHaveBeenCalledWith('src/main/App.java');
     await user.click(screen.getByRole('button', { name: 'Close pom.xml' }));
     expect(onClose).toHaveBeenCalledWith('pom.xml');
+  });
+
+  it('reveals the close button on keyboard focus-visible', () => {
+    render(
+      <EditorTabs
+        tabs={tabs}
+        activePath="src/main/App.java"
+        onSelect={() => {}}
+        onClose={() => {}}
+        onReorder={() => {}}
+      />,
+    );
+
+    const inactiveClose = screen.getByRole('button', { name: 'Close pom.xml' });
+    expect(inactiveClose).toHaveClass('opacity-0');
+    expect(inactiveClose).toHaveClass('focus-visible:opacity-100');
+    expect(screen.getByRole('button', { name: 'Close App.java' })).toHaveClass(
+      'focus-visible:opacity-100',
+    );
   });
 });

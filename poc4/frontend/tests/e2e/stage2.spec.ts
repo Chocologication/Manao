@@ -329,22 +329,37 @@ async function assertFocusVisible(locator: Locator): Promise<void> {
   }
   expect(box.width).toBeGreaterThan(0);
   expect(box.height).toBeGreaterThan(0);
-  const inViewport = await locator.evaluate((element) => {
-    const rect = element.getBoundingClientRect();
-    const style = getComputedStyle(element);
-    if (style.visibility === 'hidden' || Number(style.opacity) === 0) {
-      return false;
-    }
-    return (
-      rect.width > 1 &&
-      rect.height > 1 &&
-      rect.bottom > 0 &&
-      rect.right > 0 &&
-      rect.top < window.innerHeight &&
-      rect.left < window.innerWidth
-    );
-  });
-  expect(inViewport).toBe(true);
+  await expect
+    .poll(async () => {
+      return locator.evaluate((element) => {
+        const rect = element.getBoundingClientRect();
+        const style = getComputedStyle(element);
+        const opacity = Number(style.opacity);
+        if (style.visibility === 'hidden' || !(opacity > 0)) {
+          return false;
+        }
+        const inViewport =
+          rect.width > 1 &&
+          rect.height > 1 &&
+          rect.bottom > 0 &&
+          rect.right > 0 &&
+          rect.top < window.innerHeight &&
+          rect.left < window.innerWidth;
+        if (!inViewport) {
+          return false;
+        }
+        const outlineWidth = Number.parseFloat(style.outlineWidth);
+        const hasOutline =
+          style.outlineStyle !== 'none' &&
+          style.outlineStyle !== '' &&
+          Number.isFinite(outlineWidth) &&
+          outlineWidth > 0;
+        const shadow = style.boxShadow.trim();
+        const hasRing = shadow !== '' && shadow !== 'none';
+        return hasOutline || hasRing;
+      });
+    })
+    .toBe(true);
 }
 
 async function tabUntilFocused(page: Page, locator: Locator, maxTabs = 50): Promise<void> {
@@ -727,7 +742,9 @@ test('completes tree, tabs, viewer and Download from the keyboard', async ({ pag
   await page.keyboard.press('Enter');
   await waitForMonacoText(page, 'Hello, POC4');
 
-  await tabUntilFocused(page, page.getByRole('button', { name: 'Close pom.xml' }));
+  const closePom = page.getByRole('button', { name: 'Close pom.xml' });
+  await tabUntilFocused(page, closePom);
+  await assertFocusVisible(closePom);
   await page.keyboard.press('Enter');
   await expect(editorTab(page, /pom\.xml/)).toHaveCount(0);
   await expect(editorTab(page, /App\.java/)).toBeVisible();

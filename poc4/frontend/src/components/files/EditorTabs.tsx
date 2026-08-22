@@ -127,7 +127,7 @@ export function EditorTabs({ tabs, activePath, onSelect, onClose, onReorder }: E
                 }}
                 className={cn(
                   'shrink-0 rounded p-0.5 text-primary opacity-0 transition-opacity hover:bg-primary/20',
-                  'group-hover:opacity-100',
+                  'group-hover:opacity-100 focus-visible:opacity-100',
                   isActive && 'opacity-60'
                 )}
               >
