@@ -2,11 +2,28 @@ import { http, HttpResponse } from 'msw';
 import type { ApiErrorBody } from '../contracts/api';
 import type { AuthUser, LoginRequest } from '../contracts/auth';
 import {
+  parseProjectDirectoryPath,
+  parseProjectRelativePath,
+} from '../features/files/pathPolicy';
+import {
+  contentDispositionHeader,
+  directoryExists,
+  getMockFile,
+  getWorkspaceRevision,
+  listDirectoryEntries,
+  resolveFileBytes,
+  resolveFileText,
+  toFileMetadataJson,
+} from './fileFixtures';
+import {
+  canReadReadyProjectFiles,
   createOwnedProject,
   expireCurrentToken,
+  isLargeFileBodiesEnabled,
   listOwnedProjectSummaries,
   loginWithCredentials,
   readOwnedProjectSummary,
+  recordFileRequest,
   resolveUserByAccessToken,
 } from './state';
 
@@ -38,6 +55,30 @@ const VALIDATION_ERROR: ApiErrorBody = {
   code: 'VALIDATION_ERROR',
   message: 'Invalid project name',
   traceId: 'mock-trace-validation',
+};
+
+const INVALID_PATH: ApiErrorBody = {
+  code: 'INVALID_PATH',
+  message: 'Invalid path',
+  traceId: 'mock-trace-invalid-path',
+};
+
+const FILE_TOO_LARGE: ApiErrorBody = {
+  code: 'FILE_TOO_LARGE',
+  message: 'File too large',
+  traceId: 'mock-trace-file-too-large',
+};
+
+const BINARY_FILE: ApiErrorBody = {
+  code: 'BINARY_FILE',
+  message: 'Binary file',
+  traceId: 'mock-trace-binary-file',
+};
+
+const FILE_VALIDATION_ERROR: ApiErrorBody = {
+  code: 'VALIDATION_ERROR',
+  message: 'Request validation failed',
+  traceId: 'mock-trace-file-validation',
 };
 
 function jsonError(status: number, body: ApiErrorBody) {
@@ -77,6 +118,64 @@ async function readJsonBody(request: Request): Promise<unknown> {
   } catch {
     return null;
   }
+}
+
+function readProjectId(params: { projectId?: string | readonly string[] }): string | null {
+  const projectId = params.projectId;
+  const id = Array.isArray(projectId) ? projectId[0] : projectId;
+  if (typeof id !== 'string' || id.length === 0) {
+    return null;
+  }
+  return id;
+}
+
+function readQueryPath(request: Request): string | null {
+  return new URL(request.url).searchParams.get('path');
+}
+
+function authorizeReadyFiles(
+  request: Request,
+  params: { projectId?: string | readonly string[] },
+): { projectId: string } | { response: ReturnType<typeof jsonError> } {
+  const auth = authorize(request);
+  if ('response' in auth) {
+    return auth;
+  }
+  const projectId = readProjectId(params);
+  if (projectId === null || !canReadReadyProjectFiles(auth.user.id, projectId)) {
+    return { response: jsonError(403, FORBIDDEN) };
+  }
+  return { projectId };
+}
+
+function parseDirectoryQuery(rawPath: string | null): string | null {
+  if (rawPath === null) {
+    return null;
+  }
+  try {
+    return parseProjectDirectoryPath(rawPath);
+  } catch {
+    return null;
+  }
+}
+
+function parseFileQuery(rawPath: string | null): string | null {
+  if (rawPath === null) {
+    return null;
+  }
+  try {
+    return parseProjectRelativePath(rawPath);
+  } catch {
+    return null;
+  }
+}
+
+function lookupFile(projectId: string, rawPath: string | null) {
+  const path = parseFileQuery(rawPath);
+  if (path === null || directoryExists(projectId, path)) {
+    return null;
+  }
+  return getMockFile(projectId, path);
 }
 
 export const handlers = [
@@ -150,5 +249,85 @@ export const handlers = [
       return jsonError(403, FORBIDDEN);
     }
     return HttpResponse.json(project);
+  }),
+
+  http.get('/api/v1/projects/:projectId/files/tree', ({ request, params }) => {
+    const access = authorizeReadyFiles(request, params);
+    if ('response' in access) {
+      return access.response;
+    }
+    const rawPath = readQueryPath(request);
+    recordFileRequest('tree', access.projectId, rawPath ?? '');
+    const directory = parseDirectoryQuery(rawPath);
+    if (directory === null) {
+      return jsonError(400, INVALID_PATH);
+    }
+    const entries = listDirectoryEntries(access.projectId, directory);
+    if (entries === null) {
+      return jsonError(400, INVALID_PATH);
+    }
+    return HttpResponse.json({ directory, entries });
+  }),
+
+  http.get('/api/v1/projects/:projectId/files/meta', ({ request, params }) => {
+    const access = authorizeReadyFiles(request, params);
+    if ('response' in access) {
+      return access.response;
+    }
+    const rawPath = readQueryPath(request);
+    recordFileRequest('meta', access.projectId, rawPath ?? '');
+    const file = lookupFile(access.projectId, rawPath);
+    if (file === null) {
+      return jsonError(400, INVALID_PATH);
+    }
+    return HttpResponse.json(toFileMetadataJson(file));
+  }),
+
+  http.get('/api/v1/projects/:projectId/files/content', ({ request, params }) => {
+    const access = authorizeReadyFiles(request, params);
+    if ('response' in access) {
+      return access.response;
+    }
+    const rawPath = readQueryPath(request);
+    recordFileRequest('content', access.projectId, rawPath ?? '');
+    const file = lookupFile(access.projectId, rawPath);
+    if (file === null) {
+      return jsonError(400, INVALID_PATH);
+    }
+    if (file.renderMode === 'BLOCKED') {
+      if (file.blockReason === 'BINARY_FILE') {
+        return jsonError(415, BINARY_FILE);
+      }
+      if (file.blockReason === 'FILE_TOO_LARGE') {
+        return jsonError(413, FILE_TOO_LARGE);
+      }
+      return jsonError(400, FILE_VALIDATION_ERROR);
+    }
+    return HttpResponse.json({
+      path: file.path,
+      content: resolveFileText(file, isLargeFileBodiesEnabled()),
+      workspaceRevision: getWorkspaceRevision(access.projectId),
+    });
+  }),
+
+  http.get('/api/v1/projects/:projectId/files/download', ({ request, params }) => {
+    const access = authorizeReadyFiles(request, params);
+    if ('response' in access) {
+      return access.response;
+    }
+    const rawPath = readQueryPath(request);
+    recordFileRequest('download', access.projectId, rawPath ?? '');
+    const file = lookupFile(access.projectId, rawPath);
+    if (file === null) {
+      return jsonError(400, INVALID_PATH);
+    }
+    const bytes = resolveFileBytes(file, isLargeFileBodiesEnabled());
+    return new HttpResponse(bytes, {
+      status: 200,
+      headers: {
+        'Content-Type': 'application/octet-stream',
+        'Content-Disposition': contentDispositionHeader(file.name),
+      },
+    });
   }),
 ];

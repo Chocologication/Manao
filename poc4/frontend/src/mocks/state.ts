@@ -1,5 +1,6 @@
 import type { AuthUser, LoginResponse } from '../contracts/auth';
 import type { ProjectState, ProjectSummary } from '../contracts/project';
+import { clearLargeFileBodyCache } from './fileFixtures';
 
 const ACCESS_TOKEN_TTL_MS = 15 * 60 * 1000;
 const PROJECT_LIMIT = 3;
@@ -38,6 +39,8 @@ let projects: MockProject[] = [];
 let tokens = new Map<string, IssuedToken>();
 let nextProjectSeq = 0;
 let nextTokenSeq = 0;
+let fileRequestCounts = new Map<string, number>();
+let largeFileBodiesEnabled = false;
 
 function toSummary(project: MockProject): ProjectSummary {
   return {
@@ -72,11 +75,43 @@ function seedProjects(): MockProject[] {
   ];
 }
 
+function fileRequestKey(method: string, projectId: string, path: string): string {
+  return `${method}\0${projectId}\0${path}`;
+}
+
+export function recordFileRequest(method: string, projectId: string, path: string): void {
+  const key = fileRequestKey(method, projectId, path);
+  fileRequestCounts.set(key, (fileRequestCounts.get(key) ?? 0) + 1);
+}
+
+export function getFileRequestCount(method: string, projectId: string, path: string): number {
+  return fileRequestCounts.get(fileRequestKey(method, projectId, path)) ?? 0;
+}
+
+export function setLargeFileBodiesEnabled(enabled: boolean): void {
+  largeFileBodiesEnabled = enabled;
+  if (!enabled) {
+    clearLargeFileBodyCache();
+  }
+}
+
+export function isLargeFileBodiesEnabled(): boolean {
+  return largeFileBodiesEnabled;
+}
+
+export function canReadReadyProjectFiles(userId: string, projectId: string): boolean {
+  const project = projects.find((candidate) => candidate.id === projectId);
+  return project !== undefined && project.ownerId === userId && project.state === 'READY';
+}
+
 export function resetMockState(): void {
   tokens = new Map();
   nextProjectSeq = 0;
   nextTokenSeq = 0;
   projects = seedProjects();
+  fileRequestCounts = new Map();
+  largeFileBodiesEnabled = false;
+  clearLargeFileBodyCache();
 }
 
 resetMockState();
