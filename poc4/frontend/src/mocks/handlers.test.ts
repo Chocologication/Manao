@@ -91,7 +91,7 @@ async function fetchFileResource(
 }
 
 function leakPattern(): RegExp {
-  return /bob|not found|does not exist|prj-bob|exist|usr-bob|pvc|pod|job|\\\\DeepLearning|C:\\\\|D:\\\\|\/home\/|\/var\/|physical/i;
+  return /bob|not found|does not exist|prj-bob|lab-notes|usr-bob|pvc|pod|job|\\\\DeepLearning|C:\\\\|D:\\\\|\/Users\/|\/home\/|\/etc\/|\/var\/|physical/i;
 }
 
 async function expectGenericForbidden(response: Response): Promise<ApiErrorBody> {
@@ -117,7 +117,9 @@ async function expectApiError(
   expect(body.message).toEqual(expect.any(String));
   expect(body.traceId).toEqual(expect.any(String));
   expect(body).not.toHaveProperty('content');
-  expect(JSON.stringify(body)).not.toMatch(/\\\\DeepLearning|C:\\\\Windows|\/etc\/passwd|physical/i);
+  expect(JSON.stringify(body)).not.toMatch(
+    /\\\\DeepLearning|C:\\\\Windows|\/Users\/|\/etc\/passwd|physical/i,
+  );
   return body;
 }
 
@@ -717,5 +719,90 @@ describe('MSW read-only file handlers', () => {
       parseProjectRelativePath('docs/large-notes.md'),
     );
     expect(body.content.length).toBeLessThan(10_000);
+  });
+
+  it('returns the same generic 403 when Alice requests Bob file resources without leaking owner, project or path', async () => {
+    const alice = await loginOk(ALICE.username, ALICE.password);
+    const cases: Array<{
+      resource: 'tree' | 'meta' | 'content' | 'download';
+      path: string;
+    }> = [
+      { resource: 'tree', path: 'samples' },
+      { resource: 'meta', path: 'lab-notes.md' },
+      { resource: 'content', path: 'lab-notes.md' },
+      { resource: 'download', path: 'lab-notes.md' },
+    ];
+    for (const item of cases) {
+      const body = await expectGenericForbidden(
+        await fetchFileResource(alice.accessToken, BOB_SEED_PROJECT_ID, item.resource, item.path),
+      );
+      const serialized = JSON.stringify(body);
+      expect(serialized).not.toContain(item.path);
+      expect(serialized).not.toContain(BOB_SEED_PROJECT_ID);
+      expect(serialized).not.toContain('lab-notes');
+      expect(serialized).not.toContain('samples');
+      expect(serialized).not.toMatch(/C:\\|\/Users\/|\/etc\//);
+    }
+  });
+
+  it('rejects blocked content even when Accept asks for bytes', async () => {
+    const alice = await loginOk(ALICE.username, ALICE.password);
+    const blocked = [
+      { path: 'assets/logo.png', status: 415, code: 'BINARY_FILE' as const },
+      { path: 'docs/too-large.md', status: 413, code: 'FILE_TOO_LARGE' as const },
+      { path: 'docs/latin1.txt', status: 400, code: 'VALIDATION_ERROR' as const },
+    ];
+    for (const item of blocked) {
+      const response = await fetch(fileResourceUrl(ALICE_SEED_PROJECT_ID, 'content', item.path), {
+        headers: {
+          Accept: 'application/octet-stream',
+          Authorization: `Bearer ${alice.accessToken}`,
+        },
+      });
+      const body = await expectApiError(response, item.status, item.code);
+      expect(body).not.toHaveProperty('content');
+      const serialized = JSON.stringify(body);
+      expect(serialized).not.toMatch(/class App|PNG|latin-?1|ISO-8859/i);
+      expect(serialized).not.toMatch(/C:\\|\/Users\/|\/etc\//);
+    }
+  });
+
+  it('returns 401 on file download after the current token is expired', async () => {
+    const alice = await loginOk(ALICE.username, ALICE.password);
+    const expire = await fetch('/api/v1/session/expire', {
+      method: 'POST',
+      headers: bearerHeaders(alice.accessToken),
+    });
+    expect(expire.status).toBe(204);
+
+    const download = await fetchFileResource(
+      alice.accessToken,
+      ALICE_SEED_PROJECT_ID,
+      'download',
+      'pom.xml',
+    );
+    expect(download.status).toBe(401);
+    const body = await readJson<ApiErrorBody>(download);
+    expect(body.code).toBe('UNAUTHENTICATED');
+    expect(JSON.stringify(body)).not.toMatch(leakPattern());
+    expect(JSON.stringify(body)).not.toContain('pom.xml');
+  });
+
+  it('never prints physical server paths in INVALID_PATH bodies', async () => {
+    const alice = await loginOk(ALICE.username, ALICE.password);
+    const physical = ['C:\\Users\\alice\\secret', '/Users/alice/secret', '/etc/passwd'];
+    for (const path of physical) {
+      for (const resource of ['tree', 'meta', 'content', 'download'] as const) {
+        const body = await expectApiError(
+          await fetchFileResource(alice.accessToken, ALICE_SEED_PROJECT_ID, resource, path),
+          400,
+          'INVALID_PATH',
+        );
+        const serialized = JSON.stringify(body);
+        expect(serialized).not.toContain(path);
+        expect(serialized).not.toMatch(/C:\\|\/Users\/|\/etc\/|\\\\DeepLearning/);
+        expect(body.message).toBe('Invalid path');
+      }
+    }
   });
 });

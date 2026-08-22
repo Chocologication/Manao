@@ -404,6 +404,98 @@ describe('ReadonlyEditorWorkspace scoped loading and errors', () => {
     expect(getFileRequestCount('meta', ALICE_SEED_PROJECT_ID, 'pom.xml')).toBe(1);
     expect(getFileRequestCount('content', ALICE_SEED_PROJECT_ID, 'pom.xml')).toBe(2);
     expect(screen.getAllByRole('tab', { name: /pom.xml/ })).toHaveLength(1);
+    const pomUri = toProjectModelUri(ALICE_SEED_PROJECT_ID, POM);
+    await waitFor(() => {
+      expect(monaco.editor.getModel(pomUri)).not.toBeNull();
+    });
+    expect(
+      monaco.editor.getModels().filter((model) => model.uri.toString() === pomUri.toString()),
+    ).toHaveLength(1);
+    expect(workspaceSessionStore.getState().openPaths).toEqual([POM]);
+  });
+});
+
+const OWNER_OR_PHYSICAL_LEAK = /bob|prj-bob|usr-bob|C:\\|D:\\|\/Users\/|\/etc\/|\/home\/|\/var\//;
+
+describe('ReadonlyEditorWorkspace authorization and path errors', () => {
+  it('shows generic access denied when Alice opens Bob file without leaking owner, project or path', async () => {
+    await authenticateAsAlice();
+    renderWorkspace(BOB_SEED_PROJECT_ID);
+    openFile(parseProjectRelativePath('lab-notes.md'));
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent(/access denied/i);
+    expect(alert).not.toHaveTextContent(OWNER_OR_PHYSICAL_LEAK);
+    expect(alert).not.toHaveTextContent(/lab-notes/i);
+    expect(document.body.textContent ?? '').not.toMatch(/prj-bob|usr-bob/i);
+    expect(document.body.textContent ?? '').not.toMatch(/C:\\|\/Users\/|\/etc\//);
+    expect(getFileRequestCount('content', BOB_SEED_PROJECT_ID, 'lab-notes.md')).toBe(0);
+  });
+
+  it('does not print physical server paths when metadata is INVALID_PATH', async () => {
+    server.use(
+      http.get('/api/v1/projects/:projectId/files/meta', ({ request }) => {
+        if (new URL(request.url).searchParams.get('path') !== 'pom.xml') {
+          return undefined;
+        }
+        recordFileRequest('meta', ALICE_SEED_PROJECT_ID, 'pom.xml');
+        return HttpResponse.json(
+          {
+            code: 'INVALID_PATH',
+            message: 'Rejected C:\\Users\\alice\\repo\\pom.xml and /etc/passwd',
+            traceId: 'trace-invalid-path',
+          },
+          { status: 400 },
+        );
+      }),
+    );
+    await authenticateAsAlice();
+    renderWorkspace();
+    openFile(POM);
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent(/unable to load file metadata/i);
+    expect(alert).not.toHaveTextContent(/C:\\|\/Users\/|\/etc\//);
+    expect(document.body.textContent ?? '').not.toMatch(/C:\\|\/Users\/|\/etc\//);
+    expect(getFileRequestCount('content', ALICE_SEED_PROJECT_ID, 'pom.xml')).toBe(0);
+  });
+});
+
+describe('ReadonlyEditorWorkspace retry isolation', () => {
+  it('retries metadata without fetching content until metadata succeeds and without duplicating the tab', async () => {
+    const user = userEvent.setup();
+    let failMeta = true;
+    server.use(
+      http.get('/api/v1/projects/:projectId/files/meta', ({ request }) => {
+        if (new URL(request.url).searchParams.get('path') !== 'pom.xml') {
+          return undefined;
+        }
+        if (failMeta) {
+          failMeta = false;
+          recordFileRequest('meta', ALICE_SEED_PROJECT_ID, 'pom.xml');
+          return HttpResponse.json(
+            { code: 'INTERNAL_ERROR', message: 'Mock meta failure', traceId: 'trace-meta-retry' },
+            { status: 500 },
+          );
+        }
+        return undefined;
+      }),
+    );
+    await authenticateAsAlice();
+    renderWorkspace();
+    openFile(POM);
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(/unable to load file metadata/i);
+    expect(screen.getAllByRole('tab', { name: /pom.xml/ })).toHaveLength(1);
+    expect(getFileRequestCount('content', ALICE_SEED_PROJECT_ID, 'pom.xml')).toBe(0);
+    expect(getFileRequestCount('meta', ALICE_SEED_PROJECT_ID, 'src/main/java/demo/App.java')).toBe(0);
+
+    await user.click(screen.getByRole('button', { name: 'Retry' }));
+    expect(await screen.findByTestId('mock-editor')).toBeInTheDocument();
+    expect(getFileRequestCount('meta', ALICE_SEED_PROJECT_ID, 'pom.xml')).toBe(2);
+    expect(getFileRequestCount('content', ALICE_SEED_PROJECT_ID, 'pom.xml')).toBe(1);
+    expect(getFileRequestCount('content', ALICE_SEED_PROJECT_ID, 'src/main/java/demo/App.java')).toBe(0);
+    expect(screen.getAllByRole('tab', { name: /pom.xml/ })).toHaveLength(1);
   });
 });
 

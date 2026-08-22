@@ -1,4 +1,5 @@
 import { useQuery, type QueryClient } from '@tanstack/react-query';
+import { ApiRequestError } from '../../api/ApiRequestError';
 import { getFileContent, getFileMetadata, listDirectory } from '../../api/fileApi';
 import type {
   FileRenderMode,
@@ -98,4 +99,17 @@ export async function refreshProjectFiles(
   const queryKey = fileKeys.all(projectId);
   await queryClient.cancelQueries({ queryKey });
   await queryClient.invalidateQueries({ queryKey });
+}
+
+export function fileQueryErrorMessage(error: unknown, fallback: string): string {
+  if (error instanceof Error && /network request failed/i.test(error.message)) {
+    return 'Network request failed';
+  }
+  if (
+    error instanceof ApiRequestError &&
+    (error.status === 403 || error.body?.code === 'FORBIDDEN')
+  ) {
+    return 'Access denied';
+  }
+  return fallback;
 }

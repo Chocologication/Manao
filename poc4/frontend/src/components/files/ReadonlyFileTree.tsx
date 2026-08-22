@@ -7,16 +7,13 @@ import { Spinner } from '@/components/ui/spinner';
 import type { ProjectDirectoryPath, ProjectRelativePath } from '@/contracts/file';
 import { useWorkspaceSession } from '@/features/editor/workspaceSession';
 import {
+  fileQueryErrorMessage,
   refreshProjectFiles,
   sortFileTreeEntries,
   useDirectoryTreeQuery,
 } from '@/features/files/fileQueries';
 import { parseProjectDirectoryPath, parseProjectRelativePath } from '@/features/files/pathPolicy';
 import { FileTreeNode } from './FileTreeNode';
-
-function isNetworkError(error: unknown): boolean {
-  return error instanceof Error && /network request failed/i.test(error.message);
-}
 
 function parentDirectory(path: ProjectRelativePath): ProjectDirectoryPath {
   const slash = path.lastIndexOf('/');
@@ -236,7 +233,7 @@ export function ReadonlyFileTree({ projectId }: { projectId: string }) {
         {rootQuery.isError ? (
           <div className="flex flex-col items-start gap-2 p-3">
             <InlineAlert>
-              {isNetworkError(rootQuery.error) ? 'Network request failed' : 'Unable to load files'}
+              {fileQueryErrorMessage(rootQuery.error, 'Unable to load files')}
             </InlineAlert>
             <Button type="button" variant="outline" onClick={() => void rootQuery.refetch()}>
               Retry

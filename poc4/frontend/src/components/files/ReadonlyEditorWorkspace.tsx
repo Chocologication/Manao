@@ -6,7 +6,11 @@ import { Spinner } from '@/components/ui/spinner';
 import type { ProjectRelativePath } from '@/contracts/file';
 import type { EditorTab } from '@/features/editor/editorTypes';
 import { useWorkspaceSession } from '@/features/editor/workspaceSession';
-import { useFileContentQuery, useFileMetadataQuery } from '@/features/files/fileQueries';
+import {
+  fileQueryErrorMessage,
+  useFileContentQuery,
+  useFileMetadataQuery,
+} from '@/features/files/fileQueries';
 import { parseProjectRelativePath } from '@/features/files/pathPolicy';
 import { languageForFile } from '@/lib/languageForFile';
 import {
@@ -22,10 +26,6 @@ import { ReadonlyMonacoEditor } from './ReadonlyMonacoEditor';
 function fileName(path: string): string {
   const index = path.lastIndexOf('/');
   return index === -1 ? path : path.slice(index + 1);
-}
-
-function isNetworkError(error: unknown): boolean {
-  return error instanceof Error && /network request failed/i.test(error.message);
 }
 
 function FileStatus({ label }: { label: string }) {
@@ -75,9 +75,7 @@ function ActiveFileSurface({
   if (meta.isError) {
     return (
       <FileRequestError
-        message={
-          isNetworkError(meta.error) ? 'Network request failed' : 'Unable to load file metadata'
-        }
+        message={fileQueryErrorMessage(meta.error, 'Unable to load file metadata')}
         onRetry={() => {
           void meta.refetch();
         }}
@@ -98,9 +96,7 @@ function ActiveFileSurface({
   if (content.isError) {
     return (
       <FileRequestError
-        message={
-          isNetworkError(content.error) ? 'Network request failed' : 'Unable to load file content'
-        }
+        message={fileQueryErrorMessage(content.error, 'Unable to load file content')}
         onRetry={() => {
           void content.refetch();
         }}

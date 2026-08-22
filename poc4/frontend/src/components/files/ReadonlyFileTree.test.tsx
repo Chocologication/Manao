@@ -10,7 +10,12 @@ import { workspaceSessionStore } from '../../features/editor/workspaceSession';
 import { fileKeys } from '../../features/files/fileQueries';
 import { parseProjectDirectoryPath, parseProjectRelativePath } from '../../features/files/pathPolicy';
 import { server } from '../../mocks/node';
-import { ALICE_SEED_PROJECT_ID, getFileRequestCount, recordFileRequest } from '../../mocks/state';
+import {
+  ALICE_SEED_PROJECT_ID,
+  BOB_SEED_PROJECT_ID,
+  getFileRequestCount,
+  recordFileRequest,
+} from '../../mocks/state';
 import { resetAppRuntime } from '../../test/renderApp';
 import { ReadonlyFileTree } from './ReadonlyFileTree';
 
@@ -339,6 +344,145 @@ describe('ReadonlyFileTree selection and commands', () => {
     expect(
       queryClient.getQueryData(fileKeys.tree(ALICE_SEED_PROJECT_ID, parseProjectDirectoryPath('src'))),
     ).toBeDefined();
+  });
+});
+
+const OWNER_OR_PHYSICAL_LEAK = /bob|prj-bob|usr-bob|lab-notes|C:\\|D:\\|\/Users\/|\/etc\/|\/home\/|\/var\//;
+
+describe('ReadonlyFileTree authorization and invalid payloads', () => {
+  it('shows generic access denied for another owner tree without a partial tree or path leak', async () => {
+    await authenticateAsAlice();
+    renderTree(BOB_SEED_PROJECT_ID);
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent(/access denied/i);
+    expect(alert).not.toHaveTextContent(OWNER_OR_PHYSICAL_LEAK);
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument();
+    expect(screen.queryByRole('tree')).not.toBeInTheDocument();
+    expect(screen.queryByRole('treeitem')).not.toBeInTheDocument();
+    expect(screen.queryByText(/no files/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/^empty$/i)).not.toBeInTheDocument();
+    expect(document.body.textContent ?? '').not.toMatch(OWNER_OR_PHYSICAL_LEAK);
+  });
+
+  it('stops the affected directory and offers retry when the tree payload is invalid, without a partial tree', async () => {
+    const user = userEvent.setup();
+    let invalidSrc = true;
+    server.use(
+      http.get('/api/v1/projects/:projectId/files/tree', ({ request }) => {
+        if (new URL(request.url).searchParams.get('path') !== 'src') {
+          return undefined;
+        }
+        recordFileRequest('tree', ALICE_SEED_PROJECT_ID, 'src');
+        if (invalidSrc) {
+          return HttpResponse.json({
+            directory: 'src',
+            entries: [
+              {
+                path: 'src/main',
+                name: 'main',
+                kind: 'directory',
+                hidden: false,
+                sizeBytes: null,
+                hasChildren: true,
+              },
+              {
+                path: 'C:\\Users\\alice\\secret',
+                name: 'secret',
+                kind: 'file',
+                hidden: false,
+                sizeBytes: 1,
+                hasChildren: null,
+              },
+            ],
+          });
+        }
+        return HttpResponse.json({
+          directory: 'src',
+          entries: [
+            {
+              path: 'src/main',
+              name: 'main',
+              kind: 'directory',
+              hidden: false,
+              sizeBytes: null,
+              hasChildren: true,
+            },
+          ],
+        });
+      }),
+    );
+    await authenticateAsAlice();
+    renderTree();
+    await loadedRoot();
+
+    await user.click(screen.getByRole('treeitem', { name: 'src' }));
+    const src = await screen.findByRole('treeitem', { name: 'src' });
+    const srcGroup = groupAfter(src);
+    expect(within(srcGroup).getByRole('alert')).toHaveTextContent(/unable to load directory/i);
+    expect(within(srcGroup).getByRole('button', { name: 'Retry' })).toBeInTheDocument();
+    expect(screen.queryByRole('treeitem', { name: 'main' })).not.toBeInTheDocument();
+    expect(screen.getByRole('treeitem', { name: 'docs' })).toBeInTheDocument();
+    expect(screen.getByRole('treeitem', { name: 'pom.xml' })).toBeInTheDocument();
+    expect(document.body.textContent ?? '').not.toMatch(/C:\\|\/Users\/|\/etc\//);
+
+    invalidSrc = false;
+    await user.click(within(srcGroup).getByRole('button', { name: 'Retry' }));
+    expect(await screen.findByRole('treeitem', { name: 'main' })).toBeInTheDocument();
+    expect(getFileRequestCount('tree', ALICE_SEED_PROJECT_ID, 'src')).toBe(2);
+  });
+});
+
+describe('ReadonlyFileTree retry isolation', () => {
+  it('does not refetch a successful sibling directory when retrying a failed one', async () => {
+    const user = userEvent.setup();
+    let failSrc = true;
+    server.use(
+      http.get('/api/v1/projects/:projectId/files/tree', ({ request }) => {
+        if (new URL(request.url).searchParams.get('path') !== 'src') {
+          return undefined;
+        }
+        recordFileRequest('tree', ALICE_SEED_PROJECT_ID, 'src');
+        if (failSrc) {
+          return HttpResponse.json(TREE_FAILURE, { status: 500 });
+        }
+        return HttpResponse.json({
+          directory: 'src',
+          entries: [
+            {
+              path: 'src/main',
+              name: 'main',
+              kind: 'directory',
+              hidden: false,
+              sizeBytes: null,
+              hasChildren: true,
+            },
+          ],
+        });
+      }),
+    );
+    await authenticateAsAlice();
+    renderTree();
+    await loadedRoot();
+
+    await user.click(screen.getByRole('treeitem', { name: 'docs' }));
+    expect(await screen.findByRole('treeitem', { name: 'large-notes.md' })).toBeInTheDocument();
+    const docsCount = getFileRequestCount('tree', ALICE_SEED_PROJECT_ID, 'docs');
+    expect(docsCount).toBe(1);
+    expect(getFileRequestCount('tree', ALICE_SEED_PROJECT_ID, 'assets')).toBe(0);
+
+    await user.click(screen.getByRole('treeitem', { name: 'src' }));
+    const src = await screen.findByRole('treeitem', { name: 'src' });
+    const srcGroup = groupAfter(src);
+    expect(within(srcGroup).getByRole('alert')).toHaveTextContent(/unable to load directory/i);
+
+    failSrc = false;
+    await user.click(within(srcGroup).getByRole('button', { name: 'Retry' }));
+    expect(await screen.findByRole('treeitem', { name: 'main' })).toBeInTheDocument();
+    expect(getFileRequestCount('tree', ALICE_SEED_PROJECT_ID, 'src')).toBe(2);
+    expect(getFileRequestCount('tree', ALICE_SEED_PROJECT_ID, 'docs')).toBe(docsCount);
+    expect(getFileRequestCount('tree', ALICE_SEED_PROJECT_ID, 'assets')).toBe(0);
+    expect(screen.getByRole('treeitem', { name: 'large-notes.md' })).toBeInTheDocument();
   });
 });
 

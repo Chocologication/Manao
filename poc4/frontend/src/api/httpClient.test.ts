@@ -392,6 +392,52 @@ describe('HttpClient', () => {
     expect(onUnauthorized).toHaveBeenCalledTimes(1);
   });
 
+  it('requestBlob does not invoke onUnauthorized for 401 when auth is false', async () => {
+    const body = {
+      code: 'UNAUTHENTICATED' as const,
+      message: 'Invalid username or password',
+      traceId: 'trace-blob-login-401',
+    };
+    const fetchImpl = vi.fn<typeof fetch>(async () => jsonResponse(body, 401));
+    const onUnauthorized = vi.fn();
+    const client = createClient(fetchImpl, { onUnauthorized });
+
+    const error = await expectRejection(
+      client.requestBlob('/api/v1/projects/prj/files/download?path=a', {
+        fallbackName: 'a.bin',
+        auth: false,
+      }),
+    );
+
+    expect(error).toBeInstanceOf(ApiRequestError);
+    expect(error).toMatchObject({ status: 401, body });
+    expect(onUnauthorized).not.toHaveBeenCalled();
+    expect(authorizationHeader(fetchImpl.mock.calls[0]?.[1])).toBeNull();
+  });
+
+  it('requestBlob does not invoke onUnauthorized for 401 when no Authorization header is sent', async () => {
+    const body = {
+      code: 'UNAUTHENTICATED' as const,
+      message: 'Authentication required',
+      traceId: 'trace-blob-anon-401',
+    };
+    const fetchImpl = vi.fn<typeof fetch>(async () => jsonResponse(body, 401));
+    const onUnauthorized = vi.fn();
+    const client = createClient(fetchImpl, {
+      getAccessToken: () => null,
+      onUnauthorized,
+    });
+
+    const error = await expectRejection(
+      client.requestBlob('/api/v1/projects/prj/files/download?path=a', { fallbackName: 'a.bin' }),
+    );
+
+    expect(error).toBeInstanceOf(ApiRequestError);
+    expect(error).toMatchObject({ status: 401, body });
+    expect(onUnauthorized).not.toHaveBeenCalled();
+    expect(authorizationHeader(fetchImpl.mock.calls[0]?.[1])).toBeNull();
+  });
+
   it('requestBlob does not invoke onUnauthorized when a delayed 401 belongs to a previous token', async () => {
     const body = {
       code: 'UNAUTHENTICATED' as const,

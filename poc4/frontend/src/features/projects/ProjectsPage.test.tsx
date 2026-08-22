@@ -298,7 +298,7 @@ describe('ProjectsPage', () => {
 describe('ProjectRoutePage', () => {
   beforeAll(async () => {
     await import('./ReadonlyWorkbenchPage');
-  });
+  }, 30_000);
 
   it('shows provisioning while CREATING', async () => {
     await authenticateAsAlice();

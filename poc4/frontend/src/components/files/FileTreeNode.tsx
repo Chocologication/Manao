@@ -4,13 +4,13 @@ import { Button } from '@/components/ui/button';
 import { Spinner } from '@/components/ui/spinner';
 import type { FileTreeEntry, ProjectRelativePath } from '@/contracts/file';
 import { useWorkspaceSession } from '@/features/editor/workspaceSession';
-import { sortFileTreeEntries, useDirectoryTreeQuery } from '@/features/files/fileQueries';
+import {
+  fileQueryErrorMessage,
+  sortFileTreeEntries,
+  useDirectoryTreeQuery,
+} from '@/features/files/fileQueries';
 import { cn } from '@/lib/utils';
 import { getFileIcon, getFileIconColor } from './fileIcons';
-
-function isNetworkError(error: unknown): boolean {
-  return error instanceof Error && /network request failed/i.test(error.message);
-}
 
 function rowClassName(isSelected: boolean): string {
   return cn(
@@ -124,7 +124,7 @@ function DirectoryTreeNode({
               style={{ paddingLeft: `${(depth + 1) * 12 + 8}px` }}
             >
               <InlineAlert>
-                {isNetworkError(query.error) ? 'Network request failed' : 'Unable to load directory'}
+                {fileQueryErrorMessage(query.error, 'Unable to load directory')}
               </InlineAlert>
               <Button
                 type="button"
