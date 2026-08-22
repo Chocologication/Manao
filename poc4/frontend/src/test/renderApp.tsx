@@ -1,4 +1,5 @@
 import { render, type RenderResult } from '@testing-library/react';
+import { StrictMode } from 'react';
 import {
   MemoryRouter,
   Navigate,
@@ -49,19 +50,21 @@ function LocationEcho() {
 
 export function renderApp(options: { initialEntries?: string[] } = {}): RenderResult {
   return render(
-    <AppProviders>
-      <MemoryRouter initialEntries={options.initialEntries ?? ['/projects']}>
-        <LocationEcho />
-        <Routes>
-          <Route path="/" element={<Navigate to="/projects" replace />} />
-          <Route path="/login" element={<LoginPage />} />
-          <Route element={<RequireAuth />}>
-            <Route path="/projects" element={<ProjectsPage />} />
-            <Route path="/projects/:projectId" element={<ProjectRoutePage />} />
-          </Route>
-          <Route path="*" element={<NotFoundPage />} />
-        </Routes>
-      </MemoryRouter>
-    </AppProviders>,
+    <StrictMode>
+      <AppProviders>
+        <MemoryRouter initialEntries={options.initialEntries ?? ['/projects']}>
+          <LocationEcho />
+          <Routes>
+            <Route path="/" element={<Navigate to="/projects" replace />} />
+            <Route path="/login" element={<LoginPage />} />
+            <Route element={<RequireAuth />}>
+              <Route path="/projects" element={<ProjectsPage />} />
+              <Route path="/projects/:projectId" element={<ProjectRoutePage />} />
+            </Route>
+            <Route path="*" element={<NotFoundPage />} />
+          </Routes>
+        </MemoryRouter>
+      </AppProviders>
+    </StrictMode>,
   );
 }

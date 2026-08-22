@@ -1,7 +1,7 @@
 import { cleanup, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { login } from '../../api/authApi';
 import { createProject, getProject } from '../../api/projectApi';
 import { authSession, queryClient } from '../../app/appRuntime';
@@ -11,6 +11,7 @@ import {
   ALICE_SEED_PROJECT_ID,
   BOB_SEED_PROJECT_ID,
   MOCK_FAILURE_REASON,
+  getFileRequestCount,
 } from '../../mocks/state';
 import { renderApp, resetAppRuntime } from '../../test/renderApp';
 import {
@@ -25,6 +26,25 @@ const ACCESS_DENIED_LEAK = /not found|does not exist|bob|prj-bob|exist/i;
 async function authenticateAsAlice(): Promise<void> {
   const response = await login(ALICE);
   authSession.authenticate(response);
+}
+
+function expectNoFileApi(projectId: string): void {
+  expect(getFileRequestCount('tree', projectId, '')).toBe(0);
+  expect(getFileRequestCount('tree', projectId, 'src')).toBe(0);
+  expect(getFileRequestCount('meta', projectId, 'pom.xml')).toBe(0);
+  expect(getFileRequestCount('content', projectId, 'pom.xml')).toBe(0);
+}
+
+function expectNoWorkbench(): void {
+  expect(screen.queryByRole('tree')).not.toBeInTheDocument();
+  expect(screen.queryByRole('tab', { name: 'File' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('tab', { name: 'Run' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('tab', { name: 'Terminal' })).not.toBeInTheDocument();
+  expect(screen.queryByLabelText('Editor')).not.toBeInTheDocument();
+}
+
+async function waitForWorkbench(): Promise<void> {
+  expect(await screen.findByRole('tree', { name: 'Files' }, { timeout: 10_000 })).toBeInTheDocument();
 }
 
 function readyProject(overrides: Partial<ProjectSummary>): ProjectSummary {
@@ -276,6 +296,10 @@ describe('ProjectsPage', () => {
 });
 
 describe('ProjectRoutePage', () => {
+  beforeAll(async () => {
+    await import('./ReadonlyWorkbenchPage');
+  });
+
   it('shows provisioning while CREATING', async () => {
     await authenticateAsAlice();
     const created = await createProject({ name: 'Pending shell' });
@@ -292,6 +316,8 @@ describe('ProjectRoutePage', () => {
 
     expect(await screen.findByText(/provisioning/i)).toBeInTheDocument();
     expect(screen.getByTestId('spinner')).toBeInTheDocument();
+    expectNoFileApi(created.id);
+    expectNoWorkbench();
   });
 
   it('shows the backend reason and a back action when FAILED', async () => {
@@ -308,18 +334,23 @@ describe('ProjectRoutePage', () => {
       'href',
       '/projects',
     );
+    expectNoFileApi(created.id);
+    expectNoWorkbench();
   });
 
-  it('shows a quiet READY shell without Stage 0 terminal or files', async () => {
+  it('shows a quiet READY workbench without Stage 0 terminal or files', async () => {
     await authenticateAsAlice();
-    renderApp({ initialEntries: [`/projects/${ALICE_SEED_PROJECT_ID}`] });
+    renderApp({ initialEntries: [`/projects/${encodeURIComponent(ALICE_SEED_PROJECT_ID)}`] });
 
+    await waitForWorkbench();
     expect(await screen.findByRole('heading', { name: 'Alice Notebook' })).toBeInTheDocument();
     expect(screen.getByText('READY')).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: 'File' })).toHaveAttribute('aria-selected', 'true');
+    expect(getFileRequestCount('tree', ALICE_SEED_PROJECT_ID, '')).toBeGreaterThan(0);
     expect(screen.queryByTestId('terminal-spike-panel')).not.toBeInTheDocument();
     expect(screen.queryByText(/mock file tree/i)).not.toBeInTheDocument();
     expect(screen.queryByTestId('mock-editor')).not.toBeInTheDocument();
-  });
+  }, 15_000);
 
   it('shows the same generic access denied for another owner id and an unknown id', async () => {
     await authenticateAsAlice();
@@ -329,6 +360,8 @@ describe('ProjectRoutePage', () => {
     expect(foreignAlert).toHaveTextContent(/access denied/i);
     expect(foreignAlert).not.toHaveTextContent(ACCESS_DENIED_LEAK);
     expect(screen.getByRole('link', { name: /back to projects/i })).toBeInTheDocument();
+    expectNoFileApi(BOB_SEED_PROJECT_ID);
+    expectNoWorkbench();
     const foreignCopy = foreignAlert.textContent;
 
     cleanup();
@@ -340,6 +373,8 @@ describe('ProjectRoutePage', () => {
     expect(unknownAlert).toHaveTextContent(/access denied/i);
     expect(unknownAlert).not.toHaveTextContent(ACCESS_DENIED_LEAK);
     expect(unknownAlert.textContent).toBe(foreignCopy);
+    expectNoFileApi('prj-does-not-exist');
+    expectNoWorkbench();
   });
 
   it('shows a retryable local error for network failure on the project route', async () => {
@@ -354,13 +389,16 @@ describe('ProjectRoutePage', () => {
     expect(screen.getByRole('button', { name: /retry/i })).toBeInTheDocument();
     expect(screen.queryByRole('heading', { name: /something went wrong/i })).not.toBeInTheDocument();
     expect(authSession.getSnapshot().status).toBe('authenticated');
+    expectNoFileApi(ALICE_SEED_PROJECT_ID);
+    expectNoWorkbench();
 
     server.resetHandlers();
     await user.click(screen.getByRole('button', { name: /retry/i }));
 
+    await waitForWorkbench();
     expect(await screen.findByRole('heading', { name: 'Alice Notebook' })).toBeInTheDocument();
     expect(authSession.getSnapshot().status).toBe('authenticated');
-  });
+  }, 15_000);
 
   it('shows a retryable local error for 5xx on the project route, not access denied', async () => {
     await authenticateAsAlice();
@@ -385,5 +423,7 @@ describe('ProjectRoutePage', () => {
     expect(screen.getByRole('button', { name: /retry/i })).toBeInTheDocument();
     expect(screen.queryByRole('heading', { name: /something went wrong/i })).not.toBeInTheDocument();
     expect(authSession.getSnapshot().status).toBe('authenticated');
+    expectNoFileApi(ALICE_SEED_PROJECT_ID);
+    expectNoWorkbench();
   });
 });

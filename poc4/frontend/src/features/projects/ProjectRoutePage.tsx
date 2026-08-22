@@ -1,3 +1,4 @@
+import { lazy, Suspense } from 'react';
 import { Link, useParams } from 'react-router';
 import { ApiRequestError } from '../../api/ApiRequestError';
 import { AccessDeniedPage } from '@/components/feedback/AccessDeniedPage';
@@ -7,6 +8,19 @@ import { Button } from '@/components/ui/button';
 import { Spinner } from '@/components/ui/spinner';
 import { AppChrome } from './ProjectsPage';
 import { useProjectQuery } from './projectQueries';
+
+const ReadonlyWorkbenchPage = lazy(() => import('./ReadonlyWorkbenchPage'));
+
+function decodeProjectId(raw: string | undefined): string {
+  if (raw === undefined || raw.length === 0) {
+    return '';
+  }
+  try {
+    return decodeURIComponent(raw);
+  } catch {
+    return raw;
+  }
+}
 
 function isForbiddenError(error: unknown): boolean {
   return (
@@ -21,7 +35,7 @@ function isNetworkError(error: unknown): boolean {
 
 export function ProjectRoutePage() {
   const { projectId } = useParams();
-  const id = typeof projectId === 'string' ? projectId : '';
+  const id = decodeProjectId(typeof projectId === 'string' ? projectId : undefined);
   const query = useProjectQuery(id);
 
   if (query.isPending) {
@@ -90,8 +104,14 @@ export function ProjectRoutePage() {
   }
 
   return (
-    <AppChrome title={project.name}>
-      <p className="text-sm text-muted-foreground">{project.state}</p>
-    </AppChrome>
+    <Suspense
+      fallback={
+        <div role="status" aria-label="Loading workbench" className="flex h-full items-center justify-center">
+          <Spinner />
+        </div>
+      }
+    >
+      <ReadonlyWorkbenchPage project={project} />
+    </Suspense>
   );
 }
