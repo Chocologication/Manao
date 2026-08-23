@@ -127,7 +127,7 @@ async function recordMeasurement(
   });
 }
 
-test('loads a real 20 MiB - 1 Java file into read-only Monaco', async ({ page }) => {
+test('loads a real 20 MiB - 1 Java file into writable Monaco', async ({ page }) => {
   const issues = collectPageIssues(page);
   const accessToken = await openAliceWorkbench(page);
   await enableLargeFileBodies(page, accessToken);
@@ -204,11 +204,11 @@ test('loads a real 20 MiB - 1 Java file into read-only Monaco', async ({ page })
       line1: match.getLineContent(1),
     };
   });
-  expect(afterType.length).toBe(NEAR_LIMIT_BYTES);
-  expect(afterType.line1).toBe(model.line1);
+  expect(afterType.length).toBe(NEAR_LIMIT_BYTES + 1);
+  expect(afterType.line1).not.toBe(model.line1);
   await expect(
     page.getByRole('tablist', { name: 'Editor tabs' }).getByRole('tab', { name: /NearLimit\.java/ }),
-  ).not.toContainText('*');
+  ).toContainText('*');
 
   await recordMeasurement('NearLimit.java', {
     path: NEAR_LIMIT_PATH,
@@ -225,7 +225,7 @@ test('loads a real 20 MiB - 1 Java file into read-only Monaco', async ({ page })
   expect(page.isClosed()).toBe(false);
 });
 
-test('loads a real 20 MiB + 1 Markdown file into the plain-text viewer', async ({ page }) => {
+test('loads a real 20 MiB + 1 Markdown file into the writable plain-text editor', async ({ page }) => {
   const issues = collectPageIssues(page);
   const accessToken = await openAliceWorkbench(page);
   await enableLargeFileBodies(page, accessToken);
@@ -251,7 +251,7 @@ test('loads a real 20 MiB + 1 Markdown file into the plain-text viewer', async (
     };
   });
   const viewerReadyMs = Date.now() - started;
-  expect(snapshot.readOnly).toBe(true);
+  expect(snapshot.readOnly).toBe(false);
   expect(snapshot.length).toBe(LARGE_NOTES_BYTES);
   expect(snapshot.prefix).toBe('# Large notes');
 
@@ -266,8 +266,11 @@ test('loads a real 20 MiB + 1 Markdown file into the plain-text viewer', async (
       prefix: element.value.slice(0, 13),
     };
   });
-  expect(afterType.length).toBe(LARGE_NOTES_BYTES);
-  expect(afterType.prefix).toBe(snapshot.prefix);
+  expect(afterType.length).toBe(LARGE_NOTES_BYTES + 1);
+  expect(afterType.prefix).not.toBe(snapshot.prefix);
+  await expect(
+    page.getByRole('tablist', { name: 'Editor tabs' }).getByRole('tab', { name: /large-notes\.md/ }),
+  ).toContainText('*');
 
   await recordMeasurement('large-notes.md', {
     path: LARGE_NOTES_PATH,
