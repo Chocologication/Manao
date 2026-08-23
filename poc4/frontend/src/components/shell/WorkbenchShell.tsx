@@ -1,19 +1,15 @@
-import { useIsMutating } from '@tanstack/react-query';
 import { ArrowLeft, FileCode, LogOut, Play, SquareTerminal } from 'lucide-react';
-import { useCallback, type MouseEvent } from 'react';
+import { useCallback, useState, useSyncExternalStore, type MouseEvent } from 'react';
 import { Link } from 'react-router';
 import { logout } from '@/app/appRuntime';
-import { projectFileWritePredicate } from '@/components/files/editorSaveCommand';
 import { EditorWorkspace } from '@/components/files/EditorWorkspace';
 import { UnsavedChangesDialog } from '@/components/files/UnsavedChangesDialog';
 import { FileTree } from '@/components/files/FileTree';
+import { InlineAlert } from '@/components/feedback/InlineAlert';
+import { RunPanel } from '@/components/runs/RunPanel';
 import { Button } from '@/components/ui/button';
 import type { ProjectSummary } from '@/contracts/project';
-import {
-  resolveRunPreconditions,
-  runPreconditionDescription,
-  terminalPreconditionDescription,
-} from '@/features/editor/runPreconditions';
+import { terminalPreconditionDescription } from '@/features/editor/runPreconditions';
 import {
   dismissUnsavedDialog,
   LEAVE_MESSAGE,
@@ -23,40 +19,58 @@ import {
   useUnsavedDialogState,
 } from '@/features/editor/unsavedChangesGuard';
 import { useWorkspaceSession } from '@/features/editor/workspaceSession';
-import { useDirectoryTreeQuery } from '@/features/files/fileQueries';
-import { parseProjectDirectoryPath } from '@/features/files/pathPolicy';
+import {
+  isWorkspaceEditable,
+  useRunAuthorityCoordinator,
+} from '@/features/runs/RunAuthorityCoordinator';
+import { useActiveRunQuery } from '@/features/runs/runQueries';
 import { cn } from '@/lib/utils';
 
 const EDITOR_REGION_ID = 'workbench-editor';
-const RUN_REASON_ID = 'workbench-run-reason';
+const RUN_PANEL_ID = 'workbench-run-panel';
 const TERMINAL_REASON_ID = 'workbench-terminal-reason';
+
+type WorkbenchPanel = 'file' | 'run';
 
 const panelTabClassName =
   'inline-flex h-8 items-center gap-1.5 rounded-md px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring';
 
-function skipToEditor(event: MouseEvent<HTMLAnchorElement>): void {
-  event.preventDefault();
-  document.getElementById(EDITOR_REGION_ID)?.focus();
+const panelSurfaceClassName =
+  'absolute inset-0 flex min-h-0 min-w-0 flex-col overflow-hidden outline-none';
+
+function authorityErrorMessage(error: unknown): string {
+  if (error instanceof Error && /network request failed/i.test(error.message)) {
+    return 'Network request failed';
+  }
+  return 'Unable to load run authority';
 }
 
 export function WorkbenchShell({ project }: { project: ProjectSummary }) {
+  const [activePanel, setActivePanel] = useState<WorkbenchPanel>('file');
+  const coordinator = useRunAuthorityCoordinator(project.id);
+  const snapshot = useSyncExternalStore(
+    coordinator.subscribe,
+    coordinator.getSnapshot,
+    coordinator.getSnapshot,
+  );
+  const writesLocked = !isWorkspaceEditable(snapshot);
+  const unconfirmedLock =
+    snapshot.observedLockingRunId !== null &&
+    snapshot.phase !== 'RELOADING_WORKSPACE' &&
+    snapshot.phase !== 'RELOAD_FAILED';
+  const activeQuery = useActiveRunQuery(project.id, unconfirmedLock);
   const dirtyCount = useWorkspaceSession((state) => state.dirtyPaths.size);
   const leaveGuard = useUnsavedDialogState();
-  const writePending =
-    useIsMutating({
-      predicate: projectFileWritePredicate(project.id),
-    }) > 0;
-  const rootTree = useDirectoryTreeQuery(project.id, parseProjectDirectoryPath(''));
-  const run = resolveRunPreconditions({
-    dirtyCount,
-    writePending,
-    workspaceRevision: rootTree.data?.workspaceRevision,
-  });
-  const runDescription = runPreconditionDescription(run.reason);
   const terminalDescription = terminalPreconditionDescription(
     dirtyCount > 0 ? 'DIRTY_FILES' : 'STAGE_4_UNAVAILABLE',
   );
   useDirtyBeforeUnload(dirtyCount);
+
+  const handleSkipToEditor = useCallback((event: MouseEvent<HTMLAnchorElement>) => {
+    event.preventDefault();
+    setActivePanel('file');
+    document.getElementById(EDITOR_REGION_ID)?.focus();
+  }, []);
 
   const handleLogoutClick = useCallback(() => {
     const decision = requestLogout(useWorkspaceSession.getState().dirtyPaths.size);
@@ -83,7 +97,7 @@ export function WorkbenchShell({ project }: { project: ProjectSummary }) {
 
   return (
     <div className="workbench-shell flex h-full min-h-0 w-full min-w-0 flex-col overflow-hidden bg-background text-foreground">
-      <a href={`#${EDITOR_REGION_ID}`} className="skip-to-editor" onClick={skipToEditor}>
+      <a href={`#${EDITOR_REGION_ID}`} className="skip-to-editor" onClick={handleSkipToEditor}>
         Skip to editor
       </a>
       <header className="flex h-12 shrink-0 items-center gap-2 border-b px-2">
@@ -118,13 +132,10 @@ export function WorkbenchShell({ project }: { project: ProjectSummary }) {
             /
           </span>
           <div className="min-h-0 min-w-0 flex-1">
-            <FileTree projectId={project.id} />
+            <FileTree projectId={project.id} writesLocked={writesLocked} />
           </div>
         </aside>
         <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-          <span id={RUN_REASON_ID} className="sr-only">
-            {runDescription}
-          </span>
           <span id={TERMINAL_REASON_ID} className="sr-only">
             {terminalDescription}
           </span>
@@ -136,9 +147,19 @@ export function WorkbenchShell({ project }: { project: ProjectSummary }) {
             <button
               type="button"
               role="tab"
+              id="workbench-tab-file"
               aria-label="File"
-              aria-selected={true}
-              className={cn(panelTabClassName, 'bg-accent text-accent-foreground')}
+              aria-controls={EDITOR_REGION_ID}
+              aria-selected={activePanel === 'file'}
+              className={cn(
+                panelTabClassName,
+                activePanel === 'file'
+                  ? 'bg-accent text-accent-foreground'
+                  : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground',
+              )}
+              onClick={() => {
+                setActivePanel('file');
+              }}
             >
               <FileCode className="h-4 w-4" aria-hidden />
               File
@@ -146,12 +167,19 @@ export function WorkbenchShell({ project }: { project: ProjectSummary }) {
             <button
               type="button"
               role="tab"
+              id="workbench-tab-run"
               aria-label="Run"
-              aria-selected={false}
-              aria-describedby={RUN_REASON_ID}
-              title={runDescription}
-              disabled
-              className={cn(panelTabClassName, 'text-muted-foreground disabled:opacity-64')}
+              aria-controls={RUN_PANEL_ID}
+              aria-selected={activePanel === 'run'}
+              className={cn(
+                panelTabClassName,
+                activePanel === 'run'
+                  ? 'bg-accent text-accent-foreground'
+                  : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground',
+              )}
+              onClick={() => {
+                setActivePanel('run');
+              }}
             >
               <Play className="h-4 w-4" aria-hidden />
               Run
@@ -170,13 +198,50 @@ export function WorkbenchShell({ project }: { project: ProjectSummary }) {
               Terminal
             </button>
           </div>
-          <div
-            id={EDITOR_REGION_ID}
-            tabIndex={-1}
-            aria-label="Editor"
-            className="min-h-0 min-w-0 flex-1 overflow-hidden outline-none"
-          >
-            <EditorWorkspace projectId={project.id} />
+          <div className="relative min-h-0 min-w-0 flex-1 overflow-hidden">
+            <div
+              id={EDITOR_REGION_ID}
+              role="tabpanel"
+              tabIndex={-1}
+              aria-label="Editor"
+              aria-hidden={activePanel !== 'file'}
+              inert={activePanel !== 'file' ? true : undefined}
+              className={cn(
+                panelSurfaceClassName,
+                activePanel === 'file' ? 'z-10' : 'invisible pointer-events-none',
+              )}
+            >
+              {activeQuery.isError ? (
+                <div className="flex items-center gap-2 border-b px-3 py-2">
+                  <InlineAlert>{authorityErrorMessage(activeQuery.error)}</InlineAlert>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => {
+                      void activeQuery.refetch();
+                    }}
+                  >
+                    Retry loading run authority
+                  </Button>
+                </div>
+              ) : null}
+              <div className="min-h-0 min-w-0 flex-1 overflow-hidden">
+                <EditorWorkspace projectId={project.id} writesLocked={writesLocked} />
+              </div>
+            </div>
+            <div
+              id={RUN_PANEL_ID}
+              role="tabpanel"
+              aria-labelledby="workbench-tab-run"
+              aria-hidden={activePanel !== 'run'}
+              inert={activePanel !== 'run' ? true : undefined}
+              className={cn(
+                panelSurfaceClassName,
+                activePanel === 'run' ? 'z-10' : 'invisible pointer-events-none',
+              )}
+            >
+              <RunPanel key={project.id} projectId={project.id} coordinator={coordinator} />
+            </div>
           </div>
         </div>
       </div>

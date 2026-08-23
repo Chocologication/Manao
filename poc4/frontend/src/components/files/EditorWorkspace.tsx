@@ -80,10 +80,12 @@ function ActiveFileSurface({
   projectId,
   path,
   onSave,
+  readOnly,
 }: {
   projectId: string;
   path: ProjectRelativePath;
   onSave: () => void;
+  readOnly: boolean;
 }) {
   const meta = useFileMetadataQuery(projectId, path, true);
   const content = useFileContentQuery(projectId, path, meta.data?.renderMode);
@@ -133,6 +135,7 @@ function ActiveFileSurface({
         path={path}
         metadata={meta.data}
         content={content.data.content}
+        readOnly={readOnly}
         onSave={onSave}
       />
     );
@@ -144,12 +147,19 @@ function ActiveFileSurface({
       path={path}
       content={content.data.content}
       language={meta.data.language || languageForFile(path)}
+      readOnly={readOnly}
       onSave={onSave}
     />
   );
 }
 
-export function EditorWorkspace({ projectId }: { projectId: string }) {
+export function EditorWorkspace({
+  projectId,
+  writesLocked,
+}: {
+  projectId: string;
+  writesLocked: boolean;
+}) {
   const sessionProjectId = useWorkspaceSession((state) => state.projectId);
   const openPaths = useWorkspaceSession((state) => state.openPaths);
   const activePath = useWorkspaceSession((state) => state.activePath);
@@ -233,6 +243,9 @@ export function EditorWorkspace({ projectId }: { projectId: string }) {
   }, [closeTabNow, projectId]);
 
   const handleSaveAndClose = useCallback(async () => {
+    if (writesLocked) {
+      return;
+    }
     const current = getUnsavedDialogState();
     if (!current.open || current.action.type !== 'close-tab') {
       return;
@@ -257,25 +270,25 @@ export function EditorWorkspace({ projectId }: { projectId: string }) {
     if (outcome.message !== undefined) {
       patchUnsavedDialog({ message: outcome.message });
     }
-  }, [closeTabNow, projectId, save]);
+  }, [closeTabNow, projectId, save, writesLocked]);
 
   const handleReorder = useCallback((fromIndex: number, toIndex: number) => {
     useWorkspaceSession.getState().reorderTabs(fromIndex, toIndex);
   }, []);
 
   const handleSave = useCallback(() => {
-    if (visibleActivePath === null) {
+    if (visibleActivePath === null || writesLocked) {
       return;
     }
     void save.savePath(visibleActivePath);
-  }, [save, visibleActivePath]);
+  }, [save, visibleActivePath, writesLocked]);
 
   const handleRetry = useCallback(() => {
-    if (save.feedback?.kind !== 'alert') {
+    if (writesLocked || save.feedback?.kind !== 'alert') {
       return;
     }
     void save.savePath(save.feedback.path);
-  }, [save]);
+  }, [save, writesLocked]);
 
   useEffect(() => {
     if (save.feedback !== null && !visibleOpenPaths.includes(save.feedback.path)) {
@@ -332,7 +345,9 @@ export function EditorWorkspace({ projectId }: { projectId: string }) {
         onClose={handleClose}
         onReorder={handleReorder}
         onSave={canSave ? handleSave : undefined}
-        saveDisabled={!isSaveEnabled({ dirty: activeDirty, writePending: save.writePending })}
+        saveDisabled={
+          writesLocked || !isSaveEnabled({ dirty: activeDirty, writePending: save.writePending })
+        }
         savePending={save.writePending}
       />
       {save.feedback?.kind === 'alert' && save.feedback.path === visibleActivePath ? (
@@ -363,7 +378,11 @@ export function EditorWorkspace({ projectId }: { projectId: string }) {
             key={visibleActivePath}
             projectId={projectId}
             path={visibleActivePath}
+            readOnly={writesLocked}
             onSave={() => {
+              if (writesLocked) {
+                return;
+              }
               void save.savePath(visibleActivePath);
             }}
           />
@@ -374,9 +393,13 @@ export function EditorWorkspace({ projectId }: { projectId: string }) {
         mode="close-tab"
         message={closeGuard.open ? closeGuard.message : CLOSE_TAB_MESSAGE}
         busy={save.writePending}
-        onSaveAndClose={() => {
-          void handleSaveAndClose();
-        }}
+        onSaveAndClose={
+          writesLocked
+            ? undefined
+            : () => {
+                void handleSaveAndClose();
+              }
+        }
         onDiscard={handleDiscardClose}
         onCancel={handleCancelClose}
       />
