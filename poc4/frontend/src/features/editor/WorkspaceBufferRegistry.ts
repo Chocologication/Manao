@@ -40,17 +40,6 @@ function isSelfOrDescendant(parent: ProjectRelativePath, candidate: ProjectRelat
   return candidate === parent || candidate.startsWith(`${parent}/`);
 }
 
-function rewritePath(
-  from: ProjectRelativePath,
-  to: ProjectRelativePath,
-  path: ProjectRelativePath,
-): ProjectRelativePath {
-  if (path === from) {
-    return to;
-  }
-  return parseProjectRelativePath(`${to}${path.slice(from.length)}`);
-}
-
 type DirtySink = {
   emit(projectId: string, path: ProjectRelativePath, dirty: boolean): void;
 };
@@ -88,17 +77,21 @@ abstract class BufferAdapter implements WorkspaceBuffer {
     if (this.disposed) {
       return;
     }
-    this.disposed = true;
-    this.disposeResources();
-    this.listeners.clear();
-    if (this.lastDirty) {
-      this.lastDirty = false;
-      this.dirtySink.emit(this.projectId, this.path, false);
+    try {
+      this.snapshot();
+    } catch {
+      // Keep the last successful snapshot if the model is already gone.
     }
-  }
-
-  remapPath(nextPath: ProjectRelativePath): void {
-    this.path = nextPath;
+    this.disposed = true;
+    try {
+      this.disposeResources();
+    } finally {
+      this.listeners.clear();
+      if (this.lastDirty) {
+        this.lastDirty = false;
+        this.dirtySink.emit(this.projectId, this.path, false);
+      }
+    }
   }
 
   protected notify(): void {
@@ -133,16 +126,22 @@ class PlainTextBuffer extends BufferAdapter {
   }
 
   isDirty(): boolean {
-    return this.epoch !== this.savedVersion;
+    return !this.disposed && this.epoch !== this.savedVersion;
   }
 
   markSaved(snapshot: BufferSnapshot): void {
+    if (this.disposed) {
+      return;
+    }
     this.savedContent = snapshot.content;
     this.savedVersion = snapshot.version;
     this.notify();
   }
 
   discard(): void {
+    if (this.disposed) {
+      return;
+    }
     this.content = this.savedContent;
     this.epoch = this.savedVersion;
     this.notify();
@@ -165,6 +164,7 @@ class MonacoBuffer extends BufferAdapter {
   private readonly model: WorkspaceTextModel;
   private savedContent: string;
   private savedVersion: number;
+  private lastSnapshot: BufferSnapshot;
   private readonly contentListener: { dispose(): void };
   private restoring = false;
 
@@ -178,6 +178,7 @@ class MonacoBuffer extends BufferAdapter {
     this.model = model;
     this.savedContent = model.getValue();
     this.savedVersion = model.getAlternativeVersionId();
+    this.lastSnapshot = { content: this.savedContent, version: this.savedVersion };
     this.contentListener = model.onDidChangeContent(() => {
       if (this.disposed || this.restoring) {
         return;
@@ -187,23 +188,32 @@ class MonacoBuffer extends BufferAdapter {
   }
 
   snapshot(): BufferSnapshot {
-    return {
-      content: this.model.getValue(),
-      version: this.model.getAlternativeVersionId(),
-    };
+    if (!this.disposed) {
+      this.lastSnapshot = {
+        content: this.model.getValue(),
+        version: this.model.getAlternativeVersionId(),
+      };
+    }
+    return { content: this.lastSnapshot.content, version: this.lastSnapshot.version };
   }
 
   isDirty(): boolean {
-    return this.model.getAlternativeVersionId() !== this.savedVersion;
+    return !this.disposed && this.model.getAlternativeVersionId() !== this.savedVersion;
   }
 
   markSaved(snapshot: BufferSnapshot): void {
+    if (this.disposed) {
+      return;
+    }
     this.savedContent = snapshot.content;
     this.savedVersion = snapshot.version;
     this.notify();
   }
 
   discard(): void {
+    if (this.disposed) {
+      return;
+    }
     this.restoring = true;
     try {
       this.model.setValue(this.savedContent);
@@ -253,27 +263,8 @@ export class WorkspaceBufferRegistry {
   }
 
   remap(projectId: string, from: ProjectRelativePath, to: ProjectRelativePath): void {
-    const source = parseProjectRelativePath(from);
-    const target = parseProjectRelativePath(to);
-    if (source === target) {
-      return;
-    }
-    const moving: BufferAdapter[] = [];
-    for (const [key, buffer] of this.buffers) {
-      if (buffer.projectId !== projectId || !isSelfOrDescendant(source, buffer.path)) {
-        continue;
-      }
-      this.buffers.delete(key);
-      moving.push(buffer);
-    }
-    for (const buffer of moving) {
-      const nextPath = rewritePath(source, target, buffer.path);
-      const nextKey = bufferKey(projectId, nextPath);
-      this.buffers.get(nextKey)?.dispose();
-      this.buffers.delete(nextKey);
-      buffer.remapPath(nextPath);
-      this.buffers.set(nextKey, buffer);
-    }
+    parseProjectRelativePath(to);
+    this.remove(projectId, from);
   }
 
   remove(projectId: string, path: ProjectRelativePath): void {
@@ -281,7 +272,7 @@ export class WorkspaceBufferRegistry {
     for (const [key, buffer] of [...this.buffers]) {
       if (buffer.projectId === projectId && isSelfOrDescendant(target, buffer.path)) {
         this.buffers.delete(key);
-        buffer.dispose();
+        this.disposeBuffer(buffer);
       }
     }
   }
@@ -290,7 +281,7 @@ export class WorkspaceBufferRegistry {
     for (const [key, buffer] of [...this.buffers]) {
       if (buffer.projectId === projectId) {
         this.buffers.delete(key);
-        buffer.dispose();
+        this.disposeBuffer(buffer);
       }
     }
   }
@@ -299,7 +290,15 @@ export class WorkspaceBufferRegistry {
     const buffers = [...this.buffers.values()];
     this.buffers.clear();
     for (const buffer of buffers) {
+      this.disposeBuffer(buffer);
+    }
+  }
+
+  private disposeBuffer(buffer: BufferAdapter): void {
+    try {
       buffer.dispose();
+    } catch {
+      // 401 cleanup must still dispose every remaining workspace buffer.
     }
   }
 }

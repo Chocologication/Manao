@@ -236,11 +236,23 @@ describe('WorkspaceBufferRegistry dirty lifecycle', () => {
   });
 });
 
+function throwingMonacoModel(content: string) {
+  return {
+    getValue: () => content,
+    setValue: () => {},
+    getAlternativeVersionId: () => 1,
+    onDidChangeContent: () => ({ dispose() {} }),
+    dispose() {
+      throw new Error('dispose failed');
+    },
+  };
+}
+
 describe('WorkspaceBufferRegistry remap and dispose', () => {
-  it('remaps a path and descendants without touching a prefix sibling', () => {
+  it('remaps by disposing old-path adapters and leaves the next path empty', () => {
     const { registry } = createRegistry();
     const fileA = registerPlain(registry, ALICE, SRC_A, 'a');
-    const child = registerPlain(registry, ALICE, SRC_A_FOO, 'foo');
+    registerPlain(registry, ALICE, SRC_A_FOO, 'foo');
     const sibling = registerPlain(registry, ALICE, SRC_AB, 'ab');
     const bob = registerPlain(registry, BOB, SRC_A, 'bob-a');
 
@@ -248,14 +260,27 @@ describe('WorkspaceBufferRegistry remap and dispose', () => {
 
     expect(registry.get(ALICE, SRC_A)).toBeUndefined();
     expect(registry.get(ALICE, SRC_A_FOO)).toBeUndefined();
-    expect(registry.get(ALICE, SRC_B)).toBe(fileA);
-    expect(registry.get(ALICE, SRC_B_FOO)).toBe(child);
-    expect(fileA.path).toBe(SRC_B);
-    expect(child.path).toBe(SRC_B_FOO);
+    expect(registry.get(ALICE, SRC_B)).toBeUndefined();
+    expect(registry.get(ALICE, SRC_B_FOO)).toBeUndefined();
     expect(registry.get(ALICE, SRC_AB)).toBe(sibling);
-    expect(sibling.path).toBe(SRC_AB);
     expect(registry.get(BOB, SRC_A)).toBe(bob);
-    expect(bob.path).toBe(SRC_A);
+    expect(() => fileA.snapshot()).not.toThrow();
+    expect(fileA.snapshot().content).toBe('a');
+  });
+
+  it('does not leave a live monaco adapter after remap', () => {
+    const { registry } = createRegistry();
+    const { buffer, model } = registerMonaco(registry, ALICE, POM, 'hello');
+    editMonaco(model, 'hello!');
+
+    registry.remap(ALICE, POM, README);
+
+    expect(registry.get(ALICE, POM)).toBeUndefined();
+    expect(registry.get(ALICE, README)).toBeUndefined();
+    expect(monaco.editor.getModel(model.uri)).toBeNull();
+    expect(() => buffer.snapshot()).not.toThrow();
+    expect(buffer.snapshot().content).toBe('hello!');
+    expect(buffer.isDirty()).toBe(false);
   });
 
   it('removes a path and descendants and treats dispose as idempotent', () => {
@@ -290,5 +315,39 @@ describe('WorkspaceBufferRegistry remap and dispose', () => {
     expect(registry.get(BOB, POM)).toBeUndefined();
     expect(monaco.editor.getModel(model.uri)).toBeNull();
     expect(() => buffer.dispose()).not.toThrow();
+  });
+
+  it('disposeAll still disposes remaining buffers when one adapter throws', () => {
+    const { registry } = createRegistry();
+    registry.register({
+      projectId: ALICE,
+      path: POM,
+      kind: 'monaco',
+      model: throwingMonacoModel('boom'),
+    });
+    const { model: survivor } = registerMonaco(registry, BOB, POM, 'keep');
+
+    expect(() => registry.disposeAll()).not.toThrow();
+    expect(registry.get(ALICE, POM)).toBeUndefined();
+    expect(registry.get(BOB, POM)).toBeUndefined();
+    expect(monaco.editor.getModel(survivor.uri)).toBeNull();
+  });
+
+  it('disposeProject drops leftover buffers so they cannot refill another session', () => {
+    const { registry, onDirtyChange } = createRegistry();
+    const alice = registerPlain(registry, ALICE, POM, 'alice');
+    const bob = registerPlain(registry, BOB, README, 'bob');
+    asPlain(alice).replace('dirty-alice');
+
+    registry.disposeProject(ALICE);
+    registry.disposeProject(ALICE);
+
+    expect(registry.get(ALICE, POM)).toBeUndefined();
+    expect(registry.get(BOB, README)).toBe(bob);
+    expect(onDirtyChange).toHaveBeenCalledWith(ALICE, POM, false);
+    onDirtyChange.mockClear();
+    asPlain(alice).replace('after-dispose');
+    expect(onDirtyChange).not.toHaveBeenCalled();
+    expect(bob.isDirty()).toBe(false);
   });
 });

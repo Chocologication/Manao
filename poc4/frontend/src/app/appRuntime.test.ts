@@ -666,4 +666,34 @@ describe('appRuntime workspace buffer disposal', () => {
     expect(next.snapshot().content).toBe('reopened');
     workspaceBufferRegistry.remove(ALICE_SEED_PROJECT_ID, POM);
   });
+
+  it('does not leak Alice dirty into Bob and disposeProject drops leftover Alice buffers', () => {
+    const aliceStore = workspaceSessionStore.getState();
+    aliceStore.activateProject(ALICE_SEED_PROJECT_ID);
+    const alice = workspaceBufferRegistry.register({
+      projectId: ALICE_SEED_PROJECT_ID,
+      path: POM,
+      kind: 'plain-text',
+      content: 'alice',
+    });
+    (alice as typeof alice & { replace(content: string): void }).replace('alice-dirty');
+    expect(workspaceSessionStore.getState().dirtyPaths.has(POM)).toBe(true);
+
+    workspaceSessionStore.getState().activateProject(BOB_SEED_PROJECT_ID);
+    expect(workspaceSessionStore.getState().projectId).toBe(BOB_SEED_PROJECT_ID);
+    expect(workspaceSessionStore.getState().dirtyPaths.size).toBe(0);
+    expect(workspaceBufferRegistry.get(ALICE_SEED_PROJECT_ID, POM)).toBe(alice);
+
+    (alice as typeof alice & { replace(content: string): void }).replace('still-alice');
+    expect(workspaceSessionStore.getState().dirtyPaths.size).toBe(0);
+    expect(workspaceSessionStore.getState().dirtyPaths.has(POM)).toBe(false);
+
+    workspaceBufferRegistry.disposeProject(ALICE_SEED_PROJECT_ID);
+    expect(workspaceBufferRegistry.get(ALICE_SEED_PROJECT_ID, POM)).toBeUndefined();
+    expect(workspaceSessionStore.getState().dirtyPaths.size).toBe(0);
+
+    workspaceSessionStore.getState().activateProject(ALICE_SEED_PROJECT_ID);
+    expect(workspaceBufferRegistry.get(ALICE_SEED_PROJECT_ID, POM)).toBeUndefined();
+    expect(workspaceSessionStore.getState().dirtyPaths.size).toBe(0);
+  });
 });

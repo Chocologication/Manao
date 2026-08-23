@@ -58,46 +58,6 @@ function isExactOrDescendant(parent: ProjectRelativePath, relative: string): boo
   return relative === parent || relative.startsWith(`${parent}/`);
 }
 
-function rewriteRelative(
-  from: ProjectRelativePath,
-  to: ProjectRelativePath,
-  relative: string,
-): ProjectRelativePath {
-  if (relative === from) {
-    return to;
-  }
-  return parseProjectRelativePath(`${to}${relative.slice(from.length)}`);
-}
-
-function moveProjectModel(model: monaco.editor.ITextModel, nextUri: monaco.Uri): void {
-  if (model.uri.toString() === nextUri.toString()) {
-    return;
-  }
-  monaco.editor.getModel(nextUri)?.dispose();
-  monaco.editor.createModel(model.getValue(), model.getLanguageId(), nextUri);
-  model.dispose();
-}
-
-export function remapProjectModels(
-  projectId: string,
-  from: ProjectRelativePath,
-  to: ProjectRelativePath,
-): void {
-  const source = parseProjectRelativePath(from);
-  const target = parseProjectRelativePath(to);
-  const models = monaco.editor.getModels().filter((model) => {
-    const relative = relativeFromProjectUri(projectId, model.uri);
-    return relative !== null && isExactOrDescendant(source, relative);
-  });
-  for (const model of models) {
-    const relative = relativeFromProjectUri(projectId, model.uri);
-    if (relative === null) {
-      continue;
-    }
-    moveProjectModel(model, toProjectModelUri(projectId, rewriteRelative(source, target, relative)));
-  }
-}
-
 export function disposeDescendantProjectModels(projectId: string, path: ProjectRelativePath): void {
   const target = parseProjectRelativePath(path);
   for (const model of [...monaco.editor.getModels()]) {
