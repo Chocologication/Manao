@@ -47,9 +47,11 @@ function projectEntriesUrl(projectId: string, suffix = '', path?: ProjectRelativ
 export async function listDirectory(
   projectId: string,
   directory: ProjectDirectoryPath,
+  signal?: AbortSignal,
 ): Promise<FileTreeResponse> {
   const payload = await getHttpClient().request<unknown>(
     projectFileUrl(projectId, 'tree', directory),
+    { signal },
   );
   return parseFileTreeResponse(payload, directory);
 }
@@ -57,9 +59,11 @@ export async function listDirectory(
 export async function getFileMetadata(
   projectId: string,
   path: ProjectRelativePath,
+  signal?: AbortSignal,
 ): Promise<FileMetadata> {
   const payload = await getHttpClient().request<unknown>(
     projectFileUrl(projectId, 'meta', path),
+    { signal },
   );
   return parseFileMetadata(payload, path);
 }
@@ -67,9 +71,11 @@ export async function getFileMetadata(
 export async function getFileContent(
   projectId: string,
   path: ProjectRelativePath,
+  signal?: AbortSignal,
 ): Promise<FileContentResponse> {
   const payload = await getHttpClient().request<unknown>(
     projectFileUrl(projectId, 'content', path),
+    { signal },
   );
   return parseFileContentResponse(payload, path);
 }
