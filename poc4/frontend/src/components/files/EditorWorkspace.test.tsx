@@ -1,4 +1,4 @@
-import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import * as monaco from 'monaco-editor';
@@ -6,7 +6,12 @@ import { createElement, useEffect } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { login } from '../../api/authApi';
 import { AppProviders } from '../../app/AppProviders';
-import { authSession, queryClient, workspaceResourceRegistry } from '../../app/appRuntime';
+import {
+  authSession,
+  queryClient,
+  workspaceBufferRegistry,
+  workspaceResourceRegistry,
+} from '../../app/appRuntime';
 import type { ProjectRelativePath } from '../../contracts/file';
 import { workspaceSessionStore } from '../../features/editor/workspaceSession';
 import { parseProjectRelativePath } from '../../features/files/pathPolicy';
@@ -21,7 +26,7 @@ import {
   recordFileRequest,
 } from '../../mocks/state';
 import { resetAppRuntime } from '../../test/renderApp';
-import { ReadonlyEditorWorkspace } from './ReadonlyEditorWorkspace';
+import { EditorWorkspace } from './EditorWorkspace';
 
 const ALICE = { username: 'alice', password: 'demo-pass' };
 const POM = parseProjectRelativePath('pom.xml');
@@ -30,12 +35,20 @@ const LARGE_NOTES = parseProjectRelativePath('docs/large-notes.md');
 const TOO_LARGE = parseProjectRelativePath('docs/too-large.md');
 const LOGO = parseProjectRelativePath('assets/logo.png');
 const LATIN1 = parseProjectRelativePath('docs/latin1.txt');
+const README = parseProjectRelativePath('README.md');
+
+type FakeMonacoEditor = {
+  addCommand(keybinding: number, handler: () => void): void;
+  getModel(): monaco.editor.ITextModel | null;
+};
 
 type RecordedEditorProps = {
   path?: string;
   value?: string;
+  defaultValue?: string;
   language?: string;
   keepCurrentModel?: boolean;
+  saveViewState?: boolean;
   options?: {
     readOnly?: boolean;
     domReadOnly?: boolean;
@@ -43,10 +56,13 @@ type RecordedEditorProps = {
     scrollBeyondLastLine?: boolean;
   };
   onChange?: unknown;
+  onMount?: (editor: FakeMonacoEditor, monacoApi: typeof monaco) => void;
 };
 
 const recordedEditor = vi.hoisted(() => ({
   last: null as RecordedEditorProps | null,
+  saveKeybinding: null as number | null,
+  saveHandler: null as (() => void) | null,
 }));
 
 vi.mock('@monaco-editor/react', () => {
@@ -54,10 +70,13 @@ vi.mock('@monaco-editor/react', () => {
     recordedEditor.last = {
       path: props.path,
       value: props.value,
+      defaultValue: props.defaultValue,
       language: props.language,
       keepCurrentModel: props.keepCurrentModel,
+      saveViewState: props.saveViewState,
       options: props.options,
       onChange: props.onChange,
+      onMount: props.onMount,
     };
     useEffect(() => {
       const modelPath = props.path;
@@ -66,14 +85,31 @@ vi.mock('@monaco-editor/react', () => {
       }
       const uri = monaco.Uri.parse(modelPath);
       if (monaco.editor.getModel(uri) === null) {
-        monaco.editor.createModel(props.value ?? '', props.language, uri);
+        monaco.editor.createModel(props.defaultValue ?? props.value ?? '', props.language, uri);
       }
+      const editor: FakeMonacoEditor = {
+        addCommand(keybinding, handler) {
+          recordedEditor.saveKeybinding = keybinding;
+          recordedEditor.saveHandler = handler;
+        },
+        getModel() {
+          return monaco.editor.getModel(uri);
+        },
+      };
+      props.onMount?.(editor, monaco);
       return () => {
         if (props.keepCurrentModel !== true) {
           monaco.editor.getModel(uri)?.dispose();
         }
       };
-    }, [props.path, props.value, props.language, props.keepCurrentModel]);
+    }, [
+      props.path,
+      props.value,
+      props.defaultValue,
+      props.language,
+      props.keepCurrentModel,
+      props.onMount,
+    ]);
     return createElement('div', {
       className: 'monaco-editor',
       'data-testid': 'mock-editor',
@@ -98,7 +134,7 @@ function renderWorkspace(projectId = ALICE_SEED_PROJECT_ID) {
   workspaceSessionStore.getState().activateProject(projectId);
   return render(
     <AppProviders>
-      <ReadonlyEditorWorkspace projectId={projectId} />
+      <EditorWorkspace projectId={projectId} />
     </AppProviders>,
   );
 }
@@ -152,8 +188,16 @@ function delayThenPassthrough(url: string, matchPath: string): { release: () => 
 
 const originalClipboardItem = globalThis.ClipboardItem;
 
+function editMonacoModel(projectId: string, path: ProjectRelativePath, text: string): void {
+  const model = monaco.editor.getModel(toProjectModelUri(projectId, path));
+  expect(model).not.toBeNull();
+  model!.pushEditOperations([], [{ range: model!.getFullModelRange(), text }], () => null);
+}
+
 beforeEach(() => {
   recordedEditor.last = null;
+  recordedEditor.saveKeybinding = null;
+  recordedEditor.saveHandler = null;
   resetAppRuntime();
   globalThis.ClipboardItem = class {
     constructor(items: Record<string, Blob | string | Promise<Blob | string>> = {}) {
@@ -175,8 +219,8 @@ afterEach(async () => {
   resetAppRuntime();
 });
 
-describe('ReadonlyEditorWorkspace metadata-gated views', () => {
-  it('loads MONACO_TEXT as read-only Monaco after exactly one metadata and one content request', async () => {
+describe('EditorWorkspace metadata-gated views', () => {
+  it('loads MONACO_TEXT as writable Monaco after exactly one metadata and one content request', async () => {
     const { release } = delayThenPassthrough(
       '/api/v1/projects/:projectId/files/meta',
       'pom.xml',
@@ -196,9 +240,11 @@ describe('ReadonlyEditorWorkspace metadata-gated views', () => {
       toProjectModelUri(ALICE_SEED_PROJECT_ID, POM).toString(),
     );
     expect(recordedEditor.last?.keepCurrentModel).toBe(true);
+    expect(recordedEditor.last?.saveViewState).toBe(true);
+    expect(recordedEditor.last?.value).toBeUndefined();
     expect(recordedEditor.last?.options).toEqual({
-      readOnly: true,
-      domReadOnly: true,
+      readOnly: false,
+      domReadOnly: false,
       automaticLayout: true,
       scrollBeyondLastLine: false,
     });
@@ -207,14 +253,14 @@ describe('ReadonlyEditorWorkspace metadata-gated views', () => {
     expect(getFileRequestCount('content', ALICE_SEED_PROJECT_ID, 'pom.xml')).toBe(1);
   });
 
-  it('loads PLAIN_TEXT as a read-only textarea and never mounts Monaco', async () => {
+  it('loads PLAIN_TEXT as an editable textarea and never mounts Monaco', async () => {
     await authenticateAsAlice();
     renderWorkspace();
     openFile(LARGE_NOTES);
 
     const textarea = await screen.findByRole('textbox');
     expect(textarea.tagName).toBe('TEXTAREA');
-    expect(textarea).toHaveAttribute('readonly');
+    expect(textarea).not.toHaveAttribute('readonly');
     expect(textarea).toHaveAttribute('wrap', 'off');
     expect(textarea).toHaveAttribute('spellcheck', 'false');
     expect(textarea).toHaveValue('# Large notes\n\nPlaceholder for the oversized Markdown fixture.\n');
@@ -314,7 +360,7 @@ describe('ReadonlyEditorWorkspace metadata-gated views', () => {
   });
 });
 
-describe('ReadonlyEditorWorkspace scoped loading and errors', () => {
+describe('EditorWorkspace scoped loading and errors', () => {
   it('keeps metadata loading distinct from content loading', async () => {
     const metaGate = delayThenPassthrough(
       '/api/v1/projects/:projectId/files/meta',
@@ -417,7 +463,7 @@ describe('ReadonlyEditorWorkspace scoped loading and errors', () => {
 
 const OWNER_OR_PHYSICAL_LEAK = /bob|prj-bob|usr-bob|C:\\|D:\\|\/Users\/|\/etc\/|\/home\/|\/var\//;
 
-describe('ReadonlyEditorWorkspace authorization and path errors', () => {
+describe('EditorWorkspace authorization and path errors', () => {
   it('shows generic access denied when Alice opens Bob file without leaking owner, project or path', async () => {
     await authenticateAsAlice();
     renderWorkspace(BOB_SEED_PROJECT_ID);
@@ -461,7 +507,7 @@ describe('ReadonlyEditorWorkspace authorization and path errors', () => {
   });
 });
 
-describe('ReadonlyEditorWorkspace retry isolation', () => {
+describe('EditorWorkspace retry isolation', () => {
   it('retries metadata without fetching content until metadata succeeds and without duplicating the tab', async () => {
     const user = userEvent.setup();
     let failMeta = true;
@@ -499,7 +545,7 @@ describe('ReadonlyEditorWorkspace retry isolation', () => {
   });
 });
 
-describe('ReadonlyEditorWorkspace tabs', () => {
+describe('EditorWorkspace tabs', () => {
   it('uses the final path segment as the label, full path as tooltip, and never marks dirty', async () => {
     await authenticateAsAlice();
     renderWorkspace();
@@ -532,7 +578,7 @@ describe('ReadonlyEditorWorkspace tabs', () => {
   });
 });
 
-describe('ReadonlyEditorWorkspace model and request cleanup', () => {
+describe('EditorWorkspace model and request cleanup', () => {
   it('disposes a closed active tab only after the editor path has switched', async () => {
     const user = userEvent.setup();
     const pathWhenDispose = new Map<string, string>();
@@ -652,7 +698,7 @@ describe('ReadonlyEditorWorkspace model and request cleanup', () => {
     workspaceSessionStore.getState().activateProject(BOB_SEED_PROJECT_ID);
     rerender(
       <AppProviders>
-        <ReadonlyEditorWorkspace projectId={BOB_SEED_PROJECT_ID} />
+        <EditorWorkspace projectId={BOB_SEED_PROJECT_ID} />
       </AppProviders>,
     );
 
@@ -672,7 +718,7 @@ describe('ReadonlyEditorWorkspace model and request cleanup', () => {
     workspaceSessionStore.getState().activateProject(BOB_SEED_PROJECT_ID);
     rerender(
       <AppProviders>
-        <ReadonlyEditorWorkspace projectId={BOB_SEED_PROJECT_ID} />
+        <EditorWorkspace projectId={BOB_SEED_PROJECT_ID} />
       </AppProviders>,
     );
     release();
@@ -692,7 +738,7 @@ describe('ReadonlyEditorWorkspace model and request cleanup', () => {
       .mockReturnValue(unregister);
     const { unmount } = render(
       <AppProviders>
-        <ReadonlyEditorWorkspace projectId={ALICE_SEED_PROJECT_ID} />
+        <EditorWorkspace projectId={ALICE_SEED_PROJECT_ID} />
       </AppProviders>,
     );
 
@@ -702,7 +748,7 @@ describe('ReadonlyEditorWorkspace model and request cleanup', () => {
   });
 });
 
-describe('ReadonlyEditorWorkspace download', () => {
+describe('EditorWorkspace download', () => {
   it('disables Download only while the blob request is in flight', async () => {
     const user = userEvent.setup();
     let release = () => {};
@@ -784,5 +830,263 @@ describe('EditorTabs Stage 2 contract', () => {
     const tab = await screen.findByRole('tab', { name: /pom.xml/ });
     expect(tab).not.toHaveTextContent('*');
     expect(tab).toHaveAttribute('title', 'pom.xml');
+  });
+});
+
+function delayPut(matchPath: string): { release: () => void; puts: () => number } {
+  let release = () => {};
+  let puts = 0;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  server.use(
+    http.put('/api/v1/projects/:projectId/files/content', async ({ request }) => {
+      if (new URL(request.url).searchParams.get('path') === matchPath) {
+        puts += 1;
+        await gate;
+      }
+      return undefined;
+    }),
+  );
+  return { release, puts: () => puts };
+}
+
+describe('EditorWorkspace writable buffers', () => {
+  it('registers a monaco buffer once, dirties the tab on edit, and binds CtrlCmd+S', async () => {
+    await authenticateAsAlice();
+    renderWorkspace();
+    openFile(POM);
+    await screen.findByTestId('mock-editor');
+
+    const uri = toProjectModelUri(ALICE_SEED_PROJECT_ID, POM);
+    const first = workspaceBufferRegistry.get(ALICE_SEED_PROJECT_ID, POM);
+    expect(first?.kind).toBe('monaco');
+    expect(first?.isDirty()).toBe(false);
+    expect(monaco.editor.getModel(uri)).not.toBeNull();
+    expect(recordedEditor.saveKeybinding).toBe(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS);
+    expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
+
+    editMonacoModel(ALICE_SEED_PROJECT_ID, POM, '<project edited />');
+
+    await waitFor(() => {
+      expect(screen.getByRole('tab', { name: /pom.xml/ })).toHaveTextContent('*');
+    });
+    expect(first?.isDirty()).toBe(true);
+    expect(workspaceBufferRegistry.get(ALICE_SEED_PROJECT_ID, POM)).toBe(first);
+    expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled();
+
+    openFile(APP);
+    await waitFor(() => {
+      expect(screen.getByTestId('mock-editor')).toHaveAttribute(
+        'data-path',
+        toProjectModelUri(ALICE_SEED_PROJECT_ID, APP).toString(),
+      );
+    });
+    openFile(POM);
+    await screen.findByTestId('mock-editor');
+    expect(workspaceBufferRegistry.get(ALICE_SEED_PROJECT_ID, POM)).toBe(first);
+    expect(monaco.editor.getModel(uri)?.getValue()).toBe('<project edited />');
+    expect(recordedEditor.last?.onChange).toBeUndefined();
+    expect(recordedEditor.last?.value).toBeUndefined();
+  });
+
+  it('edits large Markdown through an epoch buffer and remounts from the snapshot', async () => {
+    await authenticateAsAlice();
+    renderWorkspace();
+    openFile(LARGE_NOTES);
+    const textarea = await screen.findByRole('textbox');
+    const original = (textarea as HTMLTextAreaElement).value;
+    const next = `${original} appended notes`;
+
+    fireEvent.change(textarea, { target: { value: next } });
+
+    const buffer = workspaceBufferRegistry.get(ALICE_SEED_PROJECT_ID, LARGE_NOTES);
+    expect(buffer?.kind).toBe('plain-text');
+    expect(buffer?.isDirty()).toBe(true);
+    expect(buffer?.snapshot().content).toBe(next);
+    expect(JSON.stringify(workspaceSessionStore.getState())).not.toContain('appended notes');
+    expect(await screen.findByRole('tab', { name: /large-notes.md/ })).toHaveTextContent('*');
+
+    openFile(POM);
+    await screen.findByTestId('mock-editor');
+    expect(screen.queryByRole('textbox')).not.toBeInTheDocument();
+
+    openFile(LARGE_NOTES);
+    const remounted = await screen.findByRole('textbox');
+    expect(remounted).toHaveValue(next);
+    expect(workspaceBufferRegistry.get(ALICE_SEED_PROJECT_ID, LARGE_NOTES)).toBe(buffer);
+  });
+
+  it('never registers a buffer for BLOCKED files and hides Save', async () => {
+    await authenticateAsAlice();
+    renderWorkspace();
+    openFile(LOGO);
+    expect(await screen.findByRole('button', { name: 'Download' })).toBeInTheDocument();
+    expect(workspaceBufferRegistry.get(ALICE_SEED_PROJECT_ID, LOGO)).toBeUndefined();
+    expect(screen.queryByRole('button', { name: 'Save' })).not.toBeInTheDocument();
+  });
+});
+
+describe('EditorWorkspace save lifecycle', () => {
+  it('saves the captured snapshot, shows status, and stays dirty after a later edit', async () => {
+    const user = userEvent.setup();
+    await authenticateAsAlice();
+    renderWorkspace();
+    openFile(POM);
+    await screen.findByTestId('mock-editor');
+    editMonacoModel(ALICE_SEED_PROJECT_ID, POM, '<project saved />');
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled());
+
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+    expect(await screen.findByRole('status', { name: 'Saved' })).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: /pom.xml/ })).not.toHaveTextContent('*');
+    expect(workspaceBufferRegistry.get(ALICE_SEED_PROJECT_ID, POM)?.isDirty()).toBe(false);
+
+    editMonacoModel(ALICE_SEED_PROJECT_ID, POM, '<project later />');
+    await waitFor(() => {
+      expect(screen.getByRole('tab', { name: /pom.xml/ })).toHaveTextContent('*');
+    });
+    expect(workspaceBufferRegistry.get(ALICE_SEED_PROJECT_ID, POM)?.isDirty()).toBe(true);
+  });
+
+  it('disables a duplicate project save while the write is pending', async () => {
+    const user = userEvent.setup();
+    const { release, puts } = delayPut('pom.xml');
+    await authenticateAsAlice();
+    renderWorkspace();
+    openFile(POM);
+    await screen.findByTestId('mock-editor');
+    editMonacoModel(ALICE_SEED_PROJECT_ID, POM, '<project pending />');
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled());
+
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+    expect(await screen.findByRole('status', { name: 'Saving' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+    recordedEditor.saveHandler?.();
+    expect(puts()).toBe(1);
+
+    release();
+    expect(await screen.findByRole('status', { name: 'Saved' })).toBeInTheDocument();
+    expect(puts()).toBe(1);
+  });
+
+  it('keeps the dirty buffer and shows a retryable alert on save failure', async () => {
+    const user = userEvent.setup();
+    server.use(
+      http.put('/api/v1/projects/:projectId/files/content', () => {
+        return HttpResponse.json(
+          { code: 'INTERNAL_ERROR', message: 'Mock save failure', traceId: 'trace-save' },
+          { status: 500 },
+        );
+      }),
+    );
+    await authenticateAsAlice();
+    renderWorkspace();
+    openFile(POM);
+    await screen.findByTestId('mock-editor');
+    editMonacoModel(ALICE_SEED_PROJECT_ID, POM, '<project failed />');
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled());
+
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent(/unable to save file/i);
+    expect(screen.getByRole('tab', { name: /pom.xml/ })).toHaveTextContent('*');
+    expect(workspaceBufferRegistry.get(ALICE_SEED_PROJECT_ID, POM)?.snapshot().content).toBe(
+      '<project failed />',
+    );
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeEnabled();
+  });
+
+  it('saves from the monaco CtrlCmd+S handler and the plain-text keydown', async () => {
+    await authenticateAsAlice();
+    renderWorkspace();
+    openFile(POM);
+    await screen.findByTestId('mock-editor');
+    editMonacoModel(ALICE_SEED_PROJECT_ID, POM, '<project shortcut />');
+    await waitFor(() => expect(recordedEditor.saveHandler).not.toBeNull());
+
+    recordedEditor.saveHandler?.();
+    expect(await screen.findByRole('status', { name: 'Saved' })).toBeInTheDocument();
+
+    openFile(LARGE_NOTES);
+    const textarea = await screen.findByRole('textbox');
+    fireEvent.change(textarea, { target: { value: '# Large notes\n\nshortcut save\n' } });
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled());
+    fireEvent.keyDown(textarea, { key: 's', ctrlKey: true });
+    expect(await screen.findByRole('status', { name: 'Saved' })).toBeInTheDocument();
+    expect(
+      workspaceBufferRegistry.get(ALICE_SEED_PROJECT_ID, LARGE_NOTES)?.isDirty(),
+    ).toBe(false);
+  });
+});
+
+describe('EditorWorkspace renderer mode transitions', () => {
+  it('switches renderer from the submitted snapshot only after a successful save', async () => {
+    const user = userEvent.setup();
+    const submitted = '# Alice Notebook\n\nnow plain\n';
+    server.use(
+      http.put('/api/v1/projects/:projectId/files/content', async ({ request }) => {
+        if (new URL(request.url).searchParams.get('path') !== 'README.md') {
+          return undefined;
+        }
+        return HttpResponse.json({
+          file: {
+            path: 'README.md',
+            name: 'README.md',
+            sizeBytes: 20 * 1024 * 1024 + 1,
+            mediaType: 'text/markdown',
+            encoding: 'UTF-8',
+            language: 'markdown',
+            renderMode: 'PLAIN_TEXT',
+            blockReason: null,
+          },
+          workspaceRevision: 'mock-rev-0002',
+        });
+      }),
+    );
+    await authenticateAsAlice();
+    renderWorkspace();
+    openFile(README);
+    await screen.findByTestId('mock-editor');
+    const monacoUri = toProjectModelUri(ALICE_SEED_PROJECT_ID, README);
+    editMonacoModel(ALICE_SEED_PROJECT_ID, README, submitted);
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled());
+
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+    const textarea = await screen.findByRole('textbox');
+    expect(textarea).toHaveValue(submitted);
+    expect(document.querySelector('.monaco-editor')).toBeNull();
+    expect(monaco.editor.getModel(monacoUri)).toBeNull();
+    expect(workspaceBufferRegistry.get(ALICE_SEED_PROJECT_ID, README)?.kind).toBe('plain-text');
+    expect(workspaceSessionStore.getState().activePath).toBe(README);
+    expect(workspaceSessionStore.getState().openPaths).toEqual([README]);
+    expect(screen.getByRole('tab', { name: /README.md/ })).not.toHaveTextContent('*');
+  });
+
+  it('does not switch renderer or discard content when an over-limit save is rejected', async () => {
+    const user = userEvent.setup();
+    server.use(
+      http.put('/api/v1/projects/:projectId/files/content', () => {
+        return HttpResponse.json(
+          { code: 'FILE_TOO_LARGE', message: 'File is too large', traceId: 'trace-413' },
+          { status: 413 },
+        );
+      }),
+    );
+    await authenticateAsAlice();
+    renderWorkspace();
+    openFile(POM);
+    await screen.findByTestId('mock-editor');
+    const kept = '<project too large />';
+    editMonacoModel(ALICE_SEED_PROJECT_ID, POM, kept);
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled());
+
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent(/file is too large/i);
+    expect(screen.getByTestId('mock-editor')).toBeInTheDocument();
+    expect(screen.queryByRole('textbox')).not.toBeInTheDocument();
+    expect(workspaceBufferRegistry.get(ALICE_SEED_PROJECT_ID, POM)?.kind).toBe('monaco');
+    expect(workspaceBufferRegistry.get(ALICE_SEED_PROJECT_ID, POM)?.snapshot().content).toBe(kept);
+    expect(screen.getByRole('tab', { name: /pom.xml/ })).toHaveTextContent('*');
   });
 });

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef } from 'react';
-import { workspaceResourceRegistry } from '@/app/appRuntime';
+import { workspaceBufferRegistry, workspaceResourceRegistry } from '@/app/appRuntime';
 import { InlineAlert } from '@/components/feedback/InlineAlert';
 import { Button } from '@/components/ui/button';
 import { Spinner } from '@/components/ui/spinner';
@@ -20,8 +20,13 @@ import {
 } from '@/lib/projectMonacoModels';
 import { BlockedFileView } from './BlockedFileView';
 import { EditorTabs } from './EditorTabs';
-import { PlainTextViewer } from './PlainTextViewer';
-import { ReadonlyMonacoEditor } from './ReadonlyMonacoEditor';
+import {
+  editorKindForRenderMode,
+  isSaveEnabled,
+  useEditorSaveCommand,
+} from './editorSaveCommand';
+import { PlainTextEditor } from './PlainTextEditor';
+import { WritableMonacoEditor } from './WritableMonacoEditor';
 
 function fileName(path: string): string {
   const index = path.lastIndexOf('/');
@@ -62,9 +67,11 @@ function FileQuerySubscription({
 function ActiveFileSurface({
   projectId,
   path,
+  onSave,
 }: {
   projectId: string;
   path: ProjectRelativePath;
+  onSave: () => void;
 }) {
   const meta = useFileMetadataQuery(projectId, path, true);
   const content = useFileContentQuery(projectId, path, meta.data?.renderMode);
@@ -108,28 +115,48 @@ function ActiveFileSurface({
   }
 
   if (meta.data.renderMode === 'PLAIN_TEXT') {
-    return <PlainTextViewer metadata={meta.data} content={content.data.content} />;
+    return (
+      <PlainTextEditor
+        projectId={projectId}
+        path={path}
+        metadata={meta.data}
+        content={content.data.content}
+        onSave={onSave}
+      />
+    );
   }
 
   return (
-    <ReadonlyMonacoEditor
+    <WritableMonacoEditor
       projectId={projectId}
       path={path}
       content={content.data.content}
       language={meta.data.language || languageForFile(path)}
+      onSave={onSave}
     />
   );
 }
 
-export function ReadonlyEditorWorkspace({ projectId }: { projectId: string }) {
+export function EditorWorkspace({ projectId }: { projectId: string }) {
   const sessionProjectId = useWorkspaceSession((state) => state.projectId);
   const openPaths = useWorkspaceSession((state) => state.openPaths);
   const activePath = useWorkspaceSession((state) => state.activePath);
+  const dirtyPaths = useWorkspaceSession((state) => state.dirtyPaths);
   const aligned = sessionProjectId === projectId;
   const visibleOpenPaths = aligned ? openPaths : [];
   const visibleActivePath = aligned ? activePath : null;
   const pendingDisposeRef = useRef<ProjectRelativePath[]>([]);
   const previousProjectIdRef = useRef<string | null>(null);
+  const save = useEditorSaveCommand(projectId);
+  const activeMeta = useFileMetadataQuery(
+    projectId,
+    visibleActivePath ?? parseProjectRelativePath('pom.xml'),
+    visibleActivePath !== null,
+  );
+  const canSave =
+    visibleActivePath !== null &&
+    editorKindForRenderMode(activeMeta.data?.renderMode ?? 'BLOCKED') !== null;
+  const activeDirty = visibleActivePath !== null && dirtyPaths.has(visibleActivePath);
 
   useEffect(() => {
     const unregister = workspaceResourceRegistry.register(disposeAllProjectModels);
@@ -164,6 +191,13 @@ export function ReadonlyEditorWorkspace({ projectId }: { projectId: string }) {
     useWorkspaceSession.getState().reorderTabs(fromIndex, toIndex);
   }, []);
 
+  const handleSave = useCallback(() => {
+    if (visibleActivePath === null) {
+      return;
+    }
+    save.savePath(visibleActivePath);
+  }, [save, visibleActivePath]);
+
   useEffect(() => {
     const pending = pendingDisposeRef.current;
     if (pending.length === 0) {
@@ -175,6 +209,7 @@ export function ReadonlyEditorWorkspace({ projectId }: { projectId: string }) {
       if (path === visibleActivePath) {
         stillPending.push(path);
       } else {
+        workspaceBufferRegistry.remove(projectId, path);
         disposeProjectModel(projectId, path);
       }
     }
@@ -184,7 +219,7 @@ export function ReadonlyEditorWorkspace({ projectId }: { projectId: string }) {
   const tabs: EditorTab[] = visibleOpenPaths.map((path) => ({
     path,
     title: fileName(path),
-    isDirty: false,
+    isDirty: dirtyPaths.has(path),
   }));
 
   return (
@@ -195,7 +230,27 @@ export function ReadonlyEditorWorkspace({ projectId }: { projectId: string }) {
         onSelect={handleSelect}
         onClose={handleClose}
         onReorder={handleReorder}
+        onSave={canSave ? handleSave : undefined}
+        saveDisabled={!isSaveEnabled({ dirty: activeDirty, writePending: save.writePending })}
+        savePending={save.writePending}
       />
+      {save.feedback?.kind === 'alert' ? (
+        <div className="flex items-center gap-2 border-b px-3 py-2">
+          <InlineAlert>{save.feedback.message}</InlineAlert>
+          <Button type="button" variant="outline" onClick={handleSave}>
+            Retry
+          </Button>
+        </div>
+      ) : null}
+      {save.feedback?.kind === 'status' ? (
+        <p
+          role="status"
+          aria-label={save.feedback.message}
+          className="px-3 py-1 text-sm text-muted-foreground"
+        >
+          {save.feedback.message}
+        </p>
+      ) : null}
       <div className="min-h-0 min-w-0 flex-1">
         {visibleOpenPaths.map((path) =>
           path === visibleActivePath ? null : (
@@ -203,7 +258,11 @@ export function ReadonlyEditorWorkspace({ projectId }: { projectId: string }) {
           ),
         )}
         {visibleActivePath !== null ? (
-          <ActiveFileSurface projectId={projectId} path={visibleActivePath} />
+          <ActiveFileSurface
+            projectId={projectId}
+            path={visibleActivePath}
+            onSave={() => save.savePath(visibleActivePath)}
+          />
         ) : null}
       </div>
     </div>

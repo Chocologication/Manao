@@ -2,7 +2,7 @@ import { ArrowLeft, FileCode, LogOut, Play, SquareTerminal } from 'lucide-react'
 import type { MouseEvent } from 'react';
 import { Link } from 'react-router';
 import { logout } from '@/app/appRuntime';
-import { ReadonlyEditorWorkspace } from '@/components/files/ReadonlyEditorWorkspace';
+import { EditorWorkspace } from '@/components/files/EditorWorkspace';
 import { ReadonlyFileTree } from '@/components/files/ReadonlyFileTree';
 import { Button } from '@/components/ui/button';
 import type { ProjectSummary } from '@/contracts/project';
@@ -104,7 +104,7 @@ export function WorkbenchShell({ project }: { project: ProjectSummary }) {
             aria-label="Editor"
             className="min-h-0 min-w-0 flex-1 overflow-hidden outline-none"
           >
-            <ReadonlyEditorWorkspace projectId={project.id} />
+            <EditorWorkspace projectId={project.id} />
           </div>
         </div>
       </div>
