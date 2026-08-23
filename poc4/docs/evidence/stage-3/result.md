@@ -2,15 +2,15 @@
 
 ## Source Commit
 
-- 日期：`2026-08-23`
+- 日期：`2026-08-24`
 - 分支：`poc4/ensoai-stage-3-writable-workbench`
-- 验证树（代码 + 最终 large-files / 生产重建）：`c2c6ef51c8add2f0c91048cf232081375e39211d`（`c2c6ef5` `test(poc4): assert large Java edit by length not first line`）
+- 验证树（完整矩阵）：`b111d5d9941a2a697157e7f731b8b794d3f67593`（`b111d5d` `fix(poc4): focus cancel on leave unsaved dialog`）
 - 本报告是该 SHA 之后的文档提交，不改应用源码
 - 工作目录：`poc4/frontend`；包管理器仅 pnpm
 - EnsoAI 来源仍为 `D:\DeepLearning\MyProjects\Enso_AI@5aa294a`；阶段 3 未再复制新的 EnsoAI 大组件
-- 本报告所有退出码、测试数、构建体积、扫描结果与大文件实测均来自该产品工作树。`pnpm test:boundary` / `typecheck` / `test` / `build` / `build:mock` / `test:e2e` / `test:e2e:channels` / `test:e2e:large-writes` 在父提交 `a6b1190` 上执行；相对 `c2c6ef5` 的唯一源码差是 large-files E2E 的可写断言（见 Automated Verification）。应用源码、生产 chunk 哈希与 `c2c6ef5` 一致
+- 本报告所有退出码、测试数、构建体积、扫描结果与大文件实测均在 `b111d5d` 上新鲜执行。离开工作台对话框默认焦点为 Cancel 的产品代码包含在该 SHA 内，Chrome/Edge 功能矩阵已在同一 SHA 复跑。
 
-阶段 3 实现提交（`e75a298..c2c6ef5`）：
+阶段 3 实现提交（`e75a298..b111d5d`）：
 
 | SHA | 说明 |
 |---|---|
@@ -27,6 +27,8 @@
 | `18726e5` | Stage 3 E2E、12 张 PNG、真实大写入 |
 | `a6b1190` | large-files E2E 改为可写载荷证明 |
 | `c2c6ef5` | large-files Monaco 可写按长度断言 |
+| `2ea9e80` | 首次证据报告（认证 `c2c6ef5`，已被本报告取代） |
+| `b111d5d` | 离开/logout 确认框初始焦点改为 Cancel |
 
 ## Scope Boundary
 
@@ -38,25 +40,24 @@
 
 ## Automated Verification
 
-工作目录：`poc4/frontend`。下列命令于 `a6b1190`（除标注外）对应工作树执行。`rg` 不在 PATH；生产排除扫描见后文。浏览器测试后 `git diff --check` 无空白错误。channels 会改写已提交 PNG；Stage 0 / Stage 2 与本次重拍的 Stage 3 PNG 均已 `git checkout` 还原，未纳入本报告提交。
+工作目录：`poc4/frontend`。下列命令均在 `b111d5d` 对应工作树执行。`rg` 不在 PATH；生产排除扫描见后文。浏览器测试后 `git diff --check` 无空白错误。channels 会改写已提交 PNG；Stage 0 / Stage 2 与本次重拍的 Stage 3 PNG 均已 `git checkout` 还原，未纳入本报告提交。第 509 条单测是离开对话框聚焦 Cancel（`UnsavedChangesDialog.test.tsx`）。
 
 | 命令 | 退出码 | 观察结果 |
 |---|---:|---|
-| `pnpm test:boundary` | 0 | node:test **16 pass / 0 fail**（`duration_ms 128.4356`；命令墙钟 780 ms）；随后打印 `Browser boundary check passed.` |
-| `pnpm typecheck` | 0 | `tsc -b --pretty false` 无诊断输出（5068 ms） |
-| `pnpm test` | 0 | Vitest 3.2.7：Test Files **34 passed (34)**；Tests **508 passed (508)**；Duration 37.39s（墙钟 39015 ms）。stderr 仅 jsdom `HTMLCanvasElement.getContext` 未实现提示（Spike），不计入失败 |
-| `pnpm build`（矩阵首次） | 0 | 内含 typecheck；Vite 7.3.6 production；`3746 modules transformed`；`built in 45.06s`（墙钟 51040 ms）。入口 `index-CMarb_nk.js` 387.84 kB / gzip 123.06 kB；工作台 `WorkbenchPage-COWb8pVo.js` 3,964.55 kB / gzip 1,031.41 kB |
-| `pnpm build:mock` | 0 | Vite mock；`3763 modules transformed`；`built in 48.19s`（墙钟 54825 ms）。含 `stage0.html`、MSW worker、Monaco workers。存在 `>500 kB` chunk 提示，构建仍成功 |
-| `pnpm test:e2e` | 0 | Playwright Chromium：Running 50 tests using 4 workers；**38 passed / 12 skipped**（1.7m，墙钟 102614 ms）。跳过的是 Spike / Stage 1 / Stage 2 / Stage 3 截图（仅 chrome/edge） |
-| `pnpm test:e2e:channels` | 0 | Playwright chrome + edge：Running 100 tests using 4 workers；**100 passed**（3.3m，墙钟 196637 ms） |
-| `pnpm test:e2e:large-files`（`a6b1190`） | 1 | 2 tests / 1 worker；**1 failed / 1 passed**（1.2m）。失败用例：`loads a real 20 MiB - 1 Java file into writable Monaco`。`getValueLength()` 已为 `20 MiB`，但点击后插入点不在第 1 行，旧断言 `line1` 改变不成立。`large-notes.md` 通过。这是 E2E 断言过窄，不是只读回退或载荷缩小 |
-| `pnpm test:e2e:large-writes` | 0 | Playwright `chromium-large-writes`：**1 passed**（1.1m，墙钟 70077 ms，180s ceiling） |
-| `pnpm test:e2e:large-files`（`c2c6ef5` 复跑） | 0 | 断言改为长度 + dirty `*` 后 **2 passed**（1.1m，墙钟 67326 ms） |
-| `pnpm build`（E2E 后生产重建，`c2c6ef5`） | 0 | mock/E2E 覆盖 `dist/` 后再构建；`3746 modules transformed`；`built in 45.38s`（墙钟 51801 ms）；产物哈希与矩阵首次生产构建一致 |
+| `pnpm test:boundary` | 0 | node:test **16 pass / 0 fail**（`duration_ms 125.8978`；命令墙钟 841 ms）；随后打印 `Browser boundary check passed.` |
+| `pnpm typecheck` | 0 | `tsc -b --pretty false` 无诊断输出（4866 ms） |
+| `pnpm test` | 0 | Vitest 3.2.7：Test Files **34 passed (34)**；Tests **509 passed (509)**；Duration 39.24s（墙钟 40945 ms）。stderr 仅 jsdom `HTMLCanvasElement.getContext` 未实现提示（Spike），不计入失败 |
+| `pnpm build`（矩阵首次） | 0 | 内含 typecheck；Vite 7.3.6 production；`3746 modules transformed`；`built in 45.00s`（墙钟 51306 ms）。入口 `index-DtVFVaEX.js` 387.90 kB / gzip 123.08 kB；工作台 `WorkbenchPage-CPiVnFWW.js` 3,964.55 kB / gzip 1,031.42 kB |
+| `pnpm build:mock` | 0 | Vite mock；`3763 modules transformed`；`built in 48.78s`（墙钟 56447 ms）。含 `stage0.html`、MSW worker、Monaco workers。存在 `>500 kB` chunk 提示，构建仍成功 |
+| `pnpm test:e2e` | 0 | Playwright Chromium：Running 50 tests using 4 workers；**38 passed / 12 skipped**（1.8m，墙钟 107750 ms）。跳过的是 Spike / Stage 1 / Stage 2 / Stage 3 截图（仅 chrome/edge） |
+| `pnpm test:e2e:channels` | 0 | Playwright chrome + edge：Running 100 tests using 8 workers；**100 passed**（3.3m，墙钟 196560 ms）。含 `back and logout guards support Cancel and Discard` |
+| `pnpm test:e2e:large-files` | 0 | Playwright `chromium-large-files`：**2 passed**（1.2m，墙钟 72355 ms） |
+| `pnpm test:e2e:large-writes` | 0 | Playwright `chromium-large-writes`：**1 passed**（1.2m，墙钟 72913 ms，180s ceiling） |
+| `pnpm build`（E2E 后生产重建） | 0 | mock/E2E 覆盖 `dist/` 后再构建；`3746 modules transformed`；`built in 47.12s`（墙钟 53523 ms）；产物哈希与矩阵首次生产构建一致（`index-DtVFVaEX.js` / `WorkbenchPage-CPiVnFWW.js`） |
 | `git -C ../.. diff --check` | 0 | 干净 |
-| `git -C ../.. status --short` | 0 | 矩阵结束时仅 PNG recapture；已还原。本报告提交前工作树干净 |
+| `git -C ../.. status --short` | 0 | 矩阵结束时仅 PNG recapture；已还原。本报告提交前工作树仅本文件变更 |
 
-`a6b1190` 上 large-files 失败不记为产品回归。后续退出门按 `c2c6ef5` 复跑 + 其余命令在相同应用源码上的结果判定。
+本矩阵不再依赖 `a6b1190` / `c2c6ef5` 的旧命令输出。先前 `a6b1190` 上 large-files 第 1 行断言失败已由 `c2c6ef5` 改为长度断言，并在 `b111d5d` 上复跑通过。
 
 ## Contract And Revision Evidence
 
@@ -110,7 +111,7 @@ Content-Type: application/json
 3. 删除：Cancel 后 `README.md` 树与标签不变；非空 `src` 确认后对话框内 `DIRECTORY_NOT_EMPTY`（“Directory is not empty”），树仍在；空目录 `tmp` 确认后消失。
 4. dirty 后代：选中含 dirty 子文件的目录时 Rename / Delete 禁用，title 为 “Save or discard unsaved changes before renaming/deleting”；前缀兄弟 `src/ab` 不受 `src/a` dirty 影响。
 5. 关闭 dirty 标签：Cancel 保留标签与缓冲；Discard 关闭且再打开为服务端版本；Save and close 先 PUT 再关，再打开含已保存文本且无 `*`。
-6. Back / logout：Cancel 不改变 URL、认证、标签或模型；Discard and leave 才离开。`beforeunload` 仅在存在 dirty 时注册。
+6. Back / logout：Cancel 不改变 URL、认证、标签或模型；Discard and leave 才离开。离开/logout 确认框打开后初始焦点在 Cancel（`b111d5d`；单测 + Chromium/Chrome/Edge `back and logout guards`）。`beforeunload` 仅在存在 dirty 时注册。
 7. 当前 token 401：`POST /api/v1/session/expire`（mock-only）+ Refresh 回到 `/login`，一条过期会话 alert，无 Unsaved 对话框。Alice/Bob 互不可见树、标签与 `ALICEONLY` 文本。
 8. Run / Terminal 保持禁用。干净时 accessible description 含 `STAGE_4_UNAVAILABLE`；dirty 时 Run 为 `DIRTY_FILES`。强制点击不产生 `/runs`、log 或生产 terminal 请求。
 
@@ -134,7 +135,7 @@ Chrome + Edge（`pnpm test:e2e:channels`，退出 0）：
 | chrome | 50 | 0 | 含 Stage 3 功能 + 3 条 dirty/delete-dialog 截图 |
 | edge | 50 | 0 | 同上 |
 
-12 张视觉证据已在 `18726e5` 写入 `poc4/docs/evidence/stage-3/`。本矩阵 channels 复拍了其中部分 Stage 3 PNG、全部 Stage 2 PNG 与 1 张 Stage 0 PNG；按约束全部还原，不提交。PNG 字节不是 golden-file；断言的是 CSS 像素尺寸、无文档横向溢出、sidebar/editor 无内部重叠、Refresh / New file / Save / 活动标签 / Close / Delete / Cancel 可达、Monaco canvas 含非背景像素与 `STAGE3VISUAL`、`App.java` tab `title` 为完整相对路径且脏标 `*` 可见。
+12 张视觉证据已在 `18726e5` 写入 `poc4/docs/evidence/stage-3/`（dirty 工作台与删除对话框，不含离开确认框）。`b111d5d` 的 channels 复跑通过了同一套几何/截图断言，并复拍了 2 张 Stage 3 1920 delete-dialog 以及 Stage 0/2 PNG；按约束全部还原，不提交。离开对话框安全焦点由功能 E2E 与单测覆盖，不依赖这些 PNG。PNG 字节不是 golden-file；断言的是 CSS 像素尺寸、无文档横向溢出、sidebar/editor 无内部重叠、Refresh / New file / Save / 活动标签 / Close / Delete / Cancel 可达、Monaco canvas 含非背景像素与 `STAGE3VISUAL`、`App.java` tab `title` 为完整相对路径且脏标 `*` 可见。
 
 | 文件 | 像素 |
 |---|---|
@@ -147,7 +148,7 @@ Chrome + Edge（`pnpm test:e2e:channels`，退出 0）：
 
 1280 px：Chrome/Edge dirty 工作台与删除对话框均通过无溢出、modal 在视口内与可达断言。
 
-键盘：skip link → New file 对话框焦点包围与 Escape 回按钮 → 树打开文件 → Save → dirty 关闭框 → 删除确认 Cancel。`role="alert"` 用于校验 / lock / conflict / 非空目录。`prefers-reduced-motion: reduce` 已模拟。树到达仍可能在 Tab 用尽后 `.focus()` 兜底（Task 10 minor）。
+键盘：skip link → New file 对话框焦点包围与 Escape 回按钮 → 树打开文件 → Save → dirty 关闭框 → 删除确认 Cancel。离开/logout 确认框初始焦点为 Cancel。`role="alert"` 用于校验 / lock / conflict / 非空目录。`prefers-reduced-motion: reduce` 已模拟。树到达仍可能在 Tab 用尽后 `.focus()` 兜底（Task 10 minor）。
 
 Playwright 1.62.1；Chromium `151.0.7922.34`。webServer 执行 `pnpm build:mock && pnpm preview`（4173）与 `pnpm dev:echo`（4174）。未连接真实 POC4 后端。
 
@@ -155,26 +156,26 @@ Playwright 1.62.1；Chromium `151.0.7922.34`。webServer 执行 `pnpm build:mock
 
 载荷未缩小。large-files 超时 120s；large-writes 超时 180s。均先 `POST /api/v1/session/large-files`（mock-only）。浏览器：Playwright Chromium 151.0.7922.34。
 
-`pnpm test:e2e:large-files`（`c2c6ef5`，2 passed）：
+`pnpm test:e2e:large-files`（`b111d5d`，2 passed）：
 
 | File | Renderer | 字符串长度 | Content bytes | Response `Content-Length` | Click → viewer-ready | Console errors | Page errors |
 |---|---|---:|---:|---:|---:|---|---|
-| `src/main/java/demo/NearLimit.java` | 可写 Monaco | 20,971,519（20 MiB − 1） | 20,971,519 | 20,971,619 | **629 ms** | none | none |
-| `docs/large-notes.md` | 可写 textarea | 20,971,521（20 MiB + 1） | 20,971,521 | 20,971,603 | **3573 ms** | none | none |
+| `src/main/java/demo/NearLimit.java` | 可写 Monaco | 20,971,519（20 MiB − 1） | 20,971,519 | 20,971,619 | **638 ms** | none | none |
+| `docs/large-notes.md` | 可写 textarea | 20,971,521（20 MiB + 1） | 20,971,521 | 20,971,603 | **4308 ms** | none | none |
 
 可写证明：NearLimit 键入 `X` 后 `getValueLength() === 20 MiB` 且标签出现 `*`（插入点不必在第 1 行）。`large-notes.md` `readOnly === false`，键入后长度 +1 且 dirty。页面未崩溃。这只证明当前测试机器可运行，不构成生产 SLA。Stage 2 只读断言已删除，不再声称大文件只读。
 
-`pnpm test:e2e:large-writes`（`a6b1190` / 同应用源码，1 passed）：
+`pnpm test:e2e:large-writes`（`b111d5d`，1 passed）：
 
 | File | Renderer | 保存后 UTF-8 正文 | JSON 请求 UTF-8 | GET `Content-Length` | Click → ready | Save → response | Console | Page |
 |---|---|---:|---:|---:|---:|---:|---|---|
-| `docs/large-notes.md` | 可写 textarea | 20,971,538（20 MiB + 1 + `\nE2E_LARGE_WRITE\n`） | 20,971,601 | 20,971,603 | **3644 ms** | **1486 ms** | none | none |
+| `docs/large-notes.md` | 可写 textarea | 20,971,538（20 MiB + 1 + `\nE2E_LARGE_WRITE\n`） | 20,971,601 | 20,971,603 | **3938 ms** | **1371 ms** | none | none |
 
 切换到 `pom.xml` 再切回后后缀仍在；PUT `expectedWorkspaceRevision` 等于进入时的根 revision；保存后 dirty 清除；refetch 正文含后缀且 revision 已推进。20 MiB PUT 的 Playwright `postData()` 可能被 inspector 丢弃；请求 UTF-8 长度来自页内 `TextEncoder` 探针，不是传输层 `Content-Length`。
 
 ## Production Exclusion Evidence
 
-矩阵中 `pnpm build:mock` 与 E2E 会覆盖 `dist/`，因此在 `c2c6ef5` 上于 large-files 复跑之后重新执行 `pnpm build`（production，非 mock）再扫描。`dist/stage0.html` 与 `dist/mockServiceWorker.js` 均不存在。产物 190 个文件。
+矩阵中 `pnpm build:mock` 与 E2E 会覆盖 `dist/`，因此在 `b111d5d` 上于 large-writes 之后重新执行 `pnpm build`（production，非 mock）再扫描。`dist/stage0.html` 与 `dist/mockServiceWorker.js` 均不存在。产物 190 个文件。
 
 扫描字符串（Stage 2 列表 **加上** Stage 3 scenario 与 mock 写夹具标记）：
 
@@ -196,28 +197,28 @@ fileFixtures
 
 UTF-8 解码后逐文件 `Contains`：`FORBIDDEN_MATCH_COUNT=0`（每条 needle 的 MATCH_FILES=0）。
 
-入口 chunk `index-CMarb_nk.js` **没有** `monaco-editor` / `@monaco-editor` 静态导入，也没有 Worker 文件名。其中出现的 `kind="monaco"` 来自打进入口的 `WorkspaceBufferRegistry` 判别字段，不是编辑器包。工作台 `WorkbenchPage` 仍由 `ProjectRoutePage` `lazy(() => import('./WorkbenchPage'))` 加载。五个 Monaco Worker 均存在于生产 `dist/assets/`。
+入口 chunk `index-DtVFVaEX.js` **没有** `monaco-editor` / `@monaco-editor` 静态导入，也没有 Worker 文件名。其中出现的 `kind="monaco"` 来自打进入口的 `WorkspaceBufferRegistry` 判别字段，不是编辑器包。工作台 `WorkbenchPage` 仍由 `ProjectRoutePage` `lazy(() => import('./WorkbenchPage'))` 加载。五个 Monaco Worker 均存在于生产 `dist/assets/`。
 
-关键产物（Vite 打印；Worker 无 gzip 列，改用 `zlib.gzipSync({ level: 9 })`）：
+关键产物（Vite 打印；Worker gzip 列为 Python `gzip.compress(level=9)`）：
 
 | 路径 | raw | gzip |
 |---|---:|---:|
 | `dist/index.html` | 0.40 kB | 0.27 kB |
 | `dist/assets/index-ClGF_-0n.css` | 35.35 kB | 6.73 kB |
-| `dist/assets/index-CMarb_nk.js`（入口，无静态 Monaco） | 387.84 kB | 123.06 kB |
+| `dist/assets/index-DtVFVaEX.js`（入口，无静态 Monaco） | 387.90 kB | 123.08 kB |
 | `dist/assets/WorkbenchPage-Ck3IbhyB.css` | 142.37 kB | 22.88 kB |
-| `dist/assets/WorkbenchPage-COWb8pVo.js`（工作台） | 3,964.55 kB | 1,031.41 kB |
-| `dist/assets/editor.worker-C2_AfrSl.js` | 251,735 B | 75,845 B |
-| `dist/assets/json.worker-C838mOW9.js` | 383,014 B | 113,613 B |
-| `dist/assets/html.worker-eZJr__P7.js` | 693,120 B | 181,134 B |
-| `dist/assets/css.worker-NZNbQL3P.js` | 1,030,315 B | 231,173 B |
-| `dist/assets/ts.worker-BfwyojP3.js` | 7,010,073 B | 1,534,541 B |
+| `dist/assets/WorkbenchPage-CPiVnFWW.js`（工作台） | 3,964.55 kB | 1,031.42 kB |
+| `dist/assets/editor.worker-C2_AfrSl.js` | 251,735 B | 75,278 B |
+| `dist/assets/json.worker-C838mOW9.js` | 383,014 B | 112,906 B |
+| `dist/assets/html.worker-eZJr__P7.js` | 693,120 B | 179,908 B |
+| `dist/assets/css.worker-NZNbQL3P.js` | 1,030,315 B | 230,640 B |
+| `dist/assets/ts.worker-BfwyojP3.js` | 7,010,073 B | 1,531,330 B |
 
 Vite 打印 `Some chunks are larger than 500 kB after minification`。`chunkSizeWarningLimit` 未提高。
 
 `main.tsx` 仅在 `import.meta.env.VITE_ENABLE_MOCK_API === 'true'` 时动态 `import('./mocks/browser')`。Vite `publicDir` 生产为 `public`，mock 为 `public-mock`。生产入口只有 `index.html`。
 
-编码：对 `git ls-files` 下 `poc4/frontend` 与 `poc4/docs` 的文本文件做 UTF-8 严格解码；`ENCODING_CHECKED=152`，`BOM_FOUND=0`，`UTF8_STRICT_FAIL=0`。工作区因 `core.autocrlf=true` 可见 CRLF（`CR_FOUND=91`）；`git diff --check` 干净。未添加 `.grok/`、`.superpowers/`、traces、videos、`test-results/`、`playwright-report/` 或 recaptured prior-stage PNG。
+编码：对 `git ls-files` 下 `poc4/frontend` 与 `poc4/docs` 的文本后缀（`.ts/.tsx/.js/.mjs/.cjs/.json/.md/.css/.html/.txt/.yml/.yaml`）做 UTF-8 严格解码；`ENCODING_CHECKED=151`，`BOM_FOUND=0`，`UTF8_STRICT_FAIL=0`。工作区因 `core.autocrlf=true` 可见 CRLF（`CR_FOUND=89`）；`git diff --check` 干净。未添加 `.grok/`、`.superpowers/`、traces、videos、`test-results/`、`playwright-report/` 或 recaptured prior-stage PNG。
 
 ## Known Gaps
 
@@ -234,7 +235,7 @@ Vite 打印 `Some chunks are larger than 500 kB after minification`。`chunkSize
 
 ## Decision
 
-对照阶段 3 退出门十三项，依据 `a6b1190` 矩阵 + `c2c6ef5` large-files / 生产重建逐项判定。全部为 **mock contract verified**：
+对照阶段 3 退出门十三项，依据 `b111d5d` 上完整矩阵逐项判定。全部为 **mock contract verified**：
 
 1. 所有写 API 只接受 branded 项目内相对路径；创建/重命名 basename 经前端检查，MSW 再拒绝绝对路径、反斜杠、`.`、`..`、NUL、逃逸和非法 parent：通过。
 2. 初次根目录响应建立非空 opaque `workspaceRevision`；每次保存/创建/重命名/删除携带当前 revision，成功推进，客户端从不自行生成：通过。
@@ -258,4 +259,4 @@ Vite 打印 `Some chunks are larger than 500 kB after minification`。`chunkSize
 
 ## Confidence
 
-对阶段 3 产品退出门 1–13 的置信度为 **88%**（单测 508、Chromium 38、Chrome/Edge 100、真实 20 MiB 加载与写入、生产扫描 0 匹配、工作台 chunk + 五 Worker）。对「现在就可以 `READY_FOR_STAGE_4_PLAN`」的置信度为 **84%**：完整命令矩阵跨 `a6b1190` 与仅改 large-files 断言的 `c2c6ef5`；large-files 首次因第 1 行断言失败；大文件耗时依赖本机；全部安全结论仍是 **mock contract verified**，真实后端/PVC/symlink/JWT/lock 未验证。
+对阶段 3 产品退出门 1–13 的置信度为 **90%**（单测 509、Chromium 38、Chrome/Edge 100、真实 20 MiB 加载与写入、生产扫描 0 匹配、工作台 chunk + 五 Worker）。对「现在就可以 `READY_FOR_STAGE_4_PLAN`」的置信度为 **88%**：完整命令矩阵已在最终应用 SHA `b111d5d` 上重跑；离开对话框 Cancel 焦点含在该 SHA；大文件耗时依赖本机；全部安全结论仍是 **mock contract verified**，真实后端/PVC/symlink/JWT/lock 未验证。
