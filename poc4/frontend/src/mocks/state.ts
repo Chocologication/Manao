@@ -1,6 +1,7 @@
 import type { AuthUser, LoginResponse } from '../contracts/auth';
 import type { ProjectState, ProjectSummary } from '../contracts/project';
 import { clearLargeFileBodyCache, ensureWorkspace, resetWorkspaces } from './fileFixtures';
+import { resetLogTickets } from './runSocket';
 import { bootRunState, resetRunState } from './runState';
 
 const ACCESS_TOKEN_TTL_MS = 15 * 60 * 1000;
@@ -145,6 +146,7 @@ function resetSessionState(): void {
 export function resetMockState(): void {
   resetSessionState();
   resetRunState();
+  resetLogTickets();
 }
 
 resetSessionState();

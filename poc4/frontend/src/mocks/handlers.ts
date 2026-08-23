@@ -20,7 +20,8 @@ import {
   toFileMetadataJson,
   type MockMutationError,
 } from './fileFixtures';
-import { isRunScenario, setRunScenario } from './runState';
+import { runHandlers } from './runHandlers';
+import { hasActiveRun, isRunScenario, setRunScenario } from './runState';
 import {
   canReadReadyProjectFiles,
   createOwnedProject,
@@ -292,6 +293,9 @@ async function gateWrite(
   }
   if (expectedWorkspaceRevision !== getWorkspaceRevision(access.projectId)) {
     return { response: jsonError(409, WORKSPACE_REVISION_CONFLICT) };
+  }
+  if (hasActiveRun(access.projectId)) {
+    return { response: jsonError(409, PROJECT_LOCKED) };
   }
   const scenarioResponse = await applyWriteScenario();
   if (scenarioResponse !== null) {
@@ -611,4 +615,6 @@ export const handlers = [
       workspaceRevision: result.workspaceRevision,
     });
   }),
+
+  ...runHandlers,
 ];
