@@ -53,6 +53,7 @@ export function UnsavedChangesDialog({
   onCancel,
 }: UnsavedChangesDialogProps) {
   const dialogRef = useRef<HTMLDialogElement>(null);
+  const cancelRef = useRef<HTMLButtonElement>(null);
   const onCancelRef = useRef(onCancel);
   onCancelRef.current = onCancel;
 
@@ -67,7 +68,11 @@ export function UnsavedChangesDialog({
     const root: HTMLElement = dialog;
     const trigger = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     showNativeModal(dialog);
-    focusableElements(root)[0]?.focus();
+    if (mode === 'leave') {
+      cancelRef.current?.focus();
+    } else {
+      focusableElements(root)[0]?.focus();
+    }
 
     function onKeyDown(event: KeyboardEvent): void {
       if (event.key === 'Escape') {
@@ -108,7 +113,7 @@ export function UnsavedChangesDialog({
       closeNativeModal(dialog);
       trigger?.focus();
     };
-  }, [open]);
+  }, [open, mode]);
 
   if (!open) {
     return null;
@@ -146,7 +151,7 @@ export function UnsavedChangesDialog({
         >
           {mode === 'leave' ? DISCARD_AND_LEAVE_LABEL : DISCARD_LABEL}
         </Button>
-        <Button type="button" variant="ghost" onClick={onCancel}>
+        <Button ref={cancelRef} type="button" variant="ghost" onClick={onCancel}>
           {CANCEL_LABEL}
         </Button>
       </div>

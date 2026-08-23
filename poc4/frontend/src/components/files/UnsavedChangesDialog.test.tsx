@@ -141,4 +141,19 @@ describe('UnsavedChangesDialog', () => {
     expect(trigger).toHaveFocus();
     trigger.remove();
   });
+
+  it('focuses Cancel when opening a leave dialog', () => {
+    render(
+      <UnsavedChangesDialog
+        open
+        mode="leave"
+        message={LEAVE_MESSAGE}
+        onDiscard={() => {}}
+        onCancel={() => {}}
+      />,
+    );
+
+    expect(screen.getByRole('button', { name: CANCEL_LABEL })).toHaveFocus();
+    expect(screen.getByRole('button', { name: DISCARD_AND_LEAVE_LABEL })).not.toHaveFocus();
+  });
 });
