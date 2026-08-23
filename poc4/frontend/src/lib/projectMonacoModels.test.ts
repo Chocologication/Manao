@@ -4,6 +4,7 @@ import type { ProjectRelativePath } from '../contracts/file';
 import { parseProjectRelativePath } from '../features/files/pathPolicy';
 import {
   disposeAllProjectModels,
+  disposeDescendantProjectModels,
   disposeProjectModel,
   disposeProjectModels,
   toProjectModelUri,
@@ -104,5 +105,32 @@ describe('project Monaco model dispose', () => {
       .getModels()
       .filter((model) => model.uri.scheme === 'poc4' && model.uri.authority === 'workspace');
     expect(remaining).toEqual([]);
+  });
+
+  it('does not export a live-model URI move helper', async () => {
+    const module = await import('./projectMonacoModels');
+    expect(module).not.toHaveProperty('remapProjectModels');
+  });
+
+  it('disposeDescendantProjectModels removes exact and descendant models only', () => {
+    const from = parseProjectRelativePath('src/a');
+    const child = parseProjectRelativePath('src/a/foo.ts');
+    const sibling = parseProjectRelativePath('src/ab');
+    const aliceFrom = toProjectModelUri('prj-alice-notebook', from);
+    const aliceChild = toProjectModelUri('prj-alice-notebook', child);
+    const aliceSibling = toProjectModelUri('prj-alice-notebook', sibling);
+    const bobFrom = toProjectModelUri('prj-bob-lab', from);
+    monaco.editor.createModel('alice-a', 'plaintext', aliceFrom);
+    monaco.editor.createModel('alice-foo', 'typescript', aliceChild);
+    monaco.editor.createModel('alice-ab', 'plaintext', aliceSibling);
+    monaco.editor.createModel('bob-a', 'plaintext', bobFrom);
+
+    disposeDescendantProjectModels('prj-alice-notebook', from);
+    disposeDescendantProjectModels('prj-alice-notebook', from);
+
+    expect(monaco.editor.getModel(aliceFrom)).toBeNull();
+    expect(monaco.editor.getModel(aliceChild)).toBeNull();
+    expect(monaco.editor.getModel(aliceSibling)?.getValue()).toBe('alice-ab');
+    expect(monaco.editor.getModel(bobFrom)?.getValue()).toBe('bob-a');
   });
 });

@@ -3,7 +3,7 @@ import { http, HttpResponse } from 'msw';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { login } from '../../api/authApi';
 import { AppProviders } from '../../app/AppProviders';
-import { authSession, queryClient } from '../../app/appRuntime';
+import { authSession, queryClient, workspaceBufferRegistry } from '../../app/appRuntime';
 import type { FileTreeEntry, ProjectRelativePath } from '../../contracts/file';
 import { useWorkspaceSession } from '../editor/workspaceSession';
 import { parseProjectDirectoryPath, parseProjectRelativePath } from './pathPolicy';
@@ -16,7 +16,12 @@ import {
   useFileMetadataQuery,
 } from './fileQueries';
 import { server } from '../../mocks/node';
-import { ALICE_SEED_PROJECT_ID, getFileRequestCount, recordFileRequest } from '../../mocks/state';
+import {
+  ALICE_SEED_PROJECT_ID,
+  BOB_SEED_PROJECT_ID,
+  getFileRequestCount,
+  recordFileRequest,
+} from '../../mocks/state';
 import { resetAppRuntime } from '../../test/renderApp';
 
 const ALICE = { username: 'alice', password: 'demo-pass' };
@@ -59,15 +64,19 @@ afterEach(async () => {
 describe('fileKeys', () => {
   it('uses the hierarchical project-files key tuples', () => {
     expect(fileKeys.all('prj-1')).toEqual(['project-files', 'prj-1']);
+    expect(fileKeys.trees('prj-1')).toEqual(['project-files', 'prj-1', 'tree']);
     expect(fileKeys.tree('prj-1', ROOT)).toEqual(['project-files', 'prj-1', 'tree', '']);
     expect(fileKeys.tree('prj-1', SRC)).toEqual(['project-files', 'prj-1', 'tree', 'src']);
+    expect(fileKeys.meta('prj-1')).toEqual(['project-files', 'prj-1', 'meta']);
     expect(fileKeys.meta('prj-1', POM)).toEqual(['project-files', 'prj-1', 'meta', 'pom.xml']);
+    expect(fileKeys.content('prj-1')).toEqual(['project-files', 'prj-1', 'content']);
     expect(fileKeys.content('prj-1', POM)).toEqual([
       'project-files',
       'prj-1',
       'content',
       'pom.xml',
     ]);
+    expect(fileKeys.revision('prj-1')).toEqual(['project-files', 'prj-1', 'revision']);
   });
 });
 
@@ -183,7 +192,7 @@ describe('metadata-gated content queries', () => {
 });
 
 describe('refreshProjectFiles', () => {
-  it('cancels then invalidates the project file key and does not clear open tabs', async () => {
+  it('cancels then invalidates only tree keys and does not clear open tabs', async () => {
     await authenticateAsAlice();
     useWorkspaceSession.getState().activateProject(ALICE_SEED_PROJECT_ID);
     useWorkspaceSession.getState().openFile(POM);
@@ -199,11 +208,222 @@ describe('refreshProjectFiles', () => {
 
     await refreshProjectFiles(queryClient, ALICE_SEED_PROJECT_ID);
 
-    expect(cancel).toHaveBeenCalledWith({ queryKey: fileKeys.all(ALICE_SEED_PROJECT_ID) });
-    expect(invalidate).toHaveBeenCalledWith({ queryKey: fileKeys.all(ALICE_SEED_PROJECT_ID) });
+    expect(cancel).toHaveBeenCalledWith({ queryKey: fileKeys.trees(ALICE_SEED_PROJECT_ID) });
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: fileKeys.trees(ALICE_SEED_PROJECT_ID) });
+    expect(cancel).not.toHaveBeenCalledWith({ queryKey: fileKeys.all(ALICE_SEED_PROJECT_ID) });
+    expect(invalidate).not.toHaveBeenCalledWith({ queryKey: fileKeys.all(ALICE_SEED_PROJECT_ID) });
     expect(cancel.mock.invocationCallOrder[0]).toBeLessThan(invalidate.mock.invocationCallOrder[0]);
     expect(remove).not.toHaveBeenCalled();
     expect(useWorkspaceSession.getState().openPaths).toEqual([POM]);
     expect(useWorkspaceSession.getState().activePath).toBe(POM);
+  });
+
+  it('does not refetch content or replace a dirty buffer', async () => {
+    await authenticateAsAlice();
+    useWorkspaceSession.getState().activateProject(ALICE_SEED_PROJECT_ID);
+
+    const { result } = renderHook(
+      () => ({
+        tree: useDirectoryTreeQuery(ALICE_SEED_PROJECT_ID, ROOT),
+        content: useFileContentQuery(ALICE_SEED_PROJECT_ID, POM, 'MONACO_TEXT'),
+      }),
+      { wrapper: AppProviders },
+    );
+    await waitFor(() => expect(result.current.tree.isSuccess).toBe(true));
+    await waitFor(() => expect(result.current.content.isSuccess).toBe(true));
+    const loaded = result.current.content.data?.content;
+    expect(typeof loaded).toBe('string');
+
+    const buffer = workspaceBufferRegistry.register({
+      projectId: ALICE_SEED_PROJECT_ID,
+      path: POM,
+      kind: 'plain-text',
+      content: loaded ?? '',
+    });
+    const plain = buffer as typeof buffer & { replace(content: string): void };
+    plain.replace(`${loaded ?? ''}// dirty`);
+    const dirtySnapshot = buffer.snapshot();
+    expect(buffer.isDirty()).toBe(true);
+    const contentRequests = getFileRequestCount('content', ALICE_SEED_PROJECT_ID, 'pom.xml');
+
+    await refreshProjectFiles(queryClient, ALICE_SEED_PROJECT_ID);
+    await waitFor(() => expect(result.current.tree.isFetching).toBe(false));
+    await new Promise((resolve) => setTimeout(resolve, 40));
+
+    expect(getFileRequestCount('content', ALICE_SEED_PROJECT_ID, 'pom.xml')).toBe(contentRequests);
+    expect(result.current.content.data?.content).toBe(loaded);
+    expect(buffer.isDirty()).toBe(true);
+    expect(buffer.snapshot()).toEqual(dirtySnapshot);
+  });
+});
+
+describe('workspace revision cache', () => {
+  it('seeds fileKeys.revision from the root tree', async () => {
+    await authenticateAsAlice();
+    const { result } = renderHook(() => useDirectoryTreeQuery(ALICE_SEED_PROJECT_ID, ROOT), {
+      wrapper: AppProviders,
+    });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(queryClient.getQueryData(fileKeys.revision(ALICE_SEED_PROJECT_ID))).toBe('mock-rev-0001');
+  });
+
+  it('lets nested tree and content refresh revision only for the current project', async () => {
+    await authenticateAsAlice();
+    useWorkspaceSession.getState().activateProject(ALICE_SEED_PROJECT_ID);
+    useWorkspaceSession.getState().toggleDirectory(parseProjectRelativePath('src'));
+
+    const { result } = renderHook(
+      () => ({
+        root: useDirectoryTreeQuery(ALICE_SEED_PROJECT_ID, ROOT),
+        nested: useDirectoryTreeQuery(ALICE_SEED_PROJECT_ID, SRC),
+        content: useFileContentQuery(ALICE_SEED_PROJECT_ID, POM, 'MONACO_TEXT'),
+      }),
+      { wrapper: AppProviders },
+    );
+    await waitFor(() => expect(result.current.root.isSuccess).toBe(true));
+    expect(queryClient.getQueryData(fileKeys.revision(ALICE_SEED_PROJECT_ID))).toBe('mock-rev-0001');
+
+    server.use(
+      http.get('/api/v1/projects/:projectId/files/tree', ({ request }) => {
+        const path = new URL(request.url).searchParams.get('path') ?? '';
+        recordFileRequest('tree', ALICE_SEED_PROJECT_ID, path);
+        if (path === 'src') {
+          return HttpResponse.json({
+            directory: 'src',
+            entries: [
+              {
+                path: 'src/main',
+                name: 'main',
+                kind: 'directory',
+                hidden: false,
+                sizeBytes: null,
+                hasChildren: true,
+              },
+            ],
+            workspaceRevision: 'nested-tree-rev',
+          });
+        }
+        return HttpResponse.json({
+          directory: path,
+          entries: [],
+          workspaceRevision: 'root-should-not-clobber',
+        });
+      }),
+    );
+    await result.current.nested.refetch();
+    await waitFor(() =>
+      expect(queryClient.getQueryData(fileKeys.revision(ALICE_SEED_PROJECT_ID))).toBe(
+        'nested-tree-rev',
+      ),
+    );
+
+    server.use(
+      http.get('/api/v1/projects/:projectId/files/content', ({ request }) => {
+        const path = new URL(request.url).searchParams.get('path') ?? '';
+        recordFileRequest('content', ALICE_SEED_PROJECT_ID, path);
+        return HttpResponse.json({
+          path,
+          content: '<project />',
+          workspaceRevision: 'nested-content-rev',
+        });
+      }),
+    );
+    await result.current.content.refetch();
+    await waitFor(() =>
+      expect(queryClient.getQueryData(fileKeys.revision(ALICE_SEED_PROJECT_ID))).toBe(
+        'nested-content-rev',
+      ),
+    );
+
+    useWorkspaceSession.getState().activateProject(BOB_SEED_PROJECT_ID);
+    server.use(
+      http.get('/api/v1/projects/:projectId/files/tree', () =>
+        HttpResponse.json({
+          directory: 'src',
+          entries: [
+            {
+              path: 'src/main',
+              name: 'main',
+              kind: 'directory',
+              hidden: false,
+              sizeBytes: null,
+              hasChildren: true,
+            },
+          ],
+          workspaceRevision: 'alice-after-switch',
+        }),
+      ),
+    );
+    await result.current.nested.refetch();
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    expect(queryClient.getQueryData(fileKeys.revision(ALICE_SEED_PROJECT_ID))).toBe(
+      'nested-content-rev',
+    );
+  });
+
+  it('clears the old revision on project switch or removal', async () => {
+    await authenticateAsAlice();
+    const { result } = renderHook(() => useDirectoryTreeQuery(ALICE_SEED_PROJECT_ID, ROOT), {
+      wrapper: AppProviders,
+    });
+    await waitFor(() =>
+      expect(queryClient.getQueryData(fileKeys.revision(ALICE_SEED_PROJECT_ID))).toBe(
+        'mock-rev-0001',
+      ),
+    );
+    expect(result.current.isSuccess).toBe(true);
+
+    const queryKey = fileKeys.all(ALICE_SEED_PROJECT_ID);
+    await queryClient.cancelQueries({ queryKey });
+    queryClient.removeQueries({ queryKey });
+    useWorkspaceSession.getState().activateProject(BOB_SEED_PROJECT_ID);
+
+    expect(queryClient.getQueryData(fileKeys.revision(ALICE_SEED_PROJECT_ID))).toBeUndefined();
+  });
+
+  it('aborts an in-flight GET on cancelQueries so a late body cannot regress revision after a write', async () => {
+    await authenticateAsAlice();
+    useWorkspaceSession.getState().activateProject(ALICE_SEED_PROJECT_ID);
+    const { result: root } = renderHook(() => useDirectoryTreeQuery(ALICE_SEED_PROJECT_ID, ROOT), {
+      wrapper: AppProviders,
+    });
+    await waitFor(() => expect(root.current.isSuccess).toBe(true));
+    queryClient.setQueryData(fileKeys.revision(ALICE_SEED_PROJECT_ID), 'written-rev');
+
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let requestSignal: AbortSignal | undefined;
+    server.use(
+      http.get('/api/v1/projects/:projectId/files/content', async ({ request }) => {
+        requestSignal = request.signal;
+        recordFileRequest('content', ALICE_SEED_PROJECT_ID, 'pom.xml');
+        await held;
+        return HttpResponse.json({
+          path: 'pom.xml',
+          content: 'stale-after-write',
+          workspaceRevision: 'mock-rev-0001',
+        });
+      }),
+    );
+
+    const { result } = renderHook(
+      () => useFileContentQuery(ALICE_SEED_PROJECT_ID, POM, 'MONACO_TEXT'),
+      { wrapper: AppProviders },
+    );
+    await waitFor(() => expect(requestSignal).toBeDefined());
+    expect(result.current.isFetching).toBe(true);
+
+    await queryClient.cancelQueries({ queryKey: fileKeys.content(ALICE_SEED_PROJECT_ID, POM) });
+    expect(requestSignal?.aborted).toBe(true);
+    release();
+    await new Promise((resolve) => setTimeout(resolve, 40));
+
+    expect(queryClient.getQueryData(fileKeys.revision(ALICE_SEED_PROJECT_ID))).toBe('written-rev');
+    expect(queryClient.getQueryData(fileKeys.content(ALICE_SEED_PROJECT_ID, POM))).not.toEqual(
+      expect.objectContaining({ content: 'stale-after-write' }),
+    );
   });
 });

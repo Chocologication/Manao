@@ -42,3 +42,28 @@ export function disposeAllProjectModels(): void {
     }
   }
 }
+
+function relativeFromProjectUri(projectId: string, uri: monaco.Uri): string | null {
+  if (!isProjectWorkspaceUri(uri)) {
+    return null;
+  }
+  const prefix = projectPathPrefix(projectId);
+  if (!uri.path.startsWith(prefix)) {
+    return null;
+  }
+  return uri.path.slice(prefix.length);
+}
+
+function isExactOrDescendant(parent: ProjectRelativePath, relative: string): boolean {
+  return relative === parent || relative.startsWith(`${parent}/`);
+}
+
+export function disposeDescendantProjectModels(projectId: string, path: ProjectRelativePath): void {
+  const target = parseProjectRelativePath(path);
+  for (const model of [...monaco.editor.getModels()]) {
+    const relative = relativeFromProjectUri(projectId, model.uri);
+    if (relative !== null && isExactOrDescendant(target, relative)) {
+      model.dispose();
+    }
+  }
+}

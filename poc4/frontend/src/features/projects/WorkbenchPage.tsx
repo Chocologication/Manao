@@ -1,12 +1,13 @@
 import { useQueryClient } from '@tanstack/react-query';
 import { useEffect } from 'react';
+import { workspaceBufferRegistry } from '@/app/appRuntime';
 import { WorkbenchShell } from '@/components/shell/WorkbenchShell';
 import type { ProjectSummary } from '@/contracts/project';
 import { useWorkspaceSession } from '@/features/editor/workspaceSession';
 import { fileKeys } from '@/features/files/fileQueries';
 import { disposeProjectModels } from '@/lib/projectMonacoModels';
 
-export function ReadonlyWorkbenchPage({ project }: { project: ProjectSummary }) {
+export function WorkbenchPage({ project }: { project: ProjectSummary }) {
   const queryClient = useQueryClient();
   const projectId = project.id;
 
@@ -15,9 +16,10 @@ export function ReadonlyWorkbenchPage({ project }: { project: ProjectSummary }) 
     if (previousId !== null && previousId !== projectId) {
       const queryKey = fileKeys.all(previousId);
       void queryClient.cancelQueries({ queryKey });
+      workspaceBufferRegistry.disposeProject(previousId);
       disposeProjectModels(previousId);
-      queryClient.removeQueries({ queryKey });
       useWorkspaceSession.getState().reset();
+      queryClient.removeQueries({ queryKey });
     }
     useWorkspaceSession.getState().activateProject(projectId);
   }, [projectId, queryClient]);
@@ -25,4 +27,4 @@ export function ReadonlyWorkbenchPage({ project }: { project: ProjectSummary }) 
   return <WorkbenchShell project={project} />;
 }
 
-export default ReadonlyWorkbenchPage;
+export default WorkbenchPage;

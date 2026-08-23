@@ -1,15 +1,83 @@
-import { lazy, Suspense } from 'react';
+import { lazy, Suspense, useEffect } from 'react';
 import { Link, useParams } from 'react-router';
 import { ApiRequestError } from '../../api/ApiRequestError';
+import { workspaceBufferRegistry } from '@/app/appRuntime';
 import { AccessDeniedPage } from '@/components/feedback/AccessDeniedPage';
 import { InlineAlert } from '@/components/feedback/InlineAlert';
 import { LoadingState } from '@/components/feedback/LoadingState';
+import { UnsavedChangesDialog } from '@/components/files/UnsavedChangesDialog';
 import { Button } from '@/components/ui/button';
+import type { ProjectSummary } from '@/contracts/project';
 import { Spinner } from '@/components/ui/spinner';
+import {
+  dismissUnsavedDialog,
+  getUnsavedDialogState,
+  LEAVE_MESSAGE,
+  requestUnsavedDialog,
+  useUnsavedDialogState,
+  useWorkbenchLeaveBlocker,
+} from '@/features/editor/unsavedChangesGuard';
+import { useWorkspaceSession } from '@/features/editor/workspaceSession';
 import { AppChrome } from './ProjectsPage';
 import { useProjectQuery } from './projectQueries';
 
-const ReadonlyWorkbenchPage = lazy(() => import('./ReadonlyWorkbenchPage'));
+const WorkbenchPage = lazy(() => import('./WorkbenchPage'));
+
+function WorkbenchRoute({ project }: { project: ProjectSummary }) {
+  const dirtyCount = useWorkspaceSession((state) => state.dirtyPaths.size);
+  const blocker = useWorkbenchLeaveBlocker(dirtyCount);
+  const dialog = useUnsavedDialogState();
+
+  useEffect(() => {
+    if (blocker.state !== 'blocked') {
+      return;
+    }
+    const current = getUnsavedDialogState();
+    if (current.open && current.action.type === 'leave-workbench') {
+      return;
+    }
+    const result = requestUnsavedDialog({
+      open: true,
+      mode: 'leave',
+      action: { type: 'leave-workbench' },
+      message: LEAVE_MESSAGE,
+    });
+    if (result === 'busy') {
+      blocker.reset();
+    }
+  }, [blocker]);
+
+  function handleCancel(): void {
+    if (blocker.state === 'blocked') {
+      blocker.reset();
+    }
+    dismissUnsavedDialog();
+  }
+
+  function handleDiscard(): void {
+    const session = useWorkspaceSession.getState();
+    for (const path of [...session.dirtyPaths]) {
+      workspaceBufferRegistry.get(project.id, path)?.discard();
+    }
+    dismissUnsavedDialog();
+    if (blocker.state === 'blocked') {
+      blocker.proceed();
+    }
+  }
+
+  return (
+    <>
+      <WorkbenchPage project={project} />
+      <UnsavedChangesDialog
+        open={dialog.open && dialog.action.type === 'leave-workbench'}
+        mode="leave"
+        message={LEAVE_MESSAGE}
+        onDiscard={handleDiscard}
+        onCancel={handleCancel}
+      />
+    </>
+  );
+}
 
 function decodeProjectId(raw: string | undefined): string {
   if (raw === undefined || raw.length === 0) {
@@ -111,7 +179,7 @@ export function ProjectRoutePage() {
         </div>
       }
     >
-      <ReadonlyWorkbenchPage project={project} />
+      <WorkbenchRoute project={project} />
     </Suspense>
   );
 }

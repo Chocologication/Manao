@@ -4,6 +4,7 @@ import {
 } from '../features/files/pathPolicy';
 
 declare const projectRelativePathBrand: unique symbol;
+declare const workspaceRevisionBrand: unique symbol;
 
 export type ProjectRelativePath = string & {
   readonly [projectRelativePathBrand]: true;
@@ -11,10 +12,16 @@ export type ProjectRelativePath = string & {
 
 export type ProjectDirectoryPath = ProjectRelativePath | '';
 
+export type WorkspaceRevision = string & {
+  readonly [workspaceRevisionBrand]: true;
+};
+
+export type EntryKind = 'file' | 'directory';
+
 export type FileTreeEntry = {
   path: ProjectRelativePath;
   name: string;
-  kind: 'file' | 'directory';
+  kind: EntryKind;
   hidden: boolean;
   sizeBytes: number | null;
   hasChildren: boolean | null;
@@ -23,6 +30,7 @@ export type FileTreeEntry = {
 export type FileTreeResponse = {
   directory: ProjectDirectoryPath;
   entries: FileTreeEntry[];
+  workspaceRevision: WorkspaceRevision;
 };
 
 export type FileRenderMode = 'MONACO_TEXT' | 'PLAIN_TEXT' | 'BLOCKED';
@@ -45,13 +53,66 @@ export type FileMetadata = {
 export type FileContentResponse = {
   path: ProjectRelativePath;
   content: string;
-  workspaceRevision: string;
+  workspaceRevision: WorkspaceRevision;
+};
+
+export type SaveFileRequest = {
+  content: string;
+  expectedWorkspaceRevision: WorkspaceRevision;
+};
+
+export type SaveFileResponse = {
+  file: FileMetadata;
+  workspaceRevision: WorkspaceRevision;
+};
+
+export type CreateEntryRequest = {
+  kind: EntryKind;
+  path: ProjectRelativePath;
+  expectedWorkspaceRevision: WorkspaceRevision;
+};
+
+export type CreateEntryResponse = {
+  entry: FileTreeEntry;
+  file: FileMetadata | null;
+  workspaceRevision: WorkspaceRevision;
+};
+
+export type RenameEntryRequest = {
+  path: ProjectRelativePath;
+  nextPath: ProjectRelativePath;
+  expectedWorkspaceRevision: WorkspaceRevision;
+};
+
+export type RenameEntryResponse = {
+  path: ProjectRelativePath;
+  nextPath: ProjectRelativePath;
+  entry: FileTreeEntry;
+  file: FileMetadata | null;
+  workspaceRevision: WorkspaceRevision;
+};
+
+export type DeleteEntryRequest = {
+  expectedWorkspaceRevision: WorkspaceRevision;
+};
+
+export type DeleteEntryResponse = {
+  path: ProjectRelativePath;
+  workspaceRevision: WorkspaceRevision;
 };
 
 const INVALID_FILE_RESPONSE = 'Invalid file response';
+const MAX_WORKSPACE_REVISION_LENGTH = 256;
 
 function invalidFileResponse(): never {
   throw new Error(INVALID_FILE_RESPONSE);
+}
+
+export function parseWorkspaceRevision(value: unknown): WorkspaceRevision {
+  if (typeof value !== 'string' || value === '' || value.length > MAX_WORKSPACE_REVISION_LENGTH) {
+    invalidFileResponse();
+  }
+  return value as WorkspaceRevision;
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -168,7 +229,7 @@ export function parseFileTreeResponse(
     }
     seen.add(entry.path);
   }
-  return { directory, entries };
+  return { directory, entries, workspaceRevision: parseWorkspaceRevision(record.workspaceRevision) };
 }
 
 function parseRenderMode(value: unknown): FileRenderMode {
@@ -245,12 +306,90 @@ export function parseFileContentResponse(
   if (typeof record.content !== 'string') {
     invalidFileResponse();
   }
-  if (typeof record.workspaceRevision !== 'string' || record.workspaceRevision === '') {
+  return {
+    path,
+    content: record.content,
+    workspaceRevision: parseWorkspaceRevision(record.workspaceRevision),
+  };
+}
+
+function parseMutationFile(
+  value: unknown,
+  expectedPath: ProjectRelativePath,
+  kind: EntryKind,
+): FileMetadata | null {
+  if (kind === 'directory') {
+    if (value !== null) {
+      invalidFileResponse();
+    }
+    return null;
+  }
+  return parseFileMetadata(value, expectedPath);
+}
+
+export function parseSaveFileResponse(
+  value: unknown,
+  expectedPath: ProjectRelativePath,
+): SaveFileResponse {
+  const record = asRecord(value);
+  return {
+    file: parseFileMetadata(record.file, expectedPath),
+    workspaceRevision: parseWorkspaceRevision(record.workspaceRevision),
+  };
+}
+
+export function parseCreateEntryResponse(
+  value: unknown,
+  expectedPath: ProjectRelativePath,
+  expectedKind: EntryKind,
+): CreateEntryResponse {
+  const record = asRecord(value);
+  const entry = parseFileTreeEntry(record.entry);
+  if (entry.path !== expectedPath || entry.kind !== expectedKind) {
+    invalidFileResponse();
+  }
+  return {
+    entry,
+    file: parseMutationFile(record.file, expectedPath, expectedKind),
+    workspaceRevision: parseWorkspaceRevision(record.workspaceRevision),
+  };
+}
+
+export function parseRenameEntryResponse(
+  value: unknown,
+  expectedPath: ProjectRelativePath,
+  expectedNextPath: ProjectRelativePath,
+): RenameEntryResponse {
+  const record = asRecord(value);
+  const path = parseResponseRelativePath(record.path);
+  const nextPath = parseResponseRelativePath(record.nextPath);
+  if (path !== expectedPath || nextPath !== expectedNextPath) {
+    invalidFileResponse();
+  }
+  const entry = parseFileTreeEntry(record.entry);
+  if (entry.path !== nextPath) {
     invalidFileResponse();
   }
   return {
     path,
-    content: record.content,
-    workspaceRevision: record.workspaceRevision,
+    nextPath,
+    entry,
+    file: parseMutationFile(record.file, nextPath, entry.kind),
+    workspaceRevision: parseWorkspaceRevision(record.workspaceRevision),
+  };
+}
+
+export function parseDeleteEntryResponse(
+  value: unknown,
+  expectedPath: ProjectRelativePath,
+): DeleteEntryResponse {
+  const record = asRecord(value);
+  const path = parseResponseRelativePath(record.path);
+  if (path !== expectedPath) {
+    invalidFileResponse();
+  }
+  return {
+    path,
+    workspaceRevision: parseWorkspaceRevision(record.workspaceRevision),
   };
 }

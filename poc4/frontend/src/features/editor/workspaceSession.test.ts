@@ -1,6 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { parseProjectRelativePath } from '../files/pathPolicy';
-import { useWorkspaceSession, workspaceSessionStore } from './workspaceSession';
+import {
+  hasDirtySelfOrDescendant,
+  useWorkspaceSession,
+  workspaceSessionStore,
+} from './workspaceSession';
 
 const pom = parseProjectRelativePath('pom.xml');
 const readme = parseProjectRelativePath('README.md');
@@ -18,6 +22,7 @@ function view() {
     selectedPath: state.selectedPath,
     openPaths: state.openPaths,
     activePath: state.activePath,
+    dirtyPaths: [...state.dirtyPaths].sort(),
   };
 }
 
@@ -40,6 +45,7 @@ describe('workspaceSession', () => {
       selectedPath: null,
       openPaths: [],
       activePath: null,
+      dirtyPaths: [],
     });
     expect(localSet).not.toHaveBeenCalled();
     expect(sessionSet).not.toHaveBeenCalled();
@@ -139,6 +145,7 @@ describe('workspaceSession', () => {
       selectedPath: null,
       openPaths: [],
       activePath: null,
+      dirtyPaths: [],
     });
     expect(useWorkspaceSession.getState().expandedPaths).not.toBe(expanded);
     expect(useWorkspaceSession.getState().openPaths).not.toBe(openPaths);
@@ -177,9 +184,11 @@ describe('workspaceSession', () => {
       selectedPath: null,
       openPaths: [],
       activePath: null,
+      dirtyPaths: [],
     });
     expect(useWorkspaceSession.getInitialState().projectId).toBeNull();
     expect(useWorkspaceSession.getInitialState().openPaths).toEqual([]);
+    expect(useWorkspaceSession.getInitialState().dirtyPaths.size).toBe(0);
   });
 
   it('exposes runtime getState through workspaceSessionStore only', () => {
@@ -188,5 +197,138 @@ describe('workspaceSession', () => {
     expect(workspaceSessionStore.getState().projectId).toBe('prj-bob-lab');
     expect(workspaceSessionStore).not.toHaveProperty('persist');
     expect(Object.keys(workspaceSessionStore)).toEqual(['getState']);
+  });
+});
+
+describe('workspaceSession dirty and path lifecycle', () => {
+  const srcA = parseProjectRelativePath('src/a');
+  const srcAFoo = parseProjectRelativePath('src/a/foo.ts');
+  const srcAb = parseProjectRelativePath('src/ab');
+  const srcB = parseProjectRelativePath('src/b');
+  const srcBFoo = parseProjectRelativePath('src/b/foo.ts');
+
+  it('setDirty updates an immutable set and never stores content or revision', () => {
+    const store = useWorkspaceSession.getState();
+    store.activateProject('prj-alice-notebook');
+    const before = store.dirtyPaths;
+
+    store.setDirty(pom, true);
+    const afterAdd = useWorkspaceSession.getState().dirtyPaths;
+    expect(afterAdd).not.toBe(before);
+    expect([...afterAdd]).toEqual([pom]);
+    expect(before.has(pom)).toBe(false);
+
+    useWorkspaceSession.getState().setDirty(pom, true);
+    expect(useWorkspaceSession.getState().dirtyPaths).toBe(afterAdd);
+
+    useWorkspaceSession.getState().setDirty(readme, true);
+    const afterSecond = useWorkspaceSession.getState().dirtyPaths;
+    expect(afterSecond).not.toBe(afterAdd);
+    expect([...afterSecond].sort()).toEqual([readme, pom].sort());
+
+    useWorkspaceSession.getState().setDirty(pom, false);
+    const afterRemove = useWorkspaceSession.getState().dirtyPaths;
+    expect(afterRemove).not.toBe(afterSecond);
+    expect([...afterRemove]).toEqual([readme]);
+    expect(afterSecond.has(pom)).toBe(true);
+
+    const state = useWorkspaceSession.getState();
+    expect(state).not.toHaveProperty('content');
+    expect(state).not.toHaveProperty('workspaceRevision');
+    expect(Object.values(state)).not.toContain('file body');
+  });
+
+  it('activateProject keeps same-id dirty paths and resets them through getInitialState', () => {
+    const store = useWorkspaceSession.getState();
+    store.activateProject('prj-alice-notebook');
+    store.setDirty(pom, true);
+    const dirty = useWorkspaceSession.getState().dirtyPaths;
+
+    useWorkspaceSession.getState().activateProject('prj-alice-notebook');
+    expect(useWorkspaceSession.getState().dirtyPaths).toBe(dirty);
+    expect([...useWorkspaceSession.getState().dirtyPaths]).toEqual([pom]);
+
+    useWorkspaceSession.getState().activateProject('prj-bob-lab');
+    expect(view()).toMatchObject({
+      projectId: 'prj-bob-lab',
+      dirtyPaths: [],
+    });
+    expect(useWorkspaceSession.getState().dirtyPaths).not.toBe(dirty);
+  });
+
+  it('remapPath rewrites selected, active, open, expanded and dirty descendants only', () => {
+    const store = useWorkspaceSession.getState();
+    store.activateProject('prj-alice-notebook');
+    store.toggleDirectory(src);
+    store.toggleDirectory(srcA);
+    store.toggleDirectory(srcAb);
+    store.openFile(srcAFoo);
+    store.openFile(srcAb);
+    store.openFile(pom);
+    store.selectPath(srcAFoo);
+    store.setDirty(srcAFoo, true);
+    store.setDirty(srcAb, true);
+    const beforeOpen = useWorkspaceSession.getState().openPaths;
+    const beforeExpanded = useWorkspaceSession.getState().expandedPaths;
+    const beforeDirty = useWorkspaceSession.getState().dirtyPaths;
+
+    useWorkspaceSession.getState().remapPath(srcA, srcB);
+
+    expect(useWorkspaceSession.getState().openPaths).not.toBe(beforeOpen);
+    expect(useWorkspaceSession.getState().expandedPaths).not.toBe(beforeExpanded);
+    expect(useWorkspaceSession.getState().dirtyPaths).not.toBe(beforeDirty);
+    expect(view()).toMatchObject({
+      selectedPath: srcBFoo,
+      activePath: pom,
+      openPaths: [srcBFoo, srcAb, pom],
+    });
+    expect([...useWorkspaceSession.getState().expandedPaths].sort()).toEqual(
+      [src, srcB, srcAb].sort(),
+    );
+    expect([...useWorkspaceSession.getState().dirtyPaths].sort()).toEqual(
+      [srcBFoo, srcAb].sort(),
+    );
+    expect(beforeOpen).toEqual([srcAFoo, srcAb, pom]);
+    expect(beforeExpanded.has(srcA)).toBe(true);
+    expect(beforeDirty.has(srcAFoo)).toBe(true);
+  });
+
+  it('removePathAndDescendants clears matching selected, active, open, expanded and dirty paths', () => {
+    const store = useWorkspaceSession.getState();
+    store.activateProject('prj-alice-notebook');
+    store.toggleDirectory(src);
+    store.toggleDirectory(srcA);
+    store.toggleDirectory(srcAb);
+    store.openFile(pom);
+    store.openFile(srcAFoo);
+    store.openFile(srcAb);
+    store.openFile(srcAFoo);
+    store.selectPath(srcAFoo);
+    store.setDirty(srcAFoo, true);
+    store.setDirty(srcAb, true);
+    store.setDirty(pom, true);
+
+    useWorkspaceSession.getState().removePathAndDescendants(srcA);
+
+    expect(view()).toMatchObject({
+      selectedPath: null,
+      activePath: srcAb,
+      openPaths: [pom, srcAb],
+      dirtyPaths: [pom, srcAb].sort(),
+    });
+    expect([...useWorkspaceSession.getState().expandedPaths].sort()).toEqual(
+      [src, srcAb].sort(),
+    );
+  });
+
+  it('hasDirtySelfOrDescendant matches the target and descendants, not prefix siblings', () => {
+    const dirty = new Set([srcAFoo, srcAb]);
+    expect(hasDirtySelfOrDescendant(dirty, srcAFoo)).toBe(true);
+    expect(hasDirtySelfOrDescendant(dirty, srcA)).toBe(true);
+    expect(hasDirtySelfOrDescendant(dirty, srcAb)).toBe(true);
+    expect(hasDirtySelfOrDescendant(dirty, src)).toBe(true);
+    expect(hasDirtySelfOrDescendant(dirty, pom)).toBe(false);
+    expect(hasDirtySelfOrDescendant(new Set([srcAb]), srcA)).toBe(false);
+    expect(hasDirtySelfOrDescendant(new Set([srcA]), srcAb)).toBe(false);
   });
 });

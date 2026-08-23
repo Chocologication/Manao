@@ -2,6 +2,7 @@ import { cleanup, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import * as monaco from 'monaco-editor';
+import { readFileSync } from 'node:fs';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { login } from '../api/authApi';
 import { ApiRequestError } from '../api/ApiRequestError';
@@ -20,6 +21,7 @@ import {
   connectionRegistry,
   logout,
   queryClient,
+  workspaceBufferRegistry,
   workspaceResourceRegistry,
 } from './appRuntime';
 
@@ -68,6 +70,7 @@ function expectEmptyWorkspaceSession(): void {
   expect(state.activePath).toBeNull();
   expect(state.selectedPath).toBeNull();
   expect(state.expandedPaths.size).toBe(0);
+  expect(state.dirtyPaths.size).toBe(0);
 }
 
 async function prefetchFileQuery(
@@ -159,7 +162,7 @@ afterEach(async () => {
 });
 
 beforeAll(async () => {
-  await import('../features/projects/ReadonlyWorkbenchPage');
+  await import('../features/projects/WorkbenchPage');
 }, 30_000);
 
 describe('appRuntime unauthorized recovery', () => {
@@ -360,6 +363,10 @@ describe('appRuntime stale session 401', () => {
       renderApp({ initialEntries: [`/projects/${BOB_SEED_PROJECT_ID}`] });
       expect(await screen.findByRole('heading', { name: 'Bob Lab' }, { timeout: 10_000 })).toBeInTheDocument();
       expect(screen.queryByText('Alice Notebook')).not.toBeInTheDocument();
+      await waitFor(() => {
+        expect(workspaceBufferRegistry.get(BOB_SEED_PROJECT_ID, LAB_NOTES)).toBeDefined();
+      });
+      expect(workspaceBufferRegistry.get(ALICE_SEED_PROJECT_ID, POM)).toBeUndefined();
 
       releaseAlice();
       const aliceError = await pendingAliceContent.catch((reason: unknown) => reason);
@@ -371,6 +378,11 @@ describe('appRuntime stale session 401', () => {
       expect(monaco.editor.getModel(bobUri)).not.toBeNull();
       expect(queryClient.getQueryData(fileKeys.meta(BOB_SEED_PROJECT_ID, LAB_NOTES))).toBeDefined();
       expect(queryClient.getQueryData(fileKeys.content(BOB_SEED_PROJECT_ID, LAB_NOTES))).toBeDefined();
+      expect(workspaceBufferRegistry.get(ALICE_SEED_PROJECT_ID, POM)).toBeUndefined();
+      expect(workspaceBufferRegistry.get(BOB_SEED_PROJECT_ID, LAB_NOTES)).toBeDefined();
+      expect(workspaceBufferRegistry.get(BOB_SEED_PROJECT_ID, LAB_NOTES)?.snapshot().content).not.toMatch(
+        /alice/i,
+      );
       expect(workspaceSessionStore.getState().projectId).toBe(BOB_SEED_PROJECT_ID);
       expect(workspaceSessionStore.getState().openPaths).toEqual([LAB_NOTES]);
       expect(workspaceSessionStore.getState().expandedPaths.has(parseProjectRelativePath('samples'))).toBe(
@@ -606,5 +618,91 @@ describe('unknown routes', () => {
     );
     expect(screen.queryByRole('heading', { name: /something went wrong/i })).not.toBeInTheDocument();
     expect(document.body.textContent ?? '').not.toMatch(/stack|jwt|password|traceId/i);
+  });
+});
+
+describe('appRuntime workspace buffer disposal', () => {
+  it('does not statically import monaco-editor or project Monaco models', () => {
+    const source = readFileSync('src/app/appRuntime.ts', 'utf8');
+    expect(source).not.toMatch(/from ['"]monaco-editor['"]/);
+    expect(source).not.toMatch(/from ['"]monaco-editor\//);
+    expect(source).not.toMatch(/projectMonacoModels/);
+  });
+
+  it('injects dirty changes into the session and disposes buffers on logout', () => {
+    const store = workspaceSessionStore.getState();
+    store.activateProject(ALICE_SEED_PROJECT_ID);
+    const buffer = workspaceBufferRegistry.register({
+      projectId: ALICE_SEED_PROJECT_ID,
+      path: POM,
+      kind: 'plain-text',
+      content: 'before',
+    });
+    (buffer as typeof buffer & { replace(content: string): void }).replace('after');
+
+    expect(workspaceSessionStore.getState().dirtyPaths.has(POM)).toBe(true);
+
+    logout();
+
+    expect(workspaceBufferRegistry.get(ALICE_SEED_PROJECT_ID, POM)).toBeUndefined();
+    expectEmptyWorkspaceSession();
+  });
+
+  it('disposes buffers on a current-session 401 and keeps them available after the next register', async () => {
+    await authenticateAsAlice();
+    workspaceSessionStore.getState().activateProject(ALICE_SEED_PROJECT_ID);
+    workspaceBufferRegistry.register({
+      projectId: ALICE_SEED_PROJECT_ID,
+      path: POM,
+      kind: 'plain-text',
+      content: 'open',
+    });
+
+    await expireCurrentSessionToken();
+    const error = await getFileContent(ALICE_SEED_PROJECT_ID, POM).catch((reason: unknown) => reason);
+    expect(error).toBeInstanceOf(ApiRequestError);
+    expect(error).toMatchObject({ status: 401 });
+
+    expect(workspaceBufferRegistry.get(ALICE_SEED_PROJECT_ID, POM)).toBeUndefined();
+    expectEmptyWorkspaceSession();
+
+    const next = workspaceBufferRegistry.register({
+      projectId: ALICE_SEED_PROJECT_ID,
+      path: POM,
+      kind: 'plain-text',
+      content: 'reopened',
+    });
+    expect(next.snapshot().content).toBe('reopened');
+    workspaceBufferRegistry.remove(ALICE_SEED_PROJECT_ID, POM);
+  });
+
+  it('does not leak Alice dirty into Bob and disposeProject drops leftover Alice buffers', () => {
+    const aliceStore = workspaceSessionStore.getState();
+    aliceStore.activateProject(ALICE_SEED_PROJECT_ID);
+    const alice = workspaceBufferRegistry.register({
+      projectId: ALICE_SEED_PROJECT_ID,
+      path: POM,
+      kind: 'plain-text',
+      content: 'alice',
+    });
+    (alice as typeof alice & { replace(content: string): void }).replace('alice-dirty');
+    expect(workspaceSessionStore.getState().dirtyPaths.has(POM)).toBe(true);
+
+    workspaceSessionStore.getState().activateProject(BOB_SEED_PROJECT_ID);
+    expect(workspaceSessionStore.getState().projectId).toBe(BOB_SEED_PROJECT_ID);
+    expect(workspaceSessionStore.getState().dirtyPaths.size).toBe(0);
+    expect(workspaceBufferRegistry.get(ALICE_SEED_PROJECT_ID, POM)).toBe(alice);
+
+    (alice as typeof alice & { replace(content: string): void }).replace('still-alice');
+    expect(workspaceSessionStore.getState().dirtyPaths.size).toBe(0);
+    expect(workspaceSessionStore.getState().dirtyPaths.has(POM)).toBe(false);
+
+    workspaceBufferRegistry.disposeProject(ALICE_SEED_PROJECT_ID);
+    expect(workspaceBufferRegistry.get(ALICE_SEED_PROJECT_ID, POM)).toBeUndefined();
+    expect(workspaceSessionStore.getState().dirtyPaths.size).toBe(0);
+
+    workspaceSessionStore.getState().activateProject(ALICE_SEED_PROJECT_ID);
+    expect(workspaceBufferRegistry.get(ALICE_SEED_PROJECT_ID, POM)).toBeUndefined();
+    expect(workspaceSessionStore.getState().dirtyPaths.size).toBe(0);
   });
 });

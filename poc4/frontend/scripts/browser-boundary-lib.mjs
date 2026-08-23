@@ -37,19 +37,34 @@ function isNodeBuiltinSpecifier(specifier) {
   return nodeBuiltinRoots.has(root);
 }
 
-function isStage2ProductionModule(file) {
+const workbenchProductionExact = new Set([
+  'src/api/fileApi.ts',
+  'src/contracts/file.ts',
+  'src/features/editor/workspaceSession.ts',
+  'src/features/editor/WorkspaceBufferRegistry.ts',
+  'src/features/editor/unsavedChangesGuard.ts',
+  'src/features/editor/runPreconditions.ts',
+  'src/features/projects/WorkbenchPage.tsx',
+  'src/components/shell/WorkbenchShell.tsx',
+  'src/components/files/FileTreeNode.tsx',
+  'src/components/files/FileTree.tsx',
+  'src/components/files/EditorWorkspace.tsx',
+  'src/components/files/WritableMonacoEditor.tsx',
+  'src/components/files/PlainTextEditor.tsx',
+  'src/components/files/FileMutationDialogs.tsx',
+  'src/components/files/UnsavedChangesDialog.tsx',
+  'src/components/files/editorSaveCommand.ts',
+  'src/lib/projectMonacoModels.ts',
+]);
+
+function isWorkbenchProductionModule(file) {
   const normalized = toPosix(file);
-  if (normalized === 'src/api/fileApi.ts') return true;
-  if (normalized === 'src/contracts/file.ts') return true;
+  if (workbenchProductionExact.has(normalized)) return true;
   if (normalized.startsWith('src/features/files/')) return true;
-  if (normalized === 'src/features/editor/workspaceSession.ts') return true;
-  if (normalized === 'src/features/projects/ReadonlyWorkbenchPage.tsx') return true;
-  if (normalized === 'src/components/files/FileTreeNode.tsx') return true;
-  if (normalized === 'src/components/shell/WorkbenchShell.tsx') return true;
   const filesPrefix = 'src/components/files/';
   if (!normalized.startsWith(filesPrefix)) return false;
   const baseName = normalized.slice(filesPrefix.length);
-  return !baseName.includes('/') && baseName.startsWith('Readonly');
+  return !baseName.includes('/') && (baseName.startsWith('Readonly') || baseName === 'PlainTextViewer.tsx');
 }
 
 function resolveSpecifier(file, specifier) {
@@ -64,7 +79,7 @@ function resolveSpecifier(file, specifier) {
   return normalizedSpecifier;
 }
 
-function stage2ImportRule(file, specifier) {
+function workbenchImportRule(file, specifier) {
   const resolved = resolveSpecifier(file, specifier);
   if (resolved === 'src/spike' || resolved.startsWith('src/spike/')) return 'stage0-spike-import';
   if (resolved === 'src/terminal' || resolved.startsWith('src/terminal/')) {
@@ -97,12 +112,15 @@ export function findForbiddenSource(file, source) {
   return toRuleResults(file, rules);
 }
 
-export function findForbiddenStage2Imports(file, source) {
-  if (!isStage2ProductionModule(file)) return [];
+export function findForbiddenWorkbenchImports(file, source) {
+  if (!isWorkbenchProductionModule(file)) return [];
   const rules = new Set();
   for (const specifier of extractImportSpecifiers(source)) {
-    const rule = stage2ImportRule(file, specifier);
+    const rule = workbenchImportRule(file, specifier);
     if (rule) rules.add(rule);
+  }
+  if (source.includes('/api/v1/session/write-scenario')) {
+    rules.add('stage3-scenario-endpoint');
   }
   return toRuleResults(file, rules);
 }

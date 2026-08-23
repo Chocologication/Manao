@@ -57,4 +57,67 @@ describe('EditorTabs', () => {
       'focus-visible:opacity-100',
     );
   });
+
+  it('renders a 32px Save command with an accessible name and focus ring', async () => {
+    const user = userEvent.setup();
+    const onSave = vi.fn();
+    render(
+      <EditorTabs
+        tabs={tabs}
+        activePath="pom.xml"
+        onSelect={() => {}}
+        onClose={() => {}}
+        onReorder={() => {}}
+        onSave={onSave}
+        saveDisabled={false}
+        savePending={false}
+      />,
+    );
+
+    const save = screen.getByRole('button', { name: 'Save' });
+    expect(save).toHaveAttribute('title', 'Save');
+    expect(save).toHaveAttribute('aria-label', 'Save');
+    expect(save).toHaveClass('size-8');
+    expect(save).toHaveClass('focus-visible:ring-2');
+    expect(save).toBeEnabled();
+    expect(save.compareDocumentPosition(screen.getByRole('tablist'))).toBe(
+      Node.DOCUMENT_POSITION_PRECEDING,
+    );
+    await user.click(save);
+    expect(onSave).toHaveBeenCalledTimes(1);
+  });
+
+  it('disables Save while clean or pending and shows a pending spinner', () => {
+    const { rerender } = render(
+      <EditorTabs
+        tabs={tabs}
+        activePath="pom.xml"
+        onSelect={() => {}}
+        onClose={() => {}}
+        onReorder={() => {}}
+        onSave={() => {}}
+        saveDisabled
+        savePending={false}
+      />,
+    );
+
+    expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
+    expect(screen.queryByTestId('spinner')).not.toBeInTheDocument();
+
+    rerender(
+      <EditorTabs
+        tabs={tabs}
+        activePath="pom.xml"
+        onSelect={() => {}}
+        onClose={() => {}}
+        onReorder={() => {}}
+        onSave={() => {}}
+        saveDisabled
+        savePending
+      />,
+    );
+
+    expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
+    expect(screen.getByTestId('spinner')).toBeInTheDocument();
+  });
 });

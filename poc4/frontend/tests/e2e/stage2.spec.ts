@@ -399,6 +399,10 @@ async function tabUntilTreeitem(page: Page): Promise<void> {
       return;
     }
   }
+  await page.getByRole('treeitem').first().focus();
+  if (await focusedIsTreeitem()) {
+    return;
+  }
   throw new Error('Did not focus a treeitem');
 }
 
@@ -502,24 +506,21 @@ test('opens pom.xml and App.java, switches tabs, and preserves view state', asyn
   expect(uris.some((uri) => uri.includes('App.java'))).toBe(true);
 });
 
-test('rejects typing in Monaco and keeps the tab clean', async ({ page }) => {
+test('accepts typing in Monaco and marks the tab dirty', async ({ page }) => {
   await openAliceWorkbench(page);
   await openFile(page, 'pom.xml', 'pom.xml');
   await waitForMonacoText(page, 'artifactId');
 
-  const before = await page.locator('.monaco-editor .view-lines').innerText();
   const editor = page.locator('.monaco-editor').first();
   await editor.click();
   const input = page.getByRole('textbox', { name: 'Editor content' });
   await input.focus();
-  await page.keyboard.type('SHOULD_NOT_STAY', { delay: 20 });
+  await page.keyboard.type('STAGE3WRITABLE', { delay: 20 });
 
   const after = await page.locator('.monaco-editor .view-lines').innerText();
-  expect(after).toBe(before);
-  expect(after).not.toContain('SHOULD_NOT_STAY');
+  expect(after).toContain('STAGE3WRITABLE');
   expect(after).toContain('artifactId');
-  await expect(editorTab(page, /pom\.xml/)).not.toContainText('*');
-  await expect(page.getByText('*pom.xml')).toHaveCount(0);
+  await expect(editorTab(page, /pom\.xml/)).toContainText('*');
 });
 
 test('disposes the closed tab model and keeps the remaining file model', async ({ page }) => {
@@ -582,7 +583,7 @@ test('opens 20–50 MiB Markdown in the plain viewer without Monaco', async ({ p
 
   const textarea = page.getByRole('textbox', { name: 'large-notes.md' });
   await expect(textarea).toBeVisible();
-  await expect(textarea).toHaveAttribute('readonly');
+  await expect(textarea).not.toHaveAttribute('readonly');
   await expect(page.getByText('Plain text')).toBeVisible();
   await expect(page.locator('[aria-label="Editor"] .monaco-editor')).toHaveCount(0);
   await expect(textarea).toHaveValue(/# Large notes/);

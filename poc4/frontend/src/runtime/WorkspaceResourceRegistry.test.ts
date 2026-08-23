@@ -44,4 +44,32 @@ describe('WorkspaceResourceRegistry', () => {
     expect(throwing).toHaveBeenCalledTimes(1);
     expect(remaining).toHaveBeenCalledTimes(1);
   });
+
+  it('registerLazy keeps the disposer across disposeAll', () => {
+    const registry = new WorkspaceResourceRegistry();
+    const dispose = vi.fn();
+    const unregister = registry.registerLazy(dispose);
+
+    registry.disposeAll();
+    registry.disposeAll();
+    expect(dispose).toHaveBeenCalledTimes(2);
+
+    unregister();
+    registry.disposeAll();
+    expect(dispose).toHaveBeenCalledTimes(2);
+  });
+
+  it('registerLazy still runs remaining disposers when one throws', () => {
+    const registry = new WorkspaceResourceRegistry();
+    const throwing = vi.fn(() => {
+      throw new Error('lazy dispose failed');
+    });
+    const remaining = vi.fn();
+    registry.registerLazy(throwing);
+    registry.register(remaining);
+
+    expect(() => registry.disposeAll()).not.toThrow();
+    expect(throwing).toHaveBeenCalledTimes(1);
+    expect(remaining).toHaveBeenCalledTimes(1);
+  });
 });

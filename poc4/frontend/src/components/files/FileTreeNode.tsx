@@ -69,6 +69,7 @@ function DirectoryTreeNode({
 }) {
   const isExpanded = useWorkspaceSession((state) => state.expandedPaths.has(entry.path));
   const isSelected = useWorkspaceSession((state) => state.selectedPath === entry.path);
+  const selectPath = useWorkspaceSession((state) => state.selectPath);
   const toggleDirectory = useWorkspaceSession((state) => state.toggleDirectory);
   const query = useDirectoryTreeQuery(projectId, entry.path);
   const isFocused = tabbablePath === entry.path;
@@ -93,6 +94,7 @@ function DirectoryTreeNode({
         onClick={(event) => {
           event.stopPropagation();
           onFocusedPath(entry.path);
+          selectPath(entry.path);
           toggleDirectory(entry.path);
         }}
         onFocus={(event) => {

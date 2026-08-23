@@ -1,13 +1,13 @@
 import { render, type RenderResult } from '@testing-library/react';
 import { StrictMode } from 'react';
 import {
-  MemoryRouter,
+  createMemoryRouter,
   Navigate,
-  Route,
-  Routes,
+  Outlet,
   useLocation,
   useNavigationType,
 } from 'react-router';
+import { RouterProvider } from 'react-router/dom';
 import { setHttpClient } from '../api/httpClient';
 import { AppProviders } from '../app/AppProviders';
 import {
@@ -17,6 +17,7 @@ import {
   queryClient,
   workspaceResourceRegistry,
 } from '../app/appRuntime';
+import { resetUnsavedDialog } from '../features/editor/unsavedChangesGuard';
 import { workspaceSessionStore } from '../features/editor/workspaceSession';
 import { NotFoundPage } from '../components/feedback/NotFoundPage';
 import { LoginPage } from '../features/auth/LoginPage';
@@ -29,6 +30,7 @@ export function resetAppRuntime(): void {
   connectionRegistry.closeAll();
   workspaceResourceRegistry.disposeAll();
   workspaceSessionStore.getState().reset();
+  resetUnsavedDialog();
   queryClient.clear();
   if (authSession.getSnapshot().status === 'authenticated') {
     authSession.clear('logout');
@@ -48,23 +50,43 @@ function LocationEcho() {
   );
 }
 
-export function renderApp(options: { initialEntries?: string[] } = {}): RenderResult {
-  return render(
+export function renderApp(
+  options: { initialEntries?: string[]; initialIndex?: number } = {},
+): RenderResult & { router: ReturnType<typeof createMemoryRouter> } {
+  const router = createMemoryRouter(
+    [
+      {
+        element: (
+          <>
+            <LocationEcho />
+            <Outlet />
+          </>
+        ),
+        children: [
+          { path: '/', element: <Navigate to="/projects" replace /> },
+          { path: '/login', element: <LoginPage /> },
+          {
+            element: <RequireAuth />,
+            children: [
+              { path: '/projects', element: <ProjectsPage /> },
+              { path: '/projects/:projectId', element: <ProjectRoutePage /> },
+            ],
+          },
+          { path: '*', element: <NotFoundPage /> },
+        ],
+      },
+    ],
+    {
+      initialEntries: options.initialEntries ?? ['/projects'],
+      initialIndex: options.initialIndex,
+    },
+  );
+  const view = render(
     <StrictMode>
       <AppProviders>
-        <MemoryRouter initialEntries={options.initialEntries ?? ['/projects']}>
-          <LocationEcho />
-          <Routes>
-            <Route path="/" element={<Navigate to="/projects" replace />} />
-            <Route path="/login" element={<LoginPage />} />
-            <Route element={<RequireAuth />}>
-              <Route path="/projects" element={<ProjectsPage />} />
-              <Route path="/projects/:projectId" element={<ProjectRoutePage />} />
-            </Route>
-            <Route path="*" element={<NotFoundPage />} />
-          </Routes>
-        </MemoryRouter>
+        <RouterProvider router={router} />
       </AppProviders>
     </StrictMode>,
   );
+  return Object.assign(view, { router });
 }

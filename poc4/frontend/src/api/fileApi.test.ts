@@ -1,12 +1,26 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { FileContentResponse, FileMetadata, FileTreeResponse } from '../contracts/file';
 import {
+  parseCreateEntryResponse,
+  parseDeleteEntryResponse,
   parseFileContentResponse,
   parseFileMetadata,
   parseFileTreeResponse,
+  parseRenameEntryResponse,
+  parseSaveFileResponse,
+  parseWorkspaceRevision,
 } from '../contracts/file';
 import { parseProjectDirectoryPath, parseProjectRelativePath } from '../features/files/pathPolicy';
-import { downloadFileBlob, getFileContent, getFileMetadata, listDirectory } from './fileApi';
+import {
+  createEntry,
+  deleteEntry,
+  downloadFileBlob,
+  getFileContent,
+  getFileMetadata,
+  listDirectory,
+  renameEntry,
+  saveFileContent,
+} from './fileApi';
 import { HttpClient, setHttpClient } from './httpClient';
 
 const PROJECT_ID = 'prj/opaque';
@@ -26,7 +40,7 @@ const monacoMetadata: FileMetadata = {
 const fileContent: FileContentResponse = {
   path: FILE_PATH as FileContentResponse['path'],
   content: 'class App {}',
-  workspaceRevision: 'rev-1',
+  workspaceRevision: 'rev-1' as FileContentResponse['workspaceRevision'],
 };
 
 const srcTree: FileTreeResponse = {
@@ -49,6 +63,48 @@ const srcTree: FileTreeResponse = {
       hasChildren: true,
     },
   ],
+  workspaceRevision: 'rev-1' as FileTreeResponse['workspaceRevision'],
+};
+
+const newFileEntry = {
+  path: 'src/New.java',
+  name: 'New.java',
+  kind: 'file' as const,
+  hidden: false,
+  sizeBytes: 0,
+  hasChildren: null,
+};
+
+const newFileMetadata: FileMetadata = {
+  path: 'src/New.java' as FileMetadata['path'],
+  name: 'New.java',
+  sizeBytes: 0,
+  mediaType: 'text/plain',
+  encoding: 'UTF-8',
+  language: 'java',
+  renderMode: 'MONACO_TEXT',
+  blockReason: null,
+};
+
+const newDirectoryEntry = {
+  path: 'src/util',
+  name: 'util',
+  kind: 'directory' as const,
+  hidden: false,
+  sizeBytes: null,
+  hasChildren: false,
+};
+
+const createFilePayload = {
+  entry: newFileEntry,
+  file: newFileMetadata,
+  workspaceRevision: 'rev-2',
+};
+
+const createDirectoryPayload = {
+  entry: newDirectoryEntry,
+  file: null,
+  workspaceRevision: 'rev-2',
 };
 
 function jsonResponse(body: unknown, status = 200): Response {
@@ -121,6 +177,7 @@ describe('file API URL construction', () => {
           hasChildren: null,
         },
       ],
+      workspaceRevision: 'rev-1',
     };
     const fetchImpl = vi.fn<typeof fetch>();
     fetchImpl
@@ -192,6 +249,17 @@ describe('file API URL construction', () => {
       void getFileContent(PROJECT_ID, FILE_PATH);
       // @ts-expect-error raw strings are not branded paths
       void downloadFileBlob(PROJECT_ID, FILE_PATH, 'App.java');
+      // @ts-expect-error raw strings are not branded paths
+      void saveFileContent(PROJECT_ID, FILE_PATH, {
+        content: '',
+        expectedWorkspaceRevision: parseWorkspaceRevision('rev-1'),
+      });
+      void createEntry(PROJECT_ID, {
+        kind: 'file',
+        // @ts-expect-error raw strings are not branded paths
+        path: FILE_PATH,
+        expectedWorkspaceRevision: parseWorkspaceRevision('rev-1'),
+      });
     }
   });
 });
@@ -211,6 +279,7 @@ describe('file API response contracts', () => {
           hasChildren: null,
         },
       ],
+      workspaceRevision: 'rev-1',
     };
 
     expect(parseFileTreeResponse(unicodeTree, directory)).toEqual(unicodeTree);
@@ -231,6 +300,7 @@ describe('file API response contracts', () => {
           hasChildren: true,
         },
       ],
+      workspaceRevision: 'rev-1',
     };
 
     expect(() => parseFileTreeResponse(payload, directory)).toThrow('Invalid file response');
@@ -242,6 +312,7 @@ describe('file API response contracts', () => {
       {
         directory: 'src',
         entries: [srcTree.entries[0], srcTree.entries[0]],
+        workspaceRevision: 'rev-1',
       },
     ],
     [
@@ -258,6 +329,7 @@ describe('file API response contracts', () => {
             hasChildren: null,
           },
         ],
+        workspaceRevision: 'rev-1',
       },
     ],
     [
@@ -274,6 +346,7 @@ describe('file API response contracts', () => {
             hasChildren: false,
           },
         ],
+        workspaceRevision: 'rev-1',
       },
     ],
     [
@@ -290,6 +363,7 @@ describe('file API response contracts', () => {
             hasChildren: true,
           },
         ],
+        workspaceRevision: 'rev-1',
       },
     ],
     [
@@ -306,6 +380,7 @@ describe('file API response contracts', () => {
             hasChildren: null,
           },
         ],
+        workspaceRevision: 'rev-1',
       },
     ],
   ])('rejects tree with %s', (_label, payload) => {
@@ -329,6 +404,7 @@ describe('file API response contracts', () => {
             hasChildren: null,
           },
         ],
+        workspaceRevision: 'rev-1',
       }),
     );
     installClient(fetchImpl);
@@ -449,5 +525,310 @@ describe('file API response contracts', () => {
 
     await expect(getFileMetadata(PROJECT_ID, path)).rejects.toThrow('Invalid file response');
     await expect(getFileContent(PROJECT_ID, path)).rejects.toThrow('Invalid file response');
+  });
+});
+
+describe('workspace revision contract', () => {
+  it('accepts a non-empty opaque token up to 256 UTF-16 code units', () => {
+    expect(parseWorkspaceRevision('rev-1')).toBe('rev-1');
+    expect(parseWorkspaceRevision('x'.repeat(256))).toBe('x'.repeat(256));
+    expect(parseWorkspaceRevision(' mock-rev/0002 ')).toBe(' mock-rev/0002 ');
+  });
+
+  it.each([
+    ['empty', ''],
+    ['oversized', 'x'.repeat(257)],
+    ['non-string', 1],
+  ])('rejects %s revision with a single safe error', (_label, value) => {
+    expect(() => parseWorkspaceRevision(value)).toThrow('Invalid file response');
+  });
+
+  it('requires a branded revision on tree and content responses', () => {
+    const directory = parseProjectDirectoryPath('src');
+    expect(() =>
+      parseFileTreeResponse({ directory: 'src', entries: srcTree.entries }, directory),
+    ).toThrow('Invalid file response');
+    expect(() =>
+      parseFileTreeResponse({ ...srcTree, workspaceRevision: '' }, directory),
+    ).toThrow('Invalid file response');
+    expect(() =>
+      parseFileTreeResponse({ ...srcTree, workspaceRevision: 'x'.repeat(257) }, directory),
+    ).toThrow('Invalid file response');
+    expect(() =>
+      parseFileContentResponse(
+        { ...fileContent, workspaceRevision: 'x'.repeat(257) },
+        parseProjectRelativePath(FILE_PATH),
+      ),
+    ).toThrow('Invalid file response');
+  });
+});
+
+describe('mutation response contracts', () => {
+  it('parses save, create, rename and delete success bodies', () => {
+    const filePath = parseProjectRelativePath(FILE_PATH);
+    const newPath = parseProjectRelativePath('src/New.java');
+    const dirPath = parseProjectRelativePath('src/util');
+    const nextPath = parseProjectRelativePath('src/Renamed.java');
+
+    expect(
+      parseSaveFileResponse(
+        { file: monacoMetadata, workspaceRevision: 'rev-2' },
+        filePath,
+      ),
+    ).toEqual({ file: monacoMetadata, workspaceRevision: 'rev-2' });
+    expect(parseCreateEntryResponse(createFilePayload, newPath, 'file')).toEqual(createFilePayload);
+    expect(parseCreateEntryResponse(createDirectoryPayload, dirPath, 'directory')).toEqual(
+      createDirectoryPayload,
+    );
+    expect(
+      parseRenameEntryResponse(
+        {
+          path: FILE_PATH,
+          nextPath: 'src/Renamed.java',
+          entry: { ...newFileEntry, path: 'src/Renamed.java', name: 'Renamed.java' },
+          file: { ...newFileMetadata, path: 'src/Renamed.java', name: 'Renamed.java' },
+          workspaceRevision: 'rev-3',
+        },
+        filePath,
+        nextPath,
+      ),
+    ).toMatchObject({ path: FILE_PATH, nextPath: 'src/Renamed.java', workspaceRevision: 'rev-3' });
+    expect(
+      parseDeleteEntryResponse({ path: FILE_PATH, workspaceRevision: 'rev-4' }, filePath),
+    ).toEqual({ path: FILE_PATH, workspaceRevision: 'rev-4' });
+  });
+
+  it.each([
+    [
+      'empty revision',
+      () =>
+        parseSaveFileResponse(
+          { file: monacoMetadata, workspaceRevision: '' },
+          parseProjectRelativePath(FILE_PATH),
+        ),
+    ],
+    [
+      'oversized revision',
+      () =>
+        parseDeleteEntryResponse(
+          { path: FILE_PATH, workspaceRevision: 'x'.repeat(257) },
+          parseProjectRelativePath(FILE_PATH),
+        ),
+    ],
+    [
+      'request/response path mismatch',
+      () =>
+        parseSaveFileResponse(
+          { file: { ...monacoMetadata, path: 'src/Other.java', name: 'Other.java' }, workspaceRevision: 'rev-2' },
+          parseProjectRelativePath(FILE_PATH),
+        ),
+    ],
+    [
+      'wrong entry kind',
+      () =>
+        parseCreateEntryResponse(createDirectoryPayload, parseProjectRelativePath('src/util'), 'file'),
+    ],
+    [
+      'parent mismatch',
+      () =>
+        parseCreateEntryResponse(
+          {
+            ...createFilePayload,
+            entry: { ...newFileEntry, path: 'docs/New.java' },
+            file: { ...newFileMetadata, path: 'docs/New.java' },
+          },
+          parseProjectRelativePath('src/New.java'),
+          'file',
+        ),
+    ],
+    [
+      'mismatched file metadata',
+      () =>
+        parseCreateEntryResponse(
+          {
+            ...createFilePayload,
+            file: { ...newFileMetadata, path: FILE_PATH, name: 'App.java' },
+          },
+          parseProjectRelativePath('src/New.java'),
+          'file',
+        ),
+    ],
+    [
+      'duplicate fields that violate invariants',
+      () =>
+        parseCreateEntryResponse(
+          { ...createDirectoryPayload, file: newFileMetadata },
+          parseProjectRelativePath('src/util'),
+          'directory',
+        ),
+    ],
+    [
+      'forbidden physical identifiers',
+      () =>
+        parseRenameEntryResponse(
+          {
+            path: 'C:\\Users\\repo\\App.java',
+            nextPath: 'src/Renamed.java',
+            entry: { ...newFileEntry, path: 'src/Renamed.java', name: 'Renamed.java' },
+            file: { ...newFileMetadata, path: 'src/Renamed.java', name: 'Renamed.java' },
+            workspaceRevision: 'rev-3',
+          },
+          parseProjectRelativePath(FILE_PATH),
+          parseProjectRelativePath('src/Renamed.java'),
+        ),
+    ],
+  ])('rejects mutation with %s', (_label, parse) => {
+    expect(parse).toThrow('Invalid file response');
+  });
+
+  it('does not return a partial mutation result from saveFileContent', async () => {
+    const fetchImpl = vi.fn<typeof fetch>(async () =>
+      jsonResponse({ file: monacoMetadata, workspaceRevision: '' }),
+    );
+    installClient(fetchImpl);
+
+    await expect(
+      saveFileContent(PROJECT_ID, parseProjectRelativePath(FILE_PATH), {
+        content: 'class App {}',
+        expectedWorkspaceRevision: parseWorkspaceRevision('rev-1'),
+      }),
+    ).rejects.toThrow('Invalid file response');
+  });
+});
+
+describe('file mutation API URL construction', () => {
+  it('PUTs file content with encoded project id, URLSearchParams path and revision body', async () => {
+    const fetchImpl = vi.fn<typeof fetch>(async () =>
+      jsonResponse({ file: monacoMetadata, workspaceRevision: 'rev-2' }),
+    );
+    installClient(fetchImpl);
+    const path = parseProjectRelativePath(FILE_PATH);
+    const expectedWorkspaceRevision = parseWorkspaceRevision('rev-1');
+
+    await expect(
+      saveFileContent(PROJECT_ID, path, {
+        content: 'class App {}',
+        expectedWorkspaceRevision,
+      }),
+    ).resolves.toEqual({ file: monacoMetadata, workspaceRevision: 'rev-2' });
+
+    const requestUrl = callUrl(fetchImpl);
+    expect(fetchImpl.mock.calls[0]?.[1]?.method).toBe('PUT');
+    expect(requestUrl.pathname).toBe('/api/v1/projects/prj%2Fopaque/files/content');
+    expect(requestUrl.searchParams.get('path')).toBe(FILE_PATH);
+    expect(authorizationHeader(fetchImpl.mock.calls[0]?.[1])).toBe('Bearer access-token');
+    expect(String(fetchImpl.mock.calls[0]?.[0])).not.toContain('access-token');
+    expect(String(fetchImpl.mock.calls[0]?.[1]?.body)).not.toContain('access-token');
+    expect(fetchImpl.mock.calls[0]?.[1]?.body).toBe(
+      JSON.stringify({
+        content: 'class App {}',
+        expectedWorkspaceRevision: 'rev-1',
+      }),
+    );
+  });
+
+  it('POSTs createEntry with branded path and revision in the JSON body', async () => {
+    const fetchImpl = vi.fn<typeof fetch>(async () => jsonResponse(createFilePayload));
+    installClient(fetchImpl);
+    const path = parseProjectRelativePath('src/New.java');
+
+    await expect(
+      createEntry(PROJECT_ID, {
+        kind: 'file',
+        path,
+        expectedWorkspaceRevision: parseWorkspaceRevision('rev-1'),
+      }),
+    ).resolves.toEqual(createFilePayload);
+
+    const requestUrl = callUrl(fetchImpl);
+    expect(fetchImpl.mock.calls[0]?.[1]?.method).toBe('POST');
+    expect(requestUrl.pathname).toBe('/api/v1/projects/prj%2Fopaque/entries');
+    expect(authorizationHeader(fetchImpl.mock.calls[0]?.[1])).toBe('Bearer access-token');
+    expect(String(fetchImpl.mock.calls[0]?.[0])).not.toContain('access-token');
+    expect(fetchImpl.mock.calls[0]?.[1]?.body).toBe(
+      JSON.stringify({
+        kind: 'file',
+        path: 'src/New.java',
+        expectedWorkspaceRevision: 'rev-1',
+      }),
+    );
+  });
+
+  it('POSTs renameEntry with current and next branded paths', async () => {
+    const nextPath = 'src/Renamed.java';
+    const payload = {
+      path: FILE_PATH,
+      nextPath,
+      entry: { ...newFileEntry, path: nextPath, name: 'Renamed.java' },
+      file: { ...newFileMetadata, path: nextPath, name: 'Renamed.java' },
+      workspaceRevision: 'rev-3',
+    };
+    const fetchImpl = vi.fn<typeof fetch>(async () => jsonResponse(payload));
+    installClient(fetchImpl);
+
+    await expect(
+      renameEntry(PROJECT_ID, {
+        path: parseProjectRelativePath(FILE_PATH),
+        nextPath: parseProjectRelativePath(nextPath),
+        expectedWorkspaceRevision: parseWorkspaceRevision('rev-2'),
+      }),
+    ).resolves.toMatchObject({ path: FILE_PATH, nextPath, workspaceRevision: 'rev-3' });
+
+    const requestUrl = callUrl(fetchImpl);
+    expect(fetchImpl.mock.calls[0]?.[1]?.method).toBe('POST');
+    expect(requestUrl.pathname).toBe('/api/v1/projects/prj%2Fopaque/entries/rename');
+    expect(authorizationHeader(fetchImpl.mock.calls[0]?.[1])).toBe('Bearer access-token');
+    expect(String(fetchImpl.mock.calls[0]?.[0])).not.toContain('access-token');
+    expect(fetchImpl.mock.calls[0]?.[1]?.body).toBe(
+      JSON.stringify({
+        path: FILE_PATH,
+        nextPath,
+        expectedWorkspaceRevision: 'rev-2',
+      }),
+    );
+  });
+
+  it('DELETEs an entry with URLSearchParams path and revision JSON body', async () => {
+    const fetchImpl = vi.fn<typeof fetch>(async () =>
+      jsonResponse({ path: FILE_PATH, workspaceRevision: 'rev-4' }),
+    );
+    installClient(fetchImpl);
+
+    await expect(
+      deleteEntry(PROJECT_ID, parseProjectRelativePath(FILE_PATH), {
+        expectedWorkspaceRevision: parseWorkspaceRevision('rev-3'),
+      }),
+    ).resolves.toEqual({ path: FILE_PATH, workspaceRevision: 'rev-4' });
+
+    const requestUrl = callUrl(fetchImpl);
+    expect(fetchImpl.mock.calls[0]?.[1]?.method).toBe('DELETE');
+    expect(requestUrl.pathname).toBe('/api/v1/projects/prj%2Fopaque/entries');
+    expect(requestUrl.searchParams.get('path')).toBe(FILE_PATH);
+    expect(authorizationHeader(fetchImpl.mock.calls[0]?.[1])).toBe('Bearer access-token');
+    expect(String(fetchImpl.mock.calls[0]?.[0])).not.toContain('access-token');
+    expect(String(fetchImpl.mock.calls[0]?.[1]?.body)).not.toContain('access-token');
+    expect(fetchImpl.mock.calls[0]?.[1]?.body).toBe(
+      JSON.stringify({ expectedWorkspaceRevision: 'rev-3' }),
+    );
+  });
+
+  it('passes AbortSignal unchanged through saveFileContent', async () => {
+    const controller = new AbortController();
+    const fetchImpl = vi.fn<typeof fetch>(async () =>
+      jsonResponse({ file: monacoMetadata, workspaceRevision: 'rev-2' }),
+    );
+    installClient(fetchImpl);
+
+    await saveFileContent(
+      PROJECT_ID,
+      parseProjectRelativePath(FILE_PATH),
+      {
+        content: 'class App {}',
+        expectedWorkspaceRevision: parseWorkspaceRevision('rev-1'),
+      },
+      controller.signal,
+    );
+
+    expect(fetchImpl.mock.calls[0]?.[1]?.signal).toBe(controller.signal);
   });
 });

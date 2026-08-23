@@ -6,7 +6,7 @@ export default defineConfig({
   plugins: [react()],
   resolve: { alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) } },
   test: {
-    environment: 'jsdom',
+    environment: './vitest-environment-jsdom-node-abort.ts',
     environmentOptions: {
       jsdom: {
         url: 'http://localhost/',

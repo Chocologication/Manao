@@ -1,14 +1,35 @@
+import { useIsMutating } from '@tanstack/react-query';
 import { ArrowLeft, FileCode, LogOut, Play, SquareTerminal } from 'lucide-react';
-import type { MouseEvent } from 'react';
+import { useCallback, type MouseEvent } from 'react';
 import { Link } from 'react-router';
 import { logout } from '@/app/appRuntime';
-import { ReadonlyEditorWorkspace } from '@/components/files/ReadonlyEditorWorkspace';
-import { ReadonlyFileTree } from '@/components/files/ReadonlyFileTree';
+import { projectFileWritePredicate } from '@/components/files/editorSaveCommand';
+import { EditorWorkspace } from '@/components/files/EditorWorkspace';
+import { UnsavedChangesDialog } from '@/components/files/UnsavedChangesDialog';
+import { FileTree } from '@/components/files/FileTree';
 import { Button } from '@/components/ui/button';
 import type { ProjectSummary } from '@/contracts/project';
+import {
+  resolveRunPreconditions,
+  runPreconditionDescription,
+  terminalPreconditionDescription,
+} from '@/features/editor/runPreconditions';
+import {
+  dismissUnsavedDialog,
+  LEAVE_MESSAGE,
+  requestLogout,
+  requestUnsavedDialog,
+  useDirtyBeforeUnload,
+  useUnsavedDialogState,
+} from '@/features/editor/unsavedChangesGuard';
+import { useWorkspaceSession } from '@/features/editor/workspaceSession';
+import { useDirectoryTreeQuery } from '@/features/files/fileQueries';
+import { parseProjectDirectoryPath } from '@/features/files/pathPolicy';
 import { cn } from '@/lib/utils';
 
 const EDITOR_REGION_ID = 'workbench-editor';
+const RUN_REASON_ID = 'workbench-run-reason';
+const TERMINAL_REASON_ID = 'workbench-terminal-reason';
 
 const panelTabClassName =
   'inline-flex h-8 items-center gap-1.5 rounded-md px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring';
@@ -19,6 +40,47 @@ function skipToEditor(event: MouseEvent<HTMLAnchorElement>): void {
 }
 
 export function WorkbenchShell({ project }: { project: ProjectSummary }) {
+  const dirtyCount = useWorkspaceSession((state) => state.dirtyPaths.size);
+  const leaveGuard = useUnsavedDialogState();
+  const writePending =
+    useIsMutating({
+      predicate: projectFileWritePredicate(project.id),
+    }) > 0;
+  const rootTree = useDirectoryTreeQuery(project.id, parseProjectDirectoryPath(''));
+  const run = resolveRunPreconditions({
+    dirtyCount,
+    writePending,
+    workspaceRevision: rootTree.data?.workspaceRevision,
+  });
+  const runDescription = runPreconditionDescription(run.reason);
+  const terminalDescription = terminalPreconditionDescription(
+    dirtyCount > 0 ? 'DIRTY_FILES' : 'STAGE_4_UNAVAILABLE',
+  );
+  useDirtyBeforeUnload(dirtyCount);
+
+  const handleLogoutClick = useCallback(() => {
+    const decision = requestLogout(useWorkspaceSession.getState().dirtyPaths.size);
+    if (decision.kind === 'proceed') {
+      logout();
+      return;
+    }
+    requestUnsavedDialog({
+      open: true,
+      mode: 'leave',
+      action: { type: 'logout' },
+      message: LEAVE_MESSAGE,
+    });
+  }, []);
+
+  const handleCancelLeave = useCallback(() => {
+    dismissUnsavedDialog();
+  }, []);
+
+  const handleDiscardLeave = useCallback(() => {
+    dismissUnsavedDialog();
+    logout();
+  }, []);
+
   return (
     <div className="workbench-shell flex h-full min-h-0 w-full min-w-0 flex-col overflow-hidden bg-background text-foreground">
       <a href={`#${EDITOR_REGION_ID}`} className="skip-to-editor" onClick={skipToEditor}>
@@ -42,7 +104,7 @@ export function WorkbenchShell({ project }: { project: ProjectSummary }) {
           size="icon"
           aria-label="Log out"
           title="Log out"
-          onClick={() => logout()}
+          onClick={handleLogoutClick}
         >
           <LogOut />
         </Button>
@@ -56,10 +118,16 @@ export function WorkbenchShell({ project }: { project: ProjectSummary }) {
             /
           </span>
           <div className="min-h-0 min-w-0 flex-1">
-            <ReadonlyFileTree projectId={project.id} />
+            <FileTree projectId={project.id} />
           </div>
         </aside>
         <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+          <span id={RUN_REASON_ID} className="sr-only">
+            {runDescription}
+          </span>
+          <span id={TERMINAL_REASON_ID} className="sr-only">
+            {terminalDescription}
+          </span>
           <div
             role="tablist"
             aria-label="Workbench panels"
@@ -80,6 +148,8 @@ export function WorkbenchShell({ project }: { project: ProjectSummary }) {
               role="tab"
               aria-label="Run"
               aria-selected={false}
+              aria-describedby={RUN_REASON_ID}
+              title={runDescription}
               disabled
               className={cn(panelTabClassName, 'text-muted-foreground disabled:opacity-64')}
             >
@@ -91,6 +161,8 @@ export function WorkbenchShell({ project }: { project: ProjectSummary }) {
               role="tab"
               aria-label="Terminal"
               aria-selected={false}
+              aria-describedby={TERMINAL_REASON_ID}
+              title={terminalDescription}
               disabled
               className={cn(panelTabClassName, 'text-muted-foreground disabled:opacity-64')}
             >
@@ -104,10 +176,17 @@ export function WorkbenchShell({ project }: { project: ProjectSummary }) {
             aria-label="Editor"
             className="min-h-0 min-w-0 flex-1 overflow-hidden outline-none"
           >
-            <ReadonlyEditorWorkspace projectId={project.id} />
+            <EditorWorkspace projectId={project.id} />
           </div>
         </div>
       </div>
+      <UnsavedChangesDialog
+        open={leaveGuard.open && leaveGuard.action.type === 'logout'}
+        mode="leave"
+        message={leaveGuard.open ? leaveGuard.message : LEAVE_MESSAGE}
+        onDiscard={handleDiscardLeave}
+        onCancel={handleCancelLeave}
+      />
     </div>
   );
 }
