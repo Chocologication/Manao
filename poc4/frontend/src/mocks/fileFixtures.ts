@@ -48,7 +48,27 @@ type MockWorkspace = {
   directories: Set<string>;
   children: Map<string, string[]>;
   revision: string;
+  revisionSeq: number;
 };
+
+export type MockTreeEntryJson = {
+  path: string;
+  name: string;
+  kind: 'file' | 'directory';
+  hidden: boolean;
+  sizeBytes: number | null;
+  hasChildren: boolean | null;
+};
+
+export type MockMutationError =
+  | 'invalid-path'
+  | 'validation'
+  | 'not-found'
+  | 'already-exists'
+  | 'not-empty'
+  | 'too-large'
+  | 'binary'
+  | 'unsupported-encoding';
 
 let nearLimitBodyCache: string | undefined;
 let largeNotesBodyCache: string | undefined;
@@ -172,12 +192,17 @@ function buildFile(spec: FileSpec): MockFileRecord {
   };
 }
 
-function emptyWorkspace(revision: string): MockWorkspace {
+function formatRevision(seq: number): string {
+  return `mock-rev-${String(seq).padStart(4, '0')}`;
+}
+
+function emptyWorkspace(revisionSeq: number): MockWorkspace {
   return {
     files: new Map(),
     directories: new Set(['']),
     children: new Map([['', []]]),
-    revision,
+    revision: formatRevision(revisionSeq),
+    revisionSeq,
   };
 }
 
@@ -207,8 +232,8 @@ function ensureDir(workspace: MockWorkspace, dir: string): void {
   }
 }
 
-function buildWorkspace(revision: string, specs: readonly FileSpec[]): MockWorkspace {
-  const workspace = emptyWorkspace(revision);
+function buildWorkspace(revisionSeq: number, specs: readonly FileSpec[]): MockWorkspace {
+  const workspace = emptyWorkspace(revisionSeq);
   for (const spec of specs) {
     const file = buildFile(spec);
     workspace.files.set(file.path, file);
@@ -217,6 +242,37 @@ function buildWorkspace(revision: string, specs: readonly FileSpec[]): MockWorks
     appendChild(workspace, parent, file.path);
   }
   return workspace;
+}
+
+function incrementRevision(workspace: MockWorkspace): string {
+  workspace.revisionSeq += 1;
+  workspace.revision = formatRevision(workspace.revisionSeq);
+  return workspace.revision;
+}
+
+function removeChild(workspace: MockWorkspace, parent: string, child: string): void {
+  const list = workspace.children.get(parent);
+  if (list === undefined) {
+    return;
+  }
+  const index = list.indexOf(child);
+  if (index !== -1) {
+    list.splice(index, 1);
+  }
+}
+
+function entryExists(workspace: MockWorkspace, path: string): boolean {
+  return workspace.files.has(path) || workspace.directories.has(path);
+}
+
+function remapRelativePath(path: string, from: string, to: string): string {
+  if (path === from) {
+    return to;
+  }
+  if (from !== '' && path.startsWith(`${from}/`)) {
+    return `${to}${path.slice(from.length)}`;
+  }
+  return path;
 }
 
 function padAscii(prefix: string, suffix: string, sizeBytes: number): string {
@@ -344,16 +400,32 @@ const BOB_FILES: readonly FileSpec[] = [
   },
 ];
 
-const EMPTY_WORKSPACE = emptyWorkspace('rev-workspace');
+let workspaces = new Map<string, MockWorkspace>();
 
-const WORKSPACES = new Map<string, MockWorkspace>([
-  [ALICE_PROJECT_ID, buildWorkspace('rev-alice-notebook', ALICE_FILES)],
-  [BOB_PROJECT_ID, buildWorkspace('rev-bob-lab', BOB_FILES)],
-]);
+export function resetWorkspaces(): void {
+  workspaces = new Map([
+    [ALICE_PROJECT_ID, buildWorkspace(1, ALICE_FILES)],
+    [BOB_PROJECT_ID, buildWorkspace(1, BOB_FILES)],
+  ]);
+}
+
+export function ensureWorkspace(projectId: string): void {
+  if (!workspaces.has(projectId)) {
+    workspaces.set(projectId, emptyWorkspace(1));
+  }
+}
 
 function workspaceFor(projectId: string): MockWorkspace {
-  return WORKSPACES.get(projectId) ?? EMPTY_WORKSPACE;
+  const existing = workspaces.get(projectId);
+  if (existing !== undefined) {
+    return existing;
+  }
+  const created = emptyWorkspace(1);
+  workspaces.set(projectId, created);
+  return created;
 }
+
+resetWorkspaces();
 
 export function getWorkspaceRevision(projectId: string): string {
   return workspaceFor(projectId).revision;
@@ -453,4 +525,236 @@ export function sanitizeDownloadFilename(name: string): string {
 
 export function contentDispositionHeader(name: string): string {
   return `attachment; filename="${sanitizeDownloadFilename(name)}"`;
+}
+
+function toTreeEntryJson(workspace: MockWorkspace, path: string): MockTreeEntryJson {
+  const file = workspace.files.get(path);
+  if (file !== undefined) {
+    return {
+      path: file.path,
+      name: file.name,
+      kind: 'file',
+      hidden: file.name.startsWith('.'),
+      sizeBytes: file.sizeBytes,
+      hasChildren: null,
+    };
+  }
+  const name = fileName(path);
+  const grandchildren = workspace.children.get(path) ?? [];
+  return {
+    path,
+    name,
+    kind: 'directory',
+    hidden: name.startsWith('.'),
+    sizeBytes: null,
+    hasChildren: grandchildren.length > 0,
+  };
+}
+
+function cloneFileAtPath(file: MockFileRecord, nextPath: string): MockFileRecord {
+  if (file.blockReason === 'BINARY_FILE') {
+    return buildFile({
+      path: nextPath,
+      binaryContent: file.binaryContent ?? undefined,
+      sizeBytes: file.sizeBytes,
+      encodingKind: 'binary',
+    });
+  }
+  if (file.blockReason === 'UNSUPPORTED_ENCODING') {
+    return buildFile({
+      path: nextPath,
+      binaryContent: file.binaryContent ?? undefined,
+      sizeBytes: file.sizeBytes,
+      encodingKind: 'latin1',
+    });
+  }
+  return buildFile({
+    path: nextPath,
+    textContent: file.textContent ?? '',
+    sizeBytes: file.sizeBytes,
+    largeBodyKind: file.largeBodyKind ?? undefined,
+  });
+}
+
+export function saveMockFile(
+  projectId: string,
+  path: string,
+  content: string,
+):
+  | { ok: true; file: MockFileRecord; workspaceRevision: string }
+  | { ok: false; error: MockMutationError } {
+  const workspace = workspaceFor(projectId);
+  if (workspace.directories.has(path)) {
+    return { ok: false, error: 'invalid-path' };
+  }
+  const existing = workspace.files.get(path);
+  if (existing === undefined) {
+    return { ok: false, error: 'not-found' };
+  }
+  if (existing.blockReason === 'BINARY_FILE') {
+    return { ok: false, error: 'binary' };
+  }
+  if (existing.blockReason === 'UNSUPPORTED_ENCODING') {
+    return { ok: false, error: 'unsupported-encoding' };
+  }
+  if (existing.blockReason === 'FILE_TOO_LARGE') {
+    return { ok: false, error: 'too-large' };
+  }
+  const next = buildFile({ path, textContent: content });
+  if (next.blockReason === 'FILE_TOO_LARGE') {
+    return { ok: false, error: 'too-large' };
+  }
+  workspace.files.set(path, next);
+  incrementRevision(workspace);
+  return { ok: true, file: next, workspaceRevision: workspace.revision };
+}
+
+export function createMockEntry(
+  projectId: string,
+  kind: 'file' | 'directory',
+  path: string,
+):
+  | {
+      ok: true;
+      entry: MockTreeEntryJson;
+      file: MockFileRecord | null;
+      workspaceRevision: string;
+    }
+  | { ok: false; error: MockMutationError } {
+  const workspace = workspaceFor(projectId);
+  const parent = parentOf(path);
+  if (!workspace.directories.has(parent)) {
+    return { ok: false, error: 'invalid-path' };
+  }
+  if (entryExists(workspace, path)) {
+    return { ok: false, error: 'already-exists' };
+  }
+  if (kind === 'file') {
+    const file = buildFile({ path, textContent: '' });
+    workspace.files.set(path, file);
+    appendChild(workspace, parent, path);
+    incrementRevision(workspace);
+    return {
+      ok: true,
+      entry: toTreeEntryJson(workspace, path),
+      file,
+      workspaceRevision: workspace.revision,
+    };
+  }
+  ensureDir(workspace, path);
+  incrementRevision(workspace);
+  return {
+    ok: true,
+    entry: toTreeEntryJson(workspace, path),
+    file: null,
+    workspaceRevision: workspace.revision,
+  };
+}
+
+export function renameMockEntry(
+  projectId: string,
+  path: string,
+  nextPath: string,
+):
+  | {
+      ok: true;
+      path: string;
+      nextPath: string;
+      entry: MockTreeEntryJson;
+      file: MockFileRecord | null;
+      workspaceRevision: string;
+    }
+  | { ok: false; error: MockMutationError } {
+  const workspace = workspaceFor(projectId);
+  if (parentOf(path) !== parentOf(nextPath)) {
+    return { ok: false, error: 'validation' };
+  }
+  const isFile = workspace.files.has(path);
+  const isDir = path !== '' && workspace.directories.has(path);
+  if (!isFile && !isDir) {
+    return { ok: false, error: 'not-found' };
+  }
+  if (entryExists(workspace, nextPath)) {
+    return { ok: false, error: 'already-exists' };
+  }
+  if (isFile) {
+    const file = workspace.files.get(path);
+    if (file === undefined) {
+      return { ok: false, error: 'not-found' };
+    }
+    workspace.files.delete(path);
+    const renamed = cloneFileAtPath(file, nextPath);
+    workspace.files.set(nextPath, renamed);
+    const parent = parentOf(path);
+    removeChild(workspace, parent, path);
+    appendChild(workspace, parent, nextPath);
+    incrementRevision(workspace);
+    return {
+      ok: true,
+      path,
+      nextPath,
+      entry: toTreeEntryJson(workspace, nextPath),
+      file: renamed,
+      workspaceRevision: workspace.revision,
+    };
+  }
+
+  const nextFiles = new Map<string, MockFileRecord>();
+  for (const [oldPath, file] of workspace.files) {
+    const remapped = remapRelativePath(oldPath, path, nextPath);
+    nextFiles.set(remapped, remapped === oldPath ? file : cloneFileAtPath(file, remapped));
+  }
+  workspace.files = nextFiles;
+
+  const nextDirectories = new Set<string>();
+  for (const dir of workspace.directories) {
+    nextDirectories.add(remapRelativePath(dir, path, nextPath));
+  }
+  workspace.directories = nextDirectories;
+
+  const nextChildren = new Map<string, string[]>();
+  for (const [dir, children] of workspace.children) {
+    nextChildren.set(
+      remapRelativePath(dir, path, nextPath),
+      children.map((child) => remapRelativePath(child, path, nextPath)),
+    );
+  }
+  workspace.children = nextChildren;
+
+  incrementRevision(workspace);
+  return {
+    ok: true,
+    path,
+    nextPath,
+    entry: toTreeEntryJson(workspace, nextPath),
+    file: null,
+    workspaceRevision: workspace.revision,
+  };
+}
+
+export function deleteMockEntry(
+  projectId: string,
+  path: string,
+):
+  | { ok: true; path: string; workspaceRevision: string }
+  | { ok: false; error: MockMutationError } {
+  const workspace = workspaceFor(projectId);
+  if (workspace.files.has(path)) {
+    workspace.files.delete(path);
+    removeChild(workspace, parentOf(path), path);
+    incrementRevision(workspace);
+    return { ok: true, path, workspaceRevision: workspace.revision };
+  }
+  if (path === '' || !workspace.directories.has(path)) {
+    return { ok: false, error: path === '' ? 'invalid-path' : 'not-found' };
+  }
+  const children = workspace.children.get(path) ?? [];
+  if (children.length > 0) {
+    return { ok: false, error: 'not-empty' };
+  }
+  workspace.directories.delete(path);
+  workspace.children.delete(path);
+  removeChild(workspace, parentOf(path), path);
+  incrementRevision(workspace);
+  return { ok: true, path, workspaceRevision: workspace.revision };
 }

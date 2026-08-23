@@ -2,13 +2,22 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ApiErrorBody } from '../contracts/api';
 import type { LoginResponse } from '../contracts/auth';
 import {
+  parseCreateEntryResponse,
+  parseDeleteEntryResponse,
   parseFileContentResponse,
   parseFileMetadata,
   parseFileTreeResponse,
+  parseRenameEntryResponse,
+  parseSaveFileResponse,
 } from '../contracts/file';
 import type { ProjectListResponse, ProjectSummary } from '../contracts/project';
 import { parseProjectDirectoryPath, parseProjectRelativePath } from '../features/files/pathPolicy';
-import { getFileRequestCount, resetMockState, setLargeFileBodiesEnabled } from './state';
+import {
+  getFileRequestCount,
+  resetMockState,
+  setLargeFileBodiesEnabled,
+  WRITE_SCENARIO_DELAY_MS,
+} from './state';
 
 const ALICE = { username: 'alice', password: 'demo-pass' };
 const BOB = { username: 'bob', password: 'demo-pass' };
@@ -121,6 +130,126 @@ async function expectApiError(
     /\\\\DeepLearning|C:\\\\Windows|\/Users\/|\/etc\/passwd|physical/i,
   );
   return body;
+}
+
+const SEED_REVISION = 'mock-rev-0001';
+const README_CONTENT = '# Alice Notebook\n\nRead-only Maven demo.\n';
+const APP_JAVA_PATH = 'src/main/java/demo/App.java';
+const MIB = 1024 * 1024;
+
+function projectEntriesUrl(projectId: string, suffix = '', path?: string): string {
+  const base = `/api/v1/projects/${encodeURIComponent(projectId)}/entries${suffix}`;
+  if (path === undefined) {
+    return base;
+  }
+  const search = new URLSearchParams();
+  search.set('path', path);
+  return `${base}?${search.toString()}`;
+}
+
+async function readTree(token: string, projectId: string, directory = '') {
+  const response = await fetchFileResource(token, projectId, 'tree', directory);
+  expect(response.status).toBe(200);
+  return parseFileTreeResponse(await response.json(), parseProjectDirectoryPath(directory));
+}
+
+async function putFileContent(
+  token: string,
+  projectId: string,
+  path: string,
+  content: string,
+  expectedWorkspaceRevision: string,
+): Promise<Response> {
+  return fetch(fileResourceUrl(projectId, 'content', path), {
+    method: 'PUT',
+    headers: {
+      ...bearerHeaders(token),
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ content, expectedWorkspaceRevision }),
+  });
+}
+
+async function postCreateEntry(
+  token: string,
+  projectId: string,
+  kind: 'file' | 'directory',
+  path: string,
+  expectedWorkspaceRevision: string,
+): Promise<Response> {
+  return fetch(projectEntriesUrl(projectId), {
+    method: 'POST',
+    headers: {
+      ...bearerHeaders(token),
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ kind, path, expectedWorkspaceRevision }),
+  });
+}
+
+async function postRenameEntry(
+  token: string,
+  projectId: string,
+  path: string,
+  nextPath: string,
+  expectedWorkspaceRevision: string,
+): Promise<Response> {
+  return fetch(projectEntriesUrl(projectId, '/rename'), {
+    method: 'POST',
+    headers: {
+      ...bearerHeaders(token),
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ path, nextPath, expectedWorkspaceRevision }),
+  });
+}
+
+async function deleteProjectEntry(
+  token: string,
+  projectId: string,
+  path: string,
+  expectedWorkspaceRevision: string,
+): Promise<Response> {
+  return fetch(projectEntriesUrl(projectId, '', path), {
+    method: 'DELETE',
+    headers: {
+      ...bearerHeaders(token),
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ expectedWorkspaceRevision }),
+  });
+}
+
+async function postWriteScenario(token: string, scenario: string): Promise<Response> {
+  return fetch('/api/v1/session/write-scenario', {
+    method: 'POST',
+    headers: {
+      ...bearerHeaders(token),
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ scenario }),
+  });
+}
+
+async function expectSeedWorkspaceUnchanged(token: string, projectId: string): Promise<void> {
+  const tree = await readTree(token, projectId, '');
+  expect(tree.workspaceRevision).toBe(SEED_REVISION);
+  expect(tree.entries.map((entry) => entry.name).sort()).toEqual([
+    '.gitignore',
+    'README.md',
+    'assets',
+    'docs',
+    'pom.xml',
+    'src',
+  ]);
+  const readme = await fetchFileResource(token, projectId, 'content', 'README.md');
+  expect(readme.status).toBe(200);
+  const body = parseFileContentResponse(
+    await readme.json(),
+    parseProjectRelativePath('README.md'),
+  );
+  expect(body.content).toBe(README_CONTENT);
+  expect(body.workspaceRevision).toBe(SEED_REVISION);
 }
 
 describe('MSW auth handlers', () => {
@@ -300,6 +429,7 @@ describe('MSW read-only file handlers', () => {
     const response = await fetchFileResource(alice.accessToken, ALICE_SEED_PROJECT_ID, 'tree', '');
     expect(response.status).toBe(200);
     const tree = parseFileTreeResponse(await response.json(), parseProjectDirectoryPath(''));
+    expect(tree.workspaceRevision).toBe(SEED_REVISION);
     const names = tree.entries.map((entry) => entry.name).sort();
     expect(names).toEqual(['.gitignore', 'README.md', 'assets', 'docs', 'pom.xml', 'src']);
     expect(tree.entries.find((entry) => entry.name === '.gitignore')).toMatchObject({
@@ -804,5 +934,798 @@ describe('MSW read-only file handlers', () => {
         expect(body.message).toBe('Invalid path');
       }
     }
+  });
+});
+
+describe('MSW writable file handlers', () => {
+  it('creates a root file and a nested file, then rejects a collision without advancing revision', async () => {
+    const alice = await loginOk(ALICE.username, ALICE.password);
+
+    const rootCreated = await postCreateEntry(
+      alice.accessToken,
+      ALICE_SEED_PROJECT_ID,
+      'file',
+      'notes.txt',
+      SEED_REVISION,
+    );
+    expect(rootCreated.status).toBe(200);
+    const rootBody = parseCreateEntryResponse(
+      await rootCreated.json(),
+      parseProjectRelativePath('notes.txt'),
+      'file',
+    );
+    expect(rootBody.workspaceRevision).toBe('mock-rev-0002');
+    expect(rootBody.entry).toMatchObject({
+      path: 'notes.txt',
+      name: 'notes.txt',
+      kind: 'file',
+      hidden: false,
+      sizeBytes: 0,
+      hasChildren: null,
+    });
+    expect(rootBody.file).toMatchObject({
+      path: 'notes.txt',
+      sizeBytes: 0,
+      renderMode: 'MONACO_TEXT',
+      blockReason: null,
+      encoding: 'UTF-8',
+    });
+
+    const nestedCreated = await postCreateEntry(
+      alice.accessToken,
+      ALICE_SEED_PROJECT_ID,
+      'file',
+      'src/main/java/demo/Util.java',
+      'mock-rev-0002',
+    );
+    expect(nestedCreated.status).toBe(200);
+    const nestedBody = parseCreateEntryResponse(
+      await nestedCreated.json(),
+      parseProjectRelativePath('src/main/java/demo/Util.java'),
+      'file',
+    );
+    expect(nestedBody.workspaceRevision).toBe('mock-rev-0003');
+
+    const collision = await postCreateEntry(
+      alice.accessToken,
+      ALICE_SEED_PROJECT_ID,
+      'file',
+      'notes.txt',
+      'mock-rev-0003',
+    );
+    await expectApiError(collision, 409, 'ENTRY_ALREADY_EXISTS');
+
+    const tree = await readTree(alice.accessToken, ALICE_SEED_PROJECT_ID, '');
+    expect(tree.workspaceRevision).toBe('mock-rev-0003');
+    expect(tree.entries.map((entry) => entry.name)).toContain('notes.txt');
+    const demo = await readTree(alice.accessToken, ALICE_SEED_PROJECT_ID, 'src/main/java/demo');
+    expect(demo.workspaceRevision).toBe('mock-rev-0003');
+    expect(demo.entries.map((entry) => entry.name).sort()).toEqual([
+      'App.java',
+      'NearLimit.java',
+      'Util.java',
+    ]);
+  });
+
+  it('creates an empty directory and lists it with hasChildren false', async () => {
+    const alice = await loginOk(ALICE.username, ALICE.password);
+    const created = await postCreateEntry(
+      alice.accessToken,
+      ALICE_SEED_PROJECT_ID,
+      'directory',
+      'tmp',
+      SEED_REVISION,
+    );
+    expect(created.status).toBe(200);
+    const body = parseCreateEntryResponse(
+      await created.json(),
+      parseProjectRelativePath('tmp'),
+      'directory',
+    );
+    expect(body.file).toBeNull();
+    expect(body.workspaceRevision).toBe('mock-rev-0002');
+    expect(body.entry).toMatchObject({
+      path: 'tmp',
+      kind: 'directory',
+      sizeBytes: null,
+      hasChildren: false,
+    });
+
+    const listed = await readTree(alice.accessToken, ALICE_SEED_PROJECT_ID, 'tmp');
+    expect(listed.workspaceRevision).toBe('mock-rev-0002');
+    expect(listed.entries).toEqual([]);
+  });
+
+  it('renames a file in the same directory and leaves the old path gone', async () => {
+    const alice = await loginOk(ALICE.username, ALICE.password);
+    const renamed = await postRenameEntry(
+      alice.accessToken,
+      ALICE_SEED_PROJECT_ID,
+      'README.md',
+      'NOTES.md',
+      SEED_REVISION,
+    );
+    expect(renamed.status).toBe(200);
+    const body = parseRenameEntryResponse(
+      await renamed.json(),
+      parseProjectRelativePath('README.md'),
+      parseProjectRelativePath('NOTES.md'),
+    );
+    expect(body.workspaceRevision).toBe('mock-rev-0002');
+    expect(body.entry.path).toBe('NOTES.md');
+    expect(body.file?.path).toBe('NOTES.md');
+
+    const tree = await readTree(alice.accessToken, ALICE_SEED_PROJECT_ID, '');
+    expect(tree.workspaceRevision).toBe('mock-rev-0002');
+    expect(tree.entries.map((entry) => entry.name)).toContain('NOTES.md');
+    expect(tree.entries.map((entry) => entry.name)).not.toContain('README.md');
+    await expectApiError(
+      await fetchFileResource(alice.accessToken, ALICE_SEED_PROJECT_ID, 'meta', 'README.md'),
+      400,
+      'INVALID_PATH',
+    );
+  });
+
+  it('remaps directory descendants on rename without touching a same-prefix sibling', async () => {
+    const alice = await loginOk(ALICE.username, ALICE.password);
+    const sibling = await postCreateEntry(
+      alice.accessToken,
+      ALICE_SEED_PROJECT_ID,
+      'file',
+      'src-notes.md',
+      SEED_REVISION,
+    );
+    expect(sibling.status).toBe(200);
+
+    const renamed = await postRenameEntry(
+      alice.accessToken,
+      ALICE_SEED_PROJECT_ID,
+      'src',
+      'source',
+      'mock-rev-0002',
+    );
+    expect(renamed.status).toBe(200);
+    const body = parseRenameEntryResponse(
+      await renamed.json(),
+      parseProjectRelativePath('src'),
+      parseProjectRelativePath('source'),
+    );
+    expect(body.workspaceRevision).toBe('mock-rev-0003');
+    expect(body.file).toBeNull();
+    expect(body.entry).toMatchObject({
+      path: 'source',
+      kind: 'directory',
+      hasChildren: true,
+    });
+
+    const demo = await readTree(alice.accessToken, ALICE_SEED_PROJECT_ID, 'source/main/java/demo');
+    expect(demo.workspaceRevision).toBe('mock-rev-0003');
+    expect(demo.entries.map((entry) => entry.name).sort()).toEqual(['App.java', 'NearLimit.java']);
+
+    const app = await fetchFileResource(
+      alice.accessToken,
+      ALICE_SEED_PROJECT_ID,
+      'content',
+      'source/main/java/demo/App.java',
+    );
+    expect(app.status).toBe(200);
+    const appBody = parseFileContentResponse(
+      await app.json(),
+      parseProjectRelativePath('source/main/java/demo/App.java'),
+    );
+    expect(appBody.content).toContain('class App');
+    expect(appBody.workspaceRevision).toBe('mock-rev-0003');
+
+    await expectApiError(
+      await fetchFileResource(alice.accessToken, ALICE_SEED_PROJECT_ID, 'content', APP_JAVA_PATH),
+      400,
+      'INVALID_PATH',
+    );
+
+    const root = await readTree(alice.accessToken, ALICE_SEED_PROJECT_ID, '');
+    expect(root.entries.map((entry) => entry.name)).toContain('src-notes.md');
+    expect(root.entries.map((entry) => entry.name)).toContain('source');
+    expect(root.entries.map((entry) => entry.name)).not.toContain('src');
+  });
+
+  it('deletes a file and an empty directory, and rejects a non-empty directory', async () => {
+    const alice = await loginOk(ALICE.username, ALICE.password);
+
+    const createdDir = await postCreateEntry(
+      alice.accessToken,
+      ALICE_SEED_PROJECT_ID,
+      'directory',
+      'tmp',
+      SEED_REVISION,
+    );
+    expect(createdDir.status).toBe(200);
+
+    const deletedFile = await deleteProjectEntry(
+      alice.accessToken,
+      ALICE_SEED_PROJECT_ID,
+      'README.md',
+      'mock-rev-0002',
+    );
+    expect(deletedFile.status).toBe(200);
+    const fileBody = parseDeleteEntryResponse(
+      await deletedFile.json(),
+      parseProjectRelativePath('README.md'),
+    );
+    expect(fileBody).toEqual({ path: 'README.md', workspaceRevision: 'mock-rev-0003' });
+
+    const deletedDir = await deleteProjectEntry(
+      alice.accessToken,
+      ALICE_SEED_PROJECT_ID,
+      'tmp',
+      'mock-rev-0003',
+    );
+    expect(deletedDir.status).toBe(200);
+    const dirBody = parseDeleteEntryResponse(
+      await deletedDir.json(),
+      parseProjectRelativePath('tmp'),
+    );
+    expect(dirBody.workspaceRevision).toBe('mock-rev-0004');
+
+    const rejected = await deleteProjectEntry(
+      alice.accessToken,
+      ALICE_SEED_PROJECT_ID,
+      'docs',
+      'mock-rev-0004',
+    );
+    await expectApiError(rejected, 409, 'DIRECTORY_NOT_EMPTY');
+
+    const tree = await readTree(alice.accessToken, ALICE_SEED_PROJECT_ID, '');
+    expect(tree.workspaceRevision).toBe('mock-rev-0004');
+    expect(tree.entries.map((entry) => entry.name)).not.toContain('README.md');
+    expect(tree.entries.map((entry) => entry.name)).not.toContain('tmp');
+    expect(tree.entries.map((entry) => entry.name)).toContain('docs');
+    const docs = await readTree(alice.accessToken, ALICE_SEED_PROJECT_ID, 'docs');
+    expect(docs.entries.length).toBeGreaterThan(0);
+  });
+
+  it('advances mock-rev exactly once per successful mutation and not on any rejected branch', async () => {
+    const alice = await loginOk(ALICE.username, ALICE.password);
+    const bob = await loginOk(BOB.username, BOB.password);
+
+    const created = await postCreateEntry(
+      alice.accessToken,
+      ALICE_SEED_PROJECT_ID,
+      'file',
+      'scratch.txt',
+      SEED_REVISION,
+    );
+    expect(parseCreateEntryResponse(
+      await created.json(),
+      parseProjectRelativePath('scratch.txt'),
+      'file',
+    ).workspaceRevision).toBe('mock-rev-0002');
+
+    const saved = await putFileContent(
+      alice.accessToken,
+      ALICE_SEED_PROJECT_ID,
+      'scratch.txt',
+      'hello',
+      'mock-rev-0002',
+    );
+    expect(parseSaveFileResponse(
+      await saved.json(),
+      parseProjectRelativePath('scratch.txt'),
+    ).workspaceRevision).toBe('mock-rev-0003');
+
+    const renamed = await postRenameEntry(
+      alice.accessToken,
+      ALICE_SEED_PROJECT_ID,
+      'scratch.txt',
+      'scratch-2.txt',
+      'mock-rev-0003',
+    );
+    expect(parseRenameEntryResponse(
+      await renamed.json(),
+      parseProjectRelativePath('scratch.txt'),
+      parseProjectRelativePath('scratch-2.txt'),
+    ).workspaceRevision).toBe('mock-rev-0004');
+
+    const folder = await postCreateEntry(
+      alice.accessToken,
+      ALICE_SEED_PROJECT_ID,
+      'directory',
+      'empty-dir',
+      'mock-rev-0004',
+    );
+    expect(parseCreateEntryResponse(
+      await folder.json(),
+      parseProjectRelativePath('empty-dir'),
+      'directory',
+    ).workspaceRevision).toBe('mock-rev-0005');
+
+    const failures: Array<{ label: string; response: Response }> = [
+      {
+        label: 'collision',
+        response: await postCreateEntry(
+          alice.accessToken,
+          ALICE_SEED_PROJECT_ID,
+          'file',
+          'pom.xml',
+          'mock-rev-0005',
+        ),
+      },
+      {
+        label: 'non-empty delete',
+        response: await deleteProjectEntry(
+          alice.accessToken,
+          ALICE_SEED_PROJECT_ID,
+          'docs',
+          'mock-rev-0005',
+        ),
+      },
+      {
+        label: 'owner',
+        response: await putFileContent(
+          bob.accessToken,
+          ALICE_SEED_PROJECT_ID,
+          'scratch-2.txt',
+          'stolen',
+          'mock-rev-0005',
+        ),
+      },
+      {
+        label: 'invalid path',
+        response: await postCreateEntry(
+          alice.accessToken,
+          ALICE_SEED_PROJECT_ID,
+          'file',
+          '../secret',
+          'mock-rev-0005',
+        ),
+      },
+      {
+        label: 'revision mismatch',
+        response: await putFileContent(
+          alice.accessToken,
+          ALICE_SEED_PROJECT_ID,
+          'scratch-2.txt',
+          'stale',
+          SEED_REVISION,
+        ),
+      },
+    ];
+    await expectApiError(failures[0].response, 409, 'ENTRY_ALREADY_EXISTS');
+    await expectApiError(failures[1].response, 409, 'DIRECTORY_NOT_EMPTY');
+    await expectGenericForbidden(failures[2].response);
+    await expectApiError(failures[3].response, 400, 'INVALID_PATH');
+    await expectApiError(failures[4].response, 409, 'WORKSPACE_REVISION_CONFLICT');
+
+    const tree = await readTree(alice.accessToken, ALICE_SEED_PROJECT_ID, '');
+    expect(tree.workspaceRevision).toBe('mock-rev-0005');
+    const content = await fetchFileResource(
+      alice.accessToken,
+      ALICE_SEED_PROJECT_ID,
+      'content',
+      'scratch-2.txt',
+    );
+    const savedContent = parseFileContentResponse(
+      await content.json(),
+      parseProjectRelativePath('scratch-2.txt'),
+    );
+    expect(savedContent.content).toBe('hello');
+    expect(savedContent.workspaceRevision).toBe('mock-rev-0005');
+  });
+
+  it('returns the same generic 403 for another owner, unknown ids and non-READY writes without mutating', async () => {
+    const alice = await loginOk(ALICE.username, ALICE.password);
+    const bob = await loginOk(BOB.username, BOB.password);
+
+    const foreign = await expectGenericForbidden(
+      await putFileContent(
+        alice.accessToken,
+        BOB_SEED_PROJECT_ID,
+        'lab-notes.md',
+        'nope',
+        SEED_REVISION,
+      ),
+    );
+    const unknown = await expectGenericForbidden(
+      await postCreateEntry(
+        alice.accessToken,
+        'prj-does-not-exist',
+        'file',
+        'notes.txt',
+        SEED_REVISION,
+      ),
+    );
+    expect(foreign.message).toBe(unknown.message);
+    expect(JSON.stringify(foreign)).not.toContain('lab-notes');
+    expect(JSON.stringify(foreign)).not.toContain(BOB_SEED_PROJECT_ID);
+
+    const bobTree = await readTree(bob.accessToken, BOB_SEED_PROJECT_ID, '');
+    expect(bobTree.workspaceRevision).toBe(SEED_REVISION);
+    expect(bobTree.entries.map((entry) => entry.name)).toEqual(['lab-notes.md', 'samples']);
+
+    const created = await readJson<ProjectSummary>(
+      await createProject(alice.accessToken, 'NotReadyWrites'),
+    );
+    expect(created.state).toBe('CREATING');
+    await expectGenericForbidden(
+      await postCreateEntry(alice.accessToken, created.id, 'file', 'a.txt', SEED_REVISION),
+    );
+    const first = await readJson<ProjectSummary>(await getProject(alice.accessToken, created.id));
+    expect(first.state).toBe('CREATING');
+    await expectGenericForbidden(
+      await deleteProjectEntry(alice.accessToken, created.id, 'a.txt', SEED_REVISION),
+    );
+  });
+
+  it('rejects malformed write paths before comparing revision and leaves the workspace unchanged', async () => {
+    const alice = await loginOk(ALICE.username, ALICE.password);
+    const malformed = ['../secret', 'src\\App.java', 'foo/../bar', '', 'foo//bar'];
+    for (const path of malformed) {
+      const createBody = await expectApiError(
+        await postCreateEntry(alice.accessToken, ALICE_SEED_PROJECT_ID, 'file', path, 'mock-rev-9999'),
+        400,
+        'INVALID_PATH',
+      );
+      if (path !== '') {
+        expect(JSON.stringify(createBody)).not.toContain(path);
+      }
+      const saveBody = await expectApiError(
+        await putFileContent(
+          alice.accessToken,
+          ALICE_SEED_PROJECT_ID,
+          path,
+          'x',
+          'mock-rev-9999',
+        ),
+        400,
+        'INVALID_PATH',
+      );
+      if (path !== '') {
+        expect(JSON.stringify(saveBody)).not.toContain(path);
+      }
+    }
+
+    const missingParent = await expectApiError(
+      await postCreateEntry(
+        alice.accessToken,
+        ALICE_SEED_PROJECT_ID,
+        'file',
+        'ghost/new.txt',
+        'mock-rev-9999',
+      ),
+      400,
+      'INVALID_PATH',
+    );
+    expect(JSON.stringify(missingParent)).not.toContain('ghost/new.txt');
+
+    const crossDirectory = await expectApiError(
+      await postRenameEntry(
+        alice.accessToken,
+        ALICE_SEED_PROJECT_ID,
+        APP_JAVA_PATH,
+        'docs/App.java',
+        'mock-rev-9999',
+      ),
+      400,
+      'VALIDATION_ERROR',
+    );
+    expect(JSON.stringify(crossDirectory)).not.toContain(APP_JAVA_PATH);
+
+    await expectSeedWorkspaceUnchanged(alice.accessToken, ALICE_SEED_PROJECT_ID);
+  });
+
+  it('rejects a stale revision without mutating, including when the lock scenario is set', async () => {
+    const alice = await loginOk(ALICE.username, ALICE.password);
+    expect((await postWriteScenario(alice.accessToken, 'locked')).status).toBe(204);
+
+    await expectApiError(
+      await putFileContent(
+        alice.accessToken,
+        ALICE_SEED_PROJECT_ID,
+        'README.md',
+        'stale',
+        'mock-rev-0002',
+      ),
+      409,
+      'WORKSPACE_REVISION_CONFLICT',
+    );
+    await expectSeedWorkspaceUnchanged(alice.accessToken, ALICE_SEED_PROJECT_ID);
+  });
+
+  it('returns PROJECT_LOCKED after a matching revision and does not increment', async () => {
+    const alice = await loginOk(ALICE.username, ALICE.password);
+    expect((await postWriteScenario(alice.accessToken, 'locked')).status).toBe(204);
+    await expectApiError(
+      await putFileContent(
+        alice.accessToken,
+        ALICE_SEED_PROJECT_ID,
+        'README.md',
+        'locked',
+        SEED_REVISION,
+      ),
+      409,
+      'PROJECT_LOCKED',
+    );
+    await expectSeedWorkspaceUnchanged(alice.accessToken, ALICE_SEED_PROJECT_ID);
+  });
+
+  it('measures UTF-8 bytes with TextEncoder and returns fresh save metadata', async () => {
+    const alice = await loginOk(ALICE.username, ALICE.password);
+    const response = await putFileContent(
+      alice.accessToken,
+      ALICE_SEED_PROJECT_ID,
+      'README.md',
+      '€',
+      SEED_REVISION,
+    );
+    expect(response.status).toBe(200);
+    const body = parseSaveFileResponse(
+      await response.json(),
+      parseProjectRelativePath('README.md'),
+    );
+    expect(body.workspaceRevision).toBe('mock-rev-0002');
+    expect(body.file.sizeBytes).toBe(new TextEncoder().encode('€').byteLength);
+    expect(body.file.sizeBytes).not.toBe('€'.length);
+    expect(body.file.renderMode).toBe('MONACO_TEXT');
+    expect(body.file.blockReason).toBeNull();
+  });
+
+  it('saves Markdown at 20 MiB as MONACO_TEXT', async () => {
+    const alice = await loginOk(ALICE.username, ALICE.password);
+    const content = 'a'.repeat(20 * MIB);
+    const response = await putFileContent(
+      alice.accessToken,
+      ALICE_SEED_PROJECT_ID,
+      'README.md',
+      content,
+      SEED_REVISION,
+    );
+    expect(response.status).toBe(200);
+    const body = parseSaveFileResponse(
+      await response.json(),
+      parseProjectRelativePath('README.md'),
+    );
+    expect(body.file.sizeBytes).toBe(20 * MIB);
+    expect(body.file.renderMode).toBe('MONACO_TEXT');
+    expect(body.file.blockReason).toBeNull();
+    expect(body.workspaceRevision).toBe('mock-rev-0002');
+  }, 30_000);
+
+  it('saves Markdown at 20 MiB + 1 as PLAIN_TEXT', async () => {
+    const alice = await loginOk(ALICE.username, ALICE.password);
+    const content = 'a'.repeat(20 * MIB + 1);
+    const response = await putFileContent(
+      alice.accessToken,
+      ALICE_SEED_PROJECT_ID,
+      'README.md',
+      content,
+      SEED_REVISION,
+    );
+    expect(response.status).toBe(200);
+    const body = parseSaveFileResponse(
+      await response.json(),
+      parseProjectRelativePath('README.md'),
+    );
+    expect(body.file.sizeBytes).toBe(20 * MIB + 1);
+    expect(body.file.renderMode).toBe('PLAIN_TEXT');
+    expect(body.file.blockReason).toBeNull();
+  }, 30_000);
+
+  it('saves Markdown at 50 MiB as PLAIN_TEXT', async () => {
+    const alice = await loginOk(ALICE.username, ALICE.password);
+    const content = 'a'.repeat(50 * MIB);
+    const response = await putFileContent(
+      alice.accessToken,
+      ALICE_SEED_PROJECT_ID,
+      'README.md',
+      content,
+      SEED_REVISION,
+    );
+    expect(response.status).toBe(200);
+    const body = parseSaveFileResponse(
+      await response.json(),
+      parseProjectRelativePath('README.md'),
+    );
+    expect(body.file.sizeBytes).toBe(50 * MIB);
+    expect(body.file.renderMode).toBe('PLAIN_TEXT');
+    expect(body.file.blockReason).toBeNull();
+  }, 60_000);
+
+  it('rejects Markdown at 50 MiB + 1 without mutating', async () => {
+    const alice = await loginOk(ALICE.username, ALICE.password);
+    const content = 'a'.repeat(50 * MIB + 1);
+    await expectApiError(
+      await putFileContent(
+        alice.accessToken,
+        ALICE_SEED_PROJECT_ID,
+        'README.md',
+        content,
+        SEED_REVISION,
+      ),
+      413,
+      'FILE_TOO_LARGE',
+    );
+    await expectSeedWorkspaceUnchanged(alice.accessToken, ALICE_SEED_PROJECT_ID);
+  }, 60_000);
+
+  it('saves non-Markdown at 20 MiB as MONACO_TEXT', async () => {
+    const alice = await loginOk(ALICE.username, ALICE.password);
+    const content = 'a'.repeat(20 * MIB);
+    const response = await putFileContent(
+      alice.accessToken,
+      ALICE_SEED_PROJECT_ID,
+      APP_JAVA_PATH,
+      content,
+      SEED_REVISION,
+    );
+    expect(response.status).toBe(200);
+    const body = parseSaveFileResponse(
+      await response.json(),
+      parseProjectRelativePath(APP_JAVA_PATH),
+    );
+    expect(body.file.sizeBytes).toBe(20 * MIB);
+    expect(body.file.renderMode).toBe('MONACO_TEXT');
+    expect(body.file.blockReason).toBeNull();
+  }, 30_000);
+
+  it('rejects non-Markdown at 20 MiB + 1 without mutating', async () => {
+    const alice = await loginOk(ALICE.username, ALICE.password);
+    const content = 'a'.repeat(20 * MIB + 1);
+    await expectApiError(
+      await putFileContent(
+        alice.accessToken,
+        ALICE_SEED_PROJECT_ID,
+        APP_JAVA_PATH,
+        content,
+        SEED_REVISION,
+      ),
+      413,
+      'FILE_TOO_LARGE',
+    );
+    const meta = parseFileMetadata(
+      await (await fetchFileResource(alice.accessToken, ALICE_SEED_PROJECT_ID, 'meta', APP_JAVA_PATH)).json(),
+      parseProjectRelativePath(APP_JAVA_PATH),
+    );
+    expect(meta.sizeBytes).toBeLessThan(10_000);
+    const tree = await readTree(alice.accessToken, ALICE_SEED_PROJECT_ID, '');
+    expect(tree.workspaceRevision).toBe(SEED_REVISION);
+  }, 30_000);
+
+  it('rejects blocked, binary and non-UTF-8 PUT even when called directly', async () => {
+    const alice = await loginOk(ALICE.username, ALICE.password);
+    await expectApiError(
+      await putFileContent(
+        alice.accessToken,
+        ALICE_SEED_PROJECT_ID,
+        'assets/logo.png',
+        'not-a-png',
+        SEED_REVISION,
+      ),
+      415,
+      'BINARY_FILE',
+    );
+    await expectApiError(
+      await putFileContent(
+        alice.accessToken,
+        ALICE_SEED_PROJECT_ID,
+        'docs/latin1.txt',
+        'cafe',
+        SEED_REVISION,
+      ),
+      400,
+      'VALIDATION_ERROR',
+    );
+    await expectApiError(
+      await putFileContent(
+        alice.accessToken,
+        ALICE_SEED_PROJECT_ID,
+        'docs/too-large.md',
+        'small',
+        SEED_REVISION,
+      ),
+      413,
+      'FILE_TOO_LARGE',
+    );
+    await expectSeedWorkspaceUnchanged(alice.accessToken, ALICE_SEED_PROJECT_ID);
+  });
+
+  it('chooses mock-only write scenarios without importing them from production modules', async () => {
+    const alice = await loginOk(ALICE.username, ALICE.password);
+
+    const missing = await fetch('/api/v1/session/write-scenario', {
+      method: 'POST',
+      headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ scenario: 'locked' }),
+    });
+    expect(missing.status).toBe(401);
+
+    expect((await postWriteScenario(alice.accessToken, 'conflict')).status).toBe(204);
+    await expectApiError(
+      await putFileContent(
+        alice.accessToken,
+        ALICE_SEED_PROJECT_ID,
+        'README.md',
+        'conflict',
+        SEED_REVISION,
+      ),
+      409,
+      'WORKSPACE_REVISION_CONFLICT',
+    );
+
+    expect((await postWriteScenario(alice.accessToken, 'failure')).status).toBe(204);
+    await expectApiError(
+      await putFileContent(
+        alice.accessToken,
+        ALICE_SEED_PROJECT_ID,
+        'README.md',
+        'boom',
+        SEED_REVISION,
+      ),
+      500,
+      'INTERNAL_ERROR',
+    );
+
+    expect((await postWriteScenario(alice.accessToken, 'delayed')).status).toBe(204);
+    const started = Date.now();
+    const delayed = await putFileContent(
+      alice.accessToken,
+      ALICE_SEED_PROJECT_ID,
+      'README.md',
+      'delayed',
+      SEED_REVISION,
+    );
+    expect(Date.now() - started).toBeGreaterThanOrEqual(WRITE_SCENARIO_DELAY_MS - 50);
+    expect(delayed.status).toBe(200);
+    expect(parseSaveFileResponse(
+      await delayed.json(),
+      parseProjectRelativePath('README.md'),
+    ).workspaceRevision).toBe('mock-rev-0002');
+
+    resetMockState();
+    const afterDelay = await loginOk(ALICE.username, ALICE.password);
+    expect((await postWriteScenario(afterDelay.accessToken, 'normal')).status).toBe(204);
+    const saved = await putFileContent(
+      afterDelay.accessToken,
+      ALICE_SEED_PROJECT_ID,
+      'README.md',
+      'ok',
+      SEED_REVISION,
+    );
+    expect(saved.status).toBe(200);
+    expect(parseSaveFileResponse(
+      await saved.json(),
+      parseProjectRelativePath('README.md'),
+    ).workspaceRevision).toBe('mock-rev-0002');
+  });
+
+  it('resetMockState restores files, directories, revision, write scenario and counters', async () => {
+    const alice = await loginOk(ALICE.username, ALICE.password);
+    expect((await postWriteScenario(alice.accessToken, 'locked')).status).toBe(204);
+    const created = await postCreateEntry(
+      alice.accessToken,
+      ALICE_SEED_PROJECT_ID,
+      'file',
+      'ephemeral.txt',
+      SEED_REVISION,
+    );
+    await expectApiError(created, 409, 'PROJECT_LOCKED');
+    await fetchFileResource(alice.accessToken, ALICE_SEED_PROJECT_ID, 'tree', '');
+    expect(getFileRequestCount('tree', ALICE_SEED_PROJECT_ID, '')).toBe(1);
+
+    resetMockState();
+    expect(getFileRequestCount('tree', ALICE_SEED_PROJECT_ID, '')).toBe(0);
+
+    const again = await loginOk(ALICE.username, ALICE.password);
+    await expectSeedWorkspaceUnchanged(again.accessToken, ALICE_SEED_PROJECT_ID);
+    const saved = await putFileContent(
+      again.accessToken,
+      ALICE_SEED_PROJECT_ID,
+      'README.md',
+      'after-reset',
+      SEED_REVISION,
+    );
+    expect(saved.status).toBe(200);
+    expect(parseSaveFileResponse(
+      await saved.json(),
+      parseProjectRelativePath('README.md'),
+    ).workspaceRevision).toBe('mock-rev-0002');
   });
 });

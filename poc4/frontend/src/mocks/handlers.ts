@@ -7,25 +7,34 @@ import {
 } from '../features/files/pathPolicy';
 import {
   contentDispositionHeader,
+  createMockEntry,
+  deleteMockEntry,
   directoryExists,
   getMockFile,
   getWorkspaceRevision,
   listDirectoryEntries,
+  renameMockEntry,
   resolveFileBytes,
   resolveFileText,
+  saveMockFile,
   toFileMetadataJson,
+  type MockMutationError,
 } from './fileFixtures';
 import {
   canReadReadyProjectFiles,
   createOwnedProject,
   expireCurrentToken,
+  getWriteScenario,
   isLargeFileBodiesEnabled,
+  isWriteScenario,
   listOwnedProjectSummaries,
   loginWithCredentials,
   readOwnedProjectSummary,
   recordFileRequest,
   resolveUserByAccessToken,
   setLargeFileBodiesEnabled,
+  setWriteScenario,
+  WRITE_SCENARIO_DELAY_MS,
 } from './state';
 
 const LOGIN_UNAUTHENTICATED: ApiErrorBody = {
@@ -80,6 +89,42 @@ const FILE_VALIDATION_ERROR: ApiErrorBody = {
   code: 'VALIDATION_ERROR',
   message: 'Request validation failed',
   traceId: 'mock-trace-file-validation',
+};
+
+const PROJECT_LOCKED: ApiErrorBody = {
+  code: 'PROJECT_LOCKED',
+  message: 'Project is locked',
+  traceId: 'mock-trace-project-locked',
+};
+
+const WORKSPACE_REVISION_CONFLICT: ApiErrorBody = {
+  code: 'WORKSPACE_REVISION_CONFLICT',
+  message: 'Workspace revision conflict',
+  traceId: 'mock-trace-revision-conflict',
+};
+
+const ENTRY_ALREADY_EXISTS: ApiErrorBody = {
+  code: 'ENTRY_ALREADY_EXISTS',
+  message: 'Entry already exists',
+  traceId: 'mock-trace-entry-exists',
+};
+
+const ENTRY_NOT_FOUND: ApiErrorBody = {
+  code: 'ENTRY_NOT_FOUND',
+  message: 'Entry not found',
+  traceId: 'mock-trace-entry-not-found',
+};
+
+const DIRECTORY_NOT_EMPTY: ApiErrorBody = {
+  code: 'DIRECTORY_NOT_EMPTY',
+  message: 'Directory is not empty',
+  traceId: 'mock-trace-directory-not-empty',
+};
+
+const INTERNAL_ERROR: ApiErrorBody = {
+  code: 'INTERNAL_ERROR',
+  message: 'Internal error',
+  traceId: 'mock-trace-internal',
 };
 
 function jsonError(status: number, body: ApiErrorBody) {
@@ -179,6 +224,81 @@ function lookupFile(projectId: string, rawPath: string | null) {
   return getMockFile(projectId, path);
 }
 
+function parentOf(path: string): string {
+  const index = path.lastIndexOf('/');
+  return index === -1 ? '' : path.slice(0, index);
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+    return null;
+  }
+  return value as Record<string, unknown>;
+}
+
+function mutationErrorResponse(error: MockMutationError) {
+  switch (error) {
+    case 'invalid-path':
+      return jsonError(400, INVALID_PATH);
+    case 'validation':
+      return jsonError(400, FILE_VALIDATION_ERROR);
+    case 'not-found':
+      return jsonError(409, ENTRY_NOT_FOUND);
+    case 'already-exists':
+      return jsonError(409, ENTRY_ALREADY_EXISTS);
+    case 'not-empty':
+      return jsonError(409, DIRECTORY_NOT_EMPTY);
+    case 'too-large':
+      return jsonError(413, FILE_TOO_LARGE);
+    case 'binary':
+      return jsonError(415, BINARY_FILE);
+    case 'unsupported-encoding':
+      return jsonError(400, FILE_VALIDATION_ERROR);
+  }
+}
+
+async function applyWriteScenario(): Promise<ReturnType<typeof jsonError> | null> {
+  const scenario = getWriteScenario();
+  if (scenario === 'delayed') {
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, WRITE_SCENARIO_DELAY_MS);
+    });
+    return null;
+  }
+  if (scenario === 'locked') {
+    return jsonError(409, PROJECT_LOCKED);
+  }
+  if (scenario === 'conflict') {
+    return jsonError(409, WORKSPACE_REVISION_CONFLICT);
+  }
+  if (scenario === 'failure') {
+    return jsonError(500, INTERNAL_ERROR);
+  }
+  return null;
+}
+
+async function gateWrite(
+  request: Request,
+  params: { projectId?: string | readonly string[] },
+  expectedWorkspaceRevision: unknown,
+): Promise<{ projectId: string } | { response: ReturnType<typeof jsonError> }> {
+  const access = authorizeReadyFiles(request, params);
+  if ('response' in access) {
+    return access;
+  }
+  if (typeof expectedWorkspaceRevision !== 'string' || expectedWorkspaceRevision === '') {
+    return { response: jsonError(400, FILE_VALIDATION_ERROR) };
+  }
+  if (expectedWorkspaceRevision !== getWorkspaceRevision(access.projectId)) {
+    return { response: jsonError(409, WORKSPACE_REVISION_CONFLICT) };
+  }
+  const scenarioResponse = await applyWriteScenario();
+  if (scenarioResponse !== null) {
+    return { response: scenarioResponse };
+  }
+  return { projectId: access.projectId };
+}
+
 export const handlers = [
   http.post('/api/v1/auth/login', async ({ request }) => {
     const body = await readJsonBody(request);
@@ -206,6 +326,19 @@ export const handlers = [
       return jsonError(401, REQUEST_UNAUTHENTICATED);
     }
     setLargeFileBodiesEnabled(true);
+    return new HttpResponse(null, { status: 204 });
+  }),
+
+  // Mock-only: choose write-scenario behavior for Stage 3 E2E. Forbidden in production modules.
+  http.post('/api/v1/session/write-scenario', async ({ request }) => {
+    if (resolveUserByAccessToken(readBearerToken(request)) === null) {
+      return jsonError(401, REQUEST_UNAUTHENTICATED);
+    }
+    const body = asRecord(await readJsonBody(request));
+    if (body === null || !isWriteScenario(body.scenario)) {
+      return jsonError(400, FILE_VALIDATION_ERROR);
+    }
+    setWriteScenario(body.scenario);
     return new HttpResponse(null, { status: 204 });
   }),
 
@@ -276,7 +409,11 @@ export const handlers = [
     if (entries === null) {
       return jsonError(400, INVALID_PATH);
     }
-    return HttpResponse.json({ directory, entries });
+    return HttpResponse.json({
+      directory,
+      entries,
+      workspaceRevision: getWorkspaceRevision(access.projectId),
+    });
   }),
 
   http.get('/api/v1/projects/:projectId/files/meta', ({ request, params }) => {
@@ -345,6 +482,119 @@ export const handlers = [
         'Content-Type': 'application/octet-stream',
         'Content-Disposition': contentDispositionHeader(file.name),
       },
+    });
+  }),
+
+  http.put('/api/v1/projects/:projectId/files/content', async ({ request, params }) => {
+    const access = authorizeReadyFiles(request, params);
+    if ('response' in access) {
+      return access.response;
+    }
+    const rawPath = readQueryPath(request);
+    const path = parseFileQuery(rawPath);
+    if (path === null || directoryExists(access.projectId, path)) {
+      return jsonError(400, INVALID_PATH);
+    }
+    const body = asRecord(await readJsonBody(request));
+    const gated = await gateWrite(request, params, body?.expectedWorkspaceRevision);
+    if ('response' in gated) {
+      return gated.response;
+    }
+    if (body === null || typeof body.content !== 'string') {
+      return jsonError(400, FILE_VALIDATION_ERROR);
+    }
+    const result = saveMockFile(gated.projectId, path, body.content);
+    if (!result.ok) {
+      return mutationErrorResponse(result.error);
+    }
+    return HttpResponse.json({
+      file: toFileMetadataJson(result.file),
+      workspaceRevision: result.workspaceRevision,
+    });
+  }),
+
+  http.post('/api/v1/projects/:projectId/entries/rename', async ({ request, params }) => {
+    const access = authorizeReadyFiles(request, params);
+    if ('response' in access) {
+      return access.response;
+    }
+    const body = asRecord(await readJsonBody(request));
+    const path = parseFileQuery(typeof body?.path === 'string' ? body.path : null);
+    const nextPath = parseFileQuery(typeof body?.nextPath === 'string' ? body.nextPath : null);
+    if (path === null || nextPath === null) {
+      return jsonError(400, INVALID_PATH);
+    }
+    if (parentOf(path) !== parentOf(nextPath)) {
+      return jsonError(400, FILE_VALIDATION_ERROR);
+    }
+    const gated = await gateWrite(request, params, body?.expectedWorkspaceRevision);
+    if ('response' in gated) {
+      return gated.response;
+    }
+    const result = renameMockEntry(gated.projectId, path, nextPath);
+    if (!result.ok) {
+      return mutationErrorResponse(result.error);
+    }
+    return HttpResponse.json({
+      path: result.path,
+      nextPath: result.nextPath,
+      entry: result.entry,
+      file: result.file === null ? null : toFileMetadataJson(result.file),
+      workspaceRevision: result.workspaceRevision,
+    });
+  }),
+
+  http.post('/api/v1/projects/:projectId/entries', async ({ request, params }) => {
+    const access = authorizeReadyFiles(request, params);
+    if ('response' in access) {
+      return access.response;
+    }
+    const body = asRecord(await readJsonBody(request));
+    const path = parseFileQuery(typeof body?.path === 'string' ? body.path : null);
+    if (path === null || !directoryExists(access.projectId, parentOf(path))) {
+      return jsonError(400, INVALID_PATH);
+    }
+    const kind = body?.kind;
+    if (kind !== 'file' && kind !== 'directory') {
+      return jsonError(400, FILE_VALIDATION_ERROR);
+    }
+    const gated = await gateWrite(request, params, body?.expectedWorkspaceRevision);
+    if ('response' in gated) {
+      return gated.response;
+    }
+    const result = createMockEntry(gated.projectId, kind, path);
+    if (!result.ok) {
+      return mutationErrorResponse(result.error);
+    }
+    return HttpResponse.json({
+      entry: result.entry,
+      file: result.file === null ? null : toFileMetadataJson(result.file),
+      workspaceRevision: result.workspaceRevision,
+    });
+  }),
+
+  http.delete('/api/v1/projects/:projectId/entries', async ({ request, params }) => {
+    const access = authorizeReadyFiles(request, params);
+    if ('response' in access) {
+      return access.response;
+    }
+    const rawPath = readQueryPath(request);
+    const path = parseFileQuery(rawPath);
+    if (path === null) {
+      return jsonError(400, INVALID_PATH);
+    }
+    const body = asRecord(await readJsonBody(request));
+    const gated = await gateWrite(request, params, body?.expectedWorkspaceRevision);
+    if ('response' in gated) {
+      return gated.response;
+    }
+    const result = deleteMockEntry(gated.projectId, path);
+    if (!result.ok) {
+      return mutationErrorResponse(result.error);
+    }
+    return HttpResponse.json({
+      path: result.path,
+      workspaceRevision: result.workspaceRevision,
     });
   }),
 ];

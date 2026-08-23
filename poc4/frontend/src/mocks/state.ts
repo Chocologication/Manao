@@ -1,6 +1,6 @@
 import type { AuthUser, LoginResponse } from '../contracts/auth';
 import type { ProjectState, ProjectSummary } from '../contracts/project';
-import { clearLargeFileBodyCache } from './fileFixtures';
+import { clearLargeFileBodyCache, ensureWorkspace, resetWorkspaces } from './fileFixtures';
 
 const ACCESS_TOKEN_TTL_MS = 15 * 60 * 1000;
 const PROJECT_LIMIT = 3;
@@ -41,6 +41,31 @@ let nextProjectSeq = 0;
 let nextTokenSeq = 0;
 let fileRequestCounts = new Map<string, number>();
 let largeFileBodiesEnabled = false;
+let writeScenario: WriteScenario = 'normal';
+
+export const WRITE_SCENARIO_DELAY_MS = 250;
+
+export type WriteScenario = 'normal' | 'delayed' | 'locked' | 'conflict' | 'failure';
+
+const WRITE_SCENARIOS: ReadonlySet<WriteScenario> = new Set([
+  'normal',
+  'delayed',
+  'locked',
+  'conflict',
+  'failure',
+]);
+
+export function isWriteScenario(value: unknown): value is WriteScenario {
+  return typeof value === 'string' && WRITE_SCENARIOS.has(value as WriteScenario);
+}
+
+export function setWriteScenario(scenario: WriteScenario): void {
+  writeScenario = scenario;
+}
+
+export function getWriteScenario(): WriteScenario {
+  return writeScenario;
+}
 
 function toSummary(project: MockProject): ProjectSummary {
   return {
@@ -111,6 +136,8 @@ export function resetMockState(): void {
   projects = seedProjects();
   fileRequestCounts = new Map();
   largeFileBodiesEnabled = false;
+  writeScenario = 'normal';
+  resetWorkspaces();
   clearLargeFileBodyCache();
 }
 
@@ -216,5 +243,6 @@ export function createOwnedProject(userId: string, name: string): CreateOwnedPro
     observeCount: 0,
   };
   projects.push(project);
+  ensureWorkspace(project.id);
   return { status: 'created', project: toSummary(project) };
 }
