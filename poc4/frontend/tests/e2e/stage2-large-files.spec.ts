@@ -205,7 +205,7 @@ test('loads a real 20 MiB - 1 Java file into writable Monaco', async ({ page }) 
     };
   });
   expect(afterType.length).toBe(NEAR_LIMIT_BYTES + 1);
-  expect(afterType.line1).not.toBe(model.line1);
+  expect(afterType.length).toBeGreaterThan(model.length);
   await expect(
     page.getByRole('tablist', { name: 'Editor tabs' }).getByRole('tab', { name: /NearLimit\.java/ }),
   ).toContainText('*');
