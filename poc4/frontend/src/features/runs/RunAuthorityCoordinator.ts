@@ -82,8 +82,22 @@ export class RunAuthorityCoordinator {
       return;
     }
     if (run !== null && isRunLockingState(run.state)) {
-      if (this.snapshot.observedLockingRunId !== run.id) {
-        this.patch({ observedLockingRunId: run.id });
+      const observedChanged = this.snapshot.observedLockingRunId !== run.id;
+      if (observedChanged) {
+        this.confirmGeneration += 1;
+        this.confirmingRunId = null;
+      }
+      const next: Partial<RunAuthoritySnapshot> = { observedLockingRunId: run.id };
+      if (this.snapshot.phase === 'LOADING_AUTHORITY') {
+        next.phase = 'EDITABLE';
+      } else if (
+        observedChanged &&
+        (this.snapshot.phase === 'RELOADING_WORKSPACE' || this.snapshot.phase === 'RELOAD_FAILED')
+      ) {
+        next.phase = 'EDITABLE';
+      }
+      if (observedChanged || next.phase !== undefined) {
+        this.patch(next);
       }
       return;
     }
@@ -113,6 +127,9 @@ export class RunAuthorityCoordinator {
     try {
       const detail = await this.fetchRun(runId);
       if (generation !== this.confirmGeneration) {
+        return;
+      }
+      if (this.snapshot.observedLockingRunId !== runId) {
         return;
       }
       if (!isRunTerminalState(detail.state)) {
@@ -147,13 +164,21 @@ export function useRunAuthorityCoordinator(projectId: string): RunAuthorityCoord
     coordinatorRef.current.setFetchRun((runId, signal) => requireTerminalRun(projectId, runId, signal));
   }
   const coordinator = coordinatorRef.current;
-  useSyncExternalStore(coordinator.subscribe, coordinator.getSnapshot, coordinator.getSnapshot);
-  const active = useActiveRunQuery(projectId);
+  const snapshot = useSyncExternalStore(
+    coordinator.subscribe,
+    coordinator.getSnapshot,
+    coordinator.getSnapshot,
+  );
+  const unconfirmedLock =
+    snapshot.observedLockingRunId !== null &&
+    snapshot.phase !== 'RELOADING_WORKSPACE' &&
+    snapshot.phase !== 'RELOAD_FAILED';
+  const active = useActiveRunQuery(projectId, unconfirmedLock);
 
   useEffect(() => {
     const status = active.status === 'pending' || active.status === 'error' ? active.status : 'success';
     void coordinator.reconcile(status, active.data?.run ?? null);
-  }, [active.data, active.status, coordinator]);
+  }, [active.data, active.dataUpdatedAt, active.status, coordinator]);
 
   return coordinator;
 }

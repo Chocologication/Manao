@@ -157,6 +157,11 @@ describe('activeRunRefetchInterval', () => {
     expect(activeRunRefetchInterval({ state: { data: { run: null } } })).toBe(false);
     expect(activeRunRefetchInterval({ state: { data: undefined } })).toBe(false);
   });
+
+  it('keeps polling while a previously locking run is still unconfirmed', () => {
+    expect(activeRunRefetchInterval({ state: { data: { run: null } } }, true)).toBe(5_000);
+    expect(activeRunRefetchInterval({ state: { data: undefined } }, true)).toBe(false);
+  });
 });
 
 describe('flattenRunHistoryPages', () => {

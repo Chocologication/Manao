@@ -62,8 +62,9 @@ export function useStartRunMutation(projectId: string, coordinator: RunAuthority
         await refetchActiveRun(queryClient, projectId);
         const active = queryClient.getQueryData<{ run: RunSummary | null }>(runKeys.active(projectId));
         await coordinator.reconcile('success', active?.run ?? null);
-      } finally {
         coordinator.clearStartPending();
+      } catch {
+        coordinator.noteStartPending();
       }
     },
   });

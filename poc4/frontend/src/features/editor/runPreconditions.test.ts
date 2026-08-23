@@ -139,6 +139,34 @@ describe('resolveRunPreconditions', () => {
         hasActiveLockingRun: true,
       }),
     ).toEqual({ canRequestRun: false, reason: 'RUN_ACTIVE' });
+    expect(
+      resolveRunPreconditions({
+        ...ALLOWED,
+        hasActiveLockingRun: true,
+        reloadPhase: 'LOADING_AUTHORITY',
+      }),
+    ).toEqual({ canRequestRun: false, reason: 'RUN_ACTIVE' });
+  });
+
+  it('fails closed when authority fields are only partially provided', () => {
+    expect(
+      resolveRunPreconditions({
+        dirtyCount: 0,
+        writePending: false,
+        workspaceRevision: REVISION,
+        authorityLoaded: true,
+      }),
+    ).toEqual({ canRequestRun: false, reason: 'AUTHORITY_LOADING' });
+    expect(
+      resolveRunPreconditions({
+        dirtyCount: 0,
+        writePending: false,
+        workspaceRevision: REVISION,
+        authorityLoaded: true,
+        hasActiveLockingRun: false,
+        startPending: false,
+      }),
+    ).toEqual({ canRequestRun: false, reason: 'AUTHORITY_LOADING' });
   });
 
   it('allows a Run request only when authority is loaded, editable, and idle', () => {

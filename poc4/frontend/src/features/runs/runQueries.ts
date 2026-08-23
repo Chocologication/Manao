@@ -37,14 +37,20 @@ export function retryRunQuery(failureCount: number, error: unknown): boolean {
   return error instanceof Error && /network request failed/i.test(error.message);
 }
 
-export function activeRunRefetchInterval(query: {
-  state: { data: ActiveRunResponse | undefined };
-}): number | false {
+export function activeRunRefetchInterval(
+  query: {
+    state: { data: ActiveRunResponse | undefined };
+  },
+  unconfirmedLock = false,
+): number | false {
   const run = query.state.data?.run;
-  if (run === undefined || run === null || !isRunLockingState(run.state)) {
-    return false;
+  if (run !== undefined && run !== null && isRunLockingState(run.state)) {
+    return ACTIVE_RUN_POLL_MS;
   }
-  return ACTIVE_RUN_POLL_MS;
+  if (unconfirmedLock && query.state.data !== undefined) {
+    return ACTIVE_RUN_POLL_MS;
+  }
+  return false;
 }
 
 export function flattenRunHistoryPages(pages: readonly RunListResponse[]): RunSummary[] {
@@ -83,14 +89,16 @@ export async function requireTerminalRun(
   return summary;
 }
 
-export function useActiveRunQuery(projectId: string) {
+export function useActiveRunQuery(projectId: string, unconfirmedLock = false) {
   return useQuery({
     queryKey: runKeys.active(projectId),
     queryFn: ({ signal }) => getActiveRun(projectId, signal),
     enabled: projectId.length > 0,
     retry: retryRunQuery,
     retryDelay: RUN_QUERY_RETRY_DELAY_MS,
-    refetchInterval: activeRunRefetchInterval,
+    refetchInterval: unconfirmedLock
+      ? (query) => activeRunRefetchInterval(query, true)
+      : activeRunRefetchInterval,
   });
 }
 

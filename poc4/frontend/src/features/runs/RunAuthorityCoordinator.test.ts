@@ -109,6 +109,7 @@ describe('RunAuthorityCoordinator', () => {
     await coordinator.reconcile('success', run);
     const snapshot = coordinator.getSnapshot();
     expect(snapshot.observedLockingRunId).toBe(run.id);
+    expect(snapshot.phase).not.toBe('LOADING_AUTHORITY');
     expect(isWorkspaceEditable(snapshot)).toBe(false);
     expect(JSON.stringify(snapshot)).not.toMatch(/STARTING|RUNNING|STOPPING|RECOVERING|SUCCEEDED/);
     expect(fetchRun).not.toHaveBeenCalled();
@@ -157,7 +158,6 @@ describe('RunAuthorityCoordinator', () => {
     });
     await coordinator.reconcile('success', lockingRun());
     await coordinator.reconcile('success', null);
-    expect(coordinator.getSnapshot().phase).not.toBe('EDITABLE');
     expect(coordinator.getSnapshot().phase).not.toBe('RELOADING_WORKSPACE');
     expect(isWorkspaceEditable(coordinator.getSnapshot())).toBe(false);
   });
@@ -170,7 +170,51 @@ describe('RunAuthorityCoordinator', () => {
     });
     await coordinator.reconcile('success', lockingRun());
     await coordinator.reconcile('success', null);
-    expect(coordinator.getSnapshot().phase).not.toBe('EDITABLE');
+    expect(coordinator.getSnapshot().phase).not.toBe('RELOADING_WORKSPACE');
+    expect(isWorkspaceEditable(coordinator.getSnapshot())).toBe(false);
+  });
+
+  it('retries terminal confirm after a failed detail fetch', async () => {
+    const fetchRun = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('Network request failed'))
+      .mockResolvedValueOnce(terminalRun());
+    const coordinator = new RunAuthorityCoordinator({
+      projectId: ALICE_SEED_PROJECT_ID,
+      fetchRun,
+    });
+    await coordinator.reconcile('success', lockingRun());
+    await coordinator.reconcile('success', null);
+    expect(coordinator.getSnapshot().phase).not.toBe('RELOADING_WORKSPACE');
+    await coordinator.reconcile('success', null);
+    expect(fetchRun).toHaveBeenCalledTimes(2);
+    expect(coordinator.getSnapshot().phase).toBe('RELOADING_WORKSPACE');
+    expect(isWorkspaceEditable(coordinator.getSnapshot())).toBe(false);
+  });
+
+  it('ignores a stale terminal confirm after a newer locking run is observed', async () => {
+    let releaseA = () => {};
+    const fetchRun = vi.fn((runId: string) => {
+      if (runId === 'run-a') {
+        return new Promise<RunSummary>((resolve) => {
+          releaseA = () => {
+            resolve(terminalRun('run-a'));
+          };
+        });
+      }
+      return Promise.reject(new Error(`unexpected detail ${runId}`));
+    });
+    const coordinator = new RunAuthorityCoordinator({
+      projectId: ALICE_SEED_PROJECT_ID,
+      fetchRun,
+    });
+    await coordinator.reconcile('success', lockingRun('run-a'));
+    const confirmA = coordinator.reconcile('success', null);
+    await coordinator.reconcile('success', lockingRun('run-b'));
+    releaseA();
+    await confirmA;
+    expect(coordinator.getSnapshot().observedLockingRunId).toBe(parseRunId('run-b'));
+    expect(coordinator.getSnapshot().phase).not.toBe('RELOADING_WORKSPACE');
     expect(isWorkspaceEditable(coordinator.getSnapshot())).toBe(false);
   });
 

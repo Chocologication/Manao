@@ -264,6 +264,28 @@ describe('start mutation', () => {
     expect(coordinator.getSnapshot().startPending).toBe(false);
   });
 
+  it('keeps startPending when active refetch fails after a network start', async () => {
+    await authenticateAsAlice();
+    await seedRootRevision();
+    const coordinator = makeCoordinator();
+    await coordinator.reconcile('success', null);
+    server.use(
+      http.post('/api/v1/projects/:projectId/runs', () => HttpResponse.error()),
+      http.get('/api/v1/projects/:projectId/runs/active', () => HttpResponse.error()),
+    );
+
+    const { result } = renderHook(
+      () => useStartRunMutation(ALICE_SEED_PROJECT_ID, coordinator),
+      { wrapper: AppProviders },
+    );
+    await expect(
+      result.current.mutateAsync(captureStartRunVariables(queryClient, ALICE_SEED_PROJECT_ID)),
+    ).rejects.toThrow(/network request failed/i);
+    await waitFor(() => expect(result.current.isPending).toBe(false));
+    expect(coordinator.getSnapshot().startPending).toBe(true);
+    expect(isWorkspaceEditable(coordinator.getSnapshot())).toBe(false);
+  });
+
   it('refetches active before exposing retry on RUN_ALREADY_ACTIVE', async () => {
     await authenticateAsAlice();
     await seedRootRevision();

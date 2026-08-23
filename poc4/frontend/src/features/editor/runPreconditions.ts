@@ -35,6 +35,15 @@ function authorityFieldsOmitted(input: RunPreconditionsInput): boolean {
   );
 }
 
+function allAuthorityFieldsPresent(input: RunPreconditionsInput): boolean {
+  return (
+    input.authorityLoaded !== undefined &&
+    input.hasActiveLockingRun !== undefined &&
+    input.startPending !== undefined &&
+    input.reloadPhase !== undefined
+  );
+}
+
 export function resolveRunPreconditions(input: RunPreconditionsInput): RunPreconditions {
   if (input.dirtyCount > 0) {
     return { canRequestRun: false, reason: 'DIRTY_FILES' };
@@ -48,7 +57,10 @@ export function resolveRunPreconditions(input: RunPreconditionsInput): RunPrecon
   if (authorityFieldsOmitted(input)) {
     return { canRequestRun: false, reason: 'STAGE_4_UNAVAILABLE' };
   }
-  if (input.authorityLoaded !== true || input.reloadPhase === 'LOADING_AUTHORITY') {
+  if (!allAuthorityFieldsPresent(input)) {
+    return { canRequestRun: false, reason: 'AUTHORITY_LOADING' };
+  }
+  if (input.authorityLoaded !== true) {
     return { canRequestRun: false, reason: 'AUTHORITY_LOADING' };
   }
   if (input.reloadPhase === 'RELOADING_WORKSPACE') {
@@ -62,6 +74,9 @@ export function resolveRunPreconditions(input: RunPreconditionsInput): RunPrecon
   }
   if (input.hasActiveLockingRun === true) {
     return { canRequestRun: false, reason: 'RUN_ACTIVE' };
+  }
+  if (input.reloadPhase === 'LOADING_AUTHORITY') {
+    return { canRequestRun: false, reason: 'AUTHORITY_LOADING' };
   }
   return { canRequestRun: true, reason: null };
 }
