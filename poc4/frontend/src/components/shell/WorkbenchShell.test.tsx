@@ -1,20 +1,35 @@
 import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import * as monaco from 'monaco-editor';
 import { MemoryRouter } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { login } from '../../api/authApi';
+import { getFileContent } from '../../api/fileApi';
 import { createProject, getProject } from '../../api/projectApi';
 import { AppProviders } from '../../app/AppProviders';
-import { authSession, queryClient, workspaceResourceRegistry } from '../../app/appRuntime';
+import { ApiRequestError } from '../../api/ApiRequestError';
+import {
+  authSession,
+  queryClient,
+  workspaceBufferRegistry,
+  workspaceResourceRegistry,
+} from '../../app/appRuntime';
 import type { ProjectSummary } from '../../contracts/project';
+import {
+  CANCEL_LABEL,
+  DISCARD_AND_LEAVE_LABEL,
+} from '../../features/editor/unsavedChangesGuard';
 import { workspaceSessionStore } from '../../features/editor/workspaceSession';
 import { fileKeys } from '../../features/files/fileQueries';
+import { parseProjectRelativePath } from '../../features/files/pathPolicy';
 import * as projectMonacoModels from '../../lib/projectMonacoModels';
+import { disposeAllProjectModels, toProjectModelUri } from '../../lib/projectMonacoModels';
 import { ALICE_SEED_PROJECT_ID, getFileRequestCount } from '../../mocks/state';
 import { renderApp, resetAppRuntime } from '../../test/renderApp';
 import { WorkbenchShell } from './WorkbenchShell';
 
 const ALICE = { username: 'alice', password: 'demo-pass' };
+const POM = parseProjectRelativePath('pom.xml');
 
 const ALICE_PROJECT: ProjectSummary = {
   id: ALICE_SEED_PROJECT_ID,
@@ -70,6 +85,7 @@ beforeEach(() => {
 afterEach(async () => {
   globalThis.ClipboardItem = originalClipboardItem;
   cleanup();
+  disposeAllProjectModels();
   await queryClient.cancelQueries();
   resetAppRuntime();
 });
@@ -296,5 +312,213 @@ describe('ReadonlyWorkbenchPage project transitions', () => {
     expect(await screen.findByRole('tab', { name: /pom.xml/ })).toBeInTheDocument();
     expect(workspaceSessionStore.getState().projectId).toBe(ALICE_SEED_PROJECT_ID);
     expect(workspaceSessionStore.getState().openPaths).toEqual(openPaths);
+  }, 15_000);
+});
+
+async function dirtyPomFromWorkbench(
+  user: ReturnType<typeof userEvent.setup> = userEvent.setup(),
+): Promise<void> {
+  expect(await screen.findByRole('treeitem', { name: 'pom.xml' }, { timeout: 10_000 })).toBeInTheDocument();
+  await user.click(screen.getByRole('treeitem', { name: 'pom.xml' }));
+  expect(await screen.findByRole('tab', { name: /pom.xml/ })).toBeInTheDocument();
+  const uri = toProjectModelUri(ALICE_SEED_PROJECT_ID, POM);
+  await waitFor(() => {
+    expect(monaco.editor.getModel(uri)).not.toBeNull();
+  });
+  const model = monaco.editor.getModel(uri)!;
+  model.pushEditOperations([], [{ range: model.getFullModelRange(), text: '<project dirty-nav />' }], () => null);
+  await waitFor(() => {
+    expect(screen.getByRole('tab', { name: /pom.xml/ })).toHaveTextContent('*');
+  });
+}
+
+async function expireCurrentSessionToken(): Promise<void> {
+  const token = authSession.getAccessToken();
+  expect(token).toBeTruthy();
+  const expire = await fetch('/api/v1/session/expire', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  expect(expire.status).toBe(204);
+}
+
+describe('WorkbenchShell unsaved leave and logout', () => {
+  it('Cancel on Back to projects keeps route, auth, tab, model and dirty buffer', async () => {
+    const user = userEvent.setup();
+    const localSet = vi.spyOn(window.localStorage, 'setItem');
+    const sessionSet = vi.spyOn(window.sessionStorage, 'setItem');
+    await authenticateAsAlice();
+    renderApp({ initialEntries: [`/projects/${ALICE_SEED_PROJECT_ID}`] });
+    await dirtyPomFromWorkbench(user);
+
+    await user.click(screen.getByRole('link', { name: 'Back to projects' }));
+    expect(await screen.findByRole('dialog', { name: 'Unsaved changes' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /save all/i })).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: CANCEL_LABEL }));
+
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(screen.getByTestId('location-echo')).toHaveAttribute(
+      'data-pathname',
+      `/projects/${ALICE_SEED_PROJECT_ID}`,
+    );
+    expect(authSession.getSnapshot().status).toBe('authenticated');
+    expect(workspaceSessionStore.getState().openPaths).toEqual([POM]);
+    expect(workspaceBufferRegistry.get(ALICE_SEED_PROJECT_ID, POM)?.isDirty()).toBe(true);
+    expect(workspaceBufferRegistry.get(ALICE_SEED_PROJECT_ID, POM)?.snapshot().content).toBe(
+      '<project dirty-nav />',
+    );
+    expect(monaco.editor.getModel(toProjectModelUri(ALICE_SEED_PROJECT_ID, POM))?.getValue()).toBe(
+      '<project dirty-nav />',
+    );
+    expect(localSet).not.toHaveBeenCalled();
+    expect(sessionSet).not.toHaveBeenCalled();
+  }, 15_000);
+
+  it('Discard and leave on Back to projects leaves the workbench and discards dirty buffers', async () => {
+    const user = userEvent.setup();
+    await authenticateAsAlice();
+    renderApp({ initialEntries: [`/projects/${ALICE_SEED_PROJECT_ID}`] });
+    await dirtyPomFromWorkbench(user);
+
+    await user.click(screen.getByRole('link', { name: 'Back to projects' }));
+    await user.click(await screen.findByRole('button', { name: DISCARD_AND_LEAVE_LABEL }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('location-echo')).toHaveAttribute('data-pathname', '/projects');
+    });
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(screen.queryByRole('tab', { name: /pom.xml/ })).not.toBeInTheDocument();
+    expect(authSession.getSnapshot().status).toBe('authenticated');
+    expect(workspaceBufferRegistry.get(ALICE_SEED_PROJECT_ID, POM)?.isDirty()).toBe(false);
+    expect(workspaceSessionStore.getState().dirtyPaths.size).toBe(0);
+  }, 15_000);
+
+  it('Cancel on browser history keeps the dirty workbench', async () => {
+    const user = userEvent.setup();
+    await authenticateAsAlice();
+    const view = renderApp({
+      initialEntries: ['/projects', `/projects/${ALICE_SEED_PROJECT_ID}`],
+      initialIndex: 1,
+    });
+    await dirtyPomFromWorkbench(user);
+
+    await view.router.navigate(-1);
+    expect(await screen.findByRole('dialog', { name: 'Unsaved changes' })).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: CANCEL_LABEL }));
+
+    expect(screen.getByTestId('location-echo')).toHaveAttribute(
+      'data-pathname',
+      `/projects/${ALICE_SEED_PROJECT_ID}`,
+    );
+    expect(authSession.getSnapshot().status).toBe('authenticated');
+    expect(workspaceSessionStore.getState().openPaths).toEqual([POM]);
+    expect(workspaceBufferRegistry.get(ALICE_SEED_PROJECT_ID, POM)?.isDirty()).toBe(true);
+    expect(monaco.editor.getModel(toProjectModelUri(ALICE_SEED_PROJECT_ID, POM))).not.toBeNull();
+  }, 15_000);
+
+  it('Discard and leave on browser history proceeds to projects', async () => {
+    const user = userEvent.setup();
+    await authenticateAsAlice();
+    const view = renderApp({
+      initialEntries: ['/projects', `/projects/${ALICE_SEED_PROJECT_ID}`],
+      initialIndex: 1,
+    });
+    await dirtyPomFromWorkbench(user);
+
+    await view.router.navigate(-1);
+    await user.click(await screen.findByRole('button', { name: DISCARD_AND_LEAVE_LABEL }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('location-echo')).toHaveAttribute('data-pathname', '/projects');
+    });
+    expect(authSession.getSnapshot().status).toBe('authenticated');
+    expect(workspaceSessionStore.getState().dirtyPaths.size).toBe(0);
+  }, 15_000);
+
+  it('Cancel on logout leaves auth, route, tab, model and buffer intact', async () => {
+    const user = userEvent.setup();
+    await authenticateAsAlice();
+    renderApp({ initialEntries: [`/projects/${ALICE_SEED_PROJECT_ID}`] });
+    await dirtyPomFromWorkbench(user);
+
+    await user.click(screen.getByRole('button', { name: 'Log out' }));
+    expect(await screen.findByRole('dialog', { name: 'Unsaved changes' })).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: CANCEL_LABEL }));
+
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(screen.getByTestId('location-echo')).toHaveAttribute(
+      'data-pathname',
+      `/projects/${ALICE_SEED_PROJECT_ID}`,
+    );
+    expect(authSession.getSnapshot().status).toBe('authenticated');
+    expect(authSession.getAccessToken()).not.toBeNull();
+    expect(workspaceSessionStore.getState().openPaths).toEqual([POM]);
+    expect(workspaceBufferRegistry.get(ALICE_SEED_PROJECT_ID, POM)?.isDirty()).toBe(true);
+    expect(monaco.editor.getModel(toProjectModelUri(ALICE_SEED_PROJECT_ID, POM))).not.toBeNull();
+  }, 15_000);
+
+  it('Discard and leave on logout clears auth and workspace without a leftover dialog', async () => {
+    const user = userEvent.setup();
+    await authenticateAsAlice();
+    renderApp({ initialEntries: [`/projects/${ALICE_SEED_PROJECT_ID}`] });
+    await dirtyPomFromWorkbench(user);
+    const pomUri = toProjectModelUri(ALICE_SEED_PROJECT_ID, POM);
+
+    await user.click(screen.getByRole('button', { name: 'Log out' }));
+    await user.click(await screen.findByRole('button', { name: DISCARD_AND_LEAVE_LABEL }));
+
+    expect(await screen.findByLabelText('Username')).toBeInTheDocument();
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(screen.getByTestId('location-echo')).toHaveAttribute('data-pathname', '/login');
+    expect(authSession.getSnapshot()).toEqual({ status: 'anonymous', reason: 'logout' });
+    expect(workspaceSessionStore.getState().openPaths).toEqual([]);
+    expect(workspaceBufferRegistry.get(ALICE_SEED_PROJECT_ID, POM)).toBeUndefined();
+    expect(monaco.editor.getModel(pomUri)).toBeNull();
+  }, 15_000);
+
+  it('current-token 401 does not show a cancellable dirty dialog', async () => {
+    await authenticateAsAlice();
+    renderApp({ initialEntries: [`/projects/${ALICE_SEED_PROJECT_ID}`] });
+    await dirtyPomFromWorkbench();
+    const pomUri = toProjectModelUri(ALICE_SEED_PROJECT_ID, POM);
+
+    await expireCurrentSessionToken();
+    const error = await getFileContent(ALICE_SEED_PROJECT_ID, POM).catch((reason: unknown) => reason);
+    expect(error).toBeInstanceOf(ApiRequestError);
+    expect(error).toMatchObject({ status: 401 });
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('Username')).toBeInTheDocument();
+    });
+    expect(screen.queryByRole('dialog', { name: 'Unsaved changes' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: CANCEL_LABEL })).not.toBeInTheDocument();
+    expect(screen.getByTestId('location-echo')).toHaveAttribute('data-pathname', '/login');
+    expect(authSession.getSnapshot()).toEqual({ status: 'anonymous', reason: 'unauthorized' });
+    expect(workspaceSessionStore.getState().openPaths).toEqual([]);
+    expect(workspaceBufferRegistry.get(ALICE_SEED_PROJECT_ID, POM)).toBeUndefined();
+    expect(monaco.editor.getModel(pomUri)).toBeNull();
+  }, 15_000);
+
+  it('registers one beforeunload listener only while a dirty buffer exists', async () => {
+    const user = userEvent.setup();
+    const add = vi.spyOn(window, 'addEventListener');
+    const remove = vi.spyOn(window, 'removeEventListener');
+    await authenticateAsAlice();
+    renderApp({ initialEntries: [`/projects/${ALICE_SEED_PROJECT_ID}`] });
+    expect(await screen.findByRole('treeitem', { name: 'pom.xml' }, { timeout: 10_000 })).toBeInTheDocument();
+    expect(add.mock.calls.filter((call) => call[0] === 'beforeunload')).toHaveLength(0);
+
+    await dirtyPomFromWorkbench(user);
+    const installed = add.mock.calls.filter((call) => call[0] === 'beforeunload');
+    expect(installed).toHaveLength(1);
+
+    await user.click(screen.getByRole('button', { name: 'Log out' }));
+    await user.click(await screen.findByRole('button', { name: DISCARD_AND_LEAVE_LABEL }));
+    await waitFor(() => {
+      const removed = remove.mock.calls.filter((call) => call[0] === 'beforeunload');
+      expect(removed).toHaveLength(1);
+      expect(removed[0]?.[1]).toBe(installed[0]?.[1]);
+    });
+    expect(add.mock.calls.filter((call) => call[0] === 'beforeunload')).toHaveLength(1);
   }, 15_000);
 });

@@ -25,6 +25,12 @@ import {
   getFileRequestCount,
   recordFileRequest,
 } from '../../mocks/state';
+import {
+  CANCEL_LABEL,
+  DISCARD_LABEL,
+  REMAINING_CHANGES_MESSAGE,
+  SAVE_AND_CLOSE_LABEL,
+} from '../../features/editor/unsavedChangesGuard';
 import { resetAppRuntime } from '../../test/renderApp';
 import { EditorWorkspace } from './EditorWorkspace';
 
@@ -1277,5 +1283,202 @@ describe('EditorWorkspace renderer mode transitions', () => {
     expect(workspaceBufferRegistry.get(ALICE_SEED_PROJECT_ID, POM)?.kind).toBe('monaco');
     expect(workspaceBufferRegistry.get(ALICE_SEED_PROJECT_ID, POM)?.snapshot().content).toBe(kept);
     expect(screen.getByRole('tab', { name: /pom.xml/ })).toHaveTextContent('*');
+  });
+});
+
+describe('EditorWorkspace unsaved tab close', () => {
+  it('closes a clean tab immediately without a dialog and disposes the model after switch', async () => {
+    const user = userEvent.setup();
+    await authenticateAsAlice();
+    renderWorkspace();
+    openFile(POM);
+    await screen.findByTestId('mock-editor');
+    const pomUri = toProjectModelUri(ALICE_SEED_PROJECT_ID, POM);
+    expect(monaco.editor.getModel(pomUri)).not.toBeNull();
+    expect(workspaceBufferRegistry.get(ALICE_SEED_PROJECT_ID, POM)).toBeDefined();
+
+    await user.click(screen.getByRole('button', { name: 'Close pom.xml' }));
+
+    await waitFor(() => {
+      expect(screen.queryByRole('tab', { name: /pom.xml/ })).not.toBeInTheDocument();
+    });
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(workspaceSessionStore.getState().openPaths).toEqual([]);
+    expect(workspaceSessionStore.getState().activePath).toBeNull();
+    expect(authSession.getSnapshot().status).toBe('authenticated');
+    await waitFor(() => {
+      expect(monaco.editor.getModel(pomUri)).toBeNull();
+    });
+    expect(workspaceBufferRegistry.get(ALICE_SEED_PROJECT_ID, POM)).toBeUndefined();
+  });
+
+  it('Cancel on a dirty tab has zero side effects on tab, model and buffer', async () => {
+    const user = userEvent.setup();
+    await authenticateAsAlice();
+    renderWorkspace();
+    openFile(POM);
+    await screen.findByTestId('mock-editor');
+    editMonacoModel(ALICE_SEED_PROJECT_ID, POM, '<project dirty />');
+    await waitFor(() => {
+      expect(screen.getByRole('tab', { name: /pom.xml/ })).toHaveTextContent('*');
+    });
+    const pomUri = toProjectModelUri(ALICE_SEED_PROJECT_ID, POM);
+
+    await user.click(screen.getByRole('button', { name: 'Close pom.xml' }));
+    expect(await screen.findByRole('dialog', { name: 'Unsaved changes' })).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: CANCEL_LABEL }));
+
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: /pom.xml/ })).toHaveTextContent('*');
+    expect(workspaceSessionStore.getState().openPaths).toEqual([POM]);
+    expect(workspaceSessionStore.getState().activePath).toBe(POM);
+    expect(workspaceBufferRegistry.get(ALICE_SEED_PROJECT_ID, POM)?.snapshot().content).toBe(
+      '<project dirty />',
+    );
+    expect(workspaceBufferRegistry.get(ALICE_SEED_PROJECT_ID, POM)?.isDirty()).toBe(true);
+    expect(monaco.editor.getModel(pomUri)?.getValue()).toBe('<project dirty />');
+    expect(authSession.getSnapshot().status).toBe('authenticated');
+  });
+
+  it('Discard closes only the captured dirty tab and drops that buffer', async () => {
+    const user = userEvent.setup();
+    await authenticateAsAlice();
+    renderWorkspace();
+    openFile(POM);
+    await screen.findByTestId('mock-editor');
+    editMonacoModel(ALICE_SEED_PROJECT_ID, POM, '<project dirty />');
+    await waitFor(() => expect(screen.getByRole('tab', { name: /pom.xml/ })).toHaveTextContent('*'));
+    openFile(APP);
+    await waitFor(() => {
+      expect(screen.getByTestId('mock-editor')).toHaveAttribute(
+        'data-path',
+        toProjectModelUri(ALICE_SEED_PROJECT_ID, APP).toString(),
+      );
+    });
+    const pomUri = toProjectModelUri(ALICE_SEED_PROJECT_ID, POM);
+    const appUri = toProjectModelUri(ALICE_SEED_PROJECT_ID, APP);
+
+    await user.click(screen.getByRole('button', { name: 'Close pom.xml' }));
+    await user.click(await screen.findByRole('button', { name: DISCARD_LABEL }));
+
+    await waitFor(() => {
+      expect(screen.queryByRole('tab', { name: /pom.xml/ })).not.toBeInTheDocument();
+    });
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(workspaceSessionStore.getState().openPaths).toEqual([APP]);
+    expect(workspaceSessionStore.getState().activePath).toBe(APP);
+    expect(workspaceBufferRegistry.get(ALICE_SEED_PROJECT_ID, POM)).toBeUndefined();
+    expect(workspaceBufferRegistry.get(ALICE_SEED_PROJECT_ID, APP)).toBeDefined();
+    await waitFor(() => {
+      expect(monaco.editor.getModel(pomUri)).toBeNull();
+    });
+    expect(monaco.editor.getModel(appUri)).not.toBeNull();
+    expect(authSession.getSnapshot().status).toBe('authenticated');
+  });
+
+  it('Save and close uses the captured path after a later tab switch', async () => {
+    const user = userEvent.setup();
+    const putPaths: string[] = [];
+    server.use(
+      http.put('/api/v1/projects/:projectId/files/content', ({ request }) => {
+        putPaths.push(new URL(request.url).searchParams.get('path') ?? '');
+        return undefined;
+      }),
+    );
+    await authenticateAsAlice();
+    renderWorkspace();
+    openFile(POM);
+    await screen.findByTestId('mock-editor');
+    editMonacoModel(ALICE_SEED_PROJECT_ID, POM, '<project saved-close />');
+    await waitFor(() => expect(screen.getByRole('tab', { name: /pom.xml/ })).toHaveTextContent('*'));
+    openFile(APP);
+    await waitFor(() => {
+      expect(screen.getByTestId('mock-editor')).toHaveAttribute(
+        'data-path',
+        toProjectModelUri(ALICE_SEED_PROJECT_ID, APP).toString(),
+      );
+    });
+    editMonacoModel(ALICE_SEED_PROJECT_ID, APP, 'class App { /* dirty */ }');
+    await waitFor(() => expect(screen.getByRole('tab', { name: /App.java/ })).toHaveTextContent('*'));
+
+    await user.click(screen.getByRole('button', { name: 'Close pom.xml' }));
+    expect(await screen.findByRole('dialog', { name: 'Unsaved changes' })).toBeInTheDocument();
+    await user.click(screen.getByRole('tab', { name: /App.java/ }));
+    await user.click(screen.getByRole('button', { name: SAVE_AND_CLOSE_LABEL }));
+
+    await waitFor(() => {
+      expect(screen.queryByRole('tab', { name: /pom.xml/ })).not.toBeInTheDocument();
+    });
+    expect(putPaths).toEqual(['pom.xml']);
+    expect(workspaceSessionStore.getState().openPaths).toEqual([APP]);
+    expect(workspaceSessionStore.getState().activePath).toBe(APP);
+    expect(workspaceBufferRegistry.get(ALICE_SEED_PROJECT_ID, POM)).toBeUndefined();
+    expect(workspaceBufferRegistry.get(ALICE_SEED_PROJECT_ID, APP)?.isDirty()).toBe(true);
+    expect(screen.getByRole('tab', { name: /App.java/ })).toHaveTextContent('*');
+    expect(authSession.getSnapshot().status).toBe('authenticated');
+  });
+
+  it('Save and close failure keeps the dialog, tab, model and dirty buffer', async () => {
+    const user = userEvent.setup();
+    server.use(
+      http.put('/api/v1/projects/:projectId/files/content', () => {
+        return HttpResponse.json(
+          { code: 'INTERNAL_ERROR', message: 'Mock save failure', traceId: 'trace-save-close' },
+          { status: 500 },
+        );
+      }),
+    );
+    await authenticateAsAlice();
+    renderWorkspace();
+    openFile(POM);
+    await screen.findByTestId('mock-editor');
+    editMonacoModel(ALICE_SEED_PROJECT_ID, POM, '<project failed-close />');
+    await waitFor(() => expect(screen.getByRole('tab', { name: /pom.xml/ })).toHaveTextContent('*'));
+    const pomUri = toProjectModelUri(ALICE_SEED_PROJECT_ID, POM);
+
+    await user.click(screen.getByRole('button', { name: 'Close pom.xml' }));
+    await user.click(await screen.findByRole('button', { name: SAVE_AND_CLOSE_LABEL }));
+
+    expect(await screen.findByRole('dialog', { name: 'Unsaved changes' })).toHaveTextContent(
+      /unable to save file/i,
+    );
+    expect(screen.getByRole('tab', { name: /pom.xml/ })).toHaveTextContent('*');
+    expect(workspaceSessionStore.getState().openPaths).toEqual([POM]);
+    expect(workspaceBufferRegistry.get(ALICE_SEED_PROJECT_ID, POM)?.snapshot().content).toBe(
+      '<project failed-close />',
+    );
+    expect(workspaceBufferRegistry.get(ALICE_SEED_PROJECT_ID, POM)?.isDirty()).toBe(true);
+    expect(monaco.editor.getModel(pomUri)?.getValue()).toBe('<project failed-close />');
+    expect(authSession.getSnapshot().status).toBe('authenticated');
+  });
+
+  it('Save and close success with a later edit keeps the dialog and dirty captured buffer', async () => {
+    const user = userEvent.setup();
+    const { release } = delayPut('pom.xml');
+    await authenticateAsAlice();
+    renderWorkspace();
+    openFile(POM);
+    await screen.findByTestId('mock-editor');
+    editMonacoModel(ALICE_SEED_PROJECT_ID, POM, '<project first />');
+    await waitFor(() => expect(screen.getByRole('tab', { name: /pom.xml/ })).toHaveTextContent('*'));
+    const pomUri = toProjectModelUri(ALICE_SEED_PROJECT_ID, POM);
+
+    await user.click(screen.getByRole('button', { name: 'Close pom.xml' }));
+    await user.click(await screen.findByRole('button', { name: SAVE_AND_CLOSE_LABEL }));
+    expect(await screen.findByRole('status', { name: 'Saving' })).toBeInTheDocument();
+    editMonacoModel(ALICE_SEED_PROJECT_ID, POM, '<project later-close />');
+    release();
+
+    expect(await screen.findByRole('dialog', { name: 'Unsaved changes' })).toHaveTextContent(
+      REMAINING_CHANGES_MESSAGE,
+    );
+    expect(screen.getByRole('tab', { name: /pom.xml/ })).toHaveTextContent('*');
+    expect(workspaceSessionStore.getState().openPaths).toEqual([POM]);
+    expect(workspaceBufferRegistry.get(ALICE_SEED_PROJECT_ID, POM)?.snapshot().content).toBe(
+      '<project later-close />',
+    );
+    expect(workspaceBufferRegistry.get(ALICE_SEED_PROJECT_ID, POM)?.isDirty()).toBe(true);
+    expect(monaco.editor.getModel(pomUri)?.getValue()).toBe('<project later-close />');
+    expect(authSession.getSnapshot().status).toBe('authenticated');
   });
 });

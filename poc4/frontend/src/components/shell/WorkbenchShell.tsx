@@ -1,11 +1,19 @@
 import { ArrowLeft, FileCode, LogOut, Play, SquareTerminal } from 'lucide-react';
-import type { MouseEvent } from 'react';
+import { useCallback, useState, type MouseEvent } from 'react';
 import { Link } from 'react-router';
 import { logout } from '@/app/appRuntime';
 import { EditorWorkspace } from '@/components/files/EditorWorkspace';
+import { UnsavedChangesDialog } from '@/components/files/UnsavedChangesDialog';
 import { ReadonlyFileTree } from '@/components/files/ReadonlyFileTree';
 import { Button } from '@/components/ui/button';
 import type { ProjectSummary } from '@/contracts/project';
+import {
+  LEAVE_MESSAGE,
+  requestLogout,
+  useDirtyBeforeUnload,
+  type UnsavedDialogState,
+} from '@/features/editor/unsavedChangesGuard';
+import { useWorkspaceSession } from '@/features/editor/workspaceSession';
 import { cn } from '@/lib/utils';
 
 const EDITOR_REGION_ID = 'workbench-editor';
@@ -19,6 +27,33 @@ function skipToEditor(event: MouseEvent<HTMLAnchorElement>): void {
 }
 
 export function WorkbenchShell({ project }: { project: ProjectSummary }) {
+  const dirtyCount = useWorkspaceSession((state) => state.dirtyPaths.size);
+  const [leaveGuard, setLeaveGuard] = useState<UnsavedDialogState>({ open: false });
+  useDirtyBeforeUnload(dirtyCount);
+
+  const handleLogoutClick = useCallback(() => {
+    const decision = requestLogout(useWorkspaceSession.getState().dirtyPaths.size);
+    if (decision.kind === 'proceed') {
+      logout();
+      return;
+    }
+    setLeaveGuard({
+      open: true,
+      mode: 'leave',
+      action: { type: 'logout' },
+      message: LEAVE_MESSAGE,
+    });
+  }, []);
+
+  const handleCancelLeave = useCallback(() => {
+    setLeaveGuard({ open: false });
+  }, []);
+
+  const handleDiscardLeave = useCallback(() => {
+    setLeaveGuard({ open: false });
+    logout();
+  }, []);
+
   return (
     <div className="workbench-shell flex h-full min-h-0 w-full min-w-0 flex-col overflow-hidden bg-background text-foreground">
       <a href={`#${EDITOR_REGION_ID}`} className="skip-to-editor" onClick={skipToEditor}>
@@ -42,7 +77,7 @@ export function WorkbenchShell({ project }: { project: ProjectSummary }) {
           size="icon"
           aria-label="Log out"
           title="Log out"
-          onClick={() => logout()}
+          onClick={handleLogoutClick}
         >
           <LogOut />
         </Button>
@@ -108,6 +143,13 @@ export function WorkbenchShell({ project }: { project: ProjectSummary }) {
           </div>
         </div>
       </div>
+      <UnsavedChangesDialog
+        open={leaveGuard.open}
+        mode="leave"
+        message={leaveGuard.open ? leaveGuard.message : LEAVE_MESSAGE}
+        onDiscard={handleDiscardLeave}
+        onCancel={handleCancelLeave}
+      />
     </div>
   );
 }

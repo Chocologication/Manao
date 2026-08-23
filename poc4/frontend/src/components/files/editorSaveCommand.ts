@@ -19,6 +19,11 @@ export type EditorSaveFeedback = {
   message: string;
 };
 
+export type EditorSavePathResult =
+  | { status: 'saved' }
+  | { status: 'failed'; message: string }
+  | { status: 'skipped' };
+
 type PlainTextMutableBuffer = WorkspaceBuffer & { replace(content: string): void };
 
 export function editorKindForRenderMode(
@@ -137,33 +142,42 @@ export function useEditorSaveCommand(projectId: string) {
   }, [feedback]);
 
   const savePath = useCallback(
-    (path: ProjectRelativePath) => {
-      if (inFlightRef.current) {
-        return;
-      }
-      prepareEditorSave({
-        projectId,
-        path,
-        writePending,
-        mutate: (variables) => {
-          inFlightRef.current = true;
-          setFeedback({ path, kind: 'status', message: 'Saving' });
-          mutation.mutate(variables, {
-            onSuccess: () => {
-              setFeedback({ path, kind: 'status', message: 'Saved' });
-            },
-            onError: (error) => {
-              setFeedback({
-                path,
-                kind: 'alert',
-                message: fileMutationErrorMessage(error, 'Unable to save file'),
-              });
-            },
-            onSettled: () => {
-              inFlightRef.current = false;
-            },
-          });
-        },
+    (path: ProjectRelativePath): Promise<EditorSavePathResult> => {
+      return new Promise((resolve) => {
+        if (inFlightRef.current) {
+          resolve({ status: 'skipped' });
+          return;
+        }
+        const request = prepareEditorSave({
+          projectId,
+          path,
+          writePending,
+          mutate: (variables) => {
+            inFlightRef.current = true;
+            setFeedback({ path, kind: 'status', message: 'Saving' });
+            mutation.mutate(variables, {
+              onSuccess: () => {
+                setFeedback({ path, kind: 'status', message: 'Saved' });
+                resolve({ status: 'saved' });
+              },
+              onError: (error) => {
+                const message = fileMutationErrorMessage(error, 'Unable to save file');
+                setFeedback({
+                  path,
+                  kind: 'alert',
+                  message,
+                });
+                resolve({ status: 'failed', message });
+              },
+              onSettled: () => {
+                inFlightRef.current = false;
+              },
+            });
+          },
+        });
+        if (request === null) {
+          resolve({ status: 'skipped' });
+        }
       });
     },
     [mutation, projectId, writePending],

@@ -1,15 +1,70 @@
-import { lazy, Suspense } from 'react';
+import { lazy, Suspense, useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router';
 import { ApiRequestError } from '../../api/ApiRequestError';
+import { workspaceBufferRegistry } from '@/app/appRuntime';
 import { AccessDeniedPage } from '@/components/feedback/AccessDeniedPage';
 import { InlineAlert } from '@/components/feedback/InlineAlert';
 import { LoadingState } from '@/components/feedback/LoadingState';
+import { UnsavedChangesDialog } from '@/components/files/UnsavedChangesDialog';
 import { Button } from '@/components/ui/button';
+import type { ProjectSummary } from '@/contracts/project';
 import { Spinner } from '@/components/ui/spinner';
+import {
+  LEAVE_MESSAGE,
+  useWorkbenchLeaveBlocker,
+} from '@/features/editor/unsavedChangesGuard';
+import { useWorkspaceSession } from '@/features/editor/workspaceSession';
 import { AppChrome } from './ProjectsPage';
 import { useProjectQuery } from './projectQueries';
 
 const ReadonlyWorkbenchPage = lazy(() => import('./ReadonlyWorkbenchPage'));
+
+function WorkbenchRoute({ project }: { project: ProjectSummary }) {
+  const dirtyCount = useWorkspaceSession((state) => state.dirtyPaths.size);
+  const blocker = useWorkbenchLeaveBlocker(dirtyCount);
+  const [leaveOpen, setLeaveOpen] = useState(false);
+
+  useEffect(() => {
+    if (blocker.state === 'blocked') {
+      setLeaveOpen(true);
+      return;
+    }
+    if (blocker.state === 'unblocked') {
+      setLeaveOpen(false);
+    }
+  }, [blocker.state]);
+
+  function handleCancel(): void {
+    if (blocker.state === 'blocked') {
+      blocker.reset();
+    }
+    setLeaveOpen(false);
+  }
+
+  function handleDiscard(): void {
+    const session = useWorkspaceSession.getState();
+    for (const path of [...session.dirtyPaths]) {
+      workspaceBufferRegistry.get(project.id, path)?.discard();
+    }
+    setLeaveOpen(false);
+    if (blocker.state === 'blocked') {
+      blocker.proceed();
+    }
+  }
+
+  return (
+    <>
+      <ReadonlyWorkbenchPage project={project} />
+      <UnsavedChangesDialog
+        open={leaveOpen}
+        mode="leave"
+        message={LEAVE_MESSAGE}
+        onDiscard={handleDiscard}
+        onCancel={handleCancel}
+      />
+    </>
+  );
+}
 
 function decodeProjectId(raw: string | undefined): string {
   if (raw === undefined || raw.length === 0) {
@@ -111,7 +166,7 @@ export function ProjectRoutePage() {
         </div>
       }
     >
-      <ReadonlyWorkbenchPage project={project} />
+      <WorkbenchRoute project={project} />
     </Suspense>
   );
 }
