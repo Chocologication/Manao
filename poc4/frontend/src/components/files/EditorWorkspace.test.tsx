@@ -1125,6 +1125,83 @@ describe('EditorWorkspace renderer mode transitions', () => {
     expect(screen.getByRole('tab', { name: /README.md/ })).not.toHaveTextContent('*');
   });
 
+  it('keeps leftover README and large-notes isolated when switching two PLAIN_TEXT tabs', async () => {
+    const user = userEvent.setup();
+    const leftover = '# leftover-readme-unique\n';
+    const leftoverDirty = '# leftover-readme-unique\nunsaved\n';
+    const notesEdit = '# large-notes-unique\n';
+    const notesLater = '# large-notes-unique\nmore notes\n';
+    server.use(
+      http.put('/api/v1/projects/:projectId/files/content', async ({ request }) => {
+        if (new URL(request.url).searchParams.get('path') !== 'README.md') {
+          return undefined;
+        }
+        return HttpResponse.json({
+          file: {
+            path: 'README.md',
+            name: 'README.md',
+            sizeBytes: 20 * 1024 * 1024 + 1,
+            mediaType: 'text/markdown',
+            encoding: 'UTF-8',
+            language: 'markdown',
+            renderMode: 'PLAIN_TEXT',
+            blockReason: null,
+          },
+          workspaceRevision: 'mock-rev-0002',
+        });
+      }),
+    );
+    await authenticateAsAlice();
+    renderWorkspace();
+    openFile(README);
+    await screen.findByTestId('mock-editor');
+    editMonacoModel(ALICE_SEED_PROJECT_ID, README, leftover);
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled());
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+    const readmeBox = await screen.findByRole('textbox', { name: 'README.md' });
+    expect(readmeBox).toHaveValue(leftover);
+    fireEvent.change(readmeBox, { target: { value: leftoverDirty } });
+    await waitFor(() => expect(screen.getByRole('tab', { name: /README.md/ })).toHaveTextContent('*'));
+
+    openFile(LARGE_NOTES);
+    const notesBox = await screen.findByRole('textbox', { name: 'large-notes.md' });
+    fireEvent.change(notesBox, { target: { value: notesEdit } });
+    expect(workspaceBufferRegistry.get(ALICE_SEED_PROJECT_ID, LARGE_NOTES)?.snapshot().content).toBe(
+      notesEdit,
+    );
+    expect(workspaceBufferRegistry.get(ALICE_SEED_PROJECT_ID, README)?.snapshot().content).toBe(
+      leftoverDirty,
+    );
+
+    openFile(README);
+    expect(await screen.findByRole('textbox', { name: 'README.md' })).toHaveValue(leftoverDirty);
+    expect(workspaceBufferRegistry.get(ALICE_SEED_PROJECT_ID, LARGE_NOTES)?.snapshot().content).toBe(
+      notesEdit,
+    );
+
+    openFile(LARGE_NOTES);
+    const remountedNotes = await screen.findByRole('textbox', { name: 'large-notes.md' });
+    expect(remountedNotes).toHaveValue(notesEdit);
+    expect(workspaceBufferRegistry.get(ALICE_SEED_PROJECT_ID, README)?.snapshot().content).toBe(
+      leftoverDirty,
+    );
+    fireEvent.change(remountedNotes, { target: { value: notesLater } });
+    expect(workspaceBufferRegistry.get(ALICE_SEED_PROJECT_ID, LARGE_NOTES)?.snapshot().content).toBe(
+      notesLater,
+    );
+    expect(workspaceBufferRegistry.get(ALICE_SEED_PROJECT_ID, README)?.snapshot().content).toBe(
+      leftoverDirty,
+    );
+
+    openFile(README);
+    expect(await screen.findByRole('textbox', { name: 'README.md' })).toHaveValue(leftoverDirty);
+    expect(workspaceBufferRegistry.get(ALICE_SEED_PROJECT_ID, LARGE_NOTES)?.snapshot().content).toBe(
+      notesLater,
+    );
+    expect(workspaceBufferRegistry.get(ALICE_SEED_PROJECT_ID, README)?.path).toBe(README);
+    expect(workspaceBufferRegistry.get(ALICE_SEED_PROJECT_ID, LARGE_NOTES)?.path).toBe(LARGE_NOTES);
+  });
+
   it('keeps later in-flight edits dirty after a successful renderer mode change', async () => {
     const user = userEvent.setup();
     const submitted = '# Alice Notebook\n\nnow plain\n';

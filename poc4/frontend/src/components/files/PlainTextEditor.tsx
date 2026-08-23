@@ -27,6 +27,7 @@ export function PlainTextEditor({
   onSave: () => void;
 }) {
   const [buffer, setBuffer] = useState(() => currentPlainTextBuffer(projectId, path));
+  const current = buffer !== null && buffer.path === path ? buffer : null;
 
   useLayoutEffect(() => {
     setBuffer(
@@ -53,12 +54,12 @@ export function PlainTextEditor({
         <span className="text-muted-foreground">{formatFileSize(metadata.sizeBytes)}</span>
         <span className="text-muted-foreground">Plain text</span>
       </div>
-      {buffer !== null ? (
+      {current !== null ? (
         <textarea
           key={`${projectId}:${path}:plain-text`}
           wrap="off"
           spellCheck={false}
-          defaultValue={buffer.snapshot().content}
+          defaultValue={current.snapshot().content}
           aria-label={metadata.name}
           onChange={(event) => {
             replacePlainTextContent(projectId, path, event.target.value);

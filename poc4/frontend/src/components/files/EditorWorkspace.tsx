@@ -282,6 +282,7 @@ export function EditorWorkspace({ projectId }: { projectId: string }) {
         )}
         {visibleActivePath !== null ? (
           <ActiveFileSurface
+            key={visibleActivePath}
             projectId={projectId}
             path={visibleActivePath}
             onSave={() => save.savePath(visibleActivePath)}
