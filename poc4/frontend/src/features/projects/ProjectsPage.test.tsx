@@ -1,6 +1,7 @@
 import { cleanup, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
+import { readFileSync } from 'node:fs';
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { login } from '../../api/authApi';
 import { createProject, getProject } from '../../api/projectApi';
@@ -297,8 +298,17 @@ describe('ProjectsPage', () => {
 
 describe('ProjectRoutePage', () => {
   beforeAll(async () => {
-    await import('./ReadonlyWorkbenchPage');
+    await import('./WorkbenchPage');
   }, 30_000);
+
+  it('lazy-loads WorkbenchPage and does not statically import Monaco', () => {
+    const route = readFileSync('src/features/projects/ProjectRoutePage.tsx', 'utf8');
+    expect(route).toMatch(/lazy\(\(\) => import\(['"]\.\/WorkbenchPage['"]\)\)/);
+    expect(route).not.toMatch(/from ['"]\.\/WorkbenchPage['"]/);
+    expect(route).not.toMatch(/ReadonlyWorkbenchPage/);
+    expect(route).not.toMatch(/from ['"]monaco-editor['"]/);
+    expect(route).not.toMatch(/from ['"]@monaco-editor\/react['"]/);
+  });
 
   it('shows provisioning while CREATING', async () => {
     await authenticateAsAlice();

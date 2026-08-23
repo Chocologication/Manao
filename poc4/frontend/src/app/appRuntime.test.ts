@@ -162,7 +162,7 @@ afterEach(async () => {
 });
 
 beforeAll(async () => {
-  await import('../features/projects/ReadonlyWorkbenchPage');
+  await import('../features/projects/WorkbenchPage');
 }, 30_000);
 
 describe('appRuntime unauthorized recovery', () => {
@@ -363,6 +363,10 @@ describe('appRuntime stale session 401', () => {
       renderApp({ initialEntries: [`/projects/${BOB_SEED_PROJECT_ID}`] });
       expect(await screen.findByRole('heading', { name: 'Bob Lab' }, { timeout: 10_000 })).toBeInTheDocument();
       expect(screen.queryByText('Alice Notebook')).not.toBeInTheDocument();
+      await waitFor(() => {
+        expect(workspaceBufferRegistry.get(BOB_SEED_PROJECT_ID, LAB_NOTES)).toBeDefined();
+      });
+      expect(workspaceBufferRegistry.get(ALICE_SEED_PROJECT_ID, POM)).toBeUndefined();
 
       releaseAlice();
       const aliceError = await pendingAliceContent.catch((reason: unknown) => reason);
@@ -374,6 +378,11 @@ describe('appRuntime stale session 401', () => {
       expect(monaco.editor.getModel(bobUri)).not.toBeNull();
       expect(queryClient.getQueryData(fileKeys.meta(BOB_SEED_PROJECT_ID, LAB_NOTES))).toBeDefined();
       expect(queryClient.getQueryData(fileKeys.content(BOB_SEED_PROJECT_ID, LAB_NOTES))).toBeDefined();
+      expect(workspaceBufferRegistry.get(ALICE_SEED_PROJECT_ID, POM)).toBeUndefined();
+      expect(workspaceBufferRegistry.get(BOB_SEED_PROJECT_ID, LAB_NOTES)).toBeDefined();
+      expect(workspaceBufferRegistry.get(BOB_SEED_PROJECT_ID, LAB_NOTES)?.snapshot().content).not.toMatch(
+        /alice/i,
+      );
       expect(workspaceSessionStore.getState().projectId).toBe(BOB_SEED_PROJECT_ID);
       expect(workspaceSessionStore.getState().openPaths).toEqual([LAB_NOTES]);
       expect(workspaceSessionStore.getState().expandedPaths.has(parseProjectRelativePath('samples'))).toBe(

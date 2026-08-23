@@ -44,7 +44,6 @@ const workbenchProductionExact = new Set([
   'src/features/editor/WorkspaceBufferRegistry.ts',
   'src/features/editor/unsavedChangesGuard.ts',
   'src/features/editor/runPreconditions.ts',
-  'src/features/projects/ReadonlyWorkbenchPage.tsx',
   'src/features/projects/WorkbenchPage.tsx',
   'src/components/shell/WorkbenchShell.tsx',
   'src/components/files/FileTreeNode.tsx',

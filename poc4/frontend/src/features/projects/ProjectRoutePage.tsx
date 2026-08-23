@@ -21,7 +21,7 @@ import { useWorkspaceSession } from '@/features/editor/workspaceSession';
 import { AppChrome } from './ProjectsPage';
 import { useProjectQuery } from './projectQueries';
 
-const ReadonlyWorkbenchPage = lazy(() => import('./ReadonlyWorkbenchPage'));
+const WorkbenchPage = lazy(() => import('./WorkbenchPage'));
 
 function WorkbenchRoute({ project }: { project: ProjectSummary }) {
   const dirtyCount = useWorkspaceSession((state) => state.dirtyPaths.size);
@@ -67,7 +67,7 @@ function WorkbenchRoute({ project }: { project: ProjectSummary }) {
 
   return (
     <>
-      <ReadonlyWorkbenchPage project={project} />
+      <WorkbenchPage project={project} />
       <UnsavedChangesDialog
         open={dialog.open && dialog.action.type === 'leave-workbench'}
         mode="leave"
