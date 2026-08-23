@@ -5,7 +5,7 @@ import {
   findForbiddenContractNames,
   findForbiddenDependencies,
   findForbiddenSource,
-  findForbiddenStage2Imports,
+  findForbiddenWorkbenchImports,
 } from './browser-boundary-lib.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -33,7 +33,7 @@ const sourceViolations = (
     const source = await readFile(file, 'utf8');
     return [
       ...findForbiddenSource(relative, source),
-      ...findForbiddenStage2Imports(relative, source),
+      ...findForbiddenWorkbenchImports(relative, source),
       ...findForbiddenContractNames(relative, source),
     ];
   }))

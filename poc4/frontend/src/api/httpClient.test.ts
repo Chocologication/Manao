@@ -267,6 +267,76 @@ describe('HttpClient', () => {
     expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
 
+  it('sends DELETE with a JSON body', async () => {
+    const fetchImpl = vi.fn<typeof fetch>(async () =>
+      jsonResponse({ path: 'src/App.java', workspaceRevision: 'rev-2' }),
+    );
+    const client = createClient(fetchImpl);
+    const body = { expectedWorkspaceRevision: 'rev-1' };
+
+    await expect(
+      client.request('/api/v1/projects/prj/entries?path=src/App.java', {
+        method: 'DELETE',
+        body,
+      }),
+    ).resolves.toEqual({ path: 'src/App.java', workspaceRevision: 'rev-2' });
+
+    expect(fetchImpl.mock.calls[0]?.[1]?.method).toBe('DELETE');
+    expect(fetchImpl.mock.calls[0]?.[1]?.body).toBe(JSON.stringify(body));
+    expect(new Headers(fetchImpl.mock.calls[0]?.[1]?.headers).get('Content-Type')).toBe(
+      'application/json',
+    );
+  });
+
+  it('passes AbortSignal unchanged to fetch', async () => {
+    const controller = new AbortController();
+    const fetchImpl = vi.fn<typeof fetch>(async () => jsonResponse(projectList));
+    const client = createClient(fetchImpl);
+
+    await client.request('/api/v1/projects', { signal: controller.signal });
+
+    expect(fetchImpl.mock.calls[0]?.[1]?.signal).toBe(controller.signal);
+  });
+
+  it('does not remap AbortError or DOMException abort to a network failure', async () => {
+    const abortError = new DOMException('The operation was aborted.', 'AbortError');
+    const namedAbort = Object.assign(new Error('aborted'), { name: 'AbortError' });
+    const fetchImpl = vi.fn<typeof fetch>();
+    fetchImpl.mockRejectedValueOnce(abortError).mockRejectedValueOnce(namedAbort);
+    const client = createClient(fetchImpl);
+
+    const first = await expectRejection(client.request('/api/v1/projects', { signal: new AbortController().signal }));
+    expect(first).toBe(abortError);
+    expect(String((first as Error).message).toLowerCase()).not.toMatch(/network request failed/);
+
+    const second = await expectRejection(client.request('/api/v1/projects'));
+    expect(second).toBe(namedAbort);
+    expect(String((second as Error).message).toLowerCase()).not.toMatch(/network request failed/);
+  });
+
+  it('parses Stage 3 409 mutation error codes', async () => {
+    const cases = [
+      { code: 'PROJECT_LOCKED' as const, message: 'Project is locked' },
+      { code: 'WORKSPACE_REVISION_CONFLICT' as const, message: 'Revision conflict' },
+      { code: 'ENTRY_ALREADY_EXISTS' as const, message: 'Entry exists' },
+      { code: 'ENTRY_NOT_FOUND' as const, message: 'Entry missing' },
+      { code: 'DIRECTORY_NOT_EMPTY' as const, message: 'Directory not empty' },
+    ];
+    for (const item of cases) {
+      const body = { code: item.code, message: item.message, traceId: `trace-${item.code}` };
+      const fetchImpl = vi.fn<typeof fetch>(async () => jsonResponse(body, 409));
+      const client = createClient(fetchImpl);
+      const error = await expectRejection(
+        client.request('/api/v1/projects/prj/entries', {
+          method: 'POST',
+          body: { kind: 'file', path: 'a.txt', expectedWorkspaceRevision: 'rev-1' },
+        }),
+      );
+      expect(error).toBeInstanceOf(ApiRequestError);
+      expect(error).toMatchObject({ status: 409, body, traceId: body.traceId });
+    }
+  });
+
   it('parses INVALID_PATH, FILE_TOO_LARGE and BINARY_FILE error codes', async () => {
     const cases = [
       { code: 'INVALID_PATH' as const, status: 400, message: 'Path rejected' },

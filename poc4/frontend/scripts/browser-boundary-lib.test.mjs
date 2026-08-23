@@ -4,8 +4,35 @@ import {
   findForbiddenContractNames,
   findForbiddenDependencies,
   findForbiddenSource,
-  findForbiddenStage2Imports,
+  findForbiddenWorkbenchImports,
 } from './browser-boundary-lib.mjs';
+
+const plannedWritableWorkbenchModules = [
+  'src/api/fileApi.ts',
+  'src/contracts/file.ts',
+  'src/features/files/entryNamePolicy.ts',
+  'src/features/files/fileMutations.ts',
+  'src/features/editor/workspaceSession.ts',
+  'src/features/editor/WorkspaceBufferRegistry.ts',
+  'src/features/editor/unsavedChangesGuard.ts',
+  'src/features/editor/runPreconditions.ts',
+  'src/features/projects/ReadonlyWorkbenchPage.tsx',
+  'src/features/projects/WorkbenchPage.tsx',
+  'src/components/shell/WorkbenchShell.tsx',
+  'src/components/files/FileTreeNode.tsx',
+  'src/components/files/FileTree.tsx',
+  'src/components/files/EditorWorkspace.tsx',
+  'src/components/files/WritableMonacoEditor.tsx',
+  'src/components/files/PlainTextEditor.tsx',
+  'src/components/files/PlainTextViewer.tsx',
+  'src/components/files/FileMutationDialogs.tsx',
+  'src/components/files/UnsavedChangesDialog.tsx',
+  'src/components/files/editorSaveCommand.ts',
+  'src/components/files/ReadonlyFileTree.tsx',
+  'src/components/files/ReadonlyEditorWorkspace.tsx',
+  'src/components/files/ReadonlyMonacoEditor.tsx',
+  'src/lib/projectMonacoModels.ts',
+];
 
 test('rejects Electron and PTY production dependencies', () => {
   assert.deepEqual(
@@ -42,31 +69,31 @@ test('rejects Node built-in imports', () => {
   ]);
 });
 
-test('rejects Stage 0 spike imports from Stage 2 production modules', () => {
+test('rejects Stage 0 spike imports from workbench production modules', () => {
   const source = "import { mockFiles } from '@/spike/mockFiles';";
   assert.deepEqual(
-    findForbiddenStage2Imports('src/api/fileApi.ts', source).map((item) => item.rule),
+    findForbiddenWorkbenchImports('src/api/fileApi.ts', source).map((item) => item.rule),
     ['stage0-spike-import'],
   );
 });
 
-test('rejects terminal, mocks and echo-ws imports from Stage 2 production modules', () => {
+test('rejects terminal, mocks and echo-ws imports from workbench production modules', () => {
   assert.deepEqual(
-    findForbiddenStage2Imports(
+    findForbiddenWorkbenchImports(
       'src/features/files/fileQueries.ts',
       "import { TerminalSession } from '@/terminal/TerminalSession';",
     ).map((item) => item.rule),
     ['stage0-terminal-import'],
   );
   assert.deepEqual(
-    findForbiddenStage2Imports(
+    findForbiddenWorkbenchImports(
       'src/components/shell/WorkbenchShell.tsx',
       "import { handlers } from '@/mocks/handlers';",
     ).map((item) => item.rule),
     ['stage0-mocks-import'],
   );
   assert.deepEqual(
-    findForbiddenStage2Imports(
+    findForbiddenWorkbenchImports(
       'src/features/editor/workspaceSession.ts',
       "import { createEcho } from '../../../scripts/echo-ws.mjs';",
     ).map((item) => item.rule),
@@ -74,21 +101,53 @@ test('rejects terminal, mocks and echo-ws imports from Stage 2 production module
   );
 });
 
-test('allows monaco-editor imports in Stage 2 production modules', () => {
+test('classifies current Readonly modules and planned writable workbench modules', () => {
+  const source = "import { mockFiles } from '@/spike/mockFiles';";
+  for (const file of plannedWritableWorkbenchModules) {
+    assert.deepEqual(
+      findForbiddenWorkbenchImports(file, source).map((item) => item.rule),
+      ['stage0-spike-import'],
+      file,
+    );
+  }
+});
+
+test('allows monaco-editor imports in workbench production modules', () => {
   const source = "import * as monaco from 'monaco-editor';";
   const file = 'src/components/files/ReadonlyMonacoEditor.tsx';
-  assert.deepEqual(findForbiddenStage2Imports(file, source), []);
+  assert.deepEqual(findForbiddenWorkbenchImports(file, source), []);
   assert.deepEqual(findForbiddenSource(file, source), []);
 });
 
-test('does not classify main.tsx mock worker import as a Stage 2 violation', () => {
+test('does not classify main.tsx mock worker import as a workbench violation', () => {
   const source = "const { startMockWorker } = await import('./mocks/browser');";
-  assert.deepEqual(findForbiddenStage2Imports('src/main.tsx', source), []);
+  assert.deepEqual(findForbiddenWorkbenchImports('src/main.tsx', source), []);
 });
 
-test('allows Stage 0 imports outside the Stage 2 production module set', () => {
+test('allows Stage 0 imports outside the workbench production module set', () => {
   const source = "import { mockFiles } from '@/spike/mockFiles';";
-  assert.deepEqual(findForbiddenStage2Imports('src/components/files/MonacoPanel.tsx', source), []);
+  assert.deepEqual(findForbiddenWorkbenchImports('src/components/files/MonacoPanel.tsx', source), []);
+});
+
+test('rejects the Stage 3 mock scenario endpoint in workbench production modules', () => {
+  const source = "await fetch('/api/v1/session/write-scenario', { method: 'POST' });";
+  assert.deepEqual(
+    findForbiddenWorkbenchImports('src/api/fileApi.ts', source).map((item) => item.rule),
+    ['stage3-scenario-endpoint'],
+  );
+  assert.deepEqual(
+    findForbiddenWorkbenchImports(
+      'src/features/projects/WorkbenchPage.tsx',
+      source,
+    ).map((item) => item.rule),
+    ['stage3-scenario-endpoint'],
+  );
+});
+
+test('allows the Stage 3 mock scenario endpoint outside workbench production modules', () => {
+  const source = "await fetch('/api/v1/session/write-scenario', { method: 'POST' });";
+  assert.deepEqual(findForbiddenWorkbenchImports('src/mocks/handlers.ts', source), []);
+  assert.deepEqual(findForbiddenWorkbenchImports('src/main.tsx', source), []);
 });
 
 test('rejects forbidden Kubernetes resource identifiers in production contracts', () => {

@@ -11,6 +11,11 @@ const API_ERROR_CODES: ReadonlySet<string> = new Set([
   'INVALID_PATH',
   'FILE_TOO_LARGE',
   'BINARY_FILE',
+  'PROJECT_LOCKED',
+  'WORKSPACE_REVISION_CONFLICT',
+  'ENTRY_ALREADY_EXISTS',
+  'ENTRY_NOT_FOUND',
+  'DIRECTORY_NOT_EMPTY',
 ]);
 
 export type HttpClientOptions = {
@@ -23,12 +28,14 @@ export type HttpRequestOptions = {
   method?: string;
   body?: unknown;
   auth?: boolean;
+  signal?: AbortSignal;
 };
 
 export type BlobRequestOptions = {
   method?: string;
   auth?: boolean;
   fallbackName?: string;
+  signal?: AbortSignal;
 };
 
 export type BlobResponse = {
@@ -72,6 +79,7 @@ export class HttpClient {
       headers,
       body: options.body === undefined ? undefined : JSON.stringify(options.body),
       auth: options.auth,
+      signal: options.signal,
     });
     return readSuccessBody<T>(response);
   }
@@ -83,6 +91,7 @@ export class HttpClient {
       method: options.method ?? 'GET',
       headers,
       auth: options.auth,
+      signal: options.signal,
     });
     const blob = await response.blob();
     return {
@@ -96,7 +105,7 @@ export class HttpClient {
 
   private async send(
     url: string,
-    options: { method: string; headers: Headers; body?: string; auth?: boolean },
+    options: { method: string; headers: Headers; body?: string; auth?: boolean; signal?: AbortSignal },
   ): Promise<Response> {
     assertRelativeApiV1Url(url);
 
@@ -111,8 +120,12 @@ export class HttpClient {
         method: options.method,
         headers: options.headers,
         body: options.body,
+        signal: options.signal,
       });
-    } catch {
+    } catch (error) {
+      if (isAbortError(error)) {
+        throw error;
+      }
       throw new Error('Network request failed');
     }
 
@@ -128,6 +141,16 @@ export class HttpClient {
 
     return response;
   }
+}
+
+function isAbortError(error: unknown): boolean {
+  if (typeof error !== 'object' || error === null) {
+    return false;
+  }
+  if ('name' in error && error.name === 'AbortError') {
+    return true;
+  }
+  return typeof DOMException !== 'undefined' && error instanceof DOMException && error.code === DOMException.ABORT_ERR;
 }
 
 function assertRelativeApiV1Url(url: string): void {
