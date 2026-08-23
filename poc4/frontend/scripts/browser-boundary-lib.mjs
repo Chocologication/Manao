@@ -39,7 +39,10 @@ function isNodeBuiltinSpecifier(specifier) {
 
 const workbenchProductionExact = new Set([
   'src/api/fileApi.ts',
+  'src/api/runApi.ts',
   'src/contracts/file.ts',
+  'src/contracts/run.ts',
+  'src/contracts/log.ts',
   'src/features/editor/workspaceSession.ts',
   'src/features/editor/WorkspaceBufferRegistry.ts',
   'src/features/editor/unsavedChangesGuard.ts',
@@ -61,6 +64,9 @@ function isWorkbenchProductionModule(file) {
   const normalized = toPosix(file);
   if (workbenchProductionExact.has(normalized)) return true;
   if (normalized.startsWith('src/features/files/')) return true;
+  if (normalized.startsWith('src/features/runs/')) return true;
+  if (normalized.startsWith('src/features/logs/')) return true;
+  if (normalized.startsWith('src/components/runs/')) return true;
   const filesPrefix = 'src/components/files/';
   if (!normalized.startsWith(filesPrefix)) return false;
   const baseName = normalized.slice(filesPrefix.length);
@@ -112,6 +118,14 @@ export function findForbiddenSource(file, source) {
   return toRuleResults(file, rules);
 }
 
+const productionStringNeedles = [
+  ['stage3-scenario-endpoint', '/api/v1/session/write-scenario'],
+  ['stage4-scenario-endpoint', '/api/v1/session/run-scenario'],
+  ['stage4-mock-ticket-prefix', 'mock-run-log-ticket-'],
+  ['stage4-seed-log-marker', 'ensoai-stage4-seed-log'],
+  ['stage4-mock-persistence-key', 'ensoai.mock.run-scenario.v1'],
+];
+
 export function findForbiddenWorkbenchImports(file, source) {
   if (!isWorkbenchProductionModule(file)) return [];
   const rules = new Set();
@@ -119,8 +133,8 @@ export function findForbiddenWorkbenchImports(file, source) {
     const rule = workbenchImportRule(file, specifier);
     if (rule) rules.add(rule);
   }
-  if (source.includes('/api/v1/session/write-scenario')) {
-    rules.add('stage3-scenario-endpoint');
+  for (const [rule, needle] of productionStringNeedles) {
+    if (source.includes(needle)) rules.add(rule);
   }
   return toRuleResults(file, rules);
 }
@@ -130,7 +144,14 @@ const forbiddenContractNameSet = new Set(forbiddenContractNames);
 
 function isContractNameScanTarget(file) {
   const normalized = toPosix(file);
-  return normalized.startsWith('src/contracts/') || normalized.startsWith('src/features/files/');
+  return (
+    normalized.startsWith('src/contracts/') ||
+    normalized.startsWith('src/features/files/') ||
+    normalized.startsWith('src/features/runs/') ||
+    normalized.startsWith('src/features/logs/') ||
+    normalized.startsWith('src/components/runs/') ||
+    normalized === 'src/api/runApi.ts'
+  );
 }
 
 function skipQuoted(source, start) {

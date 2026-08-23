@@ -33,6 +33,29 @@ const plannedWritableWorkbenchModules = [
   'src/lib/projectMonacoModels.ts',
 ];
 
+const stage4ProductionModules = [
+  'src/api/runApi.ts',
+  'src/contracts/run.ts',
+  'src/contracts/log.ts',
+  'src/features/runs/runQueries.ts',
+  'src/features/runs/runMutations.ts',
+  'src/features/runs/RunAuthorityCoordinator.ts',
+  'src/features/logs/RunLogStore.ts',
+  'src/features/logs/RunLogTransport.ts',
+  'src/components/runs/RunPanel.tsx',
+  'src/components/runs/RunToolbar.tsx',
+  'src/components/runs/RunHistory.tsx',
+  'src/components/runs/RunLogView.tsx',
+  'src/components/runs/StopRunDialog.tsx',
+];
+
+const stage4MockNeedles = [
+  ['stage4-scenario-endpoint', '/api/v1/session/run-scenario'],
+  ['stage4-mock-ticket-prefix', 'mock-run-log-ticket-'],
+  ['stage4-seed-log-marker', 'ensoai-stage4-seed-log'],
+  ['stage4-mock-persistence-key', 'ensoai.mock.run-scenario.v1'],
+];
+
 test('rejects Electron and PTY production dependencies', () => {
   assert.deepEqual(
     findForbiddenDependencies({ dependencies: { electron: '1', 'node-pty': '1' } }),
@@ -188,4 +211,95 @@ test('ignores forbidden words in comments and string values', () => {
 test('does not scan unrelated modules for contract-name identifiers', () => {
   const source = 'export const namespace = "local";';
   assert.deepEqual(findForbiddenContractNames('src/lib/utils.ts', source), []);
+});
+
+test('classifies Stage 4 run and log production modules', () => {
+  const source = "import { mockFiles } from '@/spike/mockFiles';";
+  for (const file of [...plannedWritableWorkbenchModules, ...stage4ProductionModules]) {
+    assert.deepEqual(
+      findForbiddenWorkbenchImports(file, source).map((item) => item.rule),
+      ['stage0-spike-import'],
+      file,
+    );
+  }
+});
+
+test('rejects terminal, mocks, echo-ws and Node built-ins from Stage 4 production modules', () => {
+  assert.deepEqual(
+    findForbiddenWorkbenchImports(
+      'src/api/runApi.ts',
+      "import { TerminalSession } from '@/terminal/TerminalSession';",
+    ).map((item) => item.rule),
+    ['stage0-terminal-import'],
+  );
+  assert.deepEqual(
+    findForbiddenWorkbenchImports(
+      'src/contracts/log.ts',
+      "import { handlers } from '@/mocks/handlers';",
+    ).map((item) => item.rule),
+    ['stage0-mocks-import'],
+  );
+  assert.deepEqual(
+    findForbiddenWorkbenchImports(
+      'src/features/runs/runQueries.ts',
+      "import { createEcho } from '../../../scripts/echo-ws.mjs';",
+    ).map((item) => item.rule),
+    ['echo-ws-import'],
+  );
+  assert.deepEqual(
+    findForbiddenWorkbenchImports(
+      'src/components/runs/RunPanel.tsx',
+      "import { Stage0SpikeApp } from '@/spike/Stage0SpikeApp';",
+    ).map((item) => item.rule),
+    ['stage0-spike-import'],
+  );
+  assert.deepEqual(
+    findForbiddenSource('src/api/runApi.ts', "import fs from 'node:fs';").map((item) => item.rule),
+    ['node-builtin'],
+  );
+});
+
+test('rejects Stage 4 mock needles in production modules and keeps Stage 3 needles', () => {
+  const writeScenario = "await fetch('/api/v1/session/write-scenario', { method: 'POST' });";
+  assert.deepEqual(
+    findForbiddenWorkbenchImports('src/api/runApi.ts', writeScenario).map((item) => item.rule),
+    ['stage3-scenario-endpoint'],
+  );
+  for (const [rule, needle] of stage4MockNeedles) {
+    const source = `const marker = ${JSON.stringify(needle)};`;
+    assert.deepEqual(
+      findForbiddenWorkbenchImports('src/contracts/run.ts', source).map((item) => item.rule),
+      [rule],
+      rule,
+    );
+    assert.deepEqual(
+      findForbiddenWorkbenchImports('src/features/logs/RunLogStore.ts', source).map((item) => item.rule),
+      [rule],
+      rule,
+    );
+    assert.deepEqual(findForbiddenWorkbenchImports('src/mocks/handlers.ts', source), [], rule);
+    assert.deepEqual(findForbiddenWorkbenchImports('src/main.tsx', source), [], rule);
+  }
+});
+
+test('rejects Kubernetes resource identifiers in Stage 4 run contracts and features', () => {
+  const source = [
+    'export type Resource = { pvcName: string; podName: string };',
+    'export const jobName = "build";',
+    'export function bind(serviceAccount: string) {}',
+    'export const payload = { namespace: "default" };',
+  ].join('\n');
+  for (const file of ['src/contracts/run.ts', 'src/contracts/log.ts', 'src/api/runApi.ts', 'src/features/runs/runQueries.ts']) {
+    assert.deepEqual(
+      findForbiddenContractNames(file, source).map((item) => item.rule),
+      [
+        'contract-name:pvcName',
+        'contract-name:podName',
+        'contract-name:jobName',
+        'contract-name:serviceAccount',
+        'contract-name:namespace',
+      ],
+      file,
+    );
+  }
 });
