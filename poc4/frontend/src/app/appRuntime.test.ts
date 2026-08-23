@@ -2,6 +2,7 @@ import { cleanup, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import * as monaco from 'monaco-editor';
+import { readFileSync } from 'node:fs';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { login } from '../api/authApi';
 import { ApiRequestError } from '../api/ApiRequestError';
@@ -20,6 +21,7 @@ import {
   connectionRegistry,
   logout,
   queryClient,
+  workspaceBufferRegistry,
   workspaceResourceRegistry,
 } from './appRuntime';
 
@@ -68,6 +70,7 @@ function expectEmptyWorkspaceSession(): void {
   expect(state.activePath).toBeNull();
   expect(state.selectedPath).toBeNull();
   expect(state.expandedPaths.size).toBe(0);
+  expect(state.dirtyPaths.size).toBe(0);
 }
 
 async function prefetchFileQuery(
@@ -606,5 +609,61 @@ describe('unknown routes', () => {
     );
     expect(screen.queryByRole('heading', { name: /something went wrong/i })).not.toBeInTheDocument();
     expect(document.body.textContent ?? '').not.toMatch(/stack|jwt|password|traceId/i);
+  });
+});
+
+describe('appRuntime workspace buffer disposal', () => {
+  it('does not statically import monaco-editor or project Monaco models', () => {
+    const source = readFileSync('src/app/appRuntime.ts', 'utf8');
+    expect(source).not.toMatch(/from ['"]monaco-editor['"]/);
+    expect(source).not.toMatch(/from ['"]monaco-editor\//);
+    expect(source).not.toMatch(/projectMonacoModels/);
+  });
+
+  it('injects dirty changes into the session and disposes buffers on logout', () => {
+    const store = workspaceSessionStore.getState();
+    store.activateProject(ALICE_SEED_PROJECT_ID);
+    const buffer = workspaceBufferRegistry.register({
+      projectId: ALICE_SEED_PROJECT_ID,
+      path: POM,
+      kind: 'plain-text',
+      content: 'before',
+    });
+    (buffer as typeof buffer & { replace(content: string): void }).replace('after');
+
+    expect(workspaceSessionStore.getState().dirtyPaths.has(POM)).toBe(true);
+
+    logout();
+
+    expect(workspaceBufferRegistry.get(ALICE_SEED_PROJECT_ID, POM)).toBeUndefined();
+    expectEmptyWorkspaceSession();
+  });
+
+  it('disposes buffers on a current-session 401 and keeps them available after the next register', async () => {
+    await authenticateAsAlice();
+    workspaceSessionStore.getState().activateProject(ALICE_SEED_PROJECT_ID);
+    workspaceBufferRegistry.register({
+      projectId: ALICE_SEED_PROJECT_ID,
+      path: POM,
+      kind: 'plain-text',
+      content: 'open',
+    });
+
+    await expireCurrentSessionToken();
+    const error = await getFileContent(ALICE_SEED_PROJECT_ID, POM).catch((reason: unknown) => reason);
+    expect(error).toBeInstanceOf(ApiRequestError);
+    expect(error).toMatchObject({ status: 401 });
+
+    expect(workspaceBufferRegistry.get(ALICE_SEED_PROJECT_ID, POM)).toBeUndefined();
+    expectEmptyWorkspaceSession();
+
+    const next = workspaceBufferRegistry.register({
+      projectId: ALICE_SEED_PROJECT_ID,
+      path: POM,
+      kind: 'plain-text',
+      content: 'reopened',
+    });
+    expect(next.snapshot().content).toBe('reopened');
+    workspaceBufferRegistry.remove(ALICE_SEED_PROJECT_ID, POM);
   });
 });
