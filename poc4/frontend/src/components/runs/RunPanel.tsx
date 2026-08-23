@@ -277,7 +277,7 @@ export function RunPanel({ projectId, coordinator }: RunPanelProps) {
             void historyQuery.refetch();
           }}
         />
-        <RunLogView store={logStore} />
+        <RunLogView key={selectedRunId ?? 'none'} store={logStore} />
       </div>
       <StopRunDialog
         open={stopOpen}

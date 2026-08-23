@@ -209,7 +209,7 @@ body,
 
 .run-log-scroller {
   font-family: var(--font-family-mono, "JetBrains Mono", "Menlo", monospace);
-  scroll-behavior: smooth;
+  scroll-behavior: auto;
 }
 
 @media (prefers-reduced-motion: reduce) {

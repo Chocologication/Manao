@@ -225,6 +225,22 @@ function setScrollerMetrics(
   });
 }
 
+function attachScrollModel(scroller: HTMLElement): Array<{ top: number; behavior?: ScrollBehavior }> {
+  const calls: Array<{ top: number; behavior?: ScrollBehavior }> = [];
+  scroller.scrollTo = ((arg?: ScrollToOptions | number) => {
+    if (typeof arg === 'number') {
+      scroller.scrollTop = arg;
+      calls.push({ top: arg });
+      return;
+    }
+    if (arg !== undefined && typeof arg.top === 'number') {
+      scroller.scrollTop = arg.top;
+      calls.push({ top: arg.top, behavior: arg.behavior });
+    }
+  }) as typeof scroller.scrollTo;
+  return calls;
+}
+
 beforeEach(() => {
   resetAppRuntime();
 });
@@ -715,60 +731,57 @@ describe('RunPanel reload failure and keyboard', () => {
 });
 
 describe('RunLogView auto-follow and truncation', () => {
-  it('follows near the bottom, preserves scroll-up, and restores on New output', async () => {
-    const runId = parseRunId('run-follow');
-    const scheduler = manualScheduler();
-    const store = new RunLogStore({
-      projectId: ALICE_SEED_PROJECT_ID,
-      runId,
-      schedule: scheduler.schedule,
-    });
-    const first = {
-      seq: 1,
-      text: 'line-one\n',
-      byteLength: utf8Bytes('line-one\n'),
+  function appendText(
+    store: RunLogStore,
+    scheduler: { flush: () => void },
+    seq: number,
+    text: string,
+    extra: { truncated?: boolean; evictedBytes?: number } = {},
+  ): void {
+    const item = {
+      seq,
+      text,
+      byteLength: utf8Bytes(text),
       persistedAt: PERSISTED_AT,
     };
-    store.applyAppend(first, {
-      firstAvailableSeq: 1,
-      lastAvailableSeq: 1,
-      retainedBytes: first.byteLength,
-      truncated: false,
-      evictedBytes: 0,
+    store.applyAppend(item, {
+      firstAvailableSeq: extra.truncated === true ? seq : 1,
+      lastAvailableSeq: seq,
+      retainedBytes: item.byteLength,
+      truncated: extra.truncated === true,
+      evictedBytes: extra.evictedBytes ?? 0,
     });
     act(() => {
       scheduler.flush();
     });
-    const scrollTo = vi.fn();
+  }
+
+  it('does not force scrollTop to the bottom after a real scroll-up', async () => {
+    const scheduler = manualScheduler();
+    const store = new RunLogStore({
+      projectId: ALICE_SEED_PROJECT_ID,
+      runId: parseRunId('run-follow'),
+      schedule: scheduler.schedule,
+    });
+    appendText(store, scheduler, 1, 'line-one\n');
     render(<RunLogView store={store} />);
     const scroller = screen.getByRole('region', { name: 'Run logs' });
-    scroller.scrollTo = scrollTo as unknown as typeof scroller.scrollTo;
     setScrollerMetrics(scroller, { scrollTop: 0, clientHeight: 100, scrollHeight: 400 });
+    const calls = attachScrollModel(scroller);
     expect(logDistanceFromBottom(scroller)).toBeGreaterThan(48);
-    store.setPendingOutput(true);
+    fireScroll(scroller);
     act(() => {
       scheduler.flush();
     });
     expect(await screen.findByRole('button', { name: 'New output' })).toBeInTheDocument();
     expect(store.getSnapshot().pendingOutput).toBe(true);
+    const callsAfterScroll = calls.length;
+    const topAfterScroll = scroller.scrollTop;
 
-    const next = {
-      seq: 2,
-      text: 'line-two\n',
-      byteLength: utf8Bytes('line-two\n'),
-      persistedAt: PERSISTED_AT,
-    };
-    store.applyAppend(next, {
-      firstAvailableSeq: 1,
-      lastAvailableSeq: 2,
-      retainedBytes: first.byteLength + next.byteLength,
-      truncated: false,
-      evictedBytes: 0,
-    });
-    act(() => {
-      scheduler.flush();
-    });
-    expect(scroller.scrollTop).toBe(0);
+    appendText(store, scheduler, 2, 'line-two\n');
+    expect(scroller.scrollTop).toBe(topAfterScroll);
+    expect(scroller.scrollTop).not.toBe(scroller.scrollHeight);
+    expect(calls.length).toBe(callsAfterScroll);
     expect(screen.getByRole('region', { name: 'Run logs' })).toHaveTextContent('line-two');
 
     await userEvent.setup().click(screen.getByRole('button', { name: 'New output' }));
@@ -776,10 +789,72 @@ describe('RunLogView auto-follow and truncation', () => {
       scheduler.flush();
     });
     expect(store.getSnapshot().pendingOutput).toBe(false);
-    expect(scrollTo).toHaveBeenCalled();
+    expect(scroller.scrollTop).toBe(scroller.scrollHeight);
     expect(screen.queryByRole('button', { name: 'New output' })).not.toBeInTheDocument();
-    const scrollArg = scrollTo.mock.calls.at(-1)?.[0] as { top?: number; behavior?: string } | undefined;
-    expect(scrollArg?.top).toBe(scroller.scrollHeight);
+  });
+
+  it('keeps following from near the bottom with instant scroll', () => {
+    const scheduler = manualScheduler();
+    const store = new RunLogStore({
+      projectId: ALICE_SEED_PROJECT_ID,
+      runId: parseRunId('run-follow-bottom'),
+      schedule: scheduler.schedule,
+    });
+    appendText(store, scheduler, 1, 'line-one\n');
+    render(<RunLogView store={store} />);
+    const scroller = screen.getByRole('region', { name: 'Run logs' });
+    setScrollerMetrics(scroller, { scrollTop: 360, clientHeight: 100, scrollHeight: 400 });
+    const calls = attachScrollModel(scroller);
+    expect(logDistanceFromBottom(scroller)).toBeLessThanOrEqual(48);
+    fireScroll(scroller);
+    act(() => {
+      scheduler.flush();
+    });
+    expect(store.getSnapshot().pendingOutput).toBe(false);
+
+    appendText(store, scheduler, 2, 'line-two\n');
+    expect(scroller.scrollTop).toBe(scroller.scrollHeight);
+    expect(calls.length).toBeGreaterThan(0);
+    expect(calls.every((call) => call.behavior !== 'smooth')).toBe(true);
+    expect(screen.queryByRole('button', { name: 'New output' })).not.toBeInTheDocument();
+  });
+
+  it('resets follow when the selected run store changes', () => {
+    const schedulerA = manualScheduler();
+    const schedulerB = manualScheduler();
+    const storeA = new RunLogStore({
+      projectId: ALICE_SEED_PROJECT_ID,
+      runId: parseRunId('run-a'),
+      schedule: schedulerA.schedule,
+    });
+    const storeB = new RunLogStore({
+      projectId: ALICE_SEED_PROJECT_ID,
+      runId: parseRunId('run-b'),
+      schedule: schedulerB.schedule,
+    });
+    appendText(storeA, schedulerA, 1, 'alpha-one\n');
+    appendText(storeB, schedulerB, 1, 'beta-one\n');
+    const { rerender } = render(<RunLogView store={storeA} />);
+    const scroller = screen.getByRole('region', { name: 'Run logs' });
+    setScrollerMetrics(scroller, { scrollTop: 0, clientHeight: 100, scrollHeight: 400 });
+    attachScrollModel(scroller);
+    fireScroll(scroller);
+    act(() => {
+      schedulerA.flush();
+    });
+    expect(storeA.getSnapshot().pendingOutput).toBe(true);
+    appendText(storeA, schedulerA, 2, 'alpha-two\n');
+    expect(scroller.scrollTop).toBe(0);
+
+    rerender(<RunLogView store={storeB} />);
+    const next = screen.getByRole('region', { name: 'Run logs' });
+    setScrollerMetrics(next, { scrollTop: 0, clientHeight: 100, scrollHeight: 400 });
+    attachScrollModel(next);
+    appendText(storeB, schedulerB, 2, 'beta-two\n');
+    expect(next.scrollTop).toBe(next.scrollHeight);
+    expect(screen.getByRole('region', { name: 'Run logs' })).toHaveTextContent('beta-two');
+    expect(screen.getByRole('region', { name: 'Run logs' })).not.toHaveTextContent('alpha-two');
+    expect(screen.queryByRole('button', { name: 'New output' })).not.toBeInTheDocument();
   });
 
   it('keeps truncation and evicted bytes visible without covering log text', () => {
@@ -829,55 +904,22 @@ describe('RunLogView auto-follow and truncation', () => {
           return false;
         },
       })) as typeof window.matchMedia;
-    const runId = parseRunId('run-motion');
+    const scheduler = manualScheduler();
     const store = new RunLogStore({
       projectId: ALICE_SEED_PROJECT_ID,
-      runId,
-      schedule: (notify) => {
-        notify();
-        return () => {};
-      },
+      runId: parseRunId('run-motion'),
+      schedule: scheduler.schedule,
     });
-    const chunk = {
-      seq: 1,
-      text: 'motion\n',
-      byteLength: utf8Bytes('motion\n'),
-      persistedAt: PERSISTED_AT,
-    };
-    store.applyAppend(chunk, {
-      firstAvailableSeq: 1,
-      lastAvailableSeq: 1,
-      retainedBytes: chunk.byteLength,
-      truncated: false,
-      evictedBytes: 0,
-    });
-    const scrollTo = vi.fn();
+    appendText(store, scheduler, 1, 'motion\n');
     render(<RunLogView store={store} />);
     const scroller = screen.getByRole('region', { name: 'Run logs' });
-    scroller.scrollTo = scrollTo as unknown as typeof scroller.scrollTo;
-    setScrollerMetrics(scroller, { scrollTop: 0, clientHeight: 100, scrollHeight: 400 });
-    store.setPendingOutput(false);
+    setScrollerMetrics(scroller, { scrollTop: 360, clientHeight: 100, scrollHeight: 400 });
+    const calls = attachScrollModel(scroller);
     fireScroll(scroller);
-    store.applyAppend(
-      {
-        seq: 2,
-        text: 'more\n',
-        byteLength: utf8Bytes('more\n'),
-        persistedAt: PERSISTED_AT,
-      },
-      {
-        firstAvailableSeq: 1,
-        lastAvailableSeq: 2,
-        retainedBytes: chunk.byteLength + utf8Bytes('more\n'),
-        truncated: false,
-        evictedBytes: 0,
-      },
-    );
-    const behaviors = scrollTo.mock.calls.map((call) => {
-      const options = call[0] as { behavior?: string };
-      return options?.behavior;
-    });
-    expect(behaviors.every((behavior) => behavior !== 'smooth')).toBe(true);
+    appendText(store, scheduler, 2, 'more\n');
+    expect(calls.length).toBeGreaterThan(0);
+    expect(calls.every((call) => call.behavior !== 'smooth')).toBe(true);
+    expect(calls.every((call) => call.behavior === 'auto' || call.behavior === undefined)).toBe(true);
   });
 });
 

@@ -31,10 +31,6 @@ function getEmptySnapshot(): RunLogSnapshot {
   return EMPTY_SNAPSHOT;
 }
 
-function prefersReducedMotion(): boolean {
-  return window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-}
-
 export function logDistanceFromBottom(element: {
   scrollHeight: number;
   scrollTop: number;
@@ -80,6 +76,8 @@ export function RunLogView({ store }: RunLogViewProps) {
   );
   const scrollerRef = useRef<HTMLDivElement>(null);
   const followingRef = useRef(true);
+  const ignoreProgrammaticScrollRef = useRef(false);
+  const followedStoreRef = useRef<RunLogStore | null>(null);
   const storeRef = useRef(store);
   storeRef.current = store;
 
@@ -88,15 +86,23 @@ export function RunLogView({ store }: RunLogViewProps) {
     if (element === null) {
       return;
     }
-    const behavior = prefersReducedMotion() ? 'auto' : 'smooth';
-    if (typeof element.scrollTo === 'function') {
-      element.scrollTo({ top: element.scrollHeight, behavior });
-    } else {
-      element.scrollTop = element.scrollHeight;
+    ignoreProgrammaticScrollRef.current = true;
+    try {
+      if (typeof element.scrollTo === 'function') {
+        element.scrollTo({ top: element.scrollHeight, behavior: 'auto' });
+      } else {
+        element.scrollTop = element.scrollHeight;
+      }
+    } finally {
+      ignoreProgrammaticScrollRef.current = false;
     }
   }
 
   useLayoutEffect(() => {
+    if (followedStoreRef.current !== store) {
+      followedStoreRef.current = store;
+      followingRef.current = true;
+    }
     if (!followingRef.current) {
       return;
     }
@@ -109,6 +115,9 @@ export function RunLogView({ store }: RunLogViewProps) {
       return undefined;
     }
     function handleScroll(): void {
+      if (ignoreProgrammaticScrollRef.current) {
+        return;
+      }
       const current = storeRef.current;
       const node = scrollerRef.current;
       if (current === null || node === null) {
