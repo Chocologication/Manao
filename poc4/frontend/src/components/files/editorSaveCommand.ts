@@ -1,5 +1,5 @@
 import { useIsMutating } from '@tanstack/react-query';
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { workspaceBufferRegistry } from '@/app/appRuntime';
 import type { FileRenderMode, ProjectRelativePath } from '@/contracts/file';
 import type { WorkspaceBuffer } from '@/features/editor/editorTypes';
@@ -11,9 +11,13 @@ import {
   type SaveFileVariables,
 } from '@/features/files/fileMutations';
 
-export type EditorSaveFeedback =
-  | { kind: 'status'; message: string }
-  | { kind: 'alert'; message: string };
+export const SAVE_SUCCESS_STATUS_MS = 2000;
+
+export type EditorSaveFeedback = {
+  path: ProjectRelativePath;
+  kind: 'status' | 'alert';
+  message: string;
+};
 
 type PlainTextMutableBuffer = WorkspaceBuffer & { replace(content: string): void };
 
@@ -58,13 +62,23 @@ export function replacePlainTextContent(
 
 export function ensureWorkspaceBuffer(input: RegisterWorkspaceBufferInput): WorkspaceBuffer {
   const existing = workspaceBufferRegistry.get(input.projectId, input.path);
+  if (existing !== undefined && existing.kind === input.kind) {
+    return existing;
+  }
+  let leftover: string | undefined;
   if (existing !== undefined) {
-    if (existing.kind === input.kind) {
-      return existing;
-    }
+    leftover = existing.snapshot().content;
     workspaceBufferRegistry.remove(input.projectId, input.path);
   }
-  return workspaceBufferRegistry.register(input);
+  const next = workspaceBufferRegistry.register(input);
+  if (leftover !== undefined && leftover !== next.snapshot().content) {
+    if (input.kind === 'plain-text') {
+      replacePlainTextContent(input.projectId, input.path, leftover);
+    } else {
+      input.model.setValue(leftover);
+    }
+  }
+  return next;
 }
 
 export function prepareEditorSave(options: {
@@ -97,6 +111,31 @@ export function useEditorSaveCommand(projectId: string) {
   const inFlightRef = useRef(false);
   const [feedback, setFeedback] = useState<EditorSaveFeedback | null>(null);
 
+  const clearFeedback = useCallback(() => {
+    setFeedback(null);
+  }, []);
+
+  useEffect(() => {
+    if (feedback?.kind !== 'status' || feedback.message !== 'Saved') {
+      return undefined;
+    }
+    const timer = window.setTimeout(() => {
+      setFeedback((current) => {
+        if (
+          current?.kind === 'status' &&
+          current.message === 'Saved' &&
+          current.path === feedback.path
+        ) {
+          return null;
+        }
+        return current;
+      });
+    }, SAVE_SUCCESS_STATUS_MS);
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [feedback]);
+
   const savePath = useCallback(
     (path: ProjectRelativePath) => {
       if (inFlightRef.current) {
@@ -108,13 +147,14 @@ export function useEditorSaveCommand(projectId: string) {
         writePending,
         mutate: (variables) => {
           inFlightRef.current = true;
-          setFeedback({ kind: 'status', message: 'Saving' });
+          setFeedback({ path, kind: 'status', message: 'Saving' });
           mutation.mutate(variables, {
             onSuccess: () => {
-              setFeedback({ kind: 'status', message: 'Saved' });
+              setFeedback({ path, kind: 'status', message: 'Saved' });
             },
             onError: (error) => {
               setFeedback({
+                path,
                 kind: 'alert',
                 message: fileMutationErrorMessage(error, 'Unable to save file'),
               });
@@ -129,5 +169,5 @@ export function useEditorSaveCommand(projectId: string) {
     [mutation, projectId, writePending],
   );
 
-  return { savePath, writePending, feedback };
+  return { savePath, writePending, feedback, clearFeedback };
 }

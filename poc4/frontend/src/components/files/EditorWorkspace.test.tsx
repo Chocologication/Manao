@@ -946,7 +946,69 @@ describe('EditorWorkspace save lifecycle', () => {
     await waitFor(() => {
       expect(screen.getByRole('tab', { name: /pom.xml/ })).toHaveTextContent('*');
     });
+    expect(screen.queryByRole('status', { name: 'Saved' })).not.toBeInTheDocument();
     expect(workspaceBufferRegistry.get(ALICE_SEED_PROJECT_ID, POM)?.isDirty()).toBe(true);
+  });
+
+  it('retries the failed path and hides leftover feedback when the active file changes', async () => {
+    const user = userEvent.setup();
+    const putPaths: string[] = [];
+    server.use(
+      http.put('/api/v1/projects/:projectId/files/content', ({ request }) => {
+        const path = new URL(request.url).searchParams.get('path') ?? '';
+        putPaths.push(path);
+        if (path === 'pom.xml' && putPaths.filter((item) => item === 'pom.xml').length === 1) {
+          return HttpResponse.json(
+            { code: 'INTERNAL_ERROR', message: 'Mock save failure', traceId: 'trace-save' },
+            { status: 500 },
+          );
+        }
+        return undefined;
+      }),
+    );
+    await authenticateAsAlice();
+    renderWorkspace();
+    openFile(POM);
+    await screen.findByTestId('mock-editor');
+    editMonacoModel(ALICE_SEED_PROJECT_ID, POM, '<project failed />');
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled());
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent(/unable to save file/i);
+
+    openFile(APP);
+    await waitFor(() => {
+      expect(screen.getByTestId('mock-editor')).toHaveAttribute(
+        'data-path',
+        toProjectModelUri(ALICE_SEED_PROJECT_ID, APP).toString(),
+      );
+    });
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument();
+    editMonacoModel(ALICE_SEED_PROJECT_ID, APP, 'class App { /* dirty */ }');
+    await waitFor(() => expect(screen.getByRole('tab', { name: /App.java/ })).toHaveTextContent('*'));
+
+    openFile(POM);
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Retry' })).toBeEnabled());
+    await user.click(screen.getByRole('button', { name: 'Retry' }));
+    await waitFor(() => expect(putPaths).toEqual(['pom.xml', 'pom.xml']));
+    expect(workspaceBufferRegistry.get(ALICE_SEED_PROJECT_ID, APP)?.isDirty()).toBe(true);
+  });
+
+  it('clears Saved when the active path changes', async () => {
+    const user = userEvent.setup();
+    await authenticateAsAlice();
+    renderWorkspace();
+    openFile(POM);
+    await screen.findByTestId('mock-editor');
+    editMonacoModel(ALICE_SEED_PROJECT_ID, POM, '<project saved />');
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled());
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+    expect(await screen.findByRole('status', { name: 'Saved' })).toBeInTheDocument();
+
+    openFile(APP);
+    await waitFor(() => {
+      expect(screen.queryByRole('status', { name: 'Saved' })).not.toBeInTheDocument();
+    });
   });
 
   it('disables a duplicate project save while the write is pending', async () => {
@@ -1061,6 +1123,56 @@ describe('EditorWorkspace renderer mode transitions', () => {
     expect(workspaceSessionStore.getState().activePath).toBe(README);
     expect(workspaceSessionStore.getState().openPaths).toEqual([README]);
     expect(screen.getByRole('tab', { name: /README.md/ })).not.toHaveTextContent('*');
+  });
+
+  it('keeps later in-flight edits dirty after a successful renderer mode change', async () => {
+    const user = userEvent.setup();
+    const submitted = '# Alice Notebook\n\nnow plain\n';
+    const later = '# Alice Notebook\n\nnow plain\nlater\n';
+    let release = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    server.use(
+      http.put('/api/v1/projects/:projectId/files/content', async ({ request }) => {
+        if (new URL(request.url).searchParams.get('path') !== 'README.md') {
+          return undefined;
+        }
+        await gate;
+        return HttpResponse.json({
+          file: {
+            path: 'README.md',
+            name: 'README.md',
+            sizeBytes: 20 * 1024 * 1024 + 1,
+            mediaType: 'text/markdown',
+            encoding: 'UTF-8',
+            language: 'markdown',
+            renderMode: 'PLAIN_TEXT',
+            blockReason: null,
+          },
+          workspaceRevision: 'mock-rev-0002',
+        });
+      }),
+    );
+    await authenticateAsAlice();
+    renderWorkspace();
+    openFile(README);
+    await screen.findByTestId('mock-editor');
+    editMonacoModel(ALICE_SEED_PROJECT_ID, README, submitted);
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled());
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+    expect(await screen.findByRole('status', { name: 'Saving' })).toBeInTheDocument();
+    editMonacoModel(ALICE_SEED_PROJECT_ID, README, later);
+    release();
+
+    const textarea = await screen.findByRole('textbox');
+    expect(textarea).toHaveValue(later);
+    const buffer = workspaceBufferRegistry.get(ALICE_SEED_PROJECT_ID, README);
+    expect(buffer?.kind).toBe('plain-text');
+    expect(buffer?.snapshot().content).toBe(later);
+    expect(buffer?.isDirty()).toBe(true);
+    expect(screen.getByRole('tab', { name: /README.md/ })).toHaveTextContent('*');
+    expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled();
   });
 
   it('does not switch renderer or discard content when an over-limit save is rejected', async () => {

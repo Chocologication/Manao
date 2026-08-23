@@ -198,6 +198,29 @@ export function EditorWorkspace({ projectId }: { projectId: string }) {
     save.savePath(visibleActivePath);
   }, [save, visibleActivePath]);
 
+  const handleRetry = useCallback(() => {
+    if (save.feedback?.kind !== 'alert') {
+      return;
+    }
+    save.savePath(save.feedback.path);
+  }, [save]);
+
+  useEffect(() => {
+    if (save.feedback?.kind === 'status' && visibleActivePath !== save.feedback.path) {
+      save.clearFeedback();
+    }
+  }, [save, visibleActivePath]);
+
+  useEffect(() => {
+    if (
+      save.feedback?.kind === 'status' &&
+      save.feedback.message === 'Saved' &&
+      dirtyPaths.has(save.feedback.path)
+    ) {
+      save.clearFeedback();
+    }
+  }, [dirtyPaths, save]);
+
   useEffect(() => {
     const pending = pendingDisposeRef.current;
     if (pending.length === 0) {
@@ -234,15 +257,15 @@ export function EditorWorkspace({ projectId }: { projectId: string }) {
         saveDisabled={!isSaveEnabled({ dirty: activeDirty, writePending: save.writePending })}
         savePending={save.writePending}
       />
-      {save.feedback?.kind === 'alert' ? (
+      {save.feedback?.kind === 'alert' && save.feedback.path === visibleActivePath ? (
         <div className="flex items-center gap-2 border-b px-3 py-2">
           <InlineAlert>{save.feedback.message}</InlineAlert>
-          <Button type="button" variant="outline" onClick={handleSave}>
+          <Button type="button" variant="outline" onClick={handleRetry}>
             Retry
           </Button>
         </div>
       ) : null}
-      {save.feedback?.kind === 'status' ? (
+      {save.feedback?.kind === 'status' && save.feedback.path === visibleActivePath ? (
         <p
           role="status"
           aria-label={save.feedback.message}

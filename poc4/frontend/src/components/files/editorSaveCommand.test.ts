@@ -20,6 +20,7 @@ import {
   prepareEditorSave,
   projectFileWritePredicate,
   replacePlainTextContent,
+  SAVE_SUCCESS_STATUS_MS,
   useEditorSaveCommand,
 } from './editorSaveCommand';
 
@@ -180,6 +181,45 @@ describe('ensureWorkspaceBuffer', () => {
     expect(monaco.editor.getModel(uri)).toBeNull();
     expect(monacoBuffer.isDirty()).toBe(false);
   });
+
+  it('seeds the next renderer from the submitted snapshot and keeps leftover edits dirty', () => {
+    const uri = toProjectModelUri(ALICE_SEED_PROJECT_ID, NOTES);
+    const model = monaco.editor.createModel('# submitted', 'markdown', uri);
+    ensureWorkspaceBuffer({
+      projectId: ALICE_SEED_PROJECT_ID,
+      path: NOTES,
+      kind: 'monaco',
+      model,
+    });
+    model.pushEditOperations([], [{ range: model.getFullModelRange(), text: '# later' }], () => null);
+
+    const next = ensureWorkspaceBuffer({
+      projectId: ALICE_SEED_PROJECT_ID,
+      path: NOTES,
+      kind: 'plain-text',
+      content: '# submitted',
+    });
+
+    expect(next.kind).toBe('plain-text');
+    expect(next.snapshot().content).toBe('# later');
+    expect(next.isDirty()).toBe(true);
+    expect(monaco.editor.getModel(uri)).toBeNull();
+
+    const monacoUri = toProjectModelUri(ALICE_SEED_PROJECT_ID, POM);
+    registerPlain(POM, '<submitted />');
+    replacePlainTextContent(ALICE_SEED_PROJECT_ID, POM, '<later />');
+    const seeded = monaco.editor.createModel('<submitted />', 'xml', monacoUri);
+    const afterPlain = ensureWorkspaceBuffer({
+      projectId: ALICE_SEED_PROJECT_ID,
+      path: POM,
+      kind: 'monaco',
+      model: seeded,
+    });
+
+    expect(afterPlain.kind).toBe('monaco');
+    expect(afterPlain.snapshot().content).toBe('<later />');
+    expect(afterPlain.isDirty()).toBe(true);
+  });
 });
 
 describe('projectFileWritePredicate', () => {
@@ -217,6 +257,7 @@ describe('useEditorSaveCommand', () => {
     result.current.savePath(POM);
     await waitFor(() => expect(result.current.feedback?.kind).toBe('alert'));
     expect(result.current.feedback).toEqual({
+      path: POM,
       kind: 'alert',
       message: 'Unable to save file',
     });
@@ -251,7 +292,9 @@ describe('useEditorSaveCommand', () => {
     replacePlainTextContent(ALICE_SEED_PROJECT_ID, POM, '<project later />');
     release();
 
-    await waitFor(() => expect(result.current.feedback).toEqual({ kind: 'status', message: 'Saved' }));
+    await waitFor(() =>
+      expect(result.current.feedback).toEqual({ path: POM, kind: 'status', message: 'Saved' }),
+    );
     expect(buffer.isDirty()).toBe(true);
     expect(buffer.snapshot().content).toBe('<project later />');
   });
@@ -288,6 +331,28 @@ describe('useEditorSaveCommand', () => {
     release();
     await waitFor(() => expect(result.current.writePending).toBe(false));
     expect(puts).toBe(1);
-    expect(result.current.feedback).toEqual({ kind: 'status', message: 'Saved' });
+    expect(result.current.feedback).toEqual({ path: POM, kind: 'status', message: 'Saved' });
+  });
+
+  it('clears a Saved status after the brief delay', async () => {
+    await authenticateAsAlice();
+    await seedRootRevision();
+    registerPlain(POM, '<project />');
+    replacePlainTextContent(ALICE_SEED_PROJECT_ID, POM, '<project edited />');
+
+    const { result } = renderHook(() => useEditorSaveCommand(ALICE_SEED_PROJECT_ID), {
+      wrapper: AppProviders,
+    });
+
+    result.current.savePath(POM);
+    await waitFor(() =>
+      expect(result.current.feedback).toEqual({ path: POM, kind: 'status', message: 'Saved' }),
+    );
+    await waitFor(
+      () => {
+        expect(result.current.feedback).toBeNull();
+      },
+      { timeout: SAVE_SUCCESS_STATUS_MS + 500 },
+    );
   });
 });

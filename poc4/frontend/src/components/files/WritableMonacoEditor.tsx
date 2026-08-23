@@ -29,9 +29,6 @@ export function WritableMonacoEditor({
     if (existing?.kind === 'monaco') {
       return;
     }
-    if (existing !== undefined) {
-      workspaceBufferRegistry.remove(projectId, path);
-    }
     const modelUri = toProjectModelUri(projectId, path);
     let model = monaco.editor.getModel(modelUri);
     if (model === null) {

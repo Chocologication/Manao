@@ -1,8 +1,17 @@
-import { useLayoutEffect, type KeyboardEvent } from 'react';
+import { useLayoutEffect, useState, type KeyboardEvent } from 'react';
 import { workspaceBufferRegistry } from '@/app/appRuntime';
 import type { FileMetadata, ProjectRelativePath } from '@/contracts/file';
+import type { WorkspaceBuffer } from '@/features/editor/editorTypes';
 import { formatFileSize } from '@/lib/languageForFile';
 import { ensureWorkspaceBuffer, replacePlainTextContent } from './editorSaveCommand';
+
+function currentPlainTextBuffer(
+  projectId: string,
+  path: ProjectRelativePath,
+): WorkspaceBuffer | null {
+  const existing = workspaceBufferRegistry.get(projectId, path);
+  return existing?.kind === 'plain-text' ? existing : null;
+}
 
 export function PlainTextEditor({
   projectId,
@@ -17,16 +26,18 @@ export function PlainTextEditor({
   content: string;
   onSave: () => void;
 }) {
-  useLayoutEffect(() => {
-    ensureWorkspaceBuffer({
-      projectId,
-      path,
-      kind: 'plain-text',
-      content,
-    });
-  }, [projectId, path, content]);
+  const [buffer, setBuffer] = useState(() => currentPlainTextBuffer(projectId, path));
 
-  const snapshot = workspaceBufferRegistry.get(projectId, path)?.snapshot().content ?? content;
+  useLayoutEffect(() => {
+    setBuffer(
+      ensureWorkspaceBuffer({
+        projectId,
+        path,
+        kind: 'plain-text',
+        content,
+      }),
+    );
+  }, [projectId, path, content]);
 
   function handleKeyDown(event: KeyboardEvent<HTMLTextAreaElement>): void {
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') {
@@ -42,17 +53,20 @@ export function PlainTextEditor({
         <span className="text-muted-foreground">{formatFileSize(metadata.sizeBytes)}</span>
         <span className="text-muted-foreground">Plain text</span>
       </div>
-      <textarea
-        wrap="off"
-        spellCheck={false}
-        defaultValue={snapshot}
-        aria-label={metadata.name}
-        onChange={(event) => {
-          replacePlainTextContent(projectId, path, event.target.value);
-        }}
-        onKeyDown={handleKeyDown}
-        className="min-h-0 w-full flex-1 resize-none bg-background p-3 font-mono text-sm text-foreground outline-none"
-      />
+      {buffer !== null ? (
+        <textarea
+          key={`${projectId}:${path}:plain-text`}
+          wrap="off"
+          spellCheck={false}
+          defaultValue={buffer.snapshot().content}
+          aria-label={metadata.name}
+          onChange={(event) => {
+            replacePlainTextContent(projectId, path, event.target.value);
+          }}
+          onKeyDown={handleKeyDown}
+          className="min-h-0 w-full flex-1 resize-none bg-background p-3 font-mono text-sm text-foreground outline-none"
+        />
+      ) : null}
     </div>
   );
 }
