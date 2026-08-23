@@ -6,7 +6,7 @@ import type { WorkspaceBuffer } from '@/features/editor/editorTypes';
 import type { RegisterWorkspaceBufferInput } from '@/features/editor/WorkspaceBufferRegistry';
 import {
   fileMutationErrorMessage,
-  projectFileWriteScope,
+  projectAuthorityScope,
   useSaveFileMutation,
   type SaveFileVariables,
 } from '@/features/files/fileMutations';
@@ -49,7 +49,7 @@ export function isSaveEnabled({
 }
 
 export function projectFileWritePredicate(projectId: string) {
-  const scopeId = projectFileWriteScope(projectId).id;
+  const scopeId = projectAuthorityScope(projectId).id;
   return (mutation: { options: { scope?: { id?: string } } }) => mutation.options.scope?.id === scopeId;
 }
 

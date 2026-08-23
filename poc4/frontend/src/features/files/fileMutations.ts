@@ -57,8 +57,8 @@ export type DeleteEntryVariables = {
   path: ProjectRelativePath;
 };
 
-export function projectFileWriteScope(projectId: string): { id: `project-file-write:${string}` } {
-  return { id: `project-file-write:${projectId}` };
+export function projectAuthorityScope(projectId: string): { id: `project-authority:${string}` } {
+  return { id: `project-authority:${projectId}` };
 }
 
 function requireWorkspaceRevision(
@@ -267,7 +267,7 @@ function applyDeleteSuccess(
 export function useSaveFileMutation(projectId: string, callbacks?: FileMutationCallbacks) {
   const queryClient = useQueryClient();
   return useMutation({
-    scope: projectFileWriteScope(projectId),
+    scope: projectAuthorityScope(projectId),
     retry: false,
     mutationFn: async (variables: SaveFileVariables) => {
       const expected = await beginProjectFileWrite(queryClient, projectId);
@@ -284,7 +284,7 @@ export function useSaveFileMutation(projectId: string, callbacks?: FileMutationC
 export function useCreateEntryMutation(projectId: string) {
   const queryClient = useQueryClient();
   return useMutation({
-    scope: projectFileWriteScope(projectId),
+    scope: projectAuthorityScope(projectId),
     retry: false,
     mutationFn: async (variables: CreateEntryVariables) => {
       const expected = await beginProjectFileWrite(queryClient, projectId);
@@ -302,7 +302,7 @@ export function useCreateEntryMutation(projectId: string) {
 export function useRenameEntryMutation(projectId: string, callbacks?: FileMutationCallbacks) {
   const queryClient = useQueryClient();
   return useMutation({
-    scope: projectFileWriteScope(projectId),
+    scope: projectAuthorityScope(projectId),
     retry: false,
     mutationFn: async (variables: RenameEntryVariables) => {
       const expected = await beginProjectFileWrite(queryClient, projectId);
@@ -320,7 +320,7 @@ export function useRenameEntryMutation(projectId: string, callbacks?: FileMutati
 export function useDeleteEntryMutation(projectId: string, callbacks?: FileMutationCallbacks) {
   const queryClient = useQueryClient();
   return useMutation({
-    scope: projectFileWriteScope(projectId),
+    scope: projectAuthorityScope(projectId),
     retry: false,
     mutationFn: async (variables: DeleteEntryVariables) => {
       const expected = await beginProjectFileWrite(queryClient, projectId);

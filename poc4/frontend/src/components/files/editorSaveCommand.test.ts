@@ -6,7 +6,7 @@ import { login } from '../../api/authApi';
 import { AppProviders } from '../../app/AppProviders';
 import { authSession, queryClient, workspaceBufferRegistry } from '../../app/appRuntime';
 import { workspaceSessionStore } from '../../features/editor/workspaceSession';
-import { projectFileWriteScope } from '../../features/files/fileMutations';
+import { projectAuthorityScope } from '../../features/files/fileMutations';
 import { fileKeys, useDirectoryTreeQuery } from '../../features/files/fileQueries';
 import { parseProjectDirectoryPath, parseProjectRelativePath } from '../../features/files/pathPolicy';
 import { disposeAllProjectModels, toProjectModelUri } from '../../lib/projectMonacoModels';
@@ -223,12 +223,12 @@ describe('ensureWorkspaceBuffer', () => {
 });
 
 describe('projectFileWritePredicate', () => {
-  it('matches only the project-file-write scope id', () => {
+  it('matches only the project-authority scope id', () => {
     const predicate = projectFileWritePredicate(ALICE_SEED_PROJECT_ID);
-    expect(predicate({ options: { scope: projectFileWriteScope(ALICE_SEED_PROJECT_ID) } })).toBe(
+    expect(predicate({ options: { scope: projectAuthorityScope(ALICE_SEED_PROJECT_ID) } })).toBe(
       true,
     );
-    expect(predicate({ options: { scope: projectFileWriteScope('other-project') } })).toBe(false);
+    expect(predicate({ options: { scope: projectAuthorityScope('other-project') } })).toBe(false);
     expect(predicate({ options: {} })).toBe(false);
   });
 });
