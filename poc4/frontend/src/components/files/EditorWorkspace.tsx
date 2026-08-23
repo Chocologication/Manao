@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import { workspaceBufferRegistry, workspaceResourceRegistry } from '@/app/appRuntime';
 import { InlineAlert } from '@/components/feedback/InlineAlert';
 import { Button } from '@/components/ui/button';
@@ -6,10 +6,15 @@ import { Spinner } from '@/components/ui/spinner';
 import type { ProjectRelativePath } from '@/contracts/file';
 import type { EditorTab } from '@/features/editor/editorTypes';
 import {
-  applySaveAndCloseResult,
+  applySaveAndCloseSettled,
   CLOSE_TAB_MESSAGE,
+  dialogTargetsClosePath,
+  dismissUnsavedDialog,
+  getUnsavedDialogState,
+  patchUnsavedDialog,
   requestCloseTab,
-  type UnsavedDialogState,
+  requestUnsavedDialog,
+  useUnsavedDialogState,
 } from '@/features/editor/unsavedChangesGuard';
 import { useWorkspaceSession } from '@/features/editor/workspaceSession';
 import {
@@ -154,9 +159,7 @@ export function EditorWorkspace({ projectId }: { projectId: string }) {
   const visibleActivePath = aligned ? activePath : null;
   const pendingDisposeRef = useRef<ProjectRelativePath[]>([]);
   const previousProjectIdRef = useRef<string | null>(null);
-  const [closeGuard, setCloseGuard] = useState<UnsavedDialogState>({ open: false });
-  const closeGuardRef = useRef(closeGuard);
-  closeGuardRef.current = closeGuard;
+  const closeGuard = useUnsavedDialogState();
   const save = useEditorSaveCommand(projectId);
   const activeMeta = useFileMetadataQuery(
     projectId,
@@ -204,7 +207,7 @@ export function EditorWorkspace({ projectId }: { projectId: string }) {
         closeTabNow(relative);
         return;
       }
-      setCloseGuard({
+      requestUnsavedDialog({
         open: true,
         mode: 'close-tab',
         action: { type: 'close-tab', path: relative },
@@ -215,47 +218,45 @@ export function EditorWorkspace({ projectId }: { projectId: string }) {
   );
 
   const handleCancelClose = useCallback(() => {
-    setCloseGuard({ open: false });
+    dismissUnsavedDialog();
   }, []);
 
   const handleDiscardClose = useCallback(() => {
-    const current = closeGuardRef.current;
+    const current = getUnsavedDialogState();
     if (!current.open || current.action.type !== 'close-tab') {
       return;
     }
     const path = current.action.path;
     workspaceBufferRegistry.get(projectId, path)?.discard();
     closeTabNow(path);
-    setCloseGuard({ open: false });
+    dismissUnsavedDialog();
   }, [closeTabNow, projectId]);
 
   const handleSaveAndClose = useCallback(async () => {
-    const current = closeGuardRef.current;
+    const current = getUnsavedDialogState();
     if (!current.open || current.action.type !== 'close-tab') {
       return;
     }
     const path = current.action.path;
     const result = await save.savePath(path);
-    if (result.status === 'skipped') {
-      return;
-    }
-    const outcome = applySaveAndCloseResult({
+    const outcome = applySaveAndCloseSettled({
       capturedPath: path,
-      saveSucceeded: result.status === 'saved',
+      dialogTargetsPath: dialogTargetsClosePath(getUnsavedDialogState(), path),
+      saveStatus: result.status,
       bufferStillDirty: workspaceBufferRegistry.get(projectId, path)?.isDirty() === true,
       saveErrorMessage: result.status === 'failed' ? result.message : undefined,
     });
-    if (outcome.kind === 'proceed' && outcome.action?.type === 'close-tab') {
-      closeTabNow(outcome.action.path);
-      setCloseGuard({ open: false });
+    if (outcome.kind === 'dismiss') {
       return;
     }
-    setCloseGuard({
-      open: true,
-      mode: 'close-tab',
-      action: { type: 'close-tab', path },
-      message: outcome.message ?? CLOSE_TAB_MESSAGE,
-    });
+    if (outcome.kind === 'proceed' && outcome.action?.type === 'close-tab') {
+      closeTabNow(outcome.action.path);
+      dismissUnsavedDialog();
+      return;
+    }
+    if (outcome.message !== undefined) {
+      patchUnsavedDialog({ message: outcome.message });
+    }
   }, [closeTabNow, projectId, save]);
 
   const handleReorder = useCallback((fromIndex: number, toIndex: number) => {
@@ -363,7 +364,7 @@ export function EditorWorkspace({ projectId }: { projectId: string }) {
         ) : null}
       </div>
       <UnsavedChangesDialog
-        open={closeGuard.open}
+        open={closeGuard.open && closeGuard.mode === 'close-tab'}
         mode="close-tab"
         message={closeGuard.open ? closeGuard.message : CLOSE_TAB_MESSAGE}
         busy={save.writePending}

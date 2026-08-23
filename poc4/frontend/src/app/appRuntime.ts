@@ -1,5 +1,6 @@
 import { HttpClient, setHttpClient } from '../api/httpClient';
 import { createAuthSession } from '../features/auth/authSession';
+import { resetUnsavedDialog } from '../features/editor/unsavedChangesGuard';
 import { WorkspaceBufferRegistry } from '../features/editor/WorkspaceBufferRegistry';
 import { workspaceSessionStore } from '../features/editor/workspaceSession';
 import { ConnectionRegistry } from '../runtime/ConnectionRegistry';
@@ -28,6 +29,7 @@ function disposeWorkspaceSession(): void {
   connectionRegistry.closeAll();
   workspaceResourceRegistry.disposeAll();
   workspaceSessionStore.getState().reset();
+  resetUnsavedDialog();
   queryClient.clear();
 }
 

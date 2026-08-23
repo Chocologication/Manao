@@ -17,6 +17,7 @@ import {
   queryClient,
   workspaceResourceRegistry,
 } from '../app/appRuntime';
+import { resetUnsavedDialog } from '../features/editor/unsavedChangesGuard';
 import { workspaceSessionStore } from '../features/editor/workspaceSession';
 import { NotFoundPage } from '../components/feedback/NotFoundPage';
 import { LoginPage } from '../features/auth/LoginPage';
@@ -29,6 +30,7 @@ export function resetAppRuntime(): void {
   connectionRegistry.closeAll();
   workspaceResourceRegistry.disposeAll();
   workspaceSessionStore.getState().reset();
+  resetUnsavedDialog();
   queryClient.clear();
   if (authSession.getSnapshot().status === 'authenticated') {
     authSession.clear('logout');

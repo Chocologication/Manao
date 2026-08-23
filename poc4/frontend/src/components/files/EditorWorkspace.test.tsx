@@ -1481,4 +1481,59 @@ describe('EditorWorkspace unsaved tab close', () => {
     expect(monaco.editor.getModel(pomUri)?.getValue()).toBe('<project later-close />');
     expect(authSession.getSnapshot().status).toBe('authenticated');
   });
+
+  it('Cancel during Save-and-close does not close the tab after a later success', async () => {
+    const user = userEvent.setup();
+    const { release } = delayPut('pom.xml');
+    await authenticateAsAlice();
+    renderWorkspace();
+    openFile(POM);
+    await screen.findByTestId('mock-editor');
+    editMonacoModel(ALICE_SEED_PROJECT_ID, POM, '<project cancel-close />');
+    await waitFor(() => expect(screen.getByRole('tab', { name: /pom.xml/ })).toHaveTextContent('*'));
+    const pomUri = toProjectModelUri(ALICE_SEED_PROJECT_ID, POM);
+
+    await user.click(screen.getByRole('button', { name: 'Close pom.xml' }));
+    await user.click(await screen.findByRole('button', { name: SAVE_AND_CLOSE_LABEL }));
+    expect(await screen.findByRole('status', { name: 'Saving' })).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: CANCEL_LABEL }));
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    release();
+
+    await waitFor(() => {
+      expect(workspaceBufferRegistry.get(ALICE_SEED_PROJECT_ID, POM)?.isDirty()).toBe(false);
+    });
+    expect(screen.getByRole('tab', { name: /pom.xml/ })).toBeInTheDocument();
+    expect(workspaceSessionStore.getState().openPaths).toEqual([POM]);
+    expect(workspaceSessionStore.getState().activePath).toBe(POM);
+    expect(monaco.editor.getModel(pomUri)).not.toBeNull();
+    expect(authSession.getSnapshot().status).toBe('authenticated');
+  });
+
+  it('Save and close after a skipped save closes when the captured buffer is already clean', async () => {
+    const user = userEvent.setup();
+    await authenticateAsAlice();
+    renderWorkspace();
+    openFile(POM);
+    await screen.findByTestId('mock-editor');
+    editMonacoModel(ALICE_SEED_PROJECT_ID, POM, '<project then-clean />');
+    await waitFor(() => expect(screen.getByRole('tab', { name: /pom.xml/ })).toHaveTextContent('*'));
+
+    await user.click(screen.getByRole('button', { name: 'Close pom.xml' }));
+    expect(await screen.findByRole('dialog', { name: 'Unsaved changes' })).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+    expect(await screen.findByRole('status', { name: 'Saved' })).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: /pom.xml/ })).not.toHaveTextContent('*');
+    expect(workspaceBufferRegistry.get(ALICE_SEED_PROJECT_ID, POM)?.isDirty()).toBe(false);
+
+    await user.click(screen.getByRole('button', { name: SAVE_AND_CLOSE_LABEL }));
+
+    await waitFor(() => {
+      expect(screen.queryByRole('tab', { name: /pom.xml/ })).not.toBeInTheDocument();
+    });
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(workspaceSessionStore.getState().openPaths).toEqual([]);
+    expect(workspaceBufferRegistry.get(ALICE_SEED_PROJECT_ID, POM)).toBeUndefined();
+    expect(authSession.getSnapshot().status).toBe('authenticated');
+  });
 });

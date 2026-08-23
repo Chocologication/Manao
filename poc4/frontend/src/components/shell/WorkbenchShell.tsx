@@ -1,5 +1,5 @@
 import { ArrowLeft, FileCode, LogOut, Play, SquareTerminal } from 'lucide-react';
-import { useCallback, useState, type MouseEvent } from 'react';
+import { useCallback, type MouseEvent } from 'react';
 import { Link } from 'react-router';
 import { logout } from '@/app/appRuntime';
 import { EditorWorkspace } from '@/components/files/EditorWorkspace';
@@ -8,10 +8,12 @@ import { ReadonlyFileTree } from '@/components/files/ReadonlyFileTree';
 import { Button } from '@/components/ui/button';
 import type { ProjectSummary } from '@/contracts/project';
 import {
+  dismissUnsavedDialog,
   LEAVE_MESSAGE,
   requestLogout,
+  requestUnsavedDialog,
   useDirtyBeforeUnload,
-  type UnsavedDialogState,
+  useUnsavedDialogState,
 } from '@/features/editor/unsavedChangesGuard';
 import { useWorkspaceSession } from '@/features/editor/workspaceSession';
 import { cn } from '@/lib/utils';
@@ -28,7 +30,7 @@ function skipToEditor(event: MouseEvent<HTMLAnchorElement>): void {
 
 export function WorkbenchShell({ project }: { project: ProjectSummary }) {
   const dirtyCount = useWorkspaceSession((state) => state.dirtyPaths.size);
-  const [leaveGuard, setLeaveGuard] = useState<UnsavedDialogState>({ open: false });
+  const leaveGuard = useUnsavedDialogState();
   useDirtyBeforeUnload(dirtyCount);
 
   const handleLogoutClick = useCallback(() => {
@@ -37,7 +39,7 @@ export function WorkbenchShell({ project }: { project: ProjectSummary }) {
       logout();
       return;
     }
-    setLeaveGuard({
+    requestUnsavedDialog({
       open: true,
       mode: 'leave',
       action: { type: 'logout' },
@@ -46,11 +48,11 @@ export function WorkbenchShell({ project }: { project: ProjectSummary }) {
   }, []);
 
   const handleCancelLeave = useCallback(() => {
-    setLeaveGuard({ open: false });
+    dismissUnsavedDialog();
   }, []);
 
   const handleDiscardLeave = useCallback(() => {
-    setLeaveGuard({ open: false });
+    dismissUnsavedDialog();
     logout();
   }, []);
 
@@ -144,7 +146,7 @@ export function WorkbenchShell({ project }: { project: ProjectSummary }) {
         </div>
       </div>
       <UnsavedChangesDialog
-        open={leaveGuard.open}
+        open={leaveGuard.open && leaveGuard.action.type === 'logout'}
         mode="leave"
         message={leaveGuard.open ? leaveGuard.message : LEAVE_MESSAGE}
         onDiscard={handleDiscardLeave}

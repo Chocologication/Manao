@@ -5,12 +5,19 @@ import {
   applyDiscardClose,
   applyDiscardLeave,
   applySaveAndCloseResult,
+  applySaveAndCloseSettled,
   capturedClosePath,
+  CLOSE_TAB_MESSAGE,
+  dismissUnsavedDialog,
+  getUnsavedDialogState,
   handleBeforeUnload,
+  LEAVE_MESSAGE,
   REMAINING_CHANGES_MESSAGE,
   requestCloseTab,
   requestLeaveWorkbench,
   requestLogout,
+  requestUnsavedDialog,
+  resetUnsavedDialog,
   shouldInstallBeforeUnload,
   shouldPromptOnUnauthorized,
   unauthorizedCleanupConsequences,
@@ -283,5 +290,89 @@ describe('unsavedChangesGuard capture isolation', () => {
     });
     expect(saved.action).toEqual({ type: 'close-tab', path: POM });
     expect(saved.consequences.tab).toBe('close-captured');
+  });
+
+  it('does not close the captured tab when Save-and-close settles after Cancel', () => {
+    const decision = applySaveAndCloseSettled({
+      capturedPath: POM,
+      dialogTargetsPath: false,
+      saveStatus: 'saved',
+      bufferStillDirty: false,
+    });
+
+    expect(decision.kind).toBe('dismiss');
+    expect(decision.consequences).toEqual({
+      route: 'unchanged',
+      auth: 'unchanged',
+      tab: 'unchanged',
+      model: 'unchanged',
+      buffer: 'unchanged',
+      dialog: 'close',
+    });
+  });
+
+  it('closes after skipped Save-and-close when the captured buffer is already clean', () => {
+    const decision = applySaveAndCloseSettled({
+      capturedPath: POM,
+      dialogTargetsPath: true,
+      saveStatus: 'skipped',
+      bufferStillDirty: false,
+    });
+
+    expect(decision.kind).toBe('proceed');
+    expect(decision.action).toEqual({ type: 'close-tab', path: POM });
+    expect(decision.consequences.tab).toBe('close-captured');
+    expect(decision.consequences.dialog).toBe('close');
+  });
+
+  it('keeps the dialog after skipped Save-and-close when the captured buffer is still dirty', () => {
+    const decision = applySaveAndCloseSettled({
+      capturedPath: POM,
+      dialogTargetsPath: true,
+      saveStatus: 'skipped',
+      bufferStillDirty: true,
+    });
+
+    expect(decision.kind).toBe('keep-dialog');
+    expect(decision.action).toEqual({ type: 'close-tab', path: POM });
+    expect(decision.consequences.tab).toBe('keep-open');
+    expect(decision.consequences.buffer).toBe('keep-dirty');
+    expect(decision.consequences.dialog).toBe('keep-open');
+  });
+});
+
+describe('unsavedChangesGuard exclusive dialog', () => {
+  beforeEach(() => {
+    resetUnsavedDialog();
+  });
+
+  afterEach(() => {
+    resetUnsavedDialog();
+  });
+
+  it('rejects a second dialog request while one command is already open', () => {
+    expect(
+      requestUnsavedDialog({
+        open: true,
+        mode: 'close-tab',
+        action: { type: 'close-tab', path: POM },
+        message: CLOSE_TAB_MESSAGE,
+      }),
+    ).toBe('opened');
+    expect(
+      requestUnsavedDialog({
+        open: true,
+        mode: 'leave',
+        action: { type: 'leave-workbench' },
+        message: LEAVE_MESSAGE,
+      }),
+    ).toBe('busy');
+    expect(getUnsavedDialogState()).toMatchObject({
+      open: true,
+      mode: 'close-tab',
+      action: { type: 'close-tab', path: POM },
+    });
+    dismissUnsavedDialog();
+    expect(getUnsavedDialogState()).toEqual({ open: false });
   });
 });

@@ -1,4 +1,4 @@
-import { useCallback, useEffect } from 'react';
+import { useCallback, useEffect, useSyncExternalStore } from 'react';
 import { useBlocker, type BlockerFunction } from 'react-router';
 import type { ProjectRelativePath } from '../../contracts/file';
 
@@ -138,6 +138,54 @@ export function applySaveAndCloseResult(options: {
       dialog: 'close',
     },
   };
+}
+
+export function applySaveAndCloseSettled(options: {
+  capturedPath: ProjectRelativePath;
+  dialogTargetsPath: boolean;
+  saveStatus: 'saved' | 'failed' | 'skipped';
+  bufferStillDirty: boolean;
+  saveErrorMessage?: string;
+}): GuardDecision {
+  if (!options.dialogTargetsPath) {
+    return applyCancel();
+  }
+  if (options.saveStatus === 'skipped') {
+    if (!options.bufferStillDirty) {
+      return {
+        kind: 'proceed',
+        action: { type: 'close-tab', path: options.capturedPath },
+        consequences: {
+          route: 'unchanged',
+          auth: 'unchanged',
+          tab: 'close-captured',
+          model: 'dispose-after-switch',
+          buffer: 'remove',
+          dialog: 'close',
+        },
+      };
+    }
+    return {
+      kind: 'keep-dialog',
+      action: { type: 'close-tab', path: options.capturedPath },
+      mode: 'close-tab',
+      message: CLOSE_TAB_MESSAGE,
+      consequences: {
+        route: 'unchanged',
+        auth: 'unchanged',
+        tab: 'keep-open',
+        model: 'keep',
+        buffer: 'keep-dirty',
+        dialog: 'keep-open',
+      },
+    };
+  }
+  return applySaveAndCloseResult({
+    capturedPath: options.capturedPath,
+    saveSucceeded: options.saveStatus === 'saved',
+    bufferStillDirty: options.bufferStillDirty,
+    saveErrorMessage: options.saveErrorMessage,
+  });
 }
 
 export function applyDiscardClose(path: ProjectRelativePath): GuardDecision {
@@ -303,4 +351,67 @@ export function useWorkbenchLeaveBlocker(dirtyCount: number) {
     [dirtyCount],
   );
   return useBlocker(shouldBlock);
+}
+
+type OpenUnsavedDialog = Extract<UnsavedDialogState, { open: true }>;
+
+let unsavedDialogState: UnsavedDialogState = { open: false };
+const unsavedDialogListeners = new Set<() => void>();
+
+function emitUnsavedDialog(): void {
+  for (const listener of [...unsavedDialogListeners]) {
+    listener();
+  }
+}
+
+export function getUnsavedDialogState(): UnsavedDialogState {
+  return unsavedDialogState;
+}
+
+export function subscribeUnsavedDialog(listener: () => void): () => void {
+  unsavedDialogListeners.add(listener);
+  return () => {
+    unsavedDialogListeners.delete(listener);
+  };
+}
+
+export function resetUnsavedDialog(): void {
+  unsavedDialogState = { open: false };
+  emitUnsavedDialog();
+}
+
+export function requestUnsavedDialog(next: OpenUnsavedDialog): 'opened' | 'busy' {
+  if (unsavedDialogState.open) {
+    return 'busy';
+  }
+  unsavedDialogState = next;
+  emitUnsavedDialog();
+  return 'opened';
+}
+
+export function dismissUnsavedDialog(): void {
+  if (!unsavedDialogState.open) {
+    return;
+  }
+  unsavedDialogState = { open: false };
+  emitUnsavedDialog();
+}
+
+export function patchUnsavedDialog(patch: { message: string }): void {
+  if (!unsavedDialogState.open) {
+    return;
+  }
+  unsavedDialogState = { ...unsavedDialogState, message: patch.message };
+  emitUnsavedDialog();
+}
+
+export function dialogTargetsClosePath(
+  state: UnsavedDialogState,
+  path: ProjectRelativePath,
+): boolean {
+  return state.open && state.action.type === 'close-tab' && state.action.path === path;
+}
+
+export function useUnsavedDialogState(): UnsavedDialogState {
+  return useSyncExternalStore(subscribeUnsavedDialog, getUnsavedDialogState, getUnsavedDialogState);
 }

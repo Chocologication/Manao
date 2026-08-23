@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useState } from 'react';
+import { lazy, Suspense, useEffect } from 'react';
 import { Link, useParams } from 'react-router';
 import { ApiRequestError } from '../../api/ApiRequestError';
 import { workspaceBufferRegistry } from '@/app/appRuntime';
@@ -10,7 +10,11 @@ import { Button } from '@/components/ui/button';
 import type { ProjectSummary } from '@/contracts/project';
 import { Spinner } from '@/components/ui/spinner';
 import {
+  dismissUnsavedDialog,
+  getUnsavedDialogState,
   LEAVE_MESSAGE,
+  requestUnsavedDialog,
+  useUnsavedDialogState,
   useWorkbenchLeaveBlocker,
 } from '@/features/editor/unsavedChangesGuard';
 import { useWorkspaceSession } from '@/features/editor/workspaceSession';
@@ -22,23 +26,32 @@ const ReadonlyWorkbenchPage = lazy(() => import('./ReadonlyWorkbenchPage'));
 function WorkbenchRoute({ project }: { project: ProjectSummary }) {
   const dirtyCount = useWorkspaceSession((state) => state.dirtyPaths.size);
   const blocker = useWorkbenchLeaveBlocker(dirtyCount);
-  const [leaveOpen, setLeaveOpen] = useState(false);
+  const dialog = useUnsavedDialogState();
 
   useEffect(() => {
-    if (blocker.state === 'blocked') {
-      setLeaveOpen(true);
+    if (blocker.state !== 'blocked') {
       return;
     }
-    if (blocker.state === 'unblocked') {
-      setLeaveOpen(false);
+    const current = getUnsavedDialogState();
+    if (current.open && current.action.type === 'leave-workbench') {
+      return;
     }
-  }, [blocker.state]);
+    const result = requestUnsavedDialog({
+      open: true,
+      mode: 'leave',
+      action: { type: 'leave-workbench' },
+      message: LEAVE_MESSAGE,
+    });
+    if (result === 'busy') {
+      blocker.reset();
+    }
+  }, [blocker]);
 
   function handleCancel(): void {
     if (blocker.state === 'blocked') {
       blocker.reset();
     }
-    setLeaveOpen(false);
+    dismissUnsavedDialog();
   }
 
   function handleDiscard(): void {
@@ -46,7 +59,7 @@ function WorkbenchRoute({ project }: { project: ProjectSummary }) {
     for (const path of [...session.dirtyPaths]) {
       workspaceBufferRegistry.get(project.id, path)?.discard();
     }
-    setLeaveOpen(false);
+    dismissUnsavedDialog();
     if (blocker.state === 'blocked') {
       blocker.proceed();
     }
@@ -56,7 +69,7 @@ function WorkbenchRoute({ project }: { project: ProjectSummary }) {
     <>
       <ReadonlyWorkbenchPage project={project} />
       <UnsavedChangesDialog
-        open={leaveOpen}
+        open={dialog.open && dialog.action.type === 'leave-workbench'}
         mode="leave"
         message={LEAVE_MESSAGE}
         onDiscard={handleDiscard}

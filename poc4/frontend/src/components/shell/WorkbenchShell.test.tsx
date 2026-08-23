@@ -18,6 +18,7 @@ import type { ProjectSummary } from '../../contracts/project';
 import {
   CANCEL_LABEL,
   DISCARD_AND_LEAVE_LABEL,
+  SAVE_AND_CLOSE_LABEL,
 } from '../../features/editor/unsavedChangesGuard';
 import { workspaceSessionStore } from '../../features/editor/workspaceSession';
 import { fileKeys } from '../../features/files/fileQueries';
@@ -520,5 +521,29 @@ describe('WorkbenchShell unsaved leave and logout', () => {
       expect(removed[0]?.[1]).toBe(installed[0]?.[1]);
     });
     expect(add.mock.calls.filter((call) => call[0] === 'beforeunload')).toHaveLength(1);
+  }, 15_000);
+
+  it('does not stack a leave dialog on top of an open dirty-tab confirm', async () => {
+    const user = userEvent.setup();
+    await authenticateAsAlice();
+    renderApp({ initialEntries: [`/projects/${ALICE_SEED_PROJECT_ID}`] });
+    await dirtyPomFromWorkbench(user);
+
+    await user.click(screen.getByRole('button', { name: 'Close pom.xml' }));
+    expect(await screen.findByRole('dialog', { name: 'Unsaved changes' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: SAVE_AND_CLOSE_LABEL })).toBeInTheDocument();
+
+    await user.click(screen.getByRole('link', { name: 'Back to projects' }));
+
+    expect(screen.getAllByRole('dialog', { name: 'Unsaved changes' })).toHaveLength(1);
+    expect(screen.getByRole('button', { name: SAVE_AND_CLOSE_LABEL })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: DISCARD_AND_LEAVE_LABEL })).not.toBeInTheDocument();
+    expect(screen.getByTestId('location-echo')).toHaveAttribute(
+      'data-pathname',
+      `/projects/${ALICE_SEED_PROJECT_ID}`,
+    );
+    expect(authSession.getSnapshot().status).toBe('authenticated');
+    expect(workspaceSessionStore.getState().openPaths).toEqual([POM]);
+    expect(workspaceBufferRegistry.get(ALICE_SEED_PROJECT_ID, POM)?.isDirty()).toBe(true);
   }, 15_000);
 });
