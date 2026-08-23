@@ -13,6 +13,13 @@ import {
 import type { ProjectListResponse, ProjectSummary } from '../contracts/project';
 import { parseProjectDirectoryPath, parseProjectRelativePath } from '../features/files/pathPolicy';
 import {
+  getActiveRun,
+  getRunScenario,
+  installVirtualRunClock,
+  MOCK_RUN_PERSISTENCE_KEY,
+  startRun,
+} from './runState';
+import {
   getFileRequestCount,
   resetMockState,
   setLargeFileBodiesEnabled,
@@ -1727,5 +1734,63 @@ describe('MSW writable file handlers', () => {
       await saved.json(),
       parseProjectRelativePath('README.md'),
     ).workspaceRevision).toBe('mock-rev-0002');
+  });
+});
+
+describe('MSW run-scenario handlers', () => {
+  async function postRunScenario(token: string, scenario: string): Promise<Response> {
+    return fetch('/api/v1/session/run-scenario', {
+      method: 'POST',
+      headers: {
+        ...bearerHeaders(token),
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ scenario }),
+    });
+  }
+
+  it('requires authentication and returns 204 for Stage 4 scenarios', async () => {
+    const missing = await fetch('/api/v1/session/run-scenario', {
+      method: 'POST',
+      headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ scenario: 'timeout' }),
+    });
+    expect(missing.status).toBe(401);
+
+    const alice = await loginOk(ALICE.username, ALICE.password);
+    await expectApiError(await postRunScenario(alice.accessToken, 'normal'), 400, 'VALIDATION_ERROR');
+    expect(getRunScenario()).toBe('success');
+
+    for (const scenario of [
+      'success',
+      'failure',
+      'timeout',
+      'recovery',
+      'delayed-start',
+      'gap',
+      'disconnect',
+      'large-log',
+      'reload-change',
+    ]) {
+      expect((await postRunScenario(alice.accessToken, scenario)).status).toBe(204);
+      expect(getRunScenario()).toBe(scenario);
+    }
+  });
+
+  it('resetMockState clears run scenario, active run and the mock persistence key', async () => {
+    const alice = await loginOk(ALICE.username, ALICE.password);
+    expect((await postRunScenario(alice.accessToken, 'failure')).status).toBe(204);
+    installVirtualRunClock(Date.parse('2026-08-24T10:00:00.000Z'));
+    const started = startRun(ALICE_SEED_PROJECT_ID, {
+      expectedWorkspaceRevision: SEED_REVISION,
+    });
+    expect(started.ok).toBe(true);
+    expect(getActiveRun(ALICE_SEED_PROJECT_ID)?.state).toBe('STARTING');
+    expect(sessionStorage.getItem(MOCK_RUN_PERSISTENCE_KEY)).not.toBeNull();
+
+    resetMockState();
+    expect(getRunScenario()).toBe('success');
+    expect(getActiveRun(ALICE_SEED_PROJECT_ID)).toBeNull();
+    expect(sessionStorage.getItem(MOCK_RUN_PERSISTENCE_KEY)).toBeNull();
   });
 });

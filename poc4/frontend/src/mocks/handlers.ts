@@ -20,6 +20,7 @@ import {
   toFileMetadataJson,
   type MockMutationError,
 } from './fileFixtures';
+import { isRunScenario, setRunScenario } from './runState';
 import {
   canReadReadyProjectFiles,
   createOwnedProject,
@@ -339,6 +340,19 @@ export const handlers = [
       return jsonError(400, FILE_VALIDATION_ERROR);
     }
     setWriteScenario(body.scenario);
+    return new HttpResponse(null, { status: 204 });
+  }),
+
+  // Mock-only: choose run-scenario behavior for Stage 4 E2E. Forbidden in production modules.
+  http.post('/api/v1/session/run-scenario', async ({ request }) => {
+    if (resolveUserByAccessToken(readBearerToken(request)) === null) {
+      return jsonError(401, REQUEST_UNAUTHENTICATED);
+    }
+    const body = asRecord(await readJsonBody(request));
+    if (body === null || !isRunScenario(body.scenario)) {
+      return jsonError(400, FILE_VALIDATION_ERROR);
+    }
+    setRunScenario(body.scenario);
     return new HttpResponse(null, { status: 204 });
   }),
 
