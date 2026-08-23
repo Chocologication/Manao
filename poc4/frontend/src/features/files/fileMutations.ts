@@ -17,7 +17,7 @@ import type {
 import type { BufferSnapshot } from '../editor/editorTypes';
 import { useWorkspaceSession } from '../editor/workspaceSession';
 import { disposeDescendantProjectModels } from '../../lib/projectMonacoModels';
-import { parseProjectDirectoryPath } from './pathPolicy';
+import { parseProjectDirectoryPath, parseProjectRelativePath } from './pathPolicy';
 import {
   cancelProjectFileReads,
   fileKeys,
@@ -93,24 +93,49 @@ function isSelfOrDescendant(parent: ProjectRelativePath, candidate: string): boo
   return candidate === parent || candidate.startsWith(`${parent}/`);
 }
 
+function remapRelativePath(
+  from: ProjectRelativePath,
+  to: ProjectRelativePath,
+  path: ProjectRelativePath,
+): ProjectRelativePath {
+  if (path === from) {
+    return to;
+  }
+  if (path.startsWith(`${from}/`)) {
+    return parseProjectRelativePath(`${to}${path.slice(from.length)}`);
+  }
+  return path;
+}
+
+function matchesPathQuery(projectId: string, path: ProjectRelativePath, queryKey: readonly unknown[]): boolean {
+  if (queryKey[0] !== 'project-files' || queryKey[1] !== projectId) {
+    return false;
+  }
+  const kind = queryKey[2];
+  if (kind !== 'tree' && kind !== 'meta' && kind !== 'content') {
+    return false;
+  }
+  const stored = queryKey[3];
+  return typeof stored === 'string' && stored.length > 0 && isSelfOrDescendant(path, stored);
+}
+
+function cancelPathQueries(
+  queryClient: QueryClient,
+  projectId: string,
+  path: ProjectRelativePath,
+): void {
+  void queryClient.cancelQueries({
+    predicate: (query) => matchesPathQuery(projectId, path, query.queryKey),
+  });
+}
+
 function removePathQueries(
   queryClient: QueryClient,
   projectId: string,
   path: ProjectRelativePath,
 ): void {
   queryClient.removeQueries({
-    predicate: (query) => {
-      const key = query.queryKey;
-      if (key[0] !== 'project-files' || key[1] !== projectId) {
-        return false;
-      }
-      const kind = key[2];
-      if (kind !== 'tree' && kind !== 'meta' && kind !== 'content') {
-        return false;
-      }
-      const stored = key[3];
-      return typeof stored === 'string' && stored.length > 0 && isSelfOrDescendant(path, stored);
-    },
+    predicate: (query) => matchesPathQuery(projectId, path, query.queryKey),
   });
 }
 
@@ -191,36 +216,52 @@ function applyCreateSuccess(
 function applyRenameSuccess(
   queryClient: QueryClient,
   projectId: string,
-  variables: RenameEntryVariables,
+  _variables: RenameEntryVariables,
   response: RenameEntryResponse,
   callbacks?: FileMutationCallbacks,
 ): void {
-  removePathQueries(queryClient, projectId, variables.path);
+  const from = response.path;
+  const to = response.nextPath;
+  const remappedOpen = useWorkspaceSession
+    .getState()
+    .openPaths.filter((path) => isSelfOrDescendant(from, path))
+    .map((path) => remapRelativePath(from, to, path));
+  cancelPathQueries(queryClient, projectId, from);
+  workspaceBufferRegistry.remove(projectId, from);
+  disposeDescendantProjectModels(projectId, from);
+  useWorkspaceSession.getState().remapPath(from, to);
+  removePathQueries(queryClient, projectId, from);
   if (response.file !== null) {
-    queryClient.setQueryData(fileKeys.meta(projectId, variables.nextPath), response.file);
+    queryClient.setQueryData(fileKeys.meta(projectId, to), response.file);
   }
   writeWorkspaceRevision(queryClient, projectId, response.workspaceRevision);
-  workspaceBufferRegistry.remove(projectId, variables.path);
-  disposeDescendantProjectModels(projectId, variables.path);
-  useWorkspaceSession.getState().remapPath(variables.path, variables.nextPath);
-  callbacks?.onRenameCleanup?.(variables.path, variables.nextPath);
-  scheduleParentTreeRefresh(queryClient, projectId, variables.path);
+  callbacks?.onRenameCleanup?.(from, to);
+  scheduleParentTreeRefresh(queryClient, projectId, from);
+  for (const path of remappedOpen) {
+    void queryClient.invalidateQueries({ queryKey: fileKeys.meta(projectId, path) });
+    void queryClient.invalidateQueries({ queryKey: fileKeys.content(projectId, path) });
+  }
+  if (remappedOpen.length === 0) {
+    void queryClient.invalidateQueries({ queryKey: fileKeys.meta(projectId, to) });
+    void queryClient.invalidateQueries({ queryKey: fileKeys.content(projectId, to) });
+  }
 }
 
 function applyDeleteSuccess(
   queryClient: QueryClient,
   projectId: string,
-  variables: DeleteEntryVariables,
+  _variables: DeleteEntryVariables,
   response: DeleteEntryResponse,
   callbacks?: FileMutationCallbacks,
 ): void {
-  removePathQueries(queryClient, projectId, variables.path);
+  const path = response.path;
+  useWorkspaceSession.getState().removePathAndDescendants(path);
+  workspaceBufferRegistry.remove(projectId, path);
+  disposeDescendantProjectModels(projectId, path);
+  removePathQueries(queryClient, projectId, path);
   writeWorkspaceRevision(queryClient, projectId, response.workspaceRevision);
-  workspaceBufferRegistry.remove(projectId, variables.path);
-  disposeDescendantProjectModels(projectId, variables.path);
-  useWorkspaceSession.getState().removePathAndDescendants(variables.path);
-  callbacks?.onDeleteCleanup?.(variables.path);
-  scheduleParentTreeRefresh(queryClient, projectId, variables.path);
+  callbacks?.onDeleteCleanup?.(path);
+  scheduleParentTreeRefresh(queryClient, projectId, path);
 }
 
 export function useSaveFileMutation(projectId: string, callbacks?: FileMutationCallbacks) {

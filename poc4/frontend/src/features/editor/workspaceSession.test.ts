@@ -1,6 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { parseProjectRelativePath } from '../files/pathPolicy';
-import { useWorkspaceSession, workspaceSessionStore } from './workspaceSession';
+import {
+  hasDirtySelfOrDescendant,
+  useWorkspaceSession,
+  workspaceSessionStore,
+} from './workspaceSession';
 
 const pom = parseProjectRelativePath('pom.xml');
 const readme = parseProjectRelativePath('README.md');
@@ -315,5 +319,16 @@ describe('workspaceSession dirty and path lifecycle', () => {
     expect([...useWorkspaceSession.getState().expandedPaths].sort()).toEqual(
       [src, srcAb].sort(),
     );
+  });
+
+  it('hasDirtySelfOrDescendant matches the target and descendants, not prefix siblings', () => {
+    const dirty = new Set([srcAFoo, srcAb]);
+    expect(hasDirtySelfOrDescendant(dirty, srcAFoo)).toBe(true);
+    expect(hasDirtySelfOrDescendant(dirty, srcA)).toBe(true);
+    expect(hasDirtySelfOrDescendant(dirty, srcAb)).toBe(true);
+    expect(hasDirtySelfOrDescendant(dirty, src)).toBe(true);
+    expect(hasDirtySelfOrDescendant(dirty, pom)).toBe(false);
+    expect(hasDirtySelfOrDescendant(new Set([srcAb]), srcA)).toBe(false);
+    expect(hasDirtySelfOrDescendant(new Set([srcA]), srcAb)).toBe(false);
   });
 });

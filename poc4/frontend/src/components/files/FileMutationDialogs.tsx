@@ -1,16 +1,22 @@
 import { useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import type { EntryKind } from '@/contracts/file';
 import { useUnsavedDialogState } from '@/features/editor/unsavedChangesGuard';
 import { parseEntryBasename } from '@/features/files/entryNamePolicy';
+import { cn } from '@/lib/utils';
+import { getFileIcon, getFileIconColor } from './fileIcons';
 
-export type FileMutationDialogKind = 'create-file' | 'create-folder';
+export type FileMutationDialogKind = 'create-file' | 'create-folder' | 'rename' | 'delete';
 
 export type FileMutationDialogsProps = {
   open: boolean;
   kind: FileMutationDialogKind | null;
   pending?: boolean;
   errorMessage?: string | null;
+  currentName?: string;
+  targetPath?: string;
+  targetKind?: EntryKind;
   onSubmit: (basename: string) => void;
   onCancel: () => void;
 };
@@ -40,7 +46,21 @@ function focusableElements(root: HTMLElement): HTMLElement[] {
 }
 
 function dialogTitle(kind: FileMutationDialogKind): string {
-  return kind === 'create-folder' ? 'New folder' : 'New file';
+  if (kind === 'create-folder') {
+    return 'New folder';
+  }
+  if (kind === 'rename') {
+    return 'Rename';
+  }
+  if (kind === 'delete') {
+    return 'Delete';
+  }
+  return 'New file';
+}
+
+function entryBasename(path: string): string {
+  const slash = path.lastIndexOf('/');
+  return slash === -1 ? path : path.slice(slash + 1);
 }
 
 export function FileMutationDialogs({
@@ -48,16 +68,20 @@ export function FileMutationDialogs({
   kind,
   pending = false,
   errorMessage = null,
+  currentName = '',
+  targetPath = '',
+  targetKind = 'file',
   onSubmit,
   onCancel,
 }: FileMutationDialogsProps) {
   const dialogRef = useRef<HTMLDialogElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const cancelRef = useRef<HTMLButtonElement>(null);
   const onCancelRef = useRef(onCancel);
   onCancelRef.current = onCancel;
   const unsavedOpen = useUnsavedDialogState().open;
   const visible = open && kind !== null && !unsavedOpen;
-  const [name, setName] = useState('');
+  const [name, setName] = useState(kind === 'rename' ? currentName : '');
   const [localError, setLocalError] = useState<string | null>(null);
   const alertMessage = localError ?? errorMessage;
 
@@ -65,9 +89,9 @@ export function FileMutationDialogs({
     if (!visible) {
       return;
     }
-    setName('');
+    setName(kind === 'rename' ? currentName : '');
     setLocalError(null);
-  }, [visible, kind]);
+  }, [visible, kind, currentName]);
 
   useEffect(() => {
     if (!visible) {
@@ -80,7 +104,15 @@ export function FileMutationDialogs({
     const root: HTMLElement = dialog;
     const trigger = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     showNativeModal(dialog);
-    inputRef.current?.focus();
+    if (kind === 'delete') {
+      cancelRef.current?.focus();
+    } else {
+      const input = inputRef.current;
+      input?.focus();
+      if (kind === 'rename' && input !== null) {
+        input.setSelectionRange(0, input.value.length);
+      }
+    }
 
     function onKeyDown(event: KeyboardEvent): void {
       if (event.key === 'Escape') {
@@ -121,73 +153,124 @@ export function FileMutationDialogs({
       closeNativeModal(dialog);
       trigger?.focus();
     };
-  }, [visible]);
+  }, [visible, kind]);
 
   if (!visible || kind === null) {
     return null;
   }
 
   const title = dialogTitle(kind);
+  const describedBy = [
+    kind === 'delete' ? 'file-mutation-delete-path' : undefined,
+    kind === 'delete' ? 'file-mutation-delete-warning' : undefined,
+    alertMessage !== null ? 'file-mutation-error' : undefined,
+  ]
+    .filter((id): id is string => id !== undefined)
+    .join(' ');
+  const Icon = getFileIcon(entryBasename(targetPath), targetKind === 'directory');
+  const iconColor = getFileIconColor(entryBasename(targetPath), targetKind === 'directory');
 
   return (
     <dialog
       ref={dialogRef}
       aria-labelledby="file-mutation-title"
-      aria-describedby={alertMessage !== null ? 'file-mutation-error' : undefined}
+      aria-describedby={describedBy === '' ? undefined : describedBy}
       aria-modal="true"
+      data-entry-kind={kind === 'delete' ? targetKind : undefined}
       className="fixed top-1/2 left-1/2 z-50 w-[min(28rem,calc(100%-2rem))] -translate-x-1/2 -translate-y-1/2 rounded-lg border bg-background p-4 text-foreground shadow-lg [&::backdrop]:bg-black/40"
     >
       <h2 id="file-mutation-title" className="text-sm font-medium">
         {title}
       </h2>
-      <form
-        className="mt-3"
-        onSubmit={(event) => {
-          event.preventDefault();
-          if (pending) {
-            return;
-          }
-          try {
-            const basename = parseEntryBasename(name);
-            setLocalError(null);
-            onSubmit(basename);
-          } catch (error) {
-            setLocalError(error instanceof Error ? error.message : 'Entry name required');
-          }
-        }}
-      >
-        <label htmlFor="file-mutation-name" className="text-sm">
-          Name
-        </label>
-        <Input
-          ref={inputRef}
-          id="file-mutation-name"
-          type="text"
-          value={name}
-          autoComplete="off"
-          spellCheck={false}
-          disabled={pending}
-          aria-invalid={alertMessage !== null}
-          className="mt-1"
-          onChange={(event) => {
-            setName(event.target.value);
-            setLocalError(null);
-          }}
-        />
-        {alertMessage !== null ? (
-          <p id="file-mutation-error" role="alert" className="mt-2 text-sm text-destructive">
-            {alertMessage}
+      {kind === 'delete' ? (
+        <div className="mt-3">
+          <div className="flex items-start gap-2">
+            <Icon className={cn('mt-0.5 h-4 w-4 shrink-0', iconColor)} aria-hidden />
+            <p id="file-mutation-delete-path" className="min-w-0 flex-1 break-all font-mono text-sm">
+              {targetPath}
+            </p>
+          </div>
+          <p id="file-mutation-delete-warning" className="mt-2 text-sm text-muted-foreground">
+            This cannot be undone.
+            {targetKind === 'directory'
+              ? ' This folder may contain nested files and folders.'
+              : null}
           </p>
-        ) : null}
-        <div className="mt-4 flex flex-wrap justify-end gap-2">
-          <Button type="submit" disabled={pending}>
-            Create
-          </Button>
-          <Button type="button" variant="ghost" onClick={onCancel}>
-            Cancel
-          </Button>
+          {alertMessage !== null ? (
+            <p id="file-mutation-error" role="alert" className="mt-2 text-sm text-destructive">
+              {alertMessage}
+            </p>
+          ) : null}
+          <div className="mt-4 flex flex-wrap justify-end gap-2">
+            <Button
+              type="button"
+              variant="destructive"
+              disabled={pending}
+              className="h-8 min-w-20"
+              onClick={() => {
+                if (pending) {
+                  return;
+                }
+                onSubmit(entryBasename(targetPath));
+              }}
+            >
+              Delete
+            </Button>
+            <Button ref={cancelRef} type="button" variant="ghost" onClick={onCancel}>
+              Cancel
+            </Button>
+          </div>
         </div>
-      </form>
+      ) : (
+        <form
+          className="mt-3"
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (pending) {
+              return;
+            }
+            try {
+              const basename = parseEntryBasename(name);
+              setLocalError(null);
+              onSubmit(basename);
+            } catch (error) {
+              setLocalError(error instanceof Error ? error.message : 'Entry name required');
+            }
+          }}
+        >
+          <label htmlFor="file-mutation-name" className="text-sm">
+            Name
+          </label>
+          <Input
+            ref={inputRef}
+            id="file-mutation-name"
+            type="text"
+            value={name}
+            autoComplete="off"
+            spellCheck={false}
+            disabled={pending}
+            aria-invalid={alertMessage !== null}
+            className="mt-1"
+            onChange={(event) => {
+              setName(event.target.value);
+              setLocalError(null);
+            }}
+          />
+          {alertMessage !== null ? (
+            <p id="file-mutation-error" role="alert" className="mt-2 text-sm text-destructive">
+              {alertMessage}
+            </p>
+          ) : null}
+          <div className="mt-4 flex flex-wrap justify-end gap-2">
+            <Button type="submit" disabled={pending}>
+              {kind === 'rename' ? 'Rename' : 'Create'}
+            </Button>
+            <Button ref={cancelRef} type="button" variant="ghost" onClick={onCancel}>
+              Cancel
+            </Button>
+          </div>
+        </form>
+      )}
     </dialog>
   );
 }

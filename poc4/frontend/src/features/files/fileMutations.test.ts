@@ -647,3 +647,266 @@ describe('mutation errors', () => {
     expect(queryClient.getQueryData(fileKeys.revision(ALICE_SEED_PROJECT_ID))).toBeUndefined();
   });
 });
+
+describe('rename/delete state matrix', () => {
+  const SRC = parseProjectRelativePath('src');
+  const SOURCE = parseProjectRelativePath('source');
+  const APP = parseProjectRelativePath('src/main/java/demo/App.java');
+  const APP_NEXT = parseProjectRelativePath('source/main/java/demo/App.java');
+  const SRC_NOTES = parseProjectRelativePath('src-notes.md');
+  const SRC_A = parseProjectRelativePath('src/a');
+  const SRC_AB = parseProjectRelativePath('src/ab');
+  const SRC_A_FOO = parseProjectRelativePath('src/a/foo.ts');
+
+  it('renames a clean closed file using the server next path and reloads it', async () => {
+    await authenticateAsAlice();
+    await seedRootRevision();
+    const { result } = renderHook(() => useRenameEntryMutation(ALICE_SEED_PROJECT_ID), {
+      wrapper: AppProviders,
+    });
+    await result.current.mutateAsync({ path: README, nextPath: README_NEXT });
+
+    expect(useWorkspaceSession.getState().openPaths).toEqual([]);
+    expect(queryClient.getQueryData(fileKeys.meta(ALICE_SEED_PROJECT_ID, README))).toBeUndefined();
+    expect(queryClient.getQueryData(fileKeys.content(ALICE_SEED_PROJECT_ID, README))).toBeUndefined();
+    expect(queryClient.getQueryData(fileKeys.meta(ALICE_SEED_PROJECT_ID, README_NEXT))).toMatchObject({
+      path: README_NEXT,
+    });
+    expect(queryClient.getQueryData(fileKeys.revision(ALICE_SEED_PROJECT_ID))).toBe('mock-rev-0002');
+
+    const content = renderHook(
+      () => useFileContentQuery(ALICE_SEED_PROJECT_ID, README_NEXT, 'MONACO_TEXT'),
+      { wrapper: AppProviders },
+    );
+    await waitFor(() => expect(content.result.current.isSuccess).toBe(true));
+    expect(content.result.current.data?.path).toBe(README_NEXT);
+  });
+
+  it('remaps a clean open file without moving a live Monaco URI', async () => {
+    await authenticateAsAlice();
+    await seedRootRevision();
+    useWorkspaceSession.getState().openFile(README);
+    const model = monaco.editor.createModel(
+      '# Readme\n',
+      'markdown',
+      toProjectModelUri(ALICE_SEED_PROJECT_ID, README),
+    );
+    workspaceBufferRegistry.register({
+      projectId: ALICE_SEED_PROJECT_ID,
+      path: README,
+      kind: 'monaco',
+      model,
+    });
+
+    const { result } = renderHook(() => useRenameEntryMutation(ALICE_SEED_PROJECT_ID), {
+      wrapper: AppProviders,
+    });
+    await result.current.mutateAsync({ path: README, nextPath: README_NEXT });
+
+    expect(useWorkspaceSession.getState().openPaths).toEqual([README_NEXT]);
+    expect(useWorkspaceSession.getState().activePath).toBe(README_NEXT);
+    expect(monaco.editor.getModel(toProjectModelUri(ALICE_SEED_PROJECT_ID, README))).toBeNull();
+    expect(monaco.editor.getModel(toProjectModelUri(ALICE_SEED_PROJECT_ID, README_NEXT))).toBeNull();
+    expect(workspaceBufferRegistry.get(ALICE_SEED_PROJECT_ID, README)).toBeUndefined();
+    expect(workspaceBufferRegistry.get(ALICE_SEED_PROJECT_ID, README_NEXT)).toBeUndefined();
+  });
+
+  it('remaps directory descendants and leaves a prefix sibling untouched', async () => {
+    await authenticateAsAlice();
+    await seedRootRevision();
+    const create = renderHook(() => useCreateEntryMutation(ALICE_SEED_PROJECT_ID), {
+      wrapper: AppProviders,
+    });
+    await create.result.current.mutateAsync({ kind: 'file', path: SRC_NOTES });
+
+    const session = useWorkspaceSession.getState();
+    session.openFile(APP);
+    session.openFile(SRC_NOTES);
+    session.toggleDirectory(SRC);
+    session.selectPath(APP);
+    session.setDirty(SRC_NOTES, true);
+
+    const { result } = renderHook(() => useRenameEntryMutation(ALICE_SEED_PROJECT_ID), {
+      wrapper: AppProviders,
+    });
+    await result.current.mutateAsync({ path: SRC, nextPath: SOURCE });
+
+    expect(useWorkspaceSession.getState().openPaths).toEqual([APP_NEXT, SRC_NOTES]);
+    expect(useWorkspaceSession.getState().selectedPath).toBe(APP_NEXT);
+    expect(useWorkspaceSession.getState().expandedPaths.has(SOURCE)).toBe(true);
+    expect(useWorkspaceSession.getState().expandedPaths.has(SRC)).toBe(false);
+    expect([...useWorkspaceSession.getState().dirtyPaths]).toEqual([SRC_NOTES]);
+    expect(queryClient.getQueryData(fileKeys.content(ALICE_SEED_PROJECT_ID, APP))).toBeUndefined();
+  });
+
+  it('does not treat src/ab as a descendant of src/a on rename or delete', async () => {
+    await authenticateAsAlice();
+    await seedRootRevision();
+    const create = renderHook(() => useCreateEntryMutation(ALICE_SEED_PROJECT_ID), {
+      wrapper: AppProviders,
+    });
+    await create.result.current.mutateAsync({ kind: 'directory', path: SRC_A });
+    await create.result.current.mutateAsync({ kind: 'directory', path: SRC_AB });
+
+    const session = useWorkspaceSession.getState();
+    session.openFile(SRC_A_FOO);
+    session.openFile(SRC_AB);
+    session.toggleDirectory(SRC_A);
+    session.toggleDirectory(SRC_AB);
+    session.selectPath(SRC_A_FOO);
+    session.setDirty(SRC_A_FOO, true);
+    session.setDirty(SRC_AB, true);
+    registerPlain(SRC_A_FOO, 'export {};');
+    registerPlain(SRC_AB, 'ab');
+
+    const rename = renderHook(() => useRenameEntryMutation(ALICE_SEED_PROJECT_ID), {
+      wrapper: AppProviders,
+    });
+    await rename.result.current.mutateAsync({
+      path: SRC_A,
+      nextPath: parseProjectRelativePath('src/b'),
+    });
+
+    expect(useWorkspaceSession.getState().openPaths).toEqual([
+      parseProjectRelativePath('src/b/foo.ts'),
+      SRC_AB,
+    ]);
+    expect(useWorkspaceSession.getState().expandedPaths.has(SRC_AB)).toBe(true);
+    expect([...useWorkspaceSession.getState().dirtyPaths].sort()).toEqual(
+      [parseProjectRelativePath('src/b/foo.ts'), SRC_AB].sort(),
+    );
+    expect(workspaceBufferRegistry.get(ALICE_SEED_PROJECT_ID, SRC_A_FOO)).toBeUndefined();
+    expect(workspaceBufferRegistry.get(ALICE_SEED_PROJECT_ID, SRC_AB)?.snapshot().content).toBe('ab');
+
+    const remove = renderHook(() => useDeleteEntryMutation(ALICE_SEED_PROJECT_ID), {
+      wrapper: AppProviders,
+    });
+    await remove.result.current.mutateAsync({ path: parseProjectRelativePath('src/b') });
+
+    expect(useWorkspaceSession.getState().openPaths).toEqual([SRC_AB]);
+    expect(useWorkspaceSession.getState().dirtyPaths.has(SRC_AB)).toBe(true);
+    expect(workspaceBufferRegistry.get(ALICE_SEED_PROJECT_ID, SRC_AB)?.snapshot().content).toBe('ab');
+  });
+
+  it('leaves buffers, session and revision unchanged when delete is rejected as not empty', async () => {
+    await authenticateAsAlice();
+    await seedRootRevision();
+    useWorkspaceSession.getState().openFile(APP);
+    useWorkspaceSession.getState().toggleDirectory(SRC);
+    registerPlain(APP, 'class App {}');
+    const treeBefore = rootTree();
+
+    const { result } = renderHook(() => useDeleteEntryMutation(ALICE_SEED_PROJECT_ID), {
+      wrapper: AppProviders,
+    });
+    const rejected = await result.current.mutateAsync({ path: SRC }).then(
+      () => null,
+      (error: unknown) => error,
+    );
+    expect(rejected).toBeInstanceOf(ApiRequestError);
+    expect(fileMutationErrorMessage(rejected)).toBe('Directory is not empty');
+    expect(useWorkspaceSession.getState().openPaths).toEqual([APP]);
+    expect(workspaceBufferRegistry.get(ALICE_SEED_PROJECT_ID, APP)).toBeDefined();
+    expect(queryClient.getQueryData(fileKeys.revision(ALICE_SEED_PROJECT_ID))).toBe('mock-rev-0001');
+    expect(rootTree()).toEqual(treeBefore);
+  });
+
+  it('leaves session and revision unchanged on locked rename and conflict delete', async () => {
+    await authenticateAsAlice();
+    await seedRootRevision();
+    useWorkspaceSession.getState().openFile(README);
+    registerPlain(README, '# Readme\n');
+
+    setWriteScenario('locked');
+    const rename = renderHook(() => useRenameEntryMutation(ALICE_SEED_PROJECT_ID), {
+      wrapper: AppProviders,
+    });
+    const locked = await rename.result.current.mutateAsync({ path: README, nextPath: README_NEXT }).then(
+      () => null,
+      (error: unknown) => error,
+    );
+    expect(locked).toBeInstanceOf(ApiRequestError);
+    expect(fileMutationErrorMessage(locked)).toBe('Project is locked');
+    expect(useWorkspaceSession.getState().openPaths).toEqual([README]);
+    expect(workspaceBufferRegistry.get(ALICE_SEED_PROJECT_ID, README)).toBeDefined();
+    expect(queryClient.getQueryData(fileKeys.revision(ALICE_SEED_PROJECT_ID))).toBe('mock-rev-0001');
+
+    setWriteScenario('conflict');
+    const remove = renderHook(() => useDeleteEntryMutation(ALICE_SEED_PROJECT_ID), {
+      wrapper: AppProviders,
+    });
+    const conflicted = await remove.result.current.mutateAsync({ path: README }).then(
+      () => null,
+      (error: unknown) => error,
+    );
+    expect(conflicted).toBeInstanceOf(ApiRequestError);
+    expect(fileMutationErrorMessage(conflicted)).toBe('Workspace revision conflict');
+    expect(useWorkspaceSession.getState().openPaths).toEqual([README]);
+    expect(workspaceBufferRegistry.get(ALICE_SEED_PROJECT_ID, README)).toBeDefined();
+    expect(queryClient.getQueryData(fileKeys.revision(ALICE_SEED_PROJECT_ID))).toBe('mock-rev-0001');
+  });
+
+  it('does not remove UI, buffers or queries while a delete request is still in flight', async () => {
+    await authenticateAsAlice();
+    await seedRootRevision();
+    useWorkspaceSession.getState().openFile(README);
+    registerPlain(README, '# Readme\n');
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    server.use(
+      http.delete('/api/v1/projects/:projectId/entries', async () => {
+        await held;
+        return undefined;
+      }),
+    );
+
+    const { result } = renderHook(() => useDeleteEntryMutation(ALICE_SEED_PROJECT_ID), {
+      wrapper: AppProviders,
+    });
+    const pending = result.current.mutateAsync({ path: README });
+    await waitFor(() => expect(result.current.isPending).toBe(true));
+    expect(useWorkspaceSession.getState().openPaths).toEqual([README]);
+    expect(workspaceBufferRegistry.get(ALICE_SEED_PROJECT_ID, README)).toBeDefined();
+    expect(queryClient.getQueryData(fileKeys.revision(ALICE_SEED_PROJECT_ID))).toBe('mock-rev-0001');
+
+    release();
+    await pending;
+    expect(useWorkspaceSession.getState().openPaths).toEqual([]);
+    expect(workspaceBufferRegistry.get(ALICE_SEED_PROJECT_ID, README)).toBeUndefined();
+  });
+
+  it('cleans captured descendants when a mock recursive delete succeeds (mock-contract only)', async () => {
+    // Frontend contract only: a 200 DELETE for a non-empty directory must drop
+    // descendant session paths, buffers and queries. This is not proof of real
+    // backend recursive-delete safety; the default mock still returns 409.
+    await authenticateAsAlice();
+    await seedRootRevision();
+    useWorkspaceSession.getState().openFile(APP);
+    useWorkspaceSession.getState().openFile(POM);
+    useWorkspaceSession.getState().toggleDirectory(SRC);
+    registerPlain(APP, 'class App {}');
+    registerPlain(POM, '<project />');
+    server.use(
+      http.delete('/api/v1/projects/:projectId/entries', () => {
+        return HttpResponse.json({
+          path: 'src',
+          workspaceRevision: 'mock-rev-0002',
+        });
+      }),
+    );
+
+    const { result } = renderHook(() => useDeleteEntryMutation(ALICE_SEED_PROJECT_ID), {
+      wrapper: AppProviders,
+    });
+    await result.current.mutateAsync({ path: SRC });
+
+    expect(useWorkspaceSession.getState().openPaths).toEqual([POM]);
+    expect(useWorkspaceSession.getState().expandedPaths.has(SRC)).toBe(false);
+    expect(workspaceBufferRegistry.get(ALICE_SEED_PROJECT_ID, APP)).toBeUndefined();
+    expect(workspaceBufferRegistry.get(ALICE_SEED_PROJECT_ID, POM)).toBeDefined();
+    expect(queryClient.getQueryData(fileKeys.content(ALICE_SEED_PROJECT_ID, APP))).toBeUndefined();
+    expect(queryClient.getQueryData(fileKeys.revision(ALICE_SEED_PROJECT_ID))).toBe('mock-rev-0002');
+  });
+});

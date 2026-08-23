@@ -1,5 +1,5 @@
-import { useQueryClient, type QueryClient } from '@tanstack/react-query';
-import { FilePlus, FolderPlus, RefreshCw, SquareMinus } from 'lucide-react';
+import { useIsMutating, useQueryClient, type QueryClient } from '@tanstack/react-query';
+import { FilePlus, FolderPlus, Pencil, RefreshCw, SquareMinus, Trash2 } from 'lucide-react';
 import { useCallback, useEffect, useState, type KeyboardEvent } from 'react';
 import { InlineAlert } from '@/components/feedback/InlineAlert';
 import { Button } from '@/components/ui/button';
@@ -11,11 +11,16 @@ import type {
   ProjectRelativePath,
 } from '@/contracts/file';
 import { useUnsavedDialogState } from '@/features/editor/unsavedChangesGuard';
-import { useWorkspaceSession } from '@/features/editor/workspaceSession';
+import {
+  hasDirtySelfOrDescendant,
+  useWorkspaceSession,
+} from '@/features/editor/workspaceSession';
 import { joinProjectPath } from '@/features/files/entryNamePolicy';
 import {
   fileMutationErrorMessage,
   useCreateEntryMutation,
+  useDeleteEntryMutation,
+  useRenameEntryMutation,
 } from '@/features/files/fileMutations';
 import {
   fileKeys,
@@ -25,8 +30,19 @@ import {
   useDirectoryTreeQuery,
 } from '@/features/files/fileQueries';
 import { parseProjectDirectoryPath, parseProjectRelativePath } from '@/features/files/pathPolicy';
+import { projectFileWritePredicate } from './editorSaveCommand';
 import { FileMutationDialogs, type FileMutationDialogKind } from './FileMutationDialogs';
 import { FileTreeNode } from './FileTreeNode';
+
+const DIRTY_RENAME_REASON = 'Save or discard unsaved changes before renaming';
+const DIRTY_DELETE_REASON = 'Save or discard unsaved changes before deleting';
+
+type MutationDialogState = {
+  kind: FileMutationDialogKind;
+  path: ProjectRelativePath | null;
+  name: string;
+  entryKind: EntryKind | null;
+};
 
 function parentDirectory(path: ProjectRelativePath): ProjectDirectoryPath {
   const slash = path.lastIndexOf('/');
@@ -100,6 +116,16 @@ function resolveCreateParent(
     return parseProjectDirectoryPath(selectedPath);
   }
   return parentDirectory(selectedPath);
+}
+
+function entryBasename(path: ProjectRelativePath): string {
+  const slash = path.lastIndexOf('/');
+  return slash === -1 ? path : path.slice(slash + 1);
+}
+
+function applyRenameSuccessUi(path: ProjectRelativePath): void {
+  expandPathChain(path);
+  useWorkspaceSession.getState().selectPath(path);
 }
 
 function applyCreateSuccessUi(kind: EntryKind, path: ProjectRelativePath): void {
@@ -193,10 +219,13 @@ export function FileTree({ projectId }: { projectId: string }) {
   const rootQuery = useDirectoryTreeQuery(projectId, parseProjectDirectoryPath(''));
   const selectedPath = useWorkspaceSession((state) => state.selectedPath);
   const expandedPaths = useWorkspaceSession((state) => state.expandedPaths);
+  const dirtyPaths = useWorkspaceSession((state) => state.dirtyPaths);
   const unsavedOpen = useUnsavedDialogState().open;
   const createMutation = useCreateEntryMutation(projectId);
+  const renameMutation = useRenameEntryMutation(projectId);
+  const deleteMutation = useDeleteEntryMutation(projectId);
   const [focusedPath, setFocusedPath] = useState<ProjectRelativePath | null>(null);
-  const [createKind, setCreateKind] = useState<FileMutationDialogKind | null>(null);
+  const [dialog, setDialog] = useState<MutationDialogState | null>(null);
   const entries = rootQuery.data ? sortFileTreeEntries(rootQuery.data.entries) : [];
   const tabbablePath = resolveTabbablePath(
     focusedPath,
@@ -204,7 +233,34 @@ export function FileTree({ projectId }: { projectId: string }) {
     entries[0]?.path ?? null,
     expandedPaths,
   );
-  const createPending = createMutation.isPending;
+  const writePending =
+    useIsMutating({
+      predicate: projectFileWritePredicate(projectId),
+    }) > 0;
+  const dirtyBlock =
+    selectedPath !== null && hasDirtySelfOrDescendant(dirtyPaths, selectedPath);
+  const selectedKind = lookupSelectedKind(queryClient, projectId, selectedPath, expandedPaths);
+  const renameLabel = dirtyBlock ? DIRTY_RENAME_REASON : 'Rename';
+  const deleteLabel = dirtyBlock ? DIRTY_DELETE_REASON : 'Delete';
+  const renameDeleteDisabled =
+    selectedPath === null || dirtyBlock || writePending || unsavedOpen;
+  const dialogPending =
+    dialog?.kind === 'rename'
+      ? renameMutation.isPending
+      : dialog?.kind === 'delete'
+        ? deleteMutation.isPending
+        : createMutation.isPending;
+  const dialogError =
+    dialog === null
+      ? null
+      : dialog.kind === 'rename' && renameMutation.isError
+        ? fileMutationErrorMessage(renameMutation.error)
+        : dialog.kind === 'delete' && deleteMutation.isError
+          ? fileMutationErrorMessage(deleteMutation.error)
+          : (dialog.kind === 'create-file' || dialog.kind === 'create-folder') &&
+              createMutation.isError
+            ? fileMutationErrorMessage(createMutation.error)
+            : null;
 
   useEffect(() => {
     if (selectedPath === null) {
@@ -225,27 +281,116 @@ export function FileTree({ projectId }: { projectId: string }) {
     return () => cancelAnimationFrame(frame);
   }, [selectedPath]);
 
-  const openCreateDialog = useCallback(
-    (kind: FileMutationDialogKind) => {
-      if (createMutation.isPending || unsavedOpen) {
-        return;
-      }
-      createMutation.reset();
-      setCreateKind(kind);
-    },
-    [createMutation, unsavedOpen],
-  );
-
-  const closeCreateDialog = useCallback(() => {
-    setCreateKind(null);
+  const resetIdleMutations = useCallback(() => {
     if (!createMutation.isPending) {
       createMutation.reset();
     }
-  }, [createMutation]);
+    if (!renameMutation.isPending) {
+      renameMutation.reset();
+    }
+    if (!deleteMutation.isPending) {
+      deleteMutation.reset();
+    }
+  }, [createMutation, deleteMutation, renameMutation]);
 
-  const submitCreate = useCallback(
+  const openCreateDialog = useCallback(
+    (kind: Extract<FileMutationDialogKind, 'create-file' | 'create-folder'>) => {
+      if (writePending || unsavedOpen) {
+        return;
+      }
+      resetIdleMutations();
+      setDialog({ kind, path: null, name: '', entryKind: null });
+    },
+    [resetIdleMutations, unsavedOpen, writePending],
+  );
+
+  const openRenameDialog = useCallback(() => {
+    const session = useWorkspaceSession.getState();
+    const path = session.selectedPath;
+    if (path === null || writePending || unsavedOpen) {
+      return;
+    }
+    if (hasDirtySelfOrDescendant(session.dirtyPaths, path)) {
+      return;
+    }
+    resetIdleMutations();
+    setDialog({
+      kind: 'rename',
+      path,
+      name: entryBasename(path),
+      entryKind: lookupSelectedKind(queryClient, projectId, path, session.expandedPaths),
+    });
+  }, [projectId, queryClient, resetIdleMutations, unsavedOpen, writePending]);
+
+  const openDeleteDialog = useCallback(() => {
+    const session = useWorkspaceSession.getState();
+    const path = session.selectedPath;
+    if (path === null || writePending || unsavedOpen) {
+      return;
+    }
+    if (hasDirtySelfOrDescendant(session.dirtyPaths, path)) {
+      return;
+    }
+    resetIdleMutations();
+    setDialog({
+      kind: 'delete',
+      path,
+      name: entryBasename(path),
+      entryKind: lookupSelectedKind(queryClient, projectId, path, session.expandedPaths),
+    });
+  }, [projectId, queryClient, resetIdleMutations, unsavedOpen, writePending]);
+
+  const closeMutationDialog = useCallback(() => {
+    setDialog(null);
+    resetIdleMutations();
+  }, [resetIdleMutations]);
+
+  const submitMutation = useCallback(
     (basename: string) => {
-      if (createKind === null || createMutation.isPending) {
+      if (dialog === null || writePending) {
+        return;
+      }
+      if (dialog.kind === 'delete') {
+        if (dialog.path === null) {
+          return;
+        }
+        if (hasDirtySelfOrDescendant(useWorkspaceSession.getState().dirtyPaths, dialog.path)) {
+          return;
+        }
+        void deleteMutation
+          .mutateAsync({ path: dialog.path })
+          .then(() => {
+            setDialog(null);
+            deleteMutation.reset();
+          })
+          .catch(() => {});
+        return;
+      }
+      if (dialog.kind === 'rename') {
+        if (dialog.path === null) {
+          return;
+        }
+        if (hasDirtySelfOrDescendant(useWorkspaceSession.getState().dirtyPaths, dialog.path)) {
+          return;
+        }
+        let nextPath: ProjectRelativePath;
+        try {
+          nextPath = joinProjectPath(parentDirectory(dialog.path), basename);
+        } catch {
+          return;
+        }
+        if (nextPath === dialog.path) {
+          setDialog(null);
+          return;
+        }
+        void renameMutation
+          .mutateAsync({ path: dialog.path, nextPath })
+          .then((response) => {
+            applyRenameSuccessUi(response.nextPath);
+            setDialog(null);
+            renameMutation.reset();
+          })
+          .catch(() => {});
         return;
       }
       const session = useWorkspaceSession.getState();
@@ -255,7 +400,7 @@ export function FileTree({ projectId }: { projectId: string }) {
         session.selectedPath,
         session.expandedPaths,
       );
-      const kind: EntryKind = createKind === 'create-folder' ? 'directory' : 'file';
+      const kind: EntryKind = dialog.kind === 'create-folder' ? 'directory' : 'file';
       let path: ProjectRelativePath;
       try {
         path = joinProjectPath(parent, basename);
@@ -266,12 +411,12 @@ export function FileTree({ projectId }: { projectId: string }) {
         .mutateAsync({ kind, path })
         .then(() => {
           applyCreateSuccessUi(kind, path);
-          setCreateKind(null);
+          setDialog(null);
           createMutation.reset();
         })
         .catch(() => {});
     },
-    [createKind, createMutation, projectId, queryClient],
+    [createMutation, deleteMutation, dialog, projectId, queryClient, renameMutation, writePending],
   );
 
   const onTreeKeyDown = useCallback((event: KeyboardEvent<HTMLDivElement>) => {
@@ -352,7 +497,7 @@ export function FileTree({ projectId }: { projectId: string }) {
           title="New file"
           aria-label="New file"
           className={iconButtonClassName}
-          disabled={createPending}
+          disabled={writePending}
           onClick={() => {
             openCreateDialog('create-file');
           }}
@@ -364,12 +509,36 @@ export function FileTree({ projectId }: { projectId: string }) {
           title="New folder"
           aria-label="New folder"
           className={iconButtonClassName}
-          disabled={createPending}
+          disabled={writePending}
           onClick={() => {
             openCreateDialog('create-folder');
           }}
         >
           <FolderPlus className="h-4 w-4" aria-hidden />
+        </button>
+        <button
+          type="button"
+          title={renameLabel}
+          aria-label={renameLabel}
+          className={iconButtonClassName}
+          disabled={renameDeleteDisabled}
+          onClick={() => {
+            openRenameDialog();
+          }}
+        >
+          <Pencil className="h-4 w-4" aria-hidden />
+        </button>
+        <button
+          type="button"
+          title={deleteLabel}
+          aria-label={deleteLabel}
+          className={iconButtonClassName}
+          disabled={renameDeleteDisabled}
+          onClick={() => {
+            openDeleteDialog();
+          }}
+        >
+          <Trash2 className="h-4 w-4" aria-hidden />
         </button>
         <button
           type="button"
@@ -431,16 +600,16 @@ export function FileTree({ projectId }: { projectId: string }) {
         ) : null}
       </div>
       <FileMutationDialogs
-        open={createKind !== null}
-        kind={createKind}
-        pending={createPending}
-        errorMessage={
-          createKind !== null && createMutation.isError
-            ? fileMutationErrorMessage(createMutation.error)
-            : null
-        }
-        onSubmit={submitCreate}
-        onCancel={closeCreateDialog}
+        key={dialog === null ? 'closed' : `${dialog.kind}:${dialog.path ?? dialog.kind}`}
+        open={dialog !== null}
+        kind={dialog?.kind ?? null}
+        pending={dialogPending}
+        errorMessage={dialogError}
+        currentName={dialog?.name ?? ''}
+        targetPath={dialog?.path ?? ''}
+        targetKind={dialog?.entryKind ?? selectedKind ?? 'file'}
+        onSubmit={submitMutation}
+        onCancel={closeMutationDialog}
       />
     </div>
   );

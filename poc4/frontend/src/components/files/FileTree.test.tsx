@@ -1,7 +1,21 @@
-import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+vi.mock('../../lib/projectMonacoModels', () => ({
+  disposeAllProjectModels() {},
+  disposeDescendantProjectModels() {},
+  disposeProjectModel() {},
+  disposeProjectModels() {},
+  toProjectModelUri(projectId: string, path: string) {
+    return {
+      toString() {
+        return `poc4://workspace/${projectId}/${path}`;
+      },
+    };
+  },
+}));
 import { login } from '../../api/authApi';
 import { AppProviders } from '../../app/AppProviders';
 import { authSession, queryClient } from '../../app/appRuntime';
@@ -542,11 +556,17 @@ describe('FileTree accessibility', () => {
     const collapse = screen.getByRole('button', { name: 'Collapse all folders' });
     const newFile = screen.getByRole('button', { name: 'New file' });
     const newFolder = screen.getByRole('button', { name: 'New folder' });
+    const rename = screen.getByRole('button', { name: 'Rename' });
+    const remove = screen.getByRole('button', { name: 'Delete' });
     expect(refresh).toHaveAttribute('title', 'Refresh');
     expect(collapse).toHaveAttribute('title', 'Collapse all folders');
     expect(newFile).toHaveAttribute('title', 'New file');
     expect(newFolder).toHaveAttribute('title', 'New folder');
-    for (const button of [refresh, collapse, newFile, newFolder]) {
+    expect(rename).toHaveAttribute('title', 'Rename');
+    expect(remove).toHaveAttribute('title', 'Delete');
+    expect(rename).toBeDisabled();
+    expect(remove).toBeDisabled();
+    for (const button of [refresh, collapse, newFile, newFolder, rename, remove]) {
       expect(button.className).toMatch(/\bh-8\b/);
       expect(button.className).toMatch(/\bw-8\b/);
       expect(button.className).not.toMatch(/scale-/);
@@ -910,5 +930,384 @@ describe('FileTree create commands', () => {
 
     release();
     expect(await screen.findByRole('treeitem', { name: 'notes.md' })).toBeInTheDocument();
+  });
+});
+
+const README = parseProjectRelativePath('README.md');
+const GUIDE = parseProjectRelativePath('GUIDE.md');
+const SRC_A = parseProjectRelativePath('src/a');
+const SRC_AB = parseProjectRelativePath('src/ab');
+const SRC_A_FOO = parseProjectRelativePath('src/a/foo.ts');
+const DIRTY_RENAME = 'Save or discard unsaved changes before renaming';
+const DIRTY_DELETE = 'Save or discard unsaved changes before deleting';
+
+function captureRenameBodies(): Array<{ path: string; nextPath: string }> {
+  const bodies: Array<{ path: string; nextPath: string }> = [];
+  server.use(
+    http.post('/api/v1/projects/:projectId/entries/rename', async ({ request }) => {
+      const body = (await request.clone().json()) as { path: string; nextPath: string };
+      bodies.push({ path: body.path, nextPath: body.nextPath });
+      return undefined;
+    }),
+  );
+  return bodies;
+}
+
+function captureDeletePaths(): string[] {
+  const paths: string[] = [];
+  server.use(
+    http.delete('/api/v1/projects/:projectId/entries', ({ request }) => {
+      const path = new URL(request.url).searchParams.get('path');
+      if (path !== null) {
+        paths.push(path);
+      }
+      return undefined;
+    }),
+  );
+  return paths;
+}
+
+async function submitRename(
+  user: ReturnType<typeof userEvent.setup>,
+  name: string,
+): Promise<void> {
+  const input = await screen.findByLabelText('Name');
+  fireEvent.change(input, { target: { value: name } });
+  await user.keyboard('{Enter}');
+}
+
+describe('FileTree rename and delete commands', () => {
+  it('enables rename and delete only after a selection', async () => {
+    const user = userEvent.setup();
+    await authenticateAsAlice();
+    renderTree();
+    await loadedRoot();
+
+    expect(screen.getByRole('button', { name: 'Rename' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Delete' })).toBeDisabled();
+
+    await user.click(screen.getByRole('treeitem', { name: 'pom.xml' }));
+    expect(screen.getByRole('button', { name: 'Rename' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Delete' })).toBeEnabled();
+  });
+
+  it('renames a clean closed file in the same parent and selects the new path', async () => {
+    const user = userEvent.setup();
+    const bodies = captureRenameBodies();
+    await authenticateAsAlice();
+    renderTree();
+    await loadedRoot();
+    expect(workspaceSessionStore.getState().openPaths).toEqual([]);
+
+    await user.click(screen.getByRole('treeitem', { name: 'README.md' }));
+    workspaceSessionStore.getState().closeFile(README);
+    expect(workspaceSessionStore.getState().openPaths).toEqual([]);
+    await user.click(screen.getByRole('button', { name: 'Rename' }));
+    const input = await screen.findByLabelText('Name');
+    expect(input).toHaveValue('README.md');
+    expect((input as HTMLInputElement).selectionEnd).toBe('README.md'.length);
+    await submitRename(user, 'GUIDE.md');
+
+    expect(await screen.findByRole('treeitem', { name: 'GUIDE.md' })).toBeInTheDocument();
+    expect(screen.queryByRole('treeitem', { name: 'README.md' })).not.toBeInTheDocument();
+    expect(bodies).toEqual([{ path: 'README.md', nextPath: 'GUIDE.md' }]);
+    expect(workspaceSessionStore.getState().selectedPath).toBe(GUIDE);
+    expect(workspaceSessionStore.getState().openPaths).toEqual([]);
+    expect(queryClient.getQueryData(fileKeys.meta(ALICE_SEED_PROJECT_ID, README))).toBeUndefined();
+  });
+
+  it('renames a clean open file and remaps the open tab', async () => {
+    const user = userEvent.setup();
+    await authenticateAsAlice();
+    renderTree();
+    await loadedRoot();
+    workspaceSessionStore.getState().openFile(README);
+    await user.click(screen.getByRole('treeitem', { name: 'README.md' }));
+    await user.click(screen.getByRole('button', { name: 'Rename' }));
+    await submitRename(user, 'GUIDE.md');
+
+    expect(await screen.findByRole('treeitem', { name: 'GUIDE.md' })).toBeInTheDocument();
+    expect(workspaceSessionStore.getState().openPaths).toEqual([GUIDE]);
+    expect(workspaceSessionStore.getState().activePath).toBe(GUIDE);
+  });
+
+  it('renames a directory with open descendants and leaves a prefix sibling closed', async () => {
+    const user = userEvent.setup();
+    const bodies = captureRenameBodies();
+    await authenticateAsAlice();
+    renderTree();
+    await loadedRoot();
+    await user.click(screen.getByRole('button', { name: 'New file' }));
+    await submitBasename(user, 'src-notes.md');
+    expect(await screen.findByRole('treeitem', { name: 'src-notes.md' })).toBeInTheDocument();
+
+    await expandToAppJava(user);
+    await user.click(screen.getByRole('treeitem', { name: 'App.java' }));
+    expect(workspaceSessionStore.getState().openPaths).toEqual([
+      parseProjectRelativePath('src-notes.md'),
+      APP_JAVA,
+    ]);
+
+    workspaceSessionStore.getState().selectPath(SRC);
+    await user.click(screen.getByRole('button', { name: 'Rename' }));
+    await submitRename(user, 'source');
+
+    expect(await screen.findByRole('treeitem', { name: 'source' })).toBeInTheDocument();
+    expect(screen.queryByRole('treeitem', { name: 'src' })).not.toBeInTheDocument();
+    expect(screen.getByRole('treeitem', { name: 'src-notes.md' })).toBeInTheDocument();
+    expect(bodies.at(-1)).toEqual({ path: 'src', nextPath: 'source' });
+    expect(workspaceSessionStore.getState().openPaths).toEqual([
+      parseProjectRelativePath('src-notes.md'),
+      parseProjectRelativePath('source/main/java/demo/App.java'),
+    ]);
+    expect(workspaceSessionStore.getState().selectedPath).toBe(parseProjectRelativePath('source'));
+    expect(workspaceSessionStore.getState().expandedPaths.has(parseProjectRelativePath('source'))).toBe(
+      true,
+    );
+  });
+
+  it('does not treat src/ab as a descendant of src/a when renaming', async () => {
+    const user = userEvent.setup();
+    await authenticateAsAlice();
+    renderTree();
+    await loadedRoot();
+    await user.click(screen.getByRole('treeitem', { name: 'src' }));
+    await user.click(screen.getByRole('button', { name: 'New folder' }));
+    await submitBasename(user, 'a');
+    expect(await screen.findByRole('treeitem', { name: 'a' })).toBeInTheDocument();
+    workspaceSessionStore.getState().selectPath(SRC);
+    await user.click(screen.getByRole('button', { name: 'New folder' }));
+    await submitBasename(user, 'ab');
+    expect(await screen.findByRole('treeitem', { name: 'ab' })).toBeInTheDocument();
+
+    workspaceSessionStore.getState().selectPath(SRC_A);
+    await user.click(screen.getByRole('button', { name: 'New file' }));
+    await submitBasename(user, 'foo.ts');
+    expect(await screen.findByRole('treeitem', { name: 'foo.ts' })).toBeInTheDocument();
+    expect(workspaceSessionStore.getState().openPaths).toContain(SRC_A_FOO);
+    workspaceSessionStore.getState().setDirty(SRC_A_FOO, false);
+
+    await user.click(screen.getByRole('treeitem', { name: 'a' }));
+    await user.click(screen.getByRole('button', { name: 'Rename' }));
+    await submitRename(user, 'b');
+
+    expect(await screen.findByRole('treeitem', { name: 'b' })).toBeInTheDocument();
+    expect(screen.getByRole('treeitem', { name: 'ab' })).toBeInTheDocument();
+    expect(workspaceSessionStore.getState().openPaths).toEqual([
+      parseProjectRelativePath('src/b/foo.ts'),
+    ]);
+    expect(workspaceSessionStore.getState().expandedPaths.has(SRC_AB)).toBe(true);
+  });
+
+  it('disables rename and delete for a dirty target and does not open a dialog', async () => {
+    const user = userEvent.setup();
+    const renameBodies = captureRenameBodies();
+    const deletePaths = captureDeletePaths();
+    await authenticateAsAlice();
+    renderTree();
+    await loadedRoot();
+    workspaceSessionStore.getState().setDirty(POM, true);
+    await user.click(screen.getByRole('treeitem', { name: 'pom.xml' }));
+
+    const rename = screen.getByRole('button', { name: new RegExp(DIRTY_RENAME) });
+    const remove = screen.getByRole('button', { name: new RegExp(DIRTY_DELETE) });
+    expect(rename).toBeDisabled();
+    expect(remove).toBeDisabled();
+    expect(rename).toHaveAttribute('title', DIRTY_RENAME);
+    expect(remove).toHaveAttribute('title', DIRTY_DELETE);
+
+    await user.click(rename);
+    await user.click(remove);
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(renameBodies).toHaveLength(0);
+    expect(deletePaths).toHaveLength(0);
+  });
+
+  it('disables rename and delete for a dirty descendant but not a prefix sibling', async () => {
+    const user = userEvent.setup();
+    await authenticateAsAlice();
+    renderTree();
+    await loadedRoot();
+    await user.click(screen.getByRole('treeitem', { name: 'src' }));
+    await user.click(screen.getByRole('button', { name: 'New folder' }));
+    await submitBasename(user, 'a');
+    expect(await screen.findByRole('treeitem', { name: 'a' })).toBeInTheDocument();
+    workspaceSessionStore.getState().selectPath(SRC);
+    await user.click(screen.getByRole('button', { name: 'New folder' }));
+    await submitBasename(user, 'ab');
+    expect(await screen.findByRole('treeitem', { name: 'ab' })).toBeInTheDocument();
+
+    workspaceSessionStore.getState().setDirty(SRC_A_FOO, true);
+    await user.click(screen.getByRole('treeitem', { name: 'a' }));
+    expect(screen.getByRole('button', { name: new RegExp(DIRTY_RENAME) })).toBeDisabled();
+    expect(screen.getByRole('button', { name: new RegExp(DIRTY_DELETE) })).toBeDisabled();
+
+    await user.click(screen.getByRole('treeitem', { name: 'ab' }));
+    expect(screen.getByRole('button', { name: 'Rename' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Delete' })).toBeEnabled();
+    expect(SRC_A.startsWith('src/a')).toBe(true);
+    expect(SRC_AB.startsWith(`${SRC_A}/`)).toBe(false);
+  });
+
+  it('cancels delete with zero side effects', async () => {
+    const user = userEvent.setup();
+    const paths = captureDeletePaths();
+    await authenticateAsAlice();
+    renderTree();
+    await loadedRoot();
+    await user.click(screen.getByRole('treeitem', { name: 'README.md' }));
+    workspaceSessionStore.getState().openFile(README);
+    const rev = revision();
+
+    await user.click(screen.getByRole('button', { name: 'Delete' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Delete' });
+    expect(dialog).toHaveTextContent('README.md');
+    expect(screen.getByRole('button', { name: 'Cancel' })).toHaveFocus();
+    await user.click(screen.getByRole('button', { name: 'Cancel' }));
+
+    expect(screen.queryByRole('dialog', { name: 'Delete' })).not.toBeInTheDocument();
+    expect(paths).toHaveLength(0);
+    expect(screen.getByRole('treeitem', { name: 'README.md' })).toBeInTheDocument();
+    expect(workspaceSessionStore.getState().openPaths).toEqual([README]);
+    expect(workspaceSessionStore.getState().selectedPath).toBe(README);
+    expect(revision()).toBe(rev);
+  });
+
+  it('deletes a clean open file and an empty directory', async () => {
+    const user = userEvent.setup();
+    const paths = captureDeletePaths();
+    await authenticateAsAlice();
+    renderTree();
+    await loadedRoot();
+    await user.click(screen.getByRole('button', { name: 'New folder' }));
+    await submitBasename(user, 'tmp');
+    expect(await screen.findByRole('treeitem', { name: 'tmp' })).toBeInTheDocument();
+
+    await user.click(screen.getByRole('treeitem', { name: 'README.md' }));
+    workspaceSessionStore.getState().openFile(README);
+    await user.click(screen.getByRole('button', { name: 'Delete' }));
+    const fileDialog = await screen.findByRole('dialog', { name: 'Delete' });
+    expect(fileDialog).toHaveTextContent('README.md');
+    await user.click(within(fileDialog).getByRole('button', { name: 'Delete' }));
+
+    await waitFor(() => {
+      expect(screen.queryByRole('treeitem', { name: 'README.md' })).not.toBeInTheDocument();
+    });
+    expect(workspaceSessionStore.getState().openPaths).toEqual([]);
+    expect(paths).toContain('README.md');
+
+    await user.click(screen.getByRole('treeitem', { name: 'tmp' }));
+    await user.click(screen.getByRole('button', { name: 'Delete' }));
+    const folderDialog = await screen.findByRole('dialog', { name: 'Delete' });
+    expect(folderDialog).toHaveTextContent('tmp');
+    expect(folderDialog).toHaveAttribute('data-entry-kind', 'directory');
+    await user.click(within(folderDialog).getByRole('button', { name: 'Delete' }));
+    await waitFor(() => {
+      expect(screen.queryByRole('treeitem', { name: 'tmp' })).not.toBeInTheDocument();
+    });
+    expect(paths).toContain('tmp');
+  });
+
+  it('keeps the tree and revision when a non-empty directory delete is rejected', async () => {
+    const user = userEvent.setup();
+    const paths = captureDeletePaths();
+    await authenticateAsAlice();
+    renderTree();
+    await loadedRoot();
+    await expandToAppJava(user);
+    await user.click(screen.getByRole('treeitem', { name: 'App.java' }));
+    const rev = revision();
+    workspaceSessionStore.getState().selectPath(SRC);
+    const namesBefore = rootNames();
+
+    await user.click(screen.getByRole('button', { name: 'Delete' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Delete' });
+    expect(dialog).toHaveTextContent('src');
+    await user.click(within(dialog).getByRole('button', { name: 'Delete' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Directory is not empty');
+    expect(screen.getByRole('dialog', { name: 'Delete' })).toBeInTheDocument();
+    expect(screen.getByRole('treeitem', { name: 'src' })).toBeInTheDocument();
+    expect(workspaceSessionStore.getState().openPaths).toEqual([APP_JAVA]);
+    expect(revision()).toBe(rev);
+    expect(rootNames()).toEqual(namesBefore);
+    expect(paths).toEqual(['src']);
+  });
+
+  it('preserves the rename dialog and revision when the project is locked', async () => {
+    const user = userEvent.setup();
+    setWriteScenario('locked');
+    await authenticateAsAlice();
+    renderTree();
+    await loadedRoot();
+    await user.click(screen.getByRole('treeitem', { name: 'README.md' }));
+    const rev = revision();
+
+    await user.click(screen.getByRole('button', { name: 'Rename' }));
+    await submitRename(user, 'GUIDE.md');
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(/project is locked/i);
+    expect(screen.getByLabelText('Name')).toHaveValue('GUIDE.md');
+    expect(screen.getByRole('dialog', { name: 'Rename' })).toBeInTheDocument();
+    expect(screen.getByRole('treeitem', { name: 'README.md' })).toBeInTheDocument();
+    expect(revision()).toBe(rev);
+  });
+
+  it('preserves the delete dialog and revision on workspace revision conflict', async () => {
+    const user = userEvent.setup();
+    setWriteScenario('conflict');
+    await authenticateAsAlice();
+    renderTree();
+    await loadedRoot();
+    await user.click(screen.getByRole('treeitem', { name: 'README.md' }));
+    const rev = revision();
+
+    await user.click(screen.getByRole('button', { name: 'Delete' }));
+    await user.click(
+      within(await screen.findByRole('dialog', { name: 'Delete' })).getByRole('button', {
+        name: 'Delete',
+      }),
+    );
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(/workspace revision conflict/i);
+    expect(screen.getByRole('dialog', { name: 'Delete' })).toBeInTheDocument();
+    expect(screen.getByRole('treeitem', { name: 'README.md' })).toBeInTheDocument();
+    expect(workspaceSessionStore.getState().selectedPath).toBe(README);
+    expect(revision()).toBe(rev);
+  });
+
+  it('keeps 32px rename and delete buttons while a rename is pending', async () => {
+    const user = userEvent.setup();
+    let release = () => {};
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    server.use(
+      http.post('/api/v1/projects/:projectId/entries/rename', async () => {
+        await held;
+        return undefined;
+      }),
+    );
+    await authenticateAsAlice();
+    renderTree();
+    await loadedRoot();
+    await user.click(screen.getByRole('treeitem', { name: 'README.md' }));
+    await user.click(screen.getByRole('button', { name: 'Rename' }));
+    await submitRename(user, 'GUIDE.md');
+    await waitFor(() => {
+      expect(within(screen.getByRole('dialog', { name: 'Rename' })).getByRole('button', { name: 'Rename' })).toBeDisabled();
+    });
+
+    const rename = screen.getAllByRole('button', { name: 'Rename' })[0]!;
+    const remove = screen.getByRole('button', { name: 'Delete' });
+    expect(rename.className).toMatch(/\bh-8\b/);
+    expect(rename.className).toMatch(/\bw-8\b/);
+    expect(remove.className).toMatch(/\bh-8\b/);
+    expect(remove.className).toMatch(/\bw-8\b/);
+    expect(remove).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'New file' })).toBeDisabled();
+
+    release();
+    expect(await screen.findByRole('treeitem', { name: 'GUIDE.md' })).toBeInTheDocument();
   });
 });

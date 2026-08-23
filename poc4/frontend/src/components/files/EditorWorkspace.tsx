@@ -278,6 +278,12 @@ export function EditorWorkspace({ projectId }: { projectId: string }) {
   }, [save]);
 
   useEffect(() => {
+    if (save.feedback !== null && !visibleOpenPaths.includes(save.feedback.path)) {
+      save.clearFeedback();
+    }
+  }, [save, visibleOpenPaths]);
+
+  useEffect(() => {
     if (save.feedback?.kind === 'status' && visibleActivePath !== save.feedback.path) {
       save.clearFeedback();
     }

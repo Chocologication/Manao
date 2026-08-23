@@ -9,6 +9,18 @@ function isSelfOrDescendant(parent: ProjectRelativePath, candidate: ProjectRelat
   return candidate === parent || candidate.startsWith(`${parent}/`);
 }
 
+export function hasDirtySelfOrDescendant(
+  dirtyPaths: ReadonlySet<ProjectRelativePath>,
+  path: ProjectRelativePath,
+): boolean {
+  for (const dirty of dirtyPaths) {
+    if (isSelfOrDescendant(path, dirty)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function remapRelativePath(
   from: ProjectRelativePath,
   to: ProjectRelativePath,
