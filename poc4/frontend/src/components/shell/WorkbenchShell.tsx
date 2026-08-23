@@ -4,7 +4,7 @@ import { Link } from 'react-router';
 import { logout } from '@/app/appRuntime';
 import { EditorWorkspace } from '@/components/files/EditorWorkspace';
 import { UnsavedChangesDialog } from '@/components/files/UnsavedChangesDialog';
-import { ReadonlyFileTree } from '@/components/files/ReadonlyFileTree';
+import { FileTree } from '@/components/files/FileTree';
 import { Button } from '@/components/ui/button';
 import type { ProjectSummary } from '@/contracts/project';
 import {
@@ -93,7 +93,7 @@ export function WorkbenchShell({ project }: { project: ProjectSummary }) {
             /
           </span>
           <div className="min-h-0 min-w-0 flex-1">
-            <ReadonlyFileTree projectId={project.id} />
+            <FileTree projectId={project.id} />
           </div>
         </aside>
         <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">

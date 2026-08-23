@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { login } from '../../api/authApi';
 import { AppProviders } from '../../app/AppProviders';
 import { authSession, queryClient } from '../../app/appRuntime';
-import type { FileTreeResponse } from '../../contracts/file';
+import type { FileContentResponse, FileTreeResponse } from '../../contracts/file';
 import { workspaceSessionStore } from '../../features/editor/workspaceSession';
 import { fileKeys } from '../../features/files/fileQueries';
 import { parseProjectDirectoryPath, parseProjectRelativePath } from '../../features/files/pathPolicy';
@@ -15,13 +15,16 @@ import {
   BOB_SEED_PROJECT_ID,
   getFileRequestCount,
   recordFileRequest,
+  setWriteScenario,
 } from '../../mocks/state';
 import { resetAppRuntime } from '../../test/renderApp';
-import { ReadonlyFileTree } from './ReadonlyFileTree';
+import { FileTree } from './FileTree';
 
 const ALICE = { username: 'alice', password: 'demo-pass' };
 const SRC = parseProjectRelativePath('src');
 const POM = parseProjectRelativePath('pom.xml');
+const NOTES = parseProjectRelativePath('notes.md');
+const APP_JAVA = parseProjectRelativePath('src/main/java/demo/App.java');
 const ROOT = parseProjectDirectoryPath('');
 
 const TREE_FAILURE = {
@@ -39,7 +42,7 @@ function renderTree(projectId = ALICE_SEED_PROJECT_ID) {
   workspaceSessionStore.getState().activateProject(projectId);
   return render(
     <AppProviders>
-      <ReadonlyFileTree projectId={projectId} />
+      <FileTree projectId={projectId} />
     </AppProviders>,
   );
 }
@@ -54,6 +57,35 @@ function groupAfter(treeitem: HTMLElement): HTMLElement {
   return group as HTMLElement;
 }
 
+function captureCreateBodies(): Array<{ kind: string; path: string }> {
+  const bodies: Array<{ kind: string; path: string }> = [];
+  server.use(
+    http.post('/api/v1/projects/:projectId/entries', async ({ request }) => {
+      const body = (await request.clone().json()) as { kind: string; path: string };
+      bodies.push({ kind: body.kind, path: body.path });
+      return undefined;
+    }),
+  );
+  return bodies;
+}
+
+async function submitBasename(user: ReturnType<typeof userEvent.setup>, name: string): Promise<void> {
+  const input = await screen.findByLabelText('Name');
+  await user.clear(input);
+  if (name !== '') {
+    await user.type(input, name);
+  }
+  await user.keyboard('{Enter}');
+}
+
+function rootNames(): string[] {
+  return screen.getAllByRole('treeitem').map((item) => item.getAttribute('aria-label') ?? '');
+}
+
+function revision(): unknown {
+  return queryClient.getQueryData(fileKeys.revision(ALICE_SEED_PROJECT_ID));
+}
+
 beforeEach(() => {
   resetAppRuntime();
 });
@@ -64,7 +96,7 @@ afterEach(async () => {
   resetAppRuntime();
 });
 
-describe('ReadonlyFileTree lazy requests', () => {
+describe('FileTree lazy requests', () => {
   it('mounts with only the root listing request', async () => {
     await authenticateAsAlice();
     renderTree();
@@ -114,7 +146,7 @@ describe('ReadonlyFileTree lazy requests', () => {
   });
 });
 
-describe('ReadonlyFileTree scoped states', () => {
+describe('FileTree scoped states', () => {
   it('keeps root rows visible while a child directory is loading', async () => {
     const user = userEvent.setup();
     let release = () => {};
@@ -277,7 +309,7 @@ describe('ReadonlyFileTree scoped states', () => {
   });
 });
 
-describe('ReadonlyFileTree selection and commands', () => {
+describe('FileTree selection and commands', () => {
   it('selects and opens a file without fetching metadata or content', async () => {
     const user = userEvent.setup();
     await authenticateAsAlice();
@@ -303,8 +335,9 @@ describe('ReadonlyFileTree selection and commands', () => {
     await user.click(screen.getByRole('treeitem', { name: 'src' }));
     const session = workspaceSessionStore.getState();
     expect(session.expandedPaths.has(SRC)).toBe(true);
-    expect(session.selectedPath).toBeNull();
+    expect(session.selectedPath).toBe(SRC);
     expect(session.openPaths).toEqual([]);
+    expect(screen.getByRole('treeitem', { name: 'src' })).toHaveAttribute('aria-selected', 'true');
   });
 
   it('cancels then invalidates file queries on refresh without clearing open tabs', async () => {
@@ -355,7 +388,7 @@ describe('ReadonlyFileTree selection and commands', () => {
 
 const OWNER_OR_PHYSICAL_LEAK = /bob|prj-bob|usr-bob|lab-notes|C:\\|D:\\|\/Users\/|\/etc\/|\/home\/|\/var\//;
 
-describe('ReadonlyFileTree authorization and invalid payloads', () => {
+describe('FileTree authorization and invalid payloads', () => {
   it('shows generic access denied for another owner tree without a partial tree or path leak', async () => {
     await authenticateAsAlice();
     renderTree(BOB_SEED_PROJECT_ID);
@@ -440,7 +473,7 @@ describe('ReadonlyFileTree authorization and invalid payloads', () => {
   });
 });
 
-describe('ReadonlyFileTree retry isolation', () => {
+describe('FileTree retry isolation', () => {
   it('does not refetch a successful sibling directory when retrying a failed one', async () => {
     const user = userEvent.setup();
     let failSrc = true;
@@ -494,7 +527,7 @@ describe('ReadonlyFileTree retry isolation', () => {
   });
 });
 
-describe('ReadonlyFileTree accessibility', () => {
+describe('FileTree accessibility', () => {
   it('exposes tree semantics, tooltips, and 32px icon hit boxes', async () => {
     await authenticateAsAlice();
     renderTree();
@@ -507,14 +540,17 @@ describe('ReadonlyFileTree accessibility', () => {
 
     const refresh = screen.getByRole('button', { name: 'Refresh' });
     const collapse = screen.getByRole('button', { name: 'Collapse all folders' });
+    const newFile = screen.getByRole('button', { name: 'New file' });
+    const newFolder = screen.getByRole('button', { name: 'New folder' });
     expect(refresh).toHaveAttribute('title', 'Refresh');
     expect(collapse).toHaveAttribute('title', 'Collapse all folders');
-    expect(refresh.className).toMatch(/\bh-8\b/);
-    expect(refresh.className).toMatch(/\bw-8\b/);
-    expect(collapse.className).toMatch(/\bh-8\b/);
-    expect(collapse.className).toMatch(/\bw-8\b/);
-    expect(refresh.className).not.toMatch(/scale-/);
-    expect(collapse.className).not.toMatch(/scale-/);
+    expect(newFile).toHaveAttribute('title', 'New file');
+    expect(newFolder).toHaveAttribute('title', 'New folder');
+    for (const button of [refresh, collapse, newFile, newFolder]) {
+      expect(button.className).toMatch(/\bh-8\b/);
+      expect(button.className).toMatch(/\bw-8\b/);
+      expect(button.className).not.toMatch(/scale-/);
+    }
   });
 
   it('supports Enter, arrows, and parent focus on visible nodes', async () => {
@@ -528,6 +564,7 @@ describe('ReadonlyFileTree accessibility', () => {
     await user.keyboard('{Enter}');
     expect(await screen.findByRole('treeitem', { name: 'main' })).toBeInTheDocument();
     expect(src).toHaveAttribute('aria-expanded', 'true');
+    expect(workspaceSessionStore.getState().selectedPath).toBe(SRC);
 
     src.focus();
     await user.keyboard('{ArrowLeft}');
@@ -608,5 +645,270 @@ describe('ReadonlyFileTree accessibility', () => {
     expect(visible[index + 1] ?? visible[index]).toHaveFocus();
     await user.keyboard('{ArrowUp}');
     expect(tabbable).toHaveFocus();
+  });
+});
+
+async function ensureExpanded(
+  user: ReturnType<typeof userEvent.setup>,
+  name: string,
+): Promise<void> {
+  const item = screen.getByRole('treeitem', { name });
+  if (item.getAttribute('aria-expanded') !== 'true') {
+    await user.click(item);
+  }
+}
+
+async function expandToAppJava(user: ReturnType<typeof userEvent.setup>): Promise<void> {
+  await ensureExpanded(user, 'src');
+  expect(await screen.findByRole('treeitem', { name: 'main' })).toBeInTheDocument();
+  await ensureExpanded(user, 'main');
+  expect(await screen.findByRole('treeitem', { name: 'java' })).toBeInTheDocument();
+  await ensureExpanded(user, 'java');
+  expect(await screen.findByRole('treeitem', { name: 'demo' })).toBeInTheDocument();
+  await ensureExpanded(user, 'demo');
+  expect(await screen.findByRole('treeitem', { name: 'App.java' })).toBeInTheDocument();
+}
+
+describe('FileTree create commands', () => {
+  it('creates a file at root when nothing is selected and opens the new tab', async () => {
+    const user = userEvent.setup();
+    const bodies = captureCreateBodies();
+    await authenticateAsAlice();
+    renderTree();
+    await loadedRoot();
+    expect(workspaceSessionStore.getState().selectedPath).toBeNull();
+    const srcCount = getFileRequestCount('tree', ALICE_SEED_PROJECT_ID, 'src');
+    const docsCount = getFileRequestCount('tree', ALICE_SEED_PROJECT_ID, 'docs');
+
+    await user.click(screen.getByRole('button', { name: 'New file' }));
+    await submitBasename(user, 'notes.md');
+
+    expect(await screen.findByRole('treeitem', { name: 'notes.md' })).toBeInTheDocument();
+    expect(bodies).toEqual([{ kind: 'file', path: 'notes.md' }]);
+    const session = workspaceSessionStore.getState();
+    expect(session.selectedPath).toBe(NOTES);
+    expect(session.openPaths).toEqual([NOTES]);
+    expect(session.activePath).toBe(NOTES);
+    expect(queryClient.getQueryData<FileContentResponse>(fileKeys.content(ALICE_SEED_PROJECT_ID, NOTES))).toEqual(
+      {
+        path: NOTES,
+        content: '',
+        workspaceRevision: revision(),
+      },
+    );
+    expect(queryClient.getQueryData(fileKeys.meta(ALICE_SEED_PROJECT_ID, NOTES))).toMatchObject({
+      path: NOTES,
+    });
+    expect(getFileRequestCount('meta', ALICE_SEED_PROJECT_ID, 'notes.md')).toBe(0);
+    expect(getFileRequestCount('content', ALICE_SEED_PROJECT_ID, 'notes.md')).toBe(0);
+    expect(getFileRequestCount('tree', ALICE_SEED_PROJECT_ID, 'src')).toBe(srcCount);
+    expect(getFileRequestCount('tree', ALICE_SEED_PROJECT_ID, 'docs')).toBe(docsCount);
+  });
+
+  it('creates inside a selected directory and inside the parent of a selected file', async () => {
+    const user = userEvent.setup();
+    const bodies = captureCreateBodies();
+    await authenticateAsAlice();
+    renderTree();
+    await loadedRoot();
+
+    await user.click(screen.getByRole('treeitem', { name: 'src' }));
+    await user.click(screen.getByRole('button', { name: 'New folder' }));
+    await submitBasename(user, 'lib');
+
+    expect(await screen.findByRole('treeitem', { name: 'lib' })).toBeInTheDocument();
+    expect(bodies).toEqual([{ kind: 'directory', path: 'src/lib' }]);
+    expect(workspaceSessionStore.getState().selectedPath).toBe(parseProjectRelativePath('src/lib'));
+    expect(workspaceSessionStore.getState().expandedPaths.has(parseProjectRelativePath('src/lib'))).toBe(
+      true,
+    );
+    expect(workspaceSessionStore.getState().openPaths).toEqual([]);
+
+    await expandToAppJava(user);
+    await user.click(screen.getByRole('treeitem', { name: 'App.java' }));
+    await user.click(screen.getByRole('button', { name: 'New file' }));
+    await submitBasename(user, 'extra.java');
+
+    expect(await screen.findByRole('treeitem', { name: 'extra.java' })).toBeInTheDocument();
+    expect(bodies.at(-1)).toEqual({ kind: 'file', path: 'src/main/java/demo/extra.java' });
+    expect(workspaceSessionStore.getState().selectedPath).toBe(
+      parseProjectRelativePath('src/main/java/demo/extra.java'),
+    );
+    expect(workspaceSessionStore.getState().openPaths).toContain(
+      parseProjectRelativePath('src/main/java/demo/extra.java'),
+    );
+  });
+
+  it('expands collapsed ancestors of a created nested file', async () => {
+    const user = userEvent.setup();
+    await authenticateAsAlice();
+    renderTree();
+    await loadedRoot();
+    await expandToAppJava(user);
+    await user.click(screen.getByRole('treeitem', { name: 'App.java' }));
+    expect(workspaceSessionStore.getState().selectedPath).toBe(APP_JAVA);
+
+    await user.click(screen.getByRole('button', { name: 'Collapse all folders' }));
+    await waitFor(() => {
+      expect(screen.queryByRole('treeitem', { name: 'App.java' })).not.toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole('button', { name: 'New file' }));
+    await submitBasename(user, 'extra.java');
+
+    expect(await screen.findByRole('treeitem', { name: 'extra.java' })).toBeInTheDocument();
+    const expanded = workspaceSessionStore.getState().expandedPaths;
+    expect(expanded.has(SRC)).toBe(true);
+    expect(expanded.has(parseProjectRelativePath('src/main'))).toBe(true);
+    expect(expanded.has(parseProjectRelativePath('src/main/java'))).toBe(true);
+    expect(expanded.has(parseProjectRelativePath('src/main/java/demo'))).toBe(true);
+  });
+
+  it('selects and expands a created directory without requesting unrelated trees', async () => {
+    const user = userEvent.setup();
+    await authenticateAsAlice();
+    renderTree();
+    await loadedRoot();
+    const srcCount = getFileRequestCount('tree', ALICE_SEED_PROJECT_ID, 'src');
+    const docsCount = getFileRequestCount('tree', ALICE_SEED_PROJECT_ID, 'docs');
+    const assetsCount = getFileRequestCount('tree', ALICE_SEED_PROJECT_ID, 'assets');
+
+    await user.click(screen.getByRole('button', { name: 'New folder' }));
+    await submitBasename(user, 'tmp');
+
+    const tmp = parseProjectRelativePath('tmp');
+    expect(await screen.findByRole('treeitem', { name: 'tmp' })).toBeInTheDocument();
+    expect(workspaceSessionStore.getState().selectedPath).toBe(tmp);
+    expect(workspaceSessionStore.getState().expandedPaths.has(tmp)).toBe(true);
+    expect(workspaceSessionStore.getState().openPaths).toEqual([]);
+    await waitFor(() => {
+      expect(getFileRequestCount('tree', ALICE_SEED_PROJECT_ID, 'tmp')).toBe(1);
+    });
+    expect(getFileRequestCount('tree', ALICE_SEED_PROJECT_ID, 'src')).toBe(srcCount);
+    expect(getFileRequestCount('tree', ALICE_SEED_PROJECT_ID, 'docs')).toBe(docsCount);
+    expect(getFileRequestCount('tree', ALICE_SEED_PROJECT_ID, 'assets')).toBe(assetsCount);
+    expect(within(groupAfter(screen.getByRole('treeitem', { name: 'tmp' }))).getByText(/^empty$/i)).toBeInTheDocument();
+  });
+
+  it('does not send a create request for an invalid basename', async () => {
+    const user = userEvent.setup();
+    const bodies = captureCreateBodies();
+    await authenticateAsAlice();
+    renderTree();
+    await loadedRoot();
+
+    await user.click(screen.getByRole('button', { name: 'New file' }));
+    await submitBasename(user, 'src/bad.java');
+
+    expect(bodies).toHaveLength(0);
+    expect(screen.getByRole('alert')).toHaveTextContent('Entry name required');
+    expect(screen.getByRole('dialog', { name: 'New file' })).toBeInTheDocument();
+    expect(screen.getByLabelText('Name')).toHaveValue('src/bad.java');
+  });
+
+  it('preserves dialog input, selection and revision on collision without mutating the tree', async () => {
+    const user = userEvent.setup();
+    const bodies = captureCreateBodies();
+    await authenticateAsAlice();
+    renderTree();
+    await loadedRoot();
+    await user.click(screen.getByRole('treeitem', { name: 'pom.xml' }));
+    const namesBefore = rootNames();
+    const rev = revision();
+
+    await user.click(screen.getByRole('button', { name: 'New file' }));
+    await submitBasename(user, 'pom.xml');
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(/already exists/i);
+    expect(screen.getByLabelText('Name')).toHaveValue('pom.xml');
+    expect(screen.getByRole('dialog', { name: 'New file' })).toBeInTheDocument();
+    expect(workspaceSessionStore.getState().selectedPath).toBe(POM);
+    expect(revision()).toBe(rev);
+    expect(rootNames()).toEqual(namesBefore);
+    expect(bodies).toHaveLength(1);
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    expect(bodies).toHaveLength(1);
+    await user.click(screen.getByRole('button', { name: 'Create' }));
+    await waitFor(() => expect(bodies).toHaveLength(2));
+    expect(screen.getByRole('dialog', { name: 'New file' })).toBeInTheDocument();
+    expect(screen.getByLabelText('Name')).toHaveValue('pom.xml');
+    expect(revision()).toBe(rev);
+    expect(rootNames()).toEqual(namesBefore);
+  });
+
+  it('preserves dialog input, selection and revision when the project is locked', async () => {
+    const user = userEvent.setup();
+    setWriteScenario('locked');
+    await authenticateAsAlice();
+    renderTree();
+    await loadedRoot();
+    await user.click(screen.getByRole('treeitem', { name: 'src' }));
+    const namesBefore = rootNames();
+    const rev = revision();
+
+    await user.click(screen.getByRole('button', { name: 'New folder' }));
+    await submitBasename(user, 'locked-dir');
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(/project is locked/i);
+    expect(screen.getByLabelText('Name')).toHaveValue('locked-dir');
+    expect(workspaceSessionStore.getState().selectedPath).toBe(SRC);
+    expect(revision()).toBe(rev);
+    expect(rootNames()).toEqual(namesBefore);
+    expect(screen.queryByRole('treeitem', { name: 'locked-dir' })).not.toBeInTheDocument();
+  });
+
+  it('preserves dialog input, selection and revision on workspace revision conflict', async () => {
+    const user = userEvent.setup();
+    setWriteScenario('conflict');
+    await authenticateAsAlice();
+    renderTree();
+    await loadedRoot();
+    await user.click(screen.getByRole('treeitem', { name: 'pom.xml' }));
+    const namesBefore = rootNames();
+    const rev = revision();
+
+    await user.click(screen.getByRole('button', { name: 'New file' }));
+    await submitBasename(user, 'conflicted.md');
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(/workspace revision conflict/i);
+    expect(screen.getByLabelText('Name')).toHaveValue('conflicted.md');
+    expect(workspaceSessionStore.getState().selectedPath).toBe(POM);
+    expect(revision()).toBe(rev);
+    expect(rootNames()).toEqual(namesBefore);
+    expect(screen.queryByRole('treeitem', { name: 'conflicted.md' })).not.toBeInTheDocument();
+  });
+
+  it('keeps 32px create buttons while a create is pending', async () => {
+    const user = userEvent.setup();
+    let release = () => {};
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    server.use(
+      http.post('/api/v1/projects/:projectId/entries', async () => {
+        await held;
+        return undefined;
+      }),
+    );
+    await authenticateAsAlice();
+    renderTree();
+    await loadedRoot();
+
+    await user.click(screen.getByRole('button', { name: 'New file' }));
+    await submitBasename(user, 'notes.md');
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'New file' })).toBeDisabled();
+    });
+    const newFile = screen.getByRole('button', { name: 'New file' });
+    const newFolder = screen.getByRole('button', { name: 'New folder' });
+    expect(newFile.className).toMatch(/\bh-8\b/);
+    expect(newFile.className).toMatch(/\bw-8\b/);
+    expect(newFolder.className).toMatch(/\bh-8\b/);
+    expect(newFolder.className).toMatch(/\bw-8\b/);
+    expect(newFolder).toBeDisabled();
+    expect(screen.getByRole('dialog', { name: 'New file' })).toBeInTheDocument();
+
+    release();
+    expect(await screen.findByRole('treeitem', { name: 'notes.md' })).toBeInTheDocument();
   });
 });
