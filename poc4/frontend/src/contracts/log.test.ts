@@ -219,10 +219,6 @@ describe('log server frames', () => {
       { firstAvailableSeq: 1, lastAvailableSeq: null, retainedBytes: 0, truncated: false, evictedBytes: 0 },
     ],
     [
-      'truncated without eviction',
-      { firstAvailableSeq: 3, lastAvailableSeq: 3, retainedBytes: 1, truncated: true, evictedBytes: 0 },
-    ],
-    [
       'negative eviction',
       { firstAvailableSeq: 1, lastAvailableSeq: 1, retainedBytes: 1, truncated: false, evictedBytes: -1 },
     ],
@@ -242,6 +238,66 @@ describe('log server frames', () => {
         { type: 'log.replay', chunks, window: windowFromChunks(chunks) },
         CONTEXT,
       ),
+    ).toThrow('Invalid log frame');
+  });
+
+  it('accepts truncated windows with or without eviction bytes', () => {
+    const item = chunk(3, 'x');
+    const base = {
+      firstAvailableSeq: 3,
+      lastAvailableSeq: 3,
+      retainedBytes: item.byteLength,
+    };
+    expect(
+      parseLogServerFrame(
+        {
+          type: 'log.append',
+          chunk: item,
+          window: { ...base, truncated: true, evictedBytes: 0 },
+        },
+        CONTEXT,
+      ),
+    ).toMatchObject({ window: { truncated: true, evictedBytes: 0 } });
+    expect(
+      parseLogServerFrame(
+        {
+          type: 'log.append',
+          chunk: item,
+          window: { ...base, truncated: true, evictedBytes: 4096 },
+        },
+        CONTEXT,
+      ),
+    ).toMatchObject({ window: { truncated: true, evictedBytes: 4096 } });
+  });
+
+  it('parses a lastSeq gap replay as a suffix of the retained window', () => {
+    const retained = [chunk(3, 'aaa'), chunk(4, 'bbbb'), chunk(5, 'ccccc')];
+    const window = {
+      firstAvailableSeq: 3,
+      lastAvailableSeq: 5,
+      retainedBytes: retained.reduce((sum, item) => sum + item.byteLength, 0),
+      truncated: true,
+      evictedBytes: 2048,
+    };
+    const gap = [retained[1], retained[2]];
+    expect(
+      parseLogServerFrame({ type: 'log.replay', chunks: gap, window }, CONTEXT),
+    ).toEqual({ type: 'log.replay', chunks: gap, window });
+  });
+
+  it('rejects a gap replay that does not reach lastAvailableSeq', () => {
+    const first = chunk(3, 'aaa');
+    const middle = chunk(4, 'bbbb');
+    const last = chunk(5, 'ccccc');
+    const window = {
+      firstAvailableSeq: 3,
+      lastAvailableSeq: 5,
+      retainedBytes: first.byteLength + middle.byteLength + last.byteLength,
+      truncated: true,
+      evictedBytes: 2048,
+    };
+    expect(() =>
+      parseLogServerFrame({ type: 'log.replay', chunks: [middle], window }, CONTEXT),
     ).toThrow('Invalid log frame');
   });
 
@@ -311,5 +367,21 @@ describe('log server frames', () => {
     expect(() =>
       parseLogServerFrameJson('x'.repeat(MAX_LOG_FRAME_UTF8_BYTES + 1), CONTEXT),
     ).toThrow('Invalid log frame');
+  });
+
+  it('parses JSON for a full 5 MiB retained-window replay', () => {
+    const text = 'x'.repeat(MAX_LOG_CHUNK_UTF8_BYTES);
+    const chunkCount = MAX_LOG_RETAINED_BYTES / MAX_LOG_CHUNK_UTF8_BYTES;
+    const chunks = Array.from({ length: chunkCount }, (_, index) => chunk(index + 1, text));
+    const frame = { type: 'log.replay', chunks, window: windowFromChunks(chunks) };
+    const json = JSON.stringify(frame);
+    expect(utf8Bytes(json)).toBeGreaterThan(MAX_LOG_RETAINED_BYTES);
+    expect(utf8Bytes(json)).toBeLessThanOrEqual(MAX_LOG_FRAME_UTF8_BYTES);
+    const parsed = parseLogServerFrameJson(json, CONTEXT);
+    expect(parsed.type).toBe('log.replay');
+    if (parsed.type === 'log.replay') {
+      expect(parsed.window.retainedBytes).toBe(MAX_LOG_RETAINED_BYTES);
+      expect(parsed.chunks).toHaveLength(chunkCount);
+    }
   });
 });

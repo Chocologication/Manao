@@ -275,6 +275,12 @@ describe('run summary invariants', () => {
   ])('rejects %s', (_label, payload) => {
     expect(() => parseRunSummary(payload)).toThrow('Invalid run response');
   });
+
+  it('accepts truncated true with evicted bytes', () => {
+    expect(
+      parseRunSummary(summary({ logTruncated: true, logEvictedBytes: 12 })),
+    ).toMatchObject({ logTruncated: true, logEvictedBytes: 12 });
+  });
 });
 
 describe('run policy', () => {

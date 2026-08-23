@@ -2,7 +2,8 @@ import { parseIsoTimestamp, parseRunSummary, type RunId, type RunSummary } from 
 
 export const MAX_LOG_RETAINED_BYTES = 5 * 1024 * 1024;
 export const MAX_LOG_CHUNK_UTF8_BYTES = 64 * 1024;
-export const MAX_LOG_FRAME_UTF8_BYTES = 128 * 1024;
+const MAX_LOG_FRAME_JSON_OVERHEAD_BYTES = 256 * 1024;
+export const MAX_LOG_FRAME_UTF8_BYTES = MAX_LOG_RETAINED_BYTES + MAX_LOG_FRAME_JSON_OVERHEAD_BYTES;
 
 export type LogParseContext = {
   projectId: string;
@@ -155,9 +156,6 @@ export function parseLogWindowMeta(
   if (!record.truncated && evictedBytes !== 0) {
     invalidLogFrame();
   }
-  if (record.truncated && evictedBytes === 0) {
-    invalidLogFrame();
-  }
   const retainedBytes = parseNonNegativeSafeInteger(record.retainedBytes);
   if (retainedBytes > MAX_LOG_RETAINED_BYTES) {
     invalidLogFrame();
@@ -185,18 +183,23 @@ export function parseLogWindowMeta(
   if (firstAvailableSeq > lastAvailableSeq) {
     invalidLogFrame();
   }
-  if (options.chunks !== undefined) {
-    if (options.chunks.length === 0) {
-      invalidLogFrame();
-    }
+  if (options.chunks !== undefined && options.chunks.length > 0) {
+    const firstChunkSeq = options.chunks[0]?.seq;
+    const lastChunkSeq = options.chunks[options.chunks.length - 1]?.seq;
     if (
-      options.chunks[0]?.seq !== firstAvailableSeq ||
-      options.chunks[options.chunks.length - 1]?.seq !== lastAvailableSeq
+      firstChunkSeq === undefined ||
+      lastChunkSeq === undefined ||
+      firstChunkSeq < firstAvailableSeq ||
+      lastChunkSeq > lastAvailableSeq ||
+      lastChunkSeq !== lastAvailableSeq
     ) {
       invalidLogFrame();
     }
     const sum = options.chunks.reduce((total, chunk) => total + chunk.byteLength, 0);
-    if (sum !== retainedBytes) {
+    if (sum > retainedBytes) {
+      invalidLogFrame();
+    }
+    if (firstChunkSeq === firstAvailableSeq && sum !== retainedBytes) {
       invalidLogFrame();
     }
   }
