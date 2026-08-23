@@ -138,6 +138,7 @@ describe('ReadonlyFileTree scoped states', () => {
                 hasChildren: true,
               },
             ],
+            workspaceRevision: 'mock-rev-0001',
           });
         }
         return undefined;
@@ -163,7 +164,11 @@ describe('ReadonlyFileTree scoped states', () => {
       http.get('/api/v1/projects/:projectId/files/tree', ({ request }) => {
         if (new URL(request.url).searchParams.get('path') === 'src') {
           recordFileRequest('tree', ALICE_SEED_PROJECT_ID, 'src');
-          return HttpResponse.json({ directory: 'src', entries: [] });
+          return HttpResponse.json({
+            directory: 'src',
+            entries: [],
+            workspaceRevision: 'mock-rev-0001',
+          });
         }
         return undefined;
       }),
@@ -203,6 +208,7 @@ describe('ReadonlyFileTree scoped states', () => {
               hasChildren: true,
             },
           ],
+          workspaceRevision: 'mock-rev-0001',
         });
       }),
     );
@@ -314,8 +320,8 @@ describe('ReadonlyFileTree selection and commands', () => {
     await user.click(screen.getByRole('button', { name: 'Refresh' }));
 
     await waitFor(() => {
-      expect(cancel).toHaveBeenCalledWith({ queryKey: fileKeys.all(ALICE_SEED_PROJECT_ID) });
-      expect(invalidate).toHaveBeenCalledWith({ queryKey: fileKeys.all(ALICE_SEED_PROJECT_ID) });
+      expect(cancel).toHaveBeenCalledWith({ queryKey: fileKeys.trees(ALICE_SEED_PROJECT_ID) });
+      expect(invalidate).toHaveBeenCalledWith({ queryKey: fileKeys.trees(ALICE_SEED_PROJECT_ID) });
     });
     expect(cancel.mock.invocationCallOrder[0]).toBeLessThan(invalidate.mock.invocationCallOrder[0]);
     expect(workspaceSessionStore.getState().openPaths).toEqual([POM]);
@@ -409,6 +415,7 @@ describe('ReadonlyFileTree authorization and invalid payloads', () => {
               hasChildren: true,
             },
           ],
+          workspaceRevision: 'mock-rev-0001',
         });
       }),
     );
@@ -458,6 +465,7 @@ describe('ReadonlyFileTree retry isolation', () => {
               hasChildren: true,
             },
           ],
+          workspaceRevision: 'mock-rev-0001',
         });
       }),
     );

@@ -159,12 +159,22 @@ function applySaveSuccess(
   }
 }
 
-async function applyCreateSuccess(
+function scheduleParentTreeRefresh(
+  queryClient: QueryClient,
+  projectId: string,
+  path: ProjectRelativePath,
+): void {
+  void queryClient.invalidateQueries({
+    queryKey: fileKeys.tree(projectId, parentDirectory(path)),
+  });
+}
+
+function applyCreateSuccess(
   queryClient: QueryClient,
   projectId: string,
   variables: CreateEntryVariables,
   response: CreateEntryResponse,
-): Promise<void> {
+): void {
   if (response.file !== null) {
     seedCreatedFileCaches(
       queryClient,
@@ -175,18 +185,16 @@ async function applyCreateSuccess(
     );
   }
   writeWorkspaceRevision(queryClient, projectId, response.workspaceRevision);
-  await queryClient.invalidateQueries({
-    queryKey: fileKeys.tree(projectId, parentDirectory(variables.path)),
-  });
+  scheduleParentTreeRefresh(queryClient, projectId, variables.path);
 }
 
-async function applyRenameSuccess(
+function applyRenameSuccess(
   queryClient: QueryClient,
   projectId: string,
   variables: RenameEntryVariables,
   response: RenameEntryResponse,
   callbacks?: FileMutationCallbacks,
-): Promise<void> {
+): void {
   removePathQueries(queryClient, projectId, variables.path);
   if (response.file !== null) {
     queryClient.setQueryData(fileKeys.meta(projectId, variables.nextPath), response.file);
@@ -196,27 +204,23 @@ async function applyRenameSuccess(
   disposeDescendantProjectModels(projectId, variables.path);
   useWorkspaceSession.getState().remapPath(variables.path, variables.nextPath);
   callbacks?.onRenameCleanup?.(variables.path, variables.nextPath);
-  await queryClient.invalidateQueries({
-    queryKey: fileKeys.tree(projectId, parentDirectory(variables.path)),
-  });
+  scheduleParentTreeRefresh(queryClient, projectId, variables.path);
 }
 
-async function applyDeleteSuccess(
+function applyDeleteSuccess(
   queryClient: QueryClient,
   projectId: string,
   variables: DeleteEntryVariables,
   response: DeleteEntryResponse,
   callbacks?: FileMutationCallbacks,
-): Promise<void> {
+): void {
   removePathQueries(queryClient, projectId, variables.path);
   writeWorkspaceRevision(queryClient, projectId, response.workspaceRevision);
   workspaceBufferRegistry.remove(projectId, variables.path);
   disposeDescendantProjectModels(projectId, variables.path);
   useWorkspaceSession.getState().removePathAndDescendants(variables.path);
   callbacks?.onDeleteCleanup?.(variables.path);
-  await queryClient.invalidateQueries({
-    queryKey: fileKeys.tree(projectId, parentDirectory(variables.path)),
-  });
+  scheduleParentTreeRefresh(queryClient, projectId, variables.path);
 }
 
 export function useSaveFileMutation(projectId: string, callbacks?: FileMutationCallbacks) {
@@ -248,7 +252,7 @@ export function useCreateEntryMutation(projectId: string) {
         path: variables.path,
         expectedWorkspaceRevision: expected,
       });
-      await applyCreateSuccess(queryClient, projectId, variables, response);
+      applyCreateSuccess(queryClient, projectId, variables, response);
       return response;
     },
   });
@@ -266,7 +270,7 @@ export function useRenameEntryMutation(projectId: string, callbacks?: FileMutati
         nextPath: variables.nextPath,
         expectedWorkspaceRevision: expected,
       });
-      await applyRenameSuccess(queryClient, projectId, variables, response, callbacks);
+      applyRenameSuccess(queryClient, projectId, variables, response, callbacks);
       return response;
     },
   });
@@ -282,7 +286,7 @@ export function useDeleteEntryMutation(projectId: string, callbacks?: FileMutati
       const response = await deleteEntry(projectId, variables.path, {
         expectedWorkspaceRevision: expected,
       });
-      await applyDeleteSuccess(queryClient, projectId, variables, response, callbacks);
+      applyDeleteSuccess(queryClient, projectId, variables, response, callbacks);
       return response;
     },
   });

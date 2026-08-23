@@ -31,6 +31,12 @@ const NOTES = parseProjectRelativePath('notes.md');
 const README_NEXT = parseProjectRelativePath('GUIDE.md');
 const WRITE_SCOPE = `project-file-write:${ALICE_SEED_PROJECT_ID}`;
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
 async function authenticateAsAlice(): Promise<void> {
   const response = await login(ALICE);
   authSession.authenticate(response);
@@ -420,6 +426,98 @@ describe('authoritative success apply', () => {
     expect(order).toEqual(['delete-cleanup']);
     expect(workspaceBufferRegistry.get(ALICE_SEED_PROJECT_ID, README)).toBeUndefined();
     expect(useWorkspaceSession.getState().openPaths).toEqual([]);
+    expect(queryClient.getQueryData(fileKeys.revision(ALICE_SEED_PROJECT_ID))).toBe('mock-rev-0002');
+  });
+
+  function holdTreeRefetchAsFailure(): { release: () => void } {
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    server.use(
+      http.get('/api/v1/projects/:projectId/files/tree', async () => {
+        await held;
+        return HttpResponse.json(
+          { code: 'INTERNAL_ERROR', message: 'tree refetch failed', traceId: 'trace-tree' },
+          { status: 500 },
+        );
+      }),
+    );
+    return { release };
+  }
+
+  it('resolves create before a failing parent tree refetch and keeps the written revision', async () => {
+    await authenticateAsAlice();
+    await seedRootRevision();
+    const { release } = holdTreeRefetchAsFailure();
+    const { result } = renderHook(() => useCreateEntryMutation(ALICE_SEED_PROJECT_ID), {
+      wrapper: AppProviders,
+    });
+
+    const pending = result.current.mutateAsync({ kind: 'file', path: NOTES });
+    await expect(
+      Promise.race([pending.then(() => 'resolved' as const), sleep(80).then(() => 'waiting' as const)]),
+    ).resolves.toBe('resolved');
+    await pending;
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    expect(result.current.isError).toBe(false);
+    expect(queryClient.getQueryData(fileKeys.revision(ALICE_SEED_PROJECT_ID))).toBe('mock-rev-0002');
+    expect(queryClient.getQueryData(fileKeys.content(ALICE_SEED_PROJECT_ID, NOTES))).toMatchObject({
+      content: '',
+    });
+    release();
+    await sleep(40);
+    expect(result.current.isSuccess).toBe(true);
+    expect(result.current.isError).toBe(false);
+    expect(queryClient.getQueryData(fileKeys.revision(ALICE_SEED_PROJECT_ID))).toBe('mock-rev-0002');
+  });
+
+  it('resolves rename before a failing parent tree refetch and keeps session remap', async () => {
+    await authenticateAsAlice();
+    await seedRootRevision();
+    useWorkspaceSession.getState().openFile(README);
+    const { release } = holdTreeRefetchAsFailure();
+    const { result } = renderHook(() => useRenameEntryMutation(ALICE_SEED_PROJECT_ID), {
+      wrapper: AppProviders,
+    });
+
+    const pending = result.current.mutateAsync({ path: README, nextPath: README_NEXT });
+    await expect(
+      Promise.race([pending.then(() => 'resolved' as const), sleep(80).then(() => 'waiting' as const)]),
+    ).resolves.toBe('resolved');
+    await pending;
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    expect(useWorkspaceSession.getState().openPaths).toEqual([README_NEXT]);
+    expect(queryClient.getQueryData(fileKeys.revision(ALICE_SEED_PROJECT_ID))).toBe('mock-rev-0002');
+    release();
+    await sleep(40);
+    expect(result.current.isError).toBe(false);
+    expect(queryClient.getQueryData(fileKeys.revision(ALICE_SEED_PROJECT_ID))).toBe('mock-rev-0002');
+  });
+
+  it('resolves delete before a failing parent tree refetch and keeps session removal', async () => {
+    await authenticateAsAlice();
+    await seedRootRevision();
+    useWorkspaceSession.getState().openFile(README);
+    const { release } = holdTreeRefetchAsFailure();
+    const { result } = renderHook(() => useDeleteEntryMutation(ALICE_SEED_PROJECT_ID), {
+      wrapper: AppProviders,
+    });
+
+    const pending = result.current.mutateAsync({ path: README });
+    await expect(
+      Promise.race([pending.then(() => 'resolved' as const), sleep(80).then(() => 'waiting' as const)]),
+    ).resolves.toBe('resolved');
+    await pending;
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    expect(useWorkspaceSession.getState().openPaths).toEqual([]);
+    expect(queryClient.getQueryData(fileKeys.revision(ALICE_SEED_PROJECT_ID))).toBe('mock-rev-0002');
+    release();
+    await sleep(40);
+    expect(result.current.isError).toBe(false);
     expect(queryClient.getQueryData(fileKeys.revision(ALICE_SEED_PROJECT_ID))).toBe('mock-rev-0002');
   });
 });
