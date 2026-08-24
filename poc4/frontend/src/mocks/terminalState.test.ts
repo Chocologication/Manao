@@ -17,6 +17,7 @@ import {
 } from './state';
 import {
   consumeTerminalTicket,
+  consumeTerminalTicketByTicket,
   endTerminalSession,
   getTerminalScenario,
   getLiveTerminalSession,
@@ -159,6 +160,62 @@ describe('terminal reservation authority', () => {
 });
 
 describe('terminal ticket lifecycle', () => {
+  it('atomically resolves and consumes the authoritative reservation by raw ticket', () => {
+    const runId = startInState('RUNNING');
+    const reservation = issueOk(runId, 132, 43);
+
+    expect(consumeTerminalTicketByTicket(reservation.ticket)).toMatchObject({
+      ok: true,
+      value: {
+        userId: ALICE_ID,
+        projectId: ALICE_SEED_PROJECT_ID,
+        runId,
+        sessionId: reservation.sessionId,
+        cols: 132,
+        rows: 43,
+        state: 'live',
+      },
+    });
+  });
+
+  it('fails raw ticket consumption closed for missing, expired, used and lost authority', () => {
+    const runId = startInState('RUNNING');
+    expect(consumeTerminalTicketByTicket('mock-terminal-ticket-missing')).toEqual({
+      ok: false,
+      code: 'TERMINAL_TICKET_NOT_AVAILABLE',
+    });
+
+    const expired = issueOk(runId);
+    vi.advanceTimersByTime(30_000);
+    expect(consumeTerminalTicketByTicket(expired.ticket)).toEqual({
+      ok: false,
+      code: 'TERMINAL_TICKET_NOT_AVAILABLE',
+    });
+
+    vi.setSystemTime(NOW);
+    const used = issueOk(runId);
+    expect(consumeTerminalTicketByTicket(used.ticket).ok).toBe(true);
+    expect(consumeTerminalTicketByTicket(used.ticket)).toEqual({
+      ok: false,
+      code: 'TERMINAL_TICKET_NOT_AVAILABLE',
+    });
+    expect(endTerminalSession({
+      userId: ALICE_ID,
+      projectId: ALICE_SEED_PROJECT_ID,
+      runId,
+      sessionId: used.sessionId,
+      reason: 'CLIENT_CLOSED',
+      exitCode: null,
+    }).ok).toBe(true);
+
+    const revoked = issueOk(runId);
+    expect(transitionRun(ALICE_SEED_PROJECT_ID, runId, { state: 'STOPPING' }).ok).toBe(true);
+    expect(consumeTerminalTicketByTicket(revoked.ticket)).toEqual({
+      ok: false,
+      code: 'TERMINAL_TICKET_NOT_AVAILABLE',
+    });
+  });
+
   it('keeps HTTP reservations inactive, bound to dimensions and independently unused', () => {
     const runId = startInState('RUNNING');
     const first = issueOk(runId, 132, 43);

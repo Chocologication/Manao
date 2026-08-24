@@ -3,6 +3,7 @@ import { afterAll, afterEach, beforeAll, vi } from 'vitest';
 import { server } from '../mocks/node';
 import { resetLogTickets } from '../mocks/runSocket';
 import { resetMockState } from '../mocks/state';
+import { resetTerminalSockets } from '../mocks/terminalSocket';
 
 if (typeof document.queryCommandSupported !== 'function') {
   document.queryCommandSupported = () => false;
@@ -61,6 +62,7 @@ vi.mock('@monaco-editor/react', async () => {
 beforeAll(() => server.listen({ onUnhandledRequest: 'error' }));
 afterEach(() => {
   server.resetHandlers();
+  resetTerminalSockets();
   resetMockState();
   resetLogTickets();
 });

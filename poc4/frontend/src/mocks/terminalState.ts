@@ -370,6 +370,22 @@ export function consumeTerminalTicket(
   return { ok: true, value: { ...live } };
 }
 
+export function consumeTerminalTicketByTicket(
+  ticket: string,
+): MockTerminalMutationResult<MockLiveTerminalSession> {
+  const reservation = reservations.get(ticket);
+  if (reservation === undefined) {
+    return { ok: false, code: 'TERMINAL_TICKET_NOT_AVAILABLE' };
+  }
+  return consumeTerminalTicket({
+    userId: reservation.userId,
+    projectId: reservation.projectId,
+    runId: reservation.runId,
+    sessionId: reservation.sessionId,
+    ticket,
+  });
+}
+
 export function endTerminalSession(
   input: EndTerminalSessionInput,
 ): MockTerminalMutationResult<MockEndedTerminalSession> {
