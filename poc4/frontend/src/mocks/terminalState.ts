@@ -14,7 +14,7 @@ import {
   type TerminalSessionId,
   type TerminalTicket,
 } from '../contracts/terminal';
-import { getActiveRun, subscribeMockRunBeforeTransition } from './runState';
+import { getActiveRun, registerMockRunBeforeTransitionFinalizer } from './runState';
 import { canReadReadyProjectFiles, registerTerminalStateReset } from './state';
 
 export const MOCK_TERMINAL_TICKET_PREFIX = 'mock-terminal-ticket-';
@@ -67,7 +67,6 @@ type TerminalReservation = {
   ticket: TerminalTicket;
   expiresAtMs: number;
   dimensions: CreateTerminalSessionRequest;
-  used: boolean;
 };
 
 export type MockLiveTerminalSession = {
@@ -134,6 +133,7 @@ let nextAuditSeq = 0;
 let auditRecords: TerminalAuditRecord[] = [];
 let terminalScenario: TerminalScenario = 'normal';
 const terminalStateSubscribers = new Set<(event: MockTerminalStateEvent) => void>();
+const terminalFinalizationsInProgress = new Set<string>();
 
 function terminalStorage(): Storage | null {
   try {
@@ -163,9 +163,14 @@ function liveSessionKey(userId: string, projectId: string, runId: string): strin
   return `${userId}\0${projectId}\0${runId}`;
 }
 
+function terminalRunKey(projectId: string, runId: string): string {
+  return `${projectId}\0${runId}`;
+}
+
 function hasRunningAuthority(userId: string, projectId: string, runId: string): boolean {
   const activeRun = getActiveRun(projectId);
   return (
+    !terminalFinalizationsInProgress.has(terminalRunKey(projectId, runId)) &&
     canReadReadyProjectFiles(userId, projectId) &&
     activeRun !== null &&
     activeRun.id === runId &&
@@ -175,25 +180,51 @@ function hasRunningAuthority(userId: string, projectId: string, runId: string): 
 
 function emitTerminalStateEvent(event: MockTerminalStateEvent): void {
   for (const listener of terminalStateSubscribers) {
-    listener(event);
+    try {
+      listener(event);
+    } catch {
+      // External observers run after the authoritative terminal state commit.
+    }
   }
 }
 
-function invalidateUnusedReservations(
+type PreparedReservationInvalidation = {
+  ticket: string;
+  event: Extract<MockTerminalStateEvent, { type: 'reservation.invalidated' }>;
+};
+
+function prepareReservationInvalidations(
   matches: (reservation: TerminalReservation) => boolean,
-): void {
-  for (const [ticket, reservation] of reservations) {
-    if (!reservation.used && matches(reservation)) {
-      reservations.delete(ticket);
-      emitTerminalStateEvent({
+): PreparedReservationInvalidation[] {
+  return [...reservations.entries()]
+    .filter(([, reservation]) => matches(reservation))
+    .map(([ticket, reservation]) => ({
+      ticket,
+      event: {
         type: 'reservation.invalidated',
         userId: reservation.userId,
         projectId: reservation.projectId,
         runId: reservation.runId,
         sessionId: reservation.sessionId,
-      });
-    }
+      },
+    }));
+}
+
+function buildAuditRecord(
+  seq: number,
+  userId: string,
+  projectId: string,
+  runId: string,
+  entry: Omit<TerminalAuditEntry, 'id'>,
+): TerminalAuditRecord {
+  const parsed = parseTerminalAuditListResponse({
+    items: [{ ...entry, id: parseTerminalAuditId(`${MOCK_TERMINAL_AUDIT_PREFIX}${seq}`) }],
+    nextCursor: null,
+  }).items[0];
+  if (parsed === undefined) {
+    throw new Error('Invalid mock terminal audit fixture');
   }
+  return { seq, userId, projectId, runId, entry: parsed };
 }
 
 function appendAuditRecord(
@@ -202,19 +233,17 @@ function appendAuditRecord(
   runId: string,
   entry: Omit<TerminalAuditEntry, 'id'>,
 ): TerminalAuditEntry {
-  nextAuditSeq += 1;
-  const parsed = parseTerminalAuditListResponse({
-    items: [{ ...entry, id: parseTerminalAuditId(`${MOCK_TERMINAL_AUDIT_PREFIX}${nextAuditSeq}`) }],
-    nextCursor: null,
-  }).items[0];
-  if (parsed === undefined) {
-    throw new Error('Invalid mock terminal audit fixture');
-  }
-  auditRecords.push({ seq: nextAuditSeq, userId, projectId, runId, entry: parsed });
-  return parsed;
+  const record = buildAuditRecord(nextAuditSeq + 1, userId, projectId, runId, entry);
+  nextAuditSeq = record.seq;
+  auditRecords.push(record);
+  return record.entry;
 }
 
-function settleAuditForSession(session: MockEndedTerminalSession): void {
+type PreparedAuditSettlement = { record: TerminalAuditRecord; entry: TerminalAuditEntry };
+
+function prepareAuditSettlement(
+  session: MockEndedTerminalSession,
+): PreparedAuditSettlement | null {
   const record = auditRecords.find(
     (candidate) =>
       candidate.userId === session.userId &&
@@ -223,7 +252,7 @@ function settleAuditForSession(session: MockEndedTerminalSession): void {
       candidate.entry.sessionId === session.sessionId &&
       candidate.entry.state === 'RUNNING',
   );
-  if (record === undefined) return;
+  if (record === undefined) return null;
   let state: TerminalAuditState;
   let exitCode: number | null;
   if (session.reason === 'SHELL_EXITED' && session.exitCode === 0) {
@@ -245,7 +274,10 @@ function settleAuditForSession(session: MockEndedTerminalSession): void {
     }],
     nextCursor: null,
   }).items[0];
-  if (parsed !== undefined) record.entry = parsed;
+  if (parsed === undefined) {
+    throw new Error('Invalid mock terminal audit settlement');
+  }
+  return { record, entry: parsed };
 }
 
 export function issueTerminalReservation(
@@ -279,7 +311,6 @@ export function issueTerminalReservation(
     ticket,
     expiresAtMs,
     dimensions,
-    used: false,
   });
   return {
     ok: true,
@@ -297,7 +328,6 @@ export function consumeTerminalTicket(
   const reservation = reservations.get(input.ticket);
   if (
     reservation === undefined ||
-    reservation.used ||
     Date.now() >= reservation.expiresAtMs ||
     reservation.userId !== input.userId ||
     reservation.projectId !== input.projectId ||
@@ -311,7 +341,6 @@ export function consumeTerminalTicket(
   if (liveSessions.has(key)) {
     return { ok: false, code: 'TERMINAL_SESSION_ALREADY_ACTIVE' };
   }
-  reservation.used = true;
   const live: MockLiveTerminalSession = {
     userId: reservation.userId,
     projectId: reservation.projectId,
@@ -321,8 +350,7 @@ export function consumeTerminalTicket(
     rows: reservation.dimensions.rows,
     state: 'live',
   };
-  liveSessions.set(key, live);
-  appendAuditRecord(live.userId, live.projectId, live.runId, {
+  const audit = buildAuditRecord(nextAuditSeq + 1, live.userId, live.projectId, live.runId, {
     sessionId: live.sessionId,
     command: terminalScenario === 'stress' ? 'ensoai-stage5-terminal-stress' : 'mvn test',
     state: 'RUNNING',
@@ -330,6 +358,10 @@ export function consumeTerminalTicket(
     finishedAt: null,
     exitCode: null,
   });
+  reservations.delete(reservation.ticket);
+  liveSessions.set(key, live);
+  nextAuditSeq = audit.seq;
+  auditRecords.push(audit);
   return { ok: true, value: { ...live } };
 }
 
@@ -341,8 +373,7 @@ export function endTerminalSession(
   if (live === undefined || live.sessionId !== input.sessionId) {
     return { ok: false, code: 'TERMINAL_NOT_AVAILABLE' };
   }
-  liveSessions.delete(key);
-  invalidateUnusedReservations(
+  const invalidations = prepareReservationInvalidations(
     (reservation) =>
       reservation.userId === input.userId &&
       reservation.projectId === input.projectId &&
@@ -355,7 +386,15 @@ export function endTerminalSession(
     reason: input.reason,
     exitCode: input.exitCode,
   };
-  settleAuditForSession(ended);
+  const settlement = prepareAuditSettlement(ended);
+  for (const invalidation of invalidations) {
+    reservations.delete(invalidation.ticket);
+  }
+  liveSessions.delete(key);
+  if (settlement !== null) settlement.record.entry = settlement.entry;
+  for (const invalidation of invalidations) {
+    emitTerminalStateEvent(invalidation.event);
+  }
   emitTerminalStateEvent({ type: 'session.ended', session: { ...ended } });
   return { ok: true, value: ended };
 }
@@ -369,22 +408,52 @@ export function subscribeTerminalStateEvents(
   };
 }
 
-function handleRunLeavingRunning(projectId: string, runId: string): void {
-  invalidateUnusedReservations(
+function finalizeTerminalRunTransition(projectId: string, runId: string): void {
+  const key = terminalRunKey(projectId, runId);
+  if (terminalFinalizationsInProgress.has(key)) return;
+  terminalFinalizationsInProgress.add(key);
+  try {
+    finalizeTerminalRunTransitionOnce(projectId, runId);
+  } finally {
+    terminalFinalizationsInProgress.delete(key);
+  }
+}
+
+function finalizeTerminalRunTransitionOnce(projectId: string, runId: string): void {
+  const invalidations = prepareReservationInvalidations(
     (reservation) => reservation.projectId === projectId && reservation.runId === runId,
   );
-  for (const live of [...liveSessions.values()]) {
-    if (live.projectId === projectId && live.runId === runId) {
-      endTerminalSession({
-        userId: live.userId,
-        projectId,
-        runId,
-        sessionId: live.sessionId,
-        reason: 'RUN_LEFT_RUNNING',
-        exitCode: null,
-      });
-    }
+  const ended = [...liveSessions.values()]
+    .filter((live) => live.projectId === projectId && live.runId === runId)
+    .map((live): MockEndedTerminalSession => ({
+      ...live,
+      state: 'closed',
+      reason: 'RUN_LEFT_RUNNING',
+      exitCode: null,
+    }));
+  const settlements = ended.map((session) => prepareAuditSettlement(session));
+
+  for (const invalidation of invalidations) {
+    reservations.delete(invalidation.ticket);
   }
+  for (const session of ended) {
+    liveSessions.delete(liveSessionKey(session.userId, session.projectId, session.runId));
+  }
+  for (const settlement of settlements) {
+    if (settlement !== null) settlement.record.entry = settlement.entry;
+  }
+  for (const invalidation of invalidations) {
+    emitTerminalStateEvent(invalidation.event);
+  }
+  for (const session of ended) {
+    emitTerminalStateEvent({ type: 'session.ended', session: { ...session } });
+  }
+}
+
+export function registerTerminalRunFinalizer(): void {
+  registerMockRunBeforeTransitionFinalizer((event) => {
+    finalizeTerminalRunTransition(event.projectId, event.runId);
+  });
 }
 
 export function seedTerminalAuditFixtures(
@@ -478,8 +547,20 @@ export function getUnusedTerminalReservationCount(
 ): number {
   return [...reservations.values()].filter(
     (reservation) =>
-      !reservation.used &&
       Date.now() < reservation.expiresAtMs &&
+      reservation.userId === userId &&
+      reservation.projectId === projectId &&
+      reservation.runId === runId,
+  ).length;
+}
+
+export function getTerminalReservationCount(
+  userId: string,
+  projectId: string,
+  runId: string,
+): number {
+  return [...reservations.values()].filter(
+    (reservation) =>
       reservation.userId === userId &&
       reservation.projectId === projectId &&
       reservation.runId === runId,
@@ -495,9 +576,9 @@ export function resetTerminalState(): void {
   terminalScenario = 'normal';
   terminalStorage()?.removeItem(MOCK_TERMINAL_PERSISTENCE_KEY);
   terminalStateSubscribers.clear();
+  terminalFinalizationsInProgress.clear();
+  registerTerminalRunFinalizer();
 }
 
 registerTerminalStateReset(resetTerminalState);
-subscribeMockRunBeforeTransition((event) => {
-  handleRunLeavingRunning(event.projectId, event.runId);
-});
+registerTerminalRunFinalizer();

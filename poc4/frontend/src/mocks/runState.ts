@@ -268,6 +268,8 @@ const subscribers = new Set<(event: MockRunSubscriberEvent) => void>();
 const beforeTransitionSubscribers = new Set<
   (event: MockRunBeforeTransitionEvent) => void
 >();
+const transitionsInProgress = new Set<string>();
+let beforeTransitionFinalizer: ((event: MockRunBeforeTransitionEvent) => void) | null = null;
 let persistNotifyObserver:
   | ((phase: MockRunPersistNotifyPhase, event: MockRunSubscriberEvent) => void)
   | null = null;
@@ -633,6 +635,23 @@ function applyTransition(
   next: MockRunTransition,
   options: { scheduleNext: boolean },
 ): MockRunMutationResult<{ run: RunSummary }> {
+  const key = recordKey(record.projectId, record.summary.id);
+  if (transitionsInProgress.has(key)) {
+    return fail('RUN_STATE_CONFLICT');
+  }
+  transitionsInProgress.add(key);
+  try {
+    return applyTransitionOnce(record, next, options);
+  } finally {
+    transitionsInProgress.delete(key);
+  }
+}
+
+function applyTransitionOnce(
+  record: MockRunRecord,
+  next: MockRunTransition,
+  options: { scheduleNext: boolean },
+): MockRunMutationResult<{ run: RunSummary }> {
   const from = record.summary.state;
   if (!ALLOWED_TRANSITIONS[from].has(next.state)) {
     return fail('RUN_STATE_CONFLICT');
@@ -666,8 +685,23 @@ function applyTransition(
       from,
       to: summary.state,
     };
+    try {
+      beforeTransitionFinalizer?.(event);
+    } catch {
+      return fail('RUN_STATE_CONFLICT');
+    }
     for (const listener of beforeTransitionSubscribers) {
-      listener(event);
+      try {
+        listener(event);
+      } catch {
+        // External observers cannot veto or corrupt the authoritative transition.
+      }
+    }
+    if (
+      findRecord(record.projectId, record.summary.id) !== record ||
+      record.summary.state !== from
+    ) {
+      return fail('RUN_STATE_CONFLICT');
     }
   }
   if (isRunTerminalState(summary.state) && getRunScenario() === 'reload-change') {
@@ -857,6 +891,12 @@ export function subscribeMockRunBeforeTransition(
   return () => {
     beforeTransitionSubscribers.delete(listener);
   };
+}
+
+export function registerMockRunBeforeTransitionFinalizer(
+  finalizer: (event: MockRunBeforeTransitionEvent) => void,
+): void {
+  beforeTransitionFinalizer = finalizer;
 }
 
 export function setMockRunPersistNotifyObserver(
@@ -1064,6 +1104,7 @@ export function scheduleMockLogAppend(
 
 export function resetRunState(): void {
   subscribers.clear();
+  beforeTransitionSubscribers.clear();
   persistNotifyObserver = null;
   clearRunMemory();
   restoreDefaultClock();
@@ -1096,6 +1137,7 @@ export function rehydrateMockRunState(): void {
 
 export function bootRunState(): void {
   subscribers.clear();
+  beforeTransitionSubscribers.clear();
   persistNotifyObserver = null;
   clearRunMemory();
   restoreDefaultClock();

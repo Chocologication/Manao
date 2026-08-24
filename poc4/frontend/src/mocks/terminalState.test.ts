@@ -19,6 +19,7 @@ import {
   endTerminalSession,
   getTerminalScenario,
   getLiveTerminalSession,
+  getTerminalReservationCount,
   getUnusedTerminalReservationCount,
   issueTerminalReservation,
   isTerminalScenario,
@@ -224,6 +225,34 @@ describe('terminal ticket lifecycle', () => {
     });
   });
 
+  it('does not publish live state or consume the ticket when audit construction throws', () => {
+    const runId = startInState('RUNNING');
+    const reservation = issueOk(runId);
+    const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(Number.NaN);
+    try {
+      expect(() => consumeTerminalTicket({
+        userId: ALICE_ID,
+        projectId: ALICE_SEED_PROJECT_ID,
+        runId,
+        sessionId: reservation.sessionId,
+        ticket: reservation.ticket,
+      })).toThrow(RangeError);
+    } finally {
+      nowSpy.mockRestore();
+    }
+
+    expect(getLiveTerminalSession(ALICE_ID, ALICE_SEED_PROJECT_ID, runId)).toBeNull();
+    expect(getTerminalReservationCount(ALICE_ID, ALICE_SEED_PROJECT_ID, runId)).toBe(1);
+    expect(consumeTerminalTicket({
+      userId: ALICE_ID,
+      projectId: ALICE_SEED_PROJECT_ID,
+      runId,
+      sessionId: reservation.sessionId,
+      ticket: reservation.ticket,
+    }).ok).toBe(true);
+    expect(getTerminalReservationCount(ALICE_ID, ALICE_SEED_PROJECT_ID, runId)).toBe(0);
+  });
+
   it('clears reservations, live sessions and deterministic counters through resetMockState', () => {
     const runId = startInState('RUNNING');
     const beforeReset = issueOk(runId);
@@ -363,7 +392,80 @@ describe('Run transition ordering', () => {
       'run:notify:STOPPING',
     ]);
     expect(getUnusedTerminalReservationCount(ALICE_ID, ALICE_SEED_PROJECT_ID, runId)).toBe(0);
+    expect(getTerminalReservationCount(ALICE_ID, ALICE_SEED_PROJECT_ID, runId)).toBe(0);
     expect(getLiveTerminalSession(ALICE_ID, ALICE_SEED_PROJECT_ID, runId)).toBeNull();
+  });
+
+  it('commits terminal cleanup and Run state despite a throwing external observer', () => {
+    const runId = startInState('RUNNING');
+    const live = issueOk(runId);
+    issueOk(runId);
+    expect(consumeTerminalTicket({
+      userId: ALICE_ID,
+      projectId: ALICE_SEED_PROJECT_ID,
+      runId,
+      sessionId: live.sessionId,
+      ticket: live.ticket,
+    }).ok).toBe(true);
+    const snapshots: Array<{ reservations: number; live: boolean }> = [];
+    const unsubscribeThrowing = subscribeTerminalStateEvents(() => {
+      throw new Error('terminal observer failure');
+    });
+    const unsubscribeInspecting = subscribeTerminalStateEvents(() => {
+      snapshots.push({
+        reservations: getTerminalReservationCount(ALICE_ID, ALICE_SEED_PROJECT_ID, runId),
+        live: getLiveTerminalSession(ALICE_ID, ALICE_SEED_PROJECT_ID, runId) !== null,
+      });
+    });
+    try {
+      let result: ReturnType<typeof transitionRun> | undefined;
+      expect(() => {
+        result = transitionRun(ALICE_SEED_PROJECT_ID, runId, { state: 'STOPPING' });
+      }).not.toThrow();
+
+      expect(result?.ok).toBe(true);
+      expect(getActiveRun(ALICE_SEED_PROJECT_ID)?.state).toBe('STOPPING');
+      expect(getTerminalReservationCount(ALICE_ID, ALICE_SEED_PROJECT_ID, runId)).toBe(0);
+      expect(getLiveTerminalSession(ALICE_ID, ALICE_SEED_PROJECT_ID, runId)).toBeNull();
+      expect(snapshots.length).toBeGreaterThan(0);
+      expect(snapshots.every((snapshot) => snapshot.reservations === 0 && !snapshot.live)).toBe(true);
+    } finally {
+      unsubscribeThrowing();
+      unsubscribeInspecting();
+    }
+  });
+
+  it('rejects a reservation created reentrantly from a terminal finalization observer', () => {
+    const runId = startInState('RUNNING');
+    const live = issueOk(runId);
+    issueOk(runId);
+    expect(consumeTerminalTicket({
+      userId: ALICE_ID,
+      projectId: ALICE_SEED_PROJECT_ID,
+      runId,
+      sessionId: live.sessionId,
+      ticket: live.ticket,
+    }).ok).toBe(true);
+    let attempted = false;
+    let reentrant: ReturnType<typeof issueTerminalReservation> | null = null;
+    const unsubscribe = subscribeTerminalStateEvents(() => {
+      if (attempted) return;
+      attempted = true;
+      reentrant = issueTerminalReservation(
+        ALICE_ID,
+        ALICE_SEED_PROJECT_ID,
+        runId,
+        { cols: 80, rows: 24 },
+      );
+    });
+    try {
+      expect(transitionRun(ALICE_SEED_PROJECT_ID, runId, { state: 'STOPPING' }).ok).toBe(true);
+
+      expect(reentrant).toEqual({ ok: false, code: 'TERMINAL_NOT_AVAILABLE' });
+      expect(getTerminalReservationCount(ALICE_ID, ALICE_SEED_PROJECT_ID, runId)).toBe(0);
+    } finally {
+      unsubscribe();
+    }
   });
 });
 

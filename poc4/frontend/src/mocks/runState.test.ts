@@ -25,6 +25,7 @@ import { MAX_SIZE_LOG_CHUNK_TEXT, POC4_RUN_POLICY, SEED_LOG_MARKER, SEED_LOG_TEX
 import {
   advanceMockRunClock,
   appendLogChunk,
+  bootRunState,
   getActiveRun,
   getLogWindow,
   getMockRunNowMs,
@@ -43,12 +44,14 @@ import {
   MOCK_RUN_STOP_DELAY_MS,
   MOCK_RUN_TERMINAL_DELAY_MS,
   rehydrateMockRunState,
+  resetRunState,
   scheduleMockLogAppend,
   setMockRunPersistNotifyObserver,
   setRunScenario,
   startRun,
   stopRun,
   subscribeMockRunEvents,
+  subscribeMockRunBeforeTransition,
   transitionRun,
   type MockRunMutationResult,
 } from './runState';
@@ -275,6 +278,69 @@ describe('state machine', () => {
       startedAt: null,
     });
     expect(getActiveRun(ALICE)).toBeNull();
+  });
+});
+
+describe('Run transition lifecycle isolation', () => {
+  it('does not propagate an external before-transition observer exception', () => {
+    const run = startOk();
+    expectOk(transitionRun(ALICE, run.id, { state: 'RUNNING' }));
+    const unsubscribe = subscribeMockRunBeforeTransition(() => {
+      throw new Error('observer failure');
+    });
+    try {
+      let result: ReturnType<typeof transitionRun> | undefined;
+      expect(() => {
+        result = transitionRun(ALICE, run.id, { state: 'STOPPING' });
+      }).not.toThrow();
+      expectOk(result as ReturnType<typeof transitionRun>);
+      expect(getRun(ALICE, run.id)?.state).toBe('STOPPING');
+    } finally {
+      unsubscribe();
+    }
+  });
+
+  it('rejects a reentrant transition for the same Run before the outer commit', () => {
+    const run = startOk();
+    expectOk(transitionRun(ALICE, run.id, { state: 'RUNNING' }));
+    let attempted = false;
+    const nested: Array<ReturnType<typeof transitionRun>> = [];
+    const unsubscribe = subscribeMockRunBeforeTransition(() => {
+      if (attempted) return;
+      attempted = true;
+      nested.push(transitionRun(ALICE, run.id, { state: 'SUCCEEDED' }));
+    });
+    try {
+      const outer = transitionRun(ALICE, run.id, { state: 'STOPPING' });
+
+      const nestedResult = nested[0];
+      if (nestedResult === undefined) throw new Error('reentrant transition was not attempted');
+      expectFail(nestedResult, 'RUN_STATE_CONFLICT');
+      expectOk(outer);
+      expect(getRun(ALICE, run.id)?.state).toBe('STOPPING');
+    } finally {
+      unsubscribe();
+    }
+  });
+
+  it.each([
+    ['reset', resetRunState],
+    ['boot', bootRunState],
+  ] as const)('clears external before-transition observers on %s', (_label, reset) => {
+    let observed = 0;
+    const unsubscribe = subscribeMockRunBeforeTransition(() => {
+      observed += 1;
+    });
+    try {
+      reset();
+      installVirtualRunClock(EPOCH_MS);
+      const run = startOk();
+      expectOk(transitionRun(ALICE, run.id, { state: 'RUNNING' }));
+      expectOk(transitionRun(ALICE, run.id, { state: 'STOPPING' }));
+      expect(observed).toBe(0);
+    } finally {
+      unsubscribe();
+    }
   });
 });
 
