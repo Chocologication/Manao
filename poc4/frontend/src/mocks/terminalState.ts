@@ -71,7 +71,20 @@ type TerminalReservation = {
   ticket: TerminalTicket;
   expiresAtMs: number;
   dimensions: CreateTerminalSessionRequest;
+  state: 'available' | 'used' | 'unavailable';
 };
+
+export type MockTerminalHandshakeClassification =
+  | { ok: true }
+  | {
+      ok: false;
+      code:
+        | 'TICKET_NOT_AVAILABLE'
+        | 'TICKET_EXPIRED'
+        | 'TICKET_ALREADY_USED'
+        | 'SESSION_ALREADY_ACTIVE'
+        | 'SESSION_NOT_AVAILABLE';
+    };
 
 export type MockLiveTerminalSession = {
   userId: string;
@@ -202,7 +215,7 @@ function prepareReservationInvalidations(
   matches: (reservation: TerminalReservation) => boolean,
 ): PreparedReservationInvalidation[] {
   return [...reservations.entries()]
-    .filter(([, reservation]) => matches(reservation))
+    .filter(([, reservation]) => reservation.state === 'available' && matches(reservation))
     .map(([ticket, reservation]) => ({
       ticket,
       event: {
@@ -316,6 +329,7 @@ export function issueTerminalReservation(
     ticket,
     expiresAtMs,
     dimensions,
+    state: 'available',
   });
   return {
     ok: true,
@@ -333,6 +347,7 @@ export function consumeTerminalTicket(
   const reservation = reservations.get(input.ticket);
   if (
     reservation === undefined ||
+    reservation.state !== 'available' ||
     Date.now() >= reservation.expiresAtMs ||
     reservation.userId !== input.userId ||
     reservation.projectId !== input.projectId ||
@@ -363,11 +378,36 @@ export function consumeTerminalTicket(
     finishedAt: null,
     exitCode: null,
   });
-  reservations.delete(reservation.ticket);
+  reservation.state = 'used';
   liveSessions.set(key, live);
   nextAuditSeq = audit.seq;
   auditRecords.push(audit);
   return { ok: true, value: { ...live } };
+}
+
+export function classifyTerminalTicketForHandshake(
+  ticket: string,
+): MockTerminalHandshakeClassification {
+  const reservation = reservations.get(ticket);
+  if (reservation === undefined) {
+    return { ok: false, code: 'TICKET_NOT_AVAILABLE' };
+  }
+  if (reservation.state === 'used') {
+    return { ok: false, code: 'TICKET_ALREADY_USED' };
+  }
+  if (reservation.state === 'unavailable') {
+    return { ok: false, code: 'SESSION_NOT_AVAILABLE' };
+  }
+  if (Date.now() >= reservation.expiresAtMs) {
+    return { ok: false, code: 'TICKET_EXPIRED' };
+  }
+  if (!hasRunningAuthority(reservation.userId, reservation.projectId, reservation.runId)) {
+    return { ok: false, code: 'SESSION_NOT_AVAILABLE' };
+  }
+  if (liveSessions.has(liveSessionKey(reservation.userId, reservation.projectId, reservation.runId))) {
+    return { ok: false, code: 'SESSION_ALREADY_ACTIVE' };
+  }
+  return { ok: true };
 }
 
 export function consumeTerminalTicketByTicket(
@@ -409,7 +449,8 @@ export function endTerminalSession(
   };
   const settlement = prepareAuditSettlement(ended);
   for (const invalidation of invalidations) {
-    reservations.delete(invalidation.ticket);
+    const reservation = reservations.get(invalidation.ticket);
+    if (reservation !== undefined) reservation.state = 'unavailable';
   }
   liveSessions.delete(key);
   if (settlement !== null) settlement.record.entry = settlement.entry;
@@ -455,7 +496,8 @@ function finalizeTerminalRunTransitionOnce(projectId: string, runId: string): vo
   const settlements = ended.map((session) => prepareAuditSettlement(session));
 
   for (const invalidation of invalidations) {
-    reservations.delete(invalidation.ticket);
+    const reservation = reservations.get(invalidation.ticket);
+    if (reservation !== undefined) reservation.state = 'unavailable';
   }
   for (const session of ended) {
     liveSessions.delete(liveSessionKey(session.userId, session.projectId, session.runId));
@@ -568,6 +610,7 @@ export function getUnusedTerminalReservationCount(
 ): number {
   return [...reservations.values()].filter(
     (reservation) =>
+      reservation.state === 'available' &&
       Date.now() < reservation.expiresAtMs &&
       reservation.userId === userId &&
       reservation.projectId === projectId &&
@@ -582,6 +625,7 @@ export function getTerminalReservationCount(
 ): number {
   return [...reservations.values()].filter(
     (reservation) =>
+      reservation.state === 'available' &&
       reservation.userId === userId &&
       reservation.projectId === projectId &&
       reservation.runId === runId,

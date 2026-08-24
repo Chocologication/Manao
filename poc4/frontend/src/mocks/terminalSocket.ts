@@ -8,6 +8,7 @@ import {
   type TerminalServerControl,
 } from '../contracts/terminal';
 import {
+  classifyTerminalTicketForHandshake,
   consumeTerminalTicketByTicket,
   endTerminalSession,
   getTerminalScenario,
@@ -78,6 +79,22 @@ function sameOriginTerminalEndpoint(): string {
 
 const terminals = ws.link(sameOriginTerminalEndpoint());
 
+function handshakeCloseCode(
+  code: Exclude<ReturnType<typeof classifyTerminalTicketForHandshake>, { ok: true }>['code'],
+): number {
+  switch (code) {
+    case 'TICKET_NOT_AVAILABLE':
+      return TERMINAL_SOCKET_CLOSE_CODES.TICKET_NOT_AVAILABLE;
+    case 'TICKET_EXPIRED':
+      return TERMINAL_SOCKET_CLOSE_CODES.TICKET_EXPIRED;
+    case 'TICKET_ALREADY_USED':
+    case 'SESSION_ALREADY_ACTIVE':
+      return TERMINAL_SOCKET_CLOSE_CODES.SESSION_ALREADY_ACTIVE;
+    case 'SESSION_NOT_AVAILABLE':
+      return TERMINAL_SOCKET_CLOSE_CODES.SESSION_NOT_AVAILABLE;
+  }
+}
+
 export const terminalSocketHandler = terminals.addEventListener('connection', ({ client }) => {
   const rejectHandshake = (code: number): void => {
     setTimeout(() => client.close(code), 0);
@@ -95,6 +112,12 @@ export const terminalSocketHandler = terminals.addEventListener('connection', ({
     rejectHandshake(TERMINAL_SOCKET_CLOSE_CODES.TICKET_NOT_AVAILABLE);
     return;
   }
+  const classification = classifyTerminalTicketForHandshake(ticket);
+  if (!classification.ok) {
+    rejectHandshake(handshakeCloseCode(classification.code));
+    return;
+  }
+
   const scenario = getTerminalScenario();
   if (scenario === 'ticket-expired') {
     rejectHandshake(TERMINAL_SOCKET_CLOSE_CODES.TICKET_EXPIRED);
@@ -104,12 +127,16 @@ export const terminalSocketHandler = terminals.addEventListener('connection', ({
     rejectHandshake(TERMINAL_SOCKET_CLOSE_CODES.SESSION_ALREADY_ACTIVE);
     return;
   }
+  if (scenario === 'disconnect') {
+    rejectHandshake(1011);
+    return;
+  }
   const consumed = consumeTerminalTicketByTicket(ticket);
   if (!consumed.ok) {
     rejectHandshake(
       consumed.code === 'TERMINAL_SESSION_ALREADY_ACTIVE'
         ? TERMINAL_SOCKET_CLOSE_CODES.SESSION_ALREADY_ACTIVE
-        : TERMINAL_SOCKET_CLOSE_CODES.TICKET_NOT_AVAILABLE,
+        : TERMINAL_SOCKET_CLOSE_CODES.SESSION_NOT_AVAILABLE,
     );
     return;
   }
@@ -257,12 +284,6 @@ export const terminalSocketHandler = terminals.addEventListener('connection', ({
       });
       return;
     }
-    if (scenario === 'disconnect') {
-      queueMicrotask(() => {
-        closeAfterStateSettlement('CONNECTION_LOST', null, null, 1011);
-      });
-      return;
-    }
     if (scenario !== 'server-pause') return;
     inputPaused = true;
     sendControl({ type: 'terminal.input.pause' });
@@ -387,6 +408,7 @@ export const terminalSocketHandler = terminals.addEventListener('connection', ({
       protocolError();
       return;
     }
+    if (binary.byteLength === 0) return;
     if (inputPaused) {
       inputOverflow();
       return;

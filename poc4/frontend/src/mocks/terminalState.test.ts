@@ -16,6 +16,7 @@ import {
   resetMockState,
 } from './state';
 import {
+  classifyTerminalTicketForHandshake,
   consumeTerminalTicket,
   consumeTerminalTicketByTicket,
   endTerminalSession,
@@ -160,6 +161,52 @@ describe('terminal reservation authority', () => {
 });
 
 describe('terminal ticket lifecycle', () => {
+  it('classifies authoritative handshake failures without exposing reservation identity', () => {
+    const runId = startInState('RUNNING');
+    expect(classifyTerminalTicketForHandshake('mock-terminal-ticket-missing')).toEqual({
+      ok: false,
+      code: 'TICKET_NOT_AVAILABLE',
+    });
+
+    const available = issueOk(runId);
+    expect(classifyTerminalTicketForHandshake(available.ticket)).toEqual({ ok: true });
+
+    const expired = issueOk(runId);
+    vi.advanceTimersByTime(30_000);
+    expect(classifyTerminalTicketForHandshake(expired.ticket)).toEqual({
+      ok: false,
+      code: 'TICKET_EXPIRED',
+    });
+
+    vi.setSystemTime(NOW);
+    const live = issueOk(runId);
+    const blocked = issueOk(runId);
+    expect(consumeTerminalTicketByTicket(live.ticket).ok).toBe(true);
+    expect(classifyTerminalTicketForHandshake(live.ticket)).toEqual({
+      ok: false,
+      code: 'TICKET_ALREADY_USED',
+    });
+    expect(classifyTerminalTicketForHandshake(blocked.ticket)).toEqual({
+      ok: false,
+      code: 'SESSION_ALREADY_ACTIVE',
+    });
+    expect(endTerminalSession({
+      userId: ALICE_ID,
+      projectId: ALICE_SEED_PROJECT_ID,
+      runId,
+      sessionId: live.sessionId,
+      reason: 'CLIENT_CLOSED',
+      exitCode: null,
+    }).ok).toBe(true);
+
+    const unavailable = issueOk(runId);
+    expect(transitionRun(ALICE_SEED_PROJECT_ID, runId, { state: 'STOPPING' }).ok).toBe(true);
+    expect(classifyTerminalTicketForHandshake(unavailable.ticket)).toEqual({
+      ok: false,
+      code: 'SESSION_NOT_AVAILABLE',
+    });
+  });
+
   it('atomically resolves and consumes the authoritative reservation by raw ticket', () => {
     const runId = startInState('RUNNING');
     const reservation = issueOk(runId, 132, 43);

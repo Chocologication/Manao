@@ -24,6 +24,7 @@ const SEED_REVISION = 'mock-rev-0001';
 const CLOSE_TICKET_NOT_AVAILABLE = 4401;
 const CLOSE_TICKET_EXPIRED = 4408;
 const CLOSE_SESSION_ALREADY_ACTIVE = 4409;
+const CLOSE_SESSION_NOT_AVAILABLE = 4410;
 const CLOSE_PROTOCOL_ERROR = 4400;
 const CLOSE_OUTPUT_FLOW_TIMEOUT = 4411;
 const sockets: WebSocket[] = [];
@@ -146,13 +147,13 @@ describe('mock terminal WebSocket handshake', () => {
     const expired = issue(runId);
     const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(NOW + 30_000);
     const expiredSocket = openTerminal(expired.ticket);
-    expect(await waitForClose(expiredSocket)).toBe(CLOSE_TICKET_NOT_AVAILABLE);
+    expect(await waitForClose(expiredSocket)).toBe(CLOSE_TICKET_EXPIRED);
     nowSpy.mockRestore();
 
     const used = issue(runId);
     expect(consumeTerminalTicketByTicket(used.ticket).ok).toBe(true);
     const usedSocket = openTerminal(used.ticket);
-    expect(await waitForClose(usedSocket)).toBe(CLOSE_TICKET_NOT_AVAILABLE);
+    expect(await waitForClose(usedSocket)).toBe(CLOSE_SESSION_ALREADY_ACTIVE);
     expect(endTerminalSession({
       userId: ALICE_ID,
       projectId: ALICE_SEED_PROJECT_ID,
@@ -165,7 +166,7 @@ describe('mock terminal WebSocket handshake', () => {
     const revoked = issue(runId);
     expect(transitionRun(ALICE_SEED_PROJECT_ID, runId, { state: 'STOPPING' }).ok).toBe(true);
     const revokedSocket = openTerminal(revoked.ticket);
-    expect(await waitForClose(revokedSocket)).toBe(CLOSE_TICKET_NOT_AVAILABLE);
+    expect(await waitForClose(revokedSocket)).toBe(CLOSE_SESSION_NOT_AVAILABLE);
 
     expect(getLiveTerminalSession(ALICE_ID, ALICE_SEED_PROJECT_ID, runId)).toBeNull();
     expect(listTerminalAudits(ALICE_ID, ALICE_SEED_PROJECT_ID, runId).items).toHaveLength(1);
@@ -194,8 +195,47 @@ describe('mock terminal WebSocket handshake', () => {
     const scenarioTicket = issue(runId);
     const expiredSocket = openTerminal(scenarioTicket.ticket);
     expect(await waitForClose(expiredSocket)).toBe(CLOSE_TICKET_EXPIRED);
+    const missingSocket = openTerminal('mock-terminal-ticket-missing-under-scenario');
+    expect(await waitForClose(missingSocket)).toBe(CLOSE_TICKET_NOT_AVAILABLE);
     expect(getTerminalReservationCount(ALICE_ID, ALICE_SEED_PROJECT_ID, runId)).toBe(1);
     expect(getMockTerminalSocketDiagnostics().execCreated).toBe(diagnosticsBefore.execCreated);
+  });
+
+  it('rejects an authority-lost reservation with 4410 before ready or resource creation', async () => {
+    const diagnosticsBefore = getMockTerminalSocketDiagnostics();
+    const runId = startRunningRun();
+    const reservation = issue(runId);
+    expect(transitionRun(ALICE_SEED_PROJECT_ID, runId, { state: 'STOPPING' }).ok).toBe(true);
+    const socket = openTerminal(reservation.ticket);
+    const frames: unknown[] = [];
+    socket.addEventListener('message', (event) => frames.push(event.data));
+
+    expect(await waitForClose(socket)).toBe(CLOSE_SESSION_NOT_AVAILABLE);
+    expect(frames).toEqual([]);
+    expect(getLiveTerminalSession(ALICE_ID, ALICE_SEED_PROJECT_ID, runId)).toBeNull();
+    expect(listTerminalAudits(ALICE_ID, ALICE_SEED_PROJECT_ID, runId).items).toEqual([]);
+    expect(getMockTerminalSocketDiagnostics()).toEqual(diagnosticsBefore);
+  });
+
+  it('rejects a retryable server handshake failure with 1011 without consuming a valid ticket', async () => {
+    setTerminalScenario('disconnect');
+    const diagnosticsBefore = getMockTerminalSocketDiagnostics();
+    const runId = startRunningRun();
+    const reservation = issue(runId);
+    const socket = openTerminal(reservation.ticket);
+    const frames: unknown[] = [];
+    socket.addEventListener('message', (event) => frames.push(event.data));
+    const closeCode = await Promise.race([
+      waitForClose(socket),
+      new Promise<number>((resolve) => setTimeout(() => resolve(-1), 100)),
+    ]);
+
+    expect(closeCode).toBe(1011);
+    expect(frames).toEqual([]);
+    expect(getTerminalReservationCount(ALICE_ID, ALICE_SEED_PROJECT_ID, runId)).toBe(1);
+    expect(getLiveTerminalSession(ALICE_ID, ALICE_SEED_PROJECT_ID, runId)).toBeNull();
+    expect(listTerminalAudits(ALICE_ID, ALICE_SEED_PROJECT_ID, runId).items).toEqual([]);
+    expect(getMockTerminalSocketDiagnostics()).toEqual(diagnosticsBefore);
   });
 
   it('rejects duplicate ticket and extra query parameters without consuming either reservation', async () => {
@@ -322,6 +362,33 @@ describe('mock PTY binary direction', () => {
 });
 
 describe('terminal output credit and acknowledgement', () => {
+  it('treats a zero-byte binary input as a no-op without output or ack timeout', async () => {
+    const runId = startRunningRun();
+    const reservation = issue(runId);
+    const socket = openTerminal(reservation.ticket);
+    const controls = new ControlReader(socket, reservation.sessionId);
+    const output: ArrayBuffer[] = [];
+    socket.addEventListener('message', (event) => {
+      if (event.data instanceof ArrayBuffer) output.push(event.data);
+    });
+    await waitForOpen(socket);
+    expect((await controls.next()).type).toBe('terminal.ready');
+    vi.useRealTimers();
+    vi.useFakeTimers();
+    vi.setSystemTime(NOW);
+    initializeTerminal(socket, 1);
+    socket.send(new ArrayBuffer(0));
+    await vi.advanceTimersByTimeAsync(5_000);
+
+    expect(socket.readyState).toBe(WebSocket.OPEN);
+    expect(output).toEqual([]);
+    expect(controls.snapshot()).not.toContainEqual({
+      type: 'terminal.error',
+      code: 'OUTPUT_FLOW_TIMEOUT',
+      retryable: false,
+    });
+  });
+
   it('holds output until credit is sufficient and accepts the exact frame ack', async () => {
     const runId = startRunningRun();
     const reservation = issue(runId);
@@ -560,7 +627,7 @@ describe('terminal destroy and audit finalization', () => {
     }
   });
 
-  it('settles shell exit and retryable disconnect scenarios without duplicate cleanup', async () => {
+  it('settles shell exit without duplicate cleanup', async () => {
     const runId = startRunningRun();
     setTerminalScenario('shell-exit');
     const shellBefore = getMockTerminalSocketDiagnostics();
@@ -582,21 +649,5 @@ describe('terminal destroy and audit finalization', () => {
     expect(listTerminalAudits(ALICE_ID, ALICE_SEED_PROJECT_ID, runId, {
       sessionId: shellReservation.sessionId,
     }).items[0]?.state).toBe('SUCCEEDED');
-
-    setTerminalScenario('disconnect');
-    const disconnectBefore = getMockTerminalSocketDiagnostics();
-    const disconnectReservation = issue(runId);
-    const disconnect = openTerminal(disconnectReservation.ticket);
-    const disconnectControls = new ControlReader(disconnect, disconnectReservation.sessionId);
-    await waitForOpen(disconnect);
-    expect((await disconnectControls.next()).type).toBe('terminal.ready');
-    const disconnectClosed = waitForClose(disconnect);
-    initializeTerminal(disconnect, 1);
-    await settleSocketEvents();
-    expect(await disconnectClosed).toBe(1011);
-    expectOneDestroy(disconnectBefore);
-    expect(listTerminalAudits(ALICE_ID, ALICE_SEED_PROJECT_ID, runId, {
-      sessionId: disconnectReservation.sessionId,
-    }).items[0]?.state).toBe('INTERRUPTED');
   });
 });
