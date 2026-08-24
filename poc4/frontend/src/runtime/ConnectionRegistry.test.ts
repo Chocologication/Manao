@@ -69,4 +69,18 @@ describe('ConnectionRegistry', () => {
     expect(self).toHaveBeenCalledTimes(1);
     expect(remaining).toHaveBeenCalledTimes(1);
   });
+
+  it('defers a connection generation registered during closeAll until the next cleanup', () => {
+    const registry = new ConnectionRegistry();
+    const nextGeneration = vi.fn();
+    registry.register(() => {
+      registry.register(nextGeneration);
+    });
+
+    registry.closeAll();
+    expect(nextGeneration).not.toHaveBeenCalled();
+
+    registry.closeAll();
+    expect(nextGeneration).toHaveBeenCalledOnce();
+  });
 });

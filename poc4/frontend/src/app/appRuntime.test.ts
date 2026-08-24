@@ -25,6 +25,7 @@ import {
   handleUnauthorized,
   logout,
   queryClient,
+  registerTerminalRuntimeResource,
   workspaceBufferRegistry,
   workspaceResourceRegistry,
 } from './appRuntime';
@@ -996,5 +997,58 @@ describe('appRuntime workspace buffer disposal', () => {
     workspaceSessionStore.getState().activateProject(ALICE_SEED_PROJECT_ID);
     expect(workspaceBufferRegistry.get(ALICE_SEED_PROJECT_ID, POM)).toBeUndefined();
     expect(workspaceSessionStore.getState().dirtyPaths.size).toBe(0);
+  });
+});
+
+describe('appRuntime terminal resource registration', () => {
+  it('closes the socket before disposing controller/xterm and keeps heavy modules lazy', () => {
+    const order: string[] = [];
+    registerTerminalRuntimeResource({
+      closeConnection: () => {
+        order.push('socket');
+      },
+      disposeWorkspace: () => {
+        order.push('controller-xterm');
+      },
+    });
+
+    logout();
+
+    expect(order).toEqual(['socket', 'controller-xterm']);
+    const source = readFileSync('src/app/appRuntime.ts', 'utf8');
+    expect(source).not.toMatch(/features[\\/]terminal/);
+    expect(source).not.toMatch(/@xterm/);
+  });
+
+  it('unregisters both ownership paths and isolates throwing cleanup observers', () => {
+    const removedClose = vi.fn();
+    const removedDispose = vi.fn();
+    const unregister = registerTerminalRuntimeResource({
+      closeConnection: removedClose,
+      disposeWorkspace: removedDispose,
+    });
+    unregister();
+    unregister();
+
+    const remainingClose = vi.fn();
+    const remainingDispose = vi.fn();
+    registerTerminalRuntimeResource({
+      closeConnection: () => {
+        throw new Error('close observer failed');
+      },
+      disposeWorkspace: () => {
+        throw new Error('dispose observer failed');
+      },
+    });
+    registerTerminalRuntimeResource({
+      closeConnection: remainingClose,
+      disposeWorkspace: remainingDispose,
+    });
+
+    expect(() => logout()).not.toThrow();
+    expect(removedClose).not.toHaveBeenCalled();
+    expect(removedDispose).not.toHaveBeenCalled();
+    expect(remainingClose).toHaveBeenCalledOnce();
+    expect(remainingDispose).toHaveBeenCalledOnce();
   });
 });

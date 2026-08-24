@@ -11,6 +11,29 @@ export const authSession = createAuthSession();
 export const queryClient = createQueryClient();
 export const connectionRegistry = new ConnectionRegistry();
 export const workspaceResourceRegistry = new WorkspaceResourceRegistry();
+
+export type TerminalRuntimeResource = {
+  closeConnection(): void;
+  disposeWorkspace(): void;
+};
+
+export function registerTerminalRuntimeResource(resource: TerminalRuntimeResource): () => void {
+  const unregisterConnection = connectionRegistry.register(() => {
+    resource.closeConnection();
+  });
+  const unregisterWorkspace = workspaceResourceRegistry.register(() => {
+    unregisterConnection();
+    resource.disposeWorkspace();
+  });
+  let registered = true;
+  return () => {
+    if (!registered) return;
+    registered = false;
+    unregisterConnection();
+    unregisterWorkspace();
+  };
+}
+
 export const workspaceBufferRegistry = new WorkspaceBufferRegistry((projectId, path, dirty) => {
   const session = workspaceSessionStore.getState();
   if (session.projectId !== projectId) {

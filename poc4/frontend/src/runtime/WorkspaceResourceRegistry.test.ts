@@ -72,4 +72,18 @@ describe('WorkspaceResourceRegistry', () => {
     expect(throwing).toHaveBeenCalledTimes(1);
     expect(remaining).toHaveBeenCalledTimes(1);
   });
+
+  it('defers a workspace generation registered during disposeAll until the next cleanup', () => {
+    const registry = new WorkspaceResourceRegistry();
+    const nextGeneration = vi.fn();
+    registry.register(() => {
+      registry.register(nextGeneration);
+    });
+
+    registry.disposeAll();
+    expect(nextGeneration).not.toHaveBeenCalled();
+
+    registry.disposeAll();
+    expect(nextGeneration).toHaveBeenCalledOnce();
+  });
 });
