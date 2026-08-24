@@ -6,7 +6,7 @@ import { parseRunId, type LogTicket, type RunSummary } from '../../contracts/run
 import { isWorkspaceEditable, RunAuthorityCoordinator } from '../runs/RunAuthorityCoordinator';
 import { runKeys } from '../runs/runQueries';
 import { ConnectionRegistry } from '../../runtime/ConnectionRegistry';
-import { LOG_HEARTBEAT_WATCHDOG_MS, LOG_WS_PATH } from './logProtocol';
+import { LOG_HEARTBEAT_WATCHDOG_MS, LOG_WS_CLOSE_CODE, LOG_WS_PATH } from './logProtocol';
 import { RunLogStore } from './RunLogStore';
 import {
   applyValidatedRunStateFrame,
@@ -190,6 +190,9 @@ function createClock() {
         }
       }
     },
+    pendingCount() {
+      return timers.size;
+    },
   };
   return clock;
 }
@@ -230,14 +233,18 @@ type Harness = {
 function createHarness(overrides: Partial<RunLogTransportOptions> = {}): Harness {
   const clock = createClock();
   const sockets: FakeWebSocket[] = [];
-  const store = new RunLogStore({
-    projectId: PROJECT_ID,
-    runId: RUN_ID,
-    schedule: (notify) => {
-      notify();
-      return () => {};
-    },
-  });
+  const projectId = overrides.projectId ?? PROJECT_ID;
+  const runId = overrides.runId ?? RUN_ID;
+  const store =
+    overrides.store ??
+    new RunLogStore({
+      projectId,
+      runId,
+      schedule: (notify) => {
+        notify();
+        return () => {};
+      },
+    });
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const registry = new ConnectionRegistry();
   const createTicket = vi.fn(async () => ({
@@ -252,10 +259,6 @@ function createHarness(overrides: Partial<RunLogTransportOptions> = {}): Harness
   const offlineListeners = new Set<() => void>();
   let online = true;
   const transport = new RunLogTransport({
-    projectId: PROJECT_ID,
-    runId: RUN_ID,
-    store,
-    queryClient,
     coordinator: { reconcile },
     connectionRegistry: registry,
     createTicket,
@@ -267,8 +270,6 @@ function createHarness(overrides: Partial<RunLogTransportOptions> = {}): Harness
       return socket as unknown as WebSocket;
     },
     location: { protocol: 'http:', host: 'localhost:4173' },
-    setTimeout: clock.setTimeout,
-    clearTimeout: clock.clearTimeout,
     jitter: false,
     heartbeatWatchdogMs: LOG_HEARTBEAT_WATCHDOG_MS,
     addWindowListener: (type, listener) => {
@@ -279,6 +280,12 @@ function createHarness(overrides: Partial<RunLogTransportOptions> = {}): Harness
     },
     isOnline: () => online,
     ...overrides,
+    projectId,
+    runId,
+    store,
+    queryClient,
+    setTimeout: overrides.setTimeout ?? clock.setTimeout,
+    clearTimeout: overrides.clearTimeout ?? clock.clearTimeout,
   });
   return {
     transport,
@@ -310,6 +317,7 @@ function harness(overrides?: Partial<RunLogTransportOptions>): Harness {
 afterEach(() => {
   for (const item of harnesses.splice(0)) {
     item.transport.dispose();
+    item.store.dispose();
     item.queryClient.clear();
   }
 });
@@ -592,5 +600,148 @@ describe('RunLogTransport run.state cache updates', () => {
     await microtasks();
     expect(item.createTicket).toHaveBeenCalledTimes(1);
     expect(item.queryClient.getQueryData(runKeys.active(PROJECT_ID))).toEqual({ run: running });
+  });
+});
+
+describe('RunLogTransport reconnect transition matrix', () => {
+  it('close before open aborts ticketing, keeps lastSeq null, and does not open a socket', async () => {
+    const item = harness();
+    let release: () => void = () => {};
+    const hold = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    item.createTicket.mockImplementation(async () => {
+      await hold;
+      return { ticket: 'ticket-held' as LogTicket, expiresAt: TICKET_EXPIRES };
+    });
+    item.transport.connect();
+    await microtasks();
+    expect(item.store.getSnapshot().connection).toBe('ticketing');
+    expect(item.sockets).toHaveLength(0);
+    item.transport.close();
+    expect(item.store.getSnapshot()).toMatchObject({ connection: 'idle', lastAppliedSeq: null });
+    expect(item.clock.pendingCount()).toBe(0);
+    release();
+    await microtasks();
+    expect(item.sockets).toHaveLength(0);
+    item.clock.advance(5_000);
+    await microtasks();
+    expect(item.createTicket).toHaveBeenCalledTimes(1);
+  });
+
+  it('close after socket create but before open cancels timers and does not reconnect', async () => {
+    const item = harness();
+    item.transport.connect();
+    await microtasks();
+    expect(item.createTicket).toHaveBeenCalledTimes(1);
+    expect(item.store.getSnapshot().connection).toBe('connecting');
+    item.transport.close();
+    expect(item.sockets[0]?.readyState).toBe(FakeWebSocket.CLOSED);
+    expect(item.store.getSnapshot()).toMatchObject({ connection: 'idle', lastAppliedSeq: null });
+    expect(item.clock.pendingCount()).toBe(0);
+    item.clock.advance(5_000);
+    await microtasks();
+    expect(item.createTicket).toHaveBeenCalledTimes(1);
+  });
+
+  it('close after replay keeps lastSeq, cancels the watchdog, and does not fetch another ticket', async () => {
+    const item = harness();
+    const socket = await openLive(item, [chunk(1, 'keep')]);
+    expect(item.store.getSnapshot().lastAppliedSeq).toBe(1);
+    expect(item.clock.pendingCount()).toBe(1);
+    item.transport.close();
+    expect(socket.readyState).toBe(FakeWebSocket.CLOSED);
+    expect(item.store.getSnapshot()).toMatchObject({ connection: 'idle', lastAppliedSeq: 1 });
+    expect(item.clock.pendingCount()).toBe(0);
+    item.clock.advance(LOG_HEARTBEAT_WATCHDOG_MS);
+    await microtasks();
+    expect(item.createTicket).toHaveBeenCalledTimes(1);
+  });
+
+  it('ticket expiry 4408 and retryable TICKET_EXPIRED reconnect with a fresh ticket and the same lastSeq', async () => {
+    const expired = harness();
+    const expiredSocket = await openLive(expired, [chunk(1, 'keep')]);
+    expiredSocket.remoteClose(LOG_WS_CLOSE_CODE.TICKET_EXPIRED, 'ignore free-form expiry text');
+    expect(expired.store.getSnapshot()).toMatchObject({
+      connection: 'reconnecting',
+      lastAppliedSeq: 1,
+    });
+    expect(expired.clock.pendingCount()).toBe(1);
+    expired.clock.flush();
+    await microtasks();
+    expect(expired.createTicket).toHaveBeenCalledTimes(2);
+    expired.sockets[1]?.open();
+    expect(expired.sockets[1]?.sent).toEqual([JSON.stringify({ type: 'log.subscribe', lastSeq: 1 })]);
+
+    const framed = harness();
+    const liveSocket = await openLive(framed, [chunk(1, 'keep')]);
+    liveSocket.message(JSON.stringify({ type: 'stream.error', code: 'TICKET_EXPIRED', retryable: true }));
+    expect(framed.store.getSnapshot()).toMatchObject({
+      connection: 'reconnecting',
+      lastAppliedSeq: 1,
+    });
+    framed.clock.flush();
+    await microtasks();
+    expect(framed.createTicket).toHaveBeenCalledTimes(2);
+    framed.sockets[1]?.open();
+    expect(framed.sockets[1]?.sent).toEqual([JSON.stringify({ type: 'log.subscribe', lastSeq: 1 })]);
+  });
+
+  it('handshake 4403 stops retry with FORBIDDEN and cancels timers', async () => {
+    const item = harness();
+    item.transport.connect();
+    await microtasks();
+    item.sockets[0]?.remoteClose(LOG_WS_CLOSE_CODE.FORBIDDEN, 'do not parse this reason');
+    expect(item.store.getSnapshot()).toMatchObject({ connection: 'failed', error: 'FORBIDDEN' });
+    expect(item.clock.pendingCount()).toBe(0);
+    item.clock.advance(5_000);
+    await microtasks();
+    expect(item.createTicket).toHaveBeenCalledTimes(1);
+  });
+
+  it('current-token 4401 calls onUnauthorized, fails the stream, and does not reconnect', async () => {
+    const item = harness();
+    const socket = await openLive(item, [chunk(1, 'keep')]);
+    socket.remoteClose(LOG_WS_CLOSE_CODE.UNAUTHENTICATED, 'Bearer alice-token');
+    expect(item.onUnauthorized).toHaveBeenCalledTimes(1);
+    expect(item.store.getSnapshot()).toMatchObject({
+      connection: 'failed',
+      error: 'UNAUTHENTICATED',
+      lastAppliedSeq: 1,
+    });
+    expect(JSON.stringify(item.store.getSnapshot())).not.toContain('alice-token');
+    expect(item.clock.pendingCount()).toBe(0);
+    item.clock.advance(5_000);
+    await microtasks();
+    expect(item.createTicket).toHaveBeenCalledTimes(1);
+  });
+
+  it('selected history change disposes the previous socket, advances generation, and cancels timers', async () => {
+    const first = harness();
+    const firstSocket = await openLive(first, [chunk(1, 'alpha')]);
+    firstSocket.remoteClose(1011, 'server exploded');
+    expect(first.store.getSnapshot()).toMatchObject({
+      connection: 'reconnecting',
+      lastAppliedSeq: 1,
+    });
+    expect(first.clock.pendingCount()).toBe(1);
+
+    first.transport.dispose();
+    expect(firstSocket.readyState).toBe(FakeWebSocket.CLOSED);
+    expect(first.clock.pendingCount()).toBe(0);
+    first.clock.advance(5_000);
+    await microtasks();
+    expect(first.createTicket).toHaveBeenCalledTimes(1);
+    firstSocket.message(JSON.stringify(appendFrame(chunk(2, 'stale-after-dispose'))));
+    expect(first.store.getSnapshot().lastAppliedSeq).toBe(1);
+    expect(first.store.getSnapshot().chunks.map((item) => item.text)).toEqual(['alpha']);
+
+    const second = harness({ runId: parseRunId('run-2') });
+    await openLive(second, [chunk(1, 'beta')]);
+    expect(second.createTicket).toHaveBeenCalledTimes(1);
+    expect(second.store.getSnapshot().lastAppliedSeq).toBe(1);
+    expect(second.store.getSnapshot().chunks.map((item) => item.text)).toEqual(['beta']);
+    expect(first.store.getSnapshot().chunks.map((item) => item.text)).toEqual(['alpha']);
+    expect(second.clock.pendingCount()).toBe(1);
   });
 });

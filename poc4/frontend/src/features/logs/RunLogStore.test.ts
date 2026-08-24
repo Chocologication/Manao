@@ -137,6 +137,24 @@ describe('RunLogStore', () => {
     expect(store.getSnapshot().lastAppliedSeq).toBe(1);
   });
 
+  it('does not concatenate copies when overlapping seqs are replayed against a retained lastSeq', () => {
+    const store = new RunLogStore({
+      projectId: ALICE,
+      runId: RUN,
+      schedule: manualScheduler().schedule,
+    });
+    const first = chunk(1, 'alpha');
+    const second = chunk(2, 'beta');
+    const third = chunk(3, 'gamma');
+    store.applyReplay([first, second], windowFromChunks([first, second]));
+    expect(store.getSnapshot().lastAppliedSeq).toBe(2);
+    store.applyReplay([first, second, third], windowFromChunks([first, second, third]));
+    expect(store.getSnapshot().chunks).toEqual([first, second, third]);
+    expect(store.getSnapshot().chunks.filter((item) => item.seq === 1)).toHaveLength(1);
+    expect(store.getSnapshot().chunks.filter((item) => item.seq === 2)).toHaveLength(1);
+    expect(store.getSnapshot().lastAppliedSeq).toBe(3);
+  });
+
   it('batches subscriber notifications through the injectable scheduler', () => {
     const scheduler = manualScheduler();
     const store = new RunLogStore({ projectId: ALICE, runId: RUN, schedule: scheduler.schedule });

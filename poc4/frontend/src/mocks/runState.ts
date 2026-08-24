@@ -35,6 +35,7 @@ export const MOCK_RUN_TERMINAL_DELAY_MS = 50;
 export const MOCK_RUN_STOP_DELAY_MS = 25;
 export const MOCK_RUN_HEARTBEAT_INTERVAL_MS = 10_000;
 export const MOCK_RUN_PERSISTENCE_KEY = 'ensoai.mock.run-scenario.v1';
+export const MOCK_RUN_HISTORY_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 
 export type RunScenario =
   | 'success'
@@ -809,8 +810,14 @@ export function listRuns(
   const limit = typeof options.limit === 'number' && Number.isSafeInteger(options.limit) && options.limit > 0
     ? options.limit
     : 20;
+  // Stage 4 mock retention only; real scheduled deletion is unverified until Stage 6.
+  const cutoffMs = getMockRunNowMs() - MOCK_RUN_HISTORY_RETENTION_MS;
   const sorted = [...records.values()]
     .filter((record) => record.projectId === projectId)
+    .filter((record) => {
+      const createdMs = Date.parse(record.summary.createdAt);
+      return Number.isFinite(createdMs) && createdMs >= cutoffMs;
+    })
     .sort(compareRuns);
   let start = 0;
   if (typeof options.cursor === 'string' && options.cursor !== '') {

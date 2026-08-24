@@ -468,9 +468,46 @@ describe('history', () => {
     const combined = [...firstPage.items, ...secondPage.items].map((item) => item.id);
     expect(new Set(combined).size).toBe(3);
   });
+
+  it('excludes runs older than seven mock-clock days and paginates the remainder', () => {
+    const sevenDaysMs = 7 * 24 * 60 * 60 * 1000;
+    const old = startOk();
+    advanceMockRunClock(MOCK_RUN_START_DELAY_MS + MOCK_RUN_TERMINAL_DELAY_MS);
+    expect(getRun(ALICE, old.id)?.state).toMatch(/SUCCEEDED|FAILED|CANCELLED|TIMED_OUT/);
+
+    advanceMockRunClock(sevenDaysMs + 1);
+    const recentIds: string[] = [];
+    for (let index = 0; index < 3; index += 1) {
+      const run = startOk();
+      recentIds.push(run.id);
+      advanceMockRunClock(MOCK_RUN_START_DELAY_MS + MOCK_RUN_TERMINAL_DELAY_MS);
+    }
+
+    const firstPage = parseRunListResponse(listRuns(ALICE, { limit: 2 }));
+    expect(firstPage.items.map((item) => item.id)).toEqual([recentIds[2], recentIds[1]]);
+    expect(firstPage.items.some((item) => item.id === old.id)).toBe(false);
+    expect(firstPage.nextCursor).toEqual(expect.any(String));
+    const secondPage = parseRunListResponse(
+      listRuns(ALICE, { limit: 2, cursor: firstPage.nextCursor }),
+    );
+    expect(secondPage.items.map((item) => item.id)).toEqual([recentIds[0]]);
+    expect(secondPage.nextCursor).toBeNull();
+    expect([...firstPage.items, ...secondPage.items].some((item) => item.id === old.id)).toBe(false);
+    expect(getRun(ALICE, old.id)?.id).toBe(old.id);
+  });
+
+  it('still lists a run created exactly seven days ago until the mock clock moves past retention', () => {
+    const sevenDaysMs = 7 * 24 * 60 * 60 * 1000;
+    const run = startOk();
+    advanceMockRunClock(sevenDaysMs);
+    expect(getMockRunNowMs() - Date.parse(run.createdAt)).toBe(sevenDaysMs);
+    expect(parseRunListResponse(listRuns(ALICE)).items.map((item) => item.id)).toContain(run.id);
+    advanceMockRunClock(1);
+    expect(parseRunListResponse(listRuns(ALICE)).items.map((item) => item.id)).not.toContain(run.id);
+  });
 });
 
-describe('mock-only refresh persistence', () => {
+describe('mock-only browser recovery contract (not backend restart or MySQL)', () => {
   it('persists compact scenario, active summary and seed log only', () => {
     setRunScenario('success');
     const run = startOk();
@@ -485,6 +522,7 @@ describe('mock-only refresh persistence', () => {
     expect(Array.isArray(parsedBlob.actives)).toBe(true);
   });
 
+  // Browser recovery contract only: mock sessionStorage must not keep the >5 MiB stress payload.
   it('does not write the large-log stress payload to sessionStorage', () => {
     setRunScenario('large-log');
     const run = startOk();
@@ -494,11 +532,13 @@ describe('mock-only refresh persistence', () => {
     }
     const raw = sessionStorage.getItem(MOCK_RUN_PERSISTENCE_KEY) ?? '';
     expect(raw.length).toBeLessThan(8 * 1024);
+    expect(raw.length).toBeLessThan(5 * 1024 * 1024);
     expect(raw.includes(MAX_SIZE_LOG_CHUNK_TEXT)).toBe(false);
     expect(getLogWindow(ALICE, run.id)?.window.retainedBytes).toBeGreaterThan(64 * 1024);
   });
 
-  it('rehydrates active Run and seed replay cursor from the mock key', () => {
+  // Proves the browser recovery contract via ensoai.mock.run-scenario.v1, not backend restart/MySQL.
+  it('rehydrates active Run and seed replay cursor from mock sessionStorage, not backend restart or MySQL', () => {
     const run = startOk();
     advanceMockRunClock(MOCK_RUN_START_DELAY_MS);
     const raw = sessionStorage.getItem(MOCK_RUN_PERSISTENCE_KEY);

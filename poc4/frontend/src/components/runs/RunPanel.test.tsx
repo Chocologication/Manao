@@ -22,6 +22,7 @@ import { projectAuthorityScope } from '../../features/files/fileMutations';
 import { fileKeys } from '../../features/files/fileQueries';
 import { parseProjectDirectoryPath, parseProjectRelativePath } from '../../features/files/pathPolicy';
 import { RunLogStore, type NotificationScheduler } from '../../features/logs/RunLogStore';
+import * as logProtocol from '../../features/logs/logProtocol';
 import { RunLogTransport } from '../../features/logs/RunLogTransport';
 import {
   isWorkspaceEditable,
@@ -632,18 +633,32 @@ describe('RunPanel logs', () => {
     const first = await startRun(ALICE_SEED_PROJECT_ID, { expectedWorkspaceRevision: revision });
     await waitForRunState(first.id, /RUNNING/);
     expect(appendLogChunk(ALICE_SEED_PROJECT_ID, first.id, 'alpha-only\n').ok).toBe(true);
+    const firstCursor = (await getRun(ALICE_SEED_PROJECT_ID, first.id)).lastLogSeq;
+    expect(firstCursor).toEqual(expect.any(Number));
     await stopRun(ALICE_SEED_PROJECT_ID, first.id);
     await waitForRunState(first.id, /CANCELLED/);
     const second = await startRun(ALICE_SEED_PROJECT_ID, { expectedWorkspaceRevision: revision });
     await waitForRunState(second.id, /RUNNING/);
     expect(appendLogChunk(ALICE_SEED_PROJECT_ID, second.id, 'beta-only\n').ok).toBe(true);
 
-    const dispose = vi.spyOn(RunLogTransport.prototype, 'dispose');
+    const subscribe = vi.spyOn(logProtocol, 'encodeLogSubscribe');
+    const live = new Set<RunLogTransport>();
+    const origConnect = RunLogTransport.prototype.connect;
+    const origDispose = RunLogTransport.prototype.dispose;
+    vi.spyOn(RunLogTransport.prototype, 'connect').mockImplementation(function (this: RunLogTransport) {
+      live.add(this);
+      return origConnect.call(this);
+    });
+    const dispose = vi.spyOn(RunLogTransport.prototype, 'dispose').mockImplementation(function (this: RunLogTransport) {
+      live.delete(this);
+      return origDispose.call(this);
+    });
     renderPanel();
     await waitFor(() => {
       expect(logRegion()).toHaveTextContent('beta-only');
     });
     expect(logRegion()).not.toHaveTextContent('alpha-only');
+    expect(live.size).toBe(1);
     const disposedAfterMount = dispose.mock.calls.length;
 
     await userEvent.setup().click(historyRunButton(first.id));
@@ -652,6 +667,26 @@ describe('RunPanel logs', () => {
     });
     expect(logRegion()).not.toHaveTextContent('beta-only');
     expect(dispose.mock.calls.length).toBeGreaterThan(disposedAfterMount);
+    expect(live.size).toBe(1);
+    const alphaCopies = (logRegion().textContent ?? '').split('alpha-only').length - 1;
+    expect(alphaCopies).toBe(1);
+
+    await userEvent.setup().click(historyRunButton(second.id));
+    await waitFor(() => {
+      expect(logRegion()).toHaveTextContent('beta-only');
+    });
+    expect(logRegion()).not.toHaveTextContent('alpha-only');
+    expect(live.size).toBe(1);
+    const callsBeforeReturn = subscribe.mock.calls.length;
+
+    await userEvent.setup().click(historyRunButton(first.id));
+    await waitFor(() => {
+      expect(logRegion()).toHaveTextContent('alpha-only');
+    });
+    expect(logRegion()).not.toHaveTextContent('beta-only');
+    expect(live.size).toBe(1);
+    expect((logRegion().textContent ?? '').split('alpha-only').length - 1).toBe(1);
+    expect(subscribe.mock.calls[callsBeforeReturn]?.[0]).toBe(firstCursor);
   });
 
   it('announces connection changes and errors without live-region log chunks', async () => {
