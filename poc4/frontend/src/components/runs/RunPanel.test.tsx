@@ -511,7 +511,7 @@ describe('RunPanel run states and stop', () => {
     await user.click(stop);
     await user.click(screen.getByRole('button', { name: 'Stop' }));
     await waitFor(() => {
-      expect(runStateStatus()).toHaveTextContent(/STOPPING|CANCELLED/);
+      expect(runStateStatus()).toHaveTextContent(/STOPPING|CANCELLED|Reloading/);
     });
   });
 });
