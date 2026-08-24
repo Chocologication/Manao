@@ -22,6 +22,7 @@ import {
 } from './fileFixtures';
 import { runHandlers } from './runHandlers';
 import { hasActiveRun, isRunScenario, setRunScenario } from './runState';
+import { terminalHandlers } from './terminalHandlers';
 import {
   canReadReadyProjectFiles,
   createOwnedProject,
@@ -617,4 +618,5 @@ export const handlers = [
   }),
 
   ...runHandlers,
+  ...terminalHandlers,
 ];

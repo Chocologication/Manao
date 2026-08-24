@@ -87,6 +87,13 @@ export type MockRunSubscriberEvent =
 
 export type MockRunPersistNotifyPhase = 'persist' | 'notify';
 
+export type MockRunBeforeTransitionEvent = {
+  projectId: string;
+  runId: RunId;
+  from: RunState;
+  to: RunState;
+};
+
 export type MockRunTransition = {
   state: RunState;
   terminationReason?: RunTerminationReason | null;
@@ -258,6 +265,9 @@ let nextRunSeq = 0;
 let records = new Map<string, MockRunRecord>();
 let activeRunIdByProject = new Map<string, string>();
 const subscribers = new Set<(event: MockRunSubscriberEvent) => void>();
+const beforeTransitionSubscribers = new Set<
+  (event: MockRunBeforeTransitionEvent) => void
+>();
 let persistNotifyObserver:
   | ((phase: MockRunPersistNotifyPhase, event: MockRunSubscriberEvent) => void)
   | null = null;
@@ -649,6 +659,17 @@ function applyTransition(
   } catch {
     return fail('RUN_STATE_CONFLICT');
   }
+  if (from === 'RUNNING' && summary.state !== 'RUNNING') {
+    const event: MockRunBeforeTransitionEvent = {
+      projectId: record.projectId,
+      runId: record.summary.id,
+      from,
+      to: summary.state,
+    };
+    for (const listener of beforeTransitionSubscribers) {
+      listener(event);
+    }
+  }
   if (isRunTerminalState(summary.state) && getRunScenario() === 'reload-change') {
     applySimulatedJobWorkspaceSideEffects(record.projectId);
   }
@@ -826,6 +847,15 @@ export function subscribeMockRunEvents(listener: (event: MockRunSubscriberEvent)
   subscribers.add(listener);
   return () => {
     subscribers.delete(listener);
+  };
+}
+
+export function subscribeMockRunBeforeTransition(
+  listener: (event: MockRunBeforeTransitionEvent) => void,
+): () => void {
+  beforeTransitionSubscribers.add(listener);
+  return () => {
+    beforeTransitionSubscribers.delete(listener);
   };
 }
 

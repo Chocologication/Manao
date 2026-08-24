@@ -1,0 +1,493 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { RunState } from '../contracts/run';
+import { parseTerminalAuditListResponse } from '../contracts/terminal';
+import {
+  getActiveRun,
+  installVirtualRunClock,
+  setMockRunPersistNotifyObserver,
+  startRun,
+  transitionRun,
+} from './runState';
+import {
+  ALICE_SEED_PROJECT_ID,
+  BOB_SEED_PROJECT_ID,
+  createOwnedProject,
+  resetMockState,
+} from './state';
+import {
+  consumeTerminalTicket,
+  endTerminalSession,
+  getTerminalScenario,
+  getLiveTerminalSession,
+  getUnusedTerminalReservationCount,
+  issueTerminalReservation,
+  isTerminalScenario,
+  listTerminalAudits,
+  MOCK_TERMINAL_PERSISTENCE_KEY,
+  seedTerminalAuditFixtures,
+  setTerminalScenario,
+  subscribeTerminalStateEvents,
+} from './terminalState';
+
+const ALICE_ID = 'usr-alice';
+const BOB_ID = 'usr-bob';
+const NOW = Date.parse('2026-08-25T10:00:00.000Z');
+const SEED_REVISION = 'mock-rev-0001';
+
+function startInState(state: RunState) {
+  const started = startRun(ALICE_SEED_PROJECT_ID, {
+    expectedWorkspaceRevision: SEED_REVISION,
+  });
+  expect(started.ok).toBe(true);
+  if (!started.ok) throw new Error(started.code);
+  if (state !== 'STARTING') {
+    const running = transitionRun(ALICE_SEED_PROJECT_ID, started.value.run.id, {
+      state: 'RUNNING',
+    });
+    expect(running.ok).toBe(true);
+  }
+  if (state !== 'STARTING' && state !== 'RUNNING') {
+    const next = transitionRun(ALICE_SEED_PROJECT_ID, started.value.run.id, { state });
+    expect(next.ok).toBe(true);
+  }
+  return started.value.run.id;
+}
+
+function issueOk(runId: string, cols = 80, rows = 24) {
+  const result = issueTerminalReservation(
+    ALICE_ID,
+    ALICE_SEED_PROJECT_ID,
+    runId,
+    { cols, rows },
+  );
+  expect(result.ok).toBe(true);
+  if (!result.ok) throw new Error(result.code);
+  return result.value;
+}
+
+beforeEach(() => {
+  vi.useFakeTimers();
+  vi.setSystemTime(NOW);
+  resetMockState();
+  installVirtualRunClock(NOW);
+});
+
+afterEach(() => {
+  vi.useRealTimers();
+});
+
+describe('terminal reservation authority', () => {
+  it('issues only for the owner of a READY project and its current RUNNING run', () => {
+    const runId = startInState('RUNNING');
+
+    const result = issueTerminalReservation(
+      ALICE_ID,
+      ALICE_SEED_PROJECT_ID,
+      runId,
+      { cols: 80, rows: 24 },
+    );
+
+    expect(result).toEqual({
+      ok: true,
+      value: {
+        sessionId: 'mock-terminal-session-1',
+        ticket: 'mock-terminal-ticket-1',
+        expiresAt: '2026-08-25T10:00:30.000Z',
+      },
+    });
+  });
+
+  it('reuses the strict terminal request parser for dimensions and exact keys', () => {
+    const runId = startInState('RUNNING');
+
+    expect(
+      issueTerminalReservation(ALICE_ID, ALICE_SEED_PROJECT_ID, runId, {
+        cols: 1,
+        rows: 24,
+      }),
+    ).toEqual({ ok: false, code: 'VALIDATION_ERROR' });
+    expect(
+      issueTerminalReservation(ALICE_ID, ALICE_SEED_PROJECT_ID, runId, {
+        cols: 80,
+        rows: 24,
+        command: 'whoami',
+      }),
+    ).toEqual({ ok: false, code: 'VALIDATION_ERROR' });
+  });
+
+  it.each([
+    ['STARTING run', ALICE_ID, ALICE_SEED_PROJECT_ID, 'STARTING'],
+    ['STOPPING run', ALICE_ID, ALICE_SEED_PROJECT_ID, 'STOPPING'],
+    ['RECOVERING run', ALICE_ID, ALICE_SEED_PROJECT_ID, 'RECOVERING'],
+    ['terminal run', ALICE_ID, ALICE_SEED_PROJECT_ID, 'SUCCEEDED'],
+    ['other owner', BOB_ID, ALICE_SEED_PROJECT_ID, 'RUNNING'],
+  ] as const)('rejects %s without leaking identifiers', (_label, userId, projectId, state) => {
+    const runId = startInState(state);
+
+    const result = issueTerminalReservation(userId, projectId, runId, {
+      cols: 80,
+      rows: 24,
+    });
+
+    expect(result).toEqual({ ok: false, code: 'TERMINAL_NOT_AVAILABLE' });
+    expect(JSON.stringify(result)).not.toMatch(
+      /prj-alice|usr-alice|usr-bob|pvc|pod|job|container|C:\\|D:\\|\/home\/|\/var\//i,
+    );
+  });
+
+  it('rejects history, unknown run, unknown project and non-READY project authority', () => {
+    const historyRunId = startInState('SUCCEEDED');
+    const currentRunId = startInState('RUNNING');
+    const creating = createOwnedProject(ALICE_ID, 'creating-terminal-project');
+    expect(creating.status).toBe('created');
+    if (creating.status !== 'created') throw new Error('project limit');
+
+    for (const [projectId, runId] of [
+      [ALICE_SEED_PROJECT_ID, historyRunId],
+      [ALICE_SEED_PROJECT_ID, 'run-unknown'],
+      ['prj-unknown', currentRunId],
+      [creating.project.id, currentRunId],
+      [BOB_SEED_PROJECT_ID, currentRunId],
+    ]) {
+      expect(
+        issueTerminalReservation(ALICE_ID, projectId, runId, { cols: 80, rows: 24 }),
+      ).toEqual({ ok: false, code: 'TERMINAL_NOT_AVAILABLE' });
+    }
+  });
+});
+
+describe('terminal ticket lifecycle', () => {
+  it('keeps HTTP reservations inactive, bound to dimensions and independently unused', () => {
+    const runId = startInState('RUNNING');
+    const first = issueOk(runId, 132, 43);
+    const second = issueOk(runId, 90, 30);
+
+    expect(first.sessionId).not.toBe(second.sessionId);
+    expect(first.ticket).not.toBe(second.ticket);
+    expect(getLiveTerminalSession(ALICE_ID, ALICE_SEED_PROJECT_ID, runId)).toBeNull();
+    expect(getUnusedTerminalReservationCount(ALICE_ID, ALICE_SEED_PROJECT_ID, runId)).toBe(2);
+
+    const consumed = consumeTerminalTicket({
+      userId: ALICE_ID,
+      projectId: ALICE_SEED_PROJECT_ID,
+      runId,
+      sessionId: first.sessionId,
+      ticket: first.ticket,
+    });
+    expect(consumed).toMatchObject({
+      ok: true,
+      value: { sessionId: first.sessionId, cols: 132, rows: 43, state: 'live' },
+    });
+    expect(getUnusedTerminalReservationCount(ALICE_ID, ALICE_SEED_PROJECT_ID, runId)).toBe(1);
+  });
+
+  it('expires at thirty seconds without a wall-clock sleep', () => {
+    const runId = startInState('RUNNING');
+    const reservation = issueOk(runId);
+    vi.advanceTimersByTime(30_000);
+
+    expect(consumeTerminalTicket({
+      userId: ALICE_ID,
+      projectId: ALICE_SEED_PROJECT_ID,
+      runId,
+      sessionId: reservation.sessionId,
+      ticket: reservation.ticket,
+    })).toEqual({ ok: false, code: 'TERMINAL_TICKET_NOT_AVAILABLE' });
+  });
+
+  it('does not consume a ticket on wrong owner, project, run or session', () => {
+    const runId = startInState('RUNNING');
+    const reservation = issueOk(runId);
+    const base = {
+      userId: ALICE_ID,
+      projectId: ALICE_SEED_PROJECT_ID,
+      runId,
+      sessionId: reservation.sessionId,
+      ticket: reservation.ticket,
+    };
+
+    for (const mismatch of [
+      { userId: BOB_ID },
+      { projectId: BOB_SEED_PROJECT_ID },
+      { runId: 'run-other' },
+      { sessionId: 'mock-terminal-session-other' },
+    ]) {
+      expect(consumeTerminalTicket({ ...base, ...mismatch })).toEqual({
+        ok: false,
+        code: 'TERMINAL_TICKET_NOT_AVAILABLE',
+      });
+    }
+    expect(consumeTerminalTicket(base).ok).toBe(true);
+    expect(consumeTerminalTicket(base)).toEqual({
+      ok: false,
+      code: 'TERMINAL_TICKET_NOT_AVAILABLE',
+    });
+  });
+
+  it('clears reservations, live sessions and deterministic counters through resetMockState', () => {
+    const runId = startInState('RUNNING');
+    const beforeReset = issueOk(runId);
+    expect(consumeTerminalTicket({
+      userId: ALICE_ID,
+      projectId: ALICE_SEED_PROJECT_ID,
+      runId,
+      sessionId: beforeReset.sessionId,
+      ticket: beforeReset.ticket,
+    }).ok).toBe(true);
+
+    resetMockState();
+    installVirtualRunClock(NOW);
+    const nextRunId = startInState('RUNNING');
+    expect(getLiveTerminalSession(ALICE_ID, ALICE_SEED_PROJECT_ID, runId)).toBeNull();
+    expect(consumeTerminalTicket({
+      userId: ALICE_ID,
+      projectId: ALICE_SEED_PROJECT_ID,
+      runId,
+      sessionId: beforeReset.sessionId,
+      ticket: beforeReset.ticket,
+    })).toEqual({ ok: false, code: 'TERMINAL_TICKET_NOT_AVAILABLE' });
+    expect(issueOk(nextRunId)).toMatchObject({
+      sessionId: 'mock-terminal-session-1',
+      ticket: 'mock-terminal-ticket-1',
+    });
+  });
+});
+
+describe('single live terminal session', () => {
+  it('atomically rejects a second valid unused ticket and new HTTP reservations', () => {
+    const runId = startInState('RUNNING');
+    const first = issueOk(runId);
+    const second = issueOk(runId);
+    expect(consumeTerminalTicket({
+      userId: ALICE_ID,
+      projectId: ALICE_SEED_PROJECT_ID,
+      runId,
+      sessionId: first.sessionId,
+      ticket: first.ticket,
+    }).ok).toBe(true);
+
+    expect(consumeTerminalTicket({
+      userId: ALICE_ID,
+      projectId: ALICE_SEED_PROJECT_ID,
+      runId,
+      sessionId: second.sessionId,
+      ticket: second.ticket,
+    })).toEqual({ ok: false, code: 'TERMINAL_SESSION_ALREADY_ACTIVE' });
+    expect(getUnusedTerminalReservationCount(ALICE_ID, ALICE_SEED_PROJECT_ID, runId)).toBe(1);
+    expect(issueTerminalReservation(
+      ALICE_ID,
+      ALICE_SEED_PROJECT_ID,
+      runId,
+      { cols: 80, rows: 24 },
+    )).toEqual({ ok: false, code: 'TERMINAL_SESSION_ALREADY_ACTIVE' });
+  });
+
+  it.each([
+    ['CLIENT_CLOSED', 'closed'],
+    ['CONNECTION_LOST', 'interrupted'],
+  ] as const)('allows a new ID only after %s ends the live session', (reason, state) => {
+    const runId = startInState('RUNNING');
+    const first = issueOk(runId);
+    const stale = issueOk(runId);
+    expect(consumeTerminalTicket({
+      userId: ALICE_ID,
+      projectId: ALICE_SEED_PROJECT_ID,
+      runId,
+      sessionId: first.sessionId,
+      ticket: first.ticket,
+    }).ok).toBe(true);
+
+    expect(endTerminalSession({
+      userId: ALICE_ID,
+      projectId: ALICE_SEED_PROJECT_ID,
+      runId,
+      sessionId: first.sessionId,
+      reason,
+      exitCode: null,
+    })).toMatchObject({ ok: true, value: { state, reason } });
+    expect(getLiveTerminalSession(ALICE_ID, ALICE_SEED_PROJECT_ID, runId)).toBeNull();
+    expect(getActiveRun(ALICE_SEED_PROJECT_ID)?.state).toBe('RUNNING');
+    expect(consumeTerminalTicket({
+      userId: ALICE_ID,
+      projectId: ALICE_SEED_PROJECT_ID,
+      runId,
+      sessionId: stale.sessionId,
+      ticket: stale.ticket,
+    })).toEqual({ ok: false, code: 'TERMINAL_TICKET_NOT_AVAILABLE' });
+
+    const next = issueOk(runId);
+    expect(next.sessionId).not.toBe(first.sessionId);
+    expect(next.ticket).not.toBe(first.ticket);
+    expect(consumeTerminalTicket({
+      userId: ALICE_ID,
+      projectId: ALICE_SEED_PROJECT_ID,
+      runId,
+      sessionId: next.sessionId,
+      ticket: next.ticket,
+    }).ok).toBe(true);
+  });
+});
+
+describe('Run transition ordering', () => {
+  it('invalidates reservations and closes live sessions before settling Run state', () => {
+    const runId = startInState('RUNNING');
+    const live = issueOk(runId);
+    const unused = issueOk(runId);
+    expect(consumeTerminalTicket({
+      userId: ALICE_ID,
+      projectId: ALICE_SEED_PROJECT_ID,
+      runId,
+      sessionId: live.sessionId,
+      ticket: live.ticket,
+    }).ok).toBe(true);
+    const order: string[] = [];
+    subscribeTerminalStateEvents((event) => {
+      if (event.type === 'reservation.invalidated') {
+        order.push(`reservation:${event.sessionId}`);
+      } else {
+        order.push(`session:${event.session.sessionId}:${event.session.reason}`);
+      }
+    });
+    setMockRunPersistNotifyObserver((phase, event) => {
+      if (event.type === 'run.state' && event.run.id === runId) {
+        order.push(`run:${phase}:${event.run.state}`);
+      }
+    });
+
+    expect(transitionRun(ALICE_SEED_PROJECT_ID, runId, { state: 'STOPPING' }).ok).toBe(true);
+
+    expect(order).toEqual([
+      `reservation:${unused.sessionId}`,
+      `session:${live.sessionId}:RUN_LEFT_RUNNING`,
+      'run:persist:STOPPING',
+      'run:notify:STOPPING',
+    ]);
+    expect(getUnusedTerminalReservationCount(ALICE_ID, ALICE_SEED_PROJECT_ID, runId)).toBe(0);
+    expect(getLiveTerminalSession(ALICE_ID, ALICE_SEED_PROJECT_ID, runId)).toBeNull();
+  });
+});
+
+describe('structured terminal audits', () => {
+  it('creates RUNNING on handshake and settles shell success, failure and disconnect', () => {
+    const runId = startInState('RUNNING');
+    const endings = [
+      ['SHELL_EXITED', 0, 'SUCCEEDED'],
+      ['SHELL_EXITED', 17, 'FAILED'],
+      ['CONNECTION_LOST', null, 'INTERRUPTED'],
+    ] as const;
+
+    for (const [reason, exitCode, state] of endings) {
+      const reservation = issueOk(runId);
+      expect(consumeTerminalTicket({
+        userId: ALICE_ID,
+        projectId: ALICE_SEED_PROJECT_ID,
+        runId,
+        sessionId: reservation.sessionId,
+        ticket: reservation.ticket,
+      }).ok).toBe(true);
+      const running = listTerminalAudits(ALICE_ID, ALICE_SEED_PROJECT_ID, runId, {
+        sessionId: reservation.sessionId,
+      });
+      expect(parseTerminalAuditListResponse(running).items).toMatchObject([
+        { sessionId: reservation.sessionId, command: 'mvn test', state: 'RUNNING' },
+      ]);
+
+      vi.advanceTimersByTime(1_000);
+      expect(endTerminalSession({
+        userId: ALICE_ID,
+        projectId: ALICE_SEED_PROJECT_ID,
+        runId,
+        sessionId: reservation.sessionId,
+        reason,
+        exitCode,
+      }).ok).toBe(true);
+      const settled = listTerminalAudits(ALICE_ID, ALICE_SEED_PROJECT_ID, runId, {
+        sessionId: reservation.sessionId,
+      });
+      expect(parseTerminalAuditListResponse(settled).items).toMatchObject([
+        { sessionId: reservation.sessionId, state, exitCode },
+      ]);
+    }
+  });
+
+  it('uses backend fixtures with owner/session isolation, newest-first pagination and retention', () => {
+    const runId = 'run-audit-fixture';
+    seedTerminalAuditFixtures(ALICE_ID, ALICE_SEED_PROJECT_ID, runId);
+    seedTerminalAuditFixtures(BOB_ID, ALICE_SEED_PROJECT_ID, runId);
+
+    const alice = parseTerminalAuditListResponse(
+      listTerminalAudits(ALICE_ID, ALICE_SEED_PROJECT_ID, runId),
+    );
+    expect(alice.items.map((entry) => entry.state).sort()).toEqual([
+      'FAILED',
+      'INTERRUPTED',
+      'RUNNING',
+      'SUCCEEDED',
+    ]);
+    expect(alice.items.every((entry) => entry.id.startsWith('mock-terminal-audit-'))).toBe(true);
+    expect(alice.items.map((entry) => Date.parse(entry.startedAt))).toEqual(
+      [...alice.items].map((entry) => Date.parse(entry.startedAt)).sort((a, b) => b - a),
+    );
+    expect(alice.items.some((entry) => entry.command === 'ensoai-stage5-terminal-stress')).toBe(true);
+    expect(JSON.stringify(alice)).not.toMatch(/rawOutput|raw-output|terminal bytes|\"output\"/i);
+
+    const firstPage = parseTerminalAuditListResponse(
+      listTerminalAudits(ALICE_ID, ALICE_SEED_PROJECT_ID, runId, { limit: 2 }),
+    );
+    expect(firstPage.items).toHaveLength(2);
+    expect(firstPage.nextCursor).toEqual(expect.any(String));
+    const secondPage = parseTerminalAuditListResponse(
+      listTerminalAudits(ALICE_ID, ALICE_SEED_PROJECT_ID, runId, {
+        limit: 2,
+        cursor: firstPage.nextCursor,
+      }),
+    );
+    expect(secondPage.items).toHaveLength(2);
+    expect(secondPage.nextCursor).toBeNull();
+    expect(new Set([...firstPage.items, ...secondPage.items].map((entry) => entry.id)).size).toBe(4);
+
+    const sessionOnly = parseTerminalAuditListResponse(
+      listTerminalAudits(ALICE_ID, ALICE_SEED_PROJECT_ID, runId, {
+        sessionId: alice.items[0]?.sessionId,
+      }),
+    );
+    expect(sessionOnly.items).toHaveLength(1);
+    expect(sessionOnly.items[0]?.sessionId).toBe(alice.items[0]?.sessionId);
+    expect(listTerminalAudits('usr-other', ALICE_SEED_PROJECT_ID, runId).items).toEqual([]);
+    expect(listTerminalAudits(BOB_ID, ALICE_SEED_PROJECT_ID, runId).items).toHaveLength(4);
+  });
+});
+
+describe('terminal scenario state', () => {
+  it('accepts every Stage 5 fixture and persists only compact mock scenario state', () => {
+    for (const scenario of [
+      'normal',
+      'ticket-expired',
+      'already-active',
+      'server-pause',
+      'disconnect',
+      'shell-exit',
+      'webgl-fallback',
+      'audit',
+      'stress',
+    ] as const) {
+      expect(isTerminalScenario(scenario)).toBe(true);
+      setTerminalScenario(scenario);
+      expect(getTerminalScenario()).toBe(scenario);
+      expect(sessionStorage.getItem(MOCK_TERMINAL_PERSISTENCE_KEY)).toBe(
+        JSON.stringify({ version: 1, scenario }),
+      );
+    }
+    expect(isTerminalScenario('production')).toBe(false);
+  });
+
+  it('resetMockState restores normal and removes the terminal scenario persistence key', () => {
+    setTerminalScenario('stress');
+    expect(sessionStorage.getItem(MOCK_TERMINAL_PERSISTENCE_KEY)).not.toBeNull();
+
+    resetMockState();
+
+    expect(getTerminalScenario()).toBe('normal');
+    expect(sessionStorage.getItem(MOCK_TERMINAL_PERSISTENCE_KEY)).toBeNull();
+  });
+});

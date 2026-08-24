@@ -44,6 +44,7 @@ let nextTokenSeq = 0;
 let fileRequestCounts = new Map<string, number>();
 let largeFileBodiesEnabled = false;
 let writeScenario: WriteScenario = 'normal';
+let resetTerminalMockState = (): void => undefined;
 
 export const WRITE_SCENARIO_DELAY_MS = 250;
 
@@ -131,6 +132,10 @@ export function canReadReadyProjectFiles(userId: string, projectId: string): boo
   return project !== undefined && project.ownerId === userId && project.state === 'READY';
 }
 
+export function registerTerminalStateReset(resetter: () => void): void {
+  resetTerminalMockState = resetter;
+}
+
 function resetSessionState(): void {
   tokens = new Map();
   nextProjectSeq = 0;
@@ -147,6 +152,7 @@ export function resetMockState(): void {
   resetSessionState();
   resetRunState();
   resetLogTickets();
+  resetTerminalMockState();
 }
 
 resetSessionState();

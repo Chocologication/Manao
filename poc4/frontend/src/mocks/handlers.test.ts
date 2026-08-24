@@ -11,6 +11,10 @@ import {
   parseSaveFileResponse,
 } from '../contracts/file';
 import type { ProjectListResponse, ProjectSummary } from '../contracts/project';
+import {
+  parseCreateTerminalSessionResponse,
+  parseTerminalAuditListResponse,
+} from '../contracts/terminal';
 import { parseProjectDirectoryPath, parseProjectRelativePath } from '../features/files/pathPolicy';
 import {
   getActiveRun,
@@ -18,6 +22,7 @@ import {
   installVirtualRunClock,
   MOCK_RUN_PERSISTENCE_KEY,
   startRun,
+  transitionRun,
 } from './runState';
 import {
   getFileRequestCount,
@@ -25,6 +30,11 @@ import {
   setLargeFileBodiesEnabled,
   WRITE_SCENARIO_DELAY_MS,
 } from './state';
+import {
+  getLiveTerminalSession,
+  getTerminalScenario,
+  seedTerminalAuditFixtures,
+} from './terminalState';
 
 const ALICE = { username: 'alice', password: 'demo-pass' };
 const BOB = { username: 'bob', password: 'demo-pass' };
@@ -1792,5 +1802,160 @@ describe('MSW run-scenario handlers', () => {
     expect(getRunScenario()).toBe('success');
     expect(getActiveRun(ALICE_SEED_PROJECT_ID)).toBeNull();
     expect(sessionStorage.getItem(MOCK_RUN_PERSISTENCE_KEY)).toBeNull();
+  });
+});
+
+describe('MSW terminal handlers', () => {
+  function terminalSessionsUrl(projectId: string, runId: string): string {
+    return `/api/v1/projects/${encodeURIComponent(projectId)}/runs/${encodeURIComponent(runId)}/terminal-sessions`;
+  }
+
+  async function postTerminalSession(
+    token: string,
+    projectId: string,
+    runId: string,
+    body: unknown = { cols: 80, rows: 24 },
+  ): Promise<Response> {
+    return fetch(terminalSessionsUrl(projectId, runId), {
+      method: 'POST',
+      headers: { ...bearerHeaders(token), 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+  }
+
+  function startRunningRun(): string {
+    const started = startRun(ALICE_SEED_PROJECT_ID, {
+      expectedWorkspaceRevision: SEED_REVISION,
+    });
+    expect(started.ok).toBe(true);
+    if (!started.ok) throw new Error(started.code);
+    const running = transitionRun(ALICE_SEED_PROJECT_ID, started.value.run.id, {
+      state: 'RUNNING',
+    });
+    expect(running.ok).toBe(true);
+    return started.value.run.id;
+  }
+
+  it('creates only an opaque thirty-second reservation for the current owner RUNNING run', async () => {
+    const missing = await fetch(terminalSessionsUrl(ALICE_SEED_PROJECT_ID, 'run-1'), {
+      method: 'POST',
+      headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cols: 80, rows: 24 }),
+    });
+    await expectApiError(missing, 401, 'UNAUTHENTICATED');
+    const alice = await loginOk(ALICE.username, ALICE.password);
+    const runId = startRunningRun();
+    const before = Date.now();
+
+    const response = await postTerminalSession(alice.accessToken, ALICE_SEED_PROJECT_ID, runId);
+    const after = Date.now();
+
+    expect(response.status).toBe(201);
+    const reservation = parseCreateTerminalSessionResponse(await response.json(), new Date(before));
+    expect(reservation.sessionId).toMatch(/^mock-terminal-session-/);
+    expect(reservation.ticket).toMatch(/^mock-terminal-ticket-/);
+    expect(Date.parse(reservation.expiresAt)).toBeGreaterThanOrEqual(before + 30_000);
+    expect(Date.parse(reservation.expiresAt)).toBeLessThanOrEqual(after + 30_000);
+    expect(getLiveTerminalSession('usr-alice', ALICE_SEED_PROJECT_ID, runId)).toBeNull();
+    await expectApiError(
+      await postTerminalSession(alice.accessToken, ALICE_SEED_PROJECT_ID, runId, {
+        cols: 80,
+        rows: 24,
+        command: 'whoami',
+      }),
+      400,
+      'VALIDATION_ERROR',
+    );
+  });
+
+  it('rejects non-owner, non-running, history and unknown authority without physical ids', async () => {
+    const alice = await loginOk(ALICE.username, ALICE.password);
+    const bob = await loginOk(BOB.username, BOB.password);
+    const started = startRun(ALICE_SEED_PROJECT_ID, {
+      expectedWorkspaceRevision: SEED_REVISION,
+    });
+    expect(started.ok).toBe(true);
+    if (!started.ok) throw new Error(started.code);
+
+    await expectApiError(
+      await postTerminalSession(bob.accessToken, ALICE_SEED_PROJECT_ID, started.value.run.id),
+      403,
+      'FORBIDDEN',
+    );
+    await expectApiError(
+      await postTerminalSession(alice.accessToken, ALICE_SEED_PROJECT_ID, started.value.run.id),
+      409,
+      'TERMINAL_NOT_AVAILABLE',
+    );
+    await expectApiError(
+      await postTerminalSession(alice.accessToken, ALICE_SEED_PROJECT_ID, 'run-unknown'),
+      409,
+      'TERMINAL_NOT_AVAILABLE',
+    );
+    expect(transitionRun(ALICE_SEED_PROJECT_ID, started.value.run.id, { state: 'RUNNING' }).ok).toBe(true);
+    expect(transitionRun(ALICE_SEED_PROJECT_ID, started.value.run.id, { state: 'SUCCEEDED' }).ok).toBe(true);
+    startRunningRun();
+    const history = await postTerminalSession(
+      alice.accessToken,
+      ALICE_SEED_PROJECT_ID,
+      started.value.run.id,
+    );
+    const body = await expectApiError(history, 409, 'TERMINAL_NOT_AVAILABLE');
+    expect(JSON.stringify(body)).not.toMatch(/pvc|pod|job|container|C:\\|D:\\|\/home\/|\/var\//i);
+  });
+
+  it('lists retained backend audits with owner isolation and cursor pagination', async () => {
+    const alice = await loginOk(ALICE.username, ALICE.password);
+    const bob = await loginOk(BOB.username, BOB.password);
+    const runId = startRunningRun();
+    seedTerminalAuditFixtures('usr-alice', ALICE_SEED_PROJECT_ID, runId);
+    const base = `/api/v1/projects/${encodeURIComponent(ALICE_SEED_PROJECT_ID)}/runs/${encodeURIComponent(runId)}/terminal-audits`;
+
+    const first = await fetch(`${base}?limit=2`, { headers: bearerHeaders(alice.accessToken) });
+    expect(first.status).toBe(200);
+    const firstPage = parseTerminalAuditListResponse(await first.json());
+    expect(firstPage.items).toHaveLength(2);
+    expect(firstPage.nextCursor).toEqual(expect.any(String));
+    const second = await fetch(
+      `${base}?limit=2&cursor=${encodeURIComponent(firstPage.nextCursor ?? '')}`,
+      { headers: bearerHeaders(alice.accessToken) },
+    );
+    expect(parseTerminalAuditListResponse(await second.json()).items).toHaveLength(2);
+    await expectApiError(
+      await fetch(base, { headers: bearerHeaders(bob.accessToken) }),
+      403,
+      'FORBIDDEN',
+    );
+  });
+
+  it('selects every authenticated Stage 5 scenario through the mock-only endpoint', async () => {
+    const url = '/api/v1/session/terminal-scenario';
+    const missing = await fetch(url, {
+      method: 'POST',
+      headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ scenario: 'stress' }),
+    });
+    await expectApiError(missing, 401, 'UNAUTHENTICATED');
+    const alice = await loginOk(ALICE.username, ALICE.password);
+    const post = (scenario: string) => fetch(url, {
+      method: 'POST',
+      headers: { ...bearerHeaders(alice.accessToken), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ scenario }),
+    });
+    await expectApiError(await post('production'), 400, 'VALIDATION_ERROR');
+    for (const scenario of [
+      'normal',
+      'ticket-expired',
+      'already-active',
+      'server-pause',
+      'disconnect',
+      'shell-exit',
+      'webgl-fallback',
+      'audit',
+      'stress',
+    ]) {
+      expect((await post(scenario)).status).toBe(204);
+      expect(getTerminalScenario()).toBe(scenario);
+    }
   });
 });
