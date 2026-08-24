@@ -1,9 +1,10 @@
-import { readFile, readdir } from 'node:fs/promises';
+import { readFile, readdir, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   findForbiddenContractNames,
   findForbiddenDependencies,
+  findForbiddenDistributionStrings,
   findForbiddenSource,
   findForbiddenWorkbenchImports,
 } from './browser-boundary-lib.mjs';
@@ -38,7 +39,20 @@ const sourceViolations = (
     ];
   }))
 ).flat();
-const violations = [...dependencyViolations, ...sourceViolations];
+let distributionViolations = [];
+try {
+  await stat(path.join(root, 'dist'));
+  const distFiles = await listSourceFiles(path.join(root, 'dist'));
+  distributionViolations = (
+    await Promise.all(distFiles.map(async (file) => {
+      const relative = path.relative(root, file).replaceAll('\\', '/');
+      return findForbiddenDistributionStrings(relative, await readFile(file, 'utf8'));
+    }))
+  ).flat();
+} catch (error) {
+  if (error?.code !== 'ENOENT') throw error;
+}
+const violations = [...dependencyViolations, ...sourceViolations, ...distributionViolations];
 
 if (violations.length > 0) {
   for (const violation of violations) console.error(`${violation.file}: ${violation.rule}`);

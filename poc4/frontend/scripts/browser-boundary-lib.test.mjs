@@ -3,6 +3,7 @@ import test from 'node:test';
 import {
   findForbiddenContractNames,
   findForbiddenDependencies,
+  findForbiddenDistributionStrings,
   findForbiddenSource,
   findForbiddenWorkbenchImports,
 } from './browser-boundary-lib.mjs';
@@ -54,6 +55,25 @@ const stage4MockNeedles = [
   ['stage4-mock-ticket-prefix', 'mock-run-log-ticket-'],
   ['stage4-seed-log-marker', 'ensoai-stage4-seed-log'],
   ['stage4-mock-persistence-key', 'ensoai.mock.run-scenario.v1'],
+];
+
+const stage5ProductionModules = [
+  'src/api/terminalApi.ts',
+  'src/contracts/terminal.ts',
+  'src/features/terminal/JobTerminalController.ts',
+  'src/components/terminal/JobTerminalPanel.tsx',
+  'src/components/terminal/JobTerminalToolbar.tsx',
+  'src/components/terminal/TerminalAuditView.tsx',
+  'src/components/terminal/CloseTerminalDialog.tsx',
+];
+
+const stage5MockNeedles = [
+  ['stage5-scenario-endpoint', '/api/v1/session/terminal-scenario'],
+  ['stage5-mock-ticket-prefix', 'mock-terminal-ticket-'],
+  ['stage5-mock-session-prefix', 'mock-terminal-session-'],
+  ['stage5-mock-audit-prefix', 'mock-terminal-audit-'],
+  ['stage5-stress-marker', 'ensoai-stage5-terminal-stress'],
+  ['stage5-mock-persistence-key', 'ensoai.mock.terminal-scenario.v1'],
 ];
 
 test('rejects Electron and PTY production dependencies', () => {
@@ -302,4 +322,49 @@ test('rejects Kubernetes resource identifiers in Stage 4 run contracts and featu
       file,
     );
   }
+});
+
+test('classifies only the new Stage 5 terminal production modules', () => {
+  const source = "import { mockFiles } from '@/spike/mockFiles';";
+  for (const file of stage5ProductionModules) {
+    assert.deepEqual(
+      findForbiddenWorkbenchImports(file, source).map((item) => item.rule),
+      ['stage0-spike-import'],
+      file,
+    );
+  }
+  assert.deepEqual(
+    findForbiddenWorkbenchImports('src/components/terminal/TerminalPanel.tsx', source),
+    [],
+  );
+});
+
+test('rejects Stage 5 mock strings and physical identifiers in terminal production modules', () => {
+  for (const [rule, needle] of stage5MockNeedles) {
+    const source = `const marker = ${JSON.stringify(needle)};`;
+    assert.deepEqual(
+      findForbiddenWorkbenchImports('src/api/terminalApi.ts', source).map((item) => item.rule),
+      [rule],
+      rule,
+    );
+    assert.deepEqual(findForbiddenWorkbenchImports('src/mocks/terminalState.ts', source), [], rule);
+  }
+  const source = 'export const payload = { namespace: "hidden" };';
+  for (const file of stage5ProductionModules) {
+    assert.deepEqual(
+      findForbiddenContractNames(file, source).map((item) => item.rule),
+      ['contract-name:namespace'],
+      file,
+    );
+  }
+});
+
+test('rejects every retained mock needle from distribution assets', () => {
+  const source = [...stage4MockNeedles, ...stage5MockNeedles]
+    .map(([, needle]) => needle)
+    .join('\n');
+  assert.deepEqual(
+    findForbiddenDistributionStrings('dist/assets/app.js', source).map((item) => item.rule),
+    [...stage4MockNeedles, ...stage5MockNeedles].map(([rule]) => rule),
+  );
 });

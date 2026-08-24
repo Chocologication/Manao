@@ -40,9 +40,11 @@ function isNodeBuiltinSpecifier(specifier) {
 const workbenchProductionExact = new Set([
   'src/api/fileApi.ts',
   'src/api/runApi.ts',
+  'src/api/terminalApi.ts',
   'src/contracts/file.ts',
   'src/contracts/run.ts',
   'src/contracts/log.ts',
+  'src/contracts/terminal.ts',
   'src/features/editor/workspaceSession.ts',
   'src/features/editor/WorkspaceBufferRegistry.ts',
   'src/features/editor/unsavedChangesGuard.ts',
@@ -66,7 +68,12 @@ function isWorkbenchProductionModule(file) {
   if (normalized.startsWith('src/features/files/')) return true;
   if (normalized.startsWith('src/features/runs/')) return true;
   if (normalized.startsWith('src/features/logs/')) return true;
+  if (normalized.startsWith('src/features/terminal/')) return true;
   if (normalized.startsWith('src/components/runs/')) return true;
+  if (normalized.startsWith('src/components/terminal/')) {
+    const baseName = normalized.slice('src/components/terminal/'.length);
+    return baseName.startsWith('JobTerminal') || baseName === 'TerminalAuditView.tsx' || baseName === 'CloseTerminalDialog.tsx';
+  }
   const filesPrefix = 'src/components/files/';
   if (!normalized.startsWith(filesPrefix)) return false;
   const baseName = normalized.slice(filesPrefix.length);
@@ -124,6 +131,12 @@ const productionStringNeedles = [
   ['stage4-mock-ticket-prefix', 'mock-run-log-ticket-'],
   ['stage4-seed-log-marker', 'ensoai-stage4-seed-log'],
   ['stage4-mock-persistence-key', 'ensoai.mock.run-scenario.v1'],
+  ['stage5-scenario-endpoint', '/api/v1/session/terminal-scenario'],
+  ['stage5-mock-ticket-prefix', 'mock-terminal-ticket-'],
+  ['stage5-mock-session-prefix', 'mock-terminal-session-'],
+  ['stage5-mock-audit-prefix', 'mock-terminal-audit-'],
+  ['stage5-stress-marker', 'ensoai-stage5-terminal-stress'],
+  ['stage5-mock-persistence-key', 'ensoai.mock.terminal-scenario.v1'],
 ];
 
 export function findForbiddenWorkbenchImports(file, source) {
@@ -133,6 +146,14 @@ export function findForbiddenWorkbenchImports(file, source) {
     const rule = workbenchImportRule(file, specifier);
     if (rule) rules.add(rule);
   }
+  for (const [rule, needle] of productionStringNeedles) {
+    if (source.includes(needle)) rules.add(rule);
+  }
+  return toRuleResults(file, rules);
+}
+
+export function findForbiddenDistributionStrings(file, source) {
+  const rules = new Set();
   for (const [rule, needle] of productionStringNeedles) {
     if (source.includes(needle)) rules.add(rule);
   }
@@ -149,8 +170,11 @@ function isContractNameScanTarget(file) {
     normalized.startsWith('src/features/files/') ||
     normalized.startsWith('src/features/runs/') ||
     normalized.startsWith('src/features/logs/') ||
+    normalized.startsWith('src/features/terminal/') ||
     normalized.startsWith('src/components/runs/') ||
-    normalized === 'src/api/runApi.ts'
+    normalized.startsWith('src/components/terminal/') ||
+    normalized === 'src/api/runApi.ts' ||
+    normalized === 'src/api/terminalApi.ts'
   );
 }
 

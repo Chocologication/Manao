@@ -142,6 +142,21 @@ describe('HttpClient', () => {
     expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
 
+  it('preserves structured Stage 5 terminal API error codes', async () => {
+    const body = {
+      code: 'TERMINAL_SESSION_ALREADY_ACTIVE',
+      message: 'Terminal session is already active',
+      traceId: 'trace-terminal-active',
+    };
+    const client = createClient(vi.fn<typeof fetch>(async () => jsonResponse(body, 409)));
+
+    await expect(client.request('/api/v1/projects/prj-1/runs/run-1/terminal-sessions')).rejects.toMatchObject({
+      status: 409,
+      body,
+      traceId: 'trace-terminal-active',
+    });
+  });
+
   it('invokes onUnauthorized exactly once per 401 response', async () => {
     const body = {
       code: 'UNAUTHENTICATED' as const,

@@ -20,6 +20,9 @@ const API_ERROR_CODES: ReadonlySet<string> = new Set([
   'RUN_STATE_CONFLICT',
   'RUN_NOT_FOUND',
   'LOG_TICKET_NOT_AVAILABLE',
+  'TERMINAL_NOT_AVAILABLE',
+  'TERMINAL_SESSION_ALREADY_ACTIVE',
+  'TERMINAL_TICKET_NOT_AVAILABLE',
 ]);
 
 export type HttpClientOptions = {
