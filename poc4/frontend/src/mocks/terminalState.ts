@@ -26,6 +26,7 @@ export const MOCK_TERMINAL_SESSION_PREFIX = 'mock-terminal-session-';
 export const MOCK_TERMINAL_AUDIT_PREFIX = 'mock-terminal-audit-';
 export const MOCK_TERMINAL_PERSISTENCE_KEY = 'ensoai.mock.terminal-scenario.v1';
 export const TERMINAL_TICKET_TTL_MS = 30_000;
+export const TERMINAL_TICKET_REPLAY_GRACE_MS = 5_000;
 export const TERMINAL_AUDIT_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 
 export type TerminalScenario =
@@ -145,6 +146,7 @@ export type ListTerminalAuditOptions = {
 
 let nextReservationSeq = 0;
 let reservations = new Map<string, TerminalReservation>();
+let reservationCleanupTimers = new Map<string, ReturnType<typeof setTimeout>>();
 let liveSessions = new Map<string, MockLiveTerminalSession>();
 let nextAuditSeq = 0;
 let auditRecords: TerminalAuditRecord[] = [];
@@ -184,6 +186,22 @@ function terminalRunKey(projectId: string, runId: string): string {
   return `${projectId}\0${runId}`;
 }
 
+function scheduleReservationCleanup(reservation: TerminalReservation): void {
+  const delayMs = Math.max(
+    0,
+    reservation.expiresAtMs + TERMINAL_TICKET_REPLAY_GRACE_MS - Date.now(),
+  );
+  const timer = setTimeout(() => {
+    if (reservations.get(reservation.ticket) === reservation) {
+      reservations.delete(reservation.ticket);
+    }
+    if (reservationCleanupTimers.get(reservation.ticket) === timer) {
+      reservationCleanupTimers.delete(reservation.ticket);
+    }
+  }, delayMs);
+  reservationCleanupTimers.set(reservation.ticket, timer);
+}
+
 function hasRunningAuthority(userId: string, projectId: string, runId: string): boolean {
   const activeRun = getActiveRun(projectId);
   return (
@@ -215,7 +233,12 @@ function prepareReservationInvalidations(
   matches: (reservation: TerminalReservation) => boolean,
 ): PreparedReservationInvalidation[] {
   return [...reservations.entries()]
-    .filter(([, reservation]) => reservation.state === 'available' && matches(reservation))
+    .filter(
+      ([, reservation]) =>
+        reservation.state === 'available' &&
+        Date.now() < reservation.expiresAtMs &&
+        matches(reservation),
+    )
     .map(([ticket, reservation]) => ({
       ticket,
       event: {
@@ -321,7 +344,7 @@ export function issueTerminalReservation(
   const sessionId = parseTerminalSessionId(`${MOCK_TERMINAL_SESSION_PREFIX}${suffix}`);
   const ticket = parseTerminalTicket(`${MOCK_TERMINAL_TICKET_PREFIX}${suffix}`);
   const expiresAtMs = Date.now() + TERMINAL_TICKET_TTL_MS;
-  reservations.set(ticket, {
+  const reservation: TerminalReservation = {
     userId,
     projectId,
     runId,
@@ -330,7 +353,9 @@ export function issueTerminalReservation(
     expiresAtMs,
     dimensions,
     state: 'available',
-  });
+  };
+  reservations.set(ticket, reservation);
+  scheduleReservationCleanup(reservation);
   return {
     ok: true,
     value: {
@@ -632,9 +657,18 @@ export function getTerminalReservationCount(
   ).length;
 }
 
+export function getTerminalReservationBackingStoreDiagnostics(): {
+  records: number;
+  timers: number;
+} {
+  return { records: reservations.size, timers: reservationCleanupTimers.size };
+}
+
 export function resetTerminalState(): void {
+  for (const timer of reservationCleanupTimers.values()) clearTimeout(timer);
   nextReservationSeq = 0;
   reservations = new Map();
+  reservationCleanupTimers = new Map();
   liveSessions = new Map();
   nextAuditSeq = 0;
   auditRecords = [];

@@ -21,6 +21,7 @@ import {
   consumeTerminalTicketByTicket,
   endTerminalSession,
   getTerminalScenario,
+  getTerminalReservationBackingStoreDiagnostics,
   getLiveTerminalSession,
   getTerminalReservationCount,
   getUnusedTerminalReservationCount,
@@ -161,6 +162,108 @@ describe('terminal reservation authority', () => {
 });
 
 describe('terminal ticket lifecycle', () => {
+  it('releases expired, used and unavailable backing records after the replay grace', () => {
+    const runId = startInState('RUNNING');
+    const expired = issueOk(runId);
+    vi.advanceTimersByTime(30_000);
+    expect(classifyTerminalTicketForHandshake(expired.ticket)).toEqual({
+      ok: false,
+      code: 'TICKET_EXPIRED',
+    });
+
+    const used = issueOk(runId);
+    expect(consumeTerminalTicketByTicket(used.ticket).ok).toBe(true);
+    expect(endTerminalSession({
+      userId: ALICE_ID,
+      projectId: ALICE_SEED_PROJECT_ID,
+      runId,
+      sessionId: used.sessionId,
+      reason: 'CLIENT_CLOSED',
+      exitCode: null,
+    }).ok).toBe(true);
+    const unavailable = issueOk(runId);
+    expect(transitionRun(ALICE_SEED_PROJECT_ID, runId, { state: 'STOPPING' }).ok).toBe(true);
+    expect(getTerminalReservationBackingStoreDiagnostics()).toEqual({ records: 3, timers: 3 });
+
+    vi.advanceTimersByTime(4_999);
+    expect(classifyTerminalTicketForHandshake(expired.ticket)).toEqual({
+      ok: false,
+      code: 'TICKET_EXPIRED',
+    });
+    expect(classifyTerminalTicketForHandshake(used.ticket)).toEqual({
+      ok: false,
+      code: 'TICKET_ALREADY_USED',
+    });
+    expect(classifyTerminalTicketForHandshake(unavailable.ticket)).toEqual({
+      ok: false,
+      code: 'SESSION_NOT_AVAILABLE',
+    });
+    expect(getTerminalReservationBackingStoreDiagnostics()).toEqual({ records: 3, timers: 3 });
+
+    vi.advanceTimersByTime(1);
+    expect(classifyTerminalTicketForHandshake(expired.ticket)).toEqual({
+      ok: false,
+      code: 'TICKET_NOT_AVAILABLE',
+    });
+    expect(getTerminalReservationBackingStoreDiagnostics()).toEqual({ records: 2, timers: 2 });
+
+    vi.advanceTimersByTime(29_999);
+    expect(classifyTerminalTicketForHandshake(used.ticket)).toEqual({
+      ok: false,
+      code: 'TICKET_ALREADY_USED',
+    });
+    expect(classifyTerminalTicketForHandshake(unavailable.ticket)).toEqual({
+      ok: false,
+      code: 'SESSION_NOT_AVAILABLE',
+    });
+    expect(getTerminalReservationBackingStoreDiagnostics()).toEqual({ records: 2, timers: 2 });
+
+    vi.advanceTimersByTime(1);
+    for (const ticket of [used.ticket, unavailable.ticket]) {
+      expect(classifyTerminalTicketForHandshake(ticket)).toEqual({
+        ok: false,
+        code: 'TICKET_NOT_AVAILABLE',
+      });
+    }
+    expect(getTerminalReservationBackingStoreDiagnostics()).toEqual({ records: 0, timers: 0 });
+  });
+
+  it('reset clears backing records and timers without stale timer deletion after ID reuse', () => {
+    const runId = startInState('RUNNING');
+    const beforeReset = issueOk(runId);
+    expect(getTerminalReservationBackingStoreDiagnostics()).toEqual({ records: 1, timers: 1 });
+    vi.advanceTimersByTime(10_000);
+
+    resetMockState();
+    installVirtualRunClock(Date.now());
+    expect(getTerminalReservationBackingStoreDiagnostics()).toEqual({ records: 0, timers: 0 });
+    const nextRunId = startInState('RUNNING');
+    const afterReset = issueOk(nextRunId);
+    expect(afterReset.ticket).toBe(beforeReset.ticket);
+    vi.advanceTimersByTime(25_000);
+
+    expect(classifyTerminalTicketForHandshake(afterReset.ticket)).toEqual({ ok: true });
+    expect(getTerminalReservationBackingStoreDiagnostics()).toEqual({ records: 1, timers: 1 });
+    resetMockState();
+    expect(getTerminalReservationBackingStoreDiagnostics()).toEqual({ records: 0, timers: 0 });
+  });
+
+  it('does not accumulate backing records across repeated issue windows', () => {
+    const runId = startInState('RUNNING');
+    for (let cycle = 0; cycle < 3; cycle += 1) {
+      for (let index = 0; index < 20; index += 1) issueOk(runId);
+      expect(getTerminalReservationBackingStoreDiagnostics()).toEqual({
+        records: 20,
+        timers: 20,
+      });
+      vi.advanceTimersByTime(35_000);
+      expect(getTerminalReservationBackingStoreDiagnostics()).toEqual({
+        records: 0,
+        timers: 0,
+      });
+    }
+  });
+
   it('classifies authoritative handshake failures without exposing reservation identity', () => {
     const runId = startInState('RUNNING');
     expect(classifyTerminalTicketForHandshake('mock-terminal-ticket-missing')).toEqual({
