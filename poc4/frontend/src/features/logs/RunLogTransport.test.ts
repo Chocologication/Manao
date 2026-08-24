@@ -492,6 +492,23 @@ describe('RunLogTransport reconnect policy', () => {
     expect(item.createTicket).toHaveBeenCalledTimes(2);
   });
 
+  it('reconnects on 503 LOG_TICKET_NOT_AVAILABLE without unlocking', async () => {
+    const item = harness();
+    item.createTicket.mockRejectedValueOnce(
+      new ApiRequestError(503, {
+        code: 'LOG_TICKET_NOT_AVAILABLE',
+        message: 'Log ticket not available',
+        traceId: 't',
+      }),
+    );
+    item.transport.connect();
+    await microtasks();
+    expect(item.store.getSnapshot()).toMatchObject({ connection: 'reconnecting', error: null });
+    item.clock.flush();
+    await microtasks();
+    expect(item.createTicket).toHaveBeenCalledTimes(2);
+  });
+
   it('stops on 403 and non-retryable stream errors with an explicit error', async () => {
     const forbidden = harness();
     forbidden.createTicket.mockRejectedValueOnce(

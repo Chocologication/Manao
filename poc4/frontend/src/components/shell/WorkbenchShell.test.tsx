@@ -962,6 +962,30 @@ describe('WorkbenchShell authority gate', () => {
     expect(attempts).toBeGreaterThan(1);
     expect(screen.queryByText(/unable to load run authority/i)).not.toBeInTheDocument();
   }, 15_000);
+
+  it('relocks New file and Start after an authority refetch error from idle', async () => {
+    const user = userEvent.setup();
+    await authenticateAsAlice();
+    renderShell();
+    await loadedEditable();
+    expect(screen.getByRole('button', { name: 'New file' })).toBeEnabled();
+
+    server.use(
+      http.get('/api/v1/projects/:projectId/runs/active', () =>
+        HttpResponse.json(
+          { code: 'FORBIDDEN', message: 'Access denied', traceId: 'trace-active-403-after-idle' },
+          { status: 403 },
+        ),
+      ),
+    );
+    await queryClient.refetchQueries({ queryKey: runKeys.active(ALICE_SEED_PROJECT_ID) });
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(/unable to load run authority/i);
+    expect(screen.getByRole('button', { name: 'New file' })).toBeDisabled();
+    await user.click(screen.getByRole('tab', { name: 'Run' }));
+    const start = await screen.findByRole('button', { name: 'Start run' });
+    expect(start).toBeDisabled();
+  }, 15_000);
 });
 
 describe('WorkbenchShell run lock', () => {
@@ -1121,6 +1145,14 @@ describe('WorkbenchShell workspace reload', () => {
     await waitUntilWritesUnlocked();
     expect(screen.queryAllByText('Reloading workspace')).toHaveLength(0);
     expect(screen.getByRole('tab', { name: /README.md/ })).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByRole('status', { name: 'Run state', hidden: true })).not.toHaveTextContent(
+        'RUNNING',
+      );
+    });
+    expect(screen.getByRole('status', { name: 'Run state', hidden: true })).toHaveTextContent(
+      /SUCCEEDED|Idle/,
+    );
   }, 15_000);
 
   it('retries a failed workspace reload from the Run toolbar', async () => {

@@ -27,6 +27,7 @@ import {
   MOCK_LOG_TICKET_PREFIX,
   MOCK_LOG_TICKET_TTL_MS,
   getMockLogTicketRecords,
+  setLogTicketUnavailable,
 } from './runSocket';
 import {
   advanceMockRunClock,
@@ -470,6 +471,19 @@ describe('one-time log tickets', () => {
       },
     ]);
     expect(JSON.stringify(records)).not.toMatch(/Bearer |tok-\d|demo-pass/);
+  });
+
+  it('returns HTTP 503 LOG_TICKET_NOT_AVAILABLE when the mock flag is set', async () => {
+    const { token, run } = await startAlice();
+    setLogTicketUnavailable(true);
+    await expectApiError(
+      await fetch(runUrl(ALICE_SEED_PROJECT_ID, `/${encodeURIComponent(run.id)}/log-ticket`), {
+        method: 'POST',
+        headers: bearerHeaders(token),
+      }),
+      503,
+      'LOG_TICKET_NOT_AVAILABLE',
+    );
   });
 
   it('rejects a ticket for the wrong owner or missing run', async () => {

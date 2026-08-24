@@ -42,27 +42,51 @@ function assertCurrentProject(projectId: string): void {
   }
 }
 
-function restoreOpenFiles(
-  originalOpenPaths: ProjectRelativePath[],
-  surviving: ProjectRelativePath[],
-  activePath: ProjectRelativePath | null,
-): void {
+async function pathStillExists(projectId: string, path: ProjectRelativePath): Promise<boolean> {
+  try {
+    await getFileMetadata(projectId, path);
+    return true;
+  } catch (error) {
+    if (!isDeletedEntryError(error)) {
+      throw error;
+    }
+  }
+  try {
+    await listDirectory(projectId, parseProjectDirectoryPath(path));
+    return true;
+  } catch (error) {
+    if (isDeletedEntryError(error)) {
+      return false;
+    }
+    throw error;
+  }
+}
+
+function restoreWorkspaceSession(options: {
+  originalOpenPaths: ProjectRelativePath[];
+  surviving: ProjectRelativePath[];
+  activePath: ProjectRelativePath | null;
+  selectedPath: ProjectRelativePath | null;
+  expandedPaths: Set<ProjectRelativePath>;
+}): void {
   let restoredActive: ProjectRelativePath | null = null;
-  if (activePath !== null && surviving.includes(activePath)) {
-    restoredActive = activePath;
-  } else if (activePath !== null) {
-    const index = originalOpenPaths.indexOf(activePath);
+  if (options.activePath !== null && options.surviving.includes(options.activePath)) {
+    restoredActive = options.activePath;
+  } else if (options.activePath !== null) {
+    const index = options.originalOpenPaths.indexOf(options.activePath);
     restoredActive =
-      originalOpenPaths.slice(index + 1).find((path) => surviving.includes(path)) ??
-      [...originalOpenPaths.slice(0, index)].reverse().find((path) => surviving.includes(path)) ??
-      surviving[0] ??
+      options.originalOpenPaths.slice(index + 1).find((path) => options.surviving.includes(path)) ??
+      [...options.originalOpenPaths.slice(0, index)].reverse().find((path) => options.surviving.includes(path)) ??
+      options.surviving[0] ??
       null;
   } else {
-    restoredActive = surviving[0] ?? null;
+    restoredActive = options.surviving[0] ?? null;
   }
   useWorkspaceSession.setState({
-    openPaths: surviving,
+    openPaths: options.surviving,
     activePath: restoredActive,
+    selectedPath: options.selectedPath,
+    expandedPaths: options.expandedPaths,
   });
 }
 
@@ -74,6 +98,8 @@ export async function reloadWorkspaceAfterTerminalRun(options: {
   const session = useWorkspaceSession.getState();
   const openPaths = [...session.openPaths];
   const activePath = session.activePath;
+  const selectedPath = session.selectedPath;
+  const expandedPaths = [...session.expandedPaths];
   const scopeId = projectAuthorityScope(projectId).id;
   if (
     queryClient.isMutating({
@@ -123,5 +149,23 @@ export async function reloadWorkspaceAfterTerminalRun(options: {
   }
 
   assertCurrentProject(projectId);
-  restoreOpenFiles(openPaths, surviving, activePath);
+  let nextSelected = selectedPath;
+  if (selectedPath !== null && !surviving.includes(selectedPath)) {
+    nextSelected = (await pathStillExists(projectId, selectedPath)) ? selectedPath : null;
+    assertCurrentProject(projectId);
+  }
+  const nextExpanded = new Set<ProjectRelativePath>();
+  for (const path of expandedPaths) {
+    assertCurrentProject(projectId);
+    if (await pathStillExists(projectId, path)) {
+      nextExpanded.add(path);
+    }
+  }
+  restoreWorkspaceSession({
+    originalOpenPaths: openPaths,
+    surviving,
+    activePath,
+    selectedPath: nextSelected,
+    expandedPaths: nextExpanded,
+  });
 }

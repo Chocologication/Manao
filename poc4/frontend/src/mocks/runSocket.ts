@@ -41,6 +41,7 @@ export type MockLogTicketRecord = {
 const runLogs = ws.link(/\/api\/v1\/ws\/run-logs/);
 
 let tickets = new Map<string, MockLogTicketRecord>();
+let logTicketUnavailable = false;
 let nextTicketSeq = 0;
 
 function cloneTicket(record: MockLogTicketRecord): MockLogTicketRecord {
@@ -77,9 +78,18 @@ export function getMockLogTicketRecords(): MockLogTicketRecord[] {
   return [...tickets.values()].map(cloneTicket);
 }
 
+export function setLogTicketUnavailable(value: boolean): void {
+  logTicketUnavailable = value;
+}
+
+export function isLogTicketUnavailable(): boolean {
+  return logTicketUnavailable;
+}
+
 export function resetLogTickets(): void {
   tickets = new Map();
   nextTicketSeq = 0;
+  logTicketUnavailable = false;
   for (const client of [...runLogs.clients]) {
     client.close();
   }

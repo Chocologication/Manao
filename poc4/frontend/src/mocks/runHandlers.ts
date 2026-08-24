@@ -9,7 +9,7 @@ import {
   stopRun,
   type MockRunErrorCode,
 } from './runState';
-import { issueLogTicket } from './runSocket';
+import { isLogTicketUnavailable, issueLogTicket } from './runSocket';
 import { canReadReadyProjectFiles, resolveUserByAccessToken } from './state';
 
 const REQUEST_UNAUTHENTICATED: ApiErrorBody = {
@@ -52,6 +52,12 @@ const RUN_NOT_FOUND: ApiErrorBody = {
   code: 'RUN_NOT_FOUND',
   message: 'Run not found',
   traceId: 'mock-trace-run-not-found',
+};
+
+const LOG_TICKET_NOT_AVAILABLE: ApiErrorBody = {
+  code: 'LOG_TICKET_NOT_AVAILABLE',
+  message: 'Log ticket not available',
+  traceId: 'mock-trace-log-ticket-unavailable',
 };
 
 function jsonError(status: number, body: ApiErrorBody) {
@@ -201,6 +207,9 @@ export const runHandlers = [
     const run = getRun(access.projectId, runId);
     if (run === null) {
       return jsonError(404, RUN_NOT_FOUND);
+    }
+    if (isLogTicketUnavailable()) {
+      return jsonError(503, LOG_TICKET_NOT_AVAILABLE);
     }
     return HttpResponse.json(issueLogTicket(access.user.id, access.projectId, run.id));
   }),

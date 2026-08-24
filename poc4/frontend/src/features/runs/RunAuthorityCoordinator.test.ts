@@ -99,6 +99,19 @@ describe('RunAuthorityCoordinator', () => {
     expect(isWorkspaceEditable(coordinator.getSnapshot())).toBe(true);
   });
 
+  it('fail-closes from EDITABLE when a later active query errors', async () => {
+    const coordinator = new RunAuthorityCoordinator({
+      projectId: ALICE_SEED_PROJECT_ID,
+      fetchRun: vi.fn(),
+    });
+    await coordinator.reconcile('success', null);
+    expect(isWorkspaceEditable(coordinator.getSnapshot())).toBe(true);
+
+    await coordinator.reconcile('error', null);
+    expect(coordinator.getSnapshot().phase).toBe('LOADING_AUTHORITY');
+    expect(isWorkspaceEditable(coordinator.getSnapshot())).toBe(false);
+  });
+
   it('does not copy a run summary and stays locked while a locking run is observed', async () => {
     const fetchRun = vi.fn();
     const coordinator = new RunAuthorityCoordinator({
@@ -352,5 +365,6 @@ describe('useRunAuthorityCoordinator', () => {
     expect(detailGets).toBeGreaterThanOrEqual(1);
     expect(isWorkspaceEditable(result.current.getSnapshot())).toBe(false);
     expect(queryClient.getQueryData(runKeys.active(ALICE_SEED_PROJECT_ID))).toEqual({ run: null });
+    expect(queryClient.getQueryData(runKeys.detail(ALICE_SEED_PROJECT_ID, run.id))).toEqual(succeeded);
   });
 });

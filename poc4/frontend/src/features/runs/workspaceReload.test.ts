@@ -32,6 +32,8 @@ import { reloadWorkspaceAfterTerminalRun } from './workspaceReload';
 const ALICE = { username: 'alice', password: 'demo-pass' };
 const README = parseProjectRelativePath('README.md');
 const POM = parseProjectRelativePath('pom.xml');
+const SRC = parseProjectRelativePath('src');
+const GONE_DIR = parseProjectRelativePath('gone-dir');
 const APP_TEST = parseProjectRelativePath('src/test/java/demo/AppTest.java');
 const LOGO = parseProjectRelativePath('assets/logo.png');
 const ROOT = parseProjectDirectoryPath('');
@@ -243,6 +245,9 @@ describe('reloadWorkspaceAfterTerminalRun path outcomes', () => {
   it('omits a deleted open path and continues with survivors', async () => {
     await authenticateAsAlice();
     activateAndOpen([README, APP_TEST, POM], APP_TEST);
+    useWorkspaceSession.getState().selectPath(APP_TEST);
+    useWorkspaceSession.getState().toggleDirectory(SRC);
+    useWorkspaceSession.getState().toggleDirectory(GONE_DIR);
     server.use(
       http.get('/api/v1/projects/:projectId/files/meta', ({ request }) => {
         const path = new URL(request.url).searchParams.get('path') ?? '';
@@ -263,6 +268,9 @@ describe('reloadWorkspaceAfterTerminalRun path outcomes', () => {
 
     expect(useWorkspaceSession.getState().openPaths).toEqual([README, POM]);
     expect(useWorkspaceSession.getState().activePath).toBe(POM);
+    expect(useWorkspaceSession.getState().selectedPath).toBeNull();
+    expect(useWorkspaceSession.getState().expandedPaths.has(SRC)).toBe(true);
+    expect(useWorkspaceSession.getState().expandedPaths.has(GONE_DIR)).toBe(false);
     expect(getFileRequestCount('content', ALICE_SEED_PROJECT_ID, 'src/test/java/demo/AppTest.java')).toBe(
       0,
     );

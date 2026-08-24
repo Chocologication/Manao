@@ -1,6 +1,7 @@
+import { useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef, useSyncExternalStore } from 'react';
 import { isRunLockingState, isRunTerminalState, type RunId, type RunSummary } from '../../contracts/run';
-import { requireTerminalRun, useActiveRunQuery } from './runQueries';
+import { cacheRunSummary, requireTerminalRun, useActiveRunQuery } from './runQueries';
 
 export type RunAuthorityPhase =
   | 'LOADING_AUTHORITY'
@@ -97,7 +98,13 @@ export class RunAuthorityCoordinator {
   }
 
   async reconcile(status: 'pending' | 'error' | 'success', run: RunSummary | null): Promise<void> {
-    if (status === 'pending' || status === 'error') {
+    if (status === 'pending') {
+      return;
+    }
+    if (status === 'error') {
+      if (this.snapshot.phase === 'EDITABLE') {
+        this.patch({ phase: 'LOADING_AUTHORITY' });
+      }
       return;
     }
     if (run !== null && isRunLockingState(run.state)) {
@@ -178,14 +185,20 @@ export class RunAuthorityCoordinator {
 }
 
 export function useRunAuthorityCoordinator(projectId: string): RunAuthorityCoordinator {
+  const queryClient = useQueryClient();
   const coordinatorRef = useRef<RunAuthorityCoordinator | null>(null);
+  const fetchRun: FetchRunDetail = async (runId, signal) => {
+    const detail = await requireTerminalRun(projectId, runId, signal);
+    cacheRunSummary(queryClient, projectId, detail);
+    return detail;
+  };
   if (coordinatorRef.current === null || coordinatorRef.current.projectId !== projectId) {
     coordinatorRef.current = new RunAuthorityCoordinator({
       projectId,
-      fetchRun: (runId, signal) => requireTerminalRun(projectId, runId, signal),
+      fetchRun,
     });
   } else {
-    coordinatorRef.current.setFetchRun((runId, signal) => requireTerminalRun(projectId, runId, signal));
+    coordinatorRef.current.setFetchRun(fetchRun);
   }
   const coordinator = coordinatorRef.current;
   const snapshot = useSyncExternalStore(
