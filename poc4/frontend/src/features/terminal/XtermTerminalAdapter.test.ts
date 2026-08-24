@@ -357,27 +357,71 @@ describe('XtermTerminalAdapter lifecycle', () => {
     expect(disposeLog).toHaveLength(8);
   });
 
-  it('invalidates old writes and listeners while a new session uses fresh resources', () => {
+  it('creates every session resource fresh and isolates the new session from all stale callbacks', () => {
     const old = createHarness();
-    const receipt = vi.fn();
-    old.adapter.open(document.createElement('div'));
+    const oldReceipt = vi.fn();
+    old.adapter.open(createSizedElement(800, 480));
     old.adapter.setInputEnabled(true);
     old.adapter.setReady(true);
-    old.adapter.write(new Uint8Array([65]), receipt);
+    old.adapter.write(new Uint8Array([65]), oldReceipt);
+    const oldFrameHandle = old.scheduler.requestedCallbacks.keys().next().value as number;
+    const oldFrame = old.scheduler.requestedCallbacks.get(oldFrameHandle);
+    old.onRendererChange.mockClear();
     old.adapter.dispose();
+    const oldRendererAfterDispose = old.adapter.renderer;
+    const oldDisposeCount = old.disposeLog.length;
 
     const next = createHarness();
-    next.adapter.open(document.createElement('div'));
+    const nextReceipt = vi.fn();
+    next.adapter.open(createSizedElement(800, 480));
     next.adapter.setInputEnabled(true);
     next.adapter.setReady(true);
-    old.terminal.writes[0]?.callback?.();
-    old.terminal.emitData('old');
+    next.adapter.write(new Uint8Array([66]), nextReceipt);
+    const nextFrameHandle = next.scheduler.requestedCallbacks.keys().next().value as number;
+    const nextFrame = next.scheduler.requestedCallbacks.get(nextFrameHandle);
+    next.onRendererChange.mockClear();
 
-    expect(receipt).not.toHaveBeenCalled();
-    expect(old.onData).not.toHaveBeenCalled();
     expect(next.terminal).not.toBe(old.terminal);
+    expect(next.fitAddon).not.toBe(old.fitAddon);
+    expect(next.searchAddon).not.toBe(old.searchAddon);
+    expect(next.webglAddon).not.toBe(old.webglAddon);
+    expect(next.resizeObserver).not.toBe(old.resizeObserver);
+    expect(next.scheduler).not.toBe(old.scheduler);
+    expect(nextFrame).not.toBe(oldFrame);
+
+    oldFrame?.();
+    old.resizeObserver.emit();
+    old.terminal.writes[0]?.callback?.();
+    old.webglAddon.loseContext();
+    old.terminal.emitData('old');
+    old.terminal.emitBinary('\u0001');
+
+    expect(oldReceipt).not.toHaveBeenCalled();
+    expect(old.onData).not.toHaveBeenCalled();
+    expect(old.onBinary).not.toHaveBeenCalled();
+    expect(old.onResize).not.toHaveBeenCalled();
+    expect(old.onRendererChange).not.toHaveBeenCalled();
+    expect(old.adapter.renderer).toBe(oldRendererAfterDispose);
+    expect(old.disposeLog).toHaveLength(oldDisposeCount);
+    expect(old.scheduler.pendingCount).toBe(0);
+
+    expect(next.adapter.renderer).toBe('webgl');
+    expect(nextReceipt).not.toHaveBeenCalled();
+    expect(next.onData).not.toHaveBeenCalled();
+    expect(next.onBinary).not.toHaveBeenCalled();
+    expect(next.onResize).not.toHaveBeenCalled();
+    expect(next.onRendererChange).not.toHaveBeenCalled();
+    expect(next.disposeLog).toEqual([]);
+    expect(next.scheduler.pendingCount).toBe(1);
+
+    next.scheduler.flush();
+    next.terminal.writes[0]?.callback?.();
     next.terminal.emitData('new');
+    next.terminal.emitBinary('\u0002');
+    expect(next.onResize).toHaveBeenCalledWith(80, 24);
+    expect(nextReceipt).toHaveBeenCalledOnce();
     expect(next.onData).toHaveBeenCalledWith('new');
+    expect(next.onBinary).toHaveBeenCalledWith('\u0002');
   });
 });
 
