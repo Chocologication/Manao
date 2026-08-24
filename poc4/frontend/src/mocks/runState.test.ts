@@ -14,6 +14,13 @@ import {
   type RunState,
   type RunSummary,
 } from '../contracts/run';
+import {
+  LARGE_LOG_EVICTED_EARLY_MARKER,
+  LARGE_LOG_HEAD_MARKER,
+  LARGE_LOG_LATEST_MARKER,
+  LARGE_LOG_MIN_GENERATED_BYTES,
+  createLargeLogChunks,
+} from './largeLogPayload';
 import { MAX_SIZE_LOG_CHUNK_TEXT, POC4_RUN_POLICY, SEED_LOG_MARKER, SEED_LOG_TEXT } from './runFixtures';
 import {
   advanceMockRunClock,
@@ -27,6 +34,7 @@ import {
   installVirtualRunClock,
   isRunScenario,
   listRuns,
+  MOCK_LARGE_LOG_VIRTUAL_CHUNK_DELAY_MS,
   MOCK_RUN_DELAYED_START_MS,
   MOCK_RUN_HEARTBEAT_INTERVAL_MS,
   MOCK_RUN_PERSISTENCE_KEY,
@@ -418,6 +426,39 @@ describe('persisted log windows', () => {
     expect(summary.logTruncated).toBe(true);
     expect(summary.logEvictedBytes).toBe(window.window.evictedBytes);
     expect(summary.lastLogSeq).toBe(window.window.lastAvailableSeq);
+  });
+
+  it('streams a real 6 MiB large-log payload, evicts the head markers, and succeeds', () => {
+    setRunScenario('large-log');
+    const planned = createLargeLogChunks();
+    const generated = planned.reduce(
+      (total, text) => total + new TextEncoder().encode(text).byteLength,
+      0,
+    );
+    expect(generated).toBeGreaterThanOrEqual(LARGE_LOG_MIN_GENERATED_BYTES);
+    const run = startOk();
+    advanceMockRunClock(MOCK_RUN_START_DELAY_MS);
+    expect(getRun(ALICE, run.id)?.state).toBe('RUNNING');
+    advanceMockRunClock(MOCK_LARGE_LOG_VIRTUAL_CHUNK_DELAY_MS * (planned.length + 2));
+    const finished = parsed(getRun(ALICE, run.id) as RunSummary);
+    expect(finished.state).toBe('SUCCEEDED');
+    const window = getLogWindow(ALICE, run.id);
+    expect(window).not.toBeNull();
+    if (window === null) {
+      throw new Error('missing window');
+    }
+    parseLogWindowMeta(window.window, { chunks: window.chunks });
+    expect(window.window.truncated).toBe(true);
+    expect(window.window.retainedBytes).toBeLessThanOrEqual(MAX_LOG_RETAINED_BYTES);
+    expect(window.window.evictedBytes).toBeGreaterThan(0);
+    expect(window.window.retainedBytes + window.window.evictedBytes).toBeGreaterThanOrEqual(
+      LARGE_LOG_MIN_GENERATED_BYTES,
+    );
+    const text = window.chunks.map((chunk) => chunk.text).join('');
+    expect(text).toContain(LARGE_LOG_LATEST_MARKER);
+    expect(text).not.toContain(LARGE_LOG_HEAD_MARKER);
+    expect(text).not.toContain(LARGE_LOG_EVICTED_EARLY_MARKER);
+    expect(getActiveRun(ALICE)).toBeNull();
   });
 
   it('updates persisted window and summary before notifying subscribers', () => {

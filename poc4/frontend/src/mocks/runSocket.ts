@@ -4,6 +4,7 @@ import {
   type LogServerFrame,
 } from '../contracts/log';
 import { isRunTerminalState } from '../contracts/run';
+import { LARGE_LOG_DISCONNECT_AFTER_LIVE_CHUNKS } from './largeLogPayload';
 import {
   getLogWindow,
   getMockRunNowMs,
@@ -201,6 +202,7 @@ export const runLogsSocketHandler = runLogs.addEventListener('connection', ({ cl
     }
     let skippedGap = false;
     let duplicatedLive = false;
+    let largeLogLiveAppends = 0;
     unsubscribe = subscribeMockRunEvents((live) => {
       if (closed || live.projectId !== record.projectId || eventRunId(live) !== record.runId) {
         return;
@@ -211,9 +213,16 @@ export const runLogsSocketHandler = runLogs.addEventListener('connection', ({ cl
       }
       const frame = toWireFrame(live);
       sendFrame(client, frame);
-      if (live.type === 'log.append' && !duplicatedLive) {
+      if (live.type === 'log.append' && !duplicatedLive && scenario !== 'large-log') {
         duplicatedLive = true;
         sendFrame(client, frame);
+      }
+      if (live.type === 'log.append' && scenario === 'large-log') {
+        largeLogLiveAppends += 1;
+        if (largeLogLiveAppends >= LARGE_LOG_DISCONNECT_AFTER_LIVE_CHUNKS) {
+          sendFrame(client, { type: 'stream.error', code: 'STREAM_UNAVAILABLE', retryable: true });
+          shutdown(1011);
+        }
       }
     });
   });

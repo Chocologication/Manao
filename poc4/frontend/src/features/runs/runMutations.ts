@@ -42,6 +42,7 @@ function applyAuthoritativeRun(queryClient: QueryClient, projectId: string, run:
 export function useStartRunMutation(projectId: string, coordinator: RunAuthorityCoordinator) {
   const queryClient = useQueryClient();
   return useMutation({
+    mutationKey: ['start-run', projectId],
     scope: projectAuthorityScope(projectId),
     retry: false,
     mutationFn: async (variables: StartRunVariables) => {
@@ -73,6 +74,7 @@ export function useStartRunMutation(projectId: string, coordinator: RunAuthority
 export function useStopRunMutation(projectId: string) {
   const queryClient = useQueryClient();
   return useMutation({
+    mutationKey: ['stop-run', projectId],
     scope: projectAuthorityScope(projectId),
     retry: false,
     mutationFn: async () => {

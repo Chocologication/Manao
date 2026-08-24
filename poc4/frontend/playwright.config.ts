@@ -3,6 +3,7 @@ import { defineConfig, devices } from '@playwright/test';
 export default defineConfig({
   testDir: './tests/e2e',
   fullyParallel: false,
+  workers: 2,
   retries: 0,
   reporter: 'list',
   timeout: 60_000,
@@ -30,17 +31,17 @@ export default defineConfig({
   projects: [
     {
       name: 'chromium',
-      testIgnore: /stage2-large-files\.spec\.ts|stage3-large-writes\.spec\.ts/,
+      testIgnore: /stage2-large-files\.spec\.ts|stage3-large-writes\.spec\.ts|stage4-large-logs\.spec\.ts/,
       use: { ...devices['Desktop Chrome'] },
     },
     {
       name: 'chrome',
-      testIgnore: /stage2-large-files\.spec\.ts|stage3-large-writes\.spec\.ts/,
+      testIgnore: /stage2-large-files\.spec\.ts|stage3-large-writes\.spec\.ts|stage4-large-logs\.spec\.ts/,
       use: { channel: 'chrome' },
     },
     {
       name: 'edge',
-      testIgnore: /stage2-large-files\.spec\.ts|stage3-large-writes\.spec\.ts/,
+      testIgnore: /stage2-large-files\.spec\.ts|stage3-large-writes\.spec\.ts|stage4-large-logs\.spec\.ts/,
       use: { channel: 'msedge' },
     },
     {
@@ -52,6 +53,12 @@ export default defineConfig({
     {
       name: 'chromium-large-writes',
       testMatch: /stage3-large-writes\.spec\.ts/,
+      timeout: 180_000,
+      use: { ...devices['Desktop Chrome'] },
+    },
+    {
+      name: 'chromium-large-logs',
+      testMatch: /stage4-large-logs\.spec\.ts/,
       timeout: 180_000,
       use: { ...devices['Desktop Chrome'] },
     },

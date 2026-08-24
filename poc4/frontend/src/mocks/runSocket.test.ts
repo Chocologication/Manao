@@ -16,6 +16,7 @@ import {
 } from '../contracts/run';
 import { parseFileContentResponse } from '../contracts/file';
 import { parseProjectRelativePath } from '../features/files/pathPolicy';
+import { LARGE_LOG_DISCONNECT_AFTER_LIVE_CHUNKS } from './largeLogPayload';
 import { SEED_LOG_MARKER } from './runFixtures';
 import {
   MOCK_LOG_TICKET_PREFIX,
@@ -673,6 +674,39 @@ describe('MSW run log WebSocket', () => {
       expect(
         getLogWindow(ALICE_SEED_PROJECT_ID, run.id)?.chunks.filter((chunk) => chunk.seq === first.chunk.seq),
       ).toHaveLength(1);
+    }
+  });
+
+  it('disconnects large-log midstream while appends continue, then replays the gap', async () => {
+    setRunScenario('large-log');
+    const { token, run } = await startAlice();
+    advanceMockRunClock(MOCK_RUN_START_DELAY_MS);
+    const firstTicket = await issueTicket(token, ALICE_SEED_PROJECT_ID, run.id);
+    const first = openSocket(firstTicket.ticket);
+    await waitForOpen(first);
+    const ctx = contextOf(run);
+    const firstReader = new FrameReader(first, ctx);
+    subscribe(first, 1);
+    await firstReader.collect(2);
+    const closed = waitForClose(first);
+    for (let index = 0; index < LARGE_LOG_DISCONNECT_AFTER_LIVE_CHUNKS; index += 1) {
+      appendLogChunk(ALICE_SEED_PROJECT_ID, run.id, `live-${index}\n`);
+    }
+    expect((await closed).code).toBe(1011);
+    appendLogChunk(ALICE_SEED_PROJECT_ID, run.id, 'while-disconnected\n');
+    expect(
+      getLogWindow(ALICE_SEED_PROJECT_ID, run.id)?.chunks.some((chunk) => chunk.text === 'while-disconnected\n'),
+    ).toBe(true);
+    const secondTicket = await issueTicket(token, ALICE_SEED_PROJECT_ID, run.id);
+    expect(secondTicket.ticket).not.toBe(firstTicket.ticket);
+    const second = openSocket(secondTicket.ticket);
+    await waitForOpen(second);
+    const secondReader = new FrameReader(second, ctx);
+    subscribe(second, LARGE_LOG_DISCONNECT_AFTER_LIVE_CHUNKS);
+    const replay = await secondReader.next();
+    expect(replay.type).toBe('log.replay');
+    if (replay.type === 'log.replay') {
+      expect(replay.chunks.some((chunk) => chunk.text === 'while-disconnected\n')).toBe(true);
     }
   });
 

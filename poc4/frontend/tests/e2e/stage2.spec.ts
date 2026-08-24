@@ -441,7 +441,7 @@ test('logs in and opens Alice\'s ready project', async ({ page }) => {
   await openAliceWorkbench(page);
   await expect(page.getByText('READY', { exact: true })).toBeVisible();
   await expect(page.getByRole('tab', { name: 'File' })).toHaveAttribute('aria-selected', 'true');
-  await expect(page.getByRole('tab', { name: 'Run' })).toBeDisabled();
+  await expect(page.getByRole('tab', { name: 'Run' })).toBeEnabled();
   await expect(page.getByRole('tab', { name: 'Terminal' })).toBeDisabled();
   await expect(page.getByRole('tree', { name: 'Files' })).toBeVisible();
 });

@@ -26,6 +26,7 @@ import {
   getWorkspaceRevision,
   saveMockFile,
 } from './fileFixtures';
+import { createLargeLogChunks } from './largeLogPayload';
 import { clonePoc4RunPolicy, SEED_LOG_MARKER, SEED_LOG_TEXT, utf8ByteLength } from './runFixtures';
 
 export const MOCK_RUN_START_DELAY_MS = 25;
@@ -34,6 +35,8 @@ export const MOCK_RUN_RECOVERY_DELAY_MS = 25;
 export const MOCK_RUN_TERMINAL_DELAY_MS = 50;
 export const MOCK_RUN_STOP_DELAY_MS = 25;
 export const MOCK_RUN_HEARTBEAT_INTERVAL_MS = 10_000;
+export const MOCK_LARGE_LOG_BROWSER_CHUNK_DELAY_MS = 120;
+export const MOCK_LARGE_LOG_VIRTUAL_CHUNK_DELAY_MS = 60_000;
 export const MOCK_RUN_PERSISTENCE_KEY = 'ensoai.mock.run-scenario.v1';
 export const MOCK_RUN_HISTORY_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 
@@ -113,6 +116,7 @@ const ALLOWED_TRANSITIONS: Record<RunState, ReadonlySet<RunState>> = {
 };
 
 type RunClock = {
+  kind: 'browser' | 'virtual';
   now(): number;
   schedule(delayMs: number, fn: () => void): number;
   cancel(handle: number): void;
@@ -156,6 +160,7 @@ function createBrowserClock(): RunClock {
   let nextHandle = 1;
   const nativeByHandle = new Map<number, ReturnType<typeof setTimeout>>();
   return {
+    kind: 'browser',
     now: () => Date.now(),
     schedule(delayMs, fn) {
       const handle = nextHandle;
@@ -192,6 +197,7 @@ function createVirtualClock(epochMs: number): RunClock {
   let nextId = 1;
   const timers: Array<{ id: number; fireAt: number; fn: () => void }> = [];
   return {
+    kind: 'virtual',
     now: () => nowMs,
     schedule(delayMs, fn) {
       const id = nextId;
@@ -471,6 +477,40 @@ function terminalForScenario(
   }
 }
 
+function largeLogChunkDelayMs(): number {
+  return clock.kind === 'virtual'
+    ? MOCK_LARGE_LOG_VIRTUAL_CHUNK_DELAY_MS
+    : MOCK_LARGE_LOG_BROWSER_CHUNK_DELAY_MS;
+}
+
+function scheduleLargeLogStream(record: MockRunRecord): void {
+  const chunks = createLargeLogChunks();
+  let index = 0;
+  const pump = (): void => {
+    const current = findRecord(record.projectId, record.summary.id);
+    if (current === null || isRunTerminalState(current.summary.state)) {
+      return;
+    }
+    if (index >= chunks.length) {
+      applyTransition(current, { state: 'SUCCEEDED' }, { scheduleNext: false });
+      return;
+    }
+    const text = chunks[index];
+    if (text === undefined) {
+      applyTransition(current, { state: 'SUCCEEDED' }, { scheduleNext: false });
+      return;
+    }
+    index += 1;
+    appendLogChunk(current.projectId, current.summary.id, text);
+    const next = findRecord(record.projectId, record.summary.id);
+    if (next === null || isRunTerminalState(next.summary.state)) {
+      return;
+    }
+    scheduleOn(next, largeLogChunkDelayMs(), pump);
+  };
+  scheduleOn(record, largeLogChunkDelayMs(), pump);
+}
+
 function scheduleHeartbeat(record: MockRunRecord): void {
   scheduleOn(record, MOCK_RUN_HEARTBEAT_INTERVAL_MS, () => {
     const current = findRecord(record.projectId, record.summary.id);
@@ -516,6 +556,10 @@ function scheduleScenarioFollowUp(record: MockRunRecord): void {
     return;
   }
   if (record.summary.state === 'RUNNING') {
+    if (runScenario === 'large-log') {
+      scheduleLargeLogStream(record);
+      return;
+    }
     const terminal = terminalForScenario(runScenario);
     if (terminal !== null) {
       scheduleOn(record, MOCK_RUN_TERMINAL_DELAY_MS, () => {

@@ -77,7 +77,13 @@ export async function reloadWorkspaceAfterTerminalRun(options: {
   const scopeId = projectAuthorityScope(projectId).id;
   if (
     queryClient.isMutating({
-      predicate: (mutation) => mutation.options.scope?.id === scopeId,
+      predicate: (mutation) => {
+        if (mutation.options.scope?.id !== scopeId) {
+          return false;
+        }
+        const key = mutation.options.mutationKey;
+        return !(Array.isArray(key) && (key[0] === 'start-run' || key[0] === 'stop-run'));
+      },
     }) > 0
   ) {
     throw new PendingProjectAuthorityMutationError();
