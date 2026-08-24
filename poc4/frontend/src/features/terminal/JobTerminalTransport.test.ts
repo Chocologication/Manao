@@ -77,6 +77,25 @@ function binaryFrames(socket: FakeTerminalSocket): number[][] {
     .map((frame) => [...new Uint8Array(frame)]);
 }
 
+function createManualScheduler() {
+  let nextId = 1;
+  const tasks = new Map<number, () => void>();
+  return {
+    scheduler: {
+      setTimeout(handler: () => void) {
+        const id = nextId;
+        nextId += 1;
+        tasks.set(id, handler);
+        return id;
+      },
+      clearTimeout(id: unknown) {
+        tasks.delete(Number(id));
+      },
+    },
+    pendingCount: () => tasks.size,
+  };
+}
+
 function createHarness(overrides: Partial<JobTerminalTransportOptions> = {}) {
   const sockets: FakeTerminalSocket[] = [];
   const states: string[] = [];
@@ -420,5 +439,111 @@ describe('JobTerminalTransport terminal close policy', () => {
     currentToken = 'bob-token';
     stale.sockets[0]!.remoteClose(4401);
     expect(staleUnauthorized).not.toHaveBeenCalled();
+  });
+});
+
+describe('JobTerminalTransport observer-safe teardown', () => {
+  it('closes and clears the pump when current-token lookup throws on 4401', () => {
+    const clock = createManualScheduler();
+    const onUnauthorized = vi.fn();
+    const onClosed = vi.fn();
+    const harness = createHarness({
+      scheduler: clock.scheduler,
+      getAccessToken: () => {
+        throw new Error('token lookup failed');
+      },
+      onUnauthorized,
+      onClosed,
+    });
+    harness.transport.connect();
+    const socket = harness.sockets[0]!;
+    ready(socket);
+    harness.transport.initialize(80, 24);
+    socket.bufferedAmount = 256 * 1024;
+    harness.transport.sendData('queued');
+    expect(clock.pendingCount()).toBe(1);
+
+    expect(() => socket.remoteClose(4401)).not.toThrow();
+
+    expect(harness.transport.currentState).toBe('closed');
+    expect(clock.pendingCount()).toBe(0);
+    expect(harness.inputEnabled).toEqual([true, false]);
+    expect(onUnauthorized).not.toHaveBeenCalled();
+    expect(onClosed).toHaveBeenCalledWith({ kind: 'socket-close', code: 4401 });
+    const sentAfterClose = socket.sent.length;
+    socket.message(JSON.stringify({ type: 'terminal.ping', nonce: 'late' }));
+    expect(socket.sent).toHaveLength(sentAfterClose);
+  });
+
+  it('finishes every other notification when unauthorized cleanup throws', () => {
+    const onUnauthorized = vi.fn(() => {
+      throw new Error('unauthorized observer failed');
+    });
+    const onClosed = vi.fn();
+    const harness = createHarness({
+      accessToken: 'alice-token',
+      getAccessToken: () => 'alice-token',
+      onUnauthorized,
+      onClosed,
+    });
+    harness.transport.connect();
+    const socket = harness.sockets[0]!;
+    ready(socket);
+    harness.transport.initialize(80, 24);
+
+    expect(() => socket.remoteClose(4401)).not.toThrow();
+
+    expect(harness.transport.currentState).toBe('closed');
+    expect(harness.states.at(-1)).toBe('closed');
+    expect(harness.inputEnabled).toEqual([true, false]);
+    expect(onUnauthorized).toHaveBeenCalledTimes(1);
+    expect(onClosed).toHaveBeenCalledWith({ kind: 'socket-close', code: 4401 });
+  });
+
+  it('closes the socket and invalidates old output when input-disabled notification throws', () => {
+    const output: JobTerminalOutputFrame[] = [];
+    const onClosed = vi.fn();
+    const onInputEnabledChange = vi.fn((enabled: boolean) => {
+      if (!enabled) throw new Error('input observer failed');
+    });
+    const harness = createHarness({
+      onInputEnabledChange,
+      onOutput: (frame) => output.push(frame),
+      onClosed,
+    });
+    harness.transport.connect();
+    const socket = harness.sockets[0]!;
+    ready(socket);
+    harness.transport.initialize(80, 24);
+    socket.message(new Uint8Array([1]).buffer);
+
+    expect(() => harness.transport.close()).not.toThrow();
+
+    expect(harness.transport.currentState).toBe('closed');
+    expect(socket.closes).toEqual([{ code: 1000 }]);
+    expect(onInputEnabledChange.mock.calls.map(([enabled]) => enabled)).toEqual([true, false]);
+    expect(onClosed).toHaveBeenCalledWith({ kind: 'client-close' });
+    expect(output[0]?.ack(1)).toBe(false);
+  });
+
+  it('isolates throwing state and closed observers after teardown commits', () => {
+    const onStateChange = vi.fn((state: string) => {
+      if (state === 'closed') throw new Error('state observer failed');
+    });
+    const onClosed = vi.fn(() => {
+      throw new Error('closed observer failed');
+    });
+    const harness = createHarness({ onStateChange, onClosed });
+    harness.transport.connect();
+    const socket = harness.sockets[0]!;
+    ready(socket);
+    harness.transport.initialize(80, 24);
+
+    expect(() => harness.transport.close()).not.toThrow();
+
+    expect(harness.transport.currentState).toBe('closed');
+    expect(socket.closes).toEqual([{ code: 1000 }]);
+    expect(onStateChange).toHaveBeenCalledWith('closed');
+    expect(onClosed).toHaveBeenCalledWith({ kind: 'client-close' });
   });
 });

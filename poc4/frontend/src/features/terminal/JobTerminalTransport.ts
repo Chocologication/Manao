@@ -104,6 +104,17 @@ function createBrowserSocket(url: string): TerminalWebSocketPort {
   return new WebSocket(url) as unknown as TerminalWebSocketPort;
 }
 
+function notifySafely<Args extends readonly unknown[]>(
+  callback: ((...args: Args) => void) | undefined,
+  ...args: Args
+): void {
+  try {
+    callback?.(...args);
+  } catch {
+    // Observer failures cannot interrupt transport state or resource cleanup.
+  }
+}
+
 export class JobTerminalTransport {
   private readonly sessionId: TerminalSessionId;
   private readonly ticket: TerminalTicket;
@@ -241,26 +252,9 @@ export class JobTerminalTransport {
 
   dispose(): void {
     if (this.state === 'disposed') return;
-    this.generation += 1;
-    this.initialized = false;
-    this.pendingOutputAcks.length = 0;
-    this.pendingOutputBytes = 0;
-    this.inputPump?.dispose();
-    this.inputPump = null;
-    this.setInputEnabled(false);
-    const socket = this.socket;
-    this.socket = null;
-    if (
-      socket !== null &&
-      (socket.readyState === SOCKET_CONNECTING || socket.readyState === SOCKET_OPEN)
-    ) {
-      try {
-        socket.close(1000);
-      } catch {
-        // The generation is already invalidated; disposal remains terminal.
-      }
-    }
-    this.transition('disposed');
+    const notifyInputDisabled = this.commitTeardown('disposed', true, 1000);
+    if (notifyInputDisabled) notifySafely(this.onInputEnabledChange, false);
+    notifySafely(this.onStateChange, 'disposed');
   }
 
   private handleOpen(generation: number, socket: TerminalWebSocketPort): void {
@@ -408,13 +402,12 @@ export class JobTerminalTransport {
     event: TerminalWebSocketEvent,
   ): void {
     if (!this.isCurrent(generation, socket)) return;
-    if (
-      event.code === 4401 &&
-      this.capturedAccessToken === this.getAccessToken()
-    ) {
-      this.onUnauthorized?.();
-    }
-    this.finish({ kind: 'socket-close', code: event.code ?? 1006 }, false);
+    this.finish(
+      { kind: 'socket-close', code: event.code ?? 1006 },
+      false,
+      1000,
+      event.code === 4401,
+    );
   }
 
   private sendControl(control: TerminalClientControl): boolean {
@@ -449,17 +442,32 @@ export class JobTerminalTransport {
     reason: JobTerminalClosedReason,
     closeSocket = true,
     closeCode = 1000,
+    checkUnauthorized = false,
   ): void {
     if (this.state === 'closed' || this.state === 'disposed') return;
+    const notifyInputDisabled = this.commitTeardown('closed', closeSocket, closeCode);
+    if (checkUnauthorized) this.notifyUnauthorizedIfCurrent();
+    if (notifyInputDisabled) notifySafely(this.onInputEnabledChange, false);
+    notifySafely(this.onStateChange, 'closed');
+    notifySafely(this.onClosed, reason);
+  }
+
+  private commitTeardown(
+    state: Extract<JobTerminalTransportState, 'closed' | 'disposed'>,
+    closeSocket: boolean,
+    closeCode: number,
+  ): boolean {
+    const notifyInputDisabled = this.inputEnabled;
     this.generation += 1;
     this.initialized = false;
     this.pendingOutputAcks.length = 0;
     this.pendingOutputBytes = 0;
     this.inputPump?.dispose();
     this.inputPump = null;
-    this.setInputEnabled(false);
+    this.inputEnabled = false;
     const socket = this.socket;
     this.socket = null;
+    this.state = state;
     if (
       closeSocket &&
       socket !== null &&
@@ -471,8 +479,19 @@ export class JobTerminalTransport {
         // Local state is already terminal even when the browser rejects close().
       }
     }
-    this.transition('closed');
-    this.onClosed?.(reason);
+    return notifyInputDisabled;
+  }
+
+  private notifyUnauthorizedIfCurrent(): void {
+    let currentToken: string | null;
+    try {
+      currentToken = this.getAccessToken();
+    } catch {
+      return;
+    }
+    if (this.capturedAccessToken === currentToken) {
+      notifySafely(this.onUnauthorized);
+    }
   }
 
   private isCurrent(generation: number, socket: TerminalWebSocketPort): boolean {
@@ -482,12 +501,12 @@ export class JobTerminalTransport {
   private setInputEnabled(enabled: boolean): void {
     if (this.inputEnabled === enabled) return;
     this.inputEnabled = enabled;
-    this.onInputEnabledChange?.(enabled);
+    notifySafely(this.onInputEnabledChange, enabled);
   }
 
   private transition(state: JobTerminalTransportState): void {
     if (this.state === state) return;
     this.state = state;
-    this.onStateChange?.(state);
+    notifySafely(this.onStateChange, state);
   }
 }
