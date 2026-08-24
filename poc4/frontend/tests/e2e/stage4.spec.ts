@@ -294,29 +294,69 @@ async function readClientHooks(page: Page): Promise<ClientHooks> {
   });
 }
 
-async function injectStaleLogAppend(page: Page, marker: string): Promise<void> {
-  const injected = await page.evaluate((text) => {
+function lastAppliedSeqFromFrames(frames: string[]): number | null {
+  let last: number | null = null;
+  for (const raw of frames) {
+    const parsed = parseLogFrame(raw);
+    if (parsed === null) {
+      continue;
+    }
+    if (parsed.type === 'log.replay') {
+      for (const chunk of parsed.chunks ?? []) {
+        if (typeof chunk.seq === 'number') {
+          last = last === null ? chunk.seq : Math.max(last, chunk.seq);
+        }
+      }
+    }
+    if (parsed.type === 'log.append' && typeof parsed.chunk?.seq === 'number') {
+      last = last === null ? parsed.chunk.seq : Math.max(last, parsed.chunk.seq);
+    }
+    if (typeof parsed.window?.lastAvailableSeq === 'number') {
+      last = last === null ? parsed.window.lastAvailableSeq : Math.max(last, parsed.window.lastAvailableSeq);
+    }
+  }
+  return last;
+}
+
+function distinctRunLogUrls(traces: SocketTrace[]): string[] {
+  const urls: string[] = [];
+  for (const trace of traces) {
+    if (!/\/api\/v1\/ws\/run-logs/.test(trace.url) || urls.includes(trace.url)) {
+      continue;
+    }
+    urls.push(trace.url);
+  }
+  return urls;
+}
+
+async function injectStaleLogAppend(
+  page: Page,
+  options: { marker: string; seq: number; socketIndex: number },
+): Promise<void> {
+  const injected = await page.evaluate((payload) => {
     const host = window as unknown as {
       __e2eFetchHooks?: { liveSockets?: WebSocket[] };
     };
-    const first = host.__e2eFetchHooks?.liveSockets?.[0];
-    if (first === undefined) {
+    const sockets = host.__e2eFetchHooks?.liveSockets ?? [];
+    const target = sockets[payload.socketIndex];
+    const other = sockets.find((_, index) => index !== payload.socketIndex);
+    if (target === undefined || other === undefined || target === other) {
       return false;
     }
-    const bytes = new TextEncoder().encode(text).byteLength;
-    first.dispatchEvent(
+    const bytes = new TextEncoder().encode(payload.text).byteLength;
+    target.dispatchEvent(
       new MessageEvent('message', {
         data: JSON.stringify({
           type: 'log.append',
           chunk: {
-            seq: 999001,
-            text,
+            seq: payload.seq,
+            text: payload.text,
             byteLength: bytes,
             persistedAt: new Date().toISOString(),
           },
           window: {
-            firstAvailableSeq: 999001,
-            lastAvailableSeq: 999001,
+            firstAvailableSeq: payload.seq,
+            lastAvailableSeq: payload.seq,
             retainedBytes: bytes,
             truncated: false,
             evictedBytes: 0,
@@ -325,7 +365,7 @@ async function injectStaleLogAppend(page: Page, marker: string): Promise<void> {
       }),
     );
     return true;
-  }, `${marker}\n`);
+  }, { marker: options.marker, seq: options.seq, socketIndex: options.socketIndex, text: `${options.marker}\n` });
   expect(injected).toBe(true);
 }
 
@@ -472,7 +512,9 @@ async function wrapPageWebSocket(page: Page): Promise<void> {
         closeCodes: number[];
         socketTraces: SocketTrace[];
         liveSockets: WebSocket[];
+        seenSockets: WeakSet<WebSocket>;
       };
+      __e2eWsWrapped?: boolean;
     };
     if (host.__e2eFetchHooks.closeCodes === undefined) {
       host.__e2eFetchHooks.closeCodes = [];
@@ -483,10 +525,21 @@ async function wrapPageWebSocket(page: Page): Promise<void> {
     if (host.__e2eFetchHooks.liveSockets === undefined) {
       host.__e2eFetchHooks.liveSockets = [];
     }
+    if (host.__e2eFetchHooks.seenSockets === undefined) {
+      host.__e2eFetchHooks.seenSockets = new WeakSet<WebSocket>();
+    }
+    if (host.__e2eWsWrapped === true) {
+      return;
+    }
+    host.__e2eWsWrapped = true;
     const CurrentWebSocket = window.WebSocket;
     window.WebSocket = new Proxy(CurrentWebSocket, {
       construct(target, args, newTarget) {
         const socket = Reflect.construct(target, args, newTarget) as WebSocket;
+        if (host.__e2eFetchHooks.seenSockets.has(socket)) {
+          return socket;
+        }
+        host.__e2eFetchHooks.seenSockets.add(socket);
         const url = String(args[0]);
         const trace: SocketTrace = { url, frames: [], closeCode: null };
         host.__e2eFetchHooks.wsUrls.push(url);
@@ -973,43 +1026,6 @@ test.beforeEach(async ({ page }) => {
       }
       return originalFetch(input, init);
     };
-    const OriginalWebSocket = window.WebSocket;
-    window.WebSocket = new Proxy(OriginalWebSocket, {
-      construct(target, args, newTarget) {
-        const socket = Reflect.construct(target, args, newTarget) as WebSocket;
-        const url = String(args[0]);
-        const trace: SocketTrace = { url, frames: [], closeCode: null };
-        host.__e2eFetchHooks.wsUrls.push(url);
-        host.__e2eFetchHooks.socketTraces.push(trace);
-        host.__e2eFetchHooks.liveSockets.push(socket);
-        const recordFrame = (raw: string): void => {
-          host.__e2eFetchHooks.wsFrames.push(raw);
-          trace.frames.push(raw);
-        };
-        socket.addEventListener('message', (event) => {
-          const data = event.data;
-          if (typeof data === 'string') {
-            recordFrame(data);
-            return;
-          }
-          if (typeof Blob !== 'undefined' && data instanceof Blob) {
-            void data.text().then((text) => {
-              recordFrame(text);
-            });
-            return;
-          }
-          if (data instanceof ArrayBuffer) {
-            recordFrame(new TextDecoder().decode(data));
-          }
-        });
-        socket.addEventListener('close', (event) => {
-          const code = (event as CloseEvent).code;
-          trace.closeCode = code;
-          host.__e2eFetchHooks.closeCodes.push(code);
-        });
-        return socket;
-      },
-    });
   });
 });
 
@@ -1305,15 +1321,59 @@ test('ignores log frames from a stale socket generation', async ({ page }) => {
   await page.getByRole('button', { name: 'Start run' }).click();
   const log = page.getByRole('region', { name: 'Run logs' });
   await expect(log).toContainText(SEED_LOG_MARKER);
+  await expect(log).toContainText(RECONNECT_LIVE_MARKER, { timeout: 20_000 });
   await expect
-    .poll(async () => (await readClientHooks(page)).socketTraces.length, { timeout: 20_000 })
-    .toBeGreaterThanOrEqual(2);
-  await injectStaleLogAppend(page, STALE_SOCKET_MARKER);
-  await expect(log).toContainText(SEED_LOG_MARKER);
-  await expect(log).not.toContainText(STALE_SOCKET_MARKER);
+    .poll(async () => {
+      const hooks = await readClientHooks(page);
+      const urls = distinctRunLogUrls(hooks.socketTraces);
+      const second = hooks.socketTraces.find((trace) => trace.url === urls[1]);
+      const lastSeq = lastAppliedSeqFromFrames(hooks.wsFrames);
+      return (
+        urls.length >= 2 &&
+        second !== undefined &&
+        socketReplayBeforeAppend(second) &&
+        lastSeq !== null
+      );
+    }, { timeout: 20_000 })
+    .toBe(true);
   const hooks = await readClientHooks(page);
-  const firstFrames = hooks.socketTraces[0]?.frames ?? [];
-  expect(firstFrames.some((raw) => raw.includes(STALE_SOCKET_MARKER))).toBe(true);
+  const urls = distinctRunLogUrls(hooks.socketTraces);
+  expect(urls.length).toBeGreaterThanOrEqual(2);
+  expect(urls[0]).not.toBe(urls[1]);
+  const lastSeq = lastAppliedSeqFromFrames(hooks.wsFrames);
+  expect(lastSeq).not.toBeNull();
+  const nextSeq = (lastSeq as number) + 1;
+  await injectStaleLogAppend(page, {
+    marker: STALE_SOCKET_MARKER,
+    seq: nextSeq,
+    socketIndex: 0,
+  });
+  await page.evaluate(
+    () =>
+      new Promise<void>((resolve) => {
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => {
+            resolve();
+          });
+        });
+      }),
+  );
+  await expect(log).toContainText(SEED_LOG_MARKER);
+  await expect(log).toContainText(RECONNECT_LIVE_MARKER);
+  await expect(log).not.toContainText(STALE_SOCKET_MARKER);
+  const after = await readClientHooks(page);
+  const firstFrames = after.socketTraces[0]?.frames ?? [];
+  const secondFrames = after.socketTraces[1]?.frames ?? [];
+  const staleOnFirst = firstFrames
+    .map(parseLogFrame)
+    .some(
+      (frame) =>
+        frame?.type === 'log.append' &&
+        frame.chunk?.seq === nextSeq &&
+        (frame.chunk.text ?? '').includes(STALE_SOCKET_MARKER),
+    );
+  expect(staleOnFirst).toBe(true);
+  expect(secondFrames.some((raw) => raw.includes(STALE_SOCKET_MARKER))).toBe(false);
   await expect(page.getByRole('button', { name: 'New file' })).toBeDisabled();
 });
 
