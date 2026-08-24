@@ -4,8 +4,20 @@ import {
   type LogServerFrame,
 } from '../contracts/log';
 import { isRunTerminalState } from '../contracts/run';
-import { LARGE_LOG_DISCONNECT_AFTER_LIVE_CHUNKS } from './largeLogPayload';
 import {
+  LARGE_LOG_DISCONNECT_AFTER_LIVE_CHUNKS,
+  LARGE_LOG_WHILE_DISCONNECTED_MARKER,
+  LARGE_LOG_WHILE_DISCONNECTED_TEXT,
+} from './largeLogPayload';
+import {
+  GAP_SKIPPED_MARKER,
+  PERSISTED_OFFLINE_MARKER,
+  PERSISTED_OFFLINE_TEXT,
+  RECONNECT_LIVE_MARKER,
+  RECONNECT_LIVE_TEXT,
+} from './runFixtures';
+import {
+  appendLogChunk,
   getLogWindow,
   getMockRunNowMs,
   getRun,
@@ -196,19 +208,27 @@ export const runLogsSocketHandler = runLogs.addEventListener('connection', ({ cl
     }
     const scenario = getRunScenario();
     if (scenario === 'disconnect') {
-      sendFrame(client, { type: 'stream.error', code: 'STREAM_UNAVAILABLE', retryable: true });
-      shutdown(1011);
-      return;
+      const hasOffline = logWindow.chunks.some((chunk) =>
+        chunk.text.includes(PERSISTED_OFFLINE_MARKER),
+      );
+      if (!hasOffline) {
+        sendFrame(client, { type: 'stream.error', code: 'STREAM_UNAVAILABLE', retryable: true });
+        shutdown(1011);
+        appendLogChunk(record.projectId, record.runId, PERSISTED_OFFLINE_TEXT);
+        return;
+      }
     }
-    let skippedGap = false;
     let duplicatedLive = false;
     let largeLogLiveAppends = 0;
     unsubscribe = subscribeMockRunEvents((live) => {
       if (closed || live.projectId !== record.projectId || eventRunId(live) !== record.runId) {
         return;
       }
-      if (live.type === 'log.append' && scenario === 'gap' && !skippedGap) {
-        skippedGap = true;
+      if (
+        live.type === 'log.append' &&
+        scenario === 'gap' &&
+        live.chunk.text.includes(GAP_SKIPPED_MARKER)
+      ) {
         return;
       }
       const frame = toWireFrame(live);
@@ -222,8 +242,24 @@ export const runLogsSocketHandler = runLogs.addEventListener('connection', ({ cl
         if (largeLogLiveAppends >= LARGE_LOG_DISCONNECT_AFTER_LIVE_CHUNKS) {
           sendFrame(client, { type: 'stream.error', code: 'STREAM_UNAVAILABLE', retryable: true });
           shutdown(1011);
+          const latest = getLogWindow(record.projectId, record.runId);
+          const alreadyPersisted = latest?.chunks.some((chunk) =>
+            chunk.text.includes(LARGE_LOG_WHILE_DISCONNECTED_MARKER),
+          );
+          if (alreadyPersisted !== true) {
+            appendLogChunk(record.projectId, record.runId, LARGE_LOG_WHILE_DISCONNECTED_TEXT);
+          }
         }
       }
     });
+    if (scenario === 'disconnect') {
+      const latest = getLogWindow(record.projectId, record.runId);
+      const hasReconnectLive = latest?.chunks.some((chunk) =>
+        chunk.text.includes(RECONNECT_LIVE_MARKER),
+      );
+      if (hasReconnectLive !== true) {
+        appendLogChunk(record.projectId, record.runId, RECONNECT_LIVE_TEXT);
+      }
+    }
   });
 });

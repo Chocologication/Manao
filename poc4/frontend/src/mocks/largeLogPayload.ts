@@ -6,6 +6,8 @@ export const LARGE_LOG_HEAD_MARKER = 'ensoai-stage4-large-log-head';
 export const LARGE_LOG_EVICTED_EARLY_MARKER = 'ensoai-stage4-large-log-evicted-early';
 export const LARGE_LOG_LATEST_MARKER = 'ensoai-stage4-large-log-latest';
 export const LARGE_LOG_CHUNK_INDEX_PREFIX = 'ensoai-stage4-large-log-chunk-';
+export const LARGE_LOG_WHILE_DISCONNECTED_MARKER = 'ensoai-stage4-large-log-while-disconnected';
+export const LARGE_LOG_WHILE_DISCONNECTED_TEXT = `${LARGE_LOG_WHILE_DISCONNECTED_MARKER}\n`;
 export const LARGE_LOG_MIN_GENERATED_BYTES = MAX_LOG_RETAINED_BYTES + 1024 * 1024;
 export const LARGE_LOG_DISCONNECT_AFTER_LIVE_CHUNKS = 16;
 

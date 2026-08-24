@@ -5,6 +5,16 @@ const utf8 = new TextEncoder();
 
 export const SEED_LOG_MARKER = 'ensoai-stage4-seed-log';
 export const SEED_LOG_TEXT = `${SEED_LOG_MARKER}\n`;
+export const GAP_DUP_MARKER = 'ensoai-stage4-gap-dup';
+export const GAP_DUP_TEXT = `${GAP_DUP_MARKER}\n`;
+export const GAP_SKIPPED_MARKER = 'ensoai-stage4-gap-skipped';
+export const GAP_SKIPPED_TEXT = `${GAP_SKIPPED_MARKER}\n`;
+export const GAP_VISIBLE_MARKER = 'ensoai-stage4-gap-visible';
+export const GAP_VISIBLE_TEXT = `${GAP_VISIBLE_MARKER}\n`;
+export const PERSISTED_OFFLINE_MARKER = 'ensoai-stage4-persisted-offline';
+export const PERSISTED_OFFLINE_TEXT = `${PERSISTED_OFFLINE_MARKER}\n`;
+export const RECONNECT_LIVE_MARKER = 'ensoai-stage4-reconnect-live';
+export const RECONNECT_LIVE_TEXT = `${RECONNECT_LIVE_MARKER}\n`;
 
 export const POC4_RUN_POLICY: RunPolicy = {
   command: 'mvn clean test',

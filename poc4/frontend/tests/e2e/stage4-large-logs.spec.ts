@@ -7,6 +7,7 @@ const MIN_GENERATED = MAX_RETAINED + 1024 * 1024;
 const HEAD_MARKER = 'ensoai-stage4-large-log-head';
 const EVICTED_EARLY_MARKER = 'ensoai-stage4-large-log-evicted-early';
 const LATEST_MARKER = 'ensoai-stage4-large-log-latest';
+const WHILE_DISCONNECTED_MARKER = 'ensoai-stage4-large-log-while-disconnected';
 const CHUNK_INDEX_PREFIX = 'ensoai-stage4-large-log-chunk-';
 
 test.describe.configure({ timeout: 180_000 });
@@ -14,16 +15,17 @@ test.describe.configure({ timeout: 180_000 });
 type ClientHooks = {
   wsUrls: string[];
   wsFrames: string[];
+  closeCodes: number[];
 };
 
 test.beforeEach(async ({ page }) => {
   await page.addInitScript(() => {
     const host = window as unknown as {
-      __e2eFetchHooks: { wsUrls: string[]; wsFrames: string[] };
+      __e2eFetchHooks: { wsUrls: string[]; wsFrames: string[]; closeCodes: number[] };
       __e2eFetchWrapped?: boolean;
     };
     if (host.__e2eFetchHooks === undefined) {
-      host.__e2eFetchHooks = { wsUrls: [], wsFrames: [] };
+      host.__e2eFetchHooks = { wsUrls: [], wsFrames: [], closeCodes: [] };
     }
     if (host.__e2eFetchWrapped === true) {
       return;
@@ -52,6 +54,9 @@ test.beforeEach(async ({ page }) => {
           }
           host.__e2eFetchHooks.wsFrames.push(String(data));
         });
+        socket.addEventListener('close', (event) => {
+          host.__e2eFetchHooks.closeCodes.push((event as CloseEvent).code);
+        });
         return socket;
       },
     });
@@ -61,11 +66,14 @@ test.beforeEach(async ({ page }) => {
 async function readClientHooks(page: Page): Promise<ClientHooks> {
   return page.evaluate(() => {
     const hooks = (
-      window as unknown as { __e2eFetchHooks?: { wsUrls?: string[]; wsFrames?: string[] } }
+      window as unknown as {
+        __e2eFetchHooks?: { wsUrls?: string[]; wsFrames?: string[]; closeCodes?: number[] };
+      }
     ).__e2eFetchHooks;
     return {
       wsUrls: [...(hooks?.wsUrls ?? [])],
       wsFrames: [...(hooks?.wsFrames ?? [])],
+      closeCodes: [...(hooks?.closeCodes ?? [])],
     };
   });
 }
@@ -73,10 +81,13 @@ async function readClientHooks(page: Page): Promise<ClientHooks> {
 async function wrapPageWebSocket(page: Page): Promise<void> {
   await page.evaluate(() => {
     const host = window as unknown as {
-      __e2eFetchHooks: { wsUrls: string[]; wsFrames: string[] };
+      __e2eFetchHooks: { wsUrls: string[]; wsFrames: string[]; closeCodes: number[] };
     };
     if (host.__e2eFetchHooks === undefined) {
-      host.__e2eFetchHooks = { wsUrls: [], wsFrames: [] };
+      host.__e2eFetchHooks = { wsUrls: [], wsFrames: [], closeCodes: [] };
+    }
+    if (host.__e2eFetchHooks.closeCodes === undefined) {
+      host.__e2eFetchHooks.closeCodes = [];
     }
     const CurrentWebSocket = window.WebSocket;
     window.WebSocket = new Proxy(CurrentWebSocket, {
@@ -100,6 +111,9 @@ async function wrapPageWebSocket(page: Page): Promise<void> {
             return;
           }
           host.__e2eFetchHooks.wsFrames.push(String(data));
+        });
+        socket.addEventListener('close', (event) => {
+          host.__e2eFetchHooks.closeCodes.push((event as CloseEvent).code);
         });
         return socket;
       },
@@ -248,14 +262,13 @@ type StreamStats = {
   forbidden: string[];
   firstWsClosedAt: number | null;
   generatedReadyAt: number | null;
+  completeCount: number;
+  streamUnavailableCount: number;
 };
 
 type ParsedChunk = { seq?: number; byteLength?: number; text?: string };
 
 function chunkUtf8Bytes(chunk: ParsedChunk): number | null {
-  if (typeof chunk.byteLength === 'number' && Number.isFinite(chunk.byteLength) && chunk.byteLength >= 0) {
-    return chunk.byteLength;
-  }
   if (typeof chunk.text === 'string') {
     return Buffer.byteLength(chunk.text, 'utf8');
   }
@@ -280,6 +293,8 @@ function ingestFrame(
     chunk?: ParsedChunk;
     chunks?: ParsedChunk[];
     window?: LogWindowMeta;
+    code?: string;
+    lastSeq?: number | null;
   };
   try {
     parsed = JSON.parse(raw) as typeof parsed;
@@ -288,6 +303,15 @@ function ingestFrame(
   }
   seen.add(raw);
   stats.frameCount += 1;
+  if (parsed.type === 'log.complete') {
+    stats.completeCount += 1;
+  }
+  if (parsed.type === 'stream.error' && parsed.code === 'STREAM_UNAVAILABLE') {
+    stats.streamUnavailableCount += 1;
+    if (stats.firstWsClosedAt === null) {
+      stats.firstWsClosedAt = Date.now();
+    }
+  }
   if (parsed.type === 'log.replay') {
     for (const chunk of parsed.chunks ?? []) {
       const bytes = chunkUtf8Bytes(chunk);
@@ -324,6 +348,7 @@ function installLargeLogObserver(page: Page): {
   stats: StreamStats;
   bytesBySeq: Map<number, number>;
   seen: Set<string>;
+  frames: string[];
 } {
   const stats: StreamStats = {
     generatedBytes: 0,
@@ -338,9 +363,12 @@ function installLargeLogObserver(page: Page): {
     forbidden: [],
     firstWsClosedAt: null,
     generatedReadyAt: null,
+    completeCount: 0,
+    streamUnavailableCount: 0,
   };
   const bytesBySeq = new Map<number, number>();
   const seen = new Set<string>();
+  const frames: string[] = [];
 
   page.on('request', (request) => {
     if (isForbiddenStage4Url(request.url())) {
@@ -358,7 +386,9 @@ function installLargeLogObserver(page: Page): {
   page.on('websocket', (ws) => {
     rememberWsUrl(stats, ws.url());
     ws.on('framereceived', (event) => {
-      ingestFrame(stats, bytesBySeq, seen, payloadToUtf8(event.payload));
+      const raw = payloadToUtf8(event.payload);
+      frames.push(raw);
+      ingestFrame(stats, bytesBySeq, seen, raw);
     });
     ws.on('close', () => {
       if (stats.firstWsClosedAt === null) {
@@ -367,7 +397,7 @@ function installLargeLogObserver(page: Page): {
     });
   });
 
-  return { stats, bytesBySeq, seen };
+  return { stats, bytesBySeq, seen, frames };
 }
 
 function applyFramesToStats(
@@ -385,12 +415,50 @@ function applyFramesToStats(
   }
 }
 
-function parseEvictedBytes(label: string): number {
-  const match = /(\d+)\s+bytes evicted/.exec(label);
-  if (match === null || match[1] === undefined) {
-    return 0;
+function replayAfterDisconnectHasNewSeq(frames: string[]): boolean {
+  let sawUnavailable = false;
+  const seqsBefore = new Set<number>();
+  for (const raw of frames) {
+    let parsed: {
+      type?: string;
+      code?: string;
+      chunk?: { seq?: number; text?: string };
+      chunks?: Array<{ seq?: number; text?: string }>;
+    };
+    try {
+      parsed = JSON.parse(raw) as typeof parsed;
+    } catch {
+      continue;
+    }
+    if (!sawUnavailable) {
+      if (parsed.type === 'log.append' && typeof parsed.chunk?.seq === 'number') {
+        seqsBefore.add(parsed.chunk.seq);
+      }
+      if (parsed.type === 'log.replay') {
+        for (const chunk of parsed.chunks ?? []) {
+          if (typeof chunk.seq === 'number') {
+            seqsBefore.add(chunk.seq);
+          }
+        }
+      }
+      if (parsed.type === 'stream.error' && parsed.code === 'STREAM_UNAVAILABLE') {
+        sawUnavailable = true;
+      }
+      continue;
+    }
+    if (parsed.type === 'log.replay') {
+      const hasNewSeq = (parsed.chunks ?? []).some(
+        (chunk) => typeof chunk.seq === 'number' && !seqsBefore.has(chunk.seq),
+      );
+      const hasWhileDisconnected = (parsed.chunks ?? []).some((chunk) =>
+        (chunk.text ?? '').includes(WHILE_DISCONNECTED_MARKER),
+      );
+      if (hasNewSeq && hasWhileDisconnected) {
+        return true;
+      }
+    }
   }
-  return Number(match[1]);
+  return false;
 }
 
 async function recordMeasurement(
@@ -428,7 +496,7 @@ test('streams more than 6 MiB, keeps a 5 MiB window, reconnects, and stays respo
   const issues = collectPageIssues(page);
   const accessToken = await openAliceWorkbench(page);
   await wrapPageWebSocket(page);
-  const { stats, bytesBySeq, seen } = installLargeLogObserver(page);
+  const { stats, bytesBySeq, seen, frames } = installLargeLogObserver(page);
   await setRunScenario(page, accessToken, 'large-log');
   await page.getByRole('tab', { name: 'Run' }).click();
   await expect(page.getByRole('tab', { name: 'Run' })).toHaveAttribute('aria-selected', 'true');
@@ -454,42 +522,30 @@ test('streams more than 6 MiB, keeps a 5 MiB window, reconnects, and stays respo
   const indexMatches = logText.match(new RegExp(`${CHUNK_INDEX_PREFIX}\\d{6}`, 'g')) ?? [];
   expect(new Set(indexMatches).size).toBe(indexMatches.length);
 
-  const reconnectStarted = Date.now();
   await expect
     .poll(async () => {
       const hooks = await readClientHooks(page);
       applyFramesToStats(stats, bytesBySeq, seen, hooks.wsFrames, hooks.wsUrls);
-      if (stats.generatedBytes >= MIN_GENERATED) {
-        return stats.generatedBytes;
-      }
-      const truncationText = await page.getByLabel('Log truncation').innerText();
-      const uiEvicted = parseEvictedBytes(truncationText);
-      const uiRetained = Buffer.byteLength(logText, 'utf8');
-      const uiGenerated = uiRetained + uiEvicted;
-      if (uiGenerated > stats.generatedBytes) {
-        stats.generatedBytes = uiGenerated;
-        if (stats.retainedBytes === 0) {
-          stats.retainedBytes = uiRetained;
-        }
-        if (stats.evictedBytes === 0) {
-          stats.evictedBytes = uiEvicted;
-        }
-      }
       return stats.generatedBytes;
     }, { timeout: 120_000 })
     .toBeGreaterThanOrEqual(MIN_GENERATED);
-  const reconnectCatchUpMs =
-    stats.firstWsClosedAt !== null && stats.generatedReadyAt !== null
-      ? Math.max(0, stats.generatedReadyAt - stats.firstWsClosedAt)
-      : Date.now() - reconnectStarted;
-  if (stats.firstAvailableSeq === null) {
-    const indexNumbers = (logText.match(new RegExp(`${CHUNK_INDEX_PREFIX}(\\d{6})`, 'g')) ?? []).map(
-      (marker) => Number(marker.slice(CHUNK_INDEX_PREFIX.length)),
-    );
-    expect(indexNumbers.length).toBeGreaterThan(0);
-    stats.firstAvailableSeq = Math.min(...indexNumbers) + 2;
-    stats.lastAvailableSeq = Math.max(...indexNumbers) + 2;
-  }
+  await expect
+    .poll(async () => {
+      const hooks = await readClientHooks(page);
+      applyFramesToStats(stats, bytesBySeq, seen, hooks.wsFrames, hooks.wsUrls);
+      return (
+        (hooks.closeCodes.includes(1011) || stats.streamUnavailableCount > 0) &&
+        replayAfterDisconnectHasNewSeq([...frames, ...hooks.wsFrames])
+      );
+    }, { timeout: 60_000 })
+    .toBe(true);
+  expect(stats.firstWsClosedAt).not.toBeNull();
+  expect(stats.generatedReadyAt).not.toBeNull();
+  const reconnectCatchUpMs = Math.max(
+    0,
+    (stats.generatedReadyAt as number) - (stats.firstWsClosedAt as number),
+  );
+  expect(stats.retainedBytes).toBeGreaterThan(0);
   expect(stats.retainedBytes).toBeLessThanOrEqual(MAX_RETAINED);
   expect(stats.evictedBytes).toBeGreaterThan(0);
   expect(stats.firstAvailableSeq).not.toBeNull();
@@ -543,9 +599,17 @@ test('streams more than 6 MiB, keeps a 5 MiB window, reconnects, and stays respo
   const probeMs = Date.now() - probeStarted;
   expect(probeMs).toBeLessThan(5_000);
 
-  await expect(page.getByLabel('Run state')).toHaveText(/SUCCEEDED|RUNNING|Reloading/, {
+  await expect
+    .poll(async () => {
+      const hooks = await readClientHooks(page);
+      applyFramesToStats(stats, bytesBySeq, seen, hooks.wsFrames, hooks.wsUrls);
+      return stats.completeCount;
+    }, { timeout: 60_000 })
+    .toBeGreaterThan(0);
+  await expect(page.getByLabel('Run state')).toHaveText(/SUCCEEDED|Reloading workspace/, {
     timeout: 60_000,
   });
+  await expect(page.getByLabel('Run state')).not.toHaveText(/^RUNNING$/);
 
   expect(issues.pageErrors).toEqual([]);
   const unexpectedConsole = issues.consoleErrors.filter(
@@ -565,6 +629,8 @@ test('streams more than 6 MiB, keeps a 5 MiB window, reconnects, and stays respo
     probeMs,
     ticketCount: stats.ticketUrls.length,
     wsCount: stats.wsUrls.length,
+    completeCount: stats.completeCount,
+    streamUnavailableCount: stats.streamUnavailableCount,
     consoleErrors: issues.consoleErrors,
     pageErrors: issues.pageErrors,
   });

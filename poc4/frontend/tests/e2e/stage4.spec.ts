@@ -7,6 +7,12 @@ const ALICE_SEED_PROJECT_ID = 'prj-alice-notebook';
 const BOB_SEED_PROJECT_ID = 'prj-bob-lab';
 const SESSION_EXPIRED = 'Your session has expired. Please sign in again.';
 const SEED_LOG_MARKER = 'ensoai-stage4-seed-log';
+const GAP_DUP_MARKER = 'ensoai-stage4-gap-dup';
+const GAP_SKIPPED_MARKER = 'ensoai-stage4-gap-skipped';
+const GAP_VISIBLE_MARKER = 'ensoai-stage4-gap-visible';
+const PERSISTED_OFFLINE_MARKER = 'ensoai-stage4-persisted-offline';
+const RECONNECT_LIVE_MARKER = 'ensoai-stage4-reconnect-live';
+const STALE_SOCKET_MARKER = 'ensoai-stage4-stale-socket';
 const RELOAD_MARKER = 'ensoai-stage4-reload-change';
 const HEAD_MARKER = 'ensoai-stage4-large-log-head';
 const EVICTED_EARLY_MARKER = 'ensoai-stage4-large-log-evicted-early';
@@ -221,6 +227,12 @@ function pngHasNonBackgroundText(bytes: Uint8Array): boolean {
   return counts.size >= 2;
 }
 
+type SocketTrace = {
+  url: string;
+  frames: string[];
+  closeCode: number | null;
+};
+
 type ClientHooks = {
   holdActive: boolean;
   holdRootTree: boolean;
@@ -229,7 +241,33 @@ type ClientHooks = {
   abortNextStart: boolean;
   wsUrls: string[];
   wsFrames: string[];
+  closeCodes: number[];
+  socketTraces: SocketTrace[];
 };
+
+type ParsedLogFrame = {
+  type?: string;
+  chunk?: { seq?: number; text?: string; byteLength?: number };
+  chunks?: Array<{ seq?: number; text?: string; byteLength?: number }>;
+  window?: {
+    firstAvailableSeq?: number | null;
+    lastAvailableSeq?: number | null;
+    retainedBytes?: number;
+    truncated?: boolean;
+    evictedBytes?: number;
+  };
+  code?: string;
+  retryable?: boolean;
+  lastSeq?: number | null;
+};
+
+function parseLogFrame(raw: string): ParsedLogFrame | null {
+  try {
+    return JSON.parse(raw) as ParsedLogFrame;
+  } catch {
+    return null;
+  }
+}
 
 async function readClientHooks(page: Page): Promise<ClientHooks> {
   return page.evaluate(() => {
@@ -246,13 +284,120 @@ async function readClientHooks(page: Page): Promise<ClientHooks> {
       abortNextStart: hooks?.abortNextStart === true,
       wsUrls: [...(hooks?.wsUrls ?? [])],
       wsFrames: [...(hooks?.wsFrames ?? [])],
+      closeCodes: [...(hooks?.closeCodes ?? [])],
+      socketTraces: (hooks?.socketTraces ?? []).map((trace) => ({
+        url: trace.url,
+        frames: [...trace.frames],
+        closeCode: trace.closeCode,
+      })),
     };
   });
 }
 
+async function injectStaleLogAppend(page: Page, marker: string): Promise<void> {
+  const injected = await page.evaluate((text) => {
+    const host = window as unknown as {
+      __e2eFetchHooks?: { liveSockets?: WebSocket[] };
+    };
+    const first = host.__e2eFetchHooks?.liveSockets?.[0];
+    if (first === undefined) {
+      return false;
+    }
+    const bytes = new TextEncoder().encode(text).byteLength;
+    first.dispatchEvent(
+      new MessageEvent('message', {
+        data: JSON.stringify({
+          type: 'log.append',
+          chunk: {
+            seq: 999001,
+            text,
+            byteLength: bytes,
+            persistedAt: new Date().toISOString(),
+          },
+          window: {
+            firstAvailableSeq: 999001,
+            lastAvailableSeq: 999001,
+            retainedBytes: bytes,
+            truncated: false,
+            evictedBytes: 0,
+          },
+        }),
+      }),
+    );
+    return true;
+  }, `${marker}\n`);
+  expect(injected).toBe(true);
+}
+
+function socketReplayBeforeAppend(trace: SocketTrace): boolean {
+  let seenReplay = false;
+  for (const raw of trace.frames) {
+    const parsed = parseLogFrame(raw);
+    if (parsed?.type === 'log.replay') {
+      seenReplay = true;
+    }
+    if (parsed?.type === 'log.append' && !seenReplay) {
+      return false;
+    }
+  }
+  return seenReplay;
+}
+
+function replayChunkBodies(frames: string[]): string[][] {
+  const bodies: string[][] = [];
+  for (const raw of frames) {
+    const parsed = parseLogFrame(raw);
+    if (parsed?.type === 'log.replay') {
+      bodies.push((parsed.chunks ?? []).map((chunk) => chunk.text ?? ''));
+    }
+  }
+  return bodies;
+}
+
+function appendSeqCounts(frames: string[]): Map<number, number> {
+  const counts = new Map<number, number>();
+  for (const raw of frames) {
+    const parsed = parseLogFrame(raw);
+    if (parsed?.type === 'log.append' && typeof parsed.chunk?.seq === 'number') {
+      counts.set(parsed.chunk.seq, (counts.get(parsed.chunk.seq) ?? 0) + 1);
+    }
+  }
+  return counts;
+}
+
+function socketHasReplayThenLive(trace: SocketTrace): boolean {
+  let seenReplay = false;
+  let seenLiveAfterReplay = false;
+  let lastReplaySeq: number | null = null;
+  for (const raw of trace.frames) {
+    const parsed = parseLogFrame(raw);
+    if (parsed?.type === 'log.replay') {
+      if (seenLiveAfterReplay) {
+        return false;
+      }
+      seenReplay = true;
+      for (const chunk of parsed.chunks ?? []) {
+        if (typeof chunk.seq === 'number') {
+          lastReplaySeq = lastReplaySeq === null ? chunk.seq : Math.max(lastReplaySeq, chunk.seq);
+        }
+      }
+    }
+    if (parsed?.type === 'log.append' && typeof parsed.chunk?.seq === 'number') {
+      if (!seenReplay) {
+        return false;
+      }
+      if (lastReplaySeq !== null && parsed.chunk.seq <= lastReplaySeq) {
+        continue;
+      }
+      seenLiveAfterReplay = true;
+    }
+  }
+  return seenReplay && seenLiveAfterReplay;
+}
+
 async function patchClientHooks(
   page: Page,
-  patch: Partial<Omit<ClientHooks, 'wsUrls' | 'wsFrames'>>,
+  patch: Partial<Omit<ClientHooks, 'wsUrls' | 'wsFrames' | 'closeCodes' | 'socketTraces'>>,
 ): Promise<void> {
   await page.evaluate((next) => {
     const host = window as unknown as {
@@ -318,6 +463,66 @@ async function signIn(
   return body.accessToken as string;
 }
 
+async function wrapPageWebSocket(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    const host = window as unknown as {
+      __e2eFetchHooks: {
+        wsUrls: string[];
+        wsFrames: string[];
+        closeCodes: number[];
+        socketTraces: SocketTrace[];
+        liveSockets: WebSocket[];
+      };
+    };
+    if (host.__e2eFetchHooks.closeCodes === undefined) {
+      host.__e2eFetchHooks.closeCodes = [];
+    }
+    if (host.__e2eFetchHooks.socketTraces === undefined) {
+      host.__e2eFetchHooks.socketTraces = [];
+    }
+    if (host.__e2eFetchHooks.liveSockets === undefined) {
+      host.__e2eFetchHooks.liveSockets = [];
+    }
+    const CurrentWebSocket = window.WebSocket;
+    window.WebSocket = new Proxy(CurrentWebSocket, {
+      construct(target, args, newTarget) {
+        const socket = Reflect.construct(target, args, newTarget) as WebSocket;
+        const url = String(args[0]);
+        const trace: SocketTrace = { url, frames: [], closeCode: null };
+        host.__e2eFetchHooks.wsUrls.push(url);
+        host.__e2eFetchHooks.socketTraces.push(trace);
+        host.__e2eFetchHooks.liveSockets.push(socket);
+        const recordFrame = (raw: string): void => {
+          host.__e2eFetchHooks.wsFrames.push(raw);
+          trace.frames.push(raw);
+        };
+        socket.addEventListener('message', (event) => {
+          const data = event.data;
+          if (typeof data === 'string') {
+            recordFrame(data);
+            return;
+          }
+          if (typeof Blob !== 'undefined' && data instanceof Blob) {
+            void data.text().then((text) => {
+              recordFrame(text);
+            });
+            return;
+          }
+          if (data instanceof ArrayBuffer) {
+            recordFrame(new TextDecoder().decode(data));
+          }
+        });
+        socket.addEventListener('close', (event) => {
+          const code = (event as CloseEvent).code;
+          trace.closeCode = code;
+          host.__e2eFetchHooks.closeCodes.push(code);
+        });
+        return socket;
+      },
+    });
+  });
+}
+
 async function openAliceWorkbench(
   page: Page,
 ): Promise<{ accessToken: string; workspaceRevision: string }> {
@@ -333,6 +538,7 @@ async function openAliceWorkbench(
   await expect(page).toHaveURL(new RegExp(`/projects/${ALICE_SEED_PROJECT_ID}$`));
   await expect(page.getByRole('heading', { name: 'Alice Notebook' })).toBeVisible();
   await expect(treeItem(page, '.gitignore')).toBeVisible();
+  await wrapPageWebSocket(page);
   return { accessToken, workspaceRevision: treeBody.workspaceRevision as string };
 }
 
@@ -684,6 +890,9 @@ test.beforeEach(async ({ page }) => {
         abortNextStart: boolean;
         wsUrls: string[];
         wsFrames: string[];
+        closeCodes: number[];
+        socketTraces: SocketTrace[];
+        liveSockets: WebSocket[];
         activeResolvers: Array<() => void>;
         treeResolvers: Array<() => void>;
         writeResolvers: Array<() => void>;
@@ -699,6 +908,9 @@ test.beforeEach(async ({ page }) => {
         abortNextStart: false,
         wsUrls: [],
         wsFrames: [],
+        closeCodes: [],
+        socketTraces: [],
+        liveSockets: [],
         activeResolvers: [],
         treeResolvers: [],
         writeResolvers: [],
@@ -765,9 +977,35 @@ test.beforeEach(async ({ page }) => {
     window.WebSocket = new Proxy(OriginalWebSocket, {
       construct(target, args, newTarget) {
         const socket = Reflect.construct(target, args, newTarget) as WebSocket;
-        host.__e2eFetchHooks.wsUrls.push(String(args[0]));
+        const url = String(args[0]);
+        const trace: SocketTrace = { url, frames: [], closeCode: null };
+        host.__e2eFetchHooks.wsUrls.push(url);
+        host.__e2eFetchHooks.socketTraces.push(trace);
+        host.__e2eFetchHooks.liveSockets.push(socket);
+        const recordFrame = (raw: string): void => {
+          host.__e2eFetchHooks.wsFrames.push(raw);
+          trace.frames.push(raw);
+        };
         socket.addEventListener('message', (event) => {
-          host.__e2eFetchHooks.wsFrames.push(String(event.data));
+          const data = event.data;
+          if (typeof data === 'string') {
+            recordFrame(data);
+            return;
+          }
+          if (typeof Blob !== 'undefined' && data instanceof Blob) {
+            void data.text().then((text) => {
+              recordFrame(text);
+            });
+            return;
+          }
+          if (data instanceof ArrayBuffer) {
+            recordFrame(new TextDecoder().decode(data));
+          }
+        });
+        socket.addEventListener('close', (event) => {
+          const code = (event as CloseEvent).code;
+          trace.closeCode = code;
+          host.__e2eFetchHooks.closeCodes.push(code);
         });
         return socket;
       },
@@ -952,7 +1190,7 @@ test('keeps dirty File buffers and log text when switching File and Run', async 
   await expect(page.getByLabel('Run state')).toHaveText(/RUNNING/);
 });
 
-test('replays then lives logs, ignores duplicates, and uses a fresh ticket after disconnect', async ({
+test('replays then lives, and reconnect replay includes chunks persisted while disconnected', async ({
   page,
 }) => {
   const guard = installStage4Guard(page);
@@ -960,41 +1198,123 @@ test('replays then lives logs, ignores duplicates, and uses a fresh ticket after
   await setRunScenario(page, accessToken, 'disconnect');
   await openRunPanel(page);
   await page.getByRole('button', { name: 'Start run' }).click();
-  await expect(page.getByRole('region', { name: 'Run logs' })).toContainText(SEED_LOG_MARKER);
-  await expect(page.getByLabel('Log connection')).toHaveText(/Live|Reconnecting|Replaying/, {
-    timeout: 20_000,
-  });
+  const log = page.getByRole('region', { name: 'Run logs' });
+  await expect(log).toContainText(SEED_LOG_MARKER);
   await expect.poll(() => guard.ticketUrls.length, { timeout: 20_000 }).toBeGreaterThanOrEqual(2);
-  expect(guard.ticketUrls.every((url) => !url.includes(accessToken) && !url.includes('Bearer'))).toBe(
-    true,
-  );
   await expect
     .poll(async () => {
       const hooks = await readClientHooks(page);
-      return hooks.wsUrls.filter((url) => url.includes('run-logs')).length + guard.ticketUrls.length;
-    })
-    .toBeGreaterThanOrEqual(2);
-  const logText = await page.getByRole('region', { name: 'Run logs' }).innerText();
-  expect(logText.split(SEED_LOG_MARKER).length - 1).toBe(1);
-  await expect(page.getByLabel('Log connection')).toHaveText(/Live|Reconnecting|Replaying/);
+      const unavailable = [...hooks.wsFrames, ...hooks.socketTraces.flatMap((trace) => trace.frames)].some(
+        (raw) => {
+          const parsed = parseLogFrame(raw);
+          return parsed?.type === 'stream.error' && parsed.code === 'STREAM_UNAVAILABLE';
+        },
+      );
+      const closed1011 =
+        hooks.closeCodes.includes(1011) ||
+        hooks.socketTraces.some((trace) => trace.closeCode === 1011);
+      return unavailable || closed1011;
+    }, { timeout: 20_000 })
+    .toBe(true);
+  await expect(log).toContainText(PERSISTED_OFFLINE_MARKER, { timeout: 20_000 });
+  await expect(log).toContainText(RECONNECT_LIVE_MARKER, { timeout: 20_000 });
+  await expect
+    .poll(async () => {
+      const hooks = await readClientHooks(page);
+      const replays = replayChunkBodies(hooks.wsFrames);
+      if (replays.length < 2) {
+        return false;
+      }
+      const firstReplay = replays[0] ?? [];
+      if (firstReplay.some((text) => text.includes(PERSISTED_OFFLINE_MARKER))) {
+        return false;
+      }
+      const laterHasPersisted = replays
+        .slice(1)
+        .some((body) => body.some((text) => text.includes(PERSISTED_OFFLINE_MARKER)));
+      const replayThenLive = hooks.socketTraces.some((trace) => socketHasReplayThenLive(trace));
+      const liveAfterReplay = hooks.socketTraces.some((trace) => {
+        if (!socketHasReplayThenLive(trace)) {
+          return false;
+        }
+        return trace.frames.some((raw) => {
+          const parsed = parseLogFrame(raw);
+          return (
+            parsed?.type === 'log.append' &&
+            (parsed.chunk?.text ?? '').includes(RECONNECT_LIVE_MARKER)
+          );
+        });
+      });
+      return laterHasPersisted && replayThenLive && liveAfterReplay;
+    }, { timeout: 20_000 })
+    .toBe(true);
+  expect((await log.innerText()).split(SEED_LOG_MARKER).length - 1).toBe(1);
   await expect(page.getByRole('button', { name: 'New file' })).toBeDisabled();
   await assertGuard(page, guard, accessToken);
-  const frames = (await readClientHooks(page)).wsFrames;
-  const seqCounts = new Map<number, number>();
-  for (const raw of frames) {
-    let parsed: { type?: string; chunk?: { seq?: number } };
-    try {
-      parsed = JSON.parse(raw) as typeof parsed;
-    } catch {
-      continue;
-    }
-    if (parsed.type === 'log.append' && typeof parsed.chunk?.seq === 'number') {
-      seqCounts.set(parsed.chunk.seq, (seqCounts.get(parsed.chunk.seq) ?? 0) + 1);
-    }
-  }
-  expect(guard.ticketUrls.length >= 2 || [...seqCounts.values()].some((count) => count > 1)).toBe(
-    true,
-  );
+});
+
+test('gap skipped seq fetches a fresh ticket and replays the missing chunk; duplicate seq is ignored', async ({
+  page,
+}) => {
+  const guard = installStage4Guard(page);
+  const { accessToken } = await openAliceWorkbench(page);
+  await setRunScenario(page, accessToken, 'gap');
+  await openRunPanel(page);
+  await page.getByRole('button', { name: 'Start run' }).click();
+  const log = page.getByRole('region', { name: 'Run logs' });
+  await expect(log).toContainText(SEED_LOG_MARKER);
+  await expect(log).toContainText(GAP_DUP_MARKER, { timeout: 20_000 });
+  await expect(log).toContainText(GAP_VISIBLE_MARKER, { timeout: 20_000 });
+  await expect.poll(() => guard.ticketUrls.length, { timeout: 20_000 }).toBeGreaterThanOrEqual(2);
+  await expect(log).toContainText(GAP_SKIPPED_MARKER, { timeout: 20_000 });
+  expect(guard.ticketUrls.length).toBeGreaterThanOrEqual(2);
+  await expect
+    .poll(async () => {
+      const hooks = await readClientHooks(page);
+      if (!socketReplayBeforeAppend({ url: '', frames: hooks.wsFrames, closeCode: null })) {
+        return false;
+      }
+      const hasDuplicateAppend = [...appendSeqCounts(hooks.wsFrames).values()].some(
+        (count) => count > 1,
+      );
+      const skippedInReplay = hooks.wsFrames.some((raw) => {
+        const frame = parseLogFrame(raw);
+        return (
+          frame?.type === 'log.replay' &&
+          (frame.chunks ?? []).some((chunk) => (chunk.text ?? '').includes(GAP_SKIPPED_MARKER))
+        );
+      });
+      return hasDuplicateAppend && skippedInReplay;
+    }, { timeout: 20_000 })
+    .toBe(true);
+  const hooks = await readClientHooks(page);
+  expect([...appendSeqCounts(hooks.wsFrames).values()].some((count) => count > 1)).toBe(true);
+  expect(guard.ticketUrls.length).toBeGreaterThanOrEqual(2);
+  const logText = await log.innerText();
+  expect(logText.split(GAP_DUP_MARKER).length - 1).toBe(1);
+  expect(logText.split(GAP_VISIBLE_MARKER).length - 1).toBe(1);
+  expect(logText.split(GAP_SKIPPED_MARKER).length - 1).toBe(1);
+  await expect(page.getByRole('button', { name: 'New file' })).toBeDisabled();
+  await assertGuard(page, guard, accessToken);
+});
+
+test('ignores log frames from a stale socket generation', async ({ page }) => {
+  const { accessToken } = await openAliceWorkbench(page);
+  await setRunScenario(page, accessToken, 'disconnect');
+  await openRunPanel(page);
+  await page.getByRole('button', { name: 'Start run' }).click();
+  const log = page.getByRole('region', { name: 'Run logs' });
+  await expect(log).toContainText(SEED_LOG_MARKER);
+  await expect
+    .poll(async () => (await readClientHooks(page)).socketTraces.length, { timeout: 20_000 })
+    .toBeGreaterThanOrEqual(2);
+  await injectStaleLogAppend(page, STALE_SOCKET_MARKER);
+  await expect(log).toContainText(SEED_LOG_MARKER);
+  await expect(log).not.toContainText(STALE_SOCKET_MARKER);
+  const hooks = await readClientHooks(page);
+  const firstFrames = hooks.socketTraces[0]?.frames ?? [];
+  expect(firstFrames.some((raw) => raw.includes(STALE_SOCKET_MARKER))).toBe(true);
+  await expect(page.getByRole('button', { name: 'New file' })).toBeDisabled();
 });
 
 test('Stop Cancel leaves the run; confirm is idempotent STOPPING then CANCELLED', async ({

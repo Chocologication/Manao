@@ -27,7 +27,15 @@ import {
   saveMockFile,
 } from './fileFixtures';
 import { createLargeLogChunks } from './largeLogPayload';
-import { clonePoc4RunPolicy, SEED_LOG_MARKER, SEED_LOG_TEXT, utf8ByteLength } from './runFixtures';
+import {
+  clonePoc4RunPolicy,
+  GAP_DUP_TEXT,
+  GAP_SKIPPED_TEXT,
+  GAP_VISIBLE_TEXT,
+  SEED_LOG_MARKER,
+  SEED_LOG_TEXT,
+  utf8ByteLength,
+} from './runFixtures';
 
 export const MOCK_RUN_START_DELAY_MS = 25;
 export const MOCK_RUN_DELAYED_START_MS = 250;
@@ -37,6 +45,7 @@ export const MOCK_RUN_STOP_DELAY_MS = 25;
 export const MOCK_RUN_HEARTBEAT_INTERVAL_MS = 10_000;
 export const MOCK_LARGE_LOG_BROWSER_CHUNK_DELAY_MS = 120;
 export const MOCK_LARGE_LOG_VIRTUAL_CHUNK_DELAY_MS = 60_000;
+export const MOCK_GAP_LIVE_DELAY_MS = 800;
 export const MOCK_RUN_PERSISTENCE_KEY = 'ensoai.mock.run-scenario.v1';
 export const MOCK_RUN_HISTORY_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 
@@ -558,6 +567,18 @@ function scheduleScenarioFollowUp(record: MockRunRecord): void {
   if (record.summary.state === 'RUNNING') {
     if (runScenario === 'large-log') {
       scheduleLargeLogStream(record);
+      return;
+    }
+    if (clock.kind === 'browser' && runScenario === 'gap') {
+      scheduleOn(record, MOCK_GAP_LIVE_DELAY_MS, () => {
+        const current = findRecord(record.projectId, record.summary.id);
+        if (current === null || isRunTerminalState(current.summary.state)) {
+          return;
+        }
+        appendLogChunk(current.projectId, current.summary.id, GAP_DUP_TEXT);
+        appendLogChunk(current.projectId, current.summary.id, GAP_SKIPPED_TEXT);
+        appendLogChunk(current.projectId, current.summary.id, GAP_VISIBLE_TEXT);
+      });
       return;
     }
     const terminal = terminalForScenario(runScenario);

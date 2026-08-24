@@ -17,7 +17,12 @@ import {
 import { parseFileContentResponse } from '../contracts/file';
 import { parseProjectRelativePath } from '../features/files/pathPolicy';
 import { LARGE_LOG_DISCONNECT_AFTER_LIVE_CHUNKS } from './largeLogPayload';
-import { SEED_LOG_MARKER } from './runFixtures';
+import {
+  GAP_SKIPPED_TEXT,
+  PERSISTED_OFFLINE_MARKER,
+  RECONNECT_LIVE_MARKER,
+  SEED_LOG_MARKER,
+} from './runFixtures';
 import {
   MOCK_LOG_TICKET_PREFIX,
   MOCK_LOG_TICKET_TTL_MS,
@@ -635,7 +640,7 @@ describe('MSW run log WebSocket', () => {
     const reader = new FrameReader(socket, ctx);
     subscribe(socket, 1);
     await reader.collect(2);
-    appendLogChunk(ALICE_SEED_PROJECT_ID, run.id, 'skipped\n');
+    appendLogChunk(ALICE_SEED_PROJECT_ID, run.id, GAP_SKIPPED_TEXT);
     appendLogChunk(ALICE_SEED_PROJECT_ID, run.id, 'visible\n');
     const live = await reader.next();
     expect(live.type).toBe('log.append');
@@ -646,7 +651,7 @@ describe('MSW run log WebSocket', () => {
     const window = getLogWindow(ALICE_SEED_PROJECT_ID, run.id);
     expect(window?.chunks.map((chunk) => chunk.text)).toEqual([
       expect.stringContaining(SEED_LOG_MARKER),
-      'skipped\n',
+      GAP_SKIPPED_TEXT,
       'visible\n',
     ]);
   });
@@ -670,7 +675,7 @@ describe('MSW run log WebSocket', () => {
     expect(second.type).toBe('log.append');
     if (first.type === 'log.append' && second.type === 'log.append') {
       expect(first.chunk).toEqual(second.chunk);
-      expect(first.chunk.text).toBe('twice\n');
+      expect(first.chunk.text).toBe('once\n');
       expect(
         getLogWindow(ALICE_SEED_PROJECT_ID, run.id)?.chunks.filter((chunk) => chunk.seq === first.chunk.seq),
       ).toHaveLength(1);
@@ -727,6 +732,42 @@ describe('MSW run log WebSocket', () => {
     expect(frames[0]?.type).toBe('log.replay');
     expect(frames.some((frame) => frame.type === 'stream.error' && frame.retryable)).toBe(true);
     expect(frames.some((frame) => frame.type === 'log.append')).toBe(false);
+    expect(
+      getLogWindow(ALICE_SEED_PROJECT_ID, run.id)?.chunks.some((chunk) =>
+        chunk.text.includes(PERSISTED_OFFLINE_MARKER),
+      ),
+    ).toBe(true);
+  });
+
+  it('replays chunks persisted while disconnected, then lives', async () => {
+    setRunScenario('disconnect');
+    const { token, run } = await startAlice();
+    advanceMockRunClock(MOCK_RUN_START_DELAY_MS);
+    const firstTicket = await issueTicket(token, ALICE_SEED_PROJECT_ID, run.id);
+    const first = openSocket(firstTicket.ticket);
+    await waitForOpen(first);
+    const ctx = contextOf(run);
+    subscribe(first, null);
+    await waitForClose(first);
+    const secondTicket = await issueTicket(token, ALICE_SEED_PROJECT_ID, run.id);
+    expect(secondTicket.ticket).not.toBe(firstTicket.ticket);
+    const second = openSocket(secondTicket.ticket);
+    await waitForOpen(second);
+    const secondReader = new FrameReader(second, ctx);
+    subscribe(second, 1);
+    const replay = await secondReader.next();
+    const state = await secondReader.next();
+    const live = await secondReader.next();
+    expect(replay.type).toBe('log.replay');
+    expect(state.type).toBe('run.state');
+    expect(live.type).toBe('log.append');
+    if (replay.type === 'log.replay' && live.type === 'log.append') {
+      expect(replay.chunks.some((chunk) => chunk.text.includes(PERSISTED_OFFLINE_MARKER))).toBe(true);
+      expect(replay.chunks.some((chunk) => chunk.text.includes(RECONNECT_LIVE_MARKER))).toBe(false);
+      expect(live.chunk.text).toContain(RECONNECT_LIVE_MARKER);
+      const replayMax = Math.max(...replay.chunks.map((chunk) => chunk.seq));
+      expect(live.chunk.seq).toBe(replayMax + 1);
+    }
   });
 
   it('does not emit heartbeats until the mock clock advances', async () => {
