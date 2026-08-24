@@ -359,12 +359,12 @@ test('rejects Stage 5 mock strings and physical identifiers in terminal producti
   }
 });
 
-test('rejects every retained mock needle from distribution assets', () => {
+test('rejects every retained mock needle from distribution HTML', () => {
   const source = [...stage4MockNeedles, ...stage5MockNeedles]
     .map(([, needle]) => needle)
     .join('\n');
   assert.deepEqual(
-    findForbiddenDistributionStrings('dist/assets/app.js', source).map((item) => item.rule),
+    findForbiddenDistributionStrings('dist/index.html', source).map((item) => item.rule),
     [...stage4MockNeedles, ...stage5MockNeedles].map(([rule]) => rule),
   );
 });

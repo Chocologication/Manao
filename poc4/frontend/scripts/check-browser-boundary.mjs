@@ -10,13 +10,14 @@ import {
 } from './browser-boundary-lib.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const extensions = new Set(['.ts', '.tsx', '.js', '.jsx', '.css']);
+const sourceExtensions = new Set(['.ts', '.tsx', '.js', '.jsx', '.css']);
+const distributionTextExtensions = new Set(['.html', '.js', '.css']);
 
-async function listSourceFiles(directory) {
+async function listTextFiles(directory, extensions) {
   const entries = await readdir(directory, { withFileTypes: true });
   const nested = await Promise.all(entries.map(async (entry) => {
     const fullPath = path.join(directory, entry.name);
-    if (entry.isDirectory()) return listSourceFiles(fullPath);
+    if (entry.isDirectory()) return listTextFiles(fullPath, extensions);
     if (/\.test\.[^.]+$/.test(entry.name)) return [];
     return extensions.has(path.extname(entry.name)) ? [fullPath] : [];
   }));
@@ -27,7 +28,7 @@ const packageJson = JSON.parse(await readFile(path.join(root, 'package.json'), '
 const dependencyViolations = findForbiddenDependencies(packageJson).map(
   (name) => ({ file: 'package.json', rule: `forbidden dependency: ${name}` })
 );
-const sourceFiles = await listSourceFiles(path.join(root, 'src'));
+const sourceFiles = await listTextFiles(path.join(root, 'src'), sourceExtensions);
 const sourceViolations = (
   await Promise.all(sourceFiles.map(async (file) => {
     const relative = path.relative(root, file).replaceAll('\\', '/');
@@ -42,7 +43,7 @@ const sourceViolations = (
 let distributionViolations = [];
 try {
   await stat(path.join(root, 'dist'));
-  const distFiles = await listSourceFiles(path.join(root, 'dist'));
+  const distFiles = await listTextFiles(path.join(root, 'dist'), distributionTextExtensions);
   distributionViolations = (
     await Promise.all(distFiles.map(async (file) => {
       const relative = path.relative(root, file).replaceAll('\\', '/');

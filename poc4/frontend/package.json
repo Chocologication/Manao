@@ -9,7 +9,7 @@
     "dev:echo": "node scripts/echo-ws.mjs",
     "typecheck": "tsc -b --pretty false",
     "test": "vitest run",
-    "test:boundary": "node --test scripts/browser-boundary-lib.test.mjs && node scripts/check-browser-boundary.mjs",
+    "test:boundary": "node --test scripts/browser-boundary-lib.test.mjs scripts/check-browser-boundary.test.mjs && node scripts/check-browser-boundary.mjs",
     "build": "pnpm typecheck && vite build",
     "build:mock": "pnpm typecheck && vite build --mode mock",
     "preview": "vite preview --port 4173",
