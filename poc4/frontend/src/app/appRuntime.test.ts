@@ -8,17 +8,21 @@ import { login } from '../api/authApi';
 import { ApiRequestError } from '../api/ApiRequestError';
 import { downloadFileBlob, getFileContent, getFileMetadata, listDirectory } from '../api/fileApi';
 import { getProject, listProjects } from '../api/projectApi';
+import { parseRunId } from '../contracts/run';
 import { ALICE_SEED_PROJECT_ID, BOB_SEED_PROJECT_ID } from '../mocks/state';
 import { server } from '../mocks/node';
 import { renderApp, resetAppRuntime } from '../test/renderApp';
 import { useWorkspaceSession, workspaceSessionStore } from '../features/editor/workspaceSession';
 import { fileKeys } from '../features/files/fileQueries';
 import { parseProjectDirectoryPath, parseProjectRelativePath } from '../features/files/pathPolicy';
+import { RunLogStore } from '../features/logs/RunLogStore';
+import { RunLogTransport } from '../features/logs/RunLogTransport';
 import { projectKeys } from '../features/projects/projectQueries';
 import { disposeAllProjectModels, toProjectModelUri } from '../lib/projectMonacoModels';
 import {
   authSession,
   connectionRegistry,
+  handleUnauthorized,
   logout,
   queryClient,
   workspaceBufferRegistry,
@@ -135,6 +139,168 @@ function expectFileCacheCleared(): void {
   expect(queryClient.getQueryData(fileKeys.content(ALICE_SEED_PROJECT_ID, POM))).toBeUndefined();
   expect(queryClient.getQueryData(fileKeys.meta(ALICE_SEED_PROJECT_ID, APP))).toBeUndefined();
   expect(queryClient.getQueryData(fileKeys.content(ALICE_SEED_PROJECT_ID, APP))).toBeUndefined();
+}
+
+class TestLogSocket {
+  static readonly OPEN = 1;
+  static readonly CLOSED = 3;
+  readyState = 0;
+  readonly url: string;
+  readonly sent: string[] = [];
+  private readonly listeners = new Map<
+    string,
+    Set<(event: { data?: unknown; code?: number; reason?: string }) => void>
+  >();
+
+  constructor(url: string) {
+    this.url = url;
+  }
+
+  addEventListener(
+    type: string,
+    listener: (event: { data?: unknown; code?: number; reason?: string }) => void,
+  ): void {
+    const set = this.listeners.get(type) ?? new Set();
+    set.add(listener);
+    this.listeners.set(type, set);
+  }
+
+  send(data: string): void {
+    this.sent.push(data);
+  }
+
+  close(): void {
+    if (this.readyState === TestLogSocket.CLOSED) {
+      return;
+    }
+    this.readyState = TestLogSocket.CLOSED;
+    this.emit('close', { code: 1000, reason: '' });
+  }
+
+  open(): void {
+    this.readyState = TestLogSocket.OPEN;
+    this.emit('open', {});
+  }
+
+  message(data: unknown): void {
+    this.emit('message', { data });
+  }
+
+  remoteClose(code: number, reason = ''): void {
+    this.readyState = TestLogSocket.CLOSED;
+    this.emit('close', { code, reason });
+  }
+
+  private emit(type: string, event: { data?: unknown; code?: number; reason?: string }): void {
+    for (const listener of [...(this.listeners.get(type) ?? [])]) {
+      listener(event);
+    }
+  }
+}
+
+async function connectTestLogTransport(runId: string): Promise<{
+  store: RunLogStore;
+  socket: TestLogSocket;
+  timers: Map<number, () => void>;
+}> {
+  const store = new RunLogStore({
+    projectId: ALICE_SEED_PROJECT_ID,
+    runId: parseRunId(runId),
+    schedule: (notify) => {
+      notify();
+      return () => {};
+    },
+  });
+  const sockets: TestLogSocket[] = [];
+  const timers = new Map<number, () => void>();
+  let nextTimer = 1;
+  const transport = new RunLogTransport({
+    projectId: ALICE_SEED_PROJECT_ID,
+    runId: store.runId,
+    store,
+    queryClient,
+    connectionRegistry,
+    createTicket: async () => ({
+      ticket: `ticket-${runId}` as never,
+      expiresAt: '2026-08-24T10:00:30.000Z',
+    }),
+    getAccessToken: () => authSession.getAccessToken(),
+    onUnauthorized: handleUnauthorized,
+    webSocketFactory: (url) => {
+      const socket = new TestLogSocket(url);
+      sockets.push(socket);
+      return socket as unknown as WebSocket;
+    },
+    location: { protocol: 'http:', host: 'localhost:4173' },
+    setTimeout: (handler) => {
+      const id = nextTimer;
+      nextTimer += 1;
+      timers.set(id, handler);
+      return id;
+    },
+    clearTimeout: (id) => {
+      timers.delete(Number(id));
+    },
+    jitter: false,
+  });
+  transport.connect();
+  await Promise.resolve();
+  await Promise.resolve();
+  const socket = sockets[0];
+  expect(socket).toBeDefined();
+  socket!.open();
+  socket!.message(
+    JSON.stringify({
+      type: 'log.replay',
+      chunks: [
+        {
+          seq: 1,
+          text: `${runId}-chunk`,
+          byteLength: new TextEncoder().encode(`${runId}-chunk`).byteLength,
+          persistedAt: '2026-08-24T10:00:02.000Z',
+        },
+      ],
+      window: {
+        firstAvailableSeq: 1,
+        lastAvailableSeq: 1,
+        retainedBytes: new TextEncoder().encode(`${runId}-chunk`).byteLength,
+        truncated: false,
+        evictedBytes: 0,
+      },
+    }),
+  );
+  expect(store.getSnapshot().lastAppliedSeq).toBe(1);
+  expect(socket!.readyState).toBe(TestLogSocket.OPEN);
+  return { store, socket: socket!, timers };
+}
+
+function trackCleanupOrder(socket: TestLogSocket): {
+  order: string[];
+  restore: () => void;
+} {
+  const order: string[] = [];
+  const origClose = socket.close.bind(socket);
+  socket.close = () => {
+    order.push('socket');
+    origClose();
+  };
+  const clearQuery = queryClient.clear.bind(queryClient);
+  queryClient.clear = () => {
+    order.push('query');
+    clearQuery();
+  };
+  const clearAuth = authSession.clear.bind(authSession);
+  authSession.clear = (reason) => {
+    order.push('auth');
+    clearAuth(reason);
+  };
+  return {
+    order,
+    restore() {
+      queryClient.clear = clearQuery;
+      authSession.clear = clearAuth;
+    },
+  };
 }
 
 const originalClipboardItem = globalThis.ClipboardItem;
@@ -474,6 +640,28 @@ describe('appRuntime current-session 401 with open workbench', () => {
     expect(screen.getByTestId('location-echo')).toHaveAttribute('data-pathname', '/login');
     expect(screen.getByRole('alert')).toHaveTextContent(/session has expired/i);
   }, 15_000);
+
+  it('closes log-transport sockets and timers before query and auth clear', async () => {
+    await authenticateAsAlice();
+    await seedCachedProjectQueries();
+    const { socket, timers } = await connectTestLogTransport('run-401-log');
+    expect(timers.size).toBeGreaterThan(0);
+    const tracked = trackCleanupOrder(socket);
+    try {
+      await expireCurrentSessionToken();
+      const error = await getFileContent(ALICE_SEED_PROJECT_ID, POM).catch((reason: unknown) => reason);
+      expect(error).toBeInstanceOf(ApiRequestError);
+      expect(error).toMatchObject({ status: 401 });
+      expect(tracked.order.indexOf('socket')).toBeGreaterThanOrEqual(0);
+      expect(tracked.order.indexOf('socket')).toBeLessThan(tracked.order.indexOf('query'));
+      expect(tracked.order.indexOf('query')).toBeLessThan(tracked.order.indexOf('auth'));
+      expect(socket.readyState).toBe(TestLogSocket.CLOSED);
+      expect(timers.size).toBe(0);
+      expect(authSession.getAccessToken()).toBeNull();
+    } finally {
+      tracked.restore();
+    }
+  });
 });
 
 describe('appRuntime login 401', () => {
@@ -603,6 +791,110 @@ describe('appRuntime explicit logout', () => {
       queryClient.clear = clearQuery;
       authSession.clear = clearAuth;
       unsubscribe();
+    }
+  });
+
+  it('closes registered log-transport sockets and timers before query and auth clear', async () => {
+    await authenticateAsAlice();
+    await seedCachedProjectQueries();
+    const { socket, timers } = await connectTestLogTransport('run-alice-log');
+    expect(timers.size).toBeGreaterThan(0);
+    const tracked = trackCleanupOrder(socket);
+    try {
+      logout();
+      expect(tracked.order.indexOf('socket')).toBeGreaterThanOrEqual(0);
+      expect(tracked.order.indexOf('socket')).toBeLessThan(tracked.order.indexOf('query'));
+      expect(tracked.order.indexOf('query')).toBeLessThan(tracked.order.indexOf('auth'));
+      expect(socket.readyState).toBe(TestLogSocket.CLOSED);
+      expect(timers.size).toBe(0);
+      expect(authSession.getAccessToken()).toBeNull();
+    } finally {
+      tracked.restore();
+    }
+  });
+});
+
+describe('appRuntime log stream session isolation', () => {
+  it('does not close Bob log stream when a delayed Alice 401 arrives', async () => {
+    await authenticateAsAlice();
+    const aliceToken = authSession.getAccessToken();
+    expect(aliceToken).toBeTruthy();
+    const alice = await connectTestLogTransport('run-alice-log');
+
+    let releaseAlice: () => void = () => {};
+    const aliceHold = new Promise<void>((resolve) => {
+      releaseAlice = resolve;
+    });
+    let interceptedAliceList = false;
+    const originalFetch = globalThis.fetch;
+
+    globalThis.fetch = (async (input, init) => {
+      const url =
+        typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+      const authorization = new Headers(init?.headers).get('Authorization');
+      if (
+        !interceptedAliceList &&
+        /\/api\/v1\/projects\/?$/.test(url) &&
+        authorization === `Bearer ${aliceToken}`
+      ) {
+        interceptedAliceList = true;
+        await aliceHold;
+        return new Response(JSON.stringify(UNAUTHENTICATED_BODY), {
+          status: 401,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      return originalFetch(input, init);
+    }) as typeof fetch;
+
+    try {
+      const pendingAliceList = listProjects();
+      logout();
+      expect(alice.socket.readyState).toBe(TestLogSocket.CLOSED);
+
+      const bob = await login({ username: 'bob', password: 'demo-pass' });
+      authSession.authenticate(bob);
+      const bobStream = await connectTestLogTransport('run-bob-log');
+      expect(bobStream.socket.readyState).toBe(TestLogSocket.OPEN);
+      expect(bobStream.store.getSnapshot().lastAppliedSeq).toBe(1);
+      const bobTimerCount = bobStream.timers.size;
+
+      releaseAlice();
+      const aliceError = await pendingAliceList.catch((reason: unknown) => reason);
+      expect(aliceError).toBeInstanceOf(ApiRequestError);
+      expect(aliceError).toMatchObject({ status: 401 });
+
+      alice.socket.remoteClose(4401, 'Bearer stale-alice');
+      expect(bobStream.socket.readyState).toBe(TestLogSocket.OPEN);
+      expect(bobStream.store.getSnapshot().lastAppliedSeq).toBe(1);
+      expect(bobStream.store.getSnapshot().chunks[0]?.text).toBe('run-bob-log-chunk');
+      expect(bobStream.timers.size).toBe(bobTimerCount);
+      expect(authSession.getSnapshot()).toMatchObject({
+        status: 'authenticated',
+        user: { username: 'bob' },
+      });
+      expect(authSession.getAccessToken()).not.toBeNull();
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+describe('resetAppRuntime connection cleanup', () => {
+  it('closes log sockets and timers before query and auth clear', async () => {
+    await authenticateAsAlice();
+    await seedCachedProjectQueries();
+    const { socket, timers } = await connectTestLogTransport('run-reset-log');
+    const tracked = trackCleanupOrder(socket);
+    try {
+      resetAppRuntime();
+      expect(tracked.order.indexOf('socket')).toBeGreaterThanOrEqual(0);
+      expect(tracked.order.indexOf('socket')).toBeLessThan(tracked.order.indexOf('query'));
+      expect(tracked.order.indexOf('query')).toBeLessThan(tracked.order.indexOf('auth'));
+      expect(socket.readyState).toBe(TestLogSocket.CLOSED);
+      expect(timers.size).toBe(0);
+    } finally {
+      tracked.restore();
     }
   });
 });

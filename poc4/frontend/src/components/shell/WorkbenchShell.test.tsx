@@ -1,22 +1,26 @@
-import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { http } from 'msw';
+import { http, HttpResponse } from 'msw';
 import * as monaco from 'monaco-editor';
 import { readFileSync } from 'node:fs';
 import { MemoryRouter } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { login } from '../../api/authApi';
-import { getFileContent } from '../../api/fileApi';
+import { createEntry, getFileContent, listDirectory, saveFileContent } from '../../api/fileApi';
 import { createProject, getProject } from '../../api/projectApi';
+import { startRun } from '../../api/runApi';
 import { AppProviders } from '../../app/AppProviders';
 import { ApiRequestError } from '../../api/ApiRequestError';
 import {
   authSession,
+  connectionRegistry,
   queryClient,
   workspaceBufferRegistry,
   workspaceResourceRegistry,
 } from '../../app/appRuntime';
+import { parseWorkspaceRevision } from '../../contracts/file';
 import type { ProjectSummary } from '../../contracts/project';
+import { runPreconditionDescription } from '../../features/editor/runPreconditions';
 import {
   CANCEL_LABEL,
   DISCARD_AND_LEAVE_LABEL,
@@ -24,16 +28,27 @@ import {
 } from '../../features/editor/unsavedChangesGuard';
 import { useWorkspaceSession, workspaceSessionStore } from '../../features/editor/workspaceSession';
 import { fileKeys } from '../../features/files/fileQueries';
-import { parseProjectRelativePath } from '../../features/files/pathPolicy';
+import { parseProjectDirectoryPath, parseProjectRelativePath } from '../../features/files/pathPolicy';
+import { RunAuthorityCoordinator } from '../../features/runs/RunAuthorityCoordinator';
+import { runKeys } from '../../features/runs/runQueries';
 import * as projectMonacoModels from '../../lib/projectMonacoModels';
 import { disposeAllProjectModels, toProjectModelUri } from '../../lib/projectMonacoModels';
 import { server } from '../../mocks/node';
+import {
+  getActiveRun,
+  startRun as mockStartRun,
+  setRunScenario,
+  transitionRun,
+} from '../../mocks/runState';
 import { ALICE_SEED_PROJECT_ID, getFileRequestCount, setWriteScenario } from '../../mocks/state';
 import { renderApp, resetAppRuntime } from '../../test/renderApp';
 import { WorkbenchShell } from './WorkbenchShell';
 
 const ALICE = { username: 'alice', password: 'demo-pass' };
 const POM = parseProjectRelativePath('pom.xml');
+const README = parseProjectRelativePath('README.md');
+const APP_TEST = parseProjectRelativePath('src/test/java/demo/AppTest.java');
+const RELOAD_MARKER = 'ensoai-stage4-reload-change';
 
 const ALICE_PROJECT: ProjectSummary = {
   id: ALICE_SEED_PROJECT_ID,
@@ -63,6 +78,52 @@ async function loadedRoot(): Promise<void> {
   expect(await screen.findByRole('treeitem', { name: 'pom.xml' })).toBeInTheDocument();
 }
 
+async function waitUntilWritesUnlocked(): Promise<void> {
+  await waitFor(() => {
+    expect(screen.getByRole('button', { name: 'New file' })).toBeEnabled();
+  });
+}
+
+async function loadedEditable(): Promise<void> {
+  await loadedRoot();
+  await waitUntilWritesUnlocked();
+}
+
+function filePanel(): HTMLElement {
+  const panel = document.getElementById('workbench-editor');
+  expect(panel).toBeInstanceOf(HTMLElement);
+  return panel as HTMLElement;
+}
+
+function runPanel(): HTMLElement {
+  const panel = document.getElementById('workbench-run-panel');
+  expect(panel).toBeInstanceOf(HTMLElement);
+  return panel as HTMLElement;
+}
+
+function expectPanelInteractive(panel: HTMLElement, interactive: boolean): void {
+  if (interactive) {
+    expect(panel.getAttribute('aria-hidden')).not.toBe('true');
+    expect(panel.hasAttribute('inert')).toBe(false);
+    expect(panel.className).not.toMatch(/\binvisible\b/);
+    expect(panel.className).not.toMatch(/\bpointer-events-none\b/);
+    return;
+  }
+  expect(panel.getAttribute('aria-hidden')).toBe('true');
+  expect(panel.hasAttribute('inert')).toBe(true);
+  expect(panel.className).toMatch(/\binvisible\b/);
+  expect(panel.className).toMatch(/\bpointer-events-none\b/);
+}
+
+async function seedLockingRun(): Promise<void> {
+  setRunScenario('disconnect');
+  const tree = await listDirectory(ALICE_SEED_PROJECT_ID, parseProjectDirectoryPath(''));
+  const result = mockStartRun(ALICE_SEED_PROJECT_ID, {
+    expectedWorkspaceRevision: tree.workspaceRevision,
+  });
+  expect(result.ok).toBe(true);
+}
+
 function queryKeyOf(call: unknown): unknown {
   if (typeof call !== 'object' || call === null || !('queryKey' in call)) {
     return undefined;
@@ -86,8 +147,32 @@ function requestUrl(input: unknown): string {
   return '';
 }
 
-function runsFetchCount(spy: { mock: { calls: unknown[][] } }): number {
-  return spy.mock.calls.filter((call) => /\/runs(?:\?|\/|$)/.test(requestUrl(call[0]))).length;
+function fetchMethod(call: unknown[]): string {
+  const init = call[1];
+  if (typeof init === 'object' && init !== null && 'method' in init && typeof (init as { method?: unknown }).method === 'string') {
+    return (init as { method: string }).method.toUpperCase();
+  }
+  return 'GET';
+}
+
+function fetchPathname(call: unknown[]): string {
+  try {
+    return new URL(requestUrl(call[0]), 'http://localhost').pathname;
+  } catch {
+    return '';
+  }
+}
+
+function runStartPostCount(spy: { mock: { calls: unknown[][] } }): number {
+  return spy.mock.calls.filter(
+    (call) => fetchMethod(call) === 'POST' && /\/runs$/.test(fetchPathname(call)),
+  ).length;
+}
+
+function runStopPostCount(spy: { mock: { calls: unknown[][] } }): number {
+  return spy.mock.calls.filter(
+    (call) => fetchMethod(call) === 'POST' && /\/runs\/[^/]+\/stop$/.test(fetchPathname(call)),
+  ).length;
 }
 
 const originalClipboardItem = globalThis.ClipboardItem;
@@ -143,23 +228,29 @@ describe('WorkbenchShell layout', () => {
     expect(within(sidebar).getByRole('button', { name: 'Collapse all folders' })).toBeInTheDocument();
   });
 
-  it('keeps File active and shows disabled Run and Terminal without fake panels', async () => {
+  it('keeps File selected, enables Run, and leaves Terminal disabled and unmounted', async () => {
     await authenticateAsAlice();
     renderShell();
-    await loadedRoot();
+    await loadedEditable();
 
     const panels = screen.getByRole('tablist', { name: 'Workbench panels' });
     expect(within(panels).getByRole('tab', { name: 'File' })).toHaveAttribute('aria-selected', 'true');
     const run = within(panels).getByRole('tab', { name: 'Run' });
     const terminal = within(panels).getByRole('tab', { name: 'Terminal' });
-    expect(run).toBeDisabled();
+    expect(run).toBeEnabled();
+    expect(run).toHaveAttribute('aria-selected', 'false');
     expect(terminal).toBeDisabled();
-    expect(run).toHaveAccessibleDescription(/STAGE_4_UNAVAILABLE/);
     expect(terminal).toHaveAccessibleDescription(/STAGE_4_UNAVAILABLE/);
+    expect(run).not.toHaveAccessibleDescription(/STAGE_4_UNAVAILABLE/);
+    expect(filePanel()).toBeInTheDocument();
+    expect(runPanel()).toBeInTheDocument();
+    expectPanelInteractive(filePanel(), true);
+    expectPanelInteractive(runPanel(), false);
     expect(screen.queryByTestId('terminal-spike-panel')).not.toBeInTheDocument();
     expect(screen.queryByTestId('run-spike-panel')).not.toBeInTheDocument();
     expect(screen.queryByText(/mock file tree/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/coming soon/i)).not.toBeInTheDocument();
+    expect(document.querySelector('.xterm')).toBeNull();
   });
 
   it('does not create document-level horizontal overflow at 1280px', async () => {
@@ -361,6 +452,7 @@ async function dirtyPomFromWorkbench(
   user: ReturnType<typeof userEvent.setup> = userEvent.setup(),
 ): Promise<void> {
   expect(await screen.findByRole('treeitem', { name: 'pom.xml' }, { timeout: 10_000 })).toBeInTheDocument();
+  await waitUntilWritesUnlocked();
   await user.click(screen.getByRole('treeitem', { name: 'pom.xml' }));
   expect(await screen.findByRole('tab', { name: /pom.xml/ })).toBeInTheDocument();
   const uri = toProjectModelUri(ALICE_SEED_PROJECT_ID, POM);
@@ -590,7 +682,7 @@ describe('WorkbenchShell unsaved leave and logout', () => {
 });
 
 describe('WorkbenchShell run preconditions', () => {
-  it('describes DIRTY_FILES on Run and Terminal while a buffer is dirty', async () => {
+  it('keeps the Run tab enabled while dirty and disables Start with DIRTY_FILES', async () => {
     const fetchSpy = vi.spyOn(globalThis, 'fetch');
     const user = userEvent.setup();
     await authenticateAsAlice();
@@ -599,15 +691,17 @@ describe('WorkbenchShell run preconditions', () => {
 
     const run = screen.getByRole('tab', { name: 'Run' });
     const terminal = screen.getByRole('tab', { name: 'Terminal' });
-    expect(run).toBeDisabled();
+    expect(run).toBeEnabled();
     expect(terminal).toBeDisabled();
-    expect(run).toHaveAccessibleDescription(/DIRTY_FILES/);
     expect(terminal).toHaveAccessibleDescription(/DIRTY_FILES/);
-    expect(run).not.toHaveAccessibleDescription(/STAGE_4_UNAVAILABLE/);
-    expect(runsFetchCount(fetchSpy)).toBe(0);
+    await user.click(run);
+    const start = await screen.findByRole('button', { name: 'Start run' });
+    expect(start).toBeDisabled();
+    expect(start).toHaveAttribute('title', runPreconditionDescription('DIRTY_FILES'));
+    expect(runStartPostCount(fetchSpy)).toBe(0);
   }, 15_000);
 
-  it('describes WRITE_PENDING on Run while a create is in flight and files are clean', async () => {
+  it('disables Start with WRITE_PENDING while a create is in flight and files are clean', async () => {
     const fetchSpy = vi.spyOn(globalThis, 'fetch');
     const user = userEvent.setup();
     let release = () => {};
@@ -623,7 +717,7 @@ describe('WorkbenchShell run preconditions', () => {
     await authenticateAsAlice();
     renderApp({ initialEntries: [`/projects/${ALICE_SEED_PROJECT_ID}`] });
     expect(await screen.findByRole('treeitem', { name: 'pom.xml' }, { timeout: 10_000 })).toBeInTheDocument();
-    expect(screen.getByRole('tab', { name: 'Run' })).toHaveAccessibleDescription(/STAGE_4_UNAVAILABLE/);
+    await waitUntilWritesUnlocked();
 
     await user.click(screen.getByRole('button', { name: 'New file' }));
     const name = await screen.findByLabelText('Name');
@@ -631,41 +725,50 @@ describe('WorkbenchShell run preconditions', () => {
     await user.type(name, 'pending.md');
     await user.keyboard('{Enter}');
 
+    await user.click(screen.getByRole('tab', { name: 'Run' }));
     await waitFor(() => {
-      expect(screen.getByRole('tab', { name: 'Run' })).toHaveAccessibleDescription(/WRITE_PENDING/);
+      expect(screen.getByRole('button', { name: 'Start run' })).toHaveAttribute(
+        'title',
+        runPreconditionDescription('WRITE_PENDING'),
+      );
     });
-    expect(screen.getByRole('tab', { name: 'Run' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Start run' })).toBeDisabled();
     expect(workspaceSessionStore.getState().dirtyPaths.size).toBe(0);
-    expect(runsFetchCount(fetchSpy)).toBe(0);
+    expect(runStartPostCount(fetchSpy)).toBe(0);
     release();
   }, 15_000);
 
-  it('describes REVISION_UNAVAILABLE on Run until the root tree revision arrives', async () => {
+  it('disables Start with REVISION_UNAVAILABLE until the root tree revision arrives', async () => {
     const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    const user = userEvent.setup();
     let release = () => {};
     const held = new Promise<void>((resolve) => {
       release = resolve;
     });
     server.use(
-      http.get('/api/v1/projects/:projectId/files/tree', async ({ request }) => {
-        const path = new URL(request.url).searchParams.get('path');
-        if (path === '') {
-          await held;
-        }
+      http.get('/api/v1/projects/:projectId/files/tree', async () => {
+        await held;
         return undefined;
       }),
     );
     await authenticateAsAlice();
+    queryClient.removeQueries({ queryKey: fileKeys.all(ALICE_SEED_PROJECT_ID) });
     renderApp({ initialEntries: [`/projects/${ALICE_SEED_PROJECT_ID}`] });
-    expect(await screen.findByRole('tab', { name: 'Run' })).toHaveAccessibleDescription(
-      /REVISION_UNAVAILABLE/,
-    );
-    expect(runsFetchCount(fetchSpy)).toBe(0);
+    expect(await screen.findByRole('tab', { name: 'Run' })).toBeEnabled();
+    const start = screen.getByRole('button', { name: 'Start run', hidden: true });
+    expect(start).toBeDisabled();
+    expect(start.getAttribute('title')).toMatch(/REVISION_UNAVAILABLE|AUTHORITY_LOADING/);
+    expect(screen.queryByRole('treeitem', { name: 'pom.xml' })).not.toBeInTheDocument();
+    expect(runStartPostCount(fetchSpy)).toBe(0);
 
     release();
     expect(await screen.findByRole('treeitem', { name: 'pom.xml' }, { timeout: 10_000 })).toBeInTheDocument();
-    expect(screen.getByRole('tab', { name: 'Run' })).toHaveAccessibleDescription(/STAGE_4_UNAVAILABLE/);
-    expect(runsFetchCount(fetchSpy)).toBe(0);
+    await waitUntilWritesUnlocked();
+    await user.click(screen.getByRole('tab', { name: 'Run' }));
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Start run' })).toBeEnabled();
+    });
+    expect(runStartPostCount(fetchSpy)).toBe(0);
   }, 15_000);
 });
 
@@ -696,7 +799,7 @@ describe('WorkbenchShell lock and conflict honesty', () => {
     expect(screen.getByRole('link', { name: 'Back to projects' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument();
     expect(getFileRequestCount('content', ALICE_SEED_PROJECT_ID, 'pom.xml')).toBe(contentCount);
-    expect(runsFetchCount(fetchSpy)).toBe(0);
+    expect(runStartPostCount(fetchSpy)).toBe(0);
   }, 15_000);
 
   it('keeps dirty content and does not claim a successful reload on revision conflict', async () => {
@@ -720,7 +823,7 @@ describe('WorkbenchShell lock and conflict honesty', () => {
       contentBefore,
     );
     expect(getFileRequestCount('content', ALICE_SEED_PROJECT_ID, 'pom.xml')).toBe(contentCount);
-    expect(runsFetchCount(fetchSpy)).toBe(0);
+    expect(runStartPostCount(fetchSpy)).toBe(0);
   }, 15_000);
 });
 
@@ -741,12 +844,425 @@ describe('WorkbenchPage lazy route and shell boundary', () => {
     }
   });
 
-  it('does not put physical identifiers or /runs into the shell', () => {
+  it('does not put physical identifiers, mock APIs, or terminal modules into the shell', () => {
     const source = readFileSync('src/components/shell/WorkbenchShell.tsx', 'utf8');
     expect(source).not.toMatch(/pvcName|podName|jobName|namespace|serviceAccount/);
-    expect(source).not.toMatch(/\/runs/);
+    expect(source).not.toMatch(/\/api\/v1\/.*runs/);
     expect(source).not.toMatch(/\/api\/v1\/session\/write-scenario/);
     expect(source).not.toMatch(/from ['"]@\/spike\//);
     expect(source).not.toMatch(/from ['"]@\/terminal\//);
+    expect(source).not.toMatch(/from ['"]@\/mocks\//);
+    expect(source).toMatch(/isWorkspaceEditable/);
+    expect(source).toMatch(/useRunAuthorityCoordinator/);
+    expect(source).not.toMatch(/phase === ['"]EDITABLE['"]/);
+  });
+
+  it('keys the workbench shell by project id so authority remounts on project change', () => {
+    const source = readFileSync('src/features/projects/WorkbenchPage.tsx', 'utf8');
+    expect(source).toMatch(/<WorkbenchShell key=\{project\.id\} project=\{project\} \/>/);
   });
 });
+
+describe('WorkbenchShell File and Run mount', () => {
+  it('keeps File and Run mounted, inerts the inactive panel, and restores File buffers', async () => {
+    const user = userEvent.setup();
+    await authenticateAsAlice();
+    renderShell();
+    await loadedEditable();
+    await user.click(screen.getByRole('treeitem', { name: 'pom.xml' }));
+    expect(await screen.findByRole('tab', { name: /pom.xml/ })).toBeInTheDocument();
+
+    const file = filePanel();
+    const run = runPanel();
+    expect(file.parentElement).toBe(run.parentElement);
+    expect(file.className).toMatch(/\babsolute\b/);
+    expect(run.className).toMatch(/\babsolute\b/);
+    expect(file.className).toMatch(/\binset-0\b/);
+    expect(run.className).toMatch(/\binset-0\b/);
+    expectPanelInteractive(file, true);
+    expectPanelInteractive(run, false);
+
+    await user.click(screen.getByRole('tab', { name: 'Run' }));
+    expect(screen.getByRole('tab', { name: 'Run' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('tab', { name: 'File' })).toHaveAttribute('aria-selected', 'false');
+    expectPanelInteractive(filePanel(), false);
+    expectPanelInteractive(runPanel(), true);
+    expect(await screen.findByRole('button', { name: 'Start run' })).toBeInTheDocument();
+    expect(screen.queryByRole('tab', { name: /pom.xml/ })).not.toBeInTheDocument();
+    expect(document.querySelector('.xterm')).toBeNull();
+    expect(screen.queryByTestId('terminal-spike-panel')).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('tab', { name: 'File' }));
+    expectPanelInteractive(filePanel(), true);
+    expectPanelInteractive(runPanel(), false);
+    expect(await screen.findByRole('tab', { name: /pom.xml/ })).toBeInTheDocument();
+    expect(workspaceSessionStore.getState().openPaths).toEqual([POM]);
+  }, 15_000);
+});
+
+describe('WorkbenchShell authority gate', () => {
+  it('locks editors and CRUD until the active query resolves, then unlocks', async () => {
+    const user = userEvent.setup();
+    let release = () => {};
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    server.use(
+      http.get('/api/v1/projects/:projectId/runs/active', async () => {
+        await held;
+        return HttpResponse.json({ run: null });
+      }),
+    );
+    await authenticateAsAlice();
+    renderShell();
+    await loadedRoot();
+
+    expect(screen.getByRole('button', { name: 'New file' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'New folder' })).toBeDisabled();
+    await user.click(screen.getByRole('treeitem', { name: 'pom.xml' }));
+    expect(await screen.findByRole('tab', { name: /pom.xml/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Refresh' })).toBeEnabled();
+    expect(screen.getByRole('link', { name: 'Back to projects' })).toBeInTheDocument();
+
+    release();
+    await waitUntilWritesUnlocked();
+    expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
+    expect(screen.getByRole('tab', { name: /pom.xml/ })).toBeInTheDocument();
+  }, 15_000);
+
+  it('stays locked on authority error and Retry refetches active', async () => {
+    const user = userEvent.setup();
+    let attempts = 0;
+    server.use(
+      http.get('/api/v1/projects/:projectId/runs/active', () => {
+        attempts += 1;
+        if (attempts === 1) {
+          return HttpResponse.json(
+            { code: 'FORBIDDEN', message: 'Access denied', traceId: 'trace-active-403' },
+            { status: 403 },
+          );
+        }
+        return HttpResponse.json({ run: null });
+      }),
+    );
+    await authenticateAsAlice();
+    renderShell();
+    await loadedRoot();
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent(/unable to load run authority/i);
+    expect(alert).not.toHaveTextContent('trace-active-403');
+    expect(screen.getByRole('button', { name: 'New file' })).toBeDisabled();
+    await user.click(screen.getByRole('treeitem', { name: 'src' }));
+    expect(await screen.findByRole('treeitem', { name: 'main' })).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Retry loading run authority' }));
+    await waitUntilWritesUnlocked();
+    expect(attempts).toBeGreaterThan(1);
+    expect(screen.queryByText(/unable to load run authority/i)).not.toBeInTheDocument();
+  }, 15_000);
+
+  it('relocks New file and Start after an authority refetch error from idle', async () => {
+    const user = userEvent.setup();
+    await authenticateAsAlice();
+    renderShell();
+    await loadedEditable();
+    expect(screen.getByRole('button', { name: 'New file' })).toBeEnabled();
+
+    server.use(
+      http.get('/api/v1/projects/:projectId/runs/active', () =>
+        HttpResponse.json(
+          { code: 'FORBIDDEN', message: 'Access denied', traceId: 'trace-active-403-after-idle' },
+          { status: 403 },
+        ),
+      ),
+    );
+    await queryClient.refetchQueries({ queryKey: runKeys.active(ALICE_SEED_PROJECT_ID) });
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(/unable to load run authority/i);
+    expect(screen.getByRole('button', { name: 'New file' })).toBeDisabled();
+    await user.click(screen.getByRole('tab', { name: 'Run' }));
+    const start = await screen.findByRole('button', { name: 'Start run' });
+    expect(start).toBeDisabled();
+  }, 15_000);
+});
+
+describe('WorkbenchShell run lock', () => {
+  it('locks every write surface while an active run is observed', async () => {
+    const user = userEvent.setup();
+    await authenticateAsAlice();
+    await seedLockingRun();
+    renderShell();
+    await loadedRoot();
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'New file' })).toBeDisabled();
+    });
+
+    await user.click(screen.getByRole('treeitem', { name: 'pom.xml' }));
+    expect(await screen.findByRole('tab', { name: /pom.xml/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'New folder' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Rename' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Delete' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Refresh' })).toBeEnabled();
+
+    await user.click(screen.getByRole('tab', { name: 'Run' }));
+    const start = await screen.findByRole('button', { name: 'Start run' });
+    await waitFor(() => {
+      expect(start).toHaveAttribute('title', runPreconditionDescription('RUN_ACTIVE'));
+    });
+    expect(start).toBeDisabled();
+  }, 15_000);
+
+  it('does not POST Stop on back or logout and still closes client sockets', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    const closeAll = vi.spyOn(connectionRegistry, 'closeAll');
+    const user = userEvent.setup();
+    await authenticateAsAlice();
+    await seedLockingRun();
+    renderApp({ initialEntries: [`/projects/${ALICE_SEED_PROJECT_ID}`] });
+    expect(await screen.findByRole('treeitem', { name: 'pom.xml' }, { timeout: 10_000 })).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'New file' })).toBeDisabled();
+    });
+
+    await user.click(screen.getByRole('link', { name: 'Back to projects' }));
+    expect(await screen.findByRole('article', { name: 'Alice Notebook' })).toBeInTheDocument();
+    expect(runStopPostCount(fetchSpy)).toBe(0);
+
+    await user.click(within(screen.getByRole('article', { name: 'Alice Notebook' })).getByRole('link', { name: /open/i }));
+    expect(await screen.findByRole('treeitem', { name: 'pom.xml' }, { timeout: 10_000 })).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'New file' })).toBeDisabled();
+    });
+
+    closeAll.mockClear();
+    await user.click(screen.getByRole('button', { name: 'Log out' }));
+    expect(await screen.findByLabelText('Username')).toBeInTheDocument();
+    expect(runStopPostCount(fetchSpy)).toBe(0);
+    expect(closeAll).toHaveBeenCalled();
+  }, 15_000);
+
+  it('returns 409 PROJECT_LOCKED for direct PUT/CRUD during an active Run and rejects stale start', async () => {
+    await authenticateAsAlice();
+    await seedLockingRun();
+    renderShell();
+    await loadedRoot();
+    const tree = await listDirectory(ALICE_SEED_PROJECT_ID, parseProjectDirectoryPath(''));
+
+    const saveError = await saveFileContent(ALICE_SEED_PROJECT_ID, POM, {
+      content: 'bypass-lock',
+      expectedWorkspaceRevision: tree.workspaceRevision,
+    }).catch((reason: unknown) => reason);
+    expect(saveError).toBeInstanceOf(ApiRequestError);
+    expect(saveError).toMatchObject({ status: 409, body: { code: 'PROJECT_LOCKED' } });
+
+    const createError = await createEntry(ALICE_SEED_PROJECT_ID, {
+      kind: 'file',
+      path: parseProjectRelativePath('bypass-lock.txt'),
+      expectedWorkspaceRevision: tree.workspaceRevision,
+    }).catch((reason: unknown) => reason);
+    expect(createError).toBeInstanceOf(ApiRequestError);
+    expect(createError).toMatchObject({ status: 409, body: { code: 'PROJECT_LOCKED' } });
+
+    const startError = await startRun(ALICE_SEED_PROJECT_ID, {
+      expectedWorkspaceRevision: parseWorkspaceRevision('stale-revision-not-current'),
+    }).catch((reason: unknown) => reason);
+    expect(startError).toBeInstanceOf(ApiRequestError);
+    expect(startError).toMatchObject({ status: 409, body: { code: 'WORKSPACE_REVISION_CONFLICT' } });
+  }, 15_000);
+});
+
+describe('WorkbenchShell workspace reload', () => {
+  async function waitUntilRunning(): Promise<NonNullable<ReturnType<typeof getActiveRun>>> {
+    await waitFor(() => {
+      expect(getActiveRun(ALICE_SEED_PROJECT_ID)?.state).toBe('RUNNING');
+    });
+    const run = getActiveRun(ALICE_SEED_PROJECT_ID);
+    expect(run).not.toBeNull();
+    return run as NonNullable<typeof run>;
+  }
+
+  async function lockShellWithActiveRun(): Promise<NonNullable<ReturnType<typeof getActiveRun>>> {
+    await seedLockingRun();
+    await queryClient.invalidateQueries({ queryKey: runKeys.active(ALICE_SEED_PROJECT_ID) });
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'New file' })).toBeDisabled();
+    });
+    return waitUntilRunning();
+  }
+
+  async function terminalizeRun(
+    run: NonNullable<ReturnType<typeof getActiveRun>>,
+    scenario?: 'disconnect' | 'reload-change',
+  ): Promise<void> {
+    if (scenario !== undefined) {
+      setRunScenario(scenario);
+    }
+    const result = transitionRun(ALICE_SEED_PROJECT_ID, run.id, {
+      state: 'SUCCEEDED',
+      terminationReason: 'BUILD_SUCCEEDED',
+      exitCode: 0,
+    });
+    expect(result.ok).toBe(true);
+    await queryClient.invalidateQueries({ queryKey: runKeys.active(ALICE_SEED_PROJECT_ID) });
+  }
+
+  it('keeps writes locked after a terminal run until workspace reload succeeds', async () => {
+    let holdReloads = false;
+    const held = deferredHold();
+    server.use(
+      http.get('/api/v1/projects/:projectId/files/tree', async ({ request }) => {
+        const path = new URL(request.url).searchParams.get('path') ?? '';
+        if (holdReloads && path === '') {
+          await held.promise;
+        }
+        return undefined;
+      }),
+    );
+    await authenticateAsAlice();
+    renderShell();
+    await loadedEditable();
+    act(() => {
+      workspaceSessionStore.getState().openFile(README);
+      workspaceSessionStore.getState().openFile(APP_TEST);
+    });
+    expect(await screen.findByRole('tab', { name: /README.md/ })).toBeInTheDocument();
+    expect(await screen.findByRole('tab', { name: /AppTest.java/ })).toBeInTheDocument();
+
+    const run = await lockShellWithActiveRun();
+    holdReloads = true;
+    await terminalizeRun(run);
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'New file' })).toBeDisabled();
+      expect(screen.getAllByText('Reloading workspace').length).toBeGreaterThan(0);
+    });
+    expect(screen.getByRole('button', { name: 'New folder' })).toBeDisabled();
+    expect(screen.getByRole('tab', { name: /README.md/ })).toBeInTheDocument();
+
+    held.resolve();
+    await waitUntilWritesUnlocked();
+    expect(screen.queryAllByText('Reloading workspace')).toHaveLength(0);
+    expect(screen.getByRole('tab', { name: /README.md/ })).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByRole('status', { name: 'Run state', hidden: true })).not.toHaveTextContent(
+        'RUNNING',
+      );
+    });
+    expect(screen.getByRole('status', { name: 'Run state', hidden: true })).toHaveTextContent(
+      /SUCCEEDED|Idle/,
+    );
+  }, 15_000);
+
+  it('retries a failed workspace reload from the Run toolbar', async () => {
+    const user = userEvent.setup();
+    let failReloads = false;
+    server.use(
+      http.get('/api/v1/projects/:projectId/files/tree', ({ request }) => {
+        const path = new URL(request.url).searchParams.get('path') ?? '';
+        if (failReloads && path === '') {
+          return HttpResponse.json(
+            { code: 'INTERNAL_ERROR', message: 'Mock reload tree failure', traceId: 'trace-reload' },
+            { status: 500 },
+          );
+        }
+        return undefined;
+      }),
+    );
+    await authenticateAsAlice();
+    renderShell();
+    await loadedEditable();
+    const run = await lockShellWithActiveRun();
+    failReloads = true;
+    await terminalizeRun(run);
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'New file' })).toBeDisabled();
+    });
+    await user.click(screen.getByRole('tab', { name: 'Run' }));
+    expect(await screen.findByText(/workspace reload failed/i)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Start run' })).toBeDisabled();
+
+    failReloads = false;
+    await user.click(screen.getByRole('button', { name: 'Retry workspace reload' }));
+    await user.click(screen.getByRole('tab', { name: 'File' }));
+    await waitUntilWritesUnlocked();
+    expect(screen.queryByText(/workspace reload failed/i)).not.toBeInTheDocument();
+  }, 15_000);
+
+  it('does not completeReload on back or logout while reload is failed', async () => {
+    const complete = vi.spyOn(RunAuthorityCoordinator.prototype, 'completeReload');
+    const user = userEvent.setup();
+    let failReloads = false;
+    server.use(
+      http.get('/api/v1/projects/:projectId/files/tree', ({ request }) => {
+        const path = new URL(request.url).searchParams.get('path') ?? '';
+        if (failReloads && path === '') {
+          return HttpResponse.json(
+            { code: 'INTERNAL_ERROR', message: 'Mock reload tree failure', traceId: 'trace-reload-nav' },
+            { status: 500 },
+          );
+        }
+        return undefined;
+      }),
+    );
+    await authenticateAsAlice();
+    renderApp({ initialEntries: [`/projects/${ALICE_SEED_PROJECT_ID}`] });
+    expect(await screen.findByRole('treeitem', { name: 'pom.xml' }, { timeout: 10_000 })).toBeInTheDocument();
+    await waitUntilWritesUnlocked();
+    const run = await lockShellWithActiveRun();
+    failReloads = true;
+    await terminalizeRun(run);
+    await user.click(screen.getByRole('tab', { name: 'Run' }));
+    expect(await screen.findByRole('button', { name: 'Retry workspace reload' })).toBeInTheDocument();
+    expect(complete).not.toHaveBeenCalled();
+
+    failReloads = false;
+    await user.click(screen.getByRole('link', { name: 'Back to projects' }));
+    expect(await screen.findByRole('article', { name: 'Alice Notebook' })).toBeInTheDocument();
+    expect(complete).not.toHaveBeenCalled();
+
+    await user.click(within(screen.getByRole('article', { name: 'Alice Notebook' })).getByRole('link', { name: /open/i }));
+    expect(await screen.findByRole('treeitem', { name: 'pom.xml' }, { timeout: 10_000 })).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Log out' }));
+    expect(await screen.findByLabelText('Username')).toBeInTheDocument();
+    expect(complete).not.toHaveBeenCalled();
+  }, 15_000);
+
+  it('applies reload-change file add/modify/delete before unlocking', async () => {
+    const user = userEvent.setup();
+    await authenticateAsAlice();
+    renderShell();
+    await loadedEditable();
+    act(() => {
+      workspaceSessionStore.getState().openFile(README);
+      workspaceSessionStore.getState().openFile(APP_TEST);
+    });
+    expect(await screen.findByRole('tab', { name: /README.md/ })).toBeInTheDocument();
+    expect(await screen.findByRole('tab', { name: /AppTest.java/ })).toBeInTheDocument();
+    const beforeRevision = queryClient.getQueryData(fileKeys.revision(ALICE_SEED_PROJECT_ID));
+
+    const run = await lockShellWithActiveRun();
+    await terminalizeRun(run, 'reload-change');
+    await waitUntilWritesUnlocked();
+
+    expect(screen.getByRole('tab', { name: /README.md/ })).toBeInTheDocument();
+    expect(screen.queryByRole('tab', { name: /AppTest.java/ })).not.toBeInTheDocument();
+    expect(queryClient.getQueryData(fileKeys.content(ALICE_SEED_PROJECT_ID, README))).toEqual(
+      expect.objectContaining({ content: expect.stringContaining(RELOAD_MARKER) }),
+    );
+    expect(queryClient.getQueryData(fileKeys.revision(ALICE_SEED_PROJECT_ID))).not.toBe(beforeRevision);
+    const docs = await listDirectory(ALICE_SEED_PROJECT_ID, parseProjectDirectoryPath('docs'));
+    expect(docs.entries.map((entry) => entry.name)).toContain('run-output.md');
+    await user.click(screen.getByRole('treeitem', { name: 'docs' }));
+    expect(await screen.findByRole('treeitem', { name: 'run-output.md' })).toBeInTheDocument();
+  }, 15_000);
+});
+
+function deferredHold(): { promise: Promise<void>; resolve: () => void } {
+  let resolve = () => {};
+  const promise = new Promise<void>((next) => {
+    resolve = next;
+  });
+  return { promise, resolve };
+}

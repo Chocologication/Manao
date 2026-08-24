@@ -136,11 +136,11 @@ async function authenticateAsAlice(): Promise<void> {
   authSession.authenticate(response);
 }
 
-function renderWorkspace(projectId = ALICE_SEED_PROJECT_ID) {
+function renderWorkspace(projectId = ALICE_SEED_PROJECT_ID, writesLocked = false) {
   workspaceSessionStore.getState().activateProject(projectId);
   return render(
     <AppProviders>
-      <EditorWorkspace projectId={projectId} />
+      <EditorWorkspace projectId={projectId} writesLocked={writesLocked} />
     </AppProviders>,
   );
 }
@@ -704,7 +704,7 @@ describe('EditorWorkspace model and request cleanup', () => {
     workspaceSessionStore.getState().activateProject(BOB_SEED_PROJECT_ID);
     rerender(
       <AppProviders>
-        <EditorWorkspace projectId={BOB_SEED_PROJECT_ID} />
+        <EditorWorkspace projectId={BOB_SEED_PROJECT_ID} writesLocked={false} />
       </AppProviders>,
     );
 
@@ -724,7 +724,7 @@ describe('EditorWorkspace model and request cleanup', () => {
     workspaceSessionStore.getState().activateProject(BOB_SEED_PROJECT_ID);
     rerender(
       <AppProviders>
-        <EditorWorkspace projectId={BOB_SEED_PROJECT_ID} />
+        <EditorWorkspace projectId={BOB_SEED_PROJECT_ID} writesLocked={false} />
       </AppProviders>,
     );
     release();
@@ -744,7 +744,7 @@ describe('EditorWorkspace model and request cleanup', () => {
       .mockReturnValue(unregister);
     const { unmount } = render(
       <AppProviders>
-        <EditorWorkspace projectId={ALICE_SEED_PROJECT_ID} />
+        <EditorWorkspace projectId={ALICE_SEED_PROJECT_ID} writesLocked={false} />
       </AppProviders>,
     );
 
@@ -1535,5 +1535,106 @@ describe('EditorWorkspace unsaved tab close', () => {
     expect(workspaceSessionStore.getState().openPaths).toEqual([]);
     expect(workspaceBufferRegistry.get(ALICE_SEED_PROJECT_ID, POM)).toBeUndefined();
     expect(authSession.getSnapshot().status).toBe('authenticated');
+  });
+});
+
+describe('EditorWorkspace run lock', () => {
+  it('sets Monaco readOnly/domReadOnly, keeps buffer text, and disables Save when writesLocked', async () => {
+    await authenticateAsAlice();
+    const { rerender } = renderWorkspace();
+    openFile(POM);
+    await screen.findByTestId('mock-editor');
+    const original = monaco.editor.getModel(toProjectModelUri(ALICE_SEED_PROJECT_ID, POM))?.getValue();
+    expect(original).toBeTruthy();
+    editMonacoModel(ALICE_SEED_PROJECT_ID, POM, '<project locked />');
+    await waitFor(() => {
+      expect(screen.getByRole('tab', { name: /pom.xml/ })).toHaveTextContent('*');
+    });
+    expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled();
+
+    rerender(
+      <AppProviders>
+        <EditorWorkspace projectId={ALICE_SEED_PROJECT_ID} writesLocked />
+      </AppProviders>,
+    );
+
+    expect(recordedEditor.last?.options).toEqual({
+      readOnly: true,
+      domReadOnly: true,
+      automaticLayout: true,
+      scrollBeyondLastLine: false,
+    });
+    expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
+    expect(monaco.editor.getModel(toProjectModelUri(ALICE_SEED_PROJECT_ID, POM))?.getValue()).toBe(
+      '<project locked />',
+    );
+    expect(workspaceBufferRegistry.get(ALICE_SEED_PROJECT_ID, POM)?.isDirty()).toBe(true);
+
+    recordedEditor.saveHandler?.();
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(screen.queryByRole('status', { name: 'Saved' })).not.toBeInTheDocument();
+    expect(workspaceBufferRegistry.get(ALICE_SEED_PROJECT_ID, POM)?.isDirty()).toBe(true);
+  });
+
+  it('marks the plain-text textarea readOnly and ignores edits when writesLocked', async () => {
+    await authenticateAsAlice();
+    renderWorkspace(ALICE_SEED_PROJECT_ID, true);
+    openFile(LARGE_NOTES);
+
+    const textarea = await screen.findByRole('textbox');
+    const original = (textarea as HTMLTextAreaElement).value;
+    expect(textarea).toHaveAttribute('readonly');
+    expect(original.length).toBeGreaterThan(0);
+    fireEvent.change(textarea, { target: { value: `${original} locked-edit` } });
+    expect(workspaceBufferRegistry.get(ALICE_SEED_PROJECT_ID, LARGE_NOTES)?.isDirty()).toBe(false);
+    expect(workspaceBufferRegistry.get(ALICE_SEED_PROJECT_ID, LARGE_NOTES)?.snapshot().content).toBe(
+      original,
+    );
+    expect(JSON.stringify(workspaceSessionStore.getState())).not.toContain('locked-edit');
+  });
+
+  it('disables dirty-close Save while Discard and Cancel stay available', async () => {
+    const user = userEvent.setup();
+    await authenticateAsAlice();
+    const { rerender } = renderWorkspace();
+    openFile(POM);
+    await screen.findByTestId('mock-editor');
+    editMonacoModel(ALICE_SEED_PROJECT_ID, POM, '<project dirty-close />');
+    await waitFor(() => {
+      expect(screen.getByRole('tab', { name: /pom.xml/ })).toHaveTextContent('*');
+    });
+
+    await user.click(screen.getByRole('button', { name: 'Close pom.xml' }));
+    expect(await screen.findByRole('dialog', { name: 'Unsaved changes' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: SAVE_AND_CLOSE_LABEL })).toBeEnabled();
+
+    rerender(
+      <AppProviders>
+        <EditorWorkspace projectId={ALICE_SEED_PROJECT_ID} writesLocked />
+      </AppProviders>,
+    );
+
+    expect(screen.getByRole('button', { name: SAVE_AND_CLOSE_LABEL })).toBeDisabled();
+    expect(screen.getByRole('button', { name: DISCARD_LABEL })).toBeEnabled();
+    expect(screen.getByRole('button', { name: CANCEL_LABEL })).toBeEnabled();
+    await user.click(screen.getByRole('button', { name: CANCEL_LABEL }));
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: /pom.xml/ })).toHaveTextContent('*');
+  });
+
+  it('keeps tab selection and blocked download available when writesLocked', async () => {
+    const user = userEvent.setup();
+    ensureObjectUrlFns();
+    await authenticateAsAlice();
+    renderWorkspace(ALICE_SEED_PROJECT_ID, true);
+    openFile(POM);
+    openFile(LOGO);
+    expect(await screen.findByRole('button', { name: 'Download' })).toBeEnabled();
+    expect(screen.queryByRole('button', { name: 'Save' })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('tab', { name: /pom.xml/ }));
+    expect(workspaceSessionStore.getState().activePath).toBe(POM);
+    expect(await screen.findByTestId('mock-editor')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
   });
 });

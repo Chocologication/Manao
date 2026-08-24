@@ -12,12 +12,14 @@ export function WritableMonacoEditor({
   path,
   content,
   language,
+  readOnly,
   onSave,
 }: {
   projectId: string;
   path: ProjectRelativePath;
   content: string;
   language: string;
+  readOnly: boolean;
   onSave: () => void;
 }) {
   const uri = toProjectModelUri(projectId, path);
@@ -57,8 +59,8 @@ export function WritableMonacoEditor({
         });
       }}
       options={{
-        readOnly: false,
-        domReadOnly: false,
+        readOnly,
+        domReadOnly: readOnly,
         automaticLayout: true,
         scrollBeyondLastLine: false,
       }}

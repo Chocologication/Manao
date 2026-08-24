@@ -44,4 +44,29 @@ describe('ConnectionRegistry', () => {
     expect(throwing).toHaveBeenCalledTimes(1);
     expect(remaining).toHaveBeenCalledTimes(1);
   });
+
+  it('unregister is idempotent so a transport dispose can always unregister', () => {
+    const registry = new ConnectionRegistry();
+    const close = vi.fn();
+    const unregister = registry.register(close);
+    unregister();
+    unregister();
+    registry.closeAll();
+    expect(close).not.toHaveBeenCalled();
+  });
+
+  it('closeAll still runs remaining closers when one closer unregisters itself', () => {
+    const registry = new ConnectionRegistry();
+    const remaining = vi.fn();
+    let unregisterSelf: () => void = () => {};
+    const self = vi.fn(() => {
+      unregisterSelf();
+    });
+    unregisterSelf = registry.register(self);
+    registry.register(remaining);
+
+    expect(() => registry.closeAll()).not.toThrow();
+    expect(self).toHaveBeenCalledTimes(1);
+    expect(remaining).toHaveBeenCalledTimes(1);
+  });
 });

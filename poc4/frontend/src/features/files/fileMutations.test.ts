@@ -15,6 +15,7 @@ import { resetAppRuntime } from '../../test/renderApp';
 import { useWorkspaceSession } from '../editor/workspaceSession';
 import {
   fileMutationErrorMessage,
+  projectAuthorityScope,
   useCreateEntryMutation,
   useDeleteEntryMutation,
   useRenameEntryMutation,
@@ -29,7 +30,7 @@ const POM = parseProjectRelativePath('pom.xml');
 const README = parseProjectRelativePath('README.md');
 const NOTES = parseProjectRelativePath('notes.md');
 const README_NEXT = parseProjectRelativePath('GUIDE.md');
-const WRITE_SCOPE = `project-file-write:${ALICE_SEED_PROJECT_ID}`;
+const WRITE_SCOPE = `project-authority:${ALICE_SEED_PROJECT_ID}`;
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => {
@@ -109,7 +110,7 @@ describe('missing workspace revision', () => {
 });
 
 describe('serialized project file mutations', () => {
-  it('uses project-file-write scope and retry false for save/create/rename/delete', async () => {
+  it('uses project-authority scope and retry false for save/create/rename/delete', async () => {
     await authenticateAsAlice();
     await seedRootRevision();
 
@@ -151,6 +152,51 @@ describe('serialized project file mutations', () => {
     await hooks.result.current.remove.mutateAsync({ path: NOTES });
     expect(lastMutation().options.scope).toEqual({ id: WRITE_SCOPE });
     expect(lastMutation().options.retry).toBe(false);
+  });
+
+  it('serializes same-project writes and keeps other project scopes independent', async () => {
+    await authenticateAsAlice();
+    await seedRootRevision();
+    expect(projectAuthorityScope(ALICE_SEED_PROJECT_ID)).toEqual({ id: WRITE_SCOPE });
+    expect(projectAuthorityScope('other-project').id).not.toBe(WRITE_SCOPE);
+
+    let releasePut = () => {};
+    const putGate = new Promise<void>((resolve) => {
+      releasePut = resolve;
+    });
+    let puts = 0;
+    let creates = 0;
+    server.use(
+      http.put('/api/v1/projects/:projectId/files/content', async () => {
+        puts += 1;
+        await putGate;
+        return undefined;
+      }),
+      http.post('/api/v1/projects/:projectId/entries', () => {
+        creates += 1;
+        return undefined;
+      }),
+    );
+
+    const buffer = registerPlain(POM, '<project />');
+    const plain = buffer as typeof buffer & { replace(content: string): void };
+    plain.replace('<project edited />');
+    const { result } = renderHook(
+      () => ({
+        save: useSaveFileMutation(ALICE_SEED_PROJECT_ID),
+        create: useCreateEntryMutation(ALICE_SEED_PROJECT_ID),
+      }),
+      { wrapper: AppProviders },
+    );
+
+    result.current.save.mutate({ path: POM, snapshot: buffer.snapshot() });
+    await waitFor(() => expect(puts).toBe(1));
+    result.current.create.mutate({ kind: 'file', path: NOTES });
+    await sleep(40);
+    expect(creates).toBe(0);
+
+    releasePut();
+    await waitFor(() => expect(creates).toBe(1));
   });
 
   it('cancels in-flight reads before write and does not optimistically mutate tree or dirty', async () => {

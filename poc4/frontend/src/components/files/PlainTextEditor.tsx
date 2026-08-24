@@ -18,12 +18,14 @@ export function PlainTextEditor({
   path,
   metadata,
   content,
+  readOnly,
   onSave,
 }: {
   projectId: string;
   path: ProjectRelativePath;
   metadata: FileMetadata;
   content: string;
+  readOnly: boolean;
   onSave: () => void;
 }) {
   const [buffer, setBuffer] = useState(() => currentPlainTextBuffer(projectId, path));
@@ -41,6 +43,9 @@ export function PlainTextEditor({
   }, [projectId, path, content]);
 
   function handleKeyDown(event: KeyboardEvent<HTMLTextAreaElement>): void {
+    if (readOnly) {
+      return;
+    }
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') {
       event.preventDefault();
       onSave();
@@ -59,9 +64,13 @@ export function PlainTextEditor({
           key={`${projectId}:${path}:plain-text`}
           wrap="off"
           spellCheck={false}
+          readOnly={readOnly}
           defaultValue={current.snapshot().content}
           aria-label={metadata.name}
           onChange={(event) => {
+            if (readOnly) {
+              return;
+            }
             replacePlainTextContent(projectId, path, event.target.value);
           }}
           onKeyDown={handleKeyDown}

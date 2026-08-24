@@ -1,6 +1,7 @@
 import '@testing-library/jest-dom/vitest';
 import { afterAll, afterEach, beforeAll, vi } from 'vitest';
 import { server } from '../mocks/node';
+import { resetLogTickets } from '../mocks/runSocket';
 import { resetMockState } from '../mocks/state';
 
 if (typeof document.queryCommandSupported !== 'function') {
@@ -61,5 +62,6 @@ beforeAll(() => server.listen({ onUnhandledRequest: 'error' }));
 afterEach(() => {
   server.resetHandlers();
   resetMockState();
+  resetLogTickets();
 });
 afterAll(() => server.close());

@@ -52,11 +52,11 @@ async function authenticateAsAlice(): Promise<void> {
   authSession.authenticate(response);
 }
 
-function renderTree(projectId = ALICE_SEED_PROJECT_ID) {
+function renderTree(projectId = ALICE_SEED_PROJECT_ID, writesLocked = false) {
   workspaceSessionStore.getState().activateProject(projectId);
   return render(
     <AppProviders>
-      <FileTree projectId={projectId} />
+      <FileTree projectId={projectId} writesLocked={writesLocked} />
     </AppProviders>,
   );
 }
@@ -1309,5 +1309,41 @@ describe('FileTree rename and delete commands', () => {
 
     release();
     expect(await screen.findByRole('treeitem', { name: 'GUIDE.md' })).toBeInTheDocument();
+  });
+});
+
+describe('FileTree run lock', () => {
+  it('disables New, Rename and Delete when writesLocked without blocking expand, select, refresh or collapse', async () => {
+    const user = userEvent.setup();
+    const bodies = captureCreateBodies();
+    await authenticateAsAlice();
+    renderTree(ALICE_SEED_PROJECT_ID, true);
+    await loadedRoot();
+
+    const newFile = screen.getByRole('button', { name: 'New file' });
+    const newFolder = screen.getByRole('button', { name: 'New folder' });
+    expect(newFile).toBeDisabled();
+    expect(newFolder).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Refresh' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Collapse all folders' })).toBeEnabled();
+
+    await user.click(screen.getByRole('treeitem', { name: 'pom.xml' }));
+    expect(workspaceSessionStore.getState().selectedPath).toBe(POM);
+    expect(workspaceSessionStore.getState().openPaths).toEqual([POM]);
+    expect(screen.getByRole('button', { name: 'Rename' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Delete' })).toBeDisabled();
+
+    await user.click(newFile);
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(bodies).toEqual([]);
+
+    const srcCount = getFileRequestCount('tree', ALICE_SEED_PROJECT_ID, 'src');
+    await user.click(screen.getByRole('treeitem', { name: 'src' }));
+    expect(await screen.findByRole('treeitem', { name: 'main' })).toBeInTheDocument();
+    expect(getFileRequestCount('tree', ALICE_SEED_PROJECT_ID, 'src')).toBe(srcCount + 1);
+
+    await user.click(screen.getByRole('button', { name: 'Collapse all folders' }));
+    expect(screen.queryByRole('treeitem', { name: 'main' })).not.toBeInTheDocument();
+    expect(screen.getByRole('treeitem', { name: 'src' })).toHaveAttribute('aria-expanded', 'false');
   });
 });

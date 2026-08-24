@@ -24,7 +24,7 @@ export function WorkbenchPage({ project }: { project: ProjectSummary }) {
     useWorkspaceSession.getState().activateProject(projectId);
   }, [projectId, queryClient]);
 
-  return <WorkbenchShell project={project} />;
+  return <WorkbenchShell key={project.id} project={project} />;
 }
 
 export default WorkbenchPage;

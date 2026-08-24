@@ -1,10 +1,10 @@
-# EnsoAI Stage 3 Writable Workbench
+# EnsoAI Stage 4 Run And Logs
 
-阶段 3 是纯浏览器前端：在阶段 1 的登录与项目生命周期、阶段 2 的只读工作台之上，提供 `READY` 项目的可写工作台（可编辑 Monaco / 大 Markdown 纯文本、显式保存与 `Ctrl+S`、workspace revision、文件与目录 CRUD、dirty 守卫）。不连接真实 Spring Boot、MySQL、PVC、Pod 或 Kubernetes。MSW 只在 mock 模式与自动化测试中启用。本目录一律使用 pnpm，禁止 npm。
+阶段 4 是纯浏览器前端：在阶段 3 可写工作台之上，提供服务器权威的 Run 与日志闭环（固定 `mvn clean test`、停止、活动 Run 恢复、运行期编辑锁、终态后强制重载工作区、最近运行列表、同源 WebSocket replay/live、5 MiB 截断窗口）。不连接真实 Spring Boot、MySQL、Kubernetes Job、PVC、Pod 或集群。MSW 只在 mock 模式与自动化测试中启用。本目录一律使用 pnpm，禁止 npm。
 
 工作目录：`poc4/frontend`。需要 Node.js >= 20 与 pnpm 10。`pnpm test:e2e:channels` 还需要本机已安装 Chrome 与 Edge。
 
-所有文件授权、路径规范化、symlink escape、项目所有权、revision 冲突与锁定校验目前只是 **mock contract verified**，在真实后端存在之前不能写成已验证。
+所有 Run 授权、ticket、日志持久化、5 MiB 淘汰、刷新恢复目前只是 **mock contract verified**，在真实后端存在之前不能写成已验证。刷新/重进工作台通过 `ensoai.mock.run-scenario.v1` 再水合，证明的是 **浏览器恢复合同**，不是 MySQL 或后端重启。
 
 ## 工作命令
 
@@ -14,12 +14,13 @@
 | `pnpm typecheck` | `tsc -b --pretty false` |
 | `pnpm test` | Vitest 单测 |
 | `pnpm test:boundary` | 浏览器边界检查（禁止 Electron / Node PTY / 本机绝对路径 / 阶段 0 泄漏） |
-| `pnpm build` | 生产构建。不含 MSW worker、mock 密码、mock expire / large-files / write-scenario 路径、`127.0.0.1:4174`、`stage0.html`。项目路由懒加载工作台与五个 Monaco Worker |
+| `pnpm build` | 生产构建。不含 MSW worker、mock 密码、mock expire / large-files / write-scenario / run-scenario 路径、`127.0.0.1:4174`、`stage0.html`。项目路由懒加载工作台与五个 Monaco Worker |
 | `pnpm build:mock` | mock 生产构建（含 `stage0.html` 与 MSW worker，供 E2E / 本地演示） |
-| `pnpm test:e2e` | Playwright Chromium（忽略真实字节大文件与大写入用例） |
+| `pnpm test:e2e` | Playwright Chromium（忽略真实字节大文件、大写入与大日志用例） |
 | `pnpm test:e2e:channels` | Playwright 本机 Chrome 与 Edge |
 | `pnpm test:e2e:large-files` | 仅 `chromium-large-files`：真实约 20 MiB 正文（需先 `POST /api/v1/session/large-files`，该路径只存在于 mock） |
 | `pnpm test:e2e:large-writes` | 仅 `chromium-large-writes`：真实 `20 MiB + 1` Markdown 写入（180 秒上限；需 mock-only `large-files`） |
+| `pnpm test:e2e:large-logs` | 仅 `chromium-large-logs`：真实 `5 MiB + 1 MiB` UTF-8 日志流（180 秒上限；需 mock-only `run-scenario` 的 `large-log`） |
 
 `pnpm test:e2e*` 会先执行 `pnpm build:mock` 并覆盖 `dist/`。扫描生产排除项之前必须再跑一次 `pnpm build`。
 
@@ -32,37 +33,27 @@
 | `alice` | `demo-pass` |
 | `bob` | `demo-pass` |
 
-强制 401 使用 mock-only `POST /api/v1/session/expire`。真实约 20 MiB 正文使用 mock-only `POST /api/v1/session/large-files`。写失败场景使用 mock-only `POST /api/v1/session/write-scenario`（`normal` / `delayed` / `locked` / `conflict` / `failure`）。这三条路径都不得进入生产 `dist`。
+强制 401 使用 mock-only `POST /api/v1/session/expire`。真实约 20 MiB 正文使用 mock-only `POST /api/v1/session/large-files`。写失败场景使用 mock-only `POST /api/v1/session/write-scenario`（`normal` / `delayed` / `locked` / `conflict` / `failure`）。Run 场景使用 mock-only `POST /api/v1/session/run-scenario`（`success` / `failure` / `timeout` / `recovery` / `delayed-start` / `gap` / `disconnect` / `large-log` / `reload-change`）。这些路径都不得进入生产 `dist`。
 
-## 可写模式
+## mock-only Run / 日志合同
 
-打开文件始终先请求 metadata。`renderMode` / `blockReason` / `sizeBytes` / 编码由服务端（当前为 MSW）决定，浏览器不得按扩展名自行放宽。
+进入 `READY` 项目后，先查询权威 active Run，再决定工作台是否可编辑。Start 只发送 `{ expectedWorkspaceRevision }`，HTTP `202`，不接受浏览器提供的命令、镜像或资源配置。每项目一个活动 Run；重复启动返回 `409 RUN_ALREADY_ACTIVE` 后必须重新获取权威 active state。
 
-| 模式 | 何时 | 查看器 | 是否请求正文 | 是否可写 |
-|---|---|---|---|---|
-| `MONACO_TEXT` | 普通文本与 Java 等 `<= 20 MiB`；Markdown `<= 20 MiB` | 可编辑 Monaco；Save 与 `Ctrl+S` / `Cmd+S` | 是 | 是 |
-| `PLAIN_TEXT` | Markdown `20 MiB < size <= 50 MiB` | 可编辑 `<textarea>`，不创建 Monaco model | 是 | 是 |
-| `BLOCKED` | 二进制、非 UTF-8、Markdown `> 50 MiB`、非 Markdown `> 20 MiB` | 说明 + Download；正文请求数为零；无 Save | 否 | 否 |
+Stop 只针对当前 owned active Run，确认对话框默认焦点在 Cancel；请求幂等，`STOPPING` / 网络不确定期间保持锁定。WebSocket 断开、ticket 失败或日志 complete 都不能解锁。只有权威 active query 到达终态并且 workspace reload 成功后才解锁编辑。
 
-路径必须是项目内正斜杠相对路径；根目录只用空字符串。前端 `pathPolicy` 只拒绝明显错误输入，不能替代后端规范化、symlink escape 和所有权校验。越过 UI 的 PUT / CRUD 仍由 mock handler 按 owner、READY、path、类型、大小和 revision 拒绝。
+日志 ticket 通过 Bearer HTTP 获取（约 30 秒、单次使用、绑定用户/project/run）。同源 WebSocket 路径为 `/api/v1/ws/run-logs?ticket=`。**主 JWT 不得进入 WebSocket URL、frame、DOM 或截图。** replay 后再 live；`seq` 重复被忽略，缺口会换新 ticket 并从 last applied seq 重放。
 
-## workspace revision
+每个 Run 只保留最近 5 MiB UTF-8 窗口。服务端淘汰后下发 `truncated` 与 `evictedBytes`；客户端不得伪造淘汰事实。`large-log` 场景会推送真实 `>= 5 MiB + 1 MiB` 字节（每块 `<= 64 KiB`），中途断开后仍继续追加，重连 replay 补齐，然后完成。
 
-初次根目录响应给出非空 opaque `workspaceRevision`。每次保存、创建、重命名、删除都携带当前 revision；成功响应推进 revision。客户端只做完全相等比较，不得解析、排序、加一或从时间推断新旧。`409 WORKSPACE_REVISION_CONFLICT` 与 `409 PROJECT_LOCKED` 不得显示为保存成功，且必须保留 dirty 缓冲区。
+终态后强制清理文件 cache/models/buffers，并重新读取树和原打开文件；成功前不解锁。`reload-change` 会在终态前改写 `README.md`、新增 `docs/run-output.md`、删除 `AppTest.java`。File 与 Run 面板一直挂载；Terminal tab 继续 disabled，本阶段不接入 xterm / PTY。
 
-## dirty 守卫
+## 阶段 4 边界
 
-标签上的 `*` 是文本标记，不只靠颜色。活动文件 dirty 时 Save 可用；保存中继续编辑不得在响应后错误清 dirty。关闭 dirty 标签提供 Save and close / Discard / Cancel；返回项目列表与 logout 提供 Discard and leave / Cancel。取消不改变标签、模型、认证或路由。浏览器 `beforeunload` 仅在存在 dirty 时安装。当前 token `401` 仍按既有安全规则清会话，不弹出可取消的 dirty 对话框。
+包含：权威 active Run、Start/Stop、运行期 File 锁、终态强制 reload、最近 Run 分页、ticket 安全 WebSocket、5 MiB 截断、断线补拉、Chromium/Chrome/Edge E2E 与真实超 5 MiB 日志压力。
 
-dirty 文件或其后代目录禁止重命名/删除，须先保存或丢弃。非空目录删除会二次确认，服务端仍可返回 `DIRECTORY_NOT_EMPTY`。
+不包含：真实 Job / MySQL / Kubernetes / 后端重启恢复 / Terminal。真实 `mvn clean test`、30 分钟超时、CPU/内存限制、Pod 日志、跨用户授权与七天定时删除都属于后续阶段。阶段 0 xterm 只作为 mock 构建里的独立 `/stage0.html` Spike 存在。
 
-## 阶段 3 边界
-
-包含：`READY` 项目可写工作台、根目录后懒加载目录、隐藏文件可见、多标签可写编辑、metadata 门闩、受认证 Blob 下载、显式保存与 revision、文件/目录创建、同目录重命名、确认删除、logout / 当前会话 401 清空工作台、生产懒加载 Monaco Worker。
-
-不包含：真实 Spring Boot / JWT 签名 / MySQL、真实 PVC / 工作区 Pod / 文件代理、拖拽上传、Git、搜索、跨目录移动、自动保存、Run / 日志 / 真实 PTY、工作台状态持久化。Run 与 Terminal 在生产 Shell 中可见但禁用。`canRequestRun` 恒为 false。Run 的 disabled 原因可区分 dirty 与 Stage 4 未接入，但 **Run 权威与运行锁属于阶段 4**，本阶段不得写成已交付。阶段 0 xterm 只作为 mock 构建里的独立 `/stage0.html` Spike 存在。
-
-跨用户 403、路径拒绝、锁定、冲突和大文件门闩只验证前端契约与 mock handler（**mock contract verified**），不能写成真实 PVC 隔离、symlink 防护、原子写入或下载授权已通过。
+跨用户 403、revision 冲突、锁定和大日志窗口只验证前端契约与 mock handler（**mock contract verified**），不能写成真实 Kubernetes 单 Job 锁、MySQL 先持久化后推送或后端重启恢复已通过。
 
 ## 已知体积问题
 

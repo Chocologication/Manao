@@ -214,7 +214,13 @@ function resolveTabbablePath(
 const iconButtonClassName =
   'inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none disabled:pointer-events-none disabled:opacity-64';
 
-export function FileTree({ projectId }: { projectId: string }) {
+export function FileTree({
+  projectId,
+  writesLocked,
+}: {
+  projectId: string;
+  writesLocked: boolean;
+}) {
   const queryClient = useQueryClient();
   const rootQuery = useDirectoryTreeQuery(projectId, parseProjectDirectoryPath(''));
   const selectedPath = useWorkspaceSession((state) => state.selectedPath);
@@ -243,7 +249,7 @@ export function FileTree({ projectId }: { projectId: string }) {
   const renameLabel = dirtyBlock ? DIRTY_RENAME_REASON : 'Rename';
   const deleteLabel = dirtyBlock ? DIRTY_DELETE_REASON : 'Delete';
   const renameDeleteDisabled =
-    selectedPath === null || dirtyBlock || writePending || unsavedOpen;
+    selectedPath === null || dirtyBlock || writePending || unsavedOpen || writesLocked;
   const dialogPending =
     dialog?.kind === 'rename'
       ? renameMutation.isPending
@@ -295,19 +301,19 @@ export function FileTree({ projectId }: { projectId: string }) {
 
   const openCreateDialog = useCallback(
     (kind: Extract<FileMutationDialogKind, 'create-file' | 'create-folder'>) => {
-      if (writePending || unsavedOpen) {
+      if (writePending || unsavedOpen || writesLocked) {
         return;
       }
       resetIdleMutations();
       setDialog({ kind, path: null, name: '', entryKind: null });
     },
-    [resetIdleMutations, unsavedOpen, writePending],
+    [resetIdleMutations, unsavedOpen, writePending, writesLocked],
   );
 
   const openRenameDialog = useCallback(() => {
     const session = useWorkspaceSession.getState();
     const path = session.selectedPath;
-    if (path === null || writePending || unsavedOpen) {
+    if (path === null || writePending || unsavedOpen || writesLocked) {
       return;
     }
     if (hasDirtySelfOrDescendant(session.dirtyPaths, path)) {
@@ -320,12 +326,12 @@ export function FileTree({ projectId }: { projectId: string }) {
       name: entryBasename(path),
       entryKind: lookupSelectedKind(queryClient, projectId, path, session.expandedPaths),
     });
-  }, [projectId, queryClient, resetIdleMutations, unsavedOpen, writePending]);
+  }, [projectId, queryClient, resetIdleMutations, unsavedOpen, writePending, writesLocked]);
 
   const openDeleteDialog = useCallback(() => {
     const session = useWorkspaceSession.getState();
     const path = session.selectedPath;
-    if (path === null || writePending || unsavedOpen) {
+    if (path === null || writePending || unsavedOpen || writesLocked) {
       return;
     }
     if (hasDirtySelfOrDescendant(session.dirtyPaths, path)) {
@@ -338,7 +344,7 @@ export function FileTree({ projectId }: { projectId: string }) {
       name: entryBasename(path),
       entryKind: lookupSelectedKind(queryClient, projectId, path, session.expandedPaths),
     });
-  }, [projectId, queryClient, resetIdleMutations, unsavedOpen, writePending]);
+  }, [projectId, queryClient, resetIdleMutations, unsavedOpen, writePending, writesLocked]);
 
   const closeMutationDialog = useCallback(() => {
     setDialog(null);
@@ -347,7 +353,7 @@ export function FileTree({ projectId }: { projectId: string }) {
 
   const submitMutation = useCallback(
     (basename: string) => {
-      if (dialog === null || writePending) {
+      if (dialog === null || writePending || writesLocked) {
         return;
       }
       if (dialog.kind === 'delete') {
@@ -416,7 +422,16 @@ export function FileTree({ projectId }: { projectId: string }) {
         })
         .catch(() => {});
     },
-    [createMutation, deleteMutation, dialog, projectId, queryClient, renameMutation, writePending],
+    [
+      createMutation,
+      deleteMutation,
+      dialog,
+      projectId,
+      queryClient,
+      renameMutation,
+      writePending,
+      writesLocked,
+    ],
   );
 
   const onTreeKeyDown = useCallback((event: KeyboardEvent<HTMLDivElement>) => {
@@ -497,7 +512,7 @@ export function FileTree({ projectId }: { projectId: string }) {
           title="New file"
           aria-label="New file"
           className={iconButtonClassName}
-          disabled={writePending}
+          disabled={writePending || writesLocked}
           onClick={() => {
             openCreateDialog('create-file');
           }}
@@ -509,7 +524,7 @@ export function FileTree({ projectId }: { projectId: string }) {
           title="New folder"
           aria-label="New folder"
           className={iconButtonClassName}
-          disabled={writePending}
+          disabled={writePending || writesLocked}
           onClick={() => {
             openCreateDialog('create-folder');
           }}

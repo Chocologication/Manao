@@ -1,6 +1,8 @@
 import type { AuthUser, LoginResponse } from '../contracts/auth';
 import type { ProjectState, ProjectSummary } from '../contracts/project';
 import { clearLargeFileBodyCache, ensureWorkspace, resetWorkspaces } from './fileFixtures';
+import { resetLogTickets } from './runSocket';
+import { bootRunState, resetRunState } from './runState';
 
 const ACCESS_TOKEN_TTL_MS = 15 * 60 * 1000;
 const PROJECT_LIMIT = 3;
@@ -129,7 +131,7 @@ export function canReadReadyProjectFiles(userId: string, projectId: string): boo
   return project !== undefined && project.ownerId === userId && project.state === 'READY';
 }
 
-export function resetMockState(): void {
+function resetSessionState(): void {
   tokens = new Map();
   nextProjectSeq = 0;
   nextTokenSeq = 0;
@@ -141,7 +143,14 @@ export function resetMockState(): void {
   clearLargeFileBodyCache();
 }
 
-resetMockState();
+export function resetMockState(): void {
+  resetSessionState();
+  resetRunState();
+  resetLogTickets();
+}
+
+resetSessionState();
+bootRunState();
 
 export function loginWithCredentials(
   username: string,

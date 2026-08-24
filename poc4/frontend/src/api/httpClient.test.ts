@@ -353,6 +353,28 @@ describe('HttpClient', () => {
     }
   });
 
+  it('parses Stage 4 run error codes', async () => {
+    const cases = [
+      { code: 'RUN_ALREADY_ACTIVE' as const, status: 409, message: 'A run is already active' },
+      { code: 'RUN_STATE_CONFLICT' as const, status: 409, message: 'Run state conflict' },
+      { code: 'RUN_NOT_FOUND' as const, status: 404, message: 'Run not found' },
+      { code: 'LOG_TICKET_NOT_AVAILABLE' as const, status: 503, message: 'Log ticket not available' },
+    ];
+    for (const item of cases) {
+      const body = { code: item.code, message: item.message, traceId: `trace-${item.code}` };
+      const fetchImpl = vi.fn<typeof fetch>(async () => jsonResponse(body, item.status));
+      const client = createClient(fetchImpl);
+      const error = await expectRejection(
+        client.request('/api/v1/projects/prj/runs', {
+          method: 'POST',
+          body: { expectedWorkspaceRevision: 'rev-1' },
+        }),
+      );
+      expect(error).toBeInstanceOf(ApiRequestError);
+      expect(error).toMatchObject({ status: item.status, body, traceId: body.traceId });
+    }
+  });
+
   it('does not treat UNSUPPORTED_ENCODING as a server error code', async () => {
     const body = {
       code: 'UNSUPPORTED_ENCODING',

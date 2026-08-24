@@ -206,3 +206,14 @@ body,
   height: 100% !important;
   background-color: inherit !important;
 }
+
+.run-log-scroller {
+  font-family: var(--font-family-mono, "JetBrains Mono", "Menlo", monospace);
+  scroll-behavior: auto;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .run-log-scroller {
+    scroll-behavior: auto;
+  }
+}

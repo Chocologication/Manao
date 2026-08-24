@@ -33,7 +33,7 @@ function disposeWorkspaceSession(): void {
   queryClient.clear();
 }
 
-function handleUnauthorized(): void {
+export function handleUnauthorized(): void {
   if (unauthorizedInFlight) {
     return;
   }

@@ -11,7 +11,11 @@ export type ApiErrorCode =
   | 'WORKSPACE_REVISION_CONFLICT'
   | 'ENTRY_ALREADY_EXISTS'
   | 'ENTRY_NOT_FOUND'
-  | 'DIRECTORY_NOT_EMPTY';
+  | 'DIRECTORY_NOT_EMPTY'
+  | 'RUN_ALREADY_ACTIVE'
+  | 'RUN_STATE_CONFLICT'
+  | 'RUN_NOT_FOUND'
+  | 'LOG_TICKET_NOT_AVAILABLE';
 
 export type ApiErrorBody = {
   code: ApiErrorCode;

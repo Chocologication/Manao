@@ -139,12 +139,9 @@ function isForbiddenProductionUrl(url: string): boolean {
   try {
     parsed = new URL(url);
   } catch {
-    return /\/runs(?:\?|\/|$)/.test(url) || /\/logs(?:\?|\/|$)/.test(url);
+    return /\/terminal(?:\?|\/|$)/.test(url);
   }
-  if (/\/api\/v1\/(?:projects\/[^/]+\/)?runs(?:\/|$)/.test(parsed.pathname)) {
-    return true;
-  }
-  if (/\/logs(?:\/|$)/.test(parsed.pathname) || /\/terminal(?:\/|$)/.test(parsed.pathname)) {
+  if (/\/terminal(?:\/|$)/.test(parsed.pathname)) {
     return true;
   }
   return parsed.port === '4174' && parsed.pathname !== '/health';
@@ -1092,12 +1089,11 @@ test('isolates Alice and Bob projects and stale 401 cleanup', async ({ page }) =
   await expect(page.getByRole('dialog', { name: 'Unsaved changes' })).toHaveCount(0);
 });
 
-test('does not send production Run, log or terminal requests', async ({ page }) => {
+test('does not send terminal or echo-ws requests', async ({ page }) => {
   const forbidden = installProductionRequestGuard(page);
   await openAliceWorkbench(page);
-  await expect(page.getByRole('tab', { name: 'Run' })).toBeDisabled();
+  await expect(page.getByRole('tab', { name: 'Run' })).toBeEnabled();
   await expect(page.getByRole('tab', { name: 'Terminal' })).toBeDisabled();
-  await expect(page.getByRole('tab', { name: 'Run' })).toHaveAccessibleDescription(/STAGE_4_UNAVAILABLE/);
   await expect(page.getByRole('tab', { name: 'Terminal' })).toHaveAccessibleDescription(
     /STAGE_4_UNAVAILABLE/,
   );
@@ -1105,9 +1101,9 @@ test('does not send production Run, log or terminal requests', async ({ page }) 
   await openFile(page, 'pom.xml', 'pom.xml');
   await waitForMonacoText(page, 'artifactId');
   await typeInMonaco(page, 'STAGE3NORUN');
-  await expect(page.getByRole('tab', { name: 'Run' })).toHaveAccessibleDescription(/DIRTY_FILES/);
-  await page.getByRole('tab', { name: 'Run' }).click({ force: true });
+  await expect(page.getByRole('tab', { name: 'Terminal' })).toHaveAccessibleDescription(/DIRTY_FILES/);
   await page.getByRole('tab', { name: 'Terminal' }).click({ force: true });
+  await expect(page.getByRole('tab', { name: 'File' })).toHaveAttribute('aria-selected', 'true');
   await saveButton(page).click();
   await expect(page.getByRole('status', { name: 'Saved' })).toBeVisible();
   expect(forbidden).toEqual([]);
