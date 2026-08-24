@@ -280,7 +280,7 @@ export class JobTerminalController {
         onUnauthorized: this.onUnauthorized,
         onInputEnabledChange: (enabled) => {
           if (!this.isCurrentTransport(generation, transport)) return;
-          adapter?.setInputEnabled(enabled);
+          this.setAdapterInputEnabledSafely(adapter, enabled);
           if (this.snapshot.phase === 'ready' && !enabled) {
             this.patch({ phase: 'paused' });
           } else if (this.snapshot.phase === 'paused' && enabled) {
@@ -295,12 +295,16 @@ export class JobTerminalController {
           ) {
             return;
           }
-          if (!transport.initialize(dimensions.cols, dimensions.rows)) {
+          try {
+            if (!transport.initialize(dimensions.cols, dimensions.rows)) {
+              this.failCurrentGeneration(generation, adapter, 'protocol-error');
+              return;
+            }
+            adapter.setReady(true);
+            this.patch({ phase: 'ready', failure: null });
+          } catch {
             this.failCurrentGeneration(generation, adapter, 'protocol-error');
-            return;
           }
-          adapter.setReady(true);
-          this.patch({ phase: 'ready', failure: null });
         },
         onOutput: (frame) => {
           if (!this.isCurrentTransport(generation, transport) || adapter === null) return;
@@ -354,8 +358,10 @@ export class JobTerminalController {
     ) {
       return;
     }
+    const phase = this.snapshot.phase;
+    this.generation += 1;
     this.transport = null;
-    adapter.setReady(false);
+    this.setAdapterReadySafely(adapter, false);
     try {
       transport.dispose();
     } catch {
@@ -376,10 +382,7 @@ export class JobTerminalController {
         : reason.kind === 'server-error'
           ? 'server-error'
           : 'connection-error';
-    if (this.snapshot.phase === 'connecting') {
-      this.failCurrentGeneration(generation, adapter, failure);
-      return;
-    }
+    if (phase === 'connecting') this.teardownResources();
     this.patch({ phase: 'error', failure });
   }
 
@@ -394,7 +397,7 @@ export class JobTerminalController {
   }
 
   private beginClose(): void {
-    this.adapter?.setInputEnabled(false);
+    this.setAdapterInputEnabledSafely(this.adapter, false);
     this.patch({ phase: 'closing' });
     try {
       this.transport?.close();
@@ -404,6 +407,25 @@ export class JobTerminalController {
       this.handleTransportClosed(this.generation, transport, adapter, {
         kind: 'connection-error',
       });
+    }
+  }
+
+  private setAdapterInputEnabledSafely(
+    adapter: JobTerminalAdapterPort | null,
+    enabled: boolean,
+  ): void {
+    try {
+      adapter?.setInputEnabled(enabled);
+    } catch {
+      // Adapter failures cannot interrupt terminal ownership transitions.
+    }
+  }
+
+  private setAdapterReadySafely(adapter: JobTerminalAdapterPort, ready: boolean): void {
+    try {
+      adapter.setReady(ready);
+    } catch {
+      // Terminal outcomes and audit invalidation remain authoritative.
     }
   }
 

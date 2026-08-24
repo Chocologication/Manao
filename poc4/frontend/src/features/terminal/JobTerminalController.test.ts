@@ -86,8 +86,12 @@ function createOpenHarness(
     connectFailure?: boolean;
     connectThrows?: boolean;
     initializeResult?: boolean;
+    initializeThrows?: boolean;
     registerRuntimeResource?: RegisterJobTerminalRuntimeResource;
     invalidateAudits?: (projectId: string, runId: RunId) => void;
+    setInputEnabledThrows?: boolean;
+    setReadyFalseThrows?: boolean;
+    setReadyThrows?: boolean;
   } = {},
 ) {
   const trace: string[] = [];
@@ -112,12 +116,15 @@ function createOpenHarness(
     }),
     setReady: vi.fn((ready: boolean) => {
       trace.push(`adapter:ready:${ready}`);
+      if (ready && options.setReadyThrows) throw new Error('set ready failed');
+      if (!ready && options.setReadyFalseThrows) throw new Error('clear ready failed');
     }),
     setActive: vi.fn((active: boolean) => {
       trace.push(`adapter:active:${active}`);
     }),
     setInputEnabled: vi.fn((enabled: boolean) => {
       trace.push(`adapter:input:${enabled}`);
+      if (options.setInputEnabledThrows) throw new Error('set input failed');
     }),
     write: vi.fn((_data: Uint8Array, receipt: () => void) => {
       trace.push('adapter:write');
@@ -143,6 +150,7 @@ function createOpenHarness(
     }),
     initialize: vi.fn((cols: number, rows: number) => {
       trace.push(`transport:initialize:${cols}x${rows}`);
+      if (options.initializeThrows) throw new Error('initialize failed');
       if (options.initializeResult === false) return false;
       transportOptions?.onInputEnabledChange?.(true);
       return true;
@@ -340,6 +348,56 @@ describe('JobTerminalController open orchestration', () => {
     });
   });
 
+  it('contains a throwing ready initialization and invalidates its callbacks and ticket', async () => {
+    const behavior = { initializeThrows: true };
+    const harness = createOpenHarness(behavior);
+    await harness.controller.open(document.createElement('div'));
+    const staleTransport = harness.getTransportOptions();
+
+    expect(() => staleTransport?.onReady?.()).not.toThrow();
+    expect(harness.controller.getSnapshot()).toMatchObject({
+      phase: 'error',
+      failure: 'protocol-error',
+    });
+    expect(harness.transport.dispose).toHaveBeenCalledOnce();
+    expect(harness.adapter.dispose).toHaveBeenCalledOnce();
+
+    staleTransport?.onReady?.();
+    expect(harness.transport.initialize).toHaveBeenCalledOnce();
+    expect(harness.transport.dispose).toHaveBeenCalledOnce();
+
+    behavior.initializeThrows = false;
+    await expect(harness.controller.open(document.createElement('div'))).resolves.toBe(true);
+    expect(harness.createSession).toHaveBeenCalledTimes(2);
+    staleTransport?.onReady?.();
+    expect(harness.transport.initialize).toHaveBeenCalledOnce();
+  });
+
+  it('contains a throwing adapter ready transition and invalidates its callbacks and ticket', async () => {
+    const behavior = { setReadyThrows: true };
+    const harness = createOpenHarness(behavior);
+    await harness.controller.open(document.createElement('div'));
+    const staleTransport = harness.getTransportOptions();
+
+    expect(() => staleTransport?.onReady?.()).not.toThrow();
+    expect(harness.controller.getSnapshot()).toMatchObject({
+      phase: 'error',
+      failure: 'protocol-error',
+    });
+    expect(harness.transport.dispose).toHaveBeenCalledOnce();
+    expect(harness.adapter.dispose).toHaveBeenCalledOnce();
+
+    staleTransport?.onReady?.();
+    expect(harness.adapter.setReady).toHaveBeenCalledOnce();
+    expect(harness.transport.dispose).toHaveBeenCalledOnce();
+
+    behavior.setReadyThrows = false;
+    await expect(harness.controller.open(document.createElement('div'))).resolves.toBe(true);
+    expect(harness.createSession).toHaveBeenCalledTimes(2);
+    staleTransport?.onReady?.();
+    expect(harness.adapter.setReady).toHaveBeenCalledOnce();
+  });
+
   it('disposes xterm when reservation or captured authorization fails', async () => {
     const reservationFailure = createOpenHarness({ reservationError: new Error('offline') });
     await expect(
@@ -418,6 +476,30 @@ describe('JobTerminalController live lifecycle', () => {
     expect(harness.controller.getSnapshot().phase).toBe('unavailable');
   });
 
+  it('continues Run-left close and disposal when disabling adapter input throws', async () => {
+    const behavior = { setInputEnabledThrows: false };
+    const harness = createOpenHarness(behavior);
+    await harness.controller.open(document.createElement('div'));
+    harness.getTransportOptions()?.onReady?.();
+    const phases: string[] = [];
+    harness.controller.subscribe(() => {
+      phases.push(harness.controller.getSnapshot().phase);
+    });
+    behavior.setInputEnabledThrows = true;
+
+    expect(() => harness.controller.setRun(activeRun('run-1', 'STOPPING'))).not.toThrow();
+
+    expect(phases[0]).toBe('closing');
+    expect(harness.transport.close).toHaveBeenCalledOnce();
+    expect(harness.transport.dispose).toHaveBeenCalledOnce();
+    expect(harness.adapter.dispose).toHaveBeenCalledOnce();
+    expect(harness.controller.getSnapshot()).toEqual({
+      phase: 'unavailable',
+      runId: null,
+      failure: null,
+    });
+  });
+
   it('maps exit without changing Run authority or accepting a second terminal callback', async () => {
     const invalidateAudits = vi.fn(() => {
       throw new Error('invalidate observer failed');
@@ -441,6 +523,33 @@ describe('JobTerminalController live lifecycle', () => {
     expect(harness.controller.getSnapshot().phase).toBe('exited');
     expect(invalidateAudits).toHaveBeenCalledOnce();
     expect(invalidateAudits).toHaveBeenCalledWith('prj-1', parseRunId('run-1'));
+  });
+
+  it('commits exit and invalidates once when clearing adapter ready throws', async () => {
+    const invalidateAudits = vi.fn();
+    const behavior = { setReadyFalseThrows: false, invalidateAudits };
+    const harness = createOpenHarness(behavior);
+    await harness.controller.open(document.createElement('div'));
+    harness.getTransportOptions()?.onReady?.();
+    const staleAdapter = harness.getAdapterOptions();
+    behavior.setReadyFalseThrows = true;
+
+    const exit = () =>
+      harness.getTransportOptions()?.onClosed?.({
+        kind: 'server-exit',
+        exitCode: 0,
+        reason: 'SHELL_EXITED',
+      });
+    expect(exit).not.toThrow();
+
+    expect(harness.controller.getSnapshot()).toMatchObject({ phase: 'exited', failure: null });
+    expect(harness.transport.dispose).toHaveBeenCalledOnce();
+    expect(invalidateAudits).toHaveBeenCalledOnce();
+    expect(exit).not.toThrow();
+    expect(harness.transport.dispose).toHaveBeenCalledOnce();
+    expect(invalidateAudits).toHaveBeenCalledOnce();
+    staleAdapter?.onData?.('stale');
+    expect(harness.transport.sendData).not.toHaveBeenCalled();
   });
 
   it('maps a structured transport failure to terminal error', async () => {
@@ -493,6 +602,21 @@ describe('JobTerminalController live lifecycle', () => {
     expect(harness.transport.close).toHaveBeenCalledOnce();
     expect(harness.transport.dispose).toHaveBeenCalledOnce();
     expect(harness.adapter.dispose).toHaveBeenCalledOnce();
+  });
+
+  it('pagehide still closes and disposes when disabling adapter input throws', async () => {
+    const behavior = { setInputEnabledThrows: false };
+    const harness = createOpenHarness(behavior);
+    await harness.controller.open(document.createElement('div'));
+    harness.getTransportOptions()?.onReady?.();
+    behavior.setInputEnabledThrows = true;
+
+    expect(() => harness.controller.handlePageHide()).not.toThrow();
+
+    expect(harness.transport.close).toHaveBeenCalledOnce();
+    expect(harness.transport.dispose).toHaveBeenCalledOnce();
+    expect(harness.adapter.dispose).toHaveBeenCalledOnce();
+    expect(() => harness.controller.handlePageHide()).not.toThrow();
   });
 
   it('registers connection close and workspace disposal as one runtime resource', async () => {
