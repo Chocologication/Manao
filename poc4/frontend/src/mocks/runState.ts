@@ -877,6 +877,10 @@ export function getMockRunNowMs(): number {
   return clock.now();
 }
 
+export function isMockRunTransitionInProgress(projectId: string, runId: string): boolean {
+  return transitionsInProgress.has(recordKey(projectId, runId));
+}
+
 export function subscribeMockRunEvents(listener: (event: MockRunSubscriberEvent) => void): () => void {
   subscribers.add(listener);
   return () => {

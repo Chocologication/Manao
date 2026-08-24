@@ -14,7 +14,11 @@ import {
   type TerminalSessionId,
   type TerminalTicket,
 } from '../contracts/terminal';
-import { getActiveRun, registerMockRunBeforeTransitionFinalizer } from './runState';
+import {
+  getActiveRun,
+  isMockRunTransitionInProgress,
+  registerMockRunBeforeTransitionFinalizer,
+} from './runState';
 import { canReadReadyProjectFiles, registerTerminalStateReset } from './state';
 
 export const MOCK_TERMINAL_TICKET_PREFIX = 'mock-terminal-ticket-';
@@ -170,6 +174,7 @@ function terminalRunKey(projectId: string, runId: string): string {
 function hasRunningAuthority(userId: string, projectId: string, runId: string): boolean {
   const activeRun = getActiveRun(projectId);
   return (
+    !isMockRunTransitionInProgress(projectId, runId) &&
     !terminalFinalizationsInProgress.has(terminalRunKey(projectId, runId)) &&
     canReadReadyProjectFiles(userId, projectId) &&
     activeRun !== null &&

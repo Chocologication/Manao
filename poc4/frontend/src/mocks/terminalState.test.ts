@@ -6,6 +6,7 @@ import {
   installVirtualRunClock,
   setMockRunPersistNotifyObserver,
   startRun,
+  subscribeMockRunBeforeTransition,
   transitionRun,
 } from './runState';
 import {
@@ -466,6 +467,52 @@ describe('Run transition ordering', () => {
     } finally {
       unsubscribe();
     }
+  });
+
+  it('fails create and consume closed inside a public Run before-transition observer', () => {
+    const runId = startInState('RUNNING');
+    const created: Array<ReturnType<typeof issueTerminalReservation>> = [];
+    const consumed: Array<ReturnType<typeof consumeTerminalTicket>> = [];
+    const unsubscribe = subscribeMockRunBeforeTransition(() => {
+      const reservation = issueTerminalReservation(
+        ALICE_ID,
+        ALICE_SEED_PROJECT_ID,
+        runId,
+        { cols: 80, rows: 24 },
+      );
+      created.push(reservation);
+      if (reservation.ok) {
+        consumed.push(consumeTerminalTicket({
+          userId: ALICE_ID,
+          projectId: ALICE_SEED_PROJECT_ID,
+          runId,
+          sessionId: reservation.value.sessionId,
+          ticket: reservation.value.ticket,
+        }));
+      }
+    });
+    try {
+      expect(transitionRun(ALICE_SEED_PROJECT_ID, runId, { state: 'RECOVERING' }).ok).toBe(true);
+
+      expect(created).toEqual([{ ok: false, code: 'TERMINAL_NOT_AVAILABLE' }]);
+      expect(consumed).toEqual([]);
+      expect(getActiveRun(ALICE_SEED_PROJECT_ID)?.state).toBe('RECOVERING');
+      expect(getTerminalReservationCount(ALICE_ID, ALICE_SEED_PROJECT_ID, runId)).toBe(0);
+      expect(getLiveTerminalSession(ALICE_ID, ALICE_SEED_PROJECT_ID, runId)).toBeNull();
+      expect(listTerminalAudits(ALICE_ID, ALICE_SEED_PROJECT_ID, runId).items).toEqual([]);
+    } finally {
+      unsubscribe();
+    }
+
+    expect(transitionRun(ALICE_SEED_PROJECT_ID, runId, { state: 'RUNNING' }).ok).toBe(true);
+    const afterTransition = issueOk(runId);
+    expect(consumeTerminalTicket({
+      userId: ALICE_ID,
+      projectId: ALICE_SEED_PROJECT_ID,
+      runId,
+      sessionId: afterTransition.sessionId,
+      ticket: afterTransition.ticket,
+    }).ok).toBe(true);
   });
 });
 
