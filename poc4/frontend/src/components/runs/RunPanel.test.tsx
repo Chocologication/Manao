@@ -705,6 +705,10 @@ describe('RunPanel reload failure and keyboard', () => {
       runPreconditionDescription('RELOAD_FAILED'),
     );
     expect(isWorkspaceEditable(coordinator.getSnapshot())).toBe(false);
+
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Retry workspace reload' }));
+    expect(coordinator.getSnapshot().phase).toBe('RELOADING_WORKSPACE');
+    expect(isWorkspaceEditable(coordinator.getSnapshot())).toBe(false);
   });
 
   it('uses toolbar -> history -> logs -> New output tab order', async () => {

@@ -37,6 +37,7 @@ export class RunAuthorityCoordinator {
   private readonly listeners = new Set<() => void>();
   private confirmGeneration = 0;
   private confirmingRunId: RunId | null = null;
+  private reloadGeneration = 0;
 
   constructor(options: { projectId: string; fetchRun: FetchRunDetail }) {
     this.projectId = options.projectId;
@@ -70,11 +71,29 @@ export class RunAuthorityCoordinator {
     this.patch({ startPending: false });
   }
 
+  getReloadGeneration(): number {
+    return this.reloadGeneration;
+  }
+
   markReloadFailed(): void {
     if (this.snapshot.phase !== 'RELOADING_WORKSPACE' && this.snapshot.phase !== 'RELOAD_FAILED') {
       return;
     }
     this.patch({ phase: 'RELOAD_FAILED' });
+  }
+
+  completeReload(): void {
+    if (this.snapshot.phase !== 'RELOADING_WORKSPACE') {
+      return;
+    }
+    this.patch({ phase: 'EDITABLE', observedLockingRunId: null });
+  }
+
+  retryReload(): void {
+    if (this.snapshot.phase !== 'RELOAD_FAILED') {
+      return;
+    }
+    this.enterReloading();
   }
 
   async reconcile(status: 'pending' | 'error' | 'success', run: RunSummary | null): Promise<void> {
@@ -135,7 +154,7 @@ export class RunAuthorityCoordinator {
       if (!isRunTerminalState(detail.state)) {
         return;
       }
-      this.patch({ phase: 'RELOADING_WORKSPACE' });
+      this.enterReloading();
     } catch {
       // Fail closed: a missing/locking/invalid detail never unlocks.
     } finally {
@@ -143,6 +162,11 @@ export class RunAuthorityCoordinator {
         this.confirmingRunId = null;
       }
     }
+  }
+
+  private enterReloading(): void {
+    this.reloadGeneration += 1;
+    this.patch({ phase: 'RELOADING_WORKSPACE' });
   }
 
   private patch(partial: Partial<RunAuthoritySnapshot>): void {

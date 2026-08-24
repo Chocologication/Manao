@@ -2,8 +2,11 @@ import { useQuery, useQueryClient, type QueryClient } from '@tanstack/react-quer
 import { ApiRequestError } from '../../api/ApiRequestError';
 import { getFileContent, getFileMetadata, listDirectory } from '../../api/fileApi';
 import type {
+  FileContentResponse,
+  FileMetadata,
   FileRenderMode,
   FileTreeEntry,
+  FileTreeResponse,
   ProjectDirectoryPath,
   ProjectRelativePath,
   WorkspaceRevision,
@@ -62,18 +65,51 @@ function canRefreshWorkspaceRevision(projectId: string, source: 'root-tree' | 'n
   return source === 'root-tree' || current === projectId;
 }
 
-function applyWorkspaceRevisionFromRead(
+export function applyWorkspaceRevisionFromRead(
   queryClient: QueryClient,
   projectId: string,
   revision: WorkspaceRevision,
   source: 'root-tree' | 'nested',
-  signal: AbortSignal,
+  signal?: AbortSignal,
 ): void {
-  throwIfAborted(signal);
+  if (signal !== undefined) {
+    throwIfAborted(signal);
+  }
   if (!canRefreshWorkspaceRevision(projectId, source)) {
     return;
   }
   queryClient.setQueryData(fileKeys.revision(projectId), revision);
+}
+
+export function cacheDirectoryTree(
+  queryClient: QueryClient,
+  projectId: string,
+  tree: FileTreeResponse,
+): void {
+  queryClient.setQueryData(fileKeys.tree(projectId, tree.directory), tree);
+  applyWorkspaceRevisionFromRead(
+    queryClient,
+    projectId,
+    tree.workspaceRevision,
+    tree.directory === '' ? 'root-tree' : 'nested',
+  );
+}
+
+export function cacheFileMetadata(
+  queryClient: QueryClient,
+  projectId: string,
+  meta: FileMetadata,
+): void {
+  queryClient.setQueryData(fileKeys.meta(projectId, meta.path), meta);
+}
+
+export function cacheFileContent(
+  queryClient: QueryClient,
+  projectId: string,
+  content: FileContentResponse,
+): void {
+  queryClient.setQueryData(fileKeys.content(projectId, content.path), content);
+  applyWorkspaceRevisionFromRead(queryClient, projectId, content.workspaceRevision, 'nested');
 }
 
 export function getWorkspaceRevision(

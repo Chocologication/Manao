@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { ApiErrorCode } from '../contracts/api';
-import { getWorkspaceRevision } from './fileFixtures';
+import { getMockFile, getWorkspaceRevision } from './fileFixtures';
 import {
   MAX_LOG_CHUNK_UTF8_BYTES,
   MAX_LOG_RETAINED_BYTES,
@@ -534,6 +534,49 @@ describe('mock-only refresh persistence', () => {
     const next = startOk();
     expectOk(appendLogChunk(ALICE, next.id, 'after-reset\n'));
     expect(notified).toBe(0);
+  });
+});
+
+describe('reload-change simulated Job side effects', () => {
+  it('mutates workspace files and revision before exposing the terminal run.state', () => {
+    setRunScenario('reload-change');
+    const beforeRevision = revisionOf(ALICE);
+    const readmeBefore = getMockFile(ALICE, 'README.md')?.textContent ?? '';
+    const seen: Array<{ state: string; revision: string; deleted: boolean; created: boolean }> = [];
+    subscribeMockRunEvents((event) => {
+      if (event.type !== 'run.state') {
+        return;
+      }
+      seen.push({
+        state: event.run.state,
+        revision: revisionOf(ALICE),
+        deleted: getMockFile(ALICE, 'src/test/java/demo/AppTest.java') === null,
+        created: getMockFile(ALICE, 'docs/run-output.md') !== null,
+      });
+    });
+
+    const run = startOk();
+    advanceMockRunClock(MOCK_RUN_START_DELAY_MS);
+    expect(getActiveRun(ALICE)?.state).toBe('RUNNING');
+    expect(revisionOf(ALICE)).toBe(beforeRevision);
+    advanceMockRunClock(MOCK_RUN_TERMINAL_DELAY_MS);
+
+    const terminal = snapshot(ALICE, run.id);
+    expect(terminal.run?.state).toBe('SUCCEEDED');
+    expect(terminal.revision).toBe('mock-rev-0004');
+    expect(terminal.revision).not.toBe(beforeRevision);
+    expect(getMockFile(ALICE, 'README.md')?.textContent).toBe(
+      `${readmeBefore}\nensoai-stage4-reload-change\n`,
+    );
+    expect(getMockFile(ALICE, 'docs/run-output.md')).not.toBeNull();
+    expect(getMockFile(ALICE, 'src/test/java/demo/AppTest.java')).toBeNull();
+    const exposed = seen.find((event) => event.state === 'SUCCEEDED');
+    expect(exposed).toEqual({
+      state: 'SUCCEEDED',
+      revision: 'mock-rev-0004',
+      deleted: true,
+      created: true,
+    });
   });
 });
 

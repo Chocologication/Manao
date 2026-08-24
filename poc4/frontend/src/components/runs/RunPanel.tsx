@@ -260,6 +260,9 @@ export function RunPanel({ projectId, coordinator }: RunPanelProps) {
         onRetryAuthority={() => {
           void activeQuery.refetch();
         }}
+        onRetryReload={() => {
+          coordinator.retryReload();
+        }}
       />
       <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden">
         <RunHistory

@@ -229,6 +229,91 @@ describe('RunAuthorityCoordinator', () => {
     expect(coordinator.getSnapshot().phase).toBe('RELOAD_FAILED');
     expect(isWorkspaceEditable(coordinator.getSnapshot())).toBe(false);
   });
+
+  it('completeReload unlocks only from RELOADING_WORKSPACE', async () => {
+    const coordinator = new RunAuthorityCoordinator({
+      projectId: ALICE_SEED_PROJECT_ID,
+      fetchRun: vi.fn().mockResolvedValue(terminalRun()),
+    });
+    coordinator.completeReload();
+    expect(coordinator.getSnapshot().phase).toBe('LOADING_AUTHORITY');
+    expect(isWorkspaceEditable(coordinator.getSnapshot())).toBe(false);
+
+    await coordinator.reconcile('success', null);
+    coordinator.completeReload();
+    expect(coordinator.getSnapshot().phase).toBe('EDITABLE');
+
+    await coordinator.reconcile('success', lockingRun());
+    await coordinator.reconcile('success', null);
+    expect(coordinator.getSnapshot().phase).toBe('RELOADING_WORKSPACE');
+    expect(coordinator.getReloadGeneration()).toBe(1);
+    coordinator.completeReload();
+    expect(coordinator.getSnapshot()).toEqual({
+      phase: 'EDITABLE',
+      startPending: false,
+      observedLockingRunId: null,
+    });
+    expect(isWorkspaceEditable(coordinator.getSnapshot())).toBe(true);
+  });
+
+  it('completeReload does not unlock RELOAD_FAILED', async () => {
+    const coordinator = new RunAuthorityCoordinator({
+      projectId: ALICE_SEED_PROJECT_ID,
+      fetchRun: vi.fn().mockResolvedValue(terminalRun()),
+    });
+    await coordinator.reconcile('success', lockingRun());
+    await coordinator.reconcile('success', null);
+    coordinator.markReloadFailed();
+    coordinator.completeReload();
+    expect(coordinator.getSnapshot().phase).toBe('RELOAD_FAILED');
+    expect(coordinator.getSnapshot().observedLockingRunId).toBe(parseRunId('run-lock'));
+    expect(isWorkspaceEditable(coordinator.getSnapshot())).toBe(false);
+  });
+
+  it('retryReload re-enters RELOADING_WORKSPACE only from RELOAD_FAILED', async () => {
+    const coordinator = new RunAuthorityCoordinator({
+      projectId: ALICE_SEED_PROJECT_ID,
+      fetchRun: vi.fn().mockResolvedValue(terminalRun()),
+    });
+    coordinator.retryReload();
+    expect(coordinator.getSnapshot().phase).toBe('LOADING_AUTHORITY');
+    expect(coordinator.getReloadGeneration()).toBe(0);
+
+    await coordinator.reconcile('success', lockingRun());
+    await coordinator.reconcile('success', null);
+    expect(coordinator.getReloadGeneration()).toBe(1);
+    coordinator.retryReload();
+    expect(coordinator.getSnapshot().phase).toBe('RELOADING_WORKSPACE');
+    expect(coordinator.getReloadGeneration()).toBe(1);
+
+    coordinator.markReloadFailed();
+    coordinator.retryReload();
+    expect(coordinator.getSnapshot().phase).toBe('RELOADING_WORKSPACE');
+    expect(coordinator.getReloadGeneration()).toBe(2);
+    expect(isWorkspaceEditable(coordinator.getSnapshot())).toBe(false);
+  });
+
+  it('does not start a second reload from a duplicate null active or terminal socket event', async () => {
+    const fetchRun = vi.fn().mockResolvedValue(terminalRun());
+    const coordinator = new RunAuthorityCoordinator({
+      projectId: ALICE_SEED_PROJECT_ID,
+      fetchRun,
+    });
+    await coordinator.reconcile('success', lockingRun());
+    const first = coordinator.reconcile('success', null);
+    const second = coordinator.reconcile('success', null);
+    await Promise.all([first, second]);
+    expect(fetchRun).toHaveBeenCalledTimes(1);
+    expect(coordinator.getSnapshot().phase).toBe('RELOADING_WORKSPACE');
+    expect(coordinator.getReloadGeneration()).toBe(1);
+
+    await coordinator.reconcile('success', terminalRun());
+    await coordinator.reconcile('success', null);
+    expect(fetchRun).toHaveBeenCalledTimes(1);
+    expect(coordinator.getReloadGeneration()).toBe(1);
+    expect(coordinator.getSnapshot().phase).toBe('RELOADING_WORKSPACE');
+    expect(isWorkspaceEditable(coordinator.getSnapshot())).toBe(false);
+  });
 });
 
 describe('useRunAuthorityCoordinator', () => {

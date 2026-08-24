@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import * as monaco from 'monaco-editor';
@@ -29,16 +29,26 @@ import {
 import { useWorkspaceSession, workspaceSessionStore } from '../../features/editor/workspaceSession';
 import { fileKeys } from '../../features/files/fileQueries';
 import { parseProjectDirectoryPath, parseProjectRelativePath } from '../../features/files/pathPolicy';
+import { RunAuthorityCoordinator } from '../../features/runs/RunAuthorityCoordinator';
+import { runKeys } from '../../features/runs/runQueries';
 import * as projectMonacoModels from '../../lib/projectMonacoModels';
 import { disposeAllProjectModels, toProjectModelUri } from '../../lib/projectMonacoModels';
 import { server } from '../../mocks/node';
-import { startRun as mockStartRun, setRunScenario } from '../../mocks/runState';
+import {
+  getActiveRun,
+  startRun as mockStartRun,
+  setRunScenario,
+  transitionRun,
+} from '../../mocks/runState';
 import { ALICE_SEED_PROJECT_ID, getFileRequestCount, setWriteScenario } from '../../mocks/state';
 import { renderApp, resetAppRuntime } from '../../test/renderApp';
 import { WorkbenchShell } from './WorkbenchShell';
 
 const ALICE = { username: 'alice', password: 'demo-pass' };
 const POM = parseProjectRelativePath('pom.xml');
+const README = parseProjectRelativePath('README.md');
+const APP_TEST = parseProjectRelativePath('src/test/java/demo/AppTest.java');
+const RELOAD_MARKER = 'ensoai-stage4-reload-change';
 
 const ALICE_PROJECT: ProjectSummary = {
   id: ALICE_SEED_PROJECT_ID,
@@ -1039,3 +1049,188 @@ describe('WorkbenchShell run lock', () => {
     expect(startError).toMatchObject({ status: 409, body: { code: 'WORKSPACE_REVISION_CONFLICT' } });
   }, 15_000);
 });
+
+describe('WorkbenchShell workspace reload', () => {
+  async function waitUntilRunning(): Promise<NonNullable<ReturnType<typeof getActiveRun>>> {
+    await waitFor(() => {
+      expect(getActiveRun(ALICE_SEED_PROJECT_ID)?.state).toBe('RUNNING');
+    });
+    const run = getActiveRun(ALICE_SEED_PROJECT_ID);
+    expect(run).not.toBeNull();
+    return run as NonNullable<typeof run>;
+  }
+
+  async function lockShellWithActiveRun(): Promise<NonNullable<ReturnType<typeof getActiveRun>>> {
+    await seedLockingRun();
+    await queryClient.invalidateQueries({ queryKey: runKeys.active(ALICE_SEED_PROJECT_ID) });
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'New file' })).toBeDisabled();
+    });
+    return waitUntilRunning();
+  }
+
+  async function terminalizeRun(
+    run: NonNullable<ReturnType<typeof getActiveRun>>,
+    scenario?: 'disconnect' | 'reload-change',
+  ): Promise<void> {
+    if (scenario !== undefined) {
+      setRunScenario(scenario);
+    }
+    const result = transitionRun(ALICE_SEED_PROJECT_ID, run.id, {
+      state: 'SUCCEEDED',
+      terminationReason: 'BUILD_SUCCEEDED',
+      exitCode: 0,
+    });
+    expect(result.ok).toBe(true);
+    await queryClient.invalidateQueries({ queryKey: runKeys.active(ALICE_SEED_PROJECT_ID) });
+  }
+
+  it('keeps writes locked after a terminal run until workspace reload succeeds', async () => {
+    let holdReloads = false;
+    const held = deferredHold();
+    server.use(
+      http.get('/api/v1/projects/:projectId/files/tree', async ({ request }) => {
+        const path = new URL(request.url).searchParams.get('path') ?? '';
+        if (holdReloads && path === '') {
+          await held.promise;
+        }
+        return undefined;
+      }),
+    );
+    await authenticateAsAlice();
+    renderShell();
+    await loadedEditable();
+    act(() => {
+      workspaceSessionStore.getState().openFile(README);
+      workspaceSessionStore.getState().openFile(APP_TEST);
+    });
+    expect(await screen.findByRole('tab', { name: /README.md/ })).toBeInTheDocument();
+    expect(await screen.findByRole('tab', { name: /AppTest.java/ })).toBeInTheDocument();
+
+    const run = await lockShellWithActiveRun();
+    holdReloads = true;
+    await terminalizeRun(run);
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'New file' })).toBeDisabled();
+      expect(screen.getAllByText('Reloading workspace').length).toBeGreaterThan(0);
+    });
+    expect(screen.getByRole('button', { name: 'New folder' })).toBeDisabled();
+    expect(screen.getByRole('tab', { name: /README.md/ })).toBeInTheDocument();
+
+    held.resolve();
+    await waitUntilWritesUnlocked();
+    expect(screen.queryAllByText('Reloading workspace')).toHaveLength(0);
+    expect(screen.getByRole('tab', { name: /README.md/ })).toBeInTheDocument();
+  }, 15_000);
+
+  it('retries a failed workspace reload from the Run toolbar', async () => {
+    const user = userEvent.setup();
+    let failReloads = false;
+    server.use(
+      http.get('/api/v1/projects/:projectId/files/tree', ({ request }) => {
+        const path = new URL(request.url).searchParams.get('path') ?? '';
+        if (failReloads && path === '') {
+          return HttpResponse.json(
+            { code: 'INTERNAL_ERROR', message: 'Mock reload tree failure', traceId: 'trace-reload' },
+            { status: 500 },
+          );
+        }
+        return undefined;
+      }),
+    );
+    await authenticateAsAlice();
+    renderShell();
+    await loadedEditable();
+    const run = await lockShellWithActiveRun();
+    failReloads = true;
+    await terminalizeRun(run);
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'New file' })).toBeDisabled();
+    });
+    await user.click(screen.getByRole('tab', { name: 'Run' }));
+    expect(await screen.findByText(/workspace reload failed/i)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Start run' })).toBeDisabled();
+
+    failReloads = false;
+    await user.click(screen.getByRole('button', { name: 'Retry workspace reload' }));
+    await user.click(screen.getByRole('tab', { name: 'File' }));
+    await waitUntilWritesUnlocked();
+    expect(screen.queryByText(/workspace reload failed/i)).not.toBeInTheDocument();
+  }, 15_000);
+
+  it('does not completeReload on back or logout while reload is failed', async () => {
+    const complete = vi.spyOn(RunAuthorityCoordinator.prototype, 'completeReload');
+    const user = userEvent.setup();
+    let failReloads = false;
+    server.use(
+      http.get('/api/v1/projects/:projectId/files/tree', ({ request }) => {
+        const path = new URL(request.url).searchParams.get('path') ?? '';
+        if (failReloads && path === '') {
+          return HttpResponse.json(
+            { code: 'INTERNAL_ERROR', message: 'Mock reload tree failure', traceId: 'trace-reload-nav' },
+            { status: 500 },
+          );
+        }
+        return undefined;
+      }),
+    );
+    await authenticateAsAlice();
+    renderApp({ initialEntries: [`/projects/${ALICE_SEED_PROJECT_ID}`] });
+    expect(await screen.findByRole('treeitem', { name: 'pom.xml' }, { timeout: 10_000 })).toBeInTheDocument();
+    await waitUntilWritesUnlocked();
+    const run = await lockShellWithActiveRun();
+    failReloads = true;
+    await terminalizeRun(run);
+    await user.click(screen.getByRole('tab', { name: 'Run' }));
+    expect(await screen.findByRole('button', { name: 'Retry workspace reload' })).toBeInTheDocument();
+    expect(complete).not.toHaveBeenCalled();
+
+    failReloads = false;
+    await user.click(screen.getByRole('link', { name: 'Back to projects' }));
+    expect(await screen.findByRole('article', { name: 'Alice Notebook' })).toBeInTheDocument();
+    expect(complete).not.toHaveBeenCalled();
+
+    await user.click(within(screen.getByRole('article', { name: 'Alice Notebook' })).getByRole('link', { name: /open/i }));
+    expect(await screen.findByRole('treeitem', { name: 'pom.xml' }, { timeout: 10_000 })).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Log out' }));
+    expect(await screen.findByLabelText('Username')).toBeInTheDocument();
+    expect(complete).not.toHaveBeenCalled();
+  }, 15_000);
+
+  it('applies reload-change file add/modify/delete before unlocking', async () => {
+    const user = userEvent.setup();
+    await authenticateAsAlice();
+    renderShell();
+    await loadedEditable();
+    act(() => {
+      workspaceSessionStore.getState().openFile(README);
+      workspaceSessionStore.getState().openFile(APP_TEST);
+    });
+    expect(await screen.findByRole('tab', { name: /README.md/ })).toBeInTheDocument();
+    expect(await screen.findByRole('tab', { name: /AppTest.java/ })).toBeInTheDocument();
+    const beforeRevision = queryClient.getQueryData(fileKeys.revision(ALICE_SEED_PROJECT_ID));
+
+    const run = await lockShellWithActiveRun();
+    await terminalizeRun(run, 'reload-change');
+    await waitUntilWritesUnlocked();
+
+    expect(screen.getByRole('tab', { name: /README.md/ })).toBeInTheDocument();
+    expect(screen.queryByRole('tab', { name: /AppTest.java/ })).not.toBeInTheDocument();
+    expect(queryClient.getQueryData(fileKeys.content(ALICE_SEED_PROJECT_ID, README))).toEqual(
+      expect.objectContaining({ content: expect.stringContaining(RELOAD_MARKER) }),
+    );
+    expect(queryClient.getQueryData(fileKeys.revision(ALICE_SEED_PROJECT_ID))).not.toBe(beforeRevision);
+    const docs = await listDirectory(ALICE_SEED_PROJECT_ID, parseProjectDirectoryPath('docs'));
+    expect(docs.entries.map((entry) => entry.name)).toContain('run-output.md');
+    await user.click(screen.getByRole('treeitem', { name: 'docs' }));
+    expect(await screen.findByRole('treeitem', { name: 'run-output.md' })).toBeInTheDocument();
+  }, 15_000);
+});
+
+function deferredHold(): { promise: Promise<void>; resolve: () => void } {
+  let resolve = () => {};
+  const promise = new Promise<void>((next) => {
+    resolve = next;
+  });
+  return { promise, resolve };
+}

@@ -33,6 +33,7 @@ export type RunToolbarProps = {
   onStart: () => void;
   onStop: () => void;
   onRetryAuthority: () => void;
+  onRetryReload: () => void;
 };
 
 export function formatRunElapsed(fromIso: string, toMs: number): string {
@@ -110,6 +111,7 @@ export function RunToolbar({
   onStart,
   onStop,
   onRetryAuthority,
+  onRetryReload,
 }: RunToolbarProps) {
   const command = run?.policy.command ?? 'mvn clean test';
   const timeoutSeconds = run?.policy.timeoutSeconds ?? 1800;
@@ -167,7 +169,16 @@ export function RunToolbar({
         </div>
       ) : null}
       {reloadFailed ? (
-        <InlineAlert>Workspace reload failed</InlineAlert>
+        <div className="flex items-center gap-2 pb-1">
+          <InlineAlert>Workspace reload failed</InlineAlert>
+          <button
+            type="button"
+            className="h-8 shrink-0 rounded-md px-2 text-sm hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+            onClick={onRetryReload}
+          >
+            Retry workspace reload
+          </button>
+        </div>
       ) : null}
       {startError !== null ? <InlineAlert>{startError}</InlineAlert> : null}
       {stopError !== null ? <InlineAlert>{stopError}</InlineAlert> : null}

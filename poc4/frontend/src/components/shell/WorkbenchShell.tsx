@@ -1,5 +1,6 @@
+import { useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, FileCode, LogOut, Play, SquareTerminal } from 'lucide-react';
-import { useCallback, useState, useSyncExternalStore, type MouseEvent } from 'react';
+import { useCallback, useEffect, useState, useSyncExternalStore, type MouseEvent } from 'react';
 import { Link } from 'react-router';
 import { logout } from '@/app/appRuntime';
 import { EditorWorkspace } from '@/components/files/EditorWorkspace';
@@ -24,6 +25,7 @@ import {
   useRunAuthorityCoordinator,
 } from '@/features/runs/RunAuthorityCoordinator';
 import { useActiveRunQuery } from '@/features/runs/runQueries';
+import { reloadWorkspaceAfterTerminalRun } from '@/features/runs/workspaceReload';
 import { cn } from '@/lib/utils';
 
 const EDITOR_REGION_ID = 'workbench-editor';
@@ -47,6 +49,7 @@ function authorityErrorMessage(error: unknown): string {
 
 export function WorkbenchShell({ project }: { project: ProjectSummary }) {
   const [activePanel, setActivePanel] = useState<WorkbenchPanel>('file');
+  const queryClient = useQueryClient();
   const coordinator = useRunAuthorityCoordinator(project.id);
   const snapshot = useSyncExternalStore(
     coordinator.subscribe,
@@ -54,6 +57,34 @@ export function WorkbenchShell({ project }: { project: ProjectSummary }) {
     coordinator.getSnapshot,
   );
   const writesLocked = !isWorkspaceEditable(snapshot);
+
+  useEffect(() => {
+    if (snapshot.phase !== 'RELOADING_WORKSPACE') {
+      return undefined;
+    }
+    const generation = coordinator.getReloadGeneration();
+    let cancelled = false;
+    void reloadWorkspaceAfterTerminalRun({
+      projectId: project.id,
+      queryClient,
+    }).then(
+      () => {
+        if (cancelled || coordinator.getReloadGeneration() !== generation) {
+          return;
+        }
+        coordinator.completeReload();
+      },
+      () => {
+        if (cancelled || coordinator.getReloadGeneration() !== generation) {
+          return;
+        }
+        coordinator.markReloadFailed();
+      },
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [coordinator, project.id, queryClient, snapshot.phase]);
   const unconfirmedLock =
     snapshot.observedLockingRunId !== null &&
     snapshot.phase !== 'RELOADING_WORKSPACE' &&
@@ -223,6 +254,11 @@ export function WorkbenchShell({ project }: { project: ProjectSummary }) {
                   >
                     Retry loading run authority
                   </Button>
+                </div>
+              ) : null}
+              {snapshot.phase === 'RELOADING_WORKSPACE' ? (
+                <div role="status" className="border-b px-3 py-2 text-sm text-muted-foreground">
+                  Reloading workspace
                 </div>
               ) : null}
               <div className="min-h-0 min-w-0 flex-1 overflow-hidden">

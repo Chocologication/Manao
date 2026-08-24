@@ -4,10 +4,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { login } from '../../api/authApi';
 import { AppProviders } from '../../app/AppProviders';
 import { authSession, queryClient, workspaceBufferRegistry } from '../../app/appRuntime';
-import type { FileTreeEntry, ProjectRelativePath } from '../../contracts/file';
+import { parseWorkspaceRevision, type FileTreeEntry, type ProjectRelativePath } from '../../contracts/file';
 import { useWorkspaceSession } from '../editor/workspaceSession';
 import { parseProjectDirectoryPath, parseProjectRelativePath } from './pathPolicy';
 import {
+  applyWorkspaceRevisionFromRead,
+  cacheDirectoryTree,
+  cacheFileContent,
+  cacheFileMetadata,
   fileKeys,
   refreshProjectFiles,
   sortFileTreeEntries,
@@ -425,5 +429,50 @@ describe('workspace revision cache', () => {
     expect(queryClient.getQueryData(fileKeys.content(ALICE_SEED_PROJECT_ID, POM))).not.toEqual(
       expect.objectContaining({ content: 'stale-after-write' }),
     );
+  });
+});
+
+describe('imperative file cache helpers', () => {
+  it('writes tree, metadata, content and revision for the current project', () => {
+    useWorkspaceSession.getState().activateProject(ALICE_SEED_PROJECT_ID);
+    const revision = parseWorkspaceRevision('reload-rev');
+    cacheDirectoryTree(queryClient, ALICE_SEED_PROJECT_ID, {
+      directory: ROOT,
+      entries: [treeEntry('README.md', 'file')],
+      workspaceRevision: revision,
+    });
+    cacheFileMetadata(queryClient, ALICE_SEED_PROJECT_ID, {
+      path: POM,
+      name: 'pom.xml',
+      sizeBytes: 4,
+      mediaType: 'application/xml',
+      encoding: 'UTF-8',
+      language: 'xml',
+      renderMode: 'MONACO_TEXT',
+      blockReason: null,
+    });
+    cacheFileContent(queryClient, ALICE_SEED_PROJECT_ID, {
+      path: POM,
+      content: '<project />',
+      workspaceRevision: parseWorkspaceRevision('content-rev'),
+    });
+    expect(queryClient.getQueryData(fileKeys.tree(ALICE_SEED_PROJECT_ID, ROOT))).toEqual(
+      expect.objectContaining({ workspaceRevision: revision }),
+    );
+    expect(queryClient.getQueryData(fileKeys.meta(ALICE_SEED_PROJECT_ID, POM))).toEqual(
+      expect.objectContaining({ path: POM, renderMode: 'MONACO_TEXT' }),
+    );
+    expect(queryClient.getQueryData(fileKeys.content(ALICE_SEED_PROJECT_ID, POM))).toEqual(
+      expect.objectContaining({ content: '<project />' }),
+    );
+    expect(queryClient.getQueryData(fileKeys.revision(ALICE_SEED_PROJECT_ID))).toBe('content-rev');
+
+    applyWorkspaceRevisionFromRead(
+      queryClient,
+      ALICE_SEED_PROJECT_ID,
+      parseWorkspaceRevision('direct-rev'),
+      'root-tree',
+    );
+    expect(queryClient.getQueryData(fileKeys.revision(ALICE_SEED_PROJECT_ID))).toBe('direct-rev');
   });
 });

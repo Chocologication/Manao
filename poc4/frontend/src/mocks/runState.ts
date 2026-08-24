@@ -19,7 +19,13 @@ import {
   type RunTerminationReason,
   type StartRunRequest,
 } from '../contracts/run';
-import { getWorkspaceRevision } from './fileFixtures';
+import {
+  createMockEntry,
+  deleteMockEntry,
+  getMockFile,
+  getWorkspaceRevision,
+  saveMockFile,
+} from './fileFixtures';
 import { clonePoc4RunPolicy, SEED_LOG_MARKER, SEED_LOG_TEXT, utf8ByteLength } from './runFixtures';
 
 export const MOCK_RUN_START_DELAY_MS = 25;
@@ -532,6 +538,20 @@ function scheduleScenarioFollowUp(record: MockRunRecord): void {
   }
 }
 
+function applySimulatedJobWorkspaceSideEffects(projectId: string): void {
+  // Simulated Job side effect, not Kubernetes.
+  const readme = getMockFile(projectId, 'README.md');
+  if (readme?.textContent != null) {
+    saveMockFile(projectId, 'README.md', `${readme.textContent}\nensoai-stage4-reload-change\n`);
+  }
+  if (getMockFile(projectId, 'docs/run-output.md') === null) {
+    createMockEntry(projectId, 'file', 'docs/run-output.md');
+  }
+  if (getMockFile(projectId, 'src/test/java/demo/AppTest.java') !== null) {
+    deleteMockEntry(projectId, 'src/test/java/demo/AppTest.java');
+  }
+}
+
 function applyTransition(
   record: MockRunRecord,
   next: MockRunTransition,
@@ -562,6 +582,9 @@ function applyTransition(
     });
   } catch {
     return fail('RUN_STATE_CONFLICT');
+  }
+  if (isRunTerminalState(summary.state) && getRunScenario() === 'reload-change') {
+    applySimulatedJobWorkspaceSideEffects(record.projectId);
   }
   cancelRecordTimers(record);
   record.summary = summary;
