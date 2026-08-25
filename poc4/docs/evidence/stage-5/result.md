@@ -2,34 +2,43 @@
 
 ## Decision
 
-**STAGE_5_REMEDIATION_REQUIRED**
+**READY_FOR_STAGE_6_PLAN**
 
-17 项退出门中 **15 PASS / 2 FAIL**。失败门仅有：
+按 `2026-08-26` 用户修订后的验收口径，17 项退出门记为 **15 PASS / 2 WAIVED_BY_USER**：
 
-1. **Gate 11 FAIL**：唯一失败原因是 required browser case `a stale Alice terminal 401 cannot clear a newer Bob login` 仍为用户封顶的 `test.fixme`。本轮未运行、未修改该 case，Chromium、Chrome、Edge 均没有它的 fresh browser PASS。
-2. **Gate 16 FAIL**：required 完整 keyboard-only File -> Run -> Terminal -> Open -> xterm -> Search -> Audit -> Close workflow 仍为 `test.fixme`。本轮同样未运行、未修改，三个 browser channel 均没有它的 fresh PASS。
+1. **Gate 11 WAIVED_BY_USER**：required browser case `a stale Alice terminal 401 cannot clear a newer Bob login` 仍为 `test.fixme`。未运行、未修改该 case，Chromium、Chrome、Edge 均没有它的 fresh browser PASS。
+2. **Gate 16 WAIVED_BY_USER**：required 完整 keyboard-only File -> Run -> Terminal -> Open -> xterm -> Search -> Audit -> Close workflow 仍为 `test.fixme`。同样未运行、未修改，三个 browser channel 均没有它的 fresh PASS。
 
-E2E 命令 exit 0 不能把 required skip 解释为 PASS。
-不得放行或启动 Stage 6。
+`WAIVED_BY_USER` 不等于 PASS。本决策只允许停止 Stage 5 并进入 Stage 6 计划阶段，不授权在本阶段实现真实后端、MySQL 或 Kubernetes PTY。
+
+当前实现 HEAD 为 `0c28ad7fef9a1dac3074f5937f5a47a48b181728`。最后一次 scoped re-review 未发现未关闭的 Critical/Important（对应 P1/P2）；保留 1 个 Minor：当 Vite base 先含非路径段 `assets`、随后才含真实 `/assets/` 时，production asset resolver 可能 fail closed false-positive，当前 Vite base 不受影响。
+
+用户要求停止继续验证，因此没有重跑第二轮矩阵。最新已有 `0c28ad7` 矩阵是 **9/11 commands exit 0**，以下异常保留为已知 verification exceptions，不伪报全绿：
+
+- `pnpm test`：60 files passed，`ProjectsPage.test.tsx` 的 `beforeAll(import('./WorkbenchPage'), 30_000)` 超时；1 suite failed，1,117 tests passed，7 tests skipped。
+- `pnpm test:e2e:channels`：160 passed / 4 skipped / 4 failed；Chrome Stage 4 两个 visual case 未在默认等待内观察到 latest marker，Chrome/Edge Stage 5 两个 recovery case 未观察到短暂 `RECOVERING` frame。
+- 其余 9 个命令 exit 0；其中 Chromium 66 passed / 18 skipped，terminal stress 8,388,650 generated = delivered = acked bytes，max outstanding 262,144，input 131,085 / 131,085，resize 204 / 102，responsiveness 28 ms，console/page errors 0/0。
 
 ## Source And Evidence Boundary
 
-- 日期：`2026-08-25`（Asia/Shanghai）
+- 日期：`2026-08-26`（Asia/Shanghai）
 - 分支：`codex/poc4-stage-5-active-job-terminal`
-- immutable matrix source SHA：`09ded26a7c9f930482a1f55dde6520f7aea0b69d`
-- 实现提交：`fix(poc4): stop stale terminal socket creation`
+- 当前实现 source SHA：`0c28ad7fef9a1dac3074f5937f5a47a48b181728`
+- 当前实现提交：`fix(poc4): make terminal asset resolution exact`
+- 历史完整绿色矩阵 source SHA：`09ded26a7c9f930482a1f55dde6520f7aea0b69d`
+- 历史实现提交：`fix(poc4): stop stale terminal socket creation`
 - 矩阵工作目录：`poc4/frontend`
 - 包管理器：pnpm `10.33.0`；browser commands 设置 `PLAYWRIGHT_HTML_OPEN=never`
 - 权威时间源：`.superpowers/sdd/2026-08-25-ensoai-stage-5-active-job-terminal-implementation-plan/matrix-09ded26-summary.json`；逐命令日志位于相邻 `matrix-09ded26-logs/`
-- 正式 11 命令矩阵、final production rebuild、production scan 与 17 门判定均绑定上述 immutable source SHA
-- 矩阵后 tracked diff 精确为 49 张 PNG 且无其他文件；49 张 PNG 已全部恢复到 source SHA；README 未修改
+- 下方完整绿色矩阵、final production rebuild 与 production scan 绑定历史 `09ded26`；`0c28ad7` 的最新矩阵结果及限制以本报告 Decision 段和 `matrix-0c28ad7-summary.json` 为准
+- 历史矩阵后的 49 张、最新矩阵后的 46 张 tracked PNG 均已精确恢复；README 未修改
 - EnsoAI 浏览器显示参考保持 `D:\DeepLearning\MyProjects\Enso_AI@5aa294a`；Stage 5 production 未复制 Electron IPC、`node-pty`、本机路径或旧 PTY 复用语义
 
 本报告只证明 **mock contract verified / real-browser + MSW/mock evidence**。它不证明真实 Spring Boot、MySQL、Fabric8、Kubernetes PTY、Maven app container、reverse proxy 或 cluster 行为；mock session、echo 和 structured audit 均不得称为真实系统证据。
 
-## Complete Matrix
+## Historical Complete Matrix
 
-11 条命令按下表顺序从同一 immutable SHA 正式执行，全部 exit 0。Start/end 是 summary 中的本机时区 wall-clock timestamp，duration 是 wrapper 记录值；mock/E2E 覆盖 `dist` 后另行执行 final production rebuild 和 scan。
+以下 11 条命令是 `09ded26` 历史完整绿色矩阵，全部 exit 0。它证明主体实现曾在同一 immutable SHA 全绿，但不替代 Decision 段披露的 `0c28ad7` 最新 9/11 矩阵。Start/end 是 summary 中的本机时区 wall-clock timestamp，duration 是 wrapper 记录值；mock/E2E 覆盖 `dist` 后另行执行 final production rebuild 和 scan。
 
 | Command | Start -> end | Duration | Exit | Exact result |
 |---|---|---:|---:|---|
@@ -53,7 +62,8 @@ E2E 命令 exit 0 不能把 required skip 解释为 PASS。
 - 历史 WorkbenchShell time fixture 进入 strict Run response parser（`parseRunSummary`）后因 timestamp 倒序 fail closed；`a1a2772b13d7cc565169aac2fa932bbb9e176d61` 只修复该旧 fixture，不是当前 evidence source。
 - 第二次最终审查发现 ticket close code、heartbeat/pause、overflow、Close grace、disconnect 时点、xterm options、create-session error mapping 七组缺口，均已在前一生命周期修复波次中以 TDD 验证。
 - Final scoped re-review 随后发现 `connecting` observer reentrant Close 的 stale socket residual；`09ded26` 以两个真实行为回归用例完成修复：connecting 通知同步 close 阻止 factory，factory 内同步 close 后返回的 unowned socket 立即 exception-safe close，且不绑定 listener、不产生二次通知，later events inert。
-- controller 随后从 `09ded26` immutable source 执行完整 11 命令矩阵、final production rebuild、scan 与 hygiene；本报告只使用该 source 的当前计数。
+- controller 随后从 `09ded26` immutable source 执行完整 11 命令矩阵、final production rebuild、scan 与 hygiene；下方历史计数只使用该 source。
+- `0b46bad` 至 `0c28ad7` 后续修复了 lazy xterm CSS 边界、ready observer 重入、50 ms input drain，以及 production terminal asset resolver 的 missing/ambiguous/basename-collision false-green。最终 scoped re-review 未发现 Critical/Important，保留 Decision 段所列 1 个 Minor。
 
 ## Production Rebuild And Scan
 
@@ -127,11 +137,11 @@ mock structured audit 只验证展示与查询 contract，不证明真实 Shell/
 ## Browser And Visual Evidence
 
 - Chromium：66 passed / 18 skipped；新增 executable coverage 包含 ticket-unavailable 保留 login，以及 post-initialize disconnect -> `INTERRUPTED` -> fresh explicit Open。
-- Chrome + Edge：164 passed / 4 skipped；两个 required fixme 各在两个 channel skip 一次，其余 executable cases 通过。
+- 历史 `09ded26` Chrome + Edge：164 passed / 4 skipped；两个 required fixme 各在两个 channel skip 一次，其余 executable cases 通过。最新 `0c28ad7` channel matrix 的 4 个失败按 Decision 段单独披露。
 - Chrome/Edge 各验证 Terminal 与 Audit 的 `1280x720`、`1440x900`、`1920x1080`，共 12 张 Stage 5 visual evidence。几何、overflow、xterm nonblank pixels、Search overlay 与 Audit scroll/header assertions 通过。
 - 矩阵运行后 tracked diff 精确出现 49 张 PNG 且无其他文件；49 张均恢复到 immutable source SHA，当前没有 tracked PNG diff。
 
-Visual/core PASS 不替代两个 required skipped workflows，故 Gate 11 与 Gate 16 仍 FAIL。
+Visual/core PASS 不替代两个 required skipped workflows；Gate 11 与 Gate 16 仅因用户明确豁免而记为 `WAIVED_BY_USER`。
 
 ## Real-System Evidence Still Deferred
 
@@ -165,11 +175,13 @@ Visual/core PASS 不替代两个 required skipped workflows，故 Gate 11 与 Ga
 
 ## Repository Hygiene
 
+以下全量 encoding/line-ending 计数绑定历史 `09ded26` hygiene scan。按用户要求，本次收尾不再运行新的全量验证扫描；只恢复 46 张已知矩阵 PNG，并修改本结果文件。
+
 - Fresh tracked set：`git ls-files -- poc4/frontend poc4/docs` 共 **291 files**；仅排除 binary `.png` **66 files**，纳入 **225 files**，其中明确包含 `poc4/frontend/.env.mock`。
 - Strict UTF-8 decode：**225 valid / 0 invalid**；UTF-8 BOM **0**。
 - Line-ending file classification：**189 CRLF-only / 21 LF-only / 15 mixed / 0 CR-only / 0 no-EOL**。
 - Line-ending sequence totals：**58,468 CRLF / 9,491 bare LF / 0 bare CR**。
-- 本 `result.md`：UTF-8 without BOM、LF-only，206 个 LF sequence；回填后以同一脚本复算到稳定。
+- 历史 `result.md`：UTF-8 without BOM、LF-only；本次收尾使用 `apply_patch` 编辑，未执行 fresh 全量重扫。
 - 扫描排除 generated/ignored `dist`、Playwright `test-results`、traces/videos/reports、`.grok`、linked worktrees 与其他 untracked artifacts；它们不纳入 tracked hygiene 或提交。
 - 本次 tracked diff 只允许 `poc4/docs/evidence/stage-5/result.md`；README、PNG、source、tests、package/lock、两个 fixme 与 `.grok` 均不修改。
 
@@ -177,7 +189,7 @@ Visual/core PASS 不替代两个 required skipped workflows，故 Gate 11 与 Ga
 
 | Gate | Status | Fresh evidence and limit |
 |---:|---|---|
-| 1 | PASS | 36 contract tests + 24/24 boundary + full unit matrix 61 files / 1,123 tests：session/audit/control exact keys、IDs、timestamps、dimensions、frame size、close/error combinations strict-parse |
+| 1 | PASS | 历史 immutable matrix：36 contract tests + 24/24 boundary + full unit matrix 61 files / 1,123 tests；最新矩阵的 unrelated dynamic-import hook timeout 作为 verification exception 保留在 Decision 段 |
 | 2 | PASS | exact `{cols,rows}` POST；only same-project active RUNNING enables create；无 shell/cwd/env/container/image/resource fields |
 | 3 | PASS | mock authority：owner、project availability、current active RUNNING、runId、history/non-RUNNING rejection 与 one-live enforcement |
 | 4 | PASS | Bearer HTTP、30 s single-use ticket、same-origin ticket-only WS、JWT absent from URL/frame/DOM；unknown/invalid ticket -> 4410 且保留 login，4401 仅明确 unauthenticated |
@@ -187,13 +199,13 @@ Visual/core PASS 不替代两个 required skipped workflows，故 Gate 11 与 Ga
 | 8 | PASS | input frame <=16 KiB、queue 1 MiB、256/64 KiB watermarks、strict pause/resume；overflow 明确 session closed 与可能已发送前缀 |
 | 9 | PASS | positive/deduped/coalesced resize、inactive/zero gate、reactivation refit；full stress 204 observed / 102 sent |
 | 10 | PASS | per-session xterm/addons；14 px、5000 scrollback、no EOL conversion、reduced-motion blink policy；WebGL/DOM fallback、Search/focus/clear/resize lifecycle |
-| 11 | **FAIL** | ticket-unavailable/current 401/pagehide/project/logout/Run-left executable cases pass；唯一失败为 required stale Alice terminal 401 preserving newer Bob remains `test.fixme`，未运行、未修改、无 fresh browser PASS |
+| 11 | **WAIVED_BY_USER** | ticket-unavailable/current 401/pagehide/project/logout/Run-left executable cases pass；required stale Alice terminal 401 preserving newer Bob remains `test.fixme`，未运行、未修改、无 fresh browser PASS |
 | 12 | PASS | post-`terminal.ready` + post-initialize disconnect settles INTERRUPTED without reconnect；later explicit Open uses fresh session/ticket/socket/xterm，old generation inert；connect reentrancy 已由 `09ded26` 独立 targeted 覆盖 |
 | 13 | PASS | null-active synchronously revokes terminal authority before detail await；pending/rejected/nonterminal do not restore it；fresh RUNNING invalidates stale confirmation；STOPPING close-before-reload passes |
 | 14 | PASS | backend-only structured audit、owner/session cursor pagination、safe plain rendering、no frontend parser、PTY/Audit/Run-log isolation |
-| 15 | PASS | full `pnpm test:e2e:terminal-stress` exit 0；8,388,650 generated=delivered=acked、204/102 resize、marker once、12 ms responsive、zero console/page errors |
-| 16 | **FAIL** | Chromium/Chrome/Edge executable core and visual cases pass；required complete keyboard-only workflow remains `test.fixme`，未运行、未修改、无 fresh browser PASS |
-| 17 | PASS | final production rebuild 3,787 modules + final boundary 24/24；192 files/97 text、34 needles zero、entry/Workbench xterm 0、dedicated lazy terminal JS + xterm CSS verified |
+| 15 | PASS | latest `pnpm test:e2e:terminal-stress` exit 0；8,388,650 generated=delivered=acked、204/102 resize、marker once、28 ms responsive、zero console/page errors |
+| 16 | **WAIVED_BY_USER** | Chromium executable core passes；required complete keyboard-only workflow remains `test.fixme`，且 latest Chrome/Edge channel run 有 Decision 段披露的 4 个 timing failures；均无 fresh all-channel PASS |
+| 17 | PASS | historical final production scan 34 needles zero；latest production build 3,789 modules、boundary 36/36、asset resolver direct 31/31 + subprocess 5/5，dedicated lazy terminal JS + exact xterm CSS resolution verified |
 
 ## Known Risks Carried Forward
 
@@ -203,4 +215,5 @@ Visual/core PASS 不替代两个 required skipped workflows，故 Gate 11 与 Ga
 - Terminal 可修改 PVC；这是受控测试 cluster risk，不提供 immutable run。
 - command audit attribution、input prefix-on-overflow、browser background throttling、watchdog 与 session/Run races 必须在真实系统重新验证。
 - `09ded26` 已修复 connecting observer reentrant Close 的 stale socket creation/ownership residual；targeted regression 2/2 GREEN，later events inert，且未改变正常 connect/ready、Close grace、authority teardown 或其他 lifecycle contract。
-- required stale-401 ownership race 与完整 keyboard-only workflow 缺少 browser PASS；在两门补齐并重新执行 gate evidence 前保持 remediation 状态。
+- required stale-401 ownership race 与完整 keyboard-only workflow 缺少 browser PASS；其状态是用户豁免而非技术 PASS，Stage 6 计划必须继续携带该事实。
+- 最新矩阵仍有 1 个 unit hook timeout 与 4 个 Chrome/Edge timing failures；用户要求不再重跑，本报告不将这些 verification exceptions 描述为已修复。
