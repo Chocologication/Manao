@@ -26,7 +26,7 @@ import {
   useTerminalAuditQuery,
 } from './terminalQueries';
 
-const RUN_ID = parseRunId('run-terminal-audit');
+const RUN_ID = parseRunId('run-channel-9');
 
 function audit(
   id: string,
@@ -66,7 +66,7 @@ describe('terminal audit query policy', () => {
     expect(terminalAuditKeys.list('prj-1', RUN_ID)).toEqual([
       'terminal-audits',
       'prj-1',
-      'run-terminal-audit',
+      'run-channel-9',
     ]);
     const unauthorized = new ApiRequestError(401, null);
     const forbidden = new ApiRequestError(403, null);

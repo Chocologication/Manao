@@ -204,7 +204,7 @@ class TestLogSocket {
   }
 }
 
-async function connectTestLogTransport(runId: string): Promise<{
+async function connectTestLogTransport(runId: string, replayText = `${runId}-chunk`): Promise<{
   store: RunLogStore;
   socket: TestLogSocket;
   timers: Map<number, () => void>;
@@ -261,15 +261,15 @@ async function connectTestLogTransport(runId: string): Promise<{
       chunks: [
         {
           seq: 1,
-          text: `${runId}-chunk`,
-          byteLength: new TextEncoder().encode(`${runId}-chunk`).byteLength,
+          text: replayText,
+          byteLength: new TextEncoder().encode(replayText).byteLength,
           persistedAt: '2026-08-24T10:00:02.000Z',
         },
       ],
       window: {
         firstAvailableSeq: 1,
         lastAvailableSeq: 1,
-        retainedBytes: new TextEncoder().encode(`${runId}-chunk`).byteLength,
+        retainedBytes: new TextEncoder().encode(replayText).byteLength,
         truncated: false,
         evictedBytes: 0,
       },
@@ -876,20 +876,22 @@ describe('appRuntime explicit logout', () => {
 
 describe('appRuntime log stream session isolation', () => {
   it('renders the Run marker only in the Run logs region', async () => {
-    const runMarker = 'RUN9';
-    const { store } = await connectTestLogTransport(runMarker);
+    const runMarker = 'RUN#9';
+    const { store } = await connectTestLogTransport('run-channel-9', runMarker);
 
     render(createElement(RunLogView, { store }));
 
     const runLogs = screen.getByRole('region', { name: 'Run logs' });
-    expect(runLogs).toHaveTextContent(`${runMarker}-chunk`);
-    expect(runLogs).not.toHaveTextContent(/PTY#9|AUDIT#9/);
+    expect(runLogs).toHaveTextContent(runMarker);
+    expect(runLogs).not.toHaveTextContent(
+      /PTY#9|AUDIT#9|session-1|short ticket\?&|jwt-secret-that-must-not-leak/,
+    );
   });
 
   it('renders only audit command data and keeps opaque credentials out of visible DOM', () => {
-    const sessionSecret = 'session-secret-9';
-    const ticketSecret = 'ticket-secret-9';
-    const jwtSecret = 'jwt-secret-9';
+    const sessionSecret = 'session-1';
+    const ticketSecret = 'short ticket?&';
+    const jwtSecret = 'jwt-secret-that-must-not-leak';
     render(createElement(TerminalAuditView, {
       items: [{
         id: parseTerminalAuditId('audit-9'),
@@ -911,9 +913,10 @@ describe('appRuntime log stream session isolation', () => {
 
     const audit = screen.getByRole('table', { name: 'Terminal command audit' });
     expect(audit).toHaveTextContent('AUDIT#9');
-    expect(document.body).not.toHaveTextContent(
-      new RegExp(`${sessionSecret}|${ticketSecret}|${jwtSecret}|PTY#9|RUN9`),
-    );
+    const visibleText = document.body.textContent ?? '';
+    for (const hidden of [sessionSecret, ticketSecret, jwtSecret, 'PTY#9', 'RUN#9']) {
+      expect(visibleText).not.toContain(hidden);
+    }
   });
 
   it('does not close Bob log stream when a delayed Alice 401 arrives', async () => {
@@ -1115,6 +1118,17 @@ describe('appRuntime terminal resource registration', () => {
     expect(runSources).not.toMatch(
       /features[\\/]terminal|JobTerminal(?:Controller|Transport)|terminalQueries/,
     );
+  });
+
+  it('treats screenshot naming as N/A because terminal runtime exposes no screenshot surface', () => {
+    const runtimeSources = [
+      readFileSync('src/app/appRuntime.ts', 'utf8'),
+      readFileSync('src/features/terminal/JobTerminalController.ts', 'utf8'),
+      readFileSync('src/features/terminal/JobTerminalTransport.ts', 'utf8'),
+      readFileSync('src/components/terminal/JobTerminalPanel.tsx', 'utf8'),
+    ].join('\n');
+
+    expect(runtimeSources).not.toMatch(/\bscreenshot\b|capturePage|toHaveScreenshot/);
   });
 
   it('closes the socket before disposing controller/xterm and keeps heavy modules lazy', () => {

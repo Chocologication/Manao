@@ -197,10 +197,14 @@ export class JobTerminalTransport {
       close: (event) => this.handleClose(generation, socket, event),
     };
     this.socketListeners = listeners;
-    socket.addEventListener('open', listeners.open);
-    socket.addEventListener('message', listeners.message);
-    socket.addEventListener('error', listeners.error);
-    socket.addEventListener('close', listeners.close);
+    try {
+      socket.addEventListener('open', listeners.open);
+      socket.addEventListener('message', listeners.message);
+      socket.addEventListener('error', listeners.error);
+      socket.addEventListener('close', listeners.close);
+    } catch {
+      this.finish({ kind: 'connection-error' });
+    }
   }
 
   initialize(cols: number, rows: number): boolean {

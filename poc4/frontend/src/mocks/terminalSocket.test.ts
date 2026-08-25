@@ -313,6 +313,9 @@ describe('mock PTY binary direction', () => {
     expect(output.map((frame) => [...frame])).toEqual(
       fragments.map((fragment) => [...fragment]),
     );
+    const terminalOutput = output.map((frame) => new TextDecoder().decode(frame)).join('');
+    expect(terminalOutput).toContain(ptyMarker);
+    expect(terminalOutput).not.toMatch(/AUDIT#9|RUN#9/);
     expect(controls.snapshot()).toEqual([]);
     expect(listTerminalAudits(ALICE_ID, ALICE_SEED_PROJECT_ID, runId).items)
       .not.toContainEqual(expect.objectContaining({ command: expect.stringContaining(ptyMarker) }));

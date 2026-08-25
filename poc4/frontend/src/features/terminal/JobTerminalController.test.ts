@@ -5,15 +5,71 @@ import {
   parseTerminalTicket,
   type CreateTerminalSessionResponse,
 } from '../../contracts/terminal';
-import type { JobTerminalTransportOptions } from './JobTerminalTransport';
+import {
+  JobTerminalTransport,
+  type JobTerminalTransportOptions,
+  type TerminalWebSocketEvent,
+  type TerminalWebSocketPort,
+} from './JobTerminalTransport';
 import type { XtermTerminalAdapterOptions } from './XtermTerminalAdapter';
 import {
   JobTerminalController,
+  type CreateJobTerminalTransport,
   type RegisterJobTerminalRuntimeResource,
 } from './JobTerminalController';
 
 function activeRun(id: string, state: RunState = 'RUNNING') {
   return { id: parseRunId(id), state };
+}
+
+class TraceTerminalSocket implements TerminalWebSocketPort {
+  readyState = 0;
+  bufferedAmount = 0;
+  binaryType: BinaryType = 'blob';
+  private readonly listeners = new Map<
+    string,
+    Set<(event: TerminalWebSocketEvent) => void>
+  >();
+  private readonly trace: string[];
+
+  constructor(trace: string[]) {
+    this.trace = trace;
+  }
+
+  addEventListener(type: string, listener: (event: TerminalWebSocketEvent) => void): void {
+    const listeners = this.listeners.get(type) ?? new Set();
+    listeners.add(listener);
+    this.listeners.set(type, listeners);
+  }
+
+  removeEventListener(type: string, listener: (event: TerminalWebSocketEvent) => void): void {
+    this.trace.push(`listener:remove:${type}`);
+    this.listeners.get(type)?.delete(listener);
+  }
+
+  send(data: string | ArrayBuffer): void {
+    if (typeof data !== 'string') return;
+    const control = JSON.parse(data) as { type: string };
+    this.trace.push(`socket:send:${control.type}`);
+  }
+
+  close(): void {
+    this.trace.push('socket:close');
+    this.readyState = 3;
+  }
+
+  open(): void {
+    this.readyState = 1;
+    this.emit('open', {});
+  }
+
+  message(data: unknown): void {
+    this.emit('message', { data });
+  }
+
+  private emit(type: string, event: TerminalWebSocketEvent): void {
+    for (const listener of [...(this.listeners.get(type) ?? [])]) listener(event);
+  }
 }
 
 describe('JobTerminalController authority transitions', () => {
@@ -83,6 +139,10 @@ function createOpenHarness(
     fitDimensions?: { cols: number; rows: number } | null;
     reservationError?: Error;
     accessToken?: string | null;
+    getAccessToken?: () => string | null;
+    onUnauthorized?: () => void;
+    trace?: string[];
+    createTransport?: CreateJobTerminalTransport;
     adapterFactoryThrows?: boolean;
     connectFailure?: boolean;
     connectThrows?: boolean;
@@ -95,7 +155,7 @@ function createOpenHarness(
     setReadyThrows?: boolean;
   } = {},
 ) {
-  const trace: string[] = [];
+  const trace = options.trace ?? [];
   let adapterOptions: XtermTerminalAdapterOptions | null = null;
   let transportOptions: JobTerminalTransportOptions | null = null;
   const transportOptionsHistory: JobTerminalTransportOptions[] = [];
@@ -186,7 +246,9 @@ function createOpenHarness(
   });
   const controller = new JobTerminalController({
     projectId: 'prj-1',
-    getAccessToken: () => (options.accessToken === undefined ? 'token' : options.accessToken),
+    getAccessToken:
+      options.getAccessToken ??
+      (() => (options.accessToken === undefined ? 'token' : options.accessToken)),
     createSession,
     createAdapter: (createdOptions) => {
       trace.push('adapter:create');
@@ -198,9 +260,10 @@ function createOpenHarness(
       trace.push('transport:create');
       transportOptions = createdOptions;
       transportOptionsHistory.push(createdOptions);
-      return transport;
+      return options.createTransport?.(createdOptions) ?? transport;
     },
     registerRuntimeResource: options.registerRuntimeResource ?? (() => () => {}),
+    onUnauthorized: options.onUnauthorized,
     invalidateAudits:
       options.invalidateAudits === undefined
         ? undefined
@@ -426,6 +489,68 @@ describe('JobTerminalController open orchestration', () => {
     expect(missingToken.adapter.dispose).toHaveBeenCalledOnce();
     expect(missingToken.transport.connect).not.toHaveBeenCalled();
   });
+
+  it('captures auth before ticket POST and rejects a delayed success after the user changes', async () => {
+    let currentToken = 'alice-token';
+    const authTrace: string[] = [];
+    const onUnauthorized = vi.fn();
+    const stale = createOpenHarness({
+      holdReservation: true,
+      trace: authTrace,
+      getAccessToken: () => {
+        authTrace.push(`token:${currentToken}`);
+        return currentToken;
+      },
+      onUnauthorized,
+    });
+    const opening = stale.controller.open(document.createElement('div'));
+    await Promise.resolve();
+    expect(stale.createSession).toHaveBeenCalledOnce();
+    expect(authTrace.indexOf('token:alice-token')).toBeLessThan(
+      authTrace.indexOf('session:create:91x27'),
+    );
+
+    currentToken = 'bob-token';
+    stale.releaseReservation();
+
+    await expect(opening).resolves.toBe(false);
+    expect(stale.getTransportOptionsHistory()).toHaveLength(0);
+    expect(stale.transport.connect).not.toHaveBeenCalled();
+    expect(stale.adapter.dispose).toHaveBeenCalledOnce();
+    expect(onUnauthorized).not.toHaveBeenCalled();
+
+    const current = createOpenHarness({
+      getAccessToken: () => 'alice-token',
+      onUnauthorized,
+    });
+    await expect(current.controller.open(document.createElement('div'))).resolves.toBe(true);
+    expect(current.getTransportOptions()?.accessToken).toBe('alice-token');
+    expect(current.transport.connect).toHaveBeenCalledOnce();
+  });
+
+  it('keeps reservation secrets out of the controller error state and console', async () => {
+    const secrets = ['short ticket?&', 'session-1', 'jwt-secret-that-must-not-leak'];
+    const consoleSpies = [
+      vi.spyOn(console, 'log').mockImplementation(() => {}),
+      vi.spyOn(console, 'warn').mockImplementation(() => {}),
+      vi.spyOn(console, 'error').mockImplementation(() => {}),
+    ];
+    try {
+      const harness = createOpenHarness({ reservationError: new Error(secrets.join(' ')) });
+
+      await expect(harness.controller.open(document.createElement('div'))).resolves.toBe(false);
+
+      const exposedError = JSON.stringify(harness.controller.getSnapshot());
+      expect(harness.controller.getSnapshot()).toMatchObject({
+        phase: 'error',
+        failure: 'open-failed',
+      });
+      for (const secret of secrets) expect(exposedError).not.toContain(secret);
+      expect(consoleSpies.every((spy) => spy.mock.calls.length === 0)).toBe(true);
+    } finally {
+      for (const spy of consoleSpies) spy.mockRestore();
+    }
+  });
 });
 
 describe('JobTerminalController live lifecycle', () => {
@@ -467,6 +592,68 @@ describe('JobTerminalController live lifecycle', () => {
     expect(harness.controller.getSnapshot().phase).toBe('closed');
   });
 
+  it('runs one observable input disable through the real controller and transport chain', async () => {
+    const trace: string[] = [];
+    const socket = new TraceTerminalSocket(trace);
+    const timers = new Map<number, () => void>();
+    let nextTimer = 1;
+    const harness = createOpenHarness({
+      trace,
+      invalidateAudits: vi.fn(),
+      createTransport: (transportOptions) => new JobTerminalTransport({
+        ...transportOptions,
+        location: { protocol: 'http:', host: 'localhost:4173' },
+        webSocketFactory: () => socket,
+        scheduler: {
+          setTimeout: (handler) => {
+            const timer = nextTimer;
+            nextTimer += 1;
+            timers.set(timer, handler);
+            return timer;
+          },
+          clearTimeout: (timer) => {
+            trace.push('pump:stop');
+            timers.delete(Number(timer));
+          },
+        },
+      }),
+    });
+    await harness.controller.open(document.createElement('div'));
+    socket.open();
+    socket.message(JSON.stringify({ type: 'terminal.ready', sessionId: 'session-1' }));
+    expect(harness.controller.getSnapshot().phase).toBe('ready');
+    trace.length = 0;
+
+    socket.bufferedAmount = 256 * 1024;
+    harness.getAdapterOptions()?.onData?.('queued');
+    expect(harness.controller.getSnapshot().phase).toBe('paused');
+    expect(timers.size).toBe(1);
+    harness.controller.close();
+
+    const cleanupTrace = trace.filter((event) =>
+      event === 'adapter:input:false' ||
+      event === 'pump:stop' ||
+      event === 'socket:send:terminal.close' ||
+      event === 'socket:close' ||
+      event.startsWith('listener:remove:') ||
+      event === 'adapter:dispose' ||
+      event === 'audit:invalidate',
+    );
+    expect(cleanupTrace).toEqual([
+      'adapter:input:false',
+      'pump:stop',
+      'socket:send:terminal.close',
+      'socket:close',
+      'listener:remove:open',
+      'listener:remove:message',
+      'listener:remove:error',
+      'listener:remove:close',
+      'adapter:dispose',
+      'audit:invalidate',
+    ]);
+    expect(timers.size).toBe(0);
+  });
+
   it('disposes the closed generation before one audit invalidation across racing endings', async () => {
     const invalidateAudits = vi.fn();
     const harness = createOpenHarness({ invalidateAudits });
@@ -480,7 +667,6 @@ describe('JobTerminalController live lifecycle', () => {
     expect(harness.trace.slice(start)).toEqual([
       'adapter:input:false',
       'transport:close',
-      'adapter:input:false',
       'adapter:ready:false',
       'transport:dispose',
       'adapter:dispose',
@@ -512,7 +698,6 @@ describe('JobTerminalController live lifecycle', () => {
     expect(harness.trace.slice(start)).toEqual([
       'adapter:input:false',
       'transport:close',
-      'adapter:input:false',
       'adapter:ready:false',
       'transport:dispose',
       'adapter:dispose',
@@ -568,6 +753,33 @@ describe('JobTerminalController live lifecycle', () => {
     expect(invalidateAudits).toHaveBeenCalledOnce();
     expect(invalidateAudits).toHaveBeenCalledWith('prj-1', parseRunId('run-1'));
   });
+
+  it.each(['replace-with-run-b', 'clear-run'] as const)(
+    'invalidates generation A when an exit subscriber performs %s',
+    async (reentry) => {
+      const invalidateAudits = vi.fn();
+      const harness = createOpenHarness({ invalidateAudits });
+      await harness.controller.open(document.createElement('div'));
+      harness.getTransportOptions()?.onReady?.();
+      let reentered = false;
+      harness.controller.subscribe(() => {
+        if (reentered || harness.controller.getSnapshot().phase !== 'exited') return;
+        reentered = true;
+        harness.controller.setRun(
+          reentry === 'replace-with-run-b' ? activeRun('run-b') : null,
+        );
+      });
+
+      harness.getTransportOptions()?.onClosed?.({
+        kind: 'server-exit',
+        exitCode: 0,
+        reason: 'SHELL_EXITED',
+      });
+
+      expect(invalidateAudits).toHaveBeenCalledOnce();
+      expect(invalidateAudits).toHaveBeenCalledWith('prj-1', parseRunId('run-1'));
+    },
+  );
 
   it('commits exit and invalidates once when clearing adapter ready throws', async () => {
     const invalidateAudits = vi.fn();

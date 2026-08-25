@@ -255,6 +255,10 @@ export class JobTerminalController {
       }
       this.dimensions = dimensions;
 
+      const accessToken = this.getAccessToken();
+      if (accessToken === null || accessToken === '') {
+        throw new Error('Terminal access token is unavailable');
+      }
       const abort = new AbortController();
       this.reservationAbort = abort;
       const reservation = await this.createSession(
@@ -265,10 +269,8 @@ export class JobTerminalController {
       );
       if (!this.isCurrent(generation, run.id, adapter)) return false;
       this.reservationAbort = null;
-
-      const accessToken = this.getAccessToken();
-      if (accessToken === null || accessToken === '') {
-        throw new Error('Terminal access token is unavailable');
+      if (this.getAccessToken() !== accessToken) {
+        throw new Error('Terminal access token changed');
       }
 
       let transport: JobTerminalTransportPort | null = null;
@@ -280,6 +282,7 @@ export class JobTerminalController {
         onUnauthorized: this.onUnauthorized,
         onInputEnabledChange: (enabled) => {
           if (!this.isCurrentTransport(generation, transport)) return;
+          if (this.snapshot.phase === 'closing' && !enabled) return;
           this.setAdapterInputEnabledSafely(adapter, enabled);
           if (this.snapshot.phase === 'ready' && !enabled) {
             this.patch({ phase: 'paused' });
@@ -313,7 +316,7 @@ export class JobTerminalController {
           }
         },
         onClosed: (reason) => {
-          this.handleTransportClosed(generation, transport, adapter, reason);
+          this.handleTransportClosed(generation, run.id, transport, adapter, reason);
         },
       });
       this.transport = transport;
@@ -347,6 +350,7 @@ export class JobTerminalController {
 
   private handleTransportClosed(
     generation: number,
+    runId: RunId | null,
     transport: JobTerminalTransportPort | null,
     adapter: JobTerminalAdapterPort | null,
     reason: JobTerminalClosedReason,
@@ -375,12 +379,12 @@ export class JobTerminalController {
     }
     if (reason.kind === 'server-exit') {
       this.patch({ phase: 'exited', failure: null });
-      this.notifyAuditInvalidation();
+      this.notifyAuditInvalidation(runId);
       return;
     }
     if (reason.kind === 'client-close') {
       this.patch({ phase: 'closed', failure: null });
-      this.notifyAuditInvalidation();
+      this.notifyAuditInvalidation(runId);
       return;
     }
     const failure: JobTerminalFailure =
@@ -390,12 +394,11 @@ export class JobTerminalController {
           ? 'server-error'
           : 'connection-error';
     this.patch({ phase: 'error', failure });
-    this.notifyAuditInvalidation();
+    this.notifyAuditInvalidation(runId);
   }
 
-  private notifyAuditInvalidation(): void {
-    const runId = this.run?.id;
-    if (runId === undefined || this.invalidateAudits === undefined) return;
+  private notifyAuditInvalidation(runId: RunId | null): void {
+    if (runId === null || this.invalidateAudits === undefined) return;
     try {
       void Promise.resolve(this.invalidateAudits(this.projectId, runId)).catch(() => {});
     } catch {
@@ -404,14 +407,16 @@ export class JobTerminalController {
   }
 
   private beginClose(): void {
-    this.setAdapterInputEnabledSafely(this.adapter, false);
+    if (this.snapshot.phase !== 'paused') {
+      this.setAdapterInputEnabledSafely(this.adapter, false);
+    }
     this.patch({ phase: 'closing' });
     try {
       this.transport?.close();
     } catch {
       const transport = this.transport;
       const adapter = this.adapter;
-      this.handleTransportClosed(this.generation, transport, adapter, {
+      this.handleTransportClosed(this.generation, this.snapshot.runId, transport, adapter, {
         kind: 'connection-error',
       });
     }

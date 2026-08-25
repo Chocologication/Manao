@@ -143,6 +143,33 @@ function ready(socket: FakeTerminalSocket): void {
 }
 
 describe('JobTerminalTransport generation and handshake', () => {
+  it('fails closed and removes partial listeners when listener registration throws', () => {
+    const trace: string[] = [];
+    class RegistrationFailureSocket extends FakeTerminalSocket {
+      override addEventListener(type: string, listener: (event: SocketEvent) => void): void {
+        if (type === 'message') throw new Error('listener registration failed');
+        super.addEventListener(type, listener);
+      }
+    }
+    const socket = new RegistrationFailureSocket(trace);
+    const onClosed = vi.fn();
+    const harness = createHarness({ webSocketFactory: () => socket, onClosed });
+
+    expect(() => harness.transport.connect()).not.toThrow();
+
+    expect(harness.transport.currentState).toBe('closed');
+    expect(socket.closes).toEqual([{ code: 1000 }]);
+    expect(trace).toEqual([
+      'socket:close',
+      'socket:remove:open',
+      'socket:remove:message',
+      'socket:remove:error',
+      'socket:remove:close',
+    ]);
+    expect(onClosed).toHaveBeenCalledOnce();
+    expect(onClosed).toHaveBeenCalledWith({ kind: 'connection-error' });
+  });
+
   it('maps an HTTP origin to the fixed ws endpoint', () => {
     expect(buildJobTerminalWebSocketUrl(
       { protocol: 'http:', host: 'localhost:4173' },
@@ -443,6 +470,7 @@ describe('JobTerminalTransport terminal close policy', () => {
   });
 
   it('ends a post-handshake socket generation without reconnecting or exposing close reason text', () => {
+    const secrets = [TICKET, SESSION_ID, 'jwt-secret-that-must-not-leak'];
     const consoleSpies = [console.log, console.warn, console.error].map((method) =>
       vi.spyOn(console, method.name as 'log' | 'warn' | 'error').mockImplementation(() => {}),
     );
@@ -452,16 +480,22 @@ describe('JobTerminalTransport terminal close policy', () => {
     ready(socket);
     harness.transport.initialize(80, 24);
 
-    socket.remoteClose(1011, 'ticket=short-ticket session=session-1 jwt=jwt-secret');
+    socket.remoteClose(1011, secrets.join(' '));
     socket.message(JSON.stringify({ type: 'terminal.ping', nonce: 'late' }));
     harness.transport.connect();
 
     expect(harness.onClosed).toHaveBeenCalledTimes(1);
     expect(harness.onClosed).toHaveBeenCalledWith({ kind: 'socket-close', code: 1011 });
-    expect(JSON.stringify(harness.onClosed.mock.calls)).not.toContain('ticket=');
+    const exposed = JSON.stringify({
+      closed: harness.onClosed.mock.calls,
+      states: harness.states,
+      input: harness.inputEnabled,
+    });
+    for (const secret of secrets) expect(exposed).not.toContain(secret);
     expect(consoleSpies.every((spy) => spy.mock.calls.length === 0)).toBe(true);
     expect(harness.sockets).toHaveLength(1);
     expect(harness.states.at(-1)).toBe('closed');
+    for (const spy of consoleSpies) spy.mockRestore();
   });
 
   it('treats exit, server error, and socket error as terminal generations', () => {
@@ -523,6 +557,58 @@ describe('JobTerminalTransport terminal close policy', () => {
 });
 
 describe('JobTerminalTransport observer-safe teardown', () => {
+  it('finishes closed when pump, socket close, and listener removal throw', () => {
+    const trace: string[] = [];
+    class TeardownFailureSocket extends FakeTerminalSocket {
+      override close(code?: number): void {
+        super.close(code);
+        throw new Error('socket close failed');
+      }
+
+      override removeEventListener(type: string, listener: (event: SocketEvent) => void): void {
+        super.removeEventListener(type, listener);
+        if (type === 'message') throw new Error('listener removal failed');
+      }
+    }
+    const socket = new TeardownFailureSocket(trace);
+    const clock = createManualScheduler();
+    const onClosed = vi.fn();
+    const harness = createHarness({
+      webSocketFactory: () => socket,
+      scheduler: {
+        ...clock.scheduler,
+        clearTimeout: (timer) => {
+          trace.push('pump:stop');
+          clock.scheduler.clearTimeout(timer);
+          throw new Error('pump disposal failed');
+        },
+      },
+      onClosed,
+    });
+    harness.transport.connect();
+    ready(socket);
+    harness.transport.initialize(80, 24);
+    socket.bufferedAmount = 256 * 1024;
+    harness.transport.sendData('queued');
+    expect(clock.pendingCount()).toBe(1);
+    trace.length = 0;
+
+    expect(() => harness.transport.close()).not.toThrow();
+
+    expect(harness.transport.currentState).toBe('closed');
+    expect(clock.pendingCount()).toBe(0);
+    expect(onClosed).toHaveBeenCalledOnce();
+    expect(trace).toEqual([
+      'pump:stop',
+      'socket:send:terminal.close',
+      'socket:close',
+      'socket:remove:open',
+      'socket:remove:message',
+      'socket:remove:error',
+      'socket:remove:close',
+    ]);
+  });
+
   it('closes and clears the pump when current-token lookup throws on 4401', () => {
     const clock = createManualScheduler();
     const onUnauthorized = vi.fn();
