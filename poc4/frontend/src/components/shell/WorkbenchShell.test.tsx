@@ -29,6 +29,7 @@ import {
 import { useWorkspaceSession, workspaceSessionStore } from '../../features/editor/workspaceSession';
 import { fileKeys } from '../../features/files/fileQueries';
 import { parseProjectDirectoryPath, parseProjectRelativePath } from '../../features/files/pathPolicy';
+import { WorkbenchPage } from '../../features/projects/WorkbenchPage';
 import { RunAuthorityCoordinator } from '../../features/runs/RunAuthorityCoordinator';
 import { runKeys } from '../../features/runs/runQueries';
 import * as projectMonacoModels from '../../lib/projectMonacoModels';
@@ -97,6 +98,12 @@ function filePanel(): HTMLElement {
 
 function runPanel(): HTMLElement {
   const panel = document.getElementById('workbench-run-panel');
+  expect(panel).toBeInstanceOf(HTMLElement);
+  return panel as HTMLElement;
+}
+
+function terminalPanel(): HTMLElement {
+  const panel = document.getElementById('workbench-terminal-panel');
   expect(panel).toBeInstanceOf(HTMLElement);
   return panel as HTMLElement;
 }
@@ -175,6 +182,12 @@ function runStopPostCount(spy: { mock: { calls: unknown[][] } }): number {
   ).length;
 }
 
+function terminalSessionPostCount(spy: { mock: { calls: unknown[][] } }): number {
+  return spy.mock.calls.filter(
+    (call) => fetchMethod(call) === 'POST' && /\/terminal-sessions$/.test(fetchPathname(call)),
+  ).length;
+}
+
 const originalClipboardItem = globalThis.ClipboardItem;
 
 beforeEach(() => {
@@ -228,7 +241,9 @@ describe('WorkbenchShell layout', () => {
     expect(within(sidebar).getByRole('button', { name: 'Collapse all folders' })).toBeInTheDocument();
   });
 
-  it('keeps File selected, enables Run, and leaves Terminal disabled and unmounted', async () => {
+  it('keeps Terminal unloaded until first selection and never opens a session automatically', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    const user = userEvent.setup();
     await authenticateAsAlice();
     renderShell();
     await loadedEditable();
@@ -239,18 +254,23 @@ describe('WorkbenchShell layout', () => {
     const terminal = within(panels).getByRole('tab', { name: 'Terminal' });
     expect(run).toBeEnabled();
     expect(run).toHaveAttribute('aria-selected', 'false');
-    expect(terminal).toBeDisabled();
-    expect(terminal).toHaveAccessibleDescription(/STAGE_4_UNAVAILABLE/);
-    expect(run).not.toHaveAccessibleDescription(/STAGE_4_UNAVAILABLE/);
+    expect(terminal).toBeEnabled();
+    expect(terminal).toHaveAttribute('aria-selected', 'false');
     expect(filePanel()).toBeInTheDocument();
     expect(runPanel()).toBeInTheDocument();
     expectPanelInteractive(filePanel(), true);
     expectPanelInteractive(runPanel(), false);
-    expect(screen.queryByTestId('terminal-spike-panel')).not.toBeInTheDocument();
-    expect(screen.queryByTestId('run-spike-panel')).not.toBeInTheDocument();
-    expect(screen.queryByText(/mock file tree/i)).not.toBeInTheDocument();
-    expect(screen.queryByText(/coming soon/i)).not.toBeInTheDocument();
+    expect(document.getElementById('workbench-terminal-panel')).toBeNull();
     expect(document.querySelector('.xterm')).toBeNull();
+    expect(terminalSessionPostCount(fetchSpy)).toBe(0);
+
+    await user.click(terminal);
+
+    expect(await screen.findByRole('region', { name: 'Job terminal' })).toBeInTheDocument();
+    expect(terminal).toHaveAttribute('aria-selected', 'true');
+    expectPanelInteractive(terminalPanel(), true);
+    expect(document.querySelector('.xterm')).toBeNull();
+    expect(terminalSessionPostCount(fetchSpy)).toBe(0);
   });
 
   it('does not create document-level horizontal overflow at 1280px', async () => {
@@ -425,6 +445,42 @@ describe('WorkbenchPage project transitions', () => {
     expect(disposeBufferOrder).toBeLessThan(resetOrder);
     expect(disposeModelOrder).toBeLessThan(resetOrder);
     expect(resetOrder).toBeLessThan(removeOrder);
+  }, 15_000);
+
+  it('disposes a loaded terminal controller before activating a replacement project', async () => {
+    const user = userEvent.setup();
+    await authenticateAsAlice();
+    const created = await createProject({ name: 'Terminal Switch Lab' });
+    await getProject(created.id);
+    const ready = await getProject(created.id);
+    expect(ready.state).toBe('READY');
+    const view = render(
+      <AppProviders>
+        <MemoryRouter>
+          <WorkbenchPage project={ALICE_PROJECT} />
+        </MemoryRouter>
+      </AppProviders>,
+    );
+    await loadedEditable();
+    await user.click(screen.getByRole('tab', { name: 'Terminal' }));
+    expect(await screen.findByRole('region', { name: 'Job terminal' })).toBeInTheDocument();
+    const { JobTerminalController } = await import('../../features/terminal/JobTerminalController');
+    const dispose = vi.spyOn(JobTerminalController.prototype, 'dispose');
+    const resetSession = vi.spyOn(useWorkspaceSession.getState(), 'reset');
+
+    view.rerender(
+      <AppProviders>
+        <MemoryRouter>
+          <WorkbenchPage project={ready} />
+        </MemoryRouter>
+      </AppProviders>,
+    );
+
+    await waitFor(() => expect(workspaceSessionStore.getState().projectId).toBe(ready.id));
+    expect(dispose).toHaveBeenCalledTimes(1);
+    expect(dispose.mock.invocationCallOrder[0]).toBeLessThan(
+      resetSession.mock.invocationCallOrder[0]!,
+    );
   }, 15_000);
 
   it('does not wipe a same-project session that is already re-activated after unmount', async () => {
@@ -682,7 +738,7 @@ describe('WorkbenchShell unsaved leave and logout', () => {
 });
 
 describe('WorkbenchShell run preconditions', () => {
-  it('keeps the Run tab enabled while dirty and disables Start with DIRTY_FILES', async () => {
+  it('keeps Terminal independent from dirty Run-start preconditions', async () => {
     const fetchSpy = vi.spyOn(globalThis, 'fetch');
     const user = userEvent.setup();
     await authenticateAsAlice();
@@ -692,12 +748,18 @@ describe('WorkbenchShell run preconditions', () => {
     const run = screen.getByRole('tab', { name: 'Run' });
     const terminal = screen.getByRole('tab', { name: 'Terminal' });
     expect(run).toBeEnabled();
-    expect(terminal).toBeDisabled();
-    expect(terminal).toHaveAccessibleDescription(/DIRTY_FILES/);
+    expect(terminal).toBeEnabled();
+    expect(terminal).not.toHaveAccessibleDescription(/DIRTY_FILES/);
     await user.click(run);
     const start = await screen.findByRole('button', { name: 'Start run' });
     expect(start).toBeDisabled();
     expect(start).toHaveAttribute('title', runPreconditionDescription('DIRTY_FILES'));
+
+    await seedLockingRun();
+    await queryClient.invalidateQueries({ queryKey: runKeys.active(ALICE_SEED_PROJECT_ID) });
+    await user.click(terminal);
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Open terminal' })).toBeEnabled());
+    expect(workspaceBufferRegistry.get(ALICE_SEED_PROJECT_ID, POM)?.isDirty()).toBe(true);
     expect(runStartPostCount(fetchSpy)).toBe(0);
   }, 15_000);
 
@@ -844,7 +906,7 @@ describe('WorkbenchPage lazy route and shell boundary', () => {
     }
   });
 
-  it('does not put physical identifiers, mock APIs, or terminal modules into the shell', () => {
+  it('keeps the terminal behind a lazy import and shell boundaries free of runtime details', () => {
     const source = readFileSync('src/components/shell/WorkbenchShell.tsx', 'utf8');
     expect(source).not.toMatch(/pvcName|podName|jobName|namespace|serviceAccount/);
     expect(source).not.toMatch(/\/api\/v1\/.*runs/);
@@ -852,9 +914,32 @@ describe('WorkbenchPage lazy route and shell boundary', () => {
     expect(source).not.toMatch(/from ['"]@\/spike\//);
     expect(source).not.toMatch(/from ['"]@\/terminal\//);
     expect(source).not.toMatch(/from ['"]@\/mocks\//);
+    expect(source).toMatch(
+      /lazy\(\(\) => import\(['"]@\/components\/terminal\/JobTerminalPanel['"]\)\)/,
+    );
+    expect(source).not.toMatch(
+      /import\s+[^;]+from ['"]@\/components\/terminal\/JobTerminalPanel['"]/,
+    );
     expect(source).toMatch(/isWorkspaceEditable/);
     expect(source).toMatch(/useRunAuthorityCoordinator/);
     expect(source).not.toMatch(/phase === ['"]EDITABLE['"]/);
+  });
+
+  it('keeps terminal transport and controls independent from Run logs and Run mutations', () => {
+    for (const file of [
+      'src/components/terminal/JobTerminalPanel.tsx',
+      'src/features/terminal/JobTerminalController.ts',
+      'src/features/terminal/JobTerminalTransport.ts',
+      'src/features/terminal/XtermTerminalAdapter.ts',
+    ]) {
+      const source = readFileSync(file, 'utf8');
+      expect(source, file).not.toMatch(/RunLogTransport|RunLogStore|useRunLog|callRunLog/i);
+    }
+    const controller = readFileSync(
+      'src/features/terminal/JobTerminalController.ts',
+      'utf8',
+    );
+    expect(controller).not.toMatch(/startRun|stopRun|completeReload|markReload|unlock/i);
   });
 
   it('keys the workbench shell by project id so authority remounts on project change', () => {
@@ -863,8 +948,8 @@ describe('WorkbenchPage lazy route and shell boundary', () => {
   });
 });
 
-describe('WorkbenchShell File and Run mount', () => {
-  it('keeps File and Run mounted, inerts the inactive panel, and restores File buffers', async () => {
+describe('WorkbenchShell panel persistence', () => {
+  it('keeps File, Run, and a once-loaded Terminal mounted with one active surface', async () => {
     const user = userEvent.setup();
     await authenticateAsAlice();
     renderShell();
@@ -890,14 +975,30 @@ describe('WorkbenchShell File and Run mount', () => {
     expect(await screen.findByRole('button', { name: 'Start run' })).toBeInTheDocument();
     expect(screen.queryByRole('tab', { name: /pom.xml/ })).not.toBeInTheDocument();
     expect(document.querySelector('.xterm')).toBeNull();
-    expect(screen.queryByTestId('terminal-spike-panel')).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('tab', { name: 'Terminal' }));
+    expect(await screen.findByRole('region', { name: 'Job terminal' })).toBeInTheDocument();
+    const terminal = terminalPanel();
+    expect(file.parentElement).toBe(terminal.parentElement);
+    expect(run.parentElement).toBe(terminal.parentElement);
+    expectPanelInteractive(file, false);
+    expectPanelInteractive(run, false);
+    expectPanelInteractive(terminal, true);
+
+    await user.click(screen.getByRole('tab', { name: 'Run' }));
+    expect(terminalPanel()).toBe(terminal);
+    expectPanelInteractive(terminal, false);
+    expectPanelInteractive(run, true);
 
     await user.click(screen.getByRole('tab', { name: 'File' }));
+    expect(terminalPanel()).toBe(terminal);
     expectPanelInteractive(filePanel(), true);
     expectPanelInteractive(runPanel(), false);
+    expectPanelInteractive(terminalPanel(), false);
     expect(await screen.findByRole('tab', { name: /pom.xml/ })).toBeInTheDocument();
     expect(workspaceSessionStore.getState().openPaths).toEqual([POM]);
   }, 15_000);
+
 });
 
 describe('WorkbenchShell authority gate', () => {
@@ -1108,6 +1209,71 @@ describe('WorkbenchShell workspace reload', () => {
     expect(result.ok).toBe(true);
     await queryClient.invalidateQueries({ queryKey: runKeys.active(ALICE_SEED_PROJECT_ID) });
   }
+
+  it('updates terminal authority before reload without forwarding transient active null', async () => {
+    const user = userEvent.setup();
+    const confirmStarted = deferredHold();
+    const confirmHeld = deferredHold();
+    const reloadHeld = deferredHold();
+    const trace: string[] = [];
+    let holdConfirmation = false;
+    let traceReload = false;
+    server.use(
+      http.get('/api/v1/projects/:projectId/runs/:runId', async () => {
+        if (!holdConfirmation) return undefined;
+        confirmStarted.resolve();
+        await confirmHeld.promise;
+        return undefined;
+      }),
+      http.get('/api/v1/projects/:projectId/files/tree', async ({ request }) => {
+        if (traceReload && new URL(request.url).searchParams.get('path') === '') {
+          trace.push('reload');
+          await reloadHeld.promise;
+        }
+        return undefined;
+      }),
+    );
+    await authenticateAsAlice();
+    renderShell();
+    await loadedEditable();
+    const run = await lockShellWithActiveRun();
+    await user.click(screen.getByRole('tab', { name: 'Terminal' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Open terminal' })).toBeEnabled());
+
+    const { JobTerminalController } = await import('../../features/terminal/JobTerminalController');
+    const originalSetRun = JobTerminalController.prototype.setRun;
+    const setRun = vi
+      .spyOn(JobTerminalController.prototype, 'setRun')
+      .mockImplementation(function (
+        this: InstanceType<typeof JobTerminalController>,
+        nextRun,
+      ) {
+        trace.push(`terminal:${nextRun?.state ?? 'null'}`);
+        return originalSetRun.call(this, nextRun);
+      });
+    holdConfirmation = true;
+    traceReload = true;
+    expect(
+      transitionRun(ALICE_SEED_PROJECT_ID, run.id, {
+        state: 'SUCCEEDED',
+        terminationReason: 'BUILD_SUCCEEDED',
+        exitCode: 0,
+      }).ok,
+    ).toBe(true);
+    const refetch = queryClient.invalidateQueries({ queryKey: runKeys.active(ALICE_SEED_PROJECT_ID) });
+    await confirmStarted.promise;
+
+    await waitFor(() => expect(setRun).toHaveBeenCalled());
+    expect(trace).toEqual(['terminal:SUCCEEDED']);
+
+    confirmHeld.resolve();
+    await waitFor(() => expect(trace).toContain('reload'));
+    expect(trace).toEqual(['terminal:SUCCEEDED', 'reload']);
+    reloadHeld.resolve();
+    await refetch;
+    const reloadIndex = trace.indexOf('reload');
+    expect(trace.slice(0, reloadIndex)).toEqual(['terminal:SUCCEEDED']);
+  }, 15_000);
 
   it('keeps writes locked after a terminal run until workspace reload succeeds', async () => {
     let holdReloads = false;

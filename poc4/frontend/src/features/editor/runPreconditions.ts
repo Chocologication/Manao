@@ -34,7 +34,6 @@ function authorityFieldsOmitted(input: RunPreconditionsInput): boolean {
     input.reloadPhase === undefined
   );
 }
-
 function allAuthorityFieldsPresent(input: RunPreconditionsInput): boolean {
   return (
     input.authorityLoaded !== undefined &&
@@ -110,13 +109,4 @@ export function runPreconditionDescription(reason: RunPreconditionReason | null)
     return 'RELOAD_FAILED: Workspace reload failed';
   }
   return 'STAGE_4_UNAVAILABLE: Run is not available in this stage';
-}
-
-export function terminalPreconditionDescription(
-  reason: Extract<RunPreconditionReason, 'DIRTY_FILES' | 'STAGE_4_UNAVAILABLE'>,
-): string {
-  if (reason === 'DIRTY_FILES') {
-    return 'DIRTY_FILES: Save or discard unsaved changes before using the terminal';
-  }
-  return 'STAGE_4_UNAVAILABLE: Terminal is not available in this stage';
 }

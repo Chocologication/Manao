@@ -327,6 +327,79 @@ describe('RunAuthorityCoordinator', () => {
     expect(coordinator.getSnapshot().phase).toBe('RELOADING_WORKSPACE');
     expect(isWorkspaceEditable(coordinator.getSnapshot())).toBe(false);
   });
+
+  it('publishes only changed current authority to the terminal channel', async () => {
+    const coordinator = new RunAuthorityCoordinator({
+      projectId: ALICE_SEED_PROJECT_ID,
+      fetchRun: vi.fn(),
+    });
+    const observed = vi.fn();
+    coordinator.subscribeTerminalAuthority(observed);
+    expect(coordinator.getTerminalAuthoritySnapshot()).toEqual({ status: 'pending', run: null });
+
+    const running = lockingRun();
+    await coordinator.reconcile('success', running);
+    expect(coordinator.getTerminalAuthoritySnapshot()).toEqual({
+      status: 'success',
+      run: { id: running.id, state: 'RUNNING' },
+    });
+    expect(observed).toHaveBeenCalledTimes(1);
+
+    const stable = coordinator.getTerminalAuthoritySnapshot();
+    await coordinator.reconcile('success', lockingRun());
+    expect(coordinator.getTerminalAuthoritySnapshot()).toBe(stable);
+    expect(observed).toHaveBeenCalledTimes(1);
+
+    await coordinator.reconcile('success', { ...running, state: 'STOPPING' });
+    expect(coordinator.getTerminalAuthoritySnapshot().run?.state).toBe('STOPPING');
+    await coordinator.reconcile('success', { ...running, state: 'RECOVERING' });
+    expect(coordinator.getTerminalAuthoritySnapshot().run?.state).toBe('RECOVERING');
+    expect(observed).toHaveBeenCalledTimes(3);
+  });
+
+  it('publishes confirmed terminal authority before workspace reload notification', async () => {
+    const coordinator = new RunAuthorityCoordinator({
+      projectId: ALICE_SEED_PROJECT_ID,
+      fetchRun: vi.fn().mockResolvedValue(terminalRun()),
+    });
+    const trace: string[] = [];
+    coordinator.subscribeTerminalAuthority(() => {
+      trace.push(`terminal:${coordinator.getTerminalAuthoritySnapshot().run?.state ?? 'null'}`);
+    });
+    coordinator.subscribe(() => {
+      if (coordinator.getSnapshot().phase === 'RELOADING_WORKSPACE') trace.push('reload');
+    });
+    await coordinator.reconcile('success', lockingRun());
+    trace.length = 0;
+
+    await coordinator.reconcile('success', null);
+
+    expect(trace).toEqual(['terminal:SUCCEEDED', 'reload']);
+    expect(coordinator.getReloadGeneration()).toBe(1);
+  });
+
+  it('publishes a direct terminal state without starting reload and ignores duplicates', async () => {
+    const coordinator = new RunAuthorityCoordinator({
+      projectId: ALICE_SEED_PROJECT_ID,
+      fetchRun: vi.fn(),
+    });
+    const trace: string[] = [];
+    coordinator.subscribeTerminalAuthority(() => {
+      trace.push(`terminal:${coordinator.getTerminalAuthoritySnapshot().run?.state ?? 'null'}`);
+    });
+    coordinator.subscribe(() => {
+      if (coordinator.getSnapshot().phase === 'RELOADING_WORKSPACE') trace.push('reload');
+    });
+    await coordinator.reconcile('success', lockingRun());
+    trace.length = 0;
+
+    await coordinator.reconcile('success', terminalRun());
+    await coordinator.reconcile('success', terminalRun());
+
+    expect(trace).toEqual(['terminal:SUCCEEDED']);
+    expect(coordinator.getReloadGeneration()).toBe(0);
+    expect(coordinator.getSnapshot().phase).not.toBe('RELOADING_WORKSPACE');
+  });
 });
 
 describe('useRunAuthorityCoordinator', () => {

@@ -4,7 +4,6 @@ import type { WorkspaceRevision } from '../../contracts/file';
 import {
   resolveRunPreconditions,
   runPreconditionDescription,
-  terminalPreconditionDescription,
 } from './runPreconditions';
 
 const REVISION = 'mock-rev-0001' as WorkspaceRevision;
@@ -204,7 +203,7 @@ describe('resolveRunPreconditions', () => {
   });
 });
 
-describe('run and terminal descriptions', () => {
+describe('run descriptions', () => {
   it('keeps the exact reason code visible in accessible copy', () => {
     expect(runPreconditionDescription('DIRTY_FILES')).toMatch(/DIRTY_FILES/);
     expect(runPreconditionDescription('WRITE_PENDING')).toMatch(/WRITE_PENDING/);
@@ -215,8 +214,6 @@ describe('run and terminal descriptions', () => {
     expect(runPreconditionDescription('RELOADING_WORKSPACE')).toMatch(/RELOADING_WORKSPACE/);
     expect(runPreconditionDescription('RELOAD_FAILED')).toMatch(/RELOAD_FAILED/);
     expect(runPreconditionDescription('STAGE_4_UNAVAILABLE')).toMatch(/STAGE_4_UNAVAILABLE/);
-    expect(terminalPreconditionDescription('DIRTY_FILES')).toMatch(/DIRTY_FILES/);
-    expect(terminalPreconditionDescription('STAGE_4_UNAVAILABLE')).toMatch(/STAGE_4_UNAVAILABLE/);
   });
 });
 
@@ -226,5 +223,6 @@ describe('runPreconditions module boundary', () => {
     expect(source).not.toMatch(/\/api\/v1\/.*runs/);
     expect(source).not.toMatch(/pvcName|podName|jobName|namespace|serviceAccount/);
     expect(source).not.toMatch(/\/api\/v1\/session\/write-scenario/);
+    expect(source).not.toMatch(/terminal/i);
   });
 });

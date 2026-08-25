@@ -1,6 +1,12 @@
 import { useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef, useSyncExternalStore } from 'react';
-import { isRunLockingState, isRunTerminalState, type RunId, type RunSummary } from '../../contracts/run';
+import {
+  isRunLockingState,
+  isRunTerminalState,
+  type RunId,
+  type RunState,
+  type RunSummary,
+} from '../../contracts/run';
 import { cacheRunSummary, requireTerminalRun, useActiveRunQuery } from './runQueries';
 
 export type RunAuthorityPhase =
@@ -13,6 +19,13 @@ export type RunAuthoritySnapshot = {
   phase: RunAuthorityPhase;
   startPending: boolean;
   observedLockingRunId: RunId | null;
+};
+
+export type TerminalRunAuthority = { id: RunId; state: RunState };
+
+export type TerminalAuthoritySnapshot = {
+  status: 'pending' | 'error' | 'success';
+  run: TerminalRunAuthority | null;
 };
 
 export type FetchRunDetail = (runId: RunId, signal?: AbortSignal) => Promise<RunSummary>;
@@ -31,11 +44,20 @@ const INITIAL_SNAPSHOT: RunAuthoritySnapshot = {
   observedLockingRunId: null,
 };
 
+const INITIAL_TERMINAL_AUTHORITY_SNAPSHOT: TerminalAuthoritySnapshot = {
+  status: 'pending',
+  run: null,
+};
+
 export class RunAuthorityCoordinator {
   readonly projectId: string;
   private fetchRun: FetchRunDetail;
   private snapshot: RunAuthoritySnapshot = { ...INITIAL_SNAPSHOT };
+  private terminalAuthoritySnapshot: TerminalAuthoritySnapshot = {
+    ...INITIAL_TERMINAL_AUTHORITY_SNAPSHOT,
+  };
   private readonly listeners = new Set<() => void>();
+  private readonly terminalAuthorityListeners = new Set<() => void>();
   private confirmGeneration = 0;
   private confirmingRunId: RunId | null = null;
   private reloadGeneration = 0;
@@ -57,6 +79,16 @@ export class RunAuthorityCoordinator {
   };
 
   getSnapshot = (): RunAuthoritySnapshot => this.snapshot;
+
+  subscribeTerminalAuthority = (listener: () => void): (() => void) => {
+    this.terminalAuthorityListeners.add(listener);
+    return () => {
+      this.terminalAuthorityListeners.delete(listener);
+    };
+  };
+
+  getTerminalAuthoritySnapshot = (): TerminalAuthoritySnapshot =>
+    this.terminalAuthoritySnapshot;
 
   noteStartPending(): void {
     if (this.snapshot.startPending) {
@@ -87,6 +119,7 @@ export class RunAuthorityCoordinator {
     if (this.snapshot.phase !== 'RELOADING_WORKSPACE') {
       return;
     }
+    this.publishTerminalAuthority('success', null);
     this.patch({ phase: 'EDITABLE', observedLockingRunId: null });
   }
 
@@ -99,15 +132,18 @@ export class RunAuthorityCoordinator {
 
   async reconcile(status: 'pending' | 'error' | 'success', run: RunSummary | null): Promise<void> {
     if (status === 'pending') {
+      this.publishTerminalAuthority('pending', null);
       return;
     }
     if (status === 'error') {
+      this.publishTerminalAuthority('error', null);
       if (this.snapshot.phase === 'EDITABLE') {
         this.patch({ phase: 'LOADING_AUTHORITY' });
       }
       return;
     }
     if (run !== null && isRunLockingState(run.state)) {
+      this.publishTerminalAuthority('success', run);
       const observedChanged = this.snapshot.observedLockingRunId !== run.id;
       if (observedChanged) {
         this.confirmGeneration += 1;
@@ -128,10 +164,12 @@ export class RunAuthorityCoordinator {
       return;
     }
     if (run !== null) {
+      this.publishTerminalAuthority('success', run);
       return;
     }
     const observed = this.snapshot.observedLockingRunId;
     if (observed === null) {
+      this.publishTerminalAuthority('success', null);
       if (this.snapshot.phase === 'LOADING_AUTHORITY') {
         this.patch({ phase: 'EDITABLE' });
       }
@@ -161,6 +199,7 @@ export class RunAuthorityCoordinator {
       if (!isRunTerminalState(detail.state)) {
         return;
       }
+      this.publishTerminalAuthority('success', detail);
       this.enterReloading();
     } catch {
       // Fail closed: a missing/locking/invalid detail never unlocks.
@@ -168,6 +207,27 @@ export class RunAuthorityCoordinator {
       if (this.confirmingRunId === runId) {
         this.confirmingRunId = null;
       }
+    }
+  }
+
+  private publishTerminalAuthority(
+    status: TerminalAuthoritySnapshot['status'],
+    run: TerminalRunAuthority | null,
+  ): void {
+    const current = this.terminalAuthoritySnapshot;
+    if (
+      current.status === status &&
+      current.run?.id === run?.id &&
+      current.run?.state === run?.state
+    ) {
+      return;
+    }
+    this.terminalAuthoritySnapshot = {
+      status,
+      run: run === null ? null : { id: run.id, state: run.state },
+    };
+    for (const listener of this.terminalAuthorityListeners) {
+      listener();
     }
   }
 

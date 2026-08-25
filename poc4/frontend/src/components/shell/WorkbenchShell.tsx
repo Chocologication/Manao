@@ -1,6 +1,14 @@
 import { useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, FileCode, LogOut, Play, SquareTerminal } from 'lucide-react';
-import { useCallback, useEffect, useState, useSyncExternalStore, type MouseEvent } from 'react';
+import {
+  lazy,
+  Suspense,
+  useCallback,
+  useEffect,
+  useState,
+  useSyncExternalStore,
+  type MouseEvent,
+} from 'react';
 import { Link } from 'react-router';
 import { logout } from '@/app/appRuntime';
 import { EditorWorkspace } from '@/components/files/EditorWorkspace';
@@ -10,7 +18,6 @@ import { InlineAlert } from '@/components/feedback/InlineAlert';
 import { RunPanel } from '@/components/runs/RunPanel';
 import { Button } from '@/components/ui/button';
 import type { ProjectSummary } from '@/contracts/project';
-import { terminalPreconditionDescription } from '@/features/editor/runPreconditions';
 import {
   dismissUnsavedDialog,
   LEAVE_MESSAGE,
@@ -30,9 +37,11 @@ import { cn } from '@/lib/utils';
 
 const EDITOR_REGION_ID = 'workbench-editor';
 const RUN_PANEL_ID = 'workbench-run-panel';
-const TERMINAL_REASON_ID = 'workbench-terminal-reason';
+const TERMINAL_PANEL_ID = 'workbench-terminal-panel';
 
-type WorkbenchPanel = 'file' | 'run';
+type WorkbenchPanel = 'file' | 'run' | 'terminal';
+
+const LazyJobTerminalPanel = lazy(() => import('@/components/terminal/JobTerminalPanel'));
 
 const panelTabClassName =
   'inline-flex h-8 items-center gap-1.5 rounded-md px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring';
@@ -49,12 +58,18 @@ function authorityErrorMessage(error: unknown): string {
 
 export function WorkbenchShell({ project }: { project: ProjectSummary }) {
   const [activePanel, setActivePanel] = useState<WorkbenchPanel>('file');
+  const [terminalLoaded, setTerminalLoaded] = useState(false);
   const queryClient = useQueryClient();
   const coordinator = useRunAuthorityCoordinator(project.id);
   const snapshot = useSyncExternalStore(
     coordinator.subscribe,
     coordinator.getSnapshot,
     coordinator.getSnapshot,
+  );
+  const terminalAuthority = useSyncExternalStore(
+    coordinator.subscribeTerminalAuthority,
+    coordinator.getTerminalAuthoritySnapshot,
+    coordinator.getTerminalAuthoritySnapshot,
   );
   const writesLocked = !isWorkspaceEditable(snapshot);
 
@@ -92,9 +107,9 @@ export function WorkbenchShell({ project }: { project: ProjectSummary }) {
   const activeQuery = useActiveRunQuery(project.id, unconfirmedLock);
   const dirtyCount = useWorkspaceSession((state) => state.dirtyPaths.size);
   const leaveGuard = useUnsavedDialogState();
-  const terminalDescription = terminalPreconditionDescription(
-    dirtyCount > 0 ? 'DIRTY_FILES' : 'STAGE_4_UNAVAILABLE',
-  );
+  const terminalAuthorityError = terminalAuthority.status === 'error'
+    ? authorityErrorMessage(activeQuery.error)
+    : null;
   useDirtyBeforeUnload(dirtyCount);
 
   const handleSkipToEditor = useCallback((event: MouseEvent<HTMLAnchorElement>) => {
@@ -167,9 +182,6 @@ export function WorkbenchShell({ project }: { project: ProjectSummary }) {
           </div>
         </aside>
         <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-          <span id={TERMINAL_REASON_ID} className="sr-only">
-            {terminalDescription}
-          </span>
           <div
             role="tablist"
             aria-label="Workbench panels"
@@ -218,12 +230,20 @@ export function WorkbenchShell({ project }: { project: ProjectSummary }) {
             <button
               type="button"
               role="tab"
+              id="workbench-tab-terminal"
               aria-label="Terminal"
-              aria-selected={false}
-              aria-describedby={TERMINAL_REASON_ID}
-              title={terminalDescription}
-              disabled
-              className={cn(panelTabClassName, 'text-muted-foreground disabled:opacity-64')}
+              aria-controls={TERMINAL_PANEL_ID}
+              aria-selected={activePanel === 'terminal'}
+              className={cn(
+                panelTabClassName,
+                activePanel === 'terminal'
+                  ? 'bg-accent text-accent-foreground'
+                  : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground',
+              )}
+              onClick={() => {
+                setTerminalLoaded(true);
+                setActivePanel('terminal');
+              }}
             >
               <SquareTerminal className="h-4 w-4" aria-hidden />
               Terminal
@@ -278,6 +298,35 @@ export function WorkbenchShell({ project }: { project: ProjectSummary }) {
             >
               <RunPanel key={project.id} projectId={project.id} coordinator={coordinator} />
             </div>
+            {terminalLoaded ? (
+              <div
+                id={TERMINAL_PANEL_ID}
+                role="tabpanel"
+                aria-labelledby="workbench-tab-terminal"
+                aria-hidden={activePanel !== 'terminal'}
+                inert={activePanel !== 'terminal' ? true : undefined}
+                className={cn(
+                  panelSurfaceClassName,
+                  activePanel === 'terminal' ? 'z-10' : 'invisible pointer-events-none',
+                )}
+              >
+                <Suspense
+                  fallback={
+                    <p role="status" className="flex h-full items-center justify-center text-sm text-muted-foreground">
+                      Loading terminal
+                    </p>
+                  }
+                >
+                  <LazyJobTerminalPanel
+                    projectId={project.id}
+                    active={activePanel === 'terminal'}
+                    authorityLoading={terminalAuthority.status === 'pending'}
+                    authorityError={terminalAuthorityError}
+                    run={terminalAuthority.run}
+                  />
+                </Suspense>
+              </div>
+            ) : null}
           </div>
         </div>
       </div>
