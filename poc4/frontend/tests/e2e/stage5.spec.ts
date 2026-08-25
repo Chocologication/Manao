@@ -813,6 +813,37 @@ test('close is explicit and abnormal disconnect never reconnects without a fresh
   expect((await terminalSockets(page)).length).toBe(failedSocketCount + 1);
 });
 
+test('persisted pagehide closes the old session and allows a fresh explicit Open after restore', async ({
+  page,
+}) => {
+  const accessToken = await openAliceWorkbench(page);
+  await startLongRunningRun(page, accessToken);
+  await setScenario(page, accessToken, 'terminal', 'normal' satisfies TerminalScenario);
+  await page.getByRole('tab', { name: 'Terminal' }).click();
+  const first = (await (await openTerminal(page)).json()) as { sessionId: string; ticket: string };
+
+  await page.evaluate(() => {
+    window.dispatchEvent(new PageTransitionEvent('pagehide', { persisted: true }));
+  });
+
+  await expect(page.getByRole('status', { name: 'Terminal state' })).toHaveText('Closed');
+  const socketCountAfterHide = (await terminalSockets(page)).length;
+  await settleAnimationFrames(page, 5);
+  expect((await terminalSockets(page)).length).toBe(socketCountAfterHide);
+
+  await page.evaluate(() => {
+    window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: true }));
+  });
+  await settleAnimationFrames(page, 2);
+  expect((await terminalSockets(page)).length).toBe(socketCountAfterHide);
+
+  const second = (await (await openTerminal(page)).json()) as { sessionId: string; ticket: string };
+  expect(second.sessionId).not.toBe(first.sessionId);
+  expect(second.ticket).not.toBe(first.ticket);
+  expect((await terminalSockets(page)).length).toBe(socketCountAfterHide + 1);
+  await expect(page.getByRole('status', { name: 'Terminal state' })).toHaveText('Ready');
+});
+
 test('Run STOPPING closes PTY before reload and keeps PTY, audit and Run log markers isolated', async ({
   page,
 }) => {

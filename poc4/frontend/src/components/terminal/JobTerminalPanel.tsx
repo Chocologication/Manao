@@ -44,7 +44,7 @@ export type JobTerminalPanelController = {
   getSnapshot(): JobTerminalSnapshot;
   setRun(run: JobTerminalRunAuthority | null): void;
   setActive(active: boolean): void;
-  handlePageHide(): void;
+  handlePageHide(persisted: boolean): void;
   open(element: HTMLElement): Promise<boolean>;
   close(): boolean;
   clear(): void;
@@ -212,8 +212,8 @@ export function JobTerminalPanel({
 
   useEffect(() => {
     if (controller === null) return undefined;
-    const handlePageHide = () => {
-      controller.handlePageHide();
+    const handlePageHide = (event: PageTransitionEvent) => {
+      controller.handlePageHide(event.persisted);
     };
     window.addEventListener('pagehide', handlePageHide);
     return () => {

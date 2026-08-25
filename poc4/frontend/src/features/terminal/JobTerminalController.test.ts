@@ -934,6 +934,26 @@ describe('JobTerminalController live lifecycle', () => {
     expect(harness.adapter.dispose).toHaveBeenCalledOnce();
   });
 
+  it('keeps the controller reusable after a persisted BFCache pagehide', async () => {
+    const harness = createOpenHarness();
+    await harness.controller.open(document.createElement('div'));
+    harness.getTransportOptions()?.onReady?.();
+    const handlePersistedPageHide = harness.controller.handlePageHide as unknown as (
+      this: JobTerminalController,
+      persisted: boolean,
+    ) => void;
+
+    handlePersistedPageHide.call(harness.controller, true);
+
+    expect(harness.transport.close).toHaveBeenCalledOnce();
+    expect(harness.transport.dispose).toHaveBeenCalledOnce();
+    expect(harness.adapter.dispose).toHaveBeenCalledOnce();
+    expect(harness.controller.getSnapshot().phase).toBe('closed');
+
+    await expect(harness.controller.open(document.createElement('div'))).resolves.toBe(true);
+    expect(harness.createSession).toHaveBeenCalledTimes(2);
+  });
+
   it('pagehide still closes and disposes when disabling adapter input throws', async () => {
     const behavior = { setInputEnabledThrows: false };
     const harness = createOpenHarness(behavior);

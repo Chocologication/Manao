@@ -242,13 +242,16 @@ describe('JobTerminalPanel toolbar and views', () => {
     await waitFor(() => expect(controller.setRun).toHaveBeenCalled());
 
     fireEvent(window, new PageTransitionEvent('pagehide', { persisted: true }));
-    expect(controller.handlePageHide).toHaveBeenCalledOnce();
+    expect(controller.handlePageHide).toHaveBeenNthCalledWith(1, true);
+
+    fireEvent(window, new PageTransitionEvent('pagehide', { persisted: false }));
+    expect(controller.handlePageHide).toHaveBeenNthCalledWith(2, false);
 
     view.unmount();
     const removed = removeListener.mock.calls.find((call) => call[0] === 'pagehide');
     expect(removed).toBeDefined();
     fireEvent(window, new PageTransitionEvent('pagehide'));
-    expect(controller.handlePageHide).toHaveBeenCalledOnce();
+    expect(controller.handlePageHide).toHaveBeenCalledTimes(2);
     removeListener.mockRestore();
   });
 });

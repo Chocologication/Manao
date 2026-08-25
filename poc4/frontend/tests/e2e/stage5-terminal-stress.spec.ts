@@ -239,10 +239,20 @@ test('streams at least 8 MiB with bounded terminal flow control and remains resp
   });
   await expect.poll(async () => (await metrics(page)).inputSent).toBe(burst.length);
 
-  for (let index = 0; index < 100; index += 1) {
-    await page.setViewportSize({ width: index % 2 === 0 ? 1180 : 1480, height: 760 });
-    await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
+  const resizeSentBeforeStorm = (await metrics(page)).resizeSent;
+  const viewportBeforeStorm = page.viewportSize();
+  if (viewportBeforeStorm === null) throw new Error('stress viewport missing');
+  const firstStormWidth = viewportBeforeStorm.width === 1180 ? 1480 : 1180;
+  const secondStormWidth = firstStormWidth === 1180 ? 1480 : 1180;
+  for (let index = 0; index < 101; index += 1) {
+    await page.setViewportSize({
+      width: index % 2 === 0 ? firstStormWidth : secondStormWidth,
+      height: 760,
+    });
+    await expect.poll(async () => (await metrics(page)).resizeSent)
+      .toBeGreaterThanOrEqual(resizeSentBeforeStorm + index + 1);
   }
+  expect((await metrics(page)).resizeSent - resizeSentBeforeStorm).toBeGreaterThanOrEqual(100);
   await expect.poll(async () => (await metrics(page)).resizeSent, { timeout: 30_000 })
     .toBeGreaterThanOrEqual(100);
   await expect.poll(async () => (await metrics(page)).markerCount, { timeout: 120_000 }).toBe(1);

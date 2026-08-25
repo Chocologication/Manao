@@ -195,7 +195,11 @@ export class JobTerminalController {
     return true;
   }
 
-  handlePageHide(): void {
+  handlePageHide(persisted = false): void {
+    if (persisted) {
+      this.close();
+      return;
+    }
     this.dispose();
   }
 
