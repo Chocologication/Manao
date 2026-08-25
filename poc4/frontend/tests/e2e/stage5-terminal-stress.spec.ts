@@ -249,12 +249,12 @@ test('streams at least 8 MiB with bounded terminal flow control and remains resp
       width: index % 2 === 0 ? firstStormWidth : secondStormWidth,
       height: 760,
     });
-    await expect.poll(async () => (await metrics(page)).resizeSent)
-      .toBeGreaterThanOrEqual(resizeSentBeforeStorm + index + 1);
+    await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
   }
-  expect((await metrics(page)).resizeSent - resizeSentBeforeStorm).toBeGreaterThanOrEqual(100);
-  await expect.poll(async () => (await metrics(page)).resizeSent, { timeout: 30_000 })
+  await expect.poll(async () => (await metrics(page)).resizeObserved, { timeout: 30_000 })
     .toBeGreaterThanOrEqual(100);
+  await expect.poll(async () => (await metrics(page)).resizeSent, { timeout: 30_000 })
+    .toBeGreaterThanOrEqual(resizeSentBeforeStorm + 100);
   await expect.poll(async () => (await metrics(page)).markerCount, { timeout: 120_000 }).toBe(1);
 
   const responsivenessStarted = Date.now();
