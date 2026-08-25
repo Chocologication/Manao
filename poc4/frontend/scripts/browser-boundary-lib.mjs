@@ -196,9 +196,11 @@ function parseInternalDistributionHref(href) {
 }
 
 function distributionPathVariants(relative) {
-  const variants = new Set([relative]);
+  const variants = [{ path: relative, allowAssetSuffix: false }];
   const assetsIndex = relative.indexOf('assets/');
-  if (assetsIndex > 0) variants.add(relative.slice(assetsIndex));
+  if (assetsIndex > 0 && relative[assetsIndex - 1] === '/') {
+    variants.push({ path: relative.slice(assetsIndex), allowAssetSuffix: true });
+  }
   return variants;
 }
 
@@ -215,8 +217,8 @@ function resolveEntryStylesheetFiles(indexHtml, cssAssets) {
     const variants = parsed.relative === null ? [] : distributionPathVariants(parsed.relative);
     const candidates = cssAssets
       .map(({ file }) => file)
-      .filter((file) => [...variants].some((variant) =>
-        file === `dist/${variant}` || file.endsWith(`/${variant}`)));
+      .filter((file) => variants.some(({ path: variant, allowAssetSuffix }) =>
+        file === `dist/${variant}` || (allowAssetSuffix && file.endsWith(`/${variant}`))));
     if (candidates.length === 0) {
       violations.push({ file: 'dist/index.html', rule: `xterm-css-entry-asset-missing:${href}` });
     } else if (candidates.length > 1) {

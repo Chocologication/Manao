@@ -414,6 +414,22 @@ test('resolves a base-prefixed entry href to its unique dist CSS asset', () => {
   ]);
 });
 
+test('rejects internal entry href basename collisions without an assets anchor', () => {
+  const assets = [
+    { file: 'dist/assets/index.css', source: 'body { margin: 0; }' },
+    { file: 'dist/assets/terminal.css', source: '.xterm-screen { height: 100%; }' },
+  ];
+
+  for (const href of ['/index.css', 'index.css', './index.css', '/fooassets/index.css']) {
+    assert.deepEqual(boundary.findTerminalCssDistributionViolations(
+      `<link rel="stylesheet" href="${href}">`,
+      assets,
+    ), [
+      { file: 'dist/index.html', rule: `xterm-css-entry-asset-missing:${href}` },
+    ]);
+  }
+});
+
 test('rejects an internal entry stylesheet href with no dist asset target', () => {
   const indexHtml = '<link rel="stylesheet" href="/assets/missing.css">';
   const assets = [
