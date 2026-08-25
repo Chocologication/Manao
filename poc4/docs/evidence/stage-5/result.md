@@ -4,187 +4,189 @@
 
 **STAGE_5_REMEDIATION_REQUIRED**
 
-17 项退出门中 **13 PASS / 4 FAIL**。失败门：
+17 项退出门中 **15 PASS / 2 FAIL**。失败门仅有：
 
-1. **Gate 11 FAIL**：`a stale Alice terminal 401 cannot clear a newer Bob login` 在 Chromium、Chrome、Edge 均没有 fresh browser PASS；该 required case 在四次失败尝试后保持 `test.fixme`。此外 immutable source SHA 没有把 production `pagehide` 接到 terminal controller，BFCache/pagehide 清理依赖 unmount 的表述不成立。
-2. **Gate 13 FAIL**：immutable source SHA 在 observed RUNNING 的 active query 变为 null 后，会等待 detail confirmation 才撤销 terminal authority；pending/rejected/nonterminal detail 期间旧 session 仍可交互，不满足 Run authority always wins。
-3. **Gate 15 FAIL**：required full `pnpm test:e2e:terminal-stress` 在 `resizeSent=99`、要求 `>=100` 时 exit 1；后续 targeted PASS 只提供诊断指标，不能消除 required full-command failure。
-4. **Gate 16 FAIL**：完整 keyboard-only File -> Run -> Terminal -> Open -> xterm -> Search -> Audit -> Close workflow 在 Chromium、Chrome、Edge 均没有 fresh browser PASS；该 required case在四次失败尝试后保持 `test.fixme`，本轮未重试。
+1. **Gate 11 FAIL**：required browser case `a stale Alice terminal 401 cannot clear a newer Bob login` 仍为 `test.fixme`，本轮按既定停止规则未重试且不可重试；Chromium、Chrome、Edge 均没有该 case 的 fresh browser PASS。
+2. **Gate 16 FAIL**：required 完整 keyboard-only File -> Run -> Terminal -> Open -> xterm -> Search -> Audit -> Close workflow 仍为 `test.fixme`，本轮同样未重试且不可重试；Chromium、Chrome、Edge 均没有该 workflow 的 fresh browser PASS。
 
-不得放行或启动 Stage 6。退出码为 0 的 E2E 命令不能把 required skip 解释为 PASS。
+不得放行或启动 Stage 6。E2E 命令 exit 0 不能把 required skip 解释为 PASS。
 
-## Source And Scope
+## Source And Evidence Boundary
 
 - 日期：`2026-08-25`（Asia/Shanghai）
 - 分支：`codex/poc4-stage-5-active-job-terminal`
-- immutable source SHA：`4f0f7ed94edc87c7750a8f6e9d3e05793c09f88d`
+- immutable matrix source SHA：`a1a2772b13d7cc565169aac2fa932bbb9e176d61`
 - 矩阵工作目录：`poc4/frontend`
-- 包管理器：pnpm `10.33.0`；所有浏览器命令均设置 `PLAYWRIGHT_HTML_OPEN=never`
-- Complete Matrix 及其 gate 判定只对应该 immutable SHA；后续 implementation remediation 仅记录在文末 Addendum，不替换原矩阵证据。Task 10 PNG 与 README 未修改
-- EnsoAI 浏览器显示参考仍为 `D:\DeepLearning\MyProjects\Enso_AI@5aa294a`；生产 Stage 5 未复制 Electron IPC、`node-pty`、本机路径或旧 PTY 复用语义
+- 包管理器：pnpm `10.33.0`；browser commands 设置 `PLAYWRIGHT_HTML_OPEN=never`
+- 本轮正式矩阵、最终 production rebuild、production scan 与 17 门判定共同绑定上述 source SHA；README 未修改，E2E 重拍的 45 张 tracked PNG 已全部恢复到该 SHA
+- EnsoAI 浏览器显示参考保持 `D:\DeepLearning\MyProjects\Enso_AI@5aa294a`；Stage 5 production 未复制 Electron IPC、`node-pty`、本机路径或旧 PTY 复用语义
 
-本报告只证明 **real browser + MSW/mock contract evidence**。它不是 Spring Boot、MySQL、Kubernetes、Fabric8 `pods/exec`、Maven app container、代理或集群证据，任何 mock session/echo/audit 都不得称为真实 Kubernetes PTY。
+本报告只证明 **mock contract verified / real-browser + MSW/mock evidence**。它不证明真实 Spring Boot、MySQL、Fabric8、Kubernetes PTY、Maven app container、reverse proxy 或 cluster 行为；mock session、echo 和 structured audit 均不得称为真实系统证据。
 
 ## Complete Matrix
 
-下表按 brief 顺序串行执行。Start/end 是 outer harness 在命令前后记录的本机时区 wall-clock timestamp；duration 是同一 wrapper 内独立 `Stopwatch` 的记录值。前者包含约 3-6 ms 的 timestamp/output bookkeeping overhead，不能用 start/end 相减替换或“修正”后者；表中两组都是当时的原始记录。mock/E2E 覆盖 `dist` 后另有 production rebuild 和 scan。
+11 条命令按下表顺序从同一 immutable SHA 正式执行，全部 exit 0。Start/end 为本机时区 wall-clock timestamp，duration 为 wrapper 记录的独立 elapsed time；mock/E2E 覆盖 `dist` 后另行执行了 final production rebuild 和 scan。
 
 | Command | Start -> end | Duration | Exit | Exact result |
 |---|---|---:|---:|---|
-| `pnpm test:boundary` | `14:18:46.746+08:00` -> `14:18:47.813+08:00` | 1.063 s | 0 | node:test **24 pass / 0 fail / 0 skipped**；scanner PASS |
-| `pnpm typecheck` | `14:18:54.536+08:00` -> `14:19:00.635+08:00` | 6.096 s | 0 | `tsc -b --pretty false` 无诊断 |
-| `pnpm test` | `14:20:29.709+08:00` -> `14:21:25.072+08:00` | 55.357 s | 0 | Vitest **60 files / 1,094 pass / 0 fail**；Vitest duration 53.61 s；stderr 仅既有 jsdom canvas-not-implemented 诊断 |
-| `pnpm build` | `14:21:41.040+08:00` -> `14:22:33.659+08:00` | 52.615 s | 0 | production，**3,787 modules**，Vite build 45.26 s；保留 >500 kB warning |
-| `pnpm build:mock` | `14:22:42.779+08:00` -> `14:23:35.622+08:00` | 52.840 s | 0 | mock，**3,799 modules**，Vite build 45.45 s；包含 mock-only `stage0.html` |
-| `pnpm test:e2e` | `14:23:43.482+08:00` -> `14:26:25.104+08:00` | 161.618 s | **1** | Chromium **63 pass / 18 skipped / 1 fail**。唯一 failure 是既有 Stage 3 delayed-first-snapshot-save case 在登录 UI 出现前 timeout；18 skips 含两个 required Stage 5 fixme |
-| `pnpm test:e2e:channels` | `14:30:39.851+08:00` -> `14:35:54.238+08:00` | 314.383 s | 0 | Chrome + Edge **160 pass / 4 skipped / 0 fail**；4 skips 精确为两个 required fixme 各跨两浏览器一次 |
-| `pnpm test:e2e:large-files` | `14:36:07.896+08:00` -> `14:37:09.322+08:00` | 61.422 s | 0 | **2 pass**；20 MiB - 1 Java 与 20 MiB + 1 Markdown |
-| `pnpm test:e2e:large-writes` | `14:37:17.293+08:00` -> `14:38:20.833+08:00` | 63.536 s | 0 | **1 pass**；20 MiB + 1 Markdown PUT |
-| `pnpm test:e2e:large-logs` | `14:38:28.643+08:00` -> `14:39:43.968+08:00` | 75.321 s | 0 | **1 pass**；6,291,522 generated / 5,242,880 retained / 1,048,642 evicted bytes |
-| `pnpm test:e2e:terminal-stress` | `14:39:53.490+08:00` -> `14:41:40.681+08:00` | 107.187 s | **1** | **1 fail**；30 s 时 `resizeSent=99`，要求 `>=100`；在 final marker/metrics assertion 前停止 |
+| `pnpm test:boundary` | `2026-08-25T19:54:47.508+08:00` -> `2026-08-25T19:54:48.394+08:00` | 0.884 s | 0 | node:test **24 pass / 0 fail / 0 skipped**；scanner PASS |
+| `pnpm typecheck` | `2026-08-25T19:54:48.424+08:00` -> `2026-08-25T19:54:53.607+08:00` | 5.183 s | 0 | `tsc -b --pretty false` 无诊断 |
+| `pnpm test` | `2026-08-25T19:54:53.612+08:00` -> `2026-08-25T19:55:39.910+08:00` | 46.307 s | 0 | Vitest **61 files / 1,105 pass / 0 fail**；Vitest duration 44.90 s |
+| `pnpm build` | `2026-08-25T19:55:39.914+08:00` -> `2026-08-25T19:56:27.025+08:00` | 47.119 s | 0 | production，**3,787 modules**；Vite build 40.70 s；保留既有 >500 kB warning |
+| `pnpm build:mock` | `2026-08-25T19:56:27.030+08:00` -> `2026-08-25T19:57:14.956+08:00` | 47.934 s | 0 | mock，**3,799 modules**；Vite build 41.33 s；mock-only `stage0.html` 仅存在于该临时产物 |
+| `pnpm test:e2e` | `2026-08-25T19:57:14.959+08:00` -> `2026-08-25T19:59:14.393+08:00` | 119.456 s | 0 | Chromium **65 passed / 18 skipped / 0 failed**；required 两个 fixme 各 skip 1 次 |
+| `pnpm test:e2e:channels` | `2026-08-25T19:59:14.398+08:00` -> `2026-08-25T20:04:26.548+08:00` | 312.193 s | 0 | Chrome + Edge **162 passed / 4 skipped / 0 failed**；4 skips 为 required 两个 fixme 各跨两浏览器一次 |
+| `pnpm test:e2e:large-files` | `2026-08-25T20:04:26.551+08:00` -> `2026-08-25T20:05:27.995+08:00` | 61.452 s | 0 | **2/2 passed**；20 MiB - 1 Java 与 20 MiB + 1 Markdown |
+| `pnpm test:e2e:large-writes` | `2026-08-25T20:05:27.999+08:00` -> `2026-08-25T20:06:31.574+08:00` | 63.583 s | 0 | **1/1 passed**；20 MiB + 1 Markdown PUT |
+| `pnpm test:e2e:large-logs` | `2026-08-25T20:06:31.578+08:00` -> `2026-08-25T20:07:47.423+08:00` | 75.855 s | 0 | **1/1 passed**；6,291,522 generated / 5,242,880 retained / 1,048,642 evicted bytes |
+| `pnpm test:e2e:terminal-stress` | `2026-08-25T20:07:47.426+08:00` -> `2026-08-25T20:09:02.017+08:00` | 74.601 s | 0 | **1/1 passed**；full required command 产生完整 flow/resize/render metrics |
 
-矩阵整体是 **9 commands exit 0 / 2 commands exit 1**，不能描述为全绿。两个非-fixme failure 均未触发实现修改：
+两项 required fixme 保持停止状态，没有在本轮矩阵前后以 targeted 或其他方式重试。18/4 的总 skipped 集合还包含按 browser project 设计跳过的既有截图用例；Gate 11/16 的 required 部分精确为 Chromium 各一次、Chrome/Edge 各两次。
 
-- Stage 3 delayed-save case 的错误上下文显示 `Username` 和 login request 均未出现，失败在业务断言之前。一次 targeted 复证 `14:29:23.899` -> `14:30:19.931`，exit 0，**1/1 pass**（56.029 s；test body 2.0 s）。原 full command 仍记 FAIL。
-- stress 循环恰好请求 100 次 viewport change，首轮出现 99 个 coalesced sends。一次 targeted 复证 `14:42:25.508` -> `14:43:40.159`，exit 0，**1/1 pass**（74.647 s）。原 full command 仍记 FAIL，门槛未降低。
+## Execution Recovery And Hygiene
 
-执行期间曾在 worktree 根目录误调用一次 `pnpm test:boundary`，因没有 `package.json` 在 1.022 s 内以 exit 1 结束，未启动测试或修改源码；随后从 brief 对应的 `poc4/frontend` 目录开始上述可审计矩阵。第一次 `pnpm test` 的长输出尾部会话丢失，因此完整重跑并只采用表中第二次的新鲜结束块。矩阵之后服务过载导致任务上下文恢复；恢复时没有残留 Playwright/Vite 产品进程，后续从已完成命令检查点继续。
+- 一次 resumed boundary 预检因 checkout 中残留 mock `dist` 而失败；production preflight rebuild 恢复了正式矩阵所需的 production boundary baseline。该预检不是产品 gate failure，也不属于上表正式矩阵。
+- 后续从 `604064a157bf5366c47783ce9693195d97d20965` 启动的 formal unit run 为 **60 files passed / 1 failed，1,104 tests passed / 1 failed**；同一 targeted test 再次 RED。根因是 test-only 固定 `finishedAt` 已早于真实时钟生成的 Run `createdAt` / `startedAt`，strict parser 正确 fail closed。
+- 修复提交 `a1a2772` 将 test-only `finishedAt` 改为 `startedAt ?? createdAt` 加 1 秒；没有放宽 parser、改生产代码或改变断言。正式 11 命令矩阵从该修复 SHA 重新开始并全部 exit 0，因此上述恢复历史不计作产品 gate failure。
+- E2E 重拍的 45 张 tracked PNG 全部恢复到 `a1a2772`；README、两个 required `test.fixme`、源码、测试和 package/lock 在本报告更新中均未修改。
 
 ## Production Rebuild And Scan
 
-E2E 后先恢复其重拍的 **44 个已跟踪 PNG** 到 source SHA；Stage 5 PNG diff 为 0。随后执行 production `pnpm build`：`14:44:09.505` -> `14:44:56.085`，46.576 s，exit 0，3,787 modules，Vite build 40.09 s。最终 `pnpm test:boundary`：`14:45:13.403` -> `14:45:14.345`，0.938 s，exit 0，24/24。
+E2E 后 final production `pnpm build`：`2026-08-25T20:09:53.072+08:00` -> `2026-08-25T20:10:40.315+08:00`，47.245 s，exit 0，3,787 modules。最终 `pnpm test:boundary`：`2026-08-25T20:10:50.594+08:00` -> `2026-08-25T20:10:51.506+08:00`，0.909 s，exit 0，24/24。
 
-production `dist` 共 192 files。逐文件扫描 Stage 0-5 累积 33 个 needles，包括 mock credentials/worker、expire/large-file/write/run/terminal scenario endpoints、Stage 4 ticket/persist/log markers、Stage 5 ticket/session/audit/stress/persist markers、`stage0.html`、echo URL、Electron 和 `node-pty`：每一项 `MATCH_FILES=0`，总计 `FORBIDDEN_MATCH_COUNT=0`。`stage0.html`、`mockServiceWorker*`、MSW/echo 命名文件均不存在。
+Final production `dist` 共 **192 files**。Stage 0-5 累积 33 个 needles 逐项均为 `MATCH_FILES=0`，总计 `FORBIDDEN_MATCH_COUNT=0`；97 个 production text files 被扫描。`stage0.html`、MSW worker 与包含 MSW/echo 命名的文件均为 0。
 
 | Production artifact | Evidence |
 |---|---|
-| `dist/assets/index-DGQlj-K6.js` | 388,416 bytes；`xterm` literal 0；只动态加载 Workbench |
-| `dist/assets/WorkbenchPage-0XoIDV5-.js` | 4,014,199 bytes；`xterm` literal 0；动态引用 `JobTerminalPanel-CRFZtKfP.js` |
-| `dist/assets/JobTerminalPanel-CRFZtKfP.js` | dedicated lazy terminal JS，659,145 bytes；xterm code only here（162 literal hits） |
-| `dist/assets/index-CUPLLfWc.css` | 43,938 bytes；109 `.xterm` selectors；production xterm CSS exists |
+| `dist/assets/index-C0w0DEI1.js` | 388,416 bytes；`xterm` literal 0；只动态进入 Workbench |
+| `dist/assets/WorkbenchPage-B_fsDVSS.js` | 4,014,278 bytes；`xterm` literal 0；`JobTerminalPanel` reference 2 |
+| `dist/assets/JobTerminalPanel-DJX0xQxU.js` | dedicated lazy terminal JS，659,437 bytes；`xterm` literal 162 |
+| `dist/assets/index-CUPLLfWc.css` | 43,938 bytes；`.xterm` selector 109；production xterm CSS 存在 |
 
-16 个 production terminal source files（tests excluded）另行扫描：`src/terminal`、`src/spike`、`src/mocks`、echo、Electron、Node/`node-pty`、`pvcName`、`podName`、`jobName`、`namespace`、`serviceAccount`、`dangerouslySetInnerHTML`、frontend audit append/tokenizer 均为 0。
+16 个 production terminal files（tests excluded）针对 `src/terminal`、`src/spike`、`src/mocks`、`echo-ws`、`electron`、`node-pty`、`pvcName`、`podName`、`jobName`、`namespace`、`serviceAccount`、`dangerouslySetInnerHTML`、`tokeniz`、`appendTerminalAudit` 的扫描结果全部为 0。
 
 ## Session, Ticket And Lifecycle Evidence
 
-以下值全部 redacted，禁止从报告恢复 token/ticket/session：
+以下 HTTP/WS 示例均隐藏 token、ticket 与 session，不能从报告恢复真实值：
 
 ```http
 POST /api/v1/projects/<project>/runs/<run>/terminal-sessions
-Authorization: Bearer <redacted>
+Authorization: Bearer <redacted-token>
 Content-Type: application/json
 
 {"cols":<integer 2..500>,"rows":<integer 1..200>}
 
 HTTP/1.1 201
-{"sessionId":"<redacted>","ticket":"<redacted>","expiresAt":"<future ISO-8601>"}
+{"sessionId":"<redacted-session>","ticket":"<redacted-ticket>","expiresAt":"<future ISO-8601>"}
 ```
 
-- Request exact keys只有 `cols` / `rows`；无 command/shell/cwd/env/container/image/resource。API unit test还证明 scoped path 编码、Bearer header 和 AbortSignal。
-- mock ticket TTL 精确 `30,000 ms`，replay tombstone/grace `5,000 ms`。HTTP reservation 不创建 live exec；成功 WebSocket handshake 原子 consume 一次后才创建 live session、RUNNING audit 并发 `terminal.ready`。过期 unused reservation 只清 reservation。
-- WebSocket 固定为 `ws(s)://<same-origin>/api/v1/ws/terminals?ticket=<redacted>`；query 只有 ticket，JWT 不进 URL/frame/DOM。重复使用 ticket 的浏览器连接 close code 为 `4409`。
-- 两个独立 unused reservations 可存在；第一个成功 consume 后，第二个 live consume 和新 HTTP reservation都因 one-live rule 被拒绝。close/disconnect 会清 live 并撤销 stale reservation；同一 RUNNING Run 再显式 Open 会得到全新的 session ID、ticket 和 xterm generation。
-- Browser lifecycle 覆盖 explicit close（Cancel/Escape/Confirm）、abnormal disconnect 无 reconnect、project navigation、logout、current-token 401、shell exit、Run 离开 RUNNING。Run STOPPING 事件实测 `terminal socket closeAt <= workspace reload fetchAt`，且历史 Run 不能 Open。
-- Controller generation 在 teardown 先禁用输入、关闭 transport、dispose xterm，再使旧 callbacks/ticket 无效并 invalidate audit。`WorkspaceResourceRegistry` 统一注册 connection close 和 workspace disposal；immutable source 的 unmount 清理幂等，但 production `pagehide` 没有接线。
-- **缺口**：stale Alice terminal 401 在 Bob 新登录后不清 Bob 的浏览器 ownership gate 没有 fresh PASS，且 pagehide/BFCache 没有 production wiring，因此 Gate 11 FAIL；unit coverage不能替代 required browser evidence。
+- Request exact keys 只有 `cols` / `rows`，不含 command、shell、cwd、env、container、image 或 resource。API coverage 同时验证 scoped path encoding、Bearer 与 AbortSignal。
+- mock ticket TTL 为 30,000 ms；replay tombstone bounded lifetime 为 35,000 ms（含 5,000 ms grace）。HTTP reservation 不创建 live exec；只有成功 WebSocket handshake 原子 consume ticket 后才创建 live session、RUNNING audit，并发送 `terminal.ready`。过期 unused reservation 只清 reservation。
+- WebSocket 固定为 `ws(s)://<same-origin>/api/v1/ws/terminals?ticket=<redacted-ticket>`；query 只有 ticket，JWT 不进入 URL、frame 或 DOM；ticket 单次使用，重复连接以 `4409` 关闭。
+- 两个 unused reservations 可并存；第一根成功 handshake 建立 one-live session 后，其他 live consume/new reservation 被拒绝。Close/disconnect 清 live 与 stale reservations；只在同一 Run 仍 `RUNNING` 时由用户显式 Open 才创建新的 session、ticket、socket 与 xterm generation。
+- Panel switch 保持同一 socket/xterm/session。Close、abnormal disconnect、project navigation、logout、current-token 401、shell exit、Run 离开 RUNNING 都禁用输入并清理；断线不自动重连，terminal exit/close 不改变 Run authority 或解锁文件。
+- persisted `pagehide` 只关闭当前 session/generation，保留 controller/runtime 可用；`pageshow` 不自动重连，用户必须显式 Open 并获得 fresh session/ticket/socket。non-persisted `pagehide` 仍执行完整 dispose。
+- active query 从 observed `RUNNING` 变为 null 时，先同步发布 null terminal authority，再 await detail；pending/rejected/nonterminal detail 都不恢复旧 terminal。fresh explicit `RUNNING` 会 invalidate stale same-run confirmation，之后才允许新的显式 Open。
 
 ## Bytes, Flow, Resize And Render Evidence
 
-- `onData` UTF-8 sample `stage5-unicode-终端-😀-needle` 是 27 UTF-16 chars / **33 UTF-8 bytes**；浏览器 sent/received binary frames 的长度和前 32 bytes 相同。`onBinary` unit sample `00 1b ff 34 3d 00` 证明每个 code unit 只取低 8 bit；真实 xterm mouse frame 以 `1b 5b 4d` 开头并包含 `>0x7f` byte。
-- output control：initial `terminal.output.credit=262,144`；server binary frame `<=32,768`；只有 xterm `write(..., callback)` 完成才发送 exact FIFO `terminal.output.ack`。未 ack outstanding 上限 262,144，错误/乱序/重复 ack fail closed。
-- input pump：frame `<=16,384`，FIFO cap 1 MiB，`bufferedAmount` high/low watermarks 262,144 / 65,536；overflow 整个 session fail closed。browser 96 KiB burst 在 forced 307,200 bufferedAmount 时 0 send，恢复后 98,304 bytes 全部发送。
-- resize：正整数、dedupe、RAF coalesce；inactive/zero-size 不发，重新显示 refit。full stress 第一次为 99 sends 而 FAIL；一次 targeted fresh run为 **202 observed / 101 sent**，门槛没有调整。
-- renderer：WebGL creation failure和 `webglcontextlost` 都 dispose addon 并落到 DOM fallback；fallback 下 resize、Search、Escape focus return 仍通过。每次 session 创建新 Terminal/Fit/Search/WebGL/ResizeObserver/RAF resources，旧 context-loss/RAF/observer/write/input不能影响新 generation。
-- targeted real-browser stress metrics：**8,388,650 generated = delivered = acked bytes**；outstanding 0；max outstanding 262,144；max output frame 32,768；input queued = sent 131,085；max input frame 16,384；max buffered 307,200；pause/resume 1/1；final marker 1；renderer WebGL；responsiveness 13 ms；console errors 0；page errors 0；Run log terminal marker 0。
+- `onData` sample `stage5-unicode-终端-😀-needle` 为 27 UTF-16 chars / **33 UTF-8 bytes**；browser binary sent/received 长度和前 32 bytes 一致。`onBinary` unit sample `00 1b ff 34 3d 00` 验证低 8 bit 原始 byte，browser xterm mouse frame 以 `1b 5b 4d` 开头并含 `>0x7f` byte。
+- output 初始 credit 262,144；frame `<=32,768`；仅在 xterm `write(..., callback)` 完成后发送 exact FIFO ack。未 ack outstanding 上限 262,144，错误/乱序/重复 ack fail closed。
+- input frame `<=16,384`，FIFO cap 1 MiB，`bufferedAmount` high/low watermarks 262,144 / 65,536；pause 时禁用输入，overflow 结束整个 session，不静默丢弃。
+- full `pnpm test:e2e:terminal-stress` fresh metrics：generated / delivered / acked **8,388,650 / 8,388,650 / 8,388,650**；outstanding 0；max outstanding 262,144；max output frame 32,768；input queued / sent 131,085 / 131,085；max input frame 16,384；max buffered 307,200；resize observed / sent **204 / 102**；pause / resume 1 / 1；final marker 1；renderer WebGL；responsiveness 8 ms；console / page errors 0 / 0；Run log terminal marker 0。
+- Stress 通过首个 viewport 必然变化、连续注入 101 次 resize 且循环内不串行等待 send，最终观测 204/102；这是 required full-command PASS，不是 targeted 替代证据。
+- WebGL creation failure 与 context loss 均 dispose addon 并回退 DOM renderer；Search、focus、scrollback、clear display 和 resize 在 fallback 下仍可用。每次新 session 都创建全新 Terminal/Fit/Search/WebGL/ResizeObserver resources，旧 generation callbacks 不影响新 session。
+- large-log fresh metrics：6,291,522 generated；5,242,880 retained；1,048,642 evicted；console / page errors 0 / 0。
 
-这些数字是本机 real-browser/mock-server 测量，不是 proxy/backend/cluster SLA，也不证明真实 PTY 字节 fidelity。
+这些指标是本机 real-browser + MSW/mock transport 测量，不是 proxy/backend/cluster SLA，也不证明真实 Kubernetes PTY 字节 fidelity。
 
 ## Audit And Channel Isolation Evidence
 
 ```http
-GET /api/v1/projects/<project>/runs/<run>/terminal-audits?limit=50&cursor=<redacted>
-Authorization: Bearer <redacted>
+GET /api/v1/projects/<project>/runs/<run>/terminal-audits?limit=50&cursor=<redacted-cursor>
+Authorization: Bearer <redacted-token>
 ```
 
-- Audit response经 strict parser：`id`、`sessionId`、`command`、`state`、`startedAt`、`finishedAt`、`exitCode` exact keys；state 只有 RUNNING/SUCCEEDED/FAILED/INTERRUPTED，timestamp/state/exitCode 组合必须一致，ID 唯一且 startedAt 降序，opaque nextCursor。
-- Browser first page为 50 records + header（51 rows），Load more携带 opaque cursor；mock state测试覆盖 owner/project/run/session filtering、newest-first 两页 2+2、states RUNNING/SUCCEEDED/FAILED/INTERRUPTED 和 shell success/failure/disconnect settlement。
-- 前端只 query/cache/render backend structured audit；production scan找不到 frontend command tokenizer/audit append。hostile command以 bounded `<code>` plain text呈现，控制字符替换，不使用 `dangerouslySetInnerHTML`。
-- Browser marker isolation：PTY `ensoai-stage5-pty-only-marker` 不进入 Audit 或 Run log；Audit `ensoai-stage5-audit-marker` 不进入 PTY；Run log `ensoai-stage4-seed-log` 不进入 PTY；stress final marker在 Run log为 0。
+- Audit response 经过 strict parser：`id`、`sessionId`、`command`、`state`、`startedAt`、`finishedAt`、`exitCode` exact keys；state 仅 RUNNING/SUCCEEDED/FAILED/INTERRUPTED，timestamp/state/exitCode 组合必须一致，ID 唯一、startedAt 降序、nextCursor opaque。
+- Browser 验证 50-record first page、Load more opaque cursor；mock state覆盖 owner/project/run/session filtering、pagination 与四种 state settlement。
+- 前端只 query/cache/render backend structured audit；production scan 不含 frontend command tokenizer 或 audit append。hostile command 以 bounded plain text 显示，不使用 `dangerouslySetInnerHTML`。
+- Browser markers pairwise isolated：PTY marker 不进入 Audit/Run log，Audit marker 不进入 PTY，Run-log marker 不进入 PTY；stress final marker 在 Run log 为 0。
 
-mock structured audit不证明真实 Shell/wrapper command-boundary integration、multiline/interactive/signal attribution或 MySQL persistence。
+mock structured audit 只验证展示与查询 contract，不证明真实 Shell/wrapper command boundary、multiline/interactive/signal attribution或 MySQL persistence。
 
 ## Browser And Visual Evidence
 
-Chrome/Edge channel command通过 160 executable cases。Stage 5 branded visual case在两浏览器各验证三个 viewport，生成并验证现有 12 个 Task 10 PNG：Terminal 与 Audit各 `1280x720`、`1440x900`、`1920x1080`；root/body无横向 overflow，toolbar/status/xterm或Audit scroller/header在 viewport内，xterm和整页均有非背景像素，Search overlay geometry受约束。本轮复拍后全部恢复到 source SHA，没有修改/提交 PNG。
+- Chromium：65 passed / 18 skipped；除 required Gate 11/16 fixme 外，Stage 5 browser cases 覆盖 lazy Open、session/ticket、bytes/resize/Search、backpressure、Close/no-reconnect、persisted pagehide 后显式 fresh Open、Run authority/channel isolation、project/logout/current 401、WebGL fallback。
+- Chrome + Edge：162 passed / 4 skipped；两项 required fixme 各在两个 channel skip 一次，其余 executable cases 通过。
+- Chrome/Edge 各验证 Terminal 与 Audit 的 `1280x720`、`1440x900`、`1920x1080`，共 12 张 Stage 5 visual evidence。几何、overflow、xterm 非空像素、Search overlay 与 Audit scroll/header assertions 通过；本轮重拍结果已恢复到 source SHA，没有 tracked PNG diff。
 
-这些 visual PASS 不替代 keyboard-only required case。该 case在 Chrome/Edge/Chromium都 skipped，所以 Gate 16 FAIL。
+Visual/core PASS 不替代两个 required skipped workflows，故 Gate 11 与 Gate 16 仍 FAIL。
 
 ## Real-System Evidence Still Deferred
 
-以下全部未验证，Stage 5 不得对其作生产结论：
+以下均未验证，本阶段不得作生产结论：
 
-1. 真实 Spring Boot JWT签名、owner/project/run/session授权、stale token race和统一 401 lifecycle。
-2. Fabric8 PTY exec精确进入当前 Maven Job的应用 container，而不是 sidecar、workspace Pod或错误 container。
-3. browser disconnect、pagehide、proxy断开后，真实 exec、shell和child processes确实销毁；旧 session不能存活或复用。
-4. Run STOPPING/RECOVERING/终态与真实 terminal close、Kubernetes exec结束、Stage 4 workspace reload之间的竞态顺序。
-5. >=8 MiB input/output、credit/ack、`bufferedAmount`和 pause/resume跨真实 reverse proxy、Spring backend、Fabric8和cluster的行为及SLA。
-6. 真实 Shell/wrapper command-boundary integration，包括backspace、completion、multiline、interactive program、signals和exit attribution。
-7. MySQL audit事务、owner query、pagination、retention、后端重启恢复与敏感命令政策。
-8. terminal对 RWX PVC 的真实副作用、跨节点可见性、UID/GID/`fsGroup`和Run后文件reload。
-9. 完整 backend restart、proxy reset、cluster reschedule、cross-node和cold-start E2E。
-10. Kubernetes API/RBAC、container identity、network policy、resource limits和受控测试集群外的安全边界。
+1. 真实 Spring Boot JWT 签名以及 owner/project/run/session/ticket 的后端授权与 stale-token race。
+2. Fabric8 PTY exec 精确进入当前 Maven Job 的应用 container，而不是 sidecar、workspace Pod 或错误 container。
+3. browser/pagehide/proxy disconnect 后真实 exec、shell 和 child processes 的销毁，以及旧 session 不可复用。
+4. Run STOPPING/RECOVERING/终态与真实 terminal close、Kubernetes exec 结束、workspace reload 的竞态顺序。
+5. >=8 MiB flow、credit/ack、input backpressure 与 pause/resume 跨真实 proxy/backend/Fabric8/cluster 的行为和 SLA。
+6. 真实 Shell/wrapper command-boundary integration，包括 backspace、completion、multiline、interactive programs、signals 和 exit attribution。
+7. MySQL audit transaction、owner query、pagination、retention、restart recovery 与敏感命令政策。
+8. Terminal 对 RWX PVC 的副作用、跨节点可见性、UID/GID/`fsGroup` 与 Run 后文件 reload。
+9. 完整 backend restart、proxy reset、cluster reschedule、cross-node 与 cold-start E2E。
+10. Kubernetes API/RBAC、container identity、network policy、resource limit 和受控测试集群之外的安全边界。
+
+## Acceptance Traceability
+
+| POC4 rule | Stage 5 proof | Still deferred |
+|---|---|---|
+| Only active Maven Job terminal | authority + mock handler state checks | Real target container selection |
+| Ticket instead of JWT URL | HTTP ticket + fixed same-origin WS | Real backend handshake/auth |
+| Input/output/resize | binary/control protocol + browser E2E | Real Kubernetes PTY fidelity |
+| Disconnect destroys old session | mock destroy + no reconnect/new IDs | Real exec/process destruction |
+| Run end prevents input | authority close before reload | Real backend Run/PTY race |
+| New session on same active Run | explicit Open after closed/restored page | Real exec recreation |
+| Command audit | structured query/display + no frontend parser | Real Shell/wrapper + MySQL audit |
+| Terminal output separate from logs | store/import/marker isolation | Real backend channel routing |
+| Continuous output | 8,388,650-byte browser/mock stress | Proxy/backend/cluster SLA |
+| Browser boundary | source/dist/chunk scans | Full real-system threat validation |
 
 ## Repository Hygiene
 
-- immutable source SHA `4f0f7ed` 的 tracked `poc4/frontend` + `poc4/docs` text：**222 files** strict UTF-8 decode PASS；report-only HEAD加入本文件后为 **223 files**，同样 strict UTF-8 decode PASS；UTF-8 BOM **0**。
-- checkout `core.autocrlf=true`，repo未提供 `.editorconfig` / `.gitattributes` text policy；report-only HEAD的现有 tracked text中 **196 files / 55,033 CR bytes**（66,750 LF bytes）为当前 Windows checkout CRLF状态；本 `result.md` 已验证 UTF-8无BOM、CR 0。
-- scan/hygiene排除 `.grok/`、linked worktrees、Playwright `test-results`/traces/videos/reports和生成 `dist`；它们不纳入提交。
-- Task 10的12张 Stage 5 PNG及所有Stage 0-4 recapture均未改；README未改。
+- Tracked `poc4/frontend` + `poc4/docs` excluding `.png` and `.mock`：**224 text files**；strict UTF-8 decode failures **0**；UTF-8 BOM files **0**。
+- Checkout `core.autocrlf=true`；repository root 无 `.editorconfig` / `.gitattributes`。上述 text files 中 **203 files contain CRLF / 58,179 CR bytes / 67,059 LF bytes**。
+- 本 `result.md`：UTF-8 without BOM，**CR 0 / LF 192**；保持 LF-only。
+- 扫描排除 generated/ignored `dist`、Playwright `test-results`、traces/videos/reports、`.grok`、linked worktrees 和其他 untracked artifacts；它们不纳入 tracked hygiene 统计或提交。
+- 本次 tracked diff 只允许 `poc4/docs/evidence/stage-5/result.md`；README、PNG、源码、测试、package/lock、两个 fixme 与 `.grok` 均不修改。
 
 ## Exit Gates
 
 | Gate | Status | Fresh evidence and limit |
 |---:|---|---|
-| 1 | PASS | 34 contract tests + boundary/unit matrix strict-parse session/audit/control exact keys, IDs, timestamp/state, dimensions, frame size and close/error combinations |
-| 2 | PASS | API/browser exact `{cols,rows}` POST，active same-project RUNNING gating，extra shell/cwd/container/resource fields absent |
-| 3 | PASS | mock authority tests cover owner、READY、current active RUNNING、runId、history/STARTING/STOPPING bypass和single-live |
-| 4 | PASS | Bearer HTTP、30 s single-use bound reservation、same-origin ticket-only WS、JWT not in URL/frame/DOM；secrets redacted here |
-| 5 | PASS | unused reservation creates no exec；successful atomic handshake creates one live session/audit before ready；second live rejected |
-| 6 | PASS | 33-byte Unicode、low-byte onBinary、real xterm mouse bytes、binary direction和Run-log isolation |
-| 7 | PASS | <=32 KiB frames、256 KiB credit、write-callback ack、exact FIFO conservation和timeout/fail-closed tests |
-| 8 | PASS | <=16 KiB input frames、1 MiB queue、256/64 KiB watermarks、pause/resume、overflow fail closed、no silent drop |
-| 9 | PASS | positive/deduped/coalesced resize、inactive/zero gate、re-show refit；targeted stress fresh 202/101 |
+| 1 | PASS | 36 contract tests + 24/24 boundary/full unit matrix：session/audit/control exact keys、IDs、timestamps、dimensions、frame size、close/error combinations strict-parse |
+| 2 | PASS | exact `{cols,rows}` POST；only same-project active `RUNNING` enables create；无 shell/cwd/env/container/image/resource fields |
+| 3 | PASS | mock authority coverage：owner、READY project、current active RUNNING、runId、history/non-RUNNING bypass rejection 与 one-live enforcement |
+| 4 | PASS | Bearer HTTP、30 s single-use bound ticket、same-origin ticket-only WS、JWT absent from URL/frame/DOM；本报告 secrets redacted |
+| 5 | PASS | unused reservation 不创建 exec；successful atomic handshake 才创建 one live session/audit/ready；second live rejected |
+| 6 | PASS | 33-byte Unicode、low-byte `onBinary`、xterm mouse bytes、binary direction 与 Run-log isolation |
+| 7 | PASS | output frame <=32 KiB、credit 256 KiB、write-callback exact FIFO ack、8,388,650-byte conservation 与 fail-closed checks |
+| 8 | PASS | input frame <=16 KiB、queue 1 MiB、256/64 KiB watermarks、pause/resume、overflow fail closed、no silent drop |
+| 9 | PASS | positive/deduped/coalesced resize、inactive/zero gate、reactivation refit；full stress fresh 204 observed / 102 sent |
 | 10 | PASS | per-session xterm/addons、WebGL creation/context-loss DOM fallback、Search/focus/clear/resize lifecycle |
-| 11 | **FAIL** | project/logout/current 401/Run-left cleanup pass，但 stale Alice terminal 401 preserving Bob仍是 required `test.fixme`，且 immutable source 未接 production pagehide；无 fresh browser PASS |
-| 12 | PASS | explicit Close/disconnect不重连；fresh Open使用new session/ticket/xterm；old generation inert |
-| 13 | **FAIL** | STOPPING/RECOVERING direct events有close-before-reload证据，但 active query RUNNING -> null 会在 detail pending/reject/nonterminal期间保留旧 terminal authority；immutable source 不满足 authority always wins |
-| 14 | PASS | backend-only structured audit、owner/session cursor pages、safe plain rendering、PTY/Audit/Run-log pairwise isolation |
-| 15 | **FAIL** | required full stress在`resizeSent=99`时exit 1；targeted fresh run的8,388,650-byte conservation、101 resize sends和完整metrics仅是诊断，不能消除full-command failure |
-| 16 | **FAIL** | Chrome/Edge core通过；Chromium full command有一次Stage 3登录前timeout且targeted复证通过；required keyboard-only xterm-to-Search/Audit/Close仍是`test.fixme` |
-| 17 | PASS | final production rebuild + 24/24 boundary；33 needles 0；no stage0/MSW/echo；entry/Workbench xterm 0；lazy terminal JS + xterm CSS |
+| 11 | **FAIL** | pagehide、project/logout/current 401/Run-left cleanup executable cases pass；required stale Alice terminal 401 preserving newer Bob remains non-retriable `test.fixme` with no fresh Chromium/Chrome/Edge PASS |
+| 12 | PASS | explicit Close/disconnect 不自动重连；persisted restore 后显式 Open uses fresh session/ticket/socket/xterm；old generation inert |
+| 13 | PASS | null-active synchronously revokes terminal authority before detail await；pending/rejected/nonterminal do not restore it；fresh RUNNING invalidates stale confirmation；STOPPING close-before-reload browser evidence passes |
+| 14 | PASS | backend-only structured audit、owner/session cursor pagination、safe plain rendering、no frontend parser、PTY/Audit/Run-log isolation |
+| 15 | PASS | required full `pnpm test:e2e:terminal-stress` exit 0；8,388,650 generated=delivered=acked、204/102 resize、marker once、8 ms responsive、zero console/page errors |
+| 16 | **FAIL** | Chrome/Edge/Chromium executable core and visual cases pass；required complete keyboard-only File -> Run -> Terminal -> Open -> xterm -> Search -> Audit -> Close remains non-retriable `test.fixme` with no fresh browser PASS |
+| 17 | PASS | final production rebuild 3,787 modules + final boundary 24/24；192 files/97 text，33 needles zero，entry/Workbench xterm 0，dedicated lazy terminal JS + xterm CSS verified |
 
 ## Known Risks Carried Forward
 
-- 真实 Kubernetes PTY、disconnect process destruction、container selection和Run race仍是最大证据缺口。
-- Native WebSocket没有内建backpressure；browser credit/ack不能证明真实proxy/backend遵守协议。
-- xterm beta版本锁定但API仍可能漂移；本阶段不升级。
-- Terminal可修改PVC；这是受控测试集群风险，不提供immutable run。
-- command audit attribution、input prefix-on-overflow、浏览器后台节流和session/Run竞态必须在真实系统重新验证。
-- 本次full Chromium和full stress各有一次非稳定FAIL，即使targeted复证通过，也必须在remediation中消除matrix不稳定，不能把本报告描述为全绿。
-
-最终决定保持：
-
-**STAGE_5_REMEDIATION_REQUIRED**
-
-## Final Review Remediation Addendum
-
-- Implementation commit：`41c71cf`（`fix(poc4): harden terminal lifecycle integration`）。该提交位于 immutable matrix source `4f0f7ed` 之后。
-- Targeted authority remediation：active query 从 observed RUNNING 变为 null 时，Coordinator 在 detail await 前同步发布 null terminal authority；workspace lock的 `observedLockingRunId` 保留用于 terminal detail confirmation。pending/rejected/nonterminal detail不会恢复旧 RUNNING；fresh explicit RUNNING会作废同 runId 的 stale confirm generation，并允许新的显式 Open。
-- Targeted lifecycle remediation：production Panel 注册 `window.pagehide` 并转发 controller `handlePageHide()`；BFCache `persisted=true` 不依赖 unmount，listener在 cleanup移除，controller close/dispose保持幂等。
-- 其他 targeted remediation：paused audit保持 2 s polling；malformed `terminal.ready.sessionId` 统一抛 `Invalid terminal frame`；inactive/nonzero 与 active/zero resize gates被独立测试；Stage 0 shared `TerminalSearchBar` active Ctrl/Cmd+F、Escape和listener cleanup已覆盖；jsdom canvas warning以等价的test-only null shim消除，未增加依赖或改变产品。
-- Fresh focused command覆盖 Coordinator、Shell、Panel、controller、query、contracts、adapter和Stage 0 search：**8 files / 205 tests PASS**。`pnpm typecheck` exit 0；`pnpm test:boundary` **24/24 PASS**；production `pnpm build` exit 0、3,787 modules；`git diff --check`与13个implementation/test文件UTF-8无BOM、CRLF、zero bare LF audit通过。
-- 本 fix wave **没有** 从 `41c71cf` 重跑 full 11-command immutable matrix，没有执行已停止的两个 required `test.fixme`，没有修改 Task 10 PNG。因此上述 targeted evidence不能宣称 Gate 11或Gate 13恢复；尤其 **Gate 13仍为 FAIL，直到新implementation SHA完成一轮新的full matrix并据此重新判门**。
-
-Addendum 后最终决定仍保持：
-
-**STAGE_5_REMEDIATION_REQUIRED**
+- 真实 Kubernetes PTY、disconnect process destruction、container selection 与 Run race 仍是最大证据缺口。
+- Native WebSocket 无内建 backpressure；browser credit/ack 不能证明真实 proxy/backend 遵守协议。
+- xterm beta versions 已锁定但 API 仍可能漂移；本阶段不升级。
+- Terminal 可修改 PVC；这是受控测试集群风险，不提供 immutable run。
+- command audit attribution、input prefix-on-overflow、browser background throttling 与 session/Run races 必须在真实系统重新验证。
+- required stale-401 ownership race 与完整 keyboard-only workflow 缺少 browser PASS；在两门补齐并重新执行 gate evidence 前，Stage 5 保持 remediation 状态。
