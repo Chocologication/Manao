@@ -181,7 +181,7 @@ function htmlAttributes(tag) {
   return attributes;
 }
 
-function normalizeDistributionHref(href) {
+function parseInternalDistributionHref(href) {
   const withoutSuffix = href.split(/[?#]/, 1)[0].replaceAll('\\', '/');
   if (/^[A-Za-z][A-Za-z\d+.-]*:/.test(withoutSuffix) || withoutSuffix.startsWith('//')) {
     return null;
@@ -190,22 +190,42 @@ function normalizeDistributionHref(href) {
     withoutSuffix.startsWith('/') ? withoutSuffix.slice(1) : withoutSuffix,
   );
   if (relative === '..' || relative.startsWith('../') || path.posix.isAbsolute(relative)) {
-    return null;
+    return { href, relative: null };
   }
-  return `dist/${relative.replace(/^\.\//, '')}`;
+  return { href, relative: relative.replace(/^\.\//, '') };
 }
 
-function entryStylesheetFiles(indexHtml) {
+function distributionPathVariants(relative) {
+  const variants = new Set([relative]);
+  const assetsIndex = relative.indexOf('assets/');
+  if (assetsIndex > 0) variants.add(relative.slice(assetsIndex));
+  return variants;
+}
+
+function resolveEntryStylesheetFiles(indexHtml, cssAssets) {
   const files = new Set();
+  const violations = [];
   for (const match of indexHtml.matchAll(/<link\b[^>]*>/gi)) {
     const attributes = htmlAttributes(match[0]);
     const rel = attributes.get('rel')?.toLowerCase().split(/\s+/) ?? [];
     const href = attributes.get('href');
     if (!rel.includes('stylesheet') || href === undefined) continue;
-    const file = normalizeDistributionHref(href);
-    if (file !== null) files.add(file);
+    const parsed = parseInternalDistributionHref(href);
+    if (parsed === null) continue;
+    const variants = parsed.relative === null ? [] : distributionPathVariants(parsed.relative);
+    const candidates = cssAssets
+      .map(({ file }) => file)
+      .filter((file) => [...variants].some((variant) =>
+        file === `dist/${variant}` || file.endsWith(`/${variant}`)));
+    if (candidates.length === 0) {
+      violations.push({ file: 'dist/index.html', rule: `xterm-css-entry-asset-missing:${href}` });
+    } else if (candidates.length > 1) {
+      violations.push({ file: 'dist/index.html', rule: `xterm-css-entry-asset-ambiguous:${href}` });
+    } else {
+      files.add(candidates[0]);
+    }
   }
-  return files;
+  return { files, violations };
 }
 
 export function findTerminalCssDistributionViolations(indexHtml, assets) {
@@ -213,8 +233,7 @@ export function findTerminalCssDistributionViolations(indexHtml, assets) {
     .map(({ file, source }) => ({ file: toPosix(file), source }))
     .filter(({ file }) => path.posix.extname(file) === '.css');
   const cssByFile = new Map(cssAssets.map((asset) => [asset.file, asset.source]));
-  const entryFiles = entryStylesheetFiles(indexHtml);
-  const violations = [];
+  const { files: entryFiles, violations } = resolveEntryStylesheetFiles(indexHtml, cssAssets);
   for (const file of entryFiles) {
     if (cssByFile.get(file)?.includes('.xterm')) {
       violations.push({ file, rule: 'xterm-css-entry-asset' });

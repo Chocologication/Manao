@@ -93,3 +93,43 @@ test('accepts a valid split xterm CSS distribution through the script', async (t
   assert.match(result.stdout, /Browser boundary check passed\./);
   assert.equal(result.stderr, '');
 });
+
+test('rejects xterm entry CSS reached through a base-prefixed href', async (t) => {
+  const fixtureRoot = await createFixture({
+    indexHtml: '<link rel="stylesheet" href="/app/assets/index.css">\n',
+    entryCss: '.xterm { width: 100%; }\n',
+  });
+  t.after(() => rm(fixtureRoot, { recursive: true, force: true }));
+
+  await assert.rejects(
+    execFileAsync(process.execPath, ['scripts/check-browser-boundary.mjs'], {
+      cwd: fixtureRoot,
+    }),
+    (error) => {
+      assert.equal(error.code, 1);
+      assert.match(error.stderr, /dist\/assets\/index\.css: xterm-css-entry-asset/);
+      return true;
+    },
+  );
+});
+
+test('rejects an internal stylesheet href whose dist target is missing', async (t) => {
+  const fixtureRoot = await createFixture({
+    indexHtml: '<link rel="stylesheet" href="/assets/missing.css">\n',
+  });
+  t.after(() => rm(fixtureRoot, { recursive: true, force: true }));
+
+  await assert.rejects(
+    execFileAsync(process.execPath, ['scripts/check-browser-boundary.mjs'], {
+      cwd: fixtureRoot,
+    }),
+    (error) => {
+      assert.equal(error.code, 1);
+      assert.match(
+        error.stderr,
+        /dist\/index\.html: xterm-css-entry-asset-missing:\/assets\/missing\.css/,
+      );
+      return true;
+    },
+  );
+});

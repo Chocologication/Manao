@@ -46,6 +46,10 @@ type TerminalCssSnapshot = {
   xtermSelectors: Array<{ url: string; selector: string }>;
 };
 
+function isLazyJobTerminalJavaScriptUrl(url: string): boolean {
+  return /\/assets\/JobTerminalPanel-[^/]+\.js$/.test(new URL(url).pathname);
+}
+
 function projectCard(page: Page, name: string) {
   return page.getByRole('article', { name });
 }
@@ -171,7 +175,6 @@ async function terminalCssSnapshot(page: Page): Promise<TerminalCssSnapshot> {
       .sort();
     const resourceUrls = performance.getEntriesByType('resource')
       .map((entry) => entry.name)
-      .filter((url) => new URL(url).pathname.endsWith('.css'))
       .sort();
     const xtermSelectors: TerminalCssSnapshot['xtermSelectors'] = [];
     const visitRules = (rules: CSSRuleList, url: string) => {
@@ -563,6 +566,7 @@ test('lazy terminal open binds an exact single-use session and paginated audit c
   expect(requests).toHaveLength(0);
   const cssBeforeSelection = await terminalCssSnapshot(page);
   expect(cssBeforeSelection.xtermSelectors).toEqual([]);
+  expect(cssBeforeSelection.resourceUrls.filter(isLazyJobTerminalJavaScriptUrl)).toEqual([]);
 
   await page.getByRole('tab', { name: 'Terminal' }).click();
   await expect(page.getByRole('region', { name: 'Job terminal' })).toBeVisible();
@@ -577,16 +581,26 @@ test('lazy terminal open binds an exact single-use session and paginated audit c
   const newResourceUrls = cssAfterSelection.resourceUrls.filter(
     (url) => !cssBeforeSelection.resourceUrls.includes(url),
   );
+  const newCssResourceUrls = newResourceUrls.filter(
+    (url) => new URL(url).pathname.endsWith('.css'),
+  );
+  const newTerminalJavaScriptUrls = newResourceUrls.filter(isLazyJobTerminalJavaScriptUrl);
+  const xtermStylesheetUrls = [
+    ...new Set(cssAfterSelection.xtermSelectors.map(({ url }) => url)),
+  ];
   expect(newStylesheetUrls.length).toBeGreaterThan(0);
   expect(newResourceUrls.length).toBeGreaterThan(0);
-  expect(cssAfterSelection.xtermSelectors.every(
-    ({ url }) => newStylesheetUrls.includes(url),
-  )).toBe(true);
+  expect(xtermStylesheetUrls.length).toBeGreaterThan(0);
+  expect(xtermStylesheetUrls.every((url) => newStylesheetUrls.includes(url))).toBe(true);
+  expect(xtermStylesheetUrls.every((url) => newCssResourceUrls.includes(url))).toBe(true);
+  expect(newTerminalJavaScriptUrls).toHaveLength(1);
   console.log('stage5 lazy terminal CSS evidence', JSON.stringify({
     before: cssBeforeSelection,
     after: cssAfterSelection,
     newStylesheetUrls,
     newResourceUrls,
+    xtermStylesheetUrls,
+    newTerminalJavaScriptUrls,
     terminalSessionPostsBeforeOpen: requests.length,
   }));
 

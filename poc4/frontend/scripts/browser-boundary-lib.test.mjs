@@ -402,6 +402,49 @@ test('rejects xterm selectors from a stylesheet linked by dist index.html', () =
   ]);
 });
 
+test('resolves a base-prefixed entry href to its unique dist CSS asset', () => {
+  const indexHtml = '<link rel="stylesheet" href="/app/assets/index.css">';
+  const assets = [
+    { file: 'dist/assets/index.css', source: '.xterm { width: 100%; }' },
+    { file: 'dist/assets/terminal.css', source: '.xterm-screen { height: 100%; }' },
+  ];
+
+  assert.deepEqual(boundary.findTerminalCssDistributionViolations(indexHtml, assets), [
+    { file: 'dist/assets/index.css', rule: 'xterm-css-entry-asset' },
+  ]);
+});
+
+test('rejects an internal entry stylesheet href with no dist asset target', () => {
+  const indexHtml = '<link rel="stylesheet" href="/assets/missing.css">';
+  const assets = [
+    { file: 'dist/assets/index.css', source: 'body { margin: 0; }' },
+    { file: 'dist/assets/terminal.css', source: '.xterm-screen { height: 100%; }' },
+  ];
+
+  assert.deepEqual(boundary.findTerminalCssDistributionViolations(indexHtml, assets), [
+    {
+      file: 'dist/index.html',
+      rule: 'xterm-css-entry-asset-missing:/assets/missing.css',
+    },
+  ]);
+});
+
+test('rejects an internal entry stylesheet href with ambiguous dist asset targets', () => {
+  const indexHtml = '<link rel="stylesheet" href="/app/assets/index.css">';
+  const assets = [
+    { file: 'dist/assets/index.css', source: 'body { margin: 0; }' },
+    { file: 'dist/static/assets/index.css', source: 'body { color: black; }' },
+    { file: 'dist/assets/terminal.css', source: '.xterm-screen { height: 100%; }' },
+  ];
+
+  assert.deepEqual(boundary.findTerminalCssDistributionViolations(indexHtml, assets), [
+    {
+      file: 'dist/index.html',
+      rule: 'xterm-css-entry-asset-ambiguous:/app/assets/index.css',
+    },
+  ]);
+});
+
 test('rejects a production distribution with no non-entry xterm stylesheet', () => {
   const indexHtml = '<link rel="stylesheet" href="/assets/index.css">';
   const assets = [{ file: 'dist/assets/index.css', source: 'body { margin: 0; }' }];
