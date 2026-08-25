@@ -10,6 +10,7 @@
 2. **Gate 16 FAIL**：required 完整 keyboard-only File -> Run -> Terminal -> Open -> xterm -> Search -> Audit -> Close workflow 仍为 `test.fixme`。本轮同样未运行、未修改，三个 browser channel 均没有它的 fresh PASS。
 
 E2E 命令 exit 0 不能把 required skip 解释为 PASS。
+不得放行或启动 Stage 6。
 
 ## Source And Evidence Boundary
 
@@ -49,7 +50,7 @@ E2E 命令 exit 0 不能把 required skip 解释为 PASS。
 ## Execution Recovery And Final Review History
 
 - 历史 preflight 曾因 checkout 残留 mock `dist` 失败；production preflight rebuild 恢复了 boundary baseline。该 preflight 不是产品 gate failure，也不是上表 formal matrix。
-- 历史 test-only time fixture 曾使 strict audit parser fail closed；`a1a2772b13d7cc565169aac2fa932bbb9e176d61` 只修复该旧 fixture。该 SHA 及其旧矩阵已被本报告的 `2238895039693cd19807a9e0cde4fa89aae42f42` fresh matrix 完全取代，不是当前 evidence source。
+- 历史 WorkbenchShell time fixture 进入 strict Run response parser（`parseRunSummary`）后因 timestamp 倒序 fail closed；`a1a2772b13d7cc565169aac2fa932bbb9e176d61` 只修复该旧 fixture。该 SHA 及其旧矩阵已被本报告的 `2238895039693cd19807a9e0cde4fa89aae42f42` fresh matrix 完全取代，不是当前 evidence source。
 - 第二次最终审查发现 ticket close code、heartbeat/pause、overflow、Close grace、disconnect 时点、xterm options、create-session error mapping 七组缺口；实现提交 `2238895039693cd19807a9e0cde4fa89aae42f42` 修复并以 TDD 验证。
 - controller 随后从该 immutable commit 执行完整 11 命令矩阵、final production rebuild、scan 与 hygiene；本报告不复用修复前 unit/browser 计数作为当前证据。
 
@@ -165,7 +166,7 @@ Visual/core PASS 不替代两个 required skipped workflows，故 Gate 11 与 Ga
 - Fresh tracked set：`git ls-files -- poc4/frontend poc4/docs` 共 **291 files**；仅排除 binary `.png` **66 files**，纳入 **225 files**，其中明确包含 `poc4/frontend/.env.mock`。
 - Strict UTF-8 decode：**225 valid / 0 invalid**；UTF-8 BOM **0**。
 - Line-ending file classification：**189 CRLF-only / 21 LF-only / 15 mixed / 0 CR-only / 0 no-EOL**。
-- Line-ending sequence totals：**58,468 CRLF / 9,373 bare LF / 0 bare CR**。
+- Line-ending sequence totals：**58,468 CRLF / 9,374 bare LF / 0 bare CR**。
 - 本 `result.md`：UTF-8 without BOM、LF-only；回填后以同一脚本复算到稳定。
 - 扫描排除 generated/ignored `dist`、Playwright `test-results`、traces/videos/reports、`.grok`、linked worktrees 与其他 untracked artifacts；它们不纳入 tracked hygiene 或提交。
 - 本次 tracked diff 只允许 `poc4/docs/evidence/stage-5/result.md`；README、PNG、source、tests、package/lock、两个 fixme 与 `.grok` 均不修改。
