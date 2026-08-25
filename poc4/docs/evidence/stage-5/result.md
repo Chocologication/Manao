@@ -154,8 +154,8 @@ Visual/core PASS 不替代两个 required skipped workflows，故 Gate 11 与 Ga
 
 ## Repository Hygiene
 
-- Tracked `poc4/frontend` + `poc4/docs` excluding `.png` and `.mock`：**224 text files**；strict UTF-8 decode failures **0**；UTF-8 BOM files **0**。
-- Checkout `core.autocrlf=true`；repository root 无 `.editorconfig` / `.gitattributes`。上述 text files 中 **203 files contain CRLF / 58,179 CR bytes / 67,059 LF bytes**。
+- Tracked `poc4/frontend` + `poc4/docs` text audit 覆盖全部 tracked files，包括 `.env.mock`；binary `.png` 是唯一非文本类型：**225 text files**；strict UTF-8 decode failures **0**；UTF-8 BOM files **0**。
+- Checkout `core.autocrlf=true`；repository root 无 `.editorconfig` / `.gitattributes`。上述 text files 中 **204 files contain CRLF / 58,181 CR bytes / 67,061 LF bytes**。
 - 本 `result.md`：UTF-8 without BOM，**CR 0 / LF 192**；保持 LF-only。
 - 扫描排除 generated/ignored `dist`、Playwright `test-results`、traces/videos/reports、`.grok`、linked worktrees 和其他 untracked artifacts；它们不纳入 tracked hygiene 统计或提交。
 - 本次 tracked diff 只允许 `poc4/docs/evidence/stage-5/result.md`；README、PNG、源码、测试、package/lock、两个 fixme 与 `.grok` 均不修改。
