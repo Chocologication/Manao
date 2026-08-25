@@ -136,7 +136,7 @@ Chrome/Edge channel command通过 160 executable cases。Stage 5 branded visual 
 ## Repository Hygiene
 
 - immutable source SHA `4f0f7ed` 的 tracked `poc4/frontend` + `poc4/docs` text：**222 files** strict UTF-8 decode PASS；report-only HEAD加入本文件后为 **223 files**，同样 strict UTF-8 decode PASS；UTF-8 BOM **0**。
-- checkout `core.autocrlf=true`，repo未提供 `.editorconfig` / `.gitattributes` text policy；report-only HEAD的现有 tracked text中 **196 files / 55,033 CR bytes**（66,749 LF bytes）为当前 Windows checkout CRLF状态；本 `result.md` 已验证 UTF-8无BOM、CR 0。
+- checkout `core.autocrlf=true`，repo未提供 `.editorconfig` / `.gitattributes` text policy；report-only HEAD的现有 tracked text中 **196 files / 55,033 CR bytes**（66,750 LF bytes）为当前 Windows checkout CRLF状态；本 `result.md` 已验证 UTF-8无BOM、CR 0。
 - scan/hygiene排除 `.grok/`、linked worktrees、Playwright `test-results`/traces/videos/reports和生成 `dist`；它们不纳入提交。
 - Task 10的12张 Stage 5 PNG及所有Stage 0-4 recapture均未改；README未改。
 
