@@ -1,14 +1,17 @@
-import { cleanup, screen, waitFor } from '@testing-library/react';
+import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import * as monaco from 'monaco-editor';
 import { readFileSync } from 'node:fs';
+import { createElement } from 'react';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { login } from '../api/authApi';
 import { ApiRequestError } from '../api/ApiRequestError';
 import { downloadFileBlob, getFileContent, getFileMetadata, listDirectory } from '../api/fileApi';
 import { getProject, listProjects } from '../api/projectApi';
+import { createTerminalSession } from '../api/terminalApi';
 import { parseRunId } from '../contracts/run';
+import { parseTerminalAuditId, parseTerminalSessionId } from '../contracts/terminal';
 import { ALICE_SEED_PROJECT_ID, BOB_SEED_PROJECT_ID } from '../mocks/state';
 import { server } from '../mocks/node';
 import { renderApp, resetAppRuntime } from '../test/renderApp';
@@ -17,6 +20,8 @@ import { fileKeys } from '../features/files/fileQueries';
 import { parseProjectDirectoryPath, parseProjectRelativePath } from '../features/files/pathPolicy';
 import { RunLogStore } from '../features/logs/RunLogStore';
 import { RunLogTransport } from '../features/logs/RunLogTransport';
+import { RunLogView } from '../components/runs/RunLogView';
+import { TerminalAuditView } from '../components/terminal/TerminalAuditView';
 import { projectKeys } from '../features/projects/projectQueries';
 import { disposeAllProjectModels, toProjectModelUri } from '../lib/projectMonacoModels';
 import {
@@ -459,6 +464,60 @@ describe('appRuntime stale session 401', () => {
     }
   });
 
+  it('keeps Bob current when Alice terminal ticket POST returns a delayed 401', async () => {
+    await authenticateAsAlice();
+    const aliceToken = authSession.getAccessToken();
+    expect(aliceToken).toBeTruthy();
+    let releaseAlice: () => void = () => {};
+    const aliceHold = new Promise<void>((resolve) => {
+      releaseAlice = resolve;
+    });
+    const originalFetch = globalThis.fetch;
+
+    globalThis.fetch = (async (input, init) => {
+      const url =
+        typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+      const authorization = new Headers(init?.headers).get('Authorization');
+      if (url.endsWith('/terminal-sessions') && authorization === `Bearer ${aliceToken}`) {
+        await aliceHold;
+        return new Response(JSON.stringify(UNAUTHENTICATED_BODY), {
+          status: 401,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      return originalFetch(input, init);
+    }) as typeof fetch;
+
+    try {
+      const pendingTicket = createTerminalSession(
+        ALICE_SEED_PROJECT_ID,
+        parseRunId('run-alice-terminal'),
+        { cols: 80, rows: 24 },
+      );
+      logout();
+      const bob = await login({ username: 'bob', password: 'demo-pass' });
+      authSession.authenticate(bob);
+      const bobClose = vi.fn();
+      const bobDispose = vi.fn();
+      connectionRegistry.register(bobClose);
+      workspaceResourceRegistry.register(bobDispose);
+
+      releaseAlice();
+      const aliceError = await pendingTicket.catch((reason: unknown) => reason);
+
+      expect(aliceError).toBeInstanceOf(ApiRequestError);
+      expect(aliceError).toMatchObject({ status: 401 });
+      expect(bobClose).not.toHaveBeenCalled();
+      expect(bobDispose).not.toHaveBeenCalled();
+      expect(authSession.getSnapshot()).toMatchObject({
+        status: 'authenticated',
+        user: { username: 'bob' },
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   it('does not clear Bob auth, workspace, file cache or model when Alice delayed file-content 401 arrives', async () => {
     await authenticateAsAlice();
     const aliceToken = authSession.getAccessToken();
@@ -816,6 +875,47 @@ describe('appRuntime explicit logout', () => {
 });
 
 describe('appRuntime log stream session isolation', () => {
+  it('renders the Run marker only in the Run logs region', async () => {
+    const runMarker = 'RUN9';
+    const { store } = await connectTestLogTransport(runMarker);
+
+    render(createElement(RunLogView, { store }));
+
+    const runLogs = screen.getByRole('region', { name: 'Run logs' });
+    expect(runLogs).toHaveTextContent(`${runMarker}-chunk`);
+    expect(runLogs).not.toHaveTextContent(/PTY#9|AUDIT#9/);
+  });
+
+  it('renders only audit command data and keeps opaque credentials out of visible DOM', () => {
+    const sessionSecret = 'session-secret-9';
+    const ticketSecret = 'ticket-secret-9';
+    const jwtSecret = 'jwt-secret-9';
+    render(createElement(TerminalAuditView, {
+      items: [{
+        id: parseTerminalAuditId('audit-9'),
+        sessionId: parseTerminalSessionId(sessionSecret),
+        command: 'AUDIT#9',
+        state: 'SUCCEEDED',
+        startedAt: '2026-08-25T10:00:00.000Z',
+        finishedAt: '2026-08-25T10:00:01.000Z',
+        exitCode: 0,
+      }],
+      isPending: false,
+      isError: false,
+      errorMessage: null,
+      hasNextPage: false,
+      isFetchingNextPage: false,
+      onLoadMore: vi.fn(),
+      onRetry: vi.fn(),
+    }));
+
+    const audit = screen.getByRole('table', { name: 'Terminal command audit' });
+    expect(audit).toHaveTextContent('AUDIT#9');
+    expect(document.body).not.toHaveTextContent(
+      new RegExp(`${sessionSecret}|${ticketSecret}|${jwtSecret}|PTY#9|RUN9`),
+    );
+  });
+
   it('does not close Bob log stream when a delayed Alice 401 arrives', async () => {
     await authenticateAsAlice();
     const aliceToken = authSession.getAccessToken();
@@ -1001,6 +1101,22 @@ describe('appRuntime workspace buffer disposal', () => {
 });
 
 describe('appRuntime terminal resource registration', () => {
+  it('keeps terminal and Run components isolated from the other channel transport', () => {
+    const terminalSources = [
+      readFileSync('src/components/terminal/JobTerminalPanel.tsx', 'utf8'),
+      readFileSync('src/components/terminal/TerminalAuditView.tsx', 'utf8'),
+    ].join('\n');
+    const runSources = [
+      readFileSync('src/components/runs/RunPanel.tsx', 'utf8'),
+      readFileSync('src/components/runs/RunLogView.tsx', 'utf8'),
+    ].join('\n');
+
+    expect(terminalSources).not.toMatch(/features[\\/]logs|RunLog(?:Store|Transport)/);
+    expect(runSources).not.toMatch(
+      /features[\\/]terminal|JobTerminal(?:Controller|Transport)|terminalQueries/,
+    );
+  });
+
   it('closes the socket before disposing controller/xterm and keeps heavy modules lazy', () => {
     const order: string[] = [];
     registerTerminalRuntimeResource({

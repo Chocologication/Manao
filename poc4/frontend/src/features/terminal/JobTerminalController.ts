@@ -358,14 +358,20 @@ export class JobTerminalController {
     ) {
       return;
     }
-    const phase = this.snapshot.phase;
     this.generation += 1;
     this.transport = null;
+    this.adapter = null;
+    this.dimensions = null;
     this.setAdapterReadySafely(adapter, false);
     try {
       transport.dispose();
     } catch {
       // The state transition remains terminal when transport disposal throws.
+    }
+    try {
+      adapter.dispose();
+    } catch {
+      // Audit invalidation still runs when xterm or an addon rejects disposal.
     }
     if (reason.kind === 'server-exit') {
       this.patch({ phase: 'exited', failure: null });
@@ -374,6 +380,7 @@ export class JobTerminalController {
     }
     if (reason.kind === 'client-close') {
       this.patch({ phase: 'closed', failure: null });
+      this.notifyAuditInvalidation();
       return;
     }
     const failure: JobTerminalFailure =
@@ -382,8 +389,8 @@ export class JobTerminalController {
         : reason.kind === 'server-error'
           ? 'server-error'
           : 'connection-error';
-    if (phase === 'connecting') this.teardownResources();
     this.patch({ phase: 'error', failure });
+    this.notifyAuditInvalidation();
   }
 
   private notifyAuditInvalidation(): void {

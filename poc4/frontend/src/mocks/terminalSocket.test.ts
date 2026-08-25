@@ -301,10 +301,11 @@ describe('mock PTY binary direction', () => {
     expect((await controls.next()).type).toBe('terminal.ready');
     initializeTerminal(socket);
 
+    const ptyMarker = 'PTY#9';
     const fragments = [
       new Uint8Array([0x00, 0x01, 0x1b, 0x7f]),
       new Uint8Array([0xf0, 0x9f]),
-      new Uint8Array([0x98, 0x80, 0x7b, 0x22, 0x00, 0x7d]),
+      new Uint8Array([80, 84, 89, 35, 57]),
     ];
     for (const fragment of fragments) socket.send(fragment.buffer.slice(0));
     await settleSocketEvents();
@@ -313,6 +314,8 @@ describe('mock PTY binary direction', () => {
       fragments.map((fragment) => [...fragment]),
     );
     expect(controls.snapshot()).toEqual([]);
+    expect(listTerminalAudits(ALICE_ID, ALICE_SEED_PROJECT_ID, runId).items)
+      .not.toContainEqual(expect.objectContaining({ command: expect.stringContaining(ptyMarker) }));
   });
 
   it('fails closed on binary before initialization and binary above 32 KiB', async () => {

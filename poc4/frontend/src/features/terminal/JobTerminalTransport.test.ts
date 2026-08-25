@@ -18,6 +18,11 @@ class FakeTerminalSocket implements TerminalWebSocketPort {
   readonly sent: Array<string | ArrayBuffer> = [];
   readonly closes: Array<{ code?: number }> = [];
   private readonly listeners = new Map<string, Set<(event: SocketEvent) => void>>();
+  private readonly trace: string[] | null;
+
+  constructor(trace: string[] | null = null) {
+    this.trace = trace;
+  }
 
   addEventListener(type: string, listener: (event: SocketEvent) => void): void {
     const listeners = this.listeners.get(type) ?? new Set();
@@ -26,14 +31,20 @@ class FakeTerminalSocket implements TerminalWebSocketPort {
   }
 
   removeEventListener(type: string, listener: (event: SocketEvent) => void): void {
+    this.trace?.push(`socket:remove:${type}`);
     this.listeners.get(type)?.delete(listener);
   }
 
   send(data: string | ArrayBuffer): void {
+    if (typeof data === 'string') {
+      const frame = JSON.parse(data) as { type?: string };
+      this.trace?.push(`socket:send:${frame.type ?? 'unknown'}`);
+    }
     this.sent.push(typeof data === 'string' ? data : data.slice(0));
   }
 
   close(code?: number): void {
+    this.trace?.push('socket:close');
     this.closes.push({ code });
     this.readyState = 3;
   }
@@ -345,6 +356,71 @@ describe('JobTerminalTransport output acknowledgement', () => {
 });
 
 describe('JobTerminalTransport terminal close policy', () => {
+  it('tears down an open generation in the exact security order', () => {
+    const trace: string[] = [];
+    const socket = new FakeTerminalSocket(trace);
+    const clock = createManualScheduler();
+    const harness = createHarness({
+      scheduler: {
+        ...clock.scheduler,
+        clearTimeout: (id) => {
+          trace.push('pump:stop');
+          clock.scheduler.clearTimeout(id);
+        },
+      },
+      webSocketFactory: () => socket,
+      onInputEnabledChange: (enabled) => trace.push(`input:${enabled}`),
+      onStateChange: (state) => trace.push(`observer:state:${state}`),
+      onClosed: () => trace.push('observer:closed'),
+    });
+    harness.transport.connect();
+    ready(socket);
+    harness.transport.initialize(80, 24);
+    const start = trace.length;
+    socket.bufferedAmount = 256 * 1024;
+    harness.transport.sendData('queued');
+    expect(clock.pendingCount()).toBe(1);
+
+    harness.transport.close();
+
+    expect(trace.slice(start)).toEqual([
+      'input:false',
+      'pump:stop',
+      'socket:send:terminal.close',
+      'socket:close',
+      'socket:remove:open',
+      'socket:remove:message',
+      'socket:remove:error',
+      'socket:remove:close',
+      'observer:state:closed',
+      'observer:closed',
+    ]);
+  });
+
+  it('commits teardown before an input observer can reenter close', () => {
+    let activeTransport: JobTerminalTransport | null = null;
+    const onClosed = vi.fn();
+    const harness = createHarness({
+      onInputEnabledChange: (enabled) => {
+        if (!enabled) activeTransport?.close();
+      },
+      onClosed,
+    });
+    activeTransport = harness.transport;
+    harness.transport.connect();
+    const socket = harness.sockets[0]!;
+    ready(socket);
+    harness.transport.initialize(80, 24);
+
+    harness.transport.close();
+
+    expect(controlFrames(socket).filter((frame) => (
+      typeof frame === 'object' && frame !== null && 'type' in frame && frame.type === 'terminal.close'
+    ))).toHaveLength(1);
+    expect(socket.closes).toEqual([{ code: 1000 }]);
+    expect(onClosed).toHaveBeenCalledOnce();
+  });
+
   it('sends terminal.close once for an explicit close and never creates another socket', () => {
     const harness = createHarness();
     harness.transport.connect();
@@ -367,19 +443,23 @@ describe('JobTerminalTransport terminal close policy', () => {
   });
 
   it('ends a post-handshake socket generation without reconnecting or exposing close reason text', () => {
+    const consoleSpies = [console.log, console.warn, console.error].map((method) =>
+      vi.spyOn(console, method.name as 'log' | 'warn' | 'error').mockImplementation(() => {}),
+    );
     const harness = createHarness();
     harness.transport.connect();
     const socket = harness.sockets[0]!;
     ready(socket);
     harness.transport.initialize(80, 24);
 
-    socket.remoteClose(1011, 'ticket=session-1 jwt=secret');
+    socket.remoteClose(1011, 'ticket=short-ticket session=session-1 jwt=jwt-secret');
     socket.message(JSON.stringify({ type: 'terminal.ping', nonce: 'late' }));
     harness.transport.connect();
 
     expect(harness.onClosed).toHaveBeenCalledTimes(1);
     expect(harness.onClosed).toHaveBeenCalledWith({ kind: 'socket-close', code: 1011 });
     expect(JSON.stringify(harness.onClosed.mock.calls)).not.toContain('ticket=');
+    expect(consoleSpies.every((spy) => spy.mock.calls.length === 0)).toBe(true);
     expect(harness.sockets).toHaveLength(1);
     expect(harness.states.at(-1)).toBe('closed');
   });
@@ -437,7 +517,7 @@ describe('JobTerminalTransport terminal close policy', () => {
     });
     stale.transport.connect();
     currentToken = 'bob-token';
-    stale.sockets[0]!.remoteClose(4401);
+    stale.sockets[0]!.remoteClose(4401, 'UNAUTHENTICATED alice-token');
     expect(staleUnauthorized).not.toHaveBeenCalled();
   });
 });

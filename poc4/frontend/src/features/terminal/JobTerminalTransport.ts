@@ -82,6 +82,13 @@ type PendingOutputAck = {
   acknowledged: boolean;
 };
 
+type TerminalSocketListeners = {
+  open: (event: TerminalWebSocketEvent) => void;
+  message: (event: TerminalWebSocketEvent) => void;
+  error: (event: TerminalWebSocketEvent) => void;
+  close: (event: TerminalWebSocketEvent) => void;
+};
+
 function assertLocation(location: JobTerminalLocation): void {
   if (location.protocol !== 'http:' && location.protocol !== 'https:') {
     throw new Error('Unsupported terminal origin protocol');
@@ -132,6 +139,7 @@ export class JobTerminalTransport {
   private readonly pendingOutputAcks: PendingOutputAck[] = [];
   private state: JobTerminalTransportState = 'idle';
   private socket: TerminalWebSocketPort | null = null;
+  private socketListeners: TerminalSocketListeners | null = null;
   private inputPump: TerminalInputPump | null = null;
   private generation = 0;
   private initialized = false;
@@ -182,10 +190,17 @@ export class JobTerminalTransport {
       return;
     }
     this.socket = socket;
-    socket.addEventListener('open', () => this.handleOpen(generation, socket));
-    socket.addEventListener('message', (event) => this.handleMessage(generation, socket, event));
-    socket.addEventListener('error', () => this.handleError(generation, socket));
-    socket.addEventListener('close', (event) => this.handleClose(generation, socket, event));
+    const listeners: TerminalSocketListeners = {
+      open: () => this.handleOpen(generation, socket),
+      message: (event) => this.handleMessage(generation, socket, event),
+      error: () => this.handleError(generation, socket),
+      close: (event) => this.handleClose(generation, socket, event),
+    };
+    this.socketListeners = listeners;
+    socket.addEventListener('open', listeners.open);
+    socket.addEventListener('message', listeners.message);
+    socket.addEventListener('error', listeners.error);
+    socket.addEventListener('close', listeners.close);
   }
 
   initialize(cols: number, rows: number): boolean {
@@ -244,16 +259,12 @@ export class JobTerminalTransport {
 
   close(): void {
     if (this.state === 'closed' || this.state === 'disposed') return;
-    if (this.socket?.readyState === SOCKET_OPEN) {
-      if (!this.sendControl({ type: 'terminal.close' })) return;
-    }
-    this.finish({ kind: 'client-close' });
+    this.finish({ kind: 'client-close' }, true, 1000, false, true);
   }
 
   dispose(): void {
     if (this.state === 'disposed') return;
-    const notifyInputDisabled = this.commitTeardown('disposed', true, 1000);
-    if (notifyInputDisabled) notifySafely(this.onInputEnabledChange, false);
+    this.commitTeardown('disposed', true, 1000, false);
     notifySafely(this.onStateChange, 'disposed');
   }
 
@@ -443,11 +454,11 @@ export class JobTerminalTransport {
     closeSocket = true,
     closeCode = 1000,
     checkUnauthorized = false,
+    sendTerminalClose = false,
   ): void {
     if (this.state === 'closed' || this.state === 'disposed') return;
-    const notifyInputDisabled = this.commitTeardown('closed', closeSocket, closeCode);
+    this.commitTeardown('closed', closeSocket, closeCode, sendTerminalClose);
     if (checkUnauthorized) this.notifyUnauthorizedIfCurrent();
-    if (notifyInputDisabled) notifySafely(this.onInputEnabledChange, false);
     notifySafely(this.onStateChange, 'closed');
     notifySafely(this.onClosed, reason);
   }
@@ -456,18 +467,32 @@ export class JobTerminalTransport {
     state: Extract<JobTerminalTransportState, 'closed' | 'disposed'>,
     closeSocket: boolean,
     closeCode: number,
-  ): boolean {
+    sendTerminalClose: boolean,
+  ): void {
     const notifyInputDisabled = this.inputEnabled;
+    const inputPump = this.inputPump;
+    const socket = this.socket;
     this.generation += 1;
     this.initialized = false;
     this.pendingOutputAcks.length = 0;
     this.pendingOutputBytes = 0;
-    this.inputPump?.dispose();
-    this.inputPump = null;
     this.inputEnabled = false;
-    const socket = this.socket;
+    this.inputPump = null;
     this.socket = null;
     this.state = state;
+    if (notifyInputDisabled) notifySafely(this.onInputEnabledChange, false);
+    try {
+      inputPump?.dispose();
+    } catch {
+      // Remaining resources still close when the pump rejects disposal.
+    }
+    if (sendTerminalClose && socket?.readyState === SOCKET_OPEN) {
+      try {
+        socket.send(JSON.stringify(parseTerminalClientControl({ type: 'terminal.close' })));
+      } catch {
+        // Socket closure remains authoritative when the final control send fails.
+      }
+    }
     if (
       closeSocket &&
       socket !== null &&
@@ -479,7 +504,25 @@ export class JobTerminalTransport {
         // Local state is already terminal even when the browser rejects close().
       }
     }
-    return notifyInputDisabled;
+    this.removeSocketListeners(socket);
+  }
+
+  private removeSocketListeners(socket: TerminalWebSocketPort | null): void {
+    const listeners = this.socketListeners;
+    this.socketListeners = null;
+    if (socket === null || listeners === null) return;
+    for (const [type, listener] of [
+      ['open', listeners.open],
+      ['message', listeners.message],
+      ['error', listeners.error],
+      ['close', listeners.close],
+    ] as const) {
+      try {
+        socket.removeEventListener(type, listener);
+      } catch {
+        // One browser listener cannot retain the other generation observers.
+      }
+    }
   }
 
   private notifyUnauthorizedIfCurrent(): void {

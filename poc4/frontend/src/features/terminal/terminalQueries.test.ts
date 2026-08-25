@@ -102,7 +102,8 @@ describe('terminal audit query policy', () => {
 
 describe('useTerminalAuditQuery', () => {
   it('loads cursor pages and caches audit data without controller, ticket, or output', async () => {
-    const newest = audit('audit-new', 'mvn test', '2026-08-25T10:00:00.000Z');
+    const auditMarker = 'AUDIT#9';
+    const newest = audit('audit-new', auditMarker, '2026-08-25T10:00:00.000Z');
     const older = audit('audit-old', 'mvn -q test', '2026-08-25T09:00:00.000Z');
     const cursors: Array<string | null> = [];
     server.use(
@@ -134,6 +135,8 @@ describe('useTerminalAuditQuery', () => {
     expect(cached?.queryKey).toEqual(key);
     expect(cached?.observers[0]?.options.retry).toBe(retryTerminalAuditQuery);
     expect(cached?.observers[0]?.options.refetchInterval).toBe(TERMINAL_AUDIT_POLL_MS);
+    expect(JSON.stringify(cached?.state.data)).toContain(auditMarker);
+    expect(JSON.stringify(cached?.state.data)).not.toMatch(/PTY#9|RUN#9/);
     expect(JSON.stringify({ key: cached?.queryKey, data: cached?.state.data })).not.toMatch(
       /ticket|controller|rawOutput|terminal bytes|output/i,
     );

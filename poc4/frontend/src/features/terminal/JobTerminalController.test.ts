@@ -78,6 +78,7 @@ describe('JobTerminalController authority transitions', () => {
 function createOpenHarness(
   options: {
     holdReservation?: boolean;
+    reservations?: CreateTerminalSessionResponse[];
     closeNotifies?: boolean;
     fitDimensions?: { cols: number; rows: number } | null;
     reservationError?: Error;
@@ -97,6 +98,8 @@ function createOpenHarness(
   const trace: string[] = [];
   let adapterOptions: XtermTerminalAdapterOptions | null = null;
   let transportOptions: JobTerminalTransportOptions | null = null;
+  const transportOptionsHistory: JobTerminalTransportOptions[] = [];
+  let reservationIndex = 0;
   let writeReceipt: (() => void) | null = null;
   let releaseReservation: ((value: CreateTerminalSessionResponse) => void) | null = null;
   const reservation = {
@@ -172,7 +175,11 @@ function createOpenHarness(
   const createSession = vi.fn(async (_projectId, _runId, request, _signal?: AbortSignal) => {
     trace.push(`session:create:${request.cols}x${request.rows}`);
     if (options.reservationError) throw options.reservationError;
-    if (!options.holdReservation) return reservation;
+    if (!options.holdReservation) {
+      const next = options.reservations?.[reservationIndex] ?? reservation;
+      reservationIndex += 1;
+      return next;
+    }
     return new Promise<CreateTerminalSessionResponse>((resolve) => {
       releaseReservation = resolve;
     });
@@ -190,10 +197,17 @@ function createOpenHarness(
     createTransport: (createdOptions) => {
       trace.push('transport:create');
       transportOptions = createdOptions;
+      transportOptionsHistory.push(createdOptions);
       return transport;
     },
     registerRuntimeResource: options.registerRuntimeResource ?? (() => () => {}),
-    invalidateAudits: options.invalidateAudits,
+    invalidateAudits:
+      options.invalidateAudits === undefined
+        ? undefined
+        : (projectId, runId) => {
+            trace.push('audit:invalidate');
+            return options.invalidateAudits?.(projectId, runId);
+          },
   });
   controller.setRun(activeRun('run-1'));
 
@@ -206,6 +220,7 @@ function createOpenHarness(
     reservation,
     getAdapterOptions: () => adapterOptions,
     getTransportOptions: () => transportOptions,
+    getTransportOptionsHistory: () => transportOptionsHistory,
     releaseReservation: () => releaseReservation?.(reservation),
     completeWrite: () => writeReceipt?.(),
   };
@@ -452,6 +467,35 @@ describe('JobTerminalController live lifecycle', () => {
     expect(harness.controller.getSnapshot().phase).toBe('closed');
   });
 
+  it('disposes the closed generation before one audit invalidation across racing endings', async () => {
+    const invalidateAudits = vi.fn();
+    const harness = createOpenHarness({ invalidateAudits });
+    await harness.controller.open(document.createElement('div'));
+    harness.getTransportOptions()?.onReady?.();
+    const staleTransport = harness.getTransportOptions();
+    const start = harness.trace.length;
+
+    expect(harness.controller.close()).toBe(true);
+
+    expect(harness.trace.slice(start)).toEqual([
+      'adapter:input:false',
+      'transport:close',
+      'adapter:input:false',
+      'adapter:ready:false',
+      'transport:dispose',
+      'adapter:dispose',
+      'audit:invalidate',
+    ]);
+
+    staleTransport?.onClosed?.({ kind: 'server-error', code: 'PTY_EXEC_FAILED' });
+    harness.controller.setRun(activeRun('run-1', 'STOPPING'));
+    harness.controller.handlePageHide();
+    expect(harness.transport.close).toHaveBeenCalledOnce();
+    expect(harness.transport.dispose).toHaveBeenCalledOnce();
+    expect(harness.adapter.dispose).toHaveBeenCalledOnce();
+    expect(invalidateAudits).toHaveBeenCalledOnce();
+  });
+
   it('closes synchronously before disposing resources when the active run leaves RUNNING', async () => {
     const harness = createOpenHarness();
     await harness.controller.open(document.createElement('div'));
@@ -566,6 +610,56 @@ describe('JobTerminalController live lifecycle', () => {
     });
   });
 
+  it('does not recover until explicit Open creates new IDs and ignores the old generation', async () => {
+    const firstReservation: CreateTerminalSessionResponse = {
+      sessionId: parseTerminalSessionId('session-old'),
+      ticket: parseTerminalTicket('ticket-old'),
+      expiresAt: '2026-08-25T12:00:00.000Z',
+    };
+    const secondReservation: CreateTerminalSessionResponse = {
+      sessionId: parseTerminalSessionId('session-new'),
+      ticket: parseTerminalTicket('ticket-new'),
+      expiresAt: '2026-08-25T12:01:00.000Z',
+    };
+    const harness = createOpenHarness({ reservations: [firstReservation, secondReservation] });
+    await harness.controller.open(document.createElement('div'));
+    const oldTransport = harness.getTransportOptionsHistory()[0]!;
+    const oldAdapter = harness.getAdapterOptions();
+    oldTransport.onReady?.();
+
+    oldTransport.onClosed?.({ kind: 'socket-close', code: 1006 });
+    const staleAck = vi.fn(() => true);
+    oldTransport.onReady?.();
+    oldTransport.onInputEnabledChange?.(true);
+    oldTransport.onOutput?.({ data: new Uint8Array([1]), byteLength: 1, ack: staleAck });
+    oldAdapter?.onData?.('stale');
+
+    expect(harness.createSession).toHaveBeenCalledOnce();
+    expect(harness.transport.connect).toHaveBeenCalledOnce();
+    expect(harness.transport.dispose).toHaveBeenCalledOnce();
+    expect(harness.adapter.dispose).toHaveBeenCalledOnce();
+    expect(harness.transport.initialize).toHaveBeenCalledOnce();
+    expect(harness.adapter.write).not.toHaveBeenCalled();
+    expect(harness.transport.sendData).not.toHaveBeenCalled();
+    expect(staleAck).not.toHaveBeenCalled();
+
+    await expect(harness.controller.open(document.createElement('div'))).resolves.toBe(true);
+    const nextTransport = harness.getTransportOptionsHistory()[1]!;
+    expect(harness.createSession).toHaveBeenCalledTimes(2);
+    expect(harness.transport.connect).toHaveBeenCalledTimes(2);
+    expect(oldTransport.sessionId).toBe('session-old');
+    expect(oldTransport.ticket).toBe('ticket-old');
+    expect(nextTransport.sessionId).toBe('session-new');
+    expect(nextTransport.ticket).toBe('ticket-new');
+
+    oldTransport.onReady?.();
+    oldTransport.onOutput?.({ data: new Uint8Array([2]), byteLength: 1, ack: staleAck });
+    nextTransport.onReady?.();
+    expect(harness.transport.initialize).toHaveBeenCalledTimes(2);
+    expect(harness.adapter.write).not.toHaveBeenCalled();
+    expect(staleAck).not.toHaveBeenCalled();
+  });
+
   it('aborts a pending reservation and ignores stale generation callbacks on Run change', async () => {
     const harness = createOpenHarness({ holdReservation: true, closeNotifies: false });
     const opening = harness.controller.open(document.createElement('div'));
@@ -633,7 +727,7 @@ describe('JobTerminalController live lifecycle', () => {
     expect(resource).not.toBeNull();
     resource!.closeConnection();
     expect(harness.transport.close).toHaveBeenCalledOnce();
-    expect(harness.adapter.dispose).not.toHaveBeenCalled();
+    expect(harness.adapter.dispose).toHaveBeenCalledOnce();
 
     resource!.disposeWorkspace();
     resource!.disposeWorkspace();
