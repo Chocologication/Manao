@@ -1172,6 +1172,7 @@ test('captures branded Terminal and Audit evidence with viewport and pixel asser
   await prepareVisualCapture(page);
   const auditTab = page.getByRole('tab', { name: 'Audit' });
   const sessionTab = page.getByRole('tab', { name: 'Session' });
+  const searchOverlay = page.getByRole('search', { name: 'Terminal output search' });
   for (const viewport of [
     { name: '1280x720', width: 1280, height: 720 },
     { name: '1440x900', width: 1440, height: 900 },
@@ -1179,13 +1180,43 @@ test('captures branded Terminal and Audit evidence with viewport and pixel asser
   ]) {
     await page.setViewportSize({ width: viewport.width, height: viewport.height });
     await settleAnimationFrames(page, 4);
+    await page.getByRole('button', { name: 'Search terminal' }).click();
+    await page.getByRole('searchbox', { name: 'Search terminal output' }).fill('stage5-visual-query');
     await assertTerminalGeometry(page);
     for (const locator of [
       page.getByRole('toolbar', { name: 'Terminal controls' }),
       page.getByRole('status', { name: 'Terminal state' }),
       page.getByRole('status', { name: 'Terminal renderer' }),
       page.getByTestId('job-terminal-viewport'),
+      searchOverlay,
     ]) await assertInsideViewport(locator);
+    const searchBox = await searchOverlay.boundingBox();
+    const terminalBox = await page.getByTestId('job-terminal-viewport').boundingBox();
+    const toolbarBox = await page.getByRole('toolbar', { name: 'Terminal controls' }).boundingBox();
+    const stateBox = await page.getByRole('status', { name: 'Terminal state' }).boundingBox();
+    const rendererBox = await page.getByRole('status', { name: 'Terminal renderer' }).boundingBox();
+    expect(searchBox).not.toBeNull();
+    expect(terminalBox).not.toBeNull();
+    expect(toolbarBox).not.toBeNull();
+    expect(stateBox).not.toBeNull();
+    expect(rendererBox).not.toBeNull();
+    if (
+      searchBox !== null &&
+      terminalBox !== null &&
+      toolbarBox !== null &&
+      stateBox !== null &&
+      rendererBox !== null
+    ) {
+      expect(searchBox.x).toBeGreaterThanOrEqual(terminalBox.x);
+      expect(searchBox.y).toBeGreaterThanOrEqual(terminalBox.y);
+      expect(searchBox.x).toBeGreaterThan(terminalBox.x + terminalBox.width / 2);
+      expect(searchBox.width).toBeLessThan(terminalBox.width / 2);
+      expect(searchBox.x + searchBox.width).toBeLessThanOrEqual(terminalBox.x + terminalBox.width);
+      expect(searchBox.y + searchBox.height).toBeLessThanOrEqual(terminalBox.y + terminalBox.height);
+      for (const topBox of [toolbarBox, stateBox, rendererBox]) {
+        expect(topBox.y + topBox.height).toBeLessThanOrEqual(searchBox.y);
+      }
+    }
     const xtermBytes = await page.getByTestId('job-terminal-viewport').screenshot({
       animations: 'disabled', caret: 'hide', scale: 'css',
     });

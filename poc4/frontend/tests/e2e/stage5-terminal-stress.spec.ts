@@ -268,7 +268,7 @@ test('streams at least 8 MiB with bounded terminal flow control and remains resp
   expect(final.markerAt!).toBeGreaterThanOrEqual(final.readyAt!);
   expect(['WebGL', 'DOM fallback']).toContain(final.renderer);
   expect(responsivenessMs).toBeLessThan(5_000);
-  expect(consoleErrors.filter((message) => /xterm.*discard/i.test(message))).toEqual([]);
+  expect(consoleErrors).toEqual([]);
   expect(pageErrors).toEqual([]);
   await page.getByRole('tab', { name: 'Run' }).click();
   await expect(page.getByRole('region', { name: 'Run logs' })).not.toContainText(FINAL_MARKER);
