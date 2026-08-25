@@ -1,4 +1,11 @@
-import { useEffect, useRef, useState, type RefObject } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type RefObject,
+} from 'react';
 import { Button } from '@/components/ui/button';
 
 export const CLOSE_TERMINAL_TITLE = 'Close terminal session';
@@ -48,12 +55,39 @@ export function CloseTerminalDialog({
   const dialogRef = useRef<HTMLDialogElement>(null);
   const cancelRef = useRef<HTMLButtonElement>(null);
   const pendingRef = useRef(false);
+  const mountedRef = useRef(false);
+  const openRef = useRef(open);
+  const requestGenerationRef = useRef(0);
   const onCancelRef = useRef(onCancel);
   const onConfirmRef = useRef(onConfirm);
   const [pending, setPending] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  openRef.current = open;
   onCancelRef.current = onCancel;
   onConfirmRef.current = onConfirm;
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      requestGenerationRef.current += 1;
+    };
+  }, []);
+
+  useLayoutEffect(() => {
+    requestGenerationRef.current += 1;
+    pendingRef.current = false;
+    setPending(false);
+    setErrorMessage(null);
+  }, [open]);
+
+  const cancelCurrentCycle = useCallback(() => {
+    if (pendingRef.current) return;
+    requestGenerationRef.current += 1;
+    setPending(false);
+    setErrorMessage(null);
+    onCancelRef.current();
+  }, []);
 
   useEffect(() => {
     if (!open) return undefined;
@@ -66,7 +100,7 @@ export function CloseTerminalDialog({
     cancelRef.current?.focus();
 
     function cancel(): void {
-      if (!pendingRef.current) onCancelRef.current();
+      cancelCurrentCycle();
     }
 
     function onKeyDown(event: KeyboardEvent): void {
@@ -107,16 +141,24 @@ export function CloseTerminalDialog({
       const returnTarget = canRestoreFocus(trigger) ? trigger : fallbackReturnTarget;
       if (canRestoreFocus(returnTarget)) returnTarget.focus();
     };
-  }, [open, returnFocusRef]);
+  }, [cancelCurrentCycle, open, returnFocusRef]);
 
   if (!open) return null;
 
   const handleConfirm = (): void => {
     if (pendingRef.current) return;
     pendingRef.current = true;
+    const requestGeneration = requestGenerationRef.current;
     setPending(true);
     setErrorMessage(null);
     const settle = (failed: boolean): void => {
+      if (
+        !mountedRef.current ||
+        !openRef.current ||
+        requestGeneration !== requestGenerationRef.current
+      ) {
+        return;
+      }
       pendingRef.current = false;
       setPending(false);
       setErrorMessage(failed ? CLOSE_TERMINAL_ERROR : null);
@@ -159,7 +201,7 @@ export function CloseTerminalDialog({
           type="button"
           variant="ghost"
           disabled={pending}
-          onClick={() => onCancelRef.current()}
+          onClick={cancelCurrentCycle}
         >
           Cancel
         </Button>

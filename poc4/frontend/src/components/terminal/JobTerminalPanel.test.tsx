@@ -644,6 +644,82 @@ describe('CloseTerminalDialog', () => {
     }
   });
 
+  it('starts a clean dialog cycle after Cancel closes a rejected confirmation', async () => {
+    const user = userEvent.setup();
+    render(
+      <CloseDialogHarness
+        onConfirm={() => Promise.reject(new Error('close request failed'))}
+      />,
+    );
+    const trigger = screen.getByRole('button', { name: 'Show close dialog' });
+    await user.click(trigger);
+    await user.click(screen.getByRole('button', { name: 'Close session' }));
+    expect(await screen.findByRole('alert')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Cancel' }));
+    await user.click(trigger);
+
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
+  it('starts a clean dialog cycle after Escape closes a rejected confirmation', async () => {
+    const user = userEvent.setup();
+    render(
+      <CloseDialogHarness
+        onConfirm={() => Promise.reject(new Error('close request failed'))}
+      />,
+    );
+    const trigger = screen.getByRole('button', { name: 'Show close dialog' });
+    await user.click(trigger);
+    await user.click(screen.getByRole('button', { name: 'Close session' }));
+    expect(await screen.findByRole('alert')).toBeInTheDocument();
+    screen.getByRole('button', { name: 'Cancel' }).focus();
+
+    await user.keyboard('{Escape}');
+    await user.click(trigger);
+
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
+  it('invalidates an old pending confirmation when the parent closes and reopens', async () => {
+    const user = userEvent.setup();
+    let rejectClose: ((reason: Error) => void) | undefined;
+    const onConfirm = () => new Promise<void>((_resolve, reject) => {
+      rejectClose = reject;
+    });
+    const onCancel = vi.fn();
+    const unhandled = vi.fn((event: PromiseRejectionEvent) => event.preventDefault());
+    window.addEventListener('unhandledrejection', unhandled);
+    try {
+      const view = render(
+        <CloseTerminalDialog open onConfirm={onConfirm} onCancel={onCancel} />,
+      );
+      await user.click(screen.getByRole('button', { name: 'Close session' }));
+      expect(screen.getByRole('button', { name: 'Close session' })).toBeDisabled();
+
+      view.rerender(
+        <CloseTerminalDialog open={false} onConfirm={onConfirm} onCancel={onCancel} />,
+      );
+      view.rerender(
+        <CloseTerminalDialog open onConfirm={onConfirm} onCancel={onCancel} />,
+      );
+
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Cancel' })).toBeEnabled();
+      expect(screen.getByRole('button', { name: 'Close session' })).toBeEnabled();
+      await act(async () => {
+        rejectClose?.(new Error('stale close failure'));
+        await Promise.resolve();
+      });
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+      expect(unhandled).not.toHaveBeenCalled();
+    } finally {
+      window.removeEventListener('unhandledrejection', unhandled);
+    }
+  });
+
   it('asks for confirmation before forwarding one Close to the controller', async () => {
     const user = userEvent.setup();
     const controller = new FakeTerminalController();
