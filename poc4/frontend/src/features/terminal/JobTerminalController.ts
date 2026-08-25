@@ -1,4 +1,5 @@
 import type { RunId, RunState } from '../../contracts/run';
+import { ApiRequestError } from '../../api/ApiRequestError';
 import { createTerminalSession } from '../../api/terminalApi';
 import {
   JobTerminalTransport,
@@ -26,7 +27,10 @@ export type JobTerminalPhase =
 
 export type JobTerminalFailure =
   | 'open-failed'
+  | 'terminal-not-available'
+  | 'terminal-session-already-active'
   | 'connection-error'
+  | 'input-overflow'
   | 'protocol-error'
   | 'server-error';
 
@@ -91,6 +95,7 @@ export type JobTerminalControllerOptions = {
   createTransport?: CreateJobTerminalTransport;
   onUnauthorized?: () => void;
   invalidateAudits?: (projectId: string, runId: RunId) => void | Promise<void>;
+  invalidateRunAuthority?: (projectId: string) => void | Promise<void>;
   registerRuntimeResource: RegisterJobTerminalRuntimeResource;
 };
 
@@ -99,6 +104,15 @@ const INITIAL_SNAPSHOT: JobTerminalSnapshot = {
   runId: null,
   failure: null,
 };
+
+function classifyCreateSessionFailure(error: unknown): JobTerminalFailure {
+  if (!(error instanceof ApiRequestError)) return 'open-failed';
+  if (error.body?.code === 'TERMINAL_NOT_AVAILABLE') return 'terminal-not-available';
+  if (error.body?.code === 'TERMINAL_SESSION_ALREADY_ACTIVE') {
+    return 'terminal-session-already-active';
+  }
+  return 'open-failed';
+}
 
 export class JobTerminalController {
   readonly projectId: string;
@@ -109,6 +123,9 @@ export class JobTerminalController {
   private readonly onUnauthorized: (() => void) | undefined;
   private readonly invalidateAudits:
     | ((projectId: string, runId: RunId) => void | Promise<void>)
+    | undefined;
+  private readonly invalidateRunAuthority:
+    | ((projectId: string) => void | Promise<void>)
     | undefined;
   private snapshot: JobTerminalSnapshot = { ...INITIAL_SNAPSHOT };
   private readonly listeners = new Set<() => void>();
@@ -133,9 +150,10 @@ export class JobTerminalController {
       ((transportOptions) => new JobTerminalTransport(transportOptions));
     this.onUnauthorized = options.onUnauthorized;
     this.invalidateAudits = options.invalidateAudits;
+    this.invalidateRunAuthority = options.invalidateRunAuthority;
     this.unregisterRuntimeResource = options.registerRuntimeResource({
       closeConnection: () => {
-        this.close();
+        this.forceCloseCurrent();
       },
       disposeWorkspace: () => {
         this.dispose();
@@ -197,7 +215,7 @@ export class JobTerminalController {
 
   handlePageHide(persisted = false): void {
     if (persisted) {
-      this.close();
+      this.forceCloseCurrent();
       return;
     }
     this.dispose();
@@ -238,6 +256,7 @@ export class JobTerminalController {
     this.patch({ phase: 'creating', runId: run.id, failure: null });
 
     let adapter: JobTerminalAdapterPort | null = null;
+    let openingStage: 'local' | 'create-session' | 'transport' = 'local';
     try {
       adapter = this.createAdapter({
         onData: (data) => {
@@ -265,12 +284,14 @@ export class JobTerminalController {
       }
       const abort = new AbortController();
       this.reservationAbort = abort;
+      openingStage = 'create-session';
       const reservation = await this.createSession(
         this.projectId,
         run.id,
         { cols: dimensions.cols, rows: dimensions.rows },
         abort.signal,
       );
+      openingStage = 'transport';
       if (!this.isCurrent(generation, run.id, adapter)) return false;
       this.reservationAbort = null;
       if (this.getAccessToken() !== accessToken) {
@@ -327,11 +348,15 @@ export class JobTerminalController {
       this.patch({ phase: 'connecting' });
       transport.connect();
       return this.isCurrentTransport(generation, transport) && this.snapshot.phase === 'connecting';
-    } catch {
+    } catch (error) {
       if (!this.isGenerationCurrent(generation, run.id)) return false;
+      const failure = openingStage === 'create-session'
+        ? classifyCreateSessionFailure(error)
+        : 'open-failed';
       this.generation += 1;
       this.teardownResources();
-      this.patch({ phase: 'error', runId: run.id, failure: 'open-failed' });
+      this.patch({ phase: 'error', runId: run.id, failure });
+      if (failure === 'terminal-not-available') this.notifyRunAuthorityInvalidation();
       return false;
     }
   }
@@ -391,8 +416,9 @@ export class JobTerminalController {
       this.notifyAuditInvalidation(runId);
       return;
     }
-    const failure: JobTerminalFailure =
-      reason.kind === 'protocol-error' || reason.kind === 'input-overflow'
+    const failure: JobTerminalFailure = reason.kind === 'input-overflow'
+      ? 'input-overflow'
+      : reason.kind === 'protocol-error'
         ? 'protocol-error'
         : reason.kind === 'server-error'
           ? 'server-error'
@@ -408,6 +434,32 @@ export class JobTerminalController {
     } catch {
       // Query invalidation observers cannot change the terminal outcome.
     }
+  }
+
+  private notifyRunAuthorityInvalidation(): void {
+    if (this.invalidateRunAuthority === undefined) return;
+    try {
+      void Promise.resolve(this.invalidateRunAuthority(this.projectId)).catch(() => {});
+    } catch {
+      // Authority refetch observers cannot replace the classified create failure.
+    }
+  }
+
+  private forceCloseCurrent(): boolean {
+    if (
+      this.disposed ||
+      !['creating', 'connecting', 'ready', 'paused', 'closing'].includes(this.snapshot.phase)
+    ) {
+      return false;
+    }
+    const runId = this.snapshot.runId;
+    if (this.snapshot.phase !== 'closing') this.beginClose();
+    if (this.snapshot.phase !== 'closing') return true;
+    this.generation += 1;
+    this.teardownResources();
+    this.patch({ phase: 'closed', failure: null });
+    this.notifyAuditInvalidation(runId);
+    return true;
   }
 
   private beginClose(): void {

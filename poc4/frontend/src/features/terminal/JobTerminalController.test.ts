@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { ApiRequestError } from '../../api/ApiRequestError';
 import { parseRunId, type RunId, type RunState } from '../../contracts/run';
 import {
   parseTerminalSessionId,
@@ -150,6 +151,7 @@ function createOpenHarness(
     initializeThrows?: boolean;
     registerRuntimeResource?: RegisterJobTerminalRuntimeResource;
     invalidateAudits?: (projectId: string, runId: RunId) => void;
+    invalidateRunAuthority?: (projectId: string) => void | Promise<void>;
     setInputEnabledThrows?: boolean;
     setReadyFalseThrows?: boolean;
     setReadyThrows?: boolean;
@@ -233,6 +235,7 @@ function createOpenHarness(
     }),
   };
   const createSession = vi.fn(async (_projectId, _runId, request, _signal?: AbortSignal) => {
+    void _signal;
     trace.push(`session:create:${request.cols}x${request.rows}`);
     if (options.reservationError) throw options.reservationError;
     if (!options.holdReservation) {
@@ -270,6 +273,13 @@ function createOpenHarness(
         : (projectId, runId) => {
             trace.push('audit:invalidate');
             return options.invalidateAudits?.(projectId, runId);
+          },
+    invalidateRunAuthority:
+      options.invalidateRunAuthority === undefined
+        ? undefined
+        : (projectId) => {
+            trace.push('run-authority:invalidate');
+            return options.invalidateRunAuthority?.(projectId);
           },
   });
   controller.setRun(activeRun('run-1'));
@@ -490,6 +500,49 @@ describe('JobTerminalController open orchestration', () => {
     expect(missingToken.transport.connect).not.toHaveBeenCalled();
   });
 
+  it.each([
+    {
+      code: 'TERMINAL_NOT_AVAILABLE' as const,
+      failure: 'terminal-not-available',
+      invalidations: 1,
+    },
+    {
+      code: 'TERMINAL_SESSION_ALREADY_ACTIVE' as const,
+      failure: 'terminal-session-already-active',
+      invalidations: 0,
+    },
+  ])('preserves create-session $code without retrying or exposing backend text', async ({
+    code,
+    failure,
+    invalidations,
+  }) => {
+    const invalidateRunAuthority = vi.fn(() => {
+      if (code === 'TERMINAL_NOT_AVAILABLE') throw new Error('observer failed');
+    });
+    const harness = createOpenHarness({
+      reservationError: new ApiRequestError(409, {
+        code,
+        message: 'backend reason that must stay hidden',
+        traceId: 'backend-trace-that-must-stay-hidden',
+      }),
+      invalidateRunAuthority,
+    });
+
+    await expect(harness.controller.open(document.createElement('div'))).resolves.toBe(false);
+
+    expect(harness.controller.getSnapshot()).toMatchObject({
+      phase: 'error',
+      failure,
+    });
+    expect(JSON.stringify(harness.controller.getSnapshot())).not.toMatch(/backend reason|trace/);
+    expect(harness.createSession).toHaveBeenCalledOnce();
+    expect(harness.transport.connect).not.toHaveBeenCalled();
+    expect(invalidateRunAuthority).toHaveBeenCalledTimes(invalidations);
+    if (invalidations === 1) {
+      expect(invalidateRunAuthority).toHaveBeenCalledWith('prj-1');
+    }
+  });
+
   it('captures auth before ticket POST and rejects a delayed success after the user changes', async () => {
     let currentToken = 'alice-token';
     const authTrace: string[] = [];
@@ -570,8 +623,8 @@ describe('JobTerminalController live lifecycle', () => {
     expect(harness.transport.close).not.toHaveBeenCalled();
   });
 
-  it('disables input and enters closing before one explicit transport close', async () => {
-    const harness = createOpenHarness();
+  it('disables input and remains closing until the transport settles', async () => {
+    const harness = createOpenHarness({ closeNotifies: false });
     await harness.controller.open(document.createElement('div'));
     harness.getTransportOptions()?.onReady?.();
     const phases: string[] = [];
@@ -589,13 +642,17 @@ describe('JobTerminalController live lifecycle', () => {
       'transport:close',
     ]);
     expect(harness.transport.close).toHaveBeenCalledOnce();
+    expect(harness.controller.getSnapshot().phase).toBe('closing');
+
+    harness.getTransportOptions()?.onClosed?.({ kind: 'client-close' });
+
     expect(harness.controller.getSnapshot().phase).toBe('closed');
   });
 
   it('runs one observable input disable through the real controller and transport chain', async () => {
     const trace: string[] = [];
     const socket = new TraceTerminalSocket(trace);
-    const timers = new Map<number, () => void>();
+    const timers = new Map<number, { handler: () => void; delayMs: number }>();
     let nextTimer = 1;
     const harness = createOpenHarness({
       trace,
@@ -605,10 +662,10 @@ describe('JobTerminalController live lifecycle', () => {
         location: { protocol: 'http:', host: 'localhost:4173' },
         webSocketFactory: () => socket,
         scheduler: {
-          setTimeout: (handler) => {
+          setTimeout: (handler, delayMs) => {
             const timer = nextTimer;
             nextTimer += 1;
-            timers.set(timer, handler);
+            timers.set(timer, { handler, delayMs });
             return timer;
           },
           clearTimeout: (timer) => {
@@ -627,7 +684,7 @@ describe('JobTerminalController live lifecycle', () => {
     socket.bufferedAmount = 256 * 1024;
     harness.getAdapterOptions()?.onData?.('queued');
     expect(harness.controller.getSnapshot().phase).toBe('paused');
-    expect(timers.size).toBe(1);
+    expect(timers.size).toBe(2);
     harness.controller.close();
 
     const cleanupTrace = trace.filter((event) =>
@@ -642,6 +699,29 @@ describe('JobTerminalController live lifecycle', () => {
     expect(cleanupTrace).toEqual([
       'adapter:input:false',
       'pump:stop',
+      'pump:stop',
+      'socket:send:terminal.close',
+    ]);
+    expect(harness.controller.getSnapshot().phase).toBe('closing');
+    expect([...timers.values()].map((timer) => timer.delayMs)).toEqual([2_000]);
+
+    const grace = [...timers.entries()].find(([, timer]) => timer.delayMs === 2_000);
+    if (grace === undefined) throw new Error('missing close grace timer');
+    timers.delete(grace[0]);
+    grace[1].handler();
+
+    expect(trace.filter((event) =>
+      event === 'adapter:input:false' ||
+      event === 'pump:stop' ||
+      event === 'socket:send:terminal.close' ||
+      event === 'socket:close' ||
+      event.startsWith('listener:remove:') ||
+      event === 'adapter:dispose' ||
+      event === 'audit:invalidate',
+    )).toEqual([
+      'adapter:input:false',
+      'pump:stop',
+      'pump:stop',
       'socket:send:terminal.close',
       'socket:close',
       'listener:remove:open',
@@ -651,6 +731,7 @@ describe('JobTerminalController live lifecycle', () => {
       'adapter:dispose',
       'audit:invalidate',
     ]);
+    expect(harness.controller.getSnapshot().phase).toBe('closed');
     expect(timers.size).toBe(0);
   });
 
@@ -846,6 +927,20 @@ describe('JobTerminalController live lifecycle', () => {
     });
   });
 
+  it('preserves input overflow as a distinct terminal failure', async () => {
+    const harness = createOpenHarness();
+    await harness.controller.open(document.createElement('div'));
+    harness.getTransportOptions()?.onReady?.();
+
+    harness.getTransportOptions()?.onClosed?.({ kind: 'input-overflow' });
+
+    expect(harness.controller.getSnapshot()).toMatchObject({
+      phase: 'error',
+      runId: parseRunId('run-1'),
+      failure: 'input-overflow',
+    });
+  });
+
   it('does not recover until explicit Open creates new IDs and ignores the old generation', async () => {
     const firstReservation: CreateTerminalSessionResponse = {
       sessionId: parseTerminalSessionId('session-old'),
@@ -935,7 +1030,7 @@ describe('JobTerminalController live lifecycle', () => {
   });
 
   it('keeps the controller reusable after a persisted BFCache pagehide', async () => {
-    const harness = createOpenHarness();
+    const harness = createOpenHarness({ closeNotifies: false });
     await harness.controller.open(document.createElement('div'));
     harness.getTransportOptions()?.onReady?.();
     const handlePersistedPageHide = harness.controller.handlePageHide as unknown as (
@@ -976,7 +1071,7 @@ describe('JobTerminalController live lifecycle', () => {
       resource = created;
       return unregister;
     };
-    const harness = createOpenHarness({ registerRuntimeResource });
+    const harness = createOpenHarness({ registerRuntimeResource, closeNotifies: false });
     await harness.controller.open(document.createElement('div'));
     harness.getTransportOptions()?.onReady?.();
 

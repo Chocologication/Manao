@@ -21,7 +21,7 @@ import {
 const ALICE_ID = 'usr-alice';
 const NOW = Date.parse('2026-08-25T10:00:00.000Z');
 const SEED_REVISION = 'mock-rev-0001';
-const CLOSE_TICKET_NOT_AVAILABLE = 4401;
+const CLOSE_TICKET_NOT_AVAILABLE = 4410;
 const CLOSE_TICKET_EXPIRED = 4408;
 const CLOSE_SESSION_ALREADY_ACTIVE = 4409;
 const CLOSE_SESSION_NOT_AVAILABLE = 4410;
@@ -217,25 +217,63 @@ describe('mock terminal WebSocket handshake', () => {
     expect(getMockTerminalSocketDiagnostics()).toEqual(diagnosticsBefore);
   });
 
-  it('rejects a retryable server handshake failure with 1011 without consuming a valid ticket', async () => {
-    setTerminalScenario('disconnect');
+  it('maps a valid reservation that becomes unavailable at handshake to 4410', async () => {
+    setTerminalScenario('ticket-unavailable');
     const diagnosticsBefore = getMockTerminalSocketDiagnostics();
     const runId = startRunningRun();
     const reservation = issue(runId);
     const socket = openTerminal(reservation.ticket);
     const frames: unknown[] = [];
     socket.addEventListener('message', (event) => frames.push(event.data));
-    const closeCode = await Promise.race([
-      waitForClose(socket),
-      new Promise<number>((resolve) => setTimeout(() => resolve(-1), 100)),
-    ]);
 
-    expect(closeCode).toBe(1011);
+    expect(await waitForClose(socket)).toBe(CLOSE_SESSION_NOT_AVAILABLE);
     expect(frames).toEqual([]);
     expect(getTerminalReservationCount(ALICE_ID, ALICE_SEED_PROJECT_ID, runId)).toBe(1);
     expect(getLiveTerminalSession(ALICE_ID, ALICE_SEED_PROJECT_ID, runId)).toBeNull();
     expect(listTerminalAudits(ALICE_ID, ALICE_SEED_PROJECT_ID, runId).items).toEqual([]);
     expect(getMockTerminalSocketDiagnostics()).toEqual(diagnosticsBefore);
+  });
+
+  it('disconnects with 1011 only after ready and initialization, then settles INTERRUPTED', async () => {
+    setTerminalScenario('disconnect');
+    const diagnosticsBefore = getMockTerminalSocketDiagnostics();
+    const runId = startRunningRun();
+    const reservation = issue(runId);
+    const socket = openTerminal(reservation.ticket);
+    const controls = new ControlReader(socket, reservation.sessionId);
+    await waitForOpen(socket);
+    expect(await controls.next()).toEqual({
+      type: 'terminal.ready',
+      sessionId: reservation.sessionId,
+    });
+    expect(getLiveTerminalSession(ALICE_ID, ALICE_SEED_PROJECT_ID, runId)).toMatchObject({
+      sessionId: reservation.sessionId,
+      state: 'live',
+    });
+    expect(listTerminalAudits(ALICE_ID, ALICE_SEED_PROJECT_ID, runId).items).toMatchObject([
+      { sessionId: reservation.sessionId, state: 'RUNNING' },
+    ]);
+    const closeCode = await Promise.race([
+      (async () => {
+        const closed = waitForClose(socket);
+        initializeTerminal(socket);
+        return closed;
+      })(),
+      new Promise<number>((resolve) => setTimeout(() => resolve(-1), 500)),
+    ]);
+
+    expect(closeCode).toBe(1011);
+    await settleSocketEvents();
+    expect(getTerminalReservationCount(ALICE_ID, ALICE_SEED_PROJECT_ID, runId)).toBe(0);
+    expect(getLiveTerminalSession(ALICE_ID, ALICE_SEED_PROJECT_ID, runId)).toBeNull();
+    expect(listTerminalAudits(ALICE_ID, ALICE_SEED_PROJECT_ID, runId, {
+      sessionId: reservation.sessionId,
+    }).items).toMatchObject([{ state: 'INTERRUPTED', exitCode: null }]);
+    expect(getMockTerminalSocketDiagnostics()).toEqual({
+      execCreated: diagnosticsBefore.execCreated + 1,
+      execDestroyed: diagnosticsBefore.execDestroyed + 1,
+      activeConnections: diagnosticsBefore.activeConnections,
+    });
   });
 
   it('rejects duplicate ticket and extra query parameters without consuming either reservation', async () => {

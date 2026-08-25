@@ -80,12 +80,12 @@ type PendingWrite = {
 };
 
 const terminalOptions: ITerminalOptions = {
-  convertEol: true,
-  cursorBlink: true,
+  convertEol: false,
   cursorStyle: 'bar',
   disableStdin: true,
   fontFamily: '"JetBrains Mono", "Cascadia Code", Consolas, monospace',
-  fontSize: 13,
+  fontSize: 14,
+  scrollback: 5_000,
   theme: {
     background: '#1e1e1e',
     foreground: '#d4d4d4',
@@ -93,7 +93,9 @@ const terminalOptions: ITerminalOptions = {
 };
 
 function createBrowserTerminal(): XtermTerminalPort {
-  const terminal = new Terminal(terminalOptions);
+  const reducedMotion = typeof globalThis.matchMedia === 'function' &&
+    globalThis.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const terminal = new Terminal({ ...terminalOptions, cursorBlink: !reducedMotion });
   return {
     get cols() {
       return terminal.cols;

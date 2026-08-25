@@ -90,13 +90,16 @@ function binaryFrames(socket: FakeTerminalSocket): number[][] {
 
 function createManualScheduler() {
   let nextId = 1;
-  const tasks = new Map<number, () => void>();
+  const tasks = new Map<number, { handler: () => void; delayMs: number }>();
+  const requested: Array<{ handler: () => void; delayMs: number }> = [];
   return {
     scheduler: {
-      setTimeout(handler: () => void) {
+      setTimeout(handler: () => void, delayMs: number) {
         const id = nextId;
         nextId += 1;
-        tasks.set(id, handler);
+        const task = { handler, delayMs };
+        tasks.set(id, task);
+        requested.push(task);
         return id;
       },
       clearTimeout(id: unknown) {
@@ -104,6 +107,16 @@ function createManualScheduler() {
       },
     },
     pendingCount: () => tasks.size,
+    pendingDelays: () => [...tasks.values()].map((task) => task.delayMs),
+    requestedForDelay: (delayMs: number) => requested
+      .filter((task) => task.delayMs === delayMs)
+      .map((task) => task.handler),
+    runNext: (delayMs: number) => {
+      const entry = [...tasks.entries()].find(([, task]) => task.delayMs === delayMs);
+      if (entry === undefined) throw new Error(`No pending ${String(delayMs)} ms task`);
+      tasks.delete(entry[0]);
+      entry[1].handler();
+    },
   };
 }
 
@@ -245,6 +258,54 @@ describe('JobTerminalTransport generation and handshake', () => {
     expect(harness.onClosed).toHaveBeenCalledWith({ kind: 'protocol-error' });
   });
 
+  it('expires a ready generation after 30000 ms and resets only for a valid ping', () => {
+    const clock = createManualScheduler();
+    const harness = createHarness({ scheduler: clock.scheduler });
+    harness.transport.connect();
+    const socket = harness.sockets[0]!;
+    ready(socket);
+
+    expect(clock.pendingDelays()).toEqual([30_000]);
+    const staleWatchdog = clock.requestedForDelay(30_000)[0]!;
+    expect(harness.transport.initialize(80, 24)).toBe(true);
+    socket.message(JSON.stringify({ type: 'terminal.ping', nonce: 'current-ping' }));
+    expect(controlFrames(socket).at(-1)).toEqual({
+      type: 'terminal.pong',
+      nonce: 'current-ping',
+    });
+    expect(clock.pendingDelays()).toEqual([30_000]);
+
+    staleWatchdog();
+    expect(harness.transport.currentState).toBe('ready');
+    expect(harness.onClosed).not.toHaveBeenCalled();
+
+    clock.runNext(30_000);
+    expect(harness.transport.currentState).toBe('closed');
+    expect(harness.onClosed).toHaveBeenCalledOnce();
+    expect(harness.onClosed).toHaveBeenCalledWith({ kind: 'connection-error' });
+    expect(clock.pendingDelays()).toEqual([]);
+  });
+
+  it('fails closed on duplicate pause or resume without a prior pause', () => {
+    for (const controls of [
+      ['terminal.input.pause', 'terminal.input.pause'],
+      ['terminal.input.resume'],
+    ] as const) {
+      const harness = createHarness();
+      harness.transport.connect();
+      const socket = harness.sockets[0]!;
+      ready(socket);
+      expect(harness.transport.initialize(80, 24)).toBe(true);
+
+      for (const type of controls) socket.message(JSON.stringify({ type }));
+
+      expect(harness.transport.currentState).toBe('closed');
+      expect(harness.onClosed).toHaveBeenCalledOnce();
+      expect(harness.onClosed).toHaveBeenCalledWith({ kind: 'protocol-error' });
+      expect(socket.closes).toEqual([{ code: 4400 }]);
+    }
+  });
+
   it('makes every old socket event and callback a no-op after dispose', () => {
     const harness = createHarness();
     harness.transport.connect();
@@ -383,7 +444,7 @@ describe('JobTerminalTransport output acknowledgement', () => {
 });
 
 describe('JobTerminalTransport terminal close policy', () => {
-  it('tears down an open generation in the exact security order', () => {
+  it('disables input and waits exactly 2000 ms before forcing an explicit close', () => {
     const trace: string[] = [];
     const socket = new FakeTerminalSocket(trace);
     const clock = createManualScheduler();
@@ -406,14 +467,24 @@ describe('JobTerminalTransport terminal close policy', () => {
     const start = trace.length;
     socket.bufferedAmount = 256 * 1024;
     harness.transport.sendData('queued');
-    expect(clock.pendingCount()).toBe(1);
+    expect(clock.pendingCount()).toBe(2);
 
     harness.transport.close();
 
     expect(trace.slice(start)).toEqual([
       'input:false',
       'pump:stop',
+      'pump:stop',
       'socket:send:terminal.close',
+      'observer:state:closing',
+    ]);
+    expect(harness.transport.currentState).toBe('closing');
+    expect(socket.closes).toEqual([]);
+    expect(clock.pendingDelays()).toEqual([2_000]);
+
+    clock.runNext(2_000);
+
+    expect(trace.slice(start + 5)).toEqual([
       'socket:close',
       'socket:remove:open',
       'socket:remove:message',
@@ -422,12 +493,15 @@ describe('JobTerminalTransport terminal close policy', () => {
       'observer:state:closed',
       'observer:closed',
     ]);
+    expect(harness.transport.currentState).toBe('closed');
   });
 
   it('commits teardown before an input observer can reenter close', () => {
     let activeTransport: JobTerminalTransport | null = null;
+    const clock = createManualScheduler();
     const onClosed = vi.fn();
     const harness = createHarness({
+      scheduler: clock.scheduler,
       onInputEnabledChange: (enabled) => {
         if (!enabled) activeTransport?.close();
       },
@@ -444,12 +518,14 @@ describe('JobTerminalTransport terminal close policy', () => {
     expect(controlFrames(socket).filter((frame) => (
       typeof frame === 'object' && frame !== null && 'type' in frame && frame.type === 'terminal.close'
     ))).toHaveLength(1);
-    expect(socket.closes).toEqual([{ code: 1000 }]);
-    expect(onClosed).toHaveBeenCalledOnce();
+    expect(socket.closes).toEqual([]);
+    expect(onClosed).not.toHaveBeenCalled();
+    expect(clock.pendingDelays()).toEqual([2_000]);
   });
 
   it('sends terminal.close once for an explicit close and never creates another socket', () => {
-    const harness = createHarness();
+    const clock = createManualScheduler();
+    const harness = createHarness({ scheduler: clock.scheduler });
     harness.transport.connect();
     const socket = harness.sockets[0]!;
     ready(socket);
@@ -463,10 +539,69 @@ describe('JobTerminalTransport terminal close policy', () => {
     expect(controlFrames(socket).filter((frame) => (
       typeof frame === 'object' && frame !== null && 'type' in frame && frame.type === 'terminal.close'
     ))).toHaveLength(1);
+    expect(harness.transport.currentState).toBe('closing');
+    expect(socket.closes).toEqual([]);
+    expect(harness.onClosed).not.toHaveBeenCalled();
+    expect(harness.sockets).toHaveLength(1);
+
+    clock.runNext(2_000);
+
     expect(socket.closes).toEqual([{ code: 1000 }]);
     expect(harness.onClosed).toHaveBeenCalledTimes(1);
     expect(harness.onClosed).toHaveBeenCalledWith({ kind: 'client-close' });
     expect(harness.sockets).toHaveLength(1);
+  });
+
+  it.each(['server-exit', 'socket-close'] as const)(
+    'settles a user close once when %s wins the grace race',
+    (ending) => {
+      const clock = createManualScheduler();
+      const harness = createHarness({ scheduler: clock.scheduler });
+      harness.transport.connect();
+      const socket = harness.sockets[0]!;
+      ready(socket);
+      harness.transport.initialize(80, 24);
+      harness.transport.close();
+      const staleGrace = clock.requestedForDelay(2_000)[0]!;
+
+      if (ending === 'server-exit') {
+        socket.message(JSON.stringify({
+          type: 'terminal.exit',
+          exitCode: null,
+          reason: 'CLIENT_CLOSED',
+        }));
+      } else {
+        socket.remoteClose(1000);
+      }
+
+      expect(harness.transport.currentState).toBe('closed');
+      expect(harness.onClosed).toHaveBeenCalledOnce();
+      expect(harness.onClosed).toHaveBeenCalledWith({ kind: 'client-close' });
+      expect(clock.pendingDelays()).toEqual([]);
+      staleGrace();
+      socket.remoteClose(1000);
+      expect(harness.onClosed).toHaveBeenCalledOnce();
+    },
+  );
+
+  it('lets authoritative dispose force immediate cleanup during user-close grace', () => {
+    const clock = createManualScheduler();
+    const harness = createHarness({ scheduler: clock.scheduler });
+    harness.transport.connect();
+    const socket = harness.sockets[0]!;
+    ready(socket);
+    harness.transport.initialize(80, 24);
+    harness.transport.close();
+    const staleGrace = clock.requestedForDelay(2_000)[0]!;
+
+    harness.transport.dispose();
+
+    expect(harness.transport.currentState).toBe('disposed');
+    expect(socket.closes).toEqual([{ code: 1000 }]);
+    expect(clock.pendingDelays()).toEqual([]);
+    expect(harness.onClosed).not.toHaveBeenCalled();
+    staleGrace();
+    expect(socket.closes).toEqual([{ code: 1000 }]);
   });
 
   it('ends a post-handshake socket generation without reconnecting or exposing close reason text', () => {
@@ -590,15 +725,22 @@ describe('JobTerminalTransport observer-safe teardown', () => {
     harness.transport.initialize(80, 24);
     socket.bufferedAmount = 256 * 1024;
     harness.transport.sendData('queued');
-    expect(clock.pendingCount()).toBe(1);
+    expect(clock.pendingCount()).toBe(2);
     trace.length = 0;
 
     expect(() => harness.transport.close()).not.toThrow();
+
+    expect(harness.transport.currentState).toBe('closing');
+    expect(clock.pendingDelays()).toEqual([2_000]);
+    expect(onClosed).not.toHaveBeenCalled();
+
+    clock.runNext(2_000);
 
     expect(harness.transport.currentState).toBe('closed');
     expect(clock.pendingCount()).toBe(0);
     expect(onClosed).toHaveBeenCalledOnce();
     expect(trace).toEqual([
+      'pump:stop',
       'pump:stop',
       'socket:send:terminal.close',
       'socket:close',
@@ -627,7 +769,7 @@ describe('JobTerminalTransport observer-safe teardown', () => {
     harness.transport.initialize(80, 24);
     socket.bufferedAmount = 256 * 1024;
     harness.transport.sendData('queued');
-    expect(clock.pendingCount()).toBe(1);
+    expect(clock.pendingCount()).toBe(2);
 
     expect(() => socket.remoteClose(4401)).not.toThrow();
 
@@ -684,6 +826,11 @@ describe('JobTerminalTransport observer-safe teardown', () => {
     socket.message(new Uint8Array([1]).buffer);
 
     expect(() => harness.transport.close()).not.toThrow();
+    socket.message(JSON.stringify({
+      type: 'terminal.exit',
+      exitCode: null,
+      reason: 'CLIENT_CLOSED',
+    }));
 
     expect(harness.transport.currentState).toBe('closed');
     expect(socket.closes).toEqual([{ code: 1000 }]);
@@ -706,6 +853,11 @@ describe('JobTerminalTransport observer-safe teardown', () => {
     harness.transport.initialize(80, 24);
 
     expect(() => harness.transport.close()).not.toThrow();
+    socket.message(JSON.stringify({
+      type: 'terminal.exit',
+      exitCode: null,
+      reason: 'CLIENT_CLOSED',
+    }));
 
     expect(harness.transport.currentState).toBe('closed');
     expect(socket.closes).toEqual([{ code: 1000 }]);

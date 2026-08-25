@@ -13,6 +13,7 @@ import {
   registerTerminalRuntimeResource,
 } from '@/app/appRuntime';
 import type { RunState } from '@/contracts/run';
+import { runKeys } from '@/features/runs/runQueries';
 import {
   JobTerminalController,
   type JobTerminalAdapterPort,
@@ -59,6 +60,7 @@ export type JobTerminalPanelControllerFactoryOptions = {
   projectId: string;
   onRendererChange(renderer: XtermRenderer): void;
   invalidateAudits(projectId: string, runId: JobTerminalRunAuthority['id']): void | Promise<void>;
+  invalidateRunAuthority(projectId: string): void | Promise<void>;
 };
 
 export type JobTerminalPanelControllerFactory = (
@@ -84,6 +86,7 @@ function createDefaultController({
   projectId,
   onRendererChange,
   invalidateAudits: invalidate,
+  invalidateRunAuthority,
 }: JobTerminalPanelControllerFactoryOptions): JobTerminalPanelController {
   return new JobTerminalController({
     projectId,
@@ -91,6 +94,7 @@ function createDefaultController({
     onUnauthorized: handleUnauthorized,
     registerRuntimeResource: registerTerminalRuntimeResource,
     invalidateAudits: invalidate,
+    invalidateRunAuthority,
     createAdapter: (options: XtermTerminalAdapterOptions): JobTerminalAdapterPort =>
       new XtermTerminalAdapter({ ...options, onRendererChange }),
   });
@@ -150,6 +154,19 @@ function terminalStatusText(options: {
   }
 }
 
+function terminalFailureText(failure: JobTerminalSnapshot['failure']): string {
+  if (failure === 'input-overflow') {
+    return 'Input queue overflow. The session closed; part of the input may already have been sent.';
+  }
+  if (failure === 'terminal-not-available') {
+    return 'The terminal is no longer available. Run authority is being refreshed.';
+  }
+  if (failure === 'terminal-session-already-active') {
+    return 'A terminal session is already active. The old session must end before an explicit retry.';
+  }
+  return 'Terminal session failed. Open a new session to retry.';
+}
+
 function isOpenable(phase: JobTerminalSnapshot['phase']): boolean {
   return ['available', 'closed', 'exited', 'error'].includes(phase);
 }
@@ -203,6 +220,11 @@ export function JobTerminalPanel({
       onRendererChange: setRenderer,
       invalidateAudits: (invalidateProjectId, runId) =>
         invalidateTerminalAudits(queryClient, invalidateProjectId, runId),
+      invalidateRunAuthority: (invalidateProjectId) => queryClient.invalidateQueries({
+        queryKey: runKeys.active(invalidateProjectId),
+        exact: true,
+        refetchType: 'active',
+      }),
     });
     setController(next);
     return () => {
@@ -323,7 +345,7 @@ export function JobTerminalPanel({
           aria-label="Terminal session error"
           className="shrink-0 border-b px-3 py-1.5 text-sm text-destructive"
         >
-          Terminal session failed. Open a new session to retry.
+          {terminalFailureText(snapshot.failure)}
         </p>
       ) : null}
       <div className="relative min-h-0 min-w-0 flex-1 overflow-hidden">

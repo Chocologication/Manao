@@ -32,6 +32,7 @@ export const TERMINAL_AUDIT_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 export type TerminalScenario =
   | 'normal'
   | 'ticket-expired'
+  | 'ticket-unavailable'
   | 'already-active'
   | 'server-pause'
   | 'disconnect'
@@ -43,6 +44,7 @@ export type TerminalScenario =
 const TERMINAL_SCENARIOS: ReadonlySet<TerminalScenario> = new Set([
   'normal',
   'ticket-expired',
+  'ticket-unavailable',
   'already-active',
   'server-pause',
   'disconnect',

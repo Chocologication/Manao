@@ -69,6 +69,15 @@ class FakeTerminalController implements JobTerminalPanelController {
     this.snapshotValue = { ...this.snapshotValue, phase };
     for (const listener of this.listeners) listener();
   }
+
+  setFailure(failure: string): void {
+    this.snapshotValue = {
+      ...this.snapshotValue,
+      phase: 'error',
+      failure: failure as JobTerminalSnapshot['failure'],
+    };
+    for (const listener of this.listeners) listener();
+  }
 }
 
 function createFactory(controller: FakeTerminalController): JobTerminalPanelControllerFactory {
@@ -254,6 +263,40 @@ describe('JobTerminalPanel toolbar and views', () => {
     expect(controller.handlePageHide).toHaveBeenCalledTimes(2);
     removeListener.mockRestore();
   });
+
+  it('warns that input overflow closes the session after a possibly sent prefix', async () => {
+    const controller = new FakeTerminalController();
+    renderPanel({ controller });
+    await waitFor(() => expect(controller.setRun).toHaveBeenCalled());
+
+    act(() => controller.setFailure('input-overflow'));
+
+    expect(screen.getByRole('alert', { name: 'Terminal session error' })).toHaveTextContent(
+      'Input queue overflow. The session closed; part of the input may already have been sent.',
+    );
+  });
+
+  it.each([
+    [
+      'terminal-not-available',
+      'The terminal is no longer available. Run authority is being refreshed.',
+    ],
+    [
+      'terminal-session-already-active',
+      'A terminal session is already active. The old session must end before an explicit retry.',
+    ],
+    ['open-failed', 'Terminal session failed. Open a new session to retry.'],
+  ] as const)('renders a bounded safe alert for %s', async (failure, message) => {
+    const controller = new FakeTerminalController();
+    renderPanel({ controller });
+    await waitFor(() => expect(controller.setRun).toHaveBeenCalled());
+
+    act(() => controller.setFailure(failure));
+
+    const alert = screen.getByRole('alert', { name: 'Terminal session error' });
+    expect(alert).toHaveTextContent(message);
+    expect(alert).not.toHaveTextContent(/backend|trace/i);
+  });
 });
 
 describe('JobTerminalPanel viewport and search', () => {
@@ -371,6 +414,29 @@ describe('JobTerminalPanel viewport and search', () => {
     act(() => factoryOptions?.onRendererChange('dom'));
     expect(rendererStatus).toHaveTextContent('DOM fallback');
     expect(screen.getByRole('status', { name: 'Terminal state' })).toBeInTheDocument();
+  });
+
+  it('invalidates and actively refetches only the current Run authority key', async () => {
+    const controller = new FakeTerminalController();
+    let factoryOptions: JobTerminalPanelControllerFactoryOptions | undefined;
+    const factory: JobTerminalPanelControllerFactory = vi.fn((options) => {
+      factoryOptions = options;
+      return controller;
+    });
+    const invalidateQueries = vi.spyOn(queryClient, 'invalidateQueries').mockResolvedValue();
+    renderPanel({ controller, factory });
+    await waitFor(() => expect(factoryOptions).toBeDefined());
+
+    await act(async () => {
+      await factoryOptions?.invalidateRunAuthority('project-terminal-panel');
+    });
+
+    expect(invalidateQueries).toHaveBeenCalledOnce();
+    expect(invalidateQueries).toHaveBeenCalledWith({
+      queryKey: ['project-runs', 'project-terminal-panel', 'active'],
+      exact: true,
+      refetchType: 'active',
+    });
   });
 
   it('resets a new terminal generation to DOM before the new adapter reports a renderer', async () => {

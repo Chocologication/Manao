@@ -1,7 +1,34 @@
 import { describe, expect, it, vi } from 'vitest';
 
 vi.mock('@xterm/addon-webgl', () => ({ WebglAddon: class {} }));
-vi.mock('@xterm/xterm', () => ({ Terminal: class {} }));
+const browserTerminalConstructorOptions = vi.hoisted(() => [] as unknown[]);
+vi.mock('@xterm/xterm', () => ({
+  Terminal: class {
+    cols = 80;
+    rows = 24;
+    options: { disableStdin?: boolean };
+
+    constructor(options: { disableStdin?: boolean }) {
+      browserTerminalConstructorOptions.push(options);
+      this.options = { ...options };
+    }
+
+    open(): void {}
+    focus(): void {}
+    write(_data: string | Uint8Array, callback?: () => void): void { callback?.(); }
+    onData(listener: (data: string) => void) {
+      void listener;
+      return { dispose() {} };
+    }
+    onBinary(listener: (data: string) => void) {
+      void listener;
+      return { dispose() {} };
+    }
+    loadAddon(): void {}
+    clear(): void {}
+    dispose(): void {}
+  },
+}));
 
 import {
   XtermTerminalAdapter,
@@ -269,6 +296,39 @@ function setElementSize(element: HTMLElement, width: number, height: number): vo
     clientHeight: { configurable: true, value: height },
   });
 }
+
+describe('XtermTerminalAdapter browser options', () => {
+  it.each([false, true])(
+    'constructs the browser Terminal directly with reduced motion %s',
+    (reducedMotion) => {
+      vi.stubGlobal('matchMedia', vi.fn((query: string) => ({
+        matches: reducedMotion && query === '(prefers-reduced-motion: reduce)',
+      })));
+      const disposeLog: string[] = [];
+      const adapter = new XtermTerminalAdapter({
+        fitAddonFactory: () => new FakeFitAddon(disposeLog),
+        searchAddonFactory: () => new FakeSearchAddon(disposeLog),
+      });
+
+      expect(browserTerminalConstructorOptions.at(-1)).toMatchObject({
+        convertEol: false,
+        cursorBlink: !reducedMotion,
+        cursorStyle: 'bar',
+        disableStdin: true,
+        fontFamily: '"JetBrains Mono", "Cascadia Code", Consolas, monospace',
+        fontSize: 14,
+        scrollback: 5_000,
+        theme: {
+          background: '#1e1e1e',
+          foreground: '#d4d4d4',
+        },
+      });
+
+      adapter.dispose();
+      vi.unstubAllGlobals();
+    },
+  );
+});
 
 describe('XtermTerminalAdapter lifecycle', () => {
   it('creates one resource set, opens once, and focuses only after ready', () => {

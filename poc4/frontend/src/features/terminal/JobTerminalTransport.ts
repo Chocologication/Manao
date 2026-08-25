@@ -17,6 +17,8 @@ import {
 const SOCKET_CONNECTING = 0;
 const SOCKET_OPEN = 1;
 const JOB_TERMINAL_PROTOCOL_CLOSE_CODE = 4400;
+export const JOB_TERMINAL_HEARTBEAT_WATCHDOG_MS = 30_000;
+export const JOB_TERMINAL_CLOSE_GRACE_MS = 2_000;
 
 export type JobTerminalLocation = Pick<Location, 'protocol' | 'host'>;
 
@@ -41,6 +43,7 @@ export type JobTerminalTransportState =
   | 'connecting'
   | 'awaiting-ready'
   | 'ready'
+  | 'closing'
   | 'closed'
   | 'disposed';
 
@@ -128,7 +131,7 @@ export class JobTerminalTransport {
   private readonly capturedAccessToken: string;
   private readonly location: JobTerminalLocation;
   private readonly webSocketFactory: (url: string) => TerminalWebSocketPort;
-  private readonly scheduler: TerminalInputPumpScheduler | undefined;
+  private readonly scheduler: TerminalInputPumpScheduler;
   private readonly getAccessToken: () => string | null;
   private readonly onUnauthorized: (() => void) | undefined;
   private readonly onStateChange: ((state: JobTerminalTransportState) => void) | undefined;
@@ -144,7 +147,13 @@ export class JobTerminalTransport {
   private generation = 0;
   private initialized = false;
   private inputEnabled = false;
+  private serverPaused = false;
   private pendingOutputBytes = 0;
+  private heartbeatWatchdogTimer: unknown = null;
+  private heartbeatWatchdogToken = 0;
+  private closeGraceTimer: unknown = null;
+  private closeGraceToken = 0;
+  private terminalCloseSent = false;
 
   constructor(options: JobTerminalTransportOptions) {
     this.sessionId = options.sessionId;
@@ -152,7 +161,10 @@ export class JobTerminalTransport {
     this.capturedAccessToken = options.accessToken;
     this.location = options.location ?? globalThis.location;
     this.webSocketFactory = options.webSocketFactory ?? createBrowserSocket;
-    this.scheduler = options.scheduler;
+    this.scheduler = options.scheduler ?? {
+      setTimeout: (handler, delayMs) => globalThis.setTimeout(handler, delayMs),
+      clearTimeout: (id) => globalThis.clearTimeout(id as ReturnType<typeof setTimeout>),
+    };
     this.getAccessToken = options.getAccessToken ?? (() => options.accessToken);
     this.onUnauthorized = options.onUnauthorized;
     this.onStateChange = options.onStateChange;
@@ -167,6 +179,7 @@ export class JobTerminalTransport {
   }
 
   connect(): void {
+    if (this.state === 'closing' || this.state === 'closed' || this.state === 'disposed') return;
     if (this.state !== 'idle') {
       this.failProtocol();
       return;
@@ -215,6 +228,7 @@ export class JobTerminalTransport {
     const generation = this.generation;
     const socket = this.socket;
     this.initialized = true;
+    this.serverPaused = false;
     this.inputPump = new TerminalInputPump({
       socket,
       scheduler: this.scheduler,
@@ -262,8 +276,8 @@ export class JobTerminalTransport {
   }
 
   close(): void {
-    if (this.state === 'closed' || this.state === 'disposed') return;
-    this.finish({ kind: 'client-close' }, true, 1000, false, true);
+    if (this.state === 'closing' || this.state === 'closed' || this.state === 'disposed') return;
+    this.beginUserClose();
   }
 
   dispose(): void {
@@ -273,7 +287,12 @@ export class JobTerminalTransport {
   }
 
   private handleOpen(generation: number, socket: TerminalWebSocketPort): void {
-    if (!this.isCurrent(generation, socket) || this.state !== 'connecting') return;
+    if (!this.isCurrent(generation, socket)) return;
+    if (this.state === 'closing') {
+      this.sendTerminalCloseOnce(generation, socket);
+      return;
+    }
+    if (this.state !== 'connecting') return;
     this.transition('awaiting-ready');
   }
 
@@ -283,6 +302,10 @@ export class JobTerminalTransport {
     event: TerminalWebSocketEvent,
   ): void {
     if (!this.isCurrent(generation, socket)) return;
+    if (this.state === 'closing') {
+      this.handleClosingMessage(event);
+      return;
+    }
     if (this.state === 'awaiting-ready') {
       if (typeof event.data !== 'string') {
         this.failProtocol();
@@ -296,7 +319,8 @@ export class JobTerminalTransport {
         return;
       }
       this.transition('ready');
-      this.onReady?.();
+      if (!this.restartHeartbeatWatchdog(generation, socket)) return;
+      notifySafely(this.onReady);
       return;
     }
     if (this.state !== 'ready') {
@@ -319,18 +343,28 @@ export class JobTerminalTransport {
       return;
     }
     if (control.type === 'terminal.input.pause') {
-      if (!this.initialized || this.inputPump === null) this.failProtocol();
-      else this.inputPump.setServerPaused(true);
+      if (!this.initialized || this.inputPump === null || this.serverPaused) {
+        this.failProtocol();
+      } else {
+        this.serverPaused = true;
+        this.inputPump.setServerPaused(true);
+      }
       return;
     }
     if (control.type === 'terminal.input.resume') {
-      if (!this.initialized || this.inputPump === null) this.failProtocol();
-      else this.inputPump.setServerPaused(false);
+      if (!this.initialized || this.inputPump === null || !this.serverPaused) {
+        this.failProtocol();
+      } else {
+        this.serverPaused = false;
+        this.inputPump.setServerPaused(false);
+      }
       return;
     }
     if (control.type === 'terminal.ping') {
       if (!this.initialized) this.failProtocol();
-      else this.sendControl({ type: 'terminal.pong', nonce: control.nonce });
+      else if (this.sendControl({ type: 'terminal.pong', nonce: control.nonce })) {
+        this.restartHeartbeatWatchdog(generation, socket);
+      }
       return;
     }
     if (control.type === 'terminal.exit') {
@@ -408,7 +442,11 @@ export class JobTerminalTransport {
   }
 
   private handleError(generation: number, socket: TerminalWebSocketPort): void {
-    this.finishCurrent(generation, socket, { kind: 'connection-error' });
+    this.finishCurrent(
+      generation,
+      socket,
+      this.state === 'closing' ? { kind: 'client-close' } : { kind: 'connection-error' },
+    );
   }
 
   private handleClose(
@@ -417,12 +455,31 @@ export class JobTerminalTransport {
     event: TerminalWebSocketEvent,
   ): void {
     if (!this.isCurrent(generation, socket)) return;
+    if (this.state === 'closing') {
+      this.finish(
+        { kind: 'client-close' },
+        false,
+        1000,
+        event.code === 4401,
+      );
+      return;
+    }
     this.finish(
       { kind: 'socket-close', code: event.code ?? 1006 },
       false,
       1000,
       event.code === 4401,
     );
+  }
+
+  private handleClosingMessage(event: TerminalWebSocketEvent): void {
+    if (typeof event.data !== 'string') return;
+    try {
+      const control = parseTerminalServerControlJson(event.data, this.sessionId);
+      if (control.type === 'terminal.exit') this.finish({ kind: 'client-close' });
+    } catch {
+      // User-close grace ignores late frames and still forces closure at its deadline.
+    }
   }
 
   private sendControl(control: TerminalClientControl): boolean {
@@ -443,6 +500,156 @@ export class JobTerminalTransport {
 
   private failProtocol(): void {
     this.finish({ kind: 'protocol-error' }, true, JOB_TERMINAL_PROTOCOL_CLOSE_CODE);
+  }
+
+  private beginUserClose(): void {
+    const socket = this.socket;
+    if (socket === null) {
+      this.finish({ kind: 'client-close' });
+      return;
+    }
+    const generation = this.generation;
+    const notifyInputDisabled = this.inputEnabled;
+    const inputPump = this.inputPump;
+    this.state = 'closing';
+    this.initialized = false;
+    this.serverPaused = false;
+    this.pendingOutputAcks.length = 0;
+    this.pendingOutputBytes = 0;
+    this.inputEnabled = false;
+    this.inputPump = null;
+    this.clearHeartbeatWatchdog();
+    if (notifyInputDisabled) notifySafely(this.onInputEnabledChange, false);
+    try {
+      inputPump?.dispose();
+    } catch {
+      // The close control and grace deadline remain authoritative.
+    }
+    if (!this.sendTerminalCloseOnce(generation, socket)) return;
+    if (!this.startCloseGrace(generation, socket)) return;
+    if (this.isCurrent(generation, socket) && this.state === 'closing') {
+      notifySafely(this.onStateChange, 'closing');
+    }
+  }
+
+  private sendTerminalCloseOnce(
+    generation: number,
+    socket: TerminalWebSocketPort,
+  ): boolean {
+    if (!this.isCurrent(generation, socket) || this.state !== 'closing') return false;
+    if (this.terminalCloseSent) return true;
+    if (socket.readyState === SOCKET_CONNECTING) return true;
+    if (socket.readyState !== SOCKET_OPEN) {
+      this.finish({ kind: 'client-close' }, false);
+      return false;
+    }
+    this.terminalCloseSent = true;
+    try {
+      socket.send(JSON.stringify(parseTerminalClientControl({ type: 'terminal.close' })));
+      return true;
+    } catch {
+      this.finish({ kind: 'client-close' });
+      return false;
+    }
+  }
+
+  private startCloseGrace(
+    generation: number,
+    socket: TerminalWebSocketPort,
+  ): boolean {
+    this.clearCloseGrace();
+    const token = this.closeGraceToken;
+    let timer: unknown;
+    try {
+      timer = this.scheduler.setTimeout(() => {
+        if (
+          token !== this.closeGraceToken ||
+          !this.isCurrent(generation, socket) ||
+          this.state !== 'closing'
+        ) {
+          return;
+        }
+        this.closeGraceTimer = null;
+        this.closeGraceToken += 1;
+        this.finish({ kind: 'client-close' });
+      }, JOB_TERMINAL_CLOSE_GRACE_MS);
+    } catch {
+      this.finishCurrent(generation, socket, { kind: 'client-close' });
+      return false;
+    }
+    if (
+      token !== this.closeGraceToken ||
+      !this.isCurrent(generation, socket) ||
+      this.state !== 'closing'
+    ) {
+      try {
+        this.scheduler.clearTimeout(timer);
+      } catch {
+        // A stale grace callback remains inert through token and generation checks.
+      }
+      return false;
+    }
+    this.closeGraceTimer = timer;
+    return true;
+  }
+
+  private clearCloseGrace(): void {
+    this.closeGraceToken += 1;
+    if (this.closeGraceTimer === null) return;
+    const timer = this.closeGraceTimer;
+    this.closeGraceTimer = null;
+    try {
+      this.scheduler.clearTimeout(timer);
+    } catch {
+      // Token and generation checks still invalidate a timer the scheduler cannot clear.
+    }
+  }
+
+  private restartHeartbeatWatchdog(
+    generation: number,
+    socket: TerminalWebSocketPort,
+  ): boolean {
+    this.clearHeartbeatWatchdog();
+    const token = this.heartbeatWatchdogToken;
+    let timer: unknown;
+    try {
+      timer = this.scheduler.setTimeout(() => {
+        if (
+          token !== this.heartbeatWatchdogToken ||
+          !this.isCurrent(generation, socket)
+        ) {
+          return;
+        }
+        this.heartbeatWatchdogTimer = null;
+        this.heartbeatWatchdogToken += 1;
+        this.finish({ kind: 'connection-error' });
+      }, JOB_TERMINAL_HEARTBEAT_WATCHDOG_MS);
+    } catch {
+      this.finishCurrent(generation, socket, { kind: 'connection-error' });
+      return false;
+    }
+    if (token !== this.heartbeatWatchdogToken || !this.isCurrent(generation, socket)) {
+      try {
+        this.scheduler.clearTimeout(timer);
+      } catch {
+        // A stale watchdog callback remains inert through its token and generation checks.
+      }
+      return false;
+    }
+    this.heartbeatWatchdogTimer = timer;
+    return true;
+  }
+
+  private clearHeartbeatWatchdog(): void {
+    this.heartbeatWatchdogToken += 1;
+    if (this.heartbeatWatchdogTimer === null) return;
+    const timer = this.heartbeatWatchdogTimer;
+    this.heartbeatWatchdogTimer = null;
+    try {
+      this.scheduler.clearTimeout(timer);
+    } catch {
+      // Token and generation checks still invalidate a timer the scheduler cannot clear.
+    }
   }
 
   private finishCurrent(
@@ -477,7 +684,11 @@ export class JobTerminalTransport {
     const inputPump = this.inputPump;
     const socket = this.socket;
     this.generation += 1;
+    this.clearHeartbeatWatchdog();
+    this.clearCloseGrace();
     this.initialized = false;
+    this.serverPaused = false;
+    this.terminalCloseSent = false;
     this.pendingOutputAcks.length = 0;
     this.pendingOutputBytes = 0;
     this.inputEnabled = false;

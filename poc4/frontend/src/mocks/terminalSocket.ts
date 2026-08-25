@@ -17,7 +17,7 @@ import {
 
 export const TERMINAL_SOCKET_CLOSE_CODES = {
   PROTOCOL_ERROR: 4400,
-  TICKET_NOT_AVAILABLE: 4401,
+  UNAUTHENTICATED: 4401,
   TICKET_EXPIRED: 4408,
   SESSION_ALREADY_ACTIVE: 4409,
   SESSION_NOT_AVAILABLE: 4410,
@@ -87,7 +87,7 @@ function handshakeCloseCode(
 ): number {
   switch (code) {
     case 'TICKET_NOT_AVAILABLE':
-      return TERMINAL_SOCKET_CLOSE_CODES.TICKET_NOT_AVAILABLE;
+      return TERMINAL_SOCKET_CLOSE_CODES.SESSION_NOT_AVAILABLE;
     case 'TICKET_EXPIRED':
       return TERMINAL_SOCKET_CLOSE_CODES.TICKET_EXPIRED;
     case 'TICKET_ALREADY_USED':
@@ -112,7 +112,7 @@ export const terminalSocketHandler = terminals.addEventListener('connection', ({
     ticket === undefined ||
     ticket === ''
   ) {
-    rejectHandshake(TERMINAL_SOCKET_CLOSE_CODES.TICKET_NOT_AVAILABLE);
+    rejectHandshake(TERMINAL_SOCKET_CLOSE_CODES.SESSION_NOT_AVAILABLE);
     return;
   }
   const classification = classifyTerminalTicketForHandshake(ticket);
@@ -126,12 +126,12 @@ export const terminalSocketHandler = terminals.addEventListener('connection', ({
     rejectHandshake(TERMINAL_SOCKET_CLOSE_CODES.TICKET_EXPIRED);
     return;
   }
-  if (scenario === 'already-active') {
-    rejectHandshake(TERMINAL_SOCKET_CLOSE_CODES.SESSION_ALREADY_ACTIVE);
+  if (scenario === 'ticket-unavailable') {
+    rejectHandshake(TERMINAL_SOCKET_CLOSE_CODES.SESSION_NOT_AVAILABLE);
     return;
   }
-  if (scenario === 'disconnect') {
-    rejectHandshake(1011);
+  if (scenario === 'already-active') {
+    rejectHandshake(TERMINAL_SOCKET_CLOSE_CODES.SESSION_ALREADY_ACTIVE);
     return;
   }
   const consumed = consumeTerminalTicketByTicket(ticket);
@@ -285,6 +285,13 @@ export const terminalSocketHandler = terminals.addEventListener('connection', ({
           1000,
         );
       });
+      return;
+    }
+    if (scenario === 'disconnect') {
+      fixtureTimer = setTimeout(() => {
+        fixtureTimer = null;
+        closeAfterStateSettlement('CONNECTION_LOST', null, null, 1011);
+      }, 250);
       return;
     }
     if (scenario === 'stress') {

@@ -8,6 +8,7 @@ const ALICE_PROJECT_ID = 'prj-alice-notebook';
 type TerminalScenario =
   | 'normal'
   | 'ticket-expired'
+  | 'ticket-unavailable'
   | 'already-active'
   | 'server-pause'
   | 'disconnect'
@@ -795,22 +796,60 @@ test('close is explicit and abnormal disconnect never reconnects without a fresh
     new URL(response.url()).pathname.endsWith('/terminal-sessions'),
   );
   await page.getByRole('button', { name: 'Open terminal' }).click();
-  const third = (await (await failedResponse).json()) as { sessionId: string; ticket: string };
+  const thirdResponse = await failedResponse;
+  const third = (await thirdResponse.json()) as { sessionId: string; ticket: string };
+  await expect(page.getByRole('status', { name: 'Terminal state' })).toHaveText('Ready');
+  const thirdXterm = page.locator('.xterm');
+  await expect(thirdXterm).toHaveCount(1);
+  await thirdXterm.evaluate((element, sessionId) => {
+    element.setAttribute('data-stage5-terminal-generation', sessionId);
+  }, third.sessionId);
+  const thirdSocketIndex = (await terminalSockets(page)).length - 1;
+  await expect.poll(async () => {
+    const socket = (await terminalSockets(page))[thirdSocketIndex];
+    return socket !== undefined &&
+      parsedControls(socket, 'received').some((frame) =>
+        frame.type === 'terminal.ready' && frame.sessionId === third.sessionId,
+      ) &&
+      parsedControls(socket, 'sent').some((frame) => frame.type === 'terminal.resize') &&
+      parsedControls(socket, 'sent').some((frame) => frame.type === 'terminal.output.credit');
+  }).toBe(true);
   await expect(page.getByRole('status', { name: 'Terminal state' })).toHaveText('Terminal error');
+  await expect.poll(async () => (await terminalSockets(page))[thirdSocketIndex]?.closeCode)
+    .toBe(1011);
+  await expect(page.getByLabel('Run state')).toHaveText('RUNNING');
+  await expect(page.locator(`[data-stage5-terminal-generation="${third.sessionId}"]`))
+    .toHaveCount(0);
+  const createPath = new URL(thirdResponse.url()).pathname.split('/');
+  const runId = createPath[createPath.indexOf('runs') + 1];
+  expect(runId).toBeTruthy();
+  await expect.poll(async () => page.evaluate(async ({ token, projectId, activeRunId, sessionId }) => {
+    const response = await fetch(
+      `/api/v1/projects/${projectId}/runs/${activeRunId}/terminal-audits?sessionId=${encodeURIComponent(sessionId)}`,
+      { headers: { Authorization: `Bearer ${token}` } },
+    );
+    const body = (await response.json()) as { items?: Array<{ state?: string }> };
+    return body.items?.[0]?.state ?? null;
+  }, {
+    token: accessToken,
+    projectId: ALICE_PROJECT_ID,
+    activeRunId: runId,
+    sessionId: third.sessionId,
+  })).toBe('INTERRUPTED');
   const failedSocketCount = (await terminalSockets(page)).length;
+  const failedFrameCount = (await terminalSockets(page))[thirdSocketIndex]!.frames.length;
   await settleAnimationFrames(page, 5);
   expect((await terminalSockets(page)).length).toBe(failedSocketCount);
+  expect((await terminalSockets(page))[thirdSocketIndex]!.frames).toHaveLength(failedFrameCount);
 
-  const retryResponse = page.waitForResponse((response) =>
-    response.request().method() === 'POST' &&
-    new URL(response.url()).pathname.endsWith('/terminal-sessions'),
-  );
-  await page.getByRole('button', { name: 'Open terminal' }).click();
-  const fourth = (await (await retryResponse).json()) as { sessionId: string; ticket: string };
-  await expect(page.getByRole('status', { name: 'Terminal state' })).toHaveText('Terminal error');
+  await setScenario(page, accessToken, 'terminal', 'normal' satisfies TerminalScenario);
+  const fourth = (await (await openTerminal(page)).json()) as { sessionId: string; ticket: string };
   expect(fourth.sessionId).not.toBe(third.sessionId);
   expect(fourth.ticket).not.toBe(third.ticket);
   expect((await terminalSockets(page)).length).toBe(failedSocketCount + 1);
+  await expect(page.locator('.xterm')).toHaveCount(1);
+  await expect(page.locator(`[data-stage5-terminal-generation="${third.sessionId}"]`))
+    .toHaveCount(0);
 });
 
 test('persisted pagehide closes the old session and allows a fresh explicit Open after restore', async ({
@@ -982,6 +1021,30 @@ test('current terminal 401 expires the active login', async ({ page }) => {
   await expect(page).toHaveURL(/\/login$/);
   await expect(page.getByRole('main').getByRole('alert'))
     .toHaveText('Your session has expired. Please sign in again.');
+});
+
+test('ticket unavailable at handshake preserves the current login without reconnecting', async ({
+  page,
+}) => {
+  const accessToken = await openAliceWorkbench(page);
+  await startLongRunningRun(page, accessToken);
+  await setScenario(page, accessToken, 'terminal', 'ticket-unavailable' satisfies TerminalScenario);
+  await page.getByRole('tab', { name: 'Terminal' }).click();
+  const responsePromise = page.waitForResponse((response) =>
+    response.request().method() === 'POST' &&
+    new URL(response.url()).pathname.endsWith('/terminal-sessions'),
+  );
+
+  await page.getByRole('button', { name: 'Open terminal' }).click();
+  expect((await responsePromise).status()).toBe(201);
+  await expect(page.getByRole('status', { name: 'Terminal state' })).toHaveText('Terminal error');
+  await expect.poll(async () => (await terminalSockets(page))[0]?.closeCode).toBe(4410);
+  await expect(page.getByRole('heading', { name: 'Alice Notebook' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Log out' })).toBeVisible();
+  await expect(page.getByText('Your session has expired. Please sign in again.')).toHaveCount(0);
+  const socketCount = (await terminalSockets(page)).length;
+  await settleAnimationFrames(page, 5);
+  expect((await terminalSockets(page)).length).toBe(socketCount);
 });
 
 test.fixme('a stale Alice terminal 401 cannot clear a newer Bob login', async ({ page }) => {
