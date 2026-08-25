@@ -6,7 +6,7 @@
 
 17 项退出门中 **15 PASS / 2 FAIL**。失败门仅有：
 
-1. **Gate 11 FAIL**：required browser case `a stale Alice terminal 401 cannot clear a newer Bob login` 仍为 `test.fixme`。本轮未运行、未修改该 case，Chromium、Chrome、Edge 均没有它的 fresh browser PASS。
+1. **Gate 11 FAIL**：required browser case `a stale Alice terminal 401 cannot clear a newer Bob login` 仍为 `test.fixme`。本轮未运行、未修改该 case，Chromium、Chrome、Edge 均没有它的 fresh browser PASS。此外存在独立 residual：`JobTerminalTransport.connect()` 发布 `connecting` 时，若同步 observer reenter Close，transport 会先 closed 并使 generation 失效，但原 `connect()` 随后仍创建、绑定 stale socket；该 socket 的事件被 generation guard 丢弃，因而永不 settle。
 2. **Gate 16 FAIL**：required 完整 keyboard-only File -> Run -> Terminal -> Open -> xterm -> Search -> Audit -> Close workflow 仍为 `test.fixme`。本轮同样未运行、未修改，三个 browser channel 均没有它的 fresh PASS。
 
 E2E 命令 exit 0 不能把 required skip 解释为 PASS。
@@ -52,6 +52,7 @@ E2E 命令 exit 0 不能把 required skip 解释为 PASS。
 - 历史 preflight 曾因 checkout 残留 mock `dist` 失败；production preflight rebuild 恢复了 boundary baseline。该 preflight 不是产品 gate failure，也不是上表 formal matrix。
 - 历史 WorkbenchShell time fixture 进入 strict Run response parser（`parseRunSummary`）后因 timestamp 倒序 fail closed；`a1a2772b13d7cc565169aac2fa932bbb9e176d61` 只修复该旧 fixture。该 SHA 及其旧矩阵已被本报告的 `2238895039693cd19807a9e0cde4fa89aae42f42` fresh matrix 完全取代，不是当前 evidence source。
 - 第二次最终审查发现 ticket close code、heartbeat/pause、overflow、Close grace、disconnect 时点、xterm options、create-session error mapping 七组缺口；实现提交 `2238895039693cd19807a9e0cde4fa89aae42f42` 修复并以 TDD 验证。
+- Final scoped re-review 判定 findings 1、2、3、5、6、7 addressed；Finding 4 NOT ADDRESSED，仍有 connecting observer reentrant Close 后 stale socket 不 settle 的 residual。按 SDD one-wave breaker，该 residual parked，不再修改实现。
 - controller 随后从该 immutable commit 执行完整 11 命令矩阵、final production rebuild、scan 与 hygiene；本报告不复用修复前 unit/browser 计数作为当前证据。
 
 ## Production Rebuild And Scan
@@ -91,7 +92,8 @@ HTTP/1.1 201
 - `ticket-unavailable` browser case 证明合法 HTTP 201 reservation 在 handshake 时不可用会保留当前 Alice login/workbench，不显示 expired-session alert，且不自动重连。
 - ready generation 启动精确 30,000 ms application heartbeat watchdog；只有合法 current-generation `terminal.ping` 会 reset。expiry 作为 connection loss 结束 terminal generation，不改变 Run authority；close/error/dispose/replacement 清 timer，stale callback 惰性。
 - server pause state 显式跟踪；duplicate pause 或没有 prior pause 的 resume 都 protocol fail closed。合法 pause/resume 继续驱动 bounded input pump 与 `disableStdin`。
-- User-confirmed Close 立即禁用输入、只发送一次 `terminal.close` 并进入 closing；精确 2,000 ms grace 内等待 server exit/socket close，deadline 后 force close/dispose。Run-left、logout、project switch、page disposal/persisted pagehide 与其他 authority teardown 强制立即清理，不等待 grace。
+- 正常非重入的 User-confirmed Close 会立即禁用输入、只发送一次 `terminal.close` 并进入 closing；精确 2,000 ms grace 内等待 server exit/socket close，deadline 后 force close/dispose。Run-left、logout、project switch、page disposal/persisted pagehide 与其他 authority teardown 强制立即清理，不等待 grace。
+- 上述证据不覆盖 connecting state observer 同步 reenter Close：该路径会先 close/失效 generation，随后原 `connect()` 仍创建并绑定 stale socket；后续事件被 generation guard 忽略，socket 不 settle。Final scoped re-review 已确认该 residual 未解决。
 - `disconnect` fixture 在 consume ticket、创建 live session/audit、发送 `terminal.ready` 并完成 resize+credit initialization 后才突然 1011 断开；audit settle 为 `INTERRUPTED`。旧 generation 惰性，Run 仍 RUNNING 时后续 explicit Open 使用 fresh sessionId/ticket/socket/xterm。
 - create-session `TERMINAL_NOT_AVAILABLE` 保留独立 UI failure，触发一次 active Run authority invalidation/refetch，不自动 retry mutation；`TERMINAL_SESSION_ALREADY_ACTIVE` 使用独立安全提示，要求旧 session 结束后 explicit retry。其他错误保持 generic，server message/reason/trace 不进入 UI。
 - Panel switch 保持同一 socket/xterm/session；disconnect、project navigation、logout、current-token 401、shell exit、Run 离开 RUNNING 均禁用输入并清理，不自动 reconnect。
@@ -166,7 +168,7 @@ Visual/core PASS 不替代两个 required skipped workflows，故 Gate 11 与 Ga
 - Fresh tracked set：`git ls-files -- poc4/frontend poc4/docs` 共 **291 files**；仅排除 binary `.png` **66 files**，纳入 **225 files**，其中明确包含 `poc4/frontend/.env.mock`。
 - Strict UTF-8 decode：**225 valid / 0 invalid**；UTF-8 BOM **0**。
 - Line-ending file classification：**189 CRLF-only / 21 LF-only / 15 mixed / 0 CR-only / 0 no-EOL**。
-- Line-ending sequence totals：**58,468 CRLF / 9,374 bare LF / 0 bare CR**。
+- Line-ending sequence totals：**58,468 CRLF / 9,377 bare LF / 0 bare CR**。
 - 本 `result.md`：UTF-8 without BOM、LF-only；回填后以同一脚本复算到稳定。
 - 扫描排除 generated/ignored `dist`、Playwright `test-results`、traces/videos/reports、`.grok`、linked worktrees 与其他 untracked artifacts；它们不纳入 tracked hygiene 或提交。
 - 本次 tracked diff 只允许 `poc4/docs/evidence/stage-5/result.md`；README、PNG、source、tests、package/lock、两个 fixme 与 `.grok` 均不修改。
@@ -185,8 +187,8 @@ Visual/core PASS 不替代两个 required skipped workflows，故 Gate 11 与 Ga
 | 8 | PASS | input frame <=16 KiB、queue 1 MiB、256/64 KiB watermarks、strict pause/resume；overflow 明确 session closed 与可能已发送前缀 |
 | 9 | PASS | positive/deduped/coalesced resize、inactive/zero gate、reactivation refit；full stress 204 observed / 102 sent |
 | 10 | PASS | per-session xterm/addons；14 px、5000 scrollback、no EOL conversion、reduced-motion blink policy；WebGL/DOM fallback、Search/focus/clear/resize lifecycle |
-| 11 | **FAIL** | ticket-unavailable/current 401/pagehide/project/logout/Run-left executable cases pass；required stale Alice terminal 401 preserving newer Bob remains `test.fixme`，未运行、未修改、无 fresh Chromium/Chrome/Edge PASS |
-| 12 | PASS | User Close 2 s grace；authority/pagehide force cleanup；post-`terminal.ready` + post-initialize disconnect settles INTERRUPTED without reconnect；later explicit Open uses fresh session/ticket/socket/xterm，old generation inert |
+| 11 | **FAIL** | ticket-unavailable/current 401/pagehide/project/logout/Run-left executable cases pass；required stale Alice terminal 401 preserving newer Bob remains `test.fixme`，且 connecting observer reentrant Close 会遗留永不 settle 的 stale socket；两项均无 fresh browser PASS |
+| 12 | PASS | post-`terminal.ready` + post-initialize disconnect settles INTERRUPTED without reconnect；later explicit Open uses fresh session/ticket/socket/xterm，old generation inert；本门不覆盖 connect reentrancy residual |
 | 13 | PASS | null-active synchronously revokes terminal authority before detail await；pending/rejected/nonterminal do not restore it；fresh RUNNING invalidates stale confirmation；STOPPING close-before-reload passes |
 | 14 | PASS | backend-only structured audit、owner/session cursor pagination、safe plain rendering、no frontend parser、PTY/Audit/Run-log isolation |
 | 15 | PASS | full `pnpm test:e2e:terminal-stress` exit 0；8,388,650 generated=delivered=acked、204/102 resize、marker once、8 ms responsive、zero console/page errors |
@@ -200,4 +202,5 @@ Visual/core PASS 不替代两个 required skipped workflows，故 Gate 11 与 Ga
 - xterm beta versions 已锁定但 API 仍可能 drift；本阶段不升级。
 - Terminal 可修改 PVC；这是受控测试 cluster risk，不提供 immutable run。
 - command audit attribution、input prefix-on-overflow、browser background throttling、watchdog 与 session/Run races 必须在真实系统重新验证。
+- Final scoped re-review 发现 client stale socket leak：`connecting` observer reenter Close 后原 `connect()` 继续绑定失效 generation 的 socket，其事件永不 settle；按 SDD one-wave breaker 已 parked。
 - required stale-401 ownership race 与完整 keyboard-only workflow 缺少 browser PASS；在两门补齐并重新执行 gate evidence 前保持 remediation 状态。
