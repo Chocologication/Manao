@@ -1,4 +1,5 @@
 import { CircleX, Eraser, Search, SquareTerminal } from 'lucide-react';
+import type { RefObject } from 'react';
 import type { JobTerminalPhase } from '@/features/terminal/JobTerminalController';
 import type { XtermRenderer } from '@/features/terminal/XtermTerminalAdapter';
 import { cn } from '@/lib/utils';
@@ -15,6 +16,7 @@ export type JobTerminalToolbarProps = {
   phase: JobTerminalPhase;
   statusText: string;
   renderer: XtermRenderer;
+  sessionTabRef: RefObject<HTMLButtonElement | null>;
   activeView: JobTerminalView;
   canOpen: boolean;
   openPending: boolean;
@@ -31,6 +33,7 @@ export function JobTerminalToolbar({
   phase,
   statusText,
   renderer,
+  sessionTabRef,
   activeView,
   canOpen,
   openPending,
@@ -93,6 +96,7 @@ export function JobTerminalToolbar({
           <button
             key={view}
             type="button"
+            ref={view === 'session' ? sessionTabRef : undefined}
             role="tab"
             id={`job-terminal-${view}-tab`}
             aria-controls={`job-terminal-${view}-view`}

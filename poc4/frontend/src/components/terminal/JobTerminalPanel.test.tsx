@@ -14,6 +14,7 @@ import type {
   JobTerminalPanelControllerFactoryOptions,
 } from './JobTerminalPanel';
 import { JobTerminalPanel } from './JobTerminalPanel';
+import { resolveTerminalAuditRunId } from './JobTerminalPanelState';
 import { CloseTerminalDialog } from './CloseTerminalDialog';
 
 const RUN_ID = parseRunId('run-terminal-panel');
@@ -306,6 +307,31 @@ describe('JobTerminalPanel viewport and search', () => {
     expect(screen.queryByRole('searchbox', { hidden: true })).not.toBeInTheDocument();
   });
 
+  it.each([
+    ['paused', 'Input paused'],
+    ['closing', 'Closing'],
+    ['closed', 'Closed'],
+    ['exited', 'Exited'],
+    ['error', 'Terminal error'],
+  ] as const)('keeps scrollback unobscured and reports %s in a compact status surface', async (phase, expected) => {
+    const controller = new FakeTerminalController();
+    renderPanel({ controller });
+    await waitFor(() => expect(controller.setRun).toHaveBeenCalled());
+    const viewport = screen.getByTestId('job-terminal-viewport');
+    const scrollback = document.createElement('span');
+    scrollback.textContent = 'retained scrollback';
+    viewport.append(scrollback);
+
+    act(() => controller.setPhase(phase));
+
+    expect(screen.queryByLabelText('Terminal viewport state')).not.toBeInTheDocument();
+    expect(viewport).toContainElement(scrollback);
+    expect(screen.getByRole('status', { name: 'Terminal state' })).toHaveTextContent(expected);
+    if (phase === 'error') {
+      expect(screen.getByRole('alert', { name: 'Terminal session error' })).toBeInTheDocument();
+    }
+  });
+
   it('announces WebGL and DOM fallback changes without replacing toolbar status slots', async () => {
     const controller = new FakeTerminalController();
     let factoryOptions: JobTerminalPanelControllerFactoryOptions | undefined;
@@ -325,9 +351,50 @@ describe('JobTerminalPanel viewport and search', () => {
     expect(rendererStatus).toHaveTextContent('DOM fallback');
     expect(screen.getByRole('status', { name: 'Terminal state' })).toBeInTheDocument();
   });
+
+  it('resets a new terminal generation to DOM before the new adapter reports a renderer', async () => {
+    const user = userEvent.setup();
+    const controller = new FakeTerminalController();
+    controller.close.mockImplementation(() => {
+      controller.setPhase('closed');
+      return true;
+    });
+    let factoryOptions: JobTerminalPanelControllerFactoryOptions | undefined;
+    const factory: JobTerminalPanelControllerFactory = vi.fn((options) => {
+      factoryOptions = options;
+      return controller;
+    });
+    renderPanel({ controller, factory });
+    await waitFor(() => expect(factoryOptions).toBeDefined());
+    act(() => controller.setPhase('ready'));
+    act(() => factoryOptions?.onRendererChange('webgl'));
+    const rendererStatus = screen.getByRole('status', { name: 'Terminal renderer' });
+    expect(rendererStatus).toHaveTextContent('WebGL');
+
+    await user.click(screen.getByRole('button', { name: 'Close terminal' }));
+    await user.click(screen.getByRole('button', { name: 'Close session' }));
+    expect(rendererStatus).toHaveTextContent('WebGL');
+
+    await user.click(screen.getByRole('button', { name: 'Open terminal' }));
+
+    expect(controller.open).toHaveBeenCalledOnce();
+    expect(rendererStatus).toHaveTextContent('DOM fallback');
+  });
 });
 
 describe('JobTerminalPanel audit query integration', () => {
+  it('resolves a current Run before the retained last Run during an authority switch', () => {
+    const runB = parseRunId('run-terminal-panel-b');
+
+    expect(
+      resolveTerminalAuditRunId(
+        'project-terminal-panel',
+        { id: runB, state: 'RUNNING' },
+        { projectId: 'project-terminal-panel', runId: RUN_ID },
+      ),
+    ).toBe(runB);
+  });
+
   it('renders backend audit pages and loads the opaque next cursor', async () => {
     const user = userEvent.setup();
     const cursors: Array<string | null> = [];
@@ -373,6 +440,48 @@ describe('JobTerminalPanel audit query integration', () => {
     expect(cursors).toEqual([null, 'cursor-older']);
   });
 
+  it('keeps the first Audit query DOM and scroll position mounted across Session switches', async () => {
+    const user = userEvent.setup();
+    let requestCount = 0;
+    server.use(
+      http.get('/api/v1/projects/:projectId/runs/:runId/terminal-audits', () => {
+        requestCount += 1;
+        return HttpResponse.json({
+          items: [{
+            id: 'audit-mounted',
+            sessionId: 'session-mounted',
+            command: 'mvn test -Dtest=MountedAudit',
+            state: 'SUCCEEDED',
+            startedAt: '2026-08-25T02:00:00.000Z',
+            finishedAt: '2026-08-25T02:00:04.000Z',
+            exitCode: 0,
+          }],
+          nextCursor: null,
+        });
+      }),
+    );
+    renderPanel();
+    await user.click(screen.getByRole('tab', { name: 'Audit' }));
+    const command = await screen.findByText('mvn test -Dtest=MountedAudit');
+    const table = screen.getByRole('table', { name: 'Terminal command audit' });
+    const scroller = table.parentElement;
+    expect(scroller).not.toBeNull();
+    if (scroller === null) throw new Error('Missing audit scroller');
+    scroller.scrollTop = 73;
+
+    await user.click(screen.getByRole('tab', { name: 'Session' }));
+
+    expect(document.querySelector('table')).toBe(table);
+    expect(screen.getByText('mvn test -Dtest=MountedAudit')).toBe(command);
+    expect(scroller.scrollTop).toBe(73);
+    expect(requestCount).toBe(1);
+
+    await user.click(screen.getByRole('tab', { name: 'Audit' }));
+    expect(screen.getByRole('table', { name: 'Terminal command audit' })).toBe(table);
+    expect(scroller.scrollTop).toBe(73);
+    expect(requestCount).toBe(1);
+  });
+
   it('keeps the last session audit available after active authority becomes empty', async () => {
     const user = userEvent.setup();
     server.use(
@@ -412,6 +521,53 @@ describe('JobTerminalPanel audit query integration', () => {
 
     expect(screen.getByText('mvn test -Dtest=LastSession')).toBeInTheDocument();
     expect(screen.getByRole('tab', { name: 'Audit' })).toHaveAttribute('aria-selected', 'true');
+  });
+
+  it('switches directly from Run A audit to Run B without retaining Run A content', async () => {
+    const user = userEvent.setup();
+    const runB = parseRunId('run-terminal-panel-b');
+    const requestedRuns: string[] = [];
+    server.use(
+      http.get('/api/v1/projects/:projectId/runs/:runId/terminal-audits', ({ params }) => {
+        const requestedRun = String(params.runId);
+        requestedRuns.push(requestedRun);
+        const isRunB = requestedRun === runB;
+        return HttpResponse.json({
+          items: [{
+            id: isRunB ? 'audit-run-b' : 'audit-run-a',
+            sessionId: isRunB ? 'session-run-b' : 'session-run-a',
+            command: isRunB ? 'command-from-run-b' : 'command-from-run-a',
+            state: 'SUCCEEDED',
+            startedAt: '2026-08-25T02:00:00.000Z',
+            finishedAt: '2026-08-25T02:00:04.000Z',
+            exitCode: 0,
+          }],
+          nextCursor: null,
+        });
+      }),
+    );
+    const controller = new FakeTerminalController();
+    const factory = createFactory(controller);
+    const view = renderPanel({ controller, factory });
+    await user.click(screen.getByRole('tab', { name: 'Audit' }));
+    expect(await screen.findByText('command-from-run-a')).toBeInTheDocument();
+
+    view.rerender(
+      <QueryClientProvider client={queryClient}>
+        <JobTerminalPanel
+          projectId="project-terminal-panel"
+          active
+          authorityLoading={false}
+          authorityError={null}
+          run={{ id: runB, state: 'RUNNING' }}
+          createController={factory}
+        />
+      </QueryClientProvider>,
+    );
+
+    expect(screen.queryByText('command-from-run-a')).not.toBeInTheDocument();
+    expect(await screen.findByText('command-from-run-b')).toBeInTheDocument();
+    expect(requestedRuns).toEqual([RUN_ID, runB]);
   });
 });
 
@@ -462,9 +618,39 @@ describe('CloseTerminalDialog', () => {
     expect(trigger).toHaveFocus();
   });
 
+  it('reports an asynchronous Close failure, re-enables actions, and consumes the rejection', async () => {
+    const user = userEvent.setup();
+    const unhandled = vi.fn((event: PromiseRejectionEvent) => event.preventDefault());
+    window.addEventListener('unhandledrejection', unhandled);
+    try {
+      render(
+        <CloseDialogHarness
+          onConfirm={() => Promise.reject(new Error('close request failed'))}
+        />,
+      );
+      await user.click(screen.getByRole('button', { name: 'Show close dialog' }));
+      await user.click(screen.getByRole('button', { name: 'Close session' }));
+
+      expect(await screen.findByRole('alert')).toHaveTextContent(
+        'Unable to close terminal session',
+      );
+      expect(screen.getByRole('dialog')).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Cancel' })).toBeEnabled();
+      expect(screen.getByRole('button', { name: 'Close session' })).toBeEnabled();
+      await Promise.resolve();
+      expect(unhandled).not.toHaveBeenCalled();
+    } finally {
+      window.removeEventListener('unhandledrejection', unhandled);
+    }
+  });
+
   it('asks for confirmation before forwarding one Close to the controller', async () => {
     const user = userEvent.setup();
     const controller = new FakeTerminalController();
+    controller.close.mockImplementation(() => {
+      controller.setPhase('closing');
+      return true;
+    });
     renderPanel({ controller });
     await waitFor(() => expect(controller.setRun).toHaveBeenCalled());
     act(() => controller.setPhase('ready'));
@@ -477,6 +663,8 @@ describe('CloseTerminalDialog', () => {
 
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
     expect(controller.close).toHaveBeenCalledOnce();
-    expect(closeTrigger).toHaveFocus();
+    expect(closeTrigger).toBeDisabled();
+    expect(screen.getByRole('tab', { name: 'Session' })).toHaveFocus();
+    expect(document.activeElement).not.toBe(document.body);
   });
 });

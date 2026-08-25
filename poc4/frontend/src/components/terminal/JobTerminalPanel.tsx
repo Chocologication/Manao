@@ -12,7 +12,7 @@ import {
   handleUnauthorized,
   registerTerminalRuntimeResource,
 } from '@/app/appRuntime';
-import type { RunId, RunState } from '@/contracts/run';
+import type { RunState } from '@/contracts/run';
 import {
   JobTerminalController,
   type JobTerminalAdapterPort,
@@ -29,6 +29,10 @@ import {
 import { cn } from '@/lib/utils';
 import { CloseTerminalDialog } from './CloseTerminalDialog';
 import { JobTerminalSearch } from './JobTerminalSearch';
+import {
+  resolveTerminalAuditRunId,
+  type RetainedTerminalAuditRun,
+} from './JobTerminalPanelState';
 import { TerminalAuditQueryView } from './TerminalAuditView';
 import {
   JobTerminalToolbar,
@@ -157,6 +161,10 @@ function isInteractiveXterm(phase: JobTerminalSnapshot['phase']): boolean {
   return phase === 'ready' || phase === 'paused';
 }
 
+function usesBlockingViewportStatus(phase: JobTerminalSnapshot['phase']): boolean {
+  return ['unavailable', 'available', 'creating', 'connecting'].includes(phase);
+}
+
 function subscribeToNothing(): () => void {
   return () => {};
 }
@@ -177,15 +185,16 @@ export function JobTerminalPanel({
   const [controller, setController] = useState<JobTerminalPanelController | null>(null);
   const [renderer, setRenderer] = useState<XtermRenderer>('dom');
   const [activeView, setActiveView] = useState<JobTerminalView>('session');
+  const [auditCreated, setAuditCreated] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [closeDialogOpen, setCloseDialogOpen] = useState(false);
   const [openPending, setOpenPending] = useState(false);
-  const [lastAuditRun, setLastAuditRun] = useState<{
-    projectId: string;
-    runId: RunId;
-  } | null>(() => (run === null ? null : { projectId, runId: run.id }));
+  const [lastAuditRun, setLastAuditRun] = useState<RetainedTerminalAuditRun | null>(() =>
+    run === null ? null : { projectId, runId: run.id },
+  );
   const openPendingRef = useRef(false);
   const viewportRef = useRef<HTMLDivElement>(null);
+  const sessionTabRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
     const next = createController({
@@ -236,7 +245,7 @@ export function JobTerminalPanel({
   const canClose = active && isCloseable(snapshot.phase);
   const canUseXtermTools =
     active && activeView === 'session' && isInteractiveXterm(snapshot.phase);
-  const auditRunId = lastAuditRun?.projectId === projectId ? lastAuditRun.runId : null;
+  const auditRunId = resolveTerminalAuditRunId(projectId, run, lastAuditRun);
 
   useEffect(() => {
     if (active && activeView === 'session' && snapshot.phase === 'ready') {
@@ -253,6 +262,7 @@ export function JobTerminalPanel({
       return;
     }
     openPendingRef.current = true;
+    setRenderer('dom');
     setOpenPending(true);
     setActiveView('session');
     void controller.open(viewportRef.current).finally(() => {
@@ -260,6 +270,11 @@ export function JobTerminalPanel({
       setOpenPending(false);
     });
   }, [canOpen, controller]);
+
+  const handleViewChange = useCallback((view: JobTerminalView) => {
+    if (view === 'audit') setAuditCreated(true);
+    setActiveView(view);
+  }, []);
 
   return (
     <section
@@ -273,6 +288,7 @@ export function JobTerminalPanel({
         phase={snapshot.phase}
         statusText={statusText}
         renderer={renderer}
+        sessionTabRef={sessionTabRef}
         activeView={activeView}
         canOpen={canOpen}
         openPending={openPending}
@@ -282,11 +298,20 @@ export function JobTerminalPanel({
         onRequestClose={() => setCloseDialogOpen(true)}
         onClear={() => controller?.clear()}
         onSearch={() => setSearchOpen(true)}
-        onViewChange={setActiveView}
+        onViewChange={handleViewChange}
       />
       {authorityError !== null ? (
         <p role="alert" className="shrink-0 border-b px-3 py-2 text-sm text-destructive">
           {authorityError}
+        </p>
+      ) : null}
+      {snapshot.phase === 'error' ? (
+        <p
+          role="alert"
+          aria-label="Terminal session error"
+          className="shrink-0 border-b px-3 py-1.5 text-sm text-destructive"
+        >
+          Terminal session failed. Open a new session to retry.
         </p>
       ) : null}
       <div className="relative min-h-0 min-w-0 flex-1 overflow-hidden">
@@ -314,9 +339,9 @@ export function JobTerminalPanel({
               onOpenChange={setSearchOpen}
             />
           ) : null}
-          {snapshot.phase !== 'ready' ? (
+          {usesBlockingViewportStatus(snapshot.phase) ? (
             <p
-              role={snapshot.phase === 'error' ? 'alert' : 'status'}
+              role="status"
               aria-label="Terminal viewport state"
               className="pointer-events-none absolute inset-0 flex items-center justify-center px-4 text-sm text-[#b8b8b8]"
             >
@@ -335,13 +360,13 @@ export function JobTerminalPanel({
             activeView !== 'audit' && 'invisible pointer-events-none',
           )}
         >
-          {activeView === 'audit' && auditRunId !== null ? (
+          {auditCreated && auditRunId !== null ? (
             <TerminalAuditQueryView
               projectId={projectId}
               runId={auditRunId}
               phase={snapshot.phase}
             />
-          ) : activeView === 'audit' ? (
+          ) : auditCreated ? (
             <p
               role="status"
               aria-label="Terminal audit unavailable"
@@ -354,6 +379,7 @@ export function JobTerminalPanel({
       </div>
       <CloseTerminalDialog
         open={closeDialogOpen}
+        returnFocusRef={sessionTabRef}
         onCancel={() => setCloseDialogOpen(false)}
         onConfirm={() => {
           controller?.close();
