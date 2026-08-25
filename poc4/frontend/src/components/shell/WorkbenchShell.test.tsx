@@ -1263,7 +1263,7 @@ describe('WorkbenchShell workspace reload', () => {
     confirmedDetail = {
       ...run,
       state: 'SUCCEEDED',
-      finishedAt: '2026-08-25T10:00:00.000Z',
+      finishedAt: new Date(Date.parse(run.startedAt ?? run.createdAt) + 1_000).toISOString(),
       terminationReason: 'BUILD_SUCCEEDED',
       exitCode: 0,
     };
