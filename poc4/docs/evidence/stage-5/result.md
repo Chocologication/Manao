@@ -4,10 +4,11 @@
 
 **STAGE_5_REMEDIATION_REQUIRED**
 
-17 项退出门中 **15 PASS / 2 FAIL**。失败门：
+17 项退出门中 **14 PASS / 3 FAIL**。失败门：
 
 1. **Gate 11 FAIL**：`a stale Alice terminal 401 cannot clear a newer Bob login` 在 Chromium、Chrome、Edge 均没有 fresh browser PASS；该 required case 在四次失败尝试后保持 `test.fixme`，本轮未重试。
-2. **Gate 16 FAIL**：完整 keyboard-only File -> Run -> Terminal -> Open -> xterm -> Search -> Audit -> Close workflow 在 Chromium、Chrome、Edge 均没有 fresh browser PASS；该 required case在四次失败尝试后保持 `test.fixme`，本轮未重试。
+2. **Gate 15 FAIL**：required full `pnpm test:e2e:terminal-stress` 在 `resizeSent=99`、要求 `>=100` 时 exit 1；后续 targeted PASS 只提供诊断指标，不能消除 required full-command failure。
+3. **Gate 16 FAIL**：完整 keyboard-only File -> Run -> Terminal -> Open -> xterm -> Search -> Audit -> Close workflow 在 Chromium、Chrome、Edge 均没有 fresh browser PASS；该 required case在四次失败尝试后保持 `test.fixme`，本轮未重试。
 
 不得放行或启动 Stage 6。退出码为 0 的 E2E 命令不能把 required skip 解释为 PASS。
 
@@ -25,7 +26,7 @@
 
 ## Complete Matrix
 
-下表按 brief 顺序串行执行。时间是本机 ISO-8601 起止时间；duration 是命令墙钟。mock/E2E 覆盖 `dist` 后另有 production rebuild 和 scan。
+下表按 brief 顺序串行执行。Start/end 是 outer harness 在命令前后记录的本机时区 wall-clock timestamp；duration 是同一 wrapper 内独立 `Stopwatch` 的记录值。前者包含约 3-6 ms 的 timestamp/output bookkeeping overhead，不能用 start/end 相减替换或“修正”后者；表中两组都是当时的原始记录。mock/E2E 覆盖 `dist` 后另有 production rebuild 和 scan。
 
 | Command | Start -> end | Duration | Exit | Exact result |
 |---|---|---:|---:|---|
@@ -134,8 +135,8 @@ Chrome/Edge channel command通过 160 executable cases。Stage 5 branded visual 
 
 ## Repository Hygiene
 
-- tracked `poc4/frontend` + `poc4/docs` text：**222 files** strict UTF-8 decode PASS；UTF-8 BOM **0**。
-- checkout `core.autocrlf=true`，repo未提供 `.editorconfig` / `.gitattributes` text policy；现有 tracked text中 **196 files / 55,033 CR bytes**（66,574 LF bytes）为当前 Windows checkout CRLF状态。本次新增 `result.md` 必须 UTF-8无 BOM，并在提交前另验 CR/BOM。
+- immutable source SHA `4f0f7ed` 的 tracked `poc4/frontend` + `poc4/docs` text：**222 files** strict UTF-8 decode PASS；report-only HEAD加入本文件后为 **223 files**，同样 strict UTF-8 decode PASS；UTF-8 BOM **0**。
+- checkout `core.autocrlf=true`，repo未提供 `.editorconfig` / `.gitattributes` text policy；report-only HEAD的现有 tracked text中 **196 files / 55,033 CR bytes**（66,749 LF bytes）为当前 Windows checkout CRLF状态；本 `result.md` 已验证 UTF-8无BOM、CR 0。
 - scan/hygiene排除 `.grok/`、linked worktrees、Playwright `test-results`/traces/videos/reports和生成 `dist`；它们不纳入提交。
 - Task 10的12张 Stage 5 PNG及所有Stage 0-4 recapture均未改；README未改。
 
@@ -157,8 +158,8 @@ Chrome/Edge channel command通过 160 executable cases。Stage 5 branded visual 
 | 12 | PASS | explicit Close/disconnect不重连；fresh Open使用new session/ticket/xterm；old generation inert |
 | 13 | PASS | STOPPING/RECOVERING先disable/close terminal再reload；terminal exit不改变Run authority或解锁 |
 | 14 | PASS | backend-only structured audit、owner/session cursor pages、safe plain rendering、PTY/Audit/Run-log pairwise isolation |
-| 15 | PASS | targeted fresh stress满足8,388,650-byte conservation、101 resize sends、marker/response/error gates；但首次full matrix stress的99-send FAIL仍保留在矩阵 |
-| 16 | **FAIL** | Chromium/Chrome/Edge其他core与12张visual通过，但required keyboard-only xterm-to-Search/Audit/Close case仍是 `test.fixme` |
+| 15 | **FAIL** | required full stress在`resizeSent=99`时exit 1；targeted fresh run的8,388,650-byte conservation、101 resize sends和完整metrics仅是诊断，不能消除full-command failure |
+| 16 | **FAIL** | Chrome/Edge core通过；Chromium full command有一次Stage 3登录前timeout且targeted复证通过；required keyboard-only xterm-to-Search/Audit/Close仍是`test.fixme` |
 | 17 | PASS | final production rebuild + 24/24 boundary；33 needles 0；no stage0/MSW/echo；entry/Workbench xterm 0；lazy terminal JS + xterm CSS |
 
 ## Known Risks Carried Forward
