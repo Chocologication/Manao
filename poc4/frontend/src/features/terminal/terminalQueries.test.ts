@@ -81,15 +81,15 @@ describe('terminal audit query policy', () => {
     expect(retryTerminalAuditQuery(TERMINAL_AUDIT_QUERY_MAX_RETRIES, serverError)).toBe(false);
   });
 
-  it('polls every two seconds only while the terminal is ready', () => {
+  it('polls every two seconds while the terminal is ready or input-paused', () => {
     expect(TERMINAL_AUDIT_POLL_MS).toBe(2_000);
     expect(terminalAuditRefetchInterval('ready')).toBe(2_000);
+    expect(terminalAuditRefetchInterval('paused')).toBe(2_000);
     for (const phase of [
       'unavailable',
       'available',
       'creating',
       'connecting',
-      'paused',
       'closing',
       'closed',
       'exited',
@@ -142,6 +142,10 @@ describe('useTerminalAuditQuery', () => {
     );
 
     rerender({ phase: 'paused' as const });
+    await waitFor(() =>
+      expect(cached?.observers[0]?.options.refetchInterval).toBe(TERMINAL_AUDIT_POLL_MS),
+    );
+    rerender({ phase: 'closing' as const });
     await waitFor(() => expect(cached?.observers[0]?.options.refetchInterval).toBe(false));
   });
 

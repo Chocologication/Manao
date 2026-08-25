@@ -47,6 +47,11 @@ if (typeof window.matchMedia !== 'function') {
   });
 }
 
+Object.defineProperty(HTMLCanvasElement.prototype, 'getContext', {
+  configurable: true,
+  value: (() => null) as typeof HTMLCanvasElement.prototype.getContext,
+});
+
 vi.mock('@monaco-editor/react', async () => {
   const { createElement } = await import('react');
   return {

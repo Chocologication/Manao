@@ -1210,20 +1210,26 @@ describe('WorkbenchShell workspace reload', () => {
     await queryClient.invalidateQueries({ queryKey: runKeys.active(ALICE_SEED_PROJECT_ID) });
   }
 
-  it('updates terminal authority before reload without forwarding transient active null', async () => {
+  it('revokes the production terminal controller before null-active detail confirmation settles', async () => {
     const user = userEvent.setup();
     const confirmStarted = deferredHold();
     const confirmHeld = deferredHold();
     const reloadHeld = deferredHold();
     const trace: string[] = [];
     let holdConfirmation = false;
+    let returnNullActive = false;
     let traceReload = false;
+    let confirmedDetail: NonNullable<ReturnType<typeof getActiveRun>> | null = null;
     server.use(
+      http.get('/api/v1/projects/:projectId/runs/active', () => {
+        if (!returnNullActive) return undefined;
+        return HttpResponse.json({ run: null });
+      }),
       http.get('/api/v1/projects/:projectId/runs/:runId', async () => {
         if (!holdConfirmation) return undefined;
         confirmStarted.resolve();
         await confirmHeld.promise;
-        return undefined;
+        return HttpResponse.json(confirmedDetail);
       }),
       http.get('/api/v1/projects/:projectId/files/tree', async ({ request }) => {
         if (traceReload && new URL(request.url).searchParams.get('path') === '') {
@@ -1252,27 +1258,30 @@ describe('WorkbenchShell workspace reload', () => {
         return originalSetRun.call(this, nextRun);
       });
     holdConfirmation = true;
+    returnNullActive = true;
     traceReload = true;
-    expect(
-      transitionRun(ALICE_SEED_PROJECT_ID, run.id, {
-        state: 'SUCCEEDED',
-        terminationReason: 'BUILD_SUCCEEDED',
-        exitCode: 0,
-      }).ok,
-    ).toBe(true);
+    confirmedDetail = {
+      ...run,
+      state: 'SUCCEEDED',
+      finishedAt: '2026-08-25T10:00:00.000Z',
+      terminationReason: 'BUILD_SUCCEEDED',
+      exitCode: 0,
+    };
     const refetch = queryClient.invalidateQueries({ queryKey: runKeys.active(ALICE_SEED_PROJECT_ID) });
     await confirmStarted.promise;
 
-    await waitFor(() => expect(setRun).toHaveBeenCalled());
-    expect(trace).toEqual(['terminal:SUCCEEDED']);
+    await waitFor(() => expect(setRun).toHaveBeenCalledWith(null));
+    expect(screen.getByRole('button', { name: 'Open terminal' })).toBeDisabled();
+    expect(trace).toEqual(['terminal:null']);
+    expect(screen.queryByText('Reloading workspace')).not.toBeInTheDocument();
 
     confirmHeld.resolve();
     await waitFor(() => expect(trace).toContain('reload'));
-    expect(trace).toEqual(['terminal:SUCCEEDED', 'reload']);
+    expect(trace.filter((item) => item === 'terminal:null')).toHaveLength(1);
     reloadHeld.resolve();
     await refetch;
     const reloadIndex = trace.indexOf('reload');
-    expect(trace.slice(0, reloadIndex)).toEqual(['terminal:SUCCEEDED']);
+    expect(trace.slice(0, reloadIndex)).toEqual(['terminal:null', 'terminal:SUCCEEDED']);
   }, 15_000);
 
   it('keeps writes locked after a terminal run until workspace reload succeeds', async () => {

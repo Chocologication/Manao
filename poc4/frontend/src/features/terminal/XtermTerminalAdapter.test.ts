@@ -459,7 +459,7 @@ describe('XtermTerminalAdapter resize coalescing', () => {
     expect(fitAddon.fit).toHaveBeenCalledTimes(2);
   });
 
-  it('waits for ready and refits only after a hidden panel becomes active again', () => {
+  it('ignores nonzero observer resizes while inactive and refits on reactivation', () => {
     const { adapter, fitAddon, onResize, resizeObserver, scheduler } = createHarness();
     const element = createSizedElement(800, 480);
     adapter.open(element);
@@ -472,13 +472,11 @@ describe('XtermTerminalAdapter resize coalescing', () => {
     expect(onResize).toHaveBeenCalledWith(80, 24);
 
     adapter.setActive(false);
-    setElementSize(element, 0, 0);
     fitAddon.proposeDimensions.mockReturnValue({ cols: 100, rows: 30 });
     for (let index = 0; index < 20; index += 1) resizeObserver.emit();
     expect(scheduler.pendingCount).toBe(0);
     expect(onResize).toHaveBeenCalledOnce();
 
-    setElementSize(element, 900, 600);
     adapter.setActive(true);
     expect(scheduler.pendingCount).toBe(1);
     scheduler.flush();
@@ -503,7 +501,7 @@ describe('XtermTerminalAdapter resize coalescing', () => {
     expect(onResize).not.toHaveBeenCalled();
   });
 
-  it('skips unchanged dimensions and zero-size containers', () => {
+  it('skips unchanged dimensions', () => {
     const { adapter, fitAddon, onResize, resizeObserver, scheduler } = createHarness();
     const element = createSizedElement(800, 480);
     adapter.open(element);
@@ -515,6 +513,15 @@ describe('XtermTerminalAdapter resize coalescing', () => {
     scheduler.flush();
     expect(fitAddon.fit).toHaveBeenCalledOnce();
     expect(onResize).toHaveBeenCalledOnce();
+  });
+
+  it('ignores active zero-size resizes until the container becomes nonzero', () => {
+    const { adapter, fitAddon, onResize, resizeObserver, scheduler } = createHarness();
+    const element = createSizedElement(800, 480);
+    adapter.open(element);
+    adapter.setReady(true);
+    scheduler.flush();
+    expect(onResize).toHaveBeenCalledOnce();
 
     setElementSize(element, 0, 0);
     fitAddon.proposeDimensions.mockReturnValue({ cols: 100, rows: 30 });
@@ -522,6 +529,12 @@ describe('XtermTerminalAdapter resize coalescing', () => {
     scheduler.flush();
     expect(fitAddon.fit).toHaveBeenCalledOnce();
     expect(onResize).toHaveBeenCalledOnce();
+
+    setElementSize(element, 900, 600);
+    resizeObserver.emit();
+    scheduler.flush();
+    expect(fitAddon.fit).toHaveBeenCalledTimes(2);
+    expect(onResize).toHaveBeenLastCalledWith(100, 30);
   });
 
   it('invalidates cancelled frames and observer callbacks after disposal', () => {

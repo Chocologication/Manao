@@ -163,6 +163,81 @@ describe('RunAuthorityCoordinator', () => {
     expect(coordinator.getSnapshot().phase).toBe('RELOADING_WORKSPACE');
   });
 
+  it('revokes terminal authority synchronously while null-active confirmation is pending', async () => {
+    let resolveDetail = (_run: RunSummary) => {};
+    const fetchRun = vi.fn(
+      () =>
+        new Promise<RunSummary>((resolve) => {
+          resolveDetail = resolve;
+        }),
+    );
+    const coordinator = new RunAuthorityCoordinator({
+      projectId: ALICE_SEED_PROJECT_ID,
+      fetchRun,
+    });
+    const running = lockingRun();
+    await coordinator.reconcile('success', running);
+
+    const confirmation = coordinator.reconcile('success', null);
+
+    expect(coordinator.getTerminalAuthoritySnapshot()).toEqual({ status: 'success', run: null });
+    expect(coordinator.getSnapshot().observedLockingRunId).toBe(running.id);
+    expect(coordinator.getSnapshot().phase).not.toBe('RELOADING_WORKSPACE');
+
+    resolveDetail(terminalRun());
+    await confirmation;
+    expect(coordinator.getSnapshot().phase).toBe('RELOADING_WORKSPACE');
+  });
+
+  it('keeps a fresh same-run RUNNING authoritative over a stale pending terminal detail', async () => {
+    let resolveDetail = (_run: RunSummary) => {};
+    const coordinator = new RunAuthorityCoordinator({
+      projectId: ALICE_SEED_PROJECT_ID,
+      fetchRun: () =>
+        new Promise<RunSummary>((resolve) => {
+          resolveDetail = resolve;
+        }),
+    });
+    const running = lockingRun();
+    await coordinator.reconcile('success', running);
+    const staleConfirmation = coordinator.reconcile('success', null);
+    expect(coordinator.getTerminalAuthoritySnapshot().run).toBeNull();
+
+    await coordinator.reconcile('success', running);
+    resolveDetail(terminalRun());
+    await staleConfirmation;
+
+    expect(coordinator.getTerminalAuthoritySnapshot()).toEqual({
+      status: 'success',
+      run: { id: running.id, state: 'RUNNING' },
+    });
+    expect(coordinator.getSnapshot().phase).not.toBe('RELOADING_WORKSPACE');
+  });
+
+  it.each([
+    ['nonterminal detail', () => Promise.resolve(lockingRun())],
+    ['detail rejection', () => Promise.reject(new Error('Network request failed'))],
+  ])('keeps terminal authority revoked after %s until a fresh active RUNNING', async (_case, fetchRun) => {
+    const coordinator = new RunAuthorityCoordinator({
+      projectId: ALICE_SEED_PROJECT_ID,
+      fetchRun,
+    });
+    const running = lockingRun();
+    await coordinator.reconcile('success', running);
+
+    await coordinator.reconcile('success', null);
+
+    expect(coordinator.getTerminalAuthoritySnapshot()).toEqual({ status: 'success', run: null });
+    expect(coordinator.getSnapshot().observedLockingRunId).toBe(running.id);
+    expect(coordinator.getSnapshot().phase).not.toBe('RELOADING_WORKSPACE');
+
+    await coordinator.reconcile('success', running);
+    expect(coordinator.getTerminalAuthoritySnapshot()).toEqual({
+      status: 'success',
+      run: { id: running.id, state: 'RUNNING' },
+    });
+  });
+
   it('stays locked when disappeared active cannot be confirmed terminal', async () => {
     const fetchRun = vi.fn().mockResolvedValue(lockingRun());
     const coordinator = new RunAuthorityCoordinator({
@@ -374,7 +449,7 @@ describe('RunAuthorityCoordinator', () => {
 
     await coordinator.reconcile('success', null);
 
-    expect(trace).toEqual(['terminal:SUCCEEDED', 'reload']);
+    expect(trace).toEqual(['terminal:null', 'terminal:SUCCEEDED', 'reload']);
     expect(coordinator.getReloadGeneration()).toBe(1);
   });
 

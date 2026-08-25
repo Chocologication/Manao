@@ -55,6 +55,7 @@ class FakeTerminalController implements JobTerminalPanelController {
   readonly focus = vi.fn();
   readonly setActive = vi.fn();
   readonly setRun = vi.fn();
+  readonly handlePageHide = vi.fn();
   readonly dispose = vi.fn();
 
   subscribe = (listener: () => void) => {
@@ -232,6 +233,23 @@ describe('JobTerminalPanel toolbar and views', () => {
     expect(screen.getByTestId('job-terminal-viewport')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Clear terminal', hidden: true })).toBeDisabled();
     expect(screen.getByRole('button', { name: 'Search terminal', hidden: true })).toBeDisabled();
+  });
+
+  it('forwards pagehide to the current controller and removes the listener on cleanup', async () => {
+    const controller = new FakeTerminalController();
+    const removeListener = vi.spyOn(window, 'removeEventListener');
+    const view = renderPanel({ controller });
+    await waitFor(() => expect(controller.setRun).toHaveBeenCalled());
+
+    fireEvent(window, new PageTransitionEvent('pagehide', { persisted: true }));
+    expect(controller.handlePageHide).toHaveBeenCalledOnce();
+
+    view.unmount();
+    const removed = removeListener.mock.calls.find((call) => call[0] === 'pagehide');
+    expect(removed).toBeDefined();
+    fireEvent(window, new PageTransitionEvent('pagehide'));
+    expect(controller.handlePageHide).toHaveBeenCalledOnce();
+    removeListener.mockRestore();
   });
 });
 

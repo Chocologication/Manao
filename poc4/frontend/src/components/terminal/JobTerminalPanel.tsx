@@ -44,6 +44,7 @@ export type JobTerminalPanelController = {
   getSnapshot(): JobTerminalSnapshot;
   setRun(run: JobTerminalRunAuthority | null): void;
   setActive(active: boolean): void;
+  handlePageHide(): void;
   open(element: HTMLElement): Promise<boolean>;
   close(): boolean;
   clear(): void;
@@ -208,6 +209,17 @@ export function JobTerminalPanel({
       next.dispose();
     };
   }, [createController, projectId, queryClient]);
+
+  useEffect(() => {
+    if (controller === null) return undefined;
+    const handlePageHide = () => {
+      controller.handlePageHide();
+    };
+    window.addEventListener('pagehide', handlePageHide);
+    return () => {
+      window.removeEventListener('pagehide', handlePageHide);
+    };
+  }, [controller]);
 
   useLayoutEffect(() => {
     controller?.setRun(run);

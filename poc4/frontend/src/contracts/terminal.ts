@@ -61,6 +61,10 @@ function parseFrameOpaque(value: unknown): string {
   if (typeof value !== 'string' || value === '' || value.length > MAX_NONCE_LENGTH) invalidFrame();
   return value;
 }
+function parseFrameSessionId(value: unknown): TerminalSessionId {
+  if (typeof value !== 'string' || value === '' || value.length > MAX_OPAQUE_ID_LENGTH) invalidFrame();
+  return value as TerminalSessionId;
+}
 
 export function parseTerminalSessionId(value: unknown): TerminalSessionId { return parseOpaque(value) as TerminalSessionId; }
 export function parseTerminalTicket(value: unknown): TerminalTicket { return parseOpaque(value) as TerminalTicket; }
@@ -123,7 +127,7 @@ export function parseTerminalClientControl(value: unknown): TerminalClientContro
 }
 export function parseTerminalServerControl(value: unknown, expectedSessionId: TerminalSessionId): TerminalServerControl {
   const record = frameRecord(value);
-  if (record.type === 'terminal.ready') { frameKeys(record, ['type', 'sessionId']); const sessionId = parseTerminalSessionId(record.sessionId); if (sessionId !== expectedSessionId) invalidFrame(); return { type: record.type, sessionId }; }
+  if (record.type === 'terminal.ready') { frameKeys(record, ['type', 'sessionId']); const sessionId = parseFrameSessionId(record.sessionId); if (sessionId !== expectedSessionId) invalidFrame(); return { type: record.type, sessionId }; }
   if (record.type === 'terminal.input.pause' || record.type === 'terminal.input.resume') { frameKeys(record, ['type']); return { type: record.type }; }
   if (record.type === 'terminal.ping') { frameKeys(record, ['type', 'nonce']); return { type: record.type, nonce: parseFrameOpaque(record.nonce) }; }
   if (record.type === 'terminal.exit') { frameKeys(record, ['type', 'exitCode', 'reason']); if (!['SHELL_EXITED', 'RUN_LEFT_RUNNING', 'CLIENT_CLOSED', 'CONNECTION_LOST', 'BACKEND_ERROR'].includes(String(record.reason))) invalidFrame(); const exitCode = record.exitCode === null ? null : parseDimension(record.exitCode, Number.MIN_SAFE_INTEGER, Number.MAX_SAFE_INTEGER, invalidFrame); return { type: record.type, exitCode, reason: record.reason as TerminalExitReason }; }

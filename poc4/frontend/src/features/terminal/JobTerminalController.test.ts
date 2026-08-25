@@ -705,6 +705,30 @@ describe('JobTerminalController live lifecycle', () => {
     expect(harness.controller.getSnapshot().phase).toBe('unavailable');
   });
 
+  it('closes one live generation on active null and permits a fresh explicit Open', async () => {
+    const harness = createOpenHarness();
+    await harness.controller.open(document.createElement('div'));
+    harness.getTransportOptions()?.onReady?.();
+    const start = harness.trace.length;
+
+    harness.controller.setRun(null);
+
+    expect(harness.trace.slice(start)).toEqual([
+      'adapter:input:false',
+      'transport:close',
+      'adapter:ready:false',
+      'transport:dispose',
+      'adapter:dispose',
+    ]);
+    expect(harness.transport.close).toHaveBeenCalledOnce();
+    expect(harness.controller.getSnapshot().phase).toBe('unavailable');
+
+    harness.controller.setRun(activeRun('run-1'));
+    expect(harness.controller.getSnapshot().phase).toBe('available');
+    await expect(harness.controller.open(document.createElement('div'))).resolves.toBe(true);
+    expect(harness.createSession).toHaveBeenCalledTimes(2);
+  });
+
   it('continues Run-left close and disposal when disabling adapter input throws', async () => {
     const behavior = { setInputEnabledThrows: false };
     const harness = createOpenHarness(behavior);

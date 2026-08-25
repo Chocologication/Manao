@@ -145,7 +145,7 @@ export class RunAuthorityCoordinator {
     if (run !== null && isRunLockingState(run.state)) {
       this.publishTerminalAuthority('success', run);
       const observedChanged = this.snapshot.observedLockingRunId !== run.id;
-      if (observedChanged) {
+      if (observedChanged || this.confirmingRunId !== null) {
         this.confirmGeneration += 1;
         this.confirmingRunId = null;
       }
@@ -178,6 +178,7 @@ export class RunAuthorityCoordinator {
     if (this.snapshot.phase === 'RELOADING_WORKSPACE' || this.snapshot.phase === 'RELOAD_FAILED') {
       return;
     }
+    this.publishTerminalAuthority('success', null);
     await this.confirmTerminal(observed);
   }
 

@@ -24,7 +24,7 @@ export function retryTerminalAuditQuery(failureCount: number, error: unknown): b
 }
 
 export function terminalAuditRefetchInterval(phase: JobTerminalPhase): number | false {
-  return phase === 'ready' ? TERMINAL_AUDIT_POLL_MS : false;
+  return phase === 'ready' || phase === 'paused' ? TERMINAL_AUDIT_POLL_MS : false;
 }
 
 export function useTerminalAuditQuery(
