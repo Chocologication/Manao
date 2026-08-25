@@ -151,6 +151,7 @@ let liveSessions = new Map<string, MockLiveTerminalSession>();
 let nextAuditSeq = 0;
 let auditRecords: TerminalAuditRecord[] = [];
 let terminalScenario: TerminalScenario = 'normal';
+const seededAuditScenarioRuns = new Set<string>();
 const terminalStateSubscribers = new Set<(event: MockTerminalStateEvent) => void>();
 const terminalFinalizationsInProgress = new Set<string>();
 
@@ -280,6 +281,24 @@ function appendAuditRecord(
   return record.entry;
 }
 
+function seedPaginatedAuditScenario(userId: string, projectId: string, runId: string): void {
+  const key = `${userId}\u0000${projectId}\u0000${runId}`;
+  if (seededAuditScenarioRuns.has(key)) return;
+  seededAuditScenarioRuns.add(key);
+  const now = Date.now();
+  for (let index = 0; index < 55; index += 1) {
+    const suffix = String(index + 1).padStart(2, '0');
+    appendAuditRecord(userId, projectId, runId, {
+      sessionId: parseTerminalSessionId(`${MOCK_TERMINAL_SESSION_PREFIX}audit-${suffix}`),
+      command: index === 0 ? 'ensoai-stage5-audit-marker' : `mvn -q test -Daudit=${suffix}`,
+      state: 'SUCCEEDED',
+      startedAt: new Date(now - (index + 1) * 1_000).toISOString(),
+      finishedAt: new Date(now - (index + 1) * 1_000 + 500).toISOString(),
+      exitCode: 0,
+    });
+  }
+}
+
 type PreparedAuditSettlement = { record: TerminalAuditRecord; entry: TerminalAuditEntry };
 
 function prepareAuditSettlement(
@@ -395,6 +414,9 @@ export function consumeTerminalTicket(
     rows: reservation.dimensions.rows,
     state: 'live',
   };
+  if (terminalScenario === 'audit') {
+    seedPaginatedAuditScenario(live.userId, live.projectId, live.runId);
+  }
   const audit = buildAuditRecord(nextAuditSeq + 1, live.userId, live.projectId, live.runId, {
     sessionId: live.sessionId,
     command: terminalScenario === 'stress' ? 'ensoai-stage5-terminal-stress' : 'mvn test',
@@ -672,6 +694,7 @@ export function resetTerminalState(): void {
   liveSessions = new Map();
   nextAuditSeq = 0;
   auditRecords = [];
+  seededAuditScenarioRuns.clear();
   terminalScenario = 'normal';
   terminalStorage()?.removeItem(MOCK_TERMINAL_PERSISTENCE_KEY);
   terminalStateSubscribers.clear();

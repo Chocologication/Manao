@@ -27,6 +27,9 @@ export const TERMINAL_SOCKET_CLOSE_CODES = {
 export const TERMINAL_OUTPUT_ACK_TIMEOUT_MS = 5_000;
 export const TERMINAL_HEARTBEAT_INTERVAL_MS = 10_000;
 export const TERMINAL_HEARTBEAT_TIMEOUT_MS = 5_000;
+export const MOCK_TERMINAL_STRESS_OUTPUT_BYTES = 8 * 1024 * 1024;
+export const MOCK_TERMINAL_STRESS_FRAME_BYTES = 32 * 1024;
+export const MOCK_TERMINAL_STRESS_FINAL_MARKER = 'ensoai-stage5-terminal-stress-final-marker';
 
 let mockExecCreated = 0;
 let mockExecDestroyed = 0;
@@ -284,7 +287,19 @@ export const terminalSocketHandler = terminals.addEventListener('connection', ({
       });
       return;
     }
-    if (scenario !== 'server-pause') return;
+    if (scenario === 'stress') {
+      const payload = new Uint8Array(MOCK_TERMINAL_STRESS_FRAME_BYTES).fill(0x73);
+      for (
+        let generated = 0;
+        generated < MOCK_TERMINAL_STRESS_OUTPUT_BYTES;
+        generated += MOCK_TERMINAL_STRESS_FRAME_BYTES
+      ) {
+        outputQueue.push(payload.slice().buffer);
+      }
+      outputQueue.push(new TextEncoder().encode(MOCK_TERMINAL_STRESS_FINAL_MARKER).buffer);
+      flushOutput();
+    }
+    if (scenario !== 'server-pause' && scenario !== 'stress') return;
     inputPaused = true;
     sendControl({ type: 'terminal.input.pause' });
     fixtureTimer = setTimeout(() => {
@@ -413,6 +428,7 @@ export const terminalSocketHandler = terminals.addEventListener('connection', ({
       inputOverflow();
       return;
     }
+    if (scenario === 'stress') return;
     outputQueue.push(binary.slice(0));
     flushOutput();
   });

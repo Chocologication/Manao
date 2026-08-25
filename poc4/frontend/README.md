@@ -1,10 +1,10 @@
-# EnsoAI Stage 4 Run And Logs
+# EnsoAI Stage 5 Active Job Terminal
 
-阶段 4 是纯浏览器前端：在阶段 3 可写工作台之上，提供服务器权威的 Run 与日志闭环（固定 `mvn clean test`、停止、活动 Run 恢复、运行期编辑锁、终态后强制重载工作区、最近运行列表、同源 WebSocket replay/live、5 MiB 截断窗口）。不连接真实 Spring Boot、MySQL、Kubernetes Job、PVC、Pod 或集群。MSW 只在 mock 模式与自动化测试中启用。本目录一律使用 pnpm，禁止 npm。
+阶段 5 仍是纯浏览器前端：在阶段 4 Run / 日志闭环上增加只绑定当前 owned `RUNNING` Run 的 xterm 会话、同源 ticket WebSocket、显式关闭、输出流控、本地搜索与结构化命令审计。不连接真实 Spring Boot、MySQL、Kubernetes Job、PVC、Pod、exec API 或集群。MSW 只在 mock 模式与自动化测试中启用。本目录一律使用 pnpm，禁止 npm。
 
 工作目录：`poc4/frontend`。需要 Node.js >= 20 与 pnpm 10。`pnpm test:e2e:channels` 还需要本机已安装 Chrome 与 Edge。
 
-所有 Run 授权、ticket、日志持久化、5 MiB 淘汰、刷新恢复目前只是 **mock contract verified**，在真实后端存在之前不能写成已验证。刷新/重进工作台通过 `ensoai.mock.run-scenario.v1` 再水合，证明的是 **浏览器恢复合同**，不是 MySQL 或后端重启。
+所有 Run/Terminal 授权、ticket、流控、审计、日志持久化、5 MiB 淘汰与刷新恢复目前只是 **mock contract verified**，在真实后端存在之前不能写成已验证。刷新/重进工作台通过 mock `sessionStorage` 再水合，证明的是浏览器恢复合同，不是 MySQL 或后端重启。
 
 ## 工作命令
 
@@ -21,6 +21,7 @@
 | `pnpm test:e2e:large-files` | 仅 `chromium-large-files`：真实约 20 MiB 正文（需先 `POST /api/v1/session/large-files`，该路径只存在于 mock） |
 | `pnpm test:e2e:large-writes` | 仅 `chromium-large-writes`：真实 `20 MiB + 1` Markdown 写入（180 秒上限；需 mock-only `large-files`） |
 | `pnpm test:e2e:large-logs` | 仅 `chromium-large-logs`：真实 `5 MiB + 1 MiB` UTF-8 日志流（180 秒上限；需 mock-only `run-scenario` 的 `large-log`） |
+| `pnpm test:e2e:terminal-stress` | 仅 `chromium-terminal-stress`：真实 `>= 8 MiB` 二进制 PTY 输出、`<= 32 KiB` 帧、256 KiB credit、输入 burst、100+ resize 与唯一 marker（180 秒上限） |
 
 `pnpm test:e2e*` 会先执行 `pnpm build:mock` 并覆盖 `dist/`。扫描生产排除项之前必须再跑一次 `pnpm build`。
 
@@ -33,7 +34,7 @@
 | `alice` | `demo-pass` |
 | `bob` | `demo-pass` |
 
-强制 401 使用 mock-only `POST /api/v1/session/expire`。真实约 20 MiB 正文使用 mock-only `POST /api/v1/session/large-files`。写失败场景使用 mock-only `POST /api/v1/session/write-scenario`（`normal` / `delayed` / `locked` / `conflict` / `failure`）。Run 场景使用 mock-only `POST /api/v1/session/run-scenario`（`success` / `failure` / `timeout` / `recovery` / `delayed-start` / `gap` / `disconnect` / `large-log` / `reload-change`）。这些路径都不得进入生产 `dist`。
+强制 401 使用 mock-only `POST /api/v1/session/expire`。真实约 20 MiB 正文使用 mock-only `POST /api/v1/session/large-files`。写失败场景使用 mock-only `POST /api/v1/session/write-scenario`。Run 场景使用 mock-only `POST /api/v1/session/run-scenario`。Terminal 场景使用 mock-only `POST /api/v1/session/terminal-scenario`（`normal` / `ticket-expired` / `already-active` / `server-pause` / `disconnect` / `shell-exit` / `webgl-fallback` / `audit` / `stress`）。这些路径都不得进入生产 `dist`。
 
 ## mock-only Run / 日志合同
 
@@ -45,15 +46,23 @@ Stop 只针对当前 owned active Run，确认对话框默认焦点在 Cancel；
 
 每个 Run 只保留最近 5 MiB UTF-8 窗口。服务端淘汰后下发 `truncated` 与 `evictedBytes`；客户端不得伪造淘汰事实。`large-log` 场景会推送真实 `>= 5 MiB + 1 MiB` 字节（每块 `<= 64 KiB`），中途断开后仍继续追加，重连 replay 补齐，然后完成。
 
-终态后强制清理文件 cache/models/buffers，并重新读取树和原打开文件；成功前不解锁。`reload-change` 会在终态前改写 `README.md`、新增 `docs/run-output.md`、删除 `AppTest.java`。File 与 Run 面板一直挂载；Terminal tab 继续 disabled，本阶段不接入 xterm / PTY。
+终态后强制清理文件 cache/models/buffers，并重新读取树和原打开文件；成功前不解锁。File、Run、Terminal 面板保持挂载，非活动面板使用 `inert`，Terminal 会话切换面板时保留但项目切换、logout、当前 401、Run 离开 `RUNNING` 时必须关闭。
 
-## 阶段 4 边界
+## mock-only Terminal 合同
 
-包含：权威 active Run、Start/Stop、运行期 File 锁、终态强制 reload、最近 Run 分页、ticket 安全 WebSocket、5 MiB 截断、断线补拉、Chromium/Chrome/Edge E2E 与真实超 5 MiB 日志压力。
+Open 只对当前 owned `RUNNING` Run 可用。浏览器先按可见 xterm 尺寸 POST 严格 `{ cols, rows }`，不能提交 command、image、Pod、容器或资源策略。返回 ticket 约 30 秒、单次使用并绑定 user/project/run/session；WebSocket 只能使用当前页面同源 `/api/v1/ws/terminals?ticket=`，主 JWT 不得进入 URL、frame、DOM 或截图。`terminal.ready.sessionId` 必须与 HTTP reservation 一致。
 
-不包含：真实 Job / MySQL / Kubernetes / 后端重启恢复 / Terminal。真实 `mvn clean test`、30 分钟超时、CPU/内存限制、Pod 日志、跨用户授权与七天定时删除都属于后续阶段。阶段 0 xterm 只作为 mock 构建里的独立 `/stage0.html` Spike 存在。
+异常断线、ticket 失败与 shell exit 都 **不自动重连**；用户只有再次 Open 才能取得全新的 session/ticket。Close 发送一次 `terminal.close`，不可恢复该会话，Maven Run 独立继续。Run 进入 `STOPPING` / `RECOVERING` 或终态时先禁用输入并关闭 PTY，再执行工作区 reload。
 
-跨用户 403、revision 冲突、锁定和大日志窗口只验证前端契约与 mock handler（**mock contract verified**），不能写成真实 Kubernetes 单 Job 锁、MySQL 先持久化后推送或后端重启恢复已通过。
+服务端输出只用 `<= 32 KiB` 二进制帧；客户端初始 credit 为 256 KiB，xterm 完成解析后才按帧 ACK 并返还等量 credit。客户端输入按 `<= 16 KiB` 分帧，响应服务端 pause/resume，并在浏览器 `bufferedAmount` 高水位暂停、低水位以下恢复。Clear 与 Search 只操作本地 xterm，不产生审计或网络命令。
+
+Audit 只渲染后端返回的结构化 command/state/time/exitCode，50 条一页并使用 opaque cursor。前端不得从逐键输入、PTY output 或 Run log 推断命令。PTY marker、Audit command 与 Run log marker 必须彼此隔离。
+
+## 阶段 5 / Stage 6 边界
+
+Stage 5 包含：浏览器内 active Run authority、单次 ticket、同源 Terminal WebSocket、显式 no-reconnect 生命周期、xterm WebGL/DOM fallback、输出 credit/ACK、输入背压、本地 Search/Clear、结构化 Audit、Chromium/Chrome/Edge E2E、12 张 branded-browser 截图与真实 8 MiB 压力。以上均只表示 **mock contract verified**。
+
+Stage 6 仍需在真实系统验证：Spring Boot terminal session/ticket API、Kubernetes `pods/exec`/PTY 与 resize、单 exec 创建/销毁、Job/run authority 竞态、MySQL audit 的事务与七天清理、真实跨用户 401/403、断网与后端重启、Pod/节点故障、流控超时、代理层 WebSocket 限制及真实 8 MiB 跨网络压力。不能把本阶段 mock 写成 Kubernetes、MySQL 或生产安全边界已通过。
 
 ## 已知体积问题
 

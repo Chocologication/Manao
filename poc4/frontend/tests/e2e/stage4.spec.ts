@@ -1123,7 +1123,7 @@ test('starts with the exact revision, no command, and locks File', async ({ page
   await expect(page.getByRole('button', { name: 'New folder' })).toBeDisabled();
   await openRunPanel(page);
   await expect(page.getByRole('region', { name: 'Run logs' })).toContainText(SEED_LOG_MARKER);
-  await expect(page.getByRole('tab', { name: 'Terminal' })).toBeDisabled();
+  await expect(page.getByRole('tab', { name: 'Terminal' })).toBeEnabled();
   await assertGuard(page, guard, accessToken);
   await expect.poll(() => guard.ticketUrls.length).toBeGreaterThan(0);
   expect(guard.ticketUrls.every((url) => !url.includes(accessToken))).toBe(true);
@@ -1403,12 +1403,13 @@ test('Stop Cancel leaves the run; confirm is idempotent STOPPING then CANCELLED'
   await expect(page.getByLabel('Run state')).toHaveText(/CANCELLED|Idle/);
 });
 
-test('closing the log socket does not unlock File', async ({ page }) => {
+test('offline log transport does not unlock File', async ({ page }) => {
   const { accessToken } = await openAliceWorkbench(page);
   await setRunScenario(page, accessToken, 'disconnect');
   await openRunPanel(page);
   await page.getByRole('button', { name: 'Start run' }).click();
   await expect(page.getByRole('button', { name: 'New file' })).toBeDisabled();
+  await expect(page.getByLabel('Log connection')).toHaveText('Live');
   await page.evaluate(() => {
     window.dispatchEvent(new Event('offline'));
   });
@@ -1654,15 +1655,13 @@ test('logout and current 401 close the stream; stale 401 does not clear Bob', as
   expect(bobToken.length).toBeGreaterThan(0);
 });
 
-test('Terminal stays disabled and no terminal or echo-ws endpoint is used', async ({ page }) => {
+test('Terminal stays lazy and no terminal or echo-ws endpoint is used before Open', async ({ page }) => {
   const guard = installStage4Guard(page);
   const { accessToken } = await openAliceWorkbench(page);
-  await expect(page.getByRole('tab', { name: 'Terminal' })).toBeDisabled();
-  await expect(page.getByRole('tab', { name: 'Terminal' })).toHaveAccessibleDescription(
-    /STAGE_4_UNAVAILABLE|DIRTY_FILES/,
-  );
-  await page.getByRole('tab', { name: 'Terminal' }).click({ force: true });
-  await expect(page.getByRole('tab', { name: 'File' })).toHaveAttribute('aria-selected', 'true');
+  await expect(page.getByRole('tab', { name: 'Terminal' })).toBeEnabled();
+  await page.getByRole('tab', { name: 'Terminal' }).click();
+  await expect(page.getByRole('region', { name: 'Job terminal' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Open terminal' })).toBeDisabled();
   await setRunScenario(page, accessToken, 'success');
   await openRunPanel(page);
   await page.getByRole('button', { name: 'Start run' }).click();
