@@ -4,11 +4,12 @@
 
 **STAGE_5_REMEDIATION_REQUIRED**
 
-17 项退出门中 **14 PASS / 3 FAIL**。失败门：
+17 项退出门中 **13 PASS / 4 FAIL**。失败门：
 
-1. **Gate 11 FAIL**：`a stale Alice terminal 401 cannot clear a newer Bob login` 在 Chromium、Chrome、Edge 均没有 fresh browser PASS；该 required case 在四次失败尝试后保持 `test.fixme`，本轮未重试。
-2. **Gate 15 FAIL**：required full `pnpm test:e2e:terminal-stress` 在 `resizeSent=99`、要求 `>=100` 时 exit 1；后续 targeted PASS 只提供诊断指标，不能消除 required full-command failure。
-3. **Gate 16 FAIL**：完整 keyboard-only File -> Run -> Terminal -> Open -> xterm -> Search -> Audit -> Close workflow 在 Chromium、Chrome、Edge 均没有 fresh browser PASS；该 required case在四次失败尝试后保持 `test.fixme`，本轮未重试。
+1. **Gate 11 FAIL**：`a stale Alice terminal 401 cannot clear a newer Bob login` 在 Chromium、Chrome、Edge 均没有 fresh browser PASS；该 required case 在四次失败尝试后保持 `test.fixme`。此外 immutable source SHA 没有把 production `pagehide` 接到 terminal controller，BFCache/pagehide 清理依赖 unmount 的表述不成立。
+2. **Gate 13 FAIL**：immutable source SHA 在 observed RUNNING 的 active query 变为 null 后，会等待 detail confirmation 才撤销 terminal authority；pending/rejected/nonterminal detail 期间旧 session 仍可交互，不满足 Run authority always wins。
+3. **Gate 15 FAIL**：required full `pnpm test:e2e:terminal-stress` 在 `resizeSent=99`、要求 `>=100` 时 exit 1；后续 targeted PASS 只提供诊断指标，不能消除 required full-command failure。
+4. **Gate 16 FAIL**：完整 keyboard-only File -> Run -> Terminal -> Open -> xterm -> Search -> Audit -> Close workflow 在 Chromium、Chrome、Edge 均没有 fresh browser PASS；该 required case在四次失败尝试后保持 `test.fixme`，本轮未重试。
 
 不得放行或启动 Stage 6。退出码为 0 的 E2E 命令不能把 required skip 解释为 PASS。
 
@@ -19,7 +20,7 @@
 - immutable source SHA：`4f0f7ed94edc87c7750a8f6e9d3e05793c09f88d`
 - 矩阵工作目录：`poc4/frontend`
 - 包管理器：pnpm `10.33.0`；所有浏览器命令均设置 `PLAYWRIGHT_HTML_OPEN=never`
-- 本报告是该 SHA 之后的纯文档提交，不修改应用源码、Task 10 PNG 或 README
+- Complete Matrix 及其 gate 判定只对应该 immutable SHA；后续 implementation remediation 仅记录在文末 Addendum，不替换原矩阵证据。Task 10 PNG 与 README 未修改
 - EnsoAI 浏览器显示参考仍为 `D:\DeepLearning\MyProjects\Enso_AI@5aa294a`；生产 Stage 5 未复制 Electron IPC、`node-pty`、本机路径或旧 PTY 复用语义
 
 本报告只证明 **real browser + MSW/mock contract evidence**。它不是 Spring Boot、MySQL、Kubernetes、Fabric8 `pods/exec`、Maven app container、代理或集群证据，任何 mock session/echo/audit 都不得称为真实 Kubernetes PTY。
@@ -84,8 +85,8 @@ HTTP/1.1 201
 - WebSocket 固定为 `ws(s)://<same-origin>/api/v1/ws/terminals?ticket=<redacted>`；query 只有 ticket，JWT 不进 URL/frame/DOM。重复使用 ticket 的浏览器连接 close code 为 `4409`。
 - 两个独立 unused reservations 可存在；第一个成功 consume 后，第二个 live consume 和新 HTTP reservation都因 one-live rule 被拒绝。close/disconnect 会清 live 并撤销 stale reservation；同一 RUNNING Run 再显式 Open 会得到全新的 session ID、ticket 和 xterm generation。
 - Browser lifecycle 覆盖 explicit close（Cancel/Escape/Confirm）、abnormal disconnect 无 reconnect、project navigation、logout、current-token 401、shell exit、Run 离开 RUNNING。Run STOPPING 事件实测 `terminal socket closeAt <= workspace reload fetchAt`，且历史 Run 不能 Open。
-- Controller generation 在 teardown 先禁用输入、关闭 transport、dispose xterm，再使旧 callbacks/ticket 无效并 invalidate audit。`WorkspaceResourceRegistry` 统一注册 connection close 和 workspace disposal；pagehide/unmount 清理幂等。
-- **缺口**：stale Alice terminal 401 在 Bob 新登录后不清 Bob 的浏览器 ownership gate 没有 fresh PASS，因此 Gate 11 FAIL；unit coverage不能替代 required browser evidence。
+- Controller generation 在 teardown 先禁用输入、关闭 transport、dispose xterm，再使旧 callbacks/ticket 无效并 invalidate audit。`WorkspaceResourceRegistry` 统一注册 connection close 和 workspace disposal；immutable source 的 unmount 清理幂等，但 production `pagehide` 没有接线。
+- **缺口**：stale Alice terminal 401 在 Bob 新登录后不清 Bob 的浏览器 ownership gate 没有 fresh PASS，且 pagehide/BFCache 没有 production wiring，因此 Gate 11 FAIL；unit coverage不能替代 required browser evidence。
 
 ## Bytes, Flow, Resize And Render Evidence
 
@@ -154,9 +155,9 @@ Chrome/Edge channel command通过 160 executable cases。Stage 5 branded visual 
 | 8 | PASS | <=16 KiB input frames、1 MiB queue、256/64 KiB watermarks、pause/resume、overflow fail closed、no silent drop |
 | 9 | PASS | positive/deduped/coalesced resize、inactive/zero gate、re-show refit；targeted stress fresh 202/101 |
 | 10 | PASS | per-session xterm/addons、WebGL creation/context-loss DOM fallback、Search/focus/clear/resize lifecycle |
-| 11 | **FAIL** | project/logout/current 401/Run-left cleanup pass，但 stale Alice terminal 401 preserving Bob仍是 required `test.fixme`，无 fresh browser PASS |
+| 11 | **FAIL** | project/logout/current 401/Run-left cleanup pass，但 stale Alice terminal 401 preserving Bob仍是 required `test.fixme`，且 immutable source 未接 production pagehide；无 fresh browser PASS |
 | 12 | PASS | explicit Close/disconnect不重连；fresh Open使用new session/ticket/xterm；old generation inert |
-| 13 | PASS | STOPPING/RECOVERING先disable/close terminal再reload；terminal exit不改变Run authority或解锁 |
+| 13 | **FAIL** | STOPPING/RECOVERING direct events有close-before-reload证据，但 active query RUNNING -> null 会在 detail pending/reject/nonterminal期间保留旧 terminal authority；immutable source 不满足 authority always wins |
 | 14 | PASS | backend-only structured audit、owner/session cursor pages、safe plain rendering、PTY/Audit/Run-log pairwise isolation |
 | 15 | **FAIL** | required full stress在`resizeSent=99`时exit 1；targeted fresh run的8,388,650-byte conservation、101 resize sends和完整metrics仅是诊断，不能消除full-command failure |
 | 16 | **FAIL** | Chrome/Edge core通过；Chromium full command有一次Stage 3登录前timeout且targeted复证通过；required keyboard-only xterm-to-Search/Audit/Close仍是`test.fixme` |
@@ -172,5 +173,18 @@ Chrome/Edge channel command通过 160 executable cases。Stage 5 branded visual 
 - 本次full Chromium和full stress各有一次非稳定FAIL，即使targeted复证通过，也必须在remediation中消除matrix不稳定，不能把本报告描述为全绿。
 
 最终决定保持：
+
+**STAGE_5_REMEDIATION_REQUIRED**
+
+## Final Review Remediation Addendum
+
+- Implementation commit：`41c71cf`（`fix(poc4): harden terminal lifecycle integration`）。该提交位于 immutable matrix source `4f0f7ed` 之后。
+- Targeted authority remediation：active query 从 observed RUNNING 变为 null 时，Coordinator 在 detail await 前同步发布 null terminal authority；workspace lock的 `observedLockingRunId` 保留用于 terminal detail confirmation。pending/rejected/nonterminal detail不会恢复旧 RUNNING；fresh explicit RUNNING会作废同 runId 的 stale confirm generation，并允许新的显式 Open。
+- Targeted lifecycle remediation：production Panel 注册 `window.pagehide` 并转发 controller `handlePageHide()`；BFCache `persisted=true` 不依赖 unmount，listener在 cleanup移除，controller close/dispose保持幂等。
+- 其他 targeted remediation：paused audit保持 2 s polling；malformed `terminal.ready.sessionId` 统一抛 `Invalid terminal frame`；inactive/nonzero 与 active/zero resize gates被独立测试；Stage 0 shared `TerminalSearchBar` active Ctrl/Cmd+F、Escape和listener cleanup已覆盖；jsdom canvas warning以等价的test-only null shim消除，未增加依赖或改变产品。
+- Fresh focused command覆盖 Coordinator、Shell、Panel、controller、query、contracts、adapter和Stage 0 search：**8 files / 205 tests PASS**。`pnpm typecheck` exit 0；`pnpm test:boundary` **24/24 PASS**；production `pnpm build` exit 0、3,787 modules；`git diff --check`与13个implementation/test文件UTF-8无BOM、CRLF、zero bare LF audit通过。
+- 本 fix wave **没有** 从 `41c71cf` 重跑 full 11-command immutable matrix，没有执行已停止的两个 required `test.fixme`，没有修改 Task 10 PNG。因此上述 targeted evidence不能宣称 Gate 11或Gate 13恢复；尤其 **Gate 13仍为 FAIL，直到新implementation SHA完成一轮新的full matrix并据此重新判门**。
+
+Addendum 后最终决定仍保持：
 
 **STAGE_5_REMEDIATION_REQUIRED**
