@@ -22,12 +22,14 @@ class FakeInputSocket {
 
 function createScheduler() {
   let nextId = 1;
-  const tasks = new Map<number, () => void>();
+  const tasks = new Map<number, { handler: () => void; delayMs: number }>();
+  const requestedDelays: number[] = [];
   const scheduler: TerminalInputPumpScheduler = {
-    setTimeout(handler) {
+    setTimeout(handler, delayMs) {
       const id = nextId;
       nextId += 1;
-      tasks.set(id, handler);
+      tasks.set(id, { handler, delayMs });
+      requestedDelays.push(delayMs);
       return id;
     },
     clearTimeout(id) {
@@ -37,11 +39,16 @@ function createScheduler() {
   return {
     scheduler,
     pendingCount: () => tasks.size,
+    pendingDelays: () => [...tasks.values()].map((task) => task.delayMs),
+    requestedDelays: () => [...requestedDelays],
     runNext() {
-      const next = tasks.entries().next().value as [number, () => void] | undefined;
+      const next = tasks.entries().next().value as [
+        number,
+        { handler: () => void; delayMs: number },
+      ] | undefined;
       if (next === undefined) return;
       tasks.delete(next[0]);
-      next[1]();
+      next[1].handler();
     },
   };
 }
@@ -103,11 +110,15 @@ describe('TerminalInputPump', () => {
     expect(socket.sent).toEqual([]);
     expect(pauses).toEqual([true]);
     expect(clock.pendingCount()).toBe(1);
+    expect(clock.pendingDelays()).toEqual([50]);
+    expect(clock.requestedDelays()).toEqual([50]);
 
     socket.bufferedAmount = TERMINAL_INPUT_BUFFER_LOW_WATERMARK_BYTES;
     clock.runNext();
     expect(socket.sent).toEqual([]);
     expect(clock.pendingCount()).toBe(1);
+    expect(clock.pendingDelays()).toEqual([50]);
+    expect(clock.requestedDelays()).toEqual([50, 50]);
 
     socket.bufferedAmount = TERMINAL_INPUT_BUFFER_LOW_WATERMARK_BYTES - 1;
     clock.runNext();
@@ -135,6 +146,13 @@ describe('TerminalInputPump', () => {
     pump.setServerPaused(false);
     expect(socket.sent).toEqual([]);
     expect(clock.pendingCount()).toBe(1);
+    expect(clock.pendingDelays()).toEqual([50]);
+    expect(clock.requestedDelays()).toEqual([50]);
+
+    clock.runNext();
+    expect(socket.sent).toEqual([]);
+    expect(clock.pendingDelays()).toEqual([50]);
+    expect(clock.requestedDelays()).toEqual([50, 50]);
 
     socket.bufferedAmount = TERMINAL_INPUT_BUFFER_LOW_WATERMARK_BYTES - 1;
     clock.runNext();

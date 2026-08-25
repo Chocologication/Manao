@@ -1,5 +1,4 @@
 @import "tailwindcss";
-@import "@xterm/xterm/css/xterm.css";
 
 @theme {
   --color-background: var(--background);
@@ -198,16 +197,6 @@ body,
   text-decoration: underline;
 }
 
-.xterm,
-.xterm-viewport,
-.xterm-screen,
-.xterm-scroll-area,
-.xterm-scrollable-element {
-  width: 100% !important;
-  height: 100% !important;
-  background-color: inherit !important;
-}
-
 .job-terminal-viewport {
   position: absolute;
   inset: 0;
@@ -216,11 +205,6 @@ body,
   overflow: hidden;
   contain: layout paint;
   background: #1e1e1e;
-}
-
-.job-terminal-viewport > .xterm {
-  box-sizing: border-box;
-  padding: 0.5rem 0.625rem;
 }
 
 .run-log-scroller {

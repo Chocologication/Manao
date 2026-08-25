@@ -125,6 +125,18 @@ export function findForbiddenSource(file, source) {
   return toRuleResults(file, rules);
 }
 
+export function findTerminalCssSourceViolations(file, source) {
+  const normalized = toPosix(file);
+  const isGlobalEntryStylesheet =
+    normalized === 'src/styles/globals.css' || normalized === 'src/globals.css';
+  if (!isGlobalEntryStylesheet) return [];
+  const importsXtermCss = extractImportSpecifiers(source)
+    .some((specifier) => stripSpecifierQuery(specifier) === '@xterm/xterm/css/xterm.css');
+  return importsXtermCss
+    ? [{ file, rule: 'xterm-css-global-import' }]
+    : [];
+}
+
 const productionStringNeedles = [
   ['stage3-scenario-endpoint', '/api/v1/session/write-scenario'],
   ['stage4-scenario-endpoint', '/api/v1/session/run-scenario'],
@@ -158,6 +170,63 @@ export function findForbiddenDistributionStrings(file, source) {
     if (source.includes(needle)) rules.add(rule);
   }
   return toRuleResults(file, rules);
+}
+
+function htmlAttributes(tag) {
+  const attributes = new Map();
+  const pattern = /([A-Za-z_:][\w:.-]*)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+)))?/g;
+  for (const match of tag.matchAll(pattern)) {
+    attributes.set(match[1].toLowerCase(), match[2] ?? match[3] ?? match[4] ?? '');
+  }
+  return attributes;
+}
+
+function normalizeDistributionHref(href) {
+  const withoutSuffix = href.split(/[?#]/, 1)[0].replaceAll('\\', '/');
+  if (/^[A-Za-z][A-Za-z\d+.-]*:/.test(withoutSuffix) || withoutSuffix.startsWith('//')) {
+    return null;
+  }
+  const relative = path.posix.normalize(
+    withoutSuffix.startsWith('/') ? withoutSuffix.slice(1) : withoutSuffix,
+  );
+  if (relative === '..' || relative.startsWith('../') || path.posix.isAbsolute(relative)) {
+    return null;
+  }
+  return `dist/${relative.replace(/^\.\//, '')}`;
+}
+
+function entryStylesheetFiles(indexHtml) {
+  const files = new Set();
+  for (const match of indexHtml.matchAll(/<link\b[^>]*>/gi)) {
+    const attributes = htmlAttributes(match[0]);
+    const rel = attributes.get('rel')?.toLowerCase().split(/\s+/) ?? [];
+    const href = attributes.get('href');
+    if (!rel.includes('stylesheet') || href === undefined) continue;
+    const file = normalizeDistributionHref(href);
+    if (file !== null) files.add(file);
+  }
+  return files;
+}
+
+export function findTerminalCssDistributionViolations(indexHtml, assets) {
+  const cssAssets = assets
+    .map(({ file, source }) => ({ file: toPosix(file), source }))
+    .filter(({ file }) => path.posix.extname(file) === '.css');
+  const cssByFile = new Map(cssAssets.map((asset) => [asset.file, asset.source]));
+  const entryFiles = entryStylesheetFiles(indexHtml);
+  const violations = [];
+  for (const file of entryFiles) {
+    if (cssByFile.get(file)?.includes('.xterm')) {
+      violations.push({ file, rule: 'xterm-css-entry-asset' });
+    }
+  }
+  const hasLazyXtermCss = cssAssets.some(
+    ({ file, source }) => !entryFiles.has(file) && source.includes('.xterm'),
+  );
+  if (!hasLazyXtermCss) {
+    violations.push({ file: 'dist/index.html', rule: 'xterm-css-lazy-asset-missing' });
+  }
+  return violations;
 }
 
 const forbiddenContractNames = ['pvcName', 'podName', 'jobName', 'namespace', 'serviceAccount'];

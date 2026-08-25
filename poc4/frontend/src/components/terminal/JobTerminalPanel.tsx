@@ -1,3 +1,5 @@
+import '@xterm/xterm/css/xterm.css';
+import './JobTerminalPanel.css';
 import { useQueryClient } from '@tanstack/react-query';
 import {
   useCallback,

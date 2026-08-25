@@ -329,7 +329,9 @@ export class JobTerminalTransport {
         return;
       }
       this.transition('ready');
+      if (!this.isReadyGeneration(generation, socket)) return;
       if (!this.restartHeartbeatWatchdog(generation, socket)) return;
+      if (!this.isReadyGeneration(generation, socket)) return;
       notifySafely(this.onReady);
       return;
     }
@@ -760,6 +762,10 @@ export class JobTerminalTransport {
     if (this.capturedAccessToken === currentToken) {
       notifySafely(this.onUnauthorized);
     }
+  }
+
+  private isReadyGeneration(generation: number, socket: TerminalWebSocketPort): boolean {
+    return this.state === 'ready' && this.isCurrent(generation, socket);
   }
 
   private isCurrent(generation: number, socket: TerminalWebSocketPort): boolean {

@@ -1,0 +1,14 @@
+.xterm,
+.xterm-viewport,
+.xterm-screen,
+.xterm-scroll-area,
+.xterm-scrollable-element {
+  width: 100% !important;
+  height: 100% !important;
+  background-color: inherit !important;
+}
+
+.job-terminal-viewport > .xterm {
+  box-sizing: border-box;
+  padding: 0.5rem 0.625rem;
+}

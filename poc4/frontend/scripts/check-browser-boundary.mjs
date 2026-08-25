@@ -7,6 +7,8 @@ import {
   findForbiddenDistributionStrings,
   findForbiddenSource,
   findForbiddenWorkbenchImports,
+  findTerminalCssDistributionViolations,
+  findTerminalCssSourceViolations,
 } from './browser-boundary-lib.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -37,6 +39,7 @@ const sourceViolations = (
       ...findForbiddenSource(relative, source),
       ...findForbiddenWorkbenchImports(relative, source),
       ...findForbiddenContractNames(relative, source),
+      ...findTerminalCssSourceViolations(relative, source),
     ];
   }))
 ).flat();
@@ -44,12 +47,17 @@ let distributionViolations = [];
 try {
   await stat(path.join(root, 'dist'));
   const distFiles = await listTextFiles(path.join(root, 'dist'), distributionTextExtensions);
-  distributionViolations = (
-    await Promise.all(distFiles.map(async (file) => {
+  const distAssets = await Promise.all(distFiles.map(async (file) => {
       const relative = path.relative(root, file).replaceAll('\\', '/');
-      return findForbiddenDistributionStrings(relative, await readFile(file, 'utf8'));
-    }))
-  ).flat();
+      return { file: relative, source: await readFile(file, 'utf8') };
+    }));
+  const indexHtml = distAssets.find(({ file }) => file === 'dist/index.html')?.source;
+  distributionViolations = [
+    ...distAssets.flatMap(({ file, source }) => findForbiddenDistributionStrings(file, source)),
+    ...(indexHtml === undefined
+      ? []
+      : findTerminalCssDistributionViolations(indexHtml, distAssets)),
+  ];
 } catch (error) {
   if (error?.code !== 'ENOENT') throw error;
 }

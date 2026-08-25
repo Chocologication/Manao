@@ -296,6 +296,38 @@ describe('JobTerminalTransport generation and handshake', () => {
     expect(harness.sockets[0]?.sent).toEqual([]);
   });
 
+  it('stops ready setup when the ready state observer closes synchronously', () => {
+    const clock = createManualScheduler();
+    const states: string[] = [];
+    const inputEnabled: boolean[] = [];
+    const onReady = vi.fn();
+    let activeTransport: JobTerminalTransport | null = null;
+    const harness = createHarness({
+      scheduler: clock.scheduler,
+      onStateChange: (state) => {
+        states.push(state);
+        if (state === 'ready') activeTransport?.close();
+      },
+      onInputEnabledChange: (enabled) => inputEnabled.push(enabled),
+      onReady,
+    });
+    activeTransport = harness.transport;
+
+    harness.transport.connect();
+    const socket = harness.sockets[0]!;
+    socket.open();
+    socket.message(JSON.stringify({ type: 'terminal.ready', sessionId: SESSION_ID }));
+
+    expect(harness.transport.currentState).toBe('closing');
+    expect(states).toEqual(['connecting', 'awaiting-ready', 'ready', 'closing']);
+    expect(controlFrames(socket)).toEqual([{ type: 'terminal.close' }]);
+    expect(binaryFrames(socket)).toEqual([]);
+    expect(inputEnabled).toEqual([]);
+    expect(clock.pendingDelays()).toEqual([2_000]);
+    expect(clock.requestedForDelay(30_000)).toEqual([]);
+    expect(onReady).not.toHaveBeenCalled();
+  });
+
   it('fails closed on pre-ready, malformed, mismatched or duplicate ready frames', () => {
     const frames = [
       new ArrayBuffer(1),

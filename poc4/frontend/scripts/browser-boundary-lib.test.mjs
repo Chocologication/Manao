@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import * as boundary from './browser-boundary-lib.mjs';
 import {
   findForbiddenContractNames,
   findForbiddenDependencies,
@@ -367,4 +368,58 @@ test('rejects every retained mock needle from distribution HTML', () => {
     findForbiddenDistributionStrings('dist/index.html', source).map((item) => item.rule),
     [...stage4MockNeedles, ...stage5MockNeedles].map(([rule]) => rule),
   );
+});
+
+test('rejects the xterm package CSS import from the global entry stylesheet only', () => {
+  assert.deepEqual(
+    boundary.findTerminalCssSourceViolations(
+      'src/styles/globals.css',
+      '@import "@xterm/xterm/css/xterm.css";',
+    ),
+    [{ file: 'src/styles/globals.css', rule: 'xterm-css-global-import' }],
+  );
+  assert.deepEqual(
+    boundary.findTerminalCssSourceViolations(
+      'src/components/terminal/JobTerminalPanel.tsx',
+      "import '@xterm/xterm/css/xterm.css';",
+    ),
+    [],
+  );
+});
+
+test('rejects xterm selectors from a stylesheet linked by dist index.html', () => {
+  const indexHtml = [
+    '<link crossorigin href="./assets/index.css?build=1#app" rel="stylesheet">',
+    '<script type="module" src="/assets/index.js"></script>',
+  ].join('\n');
+  const assets = [
+    { file: 'dist/assets/index.css', source: '.xterm { width: 100%; }' },
+    { file: 'dist/assets/terminal.css', source: '.xterm-screen { height: 100%; }' },
+  ];
+
+  assert.deepEqual(boundary.findTerminalCssDistributionViolations(indexHtml, assets), [
+    { file: 'dist/assets/index.css', rule: 'xterm-css-entry-asset' },
+  ]);
+});
+
+test('rejects a production distribution with no non-entry xterm stylesheet', () => {
+  const indexHtml = '<link rel="stylesheet" href="/assets/index.css">';
+  const assets = [{ file: 'dist/assets/index.css', source: 'body { margin: 0; }' }];
+
+  assert.deepEqual(boundary.findTerminalCssDistributionViolations(indexHtml, assets), [
+    { file: 'dist/index.html', rule: 'xterm-css-lazy-asset-missing' },
+  ]);
+});
+
+test('accepts split xterm CSS outside Vite entry stylesheets for relative and absolute paths', () => {
+  const indexHtml = [
+    '<link href="/assets/index.css" crossorigin rel="stylesheet">',
+    '<link rel="modulepreload" href="./assets/vendor.js">',
+  ].join('\n');
+  const assets = [
+    { file: 'dist/assets/index.css', source: 'body { margin: 0; }' },
+    { file: 'dist/assets/JobTerminalPanel.css', source: '.xterm-screen{height:100%}' },
+  ];
+
+  assert.deepEqual(boundary.findTerminalCssDistributionViolations(indexHtml, assets), []);
 });

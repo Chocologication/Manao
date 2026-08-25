@@ -40,6 +40,12 @@ type BrowserHooks = {
   maxBufferedObserved: number;
 };
 
+type TerminalCssSnapshot = {
+  stylesheetUrls: string[];
+  resourceUrls: string[];
+  xtermSelectors: Array<{ url: string; selector: string }>;
+};
+
 function projectCard(page: Page, name: string) {
   return page.getByRole('article', { name });
 }
@@ -155,6 +161,38 @@ function terminalRequests(page: Page): Request[] {
     }
   });
   return requests;
+}
+
+async function terminalCssSnapshot(page: Page): Promise<TerminalCssSnapshot> {
+  return page.evaluate(() => {
+    const stylesheetUrls = [...document.styleSheets]
+      .map((sheet) => sheet.href)
+      .filter((href): href is string => href !== null)
+      .sort();
+    const resourceUrls = performance.getEntriesByType('resource')
+      .map((entry) => entry.name)
+      .filter((url) => new URL(url).pathname.endsWith('.css'))
+      .sort();
+    const xtermSelectors: TerminalCssSnapshot['xtermSelectors'] = [];
+    const visitRules = (rules: CSSRuleList, url: string) => {
+      for (const rule of [...rules]) {
+        const selector = (rule as CSSStyleRule).selectorText;
+        if (typeof selector === 'string' && selector.includes('.xterm')) {
+          xtermSelectors.push({ url, selector });
+        }
+        const nested = (rule as CSSGroupingRule).cssRules;
+        if (nested !== undefined) visitRules(nested, url);
+      }
+    };
+    for (const sheet of [...document.styleSheets]) {
+      try {
+        visitRules(sheet.cssRules, sheet.href ?? 'inline');
+      } catch {
+        // Same-origin production stylesheets are readable; ignore browser-owned sheets.
+      }
+    }
+    return { stylesheetUrls, resourceUrls, xtermSelectors };
+  });
 }
 
 async function signIn(
@@ -523,11 +561,34 @@ test('lazy terminal open binds an exact single-use session and paginated audit c
 
   await expect(page.getByRole('region', { name: 'Job terminal' })).toHaveCount(0);
   expect(requests).toHaveLength(0);
+  const cssBeforeSelection = await terminalCssSnapshot(page);
+  expect(cssBeforeSelection.xtermSelectors).toEqual([]);
 
   await page.getByRole('tab', { name: 'Terminal' }).click();
   await expect(page.getByRole('region', { name: 'Job terminal' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Open terminal' })).toBeDisabled();
   expect(requests).toHaveLength(0);
+  await expect.poll(async () => (await terminalCssSnapshot(page)).xtermSelectors.length)
+    .toBeGreaterThan(0);
+  const cssAfterSelection = await terminalCssSnapshot(page);
+  const newStylesheetUrls = cssAfterSelection.stylesheetUrls.filter(
+    (url) => !cssBeforeSelection.stylesheetUrls.includes(url),
+  );
+  const newResourceUrls = cssAfterSelection.resourceUrls.filter(
+    (url) => !cssBeforeSelection.resourceUrls.includes(url),
+  );
+  expect(newStylesheetUrls.length).toBeGreaterThan(0);
+  expect(newResourceUrls.length).toBeGreaterThan(0);
+  expect(cssAfterSelection.xtermSelectors.every(
+    ({ url }) => newStylesheetUrls.includes(url),
+  )).toBe(true);
+  console.log('stage5 lazy terminal CSS evidence', JSON.stringify({
+    before: cssBeforeSelection,
+    after: cssAfterSelection,
+    newStylesheetUrls,
+    newResourceUrls,
+    terminalSessionPostsBeforeOpen: requests.length,
+  }));
 
   await startLongRunningRun(page, accessToken);
   await setScenario(page, accessToken, 'terminal', 'audit' satisfies TerminalScenario);
