@@ -183,6 +183,98 @@ describe('JobTerminalTransport generation and handshake', () => {
     expect(onClosed).toHaveBeenCalledWith({ kind: 'connection-error' });
   });
 
+  it('stops stale socket creation when connecting observer closes synchronously', () => {
+    const clock = createManualScheduler();
+    const listenerTypes: string[] = [];
+    const onClosed = vi.fn();
+    const states: string[] = [];
+    let activeTransport: JobTerminalTransport | null = null;
+    class ListenerTrackingSocket extends FakeTerminalSocket {
+      override addEventListener(type: string, listener: (event: SocketEvent) => void): void {
+        listenerTypes.push(type);
+        super.addEventListener(type, listener);
+      }
+    }
+    const uncreatedSocket = new ListenerTrackingSocket();
+    const webSocketFactory = vi.fn(() => uncreatedSocket);
+    const harness = createHarness({
+      scheduler: clock.scheduler,
+      webSocketFactory,
+      onStateChange: (state) => {
+        states.push(state);
+        if (state === 'connecting') activeTransport?.close();
+      },
+      onClosed,
+    });
+    activeTransport = harness.transport;
+
+    harness.transport.connect();
+    uncreatedSocket.open();
+    uncreatedSocket.message(JSON.stringify({
+      type: 'terminal.ready',
+      sessionId: SESSION_ID,
+    }));
+
+    expect(harness.transport.currentState).toBe('closed');
+    expect(states).toEqual(['connecting', 'closed']);
+    expect(webSocketFactory).not.toHaveBeenCalled();
+    expect(uncreatedSocket.binaryType).toBe('blob');
+    expect(uncreatedSocket.closes).toEqual([]);
+    expect(listenerTypes).toEqual([]);
+    expect(clock.pendingCount()).toBe(0);
+    expect(onClosed).toHaveBeenCalledOnce();
+    expect(onClosed).toHaveBeenCalledWith({ kind: 'client-close' });
+    expect(harness.onReady).not.toHaveBeenCalled();
+  });
+
+  it('stops stale socket ownership when factory closes synchronously', () => {
+    const clock = createManualScheduler();
+    const listenerTypes: string[] = [];
+    class ThrowingUnownedSocket extends FakeTerminalSocket {
+      override addEventListener(type: string, listener: (event: SocketEvent) => void): void {
+        listenerTypes.push(type);
+        super.addEventListener(type, listener);
+      }
+
+      override close(code?: number): void {
+        super.close(code);
+        throw new Error('unowned socket close failed');
+      }
+    }
+    const socket = new ThrowingUnownedSocket();
+    const onClosed = vi.fn();
+    const states: string[] = [];
+    let activeTransport: JobTerminalTransport | null = null;
+    const webSocketFactory = vi.fn(() => {
+      activeTransport?.close();
+      return socket;
+    });
+    const harness = createHarness({
+      scheduler: clock.scheduler,
+      webSocketFactory,
+      onStateChange: (state) => states.push(state),
+      onClosed,
+    });
+    activeTransport = harness.transport;
+
+    expect(() => harness.transport.connect()).not.toThrow();
+    socket.open();
+    socket.message(JSON.stringify({ type: 'terminal.ready', sessionId: SESSION_ID }));
+    socket.error();
+    socket.remoteClose(1011, 'late close');
+
+    expect(harness.transport.currentState).toBe('closed');
+    expect(states).toEqual(['connecting', 'closed']);
+    expect(webSocketFactory).toHaveBeenCalledOnce();
+    expect(socket.binaryType).toBe('arraybuffer');
+    expect(socket.closes).toEqual([{ code: 1000 }]);
+    expect(listenerTypes).toEqual([]);
+    expect(clock.pendingCount()).toBe(0);
+    expect(onClosed).toHaveBeenCalledOnce();
+    expect(onClosed).toHaveBeenCalledWith({ kind: 'client-close' });
+    expect(harness.onReady).not.toHaveBeenCalled();
+  });
+
   it('maps an HTTP origin to the fixed ws endpoint', () => {
     expect(buildJobTerminalWebSocketUrl(
       { protocol: 'http:', host: 'localhost:4173' },

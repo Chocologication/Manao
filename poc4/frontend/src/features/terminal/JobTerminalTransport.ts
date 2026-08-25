@@ -194,21 +194,31 @@ export class JobTerminalTransport {
     const generation = this.generation + 1;
     this.generation = generation;
     this.transition('connecting');
-    let socket: TerminalWebSocketPort;
+    if (!this.isConnectingGeneration(generation)) return;
+    let socket: TerminalWebSocketPort | null = null;
     try {
       socket = this.webSocketFactory(url);
       socket.binaryType = 'arraybuffer';
     } catch {
+      if (socket !== null) this.closeUnownedSocket(socket);
       this.finish({ kind: 'connection-error' });
       return;
     }
-    this.socket = socket;
+    if (!this.isConnectingGeneration(generation)) {
+      this.closeUnownedSocket(socket);
+      return;
+    }
     const listeners: TerminalSocketListeners = {
       open: () => this.handleOpen(generation, socket),
       message: (event) => this.handleMessage(generation, socket, event),
       error: () => this.handleError(generation, socket),
       close: (event) => this.handleClose(generation, socket, event),
     };
+    if (!this.isConnectingGeneration(generation)) {
+      this.closeUnownedSocket(socket);
+      return;
+    }
+    this.socket = socket;
     this.socketListeners = listeners;
     try {
       socket.addEventListener('open', listeners.open);
@@ -754,6 +764,18 @@ export class JobTerminalTransport {
 
   private isCurrent(generation: number, socket: TerminalWebSocketPort): boolean {
     return generation === this.generation && socket === this.socket;
+  }
+
+  private isConnectingGeneration(generation: number): boolean {
+    return generation === this.generation && this.state === 'connecting';
+  }
+
+  private closeUnownedSocket(socket: TerminalWebSocketPort): void {
+    try {
+      socket.close(1000);
+    } catch {
+      // The socket is not transport-owned, so local terminal state is already authoritative.
+    }
   }
 
   private setInputEnabled(enabled: boolean): void {
