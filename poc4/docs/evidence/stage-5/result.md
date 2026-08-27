@@ -30,6 +30,7 @@
 - 矩阵工作目录：`poc4/frontend`
 - 包管理器：pnpm `10.33.0`；browser commands 设置 `PLAYWRIGHT_HTML_OPEN=never`
 - 权威时间源：`.superpowers/sdd/2026-08-25-ensoai-stage-5-active-job-terminal-implementation-plan/matrix-09ded26-summary.json`；逐命令日志位于相邻 `matrix-09ded26-logs/`
+- 上述 `.superpowers` 矩阵日志与构建/测试缓存均为本地过程产物，已在合并前按用户要求清理；本报告保留已采集的摘要、计数和限制，不把这些缓存作为交付文件。
 - 下方完整绿色矩阵、final production rebuild 与 production scan 绑定历史 `09ded26`；`0c28ad7` 的最新矩阵结果及限制以本报告 Decision 段和 `matrix-0c28ad7-summary.json` 为准
 - 历史矩阵后的 49 张、最新矩阵后的 46 张 tracked PNG 均已精确恢复；README 未修改
 - EnsoAI 浏览器显示参考保持 `D:\DeepLearning\MyProjects\Enso_AI@5aa294a`；Stage 5 production 未复制 Electron IPC、`node-pty`、本机路径或旧 PTY 复用语义
