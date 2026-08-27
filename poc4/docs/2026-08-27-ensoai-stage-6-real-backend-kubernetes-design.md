@@ -2,11 +2,11 @@
 
 ## 1. 文档状态
 
-- 状态：设计已在对话中确认，本文待用户审阅
+- 状态：设计已在对话中确认，采用本机优先双 profile；本文修订待用户审阅
 - 日期：2026-08-27
 - 基线：`master@521b4ec`，阶段五 active-job terminal 已完成
 - 前端参考：`D:\DeepLearning\MyProjects\Enso_AI@5aa294a`
-- 本阶段结论目标：真实后端和真实集群链路可复核，但不把 mock 证据或单元测试写成生产级安全结论
+- 本阶段结论目标：先验证 6A 本机后端/本机数据库/本机前端经 SSH 隧道使用真实 Kubernetes 的链路，再验证 6B 同一后端以 Pod 部署；不把 mock 证据或单元测试写成生产级安全结论
 
 本文是阶段六的设计说明，不授权直接编码。用户审阅通过后，另行编写逐任务实施计划；实施必须在从阶段五基线创建的隔离工作树中进行。
 
@@ -14,14 +14,14 @@
 
 ### 2.1 目标
 
-在不破坏 POC4 已确认规则的前提下，交付并验证一个真实的 Spring Boot 后端：
+在不破坏 POC4 已确认规则的前提下，交付并验证一个真实的 Spring Boot 后端。阶段六按两个 profile 顺序执行：
 
-1. 后端以 Kubernetes `Deployment` 的单个 Pod 运行。
-2. 后端使用真实 JWT、MySQL、RWX PVC 和 Fabric8 Kubernetes Client。
-3. 浏览器通过阶段五已经实现的 REST/WebSocket 合同访问后端。
-4. 后端创建并管理 Maven Job，读取项目 PVC 中的源码，提供独立日志流和活动 Job PTY 终端。
-5. 后端重启、WebSocket 断开、Job/Pod 状态变化和短暂依赖故障不会产生双活 Run、可复用旧 terminal session 或错误解锁编辑器。
-6. 使用本机 Vite + SSH 隧道联调真实集群，不在本阶段部署前端静态 Pod 或 Ingress。
+1. **6A 本机集成 profile**：Spring Boot 后端、本机 MySQL 和 Vite 前端都运行在开发机；后端的 Fabric8 Client 通过 SSH 本地端口转发访问真实 Kubernetes API，真实创建/观察 Job、读取日志并建立 PTY。项目文件通过后端管理的 `kubectl port-forward` 访问集群内 workspace Service，最终仍落到真实 RWX PVC。
+2. **6B 集群部署 profile**：将同一后端构建产物以 Kubernetes `Deployment` 单 Pod 运行，切换到集群内 MySQL/Service，复用同一 REST/WebSocket 合同和状态语义，完成集群内后端验收。
+3. 两个 profile 都使用真实 JWT、MySQL、RWX PVC 和 Fabric8 Kubernetes Client；6A 与 6B 的数据库不是自动互相复制的故障转移对。
+4. 浏览器通过阶段五已经实现的 REST/WebSocket 合同访问后端；后端创建并管理 Maven Job，读取项目 PVC 中的源码，提供独立日志流和活动 Job PTY 终端。
+5. 本机进程/Pod 重启、WebSocket 断开、SSH 或 workspace port-forward 中断、Job/Pod 状态变化和短暂依赖故障不会产生双活 Run、可复用旧 terminal session 或错误解锁编辑器。
+6. 本阶段不部署前端静态 Pod 或 Ingress。6A 是首次真实部署入口，6B 是阶段六结束前必须完成的后端 Pod 部署验证。
 
 ### 2.2 权威事实分层
 
@@ -40,6 +40,7 @@
 ### 3.1 包含
 
 - `poc4/backend` Spring Boot 模块化单体。
+- 6A 本机 profile：本机 Spring Boot + 本机 MySQL + 本机 Vite；6B 集群 profile：同一后端镜像 + 集群 MySQL/Service。
 - JWT 登录、用户所有权检查、统一 HTTP 错误包。
 - MySQL Flyway migration、项目/Run/日志/ticket/terminal/audit 持久化。
 - 通过内部 workspace API 操作 RWX PVC 上的文件树、内容、保存、创建、重命名、删除和 revision 校验。
@@ -48,8 +49,8 @@
 - 当前活动 Maven Job 应用容器的 Fabric8 `pods/exec` PTY。
 - 一次性日志/终端 ticket、单 live terminal session、resize、二进制输入输出、credit/ack 和关闭销毁。
 - 结构化 terminal audit 的后端产生、分页、事务 settlement 和七天清理。
-- 后端 Deployment、内部 workspace Pod/Service 模板、ServiceAccount、namespace 级 Role/RoleBinding、Service、Secret/ConfigMap 引用、探针和镜像构建。
-- 本机 Vite 经 SSH 隧道访问集群后端的真实浏览器 E2E。
+- 后端 Deployment、内部 workspace Pod/Service 模板、6A 本机 kubeconfig/RBAC 接入、6B ServiceAccount、namespace 级 Role/RoleBinding、Service、Secret/ConfigMap 引用、探针和镜像构建。
+- 6A 本机 Vite 直连本机后端，并经 SSH API 隧道和 workspace port-forward 使用真实集群；6B 本机 Vite 经后端 Service port-forward 访问集群后端的真实浏览器 E2E。
 - MySQL、Fabric8 mock/集成测试和受控 Kubernetes 集群验收。
 
 ### 3.2 明确不包含
@@ -72,27 +73,28 @@
     v
 本机 Vite dev server
     |
-    | SSH 隧道 + kubectl port-forward
+    | 6A：Vite proxy -> 127.0.0.1:18080 -> 本机 Spring Boot
+    | 6B：Vite proxy -> 127.0.0.1:18080 -> backend Service port-forward
     v
-127.0.0.1:18080 -> backend Service:8080
-    |
-    v
-backend Deployment（replicas=1，Spring Boot Pod）
+后端业务边界（6A 本机进程；6B backend Deployment，replicas=1）
     |-- Spring Security JWT / owner authorization
     |-- REST controllers + WebSocket handlers
     |-- MySQL datasource + Flyway
+    |       |-- 6A：本机 MySQL
+    |       `-- 6B：集群 MySQL Service
     |-- workspace Pod/Service coordinator
     |-- Fabric8 Kubernetes Client
+    |       |-- 6A：SSH API tunnel -> Kubernetes API
+    |       |-- 6B：集群内 Kubernetes API
     |       |-- Maven Job / Pod watch
     |       |-- Pod log follow
     |       `-- selected application-container exec PTY
-    |
-    |-- MySQL Service
-    |-- workspace ClusterIP Service -> workspace Pod -> RWX PVC（项目文件正文）
+    |-- 6A：workspace port-forward -> workspace ClusterIP Service
+    |-- 6B：workspace ClusterIP Service -> workspace Pod -> RWX PVC（项目文件正文）
     `-- Maven Job Pod -> same project PVC（受控读写、/tmp 可写、无 K8s API）
 ```
 
-后端固定为单副本，因为阶段六的目标是先证明状态和终端生命周期正确。Deployment 扩容不是本阶段能力；任何需要第二副本的发现都必须在 Stage 6 报告中记录为后续工作，而不能静默改变锁语义。
+6A 的本机后端不以 Pod 形式运行，但必须使用与 6B 相同的 namespace、标签、资源身份校验和业务合同。6B 后端固定为单副本，因为阶段六的目标是先证明状态和终端生命周期正确。Deployment 扩容不是本阶段能力；任何需要第二副本的发现都必须在 Stage 6 报告中记录为后续工作，而不能静默改变锁语义。
 
 ### 4.1 后端模块
 
@@ -127,6 +129,8 @@ workspace Pod 只监听 namespace 内部 ClusterIP，不提供外部入口。后
 - Flyway，migration 从空 MySQL schema 可重复执行。
 - Fabric8 Kubernetes Client 7.7.0，与现有 POC1/P2 基线一致；POC1/POC2 代码只作为 API 参考，不直接复用旧业务协议。
 - 前端继续使用现有锁定依赖和 `pnpm`；阶段六不新增或升级 xterm 包。
+- 6A 使用 Spring profile `local-cluster`：本机 MySQL、外部化 JWT/内部 capability 配置，以及指向 SSH 本地转发端口的 Fabric8 kubeconfig；6B 使用 `cluster` profile：集群内 MySQL、Secret 和后端 ServiceAccount。
+- 6A 与 6B 的配置文件不提交凭据；仅提交 `.example` 配置和可审计的启动检查，真实路径、token、密钥和端口通过本机环境注入。
 
 Spring Boot Actuator 提供 liveness/readiness health groups。Kubernetes 探针分别使用 `/actuator/health/liveness` 和 `/actuator/health/readiness`；liveness 不因 MySQL 或 Kubernetes API 临时故障触发重启，readiness 在关键依赖不可用时摘除 Service 流量。健康响应不得包含连接串、资源名或堆栈。
 
@@ -291,7 +295,16 @@ wrapper 事件至少包含 `sessionId`、命令文本、开始时间、结束时
 
 ## 8. Kubernetes 部署与安全边界
 
-### 8.1 后端 Deployment
+### 8.0 两种后端运行 profile
+
+| profile | 后端进程 | 业务数据库 | Kubernetes API | workspace API | 证据含义 |
+|---|---|---|---|---|---|
+| `local-cluster`（6A） | 本机 Spring Boot 进程 | 本机 MySQL | Fabric8 经 SSH 本地端口转发访问真实 API Server | 后端管理的 `kubectl port-forward` 到项目 workspace Service | 真实 Kubernetes/Job/PTY，开发机安全边界 |
+| `cluster`（6B） | Kubernetes Deployment 单 Pod | 集群 MySQL Service | Pod 内 Fabric8 使用 ServiceAccount | 直接访问 namespace 内部 workspace Service | 集群内后端部署和权限证据 |
+
+6A 不是 mock：Job、Pod、PVC、日志和 PTY 都是真实集群资源。但 6A 的本机进程权限、SSH 凭据、本机 MySQL 和 port-forward 子进程不具备 6B 的 Pod 安全边界。6A 完成后才能进入 6B；6A 单独不能写成阶段六最终完成。
+
+### 8.1 6B 后端 Deployment
 
 - `replicas: 1`，配套 ClusterIP Service。
 - 使用专用后端 ServiceAccount，不使用 `default`。
@@ -303,9 +316,18 @@ wrapper 事件至少包含 `sessionId`、命令文本、开始时间、结束时
 - 通过 startupProbe 避免冷启动误判；liveness 只判断进程不可恢复失活；readiness 反映数据库和 Kubernetes 客户端是否可用。
 - 日志默认只输出 requestId、业务状态和脱敏错误，不输出 JWT、ticket 原文、密码、PVC 绝对路径或资源内部引用。
 
+### 8.1A 6A 本机后端身份和进程边界
+
+- 本机 Spring Boot 使用独立的 `local-cluster` profile 和专用 kubeconfig context；kubeconfig 路径只通过 `KUBECONFIG` 或外部配置提供，不复制到仓库。
+- 该 kubeconfig 的 Kubernetes 用户身份必须绑定与 6B 后端 ServiceAccount 等价的 namespace Role；执行前用 `kubectl auth can-i` 逐项检查，不使用集群管理员身份。
+- SSH 隧道只转发 Kubernetes API Server，必须保留 kubeconfig 的 CA/证书校验；禁止 `insecure-skip-tls-verify`、关闭 hostname 校验或把 API token 放进命令行历史。
+- 本机后端不得直接读取集群 Secret；JWT、MySQL 密码和内部 capability 根密钥通过本机受控环境变量或未跟踪 Secret 文件提供。
+- 本机 workspace bridge 只能启动服务端派生的 `kubectl -n $env:MANAO_TEST_NAMESPACE port-forward service/$env:MANAO_WORKSPACE_SERVICE 127.0.0.1:$env:MANAO_WORKSPACE_LOCAL_PORT:$env:MANAO_WORKSPACE_SERVICE_PORT`，绑定 `127.0.0.1`，监控子进程退出并在后端停止时清理；浏览器不能提交 Service 名或本地端口。
+- 本机后端退出或崩溃时，所有本地 port-forward 和 PTY ownership 都视为失效；旧 terminal session 必须 settlement 为 `INTERRUPTED`，不自动恢复。
+
 ### 8.2 最小 namespace Role
 
-后端 ServiceAccount 只在目标 namespace 绑定 Role：
+6B 后端 ServiceAccount 只在目标 namespace 绑定 Role；6A 本机 kubeconfig 用户必须绑定同等权限的 RoleBinding：
 
 | 资源 | verbs | 用途 |
 |---|---|---|
@@ -315,9 +337,10 @@ wrapper 事件至少包含 `sessionId`、命令文本、开始时间、结束时
 | `persistentvolumeclaims` | `get/list/create/delete` | 创建/回收每项目 RWX PVC |
 | `pods/log` | `get` | 日志 follow/replay |
 | `pods/exec` | `create` | 对已确认应用容器建立 PTY |
+| `pods/portforward` | `create` | 仅 6A workspace bridge；6B 不使用 |
 | `events` | `get/list/watch` | 失败诊断 |
 
-不得授予 `secrets`、`nodes`、`persistentvolumes`、集群级资源或其他 namespace 权限。后端 Deployment 和 workspace Pod 通过已存在 Secret 的 `envFrom` 引用共享内部 API 根密钥，后端不读取 Secret 内容。后端创建 workspace Pod/PVC/Service 时只能使用服务端生成的名称和模板。若实现需要额外权限，必须先更新设计、说明用途并新增越权测试，不能在集群中临时放宽。
+不得授予 `secrets`、`nodes`、`persistentvolumes`、集群级资源或其他 namespace 权限。`pods/portforward` 只授予 6A 本机后端为服务端派生的 workspace Service 建立 loopback bridge；6B 后端在集群内直接访问 workspace Service，不需要该权限。后端 Deployment 和 workspace Pod 通过已存在 Secret 的 `envFrom` 引用共享内部 API 根密钥，后端不读取 Secret 内容。后端创建 workspace Pod/PVC/Service 时只能使用服务端生成的名称和模板。若实现需要额外权限，必须先更新设计、说明用途并新增越权测试，不能在集群中临时放宽。
 
 Job 使用无 RBAC ServiceAccount 并设置 `automountServiceAccountToken: false`。后端通过 Deployment 环境注入 Secret，不通过 Kubernetes API 读取 Secret。
 
@@ -334,14 +357,17 @@ Job 使用无 RBAC ServiceAccount 并设置 `automountServiceAccountToken: false
 
 ## 9. 本机联调与 SSH 隧道
 
-阶段六不部署前端。真实浏览器仍运行本机 Vite，所有 API 使用相对 `/api/v1/*` 路径；Vite 开发代理把 HTTP 和 WebSocket 转发到本机端口 `18080`。SSH 隧道或 `kubectl port-forward` 将 `127.0.0.1:18080` 映射到后端 Service，例如：
+阶段六不部署前端。真实浏览器始终运行本机 Vite，所有 API 使用相对 `/api/v1/*` 路径；Vite 开发代理把 HTTP 和 WebSocket 转发到本机端口 `18080`。6A 和 6B 的后端入口不同，不能用同一条 port-forward 命令描述两者：
+
+- **6A 本机集成路径**：浏览器 -> 本机 Vite -> 本机 Spring Boot `127.0.0.1:18080`；本机后端使用本机 MySQL。Fabric8 的 kubeconfig `server` 指向 SSH 本地端口转发后的 Kubernetes API 地址，SSH 只转发 API Server 并保留 CA/证书和主机名校验。本机后端再按服务端派生的 Service 名称启动 workspace bridge：`kubectl -n $env:MANAO_TEST_NAMESPACE port-forward service/$env:MANAO_WORKSPACE_SERVICE 127.0.0.1:$env:MANAO_WORKSPACE_LOCAL_PORT:$env:MANAO_WORKSPACE_SERVICE_PORT`。该 bridge 由后端监控和清理，浏览器不能提交 Service 名或端口。
+- **6B 集群部署路径**：后端以 Deployment Pod 运行，Fabric8 直接访问集群内 Kubernetes API、集群 MySQL 和 workspace Service。浏览器仍通过本机 Vite；仅用一次受控 `kubectl port-forward` 将后端 Service 映射到本机 `18080`：
 
 ```powershell
 $MANAO_NAMESPACE = $env:MANAO_TEST_NAMESPACE
-kubectl -n $MANAO_NAMESPACE port-forward svc/manao-poc4-backend 18080:8080
+kubectl -n $MANAO_NAMESPACE port-forward service/manao-poc4-backend 18080:8080
 ```
 
-实际 Namespace、集群地址、SSH 参数、镜像 digest 和 Secret 值只在本机受控环境提供，不写入 Git、前端 bundle、截图或报告。Vite 代理不改变浏览器看到的同源 WebSocket URL，因此阶段五的 ticket-only 和 JWT 隔离规则保持不变。
+实际 Namespace、集群地址、SSH 参数、API 本地端口、workspace Service 名称和端口、镜像 digest 以及 Secret 值只在本机受控环境提供，不写入 Git、前端 bundle、截图或报告。Vite 代理不改变浏览器看到的同源 WebSocket URL，因此阶段五的 ticket-only 和 JWT 隔离规则保持不变。
 
 ## 10. 恢复、故障与并发语义
 
@@ -362,7 +388,9 @@ kubectl -n $MANAO_NAMESPACE port-forward svc/manao-poc4-backend 18080:8080
 - MySQL 短暂不可用：readiness 失败，停止新 Run/ticket/session；不重复提交已有 Job。
 - Kubernetes API 短暂不可用：保留数据库锁并进入恢复观察；不将未确认状态直接改成终态。
 - Pod 被重建或调度到另一节点：重新通过 ownerReference/标签查找唯一 Job Pod；旧 PTY 不迁移，用户显式创建新 session。
-- SSH 隧道短断只影响浏览器连接；后端 Run 和日志事实继续由集群内服务维护。
+- **6A SSH API 隧道断开**：本机后端不能创建或确认新的 Job/Pod/PTY，也不能把未确认的 Kubernetes 状态改成终态；保留数据库 Run 锁并进入 `RECOVERING`/依赖不可用状态，隧道恢复并重新完成身份确认后才能继续。已存在的集群资源不因浏览器重试而重复创建。
+- **6A workspace port-forward 断开**：workspace 文件 API 暂时不可用；禁止绕过 bridge 直接读 PVC、直接访问 Pod 或接受浏览器提交的替代 Service/端口。后端报告固定依赖错误，恢复原 bridge 后再重试。
+- **6B 后端 Service port-forward 断开**：只影响本机浏览器到集群后端的访问；集群内后端继续维护 Run、Job、日志和终端事实，浏览器重连后按既有 ticket/session 失效规则处理，不自动复用旧 PTY。
 
 ## 11. 测试与证据分层
 
@@ -399,7 +427,11 @@ kubectl -n $MANAO_NAMESPACE port-forward svc/manao-poc4-backend 18080:8080
 
 ### 11.4 真实浏览器与真实集群 E2E
 
-关闭 MSW，使用本机 Vite 代理和 SSH 隧道，沿用阶段五 Playwright 流程覆盖：
+关闭 MSW，使用本机 Vite 代理，按 6A -> 6B 的顺序执行两轮真实 E2E；每轮单独记录 profile、后端运行位置、数据库位置、Kubernetes API 入口和 port-forward 进程，不得把两轮证据混写。
+
+**6A 本机集成 E2E**：启动本机 Spring Boot、本机 MySQL、SSH API 隧道和由后端管理的 workspace port-forward，确认 Fabric8 经 API 隧道访问真实集群，并覆盖以下流程：
+
+**6B 集群部署 E2E**：使用与 6A 相同的后端构建产物和配置合同，将后端部署为单 Pod Deployment，使用集群 MySQL、集群内 Kubernetes API 和 workspace Service；本机只为浏览器访问后端 Service 建立 loopback port-forward，再重复以下流程：
 
 1. 真实登录和 token 过期；
 2. 项目创建、PVC 文件树、保存、revision 冲突和运行期锁；
@@ -409,7 +441,7 @@ kubectl -n $MANAO_NAMESPACE port-forward svc/manao-poc4-backend 18080:8080
 6. structured audit 分页、settlement、七天清理和三通道 marker 隔离；
 7. Alice/Bob 越权、伪造/过期/重复 ticket、资源标识和 Secret 泄漏探测。
 
-所有真实集群证据必须记录 Git SHA、镜像 digest、migration 版本、脱敏 Kubernetes 资源快照、后端日志摘要、HTTP/WS 结果、截图和失败/豁免状态。测试报告必须区分 `PASS`、`WAIVED_BY_USER`、`SKIPPED` 和 `FAILED`。
+6A 还必须单独证明本机 MySQL migration、SSH API 隧道重连、workspace bridge 生命周期和本机后端退出清理；6B 还必须单独证明 Deployment/ServiceAccount/Secret/探针/RBAC 和 Pod 重启恢复。所有真实集群证据必须记录 Git SHA、镜像 digest、migration 版本、脱敏 Kubernetes 资源快照、后端日志摘要、HTTP/WS 结果、截图和失败/豁免状态。测试报告必须区分 `PASS`、`WAIVED_BY_USER`、`SKIPPED` 和 `FAILED`。
 
 ### 11.5 压力与故障测试
 
@@ -419,17 +451,17 @@ kubectl -n $MANAO_NAMESPACE port-forward svc/manao-poc4-backend 18080:8080
 
 ## 12. 阶段六退出门
 
-阶段六只有以下条件全部满足才能写成 `READY_FOR_STAGE_7_PLAN` 或最终完成结论；任一关键门失败则写成 `STAGE_6_REMEDIATION_REQUIRED`：
+阶段六只有 6A 和 6B 两轮都满足以下条件，才能写成 `READY_FOR_STAGE_7_PLAN` 或最终完成结论；仅 6A 通过只能写成“真实集群本机集成通过，待 6B 部署验证”，不能提前结束阶段六。任一关键门失败则写成 `STAGE_6_REMEDIATION_REQUIRED`：
 
-1. `poc4/backend` 可重复构建；Flyway 可从空库升级，Java 单元和集成测试通过。
-2. 后端 Deployment 在真实集群 Ready；Secret 注入、liveness/readiness、Service 和 Vite/SSH 联调通过。
+1. `poc4/backend` 可重复构建；Flyway 在 6A 本机 MySQL 和 6B 集群 MySQL 上均可从空库升级，Java 单元和集成测试通过。
+2. 6A 本机后端通过 SSH API 隧道和 workspace bridge 完成联调；6B 同一构建产物的后端 Deployment 在真实集群 Ready，Secret 注入、liveness/readiness、Service 和 Vite 联调通过。
 3. JWT、owner 隔离、历史/non-RUNNING Run 拒绝、严格请求白名单和脱敏错误包在真实后端通过。
 4. PVC 文件树、读写、revision 冲突、相对路径/symlink 拒绝和 20/50 MiB 限制在真实 PVC 通过。
 5. 每次 Start 只产生一个受策略约束的 Job；日志、Stop、超时、失败、清理和 DB/Kubernetes 最终一致通过。
 6. 日志 replay/live、5 MiB 保留、断线恢复和后端重启恢复通过，并与 PTY 完全隔离。
 7. terminal ticket 单次消费、真实 Job 应用容器 `pods/exec`、Unicode/二进制、resize、credit/ack、Close 和断线销毁通过。
 8. terminal audit 的 wrapper/后端来源、事务、分页、退出归因、七天清理和重启恢复通过；没有前端按键 tokenizer。
-9. 后端 Pod 重启、MySQL 短断、WebSocket/SSH 短断、Job Pod 重建和跨节点调度不产生双活 Run 或可复用旧 session。
+9. 6A 本机后端退出/重启、MySQL 短断、WebSocket/SSH/workspace bridge 短断，以及 6B 后端 Pod 重启、MySQL 短断、WebSocket、Job Pod 重建和跨节点调度，都不产生双活 Run 或可复用旧 session。
 10. RBAC 越权、跨用户访问、伪造/过期/重复 ticket、资源标识泄漏和 Secret 泄漏探测通过。
 11. 真实链路压力满足阶段五协议上限：输出字节守恒、未确认窗口不超过 256 KiB、输入队列溢出 fail closed、resize 去重，并有实际指标。
 12. 证据包可复核：Git SHA、镜像 digest、migration、manifest、命令日志、脱敏响应/frame、截图和失败/豁免清单齐全。
@@ -463,8 +495,10 @@ kubectl -n $MANAO_NAMESPACE port-forward svc/manao-poc4-backend 18080:8080
 ## 15. 决策摘要
 
 1. 采用“模块化 Spring Boot 单体 + 单副本 Deployment + namespace 级最小 RBAC”的方案。
-2. 前端继续本机 Vite，通过 SSH 隧道和 `kubectl port-forward` 访问集群后端，不把前端部署复杂度混入本阶段。
-3. MySQL 是业务状态和审计权威，RWX PVC 是文件正文权威，Kubernetes 是 Job/Pod 执行事实权威。
-4. 终端 ticket、PTY、日志和 audit 都是独立通道；旧 terminal session 永不自动恢复。
-5. POC1/POC2 只提供 Fabric8 API 参考；不复制其无 POC4 owner/ticket/状态机边界的实现。
-6. 阶段六完成的最小可信结论是“当前受控集群中的真实后端合同已验证”；不是生产级多副本、高安全沙箱或跨集群 SLA。
+2. 6A 是首次真实集成入口：本机 Vite、本机 Spring Boot、本机 MySQL，通过 SSH API 隧道和后端管理的 workspace port-forward 使用真实 Kubernetes、Job、PVC 和 PTY。
+3. 6B 是最终部署验证：把与 6A 相同的后端构建产物部署为集群单 Pod，使用集群 MySQL、集群内 API 和 workspace Service；只有 6A、6B 都通过，阶段六才算完成。
+4. 本机开发环境不等于生产安全边界；6A 的本机权限、SSH 凭据、Secret 管理和 port-forward 生命周期必须单独记录，不能以 6A 证据替代 6B Pod 安全证据。
+5. MySQL 是业务状态和审计权威，RWX PVC 是文件正文权威，Kubernetes 是 Job/Pod 执行事实权威。
+6. 终端 ticket、PTY、日志和 audit 都是独立通道；旧 terminal session 永不自动恢复。
+7. POC1/POC2 只提供 Fabric8 API 参考；不复制其无 POC4 owner/ticket/状态机边界的实现。
+8. 阶段六完成的最小可信结论是“当前受控集群中的真实后端合同已验证”；不是生产级多副本、高安全沙箱或跨集群 SLA。
