@@ -115,9 +115,9 @@ poc4/backend/src/main/java/com/manao/poc4/
 
 Controller 只负责认证上下文、输入解析和响应映射。它不能直接调用 Fabric8、拼接 PVC 路径或写 MySQL 状态。所有跨模块操作通过服务接口和显式事务完成。`workspace` 服务只调用内部 workspace API；后端 Deployment 不挂载项目 PVC。
 
-workspace Pod 只监听 namespace 内部 ClusterIP，不提供外部入口。后端到 workspace API 的每个请求携带服务端生成的项目 capability：项目不透明 ID、请求时间、随机 nonce 和 HMAC 签名；workspace Pod 校验签名、时间窗口、nonce 重放和 capability 中的项目范围，再执行路径策略。浏览器永远不能生成或看到该 capability。
+workspace Pod 只监听 namespace 内部 ClusterIP，不提供外部入口。后端到 workspace API 的每个请求携带 `X-Manao-Workspace-Capability`：`v1.<projectId>.<issuedAtEpochMs>.<nonceBase64Url>.<signatureBase64Url>`。签名算法固定为 Ed25519，签名输入为 `v1\\n<HTTP-method>\\n<request-path-and-query>\\n<SHA-256(request-body)>\\n<projectId>\\n<issuedAtEpochMs>\\n<nonceBase64Url>`；后端持有环境级私钥，workspace-agent 只注入公钥和自己的服务端项目 ID。agent 拒绝缺失/格式错误/项目不匹配/签名错误的 capability，允许的时钟偏差为 +/-60 秒，nonce 使用有界缓存保存 120 秒并拒绝重放。每次请求使用新的 128-bit CSPRNG nonce；私钥按 6A/6B 环境隔离并从受控 Secret 注入，绝不写入日志或浏览器。浏览器永远不能生成或看到该 capability。
 
-项目创建顺序固定为：先在 MySQL 写入 `CREATING`，再创建项目专属 RWX PVC、workspace Pod 和 ClusterIP Service，等待 workspace Pod Ready 后调用内部 API 写入 Java 17/Maven 模板，最后将项目置为 `READY`。任一步骤失败，项目置为 `FAILED` 并记录脱敏原因；只删除本次创建且未被其他 Run 引用的资源，不提供用户侧项目删除入口。
+项目创建顺序固定为：先在 MySQL 写入 `CREATING`，再创建项目专属 RWX PVC；随后用一次性 initializer Pod 以 PVC 根挂载创建服务端派生的项目目录、设置固定 UID/GID 和 `fsGroup`，等待 initializer `Succeeded` 后删除它；只有目录存在且权限检查通过，才创建带 `subPath` 的 workspace Pod 和 ClusterIP Service，等待 workspace Pod Ready 后调用内部 API 写入 Java 17/Maven 模板，最后将项目置为 `READY`。任一步骤失败，项目置为 `FAILED` 并记录脱敏原因；只删除本次创建且带有本项目标签、未被其他 Run 引用的资源，不提供用户侧项目删除入口。后端启动时扫描超时的 `CREATING` 项目：若资源身份完整且模板已写入则补偿为 `READY`，否则按同一标签执行幂等清理并置为 `FAILED`；`CREATING` 状态禁止文件、Run 和 terminal 操作。
 
 ### 4.2 技术基线
 
@@ -143,12 +143,14 @@ Spring Boot Actuator 提供 liveness/readiness health groups。Kubernetes 探针
 | 表 | 关键字段 | 约束/用途 |
 |---|---|---|
 | `app_user` | `id`, `username`, `password_hash`, `enabled`, `created_at` | `username` 唯一；不存明文密码 |
-| `project` | `id`, `owner_id`, `name`, `state`, `workspace_revision`, `created_at`, `updated_at`, `failure_reason` | 每次查询带 `owner_id`；每用户最多 3 个项目 |
+| `project` | `id`, `owner_id`, `name`, `state`, `workspace_revision`, `created_at`, `updated_at`, `failure_reason` | `state` 仅为 `CREATING/READY/FAILED`；每次查询带 `owner_id`；每用户最多 3 个项目；失败原因使用有限枚举，`WORKSPACE_RECONCILIATION_REQUIRED` 不与 state 拼接 |
+| `workspace_operation` | `id`, `project_id`, `expected_revision`, `before_sha256`, `after_sha256`, `receipt_path`, `state`, `created_at`, `committed_at` | 文件写入两阶段凭据；`receipt_path` 只能是 agent 项目根下的固定相对路径，禁止绝对路径；`PENDING` 操作阻止新的写入，重启时与 agent receipt 对账 |
 | `run` | `id`, `project_id`, `requested_revision`, `state`, `policy_json`, `job_ref`, `pod_ref`, `started_at`, `finished_at`, `exit_code`, `termination_reason`, `version` | locking state 单项目唯一；保存策略快照 |
 | `run_log_chunk` | `run_id`, `seq`, `text_utf8`, `byte_length`, `created_at` | `(run_id, seq)` 唯一；总窗口不超过 5 MiB |
 | `log_ticket` | `ticket_hash`, `user_id`, `project_id`, `run_id`, `expires_at`, `consumed_at` | 哈希存储；单次消费 |
 | `terminal_session` | `id`, `project_id`, `run_id`, `user_id`, `state`, `ticket_hash`, `expires_at`, `consumed_at`, `pod_ref`, `container_ref`, `started_at`, `finished_at`, `exit_code`, `close_reason`, `version` | 单 Run 单 live session；资源引用只在服务端 |
-| `terminal_audit` | `id`, `session_id`, `project_id`, `run_id`, `user_id`, `command`, `state`, `started_at`, `finished_at`, `exit_code` | 结构化审计；不存 PTY 输出 |
+| `terminal_audit` | `id`, `session_id`, `project_id`, `run_id`, `user_id`, `command`, `state`, `started_at`, `finished_at`, `exit_code`, `sensitive_detected`, `trust_level` | 结构化审计；不存 PTY 输出；命令敏感字段先遮蔽，可信度明确记录 |
+| `instance_lease` | `id`, `holder_id`, `fencing_token`, `expires_at` | 单后端 authority；恢复/watch/清理/写操作必须携带当前 fencing token |
 
 `job_ref`、`pod_ref`、`container_ref` 可以作为后端恢复所需的内部引用，但任何 DTO、错误、日志、HTML、截图或 WebSocket frame 都不得返回它们。资源引用必须由后端标签、ownerReference、固定容器名和数据库 Run 记录交叉确认后才能使用。
 
@@ -217,7 +219,7 @@ POST   /api/v1/projects/{projectId}/runs/{runId}/terminal-sessions
 
 - 只接受项目内相对路径；拒绝绝对路径、`..`、空路径误用和符号链接逃逸。
 - workspace Pod 在 `/workspace/{derived-project-directory}` 下进行规范化，并对最终 real path 做根目录校验；后端只传项目范围相对路径和内部 capability header。
-- 写入采用临时文件、`fsync` 和原子 rename，再递增 `workspace_revision`。
+- `workspace_revision` 是 MySQL 唯一业务权威；agent 不维护可授权的本地 revision，只返回 `operationId`、写入前后 SHA-256 和原子写 receipt。保存先在 MySQL 写入 `workspace_operation(PENDING)`，agent 在 PVC 上以临时文件、`fsync`、原子 rename 和同卷 receipt 完成写入，再由后端以版本条件事务把操作置为 `COMMITTED` 并递增 `workspace_revision`。数据库不可用时保留 `PENDING`，启动恢复按 receipt 重试提交；receipt 缺失、前后摘要不匹配或 revision 已被其他操作占用时，将项目置为 `state=FAILED, failure_reason=WORKSPACE_RECONCILIATION_REQUIRED`，阻止写入和 Run，不猜测覆盖或静默回滚。Run/PTY 开始前记录可编辑源文件清单摘要，结束后重新读取；该清单固定排除 Maven 生成的 `target/**` 和服务端明确声明的临时目录，避免正常构建产物制造假冲突。若 Job/PTY 在没有 `workspace_operation` 的情况下改动清单内文件，不自动递增 revision，置为同一 reconciliation failure 并要求显式 reload。
 - 普通代码和 Markdown 小于等于 20 MiB；20--50 MiB Markdown 只能纯文本；二进制、超限正文和不支持编码返回元信息或固定错误。
 - `RUNNING`、`STARTING`、`STOPPING`、`RECOVERING` 时文件写入返回 `409 PROJECT_LOCKED`。
 - 后端不能接受浏览器提供的 PVC 名、Pod 名、Job 名或绝对路径。
@@ -238,9 +240,11 @@ Job 固定约束：
 - Java 17、Maven 3.9。
 - `restartPolicy: Never`、`backoffLimit: 0`、`activeDeadlineSeconds: 1800`。
 - CPU 不超过 8 cores，内存不超过 16 GiB，ephemeral storage 不超过 10 GiB。
-- 项目 PVC 的对应 `subPath` 以受控读写方式挂载到 `/workspace`，`workingDir=/workspace`；Maven 产物和临时文件优先写 `/tmp`，但活动 Job/PTY 对 PVC 的副作用是本 POC 已接受并必须在验收中记录的风险。
+- 项目 PVC 容量固定为 10 GiB，StorageClass 必须提供 `ReadWriteMany`；对应 `subPath` 以受控读写方式挂载到 `/workspace`，`workingDir=/workspace`；该目录必须由前置 initializer Pod 根挂载创建并通过 UID/GID/`fsGroup` 检查后才能被 Job/Pod 使用。Maven 产物和临时文件优先写 `/tmp`，但活动 Job/PTY 对 PVC 的副作用是本 POC 已接受并必须在验收中记录的风险。
 - `/tmp` 使用独立 `emptyDir`，设置 `TMPDIR=/tmp`、`HOME=/tmp`。
 - Job 使用 `automountServiceAccountToken: false` 的无 RBAC ServiceAccount。
+
+Maven Job 的应用容器使用包含 JDK 17、Maven 3.9、Bash 和固定 wrapper 的不可变镜像；PID 1 直接执行参数数组 `mvn clean test`，不经过用户可控 shell。PTY 不是 Job entrypoint、sidecar 或 wrapper 替代品，而是对同一 `Running` 应用容器建立的独立 `pods/exec` 子进程：exec 启动固定路径的 root-owned、0555 `manao-pty-wrapper`，wrapper 再启动交互 Bash。Maven PID 1 的退出决定 Job 事实；PTY shell 的输入不能改变固定 Maven 命令，但对 PVC 的写入仍记录为 POC 风险。
 
 ### 6.4 错误语义
 
@@ -269,7 +273,7 @@ WebSocket 继续采用阶段五 close code：`4401` 未认证、`4409` 已有 li
 
 ### 6.5 日志 WebSocket
 
-日志 ticket 通过带 Bearer 的 HTTP 请求取得，约 30 秒有效、单次消费并绑定 user/project/run。WebSocket 只使用同源 `/api/v1/ws/run-logs?ticket=...`；握手后客户端提交 `lastSeq`，后端先补发持久化缺口，再进入 live 推送。日志通道独立于 terminal，断线不能解锁 Run。
+日志 ticket 通过带 Bearer 的 HTTP 请求取得，约 30 秒有效、单次消费并绑定 user/project/run。WebSocket 只使用同源 `/api/v1/ws/run-logs?ticket=...`；握手后客户端提交非负 `lastSeq`，后端先补发 `seq > lastSeq` 的持久化缺口，再进入 live 推送。每个 Run 的 seq 由 MySQL 条件写入保证单调唯一；重连从客户端 lastSeq 与服务端 `firstAvailableSeq` 比较，若游标早于窗口则先发送固定 `LOG_GAP` marker，再从 `firstAvailableSeq` 继续，重复 seq 丢弃，断线不能解锁 Run。
 
 ### 6.6 Terminal WebSocket
 
@@ -283,15 +287,15 @@ WebSocket 继续采用阶段五 close code：`4401` 未认证、`4409` 已有 li
 4. 将 PTY 二进制输入/输出和阶段五 control frame 双向桥接。
 5. 在 socket close、Run 离开 `RUNNING`、Pod/container 退出或后端 authority teardown 时关闭 exec 并 settlement；旧 session 不恢复。
 
-服务端输出 frame 不超过 32 KiB，初始 credit 为 256 KiB；客户端仅在 xterm `write` callback 完成后 ACK 并返还等量 credit。服务端必须维护未确认窗口，不能用 xterm 内部 discard watermark 代替应用流控。输入分帧不超过 16 KiB，客户端 bufferedAmount 高低水位和服务端 pause/resume 规则保持阶段五合同。
+服务端输出 frame 不超过 32 KiB，初始 credit 为 256 KiB；客户端仅在 xterm `write` callback 完成后 ACK 并返还等量 credit。服务端必须维护未确认窗口，不能用 xterm 内部 discard watermark 代替应用流控。重复或不增加的 ACK 忽略，超过 outstanding 的 ACK 关闭 `4409`，credit 总量不得超过 256 KiB；输入分帧不超过 16 KiB，服务端输入队列上限固定为 64 KiB，队列满时暂停读取，持续 5 秒仍未下降则以 `4410` fail closed。resize 仅接受 1..500 列、1..200 行，按单调 generation 去重，旧 generation 丢弃。客户端 bufferedAmount 高低水位和服务端 pause/resume 规则保持阶段五合同。
 
 ## 7. 命令审计设计
 
 浏览器按键流不具备可靠命令边界：退格、补全、多行输入、信号和交互式程序都会使前端推断失真。因此前端只渲染后端结构化审计，不执行 tokenizer、不从 PTY output 追加 audit。
 
-真实后端统一使用服务器拥有的 PTY wrapper 作为审计来源。wrapper 启动固定的 Bash shell，注入受控 shell integration hook，在命令开始/结束、信号和 shell exit 时通过独立的 session-bound audit ingress 发送结构化事件；事件绝不写入 PTY stdout。无法可靠识别的输入必须记录为不可归因的非成功 settlement，不能伪造为命令。
+真实后端统一使用服务器拥有的 PTY wrapper 作为审计来源。wrapper 启动固定的 Bash shell，注入 root-owned、0555 的 shell integration hook；wrapper 通过同一容器内随机命名、0600 的 audit FIFO 写入结构化事件，后端为该 session 建立独立的非 PTY `pods/exec` `cat` 消费流。FIFO/审计流绝不合并到 PTY stdout，6A 和 6B 使用相同传输，不依赖后端从本机可达。每个 session 使用后端生成的 256-bit CSPRNG MAC key，wrapper 通过 exec 建立时的受控 stdin 一次性读取，不导出到 shell 环境；事件签名算法固定为 HMAC-SHA-256，签名输入为 canonical JSON。后端拒绝错误 nonce/MAC、重复/倒序事件和不匹配的 session。shell 用户可运行任意命令，因此审计可信度限定为“服务器 wrapper transport verified”，不能宣称恶意代码隔离；无法可靠识别的输入必须记录为不可归因的非成功 settlement，不能伪造为命令。
 
-wrapper 事件至少包含 `sessionId`、命令文本、开始时间、结束时间、退出码和 settlement 状态。后端必须拒绝错误 session nonce、重复事件、倒序时间和与 terminal session 不一致的事件。无法可靠识别的输入不能被伪造为命令；应以明确的非成功状态记录并保留原因。实现和真实集群验收必须覆盖退格、补全、多行、交互程序、Ctrl-C、shell exit 和命令退出归因。
+wrapper 事件至少包含 `sessionId`、命令文本、开始时间、结束时间、退出码和 settlement 状态。命令文本入库前按固定规则遮蔽 `--password`、`--token`、`Authorization`、环境变量凭据赋值和 URL 用户凭据，另存 `sensitiveDetected`；原始命令不写应用日志。无法可靠识别的输入不能被伪造为命令；应以明确的非成功状态记录并保留原因。实现和真实集群验收必须覆盖退格、补全、多行、交互程序、Ctrl-C、shell exit 和命令退出归因。
 
 ## 8. Kubernetes 部署与安全边界
 
@@ -306,13 +310,13 @@ wrapper 事件至少包含 `sessionId`、命令文本、开始时间、结束时
 
 ### 8.1 6B 后端 Deployment
 
-- `replicas: 1`，配套 ClusterIP Service。
+- `replicas: 1`，配套 ClusterIP Service，Deployment strategy 固定为 `Recreate`，并设置 `revisionHistoryLimit: 2`；启动时仍必须取得数据库 instance lease，所有恢复/watch/清理和写操作带 fencing token。这样即使旧 Pod 处于 Terminating，也不会有两个实例同时拥有业务 authority。
 - 使用专用后端 ServiceAccount，不使用 `default`。
 - `runAsNonRoot: true`、`allowPrivilegeEscalation: false`、丢弃 capabilities、RuntimeDefault seccomp。
 - 根文件系统只读；`/tmp` 使用 `emptyDir`。
 - 后端 Deployment 不挂载项目 PVC；项目文件只经内部 workspace Service 访问。不挂载 kubeconfig。
 - 每个 workspace Pod 只挂载其项目的 RWX PVC `subPath`，只监听 ClusterIP 内部地址；workspace Pod 使用专用 ServiceAccount 并设置 `automountServiceAccountToken: false`。
-- 数据库 URL、用户名、密码、JWT 签名密钥、内部 wrapper nonce 配置来自 Kubernetes Secret 或受控环境注入。
+- 数据库 URL、用户名、密码、JWT 签名密钥、capability 私钥和 wrapper MAC 根密钥来自 Kubernetes Secret 或受控环境注入；workspace-agent 只接收其项目的公开验证密钥、项目 ID 和服务端模板环境变量。
 - 通过 startupProbe 避免冷启动误判；liveness 只判断进程不可恢复失活；readiness 反映数据库和 Kubernetes 客户端是否可用。
 - 日志默认只输出 requestId、业务状态和脱敏错误，不输出 JWT、ticket 原文、密码、PVC 绝对路径或资源内部引用。
 
@@ -322,7 +326,8 @@ wrapper 事件至少包含 `sessionId`、命令文本、开始时间、结束时
 - 该 kubeconfig 的 Kubernetes 用户身份必须绑定与 6B 后端 ServiceAccount 等价的 namespace Role；执行前用 `kubectl auth can-i` 逐项检查，不使用集群管理员身份。
 - SSH 隧道只转发 Kubernetes API Server，必须保留 kubeconfig 的 CA/证书校验；禁止 `insecure-skip-tls-verify`、关闭 hostname 校验或把 API token 放进命令行历史。
 - 本机后端不得直接读取集群 Secret；JWT、MySQL 密码和内部 capability 根密钥通过本机受控环境变量或未跟踪 Secret 文件提供。
-- 本机 workspace bridge 只能启动服务端派生的 `kubectl -n $env:MANAO_TEST_NAMESPACE port-forward service/$env:MANAO_WORKSPACE_SERVICE 127.0.0.1:$env:MANAO_WORKSPACE_LOCAL_PORT:$env:MANAO_WORKSPACE_SERVICE_PORT`，绑定 `127.0.0.1`，监控子进程退出并在后端停止时清理；浏览器不能提交 Service 名或本地端口。
+- SSH API 隧道使用临时 kubeconfig：`server` 指向 `https://127.0.0.1:<localApiPort>`，但 cluster entry 必须显式设置 `tls-server-name: <certificate-SAN>`；该 SAN 必须由隧道目标 API 证书实际提供。6A 启动前同时用 `kubectl` 和 Fabric8 `/version` 预检 CA、client cert/token、TLS server name、namespace Role 和 API health；缺少 SAN、出现 `insecure-skip-tls-verify` 或仅修改 URL 绕过校验均阻断。API SSH forward 与 workspace bridge 使用不同本地端口。
+- 本机 workspace bridge 按项目动态管理：服务端从数据库/固定派生规则得到 namespace、Service 名和 service port，为每个 project 分配受控 loopback 端口范围中的空闲端口，维护 `projectId -> process/localPort` 映射和引用计数；一个项目一个 port-forward，可并发多个项目，不接受浏览器提交的 Service 名或端口。进程退出即标记依赖不可用并重建原映射，项目失败清理或 backend shutdown 时杀死子进程并释放端口；单一 `MANAO_WORKSPACE_SERVICE` 配置不再存在。
 - 本机后端退出或崩溃时，所有本地 port-forward 和 PTY ownership 都视为失效；旧 terminal session 必须 settlement 为 `INTERRUPTED`，不自动恢复。
 
 ### 8.2 最小 namespace Role
@@ -340,7 +345,7 @@ wrapper 事件至少包含 `sessionId`、命令文本、开始时间、结束时
 | `pods/portforward` | `create` | 仅 6A workspace bridge；6B 不使用 |
 | `events` | `get/list/watch` | 失败诊断 |
 
-不得授予 `secrets`、`nodes`、`persistentvolumes`、集群级资源或其他 namespace 权限。`pods/portforward` 只授予 6A 本机后端为服务端派生的 workspace Service 建立 loopback bridge；6B 后端在集群内直接访问 workspace Service，不需要该权限。后端 Deployment 和 workspace Pod 通过已存在 Secret 的 `envFrom` 引用共享内部 API 根密钥，后端不读取 Secret 内容。后端创建 workspace Pod/PVC/Service 时只能使用服务端生成的名称和模板。若实现需要额外权限，必须先更新设计、说明用途并新增越权测试，不能在集群中临时放宽。
+不得授予 `secrets`、`nodes`、`persistentvolumes`、集群级资源或其他 namespace 权限。`pods/portforward` 只授予 6A 本机后端为服务端派生的 workspace Service 建立 loopback bridge；6B 后端在集群内直接访问 workspace Service，不需要该权限。后端 Deployment 的敏感配置由部署时 Secret 以环境变量注入；workspace Pod 不读取 Secret，而是由后端在创建 Pod 时注入该项目的公开 Ed25519 验证密钥、项目 ID 和固定 agent 配置。后端创建 workspace Pod/PVC/Service 时只能使用服务端生成的名称和模板。若实现需要额外权限，必须先更新设计、说明用途并新增越权测试，不能在集群中临时放宽。
 
 Job 使用无 RBAC ServiceAccount 并设置 `automountServiceAccountToken: false`。后端通过 Deployment 环境注入 Secret，不通过 Kubernetes API 读取 Secret。
 
@@ -355,11 +360,17 @@ Job 使用无 RBAC ServiceAccount 并设置 `automountServiceAccountToken: false
 
 任一检查不一致即停止创建或 attach，记录 `RECOVERY_FAILED`/`PTY_EXEC_FAILED`，不尝试“猜一个相近资源”。
 
+### 8.4 真实集群实施前置条件
+
+进入 6A 决策门前必须由测试操作者记录以下可验证事实：一次性测试 namespace 已存在且仅承载本轮带 `stage6-test=true` 标签的资源，ResourceQuota/LimitRange 能容纳至少三个项目 PVC、每项目 initializer/workspace Pod 以及一个 Maven Job；存在已绑定的 `ReadWriteMany` StorageClass，项目 PVC 容量固定为 10 GiB；至少两个可调度节点可挂载同一 PVC，并在固定 UID/GID 与 `fsGroup` 下完成写入、跨节点读取和原子 rename；backend、workspace-agent 和 Maven 镜像可从受控 registry 以 immutable digest 拉取，必要的 imagePullSecret 已由部署环境提供；Maven 镜像包含 Java 17、Maven 3.9、Bash、root-owned wrapper 和 shell hook，且依赖可访问或已配置批准的内部 Maven mirror；6A/6B MySQL 均能从空库运行 Flyway；故障测试 `stage6-operator` 的临时 namespace Role 已独立提供。
+
+上述任何一项无法验证都将对应证据标为 `SKIPPED` 或 `FAILED` 并阻断对应阶段。禁止以 `hostPath`、浮动镜像 tag、root 运行、关闭 TLS 校验、集群管理员 kubeconfig、扩大后端 Role 或把 Maven 命令改成用户 shell 作为替代方案。
+
 ## 9. 本机联调与 SSH 隧道
 
 阶段六不部署前端。真实浏览器始终运行本机 Vite，所有 API 使用相对 `/api/v1/*` 路径；Vite 开发代理把 HTTP 和 WebSocket 转发到本机端口 `18080`。6A 和 6B 的后端入口不同，不能用同一条 port-forward 命令描述两者：
 
-- **6A 本机集成路径**：浏览器 -> 本机 Vite -> 本机 Spring Boot `127.0.0.1:18080`；本机后端使用本机 MySQL。Fabric8 的 kubeconfig `server` 指向 SSH 本地端口转发后的 Kubernetes API 地址，SSH 只转发 API Server 并保留 CA/证书和主机名校验。本机后端再按服务端派生的 Service 名称启动 workspace bridge：`kubectl -n $env:MANAO_TEST_NAMESPACE port-forward service/$env:MANAO_WORKSPACE_SERVICE 127.0.0.1:$env:MANAO_WORKSPACE_LOCAL_PORT:$env:MANAO_WORKSPACE_SERVICE_PORT`。该 bridge 由后端监控和清理，浏览器不能提交 Service 名或端口。
+- **6A 本机集成路径**：浏览器 -> 本机 Vite -> 本机 Spring Boot `127.0.0.1:18080`；本机后端使用本机 MySQL。Fabric8 的 kubeconfig `server` 指向 SSH 本地端口转发后的 Kubernetes API 地址，SSH 只转发 API Server 并保留 CA/证书和主机名校验。本机后端按数据库中的服务端派生 project Service 名称为每个项目动态分配受控 loopback 端口，并启动对应 workspace bridge；一个项目一个 port-forward，可并发多个项目，浏览器不能提交 Service 名或端口。该 bridge 由后端监控、重建和清理。
 - **6B 集群部署路径**：后端以 Deployment Pod 运行，Fabric8 直接访问集群内 Kubernetes API、集群 MySQL 和 workspace Service。浏览器仍通过本机 Vite；仅用一次受控 `kubectl port-forward` 将后端 Service 映射到本机 `18080`：
 
 ```powershell
@@ -380,6 +391,12 @@ kubectl -n $MANAO_NAMESPACE port-forward service/manao-poc4-backend 18080:8080
 - 找不到、重复或身份不一致：关闭相关 terminal reservation，Run 进入 `FAILED` 且终止原因 `RECOVERY_FAILED`，释放编辑锁前先完成 workspace reload。
 
 恢复不能自动恢复旧 PTY；所有旧 terminal session 进入 `INTERRUPTED`，用户必须显式 Open 取得新的 ticket/session。
+
+项目恢复独立于 Run 恢复：启动时扫描 `CREATING` 项目，超过 10 分钟仍未完成的项目进入一次性 reconciliation。若 PVC、initializer、workspace Pod 和 Service 的服务端标签/ownerReference 均唯一且模板文件 receipt 可验证，则补偿写入 `READY`；若缺资源、重复资源、权限/目录校验失败或 receipt 不一致，则只删除本项目本次创建且带匹配标签的资源，置为 `state=FAILED` 并记录有限的 `failure_reason`，不删除其他项目资源。`CREATING` 或 `state=FAILED` 且 `failure_reason=WORKSPACE_RECONCILIATION_REQUIRED` 的项目禁止文件、Run、ticket 和 terminal 操作。
+
+`RESERVED` terminal session 的 ticket TTL 固定为 30 秒。定时任务每 10 秒以数据库时间执行 `state=RESERVED AND expires_at<=now()` 的条件更新为 `EXPIRED`；启动恢复先执行同一扫描，再开放新的 reservation。WebSocket 握手成功后原子变更为 `LIVE`，任何旧 reservation 不得阻塞新的 session；`LIVE` 只允许幂等 settlement 为 `CLOSED/INTERRUPTED/FAILED`。
+
+workspace 写入恢复遵循 `workspace_operation`：未完成 `PENDING` 操作逐项查询 agent receipt。receipt 与 expected revision/前后摘要一致则重试条件提交；receipt 缺失或不一致则把项目置为 `state=FAILED`、`failure_reason=WORKSPACE_RECONCILIATION_REQUIRED` 并保留现场，禁止自动覆盖、回滚或接受新的写入。该规则覆盖后端重启、数据库短断和 agent 重启。
 
 ### 10.2 断线和状态竞态
 
@@ -406,7 +423,7 @@ kubectl -n $MANAO_NAMESPACE port-forward service/manao-poc4-backend 18080:8080
 
 ### 11.2 Spring 与 MySQL 集成测试
 
-使用隔离 MySQL schema 或一次性 MySQL 测试实例执行 Flyway，并通过 MockMvc/WebSocket client 验证：
+使用隔离 MySQL schema 或一次性 MySQL 测试实例执行 Flyway，并通过 MockMvc/WebSocket client 验证。测试固定创建 `alice`、`bob` 两个密码哈希用户；每轮使用唯一的 `manao_stage6_<runId>` schema 或一次性实例，结束后由测试操作者清理测试用户、schema、PVC、workspace Pod/Service、Job/Pod 和 terminal/log/audit 数据；完成 Job/Pod 默认保留 7 天，证据采集后才允许清理：
 
 - Alice/Bob owner 隔离、401/403/404 语义。
 - 严格请求字段白名单和错误包脱敏。
@@ -445,7 +462,7 @@ kubectl -n $MANAO_NAMESPACE port-forward service/manao-poc4-backend 18080:8080
 
 ### 11.5 压力与故障测试
 
-真实链路重复阶段五的关键压力：至少 8 MiB PTY 输出、32 KiB 输出帧、256 KiB credit、16 KiB 输入帧、有界输入队列和 100+ resize；记录实际吞吐、最大 outstanding、bufferedAmount、断线时延、错误计数和终端响应时间。另行执行后端 Pod 重启、MySQL 短断、WebSocket/SSH 短断、Job Pod 重建和跨节点调度。
+真实链路重复阶段五的关键压力：至少 8 MiB PTY 输出、32 KiB 输出帧、256 KiB credit、16 KiB 输入帧、有界输入队列和 100+ resize；记录实际吞吐、最大 outstanding、bufferedAmount、断线时延、错误计数和终端响应时间。另行执行后端 Pod 重启、MySQL 短断、WebSocket/SSH 短断、Job Pod 重建和跨节点调度。故障注入由独立 `stage6-operator` 测试身份执行，该身份仅绑定一次性测试 namespace 的 Role，允许 `get/list/watch/delete` 测试 namespace 内 Pod、`get/list/watch` Job，并允许读取脱敏状态；Kubernetes RBAC 本身不按 label 限制 delete，因此 fault runner 必须先拒绝所有不带固定 `stage6-test=true` 标签的目标，一次性 namespace 用后销毁。后端 ServiceAccount、6A kubeconfig 用户和普通 Alice/Bob 均不得拥有这些权限。MySQL 网络中断由该操作者在受控进程/防火墙层注入。每次故障操作记录操作者身份、开始/结束时间、目标的不可逆哈希和结果，不把该身份凭据写入仓库或证据。
 
 阶段五的两个用户豁免项（stale Alice terminal 401 竞态、完整键盘工作流）不能被历史 mock 结果替代。阶段六若执行它们，必须产生新的真实后端证据；否则继续标记 `WAIVED_BY_USER`。
 
