@@ -1,0 +1,11 @@
+ALTER TABLE project ADD CONSTRAINT uq_project_owner_name UNIQUE (owner_id, name);
+ALTER TABLE run ADD COLUMN active_run_marker TINYINT GENERATED ALWAYS AS (CASE WHEN state IN ('STARTING', 'RUNNING', 'STOPPING', 'RECOVERING') THEN 1 ELSE NULL END) STORED;
+CREATE UNIQUE INDEX uq_run_project_active ON run (project_id, active_run_marker);
+CREATE UNIQUE INDEX uq_terminal_run_active ON terminal_session (run_id, active_terminal_marker);
+CREATE UNIQUE INDEX uq_workspace_project_pending ON workspace_operation (project_id, pending_marker);
+CREATE INDEX ix_project_owner_updated ON project (owner_id, updated_at, id);
+CREATE INDEX ix_run_project_updated ON run (project_id, updated_at, id);
+CREATE INDEX ix_run_log_chunk_created ON run_log_chunk (run_id, created_at);
+CREATE INDEX ix_log_ticket_expiry ON log_ticket (expires_at, consumed_at);
+CREATE INDEX ix_terminal_session_project_state ON terminal_session (project_id, state, expires_at);
+CREATE INDEX ix_terminal_audit_run_started ON terminal_audit (run_id, started_at, id);
