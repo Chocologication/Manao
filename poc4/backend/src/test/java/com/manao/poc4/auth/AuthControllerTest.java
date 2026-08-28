@@ -55,4 +55,10 @@ class AuthControllerTest {
         assertThatThrownBy(() -> new ObjectMapper().readValue("{\"username\":\"alice\",\"password\":\"x\",\"token\":\"leak\"}", AuthController.LoginRequest.class))
             .isInstanceOf(Exception.class);
     }
+
+    @Test
+    void jwtRejectsUserIdsThatWouldBreakCompactJson() {
+        JwtService jwt = new JwtService("a".repeat(32), Duration.ofMinutes(15));
+        assertThatThrownBy(() -> jwt.issue("user\"\\path")).isInstanceOf(IllegalArgumentException.class);
+    }
 }

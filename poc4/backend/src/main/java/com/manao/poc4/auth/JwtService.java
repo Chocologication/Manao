@@ -19,7 +19,7 @@ public final class JwtService {
     }
 
     public IssuedToken issue(String userId) {
-        if (userId == null || userId.isBlank() || userId.length() > 64) throw new IllegalArgumentException("user identity required");
+        if (userId == null || !userId.matches("[A-Za-z0-9_-]{1,64}")) throw new IllegalArgumentException("user identity required");
         Instant expires = Instant.now().plus(lifetime);
         String header = b64("{\"alg\":\"HS256\",\"typ\":\"JWT\"}");
         String payload = b64("{\"sub\":\"" + escape(userId) + "\",\"exp\":" + expires.getEpochSecond() + "}");

@@ -22,6 +22,13 @@ class ProjectAuthorizationTest {
         assertThat(service.get("alice", id)).isPresent();
     }
 
+    @Test
+    void publicViewDoesNotExposeArbitraryFailureReason() {
+        ProjectController controller = new ProjectController(new ProjectService(new FakeStore()));
+        var view = controller.getViewForTest(new ProjectService.Project("id", "alice", "demo", "FAILED", Instant.parse("2026-01-01T00:00:00Z"), "path=/workspace/secret"));
+        assertThat(view.failureReason()).isNull();
+    }
+
     private static final class FakeStore implements ProjectService.Store {
         private final List<ProjectService.Project> projects = new ArrayList<>();
         public List<ProjectService.Project> listForOwner(String ownerId) { return projects.stream().filter(p -> p.ownerId().equals(ownerId)).toList(); }

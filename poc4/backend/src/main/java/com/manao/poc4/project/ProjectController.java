@@ -46,8 +46,12 @@ public final class ProjectController {
     }
 
     private static ProjectView view(ProjectService.Project project) {
-        return new ProjectView(project.id(), project.name(), project.state(), project.createdAt().toString(), project.failureReason());
+        String reason = "WORKSPACE_RECONCILIATION_REQUIRED".equals(project.failureReason())
+            ? project.failureReason() : null;
+        return new ProjectView(project.id(), project.name(), project.state(), project.createdAt().toString(), reason);
     }
+
+    static ProjectView getViewForTest(ProjectService.Project project) { return view(project); }
 
     public record ProjectView(String id, String name, String state, String createdAt, String failureReason) {}
     public record ProjectListResponse(List<ProjectView> items, int limit) {}

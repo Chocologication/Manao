@@ -74,3 +74,30 @@ Result: `BUILD SUCCESS`; Surefire reports show 34 tests total across the module,
 - Project creation currently records the service clock (`Instant.now`) rather than the repository's injectable `DatabaseClock`; the existing persistence layer remains authoritative for database writes and later tasks should unify this clock if deterministic service-level timestamps are required.
 - The Spring bean is deliberately conditional on a datasource so profile-only health/configuration tests can boot without credentials; real datasource-backed startup still fails when `MANAO_JWT_SECRET` is absent or shorter than 32 characters.
 - No Kubernetes Deployment, Secret, Role, or 6B resource was created or modified.
+
+## Review repair round 1
+
+### RED
+
+Added regression coverage before repair for path/token/requestId message leakage, opaque unique trace IDs, public `failureReason` filtering, JWT user IDs containing JSON delimiters, missing-secret startup, forbidden error handling, and HTTP serialization. The first repair-focused run failed exactly on the five missing behaviors (message/path leak, `unknown` trace ID, raw failure reason, special user ID acceptance, and startup condition coverage). A subsequent MockMvc fixture run first failed because the nested probe controller was not registered; switching to standalone MockMvc corrected the fixture and preserved the HTTP contract assertion.
+
+### GREEN
+
+`ApiError` now accepts only UUID-shaped trace IDs and generates a fresh UUID for null, blank, or arbitrary values. Error messages reject sensitive identifiers, path-shaped values, control characters, and internal resource vocabulary. `ProjectController` exposes only the finite `WORKSPACE_RECONCILIATION_REQUIRED` failure reason. `SecurityConfig` emits the same three-field `ApiError` for both 401 and 403 via authentication and access-denied handlers. `JwtService.issue` validates opaque IDs against `[A-Za-z0-9_-]{1,64}` before constructing JSON. A narrowly scoped backend-auth condition validates the JWT secret in contexts without a DataSource while allowing explicit DataSource-excluded profile-only health/configuration tests to boot.
+
+Repair focused suite:
+
+```text
+AuthControllerTest:          5 tests, 0 failures, 0 errors
+ProjectAuthorizationTest:   2 tests, 0 failures, 0 errors
+ErrorSanitizationTest:      5 tests, 0 failures, 0 errors
+SecurityConfigTest:          1 test,  0 failures, 0 errors
+HttpErrorContractTest:       1 test,  0 failures, 0 errors
+```
+
+`HttpErrorContractTest` uses standalone MockMvc and parses the actual JSON response, asserting exactly `code`, `message`, and `traceId` plus UUID-shaped correlation. The full module suite then passed with `41` tests, `0` failures, `0` errors, and `0` skipped against the existing real-MySQL persistence setup. `git diff --check` remained clean; changed files are UTF-8 without BOM and LF-only.
+
+### Repair concerns
+
+- The access-denied path is covered by the handler contract test and explicit Spring Security configuration; a full authenticated integration request remains deferred to the later end-to-end security stage.
+- The startup condition treats an explicit `spring.autoconfigure.exclude` of `DataSourceAutoConfiguration` as a profile-only test mode. Production profiles must not exclude datasource auto-configuration and therefore fail closed when `MANAO_JWT_SECRET` is absent.
