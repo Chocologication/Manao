@@ -1,0 +1,14 @@
+spring:
+  config:
+    activate:
+      on-profile: cluster
+  datasource:
+    url: ${MANAO_DB_URL:jdbc:mysql://mysql:3306/manao_poc4}
+    username: ${MANAO_DB_USERNAME:manao}
+    password: ${MANAO_DB_PASSWORD:}
+manao:
+  poc4:
+    backend:
+      profile: cluster
+      kubernetes:
+        master-url: ${MANAO_K8S_MASTER_URL:}
