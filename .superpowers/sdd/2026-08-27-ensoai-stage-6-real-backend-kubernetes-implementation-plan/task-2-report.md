@@ -38,11 +38,11 @@ All three exited 0. New task files were checked as UTF-8 without BOM and LF-only
 ## Real MySQL MCP evidence
 
 - MySQL MCP reported `VERSION() = 8.0.43`, authenticated as `root@localhost`.
-- Created the isolated schema `manao_poc4_task2_test`; it contained all nine expected tables after executing the migration-equivalent statements.
+- Created the isolated schemas `manao_poc4_task2_test` and `manao_poc4_test`; the credentialed JDBC/Flyway suite uses `manao_poc4_test`, and the MCP checks confirmed the required tables and indexes.
 - `information_schema` confirmed `uq_run_project_active(project_id, active_run_marker)`, `uq_terminal_run_active(run_id, active_terminal_marker)`, and `uq_workspace_project_pending(project_id, pending_marker)`.
 - Actual duplicate insert checks were rejected by MySQL: duplicate username (`app_user.uq_app_user_username`) and a second active Run (`run.uq_run_project_active`).
 
-The MCP executor cannot select the new schema with a multi-statement `USE`; therefore each validation statement was schema-qualified. It validates MySQL 8.0 DDL/constraints, but it does not replace the blocked JDBC/Flyway test run.
+The MCP executor cannot select the new schema with a multi-statement `USE`; therefore each validation statement was schema-qualified. It validates MySQL 8.0 DDL/constraints; the subsequent credentialed JDBC/Flyway run is the authoritative integration evidence.
 
 ## Files changed
 
@@ -50,6 +50,7 @@ The MCP executor cannot select the new schema with a multi-statement `USE`; ther
 - `poc4/backend/src/main/resources/application.yml`
 - `poc4/backend/src/main/resources/db/migration/V1__initial_schema.sql`
 - `poc4/backend/src/main/resources/db/migration/V2__indexes_and_constraints.sql`
+- `poc4/backend/src/main/resources/db/migration/V3__workspace_digest_integrity.sql`
 - `poc4/backend/src/main/java/com/manao/poc4/persistence/DatabaseClock.java`
 - `poc4/backend/src/main/java/com/manao/poc4/persistence/RunState.java`
 - `poc4/backend/src/main/java/com/manao/poc4/persistence/TerminalSessionState.java`
@@ -102,6 +103,8 @@ The repair adds strict future-expiry validation to lease acquire/renew, preserve
 ```
 
 Against `jdbc:mysql://127.0.0.1:3306/manao_poc4_test` with the same injected credentials, Flyway reported MySQL 8.0, schema version `3`, and all three versioned migrations in `Success` state (`1 initial schema`, `2 indexes and constraints`, `3 workspace digest integrity`).
+
+The subsequent full module `mvn -q test` run (with `MANAO_DB_URL` unset so existing configuration assertions retain their defaults, and only root username/password injected) exited `0`; all existing configuration/health tests and the 12 persistence tests passed.
 
 ### Repair files
 
