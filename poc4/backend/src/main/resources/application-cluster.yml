@@ -11,4 +11,11 @@ manao:
     backend:
       profile: cluster
       kubernetes:
-        master-url: ${MANAO_K8S_MASTER_URL:}
+        master-url: ""
+        in-cluster: true
+        service-account: true
+        kubeconfig-file: ""
+        api-server-host: ${KUBERNETES_SERVICE_HOST:}
+        api-server-port: ${KUBERNETES_SERVICE_PORT_HTTPS:0}
+        service-account-token-file: /var/run/secrets/kubernetes.io/serviceaccount/token
+        service-account-ca-certificate-file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
