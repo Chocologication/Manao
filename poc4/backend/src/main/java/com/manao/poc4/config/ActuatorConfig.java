@@ -70,9 +70,8 @@ public class ActuatorConfig {
     @Bean
     @ConditionalOnWebApplication
     SecurityFilterChain healthEndpointSecurity(HttpSecurity http) throws Exception {
-        return http.authorizeHttpRequests(authorize -> authorize
-                .requestMatchers("/actuator/health/**").permitAll()
-                .anyRequest().authenticated())
+        return http.securityMatcher("/actuator/health/**")
+            .authorizeHttpRequests(authorize -> authorize.anyRequest().permitAll())
             .csrf(csrf -> csrf.disable())
             .build();
     }
