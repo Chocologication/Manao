@@ -16,6 +16,7 @@ public final class InstanceLeaseRepository {
     }
 
     public Long acquire(String holderId, Instant expiresAt) {
+        requireFutureExpiry(expiresAt);
         try {
             connection.setAutoCommit(false);
             Long currentToken = null;
@@ -54,6 +55,7 @@ public final class InstanceLeaseRepository {
     }
 
     public boolean renew(String holderId, long fencingToken, Instant expiresAt) {
+        requireFutureExpiry(expiresAt);
         try (var update = connection.prepareStatement("UPDATE instance_lease SET expires_at = ? WHERE id = ? AND holder_id = ? AND fencing_token = ? AND expires_at > ?")) {
             update.setTimestamp(1, Timestamp.from(expiresAt)); update.setString(2, LEASE_ID); update.setString(3, holderId); update.setLong(4, fencingToken); update.setTimestamp(5, Timestamp.from(clock.now()));
             return update.executeUpdate() == 1;
@@ -64,4 +66,10 @@ public final class InstanceLeaseRepository {
 
     private void rollback() { try { connection.rollback(); } catch (SQLException ignored) { } }
     private void restoreAutoCommit() { try { connection.setAutoCommit(true); } catch (SQLException ignored) { } }
+
+    private void requireFutureExpiry(Instant expiresAt) {
+        if (expiresAt == null || !expiresAt.isAfter(clock.now())) {
+            throw new IllegalArgumentException("lease expiry must be strictly in the future");
+        }
+    }
 }

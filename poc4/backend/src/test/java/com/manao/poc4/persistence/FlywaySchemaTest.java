@@ -16,6 +16,7 @@ import org.junit.jupiter.api.Test;
 
 class FlywaySchemaTest {
     private Connection connection;
+    private static final Instant TEST_NOW = Instant.parse("2026-01-01T00:00:00Z");
 
     @BeforeEach
     void migrateEmptySchema() throws Exception {
@@ -68,9 +69,9 @@ class FlywaySchemaTest {
              var ticket = connection.prepareStatement("INSERT INTO log_ticket(ticket_hash, user_id, project_id, run_id, expires_at) VALUES ('hash1', ?, ?, ?, ?)");
              var session = connection.prepareStatement("INSERT INTO terminal_session(id, project_id, run_id, user_id, state, ticket_hash, expires_at, version) VALUES (?, ?, ?, ?, 'LIVE', 'hash1', ?, 0)")) {
             chunk.setString(1, runId); chunk.executeUpdate(); assertThatThrownBy(chunk::executeUpdate).isInstanceOf(SQLException.class);
-            ticket.setString(1, userId); ticket.setString(2, projectId); ticket.setString(3, runId); ticket.setObject(4, Instant.now().plus(Duration.ofMinutes(1))); ticket.executeUpdate();
+            ticket.setString(1, userId); ticket.setString(2, projectId); ticket.setString(3, runId); ticket.setObject(4, TEST_NOW.plus(Duration.ofMinutes(1))); ticket.executeUpdate();
             assertThatThrownBy(ticket::executeUpdate).isInstanceOf(SQLException.class);
-            session.setString(1, UUID.randomUUID().toString()); session.setString(2, projectId); session.setString(3, runId); session.setString(4, userId); session.setObject(5, Instant.now().plus(Duration.ofMinutes(1))); session.executeUpdate();
+            session.setString(1, UUID.randomUUID().toString()); session.setString(2, projectId); session.setString(3, runId); session.setString(4, userId); session.setObject(5, TEST_NOW.plus(Duration.ofMinutes(1))); session.executeUpdate();
             session.setString(1, UUID.randomUUID().toString()); assertThatThrownBy(session::executeUpdate).isInstanceOf(SQLException.class);
         }
     }
@@ -81,12 +82,46 @@ class FlywaySchemaTest {
         String projectId = UUID.randomUUID().toString();
         try (var user = connection.prepareStatement("INSERT INTO app_user(id, username, password_hash) VALUES (?, ?, 'hash')");
              var project = connection.prepareStatement("INSERT INTO project(id, owner_id, name, state, workspace_revision) VALUES (?, ?, 'p', 'READY', 0)");
-             var operation = connection.prepareStatement("INSERT INTO workspace_operation(id, project_id, expected_revision, before_sha256, after_sha256, receipt_path, state) VALUES (?, ?, 0, ?, ?, ?, 'PENDING')")) {
+             var operation = connection.prepareStatement("INSERT INTO workspace_operation(id, project_id, expected_revision, before_sha256, after_sha256, receipt_path, receipt_sha256, state) VALUES (?, ?, 0, ?, ?, ?, ?, 'PENDING')")) {
             user.setString(1, userId); user.setString(2, "owner-" + userId); user.executeUpdate();
             project.setString(1, projectId); project.setString(2, userId); project.executeUpdate();
-            operation.setString(1, UUID.randomUUID().toString()); operation.setString(2, projectId); operation.setString(3, "a".repeat(64)); operation.setString(4, "b".repeat(64)); operation.setString(5, "receipts/a"); operation.executeUpdate();
-            operation.setString(1, UUID.randomUUID().toString()); operation.setString(5, "receipts/b");
+            operation.setString(1, UUID.randomUUID().toString()); operation.setString(2, projectId); operation.setString(3, "a".repeat(64)); operation.setString(4, "b".repeat(64)); operation.setString(5, "receipts/a"); operation.setString(6, "c".repeat(64)); operation.executeUpdate();
+            operation.setString(1, UUID.randomUUID().toString()); operation.setString(5, "receipts/b"); operation.setString(6, "d".repeat(64));
             assertThatThrownBy(operation::executeUpdate).isInstanceOf(SQLException.class);
+        }
+    }
+
+    @Test
+    void schemaRejectsNonCanonicalWorkspaceDigests() throws Exception {
+        String userId = UUID.randomUUID().toString();
+        String projectId = UUID.randomUUID().toString();
+        try (var user = connection.prepareStatement("INSERT INTO app_user(id, username, password_hash) VALUES (?, ?, 'hash')");
+             var project = connection.prepareStatement("INSERT INTO project(id, owner_id, name, state, workspace_revision) VALUES (?, ?, 'digest', 'READY', 0)");
+             var operation = connection.prepareStatement("INSERT INTO workspace_operation(id, project_id, expected_revision, before_sha256, after_sha256, receipt_path, receipt_sha256, state) VALUES (?, ?, 0, ?, ?, 'receipts/digest', ?, 'PENDING')")) {
+            user.setString(1, userId); user.setString(2, "digest-owner-" + userId); user.executeUpdate();
+            project.setString(1, projectId); project.setString(2, userId); project.executeUpdate();
+            operation.setString(1, UUID.randomUUID().toString()); operation.setString(2, projectId); operation.setString(3, "NOT-A-SHA"); operation.setString(4, "b".repeat(64)); operation.setString(5, "c".repeat(64));
+            assertThatThrownBy(operation::executeUpdate).isInstanceOf(SQLException.class);
+            operation.setString(1, UUID.randomUUID().toString()); operation.setString(3, "A".repeat(64)); operation.setString(4, "b".repeat(64)); operation.setString(5, "c".repeat(64));
+            assertThatThrownBy(operation::executeUpdate).isInstanceOf(SQLException.class);
+        }
+    }
+
+    @Test
+    void schemaPreventsWorkspaceDigestMutationAfterCreation() throws Exception {
+        String userId = UUID.randomUUID().toString();
+        String projectId = UUID.randomUUID().toString();
+        String operationId = UUID.randomUUID().toString();
+        try (var user = connection.prepareStatement("INSERT INTO app_user(id, username, password_hash) VALUES (?, ?, 'hash')");
+             var project = connection.prepareStatement("INSERT INTO project(id, owner_id, name, state, workspace_revision) VALUES (?, ?, 'immutable', 'READY', 0)");
+             var operation = connection.prepareStatement("INSERT INTO workspace_operation(id, project_id, expected_revision, before_sha256, after_sha256, receipt_path, receipt_sha256, state) VALUES (?, ?, 0, ?, ?, 'receipts/immutable', ?, 'PENDING')")) {
+            user.setString(1, userId); user.setString(2, "immutable-owner-" + userId); user.executeUpdate();
+            project.setString(1, projectId); project.setString(2, userId); project.executeUpdate();
+            operation.setString(1, operationId); operation.setString(2, projectId); operation.setString(3, "a".repeat(64)); operation.setString(4, "b".repeat(64)); operation.setString(5, "c".repeat(64)); operation.executeUpdate();
+        }
+        try (var update = connection.prepareStatement("UPDATE workspace_operation SET after_sha256 = ? WHERE id = ?")) {
+            update.setString(1, "d".repeat(64)); update.setString(2, operationId);
+            assertThatThrownBy(update::executeUpdate).isInstanceOf(SQLException.class);
         }
     }
 }

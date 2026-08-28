@@ -26,8 +26,8 @@ public final class Repositories {
         this.instanceLease = new InstanceLeaseRepository(connection, clock);
         this.workspaceOperations = new WorkspaceOperationRepository(connection, clock);
         this.runs = new Runs(connection, clock);
-        this.users = new Users(connection);
-        this.projects = new Projects(connection);
+        this.users = new Users(connection, clock);
+        this.projects = new Projects(connection, clock);
         this.tickets = new Tickets(connection, clock);
         this.terminalSessions = new TerminalSessions(connection, clock);
         this.terminalAudits = new TerminalAudits(connection, clock);
@@ -56,20 +56,22 @@ public final class Repositories {
 
     public static final class Users {
         private final Connection connection;
-        private Users(Connection connection) { this.connection = connection; }
+        private final DatabaseClock clock;
+        private Users(Connection connection, DatabaseClock clock) { this.connection = connection; this.clock = clock; }
         public void insert(String id, String username, String passwordHash) {
-            try (var insert = connection.prepareStatement("INSERT INTO app_user(id, username, password_hash) VALUES (?, ?, ?)")) {
-                insert.setString(1, id); insert.setString(2, username); insert.setString(3, passwordHash); insert.executeUpdate();
+            try (var insert = connection.prepareStatement("INSERT INTO app_user(id, username, password_hash, created_at) VALUES (?, ?, ?, ?)")) {
+                insert.setString(1, id); insert.setString(2, username); insert.setString(3, passwordHash); insert.setTimestamp(4, Timestamp.from(clock.now())); insert.executeUpdate();
             } catch (SQLException ex) { throw new IllegalStateException("cannot insert user", ex); }
         }
     }
 
     public static final class Projects {
         private final Connection connection;
-        private Projects(Connection connection) { this.connection = connection; }
+        private final DatabaseClock clock;
+        private Projects(Connection connection, DatabaseClock clock) { this.connection = connection; this.clock = clock; }
         public void insert(String id, String ownerId, String name) {
-            try (var insert = connection.prepareStatement("INSERT INTO project(id, owner_id, name, state, workspace_revision) VALUES (?, ?, ?, 'READY', 0)")) {
-                insert.setString(1, id); insert.setString(2, ownerId); insert.setString(3, name); insert.executeUpdate();
+            try (var insert = connection.prepareStatement("INSERT INTO project(id, owner_id, name, state, workspace_revision, created_at, updated_at) VALUES (?, ?, ?, 'READY', 0, ?, ?)")) {
+                insert.setString(1, id); insert.setString(2, ownerId); insert.setString(3, name); insert.setTimestamp(4, Timestamp.from(clock.now())); insert.setTimestamp(5, Timestamp.from(clock.now())); insert.executeUpdate();
             } catch (SQLException ex) { throw new IllegalStateException("cannot insert project", ex); }
         }
         public boolean createForOwner(String id, String ownerId, String name) {

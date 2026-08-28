@@ -50,8 +50,10 @@ class AtomicTransitionTest {
         assertThat(repositories.runs().transition(runId, projectId, 0, RunState.RUNNING, RunState.STARTING)).isTrue();
         assertThat(repositories.runs().transition(runId, projectId, 0, RunState.STOPPING, RunState.RUNNING)).isFalse();
         String operationId = UUID.randomUUID().toString();
-        assertThat(repositories.workspaceOperations().createPending(operationId, projectId, 0, "before", "after", "receipts/op")).isTrue();
-        assertThat(repositories.workspaceOperations().createPending(UUID.randomUUID().toString(), projectId, 0, "x", "y", "receipts/other")).isFalse();
+        assertThat(repositories.workspaceOperations().createPending(operationId, projectId, 0,
+            "a".repeat(64), "b".repeat(64), "receipts/op", "c".repeat(64))).isTrue();
+        assertThat(repositories.workspaceOperations().createPending(UUID.randomUUID().toString(), projectId, 0,
+            "d".repeat(64), "e".repeat(64), "receipts/other", "f".repeat(64))).isFalse();
         assertThat(repositories.workspaceOperations().commit(operationId, projectId, 0)).isTrue();
     }
 
@@ -66,12 +68,32 @@ class AtomicTransitionTest {
     }
 
     @Test
-    void leaseFencesOldHolderAndAuditSettlementIsIdempotent() {
+    void userAndProjectTimestampsUseInjectedDatabaseClock() throws Exception {
+        String userId = UUID.randomUUID().toString();
+        String projectId = UUID.randomUUID().toString();
+        repositories.users().insert(userId, "clock-owner-" + userId, "hash");
+        repositories.projects().insert(projectId, userId, "clock-project-" + projectId);
+        try (var query = connection.prepareStatement("SELECT u.created_at AS user_created, p.created_at AS project_created, p.updated_at AS project_updated FROM app_user u JOIN project p ON p.owner_id = u.id WHERE u.id = ? AND p.id = ?")) {
+            query.setString(1, userId); query.setString(2, projectId);
+            try (var rows = query.executeQuery()) {
+                assertThat(rows.next()).isTrue();
+                assertThat(rows.getTimestamp("user_created").toInstant()).isEqualTo(Instant.parse("2026-01-01T00:00:00Z"));
+                assertThat(rows.getTimestamp("project_created").toInstant()).isEqualTo(Instant.parse("2026-01-01T00:00:00Z"));
+                assertThat(rows.getTimestamp("project_updated").toInstant()).isEqualTo(Instant.parse("2026-01-01T00:00:00Z"));
+            }
+        }
+    }
+
+    @Test
+    void leaseFencesExpiredHolderAndRejectsNonFutureExpiry() {
         InstanceLeaseRepository lease = repositories.instanceLease();
         assertThat(lease.acquire("a", Instant.parse("2026-01-01T00:00:10Z"))).isEqualTo(1L);
         assertThat(lease.acquire("b", Instant.parse("2026-01-01T00:00:05Z"))).isNull();
         currentTime.set(Instant.parse("2026-01-01T00:01:00Z"));
-        assertThat(lease.acquire("b", Instant.parse("2026-01-01T00:01:00Z"))).isEqualTo(2L);
+        org.assertj.core.api.Assertions.assertThatThrownBy(
+            () -> lease.acquire("b", Instant.parse("2026-01-01T00:01:00Z")))
+            .isInstanceOf(IllegalArgumentException.class);
+        assertThat(lease.acquire("b", Instant.parse("2026-01-01T00:01:10Z"))).isEqualTo(2L);
         assertThat(lease.renew("a", 1L, Instant.parse("2026-01-01T00:02:00Z"))).isFalse();
         assertThat(lease.renew("b", 2L, Instant.parse("2026-01-01T00:03:00Z"))).isTrue();
     }
@@ -98,5 +120,38 @@ class AtomicTransitionTest {
         assertThat(repositories.tickets().consume(ticketHash, userId, projectId, runId)).isFalse();
         assertThat(repositories.terminalAudits().settle(auditId, "RUNNING", "CLOSED", 0)).isTrue();
         assertThat(repositories.terminalAudits().settle(auditId, "RUNNING", "CLOSED", 1)).isFalse();
+    }
+
+    @Test
+    void workspaceOperationValidatesDigestsAndAllowsNewPendingAfterReconciliationFailure() throws Exception {
+        String userId = UUID.randomUUID().toString();
+        String projectId = UUID.randomUUID().toString();
+        repositories.users().insert(userId, "workspace-owner-" + userId, "hash");
+        repositories.projects().insert(projectId, userId, "workspace-project-" + projectId);
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> repositories.workspaceOperations().createPending(
+            UUID.randomUUID().toString(), projectId, 0, "before", "b".repeat(64), "receipts/invalid", "c".repeat(64)))
+            .isInstanceOf(IllegalArgumentException.class);
+        String failedId = UUID.randomUUID().toString();
+        assertThat(repositories.workspaceOperations().createPending(failedId, projectId, 0,
+            "a".repeat(64), "b".repeat(64), "receipts/failed", "c".repeat(64))).isTrue();
+        assertThat(repositories.workspaceOperations().pendingForProject(projectId)).extracting(
+            WorkspaceOperationRepository.PendingOperation::id).containsExactly(failedId);
+        assertThat(repositories.workspaceOperations().pendingForProject(projectId).get(0).receiptSha256())
+            .isEqualTo("c".repeat(64));
+        assertThat(repositories.workspaceOperations().failReconciliation(failedId, projectId)).isTrue();
+        assertThat(repositories.workspaceOperations().failReconciliation(failedId, projectId)).isFalse();
+        String nextId = UUID.randomUUID().toString();
+        assertThat(repositories.workspaceOperations().createPending(nextId, projectId, 0,
+            "d".repeat(64), "e".repeat(64), "receipts/next", "f".repeat(64))).isTrue();
+        assertThat(repositories.workspaceOperations().pendingForProject(projectId)).extracting(
+            WorkspaceOperationRepository.PendingOperation::id).containsExactly(nextId);
+    }
+
+    @Test
+    void nonDuplicateWorkspaceSqlErrorsAreNotReportedAsDuplicate() {
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> repositories.workspaceOperations().createPending(
+            UUID.randomUUID().toString(), "missing-project", 0,
+            "a".repeat(64), "b".repeat(64), "receipts/missing", "c".repeat(64)))
+            .isInstanceOf(IllegalStateException.class);
     }
 }

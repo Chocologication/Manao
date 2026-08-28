@@ -15,12 +15,16 @@ public final class WorkspaceOperationRepository {
         this.clock = clock;
     }
 
-    public boolean createPending(String id, String projectId, long expectedRevision, String beforeSha256, String afterSha256, String receiptPath) {
-        try (var insert = connection.prepareStatement("INSERT INTO workspace_operation(id, project_id, expected_revision, before_sha256, after_sha256, receipt_path, state, created_at) VALUES (?, ?, ?, ?, ?, ?, 'PENDING', ?)")) {
-            insert.setString(1, id); insert.setString(2, projectId); insert.setLong(3, expectedRevision); insert.setString(4, beforeSha256); insert.setString(5, afterSha256); insert.setString(6, receiptPath); insert.setTimestamp(7, Timestamp.from(clock.now()));
+    public boolean createPending(String id, String projectId, long expectedRevision, String beforeSha256, String afterSha256, String receiptPath, String receiptSha256) {
+        requireSha256(beforeSha256, "beforeSha256");
+        requireSha256(afterSha256, "afterSha256");
+        requireSha256(receiptSha256, "receiptSha256");
+        try (var insert = connection.prepareStatement("INSERT INTO workspace_operation(id, project_id, expected_revision, before_sha256, after_sha256, receipt_path, receipt_sha256, state, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'PENDING', ?)")) {
+            insert.setString(1, id); insert.setString(2, projectId); insert.setLong(3, expectedRevision); insert.setString(4, beforeSha256); insert.setString(5, afterSha256); insert.setString(6, receiptPath); insert.setString(7, receiptSha256); insert.setTimestamp(8, Timestamp.from(clock.now()));
             return insert.executeUpdate() == 1;
         } catch (SQLException ex) {
-            return false;
+            if (ex.getErrorCode() == 1062) return false;
+            throw new IllegalStateException("cannot create pending workspace operation", ex);
         }
     }
 
@@ -44,13 +48,14 @@ public final class WorkspaceOperationRepository {
     }
 
     public List<PendingOperation> pendingForProject(String projectId) {
-        try (var select = connection.prepareStatement("SELECT id, expected_revision, before_sha256, after_sha256, receipt_path FROM workspace_operation WHERE project_id = ? AND state = 'PENDING' ORDER BY created_at")) {
+        try (var select = connection.prepareStatement("SELECT id, expected_revision, before_sha256, after_sha256, receipt_path, receipt_sha256 FROM workspace_operation WHERE project_id = ? AND state = 'PENDING' ORDER BY created_at")) {
             select.setString(1, projectId);
             List<PendingOperation> operations = new ArrayList<>();
             try (var rows = select.executeQuery()) {
                 while (rows.next()) {
                     operations.add(new PendingOperation(rows.getString("id"), rows.getLong("expected_revision"),
-                        rows.getString("before_sha256"), rows.getString("after_sha256"), rows.getString("receipt_path")));
+                        rows.getString("before_sha256"), rows.getString("after_sha256"), rows.getString("receipt_path"),
+                        rows.getString("receipt_sha256")));
                 }
             }
             return List.copyOf(operations);
@@ -63,7 +68,14 @@ public final class WorkspaceOperationRepository {
         } catch (SQLException ex) { throw new IllegalStateException("cannot fail workspace operation reconciliation", ex); }
     }
 
-    public record PendingOperation(String id, long expectedRevision, String beforeSha256, String afterSha256, String receiptPath) { }
+    public record PendingOperation(String id, long expectedRevision, String beforeSha256, String afterSha256,
+                                   String receiptPath, String receiptSha256) { }
+
+    private static void requireSha256(String value, String name) {
+        if (value == null || !value.matches("[0-9a-f]{64}")) {
+            throw new IllegalArgumentException(name + " must be 64 lowercase hexadecimal characters");
+        }
+    }
 
     private void rollback() { try { connection.rollback(); } catch (SQLException ignored) { } }
     private void restoreAutoCommit() { try { connection.setAutoCommit(true); } catch (SQLException ignored) { } }
