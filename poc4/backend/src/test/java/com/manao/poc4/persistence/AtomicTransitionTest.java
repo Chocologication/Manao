@@ -21,7 +21,7 @@ class AtomicTransitionTest {
 
     @BeforeEach
     void setUp() throws Exception {
-        String url = System.getenv().getOrDefault("MANAO_DB_URL", "jdbc:mysql://127.0.0.1:3306/manao_poc4_test");
+        String url = System.getenv().getOrDefault("MANAO_DB_URL", "jdbc:mysql://127.0.0.1:3306/manao_poc4_task2_test");
         if (!url.startsWith("jdbc:mysql:")) throw new AssertionError("REAL_MYSQL_REQUIRED");
         try {
             connection = DriverManager.getConnection(url, System.getenv().getOrDefault("MANAO_DB_USERNAME", "manao"), System.getenv().getOrDefault("MANAO_DB_PASSWORD", ""));
@@ -80,6 +80,44 @@ class AtomicTransitionTest {
                 assertThat(rows.getTimestamp("user_created").toInstant()).isEqualTo(Instant.parse("2026-01-01T00:00:00Z"));
                 assertThat(rows.getTimestamp("project_created").toInstant()).isEqualTo(Instant.parse("2026-01-01T00:00:00Z"));
                 assertThat(rows.getTimestamp("project_updated").toInstant()).isEqualTo(Instant.parse("2026-01-01T00:00:00Z"));
+            }
+        }
+    }
+
+    @Test
+    void runInsertUsesInjectedDatabaseClockForUpdatedAt() throws Exception {
+        String userId = UUID.randomUUID().toString();
+        String projectId = UUID.randomUUID().toString();
+        String runId = UUID.randomUUID().toString();
+        repositories.users().insert(userId, "run-clock-owner-" + userId, "hash");
+        repositories.projects().insert(projectId, userId, "run-clock-project-" + projectId);
+        repositories.runs().insert(runId, projectId, 0, RunState.STARTING, "{}");
+        try (var query = connection.prepareStatement("SELECT updated_at FROM run WHERE id = ?")) {
+            query.setString(1, runId);
+            try (var rows = query.executeQuery()) {
+                assertThat(rows.next()).isTrue();
+                assertThat(rows.getTimestamp(1).toInstant()).isEqualTo(Instant.parse("2026-01-01T00:00:00Z"));
+            }
+        }
+    }
+
+    @Test
+    void workspaceCommitUsesInjectedDatabaseClockForProjectUpdatedAt() throws Exception {
+        String userId = UUID.randomUUID().toString();
+        String projectId = UUID.randomUUID().toString();
+        repositories.users().insert(userId, "commit-clock-owner-" + userId, "hash");
+        repositories.projects().insert(projectId, userId, "commit-clock-project-" + projectId);
+        String operationId = UUID.randomUUID().toString();
+        assertThat(repositories.workspaceOperations().createPending(operationId, projectId, 0,
+            "a".repeat(64), "b".repeat(64), "receipts/commit-clock", "c".repeat(64))).isTrue();
+        Instant committedAt = Instant.parse("2026-01-01T00:02:00Z");
+        currentTime.set(committedAt);
+        assertThat(repositories.workspaceOperations().commit(operationId, projectId, 0)).isTrue();
+        try (var query = connection.prepareStatement("SELECT updated_at FROM project WHERE id = ?")) {
+            query.setString(1, projectId);
+            try (var rows = query.executeQuery()) {
+                assertThat(rows.next()).isTrue();
+                assertThat(rows.getTimestamp(1).toInstant()).isEqualTo(committedAt);
             }
         }
     }

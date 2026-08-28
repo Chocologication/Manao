@@ -59,8 +59,9 @@ public final class Repositories {
         private final DatabaseClock clock;
         private Users(Connection connection, DatabaseClock clock) { this.connection = connection; this.clock = clock; }
         public void insert(String id, String username, String passwordHash) {
+            Instant now = clock.now();
             try (var insert = connection.prepareStatement("INSERT INTO app_user(id, username, password_hash, created_at) VALUES (?, ?, ?, ?)")) {
-                insert.setString(1, id); insert.setString(2, username); insert.setString(3, passwordHash); insert.setTimestamp(4, Timestamp.from(clock.now())); insert.executeUpdate();
+                insert.setString(1, id); insert.setString(2, username); insert.setString(3, passwordHash); insert.setTimestamp(4, Timestamp.from(now)); insert.executeUpdate();
             } catch (SQLException ex) { throw new IllegalStateException("cannot insert user", ex); }
         }
     }
@@ -70,8 +71,9 @@ public final class Repositories {
         private final DatabaseClock clock;
         private Projects(Connection connection, DatabaseClock clock) { this.connection = connection; this.clock = clock; }
         public void insert(String id, String ownerId, String name) {
+            Instant now = clock.now();
             try (var insert = connection.prepareStatement("INSERT INTO project(id, owner_id, name, state, workspace_revision, created_at, updated_at) VALUES (?, ?, ?, 'READY', 0, ?, ?)")) {
-                insert.setString(1, id); insert.setString(2, ownerId); insert.setString(3, name); insert.setTimestamp(4, Timestamp.from(clock.now())); insert.setTimestamp(5, Timestamp.from(clock.now())); insert.executeUpdate();
+                insert.setString(1, id); insert.setString(2, ownerId); insert.setString(3, name); insert.setTimestamp(4, Timestamp.from(now)); insert.setTimestamp(5, Timestamp.from(now)); insert.executeUpdate();
             } catch (SQLException ex) { throw new IllegalStateException("cannot insert project", ex); }
         }
         public boolean createForOwner(String id, String ownerId, String name) {
@@ -110,8 +112,9 @@ public final class Repositories {
         private final DatabaseClock clock;
         private Tickets(Connection connection, DatabaseClock clock) { this.connection = connection; this.clock = clock; }
         public boolean consume(String ticketHash, String userId, String projectId, String runId) {
+            Instant now = clock.now();
             try (var update = connection.prepareStatement("UPDATE log_ticket SET consumed_at = ? WHERE ticket_hash = ? AND user_id = ? AND project_id = ? AND run_id = ? AND consumed_at IS NULL AND expires_at > ?")) {
-                update.setTimestamp(1, Timestamp.from(clock.now())); update.setString(2, ticketHash); update.setString(3, userId); update.setString(4, projectId); update.setString(5, runId); update.setTimestamp(6, Timestamp.from(clock.now()));
+                update.setTimestamp(1, Timestamp.from(now)); update.setString(2, ticketHash); update.setString(3, userId); update.setString(4, projectId); update.setString(5, runId); update.setTimestamp(6, Timestamp.from(now));
                 return update.executeUpdate() == 1;
             } catch (SQLException ex) { throw new IllegalStateException("cannot consume log ticket", ex); }
         }
@@ -151,8 +154,8 @@ public final class Repositories {
         private Runs(Connection connection, DatabaseClock clock) { this.connection = connection; this.clock = clock; }
 
         public void insert(String id, String projectId, long requestedRevision, RunState state, String policyJson) {
-            try (var insert = connection.prepareStatement("INSERT INTO run(id, project_id, requested_revision, state, policy_json, version) VALUES (?, ?, ?, ?, ?, 0)")) {
-                insert.setString(1, id); insert.setString(2, projectId); insert.setLong(3, requestedRevision); insert.setString(4, state.name()); insert.setString(5, policyJson); insert.executeUpdate();
+            try (var insert = connection.prepareStatement("INSERT INTO run(id, project_id, requested_revision, state, policy_json, version, updated_at) VALUES (?, ?, ?, ?, ?, 0, ?)")) {
+                insert.setString(1, id); insert.setString(2, projectId); insert.setLong(3, requestedRevision); insert.setString(4, state.name()); insert.setString(5, policyJson); insert.setTimestamp(6, Timestamp.from(clock.now())); insert.executeUpdate();
             } catch (SQLException ex) { throw new IllegalStateException("cannot insert run", ex); }
         }
 

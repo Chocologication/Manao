@@ -31,12 +31,13 @@ public final class WorkspaceOperationRepository {
     public boolean commit(String id, String projectId, long expectedRevision) {
         try {
             connection.setAutoCommit(false);
+            var now = Timestamp.from(clock.now());
             try (var operation = connection.prepareStatement("UPDATE workspace_operation SET state = 'COMMITTED', committed_at = ? WHERE id = ? AND project_id = ? AND expected_revision = ? AND state = 'PENDING'")) {
-                operation.setTimestamp(1, Timestamp.from(clock.now())); operation.setString(2, id); operation.setString(3, projectId); operation.setLong(4, expectedRevision);
+                operation.setTimestamp(1, now); operation.setString(2, id); operation.setString(3, projectId); operation.setLong(4, expectedRevision);
                 if (operation.executeUpdate() != 1) { connection.rollback(); return false; }
             }
-            try (var project = connection.prepareStatement("UPDATE project SET workspace_revision = workspace_revision + 1 WHERE id = ? AND workspace_revision = ?")) {
-                project.setString(1, projectId); project.setLong(2, expectedRevision);
+            try (var project = connection.prepareStatement("UPDATE project SET workspace_revision = workspace_revision + 1, updated_at = ? WHERE id = ? AND workspace_revision = ?")) {
+                project.setTimestamp(1, now); project.setString(2, projectId); project.setLong(3, expectedRevision);
                 if (project.executeUpdate() != 1) { connection.rollback(); return false; }
             }
             connection.commit();
