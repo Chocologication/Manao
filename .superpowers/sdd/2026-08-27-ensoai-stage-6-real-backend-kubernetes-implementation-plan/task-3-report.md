@@ -101,3 +101,27 @@ HttpErrorContractTest:       1 test,  0 failures, 0 errors
 
 - The access-denied path is covered by the handler contract test and explicit Spring Security configuration; a full authenticated integration request remains deferred to the later end-to-end security stage.
 - The startup condition treats an explicit `spring.autoconfigure.exclude` of `DataSourceAutoConfiguration` as a profile-only test mode. Production profiles must not exclude datasource auto-configuration and therefore fail closed when `MANAO_JWT_SECRET` is absent.
+
+## Review repair round 2
+
+### RED
+
+Added three HTTP/MockMvc regression cases that throw `ApiException` messages containing a raw JWT-like compact token, an unlabelled password value, and a Java stack-frame string. Before the production change, all three tests failed because the caller-supplied message was serialized into the browser response.
+
+### GREEN
+
+Replaced the blacklist sanitizer with an error-code allowlist: `ApiError` now ignores arbitrary input messages and selects a fixed safe message only from the finite error code (`UNAUTHENTICATED`, `FORBIDDEN`, `PROJECT_LIMIT_REACHED`, `VALIDATION_ERROR`, `ENTRY_NOT_FOUND`, or generic `Request failed`). This makes arbitrary JWT/password/stack/path/resource text non-observable by construction rather than by keyword coverage. Existing UUID trace ID generation, 401/403 handlers, failure-reason allowlist, strict JWT subject validation, and startup secret condition remain intact.
+
+Repair focused command and result:
+
+```powershell
+$env:MAVEN_USER_HOME='D:\DeepLearning\MyProjects\Project_Manao\.m2'
+$env:MAVEN_OPTS='-Dfile.encoding=UTF-8'
+& 'D:\DeepLearning\Java\IntelliJ IDEA 2025.2.3\plugins\maven\lib\maven3\bin\mvn.cmd' '-q' '-Dtest=AuthControllerTest,ProjectAuthorizationTest,ErrorSanitizationTest,SecurityConfigTest,HttpErrorContractTest' test
+```
+
+`HttpErrorContractTest`: 4 tests, 0 failures, 0 errors; all repair-focused classes: 17 tests, 0 failures, 0 errors. The full backend suite passed with 41 tests, 0 failures, 0 errors, and 0 skipped. `-DskipTests package` and `git diff --check` passed; changed files remain UTF-8 without BOM and LF-only. Commit: `fix(poc4): harden task3 error message allowlist`.
+
+### Repair concerns
+
+- Messages are intentionally fixed per error code, so future user-facing detail must be introduced as a reviewed finite code/message mapping rather than passing runtime exception text through.

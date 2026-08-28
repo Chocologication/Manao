@@ -3,7 +3,6 @@ package com.manao.poc4.api;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
-import java.util.regex.Pattern;
 
 /** The only error fields exposed to the browser. */
 public record ApiError(String code, String message, String traceId) {
@@ -13,25 +12,25 @@ public record ApiError(String code, String message, String traceId) {
         "ENTRY_ALREADY_EXISTS", "ENTRY_NOT_FOUND", "DIRECTORY_NOT_EMPTY", "RUN_ALREADY_ACTIVE",
         "RUN_STATE_CONFLICT", "RUN_NOT_FOUND", "LOG_TICKET_NOT_AVAILABLE", "TERMINAL_NOT_AVAILABLE",
         "TERMINAL_SESSION_ALREADY_ACTIVE", "TERMINAL_TICKET_NOT_AVAILABLE");
-    private static final Pattern TRACE_ID = Pattern.compile("[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}");
 
     public ApiError {
         if (!CODES.contains(code)) code = "INTERNAL_ERROR";
-        message = sanitizeMessage(message);
-        if (traceId == null || !TRACE_ID.matcher(traceId).matches()) traceId = UUID.randomUUID().toString();
+        message = safeMessage(code);
+        traceId = UUID.randomUUID().toString();
     }
 
     public Map<String, Object> toMap() {
         return Map.of("code", code, "message", message, "traceId", traceId);
     }
 
-    private static String sanitizeMessage(String message) {
-        if (message == null || message.isBlank() || message.length() > 256 || message.chars().anyMatch(Character::isISOControl)) return "Request failed";
-        String lower = message.toLowerCase(java.util.Locale.ROOT);
-        for (String forbidden : new String[]{"jwt", "token", "password", "pvc", "pod", "job", "command", "requestid", "request-id", "path", "stacktrace", "exception", "jdbc:", "resource"}) {
-            if (lower.contains(forbidden)) return "Request failed";
-        }
-        if (message.contains("/") || message.contains("\\") || message.contains("..")) return "Request failed";
-        return message;
+    private static String safeMessage(String code) {
+        return switch (code) {
+            case "UNAUTHENTICATED" -> "Authentication required";
+            case "FORBIDDEN" -> "Access denied";
+            case "PROJECT_LIMIT_REACHED" -> "Project limit reached";
+            case "VALIDATION_ERROR" -> "Request validation failed";
+            case "ENTRY_NOT_FOUND" -> "Project not found";
+            default -> "Request failed";
+        };
     }
 }
