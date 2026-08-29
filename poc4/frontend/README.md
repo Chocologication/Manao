@@ -82,3 +82,9 @@ Stage 6 仍需在真实系统验证：Spring Boot terminal session/ticket API、
 Vite 代理同时转发 HTTP 与 WebSocket（`ws: true`），浏览器永远看不到集群地址、
 Service 名、PVC/Pod 名或绝对路径。项目 workspace bridge 由后端按项目动态管理
 （loopback 18100-18199），浏览器不能提交 Service 名或端口。
+
+## Stage 6A 决策门 E2E
+
+`pnpm test:e2e:stage6`（需 `STAGE6_GATE=1` 环境变量以跳过 mock webServer）在门执行时运行：
+后端（18080）与本机 Vite dev server（4173）必须已启动且 MSW 关闭。所有用例在后端不可达时
+自动 skip，不产生伪证据。集群前置条件状态见 `docs/evidence/stage-6/6a-gate.md`。

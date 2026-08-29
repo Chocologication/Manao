@@ -1,5 +1,7 @@
 import { defineConfig, devices } from '@playwright/test';
 
+const stage6Gate = process.env.STAGE6_GATE === '1';
+
 export default defineConfig({
   testDir: './tests/e2e',
   fullyParallel: false,
@@ -14,7 +16,9 @@ export default defineConfig({
     baseURL: 'http://127.0.0.1:4173',
     trace: 'retain-on-failure',
   },
-  webServer: [
+  webServer: stage6Gate
+    ? []
+    : [
     {
       command: 'pnpm build:mock && pnpm preview --host 127.0.0.1',
       url: 'http://127.0.0.1:4173',
@@ -29,6 +33,11 @@ export default defineConfig({
     },
   ],
   projects: [
+    {
+      name: 'stage6',
+      testMatch: /stage6-real-backend\.spec\.ts/,
+      use: { ...devices['Desktop Chrome'] },
+    },
     {
       name: 'chromium',
       testIgnore: /stage2-large-files\.spec\.ts|stage3-large-writes\.spec\.ts|stage4-large-logs\.spec\.ts|stage5-terminal-stress\.spec\.ts/,

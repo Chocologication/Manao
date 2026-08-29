@@ -18,7 +18,8 @@
     "test:e2e:large-files": "playwright test tests/e2e/stage2-large-files.spec.ts --project=chromium-large-files",
     "test:e2e:large-writes": "playwright test tests/e2e/stage3-large-writes.spec.ts --project=chromium-large-writes",
     "test:e2e:large-logs": "playwright test tests/e2e/stage4-large-logs.spec.ts --project=chromium-large-logs",
-    "test:e2e:terminal-stress": "playwright test tests/e2e/stage5-terminal-stress.spec.ts --project=chromium-terminal-stress"
+    "test:e2e:terminal-stress": "playwright test tests/e2e/stage5-terminal-stress.spec.ts --project=chromium-terminal-stress",
+    "test:e2e:stage6": "playwright test tests/e2e/stage6-real-backend.spec.ts --project=stage6"
   },
   "packageManager": "pnpm@10.33.0",
   "engines": {
