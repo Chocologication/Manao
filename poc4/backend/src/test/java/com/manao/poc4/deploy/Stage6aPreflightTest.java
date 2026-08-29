@@ -50,7 +50,8 @@ class Stage6aPreflightTest {
     void tunnelHealthRejectsDeniedNamespaceVerbs() {
         SshApiTunnelHealth.CommandRunner denying = command ->
             new SshApiTunnelHealth.CommandRunner.CommandResult(0, "no", "");
-        SshApiTunnelHealth health = new SshApiTunnelHealth(denying, List.of("get", "create"));
+        SshApiTunnelHealth health = new SshApiTunnelHealth(denying,
+            List.of(new SshApiTunnelHealth.VerbResource("get", "pods"), new SshApiTunnelHealth.VerbResource("create", "pods")));
         SshApiTunnelHealth.Result result = health.check("kubeconfig", "localhost", "manao");
         assertThat(result.up()).isFalse();
         assertThat(SshApiTunnelHealth.mapsToDependencyUnavailable(result)).isTrue();
@@ -66,7 +67,7 @@ class Stage6aPreflightTest {
         }
         String kubeconfig = Files.readString(Path.of(kubeconfigPath));
         KubeconfigTlsPreflight.requireValid(kubeconfig);
-        SshApiTunnelHealth health = new SshApiTunnelHealth(realKubectl(), List.of("get", "list", "watch", "create", "delete"));
+        SshApiTunnelHealth health = new SshApiTunnelHealth(realKubectl(), SshApiTunnelHealth.designVerbs(true));
         SshApiTunnelHealth.Result result = health.check(kubeconfigPath,
             KubeconfigTlsPreflight.validate(kubeconfig).tlsServerName(),
             System.getenv().getOrDefault("MANAO_K8S_NAMESPACE", "manao"));

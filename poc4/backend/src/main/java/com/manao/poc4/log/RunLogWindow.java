@@ -28,19 +28,47 @@ public final class RunLogWindow {
     public record AppendResult(Chunk chunk, WindowMeta meta) { }
 
     public synchronized AppendResult append(long seq, String text) {
-        if (seq != lastSeq + 1) {
+        if (!canAppend(seq)) {
             throw new IllegalArgumentException("log seq must be exactly lastSeq + 1, got " + seq + " after " + lastSeq);
         }
         byte[] bytes = text.getBytes(StandardCharsets.UTF_8);
         if (bytes.length > MAX_CHUNK_BYTES) {
             throw new IllegalArgumentException("log chunk exceeds the 64 KiB UTF-8 limit");
         }
-        Chunk chunk = new Chunk(seq, text, bytes.length, Instant.now());
+        return appendValidated(new Chunk(seq, text, bytes.length, Instant.now()));
+    }
+
+    /** Pure continuity check so callers can persist BEFORE mutating the window. */
+    public synchronized boolean canAppend(long seq) {
+        return seq == lastSeq + 1;
+    }
+
+    /** Mutates the window with an already persisted chunk; publishes only after this succeeds. */
+    public synchronized AppendResult appendValidated(Chunk chunk) {
         chunks.addLast(chunk);
         retainedBytes += chunk.byteLength();
-        lastSeq = seq;
+        lastSeq = chunk.seq();
         evictOldest();
         return new AppendResult(chunk, meta());
+    }
+
+    /**
+     * Restart seeding: restores the window from persisted chunks. Evicted bytes are unknown
+     * after a restart, so the counter resets and the truncated marker reflects a gap before
+     * the first persisted chunk; {@code lastSeq} keeps advancing even when the DB window is
+     * empty (everything evicted).
+     */
+    public synchronized void seed(List<Chunk> persisted, long lastKnownSeq) {
+        chunks.clear();
+        retainedBytes = 0;
+        for (Chunk chunk : persisted) {
+            chunks.addLast(chunk);
+            retainedBytes += chunk.byteLength();
+        }
+        long fromChunks = persisted.isEmpty() ? 0 : persisted.get(persisted.size() - 1).seq();
+        this.lastSeq = Math.max(lastKnownSeq, fromChunks);
+        // Evicted-byte history is lost across restarts; report zero and keep the window bounds honest.
+        this.evictedBytes = 0;
     }
 
     public synchronized WindowMeta meta() {

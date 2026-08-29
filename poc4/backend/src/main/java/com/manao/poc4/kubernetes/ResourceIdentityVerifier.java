@@ -29,9 +29,15 @@ public final class ResourceIdentityVerifier {
         boolean hasApplicationContainer = pod.getSpec().getContainers().stream()
             .anyMatch(container -> APPLICATION_CONTAINER.equals(container.getName()));
         if (!hasApplicationContainer) return false;
-        if (pod.getStatus() == null || !"Running".equals(pod.getStatus().getPhase())) return false;
-        return pod.getStatus().getContainerStatuses() == null || pod.getStatus().getContainerStatuses().stream()
-            .anyMatch(status -> APPLICATION_CONTAINER.equals(status.getName()) && status.getState() != null
-                && status.getState().getRunning() != null);
+        if (pod.getStatus() == null) return false;
+        String phase = pod.getStatus().getPhase();
+        // Live runs need a Running pod; recovery settlement must also accept terminal phases.
+        boolean acceptablePhase = "Running".equals(phase) || "Succeeded".equals(phase) || "Failed".equals(phase);
+        if (!acceptablePhase) return false;
+        var statuses = pod.getStatus().getContainerStatuses();
+        if (statuses == null) return false;
+        return statuses.stream().anyMatch(status -> APPLICATION_CONTAINER.equals(status.getName())
+            && status.getState() != null
+            && (status.getState().getRunning() != null || status.getState().getTerminated() != null));
     }
 }

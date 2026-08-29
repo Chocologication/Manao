@@ -22,7 +22,7 @@ public class JobResourceFactory {
         this.timeoutSeconds = timeoutSeconds;
         this.requests = requests;
         this.limits = limits;
-        this.mavenImage = requireText(mavenImage, "maven image");
+        this.mavenImage = WorkspaceResourceFactory.requireDigest(mavenImage, "maven image");
     }
 
     public record RunResources(long cpuMillis, long memoryBytes, long ephemeralStorageBytes) { }

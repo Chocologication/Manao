@@ -22,27 +22,42 @@ public final class Fabric8KubernetesGateway implements KubernetesGateway {
     }
 
     @Override public boolean projectPvcExists(String projectId) {
-        return client.persistentVolumeClaims().inNamespace(namespace)
-            .withName(WorkspaceResourceFactory.pvcName(projectId)).get() != null;
+        var pvc = client.persistentVolumeClaims().inNamespace(namespace)
+            .withName(WorkspaceResourceFactory.pvcName(projectId)).get();
+        return matchesProject(pvc, projectId);
+    }
+
+    /** Name lookups are always re-verified against the server-generated project label. */
+    private static boolean matchesProject(io.fabric8.kubernetes.api.model.HasMetadata resource, String projectId) {
+        return resource != null && resource.getMetadata() != null
+            && projectId.equals(resource.getMetadata().getLabels()
+                .get(WorkspaceResourceFactory.LABEL_PROJECT_ID));
     }
 
     @Override public boolean initializerSucceeded(String projectId) {
+        // The initializer is deleted right after success, so "gone" also counts as done.
         Pod pod = client.pods().inNamespace(namespace)
             .withName(WorkspaceResourceFactory.initializerPodName(projectId)).get();
-        return pod != null && "Succeeded".equals(pod.getStatus().getPhase());
+        if (pod == null) return true;
+        return "Succeeded".equals(pod.getStatus() == null ? null : pod.getStatus().getPhase());
     }
 
     @Override public boolean workspacePodReady(String projectId) {
         Pod pod = client.pods().inNamespace(namespace)
             .withName(WorkspaceResourceFactory.workspacePodName(projectId)).get();
-        if (pod == null || pod.getStatus() == null) return false;
+        if (!matchesProject(pod, projectId) || pod.getStatus() == null) return false;
         return pod.getStatus().getConditions().stream()
             .anyMatch(condition -> "Ready".equals(condition.getType()) && "True".equals(condition.getStatus()));
     }
 
     @Override public boolean workspaceServiceExists(String projectId) {
-        return client.services().inNamespace(namespace)
-            .withName(WorkspaceResourceFactory.serviceName(projectId)).get() != null;
+        var service = client.services().inNamespace(namespace)
+            .withName(WorkspaceResourceFactory.serviceName(projectId)).get();
+        return matchesProject(service, projectId);
+    }
+
+    @Override public void deletePod(String podName) {
+        client.pods().inNamespace(namespace).withName(podName).withGracePeriod(0).delete();
     }
 
     @Override public void createPvc(PersistentVolumeClaim pvc) {

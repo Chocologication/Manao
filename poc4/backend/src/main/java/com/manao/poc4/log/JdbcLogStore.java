@@ -60,4 +60,11 @@ public final class JdbcLogStore implements LogTicketService.Store, RunLogService
     @Override public void deleteBefore(String runId, long seqExclusive) {
         jdbc.update("DELETE FROM run_log_chunk WHERE run_id = ? AND seq < ?", runId, seqExclusive);
     }
+
+    @Override public java.util.OptionalLong lastSeq(String runId) {
+        List<Long> values = jdbc.query("SELECT MAX(seq) FROM run_log_chunk WHERE run_id = ?",
+            (rs, row) -> rs.getLong(1), runId);
+        long max = values.isEmpty() || values.get(0) == null ? 0 : values.get(0);
+        return max == 0 ? java.util.OptionalLong.empty() : java.util.OptionalLong.of(max);
+    }
 }

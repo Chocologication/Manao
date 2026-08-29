@@ -36,9 +36,8 @@ class AuditIngressServiceTest {
     }
 
     private static String canonical(long seq, String command, Integer exitCode, String state) {
-        return "{\"sessionId\":\"" + SESSION + "\",\"seq\":" + seq + ",\"command\":\"" + command
-            + "\",\"exitCode\":" + (exitCode == null ? "null" : exitCode)
-            + ",\"state\":\"" + state + "\"}";
+        return AuditIngressService.canonicalJson(
+            new AuditIngressService.WrapperEvent(SESSION, seq, command, exitCode, state, null));
     }
 
     private static String mac(String payload) {
@@ -135,7 +134,9 @@ class AuditIngressServiceTest {
         final Map<String, Boolean> settled = new HashMap<>();
 
         @Override public String insertRunning(String sessionId, String projectId, String runId, String userId,
-                                              long seq, String command, boolean sensitiveDetected, Instant startedAt) {
+                                              long seq, String command, boolean sensitiveDetected, String trustLevel,
+                                              Instant startedAt) {
+            assertThat(trustLevel).isEqualTo(AuditIngressService.TRUST_LEVEL_WRAPPER_TRANSPORT);
             String id = "audit-" + seq;
             audits.add(new AuditRecord(id, sessionId, seq, command, "RUNNING", startedAt, null, null, sensitiveDetected));
             return id;

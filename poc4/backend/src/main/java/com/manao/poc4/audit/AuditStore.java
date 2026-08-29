@@ -6,7 +6,7 @@ import java.util.List;
 /** Persistence boundary for structured terminal audits produced by the server-owned wrapper. */
 public interface AuditStore {
     String insertRunning(String sessionId, String projectId, String runId, String userId, long seq,
-                         String command, boolean sensitiveDetected, Instant startedAt);
+                         String command, boolean sensitiveDetected, String trustLevel, Instant startedAt);
 
     boolean settle(String auditId, String state, Integer exitCode, Instant finishedAt);
 

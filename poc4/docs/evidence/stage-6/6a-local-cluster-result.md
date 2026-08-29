@@ -119,3 +119,14 @@ poc4/frontend: pnpm typecheck → PASS
 - 真实项目创建 → PVC → initializer → workspace Pod → 模板写入 → READY 全链路
 - 真实 Job（maven-runner 镜像）/ 日志 / PTY / audit 浏览器 E2E（`pnpm test:e2e:stage6`）
 - `stage6-operator` 故障测试身份
+
+
+## 修复轮记录（2026-08-30）
+
+审查报告确认 17+3 项源码阻断；全部修复，backend `190 tests, 0 failures`、agent `23 tests, 0 failures`。
+要点：V5 迁移（terminal ticket FK 解耦、run.fencing_token、terminal cols/rows）、
+RunObservationService + RuntimeMaintenanceLoop（@Scheduled/@PreDestroy）、RunLogIngestor
+（Fabric8 watchLog → persistence-first）、initializer 改 init 容器并在成功后删除、recovery 增加
+label 核验与模板 receipt、镜像 digest fail-closed、SshApiTunnelHealth 26 项 can-i 矩阵 +
+Fabric8 /version + tls-server-name 校验、WebSocket 同源白名单、E2E 门模式不再静默跳过。
+详见 `6a-gate.md` 修复轮复审版。构建产物 SHA-256（前 16 位）`227d416ddca8b110`。

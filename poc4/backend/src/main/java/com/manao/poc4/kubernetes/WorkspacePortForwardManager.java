@@ -26,6 +26,7 @@ public final class WorkspacePortForwardManager {
     private static final class Bridge {
         final String serviceName;
         final int localPort;
+        int refcount = 1;
         PortForwardProcess process;
 
         Bridge(String serviceName, int localPort, PortForwardProcess process) {
@@ -56,7 +57,10 @@ public final class WorkspacePortForwardManager {
         this.factory = factory;
     }
 
-    /** Allocates (or reuses) a loopback port for the project and starts its bridge process. */
+    /**
+     * Allocates (or reuses) a loopback port for the project and starts its bridge process.
+     * Idempotent: repeated calls (e.g. one per workspace request) never spawn a second bridge.
+     */
     public synchronized int allocate(String projectId) {
         requireValidProjectId(projectId);
         Bridge existing = bridges.get(projectId);
@@ -91,9 +95,28 @@ public final class WorkspacePortForwardManager {
         return URI.create("http://127.0.0.1:" + bridge.localPort);
     }
 
+    /**
+     * Drops one reference of the project bridge; the child process dies and the port is
+     * released only when the last reference goes away.
+     */
     public synchronized void release(String projectId) {
-        Bridge bridge = bridges.remove(projectId);
-        if (bridge != null) bridge.process.kill();
+        Bridge bridge = bridges.get(projectId);
+        if (bridge == null) return;
+        if (--bridge.refcount > 0) return;
+        bridges.remove(projectId);
+        bridge.process.kill();
+    }
+
+    /** Adds one reference for a consumer that needs the bridge to stay up. */
+    public synchronized void retain(String projectId) {
+        Bridge bridge = bridges.get(projectId);
+        if (bridge == null) throw new IllegalArgumentException("no workspace bridge for this project");
+        bridge.refcount++;
+    }
+
+    public synchronized int references(String projectId) {
+        Bridge bridge = bridges.get(projectId);
+        return bridge == null ? 0 : bridge.refcount;
     }
 
     public synchronized void shutdown() {

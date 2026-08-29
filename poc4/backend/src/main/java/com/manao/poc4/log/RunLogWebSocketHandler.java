@@ -116,7 +116,16 @@ public final class RunLogWebSocketHandler extends TextWebSocketHandler {
         for (RunLogWindow.Chunk chunk : chunks) {
             if (bound.cursor.accept(chunk.seq())) accepted.add(chunk);
         }
-        send(bound, replayFrame(accepted, meta));
+        ObjectNode replay = replayFrame(accepted, meta);
+        if (plan.gap()) {
+            // Single LOG_GAP marker: the client's strict parser ignores unknown fields, and the
+            // gap range makes the discontinuity explicit alongside firstAvailableSeq.
+            ObjectNode gap = replay.putObject("gap");
+            gap.put("kind", "LOG_GAP");
+            gap.put("fromSeq", lastSeq == null ? 1 : lastSeq + 1);
+            gap.put("toSeq", meta.firstAvailableSeq() - 1);
+        }
+        send(bound, replay);
         RunSummary run = runSummaryById.apply(bound.runId);
         if (run != null && RunStateReducerBridge.isTerminal(run.state())) {
             send(bound, completeFrame(meta.lastAvailableSeq()));

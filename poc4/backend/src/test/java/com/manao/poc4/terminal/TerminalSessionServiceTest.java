@@ -115,7 +115,7 @@ class TerminalSessionServiceTest {
         assertThat(store.sessions.get(reservation.sessionId()).state()).isEqualTo("CLOSED");
     }
 
-    static final class MutableClock extends java.time.Clock {
+    public static final class MutableClock extends java.time.Clock {
         private Instant instant = NOW;
         void advance(Duration duration) { instant = instant.plus(duration); }
         @Override public java.time.ZoneOffset getZone() { return java.time.ZoneOffset.UTC; }
@@ -125,7 +125,7 @@ class TerminalSessionServiceTest {
 
     static final class FakeRunStore extends RunControllerTest.FakeRunStore { }
 
-    static final class FakeTerminalStore implements TerminalStore {
+    public static final class FakeTerminalStore implements TerminalStore {
         final Map<String, SessionRecord> sessions = new HashMap<>();
         final java.util.function.Supplier<Instant> now = () -> NOW;
         boolean failReservation;
@@ -138,7 +138,7 @@ class TerminalSessionServiceTest {
             if (hasActiveSession) return false;
             sessions.put(record.sessionId(), new SessionRecord(record.sessionId(), record.projectId(),
                 record.runId(), record.userId(), record.ticketHash(), record.expiresAt(), null, "RESERVED",
-                null, null, null));
+                null, null, null, record.cols(), record.rows()));
             return true;
         }
 
@@ -152,7 +152,7 @@ class TerminalSessionServiceTest {
             }
             SessionRecord live = new SessionRecord(session.sessionId(), session.projectId(), session.runId(),
                 session.userId(), session.ticketHash(), session.expiresAt(), Instant.now(), "LIVE",
-                session.podRef(), session.containerRef(), session.closeReason());
+                session.podRef(), session.containerRef(), session.closeReason(), session.cols(), session.rows());
             sessions.put(live.sessionId(), live);
             return Optional.of(live);
         }
@@ -166,7 +166,7 @@ class TerminalSessionServiceTest {
             if (session == null || !"LIVE".equals(session.state())) return false;
             sessions.put(sessionId, new SessionRecord(session.sessionId(), session.projectId(), session.runId(),
                 session.userId(), session.ticketHash(), session.expiresAt(), session.consumedAt(), state,
-                session.podRef(), session.containerRef(), closeReason));
+                session.podRef(), session.containerRef(), closeReason, session.cols(), session.rows()));
             return true;
         }
     }

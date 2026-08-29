@@ -13,7 +13,7 @@ import org.springframework.stereotype.Component;
 @Component
 @ConditionalOnBean(JdbcTemplate.class)
 public final class JdbcTerminalStore implements TerminalStore {
-    private static final String COLUMNS = "id, project_id, run_id, user_id, ticket_hash, expires_at, consumed_at, state, pod_ref, container_ref, close_reason";
+    private static final String COLUMNS = "id, project_id, run_id, user_id, ticket_hash, expires_at, consumed_at, state, pod_ref, container_ref, close_reason, cols, rows";
 
     private final JdbcTemplate jdbc;
     private final Clock clock;
@@ -29,9 +29,9 @@ public final class JdbcTerminalStore implements TerminalStore {
 
     @Override public boolean insertReservation(ReservationRecord record) {
         try {
-            jdbc.update("INSERT INTO terminal_session(id, project_id, run_id, user_id, state, ticket_hash, expires_at) VALUES (?, ?, ?, ?, 'RESERVED', ?, ?)",
+            jdbc.update("INSERT INTO terminal_session(id, project_id, run_id, user_id, state, ticket_hash, expires_at, cols, rows) VALUES (?, ?, ?, ?, 'RESERVED', ?, ?, ?, ?)",
                 record.sessionId(), record.projectId(), record.runId(), record.userId(), record.ticketHash(),
-                Timestamp.from(record.expiresAt()));
+                Timestamp.from(record.expiresAt()), record.cols(), record.rows());
             return true;
         } catch (org.springframework.dao.DuplicateKeyException ex) {
             return false;
@@ -64,6 +64,7 @@ public final class JdbcTerminalStore implements TerminalStore {
         return new SessionRecord(rs.getString("id"), rs.getString("project_id"), rs.getString("run_id"),
             rs.getString("user_id"), rs.getString("ticket_hash"), rs.getTimestamp("expires_at").toInstant(),
             consumed == null ? null : consumed.toInstant(), rs.getString("state"), rs.getString("pod_ref"),
-            rs.getString("container_ref"), rs.getString("close_reason"));
+            rs.getString("container_ref"), rs.getString("close_reason"),
+            rs.getInt("cols"), rs.getInt("rows"));
     }
 }

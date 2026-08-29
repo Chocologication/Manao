@@ -14,7 +14,7 @@ class JobResourceFactoryTest {
         "manao-test", 1800,
         new JobResourceFactory.RunResources(1000, 1L * 1024 * 1024 * 1024, 1L * 1024 * 1024 * 1024),
         new JobResourceFactory.RunResources(8000, 16L * 1024 * 1024 * 1024, 10L * 1024 * 1024 * 1024),
-        "registry.example/manao/maven-runner@sha256:ccc");
+        "registry.example/manao/maven-runner@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc");
     private final ObjectMapper json = new ObjectMapper();
 
     @Test
@@ -40,7 +40,7 @@ class JobResourceFactoryTest {
         assertThat(container.getCommand()).containsExactly("mvn", "clean", "test");
         assertThat(container.getArgs()).isNullOrEmpty();
         assertThat(container.getWorkingDir()).isEqualTo("/workspace");
-        assertThat(container.getImage()).isEqualTo("registry.example/manao/maven-runner@sha256:ccc");
+        assertThat(container.getImage()).isEqualTo("registry.example/manao/maven-runner@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc");
         assertThatNoBrowserPolicyFields(json.writeValueAsString(job));
     }
 

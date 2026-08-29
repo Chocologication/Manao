@@ -18,6 +18,8 @@ public interface KubernetesGateway {
 
     void createPod(Pod pod);
 
+    void deletePod(String podName);
+
     void createService(Service service);
 
     /** Deletes only pods, services and PVCs carrying this project's server-generated labels. */

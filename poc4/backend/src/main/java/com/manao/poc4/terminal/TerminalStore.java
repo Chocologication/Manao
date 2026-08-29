@@ -17,9 +17,9 @@ public interface TerminalStore {
     boolean settle(String sessionId, String state, String closeReason, Integer exitCode);
 
     record ReservationRecord(String sessionId, String projectId, String runId, String userId,
-                             String ticketHash, Instant expiresAt) { }
+                             String ticketHash, Instant expiresAt, int cols, int rows) { }
 
     record SessionRecord(String sessionId, String projectId, String runId, String userId, String ticketHash,
                          Instant expiresAt, Instant consumedAt, String state, String podRef, String containerRef,
-                         String closeReason) { }
+                         String closeReason, int cols, int rows) { }
 }

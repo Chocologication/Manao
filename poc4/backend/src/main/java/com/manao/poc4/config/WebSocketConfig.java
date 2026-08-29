@@ -8,6 +8,7 @@ import com.manao.poc4.terminal.PtyBridge;
 import com.manao.poc4.terminal.TerminalSessionService;
 import com.manao.poc4.terminal.TerminalWebSocketHandler;
 import java.time.Clock;
+import java.util.List;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.context.annotation.Bean;
@@ -28,11 +29,18 @@ public class WebSocketConfig implements WebSocketConfigurer {
 
     @Override
     public void registerWebSocketHandlers(WebSocketHandlerRegistry registry) {
+        // Same-origin contract: only the local Vite dev server origins are accepted; no wildcard.
+        List<String> allowed = java.util.Arrays.stream(new String[] {
+                "http://localhost:4173", "http://127.0.0.1:4173",
+                System.getenv().getOrDefault("MANAO_WS_EXTRA_ORIGIN", "")})
+            .filter(origin -> !origin.isBlank()).toList();
         if (runLogWebSocketHandler != null) {
-            registry.addHandler(runLogWebSocketHandler, "/api/v1/ws/run-logs").setAllowedOriginPatterns("*");
+            registry.addHandler(runLogWebSocketHandler, "/api/v1/ws/run-logs")
+                .setAllowedOrigins(allowed.toArray(new String[0]));
         }
         if (terminalWebSocketHandler != null) {
-            registry.addHandler(terminalWebSocketHandler, "/api/v1/ws/terminals").setAllowedOriginPatterns("*");
+            registry.addHandler(terminalWebSocketHandler, "/api/v1/ws/terminals")
+                .setAllowedOrigins(allowed.toArray(new String[0]));
         }
     }
 
@@ -47,7 +55,6 @@ public class WebSocketConfig implements WebSocketConfigurer {
     @ConditionalOnBean({TerminalSessionService.class, PtyBridge.class, RunService.class})
     TerminalWebSocketHandler terminalWebSocketHandler(TerminalSessionService sessions, PtyBridge bridge,
                                                       RunService runService) {
-        return new TerminalWebSocketHandler(sessions::consume, bridge, runService::findSummaryById,
-            Clock.systemUTC(), 80, 24);
+        return new TerminalWebSocketHandler(sessions, bridge, runService::findSummaryById, Clock.systemUTC());
     }
 }

@@ -43,10 +43,11 @@ public final class RunService {
         if (fencingToken.isEmpty()) {
             throw new ApiException("INTERNAL_ERROR", 503, "Backend authority is temporarily unavailable");
         }
+        long token = fencingToken.getAsLong();
         String runId = UUID.randomUUID().toString();
         RunRecord record = new RunRecord(runId, projectId, revision, RunState.STARTING, policy.toJson(),
             null, null, null, null, null, null, 0L, Instant.now());
-        RunStore.InsertResult inserted = store.insertRun(record);
+        RunStore.InsertResult inserted = store.insertRun(record, token);
         if (inserted == RunStore.InsertResult.ACTIVE_RUN_EXISTS) {
             // The unique active-run marker rejected the insert; refetch the authoritative winner.
             if (store.findActiveRun(projectId).isPresent()) {
@@ -55,8 +56,14 @@ public final class RunService {
             throw new ApiException("INTERNAL_ERROR", 503, "Backend authority is temporarily unavailable");
         }
         RunRecord persisted = store.findRunForOwner(ownerId, projectId, runId).orElseThrow();
-        String jobRef = coordinator.ensureJob(persisted, projectId);
-        store.updateJobFacts(runId, jobRef);
+        try {
+            String jobRef = coordinator.ensureJob(persisted, projectId);
+            store.updateJobFacts(runId, jobRef);
+        } catch (RuntimeException ex) {
+            // Never leave a locked STARTING run without a Job: fail closed and release the lock.
+            store.settle(runId, RunState.FAILED, "START_FAILED", null, token);
+            throw new ApiException("INTERNAL_ERROR", 503, "Run could not be started");
+        }
         return toSummary(store.findRunForOwner(ownerId, projectId, runId).orElseThrow());
     }
 
@@ -70,8 +77,12 @@ public final class RunService {
             coordinator.stop(jobRef(run));
             return toSummary(refetch(ownerId, run));
         }
+        OptionalLong stopToken = store.acquireFencingToken();
+        if (stopToken.isEmpty()) {
+            throw new ApiException("INTERNAL_ERROR", 503, "Backend authority is temporarily unavailable");
+        }
         boolean moved = store.transition(runId, projectId, run.version(), RunState.STOPPING,
-            RunState.STARTING, RunState.RUNNING);
+            stopToken.getAsLong(), RunState.STARTING, RunState.RUNNING);
         if (!moved) {
             // Concurrent settlement won; reflect authoritative state without touching Kubernetes.
             return toSummary(refetch(ownerId, run));

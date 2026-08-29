@@ -54,7 +54,7 @@ public final class TerminalSessionService implements TerminalTicketService {
         String sessionId = UUID.randomUUID().toString();
         Instant expiresAt = clock.instant().plus(TICKET_TTL);
         boolean inserted = store.insertReservation(new TerminalStore.ReservationRecord(sessionId, projectId, runId,
-            ownerId, TerminalTicketService.sha256Hex(ticket), expiresAt));
+            ownerId, TerminalTicketService.sha256Hex(ticket), expiresAt, cols, rows));
         if (!inserted) {
             throw new ApiException("TERMINAL_SESSION_ALREADY_ACTIVE", 409, "Terminal session already active");
         }

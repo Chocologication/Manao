@@ -14,5 +14,6 @@ public interface JobCoordinator {
     /** Deletes the Job; safe to call repeatedly. */
     boolean stop(String jobName);
 
-    record JobFacts(boolean running, boolean succeeded, boolean failed, boolean deadlineExceeded, Integer exitCode) { }
+    record JobFacts(boolean running, boolean succeeded, boolean failed, boolean deadlineExceeded, Integer exitCode,
+                    String podName) { }
 }

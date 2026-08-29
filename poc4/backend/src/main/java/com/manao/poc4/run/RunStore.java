@@ -12,7 +12,7 @@ public interface RunStore {
     /** Acquires or renews the instance lease and returns the current fencing token. */
     OptionalLong acquireFencingToken();
 
-    InsertResult insertRun(RunRecord record);
+    InsertResult insertRun(RunRecord record, long fencingToken);
 
     Optional<RunRecord> findActiveRun(String projectId);
 
@@ -23,11 +23,15 @@ public interface RunStore {
 
     List<RunRecord> listForOwner(String ownerId, String projectId, int limit);
 
-    boolean transition(String runId, String projectId, long expectedVersion, RunState next, RunState... allowedStates);
+    boolean transition(String runId, String projectId, long expectedVersion, RunState next, long fencingToken,
+                       RunState... allowedStates);
+
+    /** STARTING -> RUNNING with started_at; guarded by the fencing token. */
+    boolean markRunning(String runId, String projectId, long expectedVersion, long fencingToken);
 
     void updateJobFacts(String runId, String jobRef);
 
-    boolean settle(String runId, RunState state, String terminationReason, Integer exitCode);
+    boolean settle(String runId, RunState state, String terminationReason, Integer exitCode, long fencingToken);
 
     List<RunRecord> findRunsInState(RunState... states);
 

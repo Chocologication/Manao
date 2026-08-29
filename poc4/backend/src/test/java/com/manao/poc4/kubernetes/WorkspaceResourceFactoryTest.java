@@ -1,6 +1,7 @@
 package com.manao.poc4.kubernetes;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.fabric8.kubernetes.api.model.Pod;
@@ -10,10 +11,12 @@ import java.util.Map;
 import org.junit.jupiter.api.Test;
 
 class WorkspaceResourceFactoryTest {
+    private static final String DIGEST_A = "sha256:" + "a".repeat(64);
+    private static final String DIGEST_B = "sha256:" + "b".repeat(64);
     private static final String PROJECT = "0f2b1c3d-4e5f-4a6b-8c9d-0e1f2a3b4c5d";
     private static final String NAMESPACE = "manao-test";
     private final WorkspaceResourceFactory factory =
-        new WorkspaceResourceFactory(NAMESPACE, "rwx-storage", "registry.example/manao/workspace-agent@sha256:aaa", "registry.example/manao/initializer@sha256:bbb");
+        new WorkspaceResourceFactory(NAMESPACE, "rwx-storage", "registry.example/manao/workspace-agent@" + DIGEST_A, "registry.example/manao/initializer@" + DIGEST_B);
     private final ObjectMapper json = new ObjectMapper();
 
     @Test
@@ -41,13 +44,16 @@ class WorkspaceResourceFactoryTest {
         var volume = initializer.getSpec().getVolumes().get(0);
         assertThat(volume.getPersistentVolumeClaim().getClaimName()).isEqualTo("manao-pvc-" + PROJECT);
         assertThat(volume.getPersistentVolumeClaim().getReadOnly()).isFalse();
-        assertThat(initializer.getSpec().getContainers()).hasSize(2);
-        var create = initializer.getSpec().getContainers().get(0);
+        assertThat(initializer.getSpec().getContainers()).hasSize(1);
+        var create = initializer.getSpec().getInitContainers().get(0);
         assertThat(create.getVolumeMounts().get(0).getMountPath()).isEqualTo("/data");
         assertThat(create.getVolumeMounts().get(0).getSubPath()).isNull();
+        // create-directory runs as an init container: strict ordering before the non-root probe.
+        assertThat(initializer.getSpec().getInitContainers()).hasSize(1);
+        assertThat(initializer.getSpec().getInitContainers().get(0).getName()).isEqualTo("create-directory");
         assertThat(String.join(" ", create.getCommand())).contains("mkdir -p /data/project-" + PROJECT);
         assertThat(String.join(" ", create.getCommand())).contains("chown 10001:10001");
-        var probe = initializer.getSpec().getContainers().get(1);
+        var probe = initializer.getSpec().getContainers().get(0);
         assertThat(probe.getSecurityContext().getRunAsUser()).isEqualTo(10001L);
         assertThat(probe.getSecurityContext().getRunAsGroup()).isEqualTo(10001L);
         assertNoForbiddenFields(json.writeValueAsString(initializer));
@@ -67,7 +73,7 @@ class WorkspaceResourceFactoryTest {
         assertThat(pod.getSpec().getAutomountServiceAccountToken()).isFalse();
         var container = pod.getSpec().getContainers().get(0);
         assertThat(container.getName()).isEqualTo("workspace-agent");
-        assertThat(container.getImage()).isEqualTo("registry.example/manao/workspace-agent@sha256:aaa");
+        assertThat(container.getImage()).isEqualTo("registry.example/manao/workspace-agent@" + DIGEST_A);
         assertThat(container.getSecurityContext().getAllowPrivilegeEscalation()).isFalse();
         assertThat(container.getSecurityContext().getCapabilities().getDrop()).containsExactly("ALL");
         assertThat(container.getSecurityContext().getReadOnlyRootFilesystem()).isTrue();
@@ -99,6 +105,17 @@ class WorkspaceResourceFactoryTest {
         Pod pod = factory.createWorkspacePod(PROJECT, "key");
         service.getSpec().getSelector().forEach((key, value) -> assertThat(pod.getMetadata().getLabels()).containsEntry(key, value));
         assertNoForbiddenFields(json.writeValueAsString(service));
+    }
+
+    @Test
+    void imageReferencesMustBeImmutableDigests() {
+        // Floating tags fail closed at factory construction.
+        assertThatThrownBy(() -> new WorkspaceResourceFactory(NAMESPACE, "rwx-storage",
+            "registry.example/manao/workspace-agent:latest", "registry.example/manao/initializer@" + DIGEST_B))
+            .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> new WorkspaceResourceFactory(NAMESPACE, "rwx-storage",
+            "registry.example/manao/workspace-agent@" + DIGEST_A, "busybox:1.36"))
+            .isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test

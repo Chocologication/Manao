@@ -65,7 +65,8 @@ public final class Fabric8JobCoordinator implements JobCoordinator {
                 .findFirst().orElse(null);
         boolean running = !succeeded && !failed && !deadlineExceeded && pod.getStatus() != null
             && "Running".equals(pod.getStatus().getPhase());
-        return Optional.of(new JobFacts(running, succeeded, failed, deadlineExceeded, exitCode));
+        return Optional.of(new JobFacts(running, succeeded, failed, deadlineExceeded, exitCode,
+            pod.getMetadata() == null ? null : pod.getMetadata().getName()));
     }
 
     @Override public boolean stop(String jobName) {

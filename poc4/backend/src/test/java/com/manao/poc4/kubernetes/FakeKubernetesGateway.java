@@ -14,6 +14,7 @@ import java.util.Set;
 public class FakeKubernetesGateway implements KubernetesGateway {
     public final Set<String> created = new HashSet<>();
     public final Set<String> deletedProjects = new HashSet<>();
+    public final Set<String> deletedPods = new HashSet<>();
     public boolean pvcMissing = false;
     public boolean serviceMissing = false;
     public boolean initializerFails = false;
@@ -50,6 +51,10 @@ public class FakeKubernetesGateway implements KubernetesGateway {
 
     @Override public void createService(Service service) {
         if (!serviceMissing) created.add("svc:" + projectId(service));
+    }
+
+    @Override public void deletePod(String podName) {
+        deletedPods.add(podName);
     }
 
     @Override public void deleteProjectResources(String projectId) {

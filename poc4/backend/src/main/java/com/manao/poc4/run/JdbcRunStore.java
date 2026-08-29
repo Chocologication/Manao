@@ -58,11 +58,11 @@ public final class JdbcRunStore implements RunStore {
         return "backend-" + System.getProperty("manao.instance.id", "local");
     }
 
-    @Override public InsertResult insertRun(RunRecord record) {
+    @Override public InsertResult insertRun(RunRecord record, long fencingToken) {
         try {
-            jdbc.update("INSERT INTO run(id, project_id, requested_revision, state, policy_json, version, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            jdbc.update("INSERT INTO run(id, project_id, requested_revision, state, policy_json, version, created_at, fencing_token) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                 record.id(), record.projectId(), record.requestedRevision(), record.state().name(),
-                record.policyJson(), record.version(), Timestamp.from(record.createdAt()));
+                record.policyJson(), record.version(), Timestamp.from(record.createdAt()), fencingToken);
             return InsertResult.INSERTED;
         } catch (org.springframework.dao.DuplicateKeyException ex) {
             return InsertResult.ACTIVE_RUN_EXISTS;
@@ -88,7 +88,7 @@ public final class JdbcRunStore implements RunStore {
     }
 
     @Override public boolean transition(String runId, String projectId, long expectedVersion, RunState next,
-                                        RunState... allowedStates) {
+                                        long fencingToken, RunState... allowedStates) {
         String placeholders = Arrays.stream(allowedStates).map(s -> "?").collect(Collectors.joining(", "));
         List<Object> args = new java.util.ArrayList<>();
         args.add(next.name());
@@ -96,18 +96,26 @@ public final class JdbcRunStore implements RunStore {
         args.add(runId);
         args.add(projectId);
         args.add(expectedVersion);
+        args.add(fencingToken);
         args.addAll(Arrays.asList(allowedStates).stream().map(Enum::name).toList());
-        return jdbc.update("UPDATE run SET state = ?, version = version + 1, updated_at = ? WHERE id = ? AND project_id = ? AND version = ? AND state IN ("
+        return jdbc.update("UPDATE run SET state = ?, version = version + 1, updated_at = ? WHERE id = ? AND project_id = ? AND version = ? AND fencing_token = ? AND state IN ("
             + placeholders + ")", args.toArray()) == 1;
+    }
+
+    @Override public boolean markRunning(String runId, String projectId, long expectedVersion, long fencingToken) {
+        return jdbc.update("UPDATE run SET state = 'RUNNING', started_at = ?, version = version + 1, updated_at = ? WHERE id = ? AND project_id = ? AND version = ? AND fencing_token = ? AND state = 'STARTING'",
+            Timestamp.from(Instant.now()), Timestamp.from(Instant.now()), runId, projectId, expectedVersion,
+            fencingToken) == 1;
     }
 
     @Override public void updateJobFacts(String runId, String jobRef) {
         jdbc.update("UPDATE run SET job_ref = ? WHERE id = ?", jobRef, runId);
     }
 
-    @Override public boolean settle(String runId, RunState state, String terminationReason, Integer exitCode) {
-        return jdbc.update("UPDATE run SET state = ?, finished_at = ?, exit_code = ?, termination_reason = ?, version = version + 1 WHERE id = ? AND active_run_marker = 1",
-            state.name(), Timestamp.from(Instant.now()), exitCode, terminationReason, runId) == 1;
+    @Override public boolean settle(String runId, RunState state, String terminationReason, Integer exitCode,
+                                    long fencingToken) {
+        return jdbc.update("UPDATE run SET state = ?, finished_at = ?, exit_code = ?, termination_reason = ?, version = version + 1 WHERE id = ? AND fencing_token = ? AND active_run_marker = 1",
+            state.name(), Timestamp.from(Instant.now()), exitCode, terminationReason, runId, fencingToken) == 1;
     }
 
     @Override public List<RunRecord> findRunsInState(RunState... states) {

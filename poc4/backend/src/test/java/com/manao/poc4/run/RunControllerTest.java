@@ -196,7 +196,7 @@ public class RunControllerTest {
         }
     }
 
-    private static org.springframework.security.core.Authentication auth(String userId) {
+    public static org.springframework.security.core.Authentication auth(String userId) {
         return new org.springframework.security.authentication.UsernamePasswordAuthenticationToken(userId, "n/a");
     }
 
@@ -218,7 +218,8 @@ public class RunControllerTest {
 
         @Override public OptionalLong acquireFencingToken() { return fencingToken; }
 
-        @Override public InsertResult insertRun(RunRecord record) {
+        @Override public InsertResult insertRun(RunRecord record, long fencingToken) {
+            if (fencingToken != currentFencing()) return InsertResult.ACTIVE_RUN_EXISTS;
             if (failNextInsert) {
                 failNextInsert = false;
                 // Simulate the racing request that won the unique active-run marker.
@@ -256,12 +257,26 @@ public class RunControllerTest {
             return runs.values().stream().map(FakeRun::toRecord).limit(limit).toList();
         }
 
-        @Override public boolean transition(String runId, String projectId, long expectedVersion, RunState next, RunState... allowed) {
+        @Override public boolean transition(String runId, String projectId, long expectedVersion, RunState next,
+                                            long fencingToken, RunState... allowed) {
             FakeRun run = runs.get(runId);
-            if (run == null || !java.util.Set.of(allowed).contains(RunState.valueOf(run.state)) || run.version != expectedVersion) {
+            if (run == null || fencingToken != currentFencing()
+                || !java.util.Set.of(allowed).contains(RunState.valueOf(run.state)) || run.version != expectedVersion) {
                 return false;
             }
             run.state = next.name();
+            run.version++;
+            return true;
+        }
+
+        @Override public boolean markRunning(String runId, String projectId, long expectedVersion, long fencingToken) {
+            FakeRun run = runs.get(runId);
+            if (run == null || fencingToken != currentFencing() || run.version != expectedVersion
+                || !"STARTING".equals(run.state)) {
+                return false;
+            }
+            run.state = RunState.RUNNING.name();
+            run.startedAt = Instant.now();
             run.version++;
             return true;
         }
@@ -271,9 +286,10 @@ public class RunControllerTest {
             if (run != null) run.jobRef = jobRef;
         }
 
-        @Override public boolean settle(String runId, RunState state, String terminationReason, Integer exitCode) {
+        @Override public boolean settle(String runId, RunState state, String terminationReason, Integer exitCode,
+                                        long fencingToken) {
             FakeRun run = runs.get(runId);
-            if (run == null) return false;
+            if (run == null || fencingToken != currentFencing()) return false;
             run.state = state.name();
             run.terminationReason = terminationReason;
             run.exitCode = exitCode;
@@ -288,6 +304,8 @@ public class RunControllerTest {
             for (RunState state : states) wanted.add(state.name());
             return runs.values().stream().filter(run -> wanted.contains(run.state)).map(FakeRun::toRecord).toList();
         }
+
+        private long currentFencing() { return fencingToken.isPresent() ? fencingToken.getAsLong() : -1; }
     }
 
     public static final class FakeRun {
@@ -301,6 +319,7 @@ public class RunControllerTest {
         public String terminationReason;
         public Integer exitCode;
         public Instant finishedAt;
+        public Instant startedAt;
         public Instant createdAt = Instant.parse("2026-08-29T11:00:00Z");
 
         public FakeRun(RunRecord record) {
@@ -315,7 +334,7 @@ public class RunControllerTest {
 
         RunRecord toRecord() {
             return new RunRecord(id, projectId, requestedRevision, RunState.valueOf(state), policyJson, jobRef,
-                null, null, finishedAt, exitCode, terminationReason, version, createdAt);
+                null, startedAt, finishedAt, exitCode, terminationReason, version, createdAt);
         }
     }
 
@@ -324,8 +343,10 @@ public class RunControllerTest {
         public final List<String> stopCalls = new ArrayList<>();
         public final Map<String, JobCoordinator.JobFacts> factsByRun = new HashMap<>();
         public JobCoordinator.JobFacts nextFacts;
+        public RuntimeException ensureJobFailure;
 
         @Override public String ensureJob(RunRecord run, String projectId) {
+            if (ensureJobFailure != null) throw ensureJobFailure;
             ensureJobCalls.add(run.id());
             return "manao-run-" + run.id();
         }

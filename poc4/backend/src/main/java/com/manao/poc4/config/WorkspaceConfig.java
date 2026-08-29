@@ -7,6 +7,7 @@ import com.manao.poc4.kubernetes.WorkspacePortForwardManager;
 import com.manao.poc4.project.ProjectProvisioningService;
 import com.manao.poc4.recovery.ProjectRecoveryService;
 import com.manao.poc4.workspace.Ed25519Keys;
+import com.manao.poc4.log.RunLogService;
 import com.manao.poc4.workspace.WorkspaceAgent;
 import com.manao.poc4.workspace.WorkspaceCapabilitySigner;
 import com.manao.poc4.workspace.WorkspaceOperationService;
@@ -15,6 +16,7 @@ import com.manao.poc4.workspace.WorkspaceStore;
 import com.manao.poc4.workspace.WorkspaceTemplate;
 import io.fabric8.kubernetes.client.KubernetesClient;
 import io.fabric8.kubernetes.client.KubernetesClientBuilder;
+import org.springframework.scheduling.annotation.EnableScheduling;
 import java.time.Clock;
 import java.time.Duration;
 import org.springframework.beans.factory.annotation.Value;
@@ -28,6 +30,7 @@ import org.springframework.context.annotation.Conditional;
  * application configuration without MySQL or cluster access.
  */
 @Configuration
+@EnableScheduling
 @Conditional(SecurityConfig.BackendAuthCondition.class)
 public class WorkspaceConfig {
 
@@ -69,7 +72,11 @@ public class WorkspaceConfig {
             properties.kubernetes().namespace(), properties.workspace().agentPort());
         WorkspaceApiClient.EndpointResolver resolver = projectId -> {
             WorkspacePortForwardManager manager = bridges.getIfAvailable();
-            return manager != null ? manager.endpoint(projectId) : inCluster.endpoint(projectId);
+            if (manager != null) {
+                manager.allocate(projectId); // lazily (re)creates the 6A bridge for this project
+                return manager.endpoint(projectId);
+            }
+            return inCluster.endpoint(projectId);
         };
         return new WorkspaceApiClient(resolver, signer);
     }
@@ -102,9 +109,17 @@ public class WorkspaceConfig {
     ProjectProvisioningService projectProvisioningService(WorkspaceStore store, KubernetesGateway gateway,
                                                           WorkspaceService workspace,
                                                           com.manao.poc4.kubernetes.WorkspaceResourceFactory factory,
-                                                          @Value("${MANAO_WORKSPACE_CAPABILITY_PUBLIC_KEY:}") String publicKeyBase64) {
+                                                          @Value("${MANAO_WORKSPACE_CAPABILITY_PUBLIC_KEY:}") String publicKeyBase64,
+                                                          org.springframework.beans.factory.ObjectProvider<WorkspacePortForwardManager> bridges) {
+        WorkspacePortForwardManager manager = bridges.getIfAvailable();
+        // 6A: the workspace bridge must exist before the first template write and dies with the project.
+        ProjectProvisioningService.WorkspaceBridge bridge = manager == null ? null
+            : new ProjectProvisioningService.WorkspaceBridge() {
+                @Override public void allocate(String projectId) { manager.allocate(projectId); }
+                @Override public void release(String projectId) { manager.release(projectId); }
+            };
         return new ProjectProvisioningService(store, gateway, workspace, factory,
-            new WorkspaceTemplate(), publicKeyBase64);
+            new WorkspaceTemplate(), publicKeyBase64, bridge);
     }
 
     @Bean
@@ -166,6 +181,25 @@ public class WorkspaceConfig {
     com.manao.poc4.run.RunRecoveryService runRecoveryService(com.manao.poc4.run.RunStore store,
                                                              com.manao.poc4.kubernetes.JobCoordinator coordinator) {
         return new com.manao.poc4.run.RunRecoveryService(store, coordinator);
+    }
+
+    @Bean
+    com.manao.poc4.run.RunObservationService runObservationService(com.manao.poc4.run.RunStore store,
+                                                                   com.manao.poc4.kubernetes.JobCoordinator coordinator) {
+        return new com.manao.poc4.run.RunObservationService(store, coordinator);
+    }
+
+    @Bean
+    com.manao.poc4.log.PodLogGateway podLogGateway(KubernetesClient client) {
+        return new com.manao.poc4.kubernetes.Fabric8PodLogGateway(client);
+    }
+
+    @Bean
+    com.manao.poc4.log.RunLogIngestor runLogIngestor(com.manao.poc4.log.PodLogGateway gateway,
+                                                     RunLogService logService,
+                                                     BackendProperties properties) {
+        return new com.manao.poc4.log.RunLogIngestor(gateway, logService,
+            properties.kubernetes().namespace());
     }
 
     @Bean

@@ -38,9 +38,9 @@ class RunRecoveryServiceTest {
         seedRun("run-success", RunState.RUNNING);
         seedRun("run-failed", RunState.STARTING);
         seedRun("run-timeout", RunState.STOPPING);
-        coordinator.factsByRun.put("run-success", new JobCoordinator.JobFacts(false, true, false, false, 0));
-        coordinator.factsByRun.put("run-failed", new JobCoordinator.JobFacts(false, false, true, false, 1));
-        coordinator.factsByRun.put("run-timeout", new JobCoordinator.JobFacts(false, false, false, true, null));
+        coordinator.factsByRun.put("run-success", new JobCoordinator.JobFacts(false, true, false, false, 0, null));
+        coordinator.factsByRun.put("run-failed", new JobCoordinator.JobFacts(false, false, true, false, 1, null));
+        coordinator.factsByRun.put("run-timeout", new JobCoordinator.JobFacts(false, false, false, true, null, null));
 
         RunRecoveryService.RecoveryReport report = service.recoverRuns();
 
@@ -58,7 +58,7 @@ class RunRecoveryServiceTest {
     @Test
     void runningJobResumesAsRunningAfterRecovery() {
         seedRun("run-live", RunState.RUNNING);
-        coordinator.factsByRun.put("run-live", new JobCoordinator.JobFacts(true, false, false, false, null));
+        coordinator.factsByRun.put("run-live", new JobCoordinator.JobFacts(true, false, false, false, null, null));
 
         RunRecoveryService.RecoveryReport report = service.recoverRuns();
 
@@ -91,7 +91,7 @@ class RunRecoveryServiceTest {
     @Test
     void inconclusiveJobFactsKeepTheRunRecovering() {
         seedRun("run-unclear", RunState.STOPPING);
-        coordinator.factsByRun.put("run-unclear", new JobCoordinator.JobFacts(false, false, false, false, null));
+        coordinator.factsByRun.put("run-unclear", new JobCoordinator.JobFacts(false, false, false, false, null, null));
 
         RunRecoveryService.RecoveryReport report = service.recoverRuns();
 

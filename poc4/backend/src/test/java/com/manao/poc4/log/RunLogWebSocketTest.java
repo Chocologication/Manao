@@ -50,6 +50,11 @@ class RunLogWebSocketTest {
             @Override public void deleteBefore(String runId, long seqExclusive) {
                 stored.getOrDefault(runId, List.of()).removeIf(chunk -> chunk.seq() < seqExclusive);
             }
+            @Override public java.util.OptionalLong lastSeq(String runId) {
+                return stored.getOrDefault(runId, List.of()).stream()
+                    .mapToLong(RunLogWindow.Chunk::seq).max().stream().boxed().findFirst()
+                    .map(java.util.OptionalLong::of).orElseGet(java.util.OptionalLong::empty);
+            }
         };
         logService = new RunLogService(chunks, new MutableClock());
         handler = new RunLogWebSocketHandler(new StubTickets(), logService,
@@ -107,6 +112,13 @@ class RunLogWebSocketTest {
         var chunks = replay.get("chunks");
         long firstSeq = chunks.get(0).get("seq").asLong();
         assertThat(firstSeq).isEqualTo(replay.get("window").get("firstAvailableSeq").asLong());
+        // The single LOG_GAP marker rides on the replay frame; the strict stage-five parser
+        // ignores unknown fields, and the gap range is explicit for consumers.
+        assertThat(replay.has("gap")).isTrue();
+        assertThat(replay.get("gap").get("kind").asText()).isEqualTo("LOG_GAP");
+        assertThat(replay.get("gap").get("fromSeq").asLong()).isEqualTo(2);
+        assertThat(replay.get("gap").get("toSeq").asLong()).isEqualTo(firstSeq - 1);
+        assertThat(session.text.stream().filter(payload -> payload.contains("LOG_GAP")).count()).isEqualTo(1);
         for (int i = 1; i < chunks.size(); i++) {
             assertThat(chunks.get(i).get("seq").asLong()).isEqualTo(chunks.get(i - 1).get("seq").asLong() + 1);
         }

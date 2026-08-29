@@ -21,7 +21,8 @@ import org.springframework.web.socket.handler.AbstractWebSocketHandler;
 /**
  * Terminal WebSocket: ticket-only handshake into the run's live PTY. Binary frames carry PTY
  * input/output only; control frames follow the stage-five contract with server-owned flow
- * control. Old sessions are never reused; every teardown settles the reservation exactly once.
+ * control. Every teardown path settles the terminal session exactly once and closes the exec;
+ * old sessions are never reused.
  */
 public final class TerminalWebSocketHandler extends AbstractWebSocketHandler {
     public static final int INITIAL_CREDIT_BYTES = TerminalFlowController.INITIAL_CREDIT_BYTES;
@@ -29,34 +30,36 @@ public final class TerminalWebSocketHandler extends AbstractWebSocketHandler {
     private static final CloseStatus FLOW_VIOLATION = new CloseStatus(4409, "terminal flow violation");
     private static final ObjectMapper JSON = new ObjectMapper();
 
-    private final TerminalTicketService tickets;
+    private final TerminalSessionService sessions;
     private final PtyBridge bridge;
     private final Function<String, RunSummary> runSummaryById;
     private final Clock clock;
-    private final Map<String, BoundSession> sessions = new ConcurrentHashMap<>();
+    private final Map<String, BoundSession> connections = new ConcurrentHashMap<>();
 
     private static final class BoundSession {
         final WebSocketSession session;
-        final String runId;
-        final String sessionId;
+        final TerminalStore.SessionRecord record;
         final TerminalFlowController flow;
         final java.util.ArrayDeque<byte[]> pendingOutput = new java.util.ArrayDeque<>();
-        boolean pauseSent;
+        final java.util.ArrayDeque<byte[]> pendingInput = new java.util.ArrayDeque<>();
         volatile PtyBridge.PtyHandle handle;
         volatile boolean settled;
+        volatile boolean pauseNotified;
 
-        BoundSession(WebSocketSession session, String runId, String sessionId, TerminalFlowController flow) {
+        BoundSession(WebSocketSession session, TerminalStore.SessionRecord record, Clock clock) {
             this.session = session;
-            this.runId = runId;
-            this.sessionId = sessionId;
-            this.flow = flow;
+            this.record = record;
+            // The flow controller must share the handler clock so the 5-second input
+            // deadline is observable in tests and consistent in production.
+            this.flow = new TerminalFlowController(clock);
         }
+
+        String runId() { return record.runId(); }
     }
 
-    public TerminalWebSocketHandler(TerminalTicketService tickets, PtyBridge bridge,
-                                    Function<String, RunSummary> runSummaryById, Clock clock,
-                                    int cols, int rows) {
-        this.tickets = tickets;
+    public TerminalWebSocketHandler(TerminalSessionService sessions, PtyBridge bridge,
+                                    Function<String, RunSummary> runSummaryById, Clock clock) {
+        this.sessions = sessions;
         this.bridge = bridge;
         this.runSummaryById = runSummaryById;
         this.clock = clock;
@@ -65,24 +68,24 @@ public final class TerminalWebSocketHandler extends AbstractWebSocketHandler {
     @Override
     public void afterConnectionEstablished(WebSocketSession session) {
         String ticket = ticketParameter(session.getUri());
-        Optional<TerminalStore.SessionRecord> consumed = ticket == null ? Optional.empty() : tickets.consume(ticket);
+        Optional<TerminalStore.SessionRecord> consumed = ticket == null ? Optional.empty() : sessions.consume(ticket);
         if (consumed.isEmpty()) {
             closeQuietly(session, TICKET_REJECTED);
             return;
         }
         TerminalStore.SessionRecord record = consumed.get();
-        BoundSession bound = new BoundSession(session, record.runId(), record.sessionId(),
-            new TerminalFlowController(clock));
-        sessions.put(session.getId(), bound);
+        BoundSession bound = new BoundSession(session, record, clock);
+        connections.put(session.getId(), bound);
         RunSummary run = runSummaryById.apply(record.runId());
         if (run == null || !"RUNNING".equals(run.state())) {
-            settleAndClose(bound, "RUN_LEFT_RUNNING", null, TICKET_REJECTED);
+            settleAndClose(bound, "RUN_LEFT_RUNNING", "INTERRUPTED", null, TICKET_REJECTED);
             return;
         }
         try {
-            bound.handle = bridge.open(record.runId(), 80, 24, new PtyListenerAdapter(bound));
+            bound.handle = bridge.open(record.runId(), Math.max(record.cols(), 1),
+                Math.max(record.rows(), 1), new PtyListenerAdapter(bound));
         } catch (RuntimeException ex) {
-            settleAndClose(bound, "BACKEND_ERROR", null, TICKET_REJECTED);
+            settleAndClose(bound, "BACKEND_ERROR", "FAILED", null, TICKET_REJECTED);
             return;
         }
         ObjectNode ready = JSON.createObjectNode();
@@ -93,33 +96,67 @@ public final class TerminalWebSocketHandler extends AbstractWebSocketHandler {
 
     @Override
     protected void handleBinaryMessage(WebSocketSession session, BinaryMessage message) {
-        BoundSession bound = sessions.get(session.getId());
+        BoundSession bound = connections.get(session.getId());
         if (bound == null || bound.handle == null) return;
         byte[] bytes = new byte[message.getPayloadLength()];
         message.getPayload().get(bytes);
         if (bytes.length > TerminalFlowController.MAX_INPUT_FRAME_BYTES) {
-            settleAndClose(bound, "CLIENT_CLOSED", null, TICKET_REJECTED);
+            // Protocol violation: input frames are hard-limited to 16 KiB.
+            settleAndClose(bound, "BACKEND_ERROR", "FAILED", null, TICKET_REJECTED);
             return;
         }
         if (bound.flow.canQueueInput(bytes.length)) {
             bound.flow.queueInput(bytes.length);
+            bound.pendingInput.addLast(bytes);
             drainInput(bound);
         }
-        if (bound.flow.shouldPauseReading() && !bound.pauseSent) {
-            bound.pauseSent = true;
+        updatePauseState(bound);
+        if (bound.flow.queueOverflowDeadlineExceeded()) {
+            // 64 KiB queue full for the whole 5-second grace period: fail closed.
+            settleAndClose(bound, "BACKEND_ERROR", "FAILED", null, TICKET_REJECTED);
+        }
+    }
+
+    /** Writes queued input through to the PTY; backpressured bytes stay queued. */
+    private void drainInput(BoundSession bound) {
+        while (!bound.pendingInput.isEmpty()) {
+            byte[] next = bound.pendingInput.peekFirst();
+            if (!bound.handle.write(next)) break;
+            bound.pendingInput.pollFirst();
+            bound.flow.consumeInput(next.length);
+        }
+        if (bound.pendingInput.isEmpty() && bound.pauseNotified) {
+            bound.pauseNotified = false;
+            sendControl(bound, "terminal.input.resume");
+        }
+    }
+
+    private void updatePauseState(BoundSession bound) {
+        if (bound.flow.shouldPauseReading() && !bound.pauseNotified) {
+            bound.pauseNotified = true;
             sendControl(bound, "terminal.input.pause");
+        }
+    }
+
+    /** Maintenance sweep: fail closed when the input queue stayed full beyond the grace period. */
+    public void enforceInputDeadlines() {
+        for (BoundSession bound : connections.values()) {
+            if (bound.handle == null || bound.settled) continue;
+            if (bound.flow.queueOverflowDeadlineExceeded()) {
+                settleAndClose(bound, "BACKEND_ERROR", "FAILED", null, TICKET_REJECTED);
+            }
         }
     }
 
     @Override
     protected void handleTextMessage(WebSocketSession session, TextMessage message) {
-        BoundSession bound = sessions.get(session.getId());
+        BoundSession bound = connections.get(session.getId());
         if (bound == null) return;
         ObjectNode frame;
         try {
             frame = (ObjectNode) JSON.readTree(message.getPayload());
         } catch (Exception ex) {
-            settleAndClose(bound, "CLIENT_CLOSED", null, FLOW_VIOLATION);
+            settleAndClose(bound, "CLIENT_CLOSED", "CLOSED", null, FLOW_VIOLATION);
             return;
         }
         String type = frame.path("type").asText();
@@ -135,13 +172,13 @@ public final class TerminalWebSocketHandler extends AbstractWebSocketHandler {
                     // Out-of-range resize requests are dropped; the current dimensions stay effective.
                 }
             }
-            case "terminal.close" -> settleAndClose(bound, "CLIENT_CLOSED", null, CloseStatus.NORMAL);
+            case "terminal.close" -> settleAndClose(bound, "CLIENT_CLOSED", "CLOSED", null, CloseStatus.NORMAL);
             case "terminal.output.ack" -> handleAck(bound, frame.path("bytes").asInt());
             case "terminal.output.credit" -> bound.flow.grantCredit(frame.path("bytes").asInt());
             case "terminal.pong" -> { /* liveness marker; no state change */ }
             default -> {
                 sendControl(bound, "terminal.error");
-                settleAndClose(bound, "CLIENT_CLOSED", null, FLOW_VIOLATION);
+                settleAndClose(bound, "CLIENT_CLOSED", "CLOSED", null, FLOW_VIOLATION);
             }
         }
     }
@@ -153,7 +190,7 @@ public final class TerminalWebSocketHandler extends AbstractWebSocketHandler {
     private void handleAck(BoundSession bound, int bytes) {
         var result = bound.flow.ack(bytes);
         if (result == TerminalFlowController.AckResult.VIOLATION) {
-            settleAndClose(bound, "CLIENT_CLOSED", null, FLOW_VIOLATION);
+            settleAndClose(bound, "CLIENT_CLOSED", "CLOSED", null, FLOW_VIOLATION);
             return;
         }
         flushPendingOutput(bound);
@@ -190,12 +227,7 @@ public final class TerminalWebSocketHandler extends AbstractWebSocketHandler {
         }
     }
 
-    private void drainInput(BoundSession bound) {
-        // Input is written through synchronously; the queue only holds backpressured bytes.
-        bound.flow.consumeInput(0);
-    }
-
-    /** PTY exit: settle once and inform the client with the shell's exit code. */
+    /** PTY exit: settle once (CLOSED with the shell's exit code) and inform the client. */
     void handleExit(BoundSession bound, Integer exitCode) {
         ObjectNode frame = JSON.createObjectNode();
         frame.put("type", "terminal.exit");
@@ -206,27 +238,38 @@ public final class TerminalWebSocketHandler extends AbstractWebSocketHandler {
         }
         frame.put("reason", "SHELL_EXITED");
         sendText(bound, frame);
+        settle(bound, "CLOSED", "SHELL_EXITED", exitCode);
         closeQuietly(bound.session, CloseStatus.NORMAL);
     }
 
-    private void settleAndClose(BoundSession bound, String reason, Integer exitCode, CloseStatus status) {
-        if (bound.settled) return;
-        bound.settled = true;
-        if (bound.handle != null) bound.handle.close();
+    private void settleAndClose(BoundSession bound, String reason, String sessionState, Integer exitCode,
+                                CloseStatus status) {
         ObjectNode frame = JSON.createObjectNode();
         frame.put("type", "terminal.exit");
         frame.putNull("exitCode");
         frame.put("reason", reason);
         sendText(bound, frame);
+        settle(bound, sessionState, reason, exitCode);
         closeQuietly(bound.session, status);
+    }
+
+    /** Idempotent session settlement; the store only moves LIVE rows once. */
+    private void settle(BoundSession bound, String state, String closeReason, Integer exitCode) {
+        if (bound.settled) return;
+        bound.settled = true;
+        if (bound.handle != null) {
+            bound.handle.close();
+            bound.handle = null;
+        }
+        sessions.settle(bound.record.sessionId(), state, closeReason, exitCode);
     }
 
     @Override
     public void afterConnectionClosed(WebSocketSession session, CloseStatus status) {
-        BoundSession bound = sessions.remove(session.getId());
+        BoundSession bound = connections.remove(session.getId());
         if (bound != null && !bound.settled) {
-            bound.settled = true;
-            if (bound.handle != null) bound.handle.close();
+            // Connection lost without a client close frame: interrupt and settle exactly once.
+            settleAndClose(bound, "CONNECTION_LOST", "INTERRUPTED", null, null);
         }
     }
 
@@ -263,6 +306,7 @@ public final class TerminalWebSocketHandler extends AbstractWebSocketHandler {
     }
 
     private static void closeQuietly(WebSocketSession session, CloseStatus status) {
+        if (status == null) return;
         try {
             session.close(status);
         } catch (IOException ignored) { }

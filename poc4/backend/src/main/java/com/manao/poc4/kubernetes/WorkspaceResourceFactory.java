@@ -19,7 +19,10 @@ import java.util.Map;
 public class WorkspaceResourceFactory {
     public static final long WORKSPACE_UID = 10001L;
     public static final long WORKSPACE_GID = 10001L;
+    public static final String LABEL_PROJECT_ID = "manao.poc4/project-id";
     private static final String MANAGED_BY = "manao-poc4-backend";
+    private static final java.util.regex.Pattern IMMUTABLE_DIGEST =
+        java.util.regex.Pattern.compile("^[a-z0-9._/-]+@sha256:[0-9a-f]{64}$");
 
     private final String namespace;
     private final String storageClassName;
@@ -30,8 +33,17 @@ public class WorkspaceResourceFactory {
                                     String initializerImage) {
         this.namespace = requireText(namespace, "namespace");
         this.storageClassName = requireText(storageClassName, "storage class");
-        this.agentImage = requireText(agentImage, "agent image");
-        this.initializerImage = requireText(initializerImage, "initializer image");
+        this.agentImage = requireDigest(agentImage, "agent image");
+        this.initializerImage = requireDigest(initializerImage, "initializer image");
+    }
+
+    /** Fail closed: images must be pinned by immutable digest, never by floating tag. */
+    static String requireDigest(String value, String name) {
+        if (value == null || value.isBlank()) throw new IllegalArgumentException(name + " is required");
+        if (!IMMUTABLE_DIGEST.matcher(value).matches()) {
+            throw new IllegalArgumentException(name + " must reference an immutable digest (repo@sha256:<64 hex>)");
+        }
+        return value;
     }
 
     public static String pvcName(String projectId) { return "manao-pvc-" + projectId; }
@@ -43,7 +55,7 @@ public class WorkspaceResourceFactory {
     public static Map<String, String> projectLabels(String projectId) {
         Map<String, String> labels = new HashMap<>();
         labels.put("app.kubernetes.io/managed-by", MANAGED_BY);
-        labels.put("manao.poc4/project-id", projectId);
+        labels.put(LABEL_PROJECT_ID, projectId);
         labels.put("manao.poc4/component", "workspace");
         return labels;
     }
@@ -92,14 +104,17 @@ public class WorkspaceResourceFactory {
                 .withReadOnly(false)
                 .endPersistentVolumeClaim()
                 .build())
-            .withContainers(
+            // Init containers run strictly before app containers: mkdir/chown/chmod are
+            // guaranteed complete before the non-root permission probe starts.
+            .withInitContainers(
                 new io.fabric8.kubernetes.api.model.ContainerBuilder()
                     .withName("create-directory")
                     .withImage(initializerImage)
                     .withCommand("/bin/sh", "-ec", createScript)
                     .withVolumeMounts(new io.fabric8.kubernetes.api.model.VolumeMountBuilder()
                         .withName("workspace").withMountPath("/data").build())
-                    .build(),
+                    .build())
+            .withContainers(
                 new io.fabric8.kubernetes.api.model.ContainerBuilder()
                     .withName("probe-permissions")
                     .withImage(initializerImage)

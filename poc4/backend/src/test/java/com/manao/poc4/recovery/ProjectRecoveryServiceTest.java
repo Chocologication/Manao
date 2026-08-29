@@ -31,6 +31,9 @@ class ProjectRecoveryServiceTest {
         store.projects.put(OTHER, new WorkspaceStore.ProjectRecord(OTHER, "alice-id", "other", "READY", 3, null,
             NOW.minus(Duration.ofMinutes(30))));
         agent = new StubAgent();
+        // The template receipt requires the fixed pom.xml visible through the agent.
+        agent.tree = new com.manao.poc4.workspace.WorkspaceAgent.Tree("", java.util.List.of(
+            new com.manao.poc4.workspace.WorkspaceAgent.TreeEntry("pom.xml", "pom.xml", "file", false, 120L, null)));
         gateway = new FakeKubernetesGateway();
         for (String kind : java.util.List.of("pvc", "init", "pod", "svc")) {
             gateway.created.add(kind + ":" + PROJECT);

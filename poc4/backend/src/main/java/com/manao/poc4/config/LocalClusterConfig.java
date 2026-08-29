@@ -60,9 +60,26 @@ public class LocalClusterConfig {
     }
 
     @Bean
-    SshApiTunnelHealth sshApiTunnelHealth(SshApiTunnelHealth.CommandRunner runner) {
-        // Design Role verbs for pods; jobs/services/pvcs are covered by the same verbs in tests.
-        return new SshApiTunnelHealth(runner, List.of("get", "list", "watch", "create", "delete"));
+    SshApiTunnelHealth sshApiTunnelHealth(SshApiTunnelHealth.CommandRunner runner,
+                                          java.util.Optional<io.fabric8.kubernetes.client.KubernetesClient> client) {
+        SshApiTunnelHealth.Fabric8VersionProbe probe = client
+            .map(c -> (SshApiTunnelHealth.Fabric8VersionProbe) () -> {
+                try {
+                    c.getApiVersion();
+                    return c.getConfiguration() != null;
+                } catch (RuntimeException ex) {
+                    return false;
+                }
+            })
+            .orElse(null);
+        return new SshApiTunnelHealth(runner, SshApiTunnelHealth.designVerbs(true), probe,
+            path -> {
+                try {
+                    return Files.readString(Path.of(path));
+                } catch (java.io.IOException ex) {
+                    throw new IllegalStateException("kubeconfig is unreadable", ex);
+                }
+            });
     }
 
     /** Startup gate: structural kubeconfig preflight plus dual kubectl/auth can-i verification. */
@@ -73,7 +90,11 @@ public class LocalClusterConfig {
             if (kubeconfigPath == null || kubeconfigPath.isBlank()) {
                 throw new IllegalStateException("KUBECONFIG for the local-cluster profile is required");
             }
-            KubeconfigTlsPreflight.requireValid(Files.readString(Path.of(kubeconfigPath)));
+            try {
+                KubeconfigTlsPreflight.requireValid(Files.readString(Path.of(kubeconfigPath)));
+            } catch (java.io.IOException ex) {
+                throw new IllegalStateException("kubeconfig is unreadable", ex);
+            }
             SshApiTunnelHealth.Result result = health.check(kubeconfigPath,
                 KubeconfigTlsPreflight.validate(Files.readString(Path.of(kubeconfigPath))).tlsServerName(),
                 properties.kubernetes().namespace());

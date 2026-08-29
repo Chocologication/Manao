@@ -26,6 +26,7 @@ public final class ProjectProvisioningService {
     private final WorkspaceResourceFactory factory;
     private final WorkspaceTemplate template;
     private final String capabilityPublicKeyBase64;
+    private final WorkspaceBridge bridge;
     private final int pollAttempts;
     private final long pollIntervalMillis;
     private final java.util.concurrent.ExecutorService executor =
@@ -35,21 +36,36 @@ public final class ProjectProvisioningService {
             return thread;
         });
 
-    public ProjectProvisioningService(WorkspaceStore store, KubernetesGateway gateway, WorkspaceService workspace,
-                                      WorkspaceResourceFactory factory, WorkspaceTemplate template,
-                                      String capabilityPublicKeyBase64) {
-        this(store, gateway, workspace, factory, template, capabilityPublicKeyBase64, 240, 500);
+    /** 6A bridge lifecycle hooks; null in 6B where the Service is reachable in-namespace. */
+    public interface WorkspaceBridge {
+        void allocate(String projectId);
+
+        void release(String projectId);
     }
 
     public ProjectProvisioningService(WorkspaceStore store, KubernetesGateway gateway, WorkspaceService workspace,
                                       WorkspaceResourceFactory factory, WorkspaceTemplate template,
-                                      String capabilityPublicKeyBase64, int pollAttempts, long pollIntervalMillis) {
+                                      String capabilityPublicKeyBase64) {
+        this(store, gateway, workspace, factory, template, capabilityPublicKeyBase64, null, 240, 500);
+    }
+
+    public ProjectProvisioningService(WorkspaceStore store, KubernetesGateway gateway, WorkspaceService workspace,
+                                      WorkspaceResourceFactory factory, WorkspaceTemplate template,
+                                      String capabilityPublicKeyBase64, WorkspaceBridge bridge) {
+        this(store, gateway, workspace, factory, template, capabilityPublicKeyBase64, bridge, 240, 500);
+    }
+
+    public ProjectProvisioningService(WorkspaceStore store, KubernetesGateway gateway, WorkspaceService workspace,
+                                      WorkspaceResourceFactory factory, WorkspaceTemplate template,
+                                      String capabilityPublicKeyBase64, WorkspaceBridge bridge,
+                                      int pollAttempts, long pollIntervalMillis) {
         this.store = store;
         this.gateway = gateway;
         this.workspace = workspace;
         this.factory = factory;
         this.template = template;
         this.capabilityPublicKeyBase64 = capabilityPublicKeyBase64;
+        this.bridge = bridge;
         this.pollAttempts = pollAttempts;
         this.pollIntervalMillis = pollIntervalMillis;
     }
@@ -84,6 +100,11 @@ public final class ProjectProvisioningService {
         if (!gateway.workspacePodReady(projectId) && !awaitWorkspacePod(projectId)) {
             throw new IllegalStateException("workspace pod did not become ready");
         }
+        // Design: delete the one-shot initializer as soon as it has succeeded.
+        gateway.deletePod(WorkspaceResourceFactory.initializerPodName(projectId));
+        if (bridge != null) {
+            bridge.allocate(projectId); // 6A: the bridge must exist before the first template write
+        }
         writeTemplate(projectId);
         store.markProjectReady(projectId);
     }
@@ -117,6 +138,11 @@ public final class ProjectProvisioningService {
     }
 
     private void cleanup(String projectId) {
+        try {
+            if (bridge != null) bridge.release(projectId);
+        } catch (RuntimeException ex) {
+            LOG.warn("workspace bridge release failed for a provisioning project", ex);
+        }
         try {
             gateway.deleteProjectResources(projectId);
         } catch (RuntimeException ex) {

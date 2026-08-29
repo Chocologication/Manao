@@ -48,7 +48,6 @@ public final class ProjectRecoveryService {
             processed.add(project.id());
             String projectId = project.id();
             boolean resourcesComplete = gateway.projectPvcExists(projectId)
-                && gateway.initializerSucceeded(projectId)
                 && gateway.workspacePodReady(projectId)
                 && gateway.workspaceServiceExists(projectId);
             if (!resourcesComplete) {
@@ -63,7 +62,8 @@ public final class ProjectRecoveryService {
                 continue;
             }
             WorkspaceStore.ProjectRecord current = store.findProject(projectId);
-            if (current != null && current.workspaceRevision() > 0 && !"FAILED".equals(current.state())) {
+            if (current != null && current.workspaceRevision() > 0 && !"FAILED".equals(current.state())
+                && templateReceiptPresent(projectId)) {
                 store.markProjectReady(projectId);
                 ready.add(projectId);
             } else {
@@ -77,6 +77,16 @@ public final class ProjectRecoveryService {
 
     private WorkspaceOperationService operations() {
         return new WorkspaceOperationService(store, agent);
+    }
+
+    /** Template receipt: the fixed pom.xml must be readable through the workspace agent. */
+    private boolean templateReceiptPresent(String projectId) {
+        try {
+            return agent.tree(projectId, "").entries().stream()
+                .anyMatch(entry -> "pom.xml".equals(entry.path()));
+        } catch (RuntimeException ex) {
+            return false;
+        }
     }
 
     private void cleanup(String projectId) {

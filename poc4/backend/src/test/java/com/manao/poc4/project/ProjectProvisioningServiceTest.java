@@ -11,6 +11,7 @@ import com.manao.poc4.workspace.WorkspaceService;
 import com.manao.poc4.workspace.WorkspaceStore;
 import com.manao.poc4.workspace.WorkspaceTemplate;
 import java.util.ArrayList;
+import java.util.ArrayList;
 import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -35,7 +36,7 @@ class ProjectProvisioningServiceTest {
         WorkspaceOperationService operations = new WorkspaceOperationService(store, agent);
         WorkspaceService workspace = new WorkspaceService(store, operations, agent);
         service = new ProjectProvisioningService(store, gateway, workspace, factory,
-            new WorkspaceTemplate(), "cHVibGljLWtleQ==", 3, 1);
+            new WorkspaceTemplate(), "cHVibGljLWtleQ==", null, 3, 1);
     }
 
     @Test
@@ -62,6 +63,27 @@ class ProjectProvisioningServiceTest {
     }
 
     @Test
+    void bridgeIsAllocatedBeforeTemplateWriteAndReleasedOnFailure() {
+        List<String> bridgeCalls = new ArrayList<>();
+        ProjectProvisioningService.WorkspaceBridge bridge = new ProjectProvisioningService.WorkspaceBridge() {
+            @Override public void allocate(String projectId) { bridgeCalls.add("allocate:" + callsSize()); }
+            @Override public void release(String projectId) { bridgeCalls.add("release"); }
+            private int callsSize() { return factory.calls.size(); }
+        };
+        service = new ProjectProvisioningService(store, gateway, workspaceService(), factory,
+            new WorkspaceTemplate(), "cHVibGljLWtleQ==", bridge, 3, 1);
+        service.provision(PROJECT);
+        // allocate must run after the workspace service exists (4 factory calls) and before READY.
+        assertThat(bridgeCalls).containsExactly("allocate:4");
+        assertThat(store.projects.get(PROJECT).state()).isEqualTo("READY");
+    }
+
+    private com.manao.poc4.workspace.WorkspaceService workspaceService() {
+        return new com.manao.poc4.workspace.WorkspaceService(store,
+            new com.manao.poc4.workspace.WorkspaceOperationService(store, agent), agent);
+    }
+
+    @Test
     void nonCreatingProjectsAreSkipped() {
         store.projects.put(PROJECT, new WorkspaceStore.ProjectRecord(PROJECT, "alice-id", "new", "READY", 4, null,
             java.time.Instant.parse("2026-08-29T00:00:00Z")));
@@ -74,7 +96,9 @@ class ProjectProvisioningServiceTest {
         final List<String> calls = new ArrayList<>();
 
         RecordingFactory() {
-            super("manao-test", "rwx-storage", "agent-image", "initializer-image");
+            super("manao-test", "rwx-storage",
+            "registry.example/manao/workspace-agent@sha256:" + "a".repeat(64),
+            "registry.example/manao/initializer@sha256:" + "b".repeat(64));
         }
 
         @Override public io.fabric8.kubernetes.api.model.PersistentVolumeClaim createPvc(String projectId) {

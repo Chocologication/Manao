@@ -32,10 +32,10 @@ public final class JdbcAuditStore implements AuditStore, RetentionCleanupJob.Cle
     }
 
     @Override public String insertRunning(String sessionId, String projectId, String runId, String userId, long seq,
-                                          String command, boolean sensitiveDetected, Instant startedAt) {
+                                          String command, boolean sensitiveDetected, String trustLevel, Instant startedAt) {
         String id = java.util.UUID.randomUUID().toString();
-        jdbc.update("INSERT INTO terminal_audit(id, session_id, project_id, run_id, user_id, command, state, started_at, sensitive_detected) VALUES (?, ?, ?, ?, ?, ?, 'RUNNING', ?, ?)",
-            id, sessionId, projectId, runId, userId, command, Timestamp.from(startedAt), sensitiveDetected);
+        jdbc.update("INSERT INTO terminal_audit(id, session_id, project_id, run_id, user_id, command, state, started_at, sensitive_detected, trust_level) VALUES (?, ?, ?, ?, ?, ?, 'RUNNING', ?, ?, ?)",
+            id, sessionId, projectId, runId, userId, command, Timestamp.from(startedAt), sensitiveDetected, trustLevel);
         return id;
     }
 

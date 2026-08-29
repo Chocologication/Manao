@@ -60,6 +60,24 @@ class WorkspacePortForwardManagerTest {
     }
 
     @Test
+    void releaseIsRefcountedAndKillsOnlyOnTheLastReference() {
+        RecordingFactory factory = new RecordingFactory();
+        WorkspacePortForwardManager manager = new WorkspacePortForwardManager("manao-test", 18100, 18199, factory);
+        int port = manager.allocate("prj-a");
+        manager.retain("prj-a"); // second consumer holds its own reference
+        assertThat(manager.references("prj-a")).isEqualTo(2);
+
+        manager.release("prj-a");
+        assertThat(manager.references("prj-a")).isEqualTo(1);
+        assertThat(manager.endpoint("prj-a").getPort()).isEqualTo(port);
+
+        manager.release("prj-a");
+        assertThat(manager.references("prj-a")).isZero();
+        assertThatThrownBy(() -> manager.endpoint("prj-a")).isInstanceOf(IllegalArgumentException.class);
+        assertThat(factory.killed).hasSize(1);
+    }
+
+    @Test
     void shutdownKillsAllChildrenAndReleasesPorts() {
         RecordingFactory factory = new RecordingFactory();
         WorkspacePortForwardManager manager = new WorkspacePortForwardManager("manao-test", 18100, 18199, factory);

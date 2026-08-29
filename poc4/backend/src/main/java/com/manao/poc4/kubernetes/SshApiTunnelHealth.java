@@ -4,9 +4,9 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Dual tunnel preflight: kubectl reachability (version) plus every namespace auth can-i verb of
- * the design's Role. A down tunnel maps to dependency-unavailable semantics (503/RECOVERING);
- * tokens and private keys never enter command arguments.
+ * Dual tunnel preflight: kubectl reachability, a Fabric8 /version probe, and every namespace
+ * auth can-i (verb, resource) pair of the design's Role including subresources. A down tunnel
+ * maps to dependency-unavailable semantics (503/RECOVERING); tokens never enter command args.
  */
 public final class SshApiTunnelHealth {
     public interface CommandRunner {
@@ -15,14 +15,56 @@ public final class SshApiTunnelHealth {
         record CommandResult(int exitCode, String stdout, String stderr) { }
     }
 
+    /** Fabric8-side reachability probe of the same forwarded endpoint. */
+    public interface Fabric8VersionProbe {
+        boolean versionMatches();
+    }
+
+    public record VerbResource(String verb, String resource) { }
+
+    /** The design Role, expressed as exact can-i checks (6A includes pods/portforward). */
+    public static List<VerbResource> designVerbs(boolean includePortForward) {
+        List<VerbResource> checks = new ArrayList<>(List.of(
+            new VerbResource("get", "jobs"), new VerbResource("list", "jobs"), new VerbResource("watch", "jobs"),
+            new VerbResource("create", "jobs"), new VerbResource("patch", "jobs"),
+            new VerbResource("update", "jobs"), new VerbResource("delete", "jobs"),
+            new VerbResource("get", "pods"), new VerbResource("list", "pods"), new VerbResource("watch", "pods"),
+            new VerbResource("create", "pods"), new VerbResource("delete", "pods"),
+            new VerbResource("get", "services"), new VerbResource("list", "services"),
+            new VerbResource("create", "services"), new VerbResource("delete", "services"),
+            new VerbResource("get", "persistentvolumeclaims"), new VerbResource("list", "persistentvolumeclaims"),
+            new VerbResource("create", "persistentvolumeclaims"), new VerbResource("delete", "persistentvolumeclaims"),
+            new VerbResource("get", "pods/log"), new VerbResource("create", "pods/exec"),
+            new VerbResource("get", "events"), new VerbResource("list", "events"), new VerbResource("watch", "events")));
+        if (includePortForward) {
+            checks.add(new VerbResource("create", "pods/portforward"));
+        }
+        return List.copyOf(checks);
+    }
+
     public record Result(boolean up, List<String> failures) { }
 
     private final CommandRunner runner;
-    private final List<String> requiredVerbs;
+    private final List<VerbResource> checks;
+    private final Fabric8VersionProbe fabric8Probe;
+    private final KubeconfigLoader kubeconfigLoader;
 
-    public SshApiTunnelHealth(CommandRunner runner, List<String> requiredVerbs) {
+    public interface KubeconfigLoader {
+        String load(String path);
+    }
+
+    public SshApiTunnelHealth(CommandRunner runner, List<VerbResource> checks) {
+        this(runner, checks, null, path -> {
+            throw new IllegalStateException("kubeconfig loader not wired");
+        });
+    }
+
+    public SshApiTunnelHealth(CommandRunner runner, List<VerbResource> checks, Fabric8VersionProbe fabric8Probe,
+                              KubeconfigLoader kubeconfigLoader) {
         this.runner = runner;
-        this.requiredVerbs = List.copyOf(requiredVerbs);
+        this.checks = List.copyOf(checks);
+        this.fabric8Probe = fabric8Probe;
+        this.kubeconfigLoader = kubeconfigLoader;
     }
 
     public Result check(String kubeconfigPath, String tlsServerName, String namespace) {
@@ -33,11 +75,27 @@ public final class SshApiTunnelHealth {
             failures.add("kubectl version failed through the forwarded endpoint: "
                 + firstLine(version.stderr(), version.stdout()));
         }
-        for (String verb : requiredVerbs) {
-            CommandRunner.CommandResult canI = runner.run(
-                List.of("kubectl", kubeconfig, "auth", "can-i", verb, "pods", "-n", namespace));
+        if (fabric8Probe != null && !fabric8Probe.versionMatches()) {
+            failures.add("Fabric8 /version probe failed against the forwarded endpoint");
+        }
+        // The kubeconfig must carry the expected tls-server-name and stay structurally valid.
+        try {
+            KubeconfigTlsPreflight.Result preflight = KubeconfigTlsPreflight.validate(kubeconfigLoader.load(kubeconfigPath));
+            if (!preflight.passed()) {
+                failures.add("kubeconfig preflight failed: " + preflight.reason());
+            } else if (tlsServerName != null && !tlsServerName.isBlank()
+                && !tlsServerName.equals(preflight.tlsServerName())) {
+                failures.add("tls-server-name mismatch: expected " + tlsServerName
+                    + ", kubeconfig has " + preflight.tlsServerName());
+            }
+        } catch (RuntimeException ex) {
+            failures.add("kubeconfig preflight failed: " + ex.getMessage());
+        }
+        for (VerbResource check : checks) {
+            CommandRunner.CommandResult canI = runner.run(List.of("kubectl", kubeconfig, "auth", "can-i",
+                check.verb(), check.resource(), "-n", namespace));
             if (canI.exitCode() != 0 || !canI.stdout().trim().equalsIgnoreCase("yes")) {
-                failures.add("auth can-i " + verb + " pods denied in namespace " + namespace);
+                failures.add("auth can-i " + check.verb() + " " + check.resource() + " denied in namespace " + namespace);
             }
         }
         return new Result(failures.isEmpty(), failures);
