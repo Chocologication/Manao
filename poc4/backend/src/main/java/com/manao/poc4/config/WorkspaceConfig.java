@@ -3,6 +3,7 @@ package com.manao.poc4.config;
 import com.manao.poc4.kubernetes.Fabric8KubernetesGateway;
 import com.manao.poc4.kubernetes.KubernetesGateway;
 import com.manao.poc4.kubernetes.WorkspaceApiClient;
+import com.manao.poc4.kubernetes.WorkspacePortForwardManager;
 import com.manao.poc4.project.ProjectProvisioningService;
 import com.manao.poc4.recovery.ProjectRecoveryService;
 import com.manao.poc4.workspace.Ed25519Keys;
@@ -60,11 +61,16 @@ public class WorkspaceConfig {
     }
 
     @Bean
-    WorkspaceAgent workspaceAgent(BackendProperties properties, WorkspaceCapabilitySigner signer) {
-        // 6B resolves the workspace Service directly in-namespace; the 6A profile swaps this
-        // resolver for the managed port-forward bridge in Task 9.
-        WorkspaceApiClient.EndpointResolver resolver = WorkspaceApiClient.clusterInternal(
+    WorkspaceAgent workspaceAgent(BackendProperties properties, WorkspaceCapabilitySigner signer,
+                                  org.springframework.beans.factory.ObjectProvider<WorkspacePortForwardManager> bridges) {
+        // 6A resolves workspace Services through the backend-managed loopback port-forward bridge;
+        // 6B (cluster profile, no bridge bean) resolves the Service directly in-namespace.
+        WorkspaceApiClient.EndpointResolver inCluster = WorkspaceApiClient.clusterInternal(
             properties.kubernetes().namespace(), properties.workspace().agentPort());
+        WorkspaceApiClient.EndpointResolver resolver = projectId -> {
+            WorkspacePortForwardManager manager = bridges.getIfAvailable();
+            return manager != null ? manager.endpoint(projectId) : inCluster.endpoint(projectId);
+        };
         return new WorkspaceApiClient(resolver, signer);
     }
 
