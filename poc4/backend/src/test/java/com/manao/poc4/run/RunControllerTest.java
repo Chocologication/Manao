@@ -240,6 +240,10 @@ class RunControllerTest {
                 .findFirst().map(FakeRun::toRecord);
         }
 
+        @Override public Optional<RunRecord> findRun(String runId) {
+            return Optional.ofNullable(runs.get(runId)).map(FakeRun::toRecord);
+        }
+
         @Override public Optional<RunRecord> findRunForOwner(String ownerId, String projectId, String runId) {
             FakeRun run = runs.get(runId);
             if (run == null || !run.projectId.equals(projectId) || !ownerId.equals(projectOwners.get(projectId))) {

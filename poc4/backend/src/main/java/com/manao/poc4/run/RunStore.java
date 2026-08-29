@@ -18,6 +18,9 @@ public interface RunStore {
 
     Optional<RunRecord> findRunForOwner(String ownerId, String projectId, String runId);
 
+    /** Internal by-id lookup used by ticket-bound WebSocket flows. */
+    Optional<RunRecord> findRun(String runId);
+
     List<RunRecord> listForOwner(String ownerId, String projectId, int limit);
 
     boolean transition(String runId, String projectId, long expectedVersion, RunState next, RunState... allowedStates);

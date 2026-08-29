@@ -73,6 +73,10 @@ public final class JdbcRunStore implements RunStore {
         return single("SELECT " + RUN_COLUMNS + " FROM run WHERE project_id = ? AND active_run_marker = 1", projectId);
     }
 
+    @Override public Optional<RunRecord> findRun(String runId) {
+        return single("SELECT " + RUN_COLUMNS + " FROM run WHERE id = ?", runId);
+    }
+
     @Override public Optional<RunRecord> findRunForOwner(String ownerId, String projectId, String runId) {
         return single("SELECT " + RUN_COLUMNS + " FROM run WHERE run.id = ? AND run.project_id = ? AND EXISTS (SELECT 1 FROM project p WHERE p.id = run.project_id AND p.owner_id = ?)",
             runId, projectId, ownerId);

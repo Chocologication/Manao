@@ -1,7 +1,7 @@
 package com.manao.poc4.kubernetes;
 
 import com.manao.poc4.run.RunRecord;
-import io.fabric8.kubernetes.api.model.Job;
+import io.fabric8.kubernetes.api.model.batch.v1.Job;
 import io.fabric8.kubernetes.api.model.Pod;
 import io.fabric8.kubernetes.client.KubernetesClient;
 import java.util.List;
@@ -27,7 +27,7 @@ public final class Fabric8JobCoordinator implements JobCoordinator {
 
     @Override public String ensureJob(RunRecord run, String projectId) {
         String jobName = JobResourceFactory.jobName(run.id());
-        Job existing = client.jobs().inNamespace(namespace).withName(jobName).get();
+        Job existing = client.batch().v1().jobs().inNamespace(namespace).withName(jobName).get();
         if (existing != null) {
             // Idempotent recreation: reuse only when the existing job carries this run's identity.
             var labels = existing.getMetadata() == null ? null : existing.getMetadata().getLabels();
@@ -37,13 +37,13 @@ public final class Fabric8JobCoordinator implements JobCoordinator {
             }
             throw new IllegalStateException("existing job does not match the run identity");
         }
-        client.jobs().inNamespace(namespace).resource(factory.createMavenJob(run.id(), projectId))
+        client.batch().v1().jobs().inNamespace(namespace).resource(factory.createMavenJob(run.id(), projectId))
             .serverSideApply();
         return jobName;
     }
 
     @Override public Optional<JobFacts> facts(RunRecord run) {
-        Job job = client.jobs().inNamespace(namespace).withName(JobResourceFactory.jobName(run.id())).get();
+        Job job = client.batch().v1().jobs().inNamespace(namespace).withName(JobResourceFactory.jobName(run.id())).get();
         if (job == null) return Optional.empty();
         List<Pod> pods = client.pods().inNamespace(namespace)
             .withLabel(ResourceIdentityVerifier.LABEL_RUN_ID, run.id()).list().getItems();
@@ -69,7 +69,7 @@ public final class Fabric8JobCoordinator implements JobCoordinator {
     }
 
     @Override public boolean stop(String jobName) {
-        var resource = client.jobs().inNamespace(namespace).withName(jobName);
+        var resource = client.batch().v1().jobs().inNamespace(namespace).withName(jobName);
         if (resource.get() == null) return true;
         resource.withGracePeriod(0).delete();
         try {

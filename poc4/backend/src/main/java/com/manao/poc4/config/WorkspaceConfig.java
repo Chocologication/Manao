@@ -162,6 +162,23 @@ public class WorkspaceConfig {
         return new com.manao.poc4.run.RunRecoveryService(store, coordinator);
     }
 
+    @Bean
+    com.manao.poc4.log.JdbcLogStore jdbcLogStore(org.springframework.jdbc.core.JdbcTemplate jdbc) {
+        return new com.manao.poc4.log.JdbcLogStore(jdbc);
+    }
+
+    @Bean
+    com.manao.poc4.log.LogTicketService logTicketService(com.manao.poc4.log.JdbcLogStore store,
+                                                         com.manao.poc4.run.RunStore runStore) {
+        return new com.manao.poc4.log.LogTicketService(store, Clock.systemUTC(),
+            (ownerId, projectId, runId) -> runStore.findRunForOwner(ownerId, projectId, runId).isPresent());
+    }
+
+    @Bean
+    com.manao.poc4.log.RunLogService runLogService(com.manao.poc4.log.JdbcLogStore store) {
+        return new com.manao.poc4.log.RunLogService(store);
+    }
+
     private static String requiredMavenImage(String mavenImage) {
         if (mavenImage == null || mavenImage.isBlank()) {
             throw new IllegalStateException("MANAO_MAVEN_RUNNER_IMAGE is required for Maven runs");

@@ -86,6 +86,11 @@ public final class RunService {
             .orElseThrow(() -> new ApiException("RUN_NOT_FOUND", 404, "Run not found"));
     }
 
+    /** Internal summary lookup for ticket-bound log/terminal sockets. */
+    public RunSummary findSummaryById(String runId) {
+        return store.findRun(runId).map(this::toSummary).orElse(null);
+    }
+
     public Optional<RunSummary> active(String ownerId, String projectId) {
         if (store.findProjectForOwner(ownerId, projectId) == null) {
             return Optional.empty();
