@@ -107,6 +107,68 @@ public class WorkspaceConfig {
         return new ProjectRecoveryService(store, agent, gateway, Clock.systemUTC(), Duration.ofMinutes(10));
     }
 
+    @Bean
+    com.manao.poc4.run.RunStore runStore(org.springframework.jdbc.core.JdbcTemplate jdbc) {
+        return new com.manao.poc4.run.JdbcRunStore(jdbc);
+    }
+
+    @Bean
+    com.manao.poc4.run.RunPolicy runPolicy(BackendProperties properties) {
+        return com.manao.poc4.run.RunPolicy.fromProperties(properties);
+    }
+
+    @Bean
+    com.manao.poc4.kubernetes.JobResourceFactory jobResourceFactory(BackendProperties properties,
+                                                                    @Value("${MANAO_MAVEN_RUNNER_IMAGE:}") String mavenImage) {
+        com.manao.poc4.run.RunPolicy policy = com.manao.poc4.run.RunPolicy.fromProperties(properties);
+        return new com.manao.poc4.kubernetes.JobResourceFactory(
+            properties.kubernetes().namespace(),
+            policy.timeoutSeconds(),
+            new com.manao.poc4.kubernetes.JobResourceFactory.RunResources(policy.requests().cpuMillis(),
+                policy.requests().memoryBytes(), policy.requests().ephemeralStorageBytes()),
+            new com.manao.poc4.kubernetes.JobResourceFactory.RunResources(policy.limits().cpuMillis(),
+                policy.limits().memoryBytes(), policy.limits().ephemeralStorageBytes()),
+            requiredMavenImage(mavenImage));
+    }
+
+    @Bean
+    com.manao.poc4.kubernetes.ResourceIdentityVerifier resourceIdentityVerifier() {
+        return new com.manao.poc4.kubernetes.ResourceIdentityVerifier();
+    }
+
+    @Bean
+    com.manao.poc4.kubernetes.JobCoordinator jobCoordinator(org.springframework.beans.factory.ObjectProvider<KubernetesClient> client,
+                                                            com.manao.poc4.kubernetes.JobResourceFactory factory,
+                                                            com.manao.poc4.kubernetes.ResourceIdentityVerifier verifier,
+                                                            BackendProperties properties) {
+        KubernetesClient kubernetesClient = client.getIfAvailable();
+        if (kubernetesClient == null) {
+            throw new IllegalStateException("Kubernetes client is required for Job coordination");
+        }
+        return new com.manao.poc4.kubernetes.Fabric8JobCoordinator(kubernetesClient, factory, verifier,
+            properties.kubernetes().namespace());
+    }
+
+    @Bean
+    com.manao.poc4.run.RunService runService(com.manao.poc4.run.RunStore store,
+                                             com.manao.poc4.kubernetes.JobCoordinator coordinator,
+                                             com.manao.poc4.run.RunPolicy policy) {
+        return new com.manao.poc4.run.RunService(store, coordinator, policy);
+    }
+
+    @Bean
+    com.manao.poc4.run.RunRecoveryService runRecoveryService(com.manao.poc4.run.RunStore store,
+                                                             com.manao.poc4.kubernetes.JobCoordinator coordinator) {
+        return new com.manao.poc4.run.RunRecoveryService(store, coordinator);
+    }
+
+    private static String requiredMavenImage(String mavenImage) {
+        if (mavenImage == null || mavenImage.isBlank()) {
+            throw new IllegalStateException("MANAO_MAVEN_RUNNER_IMAGE is required for Maven runs");
+        }
+        return mavenImage;
+    }
+
     private static void verifyKeyPair(WorkspaceCapabilitySigner signer, byte[] rawPublicKey) {
         try {
             String header = signer.sign("GET", "/probe", new byte[0], "probe");
