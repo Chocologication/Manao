@@ -21,7 +21,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
-class RunControllerTest {
+public class RunControllerTest {
     private static final String ALICE = "alice-id";
     private static final String PROJECT = "prj-1";
     private static final ObjectMapper JSON = new ObjectMapper();
@@ -200,7 +200,7 @@ class RunControllerTest {
         return new org.springframework.security.authentication.UsernamePasswordAuthenticationToken(userId, "n/a");
     }
 
-    public static final class FakeRunStore implements RunStore {
+    public static class FakeRunStore implements RunStore {
         public final Map<String, String> projects = new LinkedHashMap<>();
         public final Map<String, Long> revision = new LinkedHashMap<>();
         public final Map<String, FakeRun> runs = new LinkedHashMap<>();
@@ -303,7 +303,7 @@ class RunControllerTest {
         public Instant finishedAt;
         public Instant createdAt = Instant.parse("2026-08-29T11:00:00Z");
 
-        FakeRun(RunRecord record) {
+        public FakeRun(RunRecord record) {
             this.id = record.id();
             this.projectId = record.projectId();
             this.requestedRevision = record.requestedRevision();

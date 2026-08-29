@@ -179,6 +179,28 @@ public class WorkspaceConfig {
         return new com.manao.poc4.log.RunLogService(store);
     }
 
+    @Bean
+    com.manao.poc4.terminal.JdbcTerminalStore jdbcTerminalStore(org.springframework.jdbc.core.JdbcTemplate jdbc) {
+        return new com.manao.poc4.terminal.JdbcTerminalStore(jdbc);
+    }
+
+    @Bean
+    com.manao.poc4.terminal.TerminalSessionService terminalSessionService(
+        com.manao.poc4.terminal.JdbcTerminalStore store, com.manao.poc4.run.RunStore runStore) {
+        return new com.manao.poc4.terminal.TerminalSessionService(store, runStore, Clock.systemUTC());
+    }
+
+    @Bean
+    com.manao.poc4.kubernetes.ExecTransport execTransport(KubernetesClient client, BackendProperties properties) {
+        return new com.manao.poc4.kubernetes.Fabric8ExecTransport(client, properties.kubernetes().namespace());
+    }
+
+    @Bean
+    com.manao.poc4.terminal.PtyBridge ptyBridge(com.manao.poc4.kubernetes.ExecTransport transport) {
+        return new com.manao.poc4.kubernetes.ExecPtyClient(transport,
+            java.util.List.of("/usr/local/bin/manao-pty-wrapper"));
+    }
+
     private static String requiredMavenImage(String mavenImage) {
         if (mavenImage == null || mavenImage.isBlank()) {
             throw new IllegalStateException("MANAO_MAVEN_RUNNER_IMAGE is required for Maven runs");
