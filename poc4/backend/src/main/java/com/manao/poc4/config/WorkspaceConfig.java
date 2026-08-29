@@ -198,7 +198,22 @@ public class WorkspaceConfig {
     @Bean
     com.manao.poc4.terminal.PtyBridge ptyBridge(com.manao.poc4.kubernetes.ExecTransport transport) {
         return new com.manao.poc4.kubernetes.ExecPtyClient(transport,
-            java.util.List.of("/usr/local/bin/manao-pty-wrapper"));
+            com.manao.poc4.terminal.PtyWrapperCommand.command());
+    }
+
+    @Bean
+    com.manao.poc4.audit.JdbcAuditStore jdbcAuditStore(org.springframework.jdbc.core.JdbcTemplate jdbc) {
+        return new com.manao.poc4.audit.JdbcAuditStore(jdbc);
+    }
+
+    @Bean
+    com.manao.poc4.audit.AuditService auditService(com.manao.poc4.audit.JdbcAuditStore store) {
+        return new com.manao.poc4.audit.AuditService(store, Clock.systemUTC());
+    }
+
+    @Bean
+    com.manao.poc4.audit.RetentionCleanupJob retentionCleanupJob(com.manao.poc4.audit.JdbcAuditStore store) {
+        return new com.manao.poc4.audit.RetentionCleanupJob(store, Clock.systemUTC());
     }
 
     private static String requiredMavenImage(String mavenImage) {
