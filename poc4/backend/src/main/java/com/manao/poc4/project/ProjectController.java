@@ -7,6 +7,7 @@ import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
 import java.util.List;
 import java.util.Map;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.core.Authentication;
@@ -23,7 +24,15 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/api/v1/projects")
 public final class ProjectController {
     private final ProjectService projects;
-    public ProjectController(ProjectService projects) { this.projects = projects; }
+    private final ProjectProvisioningService provisioning;
+
+    public ProjectController(ProjectService projects) { this(projects, null); }
+
+    @Autowired
+    public ProjectController(ProjectService projects, ProjectProvisioningService provisioning) {
+        this.projects = projects;
+        this.provisioning = provisioning;
+    }
 
     @GetMapping
     public ProjectListResponse list(Authentication authentication) {
@@ -34,7 +43,12 @@ public final class ProjectController {
     @ResponseStatus(HttpStatus.CREATED)
     public ProjectView create(Authentication authentication, @Valid @RequestBody CreateProjectRequest request) {
         return projects.create(authentication.getName(), request.name())
-            .map(ProjectController::view)
+            .map(project -> {
+                if (provisioning != null) {
+                    provisioning.provisionAsync(project.id());
+                }
+                return view(project);
+            })
             .orElseThrow(() -> new ApiException("PROJECT_LIMIT_REACHED", 409, "Project limit reached"));
     }
 

@@ -53,5 +53,9 @@ manao:
         bridge-port-start: 18100
         bridge-port-end: 18199
         agent-port: 8080
+        # Deployment values (not fixed policy): pinned to immutable digests by the deploy environment.
+        storage-class-name: ${MANAO_WORKSPACE_STORAGE_CLASS:manao-workspace-rwx}
+        agent-image: ${MANAO_WORKSPACE_AGENT_IMAGE:manao/workspace-agent:dev}
+        initializer-image: ${MANAO_WORKSPACE_INITIALIZER_IMAGE:busybox:1.36}
       logging:
         redact-secrets: true

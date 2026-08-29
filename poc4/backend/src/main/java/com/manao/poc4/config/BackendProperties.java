@@ -13,7 +13,8 @@ public final class BackendProperties {
     private static final Duration FIXED_TIMEOUT = Duration.ofSeconds(1800);
     private static final ResourceLimits FIXED_RESOURCES = new ResourceLimits(8, "16Gi", "10Gi");
     private static final Workspace FIXED_WORKSPACE = new Workspace(
-        "rwx-pvc", "manao-workspace-rwx", "10Gi", "ReadWriteMany", 18100, 18199, 8080);
+        "rwx-pvc", "manao-workspace-rwx", "10Gi", "ReadWriteMany", 18100, 18199, 8080,
+        "manao-workspace-rwx", "manao/workspace-agent:dev", "busybox:1.36");
 
     private final BackendProfile profile;
     private final String javaVersion;
@@ -35,7 +36,7 @@ public final class BackendProperties {
         this.timeout = FIXED_TIMEOUT;
         this.kubernetes = kubernetes;
         this.resources = FIXED_RESOURCES;
-        this.workspace = FIXED_WORKSPACE;
+        this.workspace = workspace == null ? FIXED_WORKSPACE : workspace.withDeploymentDefaults(FIXED_WORKSPACE);
         this.logging = logging;
     }
 
@@ -92,6 +93,17 @@ public final class BackendProperties {
                              String serviceAccountTokenFile, String serviceAccountCaCertificateFile) {}
     public record ResourceLimits(int cpuCores, String memory, String ephemeralStorage) {}
     public record Workspace(String bridgeMode, String pvcName, String pvcSize, String accessMode,
-                            int bridgePortStart, int bridgePortEnd, int agentPort) {}
+                            int bridgePortStart, int bridgePortEnd, int agentPort,
+                            String storageClassName, String agentImage, String initializerImage) {
+        /** Fixed policy fields always win; only the three deployment fields honor configuration. */
+        public Workspace withDeploymentDefaults(Workspace fixed) {
+            return new Workspace(fixed.bridgeMode(), fixed.pvcName(), fixed.pvcSize(), fixed.accessMode(),
+                fixed.bridgePortStart(), fixed.bridgePortEnd(), fixed.agentPort(),
+                blank(storageClassName) ? fixed.storageClassName() : storageClassName,
+                blank(agentImage) ? fixed.agentImage() : agentImage,
+                blank(initializerImage) ? fixed.initializerImage() : initializerImage);
+        }
+        private static boolean blank(String value) { return value == null || value.isBlank(); }
+    }
     public record Logging(boolean redactSecrets) {}
 }
