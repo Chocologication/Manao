@@ -55,7 +55,11 @@ public final class SshApiTunnelHealth {
 
     public SshApiTunnelHealth(CommandRunner runner, List<VerbResource> checks) {
         this(runner, checks, null, path -> {
-            throw new IllegalStateException("kubeconfig loader not wired");
+            try {
+                return java.nio.file.Files.readString(java.nio.file.Path.of(path));
+            } catch (java.io.IOException ex) {
+                throw new IllegalStateException("kubeconfig is unreadable", ex);
+            }
         });
     }
 

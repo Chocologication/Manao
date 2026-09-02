@@ -58,20 +58,56 @@ class Stage6aPreflightTest {
     }
 
     @Test
+    void realClusterPreflightFailsWhenKubeconfigMissingInRealMode() {
+        org.junit.jupiter.api.Assumptions.assumeTrue("true".equals(System.getProperty("manao.stage6.real", "false")));
+        String kubeconfigPath = System.getenv("KUBECONFIG");
+        assertThat(kubeconfigPath)
+            .as("REAL_MODE_KUBECONFIG_MISSING: gate run requires KUBECONFIG")
+            .isNotBlank();
+        assertThat(Files.isReadable(Path.of(kubeconfigPath)))
+            .as("REAL_MODE_KUBECONFIG_UNREADABLE")
+            .isTrue();
+    }
+
+    @Test
     void realClusterPreflightRunsOnlyWhenEnabled()
         throws Exception {
         String enabled = System.getProperty("manao.stage6.real", "false");
-        String kubeconfigPath = System.getenv("KUBECONFIG");
-        if (!"true".equals(enabled) || kubeconfigPath == null || !Files.isReadable(Path.of(kubeconfigPath))) {
+        if (!"true".equals(enabled)) {
             return; // Gate run only; the pure assertions above cover the build.
         }
+        String kubeconfigPath = System.getenv("KUBECONFIG");
+        assertThat(kubeconfigPath).as("REAL_MODE_KUBECONFIG_MISSING").isNotBlank();
+        assertThat(Files.isReadable(Path.of(kubeconfigPath))).as("REAL_MODE_KUBECONFIG_UNREADABLE").isTrue();
         String kubeconfig = Files.readString(Path.of(kubeconfigPath));
         KubeconfigTlsPreflight.requireValid(kubeconfig);
-        SshApiTunnelHealth health = new SshApiTunnelHealth(realKubectl(), SshApiTunnelHealth.designVerbs(true));
+        SshApiTunnelHealth health = new SshApiTunnelHealth(realKubectl(), SshApiTunnelHealth.designVerbs(true),
+            fabric8ProbeFromKubeconfig(kubeconfigPath), path -> {
+                try {
+                    return Files.readString(Path.of(path));
+                } catch (java.io.IOException ex) {
+                    throw new IllegalStateException("kubeconfig is unreadable", ex);
+                }
+            });
         SshApiTunnelHealth.Result result = health.check(kubeconfigPath,
             KubeconfigTlsPreflight.validate(kubeconfig).tlsServerName(),
             System.getenv().getOrDefault("MANAO_K8S_NAMESPACE", "manao"));
         assertThat(result.failures()).as("6A preflight failures: %s", result.failures()).isEmpty();
+    }
+
+    private SshApiTunnelHealth.Fabric8VersionProbe fabric8ProbeFromKubeconfig(String kubeconfigPath) {
+        return () -> {
+            try {
+                var config = io.fabric8.kubernetes.client.Config.fromKubeconfig(null,
+                    Files.readString(Path.of(kubeconfigPath)), null);
+                try (var client = new io.fabric8.kubernetes.client.KubernetesClientBuilder().withConfig(config).build()) {
+                    client.getApiVersion();
+                    return true;
+                }
+            } catch (Exception ex) {
+                return false;
+            }
+        };
     }
 
     private SshApiTunnelHealth.CommandRunner realKubectl() {
