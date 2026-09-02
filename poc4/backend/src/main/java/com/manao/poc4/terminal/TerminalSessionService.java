@@ -73,6 +73,10 @@ public final class TerminalSessionService implements TerminalTicketService {
         return store.settle(sessionId, state, closeReason, exitCode);
     }
 
+    public void updateLiveRefs(String sessionId, String podRef, String containerRef) {
+        store.updateLiveRefs(sessionId, podRef, containerRef);
+    }
+
     private static void requireDimension(int value, int min, int max, String name) {
         if (value < min || value > max) {
             throw new ApiException("VALIDATION_ERROR", 422, "Request validation failed");

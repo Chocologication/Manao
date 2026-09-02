@@ -52,9 +52,11 @@ public class WebSocketConfig implements WebSocketConfigurer {
     }
 
     @Bean
-    @ConditionalOnBean({TerminalSessionService.class, PtyBridge.class, RunService.class})
+    @ConditionalOnBean({TerminalSessionService.class, PtyBridge.class, RunService.class, com.manao.poc4.kubernetes.JobCoordinator.class})
     TerminalWebSocketHandler terminalWebSocketHandler(TerminalSessionService sessions, PtyBridge bridge,
-                                                      RunService runService) {
-        return new TerminalWebSocketHandler(sessions, bridge, runService::findSummaryById, Clock.systemUTC());
+                                                      RunService runService, com.manao.poc4.kubernetes.JobCoordinator coordinator) {
+        return new TerminalWebSocketHandler(sessions, bridge, runService::findSummaryById, Clock.systemUTC(),
+            runId -> coordinator.findLivePod(runId).map(pod ->
+                new com.manao.poc4.kubernetes.JobCoordinator.LivePod(pod.podName(), pod.containerName())));
     }
 }

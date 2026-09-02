@@ -28,8 +28,8 @@ public final class ExecPtyClient implements PtyBridge {
     }
 
     @Override
-    public PtyHandle open(String runId, int cols, int rows, PtyListener listener) {
-        ExecTransport.ExecProcess process = transport.exec("manao-run-" + runId, "maven", command, cols, rows, true);
+    public PtyHandle open(String podName, String containerName, int cols, int rows, PtyListener listener) {
+        ExecTransport.ExecProcess process = transport.exec(podName, containerName, command, cols, rows, true);
         AtomicBoolean closed = new AtomicBoolean(false);
         pumpExecutor.submit(() -> pump(process, listener, closed));
         return new PtyHandle() {

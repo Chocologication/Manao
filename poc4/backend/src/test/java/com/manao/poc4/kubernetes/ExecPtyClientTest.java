@@ -28,9 +28,9 @@ class ExecPtyClientTest {
             @Override public void onOutput(byte[] bytes) { received.set(bytes); }
             @Override public void onExit(Integer code) { exitCode.set(code); }
         };
-        PtyBridge.PtyHandle handle = client.open("1", 80, 24, listener);
+        PtyBridge.PtyHandle handle = client.open("manao-run-1-pod", "maven", 80, 24, listener);
 
-        assertThat(transport.podName).isEqualTo("manao-run-1");
+        assertThat(transport.podName).isEqualTo("manao-run-1-pod");
         assertThat(transport.containerName).isEqualTo("maven");
         assertThat(transport.command).containsExactly("/usr/local/bin/manao-pty-wrapper");
         process.complete();
@@ -47,7 +47,7 @@ class ExecPtyClientTest {
     void writesFlowToTheProcessStdin() throws Exception {
         FakeProcess process = new FakeProcess(new byte[0], 0);
         ExecPtyClient client = new ExecPtyClient(new FakeTransport(process), List.of("wrapper"));
-        PtyBridge.PtyHandle handle = client.open("pod", 80, 24, new PtyBridge.PtyListener() {
+        PtyBridge.PtyHandle handle = client.open("pod", "maven", 80, 24, new PtyBridge.PtyListener() {
             @Override public void onOutput(byte[] bytes) { }
             @Override public void onExit(Integer code) { }
         });

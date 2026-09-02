@@ -33,6 +33,7 @@ public final class TerminalWebSocketHandler extends AbstractWebSocketHandler {
     private final TerminalSessionService sessions;
     private final PtyBridge bridge;
     private final Function<String, RunSummary> runSummaryById;
+    private final Function<String, Optional<com.manao.poc4.kubernetes.JobCoordinator.LivePod>> livePodResolver;
     private final Clock clock;
     private final Map<String, BoundSession> connections = new ConcurrentHashMap<>();
 
@@ -58,11 +59,13 @@ public final class TerminalWebSocketHandler extends AbstractWebSocketHandler {
     }
 
     public TerminalWebSocketHandler(TerminalSessionService sessions, PtyBridge bridge,
-                                    Function<String, RunSummary> runSummaryById, Clock clock) {
+                                    Function<String, RunSummary> runSummaryById, Clock clock,
+                                    Function<String, Optional<com.manao.poc4.kubernetes.JobCoordinator.LivePod>> livePodResolver) {
         this.sessions = sessions;
         this.bridge = bridge;
         this.runSummaryById = runSummaryById;
         this.clock = clock;
+        this.livePodResolver = livePodResolver;
     }
 
     @Override
@@ -81,9 +84,17 @@ public final class TerminalWebSocketHandler extends AbstractWebSocketHandler {
             settleAndClose(bound, "RUN_LEFT_RUNNING", "INTERRUPTED", null, TICKET_REJECTED);
             return;
         }
+        Optional<com.manao.poc4.kubernetes.JobCoordinator.LivePod> live = livePodResolver.apply(record.runId());
+        if (live.isEmpty()) {
+            // No identity-verified live application Pod: fail closed, never exec against a guessed name.
+            settleAndClose(bound, "RUN_LEFT_RUNNING", "INTERRUPTED", null, TICKET_REJECTED);
+            return;
+        }
+        com.manao.poc4.kubernetes.JobCoordinator.LivePod pod = live.get();
         try {
-            bound.handle = bridge.open(record.runId(), Math.max(record.cols(), 1),
+            bound.handle = bridge.open(pod.podName(), pod.containerName(), Math.max(record.cols(), 1),
                 Math.max(record.rows(), 1), new PtyListenerAdapter(bound));
+            sessions.updateLiveRefs(record.sessionId(), pod.podName(), pod.containerName());
         } catch (RuntimeException ex) {
             settleAndClose(bound, "BACKEND_ERROR", "FAILED", null, TICKET_REJECTED);
             return;

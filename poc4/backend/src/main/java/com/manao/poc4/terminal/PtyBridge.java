@@ -4,7 +4,7 @@ import java.util.List;
 
 /** The only PTY transport boundary: a fixed root-owned wrapper executed inside the Job's pod. */
 public interface PtyBridge {
-    PtyHandle open(String runId, int cols, int rows, PtyListener listener);
+    PtyHandle open(String podName, String containerName, int cols, int rows, PtyListener listener);
 
     interface PtyListener {
         void onOutput(byte[] bytes);

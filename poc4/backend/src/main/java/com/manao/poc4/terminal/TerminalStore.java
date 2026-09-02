@@ -16,6 +16,9 @@ public interface TerminalStore {
 
     boolean settle(String sessionId, String state, String closeReason, Integer exitCode);
 
+    /** Persists the verified live Pod/container references once the PTY exec is established. */
+    void updateLiveRefs(String sessionId, String podRef, String containerRef);
+
     record ReservationRecord(String sessionId, String projectId, String runId, String userId,
                              String ticketHash, Instant expiresAt, int cols, int rows) { }
 

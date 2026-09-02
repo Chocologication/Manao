@@ -127,6 +127,7 @@ class TerminalSessionServiceTest {
 
     public static final class FakeTerminalStore implements TerminalStore {
         final Map<String, SessionRecord> sessions = new HashMap<>();
+        final Map<String, String[]> liveRefs = new HashMap<>();
         final java.util.function.Supplier<Instant> now = () -> NOW;
         boolean failReservation;
 
@@ -159,6 +160,16 @@ class TerminalSessionServiceTest {
 
         @Override public Optional<SessionRecord> findSession(String sessionId) {
             return Optional.ofNullable(sessions.get(sessionId));
+        }
+
+        @Override public void updateLiveRefs(String sessionId, String podRef, String containerRef) {
+            liveRefs.put(sessionId, new String[] {podRef, containerRef});
+            SessionRecord session = sessions.get(sessionId);
+            if (session != null) {
+                sessions.put(sessionId, new SessionRecord(session.sessionId(), session.projectId(), session.runId(),
+                    session.userId(), session.ticketHash(), session.expiresAt(), session.consumedAt(), session.state(),
+                    podRef, containerRef, session.closeReason(), session.cols(), session.rows()));
+            }
         }
 
         @Override public boolean settle(String sessionId, String state, String closeReason, Integer exitCode) {

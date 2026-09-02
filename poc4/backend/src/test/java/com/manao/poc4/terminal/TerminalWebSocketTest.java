@@ -18,6 +18,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -63,9 +64,12 @@ class TerminalWebSocketTest {
             "2026-08-29T11:00:00Z", Instant.now().toString(), null, null, null, false, 0, null);
     }
 
+    private static final String RESOLVED_POD = "manao-run-" + RUN + "-abcde";
+
     private TerminalWebSocketHandler newHandler(CapturingSession target, String ticket) throws Exception {
         TerminalWebSocketHandler handler = new TerminalWebSocketHandler(sessionService, bridge,
-            runId -> summary(RunState.RUNNING, runId), clock);
+            runId -> summary(RunState.RUNNING, runId), clock,
+            runId -> Optional.of(new com.manao.poc4.kubernetes.JobCoordinator.LivePod(RESOLVED_POD, "maven")));
         target.bind(handler);
         target.setUri("/api/v1/ws/terminals?ticket=" + ticket);
         handler.afterConnectionEstablished(target);
@@ -76,7 +80,7 @@ class TerminalWebSocketTest {
     void handshakeConsumesTicketOpensPtyWithReservedDimensionsAndSendsReady() throws Exception {
         newHandler(session, liveTicket);
         assertThat(bridge.opened).isTrue();
-        assertThat(bridge.podName).isEqualTo("manao-run-" + RUN);
+        assertThat(bridge.podName).isEqualTo(RESOLVED_POD);
         assertThat(bridge.containerName).isEqualTo("maven");
         assertThat(bridge.cols).isEqualTo(100);
         assertThat(bridge.rows).isEqualTo(30);
@@ -96,7 +100,8 @@ class TerminalWebSocketTest {
 
         CapturingSession missing = new CapturingSession();
         TerminalWebSocketHandler handler = new TerminalWebSocketHandler(sessionService, bridge,
-            runId -> summary(RunState.RUNNING, runId), clock);
+            runId -> summary(RunState.RUNNING, runId), clock,
+            runId -> Optional.of(new com.manao.poc4.kubernetes.JobCoordinator.LivePod(RESOLVED_POD, "maven")));
         missing.bind(handler);
         missing.setUri("/api/v1/ws/terminals");
         handler.afterConnectionEstablished(missing);
@@ -200,7 +205,8 @@ class TerminalWebSocketTest {
         CapturingSession second = new CapturingSession();
         String secondTicket = sessionService.reserve(80, 24, ALICE, PROJECT, RUN).ticket();
         TerminalWebSocketHandler secondHandler = new TerminalWebSocketHandler(sessionService, bridge,
-            runId -> summary(RunState.RUNNING, runId), clock);
+            runId -> summary(RunState.RUNNING, runId), clock,
+            runId -> Optional.of(new com.manao.poc4.kubernetes.JobCoordinator.LivePod(RESOLVED_POD, "maven")));
         second.bind(secondHandler);
         second.setUri("/api/v1/ws/terminals?ticket=" + secondTicket);
         secondHandler.afterConnectionEstablished(second);
@@ -212,6 +218,26 @@ class TerminalWebSocketTest {
         assertThat(store.sessions.values().stream()
             .anyMatch(record -> "CLOSED".equals(record.state())
                 && "SHELL_EXITED".equals(record.closeReason()))).isTrue();
+    }
+
+    @Test
+    void refusesHandshakeWhenNoLivePodIsVerified() throws Exception {
+        TerminalWebSocketHandler handler = new TerminalWebSocketHandler(sessionService, bridge,
+            runId -> summary(RunState.RUNNING, runId), clock, runId -> Optional.empty());
+        session.bind(handler);
+        session.setUri("/api/v1/ws/terminals?ticket=" + liveTicket);
+        handler.afterConnectionEstablished(session);
+        assertThat(session.closed.getCode()).isEqualTo(4410);
+        assertThat(bridge.opened).isFalse();
+    }
+
+    @Test
+    void persistsPodAndContainerRefsAfterOpen() throws Exception {
+        newHandler(session, liveTicket);
+        assertThat(store.liveRefs).hasSize(1);
+        String[] refs = store.liveRefs.values().iterator().next();
+        assertThat(refs[0]).isEqualTo(RESOLVED_POD);
+        assertThat(refs[1]).isEqualTo("maven");
     }
 
     @Test
@@ -236,10 +262,10 @@ class TerminalWebSocketTest {
         final List<String> resizes = new ArrayList<>();
         final List<byte[]> written = new ArrayList<>();
 
-        @Override public PtyHandle open(String runId, int openCols, int openRows, PtyListener listener) {
+        @Override public PtyHandle open(String openPodName, String openContainerName, int openCols, int openRows, PtyListener listener) {
             this.opened = true;
-            this.podName = "manao-run-" + runId;
-            this.containerName = "maven";
+            this.podName = openPodName;
+            this.containerName = openContainerName;
             this.cols = openCols;
             this.rows = openRows;
             this.listener = listener;

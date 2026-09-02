@@ -59,6 +59,11 @@ public final class JdbcTerminalStore implements TerminalStore {
             state, closeReason, Timestamp.from(clock.instant()), exitCode, sessionId) == 1;
     }
 
+    @Override public void updateLiveRefs(String sessionId, String podRef, String containerRef) {
+        jdbc.update("UPDATE terminal_session SET pod_ref = ?, container_ref = ? WHERE id = ? AND state = 'LIVE'",
+            podRef, containerRef, sessionId);
+    }
+
     private static SessionRecord map(java.sql.ResultSet rs) throws java.sql.SQLException {
         Timestamp consumed = rs.getTimestamp("consumed_at");
         return new SessionRecord(rs.getString("id"), rs.getString("project_id"), rs.getString("run_id"),
