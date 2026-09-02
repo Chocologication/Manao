@@ -53,7 +53,7 @@ class TerminalWebSocketTest {
         runStore.projects.put(PROJECT, "READY");
         runStore.projectOwners.put(PROJECT, ALICE);
         runStore.runs.put(RUN, new FakeRun(new RunRecord(RUN, PROJECT, 5, RunState.RUNNING,
-            "{}", "manao-run-" + RUN, null, NOW, null, null, null, 1L, NOW.minus(Duration.ofMinutes(1)))));
+            "{}", "manao-run-" + RUN, null, NOW, null, null, null, 1L, NOW.minus(Duration.ofMinutes(1)), 0L)));
         sessionService = new TerminalSessionService(store, runStore, clock);
         liveTicket = sessionService.reserve(100, 30, ALICE, PROJECT, RUN).ticket();
     }

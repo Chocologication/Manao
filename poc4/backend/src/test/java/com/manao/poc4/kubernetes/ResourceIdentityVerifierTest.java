@@ -20,7 +20,7 @@ class ResourceIdentityVerifierTest {
 
     private RunRecord run() {
         return new RunRecord(RUN, PROJECT, 0, RunState.RUNNING, "{}", "manao-run-" + RUN,
-            null, null, null, null, null, 0L, Instant.parse("2026-08-29T11:00:00Z"));
+            null, null, null, null, null, 0L, Instant.parse("2026-08-29T11:00:00Z"), 0L);
     }
 
     private Job job() {

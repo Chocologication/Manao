@@ -225,7 +225,7 @@ public class RunControllerTest {
                 // Simulate the racing request that won the unique active-run marker.
                 FakeRun winner = new FakeRun(new RunRecord("winner-run", record.projectId(), record.requestedRevision(),
                     RunState.RUNNING, "{}", null, null, null, null, null, null, 0L,
-                    Instant.parse("2026-08-29T11:30:00Z")));
+                    Instant.parse("2026-08-29T11:30:00Z"), 0L));
                 runs.put(winner.id, winner);
                 return InsertResult.ACTIVE_RUN_EXISTS;
             }
@@ -269,9 +269,9 @@ public class RunControllerTest {
             return true;
         }
 
-        @Override public boolean markRunning(String runId, String projectId, long expectedVersion, long fencingToken) {
+        @Override public boolean markRunning(String runId, String projectId, long expectedVersion) {
             FakeRun run = runs.get(runId);
-            if (run == null || fencingToken != currentFencing() || run.version != expectedVersion
+            if (run == null || !fencingToken.isPresent() || run.version != expectedVersion
                 || !"STARTING".equals(run.state)) {
                 return false;
             }
@@ -286,10 +286,9 @@ public class RunControllerTest {
             if (run != null) run.jobRef = jobRef;
         }
 
-        @Override public boolean settle(String runId, RunState state, String terminationReason, Integer exitCode,
-                                        long fencingToken) {
+        @Override public boolean settle(String runId, RunState state, String terminationReason, Integer exitCode) {
             FakeRun run = runs.get(runId);
-            if (run == null || fencingToken != currentFencing()) return false;
+            if (run == null || !fencingToken.isPresent()) return false;
             run.state = state.name();
             run.terminationReason = terminationReason;
             run.exitCode = exitCode;
@@ -321,6 +320,7 @@ public class RunControllerTest {
         public Instant finishedAt;
         public Instant startedAt;
         public Instant createdAt = Instant.parse("2026-08-29T11:00:00Z");
+        public long fencingToken;
 
         public FakeRun(RunRecord record) {
             this.id = record.id();
@@ -330,11 +330,12 @@ public class RunControllerTest {
             this.policyJson = record.policyJson();
             this.version = record.version();
             this.createdAt = record.createdAt();
+            this.fencingToken = record.fencingToken();
         }
 
         RunRecord toRecord() {
             return new RunRecord(id, projectId, requestedRevision, RunState.valueOf(state), policyJson, jobRef,
-                null, startedAt, finishedAt, exitCode, terminationReason, version, createdAt);
+                null, startedAt, finishedAt, exitCode, terminationReason, version, createdAt, fencingToken);
         }
     }
 

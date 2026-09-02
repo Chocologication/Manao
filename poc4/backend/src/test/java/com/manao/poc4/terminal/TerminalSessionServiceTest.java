@@ -38,7 +38,7 @@ class TerminalSessionServiceTest {
 
     private com.manao.poc4.run.RunRecord runningRun() {
         return new com.manao.poc4.run.RunRecord(RUN, PROJECT, 5, com.manao.poc4.persistence.RunState.RUNNING,
-            "{}", "manao-run-" + RUN, null, NOW, null, null, null, 1L, NOW.minus(Duration.ofMinutes(1)));
+            "{}", "manao-run-" + RUN, null, NOW, null, null, null, 1L, NOW.minus(Duration.ofMinutes(1)), 0L);
     }
 
     @Test
@@ -63,7 +63,7 @@ class TerminalSessionServiceTest {
                 assertThat(ex.status()).isEqualTo(409);
             });
         runStore.runs.put(RUN, new RunControllerTest.FakeRun(new com.manao.poc4.run.RunRecord(RUN, PROJECT, 5,
-            com.manao.poc4.persistence.RunState.SUCCEEDED, "{}", null, null, null, NOW, 0, "BUILD_SUCCEEDED", 2L, NOW)));
+            com.manao.poc4.persistence.RunState.SUCCEEDED, "{}", null, null, null, NOW, 0, "BUILD_SUCCEEDED", 2L, NOW, 0L)));
         assertThatThrownBy(() -> service.reserve(80, 24, ALICE, PROJECT, RUN))
             .isInstanceOfSatisfying(ApiException.class, ex -> assertThat(ex.code()).isEqualTo("TERMINAL_NOT_AVAILABLE"));
         runStore.projects.put(PROJECT, "CREATING");

@@ -5,6 +5,14 @@ import java.sql.SQLException;
 import java.sql.Timestamp;
 import java.time.Instant;
 
+/**
+ * Legacy raw-connection lease implementation, kept only for the persistence repository tests.
+ *
+ * @deprecated Production fencing goes through {@code com.manao.poc4.run.JdbcRunStore}, which owns
+ *     the single {@code instance_lease} row ("backend"), renews the lease inside markRunning and
+ *     settle, and bumps the token only when the holder changes. Do not add production callers.
+ */
+@Deprecated
 public final class InstanceLeaseRepository {
     private static final String LEASE_ID = "backend-authority";
     private final Connection connection;

@@ -20,7 +20,7 @@ import org.springframework.stereotype.Component;
 public final class JdbcRunStore implements RunStore {
     private static final String LEASE_ID = "backend";
     private static final Duration LEASE_TTL = Duration.ofSeconds(60);
-    private static final String RUN_COLUMNS = "id, project_id, requested_revision, state, policy_json, job_ref, pod_ref, started_at, finished_at, exit_code, termination_reason, version, created_at";
+    private static final String RUN_COLUMNS = "id, project_id, requested_revision, state, policy_json, job_ref, pod_ref, started_at, finished_at, exit_code, termination_reason, version, created_at, fencing_token";
 
     private final JdbcTemplate jdbc;
     private final DatabaseClock clock;
@@ -45,20 +45,28 @@ public final class JdbcRunStore implements RunStore {
 
     @Override public OptionalLong acquireFencingToken() {
         Instant now = clock.now();
-        int renewed = jdbc.update(
-            "UPDATE instance_lease SET holder_id = ?, fencing_token = fencing_token + 1, expires_at = ? WHERE id = ? AND expires_at < ?",
-            holder(), Timestamp.from(now.plus(LEASE_TTL)), LEASE_ID, Timestamp.from(now));
-        if (renewed == 0) {
-            jdbc.update("INSERT IGNORE INTO instance_lease(id, holder_id, fencing_token, expires_at) VALUES (?, ?, 1, ?)",
-                LEASE_ID, holder(), Timestamp.from(now.plus(LEASE_TTL)));
-            jdbc.update(
-                "UPDATE instance_lease SET holder_id = ?, fencing_token = fencing_token + 1, expires_at = ? WHERE id = ? AND expires_at < ?",
-                holder(), Timestamp.from(now.plus(LEASE_TTL)), LEASE_ID, Timestamp.from(now));
-        }
+        // Upsert the lease: only a holder change (real takeover) bumps the token; the same
+        // holder merely extends the expiry so long-lived Runs keep their fence. The token
+        // expression must precede the holder_id assignment because MySQL evaluates ON DUPLICATE
+        // KEY UPDATE assignments left to right (later expressions see the new value).
+        Timestamp expiry = Timestamp.from(now.plus(LEASE_TTL));
+        String currentHolder = holder();
+        jdbc.update(
+            "INSERT INTO instance_lease(id, holder_id, fencing_token, expires_at) VALUES (?, ?, 1, ?) " +
+                "ON DUPLICATE KEY UPDATE " +
+                "fencing_token = IF(holder_id <> ?, fencing_token + 1, fencing_token), " +
+                "holder_id = ?, expires_at = ?",
+            LEASE_ID, currentHolder, expiry, currentHolder, currentHolder, expiry);
         List<Long> tokens = jdbc.query(
             "SELECT fencing_token FROM instance_lease WHERE id = ? AND holder_id = ? AND expires_at >= ?",
-            (rs, row) -> rs.getLong(1), LEASE_ID, holder(), Timestamp.from(now));
-        return tokens.isEmpty() ? OptionalLong.empty() : OptionalLong.of(tokens.get(0));
+            (rs, row) -> rs.getLong(1), LEASE_ID, currentHolder, Timestamp.from(now));
+        if (tokens.isEmpty()) return OptionalLong.empty();
+        long token = tokens.get(0);
+        // Takeover restamp: align every active Run row with the current authority token.
+        // A same-holder renewal does not change the token, so this UPDATE is an idempotent no-op.
+        jdbc.update("UPDATE run SET fencing_token = ? WHERE active_run_marker = 1 AND fencing_token <> ?",
+            token, token);
+        return OptionalLong.of(token);
     }
 
     private String holder() {
@@ -67,9 +75,10 @@ public final class JdbcRunStore implements RunStore {
 
     @Override public InsertResult insertRun(RunRecord record, long fencingToken) {
         try {
-            jdbc.update("INSERT INTO run(id, project_id, requested_revision, state, policy_json, version, created_at, fencing_token) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            jdbc.update("INSERT INTO run(id, project_id, requested_revision, state, policy_json, version, created_at, updated_at, fencing_token) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 record.id(), record.projectId(), record.requestedRevision(), record.state().name(),
-                record.policyJson(), record.version(), Timestamp.from(record.createdAt()), fencingToken);
+                record.policyJson(), record.version(), Timestamp.from(record.createdAt()),
+                Timestamp.from(record.createdAt()), fencingToken);
             return InsertResult.INSERTED;
         } catch (org.springframework.dao.DuplicateKeyException ex) {
             return InsertResult.ACTIVE_RUN_EXISTS;
@@ -109,20 +118,42 @@ public final class JdbcRunStore implements RunStore {
             + placeholders + ")", args.toArray()) == 1;
     }
 
-    @Override public boolean markRunning(String runId, String projectId, long expectedVersion, long fencingToken) {
-        return jdbc.update("UPDATE run SET state = 'RUNNING', started_at = ?, version = version + 1, updated_at = ? WHERE id = ? AND project_id = ? AND version = ? AND fencing_token = ? AND state = 'STARTING'",
+    @Override public boolean markRunning(String runId, String projectId, long expectedVersion) {
+        OptionalLong token = renewLease();
+        if (token.isEmpty()) return false;
+        return jdbc.update("UPDATE run SET state = 'RUNNING', started_at = ?, version = version + 1, updated_at = ? " +
+                "WHERE id = ? AND project_id = ? AND version = ? AND state = 'STARTING' AND fencing_token = ?",
             Timestamp.from(clock.now()), Timestamp.from(clock.now()), runId, projectId, expectedVersion,
-            fencingToken) == 1;
+            token.getAsLong()) == 1;
     }
 
     @Override public void updateJobFacts(String runId, String jobRef) {
         jdbc.update("UPDATE run SET job_ref = ? WHERE id = ?", jobRef, runId);
     }
 
-    @Override public boolean settle(String runId, RunState state, String terminationReason, Integer exitCode,
-                                    long fencingToken) {
-        return jdbc.update("UPDATE run SET state = ?, finished_at = ?, exit_code = ?, termination_reason = ?, version = version + 1 WHERE id = ? AND fencing_token = ? AND active_run_marker = 1",
-            state.name(), Timestamp.from(clock.now()), exitCode, terminationReason, runId, fencingToken) == 1;
+    @Override public boolean settle(String runId, RunState state, String terminationReason, Integer exitCode) {
+        OptionalLong token = renewLease();
+        if (token.isEmpty()) return false;
+        return jdbc.update("UPDATE run SET state = ?, finished_at = ?, exit_code = ?, termination_reason = ?, " +
+                "version = version + 1 WHERE id = ? AND active_run_marker = 1 AND state <> ? AND fencing_token = ?",
+            state.name(), Timestamp.from(clock.now()), exitCode, terminationReason, runId, state.name(),
+            token.getAsLong()) == 1;
+    }
+
+    /**
+     * Renews the instance lease for the current holder and returns the authoritative token.
+     * The holder identity is the fence: the same holder can always renew (even after its
+     * previous expiry lapsed), while a takeover changes the holder and bumps the token.
+     */
+    private OptionalLong renewLease() {
+        int renewed = jdbc.update(
+            "UPDATE instance_lease SET expires_at = ? WHERE id = ? AND holder_id = ?",
+            Timestamp.from(clock.now().plus(LEASE_TTL)), LEASE_ID, holder());
+        if (renewed != 1) return OptionalLong.empty();
+        List<Long> tokens = jdbc.query(
+            "SELECT fencing_token FROM instance_lease WHERE id = ? AND holder_id = ?",
+            (rs, row) -> rs.getLong(1), LEASE_ID, holder());
+        return tokens.isEmpty() ? OptionalLong.empty() : OptionalLong.of(tokens.get(0));
     }
 
     @Override public List<RunRecord> findRunsInState(RunState... states) {
@@ -146,6 +177,7 @@ public final class JdbcRunStore implements RunStore {
             RunState.valueOf(rs.getString("state")), rs.getString("policy_json"), rs.getString("job_ref"),
             rs.getString("pod_ref"), started == null ? null : started.toInstant(),
             finished == null ? null : finished.toInstant(), exitCodeNull ? null : exitCode,
-            rs.getString("termination_reason"), rs.getLong("version"), rs.getTimestamp("created_at").toInstant());
+            rs.getString("termination_reason"), rs.getLong("version"), rs.getTimestamp("created_at").toInstant(),
+            rs.getLong("fencing_token"));
     }
 }

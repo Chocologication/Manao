@@ -46,7 +46,7 @@ public final class RunService {
         long token = fencingToken.getAsLong();
         String runId = UUID.randomUUID().toString();
         RunRecord record = new RunRecord(runId, projectId, revision, RunState.STARTING, policy.toJson(),
-            null, null, null, null, null, null, 0L, Instant.now());
+            null, null, null, null, null, null, 0L, Instant.now(), token);
         RunStore.InsertResult inserted = store.insertRun(record, token);
         if (inserted == RunStore.InsertResult.ACTIVE_RUN_EXISTS) {
             // The unique active-run marker rejected the insert; refetch the authoritative winner.
@@ -61,7 +61,7 @@ public final class RunService {
             store.updateJobFacts(runId, jobRef);
         } catch (RuntimeException ex) {
             // Never leave a locked STARTING run without a Job: fail closed and release the lock.
-            store.settle(runId, RunState.FAILED, "START_FAILED", null, token);
+            store.settle(runId, RunState.FAILED, "START_FAILED", null);
             throw new ApiException("INTERNAL_ERROR", 503, "Run could not be started");
         }
         return toSummary(store.findRunForOwner(ownerId, projectId, runId).orElseThrow());

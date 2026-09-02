@@ -29,7 +29,7 @@ class RunObservationServiceTest {
     private String seedRun(String id, RunState state) {
         store.runs.put(id, new RunControllerTest.FakeRun(new RunRecord(id, PROJECT, 5, state,
             "{}", "manao-run-" + id, null, null, null, null, null, 1L,
-            Instant.parse("2026-08-29T11:00:00Z"))));
+            Instant.parse("2026-08-29T11:00:00Z"), 0L)));
         return id;
     }
 

@@ -9,7 +9,11 @@ import java.util.OptionalLong;
 public interface RunStore {
     ProjectRecord findProjectForOwner(String ownerId, String projectId);
 
-    /** Acquires or renews the instance lease and returns the current fencing token. */
+    /**
+     * Acquires or renews the instance lease and returns the current fencing token. The token is
+     * bumped only when the holder changes (real takeover); a same-holder renewal never bumps.
+     * After a takeover every active Run row is re-stamped with the new token.
+     */
     OptionalLong acquireFencingToken();
 
     InsertResult insertRun(RunRecord record, long fencingToken);
@@ -26,12 +30,19 @@ public interface RunStore {
     boolean transition(String runId, String projectId, long expectedVersion, RunState next, long fencingToken,
                        RunState... allowedStates);
 
-    /** STARTING -> RUNNING with started_at; guarded by the fencing token. */
-    boolean markRunning(String runId, String projectId, long expectedVersion, long fencingToken);
+    /**
+     * STARTING -> RUNNING with started_at; renews the instance lease inside and guards the
+     * conditional UPDATE on the token returned by that renewal.
+     */
+    boolean markRunning(String runId, String projectId, long expectedVersion);
 
     void updateJobFacts(String runId, String jobRef);
 
-    boolean settle(String runId, RunState state, String terminationReason, Integer exitCode, long fencingToken);
+    /**
+     * Terminal settlement; renews the instance lease inside and guards the conditional UPDATE on
+     * the token returned by that renewal (active runs only, never re-settling the same state).
+     */
+    boolean settle(String runId, RunState state, String terminationReason, Integer exitCode);
 
     List<RunRecord> findRunsInState(RunState... states);
 

@@ -42,19 +42,18 @@ public final class RunRecoveryService {
             processed.add(run.id());
             Optional<JobCoordinator.JobFacts> facts = coordinator.facts(run);
             if (facts.isEmpty()) {
-                if (settle(run, RunState.FAILED, "RECOVERY_FAILED", null, token)) failedClosed.add(run.id());
+                if (settle(run, RunState.FAILED, "RECOVERY_FAILED", null)) failedClosed.add(run.id());
                 continue;
             }
             JobCoordinator.JobFacts job = facts.get();
             if (job.succeeded()) {
-                if (settle(run, RunState.SUCCEEDED, "BUILD_SUCCEEDED", job.exitCode() == null ? 0 : job.exitCode(),
-                    token)) {
+                if (settle(run, RunState.SUCCEEDED, "BUILD_SUCCEEDED", job.exitCode() == null ? 0 : job.exitCode())) {
                     settled.add(run.id());
                 }
             } else if (job.failed()) {
-                if (settle(run, RunState.FAILED, "BUILD_FAILED", job.exitCode(), token)) settled.add(run.id());
+                if (settle(run, RunState.FAILED, "BUILD_FAILED", job.exitCode())) settled.add(run.id());
             } else if (job.deadlineExceeded()) {
-                if (settle(run, RunState.TIMED_OUT, "TIME_LIMIT_EXCEEDED", null, token)) settled.add(run.id());
+                if (settle(run, RunState.TIMED_OUT, "TIME_LIMIT_EXCEEDED", null)) settled.add(run.id());
             } else if (job.running()) {
                 if (store.transition(run.id(), run.projectId(), run.version(), RunState.RUNNING,
                     token, RunState.RECOVERING)) {
@@ -67,7 +66,7 @@ public final class RunRecoveryService {
             List.copyOf(failedClosed));
     }
 
-    private boolean settle(RunRecord run, RunState state, String reason, Integer exitCode, long token) {
-        return store.settle(run.id(), state, reason, exitCode, token);
+    private boolean settle(RunRecord run, RunState state, String reason, Integer exitCode) {
+        return store.settle(run.id(), state, reason, exitCode);
     }
 }

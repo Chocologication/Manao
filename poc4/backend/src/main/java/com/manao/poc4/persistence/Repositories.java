@@ -154,8 +154,8 @@ public final class Repositories {
         private Runs(Connection connection, DatabaseClock clock) { this.connection = connection; this.clock = clock; }
 
         public void insert(String id, String projectId, long requestedRevision, RunState state, String policyJson) {
-            try (var insert = connection.prepareStatement("INSERT INTO run(id, project_id, requested_revision, state, policy_json, version, updated_at) VALUES (?, ?, ?, ?, ?, 0, ?)")) {
-                insert.setString(1, id); insert.setString(2, projectId); insert.setLong(3, requestedRevision); insert.setString(4, state.name()); insert.setString(5, policyJson); insert.setTimestamp(6, Timestamp.from(clock.now())); insert.executeUpdate();
+            try (var insert = connection.prepareStatement("INSERT INTO run(id, project_id, requested_revision, state, policy_json, version, updated_at, created_at, fencing_token) VALUES (?, ?, ?, ?, ?, 0, ?, ?, 1)")) {
+                insert.setString(1, id); insert.setString(2, projectId); insert.setLong(3, requestedRevision); insert.setString(4, state.name()); insert.setString(5, policyJson); insert.setTimestamp(6, Timestamp.from(clock.now())); insert.setTimestamp(7, Timestamp.from(clock.now())); insert.executeUpdate();
             } catch (SQLException ex) { throw new IllegalStateException("cannot insert run", ex); }
         }
 

@@ -54,11 +54,11 @@ class FlywaySchemaTest {
         String runId = UUID.randomUUID().toString();
         try (var insert = connection.prepareStatement("INSERT INTO app_user(id, username, password_hash, created_at) VALUES (?, ?, ?, ?)");
              var project = connection.prepareStatement("INSERT INTO project(id, owner_id, name, state, workspace_revision, created_at, updated_at) VALUES (?, ?, ?, 'READY', 0, ?, ?)");
-             var run = connection.prepareStatement("INSERT INTO run(id, project_id, requested_revision, state, policy_json, version, updated_at) VALUES (?, ?, 0, ?, '{}', 0, ?)")) {
+             var run = connection.prepareStatement("INSERT INTO run(id, project_id, requested_revision, state, policy_json, version, updated_at, created_at, fencing_token) VALUES (?, ?, 0, ?, '{}', 0, ?, ?, 1)")) {
             insert.setString(1, userId); insert.setString(2, "alice"); insert.setString(3, "hash"); insert.setObject(4, TEST_NOW); insert.executeUpdate();
             assertThatThrownBy(insert::executeUpdate).isInstanceOf(SQLException.class);
             project.setString(1, projectId); project.setString(2, userId); project.setString(3, "demo"); project.setObject(4, TEST_NOW); project.setObject(5, TEST_NOW); project.executeUpdate();
-            run.setString(1, runId); run.setString(2, projectId); run.setString(3, "RUNNING"); run.setObject(4, TEST_NOW); run.executeUpdate();
+            run.setString(1, runId); run.setString(2, projectId); run.setString(3, "RUNNING"); run.setObject(4, TEST_NOW); run.setObject(5, TEST_NOW); run.executeUpdate();
             run.setString(1, UUID.randomUUID().toString());
             assertThatThrownBy(run::executeUpdate).isInstanceOf(SQLException.class);
         }
@@ -71,7 +71,7 @@ class FlywaySchemaTest {
         String runId = UUID.randomUUID().toString();
         try (var s = connection.prepareStatement("INSERT INTO app_user(id, username, password_hash, created_at) VALUES (?, 'bob', 'hash', ?)")) { s.setString(1, userId); s.setObject(2, TEST_NOW); s.executeUpdate(); }
         try (var s = connection.prepareStatement("INSERT INTO project(id, owner_id, name, state, workspace_revision, created_at, updated_at) VALUES (?, ?, 'p', 'READY', 0, ?, ?)")) { s.setString(1, projectId); s.setString(2, userId); s.setObject(3, TEST_NOW); s.setObject(4, TEST_NOW); s.executeUpdate(); }
-        try (var s = connection.prepareStatement("INSERT INTO run(id, project_id, requested_revision, state, policy_json, version, updated_at) VALUES (?, ?, 0, 'SUCCEEDED', '{}', 0, ?)")) { s.setString(1, runId); s.setString(2, projectId); s.setObject(3, TEST_NOW); s.executeUpdate(); }
+        try (var s = connection.prepareStatement("INSERT INTO run(id, project_id, requested_revision, state, policy_json, version, updated_at, created_at, fencing_token) VALUES (?, ?, 0, 'SUCCEEDED', '{}', 0, ?, ?, 1)")) { s.setString(1, runId); s.setString(2, projectId); s.setObject(3, TEST_NOW); s.setObject(4, TEST_NOW); s.executeUpdate(); }
         try (var chunk = connection.prepareStatement("INSERT INTO run_log_chunk(run_id, seq, text_utf8, byte_length, created_at) VALUES (?, 1, 'x', 1, ?)");
              var ticket = connection.prepareStatement("INSERT INTO log_ticket(ticket_hash, user_id, project_id, run_id, expires_at) VALUES ('hash1', ?, ?, ?, ?)");
              var session = connection.prepareStatement("INSERT INTO terminal_session(id, project_id, run_id, user_id, state, ticket_hash, expires_at, version) VALUES (?, ?, ?, ?, 'LIVE', 'hash1', ?, 0)")) {

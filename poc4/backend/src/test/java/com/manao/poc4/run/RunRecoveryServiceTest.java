@@ -30,7 +30,7 @@ class RunRecoveryServiceTest {
     private void seedRun(String id, RunState state) {
         store.runs.put(id, new FakeRun(new RunRecord(id, PROJECT, 5, state,
             "{}", "manao-run-" + id, null, null, null, null, null, 3L,
-            Instant.parse("2026-08-29T11:00:00Z"))));
+            Instant.parse("2026-08-29T11:00:00Z"), 0L)));
     }
 
     @Test
