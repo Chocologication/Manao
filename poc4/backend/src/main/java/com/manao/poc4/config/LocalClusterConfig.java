@@ -25,14 +25,23 @@ import org.springframework.context.annotation.Profile;
 public class LocalClusterConfig {
 
     @Bean
-    WorkspacePortForwardManager workspacePortForwardManager(BackendProperties properties) {
+    WorkspacePortForwardManager workspacePortForwardManager(
+        BackendProperties properties,
+        org.springframework.beans.factory.ObjectProvider<io.fabric8.kubernetes.client.KubernetesClient> clientProvider) {
+        // MANAO_BRIDGE_MODE=supervised: an operator-managed kubectl bridge outside the JVM serves
+        // deterministic per-project ports (sandbox environments where in-process binds and child
+        // spawns are denied). Default: the in-process Fabric8 port-forward (pods/portforward).
+        String mode = System.getenv().getOrDefault("MANAO_BRIDGE_MODE", "fabric8");
+        WorkspacePortForwardManager.PortForwardProcessFactory factory = "supervised".equals(mode)
+            ? null
+            : (namespace, serviceName, servicePort, localPort) ->
+                startFabric8PortForward(clientProvider, namespace, serviceName, servicePort, localPort);
         return new WorkspacePortForwardManager(
             properties.kubernetes().namespace(),
             properties.workspace().bridgePortStart(),
             properties.workspace().bridgePortEnd(),
             properties.workspace().agentPort(),
-            (namespace, serviceName, servicePort, localPort) ->
-                startKubectlPortForward(properties, serviceName, servicePort, localPort));
+            factory);
     }
 
     @Bean
@@ -104,24 +113,30 @@ public class LocalClusterConfig {
         };
     }
 
-    private static WorkspacePortForwardManager.PortForwardProcess startKubectlPortForward(
-        BackendProperties properties, String serviceName, int servicePort, int localPort) {
-        List<String> command = List.of(
-            "kubectl",
-            "--kubeconfig=" + properties.kubernetes().kubeconfigFile(),
-            "port-forward",
-            "--address", "127.0.0.1",
-            "service/" + serviceName,
-            localPort + ":" + servicePort,
-            "-n", properties.kubernetes().namespace());
-        try {
-            Process process = new ProcessBuilder(command).redirectErrorStream(true).start();
-            return new WorkspacePortForwardManager.PortForwardProcess() {
-                @Override public boolean isAlive() { return process.isAlive(); }
-                @Override public void kill() { process.destroyForcibly(); }
-            };
-        } catch (IOException ex) {
-            throw new IllegalStateException("cannot start kubectl port-forward", ex);
+    /**
+     * 6A workspace bridge via the in-process Fabric8 port-forward (pods/portforward is granted
+     * to the 6A identity exactly for this bridge). The workspace Service name is server-derived
+     * and equals the workspace Pod name, so forwarding targets the Pod directly. Loopback-only
+     * by Fabric8's default LocalPortForward binding; no child processes and no captured stdio.
+     */
+    private static WorkspacePortForwardManager.PortForwardProcess startFabric8PortForward(
+        org.springframework.beans.factory.ObjectProvider<io.fabric8.kubernetes.client.KubernetesClient> clientProvider,
+        String namespace, String serviceName, int servicePort, int localPort) {
+        io.fabric8.kubernetes.client.KubernetesClient client = clientProvider.getIfAvailable();
+        if (client == null) {
+            throw new IllegalStateException("Kubernetes client is required for the workspace bridge");
         }
+        io.fabric8.kubernetes.client.LocalPortForward forward = client.pods().inNamespace(namespace)
+            .withName(serviceName).portForward(servicePort, java.net.InetAddress.getLoopbackAddress(), localPort);
+        return new WorkspacePortForwardManager.PortForwardProcess() {
+            @Override public boolean isAlive() { return forward.isAlive(); }
+            @Override public void kill() {
+                try {
+                    forward.close();
+                } catch (java.io.IOException ex) {
+                    throw new IllegalStateException("cannot close workspace bridge", ex);
+                }
+            }
+        };
     }
 }

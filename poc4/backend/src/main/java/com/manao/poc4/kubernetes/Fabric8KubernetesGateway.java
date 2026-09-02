@@ -63,22 +63,54 @@ public final class Fabric8KubernetesGateway implements KubernetesGateway {
     }
 
     @Override public void createPvc(PersistentVolumeClaim pvc) {
-        client.persistentVolumeClaims().inNamespace(namespace).resource(pvc).serverSideApply();
+        createIfAbsent(pvc, client.persistentVolumeClaims().inNamespace(namespace).resource(pvc), projectId(pvc));
     }
 
     @Override public void createPod(Pod pod) {
-        client.pods().inNamespace(namespace).resource(pod).serverSideApply();
+        createIfAbsent(pod, client.pods().inNamespace(namespace).resource(pod), projectId(pod));
     }
 
     @Override public void createService(Service service) {
-        client.services().inNamespace(namespace).resource(service).serverSideApply();
+        createIfAbsent(service, client.services().inNamespace(namespace).resource(service), projectId(service));
+    }
+
+    /**
+     * Idempotent create using only the get/create verbs the design Role grants (no patch/update).
+     * An existing resource is reused only when its project identity matches; a create race is
+     * re-verified the same way instead of blind retry.
+     */
+    private <T extends io.fabric8.kubernetes.api.model.HasMetadata> void createIfAbsent(
+        T resource, io.fabric8.kubernetes.client.dsl.Resource<T> handle, String projectId) {
+        T existing = handle.get();
+        if (existing != null) {
+            if (!matchesProject(existing, projectId)) {
+                throw new IllegalStateException("existing resource does not match the project identity");
+            }
+            return;
+        }
+        try {
+            handle.create();
+        } catch (io.fabric8.kubernetes.client.KubernetesClientException ex) {
+            if (ex.getCode() != 409) throw ex;
+            T after = handle.get();
+            if (after == null || !matchesProject(after, projectId)) throw ex;
+        }
+    }
+
+    private static String projectId(io.fabric8.kubernetes.api.model.HasMetadata resource) {
+        Map<String, String> labels = resource.getMetadata().getLabels();
+        if (labels == null) throw new IllegalArgumentException("resource lacks project labels");
+        String projectId = labels.get(WorkspaceResourceFactory.LABEL_PROJECT_ID);
+        if (projectId == null) throw new IllegalArgumentException("resource lacks the project label");
+        return projectId;
     }
 
     @Override public void deleteProjectResources(String projectId) {
-        Map<String, String> labels = WorkspaceResourceFactory.projectLabels(projectId);
-        client.pods().inNamespace(namespace).withLabels(labels).withGracePeriod(0).delete();
-        client.services().inNamespace(namespace).withLabels(labels).delete();
-        client.persistentVolumeClaims().inNamespace(namespace).withLabels(labels).delete();
+        deleteProjectWorkloads(projectId);
+        for (PersistentVolumeClaim pvc : client.persistentVolumeClaims().inNamespace(namespace)
+                .withLabels(WorkspaceResourceFactory.projectLabels(projectId)).list().getItems()) {
+            client.persistentVolumeClaims().inNamespace(namespace).withName(pvc.getMetadata().getName()).delete();
+        }
     }
 
     /**
@@ -87,9 +119,14 @@ public final class Fabric8KubernetesGateway implements KubernetesGateway {
      * on disk ("保留现场"). Never deletes the PVC here.
      */
     public void deleteProjectWorkloads(String projectId) {
+        // List + per-item delete: the design Role grants only the delete verb, NOT deletecollection.
         Map<String, String> labels = WorkspaceResourceFactory.projectLabels(projectId);
-        client.pods().inNamespace(namespace).withLabels(labels).withGracePeriod(0).delete();
-        client.services().inNamespace(namespace).withLabels(labels).delete();
+        for (Pod pod : client.pods().inNamespace(namespace).withLabels(labels).list().getItems()) {
+            client.pods().inNamespace(namespace).withName(pod.getMetadata().getName()).withGracePeriod(0).delete();
+        }
+        for (Service service : client.services().inNamespace(namespace).withLabels(labels).list().getItems()) {
+            client.services().inNamespace(namespace).withName(service.getMetadata().getName()).delete();
+        }
     }
 
     /** Waits until the workspace pod is Ready; returns false on timeout. */

@@ -65,20 +65,34 @@ public final class WorkspacePortForwardManager {
         requireValidProjectId(projectId);
         Bridge existing = bridges.get(projectId);
         if (existing != null) {
-            if (!existing.process.isAlive()) {
+            if (factory != null && !existing.process.isAlive()) {
                 existing.process = factory.start(namespace, existing.serviceName, servicePort, existing.localPort);
             }
             return existing.localPort;
         }
-        int port = findFreePort();
+        // Supervised mode (factory == null): a deterministic port derived from the project id,
+        // served by an operator-managed bridge process outside this JVM.
+        int port = factory == null ? deterministicPort(projectId) : findFreePort();
         String serviceName = WorkspaceResourceFactory.serviceName(projectId);
-        Bridge bridge = new Bridge(serviceName, port, factory.start(namespace, serviceName, servicePort, port));
+        PortForwardProcess process = factory == null ? ALWAYS_ALIVE : factory.start(namespace, serviceName, servicePort, port);
+        Bridge bridge = new Bridge(serviceName, port, process);
         bridges.put(projectId, bridge);
         return port;
     }
 
+    private int deterministicPort(String projectId) {
+        int span = portEnd - portStart + 1;
+        return portStart + Math.floorMod(projectId.hashCode(), span);
+    }
+
+    private static final PortForwardProcess ALWAYS_ALIVE = new PortForwardProcess() {
+        @Override public boolean isAlive() { return true; }
+        @Override public void kill() { }
+    };
+
     /** Recreates dead bridges on their original ports (called by the dependency monitor). */
     public synchronized void checkChildren() {
+        if (factory == null) return;
         for (Bridge bridge : bridges.values()) {
             if (!bridge.process.isAlive()) {
                 bridge.process = factory.start(namespace, bridge.serviceName, servicePort, bridge.localPort);
