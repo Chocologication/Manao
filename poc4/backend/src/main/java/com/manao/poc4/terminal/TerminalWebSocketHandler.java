@@ -8,6 +8,7 @@ import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.time.Clock;
 import java.util.Arrays;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
@@ -146,6 +147,13 @@ public final class TerminalWebSocketHandler extends AbstractWebSocketHandler {
         if (bound.flow.shouldPauseReading() && !bound.pauseNotified) {
             bound.pauseNotified = true;
             sendControl(bound, "terminal.input.pause");
+        }
+    }
+
+    /** Backend shutdown: settle every live session exactly once and never reattach old PTYs. */
+    public void teardownAllSessions() {
+        for (BoundSession bound : List.copyOf(connections.values())) {
+            settleAndClose(bound, "BACKEND_SHUTDOWN", "INTERRUPTED", null, null);
         }
     }
 

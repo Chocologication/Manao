@@ -81,6 +81,7 @@ public class RuntimeMaintenanceLoop {
 
     @PreDestroy
     public void shutdown() {
+        safe("terminal teardown", () -> { var handler = terminalHandler.getIfAvailable(); if (handler != null) handler.teardownAllSessions(); });
         safe("log watch detach", () -> { var ingestor = logIngestor.getIfAvailable(); if (ingestor != null) ingestor.detachAll(); });
         safe("bridge shutdown", () -> { var manager = bridges.getIfAvailable(); if (manager != null) manager.shutdown(); });
     }

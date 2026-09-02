@@ -241,6 +241,21 @@ class TerminalWebSocketTest {
     }
 
     @Test
+    void teardownAllSessionsSettlesActivePtyAndNeverReattaches() throws Exception {
+        TerminalWebSocketHandler handler = newHandler(session, liveTicket);
+        assertThat(bridge.opened).isTrue();
+
+        handler.teardownAllSessions();
+
+        assertThat(store.sessions.values().stream()
+            .anyMatch(record -> "INTERRUPTED".equals(record.state()))).isTrue();
+        assertThat(bridge.closed).isTrue();
+        handler.teardownAllSessions(); // idempotent second sweep
+        assertThat(store.sessions.values().stream()
+            .filter(record -> "INTERRUPTED".equals(record.state())).count()).isEqualTo(1);
+    }
+
+    @Test
     void connectionLostSettlesInterrupted() throws Exception {
         newHandler(session, liveTicket);
         session.closed = CloseStatus.GOING_AWAY;
