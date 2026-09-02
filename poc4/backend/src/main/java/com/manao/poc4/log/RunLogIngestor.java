@@ -15,7 +15,8 @@ public final class RunLogIngestor {
     private static final class Handle {
         PodLogGateway.LogWatchHandle watch;
         long nextSeq;
-        long skipLines;
+        /** Already-persisted chunks; re-attach skips chunk-by-chunk, never line-by-line. */
+        long skipChunks;
     }
 
     private final String namespace;
@@ -29,11 +30,10 @@ public final class RunLogIngestor {
     /** Idempotently attaches the log watch for a run; the stream is tailed from the start. */
     public synchronized void ensureWatch(String runId, String podName) {
         if (watches.containsKey(runId) || podName == null || podName.isBlank()) return;
-        long lastSeq = logs.windowFor(runId).meta().lastAvailableSeq() == null
-            ? 0 : logs.windowFor(runId).meta().lastAvailableSeq();
+        long lastSeq = logs.windowFor(runId).lastSeq();
         Handle handle = new Handle();
         handle.nextSeq = lastSeq + 1;
-        handle.skipLines = lastSeq;
+        handle.skipChunks = lastSeq;
         handle.watch = gateway.watchLogs(this.namespace, podName, line -> ingest(runId, handle, line));
         watches.put(runId, handle);
     }
@@ -51,17 +51,17 @@ public final class RunLogIngestor {
     }
 
     private void ingest(String runId, Handle handle, String line) {
-        if (handle.skipLines > 0) {
-            handle.skipLines--;
-            return;
+        java.util.List<String> pieces = Utf8ChunkSplitter.split(line + "\n", RunLogWindow.MAX_CHUNK_BYTES);
+        if (handle.skipChunks > 0) {
+            if (pieces.size() <= handle.skipChunks) {
+                handle.skipChunks -= pieces.size();
+                return;
+            }
+            pieces = pieces.subList((int) handle.skipChunks, pieces.size());
+            handle.skipChunks = 0;
         }
         long seq = handle.nextSeq;
-        String text = line + "\n";
-        // Split pathological over-long lines into <= 64 KiB chunks under one seq each.
-        while (!text.isEmpty()) {
-            String piece = text.length() > RunLogWindow.MAX_CHUNK_BYTES
-                ? text.substring(0, RunLogWindow.MAX_CHUNK_BYTES) : text;
-            text = text.length() > RunLogWindow.MAX_CHUNK_BYTES ? text.substring(RunLogWindow.MAX_CHUNK_BYTES) : "";
+        for (String piece : pieces) {
             if (!logs.publish(runId, seq, piece)) {
                 return; // storage refused; do not advance the seq cursor
             }

@@ -38,6 +38,9 @@ public final class RunLogWindow {
         return appendValidated(new Chunk(seq, text, bytes.length, Instant.now()));
     }
 
+    /** Highest seq ever persisted for the run, even when the retained window is empty. */
+    public synchronized long lastSeq() { return lastSeq; }
+
     /** Pure continuity check so callers can persist BEFORE mutating the window. */
     public synchronized boolean canAppend(long seq) {
         return seq == lastSeq + 1;
