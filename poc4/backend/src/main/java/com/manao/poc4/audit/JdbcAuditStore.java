@@ -14,14 +14,18 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 
 /** JDBC persistence for terminal audits, retention cleanup and the RESERVED -> EXPIRED scan. */
+import com.manao.poc4.config.SecurityConfig;
+import org.springframework.context.annotation.Conditional;
+
 @Component
-@ConditionalOnBean(JdbcTemplate.class)
+@Conditional(SecurityConfig.BackendAuthCondition.class)
 public final class JdbcAuditStore implements AuditStore, RetentionCleanupJob.CleanupStore {
     private static final String COLUMNS = "id, session_id, project_id, run_id, user_id, command, state, started_at, finished_at, exit_code, sensitive_detected";
 
     private final JdbcTemplate jdbc;
     private final Clock clock;
 
+    @org.springframework.beans.factory.annotation.Autowired
     public JdbcAuditStore(JdbcTemplate jdbc) {
         this(jdbc, Clock.systemUTC());
     }

@@ -15,8 +15,11 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 
 /** JDBC Run store; the generated active_run_marker enforces one active Run per project. */
+import com.manao.poc4.config.SecurityConfig;
+import org.springframework.context.annotation.Conditional;
+
 @Component
-@ConditionalOnBean(JdbcTemplate.class)
+@Conditional(SecurityConfig.BackendAuthCondition.class)
 public final class JdbcRunStore implements RunStore {
     private static final String LEASE_ID = "backend";
     private static final Duration LEASE_TTL = Duration.ofSeconds(60);
@@ -25,6 +28,7 @@ public final class JdbcRunStore implements RunStore {
     private final JdbcTemplate jdbc;
     private final DatabaseClock clock;
 
+    @org.springframework.beans.factory.annotation.Autowired
     public JdbcRunStore(JdbcTemplate jdbc) {
         this(jdbc, new DatabaseClock());
     }

@@ -24,7 +24,7 @@ import org.springframework.web.bind.annotation.RestController;
  * job/pod references, images and environment never leave the server.
  */
 @RestController
-@ConditionalOnBean({RunService.class, org.springframework.jdbc.core.JdbcTemplate.class})
+@org.springframework.context.annotation.Conditional(com.manao.poc4.config.SecurityConfig.BackendAuthCondition.class)
 @RequestMapping("/api/v1/projects/{projectId}/runs")
 public final class RunController {
     private final RunService runs;

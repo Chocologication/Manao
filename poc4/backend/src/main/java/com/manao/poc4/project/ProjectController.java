@@ -20,7 +20,7 @@ import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
 @RestController
-@ConditionalOnBean({ProjectService.class, org.springframework.jdbc.core.JdbcTemplate.class})
+@org.springframework.context.annotation.Conditional(com.manao.poc4.config.SecurityConfig.BackendAuthCondition.class)
 @RequestMapping("/api/v1/projects")
 public final class ProjectController {
     private final ProjectService projects;

@@ -129,11 +129,6 @@ public class WorkspaceConfig {
     }
 
     @Bean
-    com.manao.poc4.run.RunStore runStore(org.springframework.jdbc.core.JdbcTemplate jdbc) {
-        return new com.manao.poc4.run.JdbcRunStore(jdbc);
-    }
-
-    @Bean
     com.manao.poc4.run.RunPolicy runPolicy(BackendProperties properties) {
         return com.manao.poc4.run.RunPolicy.fromProperties(properties);
     }
@@ -204,11 +199,6 @@ public class WorkspaceConfig {
     }
 
     @Bean
-    com.manao.poc4.log.JdbcLogStore jdbcLogStore(org.springframework.jdbc.core.JdbcTemplate jdbc) {
-        return new com.manao.poc4.log.JdbcLogStore(jdbc);
-    }
-
-    @Bean
     com.manao.poc4.log.LogTicketService logTicketService(com.manao.poc4.log.JdbcLogStore store,
                                                          com.manao.poc4.run.RunStore runStore) {
         return new com.manao.poc4.log.LogTicketService(store, Clock.systemUTC(),
@@ -218,11 +208,6 @@ public class WorkspaceConfig {
     @Bean
     com.manao.poc4.log.RunLogService runLogService(com.manao.poc4.log.JdbcLogStore store) {
         return new com.manao.poc4.log.RunLogService(store);
-    }
-
-    @Bean
-    com.manao.poc4.terminal.JdbcTerminalStore jdbcTerminalStore(org.springframework.jdbc.core.JdbcTemplate jdbc) {
-        return new com.manao.poc4.terminal.JdbcTerminalStore(jdbc);
     }
 
     @Bean
@@ -240,11 +225,6 @@ public class WorkspaceConfig {
     com.manao.poc4.terminal.PtyBridge ptyBridge(com.manao.poc4.kubernetes.ExecTransport transport) {
         return new com.manao.poc4.kubernetes.ExecPtyClient(transport,
             com.manao.poc4.terminal.PtyWrapperCommand.command());
-    }
-
-    @Bean
-    com.manao.poc4.audit.JdbcAuditStore jdbcAuditStore(org.springframework.jdbc.core.JdbcTemplate jdbc) {
-        return new com.manao.poc4.audit.JdbcAuditStore(jdbc);
     }
 
     @Bean

@@ -10,7 +10,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 /** Stage-five structured terminal audit listing with keyset pagination. */
 @RestController
-@ConditionalOnBean({AuditService.class, org.springframework.jdbc.core.JdbcTemplate.class})
+@org.springframework.context.annotation.Conditional(com.manao.poc4.config.SecurityConfig.BackendAuthCondition.class)
 public final class AuditController {
     private final AuditService audits;
     private final com.manao.poc4.run.RunStore runStore;

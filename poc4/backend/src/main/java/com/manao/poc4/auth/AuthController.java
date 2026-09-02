@@ -15,7 +15,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 @RestController
-@ConditionalOnBean({JwtService.class, JdbcTemplate.class})
+@org.springframework.context.annotation.Conditional(com.manao.poc4.config.SecurityConfig.BackendAuthCondition.class)
 @RequestMapping("/api/v1/auth")
 public final class AuthController {
     private final JwtService jwt;

@@ -10,14 +10,18 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 
 /** JDBC terminal store; the generated active_terminal_marker enforces one live session per run. */
+import com.manao.poc4.config.SecurityConfig;
+import org.springframework.context.annotation.Conditional;
+
 @Component
-@ConditionalOnBean(JdbcTemplate.class)
+@Conditional(SecurityConfig.BackendAuthCondition.class)
 public final class JdbcTerminalStore implements TerminalStore {
     private static final String COLUMNS = "id, project_id, run_id, user_id, ticket_hash, expires_at, consumed_at, state, pod_ref, container_ref, close_reason, cols, rows";
 
     private final JdbcTemplate jdbc;
     private final Clock clock;
 
+    @org.springframework.beans.factory.annotation.Autowired
     public JdbcTerminalStore(JdbcTemplate jdbc) {
         this(jdbc, Clock.systemUTC());
     }

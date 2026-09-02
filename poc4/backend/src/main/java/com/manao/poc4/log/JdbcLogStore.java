@@ -10,12 +10,16 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 
 /** JDBC persistence for single-use log tickets and the retention window's chunks. */
+import com.manao.poc4.config.SecurityConfig;
+import org.springframework.context.annotation.Conditional;
+
 @Component
-@ConditionalOnBean(JdbcTemplate.class)
+@Conditional(SecurityConfig.BackendAuthCondition.class)
 public final class JdbcLogStore implements LogTicketService.Store, RunLogService.ChunkStore {
     private final JdbcTemplate jdbc;
     private final Clock clock;
 
+    @org.springframework.beans.factory.annotation.Autowired
     public JdbcLogStore(JdbcTemplate jdbc) {
         this(jdbc, Clock.systemUTC());
     }

@@ -28,7 +28,6 @@ public class SecurityConfig {
     }
 
     @Bean
-    @ConditionalOnBean(JwtService.class)
     SecurityFilterChain apiSecurity(HttpSecurity http, JwtService jwt) throws Exception {
         return http.securityMatcher("/api/**")
             .csrf(csrf -> csrf.disable())
@@ -49,7 +48,7 @@ public class SecurityConfig {
         response.getWriter().write(new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(error.toMap()));
     }
 
-    static final class BackendAuthCondition implements org.springframework.context.annotation.Condition {
+    public static final class BackendAuthCondition implements org.springframework.context.annotation.Condition {
         @Override public boolean matches(org.springframework.context.annotation.ConditionContext context,
                                          org.springframework.core.type.AnnotatedTypeMetadata metadata) {
             String excluded = context.getEnvironment().getProperty("spring.autoconfigure.exclude", "");

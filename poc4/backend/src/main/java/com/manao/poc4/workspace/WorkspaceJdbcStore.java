@@ -14,8 +14,11 @@ import org.springframework.transaction.support.TransactionTemplate;
  * writers through a SELECT ... FOR UPDATE on the project row so the expected-revision check and
  * the unique PENDING marker are enforced atomically.
  */
+import com.manao.poc4.config.SecurityConfig;
+import org.springframework.context.annotation.Conditional;
+
 @Component
-@ConditionalOnBean(JdbcTemplate.class)
+@Conditional(SecurityConfig.BackendAuthCondition.class)
 public final class WorkspaceJdbcStore implements WorkspaceStore {
     private final JdbcTemplate jdbc;
     private final TransactionTemplate transaction;

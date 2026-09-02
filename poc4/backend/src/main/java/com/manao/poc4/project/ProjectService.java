@@ -13,7 +13,7 @@ import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
 @Service
-@ConditionalOnBean(JdbcTemplate.class)
+@org.springframework.context.annotation.Conditional(com.manao.poc4.config.SecurityConfig.BackendAuthCondition.class)
 public final class ProjectService {
     private final Store store;
 

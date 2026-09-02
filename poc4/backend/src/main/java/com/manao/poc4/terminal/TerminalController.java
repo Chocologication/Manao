@@ -16,7 +16,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 /** Issues one terminal reservation (sessionId + ticket) for the run's live application container. */
 @RestController
-@ConditionalOnBean({TerminalSessionService.class, org.springframework.jdbc.core.JdbcTemplate.class})
+@org.springframework.context.annotation.Conditional(com.manao.poc4.config.SecurityConfig.BackendAuthCondition.class)
 public final class TerminalController {
     private final TerminalSessionService sessions;
 

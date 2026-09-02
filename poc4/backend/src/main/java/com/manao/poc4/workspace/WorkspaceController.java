@@ -22,7 +22,7 @@ import org.springframework.web.bind.annotation.RestController;
  * identifiers only; Kubernetes facts and absolute paths never leave this boundary.
  */
 @RestController
-@ConditionalOnBean({WorkspaceService.class, org.springframework.jdbc.core.JdbcTemplate.class})
+@org.springframework.context.annotation.Conditional(com.manao.poc4.config.SecurityConfig.BackendAuthCondition.class)
 @RequestMapping("/api/v1/projects/{projectId}")
 public final class WorkspaceController {
     private final WorkspaceService workspace;

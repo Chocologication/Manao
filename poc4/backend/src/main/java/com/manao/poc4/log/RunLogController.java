@@ -11,7 +11,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 /** Issues single-use, 30-second log tickets bound to the authenticated owner's run. */
 @RestController
-@ConditionalOnBean({LogTicketService.class, org.springframework.jdbc.core.JdbcTemplate.class})
+@org.springframework.context.annotation.Conditional(com.manao.poc4.config.SecurityConfig.BackendAuthCondition.class)
 public final class RunLogController {
     private final LogTicketService tickets;
 
