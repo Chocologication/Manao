@@ -127,8 +127,12 @@ public final class JdbcRunStore implements RunStore {
             token.getAsLong()) == 1;
     }
 
-    @Override public void updateJobFacts(String runId, String jobRef) {
-        jdbc.update("UPDATE run SET job_ref = ? WHERE id = ?", jobRef, runId);
+    @Override public void updateJobFacts(String runId, String jobRef, String podRef) {
+        jdbc.update("UPDATE run SET job_ref = ?, pod_ref = ? WHERE id = ?", jobRef, podRef, runId);
+    }
+
+    @Override public void updatePodRef(String runId, String podRef) {
+        jdbc.update("UPDATE run SET pod_ref = ? WHERE id = ?", podRef, runId);
     }
 
     @Override public boolean settle(String runId, RunState state, String terminationReason, Integer exitCode) {

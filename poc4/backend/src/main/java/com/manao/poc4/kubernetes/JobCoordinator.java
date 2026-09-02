@@ -11,9 +11,18 @@ public interface JobCoordinator {
     /** Identity-verified job facts; empty means the job is missing or does not match the run. */
     Optional<JobFacts> facts(RunRecord run);
 
+    /**
+     * Resolves the currently live application Pod for a run. Empty unless exactly one Pod matches
+     * the server labels, the Job ownerReference chain verifies, and the fixed application
+     * container is Running.
+     */
+    Optional<LivePod> findLivePod(String runId);
+
     /** Deletes the Job; safe to call repeatedly. */
     boolean stop(String jobName);
 
     record JobFacts(boolean running, boolean succeeded, boolean failed, boolean deadlineExceeded, Integer exitCode,
                     String podName) { }
+
+    record LivePod(String podName, String containerName) { }
 }

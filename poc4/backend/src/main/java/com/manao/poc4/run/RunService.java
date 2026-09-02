@@ -58,7 +58,8 @@ public final class RunService {
         RunRecord persisted = store.findRunForOwner(ownerId, projectId, runId).orElseThrow();
         try {
             String jobRef = coordinator.ensureJob(persisted, projectId);
-            store.updateJobFacts(runId, jobRef);
+            String podRef = coordinator.findLivePod(runId).map(JobCoordinator.LivePod::podName).orElse(null);
+            store.updateJobFacts(runId, jobRef, podRef);
         } catch (RuntimeException ex) {
             // Never leave a locked STARTING run without a Job: fail closed and release the lock.
             store.settle(runId, RunState.FAILED, "START_FAILED", null);

@@ -36,7 +36,11 @@ public interface RunStore {
      */
     boolean markRunning(String runId, String projectId, long expectedVersion);
 
-    void updateJobFacts(String runId, String jobRef);
+    /** Persists both server-internal references; podRef may be null while no live Pod exists yet. */
+    void updateJobFacts(String runId, String jobRef, String podRef);
+
+    /** Updates only the live Pod reference, e.g. when the Job Pod appears or is recreated. */
+    void updatePodRef(String runId, String podRef);
 
     /**
      * Terminal settlement; renews the instance lease inside and guards the conditional UPDATE on

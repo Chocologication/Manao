@@ -42,6 +42,33 @@ public final class Fabric8JobCoordinator implements JobCoordinator {
         return jobName;
     }
 
+    @Override public Optional<LivePod> findLivePod(String runId) {
+        List<Pod> pods = client.pods().inNamespace(namespace)
+            .withLabel(ResourceIdentityVerifier.LABEL_RUN_ID, runId).list().getItems();
+        if (pods.size() != 1) return Optional.empty();
+        Pod pod = pods.get(0);
+        Job job = client.batch().v1().jobs().inNamespace(namespace)
+            .withName(JobResourceFactory.jobName(runId)).get();
+        if (job == null || job.getMetadata() == null || job.getMetadata().getLabels() == null) {
+            return Optional.empty();
+        }
+        if (!verifier.verify(runRecordFrom(job), job, pod)) return Optional.empty();
+        boolean containerRunning = pod.getStatus() != null && pod.getStatus().getContainerStatuses() != null
+            && pod.getStatus().getContainerStatuses().stream().anyMatch(status ->
+                ResourceIdentityVerifier.APPLICATION_CONTAINER.equals(status.getName())
+                && status.getState() != null && status.getState().getRunning() != null);
+        if (!containerRunning) return Optional.empty();
+        return Optional.of(new LivePod(pod.getMetadata().getName(), ResourceIdentityVerifier.APPLICATION_CONTAINER));
+    }
+
+    /** Minimal RunRecord rebuilt from server labels so the shared verifier can check ownership. */
+    private RunRecord runRecordFrom(Job job) {
+        var labels = job.getMetadata().getLabels();
+        return new RunRecord(labels.get(ResourceIdentityVerifier.LABEL_RUN_ID),
+            labels.get(ResourceIdentityVerifier.LABEL_PROJECT_ID), 0L, com.manao.poc4.persistence.RunState.RUNNING,
+            "{}", null, null, null, null, null, null, 0L, null, 0L);
+    }
+
     @Override public Optional<JobFacts> facts(RunRecord run) {
         Job job = client.batch().v1().jobs().inNamespace(namespace).withName(JobResourceFactory.jobName(run.id())).get();
         if (job == null) return Optional.empty();

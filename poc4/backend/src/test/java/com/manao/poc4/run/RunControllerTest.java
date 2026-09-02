@@ -281,9 +281,14 @@ public class RunControllerTest {
             return true;
         }
 
-        @Override public void updateJobFacts(String runId, String jobRef) {
+        @Override public void updateJobFacts(String runId, String jobRef, String podRef) {
             FakeRun run = runs.get(runId);
-            if (run != null) run.jobRef = jobRef;
+            if (run != null) { run.jobRef = jobRef; run.podRef = podRef; }
+        }
+
+        @Override public void updatePodRef(String runId, String podRef) {
+            FakeRun run = runs.get(runId);
+            if (run != null) run.podRef = podRef;
         }
 
         @Override public boolean settle(String runId, RunState state, String terminationReason, Integer exitCode) {
@@ -314,6 +319,7 @@ public class RunControllerTest {
         public String state;
         public String policyJson;
         public String jobRef;
+        public String podRef;
         public long version;
         public String terminationReason;
         public Integer exitCode;
@@ -331,11 +337,12 @@ public class RunControllerTest {
             this.version = record.version();
             this.createdAt = record.createdAt();
             this.fencingToken = record.fencingToken();
+            this.podRef = record.podRef();
         }
 
         RunRecord toRecord() {
             return new RunRecord(id, projectId, requestedRevision, RunState.valueOf(state), policyJson, jobRef,
-                null, startedAt, finishedAt, exitCode, terminationReason, version, createdAt, fencingToken);
+                podRef, startedAt, finishedAt, exitCode, terminationReason, version, createdAt, fencingToken);
         }
     }
 
@@ -343,6 +350,7 @@ public class RunControllerTest {
         public final List<String> ensureJobCalls = new ArrayList<>();
         public final List<String> stopCalls = new ArrayList<>();
         public final Map<String, JobCoordinator.JobFacts> factsByRun = new HashMap<>();
+        public final Map<String, JobCoordinator.LivePod> livePods = new HashMap<>();
         public JobCoordinator.JobFacts nextFacts;
         public RuntimeException ensureJobFailure;
 
@@ -355,6 +363,10 @@ public class RunControllerTest {
         @Override public Optional<JobCoordinator.JobFacts> facts(RunRecord run) {
             JobCoordinator.JobFacts facts = factsByRun.containsKey(run.id()) ? factsByRun.get(run.id()) : nextFacts;
             return Optional.ofNullable(facts);
+        }
+
+        @Override public Optional<JobCoordinator.LivePod> findLivePod(String runId) {
+            return Optional.ofNullable(livePods.get(runId));
         }
 
         @Override public boolean stop(String jobName) {
