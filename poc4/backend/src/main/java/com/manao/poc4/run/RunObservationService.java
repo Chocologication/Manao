@@ -1,6 +1,7 @@
 package com.manao.poc4.run;
 
 import com.manao.poc4.kubernetes.JobCoordinator;
+import com.manao.poc4.log.RunLogIngestor;
 import com.manao.poc4.persistence.RunState;
 import java.util.Optional;
 import java.util.OptionalLong;
@@ -14,10 +15,12 @@ import java.util.OptionalLong;
 public final class RunObservationService {
     private final RunStore store;
     private final JobCoordinator coordinator;
+    private final RunLogIngestor logIngestor;
 
-    public RunObservationService(RunStore store, JobCoordinator coordinator) {
+    public RunObservationService(RunStore store, JobCoordinator coordinator, RunLogIngestor logIngestor) {
         this.store = store;
         this.coordinator = coordinator;
+        this.logIngestor = logIngestor;
     }
 
     public void observe() {
@@ -30,6 +33,13 @@ public final class RunObservationService {
             if (run.state() == RunState.STARTING && job.running()) {
                 store.markRunning(run.id(), run.projectId(), run.version());
                 run = store.findRun(run.id()).orElse(run);
+            }
+            if (job.running() && job.podName() != null) {
+                // Persist the live Pod reference and attach the persistence-first log watch.
+                if (!job.podName().equals(run.podRef())) {
+                    store.updatePodRef(run.id(), job.podName());
+                }
+                logIngestor.ensureWatch(run.id(), job.podName());
             }
             if (job.succeeded()) {
                 store.settle(run.id(), RunState.SUCCEEDED, "BUILD_SUCCEEDED",

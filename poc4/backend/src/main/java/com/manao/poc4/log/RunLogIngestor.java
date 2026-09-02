@@ -27,7 +27,7 @@ public final class RunLogIngestor {
     }
 
     /** Idempotently attaches the log watch for a run; the stream is tailed from the start. */
-    public synchronized void ensureWatch(String runId, String podName, String namespace) {
+    public synchronized void ensureWatch(String runId, String podName) {
         if (watches.containsKey(runId) || podName == null || podName.isBlank()) return;
         long lastSeq = logs.windowFor(runId).meta().lastAvailableSeq() == null
             ? 0 : logs.windowFor(runId).meta().lastAvailableSeq();

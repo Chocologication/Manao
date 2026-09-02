@@ -185,8 +185,9 @@ public class WorkspaceConfig {
 
     @Bean
     com.manao.poc4.run.RunObservationService runObservationService(com.manao.poc4.run.RunStore store,
-                                                                   com.manao.poc4.kubernetes.JobCoordinator coordinator) {
-        return new com.manao.poc4.run.RunObservationService(store, coordinator);
+                                                                   com.manao.poc4.kubernetes.JobCoordinator coordinator,
+                                                                   com.manao.poc4.log.RunLogIngestor logIngestor) {
+        return new com.manao.poc4.run.RunObservationService(store, coordinator, logIngestor);
     }
 
     @Bean

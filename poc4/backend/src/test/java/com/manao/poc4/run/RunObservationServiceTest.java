@@ -4,11 +4,18 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.manao.poc4.api.ApiException;
 import com.manao.poc4.kubernetes.JobCoordinator;
+import com.manao.poc4.log.PodLogGateway;
+import com.manao.poc4.log.RunLogIngestor;
+import com.manao.poc4.log.RunLogService;
+import com.manao.poc4.log.RunLogWindow;
 import com.manao.poc4.persistence.RunState;
 import com.manao.poc4.run.RunControllerTest.FakeRunStore;
 import com.manao.poc4.run.RunControllerTest.StubCoordinator;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.OptionalLong;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -17,13 +24,17 @@ class RunObservationServiceTest {
 
     private FakeRunStore store;
     private StubCoordinator coordinator;
+    private RecordingGateway gateway;
     private RunObservationService service;
 
     @BeforeEach
     void setUp() {
         store = new FakeRunStore();
         coordinator = new StubCoordinator();
-        service = new RunObservationService(store, coordinator);
+        gateway = new RecordingGateway();
+        RunLogIngestor ingestor = new RunLogIngestor(gateway,
+            new RunLogService(new EmptyChunkStore()), "manao");
+        service = new RunObservationService(store, coordinator, ingestor);
     }
 
     private String seedRun(String id, RunState state) {
@@ -53,6 +64,18 @@ class RunObservationServiceTest {
 
         assertThat(store.runs.get(runId).state).isEqualTo(RunState.SUCCEEDED.name());
         assertThat(store.runs.get(runId).terminationReason).isEqualTo("BUILD_SUCCEEDED");
+    }
+
+    @Test
+    void attachesLogWatchAndPersistsPodRefWhenRunIsRunning() {
+        String runId = seedRun("run-live", RunState.RUNNING);
+        coordinator.factsByRun.put(runId, new JobCoordinator.JobFacts(true, false, false, false, null, "manao-run-1-abcde"));
+
+        service.observe();
+
+        assertThat(gateway.watchedPods).containsExactly("manao-run-1-abcde");
+        assertThat(gateway.namespaces).containsExactly("manao");
+        assertThat(store.runs.get(runId).podRef).isEqualTo("manao-run-1-abcde");
     }
 
     @Test
@@ -87,5 +110,23 @@ class RunObservationServiceTest {
             .allMatch(run -> "FAILED".equals(run.state) && "START_FAILED".equals(run.terminationReason)))
             .isTrue();
         assertThat(store.findActiveRun(PROJECT)).isEmpty();
+    }
+
+    static final class RecordingGateway implements PodLogGateway {
+        final List<String> watchedPods = new ArrayList<>();
+        final List<String> namespaces = new ArrayList<>();
+
+        @Override public LogWatchHandle watchLogs(String namespace, String podName, java.util.function.Consumer<String> lineConsumer) {
+            watchedPods.add(podName);
+            namespaces.add(namespace);
+            return () -> { };
+        }
+    }
+
+    static final class EmptyChunkStore implements RunLogService.ChunkStore {
+        @Override public void insertChunk(String runId, RunLogWindow.Chunk chunk) { }
+        @Override public List<RunLogWindow.Chunk> loadChunks(String runId) { return List.of(); }
+        @Override public void deleteBefore(String runId, long seqExclusive) { }
+        @Override public OptionalLong lastSeq(String runId) { return OptionalLong.empty(); }
     }
 }
