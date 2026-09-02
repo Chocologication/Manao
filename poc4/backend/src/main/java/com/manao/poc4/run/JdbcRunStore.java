@@ -1,5 +1,6 @@
 package com.manao.poc4.run;
 
+import com.manao.poc4.persistence.DatabaseClock;
 import com.manao.poc4.persistence.RunState;
 import java.sql.Timestamp;
 import java.time.Duration;
@@ -22,9 +23,15 @@ public final class JdbcRunStore implements RunStore {
     private static final String RUN_COLUMNS = "id, project_id, requested_revision, state, policy_json, job_ref, pod_ref, started_at, finished_at, exit_code, termination_reason, version, created_at";
 
     private final JdbcTemplate jdbc;
+    private final DatabaseClock clock;
 
     public JdbcRunStore(JdbcTemplate jdbc) {
+        this(jdbc, new DatabaseClock());
+    }
+
+    JdbcRunStore(JdbcTemplate jdbc, DatabaseClock clock) {
         this.jdbc = jdbc;
+        this.clock = clock;
     }
 
     @Override public ProjectRecord findProjectForOwner(String ownerId, String projectId) {
@@ -37,7 +44,7 @@ public final class JdbcRunStore implements RunStore {
     }
 
     @Override public OptionalLong acquireFencingToken() {
-        Instant now = Instant.now();
+        Instant now = clock.now();
         int renewed = jdbc.update(
             "UPDATE instance_lease SET holder_id = ?, fencing_token = fencing_token + 1, expires_at = ? WHERE id = ? AND expires_at < ?",
             holder(), Timestamp.from(now.plus(LEASE_TTL)), LEASE_ID, Timestamp.from(now));
@@ -92,7 +99,7 @@ public final class JdbcRunStore implements RunStore {
         String placeholders = Arrays.stream(allowedStates).map(s -> "?").collect(Collectors.joining(", "));
         List<Object> args = new java.util.ArrayList<>();
         args.add(next.name());
-        args.add(Timestamp.from(Instant.now()));
+        args.add(Timestamp.from(clock.now()));
         args.add(runId);
         args.add(projectId);
         args.add(expectedVersion);
@@ -104,7 +111,7 @@ public final class JdbcRunStore implements RunStore {
 
     @Override public boolean markRunning(String runId, String projectId, long expectedVersion, long fencingToken) {
         return jdbc.update("UPDATE run SET state = 'RUNNING', started_at = ?, version = version + 1, updated_at = ? WHERE id = ? AND project_id = ? AND version = ? AND fencing_token = ? AND state = 'STARTING'",
-            Timestamp.from(Instant.now()), Timestamp.from(Instant.now()), runId, projectId, expectedVersion,
+            Timestamp.from(clock.now()), Timestamp.from(clock.now()), runId, projectId, expectedVersion,
             fencingToken) == 1;
     }
 
@@ -115,7 +122,7 @@ public final class JdbcRunStore implements RunStore {
     @Override public boolean settle(String runId, RunState state, String terminationReason, Integer exitCode,
                                     long fencingToken) {
         return jdbc.update("UPDATE run SET state = ?, finished_at = ?, exit_code = ?, termination_reason = ?, version = version + 1 WHERE id = ? AND fencing_token = ? AND active_run_marker = 1",
-            state.name(), Timestamp.from(Instant.now()), exitCode, terminationReason, runId, fencingToken) == 1;
+            state.name(), Timestamp.from(clock.now()), exitCode, terminationReason, runId, fencingToken) == 1;
     }
 
     @Override public List<RunRecord> findRunsInState(RunState... states) {
