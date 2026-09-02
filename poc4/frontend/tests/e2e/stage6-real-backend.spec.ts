@@ -58,8 +58,7 @@ test('login and Alice/Bob owner isolation on the real backend', async ({ page })
   await login(page, ALICE);
   const aliceProject = await createProject(page, `stage6-iso-${Date.now()}`);
   const aliceState = await awaitReady(page, aliceProject.id);
-  expect(['READY', 'CREATING', 'FAILED']).toContain(aliceState);
-  if (aliceState !== 'READY') return;
+  expect(aliceState, 'owner isolation requires a READY project').toBe('READY');
 
   // Bob authenticates as himself and must not see Alice's project in his list.
   await login(page, BOB);
@@ -116,8 +115,7 @@ test('start run produces a policy-constrained run that progresses on the real cl
   await login(page, ALICE);
   const project = await createProject(page, `stage6-run-${Date.now()}`);
   const state = await awaitReady(page, project.id);
-  test.skip(state !== 'READY', 'provisioning did not complete; covered by the creation test');
-  if (state !== 'READY') return;
+  expect(state, 'run test requires a READY project').toBe('READY');
 
   const tree = (await (await page.request.get(`/api/v1/projects/${project.id}/files/tree?path=`)).json())
     .workspaceRevision as string;
@@ -136,7 +134,8 @@ test('start run produces a policy-constrained run that progresses on the real cl
     await new Promise((resolve) => setTimeout(resolve, 2000));
     finalState = (await (await page.request.get(`/api/v1/projects/${project.id}/runs/${run.id}`)).json()).state;
   }
-  expect(['RUNNING', 'SUCCEEDED', 'FAILED', 'CANCELLED', 'TIMED_OUT']).toContain(finalState);
+  // A still-RUNNING run after the observation window is a stall symptom, not a pass.
+  expect(['SUCCEEDED', 'FAILED', 'CANCELLED', 'TIMED_OUT']).toContain(finalState);
 });
 
 test('error responses never leak cluster identifiers', async ({ request }) => {
