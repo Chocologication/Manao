@@ -62,6 +62,13 @@ public class FakeKubernetesGateway implements KubernetesGateway {
         created.removeAll(created.stream().filter(entry -> entry.endsWith(":" + projectId)).toList());
     }
 
+    public final Set<String> workloadDeletedProjects = new HashSet<>();
+
+    @Override public void deleteProjectWorkloads(String projectId) {
+        workloadDeletedProjects.add(projectId);
+        created.removeIf(entry -> (entry.startsWith("pod:") || entry.startsWith("svc:")) && entry.endsWith(":" + projectId));
+    }
+
     private static String projectId(HasMetadata resource) {
         String value = resource.getMetadata().getLabels().get("manao.poc4/project-id");
         if (value == null) throw new IllegalArgumentException("resource lacks the project label");

@@ -57,7 +57,9 @@ public final class ProjectRecoveryService {
                 continue;
             }
             if (!operations().reconcilePending(projectId)) {
-                cleanup(projectId);
+                // Fail-closed with the scene preserved: workloads go away, the PVC (file truth)
+                // and the FAILED/WORKSPACE_RECONCILIATION_REQUIRED marker stay for inspection.
+                gateway.deleteProjectWorkloads(projectId);
                 failed.add(projectId);
                 continue;
             }

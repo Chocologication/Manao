@@ -97,7 +97,9 @@ class ProjectRecoveryServiceTest {
         ProjectRecoveryService.RecoveryReport report = service.recoverStaleCreatingProjects();
         assertThat(report.failed()).containsExactly(PROJECT);
         assertThat(store.failures).containsEntry(PROJECT, "WORKSPACE_RECONCILIATION_REQUIRED");
-        assertThat(gateway.deletedProjects).containsExactly(PROJECT);
+        // 保留现场：只删 Pod/Service，不删 PVC（文件正文权威）。
+        assertThat(gateway.workloadDeletedProjects).containsExactly(PROJECT);
+        assertThat(gateway.deletedProjects).isEmpty();
     }
 
     @Test

@@ -49,6 +49,17 @@ class Fabric8KubernetesGatewayTest {
         assertThat(gateway.initializerSucceeded(PROJECT)).isFalse();
     }
 
+    @Test
+    void matchesProjectNeverNpesOnMissingLabels() {
+        var pvc = new io.fabric8.kubernetes.api.model.PersistentVolumeClaimBuilder()
+            .withNewMetadata().withName(WorkspaceResourceFactory.pvcName(PROJECT)).withNamespace(NS).endMetadata()
+            .withNewSpec().endSpec()
+            .build();
+        server.createClient().persistentVolumeClaims().inNamespace(NS).resource(pvc).create();
+        // 无 labels 的资源必须判为不匹配，而不是 NPE。
+        assertThat(gateway.projectPvcExists(PROJECT)).isFalse();
+    }
+
     private void seedInitializer(String phase) {
         var pod = new PodBuilder()
             .withNewMetadata().withName(WorkspaceResourceFactory.initializerPodName(PROJECT)).withNamespace(NS)

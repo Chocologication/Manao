@@ -29,9 +29,9 @@ public final class Fabric8KubernetesGateway implements KubernetesGateway {
 
     /** Name lookups are always re-verified against the server-generated project label. */
     private static boolean matchesProject(io.fabric8.kubernetes.api.model.HasMetadata resource, String projectId) {
-        return resource != null && resource.getMetadata() != null
-            && projectId.equals(resource.getMetadata().getLabels()
-                .get(WorkspaceResourceFactory.LABEL_PROJECT_ID));
+        if (resource == null || resource.getMetadata() == null) return false;
+        Map<String, String> labels = resource.getMetadata().getLabels();
+        return labels != null && projectId.equals(labels.get(WorkspaceResourceFactory.LABEL_PROJECT_ID));
     }
 
     @Override public boolean initializerSucceeded(String projectId) {
@@ -79,6 +79,17 @@ public final class Fabric8KubernetesGateway implements KubernetesGateway {
         client.pods().inNamespace(namespace).withLabels(labels).withGracePeriod(0).delete();
         client.services().inNamespace(namespace).withLabels(labels).delete();
         client.persistentVolumeClaims().inNamespace(namespace).withLabels(labels).delete();
+    }
+
+    /**
+     * Removes only the project workloads (Pod/Service) and preserves the PVC: used by the
+     * WORKSPACE_RECONCILIATION_REQUIRED path where the design demands the file evidence stay
+     * on disk ("保留现场"). Never deletes the PVC here.
+     */
+    public void deleteProjectWorkloads(String projectId) {
+        Map<String, String> labels = WorkspaceResourceFactory.projectLabels(projectId);
+        client.pods().inNamespace(namespace).withLabels(labels).withGracePeriod(0).delete();
+        client.services().inNamespace(namespace).withLabels(labels).delete();
     }
 
     /** Waits until the workspace pod is Ready; returns false on timeout. */
