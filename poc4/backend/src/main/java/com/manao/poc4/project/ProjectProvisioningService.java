@@ -92,7 +92,7 @@ public final class ProjectProvisioningService {
     private void provisionInternal(String projectId) {
         gateway.createPvc(factory.createPvc(projectId));
         gateway.createPod(factory.createInitializerPod(projectId));
-        if (!gateway.initializerSucceeded(projectId) && !awaitInitializer(projectId)) {
+        if (!awaitInitializer(projectId)) {
             throw new IllegalStateException("initializer did not succeed");
         }
         gateway.createPod(factory.createWorkspacePod(projectId, capabilityPublicKeyBase64));

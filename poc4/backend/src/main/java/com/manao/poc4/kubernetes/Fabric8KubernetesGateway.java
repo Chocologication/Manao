@@ -35,10 +35,12 @@ public final class Fabric8KubernetesGateway implements KubernetesGateway {
     }
 
     @Override public boolean initializerSucceeded(String projectId) {
-        // The initializer is deleted right after success, so "gone" also counts as done.
+        // Fail closed: an invisible or absent initializer is never treated as success. Only a
+        // Pod that is currently observable AND Succeeded counts; recovery may treat a
+        // confirmed-then-deleted initializer differently, provisioning may not.
         Pod pod = client.pods().inNamespace(namespace)
             .withName(WorkspaceResourceFactory.initializerPodName(projectId)).get();
-        if (pod == null) return true;
+        if (pod == null) return false;
         return "Succeeded".equals(pod.getStatus() == null ? null : pod.getStatus().getPhase());
     }
 
