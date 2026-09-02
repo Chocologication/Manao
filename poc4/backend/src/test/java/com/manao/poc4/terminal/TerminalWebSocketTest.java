@@ -250,6 +250,11 @@ class TerminalWebSocketTest {
         assertThat(store.sessions.values().stream()
             .anyMatch(record -> "INTERRUPTED".equals(record.state()))).isTrue();
         assertThat(bridge.closed).isTrue();
+        // The exit frame reason must stay inside the stage-five TerminalExitReason contract.
+        com.fasterxml.jackson.databind.JsonNode exit = JSON.readTree(session.text.get(session.text.size() - 1));
+        assertThat(exit.get("type").asText()).isEqualTo("terminal.exit");
+        assertThat(java.util.List.of("SHELL_EXITED", "RUN_LEFT_RUNNING", "CLIENT_CLOSED", "CONNECTION_LOST", "BACKEND_ERROR"))
+            .contains(exit.get("reason").asText());
         handler.teardownAllSessions(); // idempotent second sweep
         assertThat(store.sessions.values().stream()
             .filter(record -> "INTERRUPTED".equals(record.state())).count()).isEqualTo(1);

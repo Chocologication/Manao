@@ -150,10 +150,11 @@ public final class TerminalWebSocketHandler extends AbstractWebSocketHandler {
         }
     }
 
-    /** Backend shutdown: settle every live session exactly once and never reattach old PTYs. */
+    /** Backend shutdown: settle every live session exactly once and never reattach old PTYs.
+     *  The exit frame reason must stay inside the stage-five TerminalExitReason contract. */
     public void teardownAllSessions() {
         for (BoundSession bound : List.copyOf(connections.values())) {
-            settleAndClose(bound, "BACKEND_SHUTDOWN", "INTERRUPTED", null, null);
+            settleAndClose(bound, "CONNECTION_LOST", "INTERRUPTED", null, null);
         }
     }
 
