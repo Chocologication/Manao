@@ -21,7 +21,7 @@ class AtomicTransitionTest {
 
     @BeforeEach
     void setUp() throws Exception {
-        String url = System.getenv().getOrDefault("MANAO_DB_URL", "jdbc:mysql://127.0.0.1:3306/manao_poc4_task2_test");
+        String url = System.getenv().getOrDefault("MANAO_DB_URL", "jdbc:mysql://127.0.0.1:3306/manao_poc4_atomic_test");
         if (!url.startsWith("jdbc:mysql:")) throw new AssertionError("REAL_MYSQL_REQUIRED");
         try {
             connection = DriverManager.getConnection(url, System.getenv().getOrDefault("MANAO_DB_USERNAME", "manao"), System.getenv().getOrDefault("MANAO_DB_PASSWORD", ""));

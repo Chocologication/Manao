@@ -27,7 +27,7 @@ class FlywaySchemaTest {
 
     @BeforeEach
     void migrateEmptySchema() throws Exception {
-        String url = System.getenv().getOrDefault("MANAO_DB_URL", "jdbc:mysql://127.0.0.1:3306/manao_poc4_task2_test");
+        String url = System.getenv().getOrDefault("MANAO_DB_URL", "jdbc:mysql://127.0.0.1:3306/manao_poc4_schema_test");
         if (!url.startsWith("jdbc:mysql:")) {
             throw new AssertionError("REAL_MYSQL_REQUIRED: MANAO_DB_URL must be jdbc:mysql, got " + url);
         }
