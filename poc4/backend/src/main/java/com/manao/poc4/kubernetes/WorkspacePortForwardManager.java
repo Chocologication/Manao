@@ -88,6 +88,7 @@ public final class WorkspacePortForwardManager {
         Bridge existing = bridges.get(projectId);
         if (existing != null) {
             if (factory != null && (!existing.process.isAlive() || !existing.process.isListening())) {
+                existing.process.kill();
                 existing.process = factory.start(namespace, existing.serviceName, servicePort, existing.localPort);
             }
             return existing.localPort;
@@ -124,6 +125,7 @@ public final class WorkspacePortForwardManager {
         if (factory == null) return; // supervised: the external operator owns the bridge
         for (Bridge bridge : bridges.values()) {
             if (!bridge.process.isAlive() || !bridge.process.isListening()) {
+                bridge.process.kill();
                 bridge.process = factory.start(namespace, bridge.serviceName, servicePort, bridge.localPort);
             }
         }
