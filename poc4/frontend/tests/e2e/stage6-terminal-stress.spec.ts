@@ -242,21 +242,29 @@ test('PTY 8 MiB output in <=32 KiB frames conserves 256 KiB credit', async ({ pa
             await wait(50);
           }
 
-          // Input-burst flow control: exceed the 64 KiB queue while respecting pause/resume.
+          // Input-burst flow control: line-based frames (each ends with a newline) so the shell
+          // keeps consuming even in canonical mode; this exercises the 64 KiB queue without
+          // deadlocking on a never-terminated line.
           phase = 2;
-          const chunk = new Uint8Array(MAX_INPUT).fill('a'.charCodeAt(0));
+          const line = new Uint8Array(MAX_INPUT).fill('a'.charCodeAt(0));
+          line[MAX_INPUT - 1] = 10; // newline: every frame is a complete line the shell can consume.
           let sent = 0;
+          const pauseBudgetStart = Date.now();
           while (sent < INPUT_BURST_BYTES) {
-            while (inputPaused) await wait(25);
-            const length = Math.min(MAX_INPUT, INPUT_BURST_BYTES - sent);
-            sendInput(length === MAX_INPUT ? chunk : chunk.slice(0, length));
-            sent += length;
+            while (inputPaused) {
+              if (Date.now() - pauseBudgetStart > 30_000) {
+                throw new Error('input flow control: paused over 30s without terminal.input.resume (server failed to drain the 64 KiB queue)');
+              }
+              await wait(25);
+            }
+            sendInput(line);
+            sent += line.byteLength;
             await wait(1);
           }
-          sendInput(new TextEncoder().encode('\n'));
 
-          const burstDeadline = Date.now() + 20_000;
-          while ((inputPauses === 0 || inputResumes === 0) && Date.now() < burstDeadline) {
+          // Bounded settle window: let pause/resume complete, but never hang forever.
+          const settleStart = Date.now();
+          while ((inputPauses === 0 || inputResumes === 0) && Date.now() - settleStart < 30_000) {
             await wait(50);
           }
 
@@ -293,8 +301,8 @@ test('PTY 8 MiB output in <=32 KiB frames conserves 256 KiB credit', async ({ pa
   expect(metrics.maxOutstanding, 'delayed acks must let outstanding approach the 256 KiB ceiling').toBeGreaterThanOrEqual(229376);
   expect(metrics.framesAfterAck, 'frames must resume after the held credit is acked').toBeGreaterThanOrEqual(1);
   expect(metrics.sentWhilePaused, 'no input may be sent while the server queue is paused').toBe(0);
-  expect(metrics.inputPauses, 'the 64 KiB input queue must fill and pause').toBeGreaterThanOrEqual(1);
-  expect(metrics.inputResumes, 'the input queue must drain and resume').toBeGreaterThanOrEqual(1);
+  expect(metrics.inputPauses, 'server never sent terminal.input.pause; the 64 KiB input queue did not fill (input flow control did not engage)').toBeGreaterThanOrEqual(1);
+  expect(metrics.inputResumes, 'server never sent terminal.input.resume; the 64 KiB input queue never drained').toBeGreaterThanOrEqual(1);
   expect(metrics.resizeGeneration, 'at least 100 resize events must be sent').toBeGreaterThanOrEqual(100);
 });
 
