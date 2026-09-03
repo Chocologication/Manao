@@ -961,3 +961,19 @@ git commit -m "test(poc4): record stage 6 remediation gate evidence"
 - Task 12 失败：runner 镜像不构建；6A Gate 的镜像项保持 `SKIPPED`，不开始 6B。
 - 任何任务不得以“让测试变绿”为由放宽 owner 校验、RBAC、TLS、ticket 绑定、流控上限或清理顺序。
 - 同一问题最多四轮有证据修复；超过即停止扩范围并记录阻塞。
+
+---
+
+## 第二轮附录（2026-09-03/04）
+
+6A 决策门复跑审查确认四项阻断（workspace-agent 探针冷启动误杀、bridge 无真实监听验证、证据 SHA 过期、
+真实 E2E 覆盖不足），已由第二轮修复计划
+`poc4/docs/plans/2026-09-03-ensoai-stage-6a-gate-round2-remediation-plan.md` 实施，四个任务提交如下：
+
+- R2-1 探针 startupProbe：`65b411bb1b6fbb7b194e68867afd0a634bc208b4`
+- R2-2 bridge 监听语义：`293d0c08eab0215f90506ee65937808b9231d2cb`、`42c466bc7788b6be2e84aeec5a729d86ac887f57`
+- R2-3 stress/faults spec：`bfb0d55c43fba258305cf5a156b7dd111affa683`、`5ba34433ac6dce468a5e1fffcf2180e036427eb2`、`26331be5b57f9683401b26edbb2ec5f825293d5f`
+- R2-4 证据与文档更新：最终 HEAD（见 git log，证据文档提交）
+
+证据见 `poc4/docs/evidence/stage-6/6a-gate.md` 第二轮小节；台账见
+`poc4/docs/plans/2026-09-03-ensoai-stage-6a-gate-round2-ledger.md`。
