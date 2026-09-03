@@ -130,6 +130,9 @@ public class LocalClusterConfig {
             .withName(serviceName).portForward(servicePort, java.net.InetAddress.getLoopbackAddress(), localPort);
         return new WorkspacePortForwardManager.PortForwardProcess() {
             @Override public boolean isAlive() { return forward.isAlive(); }
+            @Override public boolean isListening() {
+                return forward.isAlive() && WorkspacePortForwardManager.isPortListening(localPort);
+            }
             @Override public void kill() {
                 try {
                     forward.close();

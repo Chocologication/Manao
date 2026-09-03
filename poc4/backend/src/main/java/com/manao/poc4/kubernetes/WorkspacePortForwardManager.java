@@ -1,5 +1,9 @@
 package com.manao.poc4.kubernetes;
 
+import java.io.IOException;
+import java.net.InetAddress;
+import java.net.InetSocketAddress;
+import java.net.Socket;
 import java.net.URI;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -7,14 +11,19 @@ import java.util.regex.Pattern;
 
 /**
  * 6A workspace bridge: one kubectl port-forward per project, bound to loopback only, with the
- * service name and port always server-derived. Child exit is detected and the original mapping
- * is recreated; backend shutdown kills every child process and releases the ports.
+ * service name and port always server-derived. Child exit or loss of the forwarded listener is
+ * detected and the original mapping is recreated; backend shutdown kills every child process and
+ * releases the ports.
  */
 public final class WorkspacePortForwardManager {
     private static final Pattern PROJECT_ID = Pattern.compile("[A-Za-z0-9-]+");
 
     public interface PortForwardProcess {
+        /** Process handle still alive; does not guarantee the forwarded port accepts connections. */
         boolean isAlive();
+
+        /** The forwarded loopback port actually accepts TCP connections right now. */
+        boolean isListening();
 
         void kill();
     }
@@ -58,6 +67,19 @@ public final class WorkspacePortForwardManager {
     }
 
     /**
+     * Best-effort loopback TCP connect probe: true only when the port accepts connections.
+     * Distinguishes a live port-forward socket from a handle that merely reports alive.
+     */
+    public static boolean isPortListening(int port) {
+        try (Socket socket = new Socket()) {
+            socket.connect(new InetSocketAddress(InetAddress.getLoopbackAddress(), port), 250);
+            return true;
+        } catch (IOException ex) {
+            return false;
+        }
+    }
+
+    /**
      * Allocates (or reuses) a loopback port for the project and starts its bridge process.
      * Idempotent: repeated calls (e.g. one per workspace request) never spawn a second bridge.
      */
@@ -65,7 +87,7 @@ public final class WorkspacePortForwardManager {
         requireValidProjectId(projectId);
         Bridge existing = bridges.get(projectId);
         if (existing != null) {
-            if (factory != null && !existing.process.isAlive()) {
+            if (factory != null && (!existing.process.isAlive() || !existing.process.isListening())) {
                 existing.process = factory.start(namespace, existing.serviceName, servicePort, existing.localPort);
             }
             return existing.localPort;
@@ -74,7 +96,7 @@ public final class WorkspacePortForwardManager {
         // served by an operator-managed bridge process outside this JVM.
         int port = factory == null ? deterministicPort(projectId) : findFreePort();
         String serviceName = WorkspaceResourceFactory.serviceName(projectId);
-        PortForwardProcess process = factory == null ? ALWAYS_ALIVE : factory.start(namespace, serviceName, servicePort, port);
+        PortForwardProcess process = factory == null ? supervisedProcess(port) : factory.start(namespace, serviceName, servicePort, port);
         Bridge bridge = new Bridge(serviceName, port, process);
         bridges.put(projectId, bridge);
         return port;
@@ -85,16 +107,23 @@ public final class WorkspacePortForwardManager {
         return portStart + Math.floorMod(projectId.hashCode(), span);
     }
 
-    private static final PortForwardProcess ALWAYS_ALIVE = new PortForwardProcess() {
-        @Override public boolean isAlive() { return true; }
-        @Override public void kill() { }
-    };
+    /**
+     * Supervised mode (factory == null): an operator-managed bridge outside this JVM serves the
+     * deterministic port. Liveness is reported from the real listener, never assumed.
+     */
+    private static PortForwardProcess supervisedProcess(int port) {
+        return new PortForwardProcess() {
+            @Override public boolean isAlive() { return isPortListening(port); }
+            @Override public boolean isListening() { return isPortListening(port); }
+            @Override public void kill() { }
+        };
+    }
 
-    /** Recreates dead bridges on their original ports (called by the dependency monitor). */
+    /** Recreates dead or listener-less bridges on their original ports (called by the dependency monitor). */
     public synchronized void checkChildren() {
-        if (factory == null) return;
+        if (factory == null) return; // supervised: the external operator owns the bridge
         for (Bridge bridge : bridges.values()) {
-            if (!bridge.process.isAlive()) {
+            if (!bridge.process.isAlive() || !bridge.process.isListening()) {
                 bridge.process = factory.start(namespace, bridge.serviceName, servicePort, bridge.localPort);
             }
         }

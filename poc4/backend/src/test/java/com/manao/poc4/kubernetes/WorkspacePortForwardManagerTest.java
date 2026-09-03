@@ -102,6 +102,44 @@ class WorkspacePortForwardManagerTest {
             .isInstanceOf(IllegalStateException.class);
     }
 
+    @Test
+    void aliveButNonListeningProcessIsDetectedAndRecreated() {
+        RecordingFactory factory = new RecordingFactory();
+        WorkspacePortForwardManager manager = new WorkspacePortForwardManager("manao-test", 18100, 18199, factory);
+        int port = manager.allocate("prj-a");
+        factory.processes.get("manao-ws-prj-a:" + port).stopListening();
+
+        manager.checkChildren();
+
+        assertThat(factory.started).hasSize(2);
+        assertThat(factory.started.get(1).localPort()).isEqualTo(port);
+        assertThat(factory.started.get(1).serviceName()).isEqualTo("manao-ws-prj-a");
+    }
+
+    @Test
+    void allocateRecreatesABridgeWhoseListenerWasLost() {
+        RecordingFactory factory = new RecordingFactory();
+        WorkspacePortForwardManager manager = new WorkspacePortForwardManager("manao-test", 18100, 18199, factory);
+        int port = manager.allocate("prj-a");
+        factory.processes.get("manao-ws-prj-a:" + port).stopListening();
+
+        assertThat(manager.allocate("prj-a")).isEqualTo(port);
+        assertThat(factory.started).hasSize(2);
+    }
+
+    @Test
+    void supervisedModeUsesDeterministicPortsAndKeepsOneBridgePerProject() {
+        WorkspacePortForwardManager manager = new WorkspacePortForwardManager("manao-test", 18100, 18199, null);
+        int port = manager.allocate("prj-a");
+        assertThat(port).isBetween(18100, 18199);
+        WorkspacePortForwardManager second = new WorkspacePortForwardManager("manao-test", 18100, 18199, null);
+        assertThat(second.allocate("prj-a")).isEqualTo(port);
+        manager.checkChildren();
+        assertThat(manager.activeBridges()).isEqualTo(1);
+        manager.shutdown();
+        assertThat(manager.activeBridges()).isZero();
+    }
+
     static final class RecordingFactory implements WorkspacePortForwardManager.PortForwardProcessFactory {
         record Start(String serviceName, int servicePort, int localPort) { }
         final List<Start> started = new ArrayList<>();
@@ -120,9 +158,12 @@ class WorkspacePortForwardManagerTest {
     static final class FakeProcess implements WorkspacePortForwardManager.PortForwardProcess {
         private final Runnable onKill;
         private volatile boolean alive = true;
+        private volatile boolean listening = true;
         FakeProcess(Runnable onKill) { this.onKill = onKill; }
         void fail() { alive = false; }
+        void stopListening() { listening = false; }
         @Override public boolean isAlive() { return alive; }
+        @Override public boolean isListening() { return listening; }
         @Override public void kill() {
             if (alive) onKill.run();
             alive = false;
