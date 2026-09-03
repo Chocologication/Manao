@@ -4,6 +4,7 @@
 团队：AgentTeams stage6-remediation（implementer2=deepseek-v4-flash+max，reviewer1=deepseek-v4-pro+max，fixer1=deepseek-v4-pro+high 备用）
 
 ## Rulings（按序）
+- R8: 最终评审 Important #1（输入流控断言运行时确定性）— 保留硬断言（计划 R4/R7 设计：以明确诊断失败而非静默通过），交外部复跑验证 — 代价：真实复跑可能硬失败一次，按诊断消息调整。
 - R7: 输入侧流控断言的运行时确定性无法在沙箱内验证（无真实后端）；修复轮 2 只消除自死锁并做有界等待构造，真实验证并入 6A 外部复跑 — 代价：若真实运行暴露断言不稳需再修一轮。
 - R1: 设计 startupProbe 条款适用对象为 6B 后端；本轮为 workspace Pod 补写等价条款（不修改 6B 小节）— 若评审反对则回退该文档修改。
 - R2: supervised 模式无 factory 不可重建，如实上报监听状态；重建责任在外部操作者 — 代价：监督进程失联时依赖错误持续至操作者修复。
