@@ -135,7 +135,8 @@ test('channel disconnect fails closed then reconnects', async ({ page }) => {
   await page.getByRole('button', { name: 'Open terminal' }).click({ timeout: 30_000 });
   await expect(page.getByRole('status', { name: 'Terminal state' })).toHaveText('Ready', { timeout: 30_000 });
 
-  // Fail closed: drop the channel without a client close frame.
+  // Fail closed: close the client WebSocket; the server treats the graceful close as a
+  // connection loss (CONNECTION_LOST) and must surface a session error, not silently reconnect.
   await page.evaluate(() => {
     const host = window as unknown as { __stage6TerminalSockets?: WebSocket[] };
     const sockets = host.__stage6TerminalSockets ?? [];

@@ -2,7 +2,7 @@
 
 - 日期：2026-09-02（本日联调；证据更新 2026-09-04 = 第二轮）
 - 分支：codex/poc4-stage-6-real-backend-kubernetes
-- 后端 Git SHA：26331be5b57f9683401b26edbb2ec5f825293d5f（HEAD，含第一轮修复 + 第二轮探针/bridge/覆盖修复）
+- 后端 Git SHA：26331be5b57f9683401b26edbb2ec5f825293d5f（后端代码 SHA；最终 HEAD 见 git log，含第一轮修复 + 第二轮探针/bridge/覆盖修复）
 - 修复轮测试基线：backend 全量 221/0/0（1 skipped = real-mode 守卫，2026-09-04 第二轮复测）；workspace-agent 23/0/0、frontend pnpm test 1124/1124（第一轮基线，本轮未复测）；frontend typecheck 0（2026-09-04 第二轮复测）
 - Flyway 迁移基线：V1–V7
 - 集群：3 节点 Kubernetes v1.31.13；namespace manao-stage6-test；受限 kubeconfig：D:\DeepLearning\MyProjects\Project_Manao_kubeconfig\stage6-6a-kubeconfig（SA manao-6a-local，Role manao-stage6-backend）
@@ -57,8 +57,8 @@ supervised 模式（factory==null）改为从真实监听状态上报存活，�
 ```text
 $ pnpm exec playwright test tests/e2e/stage6-terminal-stress.spec.ts tests/e2e/stage6-faults.spec.ts --project=stage6 --list
   [stage6] › stage6-faults.spec.ts:99:1 › channel disconnect fails closed then reconnects
-  [stage6] › stage6-faults.spec.ts:157:1 › parallel projects keep isolated dynamic bridges
-  [stage6] › stage6-faults.spec.ts:203:1 › fault phases: backend restart / tunnel loss / bridge loss
+  [stage6] › stage6-faults.spec.ts:158:1 › parallel projects keep isolated dynamic bridges
+  [stage6] › stage6-faults.spec.ts:204:1 › fault phases: backend restart / tunnel loss / bridge loss
   [stage6] › stage6-terminal-stress.spec.ts:113:1 › PTY 8 MiB output in <=32 KiB frames conserves 256 KiB credit
   [stage6] › stage6-terminal-stress.spec.ts:309:1 › run log live then full replay matches byte conservation
   Total: 5 tests in 2 files

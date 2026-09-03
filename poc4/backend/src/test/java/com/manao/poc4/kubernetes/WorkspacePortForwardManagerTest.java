@@ -3,6 +3,8 @@ package com.manao.poc4.kubernetes;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.net.InetAddress;
+import java.net.ServerSocket;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -114,6 +116,7 @@ class WorkspacePortForwardManagerTest {
         assertThat(factory.started).hasSize(2);
         assertThat(factory.started.get(1).localPort()).isEqualTo(port);
         assertThat(factory.started.get(1).serviceName()).isEqualTo("manao-ws-prj-a");
+        assertThat(factory.killed).containsExactly("manao-ws-prj-a");
     }
 
     @Test
@@ -125,6 +128,28 @@ class WorkspacePortForwardManagerTest {
 
         assertThat(manager.allocate("prj-a")).isEqualTo(port);
         assertThat(factory.started).hasSize(2);
+        assertThat(factory.killed).containsExactly("manao-ws-prj-a");
+    }
+
+    @Test
+    void isPortListeningReflectsRealLoopbackSocketLifecycle() throws Exception {
+        // A free port in the manager range must report false; probe once for a false baseline so we
+        // never collide with something already bound in this environment.
+        int freePort = 18100;
+        while (freePort <= 18199 && WorkspacePortForwardManager.isPortListening(freePort)) {
+            freePort++;
+        }
+        assertThat(freePort).as("the 18100-18199 range must contain at least one free port").isLessThanOrEqualTo(18199);
+        assertThat(WorkspacePortForwardManager.isPortListening(freePort)).as("a free port must not report listening").isFalse();
+
+        // A genuinely bound loopback socket must report true, and close() must clear it. close() is
+        // idempotent, so the try-with-resources close after our explicit close is a harmless no-op.
+        try (ServerSocket server = new ServerSocket(0, 1, InetAddress.getLoopbackAddress())) {
+            int boundPort = server.getLocalPort();
+            assertThat(WorkspacePortForwardManager.isPortListening(boundPort)).as("a bound loopback socket must report listening").isTrue();
+            server.close();
+            assertThat(WorkspacePortForwardManager.isPortListening(boundPort)).as("a closed socket must no longer report listening").isFalse();
+        }
     }
 
     @Test

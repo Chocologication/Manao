@@ -1,7 +1,7 @@
 # 阶段六 6A 本机集成验证记录（真实集群前置条件轮）
 
-- 日期：2026-08-29（2026-09-04 更新 SHA 引用至第二轮 HEAD）
-- 后端 Git SHA：`26331be5b57f9683401b26edbb2ec5f825293d5f`（原记录 SHA `ce550660e90fe2f432aae9bc8509b232afd2e792` 已被第二轮 HEAD 取代）
+- 日期：2026-08-29（2026-09-04 更新 SHA 引用至第二轮代码 SHA）
+- 后端 Git SHA：`26331be5b57f9683401b26edbb2ec5f825293d5f`（后端代码 SHA；最终 HEAD 见 git log。原记录 SHA `ce550660e90fe2f432aae9bc8509b232afd2e792` 已被第二轮代码 SHA 取代）
 - 执行环境：Windows 11 开发机；kubectl 经 SSH 隧道访问真实集群；本机 MySQL（root，Flyway 从空库迁移已在 `FlywaySchemaTest` 等测试中验证）
 - 所有集群探针资源均带 `stage6-test=true` 标签，位于一次性 namespace `manao-stage6-test`
 
@@ -134,7 +134,7 @@ Fabric8 /version + tls-server-name 校验、WebSocket 同源白名单、E2E 门�
 
 ## 2026-09-03 第二轮：证据已被 6a-gate.md 第二轮小节取代
 
-第二轮（探针冷启动 / bridge 监听 / E2E 覆盖）修复已提交（HEAD `26331be5b57f9683401b26edbb2ec5f825293d5f`），
+第二轮（探针冷启动 / bridge 监听 / E2E 覆盖）修复已提交（代码 SHA `26331be5b57f9683401b26edbb2ec5f825293d5f`；最终 HEAD 见 git log），
 其证据见 `poc4/docs/evidence/stage-6/6a-gate.md`「第二轮修复」小节。本文档其余历史段落（§1–§9 及
 「修复轮记录」）保持原样，仅头部 SHA 引用已刷新至新 HEAD；旧记录不再作为当前 6A 状态依据，
 以 6a-gate.md 为准。

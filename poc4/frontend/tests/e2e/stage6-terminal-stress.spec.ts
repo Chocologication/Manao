@@ -359,7 +359,10 @@ test('run log live then full replay matches byte conservation', async ({ page })
     // Live phase: subscribe immediately after start and collect every persisted chunk.
     const liveTicket = await issueTicket();
     await new Promise<void>((resolve, reject) => {
-      const socket = openLogSocket(liveTicket, (bytes) => { liveBytes += bytes; }, () => {});
+      let complete = false;
+      const socket = openLogSocket(liveTicket, (bytes) => { liveBytes += bytes; }, (type) => {
+        if (type === 'log.complete') complete = true;
+      });
       void (async () => {
         try {
           let terminal = false;
@@ -374,7 +377,16 @@ test('run log live then full replay matches byte conservation', async ({ page })
           if (!terminal) {
             throw new Error('run did not reach a terminal state within 120s');
           }
-          // Grace for the final persisted appends to flush over the live socket.
+          // Wait for the server's log.complete frame, the authoritative signal that the live
+          // window is fully flushed, with a bounded timeout that fails loudly on a missed frame.
+          const completeDeadline = Date.now() + 30_000;
+          while (!complete && Date.now() < completeDeadline) {
+            await new Promise((r) => window.setTimeout(r, 100));
+          }
+          if (!complete) {
+            throw new Error('live log socket never received log.complete within 30s of terminal state');
+          }
+          // Post-complete settle: let any final buffered appends drain through the socket.
           await new Promise((r) => window.setTimeout(r, 3000));
           try { socket.close(); } catch { /* noop */ }
           resolve();
