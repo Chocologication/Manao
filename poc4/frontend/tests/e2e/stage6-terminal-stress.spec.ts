@@ -110,7 +110,6 @@ async function createTerminalSession(
   expect(res.ok(), 'terminal session must be reservable for a RUNNING run').toBe(true);
   return (await res.json()) as { sessionId: string; ticket: string; expiresAt: string };
 }
-
 test('PTY 8 MiB output in <=32 KiB frames conserves 256 KiB credit', async ({ page }) => {
   test.setTimeout(600_000);
   await login(page, ALICE);
@@ -127,7 +126,11 @@ test('PTY 8 MiB output in <=32 KiB frames conserves 256 KiB credit', async ({ pa
     const MAX_INPUT = 16 * 1024;
     const MAX_OUTPUT = 32 * 1024;
     const CREDIT = 256 * 1024;
+    const INPUT_QUEUE = 64 * 1024;
     const TARGET = 8 * 1024 * 1024;
+    const STOP_THRESHOLD = CREDIT - MAX_OUTPUT;
+    const QUIET_MS = 1500;
+    const INPUT_BURST_BYTES = 4 * INPUT_QUEUE;
 
     let totalDelivered = 0;
     let maxOutputFrame = 0;
@@ -136,25 +139,37 @@ test('PTY 8 MiB output in <=32 KiB frames conserves 256 KiB credit', async ({ pa
     let maxInputFrame = 0;
     let inputFrames = 0;
     let resizeGeneration = 0;
+    let inputPauses = 0;
+    let inputResumes = 0;
+    let sentWhilePaused = 0;
+    let framesAfterAck = 0;
+    let lastOutputAt = 0;
     let finished = false;
-
-    const snapshot = () => ({
-      totalDelivered,
-      maxOutputFrame,
-      maxOutstanding,
-      maxInputFrame,
-      inputFrames,
-      resizeGeneration,
-    });
+    let inputPaused = false;
+    let phase = 0;
 
     const socket = new WebSocket(url);
     socket.binaryType = 'arraybuffer';
+
+    const wait = (ms: number): Promise<void> => new Promise((r) => window.setTimeout(r, ms));
+
+    function sendInput(data: Uint8Array): void {
+      if (inputPaused) sentWhilePaused += 1;
+      maxInputFrame = Math.max(maxInputFrame, data.byteLength);
+      inputFrames += 1;
+      socket.send(data);
+    }
+
+    function sendResize(cols: number, rows: number): void {
+      socket.send(JSON.stringify({ type: 'terminal.resize', cols, rows }));
+      resizeGeneration += 1;
+    }
 
     await new Promise<void>((resolve, reject) => {
       const deadline = window.setTimeout(() => {
         if (finished) return;
         try { socket.close(); } catch { /* noop */ }
-        reject(new Error('terminal stress timed out before 8 MiB'));
+        reject(new Error('terminal stress timed out'));
       }, 560_000);
 
       socket.addEventListener('open', () => { /* wait for terminal.ready */ });
@@ -163,33 +178,26 @@ test('PTY 8 MiB output in <=32 KiB frames conserves 256 KiB credit', async ({ pa
         if (typeof event.data === 'string') {
           const frame = JSON.parse(event.data) as { type?: string };
           if (frame.type === 'terminal.ready') {
-            void (async () => {
-              const command = "head -c 8388608 /dev/zero | tr '\\0' 'x'\n";
-              const input = new TextEncoder().encode(command);
-              maxInputFrame = Math.max(maxInputFrame, input.byteLength);
-              inputFrames += 1;
-              socket.send(input);
-              for (let i = 0; i < 120; i += 1) {
-                socket.send(JSON.stringify({ type: 'terminal.resize', cols: 80 + (i % 40), rows: 24 }));
-                resizeGeneration += 1;
-                await new Promise((r) => window.setTimeout(r, 1));
-              }
-            })();
+            void runScenario();
+          } else if (frame.type === 'terminal.input.pause') {
+            inputPaused = true;
+            inputPauses += 1;
+          } else if (frame.type === 'terminal.input.resume') {
+            inputPaused = false;
+            inputResumes += 1;
           }
           return;
         }
         const bytes = event.data.byteLength;
+        lastOutputAt = Date.now();
         maxOutputFrame = Math.max(maxOutputFrame, bytes);
         totalDelivered += bytes;
         outstanding += bytes;
         maxOutstanding = Math.max(maxOutstanding, outstanding);
-        socket.send(JSON.stringify({ type: 'terminal.output.ack', bytes }));
-        outstanding -= bytes;
-        if (!finished && totalDelivered >= TARGET) {
-          finished = true;
-          window.clearTimeout(deadline);
-          try { socket.close(); } catch { /* noop */ }
-          resolve();
+        if (phase !== 0) {
+          framesAfterAck += 1;
+          socket.send(JSON.stringify({ type: 'terminal.output.ack', bytes }));
+          outstanding -= bytes;
         }
       });
 
@@ -204,15 +212,89 @@ test('PTY 8 MiB output in <=32 KiB frames conserves 256 KiB credit', async ({ pa
         window.clearTimeout(deadline);
         resolve();
       });
+
+      async function runScenario(): Promise<void> {
+        try {
+          sendResize(80, 24);
+          const command = "head -c 8388608 /dev/zero | tr '\\0' 'x'\n";
+          sendInput(new TextEncoder().encode(command));
+          for (let i = 0; i < 120; i += 1) {
+            sendResize(80 + (i % 40), 24);
+            await wait(1);
+          }
+
+          // Drain phase: hold every ack until the server stops at its 256 KiB credit ceiling.
+          while (outstanding < STOP_THRESHOLD || Date.now() - lastOutputAt < QUIET_MS) {
+            if (totalDelivered >= TARGET) break;
+            await wait(50);
+          }
+
+          // Ack the held bytes once; the server restores credit and flushes pending output.
+          const held = outstanding;
+          if (held > 0) {
+            socket.send(JSON.stringify({ type: 'terminal.output.ack', bytes: held }));
+            outstanding -= held;
+          }
+          phase = 1;
+
+          // Stream the remaining output with per-frame acks.
+          while (totalDelivered < TARGET) {
+            await wait(50);
+          }
+
+          // Input-burst flow control: exceed the 64 KiB queue while respecting pause/resume.
+          phase = 2;
+          const chunk = new Uint8Array(MAX_INPUT).fill('a'.charCodeAt(0));
+          let sent = 0;
+          while (sent < INPUT_BURST_BYTES) {
+            while (inputPaused) await wait(25);
+            const length = Math.min(MAX_INPUT, INPUT_BURST_BYTES - sent);
+            sendInput(length === MAX_INPUT ? chunk : chunk.slice(0, length));
+            sent += length;
+            await wait(1);
+          }
+          sendInput(new TextEncoder().encode('\n'));
+
+          const burstDeadline = Date.now() + 20_000;
+          while ((inputPauses === 0 || inputResumes === 0) && Date.now() < burstDeadline) {
+            await wait(50);
+          }
+
+          finished = true;
+          window.clearTimeout(deadline);
+          try { socket.close(); } catch { /* noop */ }
+          resolve();
+        } catch (error) {
+          window.clearTimeout(deadline);
+          try { socket.close(); } catch { /* noop */ }
+          reject(error);
+        }
+      }
     });
 
-    return snapshot();
+    return {
+      totalDelivered,
+      maxOutputFrame,
+      maxOutstanding,
+      maxInputFrame,
+      inputFrames,
+      resizeGeneration,
+      inputPauses,
+      inputResumes,
+      sentWhilePaused,
+      framesAfterAck,
+    };
   }, { ticket: session.ticket });
 
   expect(metrics.maxInputFrame, 'each input frame must stay <= 16 KiB').toBeLessThanOrEqual(16384);
   expect(metrics.maxOutputFrame, 'each output frame must stay <= 32 KiB').toBeLessThanOrEqual(32768);
   expect(metrics.totalDelivered, 'remote output must reach at least 8 MiB').toBeGreaterThanOrEqual(8388608);
   expect(metrics.maxOutstanding, 'unacknowledged output must never exceed 256 KiB credit').toBeLessThanOrEqual(262144);
+  expect(metrics.maxOutstanding, 'delayed acks must let outstanding approach the 256 KiB ceiling').toBeGreaterThanOrEqual(229376);
+  expect(metrics.framesAfterAck, 'frames must resume after the held credit is acked').toBeGreaterThanOrEqual(1);
+  expect(metrics.sentWhilePaused, 'no input may be sent while the server queue is paused').toBe(0);
+  expect(metrics.inputPauses, 'the 64 KiB input queue must fill and pause').toBeGreaterThanOrEqual(1);
+  expect(metrics.inputResumes, 'the input queue must drain and resume').toBeGreaterThanOrEqual(1);
   expect(metrics.resizeGeneration, 'at least 100 resize events must be sent').toBeGreaterThanOrEqual(100);
 });
 
