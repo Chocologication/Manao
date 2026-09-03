@@ -317,6 +317,7 @@ wrapper 事件至少包含 `sessionId`、命令文本、开始时间、结束时
 - 后端 Deployment 不挂载项目 PVC；项目文件只经内部 workspace Service 访问。不挂载 kubeconfig。
 - 每个 workspace Pod 只挂载其项目的 RWX PVC `subPath`，只监听 ClusterIP 内部地址；workspace Pod 使用专用 ServiceAccount 并设置 `automountServiceAccountToken: false`。
 - 数据库 URL、用户名、密码、JWT 签名密钥、capability 私钥和 wrapper MAC 根密钥来自 Kubernetes Secret 或受控环境注入；workspace-agent 只接收其项目的公开验证密钥、项目 ID 和服务端模板环境变量。
+- workspace Pod 通过 startupProbe 避免冷启动误判：HTTP GET `/agent/v1/healthz`（8080），initialDelaySeconds 5、periodSeconds 5、failureThreshold 24、timeoutSeconds 2；liveness 只判断进程不可恢复失活，readiness 反映 HTTP 服务可用；liveness/readiness 在 startupProbe 成功后才开始判定。
 - 通过 startupProbe 避免冷启动误判；liveness 只判断进程不可恢复失活；readiness 反映数据库和 Kubernetes 客户端是否可用。
 - 日志默认只输出 requestId、业务状态和脱敏错误，不输出 JWT、ticket 原文、密码、PVC 绝对路径或资源内部引用。
 

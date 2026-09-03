@@ -42,14 +42,28 @@ spec:
           mountPath: /workspace
         - name: tmp
           mountPath: /tmp
+      startupProbe:
+        httpGet:
+          path: /agent/v1/healthz
+          port: 8080
+        initialDelaySeconds: 5
+        periodSeconds: 5
+        failureThreshold: 24
+        timeoutSeconds: 2
       readinessProbe:
         httpGet:
           path: /agent/v1/healthz
           port: 8080
+        initialDelaySeconds: 3
+        periodSeconds: 5
+        failureThreshold: 3
       livenessProbe:
         httpGet:
           path: /agent/v1/healthz
           port: 8080
+        initialDelaySeconds: 5
+        periodSeconds: 10
+        failureThreshold: 3
   volumes:
     - name: workspace
       persistentVolumeClaim:

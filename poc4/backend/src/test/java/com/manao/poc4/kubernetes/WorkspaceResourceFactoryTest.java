@@ -96,6 +96,28 @@ class WorkspaceResourceFactoryTest {
     }
 
     @Test
+    void workspacePodProbesSurviveJavaColdStart() {
+        Pod pod = factory.createWorkspacePod(PROJECT, "key");
+        var container = pod.getSpec().getContainers().get(0);
+        var startup = container.getStartupProbe();
+        assertThat(startup).isNotNull();
+        assertThat(startup.getHttpGet().getPath()).isEqualTo("/agent/v1/healthz");
+        assertThat(startup.getHttpGet().getPort().getIntVal()).isEqualTo(8080);
+        assertThat(startup.getInitialDelaySeconds()).isEqualTo(5);
+        assertThat(startup.getPeriodSeconds()).isEqualTo(5);
+        assertThat(startup.getFailureThreshold()).isEqualTo(24);
+        assertThat(startup.getTimeoutSeconds()).isEqualTo(2);
+        var liveness = container.getLivenessProbe();
+        assertThat(liveness.getInitialDelaySeconds()).isEqualTo(5);
+        assertThat(liveness.getPeriodSeconds()).isEqualTo(10);
+        assertThat(liveness.getFailureThreshold()).isEqualTo(3);
+        var readiness = container.getReadinessProbe();
+        assertThat(readiness.getInitialDelaySeconds()).isEqualTo(3);
+        assertThat(readiness.getPeriodSeconds()).isEqualTo(5);
+        assertThat(readiness.getFailureThreshold()).isEqualTo(3);
+    }
+
+    @Test
     void serviceIsClusterInternalAndSelectorsMatchPodLabels() throws Exception {
         Service service = factory.createWorkspaceService(PROJECT);
         assertThat(WorkspaceResourceFactory.serviceName(PROJECT)).isEqualTo("manao-ws-" + PROJECT);
