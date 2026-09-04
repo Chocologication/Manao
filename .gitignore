@@ -41,3 +41,4 @@ build/
 /.codex/skills
 /.firecrawl/
 /.npm-cache-tmp/
+.agent-teams
