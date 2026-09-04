@@ -1,11 +1,10 @@
 # 阶段六 6A 决策门（6A Gate）— 修复轮 + 真实集群联调轮
 
-- 日期：2026-09-02（本日联调）；证据更新 2026-09-04（第二轮提交 + 第三轮 P0/P1 代码修复，工作区未提交）
+- 日期：2026-09-02（历史联调）；证据更新 2026-09-04（第三轮 P0/P1 修复提交后的新鲜审查）
 - 分支：codex/poc4-stage-6-real-backend-kubernetes
-- 已提交最终 HEAD：`12805716161bee31f66417a818023b522d762551`（第二轮证据文档关闭台账；**不是**本轮 P0/P1 修复的代码 SHA）
+- 代码审查基线 HEAD：`052870bab80abd984f0478362060e04ac61d04bb`（第三轮 P0/P1 生产接线修复提交；本文为随后整理更新）
 - 第二轮最后一个后端代码提交：`26331be5b57f9683401b26edbb2ec5f825293d5f`（stress 输入帧去死锁）。其后还有 `6475d88`、`1280571` 文档/收尾提交。三者不得混写为同一个 SHA。
-- 本轮 P0/P1 修复：相对 HEAD `1280571` 的工作区 diff，**尚未形成新的 commit SHA**。复跑审查必须对工作区或后续提交取 SHA，不能沿用 `26331be`。
-- 本轮可复核测试（2026-09-04，工作区）：backend `mvn -B test` **234 tests, 0 failures, 0 errors, 1 skipped**（skipped = `Stage6aPreflightTest.realClusterPreflightRunsOnlyWhenEnabled`）；`pnpm typecheck` 0 错误；Playwright `--list` 5 个唯一用例 / 2 个 spec。workspace-agent 与 `pnpm test` 未在本轮复测。
+- 本轮可复核测试（2026-09-04，HEAD `052870b`）：backend `mvn -B test` **234 tests, 0 failures, 0 errors, 1 skipped**（skipped = `Stage6aPreflightTest.realClusterPreflightRunsOnlyWhenEnabled`）；workspace-agent `mvn -B test` **23 tests, 0 failures, 0 errors**；frontend `pnpm test` **1124 tests, 0 failures**；`pnpm typecheck` 通过；Playwright `--list` **10 个用例 / 3 个 spec**；`git diff --check` 通过。
 - Flyway 迁移基线：V1–V7
 - 集群：3 节点 Kubernetes v1.31.13；namespace manao-stage6-test；受限 kubeconfig：D:\DeepLearning\MyProjects\Project_Manao_kubeconfig\stage6-6a-kubeconfig（SA manao-6a-local，Role manao-stage6-backend）
 
@@ -28,7 +27,7 @@
 - R2-2 bridge 监听语义：`293d0c08eab0215f90506ee65937808b9231d2cb`、`42c466bc7788b6be2e84aeec5a729d86ac887f57`
 - R2-3 stress/faults spec：`bfb0d55c43fba258305cf5a156b7dd111affa683`、`5ba34433ac6dce468a5e1fffcf2180e036427eb2`、`26331be5b57f9683401b26edbb2ec5f825293d5f`
 
-> 本证据文档所属提交为最终 HEAD（见 git log），不在上列三个代码提交之内。
+> 本证据文档随第三轮修复后的整理提交更新；上列 SHA 仅用于区分第二轮代码历史，不代表当前 Gate 已通过。
 
 ### 探针 startupProbe（R2-1）
 
@@ -58,22 +57,27 @@ supervised 模式（factory==null）改为从真实监听状态上报存活，�
 
 ```text
 $ pnpm exec playwright test tests/e2e/stage6-terminal-stress.spec.ts tests/e2e/stage6-faults.spec.ts --project=stage6 --list
-  [stage6] › stage6-faults.spec.ts:99:1 › channel disconnect fails closed then reconnects
-  [stage6] › stage6-faults.spec.ts:158:1 › parallel projects keep isolated dynamic bridges
-  [stage6] › stage6-faults.spec.ts:204:1 › fault phases: backend restart / tunnel loss / bridge loss
+  [stage6] › stage6-faults.spec.ts:100:1 › channel disconnect fails closed then reconnects
+  [stage6] › stage6-faults.spec.ts:159:1 › parallel projects keep isolated dynamic bridges
+  [stage6] › stage6-faults.spec.ts:205:1 › fault phases: backend restart / tunnel loss / bridge loss
+  [stage6] › stage6-real-backend.spec.ts:67:1 › login and Alice/Bob owner isolation on the real backend
+  [stage6] › stage6-real-backend.spec.ts:86:1 › project creation reaches READY with template files through the real workspace
+  [stage6] › stage6-real-backend.spec.ts:99:1 › file save advances the workspace revision and rejects stale revisions
+  [stage6] › stage6-real-backend.spec.ts:127:1 › start run produces a policy-constrained run that progresses on the real cluster
+  [stage6] › stage6-real-backend.spec.ts:153:1 › error responses never leak cluster identifiers
   [stage6] › stage6-terminal-stress.spec.ts:113:1 › PTY 8 MiB output in <=32 KiB frames conserves 256 KiB credit
-  [stage6] › stage6-terminal-stress.spec.ts:309:1 › run log live then full replay matches byte conservation
-  Total: 5 tests in 2 files
+  [stage6] › stage6-terminal-stress.spec.ts:311:1 › run log live then full replay matches byte conservation
+  Total: 10 tests in 3 files
 ```
 
-### 后端全量测试（第二轮当时记录，已被第三轮刷新）
+### 后端全量测试（第三轮新鲜复测）
 
-第二轮文档曾写 `221`；独立执行记录出现过 `222/0/0/1`。二者都不是 2026-09-04 第三轮工作区的可复核结果。第三轮全量见文首：**234/0/0/1**。
+第二轮文档曾写 `221`；独立执行记录出现过 `222/0/0/1`。当前 HEAD 的新鲜复测为 **234/0/0/1**，workspace-agent 为 **23/0/0**。
 
-## 三、6A 真实集群联调结果（本日实测）
+## 三、6A 真实集群联调结果（历史记录，待刷新）
 
-> 本节为 2026-09-02 本日实测的旧记录，**待外部复跑刷新**；第二轮代码修复已提交（见第二节），
-> 复跑步骤不变，未产生新的外部复跑结果。
+> 本节是 2026-09-02 的历史前置记录；下方第四节和第五节补充了 2026-09-04
+> 新鲜审查中实际复现的接线与环境阻断。真实集群 happy-path、压力和故障矩阵仍未形成 PASS 证据。
 
 | # | 前置/门项 | 状态 | 证据 |
 |---|---|---|---|
@@ -86,7 +90,25 @@ $ pnpm exec playwright test tests/e2e/stage6-terminal-stress.spec.ts tests/e2e/s
 | 7 | workspace 模板写入（经 6A bridge） | FAILED（环境） | 见第四节 |
 | 8 | 浏览器 E2E（owner 隔离/文件/日志/PTY/audit） | FAILED（环境） | 见第四节 |
 
-## 四、模板写入失败的根因（环境性阻断，非代码逻辑）
+## 四、2026-09-04 新鲜审查阻断
+
+### 4.1 本机后端端口接线缺口（代码/脚本）
+
+仓库启动脚本和 Vite 代理约定后端为 `127.0.0.1:18080`，但 `application.yml` 未设置
+`server.port`。按启动脚本实际执行时，Spring Boot 监听 `8080`，导致浏览器通过 Vite
+代理访问 `/api/v1/projects` 收到 `ECONNREFUSED 127.0.0.1:18080`，5 个 real-backend
+用例全部在可达性守卫处失败。审查中仅用临时 `--server.port=18080` 验证后续链路，
+未修改配置，故该缺口仍待修复。
+
+### 4.2 共享测试数据库达到项目上限（环境/数据）
+
+临时将后端监听到 18080 后，真实浏览器成功登录并进入 `/projects`；安全脱敏用例通过，
+其余 4 个项目用例在 `POST /api/v1/projects` 收到固定 `409 PROJECT_LIMIT_REACHED`。
+MySQL `manao_poc4.project` 显示 Alice、Bob 各有 3 条历史
+`FAILED/WORKSPACE_RECONCILIATION_REQUIRED` 项目；服务端按总行数执行每用户 3 项上限，
+失败项目保留用于诊断且继续占额。审查未删除或清空这些记录。
+
+### 4.3 沙箱 bridge 限制（环境性阻断，非代码逻辑）
 
 本沙箱（DSH）对后台作业的进程树施加两类限制：
 1. 后台作业中的 JVM 无法再创建新的监听 socket（后端 Tomcat 启动期绑定 18080 成功；运行期 Fabric8 LocalPortForward 声称 alive 但 18100 从未出现在 netstat）；
@@ -98,9 +120,9 @@ $ pnpm exec playwright test tests/e2e/stage6-terminal-stress.spec.ts tests/e2e/s
 
 第二轮代码修复已提交（见第二节），复跑步骤不变；本节所述沙箱限制为环境性阻断，仍需沙箱外复跑验证。
 
-## 五、第三轮 P0/P1 代码修复（2026-09-04，工作区，无真实 E2E）
+## 五、第三轮 P0/P1 代码修复（2026-09-04，已提交，无真实 E2E）
 
-审查认定第二轮“全部修复完成”不成立：live `log.complete` 未接线、bridge 未等监听、PTY 在 WS 线程上阻塞写入等会阻断真实联调。本轮只修复这些代码缺口并补回归测试，**没有**新的浏览器/集群 E2E 证据，因此不能把本节写成 PASS。
+审查认定第二轮“全部修复完成”不成立：live `log.complete` 未接线、bridge 未等监听、PTY 在 WS 线程上阻塞写入等会阻断真实联调。本轮修复这些代码缺口并补回归测试，提交为当前 HEAD `052870b`；仍**没有**浏览器/集群 E2E 证据，因此不能把本节写成 Gate PASS。
 
 | 项 | 落点 | 本轮证据 |
 |---|---|---|
@@ -115,7 +137,19 @@ $ pnpm exec playwright test tests/e2e/stage6-terminal-stress.spec.ts tests/e2e/s
 
 集群前置：namespace 必须已有 `manao-workspace-agent` ServiceAccount（参考 `poc4/workspace-agent/deploy/workspace-agent.yaml`），否则带专用 SA 的 workspace Pod 会无法调度。
 
-## 六、结论
+## 六、当前审查发现（尚未修复）
+
+以下问题是在当前 HEAD 的真实启动/浏览器复跑中发现的，不能用单元测试结果覆盖：
+
+| 优先级 | 问题 | 证据/影响 |
+|---|---|---|
+| P0 | 6A 后端端口未接线 | 启动脚本和 Vite 代理使用 `127.0.0.1:18080`，但 Spring Boot 默认监听 `8080`；未额外传入 `--server.port=18080` 时，5 个 real-backend 用例均在可达性守卫失败。 |
+| P1 | supervised bridge 未检查真实 OS 端口占用 | `findUniqueSupervisedPort()` 只检查内部 bridge 映射，外部进程已占用候选端口时仍可能返回该端口；现有回归只覆盖 Fabric8 `findFreePort()` 的 bind 检查。 |
+| P1 | 未知 terminal 控制帧的错误响应不完整 | `TerminalWebSocketHandler` 的 default 分支发送 `{type: terminal.error}`，缺少前端合同要求的 `code` 与 `retryable:false`；现有测试只断言关闭码，未断言该帧可被严格解析。 |
+
+这些问题应在下一轮修复中分别增加失败回归测试，并在真实浏览器/集群复跑后刷新本 Gate。
+
+## 七、结论
 
 **GATE = FAILED — 未进入 6B。**
 
@@ -123,10 +157,11 @@ $ pnpm exec playwright test tests/e2e/stage6-terminal-stress.spec.ts tests/e2e/s
 
 本轮可复核的是静态/单元/集成测试，不是 6A Gate PASS：
 
-- backend：234 tests, 0 failures, 0 errors, 1 skipped（2026-09-04 工作区 `mvn -B test`）。
-- frontend：`pnpm typecheck` 0 错误；`--list` 发现 5 个 stage6 stress/fault 用例。
+- backend：234 tests, 0 failures, 0 errors, 1 skipped（2026-09-04 基于上述代码审查基线执行 `mvn -B test`）。
+- workspace-agent：23 tests, 0 failures, 0 errors；frontend：`pnpm test` 1124 tests, 0 failures；`pnpm typecheck` 通过；`--list` 发现 10 个 stage6 用例 / 3 个 spec。
 - `git diff --check`：无 whitespace 错误。
-- 真实 E2E：未跑，记 `SKIPPED`。
+- 真实浏览器：登录与项目列表可用；因 18080 接线缺口首次 5/5 在可达性守卫失败；临时指定 18080 后，1/5 通过，4/5 因共享数据库 Alice/Bob 各达到 3 项历史失败项目上限而返回 `409 PROJECT_LIMIT_REACHED`。
+- 真实集群 happy-path、压力和三阶段故障：仍未形成 PASS，记 `SKIPPED/FAILED`，不得进入 6B。
 
 沙箱外复跑（PowerShell）：
 
