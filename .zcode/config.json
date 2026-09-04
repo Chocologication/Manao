@@ -1,0 +1,73 @@
+{
+  "mcp": {
+    "servers": {
+      "apifox": {
+        "type": "stdio",
+        "command": "cmd",
+        "args": [
+          "/c",
+          "npx",
+          "-y",
+          "apifox-mcp-server@latest",
+          "--project-id=7527078"
+        ],
+        "env": {
+          "APIFOX_ACCESS_TOKEN": "afxp_db530dYJMc9e3SZNnRAdHzeBG6vSBnjxcTy4"
+        }
+      },
+      "chrome-devtools": {
+        "type": "stdio",
+        "command": "cmd",
+        "args": [
+          "/c",
+          "npx",
+          "-y",
+          "chrome-devtools-mcp@latest"
+        ],
+        "startup_timeout_ms": 60000,
+        "env": {
+          "PROGRAMFILES": "C:\\Program Files",
+          "SystemRoot": "C:\\Windows"
+        }
+      },
+      "context7": {
+        "type": "http",
+        "url": "https://mcp.context7.com/mcp",
+        "http_headers": {
+          "CONTEXT7_API_KEY": "ctx7sk-671c225f-2b5c-48af-98a4-e88c486a41e8"
+        }
+      },
+      "playwright": {
+        "type": "stdio",
+        "command": "npx",
+        "args": [
+          "@playwright/mcp@latest"
+        ]
+      },
+      "redis": {
+        "type": "stdio",
+        "command": "uvx",
+        "args": [
+          "--from",
+          "redis-mcp-server@latest",
+          "redis-mcp-server",
+          "--url",
+          "redis://localhost:6379/0"
+        ]
+      },
+      "mysql-toolbox": {
+        "type": "stdio",
+        "command": "powershell.exe",
+        "args": [
+          "-NoLogo",
+          "-NoProfile",
+          "-NonInteractive",
+          "-ExecutionPolicy",
+          "Bypass",
+          "-File",
+          "D:\\DeepLearning\\MyProjects\\Project_Manao\\.codex\\mcp\\start-mysql-toolbox.ps1"
+        ]
+      }
+    }
+  }
+}
