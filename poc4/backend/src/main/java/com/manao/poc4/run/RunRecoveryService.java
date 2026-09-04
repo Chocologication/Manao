@@ -1,6 +1,7 @@
 package com.manao.poc4.run;
 
 import com.manao.poc4.kubernetes.JobCoordinator;
+import com.manao.poc4.log.RunLogIngestor;
 import com.manao.poc4.persistence.RunState;
 import java.util.ArrayList;
 import java.util.List;
@@ -14,10 +15,19 @@ import java.util.OptionalLong;
 public final class RunRecoveryService {
     private final RunStore store;
     private final JobCoordinator coordinator;
+    private final RunLogIngestor logIngestor;
+    private final RunCompletionListener completionListener;
 
     public RunRecoveryService(RunStore store, JobCoordinator coordinator) {
+        this(store, coordinator, null, null);
+    }
+
+    public RunRecoveryService(RunStore store, JobCoordinator coordinator, RunLogIngestor logIngestor,
+                              RunCompletionListener completionListener) {
         this.store = store;
         this.coordinator = coordinator;
+        this.logIngestor = logIngestor;
+        this.completionListener = completionListener;
     }
 
     public record RecoveryReport(List<String> processed, List<String> settled,
@@ -67,6 +77,9 @@ public final class RunRecoveryService {
     }
 
     private boolean settle(RunRecord run, RunState state, String reason, Integer exitCode) {
-        return store.settle(run.id(), state, reason, exitCode);
+        if (!store.settle(run.id(), state, reason, exitCode)) return false;
+        if (logIngestor != null) logIngestor.finish(run.id());
+        if (completionListener != null) completionListener.onRunCompleted(run.id());
+        return true;
     }
 }

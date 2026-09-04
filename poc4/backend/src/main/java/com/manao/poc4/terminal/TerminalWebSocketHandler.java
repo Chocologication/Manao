@@ -2,6 +2,7 @@ package com.manao.poc4.terminal;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.manao.poc4.api.StrictWsFrame;
 import com.manao.poc4.run.RunSummary;
 import java.io.IOException;
 import java.net.URI;
@@ -12,6 +13,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Function;
 import org.springframework.web.socket.BinaryMessage;
 import org.springframework.web.socket.CloseStatus;
@@ -44,6 +46,7 @@ public final class TerminalWebSocketHandler extends AbstractWebSocketHandler {
         final TerminalFlowController flow;
         final java.util.ArrayDeque<byte[]> pendingOutput = new java.util.ArrayDeque<>();
         final java.util.ArrayDeque<byte[]> pendingInput = new java.util.ArrayDeque<>();
+        final AtomicLong resizeGeneration = new AtomicLong();
         volatile PtyBridge.PtyHandle handle;
         volatile boolean settled;
         volatile boolean pauseNotified;
@@ -117,11 +120,13 @@ public final class TerminalWebSocketHandler extends AbstractWebSocketHandler {
             settleAndClose(bound, "BACKEND_ERROR", "FAILED", null, TICKET_REJECTED);
             return;
         }
-        if (bound.flow.canQueueInput(bytes.length)) {
-            bound.flow.queueInput(bytes.length);
-            bound.pendingInput.addLast(bytes);
-            drainInput(bound);
+        synchronized (bound.pendingInput) {
+            if (bound.flow.canQueueInput(bytes.length)) {
+                bound.flow.queueInput(bytes.length);
+                bound.pendingInput.addLast(bytes);
+            }
         }
+        drainInput(bound);
         updatePauseState(bound);
         if (bound.flow.queueOverflowDeadlineExceeded()) {
             // 64 KiB queue full for the whole 5-second grace period: fail closed.
@@ -131,16 +136,21 @@ public final class TerminalWebSocketHandler extends AbstractWebSocketHandler {
 
     /** Writes queued input through to the PTY; backpressured bytes stay queued. */
     private void drainInput(BoundSession bound) {
-        while (!bound.pendingInput.isEmpty()) {
-            byte[] next = bound.pendingInput.peekFirst();
-            if (!bound.handle.write(next)) break;
-            bound.pendingInput.pollFirst();
-            bound.flow.consumeInput(next.length);
+        if (bound.handle == null || bound.settled) return;
+        boolean shouldResume = false;
+        synchronized (bound.pendingInput) {
+            while (!bound.pendingInput.isEmpty()) {
+                byte[] next = bound.pendingInput.peekFirst();
+                if (!bound.handle.write(next)) break;
+                bound.pendingInput.pollFirst();
+                bound.flow.consumeInput(next.length);
+            }
+            if (bound.pendingInput.isEmpty() && bound.pauseNotified) {
+                bound.pauseNotified = false;
+                shouldResume = true;
+            }
         }
-        if (bound.pendingInput.isEmpty() && bound.pauseNotified) {
-            bound.pauseNotified = false;
-            sendControl(bound, "terminal.input.resume");
-        }
+        if (shouldResume) sendControl(bound, "terminal.input.resume");
     }
 
     private void updatePauseState(BoundSession bound) {
@@ -174,37 +184,52 @@ public final class TerminalWebSocketHandler extends AbstractWebSocketHandler {
         if (bound == null) return;
         ObjectNode frame;
         try {
-            frame = (ObjectNode) JSON.readTree(message.getPayload());
-        } catch (Exception ex) {
-            settleAndClose(bound, "CLIENT_CLOSED", "CLOSED", null, FLOW_VIOLATION);
-            return;
-        }
-        String type = frame.path("type").asText();
-        switch (type) {
-            case "terminal.resize" -> {
-                try {
-                    boolean accepted = bound.flow.acceptResize(resizeGeneration(), frame.path("cols").asInt(),
-                        frame.path("rows").asInt());
-                    if (accepted && bound.handle != null) {
-                        bound.handle.resize(frame.path("cols").asInt(), frame.path("rows").asInt());
+            frame = StrictWsFrame.object(JSON, message.getPayload());
+            if (!frame.has("type") || !frame.get("type").isTextual()) {
+                throw new IllegalArgumentException("type must be a string");
+            }
+            String type = frame.get("type").asText();
+            switch (type) {
+                case "terminal.resize" -> {
+                    StrictWsFrame.requireExactFields(frame, "type", "cols", "rows");
+                    int cols = StrictWsFrame.requireInt(frame, "cols");
+                    int rows = StrictWsFrame.requireInt(frame, "rows");
+                    try {
+                        boolean accepted = bound.flow.acceptResize(bound.resizeGeneration.incrementAndGet(), cols, rows);
+                        if (accepted && bound.handle != null) {
+                            bound.handle.resize(cols, rows);
+                        }
+                    } catch (IllegalArgumentException ignored) {
+                        // Out-of-range resize requests are dropped; the current dimensions stay effective.
                     }
-                } catch (IllegalArgumentException ignored) {
-                    // Out-of-range resize requests are dropped; the current dimensions stay effective.
+                }
+                case "terminal.close" -> {
+                    StrictWsFrame.requireExactFields(frame, "type");
+                    settleAndClose(bound, "CLIENT_CLOSED", "CLOSED", null, CloseStatus.NORMAL);
+                }
+                case "terminal.output.ack" -> {
+                    StrictWsFrame.requireExactFields(frame, "type", "bytes");
+                    handleAck(bound, StrictWsFrame.requireInt(frame, "bytes"));
+                }
+                case "terminal.output.credit" -> {
+                    StrictWsFrame.requireExactFields(frame, "type", "bytes");
+                    int bytes = StrictWsFrame.requireInt(frame, "bytes");
+                    if (!bound.flow.grantCredit(bytes)) {
+                        settleAndClose(bound, "CLIENT_CLOSED", "CLOSED", null, FLOW_VIOLATION);
+                    }
+                }
+                case "terminal.pong" -> {
+                    StrictWsFrame.requireExactFields(frame, "type", "nonce");
+                    StrictWsFrame.requireText(frame, "nonce");
+                }
+                default -> {
+                    sendControl(bound, "terminal.error");
+                    settleAndClose(bound, "CLIENT_CLOSED", "CLOSED", null, FLOW_VIOLATION);
                 }
             }
-            case "terminal.close" -> settleAndClose(bound, "CLIENT_CLOSED", "CLOSED", null, CloseStatus.NORMAL);
-            case "terminal.output.ack" -> handleAck(bound, frame.path("bytes").asInt());
-            case "terminal.output.credit" -> bound.flow.grantCredit(frame.path("bytes").asInt());
-            case "terminal.pong" -> { /* liveness marker; no state change */ }
-            default -> {
-                sendControl(bound, "terminal.error");
-                settleAndClose(bound, "CLIENT_CLOSED", "CLOSED", null, FLOW_VIOLATION);
-            }
+        } catch (IllegalArgumentException ex) {
+            settleAndClose(bound, "CLIENT_CLOSED", "CLOSED", null, FLOW_VIOLATION);
         }
-    }
-
-    private long resizeGeneration() {
-        return clock.instant().toEpochMilli();
     }
 
     private void handleAck(BoundSession bound, int bytes) {
@@ -301,6 +326,11 @@ public final class TerminalWebSocketHandler extends AbstractWebSocketHandler {
         @Override public void onOutput(byte[] bytes) { deliverOutput(bound, bytes); }
 
         @Override public void onExit(Integer exitCode) { handleExit(bound, exitCode); }
+
+        @Override public void onWritable() {
+            drainInput(bound);
+            updatePauseState(bound);
+        }
     }
 
     private void sendControl(BoundSession bound, String type) {

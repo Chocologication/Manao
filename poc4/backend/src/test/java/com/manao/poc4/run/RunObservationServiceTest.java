@@ -26,6 +26,7 @@ class RunObservationServiceTest {
     private StubCoordinator coordinator;
     private RecordingGateway gateway;
     private RunObservationService service;
+    private final java.util.List<String> completed = new ArrayList<>();
 
     @BeforeEach
     void setUp() {
@@ -34,7 +35,8 @@ class RunObservationServiceTest {
         gateway = new RecordingGateway();
         RunLogIngestor ingestor = new RunLogIngestor(gateway,
             new RunLogService(new EmptyChunkStore()), "manao");
-        service = new RunObservationService(store, coordinator, ingestor);
+        completed.clear();
+        service = new RunObservationService(store, coordinator, ingestor, completed::add);
     }
 
     private String seedRun(String id, RunState state) {
@@ -64,6 +66,22 @@ class RunObservationServiceTest {
 
         assertThat(store.runs.get(runId).state).isEqualTo(RunState.SUCCEEDED.name());
         assertThat(store.runs.get(runId).terminationReason).isEqualTo("BUILD_SUCCEEDED");
+        assertThat(completed).containsExactly(runId);
+    }
+
+    @Test
+    void terminalSettlementFinishesTheLogWatchAfterTheLastPersist() {
+        String runId = seedRun("run-live-complete", RunState.RUNNING);
+        coordinator.factsByRun.put(runId, new JobCoordinator.JobFacts(true, false, false, false, null, "pod-1"));
+        service.observe();
+        assertThat(gateway.watchedPods).containsExactly("pod-1");
+
+        coordinator.factsByRun.put(runId, new JobCoordinator.JobFacts(false, true, false, false, 0, "pod-1"));
+        service.observe();
+
+        assertThat(store.runs.get(runId).state).isEqualTo(RunState.SUCCEEDED.name());
+        assertThat(completed).containsExactly(runId);
+        assertThat(gateway.closedPods).containsExactly("pod-1");
     }
 
     @Test
@@ -115,11 +133,12 @@ class RunObservationServiceTest {
     static final class RecordingGateway implements PodLogGateway {
         final List<String> watchedPods = new ArrayList<>();
         final List<String> namespaces = new ArrayList<>();
+        final List<String> closedPods = new ArrayList<>();
 
         @Override public LogWatchHandle watchLogs(String namespace, String podName, java.util.function.Consumer<String> lineConsumer) {
             watchedPods.add(podName);
             namespaces.add(namespace);
-            return () -> { };
+            return () -> closedPods.add(podName);
         }
     }
 

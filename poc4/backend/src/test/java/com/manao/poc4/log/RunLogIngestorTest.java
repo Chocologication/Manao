@@ -72,18 +72,30 @@ class RunLogIngestorTest {
         assertThat(chunks.inserted.get(0).text()).isEqualTo(second.substring(secondFirstPiece.length()) + "\n");
     }
 
+    @Test
+    void finishClosesTheWatchSoTheLastBufferedLinesCanDrain() {
+        RecordingGateway gateway = new RecordingGateway();
+        RunLogIngestor ingestor = new RunLogIngestor(gateway, new RunLogService(new RecordingChunkStore(0)), "manao");
+        ingestor.ensureWatch("r1", "pod-1");
+        ingestor.finish("r1");
+        assertThat(gateway.closed).containsExactly("pod-1");
+        ingestor.finish("r1");
+        assertThat(gateway.closed).containsExactly("pod-1");
+    }
+
     record RecordingChunk(long seq, String text) { }
 
     static final class RecordingGateway implements PodLogGateway {
         final List<String> watchedPods = new ArrayList<>();
         final List<String> namespaces = new ArrayList<>();
+        final List<String> closed = new ArrayList<>();
         java.util.function.Consumer<String> consumer;
 
         @Override public LogWatchHandle watchLogs(String namespace, String podName, java.util.function.Consumer<String> lineConsumer) {
             watchedPods.add(podName);
             namespaces.add(namespace);
             this.consumer = lineConsumer;
-            return () -> { };
+            return () -> closed.add(podName);
         }
     }
 

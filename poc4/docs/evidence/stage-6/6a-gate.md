@@ -1,9 +1,11 @@
 # 阶段六 6A 决策门（6A Gate）— 修复轮 + 真实集群联调轮
 
-- 日期：2026-09-02（本日联调；证据更新 2026-09-04 = 第二轮）
+- 日期：2026-09-02（本日联调）；证据更新 2026-09-04（第二轮提交 + 第三轮 P0/P1 代码修复，工作区未提交）
 - 分支：codex/poc4-stage-6-real-backend-kubernetes
-- 后端 Git SHA：26331be5b57f9683401b26edbb2ec5f825293d5f（后端代码 SHA；最终 HEAD 见 git log，含第一轮修复 + 第二轮探针/bridge/覆盖修复）
-- 修复轮测试基线：backend 全量 221/0/0（1 skipped = real-mode 守卫，2026-09-04 第二轮复测）；workspace-agent 23/0/0、frontend pnpm test 1124/1124（第一轮基线，本轮未复测）；frontend typecheck 0（2026-09-04 第二轮复测）
+- 已提交最终 HEAD：`12805716161bee31f66417a818023b522d762551`（第二轮证据文档关闭台账；**不是**本轮 P0/P1 修复的代码 SHA）
+- 第二轮最后一个后端代码提交：`26331be5b57f9683401b26edbb2ec5f825293d5f`（stress 输入帧去死锁）。其后还有 `6475d88`、`1280571` 文档/收尾提交。三者不得混写为同一个 SHA。
+- 本轮 P0/P1 修复：相对 HEAD `1280571` 的工作区 diff，**尚未形成新的 commit SHA**。复跑审查必须对工作区或后续提交取 SHA，不能沿用 `26331be`。
+- 本轮可复核测试（2026-09-04，工作区）：backend `mvn -B test` **234 tests, 0 failures, 0 errors, 1 skipped**（skipped = `Stage6aPreflightTest.realClusterPreflightRunsOnlyWhenEnabled`）；`pnpm typecheck` 0 错误；Playwright `--list` 5 个唯一用例 / 2 个 spec。workspace-agent 与 `pnpm test` 未在本轮复测。
 - Flyway 迁移基线：V1–V7
 - 集群：3 节点 Kubernetes v1.31.13；namespace manao-stage6-test；受限 kubeconfig：D:\DeepLearning\MyProjects\Project_Manao_kubeconfig\stage6-6a-kubeconfig（SA manao-6a-local，Role manao-stage6-backend）
 
@@ -64,10 +66,9 @@ $ pnpm exec playwright test tests/e2e/stage6-terminal-stress.spec.ts tests/e2e/s
   Total: 5 tests in 2 files
 ```
 
-### 后端全量测试（本轮复测）
+### 后端全量测试（第二轮当时记录，已被第三轮刷新）
 
-`mvn -B test`：221 tests, 0 failures, 0 errors, 1 skipped（skipped = real-mode 守卫
-`Stage6aPreflightTest.realClusterPreflightRunsOnlyWhenEnabled`）。`pnpm typecheck`：0 错误。
+第二轮文档曾写 `221`；独立执行记录出现过 `222/0/0/1`。二者都不是 2026-09-04 第三轮工作区的可复核结果。第三轮全量见文首：**234/0/0/1**。
 
 ## 三、6A 真实集群联调结果（本日实测）
 
@@ -97,10 +98,47 @@ $ pnpm exec playwright test tests/e2e/stage6-terminal-stress.spec.ts tests/e2e/s
 
 第二轮代码修复已提交（见第二节），复跑步骤不变；本节所述沙箱限制为环境性阻断，仍需沙箱外复跑验证。
 
-## 五、结论
+## 五、第三轮 P0/P1 代码修复（2026-09-04，工作区，无真实 E2E）
 
-**GATE = FAILED（环境阻断）— 未进入 6B。**
+审查认定第二轮“全部修复完成”不成立：live `log.complete` 未接线、bridge 未等监听、PTY 在 WS 线程上阻塞写入等会阻断真实联调。本轮只修复这些代码缺口并补回归测试，**没有**新的浏览器/集群 E2E 证据，因此不能把本节写成 PASS。
 
-- 代码修复全部完成并有真实证据（见第一节与提交历史）；第二轮修复（探针/bridge/覆盖）已提交（见第二节）。
-- 沙箱外环境复跑步骤：设置 6A 环境变量（见 backend/config/local-cluster.example.env + MANAO_K8S_MASTER_URL）→ 启动后端 → `STAGE6_GATE=1 pnpm --dir poc4/frontend test:e2e:stage6`。
-- 已知修复顺带产出：真实启动 Bean 接线修复（ActuatorConfig/WebSocketConfig/条件注解/双构造器/重复 Bean）、网关按授权动词合规（create/get + list-then-delete）、E2E spec 携带 Bearer token 与英文 UI 选择器、Vite 需绑定 127.0.0.1（--host 127.0.0.1）。
+| 项 | 落点 | 本轮证据 |
+|---|---|---|
+| live `log.complete` | `RunObservationService` 终态 settle 后 `RunLogIngestor.finish` 再 `RunLogWebSocketHandler.publishComplete` | `RunLogWebSocketTest.liveSubscriberReceivesCompleteAfterTheLastPersistedChunk`；`RunObservationServiceTest.terminalSettlementFinishesTheLogWatchAfterTheLastPersist` |
+| bridge listener-ready + 端口占用/冲突 | `allocate`/`checkChildren` 等待 `isListening()`；`findFreePort` 检查 OS bind；supervised 线性探测避免 hash 碰撞 | `WorkspacePortForwardManagerTest` 新增 5 例（含 kill-then-start 事件序） |
+| PTY 非阻塞 drain | `ExecPtyClient` 独立 writer 线程 + `onWritable`；handler 不再同步 `OutputStream.write` | `ExecPtyClientTest.writeDoesNotBlockTheCallerWhenStdinIsBackpressured`；`TerminalWebSocketTest.pausedInputResumesWhenThePtyBecomesWritable` |
+| WS 严格白名单 | `StrictWsFrame`；terminal/log 未知字段与非整数 bytes/`lastSeq` 拒绝 | `RunLogWebSocketTest.subscribeRejectsUnknownFieldsAndNonIntegerLastSeq`；`TerminalWebSocketTest.controlFramesRejectUnknownFieldsAndNonIntegerBytes` |
+| workspace 专用 SA | factory `serviceAccountName=manao-workspace-agent` + `stage6-test=true` | `WorkspaceResourceFactoryTest`；Job 标签同步 |
+| 单调 resize generation | 连接内 `AtomicLong`，不用墙钟毫秒 | `TerminalWebSocketTest.resizeGenerationIsMonotonicAndDimensionsAreValidated` |
+| 故障 spec | READY 前置、固定 `INTERNAL_ERROR` 文案、operator 证据（身份/时间/targetHash/result） | `stage6-faults.spec.ts` + `stage6-operator.ts`；注入脚本 `poc4/backend/scripts/inject-stage6-fault.ps1` |
+| 压力 spec | 不再把 pause/resume 当成所有正常 PTY 的必然条件；pause 一旦出现必须 resume | `stage6-terminal-stress.spec.ts` |
+
+集群前置：namespace 必须已有 `manao-workspace-agent` ServiceAccount（参考 `poc4/workspace-agent/deploy/workspace-agent.yaml`），否则带专用 SA 的 workspace Pod 会无法调度。
+
+## 六、结论
+
+**GATE = FAILED — 未进入 6B。**
+
+失败原因同时包括：（1）本轮仍无沙箱外真实 6A happy-path / 压力 / 三阶段故障的浏览器+集群证据；（2）在本轮代码落地之前，生产接线缺口本身就会阻断联调。本节**不**声称“代码修复全部完成并有真实证据”。
+
+本轮可复核的是静态/单元/集成测试，不是 6A Gate PASS：
+
+- backend：234 tests, 0 failures, 0 errors, 1 skipped（2026-09-04 工作区 `mvn -B test`）。
+- frontend：`pnpm typecheck` 0 错误；`--list` 发现 5 个 stage6 stress/fault 用例。
+- `git diff --check`：无 whitespace 错误。
+- 真实 E2E：未跑，记 `SKIPPED`。
+
+沙箱外复跑（PowerShell）：
+
+```powershell
+$env:STAGE6_GATE = '1'
+pnpm --dir poc4/frontend test:e2e:stage6
+pnpm --dir poc4/frontend test:e2e:stage6:stress
+$env:STAGE6_FAULT = 'backend-restart'   # 或 tunnel-loss / bridge-loss
+$env:STAGE6_OPERATOR_ID = 'stage6-operator'
+$env:STAGE6_FAULT_EVIDENCE = '<evidence.json>'
+# bridge-loss 可另设 STAGE6_OPERATOR_KUBECONFIG；restart/tunnel 设对应 CMD
+pnpm --dir poc4/frontend test:e2e:stage6:faults
+```
+
+不要写 `STAGE6_GATE=1 pnpm ...`：那不是可靠的 PowerShell 环境变量语法。

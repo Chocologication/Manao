@@ -5,10 +5,12 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.net.InetAddress;
 import java.net.ServerSocket;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CopyOnWriteArrayList;
 import org.junit.jupiter.api.Test;
 
 class WorkspacePortForwardManagerTest {
@@ -165,16 +167,104 @@ class WorkspacePortForwardManagerTest {
         assertThat(manager.activeBridges()).isZero();
     }
 
+    @Test
+    void allocateWaitsUntilTheListenerIsReady() throws Exception {
+        RecordingFactory factory = new RecordingFactory(false);
+        WorkspacePortForwardManager manager = new WorkspacePortForwardManager(
+            "manao-test", 18100, 18199, 8080, factory, Duration.ofSeconds(2), 10);
+        Thread releaser = new Thread(() -> {
+            long deadline = System.currentTimeMillis() + 1500;
+            while (factory.processes.isEmpty() && System.currentTimeMillis() < deadline) {
+                try { Thread.sleep(5); } catch (InterruptedException ex) { Thread.currentThread().interrupt(); return; }
+            }
+            factory.processes.values().forEach(FakeProcess::startListening);
+        });
+        releaser.setDaemon(true);
+        releaser.start();
+
+        int port = manager.allocate("prj-a");
+        assertThat(port).isBetween(18100, 18199);
+        assertThat(factory.started).hasSize(1);
+    }
+
+    @Test
+    void allocateFailsClosedWhenTheListenerNeverBecomesReady() {
+        RecordingFactory factory = new RecordingFactory(false);
+        WorkspacePortForwardManager manager = new WorkspacePortForwardManager(
+            "manao-test", 18100, 18199, 8080, factory, Duration.ofMillis(80), 10);
+        assertThatThrownBy(() -> manager.allocate("prj-a"))
+            .isInstanceOf(IllegalStateException.class)
+            .hasMessageContaining("listener did not become ready");
+        assertThat(factory.killed).containsExactly("manao-ws-prj-a");
+        assertThat(manager.activeBridges()).isZero();
+    }
+
+    @Test
+    void findFreePortSkipsAnOsOccupiedLoopbackPort() throws Exception {
+        try (ServerSocket occupied = new ServerSocket(0, 1, InetAddress.getLoopbackAddress())) {
+            int busy = occupied.getLocalPort();
+            int start = busy;
+            int end = busy + 2;
+            RecordingFactory factory = new RecordingFactory();
+            WorkspacePortForwardManager manager = new WorkspacePortForwardManager(
+                "manao-test", start, end, factory);
+            int port = manager.allocate("prj-a");
+            assertThat(port).isNotEqualTo(busy);
+            assertThat(port).isBetween(start, end);
+        }
+    }
+
+    @Test
+    void supervisedModeGivesCollidingProjectIdsDistinctPorts() {
+        int span = 100;
+        String first = "prj-0";
+        String second = null;
+        int firstPort = 18100 + Math.floorMod(first.hashCode(), span);
+        for (int i = 1; i < 5000; i++) {
+            String candidate = "prj-" + i;
+            if (18100 + Math.floorMod(candidate.hashCode(), span) == firstPort) {
+                second = candidate;
+                break;
+            }
+        }
+        assertThat(second).isNotNull();
+        WorkspacePortForwardManager manager = new WorkspacePortForwardManager("manao-test", 18100, 18199, null);
+        int portA = manager.allocate(first);
+        int portB = manager.allocate(second);
+        assertThat(portA).isNotEqualTo(portB);
+        assertThat(portA).isBetween(18100, 18199);
+        assertThat(portB).isBetween(18100, 18199);
+    }
+
+    @Test
+    void recreateKillsTheOldProcessBeforeStartingTheReplacement() {
+        RecordingFactory factory = new RecordingFactory();
+        WorkspacePortForwardManager manager = new WorkspacePortForwardManager("manao-test", 18100, 18199, factory);
+        int port = manager.allocate("prj-a");
+        factory.processes.get("manao-ws-prj-a:" + port).fail();
+        manager.checkChildren();
+        assertThat(factory.events).containsExactly("start:" + port, "kill:" + port, "start:" + port);
+    }
+
     static final class RecordingFactory implements WorkspacePortForwardManager.PortForwardProcessFactory {
         record Start(String serviceName, int servicePort, int localPort) { }
         final List<Start> started = new ArrayList<>();
         final Map<String, FakeProcess> processes = new ConcurrentHashMap<>();
         final List<String> killed = new ArrayList<>();
+        final List<String> events = new CopyOnWriteArrayList<>();
+        private final boolean startListening;
+
+        RecordingFactory() { this(true); }
+        RecordingFactory(boolean startListening) { this.startListening = startListening; }
 
         @Override public WorkspacePortForwardManager.PortForwardProcess start(String namespace, String serviceName,
                                                                               int servicePort, int localPort) {
             started.add(new Start(serviceName, servicePort, localPort));
-            FakeProcess process = new FakeProcess(() -> killed.add(serviceName));
+            events.add("start:" + localPort);
+            FakeProcess process = new FakeProcess(() -> {
+                events.add("kill:" + localPort);
+                killed.add(serviceName);
+            }, startListening);
             processes.put(serviceName + ":" + localPort, process);
             return process;
         }
@@ -183,15 +273,25 @@ class WorkspacePortForwardManagerTest {
     static final class FakeProcess implements WorkspacePortForwardManager.PortForwardProcess {
         private final Runnable onKill;
         private volatile boolean alive = true;
-        private volatile boolean listening = true;
-        FakeProcess(Runnable onKill) { this.onKill = onKill; }
+        private volatile boolean listening;
+        private volatile boolean killed;
+        FakeProcess(Runnable onKill) { this(onKill, true); }
+        FakeProcess(Runnable onKill, boolean listening) {
+            this.onKill = onKill;
+            this.listening = listening;
+        }
         void fail() { alive = false; }
         void stopListening() { listening = false; }
+        void startListening() { listening = true; }
         @Override public boolean isAlive() { return alive; }
         @Override public boolean isListening() { return listening; }
         @Override public void kill() {
-            if (alive) onKill.run();
+            if (!killed) {
+                killed = true;
+                onKill.run();
+            }
             alive = false;
+            listening = false;
         }
     }
 }

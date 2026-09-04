@@ -16,11 +16,18 @@ public final class RunObservationService {
     private final RunStore store;
     private final JobCoordinator coordinator;
     private final RunLogIngestor logIngestor;
+    private final RunCompletionListener completionListener;
 
     public RunObservationService(RunStore store, JobCoordinator coordinator, RunLogIngestor logIngestor) {
+        this(store, coordinator, logIngestor, null);
+    }
+
+    public RunObservationService(RunStore store, JobCoordinator coordinator, RunLogIngestor logIngestor,
+                                 RunCompletionListener completionListener) {
         this.store = store;
         this.coordinator = coordinator;
         this.logIngestor = logIngestor;
+        this.completionListener = completionListener;
     }
 
     public void observe() {
@@ -42,13 +49,19 @@ public final class RunObservationService {
                 logIngestor.ensureWatch(run.id(), job.podName());
             }
             if (job.succeeded()) {
-                store.settle(run.id(), RunState.SUCCEEDED, "BUILD_SUCCEEDED",
+                settleAndComplete(run, RunState.SUCCEEDED, "BUILD_SUCCEEDED",
                     job.exitCode() == null ? 0 : job.exitCode());
             } else if (job.failed()) {
-                store.settle(run.id(), RunState.FAILED, "BUILD_FAILED", job.exitCode());
+                settleAndComplete(run, RunState.FAILED, "BUILD_FAILED", job.exitCode());
             } else if (job.deadlineExceeded()) {
-                store.settle(run.id(), RunState.TIMED_OUT, "TIME_LIMIT_EXCEEDED", null);
+                settleAndComplete(run, RunState.TIMED_OUT, "TIME_LIMIT_EXCEEDED", null);
             }
         }
+    }
+
+    private void settleAndComplete(RunRecord run, RunState state, String reason, Integer exitCode) {
+        if (!store.settle(run.id(), state, reason, exitCode)) return;
+        logIngestor.finish(run.id());
+        if (completionListener != null) completionListener.onRunCompleted(run.id());
     }
 }

@@ -71,6 +71,8 @@ class WorkspaceResourceFactoryTest {
         assertThat(podSecurity.getFsGroup()).isEqualTo(10001L);
         assertThat(podSecurity.getSeccompProfile().getType()).isEqualTo("RuntimeDefault");
         assertThat(pod.getSpec().getAutomountServiceAccountToken()).isFalse();
+        assertThat(pod.getSpec().getServiceAccountName()).isEqualTo(WorkspaceResourceFactory.WORKSPACE_SERVICE_ACCOUNT);
+        assertThat(pod.getMetadata().getLabels()).containsEntry(WorkspaceResourceFactory.LABEL_STAGE6_TEST, "true");
         var container = pod.getSpec().getContainers().get(0);
         assertThat(container.getName()).isEqualTo("workspace-agent");
         assertThat(container.getImage()).isEqualTo("registry.example/manao/workspace-agent@" + DIGEST_A);

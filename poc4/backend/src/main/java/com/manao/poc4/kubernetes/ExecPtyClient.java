@@ -4,8 +4,11 @@ import com.manao.poc4.terminal.PtyBridge;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.List;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
@@ -31,17 +34,13 @@ public final class ExecPtyClient implements PtyBridge {
     public PtyHandle open(String podName, String containerName, int cols, int rows, PtyListener listener) {
         ExecTransport.ExecProcess process = transport.exec(podName, containerName, command, cols, rows, true);
         AtomicBoolean closed = new AtomicBoolean(false);
+        BlockingQueue<byte[]> outbound = new ArrayBlockingQueue<>(1);
         pumpExecutor.submit(() -> pump(process, listener, closed));
+        pumpExecutor.submit(() -> writeLoop(process, outbound, listener, closed));
         return new PtyHandle() {
             @Override public boolean write(byte[] bytes) {
-                if (closed.get()) return false;
-                try {
-                    process.stdin().write(bytes);
-                    process.stdin().flush();
-                    return true;
-                } catch (IOException ex) {
-                    return false;
-                }
+                if (closed.get() || bytes == null || bytes.length == 0) return false;
+                return outbound.offer(java.util.Arrays.copyOf(bytes, bytes.length));
             }
 
             @Override public void resize(int newCols, int newRows) {
@@ -50,10 +49,31 @@ public final class ExecPtyClient implements PtyBridge {
 
             @Override public void close() {
                 if (closed.compareAndSet(false, true)) {
+                    outbound.clear();
                     process.close();
                 }
             }
         };
+    }
+
+    private void writeLoop(ExecTransport.ExecProcess process, BlockingQueue<byte[]> outbound,
+                           PtyListener listener, AtomicBoolean closed) {
+        try {
+            while (!closed.get()) {
+                byte[] next = outbound.poll(100, TimeUnit.MILLISECONDS);
+                if (next == null) continue;
+                try {
+                    process.stdin().write(next);
+                    process.stdin().flush();
+                    listener.onWritable();
+                } catch (IOException ex) {
+                    closed.set(true);
+                    return;
+                }
+            }
+        } catch (InterruptedException ex) {
+            Thread.currentThread().interrupt();
+        }
     }
 
     private void pump(ExecTransport.ExecProcess process, PtyListener listener, AtomicBoolean closed) {

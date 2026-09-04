@@ -43,6 +43,14 @@ public final class RunLogIngestor {
         if (handle != null && handle.watch != null) handle.watch.close();
     }
 
+    /**
+     * Closes the live watch and waits for the pump to deliver any already-buffered lines so the
+     * last persisted seq is known before {@code log.complete} is published.
+     */
+    public synchronized void finish(String runId) {
+        detach(runId);
+    }
+
     /** Backend shutdown: every watch is closed; old sessions are never resumed. */
     public synchronized void detachAll() {
         for (String runId : watches.keySet().toArray(new String[0])) {

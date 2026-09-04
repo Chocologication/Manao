@@ -143,6 +143,38 @@ class RunLogWebSocketTest {
     }
 
     @Test
+    void liveSubscriberReceivesCompleteAfterTheLastPersistedChunk() throws Exception {
+        subscribe(null);
+        logService.publish(RUN, 1, "last line\n");
+        handler.publishComplete(RUN);
+
+        JsonNode complete = JSON.readTree(session.text.get(session.text.size() - 1));
+        assertThat(complete.get("type").asText()).isEqualTo("log.complete");
+        assertThat(complete.get("lastSeq").asLong()).isEqualTo(1);
+        int before = session.text.size();
+        handler.publishComplete(RUN);
+        assertThat(session.text).hasSize(before);
+    }
+
+    @Test
+    void subscribeRejectsUnknownFieldsAndNonIntegerLastSeq() throws Exception {
+        handler.handleMessage(session, new TextMessage(
+            "{\"type\":\"log.subscribe\",\"lastSeq\":null,\"podName\":\"manao-run-1\"}"));
+        JsonNode extra = JSON.readTree(session.text.get(0));
+        assertThat(extra.get("type").asText()).isEqualTo("stream.error");
+        assertThat(extra.get("code").asText()).isEqualTo("PROTOCOL_ERROR");
+
+        CapturingSession coerced = new CapturingSession();
+        coerced.setUri("/api/v1/ws/run-logs?ticket=valid-ticket");
+        RunLogWebSocketHandler second = new RunLogWebSocketHandler(new StubTickets(), logService,
+            runId -> summary(RunState.RUNNING, runId), new MutableClock());
+        second.afterConnectionEstablished(coerced);
+        second.handleMessage(coerced, new TextMessage("{\"type\":\"log.subscribe\",\"lastSeq\":\"1\"}"));
+        JsonNode invalid = JSON.readTree(coerced.text.get(0));
+        assertThat(invalid.get("code").asText()).isEqualTo("PROTOCOL_ERROR");
+    }
+
+    @Test
     void missingExpiredAndReusedTicketsCloseWith4410() throws Exception {
         CapturingSession noTicket = new CapturingSession();
         noTicket.setUri("/api/v1/ws/run-logs");
@@ -213,7 +245,7 @@ class RunLogWebSocketTest {
         private final Map<String, Object> attributes = new ConcurrentHashMap<>();
 
         void setUri(String uri) { this.uri = uri; }
-        @Override public String getId() { return "session-1"; }
+        @Override public String getId() { return uri + "#" + System.identityHashCode(this); }
         @Override public URI getUri() { return URI.create(uri); }
         @Override public HttpHeaders getHandshakeHeaders() { return new HttpHeaders(); }
         @Override public Principal getPrincipal() { return null; }

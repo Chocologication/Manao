@@ -20,6 +20,8 @@ public class WorkspaceResourceFactory {
     public static final long WORKSPACE_UID = 10001L;
     public static final long WORKSPACE_GID = 10001L;
     public static final String LABEL_PROJECT_ID = "manao.poc4/project-id";
+    public static final String LABEL_STAGE6_TEST = "stage6-test";
+    public static final String WORKSPACE_SERVICE_ACCOUNT = "manao-workspace-agent";
     private static final String MANAGED_BY = "manao-poc4-backend";
     private static final java.util.regex.Pattern IMMUTABLE_DIGEST =
         java.util.regex.Pattern.compile("^[a-z0-9._/-]+@sha256:[0-9a-f]{64}$");
@@ -57,6 +59,7 @@ public class WorkspaceResourceFactory {
         labels.put("app.kubernetes.io/managed-by", MANAGED_BY);
         labels.put(LABEL_PROJECT_ID, projectId);
         labels.put("manao.poc4/component", "workspace");
+        labels.put(LABEL_STAGE6_TEST, "true");
         return labels;
     }
 
@@ -142,6 +145,7 @@ public class WorkspaceResourceFactory {
             .withLabels(withComponent(projectId, "workspace"))
             .endMetadata()
             .withNewSpec()
+            .withServiceAccountName(WORKSPACE_SERVICE_ACCOUNT)
             .withAutomountServiceAccountToken(false)
             .withNewSecurityContext()
             .withRunAsNonRoot(true)

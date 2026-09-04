@@ -27,6 +27,7 @@ class JobResourceFactoryTest {
         assertThat(job.getSpec().getTemplate().getSpec().getRestartPolicy()).isEqualTo("Never");
         assertThat(job.getSpec().getTemplate().getSpec().getAutomountServiceAccountToken()).isFalse();
         assertThat(job.getMetadata().getLabels()).containsEntry("manao.poc4/run-id", RUN)
+            .containsEntry("stage6-test", "true")
             .containsEntry("manao.poc4/project-id", PROJECT)
             .containsEntry("app.kubernetes.io/managed-by", "manao-poc4-backend");
         assertThatNoBrowserPolicyFields(json.writeValueAsString(job));

@@ -174,15 +174,24 @@ public class WorkspaceConfig {
 
     @Bean
     com.manao.poc4.run.RunRecoveryService runRecoveryService(com.manao.poc4.run.RunStore store,
-                                                             com.manao.poc4.kubernetes.JobCoordinator coordinator) {
-        return new com.manao.poc4.run.RunRecoveryService(store, coordinator);
+                                                             com.manao.poc4.kubernetes.JobCoordinator coordinator,
+                                                             com.manao.poc4.log.RunLogIngestor logIngestor,
+                                                             org.springframework.beans.factory.ObjectProvider<com.manao.poc4.log.RunLogWebSocketHandler> logSockets) {
+        return new com.manao.poc4.run.RunRecoveryService(store, coordinator, logIngestor, runId -> {
+            com.manao.poc4.log.RunLogWebSocketHandler handler = logSockets.getIfAvailable();
+            if (handler != null) handler.publishComplete(runId);
+        });
     }
 
     @Bean
     com.manao.poc4.run.RunObservationService runObservationService(com.manao.poc4.run.RunStore store,
                                                                    com.manao.poc4.kubernetes.JobCoordinator coordinator,
-                                                                   com.manao.poc4.log.RunLogIngestor logIngestor) {
-        return new com.manao.poc4.run.RunObservationService(store, coordinator, logIngestor);
+                                                                   com.manao.poc4.log.RunLogIngestor logIngestor,
+                                                                   org.springframework.beans.factory.ObjectProvider<com.manao.poc4.log.RunLogWebSocketHandler> logSockets) {
+        return new com.manao.poc4.run.RunObservationService(store, coordinator, logIngestor, runId -> {
+            com.manao.poc4.log.RunLogWebSocketHandler handler = logSockets.getIfAvailable();
+            if (handler != null) handler.publishComplete(runId);
+        });
     }
 
     @Bean

@@ -3,6 +3,7 @@ package com.manao.poc4.log;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.manao.poc4.api.StrictWsFrame;
 import com.manao.poc4.persistence.RunState;
 import com.manao.poc4.run.RunSummary;
 import java.io.IOException;
@@ -40,6 +41,7 @@ public final class RunLogWebSocketHandler extends TextWebSocketHandler {
         final LogReplayCursor cursor;
         final RunLogService.LogListener listener;
         volatile boolean rejected;
+        volatile boolean completeSent;
 
         BoundSession(WebSocketSession session, String runId, RunLogService.LogListener listener) {
             this.session = session;
@@ -76,24 +78,16 @@ public final class RunLogWebSocketHandler extends TextWebSocketHandler {
     protected void handleTextMessage(WebSocketSession session, TextMessage message) {
         BoundSession bound = sessions.get(session.getId());
         if (bound == null || bound.rejected) return;
-        ObjectNode frame;
+        Long lastSeq;
         try {
-            frame = (ObjectNode) JSON.readTree(message.getPayload());
-        } catch (Exception ex) {
-            reject(bound);
-            return;
-        }
-        if (!"log.subscribe".equals(frame.path("type").asText())) {
-            reject(bound);
-            return;
-        }
-        if (frame.path("lastSeq").isMissingNode()) {
-            reject(bound);
-            return;
-        }
-        Long lastSeq = frame.path("lastSeq").isNull() || frame.path("lastSeq").isMissingNode()
-            ? null : frame.path("lastSeq").asLong();
-        if (lastSeq != null && lastSeq < 0) {
+            ObjectNode frame = StrictWsFrame.object(JSON, message.getPayload());
+            StrictWsFrame.requireExactFields(frame, "type", "lastSeq");
+            if (!"log.subscribe".equals(StrictWsFrame.requireText(frame, "type"))) {
+                reject(bound);
+                return;
+            }
+            lastSeq = StrictWsFrame.requireNullableNonNegativeLong(frame, "lastSeq");
+        } catch (IllegalArgumentException ex) {
             reject(bound);
             return;
         }
@@ -128,7 +122,21 @@ public final class RunLogWebSocketHandler extends TextWebSocketHandler {
         send(bound, replay);
         RunSummary run = runSummaryById.apply(bound.runId);
         if (run != null && RunStateReducerBridge.isTerminal(run.state())) {
+            bound.completeSent = true;
             send(bound, completeFrame(meta.lastAvailableSeq()));
+        }
+    }
+
+    /**
+     * Sends one {@code log.complete} to live subscribers after the run is terminal and the last
+     * persisted window is flushed. Duplicate completions for the same connection are dropped.
+     */
+    public void publishComplete(String runId) {
+        Long lastSeq = logService.windowFor(runId).meta().lastAvailableSeq();
+        for (BoundSession bound : sessions.values()) {
+            if (!bound.runId.equals(runId) || bound.rejected || bound.completeSent) continue;
+            bound.completeSent = true;
+            send(bound, completeFrame(lastSeq));
         }
     }
 

@@ -134,13 +134,31 @@ class TerminalWebSocketTest {
     @Test
     void resizeGenerationIsMonotonicAndDimensionsAreValidated() throws Exception {
         newHandler(session, liveTicket);
-        session.handleText("{\"type\":\"terminal.resize\",\"cols\":100,\"rows\":30}");
-        assertThat(bridge.resizes).containsExactly("100x30");
-        session.handleText("{\"type\":\"terminal.resize\",\"cols\":100,\"rows\":30}");
-        assertThat(bridge.resizes).hasSize(1);
+        session.handleText("{\"type\":\"terminal.resize\",\"cols\":80,\"rows\":24}");
+        session.handleText("{\"type\":\"terminal.resize\",\"cols\":120,\"rows\":40}");
+        assertThat(bridge.resizes).containsExactly("80x24", "120x40");
         session.handleText("{\"type\":\"terminal.resize\",\"cols\":501,\"rows\":30}");
-        assertThat(bridge.resizes).hasSize(1);
+        assertThat(bridge.resizes).hasSize(2);
         assertThat(session.closed).isNull();
+    }
+
+    @Test
+    void controlFramesRejectUnknownFieldsAndNonIntegerBytes() throws Exception {
+        newHandler(session, liveTicket);
+        session.handleText("{\"type\":\"terminal.close\",\"force\":true}");
+        assertThat(session.closed.getCode()).isEqualTo(4409);
+
+        CapturingSession credit = new CapturingSession();
+        String creditTicket = sessionService.reserve(80, 24, ALICE, PROJECT, RUN).ticket();
+        newHandler(credit, creditTicket);
+        credit.handleText("{\"type\":\"terminal.output.credit\",\"bytes\":\"256\"}");
+        assertThat(credit.closed.getCode()).isEqualTo(4409);
+
+        CapturingSession ack = new CapturingSession();
+        String ackTicket = sessionService.reserve(80, 24, ALICE, PROJECT, RUN).ticket();
+        newHandler(ack, ackTicket);
+        ack.handleText("{\"type\":\"terminal.output.ack\",\"bytes\":1,\"extra\":true}");
+        assertThat(ack.closed.getCode()).isEqualTo(4409);
     }
 
     @Test
@@ -170,6 +188,24 @@ class TerminalWebSocketTest {
         int before = session.text.size();
         session.handleBinary(new BinaryMessage(maxFrame));
         assertThat(session.text.size()).isEqualTo(before);
+    }
+
+    @Test
+    void pausedInputResumesWhenThePtyBecomesWritable() throws Exception {
+        newHandler(session, liveTicket);
+        bridge.acceptWrites = false;
+        byte[] maxFrame = new byte[16 * 1024];
+        for (int i = 0; i < 4; i++) {
+            session.handleBinary(new BinaryMessage(maxFrame));
+        }
+        JsonNode pause = JSON.readTree(session.text.get(session.text.size() - 1));
+        assertThat(pause.get("type").asText()).isEqualTo("terminal.input.pause");
+
+        bridge.releaseWrites();
+        JsonNode resume = JSON.readTree(session.text.get(session.text.size() - 1));
+        assertThat(resume.get("type").asText()).isEqualTo("terminal.input.resume");
+        assertThat(bridge.written).hasSize(4);
+        assertThat(session.closed).isNull();
     }
 
     @Test
@@ -298,6 +334,11 @@ class TerminalWebSocketTest {
                 @Override public void resize(int resizeCols, int resizeRows) { resizes.add(resizeCols + "x" + resizeRows); }
                 @Override public void close() { closed = true; }
             };
+        }
+
+        void releaseWrites() {
+            acceptWrites = true;
+            if (listener != null) listener.onWritable();
         }
     }
 

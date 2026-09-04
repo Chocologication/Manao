@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { assertOperatorEvidence, resolveFaultEvidence, type FaultAction } from './stage6-operator';
 
 /**
  * Stage 6A: fault-injection and isolation checks over the real backend. Reuses the
@@ -203,61 +204,66 @@ test('parallel projects keep isolated dynamic bridges', async ({ page }) => {
 
 test('fault phases: backend restart / tunnel loss / bridge loss', async ({ page }) => {
   test.setTimeout(300_000);
-  const FAULT = process.env.STAGE6_FAULT;
+  const FAULT = process.env.STAGE6_FAULT as FaultAction | undefined;
   if (FAULT === undefined || FAULT === '') {
     test.skip(true, 'STAGE6_FAULT not set; operator-injected fault phase');
+    return;
+  }
+  if (FAULT !== 'backend-restart' && FAULT !== 'tunnel-loss' && FAULT !== 'bridge-loss') {
+    test.skip(true, 'unknown STAGE6_FAULT value: ' + FAULT);
     return;
   }
 
   await login(page, ALICE);
   const token = await apiToken(page, ALICE);
+  const project = await createProject(page, 'stage6-fault-' + FAULT + '-' + Date.now(), token);
+  expect(await awaitReady(page, project.id, token), 'fault injection requires a READY project first').toBe('READY');
+  const baseline = await page.request.get('/api/v1/projects/' + project.id + '/files/tree?path=', { headers: authHeaders(token) });
+  expect(baseline.status(), 'READY project must serve the workspace tree before injection').toBe(200);
+
+  const evidence = resolveFaultEvidence(FAULT, project.id);
+  assertOperatorEvidence(evidence, FAULT);
 
   if (FAULT === 'backend-restart') {
-    const project = await createProject(page, 'stage6-fault-restart-' + Date.now(), token);
-    expect(project.state, 'a freshly created project starts CREATING').toBe('CREATING');
-    let state = project.state;
-    for (let i = 0; i < 60 && state === 'CREATING'; i++) {
-      await new Promise((resolve) => setTimeout(resolve, 2000));
-      const fetched = await page.request.get('/api/v1/projects/' + project.id, { headers: authHeaders(token) });
-      state = (await fetched.json()).state as string;
-    }
-    expect(['READY', 'FAILED']).toContain(state);
-    const detail = await page.request.get('/api/v1/projects/' + project.id, { headers: authHeaders(token) });
-    const detailText = (await detail.text()).toLowerCase();
+    const after = await page.request.get('/api/v1/projects/' + project.id, { headers: authHeaders(token) });
+    expect(after.status(), 'project must remain readable after backend restart').toBe(200);
+    const afterBody = (await after.json()) as { state: string };
+    expect(afterBody.state, 'READY project must survive backend restart').toBe('READY');
+    const detailText = JSON.stringify(afterBody).toLowerCase();
     for (const forbidden of ['kubeconfig', 'token', 'password']) {
       expect(detailText, 'failure reason must be desensitized').not.toContain(forbidden);
     }
+    expect(evidence.proof, 'operator must prove the backend process actually restarted').toBeTruthy();
     return;
   }
 
   if (FAULT === 'tunnel-loss') {
-    const created = await page.request.post('/api/v1/projects', {
-      data: { name: 'stage6-fault-tunnel-' + Date.now() },
+    const tree = (await (await page.request.get('/api/v1/projects/' + project.id + '/files/tree?path=', { headers: authHeaders(token) })).json())
+      .workspaceRevision as string;
+    const started = await page.request.post('/api/v1/projects/' + project.id + '/runs', {
+      data: { expectedWorkspaceRevision: tree },
       headers: authHeaders(token),
     });
-    expect(created.status(), 'tunnel loss must fail creation with a dependency error').toBeGreaterThanOrEqual(400);
-    expect(created.status()).toBeLessThan(600);
-    const body = await created.text();
-    for (const marker of ['Exception', 'Caused by', '	at ', 'at com.manao']) {
-      expect(body, 'dependency error must not leak a stack trace').not.toContain(marker);
+    expect(started.status(), 'tunnel loss must fail Start with a dependency error').toBe(503);
+    const body = (await started.json()) as { code: string; message: string };
+    expect(body.code).toBe('INTERNAL_ERROR');
+    expect(body.message).toBe('Run could not be started');
+    const raw = JSON.stringify(body);
+    for (const marker of ['Exception', 'Caused by', '\tat ', 'at com.manao']) {
+      expect(raw, 'dependency error must not leak a stack trace').not.toContain(marker);
     }
     return;
   }
 
-  if (FAULT === 'bridge-loss') {
-    const project = await createProject(page, 'stage6-fault-bridge-' + Date.now(), token);
-    await awaitReady(page, project.id, token);
-    const fileRes = await page.request.get('/api/v1/projects/' + project.id + '/files/tree?path=', { headers: authHeaders(token) });
-    expect(fileRes.status(), 'bridge loss must fail file access with a dependency error').toBeGreaterThanOrEqual(400);
-    expect(fileRes.status()).toBeLessThan(600);
-    const body = await fileRes.text();
-    for (const marker of ['Exception', 'Caused by', '	at ', 'at com.manao']) {
-      expect(body, 'dependency error must not leak a stack trace').not.toContain(marker);
-    }
-    await page.goto('/');
-    await expect(page.getByLabel(/Username|用户名/i), 'UI must remain usable after the fault').toBeVisible();
-    return;
+  const fileRes = await page.request.get('/api/v1/projects/' + project.id + '/files/tree?path=', { headers: authHeaders(token) });
+  expect(fileRes.status(), 'bridge loss must fail file access with a dependency error').toBe(503);
+  const body = (await fileRes.json()) as { code: string; message: string };
+  expect(body.code).toBe('INTERNAL_ERROR');
+  expect(body.message).toBe('Workspace is temporarily unavailable');
+  const raw = JSON.stringify(body);
+  for (const marker of ['Exception', 'Caused by', '\tat ', 'at com.manao']) {
+    expect(raw, 'dependency error must not leak a stack trace').not.toContain(marker);
   }
-
-  test.skip(true, 'unknown STAGE6_FAULT value: ' + FAULT);
+  await page.goto('/');
+  await expect(page.getByLabel(/Username|用户名/i), 'UI must remain usable after the fault').toBeVisible();
 });

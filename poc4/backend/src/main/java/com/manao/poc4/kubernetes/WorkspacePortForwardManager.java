@@ -3,8 +3,10 @@ package com.manao.poc4.kubernetes;
 import java.io.IOException;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
+import java.net.ServerSocket;
 import java.net.Socket;
 import java.net.URI;
+import java.time.Duration;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Pattern;
@@ -17,6 +19,8 @@ import java.util.regex.Pattern;
  */
 public final class WorkspacePortForwardManager {
     private static final Pattern PROJECT_ID = Pattern.compile("[A-Za-z0-9-]+");
+    static final Duration DEFAULT_LISTENER_READY_TIMEOUT = Duration.ofSeconds(15);
+    static final long DEFAULT_POLL_MILLIS = 20L;
 
     public interface PortForwardProcess {
         /** Process handle still alive; does not guarantee the forwarded port accepts connections. */
@@ -50,6 +54,8 @@ public final class WorkspacePortForwardManager {
     private final int portEnd;
     private final int servicePort;
     private final PortForwardProcessFactory factory;
+    private final Duration listenerReadyTimeout;
+    private final long pollMillis;
     private final Map<String, Bridge> bridges = new ConcurrentHashMap<>();
 
     public WorkspacePortForwardManager(String namespace, int portStart, int portEnd,
@@ -59,11 +65,20 @@ public final class WorkspacePortForwardManager {
 
     public WorkspacePortForwardManager(String namespace, int portStart, int portEnd, int servicePort,
                                        PortForwardProcessFactory factory) {
+        this(namespace, portStart, portEnd, servicePort, factory,
+            DEFAULT_LISTENER_READY_TIMEOUT, DEFAULT_POLL_MILLIS);
+    }
+
+    WorkspacePortForwardManager(String namespace, int portStart, int portEnd, int servicePort,
+                                PortForwardProcessFactory factory, Duration listenerReadyTimeout,
+                                long pollMillis) {
         this.namespace = namespace;
         this.portStart = portStart;
         this.portEnd = portEnd;
         this.servicePort = servicePort;
         this.factory = factory;
+        this.listenerReadyTimeout = listenerReadyTimeout == null ? DEFAULT_LISTENER_READY_TIMEOUT : listenerReadyTimeout;
+        this.pollMillis = pollMillis <= 0 ? DEFAULT_POLL_MILLIS : pollMillis;
     }
 
     /**
@@ -73,6 +88,17 @@ public final class WorkspacePortForwardManager {
     public static boolean isPortListening(int port) {
         try (Socket socket = new Socket()) {
             socket.connect(new InetSocketAddress(InetAddress.getLoopbackAddress(), port), 250);
+            return true;
+        } catch (IOException ex) {
+            return false;
+        }
+    }
+
+    /** True when this JVM can bind the loopback port, so it is not occupied by another process. */
+    public static boolean isPortBindable(int port) {
+        try (ServerSocket socket = new ServerSocket()) {
+            socket.setReuseAddress(false);
+            socket.bind(new InetSocketAddress(InetAddress.getLoopbackAddress(), port));
             return true;
         } catch (IOException ex) {
             return false;
@@ -89,23 +115,51 @@ public final class WorkspacePortForwardManager {
         if (existing != null) {
             if (factory != null && (!existing.process.isAlive() || !existing.process.isListening())) {
                 existing.process.kill();
-                existing.process = factory.start(namespace, existing.serviceName, servicePort, existing.localPort);
+                existing.process = startReady(existing.serviceName, existing.localPort);
             }
             return existing.localPort;
         }
-        // Supervised mode (factory == null): a deterministic port derived from the project id,
+        // Supervised mode (factory == null): a unique port derived from the project id,
         // served by an operator-managed bridge process outside this JVM.
-        int port = factory == null ? deterministicPort(projectId) : findFreePort();
+        int port = factory == null ? findUniqueSupervisedPort(projectId) : findFreePort();
         String serviceName = WorkspaceResourceFactory.serviceName(projectId);
-        PortForwardProcess process = factory == null ? supervisedProcess(port) : factory.start(namespace, serviceName, servicePort, port);
+        PortForwardProcess process = factory == null
+            ? supervisedProcess(port)
+            : startReady(serviceName, port);
         Bridge bridge = new Bridge(serviceName, port, process);
         bridges.put(projectId, bridge);
         return port;
     }
 
+    private PortForwardProcess startReady(String serviceName, int localPort) {
+        PortForwardProcess process = factory.start(namespace, serviceName, servicePort, localPort);
+        long deadline = System.nanoTime() + listenerReadyTimeout.toNanos();
+        while (System.nanoTime() < deadline) {
+            if (process.isListening()) return process;
+            if (!process.isAlive()) break;
+            sleepQuietly(pollMillis);
+        }
+        process.kill();
+        throw new IllegalStateException("workspace bridge listener did not become ready");
+    }
+
     private int deterministicPort(String projectId) {
         int span = portEnd - portStart + 1;
         return portStart + Math.floorMod(projectId.hashCode(), span);
+    }
+
+    /**
+     * Supervised mode must still give each project a unique port. Hash collisions probe forward
+     * through the range; the operator is responsible for serving the chosen port.
+     */
+    private int findUniqueSupervisedPort(String projectId) {
+        int span = portEnd - portStart + 1;
+        int start = deterministicPort(projectId);
+        for (int offset = 0; offset < span; offset++) {
+            int candidate = portStart + Math.floorMod((start - portStart) + offset, span);
+            if (!isPortMapped(candidate)) return candidate;
+        }
+        throw new IllegalStateException("workspace bridge port range is exhausted");
     }
 
     /**
@@ -126,7 +180,7 @@ public final class WorkspacePortForwardManager {
         for (Bridge bridge : bridges.values()) {
             if (!bridge.process.isAlive() || !bridge.process.isListening()) {
                 bridge.process.kill();
-                bridge.process = factory.start(namespace, bridge.serviceName, servicePort, bridge.localPort);
+                bridge.process = startReady(bridge.serviceName, bridge.localPort);
             }
         }
     }
@@ -177,11 +231,24 @@ public final class WorkspacePortForwardManager {
 
     private int findFreePort() {
         for (int candidate = portStart; candidate <= portEnd; candidate++) {
-            final int port = candidate;
-            boolean taken = bridges.values().stream().anyMatch(bridge -> bridge.localPort == port);
-            if (!taken) return port;
+            if (isPortMapped(candidate)) continue;
+            if (!isPortBindable(candidate)) continue;
+            return candidate;
         }
         throw new IllegalStateException("workspace bridge port range is exhausted");
+    }
+
+    private boolean isPortMapped(int port) {
+        return bridges.values().stream().anyMatch(bridge -> bridge.localPort == port);
+    }
+
+    private static void sleepQuietly(long millis) {
+        try {
+            Thread.sleep(millis);
+        } catch (InterruptedException ex) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("workspace bridge listener wait interrupted");
+        }
     }
 
     private static void requireValidProjectId(String projectId) {

@@ -10,6 +10,9 @@ public interface PtyBridge {
         void onOutput(byte[] bytes);
 
         void onExit(Integer exitCode);
+
+        /** Downstream stdin can accept another write; the handler must retry queued input. */
+        default void onWritable() { }
     }
 
     interface PtyHandle {
