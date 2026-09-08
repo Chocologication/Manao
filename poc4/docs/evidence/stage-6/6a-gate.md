@@ -149,6 +149,20 @@ MySQL `manao_poc4.project` 显示 Alice、Bob 各有 3 条历史
 
 这些问题应在下一轮修复中分别增加失败回归测试，并在真实浏览器/集群复跑后刷新本 Gate。
 
+## 七、本轮修复与真实联调记录（2026-09-05）
+
+本轮在同一 Stage 6 工作树补齐了上一轮审查发现的三个代码缺口，并先以回归测试锁定：
+
+- `application-local-cluster.yml` 明确配置 `server.port: 18080`，使启动脚本、Vite proxy 与 Spring Boot 使用同一入口；
+- supervised bridge 的确定性端口选择同时检查内部映射和真实 loopback OS bind 可用性；
+- 未知 terminal 控制帧返回完整的 `terminal.error`：`code=PROTOCOL_ERROR`、`retryable=false`，随后按协议关闭。
+
+测试先行结果：目标回归组 `ConfigurationTest,WorkspacePortForwardManagerTest,TerminalWebSocketTest` 为 **41 tests, 0 failures, 0 errors, 0 skipped**。
+
+真实启动结果：使用仓库外的临时 6A 环境文件启动后，日志确认 MySQL 连接成功、Flyway 7 个迁移已验证且 schema 为最新、Spring Boot 监听 `127.0.0.1:18080`。首次启动因临时 kubeconfig 中 ServiceAccount token 过期/无效而由 fail-closed preflight 退出；随后以管理员 kubeconfig 为 `manao-6a-local` 重新签发 24 小时 token，独立验证 `kubectl version` 为集群 `v1.31.13` 且 `auth can-i get pods` 为 `yes`。
+
+刷新 token 后重新启动，Spring Boot 在 `18080` 保持运行，说明本地启动时的 kubeconfig 结构、kubectl `/version`、Fabric8 `/version` 与 26 项 RBAC preflight 已越过启动门；本轮仍未重新执行完整浏览器 E2E，因此项目创建、RWX workspace、日志和 PTY 全链路没有形成 PASS 证据。该剩余状态记为 **SKIPPED/FAILED（浏览器/集群证据未闭环）**，不能据此宣称 6A Gate PASS。
+
 ## 七、结论
 
 **GATE = FAILED — 未进入 6B。**
@@ -177,3 +191,22 @@ pnpm --dir poc4/frontend test:e2e:stage6:faults
 ```
 
 不要写 `STAGE6_GATE=1 pnpm ...`：那不是可靠的 PowerShell 环境变量语法。
+
+## 八、本轮修复与本地合同验证（2026-09-08）
+
+本轮针对上一轮真实 provisioning 在 workspace-agent 首条模板 operation 失败且原始错误不可见的问题完成了代码修复。修复内容包括：
+
+- 修正 workspace-agent HTTP 合同：POST 使用 `application/json`，rename 发送 `nextPath`，DELETE 使用 `/agent/v1/entries` 路径，receipt 校验使用 agent 返回的已持久化 receipt 摘要；
+- 将空 workspace 模板初始化改为父目录先行，并对每个模板文件执行 `CREATE` 后再执行包含 UTF-8 内容的 `SAVE`；
+- fail-closed 日志增加脱敏的 `phase`、HTTP 状态和固定 allowlist 错误码，不记录 agent 原始消息、路径、文件内容、capability 或凭据；
+- 修正 supervised bridge：外部操作者已占用的确定性端口可被复用；仅由 JVM 托管的 bridge 继续检查真实 OS 端口占用，并补充后端重启复用测试。
+
+本轮新鲜验证结果：
+
+- backend 全量 Maven：`248 tests, 0 failures, 0 errors, 1 skipped`，使用随机 disposable MySQL schema，测试结束后已删除；
+- workspace-agent 全量 Maven：`24 tests, 0 failures, 0 errors`；
+- frontend：`pnpm test` 为 `1124 tests passed`，`pnpm typecheck` 通过；
+- 独立真实 HTTP/filter/controller/filesystem 合同检查通过：模板 21 次提交操作、5 个非空 UTF-8 文件、rename/delete、receipt reconciliation、未签名请求 401、错误 receipt fail-closed；
+- `git diff --check` 通过，新增和修改文件已检查为 UTF-8 无 BOM。
+
+仍未形成 6A PASS：当前只读 Stage 6 kubeconfig 在 2026-09-08 的预检返回 `Unauthorized`，因此没有启动前后端或执行真实浏览器/Kubernetes happy path、压力和故障矩阵。6A 继续记为 **FAILED**，6B 不得开始。

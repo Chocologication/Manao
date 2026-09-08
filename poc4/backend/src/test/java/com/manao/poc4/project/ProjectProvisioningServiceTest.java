@@ -31,6 +31,8 @@ class ProjectProvisioningServiceTest {
         store.projects.put(PROJECT, new WorkspaceStore.ProjectRecord(PROJECT, "alice-id", "new", "CREATING", 0, null,
             java.time.Instant.parse("2026-08-29T00:00:00Z")));
         agent = new StubAgent();
+        agent.meta = new com.manao.poc4.workspace.WorkspaceAgent.FileMeta("", "", 0L, "text/plain", "UTF-8",
+            "plaintext", "MONACO_TEXT", null, "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
         gateway = new FakeKubernetesGateway();
         factory = new RecordingFactory();
         WorkspaceOperationService operations = new WorkspaceOperationService(store, agent);
@@ -47,10 +49,36 @@ class ProjectProvisioningServiceTest {
         assertThat(factory.calls).containsExactly("pvc", "initializer", "workspace-pod", "service");
         assertThat(gateway.created).contains("pvc:" + PROJECT, "init:" + PROJECT, "pod:" + PROJECT, "svc:" + PROJECT);
         assertThat(store.projects.get(PROJECT).state()).isEqualTo("READY");
-        // Template writes: two leaf directories + five template files.
-        assertThat(store.committed).hasSize(7);
-        assertThat(store.revision.get(PROJECT)).isEqualTo(7L);
+        // Eleven parent-first directories + CREATE and SAVE for each of five template files.
+        assertThat(store.committed).hasSize(21);
+        assertThat(store.revision.get(PROJECT)).isEqualTo(21L);
         assertThat(store.failures).isEmpty();
+    }
+
+    @Test
+    void savesEveryTemplateFileAfterCreatingItAndBeforeMarkingReady() {
+        var commands = new ArrayList<com.manao.poc4.workspace.WorkspaceAgent.Command>();
+        agent.mutator = command -> {
+            assertThat(store.projects.get(PROJECT).state()).isEqualTo("CREATING");
+            commands.add(command);
+            if ("CREATE".equals(command.type()) && "file".equals(command.kind())) {
+                agent.meta = new com.manao.poc4.workspace.WorkspaceAgent.FileMeta(command.path(), command.path(),
+                    0L, "text/plain", "UTF-8", "plaintext", "MONACO_TEXT", null,
+                    "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
+            }
+            return new com.manao.poc4.workspace.WorkspaceAgent.MutationResult(command.operationId(), command.path(),
+                command.expectedBeforeSha256(), command.expectedAfterSha256(),
+                ".manao/receipts/" + command.operationId() + ".json", command.expectedReceiptSha256());
+        };
+        service.provision(PROJECT);
+        new WorkspaceTemplate().files().forEach((path, content) -> {
+            var writes = commands.stream().filter(command -> path.equals(command.path())).toList();
+            assertThat(writes).extracting(com.manao.poc4.workspace.WorkspaceAgent.Command::type)
+                .containsExactly("CREATE", "SAVE");
+            assertThat(writes.get(0).content()).isEmpty();
+            assertThat(writes.get(1).content()).isEqualTo(content.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        });
+        assertThat(store.projects.get(PROJECT).state()).isEqualTo("READY");
     }
 
     @Test

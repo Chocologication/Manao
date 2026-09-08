@@ -48,7 +48,12 @@ public class LocalClusterConfig {
     SshApiTunnelHealth.CommandRunner kubectlCommandRunner() {
         return command -> {
             try {
-                Process process = new ProcessBuilder(command).redirectErrorStream(false).start();
+                List<String> resolvedCommand = new java.util.ArrayList<>(command);
+                if (!resolvedCommand.isEmpty() && "kubectl".equalsIgnoreCase(resolvedCommand.get(0))) {
+                    String kubectl = System.getenv().getOrDefault("MANAO_KUBECTL", "kubectl");
+                    resolvedCommand.set(0, kubectl);
+                }
+                Process process = new ProcessBuilder(resolvedCommand).redirectErrorStream(false).start();
                 boolean finished = process.waitFor(30, TimeUnit.SECONDS);
                 if (!finished) {
                     process.destroyForcibly();

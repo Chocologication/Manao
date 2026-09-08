@@ -6,6 +6,8 @@ import java.security.MessageDigest;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Two-phase workspace write protocol: persist a PENDING operation, drive the agent's atomic write
@@ -14,6 +16,7 @@ import java.util.UUID;
  * WORKSPACE_RECONCILIATION_REQUIRED and blocks further writes and runs.
  */
 public final class WorkspaceOperationService {
+    private static final Logger LOG = LoggerFactory.getLogger(WorkspaceOperationService.class);
     public static final String RECEIPT_PATH_PREFIX = WorkspacePathPolicy.INTERNAL_DIRECTORY + "/receipts/";
 
     /** Error codes that prove the agent rejected the request before any write happened. */
@@ -50,10 +53,12 @@ public final class WorkspaceOperationService {
                     409, "The workspace changed; reload and retry.");
             }
         }
+        String phase = "MUTATE";
         try {
             WorkspaceAgent.MutationResult result = agent.mutate(projectId, new WorkspaceAgent.Command(
                 type, path, nextPath == null ? "" : nextPath, kind, operationId, content,
                 digests.before(), digests.after(), receiptJson, receiptSha256));
+            phase = "VERIFY_RESULT";
             verifyResult(operation, result);
         } catch (WorkspaceAgentException ex) {
             if (isDefinite(ex)) {
@@ -66,12 +71,12 @@ public final class WorkspaceOperationService {
                     throw new ApiException(browseCode(ex.code()), httpStatus(ex.code()), safeMessage(ex.code()));
                 }
             }
-            throw failClosed(projectId);
+            throw failClosed(projectId, operationId, phase, ex);
         } catch (RuntimeException ex) {
-            throw failClosed(projectId);
+            throw failClosed(projectId, operationId, phase, ex);
         }
         if (!store.commitOperation(operationId, projectId, expectedRevision)) {
-            throw failClosed(projectId);
+            throw failClosed(projectId, operationId, "COMMIT", null);
         }
         return expectedRevision + 1;
     }
@@ -191,8 +196,31 @@ public final class WorkspaceOperationService {
     }
 
     private ApiException failClosed(String projectId) {
+        return failClosed(projectId, null, "RECONCILIATION", null);
+    }
+
+    private ApiException failClosed(String projectId, String operationId, String phase, RuntimeException failure) {
+        String status = "none";
+        String code = "none";
+        if (failure instanceof WorkspaceAgentException ex) {
+            status = ex.status() >= 100 && ex.status() <= 599 ? Integer.toString(ex.status()) : "UNKNOWN";
+            code = safeDiagnosticCode(ex.code());
+        }
+        // Never log the agent body, capability, file content, path, or arbitrary exception message.
+        LOG.warn("workspace operation failed closed: projectId={} operationId={} phase={} httpStatus={} agentCode={}",
+            projectId, operationId == null ? "none" : operationId, phase, status, code);
         store.markProjectFailed(projectId, "WORKSPACE_RECONCILIATION_REQUIRED");
         return new ApiException("PROJECT_LOCKED", 409, "Project is locked");
+    }
+
+    private String safeDiagnosticCode(String code) {
+        if (code == null) return "UNKNOWN";
+        return switch (code) {
+            case "INVALID_PATH", "VALIDATION_ERROR", "FILE_TOO_LARGE", "BINARY_FILE", "UNSUPPORTED_ENCODING",
+                 "ENTRY_NOT_FOUND", "ENTRY_ALREADY_EXISTS", "DIRECTORY_NOT_EMPTY", "IO_ERROR",
+                 "CAPABILITY_REJECTED", "OPERATION_CONFLICT" -> code;
+            default -> "UNKNOWN";
+        };
     }
 
     private boolean isDefinite(WorkspaceAgentException ex) {

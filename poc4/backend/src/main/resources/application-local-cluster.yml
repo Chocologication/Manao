@@ -6,6 +6,8 @@ spring:
     url: ${MANAO_DB_URL:jdbc:mysql://127.0.0.1:3306/manao_poc4}
     username: ${MANAO_DB_USERNAME:manao}
     password: ${MANAO_DB_PASSWORD:}
+server:
+  port: 18080
 manao:
   poc4:
     backend:

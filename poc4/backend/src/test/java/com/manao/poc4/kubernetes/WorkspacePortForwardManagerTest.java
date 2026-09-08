@@ -215,6 +215,21 @@ class WorkspacePortForwardManagerTest {
     }
 
     @Test
+    void supervisedModeReusesTheExternallyOwnedListenerAcrossBackendRestart() throws Exception {
+        try (ServerSocket externalBridge = new ServerSocket(0, 1, InetAddress.getLoopbackAddress())) {
+            int port = externalBridge.getLocalPort();
+            WorkspacePortForwardManager firstBackend = new WorkspacePortForwardManager(
+                "manao-test", port, port, null);
+            assertThat(firstBackend.allocate("prj-supervised")).isEqualTo(port);
+            firstBackend.shutdown();
+            assertThat(externalBridge.isClosed()).isFalse();
+            WorkspacePortForwardManager restartedBackend = new WorkspacePortForwardManager(
+                "manao-test", port, port, null);
+            assertThat(restartedBackend.allocate("prj-supervised")).isEqualTo(port);
+        }
+    }
+
+    @Test
     void supervisedModeGivesCollidingProjectIdsDistinctPorts() {
         int span = 100;
         String first = "prj-0";

@@ -17,6 +17,9 @@ class ConfigurationTest {
     Path temporaryDirectory;
 
     private final ApplicationContextRunner contextRunner = new ApplicationContextRunner()
+        // Profile-default assertions must not inherit the operator or disposable MySQL test URL.
+        .withInitializer(context -> context.getEnvironment().getPropertySources().remove(
+            org.springframework.core.env.StandardEnvironment.SYSTEM_ENVIRONMENT_PROPERTY_SOURCE_NAME))
         .withInitializer(new ConfigDataApplicationContextInitializer())
         .withUserConfiguration(Poc4BackendApplication.class)
         .withPropertyValues(
@@ -49,6 +52,12 @@ class ConfigurationTest {
                 assertThat(clusterProperties.kubernetes().inCluster()).isTrue();
                 assertThat(clusterProperties.kubernetes().serviceAccount()).isTrue();
             });
+    }
+
+    @Test
+    void localClusterUsesTheBrowserBackendPort() {
+        localContextRunner().run(context ->
+            assertThat(context.getEnvironment().getProperty("server.port")).isEqualTo("18080"));
     }
 
     @Test

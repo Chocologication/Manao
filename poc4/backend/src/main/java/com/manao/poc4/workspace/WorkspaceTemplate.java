@@ -11,9 +11,11 @@ import org.springframework.util.FileCopyUtils;
 
 /** Loads the fixed Java 17/Maven template written into every new project via the workspace API. */
 public final class WorkspaceTemplate {
-    /** Leaf directories created with mkdir -p semantics, in deterministic order. */
+    /** CREATE requires an existing parent; bootstrap an empty workspace in parent-first order. */
     private static final List<String> DIRECTORIES = List.of(
-        "src/main/java/com/example/app", "src/test/java/com/example/app");
+        "src", "src/main", "src/main/java", "src/main/java/com", "src/main/java/com/example",
+        "src/main/java/com/example/app", "src/test", "src/test/java", "src/test/java/com",
+        "src/test/java/com/example", "src/test/java/com/example/app");
 
     private static final Map<String, String> FILES = new LinkedHashMap<>();
 

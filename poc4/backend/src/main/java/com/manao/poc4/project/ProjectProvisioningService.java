@@ -132,7 +132,8 @@ public final class ProjectProvisioningService {
             revision = workspace.applyInternal(projectId, "CREATE", directory, null, "directory", new byte[0], revision);
         }
         for (Map.Entry<String, String> file : template.files().entrySet()) {
-            revision = workspace.applyInternal(projectId, "CREATE", file.getKey(), null, "file",
+            revision = workspace.applyInternal(projectId, "CREATE", file.getKey(), null, "file", new byte[0], revision);
+            revision = workspace.applyInternal(projectId, "SAVE", file.getKey(), null, null,
                 file.getValue().getBytes(StandardCharsets.UTF_8), revision);
         }
     }

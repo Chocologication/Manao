@@ -84,7 +84,7 @@ public final class WorkspaceApiClient implements WorkspaceAgent {
             case "CREATE", "RENAME" -> mutationFrom(sendJson(projectId, "POST",
                 command.type().equals("CREATE") ? "/agent/v1/entries" : "/agent/v1/entries/rename",
                 body(command).getBytes(StandardCharsets.UTF_8)));
-            case "DELETE" -> mutationFrom(sendJson(projectId, "DELETE", deleteQuery(command), null));
+            case "DELETE" -> mutationFrom(sendJson(projectId, "DELETE", "/agent/v1/entries?" + deleteQuery(command), null));
             default -> throw new WorkspaceAgentException(422, "VALIDATION_ERROR", "unsupported mutation");
         };
     }
@@ -101,7 +101,7 @@ public final class WorkspaceApiClient implements WorkspaceAgent {
             JsonNode node = JSON.readTree(new String(body, StandardCharsets.UTF_8));
             return Optional.of(new FetchedReceipt(text(node, "operationId"), text(node, "type"), text(node, "path"),
                 text(node, "nextPath"), text(node, "beforeSha256"), text(node, "afterSha256"),
-                WorkspaceCapabilitySigner.sha256Hex(body)));
+                text(node, "receiptSha256")));
         } catch (Exception ex) {
             throw new WorkspaceAgentException(503, "IO_ERROR", "unreadable receipt");
         }
@@ -120,7 +120,7 @@ public final class WorkspaceApiClient implements WorkspaceAgent {
         byte[] payload = body == null ? new byte[0] : body;
         HttpRequest.Builder builder = requestBuilder(projectId, method, pathAndQuery, payload);
         if ("PUT".equals(method) || "POST".equals(method)) {
-            builder.header("Content-Type", "application/octet-stream")
+            builder.header("Content-Type", "POST".equals(method) ? "application/json" : "application/octet-stream")
                 .method(method, HttpRequest.BodyPublishers.ofByteArray(payload));
         } else {
             builder.method(method, HttpRequest.BodyPublishers.noBody());
@@ -150,6 +150,7 @@ public final class WorkspaceApiClient implements WorkspaceAgent {
     private String body(Command command) {
         return "{\"kind\":" + JSON.valueToTree(command.kind())
             + ",\"path\":" + JSON.valueToTree(command.path())
+            + ",\"nextPath\":" + JSON.valueToTree(command.nextPath())
             + ",\"operationId\":" + JSON.valueToTree(command.operationId())
             + ",\"expectedBeforeSha256\":" + JSON.valueToTree(command.expectedBeforeSha256())
             + ",\"expectedAfterSha256\":" + JSON.valueToTree(command.expectedAfterSha256())

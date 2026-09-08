@@ -157,6 +157,7 @@ public final class WorkspacePortForwardManager {
         int start = deterministicPort(projectId);
         for (int offset = 0; offset < span; offset++) {
             int candidate = portStart + Math.floorMod((start - portStart) + offset, span);
+            // An external supervisor may already own this listener; occupancy must not move its endpoint.
             if (!isPortMapped(candidate)) return candidate;
         }
         throw new IllegalStateException("workspace bridge port range is exhausted");

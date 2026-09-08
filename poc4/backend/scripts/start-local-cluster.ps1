@@ -21,4 +21,4 @@ Get-Content $EnvFile | ForEach-Object {
 }
 
 Write-Host "Starting backend on http://127.0.0.1:18080 with the local-cluster profile..."
-mvn -q -Dspring-boot.run.profiles=local-cluster spring-boot:run
+& mvn.cmd '-q' '-Dspring-boot.run.profiles=local-cluster' 'spring-boot:run'

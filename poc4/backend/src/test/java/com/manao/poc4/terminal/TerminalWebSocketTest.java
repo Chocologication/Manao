@@ -162,6 +162,23 @@ class TerminalWebSocketTest {
     }
 
     @Test
+    void unknownControlFrameReturnsACompleteNonRetryableProtocolError() throws Exception {
+        newHandler(session, liveTicket);
+        session.handleText("{\"type\":\"terminal.unknown\"}");
+        JsonNode error = session.text.stream()
+            .map(raw -> {
+                try { return JSON.readTree(raw); } catch (IOException ex) { throw new AssertionError(ex); }
+            })
+            .filter(frame -> "terminal.error".equals(frame.path("type").asText()))
+            .findFirst()
+            .orElseThrow();
+        assertThat(error.get("type").asText()).isEqualTo("terminal.error");
+        assertThat(error.get("code").asText()).isEqualTo("PROTOCOL_ERROR");
+        assertThat(error.get("retryable").asBoolean()).isFalse();
+        assertThat(session.closed.getCode()).isEqualTo(4409);
+    }
+
+    @Test
     void inputIsWrittenToThePtyAndOversizedFramesFailClosed() throws Exception {
         newHandler(session, liveTicket);
         session.handleBinary(new BinaryMessage("ls\n".getBytes(StandardCharsets.UTF_8)));

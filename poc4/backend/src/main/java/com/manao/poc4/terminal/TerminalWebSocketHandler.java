@@ -223,7 +223,7 @@ public final class TerminalWebSocketHandler extends AbstractWebSocketHandler {
                     StrictWsFrame.requireText(frame, "nonce");
                 }
                 default -> {
-                    sendControl(bound, "terminal.error");
+                    sendProtocolError(bound);
                     settleAndClose(bound, "CLIENT_CLOSED", "CLOSED", null, FLOW_VIOLATION);
                 }
             }
@@ -331,6 +331,14 @@ public final class TerminalWebSocketHandler extends AbstractWebSocketHandler {
             drainInput(bound);
             updatePauseState(bound);
         }
+    }
+
+    private void sendProtocolError(BoundSession bound) {
+        ObjectNode frame = JSON.createObjectNode();
+        frame.put("type", "terminal.error");
+        frame.put("code", "PROTOCOL_ERROR");
+        frame.put("retryable", false);
+        sendText(bound, frame);
     }
 
     private void sendControl(BoundSession bound, String type) {
