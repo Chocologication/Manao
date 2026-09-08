@@ -1,3 +1,4 @@
+import { DEFAULT_PROJECT_LIMIT } from '../contracts/project';
 import type { AuthUser, LoginResponse } from '../contracts/auth';
 import type { ProjectState, ProjectSummary } from '../contracts/project';
 import { clearLargeFileBodyCache, ensureWorkspace, resetWorkspaces } from './fileFixtures';
@@ -5,7 +6,7 @@ import { resetLogTickets } from './runSocket';
 import { bootRunState, resetRunState } from './runState';
 
 const ACCESS_TOKEN_TTL_MS = 15 * 60 * 1000;
-const PROJECT_LIMIT = 3;
+const PROJECT_LIMIT = DEFAULT_PROJECT_LIMIT;
 
 export const ALICE_SEED_PROJECT_ID = 'prj-alice-notebook';
 export const BOB_SEED_PROJECT_ID = 'prj-bob-lab';

@@ -20,7 +20,7 @@ const projectSummary: ProjectSummary = {
   failureReason: null,
 };
 
-const projectList: ProjectListResponse = { items: [projectSummary], limit: 3 };
+const projectList: ProjectListResponse = { items: [projectSummary], limit: 8 };
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {

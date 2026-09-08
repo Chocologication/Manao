@@ -1,3 +1,4 @@
+import { DEFAULT_PROJECT_LIMIT } from '../contracts/project';
 import { http, HttpResponse } from 'msw';
 import type { ApiErrorBody } from '../contracts/api';
 import type { AuthUser, LoginRequest } from '../contracts/auth';
@@ -368,7 +369,7 @@ export const handlers = [
     }
     return HttpResponse.json({
       items: listOwnedProjectSummaries(auth.user.id),
-      limit: 3,
+      limit: DEFAULT_PROJECT_LIMIT,
     });
   }),
 

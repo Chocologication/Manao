@@ -59,13 +59,12 @@ function readyProject(overrides: Partial<ProjectSummary>): ProjectSummary {
   };
 }
 
-const THREE_PROJECTS: ProjectListResponse = {
-  limit: 3,
-  items: [
-    readyProject({ id: 'prj-one', name: 'One' }),
-    readyProject({ id: 'prj-two', name: 'Two', createdAt: '2026-08-21T00:00:01.000Z' }),
-    readyProject({ id: 'prj-three', name: 'Three', createdAt: '2026-08-21T00:00:02.000Z' }),
-  ],
+const EIGHT_PROJECTS: ProjectListResponse = {
+  limit: 8,
+  items: Array.from({ length: 8 }, (_, index) => readyProject({
+    id: `prj-${index + 1}`,
+    name: `Workspace ${index + 1}`,
+  })),
 };
 
 function queryState<T>(data: T | undefined): { state: { data: T | undefined } } {
@@ -92,7 +91,7 @@ describe('projectKeys and polling', () => {
     expect(projectsRefetchInterval(queryState(undefined))).toBe(false);
     expect(
       projectsRefetchInterval(
-        queryState({ items: [readyProject({ id: 'prj-1' })], limit: 3 }),
+        queryState({ items: [readyProject({ id: 'prj-1' })], limit: 8 }),
       ),
     ).toBe(false);
     expect(
@@ -102,7 +101,7 @@ describe('projectKeys and polling', () => {
             readyProject({ id: 'prj-1' }),
             readyProject({ id: 'prj-2', name: 'Booting', state: 'CREATING' }),
           ],
-          limit: 3,
+          limit: 8,
         }),
       ),
     ).toBe(1000);
@@ -127,7 +126,7 @@ describe('ProjectsPage', () => {
     server.use(
       http.get('/api/v1/projects', async () => {
         await gate;
-        return HttpResponse.json({ items: [], limit: 3 });
+        return HttpResponse.json({ items: [], limit: 8 });
       }),
     );
     await authenticateAsAlice();
@@ -146,7 +145,7 @@ describe('ProjectsPage', () => {
 
   it('shows an empty state and the create form', async () => {
     server.use(
-      http.get('/api/v1/projects', () => HttpResponse.json({ items: [], limit: 3 })),
+      http.get('/api/v1/projects', () => HttpResponse.json({ items: [], limit: 8 })),
     );
     await authenticateAsAlice();
     renderApp();
@@ -205,16 +204,30 @@ describe('ProjectsPage', () => {
     expect(within(card).queryByRole('button', { name: 'Open' })).not.toBeInTheDocument();
   });
 
-  it('disables creation before submit when the list already has 3 projects', async () => {
+  it('allows creating the eighth project while seven are already listed', async () => {
     const user = userEvent.setup();
-    server.use(http.get('/api/v1/projects', () => HttpResponse.json(THREE_PROJECTS)));
+    server.use(http.get('/api/v1/projects', () => HttpResponse.json({
+      ...EIGHT_PROJECTS,
+      items: EIGHT_PROJECTS.items.slice(0, 7),
+    })));
+    await authenticateAsAlice();
+    renderApp();
+    expect(await screen.findByRole('article', { name: 'Workspace 7' })).toBeInTheDocument();
+    await user.type(screen.getByLabelText('Project name'), 'Workspace 8');
+    expect(screen.getByRole('button', { name: /create project/i })).toBeEnabled();
+    expect(screen.queryByText('Project limit reached')).not.toBeInTheDocument();
+  });
+
+  it('disables creation before submit when the list already has 8 projects', async () => {
+    const user = userEvent.setup();
+    server.use(http.get('/api/v1/projects', () => HttpResponse.json(EIGHT_PROJECTS)));
     await authenticateAsAlice();
     renderApp();
 
-    expect(await screen.findByRole('article', { name: 'One' })).toBeInTheDocument();
+    expect(await screen.findByRole('article', { name: 'Workspace 1' })).toBeInTheDocument();
     const submit = screen.getByRole('button', { name: /create project/i });
     expect(submit).toBeDisabled();
-    await user.type(screen.getByLabelText('Project name'), 'Four');
+    await user.type(screen.getByLabelText('Project name'), 'Workspace 9');
     expect(submit).toBeDisabled();
   });
 

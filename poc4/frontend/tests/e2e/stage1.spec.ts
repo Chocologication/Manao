@@ -224,17 +224,17 @@ test('fail- project reaches FAILED and displays the deterministic reason', async
   await expect(card.getByRole('button', { name: 'Open' })).toHaveCount(0);
 });
 
-test('three projects disable creation and a bypassed fourth request returns the limit error', async ({
+test('eight projects disable creation and a bypassed ninth request returns the limit error', async ({
   page,
 }) => {
   const accessToken = await signInAsAliceOnProjects(page);
 
-  await createProject(page, 'Second Workspace');
-  await createProject(page, 'Third Workspace');
+  for (let index = 2; index <= 8; index += 1) {
+    await createProject(page, `Workspace ${index}`);
+    await expect(projectCard(page, `Workspace ${index}`)).toBeVisible();
+  }
 
   await expect(projectCard(page, 'Alice Notebook')).toBeVisible();
-  await expect(projectCard(page, 'Second Workspace')).toBeVisible();
-  await expect(projectCard(page, 'Third Workspace')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Create project' })).toBeDisabled();
   await expect(page.getByLabel('Project name')).toBeDisabled();
   await expect(page.getByText('Project limit reached')).toBeVisible();
@@ -247,7 +247,7 @@ test('three projects disable creation and a bypassed fourth request returns the 
         'Content-Type': 'application/json',
         Authorization: `Bearer ${token}`,
       },
-      body: JSON.stringify({ name: 'Fourth Workspace' }),
+      body: JSON.stringify({ name: 'Ninth Workspace' }),
     });
     return {
       status: response.status,
@@ -258,7 +258,7 @@ test('three projects disable creation and a bypassed fourth request returns the 
   expect(bypassed.status).toBe(409);
   expect(bypassed.body.code).toBe('PROJECT_LIMIT_REACHED');
   expect(bypassed.body.message).toBe('Project limit reached');
-  await expect(projectCard(page, 'Fourth Workspace')).toHaveCount(0);
+  await expect(projectCard(page, 'Ninth Workspace')).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Create project' })).toBeDisabled();
 });
 

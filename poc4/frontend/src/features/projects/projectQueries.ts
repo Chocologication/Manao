@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { createProject, getProject, listProjects } from '../../api/projectApi';
-import type { ProjectListResponse, ProjectSummary } from '../../contracts/project';
+import { DEFAULT_PROJECT_LIMIT, type ProjectListResponse, type ProjectSummary } from '../../contracts/project';
 
 export const projectKeys = {
   all: ['projects'] as const,
@@ -52,7 +52,7 @@ export function useCreateProject() {
     onSuccess: (created) => {
       queryClient.setQueryData<ProjectListResponse>(projectKeys.all, (current) => {
         if (current === undefined) {
-          return { items: [created], limit: 3 };
+          return { items: [created], limit: DEFAULT_PROJECT_LIMIT };
         }
         if (current.items.some((item) => item.id === created.id)) {
           return current;

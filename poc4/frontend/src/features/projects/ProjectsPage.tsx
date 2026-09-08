@@ -1,3 +1,4 @@
+import { DEFAULT_PROJECT_LIMIT } from '../../contracts/project';
 import { LogOut } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { logout } from '../../app/appRuntime';
@@ -42,7 +43,7 @@ export function AppChrome({ title, children }: { title: string; children: ReactN
 export function ProjectsPage() {
   const query = useProjectsQuery();
   const listReady = query.data !== undefined;
-  const limit = query.data?.limit ?? 3;
+  const limit = query.data?.limit ?? DEFAULT_PROJECT_LIMIT;
   const items = query.data?.items ?? [];
   const atLimit = listReady && items.length >= limit;
   const formLocked = !listReady || query.isError;

@@ -210,3 +210,28 @@ pnpm --dir poc4/frontend test:e2e:stage6:faults
 - `git diff --check` 通过，新增和修改文件已检查为 UTF-8 无 BOM。
 
 仍未形成 6A PASS：当前只读 Stage 6 kubeconfig 在 2026-09-08 的预检返回 `Unauthorized`，因此没有启动前后端或执行真实浏览器/Kubernetes happy path、压力和故障矩阵。6A 继续记为 **FAILED**，6B 不得开始。
+## 九、测试数据清理与项目上限调整（2026-09-08）
+
+用户再次运行真实浏览器测试后仍报告 4 failed / 1 passed，随后明确要求先清理残留测试条目，再将每用户项目上限从 3 调整为 8。本轮按该范围执行，未将额度调整视为 provisioning 根因修复。
+
+### 数据清理
+
+- 已核对 `manao_poc4`：Alice 有 3 个 `stage6-*` FAILED 项目，每个项目有 1 条 workspace operation；Bob 无项目；这些项目没有 Run、terminal session、audit 或 log ticket 记录。
+- 使用固定的 3 个 project ID，并校验 owner、名称前缀、FAILED 状态及关联记录数量；事务内删除 3 个项目和 3 条 operation，前后核验其他项目及账号未变化。
+- 删除前备份保存在本机被 Git 忽略的 `poc4/backend/target/cleanup-backups/stage6-residue-20260908-160248.json`。没有提交备份或凭据。
+- 清理后 Alice/Bob 的项目数均为 0；原有 `null-receipt` 诊断项目和所有账号保留。未修改集群资源。
+
+### 上限合同
+
+- 后端 `ProjectLimits.MAX_PROJECTS_PER_OWNER = 8`，API 返回值、业务服务和 JDBC repository 共用该限制；原有 owner 行锁及事务不变。
+- 前端使用 API 返回的数值上限，默认值与 mock 统一为 8；更新缓存、页面测试及 Stage 1 mock E2E 用例。
+- 保留原有计数规则：CREATING、READY、FAILED 均计入项目总数；第 9 个项目返回 409 / PROJECT_LIMIT_REACHED。
+- 本轮不调整 Kubernetes ResourceQuota，不证明集群具备同时承载 8 个项目的容量。
+
+### 新鲜验证与生效条件
+
+- 新增测试先在旧值下失败，随后在随机隔离 MySQL schema 验证第 8 个可创建、第 9 个被拒绝、所有状态计数、owner 隔离及并发最后名额。
+- 后端全量：251 tests、0 failures、0 errors、1 skipped；随机测试 schema 已清理。
+- 前端全量：61 files / 1125 tests passed；`pnpm typecheck` 通过。
+- 没有重新运行真实浏览器 / Kubernetes E2E，也没有重启或中断用户正在运行的前后端。后端需要重启后才能加载新的上限；前端需要刷新以获取新的列表额度。
+- **6A 仍为 FAILED；本轮不能证明此前 4 个浏览器失败用例已修复，不进入 6B。**

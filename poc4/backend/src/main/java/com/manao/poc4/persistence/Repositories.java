@@ -1,5 +1,6 @@
 package com.manao.poc4.persistence;
 
+import com.manao.poc4.project.ProjectLimits;
 import java.sql.Connection;
 import java.sql.SQLException;
 import java.sql.Timestamp;
@@ -88,7 +89,7 @@ public final class Repositories {
                 try (var count = connection.prepareStatement("SELECT COUNT(*) FROM project WHERE owner_id = ?")) {
                     count.setString(1, ownerId);
                     try (var rows = count.executeQuery()) {
-                        if (!rows.next() || rows.getInt(1) >= 3) { connection.rollback(); return false; }
+                        if (!rows.next() || rows.getInt(1) >= ProjectLimits.MAX_PROJECTS_PER_OWNER) { connection.rollback(); return false; }
                     }
                 }
                 insert(id, ownerId, name);

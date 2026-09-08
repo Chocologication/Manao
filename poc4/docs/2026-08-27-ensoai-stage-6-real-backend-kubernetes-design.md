@@ -143,7 +143,7 @@ Spring Boot Actuator 提供 liveness/readiness health groups。Kubernetes 探针
 | 表 | 关键字段 | 约束/用途 |
 |---|---|---|
 | `app_user` | `id`, `username`, `password_hash`, `enabled`, `created_at` | `username` 唯一；不存明文密码 |
-| `project` | `id`, `owner_id`, `name`, `state`, `workspace_revision`, `created_at`, `updated_at`, `failure_reason` | `state` 仅为 `CREATING/READY/FAILED`；每次查询带 `owner_id`；每用户最多 3 个项目；失败原因使用有限枚举，`WORKSPACE_RECONCILIATION_REQUIRED` 不与 state 拼接 |
+| `project` | `id`, `owner_id`, `name`, `state`, `workspace_revision`, `created_at`, `updated_at`, `failure_reason` | `state` 仅为 `CREATING/READY/FAILED`；每次查询带 `owner_id`；每用户最多 8 个项目（2026-09-08 用户调整；所有状态均计入）；失败原因使用有限枚举，`WORKSPACE_RECONCILIATION_REQUIRED` 不与 state 拼接 |
 | `workspace_operation` | `id`, `project_id`, `expected_revision`, `before_sha256`, `after_sha256`, `receipt_path`, `state`, `created_at`, `committed_at` | 文件写入两阶段凭据；`receipt_path` 只能是 agent 项目根下的固定相对路径，禁止绝对路径；`PENDING` 操作阻止新的写入，重启时与 agent receipt 对账 |
 | `run` | `id`, `project_id`, `requested_revision`, `state`, `policy_json`, `job_ref`, `pod_ref`, `started_at`, `finished_at`, `exit_code`, `termination_reason`, `version` | locking state 单项目唯一；保存策略快照 |
 | `run_log_chunk` | `run_id`, `seq`, `text_utf8`, `byte_length`, `created_at` | `(run_id, seq)` 唯一；总窗口不超过 5 MiB |

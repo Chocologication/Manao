@@ -58,13 +58,13 @@ class AtomicTransitionTest {
     }
 
     @Test
-    void projectCreationIsOwnerScopedAndCappedAtThree() {
+    void projectCreationIsOwnerScopedAndCappedAtEight() {
         String userId = UUID.randomUUID().toString();
         repositories.users().insert(userId, "cap-owner-" + userId, "hash");
-        for (int i = 0; i < 3; i++) {
+        for (int i = 0; i < 8; i++) {
             assertThat(repositories.projects().createForOwner(UUID.randomUUID().toString(), userId, "p" + i)).isTrue();
         }
-        assertThat(repositories.projects().createForOwner(UUID.randomUUID().toString(), userId, "p3")).isFalse();
+        assertThat(repositories.projects().createForOwner(UUID.randomUUID().toString(), userId, "p8")).isFalse();
     }
 
     @Test

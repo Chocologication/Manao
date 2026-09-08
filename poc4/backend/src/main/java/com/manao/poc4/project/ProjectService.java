@@ -62,7 +62,7 @@ public final class ProjectService {
                 List<String> owners = jdbc.query("SELECT id FROM app_user WHERE id = ? FOR UPDATE", (rs, row) -> rs.getString(1), ownerId);
                 if (owners.isEmpty()) return false;
                 Integer count = jdbc.queryForObject("SELECT COUNT(*) FROM project WHERE owner_id = ?", Integer.class, ownerId);
-                if (count != null && count >= 3) return false;
+                if (count != null && count >= ProjectLimits.MAX_PROJECTS_PER_OWNER) return false;
                 Instant now = Instant.now();
                 return jdbc.update("INSERT INTO project(id, owner_id, name, state, workspace_revision, failure_reason, created_at, updated_at) VALUES (?, ?, ?, 'CREATING', 0, NULL, ?, ?)",
                     id, ownerId, name, Timestamp.from(now), Timestamp.from(now)) == 1;

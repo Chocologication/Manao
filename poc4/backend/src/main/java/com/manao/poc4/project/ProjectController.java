@@ -36,7 +36,7 @@ public final class ProjectController {
 
     @GetMapping
     public ProjectListResponse list(Authentication authentication) {
-        return new ProjectListResponse(projects.list(authentication.getName()).stream().map(ProjectController::view).toList(), 3);
+        return new ProjectListResponse(projects.list(authentication.getName()).stream().map(ProjectController::view).toList(), ProjectLimits.MAX_PROJECTS_PER_OWNER);
     }
 
     @PostMapping

@@ -345,8 +345,8 @@ describe('MSW project handlers', () => {
     const aliceList = await readJson<ProjectListResponse>(aliceListResponse);
     const bobList = await readJson<ProjectListResponse>(bobListResponse);
 
-    expect(aliceList.limit).toBe(3);
-    expect(bobList.limit).toBe(3);
+    expect(aliceList.limit).toBe(8);
+    expect(bobList.limit).toBe(8);
     expect(aliceList.items.map((item) => item.id)).toEqual([ALICE_SEED_PROJECT_ID]);
     expect(bobList.items.map((item) => item.id)).toEqual([BOB_SEED_PROJECT_ID]);
     expect(aliceList.items.map((item) => item.id)).not.toContain(BOB_SEED_PROJECT_ID);
@@ -424,16 +424,16 @@ describe('MSW project handlers', () => {
     expect(third.failureReason).toBe(MOCK_FAILURE_REASON);
   });
 
-  it('rejects a fourth project with 409 even when the UI is bypassed', async () => {
+  it('allows eight projects and rejects a ninth with 409 even when the UI is bypassed', async () => {
     const alice = await loginOk(ALICE.username, ALICE.password);
-    const second = await createProject(alice.accessToken, 'Two');
-    const third = await createProject(alice.accessToken, 'Three');
-    expect(second.status).toBe(202);
-    expect(third.status).toBe(202);
-
-    const fourth = await createProject(alice.accessToken, 'Four');
-    expect(fourth.status).toBe(409);
-    const body = await readJson<ApiErrorBody>(fourth);
+    // Alice already owns one seeded project.
+    for (let index = 2; index <= 8; index += 1) {
+      const created = await createProject(alice.accessToken, `Workspace ${index}`);
+      expect(created.status).toBe(202);
+    }
+    const ninth = await createProject(alice.accessToken, 'Workspace 9');
+    expect(ninth.status).toBe(409);
+    const body = await readJson<ApiErrorBody>(ninth);
     expect(body.code).toBe('PROJECT_LIMIT_REACHED');
     expect(body.message).toEqual(expect.any(String));
     expect(body.traceId).toEqual(expect.any(String));
