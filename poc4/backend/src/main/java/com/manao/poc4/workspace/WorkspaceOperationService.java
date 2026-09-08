@@ -207,8 +207,10 @@ public final class WorkspaceOperationService {
             code = safeDiagnosticCode(ex.code());
         }
         // Never log the agent body, capability, file content, path, or arbitrary exception message.
-        LOG.warn("workspace operation failed closed: projectId={} operationId={} phase={} httpStatus={} agentCode={}",
-            projectId, operationId == null ? "none" : operationId, phase, status, code);
+        LOG.warn("workspace operation failed closed: projectId={} operationId={} phase={} httpStatus={} agentCode={} transportFailure={}",
+            projectId, operationId == null ? "none" : operationId, phase, status, code,
+            failure instanceof WorkspaceAgentException ex && ex.transportFailure() != null
+                ? ex.transportFailure().name() : "none");
         store.markProjectFailed(projectId, "WORKSPACE_RECONCILIATION_REQUIRED");
         return new ApiException("PROJECT_LOCKED", 409, "Project is locked");
     }

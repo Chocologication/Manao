@@ -70,6 +70,14 @@ class WorkspaceOperationDiagnosticsTest {
         assertSafeDiagnostic("phase=VERIFY_RESULT", "httpStatus=none", "agentCode=none");
     }
 
+    @Test
+    void logsTransportFailureClassificationWithoutExceptionDetails() {
+        agent.mutator = command -> { throw new WorkspaceAgentException(503, "IO_ERROR",
+            "TOP_SECRET token=secret", WorkspaceAgentException.TransportFailure.RESET); };
+        assertFailsClosed();
+        assertSafeDiagnostic("transportFailure=RESET");
+    }
+
     private void assertFailsClosed() {
         assertThatThrownBy(() -> service.apply(PROJECT, "CREATE", "src", null, "directory", new byte[0], 0))
             .isInstanceOfSatisfying(ApiException.class, ex -> {

@@ -5,9 +5,13 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.manao.poc4.workspace.WorkspaceAgent;
 import com.manao.poc4.workspace.WorkspaceAgentException;
 import com.manao.poc4.workspace.WorkspaceCapabilitySigner;
+import java.net.ConnectException;
+import java.net.SocketException;
 import java.net.URI;
 import java.net.URLEncoder;
 import java.net.http.HttpClient;
+import java.net.http.HttpConnectTimeoutException;
+import java.net.http.HttpTimeoutException;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
@@ -32,11 +36,17 @@ public final class WorkspaceApiClient implements WorkspaceAgent {
     private final EndpointResolver resolver;
     private final WorkspaceCapabilitySigner signer;
     private final HttpClient http;
+    private final Duration timeout;
 
     public WorkspaceApiClient(EndpointResolver resolver, WorkspaceCapabilitySigner signer) {
+        this(resolver, signer, TIMEOUT);
+    }
+
+    WorkspaceApiClient(EndpointResolver resolver, WorkspaceCapabilitySigner signer, Duration timeout) {
         this.resolver = resolver;
         this.signer = signer;
-        this.http = HttpClient.newBuilder().connectTimeout(TIMEOUT).build();
+        this.timeout = timeout;
+        this.http = HttpClient.newBuilder().connectTimeout(timeout).build();
     }
 
     /** 6B profile: workspace Service is reachable directly inside the namespace. */
@@ -162,18 +172,33 @@ public final class WorkspaceApiClient implements WorkspaceAgent {
         byte[] payload = body == null ? new byte[0] : body;
         return HttpRequest.newBuilder()
             .uri(resolver.endpoint(projectId).resolve(pathAndQuery))
-            .timeout(TIMEOUT)
+            .timeout(timeout)
             .header("X-Manao-Workspace-Capability", signer.sign(method, pathAndQuery, payload, projectId));
     }
 
     private HttpResponse<byte[]> send(String projectId, HttpRequest request, String method, String pathAndQuery) {
         try {
             return http.send(request, HttpResponse.BodyHandlers.ofByteArray());
-        } catch (Exception ex) {
-            throw new WorkspaceAgentException(503, "IO_ERROR", "workspace API is temporarily unavailable");
+        } catch (InterruptedException ex) {
+            Thread.currentThread().interrupt();
+            throw new WorkspaceAgentException(503, "IO_ERROR", "workspace API is temporarily unavailable",
+                WorkspaceAgentException.TransportFailure.INTERRUPTED);
+        } catch (java.io.IOException ex) {
+            throw new WorkspaceAgentException(503, "IO_ERROR", "workspace API is temporarily unavailable",
+                classifyTransportFailure(ex));
         }
     }
 
+    private static WorkspaceAgentException.TransportFailure classifyTransportFailure(Throwable failure) {
+        for (Throwable current = failure; current != null; current = current.getCause()) {
+            if (current instanceof InterruptedException) return WorkspaceAgentException.TransportFailure.INTERRUPTED;
+            if (current instanceof HttpConnectTimeoutException) return WorkspaceAgentException.TransportFailure.CONNECT_TIMEOUT;
+            if (current instanceof HttpTimeoutException) return WorkspaceAgentException.TransportFailure.TIMEOUT;
+            if (current instanceof ConnectException) return WorkspaceAgentException.TransportFailure.CONNECT;
+            if (current instanceof SocketException) return WorkspaceAgentException.TransportFailure.RESET;
+        }
+        return WorkspaceAgentException.TransportFailure.OTHER;
+    }
     private static MutationResult mutationFrom(JsonNode node) {
         return new MutationResult(text(node, "operationId"), text(node, "path"), text(node, "beforeSha256"),
             text(node, "afterSha256"), text(node, "receiptPath"), text(node, "receiptSha256"));
