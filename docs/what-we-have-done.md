@@ -1,6 +1,6 @@
 # What We Have Done
 
-Status summarized from the current POC4 worktree and evidence records, last reviewed on 2026-09-04.
+Status reviewed on 2026-09-08 against the conversation and recorded POC4 worktree evidence. Tests and live infrastructure were not rerun for this documentation update.
 
 ## Stage 0 — Browser Foundation Spike
 
@@ -44,14 +44,25 @@ Evidence boundary: Stage 5 primarily established browser/MSW protocol and lifecy
 
 The real backend foundation is largely implemented as a modular Spring Boot application with MySQL/Flyway persistence, JWT and owner authorization, workspace PVC and Pod coordination, Maven Job control, persisted/live logs, terminal PTY bridging, audit lifecycle handling, recovery logic, and a `local-cluster` integration profile.
 
-The latest local verification recorded:
+The implementation and diagnostic documents below belong to the isolated `.worktree/ensoai-stage-6-real-backend-kubernetes` checkout, whose HEAD at this review is `d3f2857c04e7282337d2b383c10d2e39046a4ebd`. This status summary does not imply those changes have been merged into the main checkout.
 
-- Backend: 234 tests, 0 failures, 0 errors, 1 skipped.
-- Workspace agent: 23 tests, 0 failures, 0 errors.
-- Frontend: 1,124 tests, 0 failures; TypeScript typecheck passed.
-- Stage 6 Playwright inventory: 10 tests in 3 specifications.
+The most recent recorded verification results from 2026-09-08 are:
+
+- Backend: 251 tests, 0 failures, 0 errors, 1 skipped; MySQL tests used disposable schemas that were removed afterward.
+- Workspace agent: 24 tests, 0 failures, 0 errors.
+- Frontend: 1,125 tests passed across 61 files; TypeScript typecheck passed.
+- Local real-HTTP/filter/controller/filesystem contract check: template initialization, UTF-8 save, rename/delete, receipt reconciliation, unsigned-request rejection, and mismatched-receipt fail-closed behavior passed. The check substituted test stores for MySQL and Kubernetes; it did not exercise the real Fabric8 bridge or cluster.
+
+The earlier Stage 6 Playwright inventory contained 10 tests in 3 specifications; inventory alone is not execution or acceptance evidence.
 
 The code-level remediation rounds also added startup-probe protection, bridge listener checks, non-blocking PTY input draining, stricter WebSocket field validation, workspace ServiceAccount labeling, monotonic resize generations, and gated stress/fault specifications.
+
+### Changes Recorded on 2026-09-08
+
+- Commit `7692030` fixed workspace-agent request/response contracts: JSON POST content type, rename destination, DELETE route, and use of the persisted receipt digest. Template initialization now creates 11 directories in parent-first order and creates then saves each of 5 files, producing 21 committed operations in the local contract check.
+- That commit also included the `18080` backend port contract, Windows kubectl resolution, complete terminal protocol error frames, and sanitized mutation-stage/status/code logging. Supervised bridges retain externally owned deterministic listeners; managed bridges still check OS port availability. Transport exception classification remains planned, not implemented by those logs.
+- Commit `f4c79f2` raised the per-user project cap from 3 to 8 across backend enforcement, the API, frontend defaults, and mocks. CREATING, READY, and FAILED projects all count toward the cap; the ninth creation is rejected, including under concurrent requests. This does not increase or validate Kubernetes capacity.
+- The user-authorized cleanup removed 3 specific failed Alice test projects and their 3 workspace operations after a local backup; accounts and the unrelated `null-receipt` diagnostic project were preserved. Alice/Bob had zero projects immediately after that cleanup, not necessarily after later tests. Raising the cap and clearing leftovers did not fix the underlying provisioning failure.
 
 ## Current Gate Status
 
@@ -62,14 +73,26 @@ The cluster-side prerequisites that have been measured include API tunnel and TL
 - Real workspace template writing through the 6A bridge has not produced a passing result.
 - The complete real-browser flow for project creation, file operations, Run, logs, PTY, and audit has not passed as a reproducible matrix.
 - The 8 MiB terminal/log stress evidence and the operator-injected backend/tunnel/bridge fault matrix have not been completed outside the constrained sandbox.
-- A local backend port-wiring issue and shared test-data project limits also blocked the latest browser rerun; these must be resolved before a meaningful external rerun.
+- Earlier browser attempts were blocked by local port wiring and the old three-project cap. Those code/data issues were addressed as recorded above, but the user still reported 4 failed / 1 passed in the real browser suite. A later focused project-creation test also failed with `Expected: READY; Received: FAILED`.
+- The 2026-09-08 failure report records working frontend/backend health endpoints and Kubernetes tunnel/token/basic RBAC prerequisites for that run, followed by the first template directory mutation failing at `phase=MUTATE`, `httpStatus=503`, `agentCode=IO_ERROR`. `WORKSPACE_RECONCILIATION_REQUIRED` is the protective consequence, not the underlying root cause. The generic error wrapping does not establish an actual agent HTTP 503 or distinguish transport failure from response decoding failure; the precise cause remains unconfirmed.
 
 Because the 6A gate is not a pass, no 6B Deployment, Secret, or production-style backend Role should be introduced under the project’s sequencing rules.
 
 ## Next Work
 
-1. Close the remaining local wiring and test-data blockers.
-2. Run the full 6A happy-path, stress, and fault matrix in an environment that permits the workspace bridge and operator actions.
-3. Refresh the 6A evidence with the exact code SHA, image digests, test outputs, and distinct `PASS`, `FAILED`, `SKIPPED`, and `WAIVED_BY_USER` classifications.
-4. Only after a reproducible 6A `PASS`, implement and validate the 6B cluster Deployment, RBAC, Secret, probes, restart behavior, and cluster-side E2E.
-5. After Stage 6, plan the deferred product work: AI assistance, additional languages, team/admin features, and production security hardening.
+The failure report records backend shutdown at 17:05:41 on 2026-09-08 and cleanup of the failed project's cluster resources. These are run-specific observations, not a fresh check of current process state. The transport diagnosis plan was documented in commit `d3f2857`; its implementation and service restart remain pending user confirmation.
+
+1. After approval, add test-first, sanitized diagnostics that distinguish transport exceptions, actual HTTP error responses, and invalid responses without exposing request bodies, credentials, or raw exception messages. Preserve the existing fail-closed policy.
+2. Revalidate the tunnel, restricted kubeconfig, service availability, and available test quota without automatically deleting diagnostic data. Restart services only as needed for the approved run.
+3. Run only the focused project-creation browser test while observing the exact project's Pod readiness/restarts, agent logs, actual bridge endpoint, and HTTP health before cleanup removes the evidence. Check for a durable receipt if the mutation response was lost; do not blindly retry the write.
+4. Fix the single demonstrated root cause and prove focused provisioning reaches READY with correct template contents, receipts, and revision. Only then rerun the full 6A happy-path, stress, and fault matrix.
+5. Refresh the 6A evidence with the exact code SHA, image digests, test outputs, and distinct `PASS`, `FAILED`, `SKIPPED`, and `WAIVED_BY_USER` classifications. Only after a reproducible 6A `PASS`, implement and validate 6B Deployment, RBAC, Secret, probes, restart behavior, and cluster-side E2E.
+6. After Stage 6, plan the deferred product work: AI assistance, additional languages, team/admin features, and production security hardening.
+
+## Supporting Stage 6 Records
+
+These links point into the isolated Stage 6 implementation worktree:
+
+- [6A gate evidence and dated remediation/cleanup results](../.worktree/ensoai-stage-6-real-backend-kubernetes/poc4/docs/evidence/stage-6/6a-gate.md).
+- [Workspace-agent provisioning failure report](../.worktree/ensoai-stage-6-real-backend-kubernetes/poc4/docs/2026-9-8-workspace-agent-bug-report.md), recorded in commit `3255bb1`.
+- [Workspace-agent HTTP transport diagnosis plan](../.worktree/ensoai-stage-6-real-backend-kubernetes/poc4/docs/2026-09-08-workspace-agent-transport-diagnosis-plan.md), recorded in commit `d3f2857`; this is a pending plan, not evidence of an implemented fix or a 6A pass.
