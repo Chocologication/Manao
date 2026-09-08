@@ -42,3 +42,4 @@ build/
 /.firecrawl/
 /.npm-cache-tmp/
 .agent-teams
+.playwright-mcp/
