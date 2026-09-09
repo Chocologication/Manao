@@ -617,3 +617,158 @@ receipt 逻辑
 ```
 
 用户确认这个方案后，下一步才会开始第 1 个小提交：**只增加安全 transport exception 分类和对应测试，然后重启环境执行一次聚焦 provisioning 测试。**
+
+---
+
+## 附录 A：2026-09-09 阶段 2 聚焦测试证据
+
+**记录日期：** 2026-09-09（Asia/Shanghai）
+**执行范围：** 仅执行阶段 2 的单一聚焦 provisioning 用例；未运行完整 5 个 Stage 6A 用例，未执行压力测试、故障矩阵或 6B。
+**执行工作树：** `D:\DeepLearning\MyProjects\Project_Manao\.worktree\ensoai-stage-6-real-backend-kubernetes`
+**执行时 HEAD：** `1a64deb134fc681cb9063b6fdb7f7817f3447a29`
+**阶段 1 提交：** `1a64deb fix(poc4): classify workspace-agent transport failures`
+
+### A.1 环境预检
+
+本轮测试前确认：
+
+```text
+backend 18080：HTTP 200
+frontend 4173：HTTP 200
+Kubernetes SSH/API tunnel 6443：监听中且 TCP 可达
+受限 kubeconfig auth can-i get pods：yes
+```
+
+后端实际监听在 IPv6 wildcard `::` 的 `18080` 端口；通过 `127.0.0.1:18080` 和 `localhost:18080` 均得到 HTTP 200。此前只按 `LocalAddress=127.0.0.1` 过滤时显示“未监听”，该结果是地址过滤过窄，不是后端未启动。
+
+### A.2 聚焦测试命令和结果
+
+执行的唯一浏览器测试：
+
+```powershell
+$env:STAGE6_GATE = '1'
+
+pnpm exec playwright test tests/e2e/stage6-real-backend.spec.ts `
+  --project=stage6 `
+  --workers=1 `
+  --grep 'project creation reaches READY with template files through the real workspace' `
+  --reporter=list
+```
+
+结果：
+
+```text
+1 failed
+Expected: READY
+Received: FAILED
+耗时：18.1s
+```
+
+失败项目：
+
+```text
+projectId=b3d7f504-6404-4587-b347-d291c981a633
+state=FAILED
+failureReason=WORKSPACE_RECONCILIATION_REQUIRED
+```
+
+测试失败后 backend 执行了 label-scoped cleanup，相关 Kubernetes 资源随后被删除。
+
+### A.3 Kubernetes 实时观察
+
+在项目进入 provisioning 后，使用受限 kubeconfig 对 `manao-stage6-test` 命名空间中带 `manao.poc4/project-id` 标签的资源进行只读轮询，观察到：
+
+```text
+PVC：Bound
+initializer Pod：Init:0/1 -> Completed
+workspace Pod：ContainerCreating -> Running
+workspace Pod restartCount：0
+workspace Service：ClusterIP，8080/TCP
+```
+
+清理前的 Kubernetes 事件记录：
+
+```text
+Startup probe failed:
+Get "http://10.233.102.161:8080/agent/v1/healthz":
+dial tcp 10.233.102.161:8080: connect: connection refused
+
+Killing container workspace-agent
+```
+
+本轮没有取得 Endpoints 列表，因为受限 kubeconfig 的权限检查结果为：
+
+```text
+list endpoints：no
+get pods/log：yes
+```
+
+因此本轮不能得出“Service 没有 Endpoints”的结论；该项应记录为权限缺口。
+
+### A.4 backend 与 Pod 生命周期关联
+
+本轮 workspace Pod 在 backend 第一次 mutation 前仍未对 `8080` 提供可用 HTTP 服务。当前代码中的相关等待边界为：
+
+```text
+WorkspacePortForwardManager.startReady()
+listenerReadyTimeout：15 秒
+workspace-agent startupProbe：initialDelaySeconds=5，periodSeconds=5，failureThreshold=24
+```
+
+结合 Pod 事件，现有证据更支持以下范围：
+
+```text
+workspace-agent Pod 尚未提供 8080 healthz
+    -> loopback bridge 无法获得可用的目标 HTTP listener
+    -> 第一条 workspace mutation 未完成请求-响应交换
+    -> backend fail-closed
+    -> project state=FAILED
+    -> failureReason=WORKSPACE_RECONCILIATION_REQUIRED
+```
+
+但下列具体根因仍未确认：
+
+```text
+workspace-agent 进程启动失败
+Kubernetes 安全上下文或 NFS/subPath 挂载影响启动
+Pod readiness/startup probe 时序问题
+Service/Endpoint 尚未就绪
+Fabric8/kubectl port-forward 的具体传输失败类型
+```
+
+### A.5 镜像本机等价约束探针
+
+使用实际 workspace-agent 镜像 digest，在本机 Docker 中模拟主要运行约束：
+
+```text
+image：chocologic/manao_images_repository@sha256:bb0dd43023e02ec50738c76656f9319d8949ef5911a8f8bf668d4bb007ae920c
+user：10001:10001
+read-only root filesystem：yes
+/workspace：挂载
+/tmp：挂载
+container port：8080
+```
+
+探针结果：
+
+```text
+container：Up
+GET /agent/v1/healthz：HTTP 200
+body：{"status":"UP"}
+```
+
+这证明该镜像可以在本机模拟约束下启动并监听 8080，但不能替代实际 Kubernetes/NFS/subPath 证据，也不能单独证明集群中的失败根因。
+
+### A.6 阶段 2结论
+
+本轮阶段 2 已完成一次真实聚焦复现，但结果失败：
+
+```text
+聚焦 provisioning：FAILED
+真实 workspace Pod 8080 healthz：未在有效时间内可用
+真实模板写入：未开始或未完成
+Stage 6A：FAILED
+Stage 6B：不得开始
+```
+
+本附录只固定本轮证据，不表示根因已修复。下一步应先保留一次失败资源或增强失败时证据采集，再根据实际 `transportFailure`、workspace-agent 日志、Pod container state 和 Endpoint/EndpointSlice 结果修复单一根因。禁止仅根据本附录同时修改 agent、bridge、probe、receipt 和 provisioning 状态机。
