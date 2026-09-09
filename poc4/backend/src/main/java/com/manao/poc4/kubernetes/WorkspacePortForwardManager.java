@@ -57,6 +57,7 @@ public final class WorkspacePortForwardManager {
     private final Duration listenerReadyTimeout;
     private final long pollMillis;
     private final Map<String, Bridge> bridges = new ConcurrentHashMap<>();
+    private final java.util.Set<String> heldProjects = ConcurrentHashMap.newKeySet();
 
     public WorkspacePortForwardManager(String namespace, int portStart, int portEnd,
                                        PortForwardProcessFactory factory) {
@@ -178,12 +179,20 @@ public final class WorkspacePortForwardManager {
     /** Recreates dead or listener-less bridges on their original ports (called by the dependency monitor). */
     public synchronized void checkChildren() {
         if (factory == null) return; // supervised: the external operator owns the bridge
-        for (Bridge bridge : bridges.values()) {
+        for (Map.Entry<String, Bridge> entry : bridges.entrySet()) {
+            if (heldProjects.contains(entry.getKey())) continue;
+            Bridge bridge = entry.getValue();
             if (!bridge.process.isAlive() || !bridge.process.isListening()) {
                 bridge.process.kill();
                 bridge.process = startReady(bridge.serviceName, bridge.localPort);
             }
         }
+    }
+
+    /** Holds a diagnostic bridge in its current state while external evidence is collected. */
+    public synchronized void hold(String projectId) {
+        if (!bridges.containsKey(projectId)) return;
+        heldProjects.add(projectId);
     }
 
     /** Loopback endpoint of the project's bridge; unknown projects are rejected. */
@@ -204,6 +213,7 @@ public final class WorkspacePortForwardManager {
         if (bridge == null) return;
         if (--bridge.refcount > 0) return;
         bridges.remove(projectId);
+        heldProjects.remove(projectId);
         bridge.process.kill();
     }
 
@@ -224,6 +234,7 @@ public final class WorkspacePortForwardManager {
             bridge.process.kill();
         }
         bridges.clear();
+        heldProjects.clear();
     }
 
     public int activeBridges() {

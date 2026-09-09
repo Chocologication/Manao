@@ -8,6 +8,7 @@ import com.manao.poc4.workspace.WorkspaceStore;
 import com.manao.poc4.workspace.WorkspaceTemplate;
 import java.nio.charset.StandardCharsets;
 import java.util.Map;
+import java.util.function.Predicate;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -15,7 +16,7 @@ import org.slf4j.LoggerFactory;
  * Fixed project creation order: CREATING row exists -> PVC -> initializer pod (root mount,
  * fixed UID/GID probe) -> workspace pod + Service (subPath) -> wait ready -> write the fixed
  * template through the internal workspace API -> READY. Any failure records FAILED and removes
- * only this request's label-scoped resources.
+ * only this request's label-scoped resources unless a one-shot diagnostic hold has claimed it.
  */
 public final class ProjectProvisioningService {
     private static final Logger LOG = LoggerFactory.getLogger(ProjectProvisioningService.class);
@@ -27,6 +28,7 @@ public final class ProjectProvisioningService {
     private final WorkspaceTemplate template;
     private final String capabilityPublicKeyBase64;
     private final WorkspaceBridge bridge;
+    private final Predicate<WorkspaceStore.ProjectRecord> diagnosticHoldSelector;
     private final int pollAttempts;
     private final long pollIntervalMillis;
     private final java.util.concurrent.ExecutorService executor =
@@ -41,23 +43,35 @@ public final class ProjectProvisioningService {
         void allocate(String projectId);
 
         void release(String projectId);
+
+        /** Keeps a diagnostic bridge from being automatically recreated during evidence capture. */
+        default void hold(String projectId) { }
     }
 
     public ProjectProvisioningService(WorkspaceStore store, KubernetesGateway gateway, WorkspaceService workspace,
                                       WorkspaceResourceFactory factory, WorkspaceTemplate template,
                                       String capabilityPublicKeyBase64) {
-        this(store, gateway, workspace, factory, template, capabilityPublicKeyBase64, null, 240, 500);
+        this(store, gateway, workspace, factory, template, capabilityPublicKeyBase64, null, null, 240, 500);
     }
 
     public ProjectProvisioningService(WorkspaceStore store, KubernetesGateway gateway, WorkspaceService workspace,
                                       WorkspaceResourceFactory factory, WorkspaceTemplate template,
                                       String capabilityPublicKeyBase64, WorkspaceBridge bridge) {
-        this(store, gateway, workspace, factory, template, capabilityPublicKeyBase64, bridge, 240, 500);
+        this(store, gateway, workspace, factory, template, capabilityPublicKeyBase64, bridge, null, 240, 500);
     }
 
     public ProjectProvisioningService(WorkspaceStore store, KubernetesGateway gateway, WorkspaceService workspace,
                                       WorkspaceResourceFactory factory, WorkspaceTemplate template,
                                       String capabilityPublicKeyBase64, WorkspaceBridge bridge,
+                                      int pollAttempts, long pollIntervalMillis) {
+        this(store, gateway, workspace, factory, template, capabilityPublicKeyBase64, bridge, null,
+            pollAttempts, pollIntervalMillis);
+    }
+
+    public ProjectProvisioningService(WorkspaceStore store, KubernetesGateway gateway, WorkspaceService workspace,
+                                      WorkspaceResourceFactory factory, WorkspaceTemplate template,
+                                      String capabilityPublicKeyBase64, WorkspaceBridge bridge,
+                                      Predicate<WorkspaceStore.ProjectRecord> diagnosticHoldSelector,
                                       int pollAttempts, long pollIntervalMillis) {
         this.store = store;
         this.gateway = gateway;
@@ -66,6 +80,7 @@ public final class ProjectProvisioningService {
         this.template = template;
         this.capabilityPublicKeyBase64 = capabilityPublicKeyBase64;
         this.bridge = bridge;
+        this.diagnosticHoldSelector = diagnosticHoldSelector;
         this.pollAttempts = pollAttempts;
         this.pollIntervalMillis = pollIntervalMillis;
     }
@@ -83,9 +98,19 @@ public final class ProjectProvisioningService {
         try {
             provisionInternal(projectId);
         } catch (Exception ex) {
-            LOG.warn("project provisioning failed; cleaning up label-scoped resources", ex);
-            cleanup(projectId);
-            store.markProjectFailed(projectId, ProjectRecoveryService.CREATION_FAILED);
+            WorkspaceStore.ProjectRecord failedProject = store.findProject(projectId);
+            boolean hold = diagnosticHoldSelector != null && diagnosticHoldSelector.test(failedProject);
+            if (hold) {
+                if (bridge != null) bridge.hold(projectId);
+                LOG.warn("project provisioning failed; preserving diagnostic resources: projectId={} failureClass={}",
+                    projectId, ex.getClass().getSimpleName());
+            } else {
+                LOG.warn("project provisioning failed; cleaning up label-scoped resources", ex);
+                cleanup(projectId);
+            }
+            store.markProjectFailed(projectId, hold
+                ? "WORKSPACE_RECONCILIATION_REQUIRED"
+                : ProjectRecoveryService.CREATION_FAILED);
         }
     }
 

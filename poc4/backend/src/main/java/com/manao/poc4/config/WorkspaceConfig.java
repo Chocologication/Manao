@@ -117,9 +117,11 @@ public class WorkspaceConfig {
             : new ProjectProvisioningService.WorkspaceBridge() {
                 @Override public void allocate(String projectId) { manager.allocate(projectId); }
                 @Override public void release(String projectId) { manager.release(projectId); }
+                @Override public void hold(String projectId) { manager.hold(projectId); }
             };
         return new ProjectProvisioningService(store, gateway, workspace, factory,
-            new WorkspaceTemplate(), publicKeyBase64, bridge);
+            new WorkspaceTemplate(), publicKeyBase64, bridge,
+            com.manao.poc4.project.ProvisioningDiagnosticHold.fromEnvironment(), 240, 500);
     }
 
     @Bean

@@ -252,6 +252,19 @@ class WorkspacePortForwardManagerTest {
     }
 
     @Test
+    void heldDiagnosticBridgeIsNotRecreatedByMaintenance() {
+        RecordingFactory factory = new RecordingFactory();
+        WorkspacePortForwardManager manager = new WorkspacePortForwardManager("manao-test", 18100, 18199, factory);
+        int port = manager.allocate("prj-a");
+        factory.processes.get("manao-ws-prj-a:" + port).fail();
+
+        manager.hold("prj-a");
+        manager.checkChildren();
+
+        assertThat(factory.started).hasSize(1);
+        assertThat(manager.endpoint("prj-a").getPort()).isEqualTo(port);
+    }
+    @Test
     void recreateKillsTheOldProcessBeforeStartingTheReplacement() {
         RecordingFactory factory = new RecordingFactory();
         WorkspacePortForwardManager manager = new WorkspacePortForwardManager("manao-test", 18100, 18199, factory);

@@ -112,6 +112,24 @@ class ProjectProvisioningServiceTest {
     }
 
     @Test
+    void diagnosticFailureTargetPreservesResourcesAndPendingOperation() {
+        agent.mutator = command -> {
+            throw new com.manao.poc4.workspace.WorkspaceAgentException(503, "IO_ERROR",
+                "workspace API is temporarily unavailable",
+                com.manao.poc4.workspace.WorkspaceAgentException.TransportFailure.RESET);
+        };
+        service = new ProjectProvisioningService(store, gateway, workspaceService(), factory,
+            new WorkspaceTemplate(), "cHVibGljLWtleQ==", null, project -> PROJECT.equals(project.id()), 3, 1);
+
+        service.provision(PROJECT);
+
+        assertThat(store.failures).containsEntry(PROJECT, "WORKSPACE_RECONCILIATION_REQUIRED");
+        assertThat(gateway.deletedProjects).isEmpty();
+        assertThat(gateway.created).contains("pvc:" + PROJECT, "init:" + PROJECT,
+            "pod:" + PROJECT, "svc:" + PROJECT);
+        assertThat(store.pending).hasSize(1);
+    }
+    @Test
     void nonCreatingProjectsAreSkipped() {
         store.projects.put(PROJECT, new WorkspaceStore.ProjectRecord(PROJECT, "alice-id", "new", "READY", 4, null,
             java.time.Instant.parse("2026-08-29T00:00:00Z")));

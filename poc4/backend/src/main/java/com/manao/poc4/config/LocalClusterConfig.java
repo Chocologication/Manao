@@ -28,14 +28,18 @@ public class LocalClusterConfig {
     WorkspacePortForwardManager workspacePortForwardManager(
         BackendProperties properties,
         org.springframework.beans.factory.ObjectProvider<io.fabric8.kubernetes.client.KubernetesClient> clientProvider) {
-        // MANAO_BRIDGE_MODE=supervised: an operator-managed kubectl bridge outside the JVM serves
-        // deterministic per-project ports (sandbox environments where in-process binds and child
-        // spawns are denied). Default: the in-process Fabric8 port-forward (pods/portforward).
-        String mode = System.getenv().getOrDefault("MANAO_BRIDGE_MODE", "fabric8");
-        WorkspacePortForwardManager.PortForwardProcessFactory factory = "supervised".equals(mode)
-            ? null
-            : (namespace, serviceName, servicePort, localPort) ->
+        // MANAO_BRIDGE_MODE=fabric8 keeps the original in-process path for comparison.
+        // Default: kubectl port-forward, which is the transport path proven by the real-cluster
+        // health comparison on 2026-09-09. supervised leaves bridge ownership to an operator.
+        String mode = System.getenv().getOrDefault("MANAO_BRIDGE_MODE", "kubectl");
+        WorkspacePortForwardManager.PortForwardProcessFactory factory = switch (mode) {
+            case "supervised" -> null;
+            case "fabric8" -> (namespace, serviceName, servicePort, localPort) ->
                 startFabric8PortForward(clientProvider, namespace, serviceName, servicePort, localPort);
+            default -> new com.manao.poc4.kubernetes.KubectlPortForwardFactory(
+                System.getenv().getOrDefault("MANAO_KUBECTL", "kubectl"),
+                java.nio.file.Path.of(properties.kubernetes().kubeconfigFile()));
+        };
         return new WorkspacePortForwardManager(
             properties.kubernetes().namespace(),
             properties.workspace().bridgePortStart(),
