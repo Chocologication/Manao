@@ -11,6 +11,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.core.Authentication;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -50,6 +51,14 @@ public final class ProjectController {
                 return view(project);
             })
             .orElseThrow(() -> new ApiException("PROJECT_LIMIT_REACHED", 409, "Project limit reached"));
+    }
+
+    @DeleteMapping("/{projectId}")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void delete(Authentication authentication, @PathVariable String projectId) {
+        if (provisioning == null || !provisioning.deleteProject(authentication.getName(), projectId)) {
+            throw new ApiException("ENTRY_NOT_FOUND", 404, "Project not found");
+        }
     }
 
     @GetMapping("/{projectId}")

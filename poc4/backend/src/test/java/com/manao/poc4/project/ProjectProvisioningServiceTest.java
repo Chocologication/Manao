@@ -130,6 +130,30 @@ class ProjectProvisioningServiceTest {
         assertThat(store.pending).hasSize(1);
     }
     @Test
+    void deletingProjectReleasesKubernetesResourcesAndRemovesProject() {
+        store.projects.put(PROJECT, new WorkspaceStore.ProjectRecord(PROJECT, "alice-id", "new", "READY", 21, null,
+            java.time.Instant.parse("2026-08-29T00:00:00Z")));
+        java.util.Collections.addAll(gateway.created, "pvc:" + PROJECT, "init:" + PROJECT, "pod:" + PROJECT, "svc:" + PROJECT);
+
+        assertThat(service.deleteProject("alice-id", PROJECT)).isTrue();
+        assertThat(gateway.deletedProjects).containsExactly(PROJECT);
+        assertThat(gateway.created).noneMatch(entry -> entry.endsWith(":" + PROJECT));
+        assertThat(store.projects).doesNotContainKey(PROJECT);
+    }
+
+    @Test
+    void deletingProjectWithActiveRunDoesNotTouchResourcesOrDatabase() {
+        store.projects.put(PROJECT, new WorkspaceStore.ProjectRecord(PROJECT, "alice-id", "new", "READY", 21, null,
+            java.time.Instant.parse("2026-08-29T00:00:00Z")));
+        store.activeRuns.add(PROJECT);
+        java.util.Collections.addAll(gateway.created, "pvc:" + PROJECT, "pod:" + PROJECT, "svc:" + PROJECT);
+
+        assertThat(service.deleteProject("alice-id", PROJECT)).isFalse();
+        assertThat(gateway.deletedProjects).isEmpty();
+        assertThat(store.projects).containsKey(PROJECT);
+    }
+
+    @Test
     void nonCreatingProjectsAreSkipped() {
         store.projects.put(PROJECT, new WorkspaceStore.ProjectRecord(PROJECT, "alice-id", "new", "READY", 4, null,
             java.time.Instant.parse("2026-08-29T00:00:00Z")));

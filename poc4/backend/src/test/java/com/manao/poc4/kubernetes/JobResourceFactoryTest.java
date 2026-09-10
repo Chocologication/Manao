@@ -44,6 +44,14 @@ class JobResourceFactoryTest {
     }
 
     @Test
+    void projectResourceLabelsCoverWorkspaceAndMavenResources() {
+        assertThat(WorkspaceResourceFactory.projectResourceLabels(PROJECT))
+            .containsEntry(WorkspaceResourceFactory.LABEL_PROJECT_ID, PROJECT)
+            .containsEntry(WorkspaceResourceFactory.LABEL_STAGE6_TEST, "true")
+            .doesNotContainKey("manao.poc4/component");
+    }
+
+    @Test
     void pidOneDirectlyExecsFixedMavenCommandArray() throws Exception {
         Job job = factory.createMavenJob(RUN, PROJECT);
         var container = job.getSpec().getTemplate().getSpec().getContainers().get(0);

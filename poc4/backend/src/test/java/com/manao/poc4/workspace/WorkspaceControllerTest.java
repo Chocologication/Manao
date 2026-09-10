@@ -333,6 +333,7 @@ public class WorkspaceControllerTest {
         public final Map<String, Long> revision = new HashMap<>();
         public final Map<String, String> failures = new HashMap<>();
         public final List<String> deletedOperations = new ArrayList<>();
+        public final List<String> deletedProjects = new ArrayList<>();
         public boolean failCommits;
 
         public FakeStore() {
@@ -376,6 +377,17 @@ public class WorkspaceControllerTest {
         @Override public List<OperationRecord> pendingOperations(String projectId) {
             OperationRecord operation = pending.get(projectId);
             return operation == null ? List.of() : List.of(operation);
+        }
+
+        @Override public boolean deleteProject(String ownerId, String projectId) {
+            if (activeRuns.contains(projectId)) return false;
+            ProjectRecord project = projects.get(projectId);
+            if (project == null || !project.ownerId().equals(ownerId)) return false;
+            deletedProjects.add(projectId);
+            projects.remove(projectId);
+            pending.remove(projectId);
+            revision.remove(projectId);
+            return true;
         }
 
         @Override public void deleteOperation(String operationId) {

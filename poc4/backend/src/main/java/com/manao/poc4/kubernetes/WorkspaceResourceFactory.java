@@ -54,12 +54,18 @@ public class WorkspaceResourceFactory {
     public static String serviceName(String projectId) { return "manao-ws-" + projectId; }
     public static String projectDirectory(String projectId) { return "project-" + projectId; }
 
-    public static Map<String, String> projectLabels(String projectId) {
+    /** Labels shared by every Kubernetes resource owned by a project, including Maven Jobs. */
+    public static Map<String, String> projectResourceLabels(String projectId) {
         Map<String, String> labels = new HashMap<>();
         labels.put("app.kubernetes.io/managed-by", MANAGED_BY);
         labels.put(LABEL_PROJECT_ID, projectId);
-        labels.put("manao.poc4/component", "workspace");
         labels.put(LABEL_STAGE6_TEST, "true");
+        return labels;
+    }
+
+    public static Map<String, String> projectLabels(String projectId) {
+        Map<String, String> labels = projectResourceLabels(projectId);
+        labels.put("manao.poc4/component", "workspace");
         return labels;
     }
 

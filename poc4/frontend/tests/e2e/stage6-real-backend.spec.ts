@@ -10,6 +10,7 @@ import { expect, test } from '@playwright/test';
 const ALICE = { username: 'alice', password: 'stage6-alice-pass' };
 const BOB = { username: 'bob', password: 'stage6-bob-pass' };
 const GATE_MODE = process.env.STAGE6_GATE === '1';
+const createdProjectIds = new Set<string>();
 
 async function backendReachable(request: import('@playwright/test').APIRequestContext): Promise<boolean> {
   try {
@@ -51,8 +52,26 @@ function authHeaders(token: string) {
 async function createProject(page: import('@playwright/test').Page, name: string, token: string): Promise<{ id: string; state: string }> {
   const created = await page.request.post('/api/v1/projects', { data: { name }, headers: authHeaders(token) });
   expect(created.status()).toBe(201);
-  return (await created.json()) as { id: string; state: string };
+  const project = (await created.json()) as { id: string; state: string };
+  createdProjectIds.add(project.id);
+  return project;
 }
+
+test.afterAll(async ({ request }) => {
+  if (createdProjectIds.size === 0) return;
+  const loginResponse = await request.post('/api/v1/auth/login', { data: ALICE });
+  expect(loginResponse.status(), 'cleanup login must succeed').toBe(200);
+  const { accessToken } = (await loginResponse.json()) as { accessToken: string };
+  const failures: string[] = [];
+  for (const projectId of [...createdProjectIds].reverse()) {
+    const deleted = await request.delete('/api/v1/projects/' + projectId, { headers: authHeaders(accessToken) });
+    if (![204, 404].includes(deleted.status())) {
+      failures.push(projectId + ': HTTP ' + deleted.status() + ' ' + (await deleted.text()));
+    }
+  }
+  createdProjectIds.clear();
+  expect(failures, 'all created projects must be cleaned up').toEqual([]);
+});
 
 async function awaitReady(page: import('@playwright/test').Page, projectId: string, token: string): Promise<string> {
   let state = 'CREATING';

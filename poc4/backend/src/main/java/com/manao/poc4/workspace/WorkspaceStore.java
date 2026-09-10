@@ -11,6 +11,9 @@ public interface WorkspaceStore {
 
     boolean hasActiveRun(String projectId);
 
+    /** Deletes one owner-scoped project and all dependent durable records. */
+    boolean deleteProject(String ownerId, String projectId);
+
     /** Locks the project row, verifies the expected revision and inserts the PENDING operation. */
     BeginResult beginPendingOperation(String projectId, long expectedRevision, OperationRecord operation);
 

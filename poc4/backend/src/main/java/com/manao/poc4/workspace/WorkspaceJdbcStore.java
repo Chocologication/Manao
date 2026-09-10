@@ -45,6 +45,22 @@ public final class WorkspaceJdbcStore implements WorkspaceStore {
         return !states.isEmpty();
     }
 
+    @Override public boolean deleteProject(String ownerId, String projectId) {
+        Boolean deleted = transaction.execute(status -> {
+            Integer owned = jdbc.queryForObject(
+                "SELECT COUNT(*) FROM project WHERE id = ? AND owner_id = ? FOR UPDATE", Integer.class, projectId, ownerId);
+            if (owned == null || owned != 1 || hasActiveRun(projectId)) return Boolean.FALSE;
+            jdbc.update("DELETE FROM terminal_audit WHERE project_id = ?", projectId);
+            jdbc.update("DELETE FROM terminal_session WHERE project_id = ?", projectId);
+            jdbc.update("DELETE FROM log_ticket WHERE project_id = ?", projectId);
+            jdbc.update("DELETE FROM run_log_chunk WHERE run_id IN (SELECT id FROM run WHERE project_id = ?)", projectId);
+            jdbc.update("DELETE FROM run WHERE project_id = ?", projectId);
+            jdbc.update("DELETE FROM workspace_operation WHERE project_id = ?", projectId);
+            return jdbc.update("DELETE FROM project WHERE id = ? AND owner_id = ?", projectId, ownerId) == 1;
+        });
+        return Boolean.TRUE.equals(deleted);
+    }
+
     @Override public BeginResult beginPendingOperation(String projectId, long expectedRevision, OperationRecord operation) {
         BeginResult result = transaction.execute(status -> {
             List<Long> revisions = jdbc.query(

@@ -68,6 +68,22 @@ class ProjectLimitTest {
     }
 
     @Test
+    void deletingProjectRemovesItsDurableWorkspaceRecords() {
+        var jdbc = database.jdbc();
+        assertThat(service.create(alice, "cleanup-target")).isPresent();
+        String createdId = service.list(alice).get(0).id();
+        jdbc.update("UPDATE project SET state='READY' WHERE id=?", createdId);
+        jdbc.update("INSERT INTO workspace_operation(id, project_id, expected_revision, before_sha256, after_sha256, receipt_path, state, created_at, committed_at) VALUES (?, ?, 0, ?, ?, ?, 'COMMITTED', ?, ?)",
+            UUID.randomUUID().toString(), createdId, "a".repeat(64), "b".repeat(64), "receipts/cleanup.json", Timestamp.from(Instant.now()), Timestamp.from(Instant.now()));
+
+        var store = new com.manao.poc4.workspace.WorkspaceJdbcStore(jdbc,
+            new DataSourceTransactionManager(jdbc.getDataSource()));
+        assertThat(store.deleteProject(alice, createdId)).isTrue();
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM project WHERE id=?", Integer.class, createdId)).isZero();
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM workspace_operation WHERE project_id=?", Integer.class, createdId)).isZero();
+    }
+
+    @Test
     void concurrentCreatesCannotExceedEightProjects() throws Exception {
         for (int i = 0; i < 7; i++) assertThat(service.create(alice, "seed-" + i)).isPresent();
         var executor = Executors.newFixedThreadPool(4);
