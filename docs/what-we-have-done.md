@@ -1,6 +1,6 @@
 # What We Have Done
 
-Status reviewed on 2026-09-08 against the conversation and recorded POC4 worktree evidence. Tests and live infrastructure were not rerun for this documentation update.
+Status reviewed on 2026-09-10 against Stage 6 code, retained reports, the user-reported rerun and read-only Kubernetes/MySQL checks. This documentation task did not rerun tests, restart services or change runtime data. Stage 0-5 records below remain historical.
 
 ## Stage 0 — Browser Foundation Spike
 
@@ -64,35 +64,52 @@ The code-level remediation rounds also added startup-probe protection, bridge li
 - Commit `f4c79f2` raised the per-user project cap from 3 to 8 across backend enforcement, the API, frontend defaults, and mocks. CREATING, READY, and FAILED projects all count toward the cap; the ninth creation is rejected, including under concurrent requests. This does not increase or validate Kubernetes capacity.
 - The user-authorized cleanup removed 3 specific failed Alice test projects and their 3 workspace operations after a local backup; accounts and the unrelated `null-receipt` diagnostic project were preserved. Alice/Bob had zero projects immediately after that cleanup, not necessarily after later tests. Raising the cap and clearing leftovers did not fix the underlying provisioning failure.
 
+## Progress on 2026-09-09 and 2026-09-10
+
+- `4766b43` changed the 6A default workspace bridge to kubectl port-forward after a same-Pod comparison isolated the observed Fabric8 RESET. Real project creation and template initialization subsequently passed. Earlier notes that template writing had never passed are superseded.
+- `b61066b` isolated destructive Flyway tests from the runtime database, corrected file creation to HTTP 201 and removed the manually supplied Kubernetes Job selector. Fixed test accounts were restored; the earlier account/schema damage is distinct from later scheduling failures.
+- `c974630` added owner-scoped project DELETE and E2E afterAll cleanup across Kubernetes and database records. Normal-path cleanup passed; failure-path cleanup remains incomplete.
+- The user reports five real-backend tests passing outside the sandbox after restarting the cluster on 2026-09-10. The latest `.last-run.json`, modified at 18:32:06 +08:00, says `passed` with no failed IDs. That file does not independently prove the test count, duration, execution identity or actual Run outcome; a full report for this latest rerun was not retained.
+- The previous 09:50 machine-readable report records 5 passed / 0 failed / 0 skipped in 132.34 seconds using temporary admin configuration. It is retained as historical evidence, not substituted for the latest rerun or restricted-RBAC gate acceptance.
+
 ## Current Gate Status
 
-Stage 6A is still `FAILED`, and Stage 6B has not started.
+**Basic five-test suite: PASS as reported by the user, corroborated by the latest run-status file. Full Stage 6A gate: FAILED because critical acceptance remains incomplete. Stage 6B: NOT_STARTED. Stage 6: not complete.**
 
-The cluster-side prerequisites that have been measured include API tunnel and TLS validation, restricted namespace RBAC preflight, NFS `ReadWriteMany` storage, immutable image availability, and basic PVC/initializer/workspace resource creation. However, the decisive real-system evidence is still incomplete:
+| Area | Current evidence boundary |
+|---|---|
+| Login, ownership, real template/file operations and stale revisions | Covered by the basic suite; not a complete editor/log/terminal UI walkthrough |
+| Run creation and terminal transition | Covered, but the fourth test accepts SUCCEEDED, FAILED, CANCELLED or TIMED_OUT; it does not prove successful Maven execution |
+| Actual Maven success and Run/Job agreement | Still requires verification; retained 2026-09-09 evidence shows Job/Pod success with DB Run FAILED / RECOVERY_FAILED |
+| Runtime environment after restart | All three nodes currently Ready; restricted identity and selected allow/deny checks succeeded; these are read-only spot checks, not a full preflight rerun |
+| Cleanup | Normal path passed; initializer deletion and concurrent/interrupted cleanup still need remediation |
+| Live/replay logs, PTY, audit, 8 MiB stress, dynamic bridges and three fault phases | No complete current-SHA real-system PASS evidence; required before 6A acceptance |
+| Backend full regression at current SHA | Not rerun; retained ProjectLimitTest failures at MySQL/Flyway Error 1419 must not be hidden by the browser result |
 
-- Real workspace template writing through the 6A bridge has not produced a passing result.
-- The complete real-browser flow for project creation, file operations, Run, logs, PTY, and audit has not passed as a reproducible matrix.
-- The 8 MiB terminal/log stress evidence and the operator-injected backend/tunnel/bridge fault matrix have not been completed outside the constrained sandbox.
-- Earlier browser attempts were blocked by local port wiring and the old three-project cap. Those code/data issues were addressed as recorded above, but the user still reported 4 failed / 1 passed in the real browser suite. A later focused project-creation test also failed with `Expected: READY; Received: FAILED`.
-- The 2026-09-08 failure report records working frontend/backend health endpoints and Kubernetes tunnel/token/basic RBAC prerequisites for that run, followed by the first template directory mutation failing at `phase=MUTATE`, `httpStatus=503`, `agentCode=IO_ERROR`. `WORKSPACE_RECONCILIATION_REQUIRED` is the protective consequence, not the underlying root cause. The generic error wrapping does not establish an actual agent HTTP 503 or distinguish transport failure from response decoding failure; the precise cause remains unconfirmed.
+The 2026-09-10 17:06:40 project-creation failure was directly explained by Kubernetes scheduling: insufficient CPU, an unreachable worker and a tainted control-plane node. It was not a runtime MySQL permission failure. The cluster now reports healthy nodes and the rerun passed, but the underlying cause of the worker losing status updates was not investigated.
 
-Because the 6A gate is not a pass, no 6B Deployment, Secret, or production-style backend Role should be introduced under the project’s sequencing rules.
+There is still one preserved failed test project (`083b8efd-9f57-4cb4-aa6f-646b37bd6d57`) with an initializer Pod, PVC and FAILED database row; the unrelated `null-receipt` diagnostic is also preserved. Do not claim an empty environment. File cleanup in this review does not delete cluster or database diagnostics.
+
+The remaining initializer exposes a deterministic code defect: deletion selects only workspace-component Pods while its completion check waits for all project components. A failed-to-ready workspace therefore leaves the initializer, causing a 60-second DELETE timeout before PVC/database deletion. Restarting the cluster does not repair this logic.
 
 ## Next Work
 
-The failure report records backend shutdown at 17:05:41 on 2026-09-08 and cleanup of the failed project's cluster resources. These are run-specific observations, not a fresh check of current process state. The transport diagnosis plan was documented in commit `d3f2857`; its implementation and service restart remain pending user confirmation.
+1. **Make test-resource lifecycle reliable first.** Add regression coverage for initializer cleanup, CREATING/deletion races, active-Run conflicts and network exceptions; clean each test's owned resources promptly, retaining a suite-level fallback and a narrowly selected diagnostic hold. Apply the same lifecycle policy to stress/fault suites before expanding them.
+2. **Verify the actual execution loop, not only green status.** Require Maven success, matching Job/Pod/API/database outcomes, complete logs and correct workspace unlock/reload. Diagnose the retained Run/Job mismatch with fresh correlated evidence; test failed/cancelled/timed-out runs separately.
+3. **Close the full 6A matrix.** Real browser edit/save/run/logs/PTY/audit, both stress tests, concurrent bridges and backend-restart/tunnel-loss/bridge-loss phases; record exact SHA, artifact checksum, image digests, restricted identity, exit codes, skipped items and cleanup results. Use authorized disposable MySQL test schemas rather than runtime-schema reset or broad privilege relaxation.
+4. **Obtain independent 6A PASS before 6B.** Only then execute Tasks 10-12: single-replica Recreate backend, cluster MySQL, least-privilege ServiceAccount/Role, Secret/probes, fencing and the equivalent cluster-side acceptance matrix. Neither local unit tests nor user-waived gate items can replace real acceptance.
+5. **After Stage 6/POC4, design the next product slice.** Prioritize a minimal AI-assisted loop over selected files and run logs with user-confirmed patches. Languages, Git, teams/teaching/admin and billing remain separately scoped. Review execution isolation, credentials, egress and resource abuse before exposing the POC to untrusted users.
 
-1. After approval, add test-first, sanitized diagnostics that distinguish transport exceptions, actual HTTP error responses, and invalid responses without exposing request bodies, credentials, or raw exception messages. Preserve the existing fail-closed policy.
-2. Revalidate the tunnel, restricted kubeconfig, service availability, and available test quota without automatically deleting diagnostic data. Restart services only as needed for the approved run.
-3. Run only the focused project-creation browser test while observing the exact project's Pod readiness/restarts, agent logs, actual bridge endpoint, and HTTP health before cleanup removes the evidence. Check for a durable receipt if the mutation response was lost; do not blindly retry the write.
-4. Fix the single demonstrated root cause and prove focused provisioning reaches READY with correct template contents, receipts, and revision. Only then rerun the full 6A happy-path, stress, and fault matrix.
-5. Refresh the 6A evidence with the exact code SHA, image digests, test outputs, and distinct `PASS`, `FAILED`, `SKIPPED`, and `WAIVED_BY_USER` classifications. Only after a reproducible 6A `PASS`, implement and validate 6B Deployment, RBAC, Secret, probes, restart behavior, and cluster-side E2E.
-6. After Stage 6, plan the deferred product work: AI assistance, additional languages, team/admin features, and production security hardening.
+## Artifact Cleanup Review
+
+The obsolete-file inventory contains five superseded report directories and two older logs: 16 files, 158,089 bytes. Path boundaries, reparse points, Git tracking and checksums were checked. The execution policy rejected deletion before execution, so **zero files were deleted and zero bytes reclaimed**; all candidates remain. The manifest records this blocked status rather than claiming cleanup completed. Latest useful reports, unresolved-failure evidence, runtime configurations, other-stage evidence and all Kubernetes/database diagnostics were preserved.
 
 ## Supporting Stage 6 Records
 
-These links point into the isolated Stage 6 implementation worktree:
+These links intentionally point into the isolated implementation worktree; they are local working-copy links, not proof that its backend has been merged to `master`.
 
-- [6A gate evidence and dated remediation/cleanup results](../.worktree/ensoai-stage-6-real-backend-kubernetes/poc4/docs/evidence/stage-6/6a-gate.md).
-- [Workspace-agent provisioning failure report](../.worktree/ensoai-stage-6-real-backend-kubernetes/poc4/docs/2026-9-8-workspace-agent-bug-report.md), recorded in commit `3255bb1`.
-- [Workspace-agent HTTP transport diagnosis plan](../.worktree/ensoai-stage-6-real-backend-kubernetes/poc4/docs/2026-09-08-workspace-agent-transport-diagnosis-plan.md), recorded in commit `d3f2857`; this is a pending plan, not evidence of an implemented fix or a 6A pass.
+- [Current status, acceptance matrix, open issues and next steps](../.worktree/ensoai-stage-6-real-backend-kubernetes/poc4/docs/evidence/stage-6/2026-09-10-status-and-next-steps.md).
+- [Read-only snapshot and latest-run evidence boundary](../.worktree/ensoai-stage-6-real-backend-kubernetes/poc4/docs/evidence/stage-6/2026-09-10-readonly-snapshot.json).
+- [6A gate and historical remediation results](../.worktree/ensoai-stage-6-real-backend-kubernetes/poc4/docs/evidence/stage-6/6a-gate.md).
+- [Artifact cleanup manifest](../.worktree/ensoai-stage-6-real-backend-kubernetes/poc4/docs/evidence/stage-6/2026-09-10-artifact-cleanup.json).
+- [Historical workspace-agent failure report](../.worktree/ensoai-stage-6-real-backend-kubernetes/poc4/docs/2026-9-8-workspace-agent-bug-report.md) and [transport diagnosis plan](../.worktree/ensoai-stage-6-real-backend-kubernetes/poc4/docs/2026-09-08-workspace-agent-transport-diagnosis-plan.md); their old pending/blocked status is superseded by the later kubectl bridge evidence, not deleted.

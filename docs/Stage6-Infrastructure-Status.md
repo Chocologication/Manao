@@ -1,3 +1,21 @@
+# Current Stage 6 Infrastructure Snapshot — 2026-09-10
+
+This section supersedes the dated 2026-09-02 measurements below where they differ. Historical SSH, registry and CRI notes are preserved rather than treated as freshly validated facts.
+
+- Read-only checks after the user-reported cluster restart found master/node1/node2 all Ready. The master retains its control-plane taint; both workers have no taints. The earlier 17:06:40 scheduling failure was insufficient CPU plus an unreachable worker and the control-plane taint, not a runtime MySQL privilege error.
+- The restricted kubeconfig authenticates as `manao-stage6-test:manao-6a-local`; selected Job/Pod/port-forward permissions passed, while secrets/nodes access was denied. The admin identity was used only for read-only node/quota inventory. Do not grant node access to the backend to run diagnostics.
+- No namespace ResourceQuota object was returned by the operator's current check. The old quota example below is historical, not a current capacity guarantee; the backend's 8-project limit also does not guarantee schedulability.
+- The 4173 frontend, 18080 backend and 6443 API tunnel have local listeners. Listener existence is not application health. Runtime schema is `manao_poc4`; destructive tests must use disposable schemas instead.
+- One earlier failed project still owns a completed initializer Pod, a Bound PVC and a FAILED database row. It is retained for an unresolved cleanup defect; no cluster or database cleanup was performed during this documentation task.
+- The user reports five basic E2E tests passing after restart; the latest run-status file corroborates passed. This is not complete 6A acceptance. See [stage status](what-we-have-done.md#current-gate-status) and [timestamped evidence](../.worktree/ensoai-stage-6-real-backend-kubernetes/poc4/docs/evidence/stage-6/2026-09-10-readonly-snapshot.json).
+- Original restricted runtime configuration: `D:\DeepLearning\MyProjects\Project_Manao_kubeconfig\stage6-6a-local-cluster.env`. Keep credentials and kubeconfigs outside tracked documentation; temporary admin configurations are not accepted backend identities.
+
+## Credential hygiene
+
+The previously embedded database password has been removed from this working documentation. It may still exist in Git history; removing the line does not revoke it or scrub history. The operator should arrange credential rotation separately and update private consumers. This review does not rotate credentials, alter grants, remove access instructions or rewrite Git history.
+
+# Historical Access and Infrastructure Notes
+
 # SSH Access
 
 - Master node:
@@ -29,7 +47,7 @@ An SSH tunnel has already been established locally through Xshell, so `kubectl` 
 - MYSQL_HOST: `127.0.0.1`
 - MYSQL_PORT: `3306`
 - Username: `root`
-- Password: `HAOhao2006.`
+- Credentials: use the existing private environment configuration outside this documentation; never store or print the database password in Markdown.
 
 # Stage 6 (6A) Infrastructure Status (measured on 2026-09-02)
 
@@ -75,12 +93,34 @@ An SSH tunnel has already been established locally through Xshell, so `kubectl` 
 ## 6A Restricted kubeconfig
 
 - File: D:\DeepLearning\MyProjects\Project_Manao_kubeconfig\stage6-6a-kubeconfig (outside the repo, do not commit).
-- Identity manao-6a-local (SA, token expires in 24h); namespace manao-stage6-test; Role manao-stage6-backend (all 26 can-i checks pass, including pods/portforward; no secrets/nodes/pv).
-- Re-signing the token after expiration:
+- Identity manao-6a-local (SA; tokens were requested for 24h, actual lifetime is server-controlled); namespace manao-stage6-test; Role manao-stage6-backend (all 26 can-i checks pass, including pods/portforward; no secrets/nodes/pv).
+- Manual token refresh (run intentionally; not executed by this documentation review). The admin kubeconfig is used only to issue the restricted ServiceAccount token. Do not switch the backend to the admin identity:
+
   ```powershell
-  kubectl -n manao-stage6-test create token manao-6a-local --duration=24h
+  $kubectl = 'D:\Docker\DockerDesktop\resources\bin\kubectl.exe'
+  $adminConfig = 'C:\Users\shili\.kube\config'
+  $stage6Config = 'D:\DeepLearning\MyProjects\Project_Manao_kubeconfig\stage6-6a-kubeconfig'
+
+  $token = & $kubectl --kubeconfig $adminConfig --context 'kubernetes-admin@learn' `
+    --tls-server-name localhost --request-timeout=20s `
+    -n manao-stage6-test create token manao-6a-local --duration=24h
+  try {
+    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($token)) {
+      throw 'Token issuance failed; existing kubeconfig was not changed.'
+    }
+    & $kubectl --kubeconfig $stage6Config config set-credentials `
+      manao-6a-local "--token=$($token.Trim())"
+    if ($LASTEXITCODE -ne 0) { throw 'Failed to update restricted credentials.' }
+  } finally {
+    Remove-Variable token -ErrorAction SilentlyContinue
+  }
+  & $kubectl --kubeconfig $stage6Config --request-timeout=20s `
+    -n manao-stage6-test auth can-i create jobs
+  & $kubectl --kubeconfig $stage6Config --request-timeout=20s `
+    -n manao-stage6-test get pods
   ```
-  Then replace the users[0].user.token field in the file.
+
+  `--duration=24h` is a request, not a guaranteed expiry. This was checked against local `kubectl create token --help` on 2026-09-10 (Context7 was unavailable, and the official-web lookup returned no usable content). Refresh does not change RBAC. Restart a backend that loaded the old credentials at startup, using its original restricted environment file; a successful refresh is not itself an E2E rerun.
 - Structure highlights: server https://127.0.0.1:6443 + tls-server-name: localhost + real CA (no insecure-skip-tls-verify).
 
 ## Script Experience and Pitfalls

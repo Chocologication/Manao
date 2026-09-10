@@ -41,6 +41,10 @@ The following are outside the current POC4 acceptance scope:
 
 These items remain part of the broader Manao direction or future standalone reviews; their absence from POC4 is a scope decision, not a claim that they are complete.
 
+Stage 6 operational exception (2026-09-10): an owner-scoped project DELETE endpoint was added to reclaim E2E-created database and Kubernetes resources. This is test-environment lifecycle support, not delivery of a product deletion UI, archival, recoverable deletion or production storage lifecycle. Failure/concurrency cleanup is still being completed.
+
+The next milestone remains a fully accepted Stage 6A development loop followed by Stage 6B, not immediate expansion into AI or multi-language features. See [current status and next work](what-we-have-done.md#next-work).
+
 ## Relationship to the Product Plan
 
 POC4 is a validation milestone, not the finished Manao product. A successful POC4 would establish that the browser-to-backend-to-Kubernetes development loop is technically credible. It would not by itself prove production security, multi-language support, AI integration, multi-replica high availability, or the complete PRD feature set.
