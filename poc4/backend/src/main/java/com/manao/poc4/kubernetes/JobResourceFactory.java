@@ -42,7 +42,7 @@ public class JobResourceFactory {
             .withNewSpec()
             .withBackoffLimit(0)
             .withActiveDeadlineSeconds(timeoutSeconds)
-            .withNewSelector().withMatchLabels(java.util.Map.of(ResourceIdentityVerifier.LABEL_RUN_ID, runId)).endSelector()
+            // Kubernetes generates the controller-UID selector; run/project labels stay on the template.
             .withNewTemplate()
             .withNewMetadata().withLabels(labels).endMetadata()
             .withNewSpec()

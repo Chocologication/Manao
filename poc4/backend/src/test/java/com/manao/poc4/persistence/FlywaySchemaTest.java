@@ -4,7 +4,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.sql.Connection;
-import java.sql.DriverManager;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.time.Duration;
@@ -18,33 +17,29 @@ import org.junit.jupiter.api.Test;
 
 class FlywaySchemaTest {
     private Connection connection;
+    private JdbcStoreTestSupport database;
     private static final Instant TEST_NOW = Instant.parse("2026-01-01T00:00:00Z");
 
     @AfterEach
     void closeConnection() throws Exception {
-        if (connection != null) connection.close();
+        try {
+            if (connection != null) connection.close();
+        } finally {
+            if (database != null) database.close();
+        }
     }
 
     @BeforeEach
     void migrateEmptySchema() throws Exception {
-        String url = System.getenv().getOrDefault("MANAO_DB_URL", "jdbc:mysql://127.0.0.1:3306/manao_poc4_schema_test");
-        if (!url.startsWith("jdbc:mysql:")) {
-            throw new AssertionError("REAL_MYSQL_REQUIRED: MANAO_DB_URL must be jdbc:mysql, got " + url);
-        }
-        try {
-            connection = DriverManager.getConnection(url,
-                System.getenv().getOrDefault("MANAO_DB_USERNAME", "manao"),
-                System.getenv().getOrDefault("MANAO_DB_PASSWORD", ""));
-        } catch (SQLException ex) {
-            throw new AssertionError("REAL_MYSQL_BLOCKED: cannot connect to test schema", ex);
-        }
-        try (Statement statement = connection.createStatement()) {
-            statement.execute("DROP TABLE IF EXISTS terminal_audit, terminal_session, log_ticket, run_log_chunk, run, workspace_operation, project, app_user, instance_lease, flyway_schema_history");
-        }
-        Flyway.configure().dataSource(connection.getMetaData().getURL(),
-                System.getenv().getOrDefault("MANAO_DB_USERNAME", "manao"),
-                System.getenv().getOrDefault("MANAO_DB_PASSWORD", ""))
-            .locations("classpath:db/migration").load().migrate();
+        // The configured URL supplies connection details only, never the migration target.
+        database = JdbcStoreTestSupport.create();
+        connection = database.jdbc().getDataSource().getConnection();
+        assertThat(connection.getCatalog()).matches("manao_stage6_[0-9a-f]{32}");
+    }
+
+    @Test
+    void migrationsUseDedicatedDisposableSchema() throws Exception {
+        assertThat(connection.getCatalog()).matches("manao_stage6_[0-9a-f]{32}");
     }
 
     @Test
@@ -179,6 +174,7 @@ class FlywaySchemaTest {
 
     @Test
     void upgradeFailsClosedWhenLegacyReceiptDigestIsNull() throws Exception {
+        assertThat(connection.getCatalog()).matches("manao_stage6_[0-9a-f]{32}");
         try (Statement statement = connection.createStatement()) {
             statement.execute("DROP TABLE IF EXISTS terminal_audit, terminal_session, log_ticket, run_log_chunk, run, workspace_operation, project, app_user, instance_lease, flyway_schema_history");
         }

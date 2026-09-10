@@ -34,6 +34,16 @@ class JobResourceFactoryTest {
     }
 
     @Test
+    void jobLeavesSelectorGenerationToTheApiServer() {
+        Job job = factory.createMavenJob(RUN, PROJECT);
+        assertThat(job.getSpec().getSelector()).isNull();
+        assertThat(job.getSpec().getManualSelector()).isNotEqualTo(Boolean.TRUE);
+        assertThat(job.getSpec().getTemplate().getMetadata().getLabels())
+            .containsEntry(ResourceIdentityVerifier.LABEL_RUN_ID, RUN)
+            .containsEntry(ResourceIdentityVerifier.LABEL_PROJECT_ID, PROJECT);
+    }
+
+    @Test
     void pidOneDirectlyExecsFixedMavenCommandArray() throws Exception {
         Job job = factory.createMavenJob(RUN, PROJECT);
         var container = job.getSpec().getTemplate().getSpec().getContainers().get(0);
