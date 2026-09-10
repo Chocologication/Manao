@@ -1,12 +1,13 @@
 {
   "reviewedAt": "2026-09-10T18:52:58.5174513+08:00",
+  "deletedAt": "2026-09-10T20:28:27.7115920+08:00",
   "workspace": "D:\\DeepLearning\\MyProjects\\Project_Manao\\.worktree\\ensoai-stage-6-real-backend-kubernetes",
   "codeHead": "c974630b2aa34f442deef72206259113460aed09",
   "scope": "Only enumerated obsolete Stage 6 local report/log files; no database/cluster/config/cache/source deletion",
   "candidateFileCount": 16,
   "candidateBytes": 158089,
-  "actualDeletedFileCount": 0,
-  "actualBytesRemoved": 0,
+  "actualDeletedFileCount": 16,
+  "actualBytesRemoved": 158089,
   "entries": [
     {
       "files": [
@@ -24,7 +25,7 @@
       "path": "poc4/frontend/playwright-report/stage6-real-backend-20260909-201425",
       "reason": "Incomplete first attempt superseded by later reports",
       "reportStats": null,
-      "status": "retained_deletion_blocked",
+      "status": "deleted",
       "isDirectory": true
     },
     {
@@ -55,7 +56,7 @@
         "unexpected": 4,
         "flaky": 0
       },
-      "status": "retained_deletion_blocked",
+      "status": "deleted",
       "isDirectory": true
     },
     {
@@ -86,7 +87,7 @@
         "unexpected": 2,
         "flaky": 0
       },
-      "status": "retained_deletion_blocked",
+      "status": "deleted",
       "isDirectory": true
     },
     {
@@ -117,7 +118,7 @@
         "unexpected": 1,
         "flaky": 0
       },
-      "status": "retained_deletion_blocked",
+      "status": "deleted",
       "isDirectory": true
     },
     {
@@ -148,7 +149,7 @@
         "unexpected": 0,
         "flaky": 0
       },
-      "status": "retained_deletion_blocked",
+      "status": "deleted",
       "isDirectory": true
     },
     {
@@ -162,7 +163,7 @@
       "path": "poc4/backend/target/e2e-cleanup-green.log",
       "reason": "Earlier unit log superseded by unit-green log and retained surefire results",
       "reportStats": null,
-      "status": "retained_deletion_blocked",
+      "status": "deleted",
       "isDirectory": false
     },
     {
@@ -176,10 +177,10 @@
       "path": "poc4/backend/target/e2e-cleanup-integration-green.log",
       "reason": "Earlier Flyway 1419 log superseded by focused-final log retaining that unresolved blocker",
       "reportStats": null,
-      "status": "retained_deletion_blocked",
+      "status": "deleted",
       "isDirectory": false
     }
   ],
-  "status": "BLOCKED_BY_EXECUTION_POLICY",
-  "reason": "Deletion invocation was rejected before execution. No alternate deletion mechanism attempted. All candidates rechecked present."
+  "status": "DELETED",
+  "reason": "User-authorized deletion after path, reparse-point, Git-tracking and SHA-256 recheck. 16 inventoried files and 5 emptied report directories removed (158,089 bytes). Retained latest useful reports and unresolved-failure evidence. No database/cluster/config/cache/source deletion. Did not use git clean or mvn clean."
 }
