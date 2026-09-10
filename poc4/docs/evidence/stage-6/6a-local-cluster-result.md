@@ -1,5 +1,7 @@
 # 阶段六 6A 本机集成验证记录（真实集群前置条件轮）
 
+> 2026-09-10 状态更新：本文其余内容为历史基础设施/修复记录，不是当前验收结果。用户报告重启集群后基础五项 E2E 全通过，最新末次状态文件佐证 passed；完整 6A 仍未通过，6B 未开始。当前节点、残留资源、身份检查及证据限制见 [最新状态](2026-09-10-status-and-next-steps.md) 与 [只读快照](2026-09-10-readonly-snapshot.json)。历史管理员身份和 namespace 配额不能沿用为当前事实。
+
 - 日期：2026-08-29（2026-09-04 更新 SHA 引用至第二轮代码 SHA）
 - 后端 Git SHA：`26331be5b57f9683401b26edbb2ec5f825293d5f`（后端代码 SHA；最终 HEAD 见 git log。原记录 SHA `ce550660e90fe2f432aae9bc8509b232afd2e792` 已被第二轮代码 SHA 取代）
 - 执行环境：Windows 11 开发机；kubectl 经 SSH 隧道访问真实集群；本机 MySQL（root，Flyway 从空库迁移已在 `FlywaySchemaTest` 等测试中验证）

@@ -1,5 +1,7 @@
 # POC4 阶段六真实后端与 Kubernetes 集成实施计划
 
+> 状态索引（2026-09-10）：实现已推进到 Task 9A 的真实 6A 验收补齐；基础五项通过不代表 Task 9A 完成。清理失败路径、真实 Run 成功/状态一致、日志/PTY/audit、压力与故障矩阵仍需闭环。当前证据与下一步见 [阶段六状态](../evidence/stage-6/2026-09-10-status-and-next-steps.md)。本计划的步骤复选框是原始计划，不自动代表已完成；Task 10–12 继续受独立 6A PASS 门约束。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use `superpowers:subagent-driven-development` (recommended) or `superpowers:executing-plans` to implement this plan task-by-task. Every task uses TDD, a focused commit, and an explicit verification gate.
 
 **目标：** 在不改变阶段五 REST/WebSocket 合同和 POC4 核心规则的前提下，交付可由本机或 Kubernetes Pod 运行的真实 Spring Boot 后端，并完成 6A 本机集成和 6B 集群 Pod 两轮验收。
