@@ -102,7 +102,7 @@ The remaining initializer exposes a deterministic code defect: deletion selects 
 
 ## Artifact Cleanup Review
 
-The obsolete-file inventory contains five superseded report directories and two older logs: 16 files, 158,089 bytes. Path boundaries, reparse points, Git tracking and checksums were checked. The execution policy rejected deletion before execution, so **zero files were deleted and zero bytes reclaimed**; all candidates remain. The manifest records this blocked status rather than claiming cleanup completed. Latest useful reports, unresolved-failure evidence, runtime configurations, other-stage evidence and all Kubernetes/database diagnostics were preserved.
+The obsolete-file inventory contained five superseded report directories and two older logs: 16 files, 158,089 bytes. Path boundaries, reparse points, Git tracking and checksums were rechecked. After user authorization, **all 16 inventoried files were deleted and the 5 emptied report directories were removed**, reclaiming 158,089 bytes. The manifest now records status `DELETED`. Latest useful reports, unresolved-failure evidence, runtime configurations, other-stage evidence and all Kubernetes/database diagnostics were preserved.
 
 ## Supporting Stage 6 Records
 
