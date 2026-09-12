@@ -16,14 +16,16 @@ export function projectsRefetchInterval(
   if (data === undefined) {
     return false;
   }
-  return data.items.some((project) => project.state === 'CREATING') ? 1000 : false;
+  return data.items.some((project) => project.state === 'CREATING' || project.state === 'DELETING')
+    ? 1000
+    : false;
 }
 
 export function projectDetailRefetchInterval(
   query: QueryDataState<ProjectSummary>,
 ): number | false {
   const data = query.state.data;
-  return data?.state === 'CREATING' ? 1000 : false;
+  return data?.state === 'CREATING' || data?.state === 'DELETING' ? 1000 : false;
 }
 
 export function useProjectsQuery() {

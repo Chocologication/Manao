@@ -1,6 +1,6 @@
-import { render, screen } from '@testing-library/react';
+import { cleanup, render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { ProjectCard } from './ProjectCard';
 import type { ProjectSummary } from '../../contracts/project';
 
@@ -13,6 +13,10 @@ const ready: ProjectSummary = {
 };
 
 describe('ProjectCard', () => {
+  afterEach(() => {
+    cleanup();
+  });
+
   it('encodes opaque project ids in the open link', () => {
     render(
       <MemoryRouter>
@@ -24,5 +28,21 @@ describe('ProjectCard', () => {
       'href',
       `/projects/${encodeURIComponent(ready.id)}`,
     );
+  });
+
+  it('renders deleting status without an open action', () => {
+    const deleting: ProjectSummary = {
+      ...ready,
+      state: 'DELETING',
+      name: 'Deleting project',
+    };
+    render(
+      <MemoryRouter>
+        <ProjectCard project={deleting} />
+      </MemoryRouter>,
+    );
+    expect(screen.getByText('Deleting')).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Open' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Open' })).not.toBeInTheDocument();
   });
 });

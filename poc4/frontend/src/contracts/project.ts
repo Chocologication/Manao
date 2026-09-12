@@ -1,6 +1,6 @@
 export const DEFAULT_PROJECT_LIMIT = 8;
 
-export type ProjectState = 'CREATING' | 'READY' | 'FAILED';
+export type ProjectState = 'CREATING' | 'READY' | 'FAILED' | 'DELETING';
 export type ProjectSummary = {
   id: string;
   name: string;

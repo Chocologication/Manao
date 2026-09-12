@@ -115,6 +115,18 @@ describe('projectKeys and polling', () => {
       ),
     ).toBe(1000);
   });
+
+  it('keeps polling a deleting project without opening a workbench', () => {
+    const project = readyProject({
+      id: 'p1',
+      name: 'Deleting project',
+      state: 'DELETING',
+    });
+    expect(projectDetailRefetchInterval({ state: { data: project } })).toBe(1000);
+    expect(
+      projectsRefetchInterval({ state: { data: { items: [project], limit: 8 } } }),
+    ).toBe(1000);
+  });
 });
 
 describe('ProjectsPage', () => {
@@ -200,6 +212,24 @@ describe('ProjectsPage', () => {
       { timeout: 4000 },
     );
     expect(within(card).getByText('FAILED')).toBeInTheDocument();
+    expect(within(card).queryByRole('link', { name: 'Open' })).not.toBeInTheDocument();
+    expect(within(card).queryByRole('button', { name: 'Open' })).not.toBeInTheDocument();
+  });
+
+  it('shows a DELETING card without an open action', async () => {
+    await authenticateAsAlice();
+    server.use(
+      http.get('/api/v1/projects', () =>
+        HttpResponse.json({
+          items: [readyProject({ id: 'p-deleting', name: 'Deleting project', state: 'DELETING' })],
+          limit: 8,
+        }),
+      ),
+    );
+    renderApp();
+
+    const card = await screen.findByRole('article', { name: 'Deleting project' });
+    expect(within(card).getByText('Deleting')).toBeInTheDocument();
     expect(within(card).queryByRole('link', { name: 'Open' })).not.toBeInTheDocument();
     expect(within(card).queryByRole('button', { name: 'Open' })).not.toBeInTheDocument();
   });
@@ -353,6 +383,30 @@ describe('ProjectRoutePage', () => {
     renderApp({ initialEntries: [`/projects/${created.id}`] });
 
     expect(await screen.findByText(MOCK_FAILURE_REASON)).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /back to projects/i })).toHaveAttribute(
+      'href',
+      '/projects',
+    );
+    expectNoFileApi(created.id);
+    expectNoWorkbench();
+  });
+
+  it('shows deleting status without a workbench', async () => {
+    await authenticateAsAlice();
+    const created = await createProject({ name: 'Deleting shell' });
+    server.use(
+      http.get('/api/v1/projects/:projectId', () =>
+        HttpResponse.json({
+          ...created,
+          state: 'DELETING',
+          failureReason: null,
+        }),
+      ),
+    );
+    renderApp({ initialEntries: [`/projects/${created.id}`] });
+
+    expect(await screen.findByText(/project is being deleted/i)).toBeInTheDocument();
+    expect(screen.getByRole('status')).toHaveTextContent(/project is being deleted/i);
     expect(screen.getByRole('link', { name: /back to projects/i })).toHaveAttribute(
       'href',
       '/projects',

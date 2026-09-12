@@ -171,6 +171,30 @@ export function ProjectRoutePage() {
     );
   }
 
+  if (project.state === 'DELETING') {
+    return (
+      <AppChrome title={project.name}>
+        <div role="status" className="text-sm text-muted-foreground">
+          Project is being deleted
+        </div>
+        <Link to="/projects" className="text-sm text-foreground underline-offset-4 hover:underline">
+          Back to projects
+        </Link>
+      </AppChrome>
+    );
+  }
+
+  if (project.state !== 'READY') {
+    return (
+      <AppChrome title={project.name}>
+        <InlineAlert>Project is unavailable</InlineAlert>
+        <Link to="/projects" className="text-sm text-foreground underline-offset-4 hover:underline">
+          Back to projects
+        </Link>
+      </AppChrome>
+    );
+  }
+
   return (
     <Suspense
       fallback={

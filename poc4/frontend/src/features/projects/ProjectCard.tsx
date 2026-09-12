@@ -16,7 +16,9 @@ export function ProjectCard({ project }: { project: ProjectSummary }) {
           <h2 id={titleId} className="truncate text-sm font-medium">
             {project.name}
           </h2>
-          <p className="mt-1 text-sm text-muted-foreground">{project.state}</p>
+          <p className="mt-1 text-sm text-muted-foreground">
+            {project.state === 'DELETING' ? 'Deleting' : project.state}
+          </p>
           {project.state === 'FAILED' && project.failureReason ? (
             <p className="mt-2 text-sm text-destructive">{project.failureReason}</p>
           ) : null}
