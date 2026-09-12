@@ -43,6 +43,37 @@ class FlywaySchemaTest {
     }
 
     @Test
+    void latestSchemaIsVersion8AndAcceptsDeleting() throws Exception {
+        try (var version = connection.prepareStatement(
+                "SELECT version FROM flyway_schema_history WHERE success = 1 ORDER BY installed_rank DESC LIMIT 1")) {
+            try (var rows = version.executeQuery()) {
+                assertThat(rows.next()).isTrue();
+                assertThat(rows.getString(1)).isEqualTo("8");
+            }
+        }
+        String userId = UUID.randomUUID().toString();
+        String projectId = UUID.randomUUID().toString();
+        try (var user = connection.prepareStatement(
+                "INSERT INTO app_user(id, username, password_hash, created_at) VALUES (?, ?, 'hash', ?)");
+             var project = connection.prepareStatement(
+                "INSERT INTO project(id, owner_id, name, state, workspace_revision, created_at, updated_at) VALUES (?, ?, 'deleting', 'READY', 0, ?, ?)")) {
+            user.setString(1, userId);
+            user.setString(2, "deleting-owner-" + userId);
+            user.setObject(3, TEST_NOW);
+            user.executeUpdate();
+            project.setString(1, projectId);
+            project.setString(2, userId);
+            project.setObject(3, TEST_NOW);
+            project.setObject(4, TEST_NOW);
+            project.executeUpdate();
+        }
+        try (var update = connection.prepareStatement("UPDATE project SET state = 'DELETING' WHERE id = ?")) {
+            update.setString(1, projectId);
+            assertThat(update.executeUpdate()).isEqualTo(1);
+        }
+    }
+
+    @Test
     void schemaRejectsDuplicateUsersAndActiveRuns() throws Exception {
         String userId = UUID.randomUUID().toString();
         String projectId = UUID.randomUUID().toString();

@@ -12,9 +12,11 @@ import org.springframework.jdbc.datasource.DriverManagerDataSource;
 
 /**
  * Real-MySQL test scaffold: {@link #create()} provisions a unique schema
- * (manao_stage6_&lt;uuid&gt;), migrates it with the classpath Flyway migrations (V1-V6) and
- * drops the schema again on {@link #close()}. A non-jdbc:mysql MANAO_DB_URL fails the suite up
- * front (REAL_MYSQL_REQUIRED) so no test can silently pass against an in-memory substitute.
+ * (manao_stage6_&lt;uuid&gt;), migrates it with the classpath Flyway migrations and
+ * drops the schema again on {@link #close()}. {@link #createAtVersion(String)} stops at a
+ * numeric version so upgrade tests can apply later migrations on the same disposable schema.
+ * A non-jdbc:mysql MANAO_DB_URL fails the suite up front (REAL_MYSQL_REQUIRED) so no test
+ * can silently pass against an in-memory substitute.
  */
 public final class JdbcStoreTestSupport implements AutoCloseable {
     private static final String DEFAULT_URL = "jdbc:mysql://127.0.0.1:3306/manao_poc4_test";
@@ -24,32 +26,23 @@ public final class JdbcStoreTestSupport implements AutoCloseable {
     private final DataSource dataSource;
 
     public static JdbcStoreTestSupport create() {
-        String url = System.getenv().getOrDefault("MANAO_DB_URL", DEFAULT_URL);
-        if (!url.startsWith("jdbc:mysql:")) {
-            throw new AssertionError("REAL_MYSQL_REQUIRED: MANAO_DB_URL must be jdbc:mysql, got " + url);
+        return open(null);
+    }
+
+    public static JdbcStoreTestSupport createAtVersion(String version) {
+        if (version == null || !version.matches("[1-9][0-9]*")) {
+            throw new IllegalArgumentException("version must be a test-specified numeric Flyway target");
         }
-        String user = System.getenv().getOrDefault("MANAO_DB_USERNAME", DEFAULT_USER);
-        String pass = System.getenv().getOrDefault("MANAO_DB_PASSWORD", "");
-        String schema = "manao_stage6_" + UUID.randomUUID().toString().replace("-", "");
-        String schemaUrl = schemaUrl(url, schema);
-        try (Connection admin = DriverManager.getConnection(url, user, pass);
-             Statement statement = admin.createStatement()) {
-            statement.execute("CREATE SCHEMA " + schema + " CHARACTER SET utf8mb4");
-        } catch (SQLException ex) {
-            throw new AssertionError("REAL_MYSQL_BLOCKED: cannot create per-test schema " + schema, ex);
-        }
-        try {
-            Flyway.configure().dataSource(schemaUrl, user, pass)
-                .locations("classpath:db/migration").load().migrate();
-        } catch (RuntimeException ex) {
-            dropSchemaQuietly(schemaUrl, user, pass);
-            throw new AssertionError("REAL_MYSQL_BLOCKED: Flyway migrate failed on " + schema, ex);
-        }
-        return new JdbcStoreTestSupport(schema, new DriverManagerDataSource(schemaUrl, user, pass));
+        return open(version);
     }
 
     public JdbcTemplate jdbc() {
         return new JdbcTemplate(dataSource);
+    }
+
+    public void migrateToLatest() {
+        Flyway.configure().dataSource(dataSource)
+            .locations("classpath:db/migration").load().migrate();
     }
 
     @Override
@@ -65,6 +58,35 @@ public final class JdbcStoreTestSupport implements AutoCloseable {
     private JdbcStoreTestSupport(String schema, DataSource dataSource) {
         this.schema = schema;
         this.dataSource = dataSource;
+    }
+
+    private static JdbcStoreTestSupport open(String targetVersion) {
+        String url = System.getenv().getOrDefault("MANAO_DB_URL", DEFAULT_URL);
+        if (!url.startsWith("jdbc:mysql:")) {
+            throw new AssertionError("REAL_MYSQL_REQUIRED: MANAO_DB_URL must be jdbc:mysql, got " + url);
+        }
+        String user = System.getenv().getOrDefault("MANAO_DB_USERNAME", DEFAULT_USER);
+        String pass = System.getenv().getOrDefault("MANAO_DB_PASSWORD", "");
+        String schema = "manao_stage6_" + UUID.randomUUID().toString().replace("-", "");
+        String schemaUrl = schemaUrl(url, schema);
+        try (Connection admin = DriverManager.getConnection(url, user, pass);
+             Statement statement = admin.createStatement()) {
+            statement.execute("CREATE SCHEMA " + schema + " CHARACTER SET utf8mb4");
+        } catch (SQLException ex) {
+            throw new AssertionError("REAL_MYSQL_BLOCKED: cannot create per-test schema " + schema, ex);
+        }
+        try {
+            var flyway = Flyway.configure().dataSource(schemaUrl, user, pass)
+                .locations("classpath:db/migration");
+            if (targetVersion != null) {
+                flyway = flyway.target(targetVersion);
+            }
+            flyway.load().migrate();
+        } catch (RuntimeException ex) {
+            dropSchemaQuietly(schemaUrl, user, pass);
+            throw new AssertionError("REAL_MYSQL_BLOCKED: Flyway migrate failed on " + schema, ex);
+        }
+        return new JdbcStoreTestSupport(schema, new DriverManagerDataSource(schemaUrl, user, pass));
     }
 
     /** Replaces the database name in the base URL with the per-test schema name. */
