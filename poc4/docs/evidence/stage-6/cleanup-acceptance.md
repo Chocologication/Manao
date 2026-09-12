@@ -6,7 +6,7 @@
 
 ## 结论
 
-离线实现仍在 RC-8。2026-09-12 16:20 真实验收未通过：cleanup Playwright 创建了项目 `07f3cfca-9a39-48b3-8215-9677ad5c2eb8`，但运行中的后端对 owner DELETE 返回 `500 INTERNAL_ERROR`，项目停留 `READY`，台账 `UNRESOLVED / CLEANUP_REQUEST_FAILED`。诊断资源 `083b8efd-9f57-4cb4-aa6f-646b37bd6d57` 的 Pod/PVC resourceVersion 未变。C08、压力、故障未跑。
+离线实现仍在 RC-8。2026-09-12 17:18：后端已重启（PID 44892），DELETE 从 500 变为 `503 PROJECT_CLEANUP_INCOMPLETE`，但 general_log 证明 DELETE 未发出任何 SQL。原因是 `ProjectDeletionRepository` 的无参构造被 Spring 选用，`inspect` 在连库前 NPE。项目 `07f3cfca-...` 仍 READY；诊断 `083b8efd` 未改。C08、压力、故障未跑。
 
 当前状态：`CLEANUP_IMPLEMENTED_REAL_ACCEPTANCE_PENDING`
 
@@ -32,10 +32,17 @@
 - 保护诊断 `083b8efd`：Pod rv=15521700，PVC rv=14891340，与 apply 前一致。历史 `6c6378b2` 工作区未动。
 - 本轮代码修正（尚未被 PID 43608 加载）：台账忽略 `manifest.json`/`teardown-report.json`；runner 关闭 PowerShell native stderr 终止；inspect 失败映射 503 且 500 处理器记录异常类名。
 
+## 2026-09-12 17:18 重启后
+
+- 新进程 PID 44892，启动 17:11:27，加载 `1982ed2` 的 503 映射。登录仍 200。
+- `DELETE /api/v1/projects/07f3cfca-...` = 503，库行仍 READY。mysql.general_log（TABLE，用后已关）只有 login 的 `SELECT app_user`，没有 `FOR UPDATE` / `DELETING`。
+- 已给 JDBC 构造函数加 `@Autowired`，无参实例的 inspect/begin 改为明确 `not connected`。需再次重启后端才能注入 JDBC 仓库。
+- 诊断 `083b8efd` Pod/PVC rv 仍为 15521700 / 14891340。
+
 ## 未闭环
 
-- 运行中后端 DELETE 500 的具体异常（当前处理器不记录栈，需加载新构建后才能看到类名）。
-- `STAGE6_GATE=1` cleanup/basic 真实通过与独立 leftover VERIFIED。
+- 注入修复加载后，对 `07f3cfca` 台账续作并独立 leftover 核验。
+- `STAGE6_GATE=1` cleanup/basic 真实通过。
 - C08 重启续作、压力、故障、Maven 成功与 Run 一致。
 
-本切片 runner 仍不启动或停止 4173/18080。要让上述后端修正生效，需要操作者重启已有 Spring 进程；这不是 C08 业务验收。
+本切片 runner 仍不启动或停止 4173/18080。要让 JDBC 注入修正生效，需要操作者再次重启 Spring 进程；这不是 C08 业务验收。

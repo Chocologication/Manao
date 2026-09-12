@@ -16,6 +16,17 @@ class ProjectDeletionRepositoryTest {
     private static final Instant NOW = Instant.parse("2026-09-10T00:00:00Z");
 
     @Test
+    void disconnectedRepositoryDoesNotCallBegin() {
+        ProjectDeletionRepository repo = new ProjectDeletionRepository();
+        assertThatThrownBy(() -> repo.inspect("owner-a", "p1"))
+            .isInstanceOf(IllegalStateException.class)
+            .hasMessageContaining("not connected");
+        assertThatThrownBy(() -> repo.begin("owner-a", "p1"))
+            .isInstanceOf(IllegalStateException.class)
+            .hasMessageContaining("not connected");
+    }
+
+    @Test
     void readyBecomesDeletingAndCreatingStaysUntouched() {
         try (var db = JdbcStoreTestSupport.create()) {
             ProjectDeletionRepository repo = new ProjectDeletionRepository(db.jdbc(),

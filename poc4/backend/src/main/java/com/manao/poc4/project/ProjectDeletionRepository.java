@@ -4,6 +4,7 @@ import com.manao.poc4.config.SecurityConfig;
 import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.List;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Conditional;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
@@ -18,6 +19,7 @@ public class ProjectDeletionRepository {
     private final JdbcTemplate jdbc;
     private final TransactionTemplate transaction;
 
+    @Autowired
     public ProjectDeletionRepository(JdbcTemplate jdbc, PlatformTransactionManager transactions) {
         this.jdbc = jdbc;
         this.transaction = new TransactionTemplate(transactions);
@@ -29,16 +31,21 @@ public class ProjectDeletionRepository {
     }
 
     public BeginDeletion inspect(String ownerId, String projectId) {
-        if (transaction == null) {
-            return begin(ownerId, projectId);
-        }
+        requireConnected();
         BeginDeletion result = evaluate(ownerId, projectId, false);
         return result == null ? BeginDeletion.BUSY : result;
     }
 
     public BeginDeletion begin(String ownerId, String projectId) {
+        requireConnected();
         BeginDeletion result = evaluate(ownerId, projectId, true);
         return result == null ? BeginDeletion.BUSY : result;
+    }
+
+    private void requireConnected() {
+        if (jdbc == null || transaction == null) {
+            throw new IllegalStateException("project deletion repository is not connected");
+        }
     }
 
     public List<String> runIds(String ownerId, String projectId) {
