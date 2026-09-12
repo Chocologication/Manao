@@ -6,7 +6,7 @@
 
 ## 结论
 
-离线实现仍在 RC-8。2026-09-12 17:18：后端已重启（PID 44892），DELETE 从 500 变为 `503 PROJECT_CLEANUP_INCOMPLETE`，但 general_log 证明 DELETE 未发出任何 SQL。原因是 `ProjectDeletionRepository` 的无参构造被 Spring 选用，`inspect` 在连库前 NPE。项目 `07f3cfca-...` 仍 READY；诊断 `083b8efd` 未改。C08、压力、故障未跑。
+2026-09-12 18:39：`ebca913` + JDBC `@Autowired` 后端（PID 45924）上，cleanup 专项 Playwright 1 passed、台账 `API_CLEANED`、独立 leftover 核验 1/0/0/0。18:45 basic 4/5；失败项是 Run 等待未覆盖 `RECOVERING`，随后该 Run 实际 `SUCCEEDED`/`BUILD_SUCCEEDED`/exitCode=0。DELETE 在 Run 仍活跃时为 409 `RUN_ALREADY_ACTIVE`；resume 后残留核验通过。诊断 `083b8efd` rv 未变。C08、压力、故障未跑。
 
 当前状态：`CLEANUP_IMPLEMENTED_REAL_ACCEPTANCE_PENDING`
 
@@ -39,10 +39,27 @@
 - 已给 JDBC 构造函数加 `@Autowired`，无参实例的 inspect/begin 改为明确 `not connected`。需再次重启后端才能注入 JDBC 仓库。
 - 诊断 `083b8efd` Pod/PVC rv 仍为 15521700 / 14891340。
 
+## 2026-09-12 18:39 Autowired 后端后的 cleanup 专项
+
+- SHA：`ebca913`。后端 PID 45924（18:17:24 启动，加载 JDBC `@Autowired`）。身份：`system:serviceaccount:manao-stage6-test:manao-6a-local`。4173/18080 由既有进程提供；runner 未启停服务。
+- 先前 `07f3cfca` 已台账续作到 `API_CLEANED`。本次新 invocation `f95393c1bdcb44bca11995ae9ffb842f`：Playwright 1 passed / 0 failed / 0 skipped（约 20.4s），台账 `a73a42f4-...` = `API_CLEANED`，独立 verifier 1/0/0/0。
+- Node 24.12.0 在测试通过后仍以 `UV_HANDLE_CLOSING` / `0xC0000409` 崩溃。runner 现以 Playwright JSON `stats`（expected>0 且 unexpected=0）作为 e2e 判定，并单独记录 `e2eProcessExit`。本轮 `run-summary.json`：`e2eExit=0`、`verifyExit=0`、`status=PENDING_HUMAN_REVIEW`、runner 进程退出码 0。
+- 库 `manao_poc4.project` 空；alice 项目列表 0；集群无 `a73a42f4` 资源。诊断 `083b8efd` Pod/PVC rv 仍为 15521700 / 14891340。历史 `6c6378b2` 未动。
+- 证据目录：`poc4/frontend/playwright-report/stage6-cleanup-f95393c1bdcb44bca11995ae9ffb842f/`。
+
+## 2026-09-12 18:45 basic 五项
+
+- 同一 SHA/身份/后端。invocation `31a7ea1ef4ed44889f474f88becc313a`。4 passed / 1 failed / teardown `STAGE6_CLEANUP_INCOMPLETE`。
+- 失败项是 Run：等待循环只覆盖 `STARTING`/`RUNNING`，3.3 分钟时观测到 `RECOVERING`。随后 Job Complete、API Run=`SUCCEEDED`、`terminationReason=BUILD_SUCCEEDED`、`exitCode=0`、`finishedAt=2026-09-12T10:45:32Z`。这不是清理 API 失败；不能把五项凑绿当成 6A PASS。
+- 失败当时 DELETE=`409 RUN_ALREADY_ACTIVE`（协议正确），台账 `bd9c7b14-...` = `UNRESOLVED`。Run 进入 SUCCEEDED 后显式 resume apply 将同一条目标为 `API_CLEANED`；独立 verifier 1/0/0/0；GET 404；集群无该项目资源。诊断 rv 未变。
+- 证据目录：`poc4/frontend/playwright-report/stage6-basic-31a7ea1ef4ed44889f474f88becc313a/`。
+
+当前状态：`CLEANUP_IMPLEMENTED_REAL_ACCEPTANCE_PENDING`
+
+这不是 6A PASS，也不能开始 6B。C08、压力、故障套件仍为 `NOT_RUN_IN_THIS_SLICE`。
+
 ## 未闭环
 
-- 注入修复加载后，对 `07f3cfca` 台账续作并独立 leftover 核验。
-- `STAGE6_GATE=1` cleanup/basic 真实通过。
-- C08 重启续作、压力、故障、Maven 成功与 Run 一致。
-
-本切片 runner 仍不启动或停止 4173/18080。要让 JDBC 注入修正生效，需要操作者再次重启 Spring 进程；这不是 C08 业务验收。
+- C08 后端重启后续作（需单独授权目标 PID 与启动方式）。
+- 压力 / 三类故障套件。
+- Run 等待需覆盖 `RECOVERING`，并核验 Maven 成功与 Run/Job 一致；不得把任意终态或本次 4/5 当作 6A PASS。
