@@ -6,7 +6,7 @@
 
 ## 结论
 
-离线实现已完成到 RC-8 只读核验器。2026-09-12 13:40 前置门：`git SHA=f58b304`，kubeconfig 可读、namespace=`manao-stage6-test`、context=`stage6-6a`，但 `127.0.0.1:6443` 拒绝连接。按计划停止，未启动应用、未跑 preflight real 路径、未跑 Playwright、未改运行库。
+离线实现仍在 RC-8。2026-09-12 16:20 真实验收未通过：cleanup Playwright 创建了项目 `07f3cfca-9a39-48b3-8215-9677ad5c2eb8`，但运行中的后端对 owner DELETE 返回 `500 INTERNAL_ERROR`，项目停留 `READY`，台账 `UNRESOLVED / CLEANUP_REQUEST_FAILED`。诊断资源 `083b8efd-9f57-4cb4-aa6f-646b37bd6d57` 的 Pod/PVC resourceVersion 未变。C08、压力、故障未跑。
 
 当前状态：`CLEANUP_IMPLEMENTED_REAL_ACCEPTANCE_PENDING`
 
@@ -21,11 +21,21 @@
 - RC-7：三套 Stage 6 spec 接入 `resources.createProject` / `recordRun`；resume 工具默认只读。`playwright test --project=stage6 --list` 发现 10 个既有业务测试。
 - RC-8：离线 parser 4/0/0/0；gated verifier 在未设 `-Dmanao.stage6.cleanup.verify=true` 时 1 skipped。真实 leftover 核验器已实现为只读 JDBC + Fabric8 list，普通构建不执行。
 
-## 未跑 / 被前置门挡住
+## 2026-09-12 16:20 实测
 
-- `Stage6aPreflightTest` 的 real 路径：API 隧道未通。
-- `STAGE6_GATE=1` 下 cleanup/basic Playwright。
-- `-Dmanao.stage6.cleanup.verify=true` 针对真实 ledger 的只读 DB/Kubernetes 核验。
-- 故障注入、压力、Maven 成功与 Run 一致。
+- SHA（开始时）：`ad32335`。身份：`system:serviceaccount:manao-stage6-test:manao-6a-local`。namespace=`manao-stage6-test`。4173/18080/6443 已由既有进程提供；runner 未启停服务。
+- 运行库 `manao_poc4` 在当日 Flyway V1–V8 后 `app_user` 为空。只 INSERT 了文档账号 alice/bob（BCrypt12），未 DROP/reset。登录 18080 与 4173 均为 200。
+- `STAGE6_VERIFY_DB_*` 从 `MANAO_DB_*` 显式复制，schema=`manao_poc4`，已记录为同库只读映射。
+- 第一次 runner：PowerShell 把 `--reporter=list,json` 拆开，Playwright 未执行。
+- 第二次 invocation `40584abf88eb40779f75d673b596f148`：Playwright 1 failed / 1.3s，`STAGE6_CLEANUP_INCOMPLETE`。项目已 READY、revision 21，workspace Pod/PVC/Service 仍在。
+- 显式 resume（`STAGE6_CLEANUP_APPLY=1`）inspect 只读通过；apply 再次 `CLEANUP_REQUEST_FAILED`。直接 `DELETE /api/v1/projects/07f3cfca-...` = 500，库行仍 READY。
+- 保护诊断 `083b8efd`：Pod rv=15521700，PVC rv=14891340，与 apply 前一致。历史 `6c6378b2` 工作区未动。
+- 本轮代码修正（尚未被 PID 43608 加载）：台账忽略 `manifest.json`/`teardown-report.json`；runner 关闭 PowerShell native stderr 终止；inspect 失败映射 503 且 500 处理器记录异常类名。
 
-恢复 Xshell/API 隧道并确认 `4173`/`18080` 已由既有进程提供后，才能继续专项。本切片 runner 不启动或停止这些服务。
+## 未闭环
+
+- 运行中后端 DELETE 500 的具体异常（当前处理器不记录栈，需加载新构建后才能看到类名）。
+- `STAGE6_GATE=1` cleanup/basic 真实通过与独立 leftover VERIFIED。
+- C08 重启续作、压力、故障、Maven 成功与 Run 一致。
+
+本切片 runner 仍不启动或停止 4173/18080。要让上述后端修正生效，需要操作者重启已有 Spring 进程；这不是 C08 业务验收。

@@ -2,6 +2,8 @@ package com.manao.poc4.api;
 
 import jakarta.servlet.http.HttpServletRequest;
 import java.util.UUID;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
@@ -12,6 +14,8 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 
 @RestControllerAdvice
 public final class GlobalExceptionHandler {
+    private static final Logger LOG = LoggerFactory.getLogger(GlobalExceptionHandler.class);
+
     @ExceptionHandler(ApiException.class)
     ResponseEntity<ApiError> api(ApiException exception, HttpServletRequest request) {
         return response(exception.status(), exception.code(), exception.getMessage());
@@ -29,7 +33,8 @@ public final class GlobalExceptionHandler {
     }
 
     @ExceptionHandler(Exception.class)
-    ResponseEntity<ApiError> internal() {
+    ResponseEntity<ApiError> internal(Exception exception) {
+        LOG.error("unhandled {}", exception.getClass().getName());
         return response(500, "INTERNAL_ERROR", "Request failed");
     }
 

@@ -100,6 +100,20 @@ describe('FileCleanupLedger', () => {
     expect(await ledger.claimHold('owner-a', 'other-name')).toBe(false);
   });
 
+  it('does not treat manifest or teardown reports as cleanup entries', async () => {
+    const root = await tempDir();
+    const ledger = new FileCleanupLedger(root, 'inv-1');
+    await ledger.write(entry({ projectId: 'p1', state: 'OWNED' }));
+    await writeFile(path.join(root, 'manifest.json'), JSON.stringify({
+      schemaVersion: 1,
+      invocationId: 'inv-1',
+      createdAt: '2026-09-12T00:00:00.000Z',
+    }), 'utf8');
+    await writeFile(path.join(root, 'teardown-report.json'), JSON.stringify({ entries: [], issues: [] }), 'utf8');
+    const rows = await ledger.readAll();
+    expect(rows.map((row) => row.entryId)).toEqual(['entry-1']);
+  });
+
   it('never writes token or password fields', async () => {
     const root = await tempDir();
     const ledger = new FileCleanupLedger(root, 'inv-1');

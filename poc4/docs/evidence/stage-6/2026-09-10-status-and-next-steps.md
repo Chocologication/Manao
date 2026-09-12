@@ -2,7 +2,7 @@
 
 ## 1. 当前结论与证据边界
 
-- 代码基线：`c974630b2aa34f442deef72206259113460aed09`，分支 `codex/poc4-stage-6-real-backend-kubernetes`。本次只更新文档、只读核验环境并清理过时文件，不修改业务代码，不启动测试，不重启服务。
+- 代码基线（清理切片实现）：`ad32335` 及后续 runner/台账/DELETE 失败映射修正。2026-09-12 真实验收：alice/bob 已 INSERT；cleanup E2E 创建了 `07f3cfca-...`，运行中后端 DELETE 返回 500，项目仍 READY；诊断 `083b8efd` 未改。详见 [cleanup-acceptance.md](cleanup-acceptance.md)。
 - **基础 real-backend E2E：用户报告集群重启后在沙箱外 5/5 PASS。** 已读取 `poc4/frontend/test-results/.last-run.json`：`status=passed`、`failedTests=[]`，文件修改时间为 2026-09-10 18:32:06 +08:00。该文件没有用例数量、耗时、集群身份或 Run 结果；这些细节不能从它独立证明。最新一次没有留存完整 JSON/list 报告，也不把 09:50 的旧报告冒充本次报告。
 - **完整 6A Gate = FAILED（关键验收未闭环），6B 未开始，阶段六未完成。** 历史失败已经被解决的部分与待验收部分分开记录，不再把模板写入/Fabric8 RESET 列为当前已证实阻断。
 - [只读快照](2026-09-10-readonly-snapshot.json) 固定了核验时间、代码 SHA、本地 JAR/spec 校验和、末次运行状态、节点状态和残留资源。磁盘 JAR 校验和不是“当前 JVM 加载了该 JAR”的证明。

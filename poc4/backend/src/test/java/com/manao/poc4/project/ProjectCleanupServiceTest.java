@@ -127,6 +127,24 @@ class ProjectCleanupServiceTest {
     }
 
     @Test
+    void inspectFailureKeepsReadyAndMapsToIncomplete() {
+        ProjectDeletionRepository exploding = new ProjectDeletionRepository() {
+            @Override public BeginDeletion inspect(String ownerId, String projectId) {
+                throw new IllegalStateException("kubeconfig=/tmp/secret token=leak");
+            }
+        };
+        cleanup = new ProjectCleanupService(exploding, gate, runtime, gateway, store);
+        assertThatThrownBy(() -> cleanup.delete(OWNER, PROJECT))
+            .isInstanceOfSatisfying(ApiException.class, ex -> {
+                assertThat(ex.status()).isEqualTo(503);
+                assertThat(ex.code()).isEqualTo("PROJECT_CLEANUP_INCOMPLETE");
+            });
+        assertThat(store.projects.get(PROJECT).state()).isEqualTo("READY");
+        assertThat(runtime.closed).isEmpty();
+        assertThat(gateway.deletedProjects).isEmpty();
+    }
+
+    @Test
     void missingOwnerIsNotFoundWithNoSideEffects() {
         assertThatThrownBy(() -> cleanup.delete("other-owner", PROJECT))
             .isInstanceOfSatisfying(ApiException.class, ex -> {

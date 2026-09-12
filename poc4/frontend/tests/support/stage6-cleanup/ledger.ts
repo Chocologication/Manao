@@ -4,6 +4,7 @@ import path from 'node:path';
 import type { CleanupEntry, CleanupLedger } from './contracts.ts';
 
 const SAFE_ID = /^[A-Za-z0-9._-]+$/;
+const SKIP_JSON = new Set(['hold.json', 'manifest.json', 'teardown-report.json']);
 const STATES = new Set([
   'PREPARED',
   'OWNED',
@@ -41,7 +42,7 @@ export class FileCleanupLedger implements CleanupLedger {
     const names = await readdir(this.rootDir);
     const rows: CleanupEntry[] = [];
     for (const name of names) {
-      if (!name.endsWith('.json') || name === 'hold.json') {
+      if (!name.endsWith('.json') || SKIP_JSON.has(name)) {
         continue;
       }
       let file: string;

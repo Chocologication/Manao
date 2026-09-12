@@ -7,6 +7,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+$PSNativeCommandUseErrorActionPreference = $false
 $frontendDir = Split-Path -Parent $PSScriptRoot
 $backendDir = Join-Path (Split-Path -Parent $frontendDir) 'backend'
 $spec = if ($Suite -eq 'cleanup') {
@@ -21,7 +22,7 @@ $verifyExit = 1
 try {
     Push-Location -LiteralPath $frontendDir
     try {
-        pnpm exec playwright test $spec --project=stage6 --workers=1 --reporter=list,json
+        pnpm exec playwright test $spec --project=stage6 --workers=1 '--reporter=list,json'
         $e2eExit = $LASTEXITCODE
     } finally {
         Pop-Location

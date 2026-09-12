@@ -4,12 +4,15 @@ import com.manao.poc4.api.ApiException;
 import com.manao.poc4.kubernetes.KubernetesGateway;
 import com.manao.poc4.workspace.WorkspaceStore;
 import java.util.List;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Owner-scoped project deletion: persist DELETING, close local handles, clean Kubernetes, then
  * delete durable rows. Kubernetes waits never run inside a database transaction.
  */
 public final class ProjectCleanupService {
+    private static final Logger LOG = LoggerFactory.getLogger(ProjectCleanupService.class);
     private final ProjectDeletionRepository deletions;
     private final ProjectLifecycleGate lifecycle;
     private final ProjectRuntimeCleaner runtime;
@@ -26,28 +29,36 @@ public final class ProjectCleanupService {
     }
 
     public void delete(String ownerId, String projectId) {
-        ProjectDeletionRepository.BeginDeletion preview = deletions.inspect(ownerId, projectId);
-        rejectIfNotReadyToClean(preview);
-        try (var lease = lifecycle.tryAcquire(projectId).orElse(null)) {
-            if (lease == null) {
-                if (preview == ProjectDeletionRepository.BeginDeletion.RESUMED) {
+        try {
+            ProjectDeletionRepository.BeginDeletion preview = deletions.inspect(ownerId, projectId);
+            rejectIfNotReadyToClean(preview);
+            try (var lease = lifecycle.tryAcquire(projectId).orElse(null)) {
+                if (lease == null) {
+                    if (preview == ProjectDeletionRepository.BeginDeletion.RESUMED) {
+                        throw incomplete();
+                    }
+                    throw new ApiException("PROJECT_BUSY", 409, "Project is busy");
+                }
+                rejectIfNotReadyToClean(deletions.begin(ownerId, projectId));
+                try {
+                    List<String> runIds = deletions.runIds(ownerId, projectId);
+                    runtime.closeProject(projectId, runIds);
+                    gateway.deleteProjectResources(projectId);
+                    if (!store.deleteProject(ownerId, projectId)) {
+                        throw incomplete();
+                    }
+                } catch (ApiException ex) {
+                    throw ex;
+                } catch (RuntimeException ex) {
+                    LOG.warn("project delete failed: {}", ex.getClass().getSimpleName());
                     throw incomplete();
                 }
-                throw new ApiException("PROJECT_BUSY", 409, "Project is busy");
             }
-            rejectIfNotReadyToClean(deletions.begin(ownerId, projectId));
-            try {
-                List<String> runIds = deletions.runIds(ownerId, projectId);
-                runtime.closeProject(projectId, runIds);
-                gateway.deleteProjectResources(projectId);
-                if (!store.deleteProject(ownerId, projectId)) {
-                    throw incomplete();
-                }
-            } catch (ApiException ex) {
-                throw ex;
-            } catch (RuntimeException ex) {
-                throw incomplete();
-            }
+        } catch (ApiException ex) {
+            throw ex;
+        } catch (RuntimeException ex) {
+            LOG.warn("project delete failed: {}", ex.getClass().getSimpleName());
+            throw incomplete();
         }
     }
 

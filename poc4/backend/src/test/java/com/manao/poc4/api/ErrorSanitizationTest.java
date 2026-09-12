@@ -41,4 +41,13 @@ class ErrorSanitizationTest {
         assertThat(response.getStatusCode().value()).isEqualTo(403);
         assertThat(response.getBody().toMap()).containsOnlyKeys("code", "message", "traceId");
     }
+
+    @Test
+    void internalHandlerDoesNotLeakExceptionMessage() {
+        var response = new GlobalExceptionHandler().internal(
+            new IllegalStateException("token=leak kubeconfig=/tmp/secret"));
+        assertThat(response.getStatusCode().value()).isEqualTo(500);
+        assertThat(response.getBody().message()).isEqualTo("Request failed");
+        assertThat(response.getBody().toString()).doesNotContain("token", "kubeconfig", "secret");
+    }
 }
