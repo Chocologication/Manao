@@ -37,7 +37,7 @@ export default defineConfig({
   projects: [
     {
       name: 'stage6',
-      testMatch: /stage6-(real-backend|terminal-stress|faults)\.spec\.ts/,
+      testMatch: /stage6-(real-backend|terminal-stress|faults|cleanup)\.spec\.ts/,
       timeout: 600_000,
       use: { ...devices['Desktop Chrome'] },
     },
