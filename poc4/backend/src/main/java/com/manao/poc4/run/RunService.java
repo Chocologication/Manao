@@ -4,6 +4,7 @@ import com.manao.poc4.api.ApiException;
 import com.manao.poc4.kubernetes.JobCoordinator;
 import com.manao.poc4.kubernetes.JobResourceFactory;
 import com.manao.poc4.persistence.RunState;
+import com.manao.poc4.project.ProjectLifecycleGate;
 import java.time.Instant;
 import java.util.Optional;
 import java.util.OptionalLong;
@@ -17,14 +18,27 @@ public final class RunService {
     private final RunStore store;
     private final JobCoordinator coordinator;
     private final RunPolicy policy;
+    private final ProjectLifecycleGate lifecycle;
 
     public RunService(RunStore store, JobCoordinator coordinator, RunPolicy policy) {
+        this(store, coordinator, policy, new ProjectLifecycleGate());
+    }
+
+    public RunService(RunStore store, JobCoordinator coordinator, RunPolicy policy, ProjectLifecycleGate lifecycle) {
         this.store = store;
         this.coordinator = coordinator;
         this.policy = policy;
+        this.lifecycle = lifecycle;
     }
 
     public RunSummary start(String ownerId, String projectId, String expectedRevision) {
+        try (var lease = lifecycle.tryAcquire(projectId).orElseThrow(
+                () -> new ApiException("PROJECT_BUSY", 409, "Project is busy"))) {
+            return startLocked(ownerId, projectId, expectedRevision);
+        }
+    }
+
+    private RunSummary startLocked(String ownerId, String projectId, String expectedRevision) {
         RunStore.ProjectRecord project = store.findProjectForOwner(ownerId, projectId);
         if (project == null) {
             throw new ApiException("ENTRY_NOT_FOUND", 404, "Project not found");
@@ -48,12 +62,24 @@ public final class RunService {
         RunRecord record = new RunRecord(runId, projectId, revision, RunState.STARTING, policy.toJson(),
             null, null, null, null, null, null, 0L, Instant.now(), token);
         RunStore.InsertResult inserted = store.insertRun(record, token);
+        if (inserted == RunStore.InsertResult.PROJECT_LOCKED) {
+            throw new ApiException("PROJECT_LOCKED", 409, "Project is locked");
+        }
+        if (inserted == RunStore.InsertResult.PROJECT_NOT_FOUND) {
+            throw new ApiException("ENTRY_NOT_FOUND", 404, "Project not found");
+        }
+        if (inserted == RunStore.InsertResult.REVISION_CONFLICT) {
+            throw new ApiException("WORKSPACE_REVISION_CONFLICT", 409, "The workspace changed; reload and retry.");
+        }
         if (inserted == RunStore.InsertResult.ACTIVE_RUN_EXISTS) {
             // The unique active-run marker rejected the insert; refetch the authoritative winner.
             if (store.findActiveRun(projectId).isPresent()) {
                 throw new ApiException("RUN_ALREADY_ACTIVE", 409, "A run is already active");
             }
             throw new ApiException("INTERNAL_ERROR", 503, "Backend authority is temporarily unavailable");
+        }
+        if (inserted != RunStore.InsertResult.INSERTED) {
+            throw new ApiException("INTERNAL_ERROR", 503, "Run could not be started");
         }
         RunRecord persisted = store.findRunForOwner(ownerId, projectId, runId).orElseThrow();
         try {

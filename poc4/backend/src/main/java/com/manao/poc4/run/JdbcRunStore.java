@@ -10,9 +10,12 @@ import java.util.List;
 import java.util.Optional;
 import java.util.OptionalLong;
 import java.util.stream.Collectors;
+import javax.sql.DataSource;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.support.TransactionTemplate;
 
 /** JDBC Run store; the generated active_run_marker enforces one active Run per project. */
 import com.manao.poc4.config.SecurityConfig;
@@ -27,15 +30,21 @@ public final class JdbcRunStore implements RunStore {
 
     private final JdbcTemplate jdbc;
     private final DatabaseClock clock;
+    private final TransactionTemplate transaction;
 
     @org.springframework.beans.factory.annotation.Autowired
     public JdbcRunStore(JdbcTemplate jdbc) {
         this(jdbc, new DatabaseClock());
     }
 
-    JdbcRunStore(JdbcTemplate jdbc, DatabaseClock clock) {
+    public JdbcRunStore(JdbcTemplate jdbc, DatabaseClock clock) {
         this.jdbc = jdbc;
         this.clock = clock;
+        DataSource dataSource = jdbc.getDataSource();
+        if (dataSource == null) {
+            throw new IllegalStateException("JdbcTemplate requires a DataSource");
+        }
+        this.transaction = new TransactionTemplate(new DataSourceTransactionManager(dataSource));
     }
 
     @Override public ProjectRecord findProjectForOwner(String ownerId, String projectId) {
@@ -44,6 +53,15 @@ public final class JdbcRunStore implements RunStore {
             (rs, row) -> new ProjectRecord(rs.getString("id"), rs.getString("owner_id"), rs.getString("state"),
                 rs.getLong("workspace_revision")),
             projectId, ownerId);
+        return records.isEmpty() ? null : records.get(0);
+    }
+
+    @Override public ProjectRecord findProject(String projectId) {
+        List<ProjectRecord> records = jdbc.query(
+            "SELECT id, owner_id, state, workspace_revision FROM project WHERE id = ?",
+            (rs, row) -> new ProjectRecord(rs.getString("id"), rs.getString("owner_id"), rs.getString("state"),
+                rs.getLong("workspace_revision")),
+            projectId);
         return records.isEmpty() ? null : records.get(0);
     }
 
@@ -78,15 +96,32 @@ public final class JdbcRunStore implements RunStore {
     }
 
     @Override public InsertResult insertRun(RunRecord record, long fencingToken) {
-        try {
-            jdbc.update("INSERT INTO run(id, project_id, requested_revision, state, policy_json, version, created_at, updated_at, fencing_token) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                record.id(), record.projectId(), record.requestedRevision(), record.state().name(),
-                record.policyJson(), record.version(), Timestamp.from(record.createdAt()),
-                Timestamp.from(record.createdAt()), fencingToken);
-            return InsertResult.INSERTED;
-        } catch (org.springframework.dao.DuplicateKeyException ex) {
-            return InsertResult.ACTIVE_RUN_EXISTS;
-        }
+        return transaction.execute(status -> {
+            List<Object[]> rows = jdbc.query(
+                "SELECT state, workspace_revision FROM project WHERE id = ? FOR UPDATE",
+                (rs, row) -> new Object[] { rs.getString(1), rs.getLong(2) },
+                record.projectId());
+            if (rows.isEmpty()) {
+                return InsertResult.PROJECT_NOT_FOUND;
+            }
+            String state = (String) rows.get(0)[0];
+            long revision = (Long) rows.get(0)[1];
+            if (!"READY".equals(state)) {
+                return InsertResult.PROJECT_LOCKED;
+            }
+            if (revision != record.requestedRevision()) {
+                return InsertResult.REVISION_CONFLICT;
+            }
+            try {
+                jdbc.update("INSERT INTO run(id, project_id, requested_revision, state, policy_json, version, created_at, updated_at, fencing_token) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    record.id(), record.projectId(), record.requestedRevision(), record.state().name(),
+                    record.policyJson(), record.version(), Timestamp.from(record.createdAt()),
+                    Timestamp.from(record.createdAt()), fencingToken);
+                return InsertResult.INSERTED;
+            } catch (org.springframework.dao.DuplicateKeyException ex) {
+                return InsertResult.ACTIVE_RUN_EXISTS;
+            }
+        });
     }
 
     @Override public Optional<RunRecord> findActiveRun(String projectId) {

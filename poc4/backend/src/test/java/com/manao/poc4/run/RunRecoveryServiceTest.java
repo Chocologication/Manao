@@ -79,6 +79,19 @@ class RunRecoveryServiceTest {
     }
 
     @Test
+    void deletingProjectIsNotRecoveredOrSettled() {
+        seedRun("run-deleting", RunState.RUNNING);
+        store.projects.put(PROJECT, "DELETING");
+        coordinator.factsByRun.put("run-deleting", new JobCoordinator.JobFacts(false, true, false, false, 0, null));
+
+        RunRecoveryService.RecoveryReport report = service.recoverRuns();
+
+        assertThat(report.processed()).isEmpty();
+        assertThat(report.settled()).isEmpty();
+        assertThat(store.runs.get("run-deleting").state).isEqualTo(RunState.RUNNING.name());
+    }
+
+    @Test
     void terminalRunsAreNeverTouched() {
         seedRun("run-done", RunState.SUCCEEDED);
 

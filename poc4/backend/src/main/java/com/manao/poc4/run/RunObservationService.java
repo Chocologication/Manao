@@ -3,6 +3,7 @@ package com.manao.poc4.run;
 import com.manao.poc4.kubernetes.JobCoordinator;
 import com.manao.poc4.log.RunLogIngestor;
 import com.manao.poc4.persistence.RunState;
+import com.manao.poc4.project.ProjectLifecycleGate;
 import java.util.Optional;
 import java.util.OptionalLong;
 
@@ -17,45 +18,69 @@ public final class RunObservationService {
     private final JobCoordinator coordinator;
     private final RunLogIngestor logIngestor;
     private final RunCompletionListener completionListener;
+    private final ProjectLifecycleGate lifecycle;
 
     public RunObservationService(RunStore store, JobCoordinator coordinator, RunLogIngestor logIngestor) {
-        this(store, coordinator, logIngestor, null);
+        this(store, coordinator, logIngestor, null, new ProjectLifecycleGate());
     }
 
     public RunObservationService(RunStore store, JobCoordinator coordinator, RunLogIngestor logIngestor,
                                  RunCompletionListener completionListener) {
+        this(store, coordinator, logIngestor, completionListener, new ProjectLifecycleGate());
+    }
+
+    public RunObservationService(RunStore store, JobCoordinator coordinator, RunLogIngestor logIngestor,
+                                 RunCompletionListener completionListener, ProjectLifecycleGate lifecycle) {
         this.store = store;
         this.coordinator = coordinator;
         this.logIngestor = logIngestor;
         this.completionListener = completionListener;
+        this.lifecycle = lifecycle;
     }
 
     public void observe() {
         OptionalLong lease = store.acquireFencingToken();
         if (lease.isEmpty()) return;
-        for (RunRecord run : store.findRunsInState(RunState.STARTING, RunState.RUNNING)) {
-            Optional<JobCoordinator.JobFacts> facts = coordinator.facts(run);
-            if (facts.isEmpty()) continue; // job not observable yet; recovery handles absence
-            JobCoordinator.JobFacts job = facts.get();
-            if (run.state() == RunState.STARTING && job.running()) {
-                store.markRunning(run.id(), run.projectId(), run.version());
-                run = store.findRun(run.id()).orElse(run);
-            }
-            if (job.running() && job.podName() != null) {
-                // Persist the live Pod reference and attach the persistence-first log watch.
-                if (!job.podName().equals(run.podRef())) {
-                    store.updatePodRef(run.id(), job.podName());
+        for (RunRecord snapshot : store.findRunsInState(RunState.STARTING, RunState.RUNNING)) {
+            try (var projectLease = lifecycle.tryAcquire(snapshot.projectId()).orElse(null)) {
+                if (projectLease == null) {
+                    continue;
                 }
-                logIngestor.ensureWatch(run.id(), job.podName());
+                observeOne(snapshot);
             }
-            if (job.succeeded()) {
-                settleAndComplete(run, RunState.SUCCEEDED, "BUILD_SUCCEEDED",
-                    job.exitCode() == null ? 0 : job.exitCode());
-            } else if (job.failed()) {
-                settleAndComplete(run, RunState.FAILED, "BUILD_FAILED", job.exitCode());
-            } else if (job.deadlineExceeded()) {
-                settleAndComplete(run, RunState.TIMED_OUT, "TIME_LIMIT_EXCEEDED", null);
+        }
+    }
+
+    private void observeOne(RunRecord snapshot) {
+        RunRecord run = store.findRun(snapshot.id()).orElse(null);
+        if (run == null) {
+            return;
+        }
+        RunStore.ProjectRecord project = store.findProject(run.projectId());
+        if (project != null && "DELETING".equals(project.state())) {
+            return;
+        }
+        Optional<JobCoordinator.JobFacts> facts = coordinator.facts(run);
+        if (facts.isEmpty()) return; // job not observable yet; recovery handles absence
+        JobCoordinator.JobFacts job = facts.get();
+        if (run.state() == RunState.STARTING && job.running()) {
+            store.markRunning(run.id(), run.projectId(), run.version());
+            run = store.findRun(run.id()).orElse(run);
+        }
+        if (job.running() && job.podName() != null) {
+            // Persist the live Pod reference and attach the persistence-first log watch.
+            if (!job.podName().equals(run.podRef())) {
+                store.updatePodRef(run.id(), job.podName());
             }
+            logIngestor.ensureWatch(run.id(), job.podName());
+        }
+        if (job.succeeded()) {
+            settleAndComplete(run, RunState.SUCCEEDED, "BUILD_SUCCEEDED",
+                job.exitCode() == null ? 0 : job.exitCode());
+        } else if (job.failed()) {
+            settleAndComplete(run, RunState.FAILED, "BUILD_FAILED", job.exitCode());
+        } else if (job.deadlineExceeded()) {
+            settleAndComplete(run, RunState.TIMED_OUT, "TIME_LIMIT_EXCEEDED", null);
         }
     }
 

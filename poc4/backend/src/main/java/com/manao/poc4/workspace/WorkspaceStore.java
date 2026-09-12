@@ -36,5 +36,9 @@ public interface WorkspaceStore {
     record OperationRecord(String id, String projectId, long expectedRevision, String beforeSha256,
                            String afterSha256, String receiptPath, String receiptSha256) { }
 
-    record BeginResult(boolean started, boolean revisionConflict) { }
+    record BeginResult(boolean started, boolean revisionConflict, boolean projectLocked) {
+        public BeginResult(boolean started, boolean revisionConflict) {
+            this(started, revisionConflict, false);
+        }
+    }
 }

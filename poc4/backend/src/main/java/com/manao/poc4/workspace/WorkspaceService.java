@@ -1,6 +1,7 @@
 package com.manao.poc4.workspace;
 
 import com.manao.poc4.api.ApiException;
+import com.manao.poc4.project.ProjectLifecycleGate;
 import java.nio.charset.StandardCharsets;
 
 /**
@@ -14,31 +15,46 @@ public final class WorkspaceService {
     private final WorkspaceStore store;
     private final WorkspaceOperationService operations;
     private final WorkspaceAgent agent;
+    private final ProjectLifecycleGate lifecycle;
 
     public WorkspaceService(WorkspaceStore store, WorkspaceOperationService operations, WorkspaceAgent agent) {
+        this(store, operations, agent, new ProjectLifecycleGate());
+    }
+
+    public WorkspaceService(WorkspaceStore store, WorkspaceOperationService operations, WorkspaceAgent agent,
+                            ProjectLifecycleGate lifecycle) {
         this.store = store;
         this.operations = operations;
         this.agent = agent;
+        this.lifecycle = lifecycle;
     }
 
     public WorkspaceAgent.Tree tree(String ownerId, String projectId, String directory) {
-        requireReadyProject(store.findProjectForOwner(ownerId, projectId));
-        return agentCall(() -> agent.tree(projectId, validDirectory(directory)));
+        return gated(projectId, () -> {
+            requireReadyProject(store.findProjectForOwner(ownerId, projectId));
+            return agentCall(() -> agent.tree(projectId, validDirectory(directory)));
+        });
     }
 
     public WorkspaceAgent.FileMeta meta(String ownerId, String projectId, String path) {
-        requireReadyProject(store.findProjectForOwner(ownerId, projectId));
-        return agentCall(() -> agent.meta(projectId, validPath(path)));
+        return gated(projectId, () -> {
+            requireReadyProject(store.findProjectForOwner(ownerId, projectId));
+            return agentCall(() -> agent.meta(projectId, validPath(path)));
+        });
     }
 
     public WorkspaceAgent.Content content(String ownerId, String projectId, String path) {
-        requireReadyProject(store.findProjectForOwner(ownerId, projectId));
-        return agentCall(() -> agent.content(projectId, validPath(path)));
+        return gated(projectId, () -> {
+            requireReadyProject(store.findProjectForOwner(ownerId, projectId));
+            return agentCall(() -> agent.content(projectId, validPath(path)));
+        });
     }
 
     public WorkspaceAgent.Download download(String ownerId, String projectId, String path) {
-        requireReadyProject(store.findProjectForOwner(ownerId, projectId));
-        return agentCall(() -> agent.download(projectId, validPath(path)));
+        return gated(projectId, () -> {
+            requireReadyProject(store.findProjectForOwner(ownerId, projectId));
+            return agentCall(() -> agent.download(projectId, validPath(path)));
+        });
     }
 
     /** Maps agent-side errors on read paths onto the browser error contract. */
@@ -66,58 +82,73 @@ public final class WorkspaceService {
     }
 
     public long save(String ownerId, String projectId, String path, String content, String expectedRevision) {
-        WorkspaceStore.ProjectRecord project = requireReadyProject(store.findProjectForOwner(ownerId, projectId));
-        requireWritable(projectId);
-        String validPath = validPath(path);
-        byte[] bytes = content == null ? new byte[0] : content.getBytes(StandardCharsets.UTF_8);
-        requireSaveSize(validPath, bytes.length);
-        long revision = parseRevision(expectedRevision, project.workspaceRevision());
-        return operations.apply(projectId, "SAVE", validPath, null, null, bytes, revision);
+        return gated(projectId, () -> {
+            WorkspaceStore.ProjectRecord project = requireReadyProject(store.findProjectForOwner(ownerId, projectId));
+            requireWritable(projectId);
+            String validPath = validPath(path);
+            byte[] bytes = content == null ? new byte[0] : content.getBytes(StandardCharsets.UTF_8);
+            requireSaveSize(validPath, bytes.length);
+            long revision = parseRevision(expectedRevision, project.workspaceRevision());
+            return operations.apply(projectId, "SAVE", validPath, null, null, bytes, revision);
+        });
     }
 
     public long createEntry(String ownerId, String projectId, String kind, String path, String expectedRevision) {
-        WorkspaceStore.ProjectRecord project = requireReadyProject(store.findProjectForOwner(ownerId, projectId));
-        requireWritable(projectId);
-        if (!"file".equals(kind) && !"directory".equals(kind)) {
-            throw new ApiException("VALIDATION_ERROR", 422, "Unsupported entry kind");
-        }
-        String validPath = validPath(path);
-        long revision = parseRevision(expectedRevision, project.workspaceRevision());
-        return operations.apply(projectId, "CREATE", validPath, null, kind, new byte[0], revision);
+        return gated(projectId, () -> {
+            WorkspaceStore.ProjectRecord project = requireReadyProject(store.findProjectForOwner(ownerId, projectId));
+            requireWritable(projectId);
+            if (!"file".equals(kind) && !"directory".equals(kind)) {
+                throw new ApiException("VALIDATION_ERROR", 422, "Unsupported entry kind");
+            }
+            String validPath = validPath(path);
+            long revision = parseRevision(expectedRevision, project.workspaceRevision());
+            return operations.apply(projectId, "CREATE", validPath, null, kind, new byte[0], revision);
+        });
     }
 
     public long renameEntry(String ownerId, String projectId, String path, String nextPath, String expectedRevision) {
-        WorkspaceStore.ProjectRecord project = requireReadyProject(store.findProjectForOwner(ownerId, projectId));
-        requireWritable(projectId);
-        String validPath = validPath(path);
-        String validNextPath = validPath(nextPath);
-        if (validPath.equals(validNextPath)) {
-            throw new ApiException("VALIDATION_ERROR", 422, "Rename target must differ from the source");
-        }
-        long revision = parseRevision(expectedRevision, project.workspaceRevision());
-        return operations.apply(projectId, "RENAME", validPath, validNextPath, null, new byte[0], revision);
+        return gated(projectId, () -> {
+            WorkspaceStore.ProjectRecord project = requireReadyProject(store.findProjectForOwner(ownerId, projectId));
+            requireWritable(projectId);
+            String validPath = validPath(path);
+            String validNextPath = validPath(nextPath);
+            if (validPath.equals(validNextPath)) {
+                throw new ApiException("VALIDATION_ERROR", 422, "Rename target must differ from the source");
+            }
+            long revision = parseRevision(expectedRevision, project.workspaceRevision());
+            return operations.apply(projectId, "RENAME", validPath, validNextPath, null, new byte[0], revision);
+        });
     }
 
     public long deleteEntry(String ownerId, String projectId, String path, String expectedRevision) {
-        WorkspaceStore.ProjectRecord project = requireReadyProject(store.findProjectForOwner(ownerId, projectId));
-        requireWritable(projectId);
-        String validPath = validPath(path);
-        long revision = parseRevision(expectedRevision, project.workspaceRevision());
-        return operations.apply(projectId, "DELETE", validPath, null, null, new byte[0], revision);
+        return gated(projectId, () -> {
+            WorkspaceStore.ProjectRecord project = requireReadyProject(store.findProjectForOwner(ownerId, projectId));
+            requireWritable(projectId);
+            String validPath = validPath(path);
+            long revision = parseRevision(expectedRevision, project.workspaceRevision());
+            return operations.apply(projectId, "DELETE", validPath, null, null, new byte[0], revision);
+        });
     }
 
     /** Internal mutation used by provisioning (template writes) while the project is CREATING. */
     public long applyInternal(String projectId, String type, String path, String nextPath, String kind,
                               byte[] content, long expectedRevision) {
-        return operations.apply(projectId, type, path, nextPath, kind, content, expectedRevision);
+        return gated(projectId, () -> operations.apply(projectId, type, path, nextPath, kind, content, expectedRevision));
     }
 
     public long currentRevision(String ownerId, String projectId) {
-        return requireReadyProject(store.findProjectForOwner(ownerId, projectId)).workspaceRevision();
+        return gated(projectId, () -> requireReadyProject(store.findProjectForOwner(ownerId, projectId)).workspaceRevision());
     }
 
     public WorkspaceAgent agent() {
         return agent;
+    }
+
+    private <T> T gated(String projectId, java.util.function.Supplier<T> action) {
+        try (var lease = lifecycle.tryAcquire(projectId).orElseThrow(
+                () -> new ApiException("PROJECT_BUSY", 409, "Project is busy"))) {
+            return action.get();
+        }
     }
 
     private WorkspaceStore.ProjectRecord requireReadyProject(WorkspaceStore.ProjectRecord project) {

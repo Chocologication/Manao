@@ -9,6 +9,8 @@ import java.util.OptionalLong;
 public interface RunStore {
     ProjectRecord findProjectForOwner(String ownerId, String projectId);
 
+    ProjectRecord findProject(String projectId);
+
     /**
      * Acquires or renews the instance lease and returns the current fencing token. The token is
      * bumped only when the holder changes (real takeover); a same-holder renewal never bumps.
@@ -50,7 +52,7 @@ public interface RunStore {
 
     List<RunRecord> findRunsInState(RunState... states);
 
-    enum InsertResult { INSERTED, ACTIVE_RUN_EXISTS }
+    enum InsertResult { INSERTED, ACTIVE_RUN_EXISTS, PROJECT_LOCKED, PROJECT_NOT_FOUND, REVISION_CONFLICT }
 
     record ProjectRecord(String id, String ownerId, String state, long revision) { }
 }

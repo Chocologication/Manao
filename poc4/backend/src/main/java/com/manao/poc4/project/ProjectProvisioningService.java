@@ -31,6 +31,7 @@ public final class ProjectProvisioningService {
     private final Predicate<WorkspaceStore.ProjectRecord> diagnosticHoldSelector;
     private final int pollAttempts;
     private final long pollIntervalMillis;
+    private final ProjectLifecycleGate lifecycle;
     private final java.util.concurrent.ExecutorService executor =
         java.util.concurrent.Executors.newSingleThreadExecutor(runnable -> {
             Thread thread = new Thread(runnable, "project-provisioning");
@@ -73,6 +74,15 @@ public final class ProjectProvisioningService {
                                       String capabilityPublicKeyBase64, WorkspaceBridge bridge,
                                       Predicate<WorkspaceStore.ProjectRecord> diagnosticHoldSelector,
                                       int pollAttempts, long pollIntervalMillis) {
+        this(store, gateway, workspace, factory, template, capabilityPublicKeyBase64, bridge,
+            diagnosticHoldSelector, pollAttempts, pollIntervalMillis, new ProjectLifecycleGate());
+    }
+
+    public ProjectProvisioningService(WorkspaceStore store, KubernetesGateway gateway, WorkspaceService workspace,
+                                      WorkspaceResourceFactory factory, WorkspaceTemplate template,
+                                      String capabilityPublicKeyBase64, WorkspaceBridge bridge,
+                                      Predicate<WorkspaceStore.ProjectRecord> diagnosticHoldSelector,
+                                      int pollAttempts, long pollIntervalMillis, ProjectLifecycleGate lifecycle) {
         this.store = store;
         this.gateway = gateway;
         this.workspace = workspace;
@@ -83,6 +93,7 @@ public final class ProjectProvisioningService {
         this.diagnosticHoldSelector = diagnosticHoldSelector;
         this.pollAttempts = pollAttempts;
         this.pollIntervalMillis = pollIntervalMillis;
+        this.lifecycle = lifecycle;
     }
 
     /** Creation returns CREATING to the browser immediately; provisioning continues in background. */
@@ -99,10 +110,19 @@ public final class ProjectProvisioningService {
     }
 
     public void provision(String projectId) {
-        WorkspaceStore.ProjectRecord project = store.findProject(projectId);
-        if (project == null || !"CREATING".equals(project.state())) {
-            return;
+        try (var lease = lifecycle.tryAcquire(projectId).orElse(null)) {
+            if (lease == null) {
+                return;
+            }
+            WorkspaceStore.ProjectRecord project = store.findProject(projectId);
+            if (project == null || !"CREATING".equals(project.state())) {
+                return;
+            }
+            provisionHeld(projectId);
         }
+    }
+
+    private void provisionHeld(String projectId) {
         try {
             provisionInternal(projectId);
         } catch (Exception ex) {

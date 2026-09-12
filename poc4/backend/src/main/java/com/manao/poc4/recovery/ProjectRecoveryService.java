@@ -1,6 +1,7 @@
 package com.manao.poc4.recovery;
 
 import com.manao.poc4.kubernetes.KubernetesGateway;
+import com.manao.poc4.project.ProjectLifecycleGate;
 import com.manao.poc4.workspace.WorkspaceAgent;
 import com.manao.poc4.workspace.WorkspaceOperationService;
 import com.manao.poc4.workspace.WorkspaceStore;
@@ -24,14 +25,21 @@ public final class ProjectRecoveryService {
     private final KubernetesGateway gateway;
     private final Clock clock;
     private final Duration staleAfter;
+    private final ProjectLifecycleGate lifecycle;
 
     public ProjectRecoveryService(WorkspaceStore store, WorkspaceAgent agent, KubernetesGateway gateway,
                                   Clock clock, Duration staleAfter) {
+        this(store, agent, gateway, clock, staleAfter, new ProjectLifecycleGate());
+    }
+
+    public ProjectRecoveryService(WorkspaceStore store, WorkspaceAgent agent, KubernetesGateway gateway,
+                                  Clock clock, Duration staleAfter, ProjectLifecycleGate lifecycle) {
         this.store = store;
         this.agent = agent;
         this.gateway = gateway;
         this.clock = clock;
         this.staleAfter = staleAfter;
+        this.lifecycle = lifecycle;
     }
 
     public record RecoveryReport(List<String> processed, List<String> ready, List<String> failed) { }
@@ -45,33 +53,42 @@ public final class ProjectRecoveryService {
             if (project.createdAt() == null || project.createdAt().isAfter(now.minus(staleAfter))) {
                 continue;
             }
-            processed.add(project.id());
-            String projectId = project.id();
-            boolean resourcesComplete = gateway.projectPvcExists(projectId)
-                && gateway.workspacePodReady(projectId)
-                && gateway.workspaceServiceExists(projectId);
-            if (!resourcesComplete) {
-                cleanup(projectId);
-                store.markProjectFailed(projectId, CREATION_FAILED);
-                failed.add(projectId);
-                continue;
-            }
-            if (!operations().reconcilePending(projectId)) {
-                // Fail-closed with the scene preserved: workloads go away, the PVC (file truth)
-                // and the FAILED/WORKSPACE_RECONCILIATION_REQUIRED marker stay for inspection.
-                gateway.deleteProjectWorkloads(projectId);
-                failed.add(projectId);
-                continue;
-            }
-            WorkspaceStore.ProjectRecord current = store.findProject(projectId);
-            if (current != null && current.workspaceRevision() > 0 && !"FAILED".equals(current.state())
-                && templateReceiptPresent(projectId)) {
-                store.markProjectReady(projectId);
-                ready.add(projectId);
-            } else {
-                cleanup(projectId);
-                store.markProjectFailed(projectId, CREATION_FAILED);
-                failed.add(projectId);
+            try (var lease = lifecycle.tryAcquire(project.id()).orElse(null)) {
+                if (lease == null) {
+                    continue;
+                }
+                WorkspaceStore.ProjectRecord current = store.findProject(project.id());
+                if (current == null || !"CREATING".equals(current.state())) {
+                    continue;
+                }
+                processed.add(current.id());
+                String projectId = current.id();
+                boolean resourcesComplete = gateway.projectPvcExists(projectId)
+                    && gateway.workspacePodReady(projectId)
+                    && gateway.workspaceServiceExists(projectId);
+                if (!resourcesComplete) {
+                    cleanup(projectId);
+                    store.markProjectFailed(projectId, CREATION_FAILED);
+                    failed.add(projectId);
+                    continue;
+                }
+                if (!operations().reconcilePending(projectId)) {
+                    // Fail-closed with the scene preserved: workloads go away, the PVC (file truth)
+                    // and the FAILED/WORKSPACE_RECONCILIATION_REQUIRED marker stay for inspection.
+                    gateway.deleteProjectWorkloads(projectId);
+                    failed.add(projectId);
+                    continue;
+                }
+                WorkspaceStore.ProjectRecord latest = store.findProject(projectId);
+                if (latest != null && latest.workspaceRevision() > 0 && !"FAILED".equals(latest.state())
+                    && templateReceiptPresent(projectId)) {
+                    store.markProjectReady(projectId);
+                    ready.add(projectId);
+                } else {
+                    cleanup(projectId);
+                    store.markProjectFailed(projectId, CREATION_FAILED);
+                    failed.add(projectId);
+                }
             }
         }
         return new RecoveryReport(List.copyOf(processed), List.copyOf(ready), List.copyOf(failed));

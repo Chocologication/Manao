@@ -216,9 +216,22 @@ public class RunControllerTest {
             return new ProjectRecord(projectId, ownerId, state, revision.getOrDefault(projectId, 0L));
         }
 
+        @Override public ProjectRecord findProject(String projectId) {
+            String state = projects.get(projectId);
+            if (state == null) return null;
+            return new ProjectRecord(projectId, projectOwners.getOrDefault(projectId, ""), state,
+                revision.getOrDefault(projectId, 0L));
+        }
+
         @Override public OptionalLong acquireFencingToken() { return fencingToken; }
 
         @Override public InsertResult insertRun(RunRecord record, long fencingToken) {
+            String state = projects.get(record.projectId());
+            if (state == null) return InsertResult.PROJECT_NOT_FOUND;
+            if (!"READY".equals(state)) return InsertResult.PROJECT_LOCKED;
+            if (revision.getOrDefault(record.projectId(), 0L) != record.requestedRevision()) {
+                return InsertResult.REVISION_CONFLICT;
+            }
             if (fencingToken != currentFencing()) return InsertResult.ACTIVE_RUN_EXISTS;
             if (failNextInsert) {
                 failNextInsert = false;

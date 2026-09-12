@@ -335,6 +335,7 @@ public class WorkspaceControllerTest {
         public final List<String> deletedOperations = new ArrayList<>();
         public final List<String> deletedProjects = new ArrayList<>();
         public boolean failCommits;
+        public List<ProjectRecord> creatingOverride;
 
         public FakeStore() {
             revision.put(PROJECT, 7L);
@@ -351,6 +352,10 @@ public class WorkspaceControllerTest {
         @Override public boolean hasActiveRun(String projectId) { return activeRuns.contains(projectId); }
 
         @Override public BeginResult beginPendingOperation(String projectId, long expectedRevision, OperationRecord operation) {
+            ProjectRecord project = projects.get(projectId);
+            if (project != null && !"READY".equals(project.state()) && !"CREATING".equals(project.state())) {
+                return new BeginResult(false, false, true);
+            }
             if (revisionOf(projectId) != expectedRevision) return new BeginResult(false, true);
             if (pending.containsKey(projectId)) return new BeginResult(false, false);
             pending.put(projectId, operation);
@@ -359,6 +364,10 @@ public class WorkspaceControllerTest {
 
         @Override public boolean commitOperation(String operationId, String projectId, long expectedRevision) {
             if (failCommits) return false;
+            ProjectRecord current = projects.get(projectId);
+            if (current != null && ("DELETING".equals(current.state()) || "FAILED".equals(current.state()))) {
+                return false;
+            }
             OperationRecord operation = pending.remove(projectId);
             if (operation == null || !operation.id().equals(operationId) || revisionOf(projectId) != expectedRevision) return false;
             committed.add(operation);
@@ -398,7 +407,7 @@ public class WorkspaceControllerTest {
         @Override public void markProjectFailed(String projectId, String failureReason) {
             failures.put(projectId, failureReason);
             ProjectRecord project = projects.get(projectId);
-            if (project != null) {
+            if (project != null && java.util.Set.of("CREATING", "READY").contains(project.state())) {
                 projects.put(projectId, new ProjectRecord(project.id(), project.ownerId(), project.name(), "FAILED",
                     project.workspaceRevision(), failureReason, project.createdAt()));
             }
@@ -406,13 +415,16 @@ public class WorkspaceControllerTest {
 
         @Override public void markProjectReady(String projectId) {
             ProjectRecord project = projects.get(projectId);
-            if (project != null) {
+            if (project != null && "CREATING".equals(project.state())) {
                 projects.put(projectId, new ProjectRecord(project.id(), project.ownerId(), project.name(), "READY",
                     project.workspaceRevision(), null, project.createdAt()));
             }
         }
 
         @Override public java.util.List<ProjectRecord> projectsByState(String state) {
+            if (creatingOverride != null && "CREATING".equals(state)) {
+                return creatingOverride;
+            }
             return projects.values().stream().filter(project -> project.state().equals(state)).toList();
         }
     }

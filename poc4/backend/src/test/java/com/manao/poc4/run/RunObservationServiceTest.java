@@ -97,6 +97,19 @@ class RunObservationServiceTest {
     }
 
     @Test
+    void deletingProjectDoesNotAttachALateWatch() {
+        String runId = seedRun("run-deleting", RunState.RUNNING);
+        store.projects.put(PROJECT, "DELETING");
+        coordinator.factsByRun.put(runId, new JobCoordinator.JobFacts(true, false, false, false, null, "pod-late"));
+
+        service.observe();
+
+        assertThat(gateway.watchedPods).isEmpty();
+        assertThat(store.runs.get(runId).podRef).isNull();
+        assertThat(store.runs.get(runId).state).isEqualTo(RunState.RUNNING.name());
+    }
+
+    @Test
     void withoutTheLeaseNothingIsWritten() {
         String runId = seedRun("run-live", RunState.RUNNING);
         coordinator.factsByRun.put(runId, new JobCoordinator.JobFacts(false, true, false, false, 0, "pod-1"));

@@ -63,11 +63,18 @@ public final class WorkspaceJdbcStore implements WorkspaceStore {
 
     @Override public BeginResult beginPendingOperation(String projectId, long expectedRevision, OperationRecord operation) {
         BeginResult result = transaction.execute(status -> {
-            List<Long> revisions = jdbc.query(
-                "SELECT workspace_revision FROM project WHERE id = ? FOR UPDATE",
-                (rs, row) -> rs.getLong(1), projectId);
-            if (revisions.isEmpty() || revisions.get(0) != expectedRevision) {
+            List<Object[]> rows = jdbc.query(
+                "SELECT state, workspace_revision FROM project WHERE id = ? FOR UPDATE",
+                (rs, row) -> new Object[] { rs.getString(1), rs.getLong(2) }, projectId);
+            if (rows.isEmpty() || ((Long) rows.get(0)[1]) != expectedRevision) {
                 return new BeginResult(false, true);
+            }
+            String state = (String) rows.get(0)[0];
+            if (!"READY".equals(state) && !"CREATING".equals(state)) {
+                return new BeginResult(false, false, true);
+            }
+            if ("READY".equals(state) && hasActiveRun(projectId)) {
+                return new BeginResult(false, false, true);
             }
             jdbc.update("INSERT INTO workspace_operation(id, project_id, expected_revision, before_sha256, after_sha256, receipt_path, receipt_sha256, state, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'PENDING', ?)",
                 operation.id(), projectId, operation.expectedRevision(), operation.beforeSha256(),
@@ -79,6 +86,12 @@ public final class WorkspaceJdbcStore implements WorkspaceStore {
 
     @Override public boolean commitOperation(String operationId, String projectId, long expectedRevision) {
         Boolean committed = transaction.execute(status -> {
+            List<String> states = jdbc.query(
+                "SELECT state FROM project WHERE id = ? FOR UPDATE",
+                (rs, row) -> rs.getString(1), projectId);
+            if (states.isEmpty() || "DELETING".equals(states.get(0)) || "FAILED".equals(states.get(0))) {
+                return Boolean.FALSE;
+            }
             int operation = jdbc.update(
                 "UPDATE workspace_operation SET state = 'COMMITTED', committed_at = ? WHERE id = ? AND project_id = ? AND expected_revision = ? AND state = 'PENDING'",
                 Timestamp.from(Instant.now()), operationId, projectId, expectedRevision);

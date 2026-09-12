@@ -4,6 +4,7 @@ import com.manao.poc4.kubernetes.Fabric8KubernetesGateway;
 import com.manao.poc4.kubernetes.KubernetesGateway;
 import com.manao.poc4.kubernetes.WorkspaceApiClient;
 import com.manao.poc4.kubernetes.WorkspacePortForwardManager;
+import com.manao.poc4.project.ProjectLifecycleGate;
 import com.manao.poc4.project.ProjectProvisioningService;
 import com.manao.poc4.recovery.ProjectRecoveryService;
 import com.manao.poc4.workspace.Ed25519Keys;
@@ -33,6 +34,11 @@ import org.springframework.context.annotation.Conditional;
 @EnableScheduling
 @Conditional(SecurityConfig.BackendAuthCondition.class)
 public class WorkspaceConfig {
+
+    @Bean
+    ProjectLifecycleGate projectLifecycleGate() {
+        return new ProjectLifecycleGate();
+    }
 
     @Bean
     KubernetesClient kubernetesClient(BackendProperties properties) {
@@ -65,18 +71,26 @@ public class WorkspaceConfig {
 
     @Bean
     WorkspaceAgent workspaceAgent(BackendProperties properties, WorkspaceCapabilitySigner signer,
-                                  org.springframework.beans.factory.ObjectProvider<WorkspacePortForwardManager> bridges) {
+                                  org.springframework.beans.factory.ObjectProvider<WorkspacePortForwardManager> bridges,
+                                  WorkspaceStore store, ProjectLifecycleGate lifecycle) {
         // 6A resolves workspace Services through the backend-managed loopback port-forward bridge;
         // 6B (cluster profile, no bridge bean) resolves the Service directly in-namespace.
         WorkspaceApiClient.EndpointResolver inCluster = WorkspaceApiClient.clusterInternal(
             properties.kubernetes().namespace(), properties.workspace().agentPort());
         WorkspaceApiClient.EndpointResolver resolver = projectId -> {
-            WorkspacePortForwardManager manager = bridges.getIfAvailable();
-            if (manager != null) {
-                manager.allocate(projectId); // lazily (re)creates the 6A bridge for this project
-                return manager.endpoint(projectId);
+            try (var lease = lifecycle.tryAcquire(projectId).orElseThrow(
+                    () -> new IllegalStateException("project is busy"))) {
+                WorkspaceStore.ProjectRecord project = store.findProject(projectId);
+                if (project == null || "DELETING".equals(project.state())) {
+                    throw new IllegalStateException("workspace endpoint is not available");
+                }
+                WorkspacePortForwardManager manager = bridges.getIfAvailable();
+                if (manager != null) {
+                    manager.allocate(projectId); // lazily (re)creates the 6A bridge for this project
+                    return manager.endpoint(projectId);
+                }
+                return inCluster.endpoint(projectId);
             }
-            return inCluster.endpoint(projectId);
         };
         return new WorkspaceApiClient(resolver, signer);
     }
@@ -87,13 +101,15 @@ public class WorkspaceConfig {
     }
 
     @Bean
-    WorkspaceOperationService workspaceOperationService(WorkspaceStore store, WorkspaceAgent agent) {
-        return new WorkspaceOperationService(store, agent);
+    WorkspaceOperationService workspaceOperationService(WorkspaceStore store, WorkspaceAgent agent,
+                                                        ProjectLifecycleGate lifecycle) {
+        return new WorkspaceOperationService(store, agent, lifecycle);
     }
 
     @Bean
-    WorkspaceService workspaceService(WorkspaceStore store, WorkspaceOperationService operations, WorkspaceAgent agent) {
-        return new WorkspaceService(store, operations, agent);
+    WorkspaceService workspaceService(WorkspaceStore store, WorkspaceOperationService operations, WorkspaceAgent agent,
+                                      ProjectLifecycleGate lifecycle) {
+        return new WorkspaceService(store, operations, agent, lifecycle);
     }
 
     @Bean
@@ -110,7 +126,8 @@ public class WorkspaceConfig {
                                                           WorkspaceService workspace,
                                                           com.manao.poc4.kubernetes.WorkspaceResourceFactory factory,
                                                           @Value("${MANAO_WORKSPACE_CAPABILITY_PUBLIC_KEY:}") String publicKeyBase64,
-                                                          org.springframework.beans.factory.ObjectProvider<WorkspacePortForwardManager> bridges) {
+                                                          org.springframework.beans.factory.ObjectProvider<WorkspacePortForwardManager> bridges,
+                                                          ProjectLifecycleGate lifecycle) {
         WorkspacePortForwardManager manager = bridges.getIfAvailable();
         // 6A: the workspace bridge must exist before the first template write and dies with the project.
         ProjectProvisioningService.WorkspaceBridge bridge = manager == null ? null
@@ -121,13 +138,13 @@ public class WorkspaceConfig {
             };
         return new ProjectProvisioningService(store, gateway, workspace, factory,
             new WorkspaceTemplate(), publicKeyBase64, bridge,
-            com.manao.poc4.project.ProvisioningDiagnosticHold.fromEnvironment(), 240, 500);
+            com.manao.poc4.project.ProvisioningDiagnosticHold.fromEnvironment(), 240, 500, lifecycle);
     }
 
     @Bean
     ProjectRecoveryService projectRecoveryService(WorkspaceStore store, WorkspaceAgent agent,
-                                                  KubernetesGateway gateway) {
-        return new ProjectRecoveryService(store, agent, gateway, Clock.systemUTC(), Duration.ofMinutes(10));
+                                                  KubernetesGateway gateway, ProjectLifecycleGate lifecycle) {
+        return new ProjectRecoveryService(store, agent, gateway, Clock.systemUTC(), Duration.ofMinutes(10), lifecycle);
     }
 
     @Bean
@@ -170,30 +187,33 @@ public class WorkspaceConfig {
     @Bean
     com.manao.poc4.run.RunService runService(com.manao.poc4.run.RunStore store,
                                              com.manao.poc4.kubernetes.JobCoordinator coordinator,
-                                             com.manao.poc4.run.RunPolicy policy) {
-        return new com.manao.poc4.run.RunService(store, coordinator, policy);
+                                             com.manao.poc4.run.RunPolicy policy,
+                                             ProjectLifecycleGate lifecycle) {
+        return new com.manao.poc4.run.RunService(store, coordinator, policy, lifecycle);
     }
 
     @Bean
     com.manao.poc4.run.RunRecoveryService runRecoveryService(com.manao.poc4.run.RunStore store,
                                                              com.manao.poc4.kubernetes.JobCoordinator coordinator,
                                                              com.manao.poc4.log.RunLogIngestor logIngestor,
-                                                             org.springframework.beans.factory.ObjectProvider<com.manao.poc4.log.RunLogWebSocketHandler> logSockets) {
+                                                             org.springframework.beans.factory.ObjectProvider<com.manao.poc4.log.RunLogWebSocketHandler> logSockets,
+                                                             ProjectLifecycleGate lifecycle) {
         return new com.manao.poc4.run.RunRecoveryService(store, coordinator, logIngestor, runId -> {
             com.manao.poc4.log.RunLogWebSocketHandler handler = logSockets.getIfAvailable();
             if (handler != null) handler.publishComplete(runId);
-        });
+        }, lifecycle);
     }
 
     @Bean
     com.manao.poc4.run.RunObservationService runObservationService(com.manao.poc4.run.RunStore store,
                                                                    com.manao.poc4.kubernetes.JobCoordinator coordinator,
                                                                    com.manao.poc4.log.RunLogIngestor logIngestor,
-                                                                   org.springframework.beans.factory.ObjectProvider<com.manao.poc4.log.RunLogWebSocketHandler> logSockets) {
+                                                                   org.springframework.beans.factory.ObjectProvider<com.manao.poc4.log.RunLogWebSocketHandler> logSockets,
+                                                                   ProjectLifecycleGate lifecycle) {
         return new com.manao.poc4.run.RunObservationService(store, coordinator, logIngestor, runId -> {
             com.manao.poc4.log.RunLogWebSocketHandler handler = logSockets.getIfAvailable();
             if (handler != null) handler.publishComplete(runId);
-        });
+        }, lifecycle);
     }
 
     @Bean

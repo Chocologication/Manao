@@ -1,6 +1,7 @@
 package com.manao.poc4.workspace;
 
 import com.manao.poc4.api.ApiException;
+import com.manao.poc4.project.ProjectLifecycleGate;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.List;
@@ -25,15 +26,29 @@ public final class WorkspaceOperationService {
 
     private final WorkspaceStore store;
     private final WorkspaceAgent agent;
+    private final ProjectLifecycleGate lifecycle;
 
     public WorkspaceOperationService(WorkspaceStore store, WorkspaceAgent agent) {
+        this(store, agent, new ProjectLifecycleGate());
+    }
+
+    public WorkspaceOperationService(WorkspaceStore store, WorkspaceAgent agent, ProjectLifecycleGate lifecycle) {
         this.store = store;
         this.agent = agent;
+        this.lifecycle = lifecycle;
     }
 
     /** Applies one mutation and returns the new revision. */
     public long apply(String projectId, String type, String path, String nextPath, String kind,
                       byte[] content, long expectedRevision) {
+        try (var lease = lifecycle.tryAcquire(projectId).orElseThrow(
+                () -> new ApiException("PROJECT_BUSY", 409, "Project is busy"))) {
+            return applyLocked(projectId, type, path, nextPath, kind, content, expectedRevision);
+        }
+    }
+
+    private long applyLocked(String projectId, String type, String path, String nextPath, String kind,
+                             byte[] content, long expectedRevision) {
         String operationId = UUID.randomUUID().toString();
         Digests digests = computeDigests(projectId, type, path, nextPath, kind, content);
         String receiptPath = RECEIPT_PATH_PREFIX + operationId + ".json";
@@ -43,11 +58,17 @@ public final class WorkspaceOperationService {
             operationId, projectId, expectedRevision, digests.before(), digests.after(), receiptPath, receiptSha256);
 
         WorkspaceStore.BeginResult begin = store.beginPendingOperation(projectId, expectedRevision, operation);
+        if (begin.projectLocked()) {
+            throw new ApiException("PROJECT_LOCKED", 409, "Project is locked");
+        }
         if (!begin.started()) {
-            if (!reconcilePending(projectId)) {
+            if (!reconcilePendingLocked(projectId)) {
                 throw failClosed(projectId);
             }
             begin = store.beginPendingOperation(projectId, expectedRevision, operation);
+            if (begin.projectLocked()) {
+                throw new ApiException("PROJECT_LOCKED", 409, "Project is locked");
+            }
             if (!begin.started()) {
                 throw new ApiException("WORKSPACE_REVISION_CONFLICT",
                     409, "The workspace changed; reload and retry.");
@@ -86,6 +107,15 @@ public final class WorkspaceOperationService {
      * condition was recorded; callers must not create new operations for the project.
      */
     public boolean reconcilePending(String projectId) {
+        try (var lease = lifecycle.tryAcquire(projectId).orElse(null)) {
+            if (lease == null) {
+                return false;
+            }
+            return reconcilePendingLocked(projectId);
+        }
+    }
+
+    private boolean reconcilePendingLocked(String projectId) {
         List<WorkspaceStore.OperationRecord> pending = store.pendingOperations(projectId);
         if (pending.isEmpty()) return true;
         for (WorkspaceStore.OperationRecord operation : pending) {
