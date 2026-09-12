@@ -94,4 +94,17 @@ class LogTicketServiceTest {
         assertThatThrownBy(() -> service.issue(ALICE, PROJECT, "missing-run"))
             .isInstanceOfSatisfying(ApiException.class, ex -> assertThat(ex.code()).isEqualTo("RUN_NOT_FOUND"));
     }
+
+    @Test
+    void deletingProjectRejectsNewTickets() {
+        service = new LogTicketService(store, clock,
+            (ownerId, projectId, runId) -> ownerId.equals(ALICE) && runId.equals(RUN),
+            new com.manao.poc4.project.ProjectLifecycleGate(), projectId -> "DELETING");
+        assertThatThrownBy(() -> service.issue(ALICE, PROJECT, RUN))
+            .isInstanceOfSatisfying(ApiException.class, ex -> {
+                assertThat(ex.code()).isEqualTo("PROJECT_LOCKED");
+                assertThat(ex.status()).isEqualTo(409);
+            });
+        assertThat(store.tickets).isEmpty();
+    }
 }

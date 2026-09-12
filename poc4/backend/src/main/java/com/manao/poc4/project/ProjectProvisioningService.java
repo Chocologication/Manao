@@ -101,14 +101,6 @@ public final class ProjectProvisioningService {
         executor.execute(() -> provision(projectId));
     }
 
-    public boolean deleteProject(String ownerId, String projectId) {
-        WorkspaceStore.ProjectRecord project = store.findProjectForOwner(ownerId, projectId);
-        if (project == null || store.hasActiveRun(projectId)) return false;
-        if (bridge != null) bridge.release(projectId);
-        gateway.deleteProjectResources(projectId);
-        return store.deleteProject(ownerId, projectId);
-    }
-
     public void provision(String projectId) {
         try (var lease = lifecycle.tryAcquire(projectId).orElse(null)) {
             if (lease == null) {

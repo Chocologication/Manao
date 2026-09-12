@@ -1,6 +1,7 @@
 package com.manao.poc4.log;
 
 import com.manao.poc4.api.ApiException;
+import com.manao.poc4.project.ProjectLifecycleGate;
 import java.security.MessageDigest;
 import java.security.SecureRandom;
 import java.time.Clock;
@@ -8,6 +9,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.Base64;
 import java.util.Optional;
+import java.util.function.Function;
 
 /**
  * Single-use opaque log tickets bound to a run. Only the SHA-256 hash is persisted; consumption
@@ -35,24 +37,47 @@ public final class LogTicketService implements LogTicketAuthenticator {
     private final Store store;
     private final Clock clock;
     private final RunAccess runAccess;
+    private final ProjectLifecycleGate gate;
+    private final Function<String, String> projectState;
     private final SecureRandom random = new SecureRandom();
 
     public LogTicketService(Store store, Clock clock, RunAccess runAccess) {
+        this(store, clock, runAccess, null, null);
+    }
+
+    public LogTicketService(Store store, Clock clock, RunAccess runAccess, ProjectLifecycleGate gate,
+                            Function<String, String> projectState) {
         this.store = store;
         this.clock = clock;
         this.runAccess = runAccess;
+        this.gate = gate;
+        this.projectState = projectState;
     }
 
     public IssuedTicket issue(String ownerId, String projectId, String runId) {
-        if (!runAccess.check(ownerId, projectId, runId)) {
-            throw new ApiException("RUN_NOT_FOUND", 404, "Run not found");
+        ProjectLifecycleGate.Lease lease = null;
+        try {
+            if (gate != null) {
+                lease = gate.tryAcquire(projectId).orElseThrow(
+                    () -> new ApiException("PROJECT_BUSY", 409, "Project is busy"));
+            }
+            if (projectState != null && "DELETING".equals(projectState.apply(projectId))) {
+                throw new ApiException("PROJECT_LOCKED", 409, "Project is locked");
+            }
+            if (!runAccess.check(ownerId, projectId, runId)) {
+                throw new ApiException("RUN_NOT_FOUND", 404, "Run not found");
+            }
+            byte[] raw = new byte[32];
+            random.nextBytes(raw);
+            String ticket = Base64.getUrlEncoder().withoutPadding().encodeToString(raw);
+            Instant expiresAt = clock.instant().plus(TICKET_TTL);
+            store.insert(new TicketRecord(sha256Hex(ticket), ownerId, projectId, runId, expiresAt, null));
+            return new IssuedTicket(ticket, expiresAt);
+        } finally {
+            if (lease != null) {
+                lease.close();
+            }
         }
-        byte[] raw = new byte[32];
-        random.nextBytes(raw);
-        String ticket = Base64.getUrlEncoder().withoutPadding().encodeToString(raw);
-        Instant expiresAt = clock.instant().plus(TICKET_TTL);
-        store.insert(new TicketRecord(sha256Hex(ticket), ownerId, projectId, runId, expiresAt, null));
-        return new IssuedTicket(ticket, expiresAt);
     }
 
     @Override

@@ -3,7 +3,9 @@ package com.manao.poc4.config;
 import com.manao.poc4.log.LogTicketAuthenticator;
 import com.manao.poc4.log.RunLogService;
 import com.manao.poc4.log.RunLogWebSocketHandler;
+import com.manao.poc4.project.ProjectLifecycleGate;
 import com.manao.poc4.run.RunService;
+import com.manao.poc4.run.RunStore;
 import com.manao.poc4.terminal.PtyBridge;
 import com.manao.poc4.terminal.TerminalSessionService;
 import com.manao.poc4.terminal.TerminalWebSocketHandler;
@@ -50,15 +52,25 @@ public class WebSocketConfig implements WebSocketConfigurer {
 
     @Bean
     RunLogWebSocketHandler runLogWebSocketHandler(RunLogService logService, LogTicketAuthenticator tickets,
-                                                  RunService runService) {
-        return new RunLogWebSocketHandler(tickets, logService, runService::findSummaryById, Clock.systemUTC());
+                                                  RunService runService, RunStore runStore,
+                                                  ProjectLifecycleGate lifecycle) {
+        return new RunLogWebSocketHandler(tickets, logService, runService::findSummaryById, Clock.systemUTC(),
+            lifecycle, projectId -> {
+                RunStore.ProjectRecord project = runStore.findProject(projectId);
+                return project == null ? null : project.state();
+            });
     }
 
     @Bean
     TerminalWebSocketHandler terminalWebSocketHandler(TerminalSessionService sessions, PtyBridge bridge,
-                                                      RunService runService, com.manao.poc4.kubernetes.JobCoordinator coordinator) {
+                                                      RunService runService, com.manao.poc4.kubernetes.JobCoordinator coordinator,
+                                                      RunStore runStore, ProjectLifecycleGate lifecycle) {
         return new TerminalWebSocketHandler(sessions, bridge, runService::findSummaryById, Clock.systemUTC(),
             runId -> coordinator.findLivePod(runId).map(pod ->
-                new com.manao.poc4.kubernetes.JobCoordinator.LivePod(pod.podName(), pod.containerName())));
+                new com.manao.poc4.kubernetes.JobCoordinator.LivePod(pod.podName(), pod.containerName())),
+            lifecycle, projectId -> {
+                RunStore.ProjectRecord project = runStore.findProject(projectId);
+                return project == null ? null : project.state();
+            });
     }
 }

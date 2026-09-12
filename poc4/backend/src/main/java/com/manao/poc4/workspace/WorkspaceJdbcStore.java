@@ -47,9 +47,10 @@ public final class WorkspaceJdbcStore implements WorkspaceStore {
 
     @Override public boolean deleteProject(String ownerId, String projectId) {
         Boolean deleted = transaction.execute(status -> {
-            Integer owned = jdbc.queryForObject(
-                "SELECT COUNT(*) FROM project WHERE id = ? AND owner_id = ? FOR UPDATE", Integer.class, projectId, ownerId);
-            if (owned == null || owned != 1 || hasActiveRun(projectId)) return Boolean.FALSE;
+            List<String> states = jdbc.query(
+                "SELECT state FROM project WHERE id = ? AND owner_id = ? FOR UPDATE",
+                (rs, row) -> rs.getString(1), projectId, ownerId);
+            if (states.size() != 1 || !"DELETING".equals(states.get(0))) return Boolean.FALSE;
             jdbc.update("DELETE FROM terminal_audit WHERE project_id = ?", projectId);
             jdbc.update("DELETE FROM terminal_session WHERE project_id = ?", projectId);
             jdbc.update("DELETE FROM log_ticket WHERE project_id = ?", projectId);

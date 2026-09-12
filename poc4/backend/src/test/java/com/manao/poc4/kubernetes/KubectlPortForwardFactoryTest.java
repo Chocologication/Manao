@@ -26,6 +26,8 @@ class KubectlPortForwardFactoryTest {
             "--namespace", "manao-stage6-test", "port-forward",
             "pod/manao-ws-project-1", "--address=127.0.0.1", "18123:8080");
         assertThat(forward.isAlive()).isTrue();
+        when(process.pid()).thenReturn(4242L);
+        assertThat(forward.pid()).hasValue(4242L);
         forward.kill();
         verify(process).destroy();
     }

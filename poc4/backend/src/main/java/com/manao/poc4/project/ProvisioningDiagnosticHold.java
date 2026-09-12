@@ -9,14 +9,12 @@ public final class ProvisioningDiagnosticHold implements Predicate<WorkspaceStor
     private final boolean enabled;
     private final String ownerId;
     private final String projectName;
-    private final String projectNamePrefix;
     private final AtomicBoolean claimed = new AtomicBoolean();
 
     public ProvisioningDiagnosticHold(String ownerId, String projectName, String projectNamePrefix) {
         this.ownerId = blankToNull(ownerId);
         this.projectName = blankToNull(projectName);
-        this.projectNamePrefix = blankToNull(projectNamePrefix);
-        this.enabled = this.projectName != null || this.projectNamePrefix != null;
+        this.enabled = this.ownerId != null && this.projectName != null;
     }
 
     public static ProvisioningDiagnosticHold fromEnvironment() {
@@ -36,9 +34,9 @@ public final class ProvisioningDiagnosticHold implements Predicate<WorkspaceStor
     }
 
     private boolean matches(WorkspaceStore.ProjectRecord project) {
-        if (ownerId != null && !ownerId.equals(project.ownerId())) return false;
-        if (projectName != null) return projectName.equals(project.name());
-        return projectNamePrefix != null && project.name() != null && project.name().startsWith(projectNamePrefix);
+        if ("DELETING".equals(project.state())) return false;
+        if (!ownerId.equals(project.ownerId())) return false;
+        return projectName.equals(project.name());
     }
 
     private static String blankToNull(String value) {

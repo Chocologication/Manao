@@ -69,6 +69,9 @@ class TerminalSessionServiceTest {
         runStore.projects.put(PROJECT, "CREATING");
         assertThatThrownBy(() -> service.reserve(80, 24, ALICE, PROJECT, RUN))
             .isInstanceOfSatisfying(ApiException.class, ex -> assertThat(ex.code()).isEqualTo("PROJECT_LOCKED"));
+        runStore.projects.put(PROJECT, "DELETING");
+        assertThatThrownBy(() -> service.reserve(80, 24, ALICE, PROJECT, RUN))
+            .isInstanceOfSatisfying(ApiException.class, ex -> assertThat(ex.code()).isEqualTo("PROJECT_LOCKED"));
     }
 
     @Test

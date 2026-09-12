@@ -3,8 +3,10 @@ package com.manao.poc4.log;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.manao.poc4.api.ApiException;
 import com.manao.poc4.api.StrictWsFrame;
 import com.manao.poc4.persistence.RunState;
+import com.manao.poc4.project.ProjectLifecycleGate;
 import com.manao.poc4.run.RunSummary;
 import java.io.IOException;
 import java.net.URI;
@@ -33,6 +35,8 @@ public final class RunLogWebSocketHandler extends TextWebSocketHandler {
     private final RunLogService logService;
     private final Function<String, RunSummary> runSummaryById;
     private final Clock clock;
+    private final ProjectLifecycleGate gate;
+    private final Function<String, String> projectState;
     private final Map<String, BoundSession> sessions = new ConcurrentHashMap<>();
 
     private static final class BoundSession {
@@ -53,10 +57,18 @@ public final class RunLogWebSocketHandler extends TextWebSocketHandler {
 
     public RunLogWebSocketHandler(LogTicketAuthenticator tickets, RunLogService logService,
                                   Function<String, RunSummary> runSummaryById, Clock clock) {
+        this(tickets, logService, runSummaryById, clock, null, null);
+    }
+
+    public RunLogWebSocketHandler(LogTicketAuthenticator tickets, RunLogService logService,
+                                  Function<String, RunSummary> runSummaryById, Clock clock,
+                                  ProjectLifecycleGate gate, Function<String, String> projectState) {
         this.tickets = tickets;
         this.logService = logService;
         this.runSummaryById = runSummaryById;
         this.clock = clock;
+        this.gate = gate;
+        this.projectState = projectState;
     }
 
     @Override
@@ -67,11 +79,20 @@ public final class RunLogWebSocketHandler extends TextWebSocketHandler {
             closeQuietly(session, TICKET_REJECTED);
             return;
         }
-        String runId = record.get().runId();
-        BoundSession bound = new BoundSession(session, runId,
-            (chunk, meta) -> publishAppend(runId, chunk, meta));
-        sessions.put(session.getId(), bound);
-        logService.addListener(runId, bound.listener);
+        String projectId = record.get().projectId();
+        try (ProjectLifecycleGate.Lease ignored = acquireHandshake(projectId)) {
+            if (projectState != null && "DELETING".equals(projectState.apply(projectId))) {
+                closeQuietly(session, TICKET_REJECTED);
+                return;
+            }
+            String runId = record.get().runId();
+            BoundSession bound = new BoundSession(session, runId,
+                (chunk, meta) -> publishAppend(runId, chunk, meta));
+            sessions.put(session.getId(), bound);
+            logService.addListener(runId, bound.listener);
+        } catch (ApiException ex) {
+            closeQuietly(session, TICKET_REJECTED);
+        }
     }
 
     @Override
@@ -131,6 +152,15 @@ public final class RunLogWebSocketHandler extends TextWebSocketHandler {
      * Sends one {@code log.complete} to live subscribers after the run is terminal and the last
      * persisted window is flushed. Duplicate completions for the same connection are dropped.
      */
+    public void closeRun(String runId) {
+        for (BoundSession bound : List.copyOf(sessions.values())) {
+            if (runId.equals(bound.runId)) {
+                closeQuietly(bound.session, CloseStatus.GOING_AWAY);
+                afterConnectionClosed(bound.session, CloseStatus.GOING_AWAY);
+            }
+        }
+    }
+
     public void publishComplete(String runId) {
         Long lastSeq = logService.windowFor(runId).meta().lastAvailableSeq();
         for (BoundSession bound : sessions.values()) {
@@ -258,6 +288,14 @@ public final class RunLogWebSocketHandler extends TextWebSocketHandler {
         try {
             session.close(status);
         } catch (IOException ignored) { }
+    }
+
+    private ProjectLifecycleGate.Lease acquireHandshake(String projectId) {
+        if (gate == null) {
+            return () -> { };
+        }
+        return gate.tryAcquire(projectId).orElseThrow(
+            () -> new ApiException("PROJECT_BUSY", 409, "Project is busy"));
     }
 
     private static String ticketParameter(URI uri) {

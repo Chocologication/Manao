@@ -1,6 +1,7 @@
 package com.manao.poc4.project;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.manao.poc4.kubernetes.FakeKubernetesGateway;
 import com.manao.poc4.kubernetes.WorkspaceResourceFactory;
@@ -10,7 +11,6 @@ import com.manao.poc4.workspace.WorkspaceOperationService;
 import com.manao.poc4.workspace.WorkspaceService;
 import com.manao.poc4.workspace.WorkspaceStore;
 import com.manao.poc4.workspace.WorkspaceTemplate;
-import java.util.ArrayList;
 import java.util.ArrayList;
 import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
@@ -111,6 +111,13 @@ class ProjectProvisioningServiceTest {
             new com.manao.poc4.workspace.WorkspaceOperationService(store, agent), agent);
     }
 
+    private ProjectCleanupService cleanupService(ProjectDeletionRepository.BeginDeletion began, List<String> runIds) {
+        return new ProjectCleanupService(new ProjectDeletionRepository() {
+            @Override public BeginDeletion begin(String ownerId, String projectId) { return began; }
+            @Override public List<String> runIds(String ownerId, String projectId) { return runIds; }
+        }, new ProjectLifecycleGate(), new ProjectRuntimeCleaner(null, null, null, null, null), gateway, store);
+    }
+
     @Test
     void diagnosticFailureTargetPreservesResourcesAndPendingOperation() {
         agent.mutator = command -> {
@@ -131,11 +138,13 @@ class ProjectProvisioningServiceTest {
     }
     @Test
     void deletingProjectReleasesKubernetesResourcesAndRemovesProject() {
-        store.projects.put(PROJECT, new WorkspaceStore.ProjectRecord(PROJECT, "alice-id", "new", "READY", 21, null,
+        store.projects.put(PROJECT, new WorkspaceStore.ProjectRecord(PROJECT, "alice-id", "new", "DELETING", 21, null,
             java.time.Instant.parse("2026-08-29T00:00:00Z")));
         java.util.Collections.addAll(gateway.created, "pvc:" + PROJECT, "init:" + PROJECT, "pod:" + PROJECT, "svc:" + PROJECT);
+        ProjectCleanupService cleanup = cleanupService(ProjectDeletionRepository.BeginDeletion.STARTED, List.of());
 
-        assertThat(service.deleteProject("alice-id", PROJECT)).isTrue();
+        cleanup.delete("alice-id", PROJECT);
+
         assertThat(gateway.deletedProjects).containsExactly(PROJECT);
         assertThat(gateway.created).noneMatch(entry -> entry.endsWith(":" + PROJECT));
         assertThat(store.projects).doesNotContainKey(PROJECT);
@@ -147,8 +156,13 @@ class ProjectProvisioningServiceTest {
             java.time.Instant.parse("2026-08-29T00:00:00Z")));
         store.activeRuns.add(PROJECT);
         java.util.Collections.addAll(gateway.created, "pvc:" + PROJECT, "pod:" + PROJECT, "svc:" + PROJECT);
+        ProjectCleanupService cleanup = cleanupService(ProjectDeletionRepository.BeginDeletion.ACTIVE_RUN, List.of());
 
-        assertThat(service.deleteProject("alice-id", PROJECT)).isFalse();
+        assertThatThrownBy(() -> cleanup.delete("alice-id", PROJECT))
+            .isInstanceOfSatisfying(com.manao.poc4.api.ApiException.class, ex -> {
+                assertThat(ex.status()).isEqualTo(409);
+                assertThat(ex.code()).isEqualTo("RUN_ALREADY_ACTIVE");
+            });
         assertThat(gateway.deletedProjects).isEmpty();
         assertThat(store.projects).containsKey(PROJECT);
     }

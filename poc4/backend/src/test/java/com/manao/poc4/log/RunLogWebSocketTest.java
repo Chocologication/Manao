@@ -207,6 +207,20 @@ class RunLogWebSocketTest {
     }
 
     @Test
+    void closeRunDropsTheSessionMappingAndDoesNotKeepPublishing() throws Exception {
+        CapturingSession sticky = new CapturingSession();
+        sticky.stayOpen = true;
+        handler.afterConnectionEstablished(sticky);
+        handler.handleMessage(sticky, new TextMessage("{\"type\":\"log.subscribe\",\"lastSeq\":null}"));
+        handler.closeRun(RUN);
+        assertThat(sticky.closed).isEqualTo(CloseStatus.GOING_AWAY);
+        int afterClose = sticky.text.size();
+        handler.heartbeat();
+        window.append(1, "late line\n");
+        assertThat(sticky.text.size()).isEqualTo(afterClose);
+    }
+
+    @Test
     void heartbeatCarriesServerTimeAndRunStateFramesMatchTheContext() throws Exception {
         subscribe(null);
         int before = session.text.size();
@@ -241,6 +255,7 @@ class RunLogWebSocketTest {
     static final class CapturingSession implements WebSocketSession {
         final List<String> text = new ArrayList<>();
         CloseStatus closed;
+        boolean stayOpen;
         String uri = "/api/v1/ws/run-logs?ticket=valid-ticket";
         private final Map<String, Object> attributes = new ConcurrentHashMap<>();
 
@@ -258,7 +273,7 @@ class RunLogWebSocketTest {
         @Override public int getBinaryMessageSizeLimit() { return 0; }
         @Override public void setBinaryMessageSizeLimit(int size) { }
         @Override public Map<String, Object> getAttributes() { return attributes; }
-        @Override public boolean isOpen() { return closed == null; }
+        @Override public boolean isOpen() { return stayOpen || closed == null; }
         @Override public void sendMessage(WebSocketMessage<?> message) {
             if (message instanceof TextMessage textMessage) text.add(textMessage.getPayload());
         }

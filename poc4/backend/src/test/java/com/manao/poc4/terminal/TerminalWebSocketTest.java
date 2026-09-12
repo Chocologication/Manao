@@ -294,6 +294,19 @@ class TerminalWebSocketTest {
     }
 
     @Test
+    void closeRunSettlesTheSessionAndClosesThePty() throws Exception {
+        TerminalWebSocketHandler handler = newHandler(session, liveTicket);
+        handler.closeRun(RUN);
+        assertThat(bridge.closed).isTrue();
+        assertThat(session.closed).isEqualTo(CloseStatus.GOING_AWAY);
+        assertThat(store.sessions.values()).anySatisfy(record ->
+            assertThat(record.state()).isEqualTo("INTERRUPTED"));
+        JsonNode exit = JSON.readTree(session.text.get(session.text.size() - 1));
+        assertThat(exit.get("type").asText()).isEqualTo("terminal.exit");
+        assertThat(exit.get("reason").asText()).isEqualTo("CONNECTION_LOST");
+    }
+
+    @Test
     void teardownAllSessionsSettlesActivePtyAndNeverReattaches() throws Exception {
         TerminalWebSocketHandler handler = newHandler(session, liveTicket);
         assertThat(bridge.opened).isTrue();

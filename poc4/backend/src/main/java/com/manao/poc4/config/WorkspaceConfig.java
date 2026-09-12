@@ -4,8 +4,11 @@ import com.manao.poc4.kubernetes.Fabric8KubernetesGateway;
 import com.manao.poc4.kubernetes.KubernetesGateway;
 import com.manao.poc4.kubernetes.WorkspaceApiClient;
 import com.manao.poc4.kubernetes.WorkspacePortForwardManager;
+import com.manao.poc4.project.ProjectCleanupService;
+import com.manao.poc4.project.ProjectDeletionRepository;
 import com.manao.poc4.project.ProjectLifecycleGate;
 import com.manao.poc4.project.ProjectProvisioningService;
+import com.manao.poc4.project.ProjectRuntimeCleaner;
 import com.manao.poc4.recovery.ProjectRecoveryService;
 import com.manao.poc4.workspace.Ed25519Keys;
 import com.manao.poc4.log.RunLogService;
@@ -142,6 +145,20 @@ public class WorkspaceConfig {
     }
 
     @Bean
+    ProjectCleanupService projectCleanupService(ProjectDeletionRepository deletions, ProjectLifecycleGate lifecycle,
+                                                KubernetesGateway gateway, WorkspaceStore store,
+                                                org.springframework.beans.factory.ObjectProvider<WorkspacePortForwardManager> bridges,
+                                                org.springframework.beans.factory.ObjectProvider<com.manao.poc4.log.RunLogIngestor> logs,
+                                                org.springframework.beans.factory.ObjectProvider<com.manao.poc4.log.RunLogService> logService,
+                                                org.springframework.beans.factory.ObjectProvider<com.manao.poc4.log.RunLogWebSocketHandler> logSockets,
+                                                org.springframework.beans.factory.ObjectProvider<com.manao.poc4.terminal.TerminalWebSocketHandler> terminalSockets) {
+        return new ProjectCleanupService(deletions, lifecycle,
+            new ProjectRuntimeCleaner(bridges.getIfAvailable(), logs.getIfAvailable(), logService.getIfAvailable(),
+                logSockets.getIfAvailable(), terminalSockets.getIfAvailable()),
+            gateway, store);
+    }
+
+    @Bean
     ProjectRecoveryService projectRecoveryService(WorkspaceStore store, WorkspaceAgent agent,
                                                   KubernetesGateway gateway, ProjectLifecycleGate lifecycle) {
         return new ProjectRecoveryService(store, agent, gateway, Clock.systemUTC(), Duration.ofMinutes(10), lifecycle);
@@ -231,9 +248,15 @@ public class WorkspaceConfig {
 
     @Bean
     com.manao.poc4.log.LogTicketService logTicketService(com.manao.poc4.log.JdbcLogStore store,
-                                                         com.manao.poc4.run.RunStore runStore) {
+                                                         com.manao.poc4.run.RunStore runStore,
+                                                         ProjectLifecycleGate lifecycle) {
         return new com.manao.poc4.log.LogTicketService(store, Clock.systemUTC(),
-            (ownerId, projectId, runId) -> runStore.findRunForOwner(ownerId, projectId, runId).isPresent());
+            (ownerId, projectId, runId) -> runStore.findRunForOwner(ownerId, projectId, runId).isPresent(),
+            lifecycle,
+            projectId -> {
+                com.manao.poc4.run.RunStore.ProjectRecord project = runStore.findProject(projectId);
+                return project == null ? null : project.state();
+            });
     }
 
     @Bean

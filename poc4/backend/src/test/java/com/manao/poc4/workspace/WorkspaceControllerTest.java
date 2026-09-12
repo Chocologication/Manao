@@ -391,7 +391,7 @@ public class WorkspaceControllerTest {
         @Override public boolean deleteProject(String ownerId, String projectId) {
             if (activeRuns.contains(projectId)) return false;
             ProjectRecord project = projects.get(projectId);
-            if (project == null || !project.ownerId().equals(ownerId)) return false;
+            if (project == null || !project.ownerId().equals(ownerId) || !"DELETING".equals(project.state())) return false;
             deletedProjects.add(projectId);
             projects.remove(projectId);
             pending.remove(projectId);

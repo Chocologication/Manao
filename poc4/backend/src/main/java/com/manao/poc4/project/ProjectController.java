@@ -26,13 +26,20 @@ import org.springframework.web.bind.annotation.RestController;
 public final class ProjectController {
     private final ProjectService projects;
     private final ProjectProvisioningService provisioning;
+    private final ProjectCleanupService cleanup;
 
-    public ProjectController(ProjectService projects) { this(projects, null); }
+    public ProjectController(ProjectService projects) { this(projects, null, null); }
+
+    public ProjectController(ProjectService projects, ProjectProvisioningService provisioning) {
+        this(projects, provisioning, null);
+    }
 
     @Autowired
-    public ProjectController(ProjectService projects, ProjectProvisioningService provisioning) {
+    public ProjectController(ProjectService projects, ProjectProvisioningService provisioning,
+                             ProjectCleanupService cleanup) {
         this.projects = projects;
         this.provisioning = provisioning;
+        this.cleanup = cleanup;
     }
 
     @GetMapping
@@ -56,9 +63,10 @@ public final class ProjectController {
     @DeleteMapping("/{projectId}")
     @ResponseStatus(HttpStatus.NO_CONTENT)
     public void delete(Authentication authentication, @PathVariable String projectId) {
-        if (provisioning == null || !provisioning.deleteProject(authentication.getName(), projectId)) {
+        if (cleanup == null) {
             throw new ApiException("ENTRY_NOT_FOUND", 404, "Project not found");
         }
+        cleanup.delete(authentication.getName(), projectId);
     }
 
     @GetMapping("/{projectId}")

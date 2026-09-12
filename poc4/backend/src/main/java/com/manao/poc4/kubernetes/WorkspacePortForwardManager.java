@@ -30,6 +30,11 @@ public final class WorkspacePortForwardManager {
         boolean isListening();
 
         void kill();
+
+        /** Real kubectl child PID when known; never a fabricated Fabric8/supervised identifier. */
+        default java.util.OptionalLong pid() {
+            return java.util.OptionalLong.empty();
+        }
     }
 
     public interface PortForwardProcessFactory {
@@ -215,6 +220,21 @@ public final class WorkspacePortForwardManager {
         bridges.remove(projectId);
         heldProjects.remove(projectId);
         bridge.process.kill();
+    }
+
+    /** Deletes the project bridge regardless of remaining references. Failed kills keep the handle. */
+    public synchronized void closeProject(String projectId) {
+        heldProjects.remove(projectId);
+        Bridge bridge = bridges.remove(projectId);
+        if (bridge == null) {
+            return;
+        }
+        try {
+            bridge.process.kill();
+        } catch (RuntimeException ex) {
+            bridges.put(projectId, bridge);
+            throw ex;
+        }
     }
 
     /** Adds one reference for a consumer that needs the bridge to stay up. */

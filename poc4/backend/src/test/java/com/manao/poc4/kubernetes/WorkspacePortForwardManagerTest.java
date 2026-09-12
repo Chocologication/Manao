@@ -155,6 +155,33 @@ class WorkspacePortForwardManagerTest {
     }
 
     @Test
+    void closeProjectKillsRegardlessOfRemainingReferences() {
+        RecordingFactory factory = new RecordingFactory();
+        WorkspacePortForwardManager manager = new WorkspacePortForwardManager("manao-test", 18100, 18199, factory);
+        manager.allocate("prj-a");
+        manager.retain("prj-a");
+        assertThat(manager.references("prj-a")).isEqualTo(2);
+
+        manager.closeProject("prj-a");
+
+        assertThat(manager.references("prj-a")).isZero();
+        assertThat(factory.killed).containsExactly("manao-ws-prj-a");
+        assertThatThrownBy(() -> manager.endpoint("prj-a")).isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void closeProjectRestoresTheHandleWhenKillFails() {
+        RecordingFactory factory = new RecordingFactory();
+        WorkspacePortForwardManager manager = new WorkspacePortForwardManager("manao-test", 18100, 18199, factory);
+        int port = manager.allocate("prj-a");
+        factory.processes.get("manao-ws-prj-a:" + port).failKill = true;
+
+        assertThatThrownBy(() -> manager.closeProject("prj-a")).isInstanceOf(IllegalStateException.class);
+        assertThat(manager.endpoint("prj-a").getPort()).isEqualTo(port);
+        assertThat(manager.references("prj-a")).isEqualTo(1);
+    }
+
+    @Test
     void supervisedModeUsesDeterministicPortsAndKeepsOneBridgePerProject() {
         WorkspacePortForwardManager manager = new WorkspacePortForwardManager("manao-test", 18100, 18199, null);
         int port = manager.allocate("prj-a");
@@ -303,6 +330,7 @@ class WorkspacePortForwardManagerTest {
         private volatile boolean alive = true;
         private volatile boolean listening;
         private volatile boolean killed;
+        private boolean failKill;
         FakeProcess(Runnable onKill) { this(onKill, true); }
         FakeProcess(Runnable onKill, boolean listening) {
             this.onKill = onKill;
@@ -314,6 +342,9 @@ class WorkspacePortForwardManagerTest {
         @Override public boolean isAlive() { return alive; }
         @Override public boolean isListening() { return listening; }
         @Override public void kill() {
+            if (failKill) {
+                throw new IllegalStateException("kill failed");
+            }
             if (!killed) {
                 killed = true;
                 onKill.run();

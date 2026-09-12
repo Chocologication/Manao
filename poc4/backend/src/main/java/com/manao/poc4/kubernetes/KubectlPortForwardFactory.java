@@ -55,6 +55,10 @@ public final class KubectlPortForwardFactory implements WorkspacePortForwardMana
                     if (process.isAlive()) process.destroy();
                     if (process.isAlive()) process.destroyForcibly();
                 }
+
+                @Override public java.util.OptionalLong pid() {
+                    return java.util.OptionalLong.of(process.pid());
+                }
             };
         } catch (IOException ex) {
             throw new IllegalStateException("cannot start workspace port-forward", ex);

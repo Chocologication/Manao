@@ -2,7 +2,9 @@ package com.manao.poc4.terminal;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.manao.poc4.api.ApiException;
 import com.manao.poc4.api.StrictWsFrame;
+import com.manao.poc4.project.ProjectLifecycleGate;
 import com.manao.poc4.run.RunSummary;
 import java.io.IOException;
 import java.net.URI;
@@ -38,6 +40,8 @@ public final class TerminalWebSocketHandler extends AbstractWebSocketHandler {
     private final Function<String, RunSummary> runSummaryById;
     private final Function<String, Optional<com.manao.poc4.kubernetes.JobCoordinator.LivePod>> livePodResolver;
     private final Clock clock;
+    private final ProjectLifecycleGate gate;
+    private final Function<String, String> projectState;
     private final Map<String, BoundSession> connections = new ConcurrentHashMap<>();
 
     private static final class BoundSession {
@@ -65,11 +69,20 @@ public final class TerminalWebSocketHandler extends AbstractWebSocketHandler {
     public TerminalWebSocketHandler(TerminalSessionService sessions, PtyBridge bridge,
                                     Function<String, RunSummary> runSummaryById, Clock clock,
                                     Function<String, Optional<com.manao.poc4.kubernetes.JobCoordinator.LivePod>> livePodResolver) {
+        this(sessions, bridge, runSummaryById, clock, livePodResolver, null, null);
+    }
+
+    public TerminalWebSocketHandler(TerminalSessionService sessions, PtyBridge bridge,
+                                    Function<String, RunSummary> runSummaryById, Clock clock,
+                                    Function<String, Optional<com.manao.poc4.kubernetes.JobCoordinator.LivePod>> livePodResolver,
+                                    ProjectLifecycleGate gate, Function<String, String> projectState) {
         this.sessions = sessions;
         this.bridge = bridge;
         this.runSummaryById = runSummaryById;
         this.clock = clock;
         this.livePodResolver = livePodResolver;
+        this.gate = gate;
+        this.projectState = projectState;
     }
 
     @Override
@@ -81,32 +94,40 @@ public final class TerminalWebSocketHandler extends AbstractWebSocketHandler {
             return;
         }
         TerminalStore.SessionRecord record = consumed.get();
-        BoundSession bound = new BoundSession(session, record, clock);
-        connections.put(session.getId(), bound);
-        RunSummary run = runSummaryById.apply(record.runId());
-        if (run == null || !"RUNNING".equals(run.state())) {
-            settleAndClose(bound, "RUN_LEFT_RUNNING", "INTERRUPTED", null, TICKET_REJECTED);
-            return;
+        try (ProjectLifecycleGate.Lease ignored = acquireHandshake(record.projectId())) {
+            if (projectState != null && "DELETING".equals(projectState.apply(record.projectId()))) {
+                closeQuietly(session, TICKET_REJECTED);
+                return;
+            }
+            BoundSession bound = new BoundSession(session, record, clock);
+            connections.put(session.getId(), bound);
+            RunSummary run = runSummaryById.apply(record.runId());
+            if (run == null || !"RUNNING".equals(run.state())) {
+                settleAndClose(bound, "RUN_LEFT_RUNNING", "INTERRUPTED", null, TICKET_REJECTED);
+                return;
+            }
+            Optional<com.manao.poc4.kubernetes.JobCoordinator.LivePod> live = livePodResolver.apply(record.runId());
+            if (live.isEmpty()) {
+                // No identity-verified live application Pod: fail closed, never exec against a guessed name.
+                settleAndClose(bound, "RUN_LEFT_RUNNING", "INTERRUPTED", null, TICKET_REJECTED);
+                return;
+            }
+            com.manao.poc4.kubernetes.JobCoordinator.LivePod pod = live.get();
+            try {
+                bound.handle = bridge.open(pod.podName(), pod.containerName(), Math.max(record.cols(), 1),
+                    Math.max(record.rows(), 1), new PtyListenerAdapter(bound));
+                sessions.updateLiveRefs(record.sessionId(), pod.podName(), pod.containerName());
+            } catch (RuntimeException ex) {
+                settleAndClose(bound, "BACKEND_ERROR", "FAILED", null, TICKET_REJECTED);
+                return;
+            }
+            ObjectNode ready = JSON.createObjectNode();
+            ready.put("type", "terminal.ready");
+            ready.put("sessionId", record.sessionId());
+            sendText(bound, ready);
+        } catch (ApiException ex) {
+            closeQuietly(session, TICKET_REJECTED);
         }
-        Optional<com.manao.poc4.kubernetes.JobCoordinator.LivePod> live = livePodResolver.apply(record.runId());
-        if (live.isEmpty()) {
-            // No identity-verified live application Pod: fail closed, never exec against a guessed name.
-            settleAndClose(bound, "RUN_LEFT_RUNNING", "INTERRUPTED", null, TICKET_REJECTED);
-            return;
-        }
-        com.manao.poc4.kubernetes.JobCoordinator.LivePod pod = live.get();
-        try {
-            bound.handle = bridge.open(pod.podName(), pod.containerName(), Math.max(record.cols(), 1),
-                Math.max(record.rows(), 1), new PtyListenerAdapter(bound));
-            sessions.updateLiveRefs(record.sessionId(), pod.podName(), pod.containerName());
-        } catch (RuntimeException ex) {
-            settleAndClose(bound, "BACKEND_ERROR", "FAILED", null, TICKET_REJECTED);
-            return;
-        }
-        ObjectNode ready = JSON.createObjectNode();
-        ready.put("type", "terminal.ready");
-        ready.put("sessionId", record.sessionId());
-        sendText(bound, ready);
     }
 
     @Override
@@ -162,6 +183,15 @@ public final class TerminalWebSocketHandler extends AbstractWebSocketHandler {
 
     /** Backend shutdown: settle every live session exactly once and never reattach old PTYs.
      *  The exit frame reason must stay inside the stage-five TerminalExitReason contract. */
+    public void closeRun(String runId) {
+        for (BoundSession bound : java.util.List.copyOf(connections.values())) {
+            if (runId.equals(bound.runId())) {
+                settleAndClose(bound, "CONNECTION_LOST", "INTERRUPTED", null, CloseStatus.GOING_AWAY);
+                connections.remove(bound.session.getId(), bound);
+            }
+        }
+    }
+
     public void teardownAllSessions() {
         for (BoundSession bound : List.copyOf(connections.values())) {
             settleAndClose(bound, "CONNECTION_LOST", "INTERRUPTED", null, null);
@@ -368,6 +398,14 @@ public final class TerminalWebSocketHandler extends AbstractWebSocketHandler {
         try {
             session.close(status);
         } catch (IOException ignored) { }
+    }
+
+    private ProjectLifecycleGate.Lease acquireHandshake(String projectId) {
+        if (gate == null) {
+            return () -> { };
+        }
+        return gate.tryAcquire(projectId).orElseThrow(
+            () -> new ApiException("PROJECT_BUSY", 409, "Project is busy"));
     }
 
     private static String ticketParameter(URI uri) {

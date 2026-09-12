@@ -86,6 +86,11 @@ public class RunLogService {
         if (runListeners != null) runListeners.remove(listener);
     }
 
+    public void forgetRun(String runId) {
+        windows.remove(runId);
+        listeners.remove(runId);
+    }
+
     /** Clock hook for deterministic tests and ISO timestamps in frames. */
     java.time.Instant now() {
         return clock.instant();
