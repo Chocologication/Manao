@@ -66,7 +66,8 @@ public class FakeKubernetesGateway implements KubernetesGateway {
 
     @Override public void deleteProjectWorkloads(String projectId) {
         workloadDeletedProjects.add(projectId);
-        created.removeIf(entry -> (entry.startsWith("pod:") || entry.startsWith("svc:")) && entry.endsWith(":" + projectId));
+        created.removeIf(entry -> (entry.startsWith("pod:") || entry.startsWith("svc:") || entry.startsWith("init:"))
+            && entry.endsWith(":" + projectId));
     }
 
     private static String projectId(HasMetadata resource) {

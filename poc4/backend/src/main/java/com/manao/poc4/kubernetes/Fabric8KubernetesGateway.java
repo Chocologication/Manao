@@ -3,7 +3,6 @@ package com.manao.poc4.kubernetes;
 import io.fabric8.kubernetes.api.model.Pod;
 import io.fabric8.kubernetes.api.model.PersistentVolumeClaim;
 import io.fabric8.kubernetes.api.model.Service;
-import io.fabric8.kubernetes.api.model.batch.v1.Job;
 import io.fabric8.kubernetes.client.KubernetesClient;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
@@ -107,66 +106,23 @@ public final class Fabric8KubernetesGateway implements KubernetesGateway {
     }
 
     @Override public void deleteProjectResources(String projectId) {
-        Map<String, String> labels = WorkspaceResourceFactory.projectResourceLabels(projectId);
-        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(60);
-        for (Job job : client.batch().v1().jobs().inNamespace(namespace).withLabels(labels).list().getItems()) {
-            client.batch().v1().jobs().inNamespace(namespace).withName(job.getMetadata().getName()).delete();
-        }
-        deleteProjectWorkloads(projectId);
-        waitForProjectWorkloadsGone(labels, deadline);
-        for (PersistentVolumeClaim pvc : client.persistentVolumeClaims().inNamespace(namespace).withLabels(labels).list().getItems()) {
-            client.persistentVolumeClaims().inNamespace(namespace).withName(pvc.getMetadata().getName()).delete();
-        }
-        waitForProjectResourcesGone(labels, deadline);
-    }
-
-    private void waitForProjectWorkloadsGone(Map<String, String> labels, long deadline) {
-        while (true) {
-            boolean gone = client.pods().inNamespace(namespace).withLabels(labels).list().getItems().isEmpty()
-                && client.services().inNamespace(namespace).withLabels(labels).list().getItems().isEmpty()
-                && client.batch().v1().jobs().inNamespace(namespace).withLabels(labels).list().getItems().isEmpty();
-            if (gone) return;
-            sleepUntilCleanupDeadline(deadline);
-        }
-    }
-
-    private void waitForProjectResourcesGone(Map<String, String> labels, long deadline) {
-        while (true) {
-            boolean gone = client.pods().inNamespace(namespace).withLabels(labels).list().getItems().isEmpty()
-                && client.services().inNamespace(namespace).withLabels(labels).list().getItems().isEmpty()
-                && client.batch().v1().jobs().inNamespace(namespace).withLabels(labels).list().getItems().isEmpty()
-                && client.persistentVolumeClaims().inNamespace(namespace).withLabels(labels).list().getItems().isEmpty();
-            if (gone) return;
-            sleepUntilCleanupDeadline(deadline);
-        }
-    }
-
-    private static void sleepUntilCleanupDeadline(long deadline) {
-        if (System.nanoTime() >= deadline) {
-            throw new IllegalStateException("project Kubernetes resources did not finish deleting");
-        }
-        try {
-            Thread.sleep(250);
-        } catch (InterruptedException ex) {
-            Thread.currentThread().interrupt();
-            throw new IllegalStateException("project Kubernetes cleanup was interrupted", ex);
+        ProjectResourceCleaner.CleanupReport report = cleaner().clean(projectId);
+        if (!report.complete()) {
+            throw new ProjectResourceCleanupException(report);
         }
     }
 
     /**
-     * Removes only the project workloads (Pod/Service) and preserves the PVC: used by the
-     * WORKSPACE_RECONCILIATION_REQUIRED path where the design demands the file evidence stay
-     * on disk ("保留现场"). Never deletes the PVC here.
+     * Removes only the project workloads (Pod/Service, including initializer) and preserves the PVC:
+     * used by the WORKSPACE_RECONCILIATION_REQUIRED path where the design demands the file evidence
+     * stay on disk ("保留现场"). Never deletes the PVC or Jobs here.
      */
     public void deleteProjectWorkloads(String projectId) {
-        // List + per-item delete: the design Role grants only the delete verb, NOT deletecollection.
-        Map<String, String> labels = WorkspaceResourceFactory.projectLabels(projectId);
-        for (Pod pod : client.pods().inNamespace(namespace).withLabels(labels).list().getItems()) {
-            client.pods().inNamespace(namespace).withName(pod.getMetadata().getName()).withGracePeriod(0).delete();
-        }
-        for (Service service : client.services().inNamespace(namespace).withLabels(labels).list().getItems()) {
-            client.services().inNamespace(namespace).withName(service.getMetadata().getName()).delete();
-        }
+        cleaner().deleteWorkloads(projectId);
+    }
+
+    private ProjectResourceCleaner cleaner() {
+        return new ProjectResourceCleaner(client, namespace);
     }
 
     /** Waits until the workspace pod is Ready; returns false on timeout. */
