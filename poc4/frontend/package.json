@@ -23,7 +23,8 @@
     "test:e2e:terminal-stress": "playwright test tests/e2e/stage5-terminal-stress.spec.ts --project=chromium-terminal-stress",
     "test:e2e:stage6": "playwright test tests/e2e/stage6-real-backend.spec.ts --project=stage6",
     "test:e2e:stage6:stress": "playwright test tests/e2e/stage6-terminal-stress.spec.ts --project=stage6",
-    "test:e2e:stage6:faults": "playwright test tests/e2e/stage6-faults.spec.ts --project=stage6"
+    "test:e2e:stage6:faults": "playwright test tests/e2e/stage6-faults.spec.ts --project=stage6",
+    "test:stage6:cleanup:resume": "playwright test --config playwright.stage6-tools.config.ts"
   },
   "packageManager": "pnpm@10.33.0",
   "engines": {

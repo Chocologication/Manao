@@ -20,6 +20,8 @@
   "include": [
     "tests/support/stage6-cleanup/**/*.ts",
     "tests/unit/stage6-cleanup-*.test.ts",
+    "tests/tools/stage6-cleanup-resume.spec.ts",
+    "playwright.stage6-tools.config.ts",
     "vitest.stage6-cleanup.config.ts"
   ]
 }

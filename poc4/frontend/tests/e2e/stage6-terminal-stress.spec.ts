@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect, test } from '../support/stage6-cleanup/fixtures';
 
 /**
  * Stage 6A: terminal/log stress over the real backend. Reuses the stage6-real-backend helpers
@@ -47,12 +47,6 @@ async function apiToken(page: import('@playwright/test').Page, user: { username:
 
 function authHeaders(token: string) {
   return { Authorization: 'Bearer ' + token };
-}
-
-async function createProject(page: import('@playwright/test').Page, name: string, token: string): Promise<{ id: string; state: string }> {
-  const created = await page.request.post('/api/v1/projects', { data: { name }, headers: authHeaders(token) });
-  expect(created.status()).toBe(201);
-  return (await created.json()) as { id: string; state: string };
 }
 
 async function awaitReady(page: import('@playwright/test').Page, projectId: string, token: string): Promise<string> {
@@ -110,13 +104,14 @@ async function createTerminalSession(
   expect(res.ok(), 'terminal session must be reservable for a RUNNING run').toBe(true);
   return (await res.json()) as { sessionId: string; ticket: string; expiresAt: string };
 }
-test('PTY 8 MiB output in <=32 KiB frames conserves 256 KiB credit', async ({ page }) => {
+test('PTY 8 MiB output in <=32 KiB frames conserves 256 KiB credit', async ({ page, resources }) => {
   test.setTimeout(600_000);
   await login(page, ALICE);
   const token = await apiToken(page, ALICE);
-  const project = await createProject(page, 'stage6-stress-' + Date.now(), token);
+  const project = await resources.createProject('alice', 'pty-credit');
   expect(await awaitReady(page, project.id, token), 'stress requires a READY project').toBe('READY');
   const run = await startRun(page, project.id, token);
+  await resources.recordRun(project.id, run.id);
   expect(await awaitRunState(page, project.id, run.id, token, ['RUNNING']), 'terminal requires a RUNNING run').toBe('RUNNING');
   const session = await createTerminalSession(page, project.id, run.id, token);
 
@@ -308,13 +303,14 @@ test('PTY 8 MiB output in <=32 KiB frames conserves 256 KiB credit', async ({ pa
   expect(metrics.resizeGeneration, 'at least 100 resize events must be sent').toBeGreaterThanOrEqual(100);
 });
 
-test('run log live then full replay matches byte conservation', async ({ page }) => {
+test('run log live then full replay matches byte conservation', async ({ page, resources }) => {
   test.setTimeout(360_000);
   await login(page, ALICE);
   const token = await apiToken(page, ALICE);
-  const project = await createProject(page, 'stage6-log-' + Date.now(), token);
+  const project = await resources.createProject('alice', 'log-replay');
   expect(await awaitReady(page, project.id, token), 'log test requires a READY project').toBe('READY');
   const run = await startRun(page, project.id, token);
+  await resources.recordRun(project.id, run.id);
 
   const result = await page.evaluate(async ({ token, projectId, runId }) => {
     const headers = { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' };

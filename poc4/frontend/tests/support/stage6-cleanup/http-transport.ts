@@ -35,6 +35,10 @@ export class HttpCleanupTransport implements CleanupTransport {
     }
   }
 
+  async ownerId(ownerKey: string): Promise<string> {
+    return (await this.session(ownerKey)).userId;
+  }
+
   async createProject(ownerKey: string, exactName: string): Promise<ProjectView> {
     const response = await this.request(ownerKey, '/api/v1/projects', {
       method: 'POST',

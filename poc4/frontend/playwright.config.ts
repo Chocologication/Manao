@@ -5,8 +5,10 @@ const stage6Gate = process.env.STAGE6_GATE === '1';
 export default defineConfig({
   testDir: './tests/e2e',
   fullyParallel: false,
-  workers: 2,
+  workers: stage6Gate ? 1 : 2,
   retries: 0,
+  globalSetup: stage6Gate ? './tests/support/stage6-cleanup/global-setup.ts' : undefined,
+  globalTeardown: stage6Gate ? './tests/support/stage6-cleanup/global-teardown.ts' : undefined,
   reporter: 'list',
   timeout: 60_000,
   expect: {

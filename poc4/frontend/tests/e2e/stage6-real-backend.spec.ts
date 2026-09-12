@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect, test } from '../support/stage6-cleanup/fixtures';
 
 /**
  * Stage 6A: real-backend browser flow with MSW disabled. The Vite dev server (4173) proxies
@@ -10,7 +10,6 @@ import { expect, test } from '@playwright/test';
 const ALICE = { username: 'alice', password: 'stage6-alice-pass' };
 const BOB = { username: 'bob', password: 'stage6-bob-pass' };
 const GATE_MODE = process.env.STAGE6_GATE === '1';
-const createdProjectIds = new Set<string>();
 
 async function backendReachable(request: import('@playwright/test').APIRequestContext): Promise<boolean> {
   try {
@@ -49,30 +48,6 @@ function authHeaders(token: string) {
   return { Authorization: 'Bearer ' + token };
 }
 
-async function createProject(page: import('@playwright/test').Page, name: string, token: string): Promise<{ id: string; state: string }> {
-  const created = await page.request.post('/api/v1/projects', { data: { name }, headers: authHeaders(token) });
-  expect(created.status()).toBe(201);
-  const project = (await created.json()) as { id: string; state: string };
-  createdProjectIds.add(project.id);
-  return project;
-}
-
-test.afterAll(async ({ request }) => {
-  if (createdProjectIds.size === 0) return;
-  const loginResponse = await request.post('/api/v1/auth/login', { data: ALICE });
-  expect(loginResponse.status(), 'cleanup login must succeed').toBe(200);
-  const { accessToken } = (await loginResponse.json()) as { accessToken: string };
-  const failures: string[] = [];
-  for (const projectId of [...createdProjectIds].reverse()) {
-    const deleted = await request.delete('/api/v1/projects/' + projectId, { headers: authHeaders(accessToken) });
-    if (![204, 404].includes(deleted.status())) {
-      failures.push(projectId + ': HTTP ' + deleted.status() + ' ' + (await deleted.text()));
-    }
-  }
-  createdProjectIds.clear();
-  expect(failures, 'all created projects must be cleaned up').toEqual([]);
-});
-
 async function awaitReady(page: import('@playwright/test').Page, projectId: string, token: string): Promise<string> {
   let state = 'CREATING';
   for (let i = 0; i < 60 && state === 'CREATING'; i++) {
@@ -83,10 +58,10 @@ async function awaitReady(page: import('@playwright/test').Page, projectId: stri
   return state;
 }
 
-test('login and Alice/Bob owner isolation on the real backend', async ({ page }) => {
+test('login and Alice/Bob owner isolation on the real backend', async ({ page, resources }) => {
   await login(page, ALICE);
   const aliceToken = await apiToken(page, ALICE);
-  const aliceProject = await createProject(page, 'stage6-iso-' + Date.now(), aliceToken);
+  const aliceProject = await resources.createProject('alice', 'owner-isolation');
   const aliceState = await awaitReady(page, aliceProject.id, aliceToken);
   expect(aliceState, 'owner isolation requires a READY project').toBe('READY');
 
@@ -102,10 +77,10 @@ test('login and Alice/Bob owner isolation on the real backend', async ({ page })
   expect([401, 404]).toContain(bobFiles.status());
 });
 
-test('project creation reaches READY with template files through the real workspace', async ({ page }) => {
+test('project creation reaches READY with template files through the real workspace', async ({ page, resources }) => {
   await login(page, ALICE);
   const token = await apiToken(page, ALICE);
-  const project = await createProject(page, 'stage6-e2e-' + Date.now(), token);
+  const project = await resources.createProject('alice', 'template-files');
   const state = await awaitReady(page, project.id, token);
   expect(state, 'provisioning must reach READY on the real cluster').toBe('READY');
 
@@ -115,10 +90,10 @@ test('project creation reaches READY with template files through the real worksp
   expect(treeBody.entries.map((entry) => entry.path)).toContain('pom.xml');
 });
 
-test('file save advances the workspace revision and rejects stale revisions', async ({ page }) => {
+test('file save advances the workspace revision and rejects stale revisions', async ({ page, resources }) => {
   await login(page, ALICE);
   const token = await apiToken(page, ALICE);
-  const project = await createProject(page, 'stage6-save-' + Date.now(), token);
+  const project = await resources.createProject('alice', 'file-save');
   expect(await awaitReady(page, project.id, token)).toBe('READY');
 
   const revisionBefore = (await (await page.request.get('/api/v1/projects/' + project.id + '/files/tree?path=', { headers: authHeaders(token) })).json())
@@ -143,10 +118,10 @@ test('file save advances the workspace revision and rejects stale revisions', as
   expect(stale.status()).toBe(409);
 });
 
-test('start run produces a policy-constrained run that progresses on the real cluster', async ({ page }) => {
+test('start run produces a policy-constrained run that progresses on the real cluster', async ({ page, resources }) => {
   await login(page, ALICE);
   const token = await apiToken(page, ALICE);
-  const project = await createProject(page, 'stage6-run-' + Date.now(), token);
+  const project = await resources.createProject('alice', 'start-run');
   const state = await awaitReady(page, project.id, token);
   expect(state, 'run test requires a READY project').toBe('READY');
 
@@ -158,6 +133,7 @@ test('start run produces a policy-constrained run that progresses on the real cl
   });
   expect(started.status()).toBe(202);
   const run = (await started.json()) as { id: string; state: string; policy: { command: string } };
+  await resources.recordRun(project.id, run.id);
   expect(run.state).toBe('STARTING');
   expect(run.policy.command).toBe('mvn clean test');
 

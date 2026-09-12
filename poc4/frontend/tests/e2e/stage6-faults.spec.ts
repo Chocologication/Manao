@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect, test } from '../support/stage6-cleanup/fixtures';
 import { assertOperatorEvidence, resolveFaultEvidence, type FaultAction } from './stage6-operator';
 
 /**
@@ -50,12 +50,6 @@ function authHeaders(token: string) {
   return { Authorization: 'Bearer ' + token };
 }
 
-async function createProject(page: import('@playwright/test').Page, name: string, token: string): Promise<{ id: string; state: string }> {
-  const created = await page.request.post('/api/v1/projects', { data: { name }, headers: authHeaders(token) });
-  expect(created.status()).toBe(201);
-  return (await created.json()) as { id: string; state: string };
-}
-
 async function awaitReady(page: import('@playwright/test').Page, projectId: string, token: string): Promise<string> {
   let state = 'CREATING';
   for (let i = 0; i < 60 && state === 'CREATING'; i++) {
@@ -97,14 +91,15 @@ async function awaitRunState(
   return state;
 }
 
-test('channel disconnect fails closed then reconnects', async ({ page }) => {
+test('channel disconnect fails closed then reconnects', async ({ page, resources }) => {
   test.setTimeout(360_000);
 
   // REST setup without UI login: fresh token, READY project, and a RUNNING run.
   const token = await apiToken(page, ALICE);
-  const project = await createProject(page, 'stage6-fault-channel-' + Date.now(), token);
+  const project = await resources.createProject('alice', 'fault-channel');
   expect(await awaitReady(page, project.id, token), 'channel test requires a READY project').toBe('READY');
   const run = await startRun(page, project.id, token);
+  await resources.recordRun(project.id, run.id);
   expect(await awaitRunState(page, project.id, run.id, token, ['RUNNING']), 'terminal requires a RUNNING run').toBe('RUNNING');
 
   // UI login once, then open the project workbench (client-side navigation keeps the token).
@@ -156,12 +151,12 @@ test('channel disconnect fails closed then reconnects', async ({ page }) => {
   await expect(page.getByRole('status', { name: 'Terminal state' })).toHaveText('Ready', { timeout: 30_000 });
 });
 
-test('parallel projects keep isolated dynamic bridges', async ({ page }) => {
+test('parallel projects keep isolated dynamic bridges', async ({ page, resources }) => {
   test.setTimeout(300_000);
   await login(page, ALICE);
   const token = await apiToken(page, ALICE);
-  const projectA = await createProject(page, 'stage6-bridge-a-' + Date.now(), token);
-  const projectB = await createProject(page, 'stage6-bridge-b-' + Date.now(), token);
+  const projectA = await resources.createProject('alice', 'bridge-a');
+  const projectB = await resources.createProject('alice', 'bridge-b');
   const [stateA, stateB] = await Promise.all([
     awaitReady(page, projectA.id, token),
     awaitReady(page, projectB.id, token),
@@ -202,7 +197,7 @@ test('parallel projects keep isolated dynamic bridges', async ({ page }) => {
   expect(readA.content, 'bridge contents must not cross-contaminate').not.toBe(readB.content);
 });
 
-test('fault phases: backend restart / tunnel loss / bridge loss', async ({ page }) => {
+test('fault phases: backend restart / tunnel loss / bridge loss', async ({ page, resources }) => {
   test.setTimeout(300_000);
   const FAULT = process.env.STAGE6_FAULT as FaultAction | undefined;
   if (FAULT === undefined || FAULT === '') {
@@ -216,7 +211,7 @@ test('fault phases: backend restart / tunnel loss / bridge loss', async ({ page 
 
   await login(page, ALICE);
   const token = await apiToken(page, ALICE);
-  const project = await createProject(page, 'stage6-fault-' + FAULT + '-' + Date.now(), token);
+  const project = await resources.createProject('alice', 'fault-' + FAULT);
   expect(await awaitReady(page, project.id, token), 'fault injection requires a READY project first').toBe('READY');
   const baseline = await page.request.get('/api/v1/projects/' + project.id + '/files/tree?path=', { headers: authHeaders(token) });
   expect(baseline.status(), 'READY project must serve the workspace tree before injection').toBe(200);
