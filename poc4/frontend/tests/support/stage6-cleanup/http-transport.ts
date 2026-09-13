@@ -21,11 +21,20 @@ export class HttpCleanupTransport implements CleanupTransport {
   private readonly login: (ownerKey: string) => Promise<HttpCleanupSession>;
   private readonly fetchImpl: typeof fetch;
   private readonly sessions = new Map<string, HttpCleanupSession>();
+  createCalls = 0;
+  deleteCalls = 0;
+  dropCreateResponse = false;
+  dropDeleteResponse = false;
+  readonly failDeleteIds = new Set<string>();
 
   constructor(options: HttpCleanupTransportOptions) {
     this.baseUrl = options.baseUrl.replace(/\/$/, '');
     this.login = options.login;
     this.fetchImpl = options.fetchImpl ?? ((input, init) => globalThis.fetch(input, init));
+  }
+
+  clearSessions(): void {
+    this.sessions.clear();
   }
 
   async verifyOwner(ownerKey: string, expectedOwnerId: string): Promise<void> {
@@ -40,12 +49,17 @@ export class HttpCleanupTransport implements CleanupTransport {
   }
 
   async createProject(ownerKey: string, exactName: string): Promise<ProjectView> {
+    this.createCalls += 1;
     const response = await this.request(ownerKey, '/api/v1/projects', {
       method: 'POST',
       body: JSON.stringify({ name: exactName }),
     });
     if (!response.ok) {
       throw this.classify(response.status, 'CREATE_REJECTED');
+    }
+    if (this.dropCreateResponse) {
+      await response.text();
+      throw new Error('TRANSPORT_UNCERTAIN');
     }
     return (await response.json()) as ProjectView;
   }
@@ -71,6 +85,10 @@ export class HttpCleanupTransport implements CleanupTransport {
   }
 
   async deleteProject(ownerKey: string, projectId: string, timeoutMs: number): Promise<DeleteProject> {
+    this.deleteCalls += 1;
+    if (this.failDeleteIds.has(projectId)) {
+      throw new Error('INJECTED_DELETE_FAILURE');
+    }
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
@@ -84,6 +102,9 @@ export class HttpCleanupTransport implements CleanupTransport {
         if (response.status === 409 || response.status === 503) {
           const body = (await response.json()) as { code?: string };
           code = body.code;
+        }
+        if (this.dropDeleteResponse) {
+          throw new Error('TRANSPORT_UNCERTAIN');
         }
         return { status: response.status, code };
       }
@@ -154,6 +175,6 @@ export class HttpCleanupTransport implements CleanupTransport {
     if (status === 401 || status === 403) {
       return new Error('AUTH_FAILED');
     }
-    return new Error(fallback);
+    return new Error(fallback + ':' + status);
   }
 }

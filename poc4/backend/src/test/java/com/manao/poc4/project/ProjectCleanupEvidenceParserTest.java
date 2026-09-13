@@ -17,6 +17,15 @@ class ProjectCleanupEvidenceParserTest {
         new ProjectCleanupEvidenceParser.ClusterCounts(0, 0, 0, 0, false);
 
     @Test
+    void verifiedLedgerStateWithEmptyResidueIsVerified() {
+        ProjectCleanupEvidenceParser.LedgerEntry verified = new ProjectCleanupEvidenceParser.LedgerEntry(
+            "inv-1", "owner-a", "p1", "VERIFIED", List.of("run-1"), ROOT.resolve("entry-1.json"));
+        ProjectCleanupEvidenceParser.Verdict verdict = ProjectCleanupEvidenceParser.verdict(
+            "inv-1", ROOT, verified, EMPTY_DB, EMPTY_CLUSTER, true);
+        assertThat(verdict.verified()).isTrue();
+    }
+
+    @Test
     void emptyEvidenceForTheRegisteredInvocationIsVerified() {
         ProjectCleanupEvidenceParser.Verdict verdict = ProjectCleanupEvidenceParser.verdict(
             "inv-1", ROOT, ENTRY, EMPTY_DB, EMPTY_CLUSTER, true);

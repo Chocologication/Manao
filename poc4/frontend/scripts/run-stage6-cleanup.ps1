@@ -17,6 +17,14 @@ $spec = if ($Suite -eq 'cleanup') {
 }
 
 New-Item -ItemType Directory -Force -Path $EvidenceDir | Out-Null
+if (-not $env:STAGE6_INVOCATION_ID) {
+    $env:STAGE6_INVOCATION_ID = [guid]::NewGuid().ToString()
+}
+[System.IO.File]::WriteAllText(
+    (Join-Path $EvidenceDir 'invocation-id.txt'),
+    $env:STAGE6_INVOCATION_ID,
+    [System.Text.UTF8Encoding]::new($false)
+)
 if (-not $env:STAGE6_CLEANUP_LEDGER_DIR) {
     $env:STAGE6_CLEANUP_LEDGER_DIR = Join-Path $EvidenceDir 'ledger'
 }
@@ -46,11 +54,8 @@ function Invoke-Native {
     )
     $argLine = ($ArgumentList | ForEach-Object { Quote-CmdArg $_ }) -join ' '
     $batch = 'cd /d "' + $WorkingDirectory + '" && "' + $FilePath + '" ' + $argLine + ' > "' + $LogPath + '" 2>&1'
-    & cmd.exe /c $batch | Out-Null
-    $code = $LASTEXITCODE
-    if (Test-Path -LiteralPath $LogPath) {
-        Get-Content -LiteralPath $LogPath | ForEach-Object { Write-Host $_ }
-    }
+    $proc = Start-Process -FilePath 'cmd.exe' -ArgumentList @('/c', $batch) -Wait -PassThru -NoNewWindow
+    $code = $proc.ExitCode
     if ($null -eq $code) {
         return 1
     }
@@ -96,7 +101,7 @@ try {
     }
     $verifyExit = Invoke-Native `
         -FilePath $mvn `
-        -ArgumentList @('-B', '-Dtest=ProjectCleanupEvidenceTest', '-Dmanao.stage6.cleanup.verify=true', 'test') `
+        -ArgumentList @('-B', '-Dtest=ProjectCleanupEvidenceTest', '-Dmanao.stage6.cleanup.verify=true', 'surefire:test') `
         -WorkingDirectory $backendDir `
         -LogPath (Join-Path $EvidenceDir 'verifier.log')
 }

@@ -251,4 +251,33 @@ describe('Stage6CleanupEngine.cleanupOne and sweep', () => {
     expect(report.entries[1]?.state).toBe('API_CLEANED');
     expect(report.entries[1]?.state).not.toBe('VERIFIED');
   });
+
+  it('stops a recorded run once and waits until it is inactive before DELETE', async () => {
+    const owned = baseEntry({ projectId: 'p1', state: 'OWNED', runIds: ['run-1'] });
+    const ready = {
+      status: 200 as const,
+      project: { id: 'p1', name: owned.exactName, state: 'READY' as const, createdAt: owned.preparedAt },
+    };
+    const getActiveRun = vi.fn()
+      .mockResolvedValueOnce({ id: 'run-1', state: 'RUNNING' })
+      .mockResolvedValueOnce({ id: 'run-1', state: 'STOPPING' })
+      .mockResolvedValueOnce(null);
+    const stopRun = vi.fn().mockResolvedValue(undefined);
+    const deleteProject = vi.fn().mockResolvedValue({ status: 204 });
+    const getProject = vi.fn()
+      .mockResolvedValueOnce(ready)
+      .mockResolvedValueOnce({ status: 404 });
+    const engine = new Stage6CleanupEngine(
+      memoryLedger([owned]),
+      transport({ getProject, getActiveRun, stopRun, deleteProject }),
+      clockAt(Date.parse(owned.preparedAt)),
+      DEFAULT_CLEANUP_POLICY,
+    );
+    expect((await engine.cleanupOne(owned)).state).toBe('API_CLEANED');
+    expect(stopRun).toHaveBeenCalledTimes(1);
+    expect(stopRun).toHaveBeenCalledWith('alice', 'p1', 'run-1');
+    expect(getActiveRun).toHaveBeenCalledTimes(3);
+    expect(deleteProject).toHaveBeenCalledTimes(1);
+    expect(getActiveRun.mock.invocationCallOrder[2]).toBeLessThan(deleteProject.mock.invocationCallOrder[0]);
+  });
 });

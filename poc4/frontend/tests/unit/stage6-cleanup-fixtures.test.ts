@@ -1,7 +1,7 @@
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { CleanupEntry, CleanupTransport, ProjectView } from '../support/stage6-cleanup/contracts.ts';
 import { DEFAULT_CLEANUP_POLICY } from '../support/stage6-cleanup/contracts.ts';
@@ -73,6 +73,28 @@ describe('stage6 resource fixtures', () => {
     expect(deleted).toContain(b.id);
   });
 
+  it('keeps distinct ledger entries when the Playwright title is longer than 40 characters', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'stage6-fix-'));
+    dirs.push(root);
+    const ledger = new FileCleanupLedger(root, 'inv-1');
+    const projects: ProjectView[] = [];
+    const deleted: string[] = [];
+    const resources = await createTestResources({
+      invocationId: 'inv-1',
+      testId: 'C07 injected failure on the first project does not block the second',
+      attempt: 0, workerKey: '1',
+      ownerIds: { alice: 'owner-a' }, ledger, transport: transport(projects, deleted),
+      policy: DEFAULT_CLEANUP_POLICY,
+      clock: { now: () => Date.parse('2026-09-10T00:00:00.000Z'), sleep: async () => {} },
+    });
+    const first = await resources.createProject('alice', 'c07-first');
+    const second = await resources.createProject('alice', 'c07-second');
+    const report = await resources.finish();
+    expect(new Set(report.entries.map((entry) => entry.entryId)).size).toBe(2);
+    expect(report.entries.map((entry) => entry.projectId).sort()).toEqual([first.id, second.id].sort());
+    expect(deleted.sort()).toEqual([first.id, second.id].sort());
+  });
+
   it('releases both projects created by the same test', async () => {
     const root = await mkdtemp(path.join(tmpdir(), 'stage6-fix-'));
     dirs.push(root);
@@ -125,6 +147,87 @@ describe('stage6 resource fixtures', () => {
       ledger.claimHold('owner-a', 'held-name'),
     ]);
     expect(wins.filter(Boolean)).toHaveLength(1);
+  });
+
+  it('waits until CREATING leaves and exposes owner-scoped read/delete/sweep', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'stage6-fix-'));
+    dirs.push(root);
+    const ledger = new FileCleanupLedger(root, 'inv-1');
+    const projects: ProjectView[] = [];
+    const deleted: string[] = [];
+    const shared = transport(projects, deleted);
+    let reads = 0;
+    shared.getProject = vi.fn(async (_owner, projectId) => {
+      const project = projects.find((item) => item.id === projectId);
+      if (project === undefined || deleted.includes(projectId)) {
+        return { status: 404 as const };
+      }
+      reads += 1;
+      if (reads < 2) {
+        return { status: 200 as const, project: { ...project, state: 'CREATING' as const } };
+      }
+      return { status: 200 as const, project };
+    });
+    const resources = await createTestResources({
+      invocationId: 'inv-1', testId: 'wait-ready', attempt: 0, workerKey: '1',
+      ownerIds: { alice: 'owner-a' }, ledger, transport: shared, policy: DEFAULT_CLEANUP_POLICY,
+      clock: { now: () => Date.parse('2026-09-10T00:00:00.000Z'), sleep: async () => {} },
+    });
+    const created = await resources.createProject('alice', 'ready');
+    expect(await resources.waitReady('alice', created.id)).toBe('READY');
+    expect(shared.getProject).toHaveBeenCalledTimes(2);
+    expect((await resources.getProject('alice', created.id)).status).toBe(200);
+    expect((await resources.listProjects('alice')).map((item) => item.id)).toEqual([created.id]);
+    expect(await resources.deleteProject('alice', created.id)).toEqual({ status: 204 });
+    expect(deleted).toEqual([created.id]);
+    const report = await resources.sweep();
+    expect(report.entries[0]?.state).toBe('API_CLEANED');
+  });
+
+  it('declares the C01-C08 cleanup matrix', () => {
+    const source = readFileSync('tests/e2e/stage6-cleanup.spec.ts', 'utf8');
+    for (const id of ['C01', 'C02', 'C03', 'C04', 'C05', 'C06', 'C07', 'C08']) {
+      expect(source).toContain(id);
+    }
+    expect(source).toContain('stop-then-wait');
+    expect(source).toContain('STAGE6_BACKEND_RESTART_CMD');
+    expect(source).toContain('STAGE6_BACKEND_RESTART_ENVFILE');
+    expect(source).toContain("'-File'");
+    expect(source).toContain("'-Restart'");
+    expect(source).toContain("stdio: 'ignore'");
+    expect(source).not.toContain("'pipe'");
+  });
+
+  it('ships a PID-specific local backend restart switch for C08', () => {
+    const script = path.resolve('..', 'backend', 'scripts', 'start-local-cluster.ps1');
+    expect(existsSync(script), script).toBe(true);
+    const source = readFileSync(script, 'utf8');
+    expect(source).toContain('[switch]$Restart');
+    expect(source).toContain('18080');
+    expect(source).toContain('spring-boot:run');
+    expect(source).toContain('Poc4BackendApplication');
+    expect(source).not.toContain('Get-Process java');
+    expect(source).toContain("ProgressPreference = 'SilentlyContinue'");
+    expect(source).toContain('$response.StatusCode -eq 200');
+    const afterRestart = source.split("throw 'BACKEND_HEALTH_TIMEOUT'")[1] ?? '';
+    expect(afterRestart).toContain('$env:Path = $wrapperDir');
+    expect(afterRestart).toContain('& mvn.cmd');
+    expect(afterRestart).toContain('JAVA_HOME');
+    expect(afterRestart).toContain('jdk-17');
+    expect(source).not.toContain('RedirectStandardOutput');
+    expect(source).not.toContain('RedirectStandardError');
+  });
+
+  it('does not pipe cmd.exe into Out-Null after Playwright', () => {
+    const source = readFileSync('scripts/run-stage6-cleanup.ps1', 'utf8');
+    expect(source).toContain('Start-Process');
+    expect(source).toContain('-Wait');
+    expect(source).not.toContain('cmd.exe /c $batch | Out-Null');
+    expect(source).toContain('surefire:test');
+    expect(source).not.toContain(", 'test')");
+    expect(source).toContain('STAGE6_INVOCATION_ID');
+    expect(source).toContain('invocation-id.txt');
+    expect(source).not.toContain('ForEach-Object { Write-Host $_ }');
   });
 
   it('keeps three e2e specs free of bare project POST/DELETE helpers', () => {

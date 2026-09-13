@@ -1,19 +1,29 @@
+import { createHash } from 'node:crypto';
 import type {
   CleanupClock,
   CleanupEntry,
   CleanupLedger,
   CleanupPolicy,
   CleanupTransport,
+  DeleteProject,
   ProjectView,
+  ReadProject,
   SweepReport,
 } from './contracts.ts';
 import { DEFAULT_CLEANUP_POLICY } from './contracts.ts';
 import { Stage6CleanupEngine } from './engine.ts';
+import { HttpCleanupTransport } from './http-transport.ts';
 
 export interface Stage6Resources {
   createProject(ownerKey: string, caseKey: string): Promise<ProjectView>;
   recordRun(projectId: string, runId: string): Promise<void>;
+  waitReady(ownerKey: string, projectId: string): Promise<string>;
+  getProject(ownerKey: string, projectId: string): Promise<ReadProject>;
+  listProjects(ownerKey: string): Promise<ProjectView[]>;
+  deleteProject(ownerKey: string, projectId: string, timeoutMs?: number): Promise<DeleteProject>;
+  sweep(): Promise<SweepReport>;
   finish(): Promise<SweepReport>;
+  http: HttpCleanupTransport | null;
 }
 
 export class ScopedCleanupLedger implements CleanupLedger {
@@ -62,8 +72,10 @@ export async function createTestResources(input: ResourceFactoryInput): Promise<
   const policy = input.policy ?? DEFAULT_CLEANUP_POLICY;
   const engine = new Stage6CleanupEngine(scoped, input.transport, clock, policy);
   const entries = new Map<string, CleanupEntry>();
+  const http = input.transport instanceof HttpCleanupTransport ? input.transport : null;
 
   return {
+    http,
     async createProject(ownerKey, caseKey) {
       const ownerId = input.ownerIds[ownerKey];
       if (ownerId === undefined) {
@@ -78,7 +90,7 @@ export async function createTestResources(input: ResourceFactoryInput): Promise<
         testId: input.testId,
         attempt: input.attempt,
         workerKey: input.workerKey,
-        entryId: sanitize(input.testId + '-' + caseKey + '-' + String(input.attempt)),
+        entryId: uniqueEntryId(input.testId, caseKey, input.attempt, entries.size),
         ownerId,
         ownerKey,
         exactName,
@@ -100,6 +112,32 @@ export async function createTestResources(input: ResourceFactoryInput): Promise<
       const updated: CleanupEntry = { ...current, runIds: [...current.runIds, runId] };
       entries.set(projectId, updated);
       await scoped.write(updated);
+    },
+    async waitReady(ownerKey, projectId) {
+      const deadline = clock.now() + policy.creatingWaitMs;
+      while (clock.now() <= deadline) {
+        const read = await input.transport.getProject(ownerKey, projectId);
+        if (read.status === 404) {
+          throw new Error('PROJECT_NOT_FOUND');
+        }
+        if (read.project.state !== 'CREATING') {
+          return read.project.state;
+        }
+        await clock.sleep(Math.min(2000, Math.max(0, deadline - clock.now())));
+      }
+      throw new Error('CREATE_STILL_CREATING');
+    },
+    async getProject(ownerKey, projectId) {
+      return input.transport.getProject(ownerKey, projectId);
+    },
+    async listProjects(ownerKey) {
+      return input.transport.listProjects(ownerKey);
+    },
+    async deleteProject(ownerKey, projectId, timeoutMs) {
+      return input.transport.deleteProject(ownerKey, projectId, timeoutMs ?? policy.deleteRequestMs);
+    },
+    async sweep() {
+      return engine.sweep();
     },
     async finish() {
       return engine.sweep();
@@ -158,4 +196,12 @@ class InvocationLedger implements CleanupLedger {
 
 function sanitize(value: string): string {
   return value.replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40) || 'x';
+}
+
+function uniqueEntryId(testId: string, caseKey: string, attempt: number, seq: number): string {
+  const digest = createHash('sha256')
+    .update([testId, caseKey, String(attempt), String(seq)].join('\0'))
+    .digest('hex')
+    .slice(0, 12);
+  return [sanitize(caseKey), String(attempt), String(seq), digest].join('-');
 }

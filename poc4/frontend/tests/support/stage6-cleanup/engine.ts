@@ -93,12 +93,9 @@ export class Stage6CleanupEngine {
         return this.unresolved(current, 'CREATE_STILL_CREATING');
       }
     }
-    const active = await this.transport.getActiveRun(current.ownerKey, projectId);
-    if (active !== null) {
-      if (!this.policy.allowStopRecordedRuns || !current.runIds.includes(active.id)) {
-        return this.unresolved(current, 'UNKNOWN_ACTIVE_RUN');
-      }
-      await this.transport.stopRun(current.ownerKey, projectId, active.id);
+    const runWait = await this.stopAndWaitForRecordedRun(current, projectId, deadline);
+    if (runWait !== null) {
+      return runWait;
     }
     const remaining = deadline - this.clock.now();
     if (remaining <= 0) {
@@ -154,6 +151,32 @@ export class Stage6CleanupEngine {
       }
     }
     return { entries, issues };
+  }
+
+  private async stopAndWaitForRecordedRun(
+    current: CleanupEntry,
+    projectId: string,
+    deadline: number,
+  ): Promise<CleanupEntry | null> {
+    let active = await this.transport.getActiveRun(current.ownerKey, projectId);
+    if (active === null) {
+      return null;
+    }
+    if (!this.policy.allowStopRecordedRuns || !current.runIds.includes(active.id)) {
+      return this.unresolved(current, 'UNKNOWN_ACTIVE_RUN');
+    }
+    await this.transport.stopRun(current.ownerKey, projectId, active.id);
+    while (this.clock.now() < deadline) {
+      await this.clock.sleep(Math.min(250, Math.max(0, deadline - this.clock.now())));
+      active = await this.transport.getActiveRun(current.ownerKey, projectId);
+      if (active === null) {
+        return null;
+      }
+      if (!current.runIds.includes(active.id)) {
+        return this.unresolved(current, 'UNKNOWN_ACTIVE_RUN');
+      }
+    }
+    return this.unresolved(current, 'RUN_STILL_ACTIVE');
   }
 
   private async mark(entry: CleanupEntry, state: CleanupEntry['state']): Promise<CleanupEntry> {

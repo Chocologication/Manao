@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.manao.poc4.kubernetes.WorkspaceResourceFactory;
 import io.fabric8.kubernetes.client.KubernetesClient;
 import io.fabric8.kubernetes.client.KubernetesClientBuilder;
@@ -64,6 +65,8 @@ class ProjectCleanupEvidenceTest {
                     invocationId, root, entry, db, cluster, runSnapshotPresent);
                 if (!verdict.verified()) {
                     failures.add(entry.projectId() + ": " + verdict.reasons());
+                } else {
+                    stampVerified(entry.ledgerPath());
                 }
             }
             assertThat(failures).as("registered cleanup entries must be independently verified").isEmpty();
@@ -152,6 +155,14 @@ class ProjectCleanupEvidenceTest {
                 assertThat(rows.next()).isTrue();
                 return rows.getLong(1);
             }
+        }
+    }
+
+    private static void stampVerified(Path ledgerPath) throws Exception {
+        JsonNode node = JSON.readTree(Files.readString(ledgerPath));
+        if (node instanceof ObjectNode objectNode && "API_CLEANED".equals(objectNode.path("state").asText())) {
+            objectNode.put("state", "VERIFIED");
+            Files.writeString(ledgerPath, JSON.writeValueAsString(objectNode));
         }
     }
 

@@ -2,7 +2,7 @@
 
 ## 1. 当前结论与证据边界
 
-- 代码基线（清理切片实现）：`ebca913` 及 runner JSON 判定修正。2026-09-12 18:39 cleanup 专项：Playwright 1/0/0、台账 `API_CLEANED`、独立 verifier 1/0/0/0、诊断 `083b8efd` rv 未变。18:45 basic：4 passed / 1 failed（Run 等待时为 `RECOVERING`，随后 API/Job=`SUCCEEDED`/`BUILD_SUCCEEDED`/exitCode=0）；失败当时 DELETE=409 `RUN_ALREADY_ACTIVE`，resume 后 leftover 核验通过。C08/压力/故障未跑。详见 [cleanup-acceptance.md](cleanup-acceptance.md)。这不是 6A PASS，也不能开始 6B。
+- 代码基线（清理切片实现）：`f5b5037` 及后续 C01–C08/C08 重启/runner 修正。2026-09-13 cleanup invocation `8c7255f7`：Playwright 8/0/0（含 C08 重启 59.3s），独立 verifier 1/0/0/0，十条台账 `VERIFIED`。basic invocation `d7e6f809`：5/0/0，verifier 1/0/0/0，四条台账 `VERIFIED`。身份 `manao-6a-local`；诊断 `083b8efd` rv 仍为 15521700 / 14891340。压力/故障未跑。basic 第 4 项仍接受任一 Run 终态，不是 Maven 成功与 Run/Job 一致。详见 [cleanup-acceptance.md](cleanup-acceptance.md)。这不是 6A PASS，也不能开始 6B。
 - **基础 real-backend E2E：用户报告集群重启后在沙箱外 5/5 PASS。** 已读取 `poc4/frontend/test-results/.last-run.json`：`status=passed`、`failedTests=[]`，文件修改时间为 2026-09-10 18:32:06 +08:00。该文件没有用例数量、耗时、集群身份或 Run 结果；这些细节不能从它独立证明。最新一次没有留存完整 JSON/list 报告，也不把 09:50 的旧报告冒充本次报告。
 - **完整 6A Gate = FAILED（关键验收未闭环），6B 未开始，阶段六未完成。** 历史失败已经被解决的部分与待验收部分分开记录，不再把模板写入/Fabric8 RESET 列为当前已证实阻断。
 - [只读快照](2026-09-10-readonly-snapshot.json) 固定了核验时间、代码 SHA、本地 JAR/spec 校验和、末次运行状态、节点状态和残留资源。磁盘 JAR 校验和不是“当前 JVM 加载了该 JAR”的证明。

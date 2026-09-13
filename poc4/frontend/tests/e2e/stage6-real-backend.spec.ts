@@ -138,7 +138,7 @@ test('start run produces a policy-constrained run that progresses on the real cl
   expect(run.policy.command).toBe('mvn clean test');
 
   let finalState = run.state;
-  for (let i = 0; i < 150 && ['STARTING', 'RUNNING'].includes(finalState); i++) {
+  for (let i = 0; i < 150 && ['STARTING', 'RUNNING', 'STOPPING', 'RECOVERING'].includes(finalState); i++) {
     await new Promise((resolve) => setTimeout(resolve, 2000));
     finalState = (await (await page.request.get('/api/v1/projects/' + project.id + '/runs/' + run.id, { headers: authHeaders(token) })).json()).state;
   }

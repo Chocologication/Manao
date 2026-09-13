@@ -1,16 +1,14 @@
 # Stage 6 可靠清理切片：验收记录
 
-日期：2026-09-12
+日期：2026-09-13
 工作树：`.worktree/ensoai-stage-6-real-backend-kubernetes`
 分支：`codex/poc4-stage-6-real-backend-kubernetes`
 
 ## 结论
 
-2026-09-12 18:39：`ebca913` + JDBC `@Autowired` 后端（PID 45924）上，cleanup 专项 Playwright 1 passed、台账 `API_CLEANED`、独立 leftover 核验 1/0/0/0。18:45 basic 4/5；失败项是 Run 等待未覆盖 `RECOVERING`，随后该 Run 实际 `SUCCEEDED`/`BUILD_SUCCEEDED`/exitCode=0。DELETE 在 Run 仍活跃时为 409 `RUN_ALREADY_ACTIVE`；resume 后残留核验通过。诊断 `083b8efd` rv 未变。C08、压力、故障未跑。
+2026-09-13：受限身份 `manao-6a-local` 上，C01–C08 清理矩阵 8/8 通过，basic 五项 5/5 通过；独立 leftover 核验器将两条 invocation 的台账条目均戳为 `VERIFIED`。诊断 `083b8efd` Pod/PVC rv 仍为 15521700 / 14891340。历史 `6c6378b2` 未动。压力与三类故障套件仍未跑。basic 第 4 项仍只断言 Run 进入任一终态（21.6s），不是 Maven 成功与 Run/Job 一致。
 
-当前状态：`CLEANUP_IMPLEMENTED_REAL_ACCEPTANCE_PENDING`
-
-这不是 6A PASS，也不能开始 6B。
+当前状态：清理切片 C01–C08 + basic 已实测通过。这不是 6A PASS，也不能开始 6B。
 
 ## 已完成的离线证据
 
@@ -54,12 +52,19 @@
 - 失败当时 DELETE=`409 RUN_ALREADY_ACTIVE`（协议正确），台账 `bd9c7b14-...` = `UNRESOLVED`。Run 进入 SUCCEEDED 后显式 resume apply 将同一条目标为 `API_CLEANED`；独立 verifier 1/0/0/0；GET 404；集群无该项目资源。诊断 rv 未变。
 - 证据目录：`poc4/frontend/playwright-report/stage6-basic-31a7ea1ef4ed44889f474f88becc313a/`。
 
-当前状态：`CLEANUP_IMPLEMENTED_REAL_ACCEPTANCE_PENDING`
+## 2026-09-13 C01–C08 与 basic
 
-这不是 6A PASS，也不能开始 6B。C08、压力、故障套件仍为 `NOT_RUN_IN_THIS_SLICE`。
+- SHA（开始时）：`f5b5037`。身份：`system:serviceaccount:manao-stage6-test:manao-6a-local`。namespace=`manao-stage6-test`。Vite 4173 PID 48160 由操作者在沙箱外提供，全程未杀。
+- cleanup invocation `8c7255f7b7d64349b20db70e30de87b7`：Playwright 8 passed / 0 failed / 0 skipped（4.2 min）。C08 用 `start-local-cluster.ps1 -File -EnvFile -Restart` 且 `stdio: ignore`，耗时 59.3s，18080 从 PID 31132 换成 10708。runner 在 Playwright 结束后因 `Write-Host` 回放日志卡住，已只结束 runner PowerShell；独立 `surefire:test` 核验器 1/0/0/0，十条台账均为 `VERIFIED`。`run-summary.json`：`e2eExit=0`、`playwrightOk=true`、`e2eProcessExit=1`（Node `UV_HANDLE_CLOSING`）、`verifyExit=0`、`status=PENDING_HUMAN_REVIEW`。
+- 证据目录：`poc4/frontend/playwright-report/stage6-cleanup-8c7255f7b7d64349b20db70e30de87b7/`。
+- basic invocation `d7e6f8096e3e4616b50c294178357a60`：同一 SHA/身份/C08 后后端 PID 10708。Playwright 5 passed / 0 failed / 0 skipped（1.5 min）。runner 退出码 0。`run-summary.json`：`e2eExit=0`、`e2eProcessExit=0`、`verifyExit=0`、`playwrightOk=true`、`status=PENDING_HUMAN_REVIEW`。四条业务台账均为 `VERIFIED`。第 4 项 21.6s 只要求终态属于 `SUCCEEDED|FAILED|CANCELLED|TIMED_OUT`。
+- 证据目录：`poc4/frontend/playwright-report/stage6-basic-d7e6f8096e3e4616b50c294178357a60/`。
+- 两次结束后 alice/bob 列表均为空；诊断 `083b8efd` rv 未变；历史 `6c6378b2` 未动。未 DROP/reset `manao_poc4`。
+
+当前状态：清理切片 C01–C08 + basic 已实测通过。这不是 6A PASS，也不能开始 6B。压力 / 三类故障仍为 `NOT_RUN_IN_THIS_SLICE`。
 
 ## 未闭环
 
-- C08 后端重启后续作（需单独授权目标 PID 与启动方式）。
 - 压力 / 三类故障套件。
-- Run 等待需覆盖 `RECOVERING`，并核验 Maven 成功与 Run/Job 一致；不得把任意终态或本次 4/5 当作 6A PASS。
+- Run 验收仍接受任一终态；需核验 Maven 成功与 Run/Job/日志一致后才能进入完整 6A。
+- 不得把本次 C01–C08 或 basic 5/5 当作 6A PASS，也不能开始 6B。
