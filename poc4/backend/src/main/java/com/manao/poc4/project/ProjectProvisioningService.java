@@ -1,5 +1,6 @@
 package com.manao.poc4.project;
 
+import com.manao.poc4.api.ApiException;
 import com.manao.poc4.kubernetes.KubernetesGateway;
 import com.manao.poc4.kubernetes.WorkspaceResourceFactory;
 import com.manao.poc4.recovery.ProjectRecoveryService;
@@ -20,6 +21,7 @@ import org.slf4j.LoggerFactory;
  */
 public final class ProjectProvisioningService {
     private static final Logger LOG = LoggerFactory.getLogger(ProjectProvisioningService.class);
+    public static final String WORKSPACE_STORAGE_MISSING = "WORKSPACE_STORAGE_MISSING";
 
     private final WorkspaceStore store;
     private final KubernetesGateway gateway;
@@ -111,6 +113,46 @@ public final class ProjectProvisioningService {
                 return;
             }
             provisionHeld(projectId);
+        }
+    }
+
+    /** Restores only runtime resources for an existing project; never bootstraps or writes files. */
+    public void ensureWorkspaceAvailable(String projectId) {
+        try (var lease = lifecycle.tryAcquire(projectId).orElseThrow(
+                () -> new ApiException("PROJECT_BUSY", 409, "Project is busy"))) {
+            WorkspaceStore.ProjectRecord project = store.findProject(projectId);
+            if (project == null || !"READY".equals(project.state())) {
+                return;
+            }
+            if (!gateway.projectPvcExists(projectId)) {
+                store.markProjectFailed(projectId, WORKSPACE_STORAGE_MISSING);
+                return;
+            }
+            boolean podReady = gateway.workspacePodReady(projectId);
+            boolean serviceExists = gateway.workspaceServiceExists(projectId);
+            if (podReady && serviceExists) {
+                return;
+            }
+            if (!podReady) {
+                // The gateway creates only if absent, preserving an existing Pending/Running Pod.
+                gateway.createPod(factory.createWorkspacePod(projectId, capabilityPublicKeyBase64));
+            }
+            if (!serviceExists) {
+                gateway.createService(factory.createWorkspaceService(projectId));
+            }
+            if (!podReady && !awaitWorkspacePod(projectId)) {
+                throw new ApiException("INTERNAL_ERROR", 503, "Workspace is temporarily unavailable; retry opening the project");
+            }
+            if (bridge != null) {
+                bridge.release(projectId);
+                bridge.allocate(projectId);
+            }
+        } catch (ApiException ex) {
+            throw ex;
+        } catch (RuntimeException ex) {
+            // An API/transport error is not evidence that storage disappeared. Preserve all data.
+            LOG.warn("workspace recovery failed: projectId={} failureClass={}", projectId, ex.getClass().getSimpleName());
+            throw new ApiException("INTERNAL_ERROR", 503, "Workspace is temporarily unavailable; retry opening the project");
         }
     }
 

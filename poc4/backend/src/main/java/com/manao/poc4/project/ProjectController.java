@@ -71,14 +71,23 @@ public final class ProjectController {
 
     @GetMapping("/{projectId}")
     public ProjectView get(Authentication authentication, @PathVariable String projectId) {
-        return projects.get(authentication.getName(), projectId)
-            .map(ProjectController::view)
+        String ownerId = authentication.getName();
+        ProjectService.Project project = projects.get(ownerId, projectId)
             .orElseThrow(() -> new ApiException("ENTRY_NOT_FOUND", 404, "Project not found"));
+        if (provisioning != null && "READY".equals(project.state())) {
+            provisioning.ensureWorkspaceAvailable(projectId);
+            project = projects.get(ownerId, projectId)
+                .orElseThrow(() -> new ApiException("ENTRY_NOT_FOUND", 404, "Project not found"));
+        }
+        return view(project);
     }
 
     private static ProjectView view(ProjectService.Project project) {
         String reason = "WORKSPACE_RECONCILIATION_REQUIRED".equals(project.failureReason())
             ? project.failureReason() : null;
+        if (ProjectProvisioningService.WORKSPACE_STORAGE_MISSING.equals(project.failureReason())) {
+            reason = "Workspace storage is missing. Existing files cannot be accessed.";
+        }
         return new ProjectView(project.id(), project.name(), project.state(), project.createdAt().toString(), reason);
     }
 
