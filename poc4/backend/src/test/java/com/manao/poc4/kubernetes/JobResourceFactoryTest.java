@@ -52,11 +52,11 @@ class JobResourceFactoryTest {
     }
 
     @Test
-    void pidOneDirectlyExecsFixedMavenCommandArray() throws Exception {
+    void pidOneDirectlyExecsUserCodeCommandArray() throws Exception {
         Job job = factory.createMavenJob(RUN, PROJECT);
         var container = job.getSpec().getTemplate().getSpec().getContainers().get(0);
         assertThat(container.getName()).isEqualTo("maven");
-        assertThat(container.getCommand()).containsExactly("mvn", "clean", "test");
+        assertThat(container.getCommand()).containsExactly("mvn", "-q", "-DskipTests", "compile", "exec:java");
         assertThat(container.getArgs()).isNullOrEmpty();
         assertThat(container.getWorkingDir()).isEqualTo("/workspace");
         assertThat(container.getImage()).isEqualTo("registry.example/manao/maven-runner@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc");

@@ -242,6 +242,39 @@ describe('reloadWorkspaceAfterTerminalRun ordering', () => {
 });
 
 describe('reloadWorkspaceAfterTerminalRun path outcomes', () => {
+  it.each(['selected', 'expanded'] as const)('reloads with a %s directory using the real backend metadata shape', async (directoryState) => {
+    await authenticateAsAlice();
+    activateAndOpen([README], README);
+    if (directoryState === 'selected') {
+      useWorkspaceSession.getState().selectPath(SRC);
+    } else {
+      useWorkspaceSession.getState().toggleDirectory(SRC);
+    }
+    const directoryMetadata = vi.fn(() => HttpResponse.json({
+      path: 'src', name: 'src', sizeBytes: null, mediaType: 'inode/directory',
+      encoding: null, language: '', renderMode: 'MONACO_TEXT', blockReason: null,
+    }));
+    server.use(
+      http.get('/api/v1/projects/:projectId/files/meta', ({ request }) => {
+        if (new URL(request.url).searchParams.get('path') === 'src') {
+          return directoryMetadata();
+        }
+        return undefined;
+      }),
+    );
+
+    await reloadWorkspaceAfterTerminalRun({ projectId: ALICE_SEED_PROJECT_ID, queryClient });
+
+    expect(directoryMetadata).not.toHaveBeenCalled();
+    expect(useWorkspaceSession.getState().openPaths).toEqual([README]);
+    expect(useWorkspaceSession.getState().activePath).toBe(README);
+    if (directoryState === 'selected') {
+      expect(useWorkspaceSession.getState().selectedPath).toBe(SRC);
+    } else {
+      expect(useWorkspaceSession.getState().expandedPaths.has(SRC)).toBe(true);
+    }
+  });
+
   it('omits a deleted open path and continues with survivors', async () => {
     await authenticateAsAlice();
     activateAndOpen([README, APP_TEST, POM], APP_TEST);

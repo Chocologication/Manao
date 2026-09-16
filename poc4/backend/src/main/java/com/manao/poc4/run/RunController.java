@@ -56,7 +56,7 @@ public final class RunController {
         if (limit < 1 || limit > 100) {
             throw new ApiException("VALIDATION_ERROR", 422, "Request validation failed");
         }
-        RunService.RunList list = runs.list(authentication.getName(), projectId, limit);
+        RunService.RunList list = runs.list(authentication.getName(), projectId, cursor, limit);
         return new RunListResponse(list.items(), list.nextCursor());
     }
 

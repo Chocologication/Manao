@@ -42,9 +42,12 @@ function assertCurrentProject(projectId: string): void {
   }
 }
 
-async function pathStillExists(projectId: string, path: ProjectRelativePath): Promise<boolean> {
+async function pathStillExists(projectId: string, path: ProjectRelativePath, queryClient: QueryClient): Promise<boolean> {
   try {
-    await getFileMetadata(projectId, path);
+    // Directory metadata is not a FileMetadata response; check directories first.
+    const tree = await listDirectory(projectId, parseProjectDirectoryPath(path));
+    assertCurrentProject(projectId);
+    cacheDirectoryTree(queryClient, projectId, tree);
     return true;
   } catch (error) {
     if (!isDeletedEntryError(error)) {
@@ -52,7 +55,7 @@ async function pathStillExists(projectId: string, path: ProjectRelativePath): Pr
     }
   }
   try {
-    await listDirectory(projectId, parseProjectDirectoryPath(path));
+    await getFileMetadata(projectId, path);
     return true;
   } catch (error) {
     if (isDeletedEntryError(error)) {
@@ -151,13 +154,13 @@ export async function reloadWorkspaceAfterTerminalRun(options: {
   assertCurrentProject(projectId);
   let nextSelected = selectedPath;
   if (selectedPath !== null && !surviving.includes(selectedPath)) {
-    nextSelected = (await pathStillExists(projectId, selectedPath)) ? selectedPath : null;
+    nextSelected = (await pathStillExists(projectId, selectedPath, queryClient)) ? selectedPath : null;
     assertCurrentProject(projectId);
   }
   const nextExpanded = new Set<ProjectRelativePath>();
   for (const path of expandedPaths) {
     assertCurrentProject(projectId);
-    if (await pathStillExists(projectId, path)) {
+    if (await pathStillExists(projectId, path, queryClient)) {
       nextExpanded.add(path);
     }
   }

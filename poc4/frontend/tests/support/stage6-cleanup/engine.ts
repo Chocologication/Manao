@@ -29,12 +29,13 @@ export class Stage6CleanupEngine {
   async createRegistered(entry: CleanupEntry): Promise<ProjectView> {
     await this.transport.verifyOwner(entry.ownerKey, entry.ownerId);
     await this.ledger.write(entry);
+    let project: ProjectView;
     try {
-      const project = await this.transport.createProject(entry.ownerKey, entry.exactName);
-      const owned: CleanupEntry = { ...entry, projectId: project.id, state: 'OWNED' };
-      await this.ledger.write(owned);
-      return project;
-    } catch {
+      project = await this.transport.createProject(entry.ownerKey, entry.exactName);
+    } catch (error) {
+      if (!isCreateTransportUncertainty(error)) {
+        throw error;
+      }
       const uncertain: CleanupEntry = {
         ...entry,
         state: 'CREATE_UNCERTAIN',
@@ -49,6 +50,9 @@ export class Stage6CleanupEngine {
         this.policy.createResolveMs,
       );
     }
+    const owned: CleanupEntry = { ...entry, projectId: project.id, state: 'OWNED' };
+    await this.ledger.write(owned);
+    return project;
   }
 
   async cleanupOne(entry: CleanupEntry): Promise<CleanupEntry> {
@@ -194,6 +198,22 @@ export class Stage6CleanupEngine {
     await this.ledger.write(next);
     return next;
   }
+}
+
+const DEFINITE_CREATE_REJECTIONS = new Set([400, 401, 403, 404, 409, 422, 429]);
+
+export function isCreateTransportUncertainty(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return true;
+  }
+  if (error.message === 'AUTH_FAILED' || error.message === 'OWNER_MISMATCH') {
+    return false;
+  }
+  const rejected = /^CREATE_REJECTED:(\d+)$/.exec(error.message);
+  if (rejected !== null) {
+    return !DEFINITE_CREATE_REJECTIONS.has(Number(rejected[1]));
+  }
+  return true;
 }
 
 async function reconcileCreatedProject(

@@ -1,6 +1,7 @@
 package com.manao.poc4.run;
 
 import com.manao.poc4.persistence.RunState;
+import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import java.util.OptionalLong;
@@ -27,7 +28,7 @@ public interface RunStore {
     /** Internal by-id lookup used by ticket-bound WebSocket flows. */
     Optional<RunRecord> findRun(String runId);
 
-    List<RunRecord> listForOwner(String ownerId, String projectId, int limit);
+    RunPage listForOwner(String ownerId, String projectId, RunCursor cursor, int limit);
 
     boolean transition(String runId, String projectId, long expectedVersion, RunState next, long fencingToken,
                        RunState... allowedStates);
@@ -51,6 +52,10 @@ public interface RunStore {
     boolean settle(String runId, RunState state, String terminationReason, Integer exitCode);
 
     List<RunRecord> findRunsInState(RunState... states);
+
+    record RunCursor(Instant createdAt, String id) { }
+
+    record RunPage(List<RunRecord> items, boolean hasMore) { }
 
     enum InsertResult { INSERTED, ACTIVE_RUN_EXISTS, PROJECT_LOCKED, PROJECT_NOT_FOUND, REVISION_CONFLICT }
 

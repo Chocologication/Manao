@@ -70,6 +70,21 @@ class RunObservationServiceTest {
     }
 
     @Test
+    void failedJobSettlesWithNonZeroExitCodeAndDoesNotRemainActive() {
+        String runId = seedRun("run-failed", RunState.RUNNING);
+        coordinator.factsByRun.put(runId, new JobCoordinator.JobFacts(false, false, true, false, 17, "pod-failed"));
+
+        service.observe();
+        service.observe();
+
+        assertThat(store.runs.get(runId).state).isEqualTo(RunState.FAILED.name());
+        assertThat(store.runs.get(runId).terminationReason).isEqualTo("BUILD_FAILED");
+        assertThat(store.runs.get(runId).exitCode).isEqualTo(17);
+        assertThat(store.findActiveRun(PROJECT)).isEmpty();
+        assertThat(completed).containsExactly(runId);
+    }
+
+    @Test
     void terminalSettlementFinishesTheLogWatchAfterTheLastPersist() {
         String runId = seedRun("run-live-complete", RunState.RUNNING);
         coordinator.factsByRun.put(runId, new JobCoordinator.JobFacts(true, false, false, false, null, "pod-1"));

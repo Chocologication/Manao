@@ -1,4 +1,5 @@
 import { useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
+import { createContext, useContext } from 'react';
 import { ApiRequestError } from '../../api/ApiRequestError';
 import { getFileContent, getFileMetadata, listDirectory } from '../../api/fileApi';
 import type {
@@ -14,6 +15,9 @@ import type {
 import { useWorkspaceSession } from '../editor/workspaceSession';
 
 const FILE_STALE_TIME_MS = 30_000;
+
+// The explicit reload owns file reads until its cache is ready.
+export const WorkspaceFileReadsPaused = createContext(false);
 
 export const fileKeys = {
   all: (projectId: string) => ['project-files', projectId] as const,
@@ -120,6 +124,7 @@ export function getWorkspaceRevision(
 }
 
 export function useDirectoryTreeQuery(projectId: string, path: ProjectDirectoryPath) {
+  const paused = useContext(WorkspaceFileReadsPaused);
   const queryClient = useQueryClient();
   const enabled = useWorkspaceSession((state) => {
     if (projectId.length === 0) {
@@ -146,7 +151,7 @@ export function useDirectoryTreeQuery(projectId: string, path: ProjectDirectoryP
     },
     retry: false,
     staleTime: FILE_STALE_TIME_MS,
-    enabled,
+    enabled: enabled && !paused,
   });
 }
 
@@ -159,13 +164,14 @@ export function useFileMetadataQuery(
   path: ProjectRelativePath,
   enabled: boolean,
 ) {
+  const paused = useContext(WorkspaceFileReadsPaused);
   const sessionProjectId = useWorkspaceSession((state) => state.projectId);
   return useQuery({
     queryKey: fileKeys.meta(projectId, path),
     queryFn: ({ signal }) => getFileMetadata(projectId, path, signal),
     retry: false,
     staleTime: FILE_STALE_TIME_MS,
-    enabled: enabled && projectId.length > 0 && isCurrentProject(projectId, sessionProjectId),
+    enabled: !paused && enabled && projectId.length > 0 && isCurrentProject(projectId, sessionProjectId),
   });
 }
 
@@ -175,6 +181,7 @@ export function useFileContentQuery(
   renderMode: FileRenderMode | undefined,
 ) {
   const queryClient = useQueryClient();
+  const paused = useContext(WorkspaceFileReadsPaused);
   const sessionProjectId = useWorkspaceSession((state) => state.projectId);
   const authorized = renderMode === 'MONACO_TEXT' || renderMode === 'PLAIN_TEXT';
   return useQuery({
@@ -192,7 +199,7 @@ export function useFileContentQuery(
     },
     retry: false,
     staleTime: FILE_STALE_TIME_MS,
-    enabled: authorized && projectId.length > 0 && isCurrentProject(projectId, sessionProjectId),
+    enabled: !paused && authorized && projectId.length > 0 && isCurrentProject(projectId, sessionProjectId),
   });
 }
 

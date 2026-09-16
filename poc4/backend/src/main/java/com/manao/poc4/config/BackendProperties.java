@@ -79,7 +79,7 @@ public final class BackendProperties {
     }
 
     public BackendProfile profile() { return profile; }
-    public String fixedCommand() { return "mvn clean test"; }
+    public String fixedCommand() { return "mvn -q -DskipTests compile exec:java"; }
     public String javaVersion() { return javaVersion; }
     public String mavenVersion() { return mavenVersion; }
     public Duration timeout() { return timeout; }

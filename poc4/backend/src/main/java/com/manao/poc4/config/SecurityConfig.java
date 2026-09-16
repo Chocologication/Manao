@@ -32,7 +32,7 @@ public class SecurityConfig {
         return http.securityMatcher("/api/**")
             .csrf(csrf -> csrf.disable())
             .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
-            .authorizeHttpRequests(a -> a.requestMatchers("/api/v1/auth/login").permitAll().anyRequest().authenticated())
+            .authorizeHttpRequests(a -> a.requestMatchers("/api/v1/auth/login", "/api/v1/ws/run-logs", "/api/v1/ws/terminals").permitAll().anyRequest().authenticated())
             .exceptionHandling(e -> e.authenticationEntryPoint((request, response, exception) -> {
                 writeError(response, HttpServletResponse.SC_UNAUTHORIZED, new ApiError("UNAUTHENTICATED", "Authentication required", null));
             }).accessDeniedHandler((request, response, exception) -> {

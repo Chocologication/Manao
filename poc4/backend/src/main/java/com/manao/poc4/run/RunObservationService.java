@@ -41,7 +41,7 @@ public final class RunObservationService {
     public void observe() {
         OptionalLong lease = store.acquireFencingToken();
         if (lease.isEmpty()) return;
-        for (RunRecord snapshot : store.findRunsInState(RunState.STARTING, RunState.RUNNING)) {
+        for (RunRecord snapshot : store.findRunsInState(RunState.STARTING, RunState.RUNNING, RunState.RECOVERING)) {
             try (var projectLease = lifecycle.tryAcquire(snapshot.projectId()).orElse(null)) {
                 if (projectLease == null) {
                     continue;
@@ -61,6 +61,21 @@ public final class RunObservationService {
             return;
         }
         Optional<JobCoordinator.JobFacts> facts = coordinator.facts(run);
+
+        // Handle RECOVERING: check if Job actually exists
+        if (run.state() == RunState.RECOVERING) {
+            if (facts.isEmpty()) {
+                // Job does not exist; safe to mark as FAILED now
+                settleAndComplete(run, RunState.FAILED, "START_FAILED", null);
+                return;
+            } else {
+                // Job exists; transition to STARTING to continue normal flow
+                store.transition(run.id(), run.projectId(), run.version(), RunState.STARTING,
+                    run.fencingToken(), RunState.RECOVERING);
+                run = store.findRun(run.id()).orElse(run);
+            }
+        }
+
         if (facts.isEmpty()) return; // job not observable yet; recovery handles absence
         JobCoordinator.JobFacts job = facts.get();
         if (run.state() == RunState.STARTING && job.running()) {

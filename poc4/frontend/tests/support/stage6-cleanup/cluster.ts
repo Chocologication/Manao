@@ -22,6 +22,11 @@ export type ClusterSnapshot = {
   pods: ClusterResource[];
   pvcs: ClusterResource[];
   services: ClusterResource[];
+  /**
+   * Successful Job inventory. `null` means Forbidden, timeout, or any other
+   * unread list and must not be treated as empty.
+   */
+  jobs: ClusterResource[] | null;
 };
 
 export type ClusterClientOptions = {
@@ -115,6 +120,19 @@ export function createClusterClient(options: ClusterClientOptions = {}) {
     }));
   }
 
+  function listJobs(selector: string): ClusterResource[] | null {
+    try {
+      const rawJson = kc(['get', 'jobs', '-l', selector, '-o', 'json']);
+      const raw = JSON.parse(rawJson) as { kind?: string; status?: string; code?: number };
+      if (raw.kind === 'Status' || raw.status === 'Failure' || (typeof raw.code === 'number' && raw.code >= 400)) {
+        return null;
+      }
+      return parseList(rawJson);
+    } catch {
+      return null;
+    }
+  }
+
   function snapshot(projectId: string): ClusterSnapshot {
     assertMutableProject(projectId);
     const selector = 'manao.poc4/project-id=' + projectId;
@@ -122,6 +140,7 @@ export function createClusterClient(options: ClusterClientOptions = {}) {
       pods: parseList(kc(['get', 'pods', '-l', selector, '-o', 'json'])),
       pvcs: parseList(kc(['get', 'pvc', '-l', selector, '-o', 'json'])),
       services: parseList(kc(['get', 'svc', '-l', selector, '-o', 'json'])),
+      jobs: listJobs(selector),
     };
   }
 

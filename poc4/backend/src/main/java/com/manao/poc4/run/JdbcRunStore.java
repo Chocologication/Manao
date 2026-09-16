@@ -137,9 +137,27 @@ public final class JdbcRunStore implements RunStore {
             runId, projectId, ownerId);
     }
 
-    @Override public List<RunRecord> listForOwner(String ownerId, String projectId, int limit) {
-        return jdbc.query("SELECT " + RUN_COLUMNS + " FROM run WHERE project_id = ? AND EXISTS (SELECT 1 FROM project p WHERE p.id = run.project_id AND p.owner_id = ?) ORDER BY created_at DESC, id DESC LIMIT ?",
-            (rs, row) -> map(rs), projectId, ownerId, limit);
+    @Override public RunPage listForOwner(String ownerId, String projectId, RunCursor cursor, int limit) {
+        String sql = "SELECT " + RUN_COLUMNS
+            + " FROM run WHERE project_id = ?"
+            + " AND EXISTS (SELECT 1 FROM project p WHERE p.id = run.project_id AND p.owner_id = ?)";
+        List<Object> args = new java.util.ArrayList<>();
+        args.add(projectId);
+        args.add(ownerId);
+        if (cursor != null) {
+            sql += " AND (created_at < ? OR (created_at = ? AND id < ?))";
+            args.add(Timestamp.from(cursor.createdAt()));
+            args.add(Timestamp.from(cursor.createdAt()));
+            args.add(cursor.id());
+        }
+        sql += " ORDER BY created_at DESC, id DESC LIMIT ?";
+        args.add(limit + 1);
+        List<RunRecord> records = jdbc.query(sql, (rs, row) -> map(rs), args.toArray());
+        boolean hasMore = records.size() > limit;
+        if (hasMore) {
+            records = records.subList(0, limit);
+        }
+        return new RunPage(records, hasMore);
     }
 
     @Override public boolean transition(String runId, String projectId, long expectedVersion, RunState next,

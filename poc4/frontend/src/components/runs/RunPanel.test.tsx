@@ -338,7 +338,7 @@ describe('RunPanel authority and start preconditions', () => {
     const start = await loadedIdle();
     expect(start.className).toMatch(/h-8/);
     expect(start.className).toMatch(/w-8/);
-    expect(screen.getByText('mvn clean test')).toBeInTheDocument();
+    expect(screen.getByText('mvn -q -DskipTests compile exec:java')).toBeInTheDocument();
     expect(screen.getByText(/Java 17/)).toBeInTheDocument();
     expect(screen.getByText(/Maven 3/)).toBeInTheDocument();
     expect(screen.getByText(/timeout 1800s/)).toBeInTheDocument();
@@ -442,7 +442,7 @@ describe('RunPanel run states and stop', () => {
       expect(runStateStatus()).toHaveTextContent(state);
     });
     expect(runStateStatus().querySelector('svg')).not.toBeNull();
-    expect(screen.getByText('mvn clean test')).toBeInTheDocument();
+    expect(screen.getByText('mvn -q -DskipTests compile exec:java')).toBeInTheDocument();
     const stop = screen.getByRole('button', { name: 'Stop run' });
     if (stopEnabled) {
       expect(stop).toBeEnabled();

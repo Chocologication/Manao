@@ -6,15 +6,22 @@ import com.manao.poc4.kubernetes.JobResourceFactory;
 import com.manao.poc4.persistence.RunState;
 import com.manao.poc4.project.ProjectLifecycleGate;
 import java.time.Instant;
+import java.nio.charset.StandardCharsets;
+import java.time.DateTimeException;
+import java.util.Base64;
 import java.util.Optional;
 import java.util.OptionalLong;
 import java.util.UUID;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Run orchestration: start/stop/get/list with owner isolation, revision validation, fencing-token
  * acquisition and idempotent Job creation against the server-derived resource identity.
  */
 public final class RunService {
+    private static final Logger LOG = LoggerFactory.getLogger(RunService.class);
+
     private final RunStore store;
     private final JobCoordinator coordinator;
     private final RunPolicy policy;
@@ -87,8 +94,18 @@ public final class RunService {
             String podRef = coordinator.findLivePod(runId).map(JobCoordinator.LivePod::podName).orElse(null);
             store.updateJobFacts(runId, jobRef, podRef);
         } catch (RuntimeException ex) {
-            // Never leave a locked STARTING run without a Job: fail closed and release the lock.
-            store.settle(runId, RunState.FAILED, "START_FAILED", null);
+            // Check if the Job was actually created despite the exception (network timeout, etc.)
+            // Only mark as FAILED if we can confirm the Job does not exist.
+            boolean jobExists = coordinator.facts(persisted).isPresent();
+            if (jobExists) {
+                // Job exists but we couldn't get the reference; mark as RECOVERING for observation to handle.
+                store.transition(runId, projectId, persisted.version(), RunState.RECOVERING,
+                    persisted.fencingToken(), RunState.STARTING);
+                LOG.warn("Run Job creation uncertain, marking as RECOVERING for observation: runId={}", runId, ex);
+            } else {
+                // Job definitely does not exist; safe to mark as FAILED.
+                store.settle(runId, RunState.FAILED, "START_FAILED", null);
+            }
             throw new ApiException("INTERNAL_ERROR", 503, "Run could not be started");
         }
         return toSummary(store.findRunForOwner(ownerId, projectId, runId).orElseThrow());
@@ -136,18 +153,38 @@ public final class RunService {
         return store.findActiveRun(projectId).map(this::toSummary);
     }
 
-    public RunList list(String ownerId, String projectId, int limit) {
-        var runs = store.listForOwner(ownerId, projectId, limit).stream()
+    public RunList list(String ownerId, String projectId, String encodedCursor, int limit) {
+        RunStore.RunCursor cursor = decodeCursor(encodedCursor);
+        RunStore.RunPage page = store.listForOwner(ownerId, projectId, cursor, limit);
+        var runs = page.items().stream()
             .sorted((left, right) -> {
                 int byCreated = right.createdAt().compareTo(left.createdAt());
                 return byCreated != 0 ? byCreated : right.id().compareTo(left.id());
             })
             .map(this::toSummary)
             .toList();
-        String cursor = runs.isEmpty() ? null : java.util.Base64.getEncoder().encodeToString(
-            (runs.get(runs.size() - 1).createdAt() + "|" + runs.get(runs.size() - 1).id())
-                .getBytes(java.nio.charset.StandardCharsets.UTF_8));
-        return new RunList(runs, cursor);
+        String nextCursor = page.hasMore() && !runs.isEmpty() ? encodeCursor(runs.get(runs.size() - 1)) : null;
+        return new RunList(runs, nextCursor);
+    }
+
+    private RunStore.RunCursor decodeCursor(String encodedCursor) {
+        if (encodedCursor == null || encodedCursor.isBlank()) return null;
+        try {
+            String value = new String(Base64.getDecoder().decode(encodedCursor), StandardCharsets.UTF_8);
+            int separator = value.indexOf('|');
+            if (separator <= 0 || separator == value.length() - 1 || value.indexOf('|', separator + 1) >= 0) {
+                throw new IllegalArgumentException();
+            }
+            String id = value.substring(separator + 1);
+            return new RunStore.RunCursor(Instant.parse(value.substring(0, separator)), id);
+        } catch (IllegalArgumentException | DateTimeException ex) {
+            throw new ApiException("VALIDATION_ERROR", 422, "Request validation failed");
+        }
+    }
+
+    private String encodeCursor(RunSummary summary) {
+        return Base64.getEncoder().encodeToString(
+            (summary.createdAt() + "|" + summary.id()).getBytes(StandardCharsets.UTF_8));
     }
 
     public record RunList(java.util.List<RunSummary> items, String nextCursor) { }

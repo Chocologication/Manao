@@ -42,7 +42,7 @@ public class RunControllerTest {
     }
 
     static RunPolicy policy() {
-        return new RunPolicy("mvn clean test", 17, 3, 1800,
+        return new RunPolicy("mvn -q -DskipTests compile exec:java", 17, 3, 1800,
             new RunPolicy.Resources(1000, 1L << 30, 1L << 30),
             new RunPolicy.Resources(8000, 16L << 30, 10L << 30));
     }
@@ -69,7 +69,7 @@ public class RunControllerTest {
             JsonNode policy = JSON.readTree(serialized(summary)).get("policy");
             assertThat(policy.has("image")).isFalse();
             assertThat(policy.has("env")).isFalse();
-            assertThat(policy.get("command").asText()).isEqualTo("mvn clean test");
+            assertThat(policy.get("command").asText()).isEqualTo("mvn -q -DskipTests compile exec:java");
             assertThat(policy.get("runtime").get("javaMajor").asInt()).isEqualTo(17);
             assertThat(policy.get("runtime").get("mavenMajor").asInt()).isEqualTo(3);
             assertThat(policy.get("timeoutSeconds").asInt()).isEqualTo(1800);
@@ -185,8 +185,35 @@ public class RunControllerTest {
             controller.start(auth(ALICE), PROJECT, new RunController.StartRunRequest("12"));
             RunController.RunListResponse response = controller.list(auth(ALICE), PROJECT, null, 20);
             assertThat(response.items()).hasSize(1);
-            assertThat(response.nextCursor()).isNotNull();
+            assertThat(response.nextCursor()).isNull();
             assertThat(serialized(response)).contains("\"items\"");
+        }
+
+        @Test
+        void listUsesCursorForSecondPageAndRejectsMalformedCursor() {
+            addTerminalRun("run-new", Instant.parse("2026-08-29T12:03:00Z"));
+            addTerminalRun("run-middle", Instant.parse("2026-08-29T12:02:00Z"));
+            addTerminalRun("run-old", Instant.parse("2026-08-29T12:01:00Z"));
+
+            RunController.RunListResponse first = controller.list(auth(ALICE), PROJECT, null, 2);
+            assertThat(first.items()).extracting(RunSummary::id)
+                .containsExactly("run-new", "run-middle");
+            assertThat(first.nextCursor()).isNotNull();
+
+            RunController.RunListResponse second = controller.list(auth(ALICE), PROJECT, first.nextCursor(), 2);
+            assertThat(second.items()).extracting(RunSummary::id).containsExactly("run-old");
+            assertThat(second.nextCursor()).isNull();
+
+            assertThatThrownBy(() -> controller.list(auth(ALICE), PROJECT, "not-a-valid-cursor", 2))
+                .isInstanceOfSatisfying(ApiException.class, ex -> {
+                    assertThat(ex.code()).isEqualTo("VALIDATION_ERROR");
+                    assertThat(ex.status()).isEqualTo(422);
+                });
+        }
+
+        private void addTerminalRun(String id, Instant createdAt) {
+            store.runs.put(id, new FakeRun(new RunRecord(id, PROJECT, 12, RunState.SUCCEEDED, "{}",
+                null, null, null, createdAt, 0, "BUILD_SUCCEEDED", 0L, createdAt, 1L)));
         }
 
         @Test
@@ -266,8 +293,22 @@ public class RunControllerTest {
             return Optional.of(run.toRecord());
         }
 
-        @Override public List<RunRecord> listForOwner(String ownerId, String projectId, int limit) {
-            return runs.values().stream().map(FakeRun::toRecord).limit(limit).toList();
+        @Override public RunStore.RunPage listForOwner(String ownerId, String projectId, RunStore.RunCursor cursor, int limit) {
+            List<RunRecord> records = runs.values().stream()
+                .map(FakeRun::toRecord)
+                .filter(run -> run.projectId().equals(projectId))
+                .filter(run -> ownerId.equals(projectOwners.get(projectId)))
+                .sorted((left, right) -> {
+                    int byCreated = right.createdAt().compareTo(left.createdAt());
+                    return byCreated != 0 ? byCreated : right.id().compareTo(left.id());
+                })
+                .filter(run -> cursor == null
+                    || run.createdAt().isBefore(cursor.createdAt())
+                    || (run.createdAt().equals(cursor.createdAt()) && run.id().compareTo(cursor.id()) < 0))
+                .toList();
+            boolean hasMore = records.size() > limit;
+            if (hasMore) records = records.subList(0, limit);
+            return new RunStore.RunPage(records, hasMore);
         }
 
         @Override public boolean transition(String runId, String projectId, long expectedVersion, RunState next,

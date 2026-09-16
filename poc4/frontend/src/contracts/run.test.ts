@@ -19,7 +19,7 @@ const STARTED_AT = '2026-08-24T10:00:01.000Z';
 const FINISHED_AT = '2026-08-24T10:05:00.000Z';
 
 const POLICY: RunPolicy = {
-  command: 'mvn clean test',
+  command: 'mvn -q -DskipTests compile exec:java',
   runtime: { javaMajor: 17, mavenMajor: 3 },
   timeoutSeconds: 1800,
   resources: {
@@ -356,7 +356,7 @@ describe('start-related payloads', () => {
   });
 
   it.each([
-    ['command', { expectedWorkspaceRevision: 'rev-1', command: 'mvn clean test' }],
+    ['command', { expectedWorkspaceRevision: 'rev-1', command: 'mvn -q -DskipTests compile exec:java' }],
     ['image', { expectedWorkspaceRevision: 'rev-1', image: 'maven:3.9' }],
     ['resources', { expectedWorkspaceRevision: 'rev-1', resources: POLICY.resources }],
     ['env', { expectedWorkspaceRevision: 'rev-1', env: { MAVEN_OPTS: '-Xmx1g' } }],

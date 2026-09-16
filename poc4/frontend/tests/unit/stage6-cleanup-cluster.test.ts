@@ -63,5 +63,57 @@ describe('stage6 leftover initializer fixture', () => {
     const apply = calls.find((call) => call.args.includes('apply'));
     expect(apply?.input).toContain('manao.poc4/component: initializer');
     expect(apply?.input).toContain('manao-ws-init-' + PROJECT);
+    expect(calls.some((call) => call.args.includes('jobs'))).toBe(true);
+  });
+
+  it('records an empty job list only after a successful inventory', () => {
+    const client = createClusterClient({
+      kubeconfig: 'C:\\tmp\\kubeconfig',
+      namespace: 'manao-stage6-test',
+      run() {
+        return JSON.stringify({ items: [] });
+      },
+    });
+    expect(client.snapshot(PROJECT).jobs).toEqual([]);
+  });
+
+  it('does not treat a forbidden or timed-out job list as empty', () => {
+    const forbidden = createClusterClient({
+      kubeconfig: 'C:\\tmp\\kubeconfig',
+      namespace: 'manao-stage6-test',
+      run(args) {
+        if (args.includes('jobs')) {
+          throw new Error('Error from server (Forbidden): jobs.batch is forbidden');
+        }
+        return JSON.stringify({ items: [] });
+      },
+    });
+    const forbiddenSnap = forbidden.snapshot(PROJECT);
+    expect(forbiddenSnap.jobs).toBeNull();
+    expect(forbiddenSnap.jobs).not.toEqual([]);
+
+    const timedOut = createClusterClient({
+      kubeconfig: 'C:\\tmp\\kubeconfig',
+      namespace: 'manao-stage6-test',
+      run(args) {
+        if (args.includes('jobs')) {
+          throw new Error('spawnSync kubectl ETIMEDOUT');
+        }
+        return JSON.stringify({ items: [] });
+      },
+    });
+    expect(timedOut.snapshot(PROJECT).jobs).toBeNull();
+
+    const status = createClusterClient({
+      kubeconfig: 'C:\\tmp\\kubeconfig',
+      namespace: 'manao-stage6-test',
+      run(args) {
+        if (args.includes('jobs')) {
+          return JSON.stringify({ kind: 'Status', status: 'Failure', code: 403, message: 'forbidden' });
+        }
+        return JSON.stringify({ items: [] });
+      },
+    });
+    expect(status.snapshot(PROJECT).jobs).toBeNull();
   });
 });

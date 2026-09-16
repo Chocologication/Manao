@@ -145,6 +145,121 @@ test('start run produces a policy-constrained run that progresses on the real cl
   expect(['SUCCEEDED', 'FAILED', 'CANCELLED', 'TIMED_OUT']).toContain(finalState);
 });
 
+test('MVP core loop: failed revision, corrected revision, and persistent history', async ({ page, resources }) => {
+  test.setTimeout(360_000);
+  await login(page, ALICE);
+  const token = await apiToken(page, ALICE);
+  const project = await resources.createProject('alice', 'mvp-core-loop');
+  expect(await awaitReady(page, project.id, token)).toBe('READY');
+
+  const treeUrl = '/api/v1/projects/' + project.id + '/files/tree?path=';
+  const contentUrl = '/api/v1/projects/' + project.id + '/files/content?path=' + encodeURIComponent('src/main/java/com/example/app/App.java');
+  const initialTree = await page.request.get(treeUrl, { headers: authHeaders(token) });
+  expect(initialTree.ok()).toBeTruthy();
+  const initialTreeBody = (await initialTree.json()) as { workspaceRevision: string };
+  const originalContentResponse = await page.request.get(contentUrl, { headers: authHeaders(token) });
+  expect(originalContentResponse.ok()).toBeTruthy();
+  const originalContent = (await originalContentResponse.json()) as { content: string };
+  const brokenContent = originalContent.content.replace('return "Hello from Manao";', 'return missingSymbol;');
+  expect(brokenContent).not.toBe(originalContent.content);
+
+  const brokenSave = await page.request.put(contentUrl, {
+    data: { content: brokenContent, expectedWorkspaceRevision: initialTreeBody.workspaceRevision },
+    headers: authHeaders(token),
+  });
+  expect(brokenSave.ok()).toBeTruthy();
+  const brokenRevision = ((await brokenSave.json()) as { workspaceRevision: string }).workspaceRevision;
+
+  const firstRunResponse = await page.request.post('/api/v1/projects/' + project.id + '/runs', {
+    data: { expectedWorkspaceRevision: brokenRevision },
+    headers: authHeaders(token),
+  });
+  expect(firstRunResponse.status()).toBe(202);
+  const firstRun = (await firstRunResponse.json()) as { id: string; state: string };
+  await resources.recordRun(project.id, firstRun.id);
+  const firstFinal = await awaitTerminalRun(page, project.id, firstRun.id, token);
+  expect(firstFinal.state).toBe('FAILED');
+  expect(firstFinal.terminationReason).toBe('BUILD_FAILED');
+  expect(firstFinal.exitCode).not.toBe(0);
+
+  await login(page, ALICE);
+  await openProjectFromList(page, project);
+  await page.getByRole('tab', { name: 'Run' }).click();
+  await expect(page.getByRole('status', { name: 'Run state' })).toContainText('FAILED');
+  await expect(page.getByRole('region', { name: 'Run logs' })).toContainText('BUILD FAILURE');
+
+  const correctedContent = originalContent.content;
+  const currentTree = await page.request.get(treeUrl, { headers: authHeaders(token) });
+  expect(currentTree.ok()).toBeTruthy();
+  const currentRevision = ((await currentTree.json()) as { workspaceRevision: string }).workspaceRevision;
+  const correctedSave = await page.request.put(contentUrl, {
+    data: { content: correctedContent, expectedWorkspaceRevision: currentRevision },
+    headers: authHeaders(token),
+  });
+  expect(correctedSave.ok()).toBeTruthy();
+  const correctedRevision = ((await correctedSave.json()) as { workspaceRevision: string }).workspaceRevision;
+
+  const secondRunResponse = await page.request.post('/api/v1/projects/' + project.id + '/runs', {
+    data: { expectedWorkspaceRevision: correctedRevision },
+    headers: authHeaders(token),
+  });
+  expect(secondRunResponse.status()).toBe(202);
+  const secondRun = (await secondRunResponse.json()) as { id: string; state: string };
+  await resources.recordRun(project.id, secondRun.id);
+  const secondFinal = await awaitTerminalRun(page, project.id, secondRun.id, token);
+  expect(secondFinal.state).toBe('SUCCEEDED');
+  expect(secondFinal.exitCode).toBe(0);
+
+  await login(page, ALICE);
+  await openProjectFromList(page, project);
+  await page.getByRole('tab', { name: 'Run' }).click();
+  await expect(page.getByRole('status', { name: 'Run state' })).toContainText('SUCCEEDED');
+  await expect(page.getByRole('region', { name: 'Run logs' })).toContainText('BUILD SUCCESS');
+  const history = await page.request.get('/api/v1/projects/' + project.id + '/runs?limit=20', {
+    headers: authHeaders(token),
+  });
+  expect(history.ok()).toBeTruthy();
+  const historyBody = (await history.json()) as { items: { id: string; state: string }[] };
+  expect(historyBody.items.map((run) => [run.id, run.state])).toEqual([
+    [secondRun.id, 'SUCCEEDED'],
+    [firstRun.id, 'FAILED'],
+  ]);
+
+  const savedAfterReload = await page.request.get(contentUrl, { headers: authHeaders(token) });
+  expect(savedAfterReload.ok()).toBeTruthy();
+  expect((await savedAfterReload.json() as { content: string }).content).toBe(correctedContent);
+});
+
+async function openProjectFromList(
+  page: import('@playwright/test').Page,
+  project: { id: string; name: string },
+): Promise<void> {
+  const card = page.getByRole('article', { name: project.name });
+  await expect(card).toBeVisible();
+  await card.getByRole('link', { name: 'Open' }).click();
+  await expect(page).toHaveURL(new RegExp('/projects/' + project.id + '$'));
+}
+async function awaitTerminalRun(
+  page: import('@playwright/test').Page,
+  projectId: string,
+  runId: string,
+  token: string,
+): Promise<{ state: string; terminationReason: string | null; exitCode: number | null }> {
+  let body: { state: string; terminationReason: string | null; exitCode: number | null } = {
+    state: 'STARTING',
+    terminationReason: null,
+    exitCode: null,
+  };
+  for (let i = 0; i < 150 && ['STARTING', 'RUNNING', 'STOPPING', 'RECOVERING'].includes(body.state); i++) {
+    await new Promise((resolve) => setTimeout(resolve, 2000));
+    const response = await page.request.get('/api/v1/projects/' + projectId + '/runs/' + runId, {
+      headers: authHeaders(token),
+    });
+    expect(response.ok()).toBeTruthy();
+    body = (await response.json()) as typeof body;
+  }
+  return body;
+}
 test('error responses never leak cluster identifiers', async ({ request }) => {
   const response = await request.get('/api/v1/projects/does-not-exist/files/tree?path=');
   expect([401, 404]).toContain(response.status());

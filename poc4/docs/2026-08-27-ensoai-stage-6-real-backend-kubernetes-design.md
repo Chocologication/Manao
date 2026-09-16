@@ -44,7 +44,7 @@
 - JWT 登录、用户所有权检查、统一 HTTP 错误包。
 - MySQL Flyway migration、项目/Run/日志/ticket/terminal/audit 持久化。
 - 通过内部 workspace API 操作 RWX PVC 上的文件树、内容、保存、创建、重命名、删除和 revision 校验。
-- 固定 Java 17 + Maven 3.9 的 `mvn clean test` Job。
+- 固定 Java 17 + Maven 3.9 的项目入口执行 Job。
 - Pod 日志持久化、最近 5 MiB 窗口、replay/live WebSocket 和七天清理。
 - 当前活动 Maven Job 应用容器的 Fabric8 `pods/exec` PTY。
 - 一次性日志/终端 ticket、单 live terminal session、resize、二进制输入输出、credit/ack 和关闭销毁。
@@ -236,7 +236,7 @@ Start 只接受：
 
 Job 固定约束：
 
-- `mvn clean test`。
+- 使用 Maven 编译并执行项目入口类 `com.example.app.App`，不运行项目测试作为 Run 的前置步骤。
 - Java 17、Maven 3.9。
 - `restartPolicy: Never`、`backoffLimit: 0`、`activeDeadlineSeconds: 1800`。
 - CPU 不超过 8 cores，内存不超过 16 GiB，ephemeral storage 不超过 10 GiB。
@@ -244,7 +244,7 @@ Job 固定约束：
 - `/tmp` 使用独立 `emptyDir`，设置 `TMPDIR=/tmp`、`HOME=/tmp`。
 - Job 使用 `automountServiceAccountToken: false` 的无 RBAC ServiceAccount。
 
-Maven Job 的应用容器使用包含 JDK 17、Maven 3.9、Bash 和固定 wrapper 的不可变镜像；PID 1 直接执行参数数组 `mvn clean test`，不经过用户可控 shell。PTY 不是 Job entrypoint、sidecar 或 wrapper 替代品，而是对同一 `Running` 应用容器建立的独立 `pods/exec` 子进程：exec 启动固定路径的 root-owned、0555 `manao-pty-wrapper`，wrapper 再启动交互 Bash。Maven PID 1 的退出决定 Job 事实；PTY shell 的输入不能改变固定 Maven 命令，但对 PVC 的写入仍记录为 POC 风险。
+Maven Job 的应用容器使用包含 JDK 17、Maven 3.9、Bash 和固定 exec 配置的不可变镜像；PID 1 直接执行参数数组 `mvn -q -DskipTests compile exec:java`，由项目模板配置执行 `com.example.app.App`，不经过用户可控 shell。PTY 不是 Job entrypoint、sidecar 或 wrapper 替代品，而是对同一 `Running` 应用容器建立的独立 `pods/exec` 子进程：exec 启动固定路径的 root-owned、0555 `manao-pty-wrapper`，wrapper 再启动交互 Bash。Maven PID 1 的退出决定 Job 事实；PTY shell 的输入不能改变 Run 入口，但对 PVC 的写入仍记录为 POC 风险。
 
 ### 6.4 错误语义
 

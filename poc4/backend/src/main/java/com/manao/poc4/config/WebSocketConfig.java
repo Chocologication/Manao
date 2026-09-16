@@ -15,11 +15,13 @@ import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Conditional;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.web.socket.config.annotation.EnableWebSocket;
 import org.springframework.web.socket.config.annotation.WebSocketConfigurer;
 import org.springframework.web.socket.config.annotation.WebSocketHandlerRegistry;
 
 /** Registers the stage-five same-origin WebSocket endpoints (log and terminal). */
 @Configuration
+@EnableWebSocket
 @Conditional(SecurityConfig.BackendAuthCondition.class)
 public class WebSocketConfig implements WebSocketConfigurer {
     private final ObjectProvider<RunLogWebSocketHandler> runLogHandlerProvider;

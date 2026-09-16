@@ -1,6 +1,6 @@
 import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { http, HttpResponse } from 'msw';
+import { delay, http, HttpResponse } from 'msw';
 import * as monaco from 'monaco-editor';
 import { readFileSync } from 'node:fs';
 import { MemoryRouter } from 'react-router';
@@ -43,7 +43,7 @@ import {
 } from '../../mocks/runState';
 import { ALICE_SEED_PROJECT_ID, getFileRequestCount, setWriteScenario } from '../../mocks/state';
 import { renderApp, resetAppRuntime } from '../../test/renderApp';
-import { WorkbenchShell } from './WorkbenchShell';
+import { isExperimentalTerminalEnabled, WorkbenchShell } from './WorkbenchShell';
 
 const ALICE = { username: 'alice', password: 'demo-pass' };
 const POM = parseProjectRelativePath('pom.xml');
@@ -210,6 +210,14 @@ afterEach(async () => {
   disposeAllProjectModels();
   await queryClient.cancelQueries();
   resetAppRuntime();
+});
+
+describe('WorkbenchShell experimental surfaces', () => {
+  it('keeps Terminal disabled unless explicitly enabled', () => {
+    expect(isExperimentalTerminalEnabled(undefined)).toBe(false);
+    expect(isExperimentalTerminalEnabled('false')).toBe(false);
+    expect(isExperimentalTerminalEnabled('true')).toBe(true);
+  });
 });
 
 describe('WorkbenchShell layout', () => {
@@ -1314,7 +1322,7 @@ describe('WorkbenchShell workspace reload', () => {
       expect(screen.getAllByText('Reloading workspace').length).toBeGreaterThan(0);
     });
     expect(screen.getByRole('button', { name: 'New folder' })).toBeDisabled();
-    expect(screen.getByRole('tab', { name: /README.md/ })).toBeInTheDocument();
+    expect(workspaceSessionStore.getState().openPaths).toContain(README);
 
     held.resolve();
     await waitUntilWritesUnlocked();
@@ -1330,10 +1338,36 @@ describe('WorkbenchShell workspace reload', () => {
     );
   }, 15_000);
 
-  it('retries a failed workspace reload from the Run toolbar', async () => {
+  it.each(['SUCCEEDED', 'FAILED'] as const)('retries reload after a %s run with an expanded directory', async (state) => {
     const user = userEvent.setup();
     let failReloads = false;
+    let checkConcurrentReads = false;
+    let readInProgress = false;
+    let concurrentReads = 0;
     server.use(
+      http.get('/api/v1/projects/:projectId/files/:resource', async () => {
+        if (!checkConcurrentReads) return undefined;
+        if (readInProgress) {
+          concurrentReads += 1;
+          return HttpResponse.json(
+            { code: 'PROJECT_BUSY', message: 'Project is busy', traceId: 'trace-busy' },
+            { status: 409 },
+          );
+        }
+        readInProgress = true;
+        await delay(30);
+        readInProgress = false;
+        return undefined;
+      }),
+      http.get('/api/v1/projects/:projectId/files/meta', ({ request }) => {
+        if (new URL(request.url).searchParams.get('path') === 'src') {
+          return HttpResponse.json({
+            path: 'src', name: 'src', sizeBytes: null, mediaType: 'inode/directory',
+            encoding: null, language: '', renderMode: 'MONACO_TEXT', blockReason: null,
+          });
+        }
+        return undefined;
+      }),
       http.get('/api/v1/projects/:projectId/files/tree', ({ request }) => {
         const path = new URL(request.url).searchParams.get('path') ?? '';
         if (failReloads && path === '') {
@@ -1348,9 +1382,19 @@ describe('WorkbenchShell workspace reload', () => {
     await authenticateAsAlice();
     renderShell();
     await loadedEditable();
+    await user.click(screen.getByRole('treeitem', { name: 'pom.xml' }));
+    await screen.findByTestId('mock-editor');
+    await user.click(screen.getByRole('treeitem', { name: 'src' }));
+    expect(workspaceSessionStore.getState().expandedPaths.has(parseProjectRelativePath('src'))).toBe(true);
     const run = await lockShellWithActiveRun();
     failReloads = true;
-    await terminalizeRun(run);
+    const result = transitionRun(ALICE_SEED_PROJECT_ID, run.id, {
+      state,
+      terminationReason: state === 'SUCCEEDED' ? 'BUILD_SUCCEEDED' : 'BUILD_FAILED',
+      exitCode: state === 'SUCCEEDED' ? 0 : 1,
+    });
+    expect(result.ok).toBe(true);
+    await queryClient.invalidateQueries({ queryKey: runKeys.active(ALICE_SEED_PROJECT_ID) });
     await waitFor(() => {
       expect(screen.getByRole('button', { name: 'New file' })).toBeDisabled();
     });
@@ -1359,9 +1403,14 @@ describe('WorkbenchShell workspace reload', () => {
     expect(screen.getByRole('button', { name: 'Start run' })).toBeDisabled();
 
     failReloads = false;
+    checkConcurrentReads = true;
     await user.click(screen.getByRole('button', { name: 'Retry workspace reload' }));
     await user.click(screen.getByRole('tab', { name: 'File' }));
     await waitUntilWritesUnlocked();
+    expect(concurrentReads).toBe(0);
+    expect(await screen.findByTestId('mock-editor')).toBeInTheDocument();
+    expect(workspaceSessionStore.getState().activePath).toBe(POM);
+    expect(workspaceSessionStore.getState().expandedPaths.has(parseProjectRelativePath('src'))).toBe(true);
     expect(screen.queryByText(/workspace reload failed/i)).not.toBeInTheDocument();
   }, 15_000);
 

@@ -62,9 +62,9 @@ class AuditIngressServiceTest {
 
     @Test
     void acceptsMonotonicSignedEventsAndRedactsSensitiveCommands() {
-        assertThat(ingest(1, "mvn clean test", null, "RUNNING")).isTrue();
+        assertThat(ingest(1, "mvn -q -DskipTests compile exec:java", null, "RUNNING")).isTrue();
         assertThat(ingest(2, "curl https://user:secret@example.com", null, "RUNNING")).isTrue();
-        assertThat(ingest(3, "mvn clean test", 0, "SUCCEEDED")).isTrue();
+        assertThat(ingest(3, "mvn -q -DskipTests compile exec:java", 0, "SUCCEEDED")).isTrue();
 
         assertThat(store.audits).hasSize(3);
         AuditStore.AuditRecord second = store.audits.get(1);
@@ -121,7 +121,7 @@ class AuditIngressServiceTest {
 
     @Test
     void settlementHappensExactlyOnce() {
-        ingest(1, "mvn clean test", null, "RUNNING");
+        ingest(1, "mvn -q -DskipTests compile exec:java", null, "RUNNING");
         String auditId = store.audits.get(0).id();
         assertThat(service.settle(SESSION, 1, "SUCCEEDED", 0)).isTrue();
         assertThat(service.settle(SESSION, 1, "FAILED", 1)).isFalse();

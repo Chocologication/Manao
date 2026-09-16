@@ -65,7 +65,7 @@ class ConfigurationTest {
         localContextRunner()
             .run(context -> {
                 BackendProperties properties = context.getBean(BackendProperties.class);
-                assertThat(properties.fixedCommand()).isEqualTo("mvn clean test");
+                assertThat(properties.fixedCommand()).isEqualTo("mvn -q -DskipTests compile exec:java");
                 assertThat(properties.javaVersion()).isEqualTo("17");
                 assertThat(properties.mavenVersion()).isEqualTo("3.9.11");
                 assertThat(properties.timeout()).hasSeconds(1800);
@@ -97,7 +97,7 @@ class ConfigurationTest {
             .run(context -> {
                 assertThat(context.getStartupFailure()).isNull();
                 BackendProperties properties = context.getBean(BackendProperties.class);
-                assertThat(properties.fixedCommand()).isEqualTo("mvn clean test");
+                assertThat(properties.fixedCommand()).isEqualTo("mvn -q -DskipTests compile exec:java");
                 assertThat(properties.javaVersion()).isEqualTo("17");
                 assertThat(properties.mavenVersion()).isEqualTo("3.9.11");
                 assertThat(properties.timeout()).hasSeconds(1800);

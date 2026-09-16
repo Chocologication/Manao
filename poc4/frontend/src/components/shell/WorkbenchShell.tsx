@@ -27,6 +27,7 @@ import {
   useUnsavedDialogState,
 } from '@/features/editor/unsavedChangesGuard';
 import { useWorkspaceSession } from '@/features/editor/workspaceSession';
+import { WorkspaceFileReadsPaused } from '@/features/files/fileQueries';
 import {
   isWorkspaceEditable,
   useRunAuthorityCoordinator,
@@ -40,6 +41,14 @@ const RUN_PANEL_ID = 'workbench-run-panel';
 const TERMINAL_PANEL_ID = 'workbench-terminal-panel';
 
 type WorkbenchPanel = 'file' | 'run' | 'terminal';
+
+export function isExperimentalTerminalEnabled(value: string | undefined): boolean {
+  return value === 'true';
+}
+
+const experimentalTerminalEnabled = isExperimentalTerminalEnabled(
+  import.meta.env.VITE_ENABLE_EXPERIMENTAL_TERMINAL,
+);
 
 const LazyJobTerminalPanel = lazy(() => import('@/components/terminal/JobTerminalPanel'));
 
@@ -72,6 +81,7 @@ export function WorkbenchShell({ project }: { project: ProjectSummary }) {
     coordinator.getTerminalAuthoritySnapshot,
   );
   const writesLocked = !isWorkspaceEditable(snapshot);
+  const reloadingWorkspace = snapshot.phase === 'RELOADING_WORKSPACE' || snapshot.phase === 'RELOAD_FAILED';
 
   useEffect(() => {
     if (snapshot.phase !== 'RELOADING_WORKSPACE') {
@@ -142,6 +152,7 @@ export function WorkbenchShell({ project }: { project: ProjectSummary }) {
   }, []);
 
   return (
+    <WorkspaceFileReadsPaused.Provider value={reloadingWorkspace}>
     <div className="workbench-shell flex h-full min-h-0 w-full min-w-0 flex-col overflow-hidden bg-background text-foreground">
       <a href={`#${EDITOR_REGION_ID}`} className="skip-to-editor" onClick={handleSkipToEditor}>
         Skip to editor
@@ -227,27 +238,29 @@ export function WorkbenchShell({ project }: { project: ProjectSummary }) {
               <Play className="h-4 w-4" aria-hidden />
               Run
             </button>
-            <button
-              type="button"
-              role="tab"
-              id="workbench-tab-terminal"
-              aria-label="Terminal"
-              aria-controls={TERMINAL_PANEL_ID}
-              aria-selected={activePanel === 'terminal'}
-              className={cn(
-                panelTabClassName,
-                activePanel === 'terminal'
-                  ? 'bg-accent text-accent-foreground'
-                  : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground',
-              )}
-              onClick={() => {
-                setTerminalLoaded(true);
-                setActivePanel('terminal');
-              }}
-            >
-              <SquareTerminal className="h-4 w-4" aria-hidden />
-              Terminal
-            </button>
+            {experimentalTerminalEnabled ? (
+              <button
+                type="button"
+                role="tab"
+                id="workbench-tab-terminal"
+                aria-label="Terminal"
+                aria-controls={TERMINAL_PANEL_ID}
+                aria-selected={activePanel === 'terminal'}
+                className={cn(
+                  panelTabClassName,
+                  activePanel === 'terminal'
+                    ? 'bg-accent text-accent-foreground'
+                    : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground',
+                )}
+                onClick={() => {
+                  setTerminalLoaded(true);
+                  setActivePanel('terminal');
+                }}
+              >
+                <SquareTerminal className="h-4 w-4" aria-hidden />
+                Terminal
+              </button>
+            ) : null}
           </div>
           <div className="relative min-h-0 min-w-0 flex-1 overflow-hidden">
             <div
@@ -282,7 +295,7 @@ export function WorkbenchShell({ project }: { project: ProjectSummary }) {
                 </div>
               ) : null}
               <div className="min-h-0 min-w-0 flex-1 overflow-hidden">
-                <EditorWorkspace projectId={project.id} writesLocked={writesLocked} />
+                {!reloadingWorkspace && <EditorWorkspace projectId={project.id} writesLocked={writesLocked} />}
               </div>
             </div>
             <div
@@ -298,7 +311,7 @@ export function WorkbenchShell({ project }: { project: ProjectSummary }) {
             >
               <RunPanel key={project.id} projectId={project.id} coordinator={coordinator} />
             </div>
-            {terminalLoaded ? (
+            {experimentalTerminalEnabled && terminalLoaded ? (
               <div
                 id={TERMINAL_PANEL_ID}
                 role="tabpanel"
@@ -338,5 +351,6 @@ export function WorkbenchShell({ project }: { project: ProjectSummary }) {
         onCancel={handleCancelLeave}
       />
     </div>
+    </WorkspaceFileReadsPaused.Provider>
   );
 }

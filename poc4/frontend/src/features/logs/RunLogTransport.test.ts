@@ -21,7 +21,7 @@ const PERSISTED_AT = '2026-08-24T10:00:02.000Z';
 const SERVER_TIME = '2026-08-24T10:00:03.000Z';
 const TICKET_EXPIRES = '2026-08-24T10:00:30.000Z';
 const POLICY = {
-  command: 'mvn clean test' as const,
+  command: 'mvn -q -DskipTests compile exec:java' as const,
   runtime: { javaMajor: 17 as const, mavenMajor: 3 as const },
   timeoutSeconds: 1800,
   resources: {

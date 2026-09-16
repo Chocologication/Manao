@@ -6,7 +6,7 @@ import io.fabric8.kubernetes.api.model.Quantity;
 
 /**
  * Builds the Maven Job manifest. PID 1 of the application container directly execs the fixed
- * argument array {@code mvn clean test}; every constraint (deadline, resources, subPath, no
+ * argument array {@code mvn -q -DskipTests compile exec:java}; every constraint (deadline, resources, subPath, no
  * ServiceAccount token) comes from server policy, never from browser input.
  */
 public class JobResourceFactory {
@@ -71,7 +71,7 @@ public class JobResourceFactory {
             .withContainers(new io.fabric8.kubernetes.api.model.ContainerBuilder()
                 .withName(ResourceIdentityVerifier.APPLICATION_CONTAINER)
                 .withImage(mavenImage)
-                .withCommand("mvn", "clean", "test")
+                .withCommand("mvn", "-q", "-DskipTests", "compile", "exec:java")
                 .withWorkingDir("/workspace")
                 .withEnv(
                     new io.fabric8.kubernetes.api.model.EnvVarBuilder().withName("TMPDIR").withValue("/tmp").build(),

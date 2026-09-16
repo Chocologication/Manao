@@ -495,7 +495,7 @@ describe('JobTerminalPanel audit query integration', () => {
                 items: [{
                   id: 'audit-new',
                   sessionId: 'session-new',
-                  command: 'mvn clean test',
+                  command: 'mvn -q -DskipTests compile exec:java',
                   state: 'SUCCEEDED',
                   startedAt: '2026-08-25T02:00:00.000Z',
                   finishedAt: '2026-08-25T02:00:04.000Z',
@@ -521,7 +521,7 @@ describe('JobTerminalPanel audit query integration', () => {
     renderPanel();
 
     await user.click(screen.getByRole('tab', { name: 'Audit' }));
-    expect(await screen.findByText('mvn clean test')).toBeInTheDocument();
+    expect(await screen.findByText('mvn -q -DskipTests compile exec:java')).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Load more terminal audit' }));
     expect(await screen.findByText('mvn -q test')).toBeInTheDocument();
     expect(cursors).toEqual([null, 'cursor-older']);

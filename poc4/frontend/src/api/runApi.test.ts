@@ -21,7 +21,7 @@ const RUN_ID = parseRunId('run/opaque');
 const ACCESS_TOKEN = 'access-token';
 
 const POLICY = {
-  command: 'mvn clean test' as const,
+  command: 'mvn -q -DskipTests compile exec:java' as const,
   runtime: { javaMajor: 17 as const, mavenMajor: 3 as const },
   timeoutSeconds: 1800,
   resources: {
@@ -259,7 +259,7 @@ describe('run API response contracts', () => {
 
   it('rejects a start payload that includes browser-supplied policy fields', async () => {
     const fetchImpl = vi.fn<typeof fetch>(async () =>
-      jsonResponse({ ...startingRun, command: 'mvn clean test' }, 202),
+      jsonResponse({ ...startingRun, command: 'mvn -q -DskipTests compile exec:java' }, 202),
     );
     installClient(fetchImpl);
 

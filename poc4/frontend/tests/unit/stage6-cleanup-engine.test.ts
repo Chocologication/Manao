@@ -7,7 +7,7 @@ import type {
   ProjectView,
 } from '../support/stage6-cleanup/contracts.ts';
 import { DEFAULT_CLEANUP_POLICY } from '../support/stage6-cleanup/contracts.ts';
-import { Stage6CleanupEngine } from '../support/stage6-cleanup/engine.ts';
+import { isCreateTransportUncertainty, Stage6CleanupEngine } from '../support/stage6-cleanup/engine.ts';
 
 function baseEntry(overrides: Partial<CleanupEntry> = {}): CleanupEntry {
   return {
@@ -143,6 +143,32 @@ describe('Stage6CleanupEngine.createRegistered', () => {
       DEFAULT_CLEANUP_POLICY,
     );
     await expect(ambiguous.createRegistered(entry)).rejects.toThrow('CREATE_IDENTITY_AMBIGUOUS');
+  });
+
+  it('does not treat definite create HTTP errors as a lost response', async () => {
+    expect(isCreateTransportUncertainty(new Error('CREATE_REJECTED:409'))).toBe(false);
+    expect(isCreateTransportUncertainty(new Error('CREATE_REJECTED:400'))).toBe(false);
+    expect(isCreateTransportUncertainty(new Error('AUTH_FAILED'))).toBe(false);
+    expect(isCreateTransportUncertainty(new Error('TRANSPORT_UNCERTAIN'))).toBe(true);
+    expect(isCreateTransportUncertainty(new Error('CREATE_REJECTED:503'))).toBe(true);
+    expect(isCreateTransportUncertainty(new Error('fetch failed'))).toBe(true);
+
+    const entry = baseEntry();
+    const saved: CleanupEntry[] = [];
+    const listProjects = vi.fn().mockResolvedValue([]);
+    const engine = new Stage6CleanupEngine(
+      memoryLedger(saved),
+      transport({
+        createProject: vi.fn().mockRejectedValue(new Error('CREATE_REJECTED:409')),
+        listProjects,
+      }),
+      clockAt(Date.parse(entry.preparedAt)),
+      DEFAULT_CLEANUP_POLICY,
+    );
+    await expect(engine.createRegistered(entry)).rejects.toThrow('CREATE_REJECTED:409');
+    expect(listProjects).not.toHaveBeenCalled();
+    expect(saved.map((row) => row.state)).toEqual(['PREPARED']);
+    expect(saved.some((row) => row.issueCodes.includes('CREATE_RESPONSE_UNCERTAIN'))).toBe(false);
   });
 });
 

@@ -15,7 +15,7 @@ function audit(
   return {
     id: parseTerminalAuditId(id),
     sessionId: parseTerminalSessionId(`session-${id}`),
-    command: 'mvn clean test',
+    command: 'mvn -q -DskipTests compile exec:java',
     state: 'SUCCEEDED',
     startedAt: '2026-08-25T02:00:00.000Z',
     finishedAt: '2026-08-25T02:00:04.000Z',

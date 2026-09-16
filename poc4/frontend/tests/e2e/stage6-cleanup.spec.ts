@@ -1,5 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import { createClusterClient, type ClusterSnapshot } from '../support/stage6-cleanup/cluster.ts';
+import { DEFAULT_CLEANUP_POLICY } from '../support/stage6-cleanup/contracts.ts';
 import { expect, test, type Stage6Resources } from '../support/stage6-cleanup/fixtures';
 import type { HttpCleanupTransport } from '../support/stage6-cleanup/http-transport.ts';
 
@@ -67,6 +68,92 @@ function pvcVersions(snapshot: ClusterSnapshot): Record<string, string> {
     versions[pvc.name] = pvc.resourceVersion;
   }
   return versions;
+}
+
+function clusterEmpty(snapshot: ClusterSnapshot): boolean {
+  return snapshot.jobs !== null
+    && snapshot.jobs.length === 0
+    && snapshot.pods.length === 0
+    && snapshot.services.length === 0
+    && snapshot.pvcs.length === 0;
+}
+
+async function resumeDeletingUntilGone(
+  resources: Stage6Resources,
+  ownerKey: string,
+  projectId: string,
+): Promise<void> {
+  const deadline = Date.now() + DEFAULT_CLEANUP_POLICY.projectDeadlineMs;
+  while (Date.now() < deadline) {
+    let read;
+    try {
+      read = await resources.getProject(ownerKey, projectId);
+    } catch {
+      await sleep(Math.min(1000, Math.max(0, deadline - Date.now())));
+      continue;
+    }
+    if (read.status === 404) {
+      return;
+    }
+    if (read.status !== 200 || read.project.state !== 'DELETING') {
+      throw new Error(
+        'C08_RESUME_UNEXPECTED_STATE:' + (read.status === 200 ? read.project.state : String(read.status)),
+      );
+    }
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) {
+      break;
+    }
+    try {
+      const deleted = await resources.deleteProject(
+        ownerKey,
+        projectId,
+        Math.min(DEFAULT_CLEANUP_POLICY.deleteRequestMs, remaining),
+      );
+      if (deleted.status === 409) {
+        throw new Error('C08_RESUME_CONFLICT:' + (deleted.code ?? '409'));
+      }
+    } catch (error) {
+      if (error instanceof Error && error.message.startsWith('C08_RESUME_')) {
+        throw error;
+      }
+    }
+    await sleep(Math.min(1000, Math.max(0, deadline - Date.now())));
+  }
+  try {
+    const last = await resources.getProject(ownerKey, projectId);
+    if (last.status === 404) {
+      return;
+    }
+  } catch {
+    // Deadline already elapsed; the caller fails on the missing 404.
+  }
+  throw new Error('C08_RESUME_DEADLINE');
+}
+
+async function assertGoneBeforeTeardown(
+  resources: Stage6Resources,
+  cluster: ReturnType<typeof clusterClient>,
+  projectId: string,
+): Promise<void> {
+  expect((await resources.getProject('alice', projectId)).status, 'C08 must be 404 before fixture teardown').toBe(404);
+  const deadline = Date.now() + 30_000;
+  let snapshot = cluster.snapshot(projectId);
+  while (!clusterEmpty(snapshot) && Date.now() < deadline) {
+    if (snapshot.jobs === null) {
+      break;
+    }
+    await sleep(Math.min(1000, Math.max(0, deadline - Date.now())));
+    snapshot = cluster.snapshot(projectId);
+  }
+  expect(
+    snapshot.jobs,
+    'C08 Job inventory Forbidden/timeout is not an empty list',
+  ).toEqual([]);
+  expect(snapshot.pods, 'C08 pods must be gone before fixture teardown').toEqual([]);
+  expect(snapshot.services, 'C08 services must be gone before fixture teardown').toEqual([]);
+  expect(snapshot.pvcs, 'C08 PVCs must be gone before fixture teardown').toEqual([]);
+  expect(cluster.leftoverExists(projectId), 'C08 leftover initializer must be gone before fixture teardown').toBe(false);
 }
 
 test.beforeEach(async ({ request }) => {
@@ -150,7 +237,11 @@ test('C03 DELETE during CREATING is 409 and does not mutate existing Pod/PVC', a
   expect(await resources.waitReady('alice', project.id)).toBe('READY');
 });
 
-test('C04 active Run DELETE is 409 then stop-then-wait cleanup', async ({ page, resources }) => {
+/**
+ * DELETE does not implicitly stop a Run. Stop/wait belongs to fixture teardown for
+ * recordRun entries. This case does not forge a Run terminal state.
+ */
+test('C04 active Run blocks DELETE without implicit Run shutdown', async ({ page, resources }) => {
   await login(page, ALICE);
   const token = await apiToken(page, ALICE);
   const project = await resources.createProject('alice', 'c04-run');
@@ -213,7 +304,15 @@ test('C07 injected failure on the first project does not block the second', asyn
   expect((await resources.getProject('alice', first.id)).status).toBe(200);
 });
 
-test('C08 backend restart resumes cleanup of a DELETING project', async ({ request, resources }) => {
+/**
+ * Backend restart does not scan the whole database for DELETING projects.
+ * C08 resumes only this invocation's registered project via owner-scoped DELETE.
+ * Resume polls GET and retries DELETE within projectDeadlineMs; one DELETE is not
+ * assumed to finish. Job inventory Forbidden/timeout is not an empty list.
+ * Final 404 and known-empty cluster snapshot must pass in this test body before
+ * fixture teardown. This is not a 6A PASS.
+ */
+test('C08 backend restart preserves DELETING intent and explicit DELETE resume completes cleanup', async ({ request, resources }) => {
   const script = process.env.STAGE6_BACKEND_RESTART_CMD;
   const envFile = process.env.STAGE6_BACKEND_RESTART_ENVFILE;
   if (!script) {
@@ -256,10 +355,6 @@ test('C08 backend restart resumes cleanup of a DELETING project', async ({ reque
   } catch {
     // The in-flight DELETE is expected to fail when the process is replaced.
   }
-  const after = await resources.getProject('alice', project.id);
-  if (after.status === 200) {
-    expect(after.project.state, 'C08_PRECONDITION_NOT_OBTAINED').toBe('DELETING');
-  } else {
-    expect(after.status).toBe(404);
-  }
+  await resumeDeletingUntilGone(resources, 'alice', project.id);
+  await assertGoneBeforeTeardown(resources, cluster, project.id);
 });

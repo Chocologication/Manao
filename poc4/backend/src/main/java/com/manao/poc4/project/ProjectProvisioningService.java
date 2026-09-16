@@ -145,13 +145,22 @@ public final class ProjectProvisioningService {
         if (!gateway.workspacePodReady(projectId) && !awaitWorkspacePod(projectId)) {
             throw new IllegalStateException("workspace pod did not become ready");
         }
-        // Design: delete the one-shot initializer as soon as it has succeeded.
-        gateway.deletePod(WorkspaceResourceFactory.initializerPodName(projectId));
         if (bridge != null) {
             bridge.allocate(projectId); // 6A: the bridge must exist before the first template write
         }
         writeTemplate(projectId);
         store.markProjectReady(projectId);
+        // Background cleanup: delete the one-shot initializer after the project is READY.
+        // Failure to delete does not block the project from being usable.
+        cleanupInitializer(projectId);
+    }
+
+    private void cleanupInitializer(String projectId) {
+        try {
+            gateway.deletePod(WorkspaceResourceFactory.initializerPodName(projectId));
+        } catch (RuntimeException ex) {
+            LOG.warn("initializer cleanup failed but project is already READY: projectId={}", projectId, ex);
+        }
     }
 
     private boolean awaitInitializer(String projectId) {

@@ -2,4 +2,4 @@
 
 This project was created by the Manao workspace with a fixed Java 17 + Maven 3.9 template.
 
-Run `mvn clean test` from the editor's Run action to execute the build pipeline.
+Run the editor's Run action to compile and execute `com.example.app.App`; edit `src/main/java/com/example/app/App.java` to change the program.

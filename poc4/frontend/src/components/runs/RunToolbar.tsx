@@ -113,7 +113,7 @@ export function RunToolbar({
   onRetryAuthority,
   onRetryReload,
 }: RunToolbarProps) {
-  const command = run?.policy.command ?? 'mvn clean test';
+  const command = run?.policy.command ?? 'mvn -q -DskipTests compile exec:java';
   const timeoutSeconds = run?.policy.timeoutSeconds ?? 1800;
   const clock = clockLabel(run, nowMs);
   const loading = /loading/i.test(statusText);

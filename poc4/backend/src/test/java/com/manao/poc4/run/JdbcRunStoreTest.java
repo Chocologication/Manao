@@ -70,6 +70,30 @@ class JdbcRunStoreTest {
     }
 
     @Test
+    void listUsesExclusiveCursorAndReportsHasMore() {
+        String projectId = seedProject("paged");
+        String ownerId = "owner-" + projectId;
+        long token = store.acquireFencingToken().orElseThrow();
+        Instant newest = Instant.parse("2026-09-01T00:03:00Z");
+        Instant middle = Instant.parse("2026-09-01T00:02:00Z");
+        Instant oldest = Instant.parse("2026-09-01T00:01:00Z");
+        store.insertRun(run("paged-new", projectId, newest), token);
+        store.insertRun(run("paged-middle", projectId, middle), token);
+        store.insertRun(run("paged-old", projectId, oldest), token);
+
+        RunStore.RunPage first = store.listForOwner(ownerId, projectId, null, 2);
+        assertThat(first.items()).extracting(RunRecord::id)
+            .containsExactly("paged-new", "paged-middle");
+        assertThat(first.hasMore()).isTrue();
+
+        RunRecord boundary = first.items().get(1);
+        RunStore.RunPage second = store.listForOwner(ownerId, projectId,
+            new RunStore.RunCursor(boundary.createdAt(), boundary.id()), 2);
+        assertThat(second.items()).extracting(RunRecord::id).containsExactly("paged-old");
+        assertThat(second.hasMore()).isFalse();
+    }
+
+    @Test
     void takeoverBumpsTokenAndRestampsActiveRuns() {
         String projectId = seedProject("p2");
         String runId = "r2-" + UUID.randomUUID();
@@ -107,6 +131,11 @@ class JdbcRunStoreTest {
     private RunRecord run(String id, String projectId, long version) {
         return new RunRecord(id, projectId, 0L, RunState.STARTING, "{}", null, null, null, null, null, null,
             version, Instant.parse("2026-09-01T00:00:00Z"), 0L);
+    }
+
+    private RunRecord run(String id, String projectId, Instant createdAt) {
+        return new RunRecord(id, projectId, 0L, RunState.SUCCEEDED, "{}", null, null, null, createdAt, 0,
+            "BUILD_SUCCEEDED", 0L, createdAt, 0L);
     }
 
     /** Hand-rolled mutable clock so lease tests do not depend on wall-clock time. */

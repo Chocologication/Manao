@@ -189,7 +189,13 @@ describe('stage6 resource fixtures', () => {
     for (const id of ['C01', 'C02', 'C03', 'C04', 'C05', 'C06', 'C07', 'C08']) {
       expect(source).toContain(id);
     }
-    expect(source).toContain('stop-then-wait');
+    expect(source).toContain('blocks DELETE without implicit Run shutdown');
+    expect(source).toContain('explicit DELETE resume completes cleanup');
+    expect(source).toContain('resumeDeletingUntilGone');
+    expect(source).toContain('assertGoneBeforeTeardown');
+    expect(source).toContain('C08 Job inventory Forbidden/timeout is not an empty list');
+    expect(source).not.toContain('stop-then-wait');
+    expect(source).not.toContain('resumes cleanup of a DELETING project');
     expect(source).toContain('STAGE6_BACKEND_RESTART_CMD');
     expect(source).toContain('STAGE6_BACKEND_RESTART_ENVFILE');
     expect(source).toContain("'-File'");

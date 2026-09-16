@@ -19,7 +19,7 @@ The loop requires only four product concerns:
 
 1. **Identity:** a user can log in and only access their projects.
 2. **Workspace:** a project has persistent files and a monotonically increasing workspace revision.
-3. **Execution:** a saved revision is executed by a fixed `mvn clean test` Job.
+3. **Execution:** a saved revision is compiled and runs the project template entrypoint `com.example.app.App` in a Kubernetes Job; the browser cannot submit an arbitrary command.
 4. **Feedback:** the browser can see the persisted/live log and a strict terminal result, then edit again.
 
 The following remain outside the product golden path for this slice:
@@ -55,7 +55,7 @@ Existing out-of-path code is not deleted in this slice. It must not prevent the 
 ### 3.3 Run
 
 - `POST /api/v1/projects/{projectId}/runs` accepts the expected workspace revision and returns `202` with state `STARTING`.
-- The Job command is fixed to `mvn clean test`; callers cannot supply a command, image, environment, or cluster reference.
+- The Run executes the saved project code through the server-owned Maven `exec:java` entrypoint `com.example.app.App`; callers cannot supply a command, image, environment, or cluster reference.
 - The Run stores the exact requested workspace revision at creation time.
 - The public state model is:
   - active: `STARTING`, `RUNNING`;
@@ -73,8 +73,8 @@ Existing out-of-path code is not deleted in this slice. It must not prevent the 
 - The browser can load logs for a selected Run after a page refresh.
 - The browser can observe the active Run while it executes.
 - The final result is visible without requiring the user to guess whether the Run completed.
-- A failed Run displays the real Maven failure output.
-- A successful Run displays a recognizable success marker from the Maven execution.
+- A failed Run displays the real compile or program failure output.
+- A successful Run displays the program output from the project entrypoint.
 
 ## 4. UI behavior
 
