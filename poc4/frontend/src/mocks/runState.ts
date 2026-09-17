@@ -1152,3 +1152,14 @@ export function bootRunState(): void {
     }
   }
 }
+
+export function removeProjectRuns(projectId: string): void {
+  for (const [key, record] of records) {
+    if (record.projectId === projectId) {
+      cancelRecordTimers(record);
+      records.delete(key);
+    }
+  }
+  activeRunIdByProject.delete(projectId);
+  persistCompact();
+}

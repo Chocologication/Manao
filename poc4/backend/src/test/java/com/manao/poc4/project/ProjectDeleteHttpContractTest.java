@@ -154,6 +154,10 @@ class ProjectDeleteHttpContractTest {
     private static final class ScriptedDeletion extends ProjectDeletionRepository {
         private BeginDeletion result = BeginDeletion.ACTIVE_RUN;
 
+        @Override public BeginDeletion inspect(String ownerId, String projectId) {
+            return begin(ownerId, projectId);
+        }
+
         @Override public BeginDeletion begin(String ownerId, String projectId) {
             if (!"owner-a".equals(ownerId) || !"p1".equals(projectId)) {
                 return BeginDeletion.NOT_FOUND;

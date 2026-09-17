@@ -107,6 +107,7 @@ class ProjectDeletionRepositoryTest {
             String other = seed(db, "owner-b", "keep", "READY");
             insertRun(db, deleting, "run-delete", "SUCCEEDED");
             insertPending(db, deleting, "op-delete");
+            insertHistory(db, deleting, "run-delete");
             WorkspaceJdbcStore store = new WorkspaceJdbcStore(db.jdbc(),
                 new DataSourceTransactionManager(db.jdbc().getDataSource()));
 
@@ -119,6 +120,12 @@ class ProjectDeletionRepositoryTest {
                 "SELECT COUNT(*) FROM workspace_operation WHERE project_id=?", Integer.class, deleting)).isZero();
             assertThat(db.jdbc().queryForObject("SELECT state FROM project WHERE id=?", String.class, other))
                 .isEqualTo("READY");
+            for (String table : java.util.List.of("terminal_audit", "terminal_session", "log_ticket")) {
+                assertThat(db.jdbc().queryForObject("SELECT COUNT(*) FROM " + table + " WHERE project_id=?",
+                    Integer.class, deleting)).isZero();
+            }
+            assertThat(db.jdbc().queryForObject("SELECT COUNT(*) FROM run_log_chunk WHERE run_id=?",
+                Integer.class, "run-delete")).isZero();
             assertThat(store.deleteProject("owner-a", other)).isFalse();
         }
     }
@@ -129,6 +136,7 @@ class ProjectDeletionRepositoryTest {
             String deleting = seed(db, "owner-a", "rollback", "DELETING");
             insertRun(db, deleting, "run-rollback", "SUCCEEDED");
             insertPending(db, deleting, "op-rollback");
+            insertHistory(db, deleting, "run-rollback");
             JdbcTemplate failing = new JdbcTemplate(db.jdbc().getDataSource()) {
                 @Override public int update(String sql, @org.springframework.lang.Nullable Object... args) {
                     if (sql.contains("DELETE FROM run WHERE")) {
@@ -148,7 +156,29 @@ class ProjectDeletionRepositoryTest {
                 .isEqualTo(1);
             assertThat(db.jdbc().queryForObject(
                 "SELECT COUNT(*) FROM workspace_operation WHERE project_id=?", Integer.class, deleting)).isEqualTo(1);
+            for (String table : java.util.List.of("terminal_audit", "terminal_session", "log_ticket")) {
+                assertThat(db.jdbc().queryForObject("SELECT COUNT(*) FROM " + table + " WHERE project_id=?",
+                    Integer.class, deleting)).isEqualTo(1);
+            }
+            assertThat(db.jdbc().queryForObject("SELECT COUNT(*) FROM run_log_chunk WHERE run_id=?",
+                Integer.class, "run-rollback")).isEqualTo(1);
         }
+    }
+
+    private static void insertHistory(JdbcStoreTestSupport db, String projectId, String runId) {
+        Timestamp now = Timestamp.from(NOW);
+        db.jdbc().update("INSERT INTO run_log_chunk(run_id, seq, text_utf8, byte_length, created_at) VALUES (?, 0, 'build log', 9, ?)",
+            runId, now);
+        db.jdbc().update("INSERT INTO log_ticket(ticket_hash, user_id, project_id, run_id, expires_at) VALUES (?, 'owner-a', ?, ?, ?)",
+            "d".repeat(64), projectId, runId, now);
+        db.jdbc().update("""
+            INSERT INTO terminal_session(id, project_id, run_id, user_id, state, ticket_hash, expires_at)
+            VALUES ('session-history', ?, ?, 'owner-a', 'CLOSED', ?, ?)
+            """, projectId, runId, "e".repeat(64), now);
+        db.jdbc().update("""
+            INSERT INTO terminal_audit(id, session_id, project_id, run_id, user_id, command, state, started_at, trust_level)
+            VALUES ('audit-history', 'session-history', ?, ?, 'owner-a', 'echo example', 'CLOSED', ?, 'WRAPPER_TRANSPORT')
+            """, projectId, runId, now);
     }
 
     private static String seed(JdbcStoreTestSupport db, String ownerId, String name, String state) {

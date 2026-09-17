@@ -34,6 +34,7 @@ public final class SshApiTunnelHealth {
             new VerbResource("create", "services"), new VerbResource("delete", "services"),
             new VerbResource("get", "persistentvolumeclaims"), new VerbResource("list", "persistentvolumeclaims"),
             new VerbResource("create", "persistentvolumeclaims"), new VerbResource("delete", "persistentvolumeclaims"),
+            new VerbResource("list", "persistentvolumes"), new VerbResource("get", "storageclasses"),
             new VerbResource("get", "pods/log"), new VerbResource("create", "pods/exec"),
             new VerbResource("get", "events"), new VerbResource("list", "events"), new VerbResource("watch", "events")));
         if (includePortForward) {
@@ -96,10 +97,14 @@ public final class SshApiTunnelHealth {
             failures.add("kubeconfig preflight failed: " + ex.getMessage());
         }
         for (VerbResource check : checks) {
-            CommandRunner.CommandResult canI = runner.run(List.of("kubectl", kubeconfig, "auth", "can-i",
-                check.verb(), check.resource(), "-n", namespace));
+            boolean clusterScoped = "persistentvolumes".equals(check.resource())
+                || "storageclasses".equals(check.resource());
+            List<String> command = new ArrayList<>(List.of("kubectl", kubeconfig, "auth", "can-i",
+                check.verb(), check.resource()));
+            command.addAll(clusterScoped ? List.of("--all-namespaces") : List.of("-n", namespace));
+            CommandRunner.CommandResult canI = runner.run(command);
             if (canI.exitCode() != 0 || !canI.stdout().trim().equalsIgnoreCase("yes")) {
-                failures.add("auth can-i " + check.verb() + " " + check.resource() + " denied in namespace " + namespace);
+                failures.add("auth can-i " + check.verb() + " " + check.resource() + (clusterScoped ? " denied at cluster scope" : " denied in namespace " + namespace));
             }
         }
         return new Result(failures.isEmpty(), failures);

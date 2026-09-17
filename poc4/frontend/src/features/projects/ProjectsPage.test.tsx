@@ -405,8 +405,8 @@ describe('ProjectRoutePage', () => {
     );
     renderApp({ initialEntries: [`/projects/${created.id}`] });
 
-    expect(await screen.findByText(/project is being deleted/i)).toBeInTheDocument();
-    expect(screen.getByRole('status')).toHaveTextContent(/project is being deleted/i);
+    expect(await screen.findByText(/deletion has not completed/i)).toBeInTheDocument();
+    expect(screen.getByRole('status')).toHaveTextContent(/deletion has not completed/i);
     expect(screen.getByRole('link', { name: /back to projects/i })).toHaveAttribute(
       'href',
       '/projects',

@@ -175,7 +175,7 @@ export function ProjectRoutePage() {
     return (
       <AppChrome title={project.name}>
         <div role="status" className="text-sm text-muted-foreground">
-          Project is being deleted
+          Deletion has not completed. Return to projects to continue deletion.
         </div>
         <Link to="/projects" className="text-sm text-foreground underline-offset-4 hover:underline">
           Back to projects

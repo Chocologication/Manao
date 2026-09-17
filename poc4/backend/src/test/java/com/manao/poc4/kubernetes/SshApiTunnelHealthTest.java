@@ -19,6 +19,27 @@ class SshApiTunnelHealthTest {
     }
 
     @Test
+    void deletionPreflightRequiresReadOnlyStorageInventory() {
+        assertThat(SshApiTunnelHealth.designVerbs(true)).contains(
+            new SshApiTunnelHealth.VerbResource("list", "persistentvolumes"),
+            new SshApiTunnelHealth.VerbResource("get", "storageclasses"));
+    }
+
+    @Test
+    void storagePermissionChecksAreClusterScopedNotNamespaced() {
+        runner.respond("version", 0, "{}");
+        runner.respond("can-i", 0, "yes");
+        health.check("kubeconfig", "localhost", "manao-test");
+        assertThat(runner.rawCommands.stream().filter(command -> command.contains("persistentvolumes")
+            || command.contains("storageclasses"))).allSatisfy(command -> {
+                assertThat(command).contains("--all-namespaces");
+                assertThat(command).doesNotContain("-n");
+            });
+        assertThat(runner.rawCommands.stream().filter(command -> command.contains("pods")))
+            .allSatisfy(command -> assertThat(command).containsSubsequence("-n", "manao-test"));
+    }
+
+    @Test
     void dualPreflightChecksKubectlFabric8AndEveryDesignVerb() {
         runner.respond("version", 0, "{\"major\":\"1\",\"minor\":\"31\"}");
         runner.respond("can-i", 0, "yes");
@@ -28,8 +49,8 @@ class SshApiTunnelHealthTest {
         assertThat(result.up()).isTrue();
         assertThat(result.failures()).isEmpty();
         assertThat(runner.commands.stream().filter(kind -> kind.equals("version"))).hasSize(1);
-        // jobs(7) + pods(5) + services(4) + pvcs(4) + pods/log(1) + pods/exec(1) + portforward(1) + events(3)
-        assertThat(runner.commands.stream().filter(kind -> kind.equals("can-i"))).hasSize(26);
+        // jobs(7) + pods(5) + services(4) + pvcs(4) + pods/log(1) + pods/exec(1) + portforward(1) + events(3) + read-only storage inventory(2)
+        assertThat(runner.commands.stream().filter(kind -> kind.equals("can-i"))).hasSize(28);
     }
 
     @Test
@@ -51,7 +72,7 @@ class SshApiTunnelHealthTest {
         SshApiTunnelHealth.Result result = health.check("kubeconfig", "localhost", "manao-test");
 
         assertThat(result.up()).isFalse();
-        assertThat(result.failures().size()).isGreaterThanOrEqualTo(26);
+        assertThat(result.failures().size()).isGreaterThanOrEqualTo(28);
     }
 
     @Test

@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process';
 import { expect, test } from '../support/stage6-cleanup/fixtures';
 
 /**
@@ -53,7 +54,16 @@ async function awaitReady(page: import('@playwright/test').Page, projectId: stri
   for (let i = 0; i < 60 && state === 'CREATING'; i++) {
     await new Promise((resolve) => setTimeout(resolve, 2000));
     const fetched = await page.request.get('/api/v1/projects/' + projectId, { headers: authHeaders(token) });
-    state = (await fetched.json()).state as string;
+    const body = await fetched.json() as { state?: string; code?: string };
+    // Opening a READY project can briefly overlap the provisioning lifecycle lease.
+    // Retry only these read-only dependency/busy responses, never replay creation.
+    if ((fetched.status() === 409 && body.code === 'PROJECT_BUSY') || fetched.status() === 503) {
+      console.log('readiness read: HTTP ' + fetched.status() + ' code=' + body.code);
+      continue;
+    }
+    expect(fetched.status(), 'project readiness response: ' + body.code).toBe(200);
+    expect(['CREATING', 'READY', 'FAILED', 'DELETING']).toContain(body.state);
+    state = body.state!;
   }
   return state;
 }
@@ -186,7 +196,9 @@ test('MVP core loop: failed revision, corrected revision, and persistent history
   await openProjectFromList(page, project);
   await page.getByRole('tab', { name: 'Run' }).click();
   await expect(page.getByRole('status', { name: 'Run state' })).toContainText('FAILED');
-  await expect(page.getByRole('region', { name: 'Run logs' })).toContainText('BUILD FAILURE');
+  // The current runner uses mvn -q: assert the actual compiler feedback, not Maven's quieted banner.
+  await expect(page.getByRole('region', { name: 'Run logs' })).toContainText('cannot find symbol');
+  await expect(page.getByRole('region', { name: 'Run logs' })).toContainText('missingSymbol');
 
   const correctedContent = originalContent.content;
   const currentTree = await page.request.get(treeUrl, { headers: authHeaders(token) });
@@ -214,7 +226,7 @@ test('MVP core loop: failed revision, corrected revision, and persistent history
   await openProjectFromList(page, project);
   await page.getByRole('tab', { name: 'Run' }).click();
   await expect(page.getByRole('status', { name: 'Run state' })).toContainText('SUCCEEDED');
-  await expect(page.getByRole('region', { name: 'Run logs' })).toContainText('BUILD SUCCESS');
+  await expect(page.getByRole('region', { name: 'Run logs' })).toContainText('Hello from Manao');
   const history = await page.request.get('/api/v1/projects/' + project.id + '/runs?limit=20', {
     headers: authHeaders(token),
   });
@@ -228,6 +240,35 @@ test('MVP core loop: failed revision, corrected revision, and persistent history
   const savedAfterReload = await page.request.get(contentUrl, { headers: authHeaders(token) });
   expect(savedAfterReload.ok()).toBeTruthy();
   expect((await savedAfterReload.json() as { content: string }).content).toBe(correctedContent);
+
+  // This final step is user-driven; fixture teardown is not proof that the UI deletion succeeded.
+  await page.getByRole('link', { name: 'Back to projects' }).click();
+  const card = page.getByRole('article', { name: project.name });
+  await card.getByRole('button', { name: 'Delete project' }).click();
+  await page.getByRole('alertdialog').getByRole('button', { name: 'Delete permanently' }).click();
+  await expect(page.getByText('Project deleted.', { exact: true })).toBeVisible({ timeout: 120_000 });
+  await expect(card).toHaveCount(0);
+  expect((await page.request.get('/api/v1/projects/' + project.id, { headers: authHeaders(token) })).status()).toBe(404);
+  const namespace = process.env.MANAO_K8S_NAMESPACE ?? process.env.STAGE6_NAMESPACE;
+  expect(namespace, 'explicit namespace required for independent resource verification').toBeTruthy();
+  const kubeconfig = process.env.STAGE6_OPERATOR_KUBECONFIG ?? process.env.KUBECONFIG;
+  const baseArgs = kubeconfig ? ['--kubeconfig', kubeconfig, '--request-timeout=10s'] : ['--request-timeout=10s'];
+  const kubectl = (args: string[]) => JSON.parse(execFileSync(process.env.MANAO_KUBECTL ?? 'kubectl',
+    [...baseArgs, ...args, '-o', 'json'], { encoding: 'utf8', timeout: 20_000 }));
+  const resourcesLeft = kubectl(['-n', namespace!, 'get', 'jobs,pods,services,pvc',
+    '-l', 'manao.poc4/project-id=' + project.id]) as { items: unknown[] };
+  expect(resourcesLeft.items).toEqual([]);
+  const volumes = kubectl(['get', 'pv']) as { items: { spec?: { claimRef?: { namespace: string; name: string } } }[] };
+  expect(volumes.items.filter((volume) => volume.spec?.claimRef?.namespace === namespace
+    && volume.spec?.claimRef?.name === 'manao-pvc-' + project.id)).toEqual([]);
+  // Database and physical NFS absence are separately checked by the operator for this exact project/run ID.
+  await test.info().attach('deleted-project.json', {
+    body: Buffer.from(JSON.stringify({ projectId: project.id, runIds: [firstRun.id, secondRun.id] })),
+    contentType: 'application/json',
+  });
+  await login(page, ALICE);
+  await expect(page.getByRole('article', { name: project.name })).toHaveCount(0);
+
 });
 
 async function openProjectFromList(

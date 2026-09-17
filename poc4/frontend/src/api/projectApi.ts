@@ -21,3 +21,10 @@ export function getProject(projectId: string): Promise<ProjectSummary> {
     `/api/v1/projects/${encodeURIComponent(projectId)}`,
   );
 }
+
+export function deleteProject(projectId: string): Promise<void> {
+  return getHttpClient().request<void>(
+    `/api/v1/projects/${encodeURIComponent(projectId)}`,
+    { method: 'DELETE' },
+  );
+}

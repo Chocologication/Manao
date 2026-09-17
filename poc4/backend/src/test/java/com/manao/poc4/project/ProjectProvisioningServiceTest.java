@@ -113,6 +113,7 @@ class ProjectProvisioningServiceTest {
 
     private ProjectCleanupService cleanupService(ProjectDeletionRepository.BeginDeletion began, List<String> runIds) {
         return new ProjectCleanupService(new ProjectDeletionRepository() {
+            @Override public BeginDeletion inspect(String ownerId, String projectId) { return began; }
             @Override public BeginDeletion begin(String ownerId, String projectId) { return began; }
             @Override public List<String> runIds(String ownerId, String projectId) { return runIds; }
         }, new ProjectLifecycleGate(), new ProjectRuntimeCleaner(null, null, null, null, null), gateway, store);
