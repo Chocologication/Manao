@@ -190,9 +190,61 @@
 
 **遗留项**：浏览器端登录/编辑/运行/日志全链路随 Task 4；HTTP 明文边界如上记录；backend Service 若重建需 `rollout restart deploy/frontend`（nginx 静态 upstream 解析，已写入 README §8.2）。
 
-## 4. Task 4 验收结果（占位）
+## 4. Task 4 验收结果（2026-09-18，阶段 B：真实公网 E2E 生命周期验收——重跑）
 
-- [ ] 结果：待填
+- 记录时间：2026-09-18 23:59 (+08:00)；E2E 窗口 23:44:44–23:58:41 (+08:00)；残留清理窗口约 23:40–23:43 (+08:00)
+- 执行者：Task 4 阶段 B 重跑（第一次 Task 4B 运行因集群问题被用户中断，本轮为如实重跑）
+- **结果：NOT PASSED（BLOCKED，待裁决）。Playwright 实测 `2 passed / 1 failed / 3 did not run`（13.9m，exit 1），不是 6 passed。** 未达到验收标准，且失败根因为业务缺陷（见 4.4），按规程不掩盖、不放宽，保留精确证据报 BLOCKED。
+
+### 4.1 运行前环境与残留清理（实测）
+
+- 公网入口：`GET http://1.12.245.235:30080/` → 200；登录探针（不存在用户）→ 401。本机 Vite/Spring Boot 未运行；本机 MySQL 保留运行（用户豁免，其他业务在用），E2E 全程仅浏览器 + 公网入口。
+- 集群恢复观察（admin kubectl，只读）：backend/frontend/mysql-0 均 Running；**全部容器在 23:33 前后（+08:00）集体重启**（startup BackOff 后恢复，属集群重启恢复尾部），本轮 E2E 全程平台无再重启。
+- **backend 镜像变更记录**：当前 backend Pod 镜像 `sha256:a57da658…defe314e`（Pod 约 19:13 +08:00 重建，即第一次中断运行期间/之后被重新部署），与 Task 2 记录的 `sha256:5708a4b7…edd5fa` 不同；frontend 仍为 Task 3 的 `887c2e9f…e2699e`。该变更为运行环境事实，本轮未改动。
+- **中断残留清理（额外的一次真实 API 删除验证）**：第一次中断运行遗留两个 `stage6b-cloud-*` 项目（均 app_user 所有）：
+  - `3bbc74ae-36b1-4fec-b5af-3fe7884990a9`（`stage6b-cloud-20260918094433-flhm`，state FAILED，集群内已无任何 workspace 资源）；
+  - `ddaca1c0-f8fb-403a-8d4f-e53deeff70ea`（`stage6b-cloud-20260918111018-ax9s`，state READY，workspace Pod/Service Running、PVC Bound）。
+  - 以 app_user 经真实公网 API 路径逐个 `DELETE /api/v1/projects/{id}` → **两个均 HTTP 204**；GET 列表 → `items: []`；GET 单项 → 404 `ENTRY_NOT_FOUND`。
+  - admin kubectl 核对：`manao-ws-ddaca1c0-*` Pod/Service 消失、`manao-pvc-ddaca1c0-*` PVC 消失、对应 PV `pvc-11d48b0e-…` 已 NotFound（`manao-poc4-delete` Delete 回收策略实测生效）；无残留 Job。删除链路 API→DB→K8s→PV 全链路实测通过。
+- admin kubectl 通道事实：用户侧 127.0.0.1:6443 本地转发本轮不可用；实测集群 API 公网端点 `https://1.12.245.235:6443` 可达（证书 SAN 含 127.0.0.1，不含公网 IP），在私有目录（不入库、不提交）建立 admin kubeconfig 副本以继续只读观察。
+
+### 4.2 E2E 实测结果（`pnpm --dir poc4/frontend test:e2e:stage6b`，env 注入凭据）
+
+| # | test | 结果 | 用时 |
+|---|---|---|---|
+| 1 | 登录、创建标记项目、等待 READY、取 projectId | **ok** | 18.8s |
+| 2 | 编辑 App.java、显式保存、revision 前进 | **ok** | 3.3s |
+| 3 | 保存可复现编译错误、运行、观察 FAILED 与编译反馈 | **failed**（780s 超时，`Run state` 始终为 "Idle"，1533 次轮询） | 13.5m |
+| 4 | 修复、保存、再运行、观察 SUCCEEDED | did not run（serial 中断） | — |
+| 5 | 终态后仍可编辑保存 | did not run（serial 中断） | — |
+| 6 | 刷新/退出重登持久化 | did not run（serial 中断） | — |
+
+- 本次新项目：**`stage6b-cloud-20260918154446-rfp1`**，projectId **`6839f32c-ec9f-46b4-a9f6-2e4f1d6dfa52`**。broken run id **`d2460769-ba49-40b2-9ccd-db655b7f10ae`**（FAILED / START_FAILED）；**无 fixed run**（未执行到）。项目连同其 workspace 与该 run 记录**暂时保留**作为缺陷证据，待裁决后处理（8 项目限额当前占用 1）。
+- 失败工件保留（不删除）：`poc4/frontend/test-results/stage6b-cloud-lifecycle-st-9f761-ILED-with-compiler-feedback-stage6b-cloud/`（trace.zip、video.webm、test-failed-1.png、error-context.md）。
+- 集群佐证（admin kubectl，只读）：workspace `manao-ws-6839f32c-…` Pod/Service 创建并 Running（node1），PVC `manao-pvc-6839f32c-…`（10Gi RWX，`manao-poc4-delete`）Bound → 新 PV `pvc-3d0c413c-…`；initializer `manao-ws-init-…`（busybox probe-permissions）Completed。**运行 Job `manao-run-d2460769-…` 自始至终不存在**，无任何 run Pod/Job 事件。
+
+### 4.3 失败根因（实测证据链）
+
+1. UI 侧：点击 Start run 后 `POST /api/v1/projects/{id}/runs`（body `{"expectedWorkspaceRevision":"23"}`）→ **HTTP 503** `{"code":"INTERNAL_ERROR","message":"Request failed","traceId":"fcef2f71-2b7a-48dc-984e-51af4fc35fd1"}`（Playwright trace network 实录）。前端 `Run state` 状态元素停留在 "Idle"，测试等待 780s 后失败。
+2. DB 侧（API 只读核对）：run `d2460769-…` 于 `15:45:12.225633Z` 创建、`15:45:12.266381Z` 即终态（**40ms**），`state=FAILED`、`terminationReason=START_FAILED`、无日志。revision 校验本身通过（23 匹配）——即 RunService 在 `ensureJob` 抛异常后 settle START_FAILED 并回 503 的路径。
+3. K8s 侧：Job 从未创建（无对象、无事件）。
+4. 后端日志：15:45:12Z 前后**零日志**——`RunService.startLocked` 的 catch 分支静默吞掉异常（无 LOG 语句），故障不可观测（伴生缺陷）。
+5. 直接原因（实测）：`Fabric8JobCoordinator.ensureJob` 对 Job 使用 **`serverSideApply()`（PATCH）**（自 `301a8e6` 引入），而 6B Role `manao-backend-workload`（仓库 `poc4/deploy/6b/backend-rbac.yaml`，commit `b4e181c`，与集群 live 一致）对 `batch/jobs` 只授 `get,list,watch,create,delete`——**无 `patch`**。实证：`kubectl auth can-i patch jobs.batch --as=system:serviceaccount:manao-stage6b:manao-backend` → **no**（`create` → yes）。对照：workspace Pod/Service/PVC 走 `Fabric8KubernetesGateway` 的 `.create()`（create 动词）全部成功——与「创建 READY 正常、Start run 即败」的现象完全一致。
+6. 为什么 6A 未暴露：6A 本地集群 SA 对 `jobs.batch` 为全权（含 patch）；6B 部署资产在收窄动词时未对账代码实际使用的 PATCH 传输。
+
+### 4.4 缺陷定性（BLOCKED 待裁决）
+
+- **业务/部署资产缺陷**（非测试资产缺陷，测试选择器与等待行为正常且如实反映了用户可见结果）：修复方向二选一，均需裁决且按 brief「先加能复现问题的回归再修复」：
+  1. RBAC 侧：`poc4/deploy/6b/backend-rbac.yaml` 为 `batch/jobs` 增加 `patch`（若保留 serverSideApply 传输）；
+  2. 代码侧：`Fabric8JobCoordinator.ensureJob` 改为 `.create()`（若维持最小 RBAC）。
+  - 伴生问题（同批裁决）：`RunService` catch 路径无日志（故障静默）；START_FAILED 时前端 Run state 停留 "Idle"、用户得不到任何可见反馈（本次测试失败的直接表现）。
+- 裁决与修复后需**从头重跑完整 6 test 场景**（新项目名、新 run id），本轮项目与记录不作为通过依据。
+
+### 4.5 B1–B3 证据对应（Task 4 范围）
+
+- **B1（无本机依赖、公网完成流程）**：部分成立——登录、创建、READY、编辑保存全部经公网入口真实 UI 完成（test 1/2 passed），本机应用依赖为零；「完整流程」因 B2 阻塞未完成，不宣称通过。
+- **B2（同一界面完成创建/编辑保存/真实失败反馈/修复运行成功/再次编辑）**：**失败证据在案**——创建、编辑保存已过；「真实失败反馈」环节后端 Start run 即 START_FAILED（40ms、无 Job、503），前端无任何失败反馈（Run state 停留 Idle），后续修复运行/再次编辑均未执行。
+- **B3（日志实时、终态与 Run/Job 一致、刷新与重登持久化）**：未执行（serial 中断），无证据。
 
 ## 5. Task 5 验收结果（占位）
 
@@ -204,9 +256,9 @@
 
 ## 7. B1-B6 缺口清单（占位）
 
-- [ ] B1：
-- [ ] B2：
-- [ ] B3：
+- [ ] B1：部分成立（Task 4 §4.5：登录/创建/READY/编辑保存经公网真实 UI 完成；完整流程因 B2 阻塞未完成，不宣称通过）
+- [ ] B2：失败证据在案（Task 4 §4.4/§4.5：Start run 即 START_FAILED，前端无失败反馈；修复运行未执行）
+- [ ] B3：未执行、无证据（Task 4 §4.5）
 - [ ] B4：
 - [ ] B5：
 - [ ] B6：
