@@ -1,0 +1,156 @@
+# Backend Deployment for Stage 6B (namespace manao-stage6b, cluster profile, in-cluster).
+#
+# - replicas: 1 and strategy: Recreate. Two replicas would race on workspace-operation
+#   fencing; a RollingUpdate would briefly run old+new pods against one schema.
+# - readinessProbe includes the "db" and "kubernetes" health groups from application.yml,
+#   so a DB or Kubernetes API outage removes the pod from the Service without liveness
+#   killing it (readiness failure never triggers restarts).
+# - Image values are NOT baked into this manifest. MANAO_WORKSPACE_AGENT_IMAGE /
+#   MANAO_WORKSPACE_INITIALIZER_IMAGE / MANAO_MAVEN_RUNNER_IMAGE and the backend image
+#   reference come from the manao-backend-images Secret (digest-pinned values generated
+#   at deploy time, see README.md).
+# - Secrets are consumed via secretKeyRef env injection; no Secret values are stored in
+#   this repository.
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend
+  namespace: manao-stage6b
+  labels:
+    app.kubernetes.io/name: manao-backend
+    app.kubernetes.io/part-of: manao
+    app.kubernetes.io/stage: 6b
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: manao-backend
+    app.kubernetes.io/stage: 6b
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend
+  namespace: manao-stage6b
+  labels:
+    app.kubernetes.io/name: manao-backend
+    app.kubernetes.io/part-of: manao
+    app.kubernetes.io/stage: 6b
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: manao-backend
+      app.kubernetes.io/stage: 6b
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: manao-backend
+        app.kubernetes.io/part-of: manao
+        app.kubernetes.io/stage: 6b
+    spec:
+      serviceAccountName: manao-backend
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: backend
+          image: manao-poc4-backend:replace-me
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            - name: SPRING_PROFILES_ACTIVE
+              value: cluster
+            - name: SERVER_PORT
+              value: "8080"
+            - name: MANAO_K8S_NAMESPACE
+              value: manao-stage6b
+            - name: MANAO_DB_URL
+              value: jdbc:mysql://mysql.manao-stage6b.svc.cluster.local:3306/manao_poc4_6b
+            - name: MANAO_DB_USERNAME
+              value: manao
+            - name: MANAO_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: manao-mysql-auth
+                  key: MYSQL_PASSWORD
+            - name: MANAO_JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: manao-backend-auth
+                  key: JWT_SECRET
+            - name: MANAO_WORKSPACE_CAPABILITY_PRIVATE_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: manao-backend-auth
+                  key: CAPABILITY_PRIVATE_KEY
+            - name: MANAO_WORKSPACE_CAPABILITY_PUBLIC_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: manao-backend-auth
+                  key: CAPABILITY_PUBLIC_KEY
+            - name: MANAO_WS_EXTRA_ORIGIN
+              valueFrom:
+                configMapKeyRef:
+                  name: manao-backend-config
+                  key: MANAO_WS_EXTRA_ORIGIN
+            - name: MANAO_WORKSPACE_STORAGE_CLASS
+              valueFrom:
+                configMapKeyRef:
+                  name: manao-backend-config
+                  key: MANAO_WORKSPACE_STORAGE_CLASS
+            - name: MANAO_WORKSPACE_AGENT_IMAGE
+              valueFrom:
+                secretKeyRef:
+                  name: manao-backend-images
+                  key: MANAO_WORKSPACE_AGENT_IMAGE
+            - name: MANAO_WORKSPACE_INITIALIZER_IMAGE
+              valueFrom:
+                secretKeyRef:
+                  name: manao-backend-images
+                  key: MANAO_WORKSPACE_INITIALIZER_IMAGE
+            - name: MANAO_MAVEN_RUNNER_IMAGE
+              valueFrom:
+                secretKeyRef:
+                  name: manao-backend-images
+                  key: MANAO_MAVEN_RUNNER_IMAGE
+          readinessProbe:
+            httpGet:
+              path: /actuator/health/readiness
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 15
+            timeoutSeconds: 3
+            failureThreshold: 3
+          startupProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: http
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 60
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi

@@ -1,0 +1,123 @@
+# Single-instance MySQL 8.0 for Stage 6B, dedicated PVC on StorageClass nfs-storage.
+# The DB volume deliberately does NOT use manao-poc4-delete: project storage needs
+# delete-reclaim semantics, the database needs to survive pod rebuilds regardless of
+# project lifecycle. This PVC must never carry the backend-managed project labels
+# (manao.poc4/project-id / stage6-test), so project cleanup can never match it.
+#
+# V3 migration creates a BEFORE UPDATE trigger. With binary logging enabled (default
+# for MySQL 8), creating triggers requires either SUPER or
+# log_bin_trust_function_creators=ON. The application account must not have SUPER,
+# so this value is set via the command flag below. See README.md "Why
+# log_bin_trust_function_creators" for the full rationale.
+#
+# Image pinning: the tag below is pinned, but the deployment MUST be hardened by
+# digest before production rollout. After an operator records
+#   docker buildx imagetools inspect mysql:8.0.40  (or: docker pull + docker image inspect)
+# replace `image:` with mysql@sha256:<digest-of-8.0.40> (or a private-registry mirror of it).
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: mysql
+  namespace: manao-stage6b
+  labels:
+    app.kubernetes.io/name: mysql
+    app.kubernetes.io/part-of: manao
+    app.kubernetes.io/stage: 6b
+spec:
+  serviceName: mysql
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: mysql
+      app.kubernetes.io/stage: 6b
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: mysql
+        app.kubernetes.io/part-of: manao
+        app.kubernetes.io/stage: 6b
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        fsGroup: 999
+      containers:
+        - name: mysql
+          image: mysql:8.0.40
+          args:
+            - --log_bin_trust_function_creators=1
+            - --character-set-server=utf8mb4
+            - --collation-server=utf8mb4_0900_ai_ci
+          ports:
+            - name: mysql
+              containerPort: 3306
+          env:
+            - name: MYSQL_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: manao-mysql-auth
+                  key: MYSQL_ROOT_PASSWORD
+            - name: MYSQL_DATABASE
+              value: manao_poc4_6b
+            - name: MYSQL_USER
+              value: manao
+            - name: MYSQL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: manao-mysql-auth
+                  key: MYSQL_PASSWORD
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/mysql
+          readinessProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - mysqladmin ping -h 127.0.0.1 -u root -p"$MYSQL_ROOT_PASSWORD" --silent
+            initialDelaySeconds: 20
+            periodSeconds: 10
+            timeoutSeconds: 5
+          livenessProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - mysqladmin ping -h 127.0.0.1 -u root -p"$MYSQL_ROOT_PASSWORD" --silent
+            initialDelaySeconds: 60
+            periodSeconds: 15
+            timeoutSeconds: 5
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        storageClassName: nfs-storage
+        resources:
+          requests:
+            storage: 5Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mysql
+  namespace: manao-stage6b
+  labels:
+    app.kubernetes.io/name: mysql
+    app.kubernetes.io/stage: 6b
+spec:
+  type: ClusterIP
+  clusterIP: None
+  selector:
+    app.kubernetes.io/name: mysql
+    app.kubernetes.io/stage: 6b
+  ports:
+    - name: mysql
+      port: 3306
+      targetPort: mysql

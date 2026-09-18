@@ -1,0 +1,90 @@
+# RBAC for the backend ServiceAccount (manao-backend).
+#
+# Namespace Role: exactly what WorkspaceResourceFactory/JobResourceFactory create and what
+#   ProjectCleanupService deletes - pods, services, PVCs, Jobs, and pod logs inside
+#   manao-stage6b. No pods/portforward (6B resolves workspace Services directly in-namespace;
+#   the 6A port-forward bridge is not built in the cluster profile).
+# ClusterRole: read-only and independent of the namespace Role - list persistentvolumes and
+#   get storageclasses, which ProjectCleanupService needs to verify PV release after PVC
+#   deletion and to resolve the configured StorageClass. No PV write or delete verbs are
+#   granted anywhere.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: manao-backend-workload
+  namespace: manao-stage6b
+  labels:
+    app.kubernetes.io/part-of: manao
+    app.kubernetes.io/stage: 6b
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch", "create", "delete"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
+  - apiGroups: [""]
+    resources: ["pods/exec"]
+    verbs: ["create"]
+  - apiGroups: [""]
+    resources: ["services"]
+    verbs: ["get", "list", "create", "delete"]
+  - apiGroups: [""]
+    resources: ["persistentvolumeclaims"]
+    verbs: ["get", "list", "watch", "create", "delete"]
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["get", "list", "watch", "create", "delete"]
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: manao-backend-workload
+  namespace: manao-stage6b
+  labels:
+    app.kubernetes.io/part-of: manao
+    app.kubernetes.io/stage: 6b
+subjects:
+  - kind: ServiceAccount
+    name: manao-backend
+    namespace: manao-stage6b
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: manao-backend-workload
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: manao-stage6b-storage-reader
+  labels:
+    app.kubernetes.io/part-of: manao
+    app.kubernetes.io/stage: 6b
+# Read-only cluster-scoped verbs, deliberately kept in a ClusterRole separate from the
+# namespace Role so the two grants can be audited (and revoked) independently.
+rules:
+  - apiGroups: [""]
+    resources: ["persistentvolumes"]
+    verbs: ["list"]
+  - apiGroups: ["storage.k8s.io"]
+    resources: ["storageclasses"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: manao-stage6b-storage-reader
+  labels:
+    app.kubernetes.io/part-of: manao
+    app.kubernetes.io/stage: 6b
+subjects:
+  - kind: ServiceAccount
+    name: manao-backend
+    namespace: manao-stage6b
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: manao-stage6b-storage-reader
