@@ -156,6 +156,22 @@
 
 **遗留项**：`MANAO_WS_EXTRA_ORIGIN` 为 NodePort 候选初值 `http://1.12.245.235:30080`，Task 3B 实测定稿后回填 ConfigMap 并 restart backend；MySQL 镜像 digest 硬化与 1.8 Maven 版本实测不在本轮范围。
 
+### 2.1 安全事件处置与镜像回钉（2026-09-19 00:16–00:22 +08:00，Task 4 阶段 B 期间补记）
+
+**事件**：backend Deployment 于 2026-09-18 约 19:09–19:13 (+08:00) 被重新部署为未知来源镜像 `sha256:a57da658…defe314e`（构建时间约 19:07，与已验收 `5708a4b7…` 相比 9 层中 2 层不同；用户确认非本人操作）。该镜像运行窗口（约 19:09–23:33，至 23:33 前后集群重启、容器集体重建为止）内 backend Pod env 可被读取，按凭据泄露处置。
+
+**处置（admin kubectl，全部实测）**：
+1. **镜像回钉**：`kubectl set image deploy/backend backend=chocologic/manao_images_repository@sha256:5708a4b7383855826a6493a68a7f653be59db84502b82f05f045da23aaedd5fa`（与 Task 2 验收 digest 逐字一致）→ rollout 成功（00:17:13），1/1 Ready。
+2. **凭据轮换**（覆盖泄露窗口）：重新生成 JWT secret（64 字符，≥32 要求）、Ed25519 capability 密钥对（raw 32 字节 base64，README §2 openssl 方法）、`app_user` 新密码（48 字符随机，BCrypt(12) 存储）。
+   - Secret `manao-backend-auth` 三键（JWT_SECRET / CAPABILITY_PRIVATE_KEY / CAPABILITY_PUBLIC_KEY）经 `--from-file` 全量更新（openssl 输出的 CRLF 先经规范化，避免换行进入 Secret 值），解码长度实测 64/44/44；
+   - 私有 env 文件 `stage6-6b.env` 同步全部新值（并追加 `MANAO_6B_USERNAME` / `MANAO_6B_PASSWORD` E2E 别名），权限保持 0600；
+   - DB `manao_poc4_6b.app_user` 仅改密码：参数化 SQL 文件（经 stdin 进入 mysql-0；root 密码取自容器 env，不出现在命令行）+ 用户变量 + `WHERE username = @u` 限定，实测 `updated_rows=1`、全表 `total_rows=1`（未触及其他行），存储哈希 60 字符、`$2b$12$` 前缀；
+   - `rollout restart deploy/backend` → 00:21:20 Ready。
+3. **验证**：Pod 内 `/actuator/health/readiness` 与 `/actuator/health/liveness` 均 `{"status":"UP"}`；公网入口以新凭据登录 **HTTP 200**（accessToken 签发，`user.username=app_user`），错误密码对照 **401**。
+4. **边界**：旧 JWT / capability 签名失效为预期（单用户，重新登录即可）；mysql root 密码未暴露给 backend Pod，不轮换；全部新凭据值未进入任何报告、提交或控制台输出。
+
+**RBAC 修复（控制器已裁决）**：`poc4/deploy/6b/backend-rbac.yaml` 的 Role `manao-backend-workload` 对 `batch/jobs` 增加 `patch` 动词（原 get/list/watch/create/delete 保持不变，未添加其他资源），apply 生效（Role configured，RoleBinding/ClusterRole/ClusterRoleBinding unchanged）。实证：`kubectl auth can-i patch jobs.batch -n manao-stage6b --as=system:serviceaccount:manao-stage6b:manao-backend` → **yes**（get/list/watch/create/delete 逐项复测均 yes）。该修复直接消除 §4.3/§4.4（09-18 23:44 轮）记录的 Start run 即 START_FAILED 根因；该事件对后续 E2E 的影响见 §4.0。
+
 ## 3. Task 3 验收结果（2026-09-18，阶段 B：前端真实部署与公网入口验证）
 
 - 记录时间：2026-09-18 17:30 (+08:00)；部署/验证窗口 17:05–17:20（+08:00）
@@ -190,11 +206,42 @@
 
 **遗留项**：浏览器端登录/编辑/运行/日志全链路随 Task 4；HTTP 明文边界如上记录；backend Service 若重建需 `rollout restart deploy/frontend`（nginx 静态 upstream 解析，已写入 README §8.2）。
 
-## 4. Task 4 验收结果（2026-09-18，阶段 B：真实公网 E2E 生命周期验收——重跑）
+## 4. Task 4 验收结果（阶段 B：真实公网 E2E 生命周期验收——两轮重跑均未通过）
+
+- **结果：NOT PASSED（BLOCKED）。最近一轮（2026-09-19 00:23，事件处置与 RBAC 修复之后）：Playwright 实测 `1 failed / 5 did not run`（exit 1），失败根因为新实测缺陷——已验收镜像 `5708a4b7…` 的 jar 缺少 `workspace-template/.gitignore` 打包资源，项目 provisioning 必然失败（见 4.0）。此前一轮（2026-09-18 23:44）：`2 passed / 1 failed / 3 did not run`（13.9m），根因为 RBAC 缺 `patch`（已修复并验证，见 §2.1）。两轮均按规程如实记录、不掩盖、不放宽。**
+
+### 4.0 事件处置后重跑（2026-09-19 00:23–00:33 +08:00）——当前唯一有效验收记录
+
+- **前置（全部完成，见 §2.1）**：backend 镜像回钉至已验收 `sha256:5708a4b7…`；JWT/capability/app_user 凭据全量轮换并实测（健康组 UP、新凭据公网登录 200）；Role 已授 `jobs.batch patch`（can-i → yes）。
+- **残留清理（前置）**：09-18 23:44 轮遗留项目 `6839f32c-ec9f-46b4-a9f6-2e4f1d6dfa52`（`stage6b-cloud-20260918154446-rfp1`）以轮换后新凭据经真实公网 API `DELETE /api/v1/projects/{id}` → **HTTP 204**；GET 列表 → `items: []`、单项 → **404 `ENTRY_NOT_FOUND`**；admin kubectl 核对 `manao-ws-6839f32c-*` Pod/Service、`manao-pvc-6839f32c-*` PVC 消失，PV `pvc-3d0c413c-…` **NotFound**（`manao-poc4-delete` Delete 回收实测生效），无 Job 残留。项目配额回到 0/8。
+- **运行环境**：公网入口 `GET http://1.12.245.235:30080/` → 200；本机 Vite/Spring Boot 未运行；本机 MySQL 保留（用户豁免）；集群 09-18 23:33 前后集体重启的容器本轮全程运行稳定。
+- **E2E 实测**（`pnpm --dir poc4/frontend test:e2e:stage6b`，env 注入轮换后新凭据；窗口 00:23:20–00:33:48 +08:00，exit 1）：
+
+| # | test | 结果 | 用时 |
+|---|---|---|---|
+| 1 | 登录、创建标记项目、等待 READY | **failed**（项目卡状态 **FAILED**，等待 READY 600s 超时） | 10.4m |
+| 2 | 编辑 App.java、显式保存、revision 前进 | did not run（serial 中断） | — |
+| 3 | 编译错误运行、观察 FAILED 反馈 | did not run（serial 中断） | — |
+| 4 | 修复运行、观察 SUCCEEDED | did not run（serial 中断） | — |
+| 5 | 终态后仍可编辑保存 | did not run（serial 中断） | — |
+| 6 | 刷新/退出重登持久化 | did not run（serial 中断） | — |
+
+- 新项目：**`stage6b-cloud-20260918162324-fnzk`**，projectId **`049b4aa6-9478-43db-a815-cf54adc7b671`**；公网 API 实测 `state=FAILED`；无任何 run 创建；**集群内无残留资源**（provisioning 失败后 label-scoped 自动清理实测生效），DB 行保留作缺陷证据（占配额 1/8）。
+- **失败根因（实测证据链）**：
+  1. backend 日志（16:23:41Z = 00:23:41 +08:00）：`ProjectProvisioningService` — `provisioning failed; cleaning up label-scoped resources`；`java.io.UncheckedIOException: cannot load workspace template resource workspace-template/.gitignore`；`Caused by: java.io.FileNotFoundException: class path resource [workspace-template/.gitignore] cannot be opened because it does not exist`。
+  2. K8s 侧：workspace Pod/PVC 曾短暂创建后被清理，最终 namespace 内无任何 `049b4aa6` 相关资源（实测）。
+  3. UI 侧：项目卡状态 FAILED（API 实测一致），测试等待 READY 超时——测试资产按设计如实暴露用户可见故障，无测试资产缺陷。
+  4. **定性**：已验收镜像 `5708a4b7…` 内 jar 缺少 `workspace-template/.gitignore` 类路径资源（Maven jar 默认排除 `**/.gitignore` 所致），项目 provisioning 在该镜像上必然失败。工作树内**未提交**的 `poc4/backend/pom.xml`（maven-jar-plugin `addDefaultExcludes=false`）与 `poc4/backend/.dockerignore`（锚定 `/.gitignore`、`/*.md`，保留模板资源）正是该缺陷的修复，尚未构建进任何可溯源镜像。
+  5. 历史旁证：09-18 17:44 在 `5708a4b7` 上创建的 `3bbc74ae…` 即 state FAILED（同因）；未知镜像 `a57da658` 上线后创建的 `ddaca1c0…`（19:10）与 `6839f32c…`（23:44）均 READY——未知镜像很可能包含上述打包修复，但来源未验证，不作为任何通过依据。
+- **失败资产保留（不删除）**：`poc4/frontend/test-results/stage6b-cloud-lifecycle-st-31f1b--project-and-wait-for-READY-stage6b-cloud/`（trace.zip、video.webm、test-failed-1.png、error-context.md）。
+- **处置：BLOCKED（待控制器裁决）**——修复路径：提交打包修复 → 本机构建并推送新 backend 镜像（本机 Docker daemon 实测可用，server 29.3.1）→ 部署新 digest → 从头重跑 6 test 场景（新项目名/新 run id）。按规程，未获授权不自行构建/推送/部署镜像。未知镜像事件见 §2.1；B1–B3 缺口见 §7。
+
+### 4.1–4.5 前一轮记录（2026-09-18 23:44，RBAC 根因——已修复）
+
+> 以下 4.1–4.5 为 09-18 23:44 轮的原始记录，保留作历史证据；其根因（Role 缺 `patch`）已于 09-19 修复并验证（§2.1），该轮遗留项目 `6839f32c…` 已于 09-19 00:22 经公网 API 删除（见 4.0 前置）。
 
 - 记录时间：2026-09-18 23:59 (+08:00)；E2E 窗口 23:44:44–23:58:41 (+08:00)；残留清理窗口约 23:40–23:43 (+08:00)
 - 执行者：Task 4 阶段 B 重跑（第一次 Task 4B 运行因集群问题被用户中断，本轮为如实重跑）
-- **结果：NOT PASSED（BLOCKED，待裁决）。Playwright 实测 `2 passed / 1 failed / 3 did not run`（13.9m，exit 1），不是 6 passed。** 未达到验收标准，且失败根因为业务缺陷（见 4.4），按规程不掩盖、不放宽，保留精确证据报 BLOCKED。
 
 ### 4.1 运行前环境与残留清理（实测）
 
@@ -256,9 +303,9 @@
 
 ## 7. B1-B6 缺口清单（占位）
 
-- [ ] B1：部分成立（Task 4 §4.5：登录/创建/READY/编辑保存经公网真实 UI 完成；完整流程因 B2 阻塞未完成，不宣称通过）
-- [ ] B2：失败证据在案（Task 4 §4.4/§4.5：Start run 即 START_FAILED，前端无失败反馈；修复运行未执行）
-- [ ] B3：未执行、无证据（Task 4 §4.5）
+- [ ] B1：部分成立（Task 4 §4.0/§4.5：两轮均实测登录/创建经公网真实 UI 完成；09-18 23:44 轮另实测 READY 与编辑保存；「完整流程」两轮均被后端缺陷阻塞，不宣称通过）
+- [ ] B2：两轮未走通（09-18 23:44 轮：Start run 即 START_FAILED，前端无失败反馈——根因 RBAC 缺 `patch`，已修复验证（§2.1）；09-19 00:23 轮：项目 provisioning 即失败（§4.0），修复运行未执行）
+- [ ] B3：未执行、无证据（两轮 serial 中断，Task 4 §4.0/§4.5）
 - [ ] B4：
 - [ ] B5：
 - [ ] B6：
