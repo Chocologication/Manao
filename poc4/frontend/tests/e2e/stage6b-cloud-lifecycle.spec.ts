@@ -24,18 +24,17 @@ import { expect, test, type Locator, type Page } from '@playwright/test';
  * verification, so deletion belongs to the Task 5 wrap-up.
  */
 
+const BASE_URL = process.env.MANAO_6B_BASE_URL;
 const USERNAME = process.env.MANAO_6B_USERNAME;
 const PASSWORD = process.env.MANAO_6B_PASSWORD;
 
-// Load-safe gate: other configs (e.g. the default localhost config) also scan
-// tests/e2e, so this file must never throw at module scope. It only runs when
-// the full 6B environment is present, which its own config enforces; otherwise
-// the suite skips loudly instead of pretending to pass.
-const CLOUD_GATE = Boolean(
-  process.env.MANAO_6B_BASE_URL && process.env.MANAO_6B_USERNAME && process.env.MANAO_6B_PASSWORD,
-);
+// Load-safe gate: other configs (e.g. the default localhost config, where
+// MANAO_6B_BASE_URL is unset) also scan tests/e2e, so this file must never
+// throw at module scope. The suite only skips when the 6B gate is entirely
+// absent (no BASE_URL). If BASE_URL is set but credentials are missing, the
+// tests still run and fail loudly in beforeAll — never a silent green run.
 test.skip(
-  !CLOUD_GATE,
+  !BASE_URL,
   'stage6b cloud lifecycle requires MANAO_6B_BASE_URL / MANAO_6B_USERNAME / MANAO_6B_PASSWORD; run via pnpm test:e2e:stage6b',
 );
 
@@ -53,16 +52,34 @@ function shortTimestamp(): string {
   return new Date().toISOString().replace(/[-:T]/g, '').slice(0, 14);
 }
 
+function randomSuffix(): string {
+  return Math.random().toString(36).slice(2, 6);
+}
+
 // Shared scene state across the serial tests (workers: 1 guarantees ordering).
 const SCENE = {
-  projectName: `stage6b-cloud-${shortTimestamp()}`,
+  projectName: `stage6b-cloud-${shortTimestamp()}-${randomSuffix()}`,
   projectId: '',
   accessToken: '',
   brokenRunId: '',
   fixedRunId: '',
+  finalRevision: '',
 };
 
 test.describe.serial('stage6b cloud lifecycle', () => {
+  // Runtime credential guard: reached only when MANAO_6B_BASE_URL is set
+  // (module-level skip keeps the default config load-safe). A missing
+  // credential must fail the run loudly, not silently skip to a green exit.
+  test.beforeAll(() => {
+    if (!USERNAME || !PASSWORD) {
+      throw new Error(
+        '环境变量 MANAO_6B_USERNAME / MANAO_6B_PASSWORD 未设置：'
+          + 'MANAO_6B_BASE_URL 已配置时必须同时提供私有运行环境注入的真实凭据，'
+          + 'Stage 6B 云端 E2E 拒绝在凭据缺失时静默跳过。',
+      );
+    }
+  });
+
   test('login, create the marked project, and wait for READY', async ({ page }, testInfo) => {
     test.setTimeout(900_000); // cloud provisioning from a cold cluster may take minutes
     await signIn(page);
@@ -171,6 +188,9 @@ test.describe.serial('stage6b cloud lifecycle', () => {
     await saveButton(page).click();
     await saved;
     await expect(page.locator('p[role="status"][aria-label="Saved"]')).toBeVisible();
+
+    // Baseline for the persistence test: the revision after the final save.
+    SCENE.finalRevision = await workspaceRevision(page);
   });
 
   test('reload, logout, and re-login all preserve project, file content, and run history', async ({ page }) => {
@@ -183,6 +203,8 @@ test.describe.serial('stage6b cloud lifecycle', () => {
     await openAppFile(page);
     await expect(monacoViewLines(page)).toContainText(FINAL_EDIT_MARKER);
     await assertRunHistoryPreserved(page);
+    // Corroboration only: the revision stored before reload must still hold.
+    expect(await workspaceRevision(page), 'reload must preserve the saved revision').toBe(SCENE.finalRevision);
 
     // Full session reset: logout, sign back in, and re-verify from the list.
     await page.getByRole('link', { name: 'Back to projects' }).click();
@@ -195,6 +217,8 @@ test.describe.serial('stage6b cloud lifecycle', () => {
     await openAppFile(page);
     await expect(monacoViewLines(page)).toContainText(FINAL_EDIT_MARKER);
     await assertRunHistoryPreserved(page);
+    // Corroboration only: the revision must survive a full session reset too.
+    expect(await workspaceRevision(page), 're-login must preserve the saved revision').toBe(SCENE.finalRevision);
 
     console.log(
       `[stage6b] persistence verified for project "${SCENE.projectName}" id=${SCENE.projectId}; `

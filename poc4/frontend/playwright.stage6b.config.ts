@@ -40,10 +40,11 @@ export default defineConfig({
   // Per-test default for UI-only steps (login, tree navigation, editor save).
   timeout: 300_000,
   // Whole-run cap (see task-4 report for the budget rationale): cloud Maven runs
-  // may sit several minutes each from cold start; 30 minutes bounds the scene
-  // without silently absorbing hangs. Run-heavy tests raise their own timeout
-  // via test.setTimeout() while staying under this cap.
-  globalTimeout: 1_800_000,
+  // may sit several minutes each from cold start; 40 minutes bounds the worst
+  // case (READY 600s + two runs at 780s each + UI steps) without silently
+  // absorbing hangs. Run-heavy tests raise their own timeout via
+  // test.setTimeout() while staying under this cap.
+  globalTimeout: 2_400_000,
   expect: {
     // Single action/expectation budget: 30s, matching UI responsiveness over
     // the public internet; long server-side waits use explicit expect timeouts.
