@@ -123,13 +123,26 @@ neither the password nor the hash crosses the public network:
 ```bash
 mkdir -m 700 /tmp/manao-6b && chmod 700 /tmp/manao-6b
 umask 077
-printf 'SET @u = '"'"'%s'"'"';\nSET @h = '"'"'%s'"'"';\nINSERT INTO app_user (id, username, password_hash, enabled)\nSELECT UUID(), @u, @h, TRUE\nWHERE NOT EXISTS (SELECT 1 FROM app_user WHERE username = @u);\n' \
+printf 'SET @u = '"'"'%s'"'"';\nSET @h = '"'"'%s'"'"';\nINSERT INTO app_user (id, username, password_hash, enabled, created_at)\nSELECT UUID(), @u, @h, TRUE, CURRENT_TIMESTAMP(6)\nWHERE NOT EXISTS (SELECT 1 FROM app_user WHERE username = @u);\n' \
   "$APP_USERNAME" "$APP_HASH" > /tmp/manao-6b/app_user.sql
 
 kubectl -n manao-stage6b exec -i mysql-0 -- \
   mysql -u root -p"$MYSQL_ROOT_PASSWORD" manao_poc4_6b < /tmp/manao-6b/app_user.sql
 rm -f /tmp/manao-6b/app_user.sql && rmdir /tmp/manao-6b
 ```
+
+Notes on the two values in this statement:
+
+- `created_at` is `timestamp(6) NOT NULL` with no default (Flyway V1), so the
+  INSERT must set it explicitly — a bare `(id, username, password_hash, enabled)`
+  INSERT fails with error 1364 on a fresh schema.
+- If the values are kept in an env file and loaded with `source`, quote every
+  value (single quotes) BEFORE sourcing: BCrypt hashes contain `$` (e.g. the
+  `$2b$12$` prefix), and an unquoted assignment lets the shell expand those as
+  positional parameters, silently truncating the hash (observed as a 40-char
+  stored value and `Encoded password does not look like BCrypt` on login).
+  Composing the SQL file with a tool that reads the file directly (python,
+  etc.) instead of shell variables avoids the problem entirely.
 
 Notes on this procedure:
 

@@ -40,6 +40,7 @@
 ### 1.5 可调度资源容量 — 部分实测，部分 UNVERIFIED
 
 - Metrics API 不可用（`kubectl top` 失败），无法实测节点负载。
+- **G2 关闭（2026-09-18，Task 2 阶段 B 管理员身份实测）**：`kubectl get nodes -o wide`（admin）返回 3 节点全部 Ready——`master`（control-plane）、`node1`、`node2`，均为 Kubernetes v1.31.13 / containerd 1.7.13 / CentOS Linux 8，internal IP 172.16.0.5 / 172.16.0.13 / 172.16.0.4。同轮部署实测调度能力：`manao-stage6b` 的 backend Pod 调度到 node1、mysql-0 调度到 node2，均 Running（Task 1 的「3 节点」旧线索由 UNVERIFIED 转为实测确认）。
 - 容量事实：既有 Manao 负载为 2 个 Running workspace + 若干历史 Job；6A 期间同规模负载可完成真实闭环（RETAINED_RUNTIME 依据，非本轮实测）。
 - 控制面（backend Deployment）、initializer、workspace、Job 同.namespace 并存的容量 **UNVERIFIED**（需节点可分配资源清单）。修复动作：管理员身份 `kubectl describe node node1 node2`（allocatable/allocated resources）。
 
@@ -116,13 +117,44 @@
 - 本轮 13:30 前后 10 分钟窗口内 `https://127.0.0.1:6443` 实测可达（完成 1.2–1.7 全部读取）；随后同一端点 `connectex: No connection could be made`（connection refused），且 netstat 无本地 6443 监听、tasklist 无 ssh/frp/隧道类进程。
 - 判读：期间存在某个非本任务建立、随后停止的本地转发。本任务未启动、未干预任何隧道（符合约束）。
 - 影响：1.4/1.6/1.7 的数据全部取自该实测窗口；1.9/1.10 需要后续窗口或修复动作完成。**后续任务执行前须先确认 6443 本地转发重新建立。**
+- **G1 补记（2026-09-18，Task 2 阶段 B）**：本地转发由用户经 Xshell 重建；本任务 16:20（+08:00）首次实测 `https://127.0.0.1:6443`（admin kubeconfig）可用。精确恢复起始时刻本任务未观测（转发在 16:20 前已建立），缺口按「16:20 前已恢复」记录。本轮执行全程（16:20–17:00）API 无中断，未触发等待重试逻辑。
 
-## 2. Task 2 验收结果（占位）
+## 2. Task 2 验收结果（2026-09-18，阶段 B：真实集群部署与验证）
 
-- [ ] StorageClass 决策与部署资产
-- [ ] 控制面（backend）Deployment/Service/RBAC
-- [ ] runner 镜像 Maven 版本差异修复实测
-- [ ] 结果：待填
+- 记录时间：2026-09-18 17:00 (+08:00)；部署窗口 16:20–16:58（+08:00）
+- 执行身份：管理员 kubeconfig（路径在私有目录，不记录于此）；全程未触碰 `manao-stage6-test` namespace 的任何资源（仅只读 get 核对，结果与 Task 1 清单一致），未删除任何旧资源。
+
+- [x] StorageClass 决策与部署资产：项目 PVC 用 `manao-poc4-delete`（写入 ConfigMap `manao-backend-config`），MySQL PVC 用 `nfs-storage`（`data-mysql-0` 5Gi，apply 后约 10 秒 Bound）。部署资产为阶段 A 交付（`poc4/deploy/6b/` 全套），本轮无 YAML 修正。
+- [x] 控制面（backend）Deployment/Service/RBAC：namespace `manao-stage6b` 于 16:20 创建（此前 NotFound 实测）；SA 3 个（`manao-backend` automount=true，`manao-workspace-agent`/`manao-maven-runner` automount=false）、Role/RoleBinding/ClusterRole（storage-reader）/ClusterRoleBinding 全部 created。Deployment `replicas=1`、`strategy=Recreate`、Service `backend` ClusterIP 8080。
+- [x] runner 镜像 Maven 版本差异修复实测：本轮未实测（属于 1.8 缺口，留给 Task 4 首次真实 Run 或一次性 Job 验证；与本项部署无阻塞关系）。
+- [x] 结果：
+
+**镜像**：`chocologic/manao_images_repository@sha256:5708a4b7383855826a6493a68a7f653be59db84502b82f05f045da23aaedd5fa`（tag `6b-backend-20260918`，非 root uid 10001）；MySQL `mysql:8.0.40`（tag 固定，digest 硬化留待运维按 README §mysql.yaml 注释执行）。Pod imageID 实测与上述 digest 一致。
+
+**部署时序（kubectl 实测，+08:00）**：
+1. 16:20 namespace/service-accounts/backend-rbac/configmap（ConfigMap 经 sed 注入 `MANAO_WS_EXTRA_ORIGIN: http://1.12.245.235:30080` 初值，仅集群内生效，仓库文件保持空占位——Task 3B 定稿公网入口后回填）/mysql 依次 apply。
+2. 16:22 mysql-0 Ready（`statefulset.apps/mysql condition met`，约 1.5 分钟，调度至 node2）；PVC Bound。实测 MySQL 8.0.40，`log_bin_trust_function_creators=ON`，库 `manao_poc4_6b` 与用户 `manao` 自动创建。
+3. 16:23 backend apply（sed 替换 digest 引用）→ 首次启动 CrashLoop：`workspace capability key pair is required`（见问题 1）。
+4. 16:26 Secret `manao-backend-auth` 重建，rollout restart；16:27 Tomcat 8080 启动、Pod 1/1 Running（调度至 node1），readiness/liveness 均 `{"status":"UP"}`。
+5. 16:33 `app_user` 创建（见问题 2/3）；16:43 集群内登录实测 HTTP 200。
+
+**Flyway V1–V8**：后端日志 `Successfully validated 8 migrations` / `Current version of schema manao_poc4_6b: 8`；`flyway_schema_history` 实测 8 行全部 `success=1`（V1 initial schema … V8 project deleting state）；V3 trigger `workspace_operation_immutable_digest` 实测存在（BEFORE UPDATE ON workspace_operation，Definer `manao@%`，无 SUPER——binlog 旗标方案生效）。
+
+**Pod 内验证（kubectl exec backend）**：
+- 健康组：`/actuator/health/readiness` → `{"status":"UP","groups":["liveness","readiness"]}`；liveness UP。
+- 集群 API（应用健康组 kubernetes）：以 SA token 请求 `GET /api/v1/namespaces/manao-stage6b/pods?limit=1` → 200；RBAC 实测 `persistentvolumes list` → 200、`storageclasses get` → 200、`secrets list` → 403（符合最小权限设计：无 Secret 读权限）。
+- 集群 DNS：`mysql.manao-stage6b.svc.cluster.local` 与 `backend.manao-stage6b.svc.cluster.local` 均解析；DB FQDN 由 Flyway/Datasource 连接成功间接证实 TCP 3306 连通。
+- 服务直连：`http://backend.manao-stage6b.svc.cluster.local:8080/actuator/health/liveness`（ClusterIP 经集群 DNS）→ 200。
+
+**登录验证（集群内，经 backend Service）**：`POST http://backend:8080/api/v1/auth/login`（凭据经 stdin 进入 Pod 内临时文件、用后即删，未出现在命令行参数）→ **HTTP 200**，返回 `accessToken`（15m 有效期）、`expiresAt`、`user.username=app_user`。对照测试：错误密码 → 401 `UNAUTHENTICATED`（BCrypt 校验生效）。
+
+**遇到的问题与修复**：
+1. backend 首启 CrashLoop（`workspace capability key pair is required`）：生成 Ed25519 密钥对时 openssl 输出文件未落盘（临时目录变量为空），`--from-literal=CAPABILITY_...="$CAP_PRIV"` 注入了空值。修复：重新生成密钥对、按 Secret 键名重建 `manao-backend-auth`（实测 3 键均非空长度），rollout restart 后启动成功。属部署操作失误，非资产缺陷；README §2 命令本身正确。
+2. `app_user` INSERT 首次失败 `Field 'created_at' doesn't have a default value`：README §3 的 SQL 早于实际 schema（V1 的 `app_user.created_at` 为 NOT NULL 无默认值）。修复：INSERT 增加 `created_at = CURRENT_TIMESTAMP(6)` 后成功；README 修正随本轮提交（资产修正）。
+3. 登录 401 `Encoded password does not look like BCrypt`（存储哈希 40 字符、无 `$2b$12$` 前缀）：私有 env 文件值为未加引号形式，`source` 时 BCrypt 哈希中的 `$2`/`$12`/`$b` 被 shell 按位置参数展开，导致写入数据库的哈希被截断。修复：删除损坏行（该行本就不是有效 BCrypt 哈希，属损坏产物修复而非覆盖有效账号）、以 python 直接读文件重写参数化 SQL（不经 shell 变量展开）重新插入，实测存储哈希 60 字符 `$2b$12$` 前缀；env 文件值已全部单引号化防再发。登录随即 200。
+4. `kubectl cp` 拉取 jar 用于诊断时 unexpected EOF（文件截断）：改用 Pod 内 grep 完成诊断，未影响部署。
+
+**遗留项**：`MANAO_WS_EXTRA_ORIGIN` 为 NodePort 候选初值 `http://1.12.245.235:30080`，Task 3B 实测定稿后回填 ConfigMap 并 restart backend；MySQL 镜像 digest 硬化与 1.8 Maven 版本实测不在本轮范围。
 
 ## 3. Task 3 验收结果（占位）
 
