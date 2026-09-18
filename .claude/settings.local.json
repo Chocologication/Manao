@@ -37,5 +37,32 @@
       "Bash(oh-my-posh claude *)",
       "Bash(echo \"Exit: $?\")"
     ]
+  },
+  "skillOverrides": {
+    "arkcli-managed-agent": "off",
+    "arkcli-api-explorer": "off",
+    "arkcli-auth": "off",
+    "arkcli-billing": "off",
+    "arkcli-chat": "off",
+    "arkcli-code-example": "off",
+    "arkcli-config": "off",
+    "arkcli-connect": "off",
+    "arkcli-custommodel": "off",
+    "arkcli-deploy": "off",
+    "arkcli-doctor": "off",
+    "arkcli-gen": "off",
+    "arkcli-helper": "off",
+    "arkcli-infer-endpoint": "off",
+    "arkcli-models": "off",
+    "arkcli-onboard": "off",
+    "arkcli-plans": "off",
+    "arkcli-pricing": "off",
+    "arkcli-profile": "off",
+    "arkcli-resources": "off",
+    "arkcli-shared": "off",
+    "arkcli-train-finetune": "off",
+    "arkcli-understand": "off",
+    "arkcli-usage": "off",
+    "article-summarizer": "off"
   }
 }
