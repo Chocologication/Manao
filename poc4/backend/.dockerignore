@@ -1,7 +1,12 @@
 target/
 .git/
-.gitignore
+# Anchored to the context root only: the repo root .gitignore must not enter the
+# image, but the packaged template at src/main/resources/workspace-template/.gitignore
+# is a runtime classpath resource (WorkspaceTemplate.FILES) and MUST be copied.
+/.gitignore
 *.md
+# Anchored for the same reason: workspace-template/README.md is a runtime resource.
+/*.md
 *.log
 .idea/
 .vscode/
