@@ -1,3 +1,5 @@
+> **Current authority — 2026-09-17:** [Stage 6A current facts](Stage6A-Current-Facts.md) is the sole current 6A evidence document; [evolution timeline](Stage6A-Evolution-Timeline.md) records the decisions. The user has accepted the MVP lifecycle as 6A PASS and is preparing 6B. Content below is historical context, not the current 6A scope, gate or next-work authority.
+
 # Current Stage 6 Infrastructure Snapshot — 2026-09-10
 
 This section supersedes the dated 2026-09-02 measurements below where they differ. Historical SSH, registry and CRI notes are preserved rather than treated as freshly validated facts.
