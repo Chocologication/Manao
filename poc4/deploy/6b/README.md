@@ -15,9 +15,26 @@ Files:
 | `service-accounts.yaml` | `manao-backend` (token mounted), `manao-workspace-agent` and `manao-maven-runner` (no permissions, no token automount) |
 | `backend-rbac.yaml` | Namespace Role for workload resources + read-only ClusterRole (`list persistentvolumes`, `get storageclasses`) |
 | `backend.yaml` | Backend Service (ClusterIP 8080) + Deployment (replicas 1, Recreate, probes, full config contract) |
-| `frontend.yaml` | Frontend Service (ClusterIP 8080, commented NodePort alternative) + Deployment (replicas 1, probes); image placeholder must be substituted before apply |
-| `configmap.yaml` | Non-secret ConfigMap `manao-backend-config` (the two keys backend.yaml reads via configMapKeyRef) |
+| `frontend.yaml` | Frontend Service (**NodePort 30080**, commented ClusterIP alternative) + Deployment (replicas 1, probes); image placeholder must be substituted before apply |
+| `configmap.yaml` | Non-secret ConfigMap `manao-backend-config` (`MANAO_WS_EXTRA_ORIGIN` = accepted public origin, `MANAO_WORKSPACE_STORAGE_CLASS` = `manao-poc4-delete`) |
 | `config.example.env` | Template of every variable with its explanation (no real values) |
+
+## 0. Accepted build baseline (2026-09-18/19 acceptance)
+
+The acceptance record `poc4/docs/evidence/stage-6b/acceptance.md` is the
+authority for what was measured. The versions currently deployed and accepted
+(redeploy with exactly these digests to reproduce the accepted build; never
+redeploy a floating tag):
+
+| Component | Reference |
+| --- | --- |
+| Code baseline | branch `codex/poc4-stage-6b`; backend image built from commit `d1fad6d`; acceptance record finalized at commit `7706a15` |
+| Backend image | `chocologic/manao_images_repository@sha256:ac88b11b38096da9fd3056f264782fecd18f3d5a560f5cf3a4ddd670dd5609cf` (tag `6b-backend-20260918c`) |
+| Frontend image | `chocologic/manao_images_repository@sha256:887c2e9f9b9594d08c96a90d2e1fa4175bd6431e22479b647453583eb2e2699e` (tag `6b-frontend-20260918b`) |
+| MySQL | `mysql:8.0.40` (tag-pinned; optional digest hardening is described in the `mysql.yaml` comments) |
+| Workspace agent / maven runner / initializer images | digest-pinned, delivered via Secret `manao-backend-images` / the private env file (accepted: agent `sha256:bb0dd430…920c`, runner `sha256:6c93d34b…7f0c`, initializer `sha256:73aaf090…1662`) |
+| Namespace / schema | `manao-stage6b` / `manao_poc4_6b` |
+| Public origin | `http://1.12.245.235:30080` (NodePort 30080, plain HTTP — the transport limitation is recorded in the acceptance doc, sections 3 and 7.3) |
 
 ## 1. Build and publish the backend image
 
@@ -200,6 +217,15 @@ curl -s -X POST http://127.0.0.1:8080/api/v1/auth/login \
 MySQL or the Kubernetes API removes the pod from the Service without liveness
 kill loops; `startupProbe` gives the first Flyway run up to 5 minutes.
 
+After the frontend is deployed (section 8), verify the public entry from
+outside the cluster (measured values from the 2026-09-18 acceptance):
+
+```bash
+curl -s -o /dev/null -w '%{http_code}\n' http://1.12.245.235:30080/          # 200 (SPA index)
+curl -s -o /dev/null -w '%{http_code}\n' -X POST http://1.12.245.235:30080/api/v1/auth/login \
+  -H 'Content-Type: application/json' -d '{"username":"probe","password":"x"}'  # 401 proves the nginx->backend proxy chain
+```
+
 Restart / recovery:
 
 ```bash
@@ -207,11 +233,13 @@ kubectl -n manao-stage6b rollout restart deploy/backend   # keys are Secret-back
 kubectl -n manao-stage6b rollout status deploy/backend
 ```
 
-Data durability: the MySQL StatefulSet PVC (`mysql-data`, StorageClass
+Data durability: the MySQL StatefulSet PVC (`data-mysql-0`, StorageClass
 `nfs-storage`) survives pod rebuilds and reschedules. It deliberately does NOT
 use `manao-poc4-delete` (that class is reserved for project workspaces with
 delete-reclaim semantics) and carries no backend-managed project labels, so
-project cleanup can never touch it.
+project cleanup can never touch it. Section 9 covers the verified maintenance
+procedures (backend maintenance restart, MySQL pod rebuild, project deletion,
+and where the saved data lives).
 
 ## 5. Why `log_bin_trust_function_creators=1`
 
@@ -326,8 +354,13 @@ the static upstream address.
 
 ### 8.3 Public origin and WebSocket origin list
 
-When the public entry is enabled (whatever form it takes — existing server
-entry, NodePort, HTTPS termination):
+The accepted public entry (2026-09-18 measurement) is
+`http://1.12.245.235:30080`; the repository `configmap.yaml` ships that exact
+value in `MANAO_WS_EXTRA_ORIGIN`, matching the live cluster (plain HTTP — the
+transport limitation is recorded in section 0 and in the acceptance record).
+
+When the public entry is enabled or changed (whatever form it takes — existing
+server entry, NodePort, HTTPS termination):
 
 - If the public origin differs from what the backend already accepts, update
   the ConfigMap `manao-backend-config` key `MANAO_WS_EXTRA_ORIGIN` with the
@@ -337,3 +370,70 @@ entry, NodePort, HTTPS termination):
   `wss:` (RunLogTransport derives the WebSocket scheme from the page
   protocol); the nginx `/api/` block already forwards Upgrade/Connection
   headers, so no protocol change is needed on the internal hop.
+
+## 9. Day-2 operations (verified 2026-09-19, acceptance sections 5.2–5.8)
+
+Where to run: everything below is plain `kubectl` against the cluster API. The
+API endpoint `https://1.12.245.235:6443` was measured reachable from outside
+the server (2026-09-18), so maintenance can be executed from any machine that
+holds the operator/admin kubeconfig and credentials (kept in the operator's
+private directory, never in this repository) — the developer workstation does
+not need to be alive. Day-to-day workbench use needs only a browser and the
+public origin; the operator CLI is a maintenance path, not a usage dependency.
+A kubectl setup on the server itself was not established or verified in this
+round — record the actual execution location if that changes.
+
+Before any backend/MySQL maintenance, confirm no run is active (UI Run panel,
+or `GET /api/v1/runs/active` returning `{"run": null}`).
+
+### 9.1 Backend maintenance restart (measured ~57 s total window)
+
+```bash
+kubectl -n manao-stage6b scale deploy/backend --replicas=0
+# Recreate strategy: the Pod is gone within seconds; observe as long as needed
+kubectl -n manao-stage6b get pods -l app.kubernetes.io/name=manao-backend
+kubectl -n manao-stage6b scale deploy/backend --replicas=1
+kubectl -n manao-stage6b rollout status deploy/backend
+```
+
+Measured in the acceptance: Pod gone ~2 s after scale-down, deployment
+available ~17 s after scale-up (~57 s including a 30 s observation pause). The
+same ReplicaSet reuses the digest-pinned image — this is a restart, not a
+redeploy. Afterwards: re-login and confirm projects, files, run history and
+stored logs are unchanged, then start a run to verify the execution path.
+
+### 9.2 MySQL pod rebuild (data persists; measured ~35 s to Ready)
+
+```bash
+kubectl -n manao-stage6b delete pod mysql-0
+kubectl -n manao-stage6b get pods -w   # the StatefulSet recreates mysql-0 automatically
+```
+
+The StatefulSet recreates the Pod with the same identity; the PVC
+`data-mysql-0` (5Gi, StorageClass `nfs-storage`) stays Bound, so all data
+survives (verified in the acceptance: login, project, run history and a fresh
+run to SUCCEEDED after the rebuild). Never delete the PVC `data-mysql-0`.
+
+### 9.3 Project deletion (UI path) and interrupted-deletion continuation
+
+Delete from the browser only: project card -> **Delete project** -> native
+confirm dialog ("Delete project? … cannot be undone") -> **Delete
+permanently**. Measured: synchronous completion, `DELETE
+/api/v1/projects/{id}` -> 204, the card disappears and stays gone after
+reload; the workspace Pod/Service/PVC, run Jobs and DB rows are reclaimed and
+the project PV directory is removed from the NFS export (verified down to the
+filesystem in acceptance 5.6/5.8).
+
+If a deletion is ever interrupted and a project is stuck in the `DELETING`
+state, its project card shows a **Continue deletion** button that resumes the
+pending deletion (behavior inherited from Stage 6A, retained in the UI code;
+the 6B fault-injection validation was SKIPPED because no deletion-path change
+occurred and all four real deletions completed cleanly — see acceptance 5.4).
+
+### 9.4 Where the saved data lives (what survives what)
+
+| Data | Location | Survives |
+| --- | --- | --- |
+| MySQL schema `manao_poc4_6b` (projects, runs, logs, users) | PVC `data-mysql-0` -> PV `pvc-d6b6bc54…` (nfs-storage, 5Gi) | backend restart (9.1), MySQL pod rebuild (9.2), node reschedule |
+| Project files / workspace | per-project PVC `manao-pvc-<projectId>` (`manao-poc4-delete`, 10Gi RWX) | backend restart; **deleted together with the project** (Delete reclaim, verified to the NFS directory level) |
+| Platform config / secrets | namespace objects + registry digests | re-apply per sections 2–4 and 8 |

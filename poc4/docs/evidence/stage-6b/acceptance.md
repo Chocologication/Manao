@@ -170,7 +170,7 @@
 3. **验证**：Pod 内 `/actuator/health/readiness` 与 `/actuator/health/liveness` 均 `{"status":"UP"}`；公网入口以新凭据登录 **HTTP 200**（accessToken 签发，`user.username=app_user`），错误密码对照 **401**。
 4. **边界**：旧 JWT / capability 签名失效为预期（单用户，重新登录即可）；mysql root 密码未暴露给 backend Pod，不轮换；全部新凭据值未进入任何报告、提交或控制台输出。
 
-**RBAC 修复（控制器已裁决）**：`poc4/deploy/6b/backend-rbac.yaml` 的 Role `manao-backend-workload` 对 `batch/jobs` 增加 `patch` 动词（原 get/list/watch/create/delete 保持不变，未添加其他资源），apply 生效（Role configured，RoleBinding/ClusterRole/ClusterRoleBinding unchanged）。实证：`kubectl auth can-i patch jobs.batch -n manao-stage6b --as=system:serviceaccount:manao-stage6b:manao-backend` → **yes**（get/list/watch/create/delete 逐项复测均 yes）。该修复直接消除 §4.3/§4.4（09-18 23:44 轮）记录的 Start run 即 START_FAILED 根因；该事件对后续 E2E 的影响见 §4.0。
+**RBAC 修复（控制器已裁决）**：`poc4/deploy/6b/backend-rbac.yaml` 的 Role `manao-backend-workload` 对 `batch/jobs` 增加 `patch` 动词（原 get/list/watch/create/delete 保持不变，未添加其他资源），apply 生效（Role configured，RoleBinding/ClusterRole/ClusterRoleBinding unchanged）。实证：`kubectl auth can-i patch jobs.batch -n manao-stage6b --as=system:serviceaccount:manao-stage6b:manao-backend` → **yes**（get/list/watch/create/delete 逐项复测均 yes）。该修复直接消除 §4.2.c/§4.2.d（09-18 23:44 轮）记录的 Start run 即 START_FAILED 根因；该事件对后续 E2E 的影响见 §4.0。
 
 ### 2.2 打包缺陷修复与新镜像部署（2026-09-19 00:45–01:25 +08:00，Task 4 阶段 B）
 
@@ -257,7 +257,7 @@
 
 ### 4.1 历史轮二（09-19 00:23，打包缺陷根因——已修复，见 §2.2）
 
-> 以下 4.2–4.6 原编号 4.0（00:23 轮）记录，保留作历史证据；其根因（已验收镜像 jar 缺 `workspace-template/.gitignore`）已由 §2.2 的打包修复 + 新镜像 `sha256:ac88b11b…` 修复，遗留项目 `049b4aa6…` 已在最终轮前置清理中删除。
+> 本节为 09-19 00:23 轮的原始记录，保留作历史证据；其根因（已验收镜像 jar 缺 `workspace-template/.gitignore`）已由 §2.2 的打包修复 + 新镜像 `sha256:ac88b11b…` 修复，遗留项目 `049b4aa6…` 已在最终轮前置清理中删除。
 
 - **前置（全部完成，见 §2.1）**：backend 镜像回钉至已验收 `sha256:5708a4b7…`；JWT/capability/app_user 凭据全量轮换并实测（健康组 UP、新凭据公网登录 200）；Role 已授 `jobs.batch patch`（can-i → yes）。
 - **残留清理（前置）**：09-18 23:44 轮遗留项目 `6839f32c-ec9f-46b4-a9f6-2e4f1d6dfa52`（`stage6b-cloud-20260918154446-rfp1`）以轮换后新凭据经真实公网 API `DELETE /api/v1/projects/{id}` → **HTTP 204**；GET 列表 → `items: []`、单项 → **404 `ENTRY_NOT_FOUND`**；admin kubectl 核对 `manao-ws-6839f32c-*` Pod/Service、`manao-pvc-6839f32c-*` PVC 消失，PV `pvc-3d0c413c-…` **NotFound**（`manao-poc4-delete` Delete 回收实测生效），无 Job 残留。项目配额回到 0/8。
@@ -285,12 +285,12 @@
 
 ### 4.2 历史轮一（09-18 23:44，RBAC 根因——已修复，见 §2.1）
 
-> 以下小节保留原 4.1–4.5 编号，为 09-18 23:44 轮的原始记录，保留作历史证据；其根因（Role 缺 `patch`）已于 09-19 修复并验证（§2.1），该轮遗留项目 `6839f32c…` 已于 09-19 00:22 经公网 API 删除（见 4.1 前置）。
+> 以下小节（4.2.a–4.2.e）为 09-18 23:44 轮的原始记录，保留作历史证据；原编号 4.1–4.5 与顶层 §4.1/§4.2 重号，已于 Task 6（2026-09-19）改为带前缀编号。其根因（Role 缺 `patch`）已于 09-19 修复并验证（§2.1），该轮遗留项目 `6839f32c…` 已于 09-19 00:22 经公网 API 删除（见 §4.1 前置）。
 
 - 记录时间：2026-09-18 23:59 (+08:00)；E2E 窗口 23:44:44–23:58:41 (+08:00)；残留清理窗口约 23:40–23:43 (+08:00)
 - 执行者：Task 4 阶段 B 重跑（第一次 Task 4B 运行因集群问题被用户中断，本轮为如实重跑）
 
-### 4.1 运行前环境与残留清理（实测）
+### 4.2.a 运行前环境与残留清理（实测）
 
 - 公网入口：`GET http://1.12.245.235:30080/` → 200；登录探针（不存在用户）→ 401。本机 Vite/Spring Boot 未运行；本机 MySQL 保留运行（用户豁免，其他业务在用），E2E 全程仅浏览器 + 公网入口。
 - 集群恢复观察（admin kubectl，只读）：backend/frontend/mysql-0 均 Running；**全部容器在 23:33 前后（+08:00）集体重启**（startup BackOff 后恢复，属集群重启恢复尾部），本轮 E2E 全程平台无再重启。
@@ -302,7 +302,7 @@
   - admin kubectl 核对：`manao-ws-ddaca1c0-*` Pod/Service 消失、`manao-pvc-ddaca1c0-*` PVC 消失、对应 PV `pvc-11d48b0e-…` 已 NotFound（`manao-poc4-delete` Delete 回收策略实测生效）；无残留 Job。删除链路 API→DB→K8s→PV 全链路实测通过。
 - admin kubectl 通道事实：用户侧 127.0.0.1:6443 本地转发本轮不可用；实测集群 API 公网端点 `https://1.12.245.235:6443` 可达（证书 SAN 含 127.0.0.1，不含公网 IP），在私有目录（不入库、不提交）建立 admin kubeconfig 副本以继续只读观察。
 
-### 4.2 E2E 实测结果（`pnpm --dir poc4/frontend test:e2e:stage6b`，env 注入凭据）
+### 4.2.b E2E 实测结果（`pnpm --dir poc4/frontend test:e2e:stage6b`，env 注入凭据）
 
 | # | test | 结果 | 用时 |
 |---|---|---|---|
@@ -317,7 +317,7 @@
 - 失败工件保留（不删除）：`poc4/frontend/test-results/stage6b-cloud-lifecycle-st-9f761-ILED-with-compiler-feedback-stage6b-cloud/`（trace.zip、video.webm、test-failed-1.png、error-context.md）。
 - 集群佐证（admin kubectl，只读）：workspace `manao-ws-6839f32c-…` Pod/Service 创建并 Running（node1），PVC `manao-pvc-6839f32c-…`（10Gi RWX，`manao-poc4-delete`）Bound → 新 PV `pvc-3d0c413c-…`；initializer `manao-ws-init-…`（busybox probe-permissions）Completed。**运行 Job `manao-run-d2460769-…` 自始至终不存在**，无任何 run Pod/Job 事件。
 
-### 4.3 失败根因（实测证据链）
+### 4.2.c 失败根因（实测证据链）
 
 1. UI 侧：点击 Start run 后 `POST /api/v1/projects/{id}/runs`（body `{"expectedWorkspaceRevision":"23"}`）→ **HTTP 503** `{"code":"INTERNAL_ERROR","message":"Request failed","traceId":"fcef2f71-2b7a-48dc-984e-51af4fc35fd1"}`（Playwright trace network 实录）。前端 `Run state` 状态元素停留在 "Idle"，测试等待 780s 后失败。
 2. DB 侧（API 只读核对）：run `d2460769-…` 于 `15:45:12.225633Z` 创建、`15:45:12.266381Z` 即终态（**40ms**），`state=FAILED`、`terminationReason=START_FAILED`、无日志。revision 校验本身通过（23 匹配）——即 RunService 在 `ensureJob` 抛异常后 settle START_FAILED 并回 503 的路径。
@@ -326,7 +326,7 @@
 5. 直接原因（实测）：`Fabric8JobCoordinator.ensureJob` 对 Job 使用 **`serverSideApply()`（PATCH）**（自 `301a8e6` 引入），而 6B Role `manao-backend-workload`（仓库 `poc4/deploy/6b/backend-rbac.yaml`，commit `b4e181c`，与集群 live 一致）对 `batch/jobs` 只授 `get,list,watch,create,delete`——**无 `patch`**。实证：`kubectl auth can-i patch jobs.batch --as=system:serviceaccount:manao-stage6b:manao-backend` → **no**（`create` → yes）。对照：workspace Pod/Service/PVC 走 `Fabric8KubernetesGateway` 的 `.create()`（create 动词）全部成功——与「创建 READY 正常、Start run 即败」的现象完全一致。
 6. 为什么 6A 未暴露：6A 本地集群 SA 对 `jobs.batch` 为全权（含 patch）；6B 部署资产在收窄动词时未对账代码实际使用的 PATCH 传输。
 
-### 4.4 缺陷定性（BLOCKED 待裁决）
+### 4.2.d 缺陷定性（BLOCKED 待裁决）
 
 - **业务/部署资产缺陷**（非测试资产缺陷，测试选择器与等待行为正常且如实反映了用户可见结果）：修复方向二选一，均需裁决且按 brief「先加能复现问题的回归再修复」：
   1. RBAC 侧：`poc4/deploy/6b/backend-rbac.yaml` 为 `batch/jobs` 增加 `patch`（若保留 serverSideApply 传输）；
@@ -334,13 +334,13 @@
   - 伴生问题（同批裁决）：`RunService` catch 路径无日志（故障静默）；START_FAILED 时前端 Run state 停留 "Idle"、用户得不到任何可见反馈（本次测试失败的直接表现）。
 - 裁决与修复后需**从头重跑完整 6 test 场景**（新项目名、新 run id），本轮项目与记录不作为通过依据。
 
-### 4.5 B1–B3 证据对应（Task 4 范围）
+### 4.2.e B1–B3 证据对应（Task 4 范围）
 
 - **B1（无本机依赖、公网完成流程）**：部分成立——登录、创建、READY、编辑保存全部经公网入口真实 UI 完成（test 1/2 passed），本机应用依赖为零；「完整流程」因 B2 阻塞未完成，不宣称通过。
 - **B2（同一界面完成创建/编辑保存/真实失败反馈/修复运行成功/再次编辑）**：**失败证据在案**——创建、编辑保存已过；「真实失败反馈」环节后端 Start run 即 START_FAILED（40ms、无 Job、503），前端无任何失败反馈（Run state 停留 Idle），后续修复运行/再次编辑均未执行。
 - **B3（日志实时、终态与 Run/Job 一致、刷新与重登持久化）**：未执行（serial 中断），无证据。
 
-## 5. Task 5 验收结果（2026-09-19 01:57–02:10 +08:00，阶段 B：持久化验证与最终删除）
+## 5. Task 5 验收结果（2026-09-19 01:57–02:12 +08:00，阶段 B：持久化验证与最终删除；结束时间原记 02:10，Task 6 按 task-5 报告核对统一为 02:12）
 
 - **结果：PASSED。沿用 Task 4 §4.0 验收项目 `da577551-0ee9-4d95-8f03-16225625c589`（`stage6b-cloud-20260918173926-c6bn`）完成后端维护重启与 MySQL 正常重建的持久化验证（各再真实运行一次到终态），最后经浏览器 UI 手动删除并独立核对集群/存储/DB 全链路清理。全程正式部署身份（app_user 经公网入口 `http://1.12.245.235:30080` 登录），无本机应用依赖。**
 - 执行身份与边界：业务操作（登录、验证、删除）全部经公网入口 `http://1.12.245.235:30080` 与 app_user；kubectl admin 仅用于运维动作（scale/delete/exec 只读查询）与资源观察，未触业务 API 路径。本机 Vite/Spring Boot 未运行（开窗 netstat 实测无 5173/18080 监听），本机 MySQL 保留（用户豁免，未参与云端链路）。凭据仅从私有 env 读取，未入报告/提交/命令行参数。
@@ -391,7 +391,7 @@
 | run Job `manao-run-1776cb9b/8ee1a7f5/…`（含 Pod） | 同上 + name grep | **消失**（对 da577551/1776cb9b/8ee1a7f5/5f129f49/dbeff9c3 全部无匹配） |
 | PVC `manao-pvc-da577551-*` | 同上 | **消失** |
 | 绑定 PV `pvc-89121e22-13f9-4c37-a6ad-981d079612e2` | `kubectl get pv` grep | **NotFound（已回收；`manao-poc4-delete` reclaimPolicy=Delete + onDelete=delete）** |
-| NFS 存储目录直查 | provisioner exec | **未直接执行**（provisioner 镜像无 shell 可 exec；可选项）：以 PV 对象 NotFound + 同 StorageClass 此前四轮删除实测生效为依据 |
+| NFS 存储目录直查 | busybox 临时 Pod 挂载 NFS export（Task 6 有界诊断补查，见 §5.8） | **对应子目录 ABSENT（真删除、未归档）**，详见 §5.8 |
 | DB `project` 行（manao_poc4_6b） | exec mysql-0 逐表 SELECT COUNT | **0**（且 project 全表 0 行，配额回到 0/8） |
 | DB `run` 行 | 同上 | **0** |
 | DB `run_log_chunk`（经 run JOIN） | 同上 | **0** |
@@ -408,15 +408,61 @@
 - **B4（最后手动删除确实回收同一验收项目的应用记录和资源）**：成立——删除经真实浏览器 UI 完成（对话框确认 + DELETE 204 + 列表消失），5.6 独立核对表显示集群资源、PV、DB 关联行全部回收，MySQL 卷保留。「不假成功与显式续作」行为保留在代码中，故障注入按 5.4 裁决 SKIPPED。
 - **B5（后端与 MySQL 各正常重建一次后数据可用、可再运行）**：成立——5.2 后端 scale 0→1（约 57s 窗口）与 5.3 mysql-0 重建（PVC 保留）后，文件/revision/历史/已落库日志全部保留，各再真实运行一次到 SUCCEEDED 终态。workspace 主动重建按 5.4 裁决 SKIPPED；未遇活动 Run 中断场景。
 
-## 6. Task 6 验收结果（占位）
+### 5.8 NFS 目录直查补记（2026-09-19，Task 6 有界诊断，controller 已批准）
 
-- [ ] 结果：待填
+- 背景：§5.6 原记录「NFS 存储目录直查未直接执行」（provisioner 镜像无 shell 可 exec），以 PV 对象 NotFound + 同 StorageClass 历史删除为替代依据。本节为 Task 6 的有界补查，关闭该缺口。
+- 方法（命令摘要，admin kubectl）：在 `manao-stage6b` 创建一次性 busybox Pod（`manao-6b-nfs-check`，镜像 `busybox@sha256:73aaf090…1662` 与 §1.7 initializer 同源，节点已缓存无新拉取），挂载 NFS export 后仅执行只读 `ls`，随即删除 Pod（实测确认已消失，未触碰任何文件）。NFS server/path 取自 provisioner 部署 `default/nfs-client-provisioner` 的 env（`NFS_SERVER=172.16.0.5`、`NFS_PATH=/nfs/data`）——`manao-poc4-delete` StorageClass 本身不带 server/path 参数，provisioner 级配置为准。
+- 命令要点：`ls -1 /check | wc -l`（220 个条目）+ 按 PV uid 前缀对 5 个目标 grep：`89121e22`（验收项目 PV `pvc-89121e22-13f9-4c37-a6ad-981d079612e2`）、`d6b6bc54`（在卷 data-mysql-0，阳性对照）、`3d0c413c`（已删 6839f32c）、`11d48b0e`（已删 ddaca1c0）、`29ec5a5e`（已删 2a39726e）。
+- **结论**：验收项目 PV `pvc-89121e22…` 对应子目录在 NFS export 中 **ABSENT（hits=0）**，且无 `archived-…pvc-89121e22…` 归档条目——`manao-poc4-delete`（`onDelete: delete` + `reclaimPolicy: Delete`）在 NFS 文件系统层面为真删除、无归档残留。阳性对照成立：在卷 PV `pvc-d6b6bc54…` 目录存在（`manao-stage6b-data-mysql-0-pvc-d6b6bc54-…`）；另三个已删项目 PV（`3d0c413c`/`11d48b0e`/`29ec5a5e`）均 ABSENT（hits=0）。export 根条目命名形如 `<namespace>-<pvcName>-<pvName>`（nfs-storage 类的删除归档条目带 `archived-` 前缀，与两 SC 参数差异一致）。
 
-## 7. B1-B6 缺口清单（占位）
+## 6. Task 6 验收结果（2026-09-19，文档定稿与阶段汇总）
 
-- [x] B1：成立（Task 4 §4.0 最终轮：登录、创建、READY、编辑保存、两次真实运行、持久化复核全部经公网入口真实 UI 完成，本机应用依赖为零）
-- [x] B2：成立（Task 4 §4.0 最终轮：同一界面完成创建 → 编辑保存 → 真实失败反馈（FAILED + 编译错误文本）→ 修复运行 SUCCEEDED + 成功输出 → 终态后再次编辑保存）
-- [x] B3：成立（Task 4 §4.0 最终轮：Run logs 实时展示；终态与 API 记录、集群 Job 状态三方一致；刷新与退出重登后项目/文件/run 历史/revision 全部保留）
-- [x] B4：成立（Task 5 §5.5/§5.6：同一验收项目经浏览器 UI 手动删除，DELETE 204、列表消失、reload 不复现；独立核对集群 workspace/initializer/Job/Service/PVC 全部消失、PV `pvc-89121e22…` 已回收、DB 七张关联表逐表 COUNT=0、project 全表 0 行；MySQL 卷保持 Bound。不假成功与显式续作行为保留在代码中，故障注入按 §5.4 裁决 SKIPPED——触发条件未满足）
-- [x] B5：成立（Task 5 §5.2/§5.3：后端维护重启 scale 0→1 与 mysql-0 StatefulSet 重建（PVC 保留）各一次，revision 25、文件内容、run 历史与已落库日志全部保留，且各再真实运行一次到 SUCCEEDED/BUILD_SUCCEEDED 终态；workspace 主动重建按 §5.4 SKIPPED，未承诺活动 Run 中断续接）
-- [ ] B6：
+- [x] 结果：PASS。交付/定稿两份正文文档并建立入口链接（索引只链接、不复制正文）：
+  - **`poc4/deploy/6b/README.md`（部署与维护）**：新增 §0「已验收版本基线」（分支/构建 commit、backend `sha256:ac88b11b…`（tag `6b-backend-20260918c`）/frontend `sha256:887c2e9f…`（tag `6b-frontend-20260918b`）/MySQL 8.0.40/三个平台镜像 digest/namespace/公网入口）；新增 §9「Day-2 运维」（执行位置说明、后端维护重启 scale 0→1 约 57s、mysql-0 StatefulSet 重建保留 PVC 约 35s、项目 UI 删除与 DELETING → Continue deletion 续作、数据位置表）；§4 修正 MySQL PVC 名（`data-mysql-0`，原笔误 `mysql-data`）并补公网入口冒烟检查（200/401 实测值）；Files 表修正 frontend.yaml 实为 NodePort 30080、configmap.yaml 说明。配套资产修正：`configmap.yaml` 按其自身注释回填定稿值 `MANAO_WS_EXTRA_ORIGIN: http://1.12.245.235:30080`（与集群 live 一致，消除空占位导致重部署不可复现的缺口）。凭据不出现在任何文档。
+  - **`poc4/docs/evidence/stage-6b/acceptance.md`（本文件）**：§4 子节重编号消除 4.1/4.2 重号（原 §4.2 下保留的 4.1–4.5 改为 4.2.a–4.2.e，§2.1 交叉引用同步）；§5 结束时间按 task-5 报告统一为 01:57–02:12；§5.6 NFS 直查行由「未直接执行」改为引用 §5.8 补查结论；§5.8 新增 NFS 目录直查补记；本节与 §7 阶段汇总。
+  - **入口链接**：`poc4/frontend/README.md` 与 `docs/what-we-have-done.md` 各新增 6B 状态小节，链向上述两份文档（仓库内相对路径）；不重复部署步骤或验收明细，6A 历史事实原文保留。
+- [x] 临时文件清理（gitignored 路径，先盘点后删除，无运行时资源被删）：
+  - 删除 `.superpowers/sdd/2026-09-18-stage6b-cloud-workbench-implementation-plan/tmp/t5-verify-ui.cjs`、`tmp/t5-delete-ui.cjs`（Task 5 临时 Playwright 脚本；方法与选择器策略已记录于 §5/§5.5 及 task-5-report.md，无未解决失败需要脚本佐证）。
+  - 删除 `poc4/frontend/test-results/`（内容为 `.last-run.json`（status=passed）+ 3 个空目录；§4.1/§4.2 所列失败工件实际已被后续重跑的 Playwright outputDir 机制清空（§4.0 已记录），无未解决失败证据需要保留）。
+  - 保留不动：`.superpowers/sdd/…/` 下的 task brief/report、review diff、未知镜像诊断 JSON（a57*/b57*，§2.1 事件原始记录）、progress.md；`.superpowers/sdd/2026-08-27-*/` 旧计划目录。
+- [x] NFS 目录直查补查（controller 批准的有界诊断）：结论与命令摘要见 §5.8——验收项目 PV 子目录在 NFS export 中 ABSENT，§5.6 该项缺口关闭。
+
+## 7. 阶段验收汇总（B1–B6）与 STAGE6B_MVP_CLOUD_PASS
+
+### 7.1 逐项状态
+
+| 编号 | 状态 | 证据（本文件小节） |
+| --- | --- | --- |
+| B1 无本机运行依赖，从公网 IP 登录并完成完整流程 | **PASS** | §4.0（E2E 6 test 全程仅浏览器 + `http://1.12.245.235:30080`；创建→编辑→两次真实运行→持久化复核；开窗 netstat 实测本机无 5173/18080 监听） |
+| B2 同一界面完成创建、编辑保存、真实失败反馈、修复运行成功、再次编辑 | **PASS** | §4.0 test 3–5（真实 FAILED + `cannot find symbol`/`missingSymbol` 编译反馈 → 修复运行 SUCCEEDED + 成功输出 → 终态后再次编辑保存） |
+| B3 日志实时到达，终态与真实 Run/Job 一致；刷新或重新登录可查看持久化内容 | **PASS** | §4.0（Run logs 实时；终态与 API 记录、集群 Job `Complete 1/1`/`Failed 0/1` 三方一致；test 6 刷新与退出重登后项目/文件/run 历史/revision 全部保留）；§5.2/§5.3 重启后已落库日志可读 |
+| B4 最后手动删除回收同一验收项目的应用记录和资源；不假成功与显式续作；故障验证按触发条件执行 | **PASS** | §5.5（浏览器 UI 删除，DELETE 204、列表消失、reload 不复现）+ §5.6 独立核对表 + §5.8 NFS 目录直查（子目录 ABSENT、未归档）。删除故障注入测试 **SKIPPED**（触发条件未满足，§5.4）；「不假成功/Continue deletion」行为保留在代码中（6A 已验收），本轮未再触发 |
+| B5 分别正常重建一次后端和 MySQL 后，已保存数据仍可用且能再次运行 | **PASS** | §5.2（scale 0→1 约 57s；run `dbeff9c3` SUCCEEDED）+ §5.3（mysql-0 重建约 35s、PVC 保留；run `5f129f49` SUCCEEDED）。workspace Pod 主动删除测试 **SKIPPED**（触发条件未满足，§5.4；09-18 23:33 集群集体重启已自然验证工作区恢复）；不承诺活动 Run 中断无损续接 |
+| B6 单用户可按文档完成部署和维护；固定版本、账号初始化、存储与入口限制记录完整 | **PASS** | §6（本任务）：`poc4/deploy/6b/README.md` 给出镜像构建/发布（§1/§8.1）、私有配置与账号初始化（§2/§3）、应用顺序与健康检查（§4/§8.2）、公网地址（§0/§8.3）、停止/恢复与 Day-2 运维（§9）、数据位置（§4/§9.4）、入口限制（HTTP 明文，§0/§8.3）；固定版本基线见 §7.2；凭据不入库不入报告 |
+
+条件测试汇总：workspace Pod 主动删除、删除故障注入均 **SKIPPED**（触发条件未满足，§5.4），不计作 PASS；按计划 §6.2 不阻塞本轮交付。
+
+### 7.2 构建与验收标识汇总
+
+| 项 | 值 |
+| --- | --- |
+| 分支 | `codex/poc4-stage-6b` |
+| 验收记录基线 commit | `7706a15`（Task 5 收尾；backend 镜像源码 commit `d1fad6d`，§2.2；Task 6 文档定稿随本提交） |
+| backend 镜像 | `chocologic/manao_images_repository@sha256:ac88b11b38096da9fd3056f264782fecd18f3d5a560f5cf3a4ddd670dd5609cf`（tag `6b-backend-20260918c`） |
+| frontend 镜像 | `chocologic/manao_images_repository@sha256:887c2e9f9b9594d08c96a90d2e1fa4175bd6431e22479b647453583eb2e2699e`（tag `6b-frontend-20260918b`） |
+| MySQL | `mysql:8.0.40`（tag 固定；digest 硬化留运维执行，README §mysql.yaml 注释） |
+| 平台镜像（digest 钉定） | workspace agent `sha256:bb0dd43023e02ec50738c76656f9319d8949ef5911a8f8bf668d4bb007ae920c`、maven runner `sha256:6c93d34b317a98736d553d6891626471ff02578317c7358fbc140cb5ac957f0c`、initializer `sha256:73aaf090f3d85aa34ee199857f03fa3a95c8ede2ffd4cc2cdb5b94e566b11662`（§1.7） |
+| PUBLIC_ORIGIN | `http://1.12.245.235:30080`（NodePort，HTTP 明文——传输限制单独记录，见 §3「公网入口定稿」与 §7.3） |
+| 验收项目 | `stage6b-cloud-20260918173926-c6bn`（projectId `da577551-0ee9-4d95-8f03-16225625c589`，已删除） |
+| broken / fixed run | `8ee1a7f5-a913-42f3-8b88-7e1c9067a372`（FAILED/BUILD_FAILED）/ `1776cb9b-de9f-46a3-927d-3119f2ac47c3`（SUCCEEDED/BUILD_SUCCEEDED），§4.0 |
+| 持久化验证 run | `dbeff9c3-84ff-4c1a-98fa-68282173b577`、`5f129f49-8d5c-420c-be97-f2b4df813307` 均 SUCCEEDED（§5.2/§5.3，随项目删除一并回收） |
+| 时间线（+08:00） | Task 1 环境检查 09-18 13:48 起 → Task 2 部署 16:20–16:58（记录 17:00）→ Task 3 17:05–17:20（记录 17:30）→ Task 4 最终轮 09-19 01:39:24–01:42:14（历史轮 23:44 / 00:23 / 01:25 / 01:33 见 §4.2/§4.1/§4.0）→ Task 5 01:57–02:12 → Task 6 09-19 文档定稿 |
+| 实际清理结果 | 验收项目及全部临时项目（`6839f32c`/`ddaca1c0`/`2a39726e`/`5d192f57`/`049b4aa6`）经真实 API/UI 删除：workspace Pod/Service/initializer/Job/PVC 消失、PV 对象回收，其中 4 个 PV 在 NFS export 层直查 ABSENT（§5.8）、DB 七张关联表逐表 COUNT=0、project 全表 0 行（配额 0/8）；MySQL 卷 `data-mysql-0` 保留 Bound；`manao-stage6-test` 旧资源未触碰 |
+
+### 7.3 STAGE6B_MVP_CLOUD_PASS
+
+**STAGE6B_MVP_CLOUD_PASS**（2026-09-19，Task 6 记录）：
+
+- B1–B6 全部 **PASS**（§7.1），必需项与已触发条件项均有当前部署的通过证据；两项条件测试 **SKIPPED**（触发条件未满足，§5.4），按计划 §6.2 不阻塞交付、不宣称通过。
+- 边界（如实记录，不虚构安全或可用性认证）：公网入口为 **HTTP 明文**（NodePort 30080，无 TLS 终止），登录凭据与 JWT 随公网明文传输——HTTP 明文传输限制单独记录于 §3「公网入口定稿」；HTTPS 待复用既有服务器入口后启用，届时同步更新 `MANAO_WS_EXTRA_ORIGIN`。资源配额沿用 6A「8 项目」运行事实（本轮配额读数身份 Forbidden，§1.4/§1.5）；kubectl 客户端 1.34 对服务端 1.31 的偏斜告警为已知事实（§1.2）。
+- 停止扩张规则（计划 §6.2）：首次闭环已达成，后续仅修 B1–B6 违例；无新失败证据不扩展全量故障矩阵、PTY 压力、自动清理器、多副本或新平台组件。
