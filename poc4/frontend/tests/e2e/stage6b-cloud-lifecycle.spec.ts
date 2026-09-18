@@ -197,9 +197,15 @@ test.describe.serial('stage6b cloud lifecycle', () => {
     await signIn(page);
     await openProject(page);
 
-    // Reload: project, saved file content, and both terminal runs survive.
+    // Reload: project, saved file content, and both terminal runs survive on the
+    // server. The access token is deliberately memory-only (authSession never
+    // writes localStorage/sessionStorage), so a reload lands on the login page;
+    // re-authenticate and re-enter the project — the same reload pattern as the
+    // stage4 persistence spec. What must persist is the server-side scene.
     await page.reload();
-    await expect(page.getByRole('heading', { name: SCENE.projectName })).toBeVisible();
+    await expect(page.getByLabel('Username')).toBeVisible();
+    await signIn(page);
+    await openProject(page);
     await openAppFile(page);
     await expect(monacoViewLines(page)).toContainText(FINAL_EDIT_MARKER);
     await assertRunHistoryPreserved(page);
