@@ -68,12 +68,16 @@ spec:
           volumeMounts:
             - name: data
               mountPath: /var/lib/mysql
+          # Probes run WITHOUT credentials on purpose: a passwordless `mysqladmin ping`
+          # fails fast on connection refused (server down) and reports alive when the
+          # server answers at all; passing the root password would leak it into the
+          # probe process command line (visible in /proc and events).
           readinessProbe:
             exec:
               command:
                 - sh
                 - -c
-                - mysqladmin ping -h 127.0.0.1 -u root -p"$MYSQL_ROOT_PASSWORD" --silent
+                - mysqladmin ping -h 127.0.0.1 --silent
             initialDelaySeconds: 20
             periodSeconds: 10
             timeoutSeconds: 5
@@ -82,7 +86,7 @@ spec:
               command:
                 - sh
                 - -c
-                - mysqladmin ping -h 127.0.0.1 -u root -p"$MYSQL_ROOT_PASSWORD" --silent
+                - mysqladmin ping -h 127.0.0.1 --silent
             initialDelaySeconds: 60
             periodSeconds: 15
             timeoutSeconds: 5

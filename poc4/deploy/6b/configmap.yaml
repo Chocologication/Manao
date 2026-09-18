@@ -1,0 +1,25 @@
+# Non-secret backend configuration referenced by backend.yaml via configMapKeyRef.
+# backend.yaml reads exactly these two keys from ConfigMap manao-backend-config; if this
+# ConfigMap is missing, the backend Pod fails with CreateContainerConfigError.
+# Every credential and digest-pinned image reference lives in Secrets (see README section 2).
+#
+# MANAO_WS_EXTRA_ORIGIN: fill with the EXACT public origin (protocol + host + port) of the
+#   final web entry. It must equal PUBLIC_ORIGIN and must never be "*". Leave the empty
+#   placeholder only until Task 3 verifies the entry point (Stage 6B acceptance 1.10);
+#   then edit this manifest and re-apply. WebSocketConfig appends it verbatim to the
+#   allowed same-origin list.
+# MANAO_WORKSPACE_STORAGE_CLASS: Task-1-verified reclaim-capable RWX StorageClass for
+#   project workspaces (manao-poc4-delete: Delete reclaim, archiveOnDelete=false,
+#   onDelete=delete). This manifest ships the verified default; do not change without a
+#   new StorageClass verification record.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: manao-backend-config
+  namespace: manao-stage6b
+  labels:
+    app.kubernetes.io/part-of: manao
+    app.kubernetes.io/stage: 6b
+data:
+  MANAO_WS_EXTRA_ORIGIN: ""
+  MANAO_WORKSPACE_STORAGE_CLASS: manao-poc4-delete
