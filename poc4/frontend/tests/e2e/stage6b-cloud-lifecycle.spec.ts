@@ -205,7 +205,9 @@ test.describe.serial('stage6b cloud lifecycle', () => {
     await page.reload();
     await expect(page.getByLabel('Username')).toBeVisible();
     await signIn(page);
-    await openProject(page);
+    // Login returns to the pre-reload deep link, landing inside the project
+    // itself (no list detour), so assert the heading directly here.
+    await expect(page.getByRole('heading', { name: SCENE.projectName })).toBeVisible();
     await openAppFile(page);
     await expect(monacoViewLines(page)).toContainText(FINAL_EDIT_MARKER);
     await assertRunHistoryPreserved(page);
@@ -273,7 +275,10 @@ async function signIn(page: Page): Promise<void> {
   const body = (await (await loginResponse).json()) as { accessToken?: string };
   expect(typeof body.accessToken, 'login must issue an access token').toBe('string');
   SCENE.accessToken = body.accessToken!;
-  await expect(page).toHaveURL(/\/projects$/);
+  // Login normally lands on the list; after an unauthenticated reload the app
+  // returns to the pre-reload deep link (RequireAuth `state.from` -> login
+  // `resolvePostLoginPath`), so both /projects and /projects/{id} are valid.
+  await expect(page).toHaveURL(/\/projects(\/[0-9a-f-]+)?$/);
 }
 
 async function createProject(page: Page, name: string): Promise<void> {
