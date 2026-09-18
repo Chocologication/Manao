@@ -1,6 +1,6 @@
 # Stage 6A 当前事实现状与验收记录
 
-更新日期：2026-09-17（Asia/Shanghai）
+更新日期：2026-09-18（Asia/Shanghai）
 性质：**当前 6A 阶段唯一现行证据文档**。历史报告和原始 JSON/截图只作为本文件引用的来源附件，不再各自发布当前阶段结论。决策演变见 [时间线](Stage6A-Evolution-Timeline.md)。
 
 ## 1. 阶段结论
@@ -27,7 +27,14 @@
 
 ## 2. 代码基线和取证方式
 
-### 2.1 实际实现位置
+### 2026-09-18 集成交接更新
+
+- 按用户要求，将完整 6A 源码及留存证据提交为 `b555c69`，以 `--no-ff` 集成到 master，再从该集成结果创建 `codex/poc4-stage-6b`。
+- 下面 2.1 节保留 09-17 核查快照；其中未提交、未合并的描述已被此次集成取代。删除组件、测试配置及列出的原始附件均已纳入版本控制。文档链接已改为仓库内路径。
+- 此次集成检查：前端 66 个测试文件 / 1175 个测试通过，类型检查与生产构建通过；后端 `mvn -DskipTests package` 成功。未重跑后端全量测试或真实集群验收，原有证据边界不变。
+
+
+### 2.1 实际实现位置（2026-09-17 历史快照）
 
 - 主检出：`D:/DeepLearning/MyProjects/Project_Manao`，分支 `master`，HEAD `a3268aa70fe5b02767e3bab99985879e9e8b46e3`。
 - **实现工作树：** `D:/DeepLearning/MyProjects/Project_Manao/.worktree/ensoai-stage-6-real-backend-kubernetes`。
@@ -39,8 +46,8 @@
 
 | 文件 | 影响 |
 | --- | --- |
-| [DeleteProjectDialog.tsx](../.worktree/ensoai-stage-6-real-backend-kubernetes/poc4/frontend/src/features/projects/DeleteProjectDialog.tsx) | 被 ProjectsPage 实际导入的生产组件；仅 checkout HEAD 会缺失该文件 |
-| [playwright.project-deletion.config.ts](../.worktree/ensoai-stage-6-real-backend-kubernetes/poc4/frontend/playwright.project-deletion.config.ts) | package.json 的删除 UI 测试脚本引用它；该套件使用拦截 API，不是实集群验收 |
+| [DeleteProjectDialog.tsx](../poc4/frontend/src/features/projects/DeleteProjectDialog.tsx) | 被 ProjectsPage 实际导入的生产组件；仅 checkout HEAD 会缺失该文件 |
+| [playwright.project-deletion.config.ts](../poc4/frontend/playwright.project-deletion.config.ts) | package.json 的删除 UI 测试脚本引用它；该套件使用拦截 API，不是实集群验收 |
 
 此外，清理/MVP 计划、9 月 14–17 日多份记录及删除原始附件仍未跟踪。文件现存不代表已提交。本次不代为 stage/commit/merge。第 9 节记录关键文件 SHA-256；打包 6B 时应保留完整实际源文件并另行记录构建基线，不能把本次文档当成干净构建证明。
 
@@ -66,25 +73,25 @@
                                       └─ Maven Job 挂载同一项目目录
 ~~~
 
-- 前端代理目标是 `127.0.0.1:18080`；MSW 仅在 `VITE_ENABLE_MOCK_API=true` 时启动。真实记录使用非 mock 路径。依据：[Vite 配置](../.worktree/ensoai-stage-6-real-backend-kubernetes/poc4/frontend/vite.config.ts)、[启动入口](../.worktree/ensoai-stage-6-real-backend-kubernetes/poc4/frontend/src/main.tsx)。
-- 后端是模块化单体，不是微服务平台。项目声明 Java 17 / Spring Boot 3.5.9 / Fabric8 7.7.0；这是仓库版本，不是“最新版本”判断。依据：[后端依赖](../.worktree/ensoai-stage-6-real-backend-kubernetes/poc4/backend/pom.xml)。
-- MySQL 保存元数据和权威 revision；PVC 保存文件正文；Kubernetes 提供 Job/Pod 运行事实。迁移文件 V1–V8 存在；最后一次运行报告记 Flyway v8，本次未查实际数据库版本。依据：[初始表](../.worktree/ensoai-stage-6-real-backend-kubernetes/poc4/backend/src/main/resources/db/migration/V1__initial_schema.sql)、[DELETING 迁移](../.worktree/ensoai-stage-6-real-backend-kubernetes/poc4/backend/src/main/resources/db/migration/V8__project_deleting_state.sql)。
-- local-cluster 默认 kubectl bridge；Fabric8/supervised 是可选路径。没有把它简化成写死单个 workspace Service。依据：[本地适配配置](../.worktree/ensoai-stage-6-real-backend-kubernetes/poc4/backend/src/main/java/com/manao/poc4/config/LocalClusterConfig.java)。
-- `ProjectLifecycleGate` 是**单实例**、每项目互斥门，不是分布式锁。instance lease/fencing 仍存在；不能据此推断已经支持多副本高可用。依据：[生命周期互斥](../.worktree/ensoai-stage-6-real-backend-kubernetes/poc4/backend/src/main/java/com/manao/poc4/project/ProjectLifecycleGate.java)、[Run 服务](../.worktree/ensoai-stage-6-real-backend-kubernetes/poc4/backend/src/main/java/com/manao/poc4/run/RunService.java)。
+- 前端代理目标是 `127.0.0.1:18080`；MSW 仅在 `VITE_ENABLE_MOCK_API=true` 时启动。真实记录使用非 mock 路径。依据：[Vite 配置](../poc4/frontend/vite.config.ts)、[启动入口](../poc4/frontend/src/main.tsx)。
+- 后端是模块化单体，不是微服务平台。项目声明 Java 17 / Spring Boot 3.5.9 / Fabric8 7.7.0；这是仓库版本，不是“最新版本”判断。依据：[后端依赖](../poc4/backend/pom.xml)。
+- MySQL 保存元数据和权威 revision；PVC 保存文件正文；Kubernetes 提供 Job/Pod 运行事实。迁移文件 V1–V8 存在；最后一次运行报告记 Flyway v8，本次未查实际数据库版本。依据：[初始表](../poc4/backend/src/main/resources/db/migration/V1__initial_schema.sql)、[DELETING 迁移](../poc4/backend/src/main/resources/db/migration/V8__project_deleting_state.sql)。
+- local-cluster 默认 kubectl bridge；Fabric8/supervised 是可选路径。没有把它简化成写死单个 workspace Service。依据：[本地适配配置](../poc4/backend/src/main/java/com/manao/poc4/config/LocalClusterConfig.java)。
+- `ProjectLifecycleGate` 是**单实例**、每项目互斥门，不是分布式锁。instance lease/fencing 仍存在；不能据此推断已经支持多副本高可用。依据：[生命周期互斥](../poc4/backend/src/main/java/com/manao/poc4/project/ProjectLifecycleGate.java)、[Run 服务](../poc4/backend/src/main/java/com/manao/poc4/run/RunService.java)。
 
 ## 4. 当前产品行为与源码依据
 
 | 生命周期环节 | 当前实现事实 | 核查入口 |
 | --- | --- | --- |
-| 登录/归属 | 查询 app_user、校验密码、签发 JWT；项目查询/修改使用 owner 身份，不让浏览器指定集群资源作为授权依据 | [AuthController](../.worktree/ensoai-stage-6-real-backend-kubernetes/poc4/backend/src/main/java/com/manao/poc4/auth/AuthController.java)；[ProjectController](../.worktree/ensoai-stage-6-real-backend-kubernetes/poc4/backend/src/main/java/com/manao/poc4/project/ProjectController.java) |
-| 创建项目 | 插入 CREATING，异步准备 PVC、initializer、workspace 资源与模板，然后 READY；每 owner 上限 8，非容量保证 | [ProjectService](../.worktree/ensoai-stage-6-real-backend-kubernetes/poc4/backend/src/main/java/com/manao/poc4/project/ProjectService.java)；[Provisioning](../.worktree/ensoai-stage-6-real-backend-kubernetes/poc4/backend/src/main/java/com/manao/poc4/project/ProjectProvisioningService.java)；[上限](../.worktree/ensoai-stage-6-real-backend-kubernetes/poc4/backend/src/main/java/com/manao/poc4/project/ProjectLimits.java) |
-| 打开项目 | owner 校验后的详情 GET 可恢复缺失 Pod/Service，使用原 PVC；不重写模板。PVC 明确缺失才 FAILED / WORKSPACE_STORAGE_MISSING；依赖不确定返回 503 | [详情入口](../.worktree/ensoai-stage-6-real-backend-kubernetes/poc4/backend/src/main/java/com/manao/poc4/project/ProjectController.java)；[ensureWorkspaceAvailable](../.worktree/ensoai-stage-6-real-backend-kubernetes/poc4/backend/src/main/java/com/manao/poc4/project/ProjectProvisioningService.java) |
-| 编辑/保存 | 文件 CRUD 经主后端/agent；检查路径、revision 和活动 Run 锁。PENDING → agent 原子操作/receipt → 对账 → COMMITTED / revision 增长，仍然存在 | [WorkspaceService](../.worktree/ensoai-stage-6-real-backend-kubernetes/poc4/backend/src/main/java/com/manao/poc4/workspace/WorkspaceService.java)；[操作协议](../.worktree/ensoai-stage-6-real-backend-kubernetes/poc4/backend/src/main/java/com/manao/poc4/workspace/WorkspaceOperationService.java) |
-| 启动 Run | 检查 owner、READY、expectedRevision、活动 Run；持久化 Run 的 revision 和策略，再创建 Job | [startLocked](../.worktree/ensoai-stage-6-real-backend-kubernetes/poc4/backend/src/main/java/com/manao/poc4/run/RunService.java)；[Job 工厂](../.worktree/ensoai-stage-6-real-backend-kubernetes/poc4/backend/src/main/java/com/manao/poc4/kubernetes/JobResourceFactory.java) |
-| 运行结果 | 观察 Job 事实并结算数据库 Run；成功映射 SUCCEEDED，失败映射 FAILED，期限映射 TIMED_OUT；仍保留 STOPPING/RECOVERING | [Run 观察](../.worktree/ensoai-stage-6-real-backend-kubernetes/poc4/backend/src/main/java/com/manao/poc4/run/RunObservationService.java)；[完整枚举](../.worktree/ensoai-stage-6-real-backend-kubernetes/poc4/backend/src/main/java/com/manao/poc4/persistence/RunState.java) |
-| 日志/历史 | 真实 Pod 日志先落库再通知订阅者；支持历史窗口、ticket WebSocket、replay/live；Run history 处理 cursor | [采集](../.worktree/ensoai-stage-6-real-backend-kubernetes/poc4/backend/src/main/java/com/manao/poc4/log/RunLogIngestor.java)；[持久化](../.worktree/ensoai-stage-6-real-backend-kubernetes/poc4/backend/src/main/java/com/manao/poc4/log/RunLogService.java)；[WebSocket 注册](../.worktree/ensoai-stage-6-real-backend-kubernetes/poc4/backend/src/main/java/com/manao/poc4/config/WebSocketConfig.java)；[历史查询](../.worktree/ensoai-stage-6-real-backend-kubernetes/poc4/backend/src/main/java/com/manao/poc4/run/RunService.java) |
-| 修改再运行 | Run 终态后重载文件；重载期暂停自动文件查询、卸载编辑器，恢复目录/标签状态。读失败进入 RELOAD_FAILED，Retry 成功再解锁，不重放写入/Run | [工作台](../.worktree/ensoai-stage-6-real-backend-kubernetes/poc4/frontend/src/components/shell/WorkbenchShell.tsx)；[重载](../.worktree/ensoai-stage-6-real-backend-kubernetes/poc4/frontend/src/features/runs/workspaceReload.ts)；[权限状态协调](../.worktree/ensoai-stage-6-real-backend-kubernetes/poc4/frontend/src/features/runs/RunAuthorityCoordinator.ts) |
-| 删除入口 | 列表卡片确认永久删除；DELETING 保留卡片、不可打开、可 Continue deletion；不乐观移除、不自动重放 DELETE | [ProjectsPage](../.worktree/ensoai-stage-6-real-backend-kubernetes/poc4/frontend/src/features/projects/ProjectsPage.tsx)；[卡片](../.worktree/ensoai-stage-6-real-backend-kubernetes/poc4/frontend/src/features/projects/ProjectCard.tsx)；[请求和缓存](../.worktree/ensoai-stage-6-real-backend-kubernetes/poc4/frontend/src/features/projects/projectQueries.ts) |
+| 登录/归属 | 查询 app_user、校验密码、签发 JWT；项目查询/修改使用 owner 身份，不让浏览器指定集群资源作为授权依据 | [AuthController](../poc4/backend/src/main/java/com/manao/poc4/auth/AuthController.java)；[ProjectController](../poc4/backend/src/main/java/com/manao/poc4/project/ProjectController.java) |
+| 创建项目 | 插入 CREATING，异步准备 PVC、initializer、workspace 资源与模板，然后 READY；每 owner 上限 8，非容量保证 | [ProjectService](../poc4/backend/src/main/java/com/manao/poc4/project/ProjectService.java)；[Provisioning](../poc4/backend/src/main/java/com/manao/poc4/project/ProjectProvisioningService.java)；[上限](../poc4/backend/src/main/java/com/manao/poc4/project/ProjectLimits.java) |
+| 打开项目 | owner 校验后的详情 GET 可恢复缺失 Pod/Service，使用原 PVC；不重写模板。PVC 明确缺失才 FAILED / WORKSPACE_STORAGE_MISSING；依赖不确定返回 503 | [详情入口](../poc4/backend/src/main/java/com/manao/poc4/project/ProjectController.java)；[ensureWorkspaceAvailable](../poc4/backend/src/main/java/com/manao/poc4/project/ProjectProvisioningService.java) |
+| 编辑/保存 | 文件 CRUD 经主后端/agent；检查路径、revision 和活动 Run 锁。PENDING → agent 原子操作/receipt → 对账 → COMMITTED / revision 增长，仍然存在 | [WorkspaceService](../poc4/backend/src/main/java/com/manao/poc4/workspace/WorkspaceService.java)；[操作协议](../poc4/backend/src/main/java/com/manao/poc4/workspace/WorkspaceOperationService.java) |
+| 启动 Run | 检查 owner、READY、expectedRevision、活动 Run；持久化 Run 的 revision 和策略，再创建 Job | [startLocked](../poc4/backend/src/main/java/com/manao/poc4/run/RunService.java)；[Job 工厂](../poc4/backend/src/main/java/com/manao/poc4/kubernetes/JobResourceFactory.java) |
+| 运行结果 | 观察 Job 事实并结算数据库 Run；成功映射 SUCCEEDED，失败映射 FAILED，期限映射 TIMED_OUT；仍保留 STOPPING/RECOVERING | [Run 观察](../poc4/backend/src/main/java/com/manao/poc4/run/RunObservationService.java)；[完整枚举](../poc4/backend/src/main/java/com/manao/poc4/persistence/RunState.java) |
+| 日志/历史 | 真实 Pod 日志先落库再通知订阅者；支持历史窗口、ticket WebSocket、replay/live；Run history 处理 cursor | [采集](../poc4/backend/src/main/java/com/manao/poc4/log/RunLogIngestor.java)；[持久化](../poc4/backend/src/main/java/com/manao/poc4/log/RunLogService.java)；[WebSocket 注册](../poc4/backend/src/main/java/com/manao/poc4/config/WebSocketConfig.java)；[历史查询](../poc4/backend/src/main/java/com/manao/poc4/run/RunService.java) |
+| 修改再运行 | Run 终态后重载文件；重载期暂停自动文件查询、卸载编辑器，恢复目录/标签状态。读失败进入 RELOAD_FAILED，Retry 成功再解锁，不重放写入/Run | [工作台](../poc4/frontend/src/components/shell/WorkbenchShell.tsx)；[重载](../poc4/frontend/src/features/runs/workspaceReload.ts)；[权限状态协调](../poc4/frontend/src/features/runs/RunAuthorityCoordinator.ts) |
+| 删除入口 | 列表卡片确认永久删除；DELETING 保留卡片、不可打开、可 Continue deletion；不乐观移除、不自动重放 DELETE | [ProjectsPage](../poc4/frontend/src/features/projects/ProjectsPage.tsx)；[卡片](../poc4/frontend/src/features/projects/ProjectCard.tsx)；[请求和缓存](../poc4/frontend/src/features/projects/projectQueries.ts) |
 
 ### 4.1 Run 的准确语义
 
@@ -100,7 +107,7 @@ Job 在 /workspace 挂载同一项目 PVC 子目录，**readOnly=false**；保�
 
 代码策略为 Java 17、Maven 3.9.11、1800 秒超时；请求 1 CPU / 1 GiB memory / 1 GiB ephemeral，限制 8 CPU / 16 GiB / 10 GiB；backoffLimit=0。Job 使用专用 ServiceAccount 名称且不挂载 token。以上是工厂/策略值，不是本次实时 Pod 检查或生产隔离认证。
 
-来源：[固定策略](../.worktree/ensoai-stage-6-real-backend-kubernetes/poc4/backend/src/main/java/com/manao/poc4/config/BackendProperties.java)、[请求/限制](../.worktree/ensoai-stage-6-real-backend-kubernetes/poc4/backend/src/main/java/com/manao/poc4/run/RunPolicy.java)、[命令/挂载](../.worktree/ensoai-stage-6-real-backend-kubernetes/poc4/backend/src/main/java/com/manao/poc4/kubernetes/JobResourceFactory.java)、[模板 pom.xml](../.worktree/ensoai-stage-6-real-backend-kubernetes/poc4/backend/src/main/resources/workspace-template/pom.xml)。
+来源：[固定策略](../poc4/backend/src/main/java/com/manao/poc4/config/BackendProperties.java)、[请求/限制](../poc4/backend/src/main/java/com/manao/poc4/run/RunPolicy.java)、[命令/挂载](../poc4/backend/src/main/java/com/manao/poc4/kubernetes/JobResourceFactory.java)、[模板 pom.xml](../poc4/backend/src/main/resources/workspace-template/pom.xml)。
 
 ### 4.2 删除完成的准确语义
 
@@ -112,7 +119,7 @@ Job 在 /workspace 挂载同一项目 PVC 子目录，**readOnly=false**；保�
 6. 在事务中删除 terminal_audit、terminal_session、log_ticket、run_log_chunk、run、workspace_operation，最后删除 project；事务失败不返回完成。
 7. API 返回 204 后，前端仍以当前身份重新读取项目列表确认不存在，再清该项目缓存/编辑缓冲并提示删除。DELETE 响应丢失只触发读状态；401/403 或无法确认列表不当作成功。
 
-源码：[删除前置检查](../.worktree/ensoai-stage-6-real-backend-kubernetes/poc4/backend/src/main/java/com/manao/poc4/project/ProjectDeletionRepository.java)、[删除编排](../.worktree/ensoai-stage-6-real-backend-kubernetes/poc4/backend/src/main/java/com/manao/poc4/project/ProjectCleanupService.java)、[集群/存储核查](../.worktree/ensoai-stage-6-real-backend-kubernetes/poc4/backend/src/main/java/com/manao/poc4/kubernetes/ProjectResourceCleaner.java)、[关联记录事务](../.worktree/ensoai-stage-6-real-backend-kubernetes/poc4/backend/src/main/java/com/manao/poc4/workspace/WorkspaceJdbcStore.java)、[前端最终确认](../.worktree/ensoai-stage-6-real-backend-kubernetes/poc4/frontend/src/features/projects/projectQueries.ts)。
+源码：[删除前置检查](../poc4/backend/src/main/java/com/manao/poc4/project/ProjectDeletionRepository.java)、[删除编排](../poc4/backend/src/main/java/com/manao/poc4/project/ProjectCleanupService.java)、[集群/存储核查](../poc4/backend/src/main/java/com/manao/poc4/kubernetes/ProjectResourceCleaner.java)、[关联记录事务](../poc4/backend/src/main/java/com/manao/poc4/workspace/WorkspaceJdbcStore.java)、[前端最终确认](../poc4/frontend/src/features/projects/projectQueries.ts)。
 
 **DELETING 不代表后台始终在清理。** 失败/重启后由用户明确继续；没有新增队列、后台 reaper、启动扫描、强制停止后删除、回收站或批量删除。后端代码检查策略和 PVC/PV 消失；它没有在每次产品删除时直接扫描 NFS 物理目录。物理路径不存在是第 5 节具名案例的额外运行取证，不能泛化成每次删除的底层字节证明。
 
@@ -138,7 +145,7 @@ AI、Git、多语言、协作、管理员平台、多副本高可用、生产级
 | 完成收据 | 2026-09-17 17:04:52 +08:00，USER_LIFECYCLE_AND_RESUME_PASS |
 | 运行方式 | 真实前后端，无 API 拦截；代码写入已加载 Monaco model，保存/运行/删除使用 UI 按钮；任务记录独立驱动正常退出 0 |
 
-原始附件：[生命周期收据](../.worktree/ensoai-stage-6-real-backend-kubernetes/poc4/docs/evidence/stage-6/2026-09-17-project-deletion/live-ui-receipt.json)、[最终驱动日志](../.worktree/ensoai-stage-6-real-backend-kubernetes/poc4/docs/evidence/stage-6/2026-09-17-project-deletion/live-ui-resume4-run.log)、[未完成状态证据](../.worktree/ensoai-stage-6-real-backend-kubernetes/poc4/docs/evidence/stage-6/2026-09-17-project-deletion/live-ui-incomplete-proof.json)、[失败截图](../.worktree/ensoai-stage-6-real-backend-kubernetes/poc4/docs/evidence/stage-6/2026-09-17-project-deletion/live-ui-failed.png)、[成功截图](../.worktree/ensoai-stage-6-real-backend-kubernetes/poc4/docs/evidence/stage-6/2026-09-17-project-deletion/live-ui-succeeded.png)、[刷新截图](../.worktree/ensoai-stage-6-real-backend-kubernetes/poc4/docs/evidence/stage-6/2026-09-17-project-deletion/live-ui-incomplete-after-reload.png)、[删除截图](../.worktree/ensoai-stage-6-real-backend-kubernetes/poc4/docs/evidence/stage-6/2026-09-17-project-deletion/live-ui-deleted.png)。
+原始附件：[生命周期收据](../poc4/docs/evidence/stage-6/2026-09-17-project-deletion/live-ui-receipt.json)、[最终驱动日志](../poc4/docs/evidence/stage-6/2026-09-17-project-deletion/live-ui-resume4-run.log)、[未完成状态证据](../poc4/docs/evidence/stage-6/2026-09-17-project-deletion/live-ui-incomplete-proof.json)、[失败截图](../poc4/docs/evidence/stage-6/2026-09-17-project-deletion/live-ui-failed.png)、[成功截图](../poc4/docs/evidence/stage-6/2026-09-17-project-deletion/live-ui-succeeded.png)、[刷新截图](../poc4/docs/evidence/stage-6/2026-09-17-project-deletion/live-ui-incomplete-after-reload.png)、[删除截图](../poc4/docs/evidence/stage-6/2026-09-17-project-deletion/live-ui-deleted.png)。
 
 收据也保留了之前的文件树 PROJECT_BUSY 和测试驱动操作失败；最终是复用同一项目继续完成，**不是第一次尝试全程无错误**。留档成功适用于专用删除存储类，不证明旧存储项目已迁移。
 
@@ -149,7 +156,7 @@ AI、Git、多语言、协作、管理员平台、多副本高可用、生产级
 - Playwright JSON：expected=1、unexpected=0、skipped=0，122.5 秒；严格 FAILED/SUCCEEDED、成功 exit code 0、真实编译错误及 Hello from Manao，之后用户删除、404 和资源不存在。
 - **断言 PASS，CLI 进程 FAILED：** Node v24.12.0 在报告写完后出现 UV_HANDLE_CLOSING，退出 -1073740791，不能称为干净 runner 全绿。
 
-附件：[测试 JSON](../.worktree/ensoai-stage-6-real-backend-kubernetes/poc4/docs/evidence/stage-6/2026-09-17-project-deletion/attempt-3-results.json)、[独立核验/退出状态](../.worktree/ensoai-stage-6-real-backend-kubernetes/poc4/docs/evidence/stage-6/2026-09-17-project-deletion/attempt-3-independent-verification.json)。当前测试源码 [stage6-real-backend.spec.ts](../.worktree/ensoai-stage-6-real-backend-kubernetes/poc4/frontend/tests/e2e/stage6-real-backend.spec.ts) 中，旧基础 Run 场景仍允许任意终态，但新增 MVP 场景严格断言；不能把二者混写成“所有旧 smoke 都已严格化”。
+附件：[测试 JSON](../poc4/docs/evidence/stage-6/2026-09-17-project-deletion/attempt-3-results.json)、[独立核验/退出状态](../poc4/docs/evidence/stage-6/2026-09-17-project-deletion/attempt-3-independent-verification.json)。当前测试源码 [stage6-real-backend.spec.ts](../poc4/frontend/tests/e2e/stage6-real-backend.spec.ts) 中，旧基础 Run 场景仍允许任意终态，但新增 MVP 场景严格断言；不能把二者混写成“所有旧 smoke 都已严格化”。
 
 ### 5.3 删除后的独立对账（RETAINED_RUNTIME）
 
@@ -166,16 +173,16 @@ AI、Git、多语言、协作、管理员平台、多副本高可用、生产级
 - 对账 TSV 中 project、run、workspace_operation、run_log_chunk、terminal_audit、terminal_session、log_ticket 七类关联记录均为 0；范围是这些项目/五个记录 Run，不是整个运行库清空。
 - baseline 比较为原 71 个对象缺失 0；当时原 7 个数据库项目仍 READY。**这是 17 点时点的结果，不是对今天稍后所有项目的零残留保证。**
 
-附件：[资源/物理存储](../.worktree/ensoai-stage-6-real-backend-kubernetes/poc4/docs/evidence/stage-6/2026-09-17-project-deletion/all-test-projects-final-storage.json)、[数据库对账](../.worktree/ensoai-stage-6-real-backend-kubernetes/poc4/docs/evidence/stage-6/2026-09-17-project-deletion/database-after.tsv)、[既有对象保留](../.worktree/ensoai-stage-6-real-backend-kubernetes/poc4/docs/evidence/stage-6/2026-09-17-project-deletion/existing-resources-after.json)。读取本地 TSV 只是证据读取，本次没有连接运行数据库。
+附件：[资源/物理存储](../poc4/docs/evidence/stage-6/2026-09-17-project-deletion/all-test-projects-final-storage.json)、[数据库对账](../poc4/docs/evidence/stage-6/2026-09-17-project-deletion/database-after.tsv)、[既有对象保留](../poc4/docs/evidence/stage-6/2026-09-17-project-deletion/existing-resources-after.json)。读取本地 TSV 只是证据读取，本次没有连接运行数据库。
 
 ### 5.4 更早的已记录闭环（HISTORICAL_REPORT）
 
 | 日期 | 记录 | 证据范围 |
 | --- | --- | --- |
-| 09-13 | C01–C08 8/8 + basic 5/5，包含后端重启续作 | [清理历史](../.worktree/ensoai-stage-6-real-backend-kubernetes/poc4/docs/evidence/stage-6/cleanup-acceptance.md)；旧版本/旧存储核查边界，不等于当前完整重跑 |
-| 09-15 | project a8eebcbb-8490-4de7-b7f1-aa87dcb4721d，失败 Run 后修正成功，重新登录文件/日志/历史保留 | [MVP 历史](../.worktree/ensoai-stage-6-real-backend-kubernetes/poc4/docs/2026-09-15-poc4-mvp-core-loop-evidence.md)；发生在 Run 命令改成 exec:java 之前 |
-| 09-16 | 原 PVC 存在、workspace Pod 缺失时恢复，并读到原 App.java | [打开恢复](../.worktree/ensoai-stage-6-real-backend-kubernetes/poc4/docs/evidence/stage-6/2026-09-16-workspace-open-recovery.md)；当时用临时 opt-in harness 验证，新自动行为待共享后端重启加载，不能倒写为当时已加载 |
-| 09-16 | ce0c750d-2a1b-4370-af99-e63264567881 成功、ecacebec-e7ad-4ead-aeaa-be41efa3ebf7 失败后，撤销只读 GET 故障并 Retry；编辑恢复、Save 200 | [重载记录](../.worktree/ensoai-stage-6-real-backend-kubernetes/poc4/docs/evidence/stage-6/2026-09-16-workspace-reload-retry.md)；真实后端，故障注入只中止读取，不 mock 成功响应 |
+| 09-13 | C01–C08 8/8 + basic 5/5，包含后端重启续作 | [清理历史](../poc4/docs/evidence/stage-6/cleanup-acceptance.md)；旧版本/旧存储核查边界，不等于当前完整重跑 |
+| 09-15 | project a8eebcbb-8490-4de7-b7f1-aa87dcb4721d，失败 Run 后修正成功，重新登录文件/日志/历史保留 | [MVP 历史](../poc4/docs/2026-09-15-poc4-mvp-core-loop-evidence.md)；发生在 Run 命令改成 exec:java 之前 |
+| 09-16 | 原 PVC 存在、workspace Pod 缺失时恢复，并读到原 App.java | [打开恢复](../poc4/docs/evidence/stage-6/2026-09-16-workspace-open-recovery.md)；当时用临时 opt-in harness 验证，新自动行为待共享后端重启加载，不能倒写为当时已加载 |
+| 09-16 | ce0c750d-2a1b-4370-af99-e63264567881 成功、ecacebec-e7ad-4ead-aeaa-be41efa3ebf7 失败后，撤销只读 GET 故障并 Retry；编辑恢复、Save 200 | [重载记录](../poc4/docs/evidence/stage-6/2026-09-16-workspace-reload-retry.md)；真实后端，故障注入只中止读取，不 mock 成功响应 |
 
 ## 6. 已有测试记录与本次核查的区别
 
@@ -189,7 +196,7 @@ AI、Git、多语言、协作、管理员平台、多副本高可用、生产级
 | 09-16 重载修复 | 90 个相关测试通过，类型检查通过 | 全部前后端回归通过 |
 | 本次文档核查 | 检查来源/链接/编码/差异，固定源码/附件哈希；不执行产品测试 | 新鲜真实 E2E 或当前 HEAD 全量 PASS |
 
-测试数来源：[删除实现历史](../.worktree/ensoai-stage-6-real-backend-kubernetes/poc4/docs/evidence/stage-6/2026-09-16-project-deletion-mvp.md)、[重载历史](../.worktree/ensoai-stage-6-real-backend-kubernetes/poc4/docs/evidence/stage-6/2026-09-16-workspace-reload-retry.md)。9 月 15 日 cleanup 的 6 failures / 1 error 后续在定向范围修正；Maven 决策任务还报告过全量 332 tests / 7 failures / 2 errors，涉及 transport、端口与清理。没有一份已核查材料能证明当前 361985b 加未跟踪文件的全量后端重新全绿，故当前全量状态为 **NOT_REVERIFIED**，不是沿用旧失败数，也不是宣称已全过。
+测试数来源：[删除实现历史](../poc4/docs/evidence/stage-6/2026-09-16-project-deletion-mvp.md)、[重载历史](../poc4/docs/evidence/stage-6/2026-09-16-workspace-reload-retry.md)。9 月 15 日 cleanup 的 6 failures / 1 error 后续在定向范围修正；Maven 决策任务还报告过全量 332 tests / 7 failures / 2 errors，涉及 transport、端口与清理。没有一份已核查材料能证明当前 361985b 加未跟踪文件的全量后端重新全绿，故当前全量状态为 **NOT_REVERIFIED**，不是沿用旧失败数，也不是宣称已全过。
 
 ## 7. 现有边界与6B交接事项
 
@@ -202,7 +209,7 @@ AI、Git、多语言、协作、管理员平台、多副本高可用、生产级
 | stage6-6a-local-cluster.env | nfs-storage |
 | stage6-6a-project-deletion.env | manao-poc4-delete |
 
-9 月 17 日真实验收使用后一配置。留档中旧 nfs-storage 为 archiveOnDelete=true；独立 manao-poc4-delete 为 onDelete=delete、archiveOnDelete=false、reclaimPolicy=Delete，并给后端身份增加 list persistentvolumes / get storageclasses 的只读权限。来源：[当时前置资源清单](../.worktree/ensoai-stage-6-real-backend-kubernetes/poc4/docs/evidence/stage-6/2026-09-17-project-deletion/6a-deletion-runtime-prerequisites.json)。
+9 月 17 日真实验收使用后一配置。留档中旧 nfs-storage 为 archiveOnDelete=true；独立 manao-poc4-delete 为 onDelete=delete、archiveOnDelete=false、reclaimPolicy=Delete，并给后端身份增加 list persistentvolumes / get storageclasses 的只读权限。来源：[当时前置资源清单](../poc4/docs/evidence/stage-6/2026-09-17-project-deletion/6a-deletion-runtime-prerequisites.json)。
 
 删除任务 19:21 的最后可读取诊断指出 browser-mvp-manual-20260915 与 test4 仍 DELETING，旧策略导致继续删除无效；其方案只 dry-run，没有实际迁移完成证据。本次用户随后报告全生命周期可用，**按用户结果记录通过，但没有足够材料将其解释为“旧项目全部迁移、两份配置已统一”**。源码仍只输出清理异常类名，未见该轮提出的详细原因日志改动。
 
@@ -246,13 +253,13 @@ AI、Git、多语言、协作、管理员平台、多副本高可用、生产级
 
 | 来源 | SHA-256 |
 | --- | --- |
-| [DeleteProjectDialog.tsx](../.worktree/ensoai-stage-6-real-backend-kubernetes/poc4/frontend/src/features/projects/DeleteProjectDialog.tsx) | `e3f7b7f5f63b19c5acfb181a5127853f5453b8f55ab3c09164d539f388f79dd0` |
-| [playwright.project-deletion.config.ts](../.worktree/ensoai-stage-6-real-backend-kubernetes/poc4/frontend/playwright.project-deletion.config.ts) | `783e404f79418eb6c088e99941c5447fa09e95b74cc43f514ecc689c1cb40d89` |
-| [live-ui-receipt.json](../.worktree/ensoai-stage-6-real-backend-kubernetes/poc4/docs/evidence/stage-6/2026-09-17-project-deletion/live-ui-receipt.json) | `a3827d15ae4fc90ea6803a1c39852c73bfa950d6bfa5ee9ad4d86fe5ea3a7204` |
-| [live-ui-incomplete-proof.json](../.worktree/ensoai-stage-6-real-backend-kubernetes/poc4/docs/evidence/stage-6/2026-09-17-project-deletion/live-ui-incomplete-proof.json) | `dfed2162126acbab992c02276840abae34d7b3d12e312935fe3082ee514d4fcc` |
-| [all-test-projects-final-storage.json](../.worktree/ensoai-stage-6-real-backend-kubernetes/poc4/docs/evidence/stage-6/2026-09-17-project-deletion/all-test-projects-final-storage.json) | `f782e5e1c785d7d06dca19e4ab8258415d3325e0c61411fbd9daaf53fc0e22d5` |
-| [database-after.tsv](../.worktree/ensoai-stage-6-real-backend-kubernetes/poc4/docs/evidence/stage-6/2026-09-17-project-deletion/database-after.tsv) | `8b51d9500e36893f32ed53ac7db51e52b7b242af132cf7a1d686f6c371877771` |
-| [attempt-3-independent-verification.json](../.worktree/ensoai-stage-6-real-backend-kubernetes/poc4/docs/evidence/stage-6/2026-09-17-project-deletion/attempt-3-independent-verification.json) | `e23ebb588f8033fa17044426aad26c3b6fa8144586c21bcce5794443720f8058` |
+| [DeleteProjectDialog.tsx](../poc4/frontend/src/features/projects/DeleteProjectDialog.tsx) | `e3f7b7f5f63b19c5acfb181a5127853f5453b8f55ab3c09164d539f388f79dd0` |
+| [playwright.project-deletion.config.ts](../poc4/frontend/playwright.project-deletion.config.ts) | `783e404f79418eb6c088e99941c5447fa09e95b74cc43f514ecc689c1cb40d89` |
+| [live-ui-receipt.json](../poc4/docs/evidence/stage-6/2026-09-17-project-deletion/live-ui-receipt.json) | `a3827d15ae4fc90ea6803a1c39852c73bfa950d6bfa5ee9ad4d86fe5ea3a7204` |
+| [live-ui-incomplete-proof.json](../poc4/docs/evidence/stage-6/2026-09-17-project-deletion/live-ui-incomplete-proof.json) | `dfed2162126acbab992c02276840abae34d7b3d12e312935fe3082ee514d4fcc` |
+| [all-test-projects-final-storage.json](../poc4/docs/evidence/stage-6/2026-09-17-project-deletion/all-test-projects-final-storage.json) | `f782e5e1c785d7d06dca19e4ab8258415d3325e0c61411fbd9daaf53fc0e22d5` |
+| [database-after.tsv](../poc4/docs/evidence/stage-6/2026-09-17-project-deletion/database-after.tsv) | `8b51d9500e36893f32ed53ac7db51e52b7b242af132cf7a1d686f6c371877771` |
+| [attempt-3-independent-verification.json](../poc4/docs/evidence/stage-6/2026-09-17-project-deletion/attempt-3-independent-verification.json) | `e23ebb588f8033fa17044426aad26c3b6fa8144586c21bcce5794443720f8058` |
 
 ## 10. 本次工作范围
 

@@ -67,3 +67,24 @@ Stage 6 仍需在真实系统验证：Spring Boot terminal session/ticket API、
 ## 已知体积问题
 
 生产入口约 375 kB（gzip 约 119 kB），不含 Monaco。可写工作台 chunk 约 3.9 MB（gzip 约 1.0 MB），另加五个 Monaco Worker（其中 `ts.worker` 约 7.0 MB）。Vite 会提示 `>500 kB`；不要用提高 `chunkSizeWarningLimit` 来掩盖。mock / 阶段 0 Spike 仍含独立 Monaco 包。
+
+
+## Stage 6A: 本机后端联调（local-cluster）
+
+前端始终通过 Vite 代理访问本机后端，所有 API 与 WebSocket 都是同源路径（`/api/v1/...`），
+后端地址不会进入浏览器 bundle：
+
+1. 启动本机 MySQL 与 SSH API 隧道（操作者管理，见 `backend/config/local-cluster.example.env`）。
+2. 复制 `.env.local-cluster.example` 为 `.env.local`（MSW 关闭）。
+3. 启动后端：`backend/scripts/start-local-cluster.ps1 -EnvFile <env>`（端口 `127.0.0.1:18080`）。
+4. 启动前端：`pnpm dev`（端口 4173，代理已配置在 `vite.config.ts`）。
+
+Vite 代理同时转发 HTTP 与 WebSocket（`ws: true`），浏览器永远看不到集群地址、
+Service 名、PVC/Pod 名或绝对路径。项目 workspace bridge 由后端按项目动态管理
+（loopback 18100-18199），浏览器不能提交 Service 名或端口。
+
+## Stage 6A 决策门 E2E
+
+`pnpm test:e2e:stage6`（需 `STAGE6_GATE=1` 环境变量以跳过 mock webServer）在门执行时运行：
+后端（18080）与本机 Vite dev server（4173）必须已启动且 MSW 关闭。所有用例在后端不可达时
+自动 skip，不产生伪证据。集群前置条件状态见 `docs/evidence/stage-6/6a-gate.md`。

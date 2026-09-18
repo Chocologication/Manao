@@ -1,0 +1,111 @@
+package com.manao.poc4.run;
+
+import com.manao.poc4.kubernetes.JobCoordinator;
+import com.manao.poc4.log.RunLogIngestor;
+import com.manao.poc4.persistence.RunState;
+import com.manao.poc4.project.ProjectLifecycleGate;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Optional;
+import java.util.OptionalLong;
+
+/**
+ * Startup recovery: only unfinished Runs become RECOVERING, then every recovered Run is settled
+ * from identity-verified Kubernetes facts or failed closed when the Job is missing/mismatched.
+ */
+public final class RunRecoveryService {
+    private final RunStore store;
+    private final JobCoordinator coordinator;
+    private final RunLogIngestor logIngestor;
+    private final RunCompletionListener completionListener;
+    private final ProjectLifecycleGate lifecycle;
+
+    public RunRecoveryService(RunStore store, JobCoordinator coordinator) {
+        this(store, coordinator, null, null, new ProjectLifecycleGate());
+    }
+
+    public RunRecoveryService(RunStore store, JobCoordinator coordinator, RunLogIngestor logIngestor,
+                              RunCompletionListener completionListener) {
+        this(store, coordinator, logIngestor, completionListener, new ProjectLifecycleGate());
+    }
+
+    public RunRecoveryService(RunStore store, JobCoordinator coordinator, RunLogIngestor logIngestor,
+                              RunCompletionListener completionListener, ProjectLifecycleGate lifecycle) {
+        this.store = store;
+        this.coordinator = coordinator;
+        this.logIngestor = logIngestor;
+        this.completionListener = completionListener;
+        this.lifecycle = lifecycle;
+    }
+
+    public record RecoveryReport(List<String> processed, List<String> settled,
+                                 List<String> resumed, List<String> failedClosed) { }
+
+    public RecoveryReport recoverRuns() {
+        List<String> processed = new ArrayList<>();
+        List<String> settled = new ArrayList<>();
+        List<String> resumed = new ArrayList<>();
+        List<String> failedClosed = new ArrayList<>();
+        // Every recovery write carries the current fencing token; without the lease we cannot act.
+        OptionalLong lease = store.acquireFencingToken();
+        if (lease.isEmpty()) {
+            return new RecoveryReport(List.of(), List.of(), List.of(), List.of());
+        }
+        long token = lease.getAsLong();
+        for (RunRecord run : store.findRunsInState(RunState.STARTING, RunState.RUNNING, RunState.STOPPING)) {
+            try (var projectLease = lifecycle.tryAcquire(run.projectId()).orElse(null)) {
+                if (projectLease == null || deleting(run.projectId())) {
+                    continue;
+                }
+                store.transition(run.id(), run.projectId(), run.version(), RunState.RECOVERING,
+                    token, RunState.STARTING, RunState.RUNNING, RunState.STOPPING);
+            }
+        }
+        for (RunRecord snapshot : store.findRunsInState(RunState.RECOVERING)) {
+            try (var projectLease = lifecycle.tryAcquire(snapshot.projectId()).orElse(null)) {
+                if (projectLease == null || deleting(snapshot.projectId())) {
+                    continue;
+                }
+                RunRecord run = store.findRun(snapshot.id()).orElse(null);
+                if (run == null) {
+                    continue;
+                }
+                processed.add(run.id());
+                Optional<JobCoordinator.JobFacts> facts = coordinator.facts(run);
+                if (facts.isEmpty()) {
+                    if (settle(run, RunState.FAILED, "RECOVERY_FAILED", null)) failedClosed.add(run.id());
+                    continue;
+                }
+                JobCoordinator.JobFacts job = facts.get();
+                if (job.succeeded()) {
+                    if (settle(run, RunState.SUCCEEDED, "BUILD_SUCCEEDED", job.exitCode() == null ? 0 : job.exitCode())) {
+                        settled.add(run.id());
+                    }
+                } else if (job.failed()) {
+                    if (settle(run, RunState.FAILED, "BUILD_FAILED", job.exitCode())) settled.add(run.id());
+                } else if (job.deadlineExceeded()) {
+                    if (settle(run, RunState.TIMED_OUT, "TIME_LIMIT_EXCEEDED", null)) settled.add(run.id());
+                } else if (job.running()) {
+                    if (store.transition(run.id(), run.projectId(), run.version(), RunState.RUNNING,
+                        token, RunState.RECOVERING)) {
+                        resumed.add(run.id());
+                    }
+                }
+            }
+        }
+        return new RecoveryReport(List.copyOf(processed), List.copyOf(settled), List.copyOf(resumed),
+            List.copyOf(failedClosed));
+    }
+
+    private boolean deleting(String projectId) {
+        RunStore.ProjectRecord project = store.findProject(projectId);
+        return project != null && "DELETING".equals(project.state());
+    }
+
+    private boolean settle(RunRecord run, RunState state, String reason, Integer exitCode) {
+        if (!store.settle(run.id(), state, reason, exitCode)) return false;
+        if (logIngestor != null) logIngestor.finish(run.id());
+        if (completionListener != null) completionListener.onRunCompleted(run.id());
+        return true;
+    }
+}

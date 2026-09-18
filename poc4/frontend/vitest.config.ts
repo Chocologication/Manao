@@ -3,6 +3,7 @@ import react from '@vitejs/plugin-react';
 import { configDefaults, defineConfig } from 'vitest/config';
 
 export default defineConfig({
+  define: { 'import.meta.env.VITE_ENABLE_EXPERIMENTAL_TERMINAL': JSON.stringify('true') },
   plugins: [react()],
   resolve: { alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) } },
   test: {
@@ -14,6 +15,6 @@ export default defineConfig({
     },
     setupFiles: ['./src/test/setup.ts'],
     restoreMocks: true,
-    exclude: [...configDefaults.exclude, 'scripts/**', 'tests/e2e/**'],
+    exclude: [...configDefaults.exclude, 'scripts/**', 'tests/e2e/**', 'tests/tools/**', 'tests/ui/**'],
   },
 });

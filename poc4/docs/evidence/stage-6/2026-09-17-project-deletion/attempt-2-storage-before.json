@@ -1,0 +1,12 @@
+{
+  "pvcName": "manao-pvc-55b62271-dbca-465b-9d09-94b1f1790c21",
+  "pvUid": "87752ec2-d477-402a-989e-9150d9161895",
+  "pvcUid": "4c58d1a4-694b-407b-9204-5a79266e97ea",
+  "nfsServer": "172.16.0.5",
+  "projectId": "55b62271-dbca-465b-9d09-94b1f1790c21",
+  "pvName": "pvc-4c58d1a4-694b-407b-9204-5a79266e97ea",
+  "storageClass": "manao-poc4-delete",
+  "capturedAt": "2026-09-17T15:57:00.0831470+08:00",
+  "reclaimPolicy": "Delete",
+  "nfsPath": "/nfs/data/manao-stage6-test-manao-pvc-55b62271-dbca-465b-9d09-94b1f1790c21-pvc-4c58d1a4-694b-407b-9204-5a79266e97ea"
+}

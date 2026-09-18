@@ -753,7 +753,7 @@ describe('appRuntime login 401', () => {
 
   it('shows invalid credentials without an expired-session banner or cache clear', async () => {
     const user = userEvent.setup();
-    queryClient.setQueryData(projectKeys.all, { items: [], limit: 3 });
+    queryClient.setQueryData(projectKeys.all, { items: [], limit: 8 });
     const closer = vi.fn();
     connectionRegistry.register(closer);
 
@@ -767,7 +767,7 @@ describe('appRuntime login 401', () => {
     expect(alert).not.toHaveTextContent(/session has expired/i);
     expect(screen.getAllByRole('alert')).toHaveLength(1);
     expect(closer).not.toHaveBeenCalled();
-    expect(queryClient.getQueryData(projectKeys.all)).toEqual({ items: [], limit: 3 });
+    expect(queryClient.getQueryData(projectKeys.all)).toEqual({ items: [], limit: 8 });
     const snapshot = authSession.getSnapshot();
     expect(snapshot.status).toBe('anonymous');
     expect(snapshot).not.toMatchObject({ reason: 'unauthorized' });

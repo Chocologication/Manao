@@ -20,7 +20,7 @@ const projectSummary: ProjectSummary = {
   failureReason: null,
 };
 
-const projectList: ProjectListResponse = { items: [projectSummary], limit: 3 };
+const projectList: ProjectListResponse = { items: [projectSummary], limit: 8 };
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -388,6 +388,37 @@ describe('HttpClient', () => {
       expect(error).toBeInstanceOf(ApiRequestError);
       expect(error).toMatchObject({ status: item.status, body, traceId: body.traceId });
     }
+  });
+
+  it('parses project cleanup error codes and still rejects unknown codes', async () => {
+    const cases = [
+      { code: 'PROJECT_CREATING' as const, status: 409, message: 'Project is still being created' },
+      { code: 'PROJECT_BUSY' as const, status: 409, message: 'Project is busy' },
+      {
+        code: 'PROJECT_CLEANUP_INCOMPLETE' as const,
+        status: 503,
+        message: 'Project cleanup is incomplete',
+      },
+    ];
+    for (const item of cases) {
+      const body = { code: item.code, message: item.message, traceId: `trace-${item.code}` };
+      const fetchImpl = vi.fn<typeof fetch>(async () => jsonResponse(body, item.status));
+      const client = createClient(fetchImpl);
+      const error = await expectRejection(client.request('/api/v1/projects/prj', { method: 'DELETE' }));
+      expect(error).toBeInstanceOf(ApiRequestError);
+      expect(error).toMatchObject({ status: item.status, body, traceId: body.traceId });
+    }
+
+    const unknown = {
+      code: 'KUBECONFIG_LEAK',
+      message: 'token=super-secret',
+      traceId: 'trace-unknown',
+    };
+    const fetchImpl = vi.fn<typeof fetch>(async () => jsonResponse(unknown, 500));
+    const client = createClient(fetchImpl);
+    const error = await expectRejection(client.request('/api/v1/projects/prj', { method: 'DELETE' }));
+    expect(error).toBeInstanceOf(ApiRequestError);
+    expect(error).toMatchObject({ status: 500, body: null });
   });
 
   it('does not treat UNSUPPORTED_ENCODING as a server error code', async () => {

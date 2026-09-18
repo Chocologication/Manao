@@ -1,0 +1,21 @@
+spring:
+  config:
+    activate:
+      on-profile: cluster
+  datasource:
+    url: ${MANAO_DB_URL:jdbc:mysql://mysql:3306/manao_poc4}
+    username: ${MANAO_DB_USERNAME:manao}
+    password: ${MANAO_DB_PASSWORD:}
+manao:
+  poc4:
+    backend:
+      profile: cluster
+      kubernetes:
+        master-url: ""
+        in-cluster: true
+        service-account: true
+        kubeconfig-file: ""
+        api-server-host: ${KUBERNETES_SERVICE_HOST:}
+        api-server-port: ${KUBERNETES_SERVICE_PORT_HTTPS:0}
+        service-account-token-file: /var/run/secrets/kubernetes.io/serviceaccount/token
+        service-account-ca-certificate-file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt

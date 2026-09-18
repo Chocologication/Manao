@@ -1,3 +1,5 @@
+> **历史来源 / 2026-09-17 已被现行记录取代：** 当前 6A 范围、验收决定和证据以[唯一现行事实现状](../../docs/Stage6A-Current-Facts.md)为准。下文保留原时点的设计、计划和结果；其中“当前”、待实施、FAILED/不允许 6B 等只描述旧时点，不覆盖本次用户验收决定，也不自动授权重新执行。原始结果不改写。此链接指向主检出的单份文档，不复制第二份现状。
+
 # POC4 阶段六真实后端与 Kubernetes 集成设计
 
 ## 1. 文档状态
@@ -44,7 +46,7 @@
 - JWT 登录、用户所有权检查、统一 HTTP 错误包。
 - MySQL Flyway migration、项目/Run/日志/ticket/terminal/audit 持久化。
 - 通过内部 workspace API 操作 RWX PVC 上的文件树、内容、保存、创建、重命名、删除和 revision 校验。
-- 固定 Java 17 + Maven 3.9 的 `mvn clean test` Job。
+- 固定 Java 17 + Maven 3.9 的项目入口执行 Job。
 - Pod 日志持久化、最近 5 MiB 窗口、replay/live WebSocket 和七天清理。
 - 当前活动 Maven Job 应用容器的 Fabric8 `pods/exec` PTY。
 - 一次性日志/终端 ticket、单 live terminal session、resize、二进制输入输出、credit/ack 和关闭销毁。
@@ -143,7 +145,7 @@ Spring Boot Actuator 提供 liveness/readiness health groups。Kubernetes 探针
 | 表 | 关键字段 | 约束/用途 |
 |---|---|---|
 | `app_user` | `id`, `username`, `password_hash`, `enabled`, `created_at` | `username` 唯一；不存明文密码 |
-| `project` | `id`, `owner_id`, `name`, `state`, `workspace_revision`, `created_at`, `updated_at`, `failure_reason` | `state` 仅为 `CREATING/READY/FAILED`；每次查询带 `owner_id`；每用户最多 3 个项目；失败原因使用有限枚举，`WORKSPACE_RECONCILIATION_REQUIRED` 不与 state 拼接 |
+| `project` | `id`, `owner_id`, `name`, `state`, `workspace_revision`, `created_at`, `updated_at`, `failure_reason` | `state` 仅为 `CREATING/READY/FAILED`；每次查询带 `owner_id`；每用户最多 8 个项目（2026-09-08 用户调整；所有状态均计入）；失败原因使用有限枚举，`WORKSPACE_RECONCILIATION_REQUIRED` 不与 state 拼接 |
 | `workspace_operation` | `id`, `project_id`, `expected_revision`, `before_sha256`, `after_sha256`, `receipt_path`, `state`, `created_at`, `committed_at` | 文件写入两阶段凭据；`receipt_path` 只能是 agent 项目根下的固定相对路径，禁止绝对路径；`PENDING` 操作阻止新的写入，重启时与 agent receipt 对账 |
 | `run` | `id`, `project_id`, `requested_revision`, `state`, `policy_json`, `job_ref`, `pod_ref`, `started_at`, `finished_at`, `exit_code`, `termination_reason`, `version` | locking state 单项目唯一；保存策略快照 |
 | `run_log_chunk` | `run_id`, `seq`, `text_utf8`, `byte_length`, `created_at` | `(run_id, seq)` 唯一；总窗口不超过 5 MiB |
@@ -236,7 +238,7 @@ Start 只接受：
 
 Job 固定约束：
 
-- `mvn clean test`。
+- 使用 Maven 编译并执行项目入口类 `com.example.app.App`，不运行项目测试作为 Run 的前置步骤。
 - Java 17、Maven 3.9。
 - `restartPolicy: Never`、`backoffLimit: 0`、`activeDeadlineSeconds: 1800`。
 - CPU 不超过 8 cores，内存不超过 16 GiB，ephemeral storage 不超过 10 GiB。
@@ -244,7 +246,7 @@ Job 固定约束：
 - `/tmp` 使用独立 `emptyDir`，设置 `TMPDIR=/tmp`、`HOME=/tmp`。
 - Job 使用 `automountServiceAccountToken: false` 的无 RBAC ServiceAccount。
 
-Maven Job 的应用容器使用包含 JDK 17、Maven 3.9、Bash 和固定 wrapper 的不可变镜像；PID 1 直接执行参数数组 `mvn clean test`，不经过用户可控 shell。PTY 不是 Job entrypoint、sidecar 或 wrapper 替代品，而是对同一 `Running` 应用容器建立的独立 `pods/exec` 子进程：exec 启动固定路径的 root-owned、0555 `manao-pty-wrapper`，wrapper 再启动交互 Bash。Maven PID 1 的退出决定 Job 事实；PTY shell 的输入不能改变固定 Maven 命令，但对 PVC 的写入仍记录为 POC 风险。
+Maven Job 的应用容器使用包含 JDK 17、Maven 3.9、Bash 和固定 exec 配置的不可变镜像；PID 1 直接执行参数数组 `mvn -q -DskipTests compile exec:java`，由项目模板配置执行 `com.example.app.App`，不经过用户可控 shell。PTY 不是 Job entrypoint、sidecar 或 wrapper 替代品，而是对同一 `Running` 应用容器建立的独立 `pods/exec` 子进程：exec 启动固定路径的 root-owned、0555 `manao-pty-wrapper`，wrapper 再启动交互 Bash。Maven PID 1 的退出决定 Job 事实；PTY shell 的输入不能改变 Run 入口，但对 PVC 的写入仍记录为 POC 风险。
 
 ### 6.4 错误语义
 
@@ -317,6 +319,7 @@ wrapper 事件至少包含 `sessionId`、命令文本、开始时间、结束时
 - 后端 Deployment 不挂载项目 PVC；项目文件只经内部 workspace Service 访问。不挂载 kubeconfig。
 - 每个 workspace Pod 只挂载其项目的 RWX PVC `subPath`，只监听 ClusterIP 内部地址；workspace Pod 使用专用 ServiceAccount 并设置 `automountServiceAccountToken: false`。
 - 数据库 URL、用户名、密码、JWT 签名密钥、capability 私钥和 wrapper MAC 根密钥来自 Kubernetes Secret 或受控环境注入；workspace-agent 只接收其项目的公开验证密钥、项目 ID 和服务端模板环境变量。
+- workspace Pod 通过 startupProbe 避免冷启动误判：HTTP GET `/agent/v1/healthz`（8080），initialDelaySeconds 5、periodSeconds 5、failureThreshold 24、timeoutSeconds 2；liveness 只判断进程不可恢复失活，readiness 反映 HTTP 服务可用；liveness/readiness 在 startupProbe 成功后才开始判定。
 - 通过 startupProbe 避免冷启动误判；liveness 只判断进程不可恢复失活；readiness 反映数据库和 Kubernetes 客户端是否可用。
 - 日志默认只输出 requestId、业务状态和脱敏错误，不输出 JWT、ticket 原文、密码、PVC 绝对路径或资源内部引用。
 

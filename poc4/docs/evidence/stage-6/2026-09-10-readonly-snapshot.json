@@ -1,0 +1,120 @@
+{
+  "checkedAt": "2026-09-10T18:45:36.0345101+08:00",
+  "scope": "read-only review; no test execution or service restart in this documentation task",
+  "codeHead": "c974630b2aa34f442deef72206259113460aed09",
+  "mainDocsHead": "ba53731edaba0600ea770e1e58361f6a6a63ec2e",
+  "latestRun": {
+    "reportedByUser": {
+      "passed": 5,
+      "afterClusterRestart": true,
+      "outsideSandbox": true
+    },
+    "limits": "last-run.json contains status and failed IDs only; exact count, duration, Run outcome and execution identity not independently recorded for this rerun",
+    "corroboration": {
+      "path": "poc4/frontend/test-results/.last-run.json",
+      "sha256": "91d1c43004802cd49950d78eb11c8fa7d05da8ffffe219a8b13b2f561bc00903",
+      "content": {
+        "status": "passed",
+        "failedTests": []
+      },
+      "lastWriteTime": "2026-09-10T18:32:06.1960099+08:00"
+    }
+  },
+  "cluster": {
+    "remainingStage6Resources": [
+      {
+        "phase": "Succeeded",
+        "name": "manao-ws-init-083b8efd-9f57-4cb4-aa6f-646b37bd6d57",
+        "projectId": "083b8efd-9f57-4cb4-aa6f-646b37bd6d57",
+        "component": "initializer",
+        "kind": "Pod"
+      },
+      {
+        "phase": "Bound",
+        "name": "manao-pvc-083b8efd-9f57-4cb4-aa6f-646b37bd6d57",
+        "projectId": "083b8efd-9f57-4cb4-aa6f-646b37bd6d57",
+        "component": "workspace",
+        "kind": "PersistentVolumeClaim"
+      }
+    ],
+    "nodes": [
+      {
+        "kubeletVersion": "v1.31.13",
+        "allocatableCpu": "3600m",
+        "ready": "True",
+        "name": "master",
+        "runtime": "containerd://1.7.13",
+        "taints": [
+          {
+            "effect": "NoSchedule",
+            "key": "node-role.kubernetes.io/control-plane"
+          }
+        ]
+      },
+      {
+        "kubeletVersion": "v1.31.13",
+        "allocatableCpu": "7600m",
+        "ready": "True",
+        "name": "node1",
+        "runtime": "containerd://1.7.13",
+        "taints": [
+          null
+        ]
+      },
+      {
+        "kubeletVersion": "v1.31.13",
+        "allocatableCpu": "3600m",
+        "ready": "True",
+        "name": "node2",
+        "runtime": "containerd://1.7.13",
+        "taints": [
+          null
+        ]
+      }
+    ],
+    "namespace": "manao-stage6-test",
+    "nodeReadIdentity": "operator admin; read-only; not backend acceptance evidence",
+    "restrictedIdentity": "system:serviceaccount:manao-stage6-test:manao-6a-local"
+  },
+  "database": {
+    "schema": "manao_poc4",
+    "source": "read-only MySQL MCP query in this review",
+    "limits": "Post-run state only, not a before/after audit of this latest rerun",
+    "remainingProjects": [
+      {
+        "state": "READY",
+        "classification": "unrelated diagnostic, preserved",
+        "name": "null-receipt"
+      },
+      {
+        "failureReason": "CREATION_FAILED",
+        "state": "FAILED",
+        "classification": "unresolved initializer cleanup diagnostic, preserved",
+        "name": "stage6-run-1789031195908",
+        "runCount": 0,
+        "id": "083b8efd-9f57-4cb4-aa6f-646b37bd6d57",
+        "workspaceRevision": 0
+      }
+    ]
+  },
+  "historicalRunMismatch": {
+    "currentStatus": "not revalidated; do not mark resolved from terminal-state-only test",
+    "databaseReason": "RECOVERY_FAILED",
+    "source": "poc4/frontend/playwright-report/stage6-real-backend-fixed-20260909-210521/verification-summary.json",
+    "exitCode": 0,
+    "podPhase": "Succeeded",
+    "jobSucceeded": 1,
+    "databaseState": "FAILED"
+  },
+  "artifacts": {
+    "test": {
+      "path": "poc4/frontend/tests/e2e/stage6-real-backend.spec.ts",
+      "sha256": "4748b074780ced4dcd7714991e7bf08e5725841504c766fa4d3bfa31de0cd7f5"
+    },
+    "jar": {
+      "path": "poc4/backend/target/manao-poc4-backend-0.0.1-SNAPSHOT.jar",
+      "sha256": "a227a6d55422288387cf8d3a3452ad3aca76819ae3e0ca1a5e5b5d8da8e3e17f",
+      "scope": "on-disk artifact, not proof of exact process-loaded binary"
+    }
+  }
+}

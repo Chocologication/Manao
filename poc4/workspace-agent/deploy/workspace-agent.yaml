@@ -1,0 +1,72 @@
+# Reference manifest for the workspace-agent image contract.
+# Real workspace Pods are created per project by the backend WorkspaceResourceFactory; this file
+# documents the security posture the factory must reproduce and is used by manifest tests.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: manao-workspace-agent
+  labels:
+    app.kubernetes.io/managed-by: manao-poc4-backend
+automountServiceAccountToken: false
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: manao-ws-reference
+  labels:
+    app.kubernetes.io/managed-by: manao-poc4-backend
+    manao.poc4/component: workspace
+spec:
+  serviceAccountName: manao-workspace-agent
+  automountServiceAccountToken: false
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 10001
+    runAsGroup: 10001
+    fsGroup: 10001
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: workspace-agent
+      # Image must be referenced by immutable digest in real deployments.
+      image: REPLACE_WITH_WORKSPACE_AGENT_IMAGE_DIGEST
+      ports:
+        - containerPort: 8080
+      env:
+        - name: MANAO_AGENT_PROJECT_ID
+          value: REPLACE_WITH_PROJECT_ID
+        - name: MANAO_AGENT_CAPABILITY_PUBLIC_KEY
+          value: REPLACE_WITH_PUBLIC_KEY
+      volumeMounts:
+        - name: workspace
+          mountPath: /workspace
+        - name: tmp
+          mountPath: /tmp
+      startupProbe:
+        httpGet:
+          path: /agent/v1/healthz
+          port: 8080
+        initialDelaySeconds: 5
+        periodSeconds: 5
+        failureThreshold: 24
+        timeoutSeconds: 2
+      readinessProbe:
+        httpGet:
+          path: /agent/v1/healthz
+          port: 8080
+        initialDelaySeconds: 3
+        periodSeconds: 5
+        failureThreshold: 3
+      livenessProbe:
+        httpGet:
+          path: /agent/v1/healthz
+          port: 8080
+        initialDelaySeconds: 5
+        periodSeconds: 10
+        failureThreshold: 3
+  volumes:
+    - name: workspace
+      persistentVolumeClaim:
+        claimName: REPLACE_WITH_PROJECT_PVC
+    - name: tmp
+      emptyDir: { }

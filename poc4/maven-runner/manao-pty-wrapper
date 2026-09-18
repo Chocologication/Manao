@@ -1,0 +1,6 @@
+#!/bin/bash
+# manao-pty-wrapper (placeholder v0)
+# NOTE: HMAC/FIFO audit-event protocol is NOT implemented yet; it is delivered by the
+# dedicated audit-transport plan. Until then this wrapper only execs an interactive Bash,
+# and terminal audit evidence must be marked SKIPPED in the 6A gate.
+exec /bin/bash -l

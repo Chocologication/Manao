@@ -409,6 +409,10 @@ export function resetWorkspaces(): void {
   ]);
 }
 
+export function removeWorkspace(projectId: string): void {
+  workspaces.delete(projectId);
+}
+
 export function ensureWorkspace(projectId: string): void {
   if (!workspaces.has(projectId)) {
     workspaces.set(projectId, emptyWorkspace(1));

@@ -1,0 +1,119 @@
+{
+  "name": "deletion-live-ui-20260917",
+  "projectId": "2f4b29a5-5170-41f4-9ea4-75bc6aa51516",
+  "runIds": [
+    "c2182fff-4576-4b21-adb8-380984469ea6",
+    "db44b6cb-f14d-4e68-a06c-3ba90ca10048"
+  ],
+  "events": [
+    {
+      "phase": "CREATED",
+      "at": "2026-09-17T08:50:46.273Z"
+    },
+    {
+      "phase": "FAILED",
+      "at": "2026-09-17T08:52:02.921Z",
+      "message": "expect(locator).toBeVisible() failed\n\nLocator: getByRole('tree', { name: 'Files' })\nExpected: visible\nTimeout: 60000ms\nError: element(s) not found\n\nCall log:\n  - Expect \"to.be.visible\" with timeout 60000ms\n  - waiting for getByRole('tree', { name: 'Files' })\n"
+    },
+    {
+      "phase": "RESUME_SAME_PROJECT",
+      "at": "2026-09-17T08:53:47.967Z"
+    },
+    {
+      "phase": "FILE_TREE_EXPLICIT_RETRY",
+      "at": "2026-09-17T08:53:48.808Z"
+    },
+    {
+      "phase": "FILE_TREE_EXPLICIT_RETRY",
+      "at": "2026-09-17T08:53:48.833Z"
+    },
+    {
+      "phase": "FAILED",
+      "at": "2026-09-17T08:54:18.845Z",
+      "message": "locator.click: Timeout 30000ms exceeded.\nCall log:\n\u001b[2m  - waiting for getByRole('button', { name: 'Retry', exact: true })\u001b[22m\n\u001b[2m    - locator resolved to <button type=\"button\" data-slot=\"button\" class=\"[&_svg]:-mx-0.5 relative inline-flex shrink-0 cursor-pointer items-center justify-center gap-2 whitespace-nowrap rounded-lg border font-medium text-base outline-none transition-[box-shadow,transform] duration-150 before:pointer-events-none before:absolute before:inset-0 before:rounded-[calc(var(--radius-lg)-1px)] pointer-coarse:after:absolute pointer-coarse:after:size-full pointer-coarse:after:min-h-11 pointer-coarse:after:min-w-11 focus-visible:ring-2 f…>Retry</button>\u001b[22m\n\u001b[2m  - attempting click action\u001b[22m\n\u001b[2m    - waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m  - element was detached from the DOM, retrying\u001b[22m\n"
+    },
+    {
+      "phase": "RESUME_SAME_PROJECT",
+      "at": "2026-09-17T08:56:08.608Z"
+    },
+    {
+      "phase": "FILE_TREE_EXPLICIT_RETRY",
+      "at": "2026-09-17T08:56:09.462Z"
+    },
+    {
+      "phase": "FAILED",
+      "at": "2026-09-17T08:56:40.462Z",
+      "message": "locator.click: Timeout 30000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('.monaco-editor textarea').first()\u001b[22m\n\u001b[2m    - locator resolved to <textarea tabindex=\"-1\" readonly=\"true\" aria-hidden=\"true\" class=\"ime-text-area\"></textarea>\u001b[22m\n\u001b[2m  - attempting click action\u001b[22m\n\u001b[2m    2 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div class=\"view-line\">…</div> from <div data-mprt=\"6\" role=\"presentation\" class=\"monaco-scrollable-element editor-scrollable vs-dark\">…</div> subtree intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m    - waiting 20ms\u001b[22m\n\u001b[2m    2 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div class=\"view-line\">…</div> from <div data-mprt=\"6\" role=\"presentation\" class=\"monaco-scrollable-element editor-scrollable vs-dark\">…</div> subtree intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m      - waiting 100ms\u001b[22m\n\u001b[2m    57 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m       - element is visible, enabled and stable\u001b[22m\n\u001b[2m       - scrolling into view if needed\u001b[22m\n\u001b[2m       - done scrolling\u001b[22m\n\u001b[2m       - <div class=\"view-line\">…</div> from <div data-mprt=\"6\" role="
+    },
+    {
+      "phase": "RESUME_SAME_PROJECT",
+      "at": "2026-09-17T08:57:27.568Z"
+    },
+    {
+      "phase": "FILE_TREE_EXPLICIT_RETRY",
+      "at": "2026-09-17T08:57:28.405Z"
+    },
+    {
+      "phase": "FAILED",
+      "at": "2026-09-17T08:57:34.403Z",
+      "message": "expect(locator).toBeEnabled() failed\n\nLocator:  getByRole('button', { name: 'Save', exact: true })\nExpected: enabled\nReceived: disabled\nTimeout:  5000ms\n\nCall log:\n  - Expect \"to.be.enabled\" with timeout 5000ms\n  - waiting for getByRole('button', { name: 'Save', exact: true })\n    14 × locator resolved to <button disabled title=\"Save\" type=\"button\" aria-label=\"Save\" class=\"mr-1 inline-flex size-8 shrink-0 items-center justify-center rounded-md outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-64\">…</button>\n       - unexpected value \"disabled\"\n"
+    },
+    {
+      "phase": "RESUME_SAME_PROJECT",
+      "at": "2026-09-17T08:59:10.856Z"
+    },
+    {
+      "phase": "FILE_TREE_EXPLICIT_RETRY",
+      "at": "2026-09-17T08:59:11.698Z"
+    },
+    {
+      "phase": "SAVED",
+      "at": "2026-09-17T08:59:12.826Z",
+      "revision": "22"
+    },
+    {
+      "phase": "RUN_STARTED",
+      "at": "2026-09-17T08:59:13.073Z",
+      "runId": "c2182fff-4576-4b21-adb8-380984469ea6"
+    },
+    {
+      "phase": "RUN_FAILED",
+      "at": "2026-09-17T08:59:48.623Z",
+      "runId": "c2182fff-4576-4b21-adb8-380984469ea6",
+      "output": "missingSymbol"
+    },
+    {
+      "phase": "SAVED",
+      "at": "2026-09-17T08:59:48.836Z",
+      "revision": "23"
+    },
+    {
+      "phase": "RUN_STARTED",
+      "at": "2026-09-17T08:59:49.054Z",
+      "runId": "db44b6cb-f14d-4e68-a06c-3ba90ca10048"
+    },
+    {
+      "phase": "RUN_SUCCEEDED",
+      "at": "2026-09-17T09:00:04.700Z",
+      "runId": "db44b6cb-f14d-4e68-a06c-3ba90ca10048",
+      "output": "Deletion lifecycle verified"
+    },
+    {
+      "phase": "READY_FOR_DELETE_FAULT",
+      "at": "2026-09-17T09:00:04.730Z"
+    },
+    {
+      "phase": "DELETION_INCOMPLETE",
+      "at": "2026-09-17T09:01:43.997Z",
+      "status": 503
+    },
+    {
+      "phase": "RELOAD_PRESERVES_DELETING",
+      "at": "2026-09-17T09:01:44.525Z"
+    },
+    {
+      "phase": "USER_LIFECYCLE_AND_RESUME_PASS",
+      "at": "2026-09-17T09:04:52.033Z"
+    }
+  ]
+}

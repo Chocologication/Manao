@@ -25,7 +25,7 @@ const CONTEXT: LogParseContext = {
 };
 
 const POLICY = {
-  command: 'mvn clean test' as const,
+  command: 'mvn -q -DskipTests compile exec:java' as const,
   runtime: { javaMajor: 17 as const, mavenMajor: 3 as const },
   timeoutSeconds: 1800,
   resources: {

@@ -1,4 +1,6 @@
-export type ProjectState = 'CREATING' | 'READY' | 'FAILED';
+export const DEFAULT_PROJECT_LIMIT = 8;
+
+export type ProjectState = 'CREATING' | 'READY' | 'FAILED' | 'DELETING';
 export type ProjectSummary = {
   id: string;
   name: string;
@@ -6,5 +8,5 @@ export type ProjectSummary = {
   createdAt: string;
   failureReason: string | null;
 };
-export type ProjectListResponse = { items: ProjectSummary[]; limit: 3 };
+export type ProjectListResponse = { items: ProjectSummary[]; limit: number };
 export type CreateProjectRequest = { name: string };

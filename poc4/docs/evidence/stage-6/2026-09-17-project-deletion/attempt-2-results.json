@@ -1,0 +1,275 @@
+{
+  "config": {
+    "argv": [
+      "D:\\DeepLearning\\Nodejs\\node.exe",
+      "D:\\DeepLearning\\MyProjects\\Project_Manao\\.worktree\\ensoai-stage-6-real-backend-kubernetes\\poc4\\frontend\\node_modules\\@playwright\\test\\cli.js",
+      "test",
+      "tests/e2e/stage6-real-backend.spec.ts",
+      "--project=stage6",
+      "--workers=1",
+      "--grep",
+      "MVP core loop",
+      "--reporter=list,json",
+      "--trace=off"
+    ],
+    "configFile": "D:\\DeepLearning\\MyProjects\\Project_Manao\\.worktree\\ensoai-stage-6-real-backend-kubernetes\\poc4\\frontend\\playwright.config.ts",
+    "rootDir": "D:/DeepLearning/MyProjects/Project_Manao/.worktree/ensoai-stage-6-real-backend-kubernetes/poc4/frontend/tests/e2e",
+    "failOnFlakyTests": false,
+    "forbidOnly": false,
+    "fullyParallel": false,
+    "globalSetup": "D:\\DeepLearning\\MyProjects\\Project_Manao\\.worktree\\ensoai-stage-6-real-backend-kubernetes\\poc4\\frontend\\tests\\support\\stage6-cleanup\\global-setup.ts",
+    "globalTeardown": "D:\\DeepLearning\\MyProjects\\Project_Manao\\.worktree\\ensoai-stage-6-real-backend-kubernetes\\poc4\\frontend\\tests\\support\\stage6-cleanup\\global-teardown.ts",
+    "globalTimeout": 0,
+    "grep": {},
+    "grepInvert": null,
+    "maxFailures": 0,
+    "metadata": {
+      "actualWorkers": 1
+    },
+    "preserveOutput": "always",
+    "projects": [
+      {
+        "outputDir": "D:/DeepLearning/MyProjects/Project_Manao/.worktree/ensoai-stage-6-real-backend-kubernetes/poc4/frontend/test-results",
+        "repeatEach": 1,
+        "retries": 0,
+        "metadata": {
+          "actualWorkers": 1
+        },
+        "id": "stage6",
+        "name": "stage6",
+        "testDir": "D:/DeepLearning/MyProjects/Project_Manao/.worktree/ensoai-stage-6-real-backend-kubernetes/poc4/frontend/tests/e2e",
+        "testIgnore": [],
+        "testMatch": [
+          "/stage6-(real-backend|terminal-stress|faults|cleanup)\\.spec\\.ts/"
+        ],
+        "timeout": 600000
+      },
+      {
+        "outputDir": "D:/DeepLearning/MyProjects/Project_Manao/.worktree/ensoai-stage-6-real-backend-kubernetes/poc4/frontend/test-results",
+        "repeatEach": 1,
+        "retries": 0,
+        "metadata": {
+          "actualWorkers": 1
+        },
+        "id": "chromium",
+        "name": "chromium",
+        "testDir": "D:/DeepLearning/MyProjects/Project_Manao/.worktree/ensoai-stage-6-real-backend-kubernetes/poc4/frontend/tests/e2e",
+        "testIgnore": [
+          "/stage2-large-files\\.spec\\.ts|stage3-large-writes\\.spec\\.ts|stage4-large-logs\\.spec\\.ts|stage5-terminal-stress\\.spec\\.ts/"
+        ],
+        "testMatch": [
+          "**/*.@(spec|test).?(c|m)[jt]s?(x)"
+        ],
+        "timeout": 60000
+      },
+      {
+        "outputDir": "D:/DeepLearning/MyProjects/Project_Manao/.worktree/ensoai-stage-6-real-backend-kubernetes/poc4/frontend/test-results",
+        "repeatEach": 1,
+        "retries": 0,
+        "metadata": {
+          "actualWorkers": 1
+        },
+        "id": "chrome",
+        "name": "chrome",
+        "testDir": "D:/DeepLearning/MyProjects/Project_Manao/.worktree/ensoai-stage-6-real-backend-kubernetes/poc4/frontend/tests/e2e",
+        "testIgnore": [
+          "/stage2-large-files\\.spec\\.ts|stage3-large-writes\\.spec\\.ts|stage4-large-logs\\.spec\\.ts|stage5-terminal-stress\\.spec\\.ts/"
+        ],
+        "testMatch": [
+          "**/*.@(spec|test).?(c|m)[jt]s?(x)"
+        ],
+        "timeout": 60000
+      },
+      {
+        "outputDir": "D:/DeepLearning/MyProjects/Project_Manao/.worktree/ensoai-stage-6-real-backend-kubernetes/poc4/frontend/test-results",
+        "repeatEach": 1,
+        "retries": 0,
+        "metadata": {
+          "actualWorkers": 1
+        },
+        "id": "edge",
+        "name": "edge",
+        "testDir": "D:/DeepLearning/MyProjects/Project_Manao/.worktree/ensoai-stage-6-real-backend-kubernetes/poc4/frontend/tests/e2e",
+        "testIgnore": [
+          "/stage2-large-files\\.spec\\.ts|stage3-large-writes\\.spec\\.ts|stage4-large-logs\\.spec\\.ts|stage5-terminal-stress\\.spec\\.ts/"
+        ],
+        "testMatch": [
+          "**/*.@(spec|test).?(c|m)[jt]s?(x)"
+        ],
+        "timeout": 60000
+      },
+      {
+        "outputDir": "D:/DeepLearning/MyProjects/Project_Manao/.worktree/ensoai-stage-6-real-backend-kubernetes/poc4/frontend/test-results",
+        "repeatEach": 1,
+        "retries": 0,
+        "metadata": {
+          "actualWorkers": 1
+        },
+        "id": "chromium-large-files",
+        "name": "chromium-large-files",
+        "testDir": "D:/DeepLearning/MyProjects/Project_Manao/.worktree/ensoai-stage-6-real-backend-kubernetes/poc4/frontend/tests/e2e",
+        "testIgnore": [],
+        "testMatch": [
+          "/stage2-large-files\\.spec\\.ts/"
+        ],
+        "timeout": 120000
+      },
+      {
+        "outputDir": "D:/DeepLearning/MyProjects/Project_Manao/.worktree/ensoai-stage-6-real-backend-kubernetes/poc4/frontend/test-results",
+        "repeatEach": 1,
+        "retries": 0,
+        "metadata": {
+          "actualWorkers": 1
+        },
+        "id": "chromium-large-writes",
+        "name": "chromium-large-writes",
+        "testDir": "D:/DeepLearning/MyProjects/Project_Manao/.worktree/ensoai-stage-6-real-backend-kubernetes/poc4/frontend/tests/e2e",
+        "testIgnore": [],
+        "testMatch": [
+          "/stage3-large-writes\\.spec\\.ts/"
+        ],
+        "timeout": 180000
+      },
+      {
+        "outputDir": "D:/DeepLearning/MyProjects/Project_Manao/.worktree/ensoai-stage-6-real-backend-kubernetes/poc4/frontend/test-results",
+        "repeatEach": 1,
+        "retries": 0,
+        "metadata": {
+          "actualWorkers": 1
+        },
+        "id": "chromium-large-logs",
+        "name": "chromium-large-logs",
+        "testDir": "D:/DeepLearning/MyProjects/Project_Manao/.worktree/ensoai-stage-6-real-backend-kubernetes/poc4/frontend/tests/e2e",
+        "testIgnore": [],
+        "testMatch": [
+          "/stage4-large-logs\\.spec\\.ts/"
+        ],
+        "timeout": 180000
+      },
+      {
+        "outputDir": "D:/DeepLearning/MyProjects/Project_Manao/.worktree/ensoai-stage-6-real-backend-kubernetes/poc4/frontend/test-results",
+        "repeatEach": 1,
+        "retries": 0,
+        "metadata": {
+          "actualWorkers": 1
+        },
+        "id": "chromium-terminal-stress",
+        "name": "chromium-terminal-stress",
+        "testDir": "D:/DeepLearning/MyProjects/Project_Manao/.worktree/ensoai-stage-6-real-backend-kubernetes/poc4/frontend/tests/e2e",
+        "testIgnore": [],
+        "testMatch": [
+          "/stage5-terminal-stress\\.spec\\.ts/"
+        ],
+        "timeout": 180000
+      }
+    ],
+    "quiet": false,
+    "reporter": [
+      [
+        "list"
+      ],
+      [
+        "json"
+      ]
+    ],
+    "reportSlowTests": {
+      "max": 5,
+      "threshold": 300000
+    },
+    "shard": null,
+    "tags": [],
+    "updateSnapshots": "missing",
+    "updateSourceMethod": "patch",
+    "version": "1.62.1",
+    "workers": 1,
+    "webServer": null
+  },
+  "suites": [
+    {
+      "title": "stage6-real-backend.spec.ts",
+      "file": "stage6-real-backend.spec.ts",
+      "column": 0,
+      "line": 0,
+      "specs": [
+        {
+          "title": "MVP core loop: failed revision, corrected revision, and persistent history",
+          "ok": false,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 360000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "stage6",
+              "projectName": "stage6",
+              "results": [
+                {
+                  "workerIndex": 0,
+                  "parallelIndex": 0,
+                  "status": "failed",
+                  "duration": 17332,
+                  "error": {
+                    "message": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoBe\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // Object.is equality\u001b[22m\n\nExpected: \u001b[32m\"READY\"\u001b[39m\nReceived: \u001b[31mundefined\u001b[39m",
+                    "stack": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoBe\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // Object.is equality\u001b[22m\n\nExpected: \u001b[32m\"READY\"\u001b[39m\nReceived: \u001b[31mundefined\u001b[39m\n    at D:\\DeepLearning\\MyProjects\\Project_Manao\\.worktree\\ensoai-stage-6-real-backend-kubernetes\\poc4\\frontend\\tests\\e2e\\stage6-real-backend.spec.ts:154:53",
+                    "location": {
+                      "file": "D:\\DeepLearning\\MyProjects\\Project_Manao\\.worktree\\ensoai-stage-6-real-backend-kubernetes\\poc4\\frontend\\tests\\e2e\\stage6-real-backend.spec.ts",
+                      "column": 53,
+                      "line": 154
+                    },
+                    "snippet": "  152 |   const token = await apiToken(page, ALICE);\n  153 |   const project = await resources.createProject('alice', 'mvp-core-loop');\n> 154 |   expect(await awaitReady(page, project.id, token)).toBe('READY');\n      |                                                     ^\n  155 |\n  156 |   const treeUrl = '/api/v1/projects/' + project.id + '/files/tree?path=';\n  157 |   const contentUrl = '/api/v1/projects/' + project.id + '/files/content?path=' + encodeURIComponent('src/main/java/com/example/app/App.java');"
+                  },
+                  "errors": [
+                    {
+                      "location": {
+                        "file": "D:\\DeepLearning\\MyProjects\\Project_Manao\\.worktree\\ensoai-stage-6-real-backend-kubernetes\\poc4\\frontend\\tests\\e2e\\stage6-real-backend.spec.ts",
+                        "column": 53,
+                        "line": 154
+                      },
+                      "message": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoBe\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // Object.is equality\u001b[22m\n\nExpected: \u001b[32m\"READY\"\u001b[39m\nReceived: \u001b[31mundefined\u001b[39m\n\n  152 |   const token = await apiToken(page, ALICE);\n  153 |   const project = await resources.createProject('alice', 'mvp-core-loop');\n> 154 |   expect(await awaitReady(page, project.id, token)).toBe('READY');\n      |                                                     ^\n  155 |\n  156 |   const treeUrl = '/api/v1/projects/' + project.id + '/files/tree?path=';\n  157 |   const contentUrl = '/api/v1/projects/' + project.id + '/files/content?path=' + encodeURIComponent('src/main/java/com/example/app/App.java');\n    at D:\\DeepLearning\\MyProjects\\Project_Manao\\.worktree\\ensoai-stage-6-real-backend-kubernetes\\poc4\\frontend\\tests\\e2e\\stage6-real-backend.spec.ts:154:53"
+                    }
+                  ],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-09-17T07:56:56.983Z",
+                  "annotations": [],
+                  "attachments": [
+                    {
+                      "name": "stage6-cleanup.json",
+                      "contentType": "application/json",
+                      "body": "ewogICJlbnRyaWVzIjogWwogICAgewogICAgICAic2NoZW1hVmVyc2lvbiI6IDEsCiAgICAgICJpbnZvY2F0aW9uSWQiOiAiZGVsZXRlMi0yMDI2MDkxNyIsCiAgICAgICJ0ZXN0SWQiOiAic3RhZ2U2LXJlYWwtYmFja2VuZC5zcGVjLnRzL01WUCBjb3JlIGxvb3A6IGZhaWxlZCByZXZpc2lvbiwgY29ycmVjdGVkIHJldmlzaW9uLCBhbmQgcGVyc2lzdGVudCBoaXN0b3J5IiwKICAgICAgImF0dGVtcHQiOiAwLAogICAgICAid29ya2VyS2V5IjogIjAiLAogICAgICAiZW50cnlJZCI6ICJtdnAtY29yZS1sb29wLTAtMC0wNmU5NzgyYmIwNTEiLAogICAgICAib3duZXJJZCI6ICJlMDFhODJmZC01MTMwLTQ5ZWMtOTZlMi04MjQwMTVlYzFmYWYiLAogICAgICAib3duZXJLZXkiOiAiYWxpY2UiLAogICAgICAiZXhhY3ROYW1lIjogInN0YWdlNi1kZWxldGUyLS1zdGFnZTYtcmVhbC1iYWNrZW5kLnNwZWMudHMtTVZQLWNvcmUtbG9vLW12cC1jb3JlLWxvb3AtMCIsCiAgICAgICJwcmVwYXJlZEF0IjogIjIwMjYtMDktMTdUMDc6NTY6NTkuMDYyWiIsCiAgICAgICJwcm9qZWN0SWQiOiAiNTViNjIyNzEtZGJjYS00NjViLTlkMDktOTRiMWYxNzkwYzIxIiwKICAgICAgInJ1bklkcyI6IFtdLAogICAgICAic3RhdGUiOiAiQVBJX0NMRUFORUQiLAogICAgICAiaXNzdWVDb2RlcyI6IFtdCiAgICB9CiAgXSwKICAiaXNzdWVzIjogW10KfQ=="
+                    },
+                    {
+                      "name": "error-context",
+                      "contentType": "text/markdown",
+                      "path": "D:\\DeepLearning\\MyProjects\\Project_Manao\\.worktree\\ensoai-stage-6-real-backend-kubernetes\\poc4\\frontend\\test-results\\stage6-real-backend-MVP-co-256a3-sion-and-persistent-history-stage6\\error-context.md"
+                    }
+                  ],
+                  "errorLocation": {
+                    "file": "D:\\DeepLearning\\MyProjects\\Project_Manao\\.worktree\\ensoai-stage-6-real-backend-kubernetes\\poc4\\frontend\\tests\\e2e\\stage6-real-backend.spec.ts",
+                    "column": 53,
+                    "line": 154
+                  }
+                }
+              ],
+              "status": "unexpected"
+            }
+          ],
+          "id": "c1025aec68e34984938f-63b176ed57f4c4e4fd92",
+          "file": "stage6-real-backend.spec.ts",
+          "line": 149,
+          "column": 1
+        }
+      ]
+    }
+  ],
+  "errors": [],
+  "stats": {
+    "startTime": "2026-09-17T07:56:56.371Z",
+    "duration": 20117.497,
+    "expected": 0,
+    "skipped": 0,
+    "unexpected": 1,
+    "flaky": 0
+  }
+}

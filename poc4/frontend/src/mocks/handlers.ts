@@ -1,3 +1,4 @@
+import { DEFAULT_PROJECT_LIMIT } from '../contracts/project';
 import { http, HttpResponse } from 'msw';
 import type { ApiErrorBody } from '../contracts/api';
 import type { AuthUser, LoginRequest } from '../contracts/auth';
@@ -26,6 +27,7 @@ import { terminalHandlers } from './terminalHandlers';
 import {
   canReadReadyProjectFiles,
   createOwnedProject,
+  removeOwnedProject,
   expireCurrentToken,
   getWriteScenario,
   isLargeFileBodiesEnabled,
@@ -368,7 +370,7 @@ export const handlers = [
     }
     return HttpResponse.json({
       items: listOwnedProjectSummaries(auth.user.id),
-      limit: 3,
+      limit: DEFAULT_PROJECT_LIMIT,
     });
   }),
 
@@ -393,6 +395,19 @@ export const handlers = [
       return jsonError(409, PROJECT_LIMIT_REACHED);
     }
     return HttpResponse.json(result.project, { status: 202 });
+  }),
+
+  http.delete('/api/v1/projects/:projectId', ({ request, params }) => {
+    const auth = authorize(request);
+    if ('response' in auth) return auth.response;
+    const id = String(params.projectId);
+    const project = readOwnedProjectSummary(auth.user.id, id);
+    if (!project) return jsonError(403, FORBIDDEN);
+    const code = project.state === 'CREATING' ? 'PROJECT_CREATING'
+      : hasActiveRun(id) ? 'RUN_ALREADY_ACTIVE' : null;
+    if (code) return jsonError(409, { code, message: 'Project is busy', traceId: 'mock-delete' });
+    removeOwnedProject(auth.user.id, id);
+    return new HttpResponse(null, { status: 204 });
   }),
 
   http.get('/api/v1/projects/:projectId', ({ request, params }) => {

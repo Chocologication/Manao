@@ -323,12 +323,12 @@ describe('MSW run HTTP handlers', () => {
     const run = parseStartRunResponse(await created.json());
     expect(run.state).toBe('STARTING');
     expect(run.id).not.toMatch(/job-|pod-|pvc-/i);
-    expect(run.policy.command).toBe('mvn clean test');
+    expect(run.policy.command).toBe('mvn -q -DskipTests compile exec:java');
 
     await expectApiError(
       await startRunHttp(alice.accessToken, ALICE_SEED_PROJECT_ID, {
         expectedWorkspaceRevision: SEED_REVISION,
-        command: 'mvn clean test',
+        command: 'mvn -q -DskipTests compile exec:java',
       }),
       400,
       'VALIDATION_ERROR',

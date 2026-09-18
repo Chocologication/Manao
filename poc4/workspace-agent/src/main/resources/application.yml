@@ -1,0 +1,14 @@
+server:
+  port: 8080
+
+spring:
+  main:
+    banner-mode: off
+
+manao:
+  agent:
+    root: ${MANAO_AGENT_ROOT:/workspace}
+
+logging:
+  level:
+    root: WARN

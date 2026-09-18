@@ -17,7 +17,7 @@ export const RECONNECT_LIVE_MARKER = 'ensoai-stage4-reconnect-live';
 export const RECONNECT_LIVE_TEXT = `${RECONNECT_LIVE_MARKER}\n`;
 
 export const POC4_RUN_POLICY: RunPolicy = {
-  command: 'mvn clean test',
+  command: 'mvn -q -DskipTests compile exec:java',
   runtime: { javaMajor: 17, mavenMajor: 3 },
   timeoutSeconds: 1800,
   resources: {
@@ -48,7 +48,7 @@ export function utf8ByteLength(text: string): number {
 
 export function clonePoc4RunPolicy(): RunPolicy {
   return {
-    command: 'mvn clean test',
+    command: 'mvn -q -DskipTests compile exec:java',
     runtime: { javaMajor: 17, mavenMajor: 3 },
     timeoutSeconds: POC4_RUN_POLICY.timeoutSeconds,
     resources: {

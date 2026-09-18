@@ -43,3 +43,5 @@ build/
 /.npm-cache-tmp/
 .agent-teams
 .playwright-mcp/
+/poc4/frontend/.playwright-cli/
+/poc4/frontend/project-request.txt

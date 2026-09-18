@@ -31,7 +31,7 @@ export type RunResources = {
 };
 
 export type RunPolicy = {
-  command: 'mvn clean test';
+  command: 'mvn -q -DskipTests compile exec:java';
   runtime: { javaMajor: 17; mavenMajor: 3 };
   timeoutSeconds: number;
   resources: {
@@ -232,7 +232,7 @@ function parseRunPolicy(value: unknown): RunPolicy {
   if ('image' in record || 'env' in record) {
     invalidRunResponse();
   }
-  if (record.command !== 'mvn clean test') {
+  if (record.command !== 'mvn -q -DskipTests compile exec:java') {
     invalidRunResponse();
   }
   const runtime = asRecord(record.runtime);
@@ -251,7 +251,7 @@ function parseRunPolicy(value: unknown): RunPolicy {
     invalidRunResponse();
   }
   return {
-    command: 'mvn clean test',
+    command: 'mvn -q -DskipTests compile exec:java',
     runtime: { javaMajor: 17, mavenMajor: 3 },
     timeoutSeconds,
     resources: { requests, limits },

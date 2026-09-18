@@ -1,11 +1,12 @@
+import { DEFAULT_PROJECT_LIMIT } from '../contracts/project';
 import type { AuthUser, LoginResponse } from '../contracts/auth';
 import type { ProjectState, ProjectSummary } from '../contracts/project';
-import { clearLargeFileBodyCache, ensureWorkspace, resetWorkspaces } from './fileFixtures';
+import { clearLargeFileBodyCache, ensureWorkspace, removeWorkspace, resetWorkspaces } from './fileFixtures';
 import { resetLogTickets } from './runSocket';
-import { bootRunState, resetRunState } from './runState';
+import { bootRunState, removeProjectRuns, resetRunState } from './runState';
 
 const ACCESS_TOKEN_TTL_MS = 15 * 60 * 1000;
-const PROJECT_LIMIT = 3;
+const PROJECT_LIMIT = DEFAULT_PROJECT_LIMIT;
 
 export const ALICE_SEED_PROJECT_ID = 'prj-alice-notebook';
 export const BOB_SEED_PROJECT_ID = 'prj-bob-lab';
@@ -260,4 +261,12 @@ export function createOwnedProject(userId: string, name: string): CreateOwnedPro
   projects.push(project);
   ensureWorkspace(project.id);
   return { status: 'created', project: toSummary(project) };
+}
+
+export function removeOwnedProject(userId: string, projectId: string): void {
+  const project = projects.find((item) => item.id === projectId && item.ownerId === userId);
+  if (!project) return;
+  removeProjectRuns(projectId);
+  removeWorkspace(projectId);
+  projects = projects.filter((item) => item !== project);
 }

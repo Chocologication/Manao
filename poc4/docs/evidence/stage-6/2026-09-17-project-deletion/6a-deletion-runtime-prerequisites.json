@@ -1,0 +1,80 @@
+{
+  "apiVersion": "v1",
+  "kind": "List",
+  "items": [
+    {
+      "apiVersion": "storage.k8s.io/v1",
+      "parameters": {
+        "onDelete": "delete",
+        "archiveOnDelete": "false"
+      },
+      "volumeBindingMode": "Immediate",
+      "kind": "StorageClass",
+      "reclaimPolicy": "Delete",
+      "provisioner": "k8s-sigs.io/nfs-subdir-external-provisioner",
+      "metadata": {
+        "name": "manao-poc4-delete",
+        "labels": {
+          "manao.poc4/purpose": "project-deletion",
+          "app.kubernetes.io/part-of": "manao-poc4"
+        }
+      }
+    },
+    {
+      "rules": [
+        {
+          "apiGroups": [
+            ""
+          ],
+          "verbs": [
+            "list"
+          ],
+          "resources": [
+            "persistentvolumes"
+          ]
+        },
+        {
+          "apiGroups": [
+            "storage.k8s.io"
+          ],
+          "verbs": [
+            "get"
+          ],
+          "resources": [
+            "storageclasses"
+          ]
+        }
+      ],
+      "apiVersion": "rbac.authorization.k8s.io/v1",
+      "kind": "ClusterRole",
+      "metadata": {
+        "name": "manao-poc4-storage-observer",
+        "labels": {
+          "app.kubernetes.io/part-of": "manao-poc4"
+        }
+      }
+    },
+    {
+      "roleRef": {
+        "apiGroup": "rbac.authorization.k8s.io",
+        "kind": "ClusterRole",
+        "name": "manao-poc4-storage-observer"
+      },
+      "apiVersion": "rbac.authorization.k8s.io/v1",
+      "kind": "ClusterRoleBinding",
+      "subjects": [
+        {
+          "kind": "ServiceAccount",
+          "name": "manao-6a-local",
+          "namespace": "manao-stage6-test"
+        }
+      ],
+      "metadata": {
+        "name": "manao-poc4-storage-observer",
+        "labels": {
+          "app.kubernetes.io/part-of": "manao-poc4"
+        }
+      }
+    }
+  ]
+}

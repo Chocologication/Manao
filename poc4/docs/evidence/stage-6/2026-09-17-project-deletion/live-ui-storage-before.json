@@ -1,0 +1,9 @@
+{
+  "nfsPath": "/nfs/data/manao-stage6-test-manao-pvc-2f4b29a5-5170-41f4-9ea4-75bc6aa51516-pvc-7d0994b9-c4a0-4e98-b4c8-7e7c92377e91",
+  "pvcName": "manao-pvc-2f4b29a5-5170-41f4-9ea4-75bc6aa51516",
+  "pvName": "pvc-7d0994b9-c4a0-4e98-b4c8-7e7c92377e91",
+  "pvcUid": "7d0994b9-c4a0-4e98-b4c8-7e7c92377e91",
+  "storageClass": "manao-poc4-delete",
+  "physicalDirectory": "PRESENT",
+  "projectId": "2f4b29a5-5170-41f4-9ea4-75bc6aa51516"
+}

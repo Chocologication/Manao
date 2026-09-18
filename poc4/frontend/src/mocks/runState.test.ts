@@ -150,7 +150,7 @@ describe('start payload and server-owned policy', () => {
       lastLogSeq: null,
       createdAt: new Date(EPOCH_MS).toISOString(),
     });
-    expect(run.policy.command).toBe('mvn clean test');
+    expect(run.policy.command).toBe('mvn -q -DskipTests compile exec:java');
     expect(hasActiveRun(ALICE)).toBe(true);
     expect(getActiveRun(ALICE)?.id).toBe(run.id);
     expect(run.id).not.toMatch(/job-|pod-|pvc-|namespace|serviceAccount/i);
@@ -160,7 +160,7 @@ describe('start payload and server-owned policy', () => {
     'rejects extra %s on start and leaves state unchanged',
     (field) => {
       const extras: Record<string, unknown> = {
-        command: 'mvn clean test',
+        command: 'mvn -q -DskipTests compile exec:java',
         image: 'maven:3.9',
         resources: { cpuMillis: 1 },
         env: { FOO: 'bar' },

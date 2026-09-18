@@ -1,0 +1,16 @@
+{
+  "processIssue": "Windows Node v24.12.0 UV_HANDLE_CLOSING after report",
+  "physicalArchivedDirectory": "ABSENT",
+  "runIds": [
+    "e1a9ceef-88d3-401b-be04-15a59a664b60",
+    "07d575a3-41da-4e99-a67f-1efa700b575c"
+  ],
+  "testAssertions": "PASS",
+  "projectId": "7a5f80e6-7e5f-4f57-93e9-f321cb0d39fd",
+  "testProcessExit": -1073740791,
+  "clusterResourcesRemaining": 0,
+  "existingResourcesMissing": 0,
+  "physicalOriginalDirectory": "ABSENT",
+  "existingResourcesBefore": 71,
+  "checkedAt": "2026-09-17T16:43:27.7472882+08:00"
+}

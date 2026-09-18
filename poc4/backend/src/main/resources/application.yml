@@ -1,0 +1,61 @@
+spring:
+  application:
+    name: manao-poc4-backend
+  profiles:
+    default: local-cluster
+  datasource:
+    url: ${MANAO_DB_URL:jdbc:mysql://127.0.0.1:3306/manao_poc4}
+    username: ${MANAO_DB_USERNAME:manao}
+    password: ${MANAO_DB_PASSWORD:}
+  flyway:
+    enabled: true
+management:
+  endpoint:
+    health:
+      show-details: never
+      probes:
+        enabled: true
+      group:
+        liveness:
+          include: livenessState
+        readiness:
+          include: readinessState,db,kubernetes
+  endpoints:
+    web:
+      exposure:
+        include: health
+manao:
+  poc4:
+    backend:
+      profile: local-cluster
+      java-version: 17
+      maven-version: 3.9.11
+      timeout: 1800s
+      kubernetes:
+        master-url: ${MANAO_K8S_MASTER_URL:}
+        namespace: ${MANAO_K8S_NAMESPACE:manao}
+        in-cluster: false
+        service-account: false
+        kubeconfig-file: ${KUBECONFIG:}
+        api-server-host: ""
+        api-server-port: 0
+        service-account-token-file: ""
+        service-account-ca-certificate-file: ""
+      resources:
+        cpu-cores: 8
+        memory: 16Gi
+        ephemeral-storage: 10Gi
+      workspace:
+        bridge-mode: rwx-pvc
+        pvc-name: manao-workspace-rwx
+        pvc-size: 10Gi
+        access-mode: ReadWriteMany
+        bridge-port-start: 18100
+        bridge-port-end: 18199
+        agent-port: 8080
+        # Deployment values (not fixed policy): pinned to immutable digests by the deploy environment.
+        storage-class-name: ${MANAO_WORKSPACE_STORAGE_CLASS:manao-workspace-rwx}
+        agent-image: ${MANAO_WORKSPACE_AGENT_IMAGE:manao/workspace-agent@sha256:0000000000000000000000000000000000000000000000000000000000000000}
+        initializer-image: ${MANAO_WORKSPACE_INITIALIZER_IMAGE:busybox@sha256:0000000000000000000000000000000000000000000000000000000000000000}
+      logging:
+        redact-secrets: true

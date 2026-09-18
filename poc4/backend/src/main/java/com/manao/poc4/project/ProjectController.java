@@ -1,0 +1,101 @@
+package com.manao.poc4.project;
+
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import com.manao.poc4.api.ApiException;
+import jakarta.validation.Valid;
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Size;
+import java.util.List;
+import java.util.Map;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
+import org.springframework.http.HttpStatus;
+import org.springframework.security.core.Authentication;
+import org.springframework.web.bind.annotation.DeleteMapping;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.ResponseStatus;
+import org.springframework.web.bind.annotation.RestController;
+
+@RestController
+@org.springframework.context.annotation.Conditional(com.manao.poc4.config.SecurityConfig.BackendAuthCondition.class)
+@RequestMapping("/api/v1/projects")
+public final class ProjectController {
+    private final ProjectService projects;
+    private final ProjectProvisioningService provisioning;
+    private final ProjectCleanupService cleanup;
+
+    public ProjectController(ProjectService projects) { this(projects, null, null); }
+
+    public ProjectController(ProjectService projects, ProjectProvisioningService provisioning) {
+        this(projects, provisioning, null);
+    }
+
+    @Autowired
+    public ProjectController(ProjectService projects, ProjectProvisioningService provisioning,
+                             ProjectCleanupService cleanup) {
+        this.projects = projects;
+        this.provisioning = provisioning;
+        this.cleanup = cleanup;
+    }
+
+    @GetMapping
+    public ProjectListResponse list(Authentication authentication) {
+        return new ProjectListResponse(projects.list(authentication.getName()).stream().map(ProjectController::view).toList(), ProjectLimits.MAX_PROJECTS_PER_OWNER);
+    }
+
+    @PostMapping
+    @ResponseStatus(HttpStatus.CREATED)
+    public ProjectView create(Authentication authentication, @Valid @RequestBody CreateProjectRequest request) {
+        return projects.create(authentication.getName(), request.name())
+            .map(project -> {
+                if (provisioning != null) {
+                    provisioning.provisionAsync(project.id());
+                }
+                return view(project);
+            })
+            .orElseThrow(() -> new ApiException("PROJECT_LIMIT_REACHED", 409, "Project limit reached"));
+    }
+
+    @DeleteMapping("/{projectId}")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void delete(Authentication authentication, @PathVariable String projectId) {
+        if (cleanup == null) {
+            throw new ApiException("ENTRY_NOT_FOUND", 404, "Project not found");
+        }
+        cleanup.delete(authentication.getName(), projectId);
+    }
+
+    @GetMapping("/{projectId}")
+    public ProjectView get(Authentication authentication, @PathVariable String projectId) {
+        String ownerId = authentication.getName();
+        ProjectService.Project project = projects.get(ownerId, projectId)
+            .orElseThrow(() -> new ApiException("ENTRY_NOT_FOUND", 404, "Project not found"));
+        if (provisioning != null && "READY".equals(project.state())) {
+            provisioning.ensureWorkspaceAvailable(projectId);
+            project = projects.get(ownerId, projectId)
+                .orElseThrow(() -> new ApiException("ENTRY_NOT_FOUND", 404, "Project not found"));
+        }
+        return view(project);
+    }
+
+    private static ProjectView view(ProjectService.Project project) {
+        String reason = "WORKSPACE_RECONCILIATION_REQUIRED".equals(project.failureReason())
+            ? project.failureReason() : null;
+        if (ProjectProvisioningService.WORKSPACE_STORAGE_MISSING.equals(project.failureReason())) {
+            reason = "Workspace storage is missing. Existing files cannot be accessed.";
+        }
+        return new ProjectView(project.id(), project.name(), project.state(), project.createdAt().toString(), reason);
+    }
+
+    static ProjectView getViewForTest(ProjectService.Project project) { return view(project); }
+
+    public record ProjectView(String id, String name, String state, String createdAt, String failureReason) {}
+    public record ProjectListResponse(List<ProjectView> items, int limit) {}
+
+    @JsonIgnoreProperties(ignoreUnknown = false)
+    public record CreateProjectRequest(@NotBlank @Size(max = 160) String name) {}
+}
