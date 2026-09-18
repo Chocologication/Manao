@@ -172,6 +172,24 @@
 
 **RBAC 修复（控制器已裁决）**：`poc4/deploy/6b/backend-rbac.yaml` 的 Role `manao-backend-workload` 对 `batch/jobs` 增加 `patch` 动词（原 get/list/watch/create/delete 保持不变，未添加其他资源），apply 生效（Role configured，RoleBinding/ClusterRole/ClusterRoleBinding unchanged）。实证：`kubectl auth can-i patch jobs.batch -n manao-stage6b --as=system:serviceaccount:manao-stage6b:manao-backend` → **yes**（get/list/watch/create/delete 逐项复测均 yes）。该修复直接消除 §4.3/§4.4（09-18 23:44 轮）记录的 Start run 即 START_FAILED 根因；该事件对后续 E2E 的影响见 §4.0。
 
+### 2.2 打包缺陷修复与新镜像部署（2026-09-19 00:45–01:25 +08:00，Task 4 阶段 B）
+
+**红绿回归测试（先补复现测试再修复，计划要求）**：新增 `poc4/backend/src/test/java/com/manao/poc4/workspace/WorkspaceTemplateClasspathResourceTest.java`——对 `WorkspaceTemplate.FILES` 全部 5 个清单条目，经生产加载机制（`files()` → `ClassPathResource`）断言每个模板资源经 classpath 可读且非空（正对应 provisioning 的 `FileNotFoundException`）。
+
+- 执行环境：本机无 mvn，红绿验证在 Docker `maven:3.9.9-eclipse-temurin-17`（与 Dockerfile 构建层同镜像）内挂载工作树执行，`.m2` 命名卷缓存依赖。
+- **RED**（暂将 `addDefaultExcludes` 还原默认，`git stash`）：test 层 `mvn -B -Dtest=WorkspaceTemplateClasspathResourceTest clean test` → `Tests run: 1, Failures: 0`（未复现）。实测原因：`maven-jar-plugin` 默认排除只作用于打包 jar，测试 classpath 是 `target/classes`，`maven-resources-plugin` 仍会复制 `workspace-template/.gitignore`（36 字节）。**artefact 层复现**：同 RED 状态 `mvn -B -DskipTests clean package` → fat jar `BOOT-INF/classes/workspace-template/` 实测含 `pom.xml`/`README.md`/`App.java`/`AppTest.java` 而**缺 `.gitignore`**——与 §4.1 生产事故逐字一致（`FileNotFoundException: class path resource [workspace-template/.gitignore]`）。
+- **GREEN**（恢复修复）：test `Tests run: 1, Failures: 0, Errors: 0, Skipped: 0`；同状态 `package` → jar 实测含 `BOOT-INF/classes/workspace-template/.gitignore`（另两资源一并确认）。
+- `.dockerignore` 层（构建上下文缺资源）的实证即事故本身：`5708a4b7` 构建时使用未锚定 `.dockerignore`，运行时实测缺资源（§4.1 根因链）；本轮不重复构建坏镜像验证。
+- 结论：打包缺陷在 jar 构建层（maven-jar-plugin 默认排除）与构建上下文层（`.dockerignore` 未锚定）双根因，两层修复均已提交并以 artefact 层红绿验证闭环。
+
+**提交与镜像**：commit `d1fad6d`（`fix(stage6b): package workspace template resources and add regression test`：pom.xml + .dockerignore + 回归测试）。本机 Docker daemon 构建 `chocologic/manao_images_repository:6b-backend-20260918c`，构建后镜内冒烟（JRE 镜像无 jar 工具，经 `docker cp` 取出 jar 本机校验）：`BOOT-INF/classes/workspace-template/.gitignore|pom.xml|README.md` 均在 → push → **digest `sha256:ac88b11b38096da9fd3056f264782fecd18f3d5a560f5cf3a4ddd670dd5609cf`**。
+
+**溯源记录（重要）**：本轮构建前，本地同名 tag `6b-backend-20260918c` 恰好指向未知事件镜像 `a57da658…`（`docker inspect` created=2026-09-18T11:07:13Z ≙ 19:07 +08:00，与 §2.1 事件时间线吻合——即该未知镜像当初在本机以同一 tag 构建，后未再使用）。本轮授权构建使该 tag 重新指向可溯源的新镜像；集群引用一律使用 digest 钉定，不使用 tag。
+
+**私有 env**：`stage6-6b.env` 的 `BACKEND_IMAGE` 原地更新为新 digest 引用（不经 shell 变量展开，python 直读直写；文件 ACL 沿用私有目录继承权限，未放宽）。
+
+**部署与验证（admin kubectl）**：01:24:19 `kubectl set image deploy/backend backend=chocologic/manao_images_repository@sha256:ac88b11b…` → rollout 成功；Pod `backend-7488cdbb56-hqfqn` 1/1 Running，Pod `image`/`imageID` 与 digest 逐字一致；Pod 内 `/actuator/health/readiness` 与 `/actuator/health/liveness` 均 `{"status":"UP"}`。frontend（`887c2e9f…`）与 mysql-0 未动。
+
 ## 3. Task 3 验收结果（2026-09-18，阶段 B：前端真实部署与公网入口验证）
 
 - 记录时间：2026-09-18 17:30 (+08:00)；部署/验证窗口 17:05–17:20（+08:00）
@@ -206,11 +224,40 @@
 
 **遗留项**：浏览器端登录/编辑/运行/日志全链路随 Task 4；HTTP 明文边界如上记录；backend Service 若重建需 `rollout restart deploy/frontend`（nginx 静态 upstream 解析，已写入 README §8.2）。
 
-## 4. Task 4 验收结果（阶段 B：真实公网 E2E 生命周期验收——两轮重跑均未通过）
+## 4. Task 4 验收结果（阶段 B：真实公网 E2E 生命周期验收——最终 6/6 通过）
 
-- **结果：NOT PASSED（BLOCKED）。最近一轮（2026-09-19 00:23，事件处置与 RBAC 修复之后）：Playwright 实测 `1 failed / 5 did not run`（exit 1），失败根因为新实测缺陷——已验收镜像 `5708a4b7…` 的 jar 缺少 `workspace-template/.gitignore` 打包资源，项目 provisioning 必然失败（见 4.0）。此前一轮（2026-09-18 23:44）：`2 passed / 1 failed / 3 did not run`（13.9m），根因为 RBAC 缺 `patch`（已修复并验证，见 §2.1）。两轮均按规程如实记录、不掩盖、不放宽。**
+- **结果：PASSED。2026-09-19 01:39:24–01:42:14 (+08:00) 最终轮完整重跑实测 Playwright 报告 `6 passed (2.8m)`（报告正文核对：无 skip、无 did not run）。达成路径：打包缺陷修复并构建部署新镜像 `sha256:ac88b11b…`（§2.2，红绿验证）+ 两处测试资产缺陷修正（4.0 末）。此前各失败轮（09-18 23:44 RBAC 根因、09-19 00:23 打包缺陷根因）均按规程如实记录，保留为历史（4.1、4.2），不作为通过依据。**
 
-### 4.0 事件处置后重跑（2026-09-19 00:23–00:33 +08:00）——当前唯一有效验收记录
+### 4.0 最终验收轮（2026-09-19 01:39:24–01:42:14 +08:00）——当前唯一有效验收记录
+
+- **前置（全部完成）**：backend 新镜像 `sha256:ac88b11b…` 于 01:24:19 部署、rollout 成功、健康组 UP（§2.2）；Role 已含 `jobs.batch patch`（§2.1）。
+- **残留清理（前置，实测）**：历史缺陷证据项目 `049b4aa6-9478-43db-a815-cf54adc7b671`（FAILED，4.1 轮遗留，无集群资源、仅 DB 行占配额）以轮换后新凭据经真实公网 API `DELETE /api/v1/projects/{id}` → **HTTP 204**；GET 列表 → `items: []`、单项 → **404 `ENTRY_NOT_FOUND`**；admin kubectl 核对命名空间内无任何 workspace/Job/PVC 资源。配额回到 0/8。
+- **运行环境**：公网入口 `GET http://1.12.245.235:30080/` → 200、错误凭据登录探针 → 401；本机 Vite/Spring Boot 未运行（netstat 核对无 5173/18080 监听）。
+- **E2E 实测**（`pnpm --dir poc4/frontend test:e2e:stage6b`，env 私有注入；窗口 01:39:24–01:42:14 +08:00，**exit 与报告一致 6 passed**）：
+
+| # | test | 结果 | 用时 |
+|---|---|---|---|
+| 1 | 登录、创建标记项目、等待 READY、取 projectId | **ok** | 18.7s |
+| 2 | 编辑 App.java、显式保存、revision 前进 | **ok** | 3.2s |
+| 3 | 保存可复现编译错误、运行、观察 FAILED 与编译反馈 | **ok** | 1.8m |
+| 4 | 修复、保存、再运行、观察 SUCCEEDED | **ok** | 28.6s |
+| 5 | 终态后仍可编辑保存 | **ok** | 2.8s |
+| 6 | 刷新/退出重登持久化 | **ok** | 5.1s |
+
+- **最终项目（保留供 Task 5）**：`stage6b-cloud-20260918173926-c6bn`，projectId **`da577551-0ee9-4d95-8f03-16225625c589`**；broken run **`8ee1a7f5-a913-42f3-8b88-7e1c9067a372`**（FAILED，Run logs 含 `cannot find symbol` 与 `missingSymbol`）、fixed run **`1776cb9b-de9f-46a3-927d-3119f2ac47c3`**（SUCCEEDED，Run logs 含 `Hello from Manao`）。测试 console `[stage6b]` 行与 `stage6b-project.json`/`stage6b-broken-run.json`/`stage6b-fixed-run.json` 附件字段一致（list reporter 下 buffer 附件不落盘，交接数据以 console 行提取，内容相同）。
+- **佐证（公网 API + admin kubectl 只读，运行中与结束后实测）**：项目 `state=READY`；GET runs → `SUCCEEDED`/`BUILD_SUCCEEDED` 与 `FAILED`/`BUILD_FAILED` 两条记录；Job `manao-run-1776cb9b…` **Complete 1/1**、`manao-run-8ee1a7f5…` **Failed 0/1**（终态与 Run/Job 一致）；workspace Pod/Service `manao-ws-da577551…` Running、PVC `manao-pvc-da577551…` 10Gi RWX Bound → 新 PV `pvc-89121e22…`（`manao-poc4-delete`）。运行期间无重启、无异常事件。
+- **B1–B3 证据对应**：
+  - **B1（无本机依赖、公网完成完整流程）**：成立——6 test 全程仅浏览器 + 公网入口 `http://1.12.245.235:30080`，创建→编辑→两次真实运行→持久化复核全部经真实 UI 完成。
+  - **B2（同一界面完成创建/编辑保存/真实失败反馈/修复运行成功/再次编辑）**：成立——test 3 给出真实编译错误文本反馈（FAILED + `cannot find symbol`/`missingSymbol`），test 4 同界面修复运行 SUCCEEDED 并见成功输出，test 5 终态后再次编辑保存。
+  - **B3（日志实时、终态与 Run/Job 一致、刷新与重登持久化）**：成立——Run logs 实时展示编译错误与成功输出；终态与 API 记录、集群 Job 状态三方一致（上表佐证）；test 6 刷新（重登）与退出重登后项目/文件 final marker/两条 run 历史/revision 全部保留。
+- **本轮前两次 5/6 轮（测试资产缺陷，如实修正后重跑；均为真实公网环境）**：
+  1. 01:25:21–01:28:11：`5 passed / 1 failed`——test 6 假设 reload 后会话仍有效；实际前端 token 为内存态（`authSession.test.ts` 设计：不写 localStorage/sessionStorage），reload 落在登录页。属测试资产假设与既有安全设计不符（应用行为正确，stage4 spec reload 后同样重新登录）。修复（commit `81211b7`）：reload 后重新登录再复核。遗留项目 `2a39726e…`（READY，两次终态 run）经公网 API DELETE → 204、列表空、404，集群无残留、PV `pvc-29ec5a5e…` 已回收。
+  2. 01:33:59–01:37:00：`5 passed / 1 failed`——reload 后重新登录被 returnTo 深链直接带回 `/projects/{id}`（`RequireAuth` `state.from` → `resolvePostLoginPath`，应用行为正确且属既有设计），signIn 辅助函数只断言列表页 URL 过严。修复（commit `c545442`）：signIn 接受列表/深链两种落点，深链场景在项目页内直接断言。遗留项目 `5d192f57…`（READY，两次终态 run）经公网 API DELETE → 204，列表空。
+  - 两轮失败工件：attempt 1/2 的 trace/video 因后续重跑按 Playwright outputDir 机制清空，失败原因以测试输出与 error-context 记录为准（本节），不影响最终判定。
+
+### 4.1 历史轮二（09-19 00:23，打包缺陷根因——已修复，见 §2.2）
+
+> 以下 4.2–4.6 原编号 4.0（00:23 轮）记录，保留作历史证据；其根因（已验收镜像 jar 缺 `workspace-template/.gitignore`）已由 §2.2 的打包修复 + 新镜像 `sha256:ac88b11b…` 修复，遗留项目 `049b4aa6…` 已在最终轮前置清理中删除。
 
 - **前置（全部完成，见 §2.1）**：backend 镜像回钉至已验收 `sha256:5708a4b7…`；JWT/capability/app_user 凭据全量轮换并实测（健康组 UP、新凭据公网登录 200）；Role 已授 `jobs.batch patch`（can-i → yes）。
 - **残留清理（前置）**：09-18 23:44 轮遗留项目 `6839f32c-ec9f-46b4-a9f6-2e4f1d6dfa52`（`stage6b-cloud-20260918154446-rfp1`）以轮换后新凭据经真实公网 API `DELETE /api/v1/projects/{id}` → **HTTP 204**；GET 列表 → `items: []`、单项 → **404 `ENTRY_NOT_FOUND`**；admin kubectl 核对 `manao-ws-6839f32c-*` Pod/Service、`manao-pvc-6839f32c-*` PVC 消失，PV `pvc-3d0c413c-…` **NotFound**（`manao-poc4-delete` Delete 回收实测生效），无 Job 残留。项目配额回到 0/8。
@@ -234,11 +281,11 @@
   4. **定性**：已验收镜像 `5708a4b7…` 内 jar 缺少 `workspace-template/.gitignore` 类路径资源（Maven jar 默认排除 `**/.gitignore` 所致），项目 provisioning 在该镜像上必然失败。工作树内**未提交**的 `poc4/backend/pom.xml`（maven-jar-plugin `addDefaultExcludes=false`）与 `poc4/backend/.dockerignore`（锚定 `/.gitignore`、`/*.md`，保留模板资源）正是该缺陷的修复，尚未构建进任何可溯源镜像。
   5. 历史旁证：09-18 17:44 在 `5708a4b7` 上创建的 `3bbc74ae…` 即 state FAILED（同因）；未知镜像 `a57da658` 上线后创建的 `ddaca1c0…`（19:10）与 `6839f32c…`（23:44）均 READY——未知镜像很可能包含上述打包修复，但来源未验证，不作为任何通过依据。
 - **失败资产保留（不删除）**：`poc4/frontend/test-results/stage6b-cloud-lifecycle-st-31f1b--project-and-wait-for-READY-stage6b-cloud/`（trace.zip、video.webm、test-failed-1.png、error-context.md）。
-- **处置：BLOCKED（待控制器裁决）**——修复路径：提交打包修复 → 本机构建并推送新 backend 镜像（本机 Docker daemon 实测可用，server 29.3.1）→ 部署新 digest → 从头重跑 6 test 场景（新项目名/新 run id）。按规程，未获授权不自行构建/推送/部署镜像。未知镜像事件见 §2.1；B1–B3 缺口见 §7。
+- **处置：BLOCKED（当时待控制器裁决）——修复路径：提交打包修复 → 本机构建并推送新 backend 镜像 → 部署新 digest → 从头重跑 6 test 场景。该路径已由 §2.2 全部完成（commit `d1fad6d`、镜像 `sha256:ac88b11b…`、最终轮 6/6），此行仅作历史记录。未知镜像事件见 §2.1；B1–B3 缺口见 §7。**
 
-### 4.1–4.5 前一轮记录（2026-09-18 23:44，RBAC 根因——已修复）
+### 4.2 历史轮一（09-18 23:44，RBAC 根因——已修复，见 §2.1）
 
-> 以下 4.1–4.5 为 09-18 23:44 轮的原始记录，保留作历史证据；其根因（Role 缺 `patch`）已于 09-19 修复并验证（§2.1），该轮遗留项目 `6839f32c…` 已于 09-19 00:22 经公网 API 删除（见 4.0 前置）。
+> 以下小节保留原 4.1–4.5 编号，为 09-18 23:44 轮的原始记录，保留作历史证据；其根因（Role 缺 `patch`）已于 09-19 修复并验证（§2.1），该轮遗留项目 `6839f32c…` 已于 09-19 00:22 经公网 API 删除（见 4.1 前置）。
 
 - 记录时间：2026-09-18 23:59 (+08:00)；E2E 窗口 23:44:44–23:58:41 (+08:00)；残留清理窗口约 23:40–23:43 (+08:00)
 - 执行者：Task 4 阶段 B 重跑（第一次 Task 4B 运行因集群问题被用户中断，本轮为如实重跑）
@@ -303,9 +350,9 @@
 
 ## 7. B1-B6 缺口清单（占位）
 
-- [ ] B1：部分成立（Task 4 §4.0/§4.5：两轮均实测登录/创建经公网真实 UI 完成；09-18 23:44 轮另实测 READY 与编辑保存；「完整流程」两轮均被后端缺陷阻塞，不宣称通过）
-- [ ] B2：两轮未走通（09-18 23:44 轮：Start run 即 START_FAILED，前端无失败反馈——根因 RBAC 缺 `patch`，已修复验证（§2.1）；09-19 00:23 轮：项目 provisioning 即失败（§4.0），修复运行未执行）
-- [ ] B3：未执行、无证据（两轮 serial 中断，Task 4 §4.0/§4.5）
+- [x] B1：成立（Task 4 §4.0 最终轮：登录、创建、READY、编辑保存、两次真实运行、持久化复核全部经公网入口真实 UI 完成，本机应用依赖为零）
+- [x] B2：成立（Task 4 §4.0 最终轮：同一界面完成创建 → 编辑保存 → 真实失败反馈（FAILED + 编译错误文本）→ 修复运行 SUCCEEDED + 成功输出 → 终态后再次编辑保存）
+- [x] B3：成立（Task 4 §4.0 最终轮：Run logs 实时展示；终态与 API 记录、集群 Job 状态三方一致；刷新与退出重登后项目/文件/run 历史/revision 全部保留）
 - [ ] B4：
 - [ ] B5：
 - [ ] B6：
