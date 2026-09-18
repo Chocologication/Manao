@@ -1,0 +1,24 @@
+# Keep the build context minimal: only package.json, pnpm-lock.yaml, src/,
+# public/, index.html, tsconfig*/ and vite.config.ts are needed for the build.
+node_modules
+dist
+coverage
+
+# Git and CI leftovers
+.git
+.gitignore
+
+# Test artifacts and Playwright output
+tests
+playwright-report
+test-results
+blob-report
+playwright/.cache
+
+# Local env files (build flags are set explicitly in the Dockerfile; never
+# bake local .env* values into the image)
+.env
+.env.*
+
+# Documentation not needed at build time
+*.md

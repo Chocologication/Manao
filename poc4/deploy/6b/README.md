@@ -15,6 +15,7 @@ Files:
 | `service-accounts.yaml` | `manao-backend` (token mounted), `manao-workspace-agent` and `manao-maven-runner` (no permissions, no token automount) |
 | `backend-rbac.yaml` | Namespace Role for workload resources + read-only ClusterRole (`list persistentvolumes`, `get storageclasses`) |
 | `backend.yaml` | Backend Service (ClusterIP 8080) + Deployment (replicas 1, Recreate, probes, full config contract) |
+| `frontend.yaml` | Frontend Service (ClusterIP 8080, commented NodePort alternative) + Deployment (replicas 1, probes); image placeholder must be substituted before apply |
 | `configmap.yaml` | Non-secret ConfigMap `manao-backend-config` (the two keys backend.yaml reads via configMapKeyRef) |
 | `config.example.env` | Template of every variable with its explanation (no real values) |
 
@@ -245,3 +246,65 @@ committed manifest — generate them per sections 2–3.
   search-path configuration. The schema name `manao_poc4_6b` matches the
   contract exactly. To use the contract literal verbatim, replace the value in
   `backend.yaml`; nothing else depends on either form.
+
+## 8. Frontend image and deployment
+
+The frontend is a static production build of `poc4/frontend` served by
+nginx, which also proxies same-origin `/api/` (REST and the
+`/api/v1/ws/run-logs` WebSocket) to the backend Service. The browser talks to
+a single origin only; no second public address is configured.
+
+Build-time flags are set explicitly in the image (do not rely on env files):
+
+- `VITE_ENABLE_MOCK_API=false` — gates the MSW mock worker (`src/main.tsx`).
+- `VITE_ENABLE_EXPERIMENTAL_TERMINAL=false` — gates the experimental terminal
+  panel (`src/components/shell/WorkbenchShell.tsx`).
+- The legacy `VITE_USE_MSW` value in `.env.local-cluster.example` is not read
+  by any code and is irrelevant here.
+
+### 8.1 Build and publish the frontend image
+
+From the worktree root:
+
+```bash
+docker build -t chocologic/manao_images_repository:6b-frontend-<yyyymmdd> poc4/frontend
+docker push chocologic/manao_images_repository:6b-frontend-<yyyymmdd>
+docker inspect --format '{{index .RepoDigests 0}}' chocologic/manao_images_repository:6b-frontend-<yyyymmdd>
+```
+
+Record the returned `...@sha256:<64 hex>` reference. The image runs nginx
+unprivileged (uid/gid 101, no root master or worker) and listens on 8080.
+
+### 8.2 Deploy the frontend
+
+Deploy AFTER the backend: nginx resolves the upstream hostname
+`manao-backend` once at startup, so the `backend` Service must already exist
+or the frontend pod will fail to start.
+
+```bash
+# substitute the placeholder with the digest-pinned image from 8.1, then apply:
+sed "s|manao-poc4-frontend:replace-me|$FRONTEND_IMAGE|" poc4/deploy/6b/frontend.yaml | kubectl apply -f -
+kubectl -n manao-stage6b get pods -l app.kubernetes.io/name=manao-frontend -w
+```
+
+Applying `frontend.yaml` unmodified leaves the pod in ImagePullBackOff by
+design (fail-fast placeholder, same convention as backend.yaml).
+
+The default Service is ClusterIP 8080. Only if Stage B confirms no existing
+server entry (ingress/host port) can be reused for the public origin, switch
+to the commented NodePort Service block inside `frontend.yaml` and fill the
+nodePort placeholder.
+
+### 8.3 Public origin and WebSocket origin list
+
+When the public entry is enabled (whatever form it takes — existing server
+entry, NodePort, HTTPS termination):
+
+- If the public origin differs from what the backend already accepts, update
+  the ConfigMap `manao-backend-config` key `MANAO_WS_EXTRA_ORIGIN` with the
+  exact origin and restart `deploy/backend` (the WebSocket handler compares
+  the browser origin; see section 6).
+- If HTTPS terminates on a proxy in front of the frontend, browsers will use
+  `wss:` (RunLogTransport derives the WebSocket scheme from the page
+  protocol); the nginx `/api/` block already forwards Upgrade/Connection
+  headers, so no protocol change is needed on the internal hop.

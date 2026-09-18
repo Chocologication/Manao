@@ -1,0 +1,122 @@
+# Frontend Deployment for Stage 6B (namespace manao-stage6b).
+#
+# - Serves the production static build (poc4/frontend/Dockerfile) and proxies
+#   same-origin /api/ (REST + WebSocket) to the backend Service
+#   `manao-backend:8080`; the browser therefore talks to a single origin only.
+# - replicas: 1, stateless (static files + nginx proxy), so a rolling update is
+#   safe here (unlike the backend, which pins Recreate for workspace fencing).
+# - The container image (nginxinc/nginx-unprivileged) runs as uid/gid 101, so
+#   runAsNonRoot holds without any extra volume permissions.
+# - The image value is NOT baked into this manifest. Substitute the placeholder
+#   `manao-poc4-frontend:replace-me` with the digest-pinned reference built in
+#   README section 8 before apply (fail-fast placeholder, same convention as
+#   backend.yaml). Applying it unmodified leaves the pod in ImagePullBackOff.
+# - Readiness/liveness probes hit / (index.html), which nginx serves from the
+#   static files; the /api/ proxy path is exercised by the browser during the
+#   Stage B public-entry verification, not by a k8s probe.
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend
+  namespace: manao-stage6b
+  labels:
+    app.kubernetes.io/name: manao-frontend
+    app.kubernetes.io/part-of: manao
+    app.kubernetes.io/stage: 6b
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: manao-frontend
+    app.kubernetes.io/stage: 6b
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+---
+# NodePort alternative — enable ONLY if Stage B confirms no existing server
+# entry (ingress/host port) can be reused for the public origin. To switch:
+# 1. Replace the `type: ClusterIP` Service above with this block and fill the
+#    nodePort placeholder:
+#
+# apiVersion: v1
+# kind: Service
+# metadata:
+#   name: frontend
+#   namespace: manao-stage6b
+#   labels:
+#     app.kubernetes.io/name: manao-frontend
+#     app.kubernetes.io/part-of: manao
+#     app.kubernetes.io/stage: 6b
+# spec:
+#   type: NodePort
+#   selector:
+#     app.kubernetes.io/name: manao-frontend
+#     app.kubernetes.io/stage: 6b
+#   ports:
+#     - name: http
+#       port: 8080
+#       targetPort: http
+#       nodePort: <NODE_PORT_PLACEHOLDER>
+#
+# 2. After enabling it (or any HTTPS termination on a different origin), update
+#    the ConfigMap `manao-backend-config` key MANAO_WS_EXTRA_ORIGIN with the
+#    exact public origin so WebSocket origin checks accept it (see README
+#    sections 6 and 8), then restart deploy/backend.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend
+  namespace: manao-stage6b
+  labels:
+    app.kubernetes.io/name: manao-frontend
+    app.kubernetes.io/part-of: manao
+    app.kubernetes.io/stage: 6b
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: manao-frontend
+      app.kubernetes.io/stage: 6b
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: manao-frontend
+        app.kubernetes.io/part-of: manao
+        app.kubernetes.io/stage: 6b
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 101
+        runAsGroup: 101
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: frontend
+          image: manao-poc4-frontend:replace-me
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 15
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 250m
+              memory: 256Mi
