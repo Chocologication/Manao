@@ -340,9 +340,73 @@
 - **B2（同一界面完成创建/编辑保存/真实失败反馈/修复运行成功/再次编辑）**：**失败证据在案**——创建、编辑保存已过；「真实失败反馈」环节后端 Start run 即 START_FAILED（40ms、无 Job、503），前端无任何失败反馈（Run state 停留 Idle），后续修复运行/再次编辑均未执行。
 - **B3（日志实时、终态与 Run/Job 一致、刷新与重登持久化）**：未执行（serial 中断），无证据。
 
-## 5. Task 5 验收结果（占位）
+## 5. Task 5 验收结果（2026-09-19 01:57–02:10 +08:00，阶段 B：持久化验证与最终删除）
 
-- [ ] 结果：待填
+- **结果：PASSED。沿用 Task 4 §4.0 验收项目 `da577551-0ee9-4d95-8f03-16225625c589`（`stage6b-cloud-20260918173926-c6bn`）完成后端维护重启与 MySQL 正常重建的持久化验证（各再真实运行一次到终态），最后经浏览器 UI 手动删除并独立核对集群/存储/DB 全链路清理。全程正式部署身份（app_user 经公网入口 `http://1.12.245.235:30080` 登录），无本机应用依赖。**
+- 执行身份与边界：业务操作（登录、验证、删除）全部经公网入口 `http://1.12.245.235:30080` 与 app_user；kubectl admin 仅用于运维动作（scale/delete/exec 只读查询）与资源观察，未触业务 API 路径。本机 Vite/Spring Boot 未运行（开窗 netstat 实测无 5173/18080 监听），本机 MySQL 保留（用户豁免，未参与云端链路）。凭据仅从私有 env 读取，未入报告/提交/命令行参数。
+- 测试方法：临时 Playwright 脚本（`.superpowers/sdd/2026-09-18-stage6b-cloud-workbench-implementation-plan/tmp/`，gitignored，不入库）复用 Task 4 spec 的登录/项目卡/树/Run 面板选择器；凭据只经环境变量注入。
+
+### 5.1 基线快照（01:57–01:59，实测）
+
+- 公网 API：GET /projects → 仅 `da577551…`（READY）；GET 详情 state=READY 无 failureReason；GET files/tree → **workspaceRevision=25**，条目 `.gitignore`、`?`（PVC 内实际存在的一个名为 `?` 的目录，如实记录，未触碰）、README.md、pom.xml、src、target；GET App.java 内容含 `// stage6b-final-edit` 与 `return "Hello from Manao";`。
+- GET /runs → 两条历史：`8ee1a7f5…`（FAILED/BUILD_FAILED，revision 23，17:39:51Z→17:41:33Z）、`1776cb9b…`（SUCCEEDED/BUILD_SUCCEEDED，revision 24，17:41:40Z→17:42:03Z），与 Task 4 §4.0 一致。
+- admin kubectl 只读：workspace Pod/Service `manao-ws-da577551…` Running、Job `manao-run-1776cb9b…` Complete 1/1 与 `manao-run-8ee1a7f5…` Failed 0/1、PVC `manao-pvc-da577551…` Bound → PV `pvc-89121e22…`；Job pod 日志摘要（fixed `Hello from Manao`，broken `cannot find symbol`/`missingSymbol`）与 Task 4 记录一致。配额占用 1/8。
+
+### 5.2 后端维护重启（B5 之一，仅此一次；02:00–02:05，实测）
+
+- 前置：GET /runs/active → `{"run": null}`（无活动 Run）；deployment `replicas=1, strategy=Recreate` 实测记录。
+- 时序（admin kubectl）：02:01:20 `scale deploy/backend --replicas=0` → **02:01:22 backend Pod 完全消失**（Recreate，约 2s）；02:01:30–02:02:00 观察 30 秒（轮询确认副本为 0、无 Pod 残留）→ 02:02:00 `--replicas=1` → **02:02:17 deployment available**（约 17s）。旧进程结束到恢复总窗口约 **57 秒**。
+- 新 Pod `backend-7488cdbb56-46tfs`（同一 ReplicaSet，非重部署）：imageID 实测仍为已验收 `sha256:ac88b11b…`；Pod 内 readiness `{"status":"UP"}`。
+- 重启后公网验证：重新登录 200；项目 READY、**revision 仍 25**、App.java 内容（final marker + greeting）不变；两条 run 历史及状态不变。
+- **再次运行（既有代码路径 POST /runs，expectedWorkspaceRevision=25）**：新 run `dbeff9c3-84ff-4c1a-98fa-68282173b577` → **SUCCEEDED/BUILD_SUCCEEDED**（发起到终态约 13.5s）。重启后运行能力可用，新 run 记录在案。
+- UI 验证（02:05:21，临时脚本）：深链 `/projects/{id}` → 落登录页（token 内存态设计）→ 重新登录回到项目 → 文件树展开 App.java 内容含 final marker → Run 页历史 **3 条**（`dbeff9c3`/`1776cb9b`/`8ee1a7f5`）逐条点击：已落库日志可读（`Hello from Manao` ×2、`cannot find symbol` ×1）。
+
+### 5.3 MySQL 正常重建（B5 之二；02:05–02:08，实测）
+
+- 前置：上一步新 run 已终态（SUCCEEDED）。
+- 时序（admin kubectl）：02:05:42 `delete pod mysql-0` → 02:05:47 旧 Pod 消失（5s）→ **02:06:17 StatefulSet 自动重建的新 mysql-0 Ready**（删除到 Ready 约 35s）；**PVC `data-mysql-0` 保持 Bound**（PV `pvc-d6b6bc54…` 不变，nfs-storage 5Gi）。
+- 重建后公网验证：重新登录 200（DB 数据完好）；项目 READY、revision 仍 25、App.java 内容不变；run 历史 3 条全在；**再运行一次**：`5f129f49-8d5c-420c-be97-f2b4df813307`（POST /runs，revision 25）→ **SUCCEEDED/BUILD_SUCCEEDED**（约 18.9s）。
+- UI 验证（02:07:29）：项目 + 文件内容 + **4 条 run 历史** + 已落库日志全部可读。无活动 Run 意外，无需「中断续接」表态。
+
+### 5.4 条件测试裁决（均 SKIPPED，controller 已裁，如实记录）
+
+| 条件测试 | 触发条件 | 本轮判定 |
+| --- | --- | --- |
+| workspace Pod 主动删除（验证 PVC 文件不重置） | 仅当工作区恢复相关代码变化，或观察到恢复异常 | **SKIPPED**：6B 未改工作区恢复代码；09-18 23:33 集群集体重启已自然验证恢复（Pod 自动回来，Task 4 §4.1 实测）。触发条件未满足，不主动执行 |
+| 删除故障注入（DELETING、不假成功、显式续作） | 仅当删除代码/存储回收策略变化，或实际删除异常 | **SKIPPED**：6B 未改删除代码；四轮真实 API 删除（`6839f32c`/`ddaca1c0`/`2a39726e`/`5d192f57`，含 PV 回收）全部干净回收无异常。触发条件未满足；显式续作按钮（DELETING → Continue deletion）保留在 UI 代码中未回退 |
+
+### 5.5 最终手动删除（B4；02:08:07–02:08:38，浏览器 UI 路径实测）
+
+- 路径：临时 Playwright 脚本复用 spec 选择器——登录 → 项目列表找到 `stage6b-cloud-20260918173926-c6bn` 卡片 → 点 **Delete project** → 原生确认对话框 **"Delete project?"**（显示项目名与「Files, run history and logs will be permanently removed. This cannot be undone.」）→ 点 **Delete permanently** → 实测捕获 `DELETE /api/v1/projects/da577551…` → **HTTP 204** → 卡片从列表消失，**reload 后仍不显示**（总耗时约 31s）。
+- 观察记录：删除为同步完成，未出现 DELETING 卡片/"Continue deletion" 续作窗口（该路径 UI 代码保留、未回退，本轮未触发生成场景——如实记录，不宣称已再验证续作行为）。
+- API 复核（公网）：GET /projects → `items: []`；GET 单项 → **404 `ENTRY_NOT_FOUND`**；GET 该项目 /runs → `items: []`。
+
+### 5.6 独立清理核对表（B4 核心；删除后 admin kubectl + DB 实测，独立于应用 API）
+
+| 资源/记录 | 核对命令（脱敏） | 结果 |
+| --- | --- | --- |
+| workspace Pod `manao-ws-da577551-*` | `kubectl get all,pvc -n manao-stage6b` | **消失**（命名空间仅剩 backend/frontend/mysql 平台资源） |
+| workspace Service `manao-ws-da577551-*` | 同上 | **消失** |
+| initializer Pod（`manao-ws-init-*`） | 同上 | **消失**（无任何 init/run 类 Pod 残留） |
+| run Job `manao-run-1776cb9b/8ee1a7f5/…`（含 Pod） | 同上 + name grep | **消失**（对 da577551/1776cb9b/8ee1a7f5/5f129f49/dbeff9c3 全部无匹配） |
+| PVC `manao-pvc-da577551-*` | 同上 | **消失** |
+| 绑定 PV `pvc-89121e22-13f9-4c37-a6ad-981d079612e2` | `kubectl get pv` grep | **NotFound（已回收；`manao-poc4-delete` reclaimPolicy=Delete + onDelete=delete）** |
+| NFS 存储目录直查 | provisioner exec | **未直接执行**（provisioner 镜像无 shell 可 exec；可选项）：以 PV 对象 NotFound + 同 StorageClass 此前四轮删除实测生效为依据 |
+| DB `project` 行（manao_poc4_6b） | exec mysql-0 逐表 SELECT COUNT | **0**（且 project 全表 0 行，配额回到 0/8） |
+| DB `run` 行 | 同上 | **0** |
+| DB `run_log_chunk`（经 run JOIN） | 同上 | **0** |
+| DB `workspace_operation` | 同上 | **0** |
+| DB `log_ticket` | 同上 | **0** |
+| DB `terminal_audit` | 同上 | **0** |
+| DB `terminal_session` | 同上 | **0** |
+| MySQL PVC/卷 `data-mysql-0` → `pvc-d6b6bc54…` | `kubectl get pvc` | **保持 Bound（5Gi nfs-storage，未删除）**；重建后登录/查询正常证明数据完好 |
+
+- DB 查询方式：admin exec 进 mysql-0，DB 凭据取自容器 env（与私有 env 部署值同源），凭据不出现在命令行/输出。
+
+### 5.7 B4/B5 证据对应（B6 留 Task 6）
+
+- **B4（最后手动删除确实回收同一验收项目的应用记录和资源）**：成立——删除经真实浏览器 UI 完成（对话框确认 + DELETE 204 + 列表消失），5.6 独立核对表显示集群资源、PV、DB 关联行全部回收，MySQL 卷保留。「不假成功与显式续作」行为保留在代码中，故障注入按 5.4 裁决 SKIPPED。
+- **B5（后端与 MySQL 各正常重建一次后数据可用、可再运行）**：成立——5.2 后端 scale 0→1（约 57s 窗口）与 5.3 mysql-0 重建（PVC 保留）后，文件/revision/历史/已落库日志全部保留，各再真实运行一次到 SUCCEEDED 终态。workspace 主动重建按 5.4 裁决 SKIPPED；未遇活动 Run 中断场景。
 
 ## 6. Task 6 验收结果（占位）
 
@@ -353,6 +417,6 @@
 - [x] B1：成立（Task 4 §4.0 最终轮：登录、创建、READY、编辑保存、两次真实运行、持久化复核全部经公网入口真实 UI 完成，本机应用依赖为零）
 - [x] B2：成立（Task 4 §4.0 最终轮：同一界面完成创建 → 编辑保存 → 真实失败反馈（FAILED + 编译错误文本）→ 修复运行 SUCCEEDED + 成功输出 → 终态后再次编辑保存）
 - [x] B3：成立（Task 4 §4.0 最终轮：Run logs 实时展示；终态与 API 记录、集群 Job 状态三方一致；刷新与退出重登后项目/文件/run 历史/revision 全部保留）
-- [ ] B4：
-- [ ] B5：
+- [x] B4：成立（Task 5 §5.5/§5.6：同一验收项目经浏览器 UI 手动删除，DELETE 204、列表消失、reload 不复现；独立核对集群 workspace/initializer/Job/Service/PVC 全部消失、PV `pvc-89121e22…` 已回收、DB 七张关联表逐表 COUNT=0、project 全表 0 行；MySQL 卷保持 Bound。不假成功与显式续作行为保留在代码中，故障注入按 §5.4 裁决 SKIPPED——触发条件未满足）
+- [x] B5：成立（Task 5 §5.2/§5.3：后端维护重启 scale 0→1 与 mysql-0 StatefulSet 重建（PVC 保留）各一次，revision 25、文件内容、run 历史与已落库日志全部保留，且各再真实运行一次到 SUCCEEDED/BUILD_SUCCEEDED 终态；workspace 主动重建按 §5.4 SKIPPED，未承诺活动 Run 中断续接）
 - [ ] B6：
