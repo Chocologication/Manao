@@ -1,0 +1,11 @@
+{
+  "pvcDeletionTimestamp": "2026-09-17T09:00:13Z",
+  "projectId": "2f4b29a5-5170-41f4-9ea4-75bc6aa51516",
+  "projectState": "DELETING",
+  "finalizers": [
+    "manao.poc4/deletion-verification-hold"
+  ],
+  "storageStillPresent": true,
+  "pvcStillExists": true,
+  "capturedAt": "2026-09-17T17:03:44.5588054+08:00"
+}

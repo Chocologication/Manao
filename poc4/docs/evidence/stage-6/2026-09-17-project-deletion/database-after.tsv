@@ -1,0 +1,16 @@
+table_name	remaining
+project	0
+run	0
+workspace_operation	0
+run_log_chunk	0
+terminal_audit	0
+terminal_session	0
+log_ticket	0
+id	name	state	username
+cff9b936-6c8f-400c-9a9f-7acff4707735	test	READY	alice
+5a910ae1-fc20-415f-a08b-02feea97731c	test2	READY	alice
+d1a395f1-279e-444c-b65e-2e08433abe89	browser-mvp-check-20260915	READY	alice
+262e949b-2116-4c94-ae47-d03beef877fd	browser-mvp-manual-20260915	READY	alice
+0700496b-7ed7-46a7-b5e4-6186a84bbf1e	114514	READY	alice
+25dbac8a-7119-4890-a6c1-6024678cce2f	test1	READY	bob
+77d91e62-9848-477c-bbee-e62b16a475e7	test3	READY	alice

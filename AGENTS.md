@@ -1,3 +1,8 @@
+## Current Stage 6A documentation authority (2026-09-17)
+
+- [Current facts](../../docs/Stage6A-Current-Facts.md) is the sole current 6A evidence and acceptance document in the main checkout; do not create a second copy here.
+- [Evolution timeline](../../docs/Stage6A-Evolution-Timeline.md) records prior decisions and plan changes.
+
 ## SSH Access
 
 - Master node:
@@ -27,10 +32,10 @@ An SSH tunnel has already been established locally through Xshell, so `kubectl` 
 
 ## Stage 6 evidence and cleanup guardrails
 
-- Current status: [2026-09-10 status and next steps](poc4/docs/evidence/stage-6/2026-09-10-status-and-next-steps.md); acceptance authority: [6A gate](poc4/docs/evidence/stage-6/6a-gate.md). Treat older SSH/runtime notes as historical; verify current keys, tokens, nodes, quota and process state before using them.
-- Five real-backend tests passing is not full 6A acceptance: the Run test currently accepts any terminal state. Require a successful Maven Job and matching DB/API Run, real logs/PTY/audit, stress and all fault phases before 6A PASS; do not begin 6B Tasks 10-12 earlier.
+- Current status and acceptance authority: [Stage 6A current facts](../../docs/Stage6A-Current-Facts.md). Older gate, status and SSH/runtime notes are historical; verify operational values before reusing them.
+- The user accepted 6A on 2026-09-17 for the real MVP lifecycle including deletion and is preparing 6B. Historical smoke, PTY/audit/stress/fault results retain their evidence limits; they are not retroactively PASS. Revise old Tasks 10-12 against the current facts rather than consuming the historical gate as the current authority.
 - Database tests must use disposable schemas. Never let a schema-reset test drop runtime tables; distinguish test-schema migration privileges from runtime API failures.
-- Cleanup must be project- and owner-scoped and cover initializer/workspace/Job resources plus dependent DB records. Preserve one explicitly selected unresolved diagnostic; never broadly delete a namespace or runtime database. Current initializer omission and active-Run-as-404 behavior remain open; do not treat those paths as reliable cleanup.
+- Cleanup must be project- and owner-scoped and cover initializer/workspace/Job resources plus dependent DB records. Preserve one explicitly selected unresolved diagnostic; never broadly delete a namespace or runtime database. Historical initializer/active-Run defects must not be presented as still open without checking current code. Current storage/configuration limits are recorded in the current facts.
 - After a test, verify both Kubernetes resources and DB rows; afterAll success alone does not prove no leftovers. Failed scheduling and an 8-project application limit say nothing about actual cluster CPU/storage capacity.
 - Before deleting logs/evidence, keep the latest complete useful report and one minimal sample per unresolved failure; record paths, hashes and reasons. Do not run broad git clean/mvn clean, delete reparse targets, or remove live/credential-bearing configuration as artifact cleanup.
 - Never commit credentials, bearer tokens, raw kubeconfigs or unsanitized browser traces. A token refresh changes credentials, not Role permissions; verify its identity and restart the backend if it loaded credentials at startup.

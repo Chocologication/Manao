@@ -1,0 +1,26 @@
+{
+  "remainingPVs": 0,
+  "projects": [
+    {
+      "nfsOriginalOrArchive": "ABSENT",
+      "projectId": "0613bf08-c6e0-4f41-9b0f-2e1131abcd82",
+      "namespaceResources": 0
+    },
+    {
+      "nfsOriginalOrArchive": "ABSENT",
+      "projectId": "55b62271-dbca-465b-9d09-94b1f1790c21",
+      "namespaceResources": 0
+    },
+    {
+      "nfsOriginalOrArchive": "ABSENT",
+      "projectId": "7a5f80e6-7e5f-4f57-93e9-f321cb0d39fd",
+      "namespaceResources": 0
+    },
+    {
+      "nfsOriginalOrArchive": "ABSENT",
+      "projectId": "2f4b29a5-5170-41f4-9ea4-75bc6aa51516",
+      "namespaceResources": 0
+    }
+  ],
+  "checkedAt": "2026-09-17T17:09:23.2004385+08:00"
+}

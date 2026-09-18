@@ -1,0 +1,67 @@
+{
+  "spec": {
+    "securityContext": {
+      "runAsGroup": 10001,
+      "runAsNonRoot": true,
+      "runAsUser": 10001
+    },
+    "activeDeadlineSeconds": 7200,
+    "restartPolicy": "Never",
+    "volumes": [
+      {
+        "name": "storage",
+        "nfs": {
+          "readOnly": true,
+          "server": "172.16.0.5",
+          "path": "/nfs/data"
+        }
+      }
+    ],
+    "containers": [
+      {
+        "securityContext": {
+          "allowPrivilegeEscalation": false,
+          "readOnlyRootFilesystem": true,
+          "capabilities": {
+            "drop": [
+              "ALL"
+            ]
+          }
+        },
+        "resources": {
+          "limits": {
+            "memory": "64Mi",
+            "cpu": "100m"
+          },
+          "requests": {
+            "memory": "16Mi",
+            "cpu": "5m"
+          }
+        },
+        "command": [
+          "sleep",
+          "7200"
+        ],
+        "image": "busybox@sha256:73aaf090f3d85aa34ee199857f03fa3a95c8ede2ffd4cc2cdb5b94e566b11662",
+        "name": "probe",
+        "volumeMounts": [
+          {
+            "readOnly": true,
+            "mountPath": "/storage",
+            "name": "storage"
+          }
+        ]
+      }
+    ],
+    "automountServiceAccountToken": false
+  },
+  "kind": "Pod",
+  "metadata": {
+    "labels": {
+      "manao.poc4/purpose": "deletion-storage-verification"
+    },
+    "namespace": "manao-stage6-test",
+    "name": "manao-deletion-storage-probe-20260917"
+  },
+  "apiVersion": "v1"
+}

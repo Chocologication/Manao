@@ -1,0 +1,9 @@
+{
+  "frontendPid": 29376,
+  "temporaryProbeAbsent": true,
+  "backendReadiness": "UP",
+  "frontendHttp": 200,
+  "checkedAt": "2026-09-17T17:13:36.5691525+08:00",
+  "backendPid": 35132,
+  "testProjectBridgeProcessesRemaining": 0
+}

@@ -1,0 +1,24 @@
+{
+  "entries": [
+    {
+      "schemaVersion": 1,
+      "invocationId": "delete3-20260917",
+      "testId": "stage6-real-backend.spec.ts/MVP core loop: failed revision, corrected revision, and persistent history",
+      "attempt": 0,
+      "workerKey": "0",
+      "entryId": "mvp-core-loop-0-0-06e9782bb051",
+      "ownerId": "e01a82fd-5130-49ec-96e2-824015ec1faf",
+      "ownerKey": "alice",
+      "exactName": "stage6-delete3--stage6-real-backend.spec.ts-MVP-core-loo-mvp-core-loop-0",
+      "preparedAt": "2026-09-17T08:02:17.710Z",
+      "projectId": "7a5f80e6-7e5f-4f57-93e9-f321cb0d39fd",
+      "runIds": [
+        "e1a9ceef-88d3-401b-be04-15a59a664b60",
+        "07d575a3-41da-4e99-a67f-1efa700b575c"
+      ],
+      "state": "API_CLEANED",
+      "issueCodes": []
+    }
+  ],
+  "issues": []
+}
