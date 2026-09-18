@@ -2,9 +2,16 @@
 #
 # - Serves the production static build (poc4/frontend/Dockerfile) and proxies
 #   same-origin /api/ (REST + WebSocket) to the backend Service
-#   `manao-backend:8080`; the browser therefore talks to a single origin only.
+#   `backend.manao-stage6b.svc.cluster.local:8080`; the browser therefore talks
+#   to a single origin only.
 # - replicas: 1, stateless (static files + nginx proxy), so a rolling update is
 #   safe here (unlike the backend, which pins Recreate for workspace fencing).
+# - Public entry (Stage B decision): the server has no reusable ingress/host
+#   port (Task 1 measured all-accept-no-service on 1.12.245.235), so the Service
+#   is NodePort 30080 and PUBLIC_ORIGIN is http://1.12.245.235:30080 (HTTP;
+#   plaintext transport limitation recorded in acceptance.md). ConfigMap
+#   MANAO_WS_EXTRA_ORIGIN must carry that exact origin (see README sections
+#   6/8.3).
 # - The container image (nginxinc/nginx-unprivileged) runs as uid/gid 101, so
 #   runAsNonRoot holds without any extra volume permissions.
 # - The image value is NOT baked into this manifest. Substitute the placeholder
@@ -24,7 +31,7 @@ metadata:
     app.kubernetes.io/part-of: manao
     app.kubernetes.io/stage: 6b
 spec:
-  type: ClusterIP
+  type: NodePort
   selector:
     app.kubernetes.io/name: manao-frontend
     app.kubernetes.io/stage: 6b
@@ -32,36 +39,14 @@ spec:
     - name: http
       port: 8080
       targetPort: http
+      nodePort: 30080
 ---
-# NodePort alternative — enable ONLY if Stage B confirms no existing server
-# entry (ingress/host port) can be reused for the public origin. To switch:
-# 1. Replace the `type: ClusterIP` Service above with this block and fill the
-#    nodePort placeholder:
-#
-# apiVersion: v1
-# kind: Service
-# metadata:
-#   name: frontend
-#   namespace: manao-stage6b
-#   labels:
-#     app.kubernetes.io/name: manao-frontend
-#     app.kubernetes.io/part-of: manao
-#     app.kubernetes.io/stage: 6b
-# spec:
-#   type: NodePort
-#   selector:
-#     app.kubernetes.io/name: manao-frontend
-#     app.kubernetes.io/stage: 6b
-#   ports:
-#     - name: http
-#       port: 8080
-#       targetPort: http
-#       nodePort: <NODE_PORT_PLACEHOLDER>
-#
-# 2. After enabling it (or any HTTPS termination on a different origin), update
-#    the ConfigMap `manao-backend-config` key MANAO_WS_EXTRA_ORIGIN with the
-#    exact public origin so WebSocket origin checks accept it (see README
-#    sections 6 and 8), then restart deploy/backend.
+# ClusterIP alternative — only if the public entry moves back behind an
+# existing ingress/host port: change `type: NodePort` to `type: ClusterIP` and
+# drop the `nodePort:` line above. After any public-origin change, update the
+# ConfigMap `manao-backend-config` key MANAO_WS_EXTRA_ORIGIN with the exact
+# origin so WebSocket origin checks accept it (see README sections 6 and 8.3),
+# then restart deploy/backend.
 apiVersion: apps/v1
 kind: Deployment
 metadata:

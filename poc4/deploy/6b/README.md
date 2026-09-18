@@ -116,6 +116,10 @@ APP_PW="$(head -c 48 /dev/urandom | base64)"   # or an operator-chosen password 
 APP_HASH="$(APP_PW="$APP_PW" python -c "import bcrypt,os; print(bcrypt.hashpw(os.environ['APP_PW'].encode(), bcrypt.gensalt(rounds=12)).decode())")"
 ```
 
+`APP_USERNAME` is not defined by this snippet — read it from the private env
+file (same handling as `APP_PW`: generated/kept outside the repo, quoted
+before `source`, never recorded in reports or commits).
+
 Step 2 — build the SQL file via stdin redirection (no `echo`/inline
 interpolation into a command argument), then execute it inside the cluster so
 neither the password nor the hash crosses the public network:
@@ -291,8 +295,8 @@ unprivileged (uid/gid 101, no root master or worker) and listens on 8080.
 ### 8.2 Deploy the frontend
 
 Deploy AFTER the backend: nginx resolves the upstream hostname
-`manao-backend` once at startup, so the `backend` Service must already exist
-or the frontend pod will fail to start.
+`backend.manao-stage6b.svc.cluster.local` once at startup, so the `backend`
+Service must already exist or the frontend pod will fail to start.
 
 ```bash
 # substitute the placeholder with the digest-pinned image from 8.1, then apply:
@@ -303,10 +307,22 @@ kubectl -n manao-stage6b get pods -l app.kubernetes.io/name=manao-frontend -w
 Applying `frontend.yaml` unmodified leaves the pod in ImagePullBackOff by
 design (fail-fast placeholder, same convention as backend.yaml).
 
-The default Service is ClusterIP 8080. Only if Stage B confirms no existing
-server entry (ingress/host port) can be reused for the public origin, switch
-to the commented NodePort Service block inside `frontend.yaml` and fill the
-nodePort placeholder.
+The Service in `frontend.yaml` is NodePort 30080 — the Stage B decision: the
+server has no reusable ingress/host port (Task 1 measured all-accept-no-service
+on the public IP), so the public origin is `http://<PUBLIC_IP>:30080` and
+ConfigMap `MANAO_WS_EXTRA_ORIGIN` must carry that exact origin (section 8.3).
+If a reusable entry appears later, switch back to a ClusterIP Service (see the
+commented alternative in `frontend.yaml`).
+
+The nginx upstream inside the image is the backend Service FQDN
+`backend.manao-stage6b.svc.cluster.local:8080` (the Service is named
+`backend`, not `manao-backend`; the FQDN is unambiguous regardless of search
+path, same rationale as MANAO_DB_URL in backend.yaml). nginx resolves it once
+at startup, so the `backend` Service must already exist or the frontend pod
+fails to start (`host not found in upstream`). Conversely, if the `backend`
+Service itself is ever recreated with a new ClusterIP, run
+`kubectl -n manao-stage6b rollout restart deploy/frontend` so nginx re-resolves
+the static upstream address.
 
 ### 8.3 Public origin and WebSocket origin list
 

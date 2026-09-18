@@ -126,7 +126,7 @@
 
 - [x] StorageClass 决策与部署资产：项目 PVC 用 `manao-poc4-delete`（写入 ConfigMap `manao-backend-config`），MySQL PVC 用 `nfs-storage`（`data-mysql-0` 5Gi，apply 后约 10 秒 Bound）。部署资产为阶段 A 交付（`poc4/deploy/6b/` 全套），本轮无 YAML 修正。
 - [x] 控制面（backend）Deployment/Service/RBAC：namespace `manao-stage6b` 于 16:20 创建（此前 NotFound 实测）；SA 3 个（`manao-backend` automount=true，`manao-workspace-agent`/`manao-maven-runner` automount=false）、Role/RoleBinding/ClusterRole（storage-reader）/ClusterRoleBinding 全部 created。Deployment `replicas=1`、`strategy=Recreate`、Service `backend` ClusterIP 8080。
-- [x] runner 镜像 Maven 版本差异修复实测：本轮未实测（属于 1.8 缺口，留给 Task 4 首次真实 Run 或一次性 Job 验证；与本项部署无阻塞关系）。
+- [ ] runner 镜像 Maven 版本差异修复实测：**NOT_REVERIFIED，本轮未实测**（属于 1.8 缺口，留给 Task 4 首次真实 Run 或一次性 Job 验证；与本项部署无阻塞关系）。
 - [x] 结果：
 
 **镜像**：`chocologic/manao_images_repository@sha256:5708a4b7383855826a6493a68a7f653be59db84502b82f05f045da23aaedd5fa`（tag `6b-backend-20260918`，非 root uid 10001）；MySQL `mysql:8.0.40`（tag 固定，digest 硬化留待运维按 README §mysql.yaml 注释执行）。Pod imageID 实测与上述 digest 一致。
@@ -156,10 +156,39 @@
 
 **遗留项**：`MANAO_WS_EXTRA_ORIGIN` 为 NodePort 候选初值 `http://1.12.245.235:30080`，Task 3B 实测定稿后回填 ConfigMap 并 restart backend；MySQL 镜像 digest 硬化与 1.8 Maven 版本实测不在本轮范围。
 
-## 3. Task 3 验收结果（占位）
+## 3. Task 3 验收结果（2026-09-18，阶段 B：前端真实部署与公网入口验证）
 
-- [ ] 前端部署资产与 PUBLIC_ORIGIN 实测
-- [ ] 结果：待填
+- 记录时间：2026-09-18 17:30 (+08:00)；部署/验证窗口 17:05–17:20（+08:00）
+- 执行身份：管理员 kubeconfig（路径在私有目录，不记录于此）；全程仅操作 `manao-stage6b` namespace
+- [x] 前端部署资产与 PUBLIC_ORIGIN 实测：
+
+**公网入口定稿**：`PUBLIC_ORIGIN = http://1.12.245.235:30080`（HTTP 明文；NodePort 直达，无 TLS 终止。按计划第 4 节边界记录：单用户工作台 MVP 阶段接受 HTTP 明文传输限制，登录凭据与 JWT 随公网明文传输；HTTPS 待复用既有服务器入口后再启用，届时同步更新 MANAO_WS_EXTRA_ORIGIN 为 HTTPS origin，浏览器自动改用 wss）。服务器无既有可复用入口（Task 1 实测 all-accept-no-service），故 frontend.yaml 的 Service 定稿为 `type: NodePort, nodePort: 30080`（仓库文件同步改为 NodePort 版本，ClusterIP 作为注释备选保留）。
+
+**镜像**：`chocologic/manao_images_repository@sha256:887c2e9f9b9594d08c96a90d2e1fa4175bd6431e22479b647453583eb2e2699e`（tag `6b-frontend-20260918b`）。初版镜像 digest `d29ff0e8…93e7`（tag `6b-frontend-20260918`）部署即 CrashLoop（见问题 1），已由修正版取代；修正仅 nginx.conf 一行 upstream（资产修正，前端构建产物 dist 不变）。
+
+**部署时序（kubectl 实测，+08:00）**：
+1. 17:05 apply frontend.yaml（sed 注入 digest）→ Service `frontend` NodePort 8080/30080 created，Deployment created。
+2. 初版镜像 Pod CrashLoopBackOff：nginx `[emerg] host not found in upstream "manao-backend"`。根因：backend Service 实际名为 `backend`（backend.yaml），而镜像内 nginx.conf 写的是 `manao-backend`——该主机名不存在，nginx 启动解析失败退出。修复：`poc4/frontend/deploy/nginx.conf` 的 `proxy_pass` 改为 `backend.manao-stage6b.svc.cluster.local:8080`（FQDN，理由同 MANAO_DB_URL 的可审计性决策），重建并推送镜像 `6b-frontend-20260918b`，17:18 重新 apply。
+3. 17:19 rollout status `deployment "frontend" successfully rolled out`；Pod 1/1 Running（调度至 node2）。实测 `get svc frontend` → NodePort 30080（分配值与指定值一致）。集群内既有 backend/mysql-0 未受影响（backend Pod 仍为部署时创建的实例，未 restart——ConfigMap `MANAO_WS_EXTRA_ORIGIN=http://1.12.245.235:30080` 与定稿 PUBLIC_ORIGIN 一致，无需改动与重启）。
+4. 17:20 Pod 内 `kubectl exec deploy/frontend -- nginx -t` → `nginx: the configuration file /etc/nginx/nginx.conf test is successful`。
+
+**公网真实验证（本机直接 curl `http://1.12.245.235:30080`，非 localhost/隧道/集群内路径）**：
+
+| 项 | 命令（脱敏） | 实测结果 |
+| --- | --- | --- |
+| a. 静态页面 | `curl http://1.12.245.235:30080/` | HTTP 200 `text/html`（403 B），HTML 含 `<div id="root">`（React 挂载点）与 `src="/assets/index-D18AvTFx.js"` |
+| b. 静态资源 | `curl http://1.12.245.235:30080/assets/index-D18AvTFx.js` | HTTP 200 `application/javascript`（393 KB），`Cache-Control: public, max-age=31536000, immutable` |
+| c. SPA 路由回退 | `curl http://1.12.245.235:30080/login` | HTTP 200 `text/html`（403 B），与 `/` 返回逐字节相同（`diff` 实测一致，回退到 index.html） |
+| d. 同源 API 代理 | `curl -X POST http://1.12.245.235:30080/api/v1/auth/login -d '{"username":"probe-no-such-user",...}'` | HTTP 401，响应为 backend Spring Security JSON `{"code":"UNAUTHENTICATED","message":"Authentication required","traceId":"052af1cc-…"}` 及 backend 安全响应头（X-Frame-Options: DENY 等）——该 JSON 与响应头不可能由 nginx 自身产生，证明请求穿过 nginx 到达 backend（nginx 侧仅添加 `Server: nginx/1.27.5`）。backend 为 ClusterIP，公网无直达路径，此为唯一同源代理链路的实测证据 |
+| e. WebSocket 升级路径 | `curl` 向 `/api/v1/ws/run-logs` 发 Upgrade 请求（Origin: http://1.12.245.235:30080，带 Sec-WebSocket-Key/Version） | **HTTP 101 Switching Protocols**（Sec-WebSocket-Accept 正确），升级后 backend 推送 `log ticket rejected`（无 ticket 的预期拒绝）；对照：同路径无 Upgrade 头 GET → HTTP 400。证明 nginx 正确转发 Upgrade/Connection 且 backend 的 WS origin 白名单接受 PUBLIC_ORIGIN。真正的日志握手与传输随 Task 4 的 Run 验证（本轮不建 Run） |
+
+**结论**：浏览器可从公网地址加载页面与静态资源，同源 `/api/` REST 代理与 WebSocket 升级链路均实测连通。浏览器登录操作本身随 Task 4 E2E 验证。
+
+**遇到的问题与修复**：
+1. 初版前端镜像 CrashLoop（`host not found in upstream "manao-backend"`）：阶段 A 按 brief 示例配置写死了 `manao-backend` 主机名，但 Task 2 实际部署的 backend Service 名为 `backend`——两份资产间的名称假设未经对账，属阶段 A 资产缺陷而非部署操作失误。修复：nginx.conf upstream 改为 backend Service FQDN，重建镜像 `6b-frontend-20260918b`（digest `887c2e9f…e2699e`），重新 apply 后正常。frontend.yaml/README/nginx.conf 已同步修正（随本轮提交）。
+2. CrashLoopBackOff 期间容器秒级退出导致 `kubectl exec` 持续报 `unable to upgrade connection: container not found`，Pod 内 DNS 诊断一度受阻；改由 mysql-0（同 namespace）`getent hosts backend.manao-stage6b.svc.cluster.local` 实测 DNS 解析正常（返回 ClusterIP 10.233.53.222），定位到 upstream 名称本身不存在。
+
+**遗留项**：浏览器端登录/编辑/运行/日志全链路随 Task 4；HTTP 明文边界如上记录；backend Service 若重建需 `rollout restart deploy/frontend`（nginx 静态 upstream 解析，已写入 README §8.2）。
 
 ## 4. Task 4 验收结果（占位）
 

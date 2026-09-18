@@ -122,3 +122,75 @@ files are emitted in dist, so this is preventive). `server_name _` added.
    proxy, and confirm browser WS requests go to the public origin (wss if
    HTTPS). Log handshake/transport validation stays with Task 4's Run
    verification.
+
+## 7. Stage B — Cluster Frontend Deployment and Public-Entry Verification
+
+Date: 2026-09-18, window ~17:05–17:20 (+08:00). Admin kubeconfig (private
+path, not recorded here) for namespace `manao-stage6b` only.
+
+### 7.1 Deployment
+
+- Cluster state verified first: backend 1/1 Running, mysql-0 1/1 Running,
+  Service `backend` ClusterIP 8080, ConfigMap `MANAO_WS_EXTRA_ORIGIN` =
+  `http://1.12.245.235:30080` (already equal to the final PUBLIC_ORIGIN —
+  no config change and no backend restart needed).
+- `frontend.yaml` Service finalized as NodePort 30080 (repo file committed in
+  NodePort form; the old ClusterIP Service is kept as a commented
+  alternative). Image placeholder substituted via sed with the digest-pinned
+  reference, applied through the pipe; the repo file keeps the fail-fast
+  placeholder, same convention as backend.yaml.
+- `kubectl get svc frontend` → NodePort 30080 (assigned value matches the
+  requested value).
+- Result: `rollout status` succeeded, frontend pod 1/1 Running (node2),
+  image `chocologic/manao_images_repository@sha256:887c2e9f9b9594d08c96a90d2e1fa4175bd6431e22479b647453583eb2e2699e`
+  (tag `6b-frontend-20260918b`).
+- `kubectl exec deploy/frontend -- nginx -t` → configuration test successful.
+
+### 7.2 Incident: first image CrashLooped (asset fix, not an ops slip)
+
+The Stage A image (digest `d29ff0e8…93e7`) exited immediately:
+`nginx: [emerg] host not found in upstream "manao-backend"`. Root cause:
+nginx.conf (Stage A, following the plan's example verbatim) hard-coded the
+upstream hostname `manao-backend`, but the backend Service actually deployed
+by Task 2 is named `backend` — a cross-asset name assumption that was never
+reconciled (the local smoke test in Stage A masked it with `--add-host`).
+Evidence: `kubectl get svc backend` (exists), mysql-0 `getent hosts
+backend.manao-stage6b.svc.cluster.local` resolves (DNS healthy, name does not
+exist). Fix: `poc4/frontend/deploy/nginx.conf` `proxy_pass` changed to
+`backend.manao-stage6b.svc.cluster.local:8080` (FQDN, same auditability
+rationale as MANAO_DB_URL in backend.yaml), image rebuilt/re-pushed as
+`6b-frontend-20260918b`, re-applied — clean rollout. dist/ build output was
+unchanged; the only delta is the one nginx.conf line plus comments.
+kubectl exec into the CrashLooping pod kept failing with `container not
+found` (sub-second container lifetime), which is why DNS was probed from
+mysql-0 instead.
+
+### 7.3 Public-entry verification (real curl from the local machine to
+`http://1.12.245.235:30080`; no localhost/tunnel/in-cluster path)
+
+| Check | Result |
+| --- | --- |
+| a. GET / | HTTP 200 text/html, contains `<div id="root">` (React mount) and `/assets/index-D18AvTFx.js` |
+| b. Static asset | HTTP 200 application/javascript (393 KB) with `Cache-Control: public, max-age=31536000, immutable` |
+| c. SPA fallback (/login) | HTTP 200, byte-identical to `/` (diff verified) |
+| d. Same-origin API proxy | POST `/api/v1/auth/login` (bogus probe user) → HTTP 401 with backend Spring Security JSON `{"code":"UNAUTHENTICATED",...,"traceId":"…"}` and backend security headers; impossible for nginx to produce itself, so the request demonstrably traversed nginx to the backend (backend is ClusterIP with no public path — this is the only same-origin route) |
+| e. WS upgrade path | `/api/v1/ws/run-logs` with Upgrade headers → **HTTP 101 Switching Protocols**, correct Sec-WebSocket-Accept, then backend pushed `log ticket rejected` (expected without a ticket); control: same path without Upgrade → HTTP 400. Proves nginx Upgrade forwarding works and the backend WS origin whitelist accepts `http://1.12.245.235:30080`. Real log handshake stays with Task 4's Run. |
+
+PUBLIC_ORIGIN finalized: `http://1.12.245.235:30080` (HTTP plaintext —
+transport limitation recorded in acceptance.md §3 per plan §4; HTTPS deferred
+until a reusable server entry exists).
+
+### 7.4 Docs fixes carried in this round
+
+- acceptance.md §2: runner-Maven-version checkbox was ticked while its own
+  text said "not tested" — unticked, marked NOT_REVERIFIED.
+- README §3 Step 2: added that `APP_USERNAME` comes from the private env file
+  (same handling as APP_PW).
+- README §8/8.2: rewritten for the actually-used deploy command (sed-pipe
+  apply), NodePort-30080 default, the real upstream FQDN, and the new note
+  "backend Service recreated → `rollout restart deploy/frontend`" (nginx
+  static upstream resolution).
+- frontend.yaml: NodePort finalized (comment mentions the FQDN upstream and
+  MANAO_WS_EXTRA_ORIGIN coupling).
+- Evidence for stage acceptance lives in
+  `poc4/docs/evidence/stage-6b/acceptance.md` §3.
