@@ -2,6 +2,7 @@ import { cleanup, renderHook, waitFor } from '@testing-library/react';
 import { http, HttpResponse } from 'msw';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { login } from '../../api/authApi';
+import { retryProjectBusyRead } from '../../api/projectBusyRetry';
 import { AppProviders } from '../../app/AppProviders';
 import { authSession, queryClient, workspaceBufferRegistry } from '../../app/appRuntime';
 import { parseWorkspaceRevision, type FileTreeEntry, type ProjectRelativePath } from '../../contracts/file';
@@ -105,7 +106,7 @@ describe('sortFileTreeEntries', () => {
 });
 
 describe('directory tree queries', () => {
-  it('fetches root with retry false, 30s staleTime, and default five-minute GC', async () => {
+  it('fetches root with project-busy-only retry, 30s staleTime, and default five-minute GC', async () => {
     await authenticateAsAlice();
     const { result } = renderHook(() => useDirectoryTreeQuery(ALICE_SEED_PROJECT_ID, ROOT), {
       wrapper: AppProviders,
@@ -117,7 +118,7 @@ describe('directory tree queries', () => {
     const cached = queryClient.getQueryCache().find({
       queryKey: fileKeys.tree(ALICE_SEED_PROJECT_ID, ROOT),
     });
-    expect(cached?.options.retry).toBe(false);
+    expect(cached?.options.retry).toBe(retryProjectBusyRead);
     expect(cached?.observers[0]?.options.staleTime).toBe(30_000);
     expect(cached?.gcTime).toBe(5 * 60 * 1000);
   });

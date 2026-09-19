@@ -114,32 +114,32 @@ export function ProjectRoutePage() {
     );
   }
 
-  if (query.isError) {
-    if (isForbiddenError(query.error)) {
-      return (
-        <AppChrome title="Project">
-          <AccessDeniedPage />
-        </AppChrome>
-      );
-    }
-
-    const message = isNetworkError(query.error)
-      ? 'Network request failed'
-      : 'Unable to load project';
-
+  if (query.isError && isForbiddenError(query.error)) {
     return (
       <AppChrome title="Project">
-        <div className="flex flex-col items-start gap-2">
-          <InlineAlert>{message}</InlineAlert>
-          <Button type="button" variant="outline" onClick={() => void query.refetch()}>
-            Retry
-          </Button>
-        </div>
+        <AccessDeniedPage />
       </AppChrome>
     );
   }
 
   if (query.data === undefined) {
+    if (query.isError) {
+      const message = isNetworkError(query.error)
+        ? 'Network request failed'
+        : 'Unable to load project';
+
+      return (
+        <AppChrome title="Project">
+          <div className="flex flex-col items-start gap-2">
+            <InlineAlert>{message}</InlineAlert>
+            <Button type="button" variant="outline" onClick={() => void query.refetch()}>
+              Retry
+            </Button>
+          </div>
+        </AppChrome>
+      );
+    }
+
     return (
       <AppChrome title="Project">
         <AccessDeniedPage />

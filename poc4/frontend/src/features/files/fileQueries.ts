@@ -1,6 +1,10 @@
 import { useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { createContext, useContext } from 'react';
 import { ApiRequestError } from '../../api/ApiRequestError';
+import {
+  PROJECT_BUSY_READ_RETRY_DELAY_MS,
+  retryProjectBusyRead,
+} from '../../api/projectBusyRetry';
 import { getFileContent, getFileMetadata, listDirectory } from '../../api/fileApi';
 import type {
   FileContentResponse,
@@ -149,7 +153,9 @@ export function useDirectoryTreeQuery(projectId: string, path: ProjectDirectoryP
       );
       return tree;
     },
-    retry: false,
+    retry: retryProjectBusyRead,
+    retryDelay: PROJECT_BUSY_READ_RETRY_DELAY_MS,
+    refetchOnWindowFocus: false,
     staleTime: FILE_STALE_TIME_MS,
     enabled: enabled && !paused,
   });
@@ -169,7 +175,9 @@ export function useFileMetadataQuery(
   return useQuery({
     queryKey: fileKeys.meta(projectId, path),
     queryFn: ({ signal }) => getFileMetadata(projectId, path, signal),
-    retry: false,
+    retry: retryProjectBusyRead,
+    retryDelay: PROJECT_BUSY_READ_RETRY_DELAY_MS,
+    refetchOnWindowFocus: false,
     staleTime: FILE_STALE_TIME_MS,
     enabled: !paused && enabled && projectId.length > 0 && isCurrentProject(projectId, sessionProjectId),
   });
@@ -197,7 +205,9 @@ export function useFileContentQuery(
       );
       return content;
     },
-    retry: false,
+    retry: retryProjectBusyRead,
+    retryDelay: PROJECT_BUSY_READ_RETRY_DELAY_MS,
+    refetchOnWindowFocus: false,
     staleTime: FILE_STALE_TIME_MS,
     enabled: !paused && authorized && projectId.length > 0 && isCurrentProject(projectId, sessionProjectId),
   });
