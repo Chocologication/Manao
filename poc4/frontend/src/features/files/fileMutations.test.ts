@@ -956,3 +956,31 @@ describe('rename/delete state matrix', () => {
     expect(queryClient.getQueryData(fileKeys.revision(ALICE_SEED_PROJECT_ID))).toBe('mock-rev-0002');
   });
 });
+
+describe('PROJECT_BUSY writes', () => {
+  it('does not auto-retry a create entry write rejected with PROJECT_BUSY', async () => {
+    await authenticateAsAlice();
+    await seedRootRevision();
+    let createCount = 0;
+    server.use(
+      http.post('/api/v1/projects/:projectId/entries', () => {
+        createCount += 1;
+        return HttpResponse.json(
+          { code: 'PROJECT_BUSY', message: 'Project is busy', traceId: 'trace-busy' },
+          { status: 409 },
+        );
+      }),
+    );
+
+    const { result } = renderHook(() => useCreateEntryMutation(ALICE_SEED_PROJECT_ID), {
+      wrapper: AppProviders,
+    });
+    await expect(
+      result.current.mutateAsync({ kind: 'file', path: parseProjectRelativePath('busy-check.md') }),
+    ).rejects.toThrow();
+    await sleep(60);
+
+    expect(createCount).toBe(1);
+    expect(lastMutation().options.retry).toBe(false);
+  });
+});

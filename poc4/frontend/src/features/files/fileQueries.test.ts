@@ -26,7 +26,7 @@ import {
   getFileRequestCount,
   recordFileRequest,
 } from '../../mocks/state';
-import { resetAppRuntime } from '../../test/renderApp';
+import { resetAppRuntime, simulateWindowRefocus } from '../../test/renderApp';
 
 const ALICE = { username: 'alice', password: 'demo-pass' };
 const ROOT = parseProjectDirectoryPath('');
@@ -474,5 +474,113 @@ describe('imperative file cache helpers', () => {
       'root-tree',
     );
     expect(queryClient.getQueryData(fileKeys.revision(ALICE_SEED_PROJECT_ID))).toBe('direct-rev');
+  });
+});
+
+function busyJson() {
+  return HttpResponse.json(
+    { code: 'PROJECT_BUSY', message: 'Project is busy', traceId: 'trace-busy' },
+    { status: 409 },
+  );
+}
+
+describe('window focus and PROJECT_BUSY file reads', () => {
+  it('does not refetch stale tree or content queries on simulated window refocus', async () => {
+    await authenticateAsAlice();
+    const { result } = renderHook(
+      () => ({
+        tree: useDirectoryTreeQuery(ALICE_SEED_PROJECT_ID, ROOT),
+        content: useFileContentQuery(ALICE_SEED_PROJECT_ID, POM, 'MONACO_TEXT'),
+      }),
+      { wrapper: AppProviders },
+    );
+    await waitFor(() => expect(result.current.tree.isSuccess).toBe(true));
+    await waitFor(() => expect(result.current.content.isSuccess).toBe(true));
+    const treeCount = getFileRequestCount('tree', ALICE_SEED_PROJECT_ID, '');
+    const contentCount = getFileRequestCount('content', ALICE_SEED_PROJECT_ID, 'pom.xml');
+
+    // Age the cached reads past FILE_STALE_TIME_MS so a focus refetch would be allowed.
+    queryClient.setQueryData(
+      fileKeys.tree(ALICE_SEED_PROJECT_ID, ROOT),
+      (current) => current,
+      { updatedAt: Date.now() - 31_000 },
+    );
+    queryClient.setQueryData(
+      fileKeys.content(ALICE_SEED_PROJECT_ID, POM),
+      (current) => current,
+      { updatedAt: Date.now() - 31_000 },
+    );
+
+    await simulateWindowRefocus();
+    await new Promise((resolve) => setTimeout(resolve, 80));
+
+    expect(getFileRequestCount('tree', ALICE_SEED_PROJECT_ID, '')).toBe(treeCount);
+    expect(getFileRequestCount('content', ALICE_SEED_PROJECT_ID, 'pom.xml')).toBe(contentCount);
+  });
+
+  it('retries a PROJECT_BUSY tree request and succeeds when the workspace frees', async () => {
+    let busyHits = 0;
+    server.use(
+      http.get('/api/v1/projects/:projectId/files/tree', ({ request }) => {
+        const path = new URL(request.url).searchParams.get('path') ?? '';
+        recordFileRequest('tree', ALICE_SEED_PROJECT_ID, path);
+        busyHits += 1;
+        if (busyHits <= 2) {
+          return busyJson();
+        }
+        return HttpResponse.json({
+          directory: path,
+          entries: [treeEntry('recovered.md', 'file')],
+          workspaceRevision: 'mock-rev-0002',
+        });
+      }),
+    );
+    await authenticateAsAlice();
+    const { result } = renderHook(() => useDirectoryTreeQuery(ALICE_SEED_PROJECT_ID, ROOT), {
+      wrapper: AppProviders,
+    });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(result.current.data?.entries.map((entry) => entry.name)).toEqual(['recovered.md']);
+    expect(getFileRequestCount('tree', ALICE_SEED_PROJECT_ID, '')).toBe(3);
+  });
+
+  it('stops retrying a tree request that stays busy after the bounded attempts', async () => {
+    server.use(
+      http.get('/api/v1/projects/:projectId/files/tree', ({ request }) => {
+        const path = new URL(request.url).searchParams.get('path') ?? '';
+        recordFileRequest('tree', ALICE_SEED_PROJECT_ID, path);
+        return busyJson();
+      }),
+    );
+    await authenticateAsAlice();
+    const { result } = renderHook(() => useDirectoryTreeQuery(ALICE_SEED_PROJECT_ID, ROOT), {
+      wrapper: AppProviders,
+    });
+
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    expect(getFileRequestCount('tree', ALICE_SEED_PROJECT_ID, '')).toBe(3);
+  });
+
+  it('does not retry FORBIDDEN tree requests', async () => {
+    server.use(
+      http.get('/api/v1/projects/:projectId/files/tree', ({ request }) => {
+        const path = new URL(request.url).searchParams.get('path') ?? '';
+        recordFileRequest('tree', ALICE_SEED_PROJECT_ID, path);
+        return HttpResponse.json(
+          { code: 'FORBIDDEN', message: 'denied', traceId: 'trace-forbidden' },
+          { status: 403 },
+        );
+      }),
+    );
+    await authenticateAsAlice();
+    const { result } = renderHook(() => useDirectoryTreeQuery(ALICE_SEED_PROJECT_ID, ROOT), {
+      wrapper: AppProviders,
+    });
+
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    expect(getFileRequestCount('tree', ALICE_SEED_PROJECT_ID, '')).toBe(1);
   });
 });

@@ -52,8 +52,7 @@ function LocationEcho() {
 
 export function renderApp(
   options: { initialEntries?: string[]; initialIndex?: number } = {},
-): RenderResult & { router: ReturnType<typeof createMemoryRouter> } {
-  const router = createMemoryRouter(
+): RenderResult & { router: ReturnType<typeof createMemoryRouter> } {  const router = createMemoryRouter(
     [
       {
         element: (
@@ -89,4 +88,30 @@ export function renderApp(
     </StrictMode>,
   );
   return Object.assign(view, { router });
+}
+
+/**
+ * Simulates an app switch away and back: hides the document, waits, then goes
+ * visible again. React Query's focusManager listens for window
+ * `visibilitychange` events and reads `document.visibilityState`.
+ */
+export async function simulateWindowRefocus(hiddenMs = 150): Promise<void> {
+  const ownDescriptor = Object.getOwnPropertyDescriptor(document, 'visibilityState');
+  const setVisibility = (value: string): void => {
+    Object.defineProperty(document, 'visibilityState', {
+      configurable: true,
+      get: () => value,
+    });
+  };
+  setVisibility('hidden');
+  window.dispatchEvent(new Event('visibilitychange'));
+  await new Promise((resolve) => setTimeout(resolve, hiddenMs));
+  setVisibility('visible');
+  window.dispatchEvent(new Event('visibilitychange'));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  if (ownDescriptor) {
+    Object.defineProperty(document, 'visibilityState', ownDescriptor);
+  } else {
+    delete (document as unknown as Record<string, unknown>).visibilityState;
+  }
 }

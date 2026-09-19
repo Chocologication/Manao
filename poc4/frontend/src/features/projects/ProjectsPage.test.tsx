@@ -1,4 +1,4 @@
-import { cleanup, screen, waitFor, within } from '@testing-library/react';
+import { cleanup, renderHook, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import { readFileSync } from 'node:fs';
@@ -14,11 +14,14 @@ import {
   MOCK_FAILURE_REASON,
   getFileRequestCount,
 } from '../../mocks/state';
-import { renderApp, resetAppRuntime } from '../../test/renderApp';
+import { renderApp, resetAppRuntime, simulateWindowRefocus } from '../../test/renderApp';
+import { AppProviders } from '../../app/AppProviders';
 import {
   projectDetailRefetchInterval,
   projectKeys,
   projectsRefetchInterval,
+  useProjectQuery,
+  useProjectsQuery,
 } from './projectQueries';
 
 const ALICE = { username: 'alice', password: 'demo-pass' };
@@ -503,4 +506,134 @@ describe('ProjectRoutePage', () => {
     expectNoFileApi(ALICE_SEED_PROJECT_ID);
     expectNoWorkbench();
   });
+});
+
+function busyError() {
+  return HttpResponse.json(
+    { code: 'PROJECT_BUSY', message: 'Project is busy', traceId: 'trace-busy' },
+    { status: 409 },
+  );
+}
+
+describe('project query focus and PROJECT_BUSY reads', () => {
+  it('does not refetch project list or detail queries on simulated window refocus', async () => {
+    await authenticateAsAlice();
+    let listCount = 0;
+    let detailCount = 0;
+    const alice = readyProject({ id: ALICE_SEED_PROJECT_ID, name: 'Alice Notebook' });
+    server.use(
+      http.get('/api/v1/projects', () => {
+        listCount += 1;
+        return HttpResponse.json({ items: [alice], limit: 8 });
+      }),
+      http.get('/api/v1/projects/:projectId', () => {
+        detailCount += 1;
+        return HttpResponse.json(alice);
+      }),
+    );
+
+    const list = renderHook(() => useProjectsQuery(), { wrapper: AppProviders });
+    await waitFor(() => expect(list.result.current.isSuccess).toBe(true));
+    const detail = renderHook(() => useProjectQuery(ALICE_SEED_PROJECT_ID), { wrapper: AppProviders });
+    await waitFor(() => expect(detail.result.current.isSuccess).toBe(true));
+    expect(listCount).toBe(1);
+    expect(detailCount).toBe(1);
+
+    await simulateWindowRefocus();
+    await new Promise((resolve) => setTimeout(resolve, 80));
+
+    expect(listCount).toBe(1);
+    expect(detailCount).toBe(1);
+  });
+
+  it('retries a PROJECT_BUSY project read and loads when the workspace frees', async () => {
+    await authenticateAsAlice();
+    let detailCount = 0;
+    server.use(
+      http.get('/api/v1/projects/:projectId', () => {
+        detailCount += 1;
+        if (detailCount <= 2) {
+          return busyError();
+        }
+        return HttpResponse.json(
+          readyProject({ id: ALICE_SEED_PROJECT_ID, name: 'Alice Notebook' }),
+        );
+      }),
+    );
+
+    const detail = renderHook(() => useProjectQuery(ALICE_SEED_PROJECT_ID), { wrapper: AppProviders });
+    await waitFor(() => expect(detail.result.current.isSuccess).toBe(true));
+    expect(detailCount).toBe(3);
+  });
+
+  it('stops retrying a project read that stays busy after the bounded attempts', async () => {
+    await authenticateAsAlice();
+    let detailCount = 0;
+    server.use(
+      http.get('/api/v1/projects/:projectId', () => {
+        detailCount += 1;
+        return busyError();
+      }),
+    );
+
+    const detail = renderHook(() => useProjectQuery(ALICE_SEED_PROJECT_ID), { wrapper: AppProviders });
+    await waitFor(() => expect(detail.result.current.isError).toBe(true));
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    expect(detailCount).toBe(3);
+  });
+
+  it('does not retry FORBIDDEN project reads', async () => {
+    await authenticateAsAlice();
+    let detailCount = 0;
+    server.use(
+      http.get('/api/v1/projects/:projectId', () => {
+        detailCount += 1;
+        return HttpResponse.json(
+          { code: 'FORBIDDEN', message: 'denied', traceId: 'trace-forbidden' },
+          { status: 403 },
+        );
+      }),
+    );
+
+    const detail = renderHook(() => useProjectQuery(ALICE_SEED_PROJECT_ID), { wrapper: AppProviders });
+    await waitFor(() => expect(detail.result.current.isError).toBe(true));
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    expect(detailCount).toBe(1);
+  });
+
+  it('keeps the workbench when a background refresh fails with cached data', async () => {
+    await authenticateAsAlice();
+    renderApp({ initialEntries: [`/projects/${ALICE_SEED_PROJECT_ID}`] });
+    await waitForWorkbench();
+
+    server.use(http.get('/api/v1/projects/:projectId', () => busyError()));
+    await queryClient.refetchQueries({ queryKey: projectKeys.detail(ALICE_SEED_PROJECT_ID) });
+    await waitFor(() =>
+      expect(queryClient.getQueryState(projectKeys.detail(ALICE_SEED_PROJECT_ID))?.status).toBe(
+        'error',
+      ),
+    );
+
+    expect(screen.getByRole('heading', { name: 'Alice Notebook' })).toBeInTheDocument();
+    expect(screen.queryByText('Unable to load project')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /retry/i })).not.toBeInTheDocument();
+  }, 15_000);
+
+  it('shows the full-page retry error only when the first load fails busy', async () => {
+    let detailCount = 0;
+    server.use(
+      http.get('/api/v1/projects/:projectId', () => {
+        detailCount += 1;
+        return busyError();
+      }),
+    );
+    await authenticateAsAlice();
+    renderApp({ initialEntries: [`/projects/${ALICE_SEED_PROJECT_ID}`] });
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('Unable to load project');
+    expect(screen.getByRole('button', { name: /retry/i })).toBeInTheDocument();
+    expectNoWorkbench();
+    expect(detailCount).toBe(3);
+  }, 15_000);
 });
