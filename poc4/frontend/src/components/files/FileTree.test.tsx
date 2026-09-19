@@ -354,7 +354,7 @@ describe('FileTree selection and commands', () => {
     expect(screen.getByRole('treeitem', { name: 'src' })).toHaveAttribute('aria-selected', 'true');
   });
 
-  it('cancels then invalidates file queries on refresh without clearing open tabs', async () => {
+  it('cancels, marks trees stale and refetches active trees on refresh without clearing open tabs', async () => {
     const user = userEvent.setup();
     await authenticateAsAlice();
     renderTree();
@@ -364,11 +364,19 @@ describe('FileTree selection and commands', () => {
 
     const cancel = vi.spyOn(queryClient, 'cancelQueries');
     const invalidate = vi.spyOn(queryClient, 'invalidateQueries');
+    const refetch = vi.spyOn(queryClient, 'refetchQueries');
     await user.click(screen.getByRole('button', { name: 'Refresh' }));
 
     await waitFor(() => {
       expect(cancel).toHaveBeenCalledWith({ queryKey: fileKeys.trees(ALICE_SEED_PROJECT_ID) });
-      expect(invalidate).toHaveBeenCalledWith({ queryKey: fileKeys.trees(ALICE_SEED_PROJECT_ID) });
+      expect(invalidate).toHaveBeenCalledWith({
+        queryKey: fileKeys.trees(ALICE_SEED_PROJECT_ID),
+        refetchType: 'none',
+      });
+      expect(refetch).toHaveBeenCalledWith({
+        queryKey: fileKeys.tree(ALICE_SEED_PROJECT_ID, ROOT),
+        type: 'active',
+      });
     });
     expect(cancel.mock.invocationCallOrder[0]).toBeLessThan(invalidate.mock.invocationCallOrder[0]);
     expect(workspaceSessionStore.getState().openPaths).toEqual([POM]);

@@ -97,6 +97,10 @@ function isForbiddenError(error: unknown): boolean {
   );
 }
 
+function isNotFoundError(error: unknown): boolean {
+  return error instanceof ApiRequestError && error.status === 404;
+}
+
 function isNetworkError(error: unknown): boolean {
   return error instanceof Error && /network request failed/i.test(error.message);
 }
@@ -118,6 +122,24 @@ export function ProjectRoutePage() {
     return (
       <AppChrome title="Project">
         <AccessDeniedPage />
+      </AppChrome>
+    );
+  }
+
+  // A missing project must keep its real semantics even when cached data is
+  // still around; it must not be shown as a normal workbench.
+  if (query.isError && isNotFoundError(query.error)) {
+    return (
+      <AppChrome title="Project">
+        <div className="flex flex-col items-start gap-2">
+          <InlineAlert>Project is no longer available</InlineAlert>
+          <Button type="button" variant="outline" onClick={() => void query.refetch()}>
+            Retry
+          </Button>
+          <Link to="/projects" className="text-sm text-foreground underline-offset-4 hover:underline">
+            Back to projects
+          </Link>
+        </div>
       </AppChrome>
     );
   }
@@ -195,15 +217,31 @@ export function ProjectRoutePage() {
     );
   }
 
+  // A failed background refresh keeps the workbench mounted with a local,
+  // actionable hint instead of a full-page error. The hint appears once the
+  // bounded PROJECT_BUSY retries are exhausted (no fetch in flight); during the
+  // retry window the existing interface stays untouched. The conditional slot
+  // stays ahead of the Suspense boundary so the workbench is never remounted
+  // when the hint appears or disappears.
   return (
-    <Suspense
-      fallback={
-        <div role="status" aria-label="Loading workbench" className="flex h-full items-center justify-center">
-          <Spinner />
+    <>
+      {query.isError && !query.isFetching ? (
+        <div className="flex flex-col items-start gap-2 border-b bg-background px-4 py-2">
+          <InlineAlert>Project update failed</InlineAlert>
+          <Button type="button" variant="outline" onClick={() => void query.refetch()}>
+            Retry
+          </Button>
         </div>
-      }
-    >
-      <WorkbenchRoute project={project} />
-    </Suspense>
+      ) : null}
+      <Suspense
+        fallback={
+          <div role="status" aria-label="Loading workbench" className="flex h-full items-center justify-center">
+            <Spinner />
+          </div>
+        }
+      >
+        <WorkbenchRoute project={project} />
+      </Suspense>
+    </>
   );
 }

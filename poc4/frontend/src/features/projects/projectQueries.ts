@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { createProject, deleteProject, getProject, listProjects } from '../../api/projectApi';
 import {
-  PROJECT_BUSY_READ_RETRY_DELAY_MS,
+  projectBusyReadRetryDelay,
   retryProjectBusyRead,
 } from '../../api/projectBusyRetry';
 import { DEFAULT_PROJECT_LIMIT, type ProjectListResponse, type ProjectSummary } from '../../contracts/project';
@@ -40,7 +40,7 @@ export function useProjectsQuery() {
     queryKey: projectKeys.all,
     queryFn: listProjects,
     retry: retryProjectBusyRead,
-    retryDelay: PROJECT_BUSY_READ_RETRY_DELAY_MS,
+    retryDelay: projectBusyReadRetryDelay,
     refetchOnWindowFocus: false,
     refetchInterval: projectsRefetchInterval,
   });
@@ -51,7 +51,7 @@ export function useProjectQuery(projectId: string) {
     queryKey: projectKeys.detail(projectId),
     queryFn: () => getProject(projectId),
     retry: retryProjectBusyRead,
-    retryDelay: PROJECT_BUSY_READ_RETRY_DELAY_MS,
+    retryDelay: projectBusyReadRetryDelay,
     refetchOnWindowFocus: false,
     refetchInterval: projectDetailRefetchInterval,
     enabled: projectId.length > 0,
