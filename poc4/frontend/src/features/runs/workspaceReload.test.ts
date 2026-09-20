@@ -1,14 +1,20 @@
-import { cleanup, waitFor } from '@testing-library/react';
+import { cleanup, renderHook, waitFor } from '@testing-library/react';
 import { http, HttpResponse } from 'msw';
 import * as monaco from 'monaco-editor';
 import { readFileSync } from 'node:fs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { login } from '../../api/authApi';
+import { AppProviders } from '../../app/AppProviders';
 import { authSession, queryClient, workspaceBufferRegistry } from '../../app/appRuntime';
 import { parseWorkspaceRevision } from '../../contracts/file';
 import { useWorkspaceSession } from '../editor/workspaceSession';
 import { projectAuthorityScope } from '../files/fileMutations';
-import { fileKeys } from '../files/fileQueries';
+import {
+  fileKeys,
+  useDirectoryTreeQuery,
+  useFileContentQuery,
+  useFileMetadataQuery,
+} from '../files/fileQueries';
 import { parseProjectDirectoryPath, parseProjectRelativePath } from '../files/pathPolicy';
 import { disposeAllProjectModels, toProjectModelUri } from '../../lib/projectMonacoModels';
 import * as projectMonacoModels from '../../lib/projectMonacoModels';
@@ -26,7 +32,7 @@ import {
   startRun as mockStartRun,
 } from '../../mocks/runState';
 import { ALICE_SEED_PROJECT_ID, getFileRequestCount } from '../../mocks/state';
-import { resetAppRuntime } from '../../test/renderApp';
+import { resetAppRuntime, simulateWindowRefocus } from '../../test/renderApp';
 import { reloadWorkspaceAfterTerminalRun } from './workspaceReload';
 
 const ALICE = { username: 'alice', password: 'demo-pass' };
@@ -436,5 +442,37 @@ describe('reloadWorkspaceAfterTerminalRun isolation', () => {
     const source = readFileSync('src/features/runs/workspaceReload.ts', 'utf8');
     expect(source).not.toMatch(/completeReload/);
     expect(source).not.toMatch(/RunAuthorityCoordinator/);
+  });
+});
+
+describe('reloadWorkspaceAfterTerminalRun window refocus', () => {
+  it('does not re-read workspace files when the window refocuses after a run-end reload', async () => {
+    await authenticateAsAlice();
+    activateAndOpen([README, POM], POM);
+    await reloadWorkspaceAfterTerminalRun({ projectId: ALICE_SEED_PROJECT_ID, queryClient });
+
+    // The workbench keeps mounted observers over the reloaded reads.
+    const { result } = renderHook(
+      () => ({
+        tree: useDirectoryTreeQuery(ALICE_SEED_PROJECT_ID, ROOT),
+        meta: useFileMetadataQuery(ALICE_SEED_PROJECT_ID, POM, true),
+        content: useFileContentQuery(ALICE_SEED_PROJECT_ID, POM, 'MONACO_TEXT'),
+      }),
+      { wrapper: AppProviders },
+    );
+    await waitFor(() => expect(result.current.tree.isSuccess).toBe(true));
+    await waitFor(() => expect(result.current.content.isSuccess).toBe(true));
+
+    const treeCount = getFileRequestCount('tree', ALICE_SEED_PROJECT_ID, '');
+    const metaCount = getFileRequestCount('meta', ALICE_SEED_PROJECT_ID, 'pom.xml');
+    const contentCount = getFileRequestCount('content', ALICE_SEED_PROJECT_ID, 'pom.xml');
+
+    await simulateWindowRefocus();
+    await new Promise((resolve) => setTimeout(resolve, 80));
+
+    expect(getFileRequestCount('tree', ALICE_SEED_PROJECT_ID, '')).toBe(treeCount);
+    expect(getFileRequestCount('meta', ALICE_SEED_PROJECT_ID, 'pom.xml')).toBe(metaCount);
+    expect(getFileRequestCount('content', ALICE_SEED_PROJECT_ID, 'pom.xml')).toBe(contentCount);
+    expect(useWorkspaceSession.getState().openPaths).toEqual([README, POM]);
   });
 });

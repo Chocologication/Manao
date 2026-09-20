@@ -1,0 +1,22 @@
+
+> frontend@0.0.0 test:e2e:stage6b D:\DeepLearning\MyProjects\Project_Manao\.worktree\poc4-stage-6b\poc4\frontend
+> playwright test --config playwright.stage6b.config.ts "--output" "D:/DeepLearning/MyProjects/Project_Manao_kubeconfig/verification-20260920-stage6b/playwright-results"
+
+
+Running 6 tests using 1 worker
+
+(node:28824) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+[stage6b] created project "stage6b-cloud-20260920054331-rk63" id=60ca4205-a333-486b-912e-51098126144d
+  ok 1 [stage6b-cloud] › tests\e2e\stage6b-cloud-lifecycle.spec.ts:83:3 › stage6b cloud lifecycle › login, create the marked project, and wait for READY (19.6s)
+  ok 2 [stage6b-cloud] › tests\e2e\stage6b-cloud-lifecycle.spec.ts:108:3 › stage6b cloud lifecycle › edit App.java in the editor, save explicitly, and observe the revision advance (3.3s)
+[stage6b] broken run id=2dd28ff7-88e5-45a2-821b-2d1094cc529e reached FAILED with compiler feedback
+  ok 3 [stage6b-cloud] › tests\e2e\stage6b-cloud-lifecycle.spec.ts:129:3 › stage6b cloud lifecycle › save a reproducible compile error, run, and observe FAILED with compiler feedback (59.1s)
+[stage6b] fixed run id=8a23d836-1052-426e-89db-91b0dfffb2d8 reached SUCCEEDED with "Hello from Manao" output
+  ok 4 [stage6b-cloud] › tests\e2e\stage6b-cloud-lifecycle.spec.ts:156:3 › stage6b cloud lifecycle › fix the code, save, run again, and observe SUCCEEDED with the expected output (19.2s)
+  ok 5 [stage6b-cloud] › tests\e2e\stage6b-cloud-lifecycle.spec.ts:180:3 › stage6b cloud lifecycle › the project remains editable after a terminal run state (3.7s)
+[stage6b] persistence verified for project "stage6b-cloud-20260920054331-rk63" id=60ca4205-a333-486b-912e-51098126144d; runs: broken=2dd28ff7-88e5-45a2-821b-2d1094cc529e fixed=8a23d836-1052-426e-89db-91b0dfffb2d8
+[stage6b] 保留项目 stage6b-cloud-20260920054331-rk63 (id=60ca4205-a333-486b-912e-51098126144d) 供 Task 5 持久化验证；本测试不删除该项目，删除属于 Task 5 收尾。
+  ok 6 [stage6b-cloud] › tests\e2e\stage6b-cloud-lifecycle.spec.ts:196:3 › stage6b cloud lifecycle › reload, logout, and re-login all preserve project, file content, and run history (6.8s)
+
+  6 passed (1.9m)

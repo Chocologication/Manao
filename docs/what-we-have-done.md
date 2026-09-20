@@ -4,6 +4,19 @@
 
 Status reviewed on 2026-09-10 against Stage 6 code, retained reports, the user-reported rerun and read-only Kubernetes/MySQL checks. This documentation task did not rerun tests, restart services or change runtime data. Stage 0-5 records below remain historical.
 
+## Stage 6B — Cloud Workbench (accepted 2026-09-18/19)
+
+Stage 6B delivered the repeatedly startable and maintainable single-user workbench in the cloud cluster (namespace `manao-stage6b`): digest-pinned backend/frontend images, a dedicated MySQL 8.0.40 (schema `manao_poc4_6b`), and the public origin `http://1.12.245.235:30080` (NodePort; the plain-HTTP transport limitation is recorded separately). The 2026-09-19 acceptance: public-network Playwright E2E 6/6 passed (create, edit/save, real failure feedback, fix and successful rerun, persistence after reload/re-login, final UI deletion); data survived a backend maintenance restart and a MySQL pod rebuild with fresh runs to SUCCEEDED; the final deletion reclaimed cluster resources, the PV (verified at the NFS directory level) and the DB rows. Two conditional tests (workspace pod rebuild, deletion fault injection) are recorded SKIPPED — trigger conditions were not met. **STAGE6B_MVP_CLOUD_PASS** is recorded in the acceptance record.
+
+**2026-09-20 closeout:** The cloud lifecycle and maintenance/deletion recheck passed; the frontend version-record gap was closed, and the user confirmed Stage 6B complete and authorized integration into `master`. See acceptance sections 9.5 and 10 for the current decision; earlier raw recheck failures remain historical evidence.
+
+Entry points — the two documents below are the only 6B bodies; this section does not duplicate them:
+
+- Acceptance record (environment checks, build versions, per-item results, minimal evidence): [poc4/docs/evidence/stage-6b/acceptance.md](../poc4/docs/evidence/stage-6b/acceptance.md)
+- Deployment and maintenance manual (images, private config and account init, apply order, health checks, public entry, stop/resume, data locations): [poc4/deploy/6b/README.md](../poc4/deploy/6b/README.md)
+
+The 2026-09-10 snapshot below and all Stage 6A historical facts are kept unchanged.
+
 ## Stage 0 — Browser Foundation Spike
 
 Completed the EnsoAI selective-reuse feasibility spike. The pure Vite browser application demonstrated the migrated visual system, editor tabs, Monaco workers and model lifecycle, xterm transport, panel switching, and disposal behavior in Chromium, Chrome, and Edge. The decision was `CONTINUE_SELECTIVE_MIGRATION`.

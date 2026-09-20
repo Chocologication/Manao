@@ -1,11 +1,11 @@
-import { cleanup, screen, waitFor, within } from '@testing-library/react';
+import { cleanup, renderHook, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import { readFileSync } from 'node:fs';
-import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { login } from '../../api/authApi';
 import { createProject, getProject } from '../../api/projectApi';
-import { authSession, queryClient } from '../../app/appRuntime';
+import { authSession, queryClient, workspaceBufferRegistry } from '../../app/appRuntime';
 import type { ProjectListResponse, ProjectSummary } from '../../contracts/project';
 import { server } from '../../mocks/node';
 import {
@@ -14,11 +14,21 @@ import {
   MOCK_FAILURE_REASON,
   getFileRequestCount,
 } from '../../mocks/state';
-import { renderApp, resetAppRuntime } from '../../test/renderApp';
+import {
+  advanceFakeTimersUntil,
+  renderApp,
+  resetAppRuntime,
+  simulateWindowRefocus,
+} from '../../test/renderApp';
+import { AppProviders } from '../../app/AppProviders';
+import { useWorkspaceSession } from '../editor/workspaceSession';
+import { parseProjectRelativePath } from '../files/pathPolicy';
 import {
   projectDetailRefetchInterval,
   projectKeys,
   projectsRefetchInterval,
+  useProjectQuery,
+  useProjectsQuery,
 } from './projectQueries';
 
 const ALICE = { username: 'alice', password: 'demo-pass' };
@@ -503,4 +513,277 @@ describe('ProjectRoutePage', () => {
     expectNoFileApi(ALICE_SEED_PROJECT_ID);
     expectNoWorkbench();
   });
+});
+
+function busyError() {
+  return HttpResponse.json(
+    { code: 'PROJECT_BUSY', message: 'Project is busy', traceId: 'trace-busy' },
+    { status: 409 },
+  );
+}
+
+function lockedError() {
+  return HttpResponse.json(
+    { code: 'PROJECT_LOCKED', message: 'Project is locked', traceId: 'trace-locked' },
+    { status: 409 },
+  );
+}
+
+describe('project query focus and PROJECT_BUSY reads', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('does not refetch project list or detail queries on simulated window refocus', async () => {
+    await authenticateAsAlice();
+    let listCount = 0;
+    let detailCount = 0;
+    const alice = readyProject({ id: ALICE_SEED_PROJECT_ID, name: 'Alice Notebook' });
+    server.use(
+      http.get('/api/v1/projects', () => {
+        listCount += 1;
+        return HttpResponse.json({ items: [alice], limit: 8 });
+      }),
+      http.get('/api/v1/projects/:projectId', () => {
+        detailCount += 1;
+        return HttpResponse.json(alice);
+      }),
+    );
+
+    const list = renderHook(() => useProjectsQuery(), { wrapper: AppProviders });
+    await waitFor(() => expect(list.result.current.isSuccess).toBe(true));
+    const detail = renderHook(() => useProjectQuery(ALICE_SEED_PROJECT_ID), { wrapper: AppProviders });
+    await waitFor(() => expect(detail.result.current.isSuccess).toBe(true));
+    expect(listCount).toBe(1);
+    expect(detailCount).toBe(1);
+
+    await simulateWindowRefocus();
+    await new Promise((resolve) => setTimeout(resolve, 80));
+
+    expect(listCount).toBe(1);
+    expect(detailCount).toBe(1);
+  });
+
+  it('retries a PROJECT_BUSY project read and loads when the workspace frees', async () => {
+    await authenticateAsAlice();
+    let detailCount = 0;
+    server.use(
+      http.get('/api/v1/projects/:projectId', () => {
+        detailCount += 1;
+        if (detailCount <= 3) {
+          return busyError();
+        }
+        return HttpResponse.json(
+          readyProject({ id: ALICE_SEED_PROJECT_ID, name: 'Alice Notebook' }),
+        );
+      }),
+    );
+
+    vi.useFakeTimers();
+    try {
+      const detail = renderHook(() => useProjectQuery(ALICE_SEED_PROJECT_ID), {
+        wrapper: AppProviders,
+      });
+      await advanceFakeTimersUntil(() => detail.result.current.isSuccess);
+
+      expect(detail.result.current.data?.name).toBe('Alice Notebook');
+      expect(detailCount).toBe(4);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('stops retrying a project read that stays busy after the bounded attempts', async () => {
+    await authenticateAsAlice();
+    let detailCount = 0;
+    server.use(
+      http.get('/api/v1/projects/:projectId', () => {
+        detailCount += 1;
+        return busyError();
+      }),
+    );
+
+    vi.useFakeTimers();
+    try {
+      const detail = renderHook(() => useProjectQuery(ALICE_SEED_PROJECT_ID), {
+        wrapper: AppProviders,
+      });
+      await advanceFakeTimersUntil(() => detail.result.current.isError);
+      await vi.advanceTimersByTimeAsync(3_000);
+
+      expect(detailCount).toBe(4);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('stops sending retry requests once the query is cancelled', async () => {
+    await authenticateAsAlice();
+    let detailCount = 0;
+    server.use(
+      http.get('/api/v1/projects/:projectId', () => {
+        detailCount += 1;
+        return busyError();
+      }),
+    );
+
+    vi.useFakeTimers();
+    try {
+      renderHook(() => useProjectQuery(ALICE_SEED_PROJECT_ID), {
+        wrapper: AppProviders,
+      });
+      await advanceFakeTimersUntil(() => detailCount >= 2);
+      await queryClient.cancelQueries({ queryKey: projectKeys.detail(ALICE_SEED_PROJECT_ID) });
+      await vi.advanceTimersByTimeAsync(3_000);
+
+      expect(detailCount).toBe(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not retry FORBIDDEN project reads', async () => {
+    await authenticateAsAlice();
+    let detailCount = 0;
+    server.use(
+      http.get('/api/v1/projects/:projectId', () => {
+        detailCount += 1;
+        return HttpResponse.json(
+          { code: 'FORBIDDEN', message: 'denied', traceId: 'trace-forbidden' },
+          { status: 403 },
+        );
+      }),
+    );
+
+    const detail = renderHook(() => useProjectQuery(ALICE_SEED_PROJECT_ID), { wrapper: AppProviders });
+    await waitFor(() => expect(detail.result.current.isError).toBe(true));
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    expect(detailCount).toBe(1);
+  });
+
+  it('does not retry other 409 business codes such as PROJECT_LOCKED', async () => {
+    await authenticateAsAlice();
+    let detailCount = 0;
+    server.use(
+      http.get('/api/v1/projects/:projectId', () => {
+        detailCount += 1;
+        return lockedError();
+      }),
+    );
+
+    const detail = renderHook(() => useProjectQuery(ALICE_SEED_PROJECT_ID), { wrapper: AppProviders });
+    await waitFor(() => expect(detail.result.current.isError).toBe(true));
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    expect(detailCount).toBe(1);
+  });
+
+  it('keeps the workbench and unsaved content when a background refresh fails busy and retries exhaust', async () => {
+    await authenticateAsAlice();
+    useWorkspaceSession.getState().activateProject(ALICE_SEED_PROJECT_ID);
+    useWorkspaceSession.getState().toggleDirectory(parseProjectRelativePath('src'));
+    renderApp({ initialEntries: [`/projects/${ALICE_SEED_PROJECT_ID}`] });
+    await waitForWorkbench();
+
+    const pom = parseProjectRelativePath('pom.xml');
+    const buffer = workspaceBufferRegistry.register({
+      projectId: ALICE_SEED_PROJECT_ID,
+      path: pom,
+      kind: 'plain-text',
+      content: '<project />',
+    });
+    const plain = buffer as typeof buffer & { replace(content: string): void };
+    plain.replace('<project edited />');
+    const dirtySnapshot = buffer.snapshot();
+    const expandedBefore = [...useWorkspaceSession.getState().expandedPaths];
+
+    server.use(http.get('/api/v1/projects/:projectId', () => busyError()));
+    vi.useFakeTimers();
+    try {
+      const refetch = queryClient.refetchQueries({
+        queryKey: projectKeys.detail(ALICE_SEED_PROJECT_ID),
+      });
+      await vi.advanceTimersByTimeAsync(400);
+      await vi.advanceTimersByTimeAsync(650);
+      await vi.advanceTimersByTimeAsync(1_200);
+      await refetch;
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(screen.getByRole('heading', { name: 'Alice Notebook' })).toBeInTheDocument();
+      expect(screen.getByRole('tree', { name: 'Files' })).toBeInTheDocument();
+      expect(screen.getByText('Project update failed')).toBeVisible();
+      expect(screen.getByRole('button', { name: /retry/i })).toBeInTheDocument();
+      expect(screen.queryByText('Unable to load project')).not.toBeInTheDocument();
+      expect(buffer.isDirty()).toBe(true);
+      expect(buffer.snapshot()).toEqual(dirtySnapshot);
+      expect(useWorkspaceSession.getState().openPaths).toEqual([]);
+      expect([...useWorkspaceSession.getState().expandedPaths]).toEqual(expandedBefore);
+    } finally {
+      vi.useRealTimers();
+    }
+  }, 20_000);
+
+  it('shows the deleted-project error when a refresh returns 404 with cached data', async () => {
+    await authenticateAsAlice();
+    renderApp({ initialEntries: [`/projects/${ALICE_SEED_PROJECT_ID}`] });
+    await waitForWorkbench();
+
+    let notFoundCount = 0;
+    server.use(
+      http.get('/api/v1/projects/:projectId', () => {
+        notFoundCount += 1;
+        return new HttpResponse(null, { status: 404 });
+      }),
+    );
+    await queryClient.refetchQueries({ queryKey: projectKeys.detail(ALICE_SEED_PROJECT_ID) });
+
+    expect(await screen.findByText('Project is no longer available')).toBeVisible();
+    expect(screen.getByRole('button', { name: /retry/i })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /back to projects/i })).toBeInTheDocument();
+    expect(screen.queryByRole('tree', { name: 'Files' })).not.toBeInTheDocument();
+    expect(notFoundCount).toBe(1);
+  }, 15_000);
+
+  it('shows the deleted-project error on a first-load 404 without cached data', async () => {
+    let notFoundCount = 0;
+    server.use(
+      http.get('/api/v1/projects/:projectId', () => {
+        notFoundCount += 1;
+        return new HttpResponse(null, { status: 404 });
+      }),
+    );
+    await authenticateAsAlice();
+    renderApp({ initialEntries: [`/projects/${ALICE_SEED_PROJECT_ID}`] });
+
+    expect(await screen.findByText('Project is no longer available')).toBeVisible();
+    expect(screen.getByRole('button', { name: /retry/i })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /back to projects/i })).toBeInTheDocument();
+    expectNoWorkbench();
+    expect(notFoundCount).toBe(1);
+  }, 15_000);
+
+  it('shows the full-page retry error when the first load fails busy', async () => {
+    let detailCount = 0;
+    server.use(
+      http.get('/api/v1/projects/:projectId', () => {
+        detailCount += 1;
+        return busyError();
+      }),
+    );
+    await authenticateAsAlice();
+
+    vi.useFakeTimers();
+    try {
+      renderApp({ initialEntries: [`/projects/${ALICE_SEED_PROJECT_ID}`] });
+      await advanceFakeTimersUntil(() => detailCount >= 4);
+      await vi.advanceTimersByTimeAsync(0);
+
+      const alert = screen.getByRole('alert');
+      expect(alert).toHaveTextContent('Unable to load project');
+      expect(screen.getByRole('button', { name: /retry/i })).toBeInTheDocument();
+      expectNoWorkbench();
+      expect(detailCount).toBe(4);
+    } finally {
+      vi.useRealTimers();
+    }
+  }, 20_000);
 });

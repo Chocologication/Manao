@@ -31,6 +31,17 @@
         <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-test</artifactId><scope>test</scope></dependency>
     </dependencies>
     <build><plugins>
+        <!-- addDefaultExcludes must be off: the default excludes **/.gitignore, which
+             would silently drop the packaged workspace template resource
+             workspace-template/.gitignore (WorkspaceTemplate.FILES) from the jar and
+             fail project provisioning at runtime with FileNotFoundException. -->
+        <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-jar-plugin</artifactId>
+            <configuration>
+                <addDefaultExcludes>false</addDefaultExcludes>
+            </configuration>
+        </plugin>
         <plugin><groupId>org.springframework.boot</groupId><artifactId>spring-boot-maven-plugin</artifactId></plugin>
         <plugin>
             <groupId>org.flywaydb</groupId><artifactId>flyway-maven-plugin</artifactId>

@@ -2,6 +2,7 @@ import { cleanup, renderHook, waitFor } from '@testing-library/react';
 import { http, HttpResponse } from 'msw';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { login } from '../../api/authApi';
+import { retryProjectBusyRead } from '../../api/projectBusyRetry';
 import { AppProviders } from '../../app/AppProviders';
 import { authSession, queryClient, workspaceBufferRegistry } from '../../app/appRuntime';
 import { parseWorkspaceRevision, type FileTreeEntry, type ProjectRelativePath } from '../../contracts/file';
@@ -26,7 +27,7 @@ import {
   getFileRequestCount,
   recordFileRequest,
 } from '../../mocks/state';
-import { resetAppRuntime } from '../../test/renderApp';
+import { advanceFakeTimersUntil, resetAppRuntime, simulateWindowRefocus } from '../../test/renderApp';
 
 const ALICE = { username: 'alice', password: 'demo-pass' };
 const ROOT = parseProjectDirectoryPath('');
@@ -105,7 +106,7 @@ describe('sortFileTreeEntries', () => {
 });
 
 describe('directory tree queries', () => {
-  it('fetches root with retry false, 30s staleTime, and default five-minute GC', async () => {
+  it('fetches root with project-busy-only retry, 30s staleTime, and default five-minute GC', async () => {
     await authenticateAsAlice();
     const { result } = renderHook(() => useDirectoryTreeQuery(ALICE_SEED_PROJECT_ID, ROOT), {
       wrapper: AppProviders,
@@ -117,7 +118,7 @@ describe('directory tree queries', () => {
     const cached = queryClient.getQueryCache().find({
       queryKey: fileKeys.tree(ALICE_SEED_PROJECT_ID, ROOT),
     });
-    expect(cached?.options.retry).toBe(false);
+    expect(cached?.options.retry).toBe(retryProjectBusyRead);
     expect(cached?.observers[0]?.options.staleTime).toBe(30_000);
     expect(cached?.gcTime).toBe(5 * 60 * 1000);
   });
@@ -209,11 +210,19 @@ describe('refreshProjectFiles', () => {
     const cancel = vi.spyOn(queryClient, 'cancelQueries');
     const invalidate = vi.spyOn(queryClient, 'invalidateQueries');
     const remove = vi.spyOn(queryClient, 'removeQueries');
+    const refetch = vi.spyOn(queryClient, 'refetchQueries');
 
     await refreshProjectFiles(queryClient, ALICE_SEED_PROJECT_ID);
 
     expect(cancel).toHaveBeenCalledWith({ queryKey: fileKeys.trees(ALICE_SEED_PROJECT_ID) });
-    expect(invalidate).toHaveBeenCalledWith({ queryKey: fileKeys.trees(ALICE_SEED_PROJECT_ID) });
+    expect(invalidate).toHaveBeenCalledWith({
+      queryKey: fileKeys.trees(ALICE_SEED_PROJECT_ID),
+      refetchType: 'none',
+    });
+    expect(refetch).toHaveBeenCalledWith({
+      queryKey: fileKeys.tree(ALICE_SEED_PROJECT_ID, ROOT),
+      type: 'active',
+    });
     expect(cancel).not.toHaveBeenCalledWith({ queryKey: fileKeys.all(ALICE_SEED_PROJECT_ID) });
     expect(invalidate).not.toHaveBeenCalledWith({ queryKey: fileKeys.all(ALICE_SEED_PROJECT_ID) });
     expect(cancel.mock.invocationCallOrder[0]).toBeLessThan(invalidate.mock.invocationCallOrder[0]);
@@ -474,5 +483,213 @@ describe('imperative file cache helpers', () => {
       'root-tree',
     );
     expect(queryClient.getQueryData(fileKeys.revision(ALICE_SEED_PROJECT_ID))).toBe('direct-rev');
+  });
+});
+
+function busyJson() {
+  return HttpResponse.json(
+    { code: 'PROJECT_BUSY', message: 'Project is busy', traceId: 'trace-busy' },
+    { status: 409 },
+  );
+}
+
+describe('window focus and PROJECT_BUSY file reads', () => {
+  it('does not refetch stale tree or content queries on simulated window refocus', async () => {
+    await authenticateAsAlice();
+    const { result } = renderHook(
+      () => ({
+        tree: useDirectoryTreeQuery(ALICE_SEED_PROJECT_ID, ROOT),
+        content: useFileContentQuery(ALICE_SEED_PROJECT_ID, POM, 'MONACO_TEXT'),
+      }),
+      { wrapper: AppProviders },
+    );
+    await waitFor(() => expect(result.current.tree.isSuccess).toBe(true));
+    await waitFor(() => expect(result.current.content.isSuccess).toBe(true));
+    const treeCount = getFileRequestCount('tree', ALICE_SEED_PROJECT_ID, '');
+    const contentCount = getFileRequestCount('content', ALICE_SEED_PROJECT_ID, 'pom.xml');
+
+    // Age the cached reads past FILE_STALE_TIME_MS so a focus refetch would be allowed.
+    queryClient.setQueryData(
+      fileKeys.tree(ALICE_SEED_PROJECT_ID, ROOT),
+      (current) => current,
+      { updatedAt: Date.now() - 31_000 },
+    );
+    queryClient.setQueryData(
+      fileKeys.content(ALICE_SEED_PROJECT_ID, POM),
+      (current) => current,
+      { updatedAt: Date.now() - 31_000 },
+    );
+
+    await simulateWindowRefocus();
+    await new Promise((resolve) => setTimeout(resolve, 80));
+
+    expect(getFileRequestCount('tree', ALICE_SEED_PROJECT_ID, '')).toBe(treeCount);
+    expect(getFileRequestCount('content', ALICE_SEED_PROJECT_ID, 'pom.xml')).toBe(contentCount);
+  });
+
+  it('retries a PROJECT_BUSY tree request and succeeds when the workspace frees', async () => {
+    let busyHits = 0;
+    server.use(
+      http.get('/api/v1/projects/:projectId/files/tree', ({ request }) => {
+        const path = new URL(request.url).searchParams.get('path') ?? '';
+        recordFileRequest('tree', ALICE_SEED_PROJECT_ID, path);
+        busyHits += 1;
+        if (busyHits <= 3) {
+          return busyJson();
+        }
+        return HttpResponse.json({
+          directory: path,
+          entries: [treeEntry('recovered.md', 'file')],
+          workspaceRevision: 'mock-rev-0002',
+        });
+      }),
+    );
+    await authenticateAsAlice();
+
+    vi.useFakeTimers();
+    try {
+      const { result } = renderHook(() => useDirectoryTreeQuery(ALICE_SEED_PROJECT_ID, ROOT), {
+        wrapper: AppProviders,
+      });
+      await advanceFakeTimersUntil(() => result.current.isSuccess);
+
+      expect(result.current.data?.entries.map((entry) => entry.name)).toEqual(['recovered.md']);
+      expect(getFileRequestCount('tree', ALICE_SEED_PROJECT_ID, '')).toBe(4);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('stops retrying a tree request that stays busy after the bounded attempts', async () => {
+    server.use(
+      http.get('/api/v1/projects/:projectId/files/tree', ({ request }) => {
+        const path = new URL(request.url).searchParams.get('path') ?? '';
+        recordFileRequest('tree', ALICE_SEED_PROJECT_ID, path);
+        return busyJson();
+      }),
+    );
+    await authenticateAsAlice();
+
+    vi.useFakeTimers();
+    try {
+      const { result } = renderHook(() => useDirectoryTreeQuery(ALICE_SEED_PROJECT_ID, ROOT), {
+        wrapper: AppProviders,
+      });
+      await advanceFakeTimersUntil(() => result.current.isError);
+      await vi.advanceTimersByTimeAsync(3_000);
+
+      expect(getFileRequestCount('tree', ALICE_SEED_PROJECT_ID, '')).toBe(4);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not retry FORBIDDEN tree requests', async () => {
+    server.use(
+      http.get('/api/v1/projects/:projectId/files/tree', ({ request }) => {
+        const path = new URL(request.url).searchParams.get('path') ?? '';
+        recordFileRequest('tree', ALICE_SEED_PROJECT_ID, path);
+        return HttpResponse.json(
+          { code: 'FORBIDDEN', message: 'denied', traceId: 'trace-forbidden' },
+          { status: 403 },
+        );
+      }),
+    );
+    await authenticateAsAlice();
+    const { result } = renderHook(() => useDirectoryTreeQuery(ALICE_SEED_PROJECT_ID, ROOT), {
+      wrapper: AppProviders,
+    });
+
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    expect(getFileRequestCount('tree', ALICE_SEED_PROJECT_ID, '')).toBe(1);
+  });
+
+  it('refreshes expanded directories one by one when the user refreshes manually', async () => {
+    await authenticateAsAlice();
+    useWorkspaceSession.getState().activateProject(ALICE_SEED_PROJECT_ID);
+    useWorkspaceSession.getState().toggleDirectory(parseProjectRelativePath('src'));
+    useWorkspaceSession.getState().toggleDirectory(parseProjectRelativePath('src/main'));
+    const SRC_MAIN = parseProjectDirectoryPath('src/main');
+    const { result } = renderHook(
+      () => ({
+        root: useDirectoryTreeQuery(ALICE_SEED_PROJECT_ID, ROOT),
+        src: useDirectoryTreeQuery(ALICE_SEED_PROJECT_ID, SRC),
+        main: useDirectoryTreeQuery(ALICE_SEED_PROJECT_ID, SRC_MAIN),
+      }),
+      { wrapper: AppProviders },
+    );
+    await waitFor(() => expect(result.current.root.isSuccess).toBe(true));
+    await waitFor(() => expect(result.current.src.isSuccess).toBe(true));
+    await waitFor(() => expect(result.current.main.isSuccess).toBe(true));
+
+    let inFlight = 0;
+    let overlapped = false;
+    const order: string[] = [];
+    server.use(
+      http.get('/api/v1/projects/:projectId/files/tree', async ({ request }) => {
+        const path = new URL(request.url).searchParams.get('path') ?? '';
+        recordFileRequest('tree', ALICE_SEED_PROJECT_ID, path);
+        inFlight += 1;
+        if (inFlight > 1) {
+          overlapped = true;
+        }
+        order.push(path);
+        await new Promise((resolve) => setTimeout(resolve, 15));
+        inFlight -= 1;
+        return HttpResponse.json({
+          directory: path,
+          entries: [],
+          workspaceRevision: 'refresh-rev',
+        });
+      }),
+    );
+
+    await refreshProjectFiles(queryClient, ALICE_SEED_PROJECT_ID);
+
+    expect(overlapped).toBe(false);
+    expect(order).toEqual(['', 'src', 'src/main']);
+    expect(queryClient.getQueryData(fileKeys.revision(ALICE_SEED_PROJECT_ID))).toBe('refresh-rev');
+  });
+
+  it('keeps collapsed directories stale so they refresh when opened later', async () => {
+    await authenticateAsAlice();
+    useWorkspaceSession.getState().activateProject(ALICE_SEED_PROJECT_ID);
+    useWorkspaceSession.getState().toggleDirectory(parseProjectRelativePath('src'));
+
+    server.use(
+      http.get('/api/v1/projects/:projectId/files/tree', ({ request }) => {
+        const path = new URL(request.url).searchParams.get('path') ?? '';
+        recordFileRequest('tree', ALICE_SEED_PROJECT_ID, path);
+        return HttpResponse.json({
+          directory: path,
+          entries: [treeEntry('src/later.md', 'file')],
+          workspaceRevision: 'collapsed-rev',
+        });
+      }),
+    );
+
+    const first = renderHook(() => useDirectoryTreeQuery(ALICE_SEED_PROJECT_ID, SRC), {
+      wrapper: AppProviders,
+    });
+    await waitFor(() => expect(first.result.current.isSuccess).toBe(true));
+    expect(getFileRequestCount('tree', ALICE_SEED_PROJECT_ID, 'src')).toBe(1);
+    first.unmount();
+
+    // The manual refresh must not fetch the collapsed directory, but it must
+    // stay marked stale so opening it later gets fresh data.
+    await refreshProjectFiles(queryClient, ALICE_SEED_PROJECT_ID);
+    expect(getFileRequestCount('tree', ALICE_SEED_PROJECT_ID, 'src')).toBe(1);
+    expect(
+      queryClient.getQueryCache().find({ queryKey: fileKeys.tree(ALICE_SEED_PROJECT_ID, SRC) })
+        ?.isStale(),
+    ).toBe(true);
+
+    const second = renderHook(() => useDirectoryTreeQuery(ALICE_SEED_PROJECT_ID, SRC), {
+      wrapper: AppProviders,
+    });
+    await waitFor(() => expect(second.result.current.isSuccess).toBe(true));
+    expect(getFileRequestCount('tree', ALICE_SEED_PROJECT_ID, 'src')).toBe(2);
+    expect(queryClient.getQueryData(fileKeys.revision(ALICE_SEED_PROJECT_ID))).toBe('collapsed-rev');
   });
 });

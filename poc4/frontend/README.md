@@ -88,3 +88,17 @@ Service 名、PVC/Pod 名或绝对路径。项目 workspace bridge 由后端按�
 `pnpm test:e2e:stage6`（需 `STAGE6_GATE=1` 环境变量以跳过 mock webServer）在门执行时运行：
 后端（18080）与本机 Vite dev server（4173）必须已启动且 MSW 关闭。所有用例在后端不可达时
 自动 skip，不产生伪证据。集群前置条件状态见 `docs/evidence/stage-6/6a-gate.md`。
+
+## Stage 6B: 云端工作台（已验收，2026-09-18/19）
+
+Stage 6B 将本目录的静态生产构建 + nginx 同源代理（`/api/` REST 与 WebSocket）部署到云集群
+namespace `manao-stage6b`，公网入口 `http://1.12.245.235:30080`（NodePort，HTTP 明文限制单独记录）。
+2026-09-19 集中验收：`pnpm test:e2e:stage6b`（凭据经私有 env 注入，不本机起服务）6/6 通过——
+创建、编辑保存、真实失败反馈、修复运行成功、刷新/重登持久化，最后经 UI 手动删除并全链路回收；
+后端维护重启与 MySQL 重建后数据保留且可再次运行。两项条件测试（workspace Pod 主动删除、删除故障注入）
+因触发条件未满足记录为 SKIPPED。
+
+6B 只有两份正文文档（本节仅作入口，不复制其内容）：
+
+- 验收记录（唯一阶段验收正文）：`../docs/evidence/stage-6b/acceptance.md`
+- 部署与维护手册：`../deploy/6b/README.md`

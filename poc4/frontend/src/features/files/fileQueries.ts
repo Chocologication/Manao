@@ -1,6 +1,10 @@
 import { useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { createContext, useContext } from 'react';
 import { ApiRequestError } from '../../api/ApiRequestError';
+import {
+  projectBusyReadRetryDelay,
+  retryProjectBusyRead,
+} from '../../api/projectBusyRetry';
 import { getFileContent, getFileMetadata, listDirectory } from '../../api/fileApi';
 import type {
   FileContentResponse,
@@ -13,6 +17,7 @@ import type {
   WorkspaceRevision,
 } from '../../contracts/file';
 import { useWorkspaceSession } from '../editor/workspaceSession';
+import { parseProjectDirectoryPath } from './pathPolicy';
 
 const FILE_STALE_TIME_MS = 30_000;
 
@@ -149,7 +154,9 @@ export function useDirectoryTreeQuery(projectId: string, path: ProjectDirectoryP
       );
       return tree;
     },
-    retry: false,
+    retry: retryProjectBusyRead,
+    retryDelay: projectBusyReadRetryDelay,
+    refetchOnWindowFocus: false,
     staleTime: FILE_STALE_TIME_MS,
     enabled: enabled && !paused,
   });
@@ -169,7 +176,9 @@ export function useFileMetadataQuery(
   return useQuery({
     queryKey: fileKeys.meta(projectId, path),
     queryFn: ({ signal }) => getFileMetadata(projectId, path, signal),
-    retry: false,
+    retry: retryProjectBusyRead,
+    retryDelay: projectBusyReadRetryDelay,
+    refetchOnWindowFocus: false,
     staleTime: FILE_STALE_TIME_MS,
     enabled: !paused && enabled && projectId.length > 0 && isCurrentProject(projectId, sessionProjectId),
   });
@@ -197,7 +206,9 @@ export function useFileContentQuery(
       );
       return content;
     },
-    retry: false,
+    retry: retryProjectBusyRead,
+    retryDelay: projectBusyReadRetryDelay,
+    refetchOnWindowFocus: false,
     staleTime: FILE_STALE_TIME_MS,
     enabled: !paused && authorized && projectId.length > 0 && isCurrentProject(projectId, sessionProjectId),
   });
@@ -207,9 +218,25 @@ export async function refreshProjectFiles(
   queryClient: QueryClient,
   projectId: string,
 ): Promise<void> {
-  const queryKey = fileKeys.trees(projectId);
-  await queryClient.cancelQueries({ queryKey });
-  await queryClient.invalidateQueries({ queryKey });
+  await queryClient.cancelQueries({ queryKey: fileKeys.trees(projectId) });
+  // Mark every cached tree stale (collapsed directories still refresh when they
+  // are opened later), then refetch only the currently active directories one
+  // at a time, so a manual refresh cannot burst concurrent reads into the
+  // project lock.
+  await queryClient.invalidateQueries({
+    queryKey: fileKeys.trees(projectId),
+    refetchType: 'none',
+  });
+  const directories = new Set<ProjectDirectoryPath>([parseProjectDirectoryPath('')]);
+  for (const path of useWorkspaceSession.getState().expandedPaths) {
+    directories.add(parseProjectDirectoryPath(path));
+  }
+  for (const directory of directories) {
+    await queryClient.refetchQueries({
+      queryKey: fileKeys.tree(projectId, directory),
+      type: 'active',
+    });
+  }
 }
 
 export async function cancelProjectFileReads(

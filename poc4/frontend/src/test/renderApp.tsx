@@ -1,5 +1,6 @@
 import { render, type RenderResult } from '@testing-library/react';
 import { StrictMode } from 'react';
+import { vi } from 'vitest';
 import {
   createMemoryRouter,
   Navigate,
@@ -89,4 +90,47 @@ export function renderApp(
     </StrictMode>,
   );
   return Object.assign(view, { router });
+}
+
+/**
+ * Simulates an app switch away and back: hides the document, waits, then goes
+ * visible again. React Query's focusManager listens for window
+ * `visibilitychange` events and reads `document.visibilityState`.
+ */
+export async function simulateWindowRefocus(hiddenMs = 150): Promise<void> {
+  const ownDescriptor = Object.getOwnPropertyDescriptor(document, 'visibilityState');
+  const setVisibility = (value: string): void => {
+    Object.defineProperty(document, 'visibilityState', {
+      configurable: true,
+      get: () => value,
+    });
+  };
+  setVisibility('hidden');
+  window.dispatchEvent(new Event('visibilitychange'));
+  await new Promise((resolve) => setTimeout(resolve, hiddenMs));
+  setVisibility('visible');
+  window.dispatchEvent(new Event('visibilitychange'));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  if (ownDescriptor) {
+    Object.defineProperty(document, 'visibilityState', ownDescriptor);
+  } else {
+    delete (document as unknown as Record<string, unknown>).visibilityState;
+  }
+}
+
+/**
+ * Advances fake timers in small chunks until `check` passes, so tests can wait
+ * out retry delays (250/500/1000ms plus jitter) without real sleeping.
+ */
+export async function advanceFakeTimersUntil(
+  check: () => boolean,
+  budgetMs = 8_000,
+): Promise<void> {
+  for (let elapsed = 0; elapsed < budgetMs; elapsed += 50) {
+    await vi.advanceTimersByTimeAsync(50);
+    if (check()) {
+      return;
+    }
+  }
+  throw new Error('fake-timer condition not met within budget');
 }

@@ -1,0 +1,10 @@
+{
+  "check": {
+    "projectPvDirectoryMatches": 0,
+    "mysqlControlPresent": 1
+  },
+  "readOnly": true,
+  "projectPv": "pvc-95cbc27e-f24e-49a1-966c-4e799c922283",
+  "timestamp": "2026-09-20T13:52:33.5643333+08:00",
+  "diagnosticPodDeleted": true
+}

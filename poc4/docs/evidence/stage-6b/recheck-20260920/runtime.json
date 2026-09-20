@@ -1,0 +1,266 @@
+{
+  "started": "2026-09-20T05:47:50.465Z",
+  "projectId": "60ca4205-a333-486b-912e-51098126144d",
+  "projectName": "stage6b-cloud-20260920054331-rk63",
+  "baseURL": "http://1.12.245.235:30080",
+  "steps": [
+    {
+      "time": "2026-09-20T05:47:52.395Z",
+      "label": "baseline",
+      "projectId": "60ca4205-a333-486b-912e-51098126144d",
+      "state": "READY",
+      "revision": "25",
+      "contentSha256": "bd23eeff246c906d45660f762f57087b6fd55960c9001fd5f7f264ad0ef992ea",
+      "runs": [
+        {
+          "id": "2dd28ff7-88e5-45a2-821b-2d1094cc529e",
+          "state": "FAILED",
+          "terminationReason": "BUILD_FAILED",
+          "requestedWorkspaceRevision": "23"
+        },
+        {
+          "id": "8a23d836-1052-426e-89db-91b0dfffb2d8",
+          "state": "SUCCEEDED",
+          "terminationReason": "BUILD_SUCCEEDED",
+          "requestedWorkspaceRevision": "24"
+        }
+      ],
+      "images": [
+        {
+          "name": "backend",
+          "image": "chocologic/manao_images_repository@sha256:ac88b11b38096da9fd3056f264782fecd18f3d5a560f5cf3a4ddd670dd5609cf"
+        },
+        {
+          "name": "frontend",
+          "image": "chocologic/manao_images_repository@sha256:a1915ebbfbf17dd2b4e7e4f7bd4a65422021317ee199c4e8b3160bd7d5afbf86"
+        }
+      ],
+      "jobs": [
+        {
+          "name": "manao-run-2dd28ff7-88e5-45a2-821b-2d1094cc529e",
+          "conditions": [
+            {
+              "lastProbeTime": "2026-09-20T05:44:49Z",
+              "lastTransitionTime": "2026-09-20T05:44:49Z",
+              "message": "Job has reached the specified backoff limit",
+              "reason": "BackoffLimitExceeded",
+              "status": "True",
+              "type": "FailureTarget"
+            },
+            {
+              "lastProbeTime": "2026-09-20T05:44:49Z",
+              "lastTransitionTime": "2026-09-20T05:44:49Z",
+              "message": "Job has reached the specified backoff limit",
+              "reason": "BackoffLimitExceeded",
+              "status": "True",
+              "type": "Failed"
+            }
+          ],
+          "failed": 1
+        },
+        {
+          "name": "manao-run-8a23d836-1052-426e-89db-91b0dfffb2d8",
+          "conditions": [
+            {
+              "lastProbeTime": "2026-09-20T05:45:07Z",
+              "lastTransitionTime": "2026-09-20T05:45:07Z",
+              "message": "Reached expected number of succeeded pods",
+              "reason": "CompletionsReached",
+              "status": "True",
+              "type": "SuccessCriteriaMet"
+            },
+            {
+              "lastProbeTime": "2026-09-20T05:45:07Z",
+              "lastTransitionTime": "2026-09-20T05:45:07Z",
+              "message": "Reached expected number of succeeded pods",
+              "reason": "CompletionsReached",
+              "status": "True",
+              "type": "Complete"
+            }
+          ],
+          "succeeded": 1
+        }
+      ],
+      "projectVolume": {
+        "pvc": "manao-pvc-60ca4205-a333-486b-912e-51098126144d",
+        "pv": "pvc-95cbc27e-f24e-49a1-966c-4e799c922283",
+        "nfs": {
+          "path": "/nfs/data/manao-stage6b-manao-pvc-60ca4205-a333-486b-912e-51098126144d-pvc-95cbc27e-f24e-49a1-966c-4e799c922283",
+          "server": "172.16.0.5"
+        }
+      },
+      "mysqlVolume": {
+        "uid": "d6b6bc54-6e34-4bac-9897-436cf9e84cb3",
+        "pv": "pvc-d6b6bc54-6e34-4bac-9897-436cf9e84cb3"
+      }
+    },
+    {
+      "time": "2026-09-20T05:47:56.088Z",
+      "label": "backend-stopped",
+      "oldUid": "7dbcc5f4-32b2-43fa-ac69-2bed286c3b71",
+      "pods": 0
+    },
+    {
+      "time": "2026-09-20T05:48:14.877Z",
+      "label": "backend-persistence",
+      "durationSeconds": 21.515,
+      "newUid": "f3d24a16-6df8-4f7d-9c15-dbf67c5856b6",
+      "projectId": "60ca4205-a333-486b-912e-51098126144d",
+      "state": "READY",
+      "revision": "25",
+      "contentSha256": "bd23eeff246c906d45660f762f57087b6fd55960c9001fd5f7f264ad0ef992ea",
+      "runs": [
+        {
+          "id": "2dd28ff7-88e5-45a2-821b-2d1094cc529e",
+          "state": "FAILED",
+          "terminationReason": "BUILD_FAILED",
+          "requestedWorkspaceRevision": "23"
+        },
+        {
+          "id": "8a23d836-1052-426e-89db-91b0dfffb2d8",
+          "state": "SUCCEEDED",
+          "terminationReason": "BUILD_SUCCEEDED",
+          "requestedWorkspaceRevision": "24"
+        }
+      ]
+    },
+    {
+      "time": "2026-09-20T05:48:19.148Z",
+      "label": "FAILED",
+      "message": "API run disagrees with UI"
+    },
+    {
+      "time": "2026-09-20T05:50:40.517Z",
+      "label": "harness-assertion-reconciled",
+      "previousFailure": "compared previously selected historical Run UI with new Run API before its completion",
+      "existingRunId": "878e3440-3ddf-4aa7-8f5c-a5fc31f29fe5",
+      "state": "SUCCEEDED",
+      "backendRestartRepeated": false,
+      "newStartRequestRepeated": false
+    },
+    {
+      "time": "2026-09-20T05:50:43.960Z",
+      "label": "backend-restart-ui-run",
+      "runId": "878e3440-3ddf-4aa7-8f5c-a5fc31f29fe5",
+      "state": "SUCCEEDED",
+      "jobComplete": true,
+      "historyReadable": 3,
+      "websocketFrames": 4,
+      "httpOrigins": [
+        "http://1.12.245.235:30080"
+      ],
+      "resumedWithoutMutationReplay": true
+    },
+    {
+      "time": "2026-09-20T05:51:18.128Z",
+      "label": "mysql-persistence",
+      "durationSeconds": 33.354,
+      "oldUid": "d4ceb5ab-7d62-416e-8de5-6b3277959a3d",
+      "newUid": "821c2d2e-0c44-4b38-b0e1-08fd8b498aa4",
+      "mysqlPvcPreserved": true,
+      "projectId": "60ca4205-a333-486b-912e-51098126144d",
+      "state": "READY",
+      "revision": "25",
+      "contentSha256": "bd23eeff246c906d45660f762f57087b6fd55960c9001fd5f7f264ad0ef992ea",
+      "runs": [
+        {
+          "id": "2dd28ff7-88e5-45a2-821b-2d1094cc529e",
+          "state": "FAILED",
+          "terminationReason": "BUILD_FAILED",
+          "requestedWorkspaceRevision": "23"
+        },
+        {
+          "id": "878e3440-3ddf-4aa7-8f5c-a5fc31f29fe5",
+          "state": "SUCCEEDED",
+          "terminationReason": "BUILD_SUCCEEDED",
+          "requestedWorkspaceRevision": "25"
+        },
+        {
+          "id": "8a23d836-1052-426e-89db-91b0dfffb2d8",
+          "state": "SUCCEEDED",
+          "terminationReason": "BUILD_SUCCEEDED",
+          "requestedWorkspaceRevision": "24"
+        }
+      ]
+    },
+    {
+      "time": "2026-09-20T05:51:20.984Z",
+      "label": "run-selection-observation",
+      "newRunId": "211686da-9c7d-4857-ba43-3971ec8dea40",
+      "selectedId": "8a23d836-1052-426e-89db-91b0dfffb2d8",
+      "selectedUiState": "SUCCEEDED",
+      "newRunState": "STARTING"
+    },
+    {
+      "time": "2026-09-20T05:51:31.795Z",
+      "label": "mysql-restart-ui-run",
+      "runId": "211686da-9c7d-4857-ba43-3971ec8dea40",
+      "state": "SUCCEEDED",
+      "jobComplete": true,
+      "historyReadable": 3,
+      "websocketFrames": 9,
+      "httpOrigins": [
+        "http://1.12.245.235:30080"
+      ]
+    },
+    {
+      "time": "2026-09-20T05:51:32.181Z",
+      "label": "before-delete",
+      "projectId": "60ca4205-a333-486b-912e-51098126144d",
+      "state": "READY",
+      "revision": "25",
+      "contentSha256": "bd23eeff246c906d45660f762f57087b6fd55960c9001fd5f7f264ad0ef992ea",
+      "runs": [
+        {
+          "id": "211686da-9c7d-4857-ba43-3971ec8dea40",
+          "state": "SUCCEEDED",
+          "terminationReason": "BUILD_SUCCEEDED",
+          "requestedWorkspaceRevision": "25"
+        },
+        {
+          "id": "2dd28ff7-88e5-45a2-821b-2d1094cc529e",
+          "state": "FAILED",
+          "terminationReason": "BUILD_FAILED",
+          "requestedWorkspaceRevision": "23"
+        },
+        {
+          "id": "878e3440-3ddf-4aa7-8f5c-a5fc31f29fe5",
+          "state": "SUCCEEDED",
+          "terminationReason": "BUILD_SUCCEEDED",
+          "requestedWorkspaceRevision": "25"
+        },
+        {
+          "id": "8a23d836-1052-426e-89db-91b0dfffb2d8",
+          "state": "SUCCEEDED",
+          "terminationReason": "BUILD_SUCCEEDED",
+          "requestedWorkspaceRevision": "24"
+        }
+      ]
+    },
+    {
+      "time": "2026-09-20T05:51:55.704Z",
+      "label": "ui-deletion",
+      "status": 204,
+      "projectGetStatus": 404,
+      "absentAfterReload": true
+    },
+    {
+      "time": "2026-09-20T05:51:56.812Z",
+      "label": "independent-cleanup",
+      "remainingResources": 0,
+      "projectPvAbsent": true,
+      "dbCounts": {
+        "project": 0,
+        "run": 0,
+        "workspace_operation": 0,
+        "log_ticket": 0,
+        "terminal_audit": 0,
+        "terminal_session": 0,
+        "run_log_chunk": 0
+      },
+      "mysqlVolumePreserved": true
+    }
+  ],
+  "status": "B1_B5_PASS_B6_FAILED",
+  "finished": "2026-09-20T05:51:56.813Z"
+}
