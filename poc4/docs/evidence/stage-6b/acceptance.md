@@ -466,3 +466,85 @@
 - B1–B6 全部 **PASS**（§7.1），必需项与已触发条件项均有当前部署的通过证据；两项条件测试 **SKIPPED**（触发条件未满足，§5.4），按计划 §6.2 不阻塞交付、不宣称通过。
 - 边界（如实记录，不虚构安全或可用性认证）：公网入口为 **HTTP 明文**（NodePort 30080，无 TLS 终止），登录凭据与 JWT 随公网明文传输——HTTP 明文传输限制单独记录于 §3「公网入口定稿」；HTTPS 待复用既有服务器入口后启用，届时同步更新 `MANAO_WS_EXTRA_ORIGIN`。资源配额沿用 6A「8 项目」运行事实（本轮配额读数身份 Forbidden，§1.4/§1.5）；kubectl 客户端 1.34 对服务端 1.31 的偏斜告警为已知事实（§1.2）。
 - 停止扩张规则（计划 §6.2）：首次闭环已达成，后续仅修 B1–B6 违例；无新失败证据不扩展全量故障矩阵、PTY 压力、自动清理器、多副本或新平台组件。
+
+## 8. 登录有效期配置更新（2026-09-20）
+
+- 用户要求：将当前 6B 登录过期自动退出时间改为 24 小时。
+- 修改前实测：公网登录接口签发的 JWT 有效期为 900 秒（15 分钟）；Deployment 未设置 `MANAO_JWT_LIFETIME`，采用后端默认值。
+- 配置变更：`poc4/deploy/6b/backend.yaml` 显式设置 `MANAO_JWT_LIFETIME=24h`，配置模板与 README 同步；沿用现有后端镜像和签名密钥。
+- 部署：仅更新 `manao-stage6b` 的 `deployment/backend` 对应环境变量，经 Recreate 完成替换；generation/observedGeneration 均为 9，readyReplicas=1。修改前项目列表为空，未发现活动 Job。
+- 公网核验：2026-09-20T05:20:38Z 的登录响应为 HTTP 200，`expiresAt=2026-09-21T05:20:38.913402377Z`；JWT `exp` 与响应到期时间一致，有效期 86,400 秒；新令牌访问项目列表为 HTTP 200。
+- 本地验证：`pnpm exec vitest run src/features/auth/authSession.test.ts src/features/auth/LoginPage.test.tsx`，2 个测试文件、19 项测试通过；部署清单 client dry-run 和环境变量 server dry-run 通过。
+- 生效语义：从重新登录时起算绝对 24 小时，不是闲置超时；旧令牌保持原到期时间。浏览器继续使用内存会话，刷新或关闭页面后仍需重新登录。
+- 证据边界：本次仅验证配置加载、实际签发期限、鉴权访问和现有登录回归；未等待真实 24 小时，也未重跑完整 B1–B6 验收。此前验收记录保持原证据范围。
+
+## 9. 2026-09-20 当前部署复测（13:43–13:54 +08:00）
+
+**本次结论：B1–B5 核心功能复测通过；B6 当前版本与交付文档不一致，记为 FAILED（文档版本一致性），暂不为当前部署重新签发 `STAGE6B_MVP_CLOUD_PASS`。** §7 的 2026-09-19 验收作为历史事实保留，不把旧镜像的验收记录直接当作本次部署的完整证据。未修改业务实现或替换镜像。
+
+### 9.1 范围、基线与结果
+
+- 本地分支 `codex/poc4-stage-6b`，HEAD `e47b0500397aae54b263debd654054daa23178b7`。开始前已有 README/backend.yaml/config.example.env/本文件的 24h 登录配置改动及未跟踪计划文档；均原样保留。本次仅追加验收记录与脱敏证据。
+- 公网业务入口仍为 `http://1.12.245.235:30080`；测试前后本机 4173/5173/18080/6443 无监听。没有启动本地前后端或桥接，管理检查直接使用私有 kubeconfig。节点 master/node1/node2 均 Ready，集群前端、后端、MySQL 均 Ready。
+- 开始时当前账号项目列表为空。仅新建下述一个项目；重启前核对无活动 Run/Job；后端 scale 0→旧 Pod 消失→scale 1 **仅一次**，MySQL 保留 PVC 正常重建 **仅一次**。
+
+| 检查 | 本次实测结果 |
+| --- | --- |
+| B1/B2 公网完整开发生命周期 | **PASS**：现有 `pnpm --dir poc4/frontend test:e2e:stage6b`，6/6 通过，约 1.9 分钟；创建 READY、编辑保存、真实编译失败、修复成功、终态再次编辑、刷新/重登持久化全部完成 |
+| B3 状态、日志和持久化 | **PASS（按同一个选中 Run 核对）**：编译失败/成功 UI 与 API、Job Failed/Complete 对应；重启后逐条打开历史日志可读；补充浏览器验证收到 WebSocket 帧，HTTP 请求仅访问公网 origin。历史选择后的新运行不自动切换，见 §9.3，不把旧 Run 的 SUCCEEDED 当作新 Run 成功 |
+| B4 UI 删除和独立清理 | **PASS**：Delete project → Delete permanently → HTTP 204，刷新重登后卡片消失，GET 项目 404；该项目 initializer/workspace/Job/Service/PVC 无残留，PV 已不存在；七张关联表 scoped COUNT 均为 0；NFS 对应 PV 目录及归档匹配均为 0，MySQL 目录阳性对照存在 |
+| B5 后端/MySQL 重建 | **PASS**：后端约 21.5 秒、MySQL 约 33.4 秒；UID 变化、revision=25 和文件 SHA-256 不变、既有历史及日志保留；两次维护后分别从 UI 启动一次新 Run，均 SUCCEEDED / Job Complete；MySQL PVC UID/PV 不变 |
+| B6 部署文档与当前版本 | **FAILED（版本记录不一致）**：README §0 和本文件 §7.2 的前端 digest 为 `887c2e9f…2699e`，live Deployment 为 `a1915ebb…fbf86`；交付记录未包含当前前端镜像的构建 SHA 对应关系。不能声称按现有 README 能重建本次受测前端。后端 digest 与文档一致 |
+| 最新前端修改的本地回归 | **PASS**：5 文件 / 137 测试；`pnpm typecheck` 通过。仅证明本地 HEAD 对应测试，不把它当作 live 镜像源码映射证明 |
+| workspace Pod 主动删除 / 删除故障注入 | **SKIPPED**：相应后端恢复/删除代码与存储策略未变化，本次无恢复/删除异常，不触发条件测试；不计作 PASS |
+| 全量后端/前端测试、PTY 压力及完整故障矩阵 | **NOT_REVERIFIED**：不属于本次必需验收范围，没有扩大执行 |
+
+### 9.2 可追溯对象与当前镜像
+
+- 项目：`stage6b-cloud-20260920054331-rk63`，`60ca4205-a333-486b-912e-51098126144d`（本次最终已删除）。
+- 编译失败 Run：`2dd28ff7-88e5-45a2-821b-2d1094cc529e`，FAILED / BUILD_FAILED，revision 23。
+- 修复成功 Run：`8a23d836-1052-426e-89db-91b0dfffb2d8`，SUCCEEDED / BUILD_SUCCEEDED，revision 24。
+- 后端重启后 Run：`878e3440-3ddf-4aa7-8f5c-a5fc31f29fe5`；MySQL 重建后 Run：`211686da-9c7d-4857-ba43-3971ec8dea40`；均 SUCCEEDED / BUILD_SUCCEEDED，revision 25。
+- live backend：`chocologic/manao_images_repository@sha256:ac88b11b38096da9fd3056f264782fecd18f3d5a560f5cf3a4ddd670dd5609cf`。
+- live frontend：`chocologic/manao_images_repository@sha256:a1915ebbfbf17dd2b4e7e4f7bd4a65422021317ee199c4e8b3160bd7d5afbf86`。
+- 已回收项目 PV：`pvc-95cbc27e-f24e-49a1-966c-4e799c922283`；保留 MySQL PVC `data-mysql-0` → `pvc-d6b6bc54-6e34-4bac-9897-436cf9e84cb3`。
+- 关联表独立检查：`project`、`run`、`workspace_operation`、`log_ticket`、`terminal_audit`、`terminal_session` 按本项目 ID；`run_log_chunk` 按上述四个 Run ID；均 0。未重置 schema，未清理其他项目或已有资源。
+
+### 9.3 新观察与测试过程异常
+
+**历史 Run 选择后的显示行为：** 查看历史 Run 后再点 Start run，面板继续选中历史 Run，不自动跟随新 Run。本轮记录到新 Run `211686da…` 为 STARTING 时，面板选中的仍是历史 `8a23d836…`，其状态 SUCCEEDED；手动选择新记录后，状态、日志及最终结果均正常。此为显示/选择体验观察，不等同后端把新 Run 误记为成功；若产品预期 Start run 自动切到新运行，应单独修复并回归。代码位置为 `RunPanel.tsx` 的 `onSelect`/`followActiveRef` 与 `onStart`，本次未改。
+
+补充验证脚本第一次在后端重启后将“当前选中的历史 UI 状态”与“最新 Run API 状态”跨 ID 对比，触发 `API run disagrees with UI`。核查已有 Run 和 Job 后确认该新 Run 实际成功，属于补充脚本断言对象错误，原失败保留在 runtime.json。随后改为绑定具体 Run ID，沿同一项目继续验证，**未重复后端重启、未重放该 Start 请求**。MySQL 阶段另记录上述选择行为，并显式选择新 Run 后检查 UI/API/Job。
+
+### 9.4 命令、证据与收尾
+
+本地新增变更针对性回归命令（在 `poc4/frontend`）：
+
+```powershell
+pnpm exec vitest run src/components/files/FileTree.test.tsx src/features/files/fileMutations.test.ts src/features/files/fileQueries.test.ts src/features/projects/ProjectsPage.test.tsx src/features/runs/workspaceReload.test.ts
+pnpm typecheck
+```
+
+云端生命周期使用现有 `playwright.stage6b.config.ts`，从私有 env 注入 `MANAO_6B_USERNAME/MANAO_6B_PASSWORD`，显式设置公网 `MANAO_6B_BASE_URL`；维护/删除通过一次性脚本复用相同 UI 选择器并以 API、kubectl、只读 SQL 佐证。无凭据进入报告。
+
+证据：[生命周期执行日志](recheck-20260920/lifecycle.log)、[维护及关联资源原始脱敏记录](recheck-20260920/runtime.json)、[NFS 只读直查](recheck-20260920/nfs-cleanup.json)、[本次结果汇总](recheck-20260920/summary.json)。
+
+实际收尾：本次一个项目及四个 Run 的资源/记录已回收；只读 NFS 检查临时 Pod 已删除；平台前端/后端/MySQL 仍 Ready。本地一次性验证脚本与成功测试临时目录的删除命令被执行策略拦截，尚未移除；只残留私有目录 `Project_Manao_kubeconfig/verification-20260920-stage6b` 内的验证脚本、45 字节 `.last-run.json` 和空测试目录，不含本轮失败 trace。上列脱敏证据另行保留。未执行 commit/push，未改业务代码或更新部署 README 的镜像基线。
+
+**下一步最小闭环：** 核实 `a1915ebb…fbf86` 的构建源码 SHA，并同步部署 README 和现行验收镜像记录，关闭 B6 文档差异；历史选择后启动新 Run 的交互行为单独处理，不以重跑整套测试代替修正文档。
+
+### 9.5 B6 闭环：live 前端镜像的构建源码核实与文档同步（2026-09-20）
+
+9.4 的最小闭环在本节完成（记录时间 2026-09-20 14:30 前后，+08:00）。
+
+**a1915ebb 的构建源码 SHA 证据链（全部来自本仓库会话的操作记录与当次命令输出）：**
+
+| 环节 | 证据 |
+| --- | --- |
+| 构建源码 | 分支 `codex/poc4-stage-6b`，构建时 HEAD `e47b0500397aae54b263debd654054daa23178b7`（commit 时间 2026-09-19 16:51:26 +08:00，"align busy-read retry with spec and surface exhausted-refresh errors"）；构建时工作树 tracked 文件干净（仅未跟踪的 6B 计划文档） |
+| 构建时间与产物 | 镜像 config `created: 2026-09-19T08:58:07Z`（=16:58:07 +08:00），晚于 e47b050 提交 7 分钟；由控制器会话按 README §8 在本工作树 `docker build` 上下文 `poc4/frontend` 构建 |
+| 发布与部署 | 2026-09-19 推送 tag `6b-frontend-20260919`；本日复核 Docker Hub：该 tag 的 `docker-content-digest` = `sha256:a1915ebbfbf17dd2b4e7e4f7bd4a65422021317ee199c4e8b3160bd7d5afbf86`，与集群 deployment/Pod 及 §9.1 live 记录逐字一致 |
+| 行为一致性 | 公网 bundle `index-D_UcSSSm.js` 与本地同源构建（16:49，工作树同 HEAD）均含 e47b050 修复标记（`Project update failed`、`Project is no longer available`、`refetchOnWindowFocus:!1`）；本地/容器 bundle hash 不同属 Vite 内容寻址在不同构建环境下的正常差异（Task 3 曾披露同一现象） |
+| 运行验证 | §9.1–9.2 的云端生命周期 6/6、backend/MySQL 重建持久化、删除与清理核对均在该前端版本上完成（`summary.json` head 字段 = `e47b0503…`） |
+
+**结论：** `a1915ebb` 即源码 `e47b050` 的构建产物，本轮（2026-09-19）窗口切回风暴修复的部署版本。2026-09-18 基线中 frontend `887c2e9f…e2699e`（源码 `e948b1a`）的记录保留为其当时验收轮的历史事实，不再描述当前 live。文档同步：`poc4/deploy/6b/README.md` §0 已更新当前 live digest 并在 §8 部署命令后新增"发布新前端镜像后必须同步 §0 与验收记录"的要求；`backend.yaml`/`config.example.env` 固化 `MANAO_JWT_LIFETIME=24h`（与 live 运行配置一致的资产化）。B6 文档差异就此关闭；本轮修复的验收状态汇总为：本地 1193 测试 + 构建通过、部署生效、§9 云端生命周期通过；真实原生 Alt-Tab 复测仍待用户执行。

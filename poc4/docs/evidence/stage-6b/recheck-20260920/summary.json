@@ -1,0 +1,33 @@
+{
+  "finished": "2026-09-20T13:55:14.9836644+08:00",
+  "implementationChanged": false,
+  "lifecycle": {
+    "passed": 6,
+    "failed": 0,
+    "duration": "1.9m"
+  },
+  "fullRegression": "NOT_REVERIFIED",
+  "branch": "codex/poc4-stage-6b",
+  "nfs": "PASS",
+  "verdict": "B1_B5_PASS_B6_FAILED",
+  "B6": "FAILED: deployed frontend digest differs from deployment README; build SHA mapping unverified",
+  "typecheck": "PASS",
+  "backendRebuild": "PASS",
+  "mutationReplay": false,
+  "deletion": "PASS",
+  "notes": [
+    "Supplemental harness cross-Run assertion corrected after durable state reconciliation; original failure retained.",
+    "Starting after historical Run selection leaves historical Run selected; selecting the new Run works."
+  ],
+  "mysqlRebuild": "PASS",
+  "conditionalTests": "SKIPPED: triggers not met",
+  "projectDeleted": true,
+  "projectId": "60ca4205-a333-486b-912e-51098126144d",
+  "targetedRegression": {
+    "failed": 0,
+    "files": 5,
+    "passed": 137
+  },
+  "date": "2026-09-20",
+  "head": "e47b0500397aae54b263debd654054daa23178b7"
+}

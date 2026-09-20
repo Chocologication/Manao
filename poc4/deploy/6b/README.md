@@ -28,9 +28,9 @@ redeploy a floating tag):
 
 | Component | Reference |
 | --- | --- |
-| Code baseline | branch `codex/poc4-stage-6b`; backend image built from commit `d1fad6d`; acceptance record finalized at commit `7706a15` |
+| Code baseline | branch `codex/poc4-stage-6b`; backend image built from commit `d1fad6d`; acceptance record finalized at commit `7706a15` (superseded in place by the 2026-09-19 fix below) |
 | Backend image | `chocologic/manao_images_repository@sha256:ac88b11b38096da9fd3056f264782fecd18f3d5a560f5cf3a4ddd670dd5609cf` (tag `6b-backend-20260918c`) |
-| Frontend image | `chocologic/manao_images_repository@sha256:887c2e9f9b9594d08c96a90d2e1fa4175bd6431e22479b647453583eb2e2699e` (tag `6b-frontend-20260918b`) |
+| Frontend image (currently deployed, 2026-09-19 focus-refetch fix) | `chocologic/manao_images_repository@sha256:a1915ebbfbf17dd2b4e7e4f7bd4a65422021317ee199c4e8b3160bd7d5afbf86` (tag `6b-frontend-20260919`, built from commit `e47b050`); previous accepted frontend `sha256:887c2e9f…e2699e` (tag `6b-frontend-20260918b`, commit `e948b1a`) remains valid for that round's acceptance record |
 | MySQL | `mysql:8.0.40` (tag-pinned; optional digest hardening is described in the `mysql.yaml` comments) |
 | Workspace agent / maven runner / initializer images | digest-pinned, delivered via Secret `manao-backend-images` / the private env file (accepted: agent `sha256:bb0dd430…920c`, runner `sha256:6c93d34b…7f0c`, initializer `sha256:73aaf090…1662`) |
 | Namespace / schema | `manao-stage6b` / `manao_poc4_6b` |
@@ -270,8 +270,15 @@ Verified against the source code (do not rename without re-verifying):
 | `MANAO_WORKSPACE_AGENT_IMAGE` | `application.yml` → `BackendProperties.Workspace.agentImage` (digest-validated) | Secret `manao-backend-images` |
 | `MANAO_WORKSPACE_INITIALIZER_IMAGE` | `application.yml` → `BackendProperties.Workspace.initializerImage` (digest-validated) | Secret `manao-backend-images` |
 | `MANAO_MAVEN_RUNNER_IMAGE` | `WorkspaceConfig.jobResourceFactory` (`@Value`, required) | Secret `manao-backend-images` |
+| `MANAO_JWT_LIFETIME` | `SecurityConfig.jwtService` (`@Value`, duration) | `backend.yaml` env (fixed `24h`) |
 | `MANAO_JWT_SECRET` | `SecurityConfig.jwtService` (`@Value`, >=32 chars) | Secret `manao-backend-auth` |
 | `MANAO_WORKSPACE_CAPABILITY_PRIVATE_KEY` / `_PUBLIC_KEY` | `WorkspaceConfig.workspaceCapabilitySigner` (`@Value`, raw-32-byte base64) | Secret `manao-backend-auth` |
+
+The Stage 6B login lifetime is 24 hours from sign-in (absolute expiry, not an
+inactivity timeout). The frontend uses the login response's `expiresAt`. Existing
+tokens keep their original expiry; sign in again after this setting changes.
+Tokens remain in browser memory, so reloading or closing the page still requires
+signing in again.
 
 The in-cluster Kubernetes identity comes from `application-cluster.yml`
 (`in-cluster: true`, ServiceAccount token/CA paths) and the SA token mounted
@@ -316,6 +323,11 @@ docker build -t chocologic/manao_images_repository:6b-frontend-<yyyymmdd> poc4/f
 docker push chocologic/manao_images_repository:6b-frontend-<yyyymmdd>
 docker inspect --format '{{index .RepoDigests 0}}' chocologic/manao_images_repository:6b-frontend-<yyyymmdd>
 ```
+
+After rolling a new frontend image out, update §0 above (and the acceptance
+record) with the new digest and the commit it was built from — the deployed
+frontend must stay traceable to a source SHA, otherwise the accepted build
+cannot be reproduced.
 
 Record the returned `...@sha256:<64 hex>` reference. The image runs nginx
 unprivileged (uid/gid 101, no root master or worker) and listens on 8080.
