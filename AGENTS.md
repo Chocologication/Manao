@@ -3,7 +3,7 @@
 ## Workspace
 
 - Check out implementation branches under `D:/DeepLearning/MyProjects/Project_Manao/.worktree/`.
-- The active 6B checkout is `.worktree/poc4-stage-6b`, on branch `codex/poc4-stage-6b`; the main checkout remains on `master`.
+- Stage 6B was accepted and closed by the user on 2026-09-20. Its checkout `.worktree/poc4-stage-6b` and branch `codex/poc4-stage-6b` are retained for traceability; the main checkout is on `master`. Current 6B acceptance and limits are recorded in `poc4/docs/evidence/stage-6b/acceptance.md`, sections 9.5 and 10.
 - Run implementation commands from the active worktree and resolve repository-relative paths there. Check the current branch and local changes before editing; preserve unrelated changes.
 
 ## Documentation and stage boundary
