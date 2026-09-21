@@ -1,5 +1,6 @@
 package com.manao.poc4.run;
 
+import com.manao.poc4.kubernetes.JobCoordinator;
 import com.manao.poc4.persistence.RunState;
 import java.util.Map;
 import java.util.Optional;
@@ -7,6 +8,12 @@ import java.util.Optional;
 /**
  * Pure Run state machine. Locking states (STARTING, RUNNING, STOPPING, RECOVERING) block a
  * second Run and workspace writes; terminal states absorb every event.
+ *
+ * <p>{@link #settleOutcome} is the single terminal classification shared by live observation and
+ * startup recovery: Job {@code DeadlineExceeded} wins over an ordinary failed classification, a
+ * web application that exits (even with exit 0) is APPLICATION_EXITED rather than
+ * BUILD_SUCCEEDED, a user stop is USER_STOPPED and startup/lifetime budgets map to their own
+ * reasons. No caller keeps a second copy of these branches.</p>
  */
 public final class RunStateReducer {
     public enum Event {
@@ -45,6 +52,64 @@ public final class RunStateReducer {
         Map<Event, Outcome> allowed = TRANSITIONS.get(state);
         if (allowed == null) return Optional.empty();
         return Optional.ofNullable(allowed.get(event));
+    }
+
+    /**
+     * Terminal classification from identity-verified facts plus the execution receipt. A null
+     * {@code facts} means the Job and every matching Pod are gone: only a persisted stop intent
+     * settles there, absence of a live run is otherwise the recovery fail-closed decision. A
+     * DENIED receipt (a replacement container that lost the claim) never settles the claimed run.
+     */
+    public static Optional<Outcome> settleOutcome(boolean serviceRun, boolean stopRequested, boolean readyRecorded,
+                                                  JobCoordinator.JobFacts facts, RunExecutionReceipt receipt) {
+        if (facts == null) {
+            if (stopRequested) {
+                return Optional.of(new Outcome(RunState.CANCELLED, "USER_STOPPED"));
+            }
+            return Optional.empty();
+        }
+        // The Job condition DeadlineExceeded (type=Failed, reason=DeadlineExceeded) outranks the
+        // ordinary failed classification for both execution kinds.
+        if (facts.deadlineExceeded()) {
+            if (serviceRun && !readyRecorded && !receiptIndicatesReady(receipt)) {
+                return Optional.of(new Outcome(RunState.TIMED_OUT, "STARTUP_TIME_LIMIT_EXCEEDED"));
+            }
+            return Optional.of(new Outcome(RunState.TIMED_OUT, "TIME_LIMIT_EXCEEDED"));
+        }
+        if (!serviceRun) {
+            if (facts.succeeded()) {
+                return Optional.of(new Outcome(RunState.SUCCEEDED, "BUILD_SUCCEEDED"));
+            }
+            if (facts.failed()) {
+                return Optional.of(new Outcome(RunState.FAILED, "BUILD_FAILED"));
+            }
+            return Optional.empty();
+        }
+        if (receipt != null) {
+            return switch (receipt.state()) {
+                case RunExecutionReceipt.STATE_TIMED_OUT ->
+                    Optional.of(new Outcome(RunState.TIMED_OUT, "TIME_LIMIT_EXCEEDED"));
+                case RunExecutionReceipt.STATE_STARTUP_TIMED_OUT ->
+                    Optional.of(new Outcome(RunState.TIMED_OUT, "STARTUP_TIME_LIMIT_EXCEEDED"));
+                case RunExecutionReceipt.STATE_EXITED -> "USER_STOPPED".equals(receipt.reason())
+                    ? Optional.of(new Outcome(RunState.CANCELLED, "USER_STOPPED"))
+                    : Optional.of(new Outcome(RunState.FAILED, "APPLICATION_EXITED"));
+                case RunExecutionReceipt.STATE_CLAIMED, RunExecutionReceipt.STATE_READY -> facts.applicationTerminated()
+                    ? Optional.of(new Outcome(RunState.FAILED, "APPLICATION_EXITED"))
+                    : Optional.empty();
+                default -> Optional.empty(); // DENIED or unknown: the claim owner decides the outcome
+            };
+        }
+        if (facts.applicationTerminated()) {
+            return stopRequested
+                ? Optional.of(new Outcome(RunState.CANCELLED, "USER_STOPPED"))
+                : Optional.of(new Outcome(RunState.FAILED, "APPLICATION_EXITED"));
+        }
+        return Optional.empty();
+    }
+
+    private static boolean receiptIndicatesReady(RunExecutionReceipt receipt) {
+        return receipt != null && receipt.indicatesReady();
     }
 
     public static boolean isTerminal(RunState state) {

@@ -153,6 +153,80 @@ class PublicEndpointGatewayTest {
         assertThat(unchanged.getSpec().getPorts().get(0).getNodePort()).isEqualTo(30081);
     }
 
+    @Test
+    void routingPointsTheSelectorAtProjectComponentRunAndTheClaimedPod() {
+        var ports = List.of(new ProjectRuntimeSpec.Port("web", 8080, 30081));
+        assertThat(gateway.ensure("p1", ports)).isEqualTo(CONFIRMED);
+        String podUid = seedRunPod("p1", "run-1");
+
+        gateway.routeToRun("p1", "run-1", podUid);
+
+        Service service = client.services().inNamespace(NS).withName("manao-app-p1").get();
+        assertThat(service.getSpec().getSelector())
+            .containsEntry("manao.poc4/project-id", "p1")
+            .containsEntry("manao.poc4/component", "maven-run")
+            .containsEntry("manao.poc4/run-id", "run-1")
+            .containsEntry("manao.poc4/pod-uid", podUid);
+        // The claimed pod carries the server-side identity label before the selector can match.
+        var pod = client.pods().inNamespace(NS).withName("manao-run-run-1-pod").get();
+        assertThat(pod.getMetadata().getLabels()).containsEntry("manao.poc4/pod-uid", podUid);
+    }
+
+    @Test
+    void routingIsIdempotentAndRefusesUnknownClaimedPods() {
+        var ports = List.of(new ProjectRuntimeSpec.Port("web", 8080, 30081));
+        assertThat(gateway.ensure("p1", ports)).isEqualTo(CONFIRMED);
+        String podUid = seedRunPod("p1", "run-1");
+        gateway.routeToRun("p1", "run-1", podUid);
+        gateway.routeToRun("p1", "run-1", podUid);
+        assertThat(client.services().inNamespace(NS).withName("manao-app-p1").get()
+            .getSpec().getSelector()).containsEntry("manao.poc4/run-id", "run-1");
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> gateway.routeToRun("p1", "run-1", "pod-uid-gone"))
+            .isInstanceOf(IllegalStateException.class);
+        // A pod from another run is never adopted as the claimed pod.
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> gateway.routeToRun("p1", "run-2", podUid))
+            .isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
+    void withdrawDetachesTheRunButKeepsThePortAllocation() {
+        var ports = List.of(new ProjectRuntimeSpec.Port("web", 8080, 30081));
+        assertThat(gateway.ensure("p1", ports)).isEqualTo(CONFIRMED);
+        String podUid = seedRunPod("p1", "run-1");
+        gateway.routeToRun("p1", "run-1", podUid);
+
+        gateway.withdraw("p1");
+
+        Service service = client.services().inNamespace(NS).withName("manao-app-p1").get();
+        assertThat(service).isNotNull();
+        assertThat(service.getSpec().getPorts().get(0).getNodePort()).isEqualTo(30081);
+        assertThat(service.getSpec().getSelector())
+            .containsEntry("manao.poc4/run-id", "stopped")
+            .doesNotContainKey("manao.poc4/pod-uid");
+    }
+
+    /** Creates the claimed pod and returns the server-assigned UID used for routing. */
+    private String seedRunPod(String projectId, String runId) {
+        var pod = new io.fabric8.kubernetes.api.model.PodBuilder()
+            .withNewMetadata().withName("manao-run-" + runId + "-pod").withNamespace(NS)
+            .withLabels(Map.of(
+                "manao.poc4/project-id", projectId,
+                "manao.poc4/run-id", runId,
+                "manao.poc4/component", "maven-run"))
+            .endMetadata()
+            .withNewSpec().addNewContainer().withName("maven").endContainer().endSpec()
+            .withNewStatus().withPhase("Running")
+            .addNewContainerStatus().withName("maven")
+                .withNewState().withNewRunning().endRunning().endState()
+            .endContainerStatus()
+            .endStatus()
+            .build();
+        client.pods().inNamespace(NS).resource(pod).create();
+        return client.pods().inNamespace(NS).withName("manao-run-" + runId + "-pod").get()
+            .getMetadata().getUid();
+    }
+
     private Status nodePortConflictStatus(String field, String message, String reason) {
         return new StatusBuilder()
             .withCode(422)

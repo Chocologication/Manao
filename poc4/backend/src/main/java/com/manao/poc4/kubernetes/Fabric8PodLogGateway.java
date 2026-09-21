@@ -25,8 +25,10 @@ public final class Fabric8PodLogGateway implements PodLogGateway {
     }
 
     @Override
-    public LogWatchHandle watchLogs(String namespace, String podName, java.util.function.Consumer<String> lineConsumer) {
-        LogWatch watch = client.pods().inNamespace(namespace).withName(podName).watchLog();
+    public LogWatchHandle watchLogs(String namespace, String podName, String container,
+                                    java.util.function.Consumer<String> lineConsumer) {
+        LogWatch watch = client.pods().inNamespace(namespace).withName(podName)
+            .inContainer(container).watchLog();
         CountDownLatch drained = new CountDownLatch(1);
         pumpExecutor.submit(() -> {
             try (BufferedReader reader = new BufferedReader(

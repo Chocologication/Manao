@@ -287,12 +287,14 @@ class ProjectDependenciesTest {
             .containsExactly("id", "ownerId", "name", "state", "createdAt", "failureReason");
         // The persisted run policy carries no environment or credential surface at all.
         RunPolicy policy = new RunPolicy("mvn -q -DskipTests compile exec:java", 17, 3, 1800,
+            RunPolicy.EXECUTION_KIND_TASK, 1800, 0,
             new RunPolicy.Resources(1000, 1073741824L, 1073741824L),
             new RunPolicy.Resources(8000, 17179869184L, 10737418240L));
         JsonNode json = read(policy.toJson());
         List<String> fields = new java.util.ArrayList<>();
         json.fieldNames().forEachRemaining(fields::add);
-        assertThat(fields).containsExactlyInAnyOrder("command", "runtime", "timeoutSeconds", "resources");
+        assertThat(fields).containsExactlyInAnyOrder("command", "runtime", "timeoutSeconds",
+            "executionKind", "startupTimeoutSeconds", "serviceLifetimeSeconds", "resources");
         // The internal application environment never carries a plaintext credential value.
         var env = dependencies.applicationEnvironment(PROJECT, spec(true, true));
         assertThat(env).allSatisfy(entry -> {
@@ -315,10 +317,13 @@ class ProjectDependenciesTest {
     void stoppingARunDeletesOnlyTheJobAndNeverTheDependencies() {
         dependencies.ensure(PROJECT, spec(true, true));
         var runResources = new JobResourceFactory.RunResources(1000, 1073741824L, 10737418240L);
-        var jobFactory = new JobResourceFactory(NS, 1800, runResources, runResources,
+        var jobFactory = new JobResourceFactory(NS, 1800,
+            "registry.example/manao/initializer@sha256:" + "c".repeat(64), runResources, runResources,
             "registry.example/maven@sha256:" + "c".repeat(64));
-        client.batch().v1().jobs().inNamespace(NS).resource(jobFactory.createMavenJob("run-1", PROJECT)).create();
-        var coordinator = new Fabric8JobCoordinator(client, jobFactory, new ResourceIdentityVerifier(), NS);
+        client.batch().v1().jobs().inNamespace(NS)
+            .resource(jobFactory.createMavenJob("run-1", PROJECT, List.of())).create();
+        var coordinator = new Fabric8JobCoordinator(client, jobFactory, new ResourceIdentityVerifier(), NS,
+            (pod, container, command, cols, rows, pty) -> { throw new UnsupportedOperationException(); });
 
         coordinator.stop(jobFactory.jobName("run-1"));
 

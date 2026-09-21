@@ -15,23 +15,38 @@ class RunLogIngestorTest {
         RecordingGateway gateway = new RecordingGateway();
         RunLogIngestor ingestor = new RunLogIngestor(gateway, new RunLogService(new RecordingChunkStore(0)), "manao");
 
-        ingestor.ensureWatch("r1", "pod-1");
-        ingestor.ensureWatch("r1", "pod-1");
-        ingestor.ensureWatch("r2", "pod-2");
+        ingestor.ensureWatch("r1", "pod-1", "uid-1");
+        ingestor.ensureWatch("r1", "pod-1", "uid-1");
+        ingestor.ensureWatch("r2", "pod-2", "uid-2");
 
         assertThat(gateway.watchedPods).containsExactly("pod-1", "pod-2");
+        assertThat(gateway.containers).containsExactly("maven", "maven");
         assertThat(gateway.namespaces).containsExactly("manao", "manao");
     }
 
     @Test
-    void blankPodNameNeverAttaches() {
+    void blankPodNameOrUidNeverAttaches() {
         RecordingGateway gateway = new RecordingGateway();
         RunLogIngestor ingestor = new RunLogIngestor(gateway, new RunLogService(new RecordingChunkStore(0)), "manao");
 
-        ingestor.ensureWatch("r1", null);
-        ingestor.ensureWatch("r1", "   ");
+        ingestor.ensureWatch("r1", null, "uid-1");
+        ingestor.ensureWatch("r1", "   ", "uid-1");
+        ingestor.ensureWatch("r1", "pod-1", null);
+        ingestor.ensureWatch("r1", "pod-1", "  ");
 
         assertThat(gateway.watchedPods).isEmpty();
+    }
+
+    @Test
+    void aRejectedReplacementPodNeverBecomesTheLogSource() {
+        RecordingGateway gateway = new RecordingGateway();
+        RunLogIngestor ingestor = new RunLogIngestor(gateway, new RunLogService(new RecordingChunkStore(0)), "manao");
+
+        ingestor.ensureWatch("r1", "pod-claimed", "uid-claimed");
+        ingestor.ensureWatch("r1", "pod-replacement", "uid-replacement");
+        ingestor.ensureWatch("r1", "pod-replacement", null);
+
+        assertThat(gateway.watchedPods).containsExactly("pod-claimed");
     }
 
     @Test
@@ -40,7 +55,7 @@ class RunLogIngestorTest {
         RecordingChunkStore chunks = new RecordingChunkStore(0);
         RunLogIngestor ingestor = new RunLogIngestor(gateway, new RunLogService(chunks), "manao");
 
-        ingestor.ensureWatch("r1", "pod-1");
+        ingestor.ensureWatch("r1", "pod-1", "uid-1");
         String line = "中".repeat(30000); // 90,000 UTF-8 bytes
         gateway.consumer.accept(line);
 
@@ -60,7 +75,7 @@ class RunLogIngestorTest {
         RecordingChunkStore chunks = new RecordingChunkStore(3); // chunks 1..3 already persisted
         RunLogIngestor ingestor = new RunLogIngestor(gateway, new RunLogService(chunks), "manao");
 
-        ingestor.ensureWatch("r1", "pod-1");
+        ingestor.ensureWatch("r1", "pod-1", "uid-1");
         String first = "a".repeat(70000);        // 2 chunks (seqs 1-2)
         String second = "c".repeat(70000);       // 2 chunks (seqs 3-4): the first is already persisted
         gateway.consumer.accept(first);
@@ -76,7 +91,7 @@ class RunLogIngestorTest {
     void finishClosesTheWatchSoTheLastBufferedLinesCanDrain() {
         RecordingGateway gateway = new RecordingGateway();
         RunLogIngestor ingestor = new RunLogIngestor(gateway, new RunLogService(new RecordingChunkStore(0)), "manao");
-        ingestor.ensureWatch("r1", "pod-1");
+        ingestor.ensureWatch("r1", "pod-1", "uid-1");
         ingestor.finish("r1");
         assertThat(gateway.closed).containsExactly("pod-1");
         ingestor.finish("r1");
@@ -87,12 +102,15 @@ class RunLogIngestorTest {
 
     static final class RecordingGateway implements PodLogGateway {
         final List<String> watchedPods = new ArrayList<>();
+        final List<String> containers = new ArrayList<>();
         final List<String> namespaces = new ArrayList<>();
         final List<String> closed = new ArrayList<>();
         java.util.function.Consumer<String> consumer;
 
-        @Override public LogWatchHandle watchLogs(String namespace, String podName, java.util.function.Consumer<String> lineConsumer) {
+        @Override public LogWatchHandle watchLogs(String namespace, String podName, String container,
+                                                  java.util.function.Consumer<String> lineConsumer) {
             watchedPods.add(podName);
+            containers.add(container);
             namespaces.add(namespace);
             this.consumer = lineConsumer;
             return () -> closed.add(podName);

@@ -7,7 +7,11 @@ import java.io.OutputStream;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 
-/** Fabric8 pods/exec transport for the PTY bridge; the wrapper command is fixed server-side. */
+/**
+ * Fabric8 pods/exec transport. The container is honored so every caller execs into exactly the
+ * container it verified, and the pty flag decides between the TTY-wrapped PTY bridge and a clean
+ * non-TTY stream (the bounded fixed-command reads must not get CRLF-mangled output).
+ */
 public final class Fabric8ExecTransport implements ExecTransport {
     private final KubernetesClient client;
     private final String namespace;
@@ -20,12 +24,13 @@ public final class Fabric8ExecTransport implements ExecTransport {
     @Override
     public ExecProcess exec(String podName, String containerName, List<String> command, int cols, int rows,
                             boolean pty) {
-        ExecWatch watch = client.pods().inNamespace(namespace).withName(podName)
+        var exec = client.pods().inNamespace(namespace).withName(podName)
+            .inContainer(containerName)
             .redirectingInput()
             .redirectingOutput()
-            .redirectingError()
-            .withTTY()
-            .exec(command.toArray(new String[0]));
+            .redirectingError();
+        ExecWatch watch = pty ? exec.withTTY().exec(command.toArray(new String[0]))
+            : exec.exec(command.toArray(new String[0]));
         return new ExecProcess() {
             @Override public OutputStream stdin() { return watch.getInput(); }
             @Override public InputStream stdout() { return watch.getOutput(); }

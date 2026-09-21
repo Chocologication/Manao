@@ -13,7 +13,7 @@ public record ApiError(String code, String message, String traceId) {
         "RUN_STATE_CONFLICT", "RUN_NOT_FOUND", "LOG_TICKET_NOT_AVAILABLE", "TERMINAL_NOT_AVAILABLE",
         "TERMINAL_SESSION_ALREADY_ACTIVE", "TERMINAL_TICKET_NOT_AVAILABLE",
         "PROJECT_CREATING", "PROJECT_BUSY", "CLEANUP_INCOMPLETE", "PROJECT_CLEANUP_INCOMPLETE",
-        "PUBLIC_PORT_RESERVED", "PUBLIC_PORT_IN_USE", "CREATE_REQUEST_MISMATCH");
+        "PUBLIC_PORT_RESERVED", "PUBLIC_PORT_IN_USE", "CREATE_REQUEST_MISMATCH", "DEPENDENCY_NOT_READY");
 
     public ApiError {
         if (!CODES.contains(code)) code = "INTERNAL_ERROR";
@@ -40,6 +40,7 @@ public record ApiError(String code, String message, String traceId) {
             case "PUBLIC_PORT_RESERVED" -> "Public port is reserved. Choose another port.";
             case "PUBLIC_PORT_IN_USE" -> "Public port is already in use. Choose another port.";
             case "CREATE_REQUEST_MISMATCH" -> "Creation request does not match the original request";
+            case "DEPENDENCY_NOT_READY" -> "Selected dependencies are not ready yet. Try again once they are ready.";
             default -> "Request failed";
         };
     }

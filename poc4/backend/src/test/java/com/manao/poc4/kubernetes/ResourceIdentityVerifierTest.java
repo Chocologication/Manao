@@ -15,6 +15,7 @@ import org.junit.jupiter.api.Test;
 class ResourceIdentityVerifierTest {
     private static final String RUN = "run-1";
     private static final String PROJECT = "prj-1";
+    private static final String JOB_UID = "job-uid-1";
 
     private final ResourceIdentityVerifier verifier = new ResourceIdentityVerifier();
 
@@ -25,7 +26,7 @@ class ResourceIdentityVerifierTest {
 
     private Job job() {
         return new JobBuilder()
-            .withNewMetadata().withName("manao-run-" + RUN)
+            .withNewMetadata().withName("manao-run-" + RUN).withUid(JOB_UID)
             .withLabels(Map.of("manao.poc4/run-id", RUN, "manao.poc4/project-id", PROJECT))
             .endMetadata()
             .withNewSpec().endSpec()
@@ -33,11 +34,15 @@ class ResourceIdentityVerifierTest {
     }
 
     private Pod pod(boolean running, String containerName) {
+        return pod(running, containerName, JOB_UID);
+    }
+
+    private Pod pod(boolean running, String containerName, String ownerUid) {
         PodBuilder builder = new PodBuilder()
             .withNewMetadata().withName("manao-run-" + RUN + "-pod")
             .withOwnerReferences(new io.fabric8.kubernetes.api.model.OwnerReferenceBuilder()
                 .withApiVersion("batch/v1").withKind("Job").withName("manao-run-" + RUN)
-                .withUid("job-uid").withController(true).build())
+                .withUid(ownerUid).withController(true).build())
             .endMetadata()
             .withNewSpec().withContainers(new io.fabric8.kubernetes.api.model.ContainerBuilder()
                 .withName(containerName).build()).endSpec()
@@ -52,6 +57,18 @@ class ResourceIdentityVerifierTest {
     @Test
     void acceptsMatchingJobAndRunningApplicationContainer() {
         assertThat(verifier.verify(run(), job(), pod(true, "maven"))).isTrue();
+    }
+
+    @Test
+    void ownershipCheckRequiresTheJobUidInEveryOwnerReference() {
+        assertThat(verifier.verifyOwnership(run(), job(), pod(true, "maven"))).isTrue();
+        // Same name, different UID: a look-alike Job is refused before any fact is read.
+        assertThat(verifier.verifyOwnership(run(), job(), pod(true, "maven", "different-job-uid"))).isFalse();
+        assertThat(verifier.verify(run(), job(), pod(true, "maven", "different-job-uid"))).isFalse();
+        // A Job without a UID can never own a verified Pod.
+        Job uidLess = job();
+        uidLess.getMetadata().setUid(null);
+        assertThat(verifier.verifyOwnership(run(), uidLess, pod(true, "maven"))).isFalse();
     }
 
     @Test

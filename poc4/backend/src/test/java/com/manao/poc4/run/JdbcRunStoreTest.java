@@ -116,6 +116,76 @@ class JdbcRunStoreTest {
         }
     }
 
+    @Test
+    void recordFirstReadyIsCasOnTheClaimedPodUidAndPersistsTheFixedLifetime() {
+        String projectId = seedProject("p3");
+        String runId = "r3-" + UUID.randomUUID();
+        long token = store.acquireFencingToken().orElseThrow();
+        store.insertRun(run(runId, projectId, 0L), token);
+        Instant readyAt = clock.instant();
+        Instant expiresAt = readyAt.plusSeconds(7200);
+
+        assertThat(store.recordFirstReady(runId, "pod-uid-a", readyAt, expiresAt)).isTrue();
+        RunRecord recorded = store.findRun(runId).orElseThrow();
+        assertThat(recorded.firstReadyAt()).isEqualTo(readyAt);
+        assertThat(recorded.expiresAt()).isEqualTo(expiresAt);
+        assertThat(recorded.executionPodUid()).isEqualTo("pod-uid-a");
+
+        // A different Pod can never re-claim the recorded lifetime (replacement Pod CAS denial).
+        assertThat(store.recordFirstReady(runId, "pod-uid-b", readyAt.plusSeconds(30),
+            readyAt.plusSeconds(30).plusSeconds(7200))).isFalse();
+        // The same claimed Pod is idempotent (re-observation must not move the lifetime).
+        assertThat(store.recordFirstReady(runId, "pod-uid-a", readyAt.plusSeconds(30),
+            readyAt.plusSeconds(30).plusSeconds(7200))).isTrue();
+        RunRecord unchanged = store.findRun(runId).orElseThrow();
+        assertThat(unchanged.firstReadyAt()).isEqualTo(readyAt);
+        assertThat(unchanged.expiresAt()).isEqualTo(expiresAt);
+    }
+
+    @Test
+    void recordFirstReadyRefusesTerminalRuns() {
+        String projectId = seedProject("p4");
+        String runId = "r4-" + UUID.randomUUID();
+        long token = store.acquireFencingToken().orElseThrow();
+        store.insertRun(run(runId, projectId, 0L), token);
+        Instant readyAt = clock.instant();
+        store.settle(runId, RunState.FAILED, "BUILD_FAILED", 1);
+        assertThat(store.recordFirstReady(runId, "pod-uid-a", readyAt, readyAt.plusSeconds(7200))).isFalse();
+        assertThat(store.findRun(runId).orElseThrow().firstReadyAt()).isNull();
+        assertThat(store.findRun(runId).orElseThrow().executionPodUid()).isNull();
+    }
+
+    @Test
+    void requestStopAtomicallyPersistsStoppingAndTheIntent() {
+        String projectId = seedProject("p6");
+        String runId = "r6-" + UUID.randomUUID();
+        long token = store.acquireFencingToken().orElseThrow();
+        store.insertRun(run(runId, projectId, 0L), token);
+
+        assertThat(store.requestStop(runId, "USER_STOPPED", token)).isTrue();
+        RunRecord stopped = store.findRun(runId).orElseThrow();
+        assertThat(stopped.state()).isEqualTo(RunState.STOPPING);
+        assertThat(stopped.terminationIntent()).isEqualTo("USER_STOPPED");
+
+        // Already STOPPING: not a STARTING/RUNNING transition any more.
+        assertThat(store.requestStop(runId, "USER_STOPPED", token)).isFalse();
+        // A stale fencing token never writes.
+        assertThat(store.requestStop(runId, "USER_STOPPED", token + 999)).isFalse();
+        assertThat(store.findRun(runId).orElseThrow().version()).isEqualTo(stopped.version());
+    }
+
+    @Test
+    void requestStopSurvivesLeaseRenewalsLikeEveryOtherWrite() {
+        String projectId = seedProject("p7");
+        String runId = "r7-" + UUID.randomUUID();
+        long token = store.acquireFencingToken().orElseThrow();
+        store.insertRun(run(runId, projectId, 0L), token);
+        clock.advance(Duration.ofSeconds(61));
+        store.acquireFencingToken(); // renew with the same holder; token unchanged
+        assertThat(store.requestStop(runId, "USER_STOPPED", token)).isTrue();
+        assertThat(store.findRun(runId).orElseThrow().terminationIntent()).isEqualTo("USER_STOPPED");
+    }
+
     /** Seeds the FK chain (app_user -> project) a Run row needs; ids stay unique per call. */
     private String seedProject(String prefix) {
         String projectId = prefix + "-" + UUID.randomUUID();

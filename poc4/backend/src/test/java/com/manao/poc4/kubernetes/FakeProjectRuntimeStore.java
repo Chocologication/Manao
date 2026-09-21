@@ -19,6 +19,11 @@ public class FakeProjectRuntimeStore implements ProjectRuntimeStore {
         return spec == null ? ProjectRuntimeSpec.console() : spec;
     }
 
+    /** Seeds a runtime spec for a project, as creation would have persisted it. */
+    public void putSpec(String projectId, ProjectRuntimeSpec spec) {
+        specs.put(projectId, spec);
+    }
+
     @Override public void setEndpointState(String projectId, String state) {
         endpointStates.put(projectId, state);
     }

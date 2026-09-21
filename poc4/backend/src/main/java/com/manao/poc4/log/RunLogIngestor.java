@@ -1,11 +1,14 @@
 package com.manao.poc4.log;
 
+import com.manao.poc4.kubernetes.ResourceIdentityVerifier;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * Attaches one persistence-first log watch per RUNNING run. Lines map 1:1 to seqs; on re-attach
- * the already-ingested prefix of the stream is skipped so seq continuity is never broken.
+ * Attaches one persistence-first log watch per RUNNING run, bound to the claimed execution Pod
+ * UID. Lines map 1:1 to seqs; a same-source re-attach skips the already-ingested prefix so seq
+ * continuity is never broken. A different Pod (e.g. a replacement that was denied the claim) is
+ * never adopted as the source, and history is never cleared to make a new source look complete.
  */
 public final class RunLogIngestor {
     private final PodLogGateway gateway;
@@ -17,6 +20,8 @@ public final class RunLogIngestor {
         long nextSeq;
         /** Already-persisted chunks; re-attach skips chunk-by-chunk, never line-by-line. */
         long skipChunks;
+        /** The claimed Pod UID this source is bound to; identity, not just a name. */
+        String podUid;
     }
 
     private final String namespace;
@@ -27,14 +32,22 @@ public final class RunLogIngestor {
         this.namespace = namespace;
     }
 
-    /** Idempotently attaches the log watch for a run; the stream is tailed from the start. */
-    public synchronized void ensureWatch(String runId, String podName) {
-        if (watches.containsKey(runId) || podName == null || podName.isBlank()) return;
+    /**
+     * Idempotently attaches the log watch for a run to the claimed pod; the stream is tailed from
+     * the start. Once a source is bound, no other pod can silently replace it.
+     */
+    public synchronized void ensureWatch(String runId, String podName, String podUid) {
+        if (watches.containsKey(runId) || podName == null || podName.isBlank()
+            || podUid == null || podUid.isBlank()) {
+            return;
+        }
         long lastSeq = logs.windowFor(runId).lastSeq();
         Handle handle = new Handle();
         handle.nextSeq = lastSeq + 1;
         handle.skipChunks = lastSeq;
-        handle.watch = gateway.watchLogs(this.namespace, podName, line -> ingest(runId, handle, line));
+        handle.podUid = podUid;
+        handle.watch = gateway.watchLogs(this.namespace, podName, ResourceIdentityVerifier.APPLICATION_CONTAINER,
+            line -> ingest(runId, handle, line));
         watches.put(runId, handle);
     }
 

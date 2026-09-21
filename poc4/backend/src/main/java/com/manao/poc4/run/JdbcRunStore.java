@@ -26,7 +26,7 @@ import org.springframework.context.annotation.Conditional;
 public final class JdbcRunStore implements RunStore {
     private static final String LEASE_ID = "backend";
     private static final Duration LEASE_TTL = Duration.ofSeconds(60);
-    private static final String RUN_COLUMNS = "id, project_id, requested_revision, state, policy_json, job_ref, pod_ref, started_at, finished_at, exit_code, termination_reason, version, created_at, fencing_token";
+    private static final String RUN_COLUMNS = "id, project_id, requested_revision, state, policy_json, job_ref, pod_ref, started_at, finished_at, exit_code, termination_reason, version, created_at, fencing_token, first_ready_at, expires_at, execution_pod_uid, termination_intent";
 
     private final JdbcTemplate jdbc;
     private final DatabaseClock clock;
@@ -201,6 +201,35 @@ public final class JdbcRunStore implements RunStore {
             token.getAsLong()) == 1;
     }
 
+    @Override public boolean recordFirstReady(String runId, String podUid, Instant readyAt, Instant expiresAt) {
+        OptionalLong token = renewLease();
+        if (token.isEmpty()) return false;
+        // CAS on the claimed Pod UID: the first verified READY receipt wins and a replacement Pod
+        // is refused. A same-Pod call only writes when no lifetime exists yet, so the recorded
+        // firstReadyAt/expiresAt can never move once set.
+        int updated = jdbc.update("UPDATE run SET first_ready_at = ?, expires_at = ?, execution_pod_uid = ?, " +
+                "version = version + 1, updated_at = ? WHERE id = ? AND active_run_marker = 1 " +
+                "AND fencing_token = ? AND (execution_pod_uid IS NULL " +
+                "OR (execution_pod_uid = ? AND first_ready_at IS NULL))",
+            Timestamp.from(readyAt), Timestamp.from(expiresAt), podUid, Timestamp.from(clock.now()),
+            runId, token.getAsLong(), podUid);
+        if (updated == 1) return true;
+        // Idempotent: the same claimed Pod re-observing its already-recorded lifetime succeeds
+        // without changing it.
+        List<String> recorded = jdbc.query(
+            "SELECT id FROM run WHERE id = ? AND active_run_marker = 1 AND execution_pod_uid = ? " +
+                "AND first_ready_at IS NOT NULL",
+            (rs, row) -> rs.getString(1), runId, podUid);
+        return !recorded.isEmpty();
+    }
+
+    @Override public boolean requestStop(String runId, String reason, long fencingToken) {
+        return jdbc.update("UPDATE run SET state = 'STOPPING', termination_intent = ?, " +
+                "version = version + 1, updated_at = ? WHERE id = ? AND state IN ('STARTING', 'RUNNING') " +
+                "AND fencing_token = ?",
+            reason, Timestamp.from(clock.now()), runId, fencingToken) == 1;
+    }
+
     /**
      * Renews the instance lease for the current holder and returns the authoritative token.
      * The holder identity is the fence: the same holder can always renew (even after its
@@ -234,11 +263,16 @@ public final class JdbcRunStore implements RunStore {
         Timestamp finished = rs.getTimestamp("finished_at");
         int exitCode = rs.getInt("exit_code");
         boolean exitCodeNull = rs.wasNull();
+        Timestamp firstReady = rs.getTimestamp("first_ready_at");
+        Timestamp expires = rs.getTimestamp("expires_at");
         return new RunRecord(rs.getString("id"), rs.getString("project_id"), rs.getLong("requested_revision"),
             RunState.valueOf(rs.getString("state")), rs.getString("policy_json"), rs.getString("job_ref"),
             rs.getString("pod_ref"), started == null ? null : started.toInstant(),
             finished == null ? null : finished.toInstant(), exitCodeNull ? null : exitCode,
             rs.getString("termination_reason"), rs.getLong("version"), rs.getTimestamp("created_at").toInstant(),
-            rs.getLong("fencing_token"));
+            rs.getLong("fencing_token"),
+            firstReady == null ? null : firstReady.toInstant(),
+            expires == null ? null : expires.toInstant(),
+            rs.getString("execution_pod_uid"), rs.getString("termination_intent"));
     }
 }

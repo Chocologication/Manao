@@ -38,7 +38,7 @@ class ProjectResourceCleanerTest {
         factory = new WorkspaceResourceFactory(NS, "rwx-storage",
             "registry.example/manao/workspace-agent@" + DIGEST,
             "registry.example/manao/initializer@" + DIGEST);
-        jobs = new JobResourceFactory(NS, 1800,
+        jobs = new JobResourceFactory(NS, 1800, "registry.example/manao/initializer@" + DIGEST,
             new JobResourceFactory.RunResources(1000, 1L << 30, 1L << 30),
             new JobResourceFactory.RunResources(8000, 16L << 30, 10L << 30),
             "registry.example/manao/maven-runner@" + DIGEST);
@@ -222,7 +222,7 @@ class ProjectResourceCleanerTest {
         client.pods().inNamespace(NS).resource(withPhase(factory.createInitializerPod(projectId), initializerPhase)).create();
         client.pods().inNamespace(NS).resource(factory.createWorkspacePod(projectId, "cHVibGljLWtleQ==")).create();
         client.services().inNamespace(NS).resource(factory.createWorkspaceService(projectId)).create();
-        client.batch().v1().jobs().inNamespace(NS).resource(jobs.createMavenJob("run-" + projectId, projectId)).create();
+        client.batch().v1().jobs().inNamespace(NS).resource(jobs.createMavenJob("run-" + projectId, projectId, java.util.List.of())).create();
     }
 
     private void seedFailedInitializer(String projectId) {

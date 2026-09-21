@@ -2,6 +2,7 @@ package com.manao.poc4.kubernetes;
 
 import com.manao.poc4.project.ProjectRuntimeSpec;
 import io.fabric8.kubernetes.api.model.IntOrString;
+import io.fabric8.kubernetes.api.model.Pod;
 import io.fabric8.kubernetes.api.model.Service;
 import io.fabric8.kubernetes.api.model.ServiceBuilder;
 import io.fabric8.kubernetes.api.model.ServicePort;
@@ -21,6 +22,9 @@ import java.util.Map;
 public final class Fabric8PublicEndpointGateway implements PublicEndpointGateway {
     static final String LABEL_RUN_ID = "manao.poc4/run-id";
     static final String LABEL_PROJECT_ID = "manao.poc4/project-id";
+    static final String LABEL_COMPONENT = "manao.poc4/component";
+    static final String LABEL_POD_UID = "manao.poc4/pod-uid";
+    static final String COMPONENT_VALUE = "maven-run";
     static final String INITIAL_RUN_SELECTOR = "stopped";
     private static final String NODEPORT_FIELD_PREFIX = "spec.ports[";
     // The apiserver field path is spec.ports[<index>].nodePort; the closing bracket belongs to
@@ -68,11 +72,62 @@ public final class Fabric8PublicEndpointGateway implements PublicEndpointGateway
     }
 
     @Override public void routeToRun(String projectId, String runId, String podUid) {
-        // Task 5 wires run routing; the stable Service keeps its allocation meanwhile.
+        Service service = ownedService(projectId);
+        Pod claimed = client.pods().inNamespace(namespace)
+            .withLabel(LABEL_RUN_ID, runId).list().getItems().stream()
+            .filter(pod -> podUid.equals(podUid(pod)))
+            .findFirst()
+            .orElseThrow(() -> new IllegalStateException(
+                "the claimed pod for this run is not observable; refusing to route"));
+        // The server-side identity label goes on first; only then can the selector match the pod.
+        var labels = claimed.getMetadata().getLabels() == null
+            ? new java.util.HashMap<String, String>() : new java.util.HashMap<>(claimed.getMetadata().getLabels());
+        if (!podUid.equals(labels.get(LABEL_POD_UID))) {
+            labels.put(LABEL_POD_UID, podUid);
+            client.pods().inNamespace(namespace).withName(podName(claimed)).edit(pod ->
+                new io.fabric8.kubernetes.api.model.PodBuilder(pod).editMetadata()
+                    .addToLabels(LABEL_POD_UID, podUid).endMetadata().build());
+        }
+        Map<String, String> selector = Map.of(
+            LABEL_PROJECT_ID, projectId,
+            LABEL_COMPONENT, COMPONENT_VALUE,
+            LABEL_RUN_ID, runId,
+            LABEL_POD_UID, podUid);
+        if (!selector.equals(service.getSpec() == null ? null : service.getSpec().getSelector())) {
+            client.services().inNamespace(namespace).withName(serviceName(projectId)).edit(existing ->
+                new ServiceBuilder(existing).editSpec().withSelector(selector).endSpec().build());
+        }
     }
 
     @Override public void withdraw(String projectId) {
-        // Task 5 wires stop/withdraw semantics; the allocation itself is project-scoped.
+        Service service = ownedService(projectId);
+        Map<String, String> initial = Map.of(LABEL_RUN_ID, INITIAL_RUN_SELECTOR);
+        if (initial.equals(service.getSpec() == null ? null : service.getSpec().getSelector())) {
+            return;
+        }
+        client.services().inNamespace(namespace).withName(serviceName(projectId)).edit(existing ->
+            new ServiceBuilder(existing).editSpec().withSelector(initial).endSpec().build());
+    }
+
+    /** The Service is only ever touched when its project identity label matches exactly. */
+    private Service ownedService(String projectId) {
+        Service service = client.services().inNamespace(namespace).withName(serviceName(projectId)).get();
+        if (service == null) {
+            throw new IllegalStateException("the application service for this project does not exist");
+        }
+        var labels = service.getMetadata() == null ? null : service.getMetadata().getLabels();
+        if (labels == null || !projectId.equals(labels.get(LABEL_PROJECT_ID))) {
+            throw new IllegalStateException("refusing to route through a foreign service");
+        }
+        return service;
+    }
+
+    private static String podUid(Pod pod) {
+        return pod.getMetadata() == null ? null : pod.getMetadata().getUid();
+    }
+
+    private static String podName(Pod pod) {
+        return pod.getMetadata() == null ? null : pod.getMetadata().getName();
     }
 
     /** An existing Service is only reused when identity AND the whole port group match exactly. */
