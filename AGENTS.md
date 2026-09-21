@@ -25,7 +25,7 @@
 - Keep current conclusions in their authority documents; indexes summarize and link instead of maintaining another acceptance matrix.
 - Historical Tasks 10–12 and old 6A gates are not current execution instructions. Both stages are closed under the accepted MVP scope; this does not establish a full PTY/audit/stress/fault-matrix PASS. Preserve the distinctions between PASS, FAILED, SKIPPED, WAIVED_BY_USER and NOT_REVERIFIED.
 - A new product stage or feature needs its own agreed scope; do not infer authorization to start AI, multi-language support or a broader platform from completion of 6B.
-- On 2026-09-21 the user confirmed MySQL data must survive stopping, editing and rerunning a user application, and asked to continue the recommended Java runtime design before broader language adaptation and AI. The linked design distinguishes confirmed requirements from proposed defaults; none of its capabilities is delivered or accepted by the existing 6B PASS.
+- On 2026-09-21 the user confirmed persistent project MySQL data with a separate MySQL PVC, a two-hour application lifetime after successful startup, and a public-port range of 30000–31000. Continue the Java runtime design before broader language adaptation and AI. The linked design owns timing and port-mapping semantics and distinguishes confirmed requirements from defaults; none of these capabilities is delivered or accepted by the existing 6B PASS.
 
 ## Runtime boundaries
 

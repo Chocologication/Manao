@@ -46,7 +46,7 @@ The accepted public entry uses HTTP; HTTPS and production hardening are not esta
 
 ## Next Agreed Direction: Java Runtime Design
 
-The user chose multi-language adaptation before AI verification, beginning with Java projects that can optionally expose application ports and use project-specific MySQL/Redis. On 2026-09-21 the user explicitly confirmed that MySQL data must survive application stop, code changes and subsequent runs, and asked to continue the recommended design.
+The user chose multi-language adaptation before AI verification, beginning with Java projects that can optionally expose application ports and use project-specific MySQL/Redis. On 2026-09-21 the user confirmed persistent MySQL data across application stop, edits and reruns, and a separate MySQL PVC rather than sharing the workspace PVC. The user also set a two-hour lifetime after successful application startup and a public-port range of 30000–31000; the design interprets this as the external NodePort range, not the application listening-port range.
 
 The [Java Runtime Design](superpowers/specs/2026-09-21-java-project-runtime-design.md) records confirmed requirements, proposed defaults, lifecycle contracts and acceptance scenarios. It separates project-owned dependencies/data from each application Run. Detailed defaults are under design review; no new feature implementation or runtime acceptance is claimed. [Domain terms](../CONTEXT.md) distinguish project, workspace, Run and project dependency.
 
