@@ -1,0 +1,6 @@
+#!/bin/bash
+# Fixed entrypoint for the single-run web supervisor. Only "run" and "probe" are
+# production modes. The run mode always executes the fixed maven command
+# (`mvn -q -DskipTests spring-boot:run`); no command can be passed in from the
+# environment. Root-owned 0555, same trust pattern as manao-pty-wrapper.
+exec java -cp /opt/manao-runner/classes com.manao.runtime.WebRunSupervisor "$@"
