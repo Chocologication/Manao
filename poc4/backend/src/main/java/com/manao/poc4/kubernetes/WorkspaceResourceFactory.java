@@ -20,6 +20,7 @@ public class WorkspaceResourceFactory {
     public static final long WORKSPACE_UID = 10001L;
     public static final long WORKSPACE_GID = 10001L;
     public static final String LABEL_PROJECT_ID = "manao.poc4/project-id";
+    public static final String LABEL_COMPONENT = "manao.poc4/component";
     public static final String LABEL_STAGE6_TEST = "stage6-test";
     public static final String WORKSPACE_SERVICE_ACCOUNT = "manao-workspace-agent";
     private static final String MANAGED_BY = "manao-poc4-backend";
@@ -54,18 +55,28 @@ public class WorkspaceResourceFactory {
     public static String serviceName(String projectId) { return "manao-ws-" + projectId; }
     public static String projectDirectory(String projectId) { return "project-" + projectId; }
 
-    /** Labels shared by every Kubernetes resource owned by a project, including Maven Jobs. */
-    public static Map<String, String> projectResourceLabels(String projectId) {
+    /**
+     * Identity labels every project resource carries, independent of which component created it.
+     * Cleanup selects on these so resources without the legacy stage6-test marker (the public
+     * application Service) are still scoped to their project.
+     */
+    public static Map<String, String> projectIdentityLabels(String projectId) {
         Map<String, String> labels = new HashMap<>();
         labels.put("app.kubernetes.io/managed-by", MANAGED_BY);
         labels.put(LABEL_PROJECT_ID, projectId);
+        return labels;
+    }
+
+    /** Labels shared by every Kubernetes resource owned by a project, including Maven Jobs. */
+    public static Map<String, String> projectResourceLabels(String projectId) {
+        Map<String, String> labels = projectIdentityLabels(projectId);
         labels.put(LABEL_STAGE6_TEST, "true");
         return labels;
     }
 
     public static Map<String, String> projectLabels(String projectId) {
         Map<String, String> labels = projectResourceLabels(projectId);
-        labels.put("manao.poc4/component", "workspace");
+        labels.put(LABEL_COMPONENT, "workspace");
         return labels;
     }
 
@@ -219,7 +230,7 @@ public class WorkspaceResourceFactory {
 
     public Service createWorkspaceService(String projectId) {
         Map<String, String> selector = new HashMap<>(projectLabels(projectId));
-        selector.put("manao.poc4/component", "workspace");
+        selector.put(LABEL_COMPONENT, "workspace");
         return new ServiceBuilder()
             .withNewMetadata()
             .withName(serviceName(projectId))
@@ -240,7 +251,7 @@ public class WorkspaceResourceFactory {
 
     private static Map<String, String> withComponent(String projectId, String component) {
         Map<String, String> labels = new HashMap<>(projectLabels(projectId));
-        labels.put("manao.poc4/component", component);
+        labels.put(LABEL_COMPONENT, component);
         return labels;
     }
 

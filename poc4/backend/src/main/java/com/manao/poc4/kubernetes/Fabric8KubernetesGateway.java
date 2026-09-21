@@ -15,10 +15,17 @@ public final class Fabric8KubernetesGateway implements KubernetesGateway {
     private static final long READY_TIMEOUT_SECONDS = 120;
     private final KubernetesClient client;
     private final String namespace;
+    private final com.manao.poc4.project.ProjectRuntimeStore runtimeStore;
 
     public Fabric8KubernetesGateway(KubernetesClient client, String namespace) {
+        this(client, namespace, null);
+    }
+
+    public Fabric8KubernetesGateway(KubernetesClient client, String namespace,
+                                    com.manao.poc4.project.ProjectRuntimeStore runtimeStore) {
         this.client = client;
         this.namespace = namespace;
+        this.runtimeStore = runtimeStore;
     }
 
     @Override public boolean projectPvcExists(String projectId) {
@@ -113,16 +120,17 @@ public final class Fabric8KubernetesGateway implements KubernetesGateway {
     }
 
     /**
-     * Removes only the project workloads (Pod/Service, including initializer) and preserves the PVC:
-     * used by the WORKSPACE_RECONCILIATION_REQUIRED path where the design demands the file evidence
-     * stay on disk ("保留现场"). Never deletes the PVC or Jobs here.
+     * Removes only the workspace components (workspace/initializer Pods and the workspace Service)
+     * and preserves the PVC, application and dependency resources: used by the
+     * WORKSPACE_RECONCILIATION_REQUIRED path where the design demands the file evidence stay on
+     * disk ("保留现场"). Never deletes the PVC, Jobs or dependency controllers here.
      */
-    public void deleteProjectWorkloads(String projectId) {
-        cleaner().deleteWorkloads(projectId);
+    public void deleteWorkspaceWorkloads(String projectId) {
+        cleaner().deleteWorkspaceWorkloads(projectId);
     }
 
     private ProjectResourceCleaner cleaner() {
-        return new ProjectResourceCleaner(client, namespace);
+        return new ProjectResourceCleaner(client, namespace, runtimeStore);
     }
 
     /** Waits until the workspace pod is Ready; returns false on timeout. */

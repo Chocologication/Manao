@@ -57,6 +57,8 @@ public final class WorkspaceJdbcStore implements WorkspaceStore {
             jdbc.update("DELETE FROM run_log_chunk WHERE run_id IN (SELECT id FROM run WHERE project_id = ?)", projectId);
             jdbc.update("DELETE FROM run WHERE project_id = ?", projectId);
             jdbc.update("DELETE FROM workspace_operation WHERE project_id = ?", projectId);
+            // Remembered storage identity dies with the project row (the FK also cascades this).
+            jdbc.update("DELETE FROM project_storage_binding WHERE project_id = ?", projectId);
             return jdbc.update("DELETE FROM project WHERE id = ? AND owner_id = ?", projectId, ownerId) == 1;
         });
         return Boolean.TRUE.equals(deleted);

@@ -25,6 +25,9 @@ public interface KubernetesGateway {
     /** Deletes only pods, services and PVCs carrying this project's server-generated labels. */
     void deleteProjectResources(String projectId);
 
-    /** Deletes only the project workloads (Pods/Services) and PRESERVES the PVC (file truth). */
-    void deleteProjectWorkloads(String projectId);
+    /**
+     * Deletes only the workspace components (workspace/initializer Pods and the workspace Service)
+     * and PRESERVES the PVC, user application and dependency resources.
+     */
+    void deleteWorkspaceWorkloads(String projectId);
 }

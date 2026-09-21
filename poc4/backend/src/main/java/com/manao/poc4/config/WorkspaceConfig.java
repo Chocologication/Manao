@@ -103,8 +103,9 @@ public class WorkspaceConfig {
     }
 
     @Bean
-    KubernetesGateway kubernetesGateway(KubernetesClient client, BackendProperties properties) {
-        return new Fabric8KubernetesGateway(client, properties.kubernetes().namespace());
+    KubernetesGateway kubernetesGateway(KubernetesClient client, BackendProperties properties,
+                                        ProjectRuntimeStore runtimeStore) {
+        return new Fabric8KubernetesGateway(client, properties.kubernetes().namespace(), runtimeStore);
     }
 
     @Bean

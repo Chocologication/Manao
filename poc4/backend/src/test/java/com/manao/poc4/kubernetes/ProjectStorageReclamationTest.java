@@ -22,8 +22,10 @@ import org.junit.jupiter.api.Test;
 class ProjectStorageReclamationTest {
     private static final String NS = "manao";
     private static final String PROJECT = "storage-delete";
+    private static final String MYSQL_CLAIM = "manao-mysql-pvc-" + PROJECT;
     private KubernetesMockServer server;
     private KubernetesClient client;
+    private FakeProjectRuntimeStore runtimeStore;
 
     @BeforeEach void setUp() {
         server = new KubernetesMockServer(new io.fabric8.mockwebserver.Context(),
@@ -31,6 +33,7 @@ class ProjectStorageReclamationTest {
             new KubernetesCrudDispatcher(), false);
         server.init();
         client = server.createClient();
+        runtimeStore = new FakeProjectRuntimeStore();
     }
 
     @AfterEach void tearDown() { client.close(); server.destroy(); }
@@ -131,6 +134,105 @@ class ProjectStorageReclamationTest {
         assertThat(clean(() -> { }).complete()).isFalse();
     }
 
+    @Test void leftoverVolumesOfBothClaimsAreStillVerifiedAfterDeletionByRememberedIdentity() {
+        seed("Delete", Map.of("onDelete", "delete"));
+        seedMysqlVolume("Delete", Map.of("onDelete", "delete"));
+        rememberBothBindings();
+        // Both claims are already gone (an earlier pass deleted them); the backend may also have
+        // restarted. The retry must still account for BOTH volumes via the remembered identity.
+        client.persistentVolumeClaims().inNamespace(NS).withName(WorkspaceResourceFactory.pvcName(PROJECT)).delete();
+        client.persistentVolumeClaims().inNamespace(NS).withName(MYSQL_CLAIM).delete();
+
+        var partial = clean(() -> {
+            if (client.persistentVolumes().withName("project-pv").get() != null) {
+                client.persistentVolumes().withName("project-pv").delete();
+            }
+        });
+        // The mysql volume is still there: an unidentified leftover must never report success.
+        assertThat(partial.complete()).isFalse();
+        assertThat(partial.remaining()).extracting(ProjectResourceCleaner.ResourceRef::name).contains("mysql-pv");
+        assertThat(client.persistentVolumes().withName("mysql-pv").get()).isNotNull();
+
+        var done = clean(() -> {
+            for (String pv : new String[] {"project-pv", "mysql-pv"}) {
+                if (client.persistentVolumes().withName(pv).get() != null) {
+                    client.persistentVolumes().withName(pv).delete();
+                }
+            }
+        });
+        assertThat(done.complete()).isTrue();
+        assertThat(client.persistentVolumes().withName("mysql-pv").get()).isNull();
+    }
+
+    @Test void workspaceClaimIdentityIsPersistedBeforeItsDeletion() {
+        seed("Delete", Map.of("onDelete", "delete"));
+        String claimUid = client.persistentVolumeClaims().inNamespace(NS)
+            .withName(WorkspaceResourceFactory.pvcName(PROJECT)).get().getMetadata().getUid();
+        String volumeUid = client.persistentVolumes().withName("project-pv").get().getMetadata().getUid();
+
+        var report = clean(() -> {
+            if (client.persistentVolumes().withName("project-pv").get() != null) {
+                client.persistentVolumes().withName("project-pv").delete();
+            }
+        });
+
+        assertThat(report.complete()).isTrue();
+        var bindings = runtimeStore.storageBindings(PROJECT);
+        assertThat(bindings).extracting(com.manao.poc4.project.ProjectRuntimeStore.StorageBinding::purpose)
+            .containsExactly("WORKSPACE");
+        assertThat(bindings.get(0).pvcName()).isEqualTo(WorkspaceResourceFactory.pvcName(PROJECT));
+        assertThat(bindings.get(0).pvcUid()).isEqualTo(claimUid);
+        assertThat(bindings.get(0).pvName()).isEqualTo("project-pv");
+        assertThat(bindings.get(0).pvUid()).isEqualTo(volumeUid);
+    }
+
+    @Test void unregisteredClaimIsRejectedAndPreserved() {
+        seed("Delete", Map.of("onDelete", "delete"));
+        seedMysqlVolume("Delete", Map.of("onDelete", "delete"));
+
+        var report = clean(() -> {
+            if (client.persistentVolumes().withName("project-pv").get() != null) {
+                client.persistentVolumes().withName("project-pv").delete();
+            }
+        });
+
+        assertThat(report.complete()).isFalse();
+        assertThat(report.issues())
+            .extracting(ProjectResourceCleaner.Issue::category)
+            .contains("UNEXPECTED_STORAGE_CLAIM");
+        assertThat(client.persistentVolumeClaims().inNamespace(NS).withName(MYSQL_CLAIM).get()).isNotNull();
+        assertThat(client.persistentVolumes().withName("mysql-pv").get()).isNotNull();
+    }
+
+    private void seedMysqlVolume(String policy, Map<String, String> parameters) {
+        client.persistentVolumeClaims().inNamespace(NS).resource(new PersistentVolumeClaimBuilder()
+            .withNewMetadata().withName(MYSQL_CLAIM).withNamespace(NS)
+            .withLabels(WorkspaceResourceFactory.projectResourceLabels(PROJECT))
+            .addToLabels("manao.poc4/component", "mysql").endMetadata()
+            .withNewSpec().withStorageClassName("nfs-storage").withVolumeName("mysql-pv").endSpec().build()).create();
+        client.persistentVolumes().resource(new PersistentVolumeBuilder()
+            .withNewMetadata().withName("mysql-pv").endMetadata()
+            .withNewSpec().withStorageClassName("nfs-storage").withPersistentVolumeReclaimPolicy(policy)
+            .withNewClaimRef().withNamespace(NS).withName(MYSQL_CLAIM).endClaimRef()
+            .withNewNfs().withServer("nfs.test").withPath("/data/owned-mysql").endNfs()
+            .endSpec().build()).create();
+    }
+
+    private void rememberBothBindings() {
+        String workspaceClaimUid = client.persistentVolumeClaims().inNamespace(NS)
+            .withName(WorkspaceResourceFactory.pvcName(PROJECT)).get().getMetadata().getUid();
+        String mysqlClaimUid = client.persistentVolumeClaims().inNamespace(NS)
+            .withName(MYSQL_CLAIM).get().getMetadata().getUid();
+        runtimeStore.rememberStorage(PROJECT,
+            new com.manao.poc4.project.ProjectRuntimeStore.StorageBinding("WORKSPACE",
+                WorkspaceResourceFactory.pvcName(PROJECT), workspaceClaimUid, "project-pv",
+                client.persistentVolumes().withName("project-pv").get().getMetadata().getUid()));
+        runtimeStore.rememberStorage(PROJECT,
+            new com.manao.poc4.project.ProjectRuntimeStore.StorageBinding("MYSQL",
+                MYSQL_CLAIM, mysqlClaimUid, "mysql-pv",
+                client.persistentVolumes().withName("mysql-pv").get().getMetadata().getUid()));
+    }
+
     private void assertClaimPreserved() {
         assertThat(client.persistentVolumeClaims().inNamespace(NS)
             .withName(WorkspaceResourceFactory.pvcName(PROJECT)).get()).isNotNull();
@@ -162,6 +264,7 @@ class ProjectStorageReclamationTest {
             void advance() { now = now.plusSeconds(1); }
         };
         return new ProjectResourceCleaner(client, NS, Duration.ofSeconds(3), Duration.ofSeconds(1),
-            time, Duration.ofSeconds(5), duration -> { storageController.run(); time.advance(); }).clean(PROJECT);
+            time, Duration.ofSeconds(5), duration -> { storageController.run(); time.advance(); },
+            runtimeStore).clean(PROJECT);
     }
 }
