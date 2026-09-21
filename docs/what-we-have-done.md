@@ -1,6 +1,6 @@
 # Project Progress
 
-Updated: 2026-09-20. Current integrated baseline: `master`, merge `860cdda` (6B), pushed to `origin/master`. This index summarizes completed work; detailed acceptance belongs to the linked stage records.
+Updated: 2026-09-21. Current integrated baseline: `master`, merge `860cdda` (6B), pushed to `origin/master`. This index summarizes completed work; detailed acceptance belongs to the linked stage records.
 
 ## Current Status
 
@@ -49,7 +49,9 @@ Historical stage detail and decision changes: [Evolution Timeline](Stage6A-Evolu
 
 ## Next Work
 
-Stage 6B is finished. No mandatory “finish 6A, then begin 6B” checklist remains. Choose and agree the next product goal separately; do not restart old Tasks 10–12 or expand the full engineering matrix merely because an old plan still contains unchecked boxes.
+Stage 6B is finished. No mandatory “finish 6A, then begin 6B” checklist remains; do not restart old Tasks 10–12 or expand the full engineering matrix merely because an old plan still contains unchecked boxes.
+
+The next direction is Java project runtime design before broader multi-language adaptation and AI. The user confirmed on 2026-09-21 that project MySQL data remains after application stop, code edits and rerun. The [Java Runtime Design](superpowers/specs/2026-09-21-java-project-runtime-design.md) now defines proposed application ports, optional MySQL/Redis, separate lifecycles and focused acceptance scenarios. Status: design prepared for review, not implementation or verification complete. The design owns the details; this index does not add a second acceptance matrix.
 
 For maintenance, follow the accepted deployment README, reconcile any ambiguous mutation before retrying, and use the actual failing scope to select verification. A new feature or new failure may justify additional tests; unchanged previously passed paths do not require repeated full-suite or cluster reruns.
 

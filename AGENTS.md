@@ -14,6 +14,8 @@
 | --- | --- |
 | Product goal, delivered POC4 scope and non-goals | [Project Goal](docs/Manao-Projects-goal.md) |
 | Completed stages and what remains undecided | [Progress](docs/what-we-have-done.md) |
+| Project, Run and dependency terminology | [Domain glossary](CONTEXT.md) |
+| Proposed Java application ports and project MySQL/Redis lifecycle | [Java Runtime Design](docs/superpowers/specs/2026-09-21-java-project-runtime-design.md), design review only |
 | Current cloud acceptance, evidence and limits | [Stage 6B Acceptance](poc4/docs/evidence/stage-6b/acceptance.md), current conclusion in section 10 |
 | Cloud deployment, pinned images and maintenance | [Stage 6B Deployment](poc4/deploy/6b/README.md) |
 | Environment boundaries and dated infrastructure observations | [Infrastructure Status](docs/Stage6-Infrastructure-Status.md) |
@@ -23,6 +25,7 @@
 - Keep current conclusions in their authority documents; indexes summarize and link instead of maintaining another acceptance matrix.
 - Historical Tasks 10–12 and old 6A gates are not current execution instructions. Both stages are closed under the accepted MVP scope; this does not establish a full PTY/audit/stress/fault-matrix PASS. Preserve the distinctions between PASS, FAILED, SKIPPED, WAIVED_BY_USER and NOT_REVERIFIED.
 - A new product stage or feature needs its own agreed scope; do not infer authorization to start AI, multi-language support or a broader platform from completion of 6B.
+- On 2026-09-21 the user confirmed MySQL data must survive stopping, editing and rerunning a user application, and asked to continue the recommended Java runtime design before broader language adaptation and AI. The linked design distinguishes confirmed requirements from proposed defaults; none of its capabilities is delivered or accepted by the existing 6B PASS.
 
 ## Runtime boundaries
 
