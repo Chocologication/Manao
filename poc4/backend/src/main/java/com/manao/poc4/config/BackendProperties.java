@@ -42,7 +42,7 @@ public final class BackendProperties {
         this.workspace = workspace == null ? FIXED_WORKSPACE : workspace.withDeploymentDefaults(FIXED_WORKSPACE);
         this.logging = logging;
         this.runtimeDeps = runtimeDeps == null
-            ? new RuntimeDeps(List.of(DEFAULT_RESERVED_PUBLIC_PORT), null, null) : runtimeDeps;
+            ? new RuntimeDeps(List.of(DEFAULT_RESERVED_PUBLIC_PORT), null, null, null) : runtimeDeps;
     }
 
     private static void validateClusterConfiguration(BackendProfile profile, Kubernetes kubernetes) {
@@ -115,11 +115,12 @@ public final class BackendProperties {
 
     /**
      * Runtime dependency configuration. The reserved public port set must match the deployment;
-     * the digest and storage class are only mandatory for the selected dependency and never
-     * affect legacy console projects.
+     * the image references and storage class are only mandatory for the selected dependency and
+     * never affect legacy console projects. Image references must be explicit patch versions or
+     * immutable digests (floating tags are rejected by the resource factory).
      */
     public record RuntimeDeps(List<Integer> reservedPublicPorts, String mysqlImageDigest,
-                              String mysqlStorageClassName) {
+                              String redisImageDigest, String mysqlStorageClassName) {
         public RuntimeDeps {
             reservedPublicPorts = List.copyOf(reservedPublicPorts == null ? List.of() : reservedPublicPorts);
         }

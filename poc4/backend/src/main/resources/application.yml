@@ -62,6 +62,8 @@ manao:
       runtime-deps:
         # Must match the deployment's reserved NodePorts; 30080 is the platform ingress.
         reserved-public-ports: ${MANAO_RESERVED_PUBLIC_PORTS:30080}
-        # Only mandatory when a project selects MySQL; pinned by the deploy environment.
+        # Only mandatory when a project selects the dependency; explicit patch versions or
+        # immutable digests only (floating tags are rejected at resource build time).
         mysql-image-digest: ${MANAO_MYSQL_IMAGE_DIGEST:}
+        redis-image-digest: ${MANAO_REDIS_IMAGE_DIGEST:}
         mysql-storage-class-name: ${MANAO_MYSQL_STORAGE_CLASS:}

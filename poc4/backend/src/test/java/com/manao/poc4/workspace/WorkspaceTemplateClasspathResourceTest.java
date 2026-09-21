@@ -29,4 +29,20 @@ class WorkspaceTemplateClasspathResourceTest {
             assertThat(content).as("template resource %s must load non-empty via classpath", path)
                 .isNotBlank());
     }
+
+    @Test
+    void loadsEveryWebTemplateResourceFromTheClasspathNonEmpty() {
+        var spec = new com.manao.poc4.project.ProjectRuntimeSpec(
+            com.manao.poc4.project.ProjectRuntimeSpec.TEMPLATE_JAVA_SPRING_BOOT_WEB, true, true,
+            java.util.List.of());
+        Map<String, String> files = new WorkspaceTemplate().files(spec);
+        assertThat(files).as("web template manifest must not be empty").isNotEmpty();
+        assertThat(files).containsKeys("pom.xml", "README.md", ".gitignore",
+            "src/main/java/com/example/app/App.java",
+            "src/main/java/com/example/app/DemoController.java",
+            "src/main/resources/application.yml");
+        files.forEach((path, content) ->
+            assertThat(content).as("web template resource %s must load non-empty via classpath", path)
+                .isNotBlank());
+    }
 }

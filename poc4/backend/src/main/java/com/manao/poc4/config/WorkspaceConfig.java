@@ -7,6 +7,7 @@ import com.manao.poc4.kubernetes.WorkspacePortForwardManager;
 import com.manao.poc4.project.JdbcProjectRuntimeStore;
 import com.manao.poc4.project.ProjectCleanupService;
 import com.manao.poc4.project.ProjectDeletionRepository;
+import com.manao.poc4.project.ProjectDependencies;
 import com.manao.poc4.project.ProjectLifecycleGate;
 import com.manao.poc4.project.ProjectProvisioningService;
 import com.manao.poc4.project.ProjectRuntimeCleaner;
@@ -142,12 +143,35 @@ public class WorkspaceConfig {
     }
 
     @Bean
+    com.manao.poc4.kubernetes.DependencyResourceFactory dependencyResourceFactory(BackendProperties properties) {
+        var deps = properties.runtimeDeps();
+        // The MySQL claim defaults to the workspace storage class; the deployment may override it.
+        String storageClass = deps.mysqlStorageClassName() == null || deps.mysqlStorageClassName().isBlank()
+            ? properties.workspace().storageClassName() : deps.mysqlStorageClassName();
+        return new com.manao.poc4.kubernetes.DependencyResourceFactory(
+            properties.kubernetes().namespace(),
+            deps.mysqlImageDigest(), deps.redisImageDigest(), storageClass,
+            com.manao.poc4.kubernetes.DependencyResourceFactory.MYSQL_RESOURCES,
+            com.manao.poc4.kubernetes.DependencyResourceFactory.REDIS_RESOURCES);
+    }
+
+    @Bean
+    ProjectDependencies projectDependencies(KubernetesClient client, BackendProperties properties,
+                                            com.manao.poc4.kubernetes.DependencyResourceFactory factory,
+                                            ProjectRuntimeStore runtimeStore) {
+        return new com.manao.poc4.kubernetes.Fabric8ProjectDependencies(client,
+            properties.kubernetes().namespace(), factory, runtimeStore);
+    }
+
+    @Bean
     ProjectProvisioningService projectProvisioningService(WorkspaceStore store, KubernetesGateway gateway,
                                                           WorkspaceService workspace,
                                                           com.manao.poc4.kubernetes.WorkspaceResourceFactory factory,
                                                           @Value("${MANAO_WORKSPACE_CAPABILITY_PUBLIC_KEY:}") String publicKeyBase64,
                                                           org.springframework.beans.factory.ObjectProvider<WorkspacePortForwardManager> bridges,
-                                                          ProjectLifecycleGate lifecycle) {
+                                                          ProjectLifecycleGate lifecycle,
+                                                          ProjectRuntimeStore runtimeStore,
+                                                          ProjectDependencies dependencies) {
         WorkspacePortForwardManager manager = bridges.getIfAvailable();
         // 6A: the workspace bridge must exist before the first template write and dies with the project.
         ProjectProvisioningService.WorkspaceBridge bridge = manager == null ? null
@@ -158,7 +182,8 @@ public class WorkspaceConfig {
             };
         return new ProjectProvisioningService(store, gateway, workspace, factory,
             new WorkspaceTemplate(), publicKeyBase64, bridge,
-            com.manao.poc4.project.ProvisioningDiagnosticHold.fromEnvironment(), 240, 500, lifecycle);
+            com.manao.poc4.project.ProvisioningDiagnosticHold.fromEnvironment(), 240, 500, lifecycle,
+            runtimeStore, dependencies);
     }
 
     @Bean
