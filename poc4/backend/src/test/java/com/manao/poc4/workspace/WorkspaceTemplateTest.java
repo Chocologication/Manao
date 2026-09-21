@@ -31,6 +31,24 @@ class WorkspaceTemplateTest {
     }
 
     @Test
+    void templateWriteOrderIsDeterministicAndMatchesTheManifest() {
+        // The manifest iteration order decides the workspace write order; it must not inherit
+        // an unspecified Map.of() order, so the exact sequence is locked here.
+        WorkspaceTemplate template = new WorkspaceTemplate();
+        assertThat(template.files().keySet()).containsExactly(
+            "pom.xml", "README.md", ".gitignore",
+            "src/main/java/com/example/app/App.java",
+            "src/test/java/com/example/app/AppTest.java");
+        assertThat(template.files(spec(
+                ProjectRuntimeSpec.TEMPLATE_JAVA_SPRING_BOOT_WEB, true, true)).keySet())
+            .containsExactly(
+                "pom.xml", "README.md", ".gitignore",
+                "src/main/java/com/example/app/App.java",
+                "src/main/java/com/example/app/DemoController.java",
+                "src/main/resources/application.yml");
+    }
+
+    @Test
     void webTemplateDirectoriesAreParentFirstForEverySelection() {
         WorkspaceTemplate template = new WorkspaceTemplate();
         for (boolean mysql : new boolean[] {false, true}) {

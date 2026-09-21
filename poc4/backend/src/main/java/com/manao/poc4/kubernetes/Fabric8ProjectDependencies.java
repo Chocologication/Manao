@@ -68,12 +68,15 @@ public class Fabric8ProjectDependencies implements ProjectDependencies {
         if (claim == null) {
             createIfAbsent(projectId, factory.mysqlClaim(projectId));
         }
+        // Registered immediately once the claim exists, before any later ensure step can fail:
+        // an unregistered claim would be kept by the fail-closed cleaner forever while a retry
+        // would deadlock on RECOVERY_REQUIRED, so the identity must land in the store first.
+        rememberMysqlClaim(projectId);
         // Re-initialization of the database itself happens inside the image entrypoint exactly
         // once per empty data directory; the container env reads the secret, never a backend value.
         createIfAbsent(projectId, factory.mysql(projectId, spec));
         createIfAbsent(projectId, factory.mysqlService(projectId));
         createIfAbsent(projectId, factory.dependencyNetworkPolicy(projectId));
-        rememberMysqlClaim(projectId);
     }
 
     private void ensureRedis(String projectId, ProjectRuntimeSpec spec) {

@@ -32,29 +32,29 @@ public final class WorkspaceTemplate {
         "src", "src/main", "src/main/java", "src/main/java/com", "src/main/java/com/example",
         "src/main/java/com/example/app", "src/main/resources");
 
-    private static final Map<String, String> CONSOLE_FILES = manifest(Map.of(
-        "pom.xml", "workspace-template/pom.xml",
-        "README.md", "workspace-template/README.md",
-        ".gitignore", "workspace-template/.gitignore",
-        "src/main/java/com/example/app/App.java", "workspace-template/src/main/java/com/example/app/App.java",
-        "src/test/java/com/example/app/AppTest.java", "workspace-template/src/test/java/com/example/app/AppTest.java"));
-
-    private static final Map<String, String> WEB_FILES = manifest(Map.of(
-        "pom.xml", "workspace-template-web/pom.xml",
-        "README.md", "workspace-template-web/README.md",
-        ".gitignore", "workspace-template/.gitignore",
-        "src/main/java/com/example/app/App.java", "workspace-template-web/src/main/java/com/example/app/App.java",
-        "src/main/java/com/example/app/DemoController.java",
-            "workspace-template-web/src/main/java/com/example/app/DemoController.java",
-        "src/main/resources/application.yml", "workspace-template-web/src/main/resources/application.yml"));
+    /**
+     * Built with explicit put() calls: the manifest iteration order decides the workspace write
+     * order and must stay deterministic. A Map.of() source would leak its unspecified iteration
+     * order through any wrapping map, so the pairs are never routed through one.
+     */
+    private static final Map<String, String> CONSOLE_FILES = new LinkedHashMap<>();
+    private static final Map<String, String> WEB_FILES = new LinkedHashMap<>();
+    static {
+        CONSOLE_FILES.put("pom.xml", "workspace-template/pom.xml");
+        CONSOLE_FILES.put("README.md", "workspace-template/README.md");
+        CONSOLE_FILES.put(".gitignore", "workspace-template/.gitignore");
+        CONSOLE_FILES.put("src/main/java/com/example/app/App.java", "workspace-template/src/main/java/com/example/app/App.java");
+        CONSOLE_FILES.put("src/test/java/com/example/app/AppTest.java", "workspace-template/src/test/java/com/example/app/AppTest.java");
+        WEB_FILES.put("pom.xml", "workspace-template-web/pom.xml");
+        WEB_FILES.put("README.md", "workspace-template-web/README.md");
+        WEB_FILES.put(".gitignore", "workspace-template/.gitignore");
+        WEB_FILES.put("src/main/java/com/example/app/App.java", "workspace-template-web/src/main/java/com/example/app/App.java");
+        WEB_FILES.put("src/main/java/com/example/app/DemoController.java", "workspace-template-web/src/main/java/com/example/app/DemoController.java");
+        WEB_FILES.put("src/main/resources/application.yml", "workspace-template-web/src/main/resources/application.yml");
+    }
 
     /** Conditional blocks: {@code <!-- MANAO:IF mysql -->} / {@code # MANAO:END redis -->} in XML, YAML and Markdown. */
     private static final Pattern MARKER = Pattern.compile("^\\s*(?:<!--|#)\\s*MANAO:(IF|END)\\s+([a-z]+)\\s*(?:-->)?\\s*$");
-
-    /** LinkedHashMap: the manifest order decides the workspace write order and must stay deterministic. */
-    private static Map<String, String> manifest(Map<String, String> entries) {
-        return new LinkedHashMap<>(entries);
-    }
 
     /** The legacy console template, unchanged for name-only project creation. */
     public List<String> directories() {

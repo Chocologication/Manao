@@ -159,6 +159,30 @@ class ProjectDependenciesTest {
     }
 
     @Test
+    void mysqlClaimIsRegisteredEvenWhenALaterEnsureStepFails() {
+        // A conflicting StatefulSet without the project identity makes the controller create
+        // step fail AFTER the claim exists — the exact window that used to leave the claim
+        // unregistered and the permanent deletion flow stuck on UNEXPECTED_STORAGE_CLAIM.
+        client.apps().statefulSets().inNamespace(NS).resource(
+            new io.fabric8.kubernetes.api.model.apps.StatefulSetBuilder()
+                .withNewMetadata().withNamespace(NS)
+                .withName(DependencyResourceFactory.mysqlStatefulSetName(PROJECT))
+                .endMetadata()
+                .withNewSpec().withReplicas(1).endSpec()
+                .build()).create();
+
+        assertThatThrownBy(() -> dependencies.ensure(PROJECT, spec(true, true)))
+            .isInstanceOf(IllegalStateException.class);
+
+        // The claim identity landed in the store BEFORE the failure: the claim is owned and a
+        // retry of creation hits the honest recovery path instead of an unregistered claim.
+        assertThat(runtimeStore.storageBindings(PROJECT)).anySatisfy(binding -> {
+            assertThat(binding.purpose()).isEqualTo(ProjectDependencies.STORAGE_PURPOSE_MYSQL);
+            assertThat(binding.pvcName()).isEqualTo(DependencyResourceFactory.mysqlPvcName(PROJECT));
+        });
+    }
+
+    @Test
     void existingMysqlClaimWithoutItsSecretRequiresRecoveryAndNeverReinitializes() {
         // A data volume survived while its credential secret was lost.
         client.persistentVolumeClaims().inNamespace(NS).resource(factory.mysqlClaim(PROJECT)).create();
