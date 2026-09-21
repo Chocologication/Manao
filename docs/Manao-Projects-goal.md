@@ -1,54 +1,47 @@
-> **Current authority — 2026-09-17:** [Stage 6A current facts](Stage6A-Current-Facts.md) is the sole current 6A evidence document; [evolution timeline](Stage6A-Evolution-Timeline.md) records the decisions. The user has accepted the MVP lifecycle as 6A PASS and is preparing 6B. Content below is historical context, not the current 6A scope, gate or next-work authority.
-
 # Manao Project Goal
+
+Updated: 2026-09-20. This document defines product scope, not live infrastructure health. Stage acceptance and measured results are linked below.
 
 ## Product Vision
 
-Manao is intended to be an AI cloud development laboratory that turns the fragmented workflow of learning code, configuring an environment, running programs, reading errors, and improving an implementation into one browser-based, executable, observable, and traceable loop.
+Manao is an AI cloud development laboratory intended to connect learning code, configuring an environment, editing, running, reading errors and improving an implementation in one browser-based workflow.
 
-The long-term product should let a user:
+The broader product direction includes reusable environment templates, code and execution analysis, AI-assisted improvements, and teaching/team/administration capabilities. These are product intentions, not a list of delivered features. See the [Manao PRD v4.0](Manao_PRD_V4-0.md) for the broader requirements.
 
-1. Sign in and create a project from a standard environment template.
-2. Edit and manage source code in a browser-based development workspace.
-3. Run code in an isolated, containerized environment managed by Kubernetes.
-4. Inspect logs, results, resource information, and execution history.
-5. Use AI to explain code, analyze failures, generate suggestions, and guide further improvements.
+## Delivered POC4 Slice
 
-The intended audience includes programming beginners, teachers and teaching assistants, competition teams, and platform administrators. The broader product direction therefore includes development, execution, analysis, administration, and demonstration capabilities rather than a simple AI chat page or a static online editor.
+POC4 is a deliberately narrowed single-user Java/Maven workbench. Its accepted MVP loop is:
 
-## Current Implementation Target: POC4
+```text
+Sign in -> Create project -> Open files -> Edit -> Explicitly save
+        -> Run -> Read logs/results -> Fix or improve -> Save -> Run again
+        -> Reopen/re-login with saved data -> Manually delete the project
+```
 
-The current engineering effort intentionally narrows the product vision to a verifiable real-system slice named POC4. Its purpose is to prove the core cloud development loop before the wider product is attempted.
+- An initialized account owns private projects; the browser never chooses a Kubernetes resource as its authorization boundary.
+- Each project has a workspace agent and persistent files on a 10 GiB RWX PVC. File access goes through the backend and agent, not directly from the browser to storage or Kubernetes.
+- Save uses workspace revisions and durable operation receipts. Starting a Run validates the expected revision and uses a fixed server-side command: `mvn -q -DskipTests compile exec:java`. It compiles and executes the configured project entry point; it is not the old `mvn clean test` flow or arbitrary browser-supplied shell execution.
+- MySQL owns user/project/Run/revision/log/operation metadata; PVCs store file contents; Kubernetes supplies Job/Pod execution facts. A revision on shared writable storage is not an immutable per-Run source snapshot.
+- Run history and saved logs remain available after re-login. The accepted 6B maintenance tests separately rebuilt the backend and MySQL, retained saved data, and successfully ran again.
+- Project deletion is delivered through the UI. It permanently reclaims project records and scoped resources; incomplete deletion must not report success and can be explicitly continued. Archive, undo and recoverable deletion are not delivered.
+- Terminal/PTY/audit implementation exists, but the cloud frontend disables the experimental terminal by default. The accepted MVP does not require the historical full terminal/stress/fault matrix.
 
-POC4 targets the following real workflow:
+Implementation anchors: [Job command](../poc4/backend/src/main/java/com/manao/poc4/kubernetes/JobResourceFactory.java), [file operations](../poc4/backend/src/main/java/com/manao/poc4/workspace/WorkspaceOperationService.java), [deletion UI](../poc4/frontend/src/features/projects/DeleteProjectDialog.tsx), [cloud frontend build](../poc4/frontend/Dockerfile).
 
-1. A fixed test user signs in and creates a private Java 17 Maven project.
-2. The backend provisions a project workspace backed by a 10 GiB `ReadWriteMany` PVC.
-3. The browser reads and edits project files through the backend and workspace agent; it never accesses the PVC or Kubernetes API directly.
-4. The user explicitly saves changes and starts the policy-constrained `mvn clean test` Job.
-5. The browser receives persisted and live container logs, and can open an interactive Shell in the active Maven Job container.
-6. MySQL remains authoritative for users, projects, runs, log windows, terminal sessions, and audit records, while Kubernetes remains authoritative for Job and Pod execution facts.
+## Stage Status and Evidence
 
-This slice is deliberately designed to validate ownership checks, relative-path safety, file revisions, Run lifecycle rules, log replay/live behavior, terminal ticket and PTY behavior, command auditing, and recovery semantics against a real backend and Kubernetes cluster.
+- **6A PASS:** user acceptance of the real MVP lifecycle on 2026-09-17; merged on 2026-09-18. [6A facts and evidence](Stage6A-Current-Facts.md).
+- **6B PASS / closed:** cloud lifecycle, persistence and cleanup verified; version-documentation gap closed; user confirmed completion on 2026-09-20. Merged and pushed to `master` as `860cdda`. [6B acceptance](../poc4/docs/evidence/stage-6b/acceptance.md), section 10.
+- Deployment and maintenance: [6B README](../poc4/deploy/6b/README.md). Stage summaries and next-work boundary: [Progress](what-we-have-done.md#next-work).
 
-## Explicit POC4 Non-Goals
+## Not Delivered by This Acceptance
 
-The following are outside the current POC4 acceptance scope:
+- AI context retrieval, generated patches and user-confirmed AI write workflows.
+- Multi-language execution, Git integration, uploads/drag-and-drop/batch operations and collaborative editing.
+- Team, teaching and administration platforms, billing or multi-replica high availability.
+- Production-grade malicious-code isolation, egress allowlists, archival or recoverable deletion.
+- Seamless continuation of an active Run across every maintenance or infrastructure failure.
 
-- AI context retrieval, AI-generated patches, patch confirmation, and AI write workflows.
-- Multi-language execution; Java/Maven is the first implementation target.
-- Git integration, uploads, drag-and-drop, batch operations, project deletion, and collaborative editing.
-- Team management, teaching workflows, and the platform administration console.
-- Production-grade network isolation, egress allowlists, malicious-code sandboxing, billing, high availability, archival, and recoverable deletion.
+The accepted public entry uses HTTP; HTTPS and production hardening are not established by this MVP acceptance. Details remain in the deployment/acceptance documents rather than becoming additional implied deliverables here.
 
-These items remain part of the broader Manao direction or future standalone reviews; their absence from POC4 is a scope decision, not a claim that they are complete.
-
-Stage 6 operational exception (2026-09-10): an owner-scoped project DELETE endpoint was added to reclaim E2E-created database and Kubernetes resources. This is test-environment lifecycle support, not delivery of a product deletion UI, archival, recoverable deletion or production storage lifecycle. Failure/concurrency cleanup is still being completed.
-
-The next milestone remains a fully accepted Stage 6A development loop followed by Stage 6B, not immediate expansion into AI or multi-language features. See [current status and next work](what-we-have-done.md#next-work).
-
-## Relationship to the Product Plan
-
-POC4 is a validation milestone, not the finished Manao product. A successful POC4 would establish that the browser-to-backend-to-Kubernetes development loop is technically credible. It would not by itself prove production security, multi-language support, AI integration, multi-replica high availability, or the complete PRD feature set.
-
-For the original product requirements, see [Manao PRD v4.0](Manao_PRD_V4-0.md). For the narrower POC4 acceptance scope, see the [POC4 design and implementation plan](../.worktree/ensoai-stage-6-real-backend-kubernetes/poc4/docs/plan.md) when working from the Stage 6 implementation worktree.
+POC4 is not the complete Manao product. The next product slice has not been approved in the current task; neither AI work nor a new engineering gate starts automatically because 6B is closed.

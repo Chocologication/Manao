@@ -1,6 +1,12 @@
 # Stage 6B 验收记录（acceptance.md）
 
-本文件是 Stage 6B「单用户工作台迁云」的唯一阶段验收记录。环境检查部分由 Task 1 填写；后续任务在同一文件追加各自验收结果。
+本文件是 Stage 6B「单用户工作台迁云」的唯一阶段验收记录。
+
+> **当前结论（2026-09-20）：STAGE6B_MVP_CLOUD_PASS，阶段已关闭。** 用户决定及证据边界见第 10 节；B6 版本记录闭环见第 9.5 节。6B 已通过合并提交 `860cdda` 纳入 master 并推送 origin/master，收尾提交为 `5059ab2`。部署及当前固定镜像以 [部署 README](../../../deploy/6b/README.md) 为准。
+>
+> **阅读顺序：** 第 10 节阶段结论 → 第 9 节当前受测版本的复测与后续 B6 闭环 → 第 8 节登录配置 → 第 1–7 节历史部署/验收轮次。第 9 节开头及原始 JSON 中的 B6 FAILED 是修正文档前的快照，后由第 9.5/10 节关闭。历史 BLOCKED、暂留项目和待办只代表其具名时点，不能当作当前状态或新的操作授权。
+
+以下记录头描述 **Task 1 的 2026-09-18 起始快照**，不是当前 HEAD、工作树或环境状态：
 
 - 记录时间：2026-09-18 13:48 (+08:00)
 - 记录者：Task 1（只读环境核实），全部结论来自本轮实测命令输出
@@ -228,7 +234,7 @@
 
 - **结果：PASSED。2026-09-19 01:39:24–01:42:14 (+08:00) 最终轮完整重跑实测 Playwright 报告 `6 passed (2.8m)`（报告正文核对：无 skip、无 did not run）。达成路径：打包缺陷修复并构建部署新镜像 `sha256:ac88b11b…`（§2.2，红绿验证）+ 两处测试资产缺陷修正（4.0 末）。此前各失败轮（09-18 23:44 RBAC 根因、09-19 00:23 打包缺陷根因）均按规程如实记录，保留为历史（4.1、4.2），不作为通过依据。**
 
-### 4.0 最终验收轮（2026-09-19 01:39:24–01:42:14 +08:00）——当前唯一有效验收记录
+### 4.0 Task 4 最终验收轮（2026-09-19 01:39:24–01:42:14 +08:00；后续复测见第 9 节）
 
 - **前置（全部完成）**：backend 新镜像 `sha256:ac88b11b…` 于 01:24:19 部署、rollout 成功、健康组 UP（§2.2）；Role 已含 `jobs.batch patch`（§2.1）。
 - **残留清理（前置，实测）**：历史缺陷证据项目 `049b4aa6-9478-43db-a815-cf54adc7b671`（FAILED，4.1 轮遗留，无集群资源、仅 DB 行占配额）以轮换后新凭据经真实公网 API `DELETE /api/v1/projects/{id}` → **HTTP 204**；GET 列表 → `items: []`、单项 → **404 `ENTRY_NOT_FOUND`**；admin kubectl 核对命名空间内无任何 workspace/Job/PVC 资源。配额回到 0/8。
@@ -326,7 +332,7 @@
 5. 直接原因（实测）：`Fabric8JobCoordinator.ensureJob` 对 Job 使用 **`serverSideApply()`（PATCH）**（自 `301a8e6` 引入），而 6B Role `manao-backend-workload`（仓库 `poc4/deploy/6b/backend-rbac.yaml`，commit `b4e181c`，与集群 live 一致）对 `batch/jobs` 只授 `get,list,watch,create,delete`——**无 `patch`**。实证：`kubectl auth can-i patch jobs.batch --as=system:serviceaccount:manao-stage6b:manao-backend` → **no**（`create` → yes）。对照：workspace Pod/Service/PVC 走 `Fabric8KubernetesGateway` 的 `.create()`（create 动词）全部成功——与「创建 READY 正常、Start run 即败」的现象完全一致。
 6. 为什么 6A 未暴露：6A 本地集群 SA 对 `jobs.batch` 为全权（含 patch）；6B 部署资产在收窄动词时未对账代码实际使用的 PATCH 传输。
 
-### 4.2.d 缺陷定性（BLOCKED 待裁决）
+### 4.2.d 历史缺陷定性（当时 BLOCKED；修复见第 2.1–2.2 节）
 
 - **业务/部署资产缺陷**（非测试资产缺陷，测试选择器与等待行为正常且如实反映了用户可见结果）：修复方向二选一，均需裁决且按 brief「先加能复现问题的回归再修复」：
   1. RBAC 侧：`poc4/deploy/6b/backend-rbac.yaml` 为 `batch/jobs` 增加 `patch`（若保留 serverSideApply 传输）；
@@ -558,4 +564,4 @@ pnpm typecheck
 - 本次集成前相对已复测源码 `e47b050` 的变化为文档、证据及已部署的 JWT 24h 配置资产化，没有新增业务代码，因此不重复生命周期、重启和全量测试；执行文档/digest 对账、证据编码与凭据检查、Git diff/合并完整性检查。
 - 补充纳入版本控制的 `recheck-20260920/lifecycle.log` 是 §9 的既有脱敏 6/6 测试输出，此前被通用 `*.log` 规则忽略；不是新的测试运行。
 - 历史 Run 选中后的新 Run 不自动切换、原生 Alt-Tab 复测等观察仍保持其原始证据范围，不把用户阶段关闭转换为这些项目技术测试通过。未触发条件测试仍为 SKIPPED，未复测工程项仍为 NOT_REVERIFIED。
-- 此次仅做版本集成，不修改运行部署或再次创建测试资源；保留 6B 分支和工作树供历史追溯。
+- 集成已完成：收尾提交 `5059ab2`，合并提交 `860cdda`，已推送并核对 origin/master 与本地 SHA 一致；未修改运行部署或再次创建测试资源。6B 分支和工作树保留供历史追溯。

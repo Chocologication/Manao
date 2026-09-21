@@ -1,7 +1,7 @@
 # Stage 6A 当前事实现状与验收记录
 
-更新日期：2026-09-18（Asia/Shanghai）
-性质：**当前 6A 阶段唯一现行证据文档**。历史报告和原始 JSON/截图只作为本文件引用的来源附件，不再各自发布当前阶段结论。决策演变见 [时间线](Stage6A-Evolution-Timeline.md)。
+更新日期：2026-09-20（Asia/Shanghai）；6A 原始核查与验收时点为 2026-09-17，集成交接为 2026-09-18。
+性质：**已验收 6A 基线的唯一证据汇总**，不是当前云部署的操作手册。6A 已于 2026-09-18 合并；6B 已于 2026-09-20 完成并以 `860cdda` 合并到 master、推送。当前云端结论见 [6B 验收](../poc4/docs/evidence/stage-6b/acceptance.md)第 10 节，操作见 [部署 README](../poc4/deploy/6b/README.md)。以下 6A 测试、源码和环境描述保留其具名日期，不自动变成当前部署实测。决策演变见 [时间线](Stage6A-Evolution-Timeline.md)。
 
 ## 1. 阶段结论
 
@@ -21,7 +21,7 @@
 | 已留档运行依据 | 具名真实失败/成功 Run、重登录持久化、终态重载/Retry、删除失败不假成功和显式续作；见第 5 节 |
 | 本次核查 | 源码、Git、四个任务、历史文档、留存原始收据及存储类配置文件；没有重新跑生命周期、测试套件或查询运行 DB/集群 |
 | 旧完整工程门禁 | 历史记录未形成全部 PASS；本次不把 PTY/审计、压力、三类故障矩阵、全量回归等未证明项改记 PASS |
-| 6B | **准备开始；本次未实施、未部署、未验收** |
+| 后续 6B | **已完成并合并**；范围、证据和当前版本由 [6B 验收](../poc4/docs/evidence/stage-6b/acceptance.md)维护，不在本文件重复判定 |
 
 这次变化是**验收口径和阶段决策的明确更新**：以可重复的 MVP 生命周期作为当前 6A 通过依据，不再让早期完整工程矩阵充当当前阶段的唯一决策规则。未证明的工程项保留其实际状态，不逐项虚构为用户豁免，也不因旧文件仍写 FAILED 而撤销本次用户决定。部署能力、旧存储迁移和全量回归情况仍须按下述事实理解。
 
@@ -30,26 +30,16 @@
 ### 2026-09-18 集成交接更新
 
 - 按用户要求，将完整 6A 源码及留存证据提交为 `b555c69`，以 `--no-ff` 集成到 master，再从该集成结果创建 `codex/poc4-stage-6b`。
-- 下面 2.1 节保留 09-17 核查快照；其中未提交、未合并的描述已被此次集成取代。删除组件、测试配置及列出的原始附件均已纳入版本控制。文档链接已改为仓库内路径。
+- 09-17 核查时存在的未跟踪删除组件、测试配置及原始附件均已纳入 `b555c69`，合并提交为 `6dfb655`。旧的“未提交/未合并/只 checkout HEAD 不足”不再是交接待办。
 - 此次集成检查：前端 66 个测试文件 / 1175 个测试通过，类型检查与生产构建通过；后端 `mvn -DskipTests package` 成功。未重跑后端全量测试或真实集群验收，原有证据边界不变。
 
 
-### 2.1 实际实现位置（2026-09-17 历史快照）
+### 2.1 基线与追溯位置
 
-- 主检出：`D:/DeepLearning/MyProjects/Project_Manao`，分支 `master`，HEAD `a3268aa70fe5b02767e3bab99985879e9e8b46e3`。
-- **实现工作树：** `D:/DeepLearning/MyProjects/Project_Manao/.worktree/ensoai-stage-6-real-backend-kubernetes`。
-- 实现分支：`codex/poc4-stage-6-real-backend-kubernetes`。
-- 核查 HEAD：`361985bac52f2a99e014c50e64ef3ee1adfbf04f`（2026-09-17 20:34:41 +08:00）。
-- 最近实现提交：`125daa3`（Run/MVP/重载相关）、`22148ad` / `c6ece43`（打开时恢复）、`888fbcc` / `361985b`（删除及测试）。Stage 6 实现没有合并到 master。
-
-**本次基线是“HEAD + 当前磁盘中的未跟踪文件”，不是一个可以仅凭 SHA 完整重建的干净交付版本。** 核查开始时实现工作树没有 tracked diff，但以下两个文件仍未跟踪：
-
-| 文件 | 影响 |
-| --- | --- |
-| [DeleteProjectDialog.tsx](../poc4/frontend/src/features/projects/DeleteProjectDialog.tsx) | 被 ProjectsPage 实际导入的生产组件；仅 checkout HEAD 会缺失该文件 |
-| [playwright.project-deletion.config.ts](../poc4/frontend/playwright.project-deletion.config.ts) | package.json 的删除 UI 测试脚本引用它；该套件使用拦截 API，不是实集群验收 |
-
-此外，清理/MVP 计划、9 月 14–17 日多份记录及删除原始附件仍未跟踪。文件现存不代表已提交。本次不代为 stage/commit/merge。第 9 节记录关键文件 SHA-256；打包 6B 时应保留完整实际源文件并另行记录构建基线，不能把本次文档当成干净构建证明。
+- 6A 初始核查来源：`codex/poc4-stage-6-real-backend-kubernetes` 的 `361985b` 加当时未跟踪文件；这是 2026-09-17 的历史取证范围。
+- 完整 6A 交付提交：`b555c69`；2026-09-18 合并提交：`6dfb655`。组件、测试和证据可直接从仓库读取，不依赖旧工作树。
+- 当前集成基线：master 的 `860cdda`（包含 6B）。保留的 6A/6B 工作树仅供追溯；新工作从当前集成代码建立所需分支。
+- 本文件源码/附件 SHA-256 固定的是第 9 节标注的 09-17 取证版本，不代表整个当前仓库或云镜像的校验和。
 
 ### 2.2 证据类别
 
@@ -59,7 +49,7 @@
 - **USER_CONFIRMED：** 用户本次使用结果与验收决定；未附新的项目 ID、配置、截图或测试报告。
 - **NOT_REVERIFIED：** 本次未重验或现有材料不足；不等同 FAILED，也不等同 PASS。
 
-## 3. 当前架构与边界（CODE_VERIFIED）
+## 3. 6A 本地适配架构与边界（2026-09-17 CODE_VERIFIED）
 
 ~~~text
 浏览器工作台（React / Monaco）
@@ -79,7 +69,7 @@
 - local-cluster 默认 kubectl bridge；Fabric8/supervised 是可选路径。没有把它简化成写死单个 workspace Service。依据：[本地适配配置](../poc4/backend/src/main/java/com/manao/poc4/config/LocalClusterConfig.java)。
 - `ProjectLifecycleGate` 是**单实例**、每项目互斥门，不是分布式锁。instance lease/fencing 仍存在；不能据此推断已经支持多副本高可用。依据：[生命周期互斥](../poc4/backend/src/main/java/com/manao/poc4/project/ProjectLifecycleGate.java)、[Run 服务](../poc4/backend/src/main/java/com/manao/poc4/run/RunService.java)。
 
-## 4. 当前产品行为与源码依据
+## 4. 已验收 6A 产品行为与源码依据
 
 | 生命周期环节 | 当前实现事实 | 核查入口 |
 | --- | --- | --- |
@@ -184,7 +174,7 @@ AI、Git、多语言、协作、管理员平台、多副本高可用、生产级
 | 09-16 | 原 PVC 存在、workspace Pod 缺失时恢复，并读到原 App.java | [打开恢复](../poc4/docs/evidence/stage-6/2026-09-16-workspace-open-recovery.md)；当时用临时 opt-in harness 验证，新自动行为待共享后端重启加载，不能倒写为当时已加载 |
 | 09-16 | ce0c750d-2a1b-4370-af99-e63264567881 成功、ecacebec-e7ad-4ead-aeaa-be41efa3ebf7 失败后，撤销只读 GET 故障并 Retry；编辑恢复、Save 200 | [重载记录](../poc4/docs/evidence/stage-6/2026-09-16-workspace-reload-retry.md)；真实后端，故障注入只中止读取，不 mock 成功响应 |
 
-## 6. 已有测试记录与本次核查的区别
+## 6. 6A 留档测试与文档核查的区别
 
 | 证据 | 记录结果 | 不可扩大解释为 |
 | --- | --- | --- |
@@ -196,13 +186,13 @@ AI、Git、多语言、协作、管理员平台、多副本高可用、生产级
 | 09-16 重载修复 | 90 个相关测试通过，类型检查通过 | 全部前后端回归通过 |
 | 本次文档核查 | 检查来源/链接/编码/差异，固定源码/附件哈希；不执行产品测试 | 新鲜真实 E2E 或当前 HEAD 全量 PASS |
 
-测试数来源：[删除实现历史](../poc4/docs/evidence/stage-6/2026-09-16-project-deletion-mvp.md)、[重载历史](../poc4/docs/evidence/stage-6/2026-09-16-workspace-reload-retry.md)。9 月 15 日 cleanup 的 6 failures / 1 error 后续在定向范围修正；Maven 决策任务还报告过全量 332 tests / 7 failures / 2 errors，涉及 transport、端口与清理。没有一份已核查材料能证明当前 361985b 加未跟踪文件的全量后端重新全绿，故当前全量状态为 **NOT_REVERIFIED**，不是沿用旧失败数，也不是宣称已全过。
+测试数来源：[删除实现历史](../poc4/docs/evidence/stage-6/2026-09-16-project-deletion-mvp.md)、[重载历史](../poc4/docs/evidence/stage-6/2026-09-16-workspace-reload-retry.md)。9 月 15 日 cleanup 的 6 failures / 1 error 后续在定向范围修正；Maven 决策任务还报告过全量 332 tests / 7 failures / 2 errors，涉及 transport、端口与清理。上述 09-17 核查材料未证明当时完整实际源码的全量后端重新全绿，因此该项保留 **NOT_REVERIFIED**；不能把这一历史基线表述为 master 仍含未跟踪源码，也不能将后续局部通过扩大为全量通过。
 
-## 7. 现有边界与6B交接事项
+## 7. 6A 已知边界与后续变更
 
-### 7.1 两份启动配置仍不同，旧存储迁移未获证实
+### 7.1 旧本地配置与存储迁移的证据边界
 
-本次只读提取外部 env 的 `MANAO_WORKSPACE_STORAGE_CLASS` 一项，未输出凭据：
+2026-09-17 只读提取外部 env 的 `MANAO_WORKSPACE_STORAGE_CLASS` 一项，未输出凭据；2026-09-20 文档整理未重新读取这些私有配置：
 
 | 配置文件（目录：D:/DeepLearning/MyProjects/Project_Manao_kubeconfig） | 本次读取值 |
 | --- | --- |
@@ -219,26 +209,20 @@ AI、Git、多语言、协作、管理员平台、多副本高可用、生产级
 
 | 项目 | 当前事实 | 交接含义 |
 | --- | --- | --- |
-| 文件树 PROJECT_BUSY | 真实记录仍观察到首次打开偶发 409，现有 Retry 可恢复 | 不宣称完全消除并发读争用 |
+| 文件树 PROJECT_BUSY | 6A 曾观察到首次打开偶发 409；后续 6B 的 `9269e05` / `e47b050` 已补充禁用窗口聚焦重取及有限读重试 | 后续修复与验收见 6B 记录，不保留为尚未实现的旧待办，也不承诺绝无争用 |
 | Windows CLI 退出异常 | 成功断言之后 UV_HANDLE_CLOSING；独立浏览器流程另有正常完成记录 | 产品通过与 runner 退出失败并存 |
 | 当前源码的完整回归 | 本次未跑，历史有失败且后续只有部分定向通过 | 不制造当前全套绿色徽章 |
 | 旧完整工程矩阵 | PTY/审计、8 MiB 压力、三类适配故障没有当前基线完整证据 | 保留为未完成的历史工程范围，不伪装为本次 MVP 已验收 |
 | 重启后的删除 | 09-13 旧清理切片和 09-16 本地测试有记录；09-17 新存储真实场景未再注入后端重启 | 不把浏览器刷新当作后端重启证明 |
-| 源码可重建性 | 删除 UI 组件/测试配置和多份记录未跟踪 | 打包前记录完整实际源；仅 checkout HEAD 不够 |
+| 源码交付 | `b555c69` 已纳入当时未跟踪组件/配置/证据，`6dfb655` 已合并 | 此缺口已关闭；后续镜像对应关系由 6B 记录维护 |
 | 文件版本保证 | 共享可写 PVC + revision/锁，无不可变快照 | 保持真实语义，不承诺任意程序改文件后的强快照保证 |
-| 6B 实现资产 | 当前有 cluster profile 和 agent/runner 镜像材料，但未发现原 Task 10 的 backend/Dockerfile、backend/deploy 部署资产 | 不能称控制面已经部署进集群 |
+| 6B 部署 | 前后端镜像、MySQL、RBAC 和维护文档已交付并通过验收 | 读取 [6B 部署 README](../poc4/deploy/6b/README.md)，不再执行旧资产补齐清单 |
 
-### 7.3 6B 从哪里开始
+### 7.3 6B 交接已完成
 
-用户已经决定进入下一阶段准备，不需要用旧 6a-gate.md 的 FAILED 再否决一次。6B 应以本文件描述的**现有 MVP**为输入：将控制面部署到集群，保持同一登录/文件/运行/日志/再运行/删除合同，并记录部署后的实测结果。本文件不是 6B 部署方案或部署完成证明。
+6B 沿用此 MVP 完成迁云、持久化和删除回收验收，并于 2026-09-20 合并推送。原 Tasks 10–12 的修订和实施不再是当前待办；所采用的 6B 计划与最终范围以 [6B 验收](../poc4/docs/evidence/stage-6b/acceptance.md)为准。
 
-原 Tasks 10–12 仅是历史计划，进入实施时需要按当前基线修订：
-
-1. 门禁引用改为本文件及本次用户决定，不要求回写旧 gate 为全工程 PASS。
-2. 使用当前 compile + exec:java 语义和默认关闭的 Terminal，不回退到 clean test 或自动把 Terminal 全矩阵塞回 MVP。
-3. 选择可实际回收的项目存储策略；保留当前确有需要的 PV/StorageClass 只读观察权限。原计划“任何 PV 权限都禁止”已不匹配删除代码，不应机械照搬。
-4. local-cluster 的本机 bridge 与 cluster profile 分清；单实例门闩不代表可扩到多副本。旧存储项目是否迁移与新部署存储配置分别处理。
-5. 这次只整理文档，不创建 6B Deployment、Secret、RBAC 或数据库资源。
+仍有效的边界是：固定 compile + exec:java 运行语义、Terminal 默认关闭、项目存储可回收性与必要 PV/StorageClass 只读权限、单后端实例，以及旧 6A 存储迁移不能由新 6B 项目验收代证。这里不重复部署步骤或重新设置阶段门禁。
 
 ## 8. 唯一现行文档规则
 
@@ -249,7 +233,7 @@ AI、Git、多语言、协作、管理员平台、多副本高可用、生产级
 
 ## 9. 关键来源 SHA-256
 
-以下哈希于本次从磁盘读取，固定所引用的当前组件与原始收据版本；不是源码全仓库或运行镜像的校验和。
+以下哈希于 2026-09-17 从磁盘读取，固定当时组件与原始收据版本；不是当前源码全仓库或运行镜像的校验和。
 
 | 来源 | SHA-256 |
 | --- | --- |
@@ -261,6 +245,6 @@ AI、Git、多语言、协作、管理员平台、多副本高可用、生产级
 | [database-after.tsv](../poc4/docs/evidence/stage-6/2026-09-17-project-deletion/database-after.tsv) | `8b51d9500e36893f32ed53ac7db51e52b7b242af132cf7a1d686f6c371877771` |
 | [attempt-3-independent-verification.json](../poc4/docs/evidence/stage-6/2026-09-17-project-deletion/attempt-3-independent-verification.json) | `e23ebb588f8033fa17044426aad26c3b6fa8144586c21bcce5794443720f8058` |
 
-## 10. 本次工作范围
+## 10. 文档核查范围
 
-完成源码/历史核查、时间线和现行事实整合，并在主索引及实现工作树的历史入口声明替代关系。没有修改业务代码、测试代码或私有配置，没有启动/停止服务、运行真实测试、操作数据库/集群、提交或合并代码。文档检查的实际执行结果随本次交付报告提供，不把文档检查计作产品验收测试。
+2026-09-17 完成源码/历史核查与现行事实整合；2026-09-18 补记集成交接；2026-09-20 文档整理依据已合并源码、Git 历史和既有 6B 证据，删除失效交接待办并标明历史范围。最近这轮文档整理未修改业务/测试/私有配置，未重跑产品测试或操作运行环境；文档检查不计作新的产品验收。

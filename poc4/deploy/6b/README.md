@@ -1,6 +1,6 @@
 # Stage 6B Deployment Assets (poc4/deploy/6b)
 
-Deploy the Stage 6A workbench backend into the cloud cluster namespace
+Deploy the accepted POC4 frontend/backend and database into the cloud cluster namespace
 `manao-stage6b` with its own MySQL instance and schema `manao_poc4_6b`.
 All values marked *secret* are generated at deploy time and stored only in
 Kubernetes Secrets and the private local env file — never in this repository,
@@ -19,16 +19,16 @@ Files:
 | `configmap.yaml` | Non-secret ConfigMap `manao-backend-config` (`MANAO_WS_EXTRA_ORIGIN` = accepted public origin, `MANAO_WORKSPACE_STORAGE_CLASS` = `manao-poc4-delete`) |
 | `config.example.env` | Template of every variable with its explanation (no real values) |
 
-## 0. Accepted build baseline (2026-09-18/19 acceptance)
+## 0. Accepted build baseline (closed and integrated 2026-09-20)
 
-The acceptance record `poc4/docs/evidence/stage-6b/acceptance.md` is the
+The [acceptance record](../../docs/evidence/stage-6b/acceptance.md), section 10, is the
 authority for what was measured. The versions currently deployed and accepted
 (redeploy with exactly these digests to reproduce the accepted build; never
 redeploy a floating tag):
 
 | Component | Reference |
 | --- | --- |
-| Code baseline | branch `codex/poc4-stage-6b`; backend image built from commit `d1fad6d`; acceptance record finalized at commit `7706a15` (superseded in place by the 2026-09-19 fix below) |
+| Integrated baseline | `master`, merge `860cdda` (2026-09-20, pushed); retained source branch `codex/poc4-stage-6b`. Backend image source `d1fad6d`; frontend image source `e47b050`; image digests are below |
 | Backend image | `chocologic/manao_images_repository@sha256:ac88b11b38096da9fd3056f264782fecd18f3d5a560f5cf3a4ddd670dd5609cf` (tag `6b-backend-20260918c`) |
 | Frontend image (currently deployed, 2026-09-19 focus-refetch fix) | `chocologic/manao_images_repository@sha256:a1915ebbfbf17dd2b4e7e4f7bd4a65422021317ee199c4e8b3160bd7d5afbf86` (tag `6b-frontend-20260919`, built from commit `e47b050`); previous accepted frontend `sha256:887c2e9f…e2699e` (tag `6b-frontend-20260918b`, commit `e948b1a`) remains valid for that round's acceptance record |
 | MySQL | `mysql:8.0.40` (tag-pinned; optional digest hardening is described in the `mysql.yaml` comments) |
@@ -38,7 +38,7 @@ redeploy a floating tag):
 
 ## 1. Build and publish the backend image
 
-From the worktree root:
+From the root of the checkout being deployed (the accepted baseline is available on `master`):
 
 ```bash
 mvn -q -f poc4/backend/pom.xml -DskipTests package   # verify the jar builds
@@ -78,7 +78,7 @@ Application-level verification that the pair matches: the backend startup
 request and refuses to start if the pair does not match, so a wrong pair fails
 fast at deploy time.
 
-Create the Secrets from the private env file (run from the worktree root,
+Create the Secrets from the private env file (run from the selected checkout root,
 KUBECONFIG pointing at the operator kubeconfig):
 
 ```bash
@@ -316,7 +316,7 @@ Build-time flags are set explicitly in the image (do not rely on env files):
 
 ### 8.1 Build and publish the frontend image
 
-From the worktree root:
+From the root of the checkout being deployed (the accepted baseline is available on `master`):
 
 ```bash
 docker build -t chocologic/manao_images_repository:6b-frontend-<yyyymmdd> poc4/frontend
