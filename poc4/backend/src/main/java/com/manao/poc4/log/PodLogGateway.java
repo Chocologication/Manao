@@ -12,5 +12,9 @@ public interface PodLogGateway {
 
     interface LogWatchHandle {
         void close();
+
+        /** False once the underlying stream ended (transport loss or pod exit); callers use it
+         * to mark a log gap and re-attach to the same source instead of losing lines silently. */
+        boolean isAlive();
     }
 }

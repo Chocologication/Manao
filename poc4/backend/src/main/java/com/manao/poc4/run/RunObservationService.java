@@ -2,6 +2,7 @@ package com.manao.poc4.run;
 
 import com.manao.poc4.kubernetes.JobCoordinator;
 import com.manao.poc4.kubernetes.JobCoordinator.ObservationKind;
+import com.manao.poc4.kubernetes.JobResourceFactory;
 import com.manao.poc4.kubernetes.PublicEndpointGateway;
 import com.manao.poc4.log.RunLogIngestor;
 import com.manao.poc4.persistence.RunState;
@@ -56,18 +57,19 @@ public final class RunObservationService {
     public void observe() {
         OptionalLong lease = store.acquireFencingToken();
         if (lease.isEmpty()) return;
+        long token = lease.getAsLong();
         for (RunRecord snapshot : store.findRunsInState(RunState.STARTING, RunState.RUNNING,
                 RunState.RECOVERING, RunState.STOPPING)) {
             try (var projectLease = lifecycle.tryAcquire(snapshot.projectId()).orElse(null)) {
                 if (projectLease == null) {
                     continue;
                 }
-                observeOne(snapshot);
+                observeOne(snapshot, token);
             }
         }
     }
 
-    private void observeOne(RunRecord snapshot) {
+    private void observeOne(RunRecord snapshot, long token) {
         RunRecord run = store.findRun(snapshot.id()).orElse(null);
         if (run == null) {
             return;
@@ -78,18 +80,32 @@ public final class RunObservationService {
         }
         JobCoordinator.JobObservation observation = coordinator.observe(run);
 
-        // Handle RECOVERING: check what the cluster actually says before continuing.
+        // Handle RECOVERING: check what the cluster actually says before continuing, and never
+        // lose a persisted stop intent on the way (a run stopped before a backend restart is
+        // re-stopped here instead of being resurrected into RUNNING).
         if (run.state() == RunState.RECOVERING) {
+            boolean stopIntent = "USER_STOPPED".equals(run.terminationIntent());
             if (observation.kind() == ObservationKind.MISSING) {
-                // Job does not exist; safe to mark as FAILED now.
-                settleAndComplete(run, RunState.FAILED, "START_FAILED", null);
+                if (stopIntent) {
+                    settleAndComplete(run, RunState.CANCELLED, "USER_STOPPED", null);
+                } else {
+                    // Job does not exist; safe to mark as FAILED now.
+                    settleAndComplete(run, RunState.FAILED, "START_FAILED", null);
+                }
                 return;
             }
             if (observation.kind() != ObservationKind.FOUND) {
                 return; // UNKNOWN or IDENTITY_MISMATCH keep RECOVERING; nothing is guessed.
             }
+            if (stopIntent && observation.facts().running()) {
+                // Re-drive the persisted stop; the application is never resurrected.
+                coordinator.stop(jobRef(run));
+                store.transition(run.id(), run.projectId(), run.version(), RunState.STOPPING,
+                    token, RunState.RECOVERING);
+                return;
+            }
             if (!store.transition(run.id(), run.projectId(), run.version(), RunState.STARTING,
-                run.fencingToken(), RunState.RECOVERING)) {
+                token, RunState.RECOVERING)) {
                 return;
             }
             run = store.findRun(run.id()).orElse(run);
@@ -175,6 +191,10 @@ public final class RunObservationService {
 
     private static boolean stopRequested(RunRecord run) {
         return run.state() == RunState.STOPPING || "USER_STOPPED".equals(run.terminationIntent());
+    }
+
+    private static String jobRef(RunRecord run) {
+        return run.jobRef() == null ? JobResourceFactory.jobName(run.id()) : run.jobRef();
     }
 
     private static boolean isServiceRun(RunRecord run) {

@@ -284,7 +284,8 @@ public class JobResourceFactory {
         long gib = 1024L * 1024 * 1024;
         long mib = 1024L * 1024;
         if (bytes >= gib && bytes % gib == 0) return new Quantity((bytes / gib) + "Gi");
-        if (bytes >= mib && bytes % gib == 0) return new Quantity((bytes / mib) + "Mi");
+        // MiB-aligned values keep the Mi suffix (fixes the former dead branch that tested % gib).
+        if (bytes >= mib && bytes % mib == 0) return new Quantity((bytes / mib) + "Mi");
         return new Quantity(String.valueOf(bytes));
     }
 

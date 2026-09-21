@@ -115,6 +115,20 @@ class JobResourceFactoryTest {
     }
 
     @Test
+    void byteQuantitiesSerializeAsAlignedPowerOfTwoSuffixes() {
+        // MiB-aligned but not GiB-aligned values keep the Mi suffix instead of degrading to bytes.
+        assertThat(JobResourceFactory.bytesQuantity(512L * 1024 * 1024).getFormat()).isEqualTo("Mi");
+        assertThat(JobResourceFactory.bytesQuantity(512L * 1024 * 1024).getAmount()).isEqualTo("512");
+        // GiB-aligned values keep the Gi suffix.
+        assertThat(JobResourceFactory.bytesQuantity(3L * 1024 * 1024 * 1024).getFormat()).isEqualTo("Gi");
+        assertThat(JobResourceFactory.bytesQuantity(3L * 1024 * 1024 * 1024).getAmount()).isEqualTo("3");
+        // Unaligned values degrade to raw bytes.
+        assertThat(JobResourceFactory.bytesQuantity(3L * 1024 * 1024 * 1024 + 7).getFormat()).isEmpty();
+        assertThat(JobResourceFactory.bytesQuantity(3L * 1024 * 1024 * 1024 + 7).getAmount())
+            .isEqualTo(String.valueOf(3L * 1024 * 1024 * 1024 + 7));
+    }
+
+    @Test
     void jobCarriesNoServiceAccountTokenOrBrowserInput() throws Exception {
         Job job = factory.createMavenJob(RUN, PROJECT, List.of());
         assertThat(job.getSpec().getTemplate().getSpec().getServiceAccountName()).isEqualTo("manao-maven-runner");

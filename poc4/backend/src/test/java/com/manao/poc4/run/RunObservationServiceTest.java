@@ -411,6 +411,46 @@ class RunObservationServiceTest {
         assertThat(coordinator.ensureJobCalls).isEmpty();
     }
 
+    @Test
+    void aRecoveringRunWithAStopIntentSettlesCancelledInsteadOfStartFailedWhenTheJobIsGone() {
+        String runId = seedServiceRun("run-web-rec-gone", RunState.STOPPING);
+        store.runs.get(runId).terminationIntent = "USER_STOPPED";
+        // The recovery scan runs while the cluster cannot be judged and leaves the run RECOVERING.
+        coordinator.observationKinds.put(runId, JobCoordinator.ObservationKind.UNKNOWN);
+        new com.manao.poc4.run.RunRecoveryService(store, coordinator).recoverRuns();
+        assertThat(store.runs.get(runId).state).isEqualTo(RunState.RECOVERING.name());
+
+        // Observation takes over and finds the run definitively gone.
+        coordinator.observationKinds.put(runId, JobCoordinator.ObservationKind.MISSING);
+        service.observe();
+
+        assertThat(store.runs.get(runId).state).isEqualTo(RunState.CANCELLED.name());
+        assertThat(store.runs.get(runId).terminationReason).isEqualTo("USER_STOPPED");
+        assertThat(completed).containsExactly(runId);
+    }
+
+    @Test
+    void aRecoveringRunWithAStopIntentIsReStoppedInsteadOfResurrectedToRunning() {
+        String runId = seedServiceRun("run-web-rec-live", RunState.STOPPING);
+        store.runs.get(runId).terminationIntent = "USER_STOPPED";
+        coordinator.observationKinds.put(runId, JobCoordinator.ObservationKind.UNKNOWN);
+        new com.manao.poc4.run.RunRecoveryService(store, coordinator).recoverRuns();
+        assertThat(store.runs.get(runId).state).isEqualTo(RunState.RECOVERING.name());
+
+        // The application container is still running when observation takes over.
+        coordinator.observationKinds.remove(runId);
+        coordinator.factsByRun.put(runId, facts(true, false, false, false, null, "pod-web", "uid-web", false, false));
+        int stopCallsBefore = coordinator.stopCalls.size();
+
+        service.observe();
+
+        // The stop is re-driven; the run returns to STOPPING and is never resurrected to RUNNING.
+        assertThat(store.runs.get(runId).state).isEqualTo(RunState.STOPPING.name());
+        assertThat(store.runs.get(runId).terminationIntent).isEqualTo("USER_STOPPED");
+        assertThat(coordinator.stopCalls).hasSize(stopCallsBefore + 1);
+        assertThat(completed).isEmpty();
+    }
+
     static final class RecordingGateway implements PodLogGateway {
         final List<String> watchedPods = new ArrayList<>();
         final List<String> containers = new ArrayList<>();
@@ -422,7 +462,11 @@ class RunObservationServiceTest {
             watchedPods.add(podName);
             containers.add(container);
             namespaces.add(namespace);
-            return () -> closedPods.add(podName);
+            return new LogWatchHandle() {
+                @Override public void close() { closedPods.add(podName); }
+
+                @Override public boolean isAlive() { return true; }
+            };
         }
     }
 

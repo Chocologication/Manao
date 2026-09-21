@@ -95,7 +95,11 @@ public final class RunStateReducer {
                     ? Optional.of(new Outcome(RunState.CANCELLED, "USER_STOPPED"))
                     : Optional.of(new Outcome(RunState.FAILED, "APPLICATION_EXITED"));
                 case RunExecutionReceipt.STATE_CLAIMED, RunExecutionReceipt.STATE_READY -> facts.applicationTerminated()
-                    ? Optional.of(new Outcome(RunState.FAILED, "APPLICATION_EXITED"))
+                    // A stale pre-termination receipt carries no exit reason: the persisted stop
+                    // intent decides between a user stop and an unexpected application exit.
+                    ? Optional.of(stopRequested
+                        ? new Outcome(RunState.CANCELLED, "USER_STOPPED")
+                        : new Outcome(RunState.FAILED, "APPLICATION_EXITED"))
                     : Optional.empty();
                 default -> Optional.empty(); // DENIED or unknown: the claim owner decides the outcome
             };
