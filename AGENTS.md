@@ -16,7 +16,8 @@
 | Completed stages and what remains undecided | [Progress](docs/what-we-have-done.md) |
 | Project, Run and dependency terminology | [Domain glossary](CONTEXT.md) |
 | Proposed Java application ports and project MySQL/Redis lifecycle | [Java Runtime Design](docs/superpowers/specs/2026-09-21-java-project-runtime-design.md), design review only |
-| Java runtime module/interface/test review before implementation planning | [Module Review](docs/superpowers/specs/2026-09-21-java-runtime-module-review.md), automatic application recovery decision pending |
+| Java runtime module/interface/test review | [Module Review](docs/superpowers/specs/2026-09-21-java-runtime-module-review.md), manual rerun confirmed |
+| Java runtime implementation tasks and verification | [Implementation Plan](docs/superpowers/plans/2026-09-21-java-project-runtime-implementation-plan.md), not yet executed |
 | Current cloud acceptance, evidence and limits | [Stage 6B Acceptance](poc4/docs/evidence/stage-6b/acceptance.md), current conclusion in section 10 |
 | Cloud deployment, pinned images and maintenance | [Stage 6B Deployment](poc4/deploy/6b/README.md) |
 | Environment boundaries and dated infrastructure observations | [Infrastructure Status](docs/Stage6-Infrastructure-Status.md) |
@@ -26,7 +27,7 @@
 - Keep current conclusions in their authority documents; indexes summarize and link instead of maintaining another acceptance matrix.
 - Historical Tasks 10–12 and old 6A gates are not current execution instructions. Both stages are closed under the accepted MVP scope; this does not establish a full PTY/audit/stress/fault-matrix PASS. Preserve the distinctions between PASS, FAILED, SKIPPED, WAIVED_BY_USER and NOT_REVERIFIED.
 - A new product stage or feature needs its own agreed scope; do not infer authorization to start AI, multi-language support or a broader platform from completion of 6B.
-- On 2026-09-21 the user confirmed persistent project MySQL data with a separate PVC, a two-hour application lifetime after successful startup, and mandatory user-entered public ports in 30000–31000: conflicts require user correction, never automatic replacement. Container ports have no additional product range restriction beyond valid port values. Continue design before broader language adaptation and AI. The linked module review identifies a smaller Job-based option if automatic application recovery is not required; resolve that behavior before fixing the implementation plan. None of these capabilities is delivered or accepted by the existing 6B PASS.
+- On 2026-09-21 the user confirmed persistent project MySQL data with a separate PVC, a two-hour application lifetime after successful startup, and mandatory user-entered public ports in 30000–31000: conflicts require user correction, never automatic replacement. Container ports have no additional product range restriction beyond valid port values. Continue design before broader language adaptation and AI. The user has confirmed that failed applications are manually rerun, not automatically restarted. The linked implementation plan reuses Job + Service and existing Run/log/cleanup modules; do not reintroduce the superseded application Deployment or retry framework. None of these capabilities is delivered or accepted by the existing 6B PASS.
 
 ## Runtime boundaries
 

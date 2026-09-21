@@ -5,7 +5,7 @@
 **方法：** codebase-design：先从用户结果反推 Module（模块）职责，再检查 Interface（调用方必须知道的契约）、Seam（可替换位置）、Adapter（实际实现），不按 Kubernetes 资源种类拆业务模块。
 **关联规格：** [Java 项目运行环境升级设计](2026-09-21-java-project-runtime-design.md)。本记录不复制一套产品需求或验收矩阵。
 
-## 1. 结论与一个待确认的产品行为
+## 1. 结论与已确认的产品行为
 
 需要交付的是一次开发会话：创建环境 → 编辑 → 启动 Web 应用 → 从指定公网端口访问 → 停止/到期 → 修改后重新运行，数据库数据保留。不是通用应用托管、自动伸缩或多租户数据库平台。
 
@@ -16,13 +16,13 @@
 - 延用现有单体、项目状态、Run 记录、工作区写锁、日志持久化与删除入口，不建设新的控制面服务、事件总线、Operator 或语言插件平台。
 - 不把“任务型/服务型”产品概念强制映射成“Job/Deployment”两个控制器种类。当前新增的硬性 2 小时寿命，使复用 Job 成为值得优先考虑的更小方案。
 
-**需要用户确认：应用进程异常退出后，首版是否可以报告失败，由用户手动再次运行，不自动恢复应用？**
+**用户已于 2026-09-21 确认：应用进程异常退出后，首版报告失败和日志，由用户手动再次运行，不自动恢复应用。**
 
-若同意，推荐复用 Job + 应用 Service；若要求同一 Run 自动恢复，则保留 Deployment 方案并承担多代 Pod、剩余寿命、自动恢复与手动停止竞态等额外实现。此问题影响用户行为，不能仅以“技术优化”为由默默删掉恢复能力。
+采用 Job + 应用 Service；取消用户应用 Deployment 和自动恢复次数逻辑。这个选择已经获得用户确认，不是以技术优化为由静默改变行为；后续计划只写这一种方案，不同时实现两个控制器路径。
 
 这里的“不自动恢复”只指用户应用进程；不取消 Manao 后端重启后的观察恢复，不取消 MySQL 数据保留或数据库自身控制器恢复，不取消对请求结果未知的核对。网络不可达不是“已失败/已退出”的证据。
 
-在用户确认前不编写绑定某一执行方案的完整实施计划，也不把原草案里的 Deployment 写成已确认要求。
+对应的[实施计划](../plans/2026-09-21-java-project-runtime-implementation-plan.md)以复用 Job 为唯一用户应用执行路径；Redis 的依赖 Deployment 与此无关。
 
 ## 2. 仓库事实与复用收益
 
@@ -83,11 +83,11 @@ Optional<Project> create(String ownerId, String name, ProjectRuntimeSpec runtime
 
 真实差异是模板命令、成功判据和时限起点，不一定是控制器种类。普通 Java 的正常退出为成功；Web 服务的正常工作表现是就绪并接受请求，到期则是 TIMED_OUT。
 
-**若采用推荐的无自动恢复方案：** 复用 `JobCoordinator`、`Fabric8JobCoordinator` 和身份校验；新增配置化 Web 命令及小型进程寿命执行器。`Clock` 注入现有运行逻辑用于确定性测试，不为计时单独搭调度平台。需要扩展 `RunPolicy` / `RunRecord` / `RunSummary` 的寿命和就绪字段，但不用因想象中的其他语言提前注册 Adapter。
+**已选定的无自动恢复方案：** 复用 `JobCoordinator`、`Fabric8JobCoordinator` 和身份校验；新增配置化 Web 命令及小型进程寿命执行器。`Clock` 注入现有运行逻辑用于确定性测试，不为计时单独搭调度平台。需要扩展 `RunPolicy` / `RunRecord` / `RunSummary` 的寿命和就绪字段，但不用因想象中的其他语言提前注册 Adapter。
 
-2 小时执行器仍不可省：从首次 readiness 建立期限，控制 JVM/子进程；Manao 后端重启不能续时。Job 总期限可作额外兜底，但不能替代 readiness 起点的限制。`restartPolicy: Never` / `backoffLimit: 0` 也不是“任意故障下绝不补建 Pod”的绝对保证；若集群出现替代 Pod，原 Run 期限仍必须有效，无法核对则不启动用户代码。
+2 小时执行器仍不可省：从首次 readiness 建立期限，控制 JVM/子进程；Manao 后端重启不能续时。Job 总期限只作额外兜底。`restartPolicy: Never` / `backoffLimit: 0` 不保证任意故障下不补建 Pod，因此用原子持久化认领阻止同 Run 的第二次用户程序启动；替代 Pod 一律拒绝执行，不做自动恢复。
 
-**若保留自动恢复方案：** Job/Deployment 才是真正的两种 Adapter，届时再抽出共享的运行接口；不要现在把两套实现全部列入计划后再决定选哪一种。
+**不引入的抽象：** 首版只有 Job 应用实现，继续使用既有 JobCoordinator 与生产/test 适配位置；不创建 WorkloadCoordinator、DeploymentRunCoordinator 或语言插件注册器。
 
 **测试位置：** [RunControllerTest](../../../poc4/backend/src/test/java/com/manao/poc4/run/RunControllerTest.java)、[RunObservationServiceTest](../../../poc4/backend/src/test/java/com/manao/poc4/run/RunObservationServiceTest.java)、[RunRecoveryServiceTest](../../../poc4/backend/src/test/java/com/manao/poc4/run/RunRecoveryServiceTest.java)、[JobResourceFactoryTest](../../../poc4/backend/src/test/java/com/manao/poc4/kubernetes/JobResourceFactoryTest.java)、[Fabric8JobCoordinatorTest](../../../poc4/backend/src/test/java/com/manao/poc4/kubernetes/Fabric8JobCoordinatorTest.java)；新增寿命执行器的真实子进程测试位于 `poc4/maven-runner/tests/`。单元层用受控时钟，进程层验证确实退出，最后集中做一次正式 7200 秒验证，不在每层都等两小时。
 
@@ -129,9 +129,9 @@ Optional<Project> create(String ownerId, String name, ProjectRuntimeSpec runtime
 
 ## 6. 下一步与证据边界
 
-模块、调用契约、测试位置已经检查；手填公网端口及内部端口范围已同步规格。只剩“应用异常退出是否需要自动恢复”这一项产品行为会实质改变控制器与实现规模。
+模块、调用契约、测试位置已经检查；手填端口、内部端口合法值、双 PVC、两小时寿命与异常后手动重跑均已明确，原来的控制器选择问题已关闭。
 
-若用户同意手动重启，先同步规格为复用 Job 的最小方案，再用 Superpowers writing-plans 编写一个可逐项执行的计划；若用户要求自动恢复，再保留 Deployment 并明确额外测试。两种方向都保留 MySQL 双 PVC、成功启动后 2 小时硬性寿命与手工公网端口原值。
+Superpowers writing-plans 的实施计划按配置/手填端口、依赖、单次运行器、Run 集成、前端及集中验收分任务；每项声明改动文件、接口和测试位置。无未决产品选择，不将集群容量等实测条件伪装为已验证事实。
 
 本轮未运行测试、未访问运行数据库、未启动/部署任何新工作负载；源码检查与官方资料核对不等于实施验证。
 

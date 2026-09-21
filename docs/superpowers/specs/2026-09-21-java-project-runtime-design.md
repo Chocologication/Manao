@@ -1,11 +1,11 @@
 # Java 项目运行环境升级设计
 
 **日期：** 2026-09-21
-**状态：** 已确认产品方向、MySQL 保留与独立 PVC、成功启动后 2 小时上限、用户必填公网端口 30000–31000，以及容器端口不设业务范围限制。计划前模块审查已完成；应用异常后的自动恢复行为需确认，具体控制器选型见下方审查补充。尚未实施或运行验收。
+**状态：** 用户已确认异常退出后手动再次运行、不自动拉起。产品范围与最小 Job + Service 方案已收敛，可编写实施计划；尚未实施或运行验收。
 **代码基线：** `e9c702e`，包含已验收的 POC4 / Stage 6B 基线 `860cdda`。
 **范围：** 多语言适配前的 Java 运行环境升级；不重新编号历史 POC，不改变 6A/6B 的验收结论。
 
-**计划前审查补充：** [模块职责、接口和测试位置审查](2026-09-21-java-runtime-module-review.md)指出，2 小时限时 Web 运行不必然需要 Deployment。若用户同意应用异常后手动再次运行，推荐复用现有 Job；应用自动恢复尚需确认。下文 Deployment/自动恢复相关段落保留为此前候选方案，不构成选型已确认或可以直接实施的结论。手填公网端口、内部端口范围、双 PVC 和寿命约束不受该选择影响。
+**计划前审查结论：** [模块职责、接口和测试位置审查](2026-09-21-java-runtime-module-review.md)已完成，用户在 2026-09-21 同意应用异常后手动再次运行。首版复用现有 Job、Run 和日志流程，不增加用户应用 Deployment 或自动重试机制；MySQL/Redis 的项目级生命周期不受影响。具体步骤见[实施计划](../plans/2026-09-21-java-project-runtime-implementation-plan.md)。
 
 ## 1. 目标、已确认要求与默认选择
 
@@ -20,6 +20,7 @@
 - 用户同意沿上一轮推荐方向继续：应用与项目依赖分别管理，不要求同 Pod/Job。
 - 用户再次明确选择：MySQL 使用独立数据 PVC，与代码工作区 PVC 分开；不改为共用卷。
 - 应用成功启动后最多运行 2 小时，到期必须终止本次应用进程，不因仍有请求或后台工作而续期。
+- 用户明确同意：用户应用异常退出后报告失败与日志，由用户手动再次运行；平台不自动拉起、重建同一次应用执行或续期。
 - 用户确认公网侧 NodePort 必须为 30000–31000（含两端），且每个公开端口必须由用户手动填写；平台不得自动选择、补齐或因冲突更换端口。
 - 与平台保留端口（含当前部署的 30080）或已占用端口冲突时，提示用户修改端口号，不抢占、不覆盖已有服务。
 - 容器内部 targetPort 不设额外业务范围限制；只接受合法、确定的 TCP 端口整数 1–65535，0 不是可转发的确定端口。不再限定为 1024 起，也不保留 18081 等业务不可选端口。
@@ -28,7 +29,7 @@
 
 | 事项 | 首版设计默认值 | 理由 |
 | --- | --- | --- |
-| 工作负载 | 普通 Java 保留 Job；Web 的原 Deployment 默认方案暂不定稿 | 已有 2 小时上限；先确认是否需要应用自动恢复，再选最小实现 |
+| 工作负载 | 普通 Java 与 Web 均复用 Job；Web 增加就绪与两小时寿命 | 异常后手动重跑已确认，无需应用 Deployment |
 | 数据库控制器 | 每项目独立 MySQL StatefulSet；独立 PVC 已由用户确认，不再是待选项 | 数据归属项目，不随应用 Run 删除 |
 | Redis | 每项目独立缓存实例；首版不提供持久化模式 | 避免把缓存和 MySQL 数据保留承诺混为一谈 |
 | 停止应用 | 保留依赖实例、凭据、数据和应用端点地址 | 修改后重启不重新初始化环境 |
@@ -47,7 +48,7 @@ MySQL 保留表示平台不会因停止、应用失败或重启主动清空数�
 | 固定 Maven 命令、Job、1800 秒上限 | [JobResourceFactory](../../../poc4/backend/src/main/java/com/manao/poc4/kubernetes/JobResourceFactory.java)、[BackendProperties](../../../poc4/backend/src/main/java/com/manao/poc4/config/BackendProperties.java) | 保留任务路径；服务路径使用不同运行策略 |
 | 活动 Run 阻止文件写入 | [WorkspaceJdbcStore](../../../poc4/backend/src/main/java/com/manao/poc4/workspace/WorkspaceJdbcStore.java) | 保留约束；停止必须以实际工作负载退出为依据 |
 | workspace Service:8080 指向文件管理 agent | [WorkspaceResourceFactory](../../../poc4/backend/src/main/java/com/manao/poc4/kubernetes/WorkspaceResourceFactory.java) | 新建应用 Service，不公开或复用 workspace Service |
-| 运行观察和身份核验只认识 Job，固定容器名 `maven` | [RunObservationService](../../../poc4/backend/src/main/java/com/manao/poc4/run/RunObservationService.java)、[ResourceIdentityVerifier](../../../poc4/backend/src/main/java/com/manao/poc4/kubernetes/ResourceIdentityVerifier.java) | 支持 Deployment → ReplicaSet → Pod 身份链 |
+| 运行观察和身份核验已支持 Job，固定容器名 `maven` | [RunObservationService](../../../poc4/backend/src/main/java/com/manao/poc4/run/RunObservationService.java)、[ResourceIdentityVerifier](../../../poc4/backend/src/main/java/com/manao/poc4/kubernetes/ResourceIdentityVerifier.java) | 复用 Job 身份链，补充 UID、就绪、期限及未知事实分类 |
 | 日志 watch 按 Run 复用，重接时跳过已有日志前缀 | [RunLogIngestor](../../../poc4/backend/src/main/java/com/manao/poc4/log/RunLogIngestor.java) | 增加 Pod/container 实例维度，防止重建后跳错新日志 |
 | 工作区恢复删除按项目标签选中的 Pod/Service | [ProjectResourceCleaner](../../../poc4/backend/src/main/java/com/manao/poc4/kubernetes/ProjectResourceCleaner.java) | 恢复必须限定 workspace/initializer，不能误删依赖或应用 |
 | 完整清理以 Job/Pod/Service/PVC 为中心，PV 关联偏向单个 workspace PVC | 同上 | 纳入新控制器、Secret、策略和每个数据卷的完整清单 |
@@ -79,13 +80,13 @@ MySQL 保留表示平台不会因停止、应用失败或重启主动清空数�
 ```text
 用户项目
 ├─ 工作区：现有 workspace agent + workspace PVC + 内部 Service
-├─ 应用：每次 Run 的 Job 或单副本 Deployment
+├─ 应用：每次 Run 的单次执行 Job（普通 Java 或限时 Web）
 │  └─ 项目级应用 Service：ClusterIP；选择公开端口时使用 NodePort
 ├─ 可选 MySQL：单副本 StatefulSet + 内部 Service + 独立 PVC + 独立 Secret
 └─ 可选 Redis：单副本 Deployment + 内部 Service + 独立 Secret（缓存）
 ```
 
-应用到依赖使用集群内部地址。MySQL PVC 不属于应用 Deployment/Job/Pod，也不挂载给 workspace agent；用户不能通过文件树编辑数据库内部文件。应用和依赖没有 Kubernetes 管理凭据。
+应用到依赖使用集群内部地址。MySQL PVC 不属于应用 Job/Pod，也不挂载给 workspace agent；用户不能通过文件树编辑数据库内部文件。应用和依赖没有 Kubernetes 管理凭据。
 
 初版沿用配置指定的工作负载 namespace，以后端生成的 owner/project/component 标签和持久化资源引用定位对象。它是受控 MVP 的资源组织，不把 namespace 或标签本身称为完整租户安全边界。
 
@@ -94,6 +95,7 @@ MySQL 保留表示平台不会因停止、应用失败或重启主动清空数�
 - **同 Pod/Job 的应用和数据库：** 技术可行，连接可走 localhost，但应用重建与数据库生命周期耦合，普通常驻容器还影响 Job 完成。适合整套销毁的临时环境，本次不选。
 - **多个项目共享一个 MySQL/Redis：** 资源较省，但增加权限划分、重置和删除归属问题。当前选择独立实例，避免把平台数据库也卷入此模型。
 - **每个公网项目单独 LoadBalancer 或统一域名入口：** 可以作为后续接入方式；本次 NodePort 验证通过即可，不同时建设通用网关。
+- **用户应用 Deployment：** 前期用于持续服务的候选；在用户明确两小时会话与异常后手动重跑后取消。Redis 依赖仍可用 Deployment，它不是用户应用运行。
 
 MySQL 使用保留型卷生命周期：正常缩容、Pod 重建不删除 PVC；不依赖新版本的自动删卷特性。显式项目删除经过清理模块删除 PVC，再根据真实存储回收策略核对 PV/实际存储。
 
@@ -101,20 +103,23 @@ MySQL 使用保留型卷生命周期：正常缩容、Pod 重建不删除 PVC；
 
 创建表单增加模板、依赖与公开端口映射。每项填写容器端口 targetPort 和公网端口 publicPort，publicPort 无自动默认值，留空不能提交。该公开端口是允许的产品配置，不接受任意镜像、Shell 命令、资源名或 Kubernetes YAML。
 
-建议请求结构示例（实现计划可调整字段命名，不改变语义）：
+创建请求结构（与实施计划一致）：
 
 ```json
 {
   "name": "orders-demo",
-  "templateId": "java-spring-boot-web",
-  "dependencies": { "mysql": true, "redis": true },
-  "publicPorts": [
-    { "name": "web", "targetPort": 8080, "publicPort": 30081 },
-    { "name": "api2", "targetPort": 9090, "publicPort": 30082 }
-  ]
+  "creationKey": "2a59d944-0bf2-453d-9410-d3cae7298ab8",
+  "runtime": {
+    "templateId": "java-spring-boot-web", "mysql": true, "redis": true,
+    "publicPorts": [
+      { "name": "web", "targetPort": 8080, "publicPort": 30081 },
+      { "name": "api2", "targetPort": 9090, "publicPort": 30082 }
+    ]
+  }
 }
 ```
 
+creationKey 是一次明确创建尝试的稳定标识，不是授权边界。请求结果未知时保留同一 key 和规范化配置，通过 owner-scoped 查询核对；不同内容不能复用同一 key，不另换 key 盲重放。端口确定拒绝且没有副作用后，用户改号才开始新尝试。
 模板首版为 `java-console` 和 `java-spring-boot-web`，Java 17。旧请求只提交 name 时保持 console/无依赖/无公开端口；已有项目按相同值迁移，禁止重新生成或覆盖旧工作区。
 
 两种模板都可选择依赖。只有 Web 模板提供公网端口配置；console 若提交公开端口则明确拒绝，界面说明需选择持续服务模板。创建后首版配置固定，变更模板、依赖或端口留待单独设计，代码仍可正常编辑。
@@ -147,51 +152,47 @@ MySQL 为每项目创建独立数据库、非 root 应用账号和随机密码�
 
 ### 7.1 共同约束
 
-沿用保存版本校验、一个活动 Run、持久化运行记录和停止意图。新增模板/执行类型快照与工作负载类型/名称/UID 引用；不要用 `jobRef` 字段存 Deployment 名字。旧 Run 按任务型读取。
+沿用保存版本校验、一个活动 Run、租约/停止意图、Job 身份和现有日志。前端不携带镜像、Shell 或数据库密码，不选择 Kubernetes 控制器。新增模板/执行类型与寿命快照；旧 Run 按任务型读取，不构建通用 WorkloadCoordinator。
 
-前端不携带镜像、Shell 或数据库密码。运行模块根据保存的模板和策略生成工作负载，通过同一 Run 接口返回状态；内部才区分 Job 和 Deployment 适配器。不要为第二种工作负载新建微服务、消息队列或通用插件框架。
+应用依赖尚未就绪时，创建页/工作台显示依赖状态；启动接口返回明确的 DEPENDENCY_NOT_READY，不创建一个长期等待依赖的 Run。依赖恢复后用户可再次点击启动；这不是自动执行用户代码。
 
 ### 7.2 任务型
 
-保留现有 `mvn -q -DskipTests compile exec:java`、1800 秒总时限、退出结果和日志流程。选中依赖时先等待对应实例可用，并注入连接信息；任务结束不删除项目依赖。
+保留 `mvn -q -DskipTests compile exec:java`、1800 秒总时限、退出结果和日志流程。选中依赖时注入连接配置，任务结束不删除依赖。
 
-### 7.3 服务型
+### 7.3 服务型：单次 Job + Service
 
-本节的 Deployment 与自动恢复描述仅适用于用户选择保留自动恢复的方案；若选择异常后手动重启，将在编写计划前改为复用 Job 的实现。就绪、2 小时到期、数据保留和真实停止证据是两种实现共同遵守的要求。
+- 一个显式启动对应一个 Run 和 Job，`completions=1`、`parallelism=1`、`restartPolicy=Never`、`backoffLimit=0`。应用异常退出、Pod 丢失或编译失败后不主动重建相同 Run 的应用；用户确认旧执行结束后手动新建 Run。
+- 保留容器名 `maven` 和现有 Job 观察接口；Web 容器 PID 1 使用小型受控运行器，启动固定 `mvn -q -DskipTests spring-boot:run` 子进程并继承 stdout/stderr。不另起调度服务或 sidecar。
+- 初始启动预算为从 Run 创建起 1800 秒，覆盖调度、拉镜像、构建和就绪；Job 总时限 9000 秒仅是 1800+7200 的兜底，不代替就绪后计时。未成功启动的应用仍受启动预算限制。
+- 首次通过主业务端口 readiness 时，运行器立即安装单调时钟期限并写入独立运行收据。收据中的 `firstReadyAt` 表示这个首次成功时刻，`expiresAt = firstReadyAt + 7200s`。后端核对收据后持久化并报告成功，不能把后端稍后读到收据的时间当成新的起点。
+- 工作区 PVC 中新增与代码目录并列的 `.manao-runs/<runId>` 控制目录，工作区编辑器和 Java 的 `/workspace` 均不包含它；不增加第三个 PVC。原子认领保证这个 Run 的用户程序只启动一次，失败后保留认领。它不是数据库数据目录；MySQL 仍使用独立 PVC。
+- 收据必须由运行器固定格式写入，不从用户 stdout 解析；后端先核对 project/run/Job/Pod UID，再读取固定路径的收据或容器 termination message。终态收据不能用来复活已结束的 Run。
+- 收到请求、空闲、就绪波动、浏览器刷新或后端重启不暂停/重置计时。例如 10:05 首次就绪，该 Run 12:05 到期；若 11:00 应用崩溃则结束为失败，不自动重启。用户之后明确启动的新 Run 才获得新的额度。
+- `RUNNING` 表示应用进程存在；附加 `STARTING / READY / UNAVAILABLE` 表示服务可用性。主端口为第一项公开映射的 targetPort，没有公开端口时为 8080；模板以同一端口配置 SERVER_PORT 和 readiness，无额外保留管理端口。
+- readiness 覆盖主监听器和选中的依赖；只开放最小 health 路径，不开放 env/config。Pod 不 Ready 时不发布服务端点；额外端口是否真实监听另行观察，配置转发不等于 Java 自动打开监听器。
+- 已经 Ready 的应用若临时不可用，停止转发、显示 UNAVAILABLE，但不重启进程或重置寿命；用户可提前停止，最终仍受原到期时间限制。
+- 未请求停止而服务进程退出（即使 exit code 0）是 FAILED / APPLICATION_EXITED，不是 BUILD_SUCCEEDED。用户停止为 CANCELLED / USER_STOPPED；到期为 TIMED_OUT / TIME_LIMIT_EXCEEDED；启动超时使用 TIMED_OUT / STARTUP_TIME_LIMIT_EXCEEDED。
 
-- 单副本 Deployment，每次显式启动对应一个新 Run。声明 Recreate 策略，且显式停止并核对旧 Pod 消失后才允许下一次启动；不把 Recreate 本身当成绝对单写保证。
-- 模板使用固定 Maven 构建/启动流程（拟定 `mvn -q -DskipTests spring-boot:run`），PID 1/子进程信号处理需实际验证。未开放任意命令输入。
-- 有限启动预算默认 1800 秒，涵盖依赖等待、拉镜像、构建和首次就绪，独立于成功启动后的 7200 秒运行额度；初次启动从未成功时仍必须受启动预算约束。
-- “成功启动”按本设计定义为首次通过服务 readiness 并由运行管控确认；首次确认为 `firstReadyAt`，不可变截止时间 `expiresAt = firstReadyAt + 7200s`。两者持久化且不能复用仅表示进程开始的 startedAt。收到请求、空闲、就绪波动、后端重启、容器重启或 Pod 替换均不暂停或重置自然时间计时。
-- 例如 10:05 首次就绪，该 Run 截止时间就是 12:05；11:00 自动重建 Pod 仍在 12:05 结束。旧 Run 完全停止后，用户显式发起的新 Run 可在其首次成功启动后获得新的 2 小时，不由 Deployment 自动续期。
-- `RUNNING` 表示进程运行；附加服务可用性 `STARTING` / `READY` / `UNAVAILABLE`，区分就绪和进程状态。没有活动 Run 时项目显示应用 `STOPPED`。
-- Spring Boot 模板在主业务监听器上提供最小 readiness 检查，选择了依赖时纳入相应健康检查，不另占固定管理端口。依赖暂时不可用不直接成为 liveness 失败依据；不公开 env/config 等其他管理端点。
-- Pod 不 Ready 时 Service 不发布可用端点；运行状态及每个公开端口的实际监听结果分别呈现。一次端口监听验证只证明连接能力，验收还必须请求预期业务响应。
-- 编译失败或不能就绪在有限预算后失败；后续重新进入不可用状态的恢复观察取“1800 秒预算”和“本 Run 剩余寿命”中较短者，不得越过 expiresAt。观察到应用反复重启时使用有限恢复预算（初版同一 Run 累计超过 3 次即终止），结合 Pod UID 变化和容器 restartCount 增量持久化计数，后端重启不能归零，避免换 Pod 绕过预算。检测有延迟，状态不能承诺重启次数的强同步上限。
-- 服务正常退出也不是 `BUILD_SUCCEEDED`；未请求停止且未到期却退出时进入恢复观察并按预算恢复或记录服务失败。用户主动停止沿用 `CANCELLED / USER_STOPPED`，UI 对服务显示“已停止”；因到期终止使用 `TIMED_OUT / TIME_LIMIT_EXCEEDED`，UI 显示“已达到 2 小时运行上限”，不得误报用户取消或构建成功。
+### 7.3.1 到期终止与单次执行
 
-手动停止流程：先持久化 STOPPING，撤销在线入口，停止/删除对应控制器并等待所有本次 Run 的 Pod 退出，收尾日志，再终结 Run 并解锁。优先优雅停止（默认 30 秒，但必须截断至 expiresAt）；观察预算默认 120 秒。超过观察预算保留 STOPPING/RECOVERING 与写锁供继续核对，不能以请求超时推断工作负载已停止。
+2 小时是进程执行上限，不是到时才再给 30 秒，也不是只关闭 Service。运行器先准备截止前的优雅结束，截止时用不可阻塞的终止路径结束容器 PID 1；默认独立 PID namespace 下覆盖仍存活的 JVM 与派生进程。运行器检查自己确为 PID 1，禁止 hostPID/shareProcessNamespace；具体 Linux 容器行为必须由真实子进程测试验证。
 
-### 7.3.1 到期终止的执行约束
+运行器使用镜像中的固定代码和 JDK 标准库，独立于浏览器、Manao 后端是否在线。单调时钟用于实际计时，UTC 时间用于收据、审计和后端展示；收据写入阻塞不能卡住已安装的期限线程。认领或持久化失败则不对外就绪，按有限预算终止，不留下无期限应用。
 
-2 小时是停止应用执行的上限，不是“到时开始再等 30 秒”的提醒，也不只是关闭 Service 或停止接收新请求。到达 expiresAt 后仍有请求/子进程时也不得续期；若采用优雅退出，必须安排在截止时间之前，截止时执行强制终止兜底。
+Job 的 Never/0 不是对任意集群异常下零补建 Pod 的绝对承诺。新 Pod/容器若发现同 Run 已被认领，必须在启动用户代码前退出；不能凭同一个 Pod UID 允许容器重启后再次执行。后端核对持有认领的原 Pod，替代 Pod 的拒绝退出不能误伤仍在运行的原进程，也不能造成日志串源。
 
-实现需要同时满足以下约束，而不是仅增加一个后端定时任务：
+手动停止先持久化停止原因与 STOPPING，撤销转发，正常前台删除 Job 并核对原应用进程及全部本次 Run 的 Pod 已终止，再收尾日志、解锁。优雅预算最多 30 秒且不越过 expiresAt；观察预算 120 秒。未知、Forbidden 或节点失联不能当不存在，保留 STOPPING/RECOVERING 与写锁供继续核对。
 
-1. 应用进程由受控的容器内/节点侧运行时限执行器管理，截止时覆盖 JVM 及其派生应用进程，不依赖浏览器在线或 Manao 后端恰好在运行。首次就绪与时限安装必须受控协调；只有截止时间已持久化且本地执行器已建立约束才允许对外报告成功启动，协调失败则在有限预算内停止，不能留下无期限应用。
-2. 对同一 Run 的新容器或替换 Pod，启动门禁必须取得并遵守原 expiresAt，只获得剩余时间；无法核对或已过期则不启动用户代码。不得在容器入口写一个每次重启都重新开始的 `timeout 2h` 来代替 Run 级寿命。
-3. 控制面到期记录停止意图、撤销应用流量并停止/删除对应 Deployment；进程退出不能被控制器识别为“需要重新启动同一个超时 Run”。就绪检查在到期后失败，但就绪失败本身不代替杀进程。
-4. 真实进程退出证据与资源清理状态分开观察：状态更新、删除响应或 API 中 Pod 消失不是单独充分的进程终止证据；尤其不能靠强制删除 API 对象证明失联节点上的进程已停。无法核实时保留运行锁与可核对状态，不谎报已终止。
+到期本地执行器负责终止，后端核对收据和真实容器终态再报告 TIMED_OUT；不因后端晚读取几秒而重新发放寿命。不得把强制删除 API 对象或已发送删除请求当作进程已经退出。方案不承诺执行节点/内核完全失效时的硬实时行为，也不允许因业务仍忙而正常延期。
 
-上述是待实现验证的强制时限要求，不是现有代码已有的保证。进程时限方案必须通过正常运行、长请求不退出、后端不可用和同 Run 自动重启的定向验证；未验证时标为 NOT_REVERIFIED。通用 Kubernetes 控制面并非硬实时系统，对执行节点/操作系统本身失效等情况，不能承诺任意故障下精确到某一毫秒完成；这不允许因业务仍忙而正常延期。
+### 7.4 后端恢复与日志
 
-### 7.4 恢复、Pod 重建与日志
+- 后端重启恢复的是观察和控制意图，不重建已失败/丢失的应用执行；先核对 firstReadyAt/expiresAt、停止原因、认领收据和 Job/Pod UID。
+- 普通观察与启动恢复共享同一终态判定：持久化停止原因、就绪后到期证据、Job DeadlineExceeded、应用退出。DeadlineExceeded 必须先于普通 Job failed 分类，不能把超时误报为 BUILD_FAILED。
+- 明确的资源不存在与身份不符、API 不可用分别表示，不能继续使用一个 Optional.empty 同时代表这些事实。身份不符/多个未知 Pod 保持 RECOVERING，不释放编辑锁。
+- 日志仍沿用现有持久化、重放与实时通道。对认领的 Pod UID 重接可去重；拒绝执行的替代 Pod 不成为用户日志源。原日志确实丢失时标记缺口，不靠新的 Pod 日志拼出“完整”历史。
 
-- 后端恢复先核对数据库意图、资源 UID、project/run 标签及控制器归属，以及 firstReadyAt/expiresAt，再继续；存在 STOPPING/DELETING 意图或 Run 已到期时不重新启动服务。
-- Deployment 路径核对 Deployment → ReplicaSet → Pod → 应用容器；Job 路径保留现有核验。前端不能指定要查询或终止的 Pod。
-- 服务运行允许控制器替换 Pod，但这不是一次新的用户启动。日志来源至少记录 Pod UID、容器及 restartCount/实例起点；同一来源重接才可做同源去重，新来源不能按旧来源已输出的行数跳过。
-- 日志持久化、浏览器重放和实时显示保持已有容量限制；切换来源展示恢复分界。若旧容器日志已不可得，明确记录缺口，不声称跨任意故障无丢失。
-- 若实际不确定是否仍有旧执行，不释放写锁；正常重建可恢复不等于承诺节点分区时绝无双活。继续保留受控 MVP 的边界，不实施强制驱逐后的无损故障切换。
 
 ## 8. 项目依赖、存储与隔离
 
@@ -214,12 +215,12 @@ Redis 首版明确是非持久缓存：应用停止不重建 Redis；Redis Pod/�
 | 模块 | 对调用方提供的能力 | 模块内部承担的复杂性 |
 | --- | --- | --- |
 | 项目环境 | 创建配置、查询依赖与端点、核对环境 | 模板选择、依赖初始化、资源清单、凭据引用和一致性恢复 |
-| 应用运行 | 启动、停止、观察某个 Run | Job/Deployment 差异、状态转换、身份检查、来源明确的日志 |
+| 应用运行 | 启动、停止、观察某个 Run | 同一 Job 流程内的模板策略、就绪、寿命、身份核对和日志 |
 | 项目清理 | 继续清理一个已进入 DELETING 的项目 | 控制器、子资源、数据卷、PV/存储、数据库行的有序清理与失败证据 |
 
-接口不暴露 Fabric8 对象或让前端编排 Kubernetes。现有 `JobCoordinator` 可成为任务实现；只有 Job/Deployment 的实际差异才抽象为适配器，不提前引入各语言空实现。
+接口不暴露 Fabric8 对象或让前端编排 Kubernetes。复用 `JobCoordinator` 和已有存储/日志适配位置，不新增只有一个实现的通用 WorkloadCoordinator，不提前引入各语言空实现。
 
-建议持久化类别：项目的 template/execution kind；用户填写的公网/容器端口映射、申请状态与实际 NodePort；每项依赖的选择、状态与凭据引用；带组件、类型、名称、UID 和存储关联的资源清单；Run 的工作负载引用、firstReadyAt、不可变 expiresAt、7200 秒寿命策略快照、服务可用性和日志来源。具体表拆分、索引和 API DTO 在实施计划中确定。
+建议持久化类别：项目的 template/execution kind；用户填写的公网/容器端口映射、申请状态与实际 NodePort；每项依赖的选择、状态与凭据引用；两个已知 PVC 的名称/UID/PV 绑定及其他资源的确定名称和归属；Run 的工作负载引用、firstReadyAt、不可变 expiresAt、7200 秒寿命策略快照、服务可用性和日志来源。具体表拆分、索引和 API DTO 在实施计划中确定。
 
 数据库迁移必须向后兼容已有项目/Run，不改写已有工作区；必须使用一次性 schema 验证，不能重置平台的两个运行 schema。前端在严格解析中增加新类型和原因码，不能通过放开任意字符串回避契约。
 
@@ -234,7 +235,7 @@ Redis 首版明确是非持久缓存：应用停止不重建 Redis；Redis Pod/�
 删除仍先要求活动 Run 已停止，沿用当前活动 Run 的 409 拒绝行为并给出可操作提示。用户明确删除后：
 
 1. owner 校验、持久化 DELETING、禁止新启动或环境补建。
-2. 停止/删除该项目 Job、Deployment、StatefulSet，等待控制器及其 ReplicaSet/Pod 消失；仅删 Pod 会被控制器重新创建。
+2. 停止/删除该项目应用 Job、Redis Deployment、MySQL StatefulSet，等待控制器及其子资源消失；没有用户应用 Deployment。仅删依赖 Pod 会被控制器重新创建。
 3. 删除项目的应用与依赖 Service、Secret、NetworkPolicy 等附属资源。
 4. 最后删除 workspace 与 MySQL 等全部项目 PVC；依据记录的 claim UID/PV 关联核对 PV 和适用的实际存储残留，不能继续只核对单个 workspace PVC。
 5. 完成资源确认后删除相应项目配置、端口、依赖、资源清单及原有关联记录。权限错误、超时或未知结果保留 DELETING 和最小证据，可继续；不能返回已删除。
@@ -248,7 +249,7 @@ Redis 首版明确是非持久缓存：应用停止不重建 Redis；Redis Pod/�
 针对新增契约和资源生命周期的测试：
 
 - 旧请求/旧项目兼容；两个模板及依赖四种选择；端口校验、凭据不进入源码/API/日志。
-- Job/Deployment 的状态与身份核验；停止与创建/后端恢复竞态；未知运行事实不解锁；新 Pod 日志不按旧来源跳过。
+- 复用 Job 的状态/身份核验；应用失败不自动执行，原子认领拒绝同 Run 再启动；停止与创建/后端恢复竞态，未知运行事实不解锁，拒绝执行的 Pod 不污染原日志。
 - workspace 恢复不会删除依赖；完整删除覆盖控制器、Secret、策略、所有 PVC/PV，拒绝把 Forbidden 当不存在。
 - 用户必填 publicPort，测试公网边界 30000/31000、越界 29999/31001、保留 30080、重复值、跨项目/namespace 冲突、并发竞争及响应丢失核对。断言 Service 中 nodePort 与用户输入逐项相同，冲突绝不换号，表单保留输入并提示修改。targetPort 校验覆盖 1/80/8080/18081/65535 可接受，0/65536/非整数拒绝；实际运行验证低端口确实能监听。
 - 首次 Ready 才建立 7200 秒寿命；启动等待不吃掉运行额度，Ready 波动、应用请求、后端重启与 Pod/容器替换不重置期限；提前手动停止、新 Run 的新额度、到期的状态/原因码均与数据保留契约一致。
@@ -266,7 +267,7 @@ Redis 首版明确是非持久缓存：应用停止不重建 Redis；Redis Pod/�
 
 时限额外验证集中在上述项目：
 
-- 开发测试使用可控时钟/仅测试环境的短时限，验证截止前、截止时、截止后的状态与真实进程，覆盖长请求、拒绝优雅退出、自动重启和 Manao 后端不可用。缩短测试不改变正式 7200 秒策略，不能代替真实 2 小时验收。
+- 开发测试使用可控时钟/仅测试环境的短时限，验证截止前、截止时、截止后的状态与真实进程，覆盖长请求、拒绝优雅退出、异常替代 Pod 被拒绝执行和 Manao 后端不可用。缩短测试不改变正式 7200 秒策略，不能代替真实 2 小时验收。
 - 正式验收保留一次按首次 Ready 计时的完整 7200 秒运行，记录 firstReadyAt/expiresAt、独立观测时间、进程实际退出时间、Pod/控制器状态、原数据与两个端口的结果。依赖和用户代码数据必须保留，到期后禁止该 Run 再执行用户代码；测试结束后按项目作用域清理。
 - 容器/节点执行器与控制面的停止耗时、时钟误差如实记录；不能用“到期时后台任务已发出删除请求”冒充“应用进程已经退出”，不能把超期成功运行解释为宽限期。
 
@@ -281,9 +282,9 @@ Redis 首版明确是非持久缓存：应用停止不重建 Redis；Redis Pod/�
 3. 服务型 Run、就绪/停止/日志恢复；保留现有任务型路径。
 4. 多端口公网入口、创建表单及访问状态；再做一条集中真实生命周期验收。
 
-本次不包含 AI、其他语言实现、热更新、运行中编辑、混合语言项目、自选镜像/命令、任意数据库版本、数据库公网连接、数据库重置产品功能、Redis 持久化模式、自动休眠、HA 或完整生产隔离认证。端口/运行/依赖配置保持语言无关，下一步增加语言时复用这些能力。
+本次不包含 AI、其他语言实现、用户应用自动恢复、热更新、运行中编辑、混合语言项目、自选镜像/命令、任意数据库版本、数据库公网连接、数据库重置产品功能、Redis 持久化模式、自动休眠、HA 或完整生产隔离认证。端口/运行/依赖配置保持语言无关，下一步增加语言时复用这些能力。
 
-这是一份可审阅设计，不是实施计划或部署授权记录。实现前仍需把上述接口、迁移、运行策略和资源规格拆成具体任务，并在部署前检查实际环境。
+本设计已按用户确认收敛，配套[实施计划](../plans/2026-09-21-java-project-runtime-implementation-plan.md)给出接口、迁移、任务与验证步骤。设计/计划完成不等于业务实施、部署或新功能验收完成。
 
 ## 13. 资料与证据范围
 
