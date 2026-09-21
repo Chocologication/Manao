@@ -35,6 +35,16 @@ public final class JdbcProjectRuntimeStore implements ProjectRuntimeStore {
             ? "NONE" : states.get(0);
     }
 
+    @Override public List<PendingEndpoint> projectsWithUnknownEndpoint() {
+        return jdbc.query("""
+                SELECT id, owner_id, runtime_spec_json FROM project
+                WHERE state = 'CREATING' AND endpoint_state = 'UNKNOWN'
+                ORDER BY created_at, id
+                """,
+            (rs, row) -> new PendingEndpoint(rs.getString("id"), rs.getString("owner_id"),
+                ProjectRuntimeSpec.parse(rs.getString("runtime_spec_json"))));
+    }
+
     @Override public void rememberStorage(String projectId, StorageBinding binding) {
         jdbc.update("""
                 INSERT INTO project_storage_binding(project_id, purpose, pvc_name, pvc_uid, pv_name, pv_uid)

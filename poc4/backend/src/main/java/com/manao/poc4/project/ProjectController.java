@@ -9,6 +9,8 @@ import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
 import java.util.List;
 import java.util.Set;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.http.HttpStatus;
@@ -26,6 +28,7 @@ import org.springframework.web.bind.annotation.RestController;
 @org.springframework.context.annotation.Conditional(com.manao.poc4.config.SecurityConfig.BackendAuthCondition.class)
 @RequestMapping("/api/v1/projects")
 public final class ProjectController {
+    private static final Logger LOG = LoggerFactory.getLogger(ProjectController.class);
     private static final String ENDPOINT_ASSIGNED = "ASSIGNED";
     private static final String ENDPOINT_UNKNOWN = "UNKNOWN";
 
@@ -107,7 +110,7 @@ public final class ProjectController {
                 return view(project);
             }
             if (result == PublicEndpointGateway.ApplyResult.CONFLICT) {
-                cancelCreation(ownerId, project.id());
+                cancelCreation(ownerId, project.id(), creationKey);
                 throw new ApiException("PUBLIC_PORT_IN_USE", 409,
                     "Public port is already in use. Choose another port.");
             }
@@ -139,13 +142,19 @@ public final class ProjectController {
 
     /**
      * A deterministic conflict with no Service left behind cancels this attempt's temporary
-     * row so the project quota is not consumed by a rejected form submission.
+     * row so the project quota is not consumed by a rejected form submission. The endpoint
+     * state is marked unknown before the rollback: if the rollback fails, the surviving row is
+     * visible to the startup recovery scan and the failure is logged with the attempt's
+     * identity instead of silently holding quota with no explanation.
      */
-    private void cancelCreation(String ownerId, String projectId) {
+    private void cancelCreation(String ownerId, String projectId, String creationKey) {
+        markEndpointState(projectId, ENDPOINT_UNKNOWN);
         try {
             projects.deleteProjectRow(ownerId, projectId);
         } catch (RuntimeException ex) {
-            // Cancellation is best-effort; the row stays queryable and recovery reconciles it.
+            LOG.warn("creation rollback failed after a port conflict; the CREATING row stays and "
+                    + "the startup recovery scan owns it: projectId={} creationKey={}",
+                projectId, creationKey, ex);
         }
     }
 

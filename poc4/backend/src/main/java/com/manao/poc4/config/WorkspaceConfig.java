@@ -11,6 +11,8 @@ import com.manao.poc4.project.ProjectLifecycleGate;
 import com.manao.poc4.project.ProjectProvisioningService;
 import com.manao.poc4.project.ProjectRuntimeCleaner;
 import com.manao.poc4.project.ProjectRuntimeStore;
+import com.manao.poc4.project.ProjectService;
+import com.manao.poc4.recovery.CreationEndpointRecoveryService;
 import com.manao.poc4.recovery.ProjectRecoveryService;
 import com.manao.poc4.workspace.Ed25519Keys;
 import com.manao.poc4.log.RunLogService;
@@ -176,6 +178,21 @@ public class WorkspaceConfig {
     ProjectRecoveryService projectRecoveryService(WorkspaceStore store, WorkspaceAgent agent,
                                                   KubernetesGateway gateway, ProjectLifecycleGate lifecycle) {
         return new ProjectRecoveryService(store, agent, gateway, Clock.systemUTC(), Duration.ofMinutes(10), lifecycle);
+    }
+
+    /**
+     * One startup scan (ApplicationReadyEvent) for creations whose endpoint application never
+     * reached a verdict; provisioning continues synchronously under the scan's own lifecycle
+     * lease, so no other recovery loop can fail-and-clean the row behind the scan's back.
+     */
+    @Bean
+    CreationEndpointRecoveryService creationEndpointRecoveryService(ProjectRuntimeStore store,
+                                                                    com.manao.poc4.kubernetes.PublicEndpointGateway endpoints,
+                                                                    ProjectService projects,
+                                                                    ProjectProvisioningService provisioning,
+                                                                    ProjectLifecycleGate lifecycle) {
+        return new CreationEndpointRecoveryService(store, endpoints, projects,
+            provisioning::provision, lifecycle);
     }
 
     @Bean

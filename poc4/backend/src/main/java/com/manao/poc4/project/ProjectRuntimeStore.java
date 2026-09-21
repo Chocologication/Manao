@@ -9,6 +9,15 @@ public interface ProjectRuntimeStore {
 
     void setEndpointState(String projectId, String state);
 
+    /**
+     * Creations whose public endpoint application never reached a verdict: rows still CREATING
+     * with endpoint_state UNKNOWN (a lost response, a transport failure or a failed rollback).
+     */
+    List<PendingEndpoint> projectsWithUnknownEndpoint();
+
+    /** One CREATING row awaiting endpoint verification; the spec carries the exact requested ports. */
+    record PendingEndpoint(String projectId, String ownerId, ProjectRuntimeSpec spec) {}
+
     /** Only WORKSPACE and MYSQL purposes exist; same-purpose writes update the binding. */
     void rememberStorage(String projectId, StorageBinding binding);
 

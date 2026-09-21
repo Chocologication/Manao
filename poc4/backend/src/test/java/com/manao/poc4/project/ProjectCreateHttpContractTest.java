@@ -185,6 +185,53 @@ class ProjectCreateHttpContractTest {
     }
 
     @Test
+    void aFailedRollbackStaysObservableAndIsHandedToTheRecoveryScan() throws Exception {
+        ch.qos.logback.classic.Logger logger = (ch.qos.logback.classic.Logger)
+            org.slf4j.LoggerFactory.getLogger(ProjectController.class);
+        // The level must be set explicitly: an earlier context test can leave root at OFF, which
+        // would silently swallow the event (same pattern as WorkspaceOperationDiagnosticsTest).
+        ch.qos.logback.classic.Level previousLevel = logger.getLevel();
+        logger.setLevel(ch.qos.logback.classic.Level.WARN);
+        var logs = new ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent>();
+        logs.start();
+        logger.addAppender(logs);
+        try {
+            // The rollback itself is lost (the delete fails like a broken store): the user must
+            // still get the conflict answer, and the surviving row must not hold quota silently.
+            ProjectService failingRollback = new ProjectService(new FailingRollbackStore(jdbc));
+            endpoints.result = PublicEndpointGateway.ApplyResult.CONFLICT;
+            MockMvc mvc = MockMvcBuilders.standaloneSetup(
+                    new ProjectController(failingRollback, null, null, endpoints,
+                        new JdbcProjectRuntimeStore(jdbc), RESERVED))
+                .setControllerAdvice(new GlobalExceptionHandler())
+                .build();
+
+            mvc.perform(post("/api/v1/projects").principal(owner())
+                    .contentType("application/json")
+                    .content(request("key-1", 30081)))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("PUBLIC_PORT_IN_USE"))
+                .andExpect(jsonPath("$.message").value("Public port is already in use. Choose another port."));
+
+            String projectId = jdbc.queryForObject(
+                "SELECT id FROM project WHERE creation_key = ?", String.class, "key-1");
+            assertThat(projectCount()).isEqualTo(1);
+            // Endpoint-unknown puts the surviving row on the startup recovery scan's radar.
+            assertThat(jdbc.queryForObject(
+                "SELECT endpoint_state FROM project WHERE creation_key = ?", String.class, "key-1"))
+                .isEqualTo("UNKNOWN");
+            // The log names the stuck attempt so the dead-end is diagnosable before a restart.
+            assertThat(logs.list).hasSize(1);
+            assertThat(logs.list.get(0).getFormattedMessage())
+                .contains("projectId=" + projectId, "creationKey=key-1");
+        } finally {
+            logger.detachAppender(logs);
+            logs.stop();
+            logger.setLevel(previousLevel);
+        }
+    }
+
+    @Test
     void invalidInternalPortValuesNeverReachTheStore() throws Exception {
         mvc().perform(post("/api/v1/projects").principal(owner())
                 .contentType("application/json")
@@ -248,5 +295,63 @@ class ProjectCreateHttpContractTest {
         @Override public void routeToRun(String projectId, String runId, String podUid) { }
 
         @Override public void withdraw(String projectId) { }
+    }
+
+    /**
+     * JdbcStore mirror for the rollback scenario: creation works exactly like the real keyed
+     * insert, but the row removal fails like a broken store would.
+     */
+    private static final class FailingRollbackStore implements ProjectService.RuntimeStore {
+        private final JdbcTemplate jdbc;
+
+        FailingRollbackStore(JdbcTemplate jdbc) { this.jdbc = jdbc; }
+
+        @Override public List<ProjectService.Project> listForOwner(String ownerId) { return List.of(); }
+
+        @Override public boolean create(String id, String ownerId, String name) {
+            return create(id, ownerId, name, null, ProjectRuntimeSpec.console());
+        }
+
+        @Override public boolean create(String id, String ownerId, String name, String creationKey,
+                                        ProjectRuntimeSpec runtime) {
+            return jdbc.update("INSERT INTO project(id, owner_id, name, state, workspace_revision, "
+                    + "failure_reason, runtime_spec_json, creation_key, creation_digest, endpoint_state, "
+                    + "created_at, updated_at) VALUES (?, ?, ?, 'CREATING', 0, NULL, ?, ?, ?, 'NONE', ?, ?)",
+                id, ownerId, name, runtime.toJson(), creationKey, runtime.creationDigest(),
+                Timestamp.from(Instant.now()), Timestamp.from(Instant.now())) == 1;
+        }
+
+        @Override public boolean matchesDigest(String ownerId, String creationKey, String digest) {
+            List<String> digests = jdbc.query(
+                "SELECT creation_digest FROM project WHERE owner_id = ? AND creation_key = ?",
+                (rs, row) -> rs.getString(1), ownerId, creationKey);
+            return digests.isEmpty() || digest.equals(digests.get(0));
+        }
+
+        @Override public java.util.Optional<ProjectService.Project> findCreation(String ownerId, String creationKey) {
+            List<ProjectService.Project> found = jdbc.query(
+                "SELECT id, owner_id, name, state, created_at, failure_reason FROM project "
+                    + "WHERE owner_id = ? AND creation_key = ?",
+                (rs, row) -> new ProjectService.Project(rs.getString("id"), rs.getString("owner_id"),
+                    rs.getString("name"), rs.getString("state"), rs.getTimestamp("created_at").toInstant(),
+                    rs.getString("failure_reason")),
+                ownerId, creationKey);
+            return found.isEmpty() ? java.util.Optional.empty() : java.util.Optional.of(found.get(0));
+        }
+
+        @Override public boolean deleteProjectRow(String ownerId, String projectId) {
+            throw new IllegalStateException("rollback lost");
+        }
+
+        @Override public ProjectService.Project findForOwner(String ownerId, String projectId) {
+            List<ProjectService.Project> found = jdbc.query(
+                "SELECT id, owner_id, name, state, created_at, failure_reason FROM project "
+                    + "WHERE id = ? AND owner_id = ?",
+                (rs, row) -> new ProjectService.Project(rs.getString("id"), rs.getString("owner_id"),
+                    rs.getString("name"), rs.getString("state"), rs.getTimestamp("created_at").toInstant(),
+                    rs.getString("failure_reason")),
+                projectId, ownerId);
+            return found.isEmpty() ? null : found.get(0);
+        }
     }
 }
