@@ -28,8 +28,24 @@ public final class ProjectService {
     public java.util.Optional<Project> get(String ownerId, String projectId) {
         return java.util.Optional.ofNullable(store.findForOwner(ownerId, projectId));
     }
+
+    /** Legacy name-only creation maps to the console template without dependencies or ports. */
     public java.util.Optional<Project> create(String ownerId, String name) {
+        return create(ownerId, name, null, ProjectRuntimeSpec.console());
+    }
+
+    /**
+     * Creation key, digest and runtime config are written inside the existing project INSERT
+     * transaction; the configuration is never saved as a second, separate step.
+     */
+    public java.util.Optional<Project> create(String ownerId, String name, String creationKey,
+                                              ProjectRuntimeSpec runtime) {
         String id = UUID.randomUUID().toString();
+        if (store instanceof RuntimeStore runtimeStore) {
+            return runtimeStore.create(id, ownerId, name, creationKey, runtime)
+                ? java.util.Optional.ofNullable(store.findForOwner(ownerId, id))
+                : java.util.Optional.empty();
+        }
         return store.create(id, ownerId, name)
             ? java.util.Optional.ofNullable(store.findForOwner(ownerId, id))
             : java.util.Optional.empty();
@@ -41,10 +57,15 @@ public final class ProjectService {
         Project findForOwner(String ownerId, String projectId);
     }
 
+    /** Store with runtime-aware creation; used by the JDBC implementation. */
+    public interface RuntimeStore extends Store {
+        boolean create(String id, String ownerId, String name, String creationKey, ProjectRuntimeSpec runtime);
+    }
+
     public record Project(String id, String ownerId, String name, String state,
                           Instant createdAt, String failureReason) {}
 
-    private static final class JdbcStore implements Store {
+    private static final class JdbcStore implements RuntimeStore {
         private final JdbcTemplate jdbc;
         private final TransactionTemplate transaction;
         JdbcStore(JdbcTemplate jdbc, PlatformTransactionManager transactions) {
@@ -58,14 +79,28 @@ public final class ProjectService {
         }
 
         @Override public boolean create(String id, String ownerId, String name) {
+            return create(id, ownerId, name, null, ProjectRuntimeSpec.console());
+        }
+
+        @Override public boolean create(String id, String ownerId, String name, String creationKey, ProjectRuntimeSpec runtime) {
             Boolean created = transaction.execute(status -> {
                 List<String> owners = jdbc.query("SELECT id FROM app_user WHERE id = ? FOR UPDATE", (rs, row) -> rs.getString(1), ownerId);
                 if (owners.isEmpty()) return false;
                 Integer count = jdbc.queryForObject("SELECT COUNT(*) FROM project WHERE owner_id = ?", Integer.class, ownerId);
                 if (count != null && count >= ProjectLimits.MAX_PROJECTS_PER_OWNER) return false;
                 Instant now = Instant.now();
-                return jdbc.update("INSERT INTO project(id, owner_id, name, state, workspace_revision, failure_reason, created_at, updated_at) VALUES (?, ?, ?, 'CREATING', 0, NULL, ?, ?)",
-                    id, ownerId, name, Timestamp.from(now), Timestamp.from(now)) == 1;
+                if (creationKey == null) {
+                    return jdbc.update("INSERT INTO project(id, owner_id, name, state, workspace_revision, failure_reason, created_at, updated_at) VALUES (?, ?, ?, 'CREATING', 0, NULL, ?, ?)",
+                        id, ownerId, name, Timestamp.from(now), Timestamp.from(now)) == 1;
+                }
+                // A duplicate (owner_id, creation_key) violates uq_project_creation and fails atomically.
+                try {
+                    return jdbc.update("INSERT INTO project(id, owner_id, name, state, workspace_revision, failure_reason, runtime_spec_json, creation_key, creation_digest, endpoint_state, created_at, updated_at) VALUES (?, ?, ?, 'CREATING', 0, NULL, ?, ?, ?, 'NONE', ?, ?)",
+                        id, ownerId, name, runtime.toJson(), creationKey, runtime.creationDigest(),
+                        Timestamp.from(now), Timestamp.from(now)) == 1;
+                } catch (org.springframework.dao.DuplicateKeyException ex) {
+                    return false;
+                }
             });
             return Boolean.TRUE.equals(created);
         }

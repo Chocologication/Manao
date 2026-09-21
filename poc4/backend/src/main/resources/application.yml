@@ -59,3 +59,9 @@ manao:
         initializer-image: ${MANAO_WORKSPACE_INITIALIZER_IMAGE:busybox@sha256:0000000000000000000000000000000000000000000000000000000000000000}
       logging:
         redact-secrets: true
+      runtime-deps:
+        # Must match the deployment's reserved NodePorts; 30080 is the platform ingress.
+        reserved-public-ports: ${MANAO_RESERVED_PUBLIC_PORTS:30080}
+        # Only mandatory when a project selects MySQL; pinned by the deploy environment.
+        mysql-image-digest: ${MANAO_MYSQL_IMAGE_DIGEST:}
+        mysql-storage-class-name: ${MANAO_MYSQL_STORAGE_CLASS:}
