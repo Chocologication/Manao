@@ -133,7 +133,11 @@ public final class RunObservationService {
             if (!job.podName().equals(run.podRef())) {
                 store.updatePodRef(run.id(), job.podName());
             }
-            logIngestor.ensureWatch(run.id(), job.podName(), job.podUid());
+            // A container that already terminated has EOFed its watch: with pod-phase lag this
+            // scan still sees "running", but reconnecting/marking a gap would be spurious.
+            if (!job.applicationTerminated()) {
+                logIngestor.ensureWatch(run.id(), job.podName(), job.podUid());
+            }
         }
         RunRecord settled = run;
         RunStateReducer.settleOutcome(isServiceRun(settled), stopRequested(settled), settled.firstReadyAt() != null,

@@ -31,6 +31,12 @@ public final class RunLogIngestor {
         long nextSeq;
         /** Already-persisted chunks; re-attach skips chunk-by-chunk, never line-by-line. */
         long skipChunks;
+        /**
+         * Chunks that came from the pod source itself (gap markers excluded). The reconnect
+         * replay skips exactly this many chunks: the re-attached stream never contains markers,
+         * so counting them here would silently drop one application line per loss event.
+         */
+        long sourceChunks;
         /** The claimed Pod UID this source is bound to; identity, not just a name. */
         String podUid;
         String podName;
@@ -63,7 +69,7 @@ public final class RunLogIngestor {
         if (podName == null || podName.isBlank() || podUid == null || podUid.isBlank()) {
             return;
         }
-        watches.put(runId, attach(runId, podName, podUid));
+        watches.put(runId, attach(runId, podName, podUid, logs.windowFor(runId).lastSeq()));
     }
 
     /** Marks the unrecoverable gap once, then re-attaches the same claimed source. */
@@ -73,11 +79,14 @@ public final class RunLogIngestor {
                 + ": lines emitted while the source was unavailable are missing from this history.";
             if (logs.publish(runId, existing.nextSeq, marker + "\n")) {
                 existing.nextSeq++;
+                // Only a persisted marker counts as marked; a refused one is retried next scan.
+                existing.gapMarked = true;
             }
-            existing.gapMarked = true;
         }
         try {
-            Handle reattached = attach(runId, existing.podName, existing.podUid);
+            // The replay skips exactly the pod-source chunks: the re-attached stream does not
+            // contain the marker, so the marker seq must not enter the skip count.
+            Handle reattached = attach(runId, existing.podName, existing.podUid, existing.sourceChunks);
             watches.put(runId, reattached);
         } catch (RuntimeException ex) {
             // Retry on the next scan; the gap marker is not repeated for the same loss event.
@@ -85,12 +94,14 @@ public final class RunLogIngestor {
         }
     }
 
-    /** Builds a fresh handle bound to the claimed pod; tails from the start and skips persisted chunks. */
-    private Handle attach(String runId, String podName, String podUid) {
+    /** Builds a fresh handle bound to the claimed pod; tails from the start and skips the given
+     * number of already-persisted pod-source chunks. */
+    private Handle attach(String runId, String podName, String podUid, long sourceChunksToSkip) {
         long lastSeq = logs.windowFor(runId).lastSeq();
         Handle handle = new Handle();
         handle.nextSeq = lastSeq + 1;
-        handle.skipChunks = lastSeq;
+        handle.skipChunks = sourceChunksToSkip;
+        handle.sourceChunks = sourceChunksToSkip;
         handle.podUid = podUid;
         handle.podName = podName;
         handle.watch = gateway.watchLogs(this.namespace, podName, ResourceIdentityVerifier.APPLICATION_CONTAINER,
@@ -134,6 +145,7 @@ public final class RunLogIngestor {
                 return; // storage refused; do not advance the seq cursor
             }
             seq++;
+            handle.sourceChunks++;
         }
         handle.nextSeq = seq;
     }

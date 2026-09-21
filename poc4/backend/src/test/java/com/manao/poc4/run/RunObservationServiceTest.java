@@ -451,23 +451,59 @@ class RunObservationServiceTest {
         assertThat(completed).isEmpty();
     }
 
+    @Test
+    void aContainerTerminationWithPodPhaseLagNeverMarksASpuriousLogGap() {
+        String runId = seedServiceRun("run-web-lag", RunState.RUNNING);
+        coordinator.factsByRun.put(runId, facts(true, false, false, false, null, "pod-web", "uid-web", false, false));
+        service.observe();
+        assertThat(gateway.watchedPods).containsExactly("pod-web");
+
+        // The container exits: the watch EOFs, but the pod phase still reports Running in this
+        // same scan (phase lag). This must not mark a "log source lost" gap nor reconnect.
+        gateway.latest().alive = false;
+        coordinator.factsByRun.put(runId, facts(true, false, false, false, null, "pod-web", "uid-web", false, true));
+        service.observe();
+
+        assertThat(gateway.watchedPods).containsExactly("pod-web");
+        assertThat(store.runs.get(runId).state).isEqualTo(RunState.FAILED.name());
+        assertThat(store.runs.get(runId).terminationReason).isEqualTo("APPLICATION_EXITED");
+        assertThat(completed).containsExactly(runId);
+    }
+
     static final class RecordingGateway implements PodLogGateway {
         final List<String> watchedPods = new ArrayList<>();
         final List<String> containers = new ArrayList<>();
         final List<String> namespaces = new ArrayList<>();
         final List<String> closedPods = new ArrayList<>();
+        private final List<MutableHandle> handles = new ArrayList<>();
+
+        /** The most recently created watch, so tests can kill the current source. */
+        MutableHandle latest() { return handles.get(handles.size() - 1); }
 
         @Override public LogWatchHandle watchLogs(String namespace, String podName, String container,
                                                   java.util.function.Consumer<String> lineConsumer) {
             watchedPods.add(podName);
             containers.add(container);
             namespaces.add(namespace);
-            return new LogWatchHandle() {
-                @Override public void close() { closedPods.add(podName); }
-
-                @Override public boolean isAlive() { return true; }
-            };
+            MutableHandle handle = new MutableHandle(podName, closedPods);
+            handles.add(handle);
+            return handle;
         }
+    }
+
+    static final class MutableHandle implements PodLogGateway.LogWatchHandle {
+        final String podName;
+        final List<String> closedLog;
+        boolean alive = true;
+
+        MutableHandle(String podName, List<String> closedLog) {
+            this.podName = podName;
+            this.closedLog = closedLog;
+        }
+
+        @Override public void close() { closedLog.add(podName); }
+
+        @Override public boolean isAlive() { return alive; }
     }
 
     static final class EmptyChunkStore implements RunLogService.ChunkStore {

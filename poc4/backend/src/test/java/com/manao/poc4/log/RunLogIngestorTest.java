@@ -57,7 +57,7 @@ class RunLogIngestorTest {
 
         ingestor.ensureWatch("r1", "pod-1", "uid-1");
         String line = "中".repeat(30000); // 90,000 UTF-8 bytes
-        gateway.consumer.accept(line);
+        gateway.emit(line);
 
         assertThat(chunks.inserted).hasSize(2);
         assertThat(chunks.inserted.get(0).seq()).isEqualTo(1);
@@ -78,8 +78,8 @@ class RunLogIngestorTest {
         ingestor.ensureWatch("r1", "pod-1", "uid-1");
         String first = "a".repeat(70000);        // 2 chunks (seqs 1-2)
         String second = "c".repeat(70000);       // 2 chunks (seqs 3-4): the first is already persisted
-        gateway.consumer.accept(first);
-        gateway.consumer.accept(second);
+        gateway.emit(first);
+        gateway.emit(second);
 
         String secondFirstPiece = Utf8ChunkSplitter.split(second, RunLogWindow.MAX_CHUNK_BYTES).get(0);
         assertThat(chunks.inserted).hasSize(1);
@@ -94,7 +94,7 @@ class RunLogIngestorTest {
         RunLogIngestor ingestor = new RunLogIngestor(gateway, new RunLogService(chunks), "manao");
 
         ingestor.ensureWatch("r1", "pod-1", "uid-1");
-        gateway.consumer.accept("before the loss");
+        gateway.emit("before the loss");
         gateway.latest().alive = false; // the pump died: lines emitted now are never delivered
         ingestor.ensureWatch("r1", "pod-1", "uid-1"); // the next observation scan
 
@@ -107,6 +107,60 @@ class RunLogIngestorTest {
         assertThat(gateway.watchedPods).containsExactly("pod-1", "pod-1");
         ingestor.ensureWatch("r1", "pod-replacement", "uid-replacement");
         assertThat(gateway.watchedPods).hasSize(2);
+    }
+
+    @Test
+    void aReconnectReplaysAndPersistsTheLinesEmittedDuringTheGap() {
+        RecordingGateway gateway = new RecordingGateway();
+        RecordingChunkStore chunks = new RecordingChunkStore(0);
+        RunLogIngestor ingestor = new RunLogIngestor(gateway, new RunLogService(chunks), "manao");
+
+        ingestor.ensureWatch("r1", "pod-1", "uid-1");
+        gateway.emit("before the loss");
+        gateway.latest().alive = false;              // the pump died
+        gateway.emit("lost during the gap");         // the pod emitted these; nothing was delivered
+        gateway.emit("also lost");
+        ingestor.ensureWatch("r1", "pod-1", "uid-1"); // marker + re-attach + tail-from-start replay
+
+        // The marker sits between the persisted past and the recovered gap lines; the replayed
+        // prefix is skipped exactly once and no gap line is silently dropped.
+        assertThat(chunks.inserted).extracting(RecordingChunk::seq).containsExactly(1L, 2L, 3L, 4L);
+        assertThat(chunks.inserted.get(0).text()).isEqualTo("before the loss\n");
+        assertThat(chunks.inserted.get(1).text()).contains("manao").contains("lost");
+        assertThat(chunks.inserted.get(2).text()).isEqualTo("lost during the gap\n");
+        assertThat(chunks.inserted.get(3).text()).isEqualTo("also lost\n");
+    }
+
+    @Test
+    void aRefusedGapMarkerIsRetriedOnALaterLossInsteadOfBeingSkippedForever() {
+        RecordingGateway gateway = new RecordingGateway();
+        RecordingChunkStore chunks = new RecordingChunkStore(0);
+        java.util.concurrent.atomic.AtomicBoolean refuseMarkers = new java.util.concurrent.atomic.AtomicBoolean(true);
+        RunLogService refusingMarkers = new RunLogService(chunks) {
+            @Override public boolean publish(String runId, long seq, String text) {
+                if (refuseMarkers.get() && text.contains(RunLogIngestor.GAP_MARKER_PREFIX)) {
+                    return false; // storage refuses the marker (e.g. a seq race)
+                }
+                return super.publish(runId, seq, text);
+            }
+        };
+        RunLogIngestor ingestor = new RunLogIngestor(gateway, refusingMarkers, "manao");
+
+        ingestor.ensureWatch("r1", "pod-1", "uid-1");
+        gateway.latest().alive = false;
+        ingestor.ensureWatch("r1", "pod-1", "uid-1"); // marker refused; the re-attach still proceeds
+        gateway.latest().alive = false;
+        ingestor.ensureWatch("r1", "pod-1", "uid-1"); // still refused, still retried next time
+        assertThat(gateway.watchedPods).containsExactly("pod-1", "pod-1", "pod-1");
+        assertThat(chunks.inserted).isEmpty();
+
+        refuseMarkers.set(false);
+        gateway.latest().alive = false;
+        ingestor.ensureWatch("r1", "pod-1", "uid-1"); // the loss is finally marked
+
+        long markers = chunks.inserted.stream()
+            .filter(chunk -> chunk.text().contains(RunLogIngestor.GAP_MARKER_PREFIX)).count();
+        assertThat(markers).isEqualTo(1);
     }
 
     @Test
@@ -155,11 +209,21 @@ class RunLogIngestorTest {
         final List<String> namespaces = new ArrayList<>();
         final List<String> closed = new ArrayList<>();
         final List<MutableHandle> handles = new ArrayList<>();
+        private final List<String> podLog = new ArrayList<>();
+        private MutableHandle current;
         java.util.function.Consumer<String> consumer;
         boolean failNextAttach;
 
         /** The most recently created watch, so tests can kill the current source. */
         MutableHandle latest() { return handles.get(handles.size() - 1); }
+
+        /** The pod emits a line: it always lands in the pod log and reaches only a live watch. */
+        void emit(String line) {
+            podLog.add(line);
+            if (current != null && current.alive) {
+                consumer.accept(line);
+            }
+        }
 
         @Override public LogWatchHandle watchLogs(String namespace, String podName, String container,
                                                   java.util.function.Consumer<String> lineConsumer) {
@@ -173,6 +237,11 @@ class RunLogIngestorTest {
             this.consumer = lineConsumer;
             MutableHandle handle = new MutableHandle(podName, closed);
             handles.add(handle);
+            current = handle;
+            // Tail-from-start semantics: a fresh watch replays the pod log from the beginning.
+            for (String line : podLog) {
+                lineConsumer.accept(line);
+            }
             return handle;
         }
     }
