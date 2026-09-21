@@ -1,5 +1,6 @@
 package com.manao.poc4.project;
 
+import com.manao.poc4.api.ApiException;
 import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.List;
@@ -36,10 +37,23 @@ public final class ProjectService {
 
     /**
      * Creation key, digest and runtime config are written inside the existing project INSERT
-     * transaction; the configuration is never saved as a second, separate step.
+     * transaction; the configuration is never saved as a second, separate step. The same key
+     * with the same digest replays the same project (a lost response is retried); the same key
+     * with a different digest is a {@code CREATE_REQUEST_MISMATCH}.
      */
     public java.util.Optional<Project> create(String ownerId, String name, String creationKey,
                                               ProjectRuntimeSpec runtime) {
+        if (creationKey != null) {
+            Project replayed = findCreation(ownerId, creationKey).orElse(null);
+            if (replayed != null) {
+                if (store instanceof RuntimeStore runtimeStore
+                    && !runtimeStore.matchesDigest(ownerId, creationKey, runtime.creationDigest())) {
+                    throw new ApiException("CREATE_REQUEST_MISMATCH", 409,
+                        "Creation request does not match the original request");
+                }
+                return java.util.Optional.of(replayed);
+            }
+        }
         String id = UUID.randomUUID().toString();
         if (store instanceof RuntimeStore runtimeStore) {
             return runtimeStore.create(id, ownerId, name, creationKey, runtime)
@@ -51,6 +65,26 @@ public final class ProjectService {
             : java.util.Optional.empty();
     }
 
+    /** Owner-scoped lookup of a keyed creation attempt; other owners' keys are invisible. */
+    public java.util.Optional<Project> findCreation(String ownerId, String creationKey) {
+        if (store instanceof RuntimeStore runtimeStore) {
+            return runtimeStore.findCreation(ownerId, creationKey);
+        }
+        return java.util.Optional.empty();
+    }
+
+    /**
+     * Cancels a rejected creation attempt by removing its temporary row. Only succeeds for the
+     * owning user and only for the caller-verified project identity; returns false when the
+     * row is already gone or not owned by this user.
+     */
+    public boolean deleteProjectRow(String ownerId, String projectId) {
+        if (store instanceof RuntimeStore runtimeStore) {
+            return runtimeStore.deleteProjectRow(ownerId, projectId);
+        }
+        return false;
+    }
+
     public interface Store {
         List<Project> listForOwner(String ownerId);
         boolean create(String id, String ownerId, String name);
@@ -60,6 +94,13 @@ public final class ProjectService {
     /** Store with runtime-aware creation; used by the JDBC implementation. */
     public interface RuntimeStore extends Store {
         boolean create(String id, String ownerId, String name, String creationKey, ProjectRuntimeSpec runtime);
+
+        boolean matchesDigest(String ownerId, String creationKey, String digest);
+
+        java.util.Optional<Project> findCreation(String ownerId, String creationKey);
+
+        /** Removes one owner-scoped temporary creation row; false when absent or foreign. */
+        boolean deleteProjectRow(String ownerId, String projectId);
     }
 
     public record Project(String id, String ownerId, String name, String state,
@@ -103,6 +144,26 @@ public final class ProjectService {
                 }
             });
             return Boolean.TRUE.equals(created);
+        }
+
+        @Override public boolean matchesDigest(String ownerId, String creationKey, String digest) {
+            List<String> digests = jdbc.query(
+                "SELECT creation_digest FROM project WHERE owner_id = ? AND creation_key = ?",
+                (rs, row) -> rs.getString(1), ownerId, creationKey);
+            return digests.isEmpty() || digest.equals(digests.get(0));
+        }
+
+        @Override public java.util.Optional<Project> findCreation(String ownerId, String creationKey) {
+            List<Project> projects = jdbc.query(
+                "SELECT id, owner_id, name, state, created_at, failure_reason FROM project WHERE owner_id = ? AND creation_key = ?",
+                (rs, row) -> map(rs.getString("id"), rs.getString("owner_id"), rs.getString("name"), rs.getString("state"), rs.getTimestamp("created_at"), rs.getString("failure_reason")),
+                ownerId, creationKey);
+            return projects.isEmpty() ? java.util.Optional.empty() : java.util.Optional.of(projects.get(0));
+        }
+
+        @Override public boolean deleteProjectRow(String ownerId, String projectId) {
+            return jdbc.update("DELETE FROM project WHERE id = ? AND owner_id = ?",
+                projectId, ownerId) == 1;
         }
 
         @Override public Project findForOwner(String ownerId, String projectId) {

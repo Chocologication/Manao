@@ -2,11 +2,13 @@ package com.manao.poc4.project;
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.manao.poc4.api.ApiException;
+import com.manao.poc4.config.BackendProperties;
+import com.manao.poc4.kubernetes.PublicEndpointGateway;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
 import java.util.List;
-import java.util.Map;
+import java.util.Set;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.http.HttpStatus;
@@ -24,22 +26,41 @@ import org.springframework.web.bind.annotation.RestController;
 @org.springframework.context.annotation.Conditional(com.manao.poc4.config.SecurityConfig.BackendAuthCondition.class)
 @RequestMapping("/api/v1/projects")
 public final class ProjectController {
+    private static final String ENDPOINT_ASSIGNED = "ASSIGNED";
+    private static final String ENDPOINT_UNKNOWN = "UNKNOWN";
+
     private final ProjectService projects;
     private final ProjectProvisioningService provisioning;
     private final ProjectCleanupService cleanup;
+    private final PublicEndpointGateway endpoints;
+    private final ProjectRuntimeStore runtimeStore;
+    private final Set<Integer> reservedPublicPorts;
 
-    public ProjectController(ProjectService projects) { this(projects, null, null); }
+    public ProjectController(ProjectService projects) { this(projects, null, null, null, null, java.util.Set.of()); }
 
     public ProjectController(ProjectService projects, ProjectProvisioningService provisioning) {
-        this(projects, provisioning, null);
+        this(projects, provisioning, null, null, null, java.util.Set.of());
     }
 
     @Autowired
     public ProjectController(ProjectService projects, ProjectProvisioningService provisioning,
-                             ProjectCleanupService cleanup) {
+                             ProjectCleanupService cleanup, PublicEndpointGateway endpoints,
+                             ProjectRuntimeStore runtimeStore, BackendProperties properties) {
+        this(projects, provisioning, cleanup, endpoints, runtimeStore,
+            properties == null
+                ? java.util.Set.of()
+                : java.util.Set.copyOf(properties.runtimeDeps().reservedPublicPorts()));
+    }
+
+    public ProjectController(ProjectService projects, ProjectProvisioningService provisioning,
+                             ProjectCleanupService cleanup, PublicEndpointGateway endpoints,
+                             ProjectRuntimeStore runtimeStore, Set<Integer> reservedPublicPorts) {
         this.projects = projects;
         this.provisioning = provisioning;
         this.cleanup = cleanup;
+        this.endpoints = endpoints;
+        this.runtimeStore = runtimeStore;
+        this.reservedPublicPorts = Set.copyOf(reservedPublicPorts);
     }
 
     @GetMapping
@@ -47,17 +68,85 @@ public final class ProjectController {
         return new ProjectListResponse(projects.list(authentication.getName()).stream().map(ProjectController::view).toList(), ProjectLimits.MAX_PROJECTS_PER_OWNER);
     }
 
+    /**
+     * Fixed creation order: validate the exact ports against the reserved set -> atomically
+     * persist key/digest/CREATING -> apply the port group -> only a confirmed application
+     * continues into workspace provisioning. A deterministic conflict cancels the temporary
+     * row (quota is free again); an unknown outcome keeps the record queryable. A retry with
+     * the same key and digest reuses the stable application; it never creates a second project.
+     */
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
     public ProjectView create(Authentication authentication, @Valid @RequestBody CreateProjectRequest request) {
-        return projects.create(authentication.getName(), request.name())
-            .map(project -> {
-                if (provisioning != null) {
-                    provisioning.provisionAsync(project.id());
-                }
+        String ownerId = authentication.getName();
+        ProjectRuntimeSpec runtime = request.runtime();
+        runtime.validate(reservedPublicPorts);
+        String creationKey = request.creationKey();
+        if (request.configured() && creationKey == null) {
+            // A configured form without a creation key would silently drop the config; refuse it.
+            throw new ApiException("VALIDATION_ERROR", 422, "Request validation failed");
+        }
+        java.util.Optional<ProjectService.Project> created =
+            projects.create(ownerId, request.name(), creationKey, runtime);
+        if (created.isEmpty() && creationKey != null) {
+            // Either the quota or a concurrent duplicate: re-entry resolves the replay (with
+            // the digest check) instead of misreporting a lost response as a limit.
+            created = projects.create(ownerId, request.name(), creationKey, runtime);
+        }
+        ProjectService.Project project = created.orElse(null);
+        if (project == null) {
+            throw new ApiException("PROJECT_LIMIT_REACHED", 409, "Project limit reached");
+        }
+        if (endpoints != null && !runtime.publicPorts().isEmpty()) {
+            PublicEndpointGateway.ApplyResult result;
+            try {
+                result = endpoints.ensure(project.id(), runtime.publicPorts());
+            } catch (RuntimeException ex) {
+                // Transport-level unknown: keep the CREATING identity queryable, never blind-retry.
+                markEndpointState(project.id(), ENDPOINT_UNKNOWN);
                 return view(project);
-            })
-            .orElseThrow(() -> new ApiException("PROJECT_LIMIT_REACHED", 409, "Project limit reached"));
+            }
+            if (result == PublicEndpointGateway.ApplyResult.CONFLICT) {
+                cancelCreation(ownerId, project.id());
+                throw new ApiException("PUBLIC_PORT_IN_USE", 409,
+                    "Public port is already in use. Choose another port.");
+            }
+            if (result == PublicEndpointGateway.ApplyResult.UNKNOWN) {
+                markEndpointState(project.id(), ENDPOINT_UNKNOWN);
+                return view(project);
+            }
+            markEndpointState(project.id(), ENDPOINT_ASSIGNED);
+        }
+        if (provisioning != null) {
+            provisioning.provisionAsync(project.id());
+        }
+        return view(project);
+    }
+
+    /** Owner-scoped creation lookup: same key always returns the same project identity. */
+    @GetMapping("/creation/{creationKey}")
+    public ProjectView findCreation(Authentication authentication, @PathVariable String creationKey) {
+        return projects.findCreation(authentication.getName(), creationKey)
+            .map(ProjectController::view)
+            .orElseThrow(() -> new ApiException("ENTRY_NOT_FOUND", 404, "Project not found"));
+    }
+
+    private void markEndpointState(String projectId, String state) {
+        if (runtimeStore != null) {
+            runtimeStore.setEndpointState(projectId, state);
+        }
+    }
+
+    /**
+     * A deterministic conflict with no Service left behind cancels this attempt's temporary
+     * row so the project quota is not consumed by a rejected form submission.
+     */
+    private void cancelCreation(String ownerId, String projectId) {
+        try {
+            projects.deleteProjectRow(ownerId, projectId);
+        } catch (RuntimeException ex) {
+            // Cancellation is best-effort; the row stays queryable and recovery reconciles it.
+        }
     }
 
     @DeleteMapping("/{projectId}")
@@ -97,5 +186,24 @@ public final class ProjectController {
     public record ProjectListResponse(List<ProjectView> items, int limit) {}
 
     @JsonIgnoreProperties(ignoreUnknown = false)
-    public record CreateProjectRequest(@NotBlank @Size(max = 160) String name) {}
+    public record CreateProjectRequest(@NotBlank @Size(max = 160) String name,
+                                       String creationKey, String templateId, Boolean mysql,
+                                       Boolean redis, List<ProjectRuntimeSpec.Port> publicPorts) {
+        /** True when the request carries any template configuration beyond the legacy name. */
+        public boolean configured() {
+            return templateId != null || mysql != null || redis != null
+                || (publicPorts != null && !publicPorts.isEmpty());
+        }
+
+        /** Name-only legacy requests map to the console template; configured forms are structured. */
+        public ProjectRuntimeSpec runtime() {
+            if (!configured()) {
+                return ProjectRuntimeSpec.console();
+            }
+            return new ProjectRuntimeSpec(
+                templateId == null ? ProjectRuntimeSpec.TEMPLATE_JAVA_CONSOLE : templateId,
+                Boolean.TRUE.equals(mysql), Boolean.TRUE.equals(redis),
+                publicPorts == null ? List.of() : publicPorts);
+        }
+    }
 }

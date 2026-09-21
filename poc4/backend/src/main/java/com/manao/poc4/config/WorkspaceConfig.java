@@ -4,11 +4,13 @@ import com.manao.poc4.kubernetes.Fabric8KubernetesGateway;
 import com.manao.poc4.kubernetes.KubernetesGateway;
 import com.manao.poc4.kubernetes.WorkspaceApiClient;
 import com.manao.poc4.kubernetes.WorkspacePortForwardManager;
+import com.manao.poc4.project.JdbcProjectRuntimeStore;
 import com.manao.poc4.project.ProjectCleanupService;
 import com.manao.poc4.project.ProjectDeletionRepository;
 import com.manao.poc4.project.ProjectLifecycleGate;
 import com.manao.poc4.project.ProjectProvisioningService;
 import com.manao.poc4.project.ProjectRuntimeCleaner;
+import com.manao.poc4.project.ProjectRuntimeStore;
 import com.manao.poc4.recovery.ProjectRecoveryService;
 import com.manao.poc4.workspace.Ed25519Keys;
 import com.manao.poc4.log.RunLogService;
@@ -101,6 +103,18 @@ public class WorkspaceConfig {
     @Bean
     KubernetesGateway kubernetesGateway(KubernetesClient client, BackendProperties properties) {
         return new Fabric8KubernetesGateway(client, properties.kubernetes().namespace());
+    }
+
+    @Bean
+    com.manao.poc4.kubernetes.PublicEndpointGateway publicEndpointGateway(KubernetesClient client,
+                                                                          BackendProperties properties) {
+        return new com.manao.poc4.kubernetes.Fabric8PublicEndpointGateway(client,
+            properties.kubernetes().namespace());
+    }
+
+    @Bean
+    ProjectRuntimeStore projectRuntimeStore(org.springframework.jdbc.core.JdbcTemplate jdbc) {
+        return new JdbcProjectRuntimeStore(jdbc);
     }
 
     @Bean

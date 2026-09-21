@@ -88,8 +88,11 @@ class ProjectRuntimeStoreTest {
             insertOwner(jdbc, ownerId);
             var service = new ProjectService(jdbc, new DataSourceTransactionManager(jdbc.getDataSource()));
             String creationKey = UUID.randomUUID().toString();
-            assertThat(service.create(ownerId, "first", creationKey, webSpec())).isPresent();
-            assertThat(service.create(ownerId, "second", creationKey, webSpec())).isEmpty();
+            var first = service.create(ownerId, "first", creationKey, webSpec()).orElseThrow();
+            // The same key with the same digest replays the same project (lost response retry);
+            // a second row is never created.
+            var replayed = service.create(ownerId, "second", creationKey, webSpec()).orElseThrow();
+            assertThat(replayed.id()).isEqualTo(first.id());
             assertThat(jdbc.queryForObject(
                 "SELECT COUNT(*) FROM project WHERE owner_id = ?", Integer.class, ownerId)).isEqualTo(1);
             // The unique index is owner-scoped: another owner may reuse the same creation key.

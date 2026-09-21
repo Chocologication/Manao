@@ -26,6 +26,15 @@ public final class JdbcProjectRuntimeStore implements ProjectRuntimeStore {
         jdbc.update("UPDATE project SET endpoint_state = ? WHERE id = ?", state, projectId);
     }
 
+    /** Current endpoint application state for a project; NULL/absent reads as NONE. */
+    public String endpointState(String projectId) {
+        List<String> states = jdbc.query(
+            "SELECT endpoint_state FROM project WHERE id = ?",
+            (rs, row) -> rs.getString(1), projectId);
+        return states.isEmpty() || states.get(0) == null || states.get(0).isBlank()
+            ? "NONE" : states.get(0);
+    }
+
     @Override public void rememberStorage(String projectId, StorageBinding binding) {
         jdbc.update("""
                 INSERT INTO project_storage_binding(project_id, purpose, pvc_name, pvc_uid, pv_name, pv_uid)
