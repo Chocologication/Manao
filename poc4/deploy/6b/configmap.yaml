@@ -22,9 +22,12 @@
 #   with the Java runtime deployment round: set to the platform public host and injected
 #   into the backend pod via backend.yaml (both steps of the former two-step wiring are
 #   done in-repo now; see README section 6.1 and the java-runtime acceptance record).
-# MANAO_RESERVED_PUBLIC_PORTS: every NodePort the deployment reserves for public access
-#   (30080 platform ingress + operator-assigned test ports 30281/30282). The backend
-#   rejects project creation requests whose public ports would collide with these.
+# MANAO_RESERVED_PUBLIC_PORTS: NodePorts that projects may NEVER claim, comma separated.
+#   This is the platform-owned ingress 30080 (the backend refuses any create request that
+#   selects it). Operator-assigned test ports (30281/30282 for the acceptance round) are
+#   NOT listed here: the acceptance project claims them through its own creation, and the
+#   API server then rejects any conflicting NodePort (fail-closed). Listing a port here
+#   that a project is supposed to claim makes that creation impossible.
 # MANAO_MYSQL_IMAGE_DIGEST / MANAO_REDIS_IMAGE_DIGEST: per-project dependency images,
 #   pinned by manifest digest (requirePinnedImage accepts "repo@sha256:<64hex>" or an
 #   explicit patch tag; floating tags are rejected). Values resolved against docker.io
@@ -47,7 +50,7 @@ data:
   MANAO_WS_EXTRA_ORIGIN: http://1.12.245.235:30080
   MANAO_WORKSPACE_STORAGE_CLASS: manao-poc4-delete
   MANAO_PUBLIC_ENTRY_HOST: "1.12.245.235"
-  MANAO_RESERVED_PUBLIC_PORTS: "30080,30281,30282"
+  MANAO_RESERVED_PUBLIC_PORTS: "30080"
   MANAO_MYSQL_IMAGE_DIGEST: "mysql@sha256:ed04aca46b6fe0bdc192becc17d358b46eeb82762b81ee65b80feff3d0873e9d"
   MANAO_REDIS_IMAGE_DIGEST: "redis@sha256:95acc00495ddacfec75111ba47021f903121a890311d49264c723b4423ac9601"
   MANAO_MYSQL_STORAGE_CLASS: ""

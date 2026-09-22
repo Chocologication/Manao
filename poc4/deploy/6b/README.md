@@ -281,7 +281,7 @@ Verified against the source code (do not rename without re-verifying):
 | `MANAO_JWT_LIFETIME` | `SecurityConfig.jwtService` (`@Value`, duration) | `backend.yaml` env (fixed `24h`) |
 | `MANAO_JWT_SECRET` | `SecurityConfig.jwtService` (`@Value`, >=32 chars) | Secret `manao-backend-auth` |
 | `MANAO_WORKSPACE_CAPABILITY_PRIVATE_KEY` / `_PUBLIC_KEY` | `WorkspaceConfig.workspaceCapabilitySigner` (`@Value`, raw-32-byte base64) | Secret `manao-backend-auth` |
-| `MANAO_RESERVED_PUBLIC_PORTS` | `application.yml` → `BackendProperties.RuntimeDeps.reservedPublicPorts` (comma list; must match the deployment's reserved NodePorts, incl. 30080) | ConfigMap `manao-backend-config` + backend.yaml env (configMapKeyRef; shipped 2026-09-22 with `30080,30281,30282`, section 10.4) |
+| `MANAO_RESERVED_PUBLIC_PORTS` | `application.yml` → `BackendProperties.RuntimeDeps.reservedPublicPorts` (comma list; must match the deployment's reserved NodePorts, incl. 30080) | ConfigMap `manao-backend-config` + backend.yaml env (configMapKeyRef; shipped 2026-09-22 with `30080` = ports projects may never claim, section 10.4) |
 | `MANAO_PUBLIC_ENTRY_HOST` | `application.yml` → `BackendProperties.RuntimeDeps.publicEntryHost` (bare host; empty = access URLs stay null) | ConfigMap `manao-backend-config` + backend.yaml env (configMapKeyRef; shipped 2026-09-22 with the platform host, section 6.1) |
 | `MANAO_MYSQL_IMAGE_DIGEST` | `application.yml` → `BackendProperties.RuntimeDeps.mysqlImageDigest` (explicit patch tag like `8.0.40` or `repo@sha256:<64hex>`; required before any project selects MySQL) | ConfigMap `manao-backend-config` + backend.yaml env (configMapKeyRef; shipped 2026-09-22 with the resolved digest, section 10.2) |
 | `MANAO_REDIS_IMAGE_DIGEST` | `application.yml` → `BackendProperties.RuntimeDeps.redisImageDigest` (same pinning rules; required before any project selects Redis) | ConfigMap `manao-backend-config` + backend.yaml env (configMapKeyRef; shipped 2026-09-22 with the resolved digest, section 10.2) |
@@ -560,14 +560,16 @@ cache PVC is required.
 
 ### 10.4 Reserved public ports
 
-`MANAO_RESERVED_PUBLIC_PORTS` lists every NodePort the deployment reserves
-(30080 plus the operator-assigned test ports and any other public port in use),
-so the backend refuses project creation requests that would collide with them.
-It ships in ConfigMap `manao-backend-config` since 2026-09-22
-(`30080,30281,30282` for the acceptance round) and is injected via
-`backend.yaml`. Update the ConfigMap together with any future port assignment.
-Whether a port is actually free in the cluster is adjudicated by the API server
-at Service creation — fail-closed, no cluster-wide Service listing.
+`MANAO_RESERVED_PUBLIC_PORTS` lists every NodePort that projects may never
+claim — the platform-owned ingress 30080 — and the backend refuses any create
+request that selects one of these ports. It ships in ConfigMap
+`manao-backend-config` since 2026-09-22 and is injected via `backend.yaml`.
+Operator-assigned acceptance ports (30281/30282) are deliberately NOT in this
+list: a project claims them through its own creation, and afterwards the API
+server rejects any conflicting NodePort at Service creation — fail-closed, no
+cluster-wide Service listing. (Correction recorded 2026-09-22: the first wiring
+shipped `30080,30281,30282`, which made the acceptance project's own creation
+fail with PUBLIC_PORT_RESERVED; the value is now `30080`.)
 
 ### 10.5 V9 schema migration
 
