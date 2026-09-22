@@ -4,6 +4,23 @@
 #   ProjectCleanupService deletes - pods, services, PVCs, Jobs, and pod logs inside
 #   manao-stage6b. No pods/portforward (6B resolves workspace Services directly in-namespace;
 #   the 6A port-forward bridge is not built in the cluster profile).
+# Java-runtime increment (2026-09-22, java-runtime-implementation plan): the project
+#   runtime dependencies and public-endpoint routing added by that plan need, all still
+#   inside manao-stage6b only:
+#   - apps statefulsets/deployments: per-project MySQL (StatefulSet) and Redis (Deployment)
+#     created/read/deleted by Fabric8ProjectDependencies and ProjectResourceCleaner;
+#   - apps replicasets: list/delete only, for Redis Deployment cleanup inventory
+#     (ReplicaSets themselves are created by the Deployment controller, never by the backend);
+#   - secrets: per-project MySQL/Redis auth Secrets created, read, listed and deleted;
+#   - networking.k8s.io networkpolicies: per-project dependency isolation policies
+#     created, read, listed and deleted;
+#   - services patch/update: Fabric8PublicEndpointGateway re-points a project Service's
+#     selector (initial -> run -> initial) to route the public ports;
+#   - pods patch: the gateway writes the server-verified pod identity label before the
+#     selector may match the pod (Fabric8PublicEndpointGateway.routeToRun).
+#   Existing pods/exec create stays for fixed-receipt reads. Cross-namespace port conflicts
+#   are decided by the API server; no cluster-wide Service listing, no cluster-admin and no
+#   PV delete verbs are granted anywhere.
 # ClusterRole: read-only and independent of the namespace Role - list persistentvolumes and
 #   get storageclasses, which ProjectCleanupService needs to verify PV release after PVC
 #   deletion and to resolve the configured StorageClass. No PV write or delete verbs are
@@ -19,7 +36,7 @@ metadata:
 rules:
   - apiGroups: [""]
     resources: ["pods"]
-    verbs: ["get", "list", "watch", "create", "delete"]
+    verbs: ["get", "list", "watch", "create", "delete", "patch"]
   - apiGroups: [""]
     resources: ["pods/log"]
     verbs: ["get"]
@@ -28,16 +45,31 @@ rules:
     verbs: ["create"]
   - apiGroups: [""]
     resources: ["services"]
-    verbs: ["get", "list", "create", "delete"]
+    verbs: ["get", "list", "create", "delete", "patch", "update"]
   - apiGroups: [""]
     resources: ["persistentvolumeclaims"]
     verbs: ["get", "list", "watch", "create", "delete"]
-  - apiGroups: ["batch"]
-    resources: ["jobs"]
-    verbs: ["get", "list", "watch", "create", "delete", "patch"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list", "create", "delete"]
   - apiGroups: [""]
     resources: ["events"]
     verbs: ["get", "list", "watch"]
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["get", "list", "watch", "create", "delete", "patch"]
+  - apiGroups: ["apps"]
+    resources: ["statefulsets"]
+    verbs: ["get", "list", "create", "delete"]
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "list", "create", "delete"]
+  - apiGroups: ["apps"]
+    resources: ["replicasets"]
+    verbs: ["list", "delete"]
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["networkpolicies"]
+    verbs: ["get", "list", "create", "delete"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding

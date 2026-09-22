@@ -15,6 +15,13 @@
 #   project workspaces (manao-poc4-delete: Delete reclaim, archiveOnDelete=false,
 #   onDelete=delete). This manifest ships the verified default; do not change without a
 #   new StorageClass verification record.
+# MANAO_PUBLIC_ENTRY_HOST: public host through which a project's user-selected public
+#   ports are reachable (bare host only - no scheme, no port; the backend composes
+#   http://<host>:<port> itself, ProjectController.publicEndpointUrl). Empty (the shipped
+#   default) keeps publicPortUrl null so the API never advertises a public URL; whether to
+#   enable it is the deployment operator's decision (see README section 6.1). Enabling it
+#   requires TWO steps: set the value here AND inject the env into backend.yaml (a
+#   configMapKeyRef env entry) - a ConfigMap key alone is never read by the pod.
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -26,3 +33,4 @@ metadata:
 data:
   MANAO_WS_EXTRA_ORIGIN: http://1.12.245.235:30080
   MANAO_WORKSPACE_STORAGE_CLASS: manao-poc4-delete
+  MANAO_PUBLIC_ENTRY_HOST: ""
