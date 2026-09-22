@@ -21,9 +21,10 @@
 #   Existing pods/exec create stays for fixed-receipt reads. Cross-namespace port conflicts
 #   are decided by the API server; no cluster-wide Service listing, no cluster-admin and no
 #   PV delete verbs are granted anywhere.
-# ClusterRole: read-only and independent of the namespace Role - list persistentvolumes and
-#   get storageclasses, which ProjectCleanupService needs to verify PV release after PVC
-#   deletion and to resolve the configured StorageClass. No PV write or delete verbs are
+# ClusterRole: read-only and independent of the namespace Role - get/list persistentvolumes
+#   and get storageclasses, which the runtime increment needs to record the bound MySQL PV
+#   identity (rememberMysqlClaim) and ProjectCleanupService needs to verify PV release after
+#   PVC deletion and to resolve the configured StorageClass. No PV write or delete verbs are
 #   granted anywhere.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
@@ -97,10 +98,14 @@ metadata:
     app.kubernetes.io/stage: 6b
 # Read-only cluster-scoped verbs, deliberately kept in a ClusterRole separate from the
 # namespace Role so the two grants can be audited (and revoked) independently.
+# get+list persistentvolumes: the runtime increment reads the bound PV's identity
+# (name/uid, never content) when registering a project's MySQL claim for the deletion
+# contract (Fabric8ProjectDependencies.rememberMysqlClaim) and verifies PV release after
+# PVC deletion (ProjectCleanupService). No PV write, delete or content access is granted.
 rules:
   - apiGroups: [""]
     resources: ["persistentvolumes"]
-    verbs: ["list"]
+    verbs: ["get", "list"]
   - apiGroups: ["storage.k8s.io"]
     resources: ["storageclasses"]
     verbs: ["get"]
