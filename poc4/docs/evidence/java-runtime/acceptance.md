@@ -2,7 +2,7 @@
 
 本文件是「Java 项目运行环境升级」（`java-runtime-implementation` 计划）的唯一云端验收记录。
 
-> **当前结论（2026-09-22，Task 8）：PREPARED —— 部署配置与独立云端验收入口已就绪，真实集群部署与验收尚未执行。** 本文件不含任何 PASS 结论。所有未执行项在第 4 节逐条列为 PENDING / NOT_REVERIFIED，待 Task 9 的部署轮执行并在此追加记录。既有 Stage 6B PASS（[stage-6b acceptance](../stage-6b/acceptance.md)）不因本计划改写。
+> **当前结论（2026-09-22，Task 8 + C3 部署轮）：PREPARED，其中 C3 发布阶段部分完成（接线提交与镜像发布），集群部署与验收 BLOCKED —— 服务器自本机不可达（详见第 7 节）。** 本文件仍不含任何 PASS 结论。第 4 节 PENDING 项维持，第 7 节为 C3（并入 Task 9）执行记录。既有 Stage 6B PASS（[stage-6b acceptance](../stage-6b/acceptance.md)）不因本计划改写。
 
 - 记录时间：2026-09-22（+08:00）
 - 记录者：Task 8（部署配置与 E2E 入口准备；集群核对全部为只读操作）
@@ -108,3 +108,49 @@
 - 本轮所有集群核对为只读；digest 解析只读；未执行任何部署动作。
 - 3.5 的 digest 是 2026-09-22 的实测解析值，非 Task 9 部署凭据；最终 pin 以 Task 9 部署记录为准。
 - 本文件在 Task 9 之前不存在 PASS/FAILED 结论；后续轮次在本文件追加，不回写既有 6B PASS 文档。
+
+## 7. C3 / Task 9 部署轮（2026-09-22）——集群侧 BLOCKED
+
+记录者：C3 实现轮（Maven 缓存补充计划的发布与集中运行验收，并入 Task 9 部署轮）。
+本节区分：已完成并留证的事项（D完成）、集群侧被连通性阻塞的事项（BLOCKED）、因此全部未验证的事项（NOT_REVERIFIED）。无任何 PASS。
+
+### 7.1 已完成（D完成，仓库与镜像层面，全部留证）
+
+| 事项 | 结果 | 证据 |
+| --- | --- | --- |
+| runtime-deps env 仓库接线 | 提交 `2ce008f`（feat: wire runtime deps env into backend deployment）：backend.yaml 注入 5 个 runtime-deps 变量（configMapKeyRef）；configmap.yaml 增加 5 键（`MANAO_RESERVED_PUBLIC_PORTS=30080,30281,30282`、`MANAO_PUBLIC_ENTRY_HOST=1.12.245.235`、mysql/redis digest pin、`MANAO_MYSQL_STORAGE_CLASS=""`=回退 manao-poc4-delete 的操作者决策及理由）；config.example.env 与 deploy/6b、maven-runner README 同步 | YAML 解析验证通过（Service/Deployment/ConfigMap，20 个 env 名单核对）；`git diff --check` 干净 |
+| backend 镜像重建推送 | tag `java-runtime-backend-20260922b` = `chocologic/manao_images_repository@sha256:88ebf51b2b46da1cc9f2cdd5b9975d3d899785c488db016805834f1da7ef99c0`（index digest，`docker buildx imagetools inspect` 与 push 输出一致） | host `mvn -DskipTests package` exit 0；docker build/push exit 0 |
+| runner 镜像重建推送（seed 构建） | tag `java-runtime-runner-20260922b` = `chocologic/manao_images_repository@sha256:d0387b17ff42768aa864a340e9fb4b07d38d5d9b0c6caacf03e292e772fa2412`；seed-id 实测 `4ef64a46b63a89bb21b84031b2eebe9928fdadb01a93185fc271bfc64ba7fda8`；seed 仓库 158M / 3115 文件 | 从导出的真实模板经 named context `seed-templates` 构建（exporter exit 0，导出 5 变体）；镜像内 `cat /opt/manao-maven-seed/seed-id` 实读 |
+| C2 审查遗留复核：commons-text 是否在 seed | **坐标 `org.apache.commons:commons-text:1.13.0` 确认不在 seed**（seed 内仅 1.12.0 与 1.3）；其依赖 commons-lang3 3.14.0 与 commons-parent 50 已在 seed → 该坐标是真实缺失，可直接用作"未预置依赖"验收用例 | 镜像内 `ls /opt/manao-maven-seed/repository/org/apache/commons/…` 实测 |
+| 部署前置私有值 | 私有 env 文件（仓库外）`BACKEND_IMAGE`/`MANAO_MAVEN_RUNNER_IMAGE` 已更新为上述新 digest；凭据未接触 | 值仅写入仓库外私有文件 |
+| 部署与验收脚本备妥 | `deploy-runbook.sh`（RBAC→secret→configmap→backend/frontend apply→rollout→V9 日志取证）与 `cache-acceptance.sh`（API 驱动的缓存验收步骤）已置于 gitignored 的 `.superpowers/sdd/2026-09-22-java-maven-cache-implementation-plan/`，供恢复后执行 | 文件存在；未提交（含流程不含凭据，但属临时工作文件） |
+
+### 7.2 BLOCKED：服务器自本机全面不可达（2026-09-22 约 16:53–17:38 持续实测）
+
+诊断过程与证据（全部为只读网络探测，无凭据输出）：
+
+1. 默认 kubeconfig 走 `https://127.0.0.1:6443`（Xshell 隧道，Task 8 同路径）：本机 6443 无监听（`netstat` 实测），即 Xshell 隧道断开。Xshell.exe 进程在运行但其隧道未转发。
+2. 公网 API server `https://1.12.245.235:6443`（私有目录 stage6b-admin-public.yaml）：TCP 可建连但 TLS 握手无响应（curl 000 / kubectl "EOF→deadline"）。
+3. SSH `root@1.12.245.235:22`（三把本机密钥逐一尝试）：TCP 建连后在 SSH banner 交换前被对端关闭（`kex_exchange_identification: Connection closed by remote host`），无法重建隧道。
+4. 公网入口 `http://1.12.245.235:30080`：TCP 建连后空回复/超时（HTTP 000），约 45 分钟内 20+ 次轮询全部失败。
+5. 排除本机代理因素：本机 FlClash（TUN/fake-ip）在运行，但 baidu.com / cloud.tencent.com 等同路由目标均正常（200，亚秒），仅该服务器 IP 不可达 → 结论为服务器侧/安全组/公网 IP 状态问题，非本机网络或代理配置问题。
+
+**结论：所有集群写入与验证操作无法执行。** 按红线"任何环境核对/验收不能执行就如实记 NOT_REVERIFIED/BLOCKED"，本节以下各项记 BLOCKED，不猜测、不代执行。
+
+### 7.3 BLOCKED 清单（恢复连通后按备妥脚本执行）
+
+| 事项 | 状态 | 恢复后动作 |
+| --- | --- | --- |
+| backend-rbac.yaml re-apply、manao-backend-images secret 重建、configmap/backend.yaml/frontend apply、rollout | BLOCKED | `deploy-runbook.sh`（§7.1 已备妥），含 V9 迁移日志取证与旧项目列表核对 |
+| runner 镜像预拉（node1/node2 一次性 Job） | BLOCKED | 部署完成后按 dispatch 计划执行；无法预拉则如实记录冷镜像条件 |
+| E2E 非 7200s 用例轮（`--grep-invert "whole lifetime"` 排除两小时用例；BASE_URL/30281/30282 + 私有凭据） | BLOCKED | 恢复后执行并回填 |
+| Maven 缓存专项验收（三类耗时、缓存命中文件/传输证据、commons-text 1.13.0 首次下载与复用、旧 PVC 补建、跨项目隔离、停止保留、删除回收） | BLOCKED | `cache-acceptance.sh` + kubectl 独立事实检查（Job 日志分段计时、debug pod 只读清点缓存目录） |
+| 验收项目/辅助项目清理与逐类回收核对 | BLOCKED | 随验收轮执行；不触碰平台 MySQL 卷与 30080 入口 |
+| 正式 7200 秒用例 | WAIVED_BY_USER（用户本人执行，本计划不代跑） | 用户自测后由用户/后续轮记录 |
+
+### 7.4 状态分类汇总（本节）
+
+- D完成（留证）：§7.1 六项。
+- BLOCKED：§7.3 前五项（全部集群侧）。
+- WAIVED_BY_USER：正式 7200 秒用例（尚未执行，等待用户自测结果）。
+- NOT_REVERIFIED：全部云端验证结论（V9 迁移、E2E、缓存命中、回收核对等）——在 §7.3 完成前本功能不得声称任何云端 PASS。
