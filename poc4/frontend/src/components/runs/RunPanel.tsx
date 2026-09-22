@@ -1,6 +1,7 @@
 import { useIsMutating, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { handleUnauthorized } from '@/app/appRuntime';
+import { ApiRequestError } from '@/api/ApiRequestError';
 import { projectFileWritePredicate } from '@/components/files/editorSaveCommand';
 import type { RunId, RunSummary } from '@/contracts/run';
 import {
@@ -38,6 +39,18 @@ function runQueryFallback(error: unknown, fallback: string): string {
     return 'Network request failed';
   }
   return fallback;
+}
+
+/** Surfaces the backend hint when a run cannot start because a dependency is not ready. */
+function startRunErrorMessage(error: unknown): string {
+  if (
+    error instanceof ApiRequestError &&
+    (error.body?.code === 'DEPENDENCY_NOT_READY' ||
+      error.body?.code === 'DEPENDENCY_RECOVERY_REQUIRED')
+  ) {
+    return error.body.message;
+  }
+  return 'Unable to start run';
 }
 
 function statusText(options: {
@@ -247,7 +260,7 @@ export function RunPanel({ projectId, coordinator }: RunPanelProps) {
         authorityError={
           activeQuery.isError ? runQueryFallback(activeQuery.error, 'Unable to load run authority') : null
         }
-        startError={startMutation.isError ? 'Unable to start run' : null}
+        startError={startMutation.isError ? startRunErrorMessage(startMutation.error) : null}
         stopError={stopMutation.isError ? 'Unable to stop run' : null}
         reloadFailed={reloadFailed}
         onStart={onStart}

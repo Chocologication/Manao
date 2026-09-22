@@ -11,7 +11,12 @@ import {
 } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { InlineAlert } from '@/components/feedback/InlineAlert';
-import type { RunState, RunSummary } from '@/contracts/run';
+import {
+  isRunTerminalState,
+  resolveRunAvailability,
+  type RunState,
+  type RunSummary,
+} from '@/contracts/run';
 
 export const RUN_ICON_BUTTON_CLASS =
   'inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none disabled:pointer-events-none disabled:opacity-64';
@@ -94,6 +99,31 @@ function clockLabel(run: RunSummary | null, nowMs: number): string | null {
   return `Elapsed ${formatRunElapsed(origin, nowMs)}`;
 }
 
+/**
+ * Lifetime status of a SERVICE run, derived only from the verified readiness lifetime:
+ * the countdown starts at firstReadyAt (never before), displays the remaining time until
+ * the immutable expiresAt and distinguishes an address that exists from one that answers.
+ * Display only — the server, not the browser, ends the run.
+ */
+function serviceLifetimeLabel(run: RunSummary, nowMs: number): string {
+  if (run.state === 'TIMED_OUT') {
+    return run.terminationReason === 'STARTUP_TIME_LIMIT_EXCEEDED'
+      ? 'Failed'
+      : 'Reached the two hour limit';
+  }
+  if (isRunTerminalState(run.state)) {
+    return run.state === 'CANCELLED' || run.state === 'SUCCEEDED' ? 'Stopped' : 'Failed';
+  }
+  const availability = resolveRunAvailability(run, nowMs);
+  if (availability === 'STARTING') {
+    return 'Starting';
+  }
+  if (availability === 'READY' && run.expiresAt !== null) {
+    return `Accessible · ${formatRunElapsed(run.expiresAt, nowMs)} left`;
+  }
+  return 'Unavailable';
+}
+
 export function RunToolbar({
   run,
   statusText,
@@ -116,6 +146,10 @@ export function RunToolbar({
   const command = run?.policy.command ?? 'mvn -q -DskipTests compile exec:java';
   const timeoutSeconds = run?.policy.timeoutSeconds ?? 1800;
   const clock = clockLabel(run, nowMs);
+  const serviceLifetime =
+    run !== null && run.policy.executionKind === 'SERVICE'
+      ? serviceLifetimeLabel(run, nowMs)
+      : null;
   const loading = /loading/i.test(statusText);
   const stopTitle = stopWaiting ? 'Waiting for the server' : 'Stop run';
 
@@ -151,6 +185,15 @@ export function RunToolbar({
         <span className="font-mono truncate text-sm">{command}</span>
         {clock !== null ? (
           <span className="shrink-0 text-sm text-muted-foreground">{clock}</span>
+        ) : null}
+        {serviceLifetime !== null ? (
+          <span
+            role="status"
+            aria-label="Run availability"
+            className="shrink-0 text-sm text-muted-foreground"
+          >
+            {serviceLifetime}
+          </span>
         ) : null}
         <span className="min-w-0 truncate text-sm text-muted-foreground">
           Java 17 · Maven 3 · timeout {timeoutSeconds}s

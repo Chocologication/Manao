@@ -1,5 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { createProject, deleteProject, getProject, listProjects } from '../../api/projectApi';
+import {
+  createProject,
+  deleteProject,
+  getProject,
+  getProjectCreation,
+  listProjects,
+} from '../../api/projectApi';
 import {
   projectBusyReadRetryDelay,
   retryProjectBusyRead,
@@ -71,6 +77,30 @@ export function useCreateProject() {
           return current;
         }
         return { ...current, items: [...current.items, created] };
+      });
+      void queryClient.invalidateQueries({ queryKey: projectKeys.all });
+    },
+  });
+}
+
+/**
+ * Confirms the outcome of a creation whose response was lost: the same creation key is
+ * queried and a found project is merged into the list. No automatic retry and no new key.
+ */
+export function useCheckProjectCreation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    retry: false,
+    mutationFn: (creationKey: string) => getProjectCreation(creationKey),
+    onSuccess: (project) => {
+      queryClient.setQueryData<ProjectListResponse>(projectKeys.all, (current) => {
+        if (current === undefined) {
+          return { items: [project], limit: DEFAULT_PROJECT_LIMIT };
+        }
+        if (current.items.some((item) => item.id === project.id)) {
+          return current;
+        }
+        return { ...current, items: [...current.items, project] };
       });
       void queryClient.invalidateQueries({ queryKey: projectKeys.all });
     },

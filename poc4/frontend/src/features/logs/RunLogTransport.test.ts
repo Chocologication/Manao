@@ -75,6 +75,8 @@ function lockingRun(id = 'run-1', state: 'STARTING' | 'RUNNING' = 'RUNNING'): Ru
     logTruncated: false,
     logEvictedBytes: 0,
     lastLogSeq: 2,
+    firstReadyAt: null,
+    expiresAt: null,
   };
 }
 
@@ -86,6 +88,8 @@ function terminalRun(id = 'run-1'): RunSummary {
     terminationReason: 'BUILD_SUCCEEDED',
     exitCode: 0,
     lastLogSeq: 2,
+    firstReadyAt: null,
+    expiresAt: null,
   };
 }
 

@@ -45,4 +45,40 @@ describe('ProjectCard', () => {
     expect(screen.queryByRole('link', { name: 'Open' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Open' })).not.toBeInTheDocument();
   });
+
+  it('shows the non-sensitive runtime configuration when present', () => {
+    const configured: ProjectSummary = {
+      ...ready,
+      name: 'Configured',
+      runtime: {
+        templateId: 'java-spring-boot-web',
+        mysql: true,
+        redis: false,
+        publicPorts: [{ name: 'port-1', targetPort: 8080, publicPort: 30081 }],
+      },
+      endpointState: 'UNKNOWN',
+    };
+    render(
+      <MemoryRouter>
+        <ProjectCard project={configured} />
+      </MemoryRouter>,
+    );
+
+    const runtime = screen.getByText(/Spring Boot web/);
+    expect(runtime).toHaveTextContent('MySQL');
+    expect(runtime).not.toHaveTextContent('Redis');
+    expect(runtime).toHaveTextContent('8080→30081');
+    expect(screen.getByText('Public endpoint unconfirmed')).toBeInTheDocument();
+  });
+
+  it('shows no runtime line for legacy summaries without runtime fields', () => {
+    render(
+      <MemoryRouter>
+        <ProjectCard project={ready} />
+      </MemoryRouter>,
+    );
+
+    expect(screen.queryByText(/Spring Boot web/)).not.toBeInTheDocument();
+    expect(screen.queryByText('Public endpoint unconfirmed')).not.toBeInTheDocument();
+  });
 });

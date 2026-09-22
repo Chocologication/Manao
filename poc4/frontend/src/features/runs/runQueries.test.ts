@@ -45,6 +45,8 @@ function lockingRun(id: string, state: 'STARTING' | 'RUNNING' = 'STARTING'): Run
     logTruncated: false,
     logEvictedBytes: 0,
     lastLogSeq: null,
+    firstReadyAt: null,
+    expiresAt: null,
   };
 }
 
@@ -63,6 +65,8 @@ function terminalRun(id: string, createdAt = '2026-08-24T10:00:00.000Z'): RunSum
     logTruncated: false,
     logEvictedBytes: 0,
     lastLogSeq: 1,
+    firstReadyAt: null,
+    expiresAt: null,
   };
 }
 

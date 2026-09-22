@@ -1,6 +1,10 @@
 import { DEFAULT_PROJECT_LIMIT } from '../contracts/project';
 import type { AuthUser, LoginResponse } from '../contracts/auth';
-import type { ProjectState, ProjectSummary } from '../contracts/project';
+import type {
+  ProjectRuntimeConfig,
+  ProjectState,
+  ProjectSummary,
+} from '../contracts/project';
 import { clearLargeFileBodyCache, ensureWorkspace, removeWorkspace, resetWorkspaces } from './fileFixtures';
 import { resetLogTickets } from './runSocket';
 import { bootRunState, removeProjectRuns, resetRunState } from './runState';
@@ -26,6 +30,8 @@ type MockProject = {
   createdAt: string;
   failureReason: string | null;
   observeCount: number;
+  runtime: ProjectRuntimeConfig | null;
+  creationKey: string | null;
 };
 
 type IssuedToken = {
@@ -40,6 +46,7 @@ const USERS: readonly MockUser[] = [
 
 let projects: MockProject[] = [];
 let tokens = new Map<string, IssuedToken>();
+let creationKeys = new Map<string, string>();
 let nextProjectSeq = 0;
 let nextTokenSeq = 0;
 let fileRequestCounts = new Map<string, number>();
@@ -78,6 +85,7 @@ function toSummary(project: MockProject): ProjectSummary {
     state: project.state,
     createdAt: project.createdAt,
     failureReason: project.failureReason,
+    ...(project.runtime !== null ? { runtime: project.runtime } : {}),
   };
 }
 
@@ -91,6 +99,8 @@ function seedProjects(): MockProject[] {
       createdAt: '2026-08-21T00:00:00.000Z',
       failureReason: null,
       observeCount: 0,
+      runtime: null,
+      creationKey: null,
     },
     {
       id: BOB_SEED_PROJECT_ID,
@@ -100,6 +110,8 @@ function seedProjects(): MockProject[] {
       createdAt: '2026-08-21T00:00:01.000Z',
       failureReason: null,
       observeCount: 0,
+      runtime: null,
+      creationKey: null,
     },
   ];
 }
@@ -139,6 +151,7 @@ export function registerTerminalStateReset(resetter: () => void): void {
 
 function resetSessionState(): void {
   tokens = new Map();
+  creationKeys = new Map();
   nextProjectSeq = 0;
   nextTokenSeq = 0;
   projects = seedProjects();
@@ -243,7 +256,22 @@ export type CreateOwnedProjectResult =
   | { status: 'created'; project: ProjectSummary }
   | { status: 'limit' };
 
-export function createOwnedProject(userId: string, name: string): CreateOwnedProjectResult {
+export function createOwnedProject(
+  userId: string,
+  name: string,
+  options: { creationKey?: string | null; runtime?: ProjectRuntimeConfig | null } = {},
+): CreateOwnedProjectResult {
+  // Same key always returns the same project identity; a retry never creates a second project.
+  if (options.creationKey !== null && options.creationKey !== undefined) {
+    const existingId = creationKeys.get(`${userId}\0${options.creationKey}`);
+    const existing =
+      existingId === undefined
+        ? undefined
+        : projects.find((item) => item.id === existingId && item.ownerId === userId);
+    if (existing !== undefined) {
+      return { status: 'created', project: toSummary(existing) };
+    }
+  }
   const ownedCount = projects.filter((project) => project.ownerId === userId).length;
   if (ownedCount >= PROJECT_LIMIT) {
     return { status: 'limit' };
@@ -257,15 +285,36 @@ export function createOwnedProject(userId: string, name: string): CreateOwnedPro
     createdAt: new Date().toISOString(),
     failureReason: null,
     observeCount: 0,
+    runtime: options.runtime ?? null,
+    creationKey: options.creationKey ?? null,
   };
   projects.push(project);
+  if (project.creationKey !== null) {
+    creationKeys.set(`${userId}\0${project.creationKey}`, project.id);
+  }
   ensureWorkspace(project.id);
   return { status: 'created', project: toSummary(project) };
+}
+
+/** Same key always resolves the same project identity for the same owner. */
+export function findOwnedProjectCreation(
+  userId: string,
+  creationKey: string,
+): ProjectSummary | null {
+  const projectId = creationKeys.get(`${userId}\0${creationKey}`);
+  if (projectId === undefined) {
+    return null;
+  }
+  const project = projects.find((candidate) => candidate.id === projectId);
+  return project === undefined ? null : observeProject(project);
 }
 
 export function removeOwnedProject(userId: string, projectId: string): void {
   const project = projects.find((item) => item.id === projectId && item.ownerId === userId);
   if (!project) return;
+  if (project.creationKey !== null) {
+    creationKeys.delete(`${userId}\0${project.creationKey}`);
+  }
   removeProjectRuns(projectId);
   removeWorkspace(projectId);
   projects = projects.filter((item) => item !== project);

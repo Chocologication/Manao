@@ -40,6 +40,26 @@ Object.freeze(POC4_RUN_POLICY.resources);
 Object.freeze(POC4_RUN_POLICY.resources.requests);
 Object.freeze(POC4_RUN_POLICY.resources.limits);
 
+/** Bounded web session (SERVICE) policy fixture; the lifetime starts at first readiness. */
+export const SERVICE_RUN_POLICY: RunPolicy = {
+  command: 'mvn -q -DskipTests compile exec:java',
+  runtime: { javaMajor: 17, mavenMajor: 3 },
+  timeoutSeconds: 1800,
+  executionKind: 'SERVICE',
+  startupTimeoutSeconds: 1800,
+  serviceLifetimeSeconds: 7200,
+  resources: {
+    requests: { ...POC4_RUN_POLICY.resources.requests },
+    limits: { ...POC4_RUN_POLICY.resources.limits },
+  },
+};
+
+Object.freeze(SERVICE_RUN_POLICY);
+Object.freeze(SERVICE_RUN_POLICY.runtime);
+Object.freeze(SERVICE_RUN_POLICY.resources);
+Object.freeze(SERVICE_RUN_POLICY.resources.requests);
+Object.freeze(SERVICE_RUN_POLICY.resources.limits);
+
 export const MAX_SIZE_LOG_CHUNK_TEXT = 'a'.repeat(MAX_LOG_CHUNK_UTF8_BYTES);
 
 export function utf8ByteLength(text: string): number {

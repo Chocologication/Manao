@@ -298,7 +298,7 @@ describe('MSW run HTTP handlers', () => {
       },
       body: JSON.stringify({ name: 'Creating' }),
     });
-    expect(creating.status).toBe(202);
+    expect(creating.status).toBe(201);
     const creatingId = ((await creating.json()) as { id: string }).id;
 
     const foreignBodies: ApiErrorBody[] = [];

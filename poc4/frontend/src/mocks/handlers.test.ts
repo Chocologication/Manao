@@ -370,10 +370,10 @@ describe('MSW project handlers', () => {
     expect(foreignBody.message).not.toMatch(/bob|not found|does not exist|prj-bob|exist/i);
   });
 
-  it('creates with 202 CREATING then becomes READY after two observing GETs, exactly once', async () => {
+  it('creates with 201 CREATING then becomes READY after two observing GETs, exactly once', async () => {
     const alice = await loginOk(ALICE.username, ALICE.password);
     const createdResponse = await createProject(alice.accessToken, 'Alpha');
-    expect(createdResponse.status).toBe(202);
+    expect(createdResponse.status).toBe(201);
     const created = await readJson<ProjectSummary>(createdResponse);
     expect(created.id).toMatch(/^prj-/);
     expect(created.state).toBe('CREATING');
@@ -429,7 +429,7 @@ describe('MSW project handlers', () => {
     // Alice already owns one seeded project.
     for (let index = 2; index <= 8; index += 1) {
       const created = await createProject(alice.accessToken, `Workspace ${index}`);
-      expect(created.status).toBe(202);
+      expect(created.status).toBe(201);
     }
     const ninth = await createProject(alice.accessToken, 'Workspace 9');
     expect(ninth.status).toBe(409);

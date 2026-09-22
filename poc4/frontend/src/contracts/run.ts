@@ -21,6 +21,8 @@ export type RunTerminationReason =
   | 'BUILD_FAILED'
   | 'USER_STOPPED'
   | 'TIME_LIMIT_EXCEEDED'
+  | 'STARTUP_TIME_LIMIT_EXCEEDED'
+  | 'APPLICATION_EXITED'
   | 'START_FAILED'
   | 'RECOVERY_FAILED';
 
@@ -30,15 +32,40 @@ export type RunResources = {
   ephemeralStorageBytes: number;
 };
 
-export type RunPolicy = {
+export type RunExecutionKind = 'TASK' | 'SERVICE';
+
+type RunPolicyBase = {
   command: 'mvn -q -DskipTests compile exec:java';
   runtime: { javaMajor: 17; mavenMajor: 3 };
-  timeoutSeconds: number;
   resources: {
     requests: RunResources;
     limits: RunResources;
   };
 };
+
+/**
+ * TASK keeps the single overall timeout deadline. Payloads without execution fields are
+ * legacy TASK runs; the optional numeric fields are echoed only when the server sends them.
+ */
+export type TaskRunPolicy = RunPolicyBase & {
+  timeoutSeconds: number;
+  executionKind?: 'TASK';
+  startupTimeoutSeconds?: number;
+  serviceLifetimeSeconds?: number;
+};
+
+/**
+ * SERVICE (bounded web session) derives the Job backstop from startupTimeoutSeconds plus the
+ * immutable serviceLifetimeSeconds that starts at first verified readiness.
+ */
+export type ServiceRunPolicy = RunPolicyBase & {
+  executionKind: 'SERVICE';
+  timeoutSeconds: number;
+  startupTimeoutSeconds: number;
+  serviceLifetimeSeconds: number;
+};
+
+export type RunPolicy = TaskRunPolicy | ServiceRunPolicy;
 
 export type RunSummary = {
   id: RunId;
@@ -53,6 +80,10 @@ export type RunSummary = {
   logTruncated: boolean;
   logEvictedBytes: number;
   lastLogSeq: number | null;
+  /** Verified first readiness; only SERVICE runs ever record it. */
+  firstReadyAt: string | null;
+  /** Immutable lifetime deadline armed at firstReadyAt; never moved or renewed. */
+  expiresAt: string | null;
 };
 
 export type ActiveRunResponse = { run: RunSummary | null };
@@ -63,6 +94,8 @@ export type LogTicketResponse = { ticket: LogTicket; expiresAt: string };
 const INVALID_RUN_RESPONSE = 'Invalid run response';
 const MAX_OPAQUE_ID_LENGTH = 256;
 const MAX_RUN_TIMEOUT_SECONDS = 1800;
+const SERVICE_LIFETIME_SECONDS = 7200;
+const SERVICE_LIFETIME_MS = SERVICE_LIFETIME_SECONDS * 1000;
 const MAX_RUN_CPU_MILLIS = 8000;
 const MAX_RUN_MEMORY_BYTES = 17_179_869_184;
 const MAX_RUN_EPHEMERAL_STORAGE_BYTES = 10_737_418_240;
@@ -88,9 +121,9 @@ const TERMINAL_REASONS: Record<
   readonly RunTerminationReason[]
 > = {
   SUCCEEDED: ['BUILD_SUCCEEDED'],
-  FAILED: ['BUILD_FAILED', 'START_FAILED', 'RECOVERY_FAILED'],
+  FAILED: ['BUILD_FAILED', 'START_FAILED', 'RECOVERY_FAILED', 'APPLICATION_EXITED'],
   CANCELLED: ['USER_STOPPED'],
-  TIMED_OUT: ['TIME_LIMIT_EXCEEDED'],
+  TIMED_OUT: ['TIME_LIMIT_EXCEEDED', 'STARTUP_TIME_LIMIT_EXCEEDED'],
 };
 
 const BROWSER_POLICY_FIELDS = ['command', 'image', 'resources', 'env'] as const;
@@ -158,6 +191,14 @@ function parseNullableIsoTimestamp(value: unknown): string | null {
   return parseIsoTimestamp(value);
 }
 
+/** Like the nullable variant but tolerates absent legacy keys. */
+function parseOptionalIsoTimestamp(value: unknown): string | null {
+  if (value === null || value === undefined) {
+    return null;
+  }
+  return parseIsoTimestamp(value);
+}
+
 function parseSafeInteger(value: unknown, min: number, max: number): number {
   if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < min || value > max) {
     invalidRunResponse();
@@ -189,6 +230,8 @@ function parseTerminationReason(value: unknown): RunTerminationReason | null {
     value !== 'BUILD_FAILED' &&
     value !== 'USER_STOPPED' &&
     value !== 'TIME_LIMIT_EXCEEDED' &&
+    value !== 'STARTUP_TIME_LIMIT_EXCEEDED' &&
+    value !== 'APPLICATION_EXITED' &&
     value !== 'START_FAILED' &&
     value !== 'RECOVERY_FAILED'
   ) {
@@ -239,7 +282,6 @@ function parseRunPolicy(value: unknown): RunPolicy {
   if (runtime.javaMajor !== 17 || runtime.mavenMajor !== 3) {
     invalidRunResponse();
   }
-  const timeoutSeconds = parseSafeInteger(record.timeoutSeconds, 1, MAX_RUN_TIMEOUT_SECONDS);
   const resources = asRecord(record.resources);
   const requests = parseRunResources(resources.requests);
   const limits = parseRunResources(resources.limits);
@@ -250,12 +292,55 @@ function parseRunPolicy(value: unknown): RunPolicy {
   ) {
     invalidRunResponse();
   }
-  return {
-    command: 'mvn -q -DskipTests compile exec:java',
-    runtime: { javaMajor: 17, mavenMajor: 3 },
-    timeoutSeconds,
+  const base = {
+    command: 'mvn -q -DskipTests compile exec:java' as const,
+    runtime: { javaMajor: 17, mavenMajor: 3 } as const,
     resources: { requests, limits },
   };
+  const executionKind = record.executionKind === undefined ? 'TASK' : record.executionKind;
+  if (executionKind === 'SERVICE') {
+    return {
+      ...base,
+      executionKind: 'SERVICE',
+      timeoutSeconds: parseSafeInteger(record.timeoutSeconds, 1, MAX_RUN_TIMEOUT_SECONDS),
+      startupTimeoutSeconds: parseSafeInteger(
+        record.startupTimeoutSeconds,
+        1,
+        MAX_RUN_TIMEOUT_SECONDS,
+      ),
+      serviceLifetimeSeconds: parseServiceLifetimeSeconds(record.serviceLifetimeSeconds),
+    };
+  }
+  if (executionKind !== 'TASK') {
+    invalidRunResponse();
+  }
+  const policy: TaskRunPolicy = {
+    ...base,
+    timeoutSeconds: parseSafeInteger(record.timeoutSeconds, 1, MAX_RUN_TIMEOUT_SECONDS),
+  };
+  // Echo the execution fields only when present so legacy payloads keep their exact shape.
+  if (record.executionKind !== undefined) {
+    policy.executionKind = 'TASK';
+  }
+  if (record.startupTimeoutSeconds !== undefined) {
+    policy.startupTimeoutSeconds = parseSafeInteger(
+      record.startupTimeoutSeconds,
+      0,
+      MAX_RUN_TIMEOUT_SECONDS,
+    );
+  }
+  if (record.serviceLifetimeSeconds !== undefined) {
+    policy.serviceLifetimeSeconds = parseSafeInteger(record.serviceLifetimeSeconds, 0, 0);
+  }
+  return policy;
+}
+
+function parseServiceLifetimeSeconds(value: unknown): number {
+  const seconds = parseSafeInteger(value, 1, SERVICE_LIFETIME_SECONDS);
+  if (seconds !== SERVICE_LIFETIME_SECONDS) {
+    invalidRunResponse();
+  }
+  return seconds;
 }
 
 function rejectBrowserPolicyFields(record: Record<string, unknown>): void {
@@ -289,6 +374,7 @@ function assertStateInvariants(run: {
   finishedAt: string | null;
   terminationReason: RunTerminationReason | null;
   exitCode: number | null;
+  firstReadyAt: string | null;
 }): void {
   if (isRunLockingState(run.state)) {
     if (run.finishedAt !== null || run.terminationReason !== null || run.exitCode !== null) {
@@ -298,6 +384,9 @@ function assertStateInvariants(run: {
       invalidRunResponse();
     }
     if (run.state === 'RUNNING' && run.startedAt === null) {
+      invalidRunResponse();
+    }
+    if (run.state === 'STARTING' && run.firstReadyAt !== null) {
       invalidRunResponse();
     }
     return;
@@ -310,6 +399,37 @@ function assertStateInvariants(run: {
     invalidRunResponse();
   }
   if (run.state === 'SUCCEEDED' && run.exitCode !== 0) {
+    invalidRunResponse();
+  }
+}
+
+/**
+ * Verified readiness lifetime invariants: only SERVICE runs carry firstReadyAt/expiresAt, the
+ * pair is indivisible, readiness cannot precede creation and the window is the fixed lifetime.
+ */
+function assertLifetimeInvariants(run: {
+  policy: RunPolicy;
+  createdAt: string;
+  firstReadyAt: string | null;
+  expiresAt: string | null;
+}): void {
+  if (run.policy.executionKind !== 'SERVICE') {
+    if (run.firstReadyAt !== null || run.expiresAt !== null) {
+      invalidRunResponse();
+    }
+    return;
+  }
+  if ((run.firstReadyAt === null) !== (run.expiresAt === null)) {
+    invalidRunResponse();
+  }
+  if (run.firstReadyAt === null || run.expiresAt === null) {
+    return;
+  }
+  const readyMs = Date.parse(run.firstReadyAt);
+  if (readyMs < Date.parse(run.createdAt)) {
+    invalidRunResponse();
+  }
+  if (Date.parse(run.expiresAt) - readyMs !== SERVICE_LIFETIME_MS) {
     invalidRunResponse();
   }
 }
@@ -342,8 +462,11 @@ export function parseRunSummary(value: unknown): RunSummary {
     logTruncated: record.logTruncated,
     logEvictedBytes,
     lastLogSeq: parseLastLogSeq(record.lastLogSeq),
+    firstReadyAt: parseOptionalIsoTimestamp(record.firstReadyAt),
+    expiresAt: parseOptionalIsoTimestamp(record.expiresAt),
   };
   assertStateInvariants(summary);
+  assertLifetimeInvariants(summary);
   return summary;
 }
 
@@ -423,4 +546,18 @@ export function parseRunSummaryForId(value: unknown, expectedId: RunId): RunSumm
     invalidRunResponse();
   }
   return run;
+}
+
+export type RunAvailability = 'STARTING' | 'READY' | 'UNAVAILABLE';
+
+/**
+ * Endpoint availability derived only from the verified readiness lifetime. TASK runs never
+ * record a verified firstReadyAt, so they resolve to STARTING or UNAVAILABLE; the lifetime
+ * display uses this for SERVICE runs and never renews or counts down before readiness.
+ */
+export function resolveRunAvailability(run: RunSummary, nowMs: number): RunAvailability {
+  if (run.firstReadyAt === null || run.expiresAt === null) {
+    return isRunTerminalState(run.state) ? 'UNAVAILABLE' : 'STARTING';
+  }
+  return nowMs < Date.parse(run.expiresAt) ? 'READY' : 'UNAVAILABLE';
 }
