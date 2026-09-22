@@ -361,11 +361,11 @@ test.describe.serial('java runtime cloud lifecycle', () => {
 
     // The deadline passed: the run must settle (finishedAt armed) by its
     // readiness-based lifetime.
-    await expect.poll(async () => (await fetchRun(page, SCENE.webRunId)).finishedAt, {
+    await expect.poll(async () => (await fetchRun(page, SCENE.projectId, SCENE.webRunId)).finishedAt, {
       timeout: SETTLEMENT_TIMEOUT,
       intervals: [10_000, 30_000],
     }).toBeTruthy();
-    const finalRun = await fetchRun(page, SCENE.webRunId);
+    const finalRun = await fetchRun(page, SCENE.projectId, SCENE.webRunId);
     // Settlement may not precede the immutable deadline (slack only for clock/polling
     // granularity - the deadline itself is armed server-side and never renewed).
     expect(
@@ -402,13 +402,31 @@ test.describe.serial('java runtime cloud lifecycle', () => {
   test('delete the project from the UI and confirm the card stays gone', async ({ page }, testInfo) => {
     await signIn(page);
 
+    // Deletion is refused while a run is active. In the full scene the excluded-style
+    // two-hour case has already settled the bounded session; when the operator runs this
+    // suite without it, settle the still-active run here through the same stop call the
+    // toolbar's Stop button issues.
+    const active = await (await authedGet(page, `/api/v1/projects/${SCENE.projectId}/runs/active`)).json();
+    if (active?.run) {
+      await authedPost(page, `/api/v1/projects/${SCENE.projectId}/runs/${active.run.id}/stop`, {});
+      await expect
+        .poll(
+          async () => (await fetchRun(page, SCENE.projectId, active.run.id)).state,
+          { timeout: 180_000, intervals: [5_000, 10_000] },
+        )
+        .toMatch(/SUCCEEDED|FAILED|STOPPED|TIMED_OUT|CANCELLED/);
+      console.log(`[java-runtime] settled active run ${active.run.id} before deletion`);
+    }
+
     const card = projectCard(page, SCENE.projectName);
     await expect(card).toBeVisible();
     await card.getByRole('button', { name: 'Delete project' }).click();
     const dialog = page.getByRole('alertdialog', { name: 'Delete project?' });
     await expect(dialog).toBeVisible();
     await dialog.getByRole('button', { name: 'Delete permanently' }).click();
-    await expect(card).toBeHidden();
+    // Deletion runs the whole Kubernetes cleanup synchronously; right after a stop it can
+    // outlive a default 30s expectation (measured 2026-09-22), so give it 120s.
+    await expect(card).toBeHidden({ timeout: 120_000 });
     await page.reload();
     await signIn(page);
     await expect(projectCard(page, SCENE.projectName)).toBeHidden();
@@ -507,8 +525,8 @@ async function pollForActiveReadyRun(page: Page): Promise<RunSummaryLike> {
   return ((await response.json()) as { run: RunSummaryLike }).run!;
 }
 
-async function fetchRun(page: Page, runId: string): Promise<RunSummaryLike> {
-  const response = await authedGet(page, `/api/v1/projects/${SCENE.projectId}/runs/${runId}`);
+async function fetchRun(page: Page, projectId: string, runId: string): Promise<RunSummaryLike> {
+  const response = await authedGet(page, `/api/v1/projects/${projectId}/runs/${runId}`);
   expect(response.ok(), 'run corroboration must succeed').toBeTruthy();
   return (await response.json()) as RunSummaryLike;
 }
