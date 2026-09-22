@@ -106,6 +106,21 @@ class PublicEndpointGatewayTest {
     }
 
     @Test
+    void theActualV131ApiServerAllocationMessageCasingIsAConflict() {
+        // Kubernetes v1.31 emits the allocation cause in lowercase ("provided port is
+        // already allocated"); observed live 2026-09-22 during the cloud acceptance round.
+        // The classification must not depend on the message casing, or a deterministic
+        // conflict degrades to UNKNOWN and keeps a doomed CREATING row alive.
+        server.expect().post().withPath(SERVICE_PATH)
+            .andReturn(422, nodePortConflictStatus("spec.ports[0].nodePort",
+                "provided port is already allocated", "FieldValueInvalid")).always();
+        var ports = List.of(new ProjectRuntimeSpec.Port("web", 80, 30081));
+        assertThat(gateway.ensure("p1", ports))
+            .isEqualTo(PublicEndpointGateway.ApplyResult.CONFLICT);
+        assertThat(client.services().inNamespace(NS).withName("manao-app-p1").get()).isNull();
+    }
+
+    @Test
     void anArbitrary422IsNeverTreatedAsAPortConflict() {
         // An invalid-field cause that is not about nodePort is not evidence of a port conflict.
         server.expect().post().withPath(SERVICE_PATH)

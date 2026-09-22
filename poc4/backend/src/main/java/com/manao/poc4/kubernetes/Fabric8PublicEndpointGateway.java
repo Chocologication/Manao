@@ -192,10 +192,13 @@ public final class Fabric8PublicEndpointGateway implements PublicEndpointGateway
             || ex.getStatus().getDetails().getCauses() == null) {
             return false;
         }
+        // The allocation message casing moved across Kubernetes versions (v1.31 emits it
+        // lowercase); classify on the message text, never on its case.
         return ex.getStatus().getDetails().getCauses().stream().anyMatch(cause ->
             CAUSE_FIELD_VALUE_INVALID.equals(cause.getReason())
                 && cause.getField() != null && cause.getField().startsWith(NODEPORT_FIELD_PREFIX)
                 && cause.getField().endsWith(NODEPORT_FIELD_SUFFIX)
-                && CAUSE_MESSAGE_ALREADY_ALLOCATED.equals(cause.getMessage()));
+                && cause.getMessage() != null
+                && CAUSE_MESSAGE_ALREADY_ALLOCATED.equalsIgnoreCase(cause.getMessage()));
     }
 }
