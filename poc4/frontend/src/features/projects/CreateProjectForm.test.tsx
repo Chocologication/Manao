@@ -333,4 +333,43 @@ describe('CreateProjectForm creation key', () => {
     expect(screen.getByLabelText('Project name')).toHaveValue('');
     expect(screen.queryByRole('button', { name: 'Check creation status' })).toBeNull();
   });
+
+  it('still creates a project when crypto.randomUUID is unavailable (insecure HTTP origin)', async () => {
+    // The accepted deployment serves plain HTTP on a public IP: crypto.randomUUID only
+    // exists in secure contexts, so creation must not depend on it (regression 2026-09-22:
+    // the submit handler threw before sending the request and no status was ever shown).
+    const originalRandomUUID = globalThis.crypto.randomUUID;
+    Object.defineProperty(globalThis.crypto, 'randomUUID', {
+      value: undefined,
+      configurable: true,
+    });
+    try {
+      const user = userEvent.setup();
+      const bodies: PostBody[] = [];
+      server.use(
+        http.post('/api/v1/projects', async ({ request }) => {
+          bodies.push((await request.json()) as PostBody);
+          return HttpResponse.json(createdSummary('demo'), { status: 201 });
+        }),
+      );
+      await authenticateAsAlice();
+      renderApp({ initialEntries: ['/projects'] });
+      await fillWebForm(user, 'demo');
+      await user.type(screen.getByLabelText('Public port 1'), '30081');
+      await user.click(screen.getByRole('button', { name: 'Create project' }));
+      expect(await screen.findByRole('status', { name: 'Create result' })).toHaveTextContent(
+        'Created demo',
+      );
+      expect(bodies).toHaveLength(1);
+      expect(typeof bodies[0]?.creationKey).toBe('string');
+      expect(bodies[0]?.creationKey).toMatch(
+        /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+      );
+    } finally {
+      Object.defineProperty(globalThis.crypto, 'randomUUID', {
+        value: originalRandomUUID,
+        configurable: true,
+      });
+    }
+  });
 });
