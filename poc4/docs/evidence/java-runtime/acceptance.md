@@ -207,6 +207,10 @@
 
 跨项目隔离：辅助项目独立运行后其缓存为 3115 文件（自身 marker），`commons-text/` 仅含 1.12.0/1.3 —— **不含主项目新增的 1.13.0**，跨项目缓存隔离成立。
 
+创建到可编辑（同一验收项目 cache-main-224249 / c60f6218）：14:42:49Z 创建（POST 返回 201/CREATING），14:43:11Z 首次状态轮询已 READY → 耗时 ≤22s（5s 轮询间隔，精确值落在创建与首次轮询之间；含工作区 agent 启动与模板写入全链路）。
+
+预期业务响应：各 Run 的就绪由平台服务端就绪验证确认（supervisor probe 通过 → receipt state=READY → firstReadyAt 武装）。显式 HTTP 业务断言在同轮 E2E 用例 "start the bounded web run and serve the demo app through both assigned ports"（attempt 15）实测：两公网端口 GET /api/demo 均 200 且响应体含 "Hello from Manao"（spec 断言 DEMO_GREETING，expectPortServesDemo 辅助函数）。cache-main 项目自身未做直连业务端点探活（无公网端口、未使用 port-forward）——该直连探活记 NOT_REVERIFIED，其功能面由同模板 E2E 业务断言与平台就绪验证覆盖。
+
 停止后缓存保留：Run 1→2、2→3、3→4 均经 stop→新 run，各次盘点显示缓存持续存在且未被清理。
 
 镜像拉取与运行启动分离：runner digest 已预拉至两 worker（8.1），Run 时无拉取开销；冷拉取成本以预拉事件（22.3s/357MB）单独记录。
@@ -249,8 +253,10 @@
 
 ### 8.9 状态分类汇总（C3 最终）
 
-- PASS：部署与 rollout、V9 迁移、预拉、E2E 非 7200s 用例轮（4/4）、Maven 缓存专项验收（8.3 全部子项）、删除回收（8.4）。
+- PASS（限 C3 计划内执行且留证的验证项）：部署与 rollout、V9 迁移、预拉、E2E 非 7200s 用例轮（4/4）、Maven 缓存专项验收（8.3 全部子项，含创建到可编辑与业务响应证据）、删除回收（8.4）。
 - WAIVED_BY_USER：正式 7200s 用例（用户自测）。
 - BLOCKED→已解决：服务器不可达（第 7 节，已于当日下午恢复）。
 - 遗留 DELETING：8.8 一项（待操作者）。
-- NOT_REVERIFIED：无（本轮计划内应验证项均已执行并留证）。
+- NOT_REVERIFIED（Task 8 遗留、本轮未执行，维持 PENDING 归属）：
+  - §3.2 NetworkPolicy 隔离执行行为：per-project NetworkPolicy 资源随项目生命周期创建/删除已在验收中发生，但其隔离是否实际生效未以注入流量方式在真实集群实测——本轮验收未包含该实验。
+  - §3.6 容量余量判定：未做并发项目数 × 每项目资源请求（MySQL 250m/512Mi、Redis 100m/128Mi、run Job）对节点 allocatable 的余量实测——本轮为单项目串行验收，不构成并发容量结论。

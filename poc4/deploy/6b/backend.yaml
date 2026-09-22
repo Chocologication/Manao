@@ -129,9 +129,11 @@ spec:
             # Java project runtime increment (runtime-deps): non-secret values live in the
             # ConfigMap manao-backend-config; every key below is required, so a missing key
             # fails pod creation with CreateContainerConfigError (fail-closed, like the
-            # image references above). 30080 is the platform ingress; 30281/30282 are the
-            # operator-assigned acceptance NodePorts (see README sections 6/10.4 and the
-            # java-runtime acceptance record).
+            # image references above). The reserved list is the ports projects may never
+            # claim - the platform ingress 30080 only; operator-assigned project ports are
+            # claimed by their project's creation and protected by the API server's NodePort
+            # conflict check (see README sections 6/10.4 and the java-runtime acceptance
+            # record).
             - name: MANAO_RESERVED_PUBLIC_PORTS
               valueFrom:
                 configMapKeyRef:
