@@ -18,7 +18,9 @@
 #     selector (initial -> run -> initial) to route the public ports;
 #   - pods patch: the gateway writes the server-verified pod identity label before the
 #     selector may match the pod (Fabric8PublicEndpointGateway.routeToRun).
-#   Existing pods/exec create stays for fixed-receipt reads. Cross-namespace port conflicts
+#   Existing pods/exec create stays for fixed-receipt reads; websocket-based exec (the
+#     receipt reader's transport) is a GET on the pods/exec subresource, so get is granted
+#     alongside create. Cross-namespace port conflicts
 #   are decided by the API server; no cluster-wide Service listing, no cluster-admin and no
 #   PV delete verbs are granted anywhere.
 # ClusterRole: read-only and independent of the namespace Role - get/list persistentvolumes
@@ -43,7 +45,7 @@ rules:
     verbs: ["get"]
   - apiGroups: [""]
     resources: ["pods/exec"]
-    verbs: ["create"]
+    verbs: ["create", "get"]
   - apiGroups: [""]
     resources: ["services"]
     verbs: ["get", "list", "create", "delete", "patch", "update"]
