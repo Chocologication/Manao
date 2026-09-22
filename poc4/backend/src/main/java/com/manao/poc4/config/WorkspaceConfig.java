@@ -56,12 +56,19 @@ public class WorkspaceConfig {
             try {
                 String kubeconfig = java.nio.file.Files.readString(java.nio.file.Path.of(kubernetes.kubeconfigFile()));
                 io.fabric8.kubernetes.client.Config config = io.fabric8.kubernetes.client.Config.fromKubeconfig(null, kubeconfig, null);
+                config.setHttp2Disable(true);
                 return new KubernetesClientBuilder().withConfig(config).build();
             } catch (java.io.IOException ex) {
                 throw new IllegalStateException("kubeconfig for the local-cluster profile is unreadable", ex);
             }
         }
-        return new KubernetesClientBuilder().build();
+        // In-cluster: HTTP/1.1 must be forced. Run-receipt reads go through WebSocket exec
+        // upgrades; with HTTP/2 (ALPN) negotiated, every exec fails immediately with an
+        // opaque handshake rejection against kube-apiserver (observed live on v1.31,
+        // 2026-09-22), which wedges run readiness arming at STARTING forever.
+        io.fabric8.kubernetes.client.Config config = io.fabric8.kubernetes.client.Config.autoConfigure(null);
+        config.setHttp2Disable(true);
+        return new KubernetesClientBuilder().withConfig(config).build();
     }
 
     @Bean
