@@ -16,7 +16,7 @@ Files:
 | `backend-rbac.yaml` | Namespace Role for workload resources + read-only ClusterRole (`list persistentvolumes`, `get storageclasses`); since the 2026-09-22 Java runtime increment the Role also covers per-project statefulsets, Redis deployments/replicasets, secrets, networkpolicies, services patch/update and pod label patch (section 10) |
 | `backend.yaml` | Backend Service (ClusterIP 8080) + Deployment (replicas 1, Recreate, probes, full config contract) |
 | `frontend.yaml` | Frontend Service (**NodePort 30080**, commented ClusterIP alternative) + Deployment (replicas 1, probes); image placeholder must be substituted before apply |
-| `configmap.yaml` | Non-secret ConfigMap `manao-backend-config` (`MANAO_WS_EXTRA_ORIGIN` = accepted public origin, `MANAO_WORKSPACE_STORAGE_CLASS` = `manao-poc4-delete`, `MANAO_PUBLIC_ENTRY_HOST` = empty by default, see 6.1) |
+| `configmap.yaml` | Non-secret ConfigMap `manao-backend-config` (`MANAO_WS_EXTRA_ORIGIN` = accepted public origin, `MANAO_WORKSPACE_STORAGE_CLASS` = `manao-poc4-delete`, plus the five runtime-deps keys `MANAO_PUBLIC_ENTRY_HOST` / `MANAO_RESERVED_PUBLIC_PORTS` / `MANAO_MYSQL_IMAGE_DIGEST` / `MANAO_REDIS_IMAGE_DIGEST` / `MANAO_MYSQL_STORAGE_CLASS`, see 6/6.1) |
 | `config.example.env` | Template of every variable with its explanation (no real values) |
 
 ## 0. Accepted build baseline (closed and integrated 2026-09-20)
@@ -281,11 +281,11 @@ Verified against the source code (do not rename without re-verifying):
 | `MANAO_JWT_LIFETIME` | `SecurityConfig.jwtService` (`@Value`, duration) | `backend.yaml` env (fixed `24h`) |
 | `MANAO_JWT_SECRET` | `SecurityConfig.jwtService` (`@Value`, >=32 chars) | Secret `manao-backend-auth` |
 | `MANAO_WORKSPACE_CAPABILITY_PRIVATE_KEY` / `_PUBLIC_KEY` | `WorkspaceConfig.workspaceCapabilitySigner` (`@Value`, raw-32-byte base64) | Secret `manao-backend-auth` |
-| `MANAO_RESERVED_PUBLIC_PORTS` | `application.yml` → `BackendProperties.RuntimeDeps.reservedPublicPorts` (comma list; must match the deployment's reserved NodePorts, incl. 30080) | backend.yaml env — NOT yet shipped; add with the runtime increment (section 10) |
-| `MANAO_PUBLIC_ENTRY_HOST` | `application.yml` → `BackendProperties.RuntimeDeps.publicEntryHost` (bare host; empty = access URLs stay null) | ConfigMap `manao-backend-config` + backend.yaml env — NOT yet shipped; enable per 6.1 |
-| `MANAO_MYSQL_IMAGE_DIGEST` | `application.yml` → `BackendProperties.RuntimeDeps.mysqlImageDigest` (explicit patch tag like `8.0.40` or `repo@sha256:<64hex>`; required before any project selects MySQL) | backend.yaml env — NOT yet shipped; add with the runtime increment (section 10) |
-| `MANAO_REDIS_IMAGE_DIGEST` | `application.yml` → `BackendProperties.RuntimeDeps.redisImageDigest` (same pinning rules; required before any project selects Redis) | backend.yaml env — NOT yet shipped; add with the runtime increment (section 10) |
-| `MANAO_MYSQL_STORAGE_CLASS` | `application.yml` → `BackendProperties.RuntimeDeps.mysqlStorageClassName` (StorageClass of per-project MySQL data claims; empty falls back to the workspace class) | backend.yaml env — NOT yet shipped; storage semantics are a section 10 checklist item |
+| `MANAO_RESERVED_PUBLIC_PORTS` | `application.yml` → `BackendProperties.RuntimeDeps.reservedPublicPorts` (comma list; must match the deployment's reserved NodePorts, incl. 30080) | ConfigMap `manao-backend-config` + backend.yaml env (configMapKeyRef; shipped 2026-09-22 with `30080,30281,30282`, section 10.4) |
+| `MANAO_PUBLIC_ENTRY_HOST` | `application.yml` → `BackendProperties.RuntimeDeps.publicEntryHost` (bare host; empty = access URLs stay null) | ConfigMap `manao-backend-config` + backend.yaml env (configMapKeyRef; shipped 2026-09-22 with the platform host, section 6.1) |
+| `MANAO_MYSQL_IMAGE_DIGEST` | `application.yml` → `BackendProperties.RuntimeDeps.mysqlImageDigest` (explicit patch tag like `8.0.40` or `repo@sha256:<64hex>`; required before any project selects MySQL) | ConfigMap `manao-backend-config` + backend.yaml env (configMapKeyRef; shipped 2026-09-22 with the resolved digest, section 10.2) |
+| `MANAO_REDIS_IMAGE_DIGEST` | `application.yml` → `BackendProperties.RuntimeDeps.redisImageDigest` (same pinning rules; required before any project selects Redis) | ConfigMap `manao-backend-config` + backend.yaml env (configMapKeyRef; shipped 2026-09-22 with the resolved digest, section 10.2) |
+| `MANAO_MYSQL_STORAGE_CLASS` | `application.yml` → `BackendProperties.RuntimeDeps.mysqlStorageClassName` (StorageClass of per-project MySQL data claims; empty falls back to the workspace class) | ConfigMap `manao-backend-config` + backend.yaml env (configMapKeyRef; shipped 2026-09-22 empty = Delete-reclaim fallback, section 10.2) |
 
 The Stage 6B login lifetime is 24 hours from sign-in (absolute expiry, not an
 inactivity timeout). The frontend uses the login response's `expiresAt`. Existing
@@ -300,39 +300,23 @@ via `manao-backend`; `MANAO_K8S_MASTER_URL` and `KUBECONFIG` must stay unset.
 No credential values appear in this file, in `config.example.env`, or in any
 committed manifest — generate them per sections 2–3.
 
-### 6.1 `MANAO_PUBLIC_ENTRY_HOST` — a deployment decision, off by default
+### 6.1 `MANAO_PUBLIC_ENTRY_HOST` — public access URLs for project ports
 
 The Java runtime increment lets a project expose user-selected public ports
 (NodePort 30000–31000 range) that reach the project's run pod. The backend
 composes each access URL as `http://<host>:<publicPort>` from
 `MANAO_PUBLIC_ENTRY_HOST` (read via `ProjectController.publicEndpointUrl`).
-Whether to advertise those URLs is the deployment operator's decision:
+The value is non-secret and lives in ConfigMap `manao-backend-config`; the pod
+reads it through a `configMapKeyRef` env entry that `backend.yaml` ships since
+the 2026-09-22 runtime deployment round (both former wiring steps are done
+in-repo; changing the value only requires editing `configmap.yaml`, re-applying
+and restarting `deploy/backend`):
 
-- **Empty (shipped default):** the API returns `publicPortUrl: null` and the
-  frontend shows the assigned ports without an access URL. Nothing else changes
-  — the ports are still provisioned and reachable by whoever knows the host.
-- **Set:** fill the **bare host only** (IP or hostname, e.g. `1.12.245.235`) —
-  no scheme, no port. Enabling it requires **two steps**, because
-  `backend.yaml` does not yet inject this key:
-
-  1. Set the value in ConfigMap `manao-backend-config` (edit
-     `poc4/deploy/6b/configmap.yaml` and re-apply, or
-     `kubectl -n manao-stage6b set data configmap/manao-backend-config ...`).
-  2. Add the env entry to the backend container in `backend.yaml` and re-apply
-     with the image substitution as usual:
-
-     ```yaml
-     - name: MANAO_PUBLIC_ENTRY_HOST
-       valueFrom:
-         configMapKeyRef:
-           name: manao-backend-config
-           key: MANAO_PUBLIC_ENTRY_HOST
-     ```
-
-     Then `kubectl -n manao-stage6b rollout restart deploy/backend`.
-
-A ConfigMap value alone is never read by the pod; setting only step 1 changes
-nothing and must not be mistaken for "enabled".
+- **Empty:** the API returns `publicPortUrl: null` and the frontend shows the
+  assigned ports without an access URL. Nothing else changes — the ports are
+  still provisioned and reachable by whoever knows the host.
+- **Set (current shipped value: the platform public host, bare IP):** the API
+  advertises `http://<host>:<publicPort>` for each provisioned public port.
 
 ## 7. Recorded deviation from the configuration contract
 
@@ -497,15 +481,16 @@ occurred and all four real deletions completed cleanly — see acceptance 5.4).
 | Project files / workspace | per-project PVC `manao-pvc-<projectId>` (`manao-poc4-delete`, 10Gi RWX) | backend restart; **deleted together with the project** (Delete reclaim, verified to the NFS directory level) |
 | Platform config / secrets | namespace objects + registry digests | re-apply per sections 2–4 and 8 |
 
-## 10. Java project runtime increment (prepared 2026-09-22, not yet deployed)
+## 10. Java project runtime increment (wired 2026-09-22; cluster results in the acceptance record)
 
 The `java-runtime-implementation` plan (Tasks 1–7, branch
 `codex/java-runtime-implementation`) adds per-project runtime dependencies
-(MySQL/Redis), user-selected public ports and bounded web (SERVICE) runs. This
-section describes the deployment surface it prepared. The real cluster
-deployment and acceptance round is Task 9 — nothing in this section has been
-executed against the cluster yet, and its results (resolved image tags/digests,
-checklist outcomes, E2E run) are recorded only in
+(MySQL/Redis), user-selected public ports and bounded web (SERVICE) runs, and
+the 2026-09-22 Maven-cache supplement (C1/C2) seeds the runner image and
+per-project caches. This section describes the deployment surface; since
+2026-09-22 the runtime-deps env wiring ships in-repo (`backend.yaml` +
+`configmap.yaml`, see section 6). Deployment outcomes, resolved image
+tags/digests, checklist results and the E2E run are recorded only in
 [poc4/docs/evidence/java-runtime/acceptance.md](../../docs/evidence/java-runtime/acceptance.md),
 never by rewriting the closed 6B PASS above.
 
@@ -534,41 +519,53 @@ at creation time (fail-closed), not by listing cluster Services. Re-apply with
 The backend rejects floating tags at resource build time (`requirePinnedImage`):
 only an explicit patch tag (`8.0.40`) or `repo@sha256:<64hex>` is accepted, and
 an empty value fails the resource build fail-closed. The plan fixed the families
-(MySQL 8.0.40, Redis 7.4 series); the concrete Redis patch and the immutable
-digest references must be resolved against the actual registry during
-deployment and recorded in the new acceptance doc. Wire the resolved values as
+(MySQL 8.0.40, Redis 7.4 series); the digest references resolved against
+docker.io on 2026-09-22 (`mysql@sha256:ed04aca4…873e9d`,
+`redis@sha256:95acc004…c9601`, full values in the acceptance record section 3.5)
+ship in ConfigMap `manao-backend-config` and are injected as
 `MANAO_MYSQL_IMAGE_DIGEST` / `MANAO_REDIS_IMAGE_DIGEST` backend env (section 6
-table — not yet shipped in `backend.yaml`).
+table). Re-resolve before any future redeploy and record the new values in the
+acceptance doc — never reuse a digest resolution from a previous date.
 
 `MANAO_MYSQL_STORAGE_CLASS` (empty = falls back to the workspace class
-`manao-poc4-delete`, Delete reclaim): whether per-project MySQL data claims
-should really use a delete-reclaim class, or a retention class, is a
-pre-deployment checklist decision — the platform MySQL StatefulSet volume is
-never touched by project storage.
+`manao-poc4-delete`, Delete reclaim): the 2026-09-22 deployment round kept the
+Delete-reclaim fallback so deleting a project reclaims its MySQL claim —
+matching the acceptance cleanup contract. The platform MySQL StatefulSet volume
+(`data-mysql-0`, `nfs-storage`) is never touched by project storage.
 
 ### 10.3 Maven runner image
 
-The runner image now carries the single-run supervisor for bounded web sessions
-in addition to the PTY wrapper. Build from `poc4/maven-runner`
-(`docker build -t manao-runner-java-runtime poc4/maven-runner`; exit 0 measured
-2026-09-22, see the java-runtime acceptance doc section 2). The local tag is NOT
-a production pin: push it to the registry, resolve `repo@sha256:<64hex>` and
-deliver it as `MANAO_MAVEN_RUNNER_IMAGE` via Secret `manao-backend-images`
-(section 1/2 flow).
+The runner image carries the single-run supervisor for bounded web sessions, the
+PTY wrapper, and (since the 2026-09-22 Maven-cache supplement C1/C2) a read-only
+seeded Maven repository built from the real workspace templates plus the fixed
+`manao-maven` wrapper. Build and publish (PowerShell, from the implementation
+checkout root; export fresh templates first so the image matches the current
+sources):
 
-The 2026-09-22 [Maven cache supplement](../../../docs/superpowers/plans/2026-09-22-java-maven-cache-implementation-plan.md)
-is approved but not implemented by this documentation update. It adds actual-template
-export, a named build context and dependencies inside the runner image; use its revised
-build flow once implemented, then publish/pin the measured digest and pre-pull it on Run
-nodes before startup measurements. The build above is historical Task 8 evidence and
-does not prove that a preloaded dependency repository exists. Record new image and timing
-results in the Java runtime acceptance record; no extra cache PVC is required.
+```powershell
+mvn -q -f poc4/backend/pom.xml -DskipTests test-compile org.codehaus.mojo:exec-maven-plugin:3.5.0:java -Dexec.mainClass=com.manao.poc4.workspace.MavenSeedTemplateExporter -Dexec.classpathScope=test "-Dmanao.seed.output=<abs>/poc4/backend/target/maven-seed-templates"
+docker build --build-context "seed-templates=<abs>/poc4/backend/target/maven-seed-templates" -t manao-runner-maven-cache poc4/maven-runner
+docker tag manao-runner-maven-cache chocologic/manao_images_repository:<runner-tag>
+docker push chocologic/manao_images_repository:<runner-tag>
+```
+
+The local tag is NOT a production pin: resolve the pushed
+`repo@sha256:<64hex>` (`docker manifest inspect --verbose` / `docker buildx imagetools inspect`) and deliver it as
+`MANAO_MAVEN_RUNNER_IMAGE` via Secret `manao-backend-images` (section 1/2
+flow). Record the digest, the seed-id (`/opt/manao-maven-seed/seed-id` inside
+the image) and any pre-pull evidence in the java-runtime acceptance record;
+pre-pull the published digest on the nodes that will schedule Run Jobs before
+startup measurements, or record the cold-image condition honestly. No extra
+cache PVC is required.
 
 ### 10.4 Reserved public ports
 
-`MANAO_RESERVED_PUBLIC_PORTS` must list every NodePort the deployment reserves
+`MANAO_RESERVED_PUBLIC_PORTS` lists every NodePort the deployment reserves
 (30080 plus the operator-assigned test ports and any other public port in use),
 so the backend refuses project creation requests that would collide with them.
+It ships in ConfigMap `manao-backend-config` since 2026-09-22
+(`30080,30281,30282` for the acceptance round) and is injected via
+`backend.yaml`. Update the ConfigMap together with any future port assignment.
 Whether a port is actually free in the cluster is adjudicated by the API server
 at Service creation — fail-closed, no cluster-wide Service listing.
 

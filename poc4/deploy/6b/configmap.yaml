@@ -1,6 +1,7 @@
 # Non-secret backend configuration referenced by backend.yaml via configMapKeyRef.
-# backend.yaml reads exactly these two keys from ConfigMap manao-backend-config; if this
-# ConfigMap is missing, the backend Pod fails with CreateContainerConfigError.
+# backend.yaml reads exactly these seven keys from ConfigMap manao-backend-config; if this
+# ConfigMap or one of its keys is missing, the backend Pod fails with
+# CreateContainerConfigError.
 # Every credential and digest-pinned image reference lives in Secrets (see README section 2).
 #
 # MANAO_WS_EXTRA_ORIGIN: the EXACT public origin (protocol + host + port) of the
@@ -17,11 +18,23 @@
 #   new StorageClass verification record.
 # MANAO_PUBLIC_ENTRY_HOST: public host through which a project's user-selected public
 #   ports are reachable (bare host only - no scheme, no port; the backend composes
-#   http://<host>:<port> itself, ProjectController.publicEndpointUrl). Empty (the shipped
-#   default) keeps publicPortUrl null so the API never advertises a public URL; whether to
-#   enable it is the deployment operator's decision (see README section 6.1). Enabling it
-#   requires TWO steps: set the value here AND inject the env into backend.yaml (a
-#   configMapKeyRef env entry) - a ConfigMap key alone is never read by the pod.
+#   http://<host>:<port> itself, ProjectController.publicEndpointUrl). Shipped 2026-09-22
+#   with the Java runtime deployment round: set to the platform public host and injected
+#   into the backend pod via backend.yaml (both steps of the former two-step wiring are
+#   done in-repo now; see README section 6.1 and the java-runtime acceptance record).
+# MANAO_RESERVED_PUBLIC_PORTS: every NodePort the deployment reserves for public access
+#   (30080 platform ingress + operator-assigned test ports 30281/30282). The backend
+#   rejects project creation requests whose public ports would collide with these.
+# MANAO_MYSQL_IMAGE_DIGEST / MANAO_REDIS_IMAGE_DIGEST: per-project dependency images,
+#   pinned by manifest digest (requirePinnedImage accepts "repo@sha256:<64hex>" or an
+#   explicit patch tag; floating tags are rejected). Values resolved against docker.io
+#   on 2026-09-22 (docker manifest inspect) and recorded in the java-runtime acceptance
+#   record; never replace them with a floating tag or a placeholder digest.
+# MANAO_MYSQL_STORAGE_CLASS: StorageClass of per-project MySQL data claims. Empty falls
+#   back to MANAO_WORKSPACE_STORAGE_CLASS (manao-poc4-delete, Delete reclaim). Operator
+#   decision 2026-09-22: keep the Delete-reclaim fallback so deleting a project reclaims
+#   its MySQL claim, matching the acceptance cleanup contract. The platform MySQL volume
+#   (data-mysql-0, nfs-storage) is never touched by project storage.
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -33,4 +46,8 @@ metadata:
 data:
   MANAO_WS_EXTRA_ORIGIN: http://1.12.245.235:30080
   MANAO_WORKSPACE_STORAGE_CLASS: manao-poc4-delete
-  MANAO_PUBLIC_ENTRY_HOST: ""
+  MANAO_PUBLIC_ENTRY_HOST: "1.12.245.235"
+  MANAO_RESERVED_PUBLIC_PORTS: "30080,30281,30282"
+  MANAO_MYSQL_IMAGE_DIGEST: "mysql@sha256:ed04aca46b6fe0bdc192becc17d358b46eeb82762b81ee65b80feff3d0873e9d"
+  MANAO_REDIS_IMAGE_DIGEST: "redis@sha256:95acc00495ddacfec75111ba47021f903121a890311d49264c723b4423ac9601"
+  MANAO_MYSQL_STORAGE_CLASS: ""
