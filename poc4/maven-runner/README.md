@@ -3,10 +3,12 @@
 Immutable Maven runner image for POC4 stage 6.
 
 - Base: maven:3.9.9-eclipse-temurin-17 (JDK 17, Maven 3.9, Bash)
-- Contents: /usr/local/bin/manao-pty-wrapper (root-owned, 0555) and
-  /usr/local/bin/manao-shell-hook (root-owned, 0555)
-- Job PID 1: ["mvn","clean","test"] set by JobResourceFactory; the wrapper is only the
-  pods/exec target for the interactive PTY.
+- Contents: /usr/local/bin/manao-pty-wrapper, /usr/local/bin/manao-shell-hook and
+  /usr/local/bin/manao-run-supervisor (root-owned, 0555), plus the supervisor classes.
+- Console Job command: `mvn -q -DskipTests compile exec:java`.
+- Web Job PID 1: the supervisor launches `mvn -q -DskipTests spring-boot:run` after
+  claiming the Run and enforces startup/lifetime deadlines. The PTY wrapper is an
+  independent pods/exec target.
 
 ## Build / digest pinning
 
@@ -16,6 +18,19 @@ Immutable Maven runner image for POC4 stage 6.
 
 Reference the returned digest (repo@sha256:...) in MANAO_MAVEN_RUNNER_IMAGE; floating tags
 are rejected by JobResourceFactory.
+
+## Approved Maven cache supplement (2026-09-22)
+
+The user approved an image-seeded Maven repository plus a private persistent cache on
+each project's existing workspace PVC. Implementation and performance remain unverified.
+See the [design, section 7.5](../../docs/superpowers/specs/2026-09-21-java-project-runtime-design.md)
+and [implementation supplement](../../docs/superpowers/plans/2026-09-22-java-maven-cache-implementation-plan.md).
+The supplement defines actual-template export, a named Docker build context, a fixed Maven
+wrapper, non-root cache access and focused container tests. Its new build commands become
+applicable after those files are implemented; the current image does not already contain a seed.
+
+Cache integration must preserve the current Maven goals and the Web supervisor's claim,
+stop and deadline behavior. No cache PVC or user-facing cache option is added.
 
 ## Trust boundary
 

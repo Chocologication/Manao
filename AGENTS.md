@@ -15,9 +15,10 @@
 | Product goal, delivered POC4 scope and non-goals | [Project Goal](docs/Manao-Projects-goal.md) |
 | Completed stages and what remains undecided | [Progress](docs/what-we-have-done.md) |
 | Project, Run and dependency terminology | [Domain glossary](CONTEXT.md) |
-| Proposed Java application ports and project MySQL/Redis lifecycle | [Java Runtime Design](docs/superpowers/specs/2026-09-21-java-project-runtime-design.md), design review only |
+| Agreed Java application ports, MySQL/Redis lifecycle and Maven cache | [Java Runtime Design](docs/superpowers/specs/2026-09-21-java-project-runtime-design.md), cache contract in section 7.5 |
 | Java runtime module/interface/test review | [Module Review](docs/superpowers/specs/2026-09-21-java-runtime-module-review.md), manual rerun confirmed |
-| Java runtime implementation tasks and verification | [Implementation Plan](docs/superpowers/plans/2026-09-21-java-project-runtime-implementation-plan.md), not yet executed |
+| Java runtime implementation tasks and verification | [Implementation Plan](docs/superpowers/plans/2026-09-21-java-project-runtime-implementation-plan.md); actual outcomes in [Runtime Acceptance](poc4/docs/evidence/java-runtime/acceptance.md) |
+| Approved Maven image seed and project cache supplement | [Maven Cache Plan](docs/superpowers/plans/2026-09-22-java-maven-cache-implementation-plan.md), documentation only; implementation and timing unverified |
 | Current cloud acceptance, evidence and limits | [Stage 6B Acceptance](poc4/docs/evidence/stage-6b/acceptance.md), current conclusion in section 10 |
 | Cloud deployment, pinned images and maintenance | [Stage 6B Deployment](poc4/deploy/6b/README.md) |
 | Environment boundaries and dated infrastructure observations | [Infrastructure Status](docs/Stage6-Infrastructure-Status.md) |
@@ -30,6 +31,8 @@
 - On 2026-09-21 the user confirmed persistent project MySQL data with a separate PVC, a two-hour application lifetime after successful startup, and mandatory user-entered public ports in 30000–31000: conflicts require user correction, never automatic replacement. Container ports have no additional product range restriction beyond valid port values. Continue design before broader language adaptation and AI. The user has confirmed that failed applications are manually rerun, not automatically restarted. The linked implementation plan reuses Job + Service and existing Run/log/cleanup modules; do not reintroduce the superseded application Deployment or retry framework. None of these capabilities is delivered or accepted by the existing 6B PASS.
 
 ## Runtime boundaries
+
+- On 2026-09-22 the user approved preloading standard Java template dependencies/plugins in the runner image and seeding a private Maven cache on each project's existing workspace PVC. Keep the cache outside the code subPath; preserve it across Runs and reclaim it with project deletion. No cache PVC, cross-project writable cache, new frontend option or language-provider framework. Complete cache C1/C2 before the original Task 9 and combine C3 with that acceptance; do not replay completed Tasks 1–8. This supplement improves application startup, not a promise that workspace creation is instant.
 
 - The accepted cloud deployment uses the `cluster` profile in `manao-stage6b`, the `manao_poc4_6b` schema and the `manao-backend` ServiceAccount. Browser use does not depend on a local Vite/backend, SSH tunnel or workspace bridge. Deployment and maintenance commands belong in the deployment README.
 - For explicit 6A/local debugging, `local-cluster` defaults to `kubectl port-forward` to the server-derived workspace Pod. `MANAO_KUBECTL` selects the executable; `MANAO_BRIDGE_MODE=fabric8` is for transport comparison, and `supervised` requires an intentionally managed external bridge.

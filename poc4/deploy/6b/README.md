@@ -556,6 +556,14 @@ a production pin: push it to the registry, resolve `repo@sha256:<64hex>` and
 deliver it as `MANAO_MAVEN_RUNNER_IMAGE` via Secret `manao-backend-images`
 (section 1/2 flow).
 
+The 2026-09-22 [Maven cache supplement](../../../docs/superpowers/plans/2026-09-22-java-maven-cache-implementation-plan.md)
+is approved but not implemented by this documentation update. It adds actual-template
+export, a named build context and dependencies inside the runner image; use its revised
+build flow once implemented, then publish/pin the measured digest and pre-pull it on Run
+nodes before startup measurements. The build above is historical Task 8 evidence and
+does not prove that a preloaded dependency repository exists. Record new image and timing
+results in the Java runtime acceptance record; no extra cache PVC is required.
+
 ### 10.4 Reserved public ports
 
 `MANAO_RESERVED_PUBLIC_PORTS` must list every NodePort the deployment reserves

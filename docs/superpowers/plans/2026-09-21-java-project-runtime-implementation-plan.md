@@ -10,7 +10,9 @@
 
 **Spec:** [收敛后的设计](../specs/2026-09-21-java-project-runtime-design.md)；先读 [codebase-design 模块审查](../specs/2026-09-21-java-runtime-module-review.md)。
 
-**Status / baseline:** 2026-09-21 编写；用户已确认异常后手动重跑，下面任务未执行。业务基线 `e9c702e`。文档工作树 `D:/DeepLearning/MyProjects/Project_Manao/.worktree/java-project-runtime-design`，分支 `codex/java-project-runtime-design`。实施前检查分支/未提交改动；文件路径相对于实际实施检出，不在 master 或已完成的 6B 工作树直接写实现。
+**Status / baseline:** 原计划于 2026-09-21 基于 `e9c702e` 编写。2026-09-22 检查实施分支 `codex/java-runtime-implementation` 的 `ec14339`，已有原任务代码与 Task 8 准备记录；实际部署/验收以[运行时记录](../../../poc4/docs/evidence/java-runtime/acceptance.md)为准，不以本文尚未勾选的历史步骤推断任务未执行。实施前检查最新分支/未提交改动；文件路径相对于实际实施检出，不在 master 或已完成的 6B 工作树直接写实现。
+
+**2026-09-22 已批准补充：** 按[Maven 缓存补充计划](2026-09-22-java-maven-cache-implementation-plan.md)实施镜像预置模板依赖与现有 workspace PVC 内的项目缓存。C1/C2 在 Task 9 之前完成，C3 并入 Task 9；不重新执行已完成的 Task 1–8，不新增依赖缓存 PVC。本次文档更新未实现或验收缓存。
 
 ## Global Constraints
 
@@ -20,6 +22,7 @@
 - publicPort 必须用户手填，整数 30000–31000；保留集合至少含 30080。无自动补值、选号或冲突换号。
 - targetPort 为整数 1–65535，无人为低端口或 18081 禁区。TCP、最多3条映射仍沿用设计默认值。
 - MySQL/Redis 不公开、不复用平台数据库；Redis 是非持久缓存。应用停止不等于暂停或删除依赖。
+- Maven 缓存遵守设计 §7.5：镜像 seed 初始化、项目卷独立目录、后续按需下载；创建工作区不等待 Maven；不改变启动/运行期限，MySQL 仍使用独立卷。
 - Unknown/Forbidden 不等于 Missing；不确定进程停止时保留锁。未知变更按稳定身份核对，不换 ID 盲重放。
 - pnpm，禁止 npm；UTF-8 无 BOM；Windows 既有文件先读再改，Shell/Docker 入口 LF。不重置 `manao_poc4` / `manao_poc4_6b`，不执行宽泛 clean。
 - 不增加 AI、其他语言实现、热更新、任意执行命令、自动休眠、数据库重置 UI、Redis 持久化、HA、完整 PTY/压力矩阵。
@@ -586,7 +589,8 @@ git status --short
 | 就绪/端口访问、用户日志与写锁 | 6、7、9 |
 | 工作区修复不删依赖、完整永久删除 | 3、4、9 |
 | 旧项目/旧Run兼容、运行库不重置 | 1、6、7、8、9 |
+| 镜像预置依赖、项目 Maven 缓存、旧 PVC 兼容与提速证据 | 缓存补充 C1、C2、C3；C3 并入 9 |
 
-顺序：1→2→3→4→5→6→7→8→9；文件有交叠，不默认并行。每项包含自己的失败测试→最小实现→验证→提交，不为不变路径反复跑全套。部署容量、网络、镜像及存储事实在Task8实测，不能由文档代替。
+原任务顺序：1→2→3→4→5→6→7→8→9；现有实施在 Task 9 前补充缓存 C1→C2，再合并执行 C3/Task 9。文件有交叠，不默认并行。每项包含自己的失败测试→最小实现→验证→提交，不为不变路径反复跑全套。部署容量、网络、镜像及存储事实需要实测，不能由文档代替。
 
 **计划完成不等于实施完成。** 当前没有必需再次询问的产品选择；已公开的Redis缓存、3条端口上限等设计默认值不冒充新用户逐项确认。运行器控制目录复用workspace PVC的独立子目录，不增加第三个PVC，不等于MySQL与代码共用卷。

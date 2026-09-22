@@ -1,6 +1,6 @@
 # Project Progress
 
-Updated: 2026-09-21. Current integrated baseline: `master`, merge `860cdda` (6B), pushed to `origin/master`. This index summarizes completed work; detailed acceptance belongs to the linked stage records.
+Updated: 2026-09-22. Current integrated baseline: `master`, merge `860cdda` (6B), pushed to `origin/master`. This index summarizes completed work; detailed acceptance belongs to the linked stage records.
 
 ## Current Status
 
@@ -8,7 +8,7 @@ Updated: 2026-09-21. Current integrated baseline: `master`, merge `860cdda` (6B)
 | --- | --- | --- |
 | 6A — real backend/Kubernetes MVP | PASS by user acceptance on 2026-09-17; merged on 2026-09-18 (`6dfb655`) | [6A facts](Stage6A-Current-Facts.md) |
 | 6B — cloud single-user workbench | PASS, closed and merged on 2026-09-20 (`860cdda`) | [6B acceptance](../poc4/docs/evidence/stage-6b/acceptance.md), sections 9.5–10 |
-| Next product slice | Not yet agreed; not started by this documentation task | [Product goal and non-goals](Manao-Projects-goal.md) |
+| Java runtime slice | Scope agreed; implementation branch and Task 8 preparation exist. Maven cache supplement approved; implementation and timing unverified | [Runtime acceptance](../poc4/docs/evidence/java-runtime/acceptance.md), [cache plan](superpowers/plans/2026-09-22-java-maven-cache-implementation-plan.md) |
 
 ## Delivered Cloud Workbench
 
@@ -51,7 +51,9 @@ Historical stage detail and decision changes: [Evolution Timeline](Stage6A-Evolu
 
 Stage 6B is finished. No mandatory “finish 6A, then begin 6B” checklist remains; do not restart old Tasks 10–12 or expand the full engineering matrix merely because an old plan still contains unchecked boxes.
 
-The next direction is Java project runtime design before broader multi-language adaptation and AI. The [Java Runtime Design](superpowers/specs/2026-09-21-java-project-runtime-design.md) now incorporates mandatory user-entered public ports in 30000–31000, conflict feedback without automatic replacement, and container ports without extra product range restrictions. Separate persistent MySQL storage and the two-hour application lifetime remain confirmed. The [module/interface/test review](superpowers/specs/2026-09-21-java-runtime-module-review.md) is complete and the user has confirmed manual application rerun, not automatic recovery. The [implementation plan](superpowers/plans/2026-09-21-java-project-runtime-implementation-plan.md) now defines nine sequential tasks using Job + Service, focused tests and one full two-hour acceptance run. No business implementation or runtime verification is complete. These linked documents own the details; this index does not add another acceptance matrix.
+The next direction is Java project runtime work before broader multi-language adaptation and AI. The [Java Runtime Design](superpowers/specs/2026-09-21-java-project-runtime-design.md) incorporates mandatory user-entered public ports in 30000–31000, conflict feedback without automatic replacement, and container ports without extra product range restrictions. Separate persistent MySQL storage, the two-hour application lifetime and manual rerun remain confirmed. The [module review](superpowers/specs/2026-09-21-java-runtime-module-review.md) and [implementation plan](superpowers/plans/2026-09-21-java-project-runtime-implementation-plan.md) define Job + Service, focused tests and one full two-hour acceptance run. Code exists on the implementation branch; its [acceptance record](../poc4/docs/evidence/java-runtime/acceptance.md) owns the actual deployment and verification conclusions.
+
+The 2026-09-22 [Maven cache supplement](superpowers/plans/2026-09-22-java-maven-cache-implementation-plan.md) is approved: prepare template dependencies in the runner image, seed a project cache on the existing workspace PVC, retain later downloads, and add no cache PVC. Complete C1/C2 before the original Task 9 and combine C3 with that lifecycle acceptance. This documentation update neither implements caching nor establishes startup timing; no earlier stage PASS is being rewritten.
 
 For maintenance, follow the accepted deployment README, reconcile any ambiguous mutation before retrying, and use the actual failing scope to select verification. A new feature or new failure may justify additional tests; unchanged previously passed paths do not require repeated full-suite or cluster reruns.
 

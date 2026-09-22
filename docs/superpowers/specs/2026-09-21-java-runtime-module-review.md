@@ -111,6 +111,20 @@ Optional<Project> create(String ownerId, String name, ProjectRuntimeSpec runtime
 
 **测试位置：** 在 [ProjectsPage.test.tsx](../../../poc4/frontend/src/features/projects/ProjectsPage.test.tsx) 覆盖创建流程；必要时新增 `CreateProjectForm.test.tsx` 承载输入组合，避免在两个文件重复同一断言。扩展 [RunPanel.test.tsx](../../../poc4/frontend/src/components/runs/RunPanel.test.tsx)、[contracts/run.test.ts](../../../poc4/frontend/src/contracts/run.test.ts)。一条新增的 `tests/e2e/java-runtime-lifecycle.spec.ts` 承担公网双端口、MySQL 数据保留、停止/到期与最终删除，复用现有 E2E 登录、Run 和 cleanup 工具。
 
+### 3.6 Maven 预置与缓存（2026-09-22 补充）
+
+**检查基线：** 实施分支 `ec14339`。两种 Job 都没有持久化 Maven 仓库；runner Dockerfile 没有预置模板依赖。Web 模板已按 MySQL/Redis 选择生成相应 POM，不能把冷启动描述为下载“全套 Spring Boot”。本补充仅完成设计与源码检查，未测量集群耗时。
+
+**Module / Interface：** 缓存属于 Java 运行环境内部实现。项目与 Run 的外部调用不增加参数；`WorkspaceTemplate` 继续拥有模板内容，镜像构建导出其真实结果准备依赖，不手抄另一份 POM。包装器 `/usr/local/bin/manao-maven` 负责使用镜像 seed 初始化项目缓存、显式配置 Maven 仓库并 `exec mvn`。只为当前 Java 路径增加这一处内部复用，不引入 CacheService 或多语言 Provider。
+
+**职责位置：** `WorkspaceResourceFactory` 定义 `.manao-cache/maven` subPath 并为新项目建空目录；`JobResourceFactory` 为两种 Run 挂载同一 workspace PVC 的该目录，且兼容旧 PVC 的目录/权限准备。workspace agent 仍只见代码目录。构建镜像与复制 seed 的知识留在 `poc4/maven-runner/`；Web supervisor 先 claim，再以受监督子进程调用固定包装器，原 PID 1、时限、收据与停止语义保持不变。
+
+**资源与生命周期：** 不新增 PVC/storage binding/SQL 表/前端开关；MySQL 独立 PVC 保持不变。停止/失败/到期保留项目缓存，删除复用既有 workspace 卷回收。初始化失败不回退临时仓库；不以后台自动清理、全局共享写缓存解决局部问题。
+
+**测试位置：** 原 `WorkspaceResourceFactoryTest` / `JobResourceFactoryTest` 验证两种 manifest、旧目录兼容及 workspace 不见缓存；新增 `poc4/maven-runner/tests/maven-cache.sh` 验证真实 UID 10001 下的完整 seed、离线首跑、跨容器复用、新依赖、复制中断和镜像更新。既有 `runtime-lifecycle.sh` 验证固定包装器接入后认领、PID 1、停止与期限仍成立。性能与存储回收并入原云端生命周期，不重复搭建验收框架。
+
+接口和测试已定位，按[Maven 缓存补充计划](../plans/2026-09-22-java-maven-cache-implementation-plan.md)实施。项目 PVC 持久化并不保证 NFS 小文件读取更快，实际首跑/复跑结果由测量决定。
+
 ## 4. 内部端口不设业务限制的具体影响
 
 1. 请求接受 1–65535 的整数，不把 80 或 18081 特别禁止；拒绝 0、65536、非整数是协议合法性，不是新的产品范围限制。
