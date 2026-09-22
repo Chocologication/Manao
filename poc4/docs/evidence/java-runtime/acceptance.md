@@ -2,7 +2,7 @@
 
 本文件是「Java 项目运行环境升级」（`java-runtime-implementation` 计划）的唯一云端验收记录。
 
-> **当前结论（2026-09-22，Task 8 + C3 部署轮）：PREPARED，其中 C3 发布阶段部分完成（接线提交与镜像发布），集群部署与验收 BLOCKED —— 服务器自本机不可达（详见第 7 节）。** 本文件仍不含任何 PASS 结论。第 4 节 PENDING 项维持，第 7 节为 C3（并入 Task 9）执行记录。既有 Stage 6B PASS（[stage-6b acceptance](../stage-6b/acceptance.md)）不因本计划改写。
+> **当前结论（2026-09-22，Task 8 + C3 部署/验收轮）：集群部署与迁移完成；E2E 非 7200s 用例轮与 Maven 缓存专项验收 PASS（第 8 节）；正式 7200s 用例 WAIVED_BY_USER（用户自测，未执行）；一个验收遗留项 DELETING 待操作者处理（8.8）。** 既有 Stage 6B PASS（[stage-6b acceptance](../stage-6b/acceptance.md)）不因本计划改写。第 7 节为当日上午的服务器不可达记录（已恢复）。
 
 - 记录时间：2026-09-22（+08:00）
 - 记录者：Task 8（部署配置与 E2E 入口准备；集群核对全部为只读操作）
@@ -154,3 +154,103 @@
 - BLOCKED：§7.3 前五项（全部集群侧）。
 - WAIVED_BY_USER：正式 7200 秒用例（尚未执行，等待用户自测结果）。
 - NOT_REVERIFIED：全部云端验证结论（V9 迁移、E2E、缓存命中、回收核对等）——在 §7.3 完成前本功能不得声称任何云端 PASS。
+
+## 8. C3 部署与验收结果（2026-09-22 下午，集群恢复后完成）
+
+记录者：C3 实现轮。服务器连通性恢复后，全部集群操作按部署 README 执行；每项操作均有命令级证据。状态分类见 8.9。
+
+### 8.1 部署（PASS）
+
+| 步骤 | 结果 |
+| --- | --- |
+| backend-rbac.yaml re-apply | configured；Role 新增 statefulsets/deployments/replicasets/secrets/networkpolicies、services patch/update、pods patch |
+| manao-backend-images secret 重建 | BACKEND_IMAGE=20260922d digest、MANAO_MAVEN_RUNNER_IMAGE=20260922b digest（base64 解码核对）；agent/initializer digest 未变 |
+| configmap apply | 7 键齐备（§6 表）；reserved ports = 30080（见 8.7 修正记录） |
+| backend apply + rollout | `chocologic/manao_images_repository@sha256:0cae66130092bd44118d3ed13d8a6b1d49047f14f926fddf7035eb6143b2691c`（tag `java-runtime-backend-20260922d`），rollout success |
+| frontend apply + rollout | `chocologic/manao_images_repository@sha256:eb220fb290e91612758310c79ecbc6d9b3f444ba886bf4582fbecd249352363d`（tag `java-runtime-frontend-20260922c`），rollout success；30080 返回 200 |
+| V9 迁移 | `Migrating schema manao_poc4_6b to version "9 - project runtime"` → `now at version v9 (execution time 00:00.311s)`；后端重启后 `Schema is up to date`；迁移前后 project/run 行数完好（迁移前 0 行） |
+| 旧项目列表 | API 返回正常（app_user 名下 0 个旧项目；DB 0 行，无数据丢失面） |
+| runner 镜像预拉 | node1/node2 各一个一次性 Job（pin `sha256:d0387b17…2412`）成功；node2 事件实测 `Successfully pulled image … in 22.316s, Image size: 357419877 bytes`，node1 Job 25s 完成；两节点镜像就绪后清理 Job |
+
+### 8.2 E2E 非 7200s 用例轮（PASS，4/4）
+
+命令：`MANAO_RUNTIME_BASE_URL=http://1.12.245.235:30080 MANAO_RUNTIME_PUBLIC_PORT_1=30281 MANAO_RUNTIME_PUBLIC_PORT_2=30282 pnpm --dir poc4/frontend test:e2e:java-runtime --grep-invert "whole lifetime"`（凭据经环境变量注入，两小时用例按计划排除）。
+
+| 用例 | 结果 |
+| --- | --- |
+| 登录 + 运行时工作台 | PASS（0.8–1.1s） |
+| 创建 web 项目（MySQL+Redis+端口 30281/30282） | PASS（热镜像下 23.1s 到 READY，MySQL/Redis 均 READY，端口按输入精确分配） |
+| 启动 bounded web run，双公网端口各返回 demo | PASS（run 全程 1.3m：含首跑 seed+编译+启动；`firstReadyAt` 武装、`expiresAt`=+7200s、SERVICE kind、双端口 `/api/demo` 200） |
+| 停止遗留 run + UI 删除项目 + 卡片消失 | PASS（1.4m；删除后 API 列表为空、PVC 即时回收） |
+
+完整 4/4 于 2026-09-22 22:31–22:34(+08:00)（attempt 15）。此前 attempt 12 的同轮前 3 用例亦 PASS。
+
+### 8.3 Maven 缓存专项验收（PASS）
+
+专用主项目（web 模板、无依赖、无公网端口；API 驱动创建/编辑/启停/删除，K8s/存储检查为独立事实）。运行镜像 seed-id=`4ef64a46b63a89bb21b84031b2eebe9928fdadb01a93185fc271bfc64ba7fda8`（158M / 3115 文件）。
+
+| Run | 缓存前置 | start (Z) | firstReadyAt (Z) | 耗时 | 说明 |
+| --- | --- | --- | --- | --- | --- |
+| 1 首跑 | 空 | 14:43:39 | 14:44:37 | **58s** | 容器 14:43:42 起；App Started 14:44:36.8（JVM 内 2.1s）；seed 复制+编译合并段 ≈52s（`-q` 无中间日志，不强行拆分） |
+| 2 复用 | 3115 文件+marker | 14:47:54 | 14:48:01 | **7s** | marker 命中 → 无复制；App 1.6s |
+| 3 加 commons-text:1.13.0 首下 | 3115 | 14:49:02 | 14:49:10 | 8s | pom 经文件 API 编辑；新增 8 个文件（见下） |
+| 4 复用 1.13.0 | 3123 | 14:51:02 | 14:51:09 | 7s | 文件清单与 mtime 集合与 run 3 后完全一致 → 无重下 |
+| 5 旧 PVC 补建（模拟：删除 `.manao-cache/maven` 目录） | 空 | 14:58:25 | 14:59:23 | **58s** | 目录重建+全量补种+1.13.0 按需重新获取（pom 仍声明） |
+
+缓存命中/传输证据（只读 debug pod 清点，挂载工作区 PVC）：
+
+- Run 1 后：`seeded-4ef64a46…` marker 存在，3115 文件，**0 个文件晚于 marker**。
+- Run 3 后：3115→3123；晚于 marker 的文件恰为 `commons-text/1.13.0/{jar.sha1,pom.sha1,_remote.repositories}` + `commons-parent/78/{pom.sha1,_remote.repositories}` —— 精确的最小下载集（1.13.0 的 parent POM 版本 78 未在 seed，seed 内为 50）。
+- Run 4 后：文件数与"晚于 marker 集合"与 Run 3 后逐项一致 → 无重复下载。
+- Run 5 后：3123 文件齐备，1.13.0 按需重新获取，marker 重新发布。
+- C2 审查遗留复核：`commons-text:1.13.0` 确认不在 seed（仅 1.12.0/1.3），依赖 commons-lang3 3.14.0、commons-parent 50 在 seed。
+
+跨项目隔离：辅助项目独立运行后其缓存为 3115 文件（自身 marker），`commons-text/` 仅含 1.12.0/1.3 —— **不含主项目新增的 1.13.0**，跨项目缓存隔离成立。
+
+停止后缓存保留：Run 1→2、2→3、3→4 均经 stop→新 run，各次盘点显示缓存持续存在且未被清理。
+
+镜像拉取与运行启动分离：runner digest 已预拉至两 worker（8.1），Run 时无拉取开销；冷拉取成本以预拉事件（22.3s/357MB）单独记录。
+
+### 8.4 删除与资源回收（PASS，含一处遗留）
+
+- E2E 项目（9b258d43…，含 MySQL/Redis 独立 PVC）：删除 204，`manao-mysql-pvc-*` 与 `manao-pvc-*` 即时回收，MySQL 数据 PVC 契约不变（独立 PVC、Delete 回收）。
+- 验收主项目/重复项目/辅助项目：删除 204，各自 workspace PVC 回收；删除后集群仅剩平台 3 pod（backend/frontend/mysql-0）、平台 `data-mysql-0`，无残留 run Job/pod。
+- SQL 核对：删除后 `project` 行仅剩遗留项 1 行、`project_storage_binding` 1 行（对应遗留项）。
+- 平台入口 30080 与平台 MySQL 卷全程未受影响。
+
+### 8.5 正式 7200 秒用例：WAIVED_BY_USER
+
+按计划由用户本人执行新镜像下的完整两小时用例；本计划不代跑。E2E 轮已验证的相邻事实：SERVICE run 的 readiness 武装、`expiresAt`=+7200s 不可变、停止→CANCELLED、到期语义未在本轮复验（用户自测覆盖）。
+
+### 8.6 验收过程中发现并修复的缺陷（全部 TDD/提交）
+
+| # | 缺陷 | 修复/提交 | 验证 |
+| --- | --- | --- | --- |
+| 1 | 前端创建表单依赖 `crypto.randomUUID`（仅 secure context），HTTP 公网入口上 submit 前抛错、无任何请求 | getRandomValues 回退实现 + 单测（ef660d4） | 单测 RED→GREEN；部署后探针确认 POST 发出 |
+| 2 | `MANAO_RESERVED_PUBLIC_PORTS` 首次接线误含验收测试端口 30281/30282 → 创建被 409 拒绝 | 改为仅 30080 + README 修正（cae9254） | API 探针：30080 → 409 PUBLIC_PORT_RESERVED 且无行残留 |
+| 3 | NodePort 冲突分类大小写 bug：v1.31 返回小写 `provided port is already allocated`，确定性冲突被降级为 UNKNOWN | equalsIgnoreCase + 单测（fd4bf21） | 单测 RED→GREEN 12/12 |
+| 4 | ClusterRole 缺 `persistentvolumes get`：PVC 绑定后 `rememberMysqlClaim` 403 → provisioning 失败 | 授 get+list（bd892b4） | apply 后 provisioning 成功；previously unbound-PVC 的静默路径同时关闭 |
+| 5 | fabric8 HTTP/2 下 websocket exec 立即失败（ opaque handshake rejection） | 两处客户端构造 `setHttp2Disable(true)` + 单测（fde4737） | 单测 RED→GREEN；注：此修复非该卡点最终根因（见 #6），保留为加固 |
+| 6 | **pods/exec 仅授 create（SPDY 时代动词）；websocket exec 是 GET+upgrade → 全部 403 → run 卡 STARTING** | 授 get pods/exec（71422c1） | 集群内 SA 探针：改前 403、改后 101；run `firstReadyAt` 即刻武装 |
+| 7 | 前端 Run 详情一次性获取：服务端武装 readiness 后工具条永远停在 STARTING | 非终态 run detail 按 active-run 节奏轮询 + 单测（fb469ff） | 单测 RED→GREEN；E2E att.15 工具条正确显示 RUNNING |
+| 8 | E2E spec：第二公网端口也映射 8080 —— 一个 Service 不能声明两个相同 service port（apiserver 422 Duplicate value） | 端口 2 映射 9090 并经文件 API 让示例代码真实监听 9090（原 Task 9 计划即为此设计）；依赖就绪等待预算提高（无独立提交，随 fb469ff） | E2E att.15 通过；日志证实 `Tomcat started on ports 8080 (http), 9090 (http)` |
+
+后端全量套件两次运行 509/510、510 通过，唯一失败均为既知负载敏感 flake（`WorkspaceApiClientTransportTest.classifiesAConnectionClosedWithResetAsReset`，隔离运行稳定通过，与本轮改动无关——如实记录）。
+
+### 8.7 配置修正记录
+
+`MANAO_RESERVED_PUBLIC_PORTS` 语义 = 项目**永不**可占用的平台保留端口（30080）。2026-09-22 上午首版接线曾含 `30080,30281,30282`（当时按 README 旧文案理解），导致验收项目自身创建被拒；已修正为 `30080` 并同步 configmap 注释、config.example.env、README §6/§10.4。操作者指定的验收端口由项目创建时占用、由 API server 的 NodePort 冲突检查（fail-closed）保护，不进入该列表。
+
+`MANAO_MYSQL_STORAGE_CLASS` 留空 = 回退 `manao-poc4-delete`（Delete reclaim）的操作者决策维持不变。
+
+### 8.8 遗留项（未自动回收，保持 DELETING）
+
+项目 `java-runtime-20260922120102-96pj`（id `ec03f997-…`）处于 DELETING：其 provisioning 曾因 #4 的 403 失败，MySQL PVC 未能在 store 注册，fail-closed 清理器按设计拒绝删除未注册声明（防误删数据），故清理无法自动完成，2 个 PVC（workspace + mysql）与数据保留。**需操作者决策**：确认该 PVC 归属后手动处置，或等待后续任务提供修复路径。不 force-delete、不伪造回收。
+
+### 8.9 状态分类汇总（C3 最终）
+
+- PASS：部署与 rollout、V9 迁移、预拉、E2E 非 7200s 用例轮（4/4）、Maven 缓存专项验收（8.3 全部子项）、删除回收（8.4）。
+- WAIVED_BY_USER：正式 7200s 用例（用户自测）。
+- BLOCKED→已解决：服务器不可达（第 7 节，已于当日下午恢复）。
+- 遗留 DELETING：8.8 一项（待操作者）。
+- NOT_REVERIFIED：无（本轮计划内应验证项均已执行并留证）。
