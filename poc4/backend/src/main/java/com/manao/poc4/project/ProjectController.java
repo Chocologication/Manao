@@ -7,6 +7,7 @@ import com.manao.poc4.kubernetes.PublicEndpointGateway;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 import org.slf4j.Logger;
@@ -37,7 +38,9 @@ public final class ProjectController {
     private final ProjectCleanupService cleanup;
     private final PublicEndpointGateway endpoints;
     private final ProjectRuntimeStore runtimeStore;
+    private final ProjectDependencies dependencies;
     private final Set<Integer> reservedPublicPorts;
+    private final String publicEntryHost;
 
     public ProjectController(ProjectService projects) { this(projects, null, null, null, null, java.util.Set.of()); }
 
@@ -48,27 +51,39 @@ public final class ProjectController {
     @Autowired
     public ProjectController(ProjectService projects, ProjectProvisioningService provisioning,
                              ProjectCleanupService cleanup, PublicEndpointGateway endpoints,
-                             ProjectRuntimeStore runtimeStore, BackendProperties properties) {
-        this(projects, provisioning, cleanup, endpoints, runtimeStore,
+                             ProjectRuntimeStore runtimeStore, ProjectDependencies dependencies,
+                             BackendProperties properties) {
+        this(projects, provisioning, cleanup, endpoints, runtimeStore, dependencies,
             properties == null
                 ? java.util.Set.of()
-                : java.util.Set.copyOf(properties.runtimeDeps().reservedPublicPorts()));
+                : java.util.Set.copyOf(properties.runtimeDeps().reservedPublicPorts()),
+            properties == null ? null : properties.runtimeDeps().publicEntryHost());
     }
 
     public ProjectController(ProjectService projects, ProjectProvisioningService provisioning,
                              ProjectCleanupService cleanup, PublicEndpointGateway endpoints,
                              ProjectRuntimeStore runtimeStore, Set<Integer> reservedPublicPorts) {
+        this(projects, provisioning, cleanup, endpoints, runtimeStore, null, reservedPublicPorts, null);
+    }
+
+    public ProjectController(ProjectService projects, ProjectProvisioningService provisioning,
+                             ProjectCleanupService cleanup, PublicEndpointGateway endpoints,
+                             ProjectRuntimeStore runtimeStore, ProjectDependencies dependencies,
+                             Set<Integer> reservedPublicPorts, String publicEntryHost) {
         this.projects = projects;
         this.provisioning = provisioning;
         this.cleanup = cleanup;
         this.endpoints = endpoints;
         this.runtimeStore = runtimeStore;
+        this.dependencies = dependencies;
         this.reservedPublicPorts = Set.copyOf(reservedPublicPorts);
+        this.publicEntryHost = publicEntryHost == null || publicEntryHost.isBlank()
+            ? null : publicEntryHost.trim();
     }
 
     @GetMapping
     public ProjectListResponse list(Authentication authentication) {
-        return new ProjectListResponse(projects.list(authentication.getName()).stream().map(ProjectController::view).toList(), ProjectLimits.MAX_PROJECTS_PER_OWNER);
+        return new ProjectListResponse(projects.list(authentication.getName()).stream().map(this::view).toList(), ProjectLimits.MAX_PROJECTS_PER_OWNER);
     }
 
     /**
@@ -130,7 +145,7 @@ public final class ProjectController {
     @GetMapping("/creation/{creationKey}")
     public ProjectView findCreation(Authentication authentication, @PathVariable String creationKey) {
         return projects.findCreation(authentication.getName(), creationKey)
-            .map(ProjectController::view)
+            .map(this::view)
             .orElseThrow(() -> new ApiException("ENTRY_NOT_FOUND", 404, "Project not found"));
     }
 
@@ -180,18 +195,58 @@ public final class ProjectController {
         return view(project);
     }
 
-    private static ProjectView view(ProjectService.Project project) {
+    /**
+     * Browser view: identity and state plus the non-sensitive runtime facts — the runtime
+     * configuration, the endpoint application state, live dependency readiness and the public
+     * access endpoints. No resource names, credentials or environment values ever appear here.
+     */
+    private ProjectView view(ProjectService.Project project) {
         String reason = "WORKSPACE_RECONCILIATION_REQUIRED".equals(project.failureReason())
             ? project.failureReason() : null;
         if (ProjectProvisioningService.WORKSPACE_STORAGE_MISSING.equals(project.failureReason())) {
             reason = "Workspace storage is missing. Existing files cannot be accessed.";
         }
-        return new ProjectView(project.id(), project.name(), project.state(), project.createdAt().toString(), reason);
+        ProjectRuntimeSpec spec = runtimeStore == null
+            ? ProjectRuntimeSpec.console() : runtimeStore.loadSpec(project.id());
+        String endpointState = runtimeStore == null
+            ? ProjectRuntimeStore.ENDPOINT_NONE : runtimeStore.endpointState(project.id());
+        ProjectDependencies.DependencyStatus status = dependencies == null
+            ? null : dependencies.status(project.id(), spec);
+        List<ProjectView.EndpointView> endpointViews = new ArrayList<>();
+        for (ProjectRuntimeSpec.Port port : spec.publicPorts()) {
+            endpointViews.add(new ProjectView.EndpointView(port.name(), port.targetPort(),
+                port.publicPort(), endpointUrl(port.publicPort())));
+        }
+        return new ProjectView(project.id(), project.name(), project.state(),
+            project.createdAt().toString(), reason,
+            new ProjectView.RuntimeView(spec.templateId(), spec.mysql(), spec.redis(),
+                spec.publicPorts().stream()
+                    .map(port -> new ProjectView.PortView(port.name(), port.targetPort(), port.publicPort()))
+                    .toList()),
+            endpointState,
+            status == null ? null : new ProjectView.DependencyView(status.mysql(), status.redis()),
+            List.copyOf(endpointViews));
     }
 
-    static ProjectView getViewForTest(ProjectService.Project project) { return view(project); }
+    /** The public entry host is deployment configuration; without it only the ports are known. */
+    private String endpointUrl(int publicPort) {
+        return publicEntryHost == null ? null : "http://" + publicEntryHost + ":" + publicPort;
+    }
 
-    public record ProjectView(String id, String name, String state, String createdAt, String failureReason) {}
+    ProjectView getViewForTest(ProjectService.Project project) { return view(project); }
+
+    public record ProjectView(String id, String name, String state, String createdAt, String failureReason,
+                              RuntimeView runtime, String endpointState,
+                              DependencyView dependencies, List<EndpointView> endpoints) {
+        /** The exact requested runtime configuration; the first port decides the primary port. */
+        public record RuntimeView(String templateId, boolean mysql, boolean redis,
+                                  List<PortView> publicPorts) {}
+        public record PortView(String name, int targetPort, int publicPort) {}
+        /** Live dependency readiness; a dependency that was never selected stays ABSENT. */
+        public record DependencyView(String mysql, String redis) {}
+        /** One public access point; the URL needs a deployment-configured public entry host. */
+        public record EndpointView(String name, int targetPort, int publicPort, String url) {}
+    }
     public record ProjectListResponse(List<ProjectView> items, int limit) {}
 
     @JsonIgnoreProperties(ignoreUnknown = false)

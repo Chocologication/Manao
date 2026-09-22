@@ -11,6 +11,16 @@ export function ProjectCard({ project, onDelete, deleting = false, deleteDisable
 }) {
   const titleId = `project-${project.id}-name`;
   const runtime = project.runtime;
+  // Selected dependencies report live readiness; never-selected ones stay ABSENT and hidden.
+  const dependenciesLine = (
+    [
+      ['MySQL', project.dependencies?.mysql],
+      ['Redis', project.dependencies?.redis],
+    ] as const
+  )
+    .filter(([, state]) => state !== undefined && state !== 'ABSENT')
+    .map(([name, state]) => `${name} ${state}`)
+    .join(' · ');
 
   return (
     <article
@@ -33,6 +43,20 @@ export function ProjectCard({ project, onDelete, deleting = false, deleteDisable
               {runtime.publicPorts
                 .map((port) => ` · ${port.targetPort}→${port.publicPort}`)
                 .join('')}
+            </p>
+          ) : null}
+          {dependenciesLine ? (
+            <p className="mt-1 text-sm text-muted-foreground">{dependenciesLine}</p>
+          ) : null}
+          {project.endpointState === 'ASSIGNED' && (project.endpoints?.length ?? 0) > 0 ? (
+            <p className="mt-1 text-sm text-muted-foreground">
+              {project.endpoints
+                ?.map((endpoint) =>
+                  endpoint.url === null
+                    ? `public ${endpoint.publicPort}`
+                    : `${endpoint.publicPort}: ${endpoint.url}`,
+                )
+                .join(' · ')}
             </p>
           ) : null}
           {project.endpointState === 'UNKNOWN' ? (

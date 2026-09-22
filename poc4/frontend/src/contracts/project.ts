@@ -20,6 +20,27 @@ export type ProjectRuntimeConfig = {
 
 export type ProjectEndpointState = 'NONE' | 'ASSIGNED' | 'UNKNOWN';
 
+/** Live per-dependency readiness; a dependency that was never selected stays ABSENT. */
+export type DependencyState =
+  | 'ABSENT'
+  | 'PROVISIONING'
+  | 'READY'
+  | 'UNAVAILABLE'
+  | 'RECOVERY_REQUIRED';
+
+export type ProjectDependenciesState = {
+  mysql: DependencyState;
+  redis: DependencyState;
+};
+
+/** One public access point; the URL needs a deployment-configured public entry host. */
+export type ProjectEndpoint = {
+  name: string;
+  targetPort: number;
+  publicPort: number;
+  url: string | null;
+};
+
 export type ProjectSummary = {
   id: string;
   name: string;
@@ -30,6 +51,8 @@ export type ProjectSummary = {
   runtime?: ProjectRuntimeConfig;
   /** Present only on runtime-aware views; a missing field means the state is not exposed. */
   endpointState?: ProjectEndpointState;
+  dependencies?: ProjectDependenciesState;
+  endpoints?: ProjectEndpoint[];
 };
 export type ProjectListResponse = { items: ProjectSummary[]; limit: number };
 

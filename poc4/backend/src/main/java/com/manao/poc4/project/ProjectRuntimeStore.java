@@ -4,10 +4,16 @@ import java.util.List;
 
 /** Persistence for project runtime configuration and remembered storage identity. */
 public interface ProjectRuntimeStore {
+    /** The endpoint application state before any public endpoint verdict is recorded. */
+    String ENDPOINT_NONE = "NONE";
+
     /** Missing or legacy NULL JSON reads as the console spec; unknown projects do too. */
     ProjectRuntimeSpec loadSpec(String projectId);
 
     void setEndpointState(String projectId, String state);
+
+    /** Current endpoint application state for a project; NULL/absent reads as NONE. */
+    String endpointState(String projectId);
 
     /**
      * Creations whose public endpoint application never reached a verdict: rows still CREATING

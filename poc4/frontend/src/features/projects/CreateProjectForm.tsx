@@ -115,12 +115,15 @@ export function CreateProjectForm({
     const creationKey = pendingKey ?? crypto.randomUUID();
     // The key is fixed before sending so a lost response keeps querying the same creation.
     setPendingKey(creationKey);
+    // Dependency selections exist only with the web template: a switch back to the console
+    // template masks the hidden flags instead of submitting configuration nobody sees.
+    const webTemplate = template === 'java-spring-boot-web';
     const request: CreateProjectRequest = {
       name: trimmed,
       creationKey,
       templateId: template,
-      mysql,
-      redis,
+      mysql: webTemplate && mysql,
+      redis: webTemplate && redis,
       publicPorts: parsedPorts,
     };
     setError(null);
@@ -129,6 +132,9 @@ export function CreateProjectForm({
       await create.mutateAsync(request);
       setPendingKey(null);
       setAwaitingConfirmation(false);
+      // The submitted original values stay visible in the result status; the inputs reset
+      // so a second creation starts clean instead of resubmitting the same form.
+      setName('');
       setSuccess(describeSubmitted(request));
     } catch (reason) {
       if (reason instanceof ApiRequestError) {
@@ -169,6 +175,7 @@ export function CreateProjectForm({
       const project = await check.mutateAsync(pendingKey);
       setPendingKey(null);
       setAwaitingConfirmation(false);
+      setName('');
       setSuccess(`Created ${project.name}`);
     } catch (reason) {
       if (reason instanceof ApiRequestError && reason.body?.code === 'ENTRY_NOT_FOUND') {

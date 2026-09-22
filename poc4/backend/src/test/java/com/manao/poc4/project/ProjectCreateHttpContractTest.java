@@ -12,9 +12,11 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.manao.poc4.api.GlobalExceptionHandler;
 import com.manao.poc4.kubernetes.PublicEndpointGateway;
 import com.manao.poc4.persistence.JdbcStoreTestSupport;
+import io.fabric8.kubernetes.api.model.EnvVar;
 import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
@@ -280,6 +282,80 @@ class ProjectCreateHttpContractTest {
             .build();
     }
 
+    /** Runtime-aware controller: the browser view carries runtime, endpoint and dependency facts. */
+    private MockMvc runtimeMvc(FakeProjectDependencies dependencies) {
+        ProjectService projects = new ProjectService(jdbc,
+            new DataSourceTransactionManager(jdbc.getDataSource()));
+        return MockMvcBuilders.standaloneSetup(
+                new ProjectController(projects, null, null, endpoints,
+                    new JdbcProjectRuntimeStore(jdbc), dependencies, RESERVED, "entry.example"))
+            .setControllerAdvice(new GlobalExceptionHandler())
+            .build();
+    }
+
+    @Test
+    void runtimeViewExposesRuntimeEndpointStateDependenciesAndEndpoints() throws Exception {
+        FakeProjectDependencies dependencies = new FakeProjectDependencies();
+        MockMvc mvc = runtimeMvc(dependencies);
+        mvc.perform(post("/api/v1/projects").principal(owner())
+                .contentType("application/json")
+                .content(request("key-1", 30081)))
+            .andExpect(status().isCreated())
+            .andExpect(jsonPath("$.runtime.templateId").value("java-spring-boot-web"))
+            .andExpect(jsonPath("$.runtime.mysql").value(true))
+            .andExpect(jsonPath("$.runtime.redis").value(false))
+            .andExpect(jsonPath("$.runtime.publicPorts[0].name").value("web"))
+            .andExpect(jsonPath("$.runtime.publicPorts[0].targetPort").value(8080))
+            .andExpect(jsonPath("$.runtime.publicPorts[0].publicPort").value(30081))
+            .andExpect(jsonPath("$.endpointState").value("ASSIGNED"))
+            .andExpect(jsonPath("$.dependencies.mysql").value("PROVISIONING"))
+            .andExpect(jsonPath("$.dependencies.redis").value("ABSENT"))
+            .andExpect(jsonPath("$.endpoints[0].name").value("web"))
+            .andExpect(jsonPath("$.endpoints[0].targetPort").value(8080))
+            .andExpect(jsonPath("$.endpoints[0].publicPort").value(30081))
+            .andExpect(jsonPath("$.endpoints[0].url").value("http://entry.example:30081"));
+
+        // The detail view follows the live dependency status; the assigned endpoint stays stable.
+        dependencies.mysql = ProjectDependencies.READY;
+        mvc.perform(get("/api/v1/projects/creation/key-1").principal(owner()))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.endpointState").value("ASSIGNED"))
+            .andExpect(jsonPath("$.dependencies.mysql").value("READY"))
+            .andExpect(jsonPath("$.dependencies.redis").value("ABSENT"))
+            .andExpect(jsonPath("$.endpoints[0].url").value("http://entry.example:30081"));
+        mvc.perform(get("/api/v1/projects/prj-lookup").principal(owner()))
+            .andExpect(status().isNotFound());
+
+        // The list view carries the same non-sensitive facts without leaking resources.
+        String list = mvc.perform(get("/api/v1/projects").principal(owner()))
+            .andExpect(status().isOk())
+            .andReturn().getResponse().getContentAsString();
+        assertThat(list).contains("\"endpointState\":\"ASSIGNED\"");
+        assertThat(list).contains("\"dependencies\":{\"mysql\":\"READY\",\"redis\":\"ABSENT\"}");
+        assertThat(list).contains("http://entry.example:30081");
+        assertThat(list.toLowerCase())
+            .doesNotContain("secret").doesNotContain("pvc").doesNotContain("statefulset");
+        // The dependency status was resolved only for the project that selected dependencies.
+        assertThat(dependencies.statusCalls).hasSize(1);
+    }
+
+    @Test
+    void legacyConsoleViewHasNoRuntimeStateOrEndpoints() throws Exception {
+        MockMvc mvc = runtimeMvc(new FakeProjectDependencies());
+        mvc.perform(post("/api/v1/projects").principal(owner())
+                .contentType("application/json")
+                .content("{\"name\":\"plain-console\"}"))
+            .andExpect(status().isCreated())
+            .andExpect(jsonPath("$.runtime.templateId").value("java-console"))
+            .andExpect(jsonPath("$.runtime.mysql").value(false))
+            .andExpect(jsonPath("$.runtime.redis").value(false))
+            .andExpect(jsonPath("$.runtime.publicPorts").isEmpty())
+            .andExpect(jsonPath("$.endpointState").value("NONE"))
+            .andExpect(jsonPath("$.dependencies.mysql").value("ABSENT"))
+            .andExpect(jsonPath("$.dependencies.redis").value("ABSENT"))
+            .andExpect(jsonPath("$.endpoints").isEmpty());
+    }
+
     /** Scriptable gateway fake recording every application attempt. */
     private static final class FakePublicEndpoints implements PublicEndpointGateway {
         ApplyResult result = ApplyResult.CONFIRMED;
@@ -295,6 +371,26 @@ class ProjectCreateHttpContractTest {
         @Override public void routeToRun(String projectId, String runId, String podUid) { }
 
         @Override public void withdraw(String projectId) { }
+    }
+
+    /** Scriptable dependency status: PROVISIONING until a test promotes the project. */
+    private static final class FakeProjectDependencies implements ProjectDependencies {
+        String mysql = ProjectDependencies.PROVISIONING;
+        String redis = ProjectDependencies.ABSENT;
+        final Set<String> statusCalls = new HashSet<>();
+
+        @Override public void ensure(String projectId, ProjectRuntimeSpec spec) { }
+
+        @Override public DependencyStatus status(String projectId, ProjectRuntimeSpec spec) {
+            statusCalls.add(projectId);
+            return new DependencyStatus(
+                spec.mysql() ? mysql : ABSENT,
+                spec.redis() ? redis : ABSENT);
+        }
+
+        @Override public List<EnvVar> applicationEnvironment(String projectId, ProjectRuntimeSpec spec) {
+            return List.of();
+        }
     }
 
     /**

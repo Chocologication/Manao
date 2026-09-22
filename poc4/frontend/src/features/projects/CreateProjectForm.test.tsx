@@ -121,6 +121,36 @@ describe('CreateProjectForm port rows', () => {
     expect(bodies[0]?.templateId).toBe('java-spring-boot-web');
   });
 
+  it('submits no dependencies after switching back to the console template', async () => {
+    const user = userEvent.setup();
+    const bodies: PostBody[] = [];
+    server.use(
+      http.post('/api/v1/projects', async ({ request }) => {
+        bodies.push((await request.json()) as PostBody);
+        return HttpResponse.json(createdSummary('demo'), { status: 201 });
+      }),
+    );
+    await authenticateAsAlice();
+    renderApp({ initialEntries: ['/projects'] });
+    await fillWebForm(user, 'demo');
+    await user.click(screen.getByLabelText('MySQL'));
+    await user.click(screen.getByLabelText('Redis'));
+    // The dependency checkboxes disappear with the web template; the hidden state
+    // must not leak into the console request the user now sends.
+    await user.selectOptions(screen.getByLabelText('Template'), 'java-console');
+    await user.click(screen.getByRole('button', { name: 'Create project' }));
+
+    await waitFor(() => {
+      expect(bodies).toHaveLength(1);
+    });
+    expect(bodies[0]).toMatchObject({
+      templateId: 'java-console',
+      mysql: false,
+      redis: false,
+      publicPorts: [],
+    });
+  });
+
   it('submits every port row verbatim including target port 80 and 18081', async () => {
     const user = userEvent.setup();
     const bodies: PostBody[] = [];
@@ -158,7 +188,7 @@ describe('CreateProjectForm port rows', () => {
     expect(typeof bodies[0]?.creationKey).toBe('string');
   });
 
-  it('shows the submitted original values after success', async () => {
+  it('shows the submitted original values after success and clears the name', async () => {
     const user = userEvent.setup();
     server.use(
       http.post('/api/v1/projects', () =>
@@ -176,6 +206,7 @@ describe('CreateProjectForm port rows', () => {
     expect(status).toHaveTextContent('java-spring-boot-web');
     expect(status).toHaveTextContent('MySQL');
     expect(status).toHaveTextContent('30081');
+    expect(screen.getByLabelText('Project name')).toHaveValue('');
   });
 });
 
@@ -260,5 +291,46 @@ describe('CreateProjectForm creation key', () => {
     expect(await screen.findByRole('status', { name: 'Create result' })).toHaveTextContent(
       'Created demo',
     );
+  });
+
+  it('confirms a lost creation through the same key and resets the form', async () => {
+    const user = userEvent.setup();
+    const bodies: PostBody[] = [];
+    const creationLookups: string[] = [];
+    const created = { ...createdSummary('demo'), runtime: null, failureReason: null };
+    let responseLost = false;
+    server.use(
+      http.post('/api/v1/projects', async ({ request }) => {
+        responseLost = true;
+        bodies.push((await request.json()) as PostBody);
+        return HttpResponse.error();
+      }),
+      http.get('/api/v1/projects/creation/:creationKey', ({ params }) => {
+        creationLookups.push(String(params.creationKey));
+        return HttpResponse.json(created);
+      }),
+      http.get('/api/v1/projects', () =>
+        HttpResponse.json({ items: responseLost ? [created] : [], limit: 8 })),
+    );
+    await authenticateAsAlice();
+    renderApp({ initialEntries: ['/projects'] });
+    await screen.findByText(/no projects yet/i);
+    await user.type(screen.getByLabelText('Project name'), 'demo');
+    await user.selectOptions(screen.getByLabelText('Template'), 'java-spring-boot-web');
+    await user.click(screen.getByLabelText('Public access'));
+    await user.type(screen.getByLabelText('Public port 1'), '30081');
+    await user.click(screen.getByRole('button', { name: 'Create project' }));
+    expect(await screen.findByText('Network request failed')).toBeVisible();
+    const firstKey = bodies[0]?.creationKey;
+
+    // The same creation key confirms the project that the lost response had actually created.
+    await user.click(screen.getByRole('button', { name: 'Check creation status' }));
+    expect(await screen.findByRole('status', { name: 'Create result' })).toHaveTextContent(
+      'Created demo',
+    );
+    expect(creationLookups).toEqual([firstKey]);
+    expect(await screen.findByRole('article', { name: 'demo' })).toBeInTheDocument();
+    expect(screen.getByLabelText('Project name')).toHaveValue('');
+    expect(screen.queryByRole('button', { name: 'Check creation status' })).toBeNull();
   });
 });

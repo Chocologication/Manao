@@ -1,6 +1,7 @@
 import { DEFAULT_PROJECT_LIMIT } from '../contracts/project';
 import type { AuthUser, LoginResponse } from '../contracts/auth';
 import type {
+  ProjectEndpointState,
   ProjectRuntimeConfig,
   ProjectState,
   ProjectSummary,
@@ -32,6 +33,7 @@ type MockProject = {
   observeCount: number;
   runtime: ProjectRuntimeConfig | null;
   creationKey: string | null;
+  endpointState: ProjectEndpointState;
 };
 
 type IssuedToken = {
@@ -79,6 +81,8 @@ export function getWriteScenario(): WriteScenario {
 }
 
 function toSummary(project: MockProject): ProjectSummary {
+  // Mock fixtures mirror the runtime-aware view shape: selected dependencies stay
+  // PROVISIONING because the mock never provisions a real cluster.
   return {
     id: project.id,
     name: project.name,
@@ -86,6 +90,25 @@ function toSummary(project: MockProject): ProjectSummary {
     createdAt: project.createdAt,
     failureReason: project.failureReason,
     ...(project.runtime !== null ? { runtime: project.runtime } : {}),
+    ...(project.endpointState !== 'NONE' ? { endpointState: project.endpointState } : {}),
+    ...(project.runtime !== null
+      ? {
+          dependencies: {
+            mysql: project.runtime.mysql ? 'PROVISIONING' : 'ABSENT',
+            redis: project.runtime.redis ? 'PROVISIONING' : 'ABSENT',
+          },
+        }
+      : {}),
+    ...(project.runtime !== null && project.endpointState === 'ASSIGNED'
+      ? {
+          endpoints: project.runtime.publicPorts.map((port) => ({
+            name: port.name,
+            targetPort: port.targetPort,
+            publicPort: port.publicPort,
+            url: null,
+          })),
+        }
+      : {}),
   };
 }
 
@@ -101,6 +124,7 @@ function seedProjects(): MockProject[] {
       observeCount: 0,
       runtime: null,
       creationKey: null,
+      endpointState: 'NONE',
     },
     {
       id: BOB_SEED_PROJECT_ID,
@@ -112,6 +136,7 @@ function seedProjects(): MockProject[] {
       observeCount: 0,
       runtime: null,
       creationKey: null,
+      endpointState: 'NONE',
     },
   ];
 }
@@ -276,6 +301,7 @@ export function createOwnedProject(
   if (ownedCount >= PROJECT_LIMIT) {
     return { status: 'limit' };
   }
+  const runtime = options.runtime ?? null;
   nextProjectSeq += 1;
   const project: MockProject = {
     id: `prj-${nextProjectSeq}`,
@@ -285,8 +311,11 @@ export function createOwnedProject(
     createdAt: new Date().toISOString(),
     failureReason: null,
     observeCount: 0,
-    runtime: options.runtime ?? null,
+    runtime,
     creationKey: options.creationKey ?? null,
+    // The mock applies the exact port group without a real cluster: port-bearing projects
+    // keep the ASSIGNED verdict the real gateway would have confirmed.
+    endpointState: runtime !== null && runtime.publicPorts.length > 0 ? 'ASSIGNED' : 'NONE',
   };
   projects.push(project);
   if (project.creationKey !== null) {

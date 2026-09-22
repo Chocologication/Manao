@@ -5,7 +5,6 @@ import org.springframework.jdbc.core.JdbcTemplate;
 
 /** JDBC implementation backed by the V9 runtime columns and project_storage_binding table. */
 public final class JdbcProjectRuntimeStore implements ProjectRuntimeStore {
-    private static final String ENDPOINT_NONE = "NONE";
     private final JdbcTemplate jdbc;
 
     public JdbcProjectRuntimeStore(JdbcTemplate jdbc) {
@@ -26,13 +25,12 @@ public final class JdbcProjectRuntimeStore implements ProjectRuntimeStore {
         jdbc.update("UPDATE project SET endpoint_state = ? WHERE id = ?", state, projectId);
     }
 
-    /** Current endpoint application state for a project; NULL/absent reads as NONE. */
-    public String endpointState(String projectId) {
+    @Override public String endpointState(String projectId) {
         List<String> states = jdbc.query(
             "SELECT endpoint_state FROM project WHERE id = ?",
             (rs, row) -> rs.getString(1), projectId);
         return states.isEmpty() || states.get(0) == null || states.get(0).isBlank()
-            ? "NONE" : states.get(0);
+            ? ENDPOINT_NONE : states.get(0);
     }
 
     @Override public List<PendingEndpoint> projectsWithUnknownEndpoint() {

@@ -28,6 +28,10 @@ public class FakeProjectRuntimeStore implements ProjectRuntimeStore {
         endpointStates.put(projectId, state);
     }
 
+    @Override public String endpointState(String projectId) {
+        return endpointStates.getOrDefault(projectId, ProjectRuntimeStore.ENDPOINT_NONE);
+    }
+
     @Override public List<PendingEndpoint> projectsWithUnknownEndpoint() {
         return List.of();
     }
