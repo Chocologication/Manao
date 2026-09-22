@@ -12,16 +12,25 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Builds the Maven Job manifests. For TASK runs PID 1 of the application container directly execs
- * the fixed argument array {@code mvn -q -DskipTests compile exec:java} under the single overall
- * deadline. For SERVICE runs (bounded web session) the container command is the root-owned
- * supervisor launcher: one single-run Job (completions/parallelism=1, Never, backoffLimit=0) with
- * a per-run control directory on the workspace PVC, the startup-deadline/lifetime environment and
- * a supervisor-probe readiness check. Every constraint (deadlines, resources, subPath, no
- * ServiceAccount token, safe low-port sysctl) comes from server policy, never from browser input.
+ * Builds the Maven Job manifests. For TASK runs PID 1 of the application container is the
+ * root-owned fixed wrapper {@code manao-maven}: it initializes the project's Maven cache from
+ * the image seed and then execs the fixed argument array {@code mvn -q -DskipTests compile
+ * exec:java} under the single overall deadline. For SERVICE runs (bounded web session) the
+ * container command stays the root-owned supervisor launcher (the supervisor spawns the same
+ * fixed wrapper as its supervised child after claiming the run): one single-run Job
+ * (completions/parallelism=1, Never, backoffLimit=0) with a per-run control directory on the
+ * workspace PVC, the startup-deadline/lifetime environment and a supervisor-probe readiness
+ * check. Both run kinds mount the project's Maven cache (the same workspace PVC,
+ * {@code .manao-cache/maven} subPath) at /maven-cache, and an init container root-mounts the
+ * PVC once to create/repair exactly that cache directory for projects created before it
+ * existed — templates and code are never touched. Every constraint (deadlines, resources,
+ * subPath, no ServiceAccount token, safe low-port sysctl) comes from server policy, never
+ * from browser input.
  */
 public class JobResourceFactory {
     static final String SUPERVISOR_COMMAND = "/usr/local/bin/manao-run-supervisor";
+    static final String MAVEN_WRAPPER_COMMAND = "/usr/local/bin/manao-maven";
+    static final String MAVEN_CACHE_MOUNT = "/maven-cache";
     static final String CONTROL_DIR_MOUNT = "/run-control";
     static final String TERMINATION_MESSAGE_PATH = "/tmp/manao-termination.log";
     static final String LABEL_COMPONENT = "manao.poc4/component";
@@ -87,10 +96,11 @@ public class JobResourceFactory {
                     .withName("tmp")
                     .withNewEmptyDir().endEmptyDir()
                     .build())
+            .withInitContainers(cachePreparationContainer())
             .withContainers(new io.fabric8.kubernetes.api.model.ContainerBuilder()
                 .withName(ResourceIdentityVerifier.APPLICATION_CONTAINER)
                 .withImage(mavenImage)
-                .withCommand("mvn", "-q", "-DskipTests", "compile", "exec:java")
+                .withCommand(MAVEN_WRAPPER_COMMAND, "-q", "-DskipTests", "compile", "exec:java")
                 .withWorkingDir("/workspace")
                 .withEnv(baseEnvironment(applicationEnvironment))
                 .withVolumeMounts(
@@ -98,6 +108,12 @@ public class JobResourceFactory {
                         .withName("workspace")
                         .withMountPath("/workspace")
                         .withSubPath(WorkspaceResourceFactory.projectDirectory(projectId))
+                        .withReadOnly(false)
+                        .build(),
+                    new io.fabric8.kubernetes.api.model.VolumeMountBuilder()
+                        .withName("workspace")
+                        .withMountPath(MAVEN_CACHE_MOUNT)
+                        .withSubPath(WorkspaceResourceFactory.MAVEN_CACHE_DIRECTORY)
                         .withReadOnly(false)
                         .build(),
                     new io.fabric8.kubernetes.api.model.VolumeMountBuilder()
@@ -170,18 +186,20 @@ public class JobResourceFactory {
                     .withName("tmp")
                     .withNewEmptyDir().endEmptyDir()
                     .build())
-            .withInitContainers(new io.fabric8.kubernetes.api.model.ContainerBuilder()
-                .withName("run-control")
-                .withImage(initializerImage)
-                .withCommand("mkdir", "-p", "/control/.manao-runs/" + runId)
-                .withVolumeMounts(new io.fabric8.kubernetes.api.model.VolumeMountBuilder()
-                    .withName("workspace")
-                    .withMountPath("/control")
-                    .withSubPath(WorkspaceResourceFactory.projectDirectory(projectId))
-                    .withReadOnly(false)
+            .withInitContainers(
+                cachePreparationContainer(),
+                new io.fabric8.kubernetes.api.model.ContainerBuilder()
+                    .withName("run-control")
+                    .withImage(initializerImage)
+                    .withCommand("mkdir", "-p", "/control/.manao-runs/" + runId)
+                    .withVolumeMounts(new io.fabric8.kubernetes.api.model.VolumeMountBuilder()
+                        .withName("workspace")
+                        .withMountPath("/control")
+                        .withSubPath(WorkspaceResourceFactory.projectDirectory(projectId))
+                        .withReadOnly(false)
+                        .build())
+                    .withSecurityContext(containerSecurity())
                     .build())
-                .withSecurityContext(containerSecurity())
-                .build())
             .withContainers(new io.fabric8.kubernetes.api.model.ContainerBuilder()
                 .withName(ResourceIdentityVerifier.APPLICATION_CONTAINER)
                 .withImage(mavenImage)
@@ -214,6 +232,12 @@ public class JobResourceFactory {
                         .withName("workspace")
                         .withMountPath(CONTROL_DIR_MOUNT)
                         .withSubPath(WorkspaceResourceFactory.projectDirectory(projectId) + "/.manao-runs/" + runId)
+                        .withReadOnly(false)
+                        .build(),
+                    new io.fabric8.kubernetes.api.model.VolumeMountBuilder()
+                        .withName("workspace")
+                        .withMountPath(MAVEN_CACHE_MOUNT)
+                        .withSubPath(WorkspaceResourceFactory.MAVEN_CACHE_DIRECTORY)
                         .withReadOnly(false)
                         .build(),
                     new io.fabric8.kubernetes.api.model.VolumeMountBuilder()
@@ -260,6 +284,36 @@ public class JobResourceFactory {
             new io.fabric8.kubernetes.api.model.EnvVarBuilder().withName("HOME").withValue("/tmp").build()));
         env.addAll(applicationEnvironment == null ? List.of() : applicationEnvironment);
         return env;
+    }
+
+    /**
+     * Root-mounts the workspace PVC once and creates/repairs exactly the project Maven cache
+     * directory (creating projects already have it from the initializer; old PVCs get it
+     * rebuilt here). It never touches templates, code or any other path, so it cannot run the
+     * project-initialization flow or overwrite saved files. Runs as root because the PVC root
+     * is root-owned; the cache directory itself is handed to the fixed workspace UID/GID,
+     * while the application containers keep their non-root identity.
+     */
+    private io.fabric8.kubernetes.api.model.Container cachePreparationContainer() {
+        String cacheDirectory = "/data/" + WorkspaceResourceFactory.MAVEN_CACHE_DIRECTORY;
+        String cacheParent = "/data/.manao-cache";
+        String script = "mkdir -p " + cacheDirectory
+            + " && chown " + WorkspaceResourceFactory.WORKSPACE_UID + ":" + WorkspaceResourceFactory.WORKSPACE_GID
+            + " " + cacheParent + " " + cacheDirectory
+            + " && chmod 0775 " + cacheParent + " " + cacheDirectory;
+        return new io.fabric8.kubernetes.api.model.ContainerBuilder()
+            .withName("prepare-maven-cache")
+            .withImage(initializerImage)
+            .withCommand("/bin/sh", "-ec", script)
+            .withVolumeMounts(new io.fabric8.kubernetes.api.model.VolumeMountBuilder()
+                .withName("workspace").withMountPath("/data").build())
+            .withNewSecurityContext()
+            .withRunAsNonRoot(false)
+            .withRunAsUser(0L)
+            .withAllowPrivilegeEscalation(false)
+            .withSeccompProfile(new io.fabric8.kubernetes.api.model.SeccompProfileBuilder().withType("RuntimeDefault").build())
+            .endSecurityContext()
+            .build();
     }
 
     private static SecurityContext containerSecurity() {

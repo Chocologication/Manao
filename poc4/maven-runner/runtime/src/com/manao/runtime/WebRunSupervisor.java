@@ -36,7 +36,8 @@ import java.util.concurrent.TimeoutException;
  *   <li>{@code run} — verifies it is PID 1, atomically claims
  *       {@code $MANAO_RUN_CONTROL_DIR/claim} (an existing claim means the run already
  *       started: exit 125 before any user code, and the claim is never cleared), spawns
- *       the fixed {@code mvn -q -DskipTests spring-boot:run} child in /workspace with
+ *       the fixed {@code manao-maven} wrapper child (cache initialization + exec
+ *       {@code mvn -q -DskipTests spring-boot:run}) in /workspace with
  *       inherited stdout/stderr, polls the loopback primary-port readiness endpoint with
  *       bounded timeouts and, on the first UP, arms the monotonic lifetime deadline and
  *       then writes the run receipt. Exit codes: 0 user stop, 1 unexpected application
@@ -73,8 +74,15 @@ public final class WebRunSupervisor {
 
     static final String PROTOCOL = "1";
     static final String READINESS_PATH = "/actuator/health/readiness";
+    /**
+     * The supervised child is the root-owned fixed Maven wrapper: it initializes the
+     * project's persistent Maven cache (inside the startup budget) and then execs
+     * {@code mvn -q -DskipTests spring-boot:run}. Only the first item changed from the
+     * former direct {@code mvn} spawn; stop, kill and deadline semantics are unchanged
+     * because the wrapper execs Maven in the same process.
+     */
     static final List<String> FIXED_RUN_COMMAND =
-            List.of("mvn", "-q", "-DskipTests", "spring-boot:run");
+            List.of("/usr/local/bin/manao-maven", "-q", "-DskipTests", "spring-boot:run");
     static final String RUN_WORKING_DIR = "/workspace";
 
     static final String RECEIPT_FILE_NAME = "receipt.properties";

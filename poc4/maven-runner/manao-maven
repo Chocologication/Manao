@@ -1,0 +1,81 @@
+#!/bin/bash
+# manao-maven - fixed Maven entrypoint of the Manao run containers (maven-cache supplement).
+# Root-owned 0555 image content (same trust pattern as manao-run-supervisor); it initializes
+# the project's persistent Maven cache from the read-only image seed and then execs Maven
+# with that repository. Run containers mount the project cache directory at /maven-cache
+# (the .manao-cache/maven subPath of the workspace PVC):
+#   /maven-cache/repository      this project's writable Maven local repository
+#   /maven-cache/seeded-<id>     completion marker, published atomically only after the
+#                                whole seed copy succeeded (<id> = image seed version)
+# Initialization algorithm (design 7.5 / plan 1.3): check seed and cache usability; skip
+# everything when the current seed's marker exists; otherwise fill in exactly the missing
+# seed files (temp file + atomic publish, user files are never overwritten); publish the
+# marker last; finally exec the original goal. Failures are fail-closed with a bounded,
+# credential-free diagnostic - there is never a fallback to a temporary repository.
+set -eu
+# Keep the stop contract responsive during the copy phase: for console runs this script
+# is PID 1 and the kernel ignores untrapped SIGTERM for PID 1. The trap ends the copy
+# promptly (an in-flight temp file is never published and is swept by the next run);
+# the final exec replaces the shell, so Maven keeps its own signal handling.
+trap 'exit 143' TERM INT
+
+SEED_ROOT="/opt/manao-maven-seed"
+SEED_REPO="$SEED_ROOT/repository"
+CACHE_ROOT="/maven-cache"
+REPO_DIR="$CACHE_ROOT/repository"
+
+die() { echo "manao-maven: $1" >&2; exit 1; }
+
+# 1. The seed repository and the project cache must both be usable.
+[ -d "$SEED_REPO" ] || die "image seed repository is missing"
+[ -r "$SEED_ROOT/seed-id" ] || die "image seed version file is missing"
+SEED_ID="$(tr -d '[:space:]' < "$SEED_ROOT/seed-id")"
+case "$SEED_ID" in
+  *[!0-9a-f]*|'') die "image seed version has an unexpected format" ;;
+esac
+[ "${#SEED_ID}" -eq 64 ] || die "image seed version has an unexpected length"
+[ -d "$CACHE_ROOT" ] || die "project cache directory is not mounted"
+mkdir -p "$REPO_DIR" 2>/dev/null || die "project cache directory is not writable"
+if ! : > "$CACHE_ROOT/.manao-write-probe.$$" 2>/dev/null; then
+  die "project cache directory is not writable"
+fi
+rm -f "$CACHE_ROOT/.manao-write-probe.$$"
+# Remove temp files a killed previous initialization left behind. Safe: a project has at
+# most one active run, so no concurrent initialization can own them.
+find "$REPO_DIR" -type f -name '*.manao-tmp.*' -delete 2>/dev/null || true
+
+# publish SRC DST: copy SRC to a same-directory temp file, then atomically publish it as
+# DST without ever overwriting an existing file (a hard link fails if DST appeared).
+publish() {
+  [ -e "$2" ] && return 0
+  local tmp="$2.manao-tmp.$$"
+  cp -- "$1" "$tmp" || { rm -f -- "$tmp"; return 1; }
+  if ln -- "$tmp" "$2" 2>/dev/null; then
+    rm -f -- "$tmp"
+  elif [ -e "$2" ]; then
+    rm -f -- "$tmp"   # published concurrently; the existing file wins
+  else
+    rm -f -- "$tmp"; return 1
+  fi
+}
+
+MARKER="$CACHE_ROOT/seeded-$SEED_ID"
+if [ ! -f "$MARKER" ]; then
+  # 2-3. Fill in exactly the missing seed files; every file is published atomically, so an
+  # interrupted run can only leave unnamed temp files behind, never a half final artifact.
+  while IFS= read -r -d '' src; do
+    rel="${src#"$SEED_REPO"/}"
+    dst="$REPO_DIR/$rel"
+    [ -e "$dst" ] && continue
+    mkdir -p -- "${dst%/*}"
+    publish "$src" "$dst" || die "cannot initialize project cache file $rel"
+  done < <(find "$SEED_REPO" -type f -print0)
+  # 4. Only a fully completed initialization publishes the marker (atomic rename).
+  marker_tmp="$CACHE_ROOT/.manao-marker.$$"
+  printf '%s\n' "$SEED_ID" > "$marker_tmp" || die "cannot write the cache completion marker"
+  mv -- "$marker_tmp" "$MARKER" || { rm -f -- "$marker_tmp"; die "cannot publish the cache completion marker"; }
+fi
+
+# 5. Run the original goal against the persistent project repository. exec keeps process
+# stop semantics and the exit code (console PID 1, supervised child of the web supervisor).
+exec mvn -Dmaven.repo.local="$REPO_DIR" "$@"

@@ -98,6 +98,33 @@ class WorkspaceResourceFactoryTest {
     }
 
     @Test
+    void initializerPreparesTheMavenCacheDirectoryForNewProjects() throws Exception {
+        assertThat(WorkspaceResourceFactory.MAVEN_CACHE_DIRECTORY).isEqualTo(".manao-cache/maven");
+        Pod initializer = factory.createInitializerPod(PROJECT);
+        var create = initializer.getSpec().getInitContainers().get(0);
+        String script = String.join(" ", create.getCommand());
+        // The cache lives beside the code directory at the PVC root, never inside it.
+        assertThat(script).contains("mkdir -p /data/project-" + PROJECT + " /data/.manao-cache/maven");
+        assertThat(script)
+            .contains("chown 10001:10001 /data/project-" + PROJECT + " /data/.manao-cache /data/.manao-cache/maven");
+        var probe = initializer.getSpec().getContainers().get(0);
+        assertThat(String.join(" ", probe.getCommand())).contains("/data/.manao-cache/maven/.probe");
+        assertThat(probe.getSecurityContext().getRunAsUser()).isEqualTo(10001L);
+        assertNoForbiddenFields(json.writeValueAsString(initializer));
+    }
+
+    @Test
+    void workspaceAgentNeverSeesTheMavenCache() throws Exception {
+        Pod pod = factory.createWorkspacePod(PROJECT, "cHVibGljLWtleQ==");
+        var mounts = pod.getSpec().getContainers().get(0).getVolumeMounts();
+        assertThat(mounts).extracting(mount -> mount.getMountPath()).doesNotContain("/maven-cache");
+        assertThat(mounts).noneMatch(mount -> mount.getSubPath() != null && mount.getSubPath().contains(".manao-cache"));
+        // Still exactly the code subPath and the ephemeral tmp dir — nothing else is exposed.
+        assertThat(mounts).extracting(mount -> mount.getMountPath()).containsExactly("/workspace", "/tmp");
+        assertNoForbiddenFields(json.writeValueAsString(pod));
+    }
+
+    @Test
     void workspacePodProbesSurviveJavaColdStart() {
         Pod pod = factory.createWorkspacePod(PROJECT, "key");
         var container = pod.getSpec().getContainers().get(0);

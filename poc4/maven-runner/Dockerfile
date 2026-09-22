@@ -1,11 +1,13 @@
 # poc4/maven-runner/Dockerfile
-# Immutable Maven runner image: JDK 17 + Maven 3.9 + Bash + the fixed root-owned PTY wrapper.
+# Immutable Maven runner image: JDK 17 + Maven 3.9 + Bash + the fixed root-owned wrappers.
 # For web runs the container PID 1 is the small single-run supervisor (JDK standard
 # library only, compiled from runtime/src into /opt/manao-runner/classes):
-#   manao-run-supervisor run    -> fixed `mvn -q -DskipTests spring-boot:run` child
+#   manao-run-supervisor run    -> fixed `manao-maven` wrapper child (which initializes the
+#                                  project cache and execs `mvn -q -DskipTests spring-boot:run`)
 #   manao-run-supervisor probe  -> readiness probe helper (exec child, no PID 1 required)
-# The console Job still runs ["mvn","clean","test"] as PID 1; the wrapper is only an
-# independent pods/exec target for the interactive PTY.
+# The console Job runs the fixed wrapper as PID 1
+# (["/usr/local/bin/manao-maven","-q","-DskipTests","compile","exec:java"]); the pty wrapper
+# is only an independent pods/exec target for the interactive PTY.
 # The runtime-test stage additionally contains the test fixture classes
 # (/opt/manao-runner/test-classes); the final stage copies production classes only.
 # The maven-cache supplement adds a read-only seeded Maven repository built from the real
@@ -14,6 +16,8 @@
 # (the export comes from the MavenSeedTemplateExporter; offline verification is
 # tests/maven-cache.sh). Production and runtime-test share the same seed content:
 # /opt/manao-maven-seed/repository (read-only) plus the seed-id content version file.
+# /usr/local/bin/manao-maven initializes the per-project cache mounted at /maven-cache and
+# execs Maven with -Dmaven.repo.local=/maven-cache/repository (plan 1.3).
 FROM maven:3.9.9-eclipse-temurin-17 AS runner-build
 WORKDIR /build
 COPY runtime/src/ src/
@@ -37,8 +41,9 @@ RUN useradd -r -u 1001 manao || useradd -r manao
 COPY manao-pty-wrapper /usr/local/bin/manao-pty-wrapper
 COPY manao-shell-hook.sh /usr/local/bin/manao-shell-hook
 COPY manao-run-supervisor /usr/local/bin/manao-run-supervisor
-RUN chown root:root /usr/local/bin/manao-pty-wrapper /usr/local/bin/manao-shell-hook /usr/local/bin/manao-run-supervisor \
- && chmod 0555 /usr/local/bin/manao-pty-wrapper /usr/local/bin/manao-shell-hook /usr/local/bin/manao-run-supervisor
+COPY manao-maven /usr/local/bin/manao-maven
+RUN chown root:root /usr/local/bin/manao-pty-wrapper /usr/local/bin/manao-shell-hook /usr/local/bin/manao-run-supervisor /usr/local/bin/manao-maven \
+ && chmod 0555 /usr/local/bin/manao-pty-wrapper /usr/local/bin/manao-shell-hook /usr/local/bin/manao-run-supervisor /usr/local/bin/manao-maven
 COPY --from=runner-build /build/classes /opt/manao-runner/classes
 COPY --from=runner-test-build /build/test-classes /opt/manao-runner/test-classes
 COPY --from=seed-build /opt/manao-maven-seed /opt/manao-maven-seed
@@ -51,8 +56,9 @@ RUN useradd -r -u 1001 manao || useradd -r manao
 COPY manao-pty-wrapper /usr/local/bin/manao-pty-wrapper
 COPY manao-shell-hook.sh /usr/local/bin/manao-shell-hook
 COPY manao-run-supervisor /usr/local/bin/manao-run-supervisor
-RUN chown root:root /usr/local/bin/manao-pty-wrapper /usr/local/bin/manao-shell-hook /usr/local/bin/manao-run-supervisor \
- && chmod 0555 /usr/local/bin/manao-pty-wrapper /usr/local/bin/manao-shell-hook /usr/local/bin/manao-run-supervisor
+COPY manao-maven /usr/local/bin/manao-maven
+RUN chown root:root /usr/local/bin/manao-pty-wrapper /usr/local/bin/manao-shell-hook /usr/local/bin/manao-run-supervisor /usr/local/bin/manao-maven \
+ && chmod 0555 /usr/local/bin/manao-pty-wrapper /usr/local/bin/manao-shell-hook /usr/local/bin/manao-run-supervisor /usr/local/bin/manao-maven
 COPY --from=runner-build /build/classes /opt/manao-runner/classes
 COPY --from=seed-build /opt/manao-maven-seed /opt/manao-maven-seed
 WORKDIR /workspace

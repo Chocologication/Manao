@@ -13,7 +13,22 @@
 #               /opt/manao-maven-seed content; passing never relies on a host .m2 or any
 #               online repository (network is disabled at the container level and Maven is
 #               run with -o, so a missing artifact can only fail, never download).
-#   lifecycle - delegate to the existing runtime-lifecycle.sh (needs the runtime-test image).
+#   lifecycle - plan C2 gate. Real per-project cache lifecycle under the cluster identity
+#               (UID/GID 10001, read-only root filesystem, writable tmpfs /tmp, persistent
+#               per-project cache volumes): the first run copies the seed into the project
+#               cache and downloads + really calls a fixed dependency the seed lacks
+#               (org.apache.commons:commons-text:1.13.0); a second container reuses the same
+#               cache fully offline and provably re-copies nothing; a killed copy leaves no
+#               half artifact and no marker and is repaired by the next explicit run; a
+#               changed seed version fills gaps without overwriting user files; read-only
+#               and size-limited (tmpfs) cache volumes fail closed with no temporary
+#               repository fallback. Failure injection is controlled by the harness only
+#               (ro mount, size-limited test volume, test-only throttled cp shim in a test
+#               volume); the wrapper itself reads no environment. Afterwards the mode
+#               delegates the supervisor regression to runtime-lifecycle.sh - it needs the
+#               runtime-test fixture classes, so the given image is used when it has them,
+#               otherwise the documented -test pair tag is used when available, otherwise
+#               the delegation is reported as an explicit SKIPPED (never a silent pass).
 #   all       - seed + lifecycle.
 #
 # Every container and volume is created under a per-invocation prefix and removed by exact
@@ -41,6 +56,14 @@ FAIL=0
 CASE_EXIT=""
 TEMPLATES_VOL=""
 LIFECYCLE_FAILED=0
+LC_SEED_ID=""
+IMAGE_PATH=""
+SHIM_DELAY="${SHIM_DELAY:-0.02}"
+
+# docker with MSYS/Git Bash path conversion disabled: several lifecycle docker arguments
+# carry container-absolute paths (--tmpfs /tmp, -e PATH=/shim:...). On Linux the variable
+# is simply unknown to docker and changes nothing; no host paths are ever passed here.
+dc() { MSYS_NO_PATHCONV=1 docker "$@"; }
 
 cleanup() {
   local c v l
@@ -257,9 +280,482 @@ run_seed() {
   scenario_offline_web_run
 }
 
+# --------------------------------------------------------------------------
+# lifecycle mode (plan C2): real per-project cache lifecycle with the cluster identity.
+# The docker volumes play the roles of the cluster storage: the "cache" volume is the
+# .manao-cache/maven subPath mounted at /maven-cache, the "workspace" volume is the code
+# directory mounted at /workspace. Volume preparation (chown to 10001) mirrors what the
+# workspace initializer and the Job's prepare-maven-cache init container do in the cluster.
+# --------------------------------------------------------------------------
+
+new_volume() {
+  local v="${PREFIX}-$1"
+  docker volume create "$v" >/dev/null
+  VOLUMES+=("$v")
+  echo "$v"
+}
+
+image_seed_id() {
+  # --entrypoint skips the base image's maven-entrypoint.sh, whose /root warnings pollute
+  # captured stdout and would corrupt the id (exit codes stay meaningful in every case).
+  dc run --rm --network none --entrypoint /bin/sh "$IMAGE" -c 'tr -d "[:space:]" < /opt/manao-maven-seed/seed-id'
+}
+
+# Makes a cache-mount volume writable by the real cluster identity (what the Job init
+# container achieves for the .manao-cache/maven subPath of a workspace PVC).
+lc_prep_cache() {
+  dc run --rm --user 0 -v "$1:/maven-cache" "$IMAGE" \
+    sh -c 'chown 10001:10001 /maven-cache && chmod 0775 /maven-cache' >/dev/null 2>&1
+}
+
+# Loads a console template copy into a fresh "project directory" volume and, when asked,
+# adds the fixed seed-absent dependency (commons-text 1.13.0) and rewrites App to really
+# call it (StringEscapeUtils.escapeJava) - the application output is the download evidence.
+lc_prep_workspace() { # WS_VOL with-commons-text?
+  local ws="$1" commons="${2:-}"
+  dc run --rm --user 0 -v "$ws:/workspace" -v "$TEMPLATES_VOL:/seed-projects:ro" "$IMAGE" \
+    sh -c "cp -r /seed-projects/console/. /workspace/ && chown -R 10001:10001 /workspace" >/dev/null 2>&1
+  if [ "$commons" = "with-commons-text" ]; then
+    dc run --rm --user 0 -v "$ws:/workspace" "$IMAGE" bash -c "$COMMONS_TEXT_PROJECT_SCRIPT" >/dev/null 2>&1
+  fi
+}
+
+COMMONS_TEXT_PROJECT_SCRIPT="$(cat <<'EOF'
+set -eu
+sed -i 's#<dependencies>#<dependencies><dependency><groupId>org.apache.commons</groupId><artifactId>commons-text</artifactId><version>1.13.0</version></dependency>#' /workspace/pom.xml
+grep -q 'commons-text' /workspace/pom.xml
+printf '%s\n' \
+  'package com.example.app;' \
+  '' \
+  'import org.apache.commons.text.StringEscapeUtils;' \
+  '' \
+  'public final class App {' \
+  '    public static void main(String[] args) {' \
+  '        System.out.println("CACHE-CALL " + StringEscapeUtils.escapeJava("quote\"end"));' \
+  '    }' \
+  '}' > /workspace/src/main/java/com/example/app/App.java
+chown -R 10001:10001 /workspace
+EOF
+)"
+
+# lc_run NAME SCRIPT NETWORK-OFFLINE? VOLUME_MOUNT... -> run container for the wrapper.
+# Every run container mirrors the production security context: the real cluster identity
+# (UID/GID 10001, never the image's 1001), a read-only root filesystem and a writable
+# tmpfs /tmp. Assertions live inside the scripts (exit codes), not in log matching.
+lc_run() { # NAME SCRIPT NET(none|bridge) [VOLUME_MOUNT ...]
+  local name="$1" script="$2" net="$3"; shift 3
+  local -a args=(run -d --name "$name" --user 10001:10001 --read-only --tmpfs /tmp)
+  [ "$net" = "none" ] && args+=(--network none)
+  local mount
+  for mount in "$@"; do args+=(-v "$mount"); done
+  args+=("$IMAGE" bash -c "$script")
+  CONTAINERS+=("$name")
+  dc "${args[@]}" >/dev/null
+}
+
+# Observable state of a project cache: completion marker identity, repository file count
+# and the new dependency's content hash. Equal outputs before/after a run prove that the
+# run re-copied nothing and preserved user artifacts. (--entrypoint keeps the captured
+# output free of the base image's /root entrypoint warnings.)
+lc_cache_state() { # CACHE_VOL
+  dc run --rm --network none --user 10001:10001 -v "$1:/maven-cache" --entrypoint /bin/sh "$IMAGE" -c '
+    stat -c "marker %i %Y %s" /maven-cache/seeded-* 2>/dev/null || echo "marker none"
+    echo "files $(find /maven-cache/repository -type f | wc -l)"
+    if [ -f /maven-cache/repository/org/apache/commons/commons-text/1.13.0/commons-text-1.13.0.jar ]; then
+      sha256sum /maven-cache/repository/org/apache/commons/commons-text/1.13.0/commons-text-1.13.0.jar | cut -d" " -f1 | sed "s/^/dep /"
+    else
+      echo "dep none"
+    fi'
+}
+
+write_copy_shim() { # VOLUME -> test-only throttled cp (runtime fixture, never in an image)
+  dc run --rm -i --user 0 -v "$1:/shim" "$IMAGE" \
+    sh -c 'cat > /shim/cp && chmod 0555 /shim/cp' <<'SHIM_EOF'
+#!/bin/sh
+# Test-only throttled copy for the interrupted-copy scenario. It lives in a per-run test
+# volume and is activated only by the test's PATH override; images contain no such file
+# and the manao-maven wrapper reads no environment, so production cannot be influenced.
+set -eu
+if [ "${1:-}" = "--" ]; then shift; fi
+delay="${MANAO_TEST_COPY_DELAY:-0}"
+[ "$delay" = "0" ] && exec /usr/bin/cp "$@"
+src="$1"; dst="$2"
+if [ "$(wc -c < "$src")" -lt 65536 ]; then exec /usr/bin/cp -- "$src" "$dst"; fi
+total="$(wc -c < "$src")"
+: > "$dst"
+i=0
+while [ $((i * 8192)) -lt "$total" ]; do
+  dd if="$src" of="$dst" bs=8192 count=1 skip="$i" seek="$i" conv=notrunc status=none
+  i=$((i + 1))
+  sleep "$delay"
+done
+SHIM_EOF
+}
+
+LC_FIRST_RUN_SCRIPT="$(cat <<'EOF'
+set -eu
+[ "$(id -u)" = "10001" ] && [ "$(id -g)" = "10001" ] || { echo "unexpected identity $(id -u):$(id -g)" >&2; exit 42; }
+cd /workspace
+/usr/local/bin/manao-maven -B -ntp -q -DskipTests compile exec:java >/tmp/manao-run.out 2>&1 \
+  || { echo "first run failed" >&2; tail -n 30 /tmp/manao-run.out >&2; exit 43; }
+grep -F 'CACHE-CALL quote\"end' /tmp/manao-run.out >/dev/null \
+  || { echo "commons-text was not called by the application" >&2; exit 44; }
+SEED_ID="$(tr -d '[:space:]' < /opt/manao-maven-seed/seed-id)"
+[ -f "/maven-cache/seeded-$SEED_ID" ] || { echo "no completion marker after the first run" >&2; exit 45; }
+[ -f /maven-cache/repository/org/apache/commons/commons-text/1.13.0/commons-text-1.13.0.jar ] \
+  || { echo "the new dependency is not in the project cache" >&2; exit 46; }
+echo "LC-FIRST-OK"
+EOF
+)"
+
+LC_SECOND_RUN_SCRIPT="$(cat <<'EOF'
+set -eu
+[ "$(id -u)" = "10001" ] && [ "$(id -g)" = "10001" ] || { echo "unexpected identity $(id -u):$(id -g)" >&2; exit 42; }
+cd /workspace
+# -o plus --network none: any missing artifact can only fail, never download again.
+/usr/local/bin/manao-maven -B -ntp -q -o -DskipTests compile exec:java >/tmp/manao-run.out 2>&1 \
+  || { echo "offline second run failed" >&2; tail -n 30 /tmp/manao-run.out >&2; exit 43; }
+grep -F 'CACHE-CALL quote\"end' /tmp/manao-run.out >/dev/null \
+  || { echo "commons-text was not called in the offline run" >&2; exit 44; }
+echo "LC-SECOND-OK"
+EOF
+)"
+
+LC_INTERRUPT_RUN_SCRIPT="$(cat <<'EOF'
+set -eu
+[ "$(id -u)" = "10001" ] && [ "$(id -g)" = "10001" ] || { echo "unexpected identity $(id -u):$(id -g)" >&2; exit 42; }
+cd /workspace
+exec /usr/local/bin/manao-maven -B -ntp -q -o -DskipTests compile
+EOF
+)"
+
+LC_INTERRUPT_CHECK_SCRIPT="$(cat <<'EOF'
+set -eu
+SEED_ID="$(tr -d '[:space:]' < /opt/manao-maven-seed/seed-id)"
+[ ! -e "/maven-cache/seeded-$SEED_ID" ] \
+  || { echo "completion marker written despite the interrupted copy" >&2; exit 47; }
+published=0
+while IFS= read -r -d '' f; do
+  case "$f" in *.manao-tmp.*) continue ;; esac
+  published=$((published + 1))
+  cmp -s "$f" "/opt/manao-maven-seed/repository/${f#/maven-cache/repository/}" \
+    || { echo "incomplete artifact in the cache: $f" >&2; exit 48; }
+done < <(find /maven-cache/repository -type f -print0)
+[ "$published" -ge 1 ] || { echo "nothing was published before the interruption" >&2; exit 49; }
+echo "INTERRUPTED-CACHE-CLEAN published=$published"
+EOF
+)"
+
+LC_REPAIR_SCRIPT="$(cat <<'EOF'
+set -eu
+[ "$(id -u)" = "10001" ] && [ "$(id -g)" = "10001" ] || { echo "unexpected identity $(id -u):$(id -g)" >&2; exit 42; }
+cd /workspace
+/usr/local/bin/manao-maven -B -ntp -q -o -DskipTests compile >/tmp/manao-run.out 2>&1 \
+  || { echo "repair run failed" >&2; tail -n 30 /tmp/manao-run.out >&2; exit 43; }
+SEED_ID="$(tr -d '[:space:]' < /opt/manao-maven-seed/seed-id)"
+[ -f "/maven-cache/seeded-$SEED_ID" ] || { echo "repair did not publish the completion marker" >&2; exit 45; }
+leftover="$(find /maven-cache/repository -name '*.manao-tmp.*' -type f | head -n 1)"
+[ -z "$leftover" ] || { echo "temporary file was not cleaned up: $leftover" >&2; exit 50; }
+while IFS= read -r -d '' f; do
+  cmp -s "$f" "/maven-cache/repository/${f#/opt/manao-maven-seed/repository/}" \
+    || { echo "seed file missing after repair: $f" >&2; exit 51; }
+done < <(find /opt/manao-maven-seed/repository -type f -print0)
+echo "LC-REPAIR-OK"
+EOF
+)"
+
+LC_UPDATE_BASELINE_SCRIPT="$(cat <<'EOF'
+set -eu
+[ "$(id -u)" = "10001" ] && [ "$(id -g)" = "10001" ] || { echo "unexpected identity $(id -u):$(id -g)" >&2; exit 42; }
+/usr/local/bin/manao-maven -v >/tmp/manao-run.out 2>&1 \
+  || { echo "initial cache run failed" >&2; tail -n 30 /tmp/manao-run.out >&2; exit 43; }
+SEED_ID="$(tr -d '[:space:]' < /opt/manao-maven-seed/seed-id)"
+[ -f "/maven-cache/seeded-$SEED_ID" ] || { echo "initial run did not publish the marker" >&2; exit 45; }
+echo "LC-UPDATE-BASELINE-OK"
+EOF
+)"
+
+LC_UPDATE_SECOND_SCRIPT="$(cat <<'EOF'
+set -eu
+[ "$(id -u)" = "10001" ] && [ "$(id -g)" = "10001" ] || { echo "unexpected identity $(id -u):$(id -g)" >&2; exit 42; }
+/usr/local/bin/manao-maven -v >/tmp/manao-run.out 2>&1 \
+  || { echo "seed update run failed" >&2; tail -n 30 /tmp/manao-run.out >&2; exit 43; }
+[ "$(cat /maven-cache/repository/com/example/userlib/1.0/userlib-1.0.jar)" = "USER-ARTIFACT-V1" ] \
+  || { echo "the seed update overwrote an existing project file" >&2; exit 52; }
+[ "$(cat /maven-cache/repository/com/example/newlib/2.0/newlib-2.0.jar)" = "NEW-SEED-CONTENT" ] \
+  || { echo "the seed update did not add the new seed file" >&2; exit 53; }
+NEW_ID="$(tr -d '[:space:]' < /opt/manao-maven-seed/seed-id)"
+[ -f "/maven-cache/seeded-$NEW_ID" ] || { echo "the new seed version did not publish its marker" >&2; exit 54; }
+echo "LC-UPDATE-OK"
+EOF
+)"
+
+LC_READONLY_SCRIPT="$(cat <<'EOF'
+set -eu
+[ "$(id -u)" = "10001" ] && [ "$(id -g)" = "10001" ] || { echo "unexpected identity $(id -u):$(id -g)" >&2; exit 42; }
+set +e
+/usr/local/bin/manao-maven -v >/tmp/manao-run.out 2>&1
+rc=$?
+set -e
+[ "$rc" -ne 0 ] || { echo "the wrapper succeeded although the cache is read-only" >&2; exit 55; }
+[ -z "$(find /tmp -maxdepth 2 -type d -name repository 2>/dev/null)" ] \
+  || { echo "the wrapper fell back to a temporary repository" >&2; exit 56; }
+echo "LC-READONLY-FAILS-OK"
+EOF
+)"
+
+LC_EXHAUSTED_SCRIPT="$(cat <<'EOF'
+set -eu
+[ "$(id -u)" = "10001" ] && [ "$(id -g)" = "10001" ] || { echo "unexpected identity $(id -u):$(id -g)" >&2; exit 42; }
+set +e
+/usr/local/bin/manao-maven -B -ntp -q -o -DskipTests compile >/tmp/manao-run.out 2>&1
+rc=$?
+set -e
+[ "$rc" -ne 0 ] || { echo "the wrapper succeeded although the cache volume is exhausted" >&2; exit 57; }
+[ -z "$(find /tmp -maxdepth 2 -type d -name repository 2>/dev/null)" ] \
+  || { echo "the wrapper fell back to a temporary repository" >&2; exit 56; }
+echo "LC-EXHAUSTED-FAILS-OK"
+EOF
+)"
+
+scenario_lc_first_run_seeds_and_downloads() {
+  local name="${PREFIX}-lc-first" cache ws log
+  cache="$(new_volume lc-cache-main)"; ws="$(new_volume lc-ws-main)"
+  lc_prep_cache "$cache"
+  lc_prep_workspace "$ws" with-commons-text
+  lc_run "$name" "$LC_FIRST_RUN_SCRIPT" bridge "$cache:/maven-cache" "$ws:/workspace"
+  wait_case "$name" 600
+  if [ "$CASE_EXIT" = "0" ]; then
+    log="$(log_of "$name")"
+    grep 'LC-FIRST-OK' "$log" || true
+    pass "$name"
+  else
+    log="$(log_of "$name")"
+    tail -n 30 "$log" || true
+    fail "$name (exit=$CASE_EXIT)"
+  fi
+}
+
+scenario_lc_second_run_offline_reuses() {
+  local name="${PREFIX}-lc-second" cache ws before after log
+  cache="${PREFIX}-lc-cache-main"; ws="${PREFIX}-lc-ws-main"
+  before="$(lc_cache_state "$cache")"
+  lc_run "$name" "$LC_SECOND_RUN_SCRIPT" none "$cache:/maven-cache" "$ws:/workspace"
+  wait_case "$name" 600
+  if [ "$CASE_EXIT" != "0" ]; then
+    log="$(log_of "$name")"
+    tail -n 30 "$log" || true
+    fail "$name (exit=$CASE_EXIT)"
+    return 0
+  fi
+  after="$(lc_cache_state "$cache")"
+  if [ "$before" != "$after" ]; then
+    printf 'cache state changed during the reuse run:\nbefore:\n%s\nafter:\n%s\n' "$before" "$after"
+    fail "$name (the same-seed run rewrote the cache)"
+    return 0
+  fi
+  log="$(log_of "$name")"
+  grep 'LC-SECOND-OK' "$log" || true
+  pass "$name (offline reuse, no re-copy, user artifact preserved)"
+}
+
+scenario_lc_interrupted_copy_is_repaired() {
+  local name="${PREFIX}-lc-interrupted" verify repair cache ws shim log
+  local waited=0 fired=0 st
+  cache="$(new_volume lc-cache-int)"; ws="$(new_volume lc-ws-int)"; shim="$(new_volume lc-shim)"
+  lc_prep_cache "$cache"
+  lc_prep_workspace "$ws"
+  write_copy_shim "$shim"
+  local -a run_args=(run -d --name "$name" --user 10001:10001 --read-only --tmpfs /tmp
+                     --network none
+                     -v "${cache}:/maven-cache" -v "${ws}:/workspace"
+                     -v "${shim}:/shim"
+                     -e "PATH=/shim:${IMAGE_PATH}"
+                     -e "MANAO_TEST_COPY_DELAY=${SHIM_DELAY}")
+  CONTAINERS+=("$name")
+  dc "${run_args[@]}" "$IMAGE" bash -c "$LC_INTERRUPT_RUN_SCRIPT" >/dev/null
+  # Kill the wrapper while a copy is provably in flight (the throttled cp keeps temp
+  # files visible); SIGKILL to PID 1 mirrors the hardest possible stop.
+  while [ "$waited" -lt 120 ]; do
+    st="$(docker inspect -f '{{.State.Status}}' "$name" 2>/dev/null || echo missing)"
+    [ "$st" = "running" ] || break
+    if dc exec "$name" sh -c 'find /maven-cache/repository -name "*.manao-tmp.*" -type f 2>/dev/null | head -n 1' | grep -q .; then
+      fired=1
+      break
+    fi
+    sleep 1
+    waited=$((waited+1))
+  done
+  if [ "$fired" != "1" ]; then
+    log="$(log_of "$name")"
+    tail -n 30 "$log" || true
+    fail "$name (the copy was never observed in progress)"
+    return 0
+  fi
+  docker kill "$name" >/dev/null
+  wait_case "$name" 60
+  verify="${PREFIX}-lc-interrupted-check"
+  CONTAINERS+=("$verify")
+  dc run --name "$verify" --network none -v "${cache}:/maven-cache" "$IMAGE" \
+    bash -c "$LC_INTERRUPT_CHECK_SCRIPT" >/dev/null 2>&1
+  wait_case "$verify" 120
+  if [ "$CASE_EXIT" != "0" ]; then
+    log="$(log_of "$verify")"
+    tail -n 20 "$log" || true
+    fail "$verify (exit=$CASE_EXIT)"
+    return 0
+  fi
+  pass "$verify"
+  # The next explicit run must repair the cache: complete the copy, sweep the temp files
+  # and publish the marker - and the repaired cache must then work fully offline.
+  repair="${PREFIX}-lc-repair"
+  lc_run "$repair" "$LC_REPAIR_SCRIPT" none "$cache:/maven-cache" "$ws:/workspace"
+  wait_case "$repair" 600
+  if [ "$CASE_EXIT" = "0" ]; then
+    log="$(log_of "$repair")"
+    grep 'LC-REPAIR-OK' "$log" || true
+    pass "$repair"
+  else
+    log="$(log_of "$repair")"
+    tail -n 30 "$log" || true
+    fail "$repair (exit=$CASE_EXIT)"
+  fi
+}
+
+scenario_lc_seed_update_fills_gaps_without_overwrite() {
+  local first second cache fake log
+  first="${PREFIX}-lc-update-baseline"
+  second="${PREFIX}-lc-update-second"
+  cache="$(new_volume lc-cache-upd)"; fake="$(new_volume lc-fakeseed)"
+  lc_prep_cache "$cache"
+  lc_run "$first" "$LC_UPDATE_BASELINE_SCRIPT" none "$cache:/maven-cache"
+  wait_case "$first" 600
+  if [ "$CASE_EXIT" != "0" ]; then
+    log="$(log_of "$first")"
+    tail -n 30 "$log" || true
+    fail "$first (exit=$CASE_EXIT)"
+    return 0
+  fi
+  pass "$first"
+  # A file the user added to the project cache (same path as one of the new seed's files)
+  # plus a fake "updated seed" (new content version, one overlapping + one new file).
+  dc run --rm --user 0 -v "${cache}:/maven-cache" "$IMAGE" sh -c 'mkdir -p /maven-cache/repository/com/example/userlib/1.0 && printf "USER-ARTIFACT-V1" > /maven-cache/repository/com/example/userlib/1.0/userlib-1.0.jar && chown -R 10001:10001 /maven-cache/repository/com' >/dev/null 2>&1
+  dc run --rm --user 0 -v "${fake}:/seed" "$IMAGE" sh -c 'mkdir -p /seed/repository/com/example/userlib/1.0 /seed/repository/com/example/newlib/2.0 && printf "f%.0s" $(seq 1 64) > /seed/seed-id && printf %s "SEED-UPDATE-CONTENT" > /seed/repository/com/example/userlib/1.0/userlib-1.0.jar && printf %s "NEW-SEED-CONTENT" > /seed/repository/com/example/newlib/2.0/newlib-2.0.jar' >/dev/null 2>&1
+  lc_run "$second" "$LC_UPDATE_SECOND_SCRIPT" none "$cache:/maven-cache" "${fake}:/opt/manao-maven-seed:ro"
+  wait_case "$second" 300
+  if [ "$CASE_EXIT" != "0" ]; then
+    log="$(log_of "$second")"
+    tail -n 30 "$log" || true
+    fail "$second (exit=$CASE_EXIT)"
+    return 0
+  fi
+  # The previous version's marker must survive alongside the new one.
+  if ! dc run --rm --network none -v "${cache}:/maven-cache" "$IMAGE" \
+        sh -c "test -f /maven-cache/seeded-$LC_SEED_ID" >/dev/null 2>&1; then
+    fail "$second (the previous seed version's marker disappeared)"
+    return 0
+  fi
+  log="$(log_of "$second")"
+  grep 'LC-UPDATE-OK' "$log" || true
+  pass "$second (new version filled the gap, user file untouched)"
+}
+
+scenario_lc_readonly_cache_fails_closed() {
+  local name="${PREFIX}-lc-readonly" cache log
+  cache="$(new_volume lc-cache-ro)"
+  lc_prep_cache "$cache"
+  name="${PREFIX}-lc-readonly-run"
+  lc_run "$name" "$LC_READONLY_SCRIPT" none "${cache}:/maven-cache:ro"
+  wait_case "$name" 120
+  if [ "$CASE_EXIT" = "0" ]; then
+    log="$(log_of "$name")"
+    grep 'LC-READONLY-FAILS-OK' "$log" || true
+    if dc run --rm --network none -v "${cache}:/maven-cache" "$IMAGE" \
+          sh -c '[ -z "$(ls /maven-cache/seeded-* 2>/dev/null)" ]' >/dev/null 2>&1; then
+      pass "$name"
+    else
+      fail "$name (a marker appeared on the read-only cache)"
+    fi
+  else
+    log="$(log_of "$name")"
+    tail -n 20 "$log" || true
+    fail "$name (exit=$CASE_EXIT, want a fail-closed run)"
+  fi
+}
+
+scenario_lc_exhausted_cache_fails_closed() {
+  local name="${PREFIX}-lc-full" cache log v
+  v="${PREFIX}-lc-cache-full"
+  # A real size-limited volume: the local driver's tmpfs backend, so the ENOSPC happens
+  # inside the test's own 64 MiB volume and never fills the host or a project store.
+  docker volume create --driver local --opt type=tmpfs --opt device=tmpfs --opt "o=size=64m" "$v" >/dev/null
+  VOLUMES+=("$v")
+  lc_prep_cache "$v"
+  name="${PREFIX}-lc-full-run"
+  lc_run "$name" "$LC_EXHAUSTED_SCRIPT" none "${v}:/maven-cache"
+  wait_case "$name" 120
+  if [ "$CASE_EXIT" = "0" ]; then
+    log="$(log_of "$name")"
+    grep 'LC-EXHAUSTED-FAILS-OK' "$log" || true
+    if dc run --rm --network none -v "${v}:/maven-cache" "$IMAGE" \
+          sh -c '[ -z "$(ls /maven-cache/seeded-* 2>/dev/null)" ]' >/dev/null 2>&1; then
+      pass "$name"
+    else
+      fail "$name (a marker appeared despite the copy failure)"
+    fi
+  else
+    log="$(log_of "$name")"
+    tail -n 20 "$log" || true
+    fail "$name (exit=$CASE_EXIT, want a fail-closed run)"
+  fi
+}
+
+# The supervisor regression needs the runtime-test fixture classes. Use the given image
+# when it has them, otherwise the documented -test pair tag when it exists; without any
+# capable image the delegation is an explicit SKIPPED, never a silent pass or a hard fail.
+lifecycle_image() {
+  if dc run --rm --network none --user 10001:10001 "$IMAGE" \
+       sh -c 'test -d /opt/manao-runner/test-classes' >/dev/null 2>&1; then
+    echo "$IMAGE"
+    return 0
+  fi
+  if docker image inspect "${IMAGE}-test" >/dev/null 2>&1 \
+     && dc run --rm --network none --user 10001:10001 "${IMAGE}-test" \
+          sh -c 'test -d /opt/manao-runner/test-classes' >/dev/null 2>&1; then
+    echo "${IMAGE}-test"
+    return 0
+  fi
+  return 1
+}
+
 run_lifecycle() {
-  echo "delegating to runtime-lifecycle.sh (lifecycle mode needs the runtime-test image)"
-  bash "$SCRIPT_DIR/runtime-lifecycle.sh" "$IMAGE" "$PREFIX-rl"
+  local pass_at_start=$PASS fail_at_start=$FAIL
+  echo "lifecycle: verifying the per-project maven cache (real cluster identity UID/GID 10001)"
+  require_templates
+  seed_templates_volume
+  LC_SEED_ID="$(image_seed_id)"
+  [ -n "$LC_SEED_ID" ] || { echo "image has no usable seed-id" >&2; return 2; }
+  IMAGE_PATH="$(dc run --rm --entrypoint /bin/sh "$IMAGE" -c 'printf %s "$PATH"')"
+  scenario_lc_first_run_seeds_and_downloads
+  scenario_lc_second_run_offline_reuses
+  scenario_lc_interrupted_copy_is_repaired
+  scenario_lc_seed_update_fills_gaps_without_overwrite
+  scenario_lc_readonly_cache_fails_closed
+  scenario_lc_exhausted_cache_fails_closed
+  local regression_image="" delegation_rc=0
+  if regression_image="$(lifecycle_image)"; then
+    echo
+    echo "delegating the supervisor regression to runtime-lifecycle.sh ($regression_image)"
+    bash "$SCRIPT_DIR/runtime-lifecycle.sh" "$regression_image" "$PREFIX-rl" || delegation_rc=1
+  else
+    echo
+    echo "SKIPPED: runtime-lifecycle delegation needs a runtime-test image (fixture classes);"
+    echo "         run it explicitly: bash poc4/maven-runner/tests/runtime-lifecycle.sh <runtime-test-image>"
+  fi
+  echo
+  echo "maven-cache lifecycle: $((PASS - pass_at_start)) passed, $((FAIL - fail_at_start)) failed"
+  [ "$FAIL" -eq 0 ] && [ "$delegation_rc" -eq 0 ] || return 1
+  return 0
 }
 
 case "$MODE" in

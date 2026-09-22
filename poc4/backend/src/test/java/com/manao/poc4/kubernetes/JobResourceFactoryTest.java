@@ -59,11 +59,14 @@ class JobResourceFactoryTest {
     }
 
     @Test
-    void pidOneDirectlyExecsUserCodeCommandArray() throws Exception {
+    void pidOneIsTheFixedMavenWrapperExecTheOriginalGoalArray() throws Exception {
         Job job = factory.createMavenJob(RUN, PROJECT, List.of());
         var container = job.getSpec().getTemplate().getSpec().getContainers().get(0);
         assertThat(container.getName()).isEqualTo("maven");
-        assertThat(container.getCommand()).containsExactly("mvn", "-q", "-DskipTests", "compile", "exec:java");
+        // PID 1 is the root-owned fixed wrapper; it initializes the project cache and then
+        // execs the original goal (mvn -q -DskipTests compile exec:java) as the same process.
+        assertThat(container.getCommand())
+            .containsExactly("/usr/local/bin/manao-maven", "-q", "-DskipTests", "compile", "exec:java");
         assertThat(container.getArgs()).isNullOrEmpty();
         assertThat(container.getWorkingDir()).isEqualTo("/workspace");
         assertThat(container.getImage()).isEqualTo(IMAGE);
@@ -83,6 +86,47 @@ class JobResourceFactoryTest {
             .map(item -> item.getName()).toList();
         assertThat(names).contains("SERVER_PORT", "MANAO_MYSQL_HOST", "MANAO_MYSQL_PASSWORD");
         assertThat(json.writeValueAsString(job)).doesNotContain("ManaoPoc4");
+    }
+
+    @Test
+    void bothRunKindsUseTheProjectCacheWithoutAnExtraClaim() {
+        for (Job job : List.of(
+                factory.createMavenJob(RUN, PROJECT, List.of()),
+                factory.createServiceJob(RUN, PROJECT, Instant.parse("2026-09-22T00:30:00Z"), 7200, 8080, List.of()))) {
+            var pod = job.getSpec().getTemplate().getSpec();
+            assertThat(pod.getVolumes().stream().filter(v -> v.getPersistentVolumeClaim() != null).toList())
+                .singleElement().satisfies(v -> assertThat(v.getPersistentVolumeClaim().getClaimName())
+                    .isEqualTo(WorkspaceResourceFactory.pvcName(PROJECT)));
+            assertThat(pod.getContainers().get(0).getVolumeMounts()).anySatisfy(mount -> {
+                assertThat(mount.getName()).isEqualTo("workspace");
+                assertThat(mount.getMountPath()).isEqualTo("/maven-cache");
+                assertThat(mount.getSubPath()).isEqualTo(".manao-cache/maven");
+                assertThat(mount.getReadOnly()).isFalse();
+            });
+        }
+    }
+
+    @Test
+    void runJobsPrepareTheCacheDirectoryFromARootPvcMountWithoutTouchingTemplates() throws Exception {
+        for (Job job : List.of(
+                factory.createMavenJob(RUN, PROJECT, List.of()),
+                factory.createServiceJob(RUN, PROJECT, Instant.parse("2026-09-22T00:30:00Z"), 7200, 8080, List.of()))) {
+            var spec = job.getSpec().getTemplate().getSpec();
+            var prep = spec.getInitContainers().stream()
+                .filter(container -> "prepare-maven-cache".equals(container.getName())).findFirst().orElseThrow();
+            var mount = prep.getVolumeMounts().get(0);
+            assertThat(mount.getName()).isEqualTo("workspace");
+            assertThat(mount.getMountPath()).isEqualTo("/data");
+            assertThat(mount.getSubPath()).as("cache preparation must root-mount the workspace PVC").isNull();
+            String script = String.join(" ", prep.getCommand());
+            assertThat(script).contains("mkdir -p /data/.manao-cache/maven");
+            assertThat(script).contains("chown 10001:10001 /data/.manao-cache /data/.manao-cache/maven");
+            // Old projects get their cache directory rebuilt; templates and code are never touched.
+            assertThat(script).doesNotContain(WorkspaceResourceFactory.projectDirectory(PROJECT));
+            assertThat(prep.getSecurityContext().getRunAsUser()).isEqualTo(0L);
+            assertThat(prep.getSecurityContext().getRunAsNonRoot()).isFalse();
+            assertThat(json.writeValueAsString(job)).doesNotContain("rm ");
+        }
     }
 
     @Test
@@ -194,15 +238,17 @@ class JobResourceFactoryTest {
         var spec = job.getSpec().getTemplate().getSpec();
         var mounts = spec.getContainers().get(0).getVolumeMounts();
         assertThat(mounts).extracting(mount -> mount.getMountPath())
-            .containsExactlyInAnyOrder("/workspace", "/run-control", "/tmp");
+            .containsExactlyInAnyOrder("/workspace", "/run-control", "/maven-cache", "/tmp");
         var controlMount = mounts.stream().filter(mount -> mount.getMountPath().equals("/run-control"))
             .findFirst().orElseThrow();
         assertThat(controlMount.getSubPath()).isEqualTo("project-" + PROJECT + "/.manao-runs/" + RUN);
         assertThat(controlMount.getReadOnly()).isFalse();
 
-        // The init container only creates this run's control directory; no old claim is removed.
-        assertThat(spec.getInitContainers()).hasSize(1);
-        var init = spec.getInitContainers().get(0);
+        // The init containers prepare this run's control directory and the project maven
+        // cache directory (prepare-maven-cache is covered separately); no old claim is removed.
+        assertThat(spec.getInitContainers()).hasSize(2);
+        var init = spec.getInitContainers().stream()
+            .filter(container -> "run-control".equals(container.getName())).findFirst().orElseThrow();
         assertThat(init.getCommand()).containsExactly("mkdir", "-p", "/control/.manao-runs/" + RUN);
         assertThat(json.writeValueAsString(job)).doesNotContain("rm ");
         assertThat(init.getSecurityContext().getRunAsNonRoot()).isTrue();
