@@ -333,4 +333,28 @@ describe('useRunDetailQuery', () => {
       })?.queryKey,
     ).toEqual(['project-runs', ALICE_SEED_PROJECT_ID, 'detail', 'run-detail']);
   });
+
+  it('polls while the run is non-terminal so the toolbar sees the readiness transition', async () => {
+    // The toolbar renders this detail, and the server moves a STARTING run to RUNNING
+    // on its own (readiness arming); without polling the toolbar would never update.
+    await authenticateAsAlice();
+    const run = lockingRun('run-detail-poll', 'STARTING');
+    server.use(
+      http.get('/api/v1/projects/:projectId/runs/:runId', () => HttpResponse.json(run)),
+    );
+    const { result } = renderHook(
+      () => useRunDetailQuery(ALICE_SEED_PROJECT_ID, parseRunId('run-detail-poll')),
+      { wrapper: AppProviders },
+    );
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    const refetch = queryClient.getQueryCache().find({
+      queryKey: runKeys.detail(ALICE_SEED_PROJECT_ID, parseRunId('run-detail-poll')),
+    })?.observers[0]?.options.refetchInterval as
+      | ((query: { state: { data: RunSummary | undefined } }) => number | false)
+      | undefined;
+    expect(typeof refetch).toBe('function');
+    expect(refetch?.({ state: { data: run } })).toBe(ACTIVE_RUN_POLL_MS);
+    expect(refetch?.({ state: { data: terminalRun('run-detail-poll') } })).toBe(false);
+    expect(refetch?.({ state: { data: undefined } })).toBe(false);
+  });
 });

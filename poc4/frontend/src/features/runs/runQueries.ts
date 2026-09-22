@@ -166,6 +166,13 @@ export function useRunDetailQuery(projectId: string, runId: RunId | null) {
     enabled: projectId.length > 0 && runId !== null,
     retry: retryRunQuery,
     retryDelay: RUN_QUERY_RETRY_DELAY_MS,
+    // The toolbar renders this detail, and the server moves a STARTING run to RUNNING on
+    // its own (readiness arming); poll at the active-run cadence until it settles so the
+    // transition is actually visible.
+    refetchInterval: (query) => {
+      const run = query.state.data;
+      return run !== undefined && !isRunTerminalState(run.state) ? ACTIVE_RUN_POLL_MS : false;
+    },
   });
 }
 

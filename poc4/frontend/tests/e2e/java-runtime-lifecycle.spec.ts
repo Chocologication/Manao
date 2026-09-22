@@ -41,10 +41,36 @@ const PUBLIC_PORT_2 = process.env.MANAO_RUNTIME_PUBLIC_PORT_2;
 
 const DEMO_PATH = '/api/demo';
 const DEMO_GREETING = 'Hello from Manao';
-// Both public ports serve the single template listener in this round (the demo app
-// listens on 8080). Task 9 may remap the second container port by editing the app;
-// the public ports themselves stay exactly what the operator assigned.
+// Port 1 maps the template's own HTTP listener (8080). Port 2 maps 9090, which the
+// template app does NOT listen on until the run test adds a second Tomcat connector
+// through the workspace file API (a Service cannot declare the same service port
+// twice, so both mappings must point at distinct real listeners - plan Task 9:
+// "另一端口9090由示例代码真实监听"). The public ports stay what the operator assigned.
 const WEB_CONTAINER_PORT = '8080';
+const SECOND_CONTAINER_PORT = '9090';
+const SECOND_PORT_CONFIG_PATH = 'src/main/java/com/example/app/AdditionalPortConfig.java';
+const SECOND_PORT_CONFIG_SOURCE = `package com.example.app;
+
+import org.apache.catalina.connector.Connector;
+import org.springframework.boot.web.embedded.tomcat.TomcatServletWebServerFactory;
+import org.springframework.boot.web.server.WebServerFactoryCustomizer;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+
+/** Acceptance extension: the app genuinely listens on a second HTTP port (9090). */
+@Configuration
+public class AdditionalPortConfig {
+
+    @Bean
+    public WebServerFactoryCustomizer<TomcatServletWebServerFactory> secondHttpPort() {
+        return factory -> {
+            Connector connector = new Connector(TomcatServletWebServerFactory.DEFAULT_PROTOCOL);
+            connector.setPort(9090);
+            factory.addAdditionalTomcatConnectors(connector);
+        };
+    }
+}
+`;
 // The platform ingress port must stay out of the test range; the backend would
 // reject it as reserved, but naming it is the clearer operator error.
 const PLATFORM_INGRESS_PORT = '30080';
@@ -171,8 +197,10 @@ test.describe.serial('java runtime cloud lifecycle', () => {
 
   test('create the marked web project with MySQL, Redis and the two assigned public ports', async ({ page }, testInfo) => {
     // Provisioning includes the per-project MySQL StatefulSet and Redis Deployment;
-    // image pulls on a cold cluster make minutes the honest budget.
-    test.setTimeout(900_000);
+    // image pulls on a cold cluster make minutes the honest budget (measured 2026-09-22:
+    // a cold mysql:8.0.40 pull pushed first-readiness past 13 minutes, so the dependency
+    // waits below get 840s each and the test 1500s overall).
+    test.setTimeout(1_500_000);
     await signIn(page);
 
     await page.getByLabel('Project name').fill(SCENE.projectName);
@@ -184,7 +212,7 @@ test.describe.serial('java runtime cloud lifecycle', () => {
     await page.getByLabel('Container port 1').fill(WEB_CONTAINER_PORT);
     await page.getByLabel('Public port 1').fill(String(publicPortNumber1));
     await page.getByRole('button', { name: 'Add port' }).click();
-    await page.getByLabel('Container port 2').fill(WEB_CONTAINER_PORT);
+    await page.getByLabel('Container port 2').fill(SECOND_CONTAINER_PORT);
     await page.getByLabel('Public port 2').fill(String(publicPortNumber2));
 
     await page.getByRole('button', { name: 'Create project' }).click();
@@ -197,8 +225,8 @@ test.describe.serial('java runtime cloud lifecycle', () => {
     const card = projectCard(page, SCENE.projectName);
     await expect(card).toBeVisible();
     await expect(card.getByText('READY', { exact: true })).toBeVisible({ timeout: 600_000 });
-    await expect(card.getByText('MySQL READY')).toBeVisible({ timeout: 600_000 });
-    await expect(card.getByText('Redis READY')).toBeVisible({ timeout: 600_000 });
+    await expect(card.getByText('MySQL READY')).toBeVisible({ timeout: 840_000 });
+    await expect(card.getByText('Redis READY')).toBeVisible({ timeout: 840_000 });
     // The exact user-selected NodePorts were provisioned, not substituted.
     await expect(card).toContainText(String(publicPortNumber1));
     await expect(card).toContainText(String(publicPortNumber2));
@@ -228,8 +256,30 @@ test.describe.serial('java runtime cloud lifecycle', () => {
   test('start the bounded web run and serve the demo app through both assigned ports', async ({ page }, testInfo) => {
     test.setTimeout(900_000); // cloud Maven build plus app startup may take minutes
     await signIn(page);
-    await openProject(page);
 
+    // The second public port maps container port 9090, which the template does not
+    // listen on yet: add the second Tomcat connector through the same workspace file
+    // API the editor drives, so the run genuinely serves both assigned ports. The edit
+    // happens BEFORE the project page loads, so the UI's Start-run revision is current
+    // (an edit after loading would leave the page holding a stale revision).
+    const created = await authedPost(page, `/api/v1/projects/${SCENE.projectId}/entries`, {
+      kind: 'file',
+      path: SECOND_PORT_CONFIG_PATH,
+      expectedWorkspaceRevision: await currentWorkspaceRevision(page),
+    });
+    expect(created.ok(), 'the additional-port source file must be creatable').toBeTruthy();
+    const saved = await authedPut(
+      page,
+      `/api/v1/projects/${SCENE.projectId}/files/content?path=${encodeURIComponent(SECOND_PORT_CONFIG_PATH)}`,
+      {
+        content: SECOND_PORT_CONFIG_SOURCE,
+        expectedWorkspaceRevision: (await created.json()).workspaceRevision,
+      },
+    );
+    expect(saved.ok(), 'the additional-port source file must be savable').toBeTruthy();
+    console.log(`[java-runtime] added ${SECOND_PORT_CONFIG_PATH} so the app listens on ${SECOND_CONTAINER_PORT}`);
+
+    await openProject(page);
     await page.getByRole('tab', { name: 'Run' }).click();
     const start = page.getByRole('button', { name: 'Start run' });
     await expect(start).toBeEnabled();
@@ -418,6 +468,27 @@ function authedGet(page: Page, path: string) {
   return page.request.get(path, {
     headers: { Authorization: `Bearer ${SCENE.accessToken}` },
   });
+}
+
+function authedPost(page: Page, path: string, body: unknown) {
+  return page.request.post(path, {
+    headers: { Authorization: `Bearer ${SCENE.accessToken}` },
+    data: body,
+  });
+}
+
+function authedPut(page: Page, path: string, body: unknown) {
+  return page.request.put(path, {
+    headers: { Authorization: `Bearer ${SCENE.accessToken}` },
+    data: body,
+  });
+}
+
+/** Current workspace revision for optimistic writes (files/tree carries it). */
+async function currentWorkspaceRevision(page: Page): Promise<string> {
+  const response = await authedGet(page, `/api/v1/projects/${SCENE.projectId}/files/tree`);
+  expect(response.ok(), 'workspace tree must be readable before file edits').toBeTruthy();
+  return ((await response.json()) as { workspaceRevision: string }).workspaceRevision;
 }
 
 /** The single active SERVICE run with its readiness deadline armed. */
