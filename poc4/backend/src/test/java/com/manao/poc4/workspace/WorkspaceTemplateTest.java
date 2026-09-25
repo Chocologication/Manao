@@ -235,6 +235,26 @@ class WorkspaceTemplateTest {
     }
 
     @Test
+    void pythonWebProbeImportsStayInsideTheControlledFailurePath() {
+        WorkspaceTemplate template = new WorkspaceTemplate();
+        String main = template.files(spec("python-fastapi-web", true, true)).get("app/main.py");
+        // A selected client that cannot even be imported must fail the probe (fixed 503), not
+        // the request (500 with a traceback): each client import sits inside the probe's first
+        // guarded try block. Source-level assertion because HTTP behavior is verified by the
+        // real template runs, not by committed HTTP tests.
+        int mysql = main.indexOf("def _mysql_ready()");
+        assertThat(mysql).isGreaterThanOrEqualTo(0);
+        assertThat(main.indexOf("import pymysql", mysql))
+            .as("pymysql import inside _mysql_ready's guarded try")
+            .isGreaterThan(main.indexOf("try:", mysql));
+        int redis = main.indexOf("def _redis_ready()");
+        assertThat(redis).isGreaterThanOrEqualTo(0);
+        assertThat(main.indexOf("import redis", redis))
+            .as("redis import inside _redis_ready's guarded try")
+            .isGreaterThan(main.indexOf("try:", redis));
+    }
+
+    @Test
     void pythonTemplateDirectoriesAreParentFirstForEverySelection() {
         WorkspaceTemplate template = new WorkspaceTemplate();
         for (String templateId : List.of("python-console", "python-fastapi-web")) {

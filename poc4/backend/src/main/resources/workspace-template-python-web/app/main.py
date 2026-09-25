@@ -15,10 +15,12 @@ def demo():
 def _mysql_ready() -> bool:
     import os
 
-    import pymysql
-
     timeout_seconds = 3
     try:
+        # The client import stays inside the guarded path: a selected extra that is not
+        # installed must fail the probe (fixed 503), never the request.
+        import pymysql
+
         connection = pymysql.connect(
             host=os.environ["MANAO_MYSQL_HOST"],
             port=int(os.environ.get("MANAO_MYSQL_PORT", "3306")),
@@ -47,10 +49,11 @@ def _mysql_ready() -> bool:
 def _redis_ready() -> bool:
     import os
 
-    import redis
-
     timeout_seconds = 3
     try:
+        # Same as MySQL: an unimportable client is a probe failure, not a request failure.
+        import redis
+
         client = redis.Redis(
             host=os.environ["MANAO_REDIS_HOST"],
             port=int(os.environ.get("MANAO_REDIS_PORT", "6379")),

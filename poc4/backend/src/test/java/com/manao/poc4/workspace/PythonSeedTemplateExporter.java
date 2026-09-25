@@ -16,9 +16,11 @@ import java.util.Comparator;
  * the exported declarations and lock are the inputs the image build feeds to uv.
  *
  * <p>The output location comes exclusively from the explicit {@code manao.seed.output} system
- * property (an absolute build directory). A previous export is removed first so a stale variant
- * from an older run can never survive into the image build; the path check makes sure this tool
- * only ever clears a build directory it owns.</p>
+ * property and must be this module's own canonical build directory
+ * {@code <module>/target/python-seed-templates}. A previous export is removed first so a stale
+ * variant from an older run can never survive into the image build; the guard validates the
+ * normalized path against the exporter's own build location before anything is deleted, so a
+ * same-named directory anywhere else can never be cleared.</p>
  */
 public final class PythonSeedTemplateExporter {
 
@@ -50,15 +52,47 @@ public final class PythonSeedTemplateExporter {
         System.out.println("exported " + specs.size() + " python template variants to " + root);
     }
 
-    /** Deletes a previous export so old variants cannot linger; only the owned name is accepted, even for a fresh export. */
+    /**
+     * The exporter's own canonical build output directory, derived from the location this class
+     * is loaded from: a Maven {@code target} directory of the module that ships the exporter.
+     */
+    static Path ownedDirectory() {
+        Path codeLocation;
+        try {
+            codeLocation = Path.of(PythonSeedTemplateExporter.class
+                .getProtectionDomain().getCodeSource().getLocation().toURI());
+        } catch (Exception ex) {
+            throw new IllegalStateException("cannot locate the exporter's own build directory", ex);
+        }
+        Path buildDirectory = codeLocation.getParent();
+        if (buildDirectory == null || !"target".equals(buildDirectory.getFileName().toString())) {
+            throw new IllegalStateException("the exporter must run from a Maven target directory: " + codeLocation);
+        }
+        Path moduleDirectory = buildDirectory.getParent();
+        if (moduleDirectory == null) {
+            throw new IllegalStateException("cannot locate the exporter's own module directory: " + codeLocation);
+        }
+        return moduleDirectory.resolve("target").resolve(OWNED_DIRECTORY_NAME);
+    }
+
+    /**
+     * Deletes a previous export so old variants cannot linger. Only the exporter's own canonical
+     * {@code target/python-seed-templates} is accepted — checked against the normalized path and
+     * its build-directory parent before any deletion, fail-closed for every other location.
+     */
     private static void clearOwnedDirectory(Path root) throws IOException {
-        if (!OWNED_DIRECTORY_NAME.equals(root.getFileName().toString())
-            || (Files.exists(root) && !Files.isDirectory(root))) {
+        Path owned = ownedDirectory();
+        if (!root.equals(owned)) {
             throw new IllegalArgumentException(
-                "manao.seed.output must be a '" + OWNED_DIRECTORY_NAME + "' directory: " + root);
+                "manao.seed.output must be the exporter's own '" + OWNED_DIRECTORY_NAME
+                    + "' build directory: " + owned);
         }
         if (!Files.exists(root)) {
             return;
+        }
+        if (!Files.isDirectory(root)) {
+            throw new IllegalArgumentException(
+                "manao.seed.output must be a '" + OWNED_DIRECTORY_NAME + "' directory: " + root);
         }
         try (var paths = Files.walk(root)) {
             paths.sorted(Comparator.reverseOrder()).forEach(path -> {

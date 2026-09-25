@@ -4,3 +4,12 @@
 # Scoped to the runner directory that owns the image entry points (maven-cache plan,
 # Global Constraints: "Shell/Docker 入口 LF").
 poc4/maven-runner/** text=auto eol=lf
+
+# The uv-managed Python template resources are text files (TOML declarations, generated
+# uv.lock, Python sources, Markdown, .gitignore, .python-version): treat them as text and
+# keep LF in index and working tree so the committed templates match exactly what uv wrote
+# and what the image build copies verbatim (python runtime plan, global constraints:
+# "UTF-8 无 BOM，shell/Docker 入口 LF；对新目录扩展 .gitattributes"). No shell scripts exist
+# in these directories.
+poc4/backend/src/main/resources/workspace-template-python/** text=auto eol=lf
+poc4/backend/src/main/resources/workspace-template-python-web/** text=auto eol=lf
