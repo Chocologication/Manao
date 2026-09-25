@@ -6,7 +6,10 @@
 #
 # Every container and volume is created under a per-invocation prefix and removed by
 # exact name on exit; volume names additionally embed the host pid, so a reused PREFIX
-# can never make two invocations share a volume identity. Shared docker resources are
+# can never make two invocations share a volume identity. A same-name leftover must
+# prove, from the daemon's own clock, that it predates this invocation before it is
+# removed; a name that is still occupied or contradicts that proof aborts the run
+# instead of being adopted. Shared docker resources are
 # never touched. Assertions use docker
 # wait/inspect state, exit codes, timestamps and files copied out of containers
 # (receipts, termination message, child markers) — never log text matching.
@@ -45,28 +48,90 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# SCRIPT_START is the daemon's own clock reading at invocation start, taken from the
+# CreatedAt of a short-lived probe volume — deliberately NOT the host `date`. Volume
+# CreatedAt values come from the daemon clock, so the staleness comparison in new_volume
+# must be made in daemon time as well: mixing in the host clock would misjudge staleness
+# under host/daemon skew (e.g. WSL2 clock drift after host sleep). Both sides of that
+# comparison are daemon readings, so it stays sound regardless of skew. The probe is
+# removed again immediately; if that removal fails it is registered so the EXIT trap
+# still reclaims it.
+CLOCK_PROBE="${PREFIX}-$$-vol-clockref-$RANDOM"
+if ! docker volume create "$CLOCK_PROBE" >/dev/null 2>&1; then
+  echo "runtime-lifecycle: cannot create clock probe $CLOCK_PROBE to read the daemon clock" >&2
+  exit 1
+fi
+SCRIPT_START="$(date -u -d "$(docker volume inspect -f '{{.CreatedAt}}' "$CLOCK_PROBE")" +%Y-%m-%dT%H:%M:%SZ)" || {
+  echo "runtime-lifecycle: cannot read the daemon clock from $CLOCK_PROBE" >&2
+  exit 1
+}
+docker volume rm "$CLOCK_PROBE" >/dev/null 2>&1 || printf '%s\n' "$CLOCK_PROBE" >> "$VOLUME_REGISTRY"
+
 pass() { PASS=$((PASS+1)); echo "PASS: $1"; }
 fail() { FAIL=$((FAIL+1)); echo "FAIL: $1"; }
+
+# Classify a volume name by inspecting it — semantically, never by bare exit code.
+# Returns 0 if the volume exists (prints its CreatedAt), 1 if the daemon's stable
+# "no such volume" error proves the name free, 2 for any other failure (permission,
+# transient connection, timeout — raw daemon error on stdout). A non-zero exit alone
+# proves nothing: only the daemon's own "no such volume" text may be read as "free".
+volume_state() { # NAME
+  local out st=0
+  out="$(docker volume inspect -f '{{.CreatedAt}}' "$1" 2>&1)" || st=$?
+  if [ "$st" -eq 0 ]; then
+    printf '%s' "$out"
+    return 0
+  fi
+  case "$out" in
+    *"no such volume"*|*"No such volume"*) return 1 ;;
+    *) printf '%s' "$out"; return 2 ;;
+  esac
+}
 
 # Create one uniquely-owned volume, register its exact name and expose it as
 # CREATED_VOLUME. Called in the parent shell (never inside a command substitution) so a
 # failure aborts the whole script through the EXIT trap — a scenario can never keep
 # running with an empty volume name.
+#
+# Ownership invariant: a live pid is unique among live (MSYS/Git Bash) processes, so a
+# volume named with THIS pid and a matching tag can only have been created by a dead
+# invocation that recycled the same pid (no scenario tag repeats within one run, so this
+# invocation's own earlier volumes can never collide either). Consequences, enforced in
+# order below: (1) "name is free" must be proven semantically before create — any
+# indeterminate inspect aborts, because `docker volume create` on an existing name
+# silently succeeds and would adopt it; (2) an existing same-name volume must prove it
+# predates this invocation (CreatedAt, daemon clock, vs SCRIPT_START) before it is
+# removed as a stale orphan; (3) a NEWER CreatedAt contradicts the pid invariant —
+# something created this name while this invocation is alive — and aborts instead of
+# being adopted; (4) after removal the name must again be provably free before create.
 new_volume() {
-  local v="${PREFIX}-$$-vol-$1"
-  # A live pid is unique among live (MSYS/Git Bash) processes, so a volume named with
-  # THIS pid and a matching tag can only be an orphan left behind by a dead invocation
-  # that recycled the same pid. Removing it before create therefore never touches a
-  # volume belonging to another live invocation and makes the create provably fresh —
-  # but a failed removal must never be ignored: if the name still exists afterwards,
-  # the orphan's container is still holding it, and `docker volume create` on an
-  # existing name silently succeeds and would adopt that occupied volume. Fail closed.
-  local rm_err
-  rm_err="$(docker volume rm "$v" 2>&1)" || true
-  if docker volume inspect "$v" >/dev/null 2>&1; then
-    echo "runtime-lifecycle: stale volume $v exists and is still occupied (removal failed: $rm_err)" >&2
-    echo "runtime-lifecycle: refusing to create on an occupied name; remove the stale invocation's container and volume first" >&2
+  local v="${PREFIX}-$$-vol-$1" created st
+  created="$(volume_state "$v")"; st=$?
+  if [ "$st" -eq 2 ]; then
+    echo "runtime-lifecycle: cannot prove volume name $v free (inspect: $created); refusing to create on it" >&2
     exit 1
+  fi
+  if [ "$st" -eq 0 ]; then
+    # The name exists. Prove it is a stale orphan before removing it: its creator died
+    # before this invocation spawned, so its CreatedAt must predate SCRIPT_START (both
+    # timestamps on the daemon clock — see the clock probe above). A newer CreatedAt
+    # contradicts the invariant and is refused, not adopted.
+    created="$(date -u -d "$created" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null)" || {
+      echo "runtime-lifecycle: cannot parse CreatedAt '$created' of existing volume $v" >&2
+      exit 1
+    }
+    if [[ "$created" > "$SCRIPT_START" ]]; then
+      echo "runtime-lifecycle: volume $v was created at $created, AFTER this invocation started ($SCRIPT_START) — contradicts the pid-ownership invariant; refusing to adopt it" >&2
+      exit 1
+    fi
+    local rm_err
+    rm_err="$(docker volume rm "$v" 2>&1)" || true
+    created="$(volume_state "$v")"; st=$?
+    if [ "$st" -ne 1 ]; then
+      echo "runtime-lifecycle: stale volume $v still exists after removal attempt (rm: ${rm_err:-<no error>}; re-inspect: ${created:-<empty>})" >&2
+      echo "runtime-lifecycle: refusing to create on an occupied name; remove the stale invocation's container and volume first" >&2
+      exit 1
+    fi
   fi
   docker volume create "$v" >/dev/null || {
     echo "runtime-lifecycle: cannot create volume $v" >&2
