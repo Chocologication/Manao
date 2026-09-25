@@ -57,8 +57,17 @@ new_volume() {
   # A live pid is unique among live (MSYS/Git Bash) processes, so a volume named with
   # THIS pid and a matching tag can only be an orphan left behind by a dead invocation
   # that recycled the same pid. Removing it before create therefore never touches a
-  # volume belonging to another live invocation and makes the create provably fresh.
-  docker volume rm "$v" >/dev/null 2>&1 || true
+  # volume belonging to another live invocation and makes the create provably fresh —
+  # but a failed removal must never be ignored: if the name still exists afterwards,
+  # the orphan's container is still holding it, and `docker volume create` on an
+  # existing name silently succeeds and would adopt that occupied volume. Fail closed.
+  local rm_err
+  rm_err="$(docker volume rm "$v" 2>&1)" || true
+  if docker volume inspect "$v" >/dev/null 2>&1; then
+    echo "runtime-lifecycle: stale volume $v exists and is still occupied (removal failed: $rm_err)" >&2
+    echo "runtime-lifecycle: refusing to create on an occupied name; remove the stale invocation's container and volume first" >&2
+    exit 1
+  fi
   docker volume create "$v" >/dev/null || {
     echo "runtime-lifecycle: cannot create volume $v" >&2
     exit 1
@@ -115,11 +124,16 @@ start_run() {
   else
     args+=("$IMAGE" sh -c "$FIXTURE_CMD" fixture "$kind")
   fi
-  # Register only a container that was actually created: on a same-PREFIX race a failed
-  # `docker run --name` must never put the winner's container on this run's kill list.
+  # Ownership shape for a failed `docker run -d`: the command can fail after the
+  # container object was created (e.g. an error in the start phase), leaving a container
+  # that is not on this run's kill list. So: register in CONTAINERS only on success; on
+  # failure remove the exact pid-embedded name first — it can only ever be this
+  # invocation's own container or an orphan of a dead invocation that recycled the same
+  # pid — then abort fail-closed through the EXIT trap.
   if docker "${args[@]}" >/dev/null; then
     CONTAINERS+=("$name")
   else
+    docker rm -f "$name" >/dev/null 2>&1 || true
     echo "runtime-lifecycle: cannot start container $name" >&2
     exit 1
   fi
@@ -211,12 +225,14 @@ scenario_profile_arguments_rejected() {
     esac
     name="${PREFIX}-$$-badargs-$label"
     new_volume "badargs-$label"; vol="$CREATED_VOLUME"
-    # Same registration rule as start_run: only a container that was actually created
-    # goes on this run's cleanup list.
+    # Same ownership shape as start_run: register only a container that was actually
+    # created; on failure remove the exact pid-embedded name before aborting, so a
+    # created-but-failed container is never left behind.
     if docker run -d --name "$name" -v "${vol}:/run-control" \
          "$IMAGE" sh -c "$RUN_CMD" supervisor $argv >/dev/null; then
       CONTAINERS+=("$name")
     else
+      docker rm -f "$name" >/dev/null 2>&1 || true
       echo "runtime-lifecycle: cannot start container $name" >&2
       exit 1
     fi
