@@ -13,3 +13,11 @@ poc4/maven-runner/** text=auto eol=lf
 # in these directories.
 poc4/backend/src/main/resources/workspace-template-python/** text=auto eol=lf
 poc4/backend/src/main/resources/workspace-template-python-web/** text=auto eol=lf
+
+# Shell/Docker entry points and tests of the Python runner image must keep LF line
+# endings in the working tree: with core.autocrlf a fresh checkout would otherwise hand
+# CRLF files to the docker build context, breaking every image build (shebang/scripts
+# exit 127). Scoped to the python-runner directory that owns the image entry points
+# (python runtime plan, global constraints: "UTF-8 无 BOM，shell/Docker 入口 LF；对新目录扩展
+# .gitattributes").
+poc4/python-runner/** text=auto eol=lf
