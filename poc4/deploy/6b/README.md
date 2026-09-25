@@ -36,13 +36,14 @@ redeploy a floating tag):
 | Namespace / schema | `manao-stage6b` / `manao_poc4_6b` |
 | Public origin | `http://1.12.245.235:30080` (NodePort 30080, plain HTTP — the transport limitation is recorded in the acceptance doc, sections 3 and 7.3) |
 
-The table above is the closed, accepted Stage 6B baseline — do not rewrite it. The
-Java project runtime increment (2026-09-22, `java-runtime-implementation` plan)
-prepares additional deployment surface (section 10) on top of this baseline; its
-deployment decision, resolved image versions/digests and acceptance results are
-recorded in [poc4/docs/evidence/java-runtime/acceptance.md](../../docs/evidence/java-runtime/acceptance.md)
-only when the real deployment and acceptance round (Task 9) executes them. The old
-6B PASS stays untouched by that round.
+The table above is the closed, accepted Stage 6B baseline — do not rewrite it, and
+do not replace its digests with the later runtime images. The Java project runtime
+increment (2026-09-22, `java-runtime-implementation` plan) adds deployment surface
+(section 10) on top of this baseline; the currently deployed backend/frontend
+images belong to that increment, and its deployment decisions, resolved image
+digests and acceptance results are recorded in
+[poc4/docs/evidence/java-runtime/acceptance.md](../../docs/evidence/java-runtime/acceptance.md)
+sections 8–9. The old 6B PASS stays untouched by those rounds.
 
 ## 1. Build and publish the backend image
 
@@ -124,8 +125,12 @@ to start.
 ## 3. One-time database setup
 
 The MySQL container auto-creates database `manao_poc4_6b` and user `manao`
-(from `mysql.yaml`). Flyway (built into the app) runs migrations V1–V8 on first
-startup. V3 creates a trigger; see section 5 for why the MySQL flag is set.
+(from `mysql.yaml`). Flyway (built into the app) runs migrations on first startup.
+The historical first 6B startup ran V1–V8; since the 2026-09-22 Java runtime
+increment the full migration set is V1–V9 (`V9__project_runtime.sql`, section
+10.5), and the existing cloud schema is expected to report version 9 / "Schema is
+up to date" rather than replaying fresh migrations. V3 creates a trigger; see
+section 5 for why the MySQL flag is set.
 
 The single application user (`app_user`) is created once, manually, via a
 parameterized statement executed from a controlled SQL file — no shell
@@ -207,7 +212,7 @@ kubectl apply -f poc4/deploy/6b/mysql.yaml
 # be substituted with the digest-pinned BACKEND_IMAGE from section 2 before apply.
 sed "s|manao-poc4-backend:replace-me|$BACKEND_IMAGE|" poc4/deploy/6b/backend.yaml | kubectl apply -f -
 kubectl -n manao-stage6b get pods -w
-kubectl -n manao-stage6b logs deploy/backend --tail=200   # look for Flyway V1..V8 success
+kubectl -n manao-stage6b logs deploy/backend --tail=200   # fresh schema: Flyway V1..V9; existing schema: "Schema is up to date" (version 9)
 ```
 
 Smoke checks:
@@ -479,7 +484,14 @@ occurred and all four real deletions completed cleanly — see acceptance 5.4).
 | --- | --- | --- |
 | MySQL schema `manao_poc4_6b` (projects, runs, logs, users) | PVC `data-mysql-0` -> PV `pvc-d6b6bc54…` (nfs-storage, 5Gi) | backend restart (9.1), MySQL pod rebuild (9.2), node reschedule |
 | Project files / workspace | per-project PVC `manao-pvc-<projectId>` (`manao-poc4-delete`, 10Gi RWX) | backend restart; **deleted together with the project** (Delete reclaim, verified to the NFS directory level) |
+| Per-project MySQL data (Java runtime) | per-project PVC `manao-mysql-pvc-<projectId>` (StorageClass from `MANAO_MYSQL_STORAGE_CLASS`; empty = `manao-poc4-delete`, Delete reclaim) | stopping a Run keeps it; **reclaimed only by project deletion** (runtime acceptance §8.4) |
+| Per-project Redis (Java runtime) | namespace Redis Deployment + per-project auth Secret (no PVC) | stopping a Run keeps it; deleted only with the project |
+| Per-project Maven cache (Java runtime) | `.manao-cache/maven` inside the project's workspace PVC (outside the code subPath) | stopping a Run keeps it; reclaimed with the workspace PVC at project deletion (runtime acceptance §8.3) |
 | Platform config / secrets | namespace objects + registry digests | re-apply per sections 2–4 and 8 |
+
+Project-scoped runtime resources (per-project MySQL PVC, Redis, Maven cache) are
+never touched by stopping a Run, and the platform MySQL volume `data-mysql-0` is
+never touched by project lifecycle or cleanup.
 
 ## 10. Java project runtime increment (wired 2026-09-22; cluster results in the acceptance record)
 
@@ -490,9 +502,9 @@ the 2026-09-22 Maven-cache supplement (C1/C2) seeds the runner image and
 per-project caches. This section describes the deployment surface; since
 2026-09-22 the runtime-deps env wiring ships in-repo (`backend.yaml` +
 `configmap.yaml`, see section 6). Deployment outcomes, resolved image
-tags/digests, checklist results and the E2E run are recorded only in
-[poc4/docs/evidence/java-runtime/acceptance.md](../../docs/evidence/java-runtime/acceptance.md),
-never by rewriting the closed 6B PASS above.
+tags/digests, checklist results and the E2E run are recorded in
+[poc4/docs/evidence/java-runtime/acceptance.md](../../docs/evidence/java-runtime/acceptance.md)
+sections 8–9, never by rewriting the closed 6B PASS above.
 
 ### 10.1 RBAC increment (apply before the new backend rolls)
 
@@ -590,7 +602,9 @@ fail with PUBLIC_PORT_RESERVED; the value is now `30080`.)
 
 ### 10.5 V9 schema migration
 
-Flyway `V9__project_runtime.sql` runs on the new backend's first startup. Follow
+Flyway `V9__project_runtime.sql` runs on the new backend's first startup; it was
+applied 2026-09-22 and re-verified 2026-09-25 (`Schema is up to date` at version 9,
+acceptance record §8.1/§9.1). Follow
 the existing maintenance rules: run it with the migration-privileged identity,
 never swap or rebuild the platform MySQL volume (`data-mysql-0`) for the
 migration, and do not run incompatible old/new backend versions against the
