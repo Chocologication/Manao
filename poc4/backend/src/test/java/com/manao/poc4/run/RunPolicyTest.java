@@ -60,6 +60,10 @@ class RunPolicyTest {
         // A legacy SERVICE keeps its historical console command display; history is never rewritten.
         assertThat(RunPolicy.fromJson(service).command()).isEqualTo("mvn -q -DskipTests compile exec:java");
         assertThat(RunPolicy.fromJson(task).command()).isEqualTo("mvn -q -DskipTests compile exec:java");
+        // A legacy-parsed snapshot re-serializes to the legacy shape (no templateId) and round-trips.
+        RunPolicy legacyParsed = RunPolicy.fromJson(service);
+        assertThat(legacyParsed.toJson()).doesNotContain("templateId");
+        assertThat(RunPolicy.fromJson(legacyParsed.toJson())).isEqualTo(legacyParsed);
     }
 
     @Test
@@ -71,6 +75,43 @@ class RunPolicyTest {
         assertThatThrownBy(() -> RunPolicy.fromJson(valid.replace("\"language\":\"python\"", "\"language\":\"java\"")))
             .isInstanceOf(IllegalStateException.class);
         assertThatThrownBy(() -> RunPolicy.fromJson(valid.replace("python -u main.py", "mvn -q -DskipTests compile exec:java")))
+            .isInstanceOf(IllegalStateException.class);
+        // The execution kind must also agree with the template.
+        assertThatThrownBy(() -> RunPolicy.fromJson(valid.replace(
+                "\"executionKind\":\"TASK\"", "\"executionKind\":\"SERVICE\"")))
+            .isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
+    void explicitBlankOrNullTemplateIdIsRejectedInsteadOfReadAsLegacy() {
+        // Legacy format means the field is genuinely ABSENT; a present but invalid templateId
+        // is unknown data and must never fall back to the historical Java interpretation.
+        String newFormat = RunControllerTest.policy().toJson();
+        assertThatThrownBy(() -> RunPolicy.fromJson(
+                newFormat.replace("\"templateId\":\"java-console\"", "\"templateId\":\"\"")))
+            .isInstanceOf(IllegalStateException.class);
+        assertThatThrownBy(() -> RunPolicy.fromJson(
+                newFormat.replace("\"templateId\":\"java-console\"", "\"templateId\":null")))
+            .isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
+    void runtimeFieldsMustMatchTheirLanguage() {
+        String python = RunControllerTest.policy().forProject(
+            new ProjectRuntimeSpec("python-console", false, false, List.of())).toJson();
+        // A python runtime carrying Java fields is conflicting data, never tolerated.
+        assertThatThrownBy(() -> RunPolicy.fromJson(python.replace(
+                "\"packageManager\":\"uv\"", "\"packageManager\":\"uv\",\"javaMajor\":17")))
+            .isInstanceOf(IllegalStateException.class);
+        // Missing required python fields must not be rewritten into an empty toolchain either.
+        assertThatThrownBy(() -> RunPolicy.fromJson(python.replace("\"pythonVersion\":\"3.13\",", "")))
+            .isInstanceOf(IllegalStateException.class);
+        assertThatThrownBy(() -> RunPolicy.fromJson(python.replace("\"packageManager\":\"uv\"", "")))
+            .isInstanceOf(IllegalStateException.class);
+        // The same exclusion holds for a java runtime carrying python fields.
+        String java = RunControllerTest.policy().toJson();
+        assertThatThrownBy(() -> RunPolicy.fromJson(java.replace(
+                "\"mavenMajor\":3", "\"mavenMajor\":3,\"pythonVersion\":\"3.13\"")))
             .isInstanceOf(IllegalStateException.class);
     }
 }

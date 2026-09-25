@@ -44,12 +44,35 @@ public record RunPolicy(String templateId, RuntimeInfo runtime, String command, 
         static RuntimeInfo fromJson(JsonNode runtimeNode) {
             String language = runtimeNode.path("language").asText("");
             return switch (language) {
-                case "java" -> new Java(runtimeNode.path("javaMajor").asInt(),
-                    runtimeNode.path("mavenMajor").asInt());
-                case "python" -> new Python(runtimeNode.path("pythonVersion").asText(),
-                    runtimeNode.path("packageManager").asText());
+                case "java" -> javaFromJson(runtimeNode);
+                case "python" -> pythonFromJson(runtimeNode);
                 default -> throw new IllegalStateException("stored policy runtime language is unknown: " + language);
             };
+        }
+
+        /** A java runtime needs both its fields and must not carry python fields. */
+        static RuntimeInfo.Java javaFromJson(JsonNode runtimeNode) {
+            if (!runtimeNode.has("javaMajor") || !runtimeNode.has("mavenMajor")) {
+                throw new IllegalStateException("stored policy java runtime is missing required fields");
+            }
+            if (runtimeNode.has("pythonVersion") || runtimeNode.has("packageManager")) {
+                throw new IllegalStateException("stored policy java runtime carries python fields");
+            }
+            return new Java(runtimeNode.path("javaMajor").asInt(), runtimeNode.path("mavenMajor").asInt());
+        }
+
+        /** A python runtime needs both its fields and must not carry java fields. */
+        static RuntimeInfo.Python pythonFromJson(JsonNode runtimeNode) {
+            if (!runtimeNode.has("pythonVersion") || !runtimeNode.has("packageManager")
+                || runtimeNode.path("pythonVersion").asText("").isBlank()
+                || runtimeNode.path("packageManager").asText("").isBlank()) {
+                throw new IllegalStateException("stored policy python runtime is missing required fields");
+            }
+            if (runtimeNode.has("javaMajor") || runtimeNode.has("mavenMajor")) {
+                throw new IllegalStateException("stored policy python runtime carries java fields");
+            }
+            return new Python(runtimeNode.path("pythonVersion").asText(),
+                runtimeNode.path("packageManager").asText());
         }
 
         /** Legacy rows predate the language discriminator; only confirmed Java snapshots are readable. */
@@ -85,7 +108,9 @@ public record RunPolicy(String templateId, RuntimeInfo runtime, String command, 
     }
 
     public RunPolicy {
-        templateId = templateId == null || templateId.isBlank() ? null : templateId;
+        if (templateId != null && templateId.isBlank()) {
+            throw new IllegalStateException("stored policy template is invalid: " + templateId);
+        }
         if (runtime == null) {
             throw new IllegalStateException("run policy runtime information is missing");
         }
@@ -182,12 +207,14 @@ public record RunPolicy(String templateId, RuntimeInfo runtime, String command, 
             if (!EXECUTION_KIND_TASK.equals(executionKind) && !EXECUTION_KIND_SERVICE.equals(executionKind)) {
                 throw new IllegalStateException("stored policy execution kind is unknown: " + executionKind);
             }
-            String templateId = root.path("templateId").asText("");
-            RuntimeInfo runtime = templateId.isEmpty()
+            // Legacy rows are exactly those WITHOUT the field; a present but invalid templateId
+            // (empty, null, unknown) is rejected below instead of read as the legacy format.
+            String templateId = root.has("templateId") ? root.path("templateId").asText() : null;
+            RuntimeInfo runtime = templateId == null
                 ? RuntimeInfo.fromLegacyJson(root.path("runtime"))
                 : RuntimeInfo.fromJson(root.path("runtime"));
             return new RunPolicy(
-                templateId.isEmpty() ? null : templateId,
+                templateId,
                 runtime,
                 root.path("command").asText(),
                 root.path("timeoutSeconds").asInt(),
