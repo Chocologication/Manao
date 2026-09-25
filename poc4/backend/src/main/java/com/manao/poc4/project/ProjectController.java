@@ -94,8 +94,12 @@ public final class ProjectController {
      * into workspace provisioning. The preflight is a courtesy rejection before any side
      * effect; the Kubernetes Service create stays the authoritative final judge of a race,
      * and an unreadable cluster fails closed with PUBLIC_PORT_PREFLIGHT_UNAVAILABLE (503)
-     * before the insert without claiming the port occupied or free. A deterministic conflict
-     * cancels the temporary row (quota is free again); an unknown outcome keeps the record
+     * before the insert without claiming the port occupied or free. An occupied verdict is
+     * only final after a second owner-scoped key/digest resolution: a same-key request that
+     * committed between the replay check and the list read is returned as the replay (same
+     * digest) or a CREATE_REQUEST_MISMATCH (different digest), never misreported as a port
+     * conflict. A deterministic conflict with no Service left behind cancels the temporary
+     * row (quota is free again); an unknown outcome keeps the record
      * queryable. A retry with the same key and digest reuses the stable application; it never
      * creates a second project.
      */
@@ -119,8 +123,17 @@ public final class ProjectController {
             PublicEndpointGateway.PreflightResult preflight =
                 endpoints.checkNodePortsAvailable(runtime.publicPorts());
             if (preflight == PublicEndpointGateway.PreflightResult.IN_USE) {
-                throw new ApiException("PUBLIC_PORT_IN_USE", 409,
-                    "Public port is already in use. Choose another port.");
+                // A concurrent same-key request may have committed between the replay check
+                // and this cluster list read: the port its Service "occupies" is the replay's
+                // own port. Re-resolve the owner-scoped identity before rejecting — the same
+                // digest falls through to the keyed creation and returns the concurrent
+                // project, a different digest is a CREATE_REQUEST_MISMATCH; only a still-
+                // absent key is a genuine port conflict.
+                if (creationKey == null
+                    || projects.findCreation(ownerId, creationKey).isEmpty()) {
+                    throw new ApiException("PUBLIC_PORT_IN_USE", 409,
+                        "Public port is already in use. Choose another port.");
+                }
             }
             if (preflight == PublicEndpointGateway.PreflightResult.UNKNOWN) {
                 // Uncertain, not occupied and not free: fail closed before the insert so no

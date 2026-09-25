@@ -163,6 +163,53 @@ class ProjectCreateHttpContractTest {
     }
 
     @Test
+    void aConcurrentSameKeyCreationIsResolvedInsteadOfMisreportedAsOccupied() throws Exception {
+        // Interleaving: this request's replay check finds nothing; while its preflight list
+        // runs, the concurrent request A (same key, same digest) commits its row and Service,
+        // so the list "sees" the port taken. The rejection must re-resolve the owner-scoped
+        // identity: the same digest returns A's project, never a port conflict.
+        endpoints.preflightResult = PublicEndpointGateway.PreflightResult.IN_USE;
+        ProjectRuntimeSpec concurrentSpec = new ProjectRuntimeSpec(
+            ProjectRuntimeSpec.TEMPLATE_JAVA_SPRING_BOOT_WEB, true, false,
+            List.of(new ProjectRuntimeSpec.Port("web", 8080, 30081)));
+        ProjectService concurrentService = new ProjectService(jdbc,
+            new DataSourceTransactionManager(jdbc.getDataSource()));
+        java.util.concurrent.atomic.AtomicReference<String> concurrentId =
+            new java.util.concurrent.atomic.AtomicReference<>();
+        endpoints.onPreflight = () -> concurrentId.set(concurrentService
+            .create(ownerId, "orders-demo", "key-1", concurrentSpec).orElseThrow().id());
+
+        mvc().perform(post("/api/v1/projects").principal(owner())
+                .contentType("application/json")
+                .content(request("key-1", 30081)))
+            .andExpect(status().isCreated())
+            .andExpect(jsonPath("$.id").value(concurrentId.get()));
+        // Exactly one project exists: the concurrent creation's identity was returned.
+        assertThat(projectCount()).isEqualTo(1);
+    }
+
+    @Test
+    void aConcurrentSameKeyWithADifferentDigestIsAMismatchNotAConflict() throws Exception {
+        // Same interleaving, but the concurrent request A committed a different port group
+        // under the same key: the rejection must be the digest mismatch, never a port report.
+        endpoints.preflightResult = PublicEndpointGateway.PreflightResult.IN_USE;
+        ProjectRuntimeSpec concurrentSpec = new ProjectRuntimeSpec(
+            ProjectRuntimeSpec.TEMPLATE_JAVA_SPRING_BOOT_WEB, true, false,
+            List.of(new ProjectRuntimeSpec.Port("web", 8080, 30082)));
+        ProjectService concurrentService = new ProjectService(jdbc,
+            new DataSourceTransactionManager(jdbc.getDataSource()));
+        endpoints.onPreflight = () -> concurrentService
+            .create(ownerId, "orders-demo", "key-1", concurrentSpec);
+
+        mvc().perform(post("/api/v1/projects").principal(owner())
+                .contentType("application/json")
+                .content(request("key-1", 30081)))
+            .andExpect(status().isConflict())
+            .andExpect(jsonPath("$.code").value("CREATE_REQUEST_MISMATCH"));
+        assertThat(projectCount()).isEqualTo(1);
+    }
+
+    @Test
     void aKeyedReplayWithADifferentDigestStillReportsTheRequestMismatch() throws Exception {
         mvc().perform(post("/api/v1/projects").principal(owner())
                 .contentType("application/json")
@@ -440,6 +487,8 @@ class ProjectCreateHttpContractTest {
     private static final class FakePublicEndpoints implements PublicEndpointGateway {
         ApplyResult result = ApplyResult.CONFIRMED;
         PublicEndpointGateway.PreflightResult preflightResult = PublicEndpointGateway.PreflightResult.AVAILABLE;
+        /** Runs while the preflight list is "in flight", simulating a concurrent creation. */
+        Runnable onPreflight;
         final List<String> projectIds = new ArrayList<>();
         final List<List<ProjectRuntimeSpec.Port>> calls = new ArrayList<>();
         final List<List<ProjectRuntimeSpec.Port>> preflightCalls = new ArrayList<>();
@@ -447,6 +496,9 @@ class ProjectCreateHttpContractTest {
         @Override public PublicEndpointGateway.PreflightResult checkNodePortsAvailable(
                 List<ProjectRuntimeSpec.Port> ports) {
             preflightCalls.add(ports);
+            if (onPreflight != null) {
+                onPreflight.run();
+            }
             return preflightResult;
         }
 

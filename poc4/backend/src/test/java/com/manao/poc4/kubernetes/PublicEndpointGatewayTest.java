@@ -209,6 +209,25 @@ class PublicEndpointGatewayTest {
     }
 
     @Test
+    void aLoadBalancerServiceNodePortCountsLikeAnyOtherServiceType() {
+        // Every Service type carrying a nodePort counts, not just NodePort-typed ones: the
+        // type field never gates the occupancy verdict.
+        Service loadBalancer = new ServiceBuilder()
+            .withNewMetadata().withName("lb-holder").withNamespace("other-ns").endMetadata()
+            .withNewSpec().withType("LoadBalancer")
+            .withPorts(new ServicePortBuilder().withName("web").withPort(8080)
+                .withNodePort(30081).build())
+            .endSpec()
+            .build();
+        server.expect().get().withPath("/api/v1/services")
+            .andReturn(200, new ServiceListBuilder().withItems(loadBalancer).build()).always();
+
+        var ports = List.of(new ProjectRuntimeSpec.Port("web", 8080, 30081));
+        assertThat(gateway.checkNodePortsAvailable(ports))
+            .isEqualTo(PublicEndpointGateway.PreflightResult.IN_USE);
+    }
+
+    @Test
     void servicesWithoutNodePortsNeverBlockTheRequest() {
         Service clusterIp = new ServiceBuilder()
             .withNewMetadata().withName("headless-thing").withNamespace("other-ns").endMetadata()
