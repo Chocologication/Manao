@@ -2,7 +2,7 @@
 
 **日期：** 2026-09-25
 
-**状态：** 设计与实施计划评审稿；模板范围和 uv 依赖入口已确认，尚未实施。
+**状态：** 2026-09-25 自审修订版 r2；用户同意按自审结果收紧方案，模板范围和 uv 入口已确认，尚未实施。
 
 **基线：** `06e8133820867cc9d200ab63913d1a282d2dedf6`，包含 Java 集成提交 `ef1b5bb`。
 
@@ -28,7 +28,7 @@
 
 ### 1.1 依赖入口的确认及实现边界
 
-用户选择了最小 `uv add/remove` 入口。该选择需要对 `pyproject.toml` 与 `uv.lock` 成对提交，不把两个普通 SAVE 请求当作一次可靠操作。首版入口接收包名及可选精确版本，只操作主依赖列表；不扩展成私有索引、Git/path 依赖、操作系统包或任意终端。具体双文件协议见 6.1。
+用户选择了最小 `uv add/remove` 入口。该选择需要对 `pyproject.toml` 与 `uv.lock` 成对提交，不把两个普通 SAVE 请求当作一次可靠操作。首版入口接收包名及可选精确版本，只操作主依赖列表；不扩展成私有索引、Git/path 依赖、操作系统包或任意终端。具体操作身份及双文件协议见 6.1–6.3。
 
 ## 2. 当前源码事实与复用位置
 
@@ -45,7 +45,7 @@
 | 文件编辑 | 前端 `languageForFile.ts` 已支持 `.py`；agent `languageFor()` 尚不支持 | 补 agent 的 Python 元数据；TOML/lock 可按纯文本编辑，不引入编辑器插件项目 |
 | 前端 Run | `contracts/run.ts` 只接受固定 Maven 命令；工具栏固定显示 Java/Maven | 严格支持新的 Python 分支并保留旧 Java 响应；显示实际 Run 策略 |
 
-`runtime_spec_json`、`policy_json` 已可存储语言增量，不因增加两个模板就建立语言表或重写 V9 migration。新增依赖操作需要 V10 为既有 `workspace_operation` 增加不可变 `operation_kind`：旧操作默认 `FILE`，新增值 `PYTHON_DEPENDENCIES`。该字段使后端重启后能够选择对应恢复协议；没有独立任务表。
+`runtime_spec_json`、`policy_json` 已可存储语言增量，不因增加两个模板就建立语言表或重写 V9 migration。新增依赖操作需要 V10 为既有 `workspace_operation` 增加不可变 `operation_kind` 和 `request_sha256`：前者识别恢复方式，后者约束同一浏览器操作 ID 的请求。旧操作默认 FILE，新增值 PYTHON_DEPENDENCIES；没有独立任务表。
 
 ## 3. 方案取舍
 
@@ -128,39 +128,55 @@ Web 模板只包含 FastAPI、Uvicorn 及勾选依赖需要的客户端：MySQL 
 
 每 Run 重建 venv 可以避免旧包残留及运行镜像升级后复用不兼容解释器；下载缓存负责避免重复下载。设置 `UV_LINK_MODE=copy`，明确指定镜像中的 Python，禁用运行时下载解释器。首次创建 workspace 不等待安装 Python 包。
 
-seed 以精确 uv 版本、Python minor、OS/architecture 和实际模板依赖共同确定身份。首次只向尚不存在的缓存目录进行完整、原子初始化；已有缓存交给 uv 管理，不自行拼接内部缓存文件、不清空旧缓存。seed 兼容性必须由“空私有缓存 + 禁网 + 实际模板安装/启动”容器测试证明。新 seed 与已有缓存的补齐行为须明确测量，不能声称任意新依赖离线可用。
+首版仅维护已固定版本与目标平台的一份 seed；seed 身份记录精确 uv/Python、平台及实际模板依赖。首次只向尚不存在的缓存目录进行完整、原子初始化；已有缓存交给 uv 管理，不自行拼接内部缓存文件、不清空旧缓存。seed 兼容性必须由“空私有缓存 + 禁网 + 实际模板安装/启动”容器测试证明。本阶段不实现跨 uv/Python/平台的缓存升级或自动补齐框架；未来版本变更时再依据实际兼容问题处理。不能声称任意新依赖离线可用。
 
-### 6.1 浏览器增删依赖与双文件提交
+### 6.1 浏览器依赖操作：一个身份、一个确定结果
 
-新增 `POST /api/v1/projects/{projectId}/python-dependencies`：
+浏览器在首次提交前生成 UUID `operationId`，按当前用户/项目保留该 ID；刷新、丢失响应或进入失败页后仍查询同一操作。请求为 `POST /api/v1/projects/{projectId}/python-dependencies`：
 
 ```json
-{"action":"ADD","packageName":"httpx","version":"0.28.1","expectedWorkspaceRevision":"17"}
+{"operationId":"11111111-1111-4111-8111-111111111111","action":"ADD","packageName":"httpx","version":"0.28.1","expectedWorkspaceRevision":"17"}
 ```
 
-删除使用 `action=REMOVE`、相同包名、`version=null`；添加不指定版本时 `version=null`，让 uv 解析并写入确切 lock。响应仅含 `workspaceRevision` 与两个 `changedPaths`。结果不明时使用 `POST /api/v1/projects/{projectId}/python-dependencies/reconcile` 核对当前未决依赖操作；该请求不重新解析包。示例版本仅用于契约用例，不指定模板的 FastAPI 版本。
+删除用 `REMOVE`、`version=null`；添加省略精确版本时由 uv 解析并写入 lock。服务端规范化包名，计算包含 projectId、action、packageName、version、expectedRevision 的固定顺序 JSON 的 `requestSha256`。同一 ID 不同请求返回 `DEPENDENCY_REQUEST_MISMATCH`，不得再次执行 uv。operationId 是不透明业务标识，不是资源路径或凭据。
 
-Controller 检查用户所有权、Python 模板、固定输入语法；修改服务取得既有项目 lifecycle lease，检查 revision、活动 Run 和未决操作。浏览器在任何未保存缓冲区存在时阻止依赖操作，执行中禁止 Run 和并发编辑；成功后重载两个文件及文件树，再解除 UI 写锁。
+浏览器接口保持用途明确：
 
-新增能力仍经过签名 workspace-agent 请求，不向浏览器暴露 agent 地址。agent 镜像增加与 runner 相同版本的 Python/uv，但只向后端提供以下三个用途明确的接口：
+- 首次 POST：校验 owner、Python 模板、revision、无活动 Run及未决操作，再准备并提交。
+- `GET /python-dependencies/{operationId}`：只读查询该操作，返回 `operationId`、`state=PENDING|COMMITTED|UNCONFIRMED`、`resultWorkspaceRevision`（仅 COMMITTED 有值）。必须检查项目所有权，不能泄露其他项目操作。
+- `POST /python-dependencies/{operationId}/reconcile`：核对该 ID 的已登记结果；COMMITTED 直接返回，PENDING 继续同一提交，绝不重新运行 uv。
+- 无浏览器本地 ID 的失败页可用 `GET /python-dependencies/pending` 查询该项目的唯一未决依赖操作；该查询不能覆盖客户端已保存的另一操作 ID，不返回其他类型操作。
 
-1. `prepare`：在 `/tmp` 下复制两个文件，用固定参数数组执行 `uv add/remove --no-sync`；成功后先在 PVC 隐藏 `.manao/python-dependencies/<operationId>` 持久化目标文件及 PREPARED manifest，再返回文件与 before/after 组合摘要。用户源文件尚未改变，不安装或运行用户应用。单次解析上限 20 秒，超时终止 uv 及派生进程；传输保持既有 30 秒预算。持久化 I/O 也须有界，超时不返回可提交结果。
-2. `apply`：收到后端预先记录的 operationId、摘要和 receipt 后，校验 PREPARED manifest，持久化预期 receipt，逐个原子替换两个固定路径，再核对组合摘要，最后写 receipt。MySQL revision 只增加一次。
-3. `recover`：仅根据同一 operationId 的持久化 manifest 向已确定的目标内容推进，不重新运行 uv。已有文件必须分别匹配 before 或 after 摘要；遇到第三种内容、损坏 journal 或未知结果保持锁定，不擅自覆盖。
+成功响应包含 `operationId`、`state=COMMITTED`、`resultWorkspaceRevision=expectedRevision+1`。UI 再读取当前工作区 revision 和两个文件，不能拿历史操作 revision 覆盖后来已保存的内容。仅找不到记录返回 UNCONFIRMED，不能把它解释成请求未到达或允许重发；明确的无副作用拒绝才允许修正后发新操作，结果不明继续核对，不自动 POST 重试。
 
-两个文件不是文件系统层面的同时原子替换。对用户可观察的一致性由 PENDING 操作、项目锁、持久化 journal、组合摘要与最后的 receipt 共同保证。双文件处于中间态时，文件读取、Run、保存和删除不能绕过既有项目锁。apply/recover 共享 agent 的持久文件锁，避免超时后仍在执行的旧请求与恢复并行写入。恢复前先校验 manifest 与数据库预期的 operationId/digests；receipt 查询保持只读，由专门签名恢复操作推进 journal。后端重建后由 operation_kind 分派；只有核对成功才解除对应的 reconciliation 锁，其他项目失败原因不能顺便清除。
+### 6.2 agent 只公开 prepare 和 commit
 
-组合摘要固定为下列 UTF-8 字节的 SHA-256，缺少文件以 `ABSENT` 表示；路径顺序固定，receipt 继续使用既有六个身份/摘要字段：
+agent 镜像增加与 runner 对齐的 Python/uv，全部请求经过现有 capability 签名：
+
+1. `prepare`：在 scratch 内执行固定 `uv add/remove --no-sync`，源文件不变；成功后将两个目标文件、requestSha256、单文件及组合摘要持久化到 `.manao/python-dependencies/<operationId>`，状态为 PREPARED。响应仅返回 ID、requestSha256、beforeSha256、afterSha256；不把文件正文来回传给后端。已存在同请求 PREPARED 时返回同一摘要，不重新解析；ID 冲突或结果不明时拒绝猜测。
+2. `commit`：接受后端已登记的 ID、请求摘要、前后摘要及 receipt；从本地 journal 校验并提交两个固定文件。首次调用、部分写入后的再次核对都进入同一实现。若最终 receipt 已存在且匹配，直接返回相同结果。没有单独的 apply/recover 协议，也没有自由命令入口。
+
+后端先取得 prepare 摘要，再写现有 `workspace_operation` PENDING，最后调用 commit。V10 只在该表增加 `operation_kind` 和 `request_sha256`；旧 FILE 操作的请求摘要可空，Python 依赖操作必须有摘要。已有 id 为操作身份，COMMITTED 行保留到项目删除，足以回答成功响应丢失的查询；不新建请求表或任务平台。
+
+journal 先持久化目标文件，commit 再逐文件 temp+fsync+rename，最后核对组合摘要并写 receipt。两个文件不是文件系统层面的同时原子替换；项目写锁、PENDING、journal 和最后的 receipt 共同保证用户不能运行中间状态。迟到 commit 和核对请求由 agent 同一文件锁串行化。journal 损坏、第三种文件内容、Forbidden/Unknown 继续 fail-closed，不靠删除 PENDING 解锁。
+
+现有 `ProjectLifecycleGate` 同线程可重入，`WorkspaceService` 读取已通过同一 gate。复用它们，只补未决依赖操作检查；不另建读取锁或分布式锁。数据库恢复提交集中到工作区操作模块：在一个事务内校验 operationId、kind、revision、状态和 receipt 已核对的事实，再完成操作、递增一次 revision。若需恢复 FAILED，只能清除本次 WORKSPACE_RECONCILIATION_REQUIRED，不能清除其他失败或 DELETING。普通提交与核对提交共享内部事务代码，持久层方法不接收包名、uv 命令等语言细节。
+
+组合摘要固定为以下 UTF-8 内容的 SHA-256；路径顺序固定，缺失文件用 ABSENT：
 
 ```text
 python-dependencies-v1\npyproject.toml\n<pyproject-sha256-or-ABSENT>\nuv.lock\n<lock-sha256-or-ABSENT>\n
 ```
 
-receipt 的 type 为 `PYTHON_DEPENDENCIES`，path 为 `pyproject.toml`，nextPath 为 `uv.lock`。已有 `workspace_operation` 承载组合摘要，V10 只补 operation_kind，不新增任务表或消息队列。prepare 失败或中断没有源文件副作用；没有对应 DB PENDING 的 PREPARED 内容绝不能自行应用。apply 可能已执行时必须沿同一持久化操作核对，不能自动提交第二次 ADD/REMOVE。PENDING 之前应已持久化 PREPARED；若 journal 丢失、损坏或不可读，保留 fail-closed 状态，不能仅凭暂未看见 journal/receipt 或源文件仍是 before 就假设旧请求不会稍后执行。
+receipt 沿用既有身份/摘要格式，type 为 PYTHON_DEPENDENCIES、path 为 pyproject.toml、nextPath 为 uv.lock。请求摘要通过 DB 与 journal 绑定，提交响应还要核对 receiptSha256。未登记 PENDING 的 PREPARED 绝不自行应用；断网后原后端请求是否仍可能提交不能靠一次“记录不存在”推断。
 
-uv 子进程使用环境变量允许列表，不继承 agent 的 capability 私钥或应用数据库 Secret。包名只允许正常发行名，版本只允许单个精确版本；不接受 shell 片段或 CLI 选项。模板范围采用公共 PyPI wheel 包：固定 `--no-build --no-sources --no-config --no-python-downloads`，检查 TOML 中的直接 URL/path/workspace/index 配置并明确拒绝不支持的输入，避免在管理 agent 中执行用户构建后端。缺 wheel 或解析冲突返回固定错误，原两个文件与 revision 不变；不能把 uv stderr 原文塞进 API。
+### 6.3 工具预算与首版支持边界
 
-正式 Run 只执行 `uv sync --locked --no-dev --no-build` 加服务端选定 extras，再用 venv 中的解释器启动；不自动改变依赖或 lock。用户若绕过入口手改依赖声明导致 lock 不匹配，Run 明确失败并提示通过依赖入口修正，不偷偷接受旧锁或安装另一组包。
+首版技术默认支持公共 PyPI wheel 包、主依赖包名和可选精确版本，不开放私有索引、Git/path/workspace 来源、系统包或任意终端。这是本次方案选择的支持边界，不表述为用户曾逐项指定。缺 wheel 或不支持的配置给出具体类别的固定安全错误，不静默丢弃用户配置，也不把 uv stderr 直接返回浏览器。
+
+agent 的 uv 子进程仅继承必需环境，不继承 capability 私钥或项目数据库 Secret；使用固定 argv 与 `--no-build --no-sources --no-config --no-python-downloads`，避免在管理 agent 执行用户构建后端。运行时仅 `uv sync --locked --no-dev --no-build` 加选定 extras，不自动改写声明和 lock。
+
+依赖解析预算初值 20 秒，是可配置的工程默认值，不是已测得的包解析上限或产品承诺。实施时测量代表性模板与包解析；若需调整，连同对应 HTTP 请求超时一起设置为“解析预算 + 有界 journal I/O 和传输余量”，保留显式上限。原客户端默认 30 秒无需全局调大，只给该 prepare 调用所需预算。不为这项预算配置引入异步任务平台。
 
 ## 7. Job 与服务监督
 
@@ -187,17 +203,19 @@ claim 必须在准备缓存/安装包和执行用户代码前获得。包准备�
 
 项目卡显示准确语言/模板。运行工具栏从所选 Run 的策略显示命令与版本；未有 Run 时使用当前项目模板，不能默认显示 Maven。停止提示采用通用 Run 文案。编辑器消费 agent 的 `.py` 语言类型，依赖声明及 lock 可用纯文本编辑；不要求 Python LSP。
 
+依赖失败后的核对入口必须在 ProjectRoutePage 的失败状态页及项目卡可达，不依赖 READY 才能挂载的工作台。仅对 Python 项目的 WORKSPACE_RECONCILIATION_REQUIRED 开放，禁止顺便恢复其他失败；刷新后按原 operationId 查询，若浏览器记录缺失则读取 owner-scoped pending 摘要。COMMITTED 的丢失响应在 READY 页面也能核对。
+
 发布时先让前端能解析新旧两类 Run，再启用 Python 后端和模板。后端镜像与 Python runner digest 成对记录。若需回滚，先停止创建 Python 项目和启动 Python Run，停止并核对已有活动 Python Run，保留包含 Python 数据的数据库；不能把不认识新 JSON 的旧后端直接切回来宣称兼容。
 
 ## 9. 验收与证据边界
 
-实施采用定向 TDD、真实 runner 容器测试和一次集中的真实云端浏览器验收。必要证据：
+实施分两个增量：Task 1–6 先验证模板、运行、日志、停止与删除路径，Task 7–9 再交付依赖增删和恢复；Task 10–11 发布准备与集中云端验收。增量 A 不新增强制生产部署审批或完整集群 gate；已有测试环境可执行时做真实浏览器烟测，环境缺失如实记录，不以 mock 宣称真实闭环通过。必要证据：
 
 1. Java 旧项目、旧历史和新 Java Run 可用；新增 Python 普通程序成功/失败/修改/再次运行，中文实时日志及结束后回放正常。
 2. FastAPI 真正通过选定公网端口响应业务请求；readiness 和依赖状态准确；停止后进程和访问结束，手动再次运行获得新 Run。
 3. 浏览器 uv 增删依赖可用，新增包首次下载、第二次复用、移除后不残留；失败安装不得启动应用或无限占用 Run。
 4. MySQL 项目数据在停止、改代码和再次运行后保留；Python 项目删除独立验证 DB 行、Job/Pod/Service/Secret/控制器、workspace/MySQL PVC、PV 与存储目录；缓存随 workspace 回收。
-5. 真实容器验证短时寿命、启动超时、忽略 TERM 的子进程、重复 claim、receipt 写失败、失去 readiness 后不续期。公共监督器变更须跑原 Java 生命周期测试。
+5. 公共监督器变更复用现有 Java 生命周期用例，验证 claim、receipt、计时和异常写入；Python 只补实际 uv/Python 进程链的 readiness、安装阻塞启动超时、短时到期、TERM/强制终止及日志，不复制第二份公共状态机故障矩阵。
 6. Python 正式 7200 秒云端用例单独记录。Java 曾有 `WAIVED_BY_USER` 不会自动豁免 Python；短时容器证据也不会变成完整时长 PASS。实施时若用户另行豁免，明确记录原话、范围与未测行为。
 
 Python 验收结果写入新 `poc4/docs/evidence/python-runtime/acceptance.md`，由实施任务创建；本轮不预建 PASS 记录。历史 6A/6B/Java 验收保持原始边界，包括既有 DELETING 诊断，不顺手处置历史资源。

@@ -10,14 +10,14 @@
 
 **Spec:** [Python Runtime Design](../specs/2026-09-25-python-runtime-design.md)。
 
-**Status:** 计划已编写，Task 1–10 均未执行。用户已确认“普通 Python + FastAPI”和“最小 uv add/remove 入口”；具体实现以本文与设计共同评审。当前任务不授权实际发布或集群变更。
+**Status:** 2026-09-25 自审修订版 r2，用户同意按审查结果修改；Task 1–11 均未执行。已确认普通 Python + FastAPI、最小 uv add/remove 入口。本次只修订文档；其他 agent 收到实施交接后再开始执行。
 
 **Base:** `06e8133820867cc9d200ab63913d1a282d2dedf6`，已包含 `ef1b5bb`。工作树 `.worktree/python-runtime`，分支 `codex/python-runtime`。所有 Files 路径相对于实施检出。
 
 ## Global Constraints
 
 - 本轮功能范围仅 Python；Java 继续可用，Go、TypeScript、AI 分开规划；不重新执行已完成的 Java Tasks 1–9 或历史 6A/6B gate。
-- Python 固定为 3.13 系列；Python 补丁版、uv 精确版本及基础镜像 digest 通过 Task 2/6 的构建记录固定；agent 与 runner 的 Python/uv 必须一致。版本值必须来自实际分发物，不能填写假 digest。
+- Python 固定为 3.13 系列；Python 补丁版、uv 精确版本及基础镜像 digest 通过 Task 2/4 的构建记录固定；agent 与 runner 的 Python/uv 必须一致。版本值必须来自实际分发物，不能填写假 digest。
 - 依赖增删只用 `uv add/remove`；Run 使用 `uv sync --locked --no-dev --no-build`。不得用 pip、uv pip、全局可写 venv，亦不得用 `--frozen` 掩盖锁过期。
 - 普通程序固定入口 `main.py`；FastAPI 固定入口 `app.main:app`，单 Uvicorn 进程，不 reload。展示命令与执行参数分开，禁止自由 shell/image/env 输入。
 - TASK 1800 秒总预算；SERVICE 启动 1800 秒，首次 readiness 后 7200 秒；手动再次运行，既有 claim、Pod UID、receipt 和进程终止规则继续成立。
@@ -32,16 +32,19 @@
 
 | Module | Interface / 责任 | 任务 |
 | --- | --- | --- |
-| 固定模板与 Run 策略 | 模板 ID →语言、TASK/SERVICE、固定命令、默认端口；旧快照兼容 | 1 |
-| Python 模板 | `WorkspaceTemplate.directories/files(spec)` 返回真实资源，锁文件由 uv 生成 | 2 |
-| agent 依赖编辑 | 临时解析、两个固定文件的持久化 journal、确定性完成/核对 | 3 |
-| 后端依赖操作 | 所有权、revision、单活动操作、组合摘要、receipt 和一次 revision 提交 | 4 |
-| 服务监督 | 有限 profile →固定子命令及 readiness 路径；共享寿命实现 | 5 |
-| Python 运行镜像 | uv 安装、缓存 seed、隔离 venv、固定进程入口及真实容器验证 | 6 |
-| Run/Job 接入 | 从持久化快照选择镜像和挂载，保持恢复/日志/端口/清理身份 | 7 |
-| 浏览器闭环 | 模板选择、依赖操作、Python Run 解析与展示、编辑锁和重载 | 8 |
-| 发布准备 | agent/runner/backend/frontend 一致构建、digest、部署与回滚说明 | 9 |
-| 独立验收 | 云端 Python 生命周期与 Java 回归、存储清理、时限证据 | 10 |
+| 固定模板与策略 | 模板 → 语言、执行类型、命令；旧 JSON 兼容 | 1 |
+| Python 模板 | 真实资源、uv lock、文件元数据 | 2 |
+| 公共监督器 | 固定 profile，共享寿命与 receipt 实现 | 3 |
+| Python runner | 固定入口、私有 cache、每 Run venv | 4 |
+| Run/Job 接入 | 镜像、挂载、日志、端口与清理身份 | 5 |
+| 运行浏览器闭环 | 创建、编辑、反馈、停止、再次运行、删除 | 6 |
+| agent 依赖编辑 | scratch 解析、摘要响应、引用提交，commit 可重复核对 | 7 |
+| 后端依赖操作 | 操作 ID、请求摘要、工作区锁/receipt/一次 revision | 8 |
+| 依赖浏览器闭环 | 添加/删除、刷新后查询、失败页恢复入口 | 9 |
+| 发布准备 | 配套镜像/迁移、独立 E2E 与回滚说明 | 10 |
+| 集中验收 | Python 云端闭环、Java 回归、数据回收 | 11 |
+
+增量 A 为 Task 1–6；增量 B 为 Task 7–9。先让运行路径可验证，再增加依赖管理。Task 10–11 集中发布和云端验收，不给每个开发任务新增一轮部署。
 
 ### 1.1 固定类型约定
 
@@ -62,29 +65,42 @@ public enum RuntimeTemplate {
 }
 ```
 
-以上为 Interface 清单，不是可直接编译的 enum 文件。RunPolicy 的公开方法统一为 `forProject(ProjectRuntimeSpec spec)`、`template()`、`isService()`、`toJson()`、`fromJson(String)`；嵌套 `RuntimeInfo` 负责两种语言的 JSON，避免 Python 使用假 javaMajor 值。旧 `fromProperties` 仍提供 Java console 默认策略；保留原 Java 构造函数和 `forService()` 的委托兼容入口，以免将无关测试重构混入本任务。
+以上为 Interface 清单，不是可直接编译的 enum 文件。RunPolicy 的公开方法统一为 `forProject(ProjectRuntimeSpec spec)`、`template()`、`isService()`、`toJson()`、`fromJson(String)`；嵌套 `RuntimeInfo` 负责两种语言的 JSON，避免 Python 使用假 javaMajor 值。旧记录的 JSON 解析必须兼容；内部构造函数及 forService() 根据真实调用方统一调整，不仅为少改测试永久保留两套构造路径。跨任务仍有生产调用时可暂留委托；Task 5 完成调用迁移后删除不再需要的入口，并同步测试。fromProperties 仍提供 Java 默认资源与时限。
 
 FastAPI 展示命令使用 `python -u -m uvicorn app.main:app`；实际 host/port 由固定 launcher 的验证后参数补齐。新 Java SERVICE 展示 `mvn -q -DskipTests spring-boot:run`；历史无 templateId 的旧 SERVICE console 命令按设计第 5 节兼容。
 
 ### 1.2 依赖操作约定
 
-固定 DTO：`DependencyChange(action, packageName, version)`，action 只允许 `ADD`/`REMOVE`；包名为 1–128 个 ASCII 字母、数字、点、下划线和连字符，首尾必须字母或数字；version 可空，非空只接受单个精确版本且不能包含空白、斜杠、@ 或 CLI 选项。REMOVE 必须 version=null。
+浏览器首次提交前生成 operationId（UUID），保留于用户/项目作用域。POST 请求含 `operationId, action, packageName, version, expectedWorkspaceRevision`；包名规范化为小写并将连续 `[-_.]` 折叠为 `-`。action 仅 ADD/REMOVE；包名首尾字母或数字、长度 1–128；version 可空，非空仅允许精确版本，REMOVE 必须为空。只处理当前两个固定文件，不发展任意批事务框架。
 
-浏览器请求字段：`action`、`packageName`、`version`、`expectedWorkspaceRevision`；成功响应：`workspaceRevision`、`changedPaths=["pyproject.toml","uv.lock"]`。结果不明调用 `POST /api/v1/projects/{projectId}/python-dependencies/reconcile`，不得重发依赖命令。V10 仅在现有 workspace_operation 补不可变 operation_kind（FILE / PYTHON_DEPENDENCIES），不新增依赖数据库表。
+`requestSha256` 是固定字段顺序 JSON（protocol=1、projectId、action、规范化 packageName、version、expectedRevision）的 SHA-256；同 ID 不同请求返回 409 DEPENDENCY_REQUEST_MISMATCH。ID 在 DB、agent journal、浏览器回执与状态查询中相同，不能在 prepare 内换成另一个 UUID。
 
-agent 的专用记录（backend transport 与 agent DTO 结构一致）：
+浏览器接口：
+
+```text
+POST /api/v1/projects/{projectId}/python-dependencies
+GET  /api/v1/projects/{projectId}/python-dependencies/{operationId}
+POST /api/v1/projects/{projectId}/python-dependencies/{operationId}/reconcile
+GET  /api/v1/projects/{projectId}/python-dependencies/pending
+```
+
+状态响应为 `{operationId, state, resultWorkspaceRevision}`，state 为 PENDING/COMMITTED/UNCONFIRMED；未决列表仅返回该 owner/project 的唯一 Python 依赖操作摘要。无记录仅 UNCONFIRMED，不以此自动重发。COMMITTED 包含该操作的 expectedRevision+1；重载文件时仍读取当前权威 revision。reconcile 只依据指定操作的已登记结果推进，不运行 uv；COMMITTED 直接返回。
+
+agent 只公开 `POST /agent/v1/python-dependencies/prepare` 和 `/commit`。共用以下 wire 记录，正文只留 agent 的 journal：
 
 ```java
 record DependencyChange(String action, String packageName, String version) {}
-record PreparedPythonDependencies(String operationId, String beforeSha256,
-    String afterSha256, String pyprojectContent, String lockContent) {}
+record PreparedPythonDependencies(String operationId, String requestSha256,
+    String beforeSha256, String afterSha256) {}
 record PythonDependencyCommit(PreparedPythonDependencies prepared,
     String receiptJson, String receiptSha256) {}
 ```
 
-agent endpoint：`POST /agent/v1/python-dependencies/prepare`、`/apply`、`/recover`，全部要求现有 capability 签名。recover 请求只允许 operationId 和后端已存储的 before/after/receipt 摘要，返回既有 `MutationResult`；不接受新的 package command。普通 receipt GET 保持只读。
+prepare 接收 operationId、requestSha256、DependencyChange；commit 用摘要引用已准备内容，首次提交和中断后核对共用同一方法。普通 receipt GET 保持只读。数据库仍用 workspace_operation；V10 添加 operation_kind 与 request_sha256，COMMITTED 行必须可查询到项目删除。
 
-固定错误：输入错误 `VALIDATION_ERROR`；不支持的 Python 声明 `PYTHON_DEPENDENCY_UNSUPPORTED`；uv 解析/包不存在 `PYTHON_DEPENDENCY_RESOLUTION_FAILED`；超时 `PYTHON_DEPENDENCY_TIMEOUT`。对应固定安全文本，不能回显 uv 原始 stderr。活动 Run、revision 冲突和 apply 结果不明使用既有锁/冲突/`WORKSPACE_RECONCILIATION_REQUIRED` 语义。
+固定错误：VALIDATION_ERROR；PYTHON_DEPENDENCY_UNSUPPORTED；PYTHON_DEPENDENCY_RESOLUTION_FAILED；PYTHON_DEPENDENCY_TIMEOUT；DEPENDENCY_REQUEST_MISMATCH。只有已证明未改源文件的解析/校验错误可当作无副作用失败。提交结果不明的原语义继续为项目失败原因 WORKSPACE_RECONCILIATION_REQUIRED，不直接回显 uv stderr。
+
+20 秒解析、64 KiB 工具输出上限是初始工程配置，不是用户指定或已实测指标。解析预算可配置，prepare 的单次请求超时随预算加有界 I/O/传输余量；不要把所有工作区请求超时全局提高。公共 PyPI wheel、主依赖、可选精确版本是首版明确支持边界；不因该边界扩展出包管理平台。
 
 ## Task 1：固定模板、Run 快照及旧 Java 兼容
 
@@ -95,6 +111,8 @@ agent endpoint：`POST /agent/v1/python-dependencies/prepare`、`/apply`、`/rec
 - Modify: `poc4/backend/src/test/java/com/manao/poc4/project/ProjectRuntimeSpecTest.java`
 - Modify: `poc4/backend/src/test/java/com/manao/poc4/project/ProjectRuntimeStoreTest.java`
 - Create: `poc4/backend/src/test/java/com/manao/poc4/run/RunPolicyTest.java`
+- Modify: `poc4/backend/src/test/java/com/manao/poc4/run/RunControllerTest.java`
+- Modify: `poc4/backend/src/test/java/com/manao/poc4/project/ProjectDependenciesTest.java`
 
 **Interfaces:** 消费既有 ProjectRuntimeSpec、BackendProperties；产出 1.1 中的固定模板映射及新旧快照解析。新增字段放在已有 JSON 中，不创建语言表或修改旧 migration。
 
@@ -186,125 +204,10 @@ def demo():
 
 在拥有独立 `.venv` 的临时模板项目使用 `uv add fastapi uvicorn`、`uv add --optional mysql 'PyMySQL[rsa]'`、`uv add --optional redis redis` 生成 Web 声明及 lock；普通模板使用空 dependencies 并运行 `uv lock`。记录实际 uv 版本，模板 `requires-python = ">=3.13,<3.14"`。模板条件代码消费 `MANAO_MYSQL_* / MANAO_REDIS_*`，勾选通过受控 env/模板条件决定，不要求用户提供数据库密码。
 
-- [ ] **Step 4 — 导出并执行真实模板验证。** 测试模板 `uv sync --locked`，console 正常退出，Web `/api/demo` 为 200；MySQL/Redis 选中却未提供服务时 readiness 为 503，未选中不连接。Task 6 将在最终镜像复跑全部依赖组合。agent：`mvn -q -f poc4/workspace-agent/pom.xml '-Dtest=WorkspaceFileServiceTest' test`。
+- [ ] **Step 4 — 导出并执行真实模板验证。** 测试模板 `uv sync --locked`，console 正常退出，Web `/api/demo` 为 200；MySQL/Redis 选中却未提供服务时 readiness 为 503，未选中不连接。Task 4 只补最终镜像的启动/导入检查，共同模板逻辑不重复维护一套测试。agent：`mvn -q -f poc4/workspace-agent/pom.xml '-Dtest=WorkspaceFileServiceTest' test`。
 - [ ] **Step 5 — 清理自有临时 venv/export，保留模板及 lock，差异检查并提交。** 建议 `feat(workspace): add uv-managed Python templates`。
 
-## Task 3：agent 临时解析和可恢复双文件提交
-
-**Files**
-- Create: `poc4/workspace-agent/src/main/java/com/manao/poc4/workspaceagent/PythonDependencyEditor.java`
-- Create: `poc4/workspace-agent/src/main/java/com/manao/poc4/workspaceagent/PythonDependencyTransaction.java`
-- Create: `poc4/workspace-agent/src/main/resources/python-dependency-helper.py`
-- Modify: `poc4/workspace-agent/src/main/java/com/manao/poc4/workspaceagent/WorkspaceAgentController.java`
-- Modify: `poc4/workspace-agent/src/main/java/com/manao/poc4/workspaceagent/WorkspaceAgentConfig.java`
-- Modify: `poc4/workspace-agent/Dockerfile`
-- Create: `poc4/workspace-agent/src/test/java/com/manao/poc4/workspaceagent/PythonDependencyEditorTest.java`
-- Create: `poc4/workspace-agent/src/test/java/com/manao/poc4/workspaceagent/PythonDependencyTransactionTest.java`
-- Modify: `poc4/workspace-agent/src/test/java/com/manao/poc4/workspaceagent/WorkspaceAgentApplicationTest.java`
-
-**Interfaces:** 对应 1.2 的 prepare/apply/recover。Editor 负责 scratch 内 uv，并调用 Transaction 持久化生成结果后才返回；Transaction 只处理两路径的 journal、组合摘要、写入和 receipt。二者不持有用户身份，也不自行修改 MySQL revision。agent DTO 为 PythonDependencyEditor 的嵌套 record；backend DTO 为 WorkspaceAgent 的嵌套 record。
-
-Transaction 提供 `stage(String operationId, String pyprojectContent, String lockContent)` 返回 PreparedPythonDependencies、`apply(PythonDependencyCommit)` 和 `recover(String operationId, String beforeSha256, String afterSha256, String receiptSha256)` 返回 MutationResult。生产构造 `PythonDependencyTransaction(Path root)`；测试构造增加 `IntConsumer afterRename` 作为包内故障注入点，不能通过 HTTP 配置。
-
-- [ ] **Step 1 — 注入临时目录、进程执行器和一次崩溃点，先验证外部可观察结果。** prepare 失败源文件不变；改第一文件后中断，重建 Transaction 从磁盘 manifest 完成第二文件；重复 recover 结果相同；第三种内容不覆盖；没有 receipt 不声称已提交；symlink escape 拒绝。
-
-```java
-@Test
-void recoversTheSamePairAfterInterruptionBetweenFiles(@TempDir Path root) throws Exception {
-    Files.writeString(root.resolve("pyproject.toml"), "[project]\nname='demo'\n");
-    Files.writeString(root.resolve("uv.lock"), "version = 1\n");
-    var tx = new PythonDependencyTransaction(root, completed -> {
-        if (completed == 1) throw new IllegalStateException("simulated crash");
-    });
-    var prepared = tx.stage("11111111-1111-4111-8111-111111111111",
-        "[project]\nname='updated'\n", "version = 1\nrevision = 3\n");
-    String receipt = "{\"operationId\":\"%s\",\"type\":\"PYTHON_DEPENDENCIES\","
-        + "\"path\":\"pyproject.toml\",\"nextPath\":\"uv.lock\","
-        + "\"beforeSha256\":\"%s\",\"afterSha256\":\"%s\"}";
-    receipt = receipt.formatted(prepared.operationId(), prepared.beforeSha256(), prepared.afterSha256());
-    String receiptSha = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
-        .digest(receipt.getBytes(StandardCharsets.UTF_8)));
-    var commit = new PythonDependencyCommit(prepared, receipt, receiptSha);
-    assertThatThrownBy(() -> tx.apply(commit)).isInstanceOf(IllegalStateException.class);
-    var recovered = new PythonDependencyTransaction(root).recover(prepared.operationId(),
-        prepared.beforeSha256(), prepared.afterSha256(), receiptSha);
-    assertThat(recovered.afterSha256()).isEqualTo(prepared.afterSha256());
-    assertThat(Files.readString(root.resolve("pyproject.toml"))).isEqualTo(prepared.pyprojectContent());
-    assertThat(Files.readString(root.resolve("uv.lock"))).isEqualTo(prepared.lockContent());
-}
-```
-
-该例只测试磁盘提交协议，示例 TOML 不承担 uv 有效项目验证；真实 uv 项目验证在 Editor 和 Task 6。恢复实例不能共享首次对象的内存，必须另覆盖 apply 尚未到达时从 PREPARED 完成、重复 recover、迟到 apply 与 recover 的串行化。
-
-- [ ] **Step 2 — 运行并确认正确失败。** `mvn -q -f poc4/workspace-agent/pom.xml '-Dtest=PythonDependencyEditorTest,PythonDependencyTransactionTest' test`。
-- [ ] **Step 3 — 实现有限 uv 执行。** helper 以 Python 标准库 `tomllib` 检查当前声明，拒绝非支持的 URL/path/workspace/index 来源，不执行项目源码。用 argv 和环境允许列表启动，不拼接 shell；只复制两个 manifest，`uv.toml`/用户启动脚本不带入 scratch。
-
-```text
-uv add --no-sync --no-build --no-sources --no-config --no-python-downloads --python /usr/local/bin/python3 --default-index https://pypi.org/simple httpx==0.28.1
-uv remove --no-sync --no-build --no-sources --no-config --no-python-downloads --python /usr/local/bin/python3 --default-index https://pypi.org/simple httpx
-```
-
-以 20 秒进程预算和 64 KiB 输出上限捕获结果；错误只映射固定 code/message。scratch 的 `UV_PROJECT_ENVIRONMENT` 为该临时项目自己的 `.venv`；`--no-sync` 不安装它。Dockerfile 将 helper 复制到 root-owned `/opt/manao-python/dependency_helper.py`，通过 `/usr/local/bin/python3 -I` 执行，不从用户项目 import 管理代码。安装 Python/uv 的 image stage 与 Task 6 一致，最终镜像仍以平台指定非 root UID 运行。
-
-- [ ] **Step 4 — 实现 journal。** prepare 响应前将目标文件、before/after 单文件与组合摘要、operationId 先 fsync 为 PREPARED；后端登记 PENDING 后 apply 才持久化预期 receipt 并进入 APPLYING。每文件 temp+fsync+rename，最终验证组合摘要并写 receipt。recover 从持久文件重建标准 receipt 并核对后端预存 hash；apply/recover 共用同一项目依赖 journal 的文件锁，不跑 uv、不删除别的 journal。失去 journal 不能通过观察瞬间的 before 状态自动解锁；无对应 PENDING 的 PREPARED 不会被自动执行。完成后可回收 staged 内容，receipt 按既有保留规则留下。
-- [ ] **Step 5 — 所有定向测试及 capability HTTP 验证通过后提交。** 缺真实 Linux Python/uv 时单测不能取代工具集成证据，实际镜像验证放 Task 6/9。建议 `feat(agent): support recoverable Python dependency edits`。
-
-## Task 4：依赖 HTTP、所有权和既有工作区 receipt 接入
-
-**Files**
-- Create: `poc4/backend/src/main/java/com/manao/poc4/workspace/PythonDependencyController.java`
-- Create: `poc4/backend/src/main/java/com/manao/poc4/workspace/PythonDependencyService.java`
-- Modify: `poc4/backend/src/main/java/com/manao/poc4/workspace/WorkspaceAgent.java`
-- Modify: `poc4/backend/src/main/java/com/manao/poc4/workspace/WorkspaceOperationService.java`
-- Modify: `poc4/backend/src/main/java/com/manao/poc4/kubernetes/WorkspaceApiClient.java`
-- Modify: `poc4/backend/src/main/java/com/manao/poc4/config/WorkspaceConfig.java`
-- Modify: `poc4/backend/src/main/java/com/manao/poc4/workspace/WorkspaceService.java`
-- Modify: `poc4/backend/src/main/java/com/manao/poc4/api/ApiError.java`
-- Modify: `poc4/backend/src/main/java/com/manao/poc4/workspace/WorkspaceStore.java`
-- Modify: `poc4/backend/src/main/java/com/manao/poc4/workspace/WorkspaceJdbcStore.java`
-- Modify: `poc4/backend/src/main/java/com/manao/poc4/persistence/WorkspaceOperationRepository.java`
-- Create: `poc4/backend/src/main/resources/db/migration/V10__python_dependency_operation_kind.sql`
-- Create: `poc4/backend/src/test/java/com/manao/poc4/workspace/PythonDependencyHttpContractTest.java`
-- Create: `poc4/backend/src/test/java/com/manao/poc4/workspace/PythonDependencyOperationTest.java`
-- Modify: `poc4/backend/src/test/java/com/manao/poc4/kubernetes/WorkspaceApiClientTest.java`
-- Modify: `poc4/backend/src/test/java/com/manao/poc4/api/ErrorSanitizationTest.java`
-- Modify: `poc4/backend/src/test/java/com/manao/poc4/persistence/FlywaySchemaTest.java`
-- Modify: `poc4/backend/src/test/java/com/manao/poc4/persistence/AtomicTransitionTest.java`
-
-**Interfaces:** `PythonDependencyService.change(ownerId, projectId, change, expectedRevision)` 返回新 revision，`reconcile(ownerId, projectId)` 核对已有操作并返回权威 revision；`WorkspaceOperationService.changePythonDependencies(projectId, change, long expectedRevision)` 只取得一次 lifecycle lease，复用 store 的 PENDING。WorkspaceAgent 新增 prepare/apply/recover 方法。OperationRecord 新增 operationKind，旧构造委托 FILE；WorkspaceStore 新增 `commitReconciledPythonDependency(operationId, projectId, expectedRevision)`，其专用事务仅可解除同操作产生的 reconciliation 失败。
-
-- [ ] **Step 1 — 写失败测试。** 非 owner 404、Java 项目拒绝、非法包名/选项拒绝；活动 Run 和冲突 revision 时 agent 不被调用；成功两个文件只增一次 revision。丢失 apply 响应保持 PENDING，再用同 operationId recover/receipt 完成，调用 uv 次数仍为 1。未决 paired operation 不能通过文件读取看到并被当作已保存一致状态，也不能开始 Run。
-
-复用 WorkspaceControllerTest 已有公开 FakeStore/StubAgent 扩展 HTTP 定向测试，真实持久化另用 JdbcStoreTestSupport.create()。迁移后必须断言旧操作 kind=FILE，新 PYTHON_DEPENDENCIES 重建 service 后仍能被正确选择；未知 kind 和原地修改 kind 都失败。
-
-```sql
-ALTER TABLE workspace_operation
-  ADD COLUMN operation_kind VARCHAR(32) NOT NULL DEFAULT 'FILE',
-  ADD CONSTRAINT ck_workspace_operation_kind
-    CHECK (operation_kind IN ('FILE', 'PYTHON_DEPENDENCIES'));
-```
-
-V10 还要仿照 V3 的 immutable trigger 方式保护该列，不能修改已生效的 V3。增量迁移在一次性 V9 schema 上执行并验证旧行，不能通过清空表回避兼容性。
-
-- [ ] **Step 2 — 运行失败测试。** `mvn -q -f poc4/backend/pom.xml '-Dtest=PythonDependencyHttpContractTest,PythonDependencyOperationTest' test`。
-- [ ] **Step 3 — 复用二阶段写入流程。** lease 内完成 revision/Run/pending 检查 → prepare → 记录固定组合 digest 与 receipt → apply → receipt 校验 → commit revision。lease 必须位于同一处，不能 service 与 operation service 嵌套获取不可重入锁。prepare 结果未落 PENDING 前没有代码副作用；已有未决操作先 reconcile。
-
-```text
-before digest + durable PREPARED pair
-  -> workspace_operation PENDING
-  -> agent paired apply / final receipt
-  -> verify operationId, before, after, receiptSha256
-  -> commit existing workspace revision once
-```
-
-按持久化 operation_kind 选择恢复流程。Python reconcile 先发专门 recover，再只读核对 receipt；journal 丢失/不确定继续锁定，不通过删除 PENDING 假装回滚。现有 commitOperation 拒绝 FAILED 项目，因此专用 commitReconciledPythonDependency 必须在同一事务锁 project/op 两行，核对 owner scope、kind、PENDING、revision、无活动 Run、失败原因恰为 WORKSPACE_RECONCILIATION_REQUIRED，再同时提交操作、增加 revision、恢复 READY。任何条件不符整个事务回滚；不得先独立调用 markProjectReady 再赌 commit 成功。常规单文件流程保持原行为。
-
-新错误 code 在 ApiError 使用固定 allowlist；URL、stdout、stderr、Secret 不进入浏览器异常。两个 manifest 的读取也须取得同一项目 lease 并检查 PENDING，避免读取请求与 paired apply 交错；其他既有文件协议不重写。面板 reconcile 成功后获取权威 revision，两文件重载完成才恢复写入。既有 WORKSPACE_RECONCILIATION_REQUIRED 是项目 failureReason，不能假设所有异常响应已有同名 code；UI 通过项目权威状态决定恢复入口。
-
-- [ ] **Step 4 — 运行上述测试、WorkspaceApiClientTest、ErrorSanitizationTest、FlywaySchemaTest、AtomicTransitionTest 及既有工作区并发/恢复测试。** 必测原 FAILED+reconciliation 可恢复、其他 FAILED/DELETING 不可恢复、提交中间失败全部回滚。只扩大到受影响模块；不修改旧单文件 receipt 格式。
-- [ ] **Step 5 — 差异核对并提交。** 建议 `feat(workspace): expose uv dependency edits with durable receipts`。
-
-## Task 5：公共服务监督器增加固定 Python profile
+## Task 3：公共服务监督器增加固定 Python profile
 
 **Files**
 - Modify: `poc4/maven-runner/runtime/src/com/manao/runtime/WebRunSupervisor.java`
@@ -328,7 +231,7 @@ assert RunProfile.fromId("java-spring-boot-web").readinessPath()
 
 - [ ] **Step 2 — 在 Linux runner-test 构建中运行 assertions（必须 `java -ea`），确认缺失 profile 支持失败。** 现有 runtime-test stage 已编译测试类；不能只运行编译后声称行为通过。
 - [ ] **Step 3 — 以私有 profile 参数替换固定 command/readinessPath。** `runMode` 与 `probe` 接受同一 RunProfile；测试入口允许 fixture command，但生产不接受环境变量/argv 传入任意命令。共享 RunDeadline 不另造计时器。
-- [ ] **Step 4 — 用现有 Linux 容器测试运行 Java 全部寿命场景。** 保留忽略 TERM、重复 claim、receipt 失败等断言；Python 真实进程测试在 Task 6。
+- [ ] **Step 4 — 用现有 Linux 容器测试运行 Java 全部寿命场景。** 保留忽略 TERM、重复 claim、receipt 失败等断言；Python 真实进程测试在 Task 4。
 
 ```powershell
 $javaSeed = Join-Path (Get-Location) 'poc4/backend/target/maven-seed-templates'
@@ -339,7 +242,7 @@ bash poc4/maven-runner/tests/runtime-lifecycle.sh manao-java-runtime-test
 ```
 - [ ] **Step 5 — 差异核对并提交。** 建议 `refactor(runner): select fixed service profiles in shared supervisor`。
 
-## Task 6：Python 镜像、固定 launcher、缓存 seed 与真实进程测试
+## Task 4：Python 镜像、固定 launcher、缓存 seed 与真实进程测试
 
 **Files**
 - Create: `poc4/python-runner/Dockerfile`
@@ -347,14 +250,13 @@ bash poc4/maven-runner/tests/runtime-lifecycle.sh manao-java-runtime-test
 - Create: `poc4/python-runner/prepare-python-seed.sh`
 - Create: `poc4/python-runner/tests/runtime-lifecycle.sh`
 - Create: `poc4/python-runner/tests/python-cache.sh`
-- Create: `poc4/python-runner/tests/dependency-editor.sh`
 - Create: `poc4/python-runner/tests/fixtures/child_process.py`
 - Create: `poc4/python-runner/README.md`
 - Modify: `.gitattributes`
 
 **Interfaces:** `/usr/local/bin/manao-python console|web`；只接收两个 mode。cache 挂载 `/python-cache`；venv `/tmp/manao-python/.venv`；`MANAO_PYTHON_MYSQL`、`MANAO_PYTHON_REDIS` 是服务端布尔值，用于固定 `--extra` 参数，不是任意参数数组。监督器继续使用现有 `MANAO_*` 身份/时限变量。
 
-- [ ] **Step 1 — 先写黑盒容器测试。** 空项目 cache 禁网启动默认模板；暖 cache 用第二个新 Pod/venv；增加 httpx 后确实可 import，第二次禁网复用；移除后新的 venv 不能 import。修改 pyproject 不更新 lock 必须失败且不能启动应用。两个项目 cache 不能互见，缺目录可补齐，seed 中断不留下完成标记。
+- [ ] **Step 1 — 先写黑盒容器测试。** 空项目 cache 禁网启动默认模板；暖 cache 用第二个新 Pod/venv；通过 uv add/remove 预生成的测试 manifest 验证包下载/复用及移除后新 venv 不残留；真实浏览器增删在 Task 9/11 验证。修改 pyproject 不更新 lock 必须失败且不能启动应用。两个项目 cache 不能互见，缺目录可补齐，seed 中断不留下完成标记。
 - [ ] **Step 2 — 验证失败是镜像/launcher 未交付，然后构建最小实现。** 从仓库根构建，Dockerfile 明确 COPY 同一份 `poc4/maven-runner/runtime/src` 与启动器、真实模板命名 context，不复制监督器源码到新目录。
 
 ```powershell
@@ -363,9 +265,9 @@ mvn -q -f poc4/backend/pom.xml -DskipTests test-compile org.codehaus.mojo:exec-m
 docker build -f poc4/python-runner/Dockerfile --build-context "seed-templates=$pythonSeed" --target runtime-test -t manao-python-runtime-test .
 ```
 
-Dockerfile 的 `runtime-test` 及 production 使用同一 Python/uv/JRE 分发和 seed。Task 2 已记录 uv 版本；本机本轮核实有 uv `0.11.6`，可用作候选，实施仍需核对 Linux 分发和所需 flags 后固定版本。基础 Python 使用实际可拉取的 3.13 补丁 tag 再解析 digest，写入构建记录及最终 Dockerfile；部署禁止未解析值。
+Dockerfile 的 `runtime-test` 及 production 使用同一 Python/uv/JRE 分发和 seed。Task 2 已记录 uv 版本；初版规划记录了本机 uv `0.11.6`，可用作候选，实施仍需核对 Linux 分发和所需 flags 后固定版本。基础 Python 使用实际可拉取的 3.13 补丁 tag 再解析 digest，写入构建记录及最终 Dockerfile；部署禁止未解析值。
 
-- [ ] **Step 3 — launcher 设置明确环境并安装固定锁。** shell 入口 `set -euo pipefail`；只向未存在的版本化 cache 目录整体 seed，使用临时同卷目录与 rename，完成标记最后写。存在目录绝不用 copy 覆盖活跃缓存。
+- [ ] **Step 3 — launcher 设置明确环境并安装固定锁。** shell 入口 `set -euo pipefail`；仅对当前固定工具链与平台维护一个 seed；只向未存在的私有 cache 目录整体 seed，使用临时同卷目录与 rename，完成标记最后写。存在目录绝不用 copy 覆盖活跃缓存。
 
 ```bash
 export UV_PROJECT_ENVIRONMENT=/tmp/manao-python/.venv
@@ -391,18 +293,15 @@ esac
 ```powershell
 bash poc4/python-runner/tests/runtime-lifecycle.sh manao-python-runtime-test
 bash poc4/python-runner/tests/python-cache.sh manao-python-runtime-test
-# 参数为本任务构建的 workspace-agent 测试镜像，脚本在隔离容器中验证 uv 与 helper：
-docker build -t manao-python-workspace-agent-test poc4/workspace-agent
-bash poc4/python-runner/tests/dependency-editor.sh manao-python-workspace-agent-test
 ```
 
-生命周期脚本覆盖：TASK exit 0/1、无缓冲中文日志、SERVICE readiness 后短时计时、readiness 503、安装阻塞启动超时、长请求跨 deadline、派生进程忽略 TERM、重复 claim、receipt 写失败、80 低端口。必须通过容器 exit/进程与 receipt 实际核对，不能只匹配成功日志。
+Python 脚本只覆盖真实 uv/Python 启动链：TASK exit 0/1、中文日志、FastAPI readiness、安装阻塞启动超时、短时到期和 TERM/强制终止 Python 派生进程、80 低端口。公共 claim、receipt 写失败、时钟和重复认领等状态机规则已在 Task 3 复用原测试验证，不复制第二份矩阵；若发现 Python profile 特有差异，再增加对应单个回归。使用实际容器状态和 receipt 核对，不只匹配日志。
 
-agent 集成用例至少一次真实 `uv add --no-sync` 和 `uv remove --no-sync`，检查源文件未在 prepare 时改动、两文件提交和锁一致性、20 秒进程终止。PyPI 不可达时如实报告，不以进程 mock 顶替。
+不实现跨 Python/uv/平台的缓存迁移或自动回填。模板预置与冷/暖缓存检查保留，agent 的真实依赖编辑验证在 Task 7。
 
 - [ ] **Step 5 — 记录解释器/uv/seed 身份，清理自有容器和卷，检查新脚本 LF 并提交。** 建议 `feat(runner): add isolated Python execution and seeded uv cache`。
 
-## Task 7：Run、Job、镜像配置与日志/清理兼容接入
+## Task 5：Run、Job、镜像配置与日志/清理兼容接入
 
 **Files**
 - Modify: `poc4/backend/src/main/java/com/manao/poc4/run/RunService.java`
@@ -440,7 +339,7 @@ assertThat(container.getReadinessProbe().getExec().getCommand()).containsExactly
 - [ ] **Step 4 — 扩展已有恢复、日志、端点和清理测试为 Java/Python 两种快照。** 同 Pod UID/Run 身份校验，RUNNING 恢复不重建 Run，终态才解锁；缓存随 workspace PVC 回收。运行本任务文件中的定向测试及 `RunLogIngestorTest,ResourceIdentityVerifierTest,PublicEndpointGatewayTest`。
 - [ ] **Step 5 — 通过后提交。** 建议 `feat(runtime): route Python runs through existing job lifecycle`。
 
-## Task 8：模板、依赖表单和运行展示的浏览器闭环
+## Task 6：先完成运行路径的浏览器闭环
 
 **Files**
 - Modify: `poc4/frontend/src/contracts/project.ts`
@@ -450,11 +349,6 @@ assertThat(container.getReadinessProbe().getExec().getCommand()).containsExactly
 - Modify: `poc4/frontend/src/features/projects/CreateProjectForm.test.tsx`
 - Modify: `poc4/frontend/src/features/projects/ProjectCard.tsx`
 - Modify: `poc4/frontend/src/features/projects/ProjectCard.test.tsx`
-- Create: `poc4/frontend/src/api/pythonDependencyApi.ts`
-- Create: `poc4/frontend/src/features/dependencies/PythonDependenciesPanel.tsx`
-- Create: `poc4/frontend/src/features/dependencies/PythonDependenciesPanel.test.tsx`
-- Modify: `poc4/frontend/src/components/shell/WorkbenchShell.tsx`
-- Modify: `poc4/frontend/src/components/shell/WorkbenchShell.test.tsx`
 - Modify: `poc4/frontend/src/components/runs/RunPanel.tsx`
 - Modify: `poc4/frontend/src/components/runs/RunPanel.test.tsx`
 - Modify: `poc4/frontend/src/components/runs/RunToolbar.tsx`
@@ -462,10 +356,13 @@ assertThat(container.getReadinessProbe().getExec().getCommand()).containsExactly
 - Modify: `poc4/frontend/src/components/terminal/CloseTerminalDialog.tsx`
 - Modify: `poc4/frontend/src/mocks/handlers.ts`
 - Modify: `poc4/frontend/src/mocks/runFixtures.ts`
+- Modify: `poc4/frontend/package.json`
+- Create: `poc4/frontend/playwright.python-runtime.config.ts`
+- Create: `poc4/frontend/tests/e2e/python-runtime-lifecycle.spec.ts`
 
-**Interfaces:** 新模板 ID 与 1.1 RunPolicy wire 对齐；新增 API 仅发送 1.2 DTO，禁止自动重试；UI 复用 dirty guard、RunAuthorityCoordinator 与 workspace reload。依赖面板只在 Python 项目显示，包名/可选版本两个输入、添加/删除按钮即可。
+**Interfaces:** 新模板及 RunPolicy union 与 Task 1 一致；现有 RunAuthorityCoordinator、保存/重载、端口反馈及删除流程继续使用。本任务不依赖尚未交付的依赖编辑 HTTP。
 
-- [ ] **Step 1 — 失败用例以实际交互为准。** 选 FastAPI 显示 MySQL/Redis，默认 target=8000、public 为空；改回 console 隐藏配置不泄露到请求。新增依赖响应后两文件及 revision 刷新；未保存、活动 Run、提交中不可操作；断网不自动发第二请求。Run parser 接受 Python、拒绝未知/混搭策略，旧 Java fixture 继续通过。
+- [ ] **Step 1 — 先写交互红测。** FastAPI 默认 targetPort=8000、publicPort 空白；console 隐藏 Web 选项；Python policy 可解析、旧 Java 可读、混搭策略拒绝；所选历史 Run 的展示不被当前模板覆盖。
 
 ```tsx
 await user.selectOptions(screen.getByLabelText('Template'), 'python-fastapi-web');
@@ -474,36 +371,216 @@ expect(screen.getByLabelText(/container port/i)).toHaveValue('8000');
 expect(screen.getByLabelText(/public port/i)).toHaveValue('');
 ```
 
-标签应以现有可访问名称为准；不得为了示例改成不可访问的自定义 div。依赖面板测试拦截真实 DTO 并模拟 apply 响应不明，核对不会自动重试。
-
 - [ ] **Step 2 — 运行红测。**
 
 ```powershell
-pnpm -C poc4/frontend test -- src/contracts/run.test.ts src/features/projects/CreateProjectForm.test.tsx src/features/dependencies/PythonDependenciesPanel.test.tsx
+pnpm -C poc4/frontend test -- src/contracts/run.test.ts src/features/projects/CreateProjectForm.test.tsx src/components/runs/RunPanel.test.tsx
 ```
 
-- [ ] **Step 3 — 实现 union、表单和 authority 整合。** Java/Python runtime 为判别联合；legacy parser 分支仅处理无语言的旧 Java，不能宽松接受任意 command。RunPanel 向 Toolbar 提供无 Run 时的当前模板展示；有历史 Run 时以该 Run 策略为准。停止文案使用 Run，不固定 Maven。
-
-依赖 mutation 开始前采用现有 editor authority 阻止并发写入和 Run；后端 PENDING 是最终权威。成功只在 manifest 重载完成后解锁；结果不明显示新增“核对依赖操作”按钮，调用专用 reconcile endpoint，不把按钮立即恢复为可以重发。项目卡和 MSW 同步，Mock 不算真实 Python PASS。
-
-- [ ] **Step 4 — 跑受影响 UI 测试、typecheck/build 和边界检查。**
+- [ ] **Step 3 — 实现固定 union 与展示。** 沿用现有表单，只增加两个选项与按模板推导的服务能力；RunToolbar 读取实际策略，无 Run 时读取项目模板。Stop 文案采用 Run；Mock handler 同步，但 mock 不证明 Python 运行。
+- [ ] **Step 4 — 创建最小 E2E 主路径并完成增量 A 核对。** 独立 config 使用真实 MANAO_RUNTIME_BASE_URL、workers=1/retries=0，不自动启动本地服务或扫描端口。先写 console 成功→编辑为失败→修复、FastAPI 公网请求→停止→再次运行、UI 删除的用例；package.json 加 test:e2e:python-runtime。具备本版本可用且已授权的隔离环境时做一次真实浏览器烟测。缺环境记录 NOT_REVERIFIED，继续独立开发 Task 7–9，不把缺环境变成新生产部署 gate；完整云端证据统一在 Task 11。
+- [ ] **Step 5 — 定向 UI、类型和构建检查通过，提交增量。**
 
 ```powershell
-pnpm -C poc4/frontend test -- src/contracts/run.test.ts src/features/projects/CreateProjectForm.test.tsx src/features/projects/ProjectCard.test.tsx src/features/dependencies/PythonDependenciesPanel.test.tsx src/components/shell/WorkbenchShell.test.tsx src/components/runs/RunPanel.test.tsx
+pnpm -C poc4/frontend test -- src/contracts/run.test.ts src/features/projects/CreateProjectForm.test.tsx src/features/projects/ProjectCard.test.tsx src/components/runs/RunPanel.test.tsx
 pnpm -C poc4/frontend build
 pnpm -C poc4/frontend test:boundary
 ```
 
-- [ ] **Step 5 — 检查 Java 创建/历史文案回归并提交。** 建议 `feat(frontend): add Python projects and uv dependency controls`。
+建议提交 `feat(frontend): complete Python run workflow`。通过的实现测试与未执行的云端场景分别记录；不在这里宣布整个 Python 阶段完成。
 
-## Task 9：发布准备、实际工具版本及独立 E2E 入口
+## Task 7：agent 依赖编辑，只公开 prepare/commit
+
+**Files**
+- Create: `poc4/workspace-agent/src/main/java/com/manao/poc4/workspaceagent/PythonDependencyEditor.java`
+- Create: `poc4/workspace-agent/src/main/java/com/manao/poc4/workspaceagent/PythonDependencyTransaction.java`
+- Create: `poc4/workspace-agent/src/main/resources/python-dependency-helper.py`
+- Modify: `poc4/workspace-agent/src/main/java/com/manao/poc4/workspaceagent/WorkspaceAgentController.java`
+- Modify: `poc4/workspace-agent/src/main/java/com/manao/poc4/workspaceagent/WorkspaceAgentConfig.java`
+- Modify: `poc4/workspace-agent/Dockerfile`
+- Create: `poc4/workspace-agent/src/test/java/com/manao/poc4/workspaceagent/PythonDependencyEditorTest.java`
+- Create: `poc4/workspace-agent/src/test/java/com/manao/poc4/workspaceagent/PythonDependencyTransactionTest.java`
+- Modify: `poc4/workspace-agent/src/test/java/com/manao/poc4/workspaceagent/WorkspaceAgentApplicationTest.java`
+- Create: `poc4/python-runner/tests/dependency-editor.sh`
+
+**Interfaces:** Editor.prepare(operationId, requestSha256, change) 负责 scratch 解析并持久化 PREPARED 后返回 1.2 的摘要 DTO。Transaction 的公开入口仅 commit(PythonDependencyCommit)，首次和中断后的再次调用共用它；stage(operationId, requestSha256, pyprojectContent, lockContent) 是仅供 Editor 使用的包内方法。文件正文不进入 HTTP DTO。
+
+- [ ] **Step 1 — 用真实临时文件写失败测试。** prepare 失败不改源文件；同 ID/请求已 PREPARED 时不再次 uv；改第一文件后中断，重建对象再次 commit 完成第二文件；相同最终 receipt 直接返回；不同摘要、第三种内容、symlink escape 拒绝。
+
+```java
+@Test
+void theSameCommitCompletesAfterRestart(@TempDir Path root) throws Exception {
+    Files.writeString(root.resolve("pyproject.toml"), "[project]\nname='demo'\n");
+    Files.writeString(root.resolve("uv.lock"), "version = 1\n");
+    var tx = new PythonDependencyTransaction(root, renamed -> {
+        if (renamed == 1) throw new IllegalStateException("simulated crash");
+    });
+    var prepared = tx.stage("11111111-1111-4111-8111-111111111111", "a".repeat(64),
+        "[project]\nname='updated'\n", "version = 1\nrevision = 3\n");
+    String receipt = "{\"operationId\":\"%s\",\"type\":\"PYTHON_DEPENDENCIES\","
+        + "\"path\":\"pyproject.toml\",\"nextPath\":\"uv.lock\","
+        + "\"beforeSha256\":\"%s\",\"afterSha256\":\"%s\"}";
+    receipt = receipt.formatted(prepared.operationId(), prepared.beforeSha256(), prepared.afterSha256());
+    String receiptSha = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
+        .digest(receipt.getBytes(StandardCharsets.UTF_8)));
+    var command = new PythonDependencyCommit(prepared, receipt, receiptSha);
+    assertThatThrownBy(() -> tx.commit(command)).isInstanceOf(IllegalStateException.class);
+    var result = new PythonDependencyTransaction(root).commit(command);
+    assertThat(result.afterSha256()).isEqualTo(prepared.afterSha256());
+    assertThat(Files.readString(root.resolve("uv.lock"))).isEqualTo("version = 1\nrevision = 3\n");
+}
+```
+
+生产构造只接收 Path；测试包内构造可额外接收 IntConsumer afterRename，不把故障注入开放到 HTTP。例子验证提交协议，真实 uv 项目有效性另测。
+
+- [ ] **Step 2 — 运行并确认正确失败。** `mvn -q -f poc4/workspace-agent/pom.xml '-Dtest=PythonDependencyEditorTest,PythonDependencyTransactionTest' test`。
+- [ ] **Step 3 — 最小工具实现。** Python/uv 版本复用 Task 4 固定值。helper 用标准库 tomllib 检查支持范围，以固定 argv 在 scratch 执行；root-owned helper 由 `/usr/local/bin/python3 -I /opt/manao-python/dependency_helper.py` 启动，不能从用户项目 import 管理代码。
+
+```text
+uv add --no-sync --no-build --no-sources --no-config --no-python-downloads --python /usr/local/bin/python3 --default-index https://pypi.org/simple httpx==0.28.1
+uv remove --no-sync --no-build --no-sources --no-config --no-python-downloads --python /usr/local/bin/python3 --default-index https://pypi.org/simple httpx
+```
+
+解析预算初始 20 秒，允许部署配置且必须有界；测量代表性包后与 Task 8 prepare timeout 对齐，超时终止子进程树，输出最多 64 KiB，错误返回固定安全信息。禁用 shell 拼接、用户来源配置与构建后端执行。
+- [ ] **Step 4 — journal 与同一 commit 实现。** prepare 响应前 fsync 两目标文件和 manifest；commit 核对 ID/request/before/after、持久化 receipt 后逐文件原子替换，最终写 receipt。首次提交和核对通过同一文件锁串行化，不另写 recover 状态机。无 PENDING 授权不提交，缺 journal 保持失败；只读 receipt 不推进写入。
+- [ ] **Step 5 — 定向测试与真实 uv 工具测试通过后提交。**
+
+```powershell
+mvn -q -f poc4/workspace-agent/pom.xml '-Dtest=PythonDependencyEditorTest,PythonDependencyTransactionTest,WorkspaceAgentApplicationTest' test
+docker build -t manao-python-workspace-agent-test poc4/workspace-agent
+bash poc4/python-runner/tests/dependency-editor.sh manao-python-workspace-agent-test
+```
+
+至少一次真实 uv add/remove、prepare 源文件不变、commit 锁一致、丢响应再 commit 不重解析；记录解析耗时和超时/终止结果。建议提交 `feat(agent): prepare and commit Python dependency changes`。
+
+## Task 8：依赖操作 ID、持久回执与统一核对
+
+**Files**
+- Create: `poc4/backend/src/main/java/com/manao/poc4/workspace/PythonDependencyController.java`
+- Create: `poc4/backend/src/main/java/com/manao/poc4/workspace/PythonDependencyService.java`
+- Modify: `poc4/backend/src/main/java/com/manao/poc4/workspace/WorkspaceAgent.java`
+- Modify: `poc4/backend/src/main/java/com/manao/poc4/workspace/WorkspaceOperationService.java`
+- Modify: `poc4/backend/src/main/java/com/manao/poc4/kubernetes/WorkspaceApiClient.java`
+- Modify: `poc4/backend/src/main/java/com/manao/poc4/config/WorkspaceConfig.java`
+- Modify: `poc4/backend/src/main/java/com/manao/poc4/workspace/WorkspaceService.java`
+- Modify: `poc4/backend/src/main/java/com/manao/poc4/api/ApiError.java`
+- Modify: `poc4/backend/src/main/java/com/manao/poc4/workspace/WorkspaceStore.java`
+- Modify: `poc4/backend/src/main/java/com/manao/poc4/workspace/WorkspaceJdbcStore.java`
+- Modify: `poc4/backend/src/main/java/com/manao/poc4/persistence/WorkspaceOperationRepository.java`
+- Create: `poc4/backend/src/main/resources/db/migration/V10__python_dependency_operations.sql`
+- Create: `poc4/backend/src/test/java/com/manao/poc4/workspace/PythonDependencyHttpContractTest.java`
+- Create: `poc4/backend/src/test/java/com/manao/poc4/workspace/PythonDependencyOperationTest.java`
+- Modify: `poc4/backend/src/test/java/com/manao/poc4/kubernetes/WorkspaceApiClientTest.java`
+- Modify: `poc4/backend/src/test/java/com/manao/poc4/api/ErrorSanitizationTest.java`
+- Modify: `poc4/backend/src/test/java/com/manao/poc4/persistence/FlywaySchemaTest.java`
+- Modify: `poc4/backend/src/test/java/com/manao/poc4/persistence/AtomicTransitionTest.java`
+
+**Interfaces:** PythonDependencyService 的 change(ownerId, projectId, operationId, change, expectedRevision)、status(ownerId, projectId, operationId)、pending(ownerId, projectId)、reconcile(ownerId, projectId, operationId) 对应 1.2。它负责 Python 请求规则，WorkspaceOperationService 负责锁、receipt、持久状态与 revision；WorkspaceStore 不接受包名或 uv 命令。
+
+Store 新增按 projectId/operationId 查询 PENDING 与 COMMITTED 行的 findOperation；OperationRecord 携带 operationKind/requestSha256。核对提交使用 commitReconciledOperation(operationId, projectId, expectedRevision)，与原 commitOperation 共享私有事务实现，避免复制一份 SQL 状态机。当前只对经验证的 PYTHON_DEPENDENCIES 开放 reconciliation 失败恢复，不借此重写旧单文件协议。
+
+- [ ] **Step 1 — 写失败测试。** 非 owner 404、Java 拒绝、输入注入拒绝；Run/revision/pending 冲突时不 prepare。成功丢响应后 status 返回同 ID 的 COMMITTED；同 ID 同请求不二次 uv，同 ID 不同请求 409；多标签页只核对各自 ID。PENDING 丢 commit 响应用同一 commit 完成，revision 只增一次。未记录操作返回 UNCONFIRMED，不自动重发。
+- [ ] **Step 2 — 核对 disposable MySQL 的持久性和 V9 升级。**
+
+```sql
+ALTER TABLE workspace_operation
+  ADD COLUMN operation_kind VARCHAR(32) NOT NULL DEFAULT 'FILE',
+  ADD COLUMN request_sha256 CHAR(64) NULL,
+  ADD CONSTRAINT ck_workspace_operation_kind
+    CHECK (operation_kind IN ('FILE', 'PYTHON_DEPENDENCIES')),
+  ADD CONSTRAINT ck_python_dependency_request
+    CHECK (operation_kind = 'FILE' OR
+      (request_sha256 IS NOT NULL AND REGEXP_LIKE(request_sha256, '^[0-9a-f]{64}$', 'c')));
+```
+
+V10 增量 trigger 保护这两列不可原地改变；不修改旧 migration。既有 id 唯一性防重复，requestSha256 绑定意图。保留 COMMITTED 行以回答丢响应，不加独立请求表。HTTP 状态测试与真实 store 升级/重建测试各验证自己的职责。
+
+```powershell
+mvn -q -f poc4/backend/pom.xml '-Dtest=PythonDependencyHttpContractTest,PythonDependencyOperationTest' test
+```
+
+- [ ] **Step 3 — 实现并验证服务调用顺序。**
+
+```text
+owner/project validation + existing reentrant lifecycle lease
+  -> if same ID exists: compare request digest, return/reconcile that operation
+  -> validate current revision/no active Run/no unresolved operation
+  -> agent prepare returns summary of durable PREPARED result
+  -> DB PENDING(id, kind, requestSha, beforeSha, afterSha, receiptSha)
+  -> agent commit(summary reference + deterministic receipt)
+  -> verify receipt identity/digests
+  -> one DB transaction commits operation and revision
+```
+
+先查已登记 ID，再用当前 revision 拒绝新请求，避免成功重试因 revision 已变被误判。返回提交成功前不删除操作记录。状态查询是只读，reconcile 对 COMMITTED 直接返回结果；对 PENDING 仅引用 DB 已登记摘要调用 Task 7 commit。
+
+- [ ] **Step 4 — 复用现有 gate 与恢复事务。** ProjectLifecycleGate 已同线程可重入、WorkspaceService 读取已 gated；新增逻辑只保证 pending 检查、同一 gate 实例及重启后的持久状态核对。不得再建一套读锁。专用核对提交锁 project/op 两行，核对 kind、PENDING、revision、无活动 Run；允许 READY 或仅本次 WORKSPACE_RECONCILIATION_REQUIRED 的 FAILED，其余 FAILED/DELETING 拒绝。操作提交、revision 增加及该失败解除必须同事务，条件不符全部回滚。
+
+已 commit 的操作再次核对不清除后来产生的其他失败。缺失/损坏 journal、摘要不匹配保持锁定；不能通过观察“当前两文件像旧内容”便删除 PENDING。ApiError 的新增 code 都对应固定安全 message，工具输出不进响应。
+- [ ] **Step 5 — 跑定向测试后提交。**
+
+```powershell
+mvn -q -f poc4/backend/pom.xml '-Dtest=PythonDependencyHttpContractTest,PythonDependencyOperationTest,WorkspaceApiClientTest,ErrorSanitizationTest,FlywaySchemaTest,AtomicTransitionTest,WorkspaceControllerTest' test
+```
+
+条件回滚、读取/运行遇到 PENDING 拒绝、原单文件协议、COMMITTED 查询必须有断言。缺 MySQL 权限与业务失败区分记录。建议提交 `feat(workspace): track and reconcile dependency operation receipts`。
+
+## Task 9：依赖表单及刷新后仍可达的恢复入口
+
+**Files**
+- Create: `poc4/frontend/src/api/pythonDependencyApi.ts`
+- Create: `poc4/frontend/src/features/dependencies/PythonDependenciesPanel.tsx`
+- Create: `poc4/frontend/src/features/dependencies/PythonDependenciesPanel.test.tsx`
+- Create: `poc4/frontend/src/features/dependencies/PythonDependencyRecovery.tsx`
+- Create: `poc4/frontend/src/features/dependencies/PythonDependencyRecovery.test.tsx`
+- Modify: `poc4/frontend/src/components/shell/WorkbenchShell.tsx`
+- Modify: `poc4/frontend/src/components/shell/WorkbenchShell.test.tsx`
+- Modify: `poc4/frontend/src/features/projects/ProjectRoutePage.tsx`
+- Create: `poc4/frontend/src/features/projects/ProjectRoutePage.test.tsx`
+- Modify: `poc4/frontend/src/features/projects/ProjectCard.tsx`
+- Modify: `poc4/frontend/src/features/projects/ProjectCard.test.tsx`
+- Modify: `poc4/frontend/src/mocks/handlers.ts`
+- Modify: `poc4/frontend/tests/e2e/python-runtime-lifecycle.spec.ts`
+
+**Interfaces:** panel 消费 Task 8 的 change/status/reconcile。Recovery 是 READY/FAILED 页面共用的具体 UI；无新全局任务中心。首次 ID 在 POST 前按当前用户/项目存入 sessionStorage，完成重载或明确无副作用拒绝后移除；登出不让下一用户继承操作，清理用户本地缓存。服务端 owner-scoped pending 查询兜底新会话的 FAILED 恢复，不将别人的 ID 当作可访问凭证。
+
+- [ ] **Step 1 — 红测覆盖真实用户路径。** 包名/可选版本输入，ADD/REMOVE；dirty/active Run/pending 时禁用。POST 已 COMMITTED 但响应丢失 → 刷新 → 以原 ID GET 得到 COMMITTED → 当前文件/revision 重载，POST 次数仍为 1。PENDING 导致项目 FAILED → 刷新项目 URL → 按钮仍在 → reconcile 原操作 → READY。
+
+```tsx
+// HTTP handler 在提交后模拟网络错误；原 operationId 保存在会话里。
+expect(screen.getByRole('button', { name: 'Check dependency change' })).toBeEnabled();
+await user.click(screen.getByRole('button', { name: 'Check dependency change' }));
+// 断言 handler 捕获的 GET/reconcile 均携带首次 operationId，未发送第二个 ADD。
+expect(screen.queryByText('Dependency change is unconfirmed')).not.toBeInTheDocument();
+```
+
+在 ProjectRoutePage.test 中以完整路由重挂载验证 FAILED，不能只渲染 Recovery 小组件就声称刷新后可达；另一种失败原因及 DELETING 不显示恢复操作。
+- [ ] **Step 2 — 运行红测。**
+
+```powershell
+pnpm -C poc4/frontend test -- src/features/dependencies/PythonDependenciesPanel.test.tsx src/features/dependencies/PythonDependencyRecovery.test.tsx src/features/projects/ProjectRoutePage.test.tsx
+```
+
+- [ ] **Step 3 — 实现最小界面。** Python 工作台显示依赖表单；首次生成 ID 复用已有 crypto.getRandomValues 的 HTTP 安全上下文兼容方式，不假定公网 HTTP 有 randomUUID。提交后结果不明保留 ID，只允许查询/核对，不自动重发。COMMITTED 重载当前两文件/树/revision 后才解除前端写锁，不把历史 resultWorkspaceRevision 当最新版本。
+- [ ] **Step 4 — 把恢复入口接到路由状态页。** ProjectRoutePage 的 FAILED 分支在确认为 Python+WORKSPACE_RECONCILIATION_REQUIRED 时渲染 Recovery。ProjectCard 为该失败增加“Check dependency change”链接进入状态页；不将 Open 按钮无条件开放给所有 FAILED 项目。READY 页面也能核对已保存但响应丢失的 ID。无本地 ID 时先读 pending；无记录只显示 UNCONFIRMED，不伪造成功或解锁未知操作。
+- [ ] **Step 5 — 定向 UI、构建及 E2E 用例准备完成后提交。**
+
+```powershell
+pnpm -C poc4/frontend test -- src/features/dependencies/PythonDependenciesPanel.test.tsx src/features/dependencies/PythonDependencyRecovery.test.tsx src/features/projects/ProjectRoutePage.test.tsx src/features/projects/ProjectCard.test.tsx src/components/shell/WorkbenchShell.test.tsx
+pnpm -C poc4/frontend build
+pnpm -C poc4/frontend test:boundary
+```
+
+补入真实浏览器添加 httpx→import→移除→import 失败，以及丢响应/FAILED 刷新恢复用例；真实执行集中在 Task 11。建议提交 `feat(frontend): add uv dependency edits and reachable recovery`。
+
+## Task 10：发布准备、实际工具版本及独立 E2E 入口
 
 **Files**
 - Modify: `poc4/deploy/6b/backend.yaml`
 - Modify: `poc4/deploy/6b/README.md`
 - Modify: `poc4/frontend/package.json`
-- Create: `poc4/frontend/playwright.python-runtime.config.ts`
-- Create: `poc4/frontend/tests/e2e/python-runtime-lifecycle.spec.ts`
+- Modify: `poc4/frontend/playwright.python-runtime.config.ts`
+- Modify: `poc4/frontend/tests/e2e/python-runtime-lifecycle.spec.ts`
 - Create: `poc4/docs/evidence/python-runtime/acceptance.md`
 - Modify: `poc4/python-runner/README.md`
 - Modify: `AGENTS.md`
@@ -511,8 +588,8 @@ pnpm -C poc4/frontend test:boundary
 
 **Interfaces:** 运行配置新增 `MANAO_PYTHON_RUNNER_IMAGE`，按原 image Secret 注入模式交付；README 记录与之配套的 workspace-agent/backend/frontend/Java runner digest、Python/uv 版本及 seed ID。不把真实 Secret 明文写进版本库。
 
-- [ ] **Step 1 — 创建独立真实云端测试 config。** 参考既有 Java config，但只收集 Python spec；`workers=1,retries=0,webServer=undefined`，不启动本地服务。沿用 `MANAO_RUNTIME_BASE_URL/USERNAME/PASSWORD/PUBLIC_PORT_1/PUBLIC_PORT_2`。缺值显式失败，不自动选端口，不输出密码。
-- [ ] **Step 2 — 在 spec 写入 Task 10 的真实断言。** 先通过 `--list` 检查收集；这只证明入口可加载。将脚本名 `test:e2e:python-runtime` 加到 package.json。
+- [ ] **Step 1 — 核对 Task 6 已创建的独立真实云端测试 config。** 参考既有 Java config，但只收集 Python spec；`workers=1,retries=0,webServer=undefined`，不启动本地服务。沿用 `MANAO_RUNTIME_BASE_URL/USERNAME/PASSWORD/PUBLIC_PORT_1/PUBLIC_PORT_2`。缺值显式失败，不自动选端口，不输出密码。
+- [ ] **Step 2 — 在 spec 写入 Task 11 的真实断言。** 先通过 `--list` 检查收集；这只证明入口可加载。核对 Task 6 已添加的脚本名 test:e2e:python-runtime，不另建重复入口。
 
 ```json
 "test:e2e:python-runtime": "playwright test --config playwright.python-runtime.config.ts"
@@ -523,7 +600,7 @@ pnpm -C poc4/frontend test:boundary
 - [ ] **Step 5 — 发布授权到位后执行该清单并留证；若任务只授权本地开发，则交付完整镜像/差异/部署清单等待发布决定。** 不以计划本文视为当前发布授权。验收文件初始只能写真实已做检查及其局限；不能直接标阶段 PASS。
 - [ ] **Step 6 — 聚焦提交。** 建议 `chore(deploy): prepare Python runtime release and cloud acceptance`。
 
-## Task 10：集中云端验收、Java 回归和收尾
+## Task 11：集中云端验收、Java 回归和收尾
 
 **Files**
 - Modify: `poc4/frontend/tests/e2e/python-runtime-lifecycle.spec.ts`
@@ -536,8 +613,8 @@ pnpm -C poc4/frontend test:boundary
 **Interfaces:** 仅使用真实已部署公网浏览器入口及项目/Run API 驱动产品行为；资源和数据库查询负责独立核实结果，不替用户从集群直接改文件来伪造 UI 能力。
 
 - [ ] **Step 1 — 实时前检和样本清单。** 确认目标 context、`manao-stage6b`、节点/容量、RBAC、存储、所有镜像 digest。新建唯一前缀且 owner 明确的 Python console、Python web 和必要的 Java 回归项目；记录项目/Run ID、端口、预期资源。不得复用或清理历史 DELETING 项目。
-- [ ] **Step 2 — 普通 Python 与依赖闭环。** 浏览器创建、执行欢迎程序和中文日志；修改成异常并看见 FAILED/traceback，再修复成功；依赖面板添加 httpx，编辑源码 import 后成功；重复 Run 验证缓存；移除 httpx 后 import 应失败；改回基础程序成功。确保两文件及 revision 持久化，刷新/重新登录可见。
-- [ ] **Step 3 — FastAPI 公网和数据闭环。** 用户预指定端口创建 Web + MySQL + Redis，真实 HTTP `/api/demo` 成功。测试通过浏览器编辑 `app/main.py` 加入最小读写用例，写入项目 MySQL/Redis 样本，停止、编辑响应、再次运行，MySQL 样本仍在；端口冲突保持原值且无第二项目。没有公网配置的路径由 Task 6 容器证据覆盖，除出现新疑点不再重复整套云端场景。
+- [ ] **Step 2 — 普通 Python 与依赖闭环。** 浏览器创建、执行欢迎程序和中文日志；修改成异常并看见 FAILED/traceback，再修复成功；依赖面板添加 httpx，编辑源码 import 后成功；重复 Run 验证缓存；移除 httpx 后 import 应失败；改回基础程序成功。确保两文件及 revision 持久化，刷新/重新登录可见；注入一次提交成功后丢响应，按同 operationId 查询 COMMITTED，revision 不重复增加。再覆盖 FAILED 页刷新后仍能进入指定操作的核对，不通过重新 ADD 修复。
+- [ ] **Step 3 — FastAPI 公网和数据闭环。** 用户预指定端口创建 Web + MySQL + Redis，真实 HTTP `/api/demo` 成功。测试通过浏览器编辑 `app/main.py` 加入最小读写用例，写入项目 MySQL/Redis 样本，停止、编辑响应、再次运行，MySQL 样本仍在；端口冲突保持原值且无第二项目。没有公网配置的路径由 Task 4 容器证据覆盖，除出现新疑点不再重复整套云端场景。
 - [ ] **Step 4 — 验证恢复和 Python 时限。** 本次共享后端/监督器改动要求一次受控后端重启后恢复观察既有 Python Run，firstReadyAt/expiresAt 不变，历史日志可读。正式 7200 秒用例从首次 ready 计时，deadline 前后记录 receipt、Run 状态与容器实际终止，不能仅以公网断连当终止；长等待分段观察且可响应用户，不阻塞单次工具调用两小时。
 - [ ] **Step 5 — Java 定向回归。** 既有旧策略历史可读；Java console 和 Spring Boot 至少各一次新 Run，真实输出/HTTP/停止正常。需要自有 disposable Java 项目时记录并同样清理，不删除用户已有项目。
 - [ ] **Step 6 — 独立核对清理。** UI 删除本轮项目，最终 API 404；核实 owner/project 范围内的 DB 行、Job/initializer/workspace/依赖控制器/Pod/Service/Secret、workspace/MySQL PVC、对应 PV 和存储目录；Python cache 与 workspace 同步消失。Forbidden、Unknown 或 timeout 记失败/未核实，不能当清理完成。
@@ -553,19 +630,19 @@ git status --short --branch
 - [ ] **Step 7 — 记录实测结论。** acceptance 每项写 PASS/FAILED/SKIPPED/WAIVED_BY_USER/NOT_REVERIFIED、执行 commit、镜像、项目/Run 身份、实际回收数量及保留原因。冷镜像与暖镜像、首次包下载与缓存重用分开计时；没有用户确认的性能阈值，不写秒级承诺。
 - [ ] **Step 8 — 索引更新和提交。** 仅在新证据支持时更新 Python 交付状态；不改历史 Java/6A/6B 结论。清理本轮不再需要的临时文件、构建导出目录和精确测试资源，保留必要脱敏报告。建议 `docs(runtime): record Python acceptance and delivery boundary`。
 
-## 2. 执行顺序和覆盖核对
+## 2. 执行顺序、覆盖与完成边界
 
-严格顺序 `Task 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 → 9 → 10`。这些任务会交叠修改 workspace、runtime 和配置文件，本计划不安排并行实现。
+顺序 `Task 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 → 9 → 10 → 11`，不安排并行修改。
 
-| 用户结果 / 风险 | 实现任务 | 必须保留的证据 |
+| 结果 | 任务 | 证据 |
 | --- | --- | --- |
-| 旧 Java 继续工作，Python policy 不伪装 Java | 1、7、8 | 旧 JSON fixture、真实 store、浏览器 parser、Task 10 Java 回归 |
-| Python / FastAPI 创建即有可运行模板 | 2、6、7、8 | 真实模板 lock、容器启动、浏览器创建/运行 |
-| 浏览器 uv 增删依赖，无终端依赖 | 3、4、8 | 实际 uv add/remove、成对文件内容与 revision、真实浏览器 import |
-| 双文件中断可核对，不重复执行 | 3、4 | 持久化 journal 重建测试、DB PENDING 恢复、同 operationId/摘要 |
-| 缓存提速且不会残留移除的包 | 6、7 | 冷/暖缓存禁网安装、每 Run 新 venv、隔离和回收 |
-| 就绪后两小时，不自动重启 | 5、6、7、10 | 短时真实进程证明 + 独立正式 7200 秒结果 |
-| 端口冲突和项目数据沿用原契约 | 2、7、8、10 | 真实 HTTP、手填值保留、MySQL 持久化 |
-| 完整项目删除，历史诊断不误删 | 7、10 | 资源/DB/PVC/PV/实际存储核对 |
+| 先得到 Python/FastAPI 运行路径，Java 继续可用 | 1–6 | 旧 JSON、真实模板/runner、Job 接入、UI 交互与可用环境的浏览器烟测 |
+| 最小 uv 入口 | 7–9 | 真实 add/remove、两文件最终内容、浏览器 import 与移除 |
+| 中断不盲目重试，成功丢响应可查 | 7–9 | 同 ID/request digest、一个 commit 实现、COMMITTED 查询和一次 revision |
+| FAILED 后仍可继续用户流程 | 8–9 | 完整路由刷新到失败页、卡片入口、owner-scoped pending、原操作核对 |
+| 时限和进程退出 | 3–5、11 | 公共监督器既有测试 + Python 真实进程链 + 独立正式 7200s 结果 |
+| 缓存、数据和清理 | 2、4–6、11 | 固定 seed、私有 cache、新 venv、数据持久化及资源回收 |
 
-所有产品选择已记录；实现中的版本解析、镜像拉取和集群前检是执行步骤，不是已完成证据。若出现会改变上述产品行为的真实限制，先给出具体受影响结果和可审查修改，再向用户确认；不要反复询问已确定的端口、寿命、手动重跑或 uv 入口。
+用户已确定的模板、uv 入口、手填端口、寿命和手动重跑不反复询问。20 秒解析预算和公共 wheel 边界是明确的工程默认与首版支持范围；根据实际测量调整预算无需重启产品设计，但扩大来源/执行构建后端须先说明影响。
+
+本地实现、定向测试和镜像构建完成不等于云端交付。缺环境或发布授权时完成可独立完成的工作，交付具体镜像/迁移/部署清单和未测项目；不能自动提高状态为 PASS，也不能扩大权限或处置历史诊断资源。
