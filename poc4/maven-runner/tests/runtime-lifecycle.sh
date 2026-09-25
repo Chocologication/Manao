@@ -14,7 +14,6 @@ IMAGE="${1:?usage: runtime-lifecycle.sh <runtime-test-image> [prefix]}"
 PREFIX="${2:-manao-rt-$$}"
 
 CONTAINERS=()
-VOLUMES=()
 PASS=0
 FAIL=0
 
@@ -23,8 +22,11 @@ cleanup() {
   for c in "${CONTAINERS[@]:-}"; do
     [ -n "$c" ] && docker rm -f "$c" >/dev/null 2>&1
   done
-  for v in "${VOLUMES[@]:-}"; do
-    [ -n "$v" ] && docker volume rm "$v" >/dev/null 2>&1
+  # Volume names carry the unique per-invocation prefix. The previous per-run array
+  # bookkeeping never survived the command substitution around new_volume, so derive
+  # the list from the exact prefix instead; other runs' resources are never matched.
+  for v in $(docker volume ls -q --filter "name=${PREFIX}-vol-"); do
+    docker volume rm "$v" >/dev/null 2>&1
   done
 }
 trap cleanup EXIT
@@ -35,7 +37,6 @@ fail() { FAIL=$((FAIL+1)); echo "FAIL: $1"; }
 new_volume() {
   local v="${PREFIX}-vol-$1"
   docker volume create "$v" >/dev/null
-  VOLUMES+=("$v")
   echo "$v"
 }
 
@@ -146,6 +147,44 @@ scenario_run_deadline_rules() {
   else
     fail "run-deadline-rules"
   fi
+}
+
+scenario_run_profile_rules() {
+  if docker run --rm "$IMAGE" sh -c 'exec java -ea -cp /opt/manao-runner/classes:/opt/manao-runner/test-classes com.manao.runtime.RunProfileTestMain' >/dev/null 2>&1; then
+    pass "run-profile-rules"
+  else
+    fail "run-profile-rules"
+  fi
+}
+
+# The production main must reject unknown profiles, extra arguments and unknown modes
+# immediately (exit 2), before any claim or user code — nothing may be written to the
+# control directory. The legacy no-profile invocation stays covered by the scenarios
+# below (run without profile must still start and probe without profile must still poll).
+scenario_profile_arguments_rejected() {
+  local label argv name vol code
+  for label in unknown-run unknown-probe extra-run extra-probe; do
+    case "$label" in
+      unknown-run)   argv="run unknown-profile" ;;
+      unknown-probe) argv="probe unknown-profile" ;;
+      extra-run)     argv="run python-fastapi-web extra" ;;
+      extra-probe)   argv="probe java-spring-boot-web web" ;;
+    esac
+    name="${PREFIX}-badargs-$label"
+    vol="$(new_volume "badargs-$label")"
+    CONTAINERS+=("$name")
+    docker run -d --name "$name" -v "${vol}:/run-control" \
+      "$IMAGE" sh -c "$RUN_CMD" supervisor $argv >/dev/null
+    code="$(wait_halt "$name" 30)"
+    [ "$code" = "2" ] || { fail "$name ($argv: exit=$code, want 2)"; return 0; }
+    [ "$(runtime_seconds "$name")" -le 15 ] || fail "$name ($argv: rejection took too long)"
+    if docker run --rm -v "${vol}:/run-control" "$IMAGE" \
+         sh -c 'test ! -e /run-control/claim && test ! -e /run-control/receipt.properties' >/dev/null 2>&1; then
+      pass "$name (rejected with empty control dir: $argv)"
+    else
+      fail "$name ($argv wrote claim or receipt despite rejection)"
+    fi
+  done
 }
 
 scenario_readiness_gates_lifetime() {
@@ -381,6 +420,8 @@ scenario_manual_stop() {
 }
 
 scenario_run_deadline_rules
+scenario_run_profile_rules
+scenario_profile_arguments_rejected
 scenario_readiness_gates_lifetime
 scenario_derived_dies_with_pid1
 scenario_early_exit_no_rerun 0
