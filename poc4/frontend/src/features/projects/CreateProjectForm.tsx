@@ -174,6 +174,13 @@ export function CreateProjectForm({
           setAwaitingConfirmation(true);
           return;
         }
+        if (reason.body?.code === 'PUBLIC_PORT_PREFLIGHT_UNAVAILABLE') {
+          // Uncertain preflight: the port is neither occupied nor free and nothing was
+          // created, so the inputs and the creation key stay valid for the retry.
+          setError('Public port availability cannot be verified right now. Try again in a moment.');
+          setAwaitingConfirmation(false);
+          return;
+        }
         setError(reason.body?.message ?? 'Unable to create project');
         setPendingKey(null);
         setAwaitingConfirmation(false);

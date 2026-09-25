@@ -21,13 +21,18 @@
 #   Existing pods/exec create stays for fixed-receipt reads; websocket-based exec (the
 #     receipt reader's transport) is a GET on the pods/exec subresource, so get is granted
 #     alongside create. Cross-namespace port conflicts
-#   are decided by the API server; no cluster-wide Service listing, no cluster-admin and no
-#   PV delete verbs are granted anywhere.
-# ClusterRole: read-only and independent of the namespace Role - get/list persistentvolumes
-#   and get storageclasses, which the runtime increment needs to record the bound MySQL PV
-#   identity (rememberMysqlClaim) and ProjectCleanupService needs to verify PV release after
-#   PVC deletion and to resolve the configured StorageClass. No PV write or delete verbs are
-#   granted anywhere.
+#   are decided by the API server; the cluster-wide Service list below is read-only and
+#   only feeds the create-time preflight.
+# ClusterRole: read-only and independent of the namespace Role - get/list persistentvolumes,
+#   get storageclasses, and list core services. The runtime increment needs the PV/storage
+#   reads to record the bound MySQL PV identity (rememberMysqlClaim) and so that
+#   ProjectCleanupService can verify PV release after PVC deletion and resolve the
+#   configured StorageClass. The cluster-wide, label-blind services list serves only
+#   Fabric8PublicEndpointGateway.checkNodePortsAvailable: the create-time NodePort
+#   occupancy preflight that rejects a request before any project row is written. It is
+#   read-only, never used to choose or substitute a port, and the Service create remains
+#   the authoritative final judge of a race. No cluster-admin, no cross-namespace write,
+#   no PV write or delete verbs are granted anywhere.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
@@ -104,6 +109,11 @@ metadata:
 # (name/uid, never content) when registering a project's MySQL claim for the deletion
 # contract (Fabric8ProjectDependencies.rememberMysqlClaim) and verifies PV release after
 # PVC deletion (ProjectCleanupService). No PV write, delete or content access is granted.
+# list core services (2026-09-25 port-conflict preflight): the read-only, label-blind
+# cluster-wide Service list behind Fabric8PublicEndpointGateway.checkNodePortsAvailable,
+# which rejects a requested NodePort before any project row is written when any Service in
+# any namespace already owns it. List-only: it never chooses, substitutes or "frees" a
+# port, and the Service create remains the authoritative final judge of a race.
 rules:
   - apiGroups: [""]
     resources: ["persistentvolumes"]
@@ -111,6 +121,9 @@ rules:
   - apiGroups: ["storage.k8s.io"]
     resources: ["storageclasses"]
     verbs: ["get"]
+  - apiGroups: [""]
+    resources: ["services"]
+    verbs: ["list"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding

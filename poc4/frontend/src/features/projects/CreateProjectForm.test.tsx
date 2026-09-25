@@ -253,6 +253,41 @@ describe('CreateProjectForm creation key', () => {
     expect(bodies[1]?.creationKey).toBe(firstKey);
   });
 
+  it('keeps the inputs and the creation key when the preflight is unavailable', async () => {
+    // A 503 PUBLIC_PORT_PREFLIGHT_UNAVAILABLE means the cluster pre-check itself could not
+    // run: the port is neither occupied nor free, nothing was created, so the form keeps
+    // every input and the retry reuses the same creation key.
+    const user = userEvent.setup();
+    const bodies: PostBody[] = [];
+    server.use(
+      http.post('/api/v1/projects', async ({ request }) => {
+        bodies.push((await request.json()) as PostBody);
+        return HttpResponse.json(
+          {
+            code: 'PUBLIC_PORT_PREFLIGHT_UNAVAILABLE',
+            message: 'Public port availability cannot be verified right now. Try again later.',
+            traceId: 'trace-preflight-unknown',
+          },
+          { status: 503 },
+        );
+      }),
+    );
+    await authenticateAsAlice();
+    renderApp({ initialEntries: ['/projects'] });
+    await fillWebForm(user, 'demo');
+    await user.type(screen.getByLabelText('Public port 1'), '30081');
+    await user.click(screen.getByRole('button', { name: 'Create project' }));
+    expect(await screen.findByText(/cannot be verified right now/i)).toBeVisible();
+    expect(screen.getByLabelText('Project name')).toHaveValue('demo');
+    expect(screen.getByLabelText('Public port 1')).toHaveValue(30081);
+
+    await user.click(screen.getByRole('button', { name: 'Create project' }));
+    await waitFor(() => {
+      expect(bodies).toHaveLength(2);
+    });
+    expect(bodies[1]?.creationKey).toBe(bodies[0]?.creationKey);
+  });
+
   it('uses a new creation key after a deterministic rejection', async () => {
     const user = userEvent.setup();
     const bodies: PostBody[] = [];

@@ -87,11 +87,17 @@ public final class ProjectController {
     }
 
     /**
-     * Fixed creation order: validate the exact ports against the reserved set -> atomically
-     * persist key/digest/CREATING -> apply the port group -> only a confirmed application
-     * continues into workspace provisioning. A deterministic conflict cancels the temporary
-     * row (quota is free again); an unknown outcome keeps the record queryable. A retry with
-     * the same key and digest reuses the stable application; it never creates a second project.
+     * Fixed creation order: validate the exact ports against the reserved set -> resolve the
+     * keyed replay (the attempt's own Service must never be misread as a new conflict) ->
+     * best-effort cluster-wide NodePort occupancy preflight -> atomically persist
+     * key/digest/CREATING -> apply the port group -> only a confirmed application continues
+     * into workspace provisioning. The preflight is a courtesy rejection before any side
+     * effect; the Kubernetes Service create stays the authoritative final judge of a race,
+     * and an unreadable cluster fails closed with PUBLIC_PORT_PREFLIGHT_UNAVAILABLE (503)
+     * before the insert without claiming the port occupied or free. A deterministic conflict
+     * cancels the temporary row (quota is free again); an unknown outcome keeps the record
+     * queryable. A retry with the same key and digest reuses the stable application; it never
+     * creates a second project.
      */
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
@@ -103,6 +109,25 @@ public final class ProjectController {
         if (request.configured() && creationKey == null) {
             // A configured form without a creation key would silently drop the config; refuse it.
             throw new ApiException("VALIDATION_ERROR", 422, "Request validation failed");
+        }
+        // Keyed replay first: a re-entered attempt (lost response) keeps its original project
+        // identity and skips the preflight entirely, because its own Service already holds
+        // the same ports. The digest check still happens inside the keyed creation.
+        boolean replay = creationKey != null
+            && projects.findCreation(ownerId, creationKey).isPresent();
+        if (!replay && endpoints != null && !runtime.publicPorts().isEmpty()) {
+            PublicEndpointGateway.PreflightResult preflight =
+                endpoints.checkNodePortsAvailable(runtime.publicPorts());
+            if (preflight == PublicEndpointGateway.PreflightResult.IN_USE) {
+                throw new ApiException("PUBLIC_PORT_IN_USE", 409,
+                    "Public port is already in use. Choose another port.");
+            }
+            if (preflight == PublicEndpointGateway.PreflightResult.UNKNOWN) {
+                // Uncertain, not occupied and not free: fail closed before the insert so no
+                // row, no Service and no quota are ever consumed by an unreadable preflight.
+                throw new ApiException("PUBLIC_PORT_PREFLIGHT_UNAVAILABLE", 503,
+                    "Public port availability cannot be verified right now. Try again later.");
+            }
         }
         java.util.Optional<ProjectService.Project> created =
             projects.create(ownerId, request.name(), creationKey, runtime);

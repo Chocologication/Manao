@@ -10,8 +10,12 @@ import io.fabric8.kubernetes.api.model.ServicePortBuilder;
 import io.fabric8.kubernetes.client.KubernetesClient;
 import io.fabric8.kubernetes.client.KubernetesClientException;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Fabric8-backed application of the exact user-selected public ports. One Service
@@ -20,6 +24,7 @@ import java.util.Map;
  * application is exposed here; the workspace Service is never touched.
  */
 public final class Fabric8PublicEndpointGateway implements PublicEndpointGateway {
+    private static final Logger LOG = LoggerFactory.getLogger(Fabric8PublicEndpointGateway.class);
     static final String LABEL_RUN_ID = "manao.poc4/run-id";
     static final String LABEL_PROJECT_ID = "manao.poc4/project-id";
     static final String LABEL_COMPONENT = "manao.poc4/component";
@@ -42,6 +47,46 @@ public final class Fabric8PublicEndpointGateway implements PublicEndpointGateway
     }
 
     public static String serviceName(String projectId) { return "manao-app-" + projectId; }
+
+    /**
+     * Cluster-wide, label-blind read of every Service's nodePorts: any Service anywhere that
+     * already holds a requested port makes the request reject before insertion, platform-owned
+     * or not. A list that cannot be read (Forbidden, timeout, network error) or a null result
+     * is UNKNOWN — never an empty cluster — so an unreadable state can never pass as "free".
+     * The verdict is advisory only; the Service create below stays the final judge.
+     */
+    @Override public PreflightResult checkNodePortsAvailable(List<ProjectRuntimeSpec.Port> ports) {
+        Set<Integer> requested = new HashSet<>();
+        for (ProjectRuntimeSpec.Port port : ports) {
+            requested.add(port.publicPort());
+        }
+        List<Service> services;
+        try {
+            services = client.services().inAnyNamespace().list().getItems();
+        } catch (RuntimeException ex) {
+            LOG.warn("public-port preflight could not list cluster Services; the requested "
+                + "ports' availability is unknown", ex);
+            return PreflightResult.UNKNOWN;
+        }
+        if (services == null) {
+            LOG.warn("public-port preflight list returned no result; availability is unknown");
+            return PreflightResult.UNKNOWN;
+        }
+        for (Service service : services) {
+            List<ServicePort> servicePorts = service.getSpec() == null
+                ? null : service.getSpec().getPorts();
+            if (servicePorts == null) {
+                continue;
+            }
+            for (ServicePort servicePort : servicePorts) {
+                Integer nodePort = servicePort.getNodePort();
+                if (nodePort != null && requested.contains(nodePort)) {
+                    return PreflightResult.IN_USE;
+                }
+            }
+        }
+        return PreflightResult.AVAILABLE;
+    }
 
     @Override public ApplyResult ensure(String projectId, List<ProjectRuntimeSpec.Port> ports) {
         String name = serviceName(projectId);

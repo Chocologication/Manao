@@ -78,6 +78,8 @@ class ProjectCreateHttpContractTest {
 
     @Test
     void deterministicPortConflictCancelsTheTemporaryRowAndReleasesQuota() throws Exception {
+        // Preflight green, then the Service create hits the allocation conflict: the API
+        // server stays the final judge of the race between the two steps.
         endpoints.result = PublicEndpointGateway.ApplyResult.CONFLICT;
         mvc().perform(post("/api/v1/projects").principal(owner())
                 .contentType("application/json")
@@ -85,6 +87,9 @@ class ProjectCreateHttpContractTest {
             .andExpect(status().isConflict())
             .andExpect(jsonPath("$.code").value("PUBLIC_PORT_IN_USE"))
             .andExpect(jsonPath("$.message").value("Public port is already in use. Choose another port."));
+        // The read-only preflight ran once, before the row; the conflict was still decided
+        // only by the create attempt.
+        assertThat(endpoints.preflightCalls).hasSize(1);
         // The user's exact ports were applied once; no substitution or retry with other ports.
         assertThat(endpoints.calls).hasSize(1);
         assertThat(endpoints.calls.get(0).get(0).publicPort()).isEqualTo(30081);
@@ -95,6 +100,81 @@ class ProjectCreateHttpContractTest {
                 .contentType("application/json")
                 .content(request("key-2", 30082)))
             .andExpect(status().isCreated());
+    }
+
+    @Test
+    void anOccupiedNodePortIsRejectedBeforeAnyRowOrApplicationAttempt() throws Exception {
+        endpoints.preflightResult = PublicEndpointGateway.PreflightResult.IN_USE;
+        mvc().perform(post("/api/v1/projects").principal(owner())
+                .contentType("application/json")
+                .content(request("key-1", 30081)))
+            .andExpect(status().isConflict())
+            .andExpect(jsonPath("$.code").value("PUBLIC_PORT_IN_USE"))
+            .andExpect(jsonPath("$.message").value("Public port is already in use. Choose another port."));
+        // The preflight observed the exact requested group once; no project row was inserted
+        // and the Service application was never attempted.
+        assertThat(endpoints.preflightCalls).hasSize(1);
+        assertThat(endpoints.preflightCalls.get(0).get(0).publicPort()).isEqualTo(30081);
+        assertThat(endpoints.calls).isEmpty();
+        assertThat(projectCount()).isZero();
+        // Nothing was consumed by the rejection: the owner keeps the full quota.
+        endpoints.preflightResult = PublicEndpointGateway.PreflightResult.AVAILABLE;
+        mvc().perform(post("/api/v1/projects").principal(owner())
+                .contentType("application/json")
+                .content(request("key-2", 30082)))
+            .andExpect(status().isCreated());
+    }
+
+    @Test
+    void anUncertainPreflightFailsClosedBeforeTheInsertWithoutClaimingOccupancy() throws Exception {
+        endpoints.preflightResult = PublicEndpointGateway.PreflightResult.UNKNOWN;
+        mvc().perform(post("/api/v1/projects").principal(owner())
+                .contentType("application/json")
+                .content(request("key-1", 30081)))
+            .andExpect(status().isServiceUnavailable())
+            .andExpect(jsonPath("$.code").value("PUBLIC_PORT_PREFLIGHT_UNAVAILABLE"))
+            .andExpect(jsonPath("$.message")
+                .value("Public port availability cannot be verified right now. Try again later."));
+        // Fail closed: no row, no Service create, no quota consumption, no occupancy claim.
+        assertThat(endpoints.calls).isEmpty();
+        assertThat(projectCount()).isZero();
+    }
+
+    @Test
+    void aKeyedReplayNeverMistakesItsOwnServiceForANewConflict() throws Exception {
+        String firstId = mvc().perform(post("/api/v1/projects").principal(owner())
+                .contentType("application/json")
+                .content(request("key-1", 30081)))
+            .andExpect(status().isCreated())
+            .andReturn().getResponse().getContentAsString();
+        String projectId = new ObjectMapper().readTree(firstId).path("id").asText();
+
+        // The project's own Service now occupies 30081, exactly what a naive cluster-wide
+        // preflight would report. The replay resolves the keyed identity instead.
+        endpoints.preflightResult = PublicEndpointGateway.PreflightResult.IN_USE;
+        mvc().perform(post("/api/v1/projects").principal(owner())
+                .contentType("application/json")
+                .content(request("key-1", 30081)))
+            .andExpect(status().isCreated())
+            .andExpect(jsonPath("$.id").value(projectId));
+        // The only preflight ever run was the original creation's: the replay added none.
+        assertThat(endpoints.preflightCalls).hasSize(1);
+        assertThat(projectCount()).isEqualTo(1);
+    }
+
+    @Test
+    void aKeyedReplayWithADifferentDigestStillReportsTheRequestMismatch() throws Exception {
+        mvc().perform(post("/api/v1/projects").principal(owner())
+                .contentType("application/json")
+                .content(request("key-1", 30081)))
+            .andExpect(status().isCreated());
+        endpoints.preflightResult = PublicEndpointGateway.PreflightResult.IN_USE;
+        mvc().perform(post("/api/v1/projects").principal(owner())
+                .contentType("application/json")
+                .content(request("key-1", 30082)))
+            .andExpect(status().isConflict())
+            .andExpect(jsonPath("$.code").value("CREATE_REQUEST_MISMATCH"));
+        assertThat(projectCount()).isEqualTo(1);
     }
 
     @Test
@@ -356,11 +436,19 @@ class ProjectCreateHttpContractTest {
             .andExpect(jsonPath("$.endpoints").isEmpty());
     }
 
-    /** Scriptable gateway fake recording every application attempt. */
+    /** Scriptable gateway fake recording every preflight and application attempt. */
     private static final class FakePublicEndpoints implements PublicEndpointGateway {
         ApplyResult result = ApplyResult.CONFIRMED;
+        PublicEndpointGateway.PreflightResult preflightResult = PublicEndpointGateway.PreflightResult.AVAILABLE;
         final List<String> projectIds = new ArrayList<>();
         final List<List<ProjectRuntimeSpec.Port>> calls = new ArrayList<>();
+        final List<List<ProjectRuntimeSpec.Port>> preflightCalls = new ArrayList<>();
+
+        @Override public PublicEndpointGateway.PreflightResult checkNodePortsAvailable(
+                List<ProjectRuntimeSpec.Port> ports) {
+            preflightCalls.add(ports);
+            return preflightResult;
+        }
 
         @Override public ApplyResult ensure(String projectId, List<ProjectRuntimeSpec.Port> ports) {
             projectIds.add(projectId);

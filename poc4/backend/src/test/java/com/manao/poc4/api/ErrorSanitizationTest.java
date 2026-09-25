@@ -55,6 +55,18 @@ class ErrorSanitizationTest {
     }
 
     @Test
+    void publicPortPreflightUnavailableKeepsFixedCodeAndSafeMessage() {
+        // An uncertain preflight must fail closed without revealing anything: no occupied/free
+        // claim, no namespace, no owner and no raw Kubernetes reason may reach the browser.
+        ApiError error = new ApiError("PUBLIC_PORT_PREFLIGHT_UNAVAILABLE",
+            "Forbidden: services is forbidden for user manao-backend in namespace other-ns", null);
+        assertThat(error.code()).isEqualTo("PUBLIC_PORT_PREFLIGHT_UNAVAILABLE");
+        assertThat(error.message())
+            .isEqualTo("Public port availability cannot be verified right now. Try again later.");
+        assertThat(error.toString()).doesNotContain("forbidden", "other-ns", "manao-backend");
+    }
+
+    @Test
     void creationMismatchKeepsItsFixedCodeAndSafeMessage() {
         assertThat(new ApiError("CREATE_REQUEST_MISMATCH", "digest abc123 does not match def456", null))
             .extracting(ApiError::code, ApiError::message)

@@ -13,7 +13,7 @@ Files:
 | `namespace.yaml` | Namespace `manao-stage6b` |
 | `mysql.yaml` | MySQL 8.0 StatefulSet + headless Service `mysql:3306` + PVC (StorageClass `nfs-storage`) |
 | `service-accounts.yaml` | `manao-backend` (token mounted), `manao-workspace-agent` and `manao-maven-runner` (no permissions, no token automount) |
-| `backend-rbac.yaml` | Namespace Role for workload resources + read-only ClusterRole (`list persistentvolumes`, `get storageclasses`); since the 2026-09-22 Java runtime increment the Role also covers per-project statefulsets, Redis deployments/replicasets, secrets, networkpolicies, services patch/update and pod label patch (section 10) |
+| `backend-rbac.yaml` | Namespace Role for workload resources + read-only ClusterRole (`list persistentvolumes`, `get storageclasses`, `list services`); since the 2026-09-22 Java runtime increment the Role also covers per-project statefulsets, Redis deployments/replicasets, secrets, networkpolicies, services patch/update and pod label patch; since the 2026-09-25 preflight increment the ClusterRole additionally grants the read-only cluster-wide `services list` used by the create-time NodePort occupancy preflight (section 10) |
 | `backend.yaml` | Backend Service (ClusterIP 8080) + Deployment (replicas 1, Recreate, probes, full config contract) |
 | `frontend.yaml` | Frontend Service (**NodePort 30080**, commented ClusterIP alternative) + Deployment (replicas 1, probes); image placeholder must be substituted before apply |
 | `configmap.yaml` | Non-secret ConfigMap `manao-backend-config` (`MANAO_WS_EXTRA_ORIGIN` = accepted public origin, `MANAO_WORKSPACE_STORAGE_CLASS` = `manao-poc4-delete`, plus the five runtime-deps keys `MANAO_PUBLIC_ENTRY_HOST` / `MANAO_RESERVED_PUBLIC_PORTS` / `MANAO_MYSQL_IMAGE_DIGEST` / `MANAO_REDIS_IMAGE_DIGEST` / `MANAO_MYSQL_STORAGE_CLASS`, see 6/6.1) |
@@ -509,9 +509,18 @@ never by rewriting the closed 6B PASS above.
 - `services`: + patch/update (public-endpoint selector routing);
 - `pods`: + patch (server-verified pod identity label before routing).
 
-Deliberately NOT granted: cluster-wide Service listing, cluster-admin, any PV
-write/delete. Cross-namespace NodePort conflicts are decided by the API server
-at creation time (fail-closed), not by listing cluster Services. Re-apply with
+Since the 2026-09-25 preflight increment, the read-only ClusterRole additionally
+grants core `services` **list** (cluster-wide): the create-time NodePort
+occupancy preflight (`Fabric8PublicEndpointGateway.checkNodePortsAvailable`)
+reads every Service's nodePorts across namespaces and rejects a request with 409
+`PUBLIC_PORT_IN_USE` before any project row is written when any Service already
+owns a requested port. The grant is list-only, label-blind, never used to choose
+or substitute a port; an unreadable list (Forbidden, timeout) fails closed with
+503 `PUBLIC_PORT_PREFLIGHT_UNAVAILABLE`, and the Service create remains the
+authoritative final judge of a race between preflight and creation.
+
+Deliberately NOT granted: cluster-admin, any cross-namespace write, any Service
+create/delete outside `manao-stage6b`, any PV write/delete. Re-apply with
 `kubectl apply -f poc4/deploy/6b/backend-rbac.yaml`, then roll the backend.
 
 ### 10.2 Runtime dependency images (no placeholder digests)
@@ -566,8 +575,10 @@ request that selects one of these ports. It ships in ConfigMap
 `manao-backend-config` since 2026-09-22 and is injected via `backend.yaml`.
 Operator-assigned acceptance ports (30281/30282) are deliberately NOT in this
 list: a project claims them through its own creation, and afterwards the API
-server rejects any conflicting NodePort at Service creation — fail-closed, no
-cluster-wide Service listing. (Correction recorded 2026-09-22: the first wiring
+server rejects any conflicting NodePort at Service creation — fail-closed. Since
+the 2026-09-25 preflight increment, the cluster-wide Service listing is granted
+read-only for the create-time occupancy preflight (section 10.1); it never
+frees or substitutes a port. (Correction recorded 2026-09-22: the first wiring
 shipped `30080,30281,30282`, which made the acceptance project's own creation
 fail with PUBLIC_PORT_RESERVED; the value is now `30080`.)
 

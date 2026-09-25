@@ -7,6 +7,7 @@ import com.manao.poc4.project.ProjectRuntimeSpec;
 import io.fabric8.kubernetes.api.model.IntOrString;
 import io.fabric8.kubernetes.api.model.Service;
 import io.fabric8.kubernetes.api.model.ServiceBuilder;
+import io.fabric8.kubernetes.api.model.ServiceListBuilder;
 import io.fabric8.kubernetes.api.model.ServicePortBuilder;
 import io.fabric8.kubernetes.api.model.Status;
 import io.fabric8.kubernetes.api.model.StatusBuilder;
@@ -166,6 +167,88 @@ class PublicEndpointGatewayTest {
         assertThat(gateway.ensure("p1", changed)).isEqualTo(PublicEndpointGateway.ApplyResult.UNKNOWN);
         Service unchanged = client.services().inNamespace(NS).withName("manao-app-p1").get();
         assertThat(unchanged.getSpec().getPorts().get(0).getNodePort()).isEqualTo(30081);
+    }
+
+    @Test
+    void aForeignNodePortInAnyNamespaceIsReportedInUse() {
+        // Cluster-wide and label-blind: any Service anywhere that already owns the requested
+        // nodePort rejects the request before a project row exists, regardless of its owner.
+        Service foreign = new ServiceBuilder()
+            .withNewMetadata().withName("someone-else").withNamespace("kube-system").endMetadata()
+            .withNewSpec().withType("NodePort")
+            .withPorts(new ServicePortBuilder().withName("web").withPort(8080)
+                .withNodePort(30081).build())
+            .endSpec()
+            .build();
+        server.expect().get().withPath("/api/v1/services")
+            .andReturn(200, new ServiceListBuilder().withItems(foreign).build()).always();
+
+        var ports = List.of(new ProjectRuntimeSpec.Port("web", 8080, 30081));
+        assertThat(gateway.checkNodePortsAvailable(ports))
+            .isEqualTo(PublicEndpointGateway.PreflightResult.IN_USE);
+    }
+
+    @Test
+    void anyPortOfAGroupTriggersThePreflightRejection() {
+        // A three-port group is rejected as a whole when only one member is already taken.
+        Service foreign = new ServiceBuilder()
+            .withNewMetadata().withName("other-project").withNamespace("other-ns").endMetadata()
+            .withNewSpec().withType("NodePort")
+            .withPorts(new ServicePortBuilder().withName("metrics").withPort(9090)
+                .withNodePort(30090).build())
+            .endSpec()
+            .build();
+        server.expect().get().withPath("/api/v1/services")
+            .andReturn(200, new ServiceListBuilder().withItems(foreign).build()).always();
+
+        var ports = List.of(new ProjectRuntimeSpec.Port("web", 8080, 30081),
+            new ProjectRuntimeSpec.Port("metrics", 9090, 30090),
+            new ProjectRuntimeSpec.Port("admin", 8081, 30095));
+        assertThat(gateway.checkNodePortsAvailable(ports))
+            .isEqualTo(PublicEndpointGateway.PreflightResult.IN_USE);
+    }
+
+    @Test
+    void servicesWithoutNodePortsNeverBlockTheRequest() {
+        Service clusterIp = new ServiceBuilder()
+            .withNewMetadata().withName("headless-thing").withNamespace("other-ns").endMetadata()
+            .withNewSpec().withType("ClusterIP")
+            .withPorts(new ServicePortBuilder().withName("web").withPort(8080).build())
+            .endSpec()
+            .build();
+        server.expect().get().withPath("/api/v1/services")
+            .andReturn(200, new ServiceListBuilder().withItems(clusterIp).build()).always();
+
+        var ports = List.of(new ProjectRuntimeSpec.Port("web", 8080, 30081));
+        assertThat(gateway.checkNodePortsAvailable(ports))
+            .isEqualTo(PublicEndpointGateway.PreflightResult.AVAILABLE);
+    }
+
+    @Test
+    void aForbiddenServiceListIsUnknownNeverFree() {
+        // The namespace Role grants services list only inside manao-stage6b until the narrow
+        // cluster grant rolls out: a 403 must never read as "the cluster is empty".
+        server.expect().get().withPath("/api/v1/services")
+            .andReturn(403, new StatusBuilder().withCode(403).withReason("Forbidden")
+                .withMessage("services is forbidden: cannot list at the cluster scope").build())
+            .always();
+
+        var ports = List.of(new ProjectRuntimeSpec.Port("web", 8080, 30081));
+        assertThat(gateway.checkNodePortsAvailable(ports))
+            .isEqualTo(PublicEndpointGateway.PreflightResult.UNKNOWN);
+    }
+
+    @Test
+    void aFailingServiceListIsUnknownNotEmpty() {
+        // Timeout and network errors surface as transport failures the same way: an unreadable
+        // cluster is an uncertain answer, never evidence of availability.
+        server.expect().get().withPath("/api/v1/services")
+            .andReturn(500, new StatusBuilder().withCode(500).withReason("InternalError")
+                .withMessage("etcdserver: request timed out").build()).always();
+
+        var ports = List.of(new ProjectRuntimeSpec.Port("web", 8080, 30081));
+        assertThat(gateway.checkNodePortsAvailable(ports))
+            .isEqualTo(PublicEndpointGateway.PreflightResult.UNKNOWN);
     }
 
     @Test

@@ -9,6 +9,15 @@ import java.util.List;
  * gateway cannot judge (transport errors, non-port 422s, foreign resources) stays UNKNOWN.
  */
 public interface PublicEndpointGateway {
+
+    /**
+     * Read-only, best-effort occupancy check across every namespace, run BEFORE a project row
+     * exists. It is only a courtesy rejection: the Service create below stays the authoritative
+     * final judge of a race, and an uncertain answer (Forbidden, timeout, network error, null
+     * result) is UNKNOWN — never "free" and never a conflict claim.
+     */
+    PreflightResult checkNodePortsAvailable(List<ProjectRuntimeSpec.Port> ports);
+
     ApplyResult ensure(String projectId, List<ProjectRuntimeSpec.Port> ports);
 
     /** Points the stable project Service selector at one concrete application run. */
@@ -18,4 +27,6 @@ public interface PublicEndpointGateway {
     void withdraw(String projectId);
 
     enum ApplyResult { CONFIRMED, CONFLICT, UNKNOWN }
+
+    enum PreflightResult { AVAILABLE, IN_USE, UNKNOWN }
 }

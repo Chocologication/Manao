@@ -673,6 +673,10 @@ public class RunControllerTest {
         public final List<String> routed = new ArrayList<>();
         public final List<String> withdrawn = new ArrayList<>();
 
+        @Override public PreflightResult checkNodePortsAvailable(List<ProjectRuntimeSpec.Port> ports) {
+            return PreflightResult.AVAILABLE;
+        }
+
         @Override public ApplyResult ensure(String projectId, List<ProjectRuntimeSpec.Port> ports) {
             return ApplyResult.CONFIRMED;
         }
