@@ -204,12 +204,15 @@ public final class WorkspaceApiClient implements WorkspaceAgent {
     }
 
     /**
-     * A connection reset can surface as a plain {@link java.io.IOException} ("Connection reset by peer")
-     * instead of a {@link SocketException}, depending on where the read fails; only match that explicit
-     * message so every other unspecified IOException stays fail-closed OTHER.
+     * A connection reset can surface as a plain {@link java.io.IOException} ("Connection reset by peer"
+     * on Windows, "Connection reset" on Linux) instead of a {@link SocketException}; accept exactly
+     * those JDK reset messages so anything else - including phrases that merely mention a reset,
+     * such as negations - stays fail-closed OTHER.
      */
     private static boolean isConnectionReset(String message) {
-        return message != null && message.toLowerCase(Locale.ROOT).contains("connection reset");
+        if (message == null) return false;
+        String normalized = message.toLowerCase(Locale.ROOT);
+        return normalized.equals("connection reset") || normalized.equals("connection reset by peer");
     }
     private static MutationResult mutationFrom(JsonNode node) {
         return new MutationResult(text(node, "operationId"), text(node, "path"), text(node, "beforeSha256"),

@@ -94,11 +94,24 @@ class WorkspaceApiClientTransportTest {
     }
 
     @Test
+    void classifiesAConnectionResetMessageAsReset() {
+        assertThat(WorkspaceApiClient.classifyTransportFailure(new IOException("Connection reset")))
+            .isEqualTo(WorkspaceAgentException.TransportFailure.RESET);
+    }
+
+    @Test
     void keepsAnIoExceptionWithoutAnExplicitResetSignalAsOther() {
         IOException failure = new IOException("HTTP/1.1 header parser received no bytes",
             new IOException("broken pipe"));
 
         assertThat(WorkspaceApiClient.classifyTransportFailure(failure))
+            .isEqualTo(WorkspaceAgentException.TransportFailure.OTHER);
+    }
+
+    @Test
+    void keepsAnIoExceptionThatMentionsAResetWithoutBeingOneAsOther() {
+        assertThat(WorkspaceApiClient.classifyTransportFailure(
+            new IOException("connection reset was not observed")))
             .isEqualTo(WorkspaceAgentException.TransportFailure.OTHER);
     }
 
