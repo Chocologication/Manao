@@ -5,8 +5,8 @@
 #   bash poc4/python-runner/tests/python-cache.sh <runtime-test-image> [prefix]
 #
 # Proves the seed/cache contract of design section 6 with real containers in the
-# production shape (UID/GID 10001, read-only rootfs, writable per-container /tmp like the
-# Job's emptyDir, per-project cache volume, per-run venv in /tmp):
+# production shape (UID/GID 10001, read-only rootfs, writable per-container /tmp like
+# the Job's emptyDir, per-project cache volume, per-run venv in /tmp):
 #   seed-content           the image carries a read-only seed (seed-id + uv cache) built
 #                          from the real exported templates; no template sources inside
 #   cold-cache-offline     an empty project cache plus disabled network still starts the
@@ -25,263 +25,50 @@
 #   cache-isolation        two projects' caches never see each other: the project that
 #                          downloaded a package keeps it, the other project's cache never
 #                          gains it and still works offline
-#   missing-dir-repair     a wiped cache directory is re-seeded and works offline again
+#   missing-dir-repair     a wiped cache directory (everything, marker included) is
+#                          re-seeded and works offline again
+#   cache-dir-only-repair  a cache directory deleted while its stale completion marker
+#                          survives is re-seeded by the next run (the seed decision keys
+#                          on the target directory, never on the marker alone)
 #   interrupted-seed       killing the seed copy leaves no completion marker; the next
 #                          run sweeps the temp directory and repairs the cache
 #
-# Every container and volume is created under a per-invocation prefix and removed by
-# exact name on exit; volume names embed the host pid and a same-name leftover must
-# prove, from the daemon's own clock, that it predates this invocation. Assertions use
-# container exit codes, receipts, cache state hashes and files copied out of containers —
-# never log text matching alone (application markers like HTTPX-OK are produced by the
-# fixture program itself, not by the harness grepping uv logs). Test-only failure
-# injection (throttled cp shim) lives in per-run test volumes and is activated only by
-# the harness's PATH override; images contain no such file and the launcher reads no
-# environment beyond its fixed variables.
-set -u
+# Docker ownership (names, registration, volume identity, registry, cleanup) is shared
+# with runtime-lifecycle.sh via tests/lib.sh — the hardened Task 3 pattern. Assertions
+# use container exit codes, receipts, cache state hashes and files copied out of
+# containers — never log text matching alone (application markers like HTTPX-OK are
+# produced by the fixture program itself, not by the harness grepping uv logs).
+# Test-only failure injection (throttled cp shim) lives in per-run test volumes and is
+# activated only by the harness's PATH override; images contain no such file and the
+# launcher reads no environment beyond its fixed variables.
+set -euo pipefail
 
 IMAGE="${1:?usage: python-cache.sh <runtime-test-image> [prefix]}"
 PREFIX="${2:-manao-py-cache-$$}"
+HARNESS_NAME="python-cache"
 
 if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
   echo "python-cache: image '$IMAGE' does not exist; build it first (task 4 step 2)" >&2
   exit 2
 fi
 
-CONTAINERS=()
-VOLUMES=()
-LOGS=()
-PASS=0
-FAIL=0
-CASE_EXIT=""
-SEED_ID=""
+SOURCE_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=lib.sh
+. "$SOURCE_DIR/lib.sh"
+
+harness_init
+
+SHIM_DELAY="${SHIM_DELAY:-0.02}"
 COLD_CACHE=""
 COLD_WS=""
 DEPS_CACHE=""
-SHIM_DELAY="${SHIM_DELAY:-0.02}"
 
-dc() { MSYS_NO_PATHCONV=1 docker "$@"; }
-
-# Same as dc() with a hard timeout: one-shot helper containers (prep, fixture writers)
-# must never hang the whole harness on an intermittent Docker Desktop attach stall.
-# An external timeout cannot execute the dc() shell function, hence the direct form.
-dc_t() { local t="$1"; shift; MSYS_NO_PATHCONV=1 timeout "$t" docker "$@"; }
-
-cleanup() {
-  local c v l
-  for c in "${CONTAINERS[@]:-}"; do
-    [ -n "$c" ] && docker rm -f "$c" >/dev/null 2>&1
-  done
-  for v in "${VOLUMES[@]:-}"; do
-    [ -n "$v" ] && docker volume rm "$v" >/dev/null 2>&1
-  done
-  for l in "${LOGS[@]:-}"; do
-    [ -n "$l" ] && rm -f "$l"
-  done
-}
-trap cleanup EXIT
-
-pass() { PASS=$((PASS+1)); echo "PASS: $1"; }
-fail() { FAIL=$((FAIL+1)); echo "FAIL: $1"; }
-
-# SCRIPT_START is the daemon's own clock reading at invocation start, taken from the
-# CreatedAt of a short-lived probe volume — deliberately NOT the host `date`, so the
-# staleness comparison in new_volume is made in daemon time on both sides and stays
-# sound under host/daemon skew.
-CLOCK_PROBE="${PREFIX}-$$-vol-clockref-$RANDOM"
-if ! docker volume create "$CLOCK_PROBE" >/dev/null 2>&1; then
-  echo "python-cache: cannot create clock probe $CLOCK_PROBE to read the daemon clock" >&2
-  exit 1
-fi
-SCRIPT_START="$(date -u -d "$(docker volume inspect -f '{{.CreatedAt}}' "$CLOCK_PROBE")" +%Y-%m-%dT%H:%M:%SZ)" || {
-  echo "python-cache: cannot read the daemon clock from $CLOCK_PROBE" >&2
-  exit 1
-}
-docker volume rm "$CLOCK_PROBE" >/dev/null 2>&1 || VOLUMES+=("$CLOCK_PROBE")
-
-volume_state() { # NAME
-  local out st=0
-  out="$(docker volume inspect -f '{{.CreatedAt}}' "$1" 2>&1)" || st=$?
-  if [ "$st" -eq 0 ]; then
-    printf '%s' "$out"
-    return 0
-  fi
-  case "$out" in
-    *"no such volume"*|*"No such volume"*) return 1 ;;
-    *) printf '%s' "$out"; return 2 ;;
-  esac
-}
-
-# Same ownership discipline as runtime-lifecycle.sh: pid-embedded names, semantic
-# free/existing classification, staleness proof on the daemon clock before any reuse of
-# a same-name leftover. A newer CreatedAt contradicts the pid invariant and aborts.
-new_volume() {
-  local v="${PREFIX}-$$-vol-$1" created st
-  created="$(volume_state "$v")"; st=$?
-  if [ "$st" -eq 2 ]; then
-    echo "python-cache: cannot prove volume name $v free (inspect: $created); refusing to create on it" >&2
-    exit 1
-  fi
-  if [ "$st" -eq 0 ]; then
-    created="$(date -u -d "$created" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null)" || {
-      echo "python-cache: cannot parse CreatedAt '$created' of existing volume $v" >&2
-      exit 1
-    }
-    if [[ "$created" > "$SCRIPT_START" ]]; then
-      echo "python-cache: volume $v was created at $created, AFTER this invocation started ($SCRIPT_START) — contradicts the pid-ownership invariant; refusing to adopt it" >&2
-      exit 1
-    fi
-    local rm_err
-    rm_err="$(docker volume rm "$v" 2>&1)" || true
-    created="$(volume_state "$v")"; st=$?
-    if [ "$st" -ne 1 ]; then
-      echo "python-cache: stale volume $v still exists after removal attempt (rm: ${rm_err:-<no error>}; re-inspect: ${created:-<empty>})" >&2
-      echo "python-cache: refusing to create on an occupied name; remove the stale invocation's container and volume first" >&2
-      exit 1
-    fi
-  fi
-  docker volume create "$v" >/dev/null || {
-    echo "python-cache: cannot create volume $v" >&2
-    exit 1
-  }
-  VOLUMES+=("$v")
-  CREATED_VOLUME="$v"
-}
-
-# Wait for a container to exit: sets CASE_EXIT to the exit code, or TIMEOUT.
-wait_case() {
-  local name="$1" budget="$2" waited=0 st
-  while [ "$waited" -lt "$budget" ]; do
-    st="$(docker inspect -f '{{.State.Status}}' "$name" 2>/dev/null || echo missing)"
-    if [ "$st" = "exited" ]; then
-      CASE_EXIT="$(docker inspect -f '{{.State.ExitCode}}' "$name")"
-      return 0
-    fi
-    sleep 2
-    waited=$((waited+2))
-  done
-  CASE_EXIT="TIMEOUT"
-}
-
-# Logs of a container into a temp file (removed by the cleanup trap); prints the path.
-log_of() {
-  local f
-  f="$(mktemp "${TMPDIR:-/tmp}/${PREFIX}-log.XXXXXX")" || return 1
-  docker logs "$1" >"$f" 2>&1
-  LOGS+=("$f")
-  echo "$f"
-}
-
-# docker cp with an explicit Windows-form destination: MSYS/Git Bash path conversion is
-# not reliable for every invocation environment (a raw "/tmp/..." destination would be
-# resolved by the Windows docker CLI against the current drive as \tmp), so the local
-# destination is converted with cygpath -m whenever it exists.
-copy_out() { # NAME PATH DEST -> docker cp status
-  local dest="$3"
-  command -v cygpath >/dev/null 2>&1 && dest="$(cygpath -m "$3")"
-  docker cp "$1:$2" "$dest" >/dev/null 2>&1
-}
-
-field_of() { # FILE KEY -> last value
-  sed -n "s/^$2=//p" "$1" | tail -n 1
-}
-
-future_utc() { date -u -d "+$1 seconds" +%Y-%m-%dT%H:%M:%SZ; }
-
-# Makes a mounted volume directory writable by the real cluster identity (UID/GID 10001,
-# what the workspace initializer and the Job's cache init container achieve in the
-# cluster). Mountpoints are only ever used inside sh -c strings.
-prep_dir() { # VOLUME MOUNTPOINT
-  dc_t 120 run --rm --user 0 -v "$1:$2" "$IMAGE" sh -c "chown 10001:10001 '$2'" >/dev/null 2>&1 \
-    || { echo "python-cache: cannot prep $1" >&2; exit 1; }
-}
-
-# Loads an exported template variant from the runtime-test image into a fresh workspace
-# volume, owned by the cluster identity.
-prep_workspace() { # WS_VOL VARIANT
-  dc_t 120 run --rm --user 0 -v "$1:/workspace" "$IMAGE" \
-    sh -c "cp -r /opt/manao-python-templates/$2/. /workspace/ && chown -R 10001:10001 /workspace" >/dev/null 2>&1 \
-    || { echo "python-cache: cannot load workspace $2 into $1" >&2; exit 1; }
-}
-
-# Fresh writable /tmp for a run container: the Job provides /tmp as a plain writable
-# emptyDir, so the tests mirror that with a fresh per-container volume (memory-backed
-# tmpfs would die with the container and could never be inspected after exit).
-new_run_tmp() { # NAME -> echoes volume name
-  local tmpv="${1}-tmp"
-  docker volume create "$tmpv" >/dev/null || { echo "python-cache: cannot create $tmpv" >&2; exit 1; }
-  VOLUMES+=("$tmpv")
-  echo "$tmpv"
-}
-
-# Console TASK shape: the fixed launcher as PID 1.
-run_console_task() { # NAME CACHE_VOL WS_VOL NETWORK(none|bridge) [K=V ...]
-  local name="$1" cache="$2" ws="$3" net="$4"
-  shift 4
-  local tmpv; tmpv="$(new_run_tmp "$name")"
-  local -a args=(run -d --name "$name" --user 10001:10001 --read-only -v "${tmpv}:/tmp")
-  [ "$net" = "none" ] && args+=(--network none)
-  args+=(-v "${cache}:/python-cache" -v "${ws}:/workspace")
-  local kv
-  for kv in "$@"; do args+=(-e "$kv"); done
-  args+=("$IMAGE" /usr/local/bin/manao-python console)
-  CONTAINERS+=("$name")
-  dc "${args[@]}" >/dev/null
-}
-
-RUN_CMD='export MANAO_RUN_CONTROL_DIR=/run-control; exec java -cp /opt/manao-runner/classes com.manao.runtime.WebRunSupervisor "$@"'
-
-# Supervised web shape: the shared supervisor production main with the fixed profile.
-run_supervised_web() { # NAME CACHE_VOL WS_VOL CONTROL_VOL NETWORK(none|bridge) [K=V ...]
-  local name="$1" cache="$2" ws="$3" control="$4" net="$5"
-  shift 5
-  local tmpv; tmpv="$(new_run_tmp "$name")"
-  local -a args=(run -d --name "$name" --user 10001:10001 --read-only -v "${tmpv}:/tmp")
-  [ "$net" = "none" ] && args+=(--network none)
-  args+=(-v "${cache}:/python-cache" -v "${ws}:/workspace" -v "${control}:/run-control")
-  local kv
-  for kv in "$@"; do args+=(-e "$kv"); done
-  args+=("$IMAGE" sh -c "$RUN_CMD" supervisor run python-fastapi-web)
-  CONTAINERS+=("$name")
-  dc "${args[@]}" >/dev/null
-}
-
-probe_exec() { # NAME [extra docker exec args...]
-  local name="$1"; shift
-  dc_t 30 exec "$@" "$name" sh -c "$RUN_CMD" supervisor probe python-fastapi-web >/dev/null 2>&1
-}
-
-wait_probe_ready() { # NAME BUDGET_SECONDS
-  local waited=0
-  while [ "$waited" -lt "$2" ]; do
-    probe_exec "$1" && return 0
-    sleep 1
-    waited=$((waited+1))
-  done
-  return 1
-}
-
-# Business request through the real venv python: exits 0 only for a 200 response whose
-# body contains the template's fixed welcome message.
-request_demo() { # NAME PORT
-  dc_t 30 exec "$1" /usr/local/bin/python3 -c '
-import sys, urllib.request
-with urllib.request.urlopen(sys.argv[1], timeout=5) as response:
-    body = response.read().decode("utf-8")
-    sys.exit(0 if response.status == 200 and "Hello from Manao" in body else 3)
-' "http://127.0.0.1:$2/api/demo" >/dev/null 2>&1
-}
-
-seed_id_of_image() {
-  dc_t 60 run --rm --network none --entrypoint /bin/sh "$IMAGE" -c 'tr -d "[:space:]" < /opt/manao-python-seed/seed-id'
-}
-
-# Observable state of a project cache: completion marker, whole-content hash and file
+# Readable state of a project cache: completion marker, whole-content hash and file
 # count (equal outputs before/after a run prove that the run rewrote nothing), the httpx
 # marker package, and leftover seed staging directories. Read-only on the volume.
 cache_state() { # CACHE_VOL
-  dc run --rm --network none --user 10001:10001 -v "$1:/python-cache" \
-    -e "SEED_ID=${SEED_ID}" --entrypoint /bin/sh "$IMAGE" -c '
+  dc_t 60 run --rm --network none --user 10001:10001 -v "$1:/python-cache" \
+    -e "SEED_ID=$(seed_id_of_image)" --entrypoint /bin/sh "$IMAGE" -c '
     if [ -f "/python-cache/seeded-$SEED_ID" ]; then echo "marker present"; else echo "marker absent"; fi
     if [ -d /python-cache/uv-cache ]; then
       echo "uv-cache present"
@@ -300,7 +87,7 @@ cache_state() { # CACHE_VOL
       echo "files 0"
       echo "httpx absent"
     fi
-    echo "tempdirs $(find /python-cache -maxdepth 1 -name ".manao-seed.*" | wc -l)"'
+    echo "tempdirs $(find /python-cache -maxdepth 1 -name ".manao-seed.*" | wc -l)"' 2>/dev/null || true
 }
 
 # Runs a real `uv add|remove --no-sync` with the fixed argv shape of the dependency
@@ -313,73 +100,14 @@ uv_manifest_setup() { # WS_VOL VERB PACKAGE
     >/dev/null 2>&1
 }
 
-# Copies the site-packages of the venv of an exited container into a local temp directory
-# and echoes its path (the caller greps the real installed packages).
+# Copies the site-packages of the venv of a (still running or exited) container into a
+# local temp directory and echoes its path (the caller greps the real installed
+# packages).
 venv_site_packages() { # NAME
-  local dest="/tmp/${PREFIX}-site-$1"
+  local dest="${TMPDIR:-/tmp}/${PREFIX}-site-$1"
   rm -rf "$dest"
   copy_out "$1" /tmp/manao-python/.venv/lib/python3.13/site-packages "$dest" || return 1
-  echo "$dest"
-}
-
-# Writes the test-only throttled cp shim into a per-run test volume. The launcher reads
-# no environment and images contain no such file, so production cannot be influenced; the
-# shim is activated only by the harness's PATH override (MANAO_TEST_COPY_DELAY). The
-# script travels as a base64 argument and the write is verified, so no environment-
-# dependent stdin plumbing can silently leave an empty or missing shim behind.
-write_delayed_cp_shim() { # VOLUME
-  local shim_b64
-  shim_b64="$(printf '%s\n' \
-    '#!/bin/bash' \
-    'set -eu' \
-    'if [ "${1:-}" = "--" ]; then shift; fi' \
-    'delay="${MANAO_TEST_COPY_DELAY:-0}"' \
-    '[ "$delay" = "0" ] && exec /usr/bin/cp "$@"' \
-    'while [ "$#" -gt 2 ]; do' \
-    '  case "$1" in' \
-    '    -*) shift ;;' \
-    '    *) break ;;' \
-    '  esac' \
-    'done' \
-    'src="$1"; dst="$2"' \
-    'if [ -d "$src" ]; then' \
-    '  mkdir -p "$dst"' \
-    '  (cd "$src" && find . -mindepth 1 -print0) | sort -z | while IFS= read -r -d "" entry; do' \
-    '    sleep "$delay"' \
-    '    if [ -d "$src/$entry" ]; then' \
-    '      mkdir -p "$dst/$entry"' \
-    '    else' \
-    '      mkdir -p "$dst/$(dirname "$entry")"' \
-    '      /usr/bin/cp -- "$src/$entry" "$dst/$entry"' \
-    '    fi' \
-    '  done' \
-    'else' \
-    '  sleep "$delay"' \
-    '  exec /usr/bin/cp -- "$src" "$dst"' \
-    'fi' \
-    | base64 -w0)"
-  # Detached write with a registered name (a Docker Desktop reaping stall on a fast
-  # exiting --rm container must never block the harness), then synchronous verification:
-  # the file must exist and be executable BEFORE the scenario's run container starts,
-  # because the launcher resolves cp at its first call.
-  local wname tried=0 ok=""
-  wname="$(dc run -d --rm --name "${PREFIX}-$$-shim-writer" --user 0 -v "$1:/shim" "$IMAGE" \
-    sh -c 'printf %s "$1" | base64 -d > /shim/cp && chmod 0555 /shim/cp' \
-    shim "$shim_b64")" \
-    || { echo "python-cache: cannot write the test cp shim into $1" >&2; exit 1; }
-  CONTAINERS+=("$wname")
-  while [ "$tried" -lt 10 ]; do
-    # timeout guards against a Docker Desktop start stall; docker is called directly
-    # (an external timeout cannot execute the dc() shell function).
-    if MSYS_NO_PATHCONV=1 timeout 20 docker run --rm --network none -v "$1:/shim" "$IMAGE" \
-         sh -c 'test -s /shim/cp && test -x /shim/cp' >/dev/null 2>&1; then
-      ok=1
-      break
-    fi
-    sleep 2
-    tried=$((tried+1))
-  done
-  [ -n "$ok" ] || { echo "python-cache: the test cp shim never became usable in $1" >&2; exit 1; }
+  printf '%s' "$dest"
 }
 
 # --------------------------------------------------------------------------
@@ -388,7 +116,7 @@ write_delayed_cp_shim() { # VOLUME
 
 scenario_seed_content() {
   local name="${PREFIX}-seed-content"
-  if dc run --rm --network none --user 10001:10001 --entrypoint /bin/sh "$IMAGE" -c '
+  if dc_t 60 run --rm --network none --user 10001:10001 --entrypoint /bin/sh "$IMAGE" -c '
     [ -f /opt/manao-python-seed/seed-id ] || { echo "seed-id missing" >&2; exit 31; }
     id="$(tr -d "[:space:]" < /opt/manao-python-seed/seed-id)"
     case "$id" in *[!0-9a-f]*|"") echo "seed-id format unexpected: $id" >&2; exit 31 ;; esac
@@ -418,18 +146,19 @@ scenario_cold_cache_offline_web() {
   new_volume cold-cache; cache="$CREATED_VOLUME"; COLD_CACHE="$cache"
   new_volume cold-ws; ws="$CREATED_VOLUME"; COLD_WS="$ws"
   new_volume cold-control; control="$CREATED_VOLUME"
-  prep_dir "$control" /run-control
   prep_dir "$cache" /python-cache
+  prep_dir "$control" /run-control
   prep_workspace "$ws" web
-  run_supervised_web "$name" "$cache" "$ws" "$control" none \
+  start_supervised_web "$name" "$cache" "$ws" "$control" none \
     MANAO_PROJECT_ID=proj-cold MANAO_PRIMARY_PORT=18080 \
     MANAO_RUN_ID=run-cold MANAO_POD_UID=pod-cold \
     MANAO_SERVICE_LIFETIME_SECONDS=180 MANAO_RUN_STARTUP_DEADLINE="$(future_utc 600)"
   wait_probe_ready "$name" 300 || { fail "$name (cold-cache offline startup never became ready)"; return 0; }
   request_demo "$name" 18080 || { fail "$name (/api/demo failed offline)"; return 0; }
-  rc="/tmp/${PREFIX}-receipt-cold.properties"
+  rc="${TMPDIR:-/tmp}/${PREFIX}-receipt-cold.properties"
   copy_out "$name" /run-control/receipt.properties "$rc" || { fail "$name (receipt missing)"; return 0; }
   [ "$(field_of "$rc" state)" = "READY" ] || { fail "$name (receipt state=$(field_of "$rc" state), want READY)"; return 0; }
+  # Inspect the venv before the stop so the check cannot race the container's removal.
   sites="$(venv_site_packages "$name")" || { fail "$name (venv missing after the run)"; return 0; }
   docker stop -t 30 "$name" >/dev/null
   if [ -n "$(find "$sites" -maxdepth 1 -iname "fastapi*" -print -quit)" ] \
@@ -450,7 +179,7 @@ scenario_warm_cache_second_pod_reuses() {
   new_volume warm-control; control="$CREATED_VOLUME"
   prep_dir "$control" /run-control
   before="$(cache_state "$cache")"
-  run_supervised_web "$name" "$cache" "$ws" "$control" none \
+  start_supervised_web "$name" "$cache" "$ws" "$control" none \
     MANAO_PROJECT_ID=proj-cold MANAO_PRIMARY_PORT=18080 \
     MANAO_RUN_ID=run-warm MANAO_POD_UID=pod-warm-fresh \
     MANAO_SERVICE_LIFETIME_SECONDS=180 MANAO_RUN_STARTUP_DEADLINE="$(future_utc 600)"
@@ -471,19 +200,19 @@ scenario_warm_cache_second_pod_reuses() {
 # old package. The generated workspace and cache are reused by the isolation scenario.
 scenario_download_reuse_remove() {
   local name1="${PREFIX}-deps-download" name2="${PREFIX}-deps-reuse" name3="${PREFIX}-deps-removed"
-  local ws cache control log sites before after
+  local ws cache control log before after
   new_volume deps-ws; ws="$CREATED_VOLUME"
   new_volume deps-cache; cache="$CREATED_VOLUME"; DEPS_CACHE="$cache"
   new_volume deps-control; control="$CREATED_VOLUME"
-  prep_dir "$control" /run-control
   prep_dir "$cache" /python-cache
+  prep_dir "$control" /run-control
   prep_workspace "$ws" console
   uv_manifest_setup "$ws" add "httpx==0.28.1" || { fail "$name1 (uv add pre-generation failed)"; return 0; }
   dc_t 120 run --rm --user 0 --network none -v "${ws}:/workspace" "$IMAGE" \
     sh -c 'grep -q "^name = \"httpx\"" /workspace/uv.lock && printf "%s\n" "import httpx" "print(\"HTTPX-OK\", httpx.__version__)" > /workspace/main.py && chown 10001:10001 /workspace/main.py' >/dev/null 2>&1 \
     || { fail "$name1 (generated lock lacks httpx)"; return 0; }
   # Run 1: the httpx wheel must really be downloaded into the project cache.
-  run_console_task "$name1" "$cache" "$ws" bridge
+  start_console_task "$name1" "$cache" "$ws" bridge
   wait_case "$name1" 300
   if [ "$CASE_EXIT" != "0" ]; then
     log="$(log_of "$name1")"; tail -n 20 "$log" >&2
@@ -497,7 +226,7 @@ scenario_download_reuse_remove() {
   before="$(cache_state "$cache")"
   pass "$name1 (download recorded in the project cache)"
   # Run 2: a fresh Pod/venv must reuse the downloaded package fully offline.
-  run_console_task "$name2" "$cache" "$ws" none
+  start_console_task "$name2" "$cache" "$ws" none
   wait_case "$name2" 300
   if [ "$CASE_EXIT" != "0" ]; then
     log="$(log_of "$name2")"; tail -n 20 "$log" >&2
@@ -512,7 +241,7 @@ scenario_download_reuse_remove() {
   # Removal: real uv remove regenerates the manifest. The restored program keeps the
   # template's default behavior and additionally probes the fresh venv itself: any httpx
   # residue in site-packages makes the program exit 9 instead of printing the welcome
-  # (the one-shot container's tmpfs venv cannot be inspected after exit).
+  # (the strongest no-residue observation lives in the program running under that venv).
   dc_t 120 run --rm --user 0 -v "${ws}:/workspace" "$IMAGE" \
     sh -c 'printf "%s\n" \
       "import importlib.util, sys" \
@@ -522,7 +251,7 @@ scenario_download_reuse_remove() {
       "print(\"Hello from Manao\")" \
       > /workspace/main.py && chown 10001:10001 /workspace/main.py' >/dev/null 2>&1
   uv_manifest_setup "$ws" remove "httpx" || { fail "$name3 (uv remove pre-generation failed)"; return 0; }
-  run_console_task "$name3" "$cache" "$ws" none
+  start_console_task "$name3" "$cache" "$ws" none
   wait_case "$name3" 300
   if [ "$CASE_EXIT" != "0" ]; then
     log="$(log_of "$name3")"; tail -n 20 "$log" >&2
@@ -544,32 +273,32 @@ scenario_download_reuse_remove() {
 # the application must never start (receipt shows the child exit, no firstReadyAt).
 scenario_lock_mismatch_fails_closed() {
   local name="${PREFIX}-lock-mismatch"
-  local cache ws control rc code
+  local cache ws control rc
   new_volume mismatch-cache; cache="$CREATED_VOLUME"
   new_volume mismatch-ws; ws="$CREATED_VOLUME"
   new_volume mismatch-control; control="$CREATED_VOLUME"
-  prep_dir "$control" /run-control
   prep_dir "$cache" /python-cache
+  prep_dir "$control" /run-control
   prep_workspace "$ws" web
   # Edit the declaration without touching the lock; network stays available so only the
   # lock freshness check can fail.
   dc_t 120 run --rm --user 0 --network none -v "${ws}:/workspace" "$IMAGE" \
     sh -c 'sed -i "s#\"uvicorn>=0.54.0\",#\"uvicorn>=0.54.0\",\n    \"httpx>=0.28\",#" /workspace/pyproject.toml && grep -q "httpx>=0.28" /workspace/pyproject.toml && chown 10001:10001 /workspace/pyproject.toml' >/dev/null 2>&1 \
     || { fail "$name (pyproject edit fixture failed)"; return 0; }
-  run_supervised_web "$name" "$cache" "$ws" "$control" bridge \
+  start_supervised_web "$name" "$cache" "$ws" "$control" bridge \
     MANAO_PROJECT_ID=proj-mismatch MANAO_PRIMARY_PORT=18080 \
     MANAO_RUN_ID=run-mismatch MANAO_POD_UID=pod-mismatch \
     MANAO_SERVICE_LIFETIME_SECONDS=120 MANAO_RUN_STARTUP_DEADLINE="$(future_utc 300)"
-  code="$(wait_halt_or_timeout "$name" 120)"
-  [ "$code" != "0" ] || { fail "$name (exit=0, want a fast failure)"; return 0; }
-  [ "$code" != "TIMEOUT" ] || { fail "$name (run did not end within the budget)"; return 0; }
-  rc="/tmp/${PREFIX}-receipt-mismatch.properties"
+  wait_case "$name" 120
+  [ "$CASE_EXIT" != "0" ] || { fail "$name (exit=0, want a fast failure)"; return 0; }
+  [ "$CASE_EXIT" != "TIMEOUT" ] || { fail "$name (run did not end within the budget)"; return 0; }
+  rc="${TMPDIR:-/tmp}/${PREFIX}-receipt-mismatch.properties"
   copy_out "$name" /run-control/receipt.properties "$rc" || { fail "$name (receipt missing)"; return 0; }
   [ "$(field_of "$rc" state)" = "EXITED" ] && [ "$(field_of "$rc" reason)" = "APPLICATION_EXITED" ] \
     || { fail "$name (receipt state/reason wrong: $(field_of "$rc" state)/$(field_of "$rc" reason))"; return 0; }
   [ -z "$(field_of "$rc" firstReadyAt)" ] \
     || { fail "$name (receipt carries firstReadyAt; the application started)"; return 0; }
-  if dc run --rm --network none -v "${control}:/run-control" "$IMAGE" \
+  if dc_t 60 run --rm --network none -v "${control}:/run-control" "$IMAGE" \
        sh -c 'test -d /run-control/claim' >/dev/null 2>&1; then
     pass "$name (stale lock failed the install; app never started; claim was present)"
   else
@@ -585,10 +314,10 @@ scenario_extras_offline() {
   new_volume extras-cache; cache="$CREATED_VOLUME"
   new_volume extras-ws; ws="$CREATED_VOLUME"
   new_volume extras-control; control="$CREATED_VOLUME"
-  prep_dir "$control" /run-control
   prep_dir "$cache" /python-cache
+  prep_dir "$control" /run-control
   prep_workspace "$ws" web
-  run_supervised_web "$name" "$cache" "$ws" "$control" none \
+  start_supervised_web "$name" "$cache" "$ws" "$control" none \
     MANAO_PROJECT_ID=proj-extras MANAO_PRIMARY_PORT=18080 \
     MANAO_RUN_ID=run-extras MANAO_POD_UID=pod-extras \
     MANAO_PYTHON_MYSQL=true MANAO_PYTHON_REDIS=true \
@@ -613,7 +342,7 @@ scenario_caches_isolated() {
   new_volume iso-ws; ws="$CREATED_VOLUME"
   prep_dir "$cache" /python-cache
   prep_workspace "$ws" console
-  run_console_task "$name_b" "$cache" "$ws" none
+  start_console_task "$name_b" "$cache" "$ws" none
   wait_case "$name_b" 300
   [ "$CASE_EXIT" = "0" ] || { fail "$name_b (offline run failed: $CASE_EXIT)"; return 0; }
   state_a="$(cache_state "$DEPS_CACHE")"
@@ -628,8 +357,8 @@ scenario_caches_isolated() {
   fi
 }
 
-# A wiped cache directory (the subPath lost its contents) must be repaired by the next
-# run: re-seeded and fully usable offline again.
+# A wiped cache directory (the subPath lost its contents, marker included) must be
+# repaired by the next run: re-seeded and fully usable offline again.
 scenario_missing_cache_dir_repaired() {
   local name1="${PREFIX}-wipe-baseline" name2="${PREFIX}-wipe-repair"
   local cache ws state
@@ -637,7 +366,7 @@ scenario_missing_cache_dir_repaired() {
   new_volume repair-ws; ws="$CREATED_VOLUME"
   prep_dir "$cache" /python-cache
   prep_workspace "$ws" console
-  run_console_task "$name1" "$cache" "$ws" none
+  start_console_task "$name1" "$cache" "$ws" none
   wait_case "$name1" 300
   [ "$CASE_EXIT" = "0" ] || { fail "$name1 (baseline run failed: $CASE_EXIT)"; return 0; }
   cache_state "$cache" | grep -q '^marker present$' || { fail "$name1 (baseline did not seed the cache)"; return 0; }
@@ -645,7 +374,7 @@ scenario_missing_cache_dir_repaired() {
   dc_t 120 run --rm --user 0 -v "${cache}:/python-cache" "$IMAGE" \
     sh -c 'find /python-cache -mindepth 1 -maxdepth 1 -exec rm -rf {} +' >/dev/null 2>&1
   cache_state "$cache" | grep -q '^marker absent$' || { fail "$name1 (wipe left the marker)"; return 0; }
-  run_console_task "$name2" "$cache" "$ws" none
+  start_console_task "$name2" "$cache" "$ws" none
   wait_case "$name2" 300
   [ "$CASE_EXIT" = "0" ] || { fail "$name2 (repair run failed: $CASE_EXIT)"; return 0; }
   state="$(cache_state "$cache")"
@@ -654,31 +383,61 @@ scenario_missing_cache_dir_repaired() {
   pass "$name2 (wiped cache directory repaired and usable offline)"
 }
 
+# A cache directory deleted while its stale completion marker survives must still be
+# repaired: the seed decision keys on the target directory's existence, never on the
+# marker alone, so the next run re-seeds and rewrites the marker — the offline run
+# succeeds instead of failing against a marker pointing at nothing.
+scenario_cache_dir_only_repair() {
+  local name1="${PREFIX}-dirless-baseline" name2="${PREFIX}-dirless-repair"
+  local cache ws state
+  new_volume dirless-cache; cache="$CREATED_VOLUME"
+  new_volume dirless-ws; ws="$CREATED_VOLUME"
+  prep_dir "$cache" /python-cache
+  prep_workspace "$ws" console
+  start_console_task "$name1" "$cache" "$ws" none
+  wait_case "$name1" 300
+  [ "$CASE_EXIT" = "0" ] || { fail "$name1 (baseline run failed: $CASE_EXIT)"; return 0; }
+  cache_state "$cache" | grep -q '^marker present$' || { fail "$name1 (baseline did not seed the cache)"; return 0; }
+  # Delete ONLY the cache directory; the stale completion marker stays behind.
+  dc_t 120 run --rm --user 0 -v "${cache}:/python-cache" "$IMAGE" \
+    sh -c 'rm -rf /python-cache/uv-cache' >/dev/null 2>&1
+  state="$(cache_state "$cache")"
+  echo "$state" | grep -q '^uv-cache absent$' || { fail "$name1 (the cache directory was not deleted)"; return 0; }
+  echo "$state" | grep -q '^marker present$' || { fail "$name1 (the stale marker did not survive the fixture)"; return 0; }
+  start_console_task "$name2" "$cache" "$ws" none
+  wait_case "$name2" 300
+  [ "$CASE_EXIT" = "0" ] || { fail "$name2 (run against a stale marker failed: $CASE_EXIT)"; return 0; }
+  state="$(cache_state "$cache")"
+  echo "$state" | grep -q '^marker present$' || { fail "$name2 (re-seed did not publish the marker)"; return 0; }
+  echo "$state" | grep -q '^tempdirs 0$' || { fail "$name2 (re-seed left staging directories)"; return 0; }
+  pass "$name2 (stale marker repaired: cache directory re-seeded and usable offline)"
+}
+
 # Killing the container during the seed copy must leave no completion marker and no
 # published cache directory; the next run sweeps the staging directory and repairs the
 # cache offline.
 scenario_interrupted_seed_no_marker() {
   local name="${PREFIX}-interrupted"
   local cache ws shim
-  local waited=0 fired=0 st
   new_volume interrupt-cache; cache="$CREATED_VOLUME"
   new_volume interrupt-ws; ws="$CREATED_VOLUME"
   new_volume interrupt-shim; shim="$CREATED_VOLUME"
   prep_dir "$cache" /python-cache
   prep_workspace "$ws" console
-  write_delayed_cp_shim "$shim"
+  write_delayed_cp_shim "$shim" throttle
   local image_path
-  image_path="$(dc_t 60 run --rm --entrypoint /bin/sh "$IMAGE" -c 'printf %s "$PATH"')"
-  [ -n "$image_path" ] || { echo "python-cache: cannot read the image PATH" >&2; exit 1; }
-  local tmpv; tmpv="$(new_run_tmp "$name")"
-  local -a args=(run -d --name "$name" --user 10001:10001 --read-only -v "${tmpv}:/tmp"
-                 --network none
-                 -v "${cache}:/python-cache" -v "${ws}:/workspace"
-                 -v "${shim}:/shim"
-                 -e "PATH=/shim:${image_path}"
-                 -e "MANAO_TEST_COPY_DELAY=${SHIM_DELAY}")
-  CONTAINERS+=("$name")
-  dc "${args[@]}" "$IMAGE" /usr/local/bin/manao-python console >/dev/null
+  image_path="$(dc_t 60 run --rm --entrypoint /bin/sh "$IMAGE" -c 'printf %s "$PATH"')" || { echo "$HARNESS_NAME: cannot read the image PATH" >&2; exit 1; }
+
+  new_run_tmp "$name"
+  local tmpv="$CREATED_VOLUME"
+  start_detached "$name" \
+    --user 10001:10001 --read-only --network none \
+    -v "${tmpv}:/tmp" \
+    -v "${cache}:/python-cache" -v "${ws}:/workspace" \
+    -v "${shim}:/shim" \
+    -e "PATH=/shim:${image_path}" \
+    -e "MANAO_TEST_COPY_DELAY=${SHIM_DELAY}" \
+    "$IMAGE" /usr/local/bin/manao-python console
   # Observe the copy through side containers mounting the cache volume (immune to
   # exec-attach stalls): the seed staging directory must appear AND keep growing between
   # two observations — growth proves the throttled test shim is the thing copying. A
@@ -708,8 +467,14 @@ scenario_interrupted_seed_no_marker() {
     fail "$name (the throttled seed copy was never observed in progress)"
     return 0
   fi
+  # Kill while a seed staging copy is provably in progress; SIGKILL to PID 1 mirrors the
+  # hardest possible stop, and the kill result is verified (exit status 137, container
+  # actually terminated).
   docker kill "$name" >/dev/null
   wait_case "$name" 60
+  [ "$CASE_EXIT" = "137" ] || { fail "$name (exit after kill=$CASE_EXIT, want 137)"; return 0; }
+  [ "$(docker inspect -f '{{.State.Status}}' "$name")" = "exited" ] \
+    || { fail "$name (container did not terminate after the kill)"; return 0; }
   local state; state="$(cache_state "$cache")"
   if echo "$state" | grep -q '^marker present$' || echo "$state" | grep -q '^uv-cache present$'; then
     printf 'cache state after the kill:\n%s\n' "$state"
@@ -719,7 +484,7 @@ scenario_interrupted_seed_no_marker() {
   pass "$name (interrupted seed left no marker and no cache directory)"
   # The next run must sweep the staging directory, re-seed and work fully offline.
   local verify="${PREFIX}-interrupted-repair"
-  run_console_task "$verify" "$cache" "$ws" none
+  start_console_task "$verify" "$cache" "$ws" none
   wait_case "$verify" 300
   [ "$CASE_EXIT" = "0" ] || { fail "$verify (repair run failed: $CASE_EXIT)"; return 0; }
   state="$(cache_state "$cache")"
@@ -728,32 +493,25 @@ scenario_interrupted_seed_no_marker() {
   pass "$verify (next run swept the temp directory and re-seeded the cache)"
 }
 
-# wait_halt NAME BUDGET_SECONDS -> prints exit code, or TIMEOUT (cache-script variant).
-wait_halt_or_timeout() {
-  wait_case "$1" "$2"
-  echo "$CASE_EXIT"
-}
-
 # --------------------------------------------------------------------------
 # Orchestration
 # --------------------------------------------------------------------------
 
-SEED_ID="$(seed_id_of_image)"
-[ -n "$SEED_ID" ] || { echo "python-cache: image has no usable seed-id" >&2; exit 2; }
-
-# One-time image materialization: the first container start of a freshly built image can
-# take longer than the per-scenario budgets, so warm the image before any scenario.
-echo "python-cache: warming up (first container start materializes the image)"
-dc run --rm --network none "$IMAGE" sh -c 'command -v uv >/dev/null && command -v java >/dev/null && command -v python3 >/dev/null'   || { echo "python-cache: image warmup failed (uv/java/python3 missing)" >&2; exit 1; }
+harness_warmup
 
 scenario_seed_content
 scenario_cold_cache_offline_web
-[ -n "$COLD_CACHE" ] && scenario_warm_cache_second_pod_reuses
+if [ -n "$COLD_CACHE" ]; then
+  scenario_warm_cache_second_pod_reuses
+fi
 scenario_download_reuse_remove
 scenario_lock_mismatch_fails_closed
 scenario_extras_offline
-[ -n "$DEPS_CACHE" ] && scenario_caches_isolated
+if [ -n "$DEPS_CACHE" ]; then
+  scenario_caches_isolated
+fi
 scenario_missing_cache_dir_repaired
+scenario_cache_dir_only_repair
 scenario_interrupted_seed_no_marker
 
 echo

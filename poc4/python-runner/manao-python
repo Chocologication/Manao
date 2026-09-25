@@ -17,14 +17,17 @@
 #
 # Seed algorithm (design section 6, one seed for the fixed uv/Python/platform toolchain):
 # the image carries a read-only seed (/opt/manao-python-seed) whose seed-id pins uv,
-# Python, platform and the exact template dependency content. A project cache is
-# initialized exactly once, wholly, by copying the seed into a temporary same-volume
-# directory that is atomically renamed into place; the completion marker seeded-<id> is
-# published last, so an interrupted initialization can never leave a marker. An existing
-# cache (this seed's marker present, or a cache directory without this seed's marker) is
-# never copied over — uv manages it from there. Staging directories a killed previous run
-# left behind are swept before re-seeding; a project has at most one active run, so they
-# can have no other owner. Failures are fail-closed before any user code runs.
+# Python, platform and the exact template dependency content. The seed decision keys on
+# the target cache directory's existence: a missing /python-cache/uv-cache (first Run, or
+# a subPath whose contents were lost) is initialized exactly once, wholly, by copying the
+# seed into a temporary same-volume directory that is atomically renamed into place; the
+# completion marker seeded-<id> is published last, so an interrupted initialization can
+# never leave a marker, and a stale marker left behind by a lost cache directory is
+# rewritten on the re-seed. A cache directory that exists is never copied over — uv
+# manages it from there, whatever seed id produced it. Staging directories a killed
+# previous run left behind are swept before re-seeding; a project has at most one active
+# run, so they can have no other owner. Failures are fail-closed before any user code
+# runs.
 #
 # Package preparation always happens after the supervisor claim (this script is the
 # supervised child in web mode and the TASK itself in console mode) and therefore inside
@@ -94,11 +97,13 @@ if ! : > "$CACHE_ROOT/.manao-write-probe.$$" 2>/dev/null; then
 fi
 rm -f "$CACHE_ROOT/.manao-write-probe.$$"
 
-# 5. One-time whole-seed initialization: only a not-yet-existing cache directory is
-# seeded, via a temporary same-volume directory and an atomic rename; the completion
-# marker is published last. An existing cache is never copied over.
+# 5. One-time whole-seed initialization keyed on the TARGET CACHE DIRECTORY's existence:
+# a missing directory (first Run, or a subPath whose contents were lost) is seeded afresh
+# — even when a stale completion marker survived — and this seed's marker is published
+# last (overwriting any stale copy of it). A cache directory that DOES exist is never
+# copied over: uv manages it from there, whatever seed id produced it.
 MARKER="$CACHE_ROOT/seeded-$SEED_ID"
-if [ ! -e "$MARKER" ] && [ ! -d "$CACHE_ROOT/uv-cache" ]; then
+if [ ! -d "$CACHE_ROOT/uv-cache" ]; then
   rm -rf "$CACHE_ROOT"/.manao-seed.* 2>/dev/null || true
   seed_tmp="$CACHE_ROOT/.manao-seed.$$"
   mkdir "$seed_tmp" 2>/dev/null || die "cannot create the seed staging directory"

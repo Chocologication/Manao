@@ -52,7 +52,8 @@ copies the seed, supervisor classes and launchers only. Both stages share the sa
 Python/uv/JRE distribution and the same seed.
 
 Black-box tests (real containers, production shape UID/GID 10001, read-only rootfs,
-writable tmpfs `/tmp`; every container/volume removed by exact name on exit):
+writable per-container `/tmp` volume mirroring the Job's writable `emptyDir`; every
+container/volume removed by exact name on exit):
 
 ```bash
 bash poc4/python-runner/tests/runtime-lifecycle.sh manao-python-runtime-test
@@ -68,7 +69,14 @@ claim/receipt/deadline state machine is not re-tested here —
 `python-cache.sh` covers the seed/cache contract (seed content, cold cache offline
 startup, warm reuse without rewrites, download/reuse/remove via manifests pre-generated
 by real `uv add/remove`, stale-lock fail-closed, server-controlled extras booleans,
-cross-project cache isolation, wiped-cache repair, interrupted seed without marker).
+cross-project cache isolation, wiped-cache repair, stale-marker repair after a
+cache-directory-only loss, interrupted seed without marker).
+
+Both suites share their hardened Docker harness — pid-embedded unique names,
+register-only-after-creation, semantic volume-name classification, daemon-clock
+staleness proof, persistent fail-fast registry, exact-name cleanup — in
+`poc4/python-runner/tests/lib.sh`, the pattern accepted for Task 3's
+`poc4/maven-runner/tests/runtime-lifecycle.sh`.
 
 ## Runtime contracts (design sections 6 and 7)
 
@@ -87,9 +95,11 @@ cross-project cache isolation, wiped-cache repair, interrupted seed without mark
 - Cache seeding: one seed per fixed uv/Python/platform toolchain. A not-yet-existing
   cache directory (`/python-cache/uv-cache`) is initialized exactly once — whole-seed
   copy into a same-volume staging directory, atomic rename, completion marker
-  `/python-cache/seeded-<seed-id>` published last. An existing cache is never copied
-  over; uv manages it. Interrupted initializations leave only staging directories, which
-  the next run sweeps. There is no cross-toolchain cache migration or auto-refill.
+  `/python-cache/seeded-<seed-id>` published last — and the decision keys on the
+  directory's existence, so a stale marker left behind by a lost cache directory is
+  repaired by the re-seed. An existing cache directory is never copied over; uv manages
+  it. Interrupted initializations leave only staging directories, which the next run
+  sweeps. There is no cross-toolchain cache migration or auto-refill.
 - Mounts: project code at `/workspace` (container working directory), project cache at
   `/python-cache` (the workspace PVC's `.manao-cache/python` subPath), run control at
   `/run-control` (shared supervisor), `/tmp` writable. The image carries no Maven.
