@@ -17,17 +17,24 @@ CONTAINERS=()
 PASS=0
 FAIL=0
 
+# Exact names of every volume this invocation created. new_volume is always called
+# inside a command substitution (a subshell), so an in-memory array cannot survive it;
+# this registry file, keyed by the unique host process id rather than PREFIX, is the
+# persistent exact-name cleanup source and is removed again on exit.
+VOLUME_REGISTRY="${TMPDIR:-/tmp}/runtime-lifecycle-volumes-$$"
+: > "$VOLUME_REGISTRY"
+
 cleanup() {
   local c v
   for c in "${CONTAINERS[@]:-}"; do
     [ -n "$c" ] && docker rm -f "$c" >/dev/null 2>&1
   done
-  # Volume names carry the unique per-invocation prefix. The previous per-run array
-  # bookkeeping never survived the command substitution around new_volume, so derive
-  # the list from the exact prefix instead; other runs' resources are never matched.
-  for v in $(docker volume ls -q --filter "name=${PREFIX}-vol-"); do
-    docker volume rm "$v" >/dev/null 2>&1
-  done
+  # Remove exactly the volumes this invocation created — never a filtered name or label
+  # match — so a reused or overlapping PREFIX can never touch another invocation.
+  while IFS= read -r v; do
+    [ -n "$v" ] && docker volume rm "$v" >/dev/null 2>&1
+  done < "$VOLUME_REGISTRY"
+  rm -f "$VOLUME_REGISTRY"
 }
 trap cleanup EXIT
 
@@ -37,6 +44,7 @@ fail() { FAIL=$((FAIL+1)); echo "FAIL: $1"; }
 new_volume() {
   local v="${PREFIX}-vol-$1"
   docker volume create "$v" >/dev/null
+  printf '%s\n' "$v" >> "$VOLUME_REGISTRY"
   echo "$v"
 }
 
