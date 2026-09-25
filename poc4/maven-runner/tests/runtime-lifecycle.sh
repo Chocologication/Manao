@@ -5,7 +5,9 @@
 #   bash poc4/maven-runner/tests/runtime-lifecycle.sh <runtime-test-image> [prefix]
 #
 # Every container and volume is created under a per-invocation prefix and removed by
-# exact name on exit. Shared docker resources are never touched. Assertions use docker
+# exact name on exit; volume names additionally embed the host pid, so a reused PREFIX
+# can never make two invocations share a volume identity. Shared docker resources are
+# never touched. Assertions use docker
 # wait/inspect state, exit codes, timestamps and files copied out of containers
 # (receipts, termination message, child markers) — never log text matching.
 set -u
@@ -19,10 +21,15 @@ FAIL=0
 
 # Exact names of every volume this invocation created. new_volume is always called
 # inside a command substitution (a subshell), so an in-memory array cannot survive it;
-# this registry file, keyed by the unique host process id rather than PREFIX, is the
-# persistent exact-name cleanup source and is removed again on exit.
+# this registry file, keyed by the unique host process id, is the persistent exact-name
+# cleanup source and is removed again on exit. Volume names themselves embed the host
+# pid, so even a reused PREFIX can never make this invocation adopt — and later delete
+# — a volume that belongs to another invocation.
 VOLUME_REGISTRY="${TMPDIR:-/tmp}/runtime-lifecycle-volumes-$$"
-: > "$VOLUME_REGISTRY"
+if ! : > "$VOLUME_REGISTRY"; then
+  echo "runtime-lifecycle: cannot initialize volume registry $VOLUME_REGISTRY" >&2
+  exit 1
+fi
 
 cleanup() {
   local c v
@@ -42,9 +49,18 @@ pass() { PASS=$((PASS+1)); echo "PASS: $1"; }
 fail() { FAIL=$((FAIL+1)); echo "FAIL: $1"; }
 
 new_volume() {
-  local v="${PREFIX}-vol-$1"
-  docker volume create "$v" >/dev/null
-  printf '%s\n' "$v" >> "$VOLUME_REGISTRY"
+  local v="${PREFIX}-$$-vol-$1"
+  docker volume create "$v" >/dev/null || {
+    echo "runtime-lifecycle: cannot create volume $v" >&2
+    exit 1
+  }
+  if ! printf '%s\n' "$v" >> "$VOLUME_REGISTRY"; then
+    # An unregistrable volume could never be cleaned up: remove it again and fail
+    # loudly instead of leaving it as silent residue.
+    docker volume rm "$v" >/dev/null 2>&1
+    echo "runtime-lifecycle: cannot register volume $v in $VOLUME_REGISTRY" >&2
+    exit 1
+  fi
   echo "$v"
 }
 
