@@ -43,6 +43,44 @@ class ErrorSanitizationTest {
     }
 
     @Test
+    void publicPortErrorsKeepTheirFixedCodeAndSafeMessage() {
+        // Port errors must not degrade to INTERNAL_ERROR and must never carry the raw
+        // Kubernetes response forward.
+        assertThat(new ApiError("PUBLIC_PORT_RESERVED", "raw kubernetes status payload", null))
+            .extracting(ApiError::code, ApiError::message)
+            .containsExactly("PUBLIC_PORT_RESERVED", "Public port is reserved. Choose another port.");
+        assertThat(new ApiError("PUBLIC_PORT_IN_USE", "raw kubernetes status payload", null))
+            .extracting(ApiError::code, ApiError::message)
+            .containsExactly("PUBLIC_PORT_IN_USE", "Public port is already in use. Choose another port.");
+    }
+
+    @Test
+    void publicPortPreflightUnavailableKeepsFixedCodeAndSafeMessage() {
+        // An uncertain preflight must fail closed without revealing anything: no occupied/free
+        // claim, no namespace, no owner and no raw Kubernetes reason may reach the browser.
+        ApiError error = new ApiError("PUBLIC_PORT_PREFLIGHT_UNAVAILABLE",
+            "Forbidden: services is forbidden for user manao-backend in namespace other-ns", null);
+        assertThat(error.code()).isEqualTo("PUBLIC_PORT_PREFLIGHT_UNAVAILABLE");
+        assertThat(error.message())
+            .isEqualTo("Public port availability cannot be verified right now. Try again later.");
+        assertThat(error.toString()).doesNotContain("forbidden", "other-ns", "manao-backend");
+    }
+
+    @Test
+    void creationMismatchKeepsItsFixedCodeAndSafeMessage() {
+        assertThat(new ApiError("CREATE_REQUEST_MISMATCH", "digest abc123 does not match def456", null))
+            .extracting(ApiError::code, ApiError::message)
+            .containsExactly("CREATE_REQUEST_MISMATCH", "Creation request does not match the original request");
+    }
+
+    @Test
+    void unknownCodesStillDegradeToInternalError() {
+        ApiError error = new ApiError("SOME_UNLISTED_CODE", "anything", null);
+        assertThat(error.code()).isEqualTo("INTERNAL_ERROR");
+        assertThat(error.message()).isEqualTo("Request failed");
+    }
+
+    @Test
     void internalHandlerDoesNotLeakExceptionMessage() {
         var response = new GlobalExceptionHandler().internal(
             new IllegalStateException("token=leak kubeconfig=/tmp/secret"));

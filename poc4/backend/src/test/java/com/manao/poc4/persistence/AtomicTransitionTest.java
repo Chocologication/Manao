@@ -27,7 +27,7 @@ class AtomicTransitionTest {
             connection = DriverManager.getConnection(url, System.getenv().getOrDefault("MANAO_DB_USERNAME", "manao"), System.getenv().getOrDefault("MANAO_DB_PASSWORD", ""));
         } catch (Exception ex) { throw new AssertionError("REAL_MYSQL_BLOCKED: cannot connect to test schema", ex); }
         try (Statement statement = connection.createStatement()) {
-            statement.execute("DROP TABLE IF EXISTS terminal_audit, terminal_session, log_ticket, run_log_chunk, run, workspace_operation, project, app_user, instance_lease, flyway_schema_history");
+            statement.execute("DROP TABLE IF EXISTS project_storage_binding, terminal_audit, terminal_session, log_ticket, run_log_chunk, run, workspace_operation, project, app_user, instance_lease, flyway_schema_history");
         }
         Flyway.configure().dataSource(url, System.getenv().getOrDefault("MANAO_DB_USERNAME", "manao"), System.getenv().getOrDefault("MANAO_DB_PASSWORD", ""))
             .locations("classpath:db/migration").load().migrate();

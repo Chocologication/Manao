@@ -34,6 +34,8 @@ function lockingRun(id = 'run-lock'): RunSummary {
     logTruncated: false,
     logEvictedBytes: 0,
     lastLogSeq: 2,
+    firstReadyAt: null,
+    expiresAt: null,
   };
 }
 
@@ -51,6 +53,8 @@ function terminalRun(id = 'run-lock'): RunSummary {
     logTruncated: false,
     logEvictedBytes: 0,
     lastLogSeq: 2,
+    firstReadyAt: null,
+    expiresAt: null,
   };
 }
 

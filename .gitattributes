@@ -1,0 +1,6 @@
+# Shell and Docker entry points of the runner image must keep LF line endings in the
+# working tree: with core.autocrlf a fresh checkout would otherwise hand CRLF files to
+# the docker build context, breaking every image build (shebang/scripts exit 127).
+# Scoped to the runner directory that owns the image entry points (maven-cache plan,
+# Global Constraints: "Shell/Docker 入口 LF").
+poc4/maven-runner/** text=auto eol=lf

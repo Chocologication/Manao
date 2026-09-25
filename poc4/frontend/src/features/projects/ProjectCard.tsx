@@ -10,6 +10,17 @@ export function ProjectCard({ project, onDelete, deleting = false, deleteDisable
   deleteDisabled?: boolean;
 }) {
   const titleId = `project-${project.id}-name`;
+  const runtime = project.runtime;
+  // Selected dependencies report live readiness; never-selected ones stay ABSENT and hidden.
+  const dependenciesLine = (
+    [
+      ['MySQL', project.dependencies?.mysql],
+      ['Redis', project.dependencies?.redis],
+    ] as const
+  )
+    .filter(([, state]) => state !== undefined && state !== 'ABSENT')
+    .map(([name, state]) => `${name} ${state}`)
+    .join(' · ');
 
   return (
     <article
@@ -24,6 +35,33 @@ export function ProjectCard({ project, onDelete, deleting = false, deleteDisable
           <p className="mt-1 text-sm text-muted-foreground">
             {project.state === 'DELETING' ? 'Deleting' : project.state}
           </p>
+          {runtime ? (
+            <p className="mt-1 text-sm text-muted-foreground">
+              {runtime.templateId === 'java-spring-boot-web' ? 'Spring Boot web' : 'Console'}
+              {runtime.mysql ? ' · MySQL' : ''}
+              {runtime.redis ? ' · Redis' : ''}
+              {runtime.publicPorts
+                .map((port) => ` · ${port.targetPort}→${port.publicPort}`)
+                .join('')}
+            </p>
+          ) : null}
+          {dependenciesLine ? (
+            <p className="mt-1 text-sm text-muted-foreground">{dependenciesLine}</p>
+          ) : null}
+          {project.endpointState === 'ASSIGNED' && (project.endpoints?.length ?? 0) > 0 ? (
+            <p className="mt-1 text-sm text-muted-foreground">
+              {project.endpoints
+                ?.map((endpoint) =>
+                  endpoint.url === null
+                    ? `public ${endpoint.publicPort}`
+                    : `${endpoint.publicPort}: ${endpoint.url}`,
+                )
+                .join(' · ')}
+            </p>
+          ) : null}
+          {project.endpointState === 'UNKNOWN' ? (
+            <p className="mt-1 text-sm text-muted-foreground">Public endpoint unconfirmed</p>
+          ) : null}
           {project.state === 'DELETING' && !deleting ? (
             <p className="mt-2 text-sm text-muted-foreground">
               Deletion has not completed. Continue deletion to finish releasing resources.

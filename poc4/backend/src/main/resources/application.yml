@@ -59,3 +59,13 @@ manao:
         initializer-image: ${MANAO_WORKSPACE_INITIALIZER_IMAGE:busybox@sha256:0000000000000000000000000000000000000000000000000000000000000000}
       logging:
         redact-secrets: true
+      runtime-deps:
+        # Must match the deployment's reserved NodePorts; 30080 is the platform ingress.
+        reserved-public-ports: ${MANAO_RESERVED_PUBLIC_PORTS:30080}
+        # Public address that reaches the NodePort range; empty keeps access URLs out of the view.
+        public-entry-host: ${MANAO_PUBLIC_ENTRY_HOST:}
+        # Only mandatory when a project selects the dependency; explicit patch versions or
+        # immutable digests only (floating tags are rejected at resource build time).
+        mysql-image-digest: ${MANAO_MYSQL_IMAGE_DIGEST:}
+        redis-image-digest: ${MANAO_REDIS_IMAGE_DIGEST:}
+        mysql-storage-class-name: ${MANAO_MYSQL_STORAGE_CLASS:}

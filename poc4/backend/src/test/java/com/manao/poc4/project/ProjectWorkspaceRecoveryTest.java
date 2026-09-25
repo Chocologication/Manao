@@ -167,7 +167,7 @@ class ProjectWorkspaceRecoveryTest {
         verify(gateway, never()).createPvc(any());
         verify(gateway, never()).deletePod(anyString());
         verify(gateway, never()).deleteProjectResources(anyString());
-        verify(gateway, never()).deleteProjectWorkloads(anyString());
+        verify(gateway, never()).deleteWorkspaceWorkloads(anyString());
         verify(store, never()).markProjectReady(anyString());
     }
 }

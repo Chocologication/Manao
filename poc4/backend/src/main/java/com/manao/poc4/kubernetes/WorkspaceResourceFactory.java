@@ -19,7 +19,16 @@ import java.util.Map;
 public class WorkspaceResourceFactory {
     public static final long WORKSPACE_UID = 10001L;
     public static final long WORKSPACE_GID = 10001L;
+    /**
+     * Per-project Maven cache directory, relative to the workspace PVC root (a sibling of the
+     * code directory, never inside it): {@code .manao-cache/maven/repository} is the project's
+     * writable Maven local repository and {@code .manao-cache/maven/seeded-<seed-id>} its
+     * initialization markers. Run containers mount it at /maven-cache; the workspace agent
+     * never mounts it, so the file API never sees the cache.
+     */
+    public static final String MAVEN_CACHE_DIRECTORY = ".manao-cache/maven";
     public static final String LABEL_PROJECT_ID = "manao.poc4/project-id";
+    public static final String LABEL_COMPONENT = "manao.poc4/component";
     public static final String LABEL_STAGE6_TEST = "stage6-test";
     public static final String WORKSPACE_SERVICE_ACCOUNT = "manao-workspace-agent";
     private static final String MANAGED_BY = "manao-poc4-backend";
@@ -54,18 +63,28 @@ public class WorkspaceResourceFactory {
     public static String serviceName(String projectId) { return "manao-ws-" + projectId; }
     public static String projectDirectory(String projectId) { return "project-" + projectId; }
 
-    /** Labels shared by every Kubernetes resource owned by a project, including Maven Jobs. */
-    public static Map<String, String> projectResourceLabels(String projectId) {
+    /**
+     * Identity labels every project resource carries, independent of which component created it.
+     * Cleanup selects on these so resources without the legacy stage6-test marker (the public
+     * application Service) are still scoped to their project.
+     */
+    public static Map<String, String> projectIdentityLabels(String projectId) {
         Map<String, String> labels = new HashMap<>();
         labels.put("app.kubernetes.io/managed-by", MANAGED_BY);
         labels.put(LABEL_PROJECT_ID, projectId);
+        return labels;
+    }
+
+    /** Labels shared by every Kubernetes resource owned by a project, including Maven Jobs. */
+    public static Map<String, String> projectResourceLabels(String projectId) {
+        Map<String, String> labels = projectIdentityLabels(projectId);
         labels.put(LABEL_STAGE6_TEST, "true");
         return labels;
     }
 
     public static Map<String, String> projectLabels(String projectId) {
         Map<String, String> labels = projectResourceLabels(projectId);
-        labels.put("manao.poc4/component", "workspace");
+        labels.put(LABEL_COMPONENT, "workspace");
         return labels;
     }
 
@@ -86,13 +105,21 @@ public class WorkspaceResourceFactory {
             .build();
     }
 
-    /** Root-mounted one-shot pod: creates the project directory, hands it to the fixed UID/GID. */
+    /**
+     * Root-mounted one-shot pod: creates the project directory and its empty Maven cache
+     * directory (a sibling at the PVC root, per {@link #MAVEN_CACHE_DIRECTORY}), and hands
+     * both to the fixed UID/GID.
+     */
     public Pod createInitializerPod(String projectId) {
         String directory = projectDirectory(projectId);
-        String createScript = "mkdir -p /data/" + directory
+        String cacheDirectory = "/data/" + MAVEN_CACHE_DIRECTORY;
+        String cacheParent = "/data/.manao-cache";
+        String createScript = "mkdir -p /data/" + directory + " " + cacheDirectory
             + " && chown " + WORKSPACE_UID + ":" + WORKSPACE_GID + " /data/" + directory
-            + " && chmod 0775 /data/" + directory;
-        String probeScript = "test -w /data && touch /data/" + directory + "/.probe && rm /data/" + directory + "/.probe";
+            + " " + cacheParent + " " + cacheDirectory
+            + " && chmod 0775 /data/" + directory + " " + cacheParent + " " + cacheDirectory;
+        String probeScript = "test -w /data && touch /data/" + directory + "/.probe && rm /data/" + directory + "/.probe"
+            + " && touch " + cacheDirectory + "/.probe && rm " + cacheDirectory + "/.probe";
         return new PodBuilder()
             .withNewMetadata()
             .withName(initializerPodName(projectId))
@@ -219,7 +246,7 @@ public class WorkspaceResourceFactory {
 
     public Service createWorkspaceService(String projectId) {
         Map<String, String> selector = new HashMap<>(projectLabels(projectId));
-        selector.put("manao.poc4/component", "workspace");
+        selector.put(LABEL_COMPONENT, "workspace");
         return new ServiceBuilder()
             .withNewMetadata()
             .withName(serviceName(projectId))
@@ -240,7 +267,7 @@ public class WorkspaceResourceFactory {
 
     private static Map<String, String> withComponent(String projectId, String component) {
         Map<String, String> labels = new HashMap<>(projectLabels(projectId));
-        labels.put("manao.poc4/component", component);
+        labels.put(LABEL_COMPONENT, component);
         return labels;
     }
 

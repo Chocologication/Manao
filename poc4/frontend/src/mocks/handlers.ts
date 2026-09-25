@@ -2,6 +2,11 @@ import { DEFAULT_PROJECT_LIMIT } from '../contracts/project';
 import { http, HttpResponse } from 'msw';
 import type { ApiErrorBody } from '../contracts/api';
 import type { AuthUser, LoginRequest } from '../contracts/auth';
+import type {
+  ProjectPublicPort,
+  ProjectRuntimeConfig,
+  RuntimeTemplateId,
+} from '../contracts/project';
 import {
   parseProjectDirectoryPath,
   parseProjectRelativePath,
@@ -27,6 +32,7 @@ import { terminalHandlers } from './terminalHandlers';
 import {
   canReadReadyProjectFiles,
   createOwnedProject,
+  findOwnedProjectCreation,
   removeOwnedProject,
   expireCurrentToken,
   getWriteScenario,
@@ -180,6 +186,14 @@ function readProjectId(params: { projectId?: string | readonly string[] }): stri
   return id;
 }
 
+function readParam(value: string | readonly string[] | undefined): string | null {
+  const id = Array.isArray(value) ? value[0] : value;
+  if (typeof id !== 'string' || id.length === 0) {
+    return null;
+  }
+  return id;
+}
+
 function readQueryPath(request: Request): string | null {
   return new URL(request.url).searchParams.get('path');
 }
@@ -239,6 +253,69 @@ function asRecord(value: unknown): Record<string, unknown> | null {
     return null;
   }
   return value as Record<string, unknown>;
+}
+
+const RUNTIME_TEMPLATES: ReadonlySet<RuntimeTemplateId> = new Set([
+  'java-console',
+  'java-spring-boot-web',
+]);
+
+/**
+ * Reads the runtime configuration of a create body. A legacy name-only body yields null;
+ * any template field turns the request into a structured console/web configuration.
+ */
+function parseRuntimeFromBody(
+  record: Record<string, unknown>,
+): { ok: true; runtime: ProjectRuntimeConfig | null } | { ok: false } {
+  const configured =
+    'templateId' in record || 'mysql' in record || 'redis' in record || 'publicPorts' in record;
+  if (!configured) {
+    return { ok: true, runtime: null };
+  }
+  const templateId = record.templateId;
+  if (typeof templateId !== 'string' || !RUNTIME_TEMPLATES.has(templateId as RuntimeTemplateId)) {
+    return { ok: false };
+  }
+  const publicPortEntries = record.publicPorts;
+  if (publicPortEntries !== undefined && !Array.isArray(publicPortEntries)) {
+    return { ok: false };
+  }
+  const publicPorts: ProjectPublicPort[] = [];
+  for (const entry of publicPortEntries ?? []) {
+    const port = asRecord(entry);
+    if (
+      port === null ||
+      typeof port.name !== 'string' ||
+      port.name === '' ||
+      typeof port.targetPort !== 'number' ||
+      !Number.isSafeInteger(port.targetPort) ||
+      port.targetPort < 1 ||
+      port.targetPort > 65535 ||
+      typeof port.publicPort !== 'number' ||
+      !Number.isSafeInteger(port.publicPort) ||
+      port.publicPort < 30000 ||
+      port.publicPort > 31000
+    ) {
+      return { ok: false };
+    }
+    publicPorts.push({
+      name: port.name,
+      targetPort: port.targetPort,
+      publicPort: port.publicPort,
+    });
+  }
+  if (templateId !== 'java-spring-boot-web' && publicPorts.length > 0) {
+    return { ok: false };
+  }
+  return {
+    ok: true,
+    runtime: {
+      templateId: templateId as RuntimeTemplateId,
+      mysql: record.mysql === true,
+      redis: record.redis === true,
+      publicPorts,
+    },
+  };
 }
 
 function mutationErrorResponse(error: MockMutationError) {
@@ -379,22 +456,43 @@ export const handlers = [
     if ('response' in auth) {
       return auth.response;
     }
-    const body = await readJsonBody(request);
+    const body = asRecord(await readJsonBody(request));
     const name =
-      body !== null &&
-      typeof body === 'object' &&
-      'name' in body &&
-      typeof body.name === 'string'
-        ? body.name
-        : null;
-    if (name === null) {
+      body !== null && typeof body.name === 'string' && body.name !== '' ? body.name : null;
+    if (body === null || name === null) {
       return jsonError(400, VALIDATION_ERROR);
     }
-    const result = createOwnedProject(auth.user.id, name);
+    const runtime = parseRuntimeFromBody(body);
+    if (!runtime.ok) {
+      return jsonError(400, VALIDATION_ERROR);
+    }
+    const creationKey =
+      typeof body.creationKey === 'string' && body.creationKey !== '' ? body.creationKey : null;
+    const result = createOwnedProject(auth.user.id, name, {
+      creationKey,
+      runtime: runtime.runtime,
+    });
     if (result.status === 'limit') {
       return jsonError(409, PROJECT_LIMIT_REACHED);
     }
-    return HttpResponse.json(result.project, { status: 202 });
+    return HttpResponse.json(result.project, { status: 201 });
+  }),
+
+  // Same creation key always returns the same project identity for the owner.
+  http.get('/api/v1/projects/creation/:creationKey', ({ request, params }) => {
+    const auth = authorize(request);
+    if ('response' in auth) {
+      return auth.response;
+    }
+    const creationKey = readParam(params.creationKey);
+    if (creationKey === null) {
+      return jsonError(404, ENTRY_NOT_FOUND);
+    }
+    const project = findOwnedProjectCreation(auth.user.id, creationKey);
+    if (project === null) {
+      return jsonError(404, ENTRY_NOT_FOUND);
+    }
+    return HttpResponse.json(project);
   }),
 
   http.delete('/api/v1/projects/:projectId', ({ request, params }) => {

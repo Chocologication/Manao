@@ -205,6 +205,45 @@ describe('ProjectsPage', () => {
     expect(card.parentElement?.closest('article')).toBeNull();
   });
 
+  it('renders the runtime view with assigned endpoints and ready dependencies', async () => {
+    server.use(
+      http.get('/api/v1/projects', () =>
+        HttpResponse.json({
+          items: [
+            readyProject({
+              id: 'p-runtime-view',
+              name: 'Runtime view',
+              runtime: {
+                templateId: 'java-spring-boot-web',
+                mysql: true,
+                redis: false,
+                publicPorts: [{ name: 'port-1', targetPort: 8080, publicPort: 30081 }],
+              },
+              endpointState: 'ASSIGNED',
+              dependencies: { mysql: 'READY', redis: 'ABSENT' },
+              endpoints: [
+                {
+                  name: 'port-1',
+                  targetPort: 8080,
+                  publicPort: 30081,
+                  url: 'http://entry.example:30081',
+                },
+              ],
+            }),
+          ],
+          limit: 8,
+        }),
+      ),
+    );
+    await authenticateAsAlice();
+    renderApp();
+
+    const card = await screen.findByRole('article', { name: 'Runtime view' });
+    expect(within(card).getByText(/Spring Boot web/)).toHaveTextContent('8080→30081');
+    expect(within(card).getByText('MySQL READY')).toBeInTheDocument();
+    expect(within(card).getByText('30081: http://entry.example:30081')).toBeInTheDocument();
+  });
+
   it('shows a FAILED card with the backend reason and no open action', async () => {
     const user = userEvent.setup();
     await authenticateAsAlice();

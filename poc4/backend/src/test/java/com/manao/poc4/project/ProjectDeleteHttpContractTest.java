@@ -146,7 +146,7 @@ class ProjectDeleteHttpContractTest {
         ProjectCleanupService cleanup = new ProjectCleanupService(deletions, new ProjectLifecycleGate(),
             runtime, gateway, store);
         return MockMvcBuilders.standaloneSetup(new ProjectController(new ProjectService(new UnusedProjectStore()),
-                null, cleanup))
+                null, cleanup, null, null, java.util.Set.of()))
             .setControllerAdvice(new GlobalExceptionHandler())
             .build();
     }

@@ -22,6 +22,13 @@ export function getProject(projectId: string): Promise<ProjectSummary> {
   );
 }
 
+/** Owner-scoped creation lookup for a possibly lost create response. */
+export function getProjectCreation(creationKey: string): Promise<ProjectSummary> {
+  return getHttpClient().request<ProjectSummary>(
+    `/api/v1/projects/creation/${encodeURIComponent(creationKey)}`,
+  );
+}
+
 export function deleteProject(projectId: string): Promise<void> {
   return getHttpClient().request<void>(
     `/api/v1/projects/${encodeURIComponent(projectId)}`,

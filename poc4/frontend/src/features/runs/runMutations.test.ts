@@ -40,6 +40,8 @@ function lockingRun(id: string, state: 'STARTING' | 'RUNNING' | 'STOPPING' = 'ST
     logTruncated: false,
     logEvictedBytes: 0,
     lastLogSeq: null,
+    firstReadyAt: null,
+    expiresAt: null,
   };
 }
 

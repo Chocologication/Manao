@@ -89,4 +89,21 @@ class RunStateReducerTest {
             });
         }
     }
+
+    @Test
+    void aTerminatedServiceRunWithOnlyAStaleReadyReceiptHonorsTheStopIntent() {
+        com.manao.poc4.kubernetes.JobCoordinator.JobFacts terminated =
+            new com.manao.poc4.kubernetes.JobCoordinator.JobFacts(false, false, false, false, 143,
+                "pod-1", "uid-1", false, true);
+        // The supervisor never wrote EXITED (hard kill): a stale READY receipt is all that exists.
+        RunExecutionReceipt staleReady = RunExecutionReceipt.parse(
+            "protocol=1\nprojectId=p1\nrunId=r1\npodUid=uid-1\nstate=READY\n"
+                + "firstReadyAt=2026-09-21T10:05:00Z\nexpiresAt=2026-09-21T12:05:00Z\nreason=\n");
+        // With a persisted stop intent the run is a user stop, not an unexpected application exit.
+        assertThat(RunStateReducer.settleOutcome(true, true, true, terminated, staleReady))
+            .contains(new RunStateReducer.Outcome(RunState.CANCELLED, "USER_STOPPED"));
+        // Without one it stays an unexpected exit.
+        assertThat(RunStateReducer.settleOutcome(true, false, true, terminated, staleReady))
+            .contains(new RunStateReducer.Outcome(RunState.FAILED, "APPLICATION_EXITED"));
+    }
 }

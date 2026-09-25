@@ -79,6 +79,43 @@ class WorkspaceApiClientTransportTest {
     }
 
     @Test
+    void classifiesAPlainConnectionResetByPeerIoExceptionAsReset() {
+        assertThat(WorkspaceApiClient.classifyTransportFailure(new IOException("Connection reset by peer")))
+            .isEqualTo(WorkspaceAgentException.TransportFailure.RESET);
+    }
+
+    @Test
+    void classifiesAWrappedConnectionResetByPeerCauseAsReset() {
+        IOException failure = new IOException("HTTP/1.1 header parser received no bytes",
+            new IOException("Connection reset by peer"));
+
+        assertThat(WorkspaceApiClient.classifyTransportFailure(failure))
+            .isEqualTo(WorkspaceAgentException.TransportFailure.RESET);
+    }
+
+    @Test
+    void classifiesAConnectionResetMessageAsReset() {
+        assertThat(WorkspaceApiClient.classifyTransportFailure(new IOException("Connection reset")))
+            .isEqualTo(WorkspaceAgentException.TransportFailure.RESET);
+    }
+
+    @Test
+    void keepsAnIoExceptionWithoutAnExplicitResetSignalAsOther() {
+        IOException failure = new IOException("HTTP/1.1 header parser received no bytes",
+            new IOException("broken pipe"));
+
+        assertThat(WorkspaceApiClient.classifyTransportFailure(failure))
+            .isEqualTo(WorkspaceAgentException.TransportFailure.OTHER);
+    }
+
+    @Test
+    void keepsAnIoExceptionThatMentionsAResetWithoutBeingOneAsOther() {
+        assertThat(WorkspaceApiClient.classifyTransportFailure(
+            new IOException("connection reset was not observed")))
+            .isEqualTo(WorkspaceAgentException.TransportFailure.OTHER);
+    }
+
+    @Test
     void classifiesAnInterruptedRequestAndRestoresTheInterruptFlag() {
         WorkspaceApiClient client = newClient("http://127.0.0.1:1", Duration.ofSeconds(1));
         Thread.currentThread().interrupt();

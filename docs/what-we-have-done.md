@@ -1,6 +1,6 @@
 # Project Progress
 
-Updated: 2026-09-20. Current integrated baseline: `master`, merge `860cdda` (6B), pushed to `origin/master`. This index summarizes completed work; detailed acceptance belongs to the linked stage records.
+Updated: 2026-09-22. Current integrated baseline: `master`, merge `860cdda` (6B), pushed to `origin/master`. This index summarizes completed work; detailed acceptance belongs to the linked stage records.
 
 ## Current Status
 
@@ -8,7 +8,7 @@ Updated: 2026-09-20. Current integrated baseline: `master`, merge `860cdda` (6B)
 | --- | --- | --- |
 | 6A — real backend/Kubernetes MVP | PASS by user acceptance on 2026-09-17; merged on 2026-09-18 (`6dfb655`) | [6A facts](Stage6A-Current-Facts.md) |
 | 6B — cloud single-user workbench | PASS, closed and merged on 2026-09-20 (`860cdda`) | [6B acceptance](../poc4/docs/evidence/stage-6b/acceptance.md), sections 9.5–10 |
-| Next product slice | Not yet agreed; not started by this documentation task | [Product goal and non-goals](Manao-Projects-goal.md) |
+| Java runtime slice | Deployed to `manao-stage6b` and accepted 2026-09-22: runtime deps, public ports, bounded web runs, Maven seed/cache. E2E non-7200s round 4/4 PASS; cache timings measured (first run 58s, warm 7s, per-dependency download/reuse evidenced). Formal 7200s run WAIVED_BY_USER (user self-test); one DELETING leftover awaits operator decision. Not yet merged to `master` | [Runtime acceptance](../poc4/docs/evidence/java-runtime/acceptance.md) sections 8, [cache plan](superpowers/plans/2026-09-22-java-maven-cache-implementation-plan.md) |
 
 ## Delivered Cloud Workbench
 
@@ -49,7 +49,11 @@ Historical stage detail and decision changes: [Evolution Timeline](Stage6A-Evolu
 
 ## Next Work
 
-Stage 6B is finished. No mandatory “finish 6A, then begin 6B” checklist remains. Choose and agree the next product goal separately; do not restart old Tasks 10–12 or expand the full engineering matrix merely because an old plan still contains unchecked boxes.
+Stage 6B is finished. No mandatory “finish 6A, then begin 6B” checklist remains; do not restart old Tasks 10–12 or expand the full engineering matrix merely because an old plan still contains unchecked boxes.
+
+The next direction is Java project runtime work before broader multi-language adaptation and AI. The [Java Runtime Design](superpowers/specs/2026-09-21-java-project-runtime-design.md) incorporates mandatory user-entered public ports in 30000–31000, conflict feedback without automatic replacement, and container ports without extra product range restrictions. Separate persistent MySQL storage, the two-hour application lifetime and manual rerun remain confirmed. The [module review](superpowers/specs/2026-09-21-java-runtime-module-review.md) and [implementation plan](superpowers/plans/2026-09-21-java-project-runtime-implementation-plan.md) define Job + Service, focused tests and one full two-hour acceptance run. Code exists on the implementation branch; its [acceptance record](../poc4/docs/evidence/java-runtime/acceptance.md) owns the actual deployment and verification conclusions.
+
+The 2026-09-22 [Maven cache supplement](superpowers/plans/2026-09-22-java-maven-cache-implementation-plan.md) was implemented (C1/C2) and C3 combined deployment with the lifecycle acceptance on the same day: images published and digest-pinned, V9 migration applied, the E2E non-7200s round and the Maven cache acceptance (timings, download/reuse file evidence, isolation, backfill, reclamation) recorded PASS in the [acceptance record](../poc4/docs/evidence/java-runtime/acceptance.md) section 8. The formal 7200s run remains WAIVED_BY_USER; one DELETING leftover from a mid-round defect awaits an operator decision. No earlier stage PASS was rewritten.
 
 For maintenance, follow the accepted deployment README, reconcile any ambiguous mutation before retrying, and use the actual failing scope to select verification. A new feature or new failure may justify additional tests; unchanged previously passed paths do not require repeated full-suite or cluster reruns.
 

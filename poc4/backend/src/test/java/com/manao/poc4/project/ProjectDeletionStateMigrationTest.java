@@ -58,7 +58,7 @@ class ProjectDeletionStateMigrationTest {
 
             assertThat(jdbc.queryForObject(
                 "SELECT version FROM flyway_schema_history WHERE success=1 ORDER BY installed_rank DESC LIMIT 1",
-                String.class)).isEqualTo("8");
+                String.class)).isEqualTo("9");
             assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM project", Integer.class)).isEqualTo(projectCount);
             assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM workspace_operation", Integer.class))
                 .isEqualTo(operationCount);

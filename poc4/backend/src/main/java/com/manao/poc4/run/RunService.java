@@ -3,12 +3,18 @@ package com.manao.poc4.run;
 import com.manao.poc4.api.ApiException;
 import com.manao.poc4.kubernetes.JobCoordinator;
 import com.manao.poc4.kubernetes.JobResourceFactory;
+import com.manao.poc4.kubernetes.PublicEndpointGateway;
 import com.manao.poc4.persistence.RunState;
+import com.manao.poc4.project.ProjectDependencies;
 import com.manao.poc4.project.ProjectLifecycleGate;
+import com.manao.poc4.project.ProjectRuntimeSpec;
+import com.manao.poc4.project.ProjectRuntimeStore;
+import io.fabric8.kubernetes.api.model.EnvVar;
 import java.time.Instant;
 import java.nio.charset.StandardCharsets;
 import java.time.DateTimeException;
 import java.util.Base64;
+import java.util.List;
 import java.util.Optional;
 import java.util.OptionalLong;
 import java.util.UUID;
@@ -17,7 +23,9 @@ import org.slf4j.LoggerFactory;
 
 /**
  * Run orchestration: start/stop/get/list with owner isolation, revision validation, fencing-token
- * acquisition and idempotent Job creation against the server-derived resource identity.
+ * acquisition and idempotent Job creation against the server-derived resource identity. A run
+ * only starts when every selected dependency is READY — a service run waiting for its database
+ * is never created — and a user stop persists its intent before the Job delete is issued.
  */
 public final class RunService {
     private static final Logger LOG = LoggerFactory.getLogger(RunService.class);
@@ -26,16 +34,28 @@ public final class RunService {
     private final JobCoordinator coordinator;
     private final RunPolicy policy;
     private final ProjectLifecycleGate lifecycle;
+    private final ProjectRuntimeStore runtimeStore;
+    private final ProjectDependencies dependencies;
+    private final PublicEndpointGateway endpoints;
 
     public RunService(RunStore store, JobCoordinator coordinator, RunPolicy policy) {
-        this(store, coordinator, policy, new ProjectLifecycleGate());
+        this(store, coordinator, policy, new ProjectLifecycleGate(), null, null, null);
     }
 
     public RunService(RunStore store, JobCoordinator coordinator, RunPolicy policy, ProjectLifecycleGate lifecycle) {
+        this(store, coordinator, policy, lifecycle, null, null, null);
+    }
+
+    public RunService(RunStore store, JobCoordinator coordinator, RunPolicy policy, ProjectLifecycleGate lifecycle,
+                      ProjectRuntimeStore runtimeStore, ProjectDependencies dependencies,
+                      PublicEndpointGateway endpoints) {
         this.store = store;
         this.coordinator = coordinator;
         this.policy = policy;
         this.lifecycle = lifecycle;
+        this.runtimeStore = runtimeStore;
+        this.dependencies = dependencies;
+        this.endpoints = endpoints;
     }
 
     public RunSummary start(String ownerId, String projectId, String expectedRevision) {
@@ -60,13 +80,18 @@ public final class RunService {
         if (store.findActiveRun(projectId).isPresent()) {
             throw new ApiException("RUN_ALREADY_ACTIVE", 409, "A run is already active");
         }
+        ProjectRuntimeSpec spec = loadSpec(projectId);
+        requireDependenciesReady(projectId, spec);
+        RunPolicy runPolicy = spec.isService() ? policy.forService() : policy;
+        List<EnvVar> applicationEnvironment =
+            dependencies == null ? List.of() : dependencies.applicationEnvironment(projectId, spec);
         OptionalLong fencingToken = store.acquireFencingToken();
         if (fencingToken.isEmpty()) {
             throw new ApiException("INTERNAL_ERROR", 503, "Backend authority is temporarily unavailable");
         }
         long token = fencingToken.getAsLong();
         String runId = UUID.randomUUID().toString();
-        RunRecord record = new RunRecord(runId, projectId, revision, RunState.STARTING, policy.toJson(),
+        RunRecord record = new RunRecord(runId, projectId, revision, RunState.STARTING, runPolicy.toJson(),
             null, null, null, null, null, null, 0L, Instant.now(), token);
         RunStore.InsertResult inserted = store.insertRun(record, token);
         if (inserted == RunStore.InsertResult.PROJECT_LOCKED) {
@@ -83,27 +108,26 @@ public final class RunService {
             if (store.findActiveRun(projectId).isPresent()) {
                 throw new ApiException("RUN_ALREADY_ACTIVE", 409, "A run is already active");
             }
-            throw new ApiException("INTERNAL_ERROR", 503, "Backend authority is temporarily unavailable");
+            throw new ApiException("INTERNAL_ERROR", 503, "Run could not be started");
         }
         if (inserted != RunStore.InsertResult.INSERTED) {
             throw new ApiException("INTERNAL_ERROR", 503, "Run could not be started");
         }
         RunRecord persisted = store.findRunForOwner(ownerId, projectId, runId).orElseThrow();
         try {
-            String jobRef = coordinator.ensureJob(persisted, projectId);
+            String jobRef = coordinator.ensureJob(persisted, projectId, spec.primaryPort(), applicationEnvironment);
             String podRef = coordinator.findLivePod(runId).map(JobCoordinator.LivePod::podName).orElse(null);
             store.updateJobFacts(runId, jobRef, podRef);
         } catch (RuntimeException ex) {
-            // Check if the Job was actually created despite the exception (network timeout, etc.)
-            // Only mark as FAILED if we can confirm the Job does not exist.
-            boolean jobExists = coordinator.facts(persisted).isPresent();
-            if (jobExists) {
-                // Job exists but we couldn't get the reference; mark as RECOVERING for observation to handle.
+            // Check whether the Job actually exists despite the exception (network timeout etc.):
+            // the stable Job identity decides — a second execution is never created here.
+            boolean jobMayExist = coordinator.observe(persisted).kind() != JobCoordinator.ObservationKind.MISSING;
+            if (jobMayExist) {
                 store.transition(runId, projectId, persisted.version(), RunState.RECOVERING,
                     persisted.fencingToken(), RunState.STARTING);
                 LOG.warn("Run Job creation uncertain, marking as RECOVERING for observation: runId={}", runId, ex);
             } else {
-                // Job definitely does not exist; safe to mark as FAILED.
+                // The Job is definitively absent; safe to fail without touching the cluster again.
                 store.settle(runId, RunState.FAILED, "START_FAILED", null);
             }
             throw new ApiException("INTERNAL_ERROR", 503, "Run could not be started");
@@ -125,11 +149,18 @@ public final class RunService {
         if (stopToken.isEmpty()) {
             throw new ApiException("INTERNAL_ERROR", 503, "Backend authority is temporarily unavailable");
         }
-        boolean moved = store.transition(runId, projectId, run.version(), RunState.STOPPING,
-            stopToken.getAsLong(), RunState.STARTING, RunState.RUNNING);
+        // The intent is persisted atomically with STOPPING, so a restart can never lose it.
+        boolean moved = store.requestStop(runId, "USER_STOPPED", stopToken.getAsLong());
         if (!moved) {
             // Concurrent settlement won; reflect authoritative state without touching Kubernetes.
             return toSummary(refetch(ownerId, run));
+        }
+        if (endpoints != null && isServiceRun(run)) {
+            try {
+                endpoints.withdraw(projectId);
+            } catch (RuntimeException ex) {
+                LOG.warn("endpoint withdraw failed during stop; the allocation stays with the project", ex);
+            }
         }
         coordinator.stop(jobRef(run));
         return toSummary(refetch(ownerId, run));
@@ -210,6 +241,38 @@ public final class RunService {
         }
     }
 
+    private ProjectRuntimeSpec loadSpec(String projectId) {
+        if (runtimeStore == null) {
+            return ProjectRuntimeSpec.console();
+        }
+        return runtimeStore.loadSpec(projectId);
+    }
+
+    /**
+     * Every selected dependency must be READY before a Run exists: users re-click after recovery
+     * instead of the backend parking user code behind an unavailable database.
+     */
+    private void requireDependenciesReady(String projectId, ProjectRuntimeSpec spec) {
+        if (dependencies == null || (!spec.mysql() && !spec.redis())) {
+            return;
+        }
+        ProjectDependencies.DependencyStatus status = dependencies.status(projectId, spec);
+        boolean mysqlReady = !spec.mysql() || ProjectDependencies.READY.equals(status.mysql());
+        boolean redisReady = !spec.redis() || ProjectDependencies.READY.equals(status.redis());
+        if (!mysqlReady || !redisReady) {
+            throw new ApiException("DEPENDENCY_NOT_READY", 409,
+                "Selected dependencies are not ready yet. Try again once they are ready.");
+        }
+    }
+
+    private static boolean isServiceRun(RunRecord run) {
+        try {
+            return RunPolicy.fromJson(run.policyJson()).isService();
+        } catch (RuntimeException ex) {
+            return false;
+        }
+    }
+
     /** Maps a persisted Run onto the browser contract; internal references never leave the server. */
     com.fasterxml.jackson.databind.JsonNode policyOf(RunRecord record) {
         try {
@@ -220,10 +283,13 @@ public final class RunService {
     }
 
     public RunSummary toSummary(RunRecord record) {
+        boolean serviceRun = isServiceRun(record);
         return new RunSummary(record.id(), record.state().name(), Long.toString(record.requestedRevision()),
             policyOf(record), record.createdAt().toString(),
             record.startedAt() == null ? null : record.startedAt().toString(),
             record.finishedAt() == null ? null : record.finishedAt().toString(),
-            record.terminationReason(), record.exitCode(), false, 0L, null);
+            record.terminationReason(), record.exitCode(), false, 0L, null,
+            serviceRun && record.firstReadyAt() != null ? record.firstReadyAt().toString() : null,
+            serviceRun && record.expiresAt() != null ? record.expiresAt().toString() : null);
     }
 }

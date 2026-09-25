@@ -51,6 +51,20 @@ public interface RunStore {
      */
     boolean settle(String runId, RunState state, String terminationReason, Integer exitCode);
 
+    /**
+     * CAS on the claimed execution Pod UID: the first verified READY receipt wins and the
+     * recorded lifetime is immutable afterwards; the same Pod re-observing stays idempotent and
+     * a replacement Pod is refused. Renews the instance lease inside like every lease-guarded
+     * write, and only ever touches active runs.
+     */
+    boolean recordFirstReady(String runId, String podUid, Instant readyAt, Instant expiresAt);
+
+    /**
+     * Atomically persists STOPPING together with the stop reason so a backend restart can never
+     * lose a user stop or expiry intent; guarded on the caller's fencing token.
+     */
+    boolean requestStop(String runId, String reason, long fencingToken);
+
     List<RunRecord> findRunsInState(RunState... states);
 
     record RunCursor(Instant createdAt, String id) { }

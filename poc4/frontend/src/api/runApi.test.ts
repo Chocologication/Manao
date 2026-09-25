@@ -51,6 +51,8 @@ const startingRun: RunSummary = {
   logTruncated: false,
   logEvictedBytes: 0,
   lastLogSeq: null,
+  firstReadyAt: null,
+  expiresAt: null,
 };
 
 const runningRun: RunSummary = {
@@ -58,6 +60,8 @@ const runningRun: RunSummary = {
   state: 'RUNNING',
   startedAt: '2026-08-24T10:00:01.000Z',
   lastLogSeq: 4,
+  firstReadyAt: null,
+  expiresAt: null,
 };
 
 const TICKET_EXPIRES_AT = '2026-08-24T10:00:30.000Z';

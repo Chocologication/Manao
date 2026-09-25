@@ -1,0 +1,28 @@
+server:
+  port: ${SERVER_PORT:8080}
+spring:
+  application:
+    name: manao-app
+# MANAO:IF mysql
+  datasource:
+    url: jdbc:mysql://${MANAO_MYSQL_HOST}:${MANAO_MYSQL_PORT}/${MANAO_MYSQL_DATABASE}
+    username: ${MANAO_MYSQL_USERNAME}
+    password: ${MANAO_MYSQL_PASSWORD}
+# MANAO:END mysql
+# MANAO:IF redis
+  data:
+    redis:
+      host: ${MANAO_REDIS_HOST}
+      port: ${MANAO_REDIS_PORT}
+      password: ${MANAO_REDIS_PASSWORD}
+# MANAO:END redis
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+  endpoint:
+    health:
+      show-details: never
+      probes:
+        enabled: true

@@ -25,8 +25,10 @@ public final class Fabric8PodLogGateway implements PodLogGateway {
     }
 
     @Override
-    public LogWatchHandle watchLogs(String namespace, String podName, java.util.function.Consumer<String> lineConsumer) {
-        LogWatch watch = client.pods().inNamespace(namespace).withName(podName).watchLog();
+    public LogWatchHandle watchLogs(String namespace, String podName, String container,
+                                    java.util.function.Consumer<String> lineConsumer) {
+        LogWatch watch = client.pods().inNamespace(namespace).withName(podName)
+            .inContainer(container).watchLog();
         CountDownLatch drained = new CountDownLatch(1);
         pumpExecutor.submit(() -> {
             try (BufferedReader reader = new BufferedReader(
@@ -41,16 +43,23 @@ public final class Fabric8PodLogGateway implements PodLogGateway {
                 drained.countDown();
             }
         });
-        return () -> {
-            try {
-                watch.close();
-            } catch (RuntimeException ignored) {
-                // The pump's finally block still counts down the drain latch.
+        return new LogWatchHandle() {
+            @Override public void close() {
+                try {
+                    watch.close();
+                } catch (RuntimeException ignored) {
+                    // The pump's finally block still counts down the drain latch.
+                }
+                try {
+                    drained.await(2, TimeUnit.SECONDS);
+                } catch (InterruptedException ex) {
+                    Thread.currentThread().interrupt();
+                }
             }
-            try {
-                drained.await(2, TimeUnit.SECONDS);
-            } catch (InterruptedException ex) {
-                Thread.currentThread().interrupt();
+
+            @Override public boolean isAlive() {
+                // The pump thread terminates on stream EOF/error: the source is lost.
+                return drained.getCount() > 0;
             }
         };
     }

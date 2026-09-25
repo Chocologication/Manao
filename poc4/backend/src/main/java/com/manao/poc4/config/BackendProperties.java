@@ -3,6 +3,7 @@ package com.manao.poc4.config;
 import java.time.Duration;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.boot.context.properties.bind.ConstructorBinding;
 
@@ -15,6 +16,7 @@ public final class BackendProperties {
     private static final Workspace FIXED_WORKSPACE = new Workspace(
         "rwx-pvc", "manao-workspace-rwx", "10Gi", "ReadWriteMany", 18100, 18199, 8080,
         "manao-workspace-rwx", "manao/workspace-agent:dev", "busybox:1.36");
+    private static final int DEFAULT_RESERVED_PUBLIC_PORT = 30080;
 
     private final BackendProfile profile;
     private final String javaVersion;
@@ -24,11 +26,12 @@ public final class BackendProperties {
     private final ResourceLimits resources;
     private final Workspace workspace;
     private final Logging logging;
+    private final RuntimeDeps runtimeDeps;
 
     @ConstructorBinding
     public BackendProperties(BackendProfile profile, String javaVersion, String mavenVersion,
                              Duration timeout, Kubernetes kubernetes, ResourceLimits resources,
-                             Workspace workspace, Logging logging) {
+                             Workspace workspace, Logging logging, RuntimeDeps runtimeDeps) {
         validateClusterConfiguration(profile, kubernetes);
         this.profile = profile;
         this.javaVersion = FIXED_JAVA_VERSION;
@@ -38,6 +41,8 @@ public final class BackendProperties {
         this.resources = FIXED_RESOURCES;
         this.workspace = workspace == null ? FIXED_WORKSPACE : workspace.withDeploymentDefaults(FIXED_WORKSPACE);
         this.logging = logging;
+        this.runtimeDeps = runtimeDeps == null
+            ? new RuntimeDeps(List.of(DEFAULT_RESERVED_PUBLIC_PORT), null, null, null, null) : runtimeDeps;
     }
 
     private static void validateClusterConfiguration(BackendProfile profile, Kubernetes kubernetes) {
@@ -87,6 +92,7 @@ public final class BackendProperties {
     public ResourceLimits resources() { return resources; }
     public Workspace workspace() { return workspace; }
     public Logging logging() { return logging; }
+    public RuntimeDeps runtimeDeps() { return runtimeDeps; }
 
     public record Kubernetes(String masterUrl, String namespace, boolean inCluster, boolean serviceAccount,
                              String kubeconfigFile, String apiServerHost, int apiServerPort,
@@ -106,4 +112,22 @@ public final class BackendProperties {
         private static boolean blank(String value) { return value == null || value.isBlank(); }
     }
     public record Logging(boolean redactSecrets) {}
+
+    /**
+     * Runtime dependency configuration. The reserved public port set must match the deployment;
+     * the image references and storage class are only mandatory for the selected dependency and
+     * never affect legacy console projects. Image references must be explicit patch versions or
+     * immutable digests (floating tags are rejected by the resource factory). The public entry
+     * host (the address that reaches the NodePort range) is optional: without it the project
+     * view reports the assigned ports without an access URL.
+     */
+    public record RuntimeDeps(List<Integer> reservedPublicPorts, String publicEntryHost,
+                              String mysqlImageDigest, String redisImageDigest,
+                              String mysqlStorageClassName) {
+        public RuntimeDeps {
+            reservedPublicPorts = List.copyOf(reservedPublicPorts == null ? List.of() : reservedPublicPorts);
+            publicEntryHost = blank(publicEntryHost) ? null : publicEntryHost.trim();
+        }
+        private static boolean blank(String value) { return value == null || value.isBlank(); }
+    }
 }

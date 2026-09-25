@@ -8,6 +8,7 @@ import {
   parseRunSummary,
   parseStartRunRequest,
   parseStartRunResponse,
+  resolveRunAvailability,
   type RunPolicy,
   type RunState,
   type RunSummary,
@@ -50,6 +51,8 @@ function summary(overrides: Record<string, unknown> = {}): Record<string, unknow
     logTruncated: false,
     logEvictedBytes: 0,
     lastLogSeq: null,
+    firstReadyAt: null,
+    expiresAt: null,
     ...overrides,
   };
 }
@@ -480,5 +483,188 @@ describe('branded run types', () => {
       const _id: typeof run.id = 'run-1';
       void _id;
     }
+  });
+});
+
+const SERVICE_POLICY: RunPolicy = {
+  command: 'mvn -q -DskipTests compile exec:java',
+  runtime: { javaMajor: 17, mavenMajor: 3 },
+  timeoutSeconds: 1800,
+  executionKind: 'SERVICE',
+  startupTimeoutSeconds: 1800,
+  serviceLifetimeSeconds: 7200,
+  resources: POLICY.resources,
+};
+const FIRST_READY_AT = '2026-08-24T10:01:00.000Z';
+const EXPIRES_AT = '2026-08-24T12:01:00.000Z';
+
+function serviceSummary(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return summary({ policy: SERVICE_POLICY, ...overrides });
+}
+
+function runningServiceSummary(): Record<string, unknown> {
+  return serviceSummary({
+    state: 'RUNNING',
+    startedAt: STARTED_AT,
+    firstReadyAt: FIRST_READY_AT,
+    expiresAt: EXPIRES_AT,
+    lastLogSeq: 4,
+  });
+}
+
+describe('task and service run policies', () => {
+  it('parses a legacy payload without execution fields as a TASK run', () => {
+    const parsed = parseRunSummary(summary());
+    expect(parsed.policy).toEqual(POLICY);
+    expect(parsed.firstReadyAt).toBeNull();
+    expect(parsed.expiresAt).toBeNull();
+  });
+
+  it('parses an explicit TASK policy and echoes the wire fields', () => {
+    const payload = summary({
+      policy: {
+        ...POLICY,
+        executionKind: 'TASK',
+        startupTimeoutSeconds: 1800,
+        serviceLifetimeSeconds: 0,
+      },
+    });
+    expect(parseRunSummary(payload)).toEqual(payload);
+  });
+
+  it('parses a SERVICE run with the verified readiness lifetime', () => {
+    expect(parseRunSummary(runningServiceSummary())).toEqual(runningServiceSummary());
+  });
+
+  it.each([
+    [
+      'unknown execution kind',
+      { ...POLICY, executionKind: 'DAEMON' },
+    ],
+    [
+      'service lifetime below the fixed two hours',
+      { ...POLICY, executionKind: 'SERVICE', startupTimeoutSeconds: 1800, serviceLifetimeSeconds: 7199 },
+    ],
+    [
+      'service startup timeout above 1800',
+      { ...POLICY, executionKind: 'SERVICE', startupTimeoutSeconds: 1801, serviceLifetimeSeconds: 7200 },
+    ],
+    [
+      'service startup timeout zero',
+      { ...POLICY, executionKind: 'SERVICE', startupTimeoutSeconds: 0, serviceLifetimeSeconds: 7200 },
+    ],
+  ])('rejects policy with %s', (_label, policy) => {
+    expect(() => parseRunSummary(summary({ policy }))).toThrow('Invalid run response');
+  });
+
+  it('rejects a TASK run that carries the service lifetime fields', () => {
+    expect(() =>
+      parseRunSummary(summary({ firstReadyAt: FIRST_READY_AT, expiresAt: EXPIRES_AT })),
+    ).toThrow('Invalid run response');
+  });
+
+  it('rejects a SERVICE run with firstReadyAt but no expiresAt', () => {
+    expect(() =>
+      parseRunSummary(
+        serviceSummary({ state: 'RUNNING', startedAt: STARTED_AT, firstReadyAt: FIRST_READY_AT }),
+      ),
+    ).toThrow('Invalid run response');
+  });
+
+  it('rejects a SERVICE run whose lifetime window is not the fixed two hours', () => {
+    expect(() =>
+      parseRunSummary(
+        serviceSummary({
+          state: 'RUNNING',
+          startedAt: STARTED_AT,
+          firstReadyAt: FIRST_READY_AT,
+          expiresAt: '2026-08-24T11:01:00.000Z',
+          lastLogSeq: 4,
+        }),
+      ),
+    ).toThrow('Invalid run response');
+  });
+
+  it('rejects a SERVICE run ready before its creation', () => {
+    expect(() =>
+      parseRunSummary(
+        serviceSummary({
+          state: 'RUNNING',
+          startedAt: STARTED_AT,
+          firstReadyAt: '2026-08-24T09:59:59.000Z',
+          expiresAt: '2026-08-24T11:59:59.000Z',
+          lastLogSeq: 4,
+        }),
+      ),
+    ).toThrow('Invalid run response');
+  });
+
+  it('parses FAILED with APPLICATION_EXITED and TIMED_OUT with STARTUP_TIME_LIMIT_EXCEEDED', () => {
+    expect(
+      parseRunSummary(
+        summary({
+          state: 'FAILED',
+          startedAt: STARTED_AT,
+          finishedAt: FINISHED_AT,
+          terminationReason: 'APPLICATION_EXITED',
+          exitCode: 1,
+        }),
+      ).terminationReason,
+    ).toBe('APPLICATION_EXITED');
+    expect(
+      parseRunSummary(
+        summary({
+          state: 'TIMED_OUT',
+          startedAt: STARTED_AT,
+          finishedAt: FINISHED_AT,
+          terminationReason: 'STARTUP_TIME_LIMIT_EXCEEDED',
+          exitCode: null,
+        }),
+      ).terminationReason,
+    ).toBe('STARTUP_TIME_LIMIT_EXCEEDED');
+  });
+
+  it('still rejects a FAILED run with the start-up timeout reason', () => {
+    expect(() =>
+      parseRunSummary(
+        summary({
+          state: 'FAILED',
+          startedAt: STARTED_AT,
+          finishedAt: FINISHED_AT,
+          terminationReason: 'STARTUP_TIME_LIMIT_EXCEEDED',
+          exitCode: null,
+        }),
+      ),
+    ).toThrow('Invalid run response');
+  });
+});
+
+describe('run availability', () => {
+  const NOW_MS = Date.parse('2026-08-24T11:00:00.000Z');
+
+  it('reports STARTING before verified readiness', () => {
+    expect(
+      resolveRunAvailability(
+        parseRunSummary(serviceSummary({ state: 'RUNNING', startedAt: STARTED_AT })),
+        NOW_MS,
+      ),
+    ).toBe('STARTING');
+  });
+
+  it('reports READY within the verified lifetime', () => {
+    expect(resolveRunAvailability(parseRunSummary(runningServiceSummary()), NOW_MS)).toBe('READY');
+  });
+
+  it('reports UNAVAILABLE once the lifetime ends even while the run is still locking', () => {
+    const afterExpiry = Date.parse(EXPIRES_AT);
+    expect(resolveRunAvailability(parseRunSummary(runningServiceSummary()), afterExpiry)).toBe(
+      'UNAVAILABLE',
+    );
+  });
+
+  it('reports UNAVAILABLE for terminal runs', () => {
+    expect(resolveRunAvailability(parseRunSummary(VALID_BY_STATE.FAILED), NOW_MS)).toBe(
+      'UNAVAILABLE',
+    );
   });
 });

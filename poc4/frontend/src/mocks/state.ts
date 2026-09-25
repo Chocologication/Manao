@@ -1,6 +1,11 @@
 import { DEFAULT_PROJECT_LIMIT } from '../contracts/project';
 import type { AuthUser, LoginResponse } from '../contracts/auth';
-import type { ProjectState, ProjectSummary } from '../contracts/project';
+import type {
+  ProjectEndpointState,
+  ProjectRuntimeConfig,
+  ProjectState,
+  ProjectSummary,
+} from '../contracts/project';
 import { clearLargeFileBodyCache, ensureWorkspace, removeWorkspace, resetWorkspaces } from './fileFixtures';
 import { resetLogTickets } from './runSocket';
 import { bootRunState, removeProjectRuns, resetRunState } from './runState';
@@ -26,6 +31,9 @@ type MockProject = {
   createdAt: string;
   failureReason: string | null;
   observeCount: number;
+  runtime: ProjectRuntimeConfig | null;
+  creationKey: string | null;
+  endpointState: ProjectEndpointState;
 };
 
 type IssuedToken = {
@@ -40,6 +48,7 @@ const USERS: readonly MockUser[] = [
 
 let projects: MockProject[] = [];
 let tokens = new Map<string, IssuedToken>();
+let creationKeys = new Map<string, string>();
 let nextProjectSeq = 0;
 let nextTokenSeq = 0;
 let fileRequestCounts = new Map<string, number>();
@@ -72,12 +81,34 @@ export function getWriteScenario(): WriteScenario {
 }
 
 function toSummary(project: MockProject): ProjectSummary {
+  // Mock fixtures mirror the runtime-aware view shape: selected dependencies stay
+  // PROVISIONING because the mock never provisions a real cluster.
   return {
     id: project.id,
     name: project.name,
     state: project.state,
     createdAt: project.createdAt,
     failureReason: project.failureReason,
+    ...(project.runtime !== null ? { runtime: project.runtime } : {}),
+    ...(project.endpointState !== 'NONE' ? { endpointState: project.endpointState } : {}),
+    ...(project.runtime !== null
+      ? {
+          dependencies: {
+            mysql: project.runtime.mysql ? 'PROVISIONING' : 'ABSENT',
+            redis: project.runtime.redis ? 'PROVISIONING' : 'ABSENT',
+          },
+        }
+      : {}),
+    ...(project.runtime !== null && project.endpointState === 'ASSIGNED'
+      ? {
+          endpoints: project.runtime.publicPorts.map((port) => ({
+            name: port.name,
+            targetPort: port.targetPort,
+            publicPort: port.publicPort,
+            url: null,
+          })),
+        }
+      : {}),
   };
 }
 
@@ -91,6 +122,9 @@ function seedProjects(): MockProject[] {
       createdAt: '2026-08-21T00:00:00.000Z',
       failureReason: null,
       observeCount: 0,
+      runtime: null,
+      creationKey: null,
+      endpointState: 'NONE',
     },
     {
       id: BOB_SEED_PROJECT_ID,
@@ -100,6 +134,9 @@ function seedProjects(): MockProject[] {
       createdAt: '2026-08-21T00:00:01.000Z',
       failureReason: null,
       observeCount: 0,
+      runtime: null,
+      creationKey: null,
+      endpointState: 'NONE',
     },
   ];
 }
@@ -139,6 +176,7 @@ export function registerTerminalStateReset(resetter: () => void): void {
 
 function resetSessionState(): void {
   tokens = new Map();
+  creationKeys = new Map();
   nextProjectSeq = 0;
   nextTokenSeq = 0;
   projects = seedProjects();
@@ -243,11 +281,27 @@ export type CreateOwnedProjectResult =
   | { status: 'created'; project: ProjectSummary }
   | { status: 'limit' };
 
-export function createOwnedProject(userId: string, name: string): CreateOwnedProjectResult {
+export function createOwnedProject(
+  userId: string,
+  name: string,
+  options: { creationKey?: string | null; runtime?: ProjectRuntimeConfig | null } = {},
+): CreateOwnedProjectResult {
+  // Same key always returns the same project identity; a retry never creates a second project.
+  if (options.creationKey !== null && options.creationKey !== undefined) {
+    const existingId = creationKeys.get(`${userId}\0${options.creationKey}`);
+    const existing =
+      existingId === undefined
+        ? undefined
+        : projects.find((item) => item.id === existingId && item.ownerId === userId);
+    if (existing !== undefined) {
+      return { status: 'created', project: toSummary(existing) };
+    }
+  }
   const ownedCount = projects.filter((project) => project.ownerId === userId).length;
   if (ownedCount >= PROJECT_LIMIT) {
     return { status: 'limit' };
   }
+  const runtime = options.runtime ?? null;
   nextProjectSeq += 1;
   const project: MockProject = {
     id: `prj-${nextProjectSeq}`,
@@ -257,15 +311,39 @@ export function createOwnedProject(userId: string, name: string): CreateOwnedPro
     createdAt: new Date().toISOString(),
     failureReason: null,
     observeCount: 0,
+    runtime,
+    creationKey: options.creationKey ?? null,
+    // The mock applies the exact port group without a real cluster: port-bearing projects
+    // keep the ASSIGNED verdict the real gateway would have confirmed.
+    endpointState: runtime !== null && runtime.publicPorts.length > 0 ? 'ASSIGNED' : 'NONE',
   };
   projects.push(project);
+  if (project.creationKey !== null) {
+    creationKeys.set(`${userId}\0${project.creationKey}`, project.id);
+  }
   ensureWorkspace(project.id);
   return { status: 'created', project: toSummary(project) };
+}
+
+/** Same key always resolves the same project identity for the same owner. */
+export function findOwnedProjectCreation(
+  userId: string,
+  creationKey: string,
+): ProjectSummary | null {
+  const projectId = creationKeys.get(`${userId}\0${creationKey}`);
+  if (projectId === undefined) {
+    return null;
+  }
+  const project = projects.find((candidate) => candidate.id === projectId);
+  return project === undefined ? null : observeProject(project);
 }
 
 export function removeOwnedProject(userId: string, projectId: string): void {
   const project = projects.find((item) => item.id === projectId && item.ownerId === userId);
   if (!project) return;
+  if (project.creationKey !== null) {
+    creationKeys.delete(`${userId}\0${project.creationKey}`);
+  }
   removeProjectRuns(projectId);
   removeWorkspace(projectId);
   projects = projects.filter((item) => item !== project);

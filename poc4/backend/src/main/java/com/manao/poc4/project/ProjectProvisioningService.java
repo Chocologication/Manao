@@ -34,6 +34,8 @@ public final class ProjectProvisioningService {
     private final int pollAttempts;
     private final long pollIntervalMillis;
     private final ProjectLifecycleGate lifecycle;
+    private final ProjectRuntimeStore runtimeStore;
+    private final ProjectDependencies dependencies;
     private final java.util.concurrent.ExecutorService executor =
         java.util.concurrent.Executors.newSingleThreadExecutor(runnable -> {
             Thread thread = new Thread(runnable, "project-provisioning");
@@ -85,6 +87,17 @@ public final class ProjectProvisioningService {
                                       String capabilityPublicKeyBase64, WorkspaceBridge bridge,
                                       Predicate<WorkspaceStore.ProjectRecord> diagnosticHoldSelector,
                                       int pollAttempts, long pollIntervalMillis, ProjectLifecycleGate lifecycle) {
+        this(store, gateway, workspace, factory, template, capabilityPublicKeyBase64, bridge,
+            diagnosticHoldSelector, pollAttempts, pollIntervalMillis, lifecycle, null, null);
+    }
+
+    /** Full form: the runtime store supplies the project spec, the dependencies get provisioned with it. */
+    public ProjectProvisioningService(WorkspaceStore store, KubernetesGateway gateway, WorkspaceService workspace,
+                                      WorkspaceResourceFactory factory, WorkspaceTemplate template,
+                                      String capabilityPublicKeyBase64, WorkspaceBridge bridge,
+                                      Predicate<WorkspaceStore.ProjectRecord> diagnosticHoldSelector,
+                                      int pollAttempts, long pollIntervalMillis, ProjectLifecycleGate lifecycle,
+                                      ProjectRuntimeStore runtimeStore, ProjectDependencies dependencies) {
         this.store = store;
         this.gateway = gateway;
         this.workspace = workspace;
@@ -96,6 +109,8 @@ public final class ProjectProvisioningService {
         this.pollAttempts = pollAttempts;
         this.pollIntervalMillis = pollIntervalMillis;
         this.lifecycle = lifecycle;
+        this.runtimeStore = runtimeStore;
+        this.dependencies = dependencies;
     }
 
     /** Creation returns CREATING to the browser immediately; provisioning continues in background. */
@@ -177,7 +192,15 @@ public final class ProjectProvisioningService {
     }
 
     private void provisionInternal(String projectId) {
+        // The spec was written with the creation row; it decides dependencies and template shape.
+        ProjectRuntimeSpec spec = runtimeStore == null
+            ? ProjectRuntimeSpec.console() : runtimeStore.loadSpec(projectId);
         gateway.createPvc(factory.createPvc(projectId));
+        if (dependencies != null) {
+            // MySQL/Redis come up alongside the workspace bootstrap; a failure here fails the
+            // creation through the same label-scoped cleanup path.
+            dependencies.ensure(projectId, spec);
+        }
         gateway.createPod(factory.createInitializerPod(projectId));
         if (!awaitInitializer(projectId)) {
             throw new IllegalStateException("initializer did not succeed");
@@ -190,7 +213,7 @@ public final class ProjectProvisioningService {
         if (bridge != null) {
             bridge.allocate(projectId); // 6A: the bridge must exist before the first template write
         }
-        writeTemplate(projectId);
+        writeTemplate(projectId, spec);
         store.markProjectReady(projectId);
         // Background cleanup: delete the one-shot initializer after the project is READY.
         // Failure to delete does not block the project from being usable.
@@ -222,12 +245,12 @@ public final class ProjectProvisioningService {
     }
 
     /** Template directories and files go through the same two-phase workspace protocol. */
-    private void writeTemplate(String projectId) {
+    private void writeTemplate(String projectId, ProjectRuntimeSpec spec) {
         long revision = 0;
-        for (String directory : template.directories()) {
+        for (String directory : template.directories(spec)) {
             revision = workspace.applyInternal(projectId, "CREATE", directory, null, "directory", new byte[0], revision);
         }
-        for (Map.Entry<String, String> file : template.files().entrySet()) {
+        for (Map.Entry<String, String> file : template.files(spec).entrySet()) {
             revision = workspace.applyInternal(projectId, "CREATE", file.getKey(), null, "file", new byte[0], revision);
             revision = workspace.applyInternal(projectId, "SAVE", file.getKey(), null, null,
                 file.getValue().getBytes(StandardCharsets.UTF_8), revision);

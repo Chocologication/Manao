@@ -29,7 +29,7 @@ import {
   RunAuthorityCoordinator,
   useRunAuthorityCoordinator,
 } from '../../features/runs/RunAuthorityCoordinator';
-import { clonePoc4RunPolicy, SEED_LOG_MARKER } from '../../mocks/runFixtures';
+import { clonePoc4RunPolicy, SERVICE_RUN_POLICY, SEED_LOG_MARKER } from '../../mocks/runFixtures';
 import { server } from '../../mocks/node';
 import { resetLogTickets } from '../../mocks/runSocket';
 import { appendLogChunk, setRunScenario, startRun as mockStartRun } from '../../mocks/runState';
@@ -513,6 +513,204 @@ describe('RunPanel run states and stop', () => {
     await waitFor(() => {
       expect(runStateStatus()).toHaveTextContent(/STOPPING|CANCELLED|Reloading/);
     });
+  });
+});
+
+describe('RunPanel service lifetime display', () => {
+  function makeServiceRun(
+    id: string,
+    state: RunState,
+    extra: {
+      createdAt?: string;
+      startedAt?: string | null;
+      finishedAt?: string | null;
+      terminationReason?: RunTerminationReason | null;
+      firstReadyAt?: string | null;
+      expiresAt?: string | null;
+    } = {},
+  ): RunSummary {
+    const terminal =
+      state === 'SUCCEEDED' || state === 'FAILED' || state === 'CANCELLED' || state === 'TIMED_OUT';
+    const createdAt = extra.createdAt ?? new Date(Date.now() - 3 * 3600_000).toISOString();
+    const createdMs = Date.parse(createdAt);
+    const startedAt =
+      extra.startedAt !== undefined
+        ? extra.startedAt
+        : state === 'STARTING'
+          ? null
+          : new Date(createdMs + 60_000).toISOString();
+    const firstReadyAt = extra.firstReadyAt ?? null;
+    const expiresAt = extra.expiresAt ?? null;
+    return parseRunSummary({
+      id,
+      state,
+      requestedWorkspaceRevision: parseWorkspaceRevision('mock-rev-0001'),
+      policy: SERVICE_RUN_POLICY,
+      createdAt,
+      startedAt,
+      finishedAt:
+        extra.finishedAt !== undefined ? extra.finishedAt : terminal ? startedAt : null,
+      terminationReason:
+        extra.terminationReason ??
+        (state === 'FAILED'
+          ? 'APPLICATION_EXITED'
+          : state === 'CANCELLED'
+            ? 'USER_STOPPED'
+            : state === 'TIMED_OUT'
+              ? 'TIME_LIMIT_EXCEEDED'
+              : null),
+      exitCode: state === 'FAILED' ? 1 : state === 'SUCCEEDED' ? 0 : null,
+      logTruncated: false,
+      logEvictedBytes: 0,
+      lastLogSeq: terminal ? 1 : null,
+      firstReadyAt,
+      expiresAt,
+    });
+  }
+
+  function availabilityStatus(): HTMLElement {
+    return screen.getByRole('status', { name: 'Run availability' });
+  }
+
+  it('shows Starting before verified readiness and does not count the lifetime yet', async () => {
+    stubRuns({ active: makeServiceRun('run-svc-starting', 'RUNNING') });
+    await authenticateAsAlice();
+    renderPanel();
+
+    await waitFor(() => {
+      expect(runStateStatus()).toHaveTextContent('RUNNING');
+    });
+    expect(availabilityStatus()).toHaveTextContent('Starting');
+    expect(availabilityStatus()).not.toHaveTextContent(/left/);
+    expect(screen.getByText(/Elapsed/)).toBeInTheDocument();
+  });
+
+  it('shows Accessible with the remaining verified lifetime', async () => {
+    stubRuns({
+      active: makeServiceRun('run-svc-ready', 'RUNNING', {
+        firstReadyAt: new Date(Date.now() - 7100_000).toISOString(),
+        expiresAt: new Date(Date.now() + 100_000).toISOString(),
+      }),
+    });
+    await authenticateAsAlice();
+    renderPanel();
+
+    await waitFor(() => {
+      expect(availabilityStatus()).toHaveTextContent(/Accessible/);
+    });
+    expect(availabilityStatus()).toHaveTextContent(/left/);
+  });
+
+  it('shows Unavailable after the lifetime ends without inventing a terminal state', async () => {
+    stubRuns({
+      active: makeServiceRun('run-svc-expired', 'RUNNING', {
+        firstReadyAt: new Date(Date.now() - 7201_000).toISOString(),
+        expiresAt: new Date(Date.now() - 1000).toISOString(),
+      }),
+    });
+    await authenticateAsAlice();
+    renderPanel();
+
+    await waitFor(() => {
+      expect(availabilityStatus()).toHaveTextContent('Unavailable');
+    });
+    expect(runStateStatus()).toHaveTextContent('RUNNING');
+    expect(runStateStatus()).not.toHaveTextContent('TIMED_OUT');
+    expect(screen.getByRole('button', { name: 'Start run' })).toBeDisabled();
+  });
+
+  it('marks a service run that reached the two hour limit', async () => {
+    const nowMs = Date.now();
+    stubRuns({
+      active: null,
+      history: [
+        makeServiceRun('run-svc-limit', 'TIMED_OUT', {
+          createdAt: new Date(nowMs - 3 * 3600_000).toISOString(),
+          startedAt: new Date(nowMs - 2 * 3600_000 - 60_000).toISOString(),
+          finishedAt: new Date(nowMs - 1000).toISOString(),
+          terminationReason: 'TIME_LIMIT_EXCEEDED',
+          firstReadyAt: new Date(nowMs - 7200_000).toISOString(),
+          expiresAt: new Date(nowMs).toISOString(),
+        }),
+      ],
+    });
+    await authenticateAsAlice();
+    renderPanel();
+
+    await waitFor(() => {
+      expect(runStateStatus()).toHaveTextContent('TIMED_OUT');
+    });
+    expect(availabilityStatus()).toHaveTextContent('Reached the two hour limit');
+  });
+
+  it('shows Failed and Stopped for exited and user-stopped service runs', async () => {
+    stubRuns({
+      active: null,
+      history: [
+        makeServiceRun('run-svc-exited', 'FAILED', {
+          finishedAt: new Date(Date.now() - 1000).toISOString(),
+        }),
+      ],
+    });
+    await authenticateAsAlice();
+    renderPanel();
+
+    await waitFor(() => {
+      expect(runStateStatus()).toHaveTextContent('FAILED');
+    });
+    expect(availabilityStatus()).toHaveTextContent('Failed');
+
+    cleanup();
+    resetAppRuntime();
+    await authenticateAsAlice();
+    stubRuns({
+      active: null,
+      history: [
+        makeServiceRun('run-svc-stopped', 'CANCELLED', {
+          finishedAt: new Date(Date.now() - 1000).toISOString(),
+        }),
+      ],
+    });
+    renderPanel();
+    await waitFor(() => {
+      expect(runStateStatus()).toHaveTextContent('CANCELLED');
+    });
+    expect(availabilityStatus()).toHaveTextContent('Stopped');
+  });
+
+  it('shows no availability status for TASK runs', async () => {
+    stubRuns({ active: makeRun('run-task', 'RUNNING') });
+    await authenticateAsAlice();
+    renderPanel();
+
+    await waitFor(() => {
+      expect(runStateStatus()).toHaveTextContent('RUNNING');
+    });
+    expect(screen.queryByRole('status', { name: 'Run availability' })).toBeNull();
+  });
+
+  it('surfaces the dependency-not-ready hint from a rejected start', async () => {
+    server.use(
+      http.post('/api/v1/projects/:projectId/runs', () =>
+        HttpResponse.json(
+          {
+            code: 'DEPENDENCY_NOT_READY',
+            message: 'Selected dependencies are not ready yet. Try again once they are ready.',
+            traceId: 'trace-deps-not-ready',
+          },
+          { status: 409 },
+        ),
+      ),
+    );
+    await authenticateAsAlice();
+    renderPanel();
+    const start = await loadedIdle();
+    await userEvent.setup().click(start);
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent(
+      'Selected dependencies are not ready yet. Try again once they are ready.',
+    );
   });
 });
 

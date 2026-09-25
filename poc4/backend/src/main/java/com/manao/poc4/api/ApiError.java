@@ -12,7 +12,9 @@ public record ApiError(String code, String message, String traceId) {
         "ENTRY_ALREADY_EXISTS", "ENTRY_NOT_FOUND", "DIRECTORY_NOT_EMPTY", "RUN_ALREADY_ACTIVE",
         "RUN_STATE_CONFLICT", "RUN_NOT_FOUND", "LOG_TICKET_NOT_AVAILABLE", "TERMINAL_NOT_AVAILABLE",
         "TERMINAL_SESSION_ALREADY_ACTIVE", "TERMINAL_TICKET_NOT_AVAILABLE",
-        "PROJECT_CREATING", "PROJECT_BUSY", "CLEANUP_INCOMPLETE", "PROJECT_CLEANUP_INCOMPLETE");
+        "PROJECT_CREATING", "PROJECT_BUSY", "CLEANUP_INCOMPLETE", "PROJECT_CLEANUP_INCOMPLETE",
+        "PUBLIC_PORT_RESERVED", "PUBLIC_PORT_IN_USE", "PUBLIC_PORT_PREFLIGHT_UNAVAILABLE",
+        "CREATE_REQUEST_MISMATCH", "DEPENDENCY_NOT_READY");
 
     public ApiError {
         if (!CODES.contains(code)) code = "INTERNAL_ERROR";
@@ -36,6 +38,12 @@ public record ApiError(String code, String message, String traceId) {
             case "PROJECT_CREATING" -> "Project is still being created";
             case "PROJECT_BUSY" -> "Project is busy";
             case "CLEANUP_INCOMPLETE", "PROJECT_CLEANUP_INCOMPLETE" -> "Project cleanup is incomplete";
+            case "PUBLIC_PORT_RESERVED" -> "Public port is reserved. Choose another port.";
+            case "PUBLIC_PORT_IN_USE" -> "Public port is already in use. Choose another port.";
+            case "PUBLIC_PORT_PREFLIGHT_UNAVAILABLE" ->
+                "Public port availability cannot be verified right now. Try again later.";
+            case "CREATE_REQUEST_MISMATCH" -> "Creation request does not match the original request";
+            case "DEPENDENCY_NOT_READY" -> "Selected dependencies are not ready yet. Try again once they are ready.";
             default -> "Request failed";
         };
     }

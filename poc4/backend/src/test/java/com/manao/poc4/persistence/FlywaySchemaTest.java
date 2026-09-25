@@ -6,6 +6,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import java.sql.Connection;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.sql.Timestamp;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.UUID;
@@ -43,12 +44,12 @@ class FlywaySchemaTest {
     }
 
     @Test
-    void latestSchemaIsVersion8AndAcceptsDeleting() throws Exception {
+    void latestSchemaIsVersion9AndAcceptsDeleting() throws Exception {
         try (var version = connection.prepareStatement(
                 "SELECT version FROM flyway_schema_history WHERE success = 1 ORDER BY installed_rank DESC LIMIT 1")) {
             try (var rows = version.executeQuery()) {
                 assertThat(rows.next()).isTrue();
-                assertThat(rows.getString(1)).isEqualTo("8");
+                assertThat(rows.getString(1)).isEqualTo("9");
             }
         }
         String userId = UUID.randomUUID().toString();
@@ -204,10 +205,52 @@ class FlywaySchemaTest {
     }
 
     @Test
+    void upgradeFromV8ToV9PreservesExistingProjectsAndAddsRuntimeColumns() throws Exception {
+        try (JdbcStoreTestSupport v8 = JdbcStoreTestSupport.createAtVersion("8")) {
+            var jdbc = v8.jdbc();
+            String userId = UUID.randomUUID().toString();
+            String projectId = UUID.randomUUID().toString();
+            Timestamp testNow = Timestamp.from(TEST_NOW);
+            jdbc.update("INSERT INTO app_user(id, username, password_hash, created_at) VALUES (?, ?, 'hash', ?)",
+                userId, "runtime-owner-" + userId, testNow);
+            jdbc.update("INSERT INTO project(id, owner_id, name, state, workspace_revision, created_at, updated_at)"
+                    + " VALUES (?, ?, 'legacy', 'READY', 0, ?, ?)",
+                projectId, userId, testNow, testNow);
+            v8.migrateToLatest();
+            assertThat(jdbc.queryForObject(
+                "SELECT version FROM flyway_schema_history WHERE success = 1 ORDER BY installed_rank DESC LIMIT 1",
+                String.class)).isEqualTo("9");
+            // Existing rows survive V9 and legacy JSON NULL keeps the old console reading.
+            assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM project WHERE id = ?", Integer.class, projectId)).isEqualTo(1);
+            assertThat(jdbc.queryForObject("SELECT runtime_spec_json FROM project WHERE id = ?", String.class, projectId)).isNull();
+            assertThat(jdbc.queryForObject("SELECT creation_key FROM project WHERE id = ?", String.class, projectId)).isNull();
+            assertThat(jdbc.queryForObject("SELECT creation_digest FROM project WHERE id = ?", String.class, projectId)).isNull();
+            assertThat(jdbc.queryForObject("SELECT endpoint_state FROM project WHERE id = ?", String.class, projectId)).isEqualTo("NONE");
+            // Several legacy rows of one owner coexist despite the (owner_id, creation_key) unique index.
+            jdbc.update("INSERT INTO project(id, owner_id, name, state, workspace_revision, created_at, updated_at)"
+                    + " VALUES (?, ?, 'legacy-2', 'READY', 0, ?, ?)",
+                UUID.randomUUID().toString(), userId, testNow, testNow);
+            assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM project WHERE owner_id = ?", Integer.class, userId)).isEqualTo(2);
+            // Duplicate creation keys of one owner are rejected; storage bindings are limited to known purposes.
+            String creationKey = UUID.randomUUID().toString();
+            jdbc.update("UPDATE project SET creation_key = ? WHERE id = ?", creationKey, projectId);
+            assertThatThrownBy(() -> jdbc.update(
+                    "INSERT INTO project(id, owner_id, name, state, workspace_revision, creation_key, created_at, updated_at)"
+                        + " VALUES (?, ?, 'dup', 'READY', 0, ?, ?, ?)",
+                    UUID.randomUUID().toString(), userId, creationKey, testNow, testNow))
+                .isInstanceOf(org.springframework.dao.DataAccessException.class);
+            jdbc.update("INSERT INTO project_storage_binding(project_id, purpose, pvc_name) VALUES (?, 'WORKSPACE', 'manao-ws-pvc-x')", projectId);
+            assertThatThrownBy(() -> jdbc.update(
+                    "INSERT INTO project_storage_binding(project_id, purpose, pvc_name) VALUES (?, 'REDIS', 'x')", projectId))
+                .isInstanceOf(org.springframework.dao.DataAccessException.class);
+        }
+    }
+
+    @Test
     void upgradeFailsClosedWhenLegacyReceiptDigestIsNull() throws Exception {
         assertThat(connection.getCatalog()).matches("manao_stage6_[0-9a-f]{32}");
         try (Statement statement = connection.createStatement()) {
-            statement.execute("DROP TABLE IF EXISTS terminal_audit, terminal_session, log_ticket, run_log_chunk, run, workspace_operation, project, app_user, instance_lease, flyway_schema_history");
+            statement.execute("DROP TABLE IF EXISTS project_storage_binding, terminal_audit, terminal_session, log_ticket, run_log_chunk, run, workspace_operation, project, app_user, instance_lease, flyway_schema_history");
         }
         Flyway.configure().dataSource(connection.getMetaData().getURL(),
                 System.getenv().getOrDefault("MANAO_DB_USERNAME", "manao"),

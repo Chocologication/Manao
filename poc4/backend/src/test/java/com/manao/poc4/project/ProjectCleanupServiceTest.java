@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.manao.poc4.api.ApiException;
 import com.manao.poc4.kubernetes.FakeKubernetesGateway;
+import com.manao.poc4.kubernetes.FakeProjectRuntimeStore;
 import com.manao.poc4.kubernetes.ProjectResourceCleanupException;
 import com.manao.poc4.kubernetes.ProjectResourceCleaner;
 import com.manao.poc4.workspace.WorkspaceControllerTest.FakeStore;
@@ -111,6 +112,31 @@ class ProjectCleanupServiceTest {
         restarted.delete(OWNER, PROJECT);
         assertThat(store.projects).doesNotContainKey(PROJECT);
         assertThat(gateway.deletedProjects).contains(PROJECT);
+    }
+
+    @Test
+    void storageBindingsSurviveIncompleteCleanupForTheRetry() {
+        FakeProjectRuntimeStore runtimeStore = new FakeProjectRuntimeStore();
+        runtimeStore.rememberStorage(PROJECT, new com.manao.poc4.project.ProjectRuntimeStore.StorageBinding(
+            "WORKSPACE", "manao-pvc-" + PROJECT, "uid-ws", "pv-ws", "pvuid-ws"));
+        gateway = new IncompleteOnceGateway();
+        cleanup = new ProjectCleanupService(deletions, gate, runtime, gateway, store);
+
+        assertThatThrownBy(() -> cleanup.delete(OWNER, PROJECT))
+            .isInstanceOfSatisfying(ApiException.class, ex -> {
+                assertThat(ex.status()).isEqualTo(503);
+                assertThat(ex.code()).isEqualTo("PROJECT_CLEANUP_INCOMPLETE");
+            });
+        assertThat(store.projects.get(PROJECT).state()).isEqualTo("DELETING");
+        // A permission error keeps DELETING AND the remembered storage identity: the retry
+        // re-verifies leftover volumes through it. Bindings vanish only with the project row
+        // (the database FK cascade is covered by ProjectRuntimeStoreTest against real MySQL).
+        assertThat(runtimeStore.storageBindings(PROJECT)).hasSize(1);
+
+        ProjectCleanupService restarted = new ProjectCleanupService(deletions, new ProjectLifecycleGate(),
+            runtime, new FakeKubernetesGateway(), store);
+        restarted.delete(OWNER, PROJECT);
+        assertThat(store.projects).doesNotContainKey(PROJECT);
     }
 
     @Test

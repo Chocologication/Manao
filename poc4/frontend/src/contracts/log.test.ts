@@ -49,6 +49,8 @@ const RUNNING: RunSummary = {
   logTruncated: false,
   logEvictedBytes: 0,
   lastLogSeq: 2,
+  firstReadyAt: null,
+  expiresAt: null,
 };
 
 function utf8Bytes(text: string): number {

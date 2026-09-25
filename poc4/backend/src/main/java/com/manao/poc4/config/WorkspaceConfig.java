@@ -4,11 +4,16 @@ import com.manao.poc4.kubernetes.Fabric8KubernetesGateway;
 import com.manao.poc4.kubernetes.KubernetesGateway;
 import com.manao.poc4.kubernetes.WorkspaceApiClient;
 import com.manao.poc4.kubernetes.WorkspacePortForwardManager;
+import com.manao.poc4.project.JdbcProjectRuntimeStore;
 import com.manao.poc4.project.ProjectCleanupService;
 import com.manao.poc4.project.ProjectDeletionRepository;
+import com.manao.poc4.project.ProjectDependencies;
 import com.manao.poc4.project.ProjectLifecycleGate;
 import com.manao.poc4.project.ProjectProvisioningService;
 import com.manao.poc4.project.ProjectRuntimeCleaner;
+import com.manao.poc4.project.ProjectRuntimeStore;
+import com.manao.poc4.project.ProjectService;
+import com.manao.poc4.recovery.CreationEndpointRecoveryService;
 import com.manao.poc4.recovery.ProjectRecoveryService;
 import com.manao.poc4.workspace.Ed25519Keys;
 import com.manao.poc4.log.RunLogService;
@@ -51,12 +56,19 @@ public class WorkspaceConfig {
             try {
                 String kubeconfig = java.nio.file.Files.readString(java.nio.file.Path.of(kubernetes.kubeconfigFile()));
                 io.fabric8.kubernetes.client.Config config = io.fabric8.kubernetes.client.Config.fromKubeconfig(null, kubeconfig, null);
+                config.setHttp2Disable(true);
                 return new KubernetesClientBuilder().withConfig(config).build();
             } catch (java.io.IOException ex) {
                 throw new IllegalStateException("kubeconfig for the local-cluster profile is unreadable", ex);
             }
         }
-        return new KubernetesClientBuilder().build();
+        // In-cluster: HTTP/1.1 must be forced. Run-receipt reads go through WebSocket exec
+        // upgrades; with HTTP/2 (ALPN) negotiated, every exec fails immediately with an
+        // opaque handshake rejection against kube-apiserver (observed live on v1.31,
+        // 2026-09-22), which wedges run readiness arming at STARTING forever.
+        io.fabric8.kubernetes.client.Config config = io.fabric8.kubernetes.client.Config.autoConfigure(null);
+        config.setHttp2Disable(true);
+        return new KubernetesClientBuilder().withConfig(config).build();
     }
 
     @Bean
@@ -99,8 +111,21 @@ public class WorkspaceConfig {
     }
 
     @Bean
-    KubernetesGateway kubernetesGateway(KubernetesClient client, BackendProperties properties) {
-        return new Fabric8KubernetesGateway(client, properties.kubernetes().namespace());
+    KubernetesGateway kubernetesGateway(KubernetesClient client, BackendProperties properties,
+                                        ProjectRuntimeStore runtimeStore) {
+        return new Fabric8KubernetesGateway(client, properties.kubernetes().namespace(), runtimeStore);
+    }
+
+    @Bean
+    com.manao.poc4.kubernetes.PublicEndpointGateway publicEndpointGateway(KubernetesClient client,
+                                                                          BackendProperties properties) {
+        return new com.manao.poc4.kubernetes.Fabric8PublicEndpointGateway(client,
+            properties.kubernetes().namespace());
+    }
+
+    @Bean
+    ProjectRuntimeStore projectRuntimeStore(org.springframework.jdbc.core.JdbcTemplate jdbc) {
+        return new JdbcProjectRuntimeStore(jdbc);
     }
 
     @Bean
@@ -125,12 +150,35 @@ public class WorkspaceConfig {
     }
 
     @Bean
+    com.manao.poc4.kubernetes.DependencyResourceFactory dependencyResourceFactory(BackendProperties properties) {
+        var deps = properties.runtimeDeps();
+        // The MySQL claim defaults to the workspace storage class; the deployment may override it.
+        String storageClass = deps.mysqlStorageClassName() == null || deps.mysqlStorageClassName().isBlank()
+            ? properties.workspace().storageClassName() : deps.mysqlStorageClassName();
+        return new com.manao.poc4.kubernetes.DependencyResourceFactory(
+            properties.kubernetes().namespace(),
+            deps.mysqlImageDigest(), deps.redisImageDigest(), storageClass,
+            com.manao.poc4.kubernetes.DependencyResourceFactory.MYSQL_RESOURCES,
+            com.manao.poc4.kubernetes.DependencyResourceFactory.REDIS_RESOURCES);
+    }
+
+    @Bean
+    ProjectDependencies projectDependencies(KubernetesClient client, BackendProperties properties,
+                                            com.manao.poc4.kubernetes.DependencyResourceFactory factory,
+                                            ProjectRuntimeStore runtimeStore) {
+        return new com.manao.poc4.kubernetes.Fabric8ProjectDependencies(client,
+            properties.kubernetes().namespace(), factory, runtimeStore);
+    }
+
+    @Bean
     ProjectProvisioningService projectProvisioningService(WorkspaceStore store, KubernetesGateway gateway,
                                                           WorkspaceService workspace,
                                                           com.manao.poc4.kubernetes.WorkspaceResourceFactory factory,
                                                           @Value("${MANAO_WORKSPACE_CAPABILITY_PUBLIC_KEY:}") String publicKeyBase64,
                                                           org.springframework.beans.factory.ObjectProvider<WorkspacePortForwardManager> bridges,
-                                                          ProjectLifecycleGate lifecycle) {
+                                                          ProjectLifecycleGate lifecycle,
+                                                          ProjectRuntimeStore runtimeStore,
+                                                          ProjectDependencies dependencies) {
         WorkspacePortForwardManager manager = bridges.getIfAvailable();
         // 6A: the workspace bridge must exist before the first template write and dies with the project.
         ProjectProvisioningService.WorkspaceBridge bridge = manager == null ? null
@@ -141,7 +189,8 @@ public class WorkspaceConfig {
             };
         return new ProjectProvisioningService(store, gateway, workspace, factory,
             new WorkspaceTemplate(), publicKeyBase64, bridge,
-            com.manao.poc4.project.ProvisioningDiagnosticHold.fromEnvironment(), 240, 500, lifecycle);
+            com.manao.poc4.project.ProvisioningDiagnosticHold.fromEnvironment(), 240, 500, lifecycle,
+            runtimeStore, dependencies);
     }
 
     @Bean
@@ -164,6 +213,21 @@ public class WorkspaceConfig {
         return new ProjectRecoveryService(store, agent, gateway, Clock.systemUTC(), Duration.ofMinutes(10), lifecycle);
     }
 
+    /**
+     * One startup scan (ApplicationReadyEvent) for creations whose endpoint application never
+     * reached a verdict; provisioning continues synchronously under the scan's own lifecycle
+     * lease, so no other recovery loop can fail-and-clean the row behind the scan's back.
+     */
+    @Bean
+    CreationEndpointRecoveryService creationEndpointRecoveryService(ProjectRuntimeStore store,
+                                                                    com.manao.poc4.kubernetes.PublicEndpointGateway endpoints,
+                                                                    ProjectService projects,
+                                                                    ProjectProvisioningService provisioning,
+                                                                    ProjectLifecycleGate lifecycle) {
+        return new CreationEndpointRecoveryService(store, endpoints, projects,
+            provisioning::provision, lifecycle);
+    }
+
     @Bean
     com.manao.poc4.run.RunPolicy runPolicy(BackendProperties properties) {
         return com.manao.poc4.run.RunPolicy.fromProperties(properties);
@@ -176,6 +240,7 @@ public class WorkspaceConfig {
         return new com.manao.poc4.kubernetes.JobResourceFactory(
             properties.kubernetes().namespace(),
             policy.timeoutSeconds(),
+            properties.workspace().initializerImage(),
             new com.manao.poc4.kubernetes.JobResourceFactory.RunResources(policy.requests().cpuMillis(),
                 policy.requests().memoryBytes(), policy.requests().ephemeralStorageBytes()),
             new com.manao.poc4.kubernetes.JobResourceFactory.RunResources(policy.limits().cpuMillis(),
@@ -192,21 +257,26 @@ public class WorkspaceConfig {
     com.manao.poc4.kubernetes.JobCoordinator jobCoordinator(org.springframework.beans.factory.ObjectProvider<KubernetesClient> client,
                                                             com.manao.poc4.kubernetes.JobResourceFactory factory,
                                                             com.manao.poc4.kubernetes.ResourceIdentityVerifier verifier,
+                                                            com.manao.poc4.kubernetes.ExecTransport execTransport,
                                                             BackendProperties properties) {
         KubernetesClient kubernetesClient = client.getIfAvailable();
         if (kubernetesClient == null) {
             throw new IllegalStateException("Kubernetes client is required for Job coordination");
         }
         return new com.manao.poc4.kubernetes.Fabric8JobCoordinator(kubernetesClient, factory, verifier,
-            properties.kubernetes().namespace());
+            properties.kubernetes().namespace(), execTransport);
     }
 
     @Bean
     com.manao.poc4.run.RunService runService(com.manao.poc4.run.RunStore store,
                                              com.manao.poc4.kubernetes.JobCoordinator coordinator,
                                              com.manao.poc4.run.RunPolicy policy,
-                                             ProjectLifecycleGate lifecycle) {
-        return new com.manao.poc4.run.RunService(store, coordinator, policy, lifecycle);
+                                             ProjectLifecycleGate lifecycle,
+                                             ProjectRuntimeStore runtimeStore,
+                                             ProjectDependencies dependencies,
+                                             com.manao.poc4.kubernetes.PublicEndpointGateway endpoints) {
+        return new com.manao.poc4.run.RunService(store, coordinator, policy, lifecycle, runtimeStore,
+            dependencies, endpoints);
     }
 
     @Bean
@@ -214,11 +284,12 @@ public class WorkspaceConfig {
                                                              com.manao.poc4.kubernetes.JobCoordinator coordinator,
                                                              com.manao.poc4.log.RunLogIngestor logIngestor,
                                                              org.springframework.beans.factory.ObjectProvider<com.manao.poc4.log.RunLogWebSocketHandler> logSockets,
-                                                             ProjectLifecycleGate lifecycle) {
+                                                             ProjectLifecycleGate lifecycle,
+                                                             com.manao.poc4.kubernetes.PublicEndpointGateway endpoints) {
         return new com.manao.poc4.run.RunRecoveryService(store, coordinator, logIngestor, runId -> {
             com.manao.poc4.log.RunLogWebSocketHandler handler = logSockets.getIfAvailable();
             if (handler != null) handler.publishComplete(runId);
-        }, lifecycle);
+        }, lifecycle, endpoints);
     }
 
     @Bean
@@ -226,11 +297,12 @@ public class WorkspaceConfig {
                                                                    com.manao.poc4.kubernetes.JobCoordinator coordinator,
                                                                    com.manao.poc4.log.RunLogIngestor logIngestor,
                                                                    org.springframework.beans.factory.ObjectProvider<com.manao.poc4.log.RunLogWebSocketHandler> logSockets,
-                                                                   ProjectLifecycleGate lifecycle) {
+                                                                   ProjectLifecycleGate lifecycle,
+                                                                   com.manao.poc4.kubernetes.PublicEndpointGateway endpoints) {
         return new com.manao.poc4.run.RunObservationService(store, coordinator, logIngestor, runId -> {
             com.manao.poc4.log.RunLogWebSocketHandler handler = logSockets.getIfAvailable();
             if (handler != null) handler.publishComplete(runId);
-        }, lifecycle);
+        }, lifecycle, endpoints);
     }
 
     @Bean

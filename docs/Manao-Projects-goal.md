@@ -1,6 +1,6 @@
 # Manao Project Goal
 
-Updated: 2026-09-20. This document defines product scope, not live infrastructure health. Stage acceptance and measured results are linked below.
+Updated: 2026-09-22. This document defines product scope, not live infrastructure health. Stage acceptance and measured results are linked below.
 
 ## Product Vision
 
@@ -44,4 +44,12 @@ Implementation anchors: [Job command](../poc4/backend/src/main/java/com/manao/po
 
 The accepted public entry uses HTTP; HTTPS and production hardening are not established by this MVP acceptance. Details remain in the deployment/acceptance documents rather than becoming additional implied deliverables here.
 
-POC4 is not the complete Manao product. The next product slice has not been approved in the current task; neither AI work nor a new engineering gate starts automatically because 6B is closed.
+## Next Agreed Direction: Java Runtime Design
+
+The user chose multi-language adaptation before AI verification, beginning with Java projects that can optionally expose application ports and use project-specific MySQL/Redis. On 2026-09-21 the user confirmed persistent MySQL data across application stop, edits and reruns, and a separate MySQL PVC rather than sharing the workspace PVC. The user also set a two-hour lifetime after successful application startup, mandatory manual entry of external ports in 30000–31000, and no additional product range restriction for valid container ports. Port conflicts must ask the user to change the number, never silently select another.
+
+The [Java Runtime Design](superpowers/specs/2026-09-21-java-project-runtime-design.md) records confirmed requirements, proposed defaults, lifecycle contracts and acceptance scenarios. It separates project-owned dependencies/data from each application Run. The [module review](superpowers/specs/2026-09-21-java-runtime-module-review.md) maps responsibilities, interfaces and tests. The user confirmed manual rerun after application failure; the [implementation plan](superpowers/plans/2026-09-21-java-project-runtime-implementation-plan.md) therefore reuses Job + Service without application auto-recovery. Implementation branch work exists; its deployment and verification status belongs to the [runtime acceptance record](../poc4/docs/evidence/java-runtime/acceptance.md). [Domain terms](../CONTEXT.md) distinguish project, workspace, Run and project dependency.
+
+On 2026-09-22 the user approved preloading standard template dependencies/plugins in the Java runner image and retaining each project's Maven cache in a separate directory on its existing workspace PVC. This improves first and repeated application Runs; workspace creation does not wait for Maven. No extra cache PVC is introduced. The [Maven cache supplement](superpowers/plans/2026-09-22-java-maven-cache-implementation-plan.md) was implemented (C1/C2), and C3 deployed it with the dedicated cache acceptance completed the same day, recorded in the [runtime acceptance record](../poc4/docs/evidence/java-runtime/acceptance.md) section 8; that round's 58s first-run and 7s cache-reuse timings are measured samples, not a general performance promise. The formal 7200s run remains WAIVED_BY_USER and one DELETING leftover awaits an operator decision. Future language support may reuse the project-cache lifecycle without adding a general cache framework now.
+
+POC4 remains the delivered baseline. AI, additional languages and the new runtime capabilities are not established by its acceptance, and historical stage numbers and completed gates are not being rewritten.

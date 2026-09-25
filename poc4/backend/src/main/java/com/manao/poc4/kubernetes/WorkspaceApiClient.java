@@ -17,6 +17,7 @@ import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.List;
+import java.util.Locale;
 import java.util.Optional;
 
 /**
@@ -189,15 +190,29 @@ public final class WorkspaceApiClient implements WorkspaceAgent {
         }
     }
 
-    private static WorkspaceAgentException.TransportFailure classifyTransportFailure(Throwable failure) {
+    static WorkspaceAgentException.TransportFailure classifyTransportFailure(Throwable failure) {
         for (Throwable current = failure; current != null; current = current.getCause()) {
             if (current instanceof InterruptedException) return WorkspaceAgentException.TransportFailure.INTERRUPTED;
             if (current instanceof HttpConnectTimeoutException) return WorkspaceAgentException.TransportFailure.CONNECT_TIMEOUT;
             if (current instanceof HttpTimeoutException) return WorkspaceAgentException.TransportFailure.TIMEOUT;
             if (current instanceof ConnectException) return WorkspaceAgentException.TransportFailure.CONNECT;
             if (current instanceof SocketException) return WorkspaceAgentException.TransportFailure.RESET;
+            if (current instanceof java.io.IOException && isConnectionReset(current.getMessage()))
+                return WorkspaceAgentException.TransportFailure.RESET;
         }
         return WorkspaceAgentException.TransportFailure.OTHER;
+    }
+
+    /**
+     * A connection reset can surface as a plain {@link java.io.IOException} ("Connection reset by peer"
+     * on Windows, "Connection reset" on Linux) instead of a {@link SocketException}; accept exactly
+     * those JDK reset messages so anything else - including phrases that merely mention a reset,
+     * such as negations - stays fail-closed OTHER.
+     */
+    private static boolean isConnectionReset(String message) {
+        if (message == null) return false;
+        String normalized = message.toLowerCase(Locale.ROOT);
+        return normalized.equals("connection reset") || normalized.equals("connection reset by peer");
     }
     private static MutationResult mutationFrom(JsonNode node) {
         return new MutationResult(text(node, "operationId"), text(node, "path"), text(node, "beforeSha256"),
