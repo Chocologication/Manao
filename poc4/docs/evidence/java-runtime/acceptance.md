@@ -3,6 +3,8 @@
 本文件是「Java 项目运行环境升级」（`java-runtime-implementation` 计划）的唯一云端验收记录。
 
 > **当前结论（2026-09-22，Task 8 + C3 部署/验收轮）：集群部署与迁移完成；E2E 非 7200s 用例轮与 Maven 缓存专项验收 PASS（第 8 节）；正式 7200s 用例 WAIVED_BY_USER（用户自测，未执行）；一个验收遗留项 DELETING 待操作者处理（8.8）。** 既有 Stage 6B PASS（[stage-6b acceptance](../stage-6b/acceptance.md)）不因本计划改写。第 7 节为当日上午的服务器不可达记录（已恢复）。
+>
+> **2026-09-25 追加（第 9 节）：端口预检发布轮部署完成并通过 409 无副作用验证（PASS）；无 Actuator 的导入应用就绪限制记录为文档化限制（9.3，非通过项）。** 上述 2026-09-22 结论保持不变。
 
 - 记录时间：2026-09-22（+08:00）
 - 记录者：Task 8（部署配置与 E2E 入口准备；集群核对全部为只读操作）
@@ -260,3 +262,45 @@
 - NOT_REVERIFIED（Task 8 遗留、本轮未执行，维持 PENDING 归属）：
   - §3.2 NetworkPolicy 隔离执行行为：per-project NetworkPolicy 资源随项目生命周期创建/删除已在验收中发生，但其隔离是否实际生效未以注入流量方式在真实集群实测——本轮验收未包含该实验。
   - §3.6 容量余量判定：未做并发项目数 × 每项目资源请求（MySQL 250m/512Mi、Redis 100m/128Mi、run Job）对节点 allocatable 的余量实测——本轮为单项目串行验收，不构成并发容量结论。
+
+## 9. 端口预检发布与部署轮（2026-09-25）
+
+记录者：port-preflight 发布轮。部署对象为审查通过的提交 `95c8c15`（创建时只读集群级 NodePort 占用预检）+ `b6dfc03`（占用判定前的 keyed 身份复核）。全部集群改动按部署 README 顺序执行；既有 Stage 6B PASS 与第 8 节 C3 结论均不改写。
+
+### 9.1 部署（PASS）
+
+前置核对（全部实测，任一不符即中止）：工作树干净（分支 `codex/java-runtime-implementation`，HEAD `b6dfc03`）；context `kubernetes-admin@learn`；namespace `manao-stage6b`；3 节点 Ready（master/node1/node2，v1.31.13）；无活动 Run/Job（3 个既有 Job 均 Failed、无 active，无 Running run pod）；部署中 backend digest 为 `…@sha256:0cae6613…2691c`（与 8.1 一致，作为回滚 pin 保留）。平台资源（MySQL PVC、既有 Service/NodePort 30001/30002/30080）全程未触碰。
+
+| 步骤 | 结果 |
+| --- | --- |
+| 构建 | `mvn -q -f poc4/backend/pom.xml -DskipTests package` exit 0（本机，Maven wrapper 发行版 3.9.16） |
+| 镜像 | `docker build`/`push` tag `java-runtime-backend-20260925-preflight` → **`chocologic/manao_images_repository@sha256:95f254ed201044069e412d5d20b4bb8bc35cbf377e94ca09169a0a23de079a2c`**（push 输出 digest 与 `docker inspect RepoDigests` 一致；Deployment 以 digest 引用，不用 tag）。构建源提交 `b6dfc03` |
+| RBAC | 先 `kubectl diff -f poc4/deploy/6b/backend-rbac.yaml`：唯一增量 = ClusterRole `manao-stage6b-storage-reader` 追加 core `services` `list`（Role/RoleBinding/ClusterRoleBinding 无 diff）。apply 后 `kubectl auth can-i list services --all-namespaces --as=system:serviceaccount:manao-stage6b:manao-backend` = **yes**；对照 `create services --all-namespaces` = no。仍无任何跨 namespace 写、PV 写或 cluster-admin |
+| rollout | `kubectl -n manao-stage6b set image deployment/backend backend=<新 digest>`（2026-09-25T05:39:53Z）→ Recreate 短暂中断 → rollout success；pod 1/1 Ready（readiness probe 含 db/kubernetes 组通过）。启动日志实测：`Successfully validated 9 migrations`、`Current version of schema 'manao_poc4_6b': 9`、`Schema is up to date. No migration necessary.` —— V9 保持现行，无新增迁移 |
+| 私有 env | 仓库外私有 env 文件 `BACKEND_IMAGE` 更新为新 digest（单引号格式不变，其余各行未动；凭据未接触、未输出） |
+
+### 9.2 占用端口 409 预检验证（PASS）
+
+经公网入口 `http://1.12.245.235:30080`（nginx→backend 链路实测 200/401 正常）以既有测试账号登录执行（凭据经私有 env 注入 stdin/环境，未出现在命令行、进程参数或本记录中）。时间 2026-09-25T05:44:48–05:44:50Z。
+
+- 受控创建请求：唯一名 `preflight-409-5c201ffb`，creationKey `78590a41-c7bd-49a0-8e95-4ff9d0daffc8`，`java-spring-boot-web`，publicPort **30001**（已知被 test0 的 Service 占用）。
+- **结果：HTTP 409，响应体 `{"code":"PUBLIC_PORT_IN_USE","message":"Public port is already in use. Choose another port.","traceId":"9368b193-d89c-459f-9f86-2ec151f858bf"}`** —— 预检在任何项目行写入之前拒绝。
+- 无副作用独立对账（API/集群/DB 三个面互相独立）：
+  - `GET /api/v1/projects/creation/{key}` → 404 ENTRY_NOT_FOUND（key 未落库）；
+  - 项目计数 3 → 3（limit 8）：无配额泄漏；
+  - MySQL `project` 表按该 creation_key/名称查询 = 0 行（总数 3 不变：test0、test2、8.8 遗留 DELETING 行）；
+  - 集群 Service 清单（跨 namespace 实读）：30001 仍仅由既有 `manao-app-3959c629…`（test0）持有，30002 仅由既有 `manao-app-5b3fde39…`（test2）持有——无任何新建 Service，test0 占用保持。
+- 30002 的占用仅以只读清单核验（恰好一个持有者），按计划未发起第二次 POST。
+
+### 9.3 记录的限制：无 Actuator 的导入应用无法通过平台就绪验证（文档化限制，非通过项）
+
+- 用户导入的自定义应用 **test2**（Spring Boot 4.0.8，未引入 Actuator）：8080 端口在监听、MySQL 连接正常，但平台固定就绪探测路径 `/actuator/health/readiness`（运行器 supervisor 固定轮询主端口，`WebRunSupervisor.READINESS_PATH`）始终无 2xx。
+- 后果（DB 只读实读佐证）：该 Run 终态 `TIMED_OUT` / `STARTUP_TIME_LIMIT_EXCEEDED`，`first_ready_at` 为 NULL（从未就绪武装）；项目 Service selector 保持 `manao.poc4/run-id: stopped`，不向未就绪 run 转发——fail-closed 符合设计 §7.3，不是缺陷。
+- 结论：**仅 TCP 端口打开不足以作为依赖型应用的就绪证据**。导入应用须自带 Spring Boot Actuator readiness 端点（或等价的平台可探测 2xx 路径）才能完成 bounded web run 的就绪武装。
+- 用户决定：暂不为任意应用健康检查单独立项/另行实现设计；平台**不引入自动 TCP 回退**，启动预算与 `expiresAt = firstReadyAt + 7200s` 语义维持不变。
+
+### 9.4 状态分类汇总（本节）
+
+- PASS：9.1 部署（构建/推送/RBAC/rollout/V9 校验/私有 env）、9.2 占用端口 409 预检与无副作用对账。
+- NOT_REVERIFIED：**浏览器实机 UI 对 409 的展示与输入保留**——本轮验证止于 API 层与既有单测（`CreateProjectForm.test.tsx` 模拟 409 断言错误呈现与输入保留）；实机浏览器验证未执行，因浏览器自动化需在自动化通道处理明文凭据，与凭据边界冲突。后续有条件时以不落凭据的方式补验。
+- 维持不变：8.8 DELETING 遗留项、8.5 正式 7200s 用例 WAIVED_BY_USER、8.9 两项 NOT_REVERIFIED。

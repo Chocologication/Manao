@@ -174,6 +174,7 @@ MySQL 为每项目创建独立数据库、非 root 应用账号和随机密码�
 - readiness 覆盖主监听器和选中的依赖；只开放最小 health 路径，不开放 env/config。Pod 不 Ready 时不发布服务端点；额外端口是否真实监听另行观察，配置转发不等于 Java 自动打开监听器。
 - 已经 Ready 的应用若临时不可用，停止转发、显示 UNAVAILABLE，但不重启进程或重置寿命；用户可提前停止，最终仍受原到期时间限制。
 - 未请求停止而服务进程退出（即使 exit code 0）是 FAILED / APPLICATION_EXITED，不是 BUILD_SUCCEEDED。用户停止为 CANCELLED / USER_STOPPED；到期为 TIMED_OUT / TIME_LIMIT_EXCEEDED；启动超时使用 TIMED_OUT / STARTUP_TIME_LIMIT_EXCEEDED。
+- **（2026-09-25 补充：就绪探测的固定路径是契约的一部分。）** supervisor 固定轮询主端口 `/actuator/health/readiness`（Spring Boot Actuator）。导入的不带 Actuator 的应用即使端口在监听、依赖（如 MySQL）连接正常，也无法通过就绪验证：Run 按启动预算终态 TIMED_OUT / STARTUP_TIME_LIMIT_EXCEEDED，Service selector 保持不转发（fail-closed）。实测记录见 [acceptance §9.3](../../../poc4/docs/evidence/java-runtime/acceptance.md)。仅 TCP 端口打开不构成就绪证据；平台不引入自动 TCP 回退，启动预算与 7200s 就绪武装不变（用户决定暂不为任意应用健康检查另行立项）。
 
 ### 7.3.1 到期终止与单次执行
 

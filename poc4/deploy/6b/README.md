@@ -522,6 +522,12 @@ authoritative final judge of a race between preflight and creation.
 Deliberately NOT granted: cluster-admin, any cross-namespace write, any Service
 create/delete outside `manao-stage6b`, any PV write/delete. Re-apply with
 `kubectl apply -f poc4/deploy/6b/backend-rbac.yaml`, then roll the backend.
+Applied and live-verified 2026-09-25: `kubectl diff` confirmed the only increment
+was the ClusterRole `services list`; after apply,
+`kubectl auth can-i list services --all-namespaces --as=system:serviceaccount:manao-stage6b:manao-backend`
+returned yes (create = no), and the occupied-port 409 preflight was verified
+through the public API with no side effects — deployment outcome and evidence in
+the acceptance record, section 9.
 
 ### 10.2 Runtime dependency images (no placeholder digests)
 
