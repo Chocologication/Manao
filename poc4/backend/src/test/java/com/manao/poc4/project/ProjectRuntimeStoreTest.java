@@ -81,6 +81,34 @@ class ProjectRuntimeStoreTest {
     }
 
     @Test
+    void savedPythonSpecRoundTripsWithItsOwnServiceSemantics() {
+        try (var db = JdbcStoreTestSupport.create()) {
+            JdbcTemplate jdbc = db.jdbc();
+            String ownerId = UUID.randomUUID().toString();
+            insertOwner(jdbc, ownerId);
+            var service = new ProjectService(jdbc, new DataSourceTransactionManager(jdbc.getDataSource()));
+            var runtime = new ProjectRuntimeSpec("python-fastapi-web", true, true, List.of(
+                new ProjectRuntimeSpec.Port("web", 8000, 30081)));
+            String creationKey = UUID.randomUUID().toString();
+            var created = service.create(ownerId, "fastapi-demo", creationKey, runtime);
+            assertThat(created).isPresent();
+            String projectId = created.get().id();
+            // The persisted creation digest is the plain runtime JSON digest; no derived fields.
+            assertThat(jdbc.queryForObject(
+                "SELECT creation_digest FROM project WHERE id = ?", String.class, projectId))
+                .isEqualTo(runtime.creationDigest());
+
+            var store = new JdbcProjectRuntimeStore(jdbc);
+            ProjectRuntimeSpec loaded = store.loadSpec(projectId);
+            assertThat(loaded).isEqualTo(runtime);
+            assertThat(loaded.isService()).isTrue();
+            assertThat(loaded.primaryPort()).isEqualTo(8000);
+            assertThat(loaded.mysql()).isTrue();
+            assertThat(loaded.redis()).isTrue();
+        }
+    }
+
+    @Test
     void sameCreationKeyCannotCreateSecondProjectForSameOwner() {
         try (var db = JdbcStoreTestSupport.create()) {
             JdbcTemplate jdbc = db.jdbc();

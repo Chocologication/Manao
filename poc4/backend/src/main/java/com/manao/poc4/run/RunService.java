@@ -82,7 +82,7 @@ public final class RunService {
         }
         ProjectRuntimeSpec spec = loadSpec(projectId);
         requireDependenciesReady(projectId, spec);
-        RunPolicy runPolicy = spec.isService() ? policy.forService() : policy;
+        RunPolicy runPolicy = policy.forProject(spec);
         List<EnvVar> applicationEnvironment =
             dependencies == null ? List.of() : dependencies.applicationEnvironment(projectId, spec);
         OptionalLong fencingToken = store.acquireFencingToken();

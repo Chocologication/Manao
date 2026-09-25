@@ -54,14 +54,16 @@ public class RunControllerTest {
     }
 
     static RunPolicy policy() {
-        return new RunPolicy("mvn -q -DskipTests compile exec:java", 17, 3, 1800,
+        return new RunPolicy(ProjectRuntimeSpec.TEMPLATE_JAVA_CONSOLE,
+            new RunPolicy.RuntimeInfo.Java(17, 3), "mvn -q -DskipTests compile exec:java", 1800,
             RunPolicy.EXECUTION_KIND_TASK, 1800, 0,
             new RunPolicy.Resources(1000, 1L << 30, 1L << 30),
             new RunPolicy.Resources(8000, 16L << 30, 10L << 30));
     }
 
     static RunPolicy servicePolicy() {
-        return policy().forService();
+        return policy().forProject(new ProjectRuntimeSpec(ProjectRuntimeSpec.TEMPLATE_JAVA_SPRING_BOOT_WEB,
+            false, false, List.of()));
     }
 
     private String serialized(Object response) throws Exception {
