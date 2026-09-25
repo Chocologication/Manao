@@ -48,8 +48,17 @@ trap cleanup EXIT
 pass() { PASS=$((PASS+1)); echo "PASS: $1"; }
 fail() { FAIL=$((FAIL+1)); echo "FAIL: $1"; }
 
+# Create one uniquely-owned volume, register its exact name and expose it as
+# CREATED_VOLUME. Called in the parent shell (never inside a command substitution) so a
+# failure aborts the whole script through the EXIT trap — a scenario can never keep
+# running with an empty volume name.
 new_volume() {
   local v="${PREFIX}-$$-vol-$1"
+  # A live pid is unique among live (MSYS/Git Bash) processes, so a volume named with
+  # THIS pid and a matching tag can only be an orphan left behind by a dead invocation
+  # that recycled the same pid. Removing it before create therefore never touches a
+  # volume belonging to another live invocation and makes the create provably fresh.
+  docker volume rm "$v" >/dev/null 2>&1 || true
   docker volume create "$v" >/dev/null || {
     echo "runtime-lifecycle: cannot create volume $v" >&2
     exit 1
@@ -61,7 +70,7 @@ new_volume() {
     echo "runtime-lifecycle: cannot register volume $v in $VOLUME_REGISTRY" >&2
     exit 1
   fi
-  echo "$v"
+  CREATED_VOLUME="$v"
 }
 
 # Make /run-control (fresh volume mount, root-owned) writable for the runner user.
@@ -106,8 +115,14 @@ start_run() {
   else
     args+=("$IMAGE" sh -c "$FIXTURE_CMD" fixture "$kind")
   fi
-  CONTAINERS+=("$name")
-  docker "${args[@]}" >/dev/null
+  # Register only a container that was actually created: on a same-PREFIX race a failed
+  # `docker run --name` must never put the winner's container on this run's kill list.
+  if docker "${args[@]}" >/dev/null; then
+    CONTAINERS+=("$name")
+  else
+    echo "runtime-lifecycle: cannot start container $name" >&2
+    exit 1
+  fi
 }
 
 # wait_halt NAME BUDGET_SECONDS -> prints exit code, or TIMEOUT
@@ -194,11 +209,17 @@ scenario_profile_arguments_rejected() {
       extra-run)     argv="run python-fastapi-web extra" ;;
       extra-probe)   argv="probe java-spring-boot-web web" ;;
     esac
-    name="${PREFIX}-badargs-$label"
-    vol="$(new_volume "badargs-$label")"
-    CONTAINERS+=("$name")
-    docker run -d --name "$name" -v "${vol}:/run-control" \
-      "$IMAGE" sh -c "$RUN_CMD" supervisor $argv >/dev/null
+    name="${PREFIX}-$$-badargs-$label"
+    new_volume "badargs-$label"; vol="$CREATED_VOLUME"
+    # Same registration rule as start_run: only a container that was actually created
+    # goes on this run's cleanup list.
+    if docker run -d --name "$name" -v "${vol}:/run-control" \
+         "$IMAGE" sh -c "$RUN_CMD" supervisor $argv >/dev/null; then
+      CONTAINERS+=("$name")
+    else
+      echo "runtime-lifecycle: cannot start container $name" >&2
+      exit 1
+    fi
     code="$(wait_halt "$name" 30)"
     [ "$code" = "2" ] || { fail "$name ($argv: exit=$code, want 2)"; return 0; }
     [ "$(runtime_seconds "$name")" -le 15 ] || fail "$name ($argv: rejection took too long)"
@@ -212,9 +233,10 @@ scenario_profile_arguments_rejected() {
 }
 
 scenario_readiness_gates_lifetime() {
-  local name="${PREFIX}-readiness"
+  local name="${PREFIX}-$$-readiness"
   local vol childvol rc tm starts ready exp state reason fin drift
-  vol="$(new_volume readiness)"; childvol="$(new_volume readiness-child)"
+  new_volume readiness; vol="$CREATED_VOLUME"
+  new_volume readiness-child; childvol="$CREATED_VOLUME"
   prep_control_dir "$vol"; prep_child_dir "$childvol"
   start_run "$name" "$vol" "$childvol" ready-server \
     "${COMMON_ENV[@]}" MANAO_RUN_ID=run-readiness MANAO_POD_UID=pod-readiness \
@@ -249,9 +271,10 @@ scenario_readiness_gates_lifetime() {
 }
 
 scenario_derived_dies_with_pid1() {
-  local name="${PREFIX}-pid1"
+  local name="${PREFIX}-$$-pid1"
   local vol childvol starts code secs
-  vol="$(new_volume pid1)"; childvol="$(new_volume pid1-child)"
+  new_volume pid1; vol="$CREATED_VOLUME"
+  new_volume pid1-child; childvol="$CREATED_VOLUME"
   prep_control_dir "$vol"; prep_child_dir "$childvol"
   start_run "$name" "$vol" "$childvol" ready-ignore-term \
     "${COMMON_ENV[@]}" MANAO_RUN_ID=run-pid1 MANAO_POD_UID=pod-pid1 \
@@ -272,9 +295,10 @@ scenario_derived_dies_with_pid1() {
 
 scenario_early_exit_no_rerun() {
   local exitcase="$1"
-  local name="${PREFIX}-early$exitcase"
+  local name="${PREFIX}-$$-early$exitcase"
   local vol childvol starts rc code secs
-  vol="$(new_volume "early$exitcase")"; childvol="$(new_volume "early$exitcase-child")"
+  new_volume "early$exitcase"; vol="$CREATED_VOLUME"
+  new_volume "early$exitcase-child"; childvol="$CREATED_VOLUME"
   prep_control_dir "$vol"; prep_child_dir "$childvol"
   start_run "$name" "$vol" "$childvol" "early-exit-$exitcase" \
     "${COMMON_ENV[@]}" MANAO_RUN_ID="run-early$exitcase" MANAO_POD_UID="pod-early$exitcase" \
@@ -294,9 +318,10 @@ scenario_early_exit_no_rerun() {
 }
 
 scenario_duplicate_claim_denied() {
-  local a="${PREFIX}-claim-a" b="${PREFIX}-claim-b"
+  local a="${PREFIX}-$$-claim-a" b="${PREFIX}-$$-claim-b"
   local vol childvol owner rc tm code
-  vol="$(new_volume claim)"; childvol="$(new_volume claim-child)"
+  new_volume claim; vol="$CREATED_VOLUME"
+  new_volume claim-child; childvol="$CREATED_VOLUME"
   prep_control_dir "$vol"; prep_child_dir "$childvol"
   start_run "$a" "$vol" "$childvol" ready-server \
     "${COMMON_ENV[@]}" MANAO_RUN_ID=run-claim MANAO_POD_UID=pod-claim-a \
@@ -325,9 +350,10 @@ scenario_duplicate_claim_denied() {
 }
 
 scenario_startup_too_late() {
-  local name="${PREFIX}-startup"
+  local name="${PREFIX}-$$-startup"
   local vol childvol starts rc code
-  vol="$(new_volume startup)"; childvol="$(new_volume startup-child)"
+  new_volume startup; vol="$CREATED_VOLUME"
+  new_volume startup-child; childvol="$CREATED_VOLUME"
   prep_control_dir "$vol"; prep_child_dir "$childvol"
   start_run "$name" "$vol" "$childvol" run \
     "${COMMON_ENV[@]}" MANAO_RUN_ID=run-startup MANAO_POD_UID=pod-startup \
@@ -349,9 +375,10 @@ scenario_startup_too_late() {
 }
 
 scenario_backend_unavailable() {
-  local name="${PREFIX}-nobackend"
+  local name="${PREFIX}-$$-nobackend"
   local vol childvol rc ready exp fin drift code
-  vol="$(new_volume nobackend)"; childvol="$(new_volume nobackend-child)"
+  new_volume nobackend; vol="$CREATED_VOLUME"
+  new_volume nobackend-child; childvol="$CREATED_VOLUME"
   prep_control_dir "$vol"; prep_child_dir "$childvol"
   start_run "$name" "$vol" "$childvol" ready-server \
     "${COMMON_ENV[@]}" MANAO_RUN_ID=run-nobackend MANAO_POD_UID=pod-nobackend \
@@ -374,9 +401,10 @@ scenario_backend_unavailable() {
 }
 
 scenario_receipt_broken_at_claim() {
-  local name="${PREFIX}-broken1"
+  local name="${PREFIX}-$$-broken1"
   local vol childvol starts tm code
-  vol="$(new_volume broken1)"; childvol="$(new_volume broken1-child)"
+  new_volume broken1; vol="$CREATED_VOLUME"
+  new_volume broken1-child; childvol="$CREATED_VOLUME"
   prep_broken_receipt_dir "$vol"
   start_run "$name" "$vol" "$childvol" ready-server \
     "${COMMON_ENV[@]}" MANAO_RUN_ID=run-broken1 MANAO_POD_UID=pod-broken1 \
@@ -398,9 +426,10 @@ scenario_receipt_broken_at_claim() {
 }
 
 scenario_receipt_broken_after_claim() {
-  local name="${PREFIX}-broken2"
+  local name="${PREFIX}-$$-broken2"
   local vol childvol starts tm code
-  vol="$(new_volume broken2)"; childvol="$(new_volume broken2-child)"
+  new_volume broken2; vol="$CREATED_VOLUME"
+  new_volume broken2-child; childvol="$CREATED_VOLUME"
   prep_control_dir "$vol"; prep_child_dir "$childvol"
   start_run "$name" "$vol" "$childvol" receipt-fails-after-claim \
     "${COMMON_ENV[@]}" MANAO_RUN_ID=run-broken2 MANAO_POD_UID=pod-broken2 \
@@ -421,9 +450,10 @@ scenario_receipt_broken_after_claim() {
 }
 
 scenario_manual_stop() {
-  local name="${PREFIX}-stop"
+  local name="${PREFIX}-$$-stop"
   local vol childvol starts rc code
-  vol="$(new_volume stop)"; childvol="$(new_volume stop-child)"
+  new_volume stop; vol="$CREATED_VOLUME"
+  new_volume stop-child; childvol="$CREATED_VOLUME"
   prep_control_dir "$vol"; prep_child_dir "$childvol"
   start_run "$name" "$vol" "$childvol" ready-server \
     "${COMMON_ENV[@]}" MANAO_RUN_ID=run-stop MANAO_POD_UID=pod-stop \
