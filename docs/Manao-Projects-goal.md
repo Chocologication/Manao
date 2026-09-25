@@ -44,7 +44,7 @@ Implementation anchors: [Job command](../poc4/backend/src/main/java/com/manao/po
 
 The accepted public entry uses HTTP; HTTPS and production hardening are not established by this MVP acceptance. Details remain in the deployment/acceptance documents rather than becoming additional implied deliverables here.
 
-## Next Agreed Direction: Java Runtime Design
+## Delivered Extension: Java Runtime
 
 The user chose multi-language adaptation before AI verification, beginning with Java projects that can optionally expose application ports and use project-specific MySQL/Redis. On 2026-09-21 the user confirmed persistent MySQL data across application stop, edits and reruns, and a separate MySQL PVC rather than sharing the workspace PVC. The user also set a two-hour lifetime after successful application startup, mandatory manual entry of external ports in 30000–31000, and no additional product range restriction for valid container ports. Port conflicts must ask the user to change the number, never silently select another.
 
@@ -53,3 +53,9 @@ The [Java Runtime Design](superpowers/specs/2026-09-21-java-project-runtime-desi
 On 2026-09-22 the user approved preloading standard template dependencies/plugins in the Java runner image and retaining each project's Maven cache in a separate directory on its existing workspace PVC. This improves first and repeated application Runs; workspace creation does not wait for Maven. No extra cache PVC is introduced. The [Maven cache supplement](superpowers/plans/2026-09-22-java-maven-cache-implementation-plan.md) was implemented (C1/C2), and C3 deployed it with the dedicated cache acceptance completed the same day, recorded in the [runtime acceptance record](../poc4/docs/evidence/java-runtime/acceptance.md) section 8; that round's 58s first-run and 7s cache-reuse timings are measured samples, not a general performance promise. The formal 7200s run remains WAIVED_BY_USER and one DELETING leftover awaits an operator decision. Future language support may reuse the project-cache lifecycle without adding a general cache framework now.
 
 POC4 remains the delivered baseline. AI, additional languages and the new runtime capabilities are not established by its acceptance, and historical stage numbers and completed gates are not being rewritten.
+
+## Next Agreed Direction: Python Adaptation
+
+On 2026-09-25 the user requested a Python-first language adaptation plan after Java integration, with Go and TypeScript to follow individually. The confirmed Python scope includes ordinary programs, FastAPI web services and a minimal browser entry for `uv add/remove`. Project ports, MySQL/Redis ownership and bounded Run lifetimes reuse the Java runtime contract.
+
+The [Python Runtime Design](superpowers/specs/2026-09-25-python-runtime-design.md) records the module responsibilities, compatibility rules and recoverable pyproject/lock update protocol. The [Python implementation plan](superpowers/plans/2026-09-25-python-runtime-implementation-plan.md) defines ten sequential tasks, targeted verification and a separate cloud acceptance. These are planning artifacts based on `06e81338`; Python has not been implemented or accepted. AI and the later language slices are not part of this plan.
