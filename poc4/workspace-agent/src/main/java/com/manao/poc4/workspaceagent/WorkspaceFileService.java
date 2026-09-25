@@ -419,6 +419,7 @@ public final class WorkspaceFileService {
 
     private static String languageFor(String name) {
         if (name.endsWith(".java")) return "java";
+        if (name.endsWith(".py")) return "python";
         if (name.endsWith(".xml")) return "xml";
         if (name.endsWith(".md")) return "markdown";
         if (name.equals(".gitignore")) return "ignore";

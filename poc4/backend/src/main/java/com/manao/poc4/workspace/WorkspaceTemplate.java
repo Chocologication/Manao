@@ -1,6 +1,7 @@
 package com.manao.poc4.workspace;
 
 import com.manao.poc4.project.ProjectRuntimeSpec;
+import com.manao.poc4.project.RuntimeTemplate;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
@@ -15,11 +16,12 @@ import org.springframework.core.io.ClassPathResource;
 import org.springframework.util.FileCopyUtils;
 
 /**
- * Loads the fixed Java 17/Maven templates written into every new project via the workspace API.
- * The console template stays a plain Java program; the web template is a Spring Boot
+ * Loads the fixed workspace templates written into every new project via the workspace API.
+ * Java projects get the Java 17/Maven templates (plain console program or Spring Boot
  * application whose JDBC/Redis starters, environment mapping and readiness indicators follow
- * the selected runtime dependencies. Template generation never overwrites an existing project:
- * files are only written during first provisioning of an empty workspace.
+ * the selected runtime dependencies); Python projects get uv-managed templates whose
+ * mysql/redis clients are named extras in one real lock. Template generation never overwrites
+ * an existing project: files are only written during first provisioning of an empty workspace.
  */
 public final class WorkspaceTemplate {
     /** CREATE requires an existing parent; bootstrap an empty workspace in parent-first order. */
@@ -32,6 +34,10 @@ public final class WorkspaceTemplate {
         "src", "src/main", "src/main/java", "src/main/java/com", "src/main/java/com/example",
         "src/main/java/com/example/app", "src/main/resources");
 
+    private static final List<String> PYTHON_CONSOLE_DIRECTORIES = List.of();
+
+    private static final List<String> PYTHON_WEB_DIRECTORIES = List.of("app");
+
     /**
      * Built with explicit put() calls: the manifest iteration order decides the workspace write
      * order and must stay deterministic. A Map.of() source would leak its unspecified iteration
@@ -39,6 +45,8 @@ public final class WorkspaceTemplate {
      */
     private static final Map<String, String> CONSOLE_FILES = new LinkedHashMap<>();
     private static final Map<String, String> WEB_FILES = new LinkedHashMap<>();
+    private static final Map<String, String> PYTHON_CONSOLE_FILES = new LinkedHashMap<>();
+    private static final Map<String, String> PYTHON_WEB_FILES = new LinkedHashMap<>();
     static {
         CONSOLE_FILES.put("pom.xml", "workspace-template/pom.xml");
         CONSOLE_FILES.put("README.md", "workspace-template/README.md");
@@ -51,9 +59,22 @@ public final class WorkspaceTemplate {
         WEB_FILES.put("src/main/java/com/example/app/App.java", "workspace-template-web/src/main/java/com/example/app/App.java");
         WEB_FILES.put("src/main/java/com/example/app/DemoController.java", "workspace-template-web/src/main/java/com/example/app/DemoController.java");
         WEB_FILES.put("src/main/resources/application.yml", "workspace-template-web/src/main/resources/application.yml");
+        PYTHON_CONSOLE_FILES.put("pyproject.toml", "workspace-template-python/pyproject.toml");
+        PYTHON_CONSOLE_FILES.put("uv.lock", "workspace-template-python/uv.lock");
+        PYTHON_CONSOLE_FILES.put(".python-version", "workspace-template-python/.python-version");
+        PYTHON_CONSOLE_FILES.put(".gitignore", "workspace-template-python/.gitignore");
+        PYTHON_CONSOLE_FILES.put("README.md", "workspace-template-python/README.md");
+        PYTHON_CONSOLE_FILES.put("main.py", "workspace-template-python/main.py");
+        PYTHON_WEB_FILES.put("pyproject.toml", "workspace-template-python-web/pyproject.toml");
+        PYTHON_WEB_FILES.put("uv.lock", "workspace-template-python-web/uv.lock");
+        PYTHON_WEB_FILES.put(".python-version", "workspace-template-python/.python-version");
+        PYTHON_WEB_FILES.put(".gitignore", "workspace-template-python/.gitignore");
+        PYTHON_WEB_FILES.put("README.md", "workspace-template-python-web/README.md");
+        PYTHON_WEB_FILES.put("app/__init__.py", "workspace-template-python-web/app/__init__.py");
+        PYTHON_WEB_FILES.put("app/main.py", "workspace-template-python-web/app/main.py");
     }
 
-    /** Conditional blocks: {@code <!-- MANAO:IF mysql -->} / {@code # MANAO:END redis -->} in XML, YAML and Markdown. */
+    /** Conditional blocks: {@code <!-- MANAO:IF mysql -->} / {@code # MANAO:END redis -->} in XML, YAML, Markdown and Python. */
     private static final Pattern MARKER = Pattern.compile("^\\s*(?:<!--|#)\\s*MANAO:(IF|END)\\s+([a-z]+)\\s*(?:-->)?\\s*$");
 
     /** The legacy console template, unchanged for name-only project creation. */
@@ -66,12 +87,22 @@ public final class WorkspaceTemplate {
     }
 
     public List<String> directories(ProjectRuntimeSpec spec) {
-        return spec.isService() ? WEB_DIRECTORIES : CONSOLE_DIRECTORIES;
+        return switch (RuntimeTemplate.fromId(spec.templateId())) {
+            case JAVA_CONSOLE -> CONSOLE_DIRECTORIES;
+            case JAVA_SPRING_BOOT_WEB -> WEB_DIRECTORIES;
+            case PYTHON_CONSOLE -> PYTHON_CONSOLE_DIRECTORIES;
+            case PYTHON_FASTAPI_WEB -> PYTHON_WEB_DIRECTORIES;
+        };
     }
 
     /** Template file path -> UTF-8 content for the selected template and dependencies, in deterministic order. */
     public Map<String, String> files(ProjectRuntimeSpec spec) {
-        Map<String, String> manifest = spec.isService() ? WEB_FILES : CONSOLE_FILES;
+        Map<String, String> manifest = switch (RuntimeTemplate.fromId(spec.templateId())) {
+            case JAVA_CONSOLE -> CONSOLE_FILES;
+            case JAVA_SPRING_BOOT_WEB -> WEB_FILES;
+            case PYTHON_CONSOLE -> PYTHON_CONSOLE_FILES;
+            case PYTHON_FASTAPI_WEB -> PYTHON_WEB_FILES;
+        };
         Map<String, String> loaded = new LinkedHashMap<>();
         manifest.forEach((path, resource) -> {
             String content = read(resource);
