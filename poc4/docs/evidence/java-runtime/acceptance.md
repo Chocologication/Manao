@@ -295,12 +295,13 @@
 ### 9.3 记录的限制：无 Actuator 的导入应用无法通过平台就绪验证（文档化限制，非通过项）
 
 - 用户导入的自定义应用 **test2**（Spring Boot 4.0.8，未引入 Actuator）：8080 端口在监听、MySQL 连接正常，但平台固定就绪探测路径 `/actuator/health/readiness`（运行器 supervisor 固定轮询主端口，`WebRunSupervisor.READINESS_PATH`）始终无 2xx。
-- 后果（DB 只读实读佐证）：该 Run 终态 `TIMED_OUT` / `STARTUP_TIME_LIMIT_EXCEEDED`，`first_ready_at` 为 NULL（从未就绪武装）；项目 Service selector 保持 `manao.poc4/run-id: stopped`，不向未就绪 run 转发——fail-closed 符合设计 §7.3，不是缺陷。
-- 结论：**仅 TCP 端口打开不足以作为依赖型应用的就绪证据**。导入应用须自带 Spring Boot Actuator readiness 端点（或等价的平台可探测 2xx 路径）才能完成 bounded web run 的就绪武装。
+- 后果（DB + 集群只读实读佐证，2026-09-25 复核）：Run `4c03e3c5-f4a7-4ec0-80a5-40c15cc768a1` 于 `2026-09-25T02:56:22.134060Z` 创建，**1800 秒启动预算到期**（startup deadline = 创建 + 1800s = `2026-09-25T03:26:22.134060Z`）时被终止：运行容器 `maven` 的 `finishedAt` 实读 `2026-09-25T03:26:22Z`（exitCode 126，Job `completions=1`/`backoffLimit=0`/`activeDeadlineSeconds=9000` 兜底），与启动预算到期时刻一致；Run 终态 `TIMED_OUT` / `STARTUP_TIME_LIMIT_EXCEEDED`，`first_ready_at` 为 NULL（从未就绪武装）——**7200 秒 first-ready 期限从未开始计时**（`expiresAt = firstReadyAt + 7200s` 只在首次就绪时安装；首次就绪始终未到达，运行已被启动预算终止）。项目 Service selector 保持 `manao.poc4/run-id: stopped`，不向未就绪 run 转发——fail-closed 符合设计 §7.3，不是缺陷。（该 Run 执行于本轮镜像更新前的后端，就绪机制在两个镜像间无差异。）
+- 结论：**仅 TCP 端口打开不足以作为依赖型应用的就绪证据**。现实现固定探测主端口 `/actuator/health/readiness`，该路径不可配置、无自动 TCP 回退；导入应用必须让这一固定路径返回 2xx（Spring Boot Actuator 原生满足；自定义等价实现同样必须在该固定路径上返回 2xx）才能完成 bounded web run 的就绪武装。
 - 用户决定：暂不为任意应用健康检查单独立项/另行实现设计；平台**不引入自动 TCP 回退**，启动预算与 `expiresAt = firstReadyAt + 7200s` 语义维持不变。
 
 ### 9.4 状态分类汇总（本节）
 
 - PASS：9.1 部署（构建/推送/RBAC/rollout/V9 校验/私有 env）、9.2 占用端口 409 预检与无副作用对账。
+- NOT_REVERIFIED：**生产 503 `PUBLIC_PORT_PREFLIGHT_UNAVAILABLE` fail-closed 分支**（集群清单不可读/Forbidden/传输失败时的拒绝路径）——按红线不得向生产集群注入 RBAC 或传输故障，该分支维持测试层验证（单测），不因未实测而计入 PASS。
 - NOT_REVERIFIED：**浏览器实机 UI 对 409 的展示与输入保留**——本轮验证止于 API 层与既有单测（`CreateProjectForm.test.tsx` 模拟 409 断言错误呈现与输入保留）；实机浏览器验证未执行，因浏览器自动化需在自动化通道处理明文凭据，与凭据边界冲突。后续有条件时以不落凭据的方式补验。
 - 维持不变：8.8 DELETING 遗留项、8.5 正式 7200s 用例 WAIVED_BY_USER、8.9 两项 NOT_REVERIFIED。
