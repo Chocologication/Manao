@@ -18,7 +18,7 @@
 | Agreed Java application ports, MySQL/Redis lifecycle and Maven cache | [Java Runtime Design](docs/superpowers/specs/2026-09-21-java-project-runtime-design.md), cache contract in section 7.5 |
 | Java runtime module/interface/test review | [Module Review](docs/superpowers/specs/2026-09-21-java-runtime-module-review.md), manual rerun confirmed |
 | Java runtime implementation tasks and verification | [Implementation Plan](docs/superpowers/plans/2026-09-21-java-project-runtime-implementation-plan.md); actual outcomes in [Runtime Acceptance](poc4/docs/evidence/java-runtime/acceptance.md) |
-| Approved Maven image seed and project cache supplement | [Maven Cache Plan](docs/superpowers/plans/2026-09-22-java-maven-cache-implementation-plan.md), documentation only; implementation and timing unverified |
+| Approved Maven image seed and project cache supplement | [Maven Cache Plan](docs/superpowers/plans/2026-09-22-java-maven-cache-implementation-plan.md); C1/C2 implemented, C3 deployed and the dedicated cache acceptance passed — actual outcomes in [Runtime Acceptance](poc4/docs/evidence/java-runtime/acceptance.md) section 8; that round's 58s first-run / 7s reuse timings are measured samples, not a general performance promise; formal 7200s run WAIVED_BY_USER, one DELETING leftover awaits an operator decision |
 | Current cloud acceptance, evidence and limits | [Stage 6B Acceptance](poc4/docs/evidence/stage-6b/acceptance.md), current conclusion in section 10 |
 | Cloud deployment, pinned images and maintenance | [Stage 6B Deployment](poc4/deploy/6b/README.md) |
 | Environment boundaries and dated infrastructure observations | [Infrastructure Status](docs/Stage6-Infrastructure-Status.md) |
