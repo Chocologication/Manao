@@ -248,6 +248,92 @@ describe('PythonDependencyRecovery failed page', () => {
     fetchSpy.mockRestore();
   });
 
+  it('keeps a discovered id after a lost reconcile response and re-queries the same operation', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    const onRecovered = vi.fn();
+    server.use(
+      http.get(`/api/v1/projects/${PROJECT_ID}/python-dependencies/pending`, () =>
+        HttpResponse.json({
+          operations: [{ operationId: OPERATION_ID, state: 'PENDING' }],
+        }),
+      ),
+      http.get(statusUrl(OPERATION_ID), () =>
+        HttpResponse.json({ operationId: OPERATION_ID, state: 'PENDING' }),
+      ),
+      // The reconcile commits server-side but its response is lost on the network.
+      http.post(`${statusUrl(OPERATION_ID)}/reconcile`, () => HttpResponse.error()),
+    );
+    const user = userEvent.setup();
+    renderRecovery({ variant: 'failed', onRecovered });
+
+    // First Check: discovery through the pending list, reconcile response lost.
+    await user.click(screen.getByRole('button', { name: 'Check dependency change' }));
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Check dependency change' })).toBeEnabled();
+    });
+    expect(onRecovered).not.toHaveBeenCalled();
+    // The discovered id was persisted before any status/reconcile request was issued.
+    expect(readPythonDependencyOperationId(ALICE_USER_ID, PROJECT_ID)).toBe(OPERATION_ID);
+
+    // The committed operation left the pending list; only its own GET can confirm it.
+    server.use(
+      http.get(`/api/v1/projects/${PROJECT_ID}/python-dependencies/pending`, () =>
+        HttpResponse.json({ operations: [] }),
+      ),
+      http.get(statusUrl(OPERATION_ID), () =>
+        HttpResponse.json({
+          operationId: OPERATION_ID,
+          state: 'COMMITTED',
+          resultWorkspaceRevision: 'mock-rev-0009',
+        }),
+      ),
+    );
+    await user.click(screen.getByRole('button', { name: 'Check dependency change' }));
+    await waitFor(() => {
+      expect(onRecovered).toHaveBeenCalledTimes(1);
+    });
+    expect(readPythonDependencyOperationId(ALICE_USER_ID, PROJECT_ID)).toBeNull();
+    // The second Check queried the SAME operation by id; the pending list stayed untouched.
+    expect(recordedDependencyCalls(fetchSpy)).toEqual([
+      { method: 'GET', path: `/api/v1/projects/${PROJECT_ID}/python-dependencies/pending` },
+      { method: 'GET', path: statusUrl(OPERATION_ID) },
+      { method: 'POST', path: `${statusUrl(OPERATION_ID)}/reconcile` },
+      { method: 'GET', path: statusUrl(OPERATION_ID) },
+    ]);
+    fetchSpy.mockRestore();
+  });
+
+  it('keeps the entry of a discovered operation reported UNCONFIRMED', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    const onRecovered = vi.fn();
+    server.use(
+      http.get(`/api/v1/projects/${PROJECT_ID}/python-dependencies/pending`, () =>
+        HttpResponse.json({
+          operations: [{ operationId: OPERATION_ID, state: 'PENDING' }],
+        }),
+      ),
+      http.get(statusUrl(OPERATION_ID), () =>
+        HttpResponse.json({ operationId: OPERATION_ID, state: 'UNCONFIRMED' }),
+      ),
+    );
+    const user = userEvent.setup();
+    renderRecovery({ variant: 'failed', onRecovered });
+
+    await user.click(screen.getByRole('button', { name: 'Check dependency change' }));
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Check dependency change' })).toBeEnabled();
+    });
+    expect(onRecovered).not.toHaveBeenCalled();
+    expect(recordedDependencyCalls(fetchSpy)).toEqual([
+      { method: 'GET', path: `/api/v1/projects/${PROJECT_ID}/python-dependencies/pending` },
+      { method: 'GET', path: statusUrl(OPERATION_ID) },
+    ]);
+    // The discovered id stays so the next Check re-queries the same operation.
+    expect(readPythonDependencyOperationId(ALICE_USER_ID, PROJECT_ID)).toBe(OPERATION_ID);
+    expect(screen.getByText('Dependency change is unconfirmed')).toBeInTheDocument();
+    fetchSpy.mockRestore();
+  });
+
   it('stays unconfirmed when the pending list has no record and never unlocks', async () => {
     const fetchSpy = vi.spyOn(globalThis, 'fetch');
     const onRecovered = vi.fn();

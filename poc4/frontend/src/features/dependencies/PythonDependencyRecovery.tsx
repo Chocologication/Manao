@@ -5,6 +5,7 @@ import {
   listPendingPythonDependencies,
   readPythonDependencyOperationId,
   reconcilePythonDependency,
+  storePythonDependencyOperationId,
 } from '../../api/pythonDependencyApi';
 import type { ProjectSummary } from '../../contracts/project';
 import { isPythonRuntimeTemplate } from '../../contracts/project';
@@ -58,7 +59,7 @@ export function PythonDependencyRecovery({
   onRecovered,
 }: PythonDependencyRecoveryProps) {
   const controlled = operationId !== undefined;
-  const [discoveredId] = useState<string | null>(() =>
+  const [discoveredId, setDiscoveredId] = useState<string | null>(() =>
     controlled ? null : readPythonDependencyOperationId(userId, projectId),
   );
   const [checking, setChecking] = useState(false);
@@ -89,6 +90,11 @@ export function PythonDependencyRecovery({
           // No record anywhere: keep showing the unconfirmed entry, never fabricate success.
           return;
         }
+        // The reconcile may commit server-side even when its response is lost: persist
+        // the discovered id (and adopt it in state) so every later Check queries the
+        // SAME operation instead of finding an empty pending list.
+        storePythonDependencyOperationId(userId, projectId, target);
+        setDiscoveredId(target);
       }
       const status = await getPythonDependencyStatus(projectId, target);
       if (status.state === 'UNCONFIRMED') {
