@@ -10,9 +10,16 @@ import java.util.regex.Pattern;
 public final class WorkspacePathPolicy {
     public static final String INTERNAL_DIRECTORY = ".manao";
 
+    /** Operation ids are opaque business tokens: bounded letters, digits and hyphens. */
+    private static final Pattern OPERATION_ID = Pattern.compile("[A-Za-z0-9-]{1,64}");
+
     private static final Pattern WINDOWS_DRIVE_PREFIX = Pattern.compile("^[A-Za-z]:");
 
     private WorkspacePathPolicy() { }
+
+    public static boolean isValidOperationId(String operationId) {
+        return operationId != null && OPERATION_ID.matcher(operationId).matches();
+    }
 
     public static String validateRelativePath(String relativePath) {
         if (relativePath == null || relativePath.isEmpty()) {

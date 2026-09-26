@@ -119,6 +119,51 @@ class WorkspaceApiClientTest {
         assertSignatureMatchesTheActualRequest(request);
     }
 
+    @Test
+    void prepareSendsTheOperationIdentityAndNormalizedChangeAndReadsTheSummary() throws Exception {
+        responseBody = "{\"operationId\":\"" + OPERATION + "\",\"requestSha256\":\"" + "a".repeat(64) + "\","
+            + "\"beforeSha256\":\"" + "b".repeat(64) + "\",\"afterSha256\":\"" + "c".repeat(64) + "\"}";
+        WorkspaceAgent.PreparedPythonDependencies prepared = client.prepare(PROJECT, OPERATION, "a".repeat(64),
+            new WorkspaceAgent.DependencyChange("ADD", "a-b-c", "0.28.1"));
+        Request request = received.get();
+        assertThat(request.method()).isEqualTo("POST");
+        assertThat(request.uri().getPath()).isEqualTo("/agent/v1/python-dependencies/prepare");
+        assertThat(request.contentType()).isEqualTo("application/json");
+        var body = JSON.readTree(request.body());
+        assertThat(body.get("operationId").asText()).isEqualTo(OPERATION);
+        assertThat(body.get("requestSha256").asText()).isEqualTo("a".repeat(64));
+        assertThat(body.get("change").get("action").asText()).isEqualTo("ADD");
+        assertThat(body.get("change").get("packageName").asText()).isEqualTo("a-b-c");
+        assertThat(body.get("change").get("version").asText()).isEqualTo("0.28.1");
+        assertThat(prepared).isEqualTo(new WorkspaceAgent.PreparedPythonDependencies(OPERATION, "a".repeat(64),
+            "b".repeat(64), "c".repeat(64)));
+        assertSignatureMatchesTheActualRequest(request);
+    }
+
+    @Test
+    void commitSendsTheRegisteredSummaryAndTheEscapedReceipt() throws Exception {
+        String receiptJson = "{\"operationId\":\"" + OPERATION + "\",\"type\":\"PYTHON_DEPENDENCIES\","
+            + "\"path\":\"pyproject.toml\",\"nextPath\":\"uv.lock\",\"beforeSha256\":\"" + "b".repeat(64)
+            + "\",\"afterSha256\":\"" + "c".repeat(64) + "\"}";
+        responseBody = "{\"operationId\":\"" + OPERATION + "\",\"requestSha256\":\"" + "a".repeat(64) + "\","
+            + "\"beforeSha256\":\"" + "b".repeat(64) + "\",\"afterSha256\":\"" + "c".repeat(64) + "\"}";
+        var prepared = new WorkspaceAgent.PreparedPythonDependencies(OPERATION, "a".repeat(64), "b".repeat(64), "c".repeat(64));
+        assertThat(client.commit(PROJECT, new WorkspaceAgent.PythonDependencyCommit(
+            prepared, receiptJson, "d".repeat(64)))).isEqualTo(prepared);
+        Request request = received.get();
+        assertThat(request.method()).isEqualTo("POST");
+        assertThat(request.uri().getPath()).isEqualTo("/agent/v1/python-dependencies/commit");
+        var body = JSON.readTree(request.body());
+        assertThat(body.get("prepared").get("operationId").asText()).isEqualTo(OPERATION);
+        assertThat(body.get("prepared").get("requestSha256").asText()).isEqualTo("a".repeat(64));
+        assertThat(body.get("prepared").get("beforeSha256").asText()).isEqualTo("b".repeat(64));
+        assertThat(body.get("prepared").get("afterSha256").asText()).isEqualTo("c".repeat(64));
+        // The receipt travels as one escaped JSON string, never re-encoded object structure.
+        assertThat(body.get("receiptJson").asText()).isEqualTo(receiptJson);
+        assertThat(body.get("receiptSha256").asText()).isEqualTo("d".repeat(64));
+        assertSignatureMatchesTheActualRequest(request);
+    }
+
     private WorkspaceAgent.Command command(String type, String path, String nextPath, byte[] content) {
         return new WorkspaceAgent.Command(type, path, nextPath, "directory", OPERATION, content,
             "before", "after", "{\"operationId\":\"" + OPERATION + "\"}", "receipt");

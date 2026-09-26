@@ -28,6 +28,13 @@ import java.util.Optional;
 public final class WorkspaceApiClient implements WorkspaceAgent {
     private static final ObjectMapper JSON = new ObjectMapper();
     private static final Duration TIMEOUT = Duration.ofSeconds(30);
+    /**
+     * Per-request budget for the two dependency calls only; the general workspace timeout stays
+     * untouched. The agent's resolution budget (default 20s, bounded by its own maximum) plus
+     * helper startup, journal I/O and transport margin must fit inside this window — the agent
+     * rejects its helper beyond budget+margin, so this only needs bounded headroom on top.
+     */
+    static final Duration DEPENDENCY_TIMEOUT = Duration.ofSeconds(90);
 
     /** Resolves the namespace-internal base URI of a project's workspace-agent. */
     public interface EndpointResolver {
@@ -38,15 +45,22 @@ public final class WorkspaceApiClient implements WorkspaceAgent {
     private final WorkspaceCapabilitySigner signer;
     private final HttpClient http;
     private final Duration timeout;
+    private final Duration dependencyTimeout;
 
     public WorkspaceApiClient(EndpointResolver resolver, WorkspaceCapabilitySigner signer) {
-        this(resolver, signer, TIMEOUT);
+        this(resolver, signer, TIMEOUT, DEPENDENCY_TIMEOUT);
     }
 
     WorkspaceApiClient(EndpointResolver resolver, WorkspaceCapabilitySigner signer, Duration timeout) {
+        this(resolver, signer, timeout, DEPENDENCY_TIMEOUT);
+    }
+
+    WorkspaceApiClient(EndpointResolver resolver, WorkspaceCapabilitySigner signer, Duration timeout,
+                       Duration dependencyTimeout) {
         this.resolver = resolver;
         this.signer = signer;
         this.timeout = timeout;
+        this.dependencyTimeout = dependencyTimeout;
         this.http = HttpClient.newBuilder().connectTimeout(timeout).build();
     }
 
@@ -118,6 +132,33 @@ public final class WorkspaceApiClient implements WorkspaceAgent {
         }
     }
 
+    @Override
+    public PreparedPythonDependencies prepare(String projectId, String operationId, String requestSha256,
+                                             DependencyChange change) {
+        String body = "{\"operationId\":" + JSON.valueToTree(operationId)
+            + ",\"requestSha256\":" + JSON.valueToTree(requestSha256)
+            + ",\"change\":{\"action\":" + JSON.valueToTree(change == null ? null : change.action())
+            + ",\"packageName\":" + JSON.valueToTree(change == null ? null : change.packageName())
+            + ",\"version\":" + JSON.valueToTree(change == null ? null : change.version()) + "}}";
+        return preparedFrom(sendJson(projectId, "POST", "/agent/v1/python-dependencies/prepare",
+            body.getBytes(StandardCharsets.UTF_8), dependencyTimeout));
+    }
+
+    @Override
+    public PreparedPythonDependencies commit(String projectId, PythonDependencyCommit command) {
+        var payload = JSON.createObjectNode();
+        payload.set("prepared", JSON.valueToTree(command == null ? null : command.prepared()));
+        payload.put("receiptJson", command == null ? null : command.receiptJson());
+        payload.put("receiptSha256", command == null ? null : command.receiptSha256());
+        return preparedFrom(sendJson(projectId, "POST", "/agent/v1/python-dependencies/commit",
+            payload.toString().getBytes(StandardCharsets.UTF_8), dependencyTimeout));
+    }
+
+    private static PreparedPythonDependencies preparedFrom(JsonNode node) {
+        return new PreparedPythonDependencies(text(node, "operationId"), text(node, "requestSha256"),
+            text(node, "beforeSha256"), text(node, "afterSha256"));
+    }
+
     private JsonNode get(String projectId, String pathAndQuery, String param, String value) {
         HttpRequest request = requestBuilder(projectId, "GET", pathAndQuery + "?" + param + "=" + encode(value), null)
             .GET().build();
@@ -128,8 +169,12 @@ public final class WorkspaceApiClient implements WorkspaceAgent {
     }
 
     private JsonNode sendJson(String projectId, String method, String pathAndQuery, byte[] body) {
+        return sendJson(projectId, method, pathAndQuery, body, timeout);
+    }
+
+    private JsonNode sendJson(String projectId, String method, String pathAndQuery, byte[] body, Duration requestTimeout) {
         byte[] payload = body == null ? new byte[0] : body;
-        HttpRequest.Builder builder = requestBuilder(projectId, method, pathAndQuery, payload);
+        HttpRequest.Builder builder = requestBuilder(projectId, method, pathAndQuery, payload, requestTimeout);
         if ("PUT".equals(method) || "POST".equals(method)) {
             builder.header("Content-Type", "POST".equals(method) ? "application/json" : "application/octet-stream")
                 .method(method, HttpRequest.BodyPublishers.ofByteArray(payload));
@@ -170,10 +215,15 @@ public final class WorkspaceApiClient implements WorkspaceAgent {
     }
 
     private HttpRequest.Builder requestBuilder(String projectId, String method, String pathAndQuery, byte[] body) {
+        return requestBuilder(projectId, method, pathAndQuery, body, timeout);
+    }
+
+    private HttpRequest.Builder requestBuilder(String projectId, String method, String pathAndQuery, byte[] body,
+                                               Duration requestTimeout) {
         byte[] payload = body == null ? new byte[0] : body;
         return HttpRequest.newBuilder()
             .uri(resolver.endpoint(projectId).resolve(pathAndQuery))
-            .timeout(timeout)
+            .timeout(requestTimeout)
             .header("X-Manao-Workspace-Capability", signer.sign(method, pathAndQuery, payload, projectId));
     }
 

@@ -57,22 +57,10 @@ public final class WorkspaceOperationService {
         WorkspaceStore.OperationRecord operation = new WorkspaceStore.OperationRecord(
             operationId, projectId, expectedRevision, digests.before(), digests.after(), receiptPath, receiptSha256);
 
-        WorkspaceStore.BeginResult begin = store.beginPendingOperation(projectId, expectedRevision, operation);
-        if (begin.projectLocked()) {
-            throw new ApiException("PROJECT_LOCKED", 409, "Project is locked");
-        }
+        WorkspaceStore.BeginResult begin = beginWithRecovery(projectId, expectedRevision, operation);
         if (!begin.started()) {
-            if (!reconcilePendingLocked(projectId)) {
-                throw failClosed(projectId);
-            }
-            begin = store.beginPendingOperation(projectId, expectedRevision, operation);
-            if (begin.projectLocked()) {
-                throw new ApiException("PROJECT_LOCKED", 409, "Project is locked");
-            }
-            if (!begin.started()) {
-                throw new ApiException("WORKSPACE_REVISION_CONFLICT",
-                    409, "The workspace changed; reload and retry.");
-            }
+            throw new ApiException("WORKSPACE_REVISION_CONFLICT",
+                409, "The workspace changed; reload and retry.");
         }
         String phase = "MUTATE";
         try {
@@ -100,6 +88,49 @@ public final class WorkspaceOperationService {
             throw failClosed(projectId, operationId, "COMMIT", null);
         }
         return expectedRevision + 1;
+    }
+
+    /**
+     * Registers one operation atomically: the expected-revision and no-pending checks run under
+     * the project row lock. When a PENDING operation already exists it is reconciled from its
+     * agent receipt first; an unreconcilable scene fails closed and refuses the registration.
+     * The caller must hold the project lifecycle lease (reentrant).
+     */
+    public void registerPending(String projectId, long expectedRevision, WorkspaceStore.OperationRecord operation) {
+        if (!beginWithRecovery(projectId, expectedRevision, operation).started()) {
+            throw new ApiException("WORKSPACE_REVISION_CONFLICT",
+                409, "The workspace changed; reload and retry.");
+        }
+    }
+
+    private WorkspaceStore.BeginResult beginWithRecovery(String projectId, long expectedRevision,
+                                                         WorkspaceStore.OperationRecord operation) {
+        WorkspaceStore.BeginResult begin = store.beginPendingOperation(projectId, expectedRevision, operation);
+        if (begin.projectLocked()) {
+            throw new ApiException("PROJECT_LOCKED", 409, "Project is locked");
+        }
+        if (!begin.started()) {
+            if (!reconcilePendingLocked(projectId)) {
+                throw failClosed(projectId);
+            }
+            begin = store.beginPendingOperation(projectId, expectedRevision, operation);
+            if (begin.projectLocked()) {
+                throw new ApiException("PROJECT_LOCKED", 409, "Project is locked");
+            }
+        }
+        return begin;
+    }
+
+    /**
+     * Refuses while unresolved PENDING operations exist: they are reconciled from their agent
+     * receipts first, and a scene that cannot be verified fails closed. The caller must hold the
+     * project lifecycle lease (reentrant).
+     */
+    public void requireNoUnresolvedOperations(String projectId) {
+        if (store.pendingOperations(projectId).isEmpty()) return;
+        if (!reconcilePendingLocked(projectId)) {
+            throw failClosed(projectId);
+        }
     }
 
     /**
@@ -147,6 +178,66 @@ public final class WorkspaceOperationService {
             && result.receiptSha256().equals(operation.receiptSha256());
         if (!matches) {
             throw new IllegalStateException("workspace receipt does not match the pending operation");
+        }
+    }
+
+    /**
+     * Drives the FIRST agent commit of a freshly registered dependency operation and commits it
+     * with the normal conditional commit; the project is READY at this point by contract.
+     */
+    public long commitNewPythonDependency(WorkspaceStore.OperationRecord operation, String receiptJson,
+                                          String requestSha256) {
+        return commitPythonDependency(operation, receiptJson, requestSha256, false);
+    }
+
+    /**
+     * Re-drives the SAME commit of an already registered dependency operation (lost response,
+     * restart or explicit reconcile): the registered row alone supplies identity, digests and
+     * receipt, and the reconciled commit may additionally lift exactly this operation's
+     * WORKSPACE_RECONCILIATION_REQUIRED failure. The agent serializes retries onto the same
+     * journal, so uv is never run twice.
+     */
+    public long reconcilePythonDependency(WorkspaceStore.OperationRecord operation, String receiptJson,
+                                          String requestSha256) {
+        return commitPythonDependency(operation, receiptJson, requestSha256, true);
+    }
+
+    /** Shared dependency commit phase: agent commit → response verification → conditional DB commit. */
+    private long commitPythonDependency(WorkspaceStore.OperationRecord operation, String receiptJson,
+                                        String requestSha256, boolean reconciled) {
+        String phase = "COMMIT";
+        try {
+            WorkspaceAgent.PreparedPythonDependencies result = agent.commit(operation.projectId(),
+                new WorkspaceAgent.PythonDependencyCommit(
+                    new WorkspaceAgent.PreparedPythonDependencies(operation.id(), requestSha256,
+                        operation.beforeSha256(), operation.afterSha256()),
+                    receiptJson, operation.receiptSha256()));
+            phase = "VERIFY_RESULT";
+            verifyDependencyResult(operation, result, requestSha256);
+        } catch (WorkspaceAgentException ex) {
+            throw failClosed(operation.projectId(), operation.id(), phase, ex);
+        } catch (RuntimeException ex) {
+            throw failClosed(operation.projectId(), operation.id(), phase, ex);
+        }
+        boolean committed = reconciled
+            ? store.commitReconciledOperation(operation.id(), operation.projectId(), operation.expectedRevision())
+            : store.commitOperation(operation.id(), operation.projectId(), operation.expectedRevision());
+        if (!committed) {
+            throw failClosed(operation.projectId(), operation.id(), "COMMIT", null);
+        }
+        return operation.expectedRevision() + 1;
+    }
+
+    /** The commit response must echo the registered identity and digests exactly. */
+    private void verifyDependencyResult(WorkspaceStore.OperationRecord operation,
+                                        WorkspaceAgent.PreparedPythonDependencies result, String requestSha256) {
+        boolean matches = result != null
+            && operation.id().equals(result.operationId())
+            && requestSha256.equals(result.requestSha256())
+            && operation.beforeSha256().equals(result.beforeSha256())
+            && operation.afterSha256().equals(result.afterSha256());
+        if (!matches) {
+            throw new IllegalStateException("dependency commit does not match the pending operation");
         }
     }
 
@@ -289,6 +380,11 @@ public final class WorkspaceOperationService {
         return "{\"operationId\":\"" + operationId + "\",\"type\":\"" + type + "\",\"path\":\"" + path
             + "\",\"nextPath\":\"" + (nextPath == null ? "" : nextPath) + "\",\"beforeSha256\":\"" + beforeSha256
             + "\",\"afterSha256\":\"" + afterSha256 + "\"}";
+    }
+
+    /** Deterministic dependency receipt: the same identity format with the fixed two-file fields. */
+    static String dependencyReceiptJson(String operationId, String beforeSha256, String afterSha256) {
+        return receiptJson(operationId, "PYTHON_DEPENDENCIES", "pyproject.toml", "uv.lock", beforeSha256, afterSha256);
     }
 
     public static String entryDigest(String kind, String path, String contentSha256) {

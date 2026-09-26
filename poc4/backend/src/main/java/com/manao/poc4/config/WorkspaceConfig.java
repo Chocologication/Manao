@@ -135,6 +135,16 @@ public class WorkspaceConfig {
     }
 
     @Bean
+    com.manao.poc4.workspace.PythonDependencyService pythonDependencyService(
+        WorkspaceStore store, WorkspaceOperationService operations, WorkspaceAgent agent,
+        ProjectLifecycleGate lifecycle, ProjectRuntimeStore runtimeStore) {
+        // The SAME lifecycle gate instance as every other workspace consumer: reentrant within
+        // one thread, refusing concurrent writers without a second lock.
+        return new com.manao.poc4.workspace.PythonDependencyService(store, operations, agent, lifecycle,
+            runtimeStore);
+    }
+
+    @Bean
     WorkspaceService workspaceService(WorkspaceStore store, WorkspaceOperationService operations, WorkspaceAgent agent,
                                       ProjectLifecycleGate lifecycle) {
         return new WorkspaceService(store, operations, agent, lifecycle);

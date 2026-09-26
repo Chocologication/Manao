@@ -192,4 +192,115 @@ class AtomicTransitionTest {
             "a".repeat(64), "b".repeat(64), "receipts/missing", "c".repeat(64)))
             .isInstanceOf(IllegalStateException.class);
     }
+
+    @Test
+    void dependencyOperationsBindRequestDigestsAndReconciledCommitsRecoverExactlyTheirFailure() {
+        String userId = UUID.randomUUID().toString();
+        String projectId = UUID.randomUUID().toString();
+        repositories.users().insert(userId, "deps-owner-" + userId, "hash");
+        repositories.projects().insert(projectId, userId, "deps-project-" + projectId);
+        String digest = "1".repeat(64);
+
+        // Dependency rows require the request digest; the digest binds the exact request intent.
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> repositories.workspaceOperations().createPending(
+            UUID.randomUUID().toString(), projectId, 0, "a".repeat(64), "b".repeat(64), "receipts/py",
+            "c".repeat(64), "PYTHON_DEPENDENCIES", null))
+            .isInstanceOf(IllegalArgumentException.class);
+        String first = UUID.randomUUID().toString();
+        assertThat(repositories.workspaceOperations().createPending(first, projectId, 0,
+            "a".repeat(64), "b".repeat(64), "receipts/py-first", "c".repeat(64), "PYTHON_DEPENDENCIES", digest)).isTrue();
+        assertThat(repositories.workspaceOperations().createPending(first, projectId, 0,
+            "a".repeat(64), "b".repeat(64), "receipts/py-dup", "c".repeat(64), "PYTHON_DEPENDENCIES", digest)).isFalse();
+        WorkspaceOperationRepository.Operation pending = repositories.workspaceOperations()
+            .findOperation(projectId, first).orElseThrow();
+        assertThat(pending.state()).isEqualTo("PENDING");
+        assertThat(pending.operationKind()).isEqualTo("PYTHON_DEPENDENCIES");
+        assertThat(pending.requestSha256()).isEqualTo(digest);
+        assertThat(repositories.workspaceOperations().findOperation(projectId, UUID.randomUUID().toString())).isEmpty();
+
+        // A READY project accepts the reconciled commit; the row answers COMMITTED afterwards.
+        assertThat(repositories.workspaceOperations().commitReconciled(first, projectId, 0)).isTrue();
+        WorkspaceOperationRepository.Operation committed = repositories.workspaceOperations()
+            .findOperation(projectId, first).orElseThrow();
+        assertThat(committed.state()).isEqualTo("COMMITTED");
+        assertThat(repositories.workspaceOperations().pendingForProject(projectId)).isEmpty();
+
+        // Exactly this reconciliation failure is lifted in the same transaction.
+        String second = UUID.randomUUID().toString();
+        assertThat(repositories.workspaceOperations().createPending(second, projectId, 1,
+            "d".repeat(64), "e".repeat(64), "receipts/py-second", "f".repeat(64), "PYTHON_DEPENDENCIES", digest)).isTrue();
+        failProject(projectId, "WORKSPACE_RECONCILIATION_REQUIRED");
+        assertThat(repositories.workspaceOperations().commitReconciled(second, projectId, 1)).isTrue();
+        assertThat(projectState(projectId, "state")).isEqualTo("READY");
+        assertThat(projectState(projectId, "failure_reason")).isNull();
+        assertThat(revisionOf(projectId)).isEqualTo(2);
+
+        // Other failures and DELETING stay locked and keep the operation PENDING.
+        String third = UUID.randomUUID().toString();
+        assertThat(repositories.workspaceOperations().createPending(third, projectId, 2,
+            "1".repeat(64), "2".repeat(64), "receipts/py-third", "3".repeat(64), "PYTHON_DEPENDENCIES", digest)).isTrue();
+        failProject(projectId, "CREATION_FAILED");
+        assertThat(repositories.workspaceOperations().commitReconciled(third, projectId, 2)).isFalse();
+        assertThat(repositories.workspaceOperations().findOperation(projectId, third).orElseThrow().state())
+            .isEqualTo("PENDING");
+        assertThat(revisionOf(projectId)).isEqualTo(2);
+        markDeleting(projectId);
+        assertThat(repositories.workspaceOperations().commitReconciled(third, projectId, 2)).isFalse();
+        assertThat(repositories.workspaceOperations().findOperation(projectId, third).orElseThrow().state())
+            .isEqualTo("PENDING");
+
+        // An active run fences the reconciled commit; a foreign FILE kind never enters it.
+        jdbcUpdate("UPDATE project SET state = 'READY', failure_reason = NULL WHERE id = ?", projectId);
+        repositories.runs().insert(UUID.randomUUID().toString(), projectId, 2, RunState.RUNNING, "{}");
+        assertThat(repositories.workspaceOperations().commitReconciled(third, projectId, 2)).isFalse();
+        assertThat(repositories.workspaceOperations().findOperation(projectId, third).orElseThrow().state())
+            .isEqualTo("PENDING");
+        jdbcUpdate("DELETE FROM run WHERE project_id = ?", projectId);
+        assertThat(repositories.workspaceOperations().commitReconciled(third, projectId, 2)).isTrue();
+        assertThat(revisionOf(projectId)).isEqualTo(3);
+
+        String fileOp = UUID.randomUUID().toString();
+        assertThat(repositories.workspaceOperations().createPending(fileOp, projectId, 3,
+            "4".repeat(64), "5".repeat(64), "receipts/file", "6".repeat(64))).isTrue();
+        assertThat(repositories.workspaceOperations().commitReconciled(fileOp, projectId, 3)).isFalse();
+        assertThat(repositories.workspaceOperations().commit(fileOp, projectId, 3)).isTrue();
+        assertThat(repositories.workspaceOperations().findOperation(projectId, fileOp).orElseThrow().operationKind())
+            .isEqualTo("FILE");
+        assertThat(repositories.workspaceOperations().findOperation(projectId, fileOp).orElseThrow().requestSha256())
+            .isNull();
+    }
+
+    private void jdbcUpdate(String sql, Object... args) {
+        try (var update = connection.prepareStatement(sql)) {
+            for (int i = 0; i < args.length; i++) update.setObject(i + 1, args[i]);
+            update.executeUpdate();
+        } catch (java.sql.SQLException ex) {
+            throw new IllegalStateException(ex);
+        }
+    }
+
+    private void failProject(String projectId, String failureReason) {
+        jdbcUpdate("UPDATE project SET state = 'FAILED', failure_reason = ? WHERE id = ?", failureReason, projectId);
+    }
+
+    private void markDeleting(String projectId) {
+        jdbcUpdate("UPDATE project SET state = 'DELETING' WHERE id = ?", projectId);
+    }
+
+    private long revisionOf(String projectId) {
+        return Long.parseLong(projectState(projectId, "workspace_revision"));
+    }
+
+    private String projectState(String projectId, String column) {
+        try (var query = connection.prepareStatement("SELECT " + column + " FROM project WHERE id = ?")) {
+            query.setString(1, projectId);
+            try (var rows = query.executeQuery()) {
+                assertThat(rows.next()).isTrue();
+                Object value = rows.getObject(1);
+                return value == null ? null : value.toString();
+            }
+        } catch (java.sql.SQLException ex) {
+            throw new IllegalStateException(ex);
+        }
+    }
 }

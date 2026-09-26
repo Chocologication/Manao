@@ -14,7 +14,9 @@ public record ApiError(String code, String message, String traceId) {
         "TERMINAL_SESSION_ALREADY_ACTIVE", "TERMINAL_TICKET_NOT_AVAILABLE",
         "PROJECT_CREATING", "PROJECT_BUSY", "CLEANUP_INCOMPLETE", "PROJECT_CLEANUP_INCOMPLETE",
         "PUBLIC_PORT_RESERVED", "PUBLIC_PORT_IN_USE", "PUBLIC_PORT_PREFLIGHT_UNAVAILABLE",
-        "CREATE_REQUEST_MISMATCH", "DEPENDENCY_NOT_READY");
+        "CREATE_REQUEST_MISMATCH", "DEPENDENCY_NOT_READY",
+        "PYTHON_DEPENDENCY_UNSUPPORTED", "PYTHON_DEPENDENCY_RESOLUTION_FAILED", "PYTHON_DEPENDENCY_TIMEOUT",
+        "DEPENDENCY_REQUEST_MISMATCH");
 
     public ApiError {
         if (!CODES.contains(code)) code = "INTERNAL_ERROR";
@@ -44,6 +46,11 @@ public record ApiError(String code, String message, String traceId) {
                 "Public port availability cannot be verified right now. Try again later.";
             case "CREATE_REQUEST_MISMATCH" -> "Creation request does not match the original request";
             case "DEPENDENCY_NOT_READY" -> "Selected dependencies are not ready yet. Try again once they are ready.";
+            case "PYTHON_DEPENDENCY_UNSUPPORTED" ->
+                "Dependency changes are not supported for this project or package";
+            case "PYTHON_DEPENDENCY_RESOLUTION_FAILED" -> "Dependency resolution failed";
+            case "PYTHON_DEPENDENCY_TIMEOUT" -> "Dependency resolution timed out. Try again later.";
+            case "DEPENDENCY_REQUEST_MISMATCH" -> "This operation id was already used for a different request";
             default -> "Request failed";
         };
     }

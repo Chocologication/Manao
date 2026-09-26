@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.manao.poc4.api.ApiException;
+import com.manao.poc4.project.ProjectLifecycleGate;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -329,13 +330,18 @@ public class WorkspaceControllerTest {
         public final Map<String, java.time.Instant> createdAt = new HashMap<>();
         public final Set<String> activeRuns = new java.util.HashSet<>();
         public final Map<String, OperationRecord> pending = new LinkedHashMap<>();
+        public final Map<String, OperationRecord> records = new LinkedHashMap<>();
         public final List<OperationRecord> committed = new ArrayList<>();
         public final Map<String, Long> revision = new HashMap<>();
         public final Map<String, String> failures = new HashMap<>();
+        public final List<String> clearedFailures = new ArrayList<>();
         public final List<String> deletedOperations = new ArrayList<>();
         public final List<String> deletedProjects = new ArrayList<>();
         public boolean failCommits;
+        public boolean conflictOnNextBegin;
         public List<ProjectRecord> creatingOverride;
+        /** When set, hasActiveRun refuses callers that do not hold this shared lifecycle lease. */
+        public ProjectLifecycleGate gate;
 
         public FakeStore() {
             revision.put(PROJECT, 7L);
@@ -349,9 +355,21 @@ public class WorkspaceControllerTest {
 
         @Override public ProjectRecord findProject(String projectId) { return projects.get(projectId); }
 
-        @Override public boolean hasActiveRun(String projectId) { return activeRuns.contains(projectId); }
+        @Override public boolean hasActiveRun(String projectId) {
+            if (gate != null) {
+                // Production wraps every hasActiveRun caller in the shared lifecycle gate; the
+                // fake enforces the same invariant so ungated flows fail loudly here.
+                var lease = gate.tryAcquire(projectId);
+                if (lease.isEmpty()) {
+                    throw new IllegalStateException("project lifecycle gate is held by another thread");
+                }
+                lease.get().close();
+            }
+            return activeRuns.contains(projectId);
+        }
 
         @Override public BeginResult beginPendingOperation(String projectId, long expectedRevision, OperationRecord operation) {
+            if (conflictOnNextBegin) return new BeginResult(false, true);
             ProjectRecord project = projects.get(projectId);
             if (project != null && !"READY".equals(project.state()) && !"CREATING".equals(project.state())) {
                 return new BeginResult(false, false, true);
@@ -359,6 +377,7 @@ public class WorkspaceControllerTest {
             if (revisionOf(projectId) != expectedRevision) return new BeginResult(false, true);
             if (pending.containsKey(projectId)) return new BeginResult(false, false);
             pending.put(projectId, operation);
+            records.put(operation.id(), operation);
             return new BeginResult(true, false);
         }
 
@@ -370,7 +389,9 @@ public class WorkspaceControllerTest {
             }
             OperationRecord operation = pending.remove(projectId);
             if (operation == null || !operation.id().equals(operationId) || revisionOf(projectId) != expectedRevision) return false;
-            committed.add(operation);
+            OperationRecord committedRecord = recordWithState(operation, "COMMITTED");
+            records.put(operationId, committedRecord);
+            committed.add(committedRecord);
             long updated = revisionOf(projectId) + 1;
             revision.put(projectId, updated);
             ProjectRecord project = projects.get(projectId);
@@ -381,11 +402,53 @@ public class WorkspaceControllerTest {
             return true;
         }
 
+        @Override public boolean commitReconciledOperation(String operationId, String projectId, long expectedRevision) {
+            if (failCommits) return false;
+            ProjectRecord project = projects.get(projectId);
+            if (project == null) return false;
+            boolean recoverable = "FAILED".equals(project.state())
+                && "WORKSPACE_RECONCILIATION_REQUIRED".equals(project.failureReason());
+            if (!"READY".equals(project.state()) && !recoverable) return false;
+            if (activeRuns.contains(projectId)) return false;
+            OperationRecord operation = pending.get(projectId);
+            if (operation == null || !operation.id().equals(operationId)
+                || revisionOf(projectId) != expectedRevision
+                || !"PYTHON_DEPENDENCIES".equals(operation.operationKind())) {
+                return false;
+            }
+            pending.remove(projectId);
+            OperationRecord committedRecord = recordWithState(operation, "COMMITTED");
+            records.put(operationId, committedRecord);
+            committed.add(committedRecord);
+            long updated = revisionOf(projectId) + 1;
+            revision.put(projectId, updated);
+            if (recoverable) {
+                clearedFailures.add(projectId);
+                failures.remove(projectId);
+            }
+            projects.put(projectId, new ProjectRecord(project.id(), project.ownerId(), project.name(),
+                "READY", updated, null, project.createdAt()));
+            return true;
+        }
+
+        private static OperationRecord recordWithState(OperationRecord operation, String state) {
+            return new OperationRecord(operation.id(), operation.projectId(), operation.expectedRevision(),
+                operation.beforeSha256(), operation.afterSha256(), operation.receiptPath(), operation.receiptSha256(),
+                state, operation.operationKind(), operation.requestSha256());
+        }
+
         private long revisionOf(String projectId) { return revision.getOrDefault(projectId, 0L); }
 
         @Override public List<OperationRecord> pendingOperations(String projectId) {
             OperationRecord operation = pending.get(projectId);
             return operation == null ? List.of() : List.of(operation);
+        }
+
+        @Override public Optional<OperationRecord> findOperation(String projectId, String operationId) {
+            OperationRecord operation = records.get(operationId);
+            if (operation == null || !operation.projectId().equals(projectId)) return Optional.empty();
+            return "PENDING".equals(operation.state()) || "COMMITTED".equals(operation.state())
+                ? Optional.of(operation) : Optional.empty();
         }
 
         @Override public boolean deleteProject(String ownerId, String projectId) {
@@ -443,6 +506,16 @@ public class WorkspaceControllerTest {
         public WorkspaceAgentException deleteError;
         public int mutateCalls;
         public boolean pendingMetaRequired = true;
+        /** Dependency prepare/commit seams; a matching commit echoes its prepared summary. */
+        public PreparedPythonDependencies prepareResult;
+        public WorkspaceAgentException prepareError;
+        public String commitSpoofedAfter;
+        public WorkspaceAgentException commitError;
+        public PrepareGate prepareGate;
+        public int prepareCalls;
+        public int commitCalls;
+        public final List<DependencyChange> preparedChanges = new ArrayList<>();
+        public final List<PythonDependencyCommit> commitCommands = new ArrayList<>();
 
         @Override public Tree tree(String projectId, String directory) { return tree; }
 
@@ -471,10 +544,48 @@ public class WorkspaceControllerTest {
             return Optional.ofNullable(receiptFor.get(operationId));
         }
 
+        @Override public PreparedPythonDependencies prepare(String projectId, String operationId,
+                                                           String requestSha256, DependencyChange change) {
+            prepareCalls++;
+            preparedChanges.add(change);
+            if (prepareGate != null) prepareGate.enter();
+            if (prepareError != null) throw prepareError;
+            return prepareResult;
+        }
+
+        @Override public PreparedPythonDependencies commit(String projectId, PythonDependencyCommit command) {
+            commitCalls++;
+            commitCommands.add(command);
+            if (commitError != null) throw commitError;
+            return new PreparedPythonDependencies(command.prepared().operationId(), command.prepared().requestSha256(),
+                command.prepared().beforeSha256(),
+                commitSpoofedAfter == null ? command.prepared().afterSha256() : commitSpoofedAfter);
+        }
+
         public void resetErrors() {
             metaError = null;
             contentError = null;
             deleteError = null;
+        }
+    }
+
+    /** Blocks one prepare call inside the agent so tests can prove the lease is held meanwhile. */
+    public static final class PrepareGate {
+        private final java.util.concurrent.CountDownLatch inside;
+        private final java.util.concurrent.CountDownLatch release;
+
+        public PrepareGate(java.util.concurrent.CountDownLatch inside, java.util.concurrent.CountDownLatch release) {
+            this.inside = inside;
+            this.release = release;
+        }
+
+        void enter() {
+            inside.countDown();
+            try {
+                release.await();
+            } catch (InterruptedException ex) {
+                Thread.currentThread().interrupt();
+            }
         }
     }
 }
