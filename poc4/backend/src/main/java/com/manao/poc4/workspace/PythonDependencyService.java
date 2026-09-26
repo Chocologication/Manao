@@ -191,7 +191,9 @@ public final class PythonDependencyService {
             && ("READY".equals(project.state())
                 || ("FAILED".equals(project.state()) && RECONCILIATION_FAILURE.equals(project.failureReason())));
         if (!reconcilable) {
-            throw new ApiException("PROJECT_LOCKED", 409, "Project is locked");
+            // A registered PENDING row exists: the refusal is not a proven pre-flight rejection.
+            throw new ApiException(RECONCILIATION_FAILURE, 409,
+                "Workspace needs reconciliation; the operation result is not confirmed");
         }
     }
 

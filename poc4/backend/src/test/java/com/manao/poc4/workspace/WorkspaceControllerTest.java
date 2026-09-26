@@ -254,7 +254,7 @@ public class WorkspaceControllerTest {
             };
             assertThatThrownBy(() -> controller.save(auth(ALICE), PROJECT, "src/App.java", new WorkspaceController.SaveFileRequest("x", "7")))
                 .isInstanceOfSatisfying(ApiException.class, ex -> {
-                    assertThat(ex.code()).isEqualTo("PROJECT_LOCKED");
+                    assertThat(ex.code()).isEqualTo("WORKSPACE_RECONCILIATION_REQUIRED");
                     assertThat(ex.status()).isEqualTo(409);
                 });
             assertThat(store.failures).containsEntry(PROJECT, "WORKSPACE_RECONCILIATION_REQUIRED");
@@ -266,7 +266,7 @@ public class WorkspaceControllerTest {
             agent.pendingMetaRequired = false;
             store.failCommits = true;
             assertThatThrownBy(() -> controller.save(auth(ALICE), PROJECT, "src/App.java", new WorkspaceController.SaveFileRequest("x", "7")))
-                .isInstanceOfSatisfying(ApiException.class, ex -> assertThat(ex.code()).isEqualTo("PROJECT_LOCKED"));
+                .isInstanceOfSatisfying(ApiException.class, ex -> assertThat(ex.code()).isEqualTo("WORKSPACE_RECONCILIATION_REQUIRED"));
             assertThat(store.failures).containsEntry(PROJECT, "WORKSPACE_RECONCILIATION_REQUIRED");
         }
 
@@ -305,7 +305,7 @@ public class WorkspaceControllerTest {
             store.pending.put(PROJECT, new WorkspaceStore.OperationRecord("stuck-op", PROJECT, 7, before, after,
                 ".manao/receipts/stuck-op.json", "f".repeat(64)));
             assertThatThrownBy(() -> controller.save(auth(ALICE), PROJECT, "src/App.java", new WorkspaceController.SaveFileRequest("x", "7")))
-                .isInstanceOfSatisfying(ApiException.class, ex -> assertThat(ex.code()).isEqualTo("PROJECT_LOCKED"));
+                .isInstanceOfSatisfying(ApiException.class, ex -> assertThat(ex.code()).isEqualTo("WORKSPACE_RECONCILIATION_REQUIRED"));
             assertThat(store.failures).containsEntry(PROJECT, "WORKSPACE_RECONCILIATION_REQUIRED");
             assertThat(agent.mutateCalls).isZero();
         }

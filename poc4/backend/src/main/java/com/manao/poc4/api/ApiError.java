@@ -13,6 +13,7 @@ public record ApiError(String code, String message, String traceId) {
         "RUN_STATE_CONFLICT", "RUN_NOT_FOUND", "LOG_TICKET_NOT_AVAILABLE", "TERMINAL_NOT_AVAILABLE",
         "TERMINAL_SESSION_ALREADY_ACTIVE", "TERMINAL_TICKET_NOT_AVAILABLE",
         "PROJECT_CREATING", "PROJECT_BUSY", "CLEANUP_INCOMPLETE", "PROJECT_CLEANUP_INCOMPLETE",
+        "WORKSPACE_RECONCILIATION_REQUIRED",
         "PUBLIC_PORT_RESERVED", "PUBLIC_PORT_IN_USE", "PUBLIC_PORT_PREFLIGHT_UNAVAILABLE",
         "CREATE_REQUEST_MISMATCH", "DEPENDENCY_NOT_READY",
         "PYTHON_DEPENDENCY_UNSUPPORTED", "PYTHON_DEPENDENCY_RESOLUTION_FAILED", "PYTHON_DEPENDENCY_TIMEOUT",
@@ -37,6 +38,8 @@ public record ApiError(String code, String message, String traceId) {
             case "ENTRY_NOT_FOUND" -> "Project not found";
             case "RUN_ALREADY_ACTIVE" -> "A run is already active";
             case "PROJECT_LOCKED" -> "Project is locked";
+            case "WORKSPACE_RECONCILIATION_REQUIRED" ->
+                "Workspace needs reconciliation; the operation result is not confirmed";
             case "PROJECT_CREATING" -> "Project is still being created";
             case "PROJECT_BUSY" -> "Project is busy";
             case "CLEANUP_INCOMPLETE", "PROJECT_CLEANUP_INCOMPLETE" -> "Project cleanup is incomplete";

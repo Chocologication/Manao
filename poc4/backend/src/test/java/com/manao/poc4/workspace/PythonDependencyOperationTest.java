@@ -175,8 +175,11 @@ class PythonDependencyOperationTest {
             "a".repeat(64), "b".repeat(64));
         agent.commitSpoofedAfter = "d".repeat(64);
 
+        // The row is registered PENDING and the agent may have applied the files: the answer
+        // names the unresolved operation, it is not a proven pre-flight lock.
         assertRejected(() -> dependencies.change(ALICE, PROJECT, OPERATION,
-            new WorkspaceAgent.DependencyChange("ADD", "httpx", "0.28.1"), "7"), "PROJECT_LOCKED", 409);
+            new WorkspaceAgent.DependencyChange("ADD", "httpx", "0.28.1"), "7"),
+            "WORKSPACE_RECONCILIATION_REQUIRED", 409);
         assertThat(store.failures).containsEntry(PROJECT, "WORKSPACE_RECONCILIATION_REQUIRED");
         assertThat(store.deletedOperations).isEmpty();
         assertThat(store.records.get(OPERATION).state()).isEqualTo("PENDING");
@@ -192,7 +195,8 @@ class PythonDependencyOperationTest {
         agent.recordReceipt = false;
 
         assertRejected(() -> dependencies.change(ALICE, PROJECT, OPERATION,
-            new WorkspaceAgent.DependencyChange("ADD", "httpx", "0.28.1"), "7"), "PROJECT_LOCKED", 409);
+            new WorkspaceAgent.DependencyChange("ADD", "httpx", "0.28.1"), "7"),
+            "WORKSPACE_RECONCILIATION_REQUIRED", 409);
         assertThat(store.failures).containsEntry(PROJECT, "WORKSPACE_RECONCILIATION_REQUIRED");
         assertThat(store.records.get(OPERATION).state()).isEqualTo("PENDING");
         assertThat(store.revision.get(PROJECT)).isEqualTo(7L);
@@ -258,7 +262,8 @@ class PythonDependencyOperationTest {
             "a".repeat(64), "b".repeat(64));
         agent.commitError = new WorkspaceAgentException(503, "IO_ERROR", "workspace API is temporarily unavailable");
         assertRejected(() -> dependencies.change(ALICE, PROJECT, OPERATION,
-            new WorkspaceAgent.DependencyChange("ADD", "httpx", "0.28.1"), "7"), "PROJECT_LOCKED", 409);
+            new WorkspaceAgent.DependencyChange("ADD", "httpx", "0.28.1"), "7"),
+            "WORKSPACE_RECONCILIATION_REQUIRED", 409);
         assertThat(store.failures).containsEntry(PROJECT, "WORKSPACE_RECONCILIATION_REQUIRED");
         assertThat(store.records.get(OPERATION).state()).isEqualTo("PENDING");
         assertThat(store.deletedOperations).isEmpty();
@@ -268,7 +273,8 @@ class PythonDependencyOperationTest {
         agent.prepareResult = new WorkspaceAgent.PreparedPythonDependencies(second,
             PythonDependencyService.requestDigest(PROJECT, "REMOVE", "httpx", null, 7), "a".repeat(64), "b".repeat(64));
         assertRejected(() -> dependencies.change(ALICE, PROJECT, second,
-            new WorkspaceAgent.DependencyChange("REMOVE", "httpx", null), "7"), "PROJECT_LOCKED", 409);
+            new WorkspaceAgent.DependencyChange("REMOVE", "httpx", null), "7"),
+            "WORKSPACE_RECONCILIATION_REQUIRED", 409);
         assertThat(store.records).containsOnlyKeys(OPERATION);
     }
 
@@ -355,17 +361,20 @@ class PythonDependencyOperationTest {
     }
 
     @Test
-    void reconcileRefusesDeletingAndOtherFailuresAndKeepsTheSceneLocked() {
-        String requestSha256 = PythonDependencyService.requestDigest(PROJECT, "ADD", "httpx", "0.28.1", 7);
+    void reconcileRefusesDeletingAndOtherFailuresWithTheReconciliationCode() {
+        String requestSha256 = PythonDependencyService.requestDigest(PROJECT, "ADD", "httpx", null, 7);
         WorkspaceStore.OperationRecord registered = new WorkspaceStore.OperationRecord(OPERATION, PROJECT, 7,
             "a".repeat(64), "b".repeat(64), ".manao/receipts/" + OPERATION + ".json", "c".repeat(64),
             "PENDING", "PYTHON_DEPENDENCIES", requestSha256);
         store.records.put(OPERATION, registered);
         store.pending.put(PROJECT, registered);
 
+        // A registered PENDING row exists: neither scene proves the request side-effect-free,
+        // so both answer the reconciliation code instead of the pre-flight lock.
         store.projects.put(PROJECT, new WorkspaceStore.ProjectRecord(PROJECT, ALICE, "demo", "DELETING", 7,
             null, java.time.Instant.parse("2026-08-29T00:00:00Z")));
-        assertRejected(() -> dependencies.reconcile(ALICE, PROJECT, OPERATION), "PROJECT_LOCKED", 409);
+        assertRejected(() -> dependencies.reconcile(ALICE, PROJECT, OPERATION),
+            "WORKSPACE_RECONCILIATION_REQUIRED", 409);
         assertThat(agent.commitCalls).isZero();
         assertThat(store.records.get(OPERATION).state()).isEqualTo("PENDING");
         assertThat(store.revision.get(PROJECT)).isEqualTo(7L);
@@ -373,7 +382,8 @@ class PythonDependencyOperationTest {
         store.projects.put(PROJECT, new WorkspaceStore.ProjectRecord(PROJECT, ALICE, "demo", "FAILED", 7,
             "CREATION_FAILED", java.time.Instant.parse("2026-08-29T00:00:00Z")));
         store.failures.put(PROJECT, "CREATION_FAILED");
-        assertRejected(() -> dependencies.reconcile(ALICE, PROJECT, OPERATION), "PROJECT_LOCKED", 409);
+        assertRejected(() -> dependencies.reconcile(ALICE, PROJECT, OPERATION),
+            "WORKSPACE_RECONCILIATION_REQUIRED", 409);
         assertThat(agent.commitCalls).isZero();
         assertThat(store.failures).containsEntry(PROJECT, "CREATION_FAILED");
         assertThat(store.records.get(OPERATION).state()).isEqualTo("PENDING");
@@ -473,10 +483,54 @@ class PythonDependencyOperationTest {
             new WorkspaceOperationService(store, agent), agent);
 
         assertThatThrownBy(() -> workspace.save(ALICE, PROJECT, "src/App.java", "class App {}", "7"))
-            .isInstanceOfSatisfying(ApiException.class, ex -> assertThat(ex.code()).isEqualTo("PROJECT_LOCKED"));
+            .isInstanceOfSatisfying(ApiException.class,
+                ex -> assertThat(ex.code()).isEqualTo("WORKSPACE_RECONCILIATION_REQUIRED"));
         assertThat(store.failures).containsEntry(PROJECT, "WORKSPACE_RECONCILIATION_REQUIRED");
         assertThat(store.records.get(OPERATION).state()).isEqualTo("PENDING");
         assertThat(store.deletedOperations).isEmpty();
+    }
+
+    @Test
+    void activeRunRejectionStaysAProvenPreFlightProjectLocked() {
+        // Ruling R2 classification: the active-Run gate answers BEFORE prepare and before any
+        // registration, so no operation row exists for the request and no mutation was applied —
+        // it keeps the pre-flight lock code instead of the reconciliation code.
+        agent.prepareResult = new WorkspaceAgent.PreparedPythonDependencies(OPERATION,
+            PythonDependencyService.requestDigest(PROJECT, "ADD", "httpx", "0.28.1", 7),
+            "a".repeat(64), "b".repeat(64));
+        store.activeRuns.add(PROJECT);
+
+        assertRejected(() -> dependencies.change(ALICE, PROJECT, OPERATION,
+            new WorkspaceAgent.DependencyChange("ADD", "httpx", "0.28.1"), "7"), "PROJECT_LOCKED", 409);
+        assertThat(agent.prepareCalls).isZero();
+        assertThat(agent.commitCalls).isZero();
+        assertThat(store.records).isEmpty();
+        assertThat(store.pending).isEmpty();
+        assertThat(store.failures).isEmpty();
+        assertThat(store.committed).isEmpty();
+        assertThat(store.revision.get(PROJECT)).isEqualTo(7L);
+    }
+
+    @Test
+    void pendingRegistrationOnANonReadyProjectRefusesBeforeAnyRow() {
+        // Ruling R2 classification: a project-state refusal inside beginPendingOperation answers
+        // without inserting the row (atomic refusal), and prepare never mutates the workspace
+        // sources — so this pre-flight scene keeps the lock code.
+        agent.prepareResult = new WorkspaceAgent.PreparedPythonDependencies(OPERATION,
+            PythonDependencyService.requestDigest(PROJECT, "ADD", "httpx", "0.28.1", 7),
+            "a".repeat(64), "b".repeat(64));
+        store.projects.put(PROJECT, new WorkspaceStore.ProjectRecord(PROJECT, ALICE, "demo", "DELETING", 7,
+            null, java.time.Instant.parse("2026-08-29T00:00:00Z")));
+
+        assertRejected(() -> dependencies.change(ALICE, PROJECT, OPERATION,
+            new WorkspaceAgent.DependencyChange("ADD", "httpx", "0.28.1"), "7"), "PROJECT_LOCKED", 409);
+        assertThat(agent.prepareCalls).isEqualTo(1);
+        assertThat(agent.commitCalls).isZero();
+        assertThat(store.records).isEmpty();
+        assertThat(store.pending).isEmpty();
+        assertThat(store.failures).isEmpty();
+        assertThat(store.committed).isEmpty();
+        assertThat(store.revision.get(PROJECT)).isEqualTo(7L);
     }
 
     @Test

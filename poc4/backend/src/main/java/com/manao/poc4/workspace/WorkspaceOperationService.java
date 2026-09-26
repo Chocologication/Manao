@@ -340,7 +340,10 @@ public final class WorkspaceOperationService {
             failure instanceof WorkspaceAgentException ex && ex.transportFailure() != null
                 ? ex.transportFailure().name() : "none");
         store.markProjectFailed(projectId, "WORKSPACE_RECONCILIATION_REQUIRED");
-        return new ApiException("PROJECT_LOCKED", 409, "Project is locked");
+        // The operation row/journal may exist and files may already be applied: the answer names
+        // the unresolved operation instead of the proven pre-flight lock.
+        return new ApiException("WORKSPACE_RECONCILIATION_REQUIRED", 409,
+            "Workspace needs reconciliation; the operation result is not confirmed");
     }
 
     private String safeDiagnosticCode(String code) {

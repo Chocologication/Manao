@@ -199,6 +199,8 @@ class PythonDependencyHttpContractTest {
     @Test
     void runRevisionAndPendingConflictsRefuseBeforePrepare() throws Exception {
         agent.prepareResult = prepared(OPERATION, digest("ADD", "httpx", "0.28.1", 7));
+        // The active-Run gate is a proven pre-flight refusal: no row was registered for the
+        // request and nothing was applied, so the wire keeps PROJECT_LOCKED.
         store.activeRuns.add(PROJECT);
         http.perform(post("/api/v1/projects/" + PROJECT + "/python-dependencies")
                 .principal(new UsernamePasswordAuthenticationToken(ALICE, "n/a"))
@@ -217,7 +219,9 @@ class PythonDependencyHttpContractTest {
             .andExpect(jsonPath("$.code").value("WORKSPACE_REVISION_CONFLICT"));
         assertThat(agent.prepareCalls).isZero();
 
-        // An unreconcilable stuck operation blocks new dependency work without preparing.
+        // An unreconcilable stuck operation blocks new dependency work without preparing: the
+        // registered row may already carry applied files, so the wire names the unresolved
+        // operation instead of the pre-flight lock.
         store.pending.put(PROJECT, new WorkspaceStore.OperationRecord("stuck", PROJECT, 7,
             "a".repeat(64), "b".repeat(64), ".manao/receipts/stuck.json", "c".repeat(64), "PENDING", "FILE", null));
         http.perform(post("/api/v1/projects/" + PROJECT + "/python-dependencies")
@@ -225,9 +229,40 @@ class PythonDependencyHttpContractTest {
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(changeBody(OPERATION, "ADD", "httpx", "0.28.1", "7")))
             .andExpect(status().isConflict())
-            .andExpect(jsonPath("$.code").value("PROJECT_LOCKED"));
+            .andExpect(jsonPath("$.code").value("WORKSPACE_RECONCILIATION_REQUIRED"));
         assertThat(agent.prepareCalls).isZero();
         assertThat(store.failures).containsEntry(PROJECT, "WORKSPACE_RECONCILIATION_REQUIRED");
+    }
+
+    @Test
+    void reconciliationRefusalsOfRegisteredOperationsAnswerTheReconciliationCodeOnTheWire() throws Exception {
+        String requestSha256 = digest("ADD", "httpx", "0.28.1", 7);
+        store.records.put(OPERATION, new WorkspaceStore.OperationRecord(OPERATION, PROJECT, 7,
+            "a".repeat(64), "b".repeat(64), ".manao/receipts/" + OPERATION + ".json",
+            registeredReceiptSha256(OPERATION, "a".repeat(64), "b".repeat(64)),
+            "PENDING", "PYTHON_DEPENDENCIES", requestSha256));
+        store.pending.put(PROJECT, store.records.get(OPERATION));
+
+        // A DELETING project cannot drive its registered PENDING operation: the row exists, so
+        // the answer is the reconciliation code, not the pre-flight lock.
+        store.projects.put(PROJECT, new WorkspaceStore.ProjectRecord(PROJECT, ALICE, "demo", "DELETING", 7,
+            null, java.time.Instant.parse("2026-08-29T00:00:00Z")));
+        http.perform(post("/api/v1/projects/" + PROJECT + "/python-dependencies/" + OPERATION + "/reconcile")
+                .principal(new UsernamePasswordAuthenticationToken(ALICE, "n/a")))
+            .andExpect(status().isConflict())
+            .andExpect(jsonPath("$.code").value("WORKSPACE_RECONCILIATION_REQUIRED"));
+        assertThat(agent.commitCalls).isZero();
+        assertThat(store.records.get(OPERATION).state()).isEqualTo("PENDING");
+
+        // The same refusal for a project failed for an unrelated reason.
+        store.projects.put(PROJECT, new WorkspaceStore.ProjectRecord(PROJECT, ALICE, "demo", "FAILED", 7,
+            "CREATION_FAILED", java.time.Instant.parse("2026-08-29T00:00:00Z")));
+        http.perform(post("/api/v1/projects/" + PROJECT + "/python-dependencies/" + OPERATION + "/reconcile")
+                .principal(new UsernamePasswordAuthenticationToken(ALICE, "n/a")))
+            .andExpect(status().isConflict())
+            .andExpect(jsonPath("$.code").value("WORKSPACE_RECONCILIATION_REQUIRED"));
+        assertThat(agent.commitCalls).isZero();
+        assertThat(store.records.get(OPERATION).state()).isEqualTo("PENDING");
     }
 
     @Test
