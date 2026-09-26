@@ -2095,6 +2095,51 @@ describe('WorkbenchShell python dependencies', () => {
     expect(screen.queryByText('Dependency change is unconfirmed')).not.toBeInTheDocument();
   }, 15_000);
 
+  it('a retry of a failed discovery re-queries the server and recovers a pending operation', async () => {
+    const user = userEvent.setup();
+    await authenticateAsAlice();
+    const project = await createPythonProjectWithFile('Discovery Retry Recovers');
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    let failPending = true;
+    server.use(
+      http.get('/api/v1/projects/:projectId/python-dependencies/pending', () => {
+        if (failPending) {
+          // PROJECT_BUSY is what the real backend answers under lease contention.
+          return HttpResponse.json(
+            { code: 'PROJECT_BUSY', message: 'Project is busy', traceId: 'trace-pending-retry' },
+            { status: 409 },
+          );
+        }
+        return undefined;
+      }),
+    );
+    renderPythonShell(project);
+    await waitUntilWritesUnlocked();
+    expect(
+      await screen.findByText('Could not check for a pending dependency change.'),
+    ).toBeInTheDocument();
+    expect(pendingDiscoveryGetCount(fetchSpy)).toBe(1);
+
+    // The operation becomes server-pending BEFORE the user retries: the retry's
+    // re-query must find it. A retry that only hid the banner would fabricate
+    // absence — exactly the dead end the discovery exists to prevent.
+    await registerPendingMockOperation(project, SERVER_PENDING_OPERATION_ID);
+    failPending = false;
+    await user.click(screen.getByRole('button', { name: 'Retry pending dependency check' }));
+
+    // The retry re-queried (GET count 1 -> 2) and the discovered operation
+    // engages the recovery entry from a previously empty surface.
+    expect(await screen.findByText('Dependency change is unconfirmed')).toBeInTheDocument();
+    expect(pendingDiscoveryGetCount(fetchSpy)).toBe(2);
+    expect(sessionStorage.getItem(pythonDependencyStorageKey('usr-alice', project.id))).toBe(
+      SERVER_PENDING_OPERATION_ID,
+    );
+    expect(
+      screen.queryByText('Could not check for a pending dependency change.'),
+    ).not.toBeInTheDocument();
+    fetchSpy.mockRestore();
+  }, 15_000);
+
   it('ignores the discovered pending operation when an id is stored while the query is in flight', async () => {
     const fetchSpy = vi.spyOn(globalThis, 'fetch');
     const user = userEvent.setup();
