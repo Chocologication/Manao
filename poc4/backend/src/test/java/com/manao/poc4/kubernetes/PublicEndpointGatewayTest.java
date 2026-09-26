@@ -323,6 +323,35 @@ class PublicEndpointGatewayTest {
             .doesNotContainKey("manao.poc4/pod-uid");
     }
 
+    @Test
+    void aPythonWebRunIsRoutedThroughTheSameHistoricalIdentityAndItsPrimaryPort() {
+        // The python-fastapi-web port group: the FastAPI app serves the primary port 8000.
+        var ports = new com.manao.poc4.project.ProjectRuntimeSpec(
+            com.manao.poc4.project.RuntimeTemplate.PYTHON_FASTAPI_WEB.id(), false, false,
+            List.of(new ProjectRuntimeSpec.Port("web", 8000, 30082))).publicPorts();
+        assertThat(gateway.ensure("p1", ports)).isEqualTo(CONFIRMED);
+        var service = client.services().inNamespace(NS).withName("manao-app-p1").get();
+        assertThat(service.getSpec().getPorts().get(0).getPort()).isEqualTo(8000);
+        assertThat(service.getSpec().getPorts().get(0).getNodePort()).isEqualTo(30082);
+        String podUid = seedRunPod("p1", "run-py");
+
+        gateway.routeToRun("p1", "run-py", podUid);
+
+        // The selector uses the same historical component label for Python as for Java.
+        assertThat(client.services().inNamespace(NS).withName("manao-app-p1").get()
+            .getSpec().getSelector())
+            .containsEntry("manao.poc4/project-id", "p1")
+            .containsEntry("manao.poc4/component", "maven-run")
+            .containsEntry("manao.poc4/run-id", "run-py")
+            .containsEntry("manao.poc4/pod-uid", podUid);
+
+        gateway.withdraw("p1");
+        assertThat(client.services().inNamespace(NS).withName("manao-app-p1").get()
+            .getSpec().getSelector())
+            .containsEntry("manao.poc4/run-id", "stopped")
+            .doesNotContainKey("manao.poc4/pod-uid");
+    }
+
     /** Creates the claimed pod and returns the server-assigned UID used for routing. */
     private String seedRunPod(String projectId, String runId) {
         var pod = new io.fabric8.kubernetes.api.model.PodBuilder()

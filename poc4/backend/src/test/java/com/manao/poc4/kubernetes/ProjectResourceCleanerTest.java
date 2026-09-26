@@ -127,7 +127,8 @@ class ProjectResourceCleanerTest {
     }
 
     @Test
-    void workloadsPathDeletesInitializerButNeverPvc() {        seedProject(P1, "Failed");
+    void workloadsPathDeletesInitializerButNeverPvc() {
+        seedProject(P1, "Failed");
         gateway.deleteWorkspaceWorkloads(P1);
         assertThat(client.pods().inNamespace(NS)
             .withName(WorkspaceResourceFactory.initializerPodName(P1)).get()).isNull();

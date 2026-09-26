@@ -77,12 +77,13 @@ public class JobResourceFactory {
      * profile-less {@code run}/{@code probe} keeps its Java default for already-created resources.
      */
     private record LanguageRuntime(String image, String cacheMountPath, String cacheSubPath,
-                                   String cachePreparationContainer, List<String> taskCommand,
-                                   List<String> serviceCommand, List<String> probeCommand) {
+                                   String cachePreparationContainer, boolean repairSharedCacheParent,
+                                   List<String> taskCommand, List<String> serviceCommand,
+                                   List<String> probeCommand) {
 
         static LanguageRuntime maven(String mavenImage) {
             return new LanguageRuntime(mavenImage, MAVEN_CACHE_MOUNT, MAVEN_CACHE_DIRECTORY,
-                "prepare-maven-cache",
+                "prepare-maven-cache", true,
                 List.of(MAVEN_WRAPPER_COMMAND, "-q", "-DskipTests", "compile", "exec:java"),
                 List.of(SUPERVISOR_COMMAND, "run"),
                 List.of(SUPERVISOR_COMMAND, "probe"));
@@ -90,10 +91,27 @@ public class JobResourceFactory {
 
         static LanguageRuntime python(String pythonImage, String serviceProfileId) {
             return new LanguageRuntime(pythonImage, PYTHON_CACHE_MOUNT, PYTHON_CACHE_DIRECTORY,
-                "prepare-python-cache",
+                "prepare-python-cache", false,
                 List.of(PYTHON_LAUNCHER_COMMAND, "console"),
                 List.of(SUPERVISOR_COMMAND, "run", serviceProfileId),
                 List.of(SUPERVISOR_COMMAND, "probe", serviceProfileId));
+        }
+
+        /**
+         * The exact cache-preparation script of one language: creates this language's cache
+         * directory and hands it to the fixed workspace UID/GID. Only the Maven cache also
+         * repairs the shared {@code .manao-cache} parent (its historical behavior for
+         * pre-existing projects); the Python cache never re-owns or re-permissions the parent
+         * other caches live under.
+         */
+        String cachePreparationScript() {
+            String ownDirectory = "/data/" + cacheSubPath;
+            String parent = "/data/.manao-cache";
+            String ownershipTargets = repairSharedCacheParent ? parent + " " + ownDirectory : ownDirectory;
+            return "mkdir -p " + ownDirectory
+                + " && chown " + WorkspaceResourceFactory.WORKSPACE_UID + ":"
+                + WorkspaceResourceFactory.WORKSPACE_GID + " " + ownershipTargets
+                + " && chmod 0775 " + ownershipTargets;
         }
     }
 
@@ -367,16 +385,10 @@ public class JobResourceFactory {
      * the fixed workspace UID/GID, while the application containers keep their non-root identity.
      */
     private io.fabric8.kubernetes.api.model.Container cachePreparationContainer(LanguageRuntime runtime) {
-        String cacheDirectory = "/data/" + runtime.cacheSubPath();
-        String cacheParent = "/data/.manao-cache";
-        String script = "mkdir -p " + cacheDirectory
-            + " && chown " + WorkspaceResourceFactory.WORKSPACE_UID + ":" + WorkspaceResourceFactory.WORKSPACE_GID
-            + " " + cacheParent + " " + cacheDirectory
-            + " && chmod 0775 " + cacheParent + " " + cacheDirectory;
         return new io.fabric8.kubernetes.api.model.ContainerBuilder()
             .withName(runtime.cachePreparationContainer())
             .withImage(initializerImage)
-            .withCommand("/bin/sh", "-ec", script)
+            .withCommand("/bin/sh", "-ec", runtime.cachePreparationScript())
             .withVolumeMounts(new io.fabric8.kubernetes.api.model.VolumeMountBuilder()
                 .withName("workspace").withMountPath("/data").build())
             .withNewSecurityContext()

@@ -2,6 +2,7 @@ package com.manao.poc4.log;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.manao.poc4.kubernetes.ResourceIdentityVerifier;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
@@ -22,6 +23,26 @@ class RunLogIngestorTest {
         assertThat(gateway.watchedPods).containsExactly("pod-1", "pod-2");
         assertThat(gateway.containers).containsExactly("maven", "maven");
         assertThat(gateway.namespaces).containsExactly("manao", "manao");
+    }
+
+    @Test
+    void aPythonSnapshotRunIsIngestedThroughTheSameHistoricalSource() {
+        RecordingGateway gateway = new RecordingGateway();
+        RecordingChunkStore chunks = new RecordingChunkStore(0);
+        RunLogIngestor ingestor = new RunLogIngestor(gateway, new RunLogService(chunks), "manao");
+
+        // A python-fastapi-web run: the log path is snapshot-blind and stays bound to the
+        // historical application container identity; uvicorn lines persist like Maven lines.
+        ingestor.ensureWatch("run-py", "pod-py", "uid-py");
+        gateway.emit("INFO:     Started server process [1]");
+        gateway.emit("INFO:     127.0.0.1:51744 - \"GET /health/ready HTTP/1.1\" 200 OK");
+
+        assertThat(gateway.containers).containsExactly(ResourceIdentityVerifier.APPLICATION_CONTAINER);
+        assertThat(gateway.namespaces).containsExactly("manao");
+        assertThat(chunks.inserted).extracting(RecordingChunk::seq).containsExactly(1L, 2L);
+        assertThat(chunks.inserted).extracting(RecordingChunk::text)
+            .containsExactly("INFO:     Started server process [1]\n",
+                "INFO:     127.0.0.1:51744 - \"GET /health/ready HTTP/1.1\" 200 OK\n");
     }
 
     @Test

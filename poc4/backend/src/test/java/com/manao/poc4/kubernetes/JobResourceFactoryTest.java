@@ -369,9 +369,12 @@ class JobResourceFactoryTest {
             assertThat(mount.getName()).isEqualTo("workspace");
             assertThat(mount.getMountPath()).isEqualTo("/data");
             assertThat(mount.getSubPath()).as("cache preparation must root-mount the workspace PVC").isNull();
-            String script = String.join(" ", prep.getCommand());
-            assertThat(script).contains("mkdir -p /data/.manao-cache/python");
-            assertThat(script).contains("chown 10001:10001 /data/.manao-cache /data/.manao-cache/python");
+            String script = prep.getCommand().get(2); // the /bin/sh -ec script body
+            // Ownership changes are restricted to Python's own cache directory: the shared
+            // .manao-cache parent is never re-owned or re-permissioned by a Python run.
+            assertThat(script).isEqualTo("mkdir -p /data/.manao-cache/python"
+                + " && chown 10001:10001 /data/.manao-cache/python"
+                + " && chmod 0775 /data/.manao-cache/python");
             // Only the run's own python cache directory is created: never templates, code or the
             // existing cache content, and the workspace-recovery deletion scope is not widened.
             assertThat(script).doesNotContain(WorkspaceResourceFactory.projectDirectory(PROJECT));

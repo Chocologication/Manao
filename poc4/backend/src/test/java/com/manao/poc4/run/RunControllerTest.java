@@ -172,7 +172,8 @@ public class RunControllerTest {
         }
 
         @Test
-        void startHandsPrimaryPortAndDependencyEnvironmentToTheCoordinator() {            runtimeStore.putSpec(PROJECT, new ProjectRuntimeSpec(ProjectRuntimeSpec.TEMPLATE_JAVA_SPRING_BOOT_WEB,
+        void startHandsPrimaryPortAndDependencyEnvironmentToTheCoordinator() {
+            runtimeStore.putSpec(PROJECT, new ProjectRuntimeSpec(ProjectRuntimeSpec.TEMPLATE_JAVA_SPRING_BOOT_WEB,
                 true, false, List.of(new ProjectRuntimeSpec.Port("web", 8080, 30081))));
             dependencies.mysql = ProjectDependencies.READY;
             controller.start(auth(ALICE), PROJECT, new RunController.StartRunRequest("12"));
