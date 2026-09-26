@@ -144,4 +144,70 @@ describe('ProjectCard', () => {
     expect(runtime).toHaveTextContent('MySQL');
     expect(runtime).toHaveTextContent('8000→30082');
   });
+
+  it('links to the status page for a failed python dependency reconciliation', () => {
+    const failed: ProjectSummary = {
+      ...ready,
+      name: 'Py Reconciliation',
+      state: 'FAILED',
+      failureReason: 'WORKSPACE_RECONCILIATION_REQUIRED',
+      runtime: { templateId: 'python-fastapi-web', mysql: false, redis: false, publicPorts: [] },
+    };
+    render(
+      <MemoryRouter>
+        <ProjectCard project={failed} />
+      </MemoryRouter>,
+    );
+
+    // The recovery entry is a dedicated link into the status page; Open stays closed for FAILED.
+    const link = screen.getByRole('link', { name: 'Check dependency change' });
+    expect(link).toHaveAttribute('href', `/projects/${encodeURIComponent(failed.id)}`);
+    expect(screen.queryByRole('link', { name: 'Open' })).not.toBeInTheDocument();
+  });
+
+  it('offers no dependency recovery entry for other failures or non-python runtimes', () => {
+    const otherReason: ProjectSummary = {
+      ...ready,
+      name: 'Py Other Failure',
+      state: 'FAILED',
+      failureReason: 'Mock workspace provisioning failed',
+      runtime: { templateId: 'python-console', mysql: false, redis: false, publicPorts: [] },
+    };
+    render(
+      <MemoryRouter>
+        <ProjectCard project={otherReason} />
+      </MemoryRouter>,
+    );
+    expect(screen.queryByRole('link', { name: 'Check dependency change' })).not.toBeInTheDocument();
+
+    cleanup();
+    const java: ProjectSummary = {
+      ...ready,
+      name: 'Java Reconciliation',
+      state: 'FAILED',
+      failureReason: 'WORKSPACE_RECONCILIATION_REQUIRED',
+      runtime: { templateId: 'java-spring-boot-web', mysql: false, redis: false, publicPorts: [] },
+    };
+    render(
+      <MemoryRouter>
+        <ProjectCard project={java} />
+      </MemoryRouter>,
+    );
+    expect(screen.queryByRole('link', { name: 'Check dependency change' })).not.toBeInTheDocument();
+
+    cleanup();
+    const deleting: ProjectSummary = {
+      ...ready,
+      name: 'Py Deleting',
+      state: 'DELETING',
+      failureReason: 'WORKSPACE_RECONCILIATION_REQUIRED',
+      runtime: { templateId: 'python-console', mysql: false, redis: false, publicPorts: [] },
+    };
+    render(
+      <MemoryRouter>
+        <ProjectCard project={deleting} />
+      </MemoryRouter>,
+    );
+    expect(screen.queryByRole('link', { name: 'Check dependency change' })).not.toBeInTheDocument();
+  });
 });

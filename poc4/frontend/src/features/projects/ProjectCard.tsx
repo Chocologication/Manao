@@ -1,6 +1,9 @@
 import { Link } from 'react-router';
 import { Button } from '@/components/ui/button';
 import { Spinner } from '@/components/ui/spinner';
+import {
+  isPythonDependencyRecoveryFailure,
+} from '@/features/dependencies/PythonDependencyRecovery';
 import { RUNTIME_TEMPLATE_META } from '../../contracts/project';
 import type { ProjectSummary } from '../../contracts/project';
 
@@ -84,6 +87,14 @@ export function ProjectCard({ project, onDelete, deleting = false, deleteDisable
             </Button>
           ) : null}
           {project.state === 'CREATING' ? <Spinner /> : null}
+          {isPythonDependencyRecoveryFailure(project) ? (
+            <Button
+              render={<Link to={`/projects/${encodeURIComponent(project.id)}`} />}
+              variant="outline"
+            >
+              Check dependency change
+            </Button>
+          ) : null}
           {project.state === 'READY' && !deleting ? (
             <Button render={<Link to={`/projects/${encodeURIComponent(project.id)}`} />}>
               Open

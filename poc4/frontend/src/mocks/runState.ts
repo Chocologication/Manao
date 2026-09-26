@@ -28,7 +28,7 @@ import {
 } from './fileFixtures';
 import { createLargeLogChunks } from './largeLogPayload';
 import {
-  clonePoc4RunPolicy,
+  cloneRunPolicyForTemplate,
   GAP_DUP_TEXT,
   GAP_SKIPPED_TEXT,
   GAP_VISIBLE_TEXT,
@@ -982,6 +982,7 @@ export function listRuns(
 export function startRun(
   projectId: string,
   body: unknown,
+  templateId?: string,
 ): MockRunMutationResult<{ run: RunSummary }> {
   let request: StartRunRequest;
   try {
@@ -1000,7 +1001,7 @@ export function startRun(
     id: `run-${String(nextRunSeq).padStart(6, '0')}`,
     state: 'STARTING',
     requestedWorkspaceRevision: request.expectedWorkspaceRevision,
-    policy: clonePoc4RunPolicy(),
+    policy: cloneRunPolicyForTemplate(templateId),
     createdAt: isoNow(),
     startedAt: null,
     finishedAt: null,

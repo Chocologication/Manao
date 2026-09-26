@@ -1,5 +1,5 @@
 import { useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, FileCode, LogOut, Play, SquareTerminal } from 'lucide-react';
+import { ArrowLeft, FileCode, LogOut, Package, Play, SquareTerminal } from 'lucide-react';
 import {
   lazy,
   Suspense,
@@ -18,6 +18,13 @@ import { InlineAlert } from '@/components/feedback/InlineAlert';
 import { RunPanel } from '@/components/runs/RunPanel';
 import { Button } from '@/components/ui/button';
 import type { ProjectSummary } from '@/contracts/project';
+import { readPythonDependencyOperationId } from '@/api/pythonDependencyApi';
+import {
+  PythonDependenciesPanel,
+} from '@/features/dependencies/PythonDependenciesPanel';
+import {
+  PythonDependencyRecovery,
+} from '@/features/dependencies/PythonDependencyRecovery';
 import {
   dismissUnsavedDialog,
   LEAVE_MESSAGE,
@@ -28,6 +35,7 @@ import {
 } from '@/features/editor/unsavedChangesGuard';
 import { useWorkspaceSession } from '@/features/editor/workspaceSession';
 import { WorkspaceFileReadsPaused } from '@/features/files/fileQueries';
+import { useAuth } from '@/features/auth/AuthProvider';
 import {
   isWorkspaceEditable,
   useRunAuthorityCoordinator,
@@ -38,12 +46,17 @@ import { cn } from '@/lib/utils';
 
 const EDITOR_REGION_ID = 'workbench-editor';
 const RUN_PANEL_ID = 'workbench-run-panel';
+const DEPENDENCIES_PANEL_ID = 'workbench-dependencies-panel';
 const TERMINAL_PANEL_ID = 'workbench-terminal-panel';
 
-type WorkbenchPanel = 'file' | 'run' | 'terminal';
+type WorkbenchPanel = 'file' | 'run' | 'dependencies' | 'terminal';
 
 export function isExperimentalTerminalEnabled(value: string | undefined): boolean {
   return value === 'true';
+}
+
+function isPythonRuntimeTemplate(templateId: string | undefined): boolean {
+  return templateId === 'python-console' || templateId === 'python-fastapi-web';
 }
 
 const experimentalTerminalEnabled = isExperimentalTerminalEnabled(
@@ -70,6 +83,14 @@ export function WorkbenchShell({ project }: { project: ProjectSummary }) {
   const [terminalLoaded, setTerminalLoaded] = useState(false);
   const queryClient = useQueryClient();
   const coordinator = useRunAuthorityCoordinator(project.id);
+  const { snapshot: authSnapshot } = useAuth();
+  const userId = authSnapshot.status === 'authenticated' ? authSnapshot.user.id : '';
+  const pythonWorkbench = isPythonRuntimeTemplate(project.runtime?.templateId);
+  // Seeded from sessionStorage so a refresh keeps the unconfirmed operation reachable;
+  // the panel reports a fresh lost response while the shell stays mounted.
+  const [unconfirmedOperationId, setUnconfirmedOperationId] = useState<string | null>(() =>
+    pythonWorkbench ? readPythonDependencyOperationId(userId, project.id) : null,
+  );
   const snapshot = useSyncExternalStore(
     coordinator.subscribe,
     coordinator.getSnapshot,
@@ -180,6 +201,24 @@ export function WorkbenchShell({ project }: { project: ProjectSummary }) {
           <LogOut />
         </Button>
       </header>
+      {unconfirmedOperationId !== null ? (
+        <div className="border-b bg-background px-4 py-2">
+          <PythonDependencyRecovery
+            projectId={project.id}
+            userId={userId}
+            variant="ready"
+            operationId={unconfirmedOperationId}
+            onRecovered={() => {
+              setUnconfirmedOperationId(null);
+              // Re-read the current tree/files/revision from the workspace; a reload
+              // failure surfaces through the file queries' own retry states.
+              reloadWorkspaceAfterTerminalRun({ projectId: project.id, queryClient }).catch(
+                () => {},
+              );
+            }}
+          />
+        </div>
+      ) : null}
       <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden">
         <aside
           aria-label="Project files"
@@ -238,6 +277,28 @@ export function WorkbenchShell({ project }: { project: ProjectSummary }) {
               <Play className="h-4 w-4" aria-hidden />
               Run
             </button>
+            {pythonWorkbench ? (
+              <button
+                type="button"
+                role="tab"
+                id="workbench-tab-dependencies"
+                aria-label="Dependencies"
+                aria-controls={DEPENDENCIES_PANEL_ID}
+                aria-selected={activePanel === 'dependencies'}
+                className={cn(
+                  panelTabClassName,
+                  activePanel === 'dependencies'
+                    ? 'bg-accent text-accent-foreground'
+                    : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground',
+                )}
+                onClick={() => {
+                  setActivePanel('dependencies');
+                }}
+              >
+                <Package className="h-4 w-4" aria-hidden />
+                Dependencies
+              </button>
+            ) : null}
             {experimentalTerminalEnabled ? (
               <button
                 type="button"
@@ -316,6 +377,27 @@ export function WorkbenchShell({ project }: { project: ProjectSummary }) {
                 coordinator={coordinator}
               />
             </div>
+            {pythonWorkbench ? (
+              <div
+                id={DEPENDENCIES_PANEL_ID}
+                role="tabpanel"
+                aria-labelledby="workbench-tab-dependencies"
+                aria-hidden={activePanel !== 'dependencies'}
+                inert={activePanel !== 'dependencies' ? true : undefined}
+                className={cn(
+                  panelSurfaceClassName,
+                  activePanel === 'dependencies' ? 'z-10' : 'invisible pointer-events-none',
+                )}
+              >
+                <PythonDependenciesPanel
+                  projectId={project.id}
+                  userId={userId}
+                  workspaceLocked={writesLocked}
+                  unconfirmedOperationId={unconfirmedOperationId}
+                  onResponseLost={setUnconfirmedOperationId}
+                />
+              </div>
+            ) : null}
             {experimentalTerminalEnabled && terminalLoaded ? (
               <div
                 id={TERMINAL_PANEL_ID}

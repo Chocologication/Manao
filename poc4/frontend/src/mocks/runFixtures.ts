@@ -124,6 +124,20 @@ export function clonePoc4RunPolicy(): RunPolicy {
   };
 }
 
+/**
+ * Mock-run policy by project template: python templates must not report the legacy
+ * Maven default. Legacy and unknown ids keep the historical POC4 Java policy.
+ */
+export function cloneRunPolicyForTemplate(templateId: string | undefined): RunPolicy {
+  if (templateId === 'python-console') {
+    return clonePythonConsoleRunPolicy();
+  }
+  if (templateId === 'python-fastapi-web') {
+    return clonePythonFastApiRunPolicy();
+  }
+  return clonePoc4RunPolicy();
+}
+
 export function clonePythonConsoleRunPolicy(): RunPolicy {
   return {
     templateId: 'python-console',

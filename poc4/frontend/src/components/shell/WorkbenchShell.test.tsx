@@ -41,7 +41,8 @@ import {
   setRunScenario,
   transitionRun,
 } from '../../mocks/runState';
-import { ALICE_SEED_PROJECT_ID, getFileRequestCount, setWriteScenario } from '../../mocks/state';
+import { ALICE_SEED_PROJECT_ID, getFileRequestCount, setDependencyScenario, setWriteScenario } from '../../mocks/state';
+import { pythonDependencyStorageKey } from '../../api/pythonDependencyApi';
 import { renderApp, resetAppRuntime } from '../../test/renderApp';
 import { isExperimentalTerminalEnabled, WorkbenchShell } from './WorkbenchShell';
 
@@ -1490,3 +1491,104 @@ function deferredHold(): { promise: Promise<void>; resolve: () => void } {
   });
   return { promise, resolve };
 }
+
+describe('WorkbenchShell python dependencies', () => {
+  async function renderEditablePythonShell(): Promise<ProjectSummary> {
+    const created = await createProject({
+      name: 'Python Deps Lab',
+      templateId: 'python-console',
+      mysql: false,
+      redis: false,
+      publicPorts: [],
+    });
+    await getProject(created.id);
+    const ready = await getProject(created.id);
+    expect(ready.state).toBe('READY');
+    workspaceSessionStore.getState().activateProject(ready.id);
+    render(
+      <AppProviders>
+        <MemoryRouter>
+          <WorkbenchShell project={ready} />
+        </MemoryRouter>
+      </AppProviders>,
+    );
+    await waitUntilWritesUnlocked();
+    return ready;
+  }
+
+  it('shows the Dependencies tab and form only on a python workbench', async () => {
+    const user = userEvent.setup();
+    await authenticateAsAlice();
+    await renderEditablePythonShell();
+
+    const dependencies = screen.getByRole('tab', { name: 'Dependencies' });
+    expect(dependencies).toBeEnabled();
+    await user.click(dependencies);
+    expect(await screen.findByLabelText('Package name')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Add dependency' })).toBeEnabled();
+
+    cleanup();
+    await authenticateAsAlice();
+    renderShell();
+    await loadedRoot();
+    expect(screen.queryByRole('tab', { name: 'Dependencies' })).not.toBeInTheDocument();
+  }, 15_000);
+
+  it('locks the form behind the recovery entry after a lost response; checking reloads and unlocks', async () => {
+    const user = userEvent.setup();
+    await authenticateAsAlice();
+    const project = await renderEditablePythonShell();
+    setDependencyScenario('lost-response');
+
+    await user.click(screen.getByRole('tab', { name: 'Dependencies' }));
+    await user.type(screen.getByLabelText('Package name'), 'httpx');
+    await user.click(screen.getByRole('button', { name: 'Add dependency' }));
+
+    // The result is unknown: the entry appears and no further change may start.
+    expect(await screen.findByText('Dependency change is unconfirmed')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Check dependency change' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Add dependency' })).toBeDisabled();
+
+    setDependencyScenario('normal');
+    await user.click(screen.getByRole('button', { name: 'Check dependency change' }));
+
+    await waitFor(() => {
+      expect(screen.queryByText('Dependency change is unconfirmed')).not.toBeInTheDocument();
+    });
+    expect(screen.getByRole('button', { name: 'Add dependency' })).toBeEnabled();
+    // The recovered reload re-read the workspace with the committed dependency files.
+    expect(await screen.findByRole('treeitem', { name: 'pyproject.toml' }, { timeout: 10_000 })).toBeInTheDocument();
+    expect(sessionStorage.getItem(pythonDependencyStorageKey('usr-alice', project.id))).toBeNull();
+  }, 20_000);
+
+  it('logout clears the saved dependency operation so the next user starts clean', async () => {
+    const user = userEvent.setup();
+    await authenticateAsAlice();
+    const created = await createProject({
+      name: 'Python Logout Deps',
+      templateId: 'python-console',
+      mysql: false,
+      redis: false,
+      publicPorts: [],
+    });
+    await getProject(created.id);
+    const ready = await getProject(created.id);
+    expect(ready.state).toBe('READY');
+    // The full router is needed so logout can navigate to the login page.
+    renderApp({ initialEntries: [`/projects/${ready.id}`] });
+    await waitUntilWritesUnlocked();
+    setDependencyScenario('lost-response');
+
+    await user.click(screen.getByRole('tab', { name: 'Dependencies' }));
+    await user.type(screen.getByLabelText('Package name'), 'httpx');
+    await user.click(screen.getByRole('button', { name: 'Add dependency' }));
+    expect(await screen.findByText('Dependency change is unconfirmed')).toBeInTheDocument();
+    expect(sessionStorage.getItem(pythonDependencyStorageKey('usr-alice', ready.id))).not.toBeNull();
+
+    await user.click(screen.getByRole('button', { name: 'Log out' }));
+    expect(await screen.findByLabelText('Username')).toBeInTheDocument();
+    expect(sessionStorage.getItem(pythonDependencyStorageKey('usr-alice', ready.id))).toBeNull();
+
+    setDependencyScenario('normal');
+  }, 20_000);
+});

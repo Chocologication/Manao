@@ -475,6 +475,163 @@ test.describe.serial('python runtime cloud lifecycle', () => {
     console.log(`[python-runtime] re-run ${againRun.id} serves both ports again`);
   });
 
+  test('add httpx through the dependency form, import it, remove it and fail the import again', async ({ page }, testInfo) => {
+    test.setTimeout(1_800_000); // two cloud runs plus uv resolution on both changes
+    await signIn(page);
+    await openProject(page, SCENE.consoleProjectName);
+    expect(SCENE.consoleProjectId, 'the console project from the earlier scene').not.toBe('');
+
+    // ADD httpx through the workbench form; the committed files must list it.
+    await page.getByRole('tab', { name: 'Dependencies' }).click();
+    await page.getByLabel('Package name').fill('httpx');
+    await page.getByRole('button', { name: 'Add dependency' }).click();
+    await expect
+      .poll(async () => readPyproject(page), { timeout: 120_000, intervals: [2_000, 5_000] })
+      .toContain('httpx');
+    console.log('[python-runtime] httpx added through the dependency form');
+
+    // A run that imports httpx must succeed with the resolved dependency present.
+    await putFile(
+      page,
+      SCENE.consoleProjectId,
+      CONSOLE_ENTRY_PATH,
+      '"""Manao dependency acceptance: httpx is importable."""\n\nimport httpx\n\nprint(httpx.__version__)\n',
+    );
+    await openProject(page, SCENE.consoleProjectName);
+    await startRunFromToolbar(page);
+    const withHttpxRunId = await pollForActiveRunId(page, SCENE.consoleProjectId);
+    const withHttpx = await waitForRunState(
+      page,
+      SCENE.consoleProjectId,
+      withHttpxRunId,
+      /SUCCEEDED/,
+      CONSOLE_RUN_TIMEOUT,
+    );
+    expect(withHttpx.exitCode, 'importing httpx must work after the ADD').toBe(0);
+
+    // REMOVE httpx through the same form; the committed files must drop it.
+    await page.getByRole('tab', { name: 'Dependencies' }).click();
+    await page.getByLabel('Package name').fill('httpx');
+    await page.getByRole('button', { name: 'Remove dependency' }).click();
+    await expect
+      .poll(async () => readPyproject(page), { timeout: 120_000, intervals: [2_000, 5_000] })
+      .not.toContain('httpx');
+    console.log('[python-runtime] httpx removed through the dependency form');
+
+    // The same importing program must now fail: the removal left no residue.
+    await openProject(page, SCENE.consoleProjectName);
+    await startRunFromToolbar(page);
+    const withoutHttpxRunId = await pollForActiveRunId(page, SCENE.consoleProjectId);
+    expect(withoutHttpxRunId, 'every change runs as a new run').not.toBe(withHttpxRunId);
+    const withoutHttpx = await waitForRunState(
+      page,
+      SCENE.consoleProjectId,
+      withoutHttpxRunId,
+      /FAILED/,
+      CONSOLE_RUN_TIMEOUT,
+    );
+    expect(withoutHttpx.exitCode, 'a missing import must fail the run').not.toBe(0);
+
+    await testInfo.attach('python-runtime-dependency-cycle.json', {
+      body: Buffer.from(JSON.stringify({
+        projectId: SCENE.consoleProjectId,
+        withHttpxRunId,
+        withoutHttpxRunId,
+      })),
+      contentType: 'application/json',
+    });
+  });
+
+  test('a lost dependency response stays recoverable after a refresh', async ({ page }, testInfo) => {
+    test.setTimeout(600_000);
+    await signIn(page);
+    await openProject(page, SCENE.consoleProjectName);
+
+    // Deliver the change request but lose the response: the backend may commit
+    // while the browser never learns the result, exactly like a real outage.
+    let deliveredDependencyPost = 0;
+    await page.route('**/api/v1/projects/*/python-dependencies', async (route) => {
+      deliveredDependencyPost += 1;
+      await route.fetch();
+      await route.abort('connectionreset');
+    });
+    await page.getByRole('tab', { name: 'Dependencies' }).click();
+    await page.getByLabel('Package name').fill('requests');
+    await page.getByRole('button', { name: 'Add dependency' }).click();
+    expect(deliveredDependencyPost, 'the ADD was sent exactly once').toBe(1);
+
+    // The unconfirmed entry appears and no automatic retry is sent.
+    await expect(page.getByText('Dependency change is unconfirmed')).toBeVisible();
+    expect(deliveredDependencyPost).toBe(1);
+
+    // Refresh: the same session still offers the check entry for the SAME operation.
+    await page.reload();
+    await signIn(page);
+    if (page.url().endsWith('/projects')) {
+      await openProject(page, SCENE.consoleProjectName);
+    } else {
+      await expect(page.getByRole('heading', { name: SCENE.consoleProjectName })).toBeVisible();
+    }
+    const check = page.getByRole('button', { name: 'Check dependency change' });
+    await expect(check).toBeEnabled();
+    expect(deliveredDependencyPost, 'the refresh must not resend the ADD').toBe(1);
+
+    // Checking queries/reconciles the original operation and the workspace confirms it.
+    await page.unroute('**/python-dependencies');
+    await check.click();
+    await expect(page.getByText('Dependency change is unconfirmed')).toBeHidden({ timeout: 180_000 });
+    await expect
+      .poll(async () => readPyproject(page), { timeout: 120_000, intervals: [2_000, 5_000] })
+      .toContain('requests');
+    console.log('[python-runtime] lost dependency response recovered through the same operation id');
+
+    // Leave the project clean for the deletion scene.
+    await page.getByLabel('Package name').fill('requests');
+    await page.getByRole('button', { name: 'Remove dependency' }).click();
+    await expect
+      .poll(async () => readPyproject(page), { timeout: 120_000, intervals: [2_000, 5_000] })
+      .not.toContain('requests');
+
+    await testInfo.attach('python-runtime-lost-response-recovery.json', {
+      body: Buffer.from(JSON.stringify({
+        projectId: SCENE.consoleProjectId,
+        deliveredDependencyPost,
+      })),
+      contentType: 'application/json',
+    });
+  });
+
+  test('a FAILED reconciliation page recovers the pending dependency operation', async ({ page }, testInfo) => {
+    // Authored-only case: reaching WORKSPACE_RECONCILIATION_REQUIRED needs a backend
+    // fault (agent commit interrupted after prepare). Task 11 pairs this case with the
+    // operator-injected fault; without the fault flag the case must not run and stays
+    // explicitly NOT_REVERIFIED instead of passing vacuously.
+    test.skip(
+      !process.env.MANAO_RUNTIME_DEPENDENCY_PENDING_FAULT,
+      'requires MANAO_RUNTIME_DEPENDENCY_PENDING_FAULT: Task 11 must inject the backend fault that leaves the dependency operation PENDING and the project FAILED',
+    );
+    test.setTimeout(600_000);
+    await signIn(page);
+    await page.goto(`/projects/${SCENE.consoleProjectId}`);
+
+    // The failure page must reach the recovery entry without the READY workbench.
+    await expect(page.getByText('WORKSPACE_RECONCILIATION_REQUIRED')).toBeVisible();
+    const check = page.getByRole('button', { name: 'Check dependency change' });
+    await expect(check).toBeEnabled();
+    await check.click();
+
+    // Reconciling lifts exactly this failure and reopens the workbench.
+    await expect(page.getByRole('heading', { name: SCENE.consoleProjectName })).toBeVisible({
+      timeout: 300_000,
+    });
+    console.log('[python-runtime] FAILED project recovered through the dependency check entry');
+
+    await testInfo.attach('python-runtime-failed-recovery.json', {
+      body: Buffer.from(JSON.stringify({ projectId: SCENE.consoleProjectId })),
+      contentType: 'application/json',
+    });
+  });
+
   test('delete both projects from the UI and confirm the cards stay gone', async ({ page }, testInfo) => {
     await signIn(page);
 
@@ -602,6 +759,19 @@ async function currentWorkspaceRevision(page: Page, projectId: string): Promise<
   const response = await authedGet(page, `/api/v1/projects/${projectId}/files/tree`);
   expect(response.ok(), 'workspace tree must be readable before file edits').toBeTruthy();
   return ((await response.json()) as { workspaceRevision: string }).workspaceRevision;
+}
+
+/** The committed dependency declaration; '' when the file is not readable (yet). */
+async function readPyproject(page: Page): Promise<string> {
+  const response = await authedGet(
+    page,
+    `/api/v1/projects/${SCENE.consoleProjectId}/files/content?path=${encodeURIComponent('pyproject.toml')}`,
+  );
+  if (!response.ok()) {
+    return '';
+  }
+  const body = (await response.json()) as { content?: string };
+  return body.content ?? '';
 }
 
 /** Overwrite an existing template entry through the file content API the editor drives. */
