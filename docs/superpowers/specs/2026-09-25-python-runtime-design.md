@@ -153,7 +153,7 @@ Web 模板只包含 FastAPI、Uvicorn 及勾选依赖需要的客户端：MySQL 
 
 agent 镜像增加与 runner 对齐的 Python/uv，全部请求经过现有 capability 签名：
 
-1. `prepare`：在 scratch 内执行固定 `uv add/remove --no-sync`，源文件不变；成功后将两个目标文件、requestSha256、单文件及组合摘要持久化到 `.manao/python-dependencies/<operationId>`，状态为 PREPARED。响应仅返回 ID、requestSha256、beforeSha256、afterSha256；不把文件正文来回传给后端。已存在同请求 PREPARED 时返回同一摘要，不重新解析；ID 冲突或结果不明时拒绝猜测。
+1. `prepare`：在 scratch 内执行固定 `uv add/remove --no-sync`，源文件不变；成功后在同一 scratch 内以生产安装形态去掉选定 extras 的固定 argv（`uv sync --locked --no-dev --no-build --no-config --no-python-downloads --python /usr/local/bin/python3 --dry-run`，无 `--no-sync`）验证目标解释器/平台可安装性，两次 uv 调用共用同一单调预算截止；验证通过才将两个目标文件、requestSha256、单文件及组合摘要持久化到 `.manao/python-dependencies/<operationId>`，状态为 PREPARED——universal lock 可能解析出只有其他平台 wheel 的发行版，验证保证这类请求在任何 journal 产生前即被拒绝。响应仅返回 ID、requestSha256、beforeSha256、afterSha256；不把文件正文来回传给后端。已存在同请求 PREPARED 时返回同一摘要，不重新解析；ID 冲突或结果不明时拒绝猜测。
 2. `commit`：接受后端已登记的 ID、请求摘要、前后摘要及 receipt；从本地 journal 校验并提交两个固定文件。首次调用、部分写入后的再次核对都进入同一实现。若最终 receipt 已存在且匹配，直接返回相同结果。没有单独的 apply/recover 协议，也没有自由命令入口。
 
 后端先取得 prepare 摘要，再写现有 `workspace_operation` PENDING，最后调用 commit。V10 只在该表增加 `operation_kind` 和 `request_sha256`；旧 FILE 操作的请求摘要可空，Python 依赖操作必须有摘要。已有 id 为操作身份，COMMITTED 行保留到项目删除，足以回答成功响应丢失的查询；不新建请求表或任务平台。
@@ -172,7 +172,7 @@ receipt 沿用既有身份/摘要格式，type 为 PYTHON_DEPENDENCIES、path �
 
 ### 6.3 工具预算与首版支持边界
 
-首版技术默认支持公共 PyPI wheel 包、主依赖包名和可选精确版本，不开放私有索引、Git/path/workspace 来源、系统包或任意终端。这是本次方案选择的支持边界，不表述为用户曾逐项指定。缺 wheel 或不支持的配置给出具体类别的固定安全错误，不静默丢弃用户配置，也不把 uv stderr 直接返回浏览器。
+首版技术默认支持公共 PyPI wheel 包、主依赖包名和可选精确版本，不开放私有索引、Git/path/workspace 来源、系统包或任意终端。这是本次方案选择的支持边界，不表述为用户曾逐项指定。缺 wheel 或不支持的配置给出具体类别的固定安全错误，不静默丢弃用户配置，也不把 uv stderr 直接返回浏览器。`PYTHON_DEPENDENCY_NO_WHEEL` 是端到端固定类别：helper 对非零验证结果按固定短语归入缺 wheel（universal lock 可能解析出只有其他平台 wheel 的发行版，prepare 的 dry-run 验证在任何 journal 产生前拒绝它），再经 agent 代码、后端 422 透传到达浏览器的固定文案，uv stderr 始终不到达浏览器。
 
 agent 的 uv 子进程仅继承必需环境，不继承 capability 私钥或项目数据库 Secret；使用固定 argv 与 `--no-build --no-sources --no-config --no-python-downloads`，避免在管理 agent 执行用户构建后端。运行时仅 `uv sync --locked --no-dev --no-build` 加选定 extras，不自动改写声明和 lock。
 

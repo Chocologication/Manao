@@ -109,6 +109,12 @@ staleness proof, persistent fail-fast registry, exact-name cleanup — in
   The extras are pinned booleans, never an arbitrary array. A failed install exits
   non-zero before user code starts; preparation logs share the application's
   stdout/stderr and never print environment values or credentials.
+- Dependency editing (agent prepare) verifies installability with the production install
+  shape minus the out-of-scope extras — `uv sync --locked --no-dev --no-build --no-config
+  --no-python-downloads --python /usr/local/bin/python3 --dry-run` in the same scratch,
+  under the one shared resolution budget — so a lock that resolves but has no wheel for
+  the target platform fails as the fixed `PYTHON_DEPENDENCY_NO_WHEEL` category before any
+  journal exists.
 - Cache seeding: one seed per fixed uv/Python/platform toolchain. A not-yet-existing
   cache directory (`/python-cache/uv-cache`) is initialized exactly once — whole-seed
   copy into a same-volume staging directory, atomic rename, completion marker
