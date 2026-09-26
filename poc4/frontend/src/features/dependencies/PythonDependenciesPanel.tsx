@@ -43,6 +43,9 @@ type Phase = 'idle' | 'submitting' | 'reloading';
 const NO_SIDE_EFFECT_CODES: ReadonlySet<string> = new Set([
   'VALIDATION_ERROR',
   'PYTHON_DEPENDENCY_UNSUPPORTED',
+  // The installability verification rejects before any journal or operation row exists:
+  // proven no-side-effect, so a corrected change may start a NEW operation.
+  'PYTHON_DEPENDENCY_NO_WHEEL',
   'PYTHON_DEPENDENCY_RESOLUTION_FAILED',
   'PYTHON_DEPENDENCY_TIMEOUT',
   'DEPENDENCY_REQUEST_MISMATCH',
@@ -66,6 +69,8 @@ function rejectionMessage(error: unknown): string {
         return 'Only package names with an optional exact version are supported.';
       case 'PYTHON_DEPENDENCY_UNSUPPORTED':
         return error.body.message;
+      case 'PYTHON_DEPENDENCY_NO_WHEEL':
+        return 'No compatible wheel is available for the requested package or version.';
       case 'PYTHON_DEPENDENCY_RESOLUTION_FAILED':
         return 'Dependency resolution failed. No files were changed.';
       case 'PYTHON_DEPENDENCY_TIMEOUT':

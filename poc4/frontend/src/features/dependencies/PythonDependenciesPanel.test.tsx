@@ -284,6 +284,44 @@ describe('PythonDependenciesPanel rejected changes', () => {
     fetchSpy.mockRestore();
   });
 
+  it('answers PYTHON_DEPENDENCY_NO_WHEEL as a proven no-side-effect rejection with the fixed wheel message', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    const user = userEvent.setup();
+    await authenticateAsAlice();
+    const project = await createReadyPythonProject('No Wheel');
+    primeRevision(project.id);
+    // The helper's installability verification rejects the change before any journal or
+    // operation row exists: a proven no-side-effect answer, so the stored id is removed and
+    // a corrected change may start a NEW operation.
+    server.use(
+      http.post('/api/v1/projects/:projectId/python-dependencies', () =>
+        HttpResponse.json(
+          {
+            code: 'PYTHON_DEPENDENCY_NO_WHEEL',
+            message: 'No compatible wheel is available for the requested package or version.',
+            traceId: 'mock-trace-no-wheel',
+          },
+          { status: 422 },
+        ),
+      ),
+    );
+    const onResponseLost = vi.fn();
+    renderPanel({ project, onResponseLost });
+
+    await fillForm(user, 'pywin32', '312');
+    await user.click(screen.getByRole('button', { name: 'Add dependency' }));
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent(
+      'No compatible wheel is available for the requested package or version.',
+    );
+    expect(onResponseLost).not.toHaveBeenCalled();
+    expect(readPythonDependencyOperationId(ALICE_USER_ID, project.id)).toBeNull();
+    expect(screen.getByRole('button', { name: 'Add dependency' })).toBeEnabled();
+
+    fetchSpy.mockRestore();
+  });
+
   it('shows the fixed rejection, clears the stored id and allows a corrected new operation', async () => {
     const fetchSpy = vi.spyOn(globalThis, 'fetch');
     const user = userEvent.setup();
