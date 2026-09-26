@@ -16,7 +16,8 @@ public record ApiError(String code, String message, String traceId) {
         "WORKSPACE_RECONCILIATION_REQUIRED",
         "PUBLIC_PORT_RESERVED", "PUBLIC_PORT_IN_USE", "PUBLIC_PORT_PREFLIGHT_UNAVAILABLE",
         "CREATE_REQUEST_MISMATCH", "DEPENDENCY_NOT_READY",
-        "PYTHON_DEPENDENCY_UNSUPPORTED", "PYTHON_DEPENDENCY_RESOLUTION_FAILED", "PYTHON_DEPENDENCY_TIMEOUT",
+        "PYTHON_DEPENDENCY_UNSUPPORTED", "PYTHON_DEPENDENCY_NO_WHEEL",
+        "PYTHON_DEPENDENCY_RESOLUTION_FAILED", "PYTHON_DEPENDENCY_TIMEOUT",
         "DEPENDENCY_REQUEST_MISMATCH");
 
     public ApiError {
@@ -51,6 +52,8 @@ public record ApiError(String code, String message, String traceId) {
             case "DEPENDENCY_NOT_READY" -> "Selected dependencies are not ready yet. Try again once they are ready.";
             case "PYTHON_DEPENDENCY_UNSUPPORTED" ->
                 "Dependency changes are not supported for this project or package";
+            case "PYTHON_DEPENDENCY_NO_WHEEL" ->
+                "No compatible wheel is available for the requested package or version.";
             case "PYTHON_DEPENDENCY_RESOLUTION_FAILED" -> "Dependency resolution failed";
             case "PYTHON_DEPENDENCY_TIMEOUT" -> "Dependency resolution timed out. Try again later.";
             case "DEPENDENCY_REQUEST_MISMATCH" -> "This operation id was already used for a different request";

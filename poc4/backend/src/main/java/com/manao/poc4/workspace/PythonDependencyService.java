@@ -226,8 +226,8 @@ public final class PythonDependencyService {
         return switch (ex.code()) {
             case "PYTHON_DEPENDENCY_UNSUPPORTED" -> new ApiException("PYTHON_DEPENDENCY_UNSUPPORTED", 422,
                 "Dependency changes are not supported for this project or package");
-            case "PYTHON_DEPENDENCY_NO_WHEEL" -> new ApiException("PYTHON_DEPENDENCY_RESOLUTION_FAILED", 422,
-                "Dependency resolution failed");
+            case "PYTHON_DEPENDENCY_NO_WHEEL" -> new ApiException("PYTHON_DEPENDENCY_NO_WHEEL", 422,
+                "No compatible wheel is available for the requested package or version.");
             case "PYTHON_DEPENDENCY_RESOLUTION_FAILED" -> new ApiException("PYTHON_DEPENDENCY_RESOLUTION_FAILED", 503,
                 "Dependency resolution failed");
             case "PYTHON_DEPENDENCY_TIMEOUT" -> new ApiException("PYTHON_DEPENDENCY_TIMEOUT", 504,

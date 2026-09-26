@@ -290,7 +290,7 @@ class PythonDependencyOperationTest {
         agent.prepareError = new WorkspaceAgentException(422, "PYTHON_DEPENDENCY_NO_WHEEL", "raw uv stderr");
         assertRejected(() -> dependencies.change(ALICE, PROJECT, OPERATION,
             new WorkspaceAgent.DependencyChange("ADD", "httpx", "0.28.1"), "7"),
-            "PYTHON_DEPENDENCY_RESOLUTION_FAILED", 422);
+            "PYTHON_DEPENDENCY_NO_WHEEL", 422);
         agent.prepareError = new WorkspaceAgentException(504, "PYTHON_DEPENDENCY_TIMEOUT", "raw uv stderr");
         assertRejected(() -> dependencies.change(ALICE, PROJECT, OPERATION,
             new WorkspaceAgent.DependencyChange("ADD", "httpx", "0.28.1"), "7"), "PYTHON_DEPENDENCY_TIMEOUT", 504);

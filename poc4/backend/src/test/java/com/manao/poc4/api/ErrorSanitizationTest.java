@@ -81,6 +81,11 @@ class ErrorSanitizationTest {
             .extracting(ApiError::code, ApiError::message)
             .containsExactly("PYTHON_DEPENDENCY_UNSUPPORTED",
                 "Dependency changes are not supported for this project or package");
+        assertThat(new ApiError("PYTHON_DEPENDENCY_NO_WHEEL",
+            "uv: pywin32==312 has no binary distribution on host pod-manao-ws-1", null))
+            .extracting(ApiError::code, ApiError::message)
+            .containsExactly("PYTHON_DEPENDENCY_NO_WHEEL",
+                "No compatible wheel is available for the requested package or version.");
         assertThat(new ApiError("PYTHON_DEPENDENCY_RESOLUTION_FAILED",
             "TRACE uv::resolver http 500 body leaked", null))
             .extracting(ApiError::code, ApiError::message)
