@@ -12,6 +12,19 @@ Launched by the agent exactly as:
   never import management code from a user project; no shell is ever spawned; the agent
   starts it with a minimal environment, so no capability material or project secret is in
   scope.
+- A prepare is the fixed add/remove run PLUS a fixed installability verification: after a
+  successful `uv add/remove --no-sync ...` in the scratch, the same scratch is verified with
+  the production install shape minus the out-of-scope extras (ruling R3):
+  `uv sync --locked --no-dev --no-build --no-config --no-python-downloads --python
+  /usr/local/bin/python3 --dry-run` — without `--no-sync`, because the point is to prove the
+  resolved lock installs. A universal lock can resolve a distribution whose wheels exist only
+  for other platforms (e.g. pywin32), which would otherwise stage a PREPARED journal for a
+  project whose production `uv sync` can never succeed; the dry-run verification fails such
+  a request BEFORE any journal exists, leaving the workspace sources untouched.
+- ONE monotonic deadline, taken once at start and spanning BOTH invocations: whichever phase
+  exhausts BUDGET fails PYTHON_DEPENDENCY_TIMEOUT, so the helper's total wall clock stays
+  within the budget the agent's outer wait (BUDGET + 2 s, strictly below the backend's
+  BUDGET + 10 s request timeout) assumes (ruling R4).
 - Checks the first-version support scope with tomllib: the scratch pyproject must parse and
   declare [project], must NOT declare a build backend, and the only [tool.uv] configuration
   it may carry is an index declaration for the pinned public index (uv add itself persists
@@ -36,6 +49,7 @@ import signal
 import subprocess
 import sys
 import threading
+import time
 import tomllib
 
 OUTPUT_LIMIT = 64 * 1024
@@ -77,19 +91,39 @@ UV_ARGV_PREFIX = [
     "--default-index", "https://pypi.org/simple",
 ]
 
+# Fixed installability-verification argv (ruling R3): the production install shape minus the
+# selected extras. It runs in the SCRATCH after a successful add/remove and proves the
+# resolved lock installs for the pinned target interpreter/platform; `--dry-run` touches
+# nothing (no .venv is created, the staged files are unchanged).
+VERIFY_ARGV = [
+    "uv",
+    "sync",
+    "--locked",
+    "--no-dev",
+    "--no-build",
+    "--no-config",
+    "--no-python-downloads",
+    "--python", "/usr/local/bin/python3",
+    "--dry-run",
+]
+
 EXIT_UNSUPPORTED = 3
 EXIT_TIMEOUT = 4
 EXIT_RESOLUTION_FAILED = 5
 EXIT_NO_WHEEL = 6
 
 # uv 0.11.6 emits these fixed phrases when the pinned public registry cannot satisfy the
-# request at all: the package does not exist, the exact version does not exist, or no usable
-# wheel exists and building is disabled by --no-build. Those form the design's fixed safe
-# "no wheel" category; every other uv failure stays a generic resolution failure.
+# request at all: the package does not exist, the exact version does not exist, no usable
+# wheel exists and building is disabled by --no-build, or the resolved distribution has no
+# binary distribution for the target platform while building is disabled (observed verbatim
+# for pywin32: "can't be installed because it is marked as `--no-build` but has no binary
+# distribution"). Those form the design's fixed safe "no wheel" category; every other uv
+# failure stays a generic resolution failure.
 NO_WHEEL_MARKERS = (
     "has no usable wheels",
     "was not found in the package registry",
     "there is no version of",
+    "has no binary distribution",
 )
 
 
@@ -183,6 +217,65 @@ def check_dependency_declarations(data, project):
                     "direct URLs, git and path sources are outside the supported scope: %r" % (table, entry))
 
 
+def classify_resolution_failure(code, output):
+    """Maps one non-zero uv run onto the fixed safe failure categories."""
+    # uv wraps its messages across lines, so the markers are matched against
+    # whitespace-collapsed text.
+    collapsed = " ".join(output.split())
+    if any(marker in collapsed for marker in NO_WHEEL_MARKERS):
+        no_wheel("the pinned registry cannot provide a usable wheel for the request: %s" % output)
+    resolution_failed("uv failed (%d): %s" % (code, output))
+
+
+def run_uv(argv, scratch, deadline, phase):
+    """Runs one fixed-argv uv invocation in the scratch and returns (returncode, output).
+
+    The wait draws the REMAINING time from the ONE monotonic deadline shared by the
+    add/remove and verification phases (ruling R4): a deadline exhausted before the phase
+    starts or during its run kills the whole uv tree and fails PYTHON_DEPENDENCY_TIMEOUT.
+    """
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        fail("PYTHON_DEPENDENCY_TIMEOUT", EXIT_TIMEOUT,
+             "uv exceeded the resolution budget before the %s phase" % phase)
+    try:
+        process = subprocess.Popen(
+            argv,
+            cwd=scratch,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            # Own process group so a budget overrun kills the whole uv tree, not just the shell.
+            start_new_session=True,
+        )
+    except OSError as ex:
+        resolution_failed("cannot start uv: %s" % ex)
+
+    stdout_sink, stderr_sink = {"data": b""}, {"data": b""}
+    threads = [
+        threading.Thread(target=drain, args=(process.stdout, stdout_sink), daemon=True),
+        threading.Thread(target=drain, args=(process.stderr, stderr_sink), daemon=True),
+    ]
+    for thread in threads:
+        thread.start()
+    try:
+        process.wait(timeout=remaining)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(os.getpgid(process.pid), signal.SIGKILL)
+        except (ProcessLookupError, PermissionError, OSError):
+            process.kill()
+        process.wait()
+        fail("PYTHON_DEPENDENCY_TIMEOUT", EXIT_TIMEOUT,
+             "uv exceeded the resolution budget during the %s phase: %s"
+             % (phase, stderr_sink["data"].decode("utf-8", "replace")))
+    for thread in threads:
+        # The phase's process has exited and closed its pipes, so EOF is immediate; the join
+        # only collects the concurrent drains and stays bounded by the same deadline.
+        thread.join(timeout=max(0.0, deadline - time.monotonic()))
+    return process.returncode, (stdout_sink["data"] + stderr_sink["data"]).decode("utf-8", "replace")
+
+
 def main(argv):
     if len(argv) != 6:
         resolution_failed("usage: dependency_helper.py SCRATCH ACTION PACKAGE VERSION BUDGET")
@@ -208,49 +301,22 @@ def main(argv):
 
     check_supported_scope(scratch)
 
+    # ONE deadline for the whole prepare: the add/remove run AND the installability
+    # verification draw from it, so the helper's total stays within BUDGET (ruling R4).
+    deadline = time.monotonic() + budget
+
     argv = UV_ARGV_PREFIX.copy()
     argv.insert(1, action.lower())
     argv.append(spec)
-    try:
-        process = subprocess.Popen(
-            argv,
-            cwd=scratch,
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            # Own process group so a budget overrun kills the whole uv tree, not just the shell.
-            start_new_session=True,
-        )
-    except OSError as ex:
-        resolution_failed("cannot start uv: %s" % ex)
-
-    stdout_sink, stderr_sink = {"data": b""}, {"data": b""}
-    threads = [
-        threading.Thread(target=drain, args=(process.stdout, stdout_sink), daemon=True),
-        threading.Thread(target=drain, args=(process.stderr, stderr_sink), daemon=True),
-    ]
-    for thread in threads:
-        thread.start()
-    try:
-        process.wait(timeout=budget)
-    except subprocess.TimeoutExpired:
-        try:
-            os.killpg(os.getpgid(process.pid), signal.SIGKILL)
-        except (ProcessLookupError, PermissionError, OSError):
-            process.kill()
-        process.wait()
-        fail("PYTHON_DEPENDENCY_TIMEOUT", EXIT_TIMEOUT,
-             "uv exceeded the resolution budget: %s" % (stderr_sink["data"].decode("utf-8", "replace")))
-    for thread in threads:
-        thread.join(timeout=10)
-    if process.returncode != 0:
-        output = (stdout_sink["data"] + stderr_sink["data"]).decode("utf-8", "replace")
-        # uv wraps its messages across lines, so the markers are matched against
-        # whitespace-collapsed text.
-        collapsed = " ".join(output.split())
-        if any(marker in collapsed for marker in NO_WHEEL_MARKERS):
-            no_wheel("the pinned registry cannot provide a usable wheel for the request: %s" % output)
-        resolution_failed("uv failed (%d): %s" % (process.returncode, output))
+    code, output = run_uv(argv, scratch, deadline, "%s run" % action.lower())
+    if code != 0:
+        classify_resolution_failure(code, output)
+    # The add/remove succeeded, but a universal lock can still resolve a distribution that
+    # has no wheel for THIS platform (e.g. pywin32); the dry-run installability verification
+    # in the same scratch fails such a request before any journal can exist (design 6.3).
+    code, output = run_uv(VERIFY_ARGV, scratch, deadline, "installability verification")
+    if code != 0:
+        classify_resolution_failure(code, output)
     sys.exit(0)
 
 
