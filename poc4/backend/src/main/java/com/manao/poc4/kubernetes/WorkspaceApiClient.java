@@ -36,9 +36,11 @@ public final class WorkspaceApiClient implements WorkspaceAgent {
      * {@code MANAO_AGENT_PYTHON_DEPENDENCY_RESOLUTION_SECONDS} (both default 20): they must be
      * deployed together — overriding one without the other desynchronizes the actual budget
      * from this timeout (the agent Pod env injection is recorded by the deployment task).
-     * Ordering invariant with the agent: its helper waits at most budget + 2s
-     * (PythonDependencyEditor.HELPER_MARGIN_SECONDS), strictly below this budget + 10s, so a
-     * helper that uses its full wait still leaves ~8s for journal persistence and the return.
+     * Ordering invariant with the agent: its helper phase's ENTIRE wall clock — ONE deadline
+     * covering the primary helper wait, the post-timeout kill settle and BOTH diagnostic
+     * drains — is at most budget + 2s (PythonDependencyEditor.HELPER_MARGIN_SECONDS), strictly
+     * below this budget + 10s at every budget in the 1..600 range, so a helper phase that
+     * consumes every wait still leaves ~8s for journal persistence and the return.
      */
     private static final long PREPARE_MARGIN_SECONDS = 10;
 

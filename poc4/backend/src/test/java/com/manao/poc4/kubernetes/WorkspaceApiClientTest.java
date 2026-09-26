@@ -181,13 +181,16 @@ class WorkspaceApiClientTest {
 
     @Test
     void prepareTimeoutStaysStrictlyAboveTheAgentHelperWait() {
-        // Cross-module ordering invariant: the agent helper's max wait is budget + 2s
-        // (PythonDependencyEditor.HELPER_MARGIN_SECONDS = 2, mirrored here on purpose —
-        // changing either side without the other fails one of these tests). The backend
-        // timeout must stay strictly above it at every budget, so a full-wait helper still
-        // leaves ~8s for journal persistence and the HTTP return.
+        // Cross-module ordering invariant: the agent helper phase's ENTIRE wall clock — ONE
+        // deadline covering its primary wait, the post-timeout kill settle and BOTH diagnostic
+        // drains — is at most budget + 2s (PythonDependencyEditor.HELPER_MARGIN_SECONDS = 2,
+        // mirrored here on purpose — changing either side without the other fails one of these
+        // tests). The backend timeout must stay strictly above that TOTAL at every budget, so
+        // a helper phase that consumes every wait still leaves ~8s for journal persistence
+        // and the HTTP return.
         for (long budget : new long[] {1, 20, 600}) {
-            assertThat(WorkspaceApiClient.prepareTimeout(budget).toSeconds() - budget).isGreaterThan(2);
+            // Worst-case agent total: budget + 2s.
+            assertThat(WorkspaceApiClient.prepareTimeout(budget).toSeconds()).isGreaterThan(budget + 2);
         }
         assertThat(WorkspaceApiClient.prepareTimeout(20).toSeconds()).isEqualTo(30);
     }

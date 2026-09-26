@@ -49,10 +49,13 @@ public final class PythonDependencyEditor {
     static final long MIN_RESOLUTION_SECONDS = 1;
     static final long MAX_RESOLUTION_SECONDS = 600;
     /**
-     * Bounded helper margin on top of the resolution budget: helper startup and kill time ONLY.
-     * Ordering invariant with the backend: this wait (budget + 2s) must stay STRICTLY below the
-     * backend's prepare request timeout (budget + 10s, WorkspaceApiClient.PREPARE_MARGIN_SECONDS),
-     * leaving ~8s for journal fsync and the HTTP return when the helper uses its full wait.
+     * Bounded margin on top of the resolution budget covering the helper phase's ENTIRE wall
+     * clock: the primary helper wait, the post-timeout kill wait and both diagnostic drains
+     * combined (one shared deadline). Ordering invariant with the backend: this total
+     * (budget + 2s) must stay STRICTLY below the backend's prepare request timeout
+     * (budget + 10s, WorkspaceApiClient.PREPARE_MARGIN_SECONDS) at every budget in the 1..600
+     * range, leaving ~8s for journal persistence and the HTTP return even when every wait is
+     * consumed.
      */
     private static final long HELPER_MARGIN_SECONDS = 2;
     private static final int OUTPUT_LIMIT = 64 * 1024;
@@ -181,9 +184,11 @@ public final class PythonDependencyEditor {
     }
 
     /**
-     * The helper's max wait for one resolution: the budget plus the small bounded helper
-     * margin. Kept a derivation (not an inline sum) so the cross-module ordering invariant
-     * against the backend's prepare request timeout is testable on both sides.
+     * The helper phase's ENTIRE wall-clock bound for one resolution: the budget plus the small
+     * bounded helper margin. This is the ONE deadline the primary helper wait, the post-timeout
+     * kill settle and both diagnostic drains draw from ({@link #awaitHelper}); kept a derivation
+     * (not an inline sum) so the cross-module ordering invariant against the backend's prepare
+     * request timeout is testable on both sides.
      */
     static long helperWaitSeconds(long budgetSeconds) {
         return budgetSeconds + HELPER_MARGIN_SECONDS;
@@ -220,29 +225,53 @@ public final class PythonDependencyEditor {
      * finish its write before a post-exit drain runs, so a fast resolution failure would hang
      * until the budget and be misreported as a timeout. On overrun the helper AND its whole
      * child tree are destroyed.
+     *
+     * <p>{@code timeoutSeconds} bounds the phase's ENTIRE wall clock: ONE deadline is taken at
+     * entry and the primary wait, the post-timeout settle wait and both diagnostic drains draw
+     * only the REMAINING time from it — never fresh per-call margins — so the total stays
+     * strictly inside the caller's timeout (the production call site passes
+     * {@link #helperWaitSeconds(long)}, budget + 2s, and the backend's prepare request timeout
+     * is budget + 10s). The tree kill's own destroy polling is bounded mechanics, not
+     * collection. When the deadline is exhausted the drains return whatever the concurrent
+     * reader threads have already captured; on interrupt collection stops immediately.
      */
     static HelperRun awaitHelper(Process process, long timeoutSeconds) {
+        long deadlineNanos = System.nanoTime() + TimeUnit.SECONDS.toNanos(timeoutSeconds);
         DrainReader stdout = new DrainReader(process.getInputStream());
         DrainReader stderr = new DrainReader(process.getErrorStream());
         boolean exited;
         try {
-            exited = process.waitFor(timeoutSeconds, TimeUnit.SECONDS);
+            exited = waitRemaining(process, deadlineNanos);
         } catch (InterruptedException ex) {
             Thread.currentThread().interrupt();
             killHelperTree(process);
-            return new HelperRun(true, -1, stdout.captured(), stderr.captured());
+            return new HelperRun(true, -1, stdout.captured(0L), stderr.captured(0L));
         }
         if (!exited) {
             killHelperTree(process);
             try {
-                process.waitFor(5, TimeUnit.SECONDS);
+                waitRemaining(process, deadlineNanos);
             } catch (InterruptedException ex) {
                 Thread.currentThread().interrupt();
             }
             return new HelperRun(true, process.isAlive() ? -1 : process.exitValue(),
-                stdout.captured(), stderr.captured());
+                stdout.captured(deadlineNanos), stderr.captured(deadlineNanos));
         }
-        return new HelperRun(false, process.exitValue(), stdout.captured(), stderr.captured());
+        return new HelperRun(false, process.exitValue(),
+            stdout.captured(deadlineNanos), stderr.captured(deadlineNanos));
+    }
+
+    /**
+     * Bounded wait that draws the REMAINING time from the phase's one deadline. A deadline
+     * already in the past never waits ({@link Process#waitFor(long, TimeUnit)} with a
+     * non-positive timeout is never risked).
+     */
+    private static boolean waitRemaining(Process process, long deadlineNanos) throws InterruptedException {
+        long remainingNanos = Math.max(0L, deadlineNanos - System.nanoTime());
+        if (remainingNanos == 0L) {
+            return !process.isAlive();
+        }
+        return process.waitFor(remainingNanos, TimeUnit.NANOSECONDS);
     }
 
     /**
@@ -294,12 +323,20 @@ public final class PythonDependencyEditor {
             this.thread.start();
         }
 
-        /** Waits (bounded) for EOF — a still-running grandchild cannot block it forever — and returns the retained bytes. */
-        byte[] captured() {
-            try {
-                thread.join(10_000);
-            } catch (InterruptedException ex) {
-                Thread.currentThread().interrupt();
+        /**
+         * Waits for EOF only until the helper phase's ONE deadline is exhausted — a
+         * still-running grandchild cannot block it past the shared deadline — and returns the
+         * bytes retained so far. A zero/negative remaining never joins ({@link Thread#join(long)}
+         * with zero would wait forever).
+         */
+        byte[] captured(long deadlineNanos) {
+            long remainingMillis = TimeUnit.NANOSECONDS.toMillis(Math.max(0L, deadlineNanos - System.nanoTime()));
+            if (remainingMillis > 0) {
+                try {
+                    thread.join(remainingMillis);
+                } catch (InterruptedException ex) {
+                    Thread.currentThread().interrupt();
+                }
             }
             synchronized (kept) {
                 return kept.toByteArray();

@@ -84,9 +84,13 @@ class PythonDependencyEditorTest {
     void helperWaitStaysStrictlyBelowTheBackendPrepareTimeout() {
         // Cross-module ordering invariant: the backend derives its prepare request timeout as
         // budget + 10s (WorkspaceApiClient.PREPARE_MARGIN_SECONDS = 10, mirrored here on
-        // purpose — changing either side without the other fails one of these tests). The
-        // helper's max wait is budget + 2s, so a helper that uses its full wait still leaves
-        // ~8s for journal persistence and the HTTP return instead of being truncated.
+        // purpose — changing either side without the other fails one of these tests).
+        // helperWaitSeconds is the helper phase's ENTIRE wall clock: ONE deadline covering the
+        // primary wait, the post-timeout kill settle and BOTH diagnostic drains combined
+        // (behavioural proof below: everyWaitInsideAwaitHelperDrawsFromTheOneDeadline...).
+        // Worst case — every wait consumed — budget + 2s stays strictly below budget + 10s at
+        // every budget in the 1..600 range, leaving ~8s for journal persistence and the HTTP
+        // return instead of being truncated.
         assertThat(PythonDependencyEditor.helperWaitSeconds(20)).isEqualTo(22);
         assertThat(PythonDependencyEditor.helperWaitSeconds(1)).isEqualTo(3);
         assertThat(PythonDependencyEditor.helperWaitSeconds(600)).isEqualTo(602);
@@ -322,6 +326,37 @@ class PythonDependencyEditorTest {
     }
 
     @Test
+    void everyWaitInsideAwaitHelperDrawsFromTheOneDeadlineSoTheTotalWallClockIsBounded() throws Exception {
+        // TOTAL-bound cross-module invariant, behavioural form: the backend's prepare request
+        // timeout (budget + 10s) must survive the agent's WORST helper phase. Here the helper
+        // exits fast but an orphaned grandchild keeps BOTH pipes open, so the primary wait has
+        // long returned while both diagnostic drains would block forever. With fresh per-call
+        // margins that is 2 x 10s of drains beyond the helper's exit; the production call site
+        // passes ONE deadline of helperWaitSeconds(budget) for the primary wait, the post-kill
+        // settle and both drains COMBINED, so the total must stay inside that deadline
+        // (budget 6 -> 8s) at any budget, including the 1s and 600s overrides.
+        Path pidFile = Files.createTempFile("manao-orphan-pid-", ".txt");
+        Process helper = new ProcessBuilder(javaBin(), "-cp", System.getProperty("java.class.path"),
+            StubOrphanPipeHolder.class.getName(), pidFile.toString()).start();
+        long startedNanos = System.nanoTime();
+        try {
+            PythonDependencyEditor.awaitHelper(helper, PythonDependencyEditor.helperWaitSeconds(6));
+
+            long elapsedMillis = (System.nanoTime() - startedNanos) / 1_000_000;
+            // The strict bound is 8s; the slack covers kill/destroy mechanics only. The old
+            // fresh per-drain margins alone would spend >= 20s after the helper's exit.
+            assertThat(elapsedMillis)
+                .as("the total helper wall clock must stay inside the one deadline")
+                .isLessThan(15_000);
+        } finally {
+            PythonDependencyEditor.killHelperTree(helper);
+            Files.readString(pidFile).lines().findFirst().map(Long::parseLong)
+                .flatMap(ProcessHandle::of).ifPresent(ProcessHandle::destroyForcibly);
+            Files.deleteIfExists(pidFile);
+        }
+    }
+
+    @Test
     void theOuterTimeoutKillsTheHelperAndItsWholeChildTree() throws Exception {
         Process helper = new ProcessBuilder(javaBin(), "-cp", System.getProperty("java.class.path"),
             StubHangingProcessTree.class.getName()).start();
@@ -369,6 +404,20 @@ class PythonDependencyEditorTest {
             new ProcessBuilder(javaBin(), "-cp", System.getProperty("java.class.path"),
                 StubHangingProcessTree.class.getName(), "sleep").inheritIO().start();
             Thread.sleep(120_000);
+        }
+    }
+
+    /** Spawned as a process: exits immediately but leaves a sleeping child holding both pipes open. */
+    public static final class StubOrphanPipeHolder {
+        public static void main(String[] args) throws Exception {
+            if (args.length > 0 && "sleep".equals(args[0])) {
+                Thread.sleep(30_000);
+                return;
+            }
+            Process child = new ProcessBuilder(javaBin(), "-cp", System.getProperty("java.class.path"),
+                StubOrphanPipeHolder.class.getName(), "sleep").inheritIO().start();
+            Files.writeString(Path.of(args[0]), Long.toString(child.pid()));
+            // Exit at once; the sleeping child keeps stdout/stderr open for the caller's drains.
         }
     }
 
