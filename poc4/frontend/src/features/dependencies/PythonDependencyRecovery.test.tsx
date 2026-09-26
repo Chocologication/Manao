@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
@@ -9,6 +9,8 @@ import {
 import { queryClient } from '../../app/appRuntime';
 import { server } from '../../mocks/node';
 import { resetAppRuntime } from '../../test/renderApp';
+import { useWorkspaceSession } from '../../features/editor/workspaceSession';
+import { parseProjectRelativePath } from '../../features/files/pathPolicy';
 import { http, HttpResponse } from 'msw';
 import { PythonDependencyRecovery } from './PythonDependencyRecovery';
 
@@ -294,5 +296,66 @@ describe('PythonDependencyRecovery failed page', () => {
     expect(readPythonDependencyOperationId(ALICE_USER_ID, PROJECT_ID)).toBeNull();
     expect(readPythonDependencyOperationId(ALICE_USER_ID, 'prj-other')).toBe(OTHER_OPERATION_ID);
     clearPythonDependencyOperationId(ALICE_USER_ID, 'prj-other');
+  });
+});
+
+describe('PythonDependencyRecovery dirty ready page', () => {
+  it('refuses Check while the workspace session is dirty and re-enables once it clears', async () => {
+    const onRecovered = vi.fn();
+    server.use(
+      http.get(statusUrl(OPERATION_ID), () =>
+        HttpResponse.json({
+          operationId: OPERATION_ID,
+          state: 'COMMITTED',
+          resultWorkspaceRevision: 'mock-rev-0007',
+        }),
+      ),
+    );
+    const user = userEvent.setup();
+    renderRecovery({ variant: 'ready', operationId: OPERATION_ID, onRecovered });
+
+    act(() => {
+      useWorkspaceSession.getState().setDirty(parseProjectRelativePath('main.py'), true);
+    });
+    const check = screen.getByRole('button', { name: 'Check dependency change' });
+    expect(check).toBeDisabled();
+    expect(screen.getByText('Save or discard file changes first')).toBeInTheDocument();
+
+    act(() => {
+      useWorkspaceSession.getState().setDirty(parseProjectRelativePath('main.py'), false);
+    });
+    expect(check).toBeEnabled();
+    await user.click(check);
+
+    await waitFor(() => {
+      expect(onRecovered).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it('does not refuse Check on the failed page while the session is dirty', async () => {
+    const onRecovered = vi.fn();
+    sessionStorage.setItem(pythonDependencyStorageKey(ALICE_USER_ID, PROJECT_ID), OPERATION_ID);
+    server.use(
+      http.get(statusUrl(OPERATION_ID), () =>
+        HttpResponse.json({
+          operationId: OPERATION_ID,
+          state: 'COMMITTED',
+          resultWorkspaceRevision: 'mock-rev-0008',
+        }),
+      ),
+    );
+    const user = userEvent.setup();
+    renderRecovery({ variant: 'failed', onRecovered });
+
+    act(() => {
+      useWorkspaceSession.getState().setDirty(parseProjectRelativePath('main.py'), true);
+    });
+    expect(screen.getByRole('button', { name: 'Check dependency change' })).toBeEnabled();
+    expect(screen.queryByText('Save or discard file changes first')).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Check dependency change' }));
+    await waitFor(() => {
+      expect(onRecovered).toHaveBeenCalledTimes(1);
+    });
   });
 });

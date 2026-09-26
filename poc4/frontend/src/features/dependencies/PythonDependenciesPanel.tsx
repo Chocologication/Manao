@@ -1,5 +1,5 @@
 import { useQueryClient } from '@tanstack/react-query';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { ApiRequestError } from '../../api/ApiRequestError';
 import {
   changePythonDependencies,
@@ -23,6 +23,11 @@ export type PythonDependenciesPanelProps = {
   unconfirmedOperationId: string | null;
   /** Reports a POST whose result is unknown; the shell then shows the recovery entry. */
   onResponseLost: (operationId: string) => void;
+  /**
+   * Reports whether an operation is in flight (any phase other than idle) so the
+   * shell can lock workspace writes while the change runs, whatever tab is visible.
+   */
+  onBusyChange?: (busy: boolean) => void;
 };
 
 type Phase = 'idle' | 'submitting' | 'reloading';
@@ -108,6 +113,7 @@ export function PythonDependenciesPanel({
   workspaceLocked,
   unconfirmedOperationId,
   onResponseLost,
+  onBusyChange,
 }: PythonDependenciesPanelProps) {
   const queryClient = useQueryClient();
   const [packageName, setPackageName] = useState('');
@@ -117,6 +123,11 @@ export function PythonDependenciesPanel({
   const [saved, setSaved] = useState(false);
   const dirty = useWorkspaceSession((state) => state.dirtyPaths.size) > 0;
   const revision = getWorkspaceRevision(queryClient, projectId);
+
+  const busy = phase !== 'idle';
+  useEffect(() => {
+    onBusyChange?.(busy);
+  }, [busy, onBusyChange]);
 
   const disabledReason = disableReason({
     phase,

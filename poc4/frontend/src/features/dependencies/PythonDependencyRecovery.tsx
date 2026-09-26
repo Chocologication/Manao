@@ -8,6 +8,7 @@ import {
 } from '../../api/pythonDependencyApi';
 import type { ProjectSummary } from '../../contracts/project';
 import { isPythonRuntimeTemplate } from '../../contracts/project';
+import { useWorkspaceSession } from '../../features/editor/workspaceSession';
 import { InlineAlert } from '@/components/feedback/InlineAlert';
 import { Button } from '@/components/ui/button';
 
@@ -61,6 +62,10 @@ export function PythonDependencyRecovery({
     controlled ? null : readPythonDependencyOperationId(userId, projectId),
   );
   const [checking, setChecking] = useState(false);
+  const dirtyPaths = useWorkspaceSession((state) => state.dirtyPaths.size);
+  // Only the READY page has an editor mounted: a dirty buffer means the workspace
+  // content is not authoritative, so a Check (which may reload it) waits (design 6.1).
+  const checkBlocked = variant === 'ready' && dirtyPaths > 0;
   const activeId = controlled ? operationId : (discoveredId ?? null);
   // The FAILED page always offers the entry: without a local id it can still find
   // the owner-scoped pending operation when the user checks.
@@ -111,9 +116,18 @@ export function PythonDependencyRecovery({
       <p className="text-sm text-muted-foreground">
         The result of the last dependency change is unknown. Check it before making another change.
       </p>
-      <Button type="button" variant="outline" disabled={checking} onClick={() => void check()}>
+      <Button
+        type="button"
+        variant="outline"
+        disabled={checking || checkBlocked}
+        title={checkBlocked ? 'Save or discard file changes first' : undefined}
+        onClick={() => void check()}
+      >
         Check dependency change
       </Button>
+      {checkBlocked ? (
+        <p className="text-sm text-muted-foreground">Save or discard file changes first</p>
+      ) : null}
       {checking ? (
         <p role="status" className="text-sm text-muted-foreground">
           Checking dependency change

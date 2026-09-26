@@ -193,6 +193,9 @@ const originalClipboardItem = globalThis.ClipboardItem;
 
 beforeEach(() => {
   resetAppRuntime();
+  // The mock resets the project sequence, so created project ids repeat across
+  // tests; a leftover stored operation id would leak into the next test.
+  sessionStorage.clear();
   globalThis.ClipboardItem = class {
     constructor(items: Record<string, Blob | string | Promise<Blob | string>> = {}) {
       for (const value of Object.values(items)) {
@@ -1516,6 +1519,59 @@ describe('WorkbenchShell python dependencies', () => {
     return ready;
   }
 
+  async function createPythonProjectWithFile(name: string): Promise<ProjectSummary> {
+    const created = await createProject({
+      name,
+      templateId: 'python-console',
+      mysql: false,
+      redis: false,
+      publicPorts: [],
+    });
+    await getProject(created.id);
+    const ready = await getProject(created.id);
+    expect(ready.state).toBe('READY');
+    const tree = await listDirectory(ready.id, parseProjectDirectoryPath(''));
+    await createEntry(ready.id, {
+      kind: 'file',
+      path: parseProjectRelativePath('notes.md'),
+      expectedWorkspaceRevision: tree.workspaceRevision,
+    });
+    return ready;
+  }
+
+  function renderPythonShell(project: ProjectSummary) {
+    workspaceSessionStore.getState().activateProject(project.id);
+    return render(
+      <AppProviders>
+        <MemoryRouter>
+          <WorkbenchShell project={project} />
+        </MemoryRouter>
+      </AppProviders>,
+    );
+  }
+
+  async function openNotesAndMakeDirty(
+    user: ReturnType<typeof userEvent.setup>,
+    projectId: string,
+  ): Promise<void> {
+    await user.click(screen.getByRole('treeitem', { name: 'notes.md' }));
+    expect(await screen.findByRole('tab', { name: /notes.md/ })).toBeInTheDocument();
+    const path = parseProjectRelativePath('notes.md');
+    const uri = toProjectModelUri(projectId, path);
+    await waitFor(() => {
+      expect(monaco.editor.getModel(uri)).not.toBeNull();
+    });
+    const model = monaco.editor.getModel(uri)!;
+    model.pushEditOperations(
+      [],
+      [{ range: model.getFullModelRange(), text: '# dirty notes' }],
+      () => null,
+    );
+    await waitFor(() => {
+      expect(screen.getByRole('tab', { name: /notes.md/ })).toHaveTextContent('*');
+    });
+  }
+
   it('shows the Dependencies tab and form only on a python workbench', async () => {
     const user = userEvent.setup();
     await authenticateAsAlice();
@@ -1642,4 +1698,133 @@ describe('WorkbenchShell python dependencies', () => {
 
     setDependencyScenario('normal');
   }, 20_000);
+
+  it('closes the write gate while a dependency change is in flight and reopens after a safe rejection', async () => {
+    const user = userEvent.setup();
+    let release = () => {};
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    server.use(
+      http.post('/api/v1/projects/:projectId/python-dependencies', async () => {
+        await held;
+        return undefined;
+      }),
+    );
+    await authenticateAsAlice();
+    const project = await createPythonProjectWithFile('Gate In Flight');
+    renderPythonShell(project);
+    await waitUntilWritesUnlocked();
+
+    await user.click(screen.getByRole('treeitem', { name: 'notes.md' }));
+    expect(await screen.findByRole('tab', { name: /notes.md/ })).toBeInTheDocument();
+
+    await user.click(screen.getByRole('tab', { name: 'Dependencies' }));
+    await user.type(screen.getByLabelText('Package name'), 'httpx');
+    await user.click(screen.getByRole('button', { name: 'Add dependency' }));
+
+    // The same write surfaces the active-Run lock closes are closed mid-request.
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'New file' })).toBeDisabled();
+    });
+    expect(screen.getByRole('button', { name: 'New folder' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Save', hidden: true })).toBeDisabled();
+
+    setDependencyScenario('resolution-failed');
+    release();
+    await waitUntilWritesUnlocked();
+    expect(await screen.findByRole('alert')).toHaveTextContent(/dependency resolution failed/i);
+
+    setDependencyScenario('normal');
+  }, 15_000);
+
+  it('keeps the write gate closed while a committed dependency change reloads the workspace', async () => {
+    const user = userEvent.setup();
+    let holdTree = false;
+    let releaseTree = () => {};
+    const heldTree = new Promise<void>((resolve) => {
+      releaseTree = resolve;
+    });
+    server.use(
+      http.get('/api/v1/projects/:projectId/files/tree', async ({ request }) => {
+        const path = new URL(request.url).searchParams.get('path') ?? '';
+        if (holdTree && path === '') {
+          await heldTree;
+        }
+        return undefined;
+      }),
+    );
+    await authenticateAsAlice();
+    const project = await createPythonProjectWithFile('Gate Reload');
+    renderPythonShell(project);
+    // The initial tree load must complete before reload requests are held.
+    expect(await screen.findByRole('treeitem', { name: 'notes.md' })).toBeInTheDocument();
+    await waitUntilWritesUnlocked();
+    holdTree = true;
+
+    await user.click(screen.getByRole('tab', { name: 'Dependencies' }));
+    await user.type(screen.getByLabelText('Package name'), 'httpx');
+    await user.click(screen.getByRole('button', { name: 'Add dependency' }));
+
+    // Committed: the panel reloads the workspace and the gate stays closed.
+    await screen.findByText('Reloading workspace');
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'New file' })).toBeDisabled();
+    });
+
+    releaseTree();
+    await waitUntilWritesUnlocked();
+    expect(screen.queryByText('Reloading workspace')).not.toBeInTheDocument();
+  }, 15_000);
+
+  it('closes the write gate at mount while an unconfirmed dependency operation is known', async () => {
+    const user = userEvent.setup();
+    await authenticateAsAlice();
+    const project = await createPythonProjectWithFile('Gate Unconfirmed Mount');
+    sessionStorage.setItem(
+      pythonDependencyStorageKey('usr-alice', project.id),
+      '33333333-3333-4333-8333-333333333333',
+    );
+    renderPythonShell(project);
+    expect(await screen.findByText('Dependency change is unconfirmed')).toBeInTheDocument();
+
+    // The run authority itself resolves (Start run enables) but the gate stays closed.
+    await user.click(screen.getByRole('tab', { name: 'Run' }));
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Start run' })).toBeEnabled();
+    });
+    await user.click(screen.getByRole('tab', { name: 'File' }));
+    expect(screen.getByRole('button', { name: 'New file' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'New folder' })).toBeDisabled();
+  }, 15_000);
+
+  it('never starts a dependency change from a dirty workspace, so the success reload cannot run', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    const user = userEvent.setup();
+    await authenticateAsAlice();
+    const project = await createPythonProjectWithFile('Gate Dirty');
+    renderPythonShell(project);
+    await waitUntilWritesUnlocked();
+
+    // The dirty buffer is exactly the content a success reload would destroy.
+    await openNotesAndMakeDirty(user, project.id);
+    const notesPath = parseProjectRelativePath('notes.md');
+    expect(
+      workspaceBufferRegistry.get(project.id, notesPath)?.snapshot().content,
+    ).toBe('# dirty notes');
+
+    await user.click(screen.getByRole('tab', { name: 'Dependencies' }));
+    const add = screen.getByRole('button', { name: 'Add dependency' });
+    expect(add).toBeDisabled();
+    expect(add).toHaveAttribute('title', 'Save or discard file changes first');
+    await user.click(add);
+
+    // No dependency request was issued, so the success reload is unreachable.
+    const dependencyPosts = fetchSpy.mock.calls.filter(
+      (call) => fetchMethod(call) === 'POST' && /\/python-dependencies$/.test(fetchPathname(call)),
+    );
+    expect(dependencyPosts).toHaveLength(0);
+    expect(screen.getByRole('tab', { name: /notes.md/, hidden: true })).toHaveTextContent('*');
+    fetchSpy.mockRestore();
+  }, 15_000);
 });

@@ -88,6 +88,9 @@ export function WorkbenchShell({ project }: { project: ProjectSummary }) {
   const [unconfirmedOperationId, setUnconfirmedOperationId] = useState<string | null>(() =>
     pythonWorkbench ? readPythonDependencyOperationId(userId, project.id) : null,
   );
+  // The dependencies panel reports its in-flight operations; the shell then holds
+  // the write gate even while another panel tab is visible.
+  const [dependencyOperationBusy, setDependencyOperationBusy] = useState(false);
   // A post-recovery reload failure is user-visible: the change is committed but the
   // surface may be stale until the reload succeeds. Nothing is unlocked by it.
   const [recoveryReloadFailed, setRecoveryReloadFailed] = useState(false);
@@ -106,7 +109,12 @@ export function WorkbenchShell({ project }: { project: ProjectSummary }) {
     coordinator.getTerminalAuthoritySnapshot,
     coordinator.getTerminalAuthoritySnapshot,
   );
-  const writesLocked = !isWorkspaceEditable(snapshot);
+  const runWritesLocked = !isWorkspaceEditable(snapshot);
+  // The full write gate: besides the run authority, a dependency operation in flight
+  // or with an unconfirmed result also locks workspace writes — the workspace content
+  // is not authoritative until the operation resolves (design 6.1, fail-closed).
+  const writesLocked =
+    runWritesLocked || dependencyOperationBusy || unconfirmedOperationId !== null;
   const reloadingWorkspace = snapshot.phase === 'RELOADING_WORKSPACE' || snapshot.phase === 'RELOAD_FAILED';
 
   useEffect(() => {
@@ -401,9 +409,10 @@ export function WorkbenchShell({ project }: { project: ProjectSummary }) {
                 <PythonDependenciesPanel
                   projectId={project.id}
                   userId={userId}
-                  workspaceLocked={writesLocked}
+                  workspaceLocked={runWritesLocked}
                   unconfirmedOperationId={unconfirmedOperationId}
                   onResponseLost={setUnconfirmedOperationId}
+                  onBusyChange={setDependencyOperationBusy}
                 />
               </div>
             ) : null}

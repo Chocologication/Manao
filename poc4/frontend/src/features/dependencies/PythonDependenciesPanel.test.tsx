@@ -1,5 +1,6 @@
 import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { http } from 'msw';
 import { MemoryRouter } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { login } from '../../api/authApi';
@@ -16,6 +17,7 @@ import { useWorkspaceSession, workspaceSessionStore } from '../../features/edito
 import { fileKeys } from '../../features/files/fileQueries';
 import { parseProjectRelativePath } from '../../features/files/pathPolicy';
 import { getWorkspaceRevision as mockWorkspaceRevision } from '../../mocks/fileFixtures';
+import { server } from '../../mocks/node';
 import { setDependencyScenario } from '../../mocks/state';
 import { resetAppRuntime } from '../../test/renderApp';
 import { PythonDependenciesPanel } from './PythonDependenciesPanel';
@@ -99,6 +101,7 @@ function renderPanel(options: {
   workspaceLocked?: boolean;
   unconfirmedOperationId?: string | null;
   onResponseLost?: (operationId: string) => void;
+  onBusyChange?: (busy: boolean) => void;
 }) {
   workspaceSessionStore.getState().activateProject(options.project.id);
   return render(
@@ -110,6 +113,7 @@ function renderPanel(options: {
           workspaceLocked={options.workspaceLocked ?? false}
           unconfirmedOperationId={options.unconfirmedOperationId ?? null}
           onResponseLost={options.onResponseLost ?? (() => {})}
+          onBusyChange={options.onBusyChange}
         />
       </MemoryRouter>
     </AppProviders>,
@@ -311,5 +315,82 @@ describe('PythonDependenciesPanel lost responses', () => {
 
     setDependencyScenario('normal');
     fetchSpy.mockRestore();
+  });
+});
+
+describe('PythonDependenciesPanel busy reporting', () => {
+  it('reports busy while the change is in flight and idle again after a safe rejection', async () => {
+    const user = userEvent.setup();
+    let release = () => {};
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    server.use(
+      http.post('/api/v1/projects/:projectId/python-dependencies', async () => {
+        await held;
+        return undefined;
+      }),
+    );
+    await authenticateAsAlice();
+    const project = await createReadyPythonProject('Busy Rejection');
+    primeRevision(project.id);
+    const onBusyChange = vi.fn();
+    renderPanel({ project, onBusyChange });
+
+    await fillForm(user, 'left-pad');
+    await user.click(screen.getByRole('button', { name: 'Add dependency' }));
+
+    await waitFor(() => {
+      expect(onBusyChange).toHaveBeenLastCalledWith(true);
+    });
+
+    // A proven no-side-effect rejection returns the phase to idle.
+    setDependencyScenario('resolution-failed');
+    release();
+    await waitFor(() => {
+      expect(onBusyChange).toHaveBeenLastCalledWith(false);
+    });
+    expect(await screen.findByRole('alert')).toHaveTextContent(/dependency resolution failed/i);
+
+    setDependencyScenario('normal');
+  });
+
+  it('stays busy through the workspace reload and reports idle only after it completes', async () => {
+    const user = userEvent.setup();
+    let holdTree = false;
+    let releaseTree = () => {};
+    const heldTree = new Promise<void>((resolve) => {
+      releaseTree = resolve;
+    });
+    server.use(
+      http.get('/api/v1/projects/:projectId/files/tree', async ({ request }) => {
+        const path = new URL(request.url).searchParams.get('path') ?? '';
+        if (holdTree && path === '') {
+          await heldTree;
+        }
+        return undefined;
+      }),
+    );
+    await authenticateAsAlice();
+    const project = await createReadyPythonProject('Busy Reload');
+    primeRevision(project.id);
+    const onBusyChange = vi.fn();
+    renderPanel({ project, onBusyChange });
+
+    holdTree = true;
+    await fillForm(user, 'httpx');
+    await user.click(screen.getByRole('button', { name: 'Add dependency' }));
+
+    // The commit succeeded; the reload of the workspace is still in flight.
+    await screen.findByText('Reloading workspace');
+    expect(onBusyChange).toHaveBeenLastCalledWith(true);
+
+    releaseTree();
+    expect(
+      await screen.findByRole('status', { name: 'Dependency change result' }),
+    ).toHaveTextContent('Dependency change saved.');
+    await waitFor(() => {
+      expect(onBusyChange).toHaveBeenLastCalledWith(false);
+    });
   });
 });
