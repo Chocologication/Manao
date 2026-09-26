@@ -1,0 +1,319 @@
+package com.manao.poc4.workspaceagent;
+
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.LinkOption;
+import java.nio.file.Path;
+import java.time.Duration;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.TimeUnit;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+/**
+ * Prepares Python dependency changes (design 6.2): it copies the two managed files into a fresh
+ * scratch directory, lets the root-owned helper run the fixed {@code uv add/remove --no-sync}
+ * argv there — the workspace sources are never touched — and persists the result as a PREPARED
+ * journal through {@link PythonDependencyTransaction#stage}. Validation failures, an already
+ * prepared same request, and fixed tool error categories are decided here before anything is
+ * written; raw tool output never reaches the client.
+ */
+public final class PythonDependencyEditor {
+    private static final Logger LOG = LoggerFactory.getLogger(PythonDependencyEditor.class);
+
+    /** Wire record of the requested change; the backend normalizes the package name before sending. */
+    public record DependencyChange(String action, String packageName, String version) { }
+
+    /** Wire record of the prepare/commit summary: ids and digests only, never file contents. */
+    public record PreparedPythonDependencies(String operationId, String requestSha256,
+                                             String beforeSha256, String afterSha256) { }
+
+    /** Package-private seam so tests can stand in for the container-only uv helper. */
+    interface Resolver {
+        void resolve(Path scratch, DependencyChange change);
+    }
+
+    private static final java.util.regex.Pattern ACTION = java.util.regex.Pattern.compile("ADD|REMOVE");
+    /** Post-normalization package name: lowercase alnum at both ends, hyphens inside, 1–128 chars. */
+    private static final java.util.regex.Pattern PACKAGE_NAME =
+        java.util.regex.Pattern.compile("[a-z0-9]([a-z0-9-]{0,126}[a-z0-9])?");
+    /** Exact versions only (no ranges, no wildcard matchers). */
+    private static final java.util.regex.Pattern EXACT_VERSION =
+        java.util.regex.Pattern.compile("[0-9A-Za-z][0-9A-Za-z.+!-]{0,127}");
+    private static final java.util.regex.Pattern REQUEST_SHA256 =
+        java.util.regex.Pattern.compile("[0-9a-f]{64}");
+
+    /** Engineering bounds for the resolution budget: configurable, never unbounded. */
+    static final long MIN_RESOLUTION_SECONDS = 1;
+    static final long MAX_RESOLUTION_SECONDS = 600;
+    /** Bounded margin on top of the resolution budget for helper startup, journal I/O and kill time. */
+    private static final long HELPER_MARGIN_SECONDS = 10;
+    private static final int OUTPUT_LIMIT = 64 * 1024;
+    /** Matches the workspace file service's text size limit; larger tool output is rejected. */
+    private static final long SCRATCH_FILE_LIMIT = 20L * 1024 * 1024;
+
+    private final Path projectRoot;
+    private final PythonDependencyTransaction transaction;
+    private final Resolver resolver;
+
+    public PythonDependencyEditor(Path projectRoot, PythonDependencyTransaction transaction,
+                                  String pythonExecutable, String helperPath, Duration resolutionBudget) {
+        this(projectRoot, transaction, new HelperResolver(pythonExecutable, helperPath, resolutionBudget));
+    }
+
+    PythonDependencyEditor(Path projectRoot, PythonDependencyTransaction transaction, Resolver resolver) {
+        this.projectRoot = projectRoot.normalize();
+        this.transaction = transaction;
+        this.resolver = resolver;
+    }
+
+    /**
+     * Prepares one dependency change. An operation id already prepared with the same request
+     * digest returns the stored summary without running the tool again; a different request for
+     * the same id is rejected; every failure proven side-effect free (sources were never
+     * touched) is a safe rejection.
+     */
+    public PreparedPythonDependencies prepare(String operationId, String requestSha256, DependencyChange change) {
+        validateOperationId(operationId);
+        validateRequestSha256(requestSha256);
+        validateChange(change);
+        PreparedPythonDependencies existing = transaction.existingPrepared(operationId, requestSha256);
+        if (existing != null) {
+            return existing;
+        }
+        Path pyproject = WorkspacePathPolicy.resolve(projectRoot, "pyproject.toml");
+        if (!Files.isRegularFile(pyproject, LinkOption.NOFOLLOW_LINKS)) {
+            throw new WorkspaceFileService.WorkspaceFileException("VALIDATION_ERROR", "pyproject.toml does not exist");
+        }
+        Path scratch = createScratch();
+        try {
+            copyWorkspaceFileIntoScratch(scratch, "pyproject.toml");
+            copyWorkspaceFileIntoScratch(scratch, "uv.lock");
+            resolver.resolve(scratch, change);
+            String pyprojectContent = scratchOutput(scratch, "pyproject.toml");
+            String lockContent = scratchOutput(scratch, "uv.lock");
+            return transaction.stage(operationId, requestSha256, pyprojectContent, lockContent);
+        } finally {
+            deleteRecursively(scratch);
+        }
+    }
+
+    private Path createScratch() {
+        try {
+            return Files.createTempDirectory("manao-python-dependencies-");
+        } catch (IOException ex) {
+            throw ioError("cannot create the resolution scratch directory");
+        }
+    }
+
+    private void copyWorkspaceFileIntoScratch(Path scratch, String name) {
+        Path source = WorkspacePathPolicy.resolve(projectRoot, name);
+        if (!Files.exists(source, LinkOption.NOFOLLOW_LINKS)) {
+            return; // uv.lock may legitimately be absent yet; pyproject.toml was checked before
+        }
+        if (Files.isSymbolicLink(source) || !Files.isRegularFile(source, LinkOption.NOFOLLOW_LINKS)) {
+            throw conflict("dependency source is not a regular file");
+        }
+        try {
+            Files.write(scratch.resolve(name), Files.readAllBytes(source));
+        } catch (IOException ex) {
+            throw ioError("cannot copy " + name + " into the scratch directory");
+        }
+    }
+
+    private String scratchOutput(Path scratch, String name) {
+        Path file = scratch.resolve(name);
+        if (!Files.isRegularFile(file)) {
+            throw new WorkspaceFileService.WorkspaceFileException("PYTHON_DEPENDENCY_RESOLUTION_FAILED",
+                "the resolution tool produced no " + name);
+        }
+        byte[] bytes;
+        try {
+            bytes = Files.readAllBytes(file);
+        } catch (IOException ex) {
+            throw ioError("cannot read the resolution result");
+        }
+        if (bytes.length > SCRATCH_FILE_LIMIT) {
+            throw new WorkspaceFileService.WorkspaceFileException("PYTHON_DEPENDENCY_RESOLUTION_FAILED",
+                "the resolution result exceeds the file size limit");
+        }
+        return new String(bytes, StandardCharsets.UTF_8);
+    }
+
+    private static void validateOperationId(String operationId) {
+        if (!WorkspacePathPolicy.isValidOperationId(operationId)) {
+            throw new WorkspaceFileService.WorkspaceFileException("VALIDATION_ERROR", "invalid operation id");
+        }
+    }
+
+    private static void validateRequestSha256(String requestSha256) {
+        if (requestSha256 == null || !REQUEST_SHA256.matcher(requestSha256).matches()) {
+            throw new WorkspaceFileService.WorkspaceFileException("VALIDATION_ERROR", "invalid request digest");
+        }
+    }
+
+    private static void validateChange(DependencyChange change) {
+        if (change == null || change.action() == null || !ACTION.matcher(change.action()).matches()) {
+            throw new WorkspaceFileService.WorkspaceFileException("VALIDATION_ERROR", "unsupported action");
+        }
+        if (change.packageName() == null || !PACKAGE_NAME.matcher(change.packageName()).matches()) {
+            throw new WorkspaceFileService.WorkspaceFileException("VALIDATION_ERROR", "unsupported package name");
+        }
+        String version = change.version();
+        if ("REMOVE".equals(change.action())) {
+            if (version != null && !version.isBlank()) {
+                throw new WorkspaceFileService.WorkspaceFileException("VALIDATION_ERROR",
+                    "remove must not carry a version");
+            }
+            return;
+        }
+        if (version != null && !version.isBlank() && !EXACT_VERSION.matcher(version).matches()) {
+            throw new WorkspaceFileService.WorkspaceFileException("VALIDATION_ERROR",
+                "only exact versions are supported");
+        }
+    }
+
+    /**
+     * Fixed helper argv: isolated interpreter, root-owned helper, scratch path, change and
+     * budget. Never a shell line; the package name and version travel as single arguments.
+     */
+    static List<String> helperCommand(Path scratch, DependencyChange change,
+                                      String pythonExecutable, String helperPath, long budgetSeconds) {
+        return List.of(pythonExecutable, "-I", helperPath, scratch.toString(), change.action(),
+            change.packageName(), change.version() == null || change.version().isBlank()
+                ? "" : change.version(),
+            Long.toString(budgetSeconds));
+    }
+
+    /** Maps the helper's fixed stdout token to the safe error code; anything unknown fails closed. */
+    static String mapHelperOutcome(int exitCode, String helperStdout) {
+        if (exitCode == 0) return null;
+        String token = helperStdout == null ? "" : helperStdout.trim();
+        if ("PYTHON_DEPENDENCY_UNSUPPORTED".equals(token)) return "PYTHON_DEPENDENCY_UNSUPPORTED";
+        if ("PYTHON_DEPENDENCY_TIMEOUT".equals(token)) return "PYTHON_DEPENDENCY_TIMEOUT";
+        return "PYTHON_DEPENDENCY_RESOLUTION_FAILED";
+    }
+
+    private static final class HelperResolver implements Resolver {
+        private final String pythonExecutable;
+        private final String helperPath;
+        private final long budgetSeconds;
+
+        HelperResolver(String pythonExecutable, String helperPath, Duration resolutionBudget) {
+            long seconds = resolutionBudget.getSeconds();
+            if (seconds < MIN_RESOLUTION_SECONDS || seconds > MAX_RESOLUTION_SECONDS) {
+                throw new IllegalArgumentException("resolution budget must be between "
+                    + MIN_RESOLUTION_SECONDS + " and " + MAX_RESOLUTION_SECONDS + " seconds");
+            }
+            this.pythonExecutable = pythonExecutable;
+            this.helperPath = helperPath;
+            this.budgetSeconds = seconds;
+        }
+
+        @Override
+        public void resolve(Path scratch, DependencyChange change) {
+            ProcessBuilder builder = new ProcessBuilder(helperCommand(scratch, change,
+                pythonExecutable, helperPath, budgetSeconds));
+            builder.directory(scratch.toFile());
+            // Explicitly minimal environment: never a wholesale inheritance, so capability
+            // material and any project secrets cannot leak into the tool process.
+            Map<String, String> env = builder.environment();
+            env.clear();
+            env.put("PATH", System.getenv().getOrDefault("PATH", "/usr/local/bin:/usr/bin:/bin"));
+            env.put("HOME", System.getProperty("java.io.tmpdir", "/tmp"));
+            env.put("TMPDIR", System.getProperty("java.io.tmpdir", "/tmp"));
+            env.put("LANG", "C.UTF-8");
+            Process process;
+            try {
+                process = builder.start();
+            } catch (IOException ex) {
+                throw resolutionFailed("cannot start the dependency helper");
+            }
+            boolean exited;
+            try {
+                exited = process.waitFor(budgetSeconds + HELPER_MARGIN_SECONDS, TimeUnit.SECONDS);
+            } catch (InterruptedException ex) {
+                Thread.currentThread().interrupt();
+                process.destroyForcibly();
+                throw resolutionFailed("interrupted while resolving dependencies");
+            }
+            if (!exited) {
+                process.destroyForcibly();
+                try {
+                    process.waitFor(5, TimeUnit.SECONDS);
+                } catch (InterruptedException ex) {
+                    Thread.currentThread().interrupt();
+                }
+                drain(process.getInputStream());
+                drain(process.getErrorStream());
+                throw new WorkspaceFileService.WorkspaceFileException("PYTHON_DEPENDENCY_TIMEOUT",
+                    "dependency resolution exceeded the configured budget");
+            }
+            byte[] stdout = drain(process.getInputStream());
+            byte[] stderr = drain(process.getErrorStream());
+            int exitCode = process.exitValue();
+            if (exitCode == 0) {
+                return;
+            }
+            String code = mapHelperOutcome(exitCode, new String(stdout, StandardCharsets.UTF_8));
+            // Fixed safe message for the client; capped diagnostics go to the agent log only.
+            LOG.warn("python dependency resolution failed code={} diagnostics={}", code,
+                new String(stderr, StandardCharsets.UTF_8));
+            throw new WorkspaceFileService.WorkspaceFileException(code, fixedMessage(code));
+        }
+
+        private static String fixedMessage(String code) {
+            return switch (code) {
+                case "PYTHON_DEPENDENCY_UNSUPPORTED" -> "the project or package is outside the supported dependency scope";
+                case "PYTHON_DEPENDENCY_TIMEOUT" -> "dependency resolution exceeded the configured budget";
+                default -> "dependency resolution failed";
+            };
+        }
+
+        /** Reads a stream up to the output limit and discards the rest so the pipe never blocks. */
+        private static byte[] drain(java.io.InputStream stream) {
+            java.io.ByteArrayOutputStream kept = new java.io.ByteArrayOutputStream();
+            byte[] buffer = new byte[8192];
+            try {
+                int read;
+                while ((read = stream.read(buffer)) != -1) {
+                    if (kept.size() < OUTPUT_LIMIT) {
+                        kept.write(buffer, 0, Math.min(read, OUTPUT_LIMIT - kept.size()));
+                    }
+                }
+                stream.close();
+            } catch (IOException ignored) {
+                // best-effort drain of an exited process
+            }
+            return kept.toByteArray();
+        }
+    }
+
+    private static WorkspaceFileService.WorkspaceFileException resolutionFailed(String message) {
+        return new WorkspaceFileService.WorkspaceFileException("PYTHON_DEPENDENCY_RESOLUTION_FAILED", message);
+    }
+
+    private static WorkspaceFileService.WorkspaceFileException conflict(String message) {
+        return new WorkspaceFileService.WorkspaceFileException("OPERATION_CONFLICT", message);
+    }
+
+    private static WorkspaceFileService.WorkspaceFileException ioError(String message) {
+        return new WorkspaceFileService.WorkspaceFileException("IO_ERROR", message);
+    }
+
+    private static void deleteRecursively(Path directory) {
+        try (var paths = Files.walk(directory)) {
+            paths.sorted(java.util.Comparator.reverseOrder()).forEach(path -> {
+                try {
+                    Files.delete(path);
+                } catch (IOException ignored) {
+                    // best-effort scratch cleanup under the system temp directory
+                }
+            });
+        } catch (IOException ignored) {
+            // the scratch directory lives under java.io.tmpdir and is swept with the pod
+        }
+    }
+}

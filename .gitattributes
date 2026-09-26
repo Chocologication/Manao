@@ -21,3 +21,9 @@ poc4/backend/src/main/resources/workspace-template-python-web/** text=auto eol=l
 # (python runtime plan, global constraints: "UTF-8 无 BOM，shell/Docker 入口 LF；对新目录扩展
 # .gitattributes").
 poc4/python-runner/** text=auto eol=lf
+
+# The workspace-agent Dockerfile and the root-owned python-dependency-helper.py resource are
+# image entry points: keep LF in index and working tree so the docker build context and the
+# helper installed at /opt/manao-python/dependency_helper.py match the committed bytes exactly
+# (python runtime plan task 7; "UTF-8 无 BOM，shell/Docker 入口 LF；对新目录扩展 .gitattributes").
+poc4/workspace-agent/** text=auto eol=lf
