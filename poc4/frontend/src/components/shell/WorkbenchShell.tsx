@@ -94,9 +94,16 @@ export function WorkbenchShell({ project }: { project: ProjectSummary }) {
   // A post-recovery reload failure is user-visible: the change is committed but the
   // surface may be stale until the reload succeeds. Nothing is unlocked by it.
   const [recoveryReloadFailed, setRecoveryReloadFailed] = useState(false);
+  // The authoritative reload after a confirmed recovery spans its in-flight window
+  // AND the failed state while the Retry affordance exists; only SUCCESS releases it.
+  const [recoveryReloadPending, setRecoveryReloadPending] = useState(false);
   const reloadAfterRecovery = useCallback(() => {
+    setRecoveryReloadPending(true);
     reloadWorkspaceAfterTerminalRun({ projectId: project.id, queryClient })
-      .then(() => setRecoveryReloadFailed(false))
+      .then(() => {
+        setRecoveryReloadFailed(false);
+        setRecoveryReloadPending(false);
+      })
       .catch(() => setRecoveryReloadFailed(true));
   }, [project.id, queryClient]);
   const snapshot = useSyncExternalStore(
@@ -110,11 +117,15 @@ export function WorkbenchShell({ project }: { project: ProjectSummary }) {
     coordinator.getTerminalAuthoritySnapshot,
   );
   const runWritesLocked = !isWorkspaceEditable(snapshot);
-  // The full write gate: besides the run authority, a dependency operation in flight
-  // or with an unconfirmed result also locks workspace writes — the workspace content
-  // is not authoritative until the operation resolves (design 6.1, fail-closed).
+  // The full write gate: besides the run authority, a dependency operation in flight,
+  // one with an unconfirmed result, or the authoritative reload after a recovered
+  // operation also locks workspace writes — the workspace content is not
+  // authoritative until every one of them resolves (design 6.1, fail-closed).
   const writesLocked =
-    runWritesLocked || dependencyOperationBusy || unconfirmedOperationId !== null;
+    runWritesLocked ||
+    dependencyOperationBusy ||
+    unconfirmedOperationId !== null ||
+    recoveryReloadPending;
   const reloadingWorkspace = snapshot.phase === 'RELOADING_WORKSPACE' || snapshot.phase === 'RELOAD_FAILED';
 
   useEffect(() => {

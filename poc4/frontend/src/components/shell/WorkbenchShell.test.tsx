@@ -1728,12 +1728,20 @@ describe('WorkbenchShell python dependencies', () => {
       expect(screen.getByRole('button', { name: 'New file' })).toBeDisabled();
     });
     expect(screen.getByRole('button', { name: 'New folder' })).toBeDisabled();
-    expect(screen.getByRole('button', { name: 'Save', hidden: true })).toBeDisabled();
+
+    // The editor itself is read-only while the request is held, also after
+    // switching back to the File tab.
+    await user.click(screen.getByRole('tab', { name: 'File' }));
+    expect(screen.getByTestId('mock-editor')).toHaveAttribute('data-readonly', 'true');
 
     setDependencyScenario('resolution-failed');
     release();
     await waitUntilWritesUnlocked();
-    expect(await screen.findByRole('alert')).toHaveTextContent(/dependency resolution failed/i);
+    // The rejection alert lives in the now-inactive Dependencies panel.
+    expect(await screen.findByRole('alert', { hidden: true })).toHaveTextContent(
+      /dependency resolution failed/i,
+    );
+    expect(screen.getByTestId('mock-editor')).toHaveAttribute('data-readonly', 'false');
 
     setDependencyScenario('normal');
   }, 15_000);
@@ -1760,6 +1768,8 @@ describe('WorkbenchShell python dependencies', () => {
     // The initial tree load must complete before reload requests are held.
     expect(await screen.findByRole('treeitem', { name: 'notes.md' })).toBeInTheDocument();
     await waitUntilWritesUnlocked();
+    await user.click(screen.getByRole('treeitem', { name: 'notes.md' }));
+    expect(await screen.findByRole('tab', { name: /notes.md/ })).toBeInTheDocument();
     holdTree = true;
 
     await user.click(screen.getByRole('tab', { name: 'Dependencies' }));
@@ -1775,6 +1785,7 @@ describe('WorkbenchShell python dependencies', () => {
     releaseTree();
     await waitUntilWritesUnlocked();
     expect(screen.queryByText('Reloading workspace')).not.toBeInTheDocument();
+    expect(await screen.findByTestId('mock-editor')).toHaveAttribute('data-readonly', 'false');
   }, 15_000);
 
   it('closes the write gate at mount while an unconfirmed dependency operation is known', async () => {
@@ -1827,4 +1838,115 @@ describe('WorkbenchShell python dependencies', () => {
     expect(screen.getByRole('tab', { name: /notes.md/, hidden: true })).toHaveTextContent('*');
     fetchSpy.mockRestore();
   }, 15_000);
+
+  it('keeps the write gate closed while the recovery reload runs and releases it after success', async () => {
+    const user = userEvent.setup();
+    let holdTree = false;
+    let releaseTree = () => {};
+    const heldTree = new Promise<void>((resolve) => {
+      releaseTree = resolve;
+    });
+    server.use(
+      http.get('/api/v1/projects/:projectId/files/tree', async ({ request }) => {
+        const path = new URL(request.url).searchParams.get('path') ?? '';
+        if (holdTree && path === '') {
+          await heldTree;
+        }
+        return undefined;
+      }),
+    );
+    await authenticateAsAlice();
+    const project = await createPythonProjectWithFile('Recovery Reload Gate');
+    renderPythonShell(project);
+    await waitUntilWritesUnlocked();
+    setDependencyScenario('lost-response');
+
+    await user.click(screen.getByRole('tab', { name: 'Dependencies' }));
+    await user.type(screen.getByLabelText('Package name'), 'httpx');
+    await user.click(screen.getByRole('button', { name: 'Add dependency' }));
+    expect(await screen.findByText('Dependency change is unconfirmed')).toBeInTheDocument();
+
+    setDependencyScenario('normal');
+    holdTree = true;
+    await user.click(screen.getByRole('button', { name: 'Check dependency change' }));
+
+    // The unconfirmed entry is resolved, but the authoritative reload is still in
+    // flight: the write gate must stay closed (delayed recovery).
+    await waitFor(() => {
+      expect(screen.queryByText('Dependency change is unconfirmed')).not.toBeInTheDocument();
+    });
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'New file' })).toBeDisabled();
+    });
+
+    releaseTree();
+    await waitUntilWritesUnlocked();
+    expect(await screen.findByRole('treeitem', { name: 'pyproject.toml' }, { timeout: 10_000 })).toBeInTheDocument();
+
+    setDependencyScenario('normal');
+  }, 20_000);
+
+  it('keeps the editor read-only while a failed recovery reload offers Retry and releases it after success', async () => {
+    const user = userEvent.setup();
+    let failRootTree = false;
+    let holdTree = false;
+    let releaseTree = () => {};
+    const heldTree = new Promise<void>((resolve) => {
+      releaseTree = resolve;
+    });
+    server.use(
+      http.get('/api/v1/projects/:projectId/files/tree', async ({ request }) => {
+        const path = new URL(request.url).searchParams.get('path') ?? '';
+        if (failRootTree && path === '') {
+          return HttpResponse.json(
+            { code: 'INTERNAL_ERROR', message: 'Mock recovery reload failure', traceId: 'trace-recovery-gate' },
+            { status: 500 },
+          );
+        }
+        if (holdTree && path === '') {
+          await heldTree;
+        }
+        return undefined;
+      }),
+    );
+    await authenticateAsAlice();
+    const project = await createPythonProjectWithFile('Recovery Retry Gate');
+    renderPythonShell(project);
+    await waitUntilWritesUnlocked();
+    await user.click(screen.getByRole('treeitem', { name: 'notes.md' }));
+    expect(await screen.findByRole('tab', { name: /notes.md/ })).toBeInTheDocument();
+    setDependencyScenario('lost-response');
+
+    await user.click(screen.getByRole('tab', { name: 'Dependencies' }));
+    await user.type(screen.getByLabelText('Package name'), 'httpx');
+    await user.click(screen.getByRole('button', { name: 'Add dependency' }));
+    expect(await screen.findByText('Dependency change is unconfirmed')).toBeInTheDocument();
+
+    setDependencyScenario('normal');
+    failRootTree = true;
+    await user.click(screen.getByRole('button', { name: 'Check dependency change' }));
+
+    // The reload failed, but its Retry affordance exists: the gate must stay closed
+    // so no dirty buffer can reach the retry (dirty-retry regression).
+    expect(
+      await screen.findByText('Dependency change confirmed, but reloading the workspace failed.'),
+    ).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'New file' })).toBeDisabled();
+    await user.click(screen.getByRole('tab', { name: 'File' }));
+    expect(await screen.findByTestId('mock-editor')).toHaveAttribute('data-readonly', 'true');
+
+    // The retry runs against a clean workspace and only then releases the gate.
+    failRootTree = false;
+    holdTree = true;
+    await user.click(screen.getByRole('button', { name: 'Reload workspace' }));
+    expect(screen.getByRole('button', { name: 'New file' })).toBeDisabled();
+    releaseTree();
+    await waitUntilWritesUnlocked();
+    expect(screen.getByTestId('mock-editor')).toHaveAttribute('data-readonly', 'false');
+    expect(
+      screen.queryByText('Dependency change confirmed, but reloading the workspace failed.'),
+    ).not.toBeInTheDocument();
+
+    setDependencyScenario('normal');
+  }, 20_000);
 });

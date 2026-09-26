@@ -77,8 +77,14 @@ Object.defineProperty(HTMLCanvasElement.prototype, 'getContext', {
 vi.mock('@monaco-editor/react', async () => {
   const { createElement } = await import('react');
   return {
-    default: ({ path }: { path?: string }) =>
-      createElement('div', { 'data-testid': 'mock-editor', 'data-path': path ?? '' }),
+    // Mirrors the props the real Editor binding receives; the readOnly option is
+    // exposed so tests can assert the editor's actual read-only state.
+    default: ({ path, options }: { path?: string; options?: { readOnly?: boolean } }) =>
+      createElement('div', {
+        'data-testid': 'mock-editor',
+        'data-path': path ?? '',
+        'data-readonly': options?.readOnly === true ? 'true' : 'false',
+      }),
     loader: {
       config() {},
       init: () => Promise.resolve({}),
