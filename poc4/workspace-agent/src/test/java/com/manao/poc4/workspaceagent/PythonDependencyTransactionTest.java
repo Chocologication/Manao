@@ -422,6 +422,71 @@ class PythonDependencyTransactionTest {
     }
 
     @Test
+    void stageRefusesASymlinkAtTheJournalTempFileName(@TempDir Path root, @TempDir Path outside) throws Exception {
+        Files.writeString(root.resolve("pyproject.toml"), BEFORE_PYPROJECT);
+        Files.writeString(root.resolve("uv.lock"), BEFORE_LOCK);
+        Files.createDirectories(root.resolve(".manao/python-dependencies/" + OPERATION_ID));
+        Files.writeString(outside.resolve("planted-temp"), "planted\n");
+        try {
+            Files.createSymbolicLink(
+                root.resolve(".manao/python-dependencies/" + OPERATION_ID + "/.pyproject.toml.python-deps-tmp"),
+                outside.resolve("planted-temp"));
+        } catch (UnsupportedOperationException | java.io.IOException ex) {
+            return; // platform cannot create symlinks; the policy tests cover containment
+        }
+
+        assertThatThrownBy(() -> stage(root))
+            .isInstanceOfSatisfying(WorkspaceFileService.WorkspaceFileException.class,
+                ex -> assertThat(ex.code()).isEqualTo("IO_ERROR"));
+        assertThat(Files.readString(outside.resolve("planted-temp")))
+            .as("nothing may be written through the planted temp-name symlink").isEqualTo("planted\n");
+        assertThat(Files.readString(root.resolve("pyproject.toml"))).isEqualTo(BEFORE_PYPROJECT);
+    }
+
+    @Test
+    void commitRefusesASymlinkAtTheWorkspaceTempFileName(@TempDir Path root, @TempDir Path outside) throws Exception {
+        Files.writeString(root.resolve("pyproject.toml"), BEFORE_PYPROJECT);
+        Files.writeString(root.resolve("uv.lock"), BEFORE_LOCK);
+        var prepared = stage(root);
+        Files.writeString(outside.resolve("planted-workspace-temp"), "planted\n");
+        try {
+            Files.createSymbolicLink(root.resolve(".pyproject.toml.python-deps-tmp"),
+                outside.resolve("planted-workspace-temp"));
+        } catch (UnsupportedOperationException | java.io.IOException ex) {
+            return; // platform cannot create symlinks; the policy tests cover containment
+        }
+
+        assertThatThrownBy(() -> new PythonDependencyTransaction(root).commit(commitCommand(prepared)))
+            .isInstanceOfSatisfying(WorkspaceFileService.WorkspaceFileException.class,
+                ex -> assertThat(ex.code()).isEqualTo("IO_ERROR"));
+        assertThat(Files.readString(outside.resolve("planted-workspace-temp")))
+            .as("nothing may be written through the planted temp-name symlink").isEqualTo("planted\n");
+        assertThat(Files.readString(root.resolve("pyproject.toml"))).isEqualTo(BEFORE_PYPROJECT);
+        assertThat(Files.exists(root.resolve(".manao/receipts/" + OPERATION_ID + ".json"))).isFalse();
+    }
+
+    @Test
+    void commitRefusesASymlinkAtTheReceiptTempFileName(@TempDir Path root, @TempDir Path outside) throws Exception {
+        Files.writeString(root.resolve("pyproject.toml"), BEFORE_PYPROJECT);
+        Files.writeString(root.resolve("uv.lock"), BEFORE_LOCK);
+        var prepared = stage(root);
+        Files.createDirectories(root.resolve(".manao/receipts"));
+        Files.writeString(outside.resolve("planted-receipt-temp"), "planted\n");
+        try {
+            Files.createSymbolicLink(root.resolve(".manao/receipts/." + OPERATION_ID + ".json.python-deps-tmp"),
+                outside.resolve("planted-receipt-temp"));
+        } catch (UnsupportedOperationException | java.io.IOException ex) {
+            return; // platform cannot create symlinks; the policy tests cover containment
+        }
+
+        assertThatThrownBy(() -> new PythonDependencyTransaction(root).commit(commitCommand(prepared)))
+            .isInstanceOfSatisfying(WorkspaceFileService.WorkspaceFileException.class,
+                ex -> assertThat(ex.code()).isEqualTo("IO_ERROR"));
+        assertThat(Files.readString(outside.resolve("planted-receipt-temp")))
+            .as("nothing may be written through the planted temp-name symlink").isEqualTo("planted\n");
+    }
+
+    @Test
     void commitAfterAFailedAttemptCompletesThroughTheSameEntry(@TempDir Path root) throws Exception {
         Files.writeString(root.resolve("pyproject.toml"), BEFORE_PYPROJECT);
         Files.writeString(root.resolve("uv.lock"), BEFORE_LOCK);

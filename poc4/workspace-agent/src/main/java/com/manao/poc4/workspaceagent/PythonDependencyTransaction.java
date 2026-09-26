@@ -402,13 +402,24 @@ public final class PythonDependencyTransaction {
         return projectRoot + "\n" + operationId;
     }
 
+    /**
+     * The single write chokepoint for every managed path (journal bodies, manifest, workspace
+     * targets, receipt): the parent chain, the exact FINAL name and the exact TEMP name are all
+     * checked WITHOUT following links, and the temp file is opened NOFOLLOW — so a pre-planted
+     * symlink at any of these names, including the fixed temp file name, fails closed before
+     * any content is written through it. The rename itself never traverses a symlink.
+     */
     private void writeAtomic(Path target, byte[] content) {
         try {
             Files.createDirectories(target.getParent());
             Path temp = target.resolveSibling("." + target.getFileName() + ".python-deps-tmp");
-            Files.write(temp, content, StandardOpenOption.WRITE, StandardOpenOption.TRUNCATE_EXISTING,
-                StandardOpenOption.CREATE);
-            force(temp);
+            validateWritePath(target, temp);
+            try (FileChannel channel = FileChannel.open(temp, StandardOpenOption.WRITE,
+                StandardOpenOption.TRUNCATE_EXISTING, StandardOpenOption.CREATE,
+                LinkOption.NOFOLLOW_LINKS)) {
+                channel.write(java.nio.ByteBuffer.wrap(content));
+                channel.force(true);
+            }
             try {
                 Files.move(temp, target, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
             } catch (AtomicMoveNotSupportedException ex) {
@@ -420,9 +431,36 @@ public final class PythonDependencyTransaction {
         }
     }
 
-    private static void force(Path file) throws IOException {
-        try (FileChannel channel = FileChannel.open(file, StandardOpenOption.WRITE)) {
-            channel.force(true);
+    /**
+     * No-follow write-path validation: every existing parent segment must be a real directory,
+     * and the exact final and temp names must be absent or regular files — a planted symlink
+     * at any of them rejects the write before content touches the disk.
+     */
+    private void validateWritePath(Path finalPath, Path tempPath) {
+        Path current;
+        try {
+            current = projectRoot.toRealPath();
+        } catch (IOException ex) {
+            throw ioError("project directory is unavailable");
+        }
+        for (Path segment : projectRoot.relativize(finalPath.getParent().normalize())) {
+            Path next = current.resolve(segment.toString());
+            if (Files.isSymbolicLink(next)
+                || (Files.exists(next, LinkOption.NOFOLLOW_LINKS)
+                    && !Files.isDirectory(next, LinkOption.NOFOLLOW_LINKS))) {
+                throw ioError("managed write path must not traverse a symbolic link");
+            }
+            current = next;
+        }
+        validateNoFollowRegular(finalPath);
+        validateNoFollowRegular(tempPath);
+    }
+
+    private static void validateNoFollowRegular(Path path) {
+        if (Files.isSymbolicLink(path)
+            || (Files.exists(path, LinkOption.NOFOLLOW_LINKS)
+                && !Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS))) {
+            throw ioError("managed write path must not be a symbolic link");
         }
     }
 
