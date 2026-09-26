@@ -550,7 +550,8 @@ test.describe.serial('python runtime cloud lifecycle', () => {
     // Deliver the change request but lose the response: the backend may commit
     // while the browser never learns the result, exactly like a real outage.
     let deliveredDependencyPost = 0;
-    await page.route('**/api/v1/projects/*/python-dependencies', async (route) => {
+    const dependencyChangePostRoute = '**/api/v1/projects/*/python-dependencies';
+    await page.route(dependencyChangePostRoute, async (route) => {
       deliveredDependencyPost += 1;
       await route.fetch();
       await route.abort('connectionreset');
@@ -577,7 +578,9 @@ test.describe.serial('python runtime cloud lifecycle', () => {
     expect(deliveredDependencyPost, 'the refresh must not resend the ADD').toBe(1);
 
     // Checking queries/reconciles the original operation and the workspace confirms it.
-    await page.unroute('**/python-dependencies');
+    // unroute must use the exact registered pattern, or the fetch-then-abort
+    // interceptor would silently survive and drop every later change response.
+    await page.unroute(dependencyChangePostRoute);
     await check.click();
     await expect(page.getByText('Dependency change is unconfirmed')).toBeHidden({ timeout: 180_000 });
     await expect
@@ -585,12 +588,17 @@ test.describe.serial('python runtime cloud lifecycle', () => {
       .toContain('requests');
     console.log('[python-runtime] lost dependency response recovered through the same operation id');
 
-    // Leave the project clean for the deletion scene.
+    // Leave the project clean for the deletion scene. This cleanup REMOVE is also the
+    // defensive proof that the interceptor is really gone: a surviving route would drop
+    // the response, re-enter the unconfirmed state and bump the counter to 2.
     await page.getByLabel('Package name').fill('requests');
     await page.getByRole('button', { name: 'Remove dependency' }).click();
+    await expect(page.getByText('Dependency change is unconfirmed')).toBeHidden({ timeout: 180_000 });
     await expect
       .poll(async () => readPyproject(page), { timeout: 120_000, intervals: [2_000, 5_000] })
       .not.toContain('requests');
+    expect(deliveredDependencyPost, 'the unintercepted cleanup REMOVE must not pass through the route')
+      .toBe(1);
 
     await testInfo.attach('python-runtime-lost-response-recovery.json', {
       body: Buffer.from(JSON.stringify({

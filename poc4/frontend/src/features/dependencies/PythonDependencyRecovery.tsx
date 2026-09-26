@@ -7,6 +7,7 @@ import {
   reconcilePythonDependency,
 } from '../../api/pythonDependencyApi';
 import type { ProjectSummary } from '../../contracts/project';
+import { isPythonRuntimeTemplate } from '../../contracts/project';
 import { InlineAlert } from '@/components/feedback/InlineAlert';
 import { Button } from '@/components/ui/button';
 
@@ -21,8 +22,7 @@ export function isPythonDependencyRecoveryFailure(project: ProjectSummary): bool
   return (
     project.state === 'FAILED' &&
     project.failureReason === WORKSPACE_RECONCILIATION_REQUIRED &&
-    (project.runtime?.templateId === 'python-console' ||
-      project.runtime?.templateId === 'python-fastapi-web')
+    isPythonRuntimeTemplate(project.runtime?.templateId)
   );
 }
 

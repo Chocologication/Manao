@@ -18,6 +18,7 @@ import { InlineAlert } from '@/components/feedback/InlineAlert';
 import { RunPanel } from '@/components/runs/RunPanel';
 import { Button } from '@/components/ui/button';
 import type { ProjectSummary } from '@/contracts/project';
+import { isPythonRuntimeTemplate } from '@/contracts/project';
 import { readPythonDependencyOperationId } from '@/api/pythonDependencyApi';
 import {
   PythonDependenciesPanel,
@@ -55,10 +56,6 @@ export function isExperimentalTerminalEnabled(value: string | undefined): boolea
   return value === 'true';
 }
 
-function isPythonRuntimeTemplate(templateId: string | undefined): boolean {
-  return templateId === 'python-console' || templateId === 'python-fastapi-web';
-}
-
 const experimentalTerminalEnabled = isExperimentalTerminalEnabled(
   import.meta.env.VITE_ENABLE_EXPERIMENTAL_TERMINAL,
 );
@@ -91,6 +88,14 @@ export function WorkbenchShell({ project }: { project: ProjectSummary }) {
   const [unconfirmedOperationId, setUnconfirmedOperationId] = useState<string | null>(() =>
     pythonWorkbench ? readPythonDependencyOperationId(userId, project.id) : null,
   );
+  // A post-recovery reload failure is user-visible: the change is committed but the
+  // surface may be stale until the reload succeeds. Nothing is unlocked by it.
+  const [recoveryReloadFailed, setRecoveryReloadFailed] = useState(false);
+  const reloadAfterRecovery = useCallback(() => {
+    reloadWorkspaceAfterTerminalRun({ projectId: project.id, queryClient })
+      .then(() => setRecoveryReloadFailed(false))
+      .catch(() => setRecoveryReloadFailed(true));
+  }, [project.id, queryClient]);
   const snapshot = useSyncExternalStore(
     coordinator.subscribe,
     coordinator.getSnapshot,
@@ -210,13 +215,17 @@ export function WorkbenchShell({ project }: { project: ProjectSummary }) {
             operationId={unconfirmedOperationId}
             onRecovered={() => {
               setUnconfirmedOperationId(null);
-              // Re-read the current tree/files/revision from the workspace; a reload
-              // failure surfaces through the file queries' own retry states.
-              reloadWorkspaceAfterTerminalRun({ projectId: project.id, queryClient }).catch(
-                () => {},
-              );
+              reloadAfterRecovery();
             }}
           />
+        </div>
+      ) : null}
+      {recoveryReloadFailed ? (
+        <div className="flex flex-col items-start gap-2 border-b bg-background px-4 py-2">
+          <InlineAlert>Dependency change confirmed, but reloading the workspace failed.</InlineAlert>
+          <Button type="button" variant="outline" onClick={reloadAfterRecovery}>
+            Reload workspace
+          </Button>
         </div>
       ) : null}
       <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden">

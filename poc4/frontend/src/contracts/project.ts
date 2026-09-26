@@ -8,6 +8,11 @@ export type RuntimeTemplateId =
   | 'python-console'
   | 'python-fastapi-web';
 
+/** The uv-managed python templates; the single authority for python-only surfaces. */
+export function isPythonRuntimeTemplate(templateId: RuntimeTemplateId | undefined): boolean {
+  return templateId === 'python-console' || templateId === 'python-fastapi-web';
+}
+
 /**
  * Fixed metadata of the internal template enum, shared by the creation form and the
  * project card. `web` marks the templates that offer MySQL/Redis and public ports;

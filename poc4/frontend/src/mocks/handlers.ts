@@ -7,6 +7,7 @@ import type {
   ProjectRuntimeConfig,
   RuntimeTemplateId,
 } from '../contracts/project';
+import { isPythonRuntimeTemplate } from '../contracts/project';
 import {
   parseProjectDirectoryPath,
   parseProjectRelativePath,
@@ -467,10 +468,7 @@ function unconfirmedStatusJson(operationId: string) {
 
 function isPythonRuntimeProject(userId: string, projectId: string): boolean {
   const project = readOwnedProjectSummary(userId, projectId);
-  return (
-    project?.runtime?.templateId === 'python-console' ||
-    project?.runtime?.templateId === 'python-fastapi-web'
-  );
+  return isPythonRuntimeTemplate(project?.runtime?.templateId);
 }
 
 export const dependencyHandlers = [

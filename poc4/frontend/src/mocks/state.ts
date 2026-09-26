@@ -6,11 +6,14 @@ import type {
   ProjectState,
   ProjectSummary,
 } from '../contracts/project';
-import { clearLargeFileBodyCache, ensureWorkspace, removeWorkspace, resetWorkspaces } from './fileFixtures';
 import {
+  clearLargeFileBodyCache,
   createMockEntry,
+  ensureWorkspace,
   getMockFile,
   getWorkspaceRevision,
+  removeWorkspace,
+  resetWorkspaces,
   saveMockFile,
 } from './fileFixtures';
 import { resetLogTickets } from './runSocket';

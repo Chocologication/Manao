@@ -1591,4 +1591,55 @@ describe('WorkbenchShell python dependencies', () => {
 
     setDependencyScenario('normal');
   }, 20_000);
+
+
+  it('surfaces a failed post-recovery reload and retries it instead of staying silent', async () => {
+    const user = userEvent.setup();
+    await authenticateAsAlice();
+    const project = await renderEditablePythonShell();
+    setDependencyScenario('lost-response');
+
+    let failRootTree = false;
+    server.use(
+      http.get('/api/v1/projects/:projectId/files/tree', ({ request }) => {
+        const path = new URL(request.url).searchParams.get('path') ?? '';
+        if (failRootTree && path === '') {
+          return HttpResponse.json(
+            { code: 'INTERNAL_ERROR', message: 'Mock recovery reload failure', traceId: 'trace-recovery-reload' },
+            { status: 500 },
+          );
+        }
+        return undefined;
+      }),
+    );
+
+    await user.click(screen.getByRole('tab', { name: 'Dependencies' }));
+    await user.type(screen.getByLabelText('Package name'), 'httpx');
+    await user.click(screen.getByRole('button', { name: 'Add dependency' }));
+    expect(await screen.findByText('Dependency change is unconfirmed')).toBeInTheDocument();
+
+    failRootTree = true;
+    await user.click(screen.getByRole('button', { name: 'Check dependency change' }));
+
+    // The change is committed but the surface is stale: the shell must say so.
+    await waitFor(() => {
+      expect(screen.queryByText('Dependency change is unconfirmed')).not.toBeInTheDocument();
+    });
+    expect(
+      await screen.findByText('Dependency change confirmed, but reloading the workspace failed.'),
+    ).toBeInTheDocument();
+
+    failRootTree = false;
+    await user.click(screen.getByRole('button', { name: 'Reload workspace' }));
+    await waitFor(() => {
+      expect(
+        screen.queryByText('Dependency change confirmed, but reloading the workspace failed.'),
+      ).not.toBeInTheDocument();
+    });
+    // The retried reload reads the committed workspace.
+    expect(await screen.findByRole('treeitem', { name: 'pyproject.toml' }, { timeout: 10_000 })).toBeInTheDocument();
+    expect(sessionStorage.getItem(pythonDependencyStorageKey('usr-alice', project.id))).toBeNull();
+
+    setDependencyScenario('normal');
+  }, 20_000);
 });
