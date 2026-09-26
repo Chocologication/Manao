@@ -60,8 +60,12 @@ manao:
       logging:
         redact-secrets: true
       python-dependency:
-        # Must match the workspace-agent's configured resolution budget (same 1..600 bounds);
-        # the prepare request timeout derives from it plus a bounded I/O and transport margin.
+        # One budget pair with the workspace-agent: this value MUST match the agent Pod's
+        # MANAO_AGENT_PYTHON_DEPENDENCY_RESOLUTION_SECONDS (both default 20; the deployment
+        # injects the agent env — recorded by the deployment task). Overriding one without the
+        # other desynchronizes the actual budget from the prepare request timeout, which the
+        # backend derives as this budget plus a bounded 10s I/O and transport margin
+        # (default 20 + 10 = 30s). Same 1..600 bounds on both sides.
         resolution-seconds: ${MANAO_PYTHON_DEPENDENCY_RESOLUTION_SECONDS:20}
       runtime-deps:
         # Must match the deployment's reserved NodePorts; 30080 is the platform ingress.

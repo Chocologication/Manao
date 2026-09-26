@@ -168,10 +168,12 @@ class WorkspaceApiClientTest {
 
     @Test
     void prepareTimeoutTracksTheConfiguredResolutionBudget() {
-        // The prepare request timeout derives from the configured budget plus a bounded margin;
-        // the general workspace timeout stays untouched.
-        assertThat(WorkspaceApiClient.prepareTimeout(20)).isEqualTo(Duration.ofSeconds(40));
-        assertThat(WorkspaceApiClient.prepareTimeout(600)).isEqualTo(Duration.ofSeconds(620));
+        // Design 6.3: the prepare request timeout is the resolution budget plus a bounded
+        // margin, keeping the original 30s client default for the 20s initial budget.
+        assertThat(WorkspaceApiClient.prepareTimeout(20)).isEqualTo(Duration.ofSeconds(30));
+        // A budget override moves the timeout by the same delta.
+        assertThat(WorkspaceApiClient.prepareTimeout(20 + 15)).isEqualTo(Duration.ofSeconds(30 + 15));
+        assertThat(WorkspaceApiClient.prepareTimeout(600)).isEqualTo(Duration.ofSeconds(610));
         assertThatThrownBy(() -> WorkspaceApiClient.prepareTimeout(0)).isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> WorkspaceApiClient.prepareTimeout(601)).isInstanceOf(IllegalArgumentException.class);
     }

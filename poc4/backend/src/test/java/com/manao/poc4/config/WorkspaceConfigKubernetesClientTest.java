@@ -43,6 +43,9 @@ class WorkspaceConfigKubernetesClientTest {
             kubeconfig.toString(), null, 0, null, null);
         BackendProperties properties = new BackendProperties(
             BackendProfile.LOCAL_CLUSTER, null, null, null, kubernetes, null, null, null, null, null);
+        // One budget pair with the workspace-agent: the backend's default must stay the design's
+        // 20s so the derived prepare timeout keeps the original 30s client default.
+        assertThat(properties.pythonDependency().resolutionSeconds()).isEqualTo(20);
 
         try (KubernetesClient client = new WorkspaceConfig().kubernetesClient(properties)) {
             assertThat(client.getConfiguration().isHttp2Disable())

@@ -30,10 +30,14 @@ public final class WorkspaceApiClient implements WorkspaceAgent {
     /** The general workspace request timeout; dependency prepare/commit derive their own. */
     public static final Duration DEFAULT_TIMEOUT = Duration.ofSeconds(30);
     /**
-     * Bounded margin on top of the configured resolution budget for the agent's helper startup
-     * (it waits budget+10s itself), journal I/O and transport before the backend gives up.
+     * Bounded margin on top of the configured resolution budget for journal I/O and HTTP
+     * transport. With the design's 20s initial budget the derived prepare timeout is exactly
+     * the original 30s client default. The budget is ONE pair with the workspace-agent's
+     * {@code MANAO_AGENT_PYTHON_DEPENDENCY_RESOLUTION_SECONDS} (both default 20): they must be
+     * deployed together — overriding one without the other desynchronizes the actual budget
+     * from this timeout (the agent Pod env injection is recorded by the deployment task).
      */
-    private static final long PREPARE_MARGIN_SECONDS = 20;
+    private static final long PREPARE_MARGIN_SECONDS = 10;
 
     /** Resolves the namespace-internal base URI of a project's workspace-agent. */
     public interface EndpointResolver {

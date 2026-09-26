@@ -11,6 +11,10 @@ manao:
     pythonDependency:
       python: ${MANAO_AGENT_PYTHON:/usr/local/bin/python3}
       helper: ${MANAO_AGENT_PYTHON_DEPENDENCY_HELPER:/opt/manao-python/dependency_helper.py}
+      # One budget pair with the backend: this value MUST match the backend's
+      # MANAO_PYTHON_DEPENDENCY_RESOLUTION_SECONDS (both default 20). Overriding one without
+      # the other desynchronizes the actual budget from the backend's prepare request timeout
+      # (derived as this budget plus a bounded 10s I/O and transport margin).
       resolutionSeconds: ${MANAO_AGENT_PYTHON_DEPENDENCY_RESOLUTION_SECONDS:20}
 
 logging:
