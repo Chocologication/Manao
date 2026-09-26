@@ -34,6 +34,12 @@
 #                          a usable wheel (missing package) is its own fixed safe category
 #                          422 PYTHON_DEPENDENCY_NO_WHEEL, never a generic failure, and leaves
 #                          no journal
+#   no-platform-wheel      a package that RESOLVES into the universal lock but has no wheel
+#                          for the pinned Linux target (pywin32==312 ships Windows-only
+#                          wheels) must be caught by the installability verification
+#                          (`uv sync --locked ... --dry-run` in the scratch): 422
+#                          PYTHON_DEPENDENCY_NO_WHEEL, no journal, sources untouched — the
+#                          successful `uv add --no-sync` alone never means PREPARED
 #   helper-hang-kills-tree with the resolution budget at 2 s and a test-only helper that hangs
 #                          after spawning a sleeper child (helper-path env override, per-run
 #                          volume — the production image is untouched), the OUTER budget kills
@@ -86,6 +92,7 @@ OPERATION_ADD="7f0a1c3d-0001-4a6b-8c9d-0e1f2a3b4c5d"
 OPERATION_REMOVE="7f0a1c3d-0003-4a6b-8c9d-0e1f2a3b4c5d"
 OPERATION_TIMEOUT="7f0a1c3d-0002-4a6b-8c9d-0e1f2a3b4c5d"
 OPERATION_NOWHEEL="7f0a1c3d-0005-4a6b-8c9d-0e1f2a3b4c5d"
+OPERATION_PLATFORMWHEEL="7f0a1c3d-0006-4a6b-8c9d-0e1f2a3b4c5d"
 OPERATION_HELPERHANG="7f0a1c3d-0004-4a6b-8c9d-0e1f2a3b4c5d"
 
 # shellcheck source=lib.sh
@@ -203,6 +210,7 @@ REQUEST_SHA_ADD="$(printf '{"action":"ADD","packageName":"httpx","version":"0.28
 REQUEST_SHA_ADD_OTHER="$(printf '{"action":"ADD","packageName":"httpx","version":"0.29.0"}' | sha256sum | cut -d' ' -f1)"
 REQUEST_SHA_REMOVE="$(printf '{"action":"REMOVE","packageName":"httpx","version":null}' | sha256sum | cut -d' ' -f1)"
 REQUEST_SHA_NOWHEEL="$(printf '{"action":"ADD","packageName":"manao-no-such-package-probe","version":"0.0.1"}' | sha256sum | cut -d' ' -f1)"
+REQUEST_SHA_PLATFORMWHEEL="$(printf '{"action":"ADD","packageName":"pywin32","version":"312"}' | sha256sum | cut -d' ' -f1)"
 
 cat > "$WORK/prepare-add.json" <<EOF
 {"operationId":"$OPERATION_ADD","requestSha256":"$REQUEST_SHA_ADD","change":{"action":"ADD","packageName":"httpx","version":"0.28.1"}}
@@ -218,6 +226,9 @@ cat > "$WORK/prepare-timeout.json" <<EOF
 EOF
 cat > "$WORK/prepare-nowheel.json" <<EOF
 {"operationId":"$OPERATION_NOWHEEL","requestSha256":"$REQUEST_SHA_NOWHEEL","change":{"action":"ADD","packageName":"manao-no-such-package-probe","version":"0.0.1"}}
+EOF
+cat > "$WORK/prepare-platformwheel.json" <<EOF
+{"operationId":"$OPERATION_PLATFORMWHEEL","requestSha256":"$REQUEST_SHA_PLATFORMWHEEL","change":{"action":"ADD","packageName":"pywin32","version":"312"}}
 EOF
 cat > "$WORK/prepare-helperhang.json" <<EOF
 {"operationId":"$OPERATION_HELPERHANG","requestSha256":"$REQUEST_SHA_ADD","change":{"action":"ADD","packageName":"httpx","version":"0.28.1"}}
@@ -543,6 +554,32 @@ scenario_no_wheel_category() {
   fi
 }
 
+# A package that resolves into the universal lock but has no wheel for the pinned Linux
+# target (pywin32 ships Windows-only wheels): the real `uv add --no-sync` SUCCEEDS, so a
+# prepare that stopped there would stage a journal for a project that can never start. The
+# helper's installability verification (uv sync --locked --dry-run in the same scratch) must
+# fail the change into the fixed safe category — 422 PYTHON_DEPENDENCY_NO_WHEEL — with no
+# journal and untouched workspace sources.
+scenario_no_platform_wheel_category() {
+  local started elapsed py_before lock_before py_after lock_after
+  read -r py_before lock_before <<< "$(workspace_digests "$AGENT_NAME")"
+  started="$(now_ms)"
+  post_json "$AGENT_PORT" "$PROJECT_ID" "/agent/v1/python-dependencies/prepare" "$WORK/prepare-platformwheel.json"
+  elapsed=$(( $(now_ms) - started ))
+  echo "TIMING: prepare-no-platform-wheel (real uv add + installability verification) ${elapsed}ms"
+  local journal_present=0
+  dc exec "$AGENT_NAME" test -f "/workspace/.manao/python-dependencies/$OPERATION_PLATFORMWHEEL/manifest.json" >/dev/null 2>&1 && journal_present=1
+  read -r py_after lock_after <<< "$(workspace_digests "$AGENT_NAME")"
+  if [ "$HTTP_STATUS" = "422" ] \
+    && [ "$(json_field "$WORK/resp.json" "data['code']")" = "PYTHON_DEPENDENCY_NO_WHEEL" ] \
+    && [ "$journal_present" = "0" ] \
+    && [ "$py_before" = "$py_after" ] && [ "$lock_before" = "$lock_after" ]; then
+    pass "no-platform-wheel-category (pywin32==312 resolves but has no Linux wheel -> 422 PYTHON_DEPENDENCY_NO_WHEEL, no journal, sources unchanged) [${elapsed}ms]"
+  else
+    fail "no-platform-wheel-category (status=$HTTP_STATUS body=$(cat "$WORK/resp.json") journal=$journal_present digests=$py_before/$lock_before -> $py_after/$lock_after)"
+  fi
+}
+
 # On the OUTER budget the agent must kill the helper AND its whole child tree — the helper may
 # itself be stuck and never reap uv. A test-only helper that spawns a sleeper and hangs
 # (helper-path env override, per-run volume; the production image is untouched) must end in
@@ -637,6 +674,7 @@ scenario_commit_tamper_rejected
 scenario_prepare_remove_commit
 scenario_unsupported_scope
 scenario_no_wheel_category
+scenario_no_platform_wheel_category
 scenario_helper_hang_kills_tree
 scenario_timeout_kills_tool
 
