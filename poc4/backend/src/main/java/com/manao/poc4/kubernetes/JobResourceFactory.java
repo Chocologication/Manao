@@ -1,7 +1,8 @@
 package com.manao.poc4.kubernetes;
 
+import com.manao.poc4.run.RunPolicy;
+import com.manao.poc4.run.RunRecord;
 import io.fabric8.kubernetes.api.model.EnvVar;
-import io.fabric8.kubernetes.api.model.IntOrString;
 import io.fabric8.kubernetes.api.model.SecurityContext;
 import io.fabric8.kubernetes.api.model.SecurityContextBuilder;
 import io.fabric8.kubernetes.api.model.batch.v1.Job;
@@ -12,25 +13,35 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Builds the Maven Job manifests. For TASK runs PID 1 of the application container is the
- * root-owned fixed wrapper {@code manao-maven}: it initializes the project's Maven cache from
- * the image seed and then execs the fixed argument array {@code mvn -q -DskipTests compile
- * exec:java} under the single overall deadline. For SERVICE runs (bounded web session) the
- * container command stays the root-owned supervisor launcher (the supervisor spawns the same
- * fixed wrapper as its supervised child after claiming the run): one single-run Job
- * (completions/parallelism=1, Never, backoffLimit=0) with a per-run control directory on the
- * workspace PVC, the startup-deadline/lifetime environment and a supervisor-probe readiness
- * check. Both run kinds mount the project's Maven cache (the same workspace PVC,
- * {@code .manao-cache/maven} subPath) at /maven-cache, and an init container root-mounts the
- * PVC once to create/repair exactly that cache directory for projects created before it
- * existed — templates and code are never touched. Every constraint (deadlines, resources,
- * subPath, no ServiceAccount token, safe low-port sysctl) comes from server policy, never
- * from browser input.
+ * Builds the single-run Job manifests for every fixed template. The persisted Run snapshot alone
+ * decides the language: Java uses the original Maven image and commands, Python uses the
+ * {@code MANAO_PYTHON_RUNNER_IMAGE} launcher image — the manifest shape, security envelope and
+ * historical identifiers are shared. For TASK runs PID 1 of the application container (always
+ * named {@code maven}, an internal compatibility identifier for both languages) is the fixed
+ * launcher: the root-owned {@code manao-maven} wrapper execs {@code mvn -q -DskipTests compile
+ * exec:java} under the single overall deadline, the Python launcher execs the project's console
+ * entrypoint. For SERVICE runs (bounded web session) the container command is the root-owned
+ * supervisor launcher — with the explicitly enumerated profile for Python — spawning the same
+ * fixed child after claiming the run: one single-run Job (completions/parallelism=1, Never,
+ * backoffLimit=0) with a per-run control directory on the workspace PVC, the
+ * startup-deadline/lifetime environment and a supervisor-probe readiness check.
+ *
+ * <p>Both run kinds mount the project's language cache (the same workspace PVC:
+ * {@code .manao-cache/maven} at /maven-cache for Java, {@code .manao-cache/python} at
+ * /python-cache for Python — never both), and an init container root-mounts the PVC once to
+ * create/repair exactly that language's cache directory for projects created before it existed —
+ * templates, code and the other language's cache are never touched. Every constraint (deadlines,
+ * resources, subPath, no ServiceAccount token, safe low-port sysctl) comes from server policy,
+ * never from browser input.</p>
  */
 public class JobResourceFactory {
     static final String SUPERVISOR_COMMAND = "/usr/local/bin/manao-run-supervisor";
     static final String MAVEN_WRAPPER_COMMAND = "/usr/local/bin/manao-maven";
+    static final String PYTHON_LAUNCHER_COMMAND = "/usr/local/bin/manao-python";
     static final String MAVEN_CACHE_MOUNT = "/maven-cache";
+    static final String PYTHON_CACHE_MOUNT = "/python-cache";
+    static final String MAVEN_CACHE_DIRECTORY = WorkspaceResourceFactory.MAVEN_CACHE_DIRECTORY;
+    static final String PYTHON_CACHE_DIRECTORY = ".manao-cache/python";
     static final String CONTROL_DIR_MOUNT = "/run-control";
     static final String TERMINATION_MESSAGE_PATH = "/tmp/manao-termination.log";
     static final String LABEL_COMPONENT = "manao.poc4/component";
@@ -43,23 +54,88 @@ public class JobResourceFactory {
     private final RunResources requests;
     private final RunResources limits;
     private final String mavenImage;
+    private final String pythonImage;
 
     public JobResourceFactory(String namespace, long timeoutSeconds, String initializerImage,
-                              RunResources requests, RunResources limits, String mavenImage) {
+                              RunResources requests, RunResources limits, String mavenImage,
+                              String pythonImage) {
         this.namespace = requireText(namespace, "namespace");
         this.timeoutSeconds = timeoutSeconds;
         this.initializerImage = WorkspaceResourceFactory.requireDigest(initializerImage, "run initializer image");
         this.requests = requests;
         this.limits = limits;
         this.mavenImage = WorkspaceResourceFactory.requireDigest(mavenImage, "maven image");
+        this.pythonImage = WorkspaceResourceFactory.requireDigest(pythonImage, "python runner image");
     }
 
     public record RunResources(long cpuMillis, long memoryBytes, long ephemeralStorageBytes) { }
+
+    /**
+     * The per-language fixed manifest inputs, resolved from the persisted Run template. The
+     * image, the cache mount, the TASK command and the SERVICE supervisor profile are server
+     * policy; the supervisor profile argument exists only for Python because the legacy
+     * profile-less {@code run}/{@code probe} keeps its Java default for already-created resources.
+     */
+    private record LanguageRuntime(String image, String cacheMountPath, String cacheSubPath,
+                                   String cachePreparationContainer, List<String> taskCommand,
+                                   List<String> serviceCommand, List<String> probeCommand) {
+
+        static LanguageRuntime maven(String mavenImage) {
+            return new LanguageRuntime(mavenImage, MAVEN_CACHE_MOUNT, MAVEN_CACHE_DIRECTORY,
+                "prepare-maven-cache",
+                List.of(MAVEN_WRAPPER_COMMAND, "-q", "-DskipTests", "compile", "exec:java"),
+                List.of(SUPERVISOR_COMMAND, "run"),
+                List.of(SUPERVISOR_COMMAND, "probe"));
+        }
+
+        static LanguageRuntime python(String pythonImage, String serviceProfileId) {
+            return new LanguageRuntime(pythonImage, PYTHON_CACHE_MOUNT, PYTHON_CACHE_DIRECTORY,
+                "prepare-python-cache",
+                List.of(PYTHON_LAUNCHER_COMMAND, "console"),
+                List.of(SUPERVISOR_COMMAND, "run", serviceProfileId),
+                List.of(SUPERVISOR_COMMAND, "probe", serviceProfileId));
+        }
+    }
+
+    /**
+     * The unified Job entry point: the persisted Run snapshot alone selects image, fixed
+     * commands, cache and execution shape. Template-less historical rows keep their Java
+     * semantics (decided by the execution kind); an unreadable snapshot fails closed.
+     */
+    public Job createJob(RunRecord run, String projectId, int primaryPort, List<EnvVar> applicationEnvironment) {
+        RunPolicy policy = RunPolicy.fromJson(run.policyJson());
+        com.manao.poc4.project.RuntimeTemplate template = policy.template();
+        LanguageRuntime runtime = switch (template) {
+            case JAVA_CONSOLE, JAVA_SPRING_BOOT_WEB -> LanguageRuntime.maven(mavenImage);
+            case PYTHON_CONSOLE, PYTHON_FASTAPI_WEB -> LanguageRuntime.python(pythonImage, template.id());
+        };
+        if (policy.isService()) {
+            return serviceJob(run.id(), projectId, run.createdAt().plusSeconds(policy.startupTimeoutSeconds()),
+                policy.serviceLifetimeSeconds(), primaryPort, applicationEnvironment, runtime);
+        }
+        return taskJob(run.id(), projectId, applicationEnvironment, runtime);
+    }
 
     public static String jobName(String runId) { return "manao-run-" + runId; }
 
     /** TASK run: unchanged single overall deadline; the selected dependency environment is injected. */
     public Job createMavenJob(String runId, String projectId, List<EnvVar> applicationEnvironment) {
+        return taskJob(runId, projectId, applicationEnvironment, LanguageRuntime.maven(mavenImage));
+    }
+
+    /**
+     * SERVICE run: exactly one execution of the supervisor, control directory prepared by the
+     * init container (this run's directory only — old claims are never deleted), the readiness
+     * probe is the supervisor probe and the termination message carries the receipt protocol.
+     */
+    public Job createServiceJob(String runId, String projectId, Instant startupDeadlineUtc,
+                                long serviceLifetimeSeconds, int primaryPort, List<EnvVar> applicationEnvironment) {
+        return serviceJob(runId, projectId, startupDeadlineUtc, serviceLifetimeSeconds, primaryPort,
+            applicationEnvironment, LanguageRuntime.maven(mavenImage));
+    }
+
+    private Job taskJob(String runId, String projectId, List<EnvVar> applicationEnvironment,
+                        LanguageRuntime runtime) {
         var labels = labels(projectId, runId);
         return new JobBuilder()
             .withNewMetadata()
@@ -96,11 +172,11 @@ public class JobResourceFactory {
                     .withName("tmp")
                     .withNewEmptyDir().endEmptyDir()
                     .build())
-            .withInitContainers(cachePreparationContainer())
+            .withInitContainers(cachePreparationContainer(runtime))
             .withContainers(new io.fabric8.kubernetes.api.model.ContainerBuilder()
                 .withName(ResourceIdentityVerifier.APPLICATION_CONTAINER)
-                .withImage(mavenImage)
-                .withCommand(MAVEN_WRAPPER_COMMAND, "-q", "-DskipTests", "compile", "exec:java")
+                .withImage(runtime.image())
+                .withCommand(runtime.taskCommand())
                 .withWorkingDir("/workspace")
                 .withEnv(baseEnvironment(applicationEnvironment))
                 .withVolumeMounts(
@@ -112,8 +188,8 @@ public class JobResourceFactory {
                         .build(),
                     new io.fabric8.kubernetes.api.model.VolumeMountBuilder()
                         .withName("workspace")
-                        .withMountPath(MAVEN_CACHE_MOUNT)
-                        .withSubPath(WorkspaceResourceFactory.MAVEN_CACHE_DIRECTORY)
+                        .withMountPath(runtime.cacheMountPath())
+                        .withSubPath(runtime.cacheSubPath())
                         .withReadOnly(false)
                         .build(),
                     new io.fabric8.kubernetes.api.model.VolumeMountBuilder()
@@ -136,13 +212,9 @@ public class JobResourceFactory {
             .build();
     }
 
-    /**
-     * SERVICE run: exactly one execution of the supervisor, control directory prepared by the
-     * init container (this run's directory only — old claims are never deleted), the readiness
-     * probe is the supervisor probe and the termination message carries the receipt protocol.
-     */
-    public Job createServiceJob(String runId, String projectId, Instant startupDeadlineUtc,
-                                long serviceLifetimeSeconds, int primaryPort, List<EnvVar> applicationEnvironment) {
+    private Job serviceJob(String runId, String projectId, Instant startupDeadlineUtc,
+                           long serviceLifetimeSeconds, int primaryPort, List<EnvVar> applicationEnvironment,
+                           LanguageRuntime runtime) {
         var labels = labels(projectId, runId);
         long backstopSeconds = timeoutSeconds + serviceLifetimeSeconds;
         return new JobBuilder()
@@ -187,7 +259,7 @@ public class JobResourceFactory {
                     .withNewEmptyDir().endEmptyDir()
                     .build())
             .withInitContainers(
-                cachePreparationContainer(),
+                cachePreparationContainer(runtime),
                 new io.fabric8.kubernetes.api.model.ContainerBuilder()
                     .withName("run-control")
                     .withImage(initializerImage)
@@ -202,8 +274,8 @@ public class JobResourceFactory {
                     .build())
             .withContainers(new io.fabric8.kubernetes.api.model.ContainerBuilder()
                 .withName(ResourceIdentityVerifier.APPLICATION_CONTAINER)
-                .withImage(mavenImage)
-                .withCommand(SUPERVISOR_COMMAND, "run")
+                .withImage(runtime.image())
+                .withCommand(runtime.serviceCommand())
                 .withWorkingDir("/workspace")
                 .withEnv(baseEnvironment(applicationEnvironment))
                 .addToEnv(new io.fabric8.kubernetes.api.model.EnvVarBuilder()
@@ -236,8 +308,8 @@ public class JobResourceFactory {
                         .build(),
                     new io.fabric8.kubernetes.api.model.VolumeMountBuilder()
                         .withName("workspace")
-                        .withMountPath(MAVEN_CACHE_MOUNT)
-                        .withSubPath(WorkspaceResourceFactory.MAVEN_CACHE_DIRECTORY)
+                        .withMountPath(runtime.cacheMountPath())
+                        .withSubPath(runtime.cacheSubPath())
                         .withReadOnly(false)
                         .build(),
                     new io.fabric8.kubernetes.api.model.VolumeMountBuilder()
@@ -246,7 +318,7 @@ public class JobResourceFactory {
                         .build())
                 .withNewReadinessProbe()
                 .withNewExec()
-                .withCommand(SUPERVISOR_COMMAND, "probe")
+                .withCommand(runtime.probeCommand())
                 .endExec()
                 .withInitialDelaySeconds(5)
                 .withPeriodSeconds(10)
@@ -287,22 +359,22 @@ public class JobResourceFactory {
     }
 
     /**
-     * Root-mounts the workspace PVC once and creates/repairs exactly the project Maven cache
-     * directory (creating projects already have it from the initializer; old PVCs get it
-     * rebuilt here). It never touches templates, code or any other path, so it cannot run the
-     * project-initialization flow or overwrite saved files. Runs as root because the PVC root
-     * is root-owned; the cache directory itself is handed to the fixed workspace UID/GID,
-     * while the application containers keep their non-root identity.
+     * Root-mounts the workspace PVC once and creates/repairs exactly the project cache directory
+     * of this run's language (creating projects already have it from the initializer; old PVCs
+     * get it rebuilt here). It never touches templates, code, the other language's cache or any
+     * other path, so it cannot run the project-initialization flow or overwrite saved files.
+     * Runs as root because the PVC root is root-owned; the cache directory itself is handed to
+     * the fixed workspace UID/GID, while the application containers keep their non-root identity.
      */
-    private io.fabric8.kubernetes.api.model.Container cachePreparationContainer() {
-        String cacheDirectory = "/data/" + WorkspaceResourceFactory.MAVEN_CACHE_DIRECTORY;
+    private io.fabric8.kubernetes.api.model.Container cachePreparationContainer(LanguageRuntime runtime) {
+        String cacheDirectory = "/data/" + runtime.cacheSubPath();
         String cacheParent = "/data/.manao-cache";
         String script = "mkdir -p " + cacheDirectory
             + " && chown " + WorkspaceResourceFactory.WORKSPACE_UID + ":" + WorkspaceResourceFactory.WORKSPACE_GID
             + " " + cacheParent + " " + cacheDirectory
             + " && chmod 0775 " + cacheParent + " " + cacheDirectory;
         return new io.fabric8.kubernetes.api.model.ContainerBuilder()
-            .withName("prepare-maven-cache")
+            .withName(runtime.cachePreparationContainer())
             .withImage(initializerImage)
             .withCommand("/bin/sh", "-ec", script)
             .withVolumeMounts(new io.fabric8.kubernetes.api.model.VolumeMountBuilder()

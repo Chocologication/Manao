@@ -8,6 +8,7 @@ import com.manao.poc4.run.RunControllerTest.FakeRun;
 import com.manao.poc4.run.RunControllerTest.FakeRunStore;
 import com.manao.poc4.run.RunControllerTest.StubCoordinator;
 import java.time.Instant;
+import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -35,6 +36,42 @@ class RunRecoveryServiceTest {
         store.runs.put(id, new FakeRun(new RunRecord(id, PROJECT, 5, state,
             "{}", "manao-run-" + id, null, null, null, null, null, 3L,
             Instant.parse("2026-08-29T11:00:00Z"), 0L, null, null, null, terminationIntent)));
+    }
+
+    /** A python-fastapi-web service snapshot, as RunService persists it for a Python web project. */
+    private void seedPythonServiceRun(String id, RunState state) {
+        seedPythonServiceRun(id, state, null);
+    }
+
+    private void seedPythonServiceRun(String id, RunState state, String terminationIntent) {
+        RunPolicy base = new RunPolicy(com.manao.poc4.project.RuntimeTemplate.JAVA_CONSOLE.id(),
+            new RunPolicy.RuntimeInfo.Java(17, 3),
+            com.manao.poc4.project.RuntimeTemplate.JAVA_CONSOLE.displayCommand(), 1800,
+            RunPolicy.EXECUTION_KIND_TASK, 1800, 0,
+            new RunPolicy.Resources(1000, 1L << 30, 1L << 30),
+            new RunPolicy.Resources(8000, 16L << 30, 10L << 30));
+        String policyJson = base.forProject(new com.manao.poc4.project.ProjectRuntimeSpec(
+            com.manao.poc4.project.RuntimeTemplate.PYTHON_FASTAPI_WEB.id(), false, false,
+            List.of())).toJson();
+        store.runs.put(id, new FakeRun(new RunRecord(id, PROJECT, 5, state, policyJson,
+            "manao-run-" + id, null, null, null, null, null, 3L,
+            Instant.parse("2026-08-29T11:00:00Z"), 0L, null, null, null, terminationIntent)));
+    }
+
+    /** A python-console task snapshot. */
+    private void seedPythonTaskRun(String id, RunState state) {
+        RunPolicy base = new RunPolicy(com.manao.poc4.project.RuntimeTemplate.JAVA_CONSOLE.id(),
+            new RunPolicy.RuntimeInfo.Java(17, 3),
+            com.manao.poc4.project.RuntimeTemplate.JAVA_CONSOLE.displayCommand(), 1800,
+            RunPolicy.EXECUTION_KIND_TASK, 1800, 0,
+            new RunPolicy.Resources(1000, 1L << 30, 1L << 30),
+            new RunPolicy.Resources(8000, 16L << 30, 10L << 30));
+        String policyJson = base.forProject(new com.manao.poc4.project.ProjectRuntimeSpec(
+            com.manao.poc4.project.RuntimeTemplate.PYTHON_CONSOLE.id(), false, false,
+            List.of())).toJson();
+        store.runs.put(id, new FakeRun(new RunRecord(id, PROJECT, 5, state, policyJson,
+            "manao-run-" + id, null, null, null, null, null, 3L,
+            Instant.parse("2026-08-29T11:00:00Z"), 0L)));
     }
 
     private static JobCoordinator.JobFacts facts(boolean running, boolean succeeded, boolean failed,
@@ -148,6 +185,47 @@ class RunRecoveryServiceTest {
         assertThat(report.settled()).containsExactly("run-web");
         assertThat(store.runs.get("run-web").state).isEqualTo(RunState.FAILED.name());
         assertThat(store.runs.get("run-web").terminationReason).isEqualTo("APPLICATION_EXITED");
+    }
+
+    @Test
+    void aPythonServiceRunResumesRunningWithoutRebuildingTheExecution() {
+        seedPythonServiceRun("run-py-live", RunState.RUNNING, null);
+        coordinator.factsByRun.put("run-py-live", facts(true, false, false, false, null));
+
+        RunRecoveryService.RecoveryReport report = service.recoverRuns();
+
+        // RUNNING recovery only re-arms observation: no Job is recreated and nothing is settled.
+        assertThat(report.resumed()).containsExactly("run-py-live");
+        assertThat(store.runs.get("run-py-live").state).isEqualTo(RunState.RUNNING.name());
+        assertThat(store.runs.get("run-py-live").terminationReason).isNull();
+        assertThat(coordinator.stopCalls).isEmpty();
+        assertThat(coordinator.ensureJobCalls).isEmpty();
+    }
+
+    @Test
+    void aPythonTaskRunSettlesFromTerminalJobFactsAndUnlocksTheProject() {
+        seedPythonTaskRun("run-py-task", RunState.RUNNING);
+        coordinator.factsByRun.put("run-py-task", facts(false, true, false, false, 0));
+
+        RunRecoveryService.RecoveryReport report = service.recoverRuns();
+
+        assertThat(report.settled()).containsExactly("run-py-task");
+        assertThat(store.runs.get("run-py-task").state).isEqualTo(RunState.SUCCEEDED.name());
+        assertThat(store.runs.get("run-py-task").exitCode).isZero();
+    }
+
+    @Test
+    void aPythonStopIntentSurvivesTheRestartAndIsNeverResurrectedIntoRunning() {
+        seedPythonServiceRun("run-py-stop", RunState.STOPPING, "USER_STOPPED");
+        coordinator.factsByRun.put("run-py-stop", facts(true, false, false, false, null));
+
+        RunRecoveryService.RecoveryReport report = service.recoverRuns();
+
+        assertThat(store.runs.get("run-py-stop").state).isEqualTo(RunState.STOPPING.name());
+        assertThat(store.runs.get("run-py-stop").terminationIntent).isEqualTo("USER_STOPPED");
+        assertThat(coordinator.stopCalls).containsExactly("manao-run-run-py-stop");
+        assertThat(report.resumed()).isEmpty();
+        assertThat(report.settled()).isEmpty();
     }
 
     @Test

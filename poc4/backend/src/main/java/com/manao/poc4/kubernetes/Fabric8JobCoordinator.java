@@ -3,7 +3,6 @@ package com.manao.poc4.kubernetes;
 import com.manao.poc4.kubernetes.JobCoordinator.JobObservation;
 import com.manao.poc4.kubernetes.JobCoordinator.ObservationKind;
 import com.manao.poc4.run.RunExecutionReceipt;
-import com.manao.poc4.run.RunPolicy;
 import com.manao.poc4.run.RunRecord;
 import io.fabric8.kubernetes.api.model.ContainerStateTerminated;
 import io.fabric8.kubernetes.api.model.EnvVar;
@@ -72,12 +71,9 @@ public final class Fabric8JobCoordinator implements JobCoordinator {
             }
             throw new IllegalStateException("existing job does not match the run identity");
         }
-        RunPolicy policy = RunPolicy.fromJson(run.policyJson());
-        Job job = policy.isService()
-            ? factory.createServiceJob(run.id(), projectId,
-                run.createdAt().plusSeconds(policy.startupTimeoutSeconds()),
-                policy.serviceLifetimeSeconds(), primaryPort, applicationEnvironment)
-            : factory.createMavenJob(run.id(), projectId, applicationEnvironment);
+        // The run snapshot alone decides the manifest (language, execution kind, deadlines);
+        // the coordinator never re-derives policy from anywhere else.
+        Job job = factory.createJob(run, projectId, primaryPort, applicationEnvironment);
         client.batch().v1().jobs().inNamespace(namespace).resource(job).serverSideApply();
         return jobName;
     }

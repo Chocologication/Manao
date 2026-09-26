@@ -235,7 +235,8 @@ public class WorkspaceConfig {
 
     @Bean
     com.manao.poc4.kubernetes.JobResourceFactory jobResourceFactory(BackendProperties properties,
-                                                                    @Value("${MANAO_MAVEN_RUNNER_IMAGE:}") String mavenImage) {
+                                                                    @Value("${MANAO_MAVEN_RUNNER_IMAGE:}") String mavenImage,
+                                                                    @Value("${MANAO_PYTHON_RUNNER_IMAGE:}") String pythonImage) {
         com.manao.poc4.run.RunPolicy policy = com.manao.poc4.run.RunPolicy.fromProperties(properties);
         return new com.manao.poc4.kubernetes.JobResourceFactory(
             properties.kubernetes().namespace(),
@@ -245,7 +246,7 @@ public class WorkspaceConfig {
                 policy.requests().memoryBytes(), policy.requests().ephemeralStorageBytes()),
             new com.manao.poc4.kubernetes.JobResourceFactory.RunResources(policy.limits().cpuMillis(),
                 policy.limits().memoryBytes(), policy.limits().ephemeralStorageBytes()),
-            requiredMavenImage(mavenImage));
+            requiredMavenImage(mavenImage), requiredPythonImage(pythonImage));
     }
 
     @Bean
@@ -368,6 +369,13 @@ public class WorkspaceConfig {
             throw new IllegalStateException("MANAO_MAVEN_RUNNER_IMAGE is required for Maven runs");
         }
         return mavenImage;
+    }
+
+    private static String requiredPythonImage(String pythonImage) {
+        if (pythonImage == null || pythonImage.isBlank()) {
+            throw new IllegalStateException("MANAO_PYTHON_RUNNER_IMAGE is required for Python runs");
+        }
+        return pythonImage;
     }
 
     private static void verifyKeyPair(WorkspaceCapabilitySigner signer, byte[] rawPublicKey) {
