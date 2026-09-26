@@ -167,6 +167,12 @@ const PYTHON_DEPENDENCY_RESOLUTION_FAILED: ApiErrorBody = {
   traceId: 'mock-trace-dependency-resolution',
 };
 
+const WORKSPACE_RECONCILIATION_REQUIRED: ApiErrorBody = {
+  code: 'WORKSPACE_RECONCILIATION_REQUIRED',
+  message: 'Workspace needs reconciliation; the operation result is not confirmed',
+  traceId: 'mock-trace-workspace-reconciliation',
+};
+
 const DEPENDENCY_REQUEST_MISMATCH: ApiErrorBody = {
   code: 'DEPENDENCY_REQUEST_MISMATCH',
   message: 'This operation id was already used for a different request',
@@ -617,6 +623,12 @@ export const dependencyHandlers = [
       packageName,
       version,
     });
+    if (scenario === 'reconciliation-required') {
+      // The row is registered PENDING and stays PENDING: the answer refuses to
+      // confirm the result, like the backend's fail-closed commit. A later
+      // reconcile of the same id commits it.
+      return jsonError(409, WORKSPACE_RECONCILIATION_REQUIRED);
+    }
     commitMockDependencyOperation(operation);
     if (scenario === 'lost-response') {
       // The commit happened but the browser never learns about it here.

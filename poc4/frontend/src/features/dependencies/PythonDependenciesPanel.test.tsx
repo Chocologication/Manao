@@ -1,6 +1,6 @@
 import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { http } from 'msw';
+import { http, HttpResponse } from 'msw';
 import { MemoryRouter } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { login } from '../../api/authApi';
@@ -251,6 +251,39 @@ describe('PythonDependenciesPanel committed changes', () => {
 });
 
 describe('PythonDependenciesPanel rejected changes', () => {
+  it('answers PROJECT_LOCKED as a proven pre-flight rejection: id cleared, Run message, no recovery', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    const user = userEvent.setup();
+    await authenticateAsAlice();
+    const project = await createReadyPythonProject('Pre-flight Lock');
+    primeRevision(project.id);
+    // The backend's active-Run gate refuses before any operation row is registered:
+    // nothing was applied for the request, so the answer stays the pre-flight lock.
+    server.use(
+      http.post('/api/v1/projects/:projectId/python-dependencies', () =>
+        HttpResponse.json(
+          { code: 'PROJECT_LOCKED', message: 'Project is locked', traceId: 'mock-trace-locked' },
+          { status: 409 },
+        ),
+      ),
+    );
+    const onResponseLost = vi.fn();
+    renderPanel({ project, onResponseLost });
+
+    await fillForm(user, 'httpx');
+    await user.click(screen.getByRole('button', { name: 'Add dependency' }));
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('Finish or stop the active Run before changing dependencies.');
+    // A proven no-side-effect rejection never reports a lost response and removes
+    // the stored id, so a corrected change may start a NEW operation.
+    expect(onResponseLost).not.toHaveBeenCalled();
+    expect(readPythonDependencyOperationId(ALICE_USER_ID, project.id)).toBeNull();
+    expect(screen.getByRole('button', { name: 'Add dependency' })).toBeEnabled();
+
+    fetchSpy.mockRestore();
+  });
+
   it('shows the fixed rejection, clears the stored id and allows a corrected new operation', async () => {
     const fetchSpy = vi.spyOn(globalThis, 'fetch');
     const user = userEvent.setup();
@@ -309,6 +342,42 @@ describe('PythonDependenciesPanel lost responses', () => {
     const operationId = (posts[0]!.body as Record<string, unknown>).operationId;
     expect(onResponseLost).toHaveBeenCalledWith(operationId);
     // The result is unknown: the id stays available for the recovery check.
+    expect(readPythonDependencyOperationId(ALICE_USER_ID, project.id)).toBe(operationId);
+    // No automatic retry was sent.
+    expect(dependencyPosts(fetchSpy)).toHaveLength(1);
+
+    setDependencyScenario('normal');
+    fetchSpy.mockRestore();
+  });
+
+  it('answers WORKSPACE_RECONCILIATION_REQUIRED as an unknown result: id kept, recovery reported, fixed message', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    const user = userEvent.setup();
+    await authenticateAsAlice();
+    const project = await createReadyPythonProject('Reconciliation Required');
+    primeRevision(project.id);
+    // The mock registers the operation PENDING and refuses to confirm the result,
+    // like the backend's fail-closed commit scene.
+    setDependencyScenario('reconciliation-required');
+    const onResponseLost = vi.fn();
+    renderPanel({ project, onResponseLost });
+
+    await fillForm(user, 'httpx');
+    await user.click(screen.getByRole('button', { name: 'Add dependency' }));
+
+    // The result is unknown: the recovery entry engages and the message never
+    // tells the user to stop a Run.
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent(
+      'The result of the dependency change is unknown. Check it before making another change.',
+    );
+    expect(alert).not.toHaveTextContent(/stop the/i);
+    const posts = dependencyPosts(fetchSpy);
+    expect(posts).toHaveLength(1);
+    const operationId = (posts[0]!.body as Record<string, unknown>).operationId;
+    expect(onResponseLost).toHaveBeenCalledTimes(1);
+    expect(onResponseLost).toHaveBeenCalledWith(operationId);
+    // The id stays available for the recovery check.
     expect(readPythonDependencyOperationId(ALICE_USER_ID, project.id)).toBe(operationId);
     // No automatic retry was sent.
     expect(dependencyPosts(fetchSpy)).toHaveLength(1);

@@ -375,12 +375,17 @@ export const MOCK_DEPENDENCY_RECONCILIATION_FAILURE = 'WORKSPACE_RECONCILIATION_
 const PYPROJECT_PATH = 'pyproject.toml';
 const UV_LOCK_PATH = 'uv.lock';
 
-export type MockDependencyScenario = 'normal' | 'lost-response' | 'resolution-failed';
+export type MockDependencyScenario =
+  | 'normal'
+  | 'lost-response'
+  | 'resolution-failed'
+  | 'reconciliation-required';
 
 const DEPENDENCY_SCENARIOS: ReadonlySet<string> = new Set([
   'normal',
   'lost-response',
   'resolution-failed',
+  'reconciliation-required',
 ]);
 
 export function isDependencyScenario(value: unknown): value is MockDependencyScenario {

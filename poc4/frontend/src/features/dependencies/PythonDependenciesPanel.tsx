@@ -37,6 +37,8 @@ type Phase = 'idle' | 'submitting' | 'reloading';
  * operation id is removed and a corrected change may start a NEW operation. Any
  * other failure (lost response, internal error, unreadable body) leaves the result
  * unknown — the id stays and only a check may resolve it.
+ * WORKSPACE_RECONCILIATION_REQUIRED is deliberately NOT listed: the backend answers
+ * it only after an operation row was registered, so its result is unknown.
  */
 const NO_SIDE_EFFECT_CODES: ReadonlySet<string> = new Set([
   'VALIDATION_ERROR',
@@ -70,6 +72,8 @@ function rejectionMessage(error: unknown): string {
         return 'Dependency resolution timed out. No files were changed.';
       case 'WORKSPACE_REVISION_CONFLICT':
         return 'The workspace changed. Refresh the workspace and try again.';
+      case 'WORKSPACE_RECONCILIATION_REQUIRED':
+        return 'The result of the dependency change is unknown. Check it before making another change.';
       case 'PROJECT_BUSY':
         return 'Project is busy. Wait for the current operation to finish, then try again.';
       case 'PROJECT_LOCKED':
@@ -167,6 +171,15 @@ export function PythonDependenciesPanel({
     } catch (error) {
       if (isNetworkError(error)) {
         onResponseLost(operationId);
+      } else if (
+        error instanceof ApiRequestError &&
+        error.body !== null &&
+        error.body.code === 'WORKSPACE_RECONCILIATION_REQUIRED'
+      ) {
+        // A registered operation's result is unresolved: the id stays and only
+        // the recovery check may resolve it.
+        onResponseLost(operationId);
+        setRejection(rejectionMessage(error));
       } else if (
         error instanceof ApiRequestError &&
         error.body !== null &&
