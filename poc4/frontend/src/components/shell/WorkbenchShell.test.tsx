@@ -41,7 +41,14 @@ import {
   setRunScenario,
   transitionRun,
 } from '../../mocks/runState';
-import { ALICE_SEED_PROJECT_ID, getFileRequestCount, setDependencyScenario, setWriteScenario } from '../../mocks/state';
+import {
+  ALICE_SEED_PROJECT_ID,
+  getFileRequestCount,
+  mockDependencyRequestFingerprint,
+  registerMockDependencyOperation,
+  setDependencyScenario,
+  setWriteScenario,
+} from '../../mocks/state';
 import { pythonDependencyStorageKey } from '../../api/pythonDependencyApi';
 import { renderApp, resetAppRuntime } from '../../test/renderApp';
 import { isExperimentalTerminalEnabled, WorkbenchShell } from './WorkbenchShell';
@@ -1949,4 +1956,223 @@ describe('WorkbenchShell python dependencies', () => {
 
     setDependencyScenario('normal');
   }, 20_000);
+
+  const SERVER_PENDING_OPERATION_ID = '55555555-5555-4555-8555-555555555555';
+  const MIDFLIGHT_CLIENT_OPERATION_ID = '66666666-6666-4666-8666-666666666666';
+
+  async function registerPendingMockOperation(
+    project: ProjectSummary,
+    operationId: string,
+  ): Promise<void> {
+    const tree = await listDirectory(project.id, parseProjectDirectoryPath(''));
+    registerMockDependencyOperation({
+      projectId: project.id,
+      operationId,
+      fingerprint: mockDependencyRequestFingerprint(
+        project.id,
+        'ADD',
+        'httpx',
+        null,
+        tree.workspaceRevision,
+      ),
+      action: 'ADD',
+      packageName: 'httpx',
+      version: null,
+    });
+  }
+
+  function pendingDiscoveryGetCount(spy: { mock: { calls: unknown[][] } }): number {
+    return spy.mock.calls.filter(
+      (call) =>
+        fetchMethod(call) === 'GET' &&
+        /\/python-dependencies\/pending$/.test(fetchPathname(call)),
+    ).length;
+  }
+
+  it('discovers a server-pending dependency operation on a READY workbench and engages recovery', async () => {
+    const user = userEvent.setup();
+    await authenticateAsAlice();
+    const project = await createPythonProjectWithFile('Pending Discovery');
+    await registerPendingMockOperation(project, SERVER_PENDING_OPERATION_ID);
+
+    // Hold the run authority so the closed write gate can only come from the
+    // discovered operation, not from a loading authority.
+    let releaseAuthority = () => {};
+    const authorityHeld = new Promise<void>((resolve) => {
+      releaseAuthority = resolve;
+    });
+    server.use(
+      http.get('/api/v1/projects/:projectId/runs/active', async () => {
+        await authorityHeld;
+        return HttpResponse.json({ run: null });
+      }),
+    );
+    renderPythonShell(project);
+
+    // A new browser session has no stored id: the shell discovers the durable
+    // PENDING itself, persists the identity and engages the recovery entry.
+    expect(await screen.findByText('Dependency change is unconfirmed')).toBeInTheDocument();
+    expect(sessionStorage.getItem(pythonDependencyStorageKey('usr-alice', project.id))).toBe(
+      SERVER_PENDING_OPERATION_ID,
+    );
+
+    releaseAuthority();
+    await user.click(screen.getByRole('tab', { name: 'Run' }));
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Start run' })).toBeEnabled();
+    });
+    await user.click(screen.getByRole('tab', { name: 'File' }));
+    expect(screen.getByRole('button', { name: 'New file' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'New folder' })).toBeDisabled();
+
+    // Checking the discovered operation recovers the dead end end to end.
+    await user.click(screen.getByRole('button', { name: 'Check dependency change' }));
+    await waitFor(() => {
+      expect(screen.queryByText('Dependency change is unconfirmed')).not.toBeInTheDocument();
+    });
+    expect(sessionStorage.getItem(pythonDependencyStorageKey('usr-alice', project.id))).toBeNull();
+    expect(
+      await screen.findByRole('treeitem', { name: 'pyproject.toml' }, { timeout: 10_000 }),
+    ).toBeInTheDocument();
+    await waitUntilWritesUnlocked();
+  }, 20_000);
+
+  it('renders nothing and issues the pending query once when no operation is pending', async () => {
+    await authenticateAsAlice();
+    const project = await createPythonProjectWithFile('Discovery Empty');
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    renderPythonShell(project);
+    await waitUntilWritesUnlocked();
+    expect(await screen.findByRole('treeitem', { name: 'notes.md' })).toBeInTheDocument();
+
+    await waitFor(() => {
+      expect(pendingDiscoveryGetCount(fetchSpy)).toBe(1);
+    });
+    expect(screen.queryByText('Dependency change is unconfirmed')).not.toBeInTheDocument();
+    expect(
+      screen.queryByText('Could not check for a pending dependency change.'),
+    ).not.toBeInTheDocument();
+    fetchSpy.mockRestore();
+  }, 15_000);
+
+  it('offers a retry affordance when the pending query fails and a retry that finds nothing renders nothing', async () => {
+    const user = userEvent.setup();
+    await authenticateAsAlice();
+    const project = await createPythonProjectWithFile('Discovery Failure');
+    let failPending = true;
+    server.use(
+      http.get('/api/v1/projects/:projectId/python-dependencies/pending', () => {
+        if (failPending) {
+          // PROJECT_BUSY is what the real backend answers under lease contention.
+          return HttpResponse.json(
+            { code: 'PROJECT_BUSY', message: 'Project is busy', traceId: 'trace-pending-busy' },
+            { status: 409 },
+          );
+        }
+        return undefined;
+      }),
+    );
+    renderPythonShell(project);
+    await waitUntilWritesUnlocked();
+
+    // A failed discovery must not fabricate absence: the shell says so and offers a retry.
+    expect(
+      await screen.findByText('Could not check for a pending dependency change.'),
+    ).toBeInTheDocument();
+
+    failPending = false;
+    await user.click(screen.getByRole('button', { name: 'Retry pending dependency check' }));
+
+    // The retry found nothing: the affordance disappears and nothing is rendered.
+    await waitFor(() => {
+      expect(
+        screen.queryByRole('button', { name: 'Retry pending dependency check' }),
+      ).not.toBeInTheDocument();
+    });
+    expect(
+      screen.queryByText('Could not check for a pending dependency change.'),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText('Dependency change is unconfirmed')).not.toBeInTheDocument();
+  }, 15_000);
+
+  it('ignores the discovered pending operation when an id is stored while the query is in flight', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    const user = userEvent.setup();
+    await authenticateAsAlice();
+    const project = await createPythonProjectWithFile('Discovery Midflight');
+    await registerPendingMockOperation(project, SERVER_PENDING_OPERATION_ID);
+
+    let releaseAuthority = () => {};
+    const authorityHeld = new Promise<void>((resolve) => {
+      releaseAuthority = resolve;
+    });
+    let releasePending = () => {};
+    const pendingHeld = new Promise<void>((resolve) => {
+      releasePending = resolve;
+    });
+    let pendingCaptured = false;
+    server.use(
+      http.get('/api/v1/projects/:projectId/runs/active', async () => {
+        await authorityHeld;
+        return HttpResponse.json({ run: null });
+      }),
+      http.get('/api/v1/projects/:projectId/python-dependencies/pending', async () => {
+        pendingCaptured = true;
+        await pendingHeld;
+        return undefined;
+      }),
+    );
+    renderPythonShell(project);
+    await waitFor(() => {
+      expect(pendingCaptured).toBe(true);
+    });
+
+    // The client saved its own operation while the discovery query ran.
+    sessionStorage.setItem(
+      pythonDependencyStorageKey('usr-alice', project.id),
+      MIDFLIGHT_CLIENT_OPERATION_ID,
+    );
+    releasePending();
+    await user.click(screen.getByRole('tab', { name: 'Run' }));
+    releaseAuthority();
+
+    // If the discovery result were (wrongly) adopted, the write gate would stay
+    // closed and this unlock would time out.
+    await waitUntilWritesUnlocked();
+
+    // Design 6.1: the discovery result is ignored entirely — no adoption, no
+    // overwrite of the client-saved id, no re-issued query.
+    expect(screen.queryByText('Dependency change is unconfirmed')).not.toBeInTheDocument();
+    expect(sessionStorage.getItem(pythonDependencyStorageKey('usr-alice', project.id))).toBe(
+      MIDFLIGHT_CLIENT_OPERATION_ID,
+    );
+    expect(pendingDiscoveryGetCount(fetchSpy)).toBe(1);
+    fetchSpy.mockRestore();
+  }, 15_000);
+
+  it('does not issue the pending query when an unconfirmed operation is already stored', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    await authenticateAsAlice();
+    const project = await createPythonProjectWithFile('Discovery Known');
+    sessionStorage.setItem(
+      pythonDependencyStorageKey('usr-alice', project.id),
+      '77777777-7777-4777-8777-777777777777',
+    );
+    renderPythonShell(project);
+    expect(await screen.findByText('Dependency change is unconfirmed')).toBeInTheDocument();
+    expect(await screen.findByRole('treeitem', { name: 'notes.md' })).toBeInTheDocument();
+
+    expect(pendingDiscoveryGetCount(fetchSpy)).toBe(0);
+    fetchSpy.mockRestore();
+  }, 15_000);
+
+  it('never issues the pending query for a non-python project', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    await authenticateAsAlice();
+    renderShell();
+    await loadedEditable();
+
+    expect(pendingDiscoveryGetCount(fetchSpy)).toBe(0);
+    fetchSpy.mockRestore();
+  }, 15_000);
 });

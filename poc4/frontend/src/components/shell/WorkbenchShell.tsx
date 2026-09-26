@@ -5,6 +5,7 @@ import {
   Suspense,
   useCallback,
   useEffect,
+  useRef,
   useState,
   useSyncExternalStore,
   type MouseEvent,
@@ -19,7 +20,11 @@ import { RunPanel } from '@/components/runs/RunPanel';
 import { Button } from '@/components/ui/button';
 import type { ProjectSummary } from '@/contracts/project';
 import { isPythonRuntimeTemplate } from '@/contracts/project';
-import { readPythonDependencyOperationId } from '@/api/pythonDependencyApi';
+import {
+  listPendingPythonDependencies,
+  readPythonDependencyOperationId,
+  storePythonDependencyOperationId,
+} from '@/api/pythonDependencyApi';
 import {
   PythonDependenciesPanel,
 } from '@/features/dependencies/PythonDependenciesPanel';
@@ -51,6 +56,13 @@ const DEPENDENCIES_PANEL_ID = 'workbench-dependencies-panel';
 const TERMINAL_PANEL_ID = 'workbench-terminal-panel';
 
 type WorkbenchPanel = 'file' | 'run' | 'dependencies' | 'terminal';
+
+/**
+ * One-shot discovery of a server-pending dependency operation for a READY
+ * workbench that knows no unconfirmed operation (design 6.1). It never polls:
+ * 'inFlight'/'settled' end the episode, only an explicit user retry re-runs it.
+ */
+type PendingDependencyDiscovery = 'notAttempted' | 'inFlight' | 'settled' | 'failed';
 
 export function isExperimentalTerminalEnabled(value: string | undefined): boolean {
   return value === 'true';
@@ -106,6 +118,50 @@ export function WorkbenchShell({ project }: { project: ProjectSummary }) {
       })
       .catch(() => setRecoveryReloadFailed(true));
   }, [project.id, queryClient]);
+  // A READY workbench that knows no unconfirmed operation asks the server once
+  // whether a durable PENDING exists (design 6.1): after a backend restart a new
+  // browser session has no stored id, yet the pending operation still gates the
+  // workspace — the shell must surface it instead of dead-ending.
+  const [pendingDiscovery, setPendingDiscovery] = useState<PendingDependencyDiscovery>('notAttempted');
+  // Invalidates a discovery result whose episode is over (retried or superseded)
+  // without cancelling its fetch, so the state machine can never stick in-flight.
+  const pendingDiscoveryEpochRef = useRef(0);
+  useEffect(() => {
+    if (!pythonWorkbench || userId === '' || unconfirmedOperationId !== null) {
+      return;
+    }
+    if (pendingDiscovery !== 'notAttempted') {
+      return;
+    }
+    const epoch = ++pendingDiscoveryEpochRef.current;
+    setPendingDiscovery('inFlight');
+    listPendingPythonDependencies(project.id)
+      .then((pending) => {
+        if (pendingDiscoveryEpochRef.current !== epoch) {
+          return;
+        }
+        setPendingDiscovery('settled');
+        // Design 6.1: the query must not override an operation id the client
+        // saved while it ran — a discovered result is ignored entirely then.
+        if (readPythonDependencyOperationId(userId, project.id) !== null) {
+          return;
+        }
+        const discovered = pending[0]?.operationId ?? null;
+        if (discovered !== null) {
+          storePythonDependencyOperationId(userId, project.id, discovered);
+          setUnconfirmedOperationId(discovered);
+        }
+      })
+      .catch(() => {
+        if (pendingDiscoveryEpochRef.current !== epoch) {
+          return;
+        }
+        setPendingDiscovery('failed');
+      });
+  }, [pendingDiscovery, project.id, pythonWorkbench, unconfirmedOperationId, userId]);
+  const retryPendingDiscovery = useCallback(() => {
+    setPendingDiscovery('notAttempted');
+  }, []);
   const snapshot = useSyncExternalStore(
     coordinator.subscribe,
     coordinator.getSnapshot,
@@ -244,6 +300,14 @@ export function WorkbenchShell({ project }: { project: ProjectSummary }) {
           <InlineAlert>Dependency change confirmed, but reloading the workspace failed.</InlineAlert>
           <Button type="button" variant="outline" onClick={reloadAfterRecovery}>
             Reload workspace
+          </Button>
+        </div>
+      ) : null}
+      {pendingDiscovery === 'failed' ? (
+        <div className="flex flex-col items-start gap-2 border-b bg-background px-4 py-2">
+          <InlineAlert>Could not check for a pending dependency change.</InlineAlert>
+          <Button type="button" variant="outline" onClick={retryPendingDiscovery}>
+            Retry pending dependency check
           </Button>
         </div>
       ) : null}
