@@ -31,6 +31,7 @@
 | CPython | 镜像内 `3.13.15`；锁文件生成解释器为 uv 提供的 `3.13.13`（Task 2） | 镜像内 `python3 -V`（2026-09-26）；`python:3.13.15-slim@sha256:8d9d0b8bcf6506481eae4907c18f5e3e7902e629f5f6d684f9e7c32e85e3ddf0` |
 | JRE | Debian trixie `default-jre-headless`（OpenJDK 21），runner 与 agent 镜像同源 | Task 4/7 构建；编译态 `default-jdk-headless` 同发行版 |
 | uv 缓存 seed | `a3687aae7fe59204cd1a23454fd71ccb0c4e400a9200a52cb5e76a090c0295e5`（747 文件，~30 MB），2026-09-26 重建后原样复现 | 镜像内 `/opt/manao-python-seed/seed-id` 读取（2026-09-26） |
+| 模板 lock hash | console `workspace-template-python/uv.lock` = `a96bbf8e0350626470f1f8e55b7cf8c2cf00166f25225b917954552675c399c8`；web `workspace-template-python-web/uv.lock` = `de8a8bb358d35ebfd2a250eb6e9903313e636a47a3a8f2232442f0302816d028` — 已提交锁文件字节的 SHA-256，取自 Task 10 准备提交 `11accb3`（工作树与 HEAD 一致；两锁自生成提交 `05c9337` 后未变，seed 与镜像构建消费的正是这两份锁） | `git show <commit>:<path> \| sha256sum` 与工作树 `sha256sum` 双向一致（2026-09-26 实测） |
 
 本地构建身份（**本地 tag 不是生产 pin**；生产 digest 在发布轮填入，部署清单占位见 `poc4/deploy/6b/README.md` §11.1）：
 
