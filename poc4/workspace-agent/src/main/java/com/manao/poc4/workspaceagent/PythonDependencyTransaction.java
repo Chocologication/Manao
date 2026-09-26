@@ -39,6 +39,8 @@ public final class PythonDependencyTransaction {
     static final String ABSENT = "ABSENT";
     static final String STATE_PREPARED = "PREPARED";
     private static final ObjectMapper JSON = new ObjectMapper();
+    /** Bounded run of zero-byte writes tolerated before a drain gives up fail-closed. */
+    private static final int MAX_CONSECUTIVE_EMPTY_WRITES = 3;
     private static final java.util.regex.Pattern REQUEST_SHA256 = java.util.regex.Pattern.compile("[0-9a-f]{64}");
 
     /**
@@ -417,7 +419,7 @@ public final class PythonDependencyTransaction {
             try (FileChannel channel = FileChannel.open(temp, StandardOpenOption.WRITE,
                 StandardOpenOption.TRUNCATE_EXISTING, StandardOpenOption.CREATE,
                 LinkOption.NOFOLLOW_LINKS)) {
-                channel.write(java.nio.ByteBuffer.wrap(content));
+                writeFully(channel, content);
                 channel.force(true);
             }
             try {
@@ -428,6 +430,26 @@ public final class PythonDependencyTransaction {
             forceDirectory(target.getParent());
         } catch (IOException ex) {
             throw ioError("cannot write file");
+        }
+    }
+
+    /**
+     * Writes the whole buffer before the caller fsyncs and renames: a single {@code write()}
+     * call is not guaranteed to drain the buffer, and a short write published through the
+     * rename would be a truncated journal or workspace file that no retry can restore.
+     */
+    static void writeFully(java.nio.channels.WritableByteChannel channel, byte[] content) throws IOException {
+        java.nio.ByteBuffer buffer = java.nio.ByteBuffer.wrap(content);
+        int emptyWrites = 0;
+        while (buffer.hasRemaining()) {
+            int written = channel.write(buffer);
+            if (written > 0) {
+                emptyWrites = 0;
+            } else if (++emptyWrites > MAX_CONSECUTIVE_EMPTY_WRITES) {
+                // The channel contract permits zero-byte writes; a bounded run of them with
+                // bytes still remaining is failure, not something to spin on.
+                throw ioError("short write while persisting the managed file");
+            }
         }
     }
 

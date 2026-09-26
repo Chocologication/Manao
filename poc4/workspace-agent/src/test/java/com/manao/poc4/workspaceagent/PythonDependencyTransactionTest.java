@@ -487,6 +487,83 @@ class PythonDependencyTransactionTest {
     }
 
     @Test
+    void writeFullyDrainsTheWholeBufferThroughAShortWritingChannel() throws Exception {
+        // Consumes at most LIMIT bytes per write() call, in order, exactly like a real channel
+        // that cannot take the whole buffer at once — a single write() call would silently
+        // leave most of the buffer unpublished and a truncated file would be fsynced+renamed.
+        byte[] content = new byte[100_000];
+        new java.security.SecureRandom().nextBytes(content);
+        PartialAcceptanceChannel channel = new PartialAcceptanceChannel(4096);
+
+        PythonDependencyTransaction.writeFully(channel, content);
+
+        assertThat(channel.calls).as("several write() calls must be made").isGreaterThan(1);
+        assertThat(channel.drained.toByteArray()).isEqualTo(content);
+    }
+
+    @Test
+    void writeFullyFailsClosedWhenTheChannelNeverAcceptsBytes() throws java.io.IOException {
+        // The WritableByteChannel contract permits zero-byte writes; the drain must bail out
+        // fail-closed on a bounded run of them instead of spinning forever.
+        NeverAcceptingChannel channel = new NeverAcceptingChannel();
+
+        assertThatThrownBy(() -> PythonDependencyTransaction.writeFully(channel, new byte[16]))
+            .isInstanceOfSatisfying(WorkspaceFileService.WorkspaceFileException.class,
+                ex -> assertThat(ex.code()).isEqualTo("IO_ERROR"));
+        assertThat(channel.calls).as("must terminate instead of spinning").isLessThan(10);
+    }
+
+    /** Honest partial-acceptance channel: consumes at most LIMIT bytes per write(), in order. */
+    private static final class PartialAcceptanceChannel implements java.nio.channels.WritableByteChannel {
+        private final int limit;
+        private final java.io.ByteArrayOutputStream drained = new java.io.ByteArrayOutputStream();
+        int calls;
+
+        PartialAcceptanceChannel(int limit) {
+            this.limit = limit;
+        }
+
+        @Override
+        public int write(java.nio.ByteBuffer src) {
+            calls++;
+            int accepted = Math.min(src.remaining(), limit);
+            for (int i = 0; i < accepted; i++) {
+                drained.write(src.get());
+            }
+            return accepted;
+        }
+
+        @Override
+        public boolean isOpen() {
+            return true;
+        }
+
+        @Override
+        public void close() {
+        }
+    }
+
+    /** Honest zero-acceptance channel: consumes nothing and reports zero bytes written. */
+    private static final class NeverAcceptingChannel implements java.nio.channels.WritableByteChannel {
+        int calls;
+
+        @Override
+        public int write(java.nio.ByteBuffer src) {
+            calls++;
+            return 0;
+        }
+
+        @Override
+        public boolean isOpen() {
+            return true;
+        }
+
+        @Override
+        public void close() {
+        }
+    }
+
+    @Test
     void commitAfterAFailedAttemptCompletesThroughTheSameEntry(@TempDir Path root) throws Exception {
         Files.writeString(root.resolve("pyproject.toml"), BEFORE_PYPROJECT);
         Files.writeString(root.resolve("uv.lock"), BEFORE_LOCK);
