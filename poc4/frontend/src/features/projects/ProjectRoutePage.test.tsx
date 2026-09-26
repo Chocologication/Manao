@@ -142,7 +142,9 @@ describe('ProjectRoutePage dependency recovery after refresh', () => {
     ]);
     expect(dependencyReconciles(fetchSpy)).toHaveLength(0);
     // The current workspace was reloaded after the confirmation, and the stored id is gone.
-    expect(getFileRequestCount('tree', project.id, '')).toBeGreaterThan(treeCountBeforeCheck);
+    await waitFor(() => {
+      expect(getFileRequestCount('tree', project.id, '')).toBeGreaterThan(treeCountBeforeCheck);
+    });
     expect(sessionStorage.getItem(pythonDependencyStorageKey(ALICE_USER_ID, project.id))).toBeNull();
     expect(await screen.findByRole('treeitem', { name: 'pyproject.toml' })).toBeInTheDocument();
 

@@ -21,6 +21,28 @@ if (typeof globalThis.ClipboardItem === 'undefined') {
   } as unknown as typeof ClipboardItem;
 }
 
+/**
+ * jsdom implements ClipboardItem but never consumes the promises passed as item
+ * values. Monaco's clipboardService installs a click/keydown workaround on the
+ * container (loaded with the workbench editor module graph) that creates a
+ * DeferredPromise per event and cancels the previous one, so the second user
+ * gesture in a jsdom document rejects that first promise with nobody attached —
+ * an unhandled rejection. The stub below consumes every promise item exactly
+ * like a real browser settling a clipboard payload. It only affects the already
+ * browser-mocked ClipboardItem; all other unhandled rejections stay loud.
+ */
+if (typeof globalThis.ClipboardItem === 'function') {
+  const RealClipboardItem = globalThis.ClipboardItem;
+  globalThis.ClipboardItem = class extends RealClipboardItem {
+    constructor(items: Record<string, Blob | string | Promise<Blob | string>> = {}) {
+      for (const value of Object.values(items)) {
+        void Promise.resolve(value).catch(() => {});
+      }
+      super(items);
+    }
+  } as unknown as typeof ClipboardItem;
+}
+
 if (typeof navigator.clipboard?.write !== 'function') {
   Object.defineProperty(navigator, 'clipboard', {
     configurable: true,
