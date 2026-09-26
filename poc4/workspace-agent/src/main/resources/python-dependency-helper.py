@@ -16,12 +16,19 @@ Launched by the agent exactly as:
   declare [project], must NOT declare a build backend, and the only [tool.uv] configuration
   it may carry is an index declaration for the pinned public index (uv add itself persists
   --default-index into the file that way; anything else - sources, private indexes, overrides
-  - is rejected). uv runs with the fixed argv --no-sync --no-build --no-sources
-  --no-config --no-python-downloads against the pinned interpreter and the public index, so
-  user build backends and user sources can never execute inside the management agent.
+  - is rejected). Every dependency declaration ([project] dependencies, optional-dependencies
+  and [dependency-groups]) must be a plain public-PyPI requirement: a PEP 508 name with
+  optional extras, optional PEP 440 specifiers and a conservative environment marker. Direct
+  URLs (`name @ ...`), git+/file:/http(s) references and paths can aim uv at sources beyond
+  the pinned index even with --no-sources, so they are rejected BEFORE uv runs - for the
+  requested change and for pre-existing declarations alike. uv runs with the fixed argv
+  --no-sync --no-build --no-sources --no-config --no-python-downloads against the pinned
+  interpreter and the public index, so user build backends and user sources can never execute
+  inside the management agent.
 - stdout carries only a fixed failure token (PYTHON_DEPENDENCY_UNSUPPORTED |
-  PYTHON_DEPENDENCY_TIMEOUT | PYTHON_DEPENDENCY_RESOLUTION_FAILED). Diagnostics are capped at
-  64 KiB and go to stderr for the agent log only - never back to the client.
+  PYTHON_DEPENDENCY_TIMEOUT | PYTHON_DEPENDENCY_NO_WHEEL |
+  PYTHON_DEPENDENCY_RESOLUTION_FAILED). Diagnostics are capped at 64 KiB and go to stderr for
+  the agent log only - never back to the client.
 """
 import os
 import re
@@ -35,6 +42,27 @@ OUTPUT_LIMIT = 64 * 1024
 DEFAULT_INDEX_URL = "https://pypi.org/simple"
 PACKAGE_NAME = re.compile(r"^[a-z0-9]([a-z0-9-]{0,126}[a-z0-9])?$")
 EXACT_VERSION = re.compile(r"^[0-9A-Za-z][0-9A-Za-z.+!-]{0,127}$")
+
+# First-version support scope (design 6.3): every dependency declaration must be a plain
+# public-PyPI requirement - a PEP 508 name with optional extras, optional PEP 440 version
+# specifiers and an optional PEP 508 environment-marker expression. Direct URLs (`name @
+# ...`), git+/file:/http(s) references and absolute or relative paths can direct uv to
+# sources beyond the pinned index even with --no-sources, so anything outside this grammar
+# is rejected BEFORE uv runs - for the requested change and for pre-existing declarations.
+_PEP508_NAME = r"[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?"
+_PEP440_VERSION = r"[0-9A-Za-z][0-9A-Za-z.*+!\-_]*"
+_VERSION_SPECIFIER = r"(?:===|==|!=|<=|>=|~=|<|>)\s*%s" % _PEP440_VERSION
+_MARKER_VAR = r"[A-Za-z_][A-Za-z0-9_.]*"
+_MARKER_OP = r"(?:===|==|!=|<=|>=|~=|<|>|in|not\s+in)"
+_MARKER_VALUE = r"(?:'[^']*'|\"[^\"]*\"|[0-9A-Za-z][0-9A-Za-z._+\-]*)"
+_MARKER_TERM = r"\(?%s\s*%s\s*%s\)?" % (_MARKER_VAR, _MARKER_OP, _MARKER_VALUE)
+_MARKER_EXPR = r"%s(?:\s+(?:and|or)\s+%s)*" % (_MARKER_TERM, _MARKER_TERM)
+PLAIN_REQUIREMENT = re.compile(
+    r"^(?:%s)(?:\[(?:%s(?:,%s)*)?\])?"
+    r"(?:\s*%s(?:\s*,\s*%s)*)?"
+    r"(?:\s*;\s*%s)?\s*$"
+    % (_PEP508_NAME, _PEP508_NAME, _PEP508_NAME,
+       _VERSION_SPECIFIER, _VERSION_SPECIFIER, _MARKER_EXPR))
 
 # Fixed uv argv: project discovery stays in SCRATCH (cwd), the interpreter and index are
 # pinned, and every relaxation that could execute user code or read user configuration is off.
@@ -52,6 +80,17 @@ UV_ARGV_PREFIX = [
 EXIT_UNSUPPORTED = 3
 EXIT_TIMEOUT = 4
 EXIT_RESOLUTION_FAILED = 5
+EXIT_NO_WHEEL = 6
+
+# uv 0.11.6 emits these fixed phrases when the pinned public registry cannot satisfy the
+# request at all: the package does not exist, the exact version does not exist, or no usable
+# wheel exists and building is disabled by --no-build. Those form the design's fixed safe
+# "no wheel" category; every other uv failure stays a generic resolution failure.
+NO_WHEEL_MARKERS = (
+    "has no usable wheels",
+    "was not found in the package registry",
+    "there is no version of",
+)
 
 
 def fail(token, exit_code, message):
@@ -66,6 +105,10 @@ def unsupported(message):
 
 def resolution_failed(message):
     fail("PYTHON_DEPENDENCY_RESOLUTION_FAILED", EXIT_RESOLUTION_FAILED, message)
+
+
+def no_wheel(message):
+    fail("PYTHON_DEPENDENCY_NO_WHEEL", EXIT_NO_WHEEL, message)
 
 
 def drain(stream, sink):
@@ -105,6 +148,39 @@ def check_supported_scope(scratch):
             if not isinstance(entry, dict) or entry.get("url") != DEFAULT_INDEX_URL \
                     or not set(entry) <= {"url", "default", "explicit"}:
                 unsupported("only the pinned public PyPI index (%s) is supported" % DEFAULT_INDEX_URL)
+    check_dependency_declarations(data, project)
+
+
+def check_dependency_declarations(data, project):
+    """Rejects any dependency declaration that could aim uv beyond the pinned public index."""
+    declarations = []
+    dependencies = project.get("dependencies")
+    if dependencies is not None:
+        if not isinstance(dependencies, list):
+            unsupported("[project] dependencies must be a list of requirement strings")
+        declarations.append(("[project] dependencies", dependencies))
+    optional = project.get("optional-dependencies")
+    if optional is not None:
+        if not isinstance(optional, dict):
+            unsupported("[project] optional-dependencies must be a table of requirement lists")
+        for group, entries in optional.items():
+            if not isinstance(entries, list):
+                unsupported("[project.optional-dependencies] groups must be lists of requirement strings")
+            declarations.append(("[project.optional-dependencies.%s]" % group, entries))
+    groups = data.get("dependency-groups")
+    if groups is not None:
+        if not isinstance(groups, dict):
+            unsupported("[dependency-groups] must be a table of requirement lists")
+        for group, entries in groups.items():
+            if not isinstance(entries, list):
+                unsupported("[dependency-groups] groups must be lists of requirement strings")
+            declarations.append(("[dependency-groups.%s]" % group, entries))
+    for table, entries in declarations:
+        for entry in entries:
+            if not isinstance(entry, str) or not PLAIN_REQUIREMENT.match(entry):
+                unsupported(
+                    "%s declares a dependency outside the plain public-PyPI requirement form; "
+                    "direct URLs, git and path sources are outside the supported scope: %r" % (table, entry))
 
 
 def main(argv):
@@ -168,11 +244,13 @@ def main(argv):
     for thread in threads:
         thread.join(timeout=10)
     if process.returncode != 0:
-        resolution_failed("uv failed (%d): %s%s" % (
-            process.returncode,
-            stdout_sink["data"].decode("utf-8", "replace"),
-            stderr_sink["data"].decode("utf-8", "replace"),
-        ))
+        output = (stdout_sink["data"] + stderr_sink["data"]).decode("utf-8", "replace")
+        # uv wraps its messages across lines, so the markers are matched against
+        # whitespace-collapsed text.
+        collapsed = " ".join(output.split())
+        if any(marker in collapsed for marker in NO_WHEEL_MARKERS):
+            no_wheel("the pinned registry cannot provide a usable wheel for the request: %s" % output)
+        resolution_failed("uv failed (%d): %s" % (process.returncode, output))
     sys.exit(0)
 
 

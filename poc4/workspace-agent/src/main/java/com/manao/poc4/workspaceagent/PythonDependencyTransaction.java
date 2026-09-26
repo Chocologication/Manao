@@ -22,11 +22,15 @@ import java.util.function.Supplier;
  * {@link PythonDependencyEditor} persists is the only authorization to replace
  * {@code pyproject.toml}/{@code uv.lock}; {@link #commit} validates the backend-issued command
  * and receipt against it, applies each file through temp+fsync+rename, verifies the combined
- * digest and records the receipt last. The first commit and any post-interruption retry enter
- * this same implementation, serialized by the same per-operation file lock — there is no
- * separate recover state machine. A receipt that already exists and matches is replayed as the
- * same result; a missing or damaged journal, a digest mismatch and any third file content keep
- * failing closed.
+ * digest and records the receipt last. The FULL journal — both stored file bodies and every
+ * manifest digest relationship — is validated before any rename, on the commit path and on the
+ * same-request PREPARED fast path alike, so a damaged journal fails closed without a half
+ * commit. Internal journal, lock and receipt paths are resolved without following links so a
+ * pre-planted symlink under {@code .manao} cannot redirect I/O outside the project root. The
+ * first commit and any post-interruption retry enter this same implementation, serialized by
+ * the same per-operation file lock — there is no separate recover state machine. A receipt
+ * that already exists and matches is replayed as the same result; a missing or damaged
+ * journal, a digest mismatch and any third file content keep failing closed.
  */
 public final class PythonDependencyTransaction {
     /** Internal journal directory under the agent-only {@code .manao} tree. */
@@ -71,6 +75,9 @@ public final class PythonDependencyTransaction {
                            String beforeSha256, String afterSha256,
                            FileDigests pyproject, FileDigests uvLock) { }
 
+    /** A journal whose manifest relationships and both stored file bodies are fully verified. */
+    private record ValidatedJournal(JournalManifest manifest, byte[] pyprojectContent, byte[] lockContent) { }
+
     /**
      * Package-private staging of an already-resolved result: the only writer of the journal.
      * Idempotent for the same operation id + request digest; a different request for the same
@@ -110,6 +117,44 @@ public final class PythonDependencyTransaction {
     }
 
     /**
+     * Full journal validation, run before ANY workspace mutation and on the same-request PREPARED
+     * fast path: the manifest's per-file digests must recombine to its combined digests, and both
+     * journal file bodies must exist and hash to their per-file after digests. A damaged journal
+     * fails closed here — before a single target file is touched — so a commit can never leave a
+     * half-applied workspace whose previous content the journal cannot restore.
+     */
+    private ValidatedJournal validateJournal(String operationId) {
+        Path manifestFile = internalPath(JOURNAL_DIRECTORY + "/" + operationId + "/manifest.json");
+        if (!Files.isRegularFile(manifestFile, LinkOption.NOFOLLOW_LINKS)) {
+            throw conflict("no prepared dependency journal for this operation id");
+        }
+        JournalManifest manifest = readManifest(manifestFile);
+        if (!operationId.equals(manifest.operationId()) || !STATE_PREPARED.equals(manifest.state())) {
+            throw ioError("dependency journal is in an unexpected state");
+        }
+        if (!combinedDigest(manifest.pyproject().before(), manifest.uvLock().before()).equals(manifest.beforeSha256())
+            || !combinedDigest(manifest.pyproject().after(), manifest.uvLock().after()).equals(manifest.afterSha256())) {
+            throw ioError("dependency journal manifest digests do not recombine");
+        }
+        byte[] pyproject = journalBody(internalPath(JOURNAL_DIRECTORY + "/" + operationId + "/pyproject.toml"),
+            manifest.pyproject().after());
+        byte[] lock = journalBody(internalPath(JOURNAL_DIRECTORY + "/" + operationId + "/uv.lock"),
+            manifest.uvLock().after());
+        return new ValidatedJournal(manifest, pyproject, lock);
+    }
+
+    private byte[] journalBody(Path file, String expectedSha256) {
+        if (!Files.isRegularFile(file, LinkOption.NOFOLLOW_LINKS)) {
+            throw ioError("dependency journal is incomplete");
+        }
+        byte[] bytes = readBytes(file);
+        if (!sha256Hex(bytes).equals(expectedSha256)) {
+            throw ioError("dependency journal content does not match its manifest");
+        }
+        return bytes;
+    }
+
+    /**
      * The single public entry: first commit, post-interruption retry and receipt replay all go
      * through here. Returns the committed summary; the response never carries file contents.
      */
@@ -126,7 +171,7 @@ public final class PythonDependencyTransaction {
         String operationId = command.prepared().operationId();
         return locked(operationId, () -> {
             Path receiptFile = receiptFile(operationId);
-            if (Files.isRegularFile(receiptFile)) {
+            if (Files.isRegularFile(receiptFile, LinkOption.NOFOLLOW_LINKS)) {
                 byte[] existing = readBytes(receiptFile);
                 if (command.receiptJson().equals(new String(existing, StandardCharsets.UTF_8))
                     && sha256Hex(existing).equals(command.receiptSha256())) {
@@ -138,7 +183,11 @@ public final class PythonDependencyTransaction {
                 }
                 throw conflict("operation id was already committed with a different receipt");
             }
-            JournalManifest manifest = readJournal(operationId);
+            // Validate the FULL journal — both file bodies and all manifest digest
+            // relationships — before any rename, so a damaged journal fails closed without a
+            // half commit whose previous workspace content is unrecoverable.
+            ValidatedJournal journal = validateJournal(operationId);
+            JournalManifest manifest = journal.manifest();
             if (!command.prepared().requestSha256().equals(manifest.requestSha256())) {
                 throw new WorkspaceFileService.WorkspaceFileException("DEPENDENCY_REQUEST_MISMATCH",
                     "operation id was prepared for a different request");
@@ -149,7 +198,7 @@ public final class PythonDependencyTransaction {
             }
             verifyReceipt(command.receiptJson(), command.receiptSha256(), operationId,
                 manifest.beforeSha256(), manifest.afterSha256());
-            applyPreparedFiles(manifest);
+            applyPreparedFiles(manifest, journal.pyprojectContent(), journal.lockContent());
             verifyCombinedAfter(manifest);
             writeReceipt(receiptFile, command.receiptJson(), command.receiptSha256());
             return new PythonDependencyEditor.PreparedPythonDependencies(operationId,
@@ -160,16 +209,15 @@ public final class PythonDependencyTransaction {
     /**
      * Fast-path lookup for the editor: returns the stored summary when this operation id was
      * already prepared with the same request digest, throws DEPENDENCY_REQUEST_MISMATCH for a
-     * different request and fails closed on an unreadable journal. Safe without the operation
-     * lock because the manifest is published by atomic rename.
+     * different request and fails closed on a missing, unreadable or damaged journal — the same
+     * full validation a commit performs, because the returned digests are only trustworthy if
+     * the stored journal content still matches them. Safe without the operation lock because
+     * the manifest is published by atomic rename after its file bodies.
      */
     PythonDependencyEditor.PreparedPythonDependencies existingPrepared(String operationId, String requestSha256) {
-        Path manifest = journalDirectory(operationId).resolve("manifest.json");
-        if (!Files.isRegularFile(manifest)) return null;
-        JournalManifest parsed = readManifest(manifest);
-        if (!operationId.equals(parsed.operationId()) || !STATE_PREPARED.equals(parsed.state())) {
-            throw ioError("dependency journal is in an unexpected state");
-        }
+        Path manifest = internalPath(JOURNAL_DIRECTORY + "/" + operationId + "/manifest.json");
+        if (!Files.isRegularFile(manifest, LinkOption.NOFOLLOW_LINKS)) return null;
+        JournalManifest parsed = validateJournal(operationId).manifest();
         if (!requestSha256.equals(parsed.requestSha256())) {
             throw new WorkspaceFileService.WorkspaceFileException("DEPENDENCY_REQUEST_MISMATCH",
                 "operation id was prepared for a different request");
@@ -178,17 +226,17 @@ public final class PythonDependencyTransaction {
             parsed.requestSha256(), parsed.beforeSha256(), parsed.afterSha256());
     }
 
-    private void applyPreparedFiles(JournalManifest manifest) {
+    private void applyPreparedFiles(JournalManifest manifest, byte[] pyprojectContent, byte[] lockContent) {
         // Validate both targets before touching anything, so a rejected commit is side-effect
         // free; any drift appearing between validation and application is caught by the final
-        // combined digest verification.
+        // combined digest verification. The journal bodies were fully validated before this.
         String pyprojectCurrent = fileDigestOrAbsent(workspaceFile("pyproject.toml"));
         String lockCurrent = fileDigestOrAbsent(workspaceFile("uv.lock"));
         validateCurrentState("pyproject.toml", manifest.pyproject(), pyprojectCurrent);
         validateCurrentState("uv.lock", manifest.uvLock(), lockCurrent);
         int[] renames = {0};
-        applyPreparedFile(manifest, "pyproject.toml", manifest.pyproject(), pyprojectCurrent, renames);
-        applyPreparedFile(manifest, "uv.lock", manifest.uvLock(), lockCurrent, renames);
+        applyPreparedFile("pyproject.toml", manifest.pyproject(), pyprojectCurrent, pyprojectContent, renames);
+        applyPreparedFile("uv.lock", manifest.uvLock(), lockCurrent, lockContent, renames);
     }
 
     private void validateCurrentState(String name, FileDigests digests, String current) {
@@ -198,12 +246,11 @@ public final class PythonDependencyTransaction {
         }
     }
 
-    private void applyPreparedFile(JournalManifest manifest, String name, FileDigests digests,
-                                   String current, int[] renames) {
+    private void applyPreparedFile(String name, FileDigests digests, String current,
+                                   byte[] content, int[] renames) {
         if (digests.after().equals(current)) {
             return; // this file was already replaced by the interrupted attempt
         }
-        byte[] content = journalFileBytes(manifest.operationId(), name, digests.after());
         writeAtomic(workspaceFile(name), content);
         renames[0]++;
         if (afterRename != null) {
@@ -246,26 +293,6 @@ public final class PythonDependencyTransaction {
         return value == null ? null : value.asText();
     }
 
-    private byte[] journalFileBytes(String operationId, String name, String expectedSha256) {
-        Path file = journalDirectory(operationId).resolve(name);
-        if (!Files.isRegularFile(file)) {
-            throw ioError("dependency journal is incomplete");
-        }
-        byte[] bytes = readBytes(file);
-        if (!sha256Hex(bytes).equals(expectedSha256)) {
-            throw ioError("dependency journal content does not match its manifest");
-        }
-        return bytes;
-    }
-
-    private JournalManifest readJournal(String operationId) {
-        Path manifest = journalDirectory(operationId).resolve("manifest.json");
-        if (!Files.isRegularFile(manifest)) {
-            throw conflict("no prepared dependency journal for this operation id");
-        }
-        return readManifest(manifest);
-    }
-
     private JournalManifest readManifest(Path manifest) {
         try {
             JournalManifest parsed = JSON.readValue(readBytes(manifest), JournalManifest.class);
@@ -296,11 +323,47 @@ public final class PythonDependencyTransaction {
     }
 
     private Path journalDirectory(String operationId) {
-        return projectRoot.resolve(JOURNAL_DIRECTORY).resolve(operationId);
+        return internalPath(JOURNAL_DIRECTORY + "/" + operationId);
     }
 
+    /** Receipt paths are agent-internal constants plus the validated operation id. */
     private Path receiptFile(String operationId) {
-        return projectRoot.resolve(WorkspaceFileService.RECEIPTS_DIRECTORY).resolve(operationId + ".json");
+        return internalPath(WorkspaceFileService.RECEIPTS_DIRECTORY + "/" + operationId + ".json");
+    }
+
+    /**
+     * Resolves an agent-internal path under the project root WITHOUT following links. The
+     * {@code .manao} tree shares the project PVC with user-visible files, so a pre-planted
+     * symlink on an internal directory or file must never redirect journal, lock or receipt
+     * I/O outside the project root: every existing segment must be a real directory (the last
+     * segment may also be a to-be-created file), and no segment may be a symlink. Unlike the
+     * workspace policy this does not consult {@code toRealPath()} on the target itself — the
+     * no-follow walk is the containment proof.
+     */
+    private Path internalPath(String relativePath) {
+        Path current;
+        try {
+            current = projectRoot.toRealPath();
+        } catch (IOException ex) {
+            throw ioError("project directory is unavailable");
+        }
+        String[] segments = relativePath.split("/");
+        for (int index = 0; index < segments.length; index++) {
+            String segment = segments[index];
+            if (segment.isEmpty() || segment.equals(".") || segment.equals("..")) {
+                throw ioError("agent-internal path is malformed");
+            }
+            Path next = current.resolve(segment);
+            if (Files.isSymbolicLink(next)) {
+                throw ioError("agent-internal path must not be a symbolic link");
+            }
+            if (index < segments.length - 1 && Files.exists(next, LinkOption.NOFOLLOW_LINKS)
+                && !Files.isDirectory(next, LinkOption.NOFOLLOW_LINKS)) {
+                throw ioError("agent-internal path segment is not a directory");
+            }
+            current = next;
+        }
+        return current;
     }
 
     private void writeReceipt(Path receiptFile, String receiptJson, String expectedReceiptSha256) {
@@ -314,10 +377,13 @@ public final class PythonDependencyTransaction {
         ReentrantLock mutex = OPERATION_LOCKS.computeIfAbsent(lockKey(operationId), key -> new ReentrantLock());
         mutex.lock();
         try {
-            Path lockDirectory = projectRoot.resolve(JOURNAL_DIRECTORY);
+            Path lockDirectory = internalPath(JOURNAL_DIRECTORY);
             Files.createDirectories(lockDirectory);
-            try (FileChannel channel = FileChannel.open(lockDirectory.resolve(operationId + ".lock"),
-                StandardOpenOption.CREATE, StandardOpenOption.WRITE)) {
+            // NOFOLLOW: a pre-planted lock symlink must not redirect the advisory lock outside
+            // the project root; internalPath has already rejected an existing symlinked name.
+            Path lockFile = internalPath(JOURNAL_DIRECTORY + "/" + operationId + ".lock");
+            try (FileChannel channel = FileChannel.open(lockFile, StandardOpenOption.CREATE,
+                StandardOpenOption.WRITE, LinkOption.NOFOLLOW_LINKS)) {
                 FileLock fileLock = channel.lock();
                 try {
                     return body.get();

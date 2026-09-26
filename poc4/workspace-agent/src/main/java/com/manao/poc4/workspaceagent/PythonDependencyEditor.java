@@ -193,7 +193,104 @@ public final class PythonDependencyEditor {
         String token = helperStdout == null ? "" : helperStdout.trim();
         if ("PYTHON_DEPENDENCY_UNSUPPORTED".equals(token)) return "PYTHON_DEPENDENCY_UNSUPPORTED";
         if ("PYTHON_DEPENDENCY_TIMEOUT".equals(token)) return "PYTHON_DEPENDENCY_TIMEOUT";
+        if ("PYTHON_DEPENDENCY_NO_WHEEL".equals(token)) return "PYTHON_DEPENDENCY_NO_WHEEL";
         return "PYTHON_DEPENDENCY_RESOLUTION_FAILED";
+    }
+
+    /** Outcome of one helper run: whether the outer budget was overrun, plus capped diagnostics. */
+    record HelperRun(boolean timedOut, int exitCode, byte[] stdout, byte[] stderr) { }
+
+    /**
+     * Waits for the helper within the bounded outer budget while reader threads drain both
+     * pipes CONCURRENTLY: a helper that fills the OS pipe buffer with diagnostics could never
+     * finish its write before a post-exit drain runs, so a fast resolution failure would hang
+     * until the budget and be misreported as a timeout. On overrun the helper AND its whole
+     * child tree are destroyed.
+     */
+    static HelperRun awaitHelper(Process process, long timeoutSeconds) {
+        DrainReader stdout = new DrainReader(process.getInputStream());
+        DrainReader stderr = new DrainReader(process.getErrorStream());
+        boolean exited;
+        try {
+            exited = process.waitFor(timeoutSeconds, TimeUnit.SECONDS);
+        } catch (InterruptedException ex) {
+            Thread.currentThread().interrupt();
+            killHelperTree(process);
+            return new HelperRun(true, -1, stdout.captured(), stderr.captured());
+        }
+        if (!exited) {
+            killHelperTree(process);
+            try {
+                process.waitFor(5, TimeUnit.SECONDS);
+            } catch (InterruptedException ex) {
+                Thread.currentThread().interrupt();
+            }
+            return new HelperRun(true, process.isAlive() ? -1 : process.exitValue(),
+                stdout.captured(), stderr.captured());
+        }
+        return new HelperRun(false, process.exitValue(), stdout.captured(), stderr.captured());
+    }
+
+    /**
+     * Destroys the helper and, best effort, everything below it. Java 17 exposes no process
+     * group API, so the uv tree is killed through {@link ProcessHandle#descendants()} while
+     * the helper is still discoverable — descendants first, because after the helper itself
+     * dies they are reparented and can no longer be found through it.
+     */
+    static void killHelperTree(Process process) {
+        ProcessHandle helper = process.toHandle();
+        for (int round = 0; round < 5; round++) {
+            List<ProcessHandle> descendants = helper.descendants().toList();
+            if (descendants.isEmpty()) break;
+            descendants.forEach(ProcessHandle::destroyForcibly);
+            try {
+                Thread.sleep(100);
+            } catch (InterruptedException ex) {
+                Thread.currentThread().interrupt();
+                break;
+            }
+        }
+        process.destroyForcibly();
+    }
+
+    /** Drains one child stream on its own daemon thread, retaining at most {@link #OUTPUT_LIMIT} bytes. */
+    private static final class DrainReader {
+        private final java.io.ByteArrayOutputStream kept = new java.io.ByteArrayOutputStream();
+        private final Thread thread;
+
+        DrainReader(java.io.InputStream stream) {
+            this.thread = new Thread(() -> {
+                byte[] buffer = new byte[8192];
+                try {
+                    int read;
+                    while ((read = stream.read(buffer)) != -1) {
+                        synchronized (kept) {
+                            int room = OUTPUT_LIMIT - kept.size();
+                            if (room > 0) {
+                                kept.write(buffer, 0, Math.min(read, room));
+                            }
+                        }
+                    }
+                    stream.close();
+                } catch (IOException ignored) {
+                    // best-effort drain of an exited helper's stream
+                }
+            }, "python-dependency-drain");
+            this.thread.setDaemon(true);
+            this.thread.start();
+        }
+
+        /** Waits (bounded) for EOF — a still-running grandchild cannot block it forever — and returns the retained bytes. */
+        byte[] captured() {
+            try {
+                thread.join(10_000);
+            } catch (InterruptedException ex) {
+                Thread.currentThread().interrupt();
+            }
+            synchronized (kept) {
+                return kept.toByteArray();
+            }
+        }
     }
 
     private static final class HelperResolver implements Resolver {
@@ -231,36 +328,24 @@ public final class PythonDependencyEditor {
             } catch (IOException ex) {
                 throw resolutionFailed("cannot start the dependency helper");
             }
-            boolean exited;
-            try {
-                exited = process.waitFor(budgetSeconds + HELPER_MARGIN_SECONDS, TimeUnit.SECONDS);
-            } catch (InterruptedException ex) {
-                Thread.currentThread().interrupt();
-                process.destroyForcibly();
-                throw resolutionFailed("interrupted while resolving dependencies");
-            }
-            if (!exited) {
-                process.destroyForcibly();
-                try {
-                    process.waitFor(5, TimeUnit.SECONDS);
-                } catch (InterruptedException ex) {
-                    Thread.currentThread().interrupt();
+            HelperRun run = awaitHelper(process, budgetSeconds + HELPER_MARGIN_SECONDS);
+            if (run.timedOut()) {
+                if (Thread.currentThread().isInterrupted()) {
+                    throw resolutionFailed("interrupted while resolving dependencies");
                 }
-                drain(process.getInputStream());
-                drain(process.getErrorStream());
+                // Capped diagnostics still go to the agent log only, never to the client.
+                LOG.warn("python dependency resolution timed out diagnostics={}",
+                    new String(run.stderr(), StandardCharsets.UTF_8));
                 throw new WorkspaceFileService.WorkspaceFileException("PYTHON_DEPENDENCY_TIMEOUT",
                     "dependency resolution exceeded the configured budget");
             }
-            byte[] stdout = drain(process.getInputStream());
-            byte[] stderr = drain(process.getErrorStream());
-            int exitCode = process.exitValue();
-            if (exitCode == 0) {
+            if (run.exitCode() == 0) {
                 return;
             }
-            String code = mapHelperOutcome(exitCode, new String(stdout, StandardCharsets.UTF_8));
+            String code = mapHelperOutcome(run.exitCode(), new String(run.stdout(), StandardCharsets.UTF_8));
             // Fixed safe message for the client; capped diagnostics go to the agent log only.
             LOG.warn("python dependency resolution failed code={} diagnostics={}", code,
-                new String(stderr, StandardCharsets.UTF_8));
+                new String(run.stderr(), StandardCharsets.UTF_8));
             throw new WorkspaceFileService.WorkspaceFileException(code, fixedMessage(code));
         }
 
@@ -268,26 +353,9 @@ public final class PythonDependencyEditor {
             return switch (code) {
                 case "PYTHON_DEPENDENCY_UNSUPPORTED" -> "the project or package is outside the supported dependency scope";
                 case "PYTHON_DEPENDENCY_TIMEOUT" -> "dependency resolution exceeded the configured budget";
+                case "PYTHON_DEPENDENCY_NO_WHEEL" -> "no compatible wheel is available for the requested package or version";
                 default -> "dependency resolution failed";
             };
-        }
-
-        /** Reads a stream up to the output limit and discards the rest so the pipe never blocks. */
-        private static byte[] drain(java.io.InputStream stream) {
-            java.io.ByteArrayOutputStream kept = new java.io.ByteArrayOutputStream();
-            byte[] buffer = new byte[8192];
-            try {
-                int read;
-                while ((read = stream.read(buffer)) != -1) {
-                    if (kept.size() < OUTPUT_LIMIT) {
-                        kept.write(buffer, 0, Math.min(read, OUTPUT_LIMIT - kept.size()));
-                    }
-                }
-                stream.close();
-            } catch (IOException ignored) {
-                // best-effort drain of an exited process
-            }
-            return kept.toByteArray();
         }
     }
 

@@ -318,6 +318,110 @@ class PythonDependencyTransactionTest {
     }
 
     @Test
+    void commitRefusesADamagedJournalBodyBeforeTouchingAnyTarget(@TempDir Path root) throws Exception {
+        Files.writeString(root.resolve("pyproject.toml"), BEFORE_PYPROJECT);
+        Files.writeString(root.resolve("uv.lock"), BEFORE_LOCK);
+        var prepared = stage(root);
+        // A damaged second journal body must fail the commit before the first target is renamed,
+        // otherwise the workspace is left half-applied with its previous content unrecoverable.
+        Files.writeString(root.resolve(".manao/python-dependencies/" + OPERATION_ID + "/uv.lock"), "damaged\n");
+
+        assertThatThrownBy(() -> new PythonDependencyTransaction(root).commit(commitCommand(prepared)))
+            .isInstanceOfSatisfying(WorkspaceFileService.WorkspaceFileException.class,
+                ex -> assertThat(ex.code()).isEqualTo("IO_ERROR"));
+        assertThat(Files.readString(root.resolve("pyproject.toml"))).isEqualTo(BEFORE_PYPROJECT);
+        assertThat(Files.readString(root.resolve("uv.lock"))).isEqualTo(BEFORE_LOCK);
+        assertThat(Files.exists(root.resolve(".manao/receipts/" + OPERATION_ID + ".json"))).isFalse();
+    }
+
+    @Test
+    void commitRefusesAManifestWhoseCombinedDigestsDoNotRecombine(@TempDir Path root) throws Exception {
+        Files.writeString(root.resolve("pyproject.toml"), BEFORE_PYPROJECT);
+        Files.writeString(root.resolve("uv.lock"), BEFORE_LOCK);
+        var prepared = stage(root);
+        // Keep every per-file digest intact but break the manifest's combined digest, so only
+        // the digest RELATIONSHIP is damaged — the commit must still refuse before any rename.
+        Path manifestFile = root.resolve(".manao/python-dependencies/" + OPERATION_ID + "/manifest.json");
+        String tampered = Files.readString(manifestFile)
+            .replace("\"beforeSha256\":\"" + prepared.beforeSha256() + "\"", "\"beforeSha256\":\"" + "9".repeat(64) + "\"");
+        Files.writeString(manifestFile, tampered);
+        var fromTamperedManifest = new PythonDependencyEditor.PreparedPythonDependencies(
+            prepared.operationId(), prepared.requestSha256(), "9".repeat(64), prepared.afterSha256());
+
+        assertThatThrownBy(() -> new PythonDependencyTransaction(root).commit(commitCommand(fromTamperedManifest)))
+            .isInstanceOfSatisfying(WorkspaceFileService.WorkspaceFileException.class,
+                ex -> assertThat(ex.code()).isEqualTo("IO_ERROR"));
+        assertThat(Files.readString(root.resolve("pyproject.toml"))).isEqualTo(BEFORE_PYPROJECT);
+        assertThat(Files.readString(root.resolve("uv.lock"))).isEqualTo(BEFORE_LOCK);
+        assertThat(Files.exists(root.resolve(".manao/receipts/" + OPERATION_ID + ".json"))).isFalse();
+    }
+
+    @Test
+    void stageRefusesASymlinkedJournalDirectory(@TempDir Path root, @TempDir Path outside) throws Exception {
+        Files.writeString(root.resolve("pyproject.toml"), BEFORE_PYPROJECT);
+        Files.writeString(root.resolve("uv.lock"), BEFORE_LOCK);
+        Files.createDirectories(root.resolve(".manao/python-dependencies"));
+        Files.createDirectories(outside.resolve("planted-journal"));
+        try {
+            Files.createSymbolicLink(root.resolve(".manao/python-dependencies/" + OPERATION_ID),
+                outside.resolve("planted-journal"));
+        } catch (UnsupportedOperationException | java.io.IOException ex) {
+            return; // platform cannot create symlinks; the policy tests cover containment
+        }
+
+        assertThatThrownBy(() -> stage(root))
+            .isInstanceOfSatisfying(WorkspaceFileService.WorkspaceFileException.class,
+                ex -> assertThat(ex.code()).isEqualTo("IO_ERROR"));
+        assertThat(Files.readString(root.resolve("pyproject.toml"))).isEqualTo(BEFORE_PYPROJECT);
+        assertThat(Files.readString(root.resolve("uv.lock"))).isEqualTo(BEFORE_LOCK);
+        try (var planted = Files.list(outside.resolve("planted-journal"))) {
+            assertThat(planted.findAny()).as("nothing may be written through the internal symlink").isEmpty();
+        }
+    }
+
+    @Test
+    void stageRefusesASymlinkedOperationLockFile(@TempDir Path root, @TempDir Path outside) throws Exception {
+        Files.writeString(root.resolve("pyproject.toml"), BEFORE_PYPROJECT);
+        Files.writeString(root.resolve("uv.lock"), BEFORE_LOCK);
+        Files.createDirectories(root.resolve(".manao/python-dependencies"));
+        Files.writeString(outside.resolve("planted.lock"), "planted\n");
+        try {
+            Files.createSymbolicLink(root.resolve(".manao/python-dependencies/" + OPERATION_ID + ".lock"),
+                outside.resolve("planted.lock"));
+        } catch (UnsupportedOperationException | java.io.IOException ex) {
+            return; // platform cannot create symlinks; the policy tests cover containment
+        }
+
+        assertThatThrownBy(() -> stage(root))
+            .isInstanceOfSatisfying(WorkspaceFileService.WorkspaceFileException.class,
+                ex -> assertThat(ex.code()).isEqualTo("IO_ERROR"));
+        assertThat(Files.readString(outside.resolve("planted.lock"))).isEqualTo("planted\n");
+        assertThat(Files.exists(root.resolve(".manao/python-dependencies/" + OPERATION_ID + "/manifest.json"))).isFalse();
+    }
+
+    @Test
+    void commitRefusesASymlinkedReceiptsDirectory(@TempDir Path root, @TempDir Path outside) throws Exception {
+        Files.writeString(root.resolve("pyproject.toml"), BEFORE_PYPROJECT);
+        Files.writeString(root.resolve("uv.lock"), BEFORE_LOCK);
+        var prepared = stage(root);
+        Files.createDirectories(outside.resolve("planted-receipts"));
+        try {
+            Files.createSymbolicLink(root.resolve(".manao/receipts"), outside.resolve("planted-receipts"));
+        } catch (UnsupportedOperationException | java.io.IOException ex) {
+            return; // platform cannot create symlinks; the policy tests cover containment
+        }
+
+        assertThatThrownBy(() -> new PythonDependencyTransaction(root).commit(commitCommand(prepared)))
+            .isInstanceOfSatisfying(WorkspaceFileService.WorkspaceFileException.class,
+                ex -> assertThat(ex.code()).isEqualTo("IO_ERROR"));
+        assertThat(Files.readString(root.resolve("pyproject.toml"))).isEqualTo(BEFORE_PYPROJECT);
+        assertThat(Files.readString(root.resolve("uv.lock"))).isEqualTo(BEFORE_LOCK);
+        try (var planted = Files.list(outside.resolve("planted-receipts"))) {
+            assertThat(planted.findAny()).as("no receipt may be written through the internal symlink").isEmpty();
+        }
+    }
+
+    @Test
     void commitAfterAFailedAttemptCompletesThroughTheSameEntry(@TempDir Path root) throws Exception {
         Files.writeString(root.resolve("pyproject.toml"), BEFORE_PYPROJECT);
         Files.writeString(root.resolve("uv.lock"), BEFORE_LOCK);

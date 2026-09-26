@@ -122,6 +122,25 @@ class PythonDependencyEditorTest {
     }
 
     @Test
+    void preparedFastPathRefusesADamagedJournalInsteadOfReturningSummaries(@TempDir Path root) throws Exception {
+        seedWorkspace(root);
+        CountingResolver resolver = new CountingResolver();
+        PythonDependencyEditor editor = editor(root, resolver);
+        PythonDependencyEditor.DependencyChange change =
+            new PythonDependencyEditor.DependencyChange("ADD", "httpx", "0.28.1");
+        editor.prepare(OPERATION_ID, REQUEST_SHA256, change);
+        // The same-request fast path returns persisted digests; it must not trust a journal
+        // whose stored content no longer matches its manifest.
+        Files.writeString(root.resolve(".manao/python-dependencies/" + OPERATION_ID + "/uv.lock"), "damaged\n");
+
+        assertThatThrownBy(() -> editor.prepare(OPERATION_ID, REQUEST_SHA256, change))
+            .isInstanceOfSatisfying(WorkspaceFileService.WorkspaceFileException.class,
+                ex -> assertThat(ex.code()).isEqualTo("IO_ERROR"));
+        assertThat(resolver.calls).isEqualTo(1);
+        assertThat(Files.readString(root.resolve("pyproject.toml"))).isEqualTo(BEFORE_PYPROJECT);
+    }
+
+    @Test
     void prepareWithADifferentRequestForTheSameOperationIdIsRejectedWithoutResolving(@TempDir Path root) throws Exception {
         seedWorkspace(root);
         CountingResolver resolver = new CountingResolver();
@@ -261,10 +280,86 @@ class PythonDependencyEditorTest {
             .isEqualTo("PYTHON_DEPENDENCY_TIMEOUT");
         assertThat(PythonDependencyEditor.mapHelperOutcome(5, "PYTHON_DEPENDENCY_RESOLUTION_FAILED\n"))
             .isEqualTo("PYTHON_DEPENDENCY_RESOLUTION_FAILED");
+        // A registry that cannot provide a usable wheel for the request is its own fixed
+        // safe category, not a generic resolution failure.
+        assertThat(PythonDependencyEditor.mapHelperOutcome(6, "PYTHON_DEPENDENCY_NO_WHEEL\n"))
+            .isEqualTo("PYTHON_DEPENDENCY_NO_WHEEL");
         // Unknown or empty output fails closed as a resolution failure.
         assertThat(PythonDependencyEditor.mapHelperOutcome(1, "something unexpected"))
             .isEqualTo("PYTHON_DEPENDENCY_RESOLUTION_FAILED");
         assertThat(PythonDependencyEditor.mapHelperOutcome(1, "")).isEqualTo("PYTHON_DEPENDENCY_RESOLUTION_FAILED");
+    }
+
+    @Test
+    void aFastHelperFailureIsNotMisreportedAsTimeoutEvenWhenItFillsThePipe() throws Exception {
+        Process process = new ProcessBuilder(javaBin(), "-cp", System.getProperty("java.class.path"),
+            StubNoisyProcess.class.getName()).start();
+        long startedNanos = System.nanoTime();
+
+        PythonDependencyEditor.HelperRun run = PythonDependencyEditor.awaitHelper(process, 30);
+        long elapsedMillis = (System.nanoTime() - startedNanos) / 1_000_000;
+
+        assertThat(run.timedOut()).isFalse();
+        assertThat(run.exitCode()).isEqualTo(3);
+        assertThat(run.stderr()).hasSize(64 * 1024); // drained concurrently while waiting, capped
+        assertThat(elapsedMillis).as("a fast failing helper must not wait out the whole budget")
+            .isLessThan(10_000);
+    }
+
+    @Test
+    void theOuterTimeoutKillsTheHelperAndItsWholeChildTree() throws Exception {
+        Process helper = new ProcessBuilder(javaBin(), "-cp", System.getProperty("java.class.path"),
+            StubHangingProcessTree.class.getName()).start();
+        try {
+            ProcessHandle handle = helper.toHandle();
+            long deadline = System.currentTimeMillis() + 30_000;
+            while (handle.descendants().findAny().isEmpty() && System.currentTimeMillis() < deadline) {
+                Thread.sleep(50);
+            }
+            assertThat(handle.descendants().findAny()).as("stub grandchild spawned").isPresent();
+
+            PythonDependencyEditor.killHelperTree(helper);
+
+            assertThat(helper.waitFor(15, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            long settle = System.currentTimeMillis() + 10_000;
+            while (handle.descendants().findAny().isPresent() && System.currentTimeMillis() < settle) {
+                Thread.sleep(50);
+            }
+            assertThat(handle.descendants().findAny()).as("no descendant survives the tree kill").isEmpty();
+        } finally {
+            PythonDependencyEditor.killHelperTree(helper);
+        }
+    }
+
+    /** Spawned as a process: floods stderr past any OS pipe capacity, then exits nonzero fast. */
+    public static final class StubNoisyProcess {
+        public static void main(String[] args) throws Exception {
+            byte[] chunk = new byte[8192];
+            java.util.Arrays.fill(chunk, (byte) 'x');
+            for (int i = 0; i < 32; i++) {
+                System.err.write(chunk);
+            }
+            System.err.flush();
+            System.exit(3);
+        }
+    }
+
+    /** Spawned as a process: spawns a sleeping grandchild, then hangs like a stuck helper. */
+    public static final class StubHangingProcessTree {
+        public static void main(String[] args) throws Exception {
+            if (args.length > 0 && "sleep".equals(args[0])) {
+                Thread.sleep(120_000);
+                return;
+            }
+            new ProcessBuilder(javaBin(), "-cp", System.getProperty("java.class.path"),
+                StubHangingProcessTree.class.getName(), "sleep").inheritIO().start();
+            Thread.sleep(120_000);
+        }
+    }
+
+    private static String javaBin() {
+        boolean windows = System.getProperty("os.name").toLowerCase(java.util.Locale.ROOT).contains("win");
+        return Path.of(System.getProperty("java.home"), "bin", windows ? "java.exe" : "java").toString();
     }
 
     @Test

@@ -26,6 +26,19 @@
 #   commit-tamper-rejected a commit whose receipt digest does not match fails closed 409
 #   prepare-remove-commit  one real `uv remove httpx` through prepare+commit; the lock keeps
 #                          matching and no dependency residue remains
+#   unsupported-scope      build backend, private index and dependency-declaration sources
+#                          (direct URL, git+, path) all fail 422 PYTHON_DEPENDENCY_UNSUPPORTED
+#                          before uv runs — a pre-existing direct URL can never make the agent
+#                          contact a non-PyPI address
+#   no-wheel-category      a real uv resolution against the pinned registry that cannot provide
+#                          a usable wheel (missing package) is its own fixed safe category
+#                          422 PYTHON_DEPENDENCY_NO_WHEEL, never a generic failure, and leaves
+#                          no journal
+#   helper-hang-kills-tree with the resolution budget at 2 s and a test-only helper that hangs
+#                          after spawning a sleeper child (helper-path env override, per-run
+#                          volume — the production image is untouched), the OUTER budget kills
+#                          the helper AND its whole child tree: 504 within the margin, no
+#                          orphaned process, no journal
 #   timeout-kills-tool     with the resolution budget at 2 s and a hanging test-only uv shim
 #                          (PATH override, per-run volume — the production image is untouched),
 #                          prepare fails 504 PYTHON_DEPENDENCY_TIMEOUT within the budget margin
@@ -70,6 +83,8 @@ PROJECT_ID_SHIM="1f2b1c3d-4e5f-4a6b-8c9d-0e1f2a3b4c5d"
 OPERATION_ADD="7f0a1c3d-0001-4a6b-8c9d-0e1f2a3b4c5d"
 OPERATION_REMOVE="7f0a1c3d-0003-4a6b-8c9d-0e1f2a3b4c5d"
 OPERATION_TIMEOUT="7f0a1c3d-0002-4a6b-8c9d-0e1f2a3b4c5d"
+OPERATION_NOWHEEL="7f0a1c3d-0005-4a6b-8c9d-0e1f2a3b4c5d"
+OPERATION_HELPERHANG="7f0a1c3d-0004-4a6b-8c9d-0e1f2a3b4c5d"
 
 # shellcheck source=lib.sh
 . "$SOURCE_DIR/lib.sh"
@@ -185,6 +200,7 @@ PUBLIC_KEY="$(cat "$WORK/public.b64")"
 REQUEST_SHA_ADD="$(printf '{"action":"ADD","packageName":"httpx","version":"0.28.1"}' | sha256sum | cut -d' ' -f1)"
 REQUEST_SHA_ADD_OTHER="$(printf '{"action":"ADD","packageName":"httpx","version":"0.29.0"}' | sha256sum | cut -d' ' -f1)"
 REQUEST_SHA_REMOVE="$(printf '{"action":"REMOVE","packageName":"httpx","version":null}' | sha256sum | cut -d' ' -f1)"
+REQUEST_SHA_NOWHEEL="$(printf '{"action":"ADD","packageName":"manao-no-such-package-probe","version":"0.0.1"}' | sha256sum | cut -d' ' -f1)"
 
 cat > "$WORK/prepare-add.json" <<EOF
 {"operationId":"$OPERATION_ADD","requestSha256":"$REQUEST_SHA_ADD","change":{"action":"ADD","packageName":"httpx","version":"0.28.1"}}
@@ -197,6 +213,12 @@ cat > "$WORK/prepare-remove.json" <<EOF
 EOF
 cat > "$WORK/prepare-timeout.json" <<EOF
 {"operationId":"$OPERATION_TIMEOUT","requestSha256":"$REQUEST_SHA_ADD","change":{"action":"ADD","packageName":"httpx","version":"0.28.1"}}
+EOF
+cat > "$WORK/prepare-nowheel.json" <<EOF
+{"operationId":"$OPERATION_NOWHEEL","requestSha256":"$REQUEST_SHA_NOWHEEL","change":{"action":"ADD","packageName":"manao-no-such-package-probe","version":"0.0.1"}}
+EOF
+cat > "$WORK/prepare-helperhang.json" <<EOF
+{"operationId":"$OPERATION_HELPERHANG","requestSha256":"$REQUEST_SHA_ADD","change":{"action":"ADD","packageName":"httpx","version":"0.28.1"}}
 EOF
 
 # ---------------------------------------------------------------------------
@@ -421,7 +443,11 @@ scenario_prepare_remove_commit() {
 }
 
 # Out-of-scope project configuration must fail with the fixed category error and no side
-# effects — here a private index in [tool.uv] and a build backend declaration.
+# effects — a build backend declaration, a private index in [tool.uv], and dependency
+# declarations that could aim uv beyond the pinned index: a direct URL to an unroutable
+# non-PyPI address, a git+ source and a relative path. The 422 UNSUPPORTED token is only ever
+# produced by the helper's pre-uv scope check, so the code itself proves no network contact
+# was attempted (uv hitting the unroutable address would end in 504 TIMEOUT instead).
 scenario_unsupported_scope() {
   local operation="$OPERATION_TIMEOUT"
   cat > "$WORK/pyproject-build-backend.toml" <<'EOF'
@@ -446,11 +472,32 @@ dependencies = []
 url = "https://private.example/simple"
 default = true
 EOF
+  cat > "$WORK/pyproject-direct-url.toml" <<'EOF'
+[project]
+name = "manao-python-console"
+version = "0.1.0"
+requires-python = ">=3.13,<3.14"
+dependencies = ["httpx @ http://10.255.255.1:1/simple/httpx-0.28.1.whl"]
+EOF
+  cat > "$WORK/pyproject-git-source.toml" <<'EOF'
+[project]
+name = "manao-python-console"
+version = "0.1.0"
+requires-python = ">=3.13,<3.14"
+dependencies = ["httpx @ git+https://github.com/psf/requests"]
+EOF
+  cat > "$WORK/pyproject-path-source.toml" <<'EOF'
+[project]
+name = "manao-python-console"
+version = "0.1.0"
+requires-python = ">=3.13,<3.14"
+dependencies = ["../shared-lib"]
+EOF
   cat > "$WORK/prepare-unsupported.json" <<EOF
 {"operationId":"$operation","requestSha256":"$REQUEST_SHA_ADD","change":{"action":"ADD","packageName":"httpx","version":"0.28.1"}}
 EOF
   local result=1
-  for variant in build-backend private-index; do
+  for variant in build-backend private-index direct-url git-source path-source; do
     docker cp "$WORK/pyproject-$variant.toml" "$AGENT_NAME:/workspace/pyproject.toml"
     dc exec --user 0 "$AGENT_NAME" chown 10001:10001 /workspace/pyproject.toml
     post_json "$AGENT_PORT" "$PROJECT_ID" "/agent/v1/python-dependencies/prepare" "$WORK/prepare-unsupported.json"
@@ -468,9 +515,66 @@ EOF
   # restore the clean template workspace for any later scenario
   seed_template "$AGENT_NAME"
   if [ "$result" = "0" ]; then
-    pass "unsupported-scope (build backend and private index both rejected 422 PYTHON_DEPENDENCY_UNSUPPORTED, no journal)"
+    pass "unsupported-scope (build backend, private index, direct URL, git+ and path sources all rejected 422 PYTHON_DEPENDENCY_UNSUPPORTED before uv, no journal)"
   else
     fail "unsupported-scope (status=$HTTP_STATUS body=$(cat "$WORK/resp.json"))"
+  fi
+}
+
+# A real uv resolution that cannot obtain a usable wheel from the pinned registry (here: the
+# package does not exist) is its own fixed safe category — never a generic resolution failure,
+# and its stderr is still never forwarded to the client.
+scenario_no_wheel_category() {
+  local started elapsed
+  started="$(now_ms)"
+  post_json "$AGENT_PORT" "$PROJECT_ID" "/agent/v1/python-dependencies/prepare" "$WORK/prepare-nowheel.json"
+  elapsed=$(( $(now_ms) - started ))
+  echo "TIMING: prepare-no-wheel (real uv against the pinned registry) ${elapsed}ms"
+  local journal_present=0
+  dc exec "$AGENT_NAME" test -f "/workspace/.manao/python-dependencies/$OPERATION_NOWHEEL/manifest.json" >/dev/null 2>&1 && journal_present=1
+  if [ "$HTTP_STATUS" = "422" ] \
+    && [ "$(json_field "$WORK/resp.json" "data['code']")" = "PYTHON_DEPENDENCY_NO_WHEEL" ] \
+    && [ "$journal_present" = "0" ]; then
+    pass "no-wheel-category (missing package -> 422 PYTHON_DEPENDENCY_NO_WHEEL, no journal) [${elapsed}ms]"
+  else
+    fail "no-wheel-category (status=$HTTP_STATUS body=$(cat "$WORK/resp.json"))"
+  fi
+}
+
+# On the OUTER budget the agent must kill the helper AND its whole child tree — the helper may
+# itself be stuck and never reap uv. A test-only helper that spawns a sleeper and hangs
+# (helper-path env override, per-run volume; the production image is untouched) must end in
+# 504 within the budget margin with no surviving helper or child process and no journal.
+scenario_helper_hang_kills_tree() {
+  new_volume "helper-shim"
+  local shim="$CREATED_VOLUME"
+  dc run --rm --user 0 --entrypoint /bin/sh -v "$shim:/shim" "$IMAGE" \
+    -c 'printf "#!/usr/local/bin/python3\nimport subprocess, time\nsubprocess.Popen([\"sleep\", \"300\"])\ntime.sleep(600)\n" > /shim/helper.py && chmod 0555 /shim/helper.py' >/dev/null 2>&1 \
+    || { fail "helper-hang-kills-tree (cannot write the test-only hanging helper)"; return 0; }
+  local agent2 port
+  read -r agent2 port <<< "$(start_agent "${PREFIX}-helperhang" "$PROJECT_ID_SHIM" \
+    -e 'MANAO_AGENT_PYTHON_DEPENDENCY_HELPER=/shim/helper.py' \
+    -e 'MANAO_AGENT_PYTHON_DEPENDENCY_RESOLUTION_SECONDS=2' \
+    -v "$shim:/shim")"
+  seed_template "$agent2"
+  local started elapsed
+  started="$(now_ms)"
+  post_json "$port" "$PROJECT_ID_SHIM" "/agent/v1/python-dependencies/prepare" "$WORK/prepare-helperhang.json"
+  elapsed=$(( $(now_ms) - started ))
+  echo "TIMING: prepare-helper-hang (budget 2s, outer margin kills helper + child tree) ${elapsed}ms"
+  local orphans
+  orphans="$(dc exec "$agent2" sh -c \
+    'for d in /proc/[0-9]*; do p=${d#/proc/}; [ "$p" = "$$" ] && continue; c=$(tr "\0" " " < "$d/cmdline" 2>/dev/null || true); case "$c" in *sleep*|*"/shim/helper.py"*) echo "$c";; esac; done' 2>/dev/null || true)"
+  local journal_present=0
+  dc exec "$agent2" test -f "/workspace/.manao/python-dependencies/$OPERATION_HELPERHANG/manifest.json" >/dev/null 2>&1 && journal_present=1
+  if [ "$HTTP_STATUS" = "504" ] \
+    && [ "$(json_field "$WORK/resp.json" "data['code']")" = "PYTHON_DEPENDENCY_TIMEOUT" ] \
+    && [ "$elapsed" -ge 11000 ] && [ "$elapsed" -lt 25000 ] \
+    && [ -z "$orphans" ] \
+    && [ "$journal_present" = "0" ]; then
+    pass "helper-hang-kills-tree (504 within the outer margin, hanging helper and sleeper child killed, no journal) [${elapsed}ms]"
+  else
+    fail "helper-hang-kills-tree (status=$HTTP_STATUS elapsed=${elapsed}ms orphans='${orphans}' journal=$journal_present)"
   fi
 }
 
@@ -524,6 +628,8 @@ scenario_commit_idempotent
 scenario_commit_tamper_rejected
 scenario_prepare_remove_commit
 scenario_unsupported_scope
+scenario_no_wheel_category
+scenario_helper_hang_kills_tree
 scenario_timeout_kills_tool
 
 echo "dependency-editor: $PASS passed, $FAIL failed"

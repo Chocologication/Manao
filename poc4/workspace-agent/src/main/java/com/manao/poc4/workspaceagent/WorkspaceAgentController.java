@@ -136,7 +136,7 @@ public final class WorkspaceAgentController {
             case "ENTRY_NOT_FOUND" -> 404;
             case "ENTRY_ALREADY_EXISTS", "DIRECTORY_NOT_EMPTY", "OPERATION_CONFLICT", "DEPENDENCY_REQUEST_MISMATCH" -> 409;
             case "FILE_TOO_LARGE", "BINARY_FILE", "UNSUPPORTED_ENCODING", "VALIDATION_ERROR", "INVALID_PATH",
-                 "PYTHON_DEPENDENCY_UNSUPPORTED" -> 422;
+                 "PYTHON_DEPENDENCY_UNSUPPORTED", "PYTHON_DEPENDENCY_NO_WHEEL" -> 422;
             case "PYTHON_DEPENDENCY_TIMEOUT" -> 504;
             default -> 503; // IO_ERROR, PYTHON_DEPENDENCY_RESOLUTION_FAILED and unknown codes
         };
