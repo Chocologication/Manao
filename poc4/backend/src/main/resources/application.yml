@@ -65,7 +65,8 @@ manao:
         # injects the agent env — recorded by the deployment task). Overriding one without the
         # other desynchronizes the actual budget from the prepare request timeout, which the
         # backend derives as this budget plus a bounded 10s I/O and transport margin
-        # (default 20 + 10 = 30s). Same 1..600 bounds on both sides.
+        # (default 20 + 10 = 30s). Same 1..600 bounds on both sides. Ordering invariant: the
+        # agent helper waits at most this budget + 2s, strictly below the 30s timeout.
         resolution-seconds: ${MANAO_PYTHON_DEPENDENCY_RESOLUTION_SECONDS:20}
       runtime-deps:
         # Must match the deployment's reserved NodePorts; 30080 is the platform ingress.

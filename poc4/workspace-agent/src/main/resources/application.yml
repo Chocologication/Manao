@@ -14,7 +14,9 @@ manao:
       # One budget pair with the backend: this value MUST match the backend's
       # MANAO_PYTHON_DEPENDENCY_RESOLUTION_SECONDS (both default 20). Overriding one without
       # the other desynchronizes the actual budget from the backend's prepare request timeout
-      # (derived as this budget plus a bounded 10s I/O and transport margin).
+      # (derived as this budget plus a bounded 10s I/O and transport margin). Ordering
+      # invariant: the helper waits at most this budget + 2s, strictly below that timeout, so
+      # a full-wait helper still leaves ~8s for journal persistence and the return.
       resolutionSeconds: ${MANAO_AGENT_PYTHON_DEPENDENCY_RESOLUTION_SECONDS:20}
 
 logging:

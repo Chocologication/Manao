@@ -48,8 +48,13 @@ public final class PythonDependencyEditor {
     /** Engineering bounds for the resolution budget: configurable, never unbounded. */
     static final long MIN_RESOLUTION_SECONDS = 1;
     static final long MAX_RESOLUTION_SECONDS = 600;
-    /** Bounded margin on top of the resolution budget for helper startup, journal I/O and kill time. */
-    private static final long HELPER_MARGIN_SECONDS = 10;
+    /**
+     * Bounded helper margin on top of the resolution budget: helper startup and kill time ONLY.
+     * Ordering invariant with the backend: this wait (budget + 2s) must stay STRICTLY below the
+     * backend's prepare request timeout (budget + 10s, WorkspaceApiClient.PREPARE_MARGIN_SECONDS),
+     * leaving ~8s for journal fsync and the HTTP return when the helper uses its full wait.
+     */
+    private static final long HELPER_MARGIN_SECONDS = 2;
     private static final int OUTPUT_LIMIT = 64 * 1024;
     /** Matches the workspace file service's text size limit; larger tool output is rejected. */
     private static final long SCRATCH_FILE_LIMIT = 20L * 1024 * 1024;
@@ -173,6 +178,15 @@ public final class PythonDependencyEditor {
             throw new WorkspaceFileService.WorkspaceFileException("VALIDATION_ERROR",
                 "only exact versions are supported");
         }
+    }
+
+    /**
+     * The helper's max wait for one resolution: the budget plus the small bounded helper
+     * margin. Kept a derivation (not an inline sum) so the cross-module ordering invariant
+     * against the backend's prepare request timeout is testable on both sides.
+     */
+    static long helperWaitSeconds(long budgetSeconds) {
+        return budgetSeconds + HELPER_MARGIN_SECONDS;
     }
 
     /**
@@ -328,7 +342,7 @@ public final class PythonDependencyEditor {
             } catch (IOException ex) {
                 throw resolutionFailed("cannot start the dependency helper");
             }
-            HelperRun run = awaitHelper(process, budgetSeconds + HELPER_MARGIN_SECONDS);
+            HelperRun run = awaitHelper(process, helperWaitSeconds(budgetSeconds));
             if (run.timedOut()) {
                 if (Thread.currentThread().isInterrupted()) {
                     throw resolutionFailed("interrupted while resolving dependencies");

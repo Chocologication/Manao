@@ -81,6 +81,21 @@ class PythonDependencyEditorTest {
     }
 
     @Test
+    void helperWaitStaysStrictlyBelowTheBackendPrepareTimeout() {
+        // Cross-module ordering invariant: the backend derives its prepare request timeout as
+        // budget + 10s (WorkspaceApiClient.PREPARE_MARGIN_SECONDS = 10, mirrored here on
+        // purpose — changing either side without the other fails one of these tests). The
+        // helper's max wait is budget + 2s, so a helper that uses its full wait still leaves
+        // ~8s for journal persistence and the HTTP return instead of being truncated.
+        assertThat(PythonDependencyEditor.helperWaitSeconds(20)).isEqualTo(22);
+        assertThat(PythonDependencyEditor.helperWaitSeconds(1)).isEqualTo(3);
+        assertThat(PythonDependencyEditor.helperWaitSeconds(600)).isEqualTo(602);
+        assertThat(PythonDependencyEditor.helperWaitSeconds(20)).isLessThan(20 + 10);
+        assertThat(PythonDependencyEditor.helperWaitSeconds(1)).isLessThan(1 + 10);
+        assertThat(PythonDependencyEditor.helperWaitSeconds(600)).isLessThan(600 + 10);
+    }
+
+    @Test
     void prepareResolvesInScratchPersistsTheJournalAndLeavesSourcesUntouched(@TempDir Path root) throws Exception {
         seedWorkspace(root);
         CountingResolver resolver = new CountingResolver();

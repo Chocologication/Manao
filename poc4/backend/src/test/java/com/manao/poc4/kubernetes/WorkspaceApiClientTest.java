@@ -173,9 +173,23 @@ class WorkspaceApiClientTest {
         assertThat(WorkspaceApiClient.prepareTimeout(20)).isEqualTo(Duration.ofSeconds(30));
         // A budget override moves the timeout by the same delta.
         assertThat(WorkspaceApiClient.prepareTimeout(20 + 15)).isEqualTo(Duration.ofSeconds(30 + 15));
+        assertThat(WorkspaceApiClient.prepareTimeout(1)).isEqualTo(Duration.ofSeconds(11));
         assertThat(WorkspaceApiClient.prepareTimeout(600)).isEqualTo(Duration.ofSeconds(610));
         assertThatThrownBy(() -> WorkspaceApiClient.prepareTimeout(0)).isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> WorkspaceApiClient.prepareTimeout(601)).isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void prepareTimeoutStaysStrictlyAboveTheAgentHelperWait() {
+        // Cross-module ordering invariant: the agent helper's max wait is budget + 2s
+        // (PythonDependencyEditor.HELPER_MARGIN_SECONDS = 2, mirrored here on purpose —
+        // changing either side without the other fails one of these tests). The backend
+        // timeout must stay strictly above it at every budget, so a full-wait helper still
+        // leaves ~8s for journal persistence and the HTTP return.
+        for (long budget : new long[] {1, 20, 600}) {
+            assertThat(WorkspaceApiClient.prepareTimeout(budget).toSeconds() - budget).isGreaterThan(2);
+        }
+        assertThat(WorkspaceApiClient.prepareTimeout(20).toSeconds()).isEqualTo(30);
     }
 
     private WorkspaceAgent.Command command(String type, String path, String nextPath, byte[] content) {
