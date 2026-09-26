@@ -112,6 +112,14 @@ public final class JdbcRunStore implements RunStore {
             if (revision != record.requestedRevision()) {
                 return InsertResult.REVISION_CONFLICT;
             }
+            // A durable PENDING workspace operation (an interrupted commit that survived a
+            // restart) blocks conflicting operations: the run cannot start until reconciliation.
+            List<String> pending = jdbc.query(
+                "SELECT '1' FROM workspace_operation WHERE project_id = ? AND state = 'PENDING' LIMIT 1",
+                (rs, row) -> rs.getString(1), record.projectId());
+            if (!pending.isEmpty()) {
+                return InsertResult.PROJECT_LOCKED;
+            }
             try {
                 jdbc.update("INSERT INTO run(id, project_id, requested_revision, state, policy_json, version, created_at, updated_at, fencing_token) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     record.id(), record.projectId(), record.requestedRevision(), record.state().name(),

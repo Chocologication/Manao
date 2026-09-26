@@ -22,6 +22,7 @@ import org.junit.jupiter.api.Test;
  */
 class PythonDependencyOperationTest {
     private static final String ALICE = "alice-id";
+    private static final String BOB = "bob-id";
     private static final String PROJECT = "prj-1";
     private static final String OPERATION = "11111111-1111-4111-8111-111111111111";
     private static final String ADD_HTTPX = "2259f25f49e6efd1be44b62909b915e655a563c38aa64abc9b5e3541e87f2e9f";
@@ -29,6 +30,7 @@ class PythonDependencyOperationTest {
 
     private WorkspaceControllerTest.FakeStore store;
     private WorkspaceControllerTest.StubAgent agent;
+    private ProjectLifecycleGate lifecycle;
     private PythonDependencyService dependencies;
 
     @BeforeEach
@@ -38,7 +40,7 @@ class PythonDependencyOperationTest {
         store.projects.put(PROJECT, new WorkspaceStore.ProjectRecord(PROJECT, ALICE, "demo", "READY", 7, null,
             java.time.Instant.parse("2026-08-29T00:00:00Z")));
         agent = new WorkspaceControllerTest.StubAgent();
-        ProjectLifecycleGate lifecycle = new ProjectLifecycleGate();
+        lifecycle = new ProjectLifecycleGate();
         // The fake refuses ungated hasActiveRun callers so the tests prove the dependency flow
         // runs through the SAME lease instance every other workspace consumer uses.
         store.gate = lifecycle;
@@ -70,6 +72,12 @@ class PythonDependencyOperationTest {
         assertThat(thrown.get().code()).isEqualTo(code);
         assertThat(thrown.get().status()).isEqualTo(status);
         return thrown.get();
+    }
+
+    /** The deterministic digest a registered row must carry: sha256 over the fixed receipt JSON. */
+    private static String registeredReceiptSha256(String operationId, String before, String after) {
+        return WorkspaceOperationService.sha256Hex(WorkspaceOperationService.dependencyReceiptJson(
+            operationId, before, after).getBytes(java.nio.charset.StandardCharsets.UTF_8));
     }
 
     @Test
@@ -120,8 +128,9 @@ class PythonDependencyOperationTest {
     @Test
     void pendingSameIdRedriveUsesTheRegisteredDigestsAndReceiptAndIncrementsOnce() {
         String requestSha256 = PythonDependencyService.requestDigest(PROJECT, "ADD", "httpx", "0.28.1", 7);
+        String receiptSha256 = registeredReceiptSha256(OPERATION, "a".repeat(64), "b".repeat(64));
         WorkspaceStore.OperationRecord registered = new WorkspaceStore.OperationRecord(OPERATION, PROJECT, 7,
-            "a".repeat(64), "b".repeat(64), ".manao/receipts/" + OPERATION + ".json", "c".repeat(64),
+            "a".repeat(64), "b".repeat(64), ".manao/receipts/" + OPERATION + ".json", receiptSha256,
             "PENDING", "PYTHON_DEPENDENCIES", requestSha256);
         store.records.put(OPERATION, registered);
         store.pending.put(PROJECT, registered);
@@ -139,7 +148,7 @@ class PythonDependencyOperationTest {
         assertThat(command.prepared().beforeSha256()).isEqualTo("a".repeat(64));
         assertThat(command.prepared().afterSha256()).isEqualTo("b".repeat(64));
         // The receipt is bound to the registered row, not rebuilt from the request.
-        assertThat(command.receiptSha256()).isEqualTo("c".repeat(64));
+        assertThat(command.receiptSha256()).isEqualTo(receiptSha256);
         assertThat(command.receiptJson()).contains(OPERATION).contains("PYTHON_DEPENDENCIES")
             .contains("pyproject.toml").contains("uv.lock").contains("a".repeat(64)).contains("b".repeat(64));
         assertThat(store.revision.get(PROJECT)).isEqualTo(8L);
@@ -171,6 +180,63 @@ class PythonDependencyOperationTest {
         assertThat(store.failures).containsEntry(PROJECT, "WORKSPACE_RECONCILIATION_REQUIRED");
         assertThat(store.deletedOperations).isEmpty();
         assertThat(store.records.get(OPERATION).state()).isEqualTo("PENDING");
+    }
+
+    @Test
+    void commitWithoutADurableReceiptFailsClosedAndNeverCommitsTheRow() {
+        String requestSha256 = PythonDependencyService.requestDigest(PROJECT, "ADD", "httpx", "0.28.1", 7);
+        agent.prepareResult = new WorkspaceAgent.PreparedPythonDependencies(OPERATION, requestSha256,
+            "a".repeat(64), "b".repeat(64));
+        // The agent answered the commit, but its final durable receipt is missing: the backend
+        // must verify the registered receipt digest before committing any database state.
+        agent.recordReceipt = false;
+
+        assertRejected(() -> dependencies.change(ALICE, PROJECT, OPERATION,
+            new WorkspaceAgent.DependencyChange("ADD", "httpx", "0.28.1"), "7"), "PROJECT_LOCKED", 409);
+        assertThat(store.failures).containsEntry(PROJECT, "WORKSPACE_RECONCILIATION_REQUIRED");
+        assertThat(store.records.get(OPERATION).state()).isEqualTo("PENDING");
+        assertThat(store.revision.get(PROJECT)).isEqualTo(7L);
+        assertThat(store.deletedOperations).isEmpty();
+
+        // Once the receipt is readable again, the same registered operation finishes by reconcile.
+        agent.recordReceipt = true;
+        PythonDependencyService.Status status = dependencies.reconcile(ALICE, PROJECT, OPERATION);
+        assertThat(status.state()).isEqualTo("COMMITTED");
+        assertThat(status.resultWorkspaceRevision()).isEqualTo(8L);
+        assertThat(store.revision.get(PROJECT)).isEqualTo(8L);
+        assertThat(store.records.get(OPERATION).state()).isEqualTo("COMMITTED");
+    }
+
+    @Test
+    void nonOwnerGetsNotFoundEvenWhileTheProjectLeaseIsContended() throws Exception {
+        CountDownLatch acquired = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        AtomicReference<Throwable> holderFailure = new AtomicReference<>();
+        Thread holder = new Thread(() -> {
+            try (var lease = lifecycle.tryAcquire(PROJECT).orElseThrow()) {
+                acquired.countDown();
+                if (!release.await(5, java.util.concurrent.TimeUnit.SECONDS)) {
+                    holderFailure.set(new AssertionError("lease holder was never released"));
+                }
+            } catch (InterruptedException ex) {
+                Thread.currentThread().interrupt();
+                holderFailure.set(ex);
+            }
+        });
+        holder.start();
+        assertThat(acquired.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+        try {
+            // Contention must never leak lock state to a non-owner: 404 before any lease check.
+            assertRejected(() -> dependencies.status(BOB, PROJECT, OPERATION), "ENTRY_NOT_FOUND", 404);
+            assertRejected(() -> dependencies.change(BOB, PROJECT, OPERATION,
+                new WorkspaceAgent.DependencyChange("ADD", "httpx", "0.28.1"), "7"), "ENTRY_NOT_FOUND", 404);
+            assertRejected(() -> dependencies.pending(BOB, PROJECT), "ENTRY_NOT_FOUND", 404);
+        } finally {
+            release.countDown();
+            holder.join(5000);
+        }
+        assertThat(holder.isAlive()).isFalse();
+        assertThat(holderFailure.get()).isNull();
     }
 
     @Test
@@ -268,7 +334,8 @@ class PythonDependencyOperationTest {
     void reconcileLiftsExactlyThisReconciliationFailureInTheReconciledCommit() {
         String requestSha256 = PythonDependencyService.requestDigest(PROJECT, "ADD", "httpx", "0.28.1", 7);
         WorkspaceStore.OperationRecord registered = new WorkspaceStore.OperationRecord(OPERATION, PROJECT, 7,
-            "a".repeat(64), "b".repeat(64), ".manao/receipts/" + OPERATION + ".json", "c".repeat(64),
+            "a".repeat(64), "b".repeat(64), ".manao/receipts/" + OPERATION + ".json",
+            registeredReceiptSha256(OPERATION, "a".repeat(64), "b".repeat(64)),
             "PENDING", "PYTHON_DEPENDENCIES", requestSha256);
         store.records.put(OPERATION, registered);
         store.pending.put(PROJECT, registered);
@@ -351,17 +418,28 @@ class PythonDependencyOperationTest {
         agent.prepareResult = new WorkspaceAgent.PreparedPythonDependencies(OPERATION, requestSha256,
             "a".repeat(64), "b".repeat(64));
         agent.prepareGate = new WorkspaceControllerTest.PrepareGate(insidePrepare, release);
+        AtomicReference<Throwable> workerFailure = new AtomicReference<>();
 
-        Thread worker = new Thread(() -> dependencies.change(ALICE, PROJECT, OPERATION,
-            new WorkspaceAgent.DependencyChange("ADD", "httpx", "0.28.1"), "7"));
+        Thread worker = new Thread(() -> {
+            try {
+                dependencies.change(ALICE, PROJECT, OPERATION,
+                    new WorkspaceAgent.DependencyChange("ADD", "httpx", "0.28.1"), "7");
+            } catch (Throwable failure) {
+                workerFailure.set(failure);
+            }
+        });
         worker.start();
-        insidePrepare.await();
-
-        // Any other thread's gated work is refused while the dependency operation holds the lease.
-        assertThatThrownBy(() -> store.hasActiveRun(PROJECT)).isInstanceOf(IllegalStateException.class)
-            .hasMessageContaining("gate");
-        release.countDown();
-        worker.join();
+        try {
+            assertThat(insidePrepare.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            // Any other thread's gated work is refused while the dependency operation holds the lease.
+            assertThatThrownBy(() -> store.hasActiveRun(PROJECT)).isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("gate");
+        } finally {
+            release.countDown();
+            worker.join(5000);
+        }
+        assertThat(worker.isAlive()).isFalse();
+        assertThat(workerFailure.get()).isNull();
     }
 
     @Test

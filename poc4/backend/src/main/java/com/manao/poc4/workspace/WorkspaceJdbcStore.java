@@ -100,10 +100,11 @@ public final class WorkspaceJdbcStore implements WorkspaceStore {
     /**
      * The one conditional workspace commit. Both entry points share this transaction: the project
      * row is locked first, the operation moves PENDING → COMMITTED and the revision advances only
-     * when both conditional updates touch exactly one row. The reconciled variant additionally
-     * refuses active runs and foreign operation kinds, and may recover a project failed with
-     * exactly WORKSPACE_RECONCILIATION_REQUIRED by clearing that failure in the same transaction —
-     * any condition mismatch rolls the whole transaction back.
+     * when both conditional updates touch exactly one row — every refused path is marked
+     * rollback-only so a half-applied commit persists NOTHING. The reconciled variant additionally
+     * refuses active runs, foreign operation kinds and anything but READY or exactly this
+     * reconciliation failure, and may recover a project failed with
+     * WORKSPACE_RECONCILIATION_REQUIRED by clearing that failure in the same transaction.
      */
     private boolean commitInTransaction(String operationId, String projectId, long expectedRevision,
                                         boolean reconciled) {
@@ -112,16 +113,24 @@ public final class WorkspaceJdbcStore implements WorkspaceStore {
                 "SELECT state, failure_reason FROM project WHERE id = ? FOR UPDATE",
                 (rs, row) -> new Object[] { rs.getString(1), rs.getString(2) }, projectId);
             if (projects.isEmpty()) {
+                status.setRollbackOnly();
                 return Boolean.FALSE;
             }
             String state = (String) projects.get(0)[0];
             String failureReason = (String) projects.get(0)[1];
-            boolean recoverableFailure = reconciled && "FAILED".equals(state)
-                && "WORKSPACE_RECONCILIATION_REQUIRED".equals(failureReason);
-            if ("DELETING".equals(state) || ("FAILED".equals(state) && !recoverableFailure)) {
+            if (reconciled) {
+                boolean recoverable = "FAILED".equals(state)
+                    && "WORKSPACE_RECONCILIATION_REQUIRED".equals(failureReason);
+                if (!"READY".equals(state) && !recoverable) {
+                    status.setRollbackOnly();
+                    return Boolean.FALSE;
+                }
+            } else if ("DELETING".equals(state) || "FAILED".equals(state)) {
+                status.setRollbackOnly();
                 return Boolean.FALSE;
             }
             if (reconciled && hasActiveRun(projectId)) {
+                status.setRollbackOnly();
                 return Boolean.FALSE;
             }
             int operation = jdbc.update(
@@ -130,14 +139,19 @@ public final class WorkspaceJdbcStore implements WorkspaceStore {
                     + (reconciled ? " AND operation_kind = 'PYTHON_DEPENDENCIES'" : ""),
                 Timestamp.from(Instant.now()), operationId, projectId, expectedRevision);
             if (operation != 1) {
+                status.setRollbackOnly();
                 return Boolean.FALSE;
             }
             int project = jdbc.update(
                 "UPDATE project SET workspace_revision = workspace_revision + 1, updated_at = ?"
-                    + (recoverableFailure ? ", state = 'READY', failure_reason = NULL" : "")
+                    + (reconciled ? ", state = 'READY', failure_reason = NULL" : "")
                     + " WHERE id = ? AND workspace_revision = ?",
                 Timestamp.from(Instant.now()), projectId, expectedRevision);
-            return project == 1 ? Boolean.TRUE : Boolean.FALSE;
+            if (project != 1) {
+                status.setRollbackOnly();
+                return Boolean.FALSE;
+            }
+            return Boolean.TRUE;
         });
         return Boolean.TRUE.equals(committed);
     }

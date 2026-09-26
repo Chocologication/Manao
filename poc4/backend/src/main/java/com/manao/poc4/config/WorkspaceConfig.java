@@ -107,7 +107,10 @@ public class WorkspaceConfig {
                 return inCluster.endpoint(projectId);
             }
         };
-        return new WorkspaceApiClient(resolver, signer);
+        // The dependency prepare timeout follows the configured resolution budget plus a bounded
+        // margin; the general workspace timeout is never raised for it.
+        return new WorkspaceApiClient(resolver, signer, WorkspaceApiClient.DEFAULT_TIMEOUT,
+            WorkspaceApiClient.prepareTimeout(properties.pythonDependency().resolutionSeconds()));
     }
 
     @Bean

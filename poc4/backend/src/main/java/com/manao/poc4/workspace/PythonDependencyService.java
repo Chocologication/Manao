@@ -56,14 +56,19 @@ public final class PythonDependencyService {
     /** First POST: prepare and commit one dependency change under its browser-chosen identity. */
     public Status change(String ownerId, String projectId, String operationId,
                          WorkspaceAgent.DependencyChange change, String expectedRevision) {
+        // Ownership is proven BEFORE the lease is touched: a non-owner never learns whether the
+        // project is busy. The durable row is re-read under the lease to close the gap.
+        requireOwner(ownerId, projectId);
         try (var lease = lifecycle.tryAcquire(projectId).orElseThrow(
                 () -> new ApiException("PROJECT_BUSY", 409, "Project is busy"))) {
-            return changeLocked(ownerId, projectId, operationId, change, expectedRevision);
+            requireOwner(ownerId, projectId);
+            return changeLocked(projectId, operationId, change, expectedRevision);
         }
     }
 
     /** Read-only status of one operation; only a missing record is UNCONFIRMED. */
     public Status status(String ownerId, String projectId, String operationId) {
+        requireOwner(ownerId, projectId);
         try (var lease = lifecycle.tryAcquire(projectId).orElseThrow(
                 () -> new ApiException("PROJECT_BUSY", 409, "Project is busy"))) {
             requireOwner(ownerId, projectId);
@@ -80,6 +85,7 @@ public final class PythonDependencyService {
      * unrecorded id.
      */
     public Status reconcile(String ownerId, String projectId, String operationId) {
+        requireOwner(ownerId, projectId);
         try (var lease = lifecycle.tryAcquire(projectId).orElseThrow(
                 () -> new ApiException("PROJECT_BUSY", 409, "Project is busy"))) {
             requireOwner(ownerId, projectId);
@@ -92,6 +98,7 @@ public final class PythonDependencyService {
 
     /** The project's pending dependency operation for failure pages without a local operation id. */
     public List<Status> pending(String ownerId, String projectId) {
+        requireOwner(ownerId, projectId);
         try (var lease = lifecycle.tryAcquire(projectId).orElseThrow(
                 () -> new ApiException("PROJECT_BUSY", 409, "Project is busy"))) {
             requireOwner(ownerId, projectId);
@@ -102,9 +109,8 @@ public final class PythonDependencyService {
         }
     }
 
-    private Status changeLocked(String ownerId, String projectId, String operationId,
+    private Status changeLocked(String projectId, String operationId,
                                 WorkspaceAgent.DependencyChange change, String expectedRevision) {
-        requireOwner(ownerId, projectId);
         Request request = parseRequest(projectId, operationId, change, expectedRevision);
         // A registered identity always answers first: a retry of a successful change presents
         // the old revision and must never be misjudged by the revision that has since moved.

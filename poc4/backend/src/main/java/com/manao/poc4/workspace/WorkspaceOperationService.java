@@ -202,7 +202,7 @@ public final class WorkspaceOperationService {
         return commitPythonDependency(operation, receiptJson, requestSha256, true);
     }
 
-    /** Shared dependency commit phase: agent commit → response verification → conditional DB commit. */
+    /** Shared dependency commit phase: agent commit → response verification → receipt verification → conditional DB commit. */
     private long commitPythonDependency(WorkspaceStore.OperationRecord operation, String receiptJson,
                                         String requestSha256, boolean reconciled) {
         String phase = "COMMIT";
@@ -214,6 +214,13 @@ public final class WorkspaceOperationService {
                     receiptJson, operation.receiptSha256()));
             phase = "VERIFY_RESULT";
             verifyDependencyResult(operation, result, requestSha256);
+            phase = "VERIFY_RECEIPT";
+            // The commit response alone is not authority: the agent's final durable receipt must
+            // exist and match the registered identity and digests before the database commits.
+            Optional<WorkspaceAgent.FetchedReceipt> receipt = agent.receipt(operation.projectId(), operation.id());
+            if (receipt.isEmpty() || !receiptMatches(operation, receipt.get())) {
+                throw new IllegalStateException("workspace receipt does not match the pending operation");
+            }
         } catch (WorkspaceAgentException ex) {
             throw failClosed(operation.projectId(), operation.id(), phase, ex);
         } catch (RuntimeException ex) {

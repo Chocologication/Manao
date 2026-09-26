@@ -59,6 +59,10 @@ manao:
         initializer-image: ${MANAO_WORKSPACE_INITIALIZER_IMAGE:busybox@sha256:0000000000000000000000000000000000000000000000000000000000000000}
       logging:
         redact-secrets: true
+      python-dependency:
+        # Must match the workspace-agent's configured resolution budget (same 1..600 bounds);
+        # the prepare request timeout derives from it plus a bounded I/O and transport margin.
+        resolution-seconds: ${MANAO_PYTHON_DEPENDENCY_RESOLUTION_SECONDS:20}
       runtime-deps:
         # Must match the deployment's reserved NodePorts; 30080 is the platform ingress.
         reserved-public-ports: ${MANAO_RESERVED_PUBLIC_PORTS:30080}

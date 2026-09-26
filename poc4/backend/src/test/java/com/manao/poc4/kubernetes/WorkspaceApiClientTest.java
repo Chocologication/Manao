@@ -2,6 +2,7 @@ package com.manao.poc4.kubernetes;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -17,6 +18,7 @@ import java.security.KeyPairGenerator;
 import java.security.Signature;
 import java.security.interfaces.EdECPrivateKey;
 import java.time.Clock;
+import java.time.Duration;
 import java.util.Arrays;
 import java.util.Base64;
 import java.util.Map;
@@ -162,6 +164,16 @@ class WorkspaceApiClientTest {
         assertThat(body.get("receiptJson").asText()).isEqualTo(receiptJson);
         assertThat(body.get("receiptSha256").asText()).isEqualTo("d".repeat(64));
         assertSignatureMatchesTheActualRequest(request);
+    }
+
+    @Test
+    void prepareTimeoutTracksTheConfiguredResolutionBudget() {
+        // The prepare request timeout derives from the configured budget plus a bounded margin;
+        // the general workspace timeout stays untouched.
+        assertThat(WorkspaceApiClient.prepareTimeout(20)).isEqualTo(Duration.ofSeconds(40));
+        assertThat(WorkspaceApiClient.prepareTimeout(600)).isEqualTo(Duration.ofSeconds(620));
+        assertThatThrownBy(() -> WorkspaceApiClient.prepareTimeout(0)).isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> WorkspaceApiClient.prepareTimeout(601)).isInstanceOf(IllegalArgumentException.class);
     }
 
     private WorkspaceAgent.Command command(String type, String path, String nextPath, byte[] content) {

@@ -235,10 +235,17 @@ class AtomicTransitionTest {
         assertThat(projectState(projectId, "failure_reason")).isNull();
         assertThat(revisionOf(projectId)).isEqualTo(2);
 
-        // Other failures and DELETING stay locked and keep the operation PENDING.
+        // Other failures and DELETING stay locked and keep the operation PENDING; CREATING is
+        // never reconciled and never promoted to READY.
         String third = UUID.randomUUID().toString();
         assertThat(repositories.workspaceOperations().createPending(third, projectId, 2,
             "1".repeat(64), "2".repeat(64), "receipts/py-third", "3".repeat(64), "PYTHON_DEPENDENCIES", digest)).isTrue();
+        jdbcUpdate("UPDATE project SET state = 'CREATING', failure_reason = NULL WHERE id = ?", projectId);
+        assertThat(repositories.workspaceOperations().commitReconciled(third, projectId, 2)).isFalse();
+        assertThat(repositories.workspaceOperations().findOperation(projectId, third).orElseThrow().state())
+            .isEqualTo("PENDING");
+        assertThat(projectState(projectId, "state")).isEqualTo("CREATING");
+        assertThat(revisionOf(projectId)).isEqualTo(2);
         failProject(projectId, "CREATION_FAILED");
         assertThat(repositories.workspaceOperations().commitReconciled(third, projectId, 2)).isFalse();
         assertThat(repositories.workspaceOperations().findOperation(projectId, third).orElseThrow().state())

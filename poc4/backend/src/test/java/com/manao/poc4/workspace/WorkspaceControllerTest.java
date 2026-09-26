@@ -76,6 +76,31 @@ public class WorkspaceControllerTest {
     @Nested
     class Reads {
         @Test
+        void readsRefuseWhileAPendingWorkspaceOperationExists() {
+            // A durable PENDING row (e.g. an interrupted two-file commit after a restart) must
+            // never leak its intermediate file state through read endpoints.
+            agent.tree = new WorkspaceAgent.Tree("", List.of());
+            agent.meta = new WorkspaceAgent.FileMeta("pom.xml", "pom.xml", 1L, "text/plain", "UTF-8", "java",
+                "MONACO_TEXT", null, null);
+            agent.content = new WorkspaceAgent.Content("pom.xml", "<project/>", null);
+            store.pending.put(PROJECT, new WorkspaceStore.OperationRecord("stuck", PROJECT, 7,
+                "a".repeat(64), "b".repeat(64), ".manao/receipts/stuck.json", "c".repeat(64)));
+            assertThatThrownBy(() -> controller.tree(auth(ALICE), PROJECT, ""))
+                .isInstanceOfSatisfying(ApiException.class, ex -> {
+                    assertThat(ex.code()).isEqualTo("PROJECT_LOCKED");
+                    assertThat(ex.status()).isEqualTo(409);
+                });
+            assertThatThrownBy(() -> controller.meta(auth(ALICE), PROJECT, "pom.xml"))
+                .isInstanceOfSatisfying(ApiException.class, ex -> assertThat(ex.code()).isEqualTo("PROJECT_LOCKED"));
+            assertThatThrownBy(() -> controller.content(auth(ALICE), PROJECT, "pom.xml"))
+                .isInstanceOfSatisfying(ApiException.class, ex -> assertThat(ex.code()).isEqualTo("PROJECT_LOCKED"));
+            // The dependency status endpoints read the durable row directly and keep answering;
+            // a read succeeds again once the operation is no longer pending.
+            store.pending.clear();
+            assertThat(controller.tree(auth(ALICE), PROJECT, "").entries()).isEmpty();
+        }
+
+        @Test
         void treeReturnsExactContractShape() throws Exception {
             agent.tree = new WorkspaceAgent.Tree("", List.of(
                 new WorkspaceAgent.TreeEntry("src", "src", "directory", false, null, true),
@@ -512,6 +537,8 @@ public class WorkspaceControllerTest {
         public String commitSpoofedAfter;
         public WorkspaceAgentException commitError;
         public PrepareGate prepareGate;
+        /** False simulates an agent that answered but whose final durable receipt is missing. */
+        public boolean recordReceipt = true;
         public int prepareCalls;
         public int commitCalls;
         public final List<DependencyChange> preparedChanges = new ArrayList<>();
@@ -557,9 +584,25 @@ public class WorkspaceControllerTest {
             commitCalls++;
             commitCommands.add(command);
             if (commitError != null) throw commitError;
-            return new PreparedPythonDependencies(command.prepared().operationId(), command.prepared().requestSha256(),
-                command.prepared().beforeSha256(),
-                commitSpoofedAfter == null ? command.prepared().afterSha256() : commitSpoofedAfter);
+            // The real agent validates the backend-issued receipt against the prepared journal
+            // before any rename and records the receipt last; the double enforces the same
+            // contract so placeholders and inconsistent digests cannot pass silently.
+            String receiptJson = WorkspaceOperationService.dependencyReceiptJson(command.prepared().operationId(),
+                command.prepared().beforeSha256(), command.prepared().afterSha256());
+            if (!receiptJson.equals(command.receiptJson())
+                || !WorkspaceOperationService.sha256Hex(receiptJson.getBytes(java.nio.charset.StandardCharsets.UTF_8))
+                    .equals(command.receiptSha256())) {
+                throw new WorkspaceAgentException(409, "OPERATION_CONFLICT", "receipt does not match the prepared operation");
+            }
+            String after = commitSpoofedAfter == null ? command.prepared().afterSha256() : commitSpoofedAfter;
+            PreparedPythonDependencies result = new PreparedPythonDependencies(command.prepared().operationId(),
+                command.prepared().requestSha256(), command.prepared().beforeSha256(), after);
+            if (recordReceipt) {
+                receiptFor.put(command.prepared().operationId(), new FetchedReceipt(result.operationId(),
+                    "PYTHON_DEPENDENCIES", "pyproject.toml", "uv.lock", result.beforeSha256(), result.afterSha256(),
+                    command.receiptSha256()));
+            }
+            return result;
         }
 
         public void resetErrors() {
@@ -582,7 +625,8 @@ public class WorkspaceControllerTest {
         void enter() {
             inside.countDown();
             try {
-                release.await();
+                // Bounded: a test that never releases must fail its assertions, not hang the suite.
+                release.await(10, java.util.concurrent.TimeUnit.SECONDS);
             } catch (InterruptedException ex) {
                 Thread.currentThread().interrupt();
             }

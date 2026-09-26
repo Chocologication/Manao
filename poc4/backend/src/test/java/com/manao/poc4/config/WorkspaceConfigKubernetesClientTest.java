@@ -42,7 +42,7 @@ class WorkspaceConfigKubernetesClientTest {
             "https://127.0.0.1:6443", "manao-test", false, false,
             kubeconfig.toString(), null, 0, null, null);
         BackendProperties properties = new BackendProperties(
-            BackendProfile.LOCAL_CLUSTER, null, null, null, kubernetes, null, null, null, null);
+            BackendProfile.LOCAL_CLUSTER, null, null, null, kubernetes, null, null, null, null, null);
 
         try (KubernetesClient client = new WorkspaceConfig().kubernetesClient(properties)) {
             assertThat(client.getConfiguration().isHttp2Disable())

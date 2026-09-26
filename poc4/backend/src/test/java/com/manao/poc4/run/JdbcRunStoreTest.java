@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.manao.poc4.persistence.DatabaseClock;
 import com.manao.poc4.persistence.JdbcStoreTestSupport;
 import com.manao.poc4.persistence.RunState;
+import java.sql.Timestamp;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -51,6 +52,28 @@ class JdbcRunStoreTest {
         clock.advance(Duration.ofSeconds(61));          // 越过 TTL；holder 未变
         long again = store.acquireFencingToken().orElseThrow();
         assertThat(again).isEqualTo(token);             // 缺陷：holder 不变却 bump，令正常 Run 卡死
+    }
+
+    @Test
+    void durablePendingWorkspaceOperationBlocksRunStartEvenAfterRestart() {
+        String projectId = seedProject("p-pending-run");
+        String operationId = UUID.randomUUID().toString();
+        // The durable PENDING row is all that survives a restart; the insert must refuse on it.
+        db.jdbc().update("INSERT INTO workspace_operation(id, project_id, expected_revision, before_sha256, after_sha256, receipt_path, receipt_sha256, state, operation_kind, request_sha256, created_at)"
+                + " VALUES (?, ?, 0, ?, ?, 'receipts/pending-run', ?, 'PENDING', 'PYTHON_DEPENDENCIES', ?, ?)",
+            operationId, projectId, "a".repeat(64), "b".repeat(64), "c".repeat(64), "1".repeat(64),
+            Timestamp.from(Instant.parse("2026-09-01T00:00:00Z")));
+        long token = store.acquireFencingToken().orElseThrow();
+
+        assertThat(store.insertRun(run(UUID.randomUUID().toString(), projectId, 0L), token))
+            .isEqualTo(RunStore.InsertResult.PROJECT_LOCKED);
+        assertThat(store.findActiveRun(projectId)).isEmpty();
+
+        // Once the operation is no longer pending, the run can start.
+        db.jdbc().update("DELETE FROM workspace_operation WHERE id = ?", operationId);
+        String runId = UUID.randomUUID().toString();
+        assertThat(store.insertRun(run(runId, projectId, 0L), token)).isEqualTo(RunStore.InsertResult.INSERTED);
+        assertThat(store.findRun(runId)).isPresent();
     }
 
     @Test

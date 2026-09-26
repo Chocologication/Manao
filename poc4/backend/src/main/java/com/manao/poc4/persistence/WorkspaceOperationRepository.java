@@ -64,9 +64,13 @@ public final class WorkspaceOperationRepository {
                 try (var rows = project.executeQuery()) {
                     if (!rows.next()) { connection.rollback(); return false; }
                     String state = rows.getString(1);
-                    boolean recoverableFailure = reconciled && "FAILED".equals(state)
-                        && "WORKSPACE_RECONCILIATION_REQUIRED".equals(rows.getString(2));
-                    if ("DELETING".equals(state) || ("FAILED".equals(state) && !recoverableFailure)) {
+                    if (reconciled) {
+                        // Reconciliation is only for READY or exactly this reconciliation failure;
+                        // CREATING is never reconciled and never promoted to READY.
+                        boolean recoverable = "FAILED".equals(state)
+                            && "WORKSPACE_RECONCILIATION_REQUIRED".equals(rows.getString(2));
+                        if (!"READY".equals(state) && !recoverable) { connection.rollback(); return false; }
+                    } else if ("DELETING".equals(state) || "FAILED".equals(state)) {
                         connection.rollback(); return false;
                     }
                 }

@@ -27,14 +27,13 @@ import java.util.Optional;
  */
 public final class WorkspaceApiClient implements WorkspaceAgent {
     private static final ObjectMapper JSON = new ObjectMapper();
-    private static final Duration TIMEOUT = Duration.ofSeconds(30);
+    /** The general workspace request timeout; dependency prepare/commit derive their own. */
+    public static final Duration DEFAULT_TIMEOUT = Duration.ofSeconds(30);
     /**
-     * Per-request budget for the two dependency calls only; the general workspace timeout stays
-     * untouched. The agent's resolution budget (default 20s, bounded by its own maximum) plus
-     * helper startup, journal I/O and transport margin must fit inside this window — the agent
-     * rejects its helper beyond budget+margin, so this only needs bounded headroom on top.
+     * Bounded margin on top of the configured resolution budget for the agent's helper startup
+     * (it waits budget+10s itself), journal I/O and transport before the backend gives up.
      */
-    static final Duration DEPENDENCY_TIMEOUT = Duration.ofSeconds(90);
+    private static final long PREPARE_MARGIN_SECONDS = 20;
 
     /** Resolves the namespace-internal base URI of a project's workspace-agent. */
     public interface EndpointResolver {
@@ -48,20 +47,32 @@ public final class WorkspaceApiClient implements WorkspaceAgent {
     private final Duration dependencyTimeout;
 
     public WorkspaceApiClient(EndpointResolver resolver, WorkspaceCapabilitySigner signer) {
-        this(resolver, signer, TIMEOUT, DEPENDENCY_TIMEOUT);
+        this(resolver, signer, DEFAULT_TIMEOUT, prepareTimeout(20));
     }
 
     WorkspaceApiClient(EndpointResolver resolver, WorkspaceCapabilitySigner signer, Duration timeout) {
-        this(resolver, signer, timeout, DEPENDENCY_TIMEOUT);
+        this(resolver, signer, timeout, prepareTimeout(20));
     }
 
-    WorkspaceApiClient(EndpointResolver resolver, WorkspaceCapabilitySigner signer, Duration timeout,
-                       Duration dependencyTimeout) {
+    public WorkspaceApiClient(EndpointResolver resolver, WorkspaceCapabilitySigner signer, Duration timeout,
+                              Duration dependencyTimeout) {
         this.resolver = resolver;
         this.signer = signer;
         this.timeout = timeout;
         this.dependencyTimeout = dependencyTimeout;
         this.http = HttpClient.newBuilder().connectTimeout(timeout).build();
+    }
+
+    /**
+     * The prepare request timeout derived from the configured resolution budget plus the bounded
+     * margin; the budget bounds are the agent's own (1..600 seconds), validated on both sides.
+     * Only the dependency calls use this timeout — the general workspace timeout is never raised.
+     */
+    public static Duration prepareTimeout(long resolutionBudgetSeconds) {
+        if (resolutionBudgetSeconds < 1 || resolutionBudgetSeconds > 600) {
+            throw new IllegalArgumentException("resolution budget must be between 1 and 600 seconds");
+        }
+        return Duration.ofSeconds(resolutionBudgetSeconds + PREPARE_MARGIN_SECONDS);
     }
 
     /** 6B profile: workspace Service is reachable directly inside the namespace. */

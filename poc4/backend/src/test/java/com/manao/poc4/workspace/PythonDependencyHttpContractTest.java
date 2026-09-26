@@ -89,6 +89,12 @@ class PythonDependencyHttpContractTest {
         return PythonDependencyService.requestDigest(PROJECT, action, packageName, version, expectedRevision);
     }
 
+    /** The deterministic digest a registered row must carry: sha256 over the fixed receipt JSON. */
+    private static String registeredReceiptSha256(String operationId, String before, String after) {
+        return WorkspaceOperationService.sha256Hex(WorkspaceOperationService.dependencyReceiptJson(
+            operationId, before, after).getBytes(java.nio.charset.StandardCharsets.UTF_8));
+    }
+
     private WorkspaceAgent.PreparedPythonDependencies prepared(String operationId, String requestSha256) {
         return new WorkspaceAgent.PreparedPythonDependencies(operationId, requestSha256,
             "a".repeat(64), "b".repeat(64));
@@ -246,7 +252,8 @@ class PythonDependencyHttpContractTest {
         String requestSha256 = digest("ADD", "httpx", "0.28.1", 7);
         // Crash simulation: the operation was registered PENDING and the commit response was lost.
         store.records.put(OPERATION, new WorkspaceStore.OperationRecord(OPERATION, PROJECT, 7,
-            "a".repeat(64), "b".repeat(64), ".manao/receipts/" + OPERATION + ".json", "c".repeat(64),
+            "a".repeat(64), "b".repeat(64), ".manao/receipts/" + OPERATION + ".json",
+            registeredReceiptSha256(OPERATION, "a".repeat(64), "b".repeat(64)),
             "PENDING", "PYTHON_DEPENDENCIES", requestSha256));
         store.pending.put(PROJECT, store.records.get(OPERATION));
 
@@ -333,7 +340,8 @@ class PythonDependencyHttpContractTest {
 
         // Tab two registers its own operation and loses the commit response.
         store.records.put(other, new WorkspaceStore.OperationRecord(other, PROJECT, 8,
-            "a".repeat(64), "b".repeat(64), ".manao/receipts/" + other + ".json", "c".repeat(64),
+            "a".repeat(64), "b".repeat(64), ".manao/receipts/" + other + ".json",
+            registeredReceiptSha256(other, "a".repeat(64), "b".repeat(64)),
             "PENDING", "PYTHON_DEPENDENCIES", digest("REMOVE", "httpx", null, 8)));
         store.pending.put(PROJECT, store.records.get(other));
 
