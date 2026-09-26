@@ -103,7 +103,15 @@ kubectl -n manao-stage6b create secret generic manao-backend-images \
   --from-literal=BACKEND_IMAGE="$BACKEND_IMAGE" \
   --from-literal=MANAO_WORKSPACE_AGENT_IMAGE="$MANAO_WORKSPACE_AGENT_IMAGE" \
   --from-literal=MANAO_WORKSPACE_INITIALIZER_IMAGE="$MANAO_WORKSPACE_INITIALIZER_IMAGE" \
-  --from-literal=MANAO_MAVEN_RUNNER_IMAGE="$MANAO_MAVEN_RUNNER_IMAGE"
+  --from-literal=MANAO_MAVEN_RUNNER_IMAGE="$MANAO_MAVEN_RUNNER_IMAGE" \
+  --from-literal=MANAO_PYTHON_RUNNER_IMAGE="$MANAO_PYTHON_RUNNER_IMAGE"
+```
+
+`MANAO_PYTHON_RUNNER_IMAGE` ships with the 2026-09-26 Python runtime increment
+(section 11); for an existing Secret, patch the single key instead of recreating:
+
+```bash
+kubectl -n manao-stage6b patch secret manao-backend-images -p "{\"stringData\":{\"MANAO_PYTHON_RUNNER_IMAGE\":\"$MANAO_PYTHON_RUNNER_IMAGE\"}}"
 ```
 
 The namespace is created above (or by `kubectl apply -f .../namespace.yaml` in
@@ -129,8 +137,10 @@ The MySQL container auto-creates database `manao_poc4_6b` and user `manao`
 The historical first 6B startup ran V1–V8; since the 2026-09-22 Java runtime
 increment the full migration set is V1–V9 (`V9__project_runtime.sql`, section
 10.5), and the existing cloud schema is expected to report version 9 / "Schema is
-up to date" rather than replaying fresh migrations. V3 creates a trigger; see
-section 5 for why the MySQL flag is set.
+up to date" rather than replaying fresh migrations. The 2026-09-26 Python runtime
+increment adds V10 (`V10__python_dependency_operations.sql`, section 11.3): a
+backend carrying it reports version 10 on the existing schema. V3 creates a
+trigger; see section 5 for why the MySQL flag is set.
 
 The single application user (`app_user`) is created once, manually, via a
 parameterized statement executed from a controlled SQL file — no shell
@@ -212,7 +222,7 @@ kubectl apply -f poc4/deploy/6b/mysql.yaml
 # be substituted with the digest-pinned BACKEND_IMAGE from section 2 before apply.
 sed "s|manao-poc4-backend:replace-me|$BACKEND_IMAGE|" poc4/deploy/6b/backend.yaml | kubectl apply -f -
 kubectl -n manao-stage6b get pods -w
-kubectl -n manao-stage6b logs deploy/backend --tail=200   # fresh schema: Flyway V1..V9; existing schema: "Schema is up to date" (version 9)
+kubectl -n manao-stage6b logs deploy/backend --tail=200   # fresh schema: Flyway V1..V10; existing schema: "Schema is up to date" (version 9 pre-Python backend, 10 with the Python increment)
 ```
 
 Smoke checks:
@@ -291,6 +301,8 @@ Verified against the source code (do not rename without re-verifying):
 | `MANAO_MYSQL_IMAGE_DIGEST` | `application.yml` → `BackendProperties.RuntimeDeps.mysqlImageDigest` (explicit patch tag like `8.0.40` or `repo@sha256:<64hex>`; required before any project selects MySQL) | ConfigMap `manao-backend-config` + backend.yaml env (configMapKeyRef; shipped 2026-09-22 with the resolved digest, section 10.2) |
 | `MANAO_REDIS_IMAGE_DIGEST` | `application.yml` → `BackendProperties.RuntimeDeps.redisImageDigest` (same pinning rules; required before any project selects Redis) | ConfigMap `manao-backend-config` + backend.yaml env (configMapKeyRef; shipped 2026-09-22 with the resolved digest, section 10.2) |
 | `MANAO_MYSQL_STORAGE_CLASS` | `application.yml` → `BackendProperties.RuntimeDeps.mysqlStorageClassName` (StorageClass of per-project MySQL data claims; empty falls back to the workspace class) | ConfigMap `manao-backend-config` + backend.yaml env (configMapKeyRef; shipped 2026-09-22 empty = Delete-reclaim fallback, section 10.2) |
+| `MANAO_PYTHON_RUNNER_IMAGE` | `WorkspaceConfig.jobResourceFactory` (`@Value`, required at startup, digest-validated `repo@sha256:<64hex>` at startup — a floating tag fails startup too) | Secret `manao-backend-images` + backend.yaml env (secretKeyRef; shipped 2026-09-26 with the Python runtime increment, section 11.2) |
+| `MANAO_PYTHON_DEPENDENCY_RESOLUTION_SECONDS` | `application.yml` → `BackendProperties.PythonDependency.resolutionSeconds` (validated 1–600; default 20) — ONE budget pair with the workspace-agent's `MANAO_AGENT_PYTHON_DEPENDENCY_RESOLUTION_SECONDS`, override together or never (section 11.2) | backend env only when overriding (application.yml default 20; no backend.yaml entry by default) |
 
 The Stage 6B login lifetime is 24 hours from sign-in (absolute expiry, not an
 inactivity timeout). The frontend uses the login response's `expiresAt`. Existing
@@ -626,3 +638,163 @@ backend replica; scale to 0 before schema-incompatible operations).
 Fixed run shape: workers=1, retries=0, no webServer, one complete pass under a
 3.5 h global cap; the bounded two-hour session case raises its own 155 min
 timeout. The old `stage6b` config and its collection scope are unchanged.
+
+## 11. Python project runtime increment (implemented 2026-09-26, branch `codex/python-runtime`; NOT deployed)
+
+The python-runtime plan (Tasks 1–10 implemented, branch `codex/python-runtime`)
+adds the two Python templates (`python-console`, `python-fastapi-web`), real
+Python Runs through the existing Job/Service lifecycle, browser `uv add/remove`
+dependency editing (prepare/commit with durable operation receipts) and the
+corresponding failure recovery. This section is the release checklist. As of its
+writing NOTHING below has been applied to the cluster: the live `manao-stage6b`
+backend predates V10, has no `MANAO_PYTHON_RUNNER_IMAGE`, and its schema reports
+version 9. Deployment execution and the cloud acceptance round belong to a
+separate authorized step (plan Task 11); this document only records what must be
+built, configured, checked and how to roll back. Evidence goes to
+[poc4/docs/evidence/python-runtime/acceptance.md](../../docs/evidence/python-runtime/acceptance.md)
+— which at this point contains only implementation-level evidence, never a cloud
+PASS.
+
+### 11.1 Release images (rebuild, publish, then fill in the digests)
+
+Every component below is rebuilt from the release checkout and pushed per the
+existing section 1/8.1/10.3 flows. The local test tags are NOT production pins;
+the digest column stays a marked placeholder until the real push resolves it —
+never substitute a floating tag or a guess.
+
+| Component | Source | Local build evidence (2026-09-26, implementation branch) | Production digest |
+| --- | --- | --- | --- |
+| Backend image | `poc4/backend` (section 1 flow); must include V10 + `MANAO_PYTHON_RUNNER_IMAGE` wiring | not rebuilt locally (release-gated) | `TO-FILL-AT-RELEASE: repo@sha256:<64hex>` |
+| Frontend image | `poc4/frontend` (section 8.1 flow); must be the compatible frontend that parses old and new Run JSON (11.4 step 4) | not rebuilt locally (release-gated) | `TO-FILL-AT-RELEASE: repo@sha256:<64hex>` |
+| Workspace agent image | `poc4/workspace-agent`; since Task 7 it is `python:3.13.15-slim@sha256:8d9d0b8b…e3ddf0` + `uv 0.11.6@sha256:b1e69936…06754` + `default-jre-headless` (OpenJDK 21), root-owned `/opt/manao-python/dependency_helper.py` | local tag `manao-python-workspace-agent-test` id `cb90b3be95dd`, rebuilt 2026-09-26 from the final branch sources; container suite `dependency-editor.sh` 14/14 | `TO-FILL-AT-RELEASE: repo@sha256:<64hex>` |
+| Python runner image | `poc4/python-runner` Dockerfile (production stage), seed id `a3687aae7fe59204cd1a23454fd71ccb0c4e400a9200a52cb5e76a090c0295e5` (747 files), uv 0.11.6, CPython 3.13.15 | local tag `manao-python-runtime-test` id `5027b784050a`, rebuilt 2026-09-26 from the final branch sources; suites `runtime-lifecycle.sh` 13/13 + `python-cache.sh` 13/13 | `TO-FILL-AT-RELEASE: repo@sha256:<64hex>` |
+| Maven runner image | `poc4/maven-runner` (section 10.3 flow) — MUST be rebuilt and republished even though Maven behavior is unchanged: the shared single-run supervisor source (`poc4/maven-runner/runtime/src`) gained the fixed-profile selection (`RunProfile`, commit `b260dc2`) that the Python runner image already carries; the deployed Maven runner image predates it | not rebuilt locally (release-gated) | `TO-FILL-AT-RELEASE: repo@sha256:<64hex>` |
+| Workspace initializer image | unchanged by this increment | keep the current accepted digest from the live Secret | (existing value stays) |
+
+The backend image digest and the Python runner digest are recorded as ONE pair in
+the acceptance record (design section 8): a backend that serves Python projects
+is only ever deployed together with its proven runner image. Pre-pull the pushed
+runner/agent digests on the nodes that schedule workspace Pods and Run Jobs
+before measuring startup times, or record the cold-image condition honestly.
+
+### 11.2 New configuration and the dependency-budget pair
+
+`MANAO_PYTHON_RUNNER_IMAGE` (backend.yaml `secretKeyRef` → Secret
+`manao-backend-images`, same pattern as the other three image references):
+
+- Required at backend startup — a blank value fails startup with
+  `MANAO_PYTHON_RUNNER_IMAGE is required for Python runs` (fail-fast, no
+  half-enabled Python support).
+- Digest-pinned: the `JobResourceFactory` constructor validates
+  `repo@sha256:<64hex>` (`requireDigest`) at backend startup, so a floating tag
+  also fails startup — never a half-configured backend.
+- Deliver via the section 2 Secret flow (patch command there); re-apply
+  `backend.yaml` is NOT needed for a Secret-only value change — restart
+  `deploy/backend` to reload it.
+
+`MANAO_PYTHON_DEPENDENCY_RESOLUTION_SECONDS` (backend, default 20) is ONE
+deployment pair with the workspace-agent's
+`MANAO_AGENT_PYTHON_DEPENDENCY_RESOLUTION_SECONDS` (default 20, read by the
+agent's in-image `application.yml`). Both defaults are test-pinned to 20; the
+backend's prepare request timeout derives budget + 10 s from its side.
+
+How the agent Pod gets its value: workspace Pods are built by backend code
+(`WorkspaceResourceFactory.createWorkspacePod`), which injects only
+`MANAO_AGENT_PROJECT_ID`, `MANAO_AGENT_CAPABILITY_PUBLIC_KEY`,
+`MANAO_AGENT_ROOT` and `TMPDIR` — no budget env. The agent therefore always runs
+with its image default of 20. The deployment rule is:
+
+- Leave both sides at the default 20 (current shipped state). Nothing to
+  configure.
+- Do NOT override `MANAO_PYTHON_DEPENDENCY_RESOLUTION_SECONDS` on the backend
+  alone: the prepare timeout desynchronizes from the agent's real budget (a
+  raised backend budget makes prepare wait unnecessarily; a lowered one cuts
+  prepares off — safe failure: fixed `INTERNAL_ERROR`/503, sources untouched,
+  retryable).
+- Overriding the agent side (env var in the workspace Pod) additionally requires
+  a backend code change to inject that env into created Pods — code change and
+  deployment config change must ship together or not at all.
+
+Agent image rollout: new workspace Pods (new projects, or an existing project's
+Pod after deletion/recovery) use whatever `MANAO_WORKSPACE_AGENT_IMAGE` contains
+at Pod creation; patching the Secret + backend restart is enough. Existing Java
+workspace Pods keep running their old agent image and are NOT force-rebuilt —
+the old agent serves Java file/run operations unchanged; it simply lacks the
+Python dependency endpoints, which only Python templates call.
+
+### 11.3 V10 schema migration
+
+`V10__python_dependency_operations.sql` runs on the new backend's first startup
+against the existing `manao_poc4_6b` schema: `workspace_operation` gains
+`operation_kind` (default `'FILE'`, so every historical row stays a plain file
+operation with NULL `request_sha256`), `request_sha256`, check constraints and
+the incremental trigger `workspace_operation_immutable_identity` (the two new
+columns are update-protected like the digest columns). Follow the section 10.5
+rules unchanged: run with the migration-privileged identity, never swap or
+rebuild the platform MySQL volume (`data-mysql-0`), do not run
+schema-incompatible old/new backends against the schema during the switchover
+window (Recreate keeps exactly one replica; scale to 0 first if you must).
+NOT YET APPLIED as of this writing — the live schema reports version 9; after
+this backend rolls it must report version 10.
+
+### 11.4 Deployment order and health checks (short maintenance window)
+
+Execute only with release authorization; record what was actually run in the
+acceptance record. Suggested sequence:
+
+1. Preflight: `GET /api/v1/runs/active` returns `{"run": null}`; resolve and
+   record every digest of 11.1 (fill the placeholders there); confirm free
+   disk/registry access.
+2. Build + push all images, patch Secret `manao-backend-images` with the new
+   digest-pinned values (`MANAO_PYTHON_RUNNER_IMAGE` added; the initializer key
+   keeps its accepted value), update the private env file.
+3. No RBAC change is required (the backend's existing namespace Role already
+   covers Python Runs — they reuse the Java Job/Service surface).
+4. Publish the COMPATIBLE FRONTEND FIRST (design section 8): roll the new
+   frontend image per section 8.2 and verify login + an existing Java project's
+   Run history renders — the new frontend parses both the old and the new Run
+   JSON, so this step is safe while the old backend still runs.
+5. Roll the backend: substitute `BACKEND_IMAGE` in `backend.yaml` as before
+   (unmodified apply still lands in ImagePullBackOff by design) and apply. The
+   manifest now also carries the `MANAO_PYTHON_RUNNER_IMAGE` env entry — the
+   pod fails to create (CreateContainerConfigError) if the Secret key is
+   missing, by design.
+6. Health checks before opening creation:
+   - `kubectl -n manao-stage6b get deploy backend -o jsonpath='{.status.readyReplicas}'` → 1;
+   - backend log shows Flyway `Schema is up to date` at version 10 (11.3);
+   - readiness endpoint OK; login works; an existing Java project still starts a
+     run successfully (old-path regression check);
+   - create one Python console project (smoke): reaches READY, one short run
+     SUCCEEDED — then open project creation for users.
+7. Acceptance entry (Task 11, independent of the 6B suite):
+   `pnpm --dir poc4/frontend test:e2e:python-runtime` with `MANAO_RUNTIME_BASE_URL`,
+   `MANAO_RUNTIME_USERNAME`, `MANAO_RUNTIME_PASSWORD`,
+   `MANAO_RUNTIME_PUBLIC_PORT_1/2` — missing values fail fast, never skip.
+   The optional `MANAO_RUNTIME_DEPENDENCY_PENDING_FAULT` enables the
+   FAILED-recovery case (documented in the E2E config); without it that single
+   case skips loudly and stays NOT_REVERIFIED.
+
+### 11.5 Rollback boundary
+
+From the design (section 8), binding:
+
+1. **Stop first:** creation of new Python projects and starting new Python Runs.
+2. **Stop and verify existing activity:** stop every active Python Run (UI stop
+   or the stop API) and verify no run remains active before further steps.
+3. **Keep the data:** the database containing Python data is retained — V10
+   columns, dependency operation rows and Python project/run rows stay. The
+   platform MySQL volume (`data-mysql-0`) is never swapped or rebuilt for a
+   rollback.
+4. **No claimed-compatible downgrade:** a backend that cannot parse the new Run
+   JSON must not be switched back and presented as compatible. The pre-V10
+   backend cannot serve Python projects and cannot validate a schema newer than
+   itself; a genuine backend rollback requires explicitly acknowledged
+   data/schema incompatibility handling (Flyway state included), decided at
+   release time — never a silent downgrade.
+5. **Safe first step:** rolling the frontend back to the previous accepted
+   digest is the compatible rollback move (no Python-specific state in the
+   frontend); afterwards re-verify the Java paths with the java-runtime E2E
+   entry before declaring the rollback complete.
+
+The backend/Python-runner digest pair and every rollback-relevant value are
+recorded in the acceptance record section that documents the release round.

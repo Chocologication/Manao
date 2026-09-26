@@ -16,7 +16,23 @@ shared supervisor binary the Maven runner uses, compiled from the one true sourc
 | uv | `ghcr.io/astral-sh/uv:0.11.6` (x86_64-unknown-linux-musl), digest `sha256:b1e699368d24c57cda93c338a57a8c5a119009ba809305cc8e86986d4a006754` | `docker pull`, `docker image inspect` RepoDigests, `uv self version` in the container |
 | JRE | Debian trixie `default-jre-headless` (OpenJDK 21) installed at build time; the compile stage uses `default-jdk-headless` of the same distribution | `apt-cache policy default-jre-headless` (candidate `2:1.21-76`) in the base image |
 | Interpreter | `/usr/local/bin/python3` = CPython 3.13.15 (matches the templates' `requires-python ==3.13.*`) | base image `PYTHON_VERSION=3.13.15` |
-| Seed | `/opt/manao-python-seed/seed-id` (64-hex content version) over `uv --version`, `python3 -V`, `uname -m` and the sorted sha256 of every seeded file; `/opt/manao-python-seed/uv-cache` holds the seeded cache (747 files, ~30 MB for the current template set) | printed by the seed-build stage; the seed-id of the first accepted build was `a3687aae7fe59204cd1a23454fd71ccb0c4e400a9200a52cb5e76a090c0295e5` (task 4 build, 2026-09-25) |
+| Seed | `/opt/manao-python-seed/seed-id` (64-hex content version) over `uv --version`, `python3 -V`, `uname -m` and the sorted sha256 of every seeded file; `/opt/manao-python-seed/uv-cache` holds the seeded cache (747 files, ~30 MB for the current template set) | printed by the seed-build stage; the seed-id `a3687aae7fe59204cd1a23454fd71ccb0c4e400a9200a52cb5e76a090c0295e5` was reproduced unchanged by the 2026-09-26 rebuild below (same template set, same toolchain) |
+
+Recorded builds of this image (local test tags; **a local tag is never a
+production pin**):
+
+| Build | Commit state | Local tag / image id | Verification on the built image |
+| --- | --- | --- | --- |
+| Task 4 first accepted build, 2026-09-25 | `ba7dccb` | `manao-python-runtime-test` (since overwritten) | suites below 13/13 + 12/12 |
+| Rebuild with the final branch sources (includes the `419d211` directory-keyed seeding fix in `manao-python`), 2026-09-26 | implementation branch at Task 10 prep (`869c34e`; launcher/seeder/Dockerfile/templates identical to `419d211` state) | `manao-python-runtime-test` id `5027b784050a` | in-image `uv --version` = 0.11.6, `python3 -V` = 3.13.15, seed-id read back = `a3687aae…295e5`; suites below 13/13 + 13/13 |
+
+Release requirement (task 10): the production image is built from the release
+checkout, pushed per the deployment README section 11.1, and delivered
+digest-pinned as `MANAO_PYTHON_RUNNER_IMAGE` via Secret `manao-backend-images`
+— the local image ids above are recording evidence only. The workspace-agent
+image (`poc4/workspace-agent`) pins the same `python:3.13.15-slim` and
+`uv 0.11.6` digests, so the agent-side dependency resolver and the runner
+verify identical Python/uv versions.
 
 uv `0.11.6` is the same version that generated the committed `uv.lock` files (lock
 revision 3, `requires-python ==3.13.*`, extras `mysql` = `pymysql[rsa]` and `redis`), so

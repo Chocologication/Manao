@@ -30,6 +30,10 @@ import { expect, test, type Page } from '@playwright/test';
  * Public ports are NEVER scanned or auto-selected: the operator fixes both test
  * NodePorts via MANAO_RUNTIME_PUBLIC_PORT_1 / MANAO_RUNTIME_PUBLIC_PORT_2 before the
  * run, and the suite fails up front when either is missing.
+ *
+ * The optional MANAO_RUNTIME_DEPENDENCY_PENDING_FAULT (see the config header) arms
+ * the FAILED-reconciliation case below; the backend fault it pairs with is
+ * provisioned for the Task 11 cloud acceptance round only.
  */
 
 const BASE_URL = process.env.MANAO_RUNTIME_BASE_URL;

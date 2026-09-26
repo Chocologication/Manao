@@ -16,6 +16,14 @@ import { defineConfig, devices } from '@playwright/test';
  * - MANAO_RUNTIME_PUBLIC_PORT_1   first test public NodePort, operator-assigned (checked by the spec)
  * - MANAO_RUNTIME_PUBLIC_PORT_2   second test public NodePort, operator-assigned (checked by the spec)
  *
+ * Optional environment:
+ * - MANAO_RUNTIME_DEPENDENCY_PENDING_FAULT  enables the FAILED-reconciliation
+ *   acceptance case. The case needs a BACKEND fault injection (deployed for the
+ *   Task 11 cloud acceptance round only) that leaves a dependency operation
+ *   PENDING and its project FAILED with WORKSPACE_RECONCILIATION_REQUIRED.
+ *   Without the variable that one case skips loudly and stays NOT_REVERIFIED -
+ *   it must never pass vacuously on an unfaulted backend.
+ *
  * Missing credentials or ports fail the run loudly in the spec's beforeAll - never a
  * silent skip. The two public ports are chosen by the operator up front; nothing here
  * scans for a free port or picks a number on the operator's behalf.

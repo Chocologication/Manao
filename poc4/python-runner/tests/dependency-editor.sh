@@ -37,8 +37,10 @@
 #   helper-hang-kills-tree with the resolution budget at 2 s and a test-only helper that hangs
 #                          after spawning a sleeper child (helper-path env override, per-run
 #                          volume — the production image is untouched), the OUTER budget kills
-#                          the helper AND its whole child tree: 504 within the margin, no
-#                          orphaned process, no journal
+#                          the helper AND its whole child tree: 504 within the helper wait
+#                          (budget + 2 s agent margin — helperWaitSeconds, strictly below the
+#                          backend's budget + 10 s request timeout), no orphaned process, no
+#                          journal
 #   timeout-kills-tool     with the resolution budget at 2 s and a hanging test-only uv shim
 #                          (PATH override, per-run volume — the production image is untouched),
 #                          prepare fails 504 PYTHON_DEPENDENCY_TIMEOUT within the budget margin
@@ -567,12 +569,18 @@ scenario_helper_hang_kills_tree() {
     'for d in /proc/[0-9]*; do p=${d#/proc/}; [ "$p" = "$$" ] && continue; c=$(tr "\0" " " < "$d/cmdline" 2>/dev/null || true); case "$c" in *sleep*|*"/shim/helper.py"*) echo "$c";; esac; done' 2>/dev/null || true)"
   local journal_present=0
   dc exec "$agent2" test -f "/workspace/.manao/python-dependencies/$OPERATION_HELPERHANG/manifest.json" >/dev/null 2>&1 && journal_present=1
+  # The helper phase draws ONE deadline of budget + HELPER_MARGIN_SECONDS (2 since the
+  # 0a10b7d round; the agent JVM tests pin helperWaitSeconds == budget + 2) before the
+  # tree kill, so the honest window is [budget+2s, budget+2s + kill/HTTP slack). The
+  # former >= 11 s bound encoded the superseded 10 s margin and failed against the
+  # correct, faster behavior.
+  local helper_wait_floor=$(( (2 + 2) * 1000 ))
   if [ "$HTTP_STATUS" = "504" ] \
     && [ "$(json_field "$WORK/resp.json" "data['code']")" = "PYTHON_DEPENDENCY_TIMEOUT" ] \
-    && [ "$elapsed" -ge 11000 ] && [ "$elapsed" -lt 25000 ] \
+    && [ "$elapsed" -ge "$helper_wait_floor" ] && [ "$elapsed" -lt 25000 ] \
     && [ -z "$orphans" ] \
     && [ "$journal_present" = "0" ]; then
-    pass "helper-hang-kills-tree (504 within the outer margin, hanging helper and sleeper child killed, no journal) [${elapsed}ms]"
+    pass "helper-hang-kills-tree (504 within the budget+2s helper wait, hanging helper and sleeper child killed, no journal) [${elapsed}ms]"
   else
     fail "helper-hang-kills-tree (status=$HTTP_STATUS elapsed=${elapsed}ms orphans='${orphans}' journal=$journal_present)"
   fi
