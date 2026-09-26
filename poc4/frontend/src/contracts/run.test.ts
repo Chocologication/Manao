@@ -9,6 +9,8 @@ import {
   parseStartRunRequest,
   parseStartRunResponse,
   resolveRunAvailability,
+  runRuntimeLabel,
+  templateRunDisplay,
   type RunPolicy,
   type RunState,
   type RunSummary,
@@ -636,6 +638,177 @@ describe('task and service run policies', () => {
         }),
       ),
     ).toThrow('Invalid run response');
+  });
+});
+
+describe('python and templated run policies', () => {
+  const PYTHON_RUNTIME = {
+    language: 'python',
+    pythonVersion: '3.13',
+    packageManager: 'uv',
+  } as const;
+  // The exact snapshot shape of design section 5: templateId, language-discriminated
+  // runtime, fixed display command and the echoed execution fields.
+  const PYTHON_CONSOLE_POLICY: RunPolicy = {
+    templateId: 'python-console',
+    command: 'python -u main.py',
+    runtime: PYTHON_RUNTIME,
+    timeoutSeconds: 1800,
+    executionKind: 'TASK',
+    startupTimeoutSeconds: 1800,
+    serviceLifetimeSeconds: 0,
+    resources: POLICY.resources,
+  };
+  const PYTHON_FASTAPI_POLICY: RunPolicy = {
+    templateId: 'python-fastapi-web',
+    command: 'python -u -m uvicorn app.main:app',
+    runtime: PYTHON_RUNTIME,
+    timeoutSeconds: 1800,
+    executionKind: 'SERVICE',
+    startupTimeoutSeconds: 1800,
+    serviceLifetimeSeconds: 7200,
+    resources: POLICY.resources,
+  };
+  const JAVA_CONSOLE_NEW_POLICY: RunPolicy = {
+    templateId: 'java-console',
+    command: 'mvn -q -DskipTests compile exec:java',
+    runtime: { language: 'java', javaMajor: 17, mavenMajor: 3 },
+    timeoutSeconds: 1800,
+    executionKind: 'TASK',
+    startupTimeoutSeconds: 1800,
+    serviceLifetimeSeconds: 0,
+    resources: POLICY.resources,
+  };
+  const JAVA_WEB_NEW_POLICY: RunPolicy = {
+    templateId: 'java-spring-boot-web',
+    command: 'mvn -q -DskipTests spring-boot:run',
+    runtime: { language: 'java', javaMajor: 17, mavenMajor: 3 },
+    timeoutSeconds: 1800,
+    executionKind: 'SERVICE',
+    startupTimeoutSeconds: 1800,
+    serviceLifetimeSeconds: 7200,
+    resources: POLICY.resources,
+  };
+
+  it('parses the design-doc python console snapshot verbatim', () => {
+    const payload = summary({ policy: PYTHON_CONSOLE_POLICY });
+    expect(parseRunSummary(payload)).toEqual(payload);
+  });
+
+  it('parses a python FastAPI service snapshot with the verified readiness lifetime', () => {
+    const payload = serviceSummary({
+      policy: PYTHON_FASTAPI_POLICY,
+      state: 'RUNNING',
+      startedAt: STARTED_AT,
+      firstReadyAt: FIRST_READY_AT,
+      expiresAt: EXPIRES_AT,
+      lastLogSeq: 4,
+    });
+    expect(parseRunSummary(payload)).toEqual(payload);
+  });
+
+  it('parses new-format java snapshots including the real Spring Boot command', () => {
+    const task = summary({ policy: JAVA_CONSOLE_NEW_POLICY });
+    expect(parseRunSummary(task)).toEqual(task);
+    const service = serviceSummary({
+      policy: JAVA_WEB_NEW_POLICY,
+      state: 'RUNNING',
+      startedAt: STARTED_AT,
+      firstReadyAt: FIRST_READY_AT,
+      expiresAt: EXPIRES_AT,
+      lastLogSeq: 4,
+    });
+    expect(parseRunSummary(service)).toEqual(service);
+  });
+
+  it('keeps legacy snapshots readable with their historical java semantics', () => {
+    expect(parseRunSummary(summary()).policy).toEqual(POLICY);
+    // A legacy SERVICE row keeps the historical console command display; only
+    // confirmed new-format rows switch to the real Spring Boot command.
+    expect(parseRunSummary(runningServiceSummary()).policy.command).toBe(
+      'mvn -q -DskipTests compile exec:java',
+    );
+  });
+
+  it.each([
+    ['an unknown templateId', { ...PYTHON_CONSOLE_POLICY, templateId: 'python-tensorflow' }],
+    [
+      'a python template with a java runtime',
+      { ...PYTHON_CONSOLE_POLICY, runtime: { language: 'java', javaMajor: 17, mavenMajor: 3 } },
+    ],
+    ['a java template with a python runtime', { ...JAVA_CONSOLE_NEW_POLICY, runtime: PYTHON_RUNTIME }],
+    [
+      'a command conflicting with the template',
+      { ...PYTHON_CONSOLE_POLICY, command: 'mvn -q -DskipTests compile exec:java' },
+    ],
+    ['an execution kind conflicting with the template', { ...PYTHON_CONSOLE_POLICY, executionKind: 'SERVICE' }],
+    [
+      'a service template with a task kind',
+      { ...PYTHON_FASTAPI_POLICY, executionKind: 'TASK', serviceLifetimeSeconds: 0 },
+    ],
+    [
+      'a python runtime carrying java fields',
+      { ...PYTHON_CONSOLE_POLICY, runtime: { ...PYTHON_RUNTIME, javaMajor: 17 } },
+    ],
+    [
+      'a java runtime carrying python fields',
+      {
+        ...JAVA_CONSOLE_NEW_POLICY,
+        runtime: { language: 'java', javaMajor: 17, mavenMajor: 3, packageManager: 'uv' },
+      },
+    ],
+    [
+      'an unpinned python version',
+      { ...PYTHON_CONSOLE_POLICY, runtime: { language: 'python', pythonVersion: '3.12', packageManager: 'uv' } },
+    ],
+    [
+      'an unknown package manager',
+      { ...PYTHON_CONSOLE_POLICY, runtime: { language: 'python', pythonVersion: '3.13', packageManager: 'pip' } },
+    ],
+  ])('rejects a templated policy with %s', (_label, policy) => {
+    expect(() => parseRunSummary(summary({ policy }))).toThrow('Invalid run response');
+  });
+
+  it.each([
+    ['a language discriminator', { javaMajor: 17, mavenMajor: 3, language: 'java' }],
+    ['python fields', { javaMajor: 17, mavenMajor: 3, pythonVersion: '3.13' }],
+  ])('rejects a legacy runtime carrying %s', (_label, runtime) => {
+    expect(() => parseRunSummary(summary({ policy: { ...POLICY, runtime } }))).toThrow(
+      'Invalid run response',
+    );
+  });
+});
+
+describe('run policy display helpers', () => {
+  it('labels the parsed java and python runtimes', () => {
+    expect(runRuntimeLabel(POLICY.runtime)).toBe('Java 17 · Maven 3');
+    expect(runRuntimeLabel(SERVICE_POLICY.runtime)).toBe('Java 17 · Maven 3');
+    expect(runRuntimeLabel({ language: 'python', pythonVersion: '3.13', packageManager: 'uv' })).toBe(
+      'Python 3.13 · uv',
+    );
+  });
+
+  it('derives the no-run toolbar display from the project template', () => {
+    expect(templateRunDisplay('java-console')).toEqual({
+      command: 'mvn -q -DskipTests compile exec:java',
+      runtimeLabel: 'Java 17 · Maven 3',
+      timeoutSeconds: 1800,
+    });
+    expect(templateRunDisplay('java-spring-boot-web')).toEqual({
+      command: 'mvn -q -DskipTests spring-boot:run',
+      runtimeLabel: 'Java 17 · Maven 3',
+      timeoutSeconds: 1800,
+    });
+    expect(templateRunDisplay('python-console')).toEqual({
+      command: 'python -u main.py',
+      runtimeLabel: 'Python 3.13 · uv',
+      timeoutSeconds: 1800,
+    });
+    expect(templateRunDisplay('python-fastapi-web')).toEqual({
+      command: 'python -u -m uvicorn app.main:app',
+      runtimeLabel: 'Python 3.13 · uv',
+      timeoutSeconds: 1800,
+    });
   });
 });
 

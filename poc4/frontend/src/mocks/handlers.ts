@@ -258,7 +258,12 @@ function asRecord(value: unknown): Record<string, unknown> | null {
 const RUNTIME_TEMPLATES: ReadonlySet<RuntimeTemplateId> = new Set([
   'java-console',
   'java-spring-boot-web',
+  'python-console',
+  'python-fastapi-web',
 ]);
+
+/** Console templates never expose public ports (python-console also stays dependency-free). */
+const CONSOLE_TEMPLATES: ReadonlySet<RuntimeTemplateId> = new Set(['java-console', 'python-console']);
 
 /**
  * Reads the runtime configuration of a create body. A legacy name-only body yields null;
@@ -304,7 +309,10 @@ function parseRuntimeFromBody(
       publicPort: port.publicPort,
     });
   }
-  if (templateId !== 'java-spring-boot-web' && publicPorts.length > 0) {
+  if (CONSOLE_TEMPLATES.has(templateId as RuntimeTemplateId) && publicPorts.length > 0) {
+    return { ok: false };
+  }
+  if (templateId === 'python-console' && (record.mysql === true || record.redis === true)) {
     return { ok: false };
   }
   return {

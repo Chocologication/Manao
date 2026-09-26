@@ -309,7 +309,12 @@ export function WorkbenchShell({ project }: { project: ProjectSummary }) {
                 activePanel === 'run' ? 'z-10' : 'invisible pointer-events-none',
               )}
             >
-              <RunPanel key={project.id} projectId={project.id} coordinator={coordinator} />
+              <RunPanel
+                key={project.id}
+                projectId={project.id}
+                projectTemplateId={project.runtime?.templateId ?? 'java-console'}
+                coordinator={coordinator}
+              />
             </div>
             {experimentalTerminalEnabled && terminalLoaded ? (
               <div

@@ -110,4 +110,38 @@ describe('ProjectCard', () => {
     expect(screen.queryByText(/Spring Boot web/)).not.toBeInTheDocument();
     expect(screen.queryByText('Public endpoint unconfirmed')).not.toBeInTheDocument();
   });
+
+  it('shows python templates with their accurate language and shape', () => {
+    const pythonConsole: ProjectSummary = {
+      ...ready,
+      name: 'Py Console',
+      runtime: { templateId: 'python-console', mysql: false, redis: false, publicPorts: [] },
+    };
+    render(
+      <MemoryRouter>
+        <ProjectCard project={pythonConsole} />
+      </MemoryRouter>,
+    );
+    expect(screen.getByText('Python console')).toBeInTheDocument();
+
+    cleanup();
+    const fastApi: ProjectSummary = {
+      ...ready,
+      name: 'Py Web',
+      runtime: {
+        templateId: 'python-fastapi-web',
+        mysql: true,
+        redis: false,
+        publicPorts: [{ name: 'port-1', targetPort: 8000, publicPort: 30082 }],
+      },
+    };
+    render(
+      <MemoryRouter>
+        <ProjectCard project={fastApi} />
+      </MemoryRouter>,
+    );
+    const runtime = screen.getByText(/Python FastAPI web/);
+    expect(runtime).toHaveTextContent('MySQL');
+    expect(runtime).toHaveTextContent('8000→30082');
+  });
 });

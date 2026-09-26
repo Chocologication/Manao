@@ -1,6 +1,7 @@
 import { Link } from 'react-router';
 import { Button } from '@/components/ui/button';
 import { Spinner } from '@/components/ui/spinner';
+import { RUNTIME_TEMPLATE_META } from '../../contracts/project';
 import type { ProjectSummary } from '../../contracts/project';
 
 export function ProjectCard({ project, onDelete, deleting = false, deleteDisabled = false }: {
@@ -37,7 +38,7 @@ export function ProjectCard({ project, onDelete, deleting = false, deleteDisable
           </p>
           {runtime ? (
             <p className="mt-1 text-sm text-muted-foreground">
-              {runtime.templateId === 'java-spring-boot-web' ? 'Spring Boot web' : 'Console'}
+              {RUNTIME_TEMPLATE_META[runtime.templateId].label}
               {runtime.mysql ? ' · MySQL' : ''}
               {runtime.redis ? ' · Redis' : ''}
               {runtime.publicPorts

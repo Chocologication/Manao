@@ -29,7 +29,8 @@ import {
   RunAuthorityCoordinator,
   useRunAuthorityCoordinator,
 } from '../../features/runs/RunAuthorityCoordinator';
-import { clonePoc4RunPolicy, SERVICE_RUN_POLICY, SEED_LOG_MARKER } from '../../mocks/runFixtures';
+import type { RuntimeTemplateId } from '../../contracts/project';
+import { clonePoc4RunPolicy, clonePythonConsoleRunPolicy, SERVICE_RUN_POLICY, SEED_LOG_MARKER } from '../../mocks/runFixtures';
 import { server } from '../../mocks/node';
 import { resetLogTickets } from '../../mocks/runSocket';
 import { appendLogChunk, setRunScenario, startRun as mockStartRun } from '../../mocks/runState';
@@ -38,6 +39,7 @@ import { resetAppRuntime } from '../../test/renderApp';
 import { logDistanceFromBottom, RunLogView } from './RunLogView';
 import { RunPanel } from './RunPanel';
 import { StopRunDialog } from './StopRunDialog';
+import { CloseTerminalDialog } from '../terminal/CloseTerminalDialog';
 
 const ALICE = { username: 'alice', password: 'demo-pass' };
 const POLICY = clonePoc4RunPolicy();
@@ -85,6 +87,7 @@ function makeRun(
     logTruncated?: boolean;
     logEvictedBytes?: number;
     lastLogSeq?: number | null;
+    policy?: RunSummary['policy'];
   } = {},
 ): RunSummary {
   const terminal = state === 'SUCCEEDED' || state === 'FAILED' || state === 'CANCELLED' || state === 'TIMED_OUT';
@@ -113,7 +116,7 @@ function makeRun(
     id,
     state,
     requestedWorkspaceRevision: parseWorkspaceRevision('mock-rev-0001'),
-    policy: POLICY,
+    policy: extra.policy ?? POLICY,
     createdAt,
     startedAt,
     finishedAt:
@@ -167,10 +170,19 @@ function stubRuns(options: {
   );
 }
 
-function renderPanel(coordinator?: RunAuthorityCoordinator) {
+function renderPanel(
+  coordinator?: RunAuthorityCoordinator,
+  projectTemplateId: RuntimeTemplateId = 'java-console',
+) {
   function Harness() {
     const hooked = useRunAuthorityCoordinator(ALICE_SEED_PROJECT_ID);
-    return <RunPanel projectId={ALICE_SEED_PROJECT_ID} coordinator={coordinator ?? hooked} />;
+    return (
+      <RunPanel
+        projectId={ALICE_SEED_PROJECT_ID}
+        coordinator={coordinator ?? hooked}
+        projectTemplateId={projectTemplateId}
+      />
+    );
   }
   return render(
     <AppProviders>
@@ -179,10 +191,17 @@ function renderPanel(coordinator?: RunAuthorityCoordinator) {
   );
 }
 
-function renderWithCoordinator(coordinator: RunAuthorityCoordinator) {
+function renderWithCoordinator(
+  coordinator: RunAuthorityCoordinator,
+  projectTemplateId: RuntimeTemplateId = 'java-console',
+) {
   return render(
     <AppProviders>
-      <RunPanel projectId={ALICE_SEED_PROJECT_ID} coordinator={coordinator} />
+      <RunPanel
+        projectId={ALICE_SEED_PROJECT_ID}
+        coordinator={coordinator}
+        projectTemplateId={projectTemplateId}
+      />
     </AppProviders>,
   );
 }
@@ -416,6 +435,36 @@ describe('RunPanel authority and start preconditions', () => {
     });
     expect(start).toHaveAttribute('title', runPreconditionDescription('RUN_ACTIVE'));
     expect(start).toBeDisabled();
+  });
+});
+
+describe('RunPanel run policy display', () => {
+  it('shows the project template policy before any run exists instead of the Maven default', async () => {
+    stubRuns({ active: null, history: [] });
+    await authenticateAsAlice();
+    renderPanel(undefined, 'python-fastapi-web');
+    await loadedIdle();
+    expect(screen.getByText('python -u -m uvicorn app.main:app')).toBeInTheDocument();
+    expect(screen.getByText(/Python 3\.13 · uv/)).toBeInTheDocument();
+    expect(screen.queryByText(/Maven/)).not.toBeInTheDocument();
+    expect(screen.queryByText('mvn -q -DskipTests compile exec:java')).not.toBeInTheDocument();
+  });
+
+  it('keeps a selected historical run on its own policy without the current template overriding it', async () => {
+    const pythonRun = makeRun('run-py-history', 'FAILED', {
+      policy: clonePythonConsoleRunPolicy(),
+    });
+    stubRuns({ active: null, history: [pythonRun] });
+    await authenticateAsAlice();
+    renderPanel(undefined, 'java-spring-boot-web');
+    const user = userEvent.setup();
+    const historyButton = await screen.findByRole('button', {
+      name: `${pythonRun.createdAt} FAILED`,
+    });
+    await user.click(historyButton);
+    expect(screen.getByText('python -u main.py')).toBeInTheDocument();
+    expect(screen.getByText(/Python 3\.13 · uv/)).toBeInTheDocument();
+    expect(screen.queryByText(/Maven/)).not.toBeInTheDocument();
   });
 });
 
@@ -1186,6 +1235,26 @@ describe('StopRunDialog', () => {
     rerender(<StopRunDialog open={false} onCancel={onCancel} onConfirm={onConfirm} />);
     expect(trigger).toHaveFocus();
     trigger.remove();
+  });
+});
+
+describe('Run dialog copy', () => {
+  it('asks about the run generically without naming Maven', () => {
+    render(<StopRunDialog open onCancel={vi.fn()} onConfirm={vi.fn()} />);
+    const message = screen.getByText(/remains the authority for run state/);
+    expect(message).toHaveTextContent(
+      'Stop the current run? The server remains the authority for run state.',
+    );
+    expect(message).not.toHaveTextContent(/Maven/i);
+  });
+
+  it('keeps the terminal close dialog on a generic run message', () => {
+    render(<CloseTerminalDialog open onConfirm={vi.fn()} onCancel={vi.fn()} />);
+    const message = screen.getByText(/continues independently/);
+    expect(message).toHaveTextContent(
+      'This terminal session cannot be resumed after it is closed. The run continues independently.',
+    );
+    expect(message).not.toHaveTextContent(/Maven/i);
   });
 });
 

@@ -3,7 +3,7 @@ import { Button } from '@/components/ui/button';
 
 export const STOP_DIALOG_TITLE = 'Stop run';
 export const STOP_DIALOG_MESSAGE =
-  'Stop the current Maven run? The server remains the authority for run state.';
+  'Stop the current run? The server remains the authority for run state.';
 export const STOP_CONFIRM_LABEL = 'Stop';
 export const STOP_CANCEL_LABEL = 'Cancel';
 
