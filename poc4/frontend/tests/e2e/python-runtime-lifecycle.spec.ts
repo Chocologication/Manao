@@ -297,7 +297,11 @@ test.describe.serial('python runtime cloud lifecycle', () => {
       CONSOLE_RUN_TIMEOUT,
     );
     expect(failed.exitCode, 'sys.exit(3) must surface as the run exit code').toBe(3);
-    expect(failed.terminationReason, 'a non-zero console exit fails the run').toBe('APPLICATION_EXITED');
+    // A TASK (console) run failure is classified BUILD_FAILED by the shared backend
+    // reducer for every language (RunStateReducer's non-service branch, accepted Java
+    // behavior); APPLICATION_EXITED is the web-run receipt path. The exit code, not the
+    // reason name, carries the user-visible failure fact here.
+    expect(failed.terminationReason, 'a non-zero console exit fails the run').toBe('BUILD_FAILED');
     console.log(`[python-runtime] edited console run ${failedRunId} FAILED with exit 3 as expected`);
 
     // Restore the template entry: the fix must genuinely succeed on a new run.
@@ -434,6 +438,9 @@ test.describe.serial('python runtime cloud lifecycle', () => {
     expect(before.id, 'the stop test must continue the run started by the previous test')
       .toBe(SCENE.webRunId);
 
+    // The Stop control lives in the Run panel: the workbench mounts on the File tab and
+    // inactive panels are aria-hidden, so the tab must be selected before the lookup.
+    await page.getByRole('tab', { name: 'Run' }).click();
     const stop = page.getByRole('button', { name: 'Stop run' });
     await expect(stop).toBeEnabled();
     await stop.click();
@@ -488,7 +495,7 @@ test.describe.serial('python runtime cloud lifecycle', () => {
     expect(SCENE.consoleProjectId, 'the console project from the earlier scene').not.toBe('');
 
     // ADD httpx through the workbench form; the committed files must list it.
-    await page.getByRole('tab', { name: 'Dependencies' }).click();
+    await openDependenciesPanel(page);
     await page.getByLabel('Package name').fill('httpx');
     await page.getByRole('button', { name: 'Add dependency' }).click();
     await expect
@@ -516,7 +523,7 @@ test.describe.serial('python runtime cloud lifecycle', () => {
     expect(withHttpx.exitCode, 'importing httpx must work after the ADD').toBe(0);
 
     // REMOVE httpx through the same form; the committed files must drop it.
-    await page.getByRole('tab', { name: 'Dependencies' }).click();
+    await openDependenciesPanel(page);
     await page.getByLabel('Package name').fill('httpx');
     await page.getByRole('button', { name: 'Remove dependency' }).click();
     await expect
@@ -562,7 +569,7 @@ test.describe.serial('python runtime cloud lifecycle', () => {
       await route.fetch();
       await route.abort('connectionreset');
     });
-    await page.getByRole('tab', { name: 'Dependencies' }).click();
+    await openDependenciesPanel(page);
     await page.getByLabel('Package name').fill('requests');
     await page.getByRole('button', { name: 'Add dependency' }).click();
     expect(deliveredDependencyPost, 'the ADD was sent exactly once').toBe(1);
@@ -597,6 +604,8 @@ test.describe.serial('python runtime cloud lifecycle', () => {
     // Leave the project clean for the deletion scene. This cleanup REMOVE is also the
     // defensive proof that the interceptor is really gone: a surviving route would drop
     // the response, re-enter the unconfirmed state and bump the counter to 2.
+    await settleWorkbenchReload(page);
+    await openDependenciesPanel(page);
     await page.getByLabel('Package name').fill('requests');
     await page.getByRole('button', { name: 'Remove dependency' }).click();
     await expect(page.getByText('Dependency change is unconfirmed')).toBeHidden({ timeout: 180_000 });
@@ -666,7 +675,13 @@ test.describe.serial('python runtime cloud lifecycle', () => {
       'the fail-closed body must carry the reconciliation code',
     ).toBe('WORKSPACE_RECONCILIATION_REQUIRED');
 
-    await page.goto(`/projects/${SCENE.consoleProjectId}`);
+    // Auth lives in memory only (a full reload signs out), so the failed project's route
+    // is reached through the app's own card link; the FAILED state renders the failure
+    // page, never the READY workbench.
+    const failedCard = projectCard(page, SCENE.consoleProjectName);
+    await expect(failedCard).toBeVisible();
+    await failedCard.getByRole('link', { name: 'Open' }).click();
+    await expect(page).toHaveURL(/\/projects\/[^/]+$/);
 
     // The failure page must reach the recovery entry without the READY workbench.
     await expect(page.getByText('WORKSPACE_RECONCILIATION_REQUIRED')).toBeVisible();
@@ -768,6 +783,12 @@ async function signIn(page: Page): Promise<void> {
  * Opens a project card by its visible name and waits for the workbench heading.
  */
 async function openProject(page: Page, projectName: string): Promise<void> {
+  // Callers arrive from /projects (after signIn) AND from a workbench (after a terminal
+  // run). Auth state lives in memory only — a full page reload signs out — so the workbench
+  // case navigates back through the app's own link instead of page.goto.
+  if (/\/projects\/[^/]+$/.test(page.url())) {
+    await page.getByRole('link', { name: 'Back to projects' }).click();
+  }
   const card = projectCard(page, projectName);
   await expect(card).toBeVisible();
   await card.getByRole('link', { name: 'Open' }).click();
@@ -775,8 +796,51 @@ async function openProject(page: Page, projectName: string): Promise<void> {
   await expect(page.getByRole('heading', { name: projectName })).toBeVisible();
 }
 
+/**
+ * A terminal run makes the workbench coordinator reload the authoritative workspace; a
+ * save that races that reload fails it closed behind a visible retry (the reload refuses
+ * to destroy in-flight edits). Settle it before any interaction that needs the write
+ * gate open: retry until the banner is gone.
+ */
+async function settleWorkbenchReload(page: Page): Promise<void> {
+  const failedBanner = page.getByText('Workspace reload failed');
+  const retry = page.getByRole('button', { name: 'Retry workspace reload' });
+  await expect(async () => {
+    if (await failedBanner.isVisible()) {
+      await retry.click();
+    }
+    await expect(failedBanner).toBeHidden();
+  }).toPass({ timeout: 120_000, intervals: [2_000, 5_000] });
+}
+
+/**
+ * Selects the Dependencies panel and waits for its form. A workbench remount racing the
+ * tab click resets the panel to File, so the click retries until the input is really
+ * visible (the invisible panel keeps the input in the DOM for role queries).
+ */
+async function openDependenciesPanel(page: Page): Promise<void> {
+  const packageInput = page.getByLabel('Package name');
+  await expect(async () => {
+    if (!(await packageInput.isVisible())) {
+      await page.getByRole('tab', { name: 'Dependencies' }).click();
+    }
+    await expect(packageInput).toBeVisible();
+  }).toPass({ timeout: 30_000, intervals: [1_000, 2_000] });
+}
+
 async function startRunFromToolbar(page: Page): Promise<void> {
+  await settleWorkbenchReload(page);
   await page.getByRole('tab', { name: 'Run' }).click();
+  // An API-side save between runs can leave the page's cached workspace revision stale
+  // (the Start click would answer WORKSPACE_REVISION_CONFLICT and start nothing). The
+  // file tree's Refresh is the app's own recovery; wait for its refetch response so the
+  // Start click sends the current revision.
+  const treeRefresh = page.waitForResponse(
+    (response) => response.url().includes('/files/tree') && response.ok(),
+    { timeout: 15_000 },
+  );
+  await page.getByRole('button', { name: 'Refresh', exact: true }).click();
+  await treeRefresh;
   const start = page.getByRole('button', { name: 'Start run' });
   await expect(start).toBeEnabled();
   await start.click();
