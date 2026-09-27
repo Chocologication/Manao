@@ -133,8 +133,12 @@ public class WorkspaceConfig {
 
     @Bean
     WorkspaceOperationService workspaceOperationService(WorkspaceStore store, WorkspaceAgent agent,
-                                                        ProjectLifecycleGate lifecycle) {
-        return new WorkspaceOperationService(store, agent, lifecycle);
+                                                        ProjectLifecycleGate lifecycle,
+                                                        RuntimeFaultProperties faultProperties) {
+        // The acceptance-only dependency-pending fault rides on the same instance that owns
+        // the fail-closed semantics it reuses; empty (the default) can never trip it.
+        return new WorkspaceOperationService(store, agent, lifecycle,
+            faultProperties.dependencyPendingFaultPackage());
     }
 
     @Bean

@@ -45,7 +45,12 @@ class PythonDependencyOperationTest {
         // runs through the SAME lease instance every other workspace consumer uses.
         store.gate = lifecycle;
         WorkspaceOperationService operations = new WorkspaceOperationService(store, agent, lifecycle);
-        dependencies = new PythonDependencyService(store, operations, agent, lifecycle, new ProjectRuntimeStore() {
+        dependencies = new PythonDependencyService(store, operations, agent, lifecycle, pythonRuntimeStore());
+    }
+
+    /** The Python template runtime store the owner checks read before accepting a change. */
+    private static ProjectRuntimeStore pythonRuntimeStore() {
+        return new ProjectRuntimeStore() {
             private final Map<String, ProjectRuntimeSpec> specs = new ConcurrentHashMap<>(Map.of(
                 PROJECT, new ProjectRuntimeSpec("python-fastapi-web", false, false, List.of())));
 
@@ -63,7 +68,13 @@ class PythonDependencyOperationTest {
             @Override public void rememberStorage(String projectId, StorageBinding binding) { }
 
             @Override public List<StorageBinding> storageBindings(String projectId) { return List.of(); }
-        });
+        };
+    }
+
+    /** The dependency stack wired with the operator-armed dependency-pending fault value. */
+    private PythonDependencyService dependenciesWithArmedFault(String armedPackage) {
+        WorkspaceOperationService operations = new WorkspaceOperationService(store, agent, lifecycle, armedPackage);
+        return new PythonDependencyService(store, operations, agent, lifecycle, pythonRuntimeStore());
     }
 
     private ApiException assertRejected(Runnable call, String code, int status) {
@@ -209,6 +220,91 @@ class PythonDependencyOperationTest {
         assertThat(status.resultWorkspaceRevision()).isEqualTo(8L);
         assertThat(store.revision.get(PROJECT)).isEqualTo(8L);
         assertThat(store.records.get(OPERATION).state()).isEqualTo("COMMITTED");
+    }
+
+    @Test
+    void unsetDependencyPendingFaultKeepsTheNormalCommitAndNeverFailsTheProject() {
+        // Default-off is a deployment guarantee: an empty armed value (the property default)
+        // must leave the first-party commit path exactly as it was.
+        String requestSha256 = PythonDependencyService.requestDigest(PROJECT, "ADD", "six", null, 7);
+        agent.prepareResult = new WorkspaceAgent.PreparedPythonDependencies(OPERATION, requestSha256,
+            "a".repeat(64), "b".repeat(64));
+        PythonDependencyService unfaulted = dependenciesWithArmedFault("");
+
+        PythonDependencyService.Status status = unfaulted.change(ALICE, PROJECT, OPERATION,
+            new WorkspaceAgent.DependencyChange("ADD", "six", null), "7");
+
+        assertThat(status.state()).isEqualTo("COMMITTED");
+        assertThat(status.resultWorkspaceRevision()).isEqualTo(8L);
+        assertThat(agent.commitCalls).isEqualTo(1);
+        assertThat(store.failures).isEmpty();
+        assertThat(store.records.get(OPERATION).state()).isEqualTo("COMMITTED");
+        assertThat(store.revision.get(PROJECT)).isEqualTo(8L);
+    }
+
+    @Test
+    void armedDependencyPendingFaultFailsClosedAfterTheDurablePendingRegistration() {
+        // The fault sits AFTER prepare + durable registration and BEFORE the commit: the
+        // durable state is exactly "PENDING + FAILED + journal present", so the scene is
+        // indistinguishable from a real interrupted commit and reconcile stays legal.
+        String requestSha256 = PythonDependencyService.requestDigest(PROJECT, "ADD", "six", null, 7);
+        agent.prepareResult = new WorkspaceAgent.PreparedPythonDependencies(OPERATION, requestSha256,
+            "a".repeat(64), "b".repeat(64));
+        PythonDependencyService faulted = dependenciesWithArmedFault("six");
+
+        assertRejected(() -> faulted.change(ALICE, PROJECT, OPERATION,
+            new WorkspaceAgent.DependencyChange("ADD", "six", null), "7"),
+            "WORKSPACE_RECONCILIATION_REQUIRED", 409);
+        assertThat(agent.prepareCalls).isEqualTo(1);
+        assertThat(agent.commitCalls).isZero();
+        assertThat(store.pendingOperations(PROJECT)).hasSize(1);
+        assertThat(store.records.get(OPERATION).state()).isEqualTo("PENDING");
+        assertThat(store.failures).containsEntry(PROJECT, "WORKSPACE_RECONCILIATION_REQUIRED");
+        assertThat(store.projects.get(PROJECT).state()).isEqualTo("FAILED");
+        assertThat(store.projects.get(PROJECT).failureReason()).isEqualTo("WORKSPACE_RECONCILIATION_REQUIRED");
+        assertThat(store.revision.get(PROJECT)).isEqualTo(7L);
+        assertThat(store.deletedOperations).isEmpty();
+    }
+
+    @Test
+    void armedDependencyPendingFaultIgnoresEveryOtherPackage() {
+        // Only the exact canary package trips; a different package commits normally.
+        String requestSha256 = PythonDependencyService.requestDigest(PROJECT, "ADD", "httpx", null, 7);
+        agent.prepareResult = new WorkspaceAgent.PreparedPythonDependencies(OPERATION, requestSha256,
+            "a".repeat(64), "b".repeat(64));
+        PythonDependencyService faulted = dependenciesWithArmedFault("six");
+
+        PythonDependencyService.Status status = faulted.change(ALICE, PROJECT, OPERATION,
+            new WorkspaceAgent.DependencyChange("ADD", "httpx", null), "7");
+
+        assertThat(status.state()).isEqualTo("COMMITTED");
+        assertThat(status.resultWorkspaceRevision()).isEqualTo(8L);
+        assertThat(store.failures).isEmpty();
+        assertThat(store.records.get(OPERATION).state()).isEqualTo("COMMITTED");
+        assertThat(store.revision.get(PROJECT)).isEqualTo(8L);
+    }
+
+    @Test
+    void reconcileAfterTheFaultCompletesTheRegisteredCommitAndLiftsTheFailure() {
+        String requestSha256 = PythonDependencyService.requestDigest(PROJECT, "ADD", "six", null, 7);
+        agent.prepareResult = new WorkspaceAgent.PreparedPythonDependencies(OPERATION, requestSha256,
+            "a".repeat(64), "b".repeat(64));
+        PythonDependencyService faulted = dependenciesWithArmedFault("six");
+        assertRejected(() -> faulted.change(ALICE, PROJECT, OPERATION,
+            new WorkspaceAgent.DependencyChange("ADD", "six", null), "7"),
+            "WORKSPACE_RECONCILIATION_REQUIRED", 409);
+
+        // The e2e recovery path: reconciling the SAME registered operation — even on the
+        // faulted service — always completes the commit; the redrive path never trips.
+        PythonDependencyService.Status status = faulted.reconcile(ALICE, PROJECT, OPERATION);
+
+        assertThat(status.state()).isEqualTo("COMMITTED");
+        assertThat(status.resultWorkspaceRevision()).isEqualTo(8L);
+        assertThat(store.revision.get(PROJECT)).isEqualTo(8L);
+        assertThat(store.records.get(OPERATION).state()).isEqualTo("COMMITTED");
+        assertThat(store.clearedFailures).containsExactly(PROJECT);
+        assertThat(store.projects.get(PROJECT).state()).isEqualTo("READY");
+        assertThat(store.projects.get(PROJECT).failureReason()).isNull();
     }
 
     @Test

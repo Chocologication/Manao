@@ -135,6 +135,35 @@ class PythonDependencyHttpContractTest {
     }
 
     @Test
+    void armedPendingFaultAnswersTheReconciliationCodeOnTheWireWithThePendingRowIntact() throws Exception {
+        // Operator-armed acceptance fault (deploy README 11.4): the canary ADD resolves
+        // through real prepare, registers the PENDING row, then answers the SAME fail-closed
+        // error a real interrupted commit produces — never a 2xx.
+        String canary = "six";
+        agent.prepareResult = prepared(OPERATION, digest("ADD", canary, null, 7));
+        ProjectLifecycleGate lifecycle = new ProjectLifecycleGate();
+        WorkspaceOperationService operations = new WorkspaceOperationService(store, agent, lifecycle, canary);
+        PythonDependencyService dependencies = new PythonDependencyService(store, operations, agent,
+            lifecycle, runtimeStore(Map.of(PROJECT, "python-fastapi-web")));
+        MockMvc faultedHttp = MockMvcBuilders.standaloneSetup(new PythonDependencyController(dependencies))
+            .setControllerAdvice(new GlobalExceptionHandler())
+            .build();
+
+        faultedHttp.perform(post("/api/v1/projects/" + PROJECT + "/python-dependencies")
+                .principal(new UsernamePasswordAuthenticationToken(ALICE, "n/a"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(changeBody(OPERATION, "ADD", canary, null, "7")))
+            .andExpect(status().isConflict())
+            .andExpect(jsonPath("$.code").value("WORKSPACE_RECONCILIATION_REQUIRED"));
+        assertThat(agent.commitCalls).isZero();
+        assertThat(store.pendingOperations(PROJECT)).hasSize(1);
+        assertThat(store.records.get(OPERATION).state()).isEqualTo("PENDING");
+        assertThat(store.projects.get(PROJECT).state()).isEqualTo("FAILED");
+        assertThat(store.projects.get(PROJECT).failureReason()).isEqualTo("WORKSPACE_RECONCILIATION_REQUIRED");
+        assertThat(store.revision.get(PROJECT)).isEqualTo(7L);
+    }
+
+    @Test
     void nonOwnerIsHiddenAsNotFoundAndNeverPrepares() throws Exception {
         store.projects.put("prj-java", new WorkspaceStore.ProjectRecord("prj-java", ALICE, "java", "READY", 7, null,
             java.time.Instant.parse("2026-08-29T00:00:00Z")));

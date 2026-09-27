@@ -32,8 +32,10 @@ import { expect, test, type Page } from '@playwright/test';
  * run, and the suite fails up front when either is missing.
  *
  * The optional MANAO_RUNTIME_DEPENDENCY_PENDING_FAULT (see the config header) arms
- * the FAILED-reconciliation case below; the backend fault it pairs with is
- * provisioned for the Task 11 cloud acceptance round only.
+ * the FAILED-reconciliation case below. Its value IS the canary package name: the
+ * operator arms the backend fault (MANAO_DEPENDENCY_PENDING_FAULT_PACKAGE) with the
+ * SAME value, and this spec provisions the FAILED scene itself by adding that
+ * package - provisioned for the Task 11 cloud acceptance round only.
  */
 
 const BASE_URL = process.env.MANAO_RUNTIME_BASE_URL;
@@ -616,14 +618,54 @@ test.describe.serial('python runtime cloud lifecycle', () => {
   test('a FAILED reconciliation page recovers the pending dependency operation', async ({ page }, testInfo) => {
     // Authored-only case: reaching WORKSPACE_RECONCILIATION_REQUIRED needs a backend
     // fault (agent commit interrupted after prepare). Task 11 pairs this case with the
-    // operator-injected fault; without the fault flag the case must not run and stays
+    // operator-injected fault; without the fault value the case must not run and stays
     // explicitly NOT_REVERIFIED instead of passing vacuously.
     test.skip(
       !process.env.MANAO_RUNTIME_DEPENDENCY_PENDING_FAULT,
-      'requires MANAO_RUNTIME_DEPENDENCY_PENDING_FAULT: Task 11 must inject the backend fault that leaves the dependency operation PENDING and the project FAILED',
+      'requires MANAO_RUNTIME_DEPENDENCY_PENDING_FAULT=<canary package>: the value IS the canary package '
+        + 'name the backend fault (MANAO_DEPENDENCY_PENDING_FAULT_PACKAGE) is armed with, so the operator '
+        + 'must set the SAME value on both sides - this test then provisions the FAILED scene itself by '
+        + 'adding that package',
     );
     test.setTimeout(600_000);
+    // Dual-purpose contract: the variable is both the arming flag and the exact canary
+    // package value. A value that could never pass the backend's own package rule would
+    // commit normally on an armed backend - so it must fail here loudly, never vacuously.
+    const canary = process.env.MANAO_RUNTIME_DEPENDENCY_PENDING_FAULT!;
+    expect(
+      canary,
+      `MANAO_RUNTIME_DEPENDENCY_PENDING_FAULT="${canary}" must be a valid backend dependency package `
+        + 'name (lowercase alnum at both ends, hyphens inside) and must resolve through real uv - '
+        + 'use "six"',
+    ).toMatch(/^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/);
+
     await signIn(page);
+    // The backend fault sits AFTER prepare + durable PENDING registration and BEFORE the
+    // commit: one ADD of the canary itself must answer the production fail-closed error.
+    // A 2xx would mean the backend fault was not armed with this canary value.
+    const revision = await currentWorkspaceRevision(page, SCENE.consoleProjectId);
+    const faultResponse = await authedPost(
+      page,
+      `/api/v1/projects/${SCENE.consoleProjectId}/python-dependencies`,
+      {
+        operationId: generateDependencyOperationId(),
+        action: 'ADD',
+        packageName: canary,
+        version: null,
+        expectedWorkspaceRevision: revision,
+      },
+    );
+    expect(
+      faultResponse.status(),
+      `the canary ADD must answer 409 WORKSPACE_RECONCILIATION_REQUIRED (got ${faultResponse.status()}): `
+        + 'a 2xx means the backend fault MANAO_DEPENDENCY_PENDING_FAULT_PACKAGE was NOT armed with '
+        + `"${canary}" on this backend`,
+    ).toBe(409);
+    expect(
+      ((await faultResponse.json()) as { code?: string }).code,
+      'the fail-closed body must carry the reconciliation code',
+    ).toBe('WORKSPACE_RECONCILIATION_REQUIRED');
+
     await page.goto(`/projects/${SCENE.consoleProjectId}`);
 
     // The failure page must reach the recovery entry without the READY workbench.
@@ -764,6 +806,23 @@ function authedPut(page: Page, path: string, body: unknown) {
     headers: { Authorization: `Bearer ${SCENE.accessToken}` },
     data: body,
   });
+}
+
+/** Minimal replica of src/api/pythonDependencyApi.ts generateOperationId: the panel builds
+ * the operation id the same RFC-4122 v4 way from getRandomValues, because public HTTP pages
+ * have no secure-context crypto.randomUUID guarantee. The spec never imports app code, so
+ * the fault-provisioning POST replicates the identity format it must be indistinguishable
+ * from. */
+function generateDependencyOperationId(): string {
+  const bytes = new Uint8Array(16);
+  crypto.getRandomValues(bytes);
+  bytes[6] = (bytes[6]! & 0x0f) | 0x40; // version 4
+  bytes[8] = (bytes[8]! & 0x3f) | 0x80; // RFC 4122 variant
+  const hex = Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0'));
+  return (
+    `${hex.slice(0, 4).join('')}-${hex.slice(4, 6).join('')}-${hex.slice(6, 8).join('')}` +
+    `-${hex.slice(8, 10).join('')}-${hex.slice(10, 16).join('')}`
+  );
 }
 
 /** Current workspace revision for optimistic writes (files/tree carries it). */

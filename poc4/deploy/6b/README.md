@@ -774,6 +774,20 @@ acceptance record. Suggested sequence:
    FAILED-recovery case (documented in the E2E config); without it that single
    case skips loudly and stays NOT_REVERIFIED.
 
+   Provisioning the FAILED-recovery fault — only inside the same authorized
+   window, after the main health checks of step 6: arm the backend fault with
+   `kubectl -n manao-stage6b set env deployment/backend MANAO_DEPENDENCY_PENDING_FAULT_PACKAGE=<canary>`
+   and run the suite with the SAME canary value in
+   `MANAO_RUNTIME_DEPENDENCY_PENDING_FAULT` (the variable is the arming flag
+   AND the exact package the spec ADDs). Recommended canary: `six` — the fault
+   sits after prepare + durable PENDING registration by design, so the canary
+   MUST resolve through real uv inside the 20s budget or prepare fails before
+   the fault point and the case fails loudly. Arming rolls the single backend
+   replica; disarm afterwards with
+   `kubectl -n manao-stage6b set env deployment/backend MANAO_DEPENDENCY_PENDING_FAULT_PACKAGE-`
+   (key removal) or an empty value, and record both actions in the acceptance
+   record.
+
 ### 11.5 Rollback boundary
 
 From the design (section 8), binding:

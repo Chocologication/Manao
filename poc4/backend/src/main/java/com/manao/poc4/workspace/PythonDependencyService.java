@@ -146,6 +146,10 @@ public final class PythonDependencyService {
             WorkspaceOperationService.RECEIPT_PATH_PREFIX + operationId + ".json", receiptSha256,
             "PENDING", OPERATION_KIND, request.requestSha256());
         operations.registerPending(projectId, request.expectedRevision(), operation);
+        // Acceptance-only fault (deploy README 11.4): exactly here the durable state is
+        // "PENDING + FAILED + journal present" when the canary matches — the reconcile entry
+        // can then finish the registered commit. Redrive never re-enters this line.
+        operations.tripDependencyPendingFaultIfArmed(projectId, operationId, request.packageName());
         long revision = operations.commitNewPythonDependency(operation, receiptJson, request.requestSha256());
         return new Status(operationId, "COMMITTED", revision);
     }

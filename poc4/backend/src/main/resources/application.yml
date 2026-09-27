@@ -82,3 +82,11 @@ manao:
         mysql-image-digest: ${MANAO_MYSQL_IMAGE_DIGEST:}
         redis-image-digest: ${MANAO_REDIS_IMAGE_DIGEST:}
         mysql-storage-class-name: ${MANAO_MYSQL_STORAGE_CLASS:}
+  runtime:
+    # Acceptance-only fault injection for the e2e FAILED-recovery case (deploy README 11.4):
+    # when armed with a canary package name, the FIRST-PARTY ADD of exactly that package fails
+    # closed AFTER prepare + durable PENDING registration (project FAILED with
+    # WORKSPACE_RECONCILIATION_REQUIRED, row survives) instead of committing. It must stay
+    # empty in every normal deployment; arm/disarm is an operator action inside the authorized
+    # window, recorded in the acceptance record.
+    dependency-pending-fault-package: ${MANAO_DEPENDENCY_PENDING_FAULT_PACKAGE:}

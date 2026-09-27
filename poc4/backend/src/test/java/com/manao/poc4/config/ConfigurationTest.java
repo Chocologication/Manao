@@ -197,6 +197,23 @@ class ConfigurationTest {
         }
     }
 
+    @Test
+    void dependencyPendingFaultIsDisabledByDefaultAndBindsTheOperatorCanary() {
+        // Default-off is a deployment guarantee: with no MANAO_DEPENDENCY_PENDING_FAULT_PACKAGE
+        // the acceptance fault property binds empty and nothing can ever trip it.
+        localContextRunner().run(context -> {
+            assertThat(context.getStartupFailure()).isNull();
+            RuntimeFaultProperties properties = context.getBean(RuntimeFaultProperties.class);
+            assertThat(properties.dependencyPendingFaultPackage()).isEmpty();
+        });
+        localContextRunner().withPropertyValues("manao.runtime.dependency-pending-fault-package=six")
+            .run(context -> {
+                assertThat(context.getStartupFailure()).isNull();
+                RuntimeFaultProperties properties = context.getBean(RuntimeFaultProperties.class);
+                assertThat(properties.dependencyPendingFaultPackage()).isEqualTo("six");
+            });
+    }
+
     private ApplicationContextRunner localContextRunner() {
         try {
             Path kubeconfig = temporaryDirectory.resolve("kubeconfig.yaml");

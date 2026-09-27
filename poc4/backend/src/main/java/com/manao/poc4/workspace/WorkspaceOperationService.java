@@ -27,15 +27,24 @@ public final class WorkspaceOperationService {
     private final WorkspaceStore store;
     private final WorkspaceAgent agent;
     private final ProjectLifecycleGate lifecycle;
+    /** Acceptance-only canary package name; empty (the default) can never trip the fault. */
+    private final String dependencyPendingFaultPackage;
 
     public WorkspaceOperationService(WorkspaceStore store, WorkspaceAgent agent) {
         this(store, agent, new ProjectLifecycleGate());
     }
 
     public WorkspaceOperationService(WorkspaceStore store, WorkspaceAgent agent, ProjectLifecycleGate lifecycle) {
+        this(store, agent, lifecycle, "");
+    }
+
+    public WorkspaceOperationService(WorkspaceStore store, WorkspaceAgent agent, ProjectLifecycleGate lifecycle,
+                                     String dependencyPendingFaultPackage) {
         this.store = store;
         this.agent = agent;
         this.lifecycle = lifecycle;
+        this.dependencyPendingFaultPackage = dependencyPendingFaultPackage == null
+            ? "" : dependencyPendingFaultPackage.trim();
     }
 
     /** Applies one mutation and returns the new revision. */
@@ -178,6 +187,24 @@ public final class WorkspaceOperationService {
             && result.receiptSha256().equals(operation.receiptSha256());
         if (!matches) {
             throw new IllegalStateException("workspace receipt does not match the pending operation");
+        }
+    }
+
+    /**
+     * Acceptance-only fault injection (Task 11 provisioning, deploy README 11.4): when the
+     * operator armed {@code MANAO_DEPENDENCY_PENDING_FAULT_PACKAGE} with exactly this
+     * normalized request package name, the first-party dependency commit fails closed —
+     * producing the production reconciliation scene (durable PENDING row, FAILED project,
+     * agent journal) that the e2e FAILED-recovery case pairs with. Reusing {@link #failClosed}
+     * keeps the wire answer, the project failure and the surviving row identical to a real
+     * interrupted commit; callers invoke it AFTER the durable registration and BEFORE the
+     * commit, and the reconcile/redrive path never calls it, so recovery always completes.
+     * Empty (the deployment default) can never trip.
+     */
+    public void tripDependencyPendingFaultIfArmed(String projectId, String operationId, String packageName) {
+        if (packageName != null && !dependencyPendingFaultPackage.isEmpty()
+                && packageName.equals(dependencyPendingFaultPackage)) {
+            throw failClosed(projectId, operationId, "FAULT_INJECTION", null);
         }
     }
 
