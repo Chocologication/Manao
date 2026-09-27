@@ -1,0 +1,35 @@
+
+> frontend@0.0.0 test:e2e:python-runtime D:\DeepLearning\MyProjects\Project_Manao\.worktree\python-runtime\poc4\frontend
+> playwright test --config playwright.python-runtime.config.ts
+
+
+Running 10 tests using 1 worker
+
+[python-runtime] entry=http://1.12.245.235:30080 ports=30281/30282 console="py-console-20260927074422-yrpu" web="py-web-20260927074422-cshs"
+[python-runtime] login and python templates verified on http://1.12.245.235:30080
+  ok  1 [python-runtime-cloud] › tests\e2e\python-runtime-lifecycle.spec.ts:220:3 › python runtime cloud lifecycle › login on the public entry and verify the python templates are offered (1.1s)
+[python-runtime] console run 8979c4b6-e5e7-428d-a29a-69fff6d0ba28 SUCCEEDED with policy {"command":"python -u main.py","runtime":{"language":"python","pythonVersion":"3.13","packageManager":"uv"},"resources":{"limits":{"cpuMillis":8000,"memoryBytes":17179869184,"ephemeralStorageBytes":10737418240},"requests":{"cpuMillis":1000,"memoryBytes":1073741824,"ephemeralStorageBytes":1073741824}},"templateId":"python-console","executionKind":"TASK","timeoutSeconds":1800,"startupTimeoutSeconds":1800,"serviceLifetimeSeconds":0}
+  ok  2 [python-runtime-cloud] › tests\e2e\python-runtime-lifecycle.spec.ts:232:3 › python runtime cloud lifecycle › create the python console project and run it to success (34.9s)
+[python-runtime] edited console run 8d35de53-6983-49fe-b401-78776d828680 FAILED with exit 3 as expected
+[python-runtime] fixed console run f3828e95-f197-4060-8a34-f8dcb2911fe8 SUCCEEDED
+  ok  3 [python-runtime-cloud] › tests\e2e\python-runtime-lifecycle.spec.ts:282:3 › python runtime cloud lifecycle › the edited console entry fails the next run and the fixed entry succeeds again (33.6s)
+[python-runtime] FastAPI project "py-web-20260927074422-cshs" READY with ports 30281/30282
+  ok  4 [python-runtime-cloud] › tests\e2e\python-runtime-lifecycle.spec.ts:334:3 › python runtime cloud lifecycle › create the FastAPI project with the two assigned public ports (21.5s)
+[python-runtime] run d5e664b6-a66d-4e33-a3b9-99ece30ca86b serves /api/demo through ports 30281/30282; lifetime ends at 2026-09-27T09:46:06Z
+  ok  5 [python-runtime-cloud] › tests\e2e\python-runtime-lifecycle.spec.ts:377:3 › python runtime cloud lifecycle › start the FastAPI run and serve the demo app through both assigned ports (18.4s)
+[python-runtime] run d5e664b6-a66d-4e33-a3b9-99ece30ca86b stopped from the UI; ports withdrawn
+[python-runtime] re-run 531b5b1c-cefa-4942-a307-08539766ca22 serves both ports again
+  ok  6 [python-runtime-cloud] › tests\e2e\python-runtime-lifecycle.spec.ts:431:3 › python runtime cloud lifecycle › stop the FastAPI run from the UI and start it again (32.9s)
+[python-runtime] httpx added through the dependency form
+[python-runtime] httpx removed through the dependency form
+  ok  7 [python-runtime-cloud] › tests\e2e\python-runtime-lifecycle.spec.ts:491:3 › python runtime cloud lifecycle › add httpx through the dependency form, import it, remove it and fail the import again (46.2s)
+[python-runtime] lost dependency response recovered through the same operation id
+  ok  8 [python-runtime-cloud] › tests\e2e\python-runtime-lifecycle.spec.ts:558:3 › python runtime cloud lifecycle › a lost dependency response stays recoverable after a refresh (9.5s)
+[python-runtime] FAILED project recovered through the dependency check entry
+  ok  9 [python-runtime-cloud] › tests\e2e\python-runtime-lifecycle.spec.ts:627:3 › python runtime cloud lifecycle › a FAILED reconciliation page recovers the pending dependency operation (2.9s)
+[python-runtime] settled active run 531b5b1c-cefa-4942-a307-08539766ca22 before deletion
+[python-runtime] project "py-web-20260927074422-cshs" deleted from the UI
+[python-runtime] project "py-console-20260927074422-yrpu" deleted from the UI
+  ok 10 [python-runtime-cloud] › tests\e2e\python-runtime-lifecycle.spec.ts:704:3 › python runtime cloud lifecycle › delete both projects from the UI and confirm the cards stay gone (32.5s)
+
+  10 passed (3.9m)

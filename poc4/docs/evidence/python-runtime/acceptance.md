@@ -54,11 +54,64 @@
 
 ## 4. NOT_REVERIFIED 汇总（截至本文创建）
 
+> 2026-09-27 更新：本节为 Task 10 创建时的原始边界，发布轮结果见第 5 节；第 4 节不再改写，仅在此注明哪些项已被第 5 节的实测覆盖（E2E 全套、公网探活、删除回收、V10 迁移、部署本身）。仍 NOT_REVERIFIED 的项见第 5 节末尾。
+
 - 云端部署本身：`manao-stage6b` 未应用本增量的任何变更（backend/frontend/agent/runner 镜像均未重建推送，V10 未在真实 schema 上运行，真实 schema 仍为 version 9）。
 - 独立 E2E 入口 `test:e2e:python-runtime`：仅完成收集验证（`--list`，python-runtime-cloud 单项目 **10 tests in 1 file**，2026-09-26 复测）；真实执行属 Task 11。
 - `MANAO_RUNTIME_DEPENDENCY_PENDING_FAULT` 配套的后端故障注入尚未提供（Task 11 provisioning）；该用例无故障旗标时显式跳过并保持 NOT_REVERIFIED，不空转成 PASS。
 - 真实浏览器全流程、公网端口业务探活、Python 项目云端删除回收、7200 秒正式用例、任何 Python 性能/启动时长指标（历史 Java 58s/7s 不是 Python 指标）。
 
-## 5. 发布授权到位后的执行记录（预留）
+## 5. 发布轮执行记录（Task 11，2026-09-27）
 
-本节由发布/验收轮（Task 11）追加：镜像 digest 成对记录（backend + Python runner，见部署 README §11.1/§11.5）、部署顺序与健康核对结果、E2E 各用例结果、删除回收核查、7200s 用例状态（PASS / FAILED / SKIPPED / WAIVED_BY_USER 原话与范围）。**在本节写入之前，不得将本阶段标记为已交付或云端验收通过。**
+发布授权：用户于 2026-09-27 明确指示「现在先不要合并，先进行task11的云端验收」（不合并 `codex/python-runtime` 到 `master`，在分支上执行云端部署与验收）。执行 commit：部署与验收基于 `7963512`（含 2026-09-26 外部审查修复轮 `e775c05..053f061` 与 Task 11a 故障注入 `a0db576`、e2e 校准 `7963512`）。
+
+### 5.1 发布镜像（backend 与 Python runner 成对记录，见 §11.1/§11.5）
+
+| 组件 | 生产 digest（`chocologic/manao_images_repository`，构建自 `a0db576`，tag `*-20260927`） |
+| --- | --- |
+| Backend | `sha256:e683442ccb1d0e1e2e5cc2a3c6824a359a05b2f0934c8786dfbd0d4aecd8d635` |
+| Frontend | `sha256:161f0c36607443bcccce47b06df03365ccf3868b5ad76ea0af810376331a19a3` |
+| Workspace agent | `sha256:e17920ed119382125701e65be01120785c7c165eaba317bcd42bd2d9698089d7` |
+| Python runner | `sha256:c45b61098ce72ce62d1715f93c7beaa5e5ac0a6b8f8d7d9b8250c773a4c76536` |
+| Maven runner（重建重发，含共享监督器 `b260dc2`） | `sha256:c7aabf876dd8e2caccb1e0775be9a778cfac184339f25ca93abb93735a8c3c67` |
+| Workspace initializer | 不变（`busybox@sha256:73aaf090…1662`） |
+
+镜像在 node1/node2 均经辅助 Pod 预拉成功（runner 146 MB / agent 156 MB，Pulled 事件为证）。 Secret `manao-backend-images` 补入 `MANAO_PYTHON_RUNNER_IMAGE` 并更新其余三个 digest；initializer 保持原值。工具链身份与 §2 一致（uv 0.11.6 / CPython 3.13.15）。
+
+### 5.2 部署窗口（2026-09-27 05:38–06:05 UTC，全部 PASS）
+
+1. 前检：集群 3 节点 Ready（用户当日手动重启过集群——重启痕迹为操作者行为）；真实 schema version 9；NodePort 30281/30282 空闲；`GET /api/v1/runs/active` 全局路由不存在（RunController 为项目级路由，部署 README §11.4 步骤 1 文档失准已记录），以集群侧零 RUNNING Run Pod 等效核验。
+2. 前端先行（兼容前端）：新前端 + 旧后端下登录、项目列表、既有 Java 项目 Run 历史全部 200。
+3. 后端滚动（Recreate）：Flyway 9→10「python dependency operations」迁移成功（日志与 DB `flyway_schema_history` 双确认，version 10 success=1）；登录正常。
+4. 旧路径回归：既有 Java 项目 test3 新 Run `0ffc70e2` STARTING→RUNNING（firstReadyAt 05:56:10Z，expiresAt +2h），Run Pod 实际使用**新 Maven runner** digest，停止 → CANCELLED/USER_STOPPED。
+5. Python 冒烟：新建 python-console 项目 `py-smoke-20260927135814`（`0206c58a`）约 20s READY（workspace Pod 使用新 agent digest）；Run `0d87420e` SUCCEEDED exit 0（Run Pod 使用新 Python runner digest；Pod 日志含 CPython 3.13.15、venv 创建、暖缓存解析与「Hello from Manao」）。
+6. 故障注入武装：`kubectl set env deployment/backend MANAO_DEPENDENCY_PENDING_FAULT_PACKAGE=six`（验收轮专用；E2E 后已解除并滚动恢复）。
+
+### 5.3 云端 E2E（`test:e2e:python-runtime`，run 10 全绿）— PASS
+
+`MANAO_RUNTIME_BASE_URL=http://1.12.245.235:30080`，操作者指定端口 30281/30282，`MANAO_RUNTIME_DEPENDENCY_PENDING_FAULT=six`（金丝雀值契约）。**10 passed (3.9m)**，零 skip，日志存证 `e2e-run-20260927.txt`。覆盖：console 创建→成功→改失败（exit 3，TASK 分类的终止原因见 5.5 裁定）→修复→再成功；FastAPI 双公网端口创建、`/api/demo` 真实业务响应、UI 停止后端口回收、再运行新 Run 服务双端口；依赖表单添加 httpx→import 成功→移除→无残留；丢失响应后按同 operationId 刷新恢复、revision 不重复增加；**FAILED（WORKSPACE_RECONCILIATION_REQUIRED）页面经核对入口恢复**（金丝雀 `six` 触发：prepare+PENDING 登记后 fail-closed 409，失败页 Check→COMMITTED→项目恢复）；UI 删除两项目且卡片消失。E2E 过程中 9 次此前运行的失败均为 spec 校准（authored-only 用例首次真实执行），无产品缺陷：单独记录为 5.5。
+
+### 5.4 Java 定向回归 — PASS
+
+一次性项目 `java-reg-console-160302`（Run `682df895` SUCCEEDED exit 0 BUILD_SUCCEEDED，真实 Maven 编译输出）与 `java-reg-web-160302`（Run `dd7c6a00` RUNNING firstReadyAt 08:05:00Z → 停止 CANCELLED/USER_STOPPED）。既有历史（test3）可读。旧策略历史在 V10 后正常。
+
+### 5.5 执行期裁定与发现
+
+- **TASK 终止原因裁定**：spec 期望 console 失败为 `APPLICATION_EXITED`，实测为 `BUILD_FAILED`。`RunStateReducer` 对非 service（TASK）Run 的失败分类是共享逻辑、先于 Python 轮并已被 Java 验收接受；设计 §7 禁止按语言改共享分类。裁定：修 spec 期望（exit code 才是承载失败事实的断言），不改产品。若错：未来可能一致化所有语言的任务失败文案——需独立立项。
+- **RELOAD_FAILED 竞态为设计行为**：终止 Run 后工作区自动重载与并发保存竞态时 fail-closed（`PendingProjectAuthorityMutationError` → 重试横幅 + 写闸关闭），修复轮保护在真实集群按设计生效；e2e 以重试就绪助手处理。
+- **认证为内存态**：整页刷新即登出；e2e 全部改用应用内导航。
+- 部署 README §11.4 步骤 1 的全局 `/api/v1/runs/active` 路由不存在（项目级路由）；记录为文档失准，未改产品。
+
+### 5.6 删除回收核查（Step 6）— PASS
+
+API 删除 4 个本轮一次性项目（py-smoke、py-7200、java-reg-console、java-reg-web，各 204 → 404）后独立核验：Pod/Job/Service/StatefulSet/Deployment **零残留**；workspace PVC/PV **零残留**（Python 缓存随 workspace PVC 一并回收）；DB `project`/`run`/`workspace_operation` 三表按项目 ID 查询 **0 行**。历史 DELETING 项目 `java-runtime-…-96pj` 与用户既有 test0/test2/test3 未触碰。
+
+### 5.7 7200 秒正式用例 — SKIPPED（用户指示）
+
+用户原话（2026-09-27）：「7200s的测试用例先跳过吧，这个时间太长了后面再做，先继续后面的工作」。范围：本轮不产出 7200 秒 PASS；Python 的该正式用例保持未完成（等同 NOT_REVERIFIED，不因跳过变 PASS）。跳过前已捕获的局部证据：web Run `d011e846`（项目 `py-7200-20260927075609`，公网 30281）firstReadyAt 07:58:58Z / expiresAt 09:58:58Z（精确 +7200s），`/api/demo` 经 30281 返回 200；**受控后端重启后 firstReadyAt/expiresAt 不变且公网仍 200**（恢复不变量实测）；随后按用户指示停止（CANCELLED/USER_STOPPED，端口回收连接拒绝）。未测行为：完整 7200 秒到期终止、到期 receipt 与容器实际终止核对。
+
+### 5.8 剩余 NOT_REVERIFIED（本节之后）
+
+- Python 正式 7200 秒云端用例（用户指示跳过，见 5.7）；真实浏览器下的人工深度探索（E2E 覆盖之外）。
+- 任何 Python 性能/启动时长承诺（本轮采样仅记录不承诺：workspace 创建 ~20s、冷镜像已预拉、uv 暖缓存解析毫秒级）。
+- `master` 合并与 Task 11 之外的发布后续（用户指示本轮不合并）。

@@ -639,7 +639,7 @@ Fixed run shape: workers=1, retries=0, no webServer, one complete pass under a
 3.5 h global cap; the bounded two-hour session case raises its own 155 min
 timeout. The old `stage6b` config and its collection scope are unchanged.
 
-## 11. Python project runtime increment (implemented 2026-09-26, branch `codex/python-runtime`; NOT deployed)
+## 11. Python project runtime increment (implemented 2026-09-26; deployed and cloud-accepted 2026-09-27, branch `codex/python-runtime` — see acceptance.md section 5)
 
 The python-runtime plan (Tasks 1–10 implemented, branch `codex/python-runtime`)
 adds the two Python templates (`python-console`, `python-fastapi-web`), real
@@ -664,11 +664,11 @@ never substitute a floating tag or a guess.
 
 | Component | Source | Local build evidence (2026-09-26, implementation branch) | Production digest |
 | --- | --- | --- | --- |
-| Backend image | `poc4/backend` (section 1 flow); must include V10 + `MANAO_PYTHON_RUNNER_IMAGE` wiring | not rebuilt locally (release-gated) | `TO-FILL-AT-RELEASE: repo@sha256:<64hex>` |
-| Frontend image | `poc4/frontend` (section 8.1 flow); must be the compatible frontend that parses old and new Run JSON (11.4 step 4) | not rebuilt locally (release-gated) | `TO-FILL-AT-RELEASE: repo@sha256:<64hex>` |
-| Workspace agent image | `poc4/workspace-agent`; since Task 7 it is `python:3.13.15-slim@sha256:8d9d0b8b…e3ddf0` + `uv 0.11.6@sha256:b1e69936…06754` + `default-jre-headless` (OpenJDK 21), root-owned `/opt/manao-python/dependency_helper.py` | local tag `manao-python-workspace-agent-test` id `cb90b3be95dd`, rebuilt 2026-09-26 from the final branch sources; container suite `dependency-editor.sh` 14/14 | `TO-FILL-AT-RELEASE: repo@sha256:<64hex>` |
-| Python runner image | `poc4/python-runner` Dockerfile (production stage), seed id `a3687aae7fe59204cd1a23454fd71ccb0c4e400a9200a52cb5e76a090c0295e5` (747 files), uv 0.11.6, CPython 3.13.15; template lock hashes — sha256 of the committed lock-file bytes at the Task 10 prep commit `11accb3` (both locks unchanged since `05c9337`): console `uv.lock` `a96bbf8e0350626470f1f8e55b7cf8c2cf00166f25225b917954552675c399c8`, web `uv.lock` `de8a8bb358d35ebfd2a250eb6e9903313e636a47a3a8f2232442f0302816d028` | local tag `manao-python-runtime-test` id `5027b784050a`, rebuilt 2026-09-26 from the final branch sources; suites `runtime-lifecycle.sh` 13/13 + `python-cache.sh` 13/13 | `TO-FILL-AT-RELEASE: repo@sha256:<64hex>` |
-| Maven runner image | `poc4/maven-runner` (section 10.3 flow) — MUST be rebuilt and republished even though Maven behavior is unchanged: the shared single-run supervisor source (`poc4/maven-runner/runtime/src`) gained the fixed-profile selection (`RunProfile`, commit `b260dc2`) that the Python runner image already carries; the deployed Maven runner image predates it | not rebuilt locally (release-gated) | `TO-FILL-AT-RELEASE: repo@sha256:<64hex>` |
+| Backend image | `poc4/backend` (section 1 flow); includes V10 + `MANAO_PYTHON_RUNNER_IMAGE` wiring and the Task 11a acceptance fault switch | built+pushed 2026-09-27 from `a0db576` (tag `6b-backend-20260927`) | `chocologic/manao_images_repository@sha256:e683442ccb1d0e1e2e5cc2a3c6824a359a05b2f0934c8786dfbd0d4aecd8d635` |
+| Frontend image | `poc4/frontend` (section 8.1 flow); the compatible frontend that parses old and new Run JSON (11.4 step 4) | built+pushed 2026-09-27 from `a0db576` (tag `6b-frontend-20260927`) | `chocologic/manao_images_repository@sha256:161f0c36607443bcccce47b06df03365ccf3868b5ad76ea0af810376331a19a3` |
+| Workspace agent image | `poc4/workspace-agent`; since Task 7 it is `python:3.13.15-slim@sha256:8d9d0b8b…e3ddf0` + `uv 0.11.6@sha256:b1e69936…06754` + `default-jre-headless` (OpenJDK 21), root-owned `/opt/manao-python/dependency_helper.py` | local tag `manao-python-workspace-agent-test` id `cb90b3be95dd`, rebuilt 2026-09-26; release build 2026-09-27 from `a0db576` (tag `manao-workspace-agent-20260927`), container suite 14/14 (+ platform-wheel scenario 15/15 at Task 5) | `chocologic/manao_images_repository@sha256:e17920ed119382125701e65be01120785c7c165eaba317bcd42bd2d9698089d7` |
+| Python runner image | `poc4/python-runner` Dockerfile (production stage), seed id `a3687aae7fe59204cd1a23454fd71ccb0c4e400a9200a52cb5e76a090c0295e5` (747 files), uv 0.11.6, CPython 3.13.15; template lock hashes — sha256 of the committed lock-file bytes at the Task 10 prep commit `11accb3` (both locks unchanged since `05c9337`): console `uv.lock` `a96bbf8e0350626470f1f8e55b7cf8c2cf00166f25225b917954552675c399c8`, web `uv.lock` `de8a8bb358d35ebfd2a250eb6e9903313e636a47a3a8f2232442f0302816d028` | local tag `manao-python-runtime-test` id `5027b784050a`, rebuilt 2026-09-26; release build 2026-09-27 from `a0db576` (tag `manao-python-runtime-20260927`), suites `runtime-lifecycle.sh` 13/13 + `python-cache.sh` 13/13 | `chocologic/manao_images_repository@sha256:c45b61098ce72ce62d1715f93c7beaa5e5ac0a6b8f8d7d9b8250c773a4c76536` |
+| Maven runner image | `poc4/maven-runner` (section 10.3 flow) — MUST be rebuilt and republished even though Maven behavior is unchanged: the shared single-run supervisor source (`poc4/maven-runner/runtime/src`) gained the fixed-profile selection (`RunProfile`, commit `b260dc2`) that the Python runner image already carries; the deployed Maven runner image predates it | rebuilt+republished 2026-09-27 from `a0db576` (tag `manao-maven-runner-20260927`); cloud-verified by the java regression run of acceptance.md section 5.2 | `chocologic/manao_images_repository@sha256:c7aabf876dd8e2caccb1e0775be9a778cfac184339f25ca93abb93735a8c3c67` |
 | Workspace initializer image | unchanged by this increment | keep the current accepted digest from the live Secret | (existing value stays) |
 
 The backend image digest and the Python runner digest are recorded as ONE pair in
@@ -734,8 +734,8 @@ rules unchanged: run with the migration-privileged identity, never swap or
 rebuild the platform MySQL volume (`data-mysql-0`), do not run
 schema-incompatible old/new backends against the schema during the switchover
 window (Recreate keeps exactly one replica; scale to 0 first if you must).
-NOT YET APPLIED as of this writing — the live schema reports version 9; after
-this backend rolls it must report version 10.
+APPLIED 2026-09-27: the release rollout migrated the live schema 9 → 10 (Flyway log and
+`flyway_schema_history` both confirm version 10, success=1; acceptance.md section 5.2).
 
 ### 11.4 Deployment order and health checks (short maintenance window)
 
