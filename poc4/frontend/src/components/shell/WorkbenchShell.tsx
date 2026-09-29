@@ -25,6 +25,7 @@ import {
   readPythonDependencyOperationId,
   storePythonDependencyOperationId,
 } from '@/api/pythonDependencyApi';
+import { readWithProjectBusyRetry } from '@/api/projectBusyRetry';
 import {
   PythonDependenciesPanel,
 } from '@/features/dependencies/PythonDependenciesPanel';
@@ -135,7 +136,9 @@ export function WorkbenchShell({ project }: { project: ProjectSummary }) {
     }
     const epoch = ++pendingDiscoveryEpochRef.current;
     setPendingDiscovery('inFlight');
-    listPendingPythonDependencies(project.id)
+    // Transient PROJECT_BUSY contention with the concurrent file reads is retried
+    // with the shared read-only retry policy; real errors still surface below.
+    readWithProjectBusyRetry(() => listPendingPythonDependencies(project.id))
       .then((pending) => {
         if (pendingDiscoveryEpochRef.current !== epoch) {
           return;

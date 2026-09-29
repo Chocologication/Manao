@@ -50,6 +50,7 @@ import {
   setWriteScenario,
 } from '../../mocks/state';
 import { pythonDependencyStorageKey } from '../../api/pythonDependencyApi';
+import { PROJECT_BUSY_READ_MAX_RETRIES } from '../../api/projectBusyRetry';
 import { renderApp, resetAppRuntime } from '../../test/renderApp';
 import { isExperimentalTerminalEnabled, WorkbenchShell } from './WorkbenchShell';
 
@@ -2059,6 +2060,7 @@ describe('WorkbenchShell python dependencies', () => {
     const user = userEvent.setup();
     await authenticateAsAlice();
     const project = await createPythonProjectWithFile('Discovery Failure');
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
     let failPending = true;
     server.use(
       http.get('/api/v1/projects/:projectId/python-dependencies/pending', () => {
@@ -2075,10 +2077,12 @@ describe('WorkbenchShell python dependencies', () => {
     renderPythonShell(project);
     await waitUntilWritesUnlocked();
 
-    // A failed discovery must not fabricate absence: the shell says so and offers a retry.
+    // A failed discovery must not fabricate absence: the shell says so and offers a
+    // retry, but only after the shared PROJECT_BUSY read budget is exhausted.
     expect(
-      await screen.findByText('Could not check for a pending dependency change.'),
+      await screen.findByText('Could not check for a pending dependency change.', {}, { timeout: 10_000 }),
     ).toBeInTheDocument();
+    expect(pendingDiscoveryGetCount(fetchSpy)).toBe(PROJECT_BUSY_READ_MAX_RETRIES + 1);
 
     failPending = false;
     await user.click(screen.getByRole('button', { name: 'Retry pending dependency check' }));
@@ -2093,6 +2097,7 @@ describe('WorkbenchShell python dependencies', () => {
       screen.queryByText('Could not check for a pending dependency change.'),
     ).not.toBeInTheDocument();
     expect(screen.queryByText('Dependency change is unconfirmed')).not.toBeInTheDocument();
+    fetchSpy.mockRestore();
   }, 15_000);
 
   it('a retry of a failed discovery re-queries the server and recovers a pending operation', async () => {
@@ -2116,9 +2121,9 @@ describe('WorkbenchShell python dependencies', () => {
     renderPythonShell(project);
     await waitUntilWritesUnlocked();
     expect(
-      await screen.findByText('Could not check for a pending dependency change.'),
+      await screen.findByText('Could not check for a pending dependency change.', {}, { timeout: 10_000 }),
     ).toBeInTheDocument();
-    expect(pendingDiscoveryGetCount(fetchSpy)).toBe(1);
+    expect(pendingDiscoveryGetCount(fetchSpy)).toBe(PROJECT_BUSY_READ_MAX_RETRIES + 1);
 
     // The operation becomes server-pending BEFORE the user retries: the retry's
     // re-query must find it. A retry that only hid the banner would fabricate
@@ -2127,16 +2132,77 @@ describe('WorkbenchShell python dependencies', () => {
     failPending = false;
     await user.click(screen.getByRole('button', { name: 'Retry pending dependency check' }));
 
-    // The retry re-queried (GET count 1 -> 2) and the discovered operation
-    // engages the recovery entry from a previously empty surface.
+    // The retry re-queried (GET count 4 -> 5, succeeded on its first attempt) and
+    // the discovered operation engages the recovery entry from a previously empty
+    // surface.
     expect(await screen.findByText('Dependency change is unconfirmed')).toBeInTheDocument();
-    expect(pendingDiscoveryGetCount(fetchSpy)).toBe(2);
+    expect(pendingDiscoveryGetCount(fetchSpy)).toBe(PROJECT_BUSY_READ_MAX_RETRIES + 2);
     expect(sessionStorage.getItem(pythonDependencyStorageKey('usr-alice', project.id))).toBe(
       SERVER_PENDING_OPERATION_ID,
     );
     expect(
       screen.queryByText('Could not check for a pending dependency change.'),
     ).not.toBeInTheDocument();
+    fetchSpy.mockRestore();
+  }, 15_000);
+
+  it('retries a transient PROJECT_BUSY pending failure and then discovers normally', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    await authenticateAsAlice();
+    const project = await createPythonProjectWithFile('Discovery Busy Recovered');
+    let busyHits = 0;
+    server.use(
+      http.get('/api/v1/projects/:projectId/python-dependencies/pending', () => {
+        busyHits += 1;
+        if (busyHits === 1) {
+          // PROJECT_BUSY is what the real backend answers under lease contention.
+          return HttpResponse.json(
+            { code: 'PROJECT_BUSY', message: 'Project is busy', traceId: 'trace-pending-busy-once' },
+            { status: 409 },
+          );
+        }
+        return undefined;
+      }),
+    );
+    await registerPendingMockOperation(project, SERVER_PENDING_OPERATION_ID);
+    renderPythonShell(project);
+
+    // The busy read recovers within the shared retry budget: the pending operation
+    // is discovered and the red banner never appears.
+    expect(
+      await screen.findByText('Dependency change is unconfirmed', {}, { timeout: 10_000 }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText('Could not check for a pending dependency change.'),
+    ).not.toBeInTheDocument();
+    expect(pendingDiscoveryGetCount(fetchSpy)).toBe(2);
+    fetchSpy.mockRestore();
+  }, 20_000);
+
+  it('does not retry a pending failure that is not PROJECT_BUSY', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    await authenticateAsAlice();
+    const project = await createPythonProjectWithFile('Discovery Forbidden');
+    server.use(
+      http.get('/api/v1/projects/:projectId/python-dependencies/pending', () =>
+        HttpResponse.json(
+          { code: 'FORBIDDEN', message: 'Not allowed', traceId: 'trace-pending-forbidden' },
+          { status: 403 },
+        ),
+      ),
+    );
+    renderPythonShell(project);
+    await waitUntilWritesUnlocked();
+
+    // A non-PROJECT_BUSY failure is a real error: no busy retry, the banner and its
+    // Retry affordance appear after the single attempt.
+    expect(
+      await screen.findByText('Could not check for a pending dependency change.'),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: 'Retry pending dependency check' }),
+    ).toBeInTheDocument();
+    expect(pendingDiscoveryGetCount(fetchSpy)).toBe(1);
     fetchSpy.mockRestore();
   }, 15_000);
 
