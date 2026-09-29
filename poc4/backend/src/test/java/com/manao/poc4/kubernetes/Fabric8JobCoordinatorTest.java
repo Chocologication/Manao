@@ -326,6 +326,21 @@ class Fabric8JobCoordinatorTest {
             .isEqualTo(ObservationKind.IDENTITY_MISMATCH);
     }
 
+    @Test
+    void observeCarriesTheClaimedPodIdentityEvenWhenTheApplicationContainerIsTerminated() {
+        Job job = seedJob();
+        String podUid = seedPod(job, "Failed", false, null);
+
+        JobObservation observation = coordinator.observe(run());
+
+        // The terminal log backfill keys on exactly this identity chain: a terminated application
+        // container still yields FOUND facts carrying the claimed pod's name and uid.
+        assertThat(observation.kind()).isEqualTo(ObservationKind.FOUND);
+        assertThat(observation.facts().podName()).isEqualTo(POD_NAME);
+        assertThat(observation.facts().podUid()).isEqualTo(podUid);
+        assertThat(observation.facts().applicationTerminated()).isTrue();
+    }
+
     private String readyReceipt(String podUid) {
         return "protocol=1\nprojectId=" + PROJECT + "\nrunId=" + RUN
             + "\npodUid=" + podUid + "\nstate=READY\nfirstReadyAt=2026-09-21T10:05:00Z\n"

@@ -3,12 +3,17 @@ package com.manao.poc4.run;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.manao.poc4.kubernetes.JobCoordinator;
+import com.manao.poc4.log.RunLogIngestor;
+import com.manao.poc4.log.RunLogService;
+import com.manao.poc4.log.RunLogWindow;
 import com.manao.poc4.persistence.RunState;
 import com.manao.poc4.run.RunControllerTest.FakeRun;
 import com.manao.poc4.run.RunControllerTest.FakeRunStore;
 import com.manao.poc4.run.RunControllerTest.StubCoordinator;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.OptionalLong;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -263,5 +268,64 @@ class RunRecoveryServiceTest {
         assertThat(report.resumed()).isEmpty();
         assertThat(report.failedClosed()).isEmpty();
         assertThat(store.runs.get("run-unclear").state).isEqualTo(RunState.RECOVERING.name());
+    }
+
+    @Test
+    void aRecoveredTerminalRunIsBackfilledFromPodHistoryBeforeItsCompletionNotification() {
+        String runId = "run-py-backfill";
+        seedPythonServiceRun(runId, RunState.RECOVERING);
+        RecordingChunkStore chunks = new RecordingChunkStore();
+        RunObservationServiceTest.RecordingGateway gateway = new RunObservationServiceTest.RecordingGateway();
+        gateway.podHistory.add("Traceback (most recent call last):");
+        gateway.podHistory.add("pymysql.err.OperationalError: (2003, \"Can't connect to MySQL server\")");
+        List<String> events = new ArrayList<>();
+        gateway.readLogEventSink = events::add;
+        RunLogIngestor ingestor = new RunLogIngestor(gateway, new RunLogService(chunks), "manao");
+        RunRecoveryService recovering = new RunRecoveryService(store, coordinator, ingestor,
+            id -> events.add("completed:" + id));
+        coordinator.factsByRun.put(runId, new JobCoordinator.JobFacts(false, false, true, false, 1,
+            "pod-py", "uid-py", false, true));
+
+        RunRecoveryService.RecoveryReport report = recovering.recoverRuns();
+
+        // The backend died before any observation: recovery settles from pod history through the
+        // SAME backfill path, so the Python traceback is persisted like a Java one would be.
+        assertThat(report.settled()).containsExactly(runId);
+        assertThat(store.runs.get(runId).state).isEqualTo(RunState.FAILED.name());
+        assertThat(chunks.inserted).extracting(RunLogWindow.Chunk::text)
+            .containsExactly("Traceback (most recent call last):\n",
+                "pymysql.err.OperationalError: (2003, \"Can't connect to MySQL server\")\n");
+        assertThat(events).containsExactly("backfill:pod-py", "completed:" + runId);
+    }
+
+    @Test
+    void aRecoveryBackfillThatKeepsFailingDefersTheSettlement() {
+        String runId = "run-py-backfill-defer";
+        seedPythonServiceRun(runId, RunState.RECOVERING);
+        RecordingChunkStore chunks = new RecordingChunkStore();
+        RunObservationServiceTest.RecordingGateway gateway = new RunObservationServiceTest.RecordingGateway();
+        gateway.podHistory.add("Traceback (most recent call last):");
+        gateway.failReadLogs = true;
+        RunLogIngestor ingestor = new RunLogIngestor(gateway, new RunLogService(chunks), "manao");
+        List<String> completed = new ArrayList<>();
+        RunRecoveryService recovering = new RunRecoveryService(store, coordinator, ingestor,
+            completed::add);
+        coordinator.factsByRun.put(runId, new JobCoordinator.JobFacts(false, false, true, false, 1,
+            "pod-py", "uid-py", false, true));
+
+        RunRecoveryService.RecoveryReport report = recovering.recoverRuns();
+
+        // The failing backfill defers the settlement: the run stays RECOVERING for the next scan.
+        assertThat(report.settled()).isEmpty();
+        assertThat(store.runs.get(runId).state).isEqualTo(RunState.RECOVERING.name());
+        assertThat(completed).isEmpty();
+    }
+
+    static final class RecordingChunkStore implements RunLogService.ChunkStore {
+        final List<RunLogWindow.Chunk> inserted = new ArrayList<>();
+        @Override public void insertChunk(String runId, RunLogWindow.Chunk chunk) { inserted.add(chunk); }
+        @Override public List<RunLogWindow.Chunk> loadChunks(String runId) { return List.of(); }
+        @Override public void deleteBefore(String runId, long seqExclusive) { }
+        @Override public OptionalLong lastSeq(String runId) { return OptionalLong.empty(); }
     }
 }
