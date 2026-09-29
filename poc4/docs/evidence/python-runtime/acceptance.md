@@ -136,7 +136,7 @@ API 删除 4 个本轮一次性项目（py-smoke、py-7200、java-reg-console、
 
 ### 6.3 修复验证（真实浏览器 + 真实集群）— PASS
 
-凭据处置（如实记录）：线上 `app_user` 与本地 `stage6-6b.env` 两对候选凭据**全部漂移**（bcrypt 比对均不匹配）。为完成登录验证，向 `app_user` 插入一次性账号 `deploy-verify-temp`（随机 40 位口令），验证完成后 DELETE，`app_user` 恢复为原有 1 行；原账号未触碰。**建议用户尽快同步 env 与线上凭据。**
+凭据处置（如实记录，含更正）：验证过程中一度误报「凭据漂移」——后经用户指出其浏览器可用 env 凭据正常登录，复核定位为**验证方解析错误**：`stage6-6b.env` 的值以**单引号**包裹（如 `APP_USERNAME='app_user'`），早期解析把引号当成了值的一部分（当时只检查了双引号），导致比对与登录请求都带着字面引号而 401。按单引号剥离后复核：env 的 APP_USERNAME 即线上 `app_user` 行、APP_PASSWORD 与线上 bcrypt **MATCH**、公共入口真实登录 **200**——**凭据从未漂移，无需同步**。此前的验证窗口内仍按当时认知插入过一次性账号 `deploy-verify-temp`（随机口令）完成浏览器回归，完成后已 DELETE，`app_user` 恢复为原有 1 行；原账号全程未触碰。
 
 1. **连续打开工作台（问题 A）**：以临时账号连续打开 python-fastapi-web 工作台 3 次，浏览器 console 记录 4 次短暂 409（`/python-dependencies/pending` ×2、项目详情 GET ×2）——即真实锁竞争复现；3 次打开红字「Could not check for a pending dependency change.」出现 **0 次**，文件树均正常加载。pending 只读重试在真实环境按设计生效。
 2. **FastAPI 快速失败（问题 B）**：编辑 `app/main.py` 首行注入 `import deploy_verify_nonexistent_xyz`（PUT 200），启动 Run `c2335795`：约 6 秒终态 **FAILED / APPLICATION_EXITED / exit 1**（uvicorn 导入失败即容器退出）。`run_log_chunk` 持久化 **64 chunk / 3020 字节，seq 1..64 连续**：第 1 行起（uv 解释器/venv/依赖安装）直到完整 `Traceback` 与 `ModuleNotFoundError: No module named 'deploy_verify_nonexistent_xyz'`（seq 63-64 为注入行与异常行）；**「log source lost」gap marker 0 条**。修复前该场景为 0 chunk（test5 证据）。UI Run 面板渲染完整 Traceback，日志连接状态 Complete（log.complete 在补采之后发布）。
