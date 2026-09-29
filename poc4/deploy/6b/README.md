@@ -671,6 +671,14 @@ never substitute a floating tag or a guess.
 | Maven runner image | `poc4/maven-runner` (section 10.3 flow) — MUST be rebuilt and republished even though Maven behavior is unchanged: the shared single-run supervisor source (`poc4/maven-runner/runtime/src`) gained the fixed-profile selection (`RunProfile`, commit `b260dc2`) that the Python runner image already carries; the deployed Maven runner image predates it | rebuilt+republished 2026-09-27 from `a0db576` (tag `manao-maven-runner-20260927`); cloud-verified by the java regression run of acceptance.md section 5.2 | `chocologic/manao_images_repository@sha256:c7aabf876dd8e2caccb1e0775be9a778cfac184339f25ca93abb93735a8c3c67` |
 | Workspace initializer image | unchanged by this increment | keep the current accepted digest from the live Secret | (existing value stays) |
 
+Repair-round images (2026-09-29, branch `codex/python-runtime` HEAD `78beafc`, deployed the same
+day — acceptance.md section 6): only backend and frontend were rebuilt; runner/agent/initializer
+digests and every Secret value from the 2026-09-27 release above stay untouched.
+Backend `…@sha256:8432747459756156d5dd2ec0c313af3725cce1a597ccfd94557c40d8de8b773e`
+(tag `6b-backend-20260929`), frontend
+`…@sha256:26a57cf3389e77c61fd7b22cd5dc4930b33cecdc03b41e8cf426f93e3ac1f862`
+(tag `6b-frontend-20260929`). Flyway stayed at version 10 (no new migration).
+
 The backend image digest and the Python runner digest are recorded as ONE pair in
 the acceptance record (design section 8): a backend that serves Python projects
 is only ever deployed together with its proven runner image. Pre-pull the pushed

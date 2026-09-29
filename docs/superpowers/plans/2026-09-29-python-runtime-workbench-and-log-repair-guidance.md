@@ -7,7 +7,9 @@
 > 经任务级与整分支审查及控制器裁定 R1–R5（裁定记录在 SDD ledger，见本仓库
 > `.superpowers/sdd/` 工作区，不入库）。第 5.3 节的推荐顺序按裁定 R1 调整为"先关闭并排空
 > 既有 watch 再补采"，其硬性约束（去重、补采先于 log.complete、不丢内容）全部保持。
-> 尚未合并到 `master`，尚未重建镜像或部署；线上环境的这两个缺陷在部署本轮修复前仍然存在。
+> 已于 2026-09-29 经用户授权部署到 `manao-stage6b`（backend/frontend 镜像重建，runner 镜像
+> 不变），修复经真实浏览器与集群验证通过（验收证据见
+> [Python Acceptance](../../evidence/python-runtime/acceptance.md) 第 6 节）；分支仍未合并到 `master`。
 >
 > 适用分支：`codex/python-runtime`，工作树：`.worktree/python-runtime`。
 >

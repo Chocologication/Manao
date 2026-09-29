@@ -115,3 +115,39 @@ API 删除 4 个本轮一次性项目（py-smoke、py-7200、java-reg-console、
 - Python 正式 7200 秒云端用例（用户指示跳过，见 5.7）；真实浏览器下的人工深度探索（E2E 覆盖之外）。
 - 任何 Python 性能/启动时长承诺（本轮采样仅记录不承诺：workspace 创建 ~20s、冷镜像已预拉、uv 暖缓存解析毫秒级）。
 - `master` 合并与 Task 11 之外的发布后续（用户指示本轮不合并）。
+
+## 6. 工作台与日志修复轮发布记录（2026-09-29）
+
+发布授权：用户于 2026-09-29 明确指示「本轮修改后的代码是否部署上线？没有则现在进行部署」。分支仍**未合并**到 `master`；本轮部署与验收基于分支 `codex/python-runtime` HEAD `78beafc`（含修复提交 `5a3fef5`、`7d5efa2`、`d119465`、`86e65a0` 与文档提交）。部署范围仅 backend/frontend 两个镜像；runner/agent/initializer 与 Secret 全部保持 §5 的既有值（无新迁移，无 RBAC 变化）。
+
+### 6.1 发布镜像（tag `*-20260929`，构建自 `78beafc`）
+
+| 组件 | 生产 digest |
+| --- | --- |
+| Backend | `chocologic/manao_images_repository@sha256:8432747459756156d5dd2ec0c313af3725cce1a597ccfd94557c40d8de8b773e` |
+| Frontend | `chocologic/manao_images_repository@sha256:26a57cf3389e77c61fd7b22cd5dc4930b33cecdc03b41e8cf426f93e3ac1f862` |
+| Workspace agent / Python runner / Maven runner / initializer | 不变（§5.1 值） |
+
+### 6.2 部署窗口（2026-09-29 13:45–13:47 UTC 滚动，全部 PASS）
+
+1. 预检：集群 3 节点 Ready；集群侧零活动 Run（无 Active Job）；本地 Docker 引擎按需启动；registry 已登录。
+2. 前端先行：`deployment/frontend` 滚至新 digest，公共 SPA 200。
+3. 后端滚动（Recreate）：`readyReplicas=1`，Flyway「Schema `manao_poc4_6b` is up to date」（version 10，无新迁移），`/actuator/health/readiness` 200，公共入口错误凭据 401（nginx→backend 链路正常）。
+
+### 6.3 修复验证（真实浏览器 + 真实集群）— PASS
+
+凭据处置（如实记录）：线上 `app_user` 与本地 `stage6-6b.env` 两对候选凭据**全部漂移**（bcrypt 比对均不匹配）。为完成登录验证，向 `app_user` 插入一次性账号 `deploy-verify-temp`（随机 40 位口令），验证完成后 DELETE，`app_user` 恢复为原有 1 行；原账号未触碰。**建议用户尽快同步 env 与线上凭据。**
+
+1. **连续打开工作台（问题 A）**：以临时账号连续打开 python-fastapi-web 工作台 3 次，浏览器 console 记录 4 次短暂 409（`/python-dependencies/pending` ×2、项目详情 GET ×2）——即真实锁竞争复现；3 次打开红字「Could not check for a pending dependency change.」出现 **0 次**，文件树均正常加载。pending 只读重试在真实环境按设计生效。
+2. **FastAPI 快速失败（问题 B）**：编辑 `app/main.py` 首行注入 `import deploy_verify_nonexistent_xyz`（PUT 200），启动 Run `c2335795`：约 6 秒终态 **FAILED / APPLICATION_EXITED / exit 1**（uvicorn 导入失败即容器退出）。`run_log_chunk` 持久化 **64 chunk / 3020 字节，seq 1..64 连续**：第 1 行起（uv 解释器/venv/依赖安装）直到完整 `Traceback` 与 `ModuleNotFoundError: No module named 'deploy_verify_nonexistent_xyz'`（seq 63-64 为注入行与异常行）；**「log source lost」gap marker 0 条**。修复前该场景为 0 chunk（test5 证据）。UI Run 面板渲染完整 Traceback，日志连接状态 Complete（log.complete 在补采之后发布）。
+3. **Java 旧路径回归**：新建 java-console 项目 Run **SUCCEEDED / BUILD_SUCCEEDED / exit 0**（57 秒），旧路径无回归。
+
+### 6.4 删除回收核查 — PASS
+
+两个一次性验证项目 API 删除（各 204 → 404）后独立核验：Pod/Job/PVC **零残留**；`run_log_chunk` 等依赖行随删除流程清零；历史数据与其他用户数据未触碰。
+
+### 6.5 本轮观察（非缺陷，留档）
+
+- 项目详情 GET（`/api/v1/projects/{id}`）也参与同一 `ProjectLifecycleGate` 竞争，真实打开中两次瞬时 409；工作台均自行恢复、无可见错误。该读取面的重试策略**不在本轮授权范围**，留作后续独立评估。
+- namespace 中存在两个额外 StatefulSet `manao-mysql-5b3fde39-*`（4d11h）与 `manao-mysql-dda3a01b-*`（28h），本轮部署**未触碰**，来源待运维确认。
+- 本地（单测）与云端（浏览器+集群）边界已在本节分开记录；7200 秒正式用例维持 §5.7 的 SKIPPED 状态，本轮未改变。
