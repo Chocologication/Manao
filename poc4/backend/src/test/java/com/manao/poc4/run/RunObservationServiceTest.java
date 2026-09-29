@@ -475,10 +475,30 @@ class RunObservationServiceTest {
         final List<String> containers = new ArrayList<>();
         final List<String> namespaces = new ArrayList<>();
         final List<String> closedPods = new ArrayList<>();
+        final List<String> podHistory = new ArrayList<>();
+        final List<String> readLogsPods = new ArrayList<>();
         private final List<MutableHandle> handles = new ArrayList<>();
+        /** When true, readLogs fails mid-history: the first line was already delivered. */
+        boolean failReadLogs;
+        /** Optional shared event sink so tests can order the backfill against the completion listener. */
+        java.util.function.Consumer<String> readLogEventSink;
 
         /** The most recently created watch, so tests can kill the current source. */
         MutableHandle latest() { return handles.get(handles.size() - 1); }
+
+        /** One-shot non-follow read of the pod's full history, recorded like watchLogs. */
+        @Override public void readLogs(String namespace, String podName, String container,
+                                       java.util.function.Consumer<String> lineConsumer) {
+            readLogsPods.add(podName);
+            if (readLogEventSink != null) readLogEventSink.accept("backfill:" + podName);
+            java.util.Iterator<String> lines = podHistory.iterator();
+            while (lines.hasNext()) {
+                lineConsumer.accept(lines.next());
+                if (failReadLogs) {
+                    throw new IllegalStateException("pod log read failed");
+                }
+            }
+        }
 
         @Override public LogWatchHandle watchLogs(String namespace, String podName, String container,
                                                   java.util.function.Consumer<String> lineConsumer) {

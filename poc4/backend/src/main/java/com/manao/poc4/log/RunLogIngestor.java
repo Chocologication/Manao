@@ -17,6 +17,10 @@ import org.slf4j.LoggerFactory;
  * source is re-attached on the spot. A reconnect that keeps failing marks the gap once and
  * retries quietly on every scan; a loss after a successful reconnect is a new gap and is marked
  * again.</p>
+ *
+ * <p>When a run settles, {@link #backfillHistoryBeforeFinish} replays the pod's full non-follow
+ * history through the same ingest path, so a run that terminated before its first observation
+ * still gets its log persisted.</p>
  */
 public final class RunLogIngestor {
     private static final Logger LOG = LoggerFactory.getLogger(RunLogIngestor.class);
@@ -107,6 +111,72 @@ public final class RunLogIngestor {
         handle.watch = gateway.watchLogs(this.namespace, podName, ResourceIdentityVerifier.APPLICATION_CONTAINER,
             line -> ingest(runId, handle, line));
         return handle;
+    }
+
+    /** Outcome of one terminal history backfill attempt. */
+    public enum TerminalBackfill { COMPLETED, DEFERRED, GAPPED }
+
+    /** Read attempts one run may consume before its terminal backfill reports a gap instead. */
+    private static final int BACKFILL_ATTEMPT_BUDGET = 3;
+
+    /** Skip cursor and attempt count of the terminal backfill; kept across deferred attempts. */
+    private record TerminalBackfillState(long skipChunks, int attempts) { }
+
+    private final Map<String, TerminalBackfillState> terminalBackfills = new ConcurrentHashMap<>();
+
+    /**
+     * Backfills the pod's full non-follow log history through the SAME ingest path the watch
+     * uses, right before a terminal run settles. Any bound watch is closed and drained first so
+     * the skip cursor is quiescent, and its persisted chunk count is carried over: a partial
+     * watch is never duplicated and a never-attached run gets the full history. Blank identity
+     * settles with today's semantics; a bound watch with a different pod uid is never replaced
+     * by a second source. A failed read defers settlement to the next scan; after the attempt
+     * budget one best-effort gap marker is published and the caller settles anyway.
+     */
+    public synchronized TerminalBackfill backfillHistoryBeforeFinish(String runId, String podName, String podUid) {
+        if (podName == null || podName.isBlank() || podUid == null || podUid.isBlank()) {
+            return TerminalBackfill.COMPLETED; // no verifiable identity; settlement proceeds unchanged
+        }
+        Handle bound = watches.get(runId);
+        if (bound != null && !podUid.equals(bound.podUid)) {
+            LOG.warn("terminal log backfill refused: a different pod uid is bound for the run: runId={}", runId);
+            return TerminalBackfill.COMPLETED;
+        }
+        // Quiesce first: close + drain, so the pump thread is done and nothing races the cursor.
+        detach(runId);
+        TerminalBackfillState state = terminalBackfills.computeIfAbsent(runId,
+            id -> new TerminalBackfillState(bound == null ? 0 : bound.sourceChunks, 0));
+        // The cursor is deliberately NOT registered in watches: after terminal facts the watch
+        // can never re-attach, so the backfill is the run's last log source.
+        Handle cursor = new Handle();
+        cursor.nextSeq = logs.windowFor(runId).lastSeq() + 1;
+        cursor.skipChunks = state.skipChunks();
+        cursor.sourceChunks = state.skipChunks();
+        cursor.podUid = podUid;
+        cursor.podName = podName;
+        try {
+            gateway.readLogs(namespace, podName, ResourceIdentityVerifier.APPLICATION_CONTAINER,
+                line -> ingest(runId, cursor, line));
+            // The advanced skip cursor is kept so a repeat backfill for the same run can never
+            // re-publish the history it already persisted.
+            terminalBackfills.put(runId, new TerminalBackfillState(cursor.sourceChunks, state.attempts()));
+            return TerminalBackfill.COMPLETED;
+        } catch (RuntimeException ex) {
+            int attempts = state.attempts() + 1;
+            if (attempts < BACKFILL_ATTEMPT_BUDGET) {
+                // cursor.sourceChunks is the advanced total (original skip + chunks persisted
+                // this attempt), so a partial read is never re-published from its start.
+                terminalBackfills.put(runId, new TerminalBackfillState(cursor.sourceChunks, attempts));
+                LOG.warn("terminal log backfill failed; settlement is deferred to the next scan: runId={}", runId, ex);
+                return TerminalBackfill.DEFERRED;
+            }
+            terminalBackfills.remove(runId);
+            String marker = GAP_MARKER_PREFIX + " at " + logs.now()
+                + ": the terminal history backfill failed after " + BACKFILL_ATTEMPT_BUDGET
+                + " attempts; the remaining lines are missing from this history.";
+            logs.publish(runId, cursor.nextSeq, marker + "\n"); // best effort
+            return TerminalBackfill.GAPPED;
+        }
     }
 
     public synchronized void detach(String runId) {

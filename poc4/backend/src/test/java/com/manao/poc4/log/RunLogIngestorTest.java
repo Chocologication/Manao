@@ -229,11 +229,15 @@ class RunLogIngestorTest {
         final List<String> containers = new ArrayList<>();
         final List<String> namespaces = new ArrayList<>();
         final List<String> closed = new ArrayList<>();
+        final List<String> readLogsPods = new ArrayList<>();
+        final List<String> readLogsContainers = new ArrayList<>();
         final List<MutableHandle> handles = new ArrayList<>();
         private final List<String> podLog = new ArrayList<>();
         private MutableHandle current;
         java.util.function.Consumer<String> consumer;
         boolean failNextAttach;
+        /** When true, readLogs fails mid-history: the first line was already delivered. */
+        boolean failReadLogs;
 
         /** The most recently created watch, so tests can kill the current source. */
         MutableHandle latest() { return handles.get(handles.size() - 1); }
@@ -243,6 +247,20 @@ class RunLogIngestorTest {
             podLog.add(line);
             if (current != null && current.alive) {
                 consumer.accept(line);
+            }
+        }
+
+        /** One-shot non-follow read of the pod's full history, recorded like watchLogs. */
+        @Override public void readLogs(String namespace, String podName, String container,
+                                       java.util.function.Consumer<String> lineConsumer) {
+            readLogsPods.add(podName);
+            readLogsContainers.add(container);
+            java.util.Iterator<String> lines = podLog.iterator();
+            while (lines.hasNext()) {
+                lineConsumer.accept(lines.next());
+                if (failReadLogs) {
+                    throw new IllegalStateException("pod log read failed");
+                }
             }
         }
 
