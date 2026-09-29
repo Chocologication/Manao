@@ -119,7 +119,7 @@ public final class RunLogIngestor {
     /** Read attempts one run may consume before its terminal backfill reports a gap instead. */
     private static final int BACKFILL_ATTEMPT_BUDGET = 3;
 
-    /** Skip cursor and attempt count of the terminal backfill; kept across deferred attempts. */
+    /** Skip cursor and attempt count of the terminal backfill; kept once created, never removed. */
     private record TerminalBackfillState(long skipChunks, int attempts) { }
 
     private final Map<String, TerminalBackfillState> terminalBackfills = new ConcurrentHashMap<>();
@@ -131,7 +131,9 @@ public final class RunLogIngestor {
      * watch is never duplicated and a never-attached run gets the full history. Blank identity
      * settles with today's semantics; a bound watch with a different pod uid is never replaced
      * by a second source. A failed read defers settlement to the next scan; after the attempt
-     * budget one best-effort gap marker is published and the caller settles anyway.
+     * budget one best-effort gap marker is published and the caller settles anyway. The per-run
+     * state is never removed: a repeat backfill skips every already-persisted chunk, and the gap
+     * marker is written at most once per run.
      */
     public synchronized TerminalBackfill backfillHistoryBeforeFinish(String runId, String podName, String podUid) {
         if (podName == null || podName.isBlank() || podUid == null || podUid.isBlank()) {
@@ -170,7 +172,12 @@ public final class RunLogIngestor {
                 LOG.warn("terminal log backfill failed; settlement is deferred to the next scan: runId={}", runId, ex);
                 return TerminalBackfill.DEFERRED;
             }
-            terminalBackfills.remove(runId);
+            // The state is kept (like the success path) so a repeat backfill after a gap skips
+            // every already-persisted chunk instead of re-publishing it under new seqs.
+            terminalBackfills.put(runId, new TerminalBackfillState(cursor.sourceChunks, attempts));
+            if (attempts > BACKFILL_ATTEMPT_BUDGET) {
+                return TerminalBackfill.GAPPED; // the gap is already marked; never a second marker
+            }
             String marker = GAP_MARKER_PREFIX + " at " + logs.now()
                 + ": the terminal history backfill failed after " + BACKFILL_ATTEMPT_BUDGET
                 + " attempts; the remaining lines are missing from this history.";

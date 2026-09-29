@@ -323,6 +323,44 @@ class RunLogIngestorTest {
     }
 
     @Test
+    void aBackfillAfterAnExhaustedBudgetSkipsPersistedHistoryAndNeverReMarksTheGap() {
+        RecordingGateway gateway = new RecordingGateway();
+        RecordingChunkStore chunks = new RecordingChunkStore(0);
+        RunLogIngestor ingestor = new RunLogIngestor(gateway, new RunLogService(chunks), "manao");
+        gateway.emit("L1");
+        gateway.emit("L2");
+        gateway.emit("L3");
+        // Each failed read still persists the full history first; only the read outcome fails.
+        gateway.failReadLogsAfterFullHistory = true;
+
+        assertThat(ingestor.backfillHistoryBeforeFinish("r1", "pod-1", "uid-1"))
+            .isEqualTo(RunLogIngestor.TerminalBackfill.DEFERRED);
+        assertThat(ingestor.backfillHistoryBeforeFinish("r1", "pod-1", "uid-1"))
+            .isEqualTo(RunLogIngestor.TerminalBackfill.DEFERRED);
+        assertThat(ingestor.backfillHistoryBeforeFinish("r1", "pod-1", "uid-1"))
+            .isEqualTo(RunLogIngestor.TerminalBackfill.GAPPED);
+
+        assertThat(gateway.readLogsPods).hasSize(3); // exactly the attempt budget
+        assertThat(chunks.inserted).extracting(RecordingChunk::seq).containsExactly(1L, 2L, 3L, 4L);
+        long markers = chunks.inserted.stream()
+            .filter(chunk -> chunk.text().contains(RunLogIngestor.GAP_MARKER_PREFIX)).count();
+        assertThat(markers).isEqualTo(1);
+
+        // The gateway recovers: the retry skips every already-persisted chunk, publishes
+        // nothing new, reports COMPLETED and never adds a second gap marker.
+        gateway.failReadLogsAfterFullHistory = false;
+        assertThat(ingestor.backfillHistoryBeforeFinish("r1", "pod-1", "uid-1"))
+            .isEqualTo(RunLogIngestor.TerminalBackfill.COMPLETED);
+        assertThat(gateway.readLogsPods).hasSize(4);
+        assertThat(chunks.inserted).extracting(RecordingChunk::seq).containsExactly(1L, 2L, 3L, 4L);
+        assertThat(chunks.inserted.subList(0, 3)).extracting(RecordingChunk::text)
+            .containsExactly("L1\n", "L2\n", "L3\n");
+        assertThat(chunks.inserted.stream()
+            .filter(chunk -> chunk.text().contains(RunLogIngestor.GAP_MARKER_PREFIX)).count())
+            .isEqualTo(1);
+    }
+
+    @Test
     void finishClosesTheWatchSoTheLastBufferedLinesCanDrain() {
         RecordingGateway gateway = new RecordingGateway();
         RunLogIngestor ingestor = new RunLogIngestor(gateway, new RunLogService(new RecordingChunkStore(0)), "manao");
@@ -349,6 +387,8 @@ class RunLogIngestorTest {
         boolean failNextAttach;
         /** When true, readLogs fails mid-history: the first line was already delivered. */
         boolean failReadLogs;
+        /** When true, readLogs delivers the full history first and only then fails. */
+        boolean failReadLogsAfterFullHistory;
 
         /** The most recently created watch, so tests can kill the current source. */
         MutableHandle latest() { return handles.get(handles.size() - 1); }
@@ -372,6 +412,9 @@ class RunLogIngestorTest {
                 if (failReadLogs) {
                     throw new IllegalStateException("pod log read failed");
                 }
+            }
+            if (failReadLogsAfterFullHistory) {
+                throw new IllegalStateException("pod log read failed");
             }
         }
 
