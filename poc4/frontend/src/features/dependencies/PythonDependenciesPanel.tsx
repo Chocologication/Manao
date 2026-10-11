@@ -79,6 +79,8 @@ function settleSubmissionFailure(options: {
   error: unknown;
   onResponseLost: (operationId: string) => void;
   reportRejection: (message: string) => void;
+  /** The import flow describes the requirements.txt contract, not single-package scope. */
+  importContract?: boolean;
 }): void {
   const error = options.error;
   if (!isNetworkError(error) && error instanceof ApiRequestError && error.body !== null) {
@@ -86,14 +88,14 @@ function settleSubmissionFailure(options: {
       // A registered operation's result is unresolved: the id stays and only
       // the recovery check may resolve it.
       options.onResponseLost(options.operationId);
-      options.reportRejection(rejectionMessage(error));
+      options.reportRejection(rejectionMessage(error, options.importContract === true));
       return;
     }
     if (NO_SIDE_EFFECT_CODES.has(error.body.code)) {
       // Explicitly proven no-side-effect rejection: a corrected change may
       // start a NEW operation.
       clearPythonDependencyOperationId(options.userId, options.projectId);
-      options.reportRejection(rejectionMessage(error));
+      options.reportRejection(rejectionMessage(error, options.importContract === true));
       return;
     }
   }
@@ -109,11 +111,14 @@ function requirementsReadErrorMessage(error: unknown): string {
   return 'Unable to read requirements.txt.';
 }
 
-function rejectionMessage(error: unknown): string {
+function rejectionMessage(error: unknown, importContract = false): string {
   if (error instanceof ApiRequestError) {
     switch (error.body?.code) {
       case 'VALIDATION_ERROR':
-        return 'Only package names with an optional exact version are supported.';
+        // The import contract lives on the root requirements.txt, not single packages.
+        return importContract
+          ? 'The requirements.txt import only accepts plain public-PyPI requirement lines within the size and count limits.'
+          : 'Only package names with an optional exact version are supported.';
       case 'PYTHON_DEPENDENCY_UNSUPPORTED':
         return error.body.message;
       case 'PYTHON_DEPENDENCY_NO_WHEEL':
@@ -302,6 +307,7 @@ export function PythonDependenciesPanel({
         error,
         onResponseLost,
         reportRejection: setRejection,
+        importContract: true,
       });
       setPhase('idle');
       return;

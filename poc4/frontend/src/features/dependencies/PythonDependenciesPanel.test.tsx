@@ -5,6 +5,7 @@ import { MemoryRouter } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { login } from '../../api/authApi';
 import {
+  changePythonDependencyBatch,
   generateOperationId,
   readPythonDependencyOperationId,
 } from '../../api/pythonDependencyApi';
@@ -633,6 +634,46 @@ describe('PythonDependenciesPanel requirements.txt import', () => {
     fetchSpy.mockRestore();
   });
 
+  it('answers a retry of the SAME batch operation with the original COMMITTED result, not a revision conflict', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    const user = userEvent.setup();
+    await authenticateAsAlice();
+    const project = await createReadyPythonProject('Import Registered First');
+    const requirementsText = 'httpx\n';
+    seedRootRequirements(project.id, requirementsText);
+    primeRevision(project.id);
+    renderPanel({ project });
+
+    const revisionBeforeImport = mockWorkspaceRevision(project.id);
+    await user.click(screen.getByRole('button', { name: 'Import requirements.txt' }));
+    expect(
+      await screen.findByRole('status', { name: 'Dependency change result' }),
+    ).toHaveTextContent('Dependency change saved.');
+    // The commit advanced the workspace revision...
+    const revisionAfterCommit = mockWorkspaceRevision(project.id);
+    expect(revisionAfterCommit).not.toBe(revisionBeforeImport);
+    const operationId = (batchDependencyPosts(fetchSpy)[0]!.body as Record<string, unknown>)
+      .operationId as string;
+
+    // ...and the response was "lost". The registered-first contract: the SAME
+    // operation id with the SAME request — carrying the ORIGINAL, now stale
+    // revision — re-POSTed directly returns the original durable COMMITTED result
+    // instead of judging the stale revision.
+    const retry = await changePythonDependencyBatch(project.id, {
+      operationId,
+      requirementsText,
+      expectedWorkspaceRevision: revisionBeforeImport,
+    });
+    expect(retry.state).toBe('COMMITTED');
+    expect(retry.operationId).toBe(operationId);
+    expect(retry.resultWorkspaceRevision).toBe(revisionAfterCommit);
+    // The retry did not commit a second time: the revision did not move.
+    expect(mockWorkspaceRevision(project.id)).toBe(revisionAfterCommit);
+    expect(batchDependencyPosts(fetchSpy)).toHaveLength(2);
+
+    fetchSpy.mockRestore();
+  });
+
   it('answers PROJECT_BUSY as a proven pre-flight rejection: id cleared, busy message, no recovery', async () => {
     const fetchSpy = vi.spyOn(globalThis, 'fetch');
     const user = userEvent.setup();
@@ -749,7 +790,7 @@ describe('PythonDependenciesPanel requirements.txt import', () => {
 
     const alert = await screen.findByRole('alert');
     expect(alert).toHaveTextContent(
-      'Only package names with an optional exact version are supported.',
+      'The requirements.txt import only accepts plain public-PyPI requirement lines within the size and count limits.',
     );
     // The rejection is explicit: no fabricated success message.
     expect(
@@ -804,7 +845,7 @@ describe('PythonDependenciesPanel requirements.txt import', () => {
 
     const alert = await screen.findByRole('alert');
     expect(alert).toHaveTextContent(
-      'Only package names with an optional exact version are supported.',
+      'The requirements.txt import only accepts plain public-PyPI requirement lines within the size and count limits.',
     );
     expect(readPythonDependencyOperationId(ALICE_USER_ID, project.id)).toBeNull();
     expect(screen.getByRole('button', { name: 'Import requirements.txt' })).toBeEnabled();

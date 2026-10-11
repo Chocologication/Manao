@@ -681,6 +681,27 @@ export const dependencyHandlers = [
     if (requirementLines === null) {
       return jsonError(422, FILE_VALIDATION_ERROR);
     }
+    const normalizedText = requirementLines.join('\n');
+    // The request digest covers the REQUEST's revision, like the backend's digest: a
+    // lost-response retry presents the original request and must find its row.
+    const fingerprint = mockBatchRequestFingerprint(
+      projectId,
+      normalizedText,
+      body.expectedWorkspaceRevision,
+    );
+    // Mirror the backend's changeLocked: the registered identity ALWAYS answers first —
+    // the same id with the same digest returns the original durable COMMITTED result or
+    // redrives PENDING, never misjudged by the revision that has since moved.
+    const registered = findMockDependencyOperation(projectId, body.operationId);
+    if (registered !== null) {
+      if (registered.fingerprint !== fingerprint) {
+        return jsonError(409, DEPENDENCY_REQUEST_MISMATCH);
+      }
+      if (registered.state === 'PENDING') {
+        commitMockDependencyOperation(registered);
+      }
+      return HttpResponse.json(dependencyStatusJson(registered));
+    }
     const scenario = getDependencyScenario();
     if (!isPythonRuntimeProject(auth.user.id, projectId)) {
       return jsonError(422, PYTHON_DEPENDENCY_UNSUPPORTED);
@@ -691,18 +712,6 @@ export const dependencyHandlers = [
     }
     if (hasActiveRun(projectId)) {
       return jsonError(409, RUN_ALREADY_ACTIVE);
-    }
-    const normalizedText = requirementLines.join('\n');
-    const fingerprint = mockBatchRequestFingerprint(projectId, normalizedText, revision);
-    const registered = findMockDependencyOperation(projectId, body.operationId);
-    if (registered !== null) {
-      if (registered.fingerprint !== fingerprint) {
-        return jsonError(409, DEPENDENCY_REQUEST_MISMATCH);
-      }
-      if (registered.state === 'PENDING') {
-        commitMockDependencyOperation(registered);
-      }
-      return HttpResponse.json(dependencyStatusJson(registered));
     }
     if (parseMockBatchPackages(requirementLines) === null) {
       // Mirrors the agent helper's filter_requirements at the prepare position: a line
