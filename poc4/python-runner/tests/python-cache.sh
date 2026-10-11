@@ -10,10 +10,13 @@
 #   seed-content           the image carries a read-only seed (seed-id + uv cache) built
 #                          from the real exported templates; no template sources inside
 #   template-locks-mirror  the exported template locks inside the image record only the
-#                          pinned Aliyun mirror as their registry source (byte-identical
-#                          https://mirrors.aliyun.com/pypi/simple/, trailing slash included)
-#                          with no pypi.org / files.pythonhosted.org residue — the seed is
-#                          built from exactly these locks
+#                          pinned Aliyun mirror: every https URL they carry is either the
+#                          byte-identical registry source
+#                          (https://mirrors.aliyun.com/pypi/simple/, trailing slash included)
+#                          or a mirrors.aliyun.com/pypi/packages/ artifact — the same
+#                          full-URL strength as dependency-editor's mirror-observed, with no
+#                          pypi.org / files.pythonhosted.org residue — the seed is built
+#                          from exactly these locks
 #   cold-cache-offline     an empty project cache plus disabled network still starts the
 #                          default FastAPI template (seed compatibility proof); the venv
 #                          holds the base dependencies but neither extra client
@@ -98,10 +101,13 @@ cache_state() { # CACHE_VOL
 # Runs a real `uv add|remove --no-sync` with the fixed argv shape of the dependency
 # editor inside a bridge-networked setup container, writing the updated manifest into the
 # workspace volume. The scratch uv cache and venv live in the container's tmpfs, so the
-# project cache is never touched by the pre-generation step.
+# project cache is never touched by the pre-generation step. The `--default-index` flag is
+# part of the fixed dependency-editor argv: the fixture must resolve new packages from the
+# same pinned Aliyun index the platform resolves from (test fixture parity, not a product
+# fallback — uv add persists the index declaration the same way the controlled path does).
 uv_manifest_setup() { # WS_VOL VERB PACKAGE
   dc_t 180 run --rm --user 10001:10001 --tmpfs /tmp:exec,rw,nosuid,nodev -v "$1:/workspace" "$IMAGE" \
-    bash -c "cd /workspace && export UV_CACHE_DIR=/tmp/setup-cache UV_PROJECT_ENVIRONMENT=/tmp/setup-venv UV_LINK_MODE=copy UV_PYTHON_DOWNLOADS=never && uv $2 --no-sync --no-build --no-sources --no-config --no-python-downloads --python /usr/local/bin/python3 $3" \
+    bash -c "cd /workspace && export UV_CACHE_DIR=/tmp/setup-cache UV_PROJECT_ENVIRONMENT=/tmp/setup-venv UV_LINK_MODE=copy UV_PYTHON_DOWNLOADS=never && uv $2 --no-sync --no-build --no-sources --no-config --no-python-downloads --python /usr/local/bin/python3 --default-index https://mirrors.aliyun.com/pypi/simple/ $3" \
     >/dev/null 2>&1
 }
 
@@ -144,10 +150,12 @@ scenario_seed_content() {
 }
 
 # Read-only assertion on the image's exported template locks: the seed is built from
-# exactly these locks, so every registry source they record must be the pinned mirror —
-# byte-identical to https://mirrors.aliyun.com/pypi/simple/ — with no pypi.org /
-# files.pythonhosted.org residue anywhere (the lock URLs are the runtime's download
-# sources; the console lock records no registry at all and passes vacuously).
+# exactly these locks, so every URL they record must come from the pinned mirror — the
+# registry source byte-identical to https://mirrors.aliyun.com/pypi/simple/ (trailing slash
+# included) and every other https URL an artifact under mirrors.aliyun.com/pypi/packages/
+# — with no pypi.org / files.pythonhosted.org residue anywhere (the lock URLs are the
+# runtime's download sources; the console lock records no registry at all and passes
+# vacuously).
 scenario_template_locks_mirror() {
   local name="${PREFIX}-template-locks"
   local out
@@ -163,13 +171,15 @@ scenario_template_locks_mirror() {
       fi
       bad="$(grep -h "source = { registry" "$lock" | grep -Fv "source = { registry = \"https://mirrors.aliyun.com/pypi/simple/\" }" || true)"
       [ -z "$bad" ] || { echo "unexpected registry source in $lock: $bad" >&2; status=1; }
+      foreign="$(grep -hoE "https://[^\"[:space:]]+" "$lock" | sort -u | grep -Fxv "https://mirrors.aliyun.com/pypi/simple/" | grep -v "^https://mirrors\.aliyun\.com/pypi/packages/" || true)"
+      [ -z "$foreign" ] || { echo "non-mirror URL recorded in $lock: $foreign" >&2; status=1; }
     done
     [ -n "$locks" ] || { echo "no exported template locks found" >&2; status=1; }
     echo "checked locks:$locks" >&2
     [ "$status" = 0 ] && echo "TEMPLATE-LOCKS-OK"
     exit "$status"
   ')"; then
-    pass "$name (every exported template lock records only the pinned mirror sources)"
+    pass "$name (every exported template lock records only the pinned mirror: registry byte-identical, all artifact URLs under mirrors.aliyun.com/pypi/packages/)"
   else
     fail "$name (template locks record non-mirror sources: $(printf '%s' "$out" | tail -n 2))"
   fi

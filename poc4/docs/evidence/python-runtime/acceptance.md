@@ -165,3 +165,69 @@ API 删除 4 个本轮一次性项目（py-smoke、py-7200、java-reg-console、
 - 项目详情 GET（`/api/v1/projects/{id}`）也参与同一 `ProjectLifecycleGate` 竞争，真实打开中两次瞬时 409；工作台均自行恢复、无可见错误。该读取面的重试策略**不在本轮授权范围**，留作后续独立评估。
 - namespace 中存在两个额外 StatefulSet `manao-mysql-5b3fde39-*`（4d11h）与 `manao-mysql-dda3a01b-*`（28h），本轮部署**未触碰**，来源待运维确认。
 - 本地（单测）与云端（浏览器+集群）边界已在本节分开记录；7200 秒正式用例维持 §5.7 的 SKIPPED 状态，本轮未改变。
+
+## 7. 依赖镜像切换与批量导入轮验证记录（2026-10-11）
+
+本轮（`2026-10-11-python-dependency-mirror-batch-import-plan` 计划 Tasks 0–5，分支 `codex/python-runtime`，执行 commit 范围 `f2fee94`..`32d2b27` 加本节所在提交）只完成实现与本地/容器级验证：**未部署、未合并、无任何云端操作**；云端浏览器 E2E、7200 秒正式用例与历史项目真实行为一律 NOT_REVERIFIED。既有 1–6 节不改写。
+
+### 7.1 任务 0 预检摘要（2026-10-11，完整记录见该轮 SDD 台账 task-0-report.md）
+
+一次性容器（`python:3.13.15-slim` + `uv 0.11.6` 逐字 digest，与 runner/agent Dockerfile 一致）内完成，仓库零改动：两个模板在阿里云 default index 下 lock/add/sync 全链路 PASS，`uv sync --locked` 四次消费成功；**19 个包的 wheel 下载实测全部来自 `https://mirrors.aliyun.com/pypi/packages/…`（No cache entry + fresh GET 各 19 条、共 38 条 URL 记录，0 次 pypi.org / files.pythonhosted.org）**，生成锁的 registry 与 artifact URL 全部为 mirrors.aliyun.com。简报给定的 verbatim `uv add -r` argv 因 uv 0.11.6 旗标位置失败（exit 2，解析期、无改动），修正形状（旗标置于 `add` 之后）两模板 PASS 并据此固定 helper/seed/锁再生成 argv；同时记录：`uv add -r` 会把仅存在于 extras 的包同时写入主 dependencies（extras 保留），`--default-index` 被 add 持久化为 pyproject 的 `[[tool.uv.index]]`。
+
+### 7.2 实现与验证 commit
+
+| 任务 | 内容 | Commit |
+| --- | --- | --- |
+| Task 1 | helper/seed/锁再生成固定阿里云 index | `f2fee94` |
+| Task 2 | agent 一次 `uv add -r` 批量 prepare | `72b0a67` |
+| Task 3 | backend 批量端点（共享操作协议、协议 2 digest、≤50 行/≤64 KiB） | `06a3c8e` |
+| Task 4 | 前端 Import requirements.txt 入口 | `7f54798` + `32d2b27` |
+| Task 5 | 容器场景扩充、回归验收与文档边界 | 本节所在提交 |
+
+### 7.3 容器级证据（本地 Docker 29.8.1，Linux 容器）
+
+镜像：agent 测试镜像 `docker build -t manao-python-workspace-agent-test poc4/workspace-agent`（exit 0）；runner 测试镜像按 README 命令导出模板并构建（exit 0；镜像内 seed-id `8026436feb6507c93380e3452b4a3f447e597187df093f2a17b717b0ec7c7b63`、800 files，与 Task 1 记录逐字节一致）。
+
+`bash poc4/python-runner/tests/dependency-editor.sh manao-python-workspace-agent-test` — **exit 0，23 passed / 0 failed**。既有 20 个场景全部保持通过；本轮新增 3 个：
+
+- `batch-commit`：批量 prepare 后真实 commit——两个受管文件由一次事务替换（工作区摘要 = journal after 摘要），工作区根无批量残留，durable receipt 绑定提交摘要，`uv lock --check` 一致，**批量生成锁只记录 pinned mirror（registry 逐字相等 + artifacts 全部 `mirrors.aliyun.com/pypi/packages/`，15 个不同 URL）**。
+- `batch-idempotent`：同 operationId 重放 batch prepare 返回既有 summary 且 uv add 运行数保持 1（replay 502ms vs first 1388ms）；重放后 commit 结果与 prepared 逐字相同；commit 丢失响应重放不改写（lock mtime 不变）。
+- `batch-unsupported`（source-policy 补全至九类）：-r、--index-url、--extra-index-url、--find-links、-e、裸 http(s) URL、file:// URL、git+、本地路径全部在 uv 运行前 422 `PYTHON_DEPENDENCY_UNSUPPORTED`、无 journal、源不变。
+
+另有本轮升级的 `helper-env-override` 直测（两段断言，发现见 7.5 之 2）。
+
+`bash poc4/python-runner/tests/python-cache.sh manao-python-runtime-test` — **exit 1，11 passed / 3 failed**。通过 11 项含本轮升级的 `template-locks-mirror`（全 URL 强度：registry 逐字相等 + artifacts 全部 `mirrors.aliyun.com/pypi/packages/`，5 把导出锁）与加 `--default-index` 夹具（`uv_manifest_setup`）下的 download/reuse/remove 全链路、lock-mismatch、跨项目隔离、wipe/dirless/interrupted 修复。**真实失败 3 项**：`cold-cache-offline-web`、`warm-cache-reuse`、`extras-offline`——均为"仅凭镜像 seed + 断网启动 web 模板"的场景，机制与裁定见 7.5 之 1，如实记录为 FAILED、不以任何方式掩盖。
+
+### 7.4 单元/回归证据（全部实测）
+
+| 命令 | 结果 | 退出码 |
+| --- | --- | --- |
+| `mvn -f poc4/workspace-agent/pom.xml test` | Tests run: 76, Failures: 0, Errors: 0 | 0（BUILD SUCCESS） |
+| `mvn -f poc4/backend/pom.xml -Dtest=PythonDependencyOperationTest,PythonDependencyHttpContractTest,WorkspaceApiClientTest test` | Tests run: 69（38+20+11）, Failures: 0 | 0（BUILD SUCCESS） |
+| `pnpm -C poc4/frontend test -- src/features/dependencies/PythonDependenciesPanel.test.tsx`（vitest 实际执行全量） | Test Files 71 passed, Tests 1327 passed | 0 |
+| `pnpm -C poc4/frontend exec tsc -b --pretty false` | 无输出 | 0 |
+| `git diff --check` | 干净（仅 AGENTS.md 既有 LF/CRLF 提示） | 0 |
+
+TDD 记录：`batchBoundaryOfExactly50ValidLinesIsAccepted`（恰好 50 条有效行必须被接受，注释/空行不计入）为回归守卫——加入后直接 GREEN，与既有 51 行拒绝测试构成边界对。未知字段断言先以真实 MockMvc converter 探针观察 RED（未知字段被共享 converter 静默忽略、请求穿过反序列化进入 service 层才失败——"Status expected:<422> but was:<503>"），据此按计划备选方案将两个测试改名为 record 反序列化范围并恢复原断言。Java runtime 回归：`git diff --name-only f6794b9..HEAD -- poc4/maven-runner poc4/java-runner` 为空——本轮未改动任何 Java runner/runtime 源文件。
+
+### 7.5 本轮发现（真实缺陷与边界，非 PASS 项）
+
+1. **seed 纯离线启动契约出现时间窗（真实回归，即 7.3 的 3 个 FAILED 的机制）**：三个失败场景都是"仅凭镜像 seed + 断网启动 web 模板"。实测判定：同一 seed 缓存 `uv sync --offline --locked`（rc=0，完整安装 20 包）与 launcher 形态的在线模式离线运行（rc=1，逐 wheel "No cache entry" 回退网络下载）——缓存内容完整且键正确，差别在 uv 0.11.6 在线模式对 HTTP 缓存条目的新鲜度重验证；阿里云镜像对 wheel/index 返回 `Cache-Control: max-age=43200` 且 CDN `Age` 显著（实例实测 ~6.2h），使 seed 条目在构建后数小时内进入"过期需重验证"状态，断网即失败。pypi.org 时代 files.pythonhosted.org 为 `immutable` 语义，Task 4 的无条件离线契约因此成立；切换阿里云后该契约退化为"seed 构建后一个不超过 mirror 新鲜度窗口的时限内成立"。**生产（有网络）不受影响**：launcher 形态在线 sync rc=0（20 包安装成功）。修复选项（均未实施，超出本轮文件范围）：launcher 离线优先重试（先 `--offline --locked`、失败再网络重试）、seed 策略调整、或镜像源新鲜度评估——需独立裁定。
+2. **helper 层环境变量防御缺口的精确定界**：`--default-index` CLI 参数在 uv 0.11.6 能覆盖 `UV_DEFAULT_INDEX`（锁生成的 add 阶段实测全部从 mirrors.aliyun.com 拉取，verbose 证据），但不能覆盖 `UV_INDEX`（additional-index 环境变量可引导 add 阶段）；`UV_DEFAULT_INDEX` 又会使无 index 参数的安装性验证阶段（`uv sync --locked --dry-run`）联系恶意域并失败。两种情形都 fail-closed（rc=5 `PYTHON_DEPENDENCY_RESOLUTION_FAILED`，无 journal、无锁产出、工作区源不变），**且在生产不可达**：agent 以仅 PATH/HOME/TMPDIR/LANG 的最小环境启动 helper（`fixed-index-argv` 场景本轮继续 PASS）。helper 自身未改（超出本轮文件范围）；建议后续为 `run_uv` 的子进程环境剥离 `UV_*` 或为 `VERIFY_ARGV` 固定 index。
+3. **既有容器 harness 注册缺陷（记录，不在本轮修复）**：`start_agent` 经命令替换调用，其容器注册写入子 shell 内存数组后丢失，EXIT 清理只覆盖卷注册（文件型注册表）；容器泄漏为多轮既有行为。本轮实测清理：dependency-editor 泄漏容器 67 个 + 泄漏卷 182 个 + 更早会话遗留 `task5-final-*` 容器 3 个，全部按名删除并核对为 0 残留。共享 `tests/lib.sh` 不在本轮文件清单，未改动。
+
+### 7.6 本轮边界（显式 SKIPPED / NOT_REVERIFIED）
+
+- **未部署**：无任何镜像推送、无 Kubernetes 操作、未触碰 test4/test5 与线上数据；`manao-stage6b` 未应用本轮任何变更。**未合并**：分支仍未合并到 `master`。
+- 云端真实浏览器 E2E（创建项目 → 编辑 requirements.txt → 导入 → 一次提交多条 → Run → import 验证 → 删除回收）：**SKIPPED / NOT_REVERIFIED**（用户明确禁止部署）。
+- 7200 秒正式用例：**NOT_REVERIFIED**（维持 §5.7 的 SKIPPED 基线）。
+- 历史项目行为（含 2026-09-27 后执行过依赖操作、pyproject 持久化 `[tool.uv] index url=https://pypi.org/simple` 的项目在下一次依赖操作得到固定 `PYTHON_DEPENDENCY_UNSUPPORTED` 及其工作台手动恢复路径）：容器级由 `tooluva-policy` 场景覆盖（旧 index 与缺尾斜杠 URL 均被 422 拒绝、无 journal）；**真实云端历史项目行为 NOT_REVERIFIED**。
+- seed 新鲜度窗口内/外的真实集群冷缓存行为（7.5 之 1）：**NOT_REVERIFIED**。
+
+### 7.7 文档边界（本轮在 README 与本节写明）
+
+- 默认解析源为阿里云 `https://mirrors.aliyun.com/pypi/simple/`；没有自动 fallback、没有用户可选源。
+- 本轮只覆盖新模板和新依赖操作生成的镜像锁；历史项目及其 uv.lock 不迁移——特别地：2026-09-27 部署后执行过依赖操作的历史项目，其 pyproject.toml 中持久化的 `[tool.uv] index url=https://pypi.org/simple` 会让下一次依赖操作得到固定 `PYTHON_DEPENDENCY_UNSUPPORTED`（fail-closed）；恢复方式是用户在工作台文本编辑器中删除该 `[tool.uv]` index 段；这不是迁移机制。
+- requirements.txt 只支持项目根目录、纯 public-PyPI requirement 行（UTF-8，≤64 KiB，≤50 条非空行，空行/整行 # 注释不计入）；`uv add -r` 会把仅在 extras 中出现的包加入主 dependencies。
+- batch 是一次事务（一个 operationId、一次 uv 解析、一次两文件 commit、一次 revision 增量），不提供逐包进度。
+- 本轮没有新增依赖任务表、源选择器、后台队列或全量锁迁移；未部署。

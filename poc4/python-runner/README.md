@@ -42,7 +42,14 @@ re-selected from the pinned index; never a hand URL replacement inside a lock).
 Historical projects and their `uv.lock` files are NOT migrated: their locks keep the
 sources recorded when they were created, and the launcher's `uv sync --locked` consumes
 lock-recorded URLs as-is — only newly resolved or newly created locks use the Aliyun
-index.
+index. This covers persistent `[tool.uv]` configuration too: a historical project whose
+`pyproject.toml` carries a `[tool.uv]` index section recorded by a dependency operation
+executed after the 2026-09-27 deployment (i.e. `[[tool.uv.index]]` with
+`url = "https://pypi.org/simple"`) makes every NEXT dependency operation fail closed with
+the fixed 422 `PYTHON_DEPENDENCY_UNSUPPORTED` — there is no migration mechanism and no
+automatic rewrite. The recovery is manual and user-owned: delete that `[tool.uv]` index
+section in the workbench text editor; the next dependency operation then succeeds against
+the pinned mirror.
 
 Recorded builds of this image (local test tags; **a local tag is never a
 production pin**):
@@ -149,6 +156,23 @@ staleness proof, persistent fail-fast registry, exact-name cleanup — in
   under the one shared resolution budget — so a lock that resolves but has no wheel for
   the target platform fails as the fixed `PYTHON_DEPENDENCY_NO_WHEEL` category before any
   journal exists.
+- Batch requirements import (agent prepare-batch, 2026-10-11): one transaction per
+  import — ONE operation id, ONE `uv add -r` resolution for the whole text, ONE two-file
+  journal commit, ONE workspace revision increment. There is no per-package progress and
+  no partial application. The requirements file lives only in the resolution scratch
+  (never in the project root or the workspace) and must be plain project-root
+  requirements semantics: UTF-8 text up to 64 KiB and at most 50 non-blank,
+  non-comment requirement lines (blank lines and whole-line `#` comments do not count),
+  every line a plain public-PyPI requirement — option-style lines (`-r`, `--index-url`,
+  `--extra-index-url`, `--find-links`, `-e`), direct `http(s)://`/`file://`/`git+` URLs,
+  local paths and backslash continuations are rejected 422 `PYTHON_DEPENDENCY_UNSUPPORTED`
+  before uv runs. Because `uv add -r` applies plain requirement semantics, a package that
+  appears only in a template's extras is added to the MAIN `dependencies` as well (the
+  extras themselves are preserved) — the same behavior Task 0's preflight recorded.
+- Scope boundary of the 2026-10-11 round: no dependency task table, no source selector,
+  no background queue, no full-lock migration was added; nothing in this round is
+  deployed. The controlled dependency path keeps its single pinned Aliyun index with no
+  automatic fallback and no user-selectable source.
 - Cache seeding: one seed per fixed uv/Python/platform toolchain. A not-yet-existing
   cache directory (`/python-cache/uv-cache`) is initialized exactly once — whole-seed
   copy into a same-volume staging directory, atomic rename, completion marker
@@ -156,7 +180,14 @@ staleness proof, persistent fail-fast registry, exact-name cleanup — in
   directory's existence, so a stale marker left behind by a lost cache directory is
   repaired by the re-seed. An existing cache directory is never copied over; uv manages
   it. Interrupted initializations leave only staging directories, which the next run
-  sweeps. There is no cross-toolchain cache migration or auto-refill.
+  sweeps. There is no cross-toolchain cache migration or auto-refill. One observed
+  boundary (2026-10-11, recorded in the Python acceptance record section 7): a seed's
+  offline usability is bounded by the mirror's HTTP freshness policy — uv revalidates
+  stale cached responses when the sync runs online, and the Aliyun mirror serves
+  `max-age=43200` with a non-trivial CDN `Age`, so a seed older than that freshness
+  window needs network on first Run even though its content is complete and
+  `uv sync --offline` installs it fully. Production Runs have network; the bounded case
+  is the offline cold-cache start only.
 - Mounts: project code at `/workspace` (container working directory), project cache at
   `/python-cache` (the workspace PVC's `.manao-cache/python` subPath), run control at
   `/run-control` (shared supervisor), `/tmp` writable. The image carries no Maven.

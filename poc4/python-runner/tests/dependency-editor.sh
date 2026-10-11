@@ -76,10 +76,37 @@
 #                          image is untouched) plus the one installability verification: the
 #                          workspace sources stay untouched, the journal holds BOTH packages
 #                          and no comment residue, and the pinned mirror is in the fixed argv
-#   batch-unsupported      requirements lines that could switch or nest sources (-r,
-#                          --index-url, git+, local path) are rejected 422
-#                          PYTHON_DEPENDENCY_UNSUPPORTED before uv runs, with no journal and
-#                          untouched sources
+#   batch-unsupported      requirements lines that could switch or nest sources are rejected
+#                          422 PYTHON_DEPENDENCY_UNSUPPORTED before uv runs, with no journal
+#                          and untouched sources — the complete fixed source policy in one
+#                          matrix: -r, --index-url, --extra-index-url, --find-links, -e,
+#                          a bare http(s) URL, a file:// URL, git+ and a local path
+#   batch-commit           the staged batch journal is committed through the real commit
+#                          endpoint: both managed files are replaced by the ONE transaction
+#                          (workspace digests equal the journal's after digests), the
+#                          workspace root gains no batch residue, the durable receipt binds
+#                          the committed digests, `uv lock --check` stays consistent, and
+#                          the batch-generated lock records only the pinned Aliyun mirror —
+#                          the same mirror-observed proof Task 0's preflight recorded for
+#                          single adds, applied to the batch path
+#   batch-idempotent       replaying the same batch prepare (same operation id + request
+#                          digest) returns the stored summary without a second uv run
+#                          (shim-logged add count stays at 1, recorded timing), the commit
+#                          driven after the replay returns the identical result, and the
+#                          lost-response commit replay rewrites nothing (lock mtime unchanged)
+#   helper-env-override    DIRECT helper invocations inside the container — no agent HTTP,
+#                          the hostile variables in the HELPER's own environment. The
+#                          asserted invariant: a hostile uv environment variable can never
+#                          leave its host recorded in the generated files. Observed modes
+#                          (both fail-closed, rc=5, no journal, workspace untouched): a
+#                          hostile UV_DEFAULT_INDEX alone does NOT steer the lock-generating
+#                          add (the fixed `--default-index` argv wins there) but the
+#                          installability verification (no index flag on its argv) consults
+#                          it and the run fails; a hostile UV_INDEX (the additional-index
+#                          variable) steers the add phase itself and fails against the
+#                          unreachable test host. The agent's minimal helper environment
+#                          (PATH/HOME/TMPDIR/LANG only) remains the production env layer,
+#                          proven by fixed-index-argv
 #
 # Docker ownership (names, registration, volume identity, registry, cleanup) is shared with
 # the other runner suites via tests/lib.sh — the hardened Task 3 pattern. Host-side JSON
@@ -130,6 +157,13 @@ OPERATION_BATCH_REJECT_1="7f0a1c3d-000a-4a6b-8c9d-0e1f2a3b4c5d"
 OPERATION_BATCH_REJECT_2="7f0a1c3d-000b-4a6b-8c9d-0e1f2a3b4c5d"
 OPERATION_BATCH_REJECT_3="7f0a1c3d-000c-4a6b-8c9d-0e1f2a3b4c5d"
 OPERATION_BATCH_REJECT_4="7f0a1c3d-000d-4a6b-8c9d-0e1f2a3b4c5d"
+OPERATION_BATCH_REJECT_5="7f0a1c3d-000e-4a6b-8c9d-0e1f2a3b4c5d"
+OPERATION_BATCH_REJECT_6="7f0a1c3d-000f-4a6b-8c9d-0e1f2a3b4c5d"
+OPERATION_BATCH_REJECT_7="7f0a1c3d-0010-4a6b-8c9d-0e1f2a3b4c5d"
+OPERATION_BATCH_REJECT_8="7f0a1c3d-0011-4a6b-8c9d-0e1f2a3b4c5d"
+OPERATION_BATCH_REJECT_9="7f0a1c3d-0012-4a6b-8c9d-0e1f2a3b4c5d"
+OPERATION_BATCH_COMMIT="7f0a1c3d-0013-4a6b-8c9d-0e1f2a3b4c5d"
+OPERATION_BATCH_REPLAY="7f0a1c3d-0014-4a6b-8c9d-0e1f2a3b4c5d"
 
 # shellcheck source=lib.sh
 . "$SOURCE_DIR/lib.sh"
@@ -832,18 +866,28 @@ EOF
   fi
 }
 
+# Writes the test-only logging uv shim into a fresh per-run volume (label must be unique
+# per scenario — the harness refuses same-invocation volume-name reuse) and echoes the
+# volume name (production image untouched): the shim appends every uv argv line it forwards
+# to /shim/uv.log, so scenarios can count the real uv invocations the agent/helper drove.
+new_uv_log_shim() { # LABEL
+  new_volume "uvshim-$1"
+  local shim="$CREATED_VOLUME"
+  dc run --rm --user 0 --entrypoint /bin/sh -v "$shim:/shim" "$IMAGE" \
+    -c 'printf "#!/bin/sh\nprintf \"%%s\\n\" \"\$*\" >> /shim/uv.log\nexec /usr/local/bin/uv \"\$@\"\n" > /shim/uv \
+        && chmod 0555 /shim/uv && touch /shim/uv.log && chmod 0666 /shim/uv.log' >/dev/null 2>&1 \
+    || return 1
+  printf '%s' "$shim"
+}
+
 # prepare-batch: a multi-line requirements text (exact pin, version range, whole-line comment,
 # blank line) is imported through ONE prepare-batch call with exactly ONE `uv add -r` run —
 # logged by a test-only uv shim (per-run volume + PATH override; the production image is
 # untouched) — plus the one fixed installability verification. Sources stay untouched, the
 # journal holds BOTH requirements and no comment residue, and the pinned mirror is in argv.
 scenario_prepare_batch() {
-  new_volume "uvshim"
-  local shim="$CREATED_VOLUME"
-  dc run --rm --user 0 --entrypoint /bin/sh -v "$shim:/shim" "$IMAGE" \
-    -c 'printf "#!/bin/sh\nprintf \"%%s\\n\" \"\$*\" >> /shim/uv.log\nexec /usr/local/bin/uv \"\$@\"\n" > /shim/uv \
-        && chmod 0555 /shim/uv && touch /shim/uv.log && chmod 0666 /shim/uv.log' >/dev/null 2>&1 \
-    || { fail "prepare-batch (cannot write the logging uv shim)"; return 0; }
+  local shim
+  shim="$(new_uv_log_shim prep)" || { fail "prepare-batch (cannot write the logging uv shim)"; return 0; }
   local agent2 port
   read -r agent2 port <<< "$(start_agent "${PREFIX}-batch" "$PROJECT_ID_SHIM" \
     -e 'PATH=/shim:/usr/local/bin:/usr/bin:/bin' \
@@ -897,20 +941,30 @@ EOF
   fi
 }
 
-# batch-unsupported: requirements lines that could switch or nest sources (-r, --index-url,
-# git+, local path) are rejected 422 PYTHON_DEPENDENCY_UNSUPPORTED — the token only ever
-# comes from the helper's pre-uv checks, so the code itself proves no network contact — with
-# no journal and untouched workspace sources.
+# batch-unsupported: requirements lines that could switch or nest sources are rejected 422
+# PYTHON_DEPENDENCY_UNSUPPORTED — the token only ever comes from the helper's pre-uv checks,
+# so the code itself proves no network contact — with no journal and untouched workspace
+# sources. The complete fixed source policy: -r, --index-url, --extra-index-url, --find-links,
+# -e, a bare http(s) URL, a file:// URL, git+ and a local path.
 scenario_batch_unsupported_sources() {
   local agent2 port
   read -r agent2 port <<< "$(start_agent "${PREFIX}-batchrej" "$PROJECT_ID_SHIM")"
   seed_template "$agent2"
   local py_before lock_before py_after lock_after
   read -r py_before lock_before <<< "$(workspace_digests "$agent2")"
-  local operations=("$OPERATION_BATCH_REJECT_1" "$OPERATION_BATCH_REJECT_2" "$OPERATION_BATCH_REJECT_3" "$OPERATION_BATCH_REJECT_4")
+  local operations=("$OPERATION_BATCH_REJECT_1" "$OPERATION_BATCH_REJECT_2" "$OPERATION_BATCH_REJECT_3" "$OPERATION_BATCH_REJECT_4" \
+                    "$OPERATION_BATCH_REJECT_5" "$OPERATION_BATCH_REJECT_6" "$OPERATION_BATCH_REJECT_7" "$OPERATION_BATCH_REJECT_8" \
+                    "$OPERATION_BATCH_REJECT_9")
   local result=1 i=0 variant operation digest journal_present
-  for variant in '-r ./other.txt' '--index-url https://evil.example/simple' \
-                 'git+https://github.com/psf/requests' '../shared-lib'; do
+  for variant in '-r ./other.txt' \
+                 '--index-url https://evil.example/simple' \
+                 '--extra-index-url https://evil.example/simple' \
+                 '--find-links https://evil.example/wheels' \
+                 '-e ./local-editable' \
+                 'https://evil.example/httpx-0.28.1-py3-none-any.whl' \
+                 'file:///workspace/shared-lib' \
+                 'git+https://github.com/psf/requests' \
+                 '../shared-lib'; do
     operation="${operations[$i]}"
     i=$((i+1))
     printf '%s\n' "$variant" > "$WORK/batch-reject.txt"
@@ -930,9 +984,229 @@ scenario_batch_unsupported_sources() {
   done
   read -r py_after lock_after <<< "$(workspace_digests "$agent2")"
   if [ "$result" = "0" ] && [ "$py_before" = "$py_after" ] && [ "$lock_before" = "$lock_after" ]; then
-    pass "batch-unsupported (-r, --index-url, git+ and local path requirement lines all rejected 422 PYTHON_DEPENDENCY_UNSUPPORTED before uv, no journal, sources unchanged)"
+    pass "batch-unsupported (-r, --index-url, --extra-index-url, --find-links, -e, http(s) URL, file:// URL, git+ and local path requirement lines all rejected 422 PYTHON_DEPENDENCY_UNSUPPORTED before uv, no journal, sources unchanged)"
   else
     fail "batch-unsupported (variant=$variant status=$HTTP_STATUS body=$(cat "$WORK/resp.json") journal=$journal_present)"
+  fi
+}
+
+# batch-commit: the staged batch journal is committed through the real commit endpoint. Both
+# managed files are replaced by the ONE transaction (workspace digests move from the template
+# to exactly the journal's after digests), the workspace root gains no batch residue, the
+# durable receipt binds the committed digests, `uv lock --check` stays consistent, and the
+# batch-generated lock records only the pinned Aliyun mirror — registry byte-identical and
+# artifacts under mirrors.aliyun.com/pypi/packages/ — the same mirror-observed proof Task 0's
+# preflight recorded for the corrected `uv add -r` argv shape, applied to the batch path.
+scenario_batch_commit() {
+  local agent2 port
+  read -r agent2 port <<< "$(start_agent "${PREFIX}-batchcmt" "$PROJECT_ID_SHIM")"
+  seed_template "$agent2"
+  cat > "$WORK/batch-commit-requirements.txt" <<'EOF'
+# batch commit probe
+httpx==0.28.1
+
+idna>=3.7
+EOF
+  local request_sha
+  request_sha="$(sha256sum "$WORK/batch-commit-requirements.txt" | cut -d' ' -f1)"
+  build_batch_body "$WORK/prepare-batch-commit.json" "$OPERATION_BATCH_COMMIT" "$request_sha" "$WORK/batch-commit-requirements.txt"
+  local py_before lock_before started prepare_ms commit_ms
+  read -r py_before lock_before <<< "$(workspace_digests "$agent2")"
+  started="$(now_ms)"
+  post_json "$port" "$PROJECT_ID_SHIM" "/agent/v1/python-dependencies/prepare-batch" "$WORK/prepare-batch-commit.json"
+  prepare_ms=$(( $(now_ms) - started ))
+  echo "TIMING: batch-commit prepare (one real uv requirements import) ${prepare_ms}ms"
+  if [ "$HTTP_STATUS" != "200" ]; then
+    fail "batch-commit (prepare expected 200, got $HTTP_STATUS: $(cat "$WORK/resp.json"))"
+    return 0
+  fi
+  cp "$WORK/resp.json" "$WORK/prepared-batch-commit.json"
+  dc exec "$agent2" cat "/workspace/.manao/python-dependencies/$OPERATION_BATCH_COMMIT/manifest.json" \
+    > "$WORK/manifest-batch-commit.json" 2>/dev/null || true
+  build_commit_body "$WORK/commit-batch.json" "$WORK/prepared-batch-commit.json"
+  started="$(now_ms)"
+  post_json "$port" "$PROJECT_ID_SHIM" "/agent/v1/python-dependencies/commit" "$WORK/commit-batch.json"
+  commit_ms=$(( $(now_ms) - started ))
+  local py_after lock_after urls foreign journal_files receipt response_after response_before
+  response_after="$(json_field "$WORK/prepared-batch-commit.json" "data['afterSha256']")"
+  response_before="$(json_field "$WORK/prepared-batch-commit.json" "data['beforeSha256']")"
+  read -r py_after lock_after <<< "$(workspace_digests "$agent2")"
+  urls="$(dc exec "$agent2" sh -c 'grep -hoE "https://[^\"[:space:]]+" /workspace/pyproject.toml /workspace/uv.lock | sort -u' 2>/dev/null || true)"
+  foreign="$(printf '%s\n' "$urls" | grep -Fxv "$MANAO_PYTHON_INDEX_URL" | grep -v '^https://mirrors\.aliyun\.com/pypi/packages/' || true)"
+  journal_files="$(dc exec "$agent2" sh -c "ls -A '/workspace/.manao/python-dependencies/$OPERATION_BATCH_COMMIT'" 2>/dev/null || true)"
+  receipt="$(dc exec "$agent2" cat "/workspace/.manao/receipts/$OPERATION_BATCH_COMMIT.json" 2>/dev/null || true)"
+  if [ "$HTTP_STATUS" != "200" ]; then
+    fail "batch-commit (commit expected 200, got $HTTP_STATUS: $(cat "$WORK/resp.json"))"
+  elif [ "$py_after" = "$py_before" ] || [ "$lock_after" = "$lock_before" ]; then
+    fail "batch-commit (the commit did not replace both managed files: $py_before/$lock_before -> $py_after/$lock_after)"
+  elif [ "$py_after" != "$(json_field "$WORK/manifest-batch-commit.json" "data['pyproject']['after']")" ] \
+    || [ "$lock_after" != "$(json_field "$WORK/manifest-batch-commit.json" "data['uvLock']['after']")" ]; then
+    fail "batch-commit (workspace files do not equal the journal's prepared content)"
+  elif [ "$(json_field "$WORK/resp.json" "data['afterSha256']")" != "$response_after" ]; then
+    fail "batch-commit (commit response digests differ from the prepared summary)"
+  elif [ "$journal_files" != "$(printf 'manifest.json\npyproject.toml\nuv.lock')" ]; then
+    fail "batch-commit (journal shape unexpected: $journal_files)"
+  elif ! printf '%s' "$receipt" | grep -Fq "$OPERATION_BATCH_COMMIT" \
+    || ! printf '%s' "$receipt" | grep -Fq "$response_after" \
+    || ! printf '%s' "$receipt" | grep -Fq "$response_before"; then
+    fail "batch-commit (the durable receipt does not bind the committed operation digests; receipt bytes=${#receipt})"
+  elif [ "$(dc exec "$agent2" sh -c 'ls -A /workspace | sort | tr "\n" " "' 2>/dev/null | sed 's/ *$//')" \
+      != ".manao pyproject.toml uv.lock" ]; then
+    fail "batch-commit (workspace root gained batch residue: $(dc exec "$agent2" sh -c 'ls -A /workspace' 2>/dev/null | tr '\n' ' '))"
+  elif ! dc exec "$agent2" grep -q 'httpx==0.28.1' /workspace/pyproject.toml \
+    || ! dc exec "$agent2" grep -q 'idna>=3.7' /workspace/pyproject.toml \
+    || ! dc exec "$agent2" grep -q 'name = "httpx"' /workspace/uv.lock; then
+    fail "batch-commit (batch requirements missing from the committed files)"
+  elif ! dc exec "$agent2" sh -c \
+      'cd /workspace && HOME=/tmp UV_CACHE_DIR=/tmp/.cache/uv UV_LINK_MODE=copy uv lock --check --no-config --no-python-downloads --python /usr/local/bin/python3' \
+      >/dev/null 2>&1; then
+    fail "batch-commit (uv lock --check rejected the committed lock)"
+  elif ! printf '%s\n' "$urls" | grep -Fqx "$MANAO_PYTHON_INDEX_URL" || [ -n "$foreign" ]; then
+    fail "batch-commit (batch-generated lock records non-mirror sources: ${foreign:-registry URL missing})"
+  else
+    pass "batch-commit (both managed files replaced by the one transaction $py_before/$lock_before -> $py_after/$lock_after, no batch residue, receipt+journal bound, uv lock --check consistent, batch lock records only the pinned mirror: $(printf '%s\n' "$urls" | grep -c .) distinct URLs) [prepare ${prepare_ms}ms / commit ${commit_ms}ms]"
+  fi
+}
+
+# batch-idempotent: replaying the SAME batch prepare (same operation id + same request
+# digest) returns the stored summary without a second uv run — the shim-logged add count
+# stays at exactly 1 and the replay answers within the no-resolution margin — and the commit
+# driven after the replay returns the identical result, with the lost-response commit replay
+# rewriting nothing (lock mtime unchanged).
+scenario_batch_idempotent() {
+  local shim
+  shim="$(new_uv_log_shim idem)" || { fail "batch-idempotent (cannot write the logging uv shim)"; return 0; }
+  local agent2 port
+  read -r agent2 port <<< "$(start_agent "${PREFIX}-batchidem" "$PROJECT_ID_SHIM" \
+    -e 'PATH=/shim:/usr/local/bin:/usr/bin:/bin' \
+    -v "$shim:/shim")"
+  seed_template "$agent2"
+  cat > "$WORK/batch-idem-requirements.txt" <<'EOF'
+httpx==0.28.1
+idna>=3.7
+EOF
+  local request_sha
+  request_sha="$(sha256sum "$WORK/batch-idem-requirements.txt" | cut -d' ' -f1)"
+  build_batch_body "$WORK/prepare-batch-idem.json" "$OPERATION_BATCH_REPLAY" "$request_sha" "$WORK/batch-idem-requirements.txt"
+  local started first_ms replay_ms
+  started="$(now_ms)"
+  post_json "$port" "$PROJECT_ID_SHIM" "/agent/v1/python-dependencies/prepare-batch" "$WORK/prepare-batch-idem.json"
+  first_ms=$(( $(now_ms) - started ))
+  echo "TIMING: batch-idempotent first prepare (real uv requirements import) ${first_ms}ms"
+  if [ "$HTTP_STATUS" != "200" ]; then
+    fail "batch-idempotent (first prepare expected 200, got $HTTP_STATUS: $(cat "$WORK/resp.json"))"
+    return 0
+  fi
+  cp "$WORK/resp.json" "$WORK/prepared-batch-idem.json"
+  local adds_after_first
+  adds_after_first="$(dc exec "$agent2" grep -c '^add ' /shim/uv.log 2>/dev/null || true)"
+  started="$(now_ms)"
+  post_json "$port" "$PROJECT_ID_SHIM" "/agent/v1/python-dependencies/prepare-batch" "$WORK/prepare-batch-idem.json"
+  replay_ms=$(( $(now_ms) - started ))
+  echo "TIMING: batch-idempotent replay (stored summary, no re-resolution) ${replay_ms}ms"
+  local replay_status="$HTTP_STATUS" second_response adds_after_replay
+  second_response="$(cat "$WORK/resp.json")"
+  adds_after_replay="$(dc exec "$agent2" grep -c '^add ' /shim/uv.log 2>/dev/null || true)"
+  build_commit_body "$WORK/commit-batch-idem.json" "$WORK/prepared-batch-idem.json"
+  post_json "$port" "$PROJECT_ID_SHIM" "/agent/v1/python-dependencies/commit" "$WORK/commit-batch-idem.json"
+  local commit_status="$HTTP_STATUS" commit_response before_stamp
+  commit_response="$(cat "$WORK/resp.json")"
+  before_stamp="$(dc exec "$agent2" sh -c 'stat -c %Y /workspace/uv.lock')"
+  post_json "$port" "$PROJECT_ID_SHIM" "/agent/v1/python-dependencies/commit" "$WORK/commit-batch-idem.json"
+  local after_stamp
+  after_stamp="$(dc exec "$agent2" sh -c 'stat -c %Y /workspace/uv.lock')"
+  if [ "$adds_after_first" != "1" ]; then
+    fail "batch-idempotent (the first prepare did not log exactly one uv add run: $adds_after_first)"
+  elif [ "$replay_status" != "200" ] || [ "$second_response" != "$(cat "$WORK/prepared-batch-idem.json")" ] \
+    || [ "$adds_after_replay" != "$adds_after_first" ] || [ "$replay_ms" -ge 2000 ]; then
+    fail "batch-idempotent (replay status=$replay_status same_response=$([ "$second_response" = "$(cat "$WORK/prepared-batch-idem.json")" ] && echo yes || echo no) adds=$adds_after_first->$adds_after_replay replay_ms=$replay_ms)"
+  elif [ "$commit_status" != "200" ] \
+    || [ "$commit_response" != "$(cat "$WORK/prepared-batch-idem.json")" ]; then
+    fail "batch-idempotent (commit after the replay status=$commit_status same_response=$([ "$commit_response" = "$(cat "$WORK/prepared-batch-idem.json")" ] && echo yes || echo no))"
+  elif [ "$HTTP_STATUS" != "200" ] \
+    || [ "$(cat "$WORK/resp.json")" != "$commit_response" ] \
+    || [ "$before_stamp" != "$after_stamp" ]; then
+    fail "batch-idempotent (commit replay status=$HTTP_STATUS same_response=$([ "$(cat "$WORK/resp.json")" = "$commit_response" ] && echo yes || echo no) lock_mtime=$([ "$before_stamp" = "$after_stamp" ] && echo same || echo changed))"
+  else
+    pass "batch-idempotent (replay answered the stored summary without a second uv add run [${replay_ms}ms vs first ${first_ms}ms]; commit after the replay identical; commit replay rewrote nothing)"
+  fi
+}
+
+# helper-env-override: DIRECT helper invocations inside the container — no agent HTTP, the
+# hostile variables in the HELPER's own environment. The asserted invariant is the one the
+# workspace consumes: a hostile uv environment variable can NEVER leave its host recorded in
+# the generated files, and the workspace sources stay untouched. Observed modes with the
+# unresolvable test host (both fail-closed, rc=5 PYTHON_DEPENDENCY_RESOLUTION_FAILED, no
+# journal): a hostile UV_DEFAULT_INDEX alone does NOT steer the lock-generating add (the
+# fixed `--default-index` argv wins there) but the installability verification
+# (`uv sync --locked --dry-run`, which carries no index flag) consults it and the run fails;
+# a hostile UV_INDEX (the additional-index variable) steers the add phase itself and the run
+# fails against the unreachable host. The agent's minimal helper environment
+# (PATH/HOME/TMPDIR/LANG only, proven by fixed-index-argv) remains the production env layer.
+scenario_helper_env_override_direct() {
+  local agent2 port
+  read -r agent2 port <<< "$(start_agent "${PREFIX}-helpenv" "$PROJECT_ID_SHIM")"
+  seed_template "$agent2"
+  local py_before lock_before py_after lock_after
+  read -r py_before lock_before <<< "$(workspace_digests "$agent2")"
+  # Part 1: hostile UV_DEFAULT_INDEX alone — the lock must never record the hostile host
+  # (observed: the add resolves from the pinned mirror, then the verification fails closed).
+  local part1_out rc1=0 started1 elapsed1
+  started1="$(now_ms)"
+  part1_out="$(dc exec "$agent2" sh -c '
+    set -e
+    mkdir -p /tmp/helper-direct/scratch
+    cp /workspace/pyproject.toml /workspace/uv.lock /tmp/helper-direct/scratch/
+    printf "httpx==0.28.1\n" > /tmp/helper-direct/req.txt
+    cd /tmp/helper-direct/scratch
+    UV_DEFAULT_INDEX=https://evil.example/simple \
+      HOME=/tmp/helper-direct UV_CACHE_DIR=/tmp/helper-direct/uv-cache UV_LINK_MODE=copy \
+      /usr/local/bin/python3 -I /opt/manao-python/dependency_helper.py \
+      /tmp/helper-direct/scratch BATCH /tmp/helper-direct/req.txt 120
+  ' 2>/dev/null)" || rc1=$?
+  elapsed1=$(( $(now_ms) - started1 ))
+  echo "TIMING: helper-env-override part 1 (hostile UV_DEFAULT_INDEX; observed rc=${rc1}) ${elapsed1}ms"
+  local urls foreign evil1 urls2 evil2 foreign2
+  urls="$(dc exec "$agent2" sh -c 'grep -hoE "https://[^\"[:space:]]+" /tmp/helper-direct/scratch/pyproject.toml /tmp/helper-direct/scratch/uv.lock | sort -u' 2>/dev/null || true)"
+  foreign="$(printf '%s\n' "$urls" | grep -Fxv "$MANAO_PYTHON_INDEX_URL" | grep -v '^https://mirrors\.aliyun\.com/pypi/packages/' || true)"
+  evil1="$(dc exec "$agent2" sh -c 'grep -l "evil\.example" /tmp/helper-direct/scratch/pyproject.toml /tmp/helper-direct/scratch/uv.lock 2>/dev/null || true')"
+  # Part 2: hostile UV_INDEX (the additional-index variable) — the same invariant.
+  local part2_out rc2=0 started2 elapsed2
+  started2="$(now_ms)"
+  part2_out="$(dc exec "$agent2" sh -c '
+    set -e
+    mkdir -p /tmp/helper-direct/scratch2
+    cp /workspace/pyproject.toml /workspace/uv.lock /tmp/helper-direct/scratch2/
+    printf "httpx==0.28.1\n" > /tmp/helper-direct/req2.txt
+    cd /tmp/helper-direct/scratch2
+    UV_INDEX=https://evil.example/simple \
+      HOME=/tmp/helper-direct UV_CACHE_DIR=/tmp/helper-direct/uv-cache UV_LINK_MODE=copy \
+      /usr/local/bin/python3 -I /opt/manao-python/dependency_helper.py \
+      /tmp/helper-direct/scratch2 BATCH /tmp/helper-direct/req2.txt 120
+  ' 2>/dev/null)" || rc2=$?
+  elapsed2=$(( $(now_ms) - started2 ))
+  echo "TIMING: helper-env-override part 2 (hostile UV_INDEX; observed rc=${rc2}) ${elapsed2}ms"
+  urls2="$(dc exec "$agent2" sh -c 'grep -hoE "https://[^\"[:space:]]+" /tmp/helper-direct/scratch2/pyproject.toml /tmp/helper-direct/scratch2/uv.lock | sort -u' 2>/dev/null || true)"
+  foreign2="$(printf '%s\n' "$urls2" | grep -Fxv "$MANAO_PYTHON_INDEX_URL" | grep -v '^https://mirrors\.aliyun\.com/pypi/packages/' || true)"
+  evil2="$(dc exec "$agent2" sh -c 'grep -l "evil\.example" /tmp/helper-direct/scratch2/pyproject.toml /tmp/helper-direct/scratch2/uv.lock 2>/dev/null || true')"
+  read -r py_after lock_after <<< "$(workspace_digests "$agent2")"
+  if { [ "$rc1" != "0" ] && [ "$rc1" != "5" ]; } || { [ "$rc2" != "0" ] && [ "$rc2" != "5" ]; }; then
+    fail "helper-env-override (a direct run ended in an unexpected helper state: part1 rc=$rc1 part2 rc=$rc2 — only 0 (clean success) or 5 (fail-closed resolution failure) are safe)"
+  elif [ "$py_after" != "$py_before" ] || [ "$lock_after" != "$lock_before" ]; then
+    fail "helper-env-override (a direct scratch run touched the workspace sources)"
+  elif [ "$rc1" = "0" ] && { [ -n "$part1_out" ] \
+    || ! dc exec "$agent2" grep -q 'httpx==0.28.1' /tmp/helper-direct/scratch/pyproject.toml; }; then
+    fail "helper-env-override (part 1 reported success but did not produce a clean add: stdout='$part1_out')"
+  elif [ -n "$evil1" ]; then
+    fail "helper-env-override (part 1: hostile UV_DEFAULT_INDEX reached the generated files: $evil1)"
+  elif [ "$rc1" = "0" ] && { ! printf '%s\n' "$urls" | grep -Fqx "$MANAO_PYTHON_INDEX_URL" || [ -n "$foreign" ]; }; then
+    fail "helper-env-override (part 1 generated files record non-mirror sources: ${foreign:-registry URL missing})"
+  elif [ -n "$evil2" ]; then
+    fail "helper-env-override (part 2: hostile UV_INDEX recorded the hostile host in the generated files: $evil2)"
+  elif [ "$rc2" = "0" ] && { ! printf '%s\n' "$urls2" | grep -Fqx "$MANAO_PYTHON_INDEX_URL" || [ -n "$foreign2" ]; }; then
+    fail "helper-env-override (part 2 generated files record non-mirror sources: ${foreign2:-registry URL missing})"
+  else
+    pass "helper-env-override (hostile UV_DEFAULT_INDEX and UV_INDEX in the helper's own environment can never appear in the generated files; observed fail-closed modes rc1=${rc1} rc2=${rc2} [${elapsed1}ms/${elapsed2}ms]; workspace sources untouched)"
   fi
 }
 
@@ -960,6 +1234,9 @@ scenario_timeout_kills_tool
 scenario_fixed_index_env_override
 scenario_prepare_batch
 scenario_batch_unsupported_sources
+scenario_batch_commit
+scenario_batch_idempotent
+scenario_helper_env_override_direct
 
 echo "dependency-editor: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

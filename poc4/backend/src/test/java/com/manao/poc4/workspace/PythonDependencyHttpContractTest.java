@@ -442,10 +442,13 @@ class PythonDependencyHttpContractTest {
     }
 
     @Test
-    void changeRequestsRejectUnknownFields() throws Exception {
-        // Same assertion level as the workspace controller tests: the strict record contract is
-        // proven against the plain mapper (MockMvc's shared converter leniently ignores unknown
-        // fields for every controller at once).
+    void changeRequestRecordDeserializationRejectsUnknownFields() {
+        // Scope: the REQUEST RECORD's deserialization contract only — the plain Jackson mapper
+        // (which rejects unknown fields by default) against the strict
+        // @JsonIgnoreProperties(ignoreUnknown = false) record. The HTTP surface itself is
+        // deliberately NOT asserted here: probed 2026-10-11 through the real MockMvc converter,
+        // an unknown field is silently IGNORED (the request crossed deserialization and failed
+        // later for an unrelated reason), so no wire-level 422 exists to pin.
         String body = "{\"operationId\":\"" + OPERATION + "\",\"action\":\"ADD\",\"packageName\":\"httpx\","
             + "\"version\":\"0.28.1\",\"expectedWorkspaceRevision\":\"7\",\"uvCommand\":\"leak\"}";
         assertThatThrownBy(() -> new ObjectMapper().readValue(body, PythonDependencyController.ChangeRequest.class))
@@ -618,7 +621,10 @@ class PythonDependencyHttpContractTest {
     }
 
     @Test
-    void batchRequestsRejectUnknownFields() throws Exception {
+    void batchRequestRecordDeserializationRejectsUnknownFields() {
+        // Scope: the BATCH REQUEST RECORD's deserialization contract only — same boundary as
+        // the single-op record test above (the real converter ignores unknown fields; probed
+        // 2026-10-11).
         String body = "{\"operationId\":\"" + OPERATION + "\",\"requirementsText\":\"httpx==0.28.1\\n\","
             + "\"expectedWorkspaceRevision\":\"7\",\"uvCommand\":\"leak\"}";
         assertThatThrownBy(() -> new ObjectMapper().readValue(body, PythonDependencyController.BatchRequest.class))

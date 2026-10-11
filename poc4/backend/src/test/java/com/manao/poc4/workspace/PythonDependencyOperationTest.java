@@ -750,6 +750,24 @@ class PythonDependencyOperationTest {
     }
 
     @Test
+    void batchBoundaryOfExactly50ValidLinesIsAccepted() {
+        // The 50-valid-requirement cap itself must be ACCEPTED, and only non-blank,
+        // non-comment lines count: surrounding comments and blank lines never push a batch
+        // over the cap (the >50 rejection lives in batchValidationRejectsOversizedOverCountedAndEmptyTexts).
+        String boundary = "# leading comment\n\n" + "pkg-1==1.0\n".repeat(50) + "\n# trailing comment\n";
+        agent.prepareResult = new WorkspaceAgent.PreparedPythonDependencies(OPERATION,
+            PythonDependencyService.batchRequestDigest(PROJECT, boundary, 7), "a".repeat(64), "b".repeat(64));
+
+        PythonDependencyService.Status status = dependencies.changeBatch(ALICE, PROJECT, OPERATION, boundary, "7");
+
+        assertThat(status.state()).isEqualTo("COMMITTED");
+        assertThat(agent.prepareBatchCalls).isEqualTo(1);
+        // The whole text travels to the agent untouched — comments and blank lines included.
+        assertThat(agent.preparedBatchTexts.get(0)).isEqualTo(boundary);
+        assertThat(store.revision.get(PROJECT)).isEqualTo(8L);
+    }
+
+    @Test
     void batchPrepareFailureRegistersNoOperationAndKeepsTheProjectClean() {
         agent.prepareError = new WorkspaceAgentException(504, "PYTHON_DEPENDENCY_TIMEOUT", "raw uv stderr");
 
