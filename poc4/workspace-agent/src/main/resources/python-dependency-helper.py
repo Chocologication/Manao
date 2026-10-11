@@ -28,7 +28,9 @@ or, for a batch requirements import:
 - Standard library only; isolated mode (-I) plus the absolute script path guarantee it can
   never import management code from a user project; no shell is ever spawned; the agent
   starts it with a minimal environment, so no capability material or project secret is in
-  scope.
+  scope, and every uv child process runs with a scrubbed environment (every UV_* variable
+  removed), so only the fixed argv can select the resolution index even if the helper's
+  own environment carries a hostile UV_DEFAULT_INDEX/UV_INDEX.
 - A prepare is the fixed add/remove run PLUS a fixed installability verification: after a
   successful `uv add/remove --no-sync ...` in the scratch, the same scratch is verified with
   the production install shape minus the out-of-scope extras (ruling R3):
@@ -244,12 +246,28 @@ def classify_resolution_failure(code, output):
     resolution_failed("uv failed (%d): %s" % (code, output))
 
 
+def scrubbed_env():
+    """The child environment minus every uv variable (case-sensitive `UV_` prefix).
+
+    uv reads its index configuration from UV_DEFAULT_INDEX/UV_INDEX and friends, and the
+    CLI `--default-index` flag does not override every one of them (observed: UV_INDEX, the
+    additional-index variable, steers the resolution despite the pinned argv). The fixed
+    argv is the only index authority, so uv child processes never see any UV_* variable —
+    whatever the helper's own environment carries (the agent already launches the helper
+    minimally; this closes the layer below it). Everything else (PATH, HOME, LANG, SSL_*)
+    is preserved unchanged.
+    """
+    return {key: value for key, value in os.environ.items() if not key.startswith("UV_")}
+
+
 def run_uv(argv, scratch, deadline, phase):
     """Runs one fixed-argv uv invocation in the scratch and returns (returncode, output).
 
-    The wait draws the REMAINING time from the ONE monotonic deadline shared by the
-    add/remove and verification phases (ruling R4): a deadline exhausted before the phase
-    starts or during its run kills the whole uv tree and fails PYTHON_DEPENDENCY_TIMEOUT.
+    The child runs with the scrubbed environment (no UV_* variables survive), so only the
+    fixed argv can select the resolution index. The wait draws the REMAINING time from the
+    ONE monotonic deadline shared by the add/remove and verification phases (ruling R4): a
+    deadline exhausted before the phase starts or during its run kills the whole uv tree
+    and fails PYTHON_DEPENDENCY_TIMEOUT.
     """
     remaining = deadline - time.monotonic()
     if remaining <= 0:
@@ -262,6 +280,7 @@ def run_uv(argv, scratch, deadline, phase):
             stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
+            env=scrubbed_env(),
             # Own process group so a budget overrun kills the whole uv tree, not just the shell.
             start_new_session=True,
         )
