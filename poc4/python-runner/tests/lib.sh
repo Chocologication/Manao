@@ -25,6 +25,7 @@
 HARNESS_CONTAINERS=()
 HARNESS_LOGS=()
 HARNESS_REGISTRY=""
+HARNESS_CONTAINER_REGISTRY=""
 HARNESS_SCRIPT_START=""
 HARNESS_CLOCK_PROBE=""
 CREATED_VOLUME=""
@@ -77,6 +78,21 @@ register_volume() {
   }
 }
 
+# Registers one exact container name in the FILE-based container registry. The in-memory
+# HARNESS_CONTAINERS array silently loses every registration made inside a command
+# substitution (start_agent-style callers run in a subshell), so the EXIT trap never saw
+# those containers and they leaked — observed across rounds as dozens of leftover test
+# agents while the file-based volume registry cleaned up fine. The file survives the
+# subshell boundary exactly like the volume registry; the array stays for callers that
+# register in the parent shell.
+register_container() {
+  printf '%s\n' "$1" >> "$HARNESS_CONTAINER_REGISTRY" || {
+    docker rm -f "$1" >/dev/null 2>&1 || true
+    echo "$HARNESS_NAME: cannot register container $1 in $HARNESS_CONTAINER_REGISTRY" >&2
+    exit 1
+  }
+}
+
 # Acquires one explicitly named volume: proves the name free semantically, removes a
 # same-name leftover only after it proved (on the daemon clock) to predate this
 # invocation, re-proves the name free, creates the volume and registers it. Sets
@@ -125,6 +141,11 @@ harness_init() {
     echo "$HARNESS_NAME: cannot initialize volume registry $HARNESS_REGISTRY" >&2
     exit 1
   fi
+  HARNESS_CONTAINER_REGISTRY="${TMPDIR:-/tmp}/${PREFIX}-harness-containers-$$"
+  if ! : > "$HARNESS_CONTAINER_REGISTRY"; then
+    echo "$HARNESS_NAME: cannot initialize container registry $HARNESS_CONTAINER_REGISTRY" >&2
+    exit 1
+  fi
   # SCRIPT_START is the daemon's own clock reading at invocation start, taken from the
   # CreatedAt of a short-lived probe volume — deliberately NOT the host `date`, so the
   # staleness comparison in acquire_volume is made in daemon time on both sides and
@@ -152,6 +173,14 @@ harness_cleanup() {
   for c in "${HARNESS_CONTAINERS[@]:-}"; do
     if [ -n "$c" ]; then docker rm -f "$c" >/dev/null 2>&1 || true; fi
   done
+  # The file-based registry covers every start_detached container, including the ones
+  # registered from inside a command substitution whose array append was lost.
+  if [ -f "$HARNESS_CONTAINER_REGISTRY" ]; then
+    while IFS= read -r c; do
+      if [ -n "$c" ]; then docker rm -f "$c" >/dev/null 2>&1 || true; fi
+    done < "$HARNESS_CONTAINER_REGISTRY"
+    rm -f "$HARNESS_CONTAINER_REGISTRY"
+  fi
   if [ -f "$HARNESS_REGISTRY" ]; then
     while IFS= read -r v; do
       if [ -n "$v" ]; then docker volume rm "$v" >/dev/null 2>&1 || true; fi
@@ -178,6 +207,7 @@ start_detached() { # NAME [RUN_ARGS...]
     exit 1
   }
   HARNESS_CONTAINERS+=("$name")
+  register_container "$name"
 }
 
 # Fresh writable /tmp for a run container: the Job provides /tmp as a plain writable
