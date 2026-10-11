@@ -27,6 +27,11 @@ class PythonDependencyOperationTest {
     private static final String OPERATION = "11111111-1111-4111-8111-111111111111";
     private static final String ADD_HTTPX = "2259f25f49e6efd1be44b62909b915e655a563c38aa64abc9b5e3541e87f2e9f";
     private static final String REMOVE_HTTPX = "62f272a6250a947037dd1ffd07bbc1abc94b6ac799d8e915534b94764a08ac4c";
+    private static final String BATCH_TEXT = "httpx==0.28.1\nfastapi>=0.141.1\n";
+    /** sha256 over {"protocol":2,"projectId":"prj-1","mode":"BATCH_REQUIREMENTS",
+     * "requirements":"httpx==0.28.1\nfastapi>=0.141.1\n","expectedRevision":7} — the pinned
+     * protocol 2 batch digest. */
+    private static final String BATCH_DIGEST = "72a9ffa94d38fe3288d4c6aac005ed3f9280e27351396b8b1d225b872b64d5f2";
 
     private WorkspaceControllerTest.FakeStore store;
     private WorkspaceControllerTest.StubAgent agent;
@@ -647,6 +652,221 @@ class PythonDependencyOperationTest {
         assertThatThrownBy(() -> workspace.save(ALICE, PROJECT, "src/App.java", "class App {}", "7"))
             .isInstanceOfSatisfying(ApiException.class,
                 ex -> assertThat(ex.code()).isEqualTo("WORKSPACE_REVISION_CONFLICT"));
+        assertThat(store.records.get(OPERATION).state()).isEqualTo("COMMITTED");
+        assertThat(store.revision.get(PROJECT)).isEqualTo(8L);
+    }
+
+    @Test
+    void batchDigestIsThePinnedProtocol2FixedFieldOrderJson() {
+        // Protocol 2 pins the whole format byte-exactly: version, mode, the full normalized
+        // text and the revision in this field order. Any shape change must fail here before
+        // registered rows and agent journals lose their digest.
+        assertThat(PythonDependencyService.batchRequestDigest(PROJECT, BATCH_TEXT, 7)).isEqualTo(BATCH_DIGEST);
+        assertThat(PythonDependencyService.batchRequestDigest(PROJECT, BATCH_TEXT, 8)).isNotEqualTo(BATCH_DIGEST);
+        assertThat(PythonDependencyService.batchRequestDigest(PROJECT, "httpx==0.28.1\n", 7))
+            .isNotEqualTo(BATCH_DIGEST);
+        assertThat(PythonDependencyService.batchRequestDigest("prj-2", BATCH_TEXT, 7)).isNotEqualTo(BATCH_DIGEST);
+        // The batch format never collides with the protocol 1 single-package digest.
+        assertThat(PythonDependencyService.requestDigest(PROJECT, "ADD", "httpx", "0.28.1", 7))
+            .isNotEqualTo(BATCH_DIGEST);
+    }
+
+    @Test
+    void batchCommitsOneOperationForTheWholeTextAndIncrementsTheRevisionExactlyOnce() {
+        agent.prepareResult = new WorkspaceAgent.PreparedPythonDependencies(OPERATION, BATCH_DIGEST,
+            "a".repeat(64), "b".repeat(64));
+
+        PythonDependencyService.Status status = dependencies.changeBatch(ALICE, PROJECT, OPERATION, BATCH_TEXT, "7");
+
+        assertThat(status.state()).isEqualTo("COMMITTED");
+        assertThat(status.resultWorkspaceRevision()).isEqualTo(8L);
+        assertThat(agent.prepareBatchCalls).isEqualTo(1);
+        assertThat(agent.prepareCalls).isZero(); // the per-package uv path is never entered
+        assertThat(agent.preparedBatchTexts.get(0)).isEqualTo(BATCH_TEXT);
+        assertThat(agent.commitCalls).isEqualTo(1);
+        assertThat(store.records.get(OPERATION).requestSha256()).isEqualTo(BATCH_DIGEST);
+        assertThat(store.records.get(OPERATION).state()).isEqualTo("COMMITTED");
+        assertThat(store.revision.get(PROJECT)).isEqualTo(8L);
+    }
+
+    @Test
+    void batchNormalizationFeedsTheDigestAndTheAgentFromTheSameNormalizedText() {
+        String messy = "\uFEFFhttpx==0.28.1\r\n# full comment\r\n\r\n   \nfastapi>=0.141.1\r\n";
+        String normalized = "httpx==0.28.1\n# full comment\n\n   \nfastapi>=0.141.1\n";
+        agent.prepareResult = new WorkspaceAgent.PreparedPythonDependencies(OPERATION,
+            PythonDependencyService.batchRequestDigest(PROJECT, normalized, 7), "a".repeat(64), "b".repeat(64));
+
+        dependencies.changeBatch(ALICE, PROJECT, OPERATION, messy, "7");
+
+        // The agent receives the BOM-stripped, CRLF-normalized text with comments and blank
+        // lines left intact for the helper — and the durable row digest is computed over that
+        // same normalized text, so a retry recomputes the identical digest.
+        assertThat(agent.preparedBatchTexts.get(0)).isEqualTo(normalized);
+        assertThat(store.records.get(OPERATION).requestSha256())
+            .isEqualTo(PythonDependencyService.batchRequestDigest(PROJECT, normalized, 7));
+    }
+
+    @Test
+    void batchValidationRejectsOversizedOverCountedAndEmptyTexts() {
+        // >64 KiB after normalization while still within the 50-line cap.
+        String oversized = ("a".repeat(1400) + "==1.0\n").repeat(47);
+        assertRejected(() -> dependencies.changeBatch(ALICE, PROJECT, OPERATION, oversized, "7"),
+            "VALIDATION_ERROR", 422);
+        // >50 non-blank, non-comment requirements.
+        assertRejected(() -> dependencies.changeBatch(ALICE, PROJECT, OPERATION, "pkg-1\n".repeat(51), "7"),
+            "VALIDATION_ERROR", 422);
+        // 0 valid lines: empty, whitespace only, comments only, or absent.
+        assertRejected(() -> dependencies.changeBatch(ALICE, PROJECT, OPERATION, "", "7"),
+            "VALIDATION_ERROR", 422);
+        assertRejected(() -> dependencies.changeBatch(ALICE, PROJECT, OPERATION, "  \n\t\n", "7"),
+            "VALIDATION_ERROR", 422);
+        assertRejected(() -> dependencies.changeBatch(ALICE, PROJECT, OPERATION, "# only\n#comments\n", "7"),
+            "VALIDATION_ERROR", 422);
+        assertRejected(() -> dependencies.changeBatch(ALICE, PROJECT, OPERATION, null, "7"),
+            "VALIDATION_ERROR", 422);
+        // Identity and revision validation keep the single-op contract.
+        assertRejected(() -> dependencies.changeBatch(ALICE, PROJECT, "../escape", BATCH_TEXT, "7"),
+            "VALIDATION_ERROR", 422);
+        assertRejected(() -> dependencies.changeBatch(ALICE, PROJECT, OPERATION, BATCH_TEXT, "not-a-number"),
+            "VALIDATION_ERROR", 422);
+        assertThat(agent.prepareBatchCalls).isZero();
+        assertThat(agent.prepareCalls).isZero();
+        assertThat(store.records).isEmpty();
+        assertThat(store.pending).isEmpty();
+        assertThat(store.failures).isEmpty();
+        assertThat(store.revision.get(PROJECT)).isEqualTo(7L);
+    }
+
+    @Test
+    void batchBoundaryOfExactly64KiBIsInsideTheBudget() {
+        String boundary = "a".repeat(65535) + "\n";
+        agent.prepareResult = new WorkspaceAgent.PreparedPythonDependencies(OPERATION,
+            PythonDependencyService.batchRequestDigest(PROJECT, boundary, 7), "a".repeat(64), "b".repeat(64));
+
+        PythonDependencyService.Status status = dependencies.changeBatch(ALICE, PROJECT, OPERATION, boundary, "7");
+
+        assertThat(status.state()).isEqualTo("COMMITTED");
+        assertThat(store.revision.get(PROJECT)).isEqualTo(8L);
+    }
+
+    @Test
+    void batchPrepareFailureRegistersNoOperationAndKeepsTheProjectClean() {
+        agent.prepareError = new WorkspaceAgentException(504, "PYTHON_DEPENDENCY_TIMEOUT", "raw uv stderr");
+
+        assertRejected(() -> dependencies.changeBatch(ALICE, PROJECT, OPERATION, BATCH_TEXT, "7"),
+            "PYTHON_DEPENDENCY_TIMEOUT", 504);
+
+        assertThat(store.records).isEmpty();
+        assertThat(store.pending).isEmpty();
+        assertThat(store.failures).isEmpty();
+        assertThat(store.revision.get(PROJECT)).isEqualTo(7L);
+        agent.prepareError = null;
+    }
+
+    @Test
+    void batchLostResponseRecoveryRedrivesTheRegisteredCommitWithoutSecondPrepare() {
+        String receiptSha256 = registeredReceiptSha256(OPERATION, "a".repeat(64), "b".repeat(64));
+        WorkspaceStore.OperationRecord registered = new WorkspaceStore.OperationRecord(OPERATION, PROJECT, 7,
+            "a".repeat(64), "b".repeat(64), ".manao/receipts/" + OPERATION + ".json", receiptSha256,
+            "PENDING", "PYTHON_DEPENDENCIES", BATCH_DIGEST);
+        store.records.put(OPERATION, registered);
+        store.pending.put(PROJECT, registered);
+
+        // The re-POST with the same id + same text answers from the registered row: no second
+        // uv run, the revision moves exactly once.
+        PythonDependencyService.Status status = dependencies.changeBatch(ALICE, PROJECT, OPERATION, BATCH_TEXT, "7");
+        assertThat(status.state()).isEqualTo("COMMITTED");
+        assertThat(status.resultWorkspaceRevision()).isEqualTo(8L);
+        assertThat(agent.prepareBatchCalls).isZero();
+        assertThat(agent.commitCalls).isEqualTo(1);
+        assertThat(store.revision.get(PROJECT)).isEqualTo(8L);
+        assertThat(store.records.get(OPERATION).state()).isEqualTo("COMMITTED");
+
+        // The explicit reconcile answers the same durable row without re-driving anything.
+        PythonDependencyService.Status reconciled = dependencies.reconcile(ALICE, PROJECT, OPERATION);
+        assertThat(reconciled.state()).isEqualTo("COMMITTED");
+        assertThat(reconciled.resultWorkspaceRevision()).isEqualTo(8L);
+        assertThat(agent.commitCalls).isEqualTo(1);
+        assertThat(store.revision.get(PROJECT)).isEqualTo(8L);
+    }
+
+    @Test
+    void batchSameIdWithDifferentRequirementsTextIsRejectedWithoutTouchingTheAgent() {
+        store.records.put(OPERATION, new WorkspaceStore.OperationRecord(OPERATION, PROJECT, 7,
+            "a".repeat(64), "b".repeat(64), ".manao/receipts/" + OPERATION + ".json", "c".repeat(64),
+            "COMMITTED", "PYTHON_DEPENDENCIES", BATCH_DIGEST));
+
+        assertRejected(() -> dependencies.changeBatch(ALICE, PROJECT, OPERATION,
+            "httpx==0.28.1\nfastapi>=0.141.1\n# a different tail\n", "7"), "DEPENDENCY_REQUEST_MISMATCH", 409);
+        // A protocol 1 single-package request can never match a batch row either.
+        assertRejected(() -> dependencies.change(ALICE, PROJECT, OPERATION,
+            new WorkspaceAgent.DependencyChange("ADD", "httpx", "0.28.1"), "7"), "DEPENDENCY_REQUEST_MISMATCH", 409);
+        assertThat(agent.prepareBatchCalls).isZero();
+        assertThat(agent.prepareCalls).isZero();
+        assertThat(agent.commitCalls).isZero();
+    }
+
+    @Test
+    void batchRefusesWhileRunningRevisionStaleOrWithUnresolvedOperations() {
+        // The active-Run gate is a proven pre-flight refusal: no prepare, no row.
+        store.activeRuns.add(PROJECT);
+        assertRejected(() -> dependencies.changeBatch(ALICE, PROJECT, OPERATION, BATCH_TEXT, "7"),
+            "PROJECT_LOCKED", 409);
+        assertThat(agent.prepareBatchCalls).isZero();
+        store.activeRuns.clear();
+
+        assertRejected(() -> dependencies.changeBatch(ALICE, PROJECT, OPERATION, BATCH_TEXT, "6"),
+            "WORKSPACE_REVISION_CONFLICT", 409);
+        assertThat(agent.prepareBatchCalls).isZero();
+
+        // An unreconcilable stuck operation blocks new batch work without preparing.
+        store.pending.put(PROJECT, new WorkspaceStore.OperationRecord("stuck", PROJECT, 7,
+            "a".repeat(64), "b".repeat(64), ".manao/receipts/stuck.json", "c".repeat(64), "PENDING", "FILE", null));
+        assertRejected(() -> dependencies.changeBatch(ALICE, PROJECT, OPERATION, BATCH_TEXT, "7"),
+            "WORKSPACE_RECONCILIATION_REQUIRED", 409);
+        assertThat(agent.prepareBatchCalls).isZero();
+        assertThat(store.failures).containsEntry(PROJECT, "WORKSPACE_RECONCILIATION_REQUIRED");
+        // No batch row was registered; the stuck FILE operation is still the only pending one.
+        assertThat(store.pending.get(PROJECT).id()).isEqualTo("stuck");
+        assertThat(store.records).isEmpty();
+    }
+
+    @Test
+    void armedDependencyPendingFaultTripsOnTheBatchFirstRequirementLine() {
+        // The canary label for a batch is the first normalized requirement line, matched by
+        // equality — the same single trip point AFTER the durable registration.
+        agent.prepareResult = new WorkspaceAgent.PreparedPythonDependencies(OPERATION, BATCH_DIGEST,
+            "a".repeat(64), "b".repeat(64));
+        PythonDependencyService faulted = dependenciesWithArmedFault("httpx==0.28.1");
+
+        assertRejected(() -> faulted.changeBatch(ALICE, PROJECT, OPERATION, BATCH_TEXT, "7"),
+            "WORKSPACE_RECONCILIATION_REQUIRED", 409);
+        assertThat(agent.prepareBatchCalls).isEqualTo(1);
+        assertThat(agent.commitCalls).isZero();
+        assertThat(store.pendingOperations(PROJECT)).hasSize(1);
+        assertThat(store.records.get(OPERATION).state()).isEqualTo("PENDING");
+        assertThat(store.projects.get(PROJECT).state()).isEqualTo("FAILED");
+        assertThat(store.revision.get(PROJECT)).isEqualTo(7L);
+        assertThat(store.deletedOperations).isEmpty();
+
+        // The reconcile path never re-trips and completes the registered batch commit.
+        PythonDependencyService.Status status = faulted.reconcile(ALICE, PROJECT, OPERATION);
+        assertThat(status.state()).isEqualTo("COMMITTED");
+        assertThat(status.resultWorkspaceRevision()).isEqualTo(8L);
+        assertThat(store.revision.get(PROJECT)).isEqualTo(8L);
+        assertThat(store.records.get(OPERATION).state()).isEqualTo("COMMITTED");
+    }
+
+    @Test
+    void batchFaultIgnoresCanariesThatDoNotMatchTheFirstRequirementLine() {
+        agent.prepareResult = new WorkspaceAgent.PreparedPythonDependencies(OPERATION, BATCH_DIGEST,
+            "a".repeat(64), "b".repeat(64));
+        PythonDependencyService faulted = dependenciesWithArmedFault("fastapi>=0.141.1");
+
+        PythonDependencyService.Status status = faulted.changeBatch(ALICE, PROJECT, OPERATION, BATCH_TEXT, "7");
+
+        assertThat(status.state()).isEqualTo("COMMITTED");
+        assertThat(store.failures).isEmpty();
         assertThat(store.records.get(OPERATION).state()).isEqualTo("COMMITTED");
         assertThat(store.revision.get(PROJECT)).isEqualTo(8L);
     }

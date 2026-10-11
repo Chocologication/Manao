@@ -16,11 +16,12 @@ import java.util.regex.Pattern;
 /**
  * Browser-facing Python dependency orchestration (design 6.1/6.2). This service owns the Python
  * request rules — owner, template, revision, run-lock, pending checks, package normalization and
- * the request digest — and the agent prepare/commit calls; {@link WorkspaceOperationService}
- * owns the lifecycle lease, receipts, durable operation state and revision. The call order is
- * fixed: a registered operation id is always answered before the current revision can misjudge
- * a lost-response retry, and the durable registration happens between prepare and commit so the
- * agent journal alone can never apply anything.
+ * the request digests (protocol 1 single-package, protocol 2 batch import) — and the agent
+ * prepare/commit calls; {@link WorkspaceOperationService} owns the lifecycle lease, receipts,
+ * durable operation state and revision. The call order is fixed: a registered operation id is
+ * always answered before the current revision can misjudge a lost-response retry, and the durable
+ * registration happens between prepare and commit so the agent journal alone can never apply
+ * anything. The single change and the whole-batch import share this one chain.
  */
 public final class PythonDependencyService {
     static final String OPERATION_KIND = "PYTHON_DEPENDENCIES";
@@ -33,6 +34,11 @@ public final class PythonDependencyService {
     /** Exact versions only (no ranges, no wildcard matchers). */
     private static final Pattern EXACT_VERSION = Pattern.compile("[0-9A-Za-z][0-9A-Za-z.+!-]{0,127}");
     private static final Pattern SHA256 = Pattern.compile("[0-9a-f]{64}");
+    /** Batch import limits: the normalized UTF-8 byte budget and the valid-requirement cap. */
+    static final int MAX_BATCH_BYTES = 64 * 1024;
+    static final int MAX_BATCH_REQUIREMENTS = 50;
+    /** The batch digest mode field: requirements.txt import with ADD semantics only. */
+    static final String BATCH_MODE = "BATCH_REQUIREMENTS";
 
     private final WorkspaceStore store;
     private final WorkspaceOperationService operations;
@@ -62,7 +68,24 @@ public final class PythonDependencyService {
         try (var lease = lifecycle.tryAcquire(projectId).orElseThrow(
                 () -> new ApiException("PROJECT_BUSY", 409, "Project is busy"))) {
             requireOwner(ownerId, projectId);
-            return changeLocked(projectId, operationId, change, expectedRevision);
+            return changeLocked(projectId, operationId,
+                parseRequest(projectId, operationId, change, expectedRevision));
+        }
+    }
+
+    /**
+     * First POST: prepare and commit one whole requirements.txt import (ADD semantics only) under
+     * its browser-chosen identity. It enters the exact same PENDING→COMMITTED chain as the single
+     * change — one operation, one receipt, one revision increment per batch.
+     */
+    public Status changeBatch(String ownerId, String projectId, String operationId,
+                              String requirementsText, String expectedRevision) {
+        requireOwner(ownerId, projectId);
+        try (var lease = lifecycle.tryAcquire(projectId).orElseThrow(
+                () -> new ApiException("PROJECT_BUSY", 409, "Project is busy"))) {
+            requireOwner(ownerId, projectId);
+            return changeLocked(projectId, operationId,
+                parseBatchRequest(projectId, operationId, requirementsText, expectedRevision));
         }
     }
 
@@ -109,9 +132,7 @@ public final class PythonDependencyService {
         }
     }
 
-    private Status changeLocked(String projectId, String operationId,
-                                WorkspaceAgent.DependencyChange change, String expectedRevision) {
-        Request request = parseRequest(projectId, operationId, change, expectedRevision);
+    private Status changeLocked(String projectId, String operationId, Request request) {
         // A registered identity always answers first: a retry of a successful change presents
         // the old revision and must never be misjudged by the revision that has since moved.
         Optional<WorkspaceStore.OperationRecord> registered = store.findOperation(projectId, operationId);
@@ -137,7 +158,7 @@ public final class PythonDependencyService {
         operations.requireNoUnresolvedOperations(projectId);
 
         WorkspaceAgent.PreparedPythonDependencies prepared =
-            prepare(projectId, operationId, request.requestSha256(), request.change());
+            prepare(projectId, operationId, request.requestSha256(), request);
         String receiptJson = WorkspaceOperationService.dependencyReceiptJson(
             operationId, prepared.beforeSha256(), prepared.afterSha256());
         String receiptSha256 = WorkspaceOperationService.sha256Hex(receiptJson.getBytes(StandardCharsets.UTF_8));
@@ -149,7 +170,7 @@ public final class PythonDependencyService {
         // Acceptance-only fault (deploy README 11.4): exactly here the durable state is
         // "PENDING + FAILED + journal present" when the canary matches — the reconcile entry
         // can then finish the registered commit. Redrive never re-enters this line.
-        operations.tripDependencyPendingFaultIfArmed(projectId, operationId, request.packageName());
+        operations.tripDependencyPendingFaultIfArmed(projectId, operationId, request.faultLabel());
         long revision = operations.commitNewPythonDependency(operation, receiptJson, request.requestSha256());
         return new Status(operationId, "COMMITTED", revision);
     }
@@ -202,11 +223,9 @@ public final class PythonDependencyService {
     }
 
     private WorkspaceAgent.PreparedPythonDependencies prepare(String projectId, String operationId,
-                                                             String requestSha256,
-                                                             WorkspaceAgent.DependencyChange change) {
+                                                             String requestSha256, Request request) {
         try {
-            WorkspaceAgent.PreparedPythonDependencies prepared =
-                agent.prepare(projectId, operationId, requestSha256, change);
+            WorkspaceAgent.PreparedPythonDependencies prepared = request.prepare(projectId, operationId, agent);
             // The prepare response is the only source of the journal digests; a foreign echo
             // must never reach the durable registration.
             if (prepared == null || !operationId.equals(prepared.operationId())
@@ -243,8 +262,8 @@ public final class PythonDependencyService {
         };
     }
 
-    private Request parseRequest(String projectId, String operationId, WorkspaceAgent.DependencyChange change,
-                                 String expectedRevision) {
+    private SingleRequest parseRequest(String projectId, String operationId, WorkspaceAgent.DependencyChange change,
+                                       String expectedRevision) {
         if (!WorkspacePathPolicy.isValidOperationId(operationId)) {
             throw validation();
         }
@@ -260,8 +279,49 @@ public final class PythonDependencyService {
         }
         String version = parseVersion(change);
         long revision = parseRevision(expectedRevision);
-        return new Request(change.action(), packageName, version, revision,
+        return new SingleRequest(change.action(), packageName, version, revision,
             requestDigest(projectId, change.action(), packageName, version, revision));
+    }
+
+    /**
+     * The batch validation split: the backend decides ONLY the line endings, the BOM, the
+     * normalized UTF-8 byte size and the valid-line count — never a PEP 508 parser, the agent
+     * helper owns the syntax. Blank lines and full-line comments do not count toward the cap.
+     * The normalized text is BOTH the digest input and the agent payload, so a retry with the
+     * same text recomputes the same digest and finds the registered row.
+     */
+    private BatchRequest parseBatchRequest(String projectId, String operationId, String requirementsText,
+                                           String expectedRevision) {
+        if (!WorkspacePathPolicy.isValidOperationId(operationId)) {
+            throw validation();
+        }
+        if (requirementsText == null) {
+            throw validation();
+        }
+        String normalized = requirementsText.startsWith("\uFEFF")
+            ? requirementsText.substring(1) : requirementsText;
+        normalized = normalized.replace("\r\n", "\n");
+        if (normalized.getBytes(StandardCharsets.UTF_8).length > MAX_BATCH_BYTES) {
+            throw validation();
+        }
+        int validLines = 0;
+        String firstLine = null;
+        for (String line : normalized.split("\n", -1)) {
+            String trimmed = line.trim();
+            if (trimmed.isEmpty() || trimmed.startsWith("#")) {
+                continue;
+            }
+            validLines++;
+            if (firstLine == null) {
+                firstLine = trimmed;
+            }
+        }
+        if (validLines == 0 || validLines > MAX_BATCH_REQUIREMENTS) {
+            throw validation();
+        }
+        long revision = parseRevision(expectedRevision);
+        return new BatchRequest(normalized, revision,
+            batchRequestDigest(projectId, normalized, revision), firstLine);
     }
 
     private static String parseVersion(WorkspaceAgent.DependencyChange change) {
@@ -316,6 +376,26 @@ public final class PythonDependencyService {
         }
     }
 
+    /**
+     * The batch digest is the SHA-256 of the fixed-field-order JSON over protocol 2, project,
+     * mode, the whole normalized requirements text and the expected revision. The separate
+     * protocol version and mode field keep a batch row byte-distinguishable from any protocol 1
+     * single-package row, including one bound to the same operation id.
+     */
+    public static String batchRequestDigest(String projectId, String requirementsText, long expectedRevision) {
+        Map<String, Object> fields = new LinkedHashMap<>();
+        fields.put("protocol", 2);
+        fields.put("projectId", projectId);
+        fields.put("mode", BATCH_MODE);
+        fields.put("requirements", requirementsText);
+        fields.put("expectedRevision", expectedRevision);
+        try {
+            return WorkspaceOperationService.sha256Hex(JSON.writeValueAsBytes(fields));
+        } catch (Exception ex) {
+            throw new IllegalStateException("cannot serialize the dependency request digest", ex);
+        }
+    }
+
     private static ApiException validation() {
         return new ApiException("VALIDATION_ERROR", 422, "Request validation failed");
     }
@@ -325,10 +405,39 @@ public final class PythonDependencyService {
     }
 
     /** The validated, normalized request as it travels to the agent and the durable row. */
-    private record Request(String action, String packageName, String version, long expectedRevision,
-                           String requestSha256) {
-        WorkspaceAgent.DependencyChange change() {
-            return new WorkspaceAgent.DependencyChange(action, packageName, version);
+    private interface Request {
+        long expectedRevision();
+
+        String requestSha256();
+
+        /** The equality label the acceptance-only pending fault canary matches on. */
+        String faultLabel();
+
+        /** Calls the agent's ONE prepare entry for this request's shape — never a per-line loop. */
+        WorkspaceAgent.PreparedPythonDependencies prepare(String projectId, String operationId,
+                                                          WorkspaceAgent agent);
+    }
+
+    /** The single-package change: one normalized ADD/REMOVE item, digest protocol 1. */
+    private record SingleRequest(String action, String packageName, String version, long expectedRevision,
+                                 String requestSha256) implements Request {
+        @Override public String faultLabel() {
+            return packageName;
+        }
+
+        @Override public WorkspaceAgent.PreparedPythonDependencies prepare(String projectId, String operationId,
+                                                                          WorkspaceAgent agent) {
+            return agent.prepare(projectId, operationId, requestSha256,
+                new WorkspaceAgent.DependencyChange(action, packageName, version));
+        }
+    }
+
+    /** The batch import: the whole normalized requirements text with ADD semantics, protocol 2. */
+    private record BatchRequest(String requirementsText, long expectedRevision, String requestSha256,
+                                String faultLabel) implements Request {
+        @Override public WorkspaceAgent.PreparedPythonDependencies prepare(String projectId, String operationId,
+                                                                          WorkspaceAgent agent) {
+            return agent.prepareBatch(projectId, operationId, requestSha256, requirementsText);
         }
     }
 }

@@ -31,6 +31,14 @@ public final class PythonDependencyController {
             request.expectedWorkspaceRevision()));
     }
 
+    /** Batch import: one whole requirements.txt through the same operation/receipt protocol. */
+    @PostMapping("/python-dependencies/batch")
+    public StatusResponse changeBatch(Authentication authentication, @PathVariable String projectId,
+                                      @RequestBody BatchRequest request) {
+        return view(dependencies.changeBatch(authentication.getName(), projectId, request.operationId(),
+            request.requirementsText(), request.expectedWorkspaceRevision()));
+    }
+
     @GetMapping("/python-dependencies/{operationId}")
     public StatusResponse status(Authentication authentication, @PathVariable String projectId,
                                  @PathVariable String operationId) {
@@ -62,4 +70,7 @@ public final class PythonDependencyController {
     @com.fasterxml.jackson.annotation.JsonIgnoreProperties(ignoreUnknown = false)
     public record ChangeRequest(String operationId, String action, String packageName, String version,
                                 String expectedWorkspaceRevision) { }
+
+    @com.fasterxml.jackson.annotation.JsonIgnoreProperties(ignoreUnknown = false)
+    public record BatchRequest(String operationId, String requirementsText, String expectedWorkspaceRevision) { }
 }

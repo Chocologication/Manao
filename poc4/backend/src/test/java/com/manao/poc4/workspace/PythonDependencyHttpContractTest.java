@@ -32,6 +32,9 @@ class PythonDependencyHttpContractTest {
     private static final String BOB = "bob-id";
     private static final String PROJECT = "prj-1";
     private static final String OPERATION = "11111111-1111-4111-8111-111111111111";
+    private static final String BATCH_TEXT = "httpx==0.28.1\nfastapi>=0.141.1\n";
+    /** The pinned protocol 2 batch digest over BATCH_TEXT for prj-1 at expected revision 7. */
+    private static final String BATCH_DIGEST = "72a9ffa94d38fe3288d4c6aac005ed3f9280e27351396b8b1d225b872b64d5f2";
 
     private WorkspaceControllerTest.FakeStore store;
     private WorkspaceControllerTest.StubAgent agent;
@@ -76,6 +79,17 @@ class PythonDependencyHttpContractTest {
 
             @Override public java.util.List<StorageBinding> storageBindings(String projectId) { return List.of(); }
         };
+    }
+
+    private String batchBody(String operationId, String requirementsText, String expectedRevision) {
+        return "{\"operationId\":\"" + operationId + "\",\"requirementsText\":" + json(requirementsText)
+            + ",\"expectedWorkspaceRevision\":\"" + expectedRevision + "\"}";
+    }
+
+    /** Minimal JSON string escaping for the requirements text in hand-built bodies. */
+    private static String json(String value) {
+        return "\"" + value.replace("\\", "\\\\").replace("\"", "\\\"")
+            .replace("\n", "\\n").replace("\r", "\\r") + "\"";
     }
 
     private String changeBody(String operationId, String action, String packageName, String version,
@@ -435,6 +449,179 @@ class PythonDependencyHttpContractTest {
         String body = "{\"operationId\":\"" + OPERATION + "\",\"action\":\"ADD\",\"packageName\":\"httpx\","
             + "\"version\":\"0.28.1\",\"expectedWorkspaceRevision\":\"7\",\"uvCommand\":\"leak\"}";
         assertThatThrownBy(() -> new ObjectMapper().readValue(body, PythonDependencyController.ChangeRequest.class))
+            .isInstanceOf(java.io.IOException.class);
+    }
+
+    @Test
+    void batchCommitsAndAnswersLostResponsesWithTheSameCommittedOperation() throws Exception {
+        agent.prepareResult = prepared(OPERATION, BATCH_DIGEST);
+        http.perform(post("/api/v1/projects/" + PROJECT + "/python-dependencies/batch")
+                .principal(new UsernamePasswordAuthenticationToken(ALICE, "n/a"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(batchBody(OPERATION, BATCH_TEXT, "7")))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.operationId").value(OPERATION))
+            .andExpect(jsonPath("$.state").value("COMMITTED"))
+            .andExpect(jsonPath("$.resultWorkspaceRevision").value("8"));
+        assertThat(store.revision.get(PROJECT)).isEqualTo(8L);
+        assertThat(agent.prepareBatchCalls).isEqualTo(1);
+        assertThat(agent.prepareCalls).isZero();
+
+        // Lost success response: the same id and text answers COMMITTED without a second uv.
+        http.perform(post("/api/v1/projects/" + PROJECT + "/python-dependencies/batch")
+                .principal(new UsernamePasswordAuthenticationToken(ALICE, "n/a"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(batchBody(OPERATION, BATCH_TEXT, "7")))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.state").value("COMMITTED"))
+            .andExpect(jsonPath("$.resultWorkspaceRevision").value("8"));
+        assertThat(agent.prepareBatchCalls).isEqualTo(1);
+        assertThat(agent.commitCalls).isEqualTo(1);
+
+        // The status and reconcile endpoints read the same durable row.
+        http.perform(get("/api/v1/projects/" + PROJECT + "/python-dependencies/" + OPERATION)
+                .principal(new UsernamePasswordAuthenticationToken(ALICE, "n/a")))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.state").value("COMMITTED"))
+            .andExpect(jsonPath("$.resultWorkspaceRevision").value("8"));
+        http.perform(post("/api/v1/projects/" + PROJECT + "/python-dependencies/" + OPERATION + "/reconcile")
+                .principal(new UsernamePasswordAuthenticationToken(ALICE, "n/a")))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.state").value("COMMITTED"))
+            .andExpect(jsonPath("$.resultWorkspaceRevision").value("8"));
+        assertThat(agent.commitCalls).isEqualTo(1);
+    }
+
+    @Test
+    void batchMalformedInputIsRejectedWithTheSingleOpValidationSemantics() throws Exception {
+        String[] texts = {
+            "",
+            "# only comments\n",
+            "  \n\t\n",
+            "pkg-1\n".repeat(51),
+            ("a".repeat(1400) + "==1.0\n").repeat(47),
+        };
+        for (String text : texts) {
+            http.perform(post("/api/v1/projects/" + PROJECT + "/python-dependencies/batch")
+                    .principal(new UsernamePasswordAuthenticationToken(ALICE, "n/a"))
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(batchBody(OPERATION, text, "7")))
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(jsonPath("$.code").value("VALIDATION_ERROR"));
+        }
+        // Identity and revision validation keep the single-op contract.
+        http.perform(post("/api/v1/projects/" + PROJECT + "/python-dependencies/batch")
+                .principal(new UsernamePasswordAuthenticationToken(ALICE, "n/a"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(batchBody("../escape", BATCH_TEXT, "7")))
+            .andExpect(status().isUnprocessableEntity())
+            .andExpect(jsonPath("$.code").value("VALIDATION_ERROR"));
+        http.perform(post("/api/v1/projects/" + PROJECT + "/python-dependencies/batch")
+                .principal(new UsernamePasswordAuthenticationToken(ALICE, "n/a"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(batchBody(OPERATION, BATCH_TEXT, "not-a-number")))
+            .andExpect(status().isUnprocessableEntity())
+            .andExpect(jsonPath("$.code").value("VALIDATION_ERROR"));
+        // Ownership still precedes every other answer.
+        http.perform(post("/api/v1/projects/" + PROJECT + "/python-dependencies/batch")
+                .principal(new UsernamePasswordAuthenticationToken(BOB, "n/a"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(batchBody(OPERATION, BATCH_TEXT, "7")))
+            .andExpect(status().isNotFound())
+            .andExpect(jsonPath("$.code").value("ENTRY_NOT_FOUND"));
+        assertThat(agent.prepareBatchCalls).isZero();
+        assertThat(store.pending).isEmpty();
+        assertThat(store.records).isEmpty();
+    }
+
+    @Test
+    void batchRunRevisionAndPendingConflictsRefuseBeforePrepare() throws Exception {
+        store.activeRuns.add(PROJECT);
+        http.perform(post("/api/v1/projects/" + PROJECT + "/python-dependencies/batch")
+                .principal(new UsernamePasswordAuthenticationToken(ALICE, "n/a"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(batchBody(OPERATION, BATCH_TEXT, "7")))
+            .andExpect(status().isConflict())
+            .andExpect(jsonPath("$.code").value("PROJECT_LOCKED"));
+        assertThat(agent.prepareBatchCalls).isZero();
+        store.activeRuns.clear();
+
+        http.perform(post("/api/v1/projects/" + PROJECT + "/python-dependencies/batch")
+                .principal(new UsernamePasswordAuthenticationToken(ALICE, "n/a"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(batchBody(OPERATION, BATCH_TEXT, "6")))
+            .andExpect(status().isConflict())
+            .andExpect(jsonPath("$.code").value("WORKSPACE_REVISION_CONFLICT"));
+        assertThat(agent.prepareBatchCalls).isZero();
+
+        store.pending.put(PROJECT, new WorkspaceStore.OperationRecord("stuck", PROJECT, 7,
+            "a".repeat(64), "b".repeat(64), ".manao/receipts/stuck.json", "c".repeat(64), "PENDING", "FILE", null));
+        http.perform(post("/api/v1/projects/" + PROJECT + "/python-dependencies/batch")
+                .principal(new UsernamePasswordAuthenticationToken(ALICE, "n/a"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(batchBody(OPERATION, BATCH_TEXT, "7")))
+            .andExpect(status().isConflict())
+            .andExpect(jsonPath("$.code").value("WORKSPACE_RECONCILIATION_REQUIRED"));
+        assertThat(agent.prepareBatchCalls).isZero();
+        assertThat(store.failures).containsEntry(PROJECT, "WORKSPACE_RECONCILIATION_REQUIRED");
+    }
+
+    @Test
+    void batchSameIdDifferentTextReturnsMismatchWithoutSecondPrepare() throws Exception {
+        agent.prepareResult = prepared(OPERATION, BATCH_DIGEST);
+        http.perform(post("/api/v1/projects/" + PROJECT + "/python-dependencies/batch")
+                .principal(new UsernamePasswordAuthenticationToken(ALICE, "n/a"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(batchBody(OPERATION, BATCH_TEXT, "7")))
+            .andExpect(status().isOk());
+        http.perform(post("/api/v1/projects/" + PROJECT + "/python-dependencies/batch")
+                .principal(new UsernamePasswordAuthenticationToken(ALICE, "n/a"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(batchBody(OPERATION, BATCH_TEXT + "# a different tail\n", "7")))
+            .andExpect(status().isConflict())
+            .andExpect(jsonPath("$.code").value("DEPENDENCY_REQUEST_MISMATCH"));
+        assertThat(agent.prepareBatchCalls).isEqualTo(1);
+    }
+
+    @Test
+    void batchErrorsCarryTheSameFixedCodesAndStatusesAsTheSingleOp() throws Exception {
+        // Non-Python templates answer the unsupported code before any prepare.
+        store.projects.put("prj-java", new WorkspaceStore.ProjectRecord("prj-java", ALICE, "java", "READY", 7, null,
+            java.time.Instant.parse("2026-08-29T00:00:00Z")));
+        http.perform(post("/api/v1/projects/prj-java/python-dependencies/batch")
+                .principal(new UsernamePasswordAuthenticationToken(ALICE, "n/a"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(batchBody(OPERATION, BATCH_TEXT, "7")))
+            .andExpect(status().isUnprocessableEntity())
+            .andExpect(jsonPath("$.code").value("PYTHON_DEPENDENCY_UNSUPPORTED"));
+        assertThat(agent.prepareBatchCalls).isZero();
+
+        // Fixed agent rejections pass through with their status: timeout 504, no wheel 422.
+        agent.prepareError = new WorkspaceAgentException(504, "PYTHON_DEPENDENCY_TIMEOUT", "raw uv stderr");
+        http.perform(post("/api/v1/projects/" + PROJECT + "/python-dependencies/batch")
+                .principal(new UsernamePasswordAuthenticationToken(ALICE, "n/a"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(batchBody(OPERATION, BATCH_TEXT, "7")))
+            .andExpect(status().is(504))
+            .andExpect(jsonPath("$.code").value("PYTHON_DEPENDENCY_TIMEOUT"));
+        agent.prepareError = new WorkspaceAgentException(422, "PYTHON_DEPENDENCY_NO_WHEEL", "raw uv stderr");
+        http.perform(post("/api/v1/projects/" + PROJECT + "/python-dependencies/batch")
+                .principal(new UsernamePasswordAuthenticationToken(ALICE, "n/a"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(batchBody(OPERATION, BATCH_TEXT, "7")))
+            .andExpect(status().isUnprocessableEntity())
+            .andExpect(jsonPath("$.code").value("PYTHON_DEPENDENCY_NO_WHEEL"));
+        assertThat(store.pending).isEmpty();
+        assertThat(store.records).isEmpty();
+        assertThat(store.failures).isEmpty();
+        agent.prepareError = null;
+    }
+
+    @Test
+    void batchRequestsRejectUnknownFields() throws Exception {
+        String body = "{\"operationId\":\"" + OPERATION + "\",\"requirementsText\":\"httpx==0.28.1\\n\","
+            + "\"expectedWorkspaceRevision\":\"7\",\"uvCommand\":\"leak\"}";
+        assertThatThrownBy(() -> new ObjectMapper().readValue(body, PythonDependencyController.BatchRequest.class))
             .isInstanceOf(java.io.IOException.class);
     }
 }
