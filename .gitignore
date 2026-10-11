@@ -37,11 +37,18 @@ build/
 ### VS Code ###
 .vscode/
 /full_backup.sql
+
+### User ###
 /.codex/mcp/mysql-toolbox.env
 /.codex/skills
+/.zcode/agents
+/.zcode/plans
 /.firecrawl/
 /.npm-cache-tmp/
 .agent-teams
 .playwright-mcp/
 /poc4/frontend/.playwright-cli/
 /poc4/frontend/project-request.txt
+/.zcodeignore
+/innovations
+/skills-lock.json
