@@ -123,12 +123,22 @@ if [ ! -d "$CACHE_ROOT/uv-cache" ]; then
   }
 fi
 
-# 6. Install the locked dependencies into the per-Run venv. A preparation failure exits
-# non-zero here — the application must never start with an uninstalled or mismatched
-# environment. uv's own diagnostics are the only output; they carry no credentials.
-if ! uv sync --locked --no-dev --no-build --no-config --python /usr/local/bin/python3 "${extras[@]}"; then
-  echo "manao-python: package preparation failed; the application will not start" >&2
-  exit 1
+# 6. Install the locked dependencies into the per-Run venv. Offline first: the locked argv
+# runs with --offline first, so a seed/project cache that fully covers the lock serves a
+# network-less start (the seed compatibility proof is unconditional, design section 6) even
+# when the mirror's freshness policy has aged the cached HTTP entries; the online retry with
+# the same fixed argv (minus --offline) covers artifacts the cache genuinely lacks (e.g.
+# dependencies added after the seed was built). The lock pins exact artifacts and hashes, so
+# stale cached index metadata cannot corrupt a locked install. A preparation failure in BOTH
+# attempts exits non-zero here — the application must never start with an uninstalled or
+# mismatched environment. uv's own diagnostics are the only output; they carry no
+# credentials. Both attempts share the startup budget.
+if ! uv sync --offline --locked --no-dev --no-build --no-config --python /usr/local/bin/python3 "${extras[@]}"; then
+  echo "manao-python: offline package preparation failed; retrying with network" >&2
+  if ! uv sync --locked --no-dev --no-build --no-config --python /usr/local/bin/python3 "${extras[@]}"; then
+    echo "manao-python: package preparation failed; the application will not start" >&2
+    exit 1
+  fi
 fi
 
 # 7. Exec the one fixed application command of the mode; exec keeps signal semantics and
