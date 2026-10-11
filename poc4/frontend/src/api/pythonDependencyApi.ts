@@ -24,6 +24,13 @@ export type ChangePythonDependencyRequest = {
   expectedWorkspaceRevision: string;
 };
 
+export type ChangePythonDependencyBatchRequest = {
+  operationId: string;
+  /** The whole requirements.txt content, sent verbatim; the backend/helper validates it. */
+  requirementsText: string;
+  expectedWorkspaceRevision: string;
+};
+
 function projectDependencyUrl(projectId: string, suffix = ''): string {
   return `/api/v1/projects/${encodeURIComponent(projectId)}/python-dependencies${suffix}`;
 }
@@ -78,6 +85,21 @@ export async function changePythonDependencies(
     method: 'POST',
     body: request,
   });
+  return parsePythonDependencyStatus(payload);
+}
+
+/** First POST of a batch import: one whole requirements.txt under one browser-chosen identity. */
+export async function changePythonDependencyBatch(
+  projectId: string,
+  request: ChangePythonDependencyBatchRequest,
+): Promise<PythonDependencyStatus> {
+  const payload = await getHttpClient().request<unknown>(
+    projectDependencyUrl(projectId, '/batch'),
+    {
+      method: 'POST',
+      body: request,
+    },
+  );
   return parsePythonDependencyStatus(payload);
 }
 

@@ -16,9 +16,13 @@ import { AppProviders } from '../../app/AppProviders';
 import { useWorkspaceSession, workspaceSessionStore } from '../../features/editor/workspaceSession';
 import { fileKeys } from '../../features/files/fileQueries';
 import { parseProjectRelativePath } from '../../features/files/pathPolicy';
-import { getWorkspaceRevision as mockWorkspaceRevision } from '../../mocks/fileFixtures';
+import {
+  createMockEntry,
+  getWorkspaceRevision as mockWorkspaceRevision,
+  saveMockFile,
+} from '../../mocks/fileFixtures';
 import { server } from '../../mocks/node';
-import { setDependencyScenario } from '../../mocks/state';
+import { getFileRequestCount, setDependencyScenario } from '../../mocks/state';
 import { resetAppRuntime } from '../../test/renderApp';
 import { PythonDependenciesPanel } from './PythonDependenciesPanel';
 
@@ -87,6 +91,29 @@ function dependencyPosts(spy: { mock: { calls: unknown[][] } }): RecordedCall[] 
   return recordedDependencyCalls(spy).filter(
     (call) => call.method === 'POST' && !call.path.endsWith('/reconcile'),
   );
+}
+
+function batchDependencyPosts(spy: { mock: { calls: unknown[][] } }): RecordedCall[] {
+  return dependencyPosts(spy).filter((call) => call.path.endsWith('/python-dependencies/batch'));
+}
+
+function singleDependencyPosts(spy: { mock: { calls: unknown[][] } }): RecordedCall[] {
+  return dependencyPosts(spy).filter((call) => !call.path.endsWith('/python-dependencies/batch'));
+}
+
+function treeGetCount(spy: { mock: { calls: unknown[][] } }): number {
+  return spy.mock.calls.filter((call) => String(call[0]).includes('/files/tree')).length;
+}
+
+function seedRootRequirements(projectId: string, content: string): void {
+  const created = createMockEntry(projectId, 'file', 'requirements.txt');
+  if (!created.ok) {
+    throw new Error('test fixture cannot create requirements.txt');
+  }
+  const saved = saveMockFile(projectId, 'requirements.txt', content);
+  if (!saved.ok) {
+    throw new Error('test fixture cannot save requirements.txt');
+  }
 }
 
 function uuidLike(value: unknown): boolean {
@@ -499,5 +526,266 @@ describe('PythonDependenciesPanel busy reporting', () => {
     await waitFor(() => {
       expect(onBusyChange).toHaveBeenLastCalledWith(false);
     });
+  });
+});
+
+describe('PythonDependenciesPanel requirements.txt import', () => {
+  it('reads the fixed root requirements.txt and submits exactly one batch POST', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    const user = userEvent.setup();
+    await authenticateAsAlice();
+    const project = await createReadyPythonProject('Import One Batch');
+    const requirementsText = 'httpx==0.28.1\nleft-pad\n';
+    seedRootRequirements(project.id, requirementsText);
+    primeRevision(project.id);
+    renderPanel({ project });
+
+    // The change must carry the revision the file read saw BEFORE the commit.
+    const revisionBeforeImport = mockWorkspaceRevision(project.id);
+    await user.click(screen.getByRole('button', { name: 'Import requirements.txt' }));
+
+    expect(
+      await screen.findByRole('status', { name: 'Dependency change result' }),
+    ).toHaveTextContent('Dependency change saved.');
+    const posts = batchDependencyPosts(fetchSpy);
+    expect(posts).toHaveLength(1);
+    const body = posts[0]!.body as Record<string, unknown>;
+    expect(uuidLike(body.operationId)).toBe(true);
+    // The file content goes to the batch API verbatim, never split or parsed.
+    expect(body.requirementsText).toBe(requirementsText);
+    expect(body.expectedWorkspaceRevision).toBe(revisionBeforeImport);
+    // The read targeted the fixed project-root path, exactly once.
+    expect(getFileRequestCount('content', project.id, 'requirements.txt')).toBe(1);
+    expect(singleDependencyPosts(fetchSpy)).toHaveLength(0);
+
+    fetchSpy.mockRestore();
+  });
+
+  it('imports a three-line file as one batch POST and never per-line single-package POSTs', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    const user = userEvent.setup();
+    await authenticateAsAlice();
+    const project = await createReadyPythonProject('Import Three Lines');
+    seedRootRequirements(project.id, 'httpx==0.28.1\nleft-pad\nrich==13.0.0\n');
+    primeRevision(project.id);
+    renderPanel({ project });
+
+    await user.click(screen.getByRole('button', { name: 'Import requirements.txt' }));
+
+    expect(
+      await screen.findByRole('status', { name: 'Dependency change result' }),
+    ).toHaveTextContent('Dependency change saved.');
+    expect(batchDependencyPosts(fetchSpy)).toHaveLength(1);
+    expect(singleDependencyPosts(fetchSpy)).toHaveLength(0);
+
+    fetchSpy.mockRestore();
+  });
+
+  it('reloads the workspace exactly once and clears the stored id after a committed import', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    const user = userEvent.setup();
+    await authenticateAsAlice();
+    const project = await createReadyPythonProject('Import Reload');
+    seedRootRequirements(project.id, 'httpx\n');
+    primeRevision(project.id);
+    renderPanel({ project });
+    const treeCallsBefore = treeGetCount(fetchSpy);
+
+    await user.click(screen.getByRole('button', { name: 'Import requirements.txt' }));
+
+    expect(
+      await screen.findByRole('status', { name: 'Dependency change result' }),
+    ).toHaveTextContent('Dependency change saved.');
+    // One committed batch means ONE managed workspace reload.
+    expect(treeGetCount(fetchSpy) - treeCallsBefore).toBe(1);
+    expect(readPythonDependencyOperationId(ALICE_USER_ID, project.id)).toBeNull();
+
+    fetchSpy.mockRestore();
+  });
+
+  it('keeps the stored id and reports the lost response instead of retrying', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    const user = userEvent.setup();
+    await authenticateAsAlice();
+    const project = await createReadyPythonProject('Import Lost Response');
+    seedRootRequirements(project.id, 'httpx\n');
+    primeRevision(project.id);
+    setDependencyScenario('lost-response');
+    const onResponseLost = vi.fn();
+    renderPanel({ project, onResponseLost });
+
+    await user.click(screen.getByRole('button', { name: 'Import requirements.txt' }));
+
+    await waitFor(() => {
+      expect(onResponseLost).toHaveBeenCalledTimes(1);
+    });
+    const posts = batchDependencyPosts(fetchSpy);
+    expect(posts).toHaveLength(1);
+    const operationId = (posts[0]!.body as Record<string, unknown>).operationId;
+    expect(onResponseLost).toHaveBeenCalledWith(operationId);
+    // The result is unknown: the id stays available for the recovery check.
+    expect(readPythonDependencyOperationId(ALICE_USER_ID, project.id)).toBe(operationId);
+    // No automatic retry was sent.
+    expect(batchDependencyPosts(fetchSpy)).toHaveLength(1);
+
+    setDependencyScenario('normal');
+    fetchSpy.mockRestore();
+  });
+
+  it('answers PROJECT_BUSY as a proven pre-flight rejection: id cleared, busy message, no recovery', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    const user = userEvent.setup();
+    await authenticateAsAlice();
+    const project = await createReadyPythonProject('Import Busy');
+    seedRootRequirements(project.id, 'httpx\n');
+    primeRevision(project.id);
+    // The backend lease gate refuses before any operation row is registered:
+    // the same proven no-side-effect semantics as the single-package change.
+    server.use(
+      http.post('/api/v1/projects/:projectId/python-dependencies/batch', () =>
+        HttpResponse.json(
+          { code: 'PROJECT_BUSY', message: 'Project is busy', traceId: 'mock-trace-busy' },
+          { status: 409 },
+        ),
+      ),
+    );
+    const onResponseLost = vi.fn();
+    renderPanel({ project, onResponseLost });
+
+    await user.click(screen.getByRole('button', { name: 'Import requirements.txt' }));
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent(
+      'Project is busy. Wait for the current operation to finish, then try again.',
+    );
+    expect(onResponseLost).not.toHaveBeenCalled();
+    expect(readPythonDependencyOperationId(ALICE_USER_ID, project.id)).toBeNull();
+    expect(screen.getByRole('button', { name: 'Import requirements.txt' })).toBeEnabled();
+
+    fetchSpy.mockRestore();
+  });
+
+  it('answers WORKSPACE_RECONCILIATION_REQUIRED as an unknown result: id kept, recovery reported', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    const user = userEvent.setup();
+    await authenticateAsAlice();
+    const project = await createReadyPythonProject('Import Reconciliation');
+    seedRootRequirements(project.id, 'httpx\n');
+    primeRevision(project.id);
+    // The mock registers the batch operation PENDING and refuses to confirm the
+    // result, like the backend's fail-closed commit scene.
+    setDependencyScenario('reconciliation-required');
+    const onResponseLost = vi.fn();
+    renderPanel({ project, onResponseLost });
+
+    await user.click(screen.getByRole('button', { name: 'Import requirements.txt' }));
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent(
+      'The result of the dependency change is unknown. Check it before making another change.',
+    );
+    const posts = batchDependencyPosts(fetchSpy);
+    expect(posts).toHaveLength(1);
+    const operationId = (posts[0]!.body as Record<string, unknown>).operationId;
+    expect(onResponseLost).toHaveBeenCalledTimes(1);
+    expect(onResponseLost).toHaveBeenCalledWith(operationId);
+    // The id stays available for the recovery check.
+    expect(readPythonDependencyOperationId(ALICE_USER_ID, project.id)).toBe(operationId);
+    // No automatic retry was sent.
+    expect(batchDependencyPosts(fetchSpy)).toHaveLength(1);
+
+    setDependencyScenario('normal');
+    fetchSpy.mockRestore();
+  });
+
+  it('surfaces the backend validation rejection for an empty requirements.txt without fabricating success', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    const user = userEvent.setup();
+    await authenticateAsAlice();
+    const project = await createReadyPythonProject('Import Empty');
+    // The browser sends the text verbatim; the backend owns the empty/limit validation.
+    seedRootRequirements(project.id, '\n# only a comment\n');
+    primeRevision(project.id);
+    renderPanel({ project });
+
+    await user.click(screen.getByRole('button', { name: 'Import requirements.txt' }));
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent(
+      'Only package names with an optional exact version are supported.',
+    );
+    expect(readPythonDependencyOperationId(ALICE_USER_ID, project.id)).toBeNull();
+    expect(screen.getByRole('button', { name: 'Import requirements.txt' })).toBeEnabled();
+    expect(batchDependencyPosts(fetchSpy)).toHaveLength(1);
+
+    fetchSpy.mockRestore();
+  });
+
+  it('surfaces PYTHON_DEPENDENCY_UNSUPPORTED as a fixed safe rejection', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    const user = userEvent.setup();
+    await authenticateAsAlice();
+    const created = await createProject({
+      name: 'Import Unsupported',
+      templateId: 'java-console',
+      mysql: false,
+      redis: false,
+      publicPorts: [],
+    });
+    await getProject(created.id);
+    const ready = await getProject(created.id);
+    expect(ready.state).toBe('READY');
+    seedRootRequirements(ready.id, 'httpx\n');
+    primeRevision(ready.id);
+    renderPanel({ project: ready });
+
+    await user.click(screen.getByRole('button', { name: 'Import requirements.txt' }));
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent(
+      'Dependency changes are not supported for this project or package',
+    );
+    expect(readPythonDependencyOperationId(ALICE_USER_ID, ready.id)).toBeNull();
+    expect(batchDependencyPosts(fetchSpy)).toHaveLength(1);
+
+    fetchSpy.mockRestore();
+  });
+
+  it('shows a safe error and submits nothing when requirements.txt does not exist', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    const user = userEvent.setup();
+    await authenticateAsAlice();
+    const project = await createReadyPythonProject('Import Missing File');
+    primeRevision(project.id);
+    // The fresh project has no requirements.txt; the real backend answers 404
+    // ENTRY_NOT_FOUND for the content read.
+    server.use(
+      http.get('/api/v1/projects/:projectId/files/content', ({ request }) => {
+        const path = new URL(request.url).searchParams.get('path') ?? '';
+        if (path === 'requirements.txt') {
+          return HttpResponse.json(
+            {
+              code: 'ENTRY_NOT_FOUND',
+              message: 'Entry not found',
+              traceId: 'mock-trace-entry-not-found',
+            },
+            { status: 404 },
+          );
+        }
+        return undefined;
+      }),
+    );
+    renderPanel({ project });
+
+    await user.click(screen.getByRole('button', { name: 'Import requirements.txt' }));
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('requirements.txt was not found in the project root.');
+    // No batch and no single-package change was ever submitted.
+    expect(batchDependencyPosts(fetchSpy)).toHaveLength(0);
+    expect(singleDependencyPosts(fetchSpy)).toHaveLength(0);
+    expect(readPythonDependencyOperationId(ALICE_USER_ID, project.id)).toBeNull();
+
+    fetchSpy.mockRestore();
   });
 });

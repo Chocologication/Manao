@@ -46,6 +46,7 @@ import {
   listOwnedProjectSummaries,
   listPendingMockDependencyOperations,
   loginWithCredentials,
+  mockBatchRequestFingerprint,
   mockDependencyRequestFingerprint,
   normalizeMockPackageName,
   readOwnedProjectSummary,
@@ -460,6 +461,48 @@ function isDependencyChangeBody(value: unknown): value is DependencyChangeBody {
   );
 }
 
+type DependencyBatchBody = {
+  operationId: string;
+  requirementsText: string;
+  expectedWorkspaceRevision: string;
+};
+
+function isDependencyBatchBody(value: unknown): value is DependencyBatchBody {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+    return false;
+  }
+  const record = value as Record<string, unknown>;
+  return (
+    typeof record.operationId === 'string' &&
+    record.operationId !== '' &&
+    typeof record.requirementsText === 'string' &&
+    typeof record.expectedWorkspaceRevision === 'string' &&
+    record.expectedWorkspaceRevision !== ''
+  );
+}
+
+/** Mirrors the backend's parseBatchRequest: the byte budget and the requirement-line count. */
+const MAX_BATCH_BYTES = 64 * 1024;
+const MAX_BATCH_REQUIREMENTS = 50;
+
+function parseMockBatchRequirements(requirementsText: string): string[] | null {
+  let normalized = requirementsText.startsWith('\uFEFF')
+    ? requirementsText.slice(1)
+    : requirementsText;
+  normalized = normalized.replace(/\r\n/g, '\n');
+  if (new TextEncoder().encode(normalized).length > MAX_BATCH_BYTES) {
+    return null;
+  }
+  const requirementLines = normalized
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line !== '' && !line.startsWith('#'));
+  if (requirementLines.length === 0 || requirementLines.length > MAX_BATCH_REQUIREMENTS) {
+    return null;
+  }
+  return requirementLines;
+}
+
 function dependencyStatusJson(operation: MockDependencyOperation) {
   return {
     operationId: operation.operationId,
@@ -627,6 +670,74 @@ export const dependencyHandlers = [
       // The row is registered PENDING and stays PENDING: the answer refuses to
       // confirm the result, like the backend's fail-closed commit. A later
       // reconcile of the same id commits it.
+      return jsonError(409, WORKSPACE_RECONCILIATION_REQUIRED);
+    }
+    commitMockDependencyOperation(operation);
+    if (scenario === 'lost-response') {
+      // The commit happened but the browser never learns about it here.
+      return HttpResponse.error();
+    }
+    return HttpResponse.json(dependencyStatusJson(operation));
+  }),
+
+  // Batch import: one whole requirements.txt through the SAME operation protocol —
+  // one registration, one commit, one revision move. Never a per-line loop.
+  http.post('/api/v1/projects/:projectId/python-dependencies/batch', async ({ request, params }) => {
+    const auth = authorize(request);
+    if ('response' in auth) {
+      return auth.response;
+    }
+    const projectId = readProjectId(params);
+    if (projectId === null || readOwnedProjectSummary(auth.user.id, projectId) === null) {
+      return jsonError(403, FORBIDDEN);
+    }
+    const body = asRecord(await readJsonBody(request));
+    if (body === null || !isDependencyBatchBody(body)) {
+      return jsonError(422, FILE_VALIDATION_ERROR);
+    }
+    const requirementLines = parseMockBatchRequirements(body.requirementsText);
+    if (requirementLines === null) {
+      return jsonError(422, FILE_VALIDATION_ERROR);
+    }
+    const scenario = getDependencyScenario();
+    if (!isPythonRuntimeProject(auth.user.id, projectId)) {
+      return jsonError(422, PYTHON_DEPENDENCY_UNSUPPORTED);
+    }
+    const revision = getWorkspaceRevision(projectId);
+    if (body.expectedWorkspaceRevision !== revision) {
+      return jsonError(409, WORKSPACE_REVISION_CONFLICT);
+    }
+    if (hasActiveRun(projectId)) {
+      return jsonError(409, RUN_ALREADY_ACTIVE);
+    }
+    const normalizedText = requirementLines.join('\n');
+    const fingerprint = mockBatchRequestFingerprint(projectId, normalizedText, revision);
+    const registered = findMockDependencyOperation(projectId, body.operationId);
+    if (registered !== null) {
+      if (registered.fingerprint !== fingerprint) {
+        return jsonError(409, DEPENDENCY_REQUEST_MISMATCH);
+      }
+      if (registered.state === 'PENDING') {
+        commitMockDependencyOperation(registered);
+      }
+      return HttpResponse.json(dependencyStatusJson(registered));
+    }
+    if (scenario === 'resolution-failed') {
+      // Fixed prepare rejection: no durable trace, a safe correction for the browser.
+      return jsonError(503, PYTHON_DEPENDENCY_RESOLUTION_FAILED);
+    }
+    const operation = registerMockDependencyOperation({
+      projectId,
+      operationId: body.operationId,
+      fingerprint,
+      action: 'ADD',
+      packageName: '',
+      version: null,
+      requirementsText: normalizedText,
+    });
+    if (scenario === 'reconciliation-required') {
+      // The row is registered PENDING and stays PENDING: the answer refuses to
+      // confirm the result, like the backend's fail-closed commit.
       return jsonError(409, WORKSPACE_RECONCILIATION_REQUIRED);
     }
     commitMockDependencyOperation(operation);

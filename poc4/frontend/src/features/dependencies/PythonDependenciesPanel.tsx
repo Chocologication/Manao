@@ -1,14 +1,18 @@
 import { useQueryClient } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
 import { ApiRequestError } from '../../api/ApiRequestError';
+import { getFileContent } from '../../api/fileApi';
 import {
   changePythonDependencies,
+  changePythonDependencyBatch,
   clearPythonDependencyOperationId,
   generateOperationId,
   storePythonDependencyOperationId,
   type PythonDependencyAction,
 } from '../../api/pythonDependencyApi';
+import type { FileContentResponse } from '../../contracts/file';
 import { getWorkspaceRevision } from '../../features/files/fileQueries';
+import { parseProjectRelativePath } from '../../features/files/pathPolicy';
 import { reloadWorkspaceAfterTerminalRun } from '../../features/runs/workspaceReload';
 import { useWorkspaceSession } from '../../features/editor/workspaceSession';
 import { InlineAlert } from '@/components/feedback/InlineAlert';
@@ -60,6 +64,49 @@ const NO_SIDE_EFFECT_CODES: ReadonlySet<string> = new Set([
 
 function isNetworkError(error: unknown): boolean {
   return error instanceof Error && /network request failed/i.test(error.message);
+}
+
+/**
+ * The one failure semantics shared by the single change and the batch import: a
+ * lost response or an unreadable answer leaves the result unknown (the stored id
+ * stays for the recovery entry); a proven no-side-effect rejection clears the id
+ * so a corrected change may start a NEW operation.
+ */
+function settleSubmissionFailure(options: {
+  userId: string;
+  projectId: string;
+  operationId: string;
+  error: unknown;
+  onResponseLost: (operationId: string) => void;
+  reportRejection: (message: string) => void;
+}): void {
+  const error = options.error;
+  if (!isNetworkError(error) && error instanceof ApiRequestError && error.body !== null) {
+    if (error.body.code === 'WORKSPACE_RECONCILIATION_REQUIRED') {
+      // A registered operation's result is unresolved: the id stays and only
+      // the recovery check may resolve it.
+      options.onResponseLost(options.operationId);
+      options.reportRejection(rejectionMessage(error));
+      return;
+    }
+    if (NO_SIDE_EFFECT_CODES.has(error.body.code)) {
+      // Explicitly proven no-side-effect rejection: a corrected change may
+      // start a NEW operation.
+      clearPythonDependencyOperationId(options.userId, options.projectId);
+      options.reportRejection(rejectionMessage(error));
+      return;
+    }
+  }
+  // A lost response or an unreadable/internal answer leaves the result unknown.
+  options.onResponseLost(options.operationId);
+}
+
+/** The fixed root file read registers no operation, so any read failure is a safe correction. */
+function requirementsReadErrorMessage(error: unknown): string {
+  if (error instanceof ApiRequestError && error.body?.code === 'ENTRY_NOT_FOUND') {
+    return 'requirements.txt was not found in the project root.';
+  }
+  return 'Unable to read requirements.txt.';
 }
 
 function rejectionMessage(error: unknown): string {
@@ -174,30 +221,14 @@ export function PythonDependenciesPanel({
         expectedWorkspaceRevision: revision!,
       });
     } catch (error) {
-      if (isNetworkError(error)) {
-        onResponseLost(operationId);
-      } else if (
-        error instanceof ApiRequestError &&
-        error.body !== null &&
-        error.body.code === 'WORKSPACE_RECONCILIATION_REQUIRED'
-      ) {
-        // A registered operation's result is unresolved: the id stays and only
-        // the recovery check may resolve it.
-        onResponseLost(operationId);
-        setRejection(rejectionMessage(error));
-      } else if (
-        error instanceof ApiRequestError &&
-        error.body !== null &&
-        NO_SIDE_EFFECT_CODES.has(error.body.code)
-      ) {
-        // Explicitly proven no-side-effect rejection: a corrected change may
-        // start a NEW operation.
-        clearPythonDependencyOperationId(userId, projectId);
-        setRejection(rejectionMessage(error));
-      } else {
-        // An unreadable or internal error answer leaves the result unknown.
-        onResponseLost(operationId);
-      }
+      settleSubmissionFailure({
+        userId,
+        projectId,
+        operationId,
+        error,
+        onResponseLost,
+        reportRejection: setRejection,
+      });
       setPhase('idle');
       return;
     }
@@ -222,6 +253,78 @@ export function PythonDependenciesPanel({
     clearPythonDependencyOperationId(userId, projectId);
     setPackageName('');
     setVersion('');
+    setSaved(true);
+    setPhase('idle');
+  }
+
+  /**
+   * The batch import: read the fixed project-root requirements.txt once and hand the
+   * whole text to ONE batch POST — never a per-line loop. It reuses the exact single
+   * change identity lifecycle: one stored operationId, one reload, clear on success,
+   * keep on loss.
+   */
+  async function submitImport(): Promise<void> {
+    if (disabledReason !== null) {
+      return;
+    }
+    setPhase('submitting');
+    setRejection(null);
+    setSaved(false);
+    let requirements: FileContentResponse;
+    try {
+      // The import reads the fixed root path; the user never picks a path and the
+      // browser never splits or parses the text.
+      requirements = await getFileContent(projectId, parseProjectRelativePath('requirements.txt'));
+    } catch (error) {
+      // The read-only GET registers no operation: any read failure is a safe
+      // correction and never a lost response.
+      setRejection(requirementsReadErrorMessage(error));
+      setPhase('idle');
+      return;
+    }
+    // Stored BEFORE the batch POST: a lost response or a refresh keeps asking about
+    // this exact operation.
+    const operationId = generateOperationId();
+    storePythonDependencyOperationId(userId, projectId, operationId);
+    let status: Awaited<ReturnType<typeof changePythonDependencyBatch>>;
+    try {
+      status = await changePythonDependencyBatch(projectId, {
+        operationId,
+        requirementsText: requirements.content,
+        // The revision the file read saw, not the older cached one.
+        expectedWorkspaceRevision: requirements.workspaceRevision,
+      });
+    } catch (error) {
+      settleSubmissionFailure({
+        userId,
+        projectId,
+        operationId,
+        error,
+        onResponseLost,
+        reportRejection: setRejection,
+      });
+      setPhase('idle');
+      return;
+    }
+    if (status.state !== 'COMMITTED') {
+      // A 200 without a COMMITTED answer is not a success to build on.
+      onResponseLost(operationId);
+      setPhase('idle');
+      return;
+    }
+    setPhase('reloading');
+    try {
+      // The committed files are re-read from the authoritative workspace; the
+      // historical resultWorkspaceRevision never overrides newer content.
+      await reloadWorkspaceAfterTerminalRun({ projectId, queryClient });
+    } catch {
+      // The change IS committed but the surface is not reloaded yet: keep the
+      // stored id so the recovery entry re-reads COMMITTED and reloads.
+      onResponseLost(operationId);
+      setPhase('idle');
+      return;
+    }
+    clearPythonDependencyOperationId(userId, projectId);
     setSaved(true);
     setPhase('idle');
   }
@@ -272,6 +375,15 @@ export function PythonDependenciesPanel({
             onClick={() => void submit('REMOVE')}
           >
             Remove dependency
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            disabled={disabledReason !== null}
+            title={disabledReason ?? 'Import dependencies from requirements.txt'}
+            onClick={() => void submitImport()}
+          >
+            Import requirements.txt
           </Button>
         </div>
       </form>

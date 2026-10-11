@@ -407,6 +407,8 @@ export type MockDependencyOperation = {
   action: 'ADD' | 'REMOVE';
   packageName: string;
   version: string | null;
+  /** Whole-text batch import rows carry the normalized requirements text; single rows are null. */
+  requirementsText: string | null;
   state: 'PENDING' | 'COMMITTED';
   resultWorkspaceRevision: string | null;
 };
@@ -433,6 +435,15 @@ export function mockDependencyRequestFingerprint(
   expectedRevision: string,
 ): string {
   return [projectId, action, packageName, version ?? '', expectedRevision].join('\u0000');
+}
+
+/** Mock stand-in for the backend's protocol-2 batch digest: the whole normalized text. */
+export function mockBatchRequestFingerprint(
+  projectId: string,
+  requirementsText: string,
+  expectedRevision: string,
+): string {
+  return [projectId, 'BATCH_REQUIREMENTS', requirementsText, expectedRevision].join('\u0000');
 }
 
 function pyprojectPackages(projectId: string): string[] {
@@ -494,6 +505,35 @@ export function applyMockDependencyChange(
   return getWorkspaceRevision(projectId);
 }
 
+/**
+ * Applies one batch import with ADD semantics to the two managed files — the mock-side
+ * stand-in for the agent's single uv run over the whole requirements text, never a
+ * per-line loop of separate operations.
+ */
+export function applyMockBatchDependencyChange(
+  projectId: string,
+  requirementsText: string,
+): string {
+  let next = pyprojectPackages(projectId);
+  for (const line of requirementsText.split('\n')) {
+    const trimmed = line.trim();
+    if (trimmed === '' || trimmed.startsWith('#')) {
+      continue;
+    }
+    const separator = trimmed.indexOf('==');
+    const name = normalizeMockPackageName(separator === -1 ? trimmed : trimmed.slice(0, separator));
+    if (!isValidMockPackageName(name)) {
+      // The mock only applies plain public-PyPI names, like the agent helper's filter.
+      continue;
+    }
+    const version = separator === -1 ? null : trimmed.slice(separator + 2);
+    const entry = version === null ? name : `${name}==${version}`;
+    next = [...next.filter((pkg) => pkg.split('==')[0] !== name), entry];
+  }
+  writeDependencyFiles(projectId, next);
+  return getWorkspaceRevision(projectId);
+}
+
 export function findMockDependencyOperation(
   projectId: string,
   operationId: string,
@@ -512,9 +552,11 @@ export function registerMockDependencyOperation(options: {
   action: 'ADD' | 'REMOVE';
   packageName: string;
   version: string | null;
+  requirementsText?: string | null;
 }): MockDependencyOperation {
   const operation: MockDependencyOperation = {
     ...options,
+    requirementsText: options.requirementsText ?? null,
     state: 'PENDING',
     resultWorkspaceRevision: null,
   };
@@ -527,12 +569,15 @@ export function commitMockDependencyOperation(operation: MockDependencyOperation
   if (operation.state === 'COMMITTED') {
     return operation;
   }
-  const revision = applyMockDependencyChange(
-    operation.projectId,
-    operation.action,
-    operation.packageName,
-    operation.version,
-  );
+  const revision =
+    operation.requirementsText !== null
+      ? applyMockBatchDependencyChange(operation.projectId, operation.requirementsText)
+      : applyMockDependencyChange(
+          operation.projectId,
+          operation.action,
+          operation.packageName,
+          operation.version,
+        );
   operation.state = 'COMMITTED';
   operation.resultWorkspaceRevision = revision;
   const project = projects.find((candidate) => candidate.id === operation.projectId);
