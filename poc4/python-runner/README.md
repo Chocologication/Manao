@@ -135,14 +135,16 @@ staleness proof, persistent fail-fast registry, exact-name cleanup — in
   venv, dies with the Pod), `UV_CACHE_DIR=/python-cache/uv-cache` (inside the private
   per-project cache mount), `UV_LINK_MODE=copy`, `UV_PYTHON_DOWNLOADS=never`,
   `PYTHONUNBUFFERED=1`, `PYTHONDONTWRITEBYTECODE=1`.
-- Install argv is fixed: `uv sync --locked --no-dev --no-build --no-config --python
-  /usr/local/bin/python3` plus `--extra mysql` / `--extra redis` only when the
+- Install argv is fixed and runs offline-first: `uv sync --offline --locked --no-dev
+  --no-build --no-config --python /usr/local/bin/python3`, and when that attempt fails
+  (artifacts the cache genuinely lacks) the same argv minus `--offline` retries online —
+  plus `--extra mysql` / `--extra redis` only when the
   server-controlled booleans `MANAO_PYTHON_MYSQL` / `MANAO_PYTHON_REDIS` are `true`.
-  The extras are pinned booleans, never an arbitrary array. A failed install exits
-  non-zero before user code starts; preparation logs share the application's
-  stdout/stderr and never print environment values or credentials. The launcher reads no
-  uv index configuration: downloads come from the sources recorded in the committed lock
-  (the Aliyun mirror for locks resolved through the controlled path).
+  The extras are pinned booleans, never an arbitrary array. A failed install (both
+  attempts) exits non-zero before user code starts; preparation logs share the
+  application's stdout/stderr and never print environment values or credentials. The
+  launcher reads no uv index configuration: downloads come from the sources recorded in
+  the committed lock (the Aliyun mirror for locks resolved through the controlled path).
 - Dependency editing (agent prepare) resolves with a fixed argv that pins the sole
   default index: `uv add/remove --no-sync --no-build --no-sources --no-config
   --no-python-downloads --python /usr/local/bin/python3 --default-index
@@ -180,14 +182,14 @@ staleness proof, persistent fail-fast registry, exact-name cleanup — in
   directory's existence, so a stale marker left behind by a lost cache directory is
   repaired by the re-seed. An existing cache directory is never copied over; uv manages
   it. Interrupted initializations leave only staging directories, which the next run
-  sweeps. There is no cross-toolchain cache migration or auto-refill. One observed
-  boundary (2026-10-11, recorded in the Python acceptance record section 7): a seed's
-  offline usability is bounded by the mirror's HTTP freshness policy — uv revalidates
-  stale cached responses when the sync runs online, and the Aliyun mirror serves
-  `max-age=43200` with a non-trivial CDN `Age`, so a seed older than that freshness
-  window needs network on first Run even though its content is complete and
-  `uv sync --offline` installs it fully. Production Runs have network; the bounded case
-  is the offline cold-cache start only.
+  sweeps. There is no cross-toolchain cache migration or auto-refill. The launcher's
+  locked install is offline-first with an online fallback (2026-10-11): the Aliyun mirror
+  serves `max-age=43200` with a non-trivial CDN `Age`, so cached HTTP entries age past
+  their freshness window even when the seed content is complete — the first (offline)
+  attempt serves such a cache as-is and only the genuinely missing artifacts fall through
+  to the online retry. The seed compatibility proof ("empty private cache + disabled
+  network") is therefore unconditional again, independent of the mirror's freshness
+  policy (recorded in the Python acceptance record section 7).
 - Mounts: project code at `/workspace` (container working directory), project cache at
   `/python-cache` (the workspace PVC's `.manao-cache/python` subPath), run control at
   `/run-control` (shared supervisor), `/tmp` writable. The image carries no Maven.
