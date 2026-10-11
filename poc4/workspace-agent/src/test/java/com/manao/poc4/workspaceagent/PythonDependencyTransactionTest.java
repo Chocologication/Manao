@@ -133,6 +133,32 @@ class PythonDependencyTransactionTest {
         assertThat(manifest).contains(prepared.afterSha256());
     }
 
+    /**
+     * A batch result shares the SAME two-file journal and commit entry as a single-package
+     * result: staging keeps the journal at exactly pyproject.toml + uv.lock + manifest.json,
+     * and the commit applies only the two managed files — never a third managed file.
+     */
+    @Test
+    void aBatchStagedJournalKeepsTheTwoFileShapeAndCommitsNoThirdManagedFile(@TempDir Path root) throws Exception {
+        Files.writeString(root.resolve("pyproject.toml"), BEFORE_PYPROJECT);
+        Files.writeString(root.resolve("uv.lock"), BEFORE_LOCK);
+
+        var prepared = stage(root);
+        try (var files = Files.list(root.resolve(".manao/python-dependencies").resolve(OPERATION_ID))) {
+            assertThat(files.map(path -> path.getFileName().toString()))
+                .containsExactlyInAnyOrder("pyproject.toml", "uv.lock", "manifest.json");
+        }
+        var result = new PythonDependencyTransaction(root).commit(commitCommand(prepared));
+
+        assertThat(result.afterSha256()).isEqualTo(prepared.afterSha256());
+        assertThat(Files.readString(root.resolve("pyproject.toml"))).isEqualTo(AFTER_PYPROJECT);
+        assertThat(Files.readString(root.resolve("uv.lock"))).isEqualTo(AFTER_LOCK);
+        try (var files = Files.list(root)) {
+            assertThat(files.map(path -> path.getFileName().toString()))
+                .containsExactlyInAnyOrder("pyproject.toml", "uv.lock", ".manao");
+        }
+    }
+
     @Test
     void stageTwiceWithTheSameRequestReturnsTheSameSummaryAndKeepsTheJournal(@TempDir Path root) throws Exception {
         Files.writeString(root.resolve("pyproject.toml"), BEFORE_PYPROJECT);

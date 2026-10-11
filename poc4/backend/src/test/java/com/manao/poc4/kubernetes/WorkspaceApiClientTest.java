@@ -7,6 +7,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.manao.poc4.workspace.WorkspaceAgent;
+import com.manao.poc4.workspace.WorkspaceAgentException;
 import com.manao.poc4.workspace.WorkspaceCapabilitySigner;
 import com.sun.net.httpserver.HttpServer;
 import java.net.InetSocketAddress;
@@ -35,6 +36,8 @@ class WorkspaceApiClientTest {
     private static final String PROJECT = "prj-contract";
     private static final String OPERATION = "00000000-0000-4000-8000-000000000001";
     private final AtomicReference<Request> received = new AtomicReference<>();
+    private final AtomicReference<Integer> errorStatus = new AtomicReference<>();
+    private final AtomicReference<String> errorBody = new AtomicReference<>();
     private HttpServer server;
     private WorkspaceApiClient client;
     private KeyPair keyPair;
@@ -52,9 +55,10 @@ class WorkspaceApiClientTest {
                 exchange.getRequestHeaders().getFirst("Content-Type"),
                 exchange.getRequestHeaders().getFirst("X-Manao-Workspace-Capability"),
                 exchange.getRequestBody().readAllBytes()));
-            byte[] response = responseBody.getBytes(StandardCharsets.UTF_8);
+            Integer status = errorStatus.get();
+            byte[] response = (status == null ? responseBody : errorBody.get()).getBytes(StandardCharsets.UTF_8);
             exchange.getResponseHeaders().set("Content-Type", "application/json");
-            exchange.sendResponseHeaders(200, response.length);
+            exchange.sendResponseHeaders(status == null ? 200 : status, response.length);
             try (var output = exchange.getResponseBody()) { output.write(response); }
         });
         server.start();
@@ -140,6 +144,49 @@ class WorkspaceApiClientTest {
         assertThat(prepared).isEqualTo(new WorkspaceAgent.PreparedPythonDependencies(OPERATION, "a".repeat(64),
             "b".repeat(64), "c".repeat(64)));
         assertSignatureMatchesTheActualRequest(request);
+    }
+
+    @Test
+    void prepareBatchSendsTheRequirementsTextAndReadsTheSummary() throws Exception {
+        String requirements = "# batch probe\nhttpx==0.28.1\n\nidna>=3.7\n";
+        responseBody = "{\"operationId\":\"" + OPERATION + "\",\"requestSha256\":\"" + "a".repeat(64) + "\","
+            + "\"beforeSha256\":\"" + "b".repeat(64) + "\",\"afterSha256\":\"" + "c".repeat(64) + "\"}";
+        WorkspaceAgent.PreparedPythonDependencies prepared =
+            client.prepareBatch(PROJECT, OPERATION, "a".repeat(64), requirements);
+        Request request = received.get();
+        assertThat(request.method()).isEqualTo("POST");
+        assertThat(request.uri().getPath()).isEqualTo("/agent/v1/python-dependencies/prepare-batch");
+        assertThat(request.contentType()).isEqualTo("application/json");
+        var body = JSON.readTree(request.body());
+        assertThat(body.get("operationId").asText()).isEqualTo(OPERATION);
+        assertThat(body.get("requestSha256").asText()).isEqualTo("a".repeat(64));
+        // The multi-line text travels as ONE escaped JSON string with an exact round-trip;
+        // the body itself must carry no raw line breaks, shell commands, index URLs or env.
+        assertThat(body.get("requirementsText").asText()).isEqualTo(requirements);
+        assertThat(new String(request.body(), StandardCharsets.UTF_8)).doesNotContain("\n");
+        assertThat(body.has("indexUrl")).isFalse();
+        assertThat(body.has("env")).isFalse();
+        assertThat(prepared).isEqualTo(new WorkspaceAgent.PreparedPythonDependencies(OPERATION, "a".repeat(64),
+            "b".repeat(64), "c".repeat(64)));
+        assertSignatureMatchesTheActualRequest(request);
+    }
+
+    @Test
+    void prepareBatchReusesTheAgentErrorMappingAndCodes() {
+        errorStatus.set(422);
+        errorBody.set("{\"code\":\"PYTHON_DEPENDENCY_UNSUPPORTED\",\"message\":\"outside the supported scope\"}");
+        assertThatThrownBy(() -> client.prepareBatch(PROJECT, OPERATION, "a".repeat(64), "-r other.txt\n"))
+            .isInstanceOfSatisfying(WorkspaceAgentException.class, ex -> {
+                assertThat(ex.status()).isEqualTo(422);
+                assertThat(ex.code()).isEqualTo("PYTHON_DEPENDENCY_UNSUPPORTED");
+            });
+        errorStatus.set(409);
+        errorBody.set("{\"code\":\"DEPENDENCY_REQUEST_MISMATCH\",\"message\":\"mismatch\"}");
+        assertThatThrownBy(() -> client.prepareBatch(PROJECT, OPERATION, "a".repeat(64), "httpx==0.28.1\n"))
+            .isInstanceOfSatisfying(WorkspaceAgentException.class, ex -> {
+                assertThat(ex.status()).isEqualTo(409);
+                assertThat(ex.code()).isEqualTo("DEPENDENCY_REQUEST_MISMATCH");
+            });
     }
 
     @Test

@@ -580,6 +580,19 @@ public class WorkspaceControllerTest {
             return prepareResult;
         }
 
+        /** Batch prepare seam (agent port parity); the backend batch flow is Task 3's scope. */
+        public int prepareBatchCalls;
+        public final List<String> preparedBatchTexts = new ArrayList<>();
+
+        @Override public PreparedPythonDependencies prepareBatch(String projectId, String operationId,
+                                                                String requestSha256, String requirementsText) {
+            prepareBatchCalls++;
+            preparedBatchTexts.add(requirementsText);
+            if (prepareGate != null) prepareGate.enter();
+            if (prepareError != null) throw prepareError;
+            return prepareResult;
+        }
+
         @Override public PreparedPythonDependencies commit(String projectId, PythonDependencyCommit command) {
             commitCalls++;
             commitCommands.add(command);

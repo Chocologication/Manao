@@ -114,6 +114,14 @@ public final class WorkspaceAgentController {
         return pythonDependencies.prepare(request.operationId(), request.requestSha256(), request.change());
     }
 
+    /** Batch prepare: ONE requirements-text resolution through the same scratch/journal protocol. */
+    @PostMapping("/python-dependencies/prepare-batch")
+    public PythonDependencyEditor.PreparedPythonDependencies prepareDependencyBatch(
+        @RequestBody PrepareBatchDependencyRequest request) {
+        return pythonDependencies.prepareBatch(request.operationId(), request.requestSha256(),
+            request.requirementsText());
+    }
+
     /** Commit only: first application and post-interruption retries share this single entry. */
     @PostMapping("/python-dependencies/commit")
     public PythonDependencyEditor.PreparedPythonDependencies commitDependency(
@@ -150,4 +158,6 @@ public final class WorkspaceAgentController {
                                      String expectedAfterSha256, String receiptJson, String expectedReceiptSha256) { }
     public record PrepareDependencyRequest(String operationId, String requestSha256,
                                            PythonDependencyEditor.DependencyChange change) { }
+    public record PrepareBatchDependencyRequest(String operationId, String requestSha256,
+                                                String requirementsText) { }
 }

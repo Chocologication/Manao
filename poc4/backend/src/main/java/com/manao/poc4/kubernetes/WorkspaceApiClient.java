@@ -165,6 +165,18 @@ public final class WorkspaceApiClient implements WorkspaceAgent {
     }
 
     @Override
+    public PreparedPythonDependencies prepareBatch(String projectId, String operationId, String requestSha256,
+                                                   String requirementsText) {
+        // The requirements text travels as one JSON string (properly escaped by the mapper);
+        // no shell command, index URL or environment variable is ever sent.
+        String body = "{\"operationId\":" + JSON.valueToTree(operationId)
+            + ",\"requestSha256\":" + JSON.valueToTree(requestSha256)
+            + ",\"requirementsText\":" + JSON.valueToTree(requirementsText) + "}";
+        return preparedFrom(sendJson(projectId, "POST", "/agent/v1/python-dependencies/prepare-batch",
+            body.getBytes(StandardCharsets.UTF_8), dependencyTimeout));
+    }
+
+    @Override
     public PreparedPythonDependencies commit(String projectId, PythonDependencyCommit command) {
         var payload = JSON.createObjectNode();
         payload.set("prepared", JSON.valueToTree(command == null ? null : command.prepared()));

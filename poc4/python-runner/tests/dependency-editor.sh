@@ -69,6 +69,17 @@
 #                          a pyproject declaring the FORMER pypi.org default index, or the
 #                          mirror URL without its trailing slash, is rejected 422
 #                          PYTHON_DEPENDENCY_UNSUPPORTED before uv runs, with no journal
+#   prepare-batch          a multi-line requirements text (exact pin, version range, whole-line
+#                          comment, blank line) is imported through ONE prepare-batch call with
+#                          exactly ONE `uv add -r <private file>` invocation (logged by a
+#                          test-only uv shim, per-run volume + PATH override — the production
+#                          image is untouched) plus the one installability verification: the
+#                          workspace sources stay untouched, the journal holds BOTH packages
+#                          and no comment residue, and the pinned mirror is in the fixed argv
+#   batch-unsupported      requirements lines that could switch or nest sources (-r,
+#                          --index-url, git+, local path) are rejected 422
+#                          PYTHON_DEPENDENCY_UNSUPPORTED before uv runs, with no journal and
+#                          untouched sources
 #
 # Docker ownership (names, registration, volume identity, registry, cleanup) is shared with
 # the other runner suites via tests/lib.sh — the hardened Task 3 pattern. Host-side JSON
@@ -114,6 +125,11 @@ OPERATION_PLATFORMWHEEL="7f0a1c3d-0006-4a6b-8c9d-0e1f2a3b4c5d"
 OPERATION_HELPERHANG="7f0a1c3d-0004-4a6b-8c9d-0e1f2a3b4c5d"
 OPERATION_ENVOVR="7f0a1c3d-0007-4a6b-8c9d-0e1f2a3b4c5d"
 OPERATION_TOOLUVA="7f0a1c3d-0008-4a6b-8c9d-0e1f2a3b4c5d"
+OPERATION_BATCH="7f0a1c3d-0009-4a6b-8c9d-0e1f2a3b4c5d"
+OPERATION_BATCH_REJECT_1="7f0a1c3d-000a-4a6b-8c9d-0e1f2a3b4c5d"
+OPERATION_BATCH_REJECT_2="7f0a1c3d-000b-4a6b-8c9d-0e1f2a3b4c5d"
+OPERATION_BATCH_REJECT_3="7f0a1c3d-000c-4a6b-8c9d-0e1f2a3b4c5d"
+OPERATION_BATCH_REJECT_4="7f0a1c3d-000d-4a6b-8c9d-0e1f2a3b4c5d"
 
 # shellcheck source=lib.sh
 . "$SOURCE_DIR/lib.sh"
@@ -160,6 +176,20 @@ with open(sys.argv[1], encoding='utf-8') as handle:
     data = json.load(handle)
 print($2)
 " "$1" "$2"
+}
+
+# Builds one prepare-batch request body: the multi-line requirements text travels as ONE
+# properly escaped JSON string — exactly the wire contract the backend transport uses.
+build_batch_body() { # OUT_FILE OPERATION_ID REQUEST_SHA REQUIREMENTS_FILE
+  "$PYTHON_BIN" - "$@" <<'PYEOF'
+import json, sys
+out, operation, digest, requirements_path = sys.argv[1:5]
+with open(requirements_path, encoding="utf-8") as handle:
+    text = handle.read()
+body = {"operationId": operation, "requestSha256": digest, "requirementsText": text}
+with open(out, "w", encoding="utf-8") as handle:
+    handle.write(json.dumps(body))
+PYEOF
 }
 
 # Copies the real exported template into the agent's workspace volume (via docker cp, no host
@@ -802,6 +832,110 @@ EOF
   fi
 }
 
+# prepare-batch: a multi-line requirements text (exact pin, version range, whole-line comment,
+# blank line) is imported through ONE prepare-batch call with exactly ONE `uv add -r` run —
+# logged by a test-only uv shim (per-run volume + PATH override; the production image is
+# untouched) — plus the one fixed installability verification. Sources stay untouched, the
+# journal holds BOTH requirements and no comment residue, and the pinned mirror is in argv.
+scenario_prepare_batch() {
+  new_volume "uvshim"
+  local shim="$CREATED_VOLUME"
+  dc run --rm --user 0 --entrypoint /bin/sh -v "$shim:/shim" "$IMAGE" \
+    -c 'printf "#!/bin/sh\nprintf \"%%s\\n\" \"\$*\" >> /shim/uv.log\nexec /usr/local/bin/uv \"\$@\"\n" > /shim/uv \
+        && chmod 0555 /shim/uv && touch /shim/uv.log && chmod 0666 /shim/uv.log' >/dev/null 2>&1 \
+    || { fail "prepare-batch (cannot write the logging uv shim)"; return 0; }
+  local agent2 port
+  read -r agent2 port <<< "$(start_agent "${PREFIX}-batch" "$PROJECT_ID_SHIM" \
+    -e 'PATH=/shim:/usr/local/bin:/usr/bin:/bin' \
+    -v "$shim:/shim")"
+  seed_template "$agent2"
+  cat > "$WORK/batch-requirements.txt" <<'EOF'
+# batch import probe
+httpx==0.28.1
+
+idna>=3.7
+EOF
+  local request_sha
+  request_sha="$(sha256sum "$WORK/batch-requirements.txt" | cut -d' ' -f1)"
+  build_batch_body "$WORK/prepare-batch.json" "$OPERATION_BATCH" "$request_sha" "$WORK/batch-requirements.txt"
+  local py_before lock_before py_after lock_after started elapsed
+  read -r py_before lock_before <<< "$(workspace_digests "$agent2")"
+  started="$(now_ms)"
+  post_json "$port" "$PROJECT_ID_SHIM" "/agent/v1/python-dependencies/prepare-batch" "$WORK/prepare-batch.json"
+  elapsed=$(( $(now_ms) - started ))
+  echo "TIMING: prepare-batch (one real uv requirements import) ${elapsed}ms"
+  cp "$WORK/resp.json" "$WORK/prepared-batch.json"
+  read -r py_after lock_after <<< "$(workspace_digests "$agent2")"
+  local uv_log add_runs sync_runs add_line journal_py manifest_ok
+  uv_log="$(dc exec "$agent2" cat /shim/uv.log 2>/dev/null || true)"
+  add_runs="$(printf '%s\n' "$uv_log" | grep -c '^add ' || true)"
+  sync_runs="$(printf '%s\n' "$uv_log" | grep -c '^sync ' || true)"
+  add_line="$(printf '%s\n' "$uv_log" | grep '^add ' | head -n1 || true)"
+  journal_py="$(dc exec "$agent2" cat "/workspace/.manao/python-dependencies/$OPERATION_BATCH/pyproject.toml" 2>/dev/null || true)"
+  manifest_ok=0
+  dc exec "$agent2" test -f "/workspace/.manao/python-dependencies/$OPERATION_BATCH/manifest.json" >/dev/null 2>&1 && manifest_ok=1
+  if [ "$HTTP_STATUS" != "200" ]; then
+    fail "prepare-batch (expected 200, got $HTTP_STATUS: $(cat "$WORK/resp.json"))"
+  elif [ "$(json_field "$WORK/prepared-batch.json" "data['requestSha256']")" != "$request_sha" ]; then
+    fail "prepare-batch (request digest not echoed)"
+  elif [ "$py_before" != "$py_after" ] || [ "$lock_before" != "$lock_after" ]; then
+    fail "prepare-batch (workspace sources changed during prepare)"
+  elif [ "$manifest_ok" != "1" ]; then
+    fail "prepare-batch (PREPARED journal manifest missing)"
+  elif [ "$add_runs" != "1" ] || [ "$sync_runs" != "1" ]; then
+    fail "prepare-batch (expected exactly ONE uv add + ONE verification run, got add=$add_runs sync=$sync_runs)"
+  elif ! printf '%s' "$add_line" | grep -Fq -- '-r /tmp/manao-python-dependencies-' \
+    || ! printf '%s' "$add_line" | grep -Fq 'manao-batch-requirements.txt' \
+    || ! printf '%s' "$add_line" | grep -Fq "$MANAO_PYTHON_INDEX_URL"; then
+    fail "prepare-batch (the single add run must consume the private requirements file through the pinned mirror argv)"
+  elif ! printf '%s' "$journal_py" | grep -Fq 'httpx==0.28.1' \
+    || ! printf '%s' "$journal_py" | grep -Fq 'idna>=3.7' \
+    || printf '%s' "$journal_py" | grep -Fq 'batch import probe'; then
+    fail "prepare-batch (journal must carry both requirements and no comment residue)"
+  else
+    pass "prepare-batch (ONE uv add -r + ONE verification; sources unchanged $py_before/$lock_before; both requirements journaled, no comment residue) [${elapsed}ms]"
+  fi
+}
+
+# batch-unsupported: requirements lines that could switch or nest sources (-r, --index-url,
+# git+, local path) are rejected 422 PYTHON_DEPENDENCY_UNSUPPORTED — the token only ever
+# comes from the helper's pre-uv checks, so the code itself proves no network contact — with
+# no journal and untouched workspace sources.
+scenario_batch_unsupported_sources() {
+  local agent2 port
+  read -r agent2 port <<< "$(start_agent "${PREFIX}-batchrej" "$PROJECT_ID_SHIM")"
+  seed_template "$agent2"
+  local py_before lock_before py_after lock_after
+  read -r py_before lock_before <<< "$(workspace_digests "$agent2")"
+  local operations=("$OPERATION_BATCH_REJECT_1" "$OPERATION_BATCH_REJECT_2" "$OPERATION_BATCH_REJECT_3" "$OPERATION_BATCH_REJECT_4")
+  local result=1 i=0 variant operation digest journal_present
+  for variant in '-r ./other.txt' '--index-url https://evil.example/simple' \
+                 'git+https://github.com/psf/requests' '../shared-lib'; do
+    operation="${operations[$i]}"
+    i=$((i+1))
+    printf '%s\n' "$variant" > "$WORK/batch-reject.txt"
+    digest="$(sha256sum "$WORK/batch-reject.txt" | cut -d' ' -f1)"
+    build_batch_body "$WORK/prepare-batch-reject.json" "$operation" "$digest" "$WORK/batch-reject.txt"
+    post_json "$port" "$PROJECT_ID_SHIM" "/agent/v1/python-dependencies/prepare-batch" "$WORK/prepare-batch-reject.json"
+    journal_present=0
+    dc exec "$agent2" test -f "/workspace/.manao/python-dependencies/$operation/manifest.json" >/dev/null 2>&1 && journal_present=1
+    if [ "$HTTP_STATUS" = "422" ] \
+      && [ "$(json_field "$WORK/resp.json" "data['code']")" = "PYTHON_DEPENDENCY_UNSUPPORTED" ] \
+      && [ "$journal_present" = "0" ]; then
+      result=0
+    else
+      result=1
+      break
+    fi
+  done
+  read -r py_after lock_after <<< "$(workspace_digests "$agent2")"
+  if [ "$result" = "0" ] && [ "$py_before" = "$py_after" ] && [ "$lock_before" = "$lock_after" ]; then
+    pass "batch-unsupported (-r, --index-url, git+ and local path requirement lines all rejected 422 PYTHON_DEPENDENCY_UNSUPPORTED before uv, no journal, sources unchanged)"
+  else
+    fail "batch-unsupported (variant=$variant status=$HTTP_STATUS body=$(cat "$WORK/resp.json") journal=$journal_present)"
+  fi
+}
+
 # ---------------------------------------------------------------------------
 # Run
 # ---------------------------------------------------------------------------
@@ -824,6 +958,8 @@ scenario_no_platform_wheel_category
 scenario_helper_hang_kills_tree
 scenario_timeout_kills_tool
 scenario_fixed_index_env_override
+scenario_prepare_batch
+scenario_batch_unsupported_sources
 
 echo "dependency-editor: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

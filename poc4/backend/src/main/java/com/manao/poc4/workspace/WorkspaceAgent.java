@@ -27,6 +27,15 @@ public interface WorkspaceAgent {
     PreparedPythonDependencies prepare(String projectId, String operationId, String requestSha256,
                                        DependencyChange change);
 
+    /**
+     * Prepares a whole batch requirements import with ONE resolution run in the agent's scratch
+     * space through the same prepare protocol; the workspace sources are untouched and the
+     * response carries identity and digests only. The requirements text travels as one string;
+     * no shell command, index URL or environment variable is ever sent.
+     */
+    PreparedPythonDependencies prepareBatch(String projectId, String operationId, String requestSha256,
+                                            String requirementsText);
+
     /** Commits the prepared two-file change under the backend-issued deterministic receipt. */
     PreparedPythonDependencies commit(String projectId, PythonDependencyCommit command);
 

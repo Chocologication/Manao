@@ -26,6 +26,8 @@ class PythonDependencyEditorTest {
     private static final String BEFORE_LOCK = "version = 1\n";
     private static final String AFTER_PYPROJECT = "[project]\nname='demo'\ndependencies = [\"httpx>=0.28.1\"]\n";
     private static final String AFTER_LOCK = "version = 1\nrevision = 3\n";
+    /** One batch requirements text: exact pin, version range, whole-line comment and blank line. */
+    private static final String BATCH_REQUIREMENTS = "# batch import probe\nhttpx==0.28.1\n\nidna>=3.7\n";
 
     static String sha256Hex(byte[] bytes) {
         try {
@@ -46,6 +48,8 @@ class PythonDependencyEditorTest {
     /** Package-private resolver seam: stands in for the container-only uv helper. */
     private static final class CountingResolver implements PythonDependencyEditor.Resolver {
         int calls;
+        int batchCalls;
+        String batchRequirementsText;
         String pyprojectContent = AFTER_PYPROJECT;
         String lockContent = AFTER_LOCK;
         boolean deleteLock; // simulates a tool that produced no uv.lock at all
@@ -54,6 +58,17 @@ class PythonDependencyEditorTest {
         @Override
         public void resolve(Path scratch, PythonDependencyEditor.DependencyChange change) {
             calls++;
+            applyResult(scratch);
+        }
+
+        @Override
+        public void resolveBatch(Path scratch, String requirementsText) {
+            batchCalls++;
+            this.batchRequirementsText = requirementsText;
+            applyResult(scratch);
+        }
+
+        private void applyResult(Path scratch) {
             if (failure != null) throw failure;
             try {
                 if (pyprojectContent != null) {
@@ -171,6 +186,108 @@ class PythonDependencyEditorTest {
             .isInstanceOfSatisfying(WorkspaceFileService.WorkspaceFileException.class,
                 ex -> assertThat(ex.code()).isEqualTo("DEPENDENCY_REQUEST_MISMATCH"));
         assertThat(resolver.calls).isEqualTo(1);
+    }
+
+    @Test
+    void batchPrepareResolvesOncePersistsTheJournalAndLeavesSourcesUntouched(@TempDir Path root) throws Exception {
+        seedWorkspace(root);
+        CountingResolver resolver = new CountingResolver();
+
+        PythonDependencyEditor.PreparedPythonDependencies prepared =
+            editor(root, resolver).prepareBatch(OPERATION_ID, REQUEST_SHA256, BATCH_REQUIREMENTS);
+
+        // ONE resolver invocation for the whole batch — never a per-line loop.
+        assertThat(resolver.batchCalls).isEqualTo(1);
+        assertThat(resolver.calls).isZero();
+        assertThat(resolver.batchRequirementsText).isEqualTo(BATCH_REQUIREMENTS);
+        assertThat(prepared.operationId()).isEqualTo(OPERATION_ID);
+        assertThat(prepared.requestSha256()).isEqualTo(REQUEST_SHA256);
+        assertThat(prepared.beforeSha256()).isEqualTo(combinedDigest(
+            sha256Hex(BEFORE_PYPROJECT.getBytes(StandardCharsets.UTF_8)),
+            sha256Hex(BEFORE_LOCK.getBytes(StandardCharsets.UTF_8))));
+        assertThat(prepared.afterSha256()).isEqualTo(combinedDigest(
+            sha256Hex(AFTER_PYPROJECT.getBytes(StandardCharsets.UTF_8)),
+            sha256Hex(AFTER_LOCK.getBytes(StandardCharsets.UTF_8))));
+        // The workspace sources are unchanged; the journal still holds exactly the two managed
+        // files plus its manifest — a batch never introduces a third managed file.
+        assertThat(Files.readString(root.resolve("pyproject.toml"))).isEqualTo(BEFORE_PYPROJECT);
+        assertThat(Files.readString(root.resolve("uv.lock"))).isEqualTo(BEFORE_LOCK);
+        try (var files = Files.list(root.resolve(".manao/python-dependencies").resolve(OPERATION_ID))) {
+            assertThat(files.map(path -> path.getFileName().toString()))
+                .containsExactlyInAnyOrder("pyproject.toml", "uv.lock", "manifest.json");
+        }
+    }
+
+    @Test
+    void batchPrepareWithAnAlreadyPreparedSameRequestReturnsTheSameSummaryWithoutResolvingAgain(@TempDir Path root) throws Exception {
+        seedWorkspace(root);
+        CountingResolver resolver = new CountingResolver();
+        PythonDependencyEditor editor = editor(root, resolver);
+        PythonDependencyEditor.PreparedPythonDependencies first =
+            editor.prepareBatch(OPERATION_ID, REQUEST_SHA256, BATCH_REQUIREMENTS);
+
+        PythonDependencyEditor.PreparedPythonDependencies second =
+            editor.prepareBatch(OPERATION_ID, REQUEST_SHA256, BATCH_REQUIREMENTS);
+
+        assertThat(second).isEqualTo(first);
+        assertThat(resolver.batchCalls).isEqualTo(1);
+    }
+
+    @Test
+    void batchPrepareWithADifferentRequestForTheSameOperationIdIsRejectedWithoutResolving(@TempDir Path root) throws Exception {
+        seedWorkspace(root);
+        CountingResolver resolver = new CountingResolver();
+        PythonDependencyEditor editor = editor(root, resolver);
+        editor.prepareBatch(OPERATION_ID, REQUEST_SHA256, BATCH_REQUIREMENTS);
+
+        assertThatThrownBy(() -> editor.prepareBatch(OPERATION_ID, "c".repeat(64), BATCH_REQUIREMENTS))
+            .isInstanceOfSatisfying(WorkspaceFileService.WorkspaceFileException.class,
+                ex -> assertThat(ex.code()).isEqualTo("DEPENDENCY_REQUEST_MISMATCH"));
+        assertThat(resolver.batchCalls).isEqualTo(1);
+    }
+
+    @Test
+    void batchPrepareRejectsAMissingRequirementsTextBeforeAnyResolution(@TempDir Path root) throws Exception {
+        seedWorkspace(root);
+        CountingResolver resolver = new CountingResolver();
+
+        assertThatThrownBy(() -> editor(root, resolver).prepareBatch(OPERATION_ID, REQUEST_SHA256, null))
+            .isInstanceOfSatisfying(WorkspaceFileService.WorkspaceFileException.class,
+                ex -> assertThat(ex.code()).isEqualTo("VALIDATION_ERROR"));
+        assertThat(resolver.batchCalls).isZero();
+    }
+
+    @Test
+    void failedBatchResolutionLeavesSourcesAndJournalUntouched(@TempDir Path root) throws Exception {
+        seedWorkspace(root);
+        CountingResolver resolver = new CountingResolver();
+        resolver.failure = new WorkspaceFileService.WorkspaceFileException(
+            "PYTHON_DEPENDENCY_RESOLUTION_FAILED", "uv failed");
+
+        assertThatThrownBy(() -> editor(root, resolver).prepareBatch(OPERATION_ID, REQUEST_SHA256,
+            BATCH_REQUIREMENTS))
+            .isInstanceOfSatisfying(WorkspaceFileService.WorkspaceFileException.class,
+                ex -> assertThat(ex.code()).isEqualTo("PYTHON_DEPENDENCY_RESOLUTION_FAILED"));
+        assertThat(resolver.batchCalls).isEqualTo(1);
+        assertThat(Files.readString(root.resolve("pyproject.toml"))).isEqualTo(BEFORE_PYPROJECT);
+        assertThat(Files.readString(root.resolve("uv.lock"))).isEqualTo(BEFORE_LOCK);
+        assertThat(Files.exists(root.resolve(".manao/python-dependencies").resolve(OPERATION_ID))).isFalse();
+    }
+
+    @Test
+    void helperBatchCommandIsFixedAndNeverAShellLine(@TempDir Path root) {
+        // The private requirements file lives inside the scratch under a fixed agent-owned name
+        // that is neither a workspace path nor the project-root requirements.txt.
+        Path requirements = root.resolve(PythonDependencyEditor.BATCH_REQUIREMENTS_NAME);
+        assertThat(PythonDependencyEditor.BATCH_REQUIREMENTS_NAME)
+            .isNotEqualTo("pyproject.toml").isNotEqualTo("uv.lock").isNotEqualTo("requirements.txt");
+
+        List<String> argv = PythonDependencyEditor.helperBatchCommand(root, requirements,
+            "/usr/local/bin/python3", "/opt/manao-python/dependency_helper.py", 20);
+
+        assertThat(argv).containsExactly("/usr/local/bin/python3", "-I",
+            "/opt/manao-python/dependency_helper.py", root.toString(), "BATCH",
+            requirements.toString(), "20");
     }
 
     @Test

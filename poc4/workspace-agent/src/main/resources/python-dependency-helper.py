@@ -4,10 +4,27 @@ Launched by the agent exactly as:
 
     /usr/local/bin/python3 -I /opt/manao-python/dependency_helper.py SCRATCH ACTION PACKAGE VERSION BUDGET
 
+or, for a batch requirements import:
+
+    /usr/local/bin/python3 -I /opt/manao-python/dependency_helper.py SCRATCH BATCH REQUIREMENTS BUDGET
+
 - SCRATCH is a fresh agent-created directory holding the copied pyproject.toml and (optional)
   uv.lock; the workspace sources are never touched here.
 - ACTION is ADD or REMOVE, PACKAGE is the already-normalized lowercase name, VERSION is an
-  exact version or empty, BUDGET is the resolution budget in seconds.
+  exact version or empty, BUDGET is the resolution budget in seconds. BATCH mode takes a
+  REQUIREMENTS path instead of PACKAGE/VERSION: the agent stages the raw requirements text
+  into a scratch-private file (SCRATCH/manao-batch-requirements.txt, never a workspace path
+  or the project root) and the helper reads the original bytes from that path.
+- BATCH mode imports a whole requirements text with exactly ONE uv run (never a per-line
+  loop): the helper enforces the 64 KiB limit and UTF-8 decoding itself (defence in depth -
+  the backend enforces its own limits), drops blank lines and whole-line comments, requires
+  every remaining line to match the SAME PLAIN_REQUIREMENT grammar as pre-existing
+  declarations (so -r/--requirement nesting, --index-url, --extra-index-url, --find-links,
+  -e/--editable, git+, http(s):// and file:// URLs, local paths, backslash continuations and
+  `;` payloads beyond a valid environment marker are all rejected BEFORE uv runs, with the
+  offending line number), rewrites the filtered lines into the same private file, and runs
+  the fixed add argv exactly once with `-r <that file>`, then the same installability
+  verification in the same scratch.
 - Standard library only; isolated mode (-I) plus the absolute script path guarantee it can
   never import management code from a user project; no shell is ever spawned; the agent
   starts it with a minimal environment, so no capability material or project secret is in
@@ -276,9 +293,93 @@ def run_uv(argv, scratch, deadline, phase):
     return process.returncode, (stdout_sink["data"] + stderr_sink["data"]).decode("utf-8", "replace")
 
 
+def parse_budget(budget_text):
+    try:
+        budget = int(budget_text)
+    except ValueError:
+        resolution_failed("invalid resolution budget: %r" % budget_text)
+    if budget < 1:
+        resolution_failed("invalid resolution budget: %d" % budget)
+    return budget
+
+
+def filter_requirements(text):
+    """Drops blank lines and whole-line comments and returns the stripped requirement lines.
+
+    Every remaining line must match the SAME PLAIN_REQUIREMENT grammar the scope check
+    applies to pre-existing declarations: an option-style line (-r, --index-url,
+    --extra-index-url, --find-links, -e), a git+/http(s)/file URL, a local path, a backslash
+    continuation, or a `;` payload beyond a valid environment marker never matches and is
+    rejected UNSUPPORTED with the offending line number - before uv runs.
+    """
+    kept = []
+    for number, line in enumerate(text.splitlines(), start=1):
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        if not PLAIN_REQUIREMENT.match(line):
+            unsupported(
+                "requirements line %d is outside the plain public-PyPI requirement form; "
+                "-r/--requirement, --index-url, --extra-index-url, --find-links, -e/--editable, "
+                "git+, http(s):// and file:// URLs, local paths, backslash continuations and "
+                "inline `;` payloads beyond a valid environment marker are outside the "
+                "supported scope: %r" % (number, line))
+        kept.append(stripped)
+    if not kept:
+        unsupported("the batch requirements contain no requirement line")
+    return kept
+
+
+def run_batch(scratch, requirements_path, budget_text):
+    """BATCH mode: one requirements-text import through the same prepare protocol."""
+    budget = parse_budget(budget_text)
+    try:
+        with open(requirements_path, "rb") as handle:
+            data = handle.read()
+    except OSError as ex:
+        resolution_failed("cannot read the batch requirements file: %s" % ex)
+    # Defence in depth: the backend enforces its own size and line-count limits; the helper
+    # likewise never accepts a payload beyond the bounded output limit (no silent truncation).
+    if len(data) > OUTPUT_LIMIT:
+        unsupported("the batch requirements exceed the %d byte limit" % OUTPUT_LIMIT)
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError as ex:
+        unsupported("the batch requirements are not valid UTF-8: %s" % ex)
+
+    check_supported_scope(scratch)
+    kept = filter_requirements(text)
+    try:
+        with open(requirements_path, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write("".join(line + "\n" for line in kept))
+    except OSError as ex:
+        resolution_failed("cannot write the filtered requirements file: %s" % ex)
+
+    # ONE deadline for the whole prepare: the batch add run AND the installability
+    # verification draw from it, so the helper's total stays within BUDGET (ruling R4).
+    deadline = time.monotonic() + budget
+    argv = UV_ARGV_PREFIX.copy()
+    argv.insert(1, "add")
+    argv.extend(["-r", requirements_path])
+    code, output = run_uv(argv, scratch, deadline, "batch add")
+    if code != 0:
+        classify_resolution_failure(code, output)
+    # The batch add succeeded, but a universal lock can still resolve a distribution that
+    # has no wheel for THIS platform (e.g. pywin32); the dry-run installability verification
+    # in the same scratch fails such a batch before any journal can exist (design 6.3).
+    code, output = run_uv(VERIFY_ARGV, scratch, deadline, "installability verification")
+    if code != 0:
+        classify_resolution_failure(code, output)
+    sys.exit(0)
+
+
 def main(argv):
+    if len(argv) == 5 and argv[2] == "BATCH":
+        run_batch(argv[1], argv[3], argv[4])
+        return
     if len(argv) != 6:
-        resolution_failed("usage: dependency_helper.py SCRATCH ACTION PACKAGE VERSION BUDGET")
+        resolution_failed("usage: dependency_helper.py SCRATCH ACTION PACKAGE VERSION BUDGET"
+                          " | SCRATCH BATCH REQUIREMENTS BUDGET")
     scratch, action, package, version, budget_text = argv[1], argv[2], argv[3], argv[4], argv[5]
     if action not in ("ADD", "REMOVE"):
         resolution_failed("unsupported action: %r" % action)
@@ -292,12 +393,7 @@ def main(argv):
         if version and not EXACT_VERSION.match(version):
             resolution_failed("only exact versions are supported")
         spec = "%s==%s" % (package, version) if version else package
-    try:
-        budget = int(budget_text)
-    except ValueError:
-        resolution_failed("invalid resolution budget: %r" % budget_text)
-    if budget < 1:
-        resolution_failed("invalid resolution budget: %d" % budget)
+    budget = parse_budget(budget_text)
 
     check_supported_scope(scratch)
 

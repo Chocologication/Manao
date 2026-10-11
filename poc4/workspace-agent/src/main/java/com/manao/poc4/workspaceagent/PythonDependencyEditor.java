@@ -15,10 +15,11 @@ import org.slf4j.LoggerFactory;
 /**
  * Prepares Python dependency changes (design 6.2): it copies the two managed files into a fresh
  * scratch directory, lets the root-owned helper run the fixed {@code uv add/remove --no-sync}
- * argv there — the workspace sources are never touched — and persists the result as a PREPARED
- * journal through {@link PythonDependencyTransaction#stage}. Validation failures, an already
- * prepared same request, and fixed tool error categories are decided here before anything is
- * written; raw tool output never reaches the client.
+ * argv there — or, for a batch import, the fixed {@code uv add -r} over a scratch-private
+ * requirements file exactly once — the workspace sources are never touched — and persists the
+ * result as a PREPARED journal through {@link PythonDependencyTransaction#stage}. Validation
+ * failures, an already prepared same request, and fixed tool error categories are decided here
+ * before anything is written; raw tool output never reaches the client.
  */
 public final class PythonDependencyEditor {
     private static final Logger LOG = LoggerFactory.getLogger(PythonDependencyEditor.class);
@@ -33,7 +34,16 @@ public final class PythonDependencyEditor {
     /** Package-private seam so tests can stand in for the container-only uv helper. */
     interface Resolver {
         void resolve(Path scratch, DependencyChange change);
+
+        void resolveBatch(Path scratch, String requirementsText);
     }
+
+    /**
+     * Fixed scratch-private file the batch requirements text is staged into before the ONE
+     * helper run: an agent-owned name inside the scratch, never a workspace path nor the
+     * project-root requirements.txt, and never one of the two managed files.
+     */
+    static final String BATCH_REQUIREMENTS_NAME = "manao-batch-requirements.txt";
 
     private static final java.util.regex.Pattern ACTION = java.util.regex.Pattern.compile("ADD|REMOVE");
     /** Post-normalization package name: lowercase alnum at both ends, hyphens inside, 1–128 chars. */
@@ -87,6 +97,31 @@ public final class PythonDependencyEditor {
         validateOperationId(operationId);
         validateRequestSha256(requestSha256);
         validateChange(change);
+        return resolveAndStage(operationId, requestSha256, scratch -> resolver.resolve(scratch, change));
+    }
+
+    /**
+     * Prepares one batch requirements import with exactly ONE resolution run for the whole
+     * text — never a per-line loop — through the same scratch/journal protocol as
+     * {@link #prepare}: the idempotency and mismatch rules, the copied sources, the staged
+     * two-file journal and the safe rejections are identical. The requirements text is staged
+     * into the scratch under {@link #BATCH_REQUIREMENTS_NAME}; the workspace sources are never
+     * touched and the response carries identity and digests only.
+     */
+    public PreparedPythonDependencies prepareBatch(String operationId, String requestSha256, String requirementsText) {
+        validateOperationId(operationId);
+        validateRequestSha256(requestSha256);
+        if (requirementsText == null) {
+            throw new WorkspaceFileService.WorkspaceFileException("VALIDATION_ERROR",
+                "requirements text is required");
+        }
+        return resolveAndStage(operationId, requestSha256,
+            scratch -> resolver.resolveBatch(scratch, requirementsText));
+    }
+
+    /** The prepare skeleton both the single-change and the batch path share. */
+    private PreparedPythonDependencies resolveAndStage(String operationId, String requestSha256,
+                                                       java.util.function.Consumer<Path> resolution) {
         PreparedPythonDependencies existing = transaction.existingPrepared(operationId, requestSha256);
         if (existing != null) {
             return existing;
@@ -99,7 +134,7 @@ public final class PythonDependencyEditor {
         try {
             copyWorkspaceFileIntoScratch(scratch, "pyproject.toml");
             copyWorkspaceFileIntoScratch(scratch, "uv.lock");
-            resolver.resolve(scratch, change);
+            resolution.accept(scratch);
             String pyprojectContent = scratchOutput(scratch, "pyproject.toml");
             String lockContent = scratchOutput(scratch, "uv.lock");
             return transaction.stage(operationId, requestSha256, pyprojectContent, lockContent);
@@ -204,6 +239,17 @@ public final class PythonDependencyEditor {
             change.packageName(), change.version() == null || change.version().isBlank()
                 ? "" : change.version(),
             Long.toString(budgetSeconds));
+    }
+
+    /**
+     * Fixed batch helper argv: the same isolated interpreter and root-owned helper, the BATCH
+     * action, the scratch-private requirements file path (already staged by the agent) and the
+     * budget. Never a shell line; the requirements path travels as a single argument.
+     */
+    static List<String> helperBatchCommand(Path scratch, Path requirements,
+                                           String pythonExecutable, String helperPath, long budgetSeconds) {
+        return List.of(pythonExecutable, "-I", helperPath, scratch.toString(), "BATCH",
+            requirements.toString(), Long.toString(budgetSeconds));
     }
 
     /** Maps the helper's fixed stdout token to the safe error code; anything unknown fails closed. */
@@ -362,8 +408,23 @@ public final class PythonDependencyEditor {
 
         @Override
         public void resolve(Path scratch, DependencyChange change) {
-            ProcessBuilder builder = new ProcessBuilder(helperCommand(scratch, change,
-                pythonExecutable, helperPath, budgetSeconds));
+            runHelper(helperCommand(scratch, change, pythonExecutable, helperPath, budgetSeconds), scratch);
+        }
+
+        @Override
+        public void resolveBatch(Path scratch, String requirementsText) {
+            Path requirements = scratch.resolve(BATCH_REQUIREMENTS_NAME);
+            try {
+                Files.writeString(requirements, requirementsText, StandardCharsets.UTF_8);
+            } catch (IOException ex) {
+                throw ioError("cannot write the batch requirements into the scratch directory");
+            }
+            runHelper(helperBatchCommand(scratch, requirements, pythonExecutable, helperPath, budgetSeconds),
+                scratch);
+        }
+
+        private void runHelper(List<String> command, Path scratch) {
+            ProcessBuilder builder = new ProcessBuilder(command);
             builder.directory(scratch.toFile());
             // Explicitly minimal environment: never a wholesale inheritance, so capability
             // material and any project secrets cannot leak into the tool process.
