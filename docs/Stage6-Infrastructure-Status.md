@@ -16,6 +16,8 @@ Updated: 2026-09-20. This document separates the accepted cloud environment from
 | Login | Absolute 24-hour lifetime from sign-in in the accepted deployment; browser token stays in memory, so reload/closing the page requires re-login |
 | Latest recorded health | 2026-09-20: master/node1/node2 Ready; frontend/backend/MySQL Ready; no local application/tunnel listeners needed for the cloud lifecycle |
 | Maintenance and cleanup | 2026-09-20: backend/MySQL each rebuilt once with data preserved; the test project, its four Runs and scoped resources/storage were removed; MySQL volume retained |
+| Image roll (repair round) | 2026-09-29: `manao-stage6b` backend/frontend rolled to the 2026-09-29 digests (workbench/log repair round; deploy README section 11.1); Flyway stayed at version 10, readiness and public entry verified — see the [Python acceptance record](../poc4/docs/evidence/python-runtime/acceptance.md) section 6 |
+| Project-level MySQL observed | 2026-09-29: besides the platform `mysql` StatefulSet, per-project MySQL StatefulSets named `manao-mysql-<project-id>-*` exist for test projects — labels `manao.poc4/component=mysql`, `manao.poc4/project-id=…`, `app.kubernetes.io/managed-by=manao-poc4-backend`. These are backend-managed project resources (normal business state, cleaned with the owning project), NOT platform state; do not treat them as stray infrastructure |
 
 The exact build IDs, image digests and measured operations live in the [6B acceptance record](../poc4/docs/evidence/stage-6b/acceptance.md), sections 8–10. Use the [deployment README](../poc4/deploy/6b/README.md) for account setup, deploy order, maintenance and recovery; this page does not duplicate commands or maintain another version table.
 

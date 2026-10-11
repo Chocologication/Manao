@@ -146,6 +146,20 @@ API 删除 4 个本轮一次性项目（py-smoke、py-7200、java-reg-console、
 
 两个一次性验证项目 API 删除（各 204 → 404）后独立核验：Pod/Job/PVC **零残留**；`run_log_chunk` 等依赖行随删除流程清零；历史数据与其他用户数据未触碰。
 
+### 6.6 随轮推迟的质量小项（收编自各轮 SDD 台账；台账工作区删除后本清单为唯一在库记录）
+
+以下各项均已逐轮裁定为不阻塞交付的 Minor/观察项，汇总于此防止散佚（2026-09-29 收编）：
+
+1. 工具链升级检查单：镜像内 `seeded-<旧id>` 标记清理与前端 Python 版本钉死必须成对变更（Task 1–10 轮终审）。
+2. WorkspaceFileService 临时名符号链接加固（既有代码，非 Python 轮引入）。
+3. T2 storage-ref 加固（存储被禁环境下的引用语义）。
+4. `fileMutations` 对新 409 码 `WORKSPACE_RECONCILIATION_REQUIRED` 的专属文案（09-27 审查修复轮终审）。
+5. mock 依赖面板对 active-Run 门的应答（`RUN_ALREADY_ACTIVE`）与后端（`PROJECT_LOCKED`）的既有分歧。
+6. 既有前端 flake 两例（T1/T4）。
+7. 终态日志补采在维护循环线程同步执行（有 HTTP 客户端超时 + 每 Run 3 次预算兜底；一次慢读取会拖延该轮扫描并短暂持有项目门租约）——09-29 修复轮终审裁定接受。
+8. fabric8 `getLogReader` 内部每次尝试附加一次 `waitUntilReadyOrTerminal(0)` 短往返（信息性开销）。
+9. 依赖变更 POST / reconcile POST 无新增专项防回归测试（结构性守护：重试 helper 仅包裹 pending GET 单一调用点，且 `fileMutations.test.ts` 既有写入不重试用例继续生效）。
+10. 项目详情 GET（`/api/v1/projects/{id}`）同样参与 `ProjectLifecycleGate` 竞争（瞬时 409，前端自行恢复）；其重试策略不在 09-29 修复轮授权范围，留作独立评估（见 6.5）。
 ### 6.5 本轮观察（非缺陷，留档）
 
 - 项目详情 GET（`/api/v1/projects/{id}`）也参与同一 `ProjectLifecycleGate` 竞争，真实打开中两次瞬时 409；工作台均自行恢复、无可见错误。该读取面的重试策略**不在本轮授权范围**，留作后续独立评估。
