@@ -27,17 +27,17 @@ Launched by the agent exactly as:
   BUDGET + 10 s request timeout) assumes (ruling R4).
 - Checks the first-version support scope with tomllib: the scratch pyproject must parse and
   declare [project], must NOT declare a build backend, and the only [tool.uv] configuration
-  it may carry is an index declaration for the pinned public index (uv add itself persists
-  --default-index into the file that way; anything else - sources, private indexes, overrides
-  - is rejected). Every dependency declaration ([project] dependencies, optional-dependencies
-  and [dependency-groups]) must be a plain public-PyPI requirement: a PEP 508 name with
-  optional extras, optional PEP 440 specifiers and a conservative environment marker. Direct
-  URLs (`name @ ...`), git+/file:/http(s) references and paths can aim uv at sources beyond
-  the pinned index even with --no-sources, so they are rejected BEFORE uv runs - for the
-  requested change and for pre-existing declarations alike. uv runs with the fixed argv
-  --no-sync --no-build --no-sources --no-config --no-python-downloads against the pinned
-  interpreter and the public index, so user build backends and user sources can never execute
-  inside the management agent.
+  it may carry is an index declaration for the pinned Aliyun PyPI mirror index (uv add
+  itself persists --default-index into the file that way; anything else - sources, other
+  indexes, overrides - is rejected). Every dependency declaration ([project] dependencies,
+  optional-dependencies and [dependency-groups]) must be a plain public-PyPI requirement:
+  a PEP 508 name with optional extras, optional PEP 440 specifiers and a conservative
+  environment marker. Direct URLs (`name @ ...`), git+/file:/http(s) references and paths
+  can aim uv at sources beyond the pinned index even with --no-sources, so they are
+  rejected BEFORE uv runs - for the requested change and for pre-existing declarations
+  alike. uv runs with the fixed argv --no-sync --no-build --no-sources --no-config
+  --no-python-downloads against the pinned interpreter and the pinned Aliyun mirror index,
+  so user build backends and user sources can never execute inside the management agent.
 - stdout carries only a fixed failure token (PYTHON_DEPENDENCY_UNSUPPORTED |
   PYTHON_DEPENDENCY_TIMEOUT | PYTHON_DEPENDENCY_NO_WHEEL |
   PYTHON_DEPENDENCY_RESOLUTION_FAILED). Diagnostics are capped at 64 KiB and go to stderr for
@@ -53,7 +53,7 @@ import time
 import tomllib
 
 OUTPUT_LIMIT = 64 * 1024
-DEFAULT_INDEX_URL = "https://pypi.org/simple"
+DEFAULT_INDEX_URL = "https://mirrors.aliyun.com/pypi/simple/"
 PACKAGE_NAME = re.compile(r"^[a-z0-9]([a-z0-9-]{0,126}[a-z0-9])?$")
 EXACT_VERSION = re.compile(r"^[0-9A-Za-z][0-9A-Za-z.+!-]{0,127}$")
 
@@ -88,7 +88,7 @@ UV_ARGV_PREFIX = [
     "--no-config",
     "--no-python-downloads",
     "--python", "/usr/local/bin/python3",
-    "--default-index", "https://pypi.org/simple",
+    "--default-index", "https://mirrors.aliyun.com/pypi/simple/",
 ]
 
 # Fixed installability-verification argv (ruling R3): the production install shape minus the
@@ -112,7 +112,7 @@ EXIT_TIMEOUT = 4
 EXIT_RESOLUTION_FAILED = 5
 EXIT_NO_WHEEL = 6
 
-# uv 0.11.6 emits these fixed phrases when the pinned public registry cannot satisfy the
+# uv 0.11.6 emits these fixed phrases when the pinned mirror registry cannot satisfy the
 # request at all: the package does not exist, the exact version does not exist, no usable
 # wheel exists and building is disabled by --no-build, or the resolved distribution has no
 # binary distribution for the target platform while building is disabled (observed verbatim

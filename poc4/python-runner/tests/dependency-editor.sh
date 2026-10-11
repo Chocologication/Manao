@@ -51,6 +51,24 @@
 #                          (PATH override, per-run volume — the production image is untouched),
 #                          prepare fails 504 PYTHON_DEPENDENCY_TIMEOUT within the budget margin
 #                          and the killed uv process tree leaves no orphan
+#   mirror-observed        after a real prepare-add + commit, every URL recorded in the
+#                          committed uv.lock comes from the pinned Aliyun mirror: the registry
+#                          source is byte-identical to https://mirrors.aliyun.com/pypi/simple/
+#                          (trailing slash included) and artifacts live under
+#                          mirrors.aliyun.com/pypi/packages/ — no pypi.org / pythonhosted
+#                          residue, because the lock's recorded URLs are what the runtime's
+#                          `uv sync --locked` downloads from
+#   fixed-index-argv       with UV_DEFAULT_INDEX and UV_INDEX pointing at a hostile host in
+#                          the AGENT container environment, a real prepare-add + commit still
+#                          records only the pinned mirror in the generated pyproject and lock
+#                          (the helper's fixed `--default-index` argv wins over the
+#                          environment; the agent additionally launches the helper with a
+#                          minimal environment), so the container env cannot steer resolution
+#   tooluva-policy         the [tool.uv] scope check compares index URLs by exact string
+#                          equality against the pinned mirror URL (trailing slash included):
+#                          a pyproject declaring the FORMER pypi.org default index, or the
+#                          mirror URL without its trailing slash, is rejected 422
+#                          PYTHON_DEPENDENCY_UNSUPPORTED before uv runs, with no journal
 #
 # Docker ownership (names, registration, volume identity, registry, cleanup) is shared with
 # the other runner suites via tests/lib.sh — the hardened Task 3 pattern. Host-side JSON
@@ -94,6 +112,8 @@ OPERATION_TIMEOUT="7f0a1c3d-0002-4a6b-8c9d-0e1f2a3b4c5d"
 OPERATION_NOWHEEL="7f0a1c3d-0005-4a6b-8c9d-0e1f2a3b4c5d"
 OPERATION_PLATFORMWHEEL="7f0a1c3d-0006-4a6b-8c9d-0e1f2a3b4c5d"
 OPERATION_HELPERHANG="7f0a1c3d-0004-4a6b-8c9d-0e1f2a3b4c5d"
+OPERATION_ENVOVR="7f0a1c3d-0007-4a6b-8c9d-0e1f2a3b4c5d"
+OPERATION_TOOLUVA="7f0a1c3d-0008-4a6b-8c9d-0e1f2a3b4c5d"
 
 # shellcheck source=lib.sh
 . "$SOURCE_DIR/lib.sh"
@@ -211,6 +231,13 @@ REQUEST_SHA_ADD_OTHER="$(printf '{"action":"ADD","packageName":"httpx","version"
 REQUEST_SHA_REMOVE="$(printf '{"action":"REMOVE","packageName":"httpx","version":null}' | sha256sum | cut -d' ' -f1)"
 REQUEST_SHA_NOWHEEL="$(printf '{"action":"ADD","packageName":"manao-no-such-package-probe","version":"0.0.1"}' | sha256sum | cut -d' ' -f1)"
 REQUEST_SHA_PLATFORMWHEEL="$(printf '{"action":"ADD","packageName":"pywin32","version":"312"}' | sha256sum | cut -d' ' -f1)"
+
+# The one pinned resolution index. Hard string-identity invariant: this byte-exact string
+# (trailing slash included) is the helper's DEFAULT_INDEX_URL, the helper UV_ARGV_PREFIX
+# `--default-index` value, the lock-regeneration command's URL, and these test assertions —
+# the helper compares [tool.uv] index URLs and lock registry sources by exact string
+# equality, so any drift between the places would misreject honest projects.
+MANAO_PYTHON_INDEX_URL="https://mirrors.aliyun.com/pypi/simple/"
 
 cat > "$WORK/prepare-add.json" <<EOF
 {"operationId":"$OPERATION_ADD","requestSha256":"$REQUEST_SHA_ADD","change":{"action":"ADD","packageName":"httpx","version":"0.28.1"}}
@@ -390,6 +417,26 @@ scenario_commit_applies() {
   fi
 }
 
+# mirror-observed: the committed lock is what the runtime's `uv sync --locked` downloads
+# from, so every URL it records must come from the pinned mirror — the registry source
+# byte-identical to MANAO_PYTHON_INDEX_URL, artifacts under mirrors.aliyun.com/pypi/packages/.
+scenario_mirror_observed() {
+  local urls foreign
+  urls="$(dc exec "$AGENT_NAME" sh -c 'grep -hoE "https://[^\"[:space:]]+" /workspace/uv.lock | sort -u' 2>/dev/null || true)"
+  if [ -z "$urls" ]; then
+    fail "mirror-observed (no URLs found in the committed uv.lock)"
+    return 0
+  fi
+  # Byte-exact fixed-string comparison for the registry URL; every other recorded URL must
+  # be a mirror package artifact.
+  foreign="$(printf '%s\n' "$urls" | grep -Fxv "$MANAO_PYTHON_INDEX_URL" | grep -v '^https://mirrors\.aliyun\.com/pypi/packages/' || true)"
+  if printf '%s\n' "$urls" | grep -Fqx "$MANAO_PYTHON_INDEX_URL" && [ -z "$foreign" ]; then
+    pass "mirror-observed (committed lock records only the pinned mirror: $(printf '%s\n' "$urls" | grep -c .) distinct URLs)"
+  else
+    fail "mirror-observed (mirror registry URL absent or non-mirror sources recorded: ${foreign:-registry URL missing})"
+  fi
+}
+
 scenario_commit_idempotent() {
   local before_stamp result
   before_stamp="$(dc exec "$AGENT_NAME" sh -c 'stat -c %Y /workspace/uv.lock')"
@@ -534,6 +581,62 @@ EOF
   fi
 }
 
+# tooluva-policy: the [tool.uv] scope check compares index URLs by exact string equality
+# against the pinned mirror URL (trailing slash included). The FORMER default index
+# (https://pypi.org/simple) and the mirror URL WITHOUT its trailing slash are both outside
+# the supported scope and must be rejected before uv runs, with no PREPARED journal.
+scenario_tooluva_policy() {
+  local operation="$OPERATION_TOOLUVA"
+  cat > "$WORK/pyproject-old-index.toml" <<'EOF'
+[project]
+name = "manao-python-console"
+version = "0.1.0"
+requires-python = ">=3.13,<3.14"
+dependencies = []
+
+[[tool.uv.index]]
+url = "https://pypi.org/simple"
+default = true
+EOF
+  cat > "$WORK/pyproject-mirror-no-slash.toml" <<'EOF'
+[project]
+name = "manao-python-console"
+version = "0.1.0"
+requires-python = ">=3.13,<3.14"
+dependencies = []
+
+[[tool.uv.index]]
+url = "https://mirrors.aliyun.com/pypi/simple"
+default = true
+EOF
+  cat > "$WORK/prepare-tooluva.json" <<EOF
+{"operationId":"$operation","requestSha256":"$REQUEST_SHA_ADD","change":{"action":"ADD","packageName":"httpx","version":"0.28.1"}}
+EOF
+  local result=1 variant journal_present=0
+  for variant in old-index mirror-no-slash; do
+    docker cp "$WORK/pyproject-$variant.toml" "$AGENT_NAME:/workspace/pyproject.toml"
+    dc exec --user 0 "$AGENT_NAME" chown 10001:10001 /workspace/pyproject.toml
+    post_json "$AGENT_PORT" "$PROJECT_ID" "/agent/v1/python-dependencies/prepare" "$WORK/prepare-tooluva.json"
+    journal_present=0
+    dc exec "$AGENT_NAME" test -f "/workspace/.manao/python-dependencies/$operation/manifest.json" >/dev/null 2>&1 && journal_present=1
+    if [ "$HTTP_STATUS" = "422" ] \
+      && [ "$(json_field "$WORK/resp.json" "data['code']")" = "PYTHON_DEPENDENCY_UNSUPPORTED" ] \
+      && [ "$journal_present" = "0" ]; then
+      result=0
+    else
+      result=1
+      break
+    fi
+  done
+  # restore the clean template workspace for any later scenario
+  seed_template "$AGENT_NAME"
+  if [ "$result" = "0" ]; then
+    pass "tooluva-policy (former pypi.org index and trailing-slash-missing mirror URL both rejected 422 PYTHON_DEPENDENCY_UNSUPPORTED before uv, no journal)"
+  else
+    fail "tooluva-policy (variant=$variant status=$HTTP_STATUS body=$(cat "$WORK/resp.json") journal=$journal_present)"
+  fi
+}
+
 # A real uv resolution that cannot obtain a usable wheel from the pinned registry (here: the
 # package does not exist) is its own fixed safe category — never a generic resolution failure,
 # and its stderr is still never forwarded to the client.
@@ -658,6 +761,47 @@ scenario_timeout_kills_tool() {
   fi
 }
 
+# fixed-index-argv / env-override: the resolution index may never be steered by the
+# container environment. With UV_DEFAULT_INDEX and UV_INDEX pointing at a hostile host in
+# the AGENT container's environment, a real prepare-add + commit must still record only the
+# pinned mirror in the generated pyproject and lock: the helper's fixed `--default-index`
+# argv wins over uv environment variables, and the agent additionally launches the helper
+# with a minimal environment — neither path can carry the hostile value into the lock.
+scenario_fixed_index_env_override() {
+  local agent2 port
+  read -r agent2 port <<< "$(start_agent "${PREFIX}-envovr" "$PROJECT_ID_SHIM" \
+    -e 'UV_DEFAULT_INDEX=https://evil.example/simple' \
+    -e 'UV_INDEX=https://evil.example/simple')"
+  seed_template "$agent2"
+  cat > "$WORK/prepare-envovr.json" <<EOF
+{"operationId":"$OPERATION_ENVOVR","requestSha256":"$REQUEST_SHA_ADD","change":{"action":"ADD","packageName":"httpx","version":"0.28.1"}}
+EOF
+  local started elapsed
+  started="$(now_ms)"
+  post_json "$port" "$PROJECT_ID_SHIM" "/agent/v1/python-dependencies/prepare" "$WORK/prepare-envovr.json"
+  elapsed=$(( $(now_ms) - started ))
+  echo "TIMING: prepare-env-override (real uv resolution under hostile UV_* env) ${elapsed}ms"
+  if [ "$HTTP_STATUS" != "200" ]; then
+    fail "fixed-index-argv (prepare expected 200, got $HTTP_STATUS: $(cat "$WORK/resp.json"))"
+    return 0
+  fi
+  cp "$WORK/resp.json" "$WORK/prepared-envovr.json"
+  build_commit_body "$WORK/commit-envovr.json" "$WORK/prepared-envovr.json"
+  post_json "$port" "$PROJECT_ID_SHIM" "/agent/v1/python-dependencies/commit" "$WORK/commit-envovr.json"
+  if [ "$HTTP_STATUS" != "200" ]; then
+    fail "fixed-index-argv (commit expected 200, got $HTTP_STATUS: $(cat "$WORK/resp.json"))"
+    return 0
+  fi
+  local urls foreign
+  urls="$(dc exec "$agent2" sh -c 'grep -hoE "https://[^\"[:space:]]+" /workspace/pyproject.toml /workspace/uv.lock | sort -u' 2>/dev/null || true)"
+  foreign="$(printf '%s\n' "$urls" | grep -Fxv "$MANAO_PYTHON_INDEX_URL" | grep -v '^https://mirrors\.aliyun\.com/pypi/packages/' || true)"
+  if printf '%s\n' "$urls" | grep -Fqx "$MANAO_PYTHON_INDEX_URL" && [ -z "$foreign" ]; then
+    pass "fixed-index-argv (hostile UV_DEFAULT_INDEX/UV_INDEX env ignored; generated pyproject+lock record only $MANAO_PYTHON_INDEX_URL) [${elapsed}ms]"
+  else
+    fail "fixed-index-argv (environment steered the resolution or mirror URL missing: foreign='${foreign:-registry URL missing}')"
+  fi
+}
+
 # ---------------------------------------------------------------------------
 # Run
 # ---------------------------------------------------------------------------
@@ -669,14 +813,17 @@ scenario_digest_formula
 scenario_prepare_idempotent
 scenario_mismatch_rejected
 scenario_commit_applies
+scenario_mirror_observed
 scenario_commit_idempotent
 scenario_commit_tamper_rejected
 scenario_prepare_remove_commit
 scenario_unsupported_scope
+scenario_tooluva_policy
 scenario_no_wheel_category
 scenario_no_platform_wheel_category
 scenario_helper_hang_kills_tree
 scenario_timeout_kills_tool
+scenario_fixed_index_env_override
 
 echo "dependency-editor: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

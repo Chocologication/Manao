@@ -16,8 +16,33 @@ shared supervisor binary the Maven runner uses, compiled from the one true sourc
 | uv | `ghcr.io/astral-sh/uv:0.11.6` (x86_64-unknown-linux-musl), digest `sha256:b1e699368d24c57cda93c338a57a8c5a119009ba809305cc8e86986d4a006754` | `docker pull`, `docker image inspect` RepoDigests, `uv self version` in the container |
 | JRE | Debian trixie `default-jre-headless` (OpenJDK 21) installed at build time; the compile stage uses `default-jdk-headless` of the same distribution | `apt-cache policy default-jre-headless` (candidate `2:1.21-76`) in the base image |
 | Interpreter | `/usr/local/bin/python3` = CPython 3.13.15 (matches the templates' `requires-python ==3.13.*`) | base image `PYTHON_VERSION=3.13.15` |
-| Seed | `/opt/manao-python-seed/seed-id` (64-hex content version) over `uv --version`, `python3 -V`, `uname -m` and the sorted sha256 of every seeded file; `/opt/manao-python-seed/uv-cache` holds the seeded cache (747 files, ~30 MB for the current template set) | printed by the seed-build stage; the seed-id `a3687aae7fe59204cd1a23454fd71ccb0c4e400a9200a52cb5e76a090c0295e5` was reproduced unchanged by the 2026-09-26 rebuild below (same template set, same toolchain) |
-| Template locks | sha256 of the committed lock-file bytes (working tree == HEAD at the Task 10 prep commit `11accb3`; both locks unchanged since their generating commit `05c9337`): console `poc4/backend/src/main/resources/workspace-template-python/uv.lock` = `a96bbf8e0350626470f1f8e55b7cf8c2cf00166f25225b917954552675c399c8`, web `poc4/backend/src/main/resources/workspace-template-python-web/uv.lock` = `de8a8bb358d35ebfd2a250eb6e9903313e636a47a3a8f2232442f0302816d028` | `git show <commit>:<path> \| sha256sum` and working-tree `sha256sum` agree (2026-09-26); the seed is built from exactly these locks |
+| Seed | `/opt/manao-python-seed/seed-id` (64-hex content version) over `uv --version`, `python3 -V`, `uname -m` and the sorted sha256 of every seeded file; `/opt/manao-python-seed/uv-cache` holds the seeded cache (800 files for the current template set) | printed by the seed-build stage; the 2026-10-11 Aliyun-index rebuild (regenerated locks, seed built with the pinned `--default-index`) produced seed-id `8026436feb6507c93380e3452b4a3f447e597187df093f2a17b717b0ec7c7b63`; the previous pypi.org template set reproduced `a3687aae7fe59204cd1a23454fd71ccb0c4e400a9200a52cb5e76a090c0295e5` unchanged on 2026-09-26 |
+| Template locks | sha256 of the committed lock-file bytes after the 2026-10-11 regeneration with the pinned uv 0.11.6 against the Aliyun default index: console `poc4/backend/src/main/resources/workspace-template-python/uv.lock` = `a96bbf8e0350626470f1f8e55b7cf8c2cf00166f25225b917954552675c399c8` (byte-identical to the previous lock — zero dependencies, so no registry entry exists), web `poc4/backend/src/main/resources/workspace-template-python-web/uv.lock` = `7de21d04a2365942ea146a45baea6eea55b8b466fc3592c73408a39d54c56e9f` | real `uv lock` per template directory (previous lock removed first, `--default-index https://mirrors.aliyun.com/pypi/simple/`), never a hand URL replacement; the web lock's every registry source and artifact URL is `mirrors.aliyun.com` and `uv lock --check` passes with no `--default-index` (sources are preserved from the lock); the seed is built from exactly these locks |
+
+Dependency resolution index (switched 2026-10-11): the Aliyun PyPI mirror
+`https://mirrors.aliyun.com/pypi/simple/` is the ONLY default resolution index of the
+controlled dependency path. The workspace-agent helper's fixed argv (`DEFAULT_INDEX_URL`
+and the `UV_ARGV_PREFIX` `--default-index` value), the seed-build online `uv sync
+--locked` in `prepare-python-seed.sh`, the template lock regeneration command and the
+container test assertions all carry this one byte-identical URL — trailing slash
+included, because the helper compares `[tool.uv]` index URLs and lock registry sources by
+exact string equality. There is no fallback and no user-selectable index: `uv`
+environment variables and project sources cannot steer resolution (the helper runs a
+fixed argv and the agent launches it with a minimal environment). The committed template
+locks were regenerated with the pinned uv 0.11.6 against this index:
+
+```bash
+uv --no-config --no-python-downloads lock \
+  --python /usr/local/bin/python3 \
+  --default-index https://mirrors.aliyun.com/pypi/simple/
+```
+
+(run per template directory with the previous lock removed first, so sources are
+re-selected from the pinned index; never a hand URL replacement inside a lock).
+Historical projects and their `uv.lock` files are NOT migrated: their locks keep the
+sources recorded when they were created, and the launcher's `uv sync --locked` consumes
+lock-recorded URLs as-is — only newly resolved or newly created locks use the Aliyun
+index.
 
 Recorded builds of this image (local test tags; **a local tag is never a
 production pin**):
@@ -108,8 +133,17 @@ staleness proof, persistent fail-fast registry, exact-name cleanup — in
   server-controlled booleans `MANAO_PYTHON_MYSQL` / `MANAO_PYTHON_REDIS` are `true`.
   The extras are pinned booleans, never an arbitrary array. A failed install exits
   non-zero before user code starts; preparation logs share the application's
-  stdout/stderr and never print environment values or credentials.
-- Dependency editing (agent prepare) verifies installability with the production install
+  stdout/stderr and never print environment values or credentials. The launcher reads no
+  uv index configuration: downloads come from the sources recorded in the committed lock
+  (the Aliyun mirror for locks resolved through the controlled path).
+- Dependency editing (agent prepare) resolves with a fixed argv that pins the sole
+  default index: `uv add/remove --no-sync --no-build --no-sources --no-config
+  --no-python-downloads --python /usr/local/bin/python3 --default-index
+  https://mirrors.aliyun.com/pypi/simple/` — byte-identical to the helper's
+  `DEFAULT_INDEX_URL`, the seed build and the lock regeneration; the helper's `[tool.uv]`
+  scope check accepts only an index declaration whose URL equals that exact string
+  (trailing slash included), with no fallback and no environment-selected index.
+  Dependency editing also verifies installability with the production install
   shape minus the out-of-scope extras — `uv sync --locked --no-dev --no-build --no-config
   --no-python-downloads --python /usr/local/bin/python3 --dry-run` in the same scratch,
   under the one shared resolution budget — so a lock that resolves but has no wheel for

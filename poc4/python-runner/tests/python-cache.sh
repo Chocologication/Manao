@@ -9,6 +9,11 @@
 # the Job's emptyDir, per-project cache volume, per-run venv in /tmp):
 #   seed-content           the image carries a read-only seed (seed-id + uv cache) built
 #                          from the real exported templates; no template sources inside
+#   template-locks-mirror  the exported template locks inside the image record only the
+#                          pinned Aliyun mirror as their registry source (byte-identical
+#                          https://mirrors.aliyun.com/pypi/simple/, trailing slash included)
+#                          with no pypi.org / files.pythonhosted.org residue — the seed is
+#                          built from exactly these locks
 #   cold-cache-offline     an empty project cache plus disabled network still starts the
 #                          default FastAPI template (seed compatibility proof); the venv
 #                          holds the base dependencies but neither extra client
@@ -135,6 +140,38 @@ scenario_seed_content() {
     pass "$name (read-only seed with 64-hex id and populated uv cache)"
   else
     fail "$name (seed content contract violated)"
+  fi
+}
+
+# Read-only assertion on the image's exported template locks: the seed is built from
+# exactly these locks, so every registry source they record must be the pinned mirror —
+# byte-identical to https://mirrors.aliyun.com/pypi/simple/ — with no pypi.org /
+# files.pythonhosted.org residue anywhere (the lock URLs are the runtime's download
+# sources; the console lock records no registry at all and passes vacuously).
+scenario_template_locks_mirror() {
+  local name="${PREFIX}-template-locks"
+  local out
+  if out="$(dc_t 60 run --rm --network none --user 10001:10001 --entrypoint /bin/sh "$IMAGE" -c '
+    status=0
+    locks=""
+    for lock in /opt/manao-python-templates/*/uv.lock; do
+      [ -f "$lock" ] || continue
+      locks="$locks $lock"
+      if grep -Eq "pypi\.org|files\.pythonhosted\.org" "$lock"; then
+        echo "non-mirror source recorded in $lock" >&2
+        status=1
+      fi
+      bad="$(grep -h "source = { registry" "$lock" | grep -Fv "source = { registry = \"https://mirrors.aliyun.com/pypi/simple/\" }" || true)"
+      [ -z "$bad" ] || { echo "unexpected registry source in $lock: $bad" >&2; status=1; }
+    done
+    [ -n "$locks" ] || { echo "no exported template locks found" >&2; status=1; }
+    echo "checked locks:$locks" >&2
+    [ "$status" = 0 ] && echo "TEMPLATE-LOCKS-OK"
+    exit "$status"
+  ')"; then
+    pass "$name (every exported template lock records only the pinned mirror sources)"
+  else
+    fail "$name (template locks record non-mirror sources: $(printf '%s' "$out" | tail -n 2))"
   fi
 }
 
@@ -500,6 +537,7 @@ scenario_interrupted_seed_no_marker() {
 harness_warmup
 
 scenario_seed_content
+scenario_template_locks_mirror
 scenario_cold_cache_offline_web
 if [ -n "$COLD_CACHE" ]; then
   scenario_warm_cache_second_pod_reuses

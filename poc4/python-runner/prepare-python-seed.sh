@@ -56,7 +56,10 @@ trap cleanup_work EXIT
 mkdir -p "$CACHE_DIR"
 
 # One cache for the fixed toolchain: every variant installs into its own scratch venv but
-# shares UV_CACHE_DIR, so the final cache is the union of all locked dependencies.
+# shares UV_CACHE_DIR, so the final cache is the union of all locked dependencies. The
+# online sync carries the pinned default index explicitly (byte-identical to the helper's
+# DEFAULT_INDEX_URL and the committed locks' recorded registry); the lock-recorded URLs
+# remain the actual download sources.
 for variant in $VARIANTS; do
   echo "seed: installing locked dependencies of $variant"
   (
@@ -67,6 +70,7 @@ for variant in $VARIANTS; do
     UV_PYTHON_DOWNLOADS=never \
     uv sync --locked --no-dev --no-build --no-config \
       --python /usr/local/bin/python3 \
+      --default-index https://mirrors.aliyun.com/pypi/simple/ \
       $(variant_extras "$variant")
   )
 done
