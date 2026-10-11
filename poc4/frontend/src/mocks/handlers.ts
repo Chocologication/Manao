@@ -49,6 +49,8 @@ import {
   mockBatchRequestFingerprint,
   mockDependencyRequestFingerprint,
   normalizeMockPackageName,
+  parseMockBatchLimits,
+  parseMockBatchPackages,
   readOwnedProjectSummary,
   recordFileRequest,
   registerMockDependencyOperation,
@@ -481,28 +483,6 @@ function isDependencyBatchBody(value: unknown): value is DependencyBatchBody {
   );
 }
 
-/** Mirrors the backend's parseBatchRequest: the byte budget and the requirement-line count. */
-const MAX_BATCH_BYTES = 64 * 1024;
-const MAX_BATCH_REQUIREMENTS = 50;
-
-function parseMockBatchRequirements(requirementsText: string): string[] | null {
-  let normalized = requirementsText.startsWith('\uFEFF')
-    ? requirementsText.slice(1)
-    : requirementsText;
-  normalized = normalized.replace(/\r\n/g, '\n');
-  if (new TextEncoder().encode(normalized).length > MAX_BATCH_BYTES) {
-    return null;
-  }
-  const requirementLines = normalized
-    .split('\n')
-    .map((line) => line.trim())
-    .filter((line) => line !== '' && !line.startsWith('#'));
-  if (requirementLines.length === 0 || requirementLines.length > MAX_BATCH_REQUIREMENTS) {
-    return null;
-  }
-  return requirementLines;
-}
-
 function dependencyStatusJson(operation: MockDependencyOperation) {
   return {
     operationId: operation.operationId,
@@ -695,7 +675,9 @@ export const dependencyHandlers = [
     if (body === null || !isDependencyBatchBody(body)) {
       return jsonError(422, FILE_VALIDATION_ERROR);
     }
-    const requirementLines = parseMockBatchRequirements(body.requirementsText);
+    // Mirror the backend's parseBatchRequest: the byte budget and the line count are
+    // decided before the registered row, the template and the revision.
+    const requirementLines = parseMockBatchLimits(body.requirementsText);
     if (requirementLines === null) {
       return jsonError(422, FILE_VALIDATION_ERROR);
     }
@@ -721,6 +703,12 @@ export const dependencyHandlers = [
         commitMockDependencyOperation(registered);
       }
       return HttpResponse.json(dependencyStatusJson(registered));
+    }
+    if (parseMockBatchPackages(requirementLines) === null) {
+      // Mirrors the agent helper's filter_requirements at the prepare position: a line
+      // outside the plain public-PyPI requirement form is a fixed UNSUPPORTED rejection
+      // with no durable trace — never a silent skip and never a COMMITTED row.
+      return jsonError(422, PYTHON_DEPENDENCY_UNSUPPORTED);
     }
     if (scenario === 'resolution-failed') {
       // Fixed prepare rejection: no durable trace, a safe correction for the browser.

@@ -24,6 +24,7 @@ import {
 import { server } from '../../mocks/node';
 import { getFileRequestCount, setDependencyScenario } from '../../mocks/state';
 import { resetAppRuntime } from '../../test/renderApp';
+import { PythonDependencyRecovery } from './PythonDependencyRecovery';
 import { PythonDependenciesPanel } from './PythonDependenciesPanel';
 
 const ALICE = { username: 'alice', password: 'demo-pass' };
@@ -694,7 +695,98 @@ describe('PythonDependenciesPanel requirements.txt import', () => {
     // No automatic retry was sent.
     expect(batchDependencyPosts(fetchSpy)).toHaveLength(1);
 
+    // The failed project's recovery entry checks the SAME stored batch operation: the
+    // original id drives the status GET and the reconcile, and it is never replaced
+    // while the result is unconfirmed.
+    const onRecovered = vi.fn();
+    render(
+      <PythonDependencyRecovery
+        projectId={project.id}
+        userId={ALICE_USER_ID}
+        variant="failed"
+        onRecovered={onRecovered}
+      />,
+    );
+    await user.click(screen.getByRole('button', { name: 'Check dependency change' }));
+
+    await waitFor(() => {
+      expect(onRecovered).toHaveBeenCalledTimes(1);
+    });
+    expect(recordedDependencyCalls(fetchSpy).filter((call) => call.method === 'GET' || call.path.endsWith('/reconcile'))).toEqual([
+      {
+        method: 'GET',
+        path: `/api/v1/projects/${project.id}/python-dependencies/${operationId}`,
+        body: undefined,
+      },
+      {
+        method: 'POST',
+        path: `/api/v1/projects/${project.id}/python-dependencies/${operationId}/reconcile`,
+        body: undefined,
+      },
+    ]);
+    // Only the confirmed COMMITTED result cleared the stored id.
+    expect(readPythonDependencyOperationId(ALICE_USER_ID, project.id)).toBeNull();
+
     setDependencyScenario('normal');
+    fetchSpy.mockRestore();
+  });
+
+  it('surfaces the backend validation rejection for a requirements.txt over the line limit without fabricating success', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    const user = userEvent.setup();
+    await authenticateAsAlice();
+    const project = await createReadyPythonProject('Import Over Limit');
+    // 51 requirement lines exceed the backend's cap of 50; the browser sends the text
+    // verbatim and the backend answers the fixed validation rejection.
+    seedRootRequirements(
+      project.id,
+      Array.from({ length: 51 }, (_, index) => `pkg-${index + 1}`).join('\n') + '\n',
+    );
+    primeRevision(project.id);
+    renderPanel({ project });
+
+    await user.click(screen.getByRole('button', { name: 'Import requirements.txt' }));
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent(
+      'Only package names with an optional exact version are supported.',
+    );
+    // The rejection is explicit: no fabricated success message.
+    expect(
+      screen.queryByRole('status', { name: 'Dependency change result' }),
+    ).not.toHaveTextContent('Dependency change saved.');
+    // A proven no-side-effect rejection clears the stored id.
+    expect(readPythonDependencyOperationId(ALICE_USER_ID, project.id)).toBeNull();
+    expect(batchDependencyPosts(fetchSpy)).toHaveLength(1);
+    expect(singleDependencyPosts(fetchSpy)).toHaveLength(0);
+
+    fetchSpy.mockRestore();
+  });
+
+  it('surfaces PYTHON_DEPENDENCY_UNSUPPORTED for a line outside the plain requirement form', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    const user = userEvent.setup();
+    await authenticateAsAlice();
+    const project = await createReadyPythonProject('Import Invalid Line');
+    // An option-style line never matches the plain public-PyPI requirement form; the
+    // helper-chain rejects it UNSUPPORTED before any operation row is registered.
+    seedRootRequirements(project.id, '-r other-requirements.txt\n');
+    primeRevision(project.id);
+    renderPanel({ project });
+
+    await user.click(screen.getByRole('button', { name: 'Import requirements.txt' }));
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent(
+      'Dependency changes are not supported for this project or package',
+    );
+    expect(
+      screen.queryByRole('status', { name: 'Dependency change result' }),
+    ).not.toHaveTextContent('Dependency change saved.');
+    expect(readPythonDependencyOperationId(ALICE_USER_ID, project.id)).toBeNull();
+    expect(batchDependencyPosts(fetchSpy)).toHaveLength(1);
+    expect(singleDependencyPosts(fetchSpy)).toHaveLength(0);
+
     fetchSpy.mockRestore();
   });
 

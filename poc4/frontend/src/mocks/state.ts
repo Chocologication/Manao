@@ -506,6 +506,63 @@ export function applyMockDependencyChange(
 }
 
 /**
+ * The mock's minimal plain-requirement contract: `name` or `name==version` — exactly the
+ * forms the mock can apply; the agent helper's broader PLAIN_REQUIREMENT scope is
+ * deliberately narrowed to this. A line outside the form must be REJECTED by the caller
+ * (like the helper's UNSUPPORTED prepare failure), never silently skipped.
+ */
+export type MockRequirement = { name: string; version: string | null };
+
+function parseMockRequirementLine(line: string): MockRequirement | null {
+  const separator = line.indexOf('==');
+  const name = normalizeMockPackageName(separator === -1 ? line : line.slice(0, separator));
+  if (!isValidMockPackageName(name)) {
+    return null;
+  }
+  if (separator === -1) {
+    return { name, version: null };
+  }
+  const version = line.slice(separator + 2);
+  return version !== '' && isValidMockPackageVersion(version) ? { name, version } : null;
+}
+
+/** Mirrors the backend's parseBatchRequest: the normalized UTF-8 byte budget and the
+ *  valid-requirement cap. Returns the trimmed requirement lines, or null for a 422. */
+const MAX_BATCH_BYTES = 64 * 1024;
+const MAX_BATCH_REQUIREMENTS = 50;
+
+export function parseMockBatchLimits(requirementsText: string): string[] | null {
+  let normalized = requirementsText.startsWith('\uFEFF')
+    ? requirementsText.slice(1)
+    : requirementsText;
+  normalized = normalized.replace(/\r\n/g, '\n');
+  if (new TextEncoder().encode(normalized).length > MAX_BATCH_BYTES) {
+    return null;
+  }
+  const requirementLines = normalized
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line !== '' && !line.startsWith('#'));
+  if (requirementLines.length === 0 || requirementLines.length > MAX_BATCH_REQUIREMENTS) {
+    return null;
+  }
+  return requirementLines;
+}
+
+/** Mirrors the agent helper's filter_requirements: one package per plain line, or null. */
+export function parseMockBatchPackages(requirementLines: string[]): MockRequirement[] | null {
+  const packages: MockRequirement[] = [];
+  for (const line of requirementLines) {
+    const requirement = parseMockRequirementLine(line);
+    if (requirement === null) {
+      return null;
+    }
+    packages.push(requirement);
+  }
+  return packages;
+}
+
+/**
  * Applies one batch import with ADD semantics to the two managed files — the mock-side
  * stand-in for the agent's single uv run over the whole requirements text, never a
  * per-line loop of separate operations.
@@ -514,21 +571,19 @@ export function applyMockBatchDependencyChange(
   projectId: string,
   requirementsText: string,
 ): string {
+  const packages = parseMockBatchPackages(requirementsText.split('\n'));
+  if (packages === null) {
+    // Registered batch rows always carry limit- and syntax-validated text; reaching
+    // this is a mock contract bug, so fail loud instead of committing partial input.
+    throw new Error('mock batch apply received a rejected requirements text');
+  }
   let next = pyprojectPackages(projectId);
-  for (const line of requirementsText.split('\n')) {
-    const trimmed = line.trim();
-    if (trimmed === '' || trimmed.startsWith('#')) {
-      continue;
-    }
-    const separator = trimmed.indexOf('==');
-    const name = normalizeMockPackageName(separator === -1 ? trimmed : trimmed.slice(0, separator));
-    if (!isValidMockPackageName(name)) {
-      // The mock only applies plain public-PyPI names, like the agent helper's filter.
-      continue;
-    }
-    const version = separator === -1 ? null : trimmed.slice(separator + 2);
-    const entry = version === null ? name : `${name}==${version}`;
-    next = [...next.filter((pkg) => pkg.split('==')[0] !== name), entry];
+  for (const requirement of packages) {
+    const entry =
+      requirement.version === null
+        ? requirement.name
+        : `${requirement.name}==${requirement.version}`;
+    next = [...next.filter((pkg) => pkg.split('==')[0] !== requirement.name), entry];
   }
   writeDependencyFiles(projectId, next);
   return getWorkspaceRevision(projectId);
