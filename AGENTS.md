@@ -45,3 +45,14 @@
 - Runtime cleanup must be project- and owner-scoped. Verify initializer/workspace/Job/Service/PVC resources, applicable PV/storage residue and dependent database rows. Successful `afterAll` alone does not prove cleanup; preserve narrowly identified unresolved diagnostics.
 - Artifact cleanup does not authorize deleting runtime resources. Inventory and path-check obsolete files, retaining useful reports and minimal unresolved evidence. Avoid broad `git clean`/`mvn clean`, reparse-target deletion and removal of live configuration; record actual deletion results.
 - Keep passwords, tokens, private configuration, raw kubeconfigs and unsanitized traces out of commits. Credential refresh does not change RBAC; restart a service when it must reload credentials captured at startup.
+
+<!-- CODEGRAPH_START -->
+## CodeGraph
+
+In repositories indexed by CodeGraph (a `.codegraph/` directory exists at the repo root), reach for it BEFORE grep/find or reading files when you need to understand or locate code:
+
+- **MCP tool** (when available): `codegraph_explore` answers most code questions in one call — the relevant symbols' verbatim source plus the call paths between them, including dynamic-dispatch hops grep can't follow. Name a file or symbol in the query to read its current line-numbered source. If it's listed but deferred, load it by name via tool search.
+- **Shell** (always works): `codegraph explore "<symbol names or question>"` prints the same output.
+
+If there is no `.codegraph/` directory, skip CodeGraph entirely — indexing is the user's decision.
+<!-- CODEGRAPH_END -->

@@ -4,3 +4,7 @@ args = ["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass"
 startup_timeout_sec = 20
 tool_timeout_sec = 60
 enabled = true
+
+[mcp_servers.codegraph]
+command = "codegraph"
+args = ["serve", "--mcp"]

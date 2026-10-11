@@ -13,7 +13,8 @@
         ],
         "env": {
           "APIFOX_ACCESS_TOKEN": "afxp_db530dYJMc9e3SZNnRAdHzeBG6vSBnjxcTy4"
-        }
+        },
+        "enabled": false
       },
       "chrome-devtools": {
         "type": "stdio",
@@ -66,6 +67,14 @@
           "Bypass",
           "-File",
           "D:\\DeepLearning\\MyProjects\\Project_Manao\\.codex\\mcp\\start-mysql-toolbox.ps1"
+        ]
+      },
+      "codegraph": {
+        "type": "stdio",
+        "command": "codegraph",
+        "args": [
+          "serve",
+          "--mcp"
         ]
       }
     }
