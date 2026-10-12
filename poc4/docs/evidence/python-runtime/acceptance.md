@@ -283,3 +283,14 @@ FAILED（`add httpx through the dependency form, import it, remove it and fail t
 - 7200 秒正式用例：**NOT_REVERIFIED**（维持既有基线）。
 - 历史项目（test4/test5，pyproject 持久化 pypi.org 索引）的 422 边界：**未触碰、NOT_REVERIFIED**（按约束禁止修改历史项目）。
 - 依赖面板静默无效缺陷的修复：独立后续项，见 §8.2。
+
+### 8.5 随轮推迟的质量小项（收编自本轮 SDD 台账；台账工作区删除后本清单为唯一在库记录）
+
+以下各项经任务审查与最终整计划审查分级为 acceptable-deferred（不阻断交付），按优先级留档：
+
+1. **依赖面板静默无效竞态（§8.2 的 FAILED 用例，唯一的功能性后续项）**：`PythonDependenciesPanel.tsx` 的 `submit()/submitImport()` 在 `disabledReason !== null` 时静默返回；终态 Run 的 reload 窗口内点击可落在「DOM 可用、状态已翻转」间隙，点击无 POST、无提示。根因链还包含既有的编辑器挂载脏标记与 revision 缓存在 reload 窗口的空缺。修复方向：门控翻转时给出可见提示（或提交前重读门控并报错），并复核 reload 窗口内 revision 的播种时序。**未修复**。
+2. `PythonDependencyTransactionTest` 中名为 batch 的 commit 用例直接调用通用 `stage(root)`，未串起真实 `prepareBatch` 摘要——测试定位需改名或改用批量 prepare 结果（Task 2 审查提出）。
+3. `PythonDependencyOperationTest` 字节边界缺恰好 65537 拒绝断言（已有 65536 接受、51 行拒绝、恰好 50 接受）（Task 3/最终审查提出）。
+4. 前端 reload 次数断言只统计 `/files/tree` GET，未覆盖全部受管文件刷新（Task 4 审查提出）。
+5. `dependency-editor.sh` 的 commit-replay「不重写」断言用 `stat -c %Y`（秒级精度），同秒内重写检不出；可改纳秒时间戳或 inode 守卫（Task 5 审查提出）。
+6. 既有单包 mock 路由同样「先查 revision、后查已登记 operation」，早于本分支存在，未随本轮 batch mock 修正（最终审查 out-of-scope 记录）。
