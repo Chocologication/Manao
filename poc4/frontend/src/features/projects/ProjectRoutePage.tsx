@@ -10,6 +10,10 @@ import { Button } from '@/components/ui/button';
 import type { ProjectSummary } from '@/contracts/project';
 import { Spinner } from '@/components/ui/spinner';
 import {
+  isPythonDependencyRecoveryFailure,
+  PythonDependencyRecovery,
+} from '@/features/dependencies/PythonDependencyRecovery';
+import {
   dismissUnsavedDialog,
   getUnsavedDialogState,
   LEAVE_MESSAGE,
@@ -18,6 +22,7 @@ import {
   useWorkbenchLeaveBlocker,
 } from '@/features/editor/unsavedChangesGuard';
 import { useWorkspaceSession } from '@/features/editor/workspaceSession';
+import { useAuth } from '../auth/AuthProvider';
 import { AppChrome } from './ProjectsPage';
 import { useProjectQuery } from './projectQueries';
 
@@ -108,6 +113,8 @@ function isNetworkError(error: unknown): boolean {
 export function ProjectRoutePage() {
   const { projectId } = useParams();
   const id = decodeProjectId(typeof projectId === 'string' ? projectId : undefined);
+  const { snapshot } = useAuth();
+  const userId = snapshot.status === 'authenticated' ? snapshot.user.id : '';
   const query = useProjectQuery(id);
 
   if (query.isPending) {
@@ -186,6 +193,14 @@ export function ProjectRoutePage() {
     return (
       <AppChrome title={project.name}>
         <InlineAlert>{project.failureReason ?? 'Project creation failed'}</InlineAlert>
+        {isPythonDependencyRecoveryFailure(project) ? (
+          <PythonDependencyRecovery
+            projectId={project.id}
+            userId={userId}
+            variant="failed"
+            onRecovered={() => void query.refetch()}
+          />
+        ) : null}
         <Link to="/projects" className="text-sm text-foreground underline-offset-4 hover:underline">
           Back to projects
         </Link>

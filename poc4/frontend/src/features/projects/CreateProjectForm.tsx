@@ -1,9 +1,10 @@
 import { useState, type FormEvent } from 'react';
 import { ApiRequestError } from '../../api/ApiRequestError';
-import type {
-  CreateProjectRequest,
-  ProjectPublicPort,
-  RuntimeTemplateId,
+import {
+  RUNTIME_TEMPLATE_META,
+  type CreateProjectRequest,
+  type ProjectPublicPort,
+  type RuntimeTemplateId,
 } from '../../contracts/project';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -12,15 +13,15 @@ import { useCheckProjectCreation, useCreateProject } from './projectQueries';
 
 const NAME_MAX = 64;
 const MAX_PUBLIC_PORTS = 3;
-const TEMPLATES: ReadonlyArray<{ value: RuntimeTemplateId; label: string }> = [
-  { value: 'java-console', label: 'Java console' },
-  { value: 'java-spring-boot-web', label: 'Java Spring Boot web' },
-];
+const TEMPLATES = Object.entries(RUNTIME_TEMPLATE_META).map(
+  ([value, meta]) => ({ value: value as RuntimeTemplateId, label: meta.label }),
+);
 
 type PortRow = { targetPort: string; publicPort: string };
 
-function newRow(): PortRow {
-  return { targetPort: '8080', publicPort: '' };
+/** A fresh row starts from the template's primary port with a blank public port. */
+function newRow(template: RuntimeTemplateId): PortRow {
+  return { targetPort: String(RUNTIME_TEMPLATE_META[template].defaultTargetPort), publicPort: '' };
 }
 
 function isPort(value: string, min: number, max: number): boolean {
@@ -110,7 +111,7 @@ export function CreateProjectForm({
   const [mysql, setMysql] = useState(false);
   const [redis, setRedis] = useState(false);
   const [publicAccess, setPublicAccess] = useState(false);
-  const [portRows, setPortRows] = useState<PortRow[]>([newRow()]);
+  const [portRows, setPortRows] = useState<PortRow[]>([newRow('java-console')]);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   // The key of the last unresolved attempt; a lost response keeps it so an explicit
@@ -122,7 +123,8 @@ export function CreateProjectForm({
 
   const trimmed = name.trim();
   const nameValid = trimmed.length >= 1 && trimmed.length <= NAME_MAX;
-  const portsActive = template === 'java-spring-boot-web' && publicAccess;
+  const webTemplate = RUNTIME_TEMPLATE_META[template].web;
+  const portsActive = webTemplate && publicAccess;
   const parsedPorts = portsActive ? parsePortRows(portRows) : [];
   const submitDisabled =
     locked ||
@@ -140,9 +142,8 @@ export function CreateProjectForm({
     const creationKey = pendingKey ?? newCreationKey();
     // The key is fixed before sending so a lost response keeps querying the same creation.
     setPendingKey(creationKey);
-    // Dependency selections exist only with the web template: a switch back to the console
+    // Dependency selections exist only with the web templates: a switch back to a console
     // template masks the hidden flags instead of submitting configuration nobody sees.
-    const webTemplate = template === 'java-spring-boot-web';
     const request: CreateProjectRequest = {
       name: trimmed,
       creationKey,
@@ -224,6 +225,14 @@ export function CreateProjectForm({
     setPortRows((rows) => rows.map((row, current) => (current === index ? { ...row, ...update } : row)));
   }
 
+  function selectTemplate(next: RuntimeTemplateId): void {
+    setTemplate(next);
+    // Each web template owns its primary-port default (8080 Java, 8000 Python); switching
+    // clears the previous template's rows instead of carrying stale inputs over.
+    setPortRows([newRow(next)]);
+    clearFeedback();
+  }
+
   function clearFeedback(): void {
     if (error) {
       setError(null);
@@ -263,8 +272,7 @@ export function CreateProjectForm({
             value={template}
             disabled={locked || limitReached || create.isPending}
             onChange={(event) => {
-              setTemplate(event.target.value as RuntimeTemplateId);
-              clearFeedback();
+              selectTemplate(event.target.value as RuntimeTemplateId);
             }}
           >
             {TEMPLATES.map((entry) => (
@@ -274,7 +282,7 @@ export function CreateProjectForm({
             ))}
           </select>
         </div>
-        {template === 'java-spring-boot-web' ? (
+        {webTemplate ? (
           <div className="flex flex-col gap-2">
             <label htmlFor="project-public-access" className="flex items-center gap-2 text-sm">
               <input
@@ -369,7 +377,7 @@ export function CreateProjectForm({
                 variant="outline"
                 disabled={locked || limitReached || create.isPending}
                 onClick={() => {
-                  setPortRows((rows) => [...rows, newRow()]);
+                  setPortRows((rows) => [...rows, newRow(template)]);
                   clearFeedback();
                 }}
               >

@@ -107,7 +107,10 @@ public class WorkspaceConfig {
                 return inCluster.endpoint(projectId);
             }
         };
-        return new WorkspaceApiClient(resolver, signer);
+        // The dependency prepare timeout follows the configured resolution budget plus a bounded
+        // margin; the general workspace timeout is never raised for it.
+        return new WorkspaceApiClient(resolver, signer, WorkspaceApiClient.DEFAULT_TIMEOUT,
+            WorkspaceApiClient.prepareTimeout(properties.pythonDependency().resolutionSeconds()));
     }
 
     @Bean
@@ -130,8 +133,22 @@ public class WorkspaceConfig {
 
     @Bean
     WorkspaceOperationService workspaceOperationService(WorkspaceStore store, WorkspaceAgent agent,
-                                                        ProjectLifecycleGate lifecycle) {
-        return new WorkspaceOperationService(store, agent, lifecycle);
+                                                        ProjectLifecycleGate lifecycle,
+                                                        RuntimeFaultProperties faultProperties) {
+        // The acceptance-only dependency-pending fault rides on the same instance that owns
+        // the fail-closed semantics it reuses; empty (the default) can never trip it.
+        return new WorkspaceOperationService(store, agent, lifecycle,
+            faultProperties.dependencyPendingFaultPackage());
+    }
+
+    @Bean
+    com.manao.poc4.workspace.PythonDependencyService pythonDependencyService(
+        WorkspaceStore store, WorkspaceOperationService operations, WorkspaceAgent agent,
+        ProjectLifecycleGate lifecycle, ProjectRuntimeStore runtimeStore) {
+        // The SAME lifecycle gate instance as every other workspace consumer: reentrant within
+        // one thread, refusing concurrent writers without a second lock.
+        return new com.manao.poc4.workspace.PythonDependencyService(store, operations, agent, lifecycle,
+            runtimeStore);
     }
 
     @Bean
@@ -235,7 +252,8 @@ public class WorkspaceConfig {
 
     @Bean
     com.manao.poc4.kubernetes.JobResourceFactory jobResourceFactory(BackendProperties properties,
-                                                                    @Value("${MANAO_MAVEN_RUNNER_IMAGE:}") String mavenImage) {
+                                                                    @Value("${MANAO_MAVEN_RUNNER_IMAGE:}") String mavenImage,
+                                                                    @Value("${MANAO_PYTHON_RUNNER_IMAGE:}") String pythonImage) {
         com.manao.poc4.run.RunPolicy policy = com.manao.poc4.run.RunPolicy.fromProperties(properties);
         return new com.manao.poc4.kubernetes.JobResourceFactory(
             properties.kubernetes().namespace(),
@@ -245,7 +263,7 @@ public class WorkspaceConfig {
                 policy.requests().memoryBytes(), policy.requests().ephemeralStorageBytes()),
             new com.manao.poc4.kubernetes.JobResourceFactory.RunResources(policy.limits().cpuMillis(),
                 policy.limits().memoryBytes(), policy.limits().ephemeralStorageBytes()),
-            requiredMavenImage(mavenImage));
+            requiredMavenImage(mavenImage), requiredPythonImage(pythonImage));
     }
 
     @Bean
@@ -368,6 +386,13 @@ public class WorkspaceConfig {
             throw new IllegalStateException("MANAO_MAVEN_RUNNER_IMAGE is required for Maven runs");
         }
         return mavenImage;
+    }
+
+    private static String requiredPythonImage(String pythonImage) {
+        if (pythonImage == null || pythonImage.isBlank()) {
+            throw new IllegalStateException("MANAO_PYTHON_RUNNER_IMAGE is required for Python runs");
+        }
+        return pythonImage;
     }
 
     private static void verifyKeyPair(WorkspaceCapabilitySigner signer, byte[] rawPublicKey) {

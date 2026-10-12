@@ -2,6 +2,7 @@ package com.manao.poc4.log;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.manao.poc4.kubernetes.ResourceIdentityVerifier;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
@@ -22,6 +23,26 @@ class RunLogIngestorTest {
         assertThat(gateway.watchedPods).containsExactly("pod-1", "pod-2");
         assertThat(gateway.containers).containsExactly("maven", "maven");
         assertThat(gateway.namespaces).containsExactly("manao", "manao");
+    }
+
+    @Test
+    void aPythonSnapshotRunIsIngestedThroughTheSameHistoricalSource() {
+        RecordingGateway gateway = new RecordingGateway();
+        RecordingChunkStore chunks = new RecordingChunkStore(0);
+        RunLogIngestor ingestor = new RunLogIngestor(gateway, new RunLogService(chunks), "manao");
+
+        // A python-fastapi-web run: the log path is snapshot-blind and stays bound to the
+        // historical application container identity; uvicorn lines persist like Maven lines.
+        ingestor.ensureWatch("run-py", "pod-py", "uid-py");
+        gateway.emit("INFO:     Started server process [1]");
+        gateway.emit("INFO:     127.0.0.1:51744 - \"GET /health/ready HTTP/1.1\" 200 OK");
+
+        assertThat(gateway.containers).containsExactly(ResourceIdentityVerifier.APPLICATION_CONTAINER);
+        assertThat(gateway.namespaces).containsExactly("manao");
+        assertThat(chunks.inserted).extracting(RecordingChunk::seq).containsExactly(1L, 2L);
+        assertThat(chunks.inserted).extracting(RecordingChunk::text)
+            .containsExactly("INFO:     Started server process [1]\n",
+                "INFO:     127.0.0.1:51744 - \"GET /health/ready HTTP/1.1\" 200 OK\n");
     }
 
     @Test
@@ -191,6 +212,155 @@ class RunLogIngestorTest {
     }
 
     @Test
+    void aTerminalBackfillReplaysUnwatchedPodHistoryThroughTheSharedIngestPath() {
+        RecordingGateway gateway = new RecordingGateway();
+        RecordingChunkStore chunks = new RecordingChunkStore(0);
+        RunLogIngestor ingestor = new RunLogIngestor(gateway, new RunLogService(chunks), "manao");
+        String oversized = "x".repeat(70000); // 2 chunks: the byte-bounded splitter must engage
+        gateway.emit("first line");
+        gateway.emit(oversized);
+        gateway.emit("last line");
+
+        RunLogIngestor.TerminalBackfill result = ingestor.backfillHistoryBeforeFinish("r1", "pod-1", "uid-1");
+
+        assertThat(result).isEqualTo(RunLogIngestor.TerminalBackfill.COMPLETED);
+        // No watch was ever established; the one-shot history read targets the verified container.
+        assertThat(gateway.watchedPods).isEmpty();
+        assertThat(gateway.readLogsPods).containsExactly("pod-1");
+        assertThat(gateway.readLogsContainers).containsExactly(ResourceIdentityVerifier.APPLICATION_CONTAINER);
+        List<String> oversizedPieces = Utf8ChunkSplitter.split(oversized + "\n", RunLogWindow.MAX_CHUNK_BYTES);
+        assertThat(chunks.inserted).extracting(RecordingChunk::seq).containsExactly(1L, 2L, 3L, 4L);
+        assertThat(chunks.inserted).extracting(RecordingChunk::text)
+            .containsExactly("first line\n", oversizedPieces.get(0), oversizedPieces.get(1), "last line\n");
+
+        // A repeat backfill for the same run is idempotent: nothing is published again.
+        ingestor.backfillHistoryBeforeFinish("r1", "pod-1", "uid-1");
+        assertThat(chunks.inserted).hasSize(4);
+
+        // finish afterwards closes nothing: the backfill cursor never registered a watch.
+        ingestor.finish("r1");
+        assertThat(gateway.closed).isEmpty();
+    }
+
+    @Test
+    void aTerminalBackfillAfterAPartialWatchSkipsPersistedChunksAndFillsOnlyTheTail() {
+        RecordingGateway gateway = new RecordingGateway();
+        RecordingChunkStore chunks = new RecordingChunkStore(0);
+        RunLogIngestor ingestor = new RunLogIngestor(gateway, new RunLogService(chunks), "manao");
+
+        ingestor.ensureWatch("r1", "pod-1", "uid-1");
+        gateway.emit("L1");
+        gateway.emit("L2");
+        gateway.latest().alive = false; // the pump died mid-run
+        gateway.emit("L3");             // emitted into the pod log only
+        gateway.emit("L4");
+
+        RunLogIngestor.TerminalBackfill result = ingestor.backfillHistoryBeforeFinish("r1", "pod-1", "uid-1");
+
+        assertThat(result).isEqualTo(RunLogIngestor.TerminalBackfill.COMPLETED);
+        // The replayed prefix is skipped chunk-by-chunk: no duplicate chunk, the seq stays
+        // continuous and the tail lines land exactly once.
+        assertThat(chunks.inserted).extracting(RecordingChunk::seq).containsExactly(1L, 2L, 3L, 4L);
+        assertThat(chunks.inserted).extracting(RecordingChunk::text)
+            .containsExactly("L1\n", "L2\n", "L3\n", "L4\n");
+        assertThat(gateway.readLogsPods).containsExactly("pod-1");
+        assertThat(gateway.closed).containsExactly("pod-1"); // quiesced once, by the backfill itself
+    }
+
+    @Test
+    void aFailedTerminalBackfillIsDeferredAndThenRetriedWithoutRepublishing() {
+        RecordingGateway gateway = new RecordingGateway();
+        RecordingChunkStore chunks = new RecordingChunkStore(0);
+        RunLogIngestor ingestor = new RunLogIngestor(gateway, new RunLogService(chunks), "manao");
+        gateway.emit("L1");
+        gateway.emit("L2");
+        gateway.emit("L3");
+        gateway.failReadLogs = true;
+
+        assertThat(ingestor.backfillHistoryBeforeFinish("r1", "pod-1", "uid-1"))
+            .isEqualTo(RunLogIngestor.TerminalBackfill.DEFERRED);
+        // The failed attempt already published its partial prefix; the retry must not re-publish it.
+        assertThat(chunks.inserted).extracting(RecordingChunk::text).containsExactly("L1\n");
+
+        gateway.failReadLogs = false;
+        assertThat(ingestor.backfillHistoryBeforeFinish("r1", "pod-1", "uid-1"))
+            .isEqualTo(RunLogIngestor.TerminalBackfill.COMPLETED);
+
+        assertThat(chunks.inserted).extracting(RecordingChunk::seq).containsExactly(1L, 2L, 3L);
+        assertThat(chunks.inserted).extracting(RecordingChunk::text)
+            .containsExactly("L1\n", "L2\n", "L3\n"); // no duplicated text
+        assertThat(chunks.inserted.stream()
+            .filter(chunk -> chunk.text().contains(RunLogIngestor.GAP_MARKER_PREFIX)).count()).isZero();
+    }
+
+    @Test
+    void anExhaustedTerminalBackfillBudgetPublishesOneGapMarkerAndReportsGapped() {
+        RecordingGateway gateway = new RecordingGateway();
+        RecordingChunkStore chunks = new RecordingChunkStore(0);
+        RunLogIngestor ingestor = new RunLogIngestor(gateway, new RunLogService(chunks), "manao");
+        gateway.emit("L1");
+        gateway.emit("L2");
+        gateway.emit("L3");
+        gateway.failReadLogs = true;
+
+        assertThat(ingestor.backfillHistoryBeforeFinish("r1", "pod-1", "uid-1"))
+            .isEqualTo(RunLogIngestor.TerminalBackfill.DEFERRED);
+        assertThat(ingestor.backfillHistoryBeforeFinish("r1", "pod-1", "uid-1"))
+            .isEqualTo(RunLogIngestor.TerminalBackfill.DEFERRED);
+        assertThat(ingestor.backfillHistoryBeforeFinish("r1", "pod-1", "uid-1"))
+            .isEqualTo(RunLogIngestor.TerminalBackfill.GAPPED);
+
+        assertThat(gateway.readLogsPods).hasSize(3); // exactly the attempt budget
+        long markers = chunks.inserted.stream()
+            .filter(chunk -> chunk.text().contains(RunLogIngestor.GAP_MARKER_PREFIX)).count();
+        assertThat(markers).isEqualTo(1);
+
+        // A further call after the exhausted budget never adds a second marker.
+        ingestor.backfillHistoryBeforeFinish("r1", "pod-1", "uid-1");
+        assertThat(chunks.inserted.stream()
+            .filter(chunk -> chunk.text().contains(RunLogIngestor.GAP_MARKER_PREFIX)).count())
+            .isEqualTo(1);
+    }
+
+    @Test
+    void aBackfillAfterAnExhaustedBudgetSkipsPersistedHistoryAndNeverReMarksTheGap() {
+        RecordingGateway gateway = new RecordingGateway();
+        RecordingChunkStore chunks = new RecordingChunkStore(0);
+        RunLogIngestor ingestor = new RunLogIngestor(gateway, new RunLogService(chunks), "manao");
+        gateway.emit("L1");
+        gateway.emit("L2");
+        gateway.emit("L3");
+        // Each failed read still persists the full history first; only the read outcome fails.
+        gateway.failReadLogsAfterFullHistory = true;
+
+        assertThat(ingestor.backfillHistoryBeforeFinish("r1", "pod-1", "uid-1"))
+            .isEqualTo(RunLogIngestor.TerminalBackfill.DEFERRED);
+        assertThat(ingestor.backfillHistoryBeforeFinish("r1", "pod-1", "uid-1"))
+            .isEqualTo(RunLogIngestor.TerminalBackfill.DEFERRED);
+        assertThat(ingestor.backfillHistoryBeforeFinish("r1", "pod-1", "uid-1"))
+            .isEqualTo(RunLogIngestor.TerminalBackfill.GAPPED);
+
+        assertThat(gateway.readLogsPods).hasSize(3); // exactly the attempt budget
+        assertThat(chunks.inserted).extracting(RecordingChunk::seq).containsExactly(1L, 2L, 3L, 4L);
+        long markers = chunks.inserted.stream()
+            .filter(chunk -> chunk.text().contains(RunLogIngestor.GAP_MARKER_PREFIX)).count();
+        assertThat(markers).isEqualTo(1);
+
+        // The gateway recovers: the retry skips every already-persisted chunk, publishes
+        // nothing new, reports COMPLETED and never adds a second gap marker.
+        gateway.failReadLogsAfterFullHistory = false;
+        assertThat(ingestor.backfillHistoryBeforeFinish("r1", "pod-1", "uid-1"))
+            .isEqualTo(RunLogIngestor.TerminalBackfill.COMPLETED);
+        assertThat(gateway.readLogsPods).hasSize(4);
+        assertThat(chunks.inserted).extracting(RecordingChunk::seq).containsExactly(1L, 2L, 3L, 4L);
+        assertThat(chunks.inserted.subList(0, 3)).extracting(RecordingChunk::text)
+            .containsExactly("L1\n", "L2\n", "L3\n");
+        assertThat(chunks.inserted.stream()
+            .filter(chunk -> chunk.text().contains(RunLogIngestor.GAP_MARKER_PREFIX)).count())
+            .isEqualTo(1);
+    }
+
+    @Test
     void finishClosesTheWatchSoTheLastBufferedLinesCanDrain() {
         RecordingGateway gateway = new RecordingGateway();
         RunLogIngestor ingestor = new RunLogIngestor(gateway, new RunLogService(new RecordingChunkStore(0)), "manao");
@@ -208,11 +378,17 @@ class RunLogIngestorTest {
         final List<String> containers = new ArrayList<>();
         final List<String> namespaces = new ArrayList<>();
         final List<String> closed = new ArrayList<>();
+        final List<String> readLogsPods = new ArrayList<>();
+        final List<String> readLogsContainers = new ArrayList<>();
         final List<MutableHandle> handles = new ArrayList<>();
         private final List<String> podLog = new ArrayList<>();
         private MutableHandle current;
         java.util.function.Consumer<String> consumer;
         boolean failNextAttach;
+        /** When true, readLogs fails mid-history: the first line was already delivered. */
+        boolean failReadLogs;
+        /** When true, readLogs delivers the full history first and only then fails. */
+        boolean failReadLogsAfterFullHistory;
 
         /** The most recently created watch, so tests can kill the current source. */
         MutableHandle latest() { return handles.get(handles.size() - 1); }
@@ -222,6 +398,23 @@ class RunLogIngestorTest {
             podLog.add(line);
             if (current != null && current.alive) {
                 consumer.accept(line);
+            }
+        }
+
+        /** One-shot non-follow read of the pod's full history, recorded like watchLogs. */
+        @Override public void readLogs(String namespace, String podName, String container,
+                                       java.util.function.Consumer<String> lineConsumer) {
+            readLogsPods.add(podName);
+            readLogsContainers.add(container);
+            java.util.Iterator<String> lines = podLog.iterator();
+            while (lines.hasNext()) {
+                lineConsumer.accept(lines.next());
+                if (failReadLogs) {
+                    throw new IllegalStateException("pod log read failed");
+                }
+            }
+            if (failReadLogsAfterFullHistory) {
+                throw new IllegalStateException("pod log read failed");
             }
         }
 

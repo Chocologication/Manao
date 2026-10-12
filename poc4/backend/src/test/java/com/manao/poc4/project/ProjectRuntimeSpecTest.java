@@ -127,10 +127,38 @@ class ProjectRuntimeSpecTest {
 
     @Test
     void rejectsUnknownTemplates() {
-        var unknown = new ProjectRuntimeSpec("python-console", false, false, List.of());
+        var unknown = new ProjectRuntimeSpec("python-django-web", false, false, List.of());
         assertThatThrownBy(() -> unknown.validate(RESERVED))
             .isInstanceOf(ApiException.class)
             .extracting(e -> ((ApiException) e).code()).isEqualTo("VALIDATION_ERROR");
+    }
+
+    @Test
+    void pythonConsoleRejectsDependenciesAndPorts() {
+        for (var spec : List.of(
+            new ProjectRuntimeSpec("python-console", true, false, List.of()),
+            new ProjectRuntimeSpec("python-console", false, true, List.of()),
+            new ProjectRuntimeSpec("python-console", false, false,
+                List.of(new ProjectRuntimeSpec.Port("web", 8000, 30081))))) {
+            assertThatThrownBy(() -> spec.validate(RESERVED))
+                .isInstanceOfSatisfying(ApiException.class,
+                    ex -> assertThat(ex.code()).isEqualTo("VALIDATION_ERROR"));
+        }
+        assertThatCode(() -> new ProjectRuntimeSpec("python-console", false, false, List.of())
+            .validate(RESERVED)).doesNotThrowAnyException();
+    }
+
+    @Test
+    void pythonWebUsesItsDefaultPortUnlessTheFirstMappingOverridesIt() {
+        var privateWeb = new ProjectRuntimeSpec("python-fastapi-web", true, true, List.of());
+        assertThatCode(() -> privateWeb.validate(RESERVED)).doesNotThrowAnyException();
+        assertThat(privateWeb.isService()).isTrue();
+        assertThat(privateWeb.primaryPort()).isEqualTo(8000);
+        var published = new ProjectRuntimeSpec("python-fastapi-web", false, false,
+            List.of(new ProjectRuntimeSpec.Port("web", 8081, 30081),
+                new ProjectRuntimeSpec.Port("other", 9090, 30082)));
+        assertThatCode(() -> published.validate(RESERVED)).doesNotThrowAnyException();
+        assertThat(published.primaryPort()).isEqualTo(8081);
     }
 
     @Test

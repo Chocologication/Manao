@@ -152,6 +152,34 @@ class ConfigurationTest {
             .run(context -> assertThat(context.getStartupFailure()).isNotNull());
     }
 
+    @Test
+    void pythonAndMavenRunnerImagesAreBothRequiredAndDigestPinned() {
+        localContextRunner().run(context -> {
+            BackendProperties properties = context.getBean(BackendProperties.class);
+            var config = new WorkspaceConfig();
+            String mavenDigest = "registry.example/manao/maven-runner@sha256:" + "a".repeat(64);
+            String pythonDigest = "registry.example/manao/python-runner@sha256:" + "b".repeat(64);
+            // The new Python image config is required on its own; it never replaces the Java config.
+            assertThat(context.getStartupFailure()).isNull();
+            org.assertj.core.api.Assertions.assertThatThrownBy(() ->
+                    config.jobResourceFactory(properties, mavenDigest, ""))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("MANAO_PYTHON_RUNNER_IMAGE");
+            org.assertj.core.api.Assertions.assertThatThrownBy(() ->
+                    config.jobResourceFactory(properties, "", pythonDigest))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("MANAO_MAVEN_RUNNER_IMAGE");
+            // Both values must be immutable digest references, like every other runner image.
+            org.assertj.core.api.Assertions.assertThatThrownBy(() ->
+                    config.jobResourceFactory(properties, mavenDigest, "manao/python-runner:latest"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("immutable digest");
+            org.assertj.core.api.Assertions.assertThat(
+                    config.jobResourceFactory(properties, mavenDigest, pythonDigest))
+                .isNotNull();
+        });
+    }
+
     private ApplicationContextRunner clusterContextRunner() {
         try {
             Path token = temporaryDirectory.resolve("service-account-token");
@@ -167,6 +195,23 @@ class ConfigurationTest {
         } catch (IOException ex) {
             throw new IllegalStateException(ex);
         }
+    }
+
+    @Test
+    void dependencyPendingFaultIsDisabledByDefaultAndBindsTheOperatorCanary() {
+        // Default-off is a deployment guarantee: with no MANAO_DEPENDENCY_PENDING_FAULT_PACKAGE
+        // the acceptance fault property binds empty and nothing can ever trip it.
+        localContextRunner().run(context -> {
+            assertThat(context.getStartupFailure()).isNull();
+            RuntimeFaultProperties properties = context.getBean(RuntimeFaultProperties.class);
+            assertThat(properties.dependencyPendingFaultPackage()).isEmpty();
+        });
+        localContextRunner().withPropertyValues("manao.runtime.dependency-pending-fault-package=six")
+            .run(context -> {
+                assertThat(context.getStartupFailure()).isNull();
+                RuntimeFaultProperties properties = context.getBean(RuntimeFaultProperties.class);
+                assertThat(properties.dependencyPendingFaultPackage()).isEqualTo("six");
+            });
     }
 
     private ApplicationContextRunner localContextRunner() {

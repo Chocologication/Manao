@@ -32,6 +32,7 @@ public final class WorkspaceService {
     public WorkspaceAgent.Tree tree(String ownerId, String projectId, String directory) {
         return gated(projectId, () -> {
             requireReadyProject(store.findProjectForOwner(ownerId, projectId));
+            requireNoPendingOperation(projectId);
             return agentCall(() -> agent.tree(projectId, validDirectory(directory)));
         });
     }
@@ -39,6 +40,7 @@ public final class WorkspaceService {
     public WorkspaceAgent.FileMeta meta(String ownerId, String projectId, String path) {
         return gated(projectId, () -> {
             requireReadyProject(store.findProjectForOwner(ownerId, projectId));
+            requireNoPendingOperation(projectId);
             return agentCall(() -> agent.meta(projectId, validPath(path)));
         });
     }
@@ -46,6 +48,7 @@ public final class WorkspaceService {
     public WorkspaceAgent.Content content(String ownerId, String projectId, String path) {
         return gated(projectId, () -> {
             requireReadyProject(store.findProjectForOwner(ownerId, projectId));
+            requireNoPendingOperation(projectId);
             return agentCall(() -> agent.content(projectId, validPath(path)));
         });
     }
@@ -53,6 +56,7 @@ public final class WorkspaceService {
     public WorkspaceAgent.Download download(String ownerId, String projectId, String path) {
         return gated(projectId, () -> {
             requireReadyProject(store.findProjectForOwner(ownerId, projectId));
+            requireNoPendingOperation(projectId);
             return agentCall(() -> agent.download(projectId, validPath(path)));
         });
     }
@@ -159,6 +163,17 @@ public final class WorkspaceService {
             throw new ApiException("PROJECT_LOCKED", 409, "Project is locked");
         }
         return project;
+    }
+
+    /**
+     * Reads never heal, so they refuse while a durable PENDING workspace operation exists: an
+     * interrupted commit (a READY project restarts with its row still PENDING) must not leak
+     * its intermediate file state. A reconcile or write attempt drives the recovery instead.
+     */
+    private void requireNoPendingOperation(String projectId) {
+        if (!store.pendingOperations(projectId).isEmpty()) {
+            throw new ApiException("PROJECT_LOCKED", 409, "Project is locked");
+        }
     }
 
     private void requireWritable(String projectId) {

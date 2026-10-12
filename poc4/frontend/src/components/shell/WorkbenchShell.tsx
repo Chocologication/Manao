@@ -1,10 +1,11 @@
 import { useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, FileCode, LogOut, Play, SquareTerminal } from 'lucide-react';
+import { ArrowLeft, FileCode, LogOut, Package, Play, SquareTerminal } from 'lucide-react';
 import {
   lazy,
   Suspense,
   useCallback,
   useEffect,
+  useRef,
   useState,
   useSyncExternalStore,
   type MouseEvent,
@@ -18,6 +19,19 @@ import { InlineAlert } from '@/components/feedback/InlineAlert';
 import { RunPanel } from '@/components/runs/RunPanel';
 import { Button } from '@/components/ui/button';
 import type { ProjectSummary } from '@/contracts/project';
+import { isPythonRuntimeTemplate } from '@/contracts/project';
+import {
+  listPendingPythonDependencies,
+  readPythonDependencyOperationId,
+  storePythonDependencyOperationId,
+} from '@/api/pythonDependencyApi';
+import { readWithProjectBusyRetry } from '@/api/projectBusyRetry';
+import {
+  PythonDependenciesPanel,
+} from '@/features/dependencies/PythonDependenciesPanel';
+import {
+  PythonDependencyRecovery,
+} from '@/features/dependencies/PythonDependencyRecovery';
 import {
   dismissUnsavedDialog,
   LEAVE_MESSAGE,
@@ -28,6 +42,7 @@ import {
 } from '@/features/editor/unsavedChangesGuard';
 import { useWorkspaceSession } from '@/features/editor/workspaceSession';
 import { WorkspaceFileReadsPaused } from '@/features/files/fileQueries';
+import { useAuth } from '@/features/auth/AuthProvider';
 import {
   isWorkspaceEditable,
   useRunAuthorityCoordinator,
@@ -38,9 +53,17 @@ import { cn } from '@/lib/utils';
 
 const EDITOR_REGION_ID = 'workbench-editor';
 const RUN_PANEL_ID = 'workbench-run-panel';
+const DEPENDENCIES_PANEL_ID = 'workbench-dependencies-panel';
 const TERMINAL_PANEL_ID = 'workbench-terminal-panel';
 
-type WorkbenchPanel = 'file' | 'run' | 'terminal';
+type WorkbenchPanel = 'file' | 'run' | 'dependencies' | 'terminal';
+
+/**
+ * One-shot discovery of a server-pending dependency operation for a READY
+ * workbench that knows no unconfirmed operation (design 6.1). It never polls:
+ * 'inFlight'/'settled' end the episode, only an explicit user retry re-runs it.
+ */
+type PendingDependencyDiscovery = 'notAttempted' | 'inFlight' | 'settled' | 'failed';
 
 export function isExperimentalTerminalEnabled(value: string | undefined): boolean {
   return value === 'true';
@@ -70,6 +93,78 @@ export function WorkbenchShell({ project }: { project: ProjectSummary }) {
   const [terminalLoaded, setTerminalLoaded] = useState(false);
   const queryClient = useQueryClient();
   const coordinator = useRunAuthorityCoordinator(project.id);
+  const { snapshot: authSnapshot } = useAuth();
+  const userId = authSnapshot.status === 'authenticated' ? authSnapshot.user.id : '';
+  const pythonWorkbench = isPythonRuntimeTemplate(project.runtime?.templateId);
+  // Seeded from sessionStorage so a refresh keeps the unconfirmed operation reachable;
+  // the panel reports a fresh lost response while the shell stays mounted.
+  const [unconfirmedOperationId, setUnconfirmedOperationId] = useState<string | null>(() =>
+    pythonWorkbench ? readPythonDependencyOperationId(userId, project.id) : null,
+  );
+  // The dependencies panel reports its in-flight operations; the shell then holds
+  // the write gate even while another panel tab is visible.
+  const [dependencyOperationBusy, setDependencyOperationBusy] = useState(false);
+  // A post-recovery reload failure is user-visible: the change is committed but the
+  // surface may be stale until the reload succeeds. Nothing is unlocked by it.
+  const [recoveryReloadFailed, setRecoveryReloadFailed] = useState(false);
+  // The authoritative reload after a confirmed recovery spans its in-flight window
+  // AND the failed state while the Retry affordance exists; only SUCCESS releases it.
+  const [recoveryReloadPending, setRecoveryReloadPending] = useState(false);
+  const reloadAfterRecovery = useCallback(() => {
+    setRecoveryReloadPending(true);
+    reloadWorkspaceAfterTerminalRun({ projectId: project.id, queryClient })
+      .then(() => {
+        setRecoveryReloadFailed(false);
+        setRecoveryReloadPending(false);
+      })
+      .catch(() => setRecoveryReloadFailed(true));
+  }, [project.id, queryClient]);
+  // A READY workbench that knows no unconfirmed operation asks the server once
+  // whether a durable PENDING exists (design 6.1): after a backend restart a new
+  // browser session has no stored id, yet the pending operation still gates the
+  // workspace — the shell must surface it instead of dead-ending.
+  const [pendingDiscovery, setPendingDiscovery] = useState<PendingDependencyDiscovery>('notAttempted');
+  // Invalidates a discovery result whose episode is over (retried or superseded)
+  // without cancelling its fetch, so the state machine can never stick in-flight.
+  const pendingDiscoveryEpochRef = useRef(0);
+  useEffect(() => {
+    if (!pythonWorkbench || userId === '' || unconfirmedOperationId !== null) {
+      return;
+    }
+    if (pendingDiscovery !== 'notAttempted') {
+      return;
+    }
+    const epoch = ++pendingDiscoveryEpochRef.current;
+    setPendingDiscovery('inFlight');
+    // Transient PROJECT_BUSY contention with the concurrent file reads is retried
+    // with the shared read-only retry policy; real errors still surface below.
+    readWithProjectBusyRetry(() => listPendingPythonDependencies(project.id))
+      .then((pending) => {
+        if (pendingDiscoveryEpochRef.current !== epoch) {
+          return;
+        }
+        setPendingDiscovery('settled');
+        // Design 6.1: the query must not override an operation id the client
+        // saved while it ran — a discovered result is ignored entirely then.
+        if (readPythonDependencyOperationId(userId, project.id) !== null) {
+          return;
+        }
+        const discovered = pending[0]?.operationId ?? null;
+        if (discovered !== null) {
+          storePythonDependencyOperationId(userId, project.id, discovered);
+          setUnconfirmedOperationId(discovered);
+        }
+      })
+      .catch(() => {
+        if (pendingDiscoveryEpochRef.current !== epoch) {
+          return;
+        }
+        setPendingDiscovery('failed');
+      });
+  }, [pendingDiscovery, project.id, pythonWorkbench, unconfirmedOperationId, userId]);
+  const retryPendingDiscovery = useCallback(() => {
+    setPendingDiscovery('notAttempted');
+  }, []);
   const snapshot = useSyncExternalStore(
     coordinator.subscribe,
     coordinator.getSnapshot,
@@ -80,7 +175,16 @@ export function WorkbenchShell({ project }: { project: ProjectSummary }) {
     coordinator.getTerminalAuthoritySnapshot,
     coordinator.getTerminalAuthoritySnapshot,
   );
-  const writesLocked = !isWorkspaceEditable(snapshot);
+  const runWritesLocked = !isWorkspaceEditable(snapshot);
+  // The full write gate: besides the run authority, a dependency operation in flight,
+  // one with an unconfirmed result, or the authoritative reload after a recovered
+  // operation also locks workspace writes — the workspace content is not
+  // authoritative until every one of them resolves (design 6.1, fail-closed).
+  const writesLocked =
+    runWritesLocked ||
+    dependencyOperationBusy ||
+    unconfirmedOperationId !== null ||
+    recoveryReloadPending;
   const reloadingWorkspace = snapshot.phase === 'RELOADING_WORKSPACE' || snapshot.phase === 'RELOAD_FAILED';
 
   useEffect(() => {
@@ -180,6 +284,36 @@ export function WorkbenchShell({ project }: { project: ProjectSummary }) {
           <LogOut />
         </Button>
       </header>
+      {unconfirmedOperationId !== null ? (
+        <div className="border-b bg-background px-4 py-2">
+          <PythonDependencyRecovery
+            projectId={project.id}
+            userId={userId}
+            variant="ready"
+            operationId={unconfirmedOperationId}
+            onRecovered={() => {
+              setUnconfirmedOperationId(null);
+              reloadAfterRecovery();
+            }}
+          />
+        </div>
+      ) : null}
+      {recoveryReloadFailed ? (
+        <div className="flex flex-col items-start gap-2 border-b bg-background px-4 py-2">
+          <InlineAlert>Dependency change confirmed, but reloading the workspace failed.</InlineAlert>
+          <Button type="button" variant="outline" onClick={reloadAfterRecovery}>
+            Reload workspace
+          </Button>
+        </div>
+      ) : null}
+      {pendingDiscovery === 'failed' ? (
+        <div className="flex flex-col items-start gap-2 border-b bg-background px-4 py-2">
+          <InlineAlert>Could not check for a pending dependency change.</InlineAlert>
+          <Button type="button" variant="outline" onClick={retryPendingDiscovery}>
+            Retry pending dependency check
+          </Button>
+        </div>
+      ) : null}
       <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden">
         <aside
           aria-label="Project files"
@@ -238,6 +372,28 @@ export function WorkbenchShell({ project }: { project: ProjectSummary }) {
               <Play className="h-4 w-4" aria-hidden />
               Run
             </button>
+            {pythonWorkbench ? (
+              <button
+                type="button"
+                role="tab"
+                id="workbench-tab-dependencies"
+                aria-label="Dependencies"
+                aria-controls={DEPENDENCIES_PANEL_ID}
+                aria-selected={activePanel === 'dependencies'}
+                className={cn(
+                  panelTabClassName,
+                  activePanel === 'dependencies'
+                    ? 'bg-accent text-accent-foreground'
+                    : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground',
+                )}
+                onClick={() => {
+                  setActivePanel('dependencies');
+                }}
+              >
+                <Package className="h-4 w-4" aria-hidden />
+                Dependencies
+              </button>
+            ) : null}
             {experimentalTerminalEnabled ? (
               <button
                 type="button"
@@ -309,8 +465,35 @@ export function WorkbenchShell({ project }: { project: ProjectSummary }) {
                 activePanel === 'run' ? 'z-10' : 'invisible pointer-events-none',
               )}
             >
-              <RunPanel key={project.id} projectId={project.id} coordinator={coordinator} />
+              <RunPanel
+                key={project.id}
+                projectId={project.id}
+                projectTemplateId={project.runtime?.templateId ?? 'java-console'}
+                coordinator={coordinator}
+              />
             </div>
+            {pythonWorkbench ? (
+              <div
+                id={DEPENDENCIES_PANEL_ID}
+                role="tabpanel"
+                aria-labelledby="workbench-tab-dependencies"
+                aria-hidden={activePanel !== 'dependencies'}
+                inert={activePanel !== 'dependencies' ? true : undefined}
+                className={cn(
+                  panelSurfaceClassName,
+                  activePanel === 'dependencies' ? 'z-10' : 'invisible pointer-events-none',
+                )}
+              >
+                <PythonDependenciesPanel
+                  projectId={project.id}
+                  userId={userId}
+                  workspaceLocked={runWritesLocked}
+                  unconfirmedOperationId={unconfirmedOperationId}
+                  onResponseLost={setUnconfirmedOperationId}
+                  onBusyChange={setDependencyOperationBusy}
+                />
+              </div>
+            ) : null}
             {experimentalTerminalEnabled && terminalLoaded ? (
               <div
                 id={TERMINAL_PANEL_ID}

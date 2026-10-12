@@ -1,4 +1,5 @@
 import { parseWorkspaceRevision, type WorkspaceRevision } from './file';
+import type { RuntimeTemplateId } from './project';
 
 declare const runIdBrand: unique symbol;
 declare const logTicketBrand: unique symbol;
@@ -34,9 +35,39 @@ export type RunResources = {
 
 export type RunExecutionKind = 'TASK' | 'SERVICE';
 
+/** The fixed display commands of the internal template enum; snapshots carry one of them. */
+export const JAVA_CONSOLE_COMMAND = 'mvn -q -DskipTests compile exec:java';
+export const JAVA_SPRING_BOOT_COMMAND = 'mvn -q -DskipTests spring-boot:run';
+export const PYTHON_CONSOLE_COMMAND = 'python -u main.py';
+export const PYTHON_FASTAPI_COMMAND = 'python -u -m uvicorn app.main:app';
+
+export type RunCommand =
+  | typeof JAVA_CONSOLE_COMMAND
+  | typeof JAVA_SPRING_BOOT_COMMAND
+  | typeof PYTHON_CONSOLE_COMMAND
+  | typeof PYTHON_FASTAPI_COMMAND;
+
+/** The pinned toolchain of this stage; the launcher images and backend agree on it. */
+export const PYTHON_RUN_VERSION = '3.13';
+export const PYTHON_RUN_PACKAGE_MANAGER = 'uv';
+
+/** Historical Java runtime node; rows written before the template contract carry no language. */
+export type LegacyJavaRunRuntime = { javaMajor: 17; mavenMajor: 3 };
+
+/** New-format runtime nodes carry the language discriminator and never mix languages. */
+export type JavaRunRuntime = { language: 'java'; javaMajor: 17; mavenMajor: 3 };
+export type PythonRunRuntime = {
+  language: 'python';
+  pythonVersion: typeof PYTHON_RUN_VERSION;
+  packageManager: typeof PYTHON_RUN_PACKAGE_MANAGER;
+};
+export type RunRuntime = JavaRunRuntime | PythonRunRuntime;
+/** Runtime node of a parsed snapshot: legacy Java rows omit the language discriminator. */
+export type RunPolicyRuntime = RunRuntime | LegacyJavaRunRuntime;
+
 type RunPolicyBase = {
-  command: 'mvn -q -DskipTests compile exec:java';
-  runtime: { javaMajor: 17; mavenMajor: 3 };
+  command: RunCommand;
+  runtime: RunPolicyRuntime;
   resources: {
     requests: RunResources;
     limits: RunResources;
@@ -45,9 +76,11 @@ type RunPolicyBase = {
 
 /**
  * TASK keeps the single overall timeout deadline. Payloads without execution fields are
- * legacy TASK runs; the optional numeric fields are echoed only when the server sends them.
+ * legacy TASK runs; the optional numeric fields are echoed only when the server sends
+ * them. New-format rows name their console template; legacy rows omit templateId.
  */
 export type TaskRunPolicy = RunPolicyBase & {
+  templateId?: 'java-console' | 'python-console';
   timeoutSeconds: number;
   executionKind?: 'TASK';
   startupTimeoutSeconds?: number;
@@ -56,9 +89,11 @@ export type TaskRunPolicy = RunPolicyBase & {
 
 /**
  * SERVICE (bounded web session) derives the Job backstop from startupTimeoutSeconds plus the
- * immutable serviceLifetimeSeconds that starts at first verified readiness.
+ * immutable serviceLifetimeSeconds that starts at first verified readiness. Legacy SERVICE
+ * rows keep the historical console command; new-format rows name their web template.
  */
 export type ServiceRunPolicy = RunPolicyBase & {
+  templateId?: 'java-spring-boot-web' | 'python-fastapi-web';
   executionKind: 'SERVICE';
   timeoutSeconds: number;
   startupTimeoutSeconds: number;
@@ -66,6 +101,56 @@ export type ServiceRunPolicy = RunPolicyBase & {
 };
 
 export type RunPolicy = TaskRunPolicy | ServiceRunPolicy;
+
+/**
+ * Toolbar display for the no-run state, derived from the project's current template.
+ * A selected Run always displays its own policy instead of this preview.
+ */
+export type RunTemplateDisplay = {
+  command: RunCommand;
+  runtimeLabel: string;
+  timeoutSeconds: number;
+};
+
+const DEFAULT_RUN_TIMEOUT_SECONDS = 1800;
+
+/** The per-template no-run display; it must never default a Python project to Maven. */
+export function templateRunDisplay(templateId: RuntimeTemplateId): RunTemplateDisplay {
+  switch (templateId) {
+    case 'java-console':
+      return {
+        command: JAVA_CONSOLE_COMMAND,
+        runtimeLabel: 'Java 17 · Maven 3',
+        timeoutSeconds: DEFAULT_RUN_TIMEOUT_SECONDS,
+      };
+    case 'java-spring-boot-web':
+      return {
+        command: JAVA_SPRING_BOOT_COMMAND,
+        runtimeLabel: 'Java 17 · Maven 3',
+        timeoutSeconds: DEFAULT_RUN_TIMEOUT_SECONDS,
+      };
+    case 'python-console':
+      return {
+        command: PYTHON_CONSOLE_COMMAND,
+        runtimeLabel: `Python ${PYTHON_RUN_VERSION} · ${PYTHON_RUN_PACKAGE_MANAGER}`,
+        timeoutSeconds: DEFAULT_RUN_TIMEOUT_SECONDS,
+      };
+    case 'python-fastapi-web':
+      return {
+        command: PYTHON_FASTAPI_COMMAND,
+        runtimeLabel: `Python ${PYTHON_RUN_VERSION} · ${PYTHON_RUN_PACKAGE_MANAGER}`,
+        timeoutSeconds: DEFAULT_RUN_TIMEOUT_SECONDS,
+      };
+  }
+}
+
+/** Human-readable runtime identity of a parsed policy (toolbar version display). */
+export function runRuntimeLabel(runtime: RunPolicyRuntime): string {
+  if ('language' in runtime && runtime.language === 'python') {
+    return `Python ${runtime.pythonVersion} · ${runtime.packageManager}`;
+  }
+  return `Java ${runtime.javaMajor} · Maven ${runtime.mavenMajor}`;
+}
 
 export type RunSummary = {
   id: RunId;
@@ -270,18 +355,10 @@ function parseRunResources(value: unknown): RunResources {
   };
 }
 
-function parseRunPolicy(value: unknown): RunPolicy {
-  const record = asRecord(value);
-  if ('image' in record || 'env' in record) {
-    invalidRunResponse();
-  }
-  if (record.command !== 'mvn -q -DskipTests compile exec:java') {
-    invalidRunResponse();
-  }
-  const runtime = asRecord(record.runtime);
-  if (runtime.javaMajor !== 17 || runtime.mavenMajor !== 3) {
-    invalidRunResponse();
-  }
+/** Requests never exceed limits; the check is part of the snapshot contract. */
+function parseRunResourcesNode(
+  record: Record<string, unknown>,
+): RunPolicyBase['resources'] {
   const resources = asRecord(record.resources);
   const requests = parseRunResources(resources.requests);
   const limits = parseRunResources(resources.limits);
@@ -292,10 +369,116 @@ function parseRunPolicy(value: unknown): RunPolicy {
   ) {
     invalidRunResponse();
   }
-  const base = {
-    command: 'mvn -q -DskipTests compile exec:java' as const,
-    runtime: { javaMajor: 17, mavenMajor: 3 } as const,
-    resources: { requests, limits },
+  return { requests, limits };
+}
+
+type TemplatedPolicySpec =
+  | {
+      kind: 'TASK';
+      templateId: 'java-console' | 'python-console';
+      command: RunCommand;
+      language: 'java' | 'python';
+    }
+  | {
+      kind: 'SERVICE';
+      templateId: 'java-spring-boot-web' | 'python-fastapi-web';
+      command: RunCommand;
+      language: 'java' | 'python';
+    };
+
+/** Mirror of the backend RuntimeTemplate enum; Record forces every id to stay covered. */
+const TEMPLATED_POLICIES: Record<RuntimeTemplateId, TemplatedPolicySpec> = {
+  'java-console': { kind: 'TASK', templateId: 'java-console', command: JAVA_CONSOLE_COMMAND, language: 'java' },
+  'java-spring-boot-web': {
+    kind: 'SERVICE',
+    templateId: 'java-spring-boot-web',
+    command: JAVA_SPRING_BOOT_COMMAND,
+    language: 'java',
+  },
+  'python-console': { kind: 'TASK', templateId: 'python-console', command: PYTHON_CONSOLE_COMMAND, language: 'python' },
+  'python-fastapi-web': {
+    kind: 'SERVICE',
+    templateId: 'python-fastapi-web',
+    command: PYTHON_FASTAPI_COMMAND,
+    language: 'python',
+  },
+};
+
+const RUNTIME_TEMPLATE_IDS: ReadonlySet<RuntimeTemplateId> = new Set([
+  'java-console',
+  'java-spring-boot-web',
+  'python-console',
+  'python-fastapi-web',
+] as const);
+
+/** A java runtime needs both pinned fields, the java language and no python fields. */
+function parseJavaRunRuntime(value: unknown): JavaRunRuntime {
+  const runtime = asRecord(value);
+  if (runtime.language !== 'java' || runtime.javaMajor !== 17 || runtime.mavenMajor !== 3) {
+    invalidRunResponse();
+  }
+  if ('pythonVersion' in runtime || 'packageManager' in runtime) {
+    invalidRunResponse();
+  }
+  return { language: 'java', javaMajor: 17, mavenMajor: 3 };
+}
+
+/** A python runtime needs both pinned fields, the python language and no java fields. */
+function parsePythonRunRuntime(value: unknown): PythonRunRuntime {
+  const runtime = asRecord(value);
+  if (
+    runtime.language !== 'python' ||
+    runtime.pythonVersion !== PYTHON_RUN_VERSION ||
+    runtime.packageManager !== PYTHON_RUN_PACKAGE_MANAGER
+  ) {
+    invalidRunResponse();
+  }
+  if ('javaMajor' in runtime || 'mavenMajor' in runtime) {
+    invalidRunResponse();
+  }
+  return {
+    language: 'python',
+    pythonVersion: PYTHON_RUN_VERSION,
+    packageManager: PYTHON_RUN_PACKAGE_MANAGER,
+  };
+}
+
+function parseRunPolicy(value: unknown): RunPolicy {
+  const record = asRecord(value);
+  if ('image' in record || 'env' in record) {
+    invalidRunResponse();
+  }
+  const resources = parseRunResourcesNode(record);
+  // New-format rows carry templateId and are consistency-checked against it; rows
+  // without templateId stay historical Java runs decided by their execution kind.
+  if (record.templateId !== undefined) {
+    return parseTemplatedRunPolicy(record, resources);
+  }
+  return parseLegacyRunPolicy(record, resources);
+}
+
+function parseLegacyRunPolicy(
+  record: Record<string, unknown>,
+  resources: RunPolicyBase['resources'],
+): RunPolicy {
+  // Template-less rows are historical Java records and nothing else: they keep the
+  // historical console command display and must not carry language/python fields.
+  if (record.command !== JAVA_CONSOLE_COMMAND) {
+    invalidRunResponse();
+  }
+  const runtime = asRecord(record.runtime);
+  if ('language' in runtime || 'pythonVersion' in runtime || 'packageManager' in runtime) {
+    invalidRunResponse();
+  }
+  if (runtime.javaMajor !== 17 || runtime.mavenMajor !== 3) {
+    invalidRunResponse();
+  }
+  // An explicit annotation keeps the runtime literal types that object-literal
+  // inference would otherwise widen to string/number.
+  const base: RunPolicyBase = {
+    command: JAVA_CONSOLE_COMMAND,
+    runtime: { javaMajor: 17, mavenMajor: 3 },
+    resources,
   };
   const executionKind = record.executionKind === undefined ? 'TASK' : record.executionKind;
   if (executionKind === 'SERVICE') {
@@ -319,6 +502,68 @@ function parseRunPolicy(value: unknown): RunPolicy {
     timeoutSeconds: parseSafeInteger(record.timeoutSeconds, 1, MAX_RUN_TIMEOUT_SECONDS),
   };
   // Echo the execution fields only when present so legacy payloads keep their exact shape.
+  if (record.executionKind !== undefined) {
+    policy.executionKind = 'TASK';
+  }
+  if (record.startupTimeoutSeconds !== undefined) {
+    policy.startupTimeoutSeconds = parseSafeInteger(
+      record.startupTimeoutSeconds,
+      0,
+      MAX_RUN_TIMEOUT_SECONDS,
+    );
+  }
+  if (record.serviceLifetimeSeconds !== undefined) {
+    policy.serviceLifetimeSeconds = parseSafeInteger(record.serviceLifetimeSeconds, 0, 0);
+  }
+  return policy;
+}
+
+/**
+ * New-format rows agree with their template on language, execution kind and display
+ * command; unknown or conflicting data is rejected instead of falling back to Java.
+ */
+function parseTemplatedRunPolicy(
+  record: Record<string, unknown>,
+  resources: RunPolicyBase['resources'],
+): RunPolicy {
+  const templateId = record.templateId;
+  if (typeof templateId !== 'string' || !RUNTIME_TEMPLATE_IDS.has(templateId as RuntimeTemplateId)) {
+    invalidRunResponse();
+  }
+  const spec = TEMPLATED_POLICIES[templateId as RuntimeTemplateId];
+  if (record.command !== spec.command) {
+    invalidRunResponse();
+  }
+  const runtime =
+    spec.language === 'java' ? parseJavaRunRuntime(record.runtime) : parsePythonRunRuntime(record.runtime);
+  // The template fixes the execution kind; a present-but-different kind is a conflict.
+  if (record.executionKind !== undefined && record.executionKind !== spec.kind) {
+    invalidRunResponse();
+  }
+  if (spec.kind === 'SERVICE') {
+    return {
+      templateId: spec.templateId,
+      command: spec.command,
+      runtime,
+      resources,
+      executionKind: 'SERVICE',
+      timeoutSeconds: parseSafeInteger(record.timeoutSeconds, 1, MAX_RUN_TIMEOUT_SECONDS),
+      startupTimeoutSeconds: parseSafeInteger(
+        record.startupTimeoutSeconds,
+        1,
+        MAX_RUN_TIMEOUT_SECONDS,
+      ),
+      serviceLifetimeSeconds: parseServiceLifetimeSeconds(record.serviceLifetimeSeconds),
+    };
+  }
+  const policy: TaskRunPolicy = {
+    templateId: spec.templateId,
+    command: spec.command,
+    runtime,
+    resources,
+    timeoutSeconds: parseSafeInteger(record.timeoutSeconds, 1, MAX_RUN_TIMEOUT_SECONDS),
+  };
+  // Echo the execution fields only when present so payloads keep their exact shape.
   if (record.executionKind !== undefined) {
     policy.executionKind = 'TASK';
   }

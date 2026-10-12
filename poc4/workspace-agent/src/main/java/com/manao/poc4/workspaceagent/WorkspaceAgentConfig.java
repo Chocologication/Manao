@@ -16,6 +16,26 @@ public class WorkspaceAgentConfig {
     }
 
     @Bean
+    PythonDependencyTransaction pythonDependencyTransaction(@Value("${manao.agent.root:/workspace}") String root) {
+        return new PythonDependencyTransaction(java.nio.file.Path.of(root));
+    }
+
+    /**
+     * The editor runs the root-owned dependency helper through the fixed isolated interpreter;
+     * the resolution budget is configurable but bounded (enforced by the editor constructor).
+     */
+    @Bean
+    PythonDependencyEditor pythonDependencyEditor(
+        @Value("${manao.agent.root:/workspace}") String root,
+        PythonDependencyTransaction transaction,
+        @Value("${manao.agent.pythonDependency.python:/usr/local/bin/python3}") String python,
+        @Value("${manao.agent.pythonDependency.helper:/opt/manao-python/dependency_helper.py}") String helper,
+        @Value("${manao.agent.pythonDependency.resolutionSeconds:20}") long resolutionSeconds) {
+        return new PythonDependencyEditor(java.nio.file.Path.of(root), transaction, python, helper,
+            java.time.Duration.ofSeconds(resolutionSeconds));
+    }
+
+    @Bean
     WorkspaceCapabilityVerifier workspaceCapabilityVerifier(
         @Value("${MANAO_AGENT_PROJECT_ID:}") String projectId,
         @Value("${MANAO_AGENT_CAPABILITY_PUBLIC_KEY:}") String publicKeyBase64) {

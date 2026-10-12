@@ -5,6 +5,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.manao.poc4.kubernetes.JobCoordinator.JobObservation;
 import com.manao.poc4.kubernetes.JobCoordinator.ObservationKind;
 import com.manao.poc4.persistence.RunState;
+import com.manao.poc4.project.ProjectRuntimeSpec;
+import com.manao.poc4.project.RuntimeTemplate;
+import com.manao.poc4.run.RunPolicy;
 import com.manao.poc4.run.RunRecord;
 import io.fabric8.kubernetes.api.model.ContainerState;
 import io.fabric8.kubernetes.api.model.ContainerStateBuilder;
@@ -46,6 +49,7 @@ class Fabric8JobCoordinatorTest {
     private static final String JOB_NAME = JobResourceFactory.jobName(RUN);
     private static final String POD_NAME = JOB_NAME + "-abcde";
     private static final String IMAGE = "registry.example/manao/maven-runner@sha256:" + "a".repeat(64);
+    private static final String PYTHON_IMAGE = "registry.example/manao/python-runner@sha256:" + "b".repeat(64);
 
     KubernetesMockServer server;
     KubernetesClient client;
@@ -56,7 +60,7 @@ class Fabric8JobCoordinatorTest {
     void setUp() {
         server = new KubernetesMockServer(new io.fabric8.mockwebserver.Context(),
             new io.fabric8.mockwebserver.MockWebServer(), new java.util.HashMap<>(),
-            new KubernetesCrudDispatcher(), false);
+            new ApplyAwareCrudDispatcher(), false);
         server.init();
         client = server.createClient();
         exec = new StubExecTransport();
@@ -64,8 +68,25 @@ class Fabric8JobCoordinatorTest {
             new JobResourceFactory(NS, 1800, "registry.example/manao/busybox@sha256:" + "d".repeat(64),
                 new JobResourceFactory.RunResources(500, 1024L * 1024 * 1024, 1024L * 1024 * 1024),
                 new JobResourceFactory.RunResources(8000, 16L * 1024 * 1024 * 1024, 10L * 1024 * 1024 * 1024),
-                IMAGE),
+                IMAGE, PYTHON_IMAGE),
             new ResourceIdentityVerifier(), NS, exec);
+    }
+
+    /**
+     * The crud dispatcher answers apply-patches on absent resources with 404; the real API server
+     * creates the object. Routing an apply-patch of an absent resource into create keeps the
+     * ensureJob dispatch tests on the same mock-server round-trip as everything else.
+     */
+    private static final class ApplyAwareCrudDispatcher extends KubernetesCrudDispatcher {
+        @Override public io.fabric8.mockwebserver.http.MockResponse dispatch(
+                io.fabric8.mockwebserver.http.RecordedRequest request) {
+            String contentType = request.getHeader("Content-Type");
+            if ("PATCH".equals(request.getMethod()) && contentType != null
+                && contentType.contains("apply-patch")) {
+                return handleCreate(request);
+            }
+            return super.dispatch(request);
+        }
     }
 
     @AfterEach
@@ -81,6 +102,72 @@ class Fabric8JobCoordinatorTest {
         return new RunRecord(RUN, PROJECT, 0, RunState.RUNNING, "{}", JOB_NAME,
             null, null, null, null, null, 0L, Instant.parse("2026-09-21T10:00:00Z"), 0L,
             null, null, executionPodUid, null);
+    }
+
+    /** The policy snapshot RunService persists for a python-fastapi-web project. */
+    private static String pythonServicePolicyJson() {
+        RunPolicy base = new RunPolicy(RuntimeTemplate.JAVA_CONSOLE.id(),
+            new RunPolicy.RuntimeInfo.Java(17, 3), RuntimeTemplate.JAVA_CONSOLE.displayCommand(), 1800,
+            RunPolicy.EXECUTION_KIND_TASK, 1800, 0,
+            new RunPolicy.Resources(500, 1024L * 1024 * 1024, 1024L * 1024 * 1024),
+            new RunPolicy.Resources(8000, 16L * 1024 * 1024 * 1024, 10L * 1024 * 1024 * 1024));
+        return base.forProject(new ProjectRuntimeSpec(
+            RuntimeTemplate.PYTHON_FASTAPI_WEB.id(), false, false, List.of())).toJson();
+    }
+
+    private static String mavenTaskPolicyJson() {
+        RunPolicy base = new RunPolicy(RuntimeTemplate.JAVA_CONSOLE.id(),
+            new RunPolicy.RuntimeInfo.Java(17, 3), RuntimeTemplate.JAVA_CONSOLE.displayCommand(), 1800,
+            RunPolicy.EXECUTION_KIND_TASK, 1800, 0,
+            new RunPolicy.Resources(500, 1024L * 1024 * 1024, 1024L * 1024 * 1024),
+            new RunPolicy.Resources(8000, 16L * 1024 * 1024 * 1024, 10L * 1024 * 1024 * 1024));
+        return base.forProject(new ProjectRuntimeSpec(
+            RuntimeTemplate.JAVA_CONSOLE.id(), false, false, List.of())).toJson();
+    }
+
+    @Test
+    void ensureJobDispatchesAPythonServiceSnapshotToThePythonManifest() {
+        RunRecord pythonRun = new RunRecord(RUN, PROJECT, 0, RunState.STARTING, pythonServicePolicyJson(),
+            null, null, null, null, null, null, 0L, Instant.parse("2026-09-21T10:00:00Z"), 0L);
+
+        String jobRef = coordinator.ensureJob(pythonRun, PROJECT, 8000, List.of());
+
+        assertThat(jobRef).isEqualTo(JOB_NAME);
+        Job created = client.batch().v1().jobs().inNamespace(NS).withName(JOB_NAME).get();
+        var container = created.getSpec().getTemplate().getSpec().getContainers().get(0);
+        assertThat(container.getImage()).isEqualTo(PYTHON_IMAGE);
+        assertThat(container.getCommand()).containsExactly(
+            "/usr/local/bin/manao-run-supervisor", "run", "python-fastapi-web");
+        assertThat(created.getMetadata().getLabels())
+            .containsEntry(ResourceIdentityVerifier.LABEL_RUN_ID, RUN);
+    }
+
+    @Test
+    void ensureJobDispatchesAMavenTaskSnapshotToTheMavenManifest() {
+        RunRecord mavenRun = new RunRecord(RUN, PROJECT, 0, RunState.STARTING, mavenTaskPolicyJson(),
+            null, null, null, null, null, null, 0L, Instant.parse("2026-09-21T10:00:00Z"), 0L);
+
+        coordinator.ensureJob(mavenRun, PROJECT, 8080, List.of());
+
+        Job created = client.batch().v1().jobs().inNamespace(NS).withName(JOB_NAME).get();
+        var container = created.getSpec().getTemplate().getSpec().getContainers().get(0);
+        assertThat(container.getImage()).isEqualTo(IMAGE);
+        assertThat(container.getCommand())
+            .containsExactly("/usr/local/bin/manao-maven", "-q", "-DskipTests", "compile", "exec:java");
+    }
+
+    @Test
+    void ensureJobReusesAnExistingJobThatCarriesTheRunIdentity() {
+        RunRecord pythonRun = new RunRecord(RUN, PROJECT, 0, RunState.STARTING, pythonServicePolicyJson(),
+            null, null, null, null, null, null, 0L, Instant.parse("2026-09-21T10:00:00Z"), 0L);
+        coordinator.ensureJob(pythonRun, PROJECT, 8000, List.of());
+        String resourceVersionBefore = client.batch().v1().jobs().inNamespace(NS)
+            .withName(JOB_NAME).get().getMetadata().getResourceVersion();
+
+        assertThat(coordinator.ensureJob(pythonRun, PROJECT, 8000, List.of())).isEqualTo(JOB_NAME);
+
+        assertThat(client.batch().v1().jobs().inNamespace(NS).withName(JOB_NAME).get()
+            .getMetadata().getResourceVersion()).isEqualTo(resourceVersionBefore);
     }
 
     @Test
@@ -237,6 +324,21 @@ class Fabric8JobCoordinatorTest {
 
         assertThat(coordinator.observe(run("pod-uid-gone")).kind())
             .isEqualTo(ObservationKind.IDENTITY_MISMATCH);
+    }
+
+    @Test
+    void observeCarriesTheClaimedPodIdentityEvenWhenTheApplicationContainerIsTerminated() {
+        Job job = seedJob();
+        String podUid = seedPod(job, "Failed", false, null);
+
+        JobObservation observation = coordinator.observe(run());
+
+        // The terminal log backfill keys on exactly this identity chain: a terminated application
+        // container still yields FOUND facts carrying the claimed pod's name and uid.
+        assertThat(observation.kind()).isEqualTo(ObservationKind.FOUND);
+        assertThat(observation.facts().podName()).isEqualTo(POD_NAME);
+        assertThat(observation.facts().podUid()).isEqualTo(podUid);
+        assertThat(observation.facts().applicationTerminated()).isTrue();
     }
 
     private String readyReceipt(String podUid) {

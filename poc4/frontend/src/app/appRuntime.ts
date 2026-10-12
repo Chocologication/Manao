@@ -1,4 +1,5 @@
 import { HttpClient, setHttpClient } from '../api/httpClient';
+import { clearPythonDependencyOperationIdsForUser } from '../api/pythonDependencyApi';
 import { createAuthSession } from '../features/auth/authSession';
 import { resetUnsavedDialog } from '../features/editor/unsavedChangesGuard';
 import { WorkspaceBufferRegistry } from '../features/editor/WorkspaceBufferRegistry';
@@ -56,6 +57,18 @@ function disposeWorkspaceSession(): void {
   queryClient.clear();
 }
 
+/**
+ * Dependency operation ids live per user in sessionStorage; ending the session
+ * must not hand an unresolved operation to the next user.
+ */
+function clearUserScopedDependencyOperations(): void {
+  const snapshot = authSession.getSnapshot();
+  if (snapshot.status !== 'authenticated') {
+    return;
+  }
+  clearPythonDependencyOperationIdsForUser(snapshot.user.id);
+}
+
 export function handleUnauthorized(): void {
   if (unauthorizedInFlight) {
     return;
@@ -63,6 +76,7 @@ export function handleUnauthorized(): void {
   unauthorizedInFlight = true;
   try {
     disposeWorkspaceSession();
+    clearUserScopedDependencyOperations();
     authSession.clear('unauthorized');
   } finally {
     unauthorizedInFlight = false;
@@ -70,6 +84,7 @@ export function handleUnauthorized(): void {
 }
 
 export function logout(): void {
+  clearUserScopedDependencyOperations();
   disposeWorkspaceSession();
   authSession.clear('logout');
 }

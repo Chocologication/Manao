@@ -408,3 +408,90 @@ describe('CreateProjectForm creation key', () => {
     }
   });
 });
+
+describe('CreateProjectForm python templates', () => {
+  it('defaults FastAPI to container port 8000 and an empty public port', async () => {
+    const user = userEvent.setup();
+    await authenticateAsAlice();
+    renderApp({ initialEntries: ['/projects'] });
+    await screen.findByRole('article', { name: 'Alice Notebook' });
+    await user.selectOptions(screen.getByLabelText('Template'), 'python-fastapi-web');
+    await user.click(screen.getByRole('checkbox', { name: /public/i }));
+    // Number inputs expose their value as a number to jest-dom's toHaveValue, and an
+    // empty number input reads as null rather than ''.
+    expect(screen.getByLabelText(/container port/i)).toHaveValue(8000);
+    expect(screen.getByLabelText(/public port/i)).toHaveValue(null);
+  });
+
+  it('hides the web options for the python console template and submits none', async () => {
+    const user = userEvent.setup();
+    const bodies: PostBody[] = [];
+    server.use(
+      http.post('/api/v1/projects', async ({ request }) => {
+        bodies.push((await request.json()) as PostBody);
+        return HttpResponse.json(createdSummary('demo'), { status: 201 });
+      }),
+    );
+    await authenticateAsAlice();
+    renderApp({ initialEntries: ['/projects'] });
+    await screen.findByRole('article', { name: 'Alice Notebook' });
+    await user.selectOptions(screen.getByLabelText('Template'), 'python-console');
+    expect(screen.queryByRole('checkbox', { name: /public/i })).toBeNull();
+    expect(screen.queryByLabelText('MySQL')).toBeNull();
+    expect(screen.queryByLabelText('Redis')).toBeNull();
+    await user.type(screen.getByLabelText('Project name'), 'demo');
+    await user.click(screen.getByRole('button', { name: 'Create project' }));
+
+    await waitFor(() => {
+      expect(bodies).toHaveLength(1);
+    });
+    expect(bodies[0]).toMatchObject({
+      templateId: 'python-console',
+      mysql: false,
+      redis: false,
+      publicPorts: [],
+    });
+  });
+
+  it('submits the FastAPI row with its 8000 default and the typed public port', async () => {
+    const user = userEvent.setup();
+    const bodies: PostBody[] = [];
+    server.use(
+      http.post('/api/v1/projects', async ({ request }) => {
+        bodies.push((await request.json()) as PostBody);
+        return HttpResponse.json(createdSummary('demo'), { status: 201 });
+      }),
+    );
+    await authenticateAsAlice();
+    renderApp({ initialEntries: ['/projects'] });
+    await screen.findByRole('article', { name: 'Alice Notebook' });
+    await user.selectOptions(screen.getByLabelText('Template'), 'python-fastapi-web');
+    await user.click(screen.getByRole('checkbox', { name: /public/i }));
+    await user.type(screen.getByLabelText('Project name'), 'demo');
+    await user.type(screen.getByLabelText('Public port 1'), '30081');
+    await user.click(screen.getByRole('button', { name: 'Create project' }));
+
+    await waitFor(() => {
+      expect(bodies).toHaveLength(1);
+    });
+    expect(bodies[0]).toMatchObject({
+      templateId: 'python-fastapi-web',
+      mysql: false,
+      redis: false,
+      publicPorts: [{ name: 'port-1', targetPort: 8000, publicPort: 30081 }],
+    });
+  });
+
+  it('resets the port row defaults when switching between web templates', async () => {
+    const user = userEvent.setup();
+    await authenticateAsAlice();
+    renderApp({ initialEntries: ['/projects'] });
+    await fillWebForm(user, 'demo');
+    await user.type(screen.getByLabelText('Public port 1'), '30081');
+    await user.selectOptions(screen.getByLabelText('Template'), 'python-fastapi-web');
+    // The Java web default (8080) and the typed public port do not carry over:
+    // the FastAPI template starts from its own 8000 default with a blank public port.
+    expect(screen.getByLabelText(/container port/i)).toHaveValue(8000);
+    expect(screen.getByLabelText(/public port/i)).toHaveValue(null);
+  });
+});

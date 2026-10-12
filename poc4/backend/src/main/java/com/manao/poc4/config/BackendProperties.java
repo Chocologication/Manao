@@ -27,11 +27,13 @@ public final class BackendProperties {
     private final Workspace workspace;
     private final Logging logging;
     private final RuntimeDeps runtimeDeps;
+    private final PythonDependency pythonDependency;
 
     @ConstructorBinding
     public BackendProperties(BackendProfile profile, String javaVersion, String mavenVersion,
                              Duration timeout, Kubernetes kubernetes, ResourceLimits resources,
-                             Workspace workspace, Logging logging, RuntimeDeps runtimeDeps) {
+                             Workspace workspace, Logging logging, RuntimeDeps runtimeDeps,
+                             PythonDependency pythonDependency) {
         validateClusterConfiguration(profile, kubernetes);
         this.profile = profile;
         this.javaVersion = FIXED_JAVA_VERSION;
@@ -43,6 +45,7 @@ public final class BackendProperties {
         this.logging = logging;
         this.runtimeDeps = runtimeDeps == null
             ? new RuntimeDeps(List.of(DEFAULT_RESERVED_PUBLIC_PORT), null, null, null, null) : runtimeDeps;
+        this.pythonDependency = pythonDependency == null ? new PythonDependency(20) : pythonDependency;
     }
 
     private static void validateClusterConfiguration(BackendProfile profile, Kubernetes kubernetes) {
@@ -94,6 +97,8 @@ public final class BackendProperties {
     public Logging logging() { return logging; }
     public RuntimeDeps runtimeDeps() { return runtimeDeps; }
 
+    public PythonDependency pythonDependency() { return pythonDependency; }
+
     public record Kubernetes(String masterUrl, String namespace, boolean inCluster, boolean serviceAccount,
                              String kubeconfigFile, String apiServerHost, int apiServerPort,
                              String serviceAccountTokenFile, String serviceAccountCaCertificateFile) {}
@@ -129,5 +134,19 @@ public final class BackendProperties {
             publicEntryHost = blank(publicEntryHost) ? null : publicEntryHost.trim();
         }
         private static boolean blank(String value) { return value == null || value.isBlank(); }
+    }
+
+    /**
+     * Python dependency resolution budget in seconds. It must match the workspace-agent's own
+     * configured budget (the same 1..600 bounds); the backend derives only the prepare request
+     * timeout from it and never interprets it otherwise.
+     */
+    public record PythonDependency(int resolutionSeconds) {
+        public PythonDependency {
+            if (resolutionSeconds < 1 || resolutionSeconds > 600) {
+                throw new IllegalArgumentException(
+                    "python dependency resolution budget must be between 1 and 600 seconds");
+            }
+        }
     }
 }

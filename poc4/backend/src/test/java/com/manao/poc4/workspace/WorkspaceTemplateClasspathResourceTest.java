@@ -45,4 +45,37 @@ class WorkspaceTemplateClasspathResourceTest {
             assertThat(content).as("web template resource %s must load non-empty via classpath", path)
                 .isNotBlank());
     }
+
+    @Test
+    void loadsEveryPythonConsoleTemplateResourceFromTheClasspathNonEmpty() {
+        var spec = new com.manao.poc4.project.ProjectRuntimeSpec(
+            "python-console", false, false, java.util.List.of());
+        Map<String, String> files = new WorkspaceTemplate().files(spec);
+        assertThat(files).as("python console template manifest must not be empty").isNotEmpty();
+        assertThat(files).containsKeys("pyproject.toml", "uv.lock", ".python-version",
+            ".gitignore", "README.md", "main.py");
+        files.forEach((path, content) ->
+            assertThat(content)
+                .as("python console resource %s must load non-empty via classpath", path)
+                .isNotBlank());
+        // UTF-8 text resources decode cleanly and never carry a byte order mark.
+        assertThat(files.get("main.py")).doesNotStartWith("\uFEFF");
+        assertThat(files.get("uv.lock")).contains("requires-python = \"==3.13.*\"");
+    }
+
+    @Test
+    void loadsEveryPythonWebTemplateResourceFromTheClasspathNonEmpty() {
+        var spec = new com.manao.poc4.project.ProjectRuntimeSpec(
+            "python-fastapi-web", true, true, java.util.List.of());
+        Map<String, String> files = new WorkspaceTemplate().files(spec);
+        assertThat(files).as("python web template manifest must not be empty").isNotEmpty();
+        assertThat(files).containsKeys("pyproject.toml", "uv.lock", ".python-version",
+            ".gitignore", "README.md", "app/__init__.py", "app/main.py");
+        files.forEach((path, content) ->
+            assertThat(content)
+                .as("python web resource %s must load non-empty via classpath", path)
+                .isNotBlank());
+        assertThat(files.get("app/main.py")).doesNotStartWith("\uFEFF");
+        assertThat(files.get("pyproject.toml")).contains("pymysql[rsa]").contains("\"redis");
+    }
 }

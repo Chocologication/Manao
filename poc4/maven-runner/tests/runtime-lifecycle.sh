@@ -5,7 +5,12 @@
 #   bash poc4/maven-runner/tests/runtime-lifecycle.sh <runtime-test-image> [prefix]
 #
 # Every container and volume is created under a per-invocation prefix and removed by
-# exact name on exit. Shared docker resources are never touched. Assertions use docker
+# exact name on exit; volume names additionally embed the host pid, so a reused PREFIX
+# can never make two invocations share a volume identity. A same-name leftover must
+# prove, from the daemon's own clock, that it predates this invocation before it is
+# removed; a name that is still occupied or contradicts that proof aborts the run
+# instead of being adopted. Shared docker resources are
+# never touched. Assertions use docker
 # wait/inspect state, exit codes, timestamps and files copied out of containers
 # (receipts, termination message, child markers) — never log text matching.
 set -u
@@ -14,29 +19,132 @@ IMAGE="${1:?usage: runtime-lifecycle.sh <runtime-test-image> [prefix]}"
 PREFIX="${2:-manao-rt-$$}"
 
 CONTAINERS=()
-VOLUMES=()
 PASS=0
 FAIL=0
+
+# Exact names of every volume this invocation created. new_volume is always called
+# inside a command substitution (a subshell), so an in-memory array cannot survive it;
+# this registry file, keyed by the unique host process id, is the persistent exact-name
+# cleanup source and is removed again on exit. Volume names themselves embed the host
+# pid, so even a reused PREFIX can never make this invocation adopt — and later delete
+# — a volume that belongs to another invocation.
+VOLUME_REGISTRY="${TMPDIR:-/tmp}/runtime-lifecycle-volumes-$$"
+if ! : > "$VOLUME_REGISTRY"; then
+  echo "runtime-lifecycle: cannot initialize volume registry $VOLUME_REGISTRY" >&2
+  exit 1
+fi
 
 cleanup() {
   local c v
   for c in "${CONTAINERS[@]:-}"; do
     [ -n "$c" ] && docker rm -f "$c" >/dev/null 2>&1
   done
-  for v in "${VOLUMES[@]:-}"; do
+  # Remove exactly the volumes this invocation created — never a filtered name or label
+  # match — so a reused or overlapping PREFIX can never touch another invocation.
+  while IFS= read -r v; do
     [ -n "$v" ] && docker volume rm "$v" >/dev/null 2>&1
-  done
+  done < "$VOLUME_REGISTRY"
+  rm -f "$VOLUME_REGISTRY"
 }
 trap cleanup EXIT
+
+# SCRIPT_START is the daemon's own clock reading at invocation start, taken from the
+# CreatedAt of a short-lived probe volume — deliberately NOT the host `date`. Volume
+# CreatedAt values come from the daemon clock, so the staleness comparison in new_volume
+# must be made in daemon time as well: mixing in the host clock would misjudge staleness
+# under host/daemon skew (e.g. WSL2 clock drift after host sleep). Both sides of that
+# comparison are daemon readings, so it stays sound regardless of skew. The probe is
+# removed again immediately; if that removal fails it is registered so the EXIT trap
+# still reclaims it.
+CLOCK_PROBE="${PREFIX}-$$-vol-clockref-$RANDOM"
+if ! docker volume create "$CLOCK_PROBE" >/dev/null 2>&1; then
+  echo "runtime-lifecycle: cannot create clock probe $CLOCK_PROBE to read the daemon clock" >&2
+  exit 1
+fi
+SCRIPT_START="$(date -u -d "$(docker volume inspect -f '{{.CreatedAt}}' "$CLOCK_PROBE")" +%Y-%m-%dT%H:%M:%SZ)" || {
+  echo "runtime-lifecycle: cannot read the daemon clock from $CLOCK_PROBE" >&2
+  exit 1
+}
+docker volume rm "$CLOCK_PROBE" >/dev/null 2>&1 || printf '%s\n' "$CLOCK_PROBE" >> "$VOLUME_REGISTRY"
 
 pass() { PASS=$((PASS+1)); echo "PASS: $1"; }
 fail() { FAIL=$((FAIL+1)); echo "FAIL: $1"; }
 
+# Classify a volume name by inspecting it — semantically, never by bare exit code.
+# Returns 0 if the volume exists (prints its CreatedAt), 1 if the daemon's stable
+# "no such volume" error proves the name free, 2 for any other failure (permission,
+# transient connection, timeout — raw daemon error on stdout). A non-zero exit alone
+# proves nothing: only the daemon's own "no such volume" text may be read as "free".
+volume_state() { # NAME
+  local out st=0
+  out="$(docker volume inspect -f '{{.CreatedAt}}' "$1" 2>&1)" || st=$?
+  if [ "$st" -eq 0 ]; then
+    printf '%s' "$out"
+    return 0
+  fi
+  case "$out" in
+    *"no such volume"*|*"No such volume"*) return 1 ;;
+    *) printf '%s' "$out"; return 2 ;;
+  esac
+}
+
+# Create one uniquely-owned volume, register its exact name and expose it as
+# CREATED_VOLUME. Called in the parent shell (never inside a command substitution) so a
+# failure aborts the whole script through the EXIT trap — a scenario can never keep
+# running with an empty volume name.
+#
+# Ownership invariant: a live pid is unique among live (MSYS/Git Bash) processes, so a
+# volume named with THIS pid and a matching tag can only have been created by a dead
+# invocation that recycled the same pid (no scenario tag repeats within one run, so this
+# invocation's own earlier volumes can never collide either). Consequences, enforced in
+# order below: (1) "name is free" must be proven semantically before create — any
+# indeterminate inspect aborts, because `docker volume create` on an existing name
+# silently succeeds and would adopt it; (2) an existing same-name volume must prove it
+# predates this invocation (CreatedAt, daemon clock, vs SCRIPT_START) before it is
+# removed as a stale orphan; (3) a NEWER CreatedAt contradicts the pid invariant —
+# something created this name while this invocation is alive — and aborts instead of
+# being adopted; (4) after removal the name must again be provably free before create.
 new_volume() {
-  local v="${PREFIX}-vol-$1"
-  docker volume create "$v" >/dev/null
-  VOLUMES+=("$v")
-  echo "$v"
+  local v="${PREFIX}-$$-vol-$1" created st
+  created="$(volume_state "$v")"; st=$?
+  if [ "$st" -eq 2 ]; then
+    echo "runtime-lifecycle: cannot prove volume name $v free (inspect: $created); refusing to create on it" >&2
+    exit 1
+  fi
+  if [ "$st" -eq 0 ]; then
+    # The name exists. Prove it is a stale orphan before removing it: its creator died
+    # before this invocation spawned, so its CreatedAt must predate SCRIPT_START (both
+    # timestamps on the daemon clock — see the clock probe above). A newer CreatedAt
+    # contradicts the invariant and is refused, not adopted.
+    created="$(date -u -d "$created" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null)" || {
+      echo "runtime-lifecycle: cannot parse CreatedAt '$created' of existing volume $v" >&2
+      exit 1
+    }
+    if [[ "$created" > "$SCRIPT_START" ]]; then
+      echo "runtime-lifecycle: volume $v was created at $created, AFTER this invocation started ($SCRIPT_START) — contradicts the pid-ownership invariant; refusing to adopt it" >&2
+      exit 1
+    fi
+    local rm_err
+    rm_err="$(docker volume rm "$v" 2>&1)" || true
+    created="$(volume_state "$v")"; st=$?
+    if [ "$st" -ne 1 ]; then
+      echo "runtime-lifecycle: stale volume $v still exists after removal attempt (rm: ${rm_err:-<no error>}; re-inspect: ${created:-<empty>})" >&2
+      echo "runtime-lifecycle: refusing to create on an occupied name; remove the stale invocation's container and volume first" >&2
+      exit 1
+    fi
+  fi
+  docker volume create "$v" >/dev/null || {
+    echo "runtime-lifecycle: cannot create volume $v" >&2
+    exit 1
+  }
+  if ! printf '%s\n' "$v" >> "$VOLUME_REGISTRY"; then
+    # An unregistrable volume could never be cleaned up: remove it again and fail
+    # loudly instead of leaving it as silent residue.
+    docker volume rm "$v" >/dev/null 2>&1
+    echo "runtime-lifecycle: cannot register volume $v in $VOLUME_REGISTRY" >&2
+    exit 1
+  fi
+  CREATED_VOLUME="$v"
 }
 
 # Make /run-control (fresh volume mount, root-owned) writable for the runner user.
@@ -81,8 +189,19 @@ start_run() {
   else
     args+=("$IMAGE" sh -c "$FIXTURE_CMD" fixture "$kind")
   fi
-  CONTAINERS+=("$name")
-  docker "${args[@]}" >/dev/null
+  # Ownership shape for a failed `docker run -d`: the command can fail after the
+  # container object was created (e.g. an error in the start phase), leaving a container
+  # that is not on this run's kill list. So: register in CONTAINERS only on success; on
+  # failure remove the exact pid-embedded name first — it can only ever be this
+  # invocation's own container or an orphan of a dead invocation that recycled the same
+  # pid — then abort fail-closed through the EXIT trap.
+  if docker "${args[@]}" >/dev/null; then
+    CONTAINERS+=("$name")
+  else
+    docker rm -f "$name" >/dev/null 2>&1 || true
+    echo "runtime-lifecycle: cannot start container $name" >&2
+    exit 1
+  fi
 }
 
 # wait_halt NAME BUDGET_SECONDS -> prints exit code, or TIMEOUT
@@ -148,10 +267,57 @@ scenario_run_deadline_rules() {
   fi
 }
 
+scenario_run_profile_rules() {
+  if docker run --rm "$IMAGE" sh -c 'exec java -ea -cp /opt/manao-runner/classes:/opt/manao-runner/test-classes com.manao.runtime.RunProfileTestMain' >/dev/null 2>&1; then
+    pass "run-profile-rules"
+  else
+    fail "run-profile-rules"
+  fi
+}
+
+# The production main must reject unknown profiles, extra arguments and unknown modes
+# immediately (exit 2), before any claim or user code — nothing may be written to the
+# control directory. The legacy no-profile invocation stays covered by the scenarios
+# below (run without profile must still start and probe without profile must still poll).
+scenario_profile_arguments_rejected() {
+  local label argv name vol code
+  for label in unknown-run unknown-probe extra-run extra-probe; do
+    case "$label" in
+      unknown-run)   argv="run unknown-profile" ;;
+      unknown-probe) argv="probe unknown-profile" ;;
+      extra-run)     argv="run python-fastapi-web extra" ;;
+      extra-probe)   argv="probe java-spring-boot-web web" ;;
+    esac
+    name="${PREFIX}-$$-badargs-$label"
+    new_volume "badargs-$label"; vol="$CREATED_VOLUME"
+    # Same ownership shape as start_run: register only a container that was actually
+    # created; on failure remove the exact pid-embedded name before aborting, so a
+    # created-but-failed container is never left behind.
+    if docker run -d --name "$name" -v "${vol}:/run-control" \
+         "$IMAGE" sh -c "$RUN_CMD" supervisor $argv >/dev/null; then
+      CONTAINERS+=("$name")
+    else
+      docker rm -f "$name" >/dev/null 2>&1 || true
+      echo "runtime-lifecycle: cannot start container $name" >&2
+      exit 1
+    fi
+    code="$(wait_halt "$name" 30)"
+    [ "$code" = "2" ] || { fail "$name ($argv: exit=$code, want 2)"; return 0; }
+    [ "$(runtime_seconds "$name")" -le 15 ] || fail "$name ($argv: rejection took too long)"
+    if docker run --rm -v "${vol}:/run-control" "$IMAGE" \
+         sh -c 'test ! -e /run-control/claim && test ! -e /run-control/receipt.properties' >/dev/null 2>&1; then
+      pass "$name (rejected with empty control dir: $argv)"
+    else
+      fail "$name ($argv wrote claim or receipt despite rejection)"
+    fi
+  done
+}
+
 scenario_readiness_gates_lifetime() {
-  local name="${PREFIX}-readiness"
+  local name="${PREFIX}-$$-readiness"
   local vol childvol rc tm starts ready exp state reason fin drift
-  vol="$(new_volume readiness)"; childvol="$(new_volume readiness-child)"
+  new_volume readiness; vol="$CREATED_VOLUME"
+  new_volume readiness-child; childvol="$CREATED_VOLUME"
   prep_control_dir "$vol"; prep_child_dir "$childvol"
   start_run "$name" "$vol" "$childvol" ready-server \
     "${COMMON_ENV[@]}" MANAO_RUN_ID=run-readiness MANAO_POD_UID=pod-readiness \
@@ -186,9 +352,10 @@ scenario_readiness_gates_lifetime() {
 }
 
 scenario_derived_dies_with_pid1() {
-  local name="${PREFIX}-pid1"
+  local name="${PREFIX}-$$-pid1"
   local vol childvol starts code secs
-  vol="$(new_volume pid1)"; childvol="$(new_volume pid1-child)"
+  new_volume pid1; vol="$CREATED_VOLUME"
+  new_volume pid1-child; childvol="$CREATED_VOLUME"
   prep_control_dir "$vol"; prep_child_dir "$childvol"
   start_run "$name" "$vol" "$childvol" ready-ignore-term \
     "${COMMON_ENV[@]}" MANAO_RUN_ID=run-pid1 MANAO_POD_UID=pod-pid1 \
@@ -209,9 +376,10 @@ scenario_derived_dies_with_pid1() {
 
 scenario_early_exit_no_rerun() {
   local exitcase="$1"
-  local name="${PREFIX}-early$exitcase"
+  local name="${PREFIX}-$$-early$exitcase"
   local vol childvol starts rc code secs
-  vol="$(new_volume "early$exitcase")"; childvol="$(new_volume "early$exitcase-child")"
+  new_volume "early$exitcase"; vol="$CREATED_VOLUME"
+  new_volume "early$exitcase-child"; childvol="$CREATED_VOLUME"
   prep_control_dir "$vol"; prep_child_dir "$childvol"
   start_run "$name" "$vol" "$childvol" "early-exit-$exitcase" \
     "${COMMON_ENV[@]}" MANAO_RUN_ID="run-early$exitcase" MANAO_POD_UID="pod-early$exitcase" \
@@ -231,9 +399,10 @@ scenario_early_exit_no_rerun() {
 }
 
 scenario_duplicate_claim_denied() {
-  local a="${PREFIX}-claim-a" b="${PREFIX}-claim-b"
+  local a="${PREFIX}-$$-claim-a" b="${PREFIX}-$$-claim-b"
   local vol childvol owner rc tm code
-  vol="$(new_volume claim)"; childvol="$(new_volume claim-child)"
+  new_volume claim; vol="$CREATED_VOLUME"
+  new_volume claim-child; childvol="$CREATED_VOLUME"
   prep_control_dir "$vol"; prep_child_dir "$childvol"
   start_run "$a" "$vol" "$childvol" ready-server \
     "${COMMON_ENV[@]}" MANAO_RUN_ID=run-claim MANAO_POD_UID=pod-claim-a \
@@ -262,9 +431,10 @@ scenario_duplicate_claim_denied() {
 }
 
 scenario_startup_too_late() {
-  local name="${PREFIX}-startup"
+  local name="${PREFIX}-$$-startup"
   local vol childvol starts rc code
-  vol="$(new_volume startup)"; childvol="$(new_volume startup-child)"
+  new_volume startup; vol="$CREATED_VOLUME"
+  new_volume startup-child; childvol="$CREATED_VOLUME"
   prep_control_dir "$vol"; prep_child_dir "$childvol"
   start_run "$name" "$vol" "$childvol" run \
     "${COMMON_ENV[@]}" MANAO_RUN_ID=run-startup MANAO_POD_UID=pod-startup \
@@ -286,9 +456,10 @@ scenario_startup_too_late() {
 }
 
 scenario_backend_unavailable() {
-  local name="${PREFIX}-nobackend"
+  local name="${PREFIX}-$$-nobackend"
   local vol childvol rc ready exp fin drift code
-  vol="$(new_volume nobackend)"; childvol="$(new_volume nobackend-child)"
+  new_volume nobackend; vol="$CREATED_VOLUME"
+  new_volume nobackend-child; childvol="$CREATED_VOLUME"
   prep_control_dir "$vol"; prep_child_dir "$childvol"
   start_run "$name" "$vol" "$childvol" ready-server \
     "${COMMON_ENV[@]}" MANAO_RUN_ID=run-nobackend MANAO_POD_UID=pod-nobackend \
@@ -311,9 +482,10 @@ scenario_backend_unavailable() {
 }
 
 scenario_receipt_broken_at_claim() {
-  local name="${PREFIX}-broken1"
+  local name="${PREFIX}-$$-broken1"
   local vol childvol starts tm code
-  vol="$(new_volume broken1)"; childvol="$(new_volume broken1-child)"
+  new_volume broken1; vol="$CREATED_VOLUME"
+  new_volume broken1-child; childvol="$CREATED_VOLUME"
   prep_broken_receipt_dir "$vol"
   start_run "$name" "$vol" "$childvol" ready-server \
     "${COMMON_ENV[@]}" MANAO_RUN_ID=run-broken1 MANAO_POD_UID=pod-broken1 \
@@ -335,9 +507,10 @@ scenario_receipt_broken_at_claim() {
 }
 
 scenario_receipt_broken_after_claim() {
-  local name="${PREFIX}-broken2"
+  local name="${PREFIX}-$$-broken2"
   local vol childvol starts tm code
-  vol="$(new_volume broken2)"; childvol="$(new_volume broken2-child)"
+  new_volume broken2; vol="$CREATED_VOLUME"
+  new_volume broken2-child; childvol="$CREATED_VOLUME"
   prep_control_dir "$vol"; prep_child_dir "$childvol"
   start_run "$name" "$vol" "$childvol" receipt-fails-after-claim \
     "${COMMON_ENV[@]}" MANAO_RUN_ID=run-broken2 MANAO_POD_UID=pod-broken2 \
@@ -358,9 +531,10 @@ scenario_receipt_broken_after_claim() {
 }
 
 scenario_manual_stop() {
-  local name="${PREFIX}-stop"
+  local name="${PREFIX}-$$-stop"
   local vol childvol starts rc code
-  vol="$(new_volume stop)"; childvol="$(new_volume stop-child)"
+  new_volume stop; vol="$CREATED_VOLUME"
+  new_volume stop-child; childvol="$CREATED_VOLUME"
   prep_control_dir "$vol"; prep_child_dir "$childvol"
   start_run "$name" "$vol" "$childvol" ready-server \
     "${COMMON_ENV[@]}" MANAO_RUN_ID=run-stop MANAO_POD_UID=pod-stop \
@@ -381,6 +555,8 @@ scenario_manual_stop() {
 }
 
 scenario_run_deadline_rules
+scenario_run_profile_rules
+scenario_profile_arguments_rejected
 scenario_readiness_gates_lifetime
 scenario_derived_dies_with_pid1
 scenario_early_exit_no_rerun 0

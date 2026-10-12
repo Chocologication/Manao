@@ -1,8 +1,14 @@
 package com.manao.poc4.kubernetes;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.manao.poc4.persistence.RunState;
+import com.manao.poc4.project.ProjectRuntimeSpec;
+import com.manao.poc4.project.RuntimeTemplate;
+import com.manao.poc4.run.RunPolicy;
+import com.manao.poc4.run.RunRecord;
 import io.fabric8.kubernetes.api.model.EnvVarBuilder;
 import io.fabric8.kubernetes.api.model.batch.v1.Job;
 import java.time.Instant;
@@ -15,14 +21,33 @@ class JobResourceFactoryTest {
     private static final String PROJECT = "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4e5f";
     private static final String IMAGE = "registry.example/manao/maven-runner@sha256:"
         + "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
+    private static final String pythonImageDigest = "registry.example/manao/python-runner@sha256:"
+        + "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
     private static final String INIT_IMAGE = "registry.example/manao/busybox@sha256:"
         + "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd";
+    private static final JobResourceFactory.RunResources REQUESTS =
+        new JobResourceFactory.RunResources(1000, 1L * 1024 * 1024 * 1024, 1L * 1024 * 1024 * 1024);
+    private static final JobResourceFactory.RunResources LIMITS =
+        new JobResourceFactory.RunResources(8000, 16L * 1024 * 1024 * 1024, 10L * 1024 * 1024 * 1024);
     private final JobResourceFactory factory = new JobResourceFactory(
-        "manao-test", 1800, INIT_IMAGE,
-        new JobResourceFactory.RunResources(1000, 1L * 1024 * 1024 * 1024, 1L * 1024 * 1024 * 1024),
-        new JobResourceFactory.RunResources(8000, 16L * 1024 * 1024 * 1024, 10L * 1024 * 1024 * 1024),
-        IMAGE);
+        "manao-test", 1800, INIT_IMAGE, REQUESTS, LIMITS, IMAGE, pythonImageDigest);
     private final ObjectMapper json = new ObjectMapper();
+
+    /** A Run snapshot for the given template, as RunService persists it (server-derived policy). */
+    private static RunRecord runFor(RuntimeTemplate template) {
+        RunPolicy base = new RunPolicy(RuntimeTemplate.JAVA_CONSOLE.id(),
+            new RunPolicy.RuntimeInfo.Java(17, 3), RuntimeTemplate.JAVA_CONSOLE.displayCommand(), 1800,
+            RunPolicy.EXECUTION_KIND_TASK, 1800, 0,
+            new RunPolicy.Resources(1000, 1L << 30, 1L << 30),
+            new RunPolicy.Resources(8000, 16L << 30, 10L << 30));
+        return new RunRecord(RUN, PROJECT, 0, RunState.STARTING,
+            base.forProject(new ProjectRuntimeSpec(template.id(), false, false, List.of())).toJson(),
+            null, null, null, null, null, null, 0L, Instant.parse("2026-09-21T10:00:00Z"), 0L);
+    }
+
+    private static RunRecord pythonServiceRun() {
+        return runFor(RuntimeTemplate.PYTHON_FASTAPI_WEB);
+    }
 
     @Test
     void jobUsesFixedDeadlineAndNeverRestarts() throws Exception {
@@ -268,6 +293,162 @@ class JobResourceFactoryTest {
             assertThat(sysctl.getName()).isEqualTo("net.ipv4.ip_unprivileged_port_start");
             assertThat(sysctl.getValue()).isEqualTo("0");
         });
+    }
+
+    @Test
+    void pythonServiceRunUsesThePythonImageFixedProfileAndPythonCacheThroughTheUnifiedEntrypoint() throws Exception {
+        var environment = List.of(
+            new EnvVarBuilder().withName("SERVER_PORT").withValue("8000").build(),
+            new EnvVarBuilder().withName("MANAO_PYTHON_MYSQL").withValue("true").build(),
+            new EnvVarBuilder().withName("MANAO_MYSQL_PASSWORD").withNewValueFrom()
+                .withNewSecretKeyRef().withName("manao-mysql-cred-x").withKey("password")
+                .endSecretKeyRef().endValueFrom().build());
+        var job = factory.createJob(pythonServiceRun(), PROJECT, 8000, environment);
+        var container = job.getSpec().getTemplate().getSpec().getContainers().get(0);
+        assertThat(container.getImage()).isEqualTo(pythonImageDigest);
+        assertThat(container.getCommand()).containsExactly(
+            "/usr/local/bin/manao-run-supervisor", "run", "python-fastapi-web");
+        assertThat(container.getReadinessProbe().getExec().getCommand()).containsExactly(
+            "/usr/local/bin/manao-run-supervisor", "probe", "python-fastapi-web");
+        assertThat(container.getWorkingDir()).isEqualTo("/workspace");
+        // The single-run service shape and the supervisor environment are shared with Java runs.
+        var spec = job.getSpec();
+        assertThat(spec.getParallelism()).isEqualTo(1);
+        assertThat(spec.getCompletions()).isEqualTo(1);
+        assertThat(spec.getBackoffLimit()).isEqualTo(0);
+        assertThat(spec.getActiveDeadlineSeconds()).isEqualTo(9000L); // startup budget + fixed lifetime
+        Map<String, String> env = new java.util.HashMap<>();
+        container.getEnv().forEach(item -> {
+            if (item.getValue() != null) env.put(item.getName(), item.getValue());
+        });
+        assertThat(env.get("MANAO_PRIMARY_PORT")).isEqualTo("8000");
+        assertThat(env.get("MANAO_RUN_ID")).isEqualTo(RUN);
+        assertThat(env.get("MANAO_SERVICE_LIFETIME_SECONDS")).isEqualTo("7200");
+        assertThat(env.get("MANAO_PYTHON_MYSQL")).isEqualTo("true");
+        // Python cache instead of the Maven cache; dependency secrets pass through verbatim.
+        assertThat(container.getVolumeMounts()).extracting(mount -> mount.getMountPath())
+            .containsExactlyInAnyOrder("/workspace", "/run-control", "/python-cache", "/tmp");
+        assertThat(json.writeValueAsString(job)).doesNotContain("/maven-cache", ".manao-cache/maven",
+            "/usr/local/bin/manao-maven");
+        assertThatNoBrowserPolicyFields(json.writeValueAsString(job));
+    }
+
+    @Test
+    void pythonTaskRunUsesThePythonLauncherAndPythonCacheWithoutAnyMavenArtifact() throws Exception {
+        Job job = factory.createJob(runFor(RuntimeTemplate.PYTHON_CONSOLE), PROJECT, 8000, List.of());
+        var container = job.getSpec().getTemplate().getSpec().getContainers().get(0);
+        assertThat(container.getImage()).isEqualTo(pythonImageDigest);
+        assertThat(container.getCommand()).containsExactly("/usr/local/bin/manao-python", "console");
+        assertThat(container.getWorkingDir()).isEqualTo("/workspace");
+        // Historical compatibility identifiers stay for BOTH languages.
+        assertThat(container.getName()).isEqualTo(ResourceIdentityVerifier.APPLICATION_CONTAINER);
+        assertThat(job.getMetadata().getLabels()).containsEntry(JobResourceFactory.LABEL_COMPONENT,
+            JobResourceFactory.COMPONENT_VALUE);
+        assertThat(job.getSpec().getTemplate().getSpec().getServiceAccountName()).isEqualTo("manao-maven-runner");
+        var mounts = container.getVolumeMounts();
+        assertThat(mounts).extracting(mount -> mount.getMountPath())
+            .containsExactlyInAnyOrder("/workspace", "/python-cache", "/tmp");
+        assertThat(mounts).anySatisfy(mount -> {
+            assertThat(mount.getMountPath()).isEqualTo("/python-cache");
+            assertThat(mount.getSubPath()).isEqualTo(".manao-cache/python");
+            assertThat(mount.getReadOnly()).isFalse();
+        });
+        assertThat(json.writeValueAsString(job)).doesNotContain("/maven-cache", ".manao-cache/maven",
+            "/usr/local/bin/manao-maven");
+    }
+
+    @Test
+    void pythonCachePreparationCreatesOnlyThePythonCacheDirectory() throws Exception {
+        for (Job job : List.of(
+                factory.createJob(runFor(RuntimeTemplate.PYTHON_CONSOLE), PROJECT, 8000, List.of()),
+                factory.createJob(pythonServiceRun(), PROJECT, 8000, List.of()))) {
+            var prep = job.getSpec().getTemplate().getSpec().getInitContainers().stream()
+                .filter(container -> "prepare-python-cache".equals(container.getName())).findFirst().orElseThrow();
+            assertThat(prep.getImage()).isEqualTo(INIT_IMAGE);
+            var mount = prep.getVolumeMounts().get(0);
+            assertThat(mount.getName()).isEqualTo("workspace");
+            assertThat(mount.getMountPath()).isEqualTo("/data");
+            assertThat(mount.getSubPath()).as("cache preparation must root-mount the workspace PVC").isNull();
+            String script = prep.getCommand().get(2); // the /bin/sh -ec script body
+            // Ownership changes are restricted to Python's own cache directory: the shared
+            // .manao-cache parent is never re-owned or re-permissioned by a Python run.
+            assertThat(script).isEqualTo("mkdir -p /data/.manao-cache/python"
+                + " && chown 10001:10001 /data/.manao-cache/python"
+                + " && chmod 0775 /data/.manao-cache/python");
+            // Only the run's own python cache directory is created: never templates, code or the
+            // existing cache content, and the workspace-recovery deletion scope is not widened.
+            assertThat(script).doesNotContain(WorkspaceResourceFactory.projectDirectory(PROJECT));
+            assertThat(script).doesNotContain("rm ");
+            assertThat(prep.getSecurityContext().getRunAsUser()).isEqualTo(0L);
+            assertThat(prep.getSecurityContext().getRunAsNonRoot()).isFalse();
+        }
+    }
+
+    @Test
+    void javaRunsKeepTheOriginalMavenImageCacheAndCommandsThroughTheUnifiedEntrypoint() throws Exception {
+        Job task = factory.createJob(runFor(RuntimeTemplate.JAVA_CONSOLE), PROJECT, 8080, List.of());
+        var taskContainer = task.getSpec().getTemplate().getSpec().getContainers().get(0);
+        assertThat(taskContainer.getImage()).isEqualTo(IMAGE);
+        assertThat(taskContainer.getCommand())
+            .containsExactly("/usr/local/bin/manao-maven", "-q", "-DskipTests", "compile", "exec:java");
+        assertThat(taskContainer.getVolumeMounts()).extracting(mount -> mount.getMountPath())
+            .containsExactlyInAnyOrder("/workspace", "/maven-cache", "/tmp");
+
+        Job service = factory.createJob(runFor(RuntimeTemplate.JAVA_SPRING_BOOT_WEB), PROJECT, 8080, List.of());
+        var serviceContainer = service.getSpec().getTemplate().getSpec().getContainers().get(0);
+        assertThat(serviceContainer.getImage()).isEqualTo(IMAGE);
+        assertThat(serviceContainer.getCommand()).containsExactly("/usr/local/bin/manao-run-supervisor", "run");
+        assertThat(serviceContainer.getReadinessProbe().getExec().getCommand())
+            .containsExactly("/usr/local/bin/manao-run-supervisor", "probe");
+        assertThat(json.writeValueAsString(service)).doesNotContain("/python-cache", ".manao-cache/python",
+            "manao-python");
+    }
+
+    @Test
+    void pythonRunsShareThePodSecurityAndResourceEnvelopeWithJavaRuns() throws Exception {
+        for (Job job : List.of(
+                factory.createJob(runFor(RuntimeTemplate.PYTHON_CONSOLE), PROJECT, 8000, List.of()),
+                factory.createJob(pythonServiceRun(), PROJECT, 8000, List.of()))) {
+            var spec = job.getSpec().getTemplate().getSpec();
+            var security = spec.getSecurityContext();
+            assertThat(security.getRunAsNonRoot()).isTrue();
+            assertThat(security.getRunAsUser()).isEqualTo(10001L);
+            assertThat(security.getFsGroup()).isEqualTo(10001L);
+            assertThat(spec.getAutomountServiceAccountToken()).isFalse();
+            assertThat(spec.getRestartPolicy()).isEqualTo("Never");
+            var limits = spec.getContainers().get(0).getResources().getLimits();
+            assertThat(limits.get("cpu").getAmount()).isEqualTo("8");
+            assertThat(limits.get("memory").getAmount()).isEqualTo("16");
+            var container = spec.getContainers().get(0);
+            assertThat(container.getSecurityContext().getReadOnlyRootFilesystem()).isTrue();
+        }
+        // Only the service shape carries the low-port sysctl, the shared-process guard and the
+        // termination-message receipt protocol.
+        var serviceSpec = factory.createJob(pythonServiceRun(), PROJECT, 8000, List.of())
+            .getSpec().getTemplate().getSpec();
+        assertThat(serviceSpec.getShareProcessNamespace()).isNotEqualTo(Boolean.TRUE);
+        assertThat(serviceSpec.getContainers().get(0).getTerminationMessagePath())
+            .isEqualTo("/tmp/manao-termination.log");
+        var serviceSecurity = factory.createJob(pythonServiceRun(), PROJECT, 8000, List.of())
+            .getSpec().getTemplate().getSpec().getSecurityContext();
+        assertThat(serviceSecurity.getSysctls()).anySatisfy(sysctl -> {
+            assertThat(sysctl.getName()).isEqualTo("net.ipv4.ip_unprivileged_port_start");
+            assertThat(sysctl.getValue()).isEqualTo("0");
+        });
+        assertThatNoBrowserPolicyFields(json.writeValueAsString(
+            factory.createJob(pythonServiceRun(), PROJECT, 8000, List.of())));
+    }
+
+    @Test
+    void thePythonRunnerImageIsDigestPinnedAndRequired() {
+        assertThatThrownBy(() -> new JobResourceFactory("manao-test", 1800, INIT_IMAGE, REQUESTS, LIMITS,
+                IMAGE, "manao/python-runner:latest"))
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessageContaining("python runner image");
+        assertThatThrownBy(() -> new JobResourceFactory("manao-test", 1800, INIT_IMAGE, REQUESTS, LIMITS,
+                IMAGE, " "))
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessageContaining("python runner image");
     }
 
     private void assertThatNoBrowserPolicyFields(String serialized) {

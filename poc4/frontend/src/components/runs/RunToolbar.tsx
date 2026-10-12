@@ -11,9 +11,12 @@ import {
 } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { InlineAlert } from '@/components/feedback/InlineAlert';
+import type { RuntimeTemplateId } from '@/contracts/project';
 import {
   isRunTerminalState,
   resolveRunAvailability,
+  runRuntimeLabel,
+  templateRunDisplay,
   type RunState,
   type RunSummary,
 } from '@/contracts/run';
@@ -23,6 +26,8 @@ export const RUN_ICON_BUTTON_CLASS =
 
 export type RunToolbarProps = {
   run: RunSummary | null;
+  /** Template of the project the toolbar belongs to; used only while no run is selected. */
+  projectTemplateId: RuntimeTemplateId;
   statusText: string;
   nowMs: number;
   canStart: boolean;
@@ -126,6 +131,7 @@ function serviceLifetimeLabel(run: RunSummary, nowMs: number): string {
 
 export function RunToolbar({
   run,
+  projectTemplateId,
   statusText,
   nowMs,
   canStart,
@@ -143,8 +149,12 @@ export function RunToolbar({
   onRetryAuthority,
   onRetryReload,
 }: RunToolbarProps) {
-  const command = run?.policy.command ?? 'mvn -q -DskipTests compile exec:java';
-  const timeoutSeconds = run?.policy.timeoutSeconds ?? 1800;
+  // A selected run always displays its own policy; only the no-run state falls back to
+  // the current project template so a Python project never shows a Maven default.
+  const templateDisplay = templateRunDisplay(projectTemplateId);
+  const command = run?.policy.command ?? templateDisplay.command;
+  const runtimeLabel = run !== null ? runRuntimeLabel(run.policy.runtime) : templateDisplay.runtimeLabel;
+  const timeoutSeconds = run?.policy.timeoutSeconds ?? templateDisplay.timeoutSeconds;
   const clock = clockLabel(run, nowMs);
   const serviceLifetime =
     run !== null && run.policy.executionKind === 'SERVICE'
@@ -196,7 +206,7 @@ export function RunToolbar({
           </span>
         ) : null}
         <span className="min-w-0 truncate text-sm text-muted-foreground">
-          Java 17 · Maven 3 · timeout {timeoutSeconds}s
+          {runtimeLabel} · timeout {timeoutSeconds}s
         </span>
       </div>
       {authorityError !== null ? (

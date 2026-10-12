@@ -10,6 +10,13 @@ import java.util.function.Consumer;
 public interface PodLogGateway {
     LogWatchHandle watchLogs(String namespace, String podName, String container, Consumer<String> lineConsumer);
 
+    /**
+     * One-shot history read of the verified application container: delivers every line of the
+     * pod's full non-follow log (without trailing newlines, same convention as {@code watchLogs})
+     * to the consumer, then returns. Synchronous on the calling thread.
+     */
+    void readLogs(String namespace, String podName, String container, Consumer<String> lineConsumer);
+
     interface LogWatchHandle {
         void close();
 

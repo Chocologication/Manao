@@ -280,20 +280,58 @@ class ProjectDependenciesTest {
     }
 
     @Test
+    void pythonApplicationEnvironmentCarriesFixedBooleanExtrasAndSecretReferences() {
+        var web = new ProjectRuntimeSpec(com.manao.poc4.project.RuntimeTemplate.PYTHON_FASTAPI_WEB.id(),
+            true, true, List.of(new ProjectRuntimeSpec.Port("web", 8000, 30081)));
+        var env = dependencies.applicationEnvironment(PROJECT, web);
+        assertThat(env).extracting(EnvVar::getName).containsExactlyInAnyOrder(
+            "SERVER_PORT",
+            "MANAO_PYTHON_MYSQL", "MANAO_PYTHON_REDIS",
+            "MANAO_MYSQL_HOST", "MANAO_MYSQL_PORT", "MANAO_MYSQL_DATABASE",
+            "MANAO_MYSQL_USERNAME", "MANAO_MYSQL_PASSWORD",
+            "MANAO_REDIS_HOST", "MANAO_REDIS_PORT", "MANAO_REDIS_PASSWORD");
+        // The extras are fixed boolean strings derived from the selection, never arrays or shell text.
+        assertThat(named(env, "MANAO_PYTHON_MYSQL").getValue()).isEqualTo("true");
+        assertThat(named(env, "MANAO_PYTHON_REDIS").getValue()).isEqualTo("true");
+        // Database credentials remain secret references, also for Python runs.
+        var mysqlPassword = named(env, "MANAO_MYSQL_PASSWORD");
+        assertThat(mysqlPassword.getValue()).isNull();
+        assertThat(mysqlPassword.getValueFrom().getSecretKeyRef().getName())
+            .isEqualTo(DependencyResourceFactory.mysqlSecretName(PROJECT));
+        assertThat(mysqlPassword.getValueFrom().getSecretKeyRef().getKey()).isEqualTo("password");
+
+        // Console Python cannot select dependencies: the booleans are fixed "false" strings
+        // and no database variable exists at all.
+        var console = dependencies.applicationEnvironment(PROJECT,
+            new ProjectRuntimeSpec(com.manao.poc4.project.RuntimeTemplate.PYTHON_CONSOLE.id(),
+                false, false, List.of()));
+        assertThat(console).extracting(EnvVar::getName).containsExactlyInAnyOrder(
+            "SERVER_PORT", "MANAO_PYTHON_MYSQL", "MANAO_PYTHON_REDIS");
+        assertThat(named(console, "MANAO_PYTHON_MYSQL").getValue()).isEqualTo("false");
+        assertThat(named(console, "MANAO_PYTHON_REDIS").getValue()).isEqualTo("false");
+
+        // Java runs never receive the python-only extras.
+        var javaEnv = dependencies.applicationEnvironment(PROJECT, spec(true, true));
+        assertThat(javaEnv).extracting(EnvVar::getName)
+            .doesNotContain("MANAO_PYTHON_MYSQL", "MANAO_PYTHON_REDIS");
+    }
+
+    @Test
     void credentialsNeverReachTheBrowserContractOrTheRunPolicy() {
         // The browser-facing project record has no credential-shaped field.
         assertThat(Arrays.stream(ProjectService.Project.class.getRecordComponents())
                 .map(java.lang.reflect.RecordComponent::getName))
             .containsExactly("id", "ownerId", "name", "state", "createdAt", "failureReason");
         // The persisted run policy carries no environment or credential surface at all.
-        RunPolicy policy = new RunPolicy("mvn -q -DskipTests compile exec:java", 17, 3, 1800,
+        RunPolicy policy = new RunPolicy(ProjectRuntimeSpec.TEMPLATE_JAVA_CONSOLE,
+            new RunPolicy.RuntimeInfo.Java(17, 3), "mvn -q -DskipTests compile exec:java", 1800,
             RunPolicy.EXECUTION_KIND_TASK, 1800, 0,
             new RunPolicy.Resources(1000, 1073741824L, 1073741824L),
             new RunPolicy.Resources(8000, 17179869184L, 10737418240L));
         JsonNode json = read(policy.toJson());
         List<String> fields = new java.util.ArrayList<>();
         json.fieldNames().forEachRemaining(fields::add);
-        assertThat(fields).containsExactlyInAnyOrder("command", "runtime", "timeoutSeconds",
+        assertThat(fields).containsExactlyInAnyOrder("templateId", "command", "runtime", "timeoutSeconds",
             "executionKind", "startupTimeoutSeconds", "serviceLifetimeSeconds", "resources");
         // The internal application environment never carries a plaintext credential value.
         var env = dependencies.applicationEnvironment(PROJECT, spec(true, true));
@@ -319,7 +357,8 @@ class ProjectDependenciesTest {
         var runResources = new JobResourceFactory.RunResources(1000, 1073741824L, 10737418240L);
         var jobFactory = new JobResourceFactory(NS, 1800,
             "registry.example/manao/initializer@sha256:" + "c".repeat(64), runResources, runResources,
-            "registry.example/maven@sha256:" + "c".repeat(64));
+            "registry.example/maven@sha256:" + "c".repeat(64),
+            "registry.example/python@sha256:" + "c".repeat(64));
         client.batch().v1().jobs().inNamespace(NS)
             .resource(jobFactory.createMavenJob("run-1", PROJECT, List.of())).create();
         var coordinator = new Fabric8JobCoordinator(client, jobFactory, new ResourceIdentityVerifier(), NS,

@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore
 import { handleUnauthorized } from '@/app/appRuntime';
 import { ApiRequestError } from '@/api/ApiRequestError';
 import { projectFileWritePredicate } from '@/components/files/editorSaveCommand';
+import type { RuntimeTemplateId } from '@/contracts/project';
 import type { RunId, RunSummary } from '@/contracts/run';
 import {
   resolveRunPreconditions,
@@ -31,6 +32,8 @@ import { StopRunDialog } from './StopRunDialog';
 
 export type RunPanelProps = {
   projectId: string;
+  /** Current project template; the toolbar shows it only while no run is selected. */
+  projectTemplateId: RuntimeTemplateId;
   coordinator: RunAuthorityCoordinator;
 };
 
@@ -82,7 +85,7 @@ function statusText(options: {
   return 'Idle';
 }
 
-export function RunPanel({ projectId, coordinator }: RunPanelProps) {
+export function RunPanel({ projectId, projectTemplateId, coordinator }: RunPanelProps) {
   const queryClient = useQueryClient();
   const snapshot = useSyncExternalStore(
     coordinator.subscribe,
@@ -240,6 +243,7 @@ export function RunPanel({ projectId, coordinator }: RunPanelProps) {
     <section aria-label="Run" className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-background">
       <RunToolbar
         run={selectedRun}
+        projectTemplateId={projectTemplateId}
         statusText={statusText({
           loadingAuthority,
           reloading,

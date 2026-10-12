@@ -10,7 +10,7 @@ import { Button } from '@/components/ui/button';
 
 export const CLOSE_TERMINAL_TITLE = 'Close terminal session';
 export const CLOSE_TERMINAL_MESSAGE =
-  'This terminal session cannot be resumed after it is closed. The Maven run continues independently.';
+  'This terminal session cannot be resumed after it is closed. The run continues independently.';
 export const CLOSE_TERMINAL_ERROR = 'Unable to close terminal session. Try again.';
 
 export type CloseTerminalDialogProps = {

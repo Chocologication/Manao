@@ -304,6 +304,24 @@ class WorkspaceFileServiceTest {
                 .isInstanceOfSatisfying(WorkspaceFileService.WorkspaceFileException.class,
                     ex -> assertThat(ex.code()).isEqualTo("ENTRY_NOT_FOUND"));
         }
+
+        @Test
+        void metaClassifiesPythonTemplateFiles(@TempDir Path root) throws Exception {
+            WorkspaceFileService service = new WorkspaceFileService(root);
+            Files.writeString(root.resolve("main.py"), "print('Hello from Manao')\n");
+            Files.writeString(root.resolve("pyproject.toml"), "[project]\n");
+            Files.writeString(root.resolve("uv.lock"), "version = 1\n");
+
+            WorkspaceFileService.FileMeta python = service.meta("main.py");
+            assertThat(python.language()).isEqualTo("python");
+            assertThat(python.renderMode()).isEqualTo("MONACO_TEXT");
+            assertThat(python.blockReason()).isNull();
+            // Dependency metadata stays editable plain text for the browser editor.
+            assertThat(service.content("pyproject.toml").content()).isEqualTo("[project]\n");
+            assertThat(service.content("uv.lock").content()).isEqualTo("version = 1\n");
+            assertThat(service.meta("pyproject.toml").language()).isEqualTo("plaintext");
+            assertThat(service.meta("uv.lock").language()).isEqualTo("plaintext");
+        }
     }
 
     @Nested

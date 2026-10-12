@@ -10,7 +10,7 @@ import {
   type MockRunErrorCode,
 } from './runState';
 import { isLogTicketUnavailable, issueLogTicket } from './runSocket';
-import { canReadReadyProjectFiles, resolveUserByAccessToken } from './state';
+import { canReadReadyProjectFiles, readOwnedProjectSummary, resolveUserByAccessToken } from './state';
 
 const REQUEST_UNAUTHENTICATED: ApiErrorBody = {
   code: 'UNAUTHENTICATED',
@@ -219,7 +219,9 @@ export const runHandlers = [
     if ('response' in access) {
       return access.response;
     }
-    const result = startRun(access.projectId, await readJsonBody(request));
+    // The mock run carries the project's own template policy, never a fixed Java default.
+    const templateId = readOwnedProjectSummary(access.user.id, access.projectId)?.runtime?.templateId;
+    const result = startRun(access.projectId, await readJsonBody(request), templateId);
     if (!result.ok) {
       return runMutationError(result.code);
     }

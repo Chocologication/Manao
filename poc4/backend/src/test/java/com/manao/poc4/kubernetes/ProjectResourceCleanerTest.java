@@ -41,7 +41,8 @@ class ProjectResourceCleanerTest {
         jobs = new JobResourceFactory(NS, 1800, "registry.example/manao/initializer@" + DIGEST,
             new JobResourceFactory.RunResources(1000, 1L << 30, 1L << 30),
             new JobResourceFactory.RunResources(8000, 16L << 30, 10L << 30),
-            "registry.example/manao/maven-runner@" + DIGEST);
+            "registry.example/manao/maven-runner@" + DIGEST,
+            "registry.example/manao/python-runner@" + DIGEST);
     }
 
     @AfterEach
@@ -89,6 +90,40 @@ class ProjectResourceCleanerTest {
             .withName(WorkspaceResourceFactory.initializerPodName(P2)).get()).isNotNull();
         assertThat(client.persistentVolumeClaims().inNamespace(NS)
             .withName(WorkspaceResourceFactory.pvcName(P2)).get()).isNotNull();
+    }
+
+    @Test
+    void pythonRunJobsAreCleanedByTheSameProjectLabelsAndTheCacheReclaimsWithThePvc() {
+        seedProject(P1, "Pending");
+        // A Python run job mounts the project's python cache from the workspace PVC — the same
+        // single claim; there is no second cache resource to clean.
+        var pythonRun = new com.manao.poc4.run.RunRecord("run-py-" + P1, P1, 0,
+            com.manao.poc4.persistence.RunState.STARTING,
+            new com.manao.poc4.run.RunPolicy(com.manao.poc4.project.RuntimeTemplate.JAVA_CONSOLE.id(),
+                new com.manao.poc4.run.RunPolicy.RuntimeInfo.Java(17, 3),
+                com.manao.poc4.project.RuntimeTemplate.JAVA_CONSOLE.displayCommand(), 1800,
+                com.manao.poc4.run.RunPolicy.EXECUTION_KIND_TASK, 1800, 0,
+                new com.manao.poc4.run.RunPolicy.Resources(1000, 1L << 30, 1L << 30),
+                new com.manao.poc4.run.RunPolicy.Resources(8000, 16L << 30, 10L << 30))
+                .forProject(new com.manao.poc4.project.ProjectRuntimeSpec(
+                    com.manao.poc4.project.RuntimeTemplate.PYTHON_FASTAPI_WEB.id(), false, false,
+                    java.util.List.of())).toJson(),
+            null, null, null, null, null, null, 0L, java.time.Instant.parse("2026-09-21T10:00:00Z"), 0L);
+        client.batch().v1().jobs().inNamespace(NS)
+            .resource(jobs.createJob(pythonRun, P1, 8000, java.util.List.of())).create();
+        assertThat(client.batch().v1().jobs().inNamespace(NS)
+            .withLabels(WorkspaceResourceFactory.projectResourceLabels(P1)).list().getItems()).hasSize(2);
+
+        ProjectResourceCleaner cleaner = new ProjectResourceCleaner(client, NS,
+            Duration.ofSeconds(5), Duration.ZERO, Clock.systemUTC(), Duration.ofSeconds(5), duration -> { });
+        ProjectResourceCleaner.CleanupReport report = cleaner.clean(P1);
+
+        assertThat(report.complete()).isTrue();
+        assertThat(client.batch().v1().jobs().inNamespace(NS)
+            .withLabels(WorkspaceResourceFactory.projectResourceLabels(P1)).list().getItems()).isEmpty();
+        // The python cache lived on the workspace PVC, so full cleanup reclaims it with the claim.
+        assertThat(client.persistentVolumeClaims().inNamespace(NS)
+            .withName(WorkspaceResourceFactory.pvcName(P1)).get()).isNull();
     }
 
     @Test

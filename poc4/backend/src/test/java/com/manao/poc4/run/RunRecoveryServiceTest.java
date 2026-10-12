@@ -3,11 +3,17 @@ package com.manao.poc4.run;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.manao.poc4.kubernetes.JobCoordinator;
+import com.manao.poc4.log.RunLogIngestor;
+import com.manao.poc4.log.RunLogService;
+import com.manao.poc4.log.RunLogWindow;
 import com.manao.poc4.persistence.RunState;
 import com.manao.poc4.run.RunControllerTest.FakeRun;
 import com.manao.poc4.run.RunControllerTest.FakeRunStore;
 import com.manao.poc4.run.RunControllerTest.StubCoordinator;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.OptionalLong;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -35,6 +41,42 @@ class RunRecoveryServiceTest {
         store.runs.put(id, new FakeRun(new RunRecord(id, PROJECT, 5, state,
             "{}", "manao-run-" + id, null, null, null, null, null, 3L,
             Instant.parse("2026-08-29T11:00:00Z"), 0L, null, null, null, terminationIntent)));
+    }
+
+    /** A python-fastapi-web service snapshot, as RunService persists it for a Python web project. */
+    private void seedPythonServiceRun(String id, RunState state) {
+        seedPythonServiceRun(id, state, null);
+    }
+
+    private void seedPythonServiceRun(String id, RunState state, String terminationIntent) {
+        RunPolicy base = new RunPolicy(com.manao.poc4.project.RuntimeTemplate.JAVA_CONSOLE.id(),
+            new RunPolicy.RuntimeInfo.Java(17, 3),
+            com.manao.poc4.project.RuntimeTemplate.JAVA_CONSOLE.displayCommand(), 1800,
+            RunPolicy.EXECUTION_KIND_TASK, 1800, 0,
+            new RunPolicy.Resources(1000, 1L << 30, 1L << 30),
+            new RunPolicy.Resources(8000, 16L << 30, 10L << 30));
+        String policyJson = base.forProject(new com.manao.poc4.project.ProjectRuntimeSpec(
+            com.manao.poc4.project.RuntimeTemplate.PYTHON_FASTAPI_WEB.id(), false, false,
+            List.of())).toJson();
+        store.runs.put(id, new FakeRun(new RunRecord(id, PROJECT, 5, state, policyJson,
+            "manao-run-" + id, null, null, null, null, null, 3L,
+            Instant.parse("2026-08-29T11:00:00Z"), 0L, null, null, null, terminationIntent)));
+    }
+
+    /** A python-console task snapshot. */
+    private void seedPythonTaskRun(String id, RunState state) {
+        RunPolicy base = new RunPolicy(com.manao.poc4.project.RuntimeTemplate.JAVA_CONSOLE.id(),
+            new RunPolicy.RuntimeInfo.Java(17, 3),
+            com.manao.poc4.project.RuntimeTemplate.JAVA_CONSOLE.displayCommand(), 1800,
+            RunPolicy.EXECUTION_KIND_TASK, 1800, 0,
+            new RunPolicy.Resources(1000, 1L << 30, 1L << 30),
+            new RunPolicy.Resources(8000, 16L << 30, 10L << 30));
+        String policyJson = base.forProject(new com.manao.poc4.project.ProjectRuntimeSpec(
+            com.manao.poc4.project.RuntimeTemplate.PYTHON_CONSOLE.id(), false, false,
+            List.of())).toJson();
+        store.runs.put(id, new FakeRun(new RunRecord(id, PROJECT, 5, state, policyJson,
+            "manao-run-" + id, null, null, null, null, null, 3L,
+            Instant.parse("2026-08-29T11:00:00Z"), 0L)));
     }
 
     private static JobCoordinator.JobFacts facts(boolean running, boolean succeeded, boolean failed,
@@ -151,6 +193,47 @@ class RunRecoveryServiceTest {
     }
 
     @Test
+    void aPythonServiceRunResumesRunningWithoutRebuildingTheExecution() {
+        seedPythonServiceRun("run-py-live", RunState.RUNNING, null);
+        coordinator.factsByRun.put("run-py-live", facts(true, false, false, false, null));
+
+        RunRecoveryService.RecoveryReport report = service.recoverRuns();
+
+        // RUNNING recovery only re-arms observation: no Job is recreated and nothing is settled.
+        assertThat(report.resumed()).containsExactly("run-py-live");
+        assertThat(store.runs.get("run-py-live").state).isEqualTo(RunState.RUNNING.name());
+        assertThat(store.runs.get("run-py-live").terminationReason).isNull();
+        assertThat(coordinator.stopCalls).isEmpty();
+        assertThat(coordinator.ensureJobCalls).isEmpty();
+    }
+
+    @Test
+    void aPythonTaskRunSettlesFromTerminalJobFactsAndUnlocksTheProject() {
+        seedPythonTaskRun("run-py-task", RunState.RUNNING);
+        coordinator.factsByRun.put("run-py-task", facts(false, true, false, false, 0));
+
+        RunRecoveryService.RecoveryReport report = service.recoverRuns();
+
+        assertThat(report.settled()).containsExactly("run-py-task");
+        assertThat(store.runs.get("run-py-task").state).isEqualTo(RunState.SUCCEEDED.name());
+        assertThat(store.runs.get("run-py-task").exitCode).isZero();
+    }
+
+    @Test
+    void aPythonStopIntentSurvivesTheRestartAndIsNeverResurrectedIntoRunning() {
+        seedPythonServiceRun("run-py-stop", RunState.STOPPING, "USER_STOPPED");
+        coordinator.factsByRun.put("run-py-stop", facts(true, false, false, false, null));
+
+        RunRecoveryService.RecoveryReport report = service.recoverRuns();
+
+        assertThat(store.runs.get("run-py-stop").state).isEqualTo(RunState.STOPPING.name());
+        assertThat(store.runs.get("run-py-stop").terminationIntent).isEqualTo("USER_STOPPED");
+        assertThat(coordinator.stopCalls).containsExactly("manao-run-run-py-stop");
+        assertThat(report.resumed()).isEmpty();
+        assertThat(report.settled()).isEmpty();
+    }
+
+    @Test
     void deletingProjectIsNotRecoveredOrSettled() {
         seedRun("run-deleting", RunState.RUNNING);
         store.projects.put(PROJECT, "DELETING");
@@ -185,5 +268,64 @@ class RunRecoveryServiceTest {
         assertThat(report.resumed()).isEmpty();
         assertThat(report.failedClosed()).isEmpty();
         assertThat(store.runs.get("run-unclear").state).isEqualTo(RunState.RECOVERING.name());
+    }
+
+    @Test
+    void aRecoveredTerminalRunIsBackfilledFromPodHistoryBeforeItsCompletionNotification() {
+        String runId = "run-py-backfill";
+        seedPythonServiceRun(runId, RunState.RECOVERING);
+        RecordingChunkStore chunks = new RecordingChunkStore();
+        RunObservationServiceTest.RecordingGateway gateway = new RunObservationServiceTest.RecordingGateway();
+        gateway.podHistory.add("Traceback (most recent call last):");
+        gateway.podHistory.add("pymysql.err.OperationalError: (2003, \"Can't connect to MySQL server\")");
+        List<String> events = new ArrayList<>();
+        gateway.readLogEventSink = events::add;
+        RunLogIngestor ingestor = new RunLogIngestor(gateway, new RunLogService(chunks), "manao");
+        RunRecoveryService recovering = new RunRecoveryService(store, coordinator, ingestor,
+            id -> events.add("completed:" + id));
+        coordinator.factsByRun.put(runId, new JobCoordinator.JobFacts(false, false, true, false, 1,
+            "pod-py", "uid-py", false, true));
+
+        RunRecoveryService.RecoveryReport report = recovering.recoverRuns();
+
+        // The backend died before any observation: recovery settles from pod history through the
+        // SAME backfill path, so the Python traceback is persisted like a Java one would be.
+        assertThat(report.settled()).containsExactly(runId);
+        assertThat(store.runs.get(runId).state).isEqualTo(RunState.FAILED.name());
+        assertThat(chunks.inserted).extracting(RunLogWindow.Chunk::text)
+            .containsExactly("Traceback (most recent call last):\n",
+                "pymysql.err.OperationalError: (2003, \"Can't connect to MySQL server\")\n");
+        assertThat(events).containsExactly("backfill:pod-py", "completed:" + runId);
+    }
+
+    @Test
+    void aRecoveryBackfillThatKeepsFailingDefersTheSettlement() {
+        String runId = "run-py-backfill-defer";
+        seedPythonServiceRun(runId, RunState.RECOVERING);
+        RecordingChunkStore chunks = new RecordingChunkStore();
+        RunObservationServiceTest.RecordingGateway gateway = new RunObservationServiceTest.RecordingGateway();
+        gateway.podHistory.add("Traceback (most recent call last):");
+        gateway.failReadLogs = true;
+        RunLogIngestor ingestor = new RunLogIngestor(gateway, new RunLogService(chunks), "manao");
+        List<String> completed = new ArrayList<>();
+        RunRecoveryService recovering = new RunRecoveryService(store, coordinator, ingestor,
+            completed::add);
+        coordinator.factsByRun.put(runId, new JobCoordinator.JobFacts(false, false, true, false, 1,
+            "pod-py", "uid-py", false, true));
+
+        RunRecoveryService.RecoveryReport report = recovering.recoverRuns();
+
+        // The failing backfill defers the settlement: the run stays RECOVERING for the next scan.
+        assertThat(report.settled()).isEmpty();
+        assertThat(store.runs.get(runId).state).isEqualTo(RunState.RECOVERING.name());
+        assertThat(completed).isEmpty();
+    }
+
+    static final class RecordingChunkStore implements RunLogService.ChunkStore {
+        final List<RunLogWindow.Chunk> inserted = new ArrayList<>();
+        @Override public void insertChunk(String runId, RunLogWindow.Chunk chunk) { inserted.add(chunk); }
+        @Override public List<RunLogWindow.Chunk> loadChunks(String runId) { return List.of(); }
+        @Override public void deleteBefore(String runId, long seqExclusive) { }
+        @Override public OptionalLong lastSeq(String runId) { return OptionalLong.empty(); }
     }
 }

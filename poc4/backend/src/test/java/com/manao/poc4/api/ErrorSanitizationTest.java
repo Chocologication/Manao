@@ -74,6 +74,34 @@ class ErrorSanitizationTest {
     }
 
     @Test
+    void dependencyErrorsKeepTheirFixedCodesAndNeverCarryRawToolOutput() {
+        // Raw uv stderr, package paths and agent internals must be replaced by the fixed text.
+        assertThat(new ApiError("PYTHON_DEPENDENCY_UNSUPPORTED",
+            "uv: no solution for ../etc/passwd (from host evil.example)", null))
+            .extracting(ApiError::code, ApiError::message)
+            .containsExactly("PYTHON_DEPENDENCY_UNSUPPORTED",
+                "Dependency changes are not supported for this project or package");
+        assertThat(new ApiError("PYTHON_DEPENDENCY_NO_WHEEL",
+            "uv: pywin32==312 has no binary distribution on host pod-manao-ws-1", null))
+            .extracting(ApiError::code, ApiError::message)
+            .containsExactly("PYTHON_DEPENDENCY_NO_WHEEL",
+                "No compatible wheel is available for the requested package or version.");
+        assertThat(new ApiError("PYTHON_DEPENDENCY_RESOLUTION_FAILED",
+            "TRACE uv::resolver http 500 body leaked", null))
+            .extracting(ApiError::code, ApiError::message)
+            .containsExactly("PYTHON_DEPENDENCY_RESOLUTION_FAILED", "Dependency resolution failed");
+        assertThat(new ApiError("PYTHON_DEPENDENCY_TIMEOUT",
+            "killed after 20s on host pod-manao-ws-1", null))
+            .extracting(ApiError::code, ApiError::message)
+            .containsExactly("PYTHON_DEPENDENCY_TIMEOUT", "Dependency resolution timed out. Try again later.");
+        assertThat(new ApiError("DEPENDENCY_REQUEST_MISMATCH",
+            "request sha 2259f25f does not match journal of op 111", null))
+            .extracting(ApiError::code, ApiError::message)
+            .containsExactly("DEPENDENCY_REQUEST_MISMATCH",
+                "This operation id was already used for a different request");
+    }
+
+    @Test
     void unknownCodesStillDegradeToInternalError() {
         ApiError error = new ApiError("SOME_UNLISTED_CODE", "anything", null);
         assertThat(error.code()).isEqualTo("INTERNAL_ERROR");

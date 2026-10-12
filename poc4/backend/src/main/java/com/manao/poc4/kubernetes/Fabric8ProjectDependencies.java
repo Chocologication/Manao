@@ -167,6 +167,13 @@ public class Fabric8ProjectDependencies implements ProjectDependencies {
         List<EnvVar> env = new ArrayList<>();
         env.add(new EnvVarBuilder().withName("SERVER_PORT")
             .withValue(String.valueOf(spec.primaryPort())).build());
+        // Python runs consume the fixed dependency extras through server-controlled boolean
+        // strings ("true"/"false"), never arrays or shell text; the credentials themselves stay
+        // secret references below. Java runs never see these python-only variables.
+        if (isPython(spec)) {
+            env.add(valueEnv("MANAO_PYTHON_MYSQL", String.valueOf(spec.mysql())));
+            env.add(valueEnv("MANAO_PYTHON_REDIS", String.valueOf(spec.redis())));
+        }
         if (spec.mysql()) {
             env.add(valueEnv("MANAO_MYSQL_HOST", DependencyResourceFactory.mysqlServiceName(projectId)));
             env.add(valueEnv("MANAO_MYSQL_PORT", "3306"));
@@ -180,6 +187,10 @@ public class Fabric8ProjectDependencies implements ProjectDependencies {
             env.add(secretEnv("MANAO_REDIS_PASSWORD", DependencyResourceFactory.redisSecretName(projectId), "password"));
         }
         return List.copyOf(env);
+    }
+
+    private static boolean isPython(ProjectRuntimeSpec spec) {
+        return "python".equals(com.manao.poc4.project.RuntimeTemplate.fromId(spec.templateId()).language());
     }
 
     private static EnvVar valueEnv(String name, String value) {

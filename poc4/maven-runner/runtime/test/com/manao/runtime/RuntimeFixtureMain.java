@@ -17,8 +17,11 @@ import java.util.concurrent.CountDownLatch;
  * processes instead of mocks.
  *
  * <p>The production {@code run} mode of {@link WebRunSupervisor} always executes the
- * fixed maven command; arbitrary commands cannot be injected through the environment
- * because this fixture is not present in the production image.</p>
+ * fixed command of the requested {@link RunProfile}; arbitrary commands cannot be
+ * injected through the environment because this fixture is not present in the
+ * production image. The fixture passes the Java profile with a controlled child command
+ * override through the package-private {@code runMode(RunProfile, List)} seam; the
+ * readiness path still comes from the profile.</p>
  *
  * <p>Scenarios (argv[0]):</p>
  * <ul>
@@ -47,22 +50,27 @@ public final class RuntimeFixtureMain {
         String scenario = args.length == 0 ? "" : args[0];
         int exitCode;
         switch (scenario) {
-            case "ready-server" -> exitCode = WebRunSupervisor.runMode(readyServerCommand());
+            case "ready-server" -> exitCode = WebRunSupervisor.runMode(
+                    RunProfile.JAVA_SPRING_BOOT_WEB, readyServerCommand());
             case "ready-ignore-term" -> {
                 String cp = System.getProperty("java.class.path");
-                exitCode = WebRunSupervisor.runMode(List.of("bash", "-c",
-                        "trap '' TERM; echo start >> \"$MANAO_TEST_CHILD_LOG\"; "
-                                + "java -cp '" + cp
-                                + "' 'com.manao.runtime.RuntimeFixtureMain$ReadyServer' & "
-                                + "wait $!; echo natural-exit >> \"$MANAO_TEST_CHILD_LOG\""));
+                exitCode = WebRunSupervisor.runMode(RunProfile.JAVA_SPRING_BOOT_WEB,
+                        List.of("bash", "-c",
+                                "trap '' TERM; echo start >> \"$MANAO_TEST_CHILD_LOG\"; "
+                                        + "java -cp '" + cp
+                                        + "' 'com.manao.runtime.RuntimeFixtureMain$ReadyServer' & "
+                                        + "wait $!; echo natural-exit >> \"$MANAO_TEST_CHILD_LOG\""));
             }
-            case "early-exit-0" -> exitCode = WebRunSupervisor.runMode(List.of("sh", "-c",
-                    "echo start >> \"$MANAO_TEST_CHILD_LOG\"; exit 0"));
-            case "early-exit-1" -> exitCode = WebRunSupervisor.runMode(List.of("sh", "-c",
-                    "echo start >> \"$MANAO_TEST_CHILD_LOG\"; exit 1"));
+            case "early-exit-0" -> exitCode = WebRunSupervisor.runMode(
+                    RunProfile.JAVA_SPRING_BOOT_WEB, List.of("sh", "-c",
+                            "echo start >> \"$MANAO_TEST_CHILD_LOG\"; exit 0"));
+            case "early-exit-1" -> exitCode = WebRunSupervisor.runMode(
+                    RunProfile.JAVA_SPRING_BOOT_WEB, List.of("sh", "-c",
+                            "echo start >> \"$MANAO_TEST_CHILD_LOG\"; exit 1"));
             case "receipt-fails-after-claim" -> {
                 tamperReceiptAfterClaim();
-                exitCode = WebRunSupervisor.runMode(readyServerCommand());
+                exitCode = WebRunSupervisor.runMode(
+                        RunProfile.JAVA_SPRING_BOOT_WEB, readyServerCommand());
             }
             default -> {
                 System.err.println("unknown fixture scenario: " + scenario);

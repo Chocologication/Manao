@@ -23,8 +23,15 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/agent/v1")
 public final class WorkspaceAgentController {
     private final WorkspaceFileService files;
+    private final PythonDependencyEditor pythonDependencies;
+    private final PythonDependencyTransaction dependencyTransactions;
 
-    public WorkspaceAgentController(WorkspaceFileService files) { this.files = files; }
+    public WorkspaceAgentController(WorkspaceFileService files, PythonDependencyEditor pythonDependencies,
+                                    PythonDependencyTransaction dependencyTransactions) {
+        this.files = files;
+        this.pythonDependencies = pythonDependencies;
+        this.dependencyTransactions = dependencyTransactions;
+    }
 
     @GetMapping("/healthz")
     public Health healthz() {
@@ -101,6 +108,27 @@ public final class WorkspaceAgentController {
             .orElseThrow(() -> new WorkspaceFileService.WorkspaceFileException("ENTRY_NOT_FOUND", "receipt does not exist"));
     }
 
+    /** Prepare only: resolution happens in scratch and the summary carries ids and digests. */
+    @PostMapping("/python-dependencies/prepare")
+    public PythonDependencyEditor.PreparedPythonDependencies prepareDependency(@RequestBody PrepareDependencyRequest request) {
+        return pythonDependencies.prepare(request.operationId(), request.requestSha256(), request.change());
+    }
+
+    /** Batch prepare: ONE requirements-text resolution through the same scratch/journal protocol. */
+    @PostMapping("/python-dependencies/prepare-batch")
+    public PythonDependencyEditor.PreparedPythonDependencies prepareDependencyBatch(
+        @RequestBody PrepareBatchDependencyRequest request) {
+        return pythonDependencies.prepareBatch(request.operationId(), request.requestSha256(),
+            request.requirementsText());
+    }
+
+    /** Commit only: first application and post-interruption retries share this single entry. */
+    @PostMapping("/python-dependencies/commit")
+    public PythonDependencyEditor.PreparedPythonDependencies commitDependency(
+        @RequestBody PythonDependencyTransaction.PythonDependencyCommit command) {
+        return dependencyTransactions.commit(command);
+    }
+
     @ExceptionHandler(WorkspaceFileService.WorkspaceFileException.class)
     public ResponseEntity<ErrorBody> handleFileException(WorkspaceFileService.WorkspaceFileException ex) {
         return ResponseEntity.status(statusFor(ex.code())).body(new ErrorBody(ex.code(), ex.getMessage()));
@@ -114,9 +142,11 @@ public final class WorkspaceAgentController {
     private static int statusFor(String code) {
         return switch (code) {
             case "ENTRY_NOT_FOUND" -> 404;
-            case "ENTRY_ALREADY_EXISTS", "DIRECTORY_NOT_EMPTY", "OPERATION_CONFLICT" -> 409;
-            case "FILE_TOO_LARGE", "BINARY_FILE", "UNSUPPORTED_ENCODING", "VALIDATION_ERROR", "INVALID_PATH" -> 422;
-            default -> 503;
+            case "ENTRY_ALREADY_EXISTS", "DIRECTORY_NOT_EMPTY", "OPERATION_CONFLICT", "DEPENDENCY_REQUEST_MISMATCH" -> 409;
+            case "FILE_TOO_LARGE", "BINARY_FILE", "UNSUPPORTED_ENCODING", "VALIDATION_ERROR", "INVALID_PATH",
+                 "PYTHON_DEPENDENCY_UNSUPPORTED", "PYTHON_DEPENDENCY_NO_WHEEL" -> 422;
+            case "PYTHON_DEPENDENCY_TIMEOUT" -> 504;
+            default -> 503; // IO_ERROR, PYTHON_DEPENDENCY_RESOLUTION_FAILED and unknown codes
         };
     }
 
@@ -126,4 +156,8 @@ public final class WorkspaceAgentController {
                                      String expectedAfterSha256, String receiptJson, String expectedReceiptSha256) { }
     public record RenameEntryRequest(String path, String nextPath, String operationId, String expectedBeforeSha256,
                                      String expectedAfterSha256, String receiptJson, String expectedReceiptSha256) { }
+    public record PrepareDependencyRequest(String operationId, String requestSha256,
+                                           PythonDependencyEditor.DependencyChange change) { }
+    public record PrepareBatchDependencyRequest(String operationId, String requestSha256,
+                                                String requirementsText) { }
 }

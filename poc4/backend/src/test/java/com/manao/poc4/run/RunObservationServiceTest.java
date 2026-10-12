@@ -30,6 +30,7 @@ class RunObservationServiceTest {
     private StubCoordinator coordinator;
     private RecordingGateway gateway;
     private RecordingEndpoints endpoints;
+    private RecordingChunkStore chunkStore;
     private RunObservationService service;
     private final java.util.List<String> completed = new ArrayList<>();
 
@@ -39,8 +40,9 @@ class RunObservationServiceTest {
         coordinator = new StubCoordinator();
         gateway = new RecordingGateway();
         endpoints = new RecordingEndpoints();
+        chunkStore = new RecordingChunkStore();
         RunLogIngestor ingestor = new RunLogIngestor(gateway,
-            new RunLogService(new EmptyChunkStore()), "manao");
+            new RunLogService(chunkStore), "manao");
         completed.clear();
         service = new RunObservationService(store, coordinator, ingestor, completed::add, endpoints);
     }
@@ -470,15 +472,111 @@ class RunObservationServiceTest {
         assertThat(completed).containsExactly(runId);
     }
 
+    @Test
+    void aFastFailingRunThatNeverEstablishedAWatchIsBackfilledBeforeItsTerminalPersistence() {
+        String runId = seedRun("run-fast-fail", RunState.RUNNING);
+        gateway.podHistory.add("Traceback (most recent call last):");
+        gateway.podHistory.add("pymysql.err.OperationalError: (2003, \"Can't connect to MySQL server\")");
+        List<String> events = new ArrayList<>();
+        gateway.readLogEventSink = events::add;
+        RunObservationService ordered = new RunObservationService(store, coordinator,
+            new RunLogIngestor(gateway, new RunLogService(chunkStore), "manao"),
+            id -> events.add("completed:" + id), endpoints);
+        coordinator.factsByRun.put(runId, facts(false, false, true, false, 1, "pod-1", "uid-1", false, true));
+
+        ordered.observe();
+
+        // The regression for the production defect: the app died before the first 3 s scan, no
+        // watch was ever established, and the terminal backfill persists the pod history anyway.
+        assertThat(gateway.watchedPods).isEmpty();
+        assertThat(gateway.readLogsPods).containsExactly("pod-1");
+        assertThat(store.runs.get(runId).state).isEqualTo(RunState.FAILED.name());
+        assertThat(store.runs.get(runId).terminationReason).isEqualTo("BUILD_FAILED");
+        assertThat(chunkStore.inserted).extracting(RunLogWindow.Chunk::text)
+            .containsExactly("Traceback (most recent call last):\n",
+                "pymysql.err.OperationalError: (2003, \"Can't connect to MySQL server\")\n");
+        // The backfill happens strictly before the completion notification (log.complete).
+        assertThat(events).containsExactly("backfill:pod-1", "completed:" + runId);
+    }
+
+    @Test
+    void aFailingBackfillDefersSettlementAndNeverPublishesLogCompleteEarly() {
+        String runId = seedRun("run-defer", RunState.RUNNING);
+        gateway.podHistory.add("Traceback (most recent call last):");
+        gateway.podHistory.add("pymysql.err.OperationalError: (2003, \"Can't connect to MySQL server\")");
+        coordinator.factsByRun.put(runId, facts(false, false, true, false, 1, "pod-1", "uid-1", false, true));
+        gateway.failReadLogs = true;
+
+        service.observe();
+        service.observe();
+
+        // Deferred: the run keeps its locking state and nothing completion-shaped happened.
+        assertThat(store.runs.get(runId).state).isEqualTo(RunState.RUNNING.name());
+        assertThat(completed).isEmpty();
+        assertThat(chunkStore.inserted).extracting(RunLogWindow.Chunk::text)
+            .filteredOn(text -> text.contains("backfill")).isEmpty();
+
+        gateway.failReadLogs = false;
+        service.observe();
+
+        // The third read attempt succeeds: settlement, completion notification and the traceback.
+        assertThat(store.runs.get(runId).state).isEqualTo(RunState.FAILED.name());
+        assertThat(completed).containsExactly(runId);
+        assertThat(gateway.readLogsPods).hasSize(3);
+        assertThat(chunkStore.inserted).extracting(RunLogWindow.Chunk::text)
+            .containsExactly("Traceback (most recent call last):\n",
+                "pymysql.err.OperationalError: (2003, \"Can't connect to MySQL server\")\n");
+    }
+
+    @Test
+    void anExhaustedBackfillBudgetStillSettlesWithOneGapMarker() {
+        String runId = seedRun("run-gap", RunState.RUNNING);
+        gateway.podHistory.add("Traceback (most recent call last):");
+        gateway.podHistory.add("Application startup failed. Exiting.");
+        coordinator.factsByRun.put(runId, facts(false, false, true, false, 1, "pod-1", "uid-1", false, true));
+        gateway.failReadLogs = true;
+
+        service.observe();
+        service.observe();
+        service.observe();
+
+        // The budget is exhausted: the run still settles (exactly once) with one explicit marker.
+        assertThat(store.runs.get(runId).state).isEqualTo(RunState.FAILED.name());
+        assertThat(completed).containsExactly(runId);
+        assertThat(gateway.readLogsPods).hasSize(3);
+        assertThat(chunkStore.inserted).extracting(RunLogWindow.Chunk::text)
+            .filteredOn(text -> text.contains("backfill")).hasSize(1);
+    }
+
     static final class RecordingGateway implements PodLogGateway {
         final List<String> watchedPods = new ArrayList<>();
         final List<String> containers = new ArrayList<>();
         final List<String> namespaces = new ArrayList<>();
         final List<String> closedPods = new ArrayList<>();
+        final List<String> podHistory = new ArrayList<>();
+        final List<String> readLogsPods = new ArrayList<>();
         private final List<MutableHandle> handles = new ArrayList<>();
+        /** When true, readLogs fails mid-history: the first line was already delivered. */
+        boolean failReadLogs;
+        /** Optional shared event sink so tests can order the backfill against the completion listener. */
+        java.util.function.Consumer<String> readLogEventSink;
 
         /** The most recently created watch, so tests can kill the current source. */
         MutableHandle latest() { return handles.get(handles.size() - 1); }
+
+        /** One-shot non-follow read of the pod's full history, recorded like watchLogs. */
+        @Override public void readLogs(String namespace, String podName, String container,
+                                       java.util.function.Consumer<String> lineConsumer) {
+            readLogsPods.add(podName);
+            if (readLogEventSink != null) readLogEventSink.accept("backfill:" + podName);
+            java.util.Iterator<String> lines = podHistory.iterator();
+            while (lines.hasNext()) {
+                lineConsumer.accept(lines.next());
+                if (failReadLogs) {
+                    throw new IllegalStateException("pod log read failed");
+                }
+            }
+        }
 
         @Override public LogWatchHandle watchLogs(String namespace, String podName, String container,
                                                   java.util.function.Consumer<String> lineConsumer) {
@@ -504,6 +602,14 @@ class RunObservationServiceTest {
         @Override public void close() { closedLog.add(podName); }
 
         @Override public boolean isAlive() { return alive; }
+    }
+
+    static final class RecordingChunkStore implements RunLogService.ChunkStore {
+        final List<RunLogWindow.Chunk> inserted = new ArrayList<>();
+        @Override public void insertChunk(String runId, RunLogWindow.Chunk chunk) { inserted.add(chunk); }
+        @Override public List<RunLogWindow.Chunk> loadChunks(String runId) { return List.of(); }
+        @Override public void deleteBefore(String runId, long seqExclusive) { }
+        @Override public OptionalLong lastSeq(String runId) { return OptionalLong.empty(); }
     }
 
     static final class EmptyChunkStore implements RunLogService.ChunkStore {

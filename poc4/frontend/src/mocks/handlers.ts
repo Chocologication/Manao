@@ -7,6 +7,7 @@ import type {
   ProjectRuntimeConfig,
   RuntimeTemplateId,
 } from '../contracts/project';
+import { isPythonRuntimeTemplate } from '../contracts/project';
 import {
   parseProjectDirectoryPath,
   parseProjectRelativePath,
@@ -35,17 +36,32 @@ import {
   findOwnedProjectCreation,
   removeOwnedProject,
   expireCurrentToken,
+  getDependencyScenario,
   getWriteScenario,
+  isDependencyScenario,
   isLargeFileBodiesEnabled,
   isWriteScenario,
+  isValidMockPackageName,
+  isValidMockPackageVersion,
   listOwnedProjectSummaries,
+  listPendingMockDependencyOperations,
   loginWithCredentials,
+  mockBatchRequestFingerprint,
+  mockDependencyRequestFingerprint,
+  normalizeMockPackageName,
+  parseMockBatchLimits,
+  parseMockBatchPackages,
   readOwnedProjectSummary,
   recordFileRequest,
+  registerMockDependencyOperation,
+  commitMockDependencyOperation,
+  findMockDependencyOperation,
   resolveUserByAccessToken,
+  setDependencyScenario,
   setLargeFileBodiesEnabled,
   setWriteScenario,
   WRITE_SCENARIO_DELAY_MS,
+  type MockDependencyOperation,
 } from './state';
 
 const LOGIN_UNAUTHENTICATED: ApiErrorBody = {
@@ -141,6 +157,36 @@ const INTERNAL_ERROR: ApiErrorBody = {
 function jsonError(status: number, body: ApiErrorBody) {
   return HttpResponse.json(body, { status });
 }
+
+const PYTHON_DEPENDENCY_UNSUPPORTED: ApiErrorBody = {
+  code: 'PYTHON_DEPENDENCY_UNSUPPORTED',
+  message: 'Dependency changes are not supported for this project or package',
+  traceId: 'mock-trace-dependency-unsupported',
+};
+
+const PYTHON_DEPENDENCY_RESOLUTION_FAILED: ApiErrorBody = {
+  code: 'PYTHON_DEPENDENCY_RESOLUTION_FAILED',
+  message: 'Dependency resolution failed',
+  traceId: 'mock-trace-dependency-resolution',
+};
+
+const WORKSPACE_RECONCILIATION_REQUIRED: ApiErrorBody = {
+  code: 'WORKSPACE_RECONCILIATION_REQUIRED',
+  message: 'Workspace needs reconciliation; the operation result is not confirmed',
+  traceId: 'mock-trace-workspace-reconciliation',
+};
+
+const DEPENDENCY_REQUEST_MISMATCH: ApiErrorBody = {
+  code: 'DEPENDENCY_REQUEST_MISMATCH',
+  message: 'This operation id was already used for a different request',
+  traceId: 'mock-trace-dependency-mismatch',
+};
+
+const RUN_ALREADY_ACTIVE: ApiErrorBody = {
+  code: 'RUN_ALREADY_ACTIVE',
+  message: 'A run is already active',
+  traceId: 'mock-trace-run-already-active',
+};
 
 function readBearerToken(request: Request): string | null {
   const header = request.headers.get('Authorization');
@@ -258,7 +304,12 @@ function asRecord(value: unknown): Record<string, unknown> | null {
 const RUNTIME_TEMPLATES: ReadonlySet<RuntimeTemplateId> = new Set([
   'java-console',
   'java-spring-boot-web',
+  'python-console',
+  'python-fastapi-web',
 ]);
+
+/** Console templates never expose public ports (python-console also stays dependency-free). */
+const CONSOLE_TEMPLATES: ReadonlySet<RuntimeTemplateId> = new Set(['java-console', 'python-console']);
 
 /**
  * Reads the runtime configuration of a create body. A legacy name-only body yields null;
@@ -304,7 +355,10 @@ function parseRuntimeFromBody(
       publicPort: port.publicPort,
     });
   }
-  if (templateId !== 'java-spring-boot-web' && publicPorts.length > 0) {
+  if (CONSOLE_TEMPLATES.has(templateId as RuntimeTemplateId) && publicPorts.length > 0) {
+    return { ok: false };
+  }
+  if (templateId === 'python-console' && (record.mysql === true || record.redis === true)) {
     return { ok: false };
   }
   return {
@@ -383,6 +437,314 @@ async function gateWrite(
   }
   return { projectId: access.projectId };
 }
+
+type DependencyChangeBody = {
+  operationId: string;
+  action: 'ADD' | 'REMOVE';
+  packageName: string;
+  version: string | null;
+  expectedWorkspaceRevision: string;
+};
+
+function isDependencyChangeBody(value: unknown): value is DependencyChangeBody {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+    return false;
+  }
+  const record = value as Record<string, unknown>;
+  return (
+    typeof record.operationId === 'string' &&
+    record.operationId !== '' &&
+    (record.action === 'ADD' || record.action === 'REMOVE') &&
+    typeof record.packageName === 'string' &&
+    record.packageName !== '' &&
+    (record.version === null || typeof record.version === 'string') &&
+    typeof record.expectedWorkspaceRevision === 'string' &&
+    record.expectedWorkspaceRevision !== ''
+  );
+}
+
+type DependencyBatchBody = {
+  operationId: string;
+  requirementsText: string;
+  expectedWorkspaceRevision: string;
+};
+
+function isDependencyBatchBody(value: unknown): value is DependencyBatchBody {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+    return false;
+  }
+  const record = value as Record<string, unknown>;
+  return (
+    typeof record.operationId === 'string' &&
+    record.operationId !== '' &&
+    typeof record.requirementsText === 'string' &&
+    typeof record.expectedWorkspaceRevision === 'string' &&
+    record.expectedWorkspaceRevision !== ''
+  );
+}
+
+function dependencyStatusJson(operation: MockDependencyOperation) {
+  return {
+    operationId: operation.operationId,
+    state: operation.state,
+    resultWorkspaceRevision: operation.resultWorkspaceRevision,
+  };
+}
+
+function unconfirmedStatusJson(operationId: string) {
+  return { operationId, state: 'UNCONFIRMED', resultWorkspaceRevision: null };
+}
+
+function isPythonRuntimeProject(userId: string, projectId: string): boolean {
+  const project = readOwnedProjectSummary(userId, projectId);
+  return isPythonRuntimeTemplate(project?.runtime?.templateId);
+}
+
+export const dependencyHandlers = [
+  // Mock-only: choose dependency-scenario behavior. Forbidden in production modules.
+  http.post('/api/v1/session/dependency-scenario', async ({ request }) => {
+    if (resolveUserByAccessToken(readBearerToken(request)) === null) {
+      return jsonError(401, REQUEST_UNAUTHENTICATED);
+    }
+    const body = asRecord(await readJsonBody(request));
+    if (body === null || !isDependencyScenario(body.scenario)) {
+      return jsonError(400, FILE_VALIDATION_ERROR);
+    }
+    setDependencyScenario(body.scenario);
+    return new HttpResponse(null, { status: 204 });
+  }),
+
+  // Registered BEFORE the :operationId route so 'pending' is never read as an id.
+  http.get('/api/v1/projects/:projectId/python-dependencies/pending', ({ request, params }) => {
+    const auth = authorize(request);
+    if ('response' in auth) {
+      return auth.response;
+    }
+    const projectId = readProjectId(params);
+    if (projectId === null || readOwnedProjectSummary(auth.user.id, projectId) === null) {
+      return jsonError(403, FORBIDDEN);
+    }
+    return HttpResponse.json({
+      operations: listPendingMockDependencyOperations(projectId).map(dependencyStatusJson),
+    });
+  }),
+
+  http.get('/api/v1/projects/:projectId/python-dependencies/:operationId', ({ request, params }) => {
+    const auth = authorize(request);
+    if ('response' in auth) {
+      return auth.response;
+    }
+    const projectId = readProjectId(params);
+    const operationId = readParam(params.operationId);
+    if (
+      projectId === null ||
+      operationId === null ||
+      readOwnedProjectSummary(auth.user.id, projectId) === null
+    ) {
+      return jsonError(403, FORBIDDEN);
+    }
+    const operation = findMockDependencyOperation(projectId, operationId);
+    if (operation === null) {
+      // Only a missing record is UNCONFIRMED; it never authorizes a resend.
+      return HttpResponse.json(unconfirmedStatusJson(operationId));
+    }
+    return HttpResponse.json(dependencyStatusJson(operation));
+  }),
+
+  http.post(
+    '/api/v1/projects/:projectId/python-dependencies/:operationId/reconcile',
+    ({ request, params }) => {
+      const auth = authorize(request);
+      if ('response' in auth) {
+        return auth.response;
+      }
+      const projectId = readProjectId(params);
+      const operationId = readParam(params.operationId);
+      if (
+        projectId === null ||
+        operationId === null ||
+        readOwnedProjectSummary(auth.user.id, projectId) === null
+      ) {
+        return jsonError(403, FORBIDDEN);
+      }
+      const operation = findMockDependencyOperation(projectId, operationId);
+      if (operation === null) {
+        return HttpResponse.json(unconfirmedStatusJson(operationId));
+      }
+      if (operation.state === 'PENDING') {
+        commitMockDependencyOperation(operation);
+      }
+      return HttpResponse.json(dependencyStatusJson(operation));
+    },
+  ),
+
+  http.post('/api/v1/projects/:projectId/python-dependencies', async ({ request, params }) => {
+    const auth = authorize(request);
+    if ('response' in auth) {
+      return auth.response;
+    }
+    const projectId = readProjectId(params);
+    if (projectId === null || readOwnedProjectSummary(auth.user.id, projectId) === null) {
+      return jsonError(403, FORBIDDEN);
+    }
+    const body = asRecord(await readJsonBody(request));
+    if (body === null || !isDependencyChangeBody(body)) {
+      return jsonError(422, FILE_VALIDATION_ERROR);
+    }
+    const scenario = getDependencyScenario();
+    if (!isPythonRuntimeProject(auth.user.id, projectId)) {
+      return jsonError(422, PYTHON_DEPENDENCY_UNSUPPORTED);
+    }
+    const packageName = normalizeMockPackageName(body.packageName);
+    if (!isValidMockPackageName(packageName)) {
+      return jsonError(422, FILE_VALIDATION_ERROR);
+    }
+    let version: string | null = body.version;
+    if (body.action === 'REMOVE') {
+      if (version !== null && version !== '') {
+        return jsonError(422, FILE_VALIDATION_ERROR);
+      }
+      version = null;
+    } else if (version !== null && version !== '' && !isValidMockPackageVersion(version)) {
+      return jsonError(422, FILE_VALIDATION_ERROR);
+    } else if (version === '') {
+      version = null;
+    }
+    const revision = getWorkspaceRevision(projectId);
+    if (body.expectedWorkspaceRevision !== revision) {
+      return jsonError(409, WORKSPACE_REVISION_CONFLICT);
+    }
+    if (hasActiveRun(projectId)) {
+      return jsonError(409, RUN_ALREADY_ACTIVE);
+    }
+    const fingerprint = mockDependencyRequestFingerprint(
+      projectId,
+      body.action,
+      packageName,
+      version,
+      revision,
+    );
+    const registered = findMockDependencyOperation(projectId, body.operationId);
+    if (registered !== null) {
+      if (registered.fingerprint !== fingerprint) {
+        return jsonError(409, DEPENDENCY_REQUEST_MISMATCH);
+      }
+      if (registered.state === 'PENDING') {
+        commitMockDependencyOperation(registered);
+      }
+      return HttpResponse.json(dependencyStatusJson(registered));
+    }
+    if (scenario === 'resolution-failed') {
+      // Fixed prepare rejection: no durable trace, a safe correction for the browser.
+      return jsonError(503, PYTHON_DEPENDENCY_RESOLUTION_FAILED);
+    }
+    const operation = registerMockDependencyOperation({
+      projectId,
+      operationId: body.operationId,
+      fingerprint,
+      action: body.action,
+      packageName,
+      version,
+    });
+    if (scenario === 'reconciliation-required') {
+      // The row is registered PENDING and stays PENDING: the answer refuses to
+      // confirm the result, like the backend's fail-closed commit. A later
+      // reconcile of the same id commits it.
+      return jsonError(409, WORKSPACE_RECONCILIATION_REQUIRED);
+    }
+    commitMockDependencyOperation(operation);
+    if (scenario === 'lost-response') {
+      // The commit happened but the browser never learns about it here.
+      return HttpResponse.error();
+    }
+    return HttpResponse.json(dependencyStatusJson(operation));
+  }),
+
+  // Batch import: one whole requirements.txt through the SAME operation protocol —
+  // one registration, one commit, one revision move. Never a per-line loop.
+  http.post('/api/v1/projects/:projectId/python-dependencies/batch', async ({ request, params }) => {
+    const auth = authorize(request);
+    if ('response' in auth) {
+      return auth.response;
+    }
+    const projectId = readProjectId(params);
+    if (projectId === null || readOwnedProjectSummary(auth.user.id, projectId) === null) {
+      return jsonError(403, FORBIDDEN);
+    }
+    const body = asRecord(await readJsonBody(request));
+    if (body === null || !isDependencyBatchBody(body)) {
+      return jsonError(422, FILE_VALIDATION_ERROR);
+    }
+    // Mirror the backend's parseBatchRequest: the byte budget and the line count are
+    // decided before the registered row, the template and the revision.
+    const requirementLines = parseMockBatchLimits(body.requirementsText);
+    if (requirementLines === null) {
+      return jsonError(422, FILE_VALIDATION_ERROR);
+    }
+    const normalizedText = requirementLines.join('\n');
+    // The request digest covers the REQUEST's revision, like the backend's digest: a
+    // lost-response retry presents the original request and must find its row.
+    const fingerprint = mockBatchRequestFingerprint(
+      projectId,
+      normalizedText,
+      body.expectedWorkspaceRevision,
+    );
+    // Mirror the backend's changeLocked: the registered identity ALWAYS answers first —
+    // the same id with the same digest returns the original durable COMMITTED result or
+    // redrives PENDING, never misjudged by the revision that has since moved.
+    const registered = findMockDependencyOperation(projectId, body.operationId);
+    if (registered !== null) {
+      if (registered.fingerprint !== fingerprint) {
+        return jsonError(409, DEPENDENCY_REQUEST_MISMATCH);
+      }
+      if (registered.state === 'PENDING') {
+        commitMockDependencyOperation(registered);
+      }
+      return HttpResponse.json(dependencyStatusJson(registered));
+    }
+    const scenario = getDependencyScenario();
+    if (!isPythonRuntimeProject(auth.user.id, projectId)) {
+      return jsonError(422, PYTHON_DEPENDENCY_UNSUPPORTED);
+    }
+    const revision = getWorkspaceRevision(projectId);
+    if (body.expectedWorkspaceRevision !== revision) {
+      return jsonError(409, WORKSPACE_REVISION_CONFLICT);
+    }
+    if (hasActiveRun(projectId)) {
+      return jsonError(409, RUN_ALREADY_ACTIVE);
+    }
+    if (parseMockBatchPackages(requirementLines) === null) {
+      // Mirrors the agent helper's filter_requirements at the prepare position: a line
+      // outside the plain public-PyPI requirement form is a fixed UNSUPPORTED rejection
+      // with no durable trace — never a silent skip and never a COMMITTED row.
+      return jsonError(422, PYTHON_DEPENDENCY_UNSUPPORTED);
+    }
+    if (scenario === 'resolution-failed') {
+      // Fixed prepare rejection: no durable trace, a safe correction for the browser.
+      return jsonError(503, PYTHON_DEPENDENCY_RESOLUTION_FAILED);
+    }
+    const operation = registerMockDependencyOperation({
+      projectId,
+      operationId: body.operationId,
+      fingerprint,
+      action: 'ADD',
+      packageName: '',
+      version: null,
+      requirementsText: normalizedText,
+    });
+    if (scenario === 'reconciliation-required') {
+      // The row is registered PENDING and stays PENDING: the answer refuses to
+      // confirm the result, like the backend's fail-closed commit.
+      return jsonError(409, WORKSPACE_RECONCILIATION_REQUIRED);
+    }
+    commitMockDependencyOperation(operation);
+    if (scenario === 'lost-response') {
+      // The commit happened but the browser never learns about it here.
+      return HttpResponse.error();
+    }
+    return HttpResponse.json(dependencyStatusJson(operation));
+  }),
+];
 
 export const handlers = [
   http.post('/api/v1/auth/login', async ({ request }) => {
@@ -730,6 +1092,7 @@ export const handlers = [
     });
   }),
 
+  ...dependencyHandlers,
   ...runHandlers,
   ...terminalHandlers,
 ];

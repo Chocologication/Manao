@@ -41,7 +41,16 @@ import {
   setRunScenario,
   transitionRun,
 } from '../../mocks/runState';
-import { ALICE_SEED_PROJECT_ID, getFileRequestCount, setWriteScenario } from '../../mocks/state';
+import {
+  ALICE_SEED_PROJECT_ID,
+  getFileRequestCount,
+  mockDependencyRequestFingerprint,
+  registerMockDependencyOperation,
+  setDependencyScenario,
+  setWriteScenario,
+} from '../../mocks/state';
+import { pythonDependencyStorageKey } from '../../api/pythonDependencyApi';
+import { PROJECT_BUSY_READ_MAX_RETRIES } from '../../api/projectBusyRetry';
 import { renderApp, resetAppRuntime } from '../../test/renderApp';
 import { isExperimentalTerminalEnabled, WorkbenchShell } from './WorkbenchShell';
 
@@ -192,6 +201,9 @@ const originalClipboardItem = globalThis.ClipboardItem;
 
 beforeEach(() => {
   resetAppRuntime();
+  // The mock resets the project sequence, so created project ids repeat across
+  // tests; a leftover stored operation id would leak into the next test.
+  sessionStorage.clear();
   globalThis.ClipboardItem = class {
     constructor(items: Record<string, Blob | string | Promise<Blob | string>> = {}) {
       for (const value of Object.values(items)) {
@@ -1490,3 +1502,788 @@ function deferredHold(): { promise: Promise<void>; resolve: () => void } {
   });
   return { promise, resolve };
 }
+
+describe('WorkbenchShell python dependencies', () => {
+  async function renderEditablePythonShell(): Promise<ProjectSummary> {
+    const created = await createProject({
+      name: 'Python Deps Lab',
+      templateId: 'python-console',
+      mysql: false,
+      redis: false,
+      publicPorts: [],
+    });
+    await getProject(created.id);
+    const ready = await getProject(created.id);
+    expect(ready.state).toBe('READY');
+    workspaceSessionStore.getState().activateProject(ready.id);
+    render(
+      <AppProviders>
+        <MemoryRouter>
+          <WorkbenchShell project={ready} />
+        </MemoryRouter>
+      </AppProviders>,
+    );
+    await waitUntilWritesUnlocked();
+    return ready;
+  }
+
+  async function createPythonProjectWithFile(name: string): Promise<ProjectSummary> {
+    const created = await createProject({
+      name,
+      templateId: 'python-console',
+      mysql: false,
+      redis: false,
+      publicPorts: [],
+    });
+    await getProject(created.id);
+    const ready = await getProject(created.id);
+    expect(ready.state).toBe('READY');
+    const tree = await listDirectory(ready.id, parseProjectDirectoryPath(''));
+    await createEntry(ready.id, {
+      kind: 'file',
+      path: parseProjectRelativePath('notes.md'),
+      expectedWorkspaceRevision: tree.workspaceRevision,
+    });
+    return ready;
+  }
+
+  function renderPythonShell(project: ProjectSummary) {
+    workspaceSessionStore.getState().activateProject(project.id);
+    return render(
+      <AppProviders>
+        <MemoryRouter>
+          <WorkbenchShell project={project} />
+        </MemoryRouter>
+      </AppProviders>,
+    );
+  }
+
+  async function openNotesAndMakeDirty(
+    user: ReturnType<typeof userEvent.setup>,
+    projectId: string,
+  ): Promise<void> {
+    await user.click(screen.getByRole('treeitem', { name: 'notes.md' }));
+    expect(await screen.findByRole('tab', { name: /notes.md/ })).toBeInTheDocument();
+    const path = parseProjectRelativePath('notes.md');
+    const uri = toProjectModelUri(projectId, path);
+    await waitFor(() => {
+      expect(monaco.editor.getModel(uri)).not.toBeNull();
+    });
+    const model = monaco.editor.getModel(uri)!;
+    model.pushEditOperations(
+      [],
+      [{ range: model.getFullModelRange(), text: '# dirty notes' }],
+      () => null,
+    );
+    await waitFor(() => {
+      expect(screen.getByRole('tab', { name: /notes.md/ })).toHaveTextContent('*');
+    });
+  }
+
+  it('shows the Dependencies tab and form only on a python workbench', async () => {
+    const user = userEvent.setup();
+    await authenticateAsAlice();
+    await renderEditablePythonShell();
+
+    const dependencies = screen.getByRole('tab', { name: 'Dependencies' });
+    expect(dependencies).toBeEnabled();
+    await user.click(dependencies);
+    expect(await screen.findByLabelText('Package name')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Add dependency' })).toBeEnabled();
+
+    cleanup();
+    await authenticateAsAlice();
+    renderShell();
+    await loadedRoot();
+    expect(screen.queryByRole('tab', { name: 'Dependencies' })).not.toBeInTheDocument();
+  }, 15_000);
+
+  it('locks the form behind the recovery entry after a lost response; checking reloads and unlocks', async () => {
+    const user = userEvent.setup();
+    await authenticateAsAlice();
+    const project = await renderEditablePythonShell();
+    setDependencyScenario('lost-response');
+
+    await user.click(screen.getByRole('tab', { name: 'Dependencies' }));
+    await user.type(screen.getByLabelText('Package name'), 'httpx');
+    await user.click(screen.getByRole('button', { name: 'Add dependency' }));
+
+    // The result is unknown: the entry appears and no further change may start.
+    expect(await screen.findByText('Dependency change is unconfirmed')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Check dependency change' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Add dependency' })).toBeDisabled();
+
+    setDependencyScenario('normal');
+    await user.click(screen.getByRole('button', { name: 'Check dependency change' }));
+
+    await waitFor(() => {
+      expect(screen.queryByText('Dependency change is unconfirmed')).not.toBeInTheDocument();
+    });
+    expect(screen.getByRole('button', { name: 'Add dependency' })).toBeEnabled();
+    // The recovered reload re-read the workspace with the committed dependency files.
+    expect(await screen.findByRole('treeitem', { name: 'pyproject.toml' }, { timeout: 10_000 })).toBeInTheDocument();
+    expect(sessionStorage.getItem(pythonDependencyStorageKey('usr-alice', project.id))).toBeNull();
+  }, 20_000);
+
+  it('logout clears the saved dependency operation so the next user starts clean', async () => {
+    const user = userEvent.setup();
+    await authenticateAsAlice();
+    const created = await createProject({
+      name: 'Python Logout Deps',
+      templateId: 'python-console',
+      mysql: false,
+      redis: false,
+      publicPorts: [],
+    });
+    await getProject(created.id);
+    const ready = await getProject(created.id);
+    expect(ready.state).toBe('READY');
+    // The full router is needed so logout can navigate to the login page.
+    renderApp({ initialEntries: [`/projects/${ready.id}`] });
+    await waitUntilWritesUnlocked();
+    setDependencyScenario('lost-response');
+
+    await user.click(screen.getByRole('tab', { name: 'Dependencies' }));
+    await user.type(screen.getByLabelText('Package name'), 'httpx');
+    await user.click(screen.getByRole('button', { name: 'Add dependency' }));
+    expect(await screen.findByText('Dependency change is unconfirmed')).toBeInTheDocument();
+    expect(sessionStorage.getItem(pythonDependencyStorageKey('usr-alice', ready.id))).not.toBeNull();
+
+    await user.click(screen.getByRole('button', { name: 'Log out' }));
+    expect(await screen.findByLabelText('Username')).toBeInTheDocument();
+    expect(sessionStorage.getItem(pythonDependencyStorageKey('usr-alice', ready.id))).toBeNull();
+
+    setDependencyScenario('normal');
+  }, 20_000);
+
+
+  it('surfaces a failed post-recovery reload and retries it instead of staying silent', async () => {
+    const user = userEvent.setup();
+    await authenticateAsAlice();
+    const project = await renderEditablePythonShell();
+    setDependencyScenario('lost-response');
+
+    let failRootTree = false;
+    server.use(
+      http.get('/api/v1/projects/:projectId/files/tree', ({ request }) => {
+        const path = new URL(request.url).searchParams.get('path') ?? '';
+        if (failRootTree && path === '') {
+          return HttpResponse.json(
+            { code: 'INTERNAL_ERROR', message: 'Mock recovery reload failure', traceId: 'trace-recovery-reload' },
+            { status: 500 },
+          );
+        }
+        return undefined;
+      }),
+    );
+
+    await user.click(screen.getByRole('tab', { name: 'Dependencies' }));
+    await user.type(screen.getByLabelText('Package name'), 'httpx');
+    await user.click(screen.getByRole('button', { name: 'Add dependency' }));
+    expect(await screen.findByText('Dependency change is unconfirmed')).toBeInTheDocument();
+
+    failRootTree = true;
+    await user.click(screen.getByRole('button', { name: 'Check dependency change' }));
+
+    // The change is committed but the surface is stale: the shell must say so.
+    await waitFor(() => {
+      expect(screen.queryByText('Dependency change is unconfirmed')).not.toBeInTheDocument();
+    });
+    expect(
+      await screen.findByText('Dependency change confirmed, but reloading the workspace failed.'),
+    ).toBeInTheDocument();
+
+    failRootTree = false;
+    await user.click(screen.getByRole('button', { name: 'Reload workspace' }));
+    await waitFor(() => {
+      expect(
+        screen.queryByText('Dependency change confirmed, but reloading the workspace failed.'),
+      ).not.toBeInTheDocument();
+    });
+    // The retried reload reads the committed workspace.
+    expect(await screen.findByRole('treeitem', { name: 'pyproject.toml' }, { timeout: 10_000 })).toBeInTheDocument();
+    expect(sessionStorage.getItem(pythonDependencyStorageKey('usr-alice', project.id))).toBeNull();
+
+    setDependencyScenario('normal');
+  }, 20_000);
+
+  it('closes the write gate while a dependency change is in flight and reopens after a safe rejection', async () => {
+    const user = userEvent.setup();
+    let release = () => {};
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    server.use(
+      http.post('/api/v1/projects/:projectId/python-dependencies', async () => {
+        await held;
+        return undefined;
+      }),
+    );
+    await authenticateAsAlice();
+    const project = await createPythonProjectWithFile('Gate In Flight');
+    renderPythonShell(project);
+    await waitUntilWritesUnlocked();
+
+    await user.click(screen.getByRole('treeitem', { name: 'notes.md' }));
+    expect(await screen.findByRole('tab', { name: /notes.md/ })).toBeInTheDocument();
+
+    await user.click(screen.getByRole('tab', { name: 'Dependencies' }));
+    await user.type(screen.getByLabelText('Package name'), 'httpx');
+    await user.click(screen.getByRole('button', { name: 'Add dependency' }));
+
+    // The same write surfaces the active-Run lock closes are closed mid-request.
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'New file' })).toBeDisabled();
+    });
+    expect(screen.getByRole('button', { name: 'New folder' })).toBeDisabled();
+
+    // The editor itself is read-only while the request is held, also after
+    // switching back to the File tab.
+    await user.click(screen.getByRole('tab', { name: 'File' }));
+    expect(screen.getByTestId('mock-editor')).toHaveAttribute('data-readonly', 'true');
+
+    setDependencyScenario('resolution-failed');
+    release();
+    await waitUntilWritesUnlocked();
+    // The rejection alert lives in the now-inactive Dependencies panel.
+    expect(await screen.findByRole('alert', { hidden: true })).toHaveTextContent(
+      /dependency resolution failed/i,
+    );
+    expect(screen.getByTestId('mock-editor')).toHaveAttribute('data-readonly', 'false');
+
+    setDependencyScenario('normal');
+  }, 15_000);
+
+  it('keeps the write gate closed while a committed dependency change reloads the workspace', async () => {
+    const user = userEvent.setup();
+    let holdTree = false;
+    let releaseTree = () => {};
+    const heldTree = new Promise<void>((resolve) => {
+      releaseTree = resolve;
+    });
+    server.use(
+      http.get('/api/v1/projects/:projectId/files/tree', async ({ request }) => {
+        const path = new URL(request.url).searchParams.get('path') ?? '';
+        if (holdTree && path === '') {
+          await heldTree;
+        }
+        return undefined;
+      }),
+    );
+    await authenticateAsAlice();
+    const project = await createPythonProjectWithFile('Gate Reload');
+    renderPythonShell(project);
+    // The initial tree load must complete before reload requests are held.
+    expect(await screen.findByRole('treeitem', { name: 'notes.md' })).toBeInTheDocument();
+    await waitUntilWritesUnlocked();
+    await user.click(screen.getByRole('treeitem', { name: 'notes.md' }));
+    expect(await screen.findByRole('tab', { name: /notes.md/ })).toBeInTheDocument();
+    holdTree = true;
+
+    await user.click(screen.getByRole('tab', { name: 'Dependencies' }));
+    await user.type(screen.getByLabelText('Package name'), 'httpx');
+    await user.click(screen.getByRole('button', { name: 'Add dependency' }));
+
+    // Committed: the panel reloads the workspace and the gate stays closed.
+    await screen.findByText('Reloading workspace');
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'New file' })).toBeDisabled();
+    });
+
+    releaseTree();
+    await waitUntilWritesUnlocked();
+    expect(screen.queryByText('Reloading workspace')).not.toBeInTheDocument();
+    expect(await screen.findByTestId('mock-editor')).toHaveAttribute('data-readonly', 'false');
+  }, 15_000);
+
+  it('closes the write gate at mount while an unconfirmed dependency operation is known', async () => {
+    const user = userEvent.setup();
+    await authenticateAsAlice();
+    const project = await createPythonProjectWithFile('Gate Unconfirmed Mount');
+    sessionStorage.setItem(
+      pythonDependencyStorageKey('usr-alice', project.id),
+      '33333333-3333-4333-8333-333333333333',
+    );
+    renderPythonShell(project);
+    expect(await screen.findByText('Dependency change is unconfirmed')).toBeInTheDocument();
+
+    // The run authority itself resolves (Start run enables) but the gate stays closed.
+    await user.click(screen.getByRole('tab', { name: 'Run' }));
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Start run' })).toBeEnabled();
+    });
+    await user.click(screen.getByRole('tab', { name: 'File' }));
+    expect(screen.getByRole('button', { name: 'New file' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'New folder' })).toBeDisabled();
+  }, 15_000);
+
+  it('never starts a dependency change from a dirty workspace, so the success reload cannot run', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    const user = userEvent.setup();
+    await authenticateAsAlice();
+    const project = await createPythonProjectWithFile('Gate Dirty');
+    renderPythonShell(project);
+    await waitUntilWritesUnlocked();
+
+    // The dirty buffer is exactly the content a success reload would destroy.
+    await openNotesAndMakeDirty(user, project.id);
+    const notesPath = parseProjectRelativePath('notes.md');
+    expect(
+      workspaceBufferRegistry.get(project.id, notesPath)?.snapshot().content,
+    ).toBe('# dirty notes');
+
+    await user.click(screen.getByRole('tab', { name: 'Dependencies' }));
+    const add = screen.getByRole('button', { name: 'Add dependency' });
+    expect(add).toBeDisabled();
+    expect(add).toHaveAttribute('title', 'Save or discard file changes first');
+    await user.click(add);
+
+    // No dependency request was issued, so the success reload is unreachable.
+    const dependencyPosts = fetchSpy.mock.calls.filter(
+      (call) => fetchMethod(call) === 'POST' && /\/python-dependencies$/.test(fetchPathname(call)),
+    );
+    expect(dependencyPosts).toHaveLength(0);
+    expect(screen.getByRole('tab', { name: /notes.md/, hidden: true })).toHaveTextContent('*');
+    fetchSpy.mockRestore();
+  }, 15_000);
+
+  it('keeps the write gate closed while the recovery reload runs and releases it after success', async () => {
+    const user = userEvent.setup();
+    let holdTree = false;
+    let releaseTree = () => {};
+    const heldTree = new Promise<void>((resolve) => {
+      releaseTree = resolve;
+    });
+    server.use(
+      http.get('/api/v1/projects/:projectId/files/tree', async ({ request }) => {
+        const path = new URL(request.url).searchParams.get('path') ?? '';
+        if (holdTree && path === '') {
+          await heldTree;
+        }
+        return undefined;
+      }),
+    );
+    await authenticateAsAlice();
+    const project = await createPythonProjectWithFile('Recovery Reload Gate');
+    renderPythonShell(project);
+    await waitUntilWritesUnlocked();
+    setDependencyScenario('lost-response');
+
+    await user.click(screen.getByRole('tab', { name: 'Dependencies' }));
+    await user.type(screen.getByLabelText('Package name'), 'httpx');
+    await user.click(screen.getByRole('button', { name: 'Add dependency' }));
+    expect(await screen.findByText('Dependency change is unconfirmed')).toBeInTheDocument();
+
+    setDependencyScenario('normal');
+    holdTree = true;
+    await user.click(screen.getByRole('button', { name: 'Check dependency change' }));
+
+    // The unconfirmed entry is resolved, but the authoritative reload is still in
+    // flight: the write gate must stay closed (delayed recovery).
+    await waitFor(() => {
+      expect(screen.queryByText('Dependency change is unconfirmed')).not.toBeInTheDocument();
+    });
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'New file' })).toBeDisabled();
+    });
+
+    releaseTree();
+    await waitUntilWritesUnlocked();
+    expect(await screen.findByRole('treeitem', { name: 'pyproject.toml' }, { timeout: 10_000 })).toBeInTheDocument();
+
+    setDependencyScenario('normal');
+  }, 20_000);
+
+  it('keeps the editor read-only while a failed recovery reload offers Retry and releases it after success', async () => {
+    const user = userEvent.setup();
+    let failRootTree = false;
+    let holdTree = false;
+    let releaseTree = () => {};
+    const heldTree = new Promise<void>((resolve) => {
+      releaseTree = resolve;
+    });
+    server.use(
+      http.get('/api/v1/projects/:projectId/files/tree', async ({ request }) => {
+        const path = new URL(request.url).searchParams.get('path') ?? '';
+        if (failRootTree && path === '') {
+          return HttpResponse.json(
+            { code: 'INTERNAL_ERROR', message: 'Mock recovery reload failure', traceId: 'trace-recovery-gate' },
+            { status: 500 },
+          );
+        }
+        if (holdTree && path === '') {
+          await heldTree;
+        }
+        return undefined;
+      }),
+    );
+    await authenticateAsAlice();
+    const project = await createPythonProjectWithFile('Recovery Retry Gate');
+    renderPythonShell(project);
+    await waitUntilWritesUnlocked();
+    await user.click(screen.getByRole('treeitem', { name: 'notes.md' }));
+    expect(await screen.findByRole('tab', { name: /notes.md/ })).toBeInTheDocument();
+    setDependencyScenario('lost-response');
+
+    await user.click(screen.getByRole('tab', { name: 'Dependencies' }));
+    await user.type(screen.getByLabelText('Package name'), 'httpx');
+    await user.click(screen.getByRole('button', { name: 'Add dependency' }));
+    expect(await screen.findByText('Dependency change is unconfirmed')).toBeInTheDocument();
+
+    setDependencyScenario('normal');
+    failRootTree = true;
+    await user.click(screen.getByRole('button', { name: 'Check dependency change' }));
+
+    // The reload failed, but its Retry affordance exists: the gate must stay closed
+    // so no dirty buffer can reach the retry (dirty-retry regression).
+    expect(
+      await screen.findByText('Dependency change confirmed, but reloading the workspace failed.'),
+    ).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'New file' })).toBeDisabled();
+    await user.click(screen.getByRole('tab', { name: 'File' }));
+    expect(await screen.findByTestId('mock-editor')).toHaveAttribute('data-readonly', 'true');
+
+    // The retry runs against a clean workspace and only then releases the gate.
+    failRootTree = false;
+    holdTree = true;
+    await user.click(screen.getByRole('button', { name: 'Reload workspace' }));
+    expect(screen.getByRole('button', { name: 'New file' })).toBeDisabled();
+    releaseTree();
+    await waitUntilWritesUnlocked();
+    expect(screen.getByTestId('mock-editor')).toHaveAttribute('data-readonly', 'false');
+    expect(
+      screen.queryByText('Dependency change confirmed, but reloading the workspace failed.'),
+    ).not.toBeInTheDocument();
+
+    setDependencyScenario('normal');
+  }, 20_000);
+
+  const SERVER_PENDING_OPERATION_ID = '55555555-5555-4555-8555-555555555555';
+  const MIDFLIGHT_CLIENT_OPERATION_ID = '66666666-6666-4666-8666-666666666666';
+
+  async function registerPendingMockOperation(
+    project: ProjectSummary,
+    operationId: string,
+  ): Promise<void> {
+    const tree = await listDirectory(project.id, parseProjectDirectoryPath(''));
+    registerMockDependencyOperation({
+      projectId: project.id,
+      operationId,
+      fingerprint: mockDependencyRequestFingerprint(
+        project.id,
+        'ADD',
+        'httpx',
+        null,
+        tree.workspaceRevision,
+      ),
+      action: 'ADD',
+      packageName: 'httpx',
+      version: null,
+    });
+  }
+
+  function pendingDiscoveryGetCount(spy: { mock: { calls: unknown[][] } }): number {
+    return spy.mock.calls.filter(
+      (call) =>
+        fetchMethod(call) === 'GET' &&
+        /\/python-dependencies\/pending$/.test(fetchPathname(call)),
+    ).length;
+  }
+
+  it('discovers a server-pending dependency operation on a READY workbench and engages recovery', async () => {
+    const user = userEvent.setup();
+    await authenticateAsAlice();
+    const project = await createPythonProjectWithFile('Pending Discovery');
+    await registerPendingMockOperation(project, SERVER_PENDING_OPERATION_ID);
+
+    // Hold the run authority so the closed write gate can only come from the
+    // discovered operation, not from a loading authority.
+    let releaseAuthority = () => {};
+    const authorityHeld = new Promise<void>((resolve) => {
+      releaseAuthority = resolve;
+    });
+    server.use(
+      http.get('/api/v1/projects/:projectId/runs/active', async () => {
+        await authorityHeld;
+        return HttpResponse.json({ run: null });
+      }),
+    );
+    renderPythonShell(project);
+
+    // A new browser session has no stored id: the shell discovers the durable
+    // PENDING itself, persists the identity and engages the recovery entry.
+    expect(await screen.findByText('Dependency change is unconfirmed')).toBeInTheDocument();
+    expect(sessionStorage.getItem(pythonDependencyStorageKey('usr-alice', project.id))).toBe(
+      SERVER_PENDING_OPERATION_ID,
+    );
+
+    releaseAuthority();
+    await user.click(screen.getByRole('tab', { name: 'Run' }));
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Start run' })).toBeEnabled();
+    });
+    await user.click(screen.getByRole('tab', { name: 'File' }));
+    expect(screen.getByRole('button', { name: 'New file' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'New folder' })).toBeDisabled();
+
+    // Checking the discovered operation recovers the dead end end to end.
+    await user.click(screen.getByRole('button', { name: 'Check dependency change' }));
+    await waitFor(() => {
+      expect(screen.queryByText('Dependency change is unconfirmed')).not.toBeInTheDocument();
+    });
+    expect(sessionStorage.getItem(pythonDependencyStorageKey('usr-alice', project.id))).toBeNull();
+    expect(
+      await screen.findByRole('treeitem', { name: 'pyproject.toml' }, { timeout: 10_000 }),
+    ).toBeInTheDocument();
+    await waitUntilWritesUnlocked();
+  }, 20_000);
+
+  it('renders nothing and issues the pending query once when no operation is pending', async () => {
+    await authenticateAsAlice();
+    const project = await createPythonProjectWithFile('Discovery Empty');
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    renderPythonShell(project);
+    await waitUntilWritesUnlocked();
+    expect(await screen.findByRole('treeitem', { name: 'notes.md' })).toBeInTheDocument();
+
+    await waitFor(() => {
+      expect(pendingDiscoveryGetCount(fetchSpy)).toBe(1);
+    });
+    expect(screen.queryByText('Dependency change is unconfirmed')).not.toBeInTheDocument();
+    expect(
+      screen.queryByText('Could not check for a pending dependency change.'),
+    ).not.toBeInTheDocument();
+    fetchSpy.mockRestore();
+  }, 15_000);
+
+  it('offers a retry affordance when the pending query fails and a retry that finds nothing renders nothing', async () => {
+    const user = userEvent.setup();
+    await authenticateAsAlice();
+    const project = await createPythonProjectWithFile('Discovery Failure');
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    let failPending = true;
+    server.use(
+      http.get('/api/v1/projects/:projectId/python-dependencies/pending', () => {
+        if (failPending) {
+          // PROJECT_BUSY is what the real backend answers under lease contention.
+          return HttpResponse.json(
+            { code: 'PROJECT_BUSY', message: 'Project is busy', traceId: 'trace-pending-busy' },
+            { status: 409 },
+          );
+        }
+        return undefined;
+      }),
+    );
+    renderPythonShell(project);
+    await waitUntilWritesUnlocked();
+
+    // A failed discovery must not fabricate absence: the shell says so and offers a
+    // retry, but only after the shared PROJECT_BUSY read budget is exhausted.
+    expect(
+      await screen.findByText('Could not check for a pending dependency change.', {}, { timeout: 10_000 }),
+    ).toBeInTheDocument();
+    expect(pendingDiscoveryGetCount(fetchSpy)).toBe(PROJECT_BUSY_READ_MAX_RETRIES + 1);
+
+    failPending = false;
+    await user.click(screen.getByRole('button', { name: 'Retry pending dependency check' }));
+
+    // The retry found nothing: the affordance disappears and nothing is rendered.
+    await waitFor(() => {
+      expect(
+        screen.queryByRole('button', { name: 'Retry pending dependency check' }),
+      ).not.toBeInTheDocument();
+    });
+    expect(
+      screen.queryByText('Could not check for a pending dependency change.'),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText('Dependency change is unconfirmed')).not.toBeInTheDocument();
+    fetchSpy.mockRestore();
+  }, 15_000);
+
+  it('a retry of a failed discovery re-queries the server and recovers a pending operation', async () => {
+    const user = userEvent.setup();
+    await authenticateAsAlice();
+    const project = await createPythonProjectWithFile('Discovery Retry Recovers');
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    let failPending = true;
+    server.use(
+      http.get('/api/v1/projects/:projectId/python-dependencies/pending', () => {
+        if (failPending) {
+          // PROJECT_BUSY is what the real backend answers under lease contention.
+          return HttpResponse.json(
+            { code: 'PROJECT_BUSY', message: 'Project is busy', traceId: 'trace-pending-retry' },
+            { status: 409 },
+          );
+        }
+        return undefined;
+      }),
+    );
+    renderPythonShell(project);
+    await waitUntilWritesUnlocked();
+    expect(
+      await screen.findByText('Could not check for a pending dependency change.', {}, { timeout: 10_000 }),
+    ).toBeInTheDocument();
+    expect(pendingDiscoveryGetCount(fetchSpy)).toBe(PROJECT_BUSY_READ_MAX_RETRIES + 1);
+
+    // The operation becomes server-pending BEFORE the user retries: the retry's
+    // re-query must find it. A retry that only hid the banner would fabricate
+    // absence — exactly the dead end the discovery exists to prevent.
+    await registerPendingMockOperation(project, SERVER_PENDING_OPERATION_ID);
+    failPending = false;
+    await user.click(screen.getByRole('button', { name: 'Retry pending dependency check' }));
+
+    // The retry re-queried (GET count 4 -> 5, succeeded on its first attempt) and
+    // the discovered operation engages the recovery entry from a previously empty
+    // surface.
+    expect(await screen.findByText('Dependency change is unconfirmed')).toBeInTheDocument();
+    expect(pendingDiscoveryGetCount(fetchSpy)).toBe(PROJECT_BUSY_READ_MAX_RETRIES + 2);
+    expect(sessionStorage.getItem(pythonDependencyStorageKey('usr-alice', project.id))).toBe(
+      SERVER_PENDING_OPERATION_ID,
+    );
+    expect(
+      screen.queryByText('Could not check for a pending dependency change.'),
+    ).not.toBeInTheDocument();
+    fetchSpy.mockRestore();
+  }, 15_000);
+
+  it('retries a transient PROJECT_BUSY pending failure and then discovers normally', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    await authenticateAsAlice();
+    const project = await createPythonProjectWithFile('Discovery Busy Recovered');
+    let busyHits = 0;
+    server.use(
+      http.get('/api/v1/projects/:projectId/python-dependencies/pending', () => {
+        busyHits += 1;
+        if (busyHits === 1) {
+          // PROJECT_BUSY is what the real backend answers under lease contention.
+          return HttpResponse.json(
+            { code: 'PROJECT_BUSY', message: 'Project is busy', traceId: 'trace-pending-busy-once' },
+            { status: 409 },
+          );
+        }
+        return undefined;
+      }),
+    );
+    await registerPendingMockOperation(project, SERVER_PENDING_OPERATION_ID);
+    renderPythonShell(project);
+
+    // The busy read recovers within the shared retry budget: the pending operation
+    // is discovered and the red banner never appears.
+    expect(
+      await screen.findByText('Dependency change is unconfirmed', {}, { timeout: 10_000 }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText('Could not check for a pending dependency change.'),
+    ).not.toBeInTheDocument();
+    expect(pendingDiscoveryGetCount(fetchSpy)).toBe(2);
+    fetchSpy.mockRestore();
+  }, 20_000);
+
+  it('does not retry a pending failure that is not PROJECT_BUSY', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    await authenticateAsAlice();
+    const project = await createPythonProjectWithFile('Discovery Forbidden');
+    server.use(
+      http.get('/api/v1/projects/:projectId/python-dependencies/pending', () =>
+        HttpResponse.json(
+          { code: 'FORBIDDEN', message: 'Not allowed', traceId: 'trace-pending-forbidden' },
+          { status: 403 },
+        ),
+      ),
+    );
+    renderPythonShell(project);
+    await waitUntilWritesUnlocked();
+
+    // A non-PROJECT_BUSY failure is a real error: no busy retry, the banner and its
+    // Retry affordance appear after the single attempt.
+    expect(
+      await screen.findByText('Could not check for a pending dependency change.'),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: 'Retry pending dependency check' }),
+    ).toBeInTheDocument();
+    expect(pendingDiscoveryGetCount(fetchSpy)).toBe(1);
+    fetchSpy.mockRestore();
+  }, 15_000);
+
+  it('ignores the discovered pending operation when an id is stored while the query is in flight', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    const user = userEvent.setup();
+    await authenticateAsAlice();
+    const project = await createPythonProjectWithFile('Discovery Midflight');
+    await registerPendingMockOperation(project, SERVER_PENDING_OPERATION_ID);
+
+    let releaseAuthority = () => {};
+    const authorityHeld = new Promise<void>((resolve) => {
+      releaseAuthority = resolve;
+    });
+    let releasePending = () => {};
+    const pendingHeld = new Promise<void>((resolve) => {
+      releasePending = resolve;
+    });
+    let pendingCaptured = false;
+    server.use(
+      http.get('/api/v1/projects/:projectId/runs/active', async () => {
+        await authorityHeld;
+        return HttpResponse.json({ run: null });
+      }),
+      http.get('/api/v1/projects/:projectId/python-dependencies/pending', async () => {
+        pendingCaptured = true;
+        await pendingHeld;
+        return undefined;
+      }),
+    );
+    renderPythonShell(project);
+    await waitFor(() => {
+      expect(pendingCaptured).toBe(true);
+    });
+
+    // The client saved its own operation while the discovery query ran.
+    sessionStorage.setItem(
+      pythonDependencyStorageKey('usr-alice', project.id),
+      MIDFLIGHT_CLIENT_OPERATION_ID,
+    );
+    releasePending();
+    await user.click(screen.getByRole('tab', { name: 'Run' }));
+    releaseAuthority();
+
+    // If the discovery result were (wrongly) adopted, the write gate would stay
+    // closed and this unlock would time out.
+    await waitUntilWritesUnlocked();
+
+    // Design 6.1: the discovery result is ignored entirely — no adoption, no
+    // overwrite of the client-saved id, no re-issued query.
+    expect(screen.queryByText('Dependency change is unconfirmed')).not.toBeInTheDocument();
+    expect(sessionStorage.getItem(pythonDependencyStorageKey('usr-alice', project.id))).toBe(
+      MIDFLIGHT_CLIENT_OPERATION_ID,
+    );
+    expect(pendingDiscoveryGetCount(fetchSpy)).toBe(1);
+    fetchSpy.mockRestore();
+  }, 15_000);
+
+  it('does not issue the pending query when an unconfirmed operation is already stored', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    await authenticateAsAlice();
+    const project = await createPythonProjectWithFile('Discovery Known');
+    sessionStorage.setItem(
+      pythonDependencyStorageKey('usr-alice', project.id),
+      '77777777-7777-4777-8777-777777777777',
+    );
+    renderPythonShell(project);
+    expect(await screen.findByText('Dependency change is unconfirmed')).toBeInTheDocument();
+    expect(await screen.findByRole('treeitem', { name: 'notes.md' })).toBeInTheDocument();
+
+    expect(pendingDiscoveryGetCount(fetchSpy)).toBe(0);
+    fetchSpy.mockRestore();
+  }, 15_000);
+
+  it('never issues the pending query for a non-python project', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    await authenticateAsAlice();
+    renderShell();
+    await loadedEditable();
+
+    expect(pendingDiscoveryGetCount(fetchSpy)).toBe(0);
+    fetchSpy.mockRestore();
+  }, 15_000);
+});

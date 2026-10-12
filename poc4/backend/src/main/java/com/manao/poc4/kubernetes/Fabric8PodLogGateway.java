@@ -24,6 +24,28 @@ public final class Fabric8PodLogGateway implements PodLogGateway {
         this.client = client;
     }
 
+    /**
+     * One-shot history read of the verified application container: the Fabric8 non-follow log
+     * read is consumed synchronously on the calling thread (the HTTP client's own timeouts bound
+     * the call) and every line is delivered without its trailing newline, then the call returns.
+     * getLogReader itself decodes UTF-8; a read or transport failure surfaces as
+     * UncheckedIOException so the terminal backfill retry budget handles it.
+     */
+    @Override
+    public void readLogs(String namespace, String podName, String container,
+                         java.util.function.Consumer<String> lineConsumer) {
+        try (java.io.Reader reader = client.pods().inNamespace(namespace).withName(podName)
+                .inContainer(container).getLogReader();
+             BufferedReader buffered = new BufferedReader(reader)) {
+            String line;
+            while ((line = buffered.readLine()) != null) {
+                lineConsumer.accept(line);
+            }
+        } catch (java.io.IOException ex) {
+            throw new java.io.UncheckedIOException(ex);
+        }
+    }
+
     @Override
     public LogWatchHandle watchLogs(String namespace, String podName, String container,
                                     java.util.function.Consumer<String> lineConsumer) {

@@ -54,14 +54,16 @@ public class RunControllerTest {
     }
 
     static RunPolicy policy() {
-        return new RunPolicy("mvn -q -DskipTests compile exec:java", 17, 3, 1800,
+        return new RunPolicy(ProjectRuntimeSpec.TEMPLATE_JAVA_CONSOLE,
+            new RunPolicy.RuntimeInfo.Java(17, 3), "mvn -q -DskipTests compile exec:java", 1800,
             RunPolicy.EXECUTION_KIND_TASK, 1800, 0,
             new RunPolicy.Resources(1000, 1L << 30, 1L << 30),
             new RunPolicy.Resources(8000, 16L << 30, 10L << 30));
     }
 
     static RunPolicy servicePolicy() {
-        return policy().forService();
+        return policy().forProject(new ProjectRuntimeSpec(ProjectRuntimeSpec.TEMPLATE_JAVA_SPRING_BOOT_WEB,
+            false, false, List.of()));
     }
 
     private String serialized(Object response) throws Exception {
@@ -114,6 +116,59 @@ public class RunControllerTest {
             assertThat(policy.get("serviceLifetimeSeconds").asInt()).isEqualTo(7200);
             assertThat(summary.firstReadyAt()).isNull();
             assertThat(summary.expiresAt()).isNull();
+        }
+
+        @Test
+        void pythonConsoleProjectStartsAsATaskRunWithThePythonPolicySnapshot() throws Exception {
+            runtimeStore.putSpec(PROJECT, new ProjectRuntimeSpec(
+                com.manao.poc4.project.RuntimeTemplate.PYTHON_CONSOLE.id(), false, false, List.of()));
+            RunSummary summary = controller.start(auth(ALICE), PROJECT, new RunController.StartRunRequest("12"));
+            assertThat(summary.state()).isEqualTo("STARTING");
+            JsonNode policy = JSON.readTree(serialized(summary)).get("policy");
+            assertThat(policy.get("templateId").asText()).isEqualTo("python-console");
+            assertThat(policy.get("command").asText()).isEqualTo("python -u main.py");
+            assertThat(policy.get("runtime").get("language").asText()).isEqualTo("python");
+            assertThat(policy.get("runtime").get("pythonVersion").asText()).isEqualTo("3.13");
+            assertThat(policy.get("runtime").get("packageManager").asText()).isEqualTo("uv");
+            assertThat(policy.get("runtime").has("javaMajor")).isFalse();
+            assertThat(policy.get("runtime").has("mavenMajor")).isFalse();
+            assertThat(policy.get("executionKind").asText()).isEqualTo("TASK");
+            assertThat(policy.get("serviceLifetimeSeconds").asInt()).isZero();
+        }
+
+        @Test
+        void pythonWebProjectStartsAsAServiceRunOnItsPrimaryPortAndItsStopWithdrawsTheEndpoint() throws Exception {
+            runtimeStore.putSpec(PROJECT, new ProjectRuntimeSpec(
+                com.manao.poc4.project.RuntimeTemplate.PYTHON_FASTAPI_WEB.id(), false, false,
+                List.of(new ProjectRuntimeSpec.Port("web", 8000, 30081))));
+            RunSummary started = controller.start(auth(ALICE), PROJECT, new RunController.StartRunRequest("12"));
+            JsonNode policy = JSON.readTree(serialized(started)).get("policy");
+            assertThat(policy.get("templateId").asText()).isEqualTo("python-fastapi-web");
+            assertThat(policy.get("command").asText()).isEqualTo("python -u -m uvicorn app.main:app");
+            assertThat(policy.get("runtime").get("language").asText()).isEqualTo("python");
+            assertThat(policy.get("executionKind").asText()).isEqualTo("SERVICE");
+            assertThat(policy.get("startupTimeoutSeconds").asInt()).isEqualTo(1800);
+            assertThat(policy.get("serviceLifetimeSeconds").asInt()).isEqualTo(7200);
+            assertThat(coordinator.primaryPorts.get(started.id())).isEqualTo(8000);
+            assertThat(coordinator.ensureJobCalls).containsExactly(started.id());
+
+            RunSummary stopped = controller.stop(auth(ALICE), PROJECT, started.id());
+            assertThat(stopped.state()).isEqualTo("STOPPING");
+            assertThat(endpoints.withdrawn).containsExactly(PROJECT);
+        }
+
+        @Test
+        void unreadyDependencyPreventsAPythonWebServiceRunFromBeingCreated() {
+            runtimeStore.putSpec(PROJECT, new ProjectRuntimeSpec(
+                com.manao.poc4.project.RuntimeTemplate.PYTHON_FASTAPI_WEB.id(), true, false, List.of()));
+            dependencies.mysql = ProjectDependencies.PROVISIONING;
+            assertThatThrownBy(() -> controller.start(auth(ALICE), PROJECT, new RunController.StartRunRequest("12")))
+                .isInstanceOfSatisfying(ApiException.class, ex -> {
+                    assertThat(ex.code()).isEqualTo("DEPENDENCY_NOT_READY");
+                    assertThat(ex.status()).isEqualTo(409);
+                });
+            assertThat(store.runs).isEmpty();
+            assertThat(coordinator.ensureJobCalls).isEmpty();
         }
 
         @Test

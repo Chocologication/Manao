@@ -99,10 +99,10 @@ public final class RunRecoveryService {
         switch (observation.kind()) {
             case MISSING -> {
                 if (stopRequested) {
-                    if (settle(run, RunState.CANCELLED, "USER_STOPPED", null)) settled.add(run.id());
+                    if (settle(run, RunState.CANCELLED, "USER_STOPPED", null, null)) settled.add(run.id());
                     return;
                 }
-                if (settle(run, RunState.FAILED, "RECOVERY_FAILED", null)) failedClosed.add(run.id());
+                if (settle(run, RunState.FAILED, "RECOVERY_FAILED", null, null)) failedClosed.add(run.id());
                 return;
             }
             case UNKNOWN, IDENTITY_MISMATCH -> {
@@ -115,7 +115,7 @@ public final class RunRecoveryService {
         Optional<RunStateReducer.Outcome> outcome = RunStateReducer.settleOutcome(serviceRun, stopRequested,
             run.firstReadyAt() != null, job, observation.receipt());
         if (outcome.isPresent()) {
-            if (settle(run, outcome.get().state(), outcome.get().terminationReason(), job.exitCode())) {
+            if (settle(run, outcome.get().state(), outcome.get().terminationReason(), job.exitCode(), job)) {
                 settled.add(run.id());
             }
             return;
@@ -153,7 +153,15 @@ public final class RunRecoveryService {
         }
     }
 
-    private boolean settle(RunRecord run, RunState state, String reason, Integer exitCode) {
+    private boolean settle(RunRecord run, RunState state, String reason, Integer exitCode,
+                           JobCoordinator.JobFacts facts) {
+        // Same backfill-before-settle contract as observation: a deferred terminal history read
+        // keeps the run RECOVERING so the next scan retries it.
+        if (logIngestor != null && facts != null && facts.podName() != null && facts.podUid() != null
+            && logIngestor.backfillHistoryBeforeFinish(run.id(), facts.podName(), facts.podUid())
+                == RunLogIngestor.TerminalBackfill.DEFERRED) {
+            return false;
+        }
         if (!store.settle(run.id(), state, reason, exitCode)) return false;
         if (endpoints != null && isServiceRun(run)) {
             try {

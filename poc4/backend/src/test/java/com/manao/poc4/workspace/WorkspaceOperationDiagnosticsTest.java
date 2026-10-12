@@ -79,11 +79,14 @@ class WorkspaceOperationDiagnosticsTest {
     }
 
     private void assertFailsClosed() {
+        // The pending row may already carry applied files: the fail-closed answer names the
+        // unresolved operation instead of the proven pre-flight lock.
         assertThatThrownBy(() -> service.apply(PROJECT, "CREATE", "src", null, "directory", new byte[0], 0))
             .isInstanceOfSatisfying(ApiException.class, ex -> {
-                assertThat(ex.code()).isEqualTo("PROJECT_LOCKED");
+                assertThat(ex.code()).isEqualTo("WORKSPACE_RECONCILIATION_REQUIRED");
                 assertThat(ex.status()).isEqualTo(409);
-                assertThat(ex.getMessage()).isEqualTo("Project is locked");
+                assertThat(ex.getMessage())
+                    .isEqualTo("Workspace needs reconciliation; the operation result is not confirmed");
             });
         assertThat(store.failures).containsEntry(PROJECT, "WORKSPACE_RECONCILIATION_REQUIRED");
         assertThat(store.pendingOperations(PROJECT)).hasSize(1);

@@ -20,6 +20,25 @@ public interface WorkspaceAgent {
 
     Optional<FetchedReceipt> receipt(String projectId, String operationId);
 
+    /**
+     * Prepares a Python dependency change in the agent's scratch space; the workspace sources
+     * are untouched and the response carries identity and digests only.
+     */
+    PreparedPythonDependencies prepare(String projectId, String operationId, String requestSha256,
+                                       DependencyChange change);
+
+    /**
+     * Prepares a whole batch requirements import with ONE resolution run in the agent's scratch
+     * space through the same prepare protocol; the workspace sources are untouched and the
+     * response carries identity and digests only. The requirements text travels as one string;
+     * no shell command, index URL or environment variable is ever sent.
+     */
+    PreparedPythonDependencies prepareBatch(String projectId, String operationId, String requestSha256,
+                                            String requirementsText);
+
+    /** Commits the prepared two-file change under the backend-issued deterministic receipt. */
+    PreparedPythonDependencies commit(String projectId, PythonDependencyCommit command);
+
     record Tree(String directory, List<TreeEntry> entries) { }
 
     record TreeEntry(String path, String name, String kind, boolean hidden, Long sizeBytes, Boolean hasChildren) { }
@@ -40,4 +59,14 @@ public interface WorkspaceAgent {
 
     record FetchedReceipt(String operationId, String type, String path, String nextPath,
                           String beforeSha256, String afterSha256, String receiptSha256) { }
+
+    /** Wire record of the requested change; the backend sends the normalized package name. */
+    record DependencyChange(String action, String packageName, String version) { }
+
+    /** Wire record of the prepare/commit summary: ids and digests only, never file contents. */
+    record PreparedPythonDependencies(String operationId, String requestSha256,
+                                      String beforeSha256, String afterSha256) { }
+
+    /** Wire record for the commit request: the prepared summary plus the backend-issued receipt. */
+    record PythonDependencyCommit(PreparedPythonDependencies prepared, String receiptJson, String receiptSha256) { }
 }

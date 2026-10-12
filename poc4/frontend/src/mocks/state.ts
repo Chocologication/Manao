@@ -6,7 +6,16 @@ import type {
   ProjectState,
   ProjectSummary,
 } from '../contracts/project';
-import { clearLargeFileBodyCache, ensureWorkspace, removeWorkspace, resetWorkspaces } from './fileFixtures';
+import {
+  clearLargeFileBodyCache,
+  createMockEntry,
+  ensureWorkspace,
+  getMockFile,
+  getWorkspaceRevision,
+  removeWorkspace,
+  resetWorkspaces,
+  saveMockFile,
+} from './fileFixtures';
 import { resetLogTickets } from './runSocket';
 import { bootRunState, removeProjectRuns, resetRunState } from './runState';
 
@@ -55,6 +64,10 @@ let fileRequestCounts = new Map<string, number>();
 let largeFileBodiesEnabled = false;
 let writeScenario: WriteScenario = 'normal';
 let resetTerminalMockState = (): void => undefined;
+
+// Python dependency mock state (design 6.1); declared before the module-init reset below.
+let dependencyOperations: MockDependencyOperation[] = [];
+let dependencyScenario: MockDependencyScenario = 'normal';
 
 export const WRITE_SCENARIO_DELAY_MS = 250;
 
@@ -183,6 +196,8 @@ function resetSessionState(): void {
   fileRequestCounts = new Map();
   largeFileBodiesEnabled = false;
   writeScenario = 'normal';
+  dependencyOperations = [];
+  dependencyScenario = 'normal';
   resetWorkspaces();
   clearLargeFileBodyCache();
 }
@@ -347,4 +362,322 @@ export function removeOwnedProject(userId: string, projectId: string): void {
   removeProjectRuns(projectId);
   removeWorkspace(projectId);
   projects = projects.filter((item) => item !== project);
+}
+
+// ---------------------------------------------------------------------------
+// Python dependency mock (design 6.1): one identity per change, a durable
+// status answer for lost responses and one reconcile entry. The mock mirrors
+// the backend contract; it never proves a real uv run works.
+// ---------------------------------------------------------------------------
+
+export const MOCK_DEPENDENCY_RECONCILIATION_FAILURE = 'WORKSPACE_RECONCILIATION_REQUIRED';
+
+const PYPROJECT_PATH = 'pyproject.toml';
+const UV_LOCK_PATH = 'uv.lock';
+
+export type MockDependencyScenario =
+  | 'normal'
+  | 'lost-response'
+  | 'resolution-failed'
+  | 'reconciliation-required';
+
+const DEPENDENCY_SCENARIOS: ReadonlySet<string> = new Set([
+  'normal',
+  'lost-response',
+  'resolution-failed',
+  'reconciliation-required',
+]);
+
+export function isDependencyScenario(value: unknown): value is MockDependencyScenario {
+  return typeof value === 'string' && DEPENDENCY_SCENARIOS.has(value);
+}
+
+export function setDependencyScenario(scenario: MockDependencyScenario): void {
+  dependencyScenario = scenario;
+}
+
+export function getDependencyScenario(): MockDependencyScenario {
+  return dependencyScenario;
+}
+
+export type MockDependencyOperation = {
+  operationId: string;
+  projectId: string;
+  fingerprint: string;
+  action: 'ADD' | 'REMOVE';
+  packageName: string;
+  version: string | null;
+  /** Whole-text batch import rows carry the normalized requirements text; single rows are null. */
+  requirementsText: string | null;
+  state: 'PENDING' | 'COMMITTED';
+  resultWorkspaceRevision: string | null;
+};
+
+/** Same normalization as the backend: lowercase and fold [-_.] runs to '-'. */
+export function normalizeMockPackageName(packageName: string): string {
+  return packageName.toLowerCase().replace(/[-_.]+/g, '-');
+}
+
+export function isValidMockPackageName(packageName: string): boolean {
+  return /^[a-z0-9]([a-z0-9-]{0,126}[a-z0-9])?$/.test(packageName);
+}
+
+export function isValidMockPackageVersion(version: string): boolean {
+  return /^[0-9A-Za-z][0-9A-Za-z.+!-]{0,127}$/.test(version);
+}
+
+/** Mock stand-in for the backend's fixed-field-order request digest. */
+export function mockDependencyRequestFingerprint(
+  projectId: string,
+  action: string,
+  packageName: string,
+  version: string | null,
+  expectedRevision: string,
+): string {
+  return [projectId, action, packageName, version ?? '', expectedRevision].join('\u0000');
+}
+
+/** Mock stand-in for the backend's protocol-2 batch digest: the whole normalized text. */
+export function mockBatchRequestFingerprint(
+  projectId: string,
+  requirementsText: string,
+  expectedRevision: string,
+): string {
+  return [projectId, 'BATCH_REQUIREMENTS', requirementsText, expectedRevision].join('\u0000');
+}
+
+function pyprojectPackages(projectId: string): string[] {
+  const content = getMockFile(projectId, PYPROJECT_PATH)?.textContent ?? null;
+  if (content === null) {
+    return [];
+  }
+  const match = /dependencies\s*=\s*\[([^\]]*)\]/.exec(content);
+  if (match === null) {
+    return [];
+  }
+  return (match[1] ?? '')
+    .split(',')
+    .map((entry) => entry.trim().replace(/^"+|"+$/g, ''))
+    .filter((entry) => entry !== '');
+}
+
+function writeDependencyFiles(projectId: string, packages: string[]): void {
+  const pyproject =
+    '[project]\nname = "manao-project"\nversion = "0.1.0"\nrequires-python = ">=3.13"\n'
+    + `dependencies = [${packages.map((pkg) => `"${pkg}"`).join(', ')}]\n`;
+  const lock = packages
+    .map((pkg) => `[[package]]\nname = "${pkg}"\nversion = "1.0.0"\n`)
+    .join('\n');
+  ensureDependencyFile(projectId, PYPROJECT_PATH, pyproject);
+  ensureDependencyFile(projectId, UV_LOCK_PATH, lock);
+}
+
+function ensureDependencyFile(projectId: string, path: string, content: string): void {
+  if (getMockFile(projectId, path) === null) {
+    const created = createMockEntry(projectId, 'file', path);
+    if (!created.ok) {
+      throw new Error(`mock dependency fixture cannot create ${path}`);
+    }
+  }
+  const saved = saveMockFile(projectId, path, content);
+  if (!saved.ok) {
+    throw new Error(`mock dependency fixture cannot save ${path}`);
+  }
+}
+
+/** Applies the uv add/remove result to the two managed files and returns the new revision. */
+export function applyMockDependencyChange(
+  projectId: string,
+  action: 'ADD' | 'REMOVE',
+  packageName: string,
+  version: string | null,
+): string {
+  const name = normalizeMockPackageName(packageName);
+  const current = pyprojectPackages(projectId);
+  let next: string[];
+  if (action === 'ADD') {
+    const entry = version === null ? name : `${name}==${version}`;
+    next = [...current.filter((pkg) => pkg.split('==')[0] !== name), entry];
+  } else {
+    next = current.filter((pkg) => pkg.split('==')[0] !== name);
+  }
+  writeDependencyFiles(projectId, next);
+  return getWorkspaceRevision(projectId);
+}
+
+/**
+ * The mock's minimal plain-requirement contract: `name` or `name==version` — exactly the
+ * forms the mock can apply; the agent helper's broader PLAIN_REQUIREMENT scope is
+ * deliberately narrowed to this. A line outside the form must be REJECTED by the caller
+ * (like the helper's UNSUPPORTED prepare failure), never silently skipped.
+ */
+export type MockRequirement = { name: string; version: string | null };
+
+function parseMockRequirementLine(line: string): MockRequirement | null {
+  const separator = line.indexOf('==');
+  const name = normalizeMockPackageName(separator === -1 ? line : line.slice(0, separator));
+  if (!isValidMockPackageName(name)) {
+    return null;
+  }
+  if (separator === -1) {
+    return { name, version: null };
+  }
+  const version = line.slice(separator + 2);
+  return version !== '' && isValidMockPackageVersion(version) ? { name, version } : null;
+}
+
+/** Mirrors the backend's parseBatchRequest: the normalized UTF-8 byte budget and the
+ *  valid-requirement cap. Returns the trimmed requirement lines, or null for a 422. */
+const MAX_BATCH_BYTES = 64 * 1024;
+const MAX_BATCH_REQUIREMENTS = 50;
+
+export function parseMockBatchLimits(requirementsText: string): string[] | null {
+  let normalized = requirementsText.startsWith('\uFEFF')
+    ? requirementsText.slice(1)
+    : requirementsText;
+  normalized = normalized.replace(/\r\n/g, '\n');
+  if (new TextEncoder().encode(normalized).length > MAX_BATCH_BYTES) {
+    return null;
+  }
+  const requirementLines = normalized
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line !== '' && !line.startsWith('#'));
+  if (requirementLines.length === 0 || requirementLines.length > MAX_BATCH_REQUIREMENTS) {
+    return null;
+  }
+  return requirementLines;
+}
+
+/** Mirrors the agent helper's filter_requirements: one package per plain line, or null. */
+export function parseMockBatchPackages(requirementLines: string[]): MockRequirement[] | null {
+  const packages: MockRequirement[] = [];
+  for (const line of requirementLines) {
+    const requirement = parseMockRequirementLine(line);
+    if (requirement === null) {
+      return null;
+    }
+    packages.push(requirement);
+  }
+  return packages;
+}
+
+/**
+ * Applies one batch import with ADD semantics to the two managed files — the mock-side
+ * stand-in for the agent's single uv run over the whole requirements text, never a
+ * per-line loop of separate operations.
+ */
+export function applyMockBatchDependencyChange(
+  projectId: string,
+  requirementsText: string,
+): string {
+  const packages = parseMockBatchPackages(requirementsText.split('\n'));
+  if (packages === null) {
+    // Registered batch rows always carry limit- and syntax-validated text; reaching
+    // this is a mock contract bug, so fail loud instead of committing partial input.
+    throw new Error('mock batch apply received a rejected requirements text');
+  }
+  let next = pyprojectPackages(projectId);
+  for (const requirement of packages) {
+    const entry =
+      requirement.version === null
+        ? requirement.name
+        : `${requirement.name}==${requirement.version}`;
+    next = [...next.filter((pkg) => pkg.split('==')[0] !== requirement.name), entry];
+  }
+  writeDependencyFiles(projectId, next);
+  return getWorkspaceRevision(projectId);
+}
+
+export function findMockDependencyOperation(
+  projectId: string,
+  operationId: string,
+): MockDependencyOperation | null {
+  return (
+    dependencyOperations.find(
+      (operation) => operation.projectId === projectId && operation.operationId === operationId,
+    ) ?? null
+  );
+}
+
+export function registerMockDependencyOperation(options: {
+  projectId: string;
+  operationId: string;
+  fingerprint: string;
+  action: 'ADD' | 'REMOVE';
+  packageName: string;
+  version: string | null;
+  requirementsText?: string | null;
+}): MockDependencyOperation {
+  const operation: MockDependencyOperation = {
+    ...options,
+    requirementsText: options.requirementsText ?? null,
+    state: 'PENDING',
+    resultWorkspaceRevision: null,
+  };
+  dependencyOperations.push(operation);
+  return operation;
+}
+
+/** Drives the same registered commit once: apply the change, lift the failure, keep the identity. */
+export function commitMockDependencyOperation(operation: MockDependencyOperation): MockDependencyOperation {
+  if (operation.state === 'COMMITTED') {
+    return operation;
+  }
+  const revision =
+    operation.requirementsText !== null
+      ? applyMockBatchDependencyChange(operation.projectId, operation.requirementsText)
+      : applyMockDependencyChange(
+          operation.projectId,
+          operation.action,
+          operation.packageName,
+          operation.version,
+        );
+  operation.state = 'COMMITTED';
+  operation.resultWorkspaceRevision = revision;
+  const project = projects.find((candidate) => candidate.id === operation.projectId);
+  if (project !== undefined && project.failureReason === MOCK_DEPENDENCY_RECONCILIATION_FAILURE) {
+    project.state = 'READY';
+    project.failureReason = null;
+  }
+  return operation;
+}
+
+export function listPendingMockDependencyOperations(projectId: string): MockDependencyOperation[] {
+  return dependencyOperations.filter(
+    (operation) => operation.projectId === projectId && operation.state === 'PENDING',
+  );
+}
+
+/**
+ * Test fixture: a dependency commit whose result is unknown failed the project with exactly
+ * this operation's reconciliation failure and left the operation PENDING.
+ */
+export function markMockProjectDependencyReconciliationFailed(
+  projectId: string,
+  operationId: string,
+  options: { action?: 'ADD' | 'REMOVE'; packageName?: string } = {},
+): void {
+  const project = projects.find((candidate) => candidate.id === projectId);
+  if (project === undefined) {
+    throw new Error(`mock project ${projectId} does not exist`);
+  }
+  const action = options.action ?? 'ADD';
+  const packageName = options.packageName ?? 'httpx';
+  registerMockDependencyOperation({
+    projectId,
+    operationId,
+    fingerprint: mockDependencyRequestFingerprint(
+      projectId,
+      action,
+      packageName,
+      null,
+      getWorkspaceRevision(projectId),
+    ),
+    action,
+    packageName,
+    version: null,
+  });
+  project.state = 'FAILED';
+  project.failureReason = MOCK_DEPENDENCY_RECONCILIATION_FAILURE;
 }

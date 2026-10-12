@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.manao.poc4.api.ApiException;
+import com.manao.poc4.project.ProjectLifecycleGate;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -74,6 +75,31 @@ public class WorkspaceControllerTest {
 
     @Nested
     class Reads {
+        @Test
+        void readsRefuseWhileAPendingWorkspaceOperationExists() {
+            // A durable PENDING row (e.g. an interrupted two-file commit after a restart) must
+            // never leak its intermediate file state through read endpoints.
+            agent.tree = new WorkspaceAgent.Tree("", List.of());
+            agent.meta = new WorkspaceAgent.FileMeta("pom.xml", "pom.xml", 1L, "text/plain", "UTF-8", "java",
+                "MONACO_TEXT", null, null);
+            agent.content = new WorkspaceAgent.Content("pom.xml", "<project/>", null);
+            store.pending.put(PROJECT, new WorkspaceStore.OperationRecord("stuck", PROJECT, 7,
+                "a".repeat(64), "b".repeat(64), ".manao/receipts/stuck.json", "c".repeat(64)));
+            assertThatThrownBy(() -> controller.tree(auth(ALICE), PROJECT, ""))
+                .isInstanceOfSatisfying(ApiException.class, ex -> {
+                    assertThat(ex.code()).isEqualTo("PROJECT_LOCKED");
+                    assertThat(ex.status()).isEqualTo(409);
+                });
+            assertThatThrownBy(() -> controller.meta(auth(ALICE), PROJECT, "pom.xml"))
+                .isInstanceOfSatisfying(ApiException.class, ex -> assertThat(ex.code()).isEqualTo("PROJECT_LOCKED"));
+            assertThatThrownBy(() -> controller.content(auth(ALICE), PROJECT, "pom.xml"))
+                .isInstanceOfSatisfying(ApiException.class, ex -> assertThat(ex.code()).isEqualTo("PROJECT_LOCKED"));
+            // The dependency status endpoints read the durable row directly and keep answering;
+            // a read succeeds again once the operation is no longer pending.
+            store.pending.clear();
+            assertThat(controller.tree(auth(ALICE), PROJECT, "").entries()).isEmpty();
+        }
+
         @Test
         void treeReturnsExactContractShape() throws Exception {
             agent.tree = new WorkspaceAgent.Tree("", List.of(
@@ -228,7 +254,7 @@ public class WorkspaceControllerTest {
             };
             assertThatThrownBy(() -> controller.save(auth(ALICE), PROJECT, "src/App.java", new WorkspaceController.SaveFileRequest("x", "7")))
                 .isInstanceOfSatisfying(ApiException.class, ex -> {
-                    assertThat(ex.code()).isEqualTo("PROJECT_LOCKED");
+                    assertThat(ex.code()).isEqualTo("WORKSPACE_RECONCILIATION_REQUIRED");
                     assertThat(ex.status()).isEqualTo(409);
                 });
             assertThat(store.failures).containsEntry(PROJECT, "WORKSPACE_RECONCILIATION_REQUIRED");
@@ -240,7 +266,7 @@ public class WorkspaceControllerTest {
             agent.pendingMetaRequired = false;
             store.failCommits = true;
             assertThatThrownBy(() -> controller.save(auth(ALICE), PROJECT, "src/App.java", new WorkspaceController.SaveFileRequest("x", "7")))
-                .isInstanceOfSatisfying(ApiException.class, ex -> assertThat(ex.code()).isEqualTo("PROJECT_LOCKED"));
+                .isInstanceOfSatisfying(ApiException.class, ex -> assertThat(ex.code()).isEqualTo("WORKSPACE_RECONCILIATION_REQUIRED"));
             assertThat(store.failures).containsEntry(PROJECT, "WORKSPACE_RECONCILIATION_REQUIRED");
         }
 
@@ -279,7 +305,7 @@ public class WorkspaceControllerTest {
             store.pending.put(PROJECT, new WorkspaceStore.OperationRecord("stuck-op", PROJECT, 7, before, after,
                 ".manao/receipts/stuck-op.json", "f".repeat(64)));
             assertThatThrownBy(() -> controller.save(auth(ALICE), PROJECT, "src/App.java", new WorkspaceController.SaveFileRequest("x", "7")))
-                .isInstanceOfSatisfying(ApiException.class, ex -> assertThat(ex.code()).isEqualTo("PROJECT_LOCKED"));
+                .isInstanceOfSatisfying(ApiException.class, ex -> assertThat(ex.code()).isEqualTo("WORKSPACE_RECONCILIATION_REQUIRED"));
             assertThat(store.failures).containsEntry(PROJECT, "WORKSPACE_RECONCILIATION_REQUIRED");
             assertThat(agent.mutateCalls).isZero();
         }
@@ -329,13 +355,18 @@ public class WorkspaceControllerTest {
         public final Map<String, java.time.Instant> createdAt = new HashMap<>();
         public final Set<String> activeRuns = new java.util.HashSet<>();
         public final Map<String, OperationRecord> pending = new LinkedHashMap<>();
+        public final Map<String, OperationRecord> records = new LinkedHashMap<>();
         public final List<OperationRecord> committed = new ArrayList<>();
         public final Map<String, Long> revision = new HashMap<>();
         public final Map<String, String> failures = new HashMap<>();
+        public final List<String> clearedFailures = new ArrayList<>();
         public final List<String> deletedOperations = new ArrayList<>();
         public final List<String> deletedProjects = new ArrayList<>();
         public boolean failCommits;
+        public boolean conflictOnNextBegin;
         public List<ProjectRecord> creatingOverride;
+        /** When set, hasActiveRun refuses callers that do not hold this shared lifecycle lease. */
+        public ProjectLifecycleGate gate;
 
         public FakeStore() {
             revision.put(PROJECT, 7L);
@@ -349,9 +380,21 @@ public class WorkspaceControllerTest {
 
         @Override public ProjectRecord findProject(String projectId) { return projects.get(projectId); }
 
-        @Override public boolean hasActiveRun(String projectId) { return activeRuns.contains(projectId); }
+        @Override public boolean hasActiveRun(String projectId) {
+            if (gate != null) {
+                // Production wraps every hasActiveRun caller in the shared lifecycle gate; the
+                // fake enforces the same invariant so ungated flows fail loudly here.
+                var lease = gate.tryAcquire(projectId);
+                if (lease.isEmpty()) {
+                    throw new IllegalStateException("project lifecycle gate is held by another thread");
+                }
+                lease.get().close();
+            }
+            return activeRuns.contains(projectId);
+        }
 
         @Override public BeginResult beginPendingOperation(String projectId, long expectedRevision, OperationRecord operation) {
+            if (conflictOnNextBegin) return new BeginResult(false, true);
             ProjectRecord project = projects.get(projectId);
             if (project != null && !"READY".equals(project.state()) && !"CREATING".equals(project.state())) {
                 return new BeginResult(false, false, true);
@@ -359,6 +402,7 @@ public class WorkspaceControllerTest {
             if (revisionOf(projectId) != expectedRevision) return new BeginResult(false, true);
             if (pending.containsKey(projectId)) return new BeginResult(false, false);
             pending.put(projectId, operation);
+            records.put(operation.id(), operation);
             return new BeginResult(true, false);
         }
 
@@ -370,7 +414,9 @@ public class WorkspaceControllerTest {
             }
             OperationRecord operation = pending.remove(projectId);
             if (operation == null || !operation.id().equals(operationId) || revisionOf(projectId) != expectedRevision) return false;
-            committed.add(operation);
+            OperationRecord committedRecord = recordWithState(operation, "COMMITTED");
+            records.put(operationId, committedRecord);
+            committed.add(committedRecord);
             long updated = revisionOf(projectId) + 1;
             revision.put(projectId, updated);
             ProjectRecord project = projects.get(projectId);
@@ -381,11 +427,53 @@ public class WorkspaceControllerTest {
             return true;
         }
 
+        @Override public boolean commitReconciledOperation(String operationId, String projectId, long expectedRevision) {
+            if (failCommits) return false;
+            ProjectRecord project = projects.get(projectId);
+            if (project == null) return false;
+            boolean recoverable = "FAILED".equals(project.state())
+                && "WORKSPACE_RECONCILIATION_REQUIRED".equals(project.failureReason());
+            if (!"READY".equals(project.state()) && !recoverable) return false;
+            if (activeRuns.contains(projectId)) return false;
+            OperationRecord operation = pending.get(projectId);
+            if (operation == null || !operation.id().equals(operationId)
+                || revisionOf(projectId) != expectedRevision
+                || !"PYTHON_DEPENDENCIES".equals(operation.operationKind())) {
+                return false;
+            }
+            pending.remove(projectId);
+            OperationRecord committedRecord = recordWithState(operation, "COMMITTED");
+            records.put(operationId, committedRecord);
+            committed.add(committedRecord);
+            long updated = revisionOf(projectId) + 1;
+            revision.put(projectId, updated);
+            if (recoverable) {
+                clearedFailures.add(projectId);
+                failures.remove(projectId);
+            }
+            projects.put(projectId, new ProjectRecord(project.id(), project.ownerId(), project.name(),
+                "READY", updated, null, project.createdAt()));
+            return true;
+        }
+
+        private static OperationRecord recordWithState(OperationRecord operation, String state) {
+            return new OperationRecord(operation.id(), operation.projectId(), operation.expectedRevision(),
+                operation.beforeSha256(), operation.afterSha256(), operation.receiptPath(), operation.receiptSha256(),
+                state, operation.operationKind(), operation.requestSha256());
+        }
+
         private long revisionOf(String projectId) { return revision.getOrDefault(projectId, 0L); }
 
         @Override public List<OperationRecord> pendingOperations(String projectId) {
             OperationRecord operation = pending.get(projectId);
             return operation == null ? List.of() : List.of(operation);
+        }
+
+        @Override public Optional<OperationRecord> findOperation(String projectId, String operationId) {
+            OperationRecord operation = records.get(operationId);
+            if (operation == null || !operation.projectId().equals(projectId)) return Optional.empty();
+            return "PENDING".equals(operation.state()) || "COMMITTED".equals(operation.state())
+                ? Optional.of(operation) : Optional.empty();
         }
 
         @Override public boolean deleteProject(String ownerId, String projectId) {
@@ -443,6 +531,18 @@ public class WorkspaceControllerTest {
         public WorkspaceAgentException deleteError;
         public int mutateCalls;
         public boolean pendingMetaRequired = true;
+        /** Dependency prepare/commit seams; a matching commit echoes its prepared summary. */
+        public PreparedPythonDependencies prepareResult;
+        public WorkspaceAgentException prepareError;
+        public String commitSpoofedAfter;
+        public WorkspaceAgentException commitError;
+        public PrepareGate prepareGate;
+        /** False simulates an agent that answered but whose final durable receipt is missing. */
+        public boolean recordReceipt = true;
+        public int prepareCalls;
+        public int commitCalls;
+        public final List<DependencyChange> preparedChanges = new ArrayList<>();
+        public final List<PythonDependencyCommit> commitCommands = new ArrayList<>();
 
         @Override public Tree tree(String projectId, String directory) { return tree; }
 
@@ -471,10 +571,78 @@ public class WorkspaceControllerTest {
             return Optional.ofNullable(receiptFor.get(operationId));
         }
 
+        @Override public PreparedPythonDependencies prepare(String projectId, String operationId,
+                                                           String requestSha256, DependencyChange change) {
+            prepareCalls++;
+            preparedChanges.add(change);
+            if (prepareGate != null) prepareGate.enter();
+            if (prepareError != null) throw prepareError;
+            return prepareResult;
+        }
+
+        /** Batch prepare seam (agent port parity); the backend batch flow is Task 3's scope. */
+        public int prepareBatchCalls;
+        public final List<String> preparedBatchTexts = new ArrayList<>();
+
+        @Override public PreparedPythonDependencies prepareBatch(String projectId, String operationId,
+                                                                String requestSha256, String requirementsText) {
+            prepareBatchCalls++;
+            preparedBatchTexts.add(requirementsText);
+            if (prepareGate != null) prepareGate.enter();
+            if (prepareError != null) throw prepareError;
+            return prepareResult;
+        }
+
+        @Override public PreparedPythonDependencies commit(String projectId, PythonDependencyCommit command) {
+            commitCalls++;
+            commitCommands.add(command);
+            if (commitError != null) throw commitError;
+            // The real agent validates the backend-issued receipt against the prepared journal
+            // before any rename and records the receipt last; the double enforces the same
+            // contract so placeholders and inconsistent digests cannot pass silently.
+            String receiptJson = WorkspaceOperationService.dependencyReceiptJson(command.prepared().operationId(),
+                command.prepared().beforeSha256(), command.prepared().afterSha256());
+            if (!receiptJson.equals(command.receiptJson())
+                || !WorkspaceOperationService.sha256Hex(receiptJson.getBytes(java.nio.charset.StandardCharsets.UTF_8))
+                    .equals(command.receiptSha256())) {
+                throw new WorkspaceAgentException(409, "OPERATION_CONFLICT", "receipt does not match the prepared operation");
+            }
+            String after = commitSpoofedAfter == null ? command.prepared().afterSha256() : commitSpoofedAfter;
+            PreparedPythonDependencies result = new PreparedPythonDependencies(command.prepared().operationId(),
+                command.prepared().requestSha256(), command.prepared().beforeSha256(), after);
+            if (recordReceipt) {
+                receiptFor.put(command.prepared().operationId(), new FetchedReceipt(result.operationId(),
+                    "PYTHON_DEPENDENCIES", "pyproject.toml", "uv.lock", result.beforeSha256(), result.afterSha256(),
+                    command.receiptSha256()));
+            }
+            return result;
+        }
+
         public void resetErrors() {
             metaError = null;
             contentError = null;
             deleteError = null;
+        }
+    }
+
+    /** Blocks one prepare call inside the agent so tests can prove the lease is held meanwhile. */
+    public static final class PrepareGate {
+        private final java.util.concurrent.CountDownLatch inside;
+        private final java.util.concurrent.CountDownLatch release;
+
+        public PrepareGate(java.util.concurrent.CountDownLatch inside, java.util.concurrent.CountDownLatch release) {
+            this.inside = inside;
+            this.release = release;
+        }
+
+        void enter() {
+            inside.countDown();
+            try {
+                // Bounded: a test that never releases must fail its assertions, not hang the suite.
+                release.await(10, java.util.concurrent.TimeUnit.SECONDS);
+            } catch (InterruptedException ex) {
+                Thread.currentThread().interrupt();
+            }
         }
     }
 }

@@ -31,3 +31,27 @@ export function projectBusyReadRetryDelay(failureCount: number): number {
   const base = PROJECT_BUSY_READ_RETRY_BASE_DELAY_MS * 2 ** failureCount;
   return base + Math.floor(Math.random() * PROJECT_BUSY_READ_RETRY_JITTER_MS);
 }
+
+/**
+ * Same bounded PROJECT_BUSY read policy as `retryProjectBusyRead`, for one-shot
+ * reads outside React Query: at most PROJECT_BUSY_READ_MAX_RETRIES extra attempts
+ * with the shared backoff above. Any other error, or an exhausted budget, rethrows
+ * the original error — a failed read is never reported as a value.
+ */
+export async function readWithProjectBusyRetry<T>(read: () => Promise<T>): Promise<T> {
+  let failedAttempt = 0;
+  for (;;) {
+    try {
+      return await read();
+    } catch (error) {
+      if (failedAttempt >= PROJECT_BUSY_READ_MAX_RETRIES || !isProjectBusyError(error)) {
+        throw error;
+      }
+      const delay = projectBusyReadRetryDelay(failedAttempt);
+      await new Promise<void>((resolve) => {
+        setTimeout(resolve, delay);
+      });
+      failedAttempt += 1;
+    }
+  }
+}

@@ -2,10 +2,12 @@ package com.manao.poc4.kubernetes;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.manao.poc4.workspace.WorkspaceAgent;
+import com.manao.poc4.workspace.WorkspaceAgentException;
 import com.manao.poc4.workspace.WorkspaceCapabilitySigner;
 import com.sun.net.httpserver.HttpServer;
 import java.net.InetSocketAddress;
@@ -17,6 +19,7 @@ import java.security.KeyPairGenerator;
 import java.security.Signature;
 import java.security.interfaces.EdECPrivateKey;
 import java.time.Clock;
+import java.time.Duration;
 import java.util.Arrays;
 import java.util.Base64;
 import java.util.Map;
@@ -33,6 +36,8 @@ class WorkspaceApiClientTest {
     private static final String PROJECT = "prj-contract";
     private static final String OPERATION = "00000000-0000-4000-8000-000000000001";
     private final AtomicReference<Request> received = new AtomicReference<>();
+    private final AtomicReference<Integer> errorStatus = new AtomicReference<>();
+    private final AtomicReference<String> errorBody = new AtomicReference<>();
     private HttpServer server;
     private WorkspaceApiClient client;
     private KeyPair keyPair;
@@ -50,9 +55,10 @@ class WorkspaceApiClientTest {
                 exchange.getRequestHeaders().getFirst("Content-Type"),
                 exchange.getRequestHeaders().getFirst("X-Manao-Workspace-Capability"),
                 exchange.getRequestBody().readAllBytes()));
-            byte[] response = responseBody.getBytes(StandardCharsets.UTF_8);
+            Integer status = errorStatus.get();
+            byte[] response = (status == null ? responseBody : errorBody.get()).getBytes(StandardCharsets.UTF_8);
             exchange.getResponseHeaders().set("Content-Type", "application/json");
-            exchange.sendResponseHeaders(200, response.length);
+            exchange.sendResponseHeaders(status == null ? 200 : status, response.length);
             try (var output = exchange.getResponseBody()) { output.write(response); }
         });
         server.start();
@@ -117,6 +123,123 @@ class WorkspaceApiClientTest {
         assertThat(request.body()).isEqualTo(content);
         assertThat(query(request)).containsEntry("path", "src/中文 + &.java");
         assertSignatureMatchesTheActualRequest(request);
+    }
+
+    @Test
+    void prepareSendsTheOperationIdentityAndNormalizedChangeAndReadsTheSummary() throws Exception {
+        responseBody = "{\"operationId\":\"" + OPERATION + "\",\"requestSha256\":\"" + "a".repeat(64) + "\","
+            + "\"beforeSha256\":\"" + "b".repeat(64) + "\",\"afterSha256\":\"" + "c".repeat(64) + "\"}";
+        WorkspaceAgent.PreparedPythonDependencies prepared = client.prepare(PROJECT, OPERATION, "a".repeat(64),
+            new WorkspaceAgent.DependencyChange("ADD", "a-b-c", "0.28.1"));
+        Request request = received.get();
+        assertThat(request.method()).isEqualTo("POST");
+        assertThat(request.uri().getPath()).isEqualTo("/agent/v1/python-dependencies/prepare");
+        assertThat(request.contentType()).isEqualTo("application/json");
+        var body = JSON.readTree(request.body());
+        assertThat(body.get("operationId").asText()).isEqualTo(OPERATION);
+        assertThat(body.get("requestSha256").asText()).isEqualTo("a".repeat(64));
+        assertThat(body.get("change").get("action").asText()).isEqualTo("ADD");
+        assertThat(body.get("change").get("packageName").asText()).isEqualTo("a-b-c");
+        assertThat(body.get("change").get("version").asText()).isEqualTo("0.28.1");
+        assertThat(prepared).isEqualTo(new WorkspaceAgent.PreparedPythonDependencies(OPERATION, "a".repeat(64),
+            "b".repeat(64), "c".repeat(64)));
+        assertSignatureMatchesTheActualRequest(request);
+    }
+
+    @Test
+    void prepareBatchSendsTheRequirementsTextAndReadsTheSummary() throws Exception {
+        String requirements = "# batch probe\nhttpx==0.28.1\n\nidna>=3.7\n";
+        responseBody = "{\"operationId\":\"" + OPERATION + "\",\"requestSha256\":\"" + "a".repeat(64) + "\","
+            + "\"beforeSha256\":\"" + "b".repeat(64) + "\",\"afterSha256\":\"" + "c".repeat(64) + "\"}";
+        WorkspaceAgent.PreparedPythonDependencies prepared =
+            client.prepareBatch(PROJECT, OPERATION, "a".repeat(64), requirements);
+        Request request = received.get();
+        assertThat(request.method()).isEqualTo("POST");
+        assertThat(request.uri().getPath()).isEqualTo("/agent/v1/python-dependencies/prepare-batch");
+        assertThat(request.contentType()).isEqualTo("application/json");
+        var body = JSON.readTree(request.body());
+        assertThat(body.get("operationId").asText()).isEqualTo(OPERATION);
+        assertThat(body.get("requestSha256").asText()).isEqualTo("a".repeat(64));
+        // The multi-line text travels as ONE escaped JSON string with an exact round-trip;
+        // the body itself must carry no raw line breaks, shell commands, index URLs or env.
+        assertThat(body.get("requirementsText").asText()).isEqualTo(requirements);
+        assertThat(new String(request.body(), StandardCharsets.UTF_8)).doesNotContain("\n");
+        assertThat(body.has("indexUrl")).isFalse();
+        assertThat(body.has("env")).isFalse();
+        assertThat(prepared).isEqualTo(new WorkspaceAgent.PreparedPythonDependencies(OPERATION, "a".repeat(64),
+            "b".repeat(64), "c".repeat(64)));
+        assertSignatureMatchesTheActualRequest(request);
+    }
+
+    @Test
+    void prepareBatchReusesTheAgentErrorMappingAndCodes() {
+        errorStatus.set(422);
+        errorBody.set("{\"code\":\"PYTHON_DEPENDENCY_UNSUPPORTED\",\"message\":\"outside the supported scope\"}");
+        assertThatThrownBy(() -> client.prepareBatch(PROJECT, OPERATION, "a".repeat(64), "-r other.txt\n"))
+            .isInstanceOfSatisfying(WorkspaceAgentException.class, ex -> {
+                assertThat(ex.status()).isEqualTo(422);
+                assertThat(ex.code()).isEqualTo("PYTHON_DEPENDENCY_UNSUPPORTED");
+            });
+        errorStatus.set(409);
+        errorBody.set("{\"code\":\"DEPENDENCY_REQUEST_MISMATCH\",\"message\":\"mismatch\"}");
+        assertThatThrownBy(() -> client.prepareBatch(PROJECT, OPERATION, "a".repeat(64), "httpx==0.28.1\n"))
+            .isInstanceOfSatisfying(WorkspaceAgentException.class, ex -> {
+                assertThat(ex.status()).isEqualTo(409);
+                assertThat(ex.code()).isEqualTo("DEPENDENCY_REQUEST_MISMATCH");
+            });
+    }
+
+    @Test
+    void commitSendsTheRegisteredSummaryAndTheEscapedReceipt() throws Exception {
+        String receiptJson = "{\"operationId\":\"" + OPERATION + "\",\"type\":\"PYTHON_DEPENDENCIES\","
+            + "\"path\":\"pyproject.toml\",\"nextPath\":\"uv.lock\",\"beforeSha256\":\"" + "b".repeat(64)
+            + "\",\"afterSha256\":\"" + "c".repeat(64) + "\"}";
+        responseBody = "{\"operationId\":\"" + OPERATION + "\",\"requestSha256\":\"" + "a".repeat(64) + "\","
+            + "\"beforeSha256\":\"" + "b".repeat(64) + "\",\"afterSha256\":\"" + "c".repeat(64) + "\"}";
+        var prepared = new WorkspaceAgent.PreparedPythonDependencies(OPERATION, "a".repeat(64), "b".repeat(64), "c".repeat(64));
+        assertThat(client.commit(PROJECT, new WorkspaceAgent.PythonDependencyCommit(
+            prepared, receiptJson, "d".repeat(64)))).isEqualTo(prepared);
+        Request request = received.get();
+        assertThat(request.method()).isEqualTo("POST");
+        assertThat(request.uri().getPath()).isEqualTo("/agent/v1/python-dependencies/commit");
+        var body = JSON.readTree(request.body());
+        assertThat(body.get("prepared").get("operationId").asText()).isEqualTo(OPERATION);
+        assertThat(body.get("prepared").get("requestSha256").asText()).isEqualTo("a".repeat(64));
+        assertThat(body.get("prepared").get("beforeSha256").asText()).isEqualTo("b".repeat(64));
+        assertThat(body.get("prepared").get("afterSha256").asText()).isEqualTo("c".repeat(64));
+        // The receipt travels as one escaped JSON string, never re-encoded object structure.
+        assertThat(body.get("receiptJson").asText()).isEqualTo(receiptJson);
+        assertThat(body.get("receiptSha256").asText()).isEqualTo("d".repeat(64));
+        assertSignatureMatchesTheActualRequest(request);
+    }
+
+    @Test
+    void prepareTimeoutTracksTheConfiguredResolutionBudget() {
+        // Design 6.3: the prepare request timeout is the resolution budget plus a bounded
+        // margin, keeping the original 30s client default for the 20s initial budget.
+        assertThat(WorkspaceApiClient.prepareTimeout(20)).isEqualTo(Duration.ofSeconds(30));
+        // A budget override moves the timeout by the same delta.
+        assertThat(WorkspaceApiClient.prepareTimeout(20 + 15)).isEqualTo(Duration.ofSeconds(30 + 15));
+        assertThat(WorkspaceApiClient.prepareTimeout(1)).isEqualTo(Duration.ofSeconds(11));
+        assertThat(WorkspaceApiClient.prepareTimeout(600)).isEqualTo(Duration.ofSeconds(610));
+        assertThatThrownBy(() -> WorkspaceApiClient.prepareTimeout(0)).isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> WorkspaceApiClient.prepareTimeout(601)).isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void prepareTimeoutStaysStrictlyAboveTheAgentHelperWait() {
+        // Cross-module ordering invariant: the agent helper phase's ENTIRE wall clock — ONE
+        // deadline covering its primary wait, the post-timeout kill settle and BOTH diagnostic
+        // drains — is at most budget + 2s (PythonDependencyEditor.HELPER_MARGIN_SECONDS = 2,
+        // mirrored here on purpose — changing either side without the other fails one of these
+        // tests). The backend timeout must stay strictly above that TOTAL at every budget, so
+        // a helper phase that consumes every wait still leaves ~8s for journal persistence
+        // and the HTTP return.
+        for (long budget : new long[] {1, 20, 600}) {
+            // Worst-case agent total: budget + 2s.
+            assertThat(WorkspaceApiClient.prepareTimeout(budget).toSeconds()).isGreaterThan(budget + 2);
+        }
+        assertThat(WorkspaceApiClient.prepareTimeout(20).toSeconds()).isEqualTo(30);
     }
 
     private WorkspaceAgent.Command command(String type, String path, String nextPath, byte[] content) {

@@ -44,12 +44,12 @@ class FlywaySchemaTest {
     }
 
     @Test
-    void latestSchemaIsVersion9AndAcceptsDeleting() throws Exception {
+    void latestSchemaIsVersion10AndAcceptsDeleting() throws Exception {
         try (var version = connection.prepareStatement(
                 "SELECT version FROM flyway_schema_history WHERE success = 1 ORDER BY installed_rank DESC LIMIT 1")) {
             try (var rows = version.executeQuery()) {
                 assertThat(rows.next()).isTrue();
-                assertThat(rows.getString(1)).isEqualTo("9");
+                assertThat(rows.getString(1)).isEqualTo("10");
             }
         }
         String userId = UUID.randomUUID().toString();
@@ -205,7 +205,105 @@ class FlywaySchemaTest {
     }
 
     @Test
-    void upgradeFromV8ToV9PreservesExistingProjectsAndAddsRuntimeColumns() throws Exception {
+    void schemaEnforcesDependencyOperationIdentity() throws Exception {
+        String userId = UUID.randomUUID().toString();
+        String projectId = UUID.randomUUID().toString();
+        try (var user = connection.prepareStatement("INSERT INTO app_user(id, username, password_hash, created_at) VALUES (?, ?, 'hash', ?)");
+             var project = connection.prepareStatement("INSERT INTO project(id, owner_id, name, state, workspace_revision, created_at, updated_at) VALUES (?, ?, 'deps', 'READY', 0, ?, ?)");
+             var operation = connection.prepareStatement("INSERT INTO workspace_operation(id, project_id, expected_revision, before_sha256, after_sha256, receipt_path, receipt_sha256, state, operation_kind, request_sha256, created_at) VALUES (?, ?, 0, ?, ?, 'receipts/deps', ?, ?, ?, ?, ?)")) {
+            user.setString(1, userId); user.setString(2, "deps-owner-" + userId); user.setObject(3, TEST_NOW); user.executeUpdate();
+            project.setString(1, projectId); project.setString(2, userId); project.setObject(3, TEST_NOW); project.setObject(4, TEST_NOW); project.executeUpdate();
+            // A dependency operation without a 64-hex request digest is refused.
+            operation.setString(1, UUID.randomUUID().toString()); operation.setString(2, projectId);
+            operation.setString(3, "a".repeat(64)); operation.setString(4, "b".repeat(64)); operation.setString(5, "c".repeat(64));
+            operation.setString(6, "PENDING"); operation.setString(7, "PYTHON_DEPENDENCIES"); operation.setString(8, null); operation.setObject(9, TEST_NOW);
+            assertThatThrownBy(operation::executeUpdate).isInstanceOf(SQLException.class);
+            operation.setString(1, UUID.randomUUID().toString()); operation.setString(8, "ABCDEF");
+            assertThatThrownBy(operation::executeUpdate).isInstanceOf(SQLException.class);
+            operation.setString(1, UUID.randomUUID().toString()); operation.setString(8, "e".repeat(63) + "F");
+            assertThatThrownBy(operation::executeUpdate).isInstanceOf(SQLException.class);
+            // Unknown operation kinds are refused outright.
+            operation.setString(1, UUID.randomUUID().toString()); operation.setString(7, "PYTHON"); operation.setString(8, "d".repeat(64));
+            assertThatThrownBy(operation::executeUpdate).isInstanceOf(SQLException.class);
+            // A valid dependency row binds its digest; legacy FILE rows keep kind FILE and NULL digest.
+            operation.setString(1, UUID.randomUUID().toString()); operation.setString(7, "PYTHON_DEPENDENCIES");
+            operation.setString(8, "d".repeat(64)); operation.setObject(9, TEST_NOW);
+            assertThat(operation.executeUpdate()).isEqualTo(1);
+            operation.setString(1, UUID.randomUUID().toString()); operation.setString(6, "COMMITTED");
+            operation.setString(7, "FILE"); operation.setString(8, null);
+            assertThat(operation.executeUpdate()).isEqualTo(1);
+        }
+    }
+
+    @Test
+    void schemaPreventsDependencyIdentityMutationAndStillAllowsCommits() throws Exception {
+        String userId = UUID.randomUUID().toString();
+        String projectId = UUID.randomUUID().toString();
+        String operationId = UUID.randomUUID().toString();
+        try (var user = connection.prepareStatement("INSERT INTO app_user(id, username, password_hash, created_at) VALUES (?, ?, 'hash', ?)");
+             var project = connection.prepareStatement("INSERT INTO project(id, owner_id, name, state, workspace_revision, created_at, updated_at) VALUES (?, ?, 'identity', 'READY', 0, ?, ?)");
+             var operation = connection.prepareStatement("INSERT INTO workspace_operation(id, project_id, expected_revision, before_sha256, after_sha256, receipt_path, receipt_sha256, state, operation_kind, request_sha256, created_at) VALUES (?, ?, 0, ?, ?, 'receipts/identity', ?, 'PENDING', 'PYTHON_DEPENDENCIES', ?, ?)")) {
+            user.setString(1, userId); user.setString(2, "identity-owner-" + userId); user.setObject(3, TEST_NOW); user.executeUpdate();
+            project.setString(1, projectId); project.setString(2, userId); project.setObject(3, TEST_NOW); project.setObject(4, TEST_NOW); project.executeUpdate();
+            operation.setString(1, operationId); operation.setString(2, projectId);
+            operation.setString(3, "a".repeat(64)); operation.setString(4, "b".repeat(64)); operation.setString(5, "c".repeat(64));
+            operation.setString(6, "d".repeat(64)); operation.setObject(7, TEST_NOW);
+            operation.executeUpdate();
+        }
+        // The identity columns are immutable in place: kind and request digest can never be rewritten.
+        try (var update = connection.prepareStatement("UPDATE workspace_operation SET operation_kind = 'FILE' WHERE id = ?")) {
+            update.setString(1, operationId);
+            assertThatThrownBy(update::executeUpdate).isInstanceOf(SQLException.class);
+        }
+        try (var update = connection.prepareStatement("UPDATE workspace_operation SET request_sha256 = ? WHERE id = ?")) {
+            update.setString(1, "e".repeat(64)); update.setString(2, operationId);
+            assertThatThrownBy(update::executeUpdate).isInstanceOf(SQLException.class);
+        }
+        // The ordinary commit state transition is untouched by the identity trigger.
+        try (var commit = connection.prepareStatement("UPDATE workspace_operation SET state = 'COMMITTED', committed_at = ? WHERE id = ? AND state = 'PENDING'")) {
+            commit.setObject(1, TEST_NOW); commit.setString(2, operationId);
+            assertThat(commit.executeUpdate()).isEqualTo(1);
+        }
+    }
+
+    @Test
+    void upgradeFromV9ToV10DefaultsLegacyOperationsToFileIdentity() throws Exception {
+        try (JdbcStoreTestSupport v9 = JdbcStoreTestSupport.createAtVersion("9")) {
+            var jdbc = v9.jdbc();
+            String userId = UUID.randomUUID().toString();
+            String projectId = UUID.randomUUID().toString();
+            String operationId = UUID.randomUUID().toString();
+            Timestamp testNow = Timestamp.from(TEST_NOW);
+            jdbc.update("INSERT INTO app_user(id, username, password_hash, created_at) VALUES (?, ?, 'hash', ?)",
+                userId, "v9-owner-" + userId, testNow);
+            jdbc.update("INSERT INTO project(id, owner_id, name, state, workspace_revision, created_at, updated_at)"
+                    + " VALUES (?, ?, 'legacy', 'READY', 0, ?, ?)",
+                projectId, userId, testNow, testNow);
+            jdbc.update("INSERT INTO workspace_operation(id, project_id, expected_revision, before_sha256, after_sha256, receipt_path, receipt_sha256, state, created_at)"
+                    + " VALUES (?, ?, 0, ?, ?, 'receipts/legacy', ?, 'COMMITTED', ?)",
+                operationId, projectId, "a".repeat(64), "b".repeat(64), "c".repeat(64), testNow);
+            v9.migrateToLatest();
+            assertThat(jdbc.queryForObject(
+                "SELECT version FROM flyway_schema_history WHERE success = 1 ORDER BY installed_rank DESC LIMIT 1",
+                String.class)).isEqualTo("10");
+            // The in-place upgrade keeps every legacy row and defaults it to the FILE identity.
+            assertThat(jdbc.queryForObject("SELECT operation_kind FROM workspace_operation WHERE id = ?", String.class, operationId))
+                .isEqualTo("FILE");
+            assertThat(jdbc.queryForObject("SELECT request_sha256 FROM workspace_operation WHERE id = ?", String.class, operationId))
+                .isNull();
+            // New dependency rows now require the bound request digest.
+            assertThatThrownBy(() -> jdbc.update("INSERT INTO workspace_operation(id, project_id, expected_revision, before_sha256, after_sha256, receipt_path, receipt_sha256, state, operation_kind, request_sha256, created_at)"
+                        + " VALUES (?, ?, 0, ?, ?, 'receipts/new', ?, 'PENDING', 'PYTHON_DEPENDENCIES', NULL, ?)",
+                    UUID.randomUUID().toString(), projectId, "a".repeat(64), "b".repeat(64), "c".repeat(64), testNow))
+                .isInstanceOf(org.springframework.dao.DataAccessException.class);
+            jdbc.update("INSERT INTO workspace_operation(id, project_id, expected_revision, before_sha256, after_sha256, receipt_path, receipt_sha256, state, operation_kind, request_sha256, created_at)"
+                    + " VALUES (?, ?, 0, ?, ?, 'receipts/new', ?, 'PENDING', 'PYTHON_DEPENDENCIES', ?, ?)",
+                UUID.randomUUID().toString(), projectId, "a".repeat(64), "b".repeat(64), "c".repeat(64), "d".repeat(64), testNow);
+        }
+    }
+
+    @Test
+    void upgradeFromV8ToLatestPreservesExistingProjectsAndAddsRuntimeColumns() throws Exception {
         try (JdbcStoreTestSupport v8 = JdbcStoreTestSupport.createAtVersion("8")) {
             var jdbc = v8.jdbc();
             String userId = UUID.randomUUID().toString();
@@ -219,7 +317,7 @@ class FlywaySchemaTest {
             v8.migrateToLatest();
             assertThat(jdbc.queryForObject(
                 "SELECT version FROM flyway_schema_history WHERE success = 1 ORDER BY installed_rank DESC LIMIT 1",
-                String.class)).isEqualTo("9");
+                String.class)).isEqualTo("10");
             // Existing rows survive V9 and legacy JSON NULL keeps the old console reading.
             assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM project WHERE id = ?", Integer.class, projectId)).isEqualTo(1);
             assertThat(jdbc.queryForObject("SELECT runtime_spec_json FROM project WHERE id = ?", String.class, projectId)).isNull();

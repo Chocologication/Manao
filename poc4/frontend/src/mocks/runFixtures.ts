@@ -60,6 +60,52 @@ Object.freeze(SERVICE_RUN_POLICY.resources);
 Object.freeze(SERVICE_RUN_POLICY.resources.requests);
 Object.freeze(SERVICE_RUN_POLICY.resources.limits);
 
+/**
+ * Python console (TASK) policy fixture: templateId plus the language-discriminated
+ * python runtime, mirroring the backend snapshot contract. Fixtures are unit evidence
+ * only — they never prove that a real Python run works.
+ */
+export const PYTHON_CONSOLE_RUN_POLICY: RunPolicy = {
+  templateId: 'python-console',
+  command: 'python -u main.py',
+  runtime: { language: 'python', pythonVersion: '3.13', packageManager: 'uv' },
+  timeoutSeconds: 1800,
+  executionKind: 'TASK',
+  startupTimeoutSeconds: 1800,
+  serviceLifetimeSeconds: 0,
+  resources: {
+    requests: { ...POC4_RUN_POLICY.resources.requests },
+    limits: { ...POC4_RUN_POLICY.resources.limits },
+  },
+};
+
+Object.freeze(PYTHON_CONSOLE_RUN_POLICY);
+Object.freeze(PYTHON_CONSOLE_RUN_POLICY.runtime);
+Object.freeze(PYTHON_CONSOLE_RUN_POLICY.resources);
+Object.freeze(PYTHON_CONSOLE_RUN_POLICY.resources.requests);
+Object.freeze(PYTHON_CONSOLE_RUN_POLICY.resources.limits);
+
+/** Python FastAPI web (SERVICE) policy fixture with the bounded readiness lifetime. */
+export const PYTHON_FASTAPI_RUN_POLICY: RunPolicy = {
+  templateId: 'python-fastapi-web',
+  command: 'python -u -m uvicorn app.main:app',
+  runtime: { language: 'python', pythonVersion: '3.13', packageManager: 'uv' },
+  timeoutSeconds: 1800,
+  executionKind: 'SERVICE',
+  startupTimeoutSeconds: 1800,
+  serviceLifetimeSeconds: 7200,
+  resources: {
+    requests: { ...POC4_RUN_POLICY.resources.requests },
+    limits: { ...POC4_RUN_POLICY.resources.limits },
+  },
+};
+
+Object.freeze(PYTHON_FASTAPI_RUN_POLICY);
+Object.freeze(PYTHON_FASTAPI_RUN_POLICY.runtime);
+Object.freeze(PYTHON_FASTAPI_RUN_POLICY.resources);
+Object.freeze(PYTHON_FASTAPI_RUN_POLICY.resources.requests);
+Object.freeze(PYTHON_FASTAPI_RUN_POLICY.resources.limits);
+
 export const MAX_SIZE_LOG_CHUNK_TEXT = 'a'.repeat(MAX_LOG_CHUNK_UTF8_BYTES);
 
 export function utf8ByteLength(text: string): number {
@@ -74,6 +120,52 @@ export function clonePoc4RunPolicy(): RunPolicy {
     resources: {
       requests: { ...POC4_RUN_POLICY.resources.requests },
       limits: { ...POC4_RUN_POLICY.resources.limits },
+    },
+  };
+}
+
+/**
+ * Mock-run policy by project template: python templates must not report the legacy
+ * Maven default. Legacy and unknown ids keep the historical POC4 Java policy.
+ */
+export function cloneRunPolicyForTemplate(templateId: string | undefined): RunPolicy {
+  if (templateId === 'python-console') {
+    return clonePythonConsoleRunPolicy();
+  }
+  if (templateId === 'python-fastapi-web') {
+    return clonePythonFastApiRunPolicy();
+  }
+  return clonePoc4RunPolicy();
+}
+
+export function clonePythonConsoleRunPolicy(): RunPolicy {
+  return {
+    templateId: 'python-console',
+    command: 'python -u main.py',
+    runtime: { ...PYTHON_CONSOLE_RUN_POLICY.runtime },
+    timeoutSeconds: PYTHON_CONSOLE_RUN_POLICY.timeoutSeconds,
+    executionKind: 'TASK',
+    startupTimeoutSeconds: 1800,
+    serviceLifetimeSeconds: 0,
+    resources: {
+      requests: { ...PYTHON_CONSOLE_RUN_POLICY.resources.requests },
+      limits: { ...PYTHON_CONSOLE_RUN_POLICY.resources.limits },
+    },
+  };
+}
+
+export function clonePythonFastApiRunPolicy(): RunPolicy {
+  return {
+    templateId: 'python-fastapi-web',
+    command: 'python -u -m uvicorn app.main:app',
+    runtime: { ...PYTHON_FASTAPI_RUN_POLICY.runtime },
+    timeoutSeconds: PYTHON_FASTAPI_RUN_POLICY.timeoutSeconds,
+    executionKind: 'SERVICE',
+    startupTimeoutSeconds: 1800,
+    serviceLifetimeSeconds: 7200,
+    resources: {
+      requests: { ...PYTHON_FASTAPI_RUN_POLICY.resources.requests },
+      limits: { ...PYTHON_FASTAPI_RUN_POLICY.resources.limits },
     },
   };
 }

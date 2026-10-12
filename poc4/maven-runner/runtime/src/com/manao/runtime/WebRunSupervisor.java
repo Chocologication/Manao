@@ -33,20 +33,29 @@ import java.util.concurrent.TimeoutException;
  *
  * <p>Production modes (the only entry points):</p>
  * <ul>
- *   <li>{@code run} — verifies it is PID 1, atomically claims
+ *   <li>{@code run [profile]} — verifies it is PID 1, atomically claims
  *       {@code $MANAO_RUN_CONTROL_DIR/claim} (an existing claim means the run already
  *       started: exit 125 before any user code, and the claim is never cleared), spawns
- *       the fixed {@code manao-maven} wrapper child (cache initialization + exec
- *       {@code mvn -q -DskipTests spring-boot:run}) in /workspace with
- *       inherited stdout/stderr, polls the loopback primary-port readiness endpoint with
- *       bounded timeouts and, on the first UP, arms the monotonic lifetime deadline and
- *       then writes the run receipt. Exit codes: 0 user stop, 1 unexpected application
- *       exit, 2 configuration error, 3 persistence/internal failure, 124 lifetime
- *       expiry, 125 duplicate claim, 126 startup budget exhausted.</li>
- *   <li>{@code probe} — readiness-probe helper (exec child, no PID 1 requirement):
- *       checks the local ready marker, the receipt expiry and the current primary-port
- *       health; exit 0 only when all three hold.</li>
+ *       the fixed child command of the requested {@link RunProfile} in /workspace with
+ *       inherited stdout/stderr, polls the loopback primary-port readiness endpoint of
+ *       the same profile with bounded timeouts and, on the first UP, arms the monotonic
+ *       lifetime deadline and then writes the run receipt. Exit codes: 0 user stop, 1
+ *       unexpected application exit, 2 configuration error, 3 persistence/internal
+ *       failure, 124 lifetime expiry, 125 duplicate claim, 126 startup budget
+ *       exhausted.</li>
+ *   <li>{@code probe [profile]} — readiness-probe helper (exec child, no PID 1
+ *       requirement): checks the local ready marker, the receipt expiry and the current
+ *       primary-port health on the profile's readiness path; exit 0 only when all three
+ *       hold.</li>
  * </ul>
+ *
+ * <p>Profiles: only the enumerated {@link RunProfile} ids are accepted; an unknown
+ * profile, an unknown mode or any extra argument fails immediately with exit code 2
+ * before any claim or user code. Omitting the profile keeps the legacy Java default so
+ * already-created resources without a profile argument still start, and run and probe
+ * always resolve the same profile through one shared mapping ({@link
+ * #requestedProfile(String, String[])}). The command and the readiness path are fixed
+ * by the profile — no command or health URL can be injected via the environment.</p>
  *
  * <p>Timing rules: the lifetime deadline is enforced by a dedicated thread that does
  * nothing but a monotonic check and {@link Runtime#halt(int)} — no network or disk wait
@@ -66,23 +75,14 @@ import java.util.concurrent.TimeoutException;
  * written by the claim owner — a denied replacement container reports DENIED through its
  * container-local termination message only.</p>
  *
- * <p>{@link #runMode(List)} is a package-private seam used exclusively by the test
- * fixture compiled into the {@code runtime-test} image stage; the production main always
- * passes the fixed maven command and no command can be injected via the environment.</p>
+ * <p>{@link #runMode(RunProfile, List)} is a package-private seam used exclusively by
+ * the test fixture compiled into the {@code runtime-test} image stage (it overrides the
+ * profile's fixed child command with a controlled process); the production main only
+ * passes the resolved profile and no command can be injected via the environment.</p>
  */
 public final class WebRunSupervisor {
 
     static final String PROTOCOL = "1";
-    static final String READINESS_PATH = "/actuator/health/readiness";
-    /**
-     * The supervised child is the root-owned fixed Maven wrapper: it initializes the
-     * project's persistent Maven cache (inside the startup budget) and then execs
-     * {@code mvn -q -DskipTests spring-boot:run}. Only the first item changed from the
-     * former direct {@code mvn} spawn; stop, kill and deadline semantics are unchanged
-     * because the wrapper execs Maven in the same process.
-     */
-    static final List<String> FIXED_RUN_COMMAND =
-            List.of("/usr/local/bin/manao-maven", "-q", "-DskipTests", "spring-boot:run");
     static final String RUN_WORKING_DIR = "/workspace";
 
     static final String RECEIPT_FILE_NAME = "receipt.properties";
@@ -230,39 +230,79 @@ public final class WebRunSupervisor {
     private final Config cfg;
     private final RunDeadline deadline;
     private final Child child;
+    private final RunProfile profile;
     private volatile Instant firstReadyAt;
     private volatile Instant expiresAt;
     private boolean finished;            // guarded by this
     private int finalExitCode = EXIT_OK; // guarded by this
 
-    private WebRunSupervisor(Config cfg, RunDeadline deadline, Child child) {
+    private WebRunSupervisor(Config cfg, RunDeadline deadline, Child child, RunProfile profile) {
         this.cfg = cfg;
         this.deadline = deadline;
         this.child = child;
+        this.profile = profile;
     }
 
     public static void main(String[] args) {
         String mode = args.length == 0 ? "" : args[0];
+        String[] profileArgs = args.length == 0
+                ? new String[0]
+                : Arrays.copyOfRange(args, 1, args.length);
         int code;
-        if ("run".equals(mode)) {
-            code = runMode(FIXED_RUN_COMMAND);
-        } else if ("probe".equals(mode)) {
-            code = probe();
-        } else {
-            System.err.println("usage: manao-run-supervisor run|probe");
+        try {
+            RunProfile profile = requestedProfile(mode, profileArgs);
+            code = "run".equals(mode) ? runMode(profile) : probe(profile);
+        } catch (IllegalArgumentException e) {
+            System.err.println("usage: manao-run-supervisor run|probe "
+                    + "[java-spring-boot-web|python-fastapi-web] (" + e.getMessage() + ")");
             code = EXIT_CONFIGURATION;
         }
         System.exit(code);
     }
 
+    /**
+     * Resolves the service profile shared by {@code run} and {@code probe}: no profile
+     * argument keeps the legacy Java default (already-created resources), exactly one
+     * argument must name an enumerated {@link RunProfile}, and anything else — unknown
+     * profiles, extra arguments, unknown modes — fails immediately. Both modes resolve
+     * through this single mapping, so run and probe can never use different profiles for
+     * the same invocation.
+     */
+    static RunProfile requestedProfile(String mode, String[] profileArgs) {
+        if (!"run".equals(mode) && !"probe".equals(mode)) {
+            throw new IllegalArgumentException("unknown mode: " + mode);
+        }
+        if (profileArgs.length == 0) {
+            return RunProfile.JAVA_SPRING_BOOT_WEB;
+        }
+        if (profileArgs.length == 1) {
+            return RunProfile.fromId(profileArgs[0]);
+        }
+        throw new IllegalArgumentException(
+                "unexpected extra arguments after the profile: " + (profileArgs.length - 1));
+    }
+
     // ------------------------------------------------------------------ run mode
 
     /**
-     * Runs the full supervised lifecycle. Package-private seam: the production main
-     * passes {@link #FIXED_RUN_COMMAND}; only the runtime-test fixture passes anything
-     * else (this class is never invoked with a test command outside the test image).
+     * Production entry: runs the full supervised lifecycle for the fixed command of the
+     * requested profile. The child command is always {@code profile.command()} — no
+     * environment or argv value can replace it.
      */
-    static int runMode(List<String> childCommand) {
+    static int runMode(RunProfile profile) {
+        return runMode(profile, null);
+    }
+
+    /**
+     * Runs the full supervised lifecycle. Package-private seam: the production main
+     * passes only the profile ({@code testChildCommand == null}, so the child command is
+     * {@link RunProfile#command()}); only the runtime-test fixture passes a controlled
+     * test child command instead (this class is never invoked with a test command
+     * outside the test image). Readiness always follows the profile's readiness path.
+     */
+    static int runMode(RunProfile profile, List<String> testChildCommand) {
+        List<String> childCommand =
+                testChildCommand != null ? testChildCommand : profile.command();
         Child child = new Child();
         Config cfg = null;
         try {
@@ -282,7 +322,7 @@ public final class WebRunSupervisor {
             if (claimFailure != null) {
                 return claimFailure;
             }
-            WebRunSupervisor run = new WebRunSupervisor(cfg, new RunDeadline(), child);
+            WebRunSupervisor run = new WebRunSupervisor(cfg, new RunDeadline(), child, profile);
             run.installShutdownHook();
             run.startDeadlineThread();
             return run.supervise(childCommand);
@@ -373,7 +413,7 @@ public final class WebRunSupervisor {
                         REASON_STARTUP_TIME_LIMIT_EXCEEDED, EXIT_STARTUP_EXPIRED,
                         KillMode.IMMEDIATE);
             }
-            if (readinessUp(cfg.primaryPort())) {
+            if (readinessUp(cfg.primaryPort(), profile)) {
                 break;
             }
             sleepUnchecked(READINESS_POLL_INTERVAL);
@@ -517,7 +557,7 @@ public final class WebRunSupervisor {
     // --------------------------------------------------------------------- probe
 
     /** Readiness-probe helper: ready marker + not expired + current primary port UP. */
-    static int probe() {
+    static int probe(RunProfile profile) {
         try {
             Properties local = new Properties();
             try (Reader reader = Files.newBufferedReader(Path.of(LOCAL_PROBE_FILE), StandardCharsets.UTF_8)) {
@@ -531,16 +571,21 @@ public final class WebRunSupervisor {
                 return 1;
             }
             int port = Integer.parseInt(System.getenv().getOrDefault("MANAO_PRIMARY_PORT", "").trim());
-            return readinessUp(port) ? 0 : 1;
+            return readinessUp(port, profile) ? 0 : 1;
         } catch (Exception e) {
             return 1;
         }
     }
 
-    private static boolean readinessUp(int port) {
+    /**
+     * Real loopback HTTP readiness check using the profile's fixed readiness path.
+     * Package-private so the runtime-test stage can pin that the profile decides the
+     * polled path — there is no free-form health URL.
+     */
+    static boolean readinessUp(int port, RunProfile profile) {
         try {
             HttpRequest request = HttpRequest
-                    .newBuilder(URI.create("http://127.0.0.1:" + port + READINESS_PATH))
+                    .newBuilder(URI.create("http://127.0.0.1:" + port + profile.readinessPath()))
                     .timeout(READINESS_HTTP_TIMEOUT)
                     .GET()
                     .build();

@@ -1,0 +1,6 @@
+[project]
+name = "manao-python-console"
+version = "0.1.0"
+description = "Manao Python console project"
+requires-python = ">=3.13,<3.14"
+dependencies = []

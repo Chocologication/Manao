@@ -2,7 +2,31 @@ export const DEFAULT_PROJECT_LIMIT = 8;
 
 export type ProjectState = 'CREATING' | 'READY' | 'FAILED' | 'DELETING';
 
-export type RuntimeTemplateId = 'java-console' | 'java-spring-boot-web';
+export type RuntimeTemplateId =
+  | 'java-console'
+  | 'java-spring-boot-web'
+  | 'python-console'
+  | 'python-fastapi-web';
+
+/** The uv-managed python templates; the single authority for python-only surfaces. */
+export function isPythonRuntimeTemplate(templateId: RuntimeTemplateId | undefined): boolean {
+  return templateId === 'python-console' || templateId === 'python-fastapi-web';
+}
+
+/**
+ * Fixed metadata of the internal template enum, shared by the creation form and the
+ * project card. `web` marks the templates that offer MySQL/Redis and public ports;
+ * `defaultTargetPort` is the template's primary port (8080 Java, 8000 Python).
+ */
+export const RUNTIME_TEMPLATE_META: Record<
+  RuntimeTemplateId,
+  { label: string; web: boolean; defaultTargetPort: number }
+> = {
+  'java-console': { label: 'Java console', web: false, defaultTargetPort: 8080 },
+  'java-spring-boot-web': { label: 'Java Spring Boot web', web: true, defaultTargetPort: 8080 },
+  'python-console': { label: 'Python console', web: false, defaultTargetPort: 8000 },
+  'python-fastapi-web': { label: 'Python FastAPI web', web: true, defaultTargetPort: 8000 },
+};
 
 /** Non-sensitive public port declaration; the first entry decides the primary port. */
 export type ProjectPublicPort = {

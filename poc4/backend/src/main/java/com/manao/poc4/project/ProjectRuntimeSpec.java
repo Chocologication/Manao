@@ -19,9 +19,8 @@ import java.util.Set;
  */
 public record ProjectRuntimeSpec(String templateId, boolean mysql, boolean redis,
                                  List<Port> publicPorts) {
-    public static final String TEMPLATE_JAVA_CONSOLE = "java-console";
-    public static final String TEMPLATE_JAVA_SPRING_BOOT_WEB = "java-spring-boot-web";
-    private static final Set<String> TEMPLATES = Set.of(TEMPLATE_JAVA_CONSOLE, TEMPLATE_JAVA_SPRING_BOOT_WEB);
+    public static final String TEMPLATE_JAVA_CONSOLE = RuntimeTemplate.JAVA_CONSOLE.id();
+    public static final String TEMPLATE_JAVA_SPRING_BOOT_WEB = RuntimeTemplate.JAVA_SPRING_BOOT_WEB.id();
     private static final int MAX_PUBLIC_PORTS = 3;
     private static final ObjectMapper JSON = new ObjectMapper();
 
@@ -37,24 +36,25 @@ public record ProjectRuntimeSpec(String templateId, boolean mysql, boolean redis
     }
 
     /** Web-style template with a long-lived service run; console stays a bounded task. */
-    public boolean isService() {
-        return TEMPLATE_JAVA_SPRING_BOOT_WEB.equals(templateId);
-    }
+    public boolean isService() { return RuntimeTemplate.fromId(templateId).isService(); }
 
     /** First public mapping decides the primary port; without public ports it stays 8080. */
     public int primaryPort() {
-        return publicPorts.isEmpty() ? 8080 : publicPorts.get(0).targetPort();
+        return publicPorts.isEmpty() ? RuntimeTemplate.fromId(templateId).defaultPort()
+            : publicPorts.get(0).targetPort();
     }
 
     public void validate(Set<Integer> reservedPublicPorts) {
-        if (!TEMPLATES.contains(templateId)) {
-            throw new ApiException("VALIDATION_ERROR", 422, "Request validation failed");
-        }
+        RuntimeTemplate template = RuntimeTemplate.fromId(templateId);
         if (publicPorts.size() > MAX_PUBLIC_PORTS) {
             throw new ApiException("VALIDATION_ERROR", 422, "Request validation failed");
         }
         // Console projects do not expose public ports; only the web template serves traffic.
-        if (!isService() && !publicPorts.isEmpty()) {
+        if (!template.isService() && !publicPorts.isEmpty()) {
+            throw new ApiException("VALIDATION_ERROR", 422, "Request validation failed");
+        }
+        // Python console tasks stay dependency-free; the Java console keeps its legacy allowance.
+        if (template == RuntimeTemplate.PYTHON_CONSOLE && (mysql || redis)) {
             throw new ApiException("VALIDATION_ERROR", 422, "Request validation failed");
         }
         Set<String> names = new HashSet<>();

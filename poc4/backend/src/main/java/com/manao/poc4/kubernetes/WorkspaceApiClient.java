@@ -27,7 +27,22 @@ import java.util.Optional;
  */
 public final class WorkspaceApiClient implements WorkspaceAgent {
     private static final ObjectMapper JSON = new ObjectMapper();
-    private static final Duration TIMEOUT = Duration.ofSeconds(30);
+    /** The general workspace request timeout; dependency prepare/commit derive their own. */
+    public static final Duration DEFAULT_TIMEOUT = Duration.ofSeconds(30);
+    /**
+     * Bounded margin on top of the configured resolution budget for journal I/O and HTTP
+     * transport. With the design's 20s initial budget the derived prepare timeout is exactly
+     * the original 30s client default. The budget is ONE pair with the workspace-agent's
+     * {@code MANAO_AGENT_PYTHON_DEPENDENCY_RESOLUTION_SECONDS} (both default 20): they must be
+     * deployed together — overriding one without the other desynchronizes the actual budget
+     * from this timeout (the agent Pod env injection is recorded by the deployment task).
+     * Ordering invariant with the agent: its helper phase's ENTIRE wall clock — ONE deadline
+     * covering the primary helper wait, the post-timeout kill settle and BOTH diagnostic
+     * drains — is at most budget + 2s (PythonDependencyEditor.HELPER_MARGIN_SECONDS), strictly
+     * below this budget + 10s at every budget in the 1..600 range, so a helper phase that
+     * consumes every wait still leaves ~8s for journal persistence and the return.
+     */
+    private static final long PREPARE_MARGIN_SECONDS = 10;
 
     /** Resolves the namespace-internal base URI of a project's workspace-agent. */
     public interface EndpointResolver {
@@ -38,16 +53,35 @@ public final class WorkspaceApiClient implements WorkspaceAgent {
     private final WorkspaceCapabilitySigner signer;
     private final HttpClient http;
     private final Duration timeout;
+    private final Duration dependencyTimeout;
 
     public WorkspaceApiClient(EndpointResolver resolver, WorkspaceCapabilitySigner signer) {
-        this(resolver, signer, TIMEOUT);
+        this(resolver, signer, DEFAULT_TIMEOUT, prepareTimeout(20));
     }
 
     WorkspaceApiClient(EndpointResolver resolver, WorkspaceCapabilitySigner signer, Duration timeout) {
+        this(resolver, signer, timeout, prepareTimeout(20));
+    }
+
+    public WorkspaceApiClient(EndpointResolver resolver, WorkspaceCapabilitySigner signer, Duration timeout,
+                              Duration dependencyTimeout) {
         this.resolver = resolver;
         this.signer = signer;
         this.timeout = timeout;
+        this.dependencyTimeout = dependencyTimeout;
         this.http = HttpClient.newBuilder().connectTimeout(timeout).build();
+    }
+
+    /**
+     * The prepare request timeout derived from the configured resolution budget plus the bounded
+     * margin; the budget bounds are the agent's own (1..600 seconds), validated on both sides.
+     * Only the dependency calls use this timeout — the general workspace timeout is never raised.
+     */
+    public static Duration prepareTimeout(long resolutionBudgetSeconds) {
+        if (resolutionBudgetSeconds < 1 || resolutionBudgetSeconds > 600) {
+            throw new IllegalArgumentException("resolution budget must be between 1 and 600 seconds");
+        }
+        return Duration.ofSeconds(resolutionBudgetSeconds + PREPARE_MARGIN_SECONDS);
     }
 
     /** 6B profile: workspace Service is reachable directly inside the namespace. */
@@ -118,6 +152,45 @@ public final class WorkspaceApiClient implements WorkspaceAgent {
         }
     }
 
+    @Override
+    public PreparedPythonDependencies prepare(String projectId, String operationId, String requestSha256,
+                                             DependencyChange change) {
+        String body = "{\"operationId\":" + JSON.valueToTree(operationId)
+            + ",\"requestSha256\":" + JSON.valueToTree(requestSha256)
+            + ",\"change\":{\"action\":" + JSON.valueToTree(change == null ? null : change.action())
+            + ",\"packageName\":" + JSON.valueToTree(change == null ? null : change.packageName())
+            + ",\"version\":" + JSON.valueToTree(change == null ? null : change.version()) + "}}";
+        return preparedFrom(sendJson(projectId, "POST", "/agent/v1/python-dependencies/prepare",
+            body.getBytes(StandardCharsets.UTF_8), dependencyTimeout));
+    }
+
+    @Override
+    public PreparedPythonDependencies prepareBatch(String projectId, String operationId, String requestSha256,
+                                                   String requirementsText) {
+        // The requirements text travels as one JSON string (properly escaped by the mapper);
+        // no shell command, index URL or environment variable is ever sent.
+        String body = "{\"operationId\":" + JSON.valueToTree(operationId)
+            + ",\"requestSha256\":" + JSON.valueToTree(requestSha256)
+            + ",\"requirementsText\":" + JSON.valueToTree(requirementsText) + "}";
+        return preparedFrom(sendJson(projectId, "POST", "/agent/v1/python-dependencies/prepare-batch",
+            body.getBytes(StandardCharsets.UTF_8), dependencyTimeout));
+    }
+
+    @Override
+    public PreparedPythonDependencies commit(String projectId, PythonDependencyCommit command) {
+        var payload = JSON.createObjectNode();
+        payload.set("prepared", JSON.valueToTree(command == null ? null : command.prepared()));
+        payload.put("receiptJson", command == null ? null : command.receiptJson());
+        payload.put("receiptSha256", command == null ? null : command.receiptSha256());
+        return preparedFrom(sendJson(projectId, "POST", "/agent/v1/python-dependencies/commit",
+            payload.toString().getBytes(StandardCharsets.UTF_8), dependencyTimeout));
+    }
+
+    private static PreparedPythonDependencies preparedFrom(JsonNode node) {
+        return new PreparedPythonDependencies(text(node, "operationId"), text(node, "requestSha256"),
+            text(node, "beforeSha256"), text(node, "afterSha256"));
+    }
+
     private JsonNode get(String projectId, String pathAndQuery, String param, String value) {
         HttpRequest request = requestBuilder(projectId, "GET", pathAndQuery + "?" + param + "=" + encode(value), null)
             .GET().build();
@@ -128,8 +201,12 @@ public final class WorkspaceApiClient implements WorkspaceAgent {
     }
 
     private JsonNode sendJson(String projectId, String method, String pathAndQuery, byte[] body) {
+        return sendJson(projectId, method, pathAndQuery, body, timeout);
+    }
+
+    private JsonNode sendJson(String projectId, String method, String pathAndQuery, byte[] body, Duration requestTimeout) {
         byte[] payload = body == null ? new byte[0] : body;
-        HttpRequest.Builder builder = requestBuilder(projectId, method, pathAndQuery, payload);
+        HttpRequest.Builder builder = requestBuilder(projectId, method, pathAndQuery, payload, requestTimeout);
         if ("PUT".equals(method) || "POST".equals(method)) {
             builder.header("Content-Type", "POST".equals(method) ? "application/json" : "application/octet-stream")
                 .method(method, HttpRequest.BodyPublishers.ofByteArray(payload));
@@ -170,10 +247,15 @@ public final class WorkspaceApiClient implements WorkspaceAgent {
     }
 
     private HttpRequest.Builder requestBuilder(String projectId, String method, String pathAndQuery, byte[] body) {
+        return requestBuilder(projectId, method, pathAndQuery, body, timeout);
+    }
+
+    private HttpRequest.Builder requestBuilder(String projectId, String method, String pathAndQuery, byte[] body,
+                                               Duration requestTimeout) {
         byte[] payload = body == null ? new byte[0] : body;
         return HttpRequest.newBuilder()
             .uri(resolver.endpoint(projectId).resolve(pathAndQuery))
-            .timeout(timeout)
+            .timeout(requestTimeout)
             .header("X-Manao-Workspace-Capability", signer.sign(method, pathAndQuery, payload, projectId));
     }
 

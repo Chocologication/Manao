@@ -8,6 +8,18 @@ spring:
 manao:
   agent:
     root: ${MANAO_AGENT_ROOT:/workspace}
+    pythonDependency:
+      python: ${MANAO_AGENT_PYTHON:/usr/local/bin/python3}
+      helper: ${MANAO_AGENT_PYTHON_DEPENDENCY_HELPER:/opt/manao-python/dependency_helper.py}
+      # One budget pair with the backend: this value MUST match the backend's
+      # MANAO_PYTHON_DEPENDENCY_RESOLUTION_SECONDS (both default 20). Overriding one without
+      # the other desynchronizes the actual budget from the backend's prepare request timeout
+      # (derived as this budget plus a bounded 10s I/O and transport margin). Ordering
+      # invariant at every budget: the helper phase's ENTIRE wall clock — the primary wait,
+      # the post-timeout kill settle and BOTH diagnostic drains combined — is at most this
+      # budget + 2s, strictly below that timeout, leaving ~8s for journal persistence and the
+      # return even when every wait is consumed.
+      resolutionSeconds: ${MANAO_AGENT_PYTHON_DEPENDENCY_RESOLUTION_SECONDS:20}
 
 logging:
   level:

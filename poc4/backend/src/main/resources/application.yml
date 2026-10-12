@@ -59,6 +59,19 @@ manao:
         initializer-image: ${MANAO_WORKSPACE_INITIALIZER_IMAGE:busybox@sha256:0000000000000000000000000000000000000000000000000000000000000000}
       logging:
         redact-secrets: true
+      python-dependency:
+        # One budget pair with the workspace-agent: this value MUST match the agent Pod's
+        # MANAO_AGENT_PYTHON_DEPENDENCY_RESOLUTION_SECONDS (both default 20; the deployment
+        # injects the agent env — recorded by the deployment task). Overriding one without the
+        # other desynchronizes the actual budget from the prepare request timeout, which the
+        # backend derives as this budget plus a bounded 10s I/O and transport margin
+        # (default 20 + 10 = 30s — that 30s figure is only the budget-20 default). Same 1..600
+        # bounds on both sides. Ordering invariant at EVERY budget in that range: the agent's
+        # TOTAL helper-phase wall clock — primary wait, post-timeout settle and BOTH diagnostic
+        # drains combined — is at most this budget + 2s, strictly below this budget + 10s,
+        # leaving ~8s for journal persistence and the HTTP return even when every wait is
+        # consumed.
+        resolution-seconds: ${MANAO_PYTHON_DEPENDENCY_RESOLUTION_SECONDS:20}
       runtime-deps:
         # Must match the deployment's reserved NodePorts; 30080 is the platform ingress.
         reserved-public-ports: ${MANAO_RESERVED_PUBLIC_PORTS:30080}
@@ -69,3 +82,11 @@ manao:
         mysql-image-digest: ${MANAO_MYSQL_IMAGE_DIGEST:}
         redis-image-digest: ${MANAO_REDIS_IMAGE_DIGEST:}
         mysql-storage-class-name: ${MANAO_MYSQL_STORAGE_CLASS:}
+  runtime:
+    # Acceptance-only fault injection for the e2e FAILED-recovery case (deploy README 11.4):
+    # when armed with a canary package name, the FIRST-PARTY ADD of exactly that package fails
+    # closed AFTER prepare + durable PENDING registration (project FAILED with
+    # WORKSPACE_RECONCILIATION_REQUIRED, row survives) instead of committing. It must stay
+    # empty in every normal deployment; arm/disarm is an operator action inside the authorized
+    # window, recorded in the acceptance record.
+    dependency-pending-fault-package: ${MANAO_DEPENDENCY_PENDING_FAULT_PACKAGE:}

@@ -87,10 +87,10 @@ public final class RunObservationService {
             boolean stopIntent = "USER_STOPPED".equals(run.terminationIntent());
             if (observation.kind() == ObservationKind.MISSING) {
                 if (stopIntent) {
-                    settleAndComplete(run, RunState.CANCELLED, "USER_STOPPED", null);
+                    settleAndComplete(run, RunState.CANCELLED, "USER_STOPPED", null, null);
                 } else {
                     // Job does not exist; safe to mark as FAILED now.
-                    settleAndComplete(run, RunState.FAILED, "START_FAILED", null);
+                    settleAndComplete(run, RunState.FAILED, "START_FAILED", null, null);
                 }
                 return;
             }
@@ -143,7 +143,7 @@ public final class RunObservationService {
         RunStateReducer.settleOutcome(isServiceRun(settled), stopRequested(settled), settled.firstReadyAt() != null,
                 job, observation.receipt())
             .ifPresent(outcome -> settleAndComplete(settled, outcome.state(), outcome.terminationReason(),
-                job.exitCode()));
+                job.exitCode(), job));
     }
 
     /**
@@ -153,7 +153,7 @@ public final class RunObservationService {
      */
     private void observeStopping(RunRecord run, JobCoordinator.JobObservation observation) {
         if (observation.kind() == ObservationKind.MISSING) {
-            settleAndComplete(run, RunState.CANCELLED, "USER_STOPPED", null);
+            settleAndComplete(run, RunState.CANCELLED, "USER_STOPPED", null, null);
             return;
         }
         if (observation.kind() != ObservationKind.FOUND) {
@@ -163,7 +163,7 @@ public final class RunObservationService {
         RunStateReducer.settleOutcome(isServiceRun(run), true, run.firstReadyAt() != null,
                 job, observation.receipt())
             .ifPresent(outcome -> settleAndComplete(run, outcome.state(), outcome.terminationReason(),
-                job.exitCode()));
+                job.exitCode(), job));
     }
 
     /**
@@ -209,7 +209,16 @@ public final class RunObservationService {
         }
     }
 
-    private void settleAndComplete(RunRecord run, RunState state, String reason, Integer exitCode) {
+    private void settleAndComplete(RunRecord run, RunState state, String reason, Integer exitCode,
+                                   JobCoordinator.JobFacts facts) {
+        // The terminal history backfill persists what no watch ever captured BEFORE the terminal
+        // state is persisted and before log.complete is published; a deferred backfill retries on
+        // the next scan without settling.
+        if (facts != null && facts.podName() != null && facts.podUid() != null
+            && logIngestor.backfillHistoryBeforeFinish(run.id(), facts.podName(), facts.podUid())
+                == RunLogIngestor.TerminalBackfill.DEFERRED) {
+            return;
+        }
         if (!store.settle(run.id(), state, reason, exitCode)) return;
         if (endpoints != null && isServiceRun(run)) {
             try {
