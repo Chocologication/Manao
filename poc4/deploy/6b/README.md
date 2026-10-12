@@ -679,6 +679,24 @@ Backend `…@sha256:8432747459756156d5dd2ec0c313af3725cce1a597ccfd94557c40d8de8b
 `…@sha256:26a57cf3389e77c61fd7b22cd5dc4930b33cecdc03b41e8cf426f93e3ac1f862`
 (tag `6b-frontend-20260929`). Flyway stayed at version 10 (no new migration).
 
+Dependency mirror and batch import release (2026-10-12, branch `codex/python-runtime` HEAD
+`f2934f9`, user-authorized deployment the same day — acceptance.md section 8): backend,
+frontend, workspace agent and python runner were rebuilt from `f2934f9` and rolled in the
+order Secret patch (agent + runner keys) → frontend → backend. Maven runner and the workspace
+initializer keep the 2026-09-27 digests (zero Java runner source change this round). Flyway
+stayed at version 10 (no new migration; startup log: `Schema manao_poc4_6b is up to date`).
+Backend `…@sha256:5c15b502fa6f51cb2edb7013220c626f637f1776bb709418296a6f8ee44f76c0`
+(tag `6b-backend-20261012`), frontend
+`…@sha256:2952eb1a19ad5aee3c8a612bcec3b437e6c581e796ffbf1b62bd481e9b5cca0f`
+(tag `6b-frontend-20261012`), workspace agent
+`…@sha256:cc1ae046178ec5bbc605ceef20a1b4e336083342d614eb4a95c3417e71c731f5`
+(tag `manao-workspace-agent-20261012`), python runner
+`…@sha256:a0150ca9c00bf066edf5934bb014acbc2bb947b57180480b96140d397f5779f6`
+(tag `manao-python-runtime-20261012`, seed-id `8026436f…7b63`, launcher now offline-first
+locked sync — a runtime behavior change carried by this release, see acceptance.md §7.8/§8).
+Cold-image condition recorded honestly: no node pre-pull; the first workspace Pod and Run Job
+pulled the new digests at creation.
+
 The backend image digest and the Python runner digest are recorded as ONE pair in
 the acceptance record (design section 8): a backend that serves Python projects
 is only ever deployed together with its proven runner image. Pre-pull the pushed

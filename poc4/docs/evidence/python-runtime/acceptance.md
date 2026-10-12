@@ -239,3 +239,47 @@ TDD 记录：`batchBoundaryOfExactly50ValidLinesIsAccepted`（恰好 50 条有�
 1. **launcher 离线优先重试（恢复设计 §6 的无条件 seed 兼容性证明）——运行时行为变更，重点记录**：`poc4/python-runner/manao-python` 的锁定安装改为先 `uv sync --offline --locked …`、失败才以同一固定 argv（去掉 `--offline`）在线重试，两次尝试共享既有启动预算；锁内固定 artifact+哈希使过期索引元数据无法污染锁定安装，offline-first 成功集严格大于旧实现（陈旧缓存+断网现在可启动）。**这改变 Run 启动的安装行为（离线尝试先行、日志新增一行 retry 提示），随本轮代码携带，只有未来授权部署后才生效于集群。** 证据：重建 runner 测试镜像（exit 0；seed 阶段自带的 `--offline` 验证再次通过）后 `python-cache.sh` 全套 **14 passed / 0 failed（exit 0）**——`cold-cache-offline-web`、`warm-cache-reuse`、`extras-offline` 全部恢复 PASS，其余 11 项保持通过。§7.5 之 1 的时间窗边界文本已在 README 与本节替换为 offline-first 语义：seed 兼容性证明重新无条件成立、不再依赖 mirror 新鲜度策略。
 2. **helper 子进程环境剥离 `UV_*`**：`python-dependency-helper.py` 新增 `scrubbed_env()`（`os.environ` 去除全部 `UV_` 前缀变量，大小写敏感，其余 PATH/HOME/LANG/SSL_* 原样保留），`run_uv` 两个阶段统一使用——固定 argv 成为唯一的 index 权威，不再依赖 agent 最小环境这一层。`helper-env-override` 场景升级为强契约：直调 helper 且 helper 自身环境带敌意 `UV_DEFAULT_INDEX`+`UV_INDEX` 时，批量 add **成功（rc=0）**、生成 pyproject+lock 只记录 pinned mirror（15 个不同 URL 全部 mirrors.aliyun.com）、敌意主机在文件与输出中零出现、工作区源不变。证据：重建 agent 测试镜像（exit 0）后 `dependency-editor.sh` 全套 **23 passed / 0 failed（exit 0）**（两轮：修复验证 + lib.sh 泄漏验证各一轮）。agent 单测 76/76 保持通过。
 3. **harness 文件型容器注册表**：`tests/lib.sh` 新增 `register_container`（文件 `${PREFIX}-harness-containers-$$`，与卷注册表同机制）并在 `start_detached` 注册、EXIT 清理读取——命令替换内的注册不再丢失。证据：`dependency-editor.sh` 全套 23/23（exit 0）后泄漏检查：`docker ps -a --filter name=manao-py-dep-` 计数 **0**、`docker volume ls | grep manao-py-dep-` 计数 **0**、临时注册表文件 0 个——该轮零残留。两套件（dependency-editor/python-cache）行为一致；更早会话遗留的 7 个 Exited `task5-red/green/compile2` 容器按裁定保持不动（历史残留留档）。
+
+## 8. 部署与云端 E2E 记录（2026-10-12，用户授权部署）
+
+用户于 2026-10-12 授权云端部署。部署源为分支 `codex/python-runtime` HEAD `f2934f9`（含最终审查修复波）。**未合并**：分支仍未合并到 `master`。
+
+### 8.1 发布镜像与集群更新 — PASS
+
+| 组件 | 标签 | 生产 digest |
+| --- | --- | --- |
+| Backend | `6b-backend-20261012` | `chocologic/manao_images_repository@sha256:5c15b502fa6f51cb2edb7013220c626f637f1776bb709418296a6f8ee44f76c0` |
+| Frontend | `6b-frontend-20261012` | `chocologic/manao_images_repository@sha256:2952eb1a19ad5aee3c8a612bcec3b437e6c581e796ffbf1b62bd481e9b5cca0f` |
+| Workspace agent | `manao-workspace-agent-20261012` | `chocologic/manao_images_repository@sha256:cc1ae046178ec5bbc605ceef20a1b4e336083342d614eb4a95c3417e71c731f5` |
+| Python runner | `manao-python-runtime-20261012` | `chocologic/manao_images_repository@sha256:a0150ca9c00bf066edf5934bb014acbc2bb947b57180480b96140d397f5779f6`（seed-id `8026436f…7b63` 与 Task 5 记录逐字一致） |
+
+- Maven runner 与 workspace initializer：**未变更**（本轮零 Java runner 源改动，git diff `f6794b9..HEAD` 对 `poc4/maven-runner` 为空），沿用 2026-09-27 digest。
+- 顺序：patch Secret `manao-backend-images`（agent + runner 两个 key）→ 前端先行（`frontend.yaml` digest 替换 + apply，rollout 完成）→ backend（`backend.yaml` digest 替换 + apply，Recreate 单副本 08:42:09–08:42:47 本地时间，约 38 秒窗口）。
+- 健康检查：backend `readyReplicas=1`；Flyway `Schema manao_poc4_6b is up to date`（10 个 migration，**无新迁移**，schema 维持 V10）；公网入口登录 + `GET /api/v1/projects` HTTP 200。
+- 冷镜像条件如实记录：runner/agent 拉取发生在首个工作区 Pod/Run Job 创建时（未做节点预拉取），后续用例时间不作为启动性能样本。
+
+### 8.2 云端 E2E（`test:e2e:python-runtime`，headless Chromium 驱动真实公网入口）— 6 passed / 1 failed / 3 did not run
+
+PASS：登录与模板呈现、console 创建 + Run 成功、编辑后失败/修复再成功、FastAPI 双公网端口创建、FastAPI Run + 双端口业务响应、UI 停止 + 再启动。**这意味着新 runner 镜像的离线优先锁定安装、seed、真实 uv 解析在云端全部真实执行并通过。**
+
+FAILED（`add httpx through the dependency form, import it, remove it and fail the import again`，spec.ts:491，失败于 :534 的 pyproject 轮询）——经数据库与日志定界：
+
+- ADD httpx 成功（DB `workspace_operation` 恰一条 `PYTHON_DEPENDENCIES` COMMITTED，`[[tool.uv.index]]` 正确持久化阿里云地址）；导入 httpx 的 Run SUCCEEDED。
+- **REMOVE 操作从未到达后端**：DB 无第二条依赖操作行，backend 日志在该窗口零错误、零请求错误，`readPyproject` 直读服务器 API 120 秒轮询不到变更。
+- 机制定界：面板 `submit()` 在 `disabledReason !== null` 时**静默返回**（`PythonDependenciesPanel.tsx` submit 入口）；E2E 在终态 Run 的 workspace reload 窗口点击 Remove，**既有的编辑器挂载脏标记/revision 缓存时序**抢先关闭门控——点击落在 DOM 仍可用而状态机已翻转的间隙。 dirty 门控、静默返回与 reload 时序均为**本轮未触碰的既有代码**（`git show f6794b9` 面板已含同一 disableReason）；09-27 同一用例通过，本次为时序竞态暴露。
+- 分类：**产品缺陷（依赖面板在终态 reload 窗口的点击可静默无效、无任何提示），非本轮镜像/batch 改动引入**；独立于本轮交付，留待后续修复轮。
+
+3 个未运行用例（丢响应恢复、FAILED 核对恢复、双项目删除）因该失败被 Playwright 取消，属上述同一用例的下游，**NOT_REVERIFIED**。
+
+### 8.3 测试残留清理与用户手动验收状态
+
+- E2E 两个一次性项目（`py-console-20261012011713-ytlj`、`py-web-20261012011713-2yfa`）已按删除协议删除：py-console HTTP 204、py-web 在停止其活动 Run 后删除；kubectl 核对两项目 id 的 Pod/PVC/Service/Job **零残留**。
+- 保留一次性项目 `pyimport-20261012`（Python console，workspace revision 14，根目录 requirements.txt 已写入 3 条依赖 + 注释 + 空行，无任何依赖操作）**供用户手动验收批量导入**；用户手动验收完成后可从 UI 删除。
+- 按用户 2026-10-12 指示，E2E 结束后**暂停后续自动化测试**，批量导入按钮的真实浏览器点击流由用户手动验收。
+
+### 8.4 本轮边界（部署后仍然成立）
+
+- 批量导入（requirements.txt → 一次 batch POST → 一次 revision）在云端的**按钮级**真实浏览器验收：**待用户手动验收**；协议级与容器级证据见 §7.3、§7.4（batch-commit/batch-idempotent/mirror-observed 全部 PASS）。
+- 7200 秒正式用例：**NOT_REVERIFIED**（维持既有基线）。
+- 历史项目（test4/test5，pyproject 持久化 pypi.org 索引）的 422 边界：**未触碰、NOT_REVERIFIED**（按约束禁止修改历史项目）。
+- 依赖面板静默无效缺陷的修复：独立后续项，见 §8.2。
