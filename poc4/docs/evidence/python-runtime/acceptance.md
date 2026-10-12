@@ -118,7 +118,7 @@ API 删除 4 个本轮一次性项目（py-smoke、py-7200、java-reg-console、
 
 ## 6. 工作台与日志修复轮发布记录（2026-09-29）
 
-发布授权：用户于 2026-09-29 明确指示「本轮修改后的代码是否部署上线？没有则现在进行部署」。分支仍**未合并**到 `master`；本轮部署与验收基于分支 `codex/python-runtime` HEAD `78beafc`（含修复提交 `5a3fef5`、`7d5efa2`、`d119465`、`86e65a0` 与文档提交）。部署范围仅 backend/frontend 两个镜像；runner/agent/initializer 与 Secret 全部保持 §5 的既有值（无新迁移，无 RBAC 变化）。
+发布授权：用户于 2026-09-29 明确指示「本轮修改后的代码是否部署上线？没有则现在进行部署」。分支当时**未合并**到 `master`（后记：已于 2026-10-12 由合并提交 `2ef32a5` 并入）；本轮部署与验收基于分支 `codex/python-runtime` HEAD `78beafc`（含修复提交 `5a3fef5`、`7d5efa2`、`d119465`、`86e65a0` 与文档提交）。部署范围仅 backend/frontend 两个镜像；runner/agent/initializer 与 Secret 全部保持 §5 的既有值（无新迁移，无 RBAC 变化）。
 
 ### 6.1 发布镜像（tag `*-20260929`，构建自 `78beafc`）
 
@@ -168,7 +168,7 @@ API 删除 4 个本轮一次性项目（py-smoke、py-7200、java-reg-console、
 
 ## 7. 依赖镜像切换与批量导入轮验证记录（2026-10-11）
 
-本轮（`2026-10-11-python-dependency-mirror-batch-import-plan` 计划 Tasks 0–5，分支 `codex/python-runtime`，执行 commit 范围 `f2fee94`..`32d2b27` 加本节所在提交）只完成实现与本地/容器级验证：**未部署、未合并、无任何云端操作**；云端浏览器 E2E、7200 秒正式用例与历史项目真实行为一律 NOT_REVERIFIED。既有 1–6 节不改写。
+本轮（`2026-10-11-python-dependency-mirror-batch-import-plan` 计划 Tasks 0–5，分支 `codex/python-runtime`，执行 commit 范围 `f2fee94`..`32d2b27` 加本节所在提交）在本节书写时点只完成实现与本地/容器级验证：**未部署、未合并、无任何云端操作**（该状态其后被 §8 的部署与合并取代）；云端浏览器 E2E、7200 秒正式用例与历史项目真实行为当时一律 NOT_REVERIFIED。既有 1–6 节不改写。
 
 ### 7.1 任务 0 预检摘要（2026-10-11，完整记录见该轮 SDD 台账 task-0-report.md）
 
@@ -218,7 +218,7 @@ TDD 记录：`batchBoundaryOfExactly50ValidLinesIsAccepted`（恰好 50 条有�
 
 ### 7.6 本轮边界（显式 SKIPPED / NOT_REVERIFIED）
 
-- **未部署**：无任何镜像推送、无 Kubernetes 操作、未触碰 test4/test5 与线上数据；`manao-stage6b` 未应用本轮任何变更。**未合并**：分支仍未合并到 `master`。
+- **未部署**：无任何镜像推送、无 Kubernetes 操作、未触碰 test4/test5 与线上数据；`manao-stage6b` 未应用本轮任何变更。**未合并**：分支当时仍未合并到 `master`（已于 2026-10-12 部署并合并，见 §8）。
 - 云端真实浏览器 E2E（创建项目 → 编辑 requirements.txt → 导入 → 一次提交多条 → Run → import 验证 → 删除回收）：**SKIPPED / NOT_REVERIFIED**（用户明确禁止部署）。
 - 7200 秒正式用例：**NOT_REVERIFIED**（维持 §5.7 的 SKIPPED 基线）。
 - 历史项目行为（含 2026-09-27 后执行过依赖操作、pyproject 持久化 `[tool.uv] index url=https://pypi.org/simple` 的项目在下一次依赖操作得到固定 `PYTHON_DEPENDENCY_UNSUPPORTED` 及其工作台手动恢复路径）：容器级由 `tooluva-policy` 场景覆盖（旧 index 与缺尾斜杠 URL 均被 422 拒绝、无 journal）；**真实云端历史项目行为 NOT_REVERIFIED**。
@@ -234,7 +234,7 @@ TDD 记录：`batchBoundaryOfExactly50ValidLinesIsAccepted`（恰好 50 条有�
 
 ### 7.8 同日修复轮（2026-10-11，控制器裁定 1–3；运行时行为变更随本轮携带，仅在获得部署授权后才上线）
 
-三项裁定全部实施为本地容器级修复，**仍未部署、未合并**。执行 commit：`006199f`（helper）、`c836daa`（launcher）、`092b4a3`（harness）加本小节所在文档提交。
+三项裁定全部实施为本地容器级修复（书写时点**未部署、未合并**，其后随 §8 于 2026-10-12 部署上线）。执行 commit：`006199f`（helper）、`c836daa`（launcher）、`092b4a3`（harness）加本小节所在文档提交。
 
 1. **launcher 离线优先重试（恢复设计 §6 的无条件 seed 兼容性证明）——运行时行为变更，重点记录**：`poc4/python-runner/manao-python` 的锁定安装改为先 `uv sync --offline --locked …`、失败才以同一固定 argv（去掉 `--offline`）在线重试，两次尝试共享既有启动预算；锁内固定 artifact+哈希使过期索引元数据无法污染锁定安装，offline-first 成功集严格大于旧实现（陈旧缓存+断网现在可启动）。**这改变 Run 启动的安装行为（离线尝试先行、日志新增一行 retry 提示），随本轮代码携带，只有未来授权部署后才生效于集群。** 证据：重建 runner 测试镜像（exit 0；seed 阶段自带的 `--offline` 验证再次通过）后 `python-cache.sh` 全套 **14 passed / 0 failed（exit 0）**——`cold-cache-offline-web`、`warm-cache-reuse`、`extras-offline` 全部恢复 PASS，其余 11 项保持通过。§7.5 之 1 的时间窗边界文本已在 README 与本节替换为 offline-first 语义：seed 兼容性证明重新无条件成立、不再依赖 mirror 新鲜度策略。
 2. **helper 子进程环境剥离 `UV_*`**：`python-dependency-helper.py` 新增 `scrubbed_env()`（`os.environ` 去除全部 `UV_` 前缀变量，大小写敏感，其余 PATH/HOME/LANG/SSL_* 原样保留），`run_uv` 两个阶段统一使用——固定 argv 成为唯一的 index 权威，不再依赖 agent 最小环境这一层。`helper-env-override` 场景升级为强契约：直调 helper 且 helper 自身环境带敌意 `UV_DEFAULT_INDEX`+`UV_INDEX` 时，批量 add **成功（rc=0）**、生成 pyproject+lock 只记录 pinned mirror（15 个不同 URL 全部 mirrors.aliyun.com）、敌意主机在文件与输出中零出现、工作区源不变。证据：重建 agent 测试镜像（exit 0）后 `dependency-editor.sh` 全套 **23 passed / 0 failed（exit 0）**（两轮：修复验证 + lib.sh 泄漏验证各一轮）。agent 单测 76/76 保持通过。
@@ -242,7 +242,7 @@ TDD 记录：`batchBoundaryOfExactly50ValidLinesIsAccepted`（恰好 50 条有�
 
 ## 8. 部署与云端 E2E 记录（2026-10-12，用户授权部署）
 
-用户于 2026-10-12 授权云端部署。部署源为分支 `codex/python-runtime` HEAD `f2934f9`（含最终审查修复波）。**未合并**：分支仍未合并到 `master`。
+用户于 2026-10-12 授权云端部署。部署源为分支 `codex/python-runtime` HEAD `f2934f9`（含最终审查修复波）。**已合并**：用户完成手动测试并确认整个 Python slice 完成使命后，分支于 2026-10-12 由合并提交 `2ef32a5` 以 no-fast-forward 方式并入 `master`（合并树上全套验证：workspace-agent、backend 全量、frontend 全量、tsc 均 exit 0）。
 
 ### 8.1 发布镜像与集群更新 — PASS
 
@@ -271,18 +271,18 @@ FAILED（`add httpx through the dependency form, import it, remove it and fail t
 
 3 个未运行用例（丢响应恢复、FAILED 核对恢复、双项目删除）因该失败被 Playwright 取消，属上述同一用例的下游，**NOT_REVERIFIED**。
 
-### 8.3 测试残留清理与用户手动验收状态
+### 8.3 测试残留清理与用户手动验收
 
 - E2E 两个一次性项目（`py-console-20261012011713-ytlj`、`py-web-20261012011713-2yfa`）已按删除协议删除：py-console HTTP 204、py-web 在停止其活动 Run 后删除；kubectl 核对两项目 id 的 Pod/PVC/Service/Job **零残留**。
-- 保留一次性项目 `pyimport-20261012`（Python console，workspace revision 14，根目录 requirements.txt 已写入 3 条依赖 + 注释 + 空行，无任何依赖操作）**供用户手动验收批量导入**；用户手动验收完成后可从 UI 删除。
-- 按用户 2026-10-12 指示，E2E 结束后**暂停后续自动化测试**，批量导入按钮的真实浏览器点击流由用户手动验收。
+- 曾保留一次性项目 `pyimport-20261012`（Python console，根目录 requirements.txt 已写入 3 条依赖 + 注释 + 空行）供用户手动验收批量导入；**用户于 2026-10-12 完成手动测试与实际使用并确认分支完成使命**（原话依据：「经过手动测试和实际使用之后，当前的Python-runtime分支我觉得已经完成其使命」），其后授权合并回 `master`；该一次性项目的最终状态以线上实际为准（用户验收后可自行删除）。
+- 按用户 2026-10-12 指示，E2E 结束后**暂停后续自动化测试**；批量导入按钮的真实浏览器点击流由用户手动验收完成。
 
-### 8.4 本轮边界（部署后仍然成立）
+### 8.4 本轮边界（合并时点仍然成立）
 
-- 批量导入（requirements.txt → 一次 batch POST → 一次 revision）在云端的**按钮级**真实浏览器验收：**待用户手动验收**；协议级与容器级证据见 §7.3、§7.4（batch-commit/batch-idempotent/mirror-observed 全部 PASS）。
+- 批量导入（requirements.txt → 一次 batch POST → 一次 revision）的按钮级真实浏览器验收：由**用户手动验收完成**（§8.3）；协议级与容器级证据见 §7.3、§7.4（batch-commit/batch-idempotent/mirror-observed 全部 PASS）。
 - 7200 秒正式用例：**NOT_REVERIFIED**（维持既有基线）。
 - 历史项目（test4/test5，pyproject 持久化 pypi.org 索引）的 422 边界：**未触碰、NOT_REVERIFIED**（按约束禁止修改历史项目）。
-- 依赖面板静默无效缺陷的修复：独立后续项，见 §8.2。
+- 依赖面板静默无效缺陷的修复：独立后续项，见 §8.2 与 §8.5 之 1。
 
 ### 8.5 随轮推迟的质量小项（收编自本轮 SDD 台账；台账工作区删除后本清单为唯一在库记录）
 

@@ -1,6 +1,6 @@
 # Python 依赖镜像源与批量导入实施计划
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use `superpowers:executing-plans` to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking. 本文件只描述计划；当前未实施、未提交、未部署。
+> **For agentic workers:** REQUIRED SUB-SKILL: Use `superpowers:executing-plans` to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking. 本文件只描述计划；后记：全部任务已于 2026-10-11/12 按 SDD 实施并部署（执行记录见 [Python Acceptance](../../poc4/docs/evidence/python-runtime/acceptance.md) 第 7–8 节），分支于 2026-10-12 由 `2ef32a5` 合并到 `master`。
 
 **Goal:** 在现有 Python `uv add/remove` 可靠操作协议上，将新依赖解析默认切换到阿里云 PyPI 镜像，并增加一个把根目录 `requirements.txt` 批量导入合并为一次事务的入口。
 
@@ -10,7 +10,7 @@
 
 **Spec:** [Python Runtime Design](../specs/2026-09-25-python-runtime-design.md)；本计划补充其中原先明确排除的镜像源与批量依赖提升点。
 
-**Status:** 2026-10-11 规划阶段。基于分支 `codex/python-runtime` 当前已完成的 Python 运行时、工作台红字重试和终态日志补采实现；不包含部署授权。
+**Status:** 已完成。2026-10-11 规划，2026-10-11/12 在分支 `codex/python-runtime` 按 SDD 实施（任务 0–5 各有任务级审查，最终整计划审查 clean），2026-10-12 经用户授权部署到 `manao-stage6b` 并通过云端 E2E（1 项失败定界为既有缺陷，见 acceptance §8.2），用户手动验收后于 2026-10-12 合并到 `master`（`2ef32a5`，no fast-forward）。
 
 ## Global Constraints
 

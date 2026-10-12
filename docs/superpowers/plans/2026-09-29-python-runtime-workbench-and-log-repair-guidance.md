@@ -9,7 +9,8 @@
 > 既有 watch 再补采"，其硬性约束（去重、补采先于 log.complete、不丢内容）全部保持。
 > 已于 2026-09-29 经用户授权部署到 `manao-stage6b`（backend/frontend 镜像重建，runner 镜像
 > 不变），修复经真实浏览器与集群验证通过（验收证据见
-> [Python Acceptance](../../evidence/python-runtime/acceptance.md) 第 6 节）；分支仍未合并到 `master`。
+> [Python Acceptance](../../evidence/python-runtime/acceptance.md) 第 6 节）；分支已于 2026-10-12
+> 由 `2ef32a5` 合并到 `master`。
 >
 > 适用分支：`codex/python-runtime`，工作树：`.worktree/python-runtime`。
 >
