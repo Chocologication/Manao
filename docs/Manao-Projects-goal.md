@@ -1,6 +1,6 @@
 # Manao Project Goal
 
-Updated: 2026-09-25. This document defines product scope, not live infrastructure health. Stage acceptance and measured results are linked below.
+Updated: 2026-10-13. Current integrated baseline: `master` at `5e08a9e`, including the Python slice merged by `2ef32a5` (2026-10-12). This document defines product scope, not live infrastructure health. Stage acceptance and measured results are linked below.
 
 ## Product Vision
 
@@ -52,10 +52,16 @@ The [Java Runtime Design](superpowers/specs/2026-09-21-java-project-runtime-desi
 
 On 2026-09-22 the user approved preloading standard template dependencies/plugins in the Java runner image and retaining each project's Maven cache in a separate directory on its existing workspace PVC. This improves first and repeated application Runs; workspace creation does not wait for Maven. No extra cache PVC is introduced. The [Maven cache supplement](superpowers/plans/2026-09-22-java-maven-cache-implementation-plan.md) was implemented (C1/C2), and C3 deployed it with the dedicated cache acceptance completed the same day, recorded in the [runtime acceptance record](../poc4/docs/evidence/java-runtime/acceptance.md) section 8; that round's 58s first-run and 7s cache-reuse timings are measured samples, not a general performance promise. The formal 7200s run remains WAIVED_BY_USER and one DELETING leftover awaits an operator decision. Future language support may reuse the project-cache lifecycle without adding a general cache framework now.
 
-POC4 remains the delivered baseline. AI, additional languages and the new runtime capabilities are not established by its acceptance, and historical stage numbers and completed gates are not being rewritten.
+The original POC4 acceptance remains the baseline evidence for that MVP. Java and Python extensions have their own acceptance records; AI is not delivered. Historical stage numbers and completed gates are not being rewritten.
 
-## Next Agreed Direction: Python Adaptation
+## Delivered Extension: Python Runtime
 
-On 2026-09-25 the user requested a Python-first language adaptation plan after Java integration, with Go and TypeScript to follow individually. The confirmed Python scope includes ordinary programs, FastAPI web services and a minimal browser entry for `uv add/remove`. Project ports, MySQL/Redis ownership and bounded Run lifetimes reuse the Java runtime contract.
+On 2026-09-25 the user requested Python adaptation after Java integration. The delivered scope includes ordinary programs, FastAPI web services, browser `uv add/remove`, dependency recovery, the workbench/log repair, the dependency mirror and requirements.txt batch import. Project ports, MySQL/Redis ownership and bounded Run lifetimes reuse the Java runtime contract.
 
-The reviewed r2 [Python Runtime Design](superpowers/specs/2026-09-25-python-runtime-design.md) records the module responsibilities, compatibility rules and recoverable pyproject/lock update protocol. The [Python implementation plan](superpowers/plans/2026-09-25-python-runtime-implementation-plan.md) defines eleven sequential tasks: the Run workflow first, then dependency editing with stable operation identity and reachable recovery, followed by release preparation and cloud acceptance. The [agent handoff](superpowers/plans/2026-09-25-python-runtime-agent-handoff.md) supplies execution instructions. These are planning artifacts based on `06e81338`; Python has not been implemented or accepted. AI and the later language slices are not part of this plan.
+The slice was deployed and cloud-accepted on `codex/python-runtime`, then merged to `master` by `2ef32a5` (2026-10-12, no fast-forward) after the user's manual acceptance. The [Python acceptance record](../poc4/docs/evidence/python-runtime/acceptance.md), sections 5–8, owns the dated results and limits: the initial cloud E2E passed 10/10; the mirror/batch round recorded 6 passed / 1 failed / 3 not run, with the pre-existing dependency-panel race and deferred minors retained. The formal 7200s case remains SKIPPED by user instruction. The [design](superpowers/specs/2026-09-25-python-runtime-design.md), [implementation plan](superpowers/plans/2026-09-25-python-runtime-implementation-plan.md) and [handoff](superpowers/plans/2026-09-25-python-runtime-agent-handoff.md) remain historical execution records, not a new task queue.
+
+## Next Agreed Direction: Autonomous Coding Agent
+
+On 2026-10-13 the user chose to skip Go/TypeScript adaptation and enter AI integration selection and design directly. Those language slices are no longer prerequisites. The target is an autonomous coding Agent: after receiving a task, it reads and writes code, manages dependencies, uses Shell, runs the application and repairs failures within the current user's project. Ordinary project operations run automatically; destructive or otherwise high-risk operations require confirmation. The Agent must not operate on the Manao platform itself. Only cloud model APIs are in scope; local model inference is excluded. Future expansion prioritizes coding-oriented MCP/Skills, multiple Agents, project tools and more complex tasks.
+
+Selection prioritizes open-source options: Vercel AI SDK, Pi, DeerFlow and LiteRT-LM are candidates, with self-built orchestration as the last fallback. The [framework evaluation](research/2026-10-13-ai-integration-framework-evaluation.md) owns the comparison and design questions. No framework has been selected, and this direction does not claim AI implementation, deployment or acceptance.

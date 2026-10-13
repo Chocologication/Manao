@@ -5,6 +5,8 @@
 * **版本：v4.0**
 * **时间：2026年5月12日**
 
+> 2026-10-13 阶段对齐：Java/Python 运行能力已交付；用户决定跳过 Go/TypeScript 适配，直接进入自主编程 Agent 的选型与设计。仅调用云端模型 API，后续围绕编程扩展 MCP/Skills、多 Agent 和项目工具。本文其余广义愿景不代表当前交付或本阶段全部范围；当前状态见[项目目标](Manao-Projects-goal.md)，候选与证据见[AI 框架评估](research/2026-10-13-ai-integration-framework-evaluation.md)。
+
 ---
 
 # 1，项目概述
@@ -431,7 +433,7 @@ Jenkins + Docker + Kubernetes + Helm + KubeSphere + Metrics Server + Prometheus 
 
 #### 关键要求
 
-1. AI 不直接修改用户代码，默认以建议形式输出。
+1. 按 2026-10-13 确认的自主编程目标，AI 可在用户下达任务后自动完成当前用户项目内的普通代码读写、依赖管理、Shell、运行与修复；破坏性或其他高风险操作需确认，禁止操作 Manao 平台。此约定取代初版“仅建议、不直接修改”的默认边界，具体工具与审批规则在 AI 阶段设计中落实。
 2. AI 响应需绑定当前项目、当前文件、当前运行结果等上下文。
 3. 需保留 AI 会话记录，支持后续追溯。
 4. 管理员可配置模型路由、Prompt 模板和调用额度。
