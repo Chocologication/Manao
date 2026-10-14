@@ -398,6 +398,13 @@ class AgentTaskStoreTest {
             String taskId = UUID.randomUUID().toString();
             store.create(OWNER, PROJECT, new TaskRequest(taskId, "change demo", 7));
             store.registerToolCall(taskId, "call-1", "a".repeat(64), "build", "{}", 7, "command-1");
+            // The store's own registration gate refuses a second unsettled side-effect
+            // call even below the tools layer — the C1 arbitration is authoritative here.
+            assertThatThrownBy(() -> store.registerToolCall(taskId, "call-2", "b".repeat(64),
+                "build", "{}", 7, "command-2"))
+                .isInstanceOfSatisfying(ApiException.class,
+                    ex -> assertThat(ex.code()).isEqualTo("AI_CALL_UNSETTLED"));
+            store.completeToolCall(taskId, "call-1", "{}");
             store.registerToolCall(taskId, "call-2", "b".repeat(64), "build", "{}", 7, "command-2");
 
             // A call that never started carries no identity to recover.
@@ -425,6 +432,113 @@ class AgentTaskStoreTest {
 
             assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM agent_task", Long.class)).isZero();
             assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM agent_tool_call", Long.class)).isZero();
+        }
+    }
+
+    @Test
+    void aTerminalCannotSettleWhileAToolCallIsUnsettled() {
+        try (var db = JdbcStoreTestSupport.create()) {
+            var jdbc = db.jdbc();
+            seed(jdbc);
+            var store = store(db);
+            String taskId = UUID.randomUUID().toString();
+            store.create(OWNER, PROJECT, new TaskRequest(taskId, "change demo", 7));
+            store.registerToolCall(taskId, "call-write", "a".repeat(64), "write_file",
+                "{\"path\":\"src/Demo.java\"}", 7, "op-1");
+            // The worker reports a terminal verdict while the write call is unsettled:
+            // the verdict cannot release the project. The call durably records the
+            // pending-terminal marker instead of the reported verdict.
+            assertThat(store.applyTerminal(taskId, AgentContracts.TaskState.COMPLETED, "done", null))
+                .isTrue();
+            var row = jdbc.queryForObject(
+                "SELECT CONCAT_WS('|', state, failure_code, IFNULL(summary, '')) FROM agent_task WHERE id = ?",
+                String.class, taskId);
+            // The report stays recorded as a to-be-verified event: the explicit marker
+            // keeps the project occupied and the reported summary is retained.
+            assertThat(row).isEqualTo("NEEDS_ATTENTION|" + AgentTaskStore.TERMINAL_PENDING_MARKER + "|done");
+            assertThatThrownBy(() -> store.requireBrowserWritable(PROJECT))
+                .isInstanceOfSatisfying(ApiException.class,
+                    ex -> assertThat(ex.code()).isEqualTo("AI_TASK_ACTIVE"));
+            // Every side effect settles; the close flow arms its own marker over the
+            // pending-terminal one and releases the project.
+            store.completeToolCall(taskId, "call-write", "{}");
+            assertThat(store.beginClose(taskId)).isEqualTo(AgentTaskStore.CloseEntry.START);
+            assertThat(store.failClosedTask(taskId, "AI_CLOSED", "closed")).isTrue();
+        }
+    }
+
+    @Test
+    void aTerminalAppliesOnceEveryToolCallHasSettled() {
+        try (var db = JdbcStoreTestSupport.create()) {
+            var jdbc = db.jdbc();
+            seed(jdbc);
+            var store = store(db);
+            String taskId = UUID.randomUUID().toString();
+            store.create(OWNER, PROJECT, new TaskRequest(taskId, "change demo", 7));
+            store.registerToolCall(taskId, "call-1", "a".repeat(64), "list_files", "{}", 7, null);
+            store.completeToolCall(taskId, "call-1", "{}");
+            assertThat(store.applyTerminal(taskId, AgentContracts.TaskState.FAILED, "failed", "AI_PROVIDER_ERROR"))
+                .isTrue();
+            assertThat(jdbc.queryForObject("SELECT state FROM agent_task WHERE id = ?", String.class, taskId))
+                .isEqualTo("FAILED");
+        }
+    }
+
+    @Test
+    void theFencingEpochIsPersistedExactlyOnceAtCreation() {
+        try (var db = JdbcStoreTestSupport.create()) {
+            var jdbc = db.jdbc();
+            seed(jdbc);
+            var store = store(db);
+            String taskId = UUID.randomUUID().toString();
+            var request = new TaskRequest(taskId, "change demo", 7);
+            store.create(OWNER, PROJECT, request);
+            assertThat(jdbc.queryForObject("SELECT worker_epoch FROM agent_task WHERE id = ?", Long.class, taskId))
+                .isEqualTo(1L);
+            // The same-request retry answers the original task and never re-fences it.
+            store.create(OWNER, PROJECT, request);
+            assertThat(jdbc.queryForObject("SELECT worker_epoch FROM agent_task WHERE id = ?", Long.class, taskId))
+                .isEqualTo(1L);
+        }
+    }
+
+    @Test
+    void verifiedWritesAdvanceTheSnapshotRevisionAndAccumulateChangedPaths() throws Exception {
+        try (var db = JdbcStoreTestSupport.create()) {
+            var jdbc = db.jdbc();
+            seed(jdbc);
+            var store = store(db);
+            String taskId = UUID.randomUUID().toString();
+            store.create(OWNER, PROJECT, new TaskRequest(taskId, "change demo", 7));
+            store.recordVerifiedWrite(taskId, "src/Demo.java", 8);
+            // A replayed settlement (same revision) never regresses or duplicates.
+            store.recordVerifiedWrite(taskId, "src/Demo.java", 8);
+            store.recordVerifiedWrite(taskId, "pom.xml", 9);
+            var snapshot = store.findForOwner(OWNER, PROJECT, taskId).orElseThrow();
+            assertThat(snapshot.workspaceRevision()).isEqualTo("9");
+            assertThat(snapshot.changedPaths()).containsExactly("src/Demo.java", "pom.xml");
+            // The creation revision is preserved for the evidence record while the
+            // snapshot carries the latest verified version.
+            assertThat(jdbc.queryForObject(
+                "SELECT workspace_revision FROM agent_task WHERE id = ?", Long.class, taskId)).isEqualTo(7L);
+            // The serialized snapshot keeps the field names the browser parses.
+            var json = new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(snapshot);
+            assertThat(json).contains("\"changedPaths\"").contains("\"workspaceRevision\"");
+        }
+    }
+
+    @Test
+    void aStaleWriteSettlementNeverRegressesTheSnapshotRevision() {
+        try (var db = JdbcStoreTestSupport.create()) {
+            seed(db.jdbc());
+            var store = store(db);
+            String taskId = UUID.randomUUID().toString();
+            store.create(OWNER, PROJECT, new TaskRequest(taskId, "change demo", 7));
+            store.recordVerifiedWrite(taskId, "src/Demo.java", 9);
+            store.recordVerifiedWrite(taskId, "src/Other.java", 8);
+            var snapshot = store.findForOwner(OWNER, PROJECT, taskId).orElseThrow();
+            assertThat(snapshot.workspaceRevision()).isEqualTo("9");
+            assertThat(snapshot.changedPaths()).containsExactly("src/Demo.java");
         }
     }
 

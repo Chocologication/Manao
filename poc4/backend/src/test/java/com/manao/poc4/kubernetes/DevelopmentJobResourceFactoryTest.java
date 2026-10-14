@@ -107,8 +107,20 @@ class DevelopmentJobResourceFactoryTest {
         assertThat(copy.getImage()).isEqualTo(IMAGE);
         assertThat(copy.getCommand()).containsExactly("/usr/local/bin/manao-dev-build", "copy");
         var mounts = copy.getVolumeMounts();
+        // The launcher's mktemp needs a WRITABLE /tmp under the read-only root filesystem
+        // (review fix I4): the copy container mounts the same tmp emptyDir the main
+        // container uses, so the copy phase can never fail on its own manifest file.
         assertThat(mounts).extracting(mount -> mount.getMountPath())
-            .containsExactlyInAnyOrder("/source", "/workspace");
+            .containsExactlyInAnyOrder("/source", "/workspace", "/tmp");
+        var tmp = mounts.stream().filter(mount -> mount.getMountPath().equals("/tmp"))
+            .findFirst().orElseThrow();
+        assertThat(tmp.getName()).isEqualTo("tmp");
+        // null means the Kubernetes default (writable); it must never be read-only.
+        assertThat(tmp.getReadOnly()).isNotEqualTo(Boolean.TRUE);
+        // The copy container runs under the exact production security envelope.
+        assertThat(copy.getSecurityContext().getReadOnlyRootFilesystem()).isTrue();
+        assertThat(copy.getSecurityContext().getRunAsUser())
+            .isEqualTo(WorkspaceResourceFactory.WORKSPACE_UID);
         var source = mounts.stream().filter(mount -> mount.getMountPath().equals("/source"))
             .findFirst().orElseThrow();
         assertThat(source.getName()).isEqualTo("source");

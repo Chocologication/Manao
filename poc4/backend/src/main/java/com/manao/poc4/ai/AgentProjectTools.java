@@ -169,6 +169,26 @@ public final class AgentProjectTools {
     }
 
     /**
+     * The internal reconciliation answer for one call (review fix I3): absent (the
+     * controller 404s), executing/unsettled (RUNNING or NEEDS_ATTENTION, no result),
+     * or settled (COMPLETED with the durable answer). It never re-drives anything and
+     * never misreads an executing call as an unregistered submission.
+     */
+    public Optional<AgentContracts.ToolCallStatus> callStatus(String taskId, String toolCallId) {
+        return tasks.findToolCall(taskId, toolCallId).map(row -> {
+            if ("COMPLETED".equals(row.state()) && row.resultJson() != null) {
+                return new AgentContracts.ToolCallStatus("COMPLETED", storedResult(row));
+            }
+            if ("NEEDS_ATTENTION".equals(row.state())) {
+                return new AgentContracts.ToolCallStatus("NEEDS_ATTENTION", null);
+            }
+            // REGISTERED (claimed, not yet executing) and RUNNING (executing) are the
+            // same thing to the reconciling worker: the call exists and is not settled.
+            return new AgentContracts.ToolCallStatus("RUNNING", null);
+        });
+    }
+
+    /**
      * The close flow's evidence finishing. Returns true only when every
      * still-unsettled call of the task is provably finished:
      *
@@ -180,6 +200,10 @@ public final class AgentProjectTools {
      *       the shared finish path (collect the log, delete by the original identity)
      *       with the cleanup CONFIRMED, and a started-but-unrecorded build was only
      *       observed by its deterministic name — never created, never re-executed;</li>
+     *   <li>a claimed-but-running build is released only when no execution thread of
+     *       this process still holds its live claim: an active claim keeps the project
+     *       occupied, while a restart leftover (no live claim) is closed by its stable
+     *       identity and its collected evidence settles the row;</li>
      *   <li>read-only calls and never-started builds have nothing left to finish and
      *       are closed out in the ledger as NEEDS_ATTENTION records.</li>
      * </ul>
@@ -204,14 +228,36 @@ public final class AgentProjectTools {
         for (AgentTaskStore.ToolCallRow row : unsettled) {
             if ("build".equals(row.toolName())) {
                 if ("RUNNING".equals(row.state())) {
-                    // A claimed-but-unsettled build is IN FLIGHT: its execution thread
-                    // sits between the atomic REGISTERED->RUNNING claim and the Job
-                    // create, so the negative cluster query proves nothing — the Job
-                    // may not exist YET. The row is the authority: never release while
-                    // it is RUNNING. The build path itself settles this row (its
-                    // closing fence aborts the create deterministically) or the thread
-                    // dies and an operator decides.
-                    return false;
+                    if (tasks.isBuildClaimLive(taskId, row.toolCallId())) {
+                        // An active execution thread of THIS process sits between the
+                        // atomic REGISTERED->RUNNING claim and its settlement: the Job
+                        // may not exist YET, so the negative cluster query proves nothing
+                        // and the row is the authority — never release while it runs.
+                        return false;
+                    }
+                    // A RUNNING row without a live claim is a restart leftover (review fix
+                    // I6): the executing thread is gone, so the durable row is finished by
+                    // its stable identity — the recorded Job/Pod identity when one was
+                    // bound, the deterministic commandId name otherwise. Close never
+                    // creates and never re-executes; a confirmed cleanup settles the row
+                    // with the collected evidence, an unconfirmed one keeps the task
+                    // occupied for another close attempt.
+                    AgentContracts.BuildResult closed;
+                    try {
+                        closed = builds.close(buildRequestOf(owner, row), new AgentContracts.BuildIdentity(
+                            row.jobName(), row.jobUid(), row.podUid()));
+                    } catch (RuntimeException ex) {
+                        // The evidence could not be finished: stay occupied.
+                        return false;
+                    }
+                    if (closed == null || !closed.cleanupConfirmed()) {
+                        return false;
+                    }
+                    tasks.settleClosedBuildCall(taskId, row.toolCallId(), jsonOf(fittedBuildResult(
+                        new AgentContracts.ToolResult(row.toolCallId(),
+                            Long.toString(currentRevision(owner.projectId())),
+                            buildData(buildRequestOf(owner, row), closed), closed.truncated()))));
+                    continue;
                 }
                 if (row.jobName() == null) {
                     // REGISTERED or NEEDS_ATTENTION without identity: no claim is in
@@ -389,6 +435,10 @@ public final class AgentProjectTools {
         }
         long revision = operations.applyAgentSave(owner.projectId(), row.workspaceOperationId(), path, bytes,
             request.expectedRevision(), expectedSha256(request.args()));
+        // The write is now verified: the task's snapshot carries the latest verified
+        // revision and the deduped changed path (review fix I1), so a browser refresh
+        // and the acceptance evidence can follow the real mutation.
+        tasks.recordVerifiedWrite(row.taskId(), path, revision);
         return new AgentContracts.ToolResult(request.toolCallId(), Long.toString(revision), data, false);
     }
 
@@ -447,9 +497,15 @@ public final class AgentProjectTools {
                 // First execution is claimed by the atomic REGISTERED->RUNNING transition: the
                 // request that wins it runs the build; the loser of the race re-reads the
                 // durable state and follows the recovery path, so one call id can never start
-                // a second build even when two requests raced past the gate together.
+                // a second build even when two requests raced past the gate together. The
+                // live-claim marker is retired only after the row has settled, so a close
+                // running concurrently always sees the claim for what it is (review fix I6).
                 if (tasks.markToolCallRunning(row.taskId(), row.toolCallId())) {
-                    built = builds.build(buildRequest);
+                    try {
+                        built = builds.build(buildRequest);
+                    } finally {
+                        tasks.releaseBuildClaim(row.taskId(), row.toolCallId());
+                    }
                 } else {
                     built = tasks.boundBuildIdentity(row.taskId(), row.toolCallId())
                         .map(durable -> builds.observe(buildRequest, durable))
@@ -536,6 +592,49 @@ public final class AgentProjectTools {
         ObjectNode data = JSON.createObjectNode();
         data.set("error", error);
         return new AgentContracts.ToolResult(result.toolCallId(), result.workspaceRevision(), data, false);
+    }
+
+    /** The build output bound of the browser view: a small, honest tail excerpt (I9). */
+    static final int BROWSER_OUTPUT_BYTES = 8 * 1024;
+
+    /**
+     * The owner browser's view of one SETTLED tool call (review fix I9): the durable
+     * answer with its real exit facts and bounded output. The stored data never carries
+     * internal execution identity (the Job/Pod identity stays backend-side by contract),
+     * and the build output is additionally capped to a small tail excerpt so the browser
+     * surface stays bounded. Anything unsettled or unknown reads as absent (404) — a
+     * partial answer is never shown, and nothing here re-drives a call.
+     */
+    public Optional<AgentContracts.AgentToolCallView> browserToolCall(String taskId, String toolCallId) {
+        return tasks.findToolCall(taskId, toolCallId)
+            .filter(row -> "COMPLETED".equals(row.state()) && row.resultJson() != null)
+            .map(row -> {
+                AgentContracts.ToolResult result = storedResult(row);
+                return new AgentContracts.AgentToolCallView(row.toolCallId(), row.toolName(),
+                    boundedBrowserData(result.data()));
+            });
+    }
+
+    /** Caps any oversized output excerpt in the browser view and marks it honestly. */
+    private static JsonNode boundedBrowserData(JsonNode data) {
+        if (!(data instanceof ObjectNode object) || !object.has("output")) {
+            return data;
+        }
+        JsonNode output = object.path("output");
+        if (!output.isTextual()) {
+            return data;
+        }
+        byte[] bytes = output.textValue().getBytes(StandardCharsets.UTF_8);
+        if (bytes.length <= BROWSER_OUTPUT_BYTES) {
+            return object;
+        }
+        int start = bytes.length - BROWSER_OUTPUT_BYTES;
+        while (start < bytes.length && (bytes[start] & 0xC0) == 0x80) {
+            start++;
+        }
+        object.put("output", new String(bytes, start, bytes.length - start, StandardCharsets.UTF_8));
+        object.put("outputTruncated", true);
+        return object;
     }
 
     /** Persists a deterministic, side-effect-free rejection as the call's durable answer. */

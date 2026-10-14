@@ -39,6 +39,24 @@ public final class AgentContracts {
     /** The durable tool answer: the workspace revision it ran against plus bounded result data. */
     public record ToolResult(String toolCallId, String workspaceRevision, JsonNode data, boolean truncated) { }
 
+    /**
+     * The owner browser's view of one settled tool call (review fix I9): the stable
+     * call identity, the tool name and the bounded result data — real exit facts,
+     * truncated output and the cleanup proof. It never carries the build identity,
+     * a namespace, a Pod or any mount path: those stay backend-side, and a call that
+     * has not settled reads as 404 instead of partial data.
+     */
+    public record AgentToolCallView(String toolCallId, String toolName, JsonNode data) { }
+
+    /**
+     * The internal reconciliation answer for one tool call (review fix I3): the three
+     * states the worker must tell apart — an unknown id (the controller answers 404),
+     * a registered-but-unsettled call ({@code state} RUNNING or NEEDS_ATTENTION, no
+     * result yet), and a settled call ({@code state} COMPLETED with its durable result).
+     * An executing build can therefore never be misread as an unregistered submission.
+     */
+    public record ToolCallStatus(String state, ToolResult result) { }
+
     /** One development build execution request; {@code commandId} is the stable display identity. */
     public record BuildRequest(String taskId, String toolCallId, String projectId,
                                String commandId, long sourceRevision, BuildGoal goal) { }

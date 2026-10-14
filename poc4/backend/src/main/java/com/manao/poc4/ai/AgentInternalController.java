@@ -40,12 +40,16 @@ public final class AgentInternalController {
         return tasks.invokeTool(taskId, toolCallId, instanceId, parseEpoch(epochHeader), request);
     }
 
-    /** Reconciliation read of a call whose POST response the worker may have lost. */
+    /**
+     * Reconciliation read of one call: 404 when the id was never registered, otherwise
+     * the call's state — RUNNING while it executes, COMPLETED with its durable result,
+     * NEEDS_ATTENTION while the outcome is unknown (review fix I3).
+     */
     @GetMapping("/calls/{toolCallId}")
-    public AgentContracts.ToolResult getCall(@PathVariable String taskId, @PathVariable String toolCallId,
-                                             @RequestHeader(value = "X-Manao-Worker-Instance", required = false) String instanceId,
-                                             @RequestHeader(value = "X-Manao-Worker-Epoch", required = false) String epochHeader) {
-        return tasks.getToolCall(taskId, toolCallId, instanceId, parseEpoch(epochHeader))
+    public AgentContracts.ToolCallStatus getCall(@PathVariable String taskId, @PathVariable String toolCallId,
+                                                 @RequestHeader(value = "X-Manao-Worker-Instance", required = false) String instanceId,
+                                                 @RequestHeader(value = "X-Manao-Worker-Epoch", required = false) String epochHeader) {
+        return tasks.toolCallStatus(taskId, toolCallId, instanceId, parseEpoch(epochHeader))
             .orElseThrow(() -> new ApiException("AI_CALL_NOT_FOUND", 404, "Call not found"));
     }
 

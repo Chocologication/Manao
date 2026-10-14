@@ -244,6 +244,14 @@ public class JobResourceFactory {
                         new io.fabric8.kubernetes.api.model.VolumeMountBuilder()
                             .withName("workspace")
                             .withMountPath("/workspace")
+                            .build(),
+                        // The copy phase builds its manifest with mktemp under a read-only
+                        // root filesystem (review fix I4): without a writable tmp mount the
+                        // copy can never finish, so the tmp emptyDir is mounted here too —
+                        // the same volume the execution container uses.
+                        new io.fabric8.kubernetes.api.model.VolumeMountBuilder()
+                            .withName("tmp")
+                            .withMountPath("/tmp")
                             .build())
                     .withSecurityContext(containerSecurity())
                     .build())

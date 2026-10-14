@@ -117,7 +117,7 @@ class AgentTaskServiceTest {
             WorkspaceService workspace = new WorkspaceService(store, operations, agent, gate, tasks);
             tools = new AgentProjectTools(tasks, store, workspace, operations, gate, builds);
             service = new AgentTaskService(tasks, gate, worker, tools,
-                new AiProperties(true, "", new AiProperties.Worker("http://worker.invalid", "worker-token"),
+                new AiProperties(true, PROJECT, new AiProperties.Worker("http://worker.invalid", "worker-token"),
                     new AiProperties.Internal("internal-token")));
         }
 
@@ -137,6 +137,17 @@ class AgentTaskServiceTest {
                     """,
                 operationId, PROJECT, "b".repeat(64), "c".repeat(64),
                 ".manao/receipts/" + operationId + ".json", "d".repeat(64), now);
+        }
+
+        /** A write_file call row whose outcome is still unsettled (no receipt half needed here). */
+        void insertUnsettledWriteCall(String callId, String operationId) {
+            Timestamp now = new Timestamp(System.currentTimeMillis());
+            jdbc.update("""
+                    INSERT INTO agent_tool_call(task_id, tool_call_id, request_sha256, tool_name, args_json,
+                        state, workspace_operation_id, expected_revision, created_at, updated_at)
+                    VALUES (?, ?, ?, 'write_file', '{"path":"src/Demo.java"}', 'NEEDS_ATTENTION', ?, 7, ?, ?)
+                    """,
+                taskId, callId, "a".repeat(64), operationId, now, now);
         }
 
         /** A build call row carrying a recorded Kubernetes identity. */
@@ -235,17 +246,39 @@ class AgentTaskServiceTest {
     }
 
     @Test
-    void resubmittingTheSameRequestReDrivesStartWithANewEpochAndALateAckCannotRegress() {
+    void resubmittingTheSameRequestReturnsTheExistingTaskWithoutRedriving() {
         try (Harness h = new Harness()) {
             h.submit();
             assertThat(h.rowEpoch()).isEqualTo(1);
-            // The same request re-drives the start under a new fencing epoch.
+            // The same id, the same request: the ORIGINAL task is the answer. The epoch
+            // was persisted exactly once at creation; a re-submission never bumps it,
+            // never re-drives the worker and never re-prompts the model.
             h.service.submit(OWNER, PROJECT, h.request());
-            assertThat(h.rowEpoch()).isEqualTo(2);
-            // A late ACK from the superseded attempt must not move the durable state.
-            h.service.onStartAck(h.taskId, 1, new WorkerStatus(h.taskId, "stale-worker", "RUNNING"));
+            assertThat(h.worker.starts).hasSize(1);
+            assertThat(h.rowEpoch()).isEqualTo(1);
+            // A late ACK of a superseded attempt (a different epoch) cannot bind.
+            h.service.onStartAck(h.taskId, 2, new WorkerStatus(h.taskId, "stale-worker", "RUNNING"));
             assertThat(h.rowInstance()).isEqualTo(INSTANCE);
-            assertThat(h.rowEpoch()).isEqualTo(2);
+            assertThat(h.rowEpoch()).isEqualTo(1);
+        }
+    }
+
+    @Test
+    void anEnabledStageWithoutAProjectIdFailsClosedAtConfiguration() {
+        assertThatThrownBy(() -> new AiProperties(true, "  ",
+            new AiProperties.Worker("http://worker.invalid", "worker-token"),
+            new AiProperties.Internal("internal-token")))
+            .isInstanceOf(IllegalArgumentException.class);
+        // A disabled stage may omit the project id (the AI beans never exist then).
+        new AiProperties(false, "", null, null);
+    }
+
+    @Test
+    void aSubmissionToANonEnabledProjectIsRefused() {
+        try (Harness h = new Harness()) {
+            assertThatThrownBy(() -> h.service.submit(OWNER, "other-project", h.request()))
+                .isInstanceOfSatisfying(ApiException.class,
+                    ex -> assertThat(ex.code()).isEqualTo("AI_PROJECT_NOT_ENABLED"));
         }
     }
 
@@ -392,6 +425,85 @@ class AgentTaskServiceTest {
     }
 
     @Test
+    void theInternalQueryContractDistinguishesExecutingFromSettledCalls() {
+        try (Harness h = new Harness()) {
+            h.submit();
+            // Unknown call: the 404 territory of the internal contract.
+            assertThat(h.service.toolCallStatus(h.taskId, "call-x", INSTANCE, h.rowEpoch())).isEmpty();
+            // A settled call answers COMPLETED with its durable result.
+            h.service.invokeTool(h.taskId, "call-1", INSTANCE, h.rowEpoch(),
+                new ToolRequest("call-1", "list_files", 7, JSON.createObjectNode()));
+            var settled = h.service.toolCallStatus(h.taskId, "call-1", INSTANCE, h.rowEpoch()).orElseThrow();
+            assertThat(settled.state()).isEqualTo("COMPLETED");
+            assertThat(settled.result().toolCallId()).isEqualTo("call-1");
+            // A registered-but-unsettled call reads as RUNNING — never as absent, so a
+            // long build can never be misread as an unregistered submission.
+            h.insertUnrecordedBuildCall("call-2", "RUNNING");
+            var running = h.service.toolCallStatus(h.taskId, "call-2", INSTANCE, h.rowEpoch()).orElseThrow();
+            assertThat(running.state()).isEqualTo("RUNNING");
+            assertThat(running.result()).isNull();
+            // An unknown-outcome call reads as NEEDS_ATTENTION with the same honesty.
+            h.tasks.markToolCallNeedsAttention(h.taskId, "call-2");
+            var undecided = h.service.toolCallStatus(h.taskId, "call-2", INSTANCE, h.rowEpoch()).orElseThrow();
+            assertThat(undecided.state()).isEqualTo("NEEDS_ATTENTION");
+            assertThat(undecided.result()).isNull();
+        }
+    }
+
+    @Test
+    void theOwnerBrowserReadsASettledToolResultWithoutInternalIdentity() throws Exception {
+        try (Harness h = new Harness()) {
+            h.submit();
+            // A settled build the browser can actually read: real exit facts and the
+            // cleanup proof, bounded output — the data path the panel renders (I9).
+            org.mockito.Mockito.when(h.builds.build(org.mockito.ArgumentMatchers.any()))
+                .thenReturn(new AgentContracts.BuildResult(
+                    new AgentContracts.BuildIdentity("manao-dev-x", "uid-job", "uid-pod"),
+                    1, "Completed", "BUILD FAILURE tail", false, List.of(), true));
+            h.service.invokeTool(h.taskId, "call-build", INSTANCE, h.rowEpoch(),
+                new ToolRequest("call-build", "build", 7,
+                    JSON.createObjectNode().put("goal", "test")));
+            var view = h.service.browserToolCall(OWNER, PROJECT, h.taskId, "call-build");
+            assertThat(view.toolCallId()).isEqualTo("call-build");
+            assertThat(view.toolName()).isEqualTo("build");
+            String json = JSON.writeValueAsString(view);
+            // The browser DTO never carries internal execution identity.
+            assertThat(json).doesNotContain("jobName", "jobUid", "podUid", "namespace");
+            assertThat(view.data().path("exitCode").asInt()).isEqualTo(1);
+            assertThat(view.data().path("cleanupConfirmed").asBoolean()).isTrue();
+            // A tool call that never settled reads as 404, never as partial data.
+            assertThatThrownBy(() -> h.service.browserToolCall(OWNER, PROJECT, h.taskId, "call-build-2"))
+                .isInstanceOfSatisfying(ApiException.class,
+                    ex -> assertThat(ex.code()).isEqualTo("ENTRY_NOT_FOUND"));
+            // A foreign task id reads as 404 (owner/project scoping is the boundary).
+            assertThatThrownBy(() -> h.service.browserToolCall(OWNER, PROJECT,
+                    UUID.randomUUID().toString(), "call-build"))
+                .isInstanceOfSatisfying(ApiException.class,
+                    ex -> assertThat(ex.code()).isEqualTo("ENTRY_NOT_FOUND"));
+        }
+    }
+
+    @Test
+    void anOversizedBuildOutputIsBoundedForTheBrowser() throws Exception {
+        try (Harness h = new Harness()) {
+            h.submit();
+            String hugeOutput = "m".repeat(300 * 1024);
+            org.mockito.Mockito.when(h.builds.build(org.mockito.ArgumentMatchers.any()))
+                .thenReturn(new AgentContracts.BuildResult(
+                    new AgentContracts.BuildIdentity("manao-dev-x", "uid-job", "uid-pod"),
+                    0, "Completed", hugeOutput, true, List.of(), true));
+            h.service.invokeTool(h.taskId, "call-build", INSTANCE, h.rowEpoch(),
+                new ToolRequest("call-build", "build", 7,
+                    JSON.createObjectNode().put("goal", "compile")));
+            var view = h.service.browserToolCall(OWNER, PROJECT, h.taskId, "call-build");
+            assertThat(view.data().path("output").asText().getBytes(StandardCharsets.UTF_8).length)
+                .isLessThanOrEqualTo(8 * 1024);
+            assertThat(view.data().path("outputTruncated").asBoolean()).isTrue();
+            assertThat(view.data().path("exitCode").asInt()).isEqualTo(0);
+        }
+    }
+
+    @Test
     void closeStopsTheWorkerRefusesNewCallsAndReleasesTheProject() {
         try (Harness h = new Harness()) {
             h.submit();
@@ -510,7 +622,7 @@ class AgentTaskServiceTest {
                 var workspace = new WorkspaceService(store, operations, h.agent, h.gate, tasks);
                 var tools = new AgentProjectTools(tasks, store, workspace, operations, h.gate, h.builds);
                 var service = new AgentTaskService(tasks, h.gate, h.worker, tools,
-                    new AiProperties(true, "", null, null));
+                    new AiProperties(true, PROJECT, null, null));
                 service.close(h.taskId, "AI_CLOSED", "stale snapshot must not release");
                 assertThat(h.rowState()).isEqualTo("NEEDS_ATTENTION");
                 assertThat(h.callRowState("call-build")).isEqualTo("RUNNING");
@@ -571,6 +683,91 @@ class AgentTaskServiceTest {
             assertThat(h.rowState()).isEqualTo("FAILED");
             assertThat(h.rowFailureCode()).isEqualTo("AI_CLOSED");
             h.tasks.requireBrowserWritable(PROJECT);
+        }
+    }
+
+    @Test
+    void aTerminalReportOverUnsettledSideEffectsKeepsTheTaskOccupied() {
+        try (Harness h = new Harness()) {
+            h.submit();
+            h.insertUnsettledWriteCall("call-write", "op-unsettled");
+            String terminal = JSON.createObjectNode()
+                .put("state", "COMPLETED").put("summary", "done").putNull("failureCode")
+                .toString();
+            h.service.applyProgress(h.taskId, INSTANCE, h.rowEpoch(), h.item(1, "terminal", terminal));
+            // The verdict is arbitrated by the backend: with an unsettled write side
+            // effect the task stays NEEDS_ATTENTION under the pending-terminal marker,
+            // the project stays occupied, and the report stays recorded as the
+            // to-be-verified terminal event in the progress envelope.
+            assertThat(h.rowState()).isEqualTo("NEEDS_ATTENTION");
+            assertThat(h.rowFailureCode()).isEqualTo("AI_TERMINAL_PENDING");
+            assertThat(h.jdbc.queryForObject("SELECT summary FROM agent_task WHERE id = ?", String.class, h.taskId))
+                .isEqualTo("done");
+            assertThatThrownBy(() -> h.tasks.requireBrowserWritable(PROJECT))
+                .isInstanceOfSatisfying(ApiException.class, ex -> assertThat(ex.code()).isEqualTo("AI_TASK_ACTIVE"));
+            assertThat(h.progressCount()).isEqualTo(1);
+        }
+    }
+
+    @Test
+    void aCloseResolvesATaskBlockedByATerminalReport() {
+        try (Harness h = new Harness()) {
+            h.submit();
+            h.insertUnrecordedBuildCall("call-build", "NEEDS_ATTENTION");
+            org.mockito.Mockito.when(h.builds.hasRecordedSideEffect(org.mockito.ArgumentMatchers.any()))
+                .thenReturn(false);
+            String terminal = JSON.createObjectNode()
+                .put("state", "COMPLETED").put("summary", "done").putNull("failureCode")
+                .toString();
+            h.service.applyProgress(h.taskId, INSTANCE, h.rowEpoch(), h.item(1, "terminal", terminal));
+            assertThat(h.rowFailureCode()).isEqualTo("AI_TERMINAL_PENDING");
+            // Every side effect later proves settled: the close arms its own marker
+            // over the pending-terminal one, finishes the evidence and releases.
+            h.service.close(h.taskId, "AI_CLOSED", "closed by operator");
+            assertThat(h.rowState()).isEqualTo("FAILED");
+            assertThat(h.rowFailureCode()).isEqualTo("AI_CLOSED");
+            h.tasks.requireBrowserWritable(PROJECT);
+        }
+    }
+
+    @Test
+    void aLeftoverRunningBuildFromARestartIsClosedByIdentityAndReleases() {
+        try (Harness h = new Harness()) {
+            h.submit();
+            // A RUNNING build row with a bound identity whose executing thread is gone
+            // (a backend restart): no live claim exists in this process, so the close
+            // finishes the durable row by its recorded identity.
+            h.insertBoundBuildCall("call-build", "manao-dev-x");
+            org.mockito.Mockito.when(h.builds.close(org.mockito.ArgumentMatchers.any(),
+                    org.mockito.ArgumentMatchers.any()))
+                .thenReturn(new AgentContracts.BuildResult(
+                    new AgentContracts.BuildIdentity("manao-dev-x", "uid-job", "uid-pod"),
+                    null, "BUILD_CLOSED", "the collected tail", false, List.of(), true));
+            h.service.close(h.taskId, "AI_CLOSED", "closed by operator");
+            assertThat(h.rowState()).isEqualTo("FAILED");
+            assertThat(h.rowFailureCode()).isEqualTo("AI_CLOSED");
+            // The closed evidence is settled on the row, never left RUNNING.
+            assertThat(h.callRowState("call-build")).isEqualTo("COMPLETED");
+            h.tasks.requireBrowserWritable(PROJECT);
+        }
+    }
+
+    @Test
+    void aLeftoverRunningBuildWithAnUnconfirmedCleanupKeepsTheTaskOccupied() {
+        try (Harness h = new Harness()) {
+            h.submit();
+            h.insertBoundBuildCall("call-build", "manao-dev-x");
+            org.mockito.Mockito.when(h.builds.close(org.mockito.ArgumentMatchers.any(),
+                    org.mockito.ArgumentMatchers.any()))
+                .thenReturn(new AgentContracts.BuildResult(
+                    new AgentContracts.BuildIdentity("manao-dev-x", "uid-job", "uid-pod"),
+                    null, "BUILD_CLOSED", "", false, List.of(), false));
+            h.service.close(h.taskId, "AI_CLOSED", "closed by operator");
+            assertThat(h.rowState()).isEqualTo("NEEDS_ATTENTION");
+            assertThat(h.rowFailureCode()).isEqualTo("AI_CLOSING");
+            assertThat(h.callRowState("call-build")).isEqualTo("RUNNING");
+            assertThatThrownBy(() -> h.tasks.requireBrowserWritable(PROJECT))
+                .isInstanceOfSatisfying(ApiException.class, ex -> assertThat(ex.code()).isEqualTo("AI_TASK_ACTIVE"));
         }
     }
 

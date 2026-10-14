@@ -40,6 +40,13 @@ public class AiConfig {
 
         public AiProperties {
             projectId = blank(projectId) ? "" : projectId.trim();
+            // Fail closed (review fix I7): while the stage is enabled it serves exactly
+            // one explicitly configured acceptance project. An absent id must fail the
+            // startup, never widen the stage to every project; a disabled stage may omit it.
+            if (enabled && blank(projectId)) {
+                throw new IllegalArgumentException(
+                    "manao.poc4.ai.project-id is required while manao.poc4.ai.enabled is true");
+            }
             worker = worker == null ? new Worker("", "") : worker;
             internal = internal == null ? new Internal("") : internal;
         }

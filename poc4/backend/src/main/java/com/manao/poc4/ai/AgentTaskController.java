@@ -52,6 +52,21 @@ public final class AgentTaskController {
     }
 
     /**
+     * One settled tool call of the owner's task (review fix I9): the browser's only
+     * data path to the real build evidence — exit code, bounded output excerpt and
+     * the cleanup proof. Owner/project scoped (a foreign id reads as 404), settled
+     * calls only, and never any internal execution identity.
+     */
+    @GetMapping("/{taskId}/tools/{toolCallId}")
+    public AgentContracts.AgentToolCallView toolCall(Authentication authentication,
+                                                     @PathVariable String projectId,
+                                                     @PathVariable String taskId,
+                                                     @PathVariable String toolCallId) {
+        requireOwnedTask(authentication.getName(), projectId, taskId);
+        return tasks.browserToolCall(authentication.getName(), projectId, taskId, toolCallId);
+    }
+
+    /**
      * The owner's explicit abandon: the close flow runs in the service — the marker
      * persists inside the gate first, the worker is stopped, and the project is only
      * released when every piece of evidence is provably finished. Idempotent.

@@ -41,10 +41,19 @@ public final class AgentTaskStore implements AgentTaskOccupancy {
 
     private static final ObjectMapper JSON = new ObjectMapper();
     private static final List<String> OCCUPYING_STATES = List.of("QUEUED", "RUNNING", "NEEDS_ATTENTION");
+    /** The deduped changed-path ledger of one task is bounded like the progress envelope. */
+    private static final int MAX_CHANGED_PATHS = 200;
 
     private final JdbcTemplate jdbc;
     private final TransactionTemplate transaction;
     private final Clock clock;
+    /**
+     * The build executions currently live in THIS process, keyed by taskId/toolCallId.
+     * A key is added inside the synchronized claim transition and removed only after the
+     * call row has settled, so a close that runs under this monitor can tell an active
+     * claim (never release) from a restart-leftover RUNNING row (close by identity).
+     */
+    private final java.util.Set<String> liveBuildClaims = new java.util.HashSet<>();
 
     public AgentTaskStore(JdbcTemplate jdbc, PlatformTransactionManager transactions, Clock clock) {
         this.jdbc = jdbc;
@@ -77,10 +86,23 @@ public final class AgentTaskStore implements AgentTaskOccupancy {
      */
     public AgentContracts.TaskSnapshot create(String ownerId, String projectId,
                                               AgentContracts.TaskRequest request) {
+        return createTask(ownerId, projectId, request).snapshot();
+    }
+
+    /** What {@link #create} decided: the snapshot, whether this call created the row, and its epoch. */
+    public record TaskCreation(AgentContracts.TaskSnapshot snapshot, boolean created, long epoch) { }
+
+    /**
+     * The durable decision behind {@link #create}, plus whether this call created the task.
+     * A re-submission of the same request answers the original row with
+     * {@code created = false} — the caller never re-drives, re-fences or re-prompts it.
+     */
+    public TaskCreation createTask(String ownerId, String projectId,
+                                   AgentContracts.TaskRequest request) {
         validate(request);
         String requestSha256 = requestSha256(ownerId, projectId, request);
         Timestamp now = Timestamp.from(clock.instant());
-        return requireSnapshot(transaction.execute(status -> {
+        return java.util.Objects.requireNonNull(transaction.execute(status -> {
             List<ProjectRow> projects = jdbc.query(
                 "SELECT owner_id, state, workspace_revision FROM project WHERE id = ? FOR UPDATE",
                 (rs, row) -> new ProjectRow(rs.getString(1), rs.getString(2), rs.getLong(3)), projectId);
@@ -95,7 +117,7 @@ public final class AgentTaskStore implements AgentTaskOccupancy {
                     throw new ApiException("AI_TASK_MISMATCH", 409,
                         "This task id was already used for a different request");
                 }
-                return snapshot(existing.get());
+                return new TaskCreation(snapshot(existing.get()), false, existing.get().workerEpoch());
             }
             ProjectRow project = projects.get(0);
             if (!ownerId.equals(project.ownerId())) {
@@ -118,10 +140,13 @@ public final class AgentTaskStore implements AgentTaskOccupancy {
                 throw new ApiException("AI_TASK_ACTIVE", 409, "The project already has an active task");
             }
             try {
+                // The fencing epoch is persisted exactly once, at creation: a re-submission
+                // of the same request never moves it, so a start response loss is reconciled
+                // by the same-epoch status read instead of a second, overlapping session.
                 jdbc.update("""
                     INSERT INTO agent_task(id, project_id, owner_id, request_sha256, prompt,
                         state, worker_epoch, workspace_revision, created_at, updated_at)
-                    VALUES (?, ?, ?, ?, ?, 'QUEUED', 0, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, 'QUEUED', 1, ?, ?, ?)
                     """,
                     request.taskId(), projectId, ownerId, requestSha256, request.prompt(),
                     request.expectedRevision(), now, now);
@@ -129,8 +154,9 @@ public final class AgentTaskStore implements AgentTaskOccupancy {
                 // The unique index is the backstop behind the in-transaction pre-check.
                 throw new ApiException("AI_TASK_ACTIVE", 409, "The project already has an active task");
             }
-            return new AgentContracts.TaskSnapshot(request.taskId(), AgentContracts.TaskState.QUEUED,
-                Long.toString(request.expectedRevision()), true, List.of(), List.of(), null, null);
+            return new TaskCreation(new AgentContracts.TaskSnapshot(request.taskId(),
+                AgentContracts.TaskState.QUEUED, Long.toString(request.expectedRevision()),
+                true, List.of(), List.of(), null, null), true, 1L);
         }));
     }
 
@@ -183,14 +209,36 @@ public final class AgentTaskStore implements AgentTaskOccupancy {
     }
 
     /**
-     * Registers a tool call under its stable identity: the first insert wins, a lost race re-reads
-     * the stored row and the caller's digest decides whether it may proceed — a foreign reuse of
-     * the id never rewrites the original row. {@code operationId} pre-allocates the workspace
-     * operation for file writes; side-effect-free tools pass null.
+     * Registers a tool call under its stable identity. The whole decision runs under this
+     * store monitor — the same monitor the terminal application (C1) and the build claim
+     * take — so a brand-new registration is durably arbitrated against a concurrently
+     * applied terminal verdict and against earlier unsettled side-effect calls:
+     *
+     * <ul>
+     *   <li>the first insert wins and re-validates, inside the monitor, that the task is
+     *       still QUEUED/RUNNING and (for a side-effect tool) that no earlier call is
+     *       unsettled — a terminal or close that raced the registration is already
+     *       durable here and refuses the new row;</li>
+     *   <li>a lost race re-reads the stored row and the caller's digest decides whether it
+     *       may proceed — a foreign reuse of the id never rewrites the original row.</li>
+     * </ul>
+     *
+     * <p>{@code operationId} pre-allocates the workspace operation for file writes and the
+     * stable command id for builds; side-effect-free tools pass null, which is also the
+     * marker that skips the unsettled-others check.</p>
      */
-    public ToolCallRow registerToolCall(String taskId, String toolCallId, String requestSha256,
-                                        String toolName, String argsJson, long expectedRevision,
-                                        String operationId) {
+    public synchronized ToolCallRow registerToolCall(String taskId, String toolCallId,
+                                                     String requestSha256, String toolName,
+                                                     String argsJson, long expectedRevision,
+                                                     String operationId) {
+        Optional<ToolCallRow> existing = findToolCall(taskId, toolCallId);
+        if (existing.isEmpty()) {
+            requireTaskAcceptsNewCalls(taskId);
+            if (operationId != null && hasUnsettledCall(taskId)) {
+                throw new ApiException("AI_CALL_UNSETTLED", 409,
+                    "An earlier tool call has not settled; resolve it before writing");
+            }
+        }
         Timestamp now = Timestamp.from(clock.instant());
         try {
             jdbc.update("""
@@ -235,15 +283,47 @@ public final class AgentTaskStore implements AgentTaskOccupancy {
      * Atomically claims the first execution of a REGISTERED build call by transitioning it to
      * RUNNING before its executor touches the cluster: the single request whose update wins
      * this transition owns the one execution, every later replay is a recovery that may only
-     * observe the recorded identity, never start the build again. Returns false for a row that
+     * observe the recorded identity, never start the build again. The claim is also recorded
+     * as live in this process under the same monitor, so the close flow can tell an active
+     * execution thread from a restart-leftover RUNNING row. Returns false for a row that
      * was already RUNNING or settled — the caller must then follow the recovery path instead.
      */
     public synchronized boolean markToolCallRunning(String taskId, String toolCallId) {
-        return jdbc.update(
+        boolean claimed = jdbc.update(
             "UPDATE agent_tool_call SET state = 'RUNNING', updated_at = ? "
                 + "WHERE task_id = ? AND tool_call_id = ? AND state = 'REGISTERED' "
                 + "AND EXISTS (SELECT 1 FROM agent_task t WHERE t.id = task_id AND t.state IN ('QUEUED', 'RUNNING'))",
             Timestamp.from(clock.instant()), taskId, toolCallId) > 0;
+        if (claimed) {
+            liveBuildClaims.add(taskId + "/" + toolCallId);
+        }
+        return claimed;
+    }
+
+    /** True while this process still holds the live execution claim of one build call. */
+    public synchronized boolean isBuildClaimLive(String taskId, String toolCallId) {
+        return liveBuildClaims.contains(taskId + "/" + toolCallId);
+    }
+
+    /**
+     * Retires the live claim of one build call. Called by the executing thread AFTER its call
+     * row has settled (COMPLETED or NEEDS_ATTENTION), so a close that reads the row as RUNNING
+     * can never also read the claim as already gone.
+     */
+    public synchronized void releaseBuildClaim(String taskId, String toolCallId) {
+        liveBuildClaims.remove(taskId + "/" + toolCallId);
+    }
+
+    /**
+     * Settles a claimed build row whose execution the close flow has just finished by its
+     * stable identity (a restart leftover): the collected close evidence becomes the row's
+     * durable answer. The caller proves — under this monitor — that no live claim exists.
+     */
+    public synchronized void settleClosedBuildCall(String taskId, String toolCallId, String resultJson) {
+        jdbc.update(
+            "UPDATE agent_tool_call SET state = 'COMPLETED', result_json = ?, updated_at = ? "
+                + "WHERE task_id = ? AND tool_call_id = ? AND state = 'RUNNING'",
+            resultJson, Timestamp.from(clock.instant()), taskId, toolCallId);
     }
 
     /**
@@ -278,6 +358,15 @@ public final class AgentTaskStore implements AgentTaskOccupancy {
             Timestamp.from(clock.instant()), taskId, toolCallId);
     }
 
+    /** True while any call of the task is REGISTERED/RUNNING/NEEDS_ATTENTION. */
+    public boolean hasUnsettledCall(String taskId) {
+        Integer count = jdbc.queryForObject(
+            "SELECT COUNT(*) FROM agent_tool_call WHERE task_id = ? "
+                + "AND state IN ('REGISTERED', 'RUNNING', 'NEEDS_ATTENTION')",
+            Integer.class, taskId);
+        return count != null && count > 0;
+    }
+
     /** True while a call other than this one is REGISTERED/RUNNING/NEEDS_ATTENTION. */
     public boolean hasUnsettledCallOtherThan(String taskId, String toolCallId) {
         Integer count = jdbc.queryForObject(
@@ -294,7 +383,10 @@ public final class AgentTaskStore implements AgentTaskOccupancy {
     // every method here is a durable CAS or a locked transaction.
     // ------------------------------------------------------------------
 
-    /** The durable request digest of one task, carried back to the worker in WorkerStart. */
+    /**
+     * The durable request digest of one task, carried back to the worker in WorkerStart.
+     * The fencing epoch itself is persisted exactly once, at creation.
+     */
     public String requestSha256Of(String taskId) {
         List<String> digests = jdbc.query(
             "SELECT request_sha256 FROM agent_task WHERE id = ?",
@@ -303,21 +395,6 @@ public final class AgentTaskStore implements AgentTaskOccupancy {
             throw new ApiException("AI_TASK_NOT_FOUND", 404, "Task not found");
         }
         return digests.get(0);
-    }
-
-    /**
-     * Bumps and returns the task's fencing epoch. Each start attempt moves the epoch
-     * forward, so a late ACK or callback of a superseded attempt can never bind, run
-     * or settle anything. The caller holds the shared gate.
-     */
-    public long persistEpoch(String taskId) {
-        jdbc.update("UPDATE agent_task SET worker_epoch = worker_epoch + 1, updated_at = ? WHERE id = ?",
-            Timestamp.from(clock.instant()), taskId);
-        Long epoch = jdbc.queryForObject("SELECT worker_epoch FROM agent_task WHERE id = ?", Long.class, taskId);
-        if (epoch == null) {
-            throw new ApiException("AI_TASK_NOT_FOUND", 404, "Task not found");
-        }
-        return epoch;
     }
 
     /**
@@ -372,6 +449,19 @@ public final class AgentTaskStore implements AgentTaskOccupancy {
         List<String> states = jdbc.query(
             "SELECT state FROM agent_task WHERE id = ? AND project_id = ?",
             (rs, row) -> rs.getString(1), taskId, projectId);
+        if (states.isEmpty()) {
+            throw new ApiException("AI_TASK_NOT_FOUND", 404, "Task not found");
+        }
+        if (!"QUEUED".equals(states.get(0)) && !"RUNNING".equals(states.get(0))) {
+            throw new ApiException("AI_TASK_NOT_ACTIVE", 409, "Task is not active");
+        }
+    }
+
+    /** The monitor-side form of {@link #requireTaskAcceptsNewCall}: the task row alone. */
+    private void requireTaskAcceptsNewCalls(String taskId) {
+        List<String> states = jdbc.query(
+            "SELECT state FROM agent_task WHERE id = ?",
+            (rs, row) -> rs.getString(1), taskId);
         if (states.isEmpty()) {
             throw new ApiException("AI_TASK_NOT_FOUND", 404, "Task not found");
         }
@@ -441,13 +531,28 @@ public final class AgentTaskStore implements AgentTaskOccupancy {
     }
 
     /**
-     * Applies a worker-reported terminal state by CAS from an occupying state only:
-     * a late terminal can never overwrite a settled task, and a task marked for
-     * close (NEEDS_ATTENTION) is released by the close flow alone.
+     * Applies a worker-reported terminal state — the backend's unified terminal verdict.
+     * The whole decision runs under this store monitor, the same monitor a tool-call
+     * registration and a build claim take, so the verdict and the side effects it talks
+     * about are serialized: a terminal may only settle the task COMPLETED/FAILED when
+     * every tool call of the task is settled (no RUNNING/NEEDS_ATTENTION build, no
+     * unverified file receipt, no un-closed build identity). Otherwise the verdict is
+     * recorded as a to-be-verified event — its progress item stays in the envelope and
+     * the {@link #TERMINAL_PENDING_MARKER} keeps the project occupied — and only the
+     * close flow resolves it. A late terminal can never overwrite a settled task, and a
+     * task marked for close (NEEDS_ATTENTION) is released by the close flow alone.
      */
-    public boolean applyTerminal(String taskId, AgentContracts.TaskState state, String summary, String failureCode) {
+    public synchronized boolean applyTerminal(String taskId, AgentContracts.TaskState state,
+                                              String summary, String failureCode) {
         if (state != AgentContracts.TaskState.COMPLETED && state != AgentContracts.TaskState.FAILED) {
             throw new IllegalArgumentException("only COMPLETED or FAILED may be applied as a terminal state");
+        }
+        if (hasUnsettledCall(taskId)) {
+            return jdbc.update("""
+                    UPDATE agent_task SET state = 'NEEDS_ATTENTION', failure_code = ?, summary = ?, updated_at = ?
+                    WHERE id = ? AND state IN ('QUEUED', 'RUNNING')
+                    """,
+                TERMINAL_PENDING_MARKER, summary, Timestamp.from(clock.instant()), taskId) > 0;
         }
         return jdbc.update("""
                 UPDATE agent_task SET state = ?, summary = ?, failure_code = ?, updated_at = ?
@@ -459,6 +564,13 @@ public final class AgentTaskStore implements AgentTaskOccupancy {
     /** The close flow's marker failure code; a close may only release from its own marker. */
     public static final String CLOSING_MARKER = "AI_CLOSING";
 
+    /**
+     * The task marker for a worker terminal verdict that could not be applied because a tool
+     * side effect was still unsettled: the report stays recorded (its progress item remains
+     * in the envelope) while the project keeps its occupancy until the close flow resolves it.
+     */
+    public static final String TERMINAL_PENDING_MARKER = "AI_TERMINAL_PENDING";
+
     /** The close-flow entry state: START armed the marker now, RETRY re-enters an already armed close, SETTLED means nothing to release. */
     public enum CloseEntry { START, RETRY, SETTLED }
 
@@ -467,10 +579,12 @@ public final class AgentTaskStore implements AgentTaskOccupancy {
      * NEEDS_ATTENTION with the AI_CLOSING marker (START), which refuses every new
      * tool-call registration while the evidence is finished. A task already marked
      * AI_CLOSING by an earlier close whose evidence could not be finished answers
-     * RETRY — the close may be re-driven until it provably succeeds. Anything else is
-     * SETTLED: an already released task never re-enters the flow.
+     * RETRY — the close may be re-driven until it provably succeeds. A task parked
+     * under the pending-terminal marker (a worker verdict blocked by an unsettled
+     * side effect) is armed the same way: the close is the only path that resolves
+     * it. Anything else is SETTLED: an already released task never re-enters the flow.
      */
-    public CloseEntry beginClose(String taskId) {
+    public synchronized CloseEntry beginClose(String taskId) {
         if (markClosing(taskId)) {
             return CloseEntry.START;
         }
@@ -480,9 +594,16 @@ public final class AgentTaskStore implements AgentTaskOccupancy {
         if (rows.isEmpty()) {
             throw new ApiException("AI_TASK_NOT_FOUND", 404, "Task not found");
         }
-        if ("NEEDS_ATTENTION".equals(rows.get(0).state())
-            && CLOSING_MARKER.equals(rows.get(0).failureCode())) {
+        Row row = rows.get(0);
+        if ("NEEDS_ATTENTION".equals(row.state()) && CLOSING_MARKER.equals(row.failureCode())) {
             return CloseEntry.RETRY;
+        }
+        if ("NEEDS_ATTENTION".equals(row.state()) && TERMINAL_PENDING_MARKER.equals(row.failureCode())) {
+            boolean armed = jdbc.update(
+                "UPDATE agent_task SET failure_code = ?, updated_at = ? "
+                    + "WHERE id = ? AND state = 'NEEDS_ATTENTION' AND failure_code = ?",
+                CLOSING_MARKER, Timestamp.from(clock.instant()), taskId, TERMINAL_PENDING_MARKER) > 0;
+            return armed ? CloseEntry.START : CloseEntry.SETTLED;
         }
         return CloseEntry.SETTLED;
     }
@@ -623,8 +744,9 @@ public final class AgentTaskStore implements AgentTaskOccupancy {
     private Optional<AgentContracts.TaskSnapshot> findTaskByOwner(String ownerId, String projectId,
                                                                   String extraCondition, Object... extraArgs) {
         String sql = """
-            SELECT t.id, t.request_sha256, t.state, t.workspace_revision, t.progress_json,
-                   t.summary, t.failure_code, t.active_project
+            SELECT t.id, t.request_sha256, t.state, t.worker_epoch, t.workspace_revision,
+                   t.settled_revision, t.changed_paths_json, t.progress_json, t.summary,
+                   t.failure_code, t.active_project
             FROM agent_task t INNER JOIN project p ON p.id = t.project_id
             WHERE p.owner_id = ? AND t.project_id = ? %s
             """.formatted(extraCondition);
@@ -634,27 +756,94 @@ public final class AgentTaskStore implements AgentTaskOccupancy {
         parameters.addAll(List.of(extraArgs));
         List<TaskRow> rows = jdbc.query(sql, (rs, row) -> new TaskRow(
             rs.getString(1), rs.getString(2), rs.getString(3), rs.getLong(4),
-            rs.getString(5), rs.getString(6), rs.getString(7), rs.getString(8) != null),
+            rs.getLong(5), (Long) rs.getObject(6), rs.getString(7),
+            rs.getString(8), rs.getString(9), rs.getString(10), rs.getString(11) != null),
             parameters.toArray());
         return rows.stream().findFirst().map(this::snapshot);
     }
 
     private Optional<TaskRow> findTaskById(String taskId) {
         List<TaskRow> rows = jdbc.query("""
-            SELECT id, request_sha256, state, workspace_revision, progress_json,
-                   summary, failure_code, active_project
+            SELECT id, request_sha256, state, worker_epoch, workspace_revision, settled_revision,
+                   changed_paths_json, progress_json, summary, failure_code, active_project
             FROM agent_task WHERE id = ?
             """, (rs, row) -> new TaskRow(
             rs.getString(1), rs.getString(2), rs.getString(3), rs.getLong(4),
-            rs.getString(5), rs.getString(6), rs.getString(7), rs.getString(8) != null), taskId);
+            rs.getLong(5), (Long) rs.getObject(6), rs.getString(7),
+            rs.getString(8), rs.getString(9), rs.getString(10), rs.getString(11) != null), taskId);
         return rows.stream().findFirst();
+    }
+
+    /**
+     * Records one verified write settlement on the task row (review fix I1): the latest
+     * verified revision becomes the snapshot's workspace revision and the changed path
+     * accumulates deduplicated. The creation-time {@code workspace_revision} column is
+     * never touched — it stays the initial version the submission was made against. A
+     * stale settlement (an older revision, e.g. a receipt replay) never regresses the
+     * snapshot. Unknown task ids are ignored: the write settled, and recording must not
+     * turn a settled write into an undecided call.
+     */
+    public void recordVerifiedWrite(String taskId, String path, long revision) {
+        transaction.executeWithoutResult(status -> {
+            List<Long> settled = jdbc.query(
+                "SELECT settled_revision FROM agent_task WHERE id = ? FOR UPDATE",
+                (rs, row) -> rs.getObject(1) == null ? null : rs.getLong(1), taskId);
+            if (settled.isEmpty()) {
+                return;
+            }
+            Long current = settled.get(0);
+            if (current != null && revision <= current) {
+                return;
+            }
+            List<String> paths = new ArrayList<>(changedPaths(jdbc.queryForObject(
+                "SELECT changed_paths_json FROM agent_task WHERE id = ?", String.class, taskId)));
+            if (!paths.contains(path)) {
+                paths.add(path);
+                while (paths.size() > MAX_CHANGED_PATHS) {
+                    paths.remove(0);
+                }
+            }
+            jdbc.update(
+                "UPDATE agent_task SET settled_revision = ?, changed_paths_json = ?, updated_at = ? WHERE id = ?",
+                revision, changedPathsJson(paths), Timestamp.from(clock.instant()), taskId);
+        });
+    }
+
+    private static List<String> changedPaths(String json) {
+        if (json == null || json.isBlank()) {
+            return List.of();
+        }
+        try {
+            JsonNode array = JSON.readTree(json);
+            List<String> paths = new ArrayList<>();
+            if (array.isArray()) {
+                for (JsonNode node : array) {
+                    paths.add(node.asText());
+                }
+            }
+            return paths;
+        } catch (IOException ex) {
+            throw new IllegalStateException("stored changed paths are unreadable", ex);
+        }
+    }
+
+    private static String changedPathsJson(List<String> paths) {
+        try {
+            return JSON.writeValueAsString(paths);
+        } catch (com.fasterxml.jackson.core.JsonProcessingException ex) {
+            throw new IllegalStateException("cannot serialize the changed paths", ex);
+        }
     }
 
     private AgentContracts.TaskSnapshot snapshot(TaskRow row) {
         boolean writesLocked = row.active() && OCCUPYING_STATES.contains(row.state());
+        // The snapshot revision is the latest VERIFIED write revision; before the first
+        // settled write it is the creation revision the submission was made against.
+        String revision = row.settledRevision() != null
+            ? Long.toString(row.settledRevision()) : Long.toString(row.workspaceRevision());
         return new AgentContracts.TaskSnapshot(row.id(), AgentContracts.TaskState.valueOf(row.state()),
-            Long.toString(row.workspaceRevision()), writesLocked,
-            parseProgress(row.progressJson()), List.of(), row.summary(), row.failureCode());
+            revision, writesLocked, parseProgress(row.progressJson()),
+            changedPaths(row.changedPathsJson()), row.summary(), row.failureCode());
     }
 
     /**
@@ -754,16 +943,15 @@ public final class AgentTaskStore implements AgentTaskOccupancy {
         return new ApiException("VALIDATION_ERROR", 422, "Request validation failed");
     }
 
-    private static AgentContracts.TaskSnapshot requireSnapshot(AgentContracts.TaskSnapshot snapshot) {
-        if (snapshot == null) {
-            throw new IllegalStateException("agent task creation returned no snapshot");
-        }
-        return snapshot;
-    }
-
     private record ProjectRow(String ownerId, String state, long workspaceRevision) { }
 
-    /** The durable task row as the snapshot mapper sees it; {@code active} is the occupancy. */
-    private record TaskRow(String id, String requestSha256, String state, long workspaceRevision,
+    /**
+     * The durable task row as the snapshot mapper sees it: {@code active} is the occupancy,
+     * {@code settledRevision}/{@code changedPathsJson} carry the verified write ledger
+     * (both null until the first verified write settles), and {@code workerEpoch} is the
+     * exactly-once fencing epoch persisted at creation.
+     */
+    private record TaskRow(String id, String requestSha256, String state, long workerEpoch,
+                           long workspaceRevision, Long settledRevision, String changedPathsJson,
                            String progressJson, String summary, String failureCode, boolean active) { }
 }

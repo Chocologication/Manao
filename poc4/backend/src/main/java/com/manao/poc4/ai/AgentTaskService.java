@@ -20,14 +20,16 @@ import java.util.Set;
 
 /**
  * The stage-one task lifecycle over the durable store (design section 6). A browser
- * submission creates the task and persists its fencing epoch inside the shared
- * project gate before the worker is called; the first correct (instance, epoch)
- * callback or start ACK binds the running session atomically; progress is a
- * monotonic, idempotent sequence whose terminal item applies the worker-reported
- * verdict by CAS; and the close flow persists its marker inside the gate first, then
- * stops the worker, then releases the project by CAS from its own marker alone. A
- * lost start response is reconciled by re-reading (and, on a re-submit, re-driving)
- * the ORIGINAL task under a bumped epoch — never by a second task id.
+ * submission creates the task and its fencing epoch — persisted exactly once, at
+ * creation — inside the shared project gate before the worker is called; the first
+ * correct (instance, epoch) callback or start ACK binds the running session atomically;
+ * progress is a monotonic, idempotent sequence whose terminal item applies the
+ * worker-reported verdict ONLY after every tool side effect has settled (the store's
+ * unified terminal arbitration keeps the project occupied otherwise, and the close
+ * flow is the only path that resolves such a pending verdict). A re-submission of the
+ * same request answers the ORIGINAL task without re-driving, re-fencing or re-prompting
+ * it; a lost start response is reconciled by a status read of the same task inside that
+ * one submission — never by a second task id or a second session.
  */
 public final class AgentTaskService {
     private static final ObjectMapper JSON = new ObjectMapper();
@@ -49,25 +51,31 @@ public final class AgentTaskService {
     }
 
     /**
-     * The browser's task submission. The gate covers the durable creation and the
-     * epoch persistence; the worker call runs outside the gate so no browser request
-     * holds the project lock across a network hop. A settled task is only reported,
-     * never re-driven; an occupying task is re-driven under a new fencing epoch.
+     * The browser's task submission. The gate covers the durable creation (with its
+     * exactly-once fencing epoch) and nothing else; the worker call runs outside the gate
+     * so no browser request holds the project lock across a network hop. A re-submission
+     * of the same request returns the original task untouched — no epoch bump, no start,
+     * no second model session; a lost start response is reconciled inside the FIRST
+     * submission's own drive by a status read of the same task.
      */
     public TaskSnapshot submit(String ownerId, String projectId, TaskRequest request) {
         requireProjectEnabled(projectId);
-        TaskSnapshot snapshot;
-        long epoch;
+        AgentTaskStore.TaskCreation creation;
         try (ProjectLifecycleGate.Lease lease = lifecycle.tryAcquire(projectId).orElseThrow(
                 () -> new ApiException("PROJECT_BUSY", 409, "Project is busy"))) {
-            snapshot = tasks.create(ownerId, projectId, request);
-            if (!OCCUPYING.contains(snapshot.state().name())) {
-                return snapshot;
-            }
-            epoch = tasks.persistEpoch(request.taskId());
+            creation = tasks.createTask(ownerId, projectId, request);
         }
-        driveStart(request.taskId(), request.prompt(), snapshot.workspaceRevision(), epoch);
-        return snapshot;
+        if (!creation.created()) {
+            // The original task is the whole answer: its start was driven (or reconciled)
+            // by the submission that created it, and its verdict belongs to that attempt.
+            return creation.snapshot();
+        }
+        if (!OCCUPYING.contains(creation.snapshot().state().name())) {
+            return creation.snapshot();
+        }
+        driveStart(request.taskId(), request.prompt(), creation.snapshot().workspaceRevision(),
+            creation.epoch());
+        return creation.snapshot();
     }
 
     /** One task by id, visible only through the owner's project. */
@@ -143,10 +151,16 @@ public final class AgentTaskService {
         return tools.invoke(taskId, request);
     }
 
-    /** The durable answer of a settled call; unknown or unsettled calls read as 404. */
-    public Optional<ToolResult> getToolCall(String taskId, String toolCallId, String instanceId, long epoch) {
+    /**
+     * The internal reconciliation answer for one call: absent (unknown id), executing
+     * or undecided (RUNNING / NEEDS_ATTENTION, no result), or settled (COMPLETED with
+     * the durable result). An executing build is never misread as an unregistered
+     * submission (review fix I3).
+     */
+    public Optional<AgentContracts.ToolCallStatus> toolCallStatus(String taskId, String toolCallId,
+                                                                  String instanceId, long epoch) {
         tasks.requireWorkerIdentity(taskId, epoch, instanceId);
-        return tools.getCall(taskId, toolCallId);
+        return tools.callStatus(taskId, toolCallId);
     }
 
     /**
@@ -161,6 +175,19 @@ public final class AgentTaskService {
             TerminalReport report = parseTerminal(item.text());
             tasks.applyTerminal(taskId, report.state(), report.summary(), report.failureCode());
         }
+    }
+
+    /**
+     * The owner browser's read of one settled tool call (review fix I9): the
+     * owner/project scoping is the boundary — a foreign task id reads as 404 — and
+     * only a settled call answers, with bounded data and no internal identity.
+     */
+    public AgentContracts.AgentToolCallView browserToolCall(String ownerId, String projectId,
+                                                            String taskId, String toolCallId) {
+        tasks.findForOwner(ownerId, projectId, taskId).orElseThrow(
+            () -> new ApiException("ENTRY_NOT_FOUND", 404, "Task not found"));
+        return tools.browserToolCall(taskId, toolCallId)
+            .orElseThrow(() -> new ApiException("ENTRY_NOT_FOUND", 404, "Call not found"));
     }
 
     /**
@@ -207,8 +234,14 @@ public final class AgentTaskService {
         }
     }
 
+    /**
+     * The stage's single enabled project is a hard configuration requirement (review fix
+     * I7): while AI is enabled, an absent project id can never widen the stage to every
+     * project — the AiProperties constructor already fails startup, so a blank value can
+     * never reach here, and any other project reads as not found.
+     */
     private void requireProjectEnabled(String projectId) {
-        if (!properties.projectId().isBlank() && !properties.projectId().equals(projectId)) {
+        if (!properties.projectId().equals(projectId)) {
             throw new ApiException("AI_PROJECT_NOT_ENABLED", 404, "Project not found");
         }
     }
