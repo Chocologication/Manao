@@ -4,15 +4,17 @@
  * browser). Reads the backend's durable task/tool-call ledger for ONE settled task
  * and fails unless the real coding-and-repair loop is fully evidenced:
  *
- *   1. the task is COMPLETED with no failure code;
+ *   1. the task is COMPLETED with failure_code IS NULL and no failure code — a
+ *      COMPLETED row that carries any failure code FAILS the verdict;
  *   2. EVERY tool call is COMPLETED (a NEEDS_ATTENTION/REGISTERED/RUNNING row is an
  *      unfinished side effect and fails the verdict);
  *   3. the FIRST build carries a real, non-null, non-zero exitCode (the failing
  *      confirmation run) — a missing exit code fails the verdict, never passes it;
  *   4. at least one COMPLETED write_file with a receipt (workspace_operation_id)
  *      repaired src/main/java/com/example/app/DemoController.java AFTER that build;
- *   5. a LATER build ran goal=test, exited 0, had cleanupConfirmed=true with the
- *      full Job identity (job_name/job_uid/pod_uid), and its testReports contain
+ *   5. a LATER build ran goal=test, exited 0, carried NO persisted rejection
+ *      (data.error), had cleanupConfirmed=true with the full Job identity
+ *      (job_name/job_uid/pod_uid), and its testReports contain
  *      com.example.app.DemoControllerAcceptanceTest with tests>=1,
  *      failures=0, errors=0, skipped=0. A missing report, a reportsDropped flag,
  *      or any skipped/failed/errored count FAILS the verdict. A model that only
@@ -161,7 +163,12 @@ if (taskRows.length === 1) {
   check(projectId === PROJECT_ID, 'the task belongs to the acceptance project',
     `task project mismatch: ledger says ${projectId}, expected ${PROJECT_ID}`);
   check(state === 'COMPLETED', `task state COMPLETED at revision ${revision}`,
-    `task state is ${state}${failureCode && failureCode !== 'NULL' ? ` (failure_code=${failureCode})` : ''}; only COMPLETED passes`);
+    `task state is ${state}; only COMPLETED passes`);
+  // A COMPLETED row can still carry a failure code (for example an explicit
+  // AI_* code from an earlier settle); that is never a passing verdict.
+  check(failureCode === null || failureCode === 'NULL',
+    'the task carries no failure code (failure_code IS NULL)',
+    `task carries failure_code=${failureCode}; COMPLETED with a failure code cannot pass`);
   if (INITIAL_REVISION !== undefined) {
     check(Number(revision) > Number(INITIAL_REVISION),
       `final revision ${revision} is past the initial ${INITIAL_REVISION}`,
@@ -268,6 +275,12 @@ check(verificationBuilds.length > 0,
 let reportVerified = false;
 for (const call of verificationBuilds) {
   const data = call.result?.data ?? {};
+  // A persisted rejection (data.error) is a deterministic refusal, never a
+  // passing verification build — the successful build must be error-free.
+  if (data.error !== undefined) {
+    failures.push(`verification build#${call.toolCallId} carries a persisted rejection (data.error=${JSON.stringify(data.error)}); a refused build cannot be the verification run`);
+    continue;
+  }
   if (data.reportsDropped === true) {
     failures.push(`verification build#${call.toolCallId} dropped its test reports (reportsDropped=true); the Surefire evidence was not retained`);
     continue;

@@ -313,3 +313,39 @@ Real executions this round (all local, unique prefixes, cleaned up):
 Rerun checks after the fix: `pnpm typecheck:stage6`, eslint on the touched
 spec/scripts, full `pnpm test` (1367/1367), `pnpm build`, `pnpm exec tsc
 --noEmit` (worker unchanged this round; no backend code change).
+
+### Fix round 2 (2026-10-15): failure-code assertion and nested --api export
+
+Review findings addressed: (1) the ledger verifier checked `state=COMPLETED` but
+not `failure_code IS NULL`, and did not reject a verification build carrying a
+persisted rejection; (2) the `--api` export would crash on the first nested file
+(no parent-directory creation).
+
+- `ai-stage1-verify-ledger.mjs` now FAILS when the task row is COMPLETED with any
+  `failure_code` (the rule fires first, before the tool-call rules), and a
+  verification build carrying `data.error` cannot be the verification run.
+- `ai-stage1-independent-reverify.mjs`: the export walk is now the exported
+  `exportProjectTree` function with `mkdirSync(recursive)` parent creation on
+  every nested file; the CLI flow moved under a direct-invocation guard, so the
+  unit test imports the module without executing anything.
+- New `scripts/ai-stage1-independent-reverify.test.mjs` (`pnpm
+  test:ai-stage1:scripts`, node --test): a stubbed fetch serves a nested
+  workspace tree (pom.xml + src/main/java/com/example/app/*) and the SAME
+  exported function the CLI uses must land every file with its parents created;
+  a second case asserts HTTP failures surface as rejections. 2/2 PASS.
+
+Real executions this round (disposable MySQL container removed afterwards; all
+fixture rows are ledger-shaped, NOT a real loop):
+
+- positive loop fixture: PASS (exit 0);
+- COMPLETED task WITH `failure_code=AI_PROVIDER_ERROR`: **FAIL** — "task carries
+  failure_code=AI_PROVIDER_ERROR; COMPLETED with a failure code cannot pass";
+- synthetic verification build carrying `data.error` alongside a passing report:
+  **FAIL** — "verification build#call-build-2 carries a persisted rejection…";
+- compile-only trap and empty/FAILED task: FAIL (unchanged from fix round 1);
+- re-verify CLI `--source` mode re-run after the refactor: PASS, report
+  tests=1/failures=0/errors=0/skipped=0 (no regression);
+- unit test 2/2; eslint on the three touched scripts clean; `pnpm test` 1367/1367;
+  `pnpm typecheck:stage6` clean.
+- `--api` full-chain against a real deployment remains NOT_RUN (no acceptance
+  deployment, no real model; conditions in section 5).
