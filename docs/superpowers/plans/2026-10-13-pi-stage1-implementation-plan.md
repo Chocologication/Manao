@@ -10,7 +10,7 @@
 
 **Spec:** [Pi 第一阶段设计](../specs/2026-10-13-pi-stage1-design.md)。[完整目标与已确认决定](../../research/2026-10-13-ai-integration-framework-evaluation.md#10-最小集成设计的已确认决定2026-10-13)。
 
-**Status:** 2026-10-13 编制、2026-10-14 自审修订。Tasks 1–5 已实现并测试通过（`codex/ai-integration`，提交 `1f2298e`…`d0952b4`）；Task 6 已交付验收 fixture/harness、bootstrap 脚本、发布准备与[实施记录](../../../poc4/docs/evidence/ai-stage1/acceptance.md)（提交 `test(ai): verify stage-one coding and repair loop`）。本轮已验证：frontend 1367/1367 + typecheck、worker 21/21、Docker Maven fixture 独立复验（错误→修复→Surefire XML）、组件演练（disposable MySQL + V11 + 缺模型 key 时 worker 503 拒启/后端显式 FAILED）。真实模型闭环、浏览器 E2E、云端 rollout 与 CNI enforcement 均 NOT_RUN（缺失条件见实施记录第 5 节）；`PI_STAGE1_CODE_TEST_LOOP_PASS` NOT_GRANTED。
+**Status:** 2026-10-13 编制、2026-10-14 自审修订。Tasks 1–5 已实现并测试通过（`codex/ai-integration`，提交 `1f2298e`…`d0952b4`）；Task 6 已交付验收 fixture/harness、bootstrap 脚本、发布准备与[实施记录](../../../poc4/docs/evidence/ai-stage1/acceptance.md)（提交 `test(ai): verify stage-one coding and repair loop`）。2026-10-15 最终整分支审查（`ef852b7..8898c95`）判定 Needs fixes，其全部发现（1 Critical + 10 Important + 1 Minor，逐字记录于 `.superpowers/sdd/2026-10-13-pi-stage1-implementation-plan/final-review-findings.md`）已修复并提交，修复证据见同目录 `final-review-fix-report.md`。本轮已验证：frontend 1370/1370 + typecheck、worker 27/27、后端 AI 定向套件（store/tools/executor/service/security/factory）全绿、Docker Maven fixture 独立复验（错误→修复→Surefire XML）、组件演练（disposable MySQL + V11/V12 + 缺模型 key 时 worker 503 拒启/后端显式 FAILED）。真实模型闭环、浏览器 E2E、云端 rollout 与 CNI enforcement 均 NOT_RUN（缺失条件见实施记录第 5 节）；`PI_STAGE1_CODE_TEST_LOOP_PASS` NOT_GRANTED。
 
 **Base:** `.worktree/ai-integration` / `codex/ai-integration`，代码基线 `ef852b7`。当前规划文件及索引可能未提交，实施前保留并记录最新 HEAD。下文 Files 路径相对于该工作树，不使用主 checkout 实施。
 

@@ -1,6 +1,6 @@
 # Pi 第一阶段设计：真实读改测与失败修复
 
-日期：2026-10-13 编制，2026-10-14 自审修订。状态：供第一阶段实施计划使用的设计基线，未实现、未部署、未验收。用户已要求开始第一阶段计划并准备实施交接；本次不编写产品代码。
+日期：2026-10-13 编制，2026-10-14 自审修订。状态（2026-10-15 整分支审查修复后更新）：本文件是第一阶段实施计划的**设计基线**（编制时的"未实现、未部署、未验收"为历史快照，不再描述当前状态）。当前实施状态：Tasks 1–6 已在 `codex/ai-integration` 实现并通过任务级审查；最终整分支审查发现的跨接缝问题（1 Critical + 10 Important + 1 Minor）已修复并提交。真实验收状态：真实模型闭环、浏览器 E2E、云端 rollout 与 CNI enforcement 均 NOT_RUN，`PI_STAGE1_CODE_TEST_LOOP_PASS` 未授予。实施与验收边界以[实施计划](../plans/2026-10-13-pi-stage1-implementation-plan.md)与[实施记录](../../../poc4/docs/evidence/ai-stage1/acceptance.md)为准。
 
 依据：[已确认决定](../../research/2026-10-13-ai-integration-framework-evaluation.md#10-最小集成设计的已确认决定2026-10-13)、[四阶段拆分](../../research/2026-10-13-pi-minimal-integration-implementation-slicing.md)。工作目录 `.worktree/ai-integration`，分支 `codex/ai-integration`，当前代码基线 `ef852b7`；未提交的拆分文档与索引属于本轮规划，应保留。
 
