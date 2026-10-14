@@ -93,6 +93,33 @@ class WorkspaceJdbcStoreTest {
         assertThat(revisionOf(provisioningProject)).isEqualTo(1);
     }
 
+    /**
+     * The lookup contract the agent file-tool replay path leans on (AgentProjectTools /
+     * applyAgentSave): a registered operation is visible as PENDING, stays visible as COMMITTED
+     * after the conditional commit, and is invisible to every other project.
+     */
+    @Test
+    void findOperationServesTheAgentReplayContract() {
+        String projectId = seedProject("agent-replay", 7, null, null);
+        String operationId = UUID.randomUUID().toString();
+        assertThat(store.findOperation(projectId, operationId)).isEmpty();
+
+        assertThat(store.beginPendingOperation(projectId, 7, fileOperation(operationId, projectId, 7)).started())
+            .isTrue();
+        WorkspaceStore.OperationRecord pending = store.findOperation(projectId, operationId).orElseThrow();
+        assertThat(pending.state()).isEqualTo("PENDING");
+        assertThat(pending.expectedRevision()).isEqualTo(7L);
+
+        String otherProject = seedProject("agent-replay-other", 7, null, null);
+        assertThat(store.findOperation(otherProject, operationId)).isEmpty();
+
+        assertThat(store.commitOperation(operationId, projectId, 7)).isTrue();
+        WorkspaceStore.OperationRecord committed = store.findOperation(projectId, operationId).orElseThrow();
+        assertThat(committed.state()).isEqualTo("COMMITTED");
+        assertThat(committed.beforeSha256()).isEqualTo("a".repeat(64));
+        assertThat(committed.afterSha256()).isEqualTo("b".repeat(64));
+    }
+
     private WorkspaceStore.OperationRecord fileOperation(String operationId, String projectId, long expectedRevision) {
         return new WorkspaceStore.OperationRecord(operationId, projectId, expectedRevision,
             "a".repeat(64), "b".repeat(64), ".manao/receipts/" + operationId + ".json", "c".repeat(64));

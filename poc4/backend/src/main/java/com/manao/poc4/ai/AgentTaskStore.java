@@ -143,6 +143,92 @@ public final class AgentTaskStore implements AgentTaskOccupancy {
         return findTaskByOwner(ownerId, projectId, "AND t.active_project = ?", projectId);
     }
 
+    /** The durable owner/project identity behind one task; tool dispatch never trusts caller input. */
+    public record TaskOwner(String ownerId, String projectId) { }
+
+    /** Resolves the task's durable owner/project pair; refuses unknown ids. */
+    public TaskOwner taskOwner(String taskId) {
+        List<TaskOwner> owners = jdbc.query(
+            "SELECT owner_id, project_id FROM agent_task WHERE id = ?",
+            (rs, row) -> new TaskOwner(rs.getString(1), rs.getString(2)), taskId);
+        if (owners.isEmpty()) {
+            throw new ApiException("AI_TASK_NOT_FOUND", 404, "Task not found");
+        }
+        return owners.get(0);
+    }
+
+    /** One durable tool-call row: stable identity, request digest, lifecycle and linked operation. */
+    public record ToolCallRow(String taskId, String toolCallId, String requestSha256, String toolName,
+                              String argsJson, String state, String workspaceOperationId,
+                              long expectedRevision, String resultJson) { }
+
+    public Optional<ToolCallRow> findToolCall(String taskId, String toolCallId) {
+        List<ToolCallRow> rows = jdbc.query("""
+            SELECT task_id, tool_call_id, request_sha256, tool_name, args_json, state,
+                   workspace_operation_id, expected_revision, result_json
+            FROM agent_tool_call WHERE task_id = ? AND tool_call_id = ?
+            """, (rs, row) -> new ToolCallRow(rs.getString(1), rs.getString(2), rs.getString(3),
+            rs.getString(4), rs.getString(5), rs.getString(6), rs.getString(7),
+            rs.getLong(8), rs.getString(9)), taskId, toolCallId);
+        return rows.stream().findFirst();
+    }
+
+    /**
+     * Registers a tool call under its stable identity: the first insert wins, a lost race re-reads
+     * the stored row and the caller's digest decides whether it may proceed — a foreign reuse of
+     * the id never rewrites the original row. {@code operationId} pre-allocates the workspace
+     * operation for file writes; side-effect-free tools pass null.
+     */
+    public ToolCallRow registerToolCall(String taskId, String toolCallId, String requestSha256,
+                                        String toolName, String argsJson, long expectedRevision,
+                                        String operationId) {
+        Timestamp now = Timestamp.from(clock.instant());
+        try {
+            jdbc.update("""
+                INSERT INTO agent_tool_call(task_id, tool_call_id, request_sha256, tool_name, args_json,
+                    state, workspace_operation_id, expected_revision, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, 'REGISTERED', ?, ?, ?, ?)
+                """, taskId, toolCallId, requestSha256, toolName, argsJson, operationId, expectedRevision, now, now);
+        } catch (DuplicateKeyException ex) {
+            // The stable identity is already registered: the stored row decides below.
+        }
+        ToolCallRow stored = findToolCall(taskId, toolCallId).orElseThrow(
+            () -> new IllegalStateException("agent tool call registration vanished"));
+        if (!requestSha256.equals(stored.requestSha256())) {
+            throw new ApiException("AI_CALL_MISMATCH", 409,
+                "This tool call id was already used for a different request");
+        }
+        return stored;
+    }
+
+    /** Settles the call COMPLETED with its bounded result JSON — the durable answer for replays. */
+    public void completeToolCall(String taskId, String toolCallId, String resultJson) {
+        jdbc.update(
+            "UPDATE agent_tool_call SET state = 'COMPLETED', result_json = ?, updated_at = ? "
+                + "WHERE task_id = ? AND tool_call_id = ?",
+            resultJson, Timestamp.from(clock.instant()), taskId, toolCallId);
+    }
+
+    /**
+     * Marks the outcome unknown: the project keeps its occupancy and further writes stay blocked
+     * until the call is reconciled or the task is closed. A settled answer is never downgraded.
+     */
+    public void markToolCallNeedsAttention(String taskId, String toolCallId) {
+        jdbc.update(
+            "UPDATE agent_tool_call SET state = 'NEEDS_ATTENTION', updated_at = ? "
+                + "WHERE task_id = ? AND tool_call_id = ? AND state IN ('REGISTERED', 'RUNNING')",
+            Timestamp.from(clock.instant()), taskId, toolCallId);
+    }
+
+    /** True while a call other than this one is REGISTERED/RUNNING/NEEDS_ATTENTION. */
+    public boolean hasUnsettledCallOtherThan(String taskId, String toolCallId) {
+        Integer count = jdbc.queryForObject(
+            "SELECT COUNT(*) FROM agent_tool_call WHERE task_id = ? AND tool_call_id <> ? "
+                + "AND state IN ('REGISTERED', 'RUNNING', 'NEEDS_ATTENTION')",
+            Integer.class, taskId, toolCallId);
+        return count != null && count > 0;
+    }
+
     private Optional<AgentContracts.TaskSnapshot> findTaskByOwner(String ownerId, String projectId,
                                                                   String extraCondition, Object... extraArgs) {
         String sql = """
