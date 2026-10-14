@@ -408,6 +408,50 @@ class AgentProjectToolsTest {
     }
 
     @Test
+    void writeProbeAtTheExactBoundaryJudgesThePostWriteRevisionLength() throws Exception {
+        try (Harness env = new Harness()) {
+            // Revision "9" → "10" grows the success answer by one byte. The path size is measured
+            // against the real serializer so the CURRENT-revision probe JSON is exactly 192 KiB
+            // (an old pre-check would pass it) while the post-write JSON is one byte over: the
+            // gate must judge the post-write length and reject before the mutate, never swap an
+            // applied write for an error.
+            env.jdbc.update("UPDATE project SET workspace_revision = 9 WHERE id = ?", PROJECT);
+            String content = "class Boundary {}";
+            String sha = env.sha256Hex(content);
+            int overByOne = AgentProjectTools.MAX_RESULT_BYTES + 1 - probeBytes(content, sha, 0, 0, "10");
+            int multibyte = overByOne / 3;
+            int singleByte = overByOne % 3;
+            assertThat(probeBytes(content, sha, multibyte, singleByte, "10"))
+                .isEqualTo(AgentProjectTools.MAX_RESULT_BYTES + 1);
+            assertThat(probeBytes(content, sha, multibyte, singleByte, "9"))
+                .isEqualTo(AgentProjectTools.MAX_RESULT_BYTES);
+            String path = "src/" + "中".repeat(multibyte) + "x".repeat(singleByte) + ".java";
+
+            ToolResult result = env.tools.invoke(env.taskId,
+                env.writeRequest("call-boundary", path, content, null, 9));
+
+            assertThat(result.data().path("error").path("code").asText()).isEqualTo("AI_RESULT_TOO_LARGE");
+            verify(env.agent, never()).mutate(any(), any());
+            verify(env.agent, never()).meta(any(), any());
+            assertThat(env.revision()).isEqualTo(9L);
+            assertThat(env.rowState("call-boundary")).isEqualTo("COMPLETED");
+        }
+    }
+
+    /**
+     * The probe the production write pre-check serializes, reconstructed byte-exactly against
+     * the same compact mapper: each added 中 contributes three UTF-8 bytes, each x one.
+     */
+    private static int probeBytes(String content, String sha, int multibyte, int singleByte,
+                                  String revision) throws Exception {
+        ObjectNode data = JSON.createObjectNode()
+            .put("path", "src/" + "中".repeat(multibyte) + "x".repeat(singleByte) + ".java")
+            .put("sha256", sha);
+        return JSON.writeValueAsString(new AgentContracts.ToolResult("call-boundary", revision, data, false))
+            .getBytes(StandardCharsets.UTF_8).length;
+    }
+
+    @Test
     void listFilesCapsAt200EntriesAndRefusesForbiddenDirectories() {
         try (Harness env = new Harness()) {
             List<WorkspaceAgent.TreeEntry> entries = new ArrayList<>();

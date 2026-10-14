@@ -256,11 +256,14 @@ public final class AgentProjectTools {
             throw new ApiException("FILE_TOO_LARGE", 422, "File content exceeds the 128 KiB tool limit");
         }
         ObjectNode data = JSON.createObjectNode().put("path", path).put("sha256", sha256Hex(bytes));
-        // The write result is fully determined by (path, sha256): the same UTF-8 byte gate runs
-        // BEFORE the mutate, so an unrepresentable answer is a deterministic, side-effect-free
-        // rejection — never an applied write whose result cannot be stored.
+        // The write result is fully determined by (path, sha256, post-write revision): the same
+        // UTF-8 byte gate runs BEFORE the mutate, probed with the revision the success answer
+        // will carry (current + 1 — under the project gate nothing else moves the revision), so
+        // a probe that fits guarantees the stored answer fits and a boundary like "9"→"10"
+        // cannot turn into an applied write whose result must be swapped for an error.
+        long nextRevision = currentRevision(owner.projectId()) + 1;
         if (utf8JsonBytes(new AgentContracts.ToolResult(request.toolCallId(),
-                revisionOf(owner.projectId()), data, false)) > MAX_RESULT_BYTES) {
+                Long.toString(nextRevision), data, false)) > MAX_RESULT_BYTES) {
             throw new ApiException("AI_RESULT_TOO_LARGE", 422,
                 "The write result does not fit the bounded tool result");
         }
@@ -409,9 +412,13 @@ public final class AgentProjectTools {
         }
     }
 
-    private String revisionOf(String projectId) {
+    private long currentRevision(String projectId) {
         WorkspaceStore.ProjectRecord project = store.findProject(projectId);
-        return Long.toString(project == null ? 0 : project.workspaceRevision());
+        return project == null ? 0 : project.workspaceRevision();
+    }
+
+    private String revisionOf(String projectId) {
+        return Long.toString(currentRevision(projectId));
     }
 
     private static String jsonOf(AgentContracts.ToolResult result) {
