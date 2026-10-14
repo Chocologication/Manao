@@ -50,7 +50,8 @@ class PythonDependencyOperationTest {
         // runs through the SAME lease instance every other workspace consumer uses.
         store.gate = lifecycle;
         WorkspaceOperationService operations = new WorkspaceOperationService(store, agent, lifecycle);
-        dependencies = new PythonDependencyService(store, operations, agent, lifecycle, pythonRuntimeStore());
+        dependencies = new PythonDependencyService(store, operations, agent, lifecycle, pythonRuntimeStore(),
+            WorkspaceControllerTest.NO_AGENT_TASKS);
     }
 
     /** The Python template runtime store the owner checks read before accepting a change. */
@@ -79,7 +80,8 @@ class PythonDependencyOperationTest {
     /** The dependency stack wired with the operator-armed dependency-pending fault value. */
     private PythonDependencyService dependenciesWithArmedFault(String armedPackage) {
         WorkspaceOperationService operations = new WorkspaceOperationService(store, agent, lifecycle, armedPackage);
-        return new PythonDependencyService(store, operations, agent, lifecycle, pythonRuntimeStore());
+        return new PythonDependencyService(store, operations, agent, lifecycle, pythonRuntimeStore(),
+            WorkspaceControllerTest.NO_AGENT_TASKS);
     }
 
     private ApiException assertRejected(Runnable call, String code, int status) {
@@ -560,7 +562,8 @@ class PythonDependencyOperationTest {
             command.expectedBeforeSha256(), command.expectedAfterSha256(),
             ".manao/receipts/" + command.operationId() + ".json", command.expectedReceiptSha256());
         WorkspaceService workspace = new WorkspaceService(store,
-            new WorkspaceOperationService(store, agent), agent);
+            new WorkspaceOperationService(store, agent), agent,
+            new com.manao.poc4.project.ProjectLifecycleGate(), WorkspaceControllerTest.NO_AGENT_TASKS);
 
         long revision = workspace.save(ALICE, PROJECT, "src/App.java", "class App {}", "7");
 
@@ -581,7 +584,8 @@ class PythonDependencyOperationTest {
         store.pending.put(PROJECT, registered);
         agent.pendingMetaRequired = false; // the single-file digest step runs before the pending check
         WorkspaceService workspace = new WorkspaceService(store,
-            new WorkspaceOperationService(store, agent), agent);
+            new WorkspaceOperationService(store, agent), agent,
+            new com.manao.poc4.project.ProjectLifecycleGate(), WorkspaceControllerTest.NO_AGENT_TASKS);
 
         assertThatThrownBy(() -> workspace.save(ALICE, PROJECT, "src/App.java", "class App {}", "7"))
             .isInstanceOfSatisfying(ApiException.class,
@@ -647,7 +651,8 @@ class PythonDependencyOperationTest {
         agent.receiptFor.put(OPERATION, new WorkspaceAgent.FetchedReceipt(OPERATION, "PYTHON_DEPENDENCIES",
             "pyproject.toml", "uv.lock", "a".repeat(64), "b".repeat(64), receiptSha));
         WorkspaceService workspace = new WorkspaceService(store,
-            new WorkspaceOperationService(store, agent), agent);
+            new WorkspaceOperationService(store, agent), agent,
+            new com.manao.poc4.project.ProjectLifecycleGate(), WorkspaceControllerTest.NO_AGENT_TASKS);
 
         assertThatThrownBy(() -> workspace.save(ALICE, PROJECT, "src/App.java", "class App {}", "7"))
             .isInstanceOfSatisfying(ApiException.class,

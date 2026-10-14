@@ -2,6 +2,7 @@ package com.manao.poc4.workspace;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.manao.poc4.api.ApiException;
+import com.manao.poc4.project.AgentTaskOccupancy;
 import com.manao.poc4.project.ProjectLifecycleGate;
 import com.manao.poc4.project.ProjectRuntimeStore;
 import com.manao.poc4.project.RuntimeTemplate;
@@ -45,15 +46,17 @@ public final class PythonDependencyService {
     private final WorkspaceAgent agent;
     private final ProjectLifecycleGate lifecycle;
     private final ProjectRuntimeStore runtimeStore;
+    private final AgentTaskOccupancy agentTasks;
 
     public PythonDependencyService(WorkspaceStore store, WorkspaceOperationService operations,
                                    WorkspaceAgent agent, ProjectLifecycleGate lifecycle,
-                                   ProjectRuntimeStore runtimeStore) {
+                                   ProjectRuntimeStore runtimeStore, AgentTaskOccupancy agentTasks) {
         this.store = store;
         this.operations = operations;
         this.agent = agent;
         this.lifecycle = lifecycle;
         this.runtimeStore = runtimeStore;
+        this.agentTasks = agentTasks;
     }
 
     /** The status a browser polls: PENDING, COMMITTED (with its revision) or UNCONFIRMED. */
@@ -68,6 +71,7 @@ public final class PythonDependencyService {
         try (var lease = lifecycle.tryAcquire(projectId).orElseThrow(
                 () -> new ApiException("PROJECT_BUSY", 409, "Project is busy"))) {
             requireOwner(ownerId, projectId);
+            agentTasks.requireBrowserWritable(projectId);
             return changeLocked(projectId, operationId,
                 parseRequest(projectId, operationId, change, expectedRevision));
         }
@@ -84,6 +88,7 @@ public final class PythonDependencyService {
         try (var lease = lifecycle.tryAcquire(projectId).orElseThrow(
                 () -> new ApiException("PROJECT_BUSY", 409, "Project is busy"))) {
             requireOwner(ownerId, projectId);
+            agentTasks.requireBrowserWritable(projectId);
             return changeLocked(projectId, operationId,
                 parseBatchRequest(projectId, operationId, requirementsText, expectedRevision));
         }
@@ -112,6 +117,7 @@ public final class PythonDependencyService {
         try (var lease = lifecycle.tryAcquire(projectId).orElseThrow(
                 () -> new ApiException("PROJECT_BUSY", 409, "Project is busy"))) {
             requireOwner(ownerId, projectId);
+            agentTasks.requireBrowserWritable(projectId);
             return store.findOperation(projectId, operationId)
                 .map(operation -> "COMMITTED".equals(operation.state())
                     ? committed(operation) : redrive(operation))

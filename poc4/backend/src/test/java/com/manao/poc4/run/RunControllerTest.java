@@ -46,7 +46,9 @@ public class RunControllerTest {
         endpoints = new RecordingEndpoints();
         runtimeStore = new com.manao.poc4.kubernetes.FakeProjectRuntimeStore();
         RunService service = new RunService(store, coordinator, RunControllerTest.policy(),
-            new com.manao.poc4.project.ProjectLifecycleGate(), runtimeStore, dependencies, endpoints);
+            new com.manao.poc4.project.ProjectLifecycleGate(),
+            com.manao.poc4.workspace.WorkspaceControllerTest.NO_AGENT_TASKS,
+            runtimeStore, dependencies, endpoints);
         controller = new RunController(service);
         store.projects.put(PROJECT, "READY");
         store.projectOwners.put(PROJECT, ALICE);

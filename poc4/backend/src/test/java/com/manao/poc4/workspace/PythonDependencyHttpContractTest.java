@@ -50,7 +50,8 @@ class PythonDependencyHttpContractTest {
         ProjectLifecycleGate lifecycle = new ProjectLifecycleGate();
         WorkspaceOperationService operations = new WorkspaceOperationService(store, agent, lifecycle);
         PythonDependencyService dependencies = new PythonDependencyService(store, operations, agent,
-            lifecycle, runtimeStore(Map.of(PROJECT, "python-fastapi-web", "prj-java", "java-spring-boot-web")));
+            lifecycle, runtimeStore(Map.of(PROJECT, "python-fastapi-web", "prj-java", "java-spring-boot-web")),
+            WorkspaceControllerTest.NO_AGENT_TASKS);
         http = MockMvcBuilders.standaloneSetup(new PythonDependencyController(dependencies))
             .setControllerAdvice(new GlobalExceptionHandler())
             .build();
@@ -158,7 +159,8 @@ class PythonDependencyHttpContractTest {
         ProjectLifecycleGate lifecycle = new ProjectLifecycleGate();
         WorkspaceOperationService operations = new WorkspaceOperationService(store, agent, lifecycle, canary);
         PythonDependencyService dependencies = new PythonDependencyService(store, operations, agent,
-            lifecycle, runtimeStore(Map.of(PROJECT, "python-fastapi-web")));
+            lifecycle, runtimeStore(Map.of(PROJECT, "python-fastapi-web")),
+            WorkspaceControllerTest.NO_AGENT_TASKS);
         MockMvc faultedHttp = MockMvcBuilders.standaloneSetup(new PythonDependencyController(dependencies))
             .setControllerAdvice(new GlobalExceptionHandler())
             .build();

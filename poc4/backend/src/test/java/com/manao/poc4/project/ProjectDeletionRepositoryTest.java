@@ -85,6 +85,25 @@ class ProjectDeletionRepositoryTest {
     }
 
     @Test
+    void activeAgentTaskBlocksDeletionInsideTheBeginTransaction() {
+        try (var db = JdbcStoreTestSupport.create()) {
+            ProjectDeletionRepository repo = new ProjectDeletionRepository(db.jdbc(),
+                new DataSourceTransactionManager(db.jdbc().getDataSource()));
+            String ready = seed(db, "owner-a", "ai-occupied", "READY");
+            insertAgentTask(db, ready, "task-active", "QUEUED");
+
+            assertThat(repo.inspect("owner-a", ready)).isEqualTo(ProjectDeletionRepository.BeginDeletion.BUSY);
+            assertThat(repo.begin("owner-a", ready)).isEqualTo(ProjectDeletionRepository.BeginDeletion.BUSY);
+            assertThat(db.jdbc().queryForObject("SELECT state FROM project WHERE id=?", String.class, ready))
+                .isEqualTo("READY");
+
+            // A settled task no longer owns the project: deletion proceeds exactly like before.
+            db.jdbc().update("UPDATE agent_task SET state='COMPLETED' WHERE id=?", "task-active");
+            assertThat(repo.begin("owner-a", ready)).isEqualTo(ProjectDeletionRepository.BeginDeletion.STARTED);
+        }
+    }
+
+    @Test
     void runIdsAreOwnerScopedAndOnlyReturnedForDeletingProjects() {
         try (var db = JdbcStoreTestSupport.create()) {
             ProjectDeletionRepository repo = new ProjectDeletionRepository(db.jdbc(),
@@ -107,6 +126,7 @@ class ProjectDeletionRepositoryTest {
             String other = seed(db, "owner-b", "keep", "READY");
             insertRun(db, deleting, "run-delete", "SUCCEEDED");
             insertPending(db, deleting, "op-delete");
+            insertAgentTask(db, deleting, "task-delete", "COMPLETED");
             insertHistory(db, deleting, "run-delete");
             WorkspaceJdbcStore store = new WorkspaceJdbcStore(db.jdbc(),
                 new DataSourceTransactionManager(db.jdbc().getDataSource()));
@@ -118,6 +138,8 @@ class ProjectDeletionRepositoryTest {
                 .isZero();
             assertThat(db.jdbc().queryForObject(
                 "SELECT COUNT(*) FROM workspace_operation WHERE project_id=?", Integer.class, deleting)).isZero();
+            assertThat(db.jdbc().queryForObject(
+                "SELECT COUNT(*) FROM agent_task WHERE project_id=?", Integer.class, deleting)).isZero();
             assertThat(db.jdbc().queryForObject("SELECT state FROM project WHERE id=?", String.class, other))
                 .isEqualTo("READY");
             for (String table : java.util.List.of("terminal_audit", "terminal_session", "log_ticket")) {
@@ -136,6 +158,7 @@ class ProjectDeletionRepositoryTest {
             String deleting = seed(db, "owner-a", "rollback", "DELETING");
             insertRun(db, deleting, "run-rollback", "SUCCEEDED");
             insertPending(db, deleting, "op-rollback");
+            insertAgentTask(db, deleting, "task-rollback", "COMPLETED");
             insertHistory(db, deleting, "run-rollback");
             JdbcTemplate failing = new JdbcTemplate(db.jdbc().getDataSource()) {
                 @Override public int update(String sql, @org.springframework.lang.Nullable Object... args) {
@@ -156,6 +179,8 @@ class ProjectDeletionRepositoryTest {
                 .isEqualTo(1);
             assertThat(db.jdbc().queryForObject(
                 "SELECT COUNT(*) FROM workspace_operation WHERE project_id=?", Integer.class, deleting)).isEqualTo(1);
+            assertThat(db.jdbc().queryForObject(
+                "SELECT COUNT(*) FROM agent_task WHERE project_id=?", Integer.class, deleting)).isEqualTo(1);
             for (String table : java.util.List.of("terminal_audit", "terminal_session", "log_ticket")) {
                 assertThat(db.jdbc().queryForObject("SELECT COUNT(*) FROM " + table + " WHERE project_id=?",
                     Integer.class, deleting)).isEqualTo(1);
@@ -213,5 +238,14 @@ class ProjectDeletionRepositoryTest {
             """,
             operationId + "-" + projectId, projectId, "a".repeat(64), "b".repeat(64),
             "receipts/" + operationId, "c".repeat(64), Timestamp.from(NOW));
+    }
+
+    private static void insertAgentTask(JdbcStoreTestSupport db, String projectId, String taskId, String state) {
+        db.jdbc().update("""
+            INSERT INTO agent_task(id, project_id, owner_id, request_sha256, prompt, state,
+                worker_epoch, workspace_revision, created_at, updated_at)
+            VALUES (?, ?, 'owner-a', ?, 'demo', ?, 0, 0, ?, ?)
+            """,
+            taskId, projectId, "d".repeat(64), state, Timestamp.from(NOW), Timestamp.from(NOW));
     }
 }

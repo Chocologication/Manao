@@ -25,6 +25,12 @@ public class WorkspaceControllerTest {
     private static final String BOB = "bob-id";
     private static final String PROJECT = "prj-1";
     private static final ObjectMapper JSON = new ObjectMapper();
+    /**
+     * Explicit no-active-task occupancy for fake-store tests: no agent task rows exist behind
+     * these fakes, so the guard is the empty check the production store performs against a
+     * project without tasks. Production wiring never defaults to this.
+     */
+    public static final com.manao.poc4.project.AgentTaskOccupancy NO_AGENT_TASKS = projectId -> { };
 
     private FakeStore store;
     private StubAgent agent;
@@ -36,7 +42,8 @@ public class WorkspaceControllerTest {
         store.projects.put(PROJECT, new WorkspaceStore.ProjectRecord(PROJECT, ALICE, "demo", "READY", 7, null, java.time.Instant.parse("2026-08-29T00:00:00Z")));
         agent = new StubAgent();
         WorkspaceOperationService operations = new WorkspaceOperationService(store, agent);
-        controller = new WorkspaceController(new WorkspaceService(store, operations, agent));
+        controller = new WorkspaceController(new WorkspaceService(store, operations, agent,
+            new ProjectLifecycleGate(), NO_AGENT_TASKS));
     }
 
     private static String sha256Hex(byte[] bytes) {

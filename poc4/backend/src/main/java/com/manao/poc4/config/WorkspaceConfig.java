@@ -48,6 +48,17 @@ public class WorkspaceConfig {
         return new ProjectLifecycleGate();
     }
 
+    /**
+     * The persistent half of the project write ownership (stage one): the same instance is the
+     * {@code AgentTaskOccupancy} every browser write entry consults inside its lifecycle-gate
+     * critical section and the task store the stage-one task service will build upon.
+     */
+    @Bean
+    com.manao.poc4.ai.AgentTaskStore agentTaskStore(org.springframework.jdbc.core.JdbcTemplate jdbc,
+                                                    org.springframework.transaction.PlatformTransactionManager transactions) {
+        return new com.manao.poc4.ai.AgentTaskStore(jdbc, transactions, Clock.systemUTC());
+    }
+
     @Bean
     KubernetesClient kubernetesClient(BackendProperties properties) {
         BackendProperties.Kubernetes kubernetes = properties.kubernetes();
@@ -144,17 +155,21 @@ public class WorkspaceConfig {
     @Bean
     com.manao.poc4.workspace.PythonDependencyService pythonDependencyService(
         WorkspaceStore store, WorkspaceOperationService operations, WorkspaceAgent agent,
-        ProjectLifecycleGate lifecycle, ProjectRuntimeStore runtimeStore) {
+        ProjectLifecycleGate lifecycle, ProjectRuntimeStore runtimeStore,
+        com.manao.poc4.project.AgentTaskOccupancy agentTasks) {
         // The SAME lifecycle gate instance as every other workspace consumer: reentrant within
-        // one thread, refusing concurrent writers without a second lock.
+        // one thread, refusing concurrent writers without a second lock. The agent-task
+        // occupancy rides the same critical sections, so a task holding the project blocks
+        // dependency changes exactly like an active Run does.
         return new com.manao.poc4.workspace.PythonDependencyService(store, operations, agent, lifecycle,
-            runtimeStore);
+            runtimeStore, agentTasks);
     }
 
     @Bean
     WorkspaceService workspaceService(WorkspaceStore store, WorkspaceOperationService operations, WorkspaceAgent agent,
-                                      ProjectLifecycleGate lifecycle) {
-        return new WorkspaceService(store, operations, agent, lifecycle);
+                                      ProjectLifecycleGate lifecycle,
+                                      com.manao.poc4.project.AgentTaskOccupancy agentTasks) {
+        return new WorkspaceService(store, operations, agent, lifecycle, agentTasks);
     }
 
     @Bean
@@ -290,11 +305,12 @@ public class WorkspaceConfig {
                                              com.manao.poc4.kubernetes.JobCoordinator coordinator,
                                              com.manao.poc4.run.RunPolicy policy,
                                              ProjectLifecycleGate lifecycle,
+                                             com.manao.poc4.project.AgentTaskOccupancy agentTasks,
                                              ProjectRuntimeStore runtimeStore,
                                              ProjectDependencies dependencies,
                                              com.manao.poc4.kubernetes.PublicEndpointGateway endpoints) {
-        return new com.manao.poc4.run.RunService(store, coordinator, policy, lifecycle, runtimeStore,
-            dependencies, endpoints);
+        return new com.manao.poc4.run.RunService(store, coordinator, policy, lifecycle, agentTasks,
+            runtimeStore, dependencies, endpoints);
     }
 
     @Bean

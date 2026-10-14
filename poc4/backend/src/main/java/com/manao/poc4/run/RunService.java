@@ -5,6 +5,7 @@ import com.manao.poc4.kubernetes.JobCoordinator;
 import com.manao.poc4.kubernetes.JobResourceFactory;
 import com.manao.poc4.kubernetes.PublicEndpointGateway;
 import com.manao.poc4.persistence.RunState;
+import com.manao.poc4.project.AgentTaskOccupancy;
 import com.manao.poc4.project.ProjectDependencies;
 import com.manao.poc4.project.ProjectLifecycleGate;
 import com.manao.poc4.project.ProjectRuntimeSpec;
@@ -34,25 +35,19 @@ public final class RunService {
     private final JobCoordinator coordinator;
     private final RunPolicy policy;
     private final ProjectLifecycleGate lifecycle;
+    private final AgentTaskOccupancy agentTasks;
     private final ProjectRuntimeStore runtimeStore;
     private final ProjectDependencies dependencies;
     private final PublicEndpointGateway endpoints;
 
-    public RunService(RunStore store, JobCoordinator coordinator, RunPolicy policy) {
-        this(store, coordinator, policy, new ProjectLifecycleGate(), null, null, null);
-    }
-
-    public RunService(RunStore store, JobCoordinator coordinator, RunPolicy policy, ProjectLifecycleGate lifecycle) {
-        this(store, coordinator, policy, lifecycle, null, null, null);
-    }
-
     public RunService(RunStore store, JobCoordinator coordinator, RunPolicy policy, ProjectLifecycleGate lifecycle,
-                      ProjectRuntimeStore runtimeStore, ProjectDependencies dependencies,
-                      PublicEndpointGateway endpoints) {
+                      AgentTaskOccupancy agentTasks, ProjectRuntimeStore runtimeStore,
+                      ProjectDependencies dependencies, PublicEndpointGateway endpoints) {
         this.store = store;
         this.coordinator = coordinator;
         this.policy = policy;
         this.lifecycle = lifecycle;
+        this.agentTasks = agentTasks;
         this.runtimeStore = runtimeStore;
         this.dependencies = dependencies;
         this.endpoints = endpoints;
@@ -73,6 +68,8 @@ public final class RunService {
         if (!"READY".equals(project.state())) {
             throw new ApiException("PROJECT_LOCKED", 409, "Project is locked");
         }
+        // A write-owning agent task and a Run are mutually exclusive for the same project.
+        agentTasks.requireBrowserWritable(projectId);
         long revision = parseRevision(expectedRevision);
         if (revision != project.revision()) {
             throw new ApiException("WORKSPACE_REVISION_CONFLICT", 409, "The workspace changed; reload and retry.");

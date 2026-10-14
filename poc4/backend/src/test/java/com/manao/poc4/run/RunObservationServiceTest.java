@@ -367,7 +367,9 @@ class RunObservationServiceTest {
         store.projectOwners.put(PROJECT, "alice-id");
         store.revision.put(PROJECT, 12L);
         coordinator.ensureJobFailure = new IllegalStateException("cluster unreachable");
-        RunService runService = new RunService(store, coordinator, RunControllerTest.policy());
+        RunService runService = new RunService(store, coordinator, RunControllerTest.policy(),
+            new com.manao.poc4.project.ProjectLifecycleGate(),
+            com.manao.poc4.workspace.WorkspaceControllerTest.NO_AGENT_TASKS, null, null, null);
         RunController controller = new RunController(runService);
 
         try {
@@ -390,7 +392,9 @@ class RunObservationServiceTest {
         store.revision.put(PROJECT, 12L);
         coordinator.ensureJobFailure = new IllegalStateException("write timeout");
         coordinator.fallbackKind = JobCoordinator.ObservationKind.FOUND;
-        RunService runService = new RunService(store, coordinator, RunControllerTest.policy());
+        RunService runService = new RunService(store, coordinator, RunControllerTest.policy(),
+            new com.manao.poc4.project.ProjectLifecycleGate(),
+            com.manao.poc4.workspace.WorkspaceControllerTest.NO_AGENT_TASKS, null, null, null);
         RunController controller = new RunController(runService);
         try {
             controller.start(RunControllerTest.auth("alice-id"), PROJECT, new RunController.StartRunRequest("12"));

@@ -80,6 +80,9 @@ public class ProjectDeletionRepository {
                 if (hasPendingOperation(projectId)) {
                     return BeginDeletion.BUSY;
                 }
+                if (hasActiveAgentTask(projectId)) {
+                    return BeginDeletion.BUSY;
+                }
                 if (mutate) {
                     stampDeleting(projectId);
                 }
@@ -88,6 +91,9 @@ public class ProjectDeletionRepository {
             if ("FAILED".equals(state)) {
                 if (hasActiveRun(projectId)) {
                     return BeginDeletion.ACTIVE_RUN;
+                }
+                if (hasActiveAgentTask(projectId)) {
+                    return BeginDeletion.BUSY;
                 }
                 if (mutate) {
                     stampDeleting(projectId);
@@ -109,6 +115,17 @@ public class ProjectDeletionRepository {
         Integer count = jdbc.queryForObject(
             "SELECT COUNT(*) FROM workspace_operation WHERE project_id = ? AND state = 'PENDING'",
             Integer.class, projectId);
+        return count != null && count > 0;
+    }
+
+    /**
+     * A write-owning agent task (the agent_task.active_project generated column) blocks
+     * deletion. The check runs inside this transaction's {@code SELECT ... FOR UPDATE} project
+     * row lock, so it can never race a task registration that locks the same row.
+     */
+    private boolean hasActiveAgentTask(String projectId) {
+        Integer count = jdbc.queryForObject(
+            "SELECT COUNT(*) FROM agent_task WHERE active_project = ?", Integer.class, projectId);
         return count != null && count > 0;
     }
 
