@@ -238,15 +238,18 @@ scenario_the_copy_refuses_symlinks() {
 
 scenario_the_source_mount_is_really_read_only() {
   local name="${PREFIX}-source-ro" out rc
-  # Foreground run with output captured: the probe must come from a container that actually
-  # RAN and failed with a real read-only filesystem error — a daemon or startup failure
-  # (non-zero without EROFS) is a FAIL, never a pass.
+  # Foreground run with output captured: the probe first echoes a marker, so a container that
+  # never reached its test step (a daemon, image or mount failure) is distinguishable from a
+  # real failed write — only a container that RAN, echoed the marker and then failed the
+  # touch with a real read-only filesystem error passes.
   rc=0
   out="$(dc run --rm --name "$name" --user 10001:10001 --read-only --tmpfs /tmp --network none \
     -v "$(bind_ro "$SOURCE_DIR" /source)" --entrypoint /bin/sh "$IMAGE" \
-    -c 'touch /source/manao-write-probe' 2>&1)" || rc=$?
+    -c 'echo PROBE-RAN; touch /source/manao-write-probe' 2>&1)" || rc=$?
   if [ "$rc" = "0" ]; then
     fail "$name (a write to the read-only source mount succeeded)"
+  elif ! printf '%s\n' "$out" | grep -qx 'PROBE-RAN'; then
+    fail "$name (the probe container never reached its test step, rc=$rc: $out)"
   elif ! printf '%s\n' "$out" | grep -qiE 'read-only file system|EROFS'; then
     fail "$name (the write failed without a read-only filesystem error, rc=$rc: $out)"
   else

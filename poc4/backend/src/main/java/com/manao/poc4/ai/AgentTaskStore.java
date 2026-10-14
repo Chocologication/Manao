@@ -223,15 +223,17 @@ public final class AgentTaskStore implements AgentTaskOccupancy {
     }
 
     /**
-     * Marks a REGISTERED build call RUNNING before its executor touches the cluster: from this
-     * moment a replay is a recovery that may only observe the recorded identity, never start
-     * the build again. Settled rows are never re-marked.
+     * Atomically claims the first execution of a REGISTERED build call by transitioning it to
+     * RUNNING before its executor touches the cluster: the single request whose update wins
+     * this transition owns the one execution, every later replay is a recovery that may only
+     * observe the recorded identity, never start the build again. Returns false for a row that
+     * was already RUNNING or settled — the caller must then follow the recovery path instead.
      */
-    public void markToolCallRunning(String taskId, String toolCallId) {
-        jdbc.update(
+    public boolean markToolCallRunning(String taskId, String toolCallId) {
+        return jdbc.update(
             "UPDATE agent_tool_call SET state = 'RUNNING', updated_at = ? "
                 + "WHERE task_id = ? AND tool_call_id = ? AND state = 'REGISTERED'",
-            Timestamp.from(clock.instant()), taskId, toolCallId);
+            Timestamp.from(clock.instant()), taskId, toolCallId) > 0;
     }
 
     /**

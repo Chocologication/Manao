@@ -140,7 +140,7 @@ public final class Fabric8DevelopmentBuildExecutor implements DevelopmentBuildEx
         }
         String jobUid = job == null ? identity.jobUid() : uid(job);
         BoundedText log = collectRemainingLog(request, jobName, jobUid, identity.podUid());
-        boolean cleanupConfirmed = cleanup(jobName, request.commandId());
+        boolean cleanupConfirmed = cleanup(jobName, jobUid, request.commandId());
         return new AgentContracts.BuildResult(
             new AgentContracts.BuildIdentity(jobName, jobUid, identity.podUid()),
             null, "BUILD_CLOSED", log.text(), log.truncated(), parseReports(log.text()), cleanupConfirmed);
@@ -185,7 +185,7 @@ public final class Fabric8DevelopmentBuildExecutor implements DevelopmentBuildEx
                     }
                     Observation observed = terminalObservation(job, pod);
                     if (observed != null) {
-                        boolean cleanupConfirmed = cleanup(jobName, request.commandId());
+                        boolean cleanupConfirmed = cleanup(jobName, jobUid, request.commandId());
                         return new AgentContracts.BuildResult(
                             new AgentContracts.BuildIdentity(jobName, jobUid, podUid),
                             observed.exitCode(), observed.terminationReason(), observed.output(),
@@ -197,7 +197,7 @@ public final class Fabric8DevelopmentBuildExecutor implements DevelopmentBuildEx
                     // log, delete by the original identity, confirm everything is 404. No exit
                     // code is invented for a build whose termination was never observed.
                     BoundedText log = collectRemainingLog(request, jobName, jobUid, podUid);
-                    boolean cleanupConfirmed = cleanup(jobName, request.commandId());
+                    boolean cleanupConfirmed = cleanup(jobName, jobUid, request.commandId());
                     return new AgentContracts.BuildResult(
                         new AgentContracts.BuildIdentity(jobName, jobUid, podUid), null,
                         "BUILD_WAIT_BUDGET_EXCEEDED", log.text(), log.truncated(),
@@ -206,7 +206,7 @@ public final class Fabric8DevelopmentBuildExecutor implements DevelopmentBuildEx
                 sleep();
             }
         } catch (WaitInterruptedException interrupted) {
-            finishAfterInterrupt(request, jobName);
+            finishAfterInterrupt(request, jobName, jobUid, podUid);
             throw new IllegalStateException("interrupted while waiting for the development build", interrupted);
         } catch (KubernetesClientException apiFailure) {
             if (!Thread.currentThread().isInterrupted()) {
@@ -214,19 +214,23 @@ public final class Fabric8DevelopmentBuildExecutor implements DevelopmentBuildEx
             }
             // The wait was interrupted while an API read was in flight and the client aborted
             // the call: the finish path must still run before the interruption propagates.
-            finishAfterInterrupt(request, jobName);
+            finishAfterInterrupt(request, jobName, jobUid, podUid);
             throw new IllegalStateException("interrupted while waiting for the development build", apiFailure);
         }
     }
 
     /**
-     * Best-effort shared finish for a dead caller: the still-pending interrupt flag is cleared
-     * for the finish path's own API calls and waits, and restored afterwards.
+     * Best-effort shared finish for a dead caller: the observable log is collected BEFORE
+     * anything is deleted, then the build is finished by its original identity. The still-
+     * pending interrupt flag is cleared for the finish path's own API calls and waits, and
+     * restored afterwards.
      */
-    private void finishAfterInterrupt(AgentContracts.BuildRequest request, String jobName) {
+    private void finishAfterInterrupt(AgentContracts.BuildRequest request, String jobName,
+                                      String jobUid, String podUid) {
         boolean pending = Thread.interrupted();
         try {
-            cleanup(jobName, request.commandId());
+            collectRemainingLog(request, jobName, jobUid, podUid);
+            cleanup(jobName, jobUid, request.commandId());
         } finally {
             if (pending) {
                 Thread.currentThread().interrupt();
@@ -335,19 +339,41 @@ public final class Fabric8DevelopmentBuildExecutor implements DevelopmentBuildEx
     }
 
     /**
-     * Deletes the job and every pod carrying the tool-call identity, then confirms both are 404.
-     * Anything less — a delete error, a pod stuck terminating — is reported as unconfirmed and
-     * never treated as a finished cleanup.
+     * Deletes this build's pods and job, then confirms both are 404. The delete precondition is
+     * the ORIGINAL identity: the live job must still carry the recorded UID, so a job replaced
+     * under the same name is never deleted by this build. The pods go first — while this job
+     * still holds its name no replacement can exist, so the tool-call label can only match this
+     * build's own pods. Anything less than a fully confirmed 404 — a refused precondition, a
+     * delete error, a pod stuck terminating, a replacement appearing — is reported unconfirmed.
+     * Package-private so the precondition contract is directly testable.
      */
-    private boolean cleanup(String jobName, String commandId) {
+    boolean cleanup(String jobName, String jobUid, String commandId) {
         try {
-            client.batch().v1().jobs().inNamespace(namespace).withName(jobName).delete();
-            client.pods().inNamespace(namespace)
-                .withLabel(JobResourceFactory.LABEL_TOOL_CALL_ID, commandId).delete();
+            Job job = client.batch().v1().jobs().inNamespace(namespace).withName(jobName).get();
+            if (job != null) {
+                if (jobUid == null || !jobUid.equals(uid(job))) {
+                    // A live job that does not carry the recorded UID belongs to a different
+                    // build: this call refuses to touch it and stays unconfirmed.
+                    return false;
+                }
+                client.pods().inNamespace(namespace)
+                    .withLabel(JobResourceFactory.LABEL_TOOL_CALL_ID, commandId).delete();
+                client.batch().v1().jobs().inNamespace(namespace).withName(jobName).delete();
+            } else {
+                // No job holds the name; the tool-call label can only match this build's
+                // orphaned evidence.
+                client.pods().inNamespace(namespace)
+                    .withLabel(JobResourceFactory.LABEL_TOOL_CALL_ID, commandId).delete();
+            }
             Instant deadline = clock.instant().plusSeconds(cleanupWaitSeconds);
             while (clock.instant().isBefore(deadline)) {
-                if (client.batch().v1().jobs().inNamespace(namespace).withName(jobName).get() == null
-                    && buildPods(commandId).isEmpty()) {
+                Job current = client.batch().v1().jobs().inNamespace(namespace).withName(jobName).get();
+                if (current != null) {
+                    if (jobUid == null || !jobUid.equals(uid(current))) {
+                        return false;
+                    }
+                    // Our own job is still terminating; keep waiting for its 404.
+                } else if (buildPods(commandId).isEmpty()) {
                     return true;
                 }
                 sleep();

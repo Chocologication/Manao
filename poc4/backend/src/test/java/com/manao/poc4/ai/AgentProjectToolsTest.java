@@ -4,8 +4,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -33,6 +35,12 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -714,6 +722,82 @@ class AgentProjectToolsTest {
             // The unknowable build is never executed a second time: the call fails closed.
             verify(env.builds, never()).build(any());
             assertThat(env.rowState("call-build")).isEqualTo("NEEDS_ATTENTION");
+        }
+    }
+
+    @Test
+    void aLoserOfTheFirstExecutionClaimFollowsTheRecoveryPathInsteadOfBuilding() throws Exception {
+        try (Harness env = new Harness()) {
+            env.stubLiveFile(PATH, "class DemoController {\n}\n");
+            ToolRequest request = new ToolRequest("call-build", "build", 7,
+                JSON.createObjectNode().put("goal", "test"));
+            // A fresh REGISTERED row whose first execution was atomically claimed by another
+            // request between this one's gate snapshot and its own claim: the loser's
+            // REGISTERED->RUNNING update matches no row.
+            env.tasks.registerToolCall(env.taskId, "call-build",
+                AgentProjectTools.callDigest(env.taskId, request), "build",
+                AgentProjectTools.canonicalArgsJson(request.args()), 7, "command-claimed");
+            AgentTaskStore spyingTasks = spy(env.tasks);
+            doReturn(false).when(spyingTasks).markToolCallRunning(any(), any());
+            AgentProjectTools loserTools = new AgentProjectTools(spyingTasks, env.store, env.workspace,
+                env.operations, env.gate, env.builds);
+            when(env.builds.observe(any(), any())).thenReturn(new AgentContracts.BuildResult(
+                new AgentContracts.BuildIdentity("manao-dev-claimed", "job-uid-claimed", null),
+                null, "BUILD_EVIDENCE_UNAVAILABLE", "", false, List.of(), false));
+
+            assertThatThrownBy(() -> loserTools.invoke(env.taskId, request))
+                .isInstanceOf(IllegalStateException.class);
+
+            // The claim loser never starts a build: it re-reads the durable state and
+            // recovers along the observation path only.
+            verify(spyingTasks).markToolCallRunning(env.taskId, "call-build");
+            verify(env.builds).observe(any(), eq(new AgentContracts.BuildIdentity(null, null, null)));
+            verify(env.builds, never()).build(any());
+            assertThat(env.rowState("call-build")).isEqualTo("NEEDS_ATTENTION");
+        }
+    }
+
+    @Test
+    void concurrentInvocationsOfOneBuildCallStartTheBuildExactlyOnce() throws Exception {
+        try (Harness env = new Harness()) {
+            env.stubLiveFile(PATH, "class DemoController {\n}\n");
+            AgentContracts.BuildIdentity identity =
+                new AgentContracts.BuildIdentity("manao-dev-1", "job-uid-1", "pod-uid-1");
+            CountDownLatch winnerBuilding = new CountDownLatch(1);
+            CountDownLatch loserRecovered = new CountDownLatch(1);
+            AtomicInteger builds = new AtomicInteger();
+            AtomicInteger observations = new AtomicInteger();
+            when(env.builds.build(any())).thenAnswer(invocation -> {
+                builds.incrementAndGet();
+                winnerBuilding.countDown();
+                // Hold the winning build open until the concurrent replay has taken its
+                // recovery path, mirroring a real cluster wait.
+                loserRecovered.await(10, TimeUnit.SECONDS);
+                return new AgentContracts.BuildResult(identity, 0, "Completed", "winner", false, List.of(), true);
+            });
+            when(env.builds.observe(any(), any())).thenAnswer(invocation -> {
+                observations.incrementAndGet();
+                loserRecovered.countDown();
+                return new AgentContracts.BuildResult(identity, 0, "Completed", "recovered", false, List.of(), true);
+            });
+
+            ExecutorService pool = Executors.newFixedThreadPool(2);
+            try {
+                Future<ToolResult> winner = pool.submit(() -> env.tools.invoke(env.taskId,
+                    new ToolRequest("call-build", "build", 7, JSON.createObjectNode().put("goal", "test"))));
+                assertThat(winnerBuilding.await(10, TimeUnit.SECONDS)).isTrue();
+                Future<ToolResult> loser = pool.submit(() -> env.tools.invoke(env.taskId,
+                    new ToolRequest("call-build", "build", 7, JSON.createObjectNode().put("goal", "test"))));
+
+                assertThat(winner.get(30, TimeUnit.SECONDS).data().path("output").asText()).isEqualTo("winner");
+                assertThat(loser.get(30, TimeUnit.SECONDS).data().path("output").asText()).isEqualTo("recovered");
+            } finally {
+                pool.shutdownNow();
+            }
+            // Exactly one build execution for the one call id; the concurrent replay recovered.
+            assertThat(builds.get()).isEqualTo(1);
+            assertThat(observations.get()).isEqualTo(1);
+            assertThat(env.rowState("call-build")).isEqualTo("COMPLETED");
         }
     }
 

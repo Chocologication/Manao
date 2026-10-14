@@ -542,6 +542,39 @@ class DevelopmentBuildExecutorTest {
         assertThat(result.testReports()).hasSize(1);
     }
 
+    @Test
+    void aCloseAgainstAReplacedJobIdentityIsRefused() {
+        Job job = seedJob();
+        Pod pod = seedPod(job.getMetadata().getName(), job.getMetadata().getUid(), 0, "Completed");
+
+        assertThatThrownBy(() -> executor.close(request(), new BuildIdentity(
+            job.getMetadata().getName(), "rotated-job-uid", null)))
+            .isInstanceOf(IllegalStateException.class);
+        // The refused evidence was not destroyed.
+        assertThat(client.batch().v1().jobs().inNamespace(NS)
+            .withName(job.getMetadata().getName()).get()).isNotNull();
+        assertThat(client.pods().inNamespace(NS).withName(pod.getMetadata().getName()).get()).isNotNull();
+    }
+
+    @Test
+    void aCleanupAgainstAJobThatWasReplacedUnderTheSameNameDeletesNothing() {
+        Job job = seedJob();
+        Pod pod = seedPod(job.getMetadata().getName(), job.getMetadata().getUid(), 0, "Completed");
+
+        // The delete precondition is the original identity: a live job that no longer carries
+        // the recorded UID belongs to a different build and is never touched by this one.
+        assertThat(executor.cleanup(job.getMetadata().getName(), "original-job-uid", COMMAND)).isFalse();
+        assertThat(client.batch().v1().jobs().inNamespace(NS)
+            .withName(job.getMetadata().getName()).get()).isNotNull();
+        assertThat(client.pods().inNamespace(NS).withName(pod.getMetadata().getName()).get()).isNotNull();
+
+        // With the matching original identity the same call deletes and confirms everything.
+        assertThat(executor.cleanup(job.getMetadata().getName(), job.getMetadata().getUid(), COMMAND)).isTrue();
+        assertThat(client.batch().v1().jobs().inNamespace(NS)
+            .withName(job.getMetadata().getName()).get()).isNull();
+        assertThat(client.pods().inNamespace(NS).withName(pod.getMetadata().getName()).get()).isNull();
+    }
+
     private static String sha256(String content) {
         try {
             StringBuilder builder = new StringBuilder();

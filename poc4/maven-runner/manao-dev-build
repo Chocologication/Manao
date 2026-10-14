@@ -16,10 +16,13 @@
 #               replacement. Report collection is independent evidence: every anomaly (missing
 #               directory, symlink component, unreadable file, over-budget section) becomes an
 #               explicit state on the END marker and NEVER changes the exit code, and the
-#               appended bytes are capped by reading a pinned file descriptor with head -c, so
-#               a report file swapped or grown between the checks and the read can neither
-#               redirect the append nor exceed the budget. TERM/INT exit through the same
-#               finish path, keeping the original execution rc.
+#               appended bytes are capped by staging a pinned-descriptor read and debiting
+#               the budget with the bytes actually staged (wc -c), so files swapped or grown
+#               between the checks and the read can neither redirect the append nor exceed
+#               the budget. TERM/INT never exit from the trap in the run phase — a signal
+#               landing between Maven's exit and the rc assignment would otherwise freeze
+#               rc=0 and mask the real result; the main flow attaches the reports and exits
+#               with the real rc in every ordering.
 # The backend reads the tail markers after the pod terminates; a missing or truncated report
 # section is reported as such and never read as a passing run.
 set -eu
@@ -53,14 +56,18 @@ link_free() {
 }
 
 attach_reports() {
-  # Report collection is independent evidence: it always emits the tail markers, never changes
-  # the launcher's exit code and never appends more than the budget. Every command below is
-  # guarded, so no stat/open/read failure can abort the launcher under set -e.
+  # Report collection is independent evidence: it always emits the tail markers, never
+  # changes the launcher's exit code and never appends more than the budget. Every command
+  # below is guarded, so no failure (including a failed mktemp) can abort the launcher or
+  # skip the END marker under set -e.
   local truncated=0 count=0 budget=$MAX_REPORT_BYTES state=ok
-  local report size list
+  local report list staging actual
   echo "$REPORT_BEGIN"
-  list="$(mktemp "${TMPDIR:-/tmp}/manao-dev-build-reports.XXXXXX")"
-  if ! link_free "$REPORT_DIR"; then
+  list="$(mktemp "${TMPDIR:-/tmp}/manao-dev-build-reports.XXXXXX" 2>/dev/null)" || list=""
+  staging="$(mktemp "${TMPDIR:-/tmp}/manao-dev-build-staging.XXXXXX" 2>/dev/null)" || staging=""
+  if [ -z "$list" ] || [ -z "$staging" ]; then
+    state="failed"
+  elif ! link_free "$REPORT_DIR"; then
     state="link-refused"
   elif [ ! -d "$REPORT_DIR" ]; then
     state="missing"
@@ -73,46 +80,56 @@ attach_reports() {
         state="link-refused"
         continue
       fi
-      # Pin the inode before measuring and reading: a file replaced after the checks cannot
-      # redirect the append, and head -c bounds the bytes it can contribute.
+      # Pin the inode, then stage a bounded read into a local file: the budget is debited by
+      # the bytes ACTUALLY staged (wc -c), never by a size measured through the procfs
+      # symlink, and a report swapped or grown after the checks can neither redirect the
+      # append nor exceed the budget.
       if ! exec 3< "$report" 2>/dev/null; then
         state="unreadable"
         continue
       fi
-      size="$(stat -c %s -- "/proc/self/fd/3" 2>/dev/null)" \
-        || { exec 3<&-; state="unreadable"; continue; }
-      if [ "$size" -gt "$budget" ]; then
-        exec 3<&-
-        truncated=1
-        break
-      fi
-      if ! head -c "$budget" <&3 2>/dev/null; then
+      if ! head -c "$budget" <&3 > "$staging" 2>/dev/null; then
         exec 3<&-
         state="unreadable"
         continue
       fi
+      actual="$(wc -c < "$staging")" || { exec 3<&-; state="unreadable"; continue; }
+      if [ "$actual" -ge "$budget" ]; then
+        # The budget was filled: this file was cut or nothing more fits, so the section may
+        # be incomplete and no further file can be attached.
+        exec 3<&-
+        truncated=1
+        break
+      fi
       exec 3<&-
-      budget=$((budget - size))
+      if ! cat -- "$staging" 2>/dev/null; then
+        state="unreadable"
+        continue
+      fi
+      budget=$((budget - actual))
       count=$((count + 1))
     done < "$list"
   fi
-  rm -f -- "$list" 2>/dev/null || true
+  if [ -n "$list" ]; then
+    rm -f -- "$list" 2>/dev/null || true
+  fi
+  if [ -n "$staging" ]; then
+    rm -f -- "$staging" 2>/dev/null || true
+  fi
   echo "$REPORT_END truncated=$truncated files=$count state=$state"
 }
 
 rc=""
-finishing=0
 phase="copy"
 finish_run() {
   if [ "$phase" != "run" ]; then
     exit 143
   fi
-  # A signal after Maven finished still keeps the original execution rc; the report
-  # attachment is attempted exactly once.
-  [ "$finishing" -eq 0 ] || exit "${rc:-143}"
-  finishing=1
-  attach_reports
-  exit "${rc:-143}"
+  # Run phase: NEVER exit from the trap. A signal can land between Maven's exit and the
+  # `|| rc=$?` assignment; exiting here would freeze rc=0 and mask a real Maven failure.
+  # Bash defers this trap until the foreground Maven returns anyway, and the main flow
+  # already attaches the reports and exits with the real rc, so there is nothing to do.
+  :
 }
 trap finish_run TERM INT
 
@@ -163,7 +180,6 @@ case "$cmd" in
     phase="run"
     rc=0
     /usr/local/bin/manao-maven -B -ntp "$goal" || rc=$?
-    finishing=1
     attach_reports
     exit "$rc"
     ;;

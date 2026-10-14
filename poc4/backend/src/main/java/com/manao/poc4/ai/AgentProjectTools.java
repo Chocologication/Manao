@@ -342,10 +342,18 @@ public final class AgentProjectTools {
                 // still never create.
                 built = builds.observe(buildRequest, new AgentContracts.BuildIdentity(null, null, null));
             } else {
-                // First execution: mark RUNNING before the cluster is touched, so any later
-                // replay can only recover, never re-execute.
-                tasks.markToolCallRunning(row.taskId(), row.toolCallId());
-                built = builds.build(buildRequest);
+                // First execution is claimed by the atomic REGISTERED->RUNNING transition: the
+                // request that wins it runs the build; the loser of the race re-reads the
+                // durable state and follows the recovery path, so one call id can never start
+                // a second build even when two requests raced past the gate together.
+                if (tasks.markToolCallRunning(row.taskId(), row.toolCallId())) {
+                    built = builds.build(buildRequest);
+                } else {
+                    built = tasks.boundBuildIdentity(row.taskId(), row.toolCallId())
+                        .map(durable -> builds.observe(buildRequest, durable))
+                        .orElseGet(() -> builds.observe(buildRequest,
+                            new AgentContracts.BuildIdentity(null, null, null)));
+                }
             }
         } catch (RuntimeException ex) {
             tasks.markToolCallNeedsAttention(row.taskId(), row.toolCallId());

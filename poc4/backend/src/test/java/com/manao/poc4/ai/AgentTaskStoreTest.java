@@ -321,7 +321,10 @@ class AgentTaskStoreTest {
             store.create(OWNER, PROJECT, new TaskRequest(taskId, "change demo", 7));
             store.registerToolCall(taskId, "call-1", "a".repeat(64), "build", "{}", 7, "command-1");
 
-            store.markToolCallRunning(taskId, "call-1");
+            // The REGISTERED->RUNNING transition is the atomic claim of the first execution:
+            // exactly one caller wins it, every later caller must follow the recovery path.
+            assertThat(store.markToolCallRunning(taskId, "call-1")).isTrue();
+            assertThat(store.markToolCallRunning(taskId, "call-1")).isFalse();
 
             assertThat(store.findToolCall(taskId, "call-1").orElseThrow().state()).isEqualTo("RUNNING");
             // CONCAT_WS skips NULLs entirely: no identity has been bound yet.
@@ -329,9 +332,11 @@ class AgentTaskStoreTest {
                 "SELECT CONCAT_WS('|', job_name, job_uid, pod_uid) FROM agent_tool_call "
                     + "WHERE task_id = ? AND tool_call_id = ?",
                 String.class, taskId, "call-1")).isEmpty();
-            // The transition is one-way: a RUNNING row stays RUNNING, never re-registered.
-            store.markToolCallRunning(taskId, "call-1");
-            assertThat(store.findToolCall(taskId, "call-1").orElseThrow().state()).isEqualTo("RUNNING");
+            // A settled row can never be claimed either.
+            store.bindToolCallIdentity(taskId, "call-1", "manao-dev-1", "job-uid-1", "pod-uid-1");
+            store.completeToolCall(taskId, "call-1", "{}");
+            assertThat(store.markToolCallRunning(taskId, "call-1")).isFalse();
+            assertThat(store.findToolCall(taskId, "call-1").orElseThrow().state()).isEqualTo("COMPLETED");
         }
     }
 
