@@ -4,18 +4,25 @@
 #   copy        init-container phase: copy the read-only project source (/source) into the
 #               scratch workspace (/workspace) for exactly one build. Excludes every .manao*,
 #               .git and target directory, refuses symlinks/FIFOs/device nodes, and fails
-#               closed beyond 1000 files or 20 MiB of source. Nothing from the project itself
-#               is ever executed.
+#               closed beyond 1000 files or 20 MiB of source. The plan is enumerated ONCE into
+#               a manifest and both the budget check and the copy consume that manifest, so a
+#               failed enumeration can never be reported as a successful copy. Nothing from the
+#               project itself is ever executed.
 #   run <goal>  execution phase: run the fixed `/usr/local/bin/manao-maven -B -ntp <goal>`
 #               against the scratch copy, keep the real exit code, and append a bounded copy
-#               of the Surefire XML reports (fixed target path only, links never followed,
-#               64 KiB total) to the log tail between the fixed markers before exiting with
-#               that code. The launcher must survive to attach the reports, so Maven runs as
-#               a child process — never an exec replacement.
+#               of the Surefire XML reports (fixed target path only) to the log tail between
+#               the fixed markers before exiting with that code. The launcher must survive to
+#               attach the reports, so Maven runs as a child process — never an exec
+#               replacement. Report collection is independent evidence: every anomaly (missing
+#               directory, symlink component, unreadable file, over-budget section) becomes an
+#               explicit state on the END marker and NEVER changes the exit code, and the
+#               appended bytes are capped by reading a pinned file descriptor with head -c, so
+#               a report file swapped or grown between the checks and the read can neither
+#               redirect the append nor exceed the budget. TERM/INT exit through the same
+#               finish path, keeping the original execution rc.
 # The backend reads the tail markers after the pod terminates; a missing or truncated report
 # section is reported as such and never read as a passing run.
 set -eu
-trap 'exit 143' TERM INT
 
 MAX_SOURCE_FILES=1000
 MAX_SOURCE_BYTES=20971520          # 20 MiB
@@ -28,28 +35,86 @@ REPORT_END="MANAO-SUREFIRE-REPORT-END"
 
 die() { echo "manao-dev-build: $1" >&2; exit 1; }
 
-# The plan enumeration is identical for the budget check and the copy, so the limits are exact.
-source_files() { cd "$SOURCE_DIR" && find . \( -name .git -o -name target -o -name '.manao*' \) -prune -o -type f -print0; }
+# True when NO component of $1 (the last one included) is a symbolic link.
+link_free() {
+  local rest="$1" walked="" part=""
+  case "$rest" in
+    /*) walked="/"; rest="${rest#/}" ;;
+  esac
+  while [ -n "$rest" ]; do
+    part="${rest%%/*}"
+    rest="${rest#"$part"}"
+    rest="${rest#/}"
+    walked="${walked}${part}"
+    [ ! -L "$walked" ] || return 1
+    walked="${walked}/"
+  done
+  return 0
+}
 
 attach_reports() {
-  local truncated=0 count=0 budget=$MAX_REPORT_BYTES total size report
-  if [ -d "$REPORT_DIR" ]; then
-    total="$(find "$REPORT_DIR" -maxdepth 1 -type f -name '*.xml' -printf '%s\n' 2>/dev/null | awk '{s+=$1} END{print s+0}')"
-    [ "$total" -le "$MAX_REPORT_BYTES" ] || truncated=1
-    echo "$REPORT_BEGIN"
+  # Report collection is independent evidence: it always emits the tail markers, never changes
+  # the launcher's exit code and never appends more than the budget. Every command below is
+  # guarded, so no stat/open/read failure can abort the launcher under set -e.
+  local truncated=0 count=0 budget=$MAX_REPORT_BYTES state=ok
+  local report size list
+  echo "$REPORT_BEGIN"
+  list="$(mktemp "${TMPDIR:-/tmp}/manao-dev-build-reports.XXXXXX")"
+  if ! link_free "$REPORT_DIR"; then
+    state="link-refused"
+  elif [ ! -d "$REPORT_DIR" ]; then
+    state="missing"
+  elif ! find "$REPORT_DIR" -maxdepth 1 -type f -name '*.xml' -print0 2>/dev/null > "$list"; then
+    state="unreadable"
+  else
     while IFS= read -r -d '' report; do
-      size="$(stat -c %s -- "$report")"
-      [ "$size" -le "$budget" ] || break
-      cat -- "$report"
+      [ -n "$report" ] || continue
+      if ! link_free "$report"; then
+        state="link-refused"
+        continue
+      fi
+      # Pin the inode before measuring and reading: a file replaced after the checks cannot
+      # redirect the append, and head -c bounds the bytes it can contribute.
+      if ! exec 3< "$report" 2>/dev/null; then
+        state="unreadable"
+        continue
+      fi
+      size="$(stat -c %s -- "/proc/self/fd/3" 2>/dev/null)" \
+        || { exec 3<&-; state="unreadable"; continue; }
+      if [ "$size" -gt "$budget" ]; then
+        exec 3<&-
+        truncated=1
+        break
+      fi
+      if ! head -c "$budget" <&3 2>/dev/null; then
+        exec 3<&-
+        state="unreadable"
+        continue
+      fi
+      exec 3<&-
       budget=$((budget - size))
       count=$((count + 1))
-    done < <(find "$REPORT_DIR" -maxdepth 1 -type f -name '*.xml' -print0 | sort -z)
-  else
-    echo "$REPORT_BEGIN"
-    echo "manao-dev-build: no surefire report directory" >&2
+    done < "$list"
   fi
-  echo "$REPORT_END truncated=$truncated files=$count"
+  rm -f -- "$list" 2>/dev/null || true
+  echo "$REPORT_END truncated=$truncated files=$count state=$state"
 }
+
+rc=""
+finishing=0
+phase="copy"
+finish_run() {
+  if [ "$phase" != "run" ]; then
+    exit 143
+  fi
+  # A signal after Maven finished still keeps the original execution rc; the report
+  # attachment is attempted exactly once.
+  [ "$finishing" -eq 0 ] || exit "${rc:-143}"
+  finishing=1
+  attach_reports
+  exit "${rc:-143}"
+}
+trap finish_run TERM INT
 
 cmd="${1:-}"
 case "$cmd" in
@@ -57,21 +122,35 @@ case "$cmd" in
     [ -d "$SOURCE_DIR" ] || die "source directory is not mounted"
     [ -d "$WORKSPACE_DIR" ] || die "workspace directory is not mounted"
     # A project that ships symlinks, FIFOs or device nodes is never copied, never followed.
-    bad="$(find "$SOURCE_DIR" \( -type l -o -type p -o -type b -o -type c -o -type s \) -print -quit)"
+    bad="$(find "$SOURCE_DIR" \( -type l -o -type p -o -type b -o -type c -o -type s \) -print -quit)" \
+      || die "cannot scan the source for non-regular entries"
     [ -z "$bad" ] || die "refusing non-regular source entry: ${bad#"$SOURCE_DIR"/}"
+    # One enumeration feeds both the budget check and the copy, and find's status is checked:
+    # a failed scan can never be reported as a successful copy.
+    manifest="$(mktemp "${TMPDIR:-/tmp}/manao-dev-build-manifest.XXXXXX")"
+    if ! find "$SOURCE_DIR" \( -name .git -o -name target -o -name '.manao*' \) -prune -o -type f -print0 > "$manifest"; then
+      rm -f -- "$manifest"
+      die "cannot enumerate the source files"
+    fi
     files=0
     bytes=0
     while IFS= read -r -d '' entry; do
       files=$((files + 1))
-      size="$(stat -c %s -- "$SOURCE_DIR/$entry")" || die "cannot stat source file $entry"
+      size="$(stat -c %s -- "$entry")" \
+        || { rm -f -- "$manifest"; die "cannot stat source file $entry"; }
       bytes=$((bytes + size))
-      [ "$files" -le "$MAX_SOURCE_FILES" ] || die "source exceeds the 1000 file limit"
-      [ "$bytes" -le "$MAX_SOURCE_BYTES" ] || die "source exceeds the 20 MiB limit"
-    done < <(source_files)
+      [ "$files" -le "$MAX_SOURCE_FILES" ] \
+        || { rm -f -- "$manifest"; die "source exceeds the 1000 file limit"; }
+      [ "$bytes" -le "$MAX_SOURCE_BYTES" ] \
+        || { rm -f -- "$manifest"; die "source exceeds the 20 MiB limit"; }
+    done < "$manifest"
     while IFS= read -r -d '' entry; do
-      mkdir -p -- "$WORKSPACE_DIR/$(dirname -- "$entry")"
-      cp -- "$SOURCE_DIR/$entry" "$WORKSPACE_DIR/$entry"
-    done < <(source_files)
+      rel="${entry#"$SOURCE_DIR"/}"
+      mkdir -p -- "$WORKSPACE_DIR/$(dirname -- "$rel")"
+      cp -- "$entry" "$WORKSPACE_DIR/$rel" \
+        || { rm -f -- "$manifest"; die "cannot copy source file $entry"; }
+    done < "$manifest"
+    rm -f -- "$manifest"
     echo "manao-dev-build: copied $files files ($bytes bytes)"
     ;;
   run)
@@ -81,8 +160,10 @@ case "$cmd" in
       *) die "usage: manao-dev-build run <compile|test|package>" ;;
     esac
     [ -d "$WORKSPACE_DIR" ] || die "workspace directory is not mounted"
+    phase="run"
     rc=0
     /usr/local/bin/manao-maven -B -ntp "$goal" || rc=$?
+    finishing=1
     attach_reports
     exit "$rc"
     ;;

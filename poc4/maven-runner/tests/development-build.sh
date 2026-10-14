@@ -39,15 +39,22 @@ REPORT_BEGIN="MANAO-SUREFIRE-REPORT-BEGIN"
 CONTAINERS=()
 VOLUMES=()
 LOGS=()
+LAST_LOG=""
 PASS=0
 FAIL=0
 CASE_EXIT=""
 SEED_ID=""
 
 # docker with MSYS/Git Bash path conversion disabled (same convention as maven-cache.sh);
-# host paths are converted explicitly where a bind mount needs them.
+# host paths are converted explicitly where a bind mount needs them — and only on an MSYS/MINGW
+# host, so a Linux/WSL host passes its paths through unchanged.
 dc() { MSYS_NO_PATHCONV=1 docker "$@"; }
-host_path() { cygpath -w "$1"; }
+host_path() {
+  case "$(uname -s)" in
+    MSYS*|MINGW*|CYGWIN*) cygpath -w "$1" ;;
+    *) printf '%s\n' "$1" ;;
+  esac
+}
 
 cleanup() {
   local c v l
@@ -90,13 +97,14 @@ wait_case() {
   CASE_EXIT="TIMEOUT"
 }
 
-# Logs of a container into a temp file (removed by the cleanup trap); prints the path.
-log_of() {
+# Logs of a container into a temp file (removed by the cleanup trap); sets LAST_LOG to the
+# path — a command substitution would run in a subshell and lose the LOGS bookkeeping.
+log_of() { # NAME
   local f
-  f="$(mktemp "${TMPDIR:-/tmp}/${PREFIX}-log.XXXXXX")" || return 1
+  f="$(mktemp "${TMPDIR:-/tmp}/${PREFIX}-log.XXXXXX")" || { LAST_LOG=""; return 1; }
   docker logs "$1" >"$f" 2>&1
   LOGS+=("$f")
-  echo "$f"
+  LAST_LOG="$f"
 }
 
 require_templates() {
@@ -182,15 +190,17 @@ scenario_the_copy_excludes_internals_and_copies_sources() {
   dc_copy "${PREFIX}-copy-ok" "$(bind_ro "$SOURCE_DIR" /source)" "$scratch"
   wait_case "${PREFIX}-copy-ok" 120
   if [ "$CASE_EXIT" != "0" ]; then
-    log="$(log_of "${PREFIX}-copy-ok")"
-    fail_case "${PREFIX}-copy-ok" "$log"
+    log_of "${PREFIX}-copy-ok"
+    fail_case "${PREFIX}-copy-ok" "$LAST_LOG"
     return 0
   fi
-  log="$(log_of "${PREFIX}-copy-ok")"
+  log_of "${PREFIX}-copy-ok"
+  log="$LAST_LOG"
   verify="${PREFIX}-copy-verify"
   CONTAINERS+=("$verify")
   CASE_EXIT="$(dc run --rm --name "$verify" --network none --user 10001:10001 \
     -v "$(host_path "$scratch"):/workspace" --entrypoint /bin/sh "$IMAGE" -c '
+    set -e
     test -f /workspace/pom.xml
     test -f /workspace/src/main/java/com/example/app/App.java
     test -f /workspace/src/test/java/com/example/app/AppTest.java
@@ -217,7 +227,8 @@ scenario_the_copy_refuses_symlinks() {
     sh -c 'cp -r /seed-projects/console/. /source/ && ln -s /etc/hostname /source/src/main/java/com/example/app/outside.txt' >/dev/null 2>&1
   dc_copy "$name" "${source_vol}:/source:ro" "$scratch"
   wait_case "$name" 120
-  log="$(log_of "$name")"
+  log_of "$name"
+  log="$LAST_LOG"
   if [ "$CASE_EXIT" != "0" ] && grep -q "refusing non-regular source entry" "$log"; then
     pass "$name (symlink in the source is rejected)"
   else
@@ -226,15 +237,20 @@ scenario_the_copy_refuses_symlinks() {
 }
 
 scenario_the_source_mount_is_really_read_only() {
-  local name="${PREFIX}-source-ro"
-  CONTAINERS+=("$name")
-  CASE_EXIT="$(dc run --rm --name "$name" --user 10001:10001 --read-only --tmpfs /tmp --network none \
+  local name="${PREFIX}-source-ro" out rc
+  # Foreground run with output captured: the probe must come from a container that actually
+  # RAN and failed with a real read-only filesystem error — a daemon or startup failure
+  # (non-zero without EROFS) is a FAIL, never a pass.
+  rc=0
+  out="$(dc run --rm --name "$name" --user 10001:10001 --read-only --tmpfs /tmp --network none \
     -v "$(bind_ro "$SOURCE_DIR" /source)" --entrypoint /bin/sh "$IMAGE" \
-    -c 'touch /source/manao-write-probe' >/dev/null 2>&1; echo $?)"
-  if [ "$CASE_EXIT" != "0" ]; then
-    pass "$name (writing to the read-only source mount fails)"
-  else
+    -c 'touch /source/manao-write-probe' 2>&1)" || rc=$?
+  if [ "$rc" = "0" ]; then
     fail "$name (a write to the read-only source mount succeeded)"
+  elif ! printf '%s\n' "$out" | grep -qiE 'read-only file system|EROFS'; then
+    fail "$name (the write failed without a read-only filesystem error, rc=$rc: $out)"
+  else
+    pass "$name (writing to the read-only source mount fails with a real EROFS error)"
   fi
 }
 
@@ -260,13 +276,14 @@ scenario_the_failing_test_returns_the_real_exit_1() {
   dc_copy "${PREFIX}-copy-fail" "$source_spec" "$scratch"
   wait_case "${PREFIX}-copy-fail" 120
   if [ "$CASE_EXIT" != "0" ]; then
-    log="$(log_of "${PREFIX}-copy-fail")"
-    fail_case "${PREFIX}-copy-fail" "$log"
+    log_of "${PREFIX}-copy-fail"
+    fail_case "${PREFIX}-copy-fail" "$LAST_LOG"
     return 0
   fi
   dc_run_build "$name" "$scratch" "$CACHE_DIR" bridge
   wait_case "$name" 900
-  log="$(log_of "$name")"
+  log_of "$name"
+  log="$LAST_LOG"
   fingerprint_after="$(source_fingerprint "$source_spec")"
   if [ "$CASE_EXIT" = "1" ] \
       && grep -q "$REPORT_BEGIN" "$log" \
@@ -294,15 +311,16 @@ scenario_the_updated_source_builds_offline_and_reuses_the_cache() {
   dc_copy "${PREFIX}-copy-fixed" "$source_spec" "$scratch"
   wait_case "${PREFIX}-copy-fixed" 120
   if [ "$CASE_EXIT" != "0" ]; then
-    log="$(log_of "${PREFIX}-copy-fixed")"
-    fail_case "${PREFIX}-copy-fixed" "$log"
+    log_of "${PREFIX}-copy-fixed"
+    fail_case "${PREFIX}-copy-fixed" "$LAST_LOG"
     return 0
   fi
   # Fully offline: every missing artifact can only fail, so the passing run proves the
   # per-project maven cache was reused, never re-downloaded.
   dc_run_build "$name" "$scratch" "$CACHE_DIR" none
   wait_case "$name" 900
-  log="$(log_of "$name")"
+  log_of "$name"
+  log="$LAST_LOG"
   if [ "$CASE_EXIT" != "0" ]; then
     fail_case "$name" "$log" 40
     return 0

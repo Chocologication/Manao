@@ -223,6 +223,32 @@ public final class AgentTaskStore implements AgentTaskOccupancy {
     }
 
     /**
+     * Marks a REGISTERED build call RUNNING before its executor touches the cluster: from this
+     * moment a replay is a recovery that may only observe the recorded identity, never start
+     * the build again. Settled rows are never re-marked.
+     */
+    public void markToolCallRunning(String taskId, String toolCallId) {
+        jdbc.update(
+            "UPDATE agent_tool_call SET state = 'RUNNING', updated_at = ? "
+                + "WHERE task_id = ? AND tool_call_id = ? AND state = 'REGISTERED'",
+            Timestamp.from(clock.instant()), taskId, toolCallId);
+    }
+
+    /**
+     * The durable build identity bound to one call, if any: the recovery path observes exactly
+     * this Job/Pod and never creates a replacement for evidence that has vanished.
+     */
+    public Optional<AgentContracts.BuildIdentity> boundBuildIdentity(String taskId, String toolCallId) {
+        List<AgentContracts.BuildIdentity> rows = jdbc.query(
+            "SELECT job_name, job_uid, pod_uid FROM agent_tool_call WHERE task_id = ? AND tool_call_id = ?",
+            (rs, row) -> new AgentContracts.BuildIdentity(rs.getString(1), rs.getString(2), rs.getString(3)),
+            taskId, toolCallId);
+        return rows.stream().findFirst()
+            .filter(identity -> identity.jobName() != null || identity.jobUid() != null
+                || identity.podUid() != null);
+    }
+
+    /**
      * Marks the outcome unknown: the project keeps its occupancy and further writes stay blocked
      * until the call is reconciled or the task is closed. A settled answer is never downgraded.
      */

@@ -314,7 +314,11 @@ public final class AgentProjectTools {
      * copy, so the workspace revision never moves; the verified Job/Pod identity is bound to the
      * ledger row backend-side only, and the call settles COMPLETED only when the build's cleanup
      * is confirmed — an unconfirmed cleanup or any executor failure stays NEEDS_ATTENTION and
-     * keeps the project occupied instead of letting the next write race the build pod.
+     * keeps the project occupied instead of letting the next write race the build pod. A call
+     * whose execution has never started (REGISTERED, no recorded identity) goes through build
+     * after being marked RUNNING; any call that already carries a recorded identity is a
+     * recovery that only observes it — evidence that has vanished stays unsettled and the build
+     * is never executed a second time.
      */
     private AgentContracts.ToolResult runBuild(AgentTaskStore.TaskOwner owner, AgentTaskStore.ToolCallRow row,
                                                AgentContracts.ToolRequest request,
@@ -327,7 +331,22 @@ public final class AgentProjectTools {
             currentRevision(owner.projectId()), goal);
         AgentContracts.BuildResult built;
         try {
-            built = builds.build(buildRequest);
+            AgentContracts.BuildIdentity recorded = tasks.boundBuildIdentity(row.taskId(), row.toolCallId())
+                .orElse(null);
+            if (recorded != null) {
+                // Recovery: this call already started under its recorded identity. It is only
+                // observed — never rebuilt, never re-executed.
+                built = builds.observe(buildRequest, recorded);
+            } else if ("RUNNING".equals(row.state())) {
+                // Started before the identity binding landed: adopt by the deterministic name,
+                // still never create.
+                built = builds.observe(buildRequest, new AgentContracts.BuildIdentity(null, null, null));
+            } else {
+                // First execution: mark RUNNING before the cluster is touched, so any later
+                // replay can only recover, never re-execute.
+                tasks.markToolCallRunning(row.taskId(), row.toolCallId());
+                built = builds.build(buildRequest);
+            }
         } catch (RuntimeException ex) {
             tasks.markToolCallNeedsAttention(row.taskId(), row.toolCallId());
             throw ex;

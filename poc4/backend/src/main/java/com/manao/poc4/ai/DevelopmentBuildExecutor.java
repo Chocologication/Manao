@@ -7,9 +7,36 @@ package com.manao.poc4.ai;
  * read-only source copy in a scratch workspace. Implementations must never report success
  * without a confirmed exit result and a proven cleanup, and they never advance the workspace
  * revision — builds read the saved sources and write only their own scratch space.
+ *
+ * <p>The three entry points separate the one-shot execution from everything a replayed or
+ * abandoned call may ever do: {@link #build} is reserved for a call whose execution has never
+ * started, {@link #observe} recovers a build that is already recorded under a durable identity
+ * (creating nothing, never re-executing it), and {@link #close} finishes such a build through
+ * the shared cleanup path.</p>
  */
 public interface DevelopmentBuildExecutor {
 
-    /** Runs one build goal against the task's saved source revision; the sources stay untouched. */
+    /**
+     * Runs one build goal against the task's saved source revision; the sources stay untouched.
+     * Only a call that is provably fresh (no recorded build identity) may take this path.
+     */
     AgentContracts.BuildResult build(AgentContracts.BuildRequest request);
+
+    /**
+     * Recovers one build already recorded under the given durable identity: nothing is created
+     * and nothing is re-executed — the recorded Job/Pod identity is only observed to its
+     * termination. Evidence that has vanished stays an unsettled, unconfirmed result; a
+     * recovery never rebuilds a build whose outcome is unknown.
+     */
+    AgentContracts.BuildResult observe(AgentContracts.BuildRequest request,
+                                       AgentContracts.BuildIdentity identity);
+
+    /**
+     * Closes one build recorded under the given identity through the shared finish path: the
+     * still-observable log is collected, the Job and its Pods are deleted by the original
+     * identity, and the close is confirmed only once everything is 404. No exit code is ever
+     * invented for a closed build.
+     */
+    AgentContracts.BuildResult close(AgentContracts.BuildRequest request,
+                                     AgentContracts.BuildIdentity identity);
 }

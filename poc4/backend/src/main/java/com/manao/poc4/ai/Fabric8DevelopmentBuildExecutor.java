@@ -9,6 +9,7 @@ import io.fabric8.kubernetes.api.model.batch.v1.Job;
 import io.fabric8.kubernetes.client.KubernetesClient;
 import io.fabric8.kubernetes.client.KubernetesClientException;
 import java.io.StringReader;
+import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.time.Clock;
 import java.time.Instant;
@@ -23,23 +24,28 @@ import org.xml.sax.InputSource;
 /**
  * Fabric8-backed executor of the isolated Maven development build (stage one, design section 5).
  * One build call drives exactly one identity-verified Job: the deterministic job name is derived
- * from the durable commandId, an existing job is only ever queried and reused (a fuzzy create
- * never produces a second job), and a fresh commandId creates it. The executor then observes the
- * real termination — the container's own exit code and reason, never a fabricated zero — reads a
- * bounded log tail, parses the Surefire XML the fixed launcher appended between markers (hardened
- * parser: no DTD, no external entities; unreadable reports stay missing instead of becoming
- * passes), and only then deletes the Job and its Pods. The result settles only when the Job and
- * every associated Pod are confirmed 404; identity mismatches, Forbidden reads and unconfirmed
- * cleanup never settle and keep the project occupied for the close path. Waiting holds no
- * database transaction and no thread gate — only short API reads and the identity listener
- * callbacks. Sources are never written: the build runs on the init container's read-only copy.
+ * from the durable commandId, {@link #build} is reserved for a call whose execution has never
+ * started, and {@link #observe} recovers a build already recorded under a durable identity — it
+ * re-verifies the recorded Job/Pod UIDs, never creates anything and never re-executes the build,
+ * so a replay after a crash can observe at most the very build that ran before. The executor
+ * then observes the real termination — the container's own exit code and reason, never a
+ * fabricated zero — reads a bounded log tail, parses the Surefire XML the fixed launcher
+ * appended between markers (hardened parser: no DTD, no external entities; unreadable reports
+ * stay missing instead of becoming passes), and only then deletes the Job and its Pods. The
+ * result settles only when the Job and every associated Pod are confirmed 404, the job's UID
+ * never changed during the wait, and the pod chain stayed owned by that job. {@link #close} and
+ * the wait-budget/interrupt exits share one finish path: collect the still-observable log,
+ * delete by the original identity, confirm everything 404. Identity mismatches, Forbidden reads
+ * and unconfirmed cleanup never settle and keep the project occupied. Waiting holds no database
+ * transaction and no thread gate — only short API reads and the identity listener callbacks.
+ * Sources are never written: the build runs on the init container's read-only copy.
  */
 public final class Fabric8DevelopmentBuildExecutor implements DevelopmentBuildExecutor {
     /** The fixed log markers the root-owned {@code manao-dev-build} launcher appends. */
     public static final String REPORT_BEGIN = "MANAO-SUREFIRE-REPORT-BEGIN";
     public static final String REPORT_END = "MANAO-SUREFIRE-REPORT-END";
-    /** The bounded build output kept in memory and handed to the tools layer. */
-    static final int MAX_OUTPUT_CHARS = 128 * 1024;
+    /** The bounded build output kept in memory and handed to the tools layer, in UTF-8 bytes. */
+    static final int MAX_OUTPUT_BYTES = 128 * 1024;
     /** The transport-level log fetch bound (server-side limitBytes). */
     static final int LOG_FETCH_LIMIT_BYTES = 512 * 1024;
 
@@ -81,60 +87,150 @@ public final class Fabric8DevelopmentBuildExecutor implements DevelopmentBuildEx
 
     private record BoundedText(String text, boolean truncated) { }
 
+    /** Carries an interrupted wait out of the polling loop so the shared finish path still runs. */
+    private static final class WaitInterruptedException extends RuntimeException {
+        WaitInterruptedException(InterruptedException cause) {
+            super(cause);
+        }
+    }
+
     @Override public AgentContracts.BuildResult build(AgentContracts.BuildRequest request) {
         String jobName = JobResourceFactory.developmentJobName(request.commandId());
         Job job = verifiedJob(jobName, request);
         if (job == null && !buildPods(request.commandId()).isEmpty()) {
             // Lingering pod evidence without its job: the identity chain cannot be verified, so
             // no second job is created and the evidence stays in place for reconciliation.
-            return new AgentContracts.BuildResult(
-                new AgentContracts.BuildIdentity(jobName, null, null), null,
-                "BUILD_IDENTITY_UNVERIFIABLE", "", false, List.of(), false);
+            return unresolved(jobName, null, null, "BUILD_IDENTITY_UNVERIFIABLE");
         }
         if (job == null) {
             job = createJob(request);
         }
-        String jobUid = uid(job);
-        bindIdentity(request, jobName, jobUid, null);
-        String podUid = null;
+        return awaitSettlement(request, jobName, uid(job), null);
+    }
 
-        Instant waitDeadline = clock.instant().plusSeconds(waitBudgetSeconds);
-        while (true) {
-            job = currentJob(jobName, request);
-            if (job == null) {
-                // The job is gone: evidence can only be trusted while a verified pod chain remains.
-                List<Pod> pods = buildPods(request.commandId());
-                if (pods.isEmpty()) {
-                    return new AgentContracts.BuildResult(
-                        new AgentContracts.BuildIdentity(jobName, jobUid, podUid), null,
-                        "BUILD_EVIDENCE_UNAVAILABLE", "", false, List.of(), true);
-                }
+    @Override public AgentContracts.BuildResult observe(AgentContracts.BuildRequest request,
+                                                        AgentContracts.BuildIdentity identity) {
+        String jobName = identity.jobName() == null
+            ? JobResourceFactory.developmentJobName(request.commandId()) : identity.jobName();
+        Job job = verifiedJob(jobName, request);
+        if (job == null) {
+            // Recovery never rebuilds: a recorded build without any live evidence has an
+            // unknowable outcome and stays unsettled, and pod evidence without its job can
+            // never be verified at all.
+            if (buildPods(request.commandId()).isEmpty()) {
                 return new AgentContracts.BuildResult(
-                    new AgentContracts.BuildIdentity(jobName, jobUid, podUid), null,
-                    "BUILD_IDENTITY_UNVERIFIABLE", "", false, List.of(), false);
+                    new AgentContracts.BuildIdentity(jobName, identity.jobUid(), identity.podUid()),
+                    null, "BUILD_EVIDENCE_UNAVAILABLE", "", false, List.of(), false);
             }
-            Pod pod = claimedPod(buildPods(request.commandId()), jobUid, podUid);
-            if (pod != null) {
-                if (podUid == null) {
-                    podUid = uid(pod);
-                    bindIdentity(request, jobName, jobUid, podUid);
+            return unresolved(jobName, identity.jobUid(), identity.podUid(), "BUILD_IDENTITY_UNVERIFIABLE");
+        }
+        if (identity.jobUid() != null && !identity.jobUid().equals(uid(job))) {
+            throw new IllegalStateException("the recorded build job was replaced by a different uid");
+        }
+        return awaitSettlement(request, jobName, uid(job), identity.podUid());
+    }
+
+    @Override public AgentContracts.BuildResult close(AgentContracts.BuildRequest request,
+                                                      AgentContracts.BuildIdentity identity) {
+        String jobName = identity.jobName() == null
+            ? JobResourceFactory.developmentJobName(request.commandId()) : identity.jobName();
+        Job job = verifiedJob(jobName, request);
+        if (job != null && identity.jobUid() != null && !identity.jobUid().equals(uid(job))) {
+            throw new IllegalStateException("the build job to close does not match the recorded uid");
+        }
+        String jobUid = job == null ? identity.jobUid() : uid(job);
+        BoundedText log = collectRemainingLog(request, jobName, jobUid, identity.podUid());
+        boolean cleanupConfirmed = cleanup(jobName, request.commandId());
+        return new AgentContracts.BuildResult(
+            new AgentContracts.BuildIdentity(jobName, jobUid, identity.podUid()),
+            null, "BUILD_CLOSED", log.text(), log.truncated(), parseReports(log.text()), cleanupConfirmed);
+    }
+
+    private static AgentContracts.BuildResult unresolved(String jobName, String jobUid, String podUid,
+                                                         String reason) {
+        return new AgentContracts.BuildResult(
+            new AgentContracts.BuildIdentity(jobName, jobUid, podUid), null, reason, "", false,
+            List.of(), false);
+    }
+
+    /**
+     * The one polling loop behind build and observe. It re-verifies the job identity (labels and
+     * UID) on every read, binds the observed pod once, settles only on a real termination with a
+     * confirmed cleanup, and finishes through the shared close path when the wait budget is
+     * exhausted or the caller is interrupted — the job never outlives the executor call.
+     */
+    private AgentContracts.BuildResult awaitSettlement(AgentContracts.BuildRequest request,
+                                                       String jobName, String jobUid, String boundPodUid) {
+        bindIdentity(request, jobName, jobUid, boundPodUid);
+        String podUid = boundPodUid;
+        try {
+            Instant waitDeadline = clock.instant().plusSeconds(waitBudgetSeconds);
+            while (true) {
+                Job job = currentJob(jobName, jobUid, request);
+                if (job == null) {
+                    // The verified job vanished mid-wait: the evidence is gone and can never be
+                    // trusted again, so the outcome stays unsettled for reconciliation.
+                    if (buildPods(request.commandId()).isEmpty()) {
+                        return new AgentContracts.BuildResult(
+                            new AgentContracts.BuildIdentity(jobName, jobUid, podUid), null,
+                            "BUILD_EVIDENCE_UNAVAILABLE", "", false, List.of(), false);
+                    }
+                    return unresolved(jobName, jobUid, podUid, "BUILD_IDENTITY_UNVERIFIABLE");
                 }
-                Observation observed = terminalObservation(job, pod);
-                if (observed != null) {
+                Pod pod = claimedPod(buildPods(request.commandId()), jobUid, podUid);
+                if (pod != null) {
+                    if (podUid == null) {
+                        podUid = uid(pod);
+                        bindIdentity(request, jobName, jobUid, podUid);
+                    }
+                    Observation observed = terminalObservation(job, pod);
+                    if (observed != null) {
+                        boolean cleanupConfirmed = cleanup(jobName, request.commandId());
+                        return new AgentContracts.BuildResult(
+                            new AgentContracts.BuildIdentity(jobName, jobUid, podUid),
+                            observed.exitCode(), observed.terminationReason(), observed.output(),
+                            observed.truncated(), observed.reports(), cleanupConfirmed);
+                    }
+                }
+                if (!clock.instant().isBefore(waitDeadline)) {
+                    // Budget exhausted: the same finish path as close — collect the observable
+                    // log, delete by the original identity, confirm everything is 404. No exit
+                    // code is invented for a build whose termination was never observed.
+                    BoundedText log = collectRemainingLog(request, jobName, jobUid, podUid);
                     boolean cleanupConfirmed = cleanup(jobName, request.commandId());
                     return new AgentContracts.BuildResult(
-                        new AgentContracts.BuildIdentity(jobName, jobUid, podUid),
-                        observed.exitCode(), observed.terminationReason(), observed.output(),
-                        observed.truncated(), observed.reports(), cleanupConfirmed);
+                        new AgentContracts.BuildIdentity(jobName, jobUid, podUid), null,
+                        "BUILD_WAIT_BUDGET_EXCEEDED", log.text(), log.truncated(),
+                        parseReports(log.text()), cleanupConfirmed);
                 }
+                sleep();
             }
-            if (!clock.instant().isBefore(waitDeadline)) {
-                // Unobservable build: the job stays in place for the close path, never settled.
-                return new AgentContracts.BuildResult(
-                    new AgentContracts.BuildIdentity(jobName, jobUid, podUid), null,
-                    "BUILD_WAIT_BUDGET_EXCEEDED", "", false, List.of(), false);
+        } catch (WaitInterruptedException interrupted) {
+            finishAfterInterrupt(request, jobName);
+            throw new IllegalStateException("interrupted while waiting for the development build", interrupted);
+        } catch (KubernetesClientException apiFailure) {
+            if (!Thread.currentThread().isInterrupted()) {
+                throw apiFailure;
             }
-            sleep();
+            // The wait was interrupted while an API read was in flight and the client aborted
+            // the call: the finish path must still run before the interruption propagates.
+            finishAfterInterrupt(request, jobName);
+            throw new IllegalStateException("interrupted while waiting for the development build", apiFailure);
+        }
+    }
+
+    /**
+     * Best-effort shared finish for a dead caller: the still-pending interrupt flag is cleared
+     * for the finish path's own API calls and waits, and restored afterwards.
+     */
+    private void finishAfterInterrupt(AgentContracts.BuildRequest request, String jobName) {
+        boolean pending = Thread.interrupted();
+        try {
+            cleanup(jobName, request.commandId());
+        } finally {
+            if (pending) {
+                Thread.currentThread().interrupt();
+            }
         }
     }
 
@@ -159,8 +255,15 @@ public final class Fabric8DevelopmentBuildExecutor implements DevelopmentBuildEx
         return job;
     }
 
-    private Job currentJob(String jobName, AgentContracts.BuildRequest request) {
-        return verifiedJob(jobName, request);
+    /** Re-reads the job every poll; its labels must still match and its UID must never change. */
+    private Job currentJob(String jobName, String expectedUid, AgentContracts.BuildRequest request) {
+        Job job = verifiedJob(jobName, request);
+        if (job != null && expectedUid != null && !expectedUid.equals(uid(job))) {
+            // A recreated job under the same name is a different build: its evidence can never
+            // settle this call.
+            throw new IllegalStateException("the build job identity changed during the wait");
+        }
+        return job;
     }
 
     /** An existing job is reused only when every identity label matches this build request. */
@@ -255,6 +358,41 @@ public final class Fabric8DevelopmentBuildExecutor implements DevelopmentBuildEx
         }
     }
 
+    /**
+     * Best-effort log collection for the shared finish path: whatever the main container still
+     * shows is taken bounded; any failure leaves the tail empty and never blocks the cleanup.
+     */
+    private BoundedText collectRemainingLog(AgentContracts.BuildRequest request, String jobName,
+                                            String jobUid, String podUid) {
+        try {
+            Pod pod = observablePod(buildPods(request.commandId()), jobUid, podUid);
+            if (pod == null) {
+                return new BoundedText("", false);
+            }
+            return boundedLog(podName(pod), ResourceIdentityVerifier.APPLICATION_CONTAINER);
+        } catch (RuntimeException ex) {
+            return new BoundedText("", false);
+        }
+    }
+
+    /** The pod whose log the finish path may still collect, or null when none is trustworthy. */
+    private Pod observablePod(List<Pod> pods, String jobUid, String podUid) {
+        if (pods.isEmpty()) {
+            return null;
+        }
+        if (podUid != null) {
+            return pods.stream().filter(pod -> podUid.equals(uid(pod))).findFirst().orElse(null);
+        }
+        if (pods.size() > 1) {
+            return null;
+        }
+        Pod pod = pods.get(0);
+        boolean owned = pod.getMetadata() != null && pod.getMetadata().getOwnerReferences() != null
+            && pod.getMetadata().getOwnerReferences().stream()
+                .anyMatch(owner -> jobUid == null || jobUid.equals(owner.getUid()));
+        return owned ? pod : null;
+    }
+
     private List<Pod> buildPods(String commandId) {
         List<Pod> pods = client.pods().inNamespace(namespace)
             .withLabel(JobResourceFactory.LABEL_TOOL_CALL_ID, commandId).list().getItems();
@@ -263,16 +401,30 @@ public final class Fabric8DevelopmentBuildExecutor implements DevelopmentBuildEx
 
     private BoundedText boundedLog(String podName, String container) {
         // The transport read is byte-bounded (limitBytes) and the kept text is additionally
-        // capped at the output limit: a huge Maven log can never reach the backend unbounded.
+        // capped at the output limit in UTF-8 bytes: a huge Maven log can never reach the
+        // backend unbounded, and the cut never splits a multi-byte character.
         String log = client.pods().inNamespace(namespace).withName(podName)
             .inContainer(container)
             .limitBytes(LOG_FETCH_LIMIT_BYTES)
             .getLog();
-        boolean truncated = log.length() > MAX_OUTPUT_CHARS;
-        if (truncated) {
-            log = log.substring(log.length() - MAX_OUTPUT_CHARS);
+        return boundedTail(log);
+    }
+
+    /** Keeps the tail of the log within the UTF-8 byte budget, cut on a character boundary. */
+    static BoundedText boundedTail(String log) {
+        byte[] bytes = log.getBytes(StandardCharsets.UTF_8);
+        if (bytes.length <= MAX_OUTPUT_BYTES) {
+            return new BoundedText(log, false);
         }
-        return new BoundedText(log, truncated);
+        int start = bytes.length - MAX_OUTPUT_BYTES;
+        while (start < bytes.length && isUtf8Continuation(bytes[start])) {
+            start++;
+        }
+        return new BoundedText(new String(bytes, start, bytes.length - start, StandardCharsets.UTF_8), true);
+    }
+
+    private static boolean isUtf8Continuation(byte b) {
+        return (b & 0xC0) == 0x80;
     }
 
     /**
@@ -392,7 +544,7 @@ public final class Fabric8DevelopmentBuildExecutor implements DevelopmentBuildEx
             Thread.sleep(pollMillis);
         } catch (InterruptedException ex) {
             Thread.currentThread().interrupt();
-            throw new IllegalStateException("interrupted while waiting for the development build", ex);
+            throw new WaitInterruptedException(ex);
         }
     }
 
@@ -412,7 +564,7 @@ public final class Fabric8DevelopmentBuildExecutor implements DevelopmentBuildEx
         try {
             StringBuilder builder = new StringBuilder();
             for (byte b : MessageDigest.getInstance("SHA-256")
-                .digest(content.getBytes(java.nio.charset.StandardCharsets.UTF_8))) {
+                .digest(content.getBytes(StandardCharsets.UTF_8))) {
                 builder.append(String.format("%02x", b));
             }
             return builder.toString();

@@ -559,10 +559,15 @@ class AgentProjectToolsTest {
     void buildRunsThroughTheExecutorSettlesAndKeepsTheRevisionUntouched() throws Exception {
         try (Harness env = new Harness()) {
             env.stubLiveFile(PATH, "class DemoController {\n}\n");
-            when(env.builds.build(any())).thenReturn(new AgentContracts.BuildResult(
-                new AgentContracts.BuildIdentity("manao-dev-1", "job-uid-1", "pod-uid-1"),
-                0, "Completed", "build output", false,
-                List.of(new AgentContracts.TestReport("com.example.app.AppTest", 1, 0, 0, 0, "abc")), true));
+            when(env.builds.build(any())).thenAnswer(invocation -> {
+                // The row is marked RUNNING before the executor ever touches the cluster, so a
+                // later replay can only recover the recorded identity, never re-execute.
+                assertThat(env.rowState("call-build")).isEqualTo("RUNNING");
+                return new AgentContracts.BuildResult(
+                    new AgentContracts.BuildIdentity("manao-dev-1", "job-uid-1", "pod-uid-1"),
+                    0, "Completed", "build output", false,
+                    List.of(new AgentContracts.TestReport("com.example.app.AppTest", 1, 0, 0, 0, "abc")), true);
+            });
 
             ToolResult result = env.tools.invoke(env.taskId, new ToolRequest("call-build", "build", 7,
                 JSON.createObjectNode().put("goal", "test")));
@@ -654,6 +659,61 @@ class AgentProjectToolsTest {
             assertThat(env.jdbc.queryForObject(
                 "SELECT job_name FROM agent_tool_call WHERE task_id = ? AND tool_call_id = ?",
                 String.class, env.taskId, "call-build")).isEqualTo("manao-dev-1");
+        }
+    }
+
+    @Test
+    void aRecoveryWithARecordedIdentityObservesThatBuildAndNeverRebuildsIt() throws Exception {
+        try (Harness env = new Harness()) {
+            env.stubLiveFile(PATH, "class DemoController {\n}\n");
+            ToolRequest request = new ToolRequest("call-build", "build", 7,
+                JSON.createObjectNode().put("goal", "test"));
+            // A crash-recovery scene: the call already started and its verified identity is
+            // durable on the row before the replay arrives.
+            env.tasks.registerToolCall(env.taskId, "call-build",
+                AgentProjectTools.callDigest(env.taskId, request), "build",
+                AgentProjectTools.canonicalArgsJson(request.args()), 7, "command-recorded");
+            env.jdbc.update(
+                "UPDATE agent_tool_call SET state = 'RUNNING', job_name = 'manao-dev-recorded', "
+                    + "job_uid = 'job-uid-recorded', pod_uid = 'pod-uid-recorded' "
+                    + "WHERE task_id = ? AND tool_call_id = ?", env.taskId, "call-build");
+            when(env.builds.observe(any(), any())).thenReturn(new AgentContracts.BuildResult(
+                new AgentContracts.BuildIdentity("manao-dev-recorded", "job-uid-recorded", "pod-uid-recorded"),
+                0, "Completed", "recovered output", false, List.of(), true));
+
+            ToolResult result = env.tools.invoke(env.taskId, request);
+
+            assertThat(result.data().path("output").asText()).isEqualTo("recovered output");
+            verify(env.builds).observe(any(),
+                eq(new AgentContracts.BuildIdentity("manao-dev-recorded", "job-uid-recorded", "pod-uid-recorded")));
+            verify(env.builds, never()).build(any());
+            assertThat(env.rowState("call-build")).isEqualTo("COMPLETED");
+        }
+    }
+
+    @Test
+    void aRecoveryOverVanishedEvidenceStaysNeedsAttentionWithoutAnyRebuild() throws Exception {
+        try (Harness env = new Harness()) {
+            env.stubLiveFile(PATH, "class DemoController {\n}\n");
+            ToolRequest request = new ToolRequest("call-build", "build", 7,
+                JSON.createObjectNode().put("goal", "test"));
+            env.tasks.registerToolCall(env.taskId, "call-build",
+                AgentProjectTools.callDigest(env.taskId, request), "build",
+                AgentProjectTools.canonicalArgsJson(request.args()), 7, "command-recorded");
+            env.jdbc.update(
+                "UPDATE agent_tool_call SET state = 'RUNNING', job_name = 'manao-dev-recorded', "
+                    + "job_uid = 'job-uid-recorded' WHERE task_id = ? AND tool_call_id = ?",
+                env.taskId, "call-build");
+            when(env.builds.observe(any(), any())).thenReturn(new AgentContracts.BuildResult(
+                new AgentContracts.BuildIdentity("manao-dev-recorded", "job-uid-recorded", null),
+                null, "BUILD_EVIDENCE_UNAVAILABLE", "", false, List.of(), false));
+
+            assertThatThrownBy(() -> env.tools.invoke(env.taskId, request))
+                .isInstanceOf(IllegalStateException.class);
+
+            // The unknowable build is never executed a second time: the call fails closed.
+            verify(env.builds, never()).build(any());
+            assertThat(env.rowState("call-build")).isEqualTo("NEEDS_ATTENTION");
         }
     }
 

@@ -312,6 +312,50 @@ class AgentTaskStoreTest {
     }
 
     @Test
+    void marksARegisteredBuildCallRunningBeforeItsExecution() {
+        try (var db = JdbcStoreTestSupport.create()) {
+            var jdbc = db.jdbc();
+            seed(jdbc);
+            var store = store(db);
+            String taskId = UUID.randomUUID().toString();
+            store.create(OWNER, PROJECT, new TaskRequest(taskId, "change demo", 7));
+            store.registerToolCall(taskId, "call-1", "a".repeat(64), "build", "{}", 7, "command-1");
+
+            store.markToolCallRunning(taskId, "call-1");
+
+            assertThat(store.findToolCall(taskId, "call-1").orElseThrow().state()).isEqualTo("RUNNING");
+            // CONCAT_WS skips NULLs entirely: no identity has been bound yet.
+            assertThat(jdbc.queryForObject(
+                "SELECT CONCAT_WS('|', job_name, job_uid, pod_uid) FROM agent_tool_call "
+                    + "WHERE task_id = ? AND tool_call_id = ?",
+                String.class, taskId, "call-1")).isEmpty();
+            // The transition is one-way: a RUNNING row stays RUNNING, never re-registered.
+            store.markToolCallRunning(taskId, "call-1");
+            assertThat(store.findToolCall(taskId, "call-1").orElseThrow().state()).isEqualTo("RUNNING");
+        }
+    }
+
+    @Test
+    void readsBackTheBoundBuildIdentityOfAToolCall() {
+        try (var db = JdbcStoreTestSupport.create()) {
+            var jdbc = db.jdbc();
+            seed(jdbc);
+            var store = store(db);
+            String taskId = UUID.randomUUID().toString();
+            store.create(OWNER, PROJECT, new TaskRequest(taskId, "change demo", 7));
+            store.registerToolCall(taskId, "call-1", "a".repeat(64), "build", "{}", 7, "command-1");
+            store.registerToolCall(taskId, "call-2", "b".repeat(64), "build", "{}", 7, "command-2");
+
+            // A call that never started carries no identity to recover.
+            assertThat(store.boundBuildIdentity(taskId, "call-1")).isEmpty();
+            // The bound row is the recovery's source of truth.
+            store.bindToolCallIdentity(taskId, "call-2", "manao-dev-2", "job-uid-2", "pod-uid-2");
+            assertThat(store.boundBuildIdentity(taskId, "call-2")).contains(
+                new AgentContracts.BuildIdentity("manao-dev-2", "job-uid-2", "pod-uid-2"));
+        }
+    }
+
+    @Test
     void deletingTheProjectRemovesItsAgentTaskAndToolCallRows() {
         try (var db = JdbcStoreTestSupport.create()) {
             var jdbc = db.jdbc();
