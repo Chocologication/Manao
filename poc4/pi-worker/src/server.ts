@@ -1,12 +1,13 @@
 /**
  * The worker's task HTTP surface (stage one): Node's built-in http module, three
  * routes, no framework. POST /tasks/{taskId}/start accepts immediately and drives
- * the SDK session asynchronously; a replayed identical start is idempotent; a
- * second task is refused with 409 while one is running; GET /tasks/{taskId} serves
- * the reconciliation path for a lost start response; POST /tasks/{taskId}/stop
- * aborts the SDK session — occupancy is only ever released by the backend's close
- * flow, never by this worker's own abort result. Every route fails closed without
- * the worker token.
+ * the SDK session asynchronously; a replayed identical start is idempotent, a
+ * different epoch for a known task is refused (the epoch is persisted exactly once
+ * at creation — review fix I2), and a second task is refused with 409 while one is
+ * running; GET /tasks/{taskId} serves the reconciliation path for a lost start
+ * response; POST /tasks/{taskId}/stop aborts the SDK session — occupancy is only
+ * ever released by the backend's close flow, never by this worker's own abort
+ * result. Every route fails closed without the worker token.
  */
 import { createHash, timingSafeEqual } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
@@ -126,20 +127,15 @@ export function createTaskServer(config: WorkerConfig, deps: ServerDeps = {}): T
         writeJson(response, 409, { error: "task id was already used for a different request" });
         return;
       }
-      if (existing.outcome === null && existing.start.workerEpoch !== start.workerEpoch) {
-        // Same task, same request, a NEW epoch: the backend re-fenced this task (a lost
-        // start response or a backend restart). Adopt the epoch by stopping the stale
-        // run and restarting under the new fencing — the stale chain's callbacks would
-        // otherwise be refused and the task would wedge.
-        void existing.runner.stop().catch(() => undefined);
-        const adopted = createRecord(start);
-        tasks.set(taskId, adopted);
-        active = adopted;
-        writeJson(response, 200, statusOf(taskId));
-        launch(adopted);
+      if (existing.start.workerEpoch !== start.workerEpoch) {
+        // The fencing epoch is persisted exactly once at creation (review fix I2) and
+        // is never re-fenced, so a DIFFERENT epoch for a known task is a fencing
+        // violation: refuse it instead of adopting a second session — two sessions
+        // must never overlap one task, and a settled task never restarts.
+        writeJson(response, 409, { error: "the worker epoch does not match the task" });
         return;
       }
-      // Same task, same request, same (or settled) fencing: idempotent. A settled task
+      // Same task, same request, same fencing: idempotent. A settled task
       // answers its settled state; a still-running task is never started twice.
       writeJson(response, 200, statusOf(taskId));
       return;

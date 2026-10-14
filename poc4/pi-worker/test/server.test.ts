@@ -24,6 +24,109 @@ it("queries the original call after a lost POST response", async () => {
   expect(transport.mock.calls[1]![1]?.method).toBe("GET");
 });
 
+it("waits a bounded poll for an executing call instead of treating it as unregistered", async () => {
+  const done = { toolCallId: "call-1", workspaceRevision: "8", data: { exitCode: 1 }, truncated: false };
+  const running = { state: "RUNNING", result: null };
+  const transport = vi.fn<typeof fetch>()
+    // The POST times out while the backend keeps executing the long build.
+    .mockRejectedValueOnce(new DOMException("The operation was aborted", "TimeoutError"))
+    // The GET confirms the call IS registered and executing…
+    .mockResolvedValueOnce(new Response(JSON.stringify(running), { status: 200 }))
+    // …still executing on the next bounded poll…
+    .mockResolvedValueOnce(new Response(JSON.stringify(running), { status: 200 }))
+    // …and then settles with the durable answer.
+    .mockResolvedValueOnce(new Response(JSON.stringify({ state: "COMPLETED", result: done }), { status: 200 }));
+  const client = new BackendClient({ baseUrl: "http://backend.invalid", token: "test-only",
+    instanceId: "worker-1", epoch: "epoch-1", fetch: transport, delay: async () => undefined });
+  const result = await client.invoke("task-1", { toolCallId: "call-1", name: "build",
+    expectedRevision: 7, args: { goal: "test" } });
+  expect(result).toEqual(done);
+  expect(transport.mock.calls[0]![1]?.method).toBe("POST");
+  expect(transport.mock.calls[1]![1]?.method).toBe("GET");
+  expect(transport).toHaveBeenCalledTimes(4);
+});
+
+it("answers a settled result carried directly by the reconciliation GET", async () => {
+  const done = { toolCallId: "call-1", workspaceRevision: "8", data: {}, truncated: false };
+  const transport = vi.fn<typeof fetch>()
+    .mockRejectedValueOnce(new TypeError("response lost"))
+    .mockResolvedValueOnce(new Response(JSON.stringify({ state: "COMPLETED", result: done }), { status: 200 }));
+  const client = new BackendClient({ baseUrl: "http://backend.invalid", token: "test-only",
+    instanceId: "worker-1", epoch: "epoch-1", fetch: transport });
+  const result = await client.invoke("task-1", { toolCallId: "call-1", name: "write_file",
+    expectedRevision: 7, args: { path: "pom.xml", content: "x", expectedSha256: null } });
+  expect(result).toEqual(done);
+});
+
+it("fails closed when an executing call never settles within the bounded budget", async () => {
+  const running = { state: "RUNNING", result: null };
+  // A fresh Response per poll: a consumed body must not fake a refused reconciliation.
+  const transport = vi.fn<typeof fetch>()
+    .mockRejectedValueOnce(new DOMException("The operation was aborted", "TimeoutError"))
+    .mockImplementation(() => Promise.resolve(new Response(JSON.stringify(running), { status: 200 })));
+  let clock = 0;
+  const client = new BackendClient({ baseUrl: "http://backend.invalid", token: "test-only",
+    instanceId: "worker-1", epoch: "epoch-1", fetch: transport,
+    delay: async (ms: number) => { clock += ms; }, now: () => clock });
+  await expect(client.invoke("task-1", { toolCallId: "call-1", name: "build",
+    expectedRevision: 7, args: { goal: "test" } })).rejects.toMatchObject({ code: "AI_CALL_UNKNOWN" });
+});
+
+it("refuses to proceed when a reconciled call reads as NEEDS_ATTENTION", async () => {
+  const transport = vi.fn<typeof fetch>()
+    .mockRejectedValueOnce(new TypeError("response lost"))
+    .mockResolvedValueOnce(new Response(JSON.stringify({ state: "NEEDS_ATTENTION", result: null }), { status: 200 }));
+  const client = new BackendClient({ baseUrl: "http://backend.invalid", token: "test-only",
+    instanceId: "worker-1", epoch: "epoch-1", fetch: transport });
+  await expect(client.invoke("task-1", { toolCallId: "call-1", name: "build",
+    expectedRevision: 7, args: { goal: "test" } })).rejects.toMatchObject({ code: "AI_CALL_NEEDS_ATTENTION" });
+});
+
+it("shrinks the terminal summary so the whole serialized payload fits the 8 KiB bound", async () => {
+  // Raw bytes fit 8 KiB, but the JSON wrapper plus escaping push the payload over —
+  // exactly the gap the old per-field truncation left open.
+  const summary = "q\"\\\n".repeat(1400) + "tail-marker";
+  const bodies: string[] = [];
+  const transport = vi.fn<typeof fetch>(async (_url, init) => {
+    bodies.push(String(init?.body ?? ""));
+    return new Response(JSON.stringify({ accepted: true }), { status: 200 });
+  });
+  const client = new BackendClient({ baseUrl: "http://backend.invalid", token: "test-only",
+    instanceId: "worker-1", epoch: "epoch-1", fetch: transport });
+  const progress = new ProgressChain(client, "task-1");
+  await progress.sendTerminal("COMPLETED", summary, null);
+  const terminal = bodies.map((body) => JSON.parse(body) as { kind: string; text: string })
+    .find((item) => item.kind === "terminal");
+  expect(terminal).toBeDefined();
+  expect(Buffer.byteLength(terminal!.text, "utf-8")).toBeLessThanOrEqual(8 * 1024);
+  const payload = JSON.parse(terminal!.text) as { state: string; summary: string; failureCode: string | null };
+  expect(payload.state).toBe("COMPLETED");
+  expect(payload.failureCode).toBeNull();
+  // The shrunken summary stays a prefix of the original — cut, never rewritten.
+  expect(summary.startsWith(payload.summary)).toBe(true);
+});
+
+it("keeps a terminal summary that exactly fits the serialized budget", async () => {
+  const bodies: string[] = [];
+  const transport = vi.fn<typeof fetch>(async (_url, init) => {
+    bodies.push(String(init?.body ?? ""));
+    return new Response(JSON.stringify({ accepted: true }), { status: 200 });
+  });
+  const client = new BackendClient({ baseUrl: "http://backend.invalid", token: "test-only",
+    instanceId: "worker-1", epoch: "epoch-1", fetch: transport });
+  const progress = new ProgressChain(client, "task-1");
+  const payloadBytes = (summary: string): number =>
+    Buffer.byteLength(JSON.stringify({ state: "FAILED", summary, failureCode: "AI_PROVIDER_ERROR" }), "utf-8");
+  // Fits exactly under the bound: multi-byte characters included, untouched.
+  const fits = "ü".repeat(1000) + "word ";
+  expect(payloadBytes(fits)).toBeLessThanOrEqual(8 * 1024);
+  await progress.sendTerminal("FAILED", fits, "AI_PROVIDER_ERROR");
+  const terminal = bodies.map((body) => JSON.parse(body) as { kind: string; text: string })
+    .find((item) => item.kind === "terminal");
+  expect(JSON.parse(terminal!.text)).toMatchObject({ state: "FAILED", summary: fits,
+    failureCode: "AI_PROVIDER_ERROR" });
+});
+
 describe("task server", () => {
   let backendServer: ReturnType<typeof createServer>;
   let backendRequests: Array<{ method: string; url: string; body: unknown }>;
@@ -143,7 +246,7 @@ describe("task server", () => {
     }
   });
 
-  it("adopts a re-fenced epoch for the same task by restarting the run", async () => {
+  it("refuses a start whose epoch differs from the running task instead of adopting it", async () => {
     const created: string[] = [];
     let firstRunnerStop = 0;
     const handle = createTaskServer(workerConfig({ model: TEST_MODEL }), {
@@ -163,12 +266,18 @@ describe("task server", () => {
     try {
       const first = await post(`http://127.0.0.1:${port}/tasks/task-1/start`, startBody("task-1", 1));
       expect(first.status).toBe(200);
-      // The same task, same request, a NEW epoch: the backend re-fenced, so the worker
-      // restarts under the adopted epoch instead of answering from the stale session.
+      // The epoch is persisted exactly once at creation and is never re-fenced
+      // (review fix I2): a start with a DIFFERENT epoch for a still-running task is
+      // a fencing violation — refused with 409, never adopted, never restarted, so
+      // two sessions can never overlap one task.
       const refenced = await post(`http://127.0.0.1:${port}/tasks/task-1/start`, startBody("task-1", 2));
-      expect(refenced.status).toBe(200);
-      expect(created).toEqual(["task-1:1", "task-1:2"]);
-      expect(firstRunnerStop).toBe(1);
+      expect(refenced.status).toBe(409);
+      expect(created).toEqual(["task-1:1"]);
+      expect(firstRunnerStop).toBe(0);
+      // The same epoch stays idempotent.
+      const sameEpoch = await post(`http://127.0.0.1:${port}/tasks/task-1/start`, startBody("task-1", 1));
+      expect(sameEpoch.status).toBe(200);
+      expect(created).toEqual(["task-1:1"]);
     } finally {
       await handle.close();
     }

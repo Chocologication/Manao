@@ -4,7 +4,10 @@
  * call (same toolCallId — the request id is the dedup identity and the backend's
  * durable ledger is the only authority), and a progress submission repeats the SAME
  * seq with a byte-identical payload until the backend answers. The client never
- * invents a replacement request or a replacement sequence number.
+ * invents a replacement request or a replacement sequence number. A call that is
+ * registered but still executing (RUNNING — a build may legitimately run for minutes)
+ * is awaited with a BOUNDED poll of the same GET; "executing" is never misread as
+ * "unregistered", and a budget exhaustion fails closed instead of guessing.
  */
 
 export interface ToolRequest {
@@ -19,6 +22,12 @@ export interface ToolResult {
   workspaceRevision: string;
   data: unknown;
   truncated: boolean;
+}
+
+/** The reconciliation answer for one call: executing/undecided (no result) or settled. */
+export interface ToolCallStatus {
+  state: "RUNNING" | "NEEDS_ATTENTION" | "COMPLETED";
+  result: ToolResult | null;
 }
 
 export interface ProgressItem {
@@ -40,6 +49,10 @@ export interface BackendClientOptions {
   instanceId: string;
   epoch: string | number;
   fetch?: typeof fetch;
+  /** Overrides the inter-poll wait (tests run the bounded poll synchronously). */
+  delay?: (ms: number) => Promise<void>;
+  /** Overrides the wall clock the settle budget is measured against (tests). */
+  now?: () => number;
 }
 
 export class BackendHttpError extends Error {
@@ -56,6 +69,21 @@ export class BackendHttpError extends Error {
 }
 
 const REQUEST_TIMEOUT_MS = 30_000;
+/** The inter-poll wait of the bounded settle poll (matches the browser's 2s cadence). */
+const SETTLE_POLL_INTERVAL_MS = 2_000;
+/**
+ * The bounded wait for an already-registered call to settle: the build deadline is
+ * 600s and its finish path adds up to 120s, so one bound covers every legitimate
+ * server-side execution (spec section 5).
+ */
+export const SETTLE_BUDGET_MS = 720_000;
+/** The UTF-8 byte bound of one progress item's text (spec section 3; enforced backend-side). */
+export const PROGRESS_TEXT_MAX_BYTES = 8 * 1024;
+
+export interface InvokeOptions {
+  /** Overrides the bounded wait for an already-registered call to settle. */
+  settleBudgetMs?: number;
+}
 
 export class BackendClient {
   private readonly baseUrl: string;
@@ -63,6 +91,8 @@ export class BackendClient {
   private readonly instanceId: string;
   private readonly epoch: string;
   private readonly transport: typeof fetch;
+  private readonly delay: (ms: number) => Promise<void>;
+  private readonly now: () => number;
 
   constructor(options: BackendClientOptions) {
     this.baseUrl = options.baseUrl.replace(/\/+$/, "");
@@ -70,16 +100,19 @@ export class BackendClient {
     this.instanceId = options.instanceId;
     this.epoch = String(options.epoch);
     this.transport = options.fetch ?? fetch;
+    this.delay = options.delay ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
+    this.now = options.now ?? Date.now;
   }
 
   /**
-   * Submits one tool invocation and returns its durable result. When the POST
-   * response is lost the original call is queried by GET; a 404 from that GET means
-   * the POST never landed, so the POST is retried once with the identical body.
-   * Anything still unresolved throws — the caller must not start the next side
-   * effect while this call's outcome is unknown.
+   * Submits one tool invocation and returns its durable result. When the POST response
+   * is lost the original call is queried by GET: a 404 means the POST never landed (one
+   * identical replay), a RUNNING answer means the call IS registered and executing and
+   * is awaited with a bounded poll of the same GET, and NEEDS_ATTENTION fails the call
+   * closed — the outcome is unknown, so the next side effect must never start. Anything
+   * still unresolved throws.
    */
-  async invoke(taskId: string, request: ToolRequest): Promise<ToolResult> {
+  async invoke(taskId: string, request: ToolRequest, options: InvokeOptions = {}): Promise<ToolResult> {
     const path = `/internal/ai/tasks/${encodeURIComponent(taskId)}/calls/${encodeURIComponent(request.toolCallId)}`;
     const post = (): Promise<Response> => this.transport(`${this.baseUrl}${path}`, {
       method: "POST",
@@ -87,36 +120,70 @@ export class BackendClient {
       body: JSON.stringify(request),
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
-    let response: Response;
+    const settleBudgetMs = options.settleBudgetMs ?? SETTLE_BUDGET_MS;
+    let settled: ToolResult | null = null;
     try {
-      response = await post();
-    } catch (error) {
-      // The POST outcome is unknown: query the original call before anything else.
-      let query: Response;
-      try {
-        query = await this.transport(`${this.baseUrl}${path}`, {
-          method: "GET",
-          headers: this.headers(),
-          signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-        });
-      } catch {
-        throw new BackendHttpError(0, "AI_CALL_UNKNOWN", "tool call outcome is unknown after a lost response and a failed query");
+      const response = await post();
+      return await this.parseResult(response);
+    } catch (postFailure) {
+      if (postFailure instanceof BackendHttpError) {
+        // A decided backend answer (refusal, validation): never re-sent, never polled.
+        throw postFailure;
       }
-      if (query.status === 404) {
-        // The submission never landed; replay the identical POST once.
+      // The POST outcome is unknown: query the original call before anything else.
+      const deadline = this.now() + settleBudgetMs;
+      let registered = false;
+      for (;;) {
+        let status: ToolCallStatus | null = null;
         try {
-          response = await post();
-        } catch {
-          throw new BackendHttpError(0, "AI_CALL_UNKNOWN", "tool call outcome is unknown after a lost submission");
+          const query = await this.transport(`${this.baseUrl}${path}`, {
+            method: "GET",
+            headers: this.headers(),
+            signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+          });
+          if (query.status === 404) {
+            if (registered) {
+              // A registered call row never disappears: the ledger is inconsistent.
+              throw new BackendHttpError(0, "AI_CALL_UNKNOWN",
+                "a registered tool call vanished from the ledger");
+            }
+            // The submission never landed; replay the identical POST once.
+            try {
+              return await this.parseResult(await post());
+            } catch (replayFailure) {
+              if (replayFailure instanceof BackendHttpError) {
+                throw replayFailure;
+              }
+              throw new BackendHttpError(0, "AI_CALL_UNKNOWN",
+                "tool call outcome is unknown after a lost submission");
+            }
+          }
+          status = await this.parseStatus(query);
+          registered = true;
+        } catch (error) {
+          if (error instanceof BackendHttpError) {
+            throw error;
+          }
+          // The query itself failed: keep the bounded wait honest — the POST may still
+          // be executing server-side, and the next poll decides.
+          status = null;
         }
-      } else {
-        response = query;
+        if (status?.state === "COMPLETED" && status.result !== null) {
+          settled = status.result;
+          break;
+        }
+        if (status?.state === "NEEDS_ATTENTION") {
+          throw new BackendHttpError(0, "AI_CALL_NEEDS_ATTENTION",
+            "the call outcome is unknown; it needs attention before further writes");
+        }
+        if (this.now() >= deadline) {
+          throw new BackendHttpError(0, "AI_CALL_UNKNOWN",
+            "the tool call did not settle within the bounded wait; the next side effect must not start");
+        }
+        await this.delay(SETTLE_POLL_INTERVAL_MS);
       }
     }
-    return await parseJson(response, (status, body) =>
-      new BackendHttpError(status,
-        typeof body.code === "string" ? body.code : "AI_CALL_REJECTED",
-        `tool call was refused (${status})`));
+    return settled!;
   }
 
   /**
@@ -157,14 +224,40 @@ export class BackendClient {
       "x-manao-worker-epoch": this.epoch,
     };
   }
-}
 
-async function parseJson<T>(response: Response, onError: (status: number, body: Record<string, unknown>) => Error): Promise<T> {
-  const body = await safeJson(response);
-  if (!response.ok || body === null) {
-    throw onError(response.status, body ?? {});
+  /** Parses a POST answer: the settled ToolResult, or a decided backend refusal. */
+  private async parseResult(response: Response): Promise<ToolResult> {
+    const body = await safeJson(response);
+    if (!response.ok || body === null || typeof body.toolCallId !== "string") {
+      throw new BackendHttpError(response.status,
+        typeof body?.code === "string" ? body.code : "AI_CALL_REJECTED",
+        `tool call was refused (${response.status})`);
+    }
+    return body as unknown as ToolResult;
   }
-  return body as T;
+
+  /** Parses a reconciliation GET answer into its three-state contract. */
+  private async parseStatus(response: Response): Promise<ToolCallStatus> {
+    const body = await safeJson(response);
+    if (!response.ok || body === null) {
+      throw new BackendHttpError(response.status,
+        typeof body?.code === "string" ? body.code : "AI_CALL_REJECTED",
+        `tool call reconciliation was refused (${response.status})`);
+    }
+    if (typeof body.toolCallId === "string") {
+      // A legacy settled answer carried the bare result: still a settlement.
+      return { state: "COMPLETED", result: body as unknown as ToolResult };
+    }
+    const state = body.state;
+    if (state === "RUNNING" || state === "NEEDS_ATTENTION") {
+      return { state, result: null };
+    }
+    if (state === "COMPLETED" && body.result !== null && typeof body.result === "object") {
+      return { state: "COMPLETED", result: body.result as ToolResult };
+    }
+    throw new BackendHttpError(response.status, "AI_CALL_REJECTED",
+      `tool call reconciliation carried an unreadable state (${response.status})`);
+  }
 }
 
 async function safeJson(response: Response): Promise<Record<string, unknown> | null> {
@@ -173,6 +266,32 @@ async function safeJson(response: Response): Promise<Record<string, unknown> | n
   } catch {
     return null;
   }
+}
+
+/**
+ * Shrinks a terminal summary until the COMPLETE serialized terminal payload fits the
+ * 8 KiB UTF-8 text bound (review fix I8). The cut works on the real serialized bytes,
+ * so every quoting, escaping (newlines, quotes, backslashes) and multi-byte effect is
+ * already accounted for; the cut never splits a multi-byte character and always keeps
+ * a true prefix of the summary.
+ */
+export function fitSummary(summary: string, state: "COMPLETED" | "FAILED", failureCode: string | null): string {
+  const serializedBytes = (candidate: string): number =>
+    Buffer.byteLength(JSON.stringify({ state, summary: candidate, failureCode }), "utf-8");
+  if (serializedBytes(summary) <= PROGRESS_TEXT_MAX_BYTES) {
+    return summary;
+  }
+  let cut = summary.length;
+  while (cut > 0 && serializedBytes(summary.slice(0, cut)) > PROGRESS_TEXT_MAX_BYTES) {
+    // Binary retreat: halving converges fast and the final verification below
+    // guarantees the emitted payload really fits.
+    cut = Math.floor(cut / 2);
+  }
+  while (cut < summary.length
+      && serializedBytes(summary.slice(0, cut + 1)) <= PROGRESS_TEXT_MAX_BYTES) {
+    cut += 1;
+  }
+  return summary.slice(0, cut);
 }
 
 /**
@@ -216,11 +335,15 @@ export class ProgressChain {
 
   /**
    * Drains the chain, then submits the terminal state and waits for its answer:
-   * the terminal item is never overtaken by an earlier progress item.
+   * the terminal item is never overtaken by an earlier progress item. The summary
+   * is shrunk against the WHOLE serialized payload (review fix I8): the backend
+   * bounds the item TEXT in UTF-8 bytes, and the JSON wrapper, quotes and escapes
+   * all count — so a summary that only overflows after serialization is cut here
+   * instead of being rejected backend-side (which would leave the task occupied).
    */
   async sendTerminal(state: "COMPLETED" | "FAILED", summary: string, failureCode: string | null): Promise<void> {
     await this.drain();
-    const payload = JSON.stringify({ state, summary, failureCode });
+    const payload = JSON.stringify({ state, summary: fitSummary(summary, state, failureCode), failureCode });
     const item: ProgressItem = { seq: this.nextSeq++, kind: "terminal", text: payload, truncated: false };
     this.buffer.push(item);
     await this.deliver(item);

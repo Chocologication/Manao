@@ -25,14 +25,20 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import type { BackendClient, ProgressChain } from "./backend-client.js";
+import { PROGRESS_TEXT_MAX_BYTES } from "./backend-client.js";
 import { modelConfigProblems, type PiModelConfig, type WorkerBudgets, type WorkerPaths } from "./config.js";
 import { createProjectTools, TOOL_NAMES } from "./project-tools.js";
 
 /** Stage-one budgets (spec section 3, binding). */
 export const DEFAULT_BUDGETS: WorkerBudgets = { wallClockSeconds: 1800, toolCalls: 60, builds: 8 };
 
-/** Progress items are bounded at 8 KiB of UTF-8 text each (spec section 3). */
-const MAX_PROGRESS_TEXT_BYTES = 8 * 1024;
+/**
+ * Progress items are bounded at 8 KiB of UTF-8 text each (spec section 3). The
+ * terminal item's own budget is the WHOLE serialized payload and is applied by
+ * ProgressChain.sendTerminal (review fix I8); this constant remains the plain
+ * text bound for message items.
+ */
+const MAX_PROGRESS_TEXT_BYTES = PROGRESS_TEXT_MAX_BYTES;
 
 /**
  * The fixed server-side system prompt: goal, tool capabilities, limits and the
