@@ -1095,4 +1095,31 @@ export const handlers = [
   ...dependencyHandlers,
   ...runHandlers,
   ...terminalHandlers,
+  // Stage-one agent task endpoints: the mock backend has no task store, so the
+  // honest default is "no occupying task" (404) and a refused second task.
+  // Tests that exercise real task flows override these with server.use.
+  http.get('/api/v1/projects/:projectId/agent-tasks/current', () =>
+    HttpResponse.json(
+      { code: 'ENTRY_NOT_FOUND', message: 'Task not found', traceId: 'trace-agent-none' },
+      { status: 404 },
+    ),
+  ),
+  http.get('/api/v1/projects/:projectId/agent-tasks/:taskId', () =>
+    HttpResponse.json(
+      { code: 'ENTRY_NOT_FOUND', message: 'Task not found', traceId: 'trace-agent-none' },
+      { status: 404 },
+    ),
+  ),
+  http.post('/api/v1/projects/:projectId/agent-tasks', () =>
+    HttpResponse.json(
+      { code: 'AI_TASK_ACTIVE', message: 'The project already has an active task', traceId: 'trace-agent-active' },
+      { status: 409 },
+    ),
+  ),
+  http.post('/api/v1/projects/:projectId/agent-tasks/:taskId/close', () =>
+    HttpResponse.json(
+      { code: 'ENTRY_NOT_FOUND', message: 'Task not found', traceId: 'trace-agent-none' },
+      { status: 404 },
+    ),
+  ),
 ];

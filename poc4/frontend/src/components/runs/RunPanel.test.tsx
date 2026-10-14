@@ -173,6 +173,7 @@ function stubRuns(options: {
 function renderPanel(
   coordinator?: RunAuthorityCoordinator,
   projectTemplateId: RuntimeTemplateId = 'java-console',
+  extraProps: { agentTaskActive?: boolean } = {},
 ) {
   function Harness() {
     const hooked = useRunAuthorityCoordinator(ALICE_SEED_PROJECT_ID);
@@ -181,6 +182,7 @@ function renderPanel(
         projectId={ALICE_SEED_PROJECT_ID}
         coordinator={coordinator ?? hooked}
         projectTemplateId={projectTemplateId}
+        {...extraProps}
       />
     );
   }
@@ -373,6 +375,17 @@ describe('RunPanel authority and start preconditions', () => {
     });
     expect(bodies[0]).toEqual({ expectedWorkspaceRevision: nextRevision });
     expect(Object.keys(bodies[0] as object)).toEqual(['expectedWorkspaceRevision']);
+  });
+
+  it('disables Start while an agent task occupies the workspace', async () => {
+    stubRuns({ active: null });
+    await authenticateAsAlice();
+    renderPanel(undefined, 'java-console', { agentTaskActive: true });
+    const start = await screen.findByRole('button', { name: 'Start run' });
+    await waitFor(() => {
+      expect(start).toHaveAttribute('title', runPreconditionDescription('AGENT_TASK_ACTIVE'));
+    });
+    expect(start).toBeDisabled();
   });
 
   it('disables Start for dirty files, write pending, start pending, and active runs', async () => {

@@ -3,7 +3,10 @@ import react from '@vitejs/plugin-react';
 import { configDefaults, defineConfig } from 'vitest/config';
 
 export default defineConfig({
-  define: { 'import.meta.env.VITE_ENABLE_EXPERIMENTAL_TERMINAL': JSON.stringify('true') },
+  define: {
+    'import.meta.env.VITE_ENABLE_EXPERIMENTAL_TERMINAL': JSON.stringify('true'),
+    'import.meta.env.VITE_ENABLE_AI': JSON.stringify('true'),
+  },
   plugins: [react()],
   resolve: { alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) } },
   test: {

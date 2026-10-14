@@ -1,5 +1,5 @@
-import { useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, FileCode, LogOut, Package, Play, SquareTerminal } from 'lucide-react';
+import { useIsMutating, useQueryClient } from '@tanstack/react-query';
+import { ArrowLeft, Bot, FileCode, LogOut, Package, Play, SquareTerminal } from 'lucide-react';
 import {
   lazy,
   Suspense,
@@ -12,12 +12,15 @@ import {
 } from 'react';
 import { Link } from 'react-router';
 import { logout } from '@/app/appRuntime';
+import { getAgentTask } from '@/api/agentTaskApi';
 import { EditorWorkspace } from '@/components/files/EditorWorkspace';
 import { UnsavedChangesDialog } from '@/components/files/UnsavedChangesDialog';
 import { FileTree } from '@/components/files/FileTree';
 import { InlineAlert } from '@/components/feedback/InlineAlert';
+import { projectFileWritePredicate } from '@/components/files/editorSaveCommand';
 import { RunPanel } from '@/components/runs/RunPanel';
 import { Button } from '@/components/ui/button';
+import type { AgentTaskSnapshot } from '@/contracts/agentTask';
 import type { ProjectSummary } from '@/contracts/project';
 import { isPythonRuntimeTemplate } from '@/contracts/project';
 import {
@@ -41,7 +44,16 @@ import {
   useUnsavedDialogState,
 } from '@/features/editor/unsavedChangesGuard';
 import { useWorkspaceSession } from '@/features/editor/workspaceSession';
-import { WorkspaceFileReadsPaused } from '@/features/files/fileQueries';
+import {
+  AgentTaskPanel,
+} from '@/features/ai/AgentTaskPanel';
+import {
+  agentTaskKeys,
+  useCloseAgentTaskMutation,
+  useCurrentAgentTaskQuery,
+} from '@/features/ai/agentTaskQueries';
+import { resolveAgentTaskPreconditions } from '@/features/ai/agentTaskPreconditions';
+import { WorkspaceFileReadsPaused, getWorkspaceRevision } from '@/features/files/fileQueries';
 import { useAuth } from '@/features/auth/AuthProvider';
 import {
   isWorkspaceEditable,
@@ -55,8 +67,9 @@ const EDITOR_REGION_ID = 'workbench-editor';
 const RUN_PANEL_ID = 'workbench-run-panel';
 const DEPENDENCIES_PANEL_ID = 'workbench-dependencies-panel';
 const TERMINAL_PANEL_ID = 'workbench-terminal-panel';
+const AGENT_PANEL_ID = 'workbench-agent-panel';
 
-type WorkbenchPanel = 'file' | 'run' | 'dependencies' | 'terminal';
+type WorkbenchPanel = 'file' | 'run' | 'dependencies' | 'terminal' | 'agent';
 
 /**
  * One-shot discovery of a server-pending dependency operation for a READY
@@ -69,9 +82,16 @@ export function isExperimentalTerminalEnabled(value: string | undefined): boolea
   return value === 'true';
 }
 
+/** The agent stage ships switched off; the panel only exists when explicitly enabled. */
+export function isAgentPanelEnabled(value: string | undefined): boolean {
+  return value === 'true';
+}
+
 const experimentalTerminalEnabled = isExperimentalTerminalEnabled(
   import.meta.env.VITE_ENABLE_EXPERIMENTAL_TERMINAL,
 );
+
+const agentPanelEnabled = isAgentPanelEnabled(import.meta.env.VITE_ENABLE_AI);
 
 const LazyJobTerminalPanel = lazy(() => import('@/components/terminal/JobTerminalPanel'));
 
@@ -180,12 +200,166 @@ export function WorkbenchShell({ project }: { project: ProjectSummary }) {
   // one with an unconfirmed result, or the authoritative reload after a recovered
   // operation also locks workspace writes — the workspace content is not
   // authoritative until every one of them resolves (design 6.1, fail-closed).
+  // ---------------------------------------------------------------------
+  // Stage-one agent task: the shell polls GET current every two seconds while
+  // the AI stage is enabled, derives the write lock from the backend's
+  // writesLocked, and reloads the workspace at a safe node whenever the task
+  // reports a new revision (the agent saved code the editor must show).
+  // ---------------------------------------------------------------------
+  const agentTaskQuery = useCurrentAgentTaskQuery(project.id, agentPanelEnabled);
+  const agentTask = agentTaskQuery.data ?? null;
+  const closeAgentTaskMutation = useCloseAgentTaskMutation(project.id);
+  const fileWritePending =
+    useIsMutating({ predicate: projectFileWritePredicate(project.id) }) > 0;
+  const agentWritePending =
+    fileWritePending ||
+    dependencyOperationBusy ||
+    unconfirmedOperationId !== null ||
+    recoveryReloadPending;
+  // Agent-driven reload state: pending spans the in-flight reload (the editor
+  // is unmounted and file reads paused), failed keeps the workspace read-only
+  // behind a Retry affordance, and blocked marks a dirty-buffer conflict that
+  // must never be silently replaced.
+  const [agentReloadPending, setAgentReloadPending] = useState(false);
+  const [agentReloadFailed, setAgentReloadFailed] = useState(false);
+  const [agentReloadBlocked, setAgentReloadBlocked] = useState(false);
+  const [agentReloadAttempt, setAgentReloadAttempt] = useState(0);
+  const agentReloadRevisionRef = useRef<string | null>(null);
+  const [settledAgentTask, setSettledAgentTask] = useState<AgentTaskSnapshot | null>(null);
+  const lastAgentTaskIdRef = useRef<string | null>(null);
+  const agentTaskOccupying = agentTask !== null && agentTask.writesLocked;
+  const agentReloading = agentReloadPending || agentReloadFailed || agentReloadBlocked;
+  // The shell reuses the panel's start gate for its write-lock decision: the
+  // workspace is locked exactly while the shared function would refuse a task
+  // start because one occupies the project or a reload is in flight, failed or
+  // blocked (the neutral inputs pin everything the shell is not deciding here).
+  const agentTaskLocked = !resolveAgentTaskPreconditions({
+    dirtyCount: 0,
+    writePending: false,
+    hasActiveRun: false,
+    workspaceRevision: '0',
+    taskWritesLocked: agentTaskOccupying,
+    reloading: agentReloading,
+  }).canStart;
+  const seedAgentTask = useCallback(
+    (snapshot: AgentTaskSnapshot) => {
+      queryClient.setQueryData(agentTaskKeys.current(project.id), snapshot);
+    },
+    [project.id, queryClient],
+  );
+  const retryAgentReload = useCallback(() => {
+    agentReloadRevisionRef.current = null;
+    setAgentReloadFailed(false);
+    setAgentReloadBlocked(false);
+    setAgentReloadAttempt((attempt) => attempt + 1);
+  }, []);
+  // The reload always settles its own pending/failed state. It runs outside the
+  // effect's cancellation reach (like reloadAfterRecovery): the effect's own
+  // pending state would otherwise re-run the effect, run the cleanup and mark
+  // the in-flight reload cancelled forever, leaving the editor unmounted.
+  // A project switch is guarded inside reloadWorkspaceAfterTerminalRun itself.
+  const runAgentReload = useCallback(() => {
+    setAgentReloadPending(true);
+    reloadWorkspaceAfterTerminalRun({ projectId: project.id, queryClient }).then(
+      () => {
+        setAgentReloadFailed(false);
+        setAgentReloadPending(false);
+      },
+      () => {
+        setAgentReloadFailed(true);
+        setAgentReloadPending(false);
+      },
+    );
+  }, [project.id, queryClient]);
+  // One settled snapshot per released task: GET current only answers while a
+  // task occupies the project, so the final result is fetched by its id once.
+  useEffect(() => {
+    if (agentTask !== null) {
+      if (lastAgentTaskIdRef.current !== agentTask.taskId) {
+        lastAgentTaskIdRef.current = agentTask.taskId;
+        setSettledAgentTask(null);
+      }
+      return undefined;
+    }
+    const taskId = lastAgentTaskIdRef.current;
+    if (taskId === null) {
+      return undefined;
+    }
+    let cancelled = false;
+    getAgentTask(project.id, taskId)
+      .then((snapshot) => {
+        if (cancelled) {
+          return;
+        }
+        setSettledAgentTask(snapshot);
+      })
+      .catch(() => {
+        if (cancelled) {
+          return;
+        }
+        setSettledAgentTask(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [agentTask, project.id]);
+  // The reload trigger observes the occupying task's revision and, after the
+  // task settled between two polls, the settled snapshot's final revision.
+  const agentReloadRevision = agentTask?.workspaceRevision ?? settledAgentTask?.workspaceRevision ?? null;
+  useEffect(() => {
+    if (!agentPanelEnabled || agentReloadRevision === null) {
+      return undefined;
+    }
+    if (agentReloadRevision === agentReloadRevisionRef.current) {
+      return undefined;
+    }
+    if (agentReloadRevisionRef.current === null) {
+      // First observation of a task: it was submitted against this browser's
+      // saved revision, so only a difference from the local cache needs a reload.
+      const localRevision = getWorkspaceRevision(queryClient, project.id);
+      if (agentReloadRevision === localRevision) {
+        agentReloadRevisionRef.current = agentReloadRevision;
+        return undefined;
+      }
+    }
+    if (agentReloadPending || recoveryReloadPending) {
+      // One reload at a time: concurrent polls never start a second one.
+      return undefined;
+    }
+    if (snapshot.phase === 'RELOADING_WORKSPACE' || snapshot.phase === 'RELOAD_FAILED') {
+      // The run authority reload owns the workspace; the agent reload re-runs
+      // once the phase settles back to editable.
+      return undefined;
+    }
+    if (useWorkspaceSession.getState().dirtyPaths.size > 0) {
+      // A start racing local input left a dirty buffer: replacing it would
+      // silently drop the user's edits, so the conflict is surfaced instead.
+      setAgentReloadBlocked(true);
+      return undefined;
+    }
+    setAgentReloadBlocked(false);
+    agentReloadRevisionRef.current = agentReloadRevision;
+    runAgentReload();
+  }, [
+    agentReloadAttempt,
+    agentReloadPending,
+    agentReloadRevision,
+    project.id,
+    queryClient,
+    recoveryReloadPending,
+    runAgentReload,
+    snapshot.phase,
+  ]);
   const writesLocked =
     runWritesLocked ||
     dependencyOperationBusy ||
     unconfirmedOperationId !== null ||
-    recoveryReloadPending;
-  const reloadingWorkspace = snapshot.phase === 'RELOADING_WORKSPACE' || snapshot.phase === 'RELOAD_FAILED';
+    recoveryReloadPending ||
+    agentTaskLocked;
+  const reloadingWorkspace =
+    snapshot.phase === 'RELOADING_WORKSPACE' ||
+    snapshot.phase === 'RELOAD_FAILED' ||
+    agentReloadPending;
 
   useEffect(() => {
     if (snapshot.phase !== 'RELOADING_WORKSPACE') {
@@ -314,6 +488,18 @@ export function WorkbenchShell({ project }: { project: ProjectSummary }) {
           </Button>
         </div>
       ) : null}
+      {agentReloadFailed || agentReloadBlocked ? (
+        <div className="flex flex-col items-start gap-2 border-b bg-background px-4 py-2">
+          <InlineAlert>
+            {agentReloadBlocked
+              ? 'The agent changed workspace files. Save or discard your unsaved changes, then reload.'
+              : 'The agent changed the workspace files, but reloading them failed.'}
+          </InlineAlert>
+          <Button type="button" variant="outline" onClick={retryAgentReload}>
+            Reload workspace
+          </Button>
+        </div>
+      ) : null}
       <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden">
         <aside
           aria-label="Project files"
@@ -417,6 +603,28 @@ export function WorkbenchShell({ project }: { project: ProjectSummary }) {
                 Terminal
               </button>
             ) : null}
+            {agentPanelEnabled ? (
+              <button
+                type="button"
+                role="tab"
+                id="workbench-tab-agent"
+                aria-label="AI"
+                aria-controls={AGENT_PANEL_ID}
+                aria-selected={activePanel === 'agent'}
+                className={cn(
+                  panelTabClassName,
+                  activePanel === 'agent'
+                    ? 'bg-accent text-accent-foreground'
+                    : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground',
+                )}
+                onClick={() => {
+                  setActivePanel('agent');
+                }}
+              >
+                <Bot className="h-4 w-4" aria-hidden />
+                AI
+              </button>
+            ) : null}
           </div>
           <div className="relative min-h-0 min-w-0 flex-1 overflow-hidden">
             <div
@@ -470,6 +678,7 @@ export function WorkbenchShell({ project }: { project: ProjectSummary }) {
                 projectId={project.id}
                 projectTemplateId={project.runtime?.templateId ?? 'java-console'}
                 coordinator={coordinator}
+                agentTaskActive={agentTaskLocked}
               />
             </div>
             {pythonWorkbench ? (
@@ -521,6 +730,38 @@ export function WorkbenchShell({ project }: { project: ProjectSummary }) {
                     run={terminalAuthority.run}
                   />
                 </Suspense>
+              </div>
+            ) : null}
+            {agentPanelEnabled ? (
+              <div
+                id={AGENT_PANEL_ID}
+                role="tabpanel"
+                aria-labelledby="workbench-tab-agent"
+                aria-hidden={activePanel !== 'agent'}
+                inert={activePanel !== 'agent' ? true : undefined}
+                className={cn(
+                  panelSurfaceClassName,
+                  activePanel === 'agent' ? 'z-10' : 'invisible pointer-events-none',
+                )}
+              >
+                <AgentTaskPanel
+                  projectId={project.id}
+                  userId={userId}
+                  task={agentTask}
+                  settledTask={settledAgentTask}
+                  pollFailed={agentTaskQuery.isError}
+                  writePending={agentWritePending}
+                  hasActiveRun={snapshot.observedLockingRunId !== null}
+                  reloading={reloadingWorkspace}
+                  closePending={closeAgentTaskMutation.isPending}
+                  onTaskAccepted={seedAgentTask}
+                  onClose={() => {
+                    // The only close path: the owner's explicit button click.
+                    if (agentTask !== null) {
+                      closeAgentTaskMutation.mutate(agentTask.taskId);
+                    }
+                  }}
+                />
               </div>
             ) : null}
           </div>

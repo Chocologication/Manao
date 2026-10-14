@@ -172,6 +172,25 @@ describe('resolveRunPreconditions', () => {
     expect(resolveRunPreconditions(ALLOWED)).toEqual({ canRequestRun: true, reason: null });
   });
 
+  it('refuses to start a run while an agent task occupies the workspace', () => {
+    expect(
+      resolveRunPreconditions({
+        ...ALLOWED,
+        agentTaskActive: true,
+      }),
+    ).toEqual({ canRequestRun: false, reason: 'AGENT_TASK_ACTIVE' });
+  });
+
+  it('keeps the previous behavior when the agent field is omitted', () => {
+    expect(
+      resolveRunPreconditions({
+        dirtyCount: 0,
+        writePending: false,
+        workspaceRevision: REVISION,
+      }),
+    ).toEqual({ canRequestRun: false, reason: 'STAGE_4_UNAVAILABLE' });
+  });
+
   it('does not issue /runs HTTP while resolving preconditions', () => {
     const fetchSpy = vi.spyOn(globalThis, 'fetch');
     const cases = [
@@ -213,6 +232,7 @@ describe('run descriptions', () => {
     expect(runPreconditionDescription('START_PENDING')).toMatch(/START_PENDING/);
     expect(runPreconditionDescription('RELOADING_WORKSPACE')).toMatch(/RELOADING_WORKSPACE/);
     expect(runPreconditionDescription('RELOAD_FAILED')).toMatch(/RELOAD_FAILED/);
+    expect(runPreconditionDescription('AGENT_TASK_ACTIVE')).toMatch(/AGENT_TASK_ACTIVE/);
     expect(runPreconditionDescription('STAGE_4_UNAVAILABLE')).toMatch(/STAGE_4_UNAVAILABLE/);
   });
 });

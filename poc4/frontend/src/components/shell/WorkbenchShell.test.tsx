@@ -52,7 +52,9 @@ import {
 import { pythonDependencyStorageKey } from '../../api/pythonDependencyApi';
 import { PROJECT_BUSY_READ_MAX_RETRIES } from '../../api/projectBusyRetry';
 import { renderApp, resetAppRuntime } from '../../test/renderApp';
-import { isExperimentalTerminalEnabled, WorkbenchShell } from './WorkbenchShell';
+import type { AgentTaskSnapshot } from '../../contracts/agentTask';
+import { agentTaskKeys } from '../../features/ai/agentTaskQueries';
+import { isAgentPanelEnabled, isExperimentalTerminalEnabled, WorkbenchShell } from './WorkbenchShell';
 
 const ALICE = { username: 'alice', password: 'demo-pass' };
 const POM = parseProjectRelativePath('pom.xml');
@@ -229,6 +231,12 @@ describe('WorkbenchShell experimental surfaces', () => {
     expect(isExperimentalTerminalEnabled(undefined)).toBe(false);
     expect(isExperimentalTerminalEnabled('false')).toBe(false);
     expect(isExperimentalTerminalEnabled('true')).toBe(true);
+  });
+
+  it('keeps the AI panel disabled unless explicitly enabled', () => {
+    expect(isAgentPanelEnabled(undefined)).toBe(false);
+    expect(isAgentPanelEnabled('false')).toBe(false);
+    expect(isAgentPanelEnabled('true')).toBe(true);
   });
 });
 
@@ -2285,5 +2293,263 @@ describe('WorkbenchShell python dependencies', () => {
 
     expect(pendingDiscoveryGetCount(fetchSpy)).toBe(0);
     fetchSpy.mockRestore();
+  }, 15_000);
+});
+
+describe('WorkbenchShell agent task panel', () => {
+  const AGENT_TASK_ID = '0b8fd38f-0f9e-4c28-9c48-3f5f4a2b1c11';
+  const AGENT_TASKS_URL = `/api/v1/projects/${ALICE_SEED_PROJECT_ID}/agent-tasks`;
+
+  function agentTask(overrides: Partial<AgentTaskSnapshot> = {}): AgentTaskSnapshot {
+    return {
+      taskId: AGENT_TASK_ID,
+      state: 'RUNNING',
+      workspaceRevision: 'mock-rev-0001',
+      writesLocked: true,
+      progress: [{ seq: 1, kind: 'message', text: 'Reading pom.xml', truncated: false }],
+      changedPaths: [],
+      summary: null,
+      failureCode: null,
+      ...overrides,
+    };
+  }
+
+  function agentCurrentNotFound() {
+    return HttpResponse.json(
+      { code: 'ENTRY_NOT_FOUND', message: 'Task not found', traceId: 'trace-agent-none' },
+      { status: 404 },
+    );
+  }
+
+  async function occupyWorkspace(): Promise<void> {
+    await queryClient.invalidateQueries({ queryKey: agentTaskKeys.current(ALICE_SEED_PROJECT_ID) });
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'New file' })).toBeDisabled();
+    });
+  }
+
+  it('shows the AI tab and keeps the workspace editable while no task occupies the project', async () => {
+    server.use(http.get(`${AGENT_TASKS_URL}/current`, () => agentCurrentNotFound()));
+    await authenticateAsAlice();
+    renderShell();
+    await loadedEditable();
+
+    expect(screen.getByRole('tab', { name: 'AI' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'New file' })).toBeEnabled();
+  });
+
+  it('locks the editor, file tree and Run start while an agent task occupies the workspace', async () => {
+    const user = userEvent.setup();
+    const task = agentTask();
+    let occupying = false;
+    server.use(
+      http.get(`${AGENT_TASKS_URL}/current`, () => (occupying ? HttpResponse.json(task) : agentCurrentNotFound())),
+      http.get(`${AGENT_TASKS_URL}/${task.taskId}`, () => HttpResponse.json(task)),
+    );
+    await authenticateAsAlice();
+    renderShell();
+    await loadedEditable();
+
+    occupying = true;
+    await occupyWorkspace();
+    await user.click(screen.getByRole('treeitem', { name: 'pom.xml' }));
+    expect(await screen.findByTestId('mock-editor')).toHaveAttribute('data-readonly', 'true');
+
+    await user.click(screen.getByRole('tab', { name: 'Run' }));
+    const start = await screen.findByRole('button', { name: 'Start run' });
+    expect(start).toBeDisabled();
+    expect(start).toHaveAttribute('title', runPreconditionDescription('AGENT_TASK_ACTIVE'));
+  }, 15_000);
+
+  it('does not POST close when the workbench unmounts', async () => {
+    const task = agentTask();
+    let occupying = false;
+    let closePosts = 0;
+    server.use(
+      http.get(`${AGENT_TASKS_URL}/current`, () => (occupying ? HttpResponse.json(task) : agentCurrentNotFound())),
+      http.post(`${AGENT_TASKS_URL}/${task.taskId}/close`, () => {
+        closePosts += 1;
+        return HttpResponse.json(task);
+      }),
+    );
+    await authenticateAsAlice();
+    const view = renderShell();
+    await loadedEditable();
+
+    occupying = true;
+    await occupyWorkspace();
+    view.unmount();
+    expect(closePosts).toBe(0);
+  }, 15_000);
+
+  it('refreshes the workspace when the agent task writes files and unlocks after it settles', async () => {
+    const user = userEvent.setup();
+    const settledSnapshot = agentTask({
+      state: 'COMPLETED',
+      writesLocked: false,
+      summary: 'Fixed the failing test',
+      changedPaths: ['pom.xml'],
+    });
+    const agentPomBody = '<project xmlns="http://maven.apache.org/POM/4.0.0"><agent-edit /></project>';
+    let occupying = false;
+    let settled = false;
+    let agentWrote = false;
+    let agentRevision = 'mock-rev-0001';
+    server.use(
+      http.get(`${AGENT_TASKS_URL}/current`, () =>
+        occupying ? HttpResponse.json(agentTask({ workspaceRevision: agentRevision })) : agentCurrentNotFound()),
+      http.get(`${AGENT_TASKS_URL}/${AGENT_TASK_ID}`, () =>
+        HttpResponse.json(settled ? settledSnapshot : agentTask({ workspaceRevision: agentRevision }))),
+      http.get('/api/v1/projects/:projectId/files/content', ({ request }) => {
+        const path = new URL(request.url).searchParams.get('path');
+        if (!agentWrote || path !== 'pom.xml') {
+          return undefined;
+        }
+        return HttpResponse.json({
+          path: 'pom.xml',
+          content: agentPomBody,
+          workspaceRevision: 'mock-rev-0002',
+        });
+      }),
+    );
+    await authenticateAsAlice();
+    renderShell();
+    await loadedEditable();
+    await user.click(screen.getByRole('treeitem', { name: 'pom.xml' }));
+    const uri = toProjectModelUri(ALICE_SEED_PROJECT_ID, POM);
+    await waitFor(() => {
+      expect(monaco.editor.getModel(uri)).not.toBeNull();
+    });
+    expect(monaco.editor.getModel(uri)!.getValue()).not.toContain('<agent-edit />');
+
+    occupying = true;
+    await occupyWorkspace();
+
+    // The agent writes a new revision: the shell reloads and disposes the stale model.
+    agentWrote = true;
+    agentRevision = 'mock-rev-0002';
+    await queryClient.invalidateQueries({ queryKey: agentTaskKeys.current(ALICE_SEED_PROJECT_ID) });
+    await waitFor(() => {
+      expect(monaco.editor.getModel(uri)?.getValue()).toContain('<agent-edit />');
+    });
+    // Still occupying: the agent owns every write until it settles.
+    expect(screen.getByRole('button', { name: 'New file' })).toBeDisabled();
+
+    settled = true;
+    occupying = false;
+    await queryClient.invalidateQueries({ queryKey: agentTaskKeys.current(ALICE_SEED_PROJECT_ID) });
+    await waitUntilWritesUnlocked();
+    expect(monaco.editor.getModel(uri)?.getValue()).toContain('<agent-edit />');
+  }, 15_000);
+
+  it('keeps writes locked when the agent-driven reload fails and releases them only after Retry succeeds', async () => {
+    const user = userEvent.setup();
+    const settledSnapshot = agentTask({ state: 'COMPLETED', writesLocked: false });
+    let occupying = false;
+    let settled = false;
+    let agentRevision = 'mock-rev-0001';
+    let failReloadTrees = false;
+    server.use(
+      http.get(`${AGENT_TASKS_URL}/current`, () =>
+        occupying ? HttpResponse.json(agentTask({ workspaceRevision: agentRevision })) : agentCurrentNotFound()),
+      http.get(`${AGENT_TASKS_URL}/${AGENT_TASK_ID}`, () =>
+        HttpResponse.json(settled ? settledSnapshot : agentTask({ workspaceRevision: agentRevision }))),
+      http.get('/api/v1/projects/:projectId/files/tree', ({ request }) => {
+        const path = new URL(request.url).searchParams.get('path') ?? '';
+        if (failReloadTrees && path === '') {
+          return HttpResponse.json(
+            { code: 'INTERNAL_ERROR', message: 'Mock reload tree failure', traceId: 'trace-reload' },
+            { status: 500 },
+          );
+        }
+        return undefined;
+      }),
+    );
+    await authenticateAsAlice();
+    renderShell();
+    await loadedEditable();
+
+    occupying = true;
+    await occupyWorkspace();
+
+    agentRevision = 'mock-rev-0002';
+    failReloadTrees = true;
+    await queryClient.invalidateQueries({ queryKey: agentTaskKeys.current(ALICE_SEED_PROJECT_ID) });
+    expect(
+      await screen.findByText(/agent changed the workspace files, but reloading them failed/i),
+    ).toBeInTheDocument();
+
+    // The task settles while the reload is still failed: the workspace stays locked.
+    settled = true;
+    occupying = false;
+    await queryClient.invalidateQueries({ queryKey: agentTaskKeys.current(ALICE_SEED_PROJECT_ID) });
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'New file' })).toBeDisabled();
+    });
+    expect(screen.getByRole('button', { name: 'Reload workspace' })).toBeEnabled();
+
+    failReloadTrees = false;
+    await user.click(screen.getByRole('button', { name: 'Reload workspace' }));
+    await waitUntilWritesUnlocked();
+    expect(screen.queryByRole('button', { name: 'Reload workspace' })).not.toBeInTheDocument();
+  }, 15_000);
+
+  it('does not replace dirty buffers when the agent changes files and surfaces the conflict', async () => {
+    const user = userEvent.setup();
+    let occupying = false;
+    let agentWrote = false;
+    let agentRevision = 'mock-rev-0001';
+    let rootTreeHits = 0;
+    const agentPomBody = '<project xmlns="http://maven.apache.org/POM/4.0.0"><agent-edit /></project>';
+    server.use(
+      http.get(`${AGENT_TASKS_URL}/current`, () =>
+        occupying ? HttpResponse.json(agentTask({ workspaceRevision: agentRevision })) : agentCurrentNotFound()),
+      http.get(`${AGENT_TASKS_URL}/${AGENT_TASK_ID}`, () => HttpResponse.json(agentTask({ workspaceRevision: agentRevision }))),
+      http.get('/api/v1/projects/:projectId/files/tree', ({ request }) => {
+        const path = new URL(request.url).searchParams.get('path') ?? '';
+        if (path === '') {
+          rootTreeHits += 1;
+        }
+        return undefined;
+      }),
+      http.get('/api/v1/projects/:projectId/files/content', ({ request }) => {
+        const path = new URL(request.url).searchParams.get('path');
+        if (!agentWrote || path !== 'pom.xml') {
+          return undefined;
+        }
+        return HttpResponse.json({
+          path: 'pom.xml',
+          content: agentPomBody,
+          workspaceRevision: 'mock-rev-0002',
+        });
+      }),
+    );
+    await authenticateAsAlice();
+    renderShell();
+    await loadedEditable();
+    await dirtyPomFromWorkbench(user);
+    const uri = toProjectModelUri(ALICE_SEED_PROJECT_ID, POM);
+    const dirtyContent = monaco.editor.getModel(uri)!.getValue();
+
+    occupying = true;
+    await occupyWorkspace();
+    rootTreeHits = 0;
+    agentWrote = true;
+    agentRevision = 'mock-rev-0002';
+    await queryClient.invalidateQueries({ queryKey: agentTaskKeys.current(ALICE_SEED_PROJECT_ID) });
+
+    expect(await screen.findByText(/save or discard your unsaved changes/i)).toBeInTheDocument();
+    expect(monaco.editor.getModel(uri)?.getValue()).toBe(dirtyContent);
+    expect(workspaceSessionStore.getState().dirtyPaths.has(POM)).toBe(true);
+    // No reload ran into the dirty buffer.
+    expect(rootTreeHits).toBe(0);
+
+    act(() => {
+      workspaceSessionStore.getState().setDirty(POM, false);
+    });
+    await user.click(screen.getByRole('button', { name: 'Reload workspace' }));
+    await waitFor(() => {
+      expect(monaco.editor.getModel(uri)?.getValue()).toContain('<agent-edit />');
+    });
   }, 15_000);
 });

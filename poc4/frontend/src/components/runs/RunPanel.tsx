@@ -35,6 +35,12 @@ export type RunPanelProps = {
   /** Current project template; the toolbar shows it only while no run is selected. */
   projectTemplateId: RuntimeTemplateId;
   coordinator: RunAuthorityCoordinator;
+  /**
+   * Explicitly forwarded by the shell: an occupying agent task owns the
+   * workspace writes, so Run starts are refused while it runs. The panel never
+   * derives this itself.
+   */
+  agentTaskActive?: boolean;
 };
 
 function runQueryFallback(error: unknown, fallback: string): string {
@@ -85,7 +91,7 @@ function statusText(options: {
   return 'Idle';
 }
 
-export function RunPanel({ projectId, projectTemplateId, coordinator }: RunPanelProps) {
+export function RunPanel({ projectId, projectTemplateId, coordinator, agentTaskActive }: RunPanelProps) {
   const queryClient = useQueryClient();
   const snapshot = useSyncExternalStore(
     coordinator.subscribe,
@@ -124,6 +130,7 @@ export function RunPanel({ projectId, projectTemplateId, coordinator }: RunPanel
     hasActiveLockingRun: snapshot.observedLockingRunId !== null,
     startPending,
     reloadPhase: snapshot.phase,
+    agentTaskActive,
   });
   const workspaceEditable = isWorkspaceEditable(snapshot);
   const canStart = preconditions.canRequestRun;
