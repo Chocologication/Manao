@@ -210,6 +210,19 @@ public final class AgentTaskStore implements AgentTaskOccupancy {
     }
 
     /**
+     * Binds the verified Kubernetes identity of a development build to its call row and marks
+     * it RUNNING: the durable record of which Job/Pod belongs to this call, written while the
+     * executor waits so a backend restart can still find the build by its bound identity.
+     */
+    public void bindToolCallIdentity(String taskId, String toolCallId, String jobName,
+                                     String jobUid, String podUid) {
+        jdbc.update(
+            "UPDATE agent_tool_call SET state = 'RUNNING', job_name = ?, job_uid = ?, pod_uid = ?, updated_at = ? "
+                + "WHERE task_id = ? AND tool_call_id = ? AND state IN ('REGISTERED', 'RUNNING')",
+            jobName, jobUid, podUid, Timestamp.from(clock.instant()), taskId, toolCallId);
+    }
+
+    /**
      * Marks the outcome unknown: the project keeps its occupancy and further writes stay blocked
      * until the call is reconciled or the task is closed. A settled answer is never downgraded.
      */

@@ -1,5 +1,7 @@
 package com.manao.poc4.kubernetes;
 
+import com.manao.poc4.ai.AgentContracts.BuildGoal;
+import com.manao.poc4.ai.AgentContracts.BuildRequest;
 import com.manao.poc4.run.RunPolicy;
 import com.manao.poc4.run.RunRecord;
 import io.fabric8.kubernetes.api.model.EnvVar;
@@ -44,8 +46,15 @@ public class JobResourceFactory {
     static final String PYTHON_CACHE_DIRECTORY = ".manao-cache/python";
     static final String CONTROL_DIR_MOUNT = "/run-control";
     static final String TERMINATION_MESSAGE_PATH = "/tmp/manao-termination.log";
-    static final String LABEL_COMPONENT = "manao.poc4/component";
+    public static final String LABEL_COMPONENT = "manao.poc4/component";
     static final String COMPONENT_VALUE = "maven-run";
+    /** The dedicated development-build component: never an application Run identity. */
+    public static final String COMPONENT_DEVELOPMENT_BUILD = "development-build";
+    /** The tool-call identity label binding one development build to its durable ledger row. */
+    public static final String LABEL_TOOL_CALL_ID = "manao.poc4/tool-call-id";
+    static final String DEVELOPMENT_LAUNCHER_COMMAND = "/usr/local/bin/manao-dev-build";
+    static final String SOURCE_COPY_CONTAINER = "source-copy";
+    static final long DEVELOPMENT_BUILD_DEADLINE_SECONDS = 600;
     static final String SAFE_LOW_PORT_SYSCTL = "net.ipv4.ip_unprivileged_port_start";
 
     private final String namespace;
@@ -136,6 +145,11 @@ public class JobResourceFactory {
 
     public static String jobName(String runId) { return "manao-run-" + runId; }
 
+    /** The deterministic development-build job name: exactly one job per build command id. */
+    public static String developmentJobName(String commandId) {
+        return "manao-dev-" + requireText(commandId, "commandId");
+    }
+
     /** TASK run: unchanged single overall deadline; the selected dependency environment is injected. */
     public Job createMavenJob(String runId, String projectId, List<EnvVar> applicationEnvironment) {
         return taskJob(runId, projectId, applicationEnvironment, LanguageRuntime.maven(mavenImage));
@@ -152,9 +166,158 @@ public class JobResourceFactory {
             applicationEnvironment, LanguageRuntime.maven(mavenImage));
     }
 
+    /**
+     * The isolated development build (stage one, design section 5): a fixed init container
+     * copies the read-only project source subPath into a scratch emptyDir (the {@code
+     * manao-dev-build copy} phase), then the execution container runs the fixed {@code
+     * manao-dev-build run <goal>} against that copy with the project's own Maven cache. The
+     * main container never mounts the source or the PVC root — it can only touch its scratch
+     * copy, the cache and tmp. One single-run job bounded by its own deadline, no
+     * ServiceAccount token, no application environment and no database credentials; the goal
+     * comes from the fixed enum, never from raw argv.
+     */
+    public Job createDevelopmentJob(BuildRequest request) {
+        String commandId = requireText(request.commandId(), "commandId");
+        var labels = WorkspaceResourceFactory.projectIdentityLabels(request.projectId());
+        labels.put(LABEL_COMPONENT, COMPONENT_DEVELOPMENT_BUILD);
+        labels.put(LABEL_TOOL_CALL_ID, commandId);
+        return new JobBuilder()
+            .withNewMetadata()
+            .withName(developmentJobName(commandId))
+            .withNamespace(namespace)
+            .withLabels(labels)
+            .endMetadata()
+            .withNewSpec()
+            .withCompletions(1)
+            .withParallelism(1)
+            .withBackoffLimit(0)
+            .withActiveDeadlineSeconds(DEVELOPMENT_BUILD_DEADLINE_SECONDS)
+            .withNewTemplate()
+            .withNewMetadata().withLabels(labels).endMetadata()
+            .withNewSpec()
+            .withServiceAccountName("manao-maven-runner")
+            .withAutomountServiceAccountToken(false)
+            .withRestartPolicy("Never")
+            .withNewSecurityContext()
+            .withRunAsNonRoot(true)
+            .withRunAsUser(WorkspaceResourceFactory.WORKSPACE_UID)
+            .withRunAsGroup(WorkspaceResourceFactory.WORKSPACE_GID)
+            .withFsGroup(WorkspaceResourceFactory.WORKSPACE_GID)
+            .withSeccompProfile(new io.fabric8.kubernetes.api.model.SeccompProfileBuilder().withType("RuntimeDefault").build())
+            .endSecurityContext()
+            .withVolumes(
+                new io.fabric8.kubernetes.api.model.VolumeBuilder()
+                    .withName("source")
+                    .withNewPersistentVolumeClaim()
+                    .withClaimName(WorkspaceResourceFactory.pvcName(request.projectId()))
+                    .withReadOnly(true)
+                    .endPersistentVolumeClaim()
+                    .build(),
+                new io.fabric8.kubernetes.api.model.VolumeBuilder()
+                    .withName("cache")
+                    .withNewPersistentVolumeClaim()
+                    .withClaimName(WorkspaceResourceFactory.pvcName(request.projectId()))
+                    .withReadOnly(false)
+                    .endPersistentVolumeClaim()
+                    .build(),
+                new io.fabric8.kubernetes.api.model.VolumeBuilder()
+                    .withName("workspace")
+                    .withNewEmptyDir().endEmptyDir()
+                    .build(),
+                new io.fabric8.kubernetes.api.model.VolumeBuilder()
+                    .withName("tmp")
+                    .withNewEmptyDir().endEmptyDir()
+                    .build())
+            .withInitContainers(
+                developmentCachePreparationContainer(),
+                new io.fabric8.kubernetes.api.model.ContainerBuilder()
+                    .withName(SOURCE_COPY_CONTAINER)
+                    .withImage(mavenImage)
+                    .withCommand(DEVELOPMENT_LAUNCHER_COMMAND, "copy")
+                    .withVolumeMounts(
+                        new io.fabric8.kubernetes.api.model.VolumeMountBuilder()
+                            .withName("source")
+                            .withMountPath("/source")
+                            .withSubPath(WorkspaceResourceFactory.projectDirectory(request.projectId()))
+                            .withReadOnly(true)
+                            .build(),
+                        new io.fabric8.kubernetes.api.model.VolumeMountBuilder()
+                            .withName("workspace")
+                            .withMountPath("/workspace")
+                            .build())
+                    .withSecurityContext(containerSecurity())
+                    .build())
+            .withContainers(new io.fabric8.kubernetes.api.model.ContainerBuilder()
+                .withName(ResourceIdentityVerifier.APPLICATION_CONTAINER)
+                .withImage(mavenImage)
+                .withCommand(DEVELOPMENT_LAUNCHER_COMMAND, "run", goalArgument(request.goal()))
+                .withWorkingDir("/workspace")
+                .withEnv(baseEnvironment(List.of()))
+                .withVolumeMounts(
+                    new io.fabric8.kubernetes.api.model.VolumeMountBuilder()
+                        .withName("workspace")
+                        .withMountPath("/workspace")
+                        .withReadOnly(false)
+                        .build(),
+                    new io.fabric8.kubernetes.api.model.VolumeMountBuilder()
+                        .withName("cache")
+                        .withMountPath("/maven-cache")
+                        .withSubPath(MAVEN_CACHE_DIRECTORY)
+                        .withReadOnly(false)
+                        .build(),
+                    new io.fabric8.kubernetes.api.model.VolumeMountBuilder()
+                        .withName("tmp")
+                        .withMountPath("/tmp")
+                        .build())
+                .withNewResources()
+                .addToRequests("cpu", cpuQuantity(requests.cpuMillis()))
+                .addToRequests("memory", bytesQuantity(requests.memoryBytes()))
+                .addToRequests("ephemeral-storage", bytesQuantity(requests.ephemeralStorageBytes()))
+                .addToLimits("cpu", cpuQuantity(limits.cpuMillis()))
+                .addToLimits("memory", bytesQuantity(limits.memoryBytes()))
+                .addToLimits("ephemeral-storage", bytesQuantity(limits.ephemeralStorageBytes()))
+                .endResources()
+                .withSecurityContext(containerSecurity())
+                .build())
+            .endSpec()
+            .endTemplate()
+            .endSpec()
+            .build();
+    }
+
+    /** The fixed lowercase launcher argument of one build goal. */
+    private static String goalArgument(BuildGoal goal) {
+        return switch (goal) {
+            case COMPILE -> "compile";
+            case TEST -> "test";
+            case PACKAGE -> "package";
+        };
+    }
+
+    /**
+     * The shared cache preparation for a development build: identical script to the run
+     * preparation (root PVC mount, only this project's maven cache directory is created or
+     * repaired), but mounted through the development job's writable {@code cache} volume.
+     */
+    private io.fabric8.kubernetes.api.model.Container developmentCachePreparationContainer() {
+        LanguageRuntime runtime = LanguageRuntime.maven(mavenImage);
+        return new io.fabric8.kubernetes.api.model.ContainerBuilder()
+            .withName(runtime.cachePreparationContainer())
+            .withImage(initializerImage)
+            .withCommand("/bin/sh", "-ec", runtime.cachePreparationScript())
+            .withVolumeMounts(new io.fabric8.kubernetes.api.model.VolumeMountBuilder()
+                .withName("cache").withMountPath("/data").build())
+            .withNewSecurityContext()
+            .withRunAsNonRoot(false)
+            .withRunAsUser(0L)
+            .withAllowPrivilegeEscalation(false)
+            .withSeccompProfile(new io.fabric8.kubernetes.api.model.SeccompProfileBuilder().withType("RuntimeDefault").build())
+            .endSecurityContext()
+            .build();
+    }
+
     private Job taskJob(String runId, String projectId, List<EnvVar> applicationEnvironment,
-                        LanguageRuntime runtime) {
-        var labels = labels(projectId, runId);
+                        LanguageRuntime runtime) {        var labels = labels(projectId, runId);
         return new JobBuilder()
             .withNewMetadata()
             .withName(jobName(runId))

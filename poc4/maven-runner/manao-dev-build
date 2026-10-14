@@ -1,0 +1,92 @@
+#!/bin/bash
+# manao-dev-build - fixed development-build launcher of the Manao Maven runner image (stage one).
+# Root-owned 0555 image content (same trust pattern as manao-maven). Two subcommands:
+#   copy        init-container phase: copy the read-only project source (/source) into the
+#               scratch workspace (/workspace) for exactly one build. Excludes every .manao*,
+#               .git and target directory, refuses symlinks/FIFOs/device nodes, and fails
+#               closed beyond 1000 files or 20 MiB of source. Nothing from the project itself
+#               is ever executed.
+#   run <goal>  execution phase: run the fixed `/usr/local/bin/manao-maven -B -ntp <goal>`
+#               against the scratch copy, keep the real exit code, and append a bounded copy
+#               of the Surefire XML reports (fixed target path only, links never followed,
+#               64 KiB total) to the log tail between the fixed markers before exiting with
+#               that code. The launcher must survive to attach the reports, so Maven runs as
+#               a child process — never an exec replacement.
+# The backend reads the tail markers after the pod terminates; a missing or truncated report
+# section is reported as such and never read as a passing run.
+set -eu
+trap 'exit 143' TERM INT
+
+MAX_SOURCE_FILES=1000
+MAX_SOURCE_BYTES=20971520          # 20 MiB
+MAX_REPORT_BYTES=65536             # 64 KiB
+SOURCE_DIR="/source"
+WORKSPACE_DIR="/workspace"
+REPORT_DIR="$WORKSPACE_DIR/target/surefire-reports"
+REPORT_BEGIN="MANAO-SUREFIRE-REPORT-BEGIN"
+REPORT_END="MANAO-SUREFIRE-REPORT-END"
+
+die() { echo "manao-dev-build: $1" >&2; exit 1; }
+
+# The plan enumeration is identical for the budget check and the copy, so the limits are exact.
+source_files() { cd "$SOURCE_DIR" && find . \( -name .git -o -name target -o -name '.manao*' \) -prune -o -type f -print0; }
+
+attach_reports() {
+  local truncated=0 count=0 budget=$MAX_REPORT_BYTES total size report
+  if [ -d "$REPORT_DIR" ]; then
+    total="$(find "$REPORT_DIR" -maxdepth 1 -type f -name '*.xml' -printf '%s\n' 2>/dev/null | awk '{s+=$1} END{print s+0}')"
+    [ "$total" -le "$MAX_REPORT_BYTES" ] || truncated=1
+    echo "$REPORT_BEGIN"
+    while IFS= read -r -d '' report; do
+      size="$(stat -c %s -- "$report")"
+      [ "$size" -le "$budget" ] || break
+      cat -- "$report"
+      budget=$((budget - size))
+      count=$((count + 1))
+    done < <(find "$REPORT_DIR" -maxdepth 1 -type f -name '*.xml' -print0 | sort -z)
+  else
+    echo "$REPORT_BEGIN"
+    echo "manao-dev-build: no surefire report directory" >&2
+  fi
+  echo "$REPORT_END truncated=$truncated files=$count"
+}
+
+cmd="${1:-}"
+case "$cmd" in
+  copy)
+    [ -d "$SOURCE_DIR" ] || die "source directory is not mounted"
+    [ -d "$WORKSPACE_DIR" ] || die "workspace directory is not mounted"
+    # A project that ships symlinks, FIFOs or device nodes is never copied, never followed.
+    bad="$(find "$SOURCE_DIR" \( -type l -o -type p -o -type b -o -type c -o -type s \) -print -quit)"
+    [ -z "$bad" ] || die "refusing non-regular source entry: ${bad#"$SOURCE_DIR"/}"
+    files=0
+    bytes=0
+    while IFS= read -r -d '' entry; do
+      files=$((files + 1))
+      size="$(stat -c %s -- "$SOURCE_DIR/$entry")" || die "cannot stat source file $entry"
+      bytes=$((bytes + size))
+      [ "$files" -le "$MAX_SOURCE_FILES" ] || die "source exceeds the 1000 file limit"
+      [ "$bytes" -le "$MAX_SOURCE_BYTES" ] || die "source exceeds the 20 MiB limit"
+    done < <(source_files)
+    while IFS= read -r -d '' entry; do
+      mkdir -p -- "$WORKSPACE_DIR/$(dirname -- "$entry")"
+      cp -- "$SOURCE_DIR/$entry" "$WORKSPACE_DIR/$entry"
+    done < <(source_files)
+    echo "manao-dev-build: copied $files files ($bytes bytes)"
+    ;;
+  run)
+    goal="${2:-}"
+    case "$goal" in
+      compile|test|package) ;;
+      *) die "usage: manao-dev-build run <compile|test|package>" ;;
+    esac
+    [ -d "$WORKSPACE_DIR" ] || die "workspace directory is not mounted"
+    rc=0
+    /usr/local/bin/manao-maven -B -ntp "$goal" || rc=$?
+    attach_reports
+    exit "$rc"
+    ;;
+  *)
+    die "usage: manao-dev-build copy | run <compile|test|package>"
+    ;;
+esac

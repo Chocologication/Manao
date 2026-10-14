@@ -38,8 +38,10 @@ import java.util.regex.Pattern;
  * keeps the project occupied instead of guessing. Deterministic, side-effect-free rejections
  * (path rules, size limits, sha/revision conflicts) settle COMPLETED with a persisted
  * {@code data.error} that Pi can read and retry from — an ordinary conflict never stays a
- * pending lock. The build name is reserved: until the Fabric8 executor lands (Task 3) it
- * answers a deterministic not-available rejection and never fakes a build.
+ * pending lock. The build name drives the {@link DevelopmentBuildExecutor}: the fixed goal
+ * argument is validated here, the executor runs OUTSIDE the shared gate (no thread lock across
+ * the cluster wait), its verified identity is bound to the ledger row and the call settles only
+ * on a cleanup-confirmed result — an unconfirmed cleanup keeps the project occupied.
  */
 public final class AgentProjectTools {
     /** Design section 3/4 bounds: 128 KiB file content, 192 KiB result JSON, 200 entries per listing. */
@@ -54,6 +56,7 @@ public final class AgentProjectTools {
     private static final Set<String> KNOWN_TOOLS = Set.of("list_files", "read_file", "write_file", "build");
     /** Tools that register a durable side effect and are blocked while another call is unsettled. */
     private static final Set<String> SIDE_EFFECT_TOOLS = Set.of("write_file", "build");
+    private static final String BUILD_TOOL = "build";
     private static final Set<String> FILE_WRITES = Set.of("write_file");
     private static final Pattern SHA256 = Pattern.compile("[0-9a-f]{64}");
 
@@ -74,7 +77,7 @@ public final class AgentProjectTools {
     private final WorkspaceService workspace;
     private final WorkspaceOperationService operations;
     private final ProjectLifecycleGate lifecycle;
-    /** Reserved for the Fabric8 development build (Task 3); the build dispatch refuses until then. */
+    /** The isolated development build executor: read-only source copy, real exit, proven cleanup. */
     private final DevelopmentBuildExecutor builds;
 
     public AgentProjectTools(AgentTaskStore tasks, WorkspaceStore store, WorkspaceService workspace,
@@ -92,10 +95,17 @@ public final class AgentProjectTools {
      * Invokes one project tool for the task. Identity comes from the durable task row, never
      * from the call itself; the shared gate serializes the occupancy check, the ledger
      * registration and the (short) execution exactly like every other project write entry.
+     * A build waits up to minutes for the cluster, so its dispatch is validated inside the
+     * gate but executed OUTSIDE it — the durable REGISTERED/RUNNING row already blocks every
+     * other side-effect call meanwhile, and no project transaction or thread gate is held
+     * across the cluster wait.
      */
     public AgentContracts.ToolResult invoke(String taskId, AgentContracts.ToolRequest request) {
         requireRequestShape(request);
         AgentTaskStore.TaskOwner owner = tasks.taskOwner(taskId);
+        AgentTaskStore.ToolCallRow row;
+        AgentContracts.ToolResult result = null;
+        AgentContracts.BuildGoal buildGoal = null;
         try (ProjectLifecycleGate.Lease lease = lifecycle.tryAcquire(owner.projectId()).orElseThrow(
                 () -> new ApiException("PROJECT_BUSY", 409, "Project is busy"))) {
             tasks.requireTaskWritable(taskId, owner.projectId());
@@ -107,10 +117,10 @@ public final class AgentProjectTools {
                 throw new ApiException("AI_CALL_UNSETTLED", 409,
                     "An earlier tool call has not settled; resolve it before writing");
             }
-            AgentTaskStore.ToolCallRow row = tasks.registerToolCall(taskId, request.toolCallId(),
+            row = tasks.registerToolCall(taskId, request.toolCallId(),
                 callDigest(taskId, request), request.name(), canonicalArgsJson(request.args()),
                 request.expectedRevision(),
-                FILE_WRITES.contains(request.name()) ? UUID.randomUUID().toString() : null);
+                sideEffect ? UUID.randomUUID().toString() : null);
             if ("COMPLETED".equals(row.state())) {
                 return storedResult(row);
             }
@@ -118,9 +128,14 @@ public final class AgentProjectTools {
                 throw new ApiException("AI_CALL_NEEDS_ATTENTION", 409,
                     "The call outcome is unknown; it needs attention before further writes");
             }
-            AgentContracts.ToolResult result;
+            // Only execution failures become persisted rejections; every refusal before the
+            // registration (occupancy, id reuse) propagates to the caller unchanged.
             try {
-                result = execute(owner, row, request);
+                if (BUILD_TOOL.equals(request.name())) {
+                    buildGoal = buildGoal(request);
+                } else {
+                    result = execute(owner, row, request);
+                }
             } catch (ApiException ex) {
                 if ("WORKSPACE_RECONCILIATION_REQUIRED".equals(ex.code())) {
                     tasks.markToolCallNeedsAttention(taskId, request.toolCallId());
@@ -131,10 +146,13 @@ public final class AgentProjectTools {
                 tasks.markToolCallNeedsAttention(taskId, request.toolCallId());
                 throw ex;
             }
-            AgentContracts.ToolResult settled = boundedResult(result);
-            tasks.completeToolCall(taskId, request.toolCallId(), jsonOf(settled));
-            return settled;
         }
+        if (buildGoal != null) {
+            result = runBuild(owner, row, request, buildGoal);
+        }
+        AgentContracts.ToolResult settled = boundedResult(result);
+        tasks.completeToolCall(taskId, request.toolCallId(), jsonOf(settled));
+        return settled;
     }
 
     /** Read-only ledger lookup: answers the persisted result, never re-drives anything. */
@@ -183,7 +201,7 @@ public final class AgentProjectTools {
             case "list_files" -> listFiles(owner, request);
             case "read_file" -> readFile(owner, request);
             case "write_file" -> writeFile(owner, row, request);
-            default -> build();
+            default -> throw new IllegalStateException("unsupported tool: " + request.name());
         };
     }
 
@@ -273,12 +291,95 @@ public final class AgentProjectTools {
     }
 
     /**
-     * Stage one reserves the build name: the Fabric8 executor (Task 3) will drive
-     * {@link DevelopmentBuildExecutor} through this same ledger. Until it lands, the
-     * deterministic refusal below is persisted — a premature call can never be read as a build.
+     * The build goal argument: exactly {@code compile}, {@code test} or {@code package} — there
+     * is no arbitrary argv, environment, image or shell string anywhere on the build path, so a
+     * goal like {@code "test;rm -rf"} is a persisted rejection that never reaches the executor.
      */
-    private AgentContracts.ToolResult build() {
-        throw new ApiException("AI_BUILD_NOT_AVAILABLE", 409, "The build tool is not available yet");
+    private static AgentContracts.BuildGoal buildGoal(AgentContracts.ToolRequest request) {
+        JsonNode node = request.args().get("goal");
+        if (node == null || !node.isTextual()) {
+            throw new ApiException("VALIDATION_ERROR", 422, "build requires a textual goal");
+        }
+        return switch (node.textValue()) {
+            case "compile" -> AgentContracts.BuildGoal.COMPILE;
+            case "test" -> AgentContracts.BuildGoal.TEST;
+            case "package" -> AgentContracts.BuildGoal.PACKAGE;
+            default -> throw new ApiException("VALIDATION_ERROR", 422,
+                "build goal must be compile, test or package");
+        };
+    }
+
+    /**
+     * Drives one development build against the saved sources. The executor works on a read-only
+     * copy, so the workspace revision never moves; the verified Job/Pod identity is bound to the
+     * ledger row backend-side only, and the call settles COMPLETED only when the build's cleanup
+     * is confirmed — an unconfirmed cleanup or any executor failure stays NEEDS_ATTENTION and
+     * keeps the project occupied instead of letting the next write race the build pod.
+     */
+    private AgentContracts.ToolResult runBuild(AgentTaskStore.TaskOwner owner, AgentTaskStore.ToolCallRow row,
+                                               AgentContracts.ToolRequest request,
+                                               AgentContracts.BuildGoal goal) {
+        if (row.workspaceOperationId() == null) {
+            throw new IllegalStateException("a build call row must carry its stable command id");
+        }
+        AgentContracts.BuildRequest buildRequest = new AgentContracts.BuildRequest(row.taskId(),
+            row.toolCallId(), owner.projectId(), row.workspaceOperationId(),
+            currentRevision(owner.projectId()), goal);
+        AgentContracts.BuildResult built;
+        try {
+            built = builds.build(buildRequest);
+        } catch (RuntimeException ex) {
+            tasks.markToolCallNeedsAttention(row.taskId(), row.toolCallId());
+            throw ex;
+        }
+        tasks.bindToolCallIdentity(row.taskId(), row.toolCallId(), built.identity().jobName(),
+            built.identity().jobUid(), built.identity().podUid());
+        if (!built.cleanupConfirmed()) {
+            tasks.markToolCallNeedsAttention(row.taskId(), row.toolCallId());
+            throw new IllegalStateException("the build cleanup was not confirmed; the call stays needs-attention");
+        }
+        return fittedBuildResult(new AgentContracts.ToolResult(request.toolCallId(),
+            Long.toString(currentRevision(owner.projectId())), buildData(buildRequest, built),
+            built.truncated()));
+    }
+
+    /** The durable build answer: real exit facts, bounded output and parsed report summaries. */
+    private static ObjectNode buildData(AgentContracts.BuildRequest request, AgentContracts.BuildResult built) {
+        ObjectNode data = JSON.createObjectNode()
+            .put("goal", request.goal().name().toLowerCase(Locale.ROOT))
+            .put("sourceRevision", Long.toString(request.sourceRevision()))
+            .put("terminationReason", built.terminationReason())
+            .put("output", built.output())
+            .put("cleanupConfirmed", built.cleanupConfirmed());
+        if (built.exitCode() == null) {
+            data.putNull("exitCode");
+        } else {
+            data.put("exitCode", built.exitCode());
+        }
+        data.set("testReports", JSON.valueToTree(built.testReports()));
+        return data;
+    }
+
+    /**
+     * The 192 KiB result envelope still holds for a build: the output keeps its TAIL (the
+     * failure summary and the report markers live there) and only after the output is empty do
+     * report summaries get dropped — both facts are visible as truncated/reportsDropped, and a
+     * real build failure is never masked by the fit.
+     */
+    private AgentContracts.ToolResult fittedBuildResult(AgentContracts.ToolResult result) {
+        ObjectNode data = (ObjectNode) result.data();
+        boolean truncated = result.truncated();
+        while (utf8JsonBytes(result) > MAX_RESULT_BYTES && data.path("output").asText().length() > 0) {
+            String output = data.path("output").asText();
+            data.put("output", output.substring(output.length() / 2));
+            truncated = true;
+        }
+        while (utf8JsonBytes(result) > MAX_RESULT_BYTES && data.withArray("testReports").size() > 0) {
+            ArrayNode reports = (ArrayNode) data.withArray("testReports");
+            reports.remove(reports.size() - 1);
+            data.put("reportsDropped", true);
+        }
+        return new AgentContracts.ToolResult(result.toolCallId(), result.workspaceRevision(), data, truncated);
     }
 
     /**

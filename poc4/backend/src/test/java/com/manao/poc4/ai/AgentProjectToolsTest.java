@@ -43,7 +43,9 @@ import org.springframework.jdbc.datasource.DataSourceTransactionManager;
  * interface: one durable (taskId, toolCallId) answer per call, one agent mutation per request,
  * receipt-only resume after a lost first response, persisted deterministic rejections that Pi
  * can read and retry from, and NEEDS_ATTENTION (never a fake answer) for ambiguous outcomes.
- * The build executor stays a mock: stage one only reserves the build name.
+ * The build executor stays a mock: its dispatch contract, identity binding and the
+ * cleanup-confirmed settlement are verified here, the Fabric8 executor itself in
+ * {@link DevelopmentBuildExecutorTest}.
  */
 class AgentProjectToolsTest {
     private static final ObjectMapper JSON = new ObjectMapper();
@@ -554,14 +556,110 @@ class AgentProjectToolsTest {
     }
 
     @Test
-    void buildStaysUnavailableAndSettledTasksRefuseFurtherCalls() {
+    void buildRunsThroughTheExecutorSettlesAndKeepsTheRevisionUntouched() throws Exception {
         try (Harness env = new Harness()) {
-            ToolResult build = env.tools.invoke(env.taskId, new ToolRequest("call-build", "build", 7,
-                JSON.createObjectNode().put("goal", "test")));
-            assertThat(build.data().path("error").path("code").asText()).isEqualTo("AI_BUILD_NOT_AVAILABLE");
-            verifyNoInteractions(env.builds);
-            assertThat(env.rowState("call-build")).isEqualTo("COMPLETED");
+            env.stubLiveFile(PATH, "class DemoController {\n}\n");
+            when(env.builds.build(any())).thenReturn(new AgentContracts.BuildResult(
+                new AgentContracts.BuildIdentity("manao-dev-1", "job-uid-1", "pod-uid-1"),
+                0, "Completed", "build output", false,
+                List.of(new AgentContracts.TestReport("com.example.app.AppTest", 1, 0, 0, 0, "abc")), true));
 
+            ToolResult result = env.tools.invoke(env.taskId, new ToolRequest("call-build", "build", 7,
+                JSON.createObjectNode().put("goal", "test")));
+
+            assertThat(result.data().path("goal").asText()).isEqualTo("test");
+            assertThat(result.data().path("exitCode").asInt()).isEqualTo(0);
+            assertThat(result.data().path("sourceRevision").asText()).isEqualTo("7");
+            assertThat(result.data().path("terminationReason").asText()).isEqualTo("Completed");
+            assertThat(result.data().path("output").asText()).isEqualTo("build output");
+            assertThat(result.data().path("cleanupConfirmed").asBoolean()).isTrue();
+            assertThat(result.data().path("testReports").get(0).path("testClass").asText())
+                .isEqualTo("com.example.app.AppTest");
+            assertThat(env.rowState("call-build")).isEqualTo("COMPLETED");
+            // The verified build identity is bound backend-side only.
+            assertThat(env.jdbc.queryForObject(
+                "SELECT CONCAT(job_name, '|', job_uid, '|', pod_uid) FROM agent_tool_call "
+                    + "WHERE task_id = ? AND tool_call_id = ?",
+                String.class, env.taskId, "call-build")).isEqualTo("manao-dev-1|job-uid-1|pod-uid-1");
+            // A build reads the saved sources: the revision is untouched and writing resumes.
+            assertThat(env.revision()).isEqualTo(7L);
+            ArgumentCaptor<AgentContracts.BuildRequest> dispatched =
+                ArgumentCaptor.forClass(AgentContracts.BuildRequest.class);
+            verify(env.builds).build(dispatched.capture());
+            String commandId = env.jdbc.queryForObject(
+                "SELECT workspace_operation_id FROM agent_tool_call WHERE task_id = ? AND tool_call_id = ?",
+                String.class, env.taskId, "call-build");
+            assertThat(dispatched.getValue().taskId()).isEqualTo(env.taskId);
+            assertThat(dispatched.getValue().projectId()).isEqualTo(PROJECT);
+            assertThat(dispatched.getValue().goal()).isEqualTo(AgentContracts.BuildGoal.TEST);
+            assertThat(dispatched.getValue().sourceRevision()).isEqualTo(7L);
+            assertThat(dispatched.getValue().commandId()).isEqualTo(commandId).isNotBlank();
+            ToolResult written = env.tools.invoke(env.taskId,
+                env.writeRequest("call-after", PATH, "new", env.sha256Hex("class DemoController {\n}\n"), 7));
+            assertThat(written.workspaceRevision()).isEqualTo("8");
+        }
+    }
+
+    @Test
+    void invalidGoalArgumentsArePersistedRejectionsWithoutAnyBuild() {
+        try (Harness env = new Harness()) {
+            List<String> goals = List.of("test;rm -rf", "deploy", "TEST", "");
+            for (int i = 0; i < goals.size(); i++) {
+                ToolResult result = env.tools.invoke(env.taskId, new ToolRequest("call-goal-" + i, "build", 7,
+                    JSON.createObjectNode().put("goal", goals.get(i))));
+                assertThat(result.data().path("error").path("code").asText())
+                    .as(goals.get(i)).isEqualTo("VALIDATION_ERROR");
+            }
+            ToolResult missing = env.tools.invoke(env.taskId, new ToolRequest("call-goal-missing", "build", 7,
+                JSON.createObjectNode()));
+            assertThat(missing.data().path("error").path("code").asText()).isEqualTo("VALIDATION_ERROR");
+            verifyNoInteractions(env.builds);
+            assertThat(env.revision()).isEqualTo(7L);
+            assertThat(env.rowState("call-goal-0")).isEqualTo("COMPLETED");
+        }
+    }
+
+    @Test
+    void aBuildExecutorFailureStaysNeedsAttentionAndLocksFurtherWrites() {
+        try (Harness env = new Harness()) {
+            when(env.builds.build(any())).thenThrow(new IllegalStateException("forbidden"));
+
+            assertThatThrownBy(() -> env.tools.invoke(env.taskId, new ToolRequest("call-build", "build", 7,
+                    JSON.createObjectNode().put("goal", "test"))))
+                .isInstanceOf(IllegalStateException.class);
+
+            assertThat(env.rowState("call-build")).isEqualTo("NEEDS_ATTENTION");
+            assertThatThrownBy(() -> env.tools.invoke(env.taskId,
+                    env.writeRequest("call-next", PATH, "x", null, 7)))
+                .isInstanceOfSatisfying(ApiException.class,
+                    ex -> assertThat(ex.code()).isEqualTo("AI_CALL_UNSETTLED"));
+            assertThat(env.jdbc.queryForObject(
+                "SELECT COUNT(*) FROM agent_tool_call WHERE task_id = ?", Long.class, env.taskId))
+                .isEqualTo(1L);
+        }
+    }
+
+    @Test
+    void anUnconfirmedBuildCleanupStaysNeedsAttentionWithItsEvidence() {
+        try (Harness env = new Harness()) {
+            when(env.builds.build(any())).thenReturn(new AgentContracts.BuildResult(
+                new AgentContracts.BuildIdentity("manao-dev-1", "job-uid-1", null),
+                null, "BUILD_IDENTITY_UNVERIFIABLE", "", false, List.of(), false));
+
+            assertThatThrownBy(() -> env.tools.invoke(env.taskId, new ToolRequest("call-build", "build", 7,
+                    JSON.createObjectNode().put("goal", "test"))))
+                .isInstanceOf(IllegalStateException.class);
+
+            assertThat(env.rowState("call-build")).isEqualTo("NEEDS_ATTENTION");
+            assertThat(env.jdbc.queryForObject(
+                "SELECT job_name FROM agent_tool_call WHERE task_id = ? AND tool_call_id = ?",
+                String.class, env.taskId, "call-build")).isEqualTo("manao-dev-1");
+        }
+    }
+
+    @Test
+    void settledTasksRefuseFurtherCalls() {
+        try (Harness env = new Harness()) {
             env.jdbc.update("UPDATE agent_task SET state = 'COMPLETED' WHERE id = ?", env.taskId);
             assertThatThrownBy(() -> env.tools.invoke(env.taskId,
                     env.writeRequest("call-after", PATH, "x", null, 7)))

@@ -7,6 +7,7 @@ import com.manao.poc4.ai.AgentContracts.TaskRequest;
 import com.manao.poc4.api.ApiException;
 import com.manao.poc4.persistence.JdbcStoreTestSupport;
 import com.manao.poc4.project.ProjectLifecycleGate;
+import com.manao.poc4.workspace.WorkspaceJdbcStore;
 import java.sql.Timestamp;
 import java.time.Clock;
 import java.time.Instant;
@@ -283,6 +284,49 @@ class AgentTaskStoreTest {
                         assertThat(ex.status()).isEqualTo(409);
                     });
             }
+        }
+    }
+
+    @Test
+    void bindsTheBuildIdentityToTheToolCallRow() {
+        try (var db = JdbcStoreTestSupport.create()) {
+            var jdbc = db.jdbc();
+            seed(jdbc);
+            var store = store(db);
+            String taskId = UUID.randomUUID().toString();
+            store.create(OWNER, PROJECT, new TaskRequest(taskId, "change demo", 7));
+
+            AgentTaskStore.ToolCallRow row = store.registerToolCall(taskId, "call-1",
+                "a".repeat(64), "build", "{}", 7, "command-1");
+            assertThat(row.state()).isEqualTo("REGISTERED");
+
+            store.bindToolCallIdentity(taskId, "call-1", "manao-dev-1", "job-uid-1", "pod-uid-1");
+
+            AgentTaskStore.ToolCallRow bound = store.findToolCall(taskId, "call-1").orElseThrow();
+            assertThat(bound.state()).isEqualTo("RUNNING");
+            assertThat(jdbc.queryForObject(
+                "SELECT CONCAT(job_name, '|', job_uid, '|', pod_uid) FROM agent_tool_call "
+                    + "WHERE task_id = ? AND tool_call_id = ?",
+                String.class, taskId, "call-1")).isEqualTo("manao-dev-1|job-uid-1|pod-uid-1");
+        }
+    }
+
+    @Test
+    void deletingTheProjectRemovesItsAgentTaskAndToolCallRows() {
+        try (var db = JdbcStoreTestSupport.create()) {
+            var jdbc = db.jdbc();
+            seed(jdbc);
+            var store = store(db);
+            String taskId = UUID.randomUUID().toString();
+            store.create(OWNER, PROJECT, new TaskRequest(taskId, "change demo", 7));
+            store.registerToolCall(taskId, "call-1", "a".repeat(64), "build", "{}", 7, "command-1");
+            jdbc.update("UPDATE project SET state = 'DELETING' WHERE id = ?", PROJECT);
+
+            assertThat(new WorkspaceJdbcStore(jdbc,
+                new DataSourceTransactionManager(jdbc.getDataSource())).deleteProject(OWNER, PROJECT)).isTrue();
+
+            assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM agent_task", Long.class)).isZero();
+            assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM agent_tool_call", Long.class)).isZero();
         }
     }
 
