@@ -182,6 +182,12 @@ class AgentTaskServiceTest {
             return jdbc.queryForObject("SELECT failure_code FROM agent_task WHERE id = ?", String.class, taskId);
         }
 
+        String callRowState(String callId) {
+            return jdbc.queryForObject(
+                "SELECT state FROM agent_tool_call WHERE task_id = ? AND tool_call_id = ?",
+                String.class, taskId, callId);
+        }
+
         String rowInstance() {
             return jdbc.queryForObject("SELECT worker_instance_id FROM agent_task WHERE id = ?", String.class, taskId);
         }
@@ -476,8 +482,10 @@ class AgentTaskServiceTest {
     void closeReleasesWhenAnUnrecordedBuildIsProvenAbsent() {
         try (Harness h = new Harness()) {
             h.submit();
-            h.insertUnrecordedBuildCall("call-build", "RUNNING");
-            // A successful cluster query proves no Job and no pod was ever created.
+            // NEEDS_ATTENTION: the row is not claimed (no in-flight build path), so a
+            // successful cluster query proving no Job and no pod was ever created is
+            // the missing half of the release condition.
+            h.insertUnrecordedBuildCall("call-build", "NEEDS_ATTENTION");
             org.mockito.Mockito.when(h.builds.hasRecordedSideEffect(org.mockito.ArgumentMatchers.any()))
                 .thenReturn(false);
             h.service.close(h.taskId, "AI_CLOSED", "closed by operator");
@@ -504,8 +512,57 @@ class AgentTaskServiceTest {
     }
 
     @Test
-    void aFailedEvidenceCloseCanBeRetriedAfterTheEvidenceRecovers() {
+    void aBuildClaimedBeforeCloseCannotCreateAfterTheCloseArms() throws Exception {
         try (Harness h = new Harness()) {
+            h.submit();
+            java.util.concurrent.CountDownLatch buildEntered = new java.util.concurrent.CountDownLatch(1);
+            java.util.concurrent.CountDownLatch closeFinished = new java.util.concurrent.CountDownLatch(1);
+            // The executor mock stands at the exact "claimed and paused before create"
+            // point of the REAL invoke path (gate released, row RUNNING); when it
+            // resumes after the close, it answers what the real closing fence answers:
+            // an abort with no side effect.
+            org.mockito.Mockito.when(h.builds.build(org.mockito.ArgumentMatchers.any()))
+                .thenAnswer(invocation -> {
+                    buildEntered.countDown();
+                    if (!closeFinished.await(5, TimeUnit.SECONDS)) {
+                        throw new AssertionError("the close never finished");
+                    }
+                    return new AgentContracts.BuildResult(new AgentContracts.BuildIdentity(null, null, null),
+                        null, "BUILD_CLOSING_ABORTED", "", false, List.of(), true);
+                });
+            ExecutorService pool = Executors.newSingleThreadExecutor();
+            Future<?> builder = pool.submit(() -> {
+                h.service.invokeTool(h.taskId, "call-build", INSTANCE, h.rowEpoch(),
+                    new ToolRequest("call-build", "build", 7,
+                        JSON.createObjectNode().put("goal", "compile")));
+                return null;
+            });
+            assertThat(buildEntered.await(5, TimeUnit.SECONDS)).isTrue();
+            // The claim is in flight: the row is RUNNING while nothing exists anywhere.
+            assertThat(h.callRowState("call-build")).isEqualTo("RUNNING");
+            // The close arms its marker, stops the worker, and must NOT release: the
+            // negative cluster query is irrelevant while the claim is unsettled.
+            h.service.close(h.taskId, "AI_CLOSED", "closed by operator");
+            assertThat(h.rowState()).isEqualTo("NEEDS_ATTENTION");
+            assertThat(h.rowFailureCode()).isEqualTo("AI_CLOSING");
+            assertThatThrownBy(() -> h.tasks.requireBrowserWritable(PROJECT))
+                .isInstanceOfSatisfying(ApiException.class, ex -> assertThat(ex.code()).isEqualTo("AI_TASK_ACTIVE"));
+            // The paused thread resumes; the closing fence aborts it before any create.
+            closeFinished.countDown();
+            builder.get(5, TimeUnit.SECONDS);
+            // The call settled deterministically without a side effect.
+            assertThat(h.callRowState("call-build")).isEqualTo("COMPLETED");
+            // The retry close releases: no in-flight claim and no cluster resources.
+            h.service.close(h.taskId, "AI_CLOSED", "closed by operator");
+            assertThat(h.rowState()).isEqualTo("FAILED");
+            assertThat(h.rowFailureCode()).isEqualTo("AI_CLOSED");
+            h.tasks.requireBrowserWritable(PROJECT);
+            pool.shutdownNow();
+        }
+    }
+
+    @Test
+    void aFailedEvidenceCloseCanBeRetriedAfterTheEvidenceRecovers() {        try (Harness h = new Harness()) {
             h.submit();
             h.insertUnrecordedBuildCall("call-build", "NEEDS_ATTENTION");
             // First close: the cluster answer is unclear (a Job may exist) — the close

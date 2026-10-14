@@ -203,13 +203,21 @@ public final class AgentProjectTools {
         }
         for (AgentTaskStore.ToolCallRow row : unsettled) {
             if ("build".equals(row.toolName())) {
+                if ("RUNNING".equals(row.state()) && row.jobName() == null) {
+                    // A claimed-but-unsettled build is IN FLIGHT: its execution thread
+                    // sits between the atomic REGISTERED->RUNNING claim and the Job
+                    // create, so the negative cluster query proves nothing — the Job
+                    // may not exist YET. The row is the authority: never release while
+                    // it is RUNNING. The build path itself settles this row (its
+                    // closing fence aborts the create deterministically) or the thread
+                    // dies and an operator decides.
+                    return false;
+                }
                 if (row.jobName() == null) {
-                    // No recorded identity: the build MAY have started and died before
-                    // its identity was bound — a NEEDS_ATTENTION marker alone proves
-                    // nothing. Only a successful cluster query that proves no Job (and
-                    // no stray pod) was ever created under the stable commandId may
-                    // release; a live or vanished build, or an unclear answer, stays
-                    // unknown and blocks the release.
+                    // REGISTERED or NEEDS_ATTENTION without identity: no claim is in
+                    // flight (a closing task refuses claims — its build path aborts
+                    // before creating). Prove the absence of any Job side effect by
+                    // the stable commandId; an unclear answer blocks the release.
                     if (builds.hasRecordedSideEffect(buildRequestOf(owner, row))) {
                         return false;
                     }
@@ -451,6 +459,14 @@ public final class AgentProjectTools {
         } catch (RuntimeException ex) {
             tasks.markToolCallNeedsAttention(row.taskId(), row.toolCallId());
             throw ex;
+        }
+        if ("BUILD_CLOSING_ABORTED".equals(built.terminationReason())) {
+            // The closing fence aborted the create: settle the deterministic
+            // no-side-effect answer WITHOUT binding an identity for a Job that was
+            // never created — the caller reports the abort in the call's data.
+            return fittedBuildResult(new AgentContracts.ToolResult(request.toolCallId(),
+                Long.toString(currentRevision(owner.projectId())), buildData(buildRequest, built),
+                built.truncated()));
         }
         tasks.bindToolCallIdentity(row.taskId(), row.toolCallId(), built.identity().jobName(),
             built.identity().jobUid(), built.identity().podUid());

@@ -127,7 +127,7 @@ class DevelopmentBuildExecutorTest {
             new JobResourceFactory.RunResources(8000, 16L * 1024 * 1024 * 1024, 10L * 1024 * 1024 * 1024),
             IMAGE, "registry.example/manao/python-runner@sha256:" + "b".repeat(64));
         executor = new Fabric8DevelopmentBuildExecutor(client, factory, NS, (ignored, identity) -> boundIdentities.add(identity),
-            Clock.systemUTC(), 10, 5, 5);
+            request -> true, Clock.systemUTC(), 10, 5, 5);
     }
 
     @AfterEach
@@ -352,7 +352,7 @@ class DevelopmentBuildExecutorTest {
         Pod pod = seedPod(job.getMetadata().getName(), job.getMetadata().getUid(), null, null);
         seedLog(pod.getMetadata().getName(), "[INFO] still compiling...\n");
         executor = new Fabric8DevelopmentBuildExecutor(client, factory, NS, (ignored, identity) -> boundIdentities.add(identity),
-            Clock.systemUTC(), 10, 1, 1);
+            request -> true, Clock.systemUTC(), 10, 1, 1);
 
         BuildResult result = executor.build(request());
 
@@ -409,7 +409,7 @@ class DevelopmentBuildExecutorTest {
             boundIdentities.add(identity);
             bound.countDown();
             // A long poll keeps the wait inside its sleep when the interrupt arrives.
-        }, Clock.systemUTC(), 200, 60, 5);
+        }, request -> true, Clock.systemUTC(), 200, 60, 5);
         AtomicReference<Throwable> thrown = new AtomicReference<>();
         Thread waiter = new Thread(() -> {
             try {
@@ -500,7 +500,7 @@ class DevelopmentBuildExecutorTest {
             client.batch().v1().jobs().inNamespace(NS).withName(identity.jobName()).delete();
             client.batch().v1().jobs().inNamespace(NS)
                 .resource(factory.createDevelopmentJob(request())).create();
-        }, Clock.systemUTC(), 10, 30, 5);
+        }, request -> true, Clock.systemUTC(), 10, 30, 5);
 
         assertThatThrownBy(() -> executor.build(request())).isInstanceOf(IllegalStateException.class);
         // The refused evidence was not destroyed.
@@ -652,5 +652,24 @@ class DevelopmentBuildExecutorTest {
         } catch (Exception ex) {
             throw new IllegalStateException(ex);
         }
+    }
+
+    @Test
+    void theClosingFenceForbidsJobCreationAndSettlesWithoutSideEffects() {
+        // A build claimed before the close but paused before its create: the executor
+        // re-evaluates the fence at the LAST point and must not create any Job.
+        executor = new Fabric8DevelopmentBuildExecutor(client, factory, NS,
+            (ignored, identity) -> boundIdentities.add(identity),
+            request -> false, Clock.systemUTC(), 10, 5, 5);
+
+        BuildResult result = executor.build(request());
+
+        assertThat(result.terminationReason()).isEqualTo("BUILD_CLOSING_ABORTED");
+        assertThat(result.exitCode()).isNull();
+        assertThat(result.cleanupConfirmed()).isTrue();
+        assertThat(boundIdentities).isEmpty();
+        // Nothing exists on the server: no Job was ever created.
+        assertThat(client.batch().v1().jobs().inNamespace(NS)
+            .withName(JobResourceFactory.developmentJobName(COMMAND)).get()).isNull();
     }
 }

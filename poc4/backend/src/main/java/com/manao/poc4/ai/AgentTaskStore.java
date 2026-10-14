@@ -482,6 +482,20 @@ public final class AgentTaskStore implements AgentTaskOccupancy {
     private record Row(String state, String failureCode) { }
 
     /**
+     * The closing fence the build execution path consults immediately before Job
+     * creation: true once the task carries the AI_CLOSING marker, so an execution
+     * thread claimed before the close can never create a Job afterwards.
+     */
+    public boolean hasClosingIntent(String taskId) {
+        List<Row> rows = jdbc.query(
+            "SELECT state, failure_code FROM agent_task WHERE id = ?",
+            (rs, row) -> new Row(rs.getString(1), rs.getString(2)), taskId);
+        return !rows.isEmpty()
+            && "NEEDS_ATTENTION".equals(rows.get(0).state())
+            && CLOSING_MARKER.equals(rows.get(0).failureCode());
+    }
+
+    /**
      * The close flow's first, gate-protected step: a QUEUED/RUNNING task becomes
      * NEEDS_ATTENTION with the AI_CLOSING marker, which refuses every new tool-call
      * registration while the worker is stopped and the evidence is finished. False
