@@ -17,3 +17,11 @@ manao:
         in-cluster: false
         service-account: false
         kubeconfig-file: ${KUBECONFIG:}
+    ai:
+      enabled: ${MANAO_AI_ENABLED:false}
+      project-id: ${MANAO_AI_PROJECT_ID:}
+      worker:
+        base-url: ${MANAO_AI_WORKER_BASE_URL:}
+        token: ${MANAO_AI_WORKER_TOKEN:}
+      internal:
+        token: ${MANAO_AI_INTERNAL_TOKEN:}

@@ -109,11 +109,17 @@ public final class AgentProjectTools {
         try (ProjectLifecycleGate.Lease lease = lifecycle.tryAcquire(owner.projectId()).orElseThrow(
                 () -> new ApiException("PROJECT_BUSY", 409, "Project is busy"))) {
             tasks.requireTaskWritable(taskId, owner.projectId());
+            boolean replay = tasks.findToolCall(taskId, request.toolCallId()).isPresent();
+            // A task that is closing (NEEDS_ATTENTION under the close marker) answers
+            // only replayed calls; a brand-new registration is refused until the close
+            // flow has finished with the project.
+            if (!replay) {
+                tasks.requireTaskAcceptsNewCall(taskId, owner.projectId());
+            }
             boolean sideEffect = SIDE_EFFECT_TOOLS.contains(request.name());
             // A brand-new call must not register while an earlier one is unresolved; replays of
             // a known call always pass so their settled answer stays reachable.
-            if (sideEffect && tasks.findToolCall(taskId, request.toolCallId()).isEmpty()
-                && tasks.hasUnsettledCallOtherThan(taskId, request.toolCallId())) {
+            if (sideEffect && !replay && tasks.hasUnsettledCallOtherThan(taskId, request.toolCallId())) {
                 throw new ApiException("AI_CALL_UNSETTLED", 409,
                     "An earlier tool call has not settled; resolve it before writing");
             }
@@ -160,6 +166,53 @@ public final class AgentProjectTools {
         return tasks.findToolCall(taskId, toolCallId)
             .filter(row -> "COMPLETED".equals(row.state()) && row.resultJson() != null)
             .map(AgentProjectTools::storedResult);
+    }
+
+    /**
+     * The close flow's build finishing: every still-unsettled build call of the task
+     * that carries a recorded Kubernetes identity is closed through the shared finish
+     * path (collect the log, delete by the original identity, confirm everything
+     * 404) and stays NEEDS_ATTENTION in the ledger — a closed build never invents an
+     * exit result. Calls without a recorded identity stay for their own recovery
+     * paths; a close failure here never blocks the close flow's release CAS.
+     */
+    public void closeUnsettledBuilds(String taskId) {
+        AgentTaskStore.TaskOwner owner = tasks.taskOwner(taskId);
+        for (AgentTaskStore.ToolCallRow row : tasks.unsettledCalls(taskId)) {
+            if (!"build".equals(row.toolName()) || row.jobName() == null) {
+                continue;
+            }
+            try {
+                builds.close(buildRequestOf(owner, row), new AgentContracts.BuildIdentity(
+                    row.jobName(), row.jobUid(), row.podUid()));
+                tasks.markToolCallNeedsAttention(taskId, row.toolCallId());
+            } catch (RuntimeException ex) {
+                // The evidence stays unsettled and observable through its recovery path.
+            }
+        }
+    }
+
+    private AgentContracts.BuildRequest buildRequestOf(AgentTaskStore.TaskOwner owner,
+                                                       AgentTaskStore.ToolCallRow row) {
+        if (row.workspaceOperationId() == null) {
+            throw new IllegalStateException("a build call row must carry its stable command id");
+        }
+        return new AgentContracts.BuildRequest(row.taskId(), row.toolCallId(), owner.projectId(),
+            row.workspaceOperationId(), currentRevision(owner.projectId()), buildGoalOf(row));
+    }
+
+    private AgentContracts.BuildGoal buildGoalOf(AgentTaskStore.ToolCallRow row) {
+        try {
+            JsonNode goal = JSON.readTree(row.argsJson() == null ? "{}" : row.argsJson()).path("goal");
+            return switch (goal.asText("")) {
+                case "compile" -> AgentContracts.BuildGoal.COMPILE;
+                case "test" -> AgentContracts.BuildGoal.TEST;
+                case "package" -> AgentContracts.BuildGoal.PACKAGE;
+                default -> throw new IllegalStateException("stored build goal is unreadable");
+            };
+        } catch (IOException ex) {
+            throw new IllegalStateException("stored build arguments are unreadable", ex);
+        }
     }
 
     /** The call identity: SHA-256 over taskId, tool name, expected revision and canonical args. */
