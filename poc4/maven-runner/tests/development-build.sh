@@ -5,7 +5,8 @@
 #   bash poc4/maven-runner/tests/development-build.sh <image> <exported-templates-dir>
 #
 # Every development-build security claim is exercised against REAL containers with the real
-# cluster identity (UID/GID 10001), a read-only root filesystem and a writable tmpfs /tmp:
+# cluster identity (UID/GID 10001), a read-only root filesystem and a writable tmp volume
+# mounted at /tmp (the production emptyDir shape, review fix I4):
 #   copy phase   - the launcher copies the read-only mounted source into a scratch directory,
 #                  excluding every .manao*, .git and target directory, and refuses symlinks;
 #                  the read-only source mount is proven by a real failed write (EROFS), never
@@ -144,12 +145,18 @@ load_source() { # SOURCE_DIR greeting
     || { echo "cannot prepare the source greeting in $source" >&2; exit 2; }
 }
 
-# The copy container mirrors the development job's init shape: cluster identity, read-only
-# root filesystem, tmpfs /tmp, source bound read-only, scratch bound writable.
+# The copy container mirrors the development job's init shape (review fix I4): cluster
+# identity, read-only root filesystem, a WRITABLE tmp volume mounted at /tmp — the same
+# emptyDir shape the production pod mounts for both the copy init container and the run
+# container — source bound read-only, scratch bound writable.
 dc_copy() { # NAME SOURCE_SPEC SCRATCH_DIR  (SOURCE_SPEC is a full -v argument value)
   local name="$1" source_spec="$2" scratch="$3"
+  local tmp_vol="${name}-tmp"
+  VOLUMES+=("$tmp_vol")
+  docker volume create "$tmp_vol" >/dev/null
   CONTAINERS+=("$name")
-  dc run -d --name "$name" --user 10001:10001 --read-only --tmpfs /tmp --network none \
+  dc run -d --name "$name" --user 10001:10001 --read-only --network none \
+    -v "$tmp_vol:/tmp" \
     -v "$source_spec" -v "$(host_path "$scratch"):/workspace" \
     --entrypoint /bin/bash "$IMAGE" "$LAUNCHER" copy >/dev/null
 }
@@ -159,10 +166,14 @@ bind_ro() { # HOST_DIR CONTAINER_PATH -> -v argument value
 }
 
 # The run container mirrors the development job's main shape: exactly the scratch, the project
-# maven cache and tmp — never the source.
+# maven cache and a writable tmp volume — never the source.
 dc_run_build() { # NAME SCRATCH_DIR CACHE_DIR NETWORK(none|bridge)
   local name="$1" scratch="$2" cache="$3" net="$4"
-  local -a args=(run -d --name "$name" --user 10001:10001 --read-only --tmpfs /tmp
+  local tmp_vol="${name}-tmp"
+  VOLUMES+=("$tmp_vol")
+  docker volume create "$tmp_vol" >/dev/null
+  local -a args=(run -d --name "$name" --user 10001:10001 --read-only
+                 -v "$tmp_vol:/tmp"
                  -v "$(host_path "$scratch"):/workspace" -v "$(host_path "$cache"):/maven-cache")
   [ "$net" = "none" ] && args+=(--network none)
   args+=(--entrypoint /bin/bash "$IMAGE" "$LAUNCHER" run test)

@@ -122,17 +122,35 @@ export async function exportProjectTree({ baseUrl, token, projectId, stagingDir,
     const url = directory === ''
       ? `${base}/api/v1/projects/${projectId}/files/tree`
       : `${base}/api/v1/projects/${projectId}/files/tree?path=${encodeURIComponent(directory)}`;
-    const tree = await (await fetchImpl(url, { headers: authed })).json();
-    for (const entry of tree.entries ?? []) {
+    // Fail closed (review fix I10): a legal-JSON 401/403/500 tree error used to parse
+    // and read as an empty directory (`tree.entries ?? []`), letting the re-verification
+    // continue on an incomplete export. The status AND the response structure are both
+    // checked; any directory export failure rejects the whole export.
+    const treeResponse = await fetchImpl(url, { headers: authed });
+    if (!treeResponse.ok) {
+      throw new Error(`tree export failed for "${directory || '<root>'}": HTTP ${treeResponse.status}`);
+    }
+    const tree = await treeResponse.json();
+    if (tree === null || typeof tree !== 'object' || !Array.isArray(tree.entries)) {
+      throw new Error(`malformed tree response for "${directory || '<root>'}"`);
+    }
+    for (const entry of tree.entries) {
       const entryPath = entry.path ?? childPath(entry.name);
       const target = relative === '' ? entry.name : `${relative}/${entry.name}`;
       if (entry.kind === 'directory') {
         await walk(entryPath, target);
       } else {
-        const content = await (await fetchImpl(
+        const contentResponse = await fetchImpl(
           `${base}/api/v1/projects/${projectId}/files/content?path=${encodeURIComponent(entryPath)}`,
           { headers: authed },
-        )).json();
+        );
+        if (!contentResponse.ok) {
+          throw new Error(`content export failed for "${entryPath}": HTTP ${contentResponse.status}`);
+        }
+        const content = await contentResponse.json();
+        if (content === null || typeof content !== 'object' || typeof content.content !== 'string') {
+          throw new Error(`malformed content response for "${entryPath}"`);
+        }
         const file = join(stagingDir, target.split('/').join(sep));
         mkdirSync(file.slice(0, file.lastIndexOf(sep)), { recursive: true });
         writeFileSync(file, content.content, 'utf8');

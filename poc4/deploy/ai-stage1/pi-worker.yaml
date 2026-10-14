@@ -8,7 +8,11 @@
 # Security shape (mirrors the accepted runner/agent patterns):
 #   - replicas 1 with Recreate: the single-worker/no-overlap stage-one constraint.
 #   - runAsNonRoot (the image's USER node, uid 1000), no privilege escalation,
-#     all capabilities dropped, seccomp RuntimeDefault.
+#     all capabilities dropped, seccomp RuntimeDefault. fsGroup 1000 (review fix
+#     I5) makes every emptyDir group-writable for the run group, so the first
+#     write to /work/agent or /work/sessions cannot fail with EACCES when the
+#     mount overlays the image directory's ownership. The real mounted-dir
+#     writability under UID 1000 is a deploy-time verification item (README 5).
 #   - automountServiceAccountToken: false — the worker never talks to Kubernetes.
 #   - read-only root filesystem: every writable path is a worker-private emptyDir
 #     (scratch, agent dir, session dir, tmp). No user project, no workspace PVC,
@@ -67,6 +71,10 @@ spec:
         runAsNonRoot: true
         runAsUser: 1000
         runAsGroup: 1000
+        # Group-write for the emptyDirs (scratch, agent dir, session dir): the run
+        # group owns the mounted volumes (review fix I5 — deploy-time item: verify a
+        # real first write to /work/agent/models.json under UID 1000).
+        fsGroup: 1000
         seccompProfile:
           type: RuntimeDefault
       containers:

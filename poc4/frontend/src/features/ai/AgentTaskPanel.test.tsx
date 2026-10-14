@@ -398,3 +398,75 @@ describe('agent task poll', () => {
     }
   });
 });
+
+describe('AgentTaskPanel build results (review fix I9)', () => {
+  const TOOLS_URL = `${TASKS_URL}/${TASK_ID}/tools/call-9`;
+
+  function taskWithSettledBuild(): AgentTaskSnapshot {
+    return occupyingTask({
+      progress: [
+        { seq: 1, kind: 'tool_start', text: 'build call-9', truncated: false },
+        { seq: 2, kind: 'tool_end', text: 'build call-9', truncated: false },
+      ],
+    });
+  }
+
+  it('fetches and shows the settled build result for a build tool_end item', async () => {
+    const user = userEvent.setup();
+    server.use(
+      http.get(TOOLS_URL, () => HttpResponse.json({
+        toolCallId: 'call-9',
+        toolName: 'build',
+        data: {
+          goal: 'test',
+          exitCode: 1,
+          terminationReason: 'Completed',
+          output: '[ERROR] BUILD FAILURE',
+          cleanupConfirmed: true,
+        },
+      })),
+    );
+    renderPanel({ task: taskWithSettledBuild() });
+    await user.click(screen.getByRole('button', { name: 'View build result' }));
+    expect(await screen.findByText('[ERROR] BUILD FAILURE')).toBeInTheDocument();
+    expect(screen.getByText('Exit code:')).toBeInTheDocument();
+    expect(screen.getByText('1')).toBeInTheDocument();
+    expect(screen.getByText('Cleanup confirmed:')).toBeInTheDocument();
+    expect(screen.getByText('yes')).toBeInTheDocument();
+  });
+
+  it('shows an honest error when the build result is not readable', async () => {
+    const user = userEvent.setup();
+    server.use(http.get(TOOLS_URL, () => new HttpResponse(null, { status: 404 })));
+    renderPanel({ task: taskWithSettledBuild() });
+    await user.click(screen.getByRole('button', { name: 'View build result' }));
+    expect(await screen.findByText('Could not load the build result.')).toBeInTheDocument();
+  });
+
+  it('does not offer build results for non-build tool items', () => {
+    renderPanel({
+      task: occupyingTask({
+        progress: [{ seq: 1, kind: 'tool_end', text: 'list_files call-3', truncated: false }],
+      }),
+    });
+    expect(screen.queryByRole('button', { name: 'View build result' })).not.toBeInTheDocument();
+  });
+});
+
+describe('AgentTaskPanel verified-write snapshot contract (review fix I1)', () => {
+  it('renders the changed paths and the latest verified revision the backend snapshot carries', () => {
+    // The backend persists the latest VERIFIED write revision and the deduped
+    // changed paths on the task row (AgentTaskStore.recordVerifiedWrite) and
+    // serializes them under exactly these field names — this is the browser
+    // side of that contract.
+    renderPanel({
+      task: occupyingTask({
+        workspaceRevision: '9',
+        changedPaths: ['src/main/java/demo/DemoController.java', 'pom.xml'],
+      }),
+    });
+    expect(screen.getByText('Changed paths')).toBeInTheDocument();
+    expect(screen.getByText('src/main/java/demo/DemoController.java')).toBeInTheDocument();
+    expect(screen.getByText('pom.xml')).toBeInTheDocument();
+  });
+});

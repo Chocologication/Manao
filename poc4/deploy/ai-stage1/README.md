@@ -87,6 +87,11 @@ applies V11 automatically when the new backend starts against `manao_poc4_6b`.
 - Rollback (only with no in-flight tasks, and only with authorization):
   `DROP TABLE agent_tool_call; DROP TABLE agent_task;` — the tables are pure
   additions; dropping them cannot affect project/run/workspace data.
+- V12 (`V12__agent_task_verified_writes.sql`, review fix I1) ships the same way:
+  two nullable columns on `agent_task` (`settled_revision`, `changed_paths_json`)
+  that record the latest verified write revision and the deduped changed paths.
+  Flyway applies it with V11 on the first post-fix backend start; no rollback is
+  required beyond dropping the two columns together with the tables above.
 
 ## 4. Worker configuration contract (the model key lives only here)
 
@@ -123,7 +128,11 @@ Execute only with authorization; every Deployment involved uses `Recreate`
 3. Apply `pi-worker.yaml` (Deployment + Service, placeholders filled: released
    worker digest, Secret values per section 4 — `manao-pi-worker-secrets` and
    `manao-pi-worker-model`). Verify exactly one worker pod and that the backend
-   can reach `manao-pi-worker:18090`.
+   can reach `manao-pi-worker:18090`. Deploy-time verification item (review fix
+   I5): after the pod is running, prove a real first write to `/work/agent`
+   under UID 1000 (e.g. `kubectl exec` a model-key-configured start and confirm
+   `models.json` appears) — the manifest's `fsGroup: 1000` is a static check
+   here; the mounted-dir writability is only real once observed on the cluster.
 4. Update the backend Deployment (new image; env additions per section 4).
    Startup runs Flyway V11 (section 3). Verify exactly one backend pod.
 5. Update the frontend Deployment with the `VITE_ENABLE_AI=true` image. Verify

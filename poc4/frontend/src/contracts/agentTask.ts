@@ -106,3 +106,46 @@ function parseChangedPaths(payload: unknown): string[] {
 export function isAgentTaskOccupying(state: AgentTaskState): boolean {
   return state === 'QUEUED' || state === 'RUNNING' || state === 'NEEDS_ATTENTION';
 }
+
+/** The owner browser's view of one settled tool call (backend AgentToolCallView). */
+export type AgentToolCallResult = {
+  toolCallId: string;
+  toolName: string;
+  data: Record<string, unknown>;
+};
+
+/**
+ * Honest parsing of the settled tool-call view: the backend answers only settled
+ * calls with bounded data and no internal execution identity, and a malformed
+ * payload never becomes a fabricated result.
+ */
+export function parseAgentToolCallResult(payload: unknown): AgentToolCallResult {
+  const record = asRecord(payload);
+  if (
+    record === null ||
+    typeof record.toolCallId !== 'string' ||
+    typeof record.toolName !== 'string' ||
+    record.data === null ||
+    typeof record.data !== 'object' ||
+    Array.isArray(record.data)
+  ) {
+    throw new Error('Malformed agent tool call result');
+  }
+  return {
+    toolCallId: record.toolCallId,
+    toolName: record.toolName,
+    data: record.data as Record<string, unknown>,
+  };
+}
+
+/** The real exit code of a settled build result, or null when it is honestly unknown. */
+export function buildExitCode(result: AgentToolCallResult): number | null {
+  const exitCode = result.data['exitCode'];
+  return typeof exitCode === 'number' ? exitCode : null;
+}
+
+/** Whether the build's Job/Pod cleanup was proven, or unknown when absent. */
+export function buildCleanupConfirmed(result: AgentToolCallResult): boolean | null {
+  const confirmed = result.data['cleanupConfirmed'];
+  return typeof confirmed === 'boolean' ? confirmed : null;
+}

@@ -92,7 +92,78 @@ test('exportProjectTree serves the file route before the tree route and errors o
         baseUrl: BASE, token: TOKEN, projectId: PROJECT, stagingDir: staging,
         fetchImpl: () => Promise.resolve(new Response('boom', { status: 500 })),
       }),
-      /Unexpected token|boom|JSON/i,
+      /HTTP 500|Unexpected token|boom|JSON/i,
+    );
+  } finally {
+    rmSync(staging, { recursive: true, force: true });
+  }
+});
+
+test('exportProjectTree fails closed on a legal JSON error tree response', async () => {
+  // The exact gap of review finding I10: a 401/403/500 carrying VALID JSON
+  // (`{"error": ...}`) used to parse and read as an EMPTY directory (`tree.entries
+  // ?? []`), so the re-verification continued on an incomplete export. Any
+  // non-OK tree answer must reject, whatever its body looks like.
+  const staging = mkdtempSync(join(tmpdir(), 'ai-stage1-exporttest-'));
+  try {
+    await assert.rejects(
+      exportProjectTree({
+        baseUrl: BASE, token: TOKEN, projectId: PROJECT, stagingDir: staging,
+        fetchImpl: () => Promise.resolve(
+          new Response(JSON.stringify({ timestamp: '...', error: 'Forbidden', status: 403 }), { status: 403 }),
+        ),
+      }),
+      /HTTP 403/,
+    );
+    // Nothing may be staged from an error response.
+    assert.equal(existsSync(join(staging, 'pom.xml')), false);
+  } finally {
+    rmSync(staging, { recursive: true, force: true });
+  }
+});
+
+test('exportProjectTree fails closed on a legal JSON error content response', async () => {
+  // Same rule for the per-file download: a valid-JSON 500 must reject, never
+  // stage a fabricated or partial file.
+  const staging = mkdtempSync(join(tmpdir(), 'ai-stage1-exporttest-'));
+  try {
+    await assert.rejects(
+      exportProjectTree({
+        baseUrl: BASE, token: TOKEN, projectId: PROJECT, stagingDir: staging,
+        fetchImpl: (url) => {
+          const parsed = new URL(url);
+          if (parsed.pathname === `/api/v1/projects/${PROJECT}/files/tree`) {
+            return Promise.resolve(new Response(JSON.stringify({
+              directory: '', entries: [{ name: 'pom.xml', kind: 'file', path: 'pom.xml' }],
+            }), { status: 200 }));
+          }
+          return Promise.resolve(new Response(
+            JSON.stringify({ timestamp: '...', error: 'Internal Server Error', status: 500 }),
+            { status: 500 },
+          ));
+        },
+      }),
+      /HTTP 500/,
+    );
+    assert.equal(existsSync(join(staging, 'pom.xml')), false);
+  } finally {
+    rmSync(staging, { recursive: true, force: true });
+  }
+});
+
+test('exportProjectTree fails closed on a malformed tree payload', async () => {
+  // A 200 whose body is not a tree (no entries array) must reject too — the
+  // structure check, not only the status check, guards the verdict's inputs.
+  const staging = mkdtempSync(join(tmpdir(), 'ai-stage1-exporttest-'));
+  try {
+    await assert.rejects(
+      exportProjectTree({
+        baseUrl: BASE, token: TOKEN, projectId: PROJECT, stagingDir: staging,
+        fetchImpl: () => Promise.resolve(
+          new Response(JSON.stringify({ detail: 'not a tree' }), { status: 200 }),
+        ),
+      }),
+      /malformed tree/i,
     );
   } finally {
     rmSync(staging, { recursive: true, force: true });

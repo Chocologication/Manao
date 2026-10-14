@@ -2,6 +2,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import {
   getAgentTask,
+  getAgentToolCallResult,
   submitAgentTask,
   clearAgentTaskId,
   generateAgentTaskId,
@@ -11,8 +12,11 @@ import {
 import { ApiRequestError } from '@/api/ApiRequestError';
 import { Button } from '@/components/ui/button';
 import {
+  buildCleanupConfirmed,
+  buildExitCode,
   isAgentTaskOccupying,
   type AgentTaskSnapshot,
+  type AgentToolCallResult,
 } from '@/contracts/agentTask';
 import { getWorkspaceRevision } from '@/features/files/fileQueries';
 import { useWorkspaceSession } from '@/features/editor/workspaceSession';
@@ -40,6 +44,12 @@ export type AgentTaskPanelProps = {
 };
 
 type Probe = { kind: 'found'; task: AgentTaskSnapshot } | { kind: 'missing' } | { kind: 'unknown' };
+
+/** The toolCallId of a settled build call from a tool_end progress item, if it is one. */
+export function buildToolCallId(progressText: string): string | null {
+  const match = /^build ([A-Za-z0-9-]+)$/.exec(progressText.trim());
+  return match === null ? null : match[1]!;
+}
 
 function agentTaskStartErrorMessage(error: unknown): string {
   if (error instanceof ApiRequestError && error.body !== null) {
@@ -70,6 +80,30 @@ export function AgentTaskPanel({
   const [starting, setStarting] = useState(false);
   const [startError, setStartError] = useState<string | null>(null);
   const previousTaskRef = useRef<AgentTaskSnapshot | null>(null);
+  // The settled build results this browser fetched (review fix I9): the real exit
+  // facts and cleanup proof behind each tool_end build item, per task id so a
+  // project or task switch never shows another task's evidence.
+  const [buildResults, setBuildResults] = useState<Record<string, AgentToolCallResult | 'error'>>({});
+  const [loadingCallId, setLoadingCallId] = useState<string | null>(null);
+  const activeTaskId = (task ?? settledTask)?.taskId ?? null;
+
+  const handleViewBuildResult = useCallback(
+    async (toolCallId: string) => {
+      if (activeTaskId === null) {
+        return;
+      }
+      setLoadingCallId(toolCallId);
+      try {
+        const result = await getAgentToolCallResult(projectId, activeTaskId, toolCallId);
+        setBuildResults((current) => ({ ...current, [toolCallId]: result }));
+      } catch {
+        setBuildResults((current) => ({ ...current, [toolCallId]: 'error' }));
+      } finally {
+        setLoadingCallId(null);
+      }
+    },
+    [activeTaskId, projectId],
+  );
 
   const workspaceRevision = getWorkspaceRevision(queryClient, projectId);
   const preconditions = resolveAgentTaskPreconditions({
@@ -240,12 +274,39 @@ export function AgentTaskPanel({
               <div>
                 <h3 className="text-sm font-medium">Progress</h3>
                 <ul className="mt-1 flex flex-col gap-1">
-                  {displayTask.progress.map((item) => (
-                    <li key={item.seq} className="whitespace-pre-wrap font-mono text-xs">
-                      {item.text}
-                      {item.truncated ? ' (truncated)' : ''}
-                    </li>
-                  ))}
+                  {displayTask.progress.map((item) => {
+                    const buildCallId = item.kind === 'tool_end' ? buildToolCallId(item.text) : null;
+                    return (
+                      <li key={item.seq} className="whitespace-pre-wrap font-mono text-xs">
+                        {item.text}
+                        {item.truncated ? ' (truncated)' : ''}
+                        {buildCallId !== null ? (
+                          <span className="mt-1 block">
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              disabled={loadingCallId !== null}
+                              onClick={() => {
+                                void handleViewBuildResult(buildCallId);
+                              }}
+                            >
+                              View build result
+                            </Button>
+                          </span>
+                        ) : null}
+                        {buildCallId !== null && buildResults[buildCallId] === 'error' ? (
+                          <span className="mt-1 block text-destructive">
+                            Could not load the build result.
+                          </span>
+                        ) : null}
+                        {buildCallId !== null && buildResults[buildCallId] !== undefined
+                          && buildResults[buildCallId] !== 'error' ? (
+                          <BuildResultView result={buildResults[buildCallId] as AgentToolCallResult} />
+                        ) : null}
+                      </li>
+                    );
+                  })}
                 </ul>
               </div>
             ) : null}
@@ -265,5 +326,37 @@ export function AgentTaskPanel({
         ) : null}
       </div>
     </section>
+  );
+}
+
+/** The settled build evidence the backend serves the owner: real exit facts, bounded output. */
+function BuildResultView({ result }: { result: AgentToolCallResult }) {
+  const exitCode = buildExitCode(result);
+  const cleanupConfirmed = buildCleanupConfirmed(result);
+  const output = typeof result.data['output'] === 'string' ? result.data['output'] : null;
+  const terminationReason =
+    typeof result.data['terminationReason'] === 'string' ? result.data['terminationReason'] : null;
+  return (
+    <div className="mt-1 flex flex-col gap-1 rounded border p-2">
+      <div>
+        <span className="font-medium">Exit code: </span>
+        <span className={exitCode !== null && exitCode !== 0 ? 'text-destructive' : ''}>
+          {exitCode === null ? 'unknown' : exitCode}
+        </span>
+      </div>
+      {terminationReason !== null ? (
+        <div>
+          <span className="font-medium">Termination: </span>
+          <span>{terminationReason}</span>
+        </div>
+      ) : null}
+      <div>
+        <span className="font-medium">Cleanup confirmed: </span>
+        <span>{cleanupConfirmed === null ? 'unknown' : cleanupConfirmed ? 'yes' : 'no'}</span>
+      </div>
+      {output !== null ? (
+        <pre className="max-h-48 overflow-auto whitespace-pre-wrap font-mono text-xs">{output}</pre>
+      ) : null}
+    </div>
   );
 }

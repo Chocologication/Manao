@@ -1,7 +1,9 @@
 import { getHttpClient } from './httpClient';
 import {
   parseAgentTaskSnapshot,
+  parseAgentToolCallResult,
   type AgentTaskSnapshot,
+  type AgentToolCallResult,
   type SubmitAgentTaskRequest,
 } from '../contracts/agentTask';
 
@@ -51,6 +53,22 @@ export async function closeAgentTask(
     { method: 'POST' },
   );
   return parseAgentTaskSnapshot(payload);
+}
+
+/**
+ * One settled tool call of the task (review fix I9): the browser's data path to the
+ * real build evidence. The backend answers 404 for unsettled or foreign calls, and
+ * the bounded view never carries internal execution identity.
+ */
+export async function getAgentToolCallResult(
+  projectId: string,
+  taskId: string,
+  toolCallId: string,
+): Promise<AgentToolCallResult> {
+  const payload = await getHttpClient().request<unknown>(
+    agentTaskUrl(projectId, `/${encodeURIComponent(taskId)}/tools/${encodeURIComponent(toolCallId)}`),
+  );
+  return parseAgentToolCallResult(payload);
 }
 
 // ---------------------------------------------------------------------------
