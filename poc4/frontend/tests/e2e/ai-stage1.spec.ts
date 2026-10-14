@@ -30,11 +30,21 @@ import { expect, test, type Page } from '@playwright/test';
  * Evidence boundary (deliberate): build exit codes, development Job/Pod cleanup
  * confirmations and the successful build's Surefire XML live in the backend's
  * durable tool ledger and logs, behind the internal token chain a browser JWT can
- * never cross. The settled COMPLETED state is itself the backend's cleanup-verified
- * settlement (registered tools only settle after the Job and its Pods are confirmed
- * gone), and the operator records the ledger identities plus the independent
- * acceptance-build re-verification in poc4/docs/evidence/ai-stage1/acceptance.md.
- * This spec attaches everything the browser saw so that record can be assembled.
+ * never cross. This spec asserts everything the browser can see and ATTACHES it,
+ * but the acceptance verdict additionally REQUIRES two operator-run verification
+ * steps against the same taskId (they are part of the round, not optional
+ * corroboration — deploy README section 7 steps 4–5):
+ *   - scripts/ai-stage1-verify-ledger.mjs: read-only DB check of the durable
+ *     ledger — first build real non-zero exit, receipted DemoController write,
+ *     later goal=test build exit 0 with cleanupConfirmed and Job identity, and
+ *     the acceptance test's Surefire report tests>=1 / failures=errors=skipped=0
+ *     (missing report or reportsDropped fails; COMPLETED alone proves nothing
+ *     about test success);
+ *   - scripts/ai-stage1-independent-reverify.mjs: the independent acceptance
+ *     build over the SAVED source through the same read-only-copy executor path
+ *     (manao-dev-build copy + operator pom overlay on the scratch + run test
+ *     with no /source mount), asserting the Surefire report from the fixed
+ *     log-tail markers.
  *
  * Selector provenance (reused mature page operations, do not re-derive):
  * - login: java-runtime-lifecycle.spec.ts signIn (token from the login response,

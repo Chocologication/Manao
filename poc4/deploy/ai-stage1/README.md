@@ -12,6 +12,7 @@ Files:
 | File | Purpose |
 | --- | --- |
 | `README.md` | This release preparation: images, migration, rollout order, rollback, acceptance runbook |
+| `pi-worker.yaml` | Review-ready worker Deployment + Service with placeholders (digest, tokens, model Secret); single instance, Recreate, worker-private emptyDirs, no SA token — applied only with authorization |
 | `development-network-policy.yaml` | Manifest-level egress isolation for development build pods (DNS + public HTTP/HTTPS only). Actual CNI enforcement is NOT_RUN until a real cluster is authorized for the round |
 
 Status (2026-10-14): source Tasks 1–5 implemented and locally verified; the
@@ -119,9 +120,10 @@ Execute only with authorization; every Deployment involved uses `Recreate`
    evidence.
 2. Publish the new runner digest into the images Secret
    (`manao-backend-images`) so the next development build uses `manao-dev-build`.
-3. Create the worker Deployment + Service from the section 4 contract
-   (Deployment manifest is authored at deploy time; model fields come from a
-   Secret). Verify exactly one worker pod.
+3. Apply `pi-worker.yaml` (Deployment + Service, placeholders filled: released
+   worker digest, Secret values per section 4 — `manao-pi-worker-secrets` and
+   `manao-pi-worker-model`). Verify exactly one worker pod and that the backend
+   can reach `manao-pi-worker:18090`.
 4. Update the backend Deployment (new image; env additions per section 4).
    Startup runs Flyway V11 (section 3). Verify exactly one backend pod.
 5. Update the frontend Deployment with the `VITE_ENABLE_AI=true` image. Verify
@@ -158,7 +160,34 @@ MANAO_AI_ACCEPTANCE_PASSWORD=<acc password> \
 MANAO_AI_ACCEPTANCE_PROJECT_ID=<recorded id> \
 pnpm test:e2e:ai-stage1
 
-# 4. Delete the round's dedicated project (UI/API) and verify leftovers
+# 4. MANDATORY operator evidence verification (the browser cannot see the ledger;
+#    this step is part of the verdict, not optional corroboration). Read-only DB
+#    access for the operator; the script issues SELECTs only and the browser never
+#    holds these credentials.
+MANAO_AI_ACCEPTANCE_TASK_ID=<taskId> MANAO_AI_ACCEPTANCE_PROJECT_ID=<recorded id> \
+MANAO_AI_ACCEPTANCE_INITIAL_REVISION=<recorded initial revision> \
+MANAO_AI_VERIFY_DB_HOST=<db host> MANAO_AI_VERIFY_DB_PORT=3306 \
+MANAO_AI_VERIFY_DB_NAME=<schema> MANAO_AI_VERIFY_DB_USER=<readonly user> \
+MANAO_AI_VERIFY_DB_PASSWORD=<secret> \
+[MANAO_AI_VERIFY_MYSQL_CMD="docker run --rm -i mysql:8.0.40 mysql"] \
+node scripts/ai-stage1-verify-ledger.mjs
+#    PASS requires: task COMPLETED; EVERY tool call COMPLETED; the first build with
+#    a real non-zero exit; a receipted write to DemoController after it; a later
+#    goal=test build exit 0 with cleanupConfirmed and full Job identity; the
+#    DemoControllerAcceptanceTest Surefire report tests>=1 / failures=errors=
+#    skipped=0 (missing report or reportsDropped fails).
+
+# 5. MANDATORY independent re-verification of the SAME task's saved source through
+#    the same read-only-copy executor path (manao-dev-build copy on a read-only
+#    /source mount, operator pom overlay on the scratch only, manao-dev-build run
+#    test with NO /source mount), asserting the Surefire report from the fixed
+#    log-tail markers:
+node scripts/ai-stage1-independent-reverify.mjs --api \
+  --image chocologic/manao_images_repository@sha256:<runner release digest>
+#    (the isolated local drill uses --source <dir> instead of --api; both modes
+#    are the operator's container-equivalent path of DevelopmentBuildExecutor)
+
+# 6. Delete the round's dedicated project (UI/API) and verify leftovers
 #    independently (resources, rows); record everything in the acceptance record.
 ```
 

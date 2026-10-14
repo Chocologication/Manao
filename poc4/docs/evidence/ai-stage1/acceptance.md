@@ -15,6 +15,9 @@ NOT_REVERIFIED / NOT_RUN 的严格区分；缺什么条件就记什么，不合�
 | Task 6 acceptance harness, fixtures, release preparation authored | DONE (statically checked only — section 3.1) |
 | Independent acceptance-fixture build re-verification (Docker Maven, error→fix) | PASS (real run, section 3.2) |
 | Component drill: disposable MySQL + backend + worker, model-key-missing refusal | PASS (real run, section 3.3; local mock API endpoint labeled below) |
+| Operator ledger verification script (`ai-stage1-verify-ledger.mjs`) authored and exercised | PASS (real runs against fixture ledger rows, section 7) |
+| Independent re-verification script (`ai-stage1-independent-reverify.mjs`, same read-only-copy executor path + pom overlay) authored and exercised | PASS (real runs, broken→FAIL and repaired→PASS, section 7) |
+| Worker Deployment/Service manifest (`pi-worker.yaml`) with placeholders | DONE (review-only; applied only with authorization) |
 | Real model coding-and-repair loop in a browser against a real deployment | NOT_RUN |
 | Cluster rollout (V11 on the runtime schema, images, worker manifest, network policy apply) | NOT_RUN — needs explicit user authorization |
 | CNI enforcement measurement of the development network policy | NOT_RUN |
@@ -46,7 +49,9 @@ Task 6 deliverables (this commit, `test(ai): verify stage-one coding and repair 
 | `poc4/frontend/tests/fixtures/ai-stage1/acceptance-pom.xml` | Acceptance-controlled pom (Boot 3.5.9 / Java 17 / web+actuator+test; `skipTests=false`, `skip=false`, surefire includes fixed to the fixture); sha256 `7c34a1a8235d09761814ab638418359e33c4e87ab91ef4c59d5d416e6002f2cb` |
 | `poc4/frontend/playwright.ai-stage1.config.ts` + `tests/e2e/ai-stage1.spec.ts` | Browser acceptance: bootstrap id accepted via `MANAO_AI_ACCEPTANCE_PROJECT_ID`, exact prompt, occupancy/409 refusals, reload continuity, settle watch, repaired-source + unchanged-fixture + loop-shape assertions, editor display, release check |
 | `poc4/frontend/scripts/ai-stage1-bootstrap.mjs` | Bootstrap: unique dedicated project (creationKey replay-safe), seeds the broken `DemoController` (`Instant.nwo()`) and the verbatim fixture, prints projectId/initial revision/fixture sha256 |
-| `poc4/deploy/ai-stage1/README.md` + `development-network-policy.yaml` | Release preparation (images, V11, rollout order, rollback, runbook) and the development egress policy manifest — all review-only, nothing applied |
+| `poc4/frontend/scripts/ai-stage1-verify-ledger.mjs` | Fix round 1: MANDATORY operator-side verdict step — read-only check of the durable ledger for the settled taskId (section 7); the browser never holds these credentials |
+| `poc4/frontend/scripts/ai-stage1-independent-reverify.mjs` | Fix round 1: MANDATORY operator-side verdict step — independent acceptance build over the SAVED source through the same read-only-copy executor container path with the operator pom overlay and the Surefire report assertion (section 7) |
+| `poc4/deploy/ai-stage1/README.md`, `pi-worker.yaml` + `development-network-policy.yaml` | Release preparation (images, V11, rollout order, rollback, runbook with the two mandatory verdict steps), the review-ready worker Deployment/Service manifest with placeholders, and the development egress policy manifest — all review-only, nothing applied |
 | `poc4/frontend/package.json` (`test:e2e:ai-stage1`), `tsconfig.stage6.json` (spec/config typecheck include), frontend `Dockerfile` (`ARG VITE_ENABLE_AI=false`), `.gitattributes` (fixture LF) | Wiring for the above |
 | `poc4/pi-worker/src/server.ts` | Fix found by the drill: production boot main was missing (section 3.4) |
 
@@ -152,9 +157,25 @@ Real results:
    project has no real workspace-agent behind the mock endpoint; irrelevant to the
    AI chain under test and not a defect claim.
 
-Teardown: worker, backend and mock processes killed by PID; MySQL container
-removed; all `ai-stage1-*` temp directories deleted; ports verified free. No
-shared or platform resource was touched.
+Teardown, stated in layers (corrected in fix round 1; the original "killed by PID,
+nothing shared touched" wording was broader than what actually happened):
+
+- Precisely identified and removed: the `mysql:8.0.40` container
+  `ai-stage1-drill-20261014-mysql` (`docker rm -f`), all `ai-stage1-*` temp
+  directories (worker scratch, kubeconfig/CA dir, mock script, drill logs), the
+  backend JVM by the PID listening on 18080, and the two drill node processes by
+  the PIDs listening on 16443 and 18090.
+- Batch-terminated, NOT PID-precise: before the PID kills, one
+  `taskkill /F /IM node.exe` with the filter `WINDOWTITLE ne zcode*` ran on the
+  Windows host (it reported terminating node PID 30836). Known objects: the drill's
+  own node processes. NOT confirmable from this record: whether any OTHER
+  window-title-less node process existed on the machine at that moment; the four
+  drill ports being free afterwards proves nothing about unrelated processes.
+  Follow-up local diagnostics for that uncertainty are arranged by the controller
+  outside this record — this document does not defer the confirmation to the user.
+- Port/container/temp verification after teardown: no listener on
+  18080/18090/16443/33306, no `ai-stage1-*` container, no leftover temp dir —
+  these checks are real and scoped to the drill's own resources only.
 
 ### 3.4 Defect found and fixed by the drill
 
@@ -209,3 +230,86 @@ tool ledger, the cleanup confirmations, the successful build's Surefire XML coun
 independent re-verification result of the SAME task's build, the initial→final
 revision pair, changed paths, resource cleanup results, and any unresolved
 diagnostics. Only that section may carry `PI_STAGE1_CODE_TEST_LOOP_PASS`.
+
+The verdict REQUIRES both operator-side scripts to PASS on the same taskId (in
+addition to the browser scene): `ai-stage1-verify-ledger.mjs` (ledger: first build
+real non-zero exit → receipted DemoController write → later goal=test build exit 0
+with cleanupConfirmed and Job identity → acceptance Surefire report tests>=1,
+failures=errors=skipped=0) and `ai-stage1-independent-reverify.mjs` (same
+read-only-copy executor path over the saved source with the operator pom overlay
+and the report assertion). A browser scene that is green without these two steps
+is not an accepted round.
+
+## 7. Fix round 1 (2026-10-15): operator evidence verification and honest teardown
+
+Review findings addressed: (1) the browser-only tool_end shape could not prove
+real exits, the repaired file, or the test report — two operator-run verdict steps
+now close that gap; (2) the independent re-verification had no executable path;
+(3) the worker manifest was deferred; (4) the teardown wording over-claimed.
+
+New deliverables (this fix commit):
+
+- `poc4/frontend/scripts/ai-stage1-verify-ledger.mjs` — operator-side, read-only
+  ledger verification (SELECTs only) over the durable `agent_task` /
+  `agent_tool_call` rows for one taskId. It fails unless: the task is COMPLETED;
+  EVERY tool call is COMPLETED (any unsettled row fails); the first build has a
+  real non-null non-zero exitCode; a receipted write to
+  `src/main/java/com/example/app/DemoController.java` happened after it; a later
+  `goal=test` build exited 0 with `cleanupConfirmed=true` and full Job identity
+  (job/uid/pod); the acceptance test's Surefire report shows tests>=1 with
+  failures=errors=skipped=0 — a missing report or `reportsDropped=true` fails.
+  Transport: a MySQL client command (default `mysql`, or a container client via
+  `MANAO_AI_VERIFY_MYSQL_CMD`); password via `MYSQL_PWD` env or, for container
+  transports, `-p` argv with `MANAO_AI_VERIFY_MYSQL_PASSWORD_MODE=arg`. It is run
+  by the acceptance operator; the browser never holds these credentials.
+- `poc4/frontend/scripts/ai-stage1-independent-reverify.mjs` — the independent
+  re-verification with the SAME read-only-copy executor semantics the cluster
+  build uses: the fixed `manao-dev-build copy` on a read-only `/source` bind
+  mount (same UID 10001, read-only rootfs, tmpfs /tmp, no network), then the
+  operator-controlled `acceptance-pom.xml` overlaid as the SCRATCH copy's pom
+  only, then `manao-dev-build run test` in a container that mounts ONLY the
+  scratch, the maven cache and /tmp — never /source. The verdict requires copy
+  exit 0, run exit 0, the Surefire report read from the fixed
+  `MANAO-SUREFIRE-REPORT-BEGIN/END` log-tail markers with tests>=1 and
+  failures=errors=skipped=0, an unchanged source fingerprint, and name-filtered
+  container cleanup. Source modes: `--source <dir>` (isolated local drill) and
+  `--api` (exports the SAVED, model-modified project through the owner file API —
+  the real round's path; NOT_RUN here, no deployment exists).
+- `poc4/deploy/ai-stage1/pi-worker.yaml` — review-ready worker Deployment +
+  Service with placeholders: single replica Recreate, runAsNonRoot uid 1000,
+  dropped capabilities, read-only rootfs, worker-private emptyDirs only (scratch,
+  agent dir, session dir, tmp), no ServiceAccount token, TCP probes (the worker
+  has no HTTP health route), model fields from a dedicated Secret with no real
+  values. Applied only with user authorization.
+
+Real executions this round (all local, unique prefixes, cleaned up):
+
+1. Independent re-verification script, `--source` mode, image
+   `manao-pi-stage1-runner:test` (local test tag):
+   - BROKEN source (`Instant.nwo()`): **FAIL, exit 1** — "manao-dev-build run test
+     exited 1" + "no Surefire suite for
+     com.example.app.DemoControllerAcceptanceTest"; copy exited 0, pom overlaid,
+     source fingerprint unchanged, no containers left, temp tree deleted.
+   - REPAIRED source (Hello from Pi): **PASS, exit 0** — copy 0, run 0, report
+     `tests=1 failures=0 errors=0 skipped=0` parsed from the log-tail markers,
+     fingerprint unchanged, cleanup confirmed.
+2. Ledger verification script against fixture rows in a disposable MySQL schema
+   (`ai-stage1-verify-mysql`, container removed after; the rows are
+   fixture-shaped, NOT a real loop, and prove only the script's verdict logic):
+   - positive loop fixture (build exit 1 → receipted write → test build exit 0
+     with passing report): **PASS, exit 0** (20 checks OK);
+   - compile-only trap (task COMPLETED with a single exit-0 `compile` build):
+     **FAIL, exit 1** — exactly the "model only ran compile" case the review
+     demanded be caught;
+   - empty/FAILED task: **FAIL, exit 1**.
+   The fixture run also surfaced a real verifier fragility — with identical
+   `created_at` stamps the loop-shape order would be guessed from the random
+   tool_call_id — fixed: order comes from `created_at` only and non-distinct
+   timestamps now FAIL the verdict ("ambiguous tool-call order") instead of
+   guessing. The `--api` source mode of the re-verify script and both scripts'
+   use against a REAL deployment remain NOT_RUN (no acceptance deployment, no
+   real model; conditions in section 5).
+
+Rerun checks after the fix: `pnpm typecheck:stage6`, eslint on the touched
+spec/scripts, full `pnpm test` (1367/1367), `pnpm build`, `pnpm exec tsc
+--noEmit` (worker unchanged this round; no backend code change).
