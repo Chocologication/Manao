@@ -52,6 +52,8 @@ class AgentTaskServiceTest {
         final List<String> stops = new ArrayList<>();
         boolean notConfigured;
         boolean unreachable;
+        boolean statusBroken;
+        String statusInstance = INSTANCE;
         StartBehavior startBehavior = this::defaultStart;
 
         interface StartBehavior {
@@ -74,7 +76,10 @@ class AgentTaskServiceTest {
         }
 
         @Override public WorkerStatus status(String taskId) {
-            return new WorkerStatus(taskId, INSTANCE, "RUNNING");
+            if (statusBroken) {
+                throw new ApiException("AI_WORKER_UNREACHABLE", 502, "the worker could not be reached");
+            }
+            return new WorkerStatus(taskId, statusInstance, "RUNNING");
         }
 
         @Override public WorkerStatus stop(String taskId) {
@@ -91,6 +96,8 @@ class AgentTaskServiceTest {
         final FakePiWorkerClient worker = new FakePiWorkerClient();
         final ProjectLifecycleGate gate = new ProjectLifecycleGate();
         final AgentTaskStore tasks;
+        final WorkspaceAgent agent = org.mockito.Mockito.mock(WorkspaceAgent.class);
+        final DevelopmentBuildExecutor builds = org.mockito.Mockito.mock(DevelopmentBuildExecutor.class);
         final AgentProjectTools tools;
         final AgentTaskService service;
 
@@ -101,11 +108,9 @@ class AgentTaskServiceTest {
             jdbc.update("INSERT INTO project(id, owner_id, name, state, workspace_revision, created_at, updated_at)"
                     + " VALUES (?, ?, 'ai-project', 'READY', 7, ?, ?)", PROJECT, OWNER, now, now);
             tasks = new AgentTaskStore(jdbc, new DataSourceTransactionManager(jdbc.getDataSource()), Clock.systemUTC());
-            WorkspaceAgent agent = org.mockito.Mockito.mock(WorkspaceAgent.class);
             org.mockito.Mockito.when(agent.tree(org.mockito.ArgumentMatchers.eq(PROJECT),
                     org.mockito.ArgumentMatchers.anyString()))
                 .thenReturn(new WorkspaceAgent.Tree("", List.of()));
-            DevelopmentBuildExecutor builds = org.mockito.Mockito.mock(DevelopmentBuildExecutor.class);
             WorkspaceJdbcStore store = new WorkspaceJdbcStore(jdbc, new DataSourceTransactionManager(jdbc.getDataSource()));
             WorkspaceOperationService operations = new WorkspaceOperationService(store, agent, gate);
             WorkspaceService workspace = new WorkspaceService(store, operations, agent, gate, tasks);
@@ -113,6 +118,36 @@ class AgentTaskServiceTest {
             service = new AgentTaskService(tasks, gate, worker, tools,
                 new AiProperties(true, "", new AiProperties.Worker("http://worker.invalid", "worker-token"),
                     new AiProperties.Internal("internal-token")));
+        }
+
+        /** A write_file call row carrying an unresolved PENDING workspace receipt. */
+        void insertUnverifiedWriteCall(String callId, String operationId) {
+            Timestamp now = new Timestamp(System.currentTimeMillis());
+            jdbc.update("""
+                    INSERT INTO agent_tool_call(task_id, tool_call_id, request_sha256, tool_name, args_json,
+                        state, workspace_operation_id, expected_revision, created_at, updated_at)
+                    VALUES (?, ?, ?, 'write_file', '{"path":"src/Demo.java"}', 'NEEDS_ATTENTION', ?, 7, ?, ?)
+                    """,
+                taskId, callId, "a".repeat(64), operationId, now, now);
+            jdbc.update("""
+                    INSERT INTO workspace_operation(id, project_id, expected_revision, before_sha256, after_sha256,
+                        receipt_path, receipt_sha256, state, created_at)
+                    VALUES (?, ?, 7, ?, ?, ?, ?, 'PENDING', ?)
+                    """,
+                operationId, PROJECT, "b".repeat(64), "c".repeat(64),
+                ".manao/receipts/" + operationId + ".json", "d".repeat(64), now);
+        }
+
+        /** A build call row carrying a recorded Kubernetes identity. */
+        void insertBoundBuildCall(String callId, String jobName) {
+            Timestamp now = new Timestamp(System.currentTimeMillis());
+            jdbc.update("""
+                    INSERT INTO agent_tool_call(task_id, tool_call_id, request_sha256, tool_name, args_json,
+                        state, workspace_operation_id, expected_revision, job_name, job_uid, pod_uid,
+                        created_at, updated_at)
+                    VALUES (?, ?, ?, 'build', '{"goal":"compile"}', 'RUNNING', ?, 7, ?, 'uid-job', 'uid-pod', ?, ?)
+                    """,
+                taskId, callId, "a".repeat(64), "cmd-" + callId, jobName, now, now);
         }
 
         TaskRequest request() {
@@ -199,8 +234,10 @@ class AgentTaskServiceTest {
     @Test
     void aCallbackBeforeTheStartAckBindsTheInstance() {
         try (Harness h = new Harness()) {
-            // The start response is lost, but the worker accepted and starts calling back.
+            // Both the start response and the reconciliation read are lost, but the
+            // worker accepted and starts calling back.
             h.worker.unreachable = true;
+            h.worker.statusBroken = true;
             h.service.submit(OWNER, PROJECT, h.request());
             assertThat(h.rowState()).isEqualTo("QUEUED");
             h.service.invokeTool(h.taskId, "call-1", INSTANCE, h.rowEpoch(),
@@ -223,9 +260,24 @@ class AgentTaskServiceTest {
     }
 
     @Test
+    void aLostStartResponseIsReconciledAgainstTheWorker() {
+        try (Harness h = new Harness()) {
+            // The start response is lost, but the worker accepted and is running.
+            h.worker.unreachable = true;
+            h.worker.statusInstance = "worker-2";
+            h.service.submit(OWNER, PROJECT, h.request());
+            // The explicit reconciliation bound the running session under the current
+            // epoch instead of leaving the task undecided.
+            assertThat(h.rowState()).isEqualTo("RUNNING");
+            assertThat(h.rowInstance()).isEqualTo("worker-2");
+        }
+    }
+
+    @Test
     void anUnreachableWorkerKeepsTheQueuedTaskForARedrive() {
         try (Harness h = new Harness()) {
             h.worker.unreachable = true;
+            h.worker.statusBroken = true;
             h.service.submit(OWNER, PROJECT, h.request());
             assertThat(h.rowState()).isEqualTo("QUEUED");
             // The retained task still occupies the project: no browser write may slip in.
@@ -272,6 +324,10 @@ class AgentTaskServiceTest {
                 .isInstanceOfSatisfying(ApiException.class, ex -> assertThat(ex.code()).isEqualTo("AI_PROGRESS_MISMATCH"));
             assertThat(h.progressCount()).isEqualTo(1);
             h.service.applyProgress(h.taskId, INSTANCE, h.rowEpoch(), h.item(2, "message", "second"));
+            assertThat(h.progressCount()).isEqualTo(2);
+            // A replay of an OLDER retained seq with different bytes is a forgery, not an idempotent replay.
+            assertThatThrownBy(() -> h.service.applyProgress(h.taskId, INSTANCE, h.rowEpoch(), h.item(1, "message", "forged-old")))
+                .isInstanceOfSatisfying(ApiException.class, ex -> assertThat(ex.code()).isEqualTo("AI_PROGRESS_MISMATCH"));
             assertThat(h.progressCount()).isEqualTo(2);
             String lastSha = h.jdbc.queryForObject(
                 "SELECT JSON_UNQUOTE(JSON_EXTRACT(progress_json, '$.lastPayloadSha')) FROM agent_task WHERE id = ?",
@@ -330,6 +386,60 @@ class AgentTaskServiceTest {
             assertThatThrownBy(() -> h.service.invokeTool(h.taskId, "call-late", INSTANCE, h.rowEpoch(),
                     new ToolRequest("call-late", "list_files", 7, JSON.createObjectNode())))
                 .isInstanceOf(ApiException.class);
+        }
+    }
+
+    @Test
+    void closeKeepsTheTaskOccupiedWhileAFileReceiptIsUnverifiable() {
+        try (Harness h = new Harness()) {
+            h.submit();
+            h.insertUnverifiedWriteCall("call-write", "op-unverified");
+            // The agent receipt cannot be produced: the shared reconcile path fails closed.
+            org.mockito.Mockito.when(h.agent.receipt(org.mockito.ArgumentMatchers.eq(PROJECT),
+                    org.mockito.ArgumentMatchers.anyString()))
+                .thenReturn(java.util.Optional.empty());
+            h.service.close(h.taskId, "AI_CLOSED", "closed by operator");
+            // The worker was stopped, but the unknown file state keeps the project occupied.
+            assertThat(h.worker.stops).containsExactly(h.taskId);
+            assertThat(h.rowState()).isEqualTo("NEEDS_ATTENTION");
+            assertThat(h.rowFailureCode()).isEqualTo("AI_CLOSING");
+            assertThatThrownBy(() -> h.tasks.requireBrowserWritable(PROJECT))
+                .isInstanceOfSatisfying(ApiException.class, ex -> assertThat(ex.code()).isEqualTo("AI_TASK_ACTIVE"));
+        }
+    }
+
+    @Test
+    void closeReleasesAfterTheBuildCleanupIsConfirmed() {
+        try (Harness h = new Harness()) {
+            h.submit();
+            h.insertBoundBuildCall("call-build", "manao-dev-x");
+            org.mockito.Mockito.when(h.builds.close(org.mockito.ArgumentMatchers.any(),
+                    org.mockito.ArgumentMatchers.any()))
+                .thenReturn(new AgentContracts.BuildResult(
+                    new AgentContracts.BuildIdentity("manao-dev-x", "uid-job", "uid-pod"),
+                    null, "closed", "", false, List.of(), true));
+            h.service.close(h.taskId, "AI_CLOSED", "closed by operator");
+            assertThat(h.rowState()).isEqualTo("FAILED");
+            assertThat(h.rowFailureCode()).isEqualTo("AI_CLOSED");
+            h.tasks.requireBrowserWritable(PROJECT);
+        }
+    }
+
+    @Test
+    void closeKeepsTheTaskOccupiedWhenTheBuildCleanupIsNotConfirmed() {
+        try (Harness h = new Harness()) {
+            h.submit();
+            h.insertBoundBuildCall("call-build", "manao-dev-x");
+            org.mockito.Mockito.when(h.builds.close(org.mockito.ArgumentMatchers.any(),
+                    org.mockito.ArgumentMatchers.any()))
+                .thenReturn(new AgentContracts.BuildResult(
+                    new AgentContracts.BuildIdentity("manao-dev-x", "uid-job", "uid-pod"),
+                    null, "closed", "", false, List.of(), false));
+            h.service.close(h.taskId, "AI_CLOSED", "closed by operator");
+            assertThat(h.rowState()).isEqualTo("NEEDS_ATTENTION");
+            assertThat(h.rowFailureCode()).isEqualTo("AI_CLOSING");
+            assertThatThrownBy(() -> h.tasks.requireBrowserWritable(PROJECT))
+                .isInstanceOfSatisfying(ApiException.class, ex -> assertThat(ex.code()).isEqualTo("AI_TASK_ACTIVE"));
         }
     }
 

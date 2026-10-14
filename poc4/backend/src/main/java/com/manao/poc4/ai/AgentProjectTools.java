@@ -169,27 +169,75 @@ public final class AgentProjectTools {
     }
 
     /**
-     * The close flow's build finishing: every still-unsettled build call of the task
-     * that carries a recorded Kubernetes identity is closed through the shared finish
-     * path (collect the log, delete by the original identity, confirm everything
-     * 404) and stays NEEDS_ATTENTION in the ledger — a closed build never invents an
-     * exit result. Calls without a recorded identity stay for their own recovery
-     * paths; a close failure here never blocks the close flow's release CAS.
+     * The close flow's evidence finishing. Returns true only when every
+     * still-unsettled call of the task is provably finished:
+     *
+     * <ul>
+     *   <li>every workspace file receipt is verified — the shared reconcile path
+     *       commits each PENDING operation from its agent receipt or fails the whole
+     *       reconciliation closed;</li>
+     *   <li>every build call with a recorded Kubernetes identity was closed through
+     *       the shared finish path (collect the log, delete by the original identity)
+     *       with the cleanup CONFIRMED, and a started-but-unrecorded build was only
+     *       observed by its deterministic name — never created, never re-executed;</li>
+     *   <li>read-only calls and never-started builds have nothing left to finish and
+     *       are closed out in the ledger as NEEDS_ATTENTION records.</li>
+     * </ul>
+     *
+     * <p>Any unknown state — an unverifiable receipt, an unconfirmed cleanup, a close
+     * that could not run — returns false and the caller keeps the task
+     * NEEDS_ATTENTION with the project occupied. Failures are never swallowed into a
+     * release.</p>
      */
-    public void closeUnsettledBuilds(String taskId) {
+    public boolean finishForClose(String taskId) {
         AgentTaskStore.TaskOwner owner = tasks.taskOwner(taskId);
-        for (AgentTaskStore.ToolCallRow row : tasks.unsettledCalls(taskId)) {
-            if (!"build".equals(row.toolName()) || row.jobName() == null) {
-                continue;
-            }
-            try {
-                builds.close(buildRequestOf(owner, row), new AgentContracts.BuildIdentity(
-                    row.jobName(), row.jobUid(), row.podUid()));
-                tasks.markToolCallNeedsAttention(taskId, row.toolCallId());
-            } catch (RuntimeException ex) {
-                // The evidence stays unsettled and observable through its recovery path.
-            }
+        List<AgentTaskStore.ToolCallRow> unsettled = tasks.unsettledCalls(taskId);
+        // A pre-allocated workspace operation id on a side-effect call is the receipt
+        // half of a file mutation (the build command id never creates one); any
+        // PENDING receipt is verified through the shared reconcile path, which either
+        // commits every one of them or records the project fail-closed.
+        boolean mayHavePendingReceipts = unsettled.stream()
+            .anyMatch(row -> "write_file".equals(row.toolName()) && row.workspaceOperationId() != null);
+        if (mayHavePendingReceipts && !operations.reconcilePending(owner.projectId())) {
+            return false;
         }
+        for (AgentTaskStore.ToolCallRow row : unsettled) {
+            if ("build".equals(row.toolName())) {
+                if (row.jobName() == null) {
+                    if ("RUNNING".equals(row.state())) {
+                        // Started before the identity binding landed: observe by the
+                        // deterministic name — never create, never re-execute. The
+                        // evidence stays unknown when the observation cannot confirm
+                        // the cleanup.
+                        AgentContracts.BuildResult observed;
+                        try {
+                            observed = builds.observe(buildRequestOf(owner, row),
+                                new AgentContracts.BuildIdentity(null, null, null));
+                        } catch (RuntimeException ex) {
+                            return false;
+                        }
+                        if (observed == null || !observed.cleanupConfirmed()) {
+                            return false;
+                        }
+                    }
+                    // REGISTERED without an identity never started: nothing in the cluster.
+                } else {
+                    AgentContracts.BuildResult closed;
+                    try {
+                        closed = builds.close(buildRequestOf(owner, row), new AgentContracts.BuildIdentity(
+                            row.jobName(), row.jobUid(), row.podUid()));
+                    } catch (RuntimeException ex) {
+                        // The evidence could not be finished: stay occupied.
+                        return false;
+                    }
+                    if (closed == null || !closed.cleanupConfirmed()) {
+                        return false;
+                    }
+                }
+            }
+            tasks.markToolCallNeedsAttention(taskId, row.toolCallId());
+        }
+        return true;
     }
 
     private AgentContracts.BuildRequest buildRequestOf(AgentTaskStore.TaskOwner owner,

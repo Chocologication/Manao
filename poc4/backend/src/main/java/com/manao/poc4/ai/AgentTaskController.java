@@ -22,7 +22,7 @@ import org.springframework.web.bind.annotation.RestController;
 @org.springframework.context.annotation.Conditional({
     com.manao.poc4.config.SecurityConfig.BackendAuthCondition.class,
     com.manao.poc4.config.AiConfig.AiEnabledCondition.class})
-@RequestMapping("/api/v1/projects/{projectId}/tasks")
+@RequestMapping("/api/v1/projects/{projectId}/agent-tasks")
 public final class AgentTaskController {
     private final AgentTaskService tasks;
 
@@ -48,7 +48,25 @@ public final class AgentTaskController {
     @GetMapping("/{taskId}")
     public AgentContracts.TaskSnapshot get(Authentication authentication, @PathVariable String projectId,
                                            @PathVariable String taskId) {
-        return tasks.findForOwner(authentication.getName(), projectId, taskId).orElseThrow(
+        return requireOwnedTask(authentication.getName(), projectId, taskId);
+    }
+
+    /**
+     * The owner's explicit abandon: the close flow runs in the service — the marker
+     * persists inside the gate first, the worker is stopped, and the project is only
+     * released when every piece of evidence is provably finished. Idempotent.
+     */
+    @PostMapping("/{taskId}/close")
+    public AgentContracts.TaskSnapshot close(Authentication authentication, @PathVariable String projectId,
+                                             @PathVariable String taskId) {
+        requireOwnedTask(authentication.getName(), projectId, taskId);
+        tasks.close(taskId, "AI_CLOSED", "closed by the owner");
+        return requireOwnedTask(authentication.getName(), projectId, taskId);
+    }
+
+    /** The task snapshot only through this owner's project; a foreign id reads as 404. */
+    private AgentContracts.TaskSnapshot requireOwnedTask(String ownerId, String projectId, String taskId) {
+        return tasks.findForOwner(ownerId, projectId, taskId).orElseThrow(
             () -> new ApiException("ENTRY_NOT_FOUND", 404, "Task not found"));
     }
 

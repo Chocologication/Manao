@@ -80,13 +80,19 @@ public final class AgentTaskService {
         return tasks.currentForOwner(ownerId, projectId);
     }
 
-    /** Re-drives the start under the persisted epoch; the ACK binds QUEUED to RUNNING. */
+    /**
+     * Re-drives the start under the persisted epoch; the ACK binds QUEUED to RUNNING.
+     * A start whose outcome is unknown (transport failure) is reconciled against the
+     * worker with a status read of the SAME task before the task is left undecided —
+     * the worker may already be running a session nobody bound.
+     */
     private void driveStart(String taskId, String prompt, String workspaceRevision, long epoch) {
         WorkerStart start = new WorkerStart(taskId, prompt, workspaceRevision,
             tasks.requestSha256Of(taskId), epoch);
         try {
             WorkerStatus ack = worker.start(start);
             onStartAck(taskId, epoch, ack);
+            return;
         } catch (ApiException ex) {
             if ("AI_WORKER_NOT_CONFIGURED".equals(ex.code())) {
                 // The worker refuses before any session exists: fail the task now, release it.
@@ -94,8 +100,18 @@ public final class AgentTaskService {
                     "the worker has no model configuration", "AI_WORKER_NOT_CONFIGURED");
                 return;
             }
-            // Unreachable or transient: the task stays QUEUED with its persisted epoch,
-            // retained for the next re-drive of the same request.
+            // Unreachable or transient: fall through to the explicit reconciliation below.
+        }
+        try {
+            // The start response was lost: ask the worker about the ORIGINAL task. A
+            // running (or even already settled) session is bound under the current
+            // epoch, so its callbacks are accepted instead of silently refused.
+            WorkerStatus status = worker.status(taskId);
+            tasks.bindWorkerInstance(taskId, epoch, status.instanceId());
+        } catch (RuntimeException reconcileFailure) {
+            // Both calls failed: the task keeps its persisted epoch and stays QUEUED —
+            // an explicit undecided state that only a re-drive of the same request or
+            // the close flow can resolve.
         }
     }
 
@@ -137,10 +153,14 @@ public final class AgentTaskService {
     /**
      * The close flow: inside the gate the task is marked NEEDS_ATTENTION with the
      * AI_CLOSING marker (which refuses every new tool registration from this moment),
-     * then the worker is stopped and the build evidence is finished, and finally the
-     * task is CASed to FAILED from its own marker — a late terminal can never release
-     * the project first. Idempotent: an already settled or already closing task is a
-     * no-op.
+     * then the worker is stopped and the evidence is finished. The project is
+     * released ONLY when every applicable piece of evidence is provably finished —
+     * every workspace file receipt verified through the shared reconcile path and
+     * every recorded build cleanup confirmed. Any unknown state (an unverifiable
+     * receipt, an unconfirmed build cleanup, a close that could not run) keeps the
+     * task NEEDS_ATTENTION with the project occupied; a late terminal can never
+     * release the project first because the release CAS matches only the close's own
+     * marker. Idempotent: an already settled or already closing task is a no-op.
      */
     public void close(String taskId, String failureCode, String summary) {
         AgentTaskStore.TaskOwner owner = tasks.taskOwner(taskId);
@@ -155,7 +175,11 @@ public final class AgentTaskService {
         } catch (RuntimeException ex) {
             // The worker may already be gone; the marker already blocks new calls.
         }
-        tools.closeUnsettledBuilds(taskId);
+        if (!tools.finishForClose(taskId)) {
+            // Evidence is still unknown: the task stays NEEDS_ATTENTION/AI_CLOSING and
+            // the project stays occupied until a later close can finish the evidence.
+            return;
+        }
         tasks.failClosedTask(taskId, failureCode, summary);
     }
 

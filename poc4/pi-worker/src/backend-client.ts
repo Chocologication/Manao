@@ -200,7 +200,9 @@ export class ProgressChain {
   send(kind: string, text: string, truncated = false): void {
     const item: ProgressItem = { seq: this.nextSeq++, kind, text, truncated };
     this.buffer.push(item);
-    if (this.buffer.length > 128) {
+    // The resend buffer matches the backend's 100-item retained window (the protocol
+    // bound the progress envelope enforces), so every gap answer can be replayed.
+    if (this.buffer.length > 100) {
       this.buffer.shift();
     }
     this.queue = this.queue.then(() => this.deliver(item));
@@ -235,9 +237,10 @@ export class ProgressChain {
       if (ack.accepted) {
         return;
       }
-      if (ack.expectedSeq !== undefined && ack.expectedSeq < item.seq) {
-        // Items before this one were lost; replay the buffered range from the seq
-        // the backend expects, then fall through to this item again.
+      if (ack.expectedSeq !== undefined && ack.expectedSeq <= item.seq) {
+        // The backend has not durably reached this item yet: replay the buffered
+        // range from the seq it expects (an equality gap means the very first item
+        // never landed), then retry THIS item with its identical payload.
         for (const pending of this.buffer) {
           if (pending.seq >= ack.expectedSeq && pending.seq < item.seq) {
             await this.client.progress(this.taskId, pending);

@@ -319,7 +319,8 @@ async function readJson(request: IncomingMessage): Promise<unknown> {
     let overflow = false;
     request.on("data", (chunk: Buffer) => {
       raw += chunk.toString("utf-8");
-      if (raw.length > MAX_BODY_BYTES) {
+      // The bound is on UTF-8 bytes, not the JS string length.
+      if (Buffer.byteLength(raw, "utf-8") > MAX_BODY_BYTES) {
         overflow = true;
         request.destroy();
       }

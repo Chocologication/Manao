@@ -397,7 +397,18 @@ public final class AgentTaskStore implements AgentTaskOccupancy {
             }
             Envelope envelope = readEnvelope(taskId);
             if (item.seq() < envelope.lastSeq) {
-                // A delayed replay of an older item: it was already durable; never append twice.
+                // A replay of an older item: inside the retained window the stored
+                // payload decides — identical bytes are an idempotent replay, different
+                // bytes are a forgery. Outside the window the durable copy won and the
+                // item can no longer be verified either way.
+                AgentContracts.ProgressItem retained = envelope.items.stream()
+                    .filter(stored -> stored.seq() == item.seq())
+                    .findFirst()
+                    .orElse(null);
+                if (retained != null && !progressPayloadSha(retained).equals(payloadSha)) {
+                    throw new ApiException("AI_PROGRESS_MISMATCH", 409,
+                        "This progress seq was already used for a different payload");
+                }
                 return new ProgressAppend(envelope.lastSeq, false);
             }
             if (item.seq() == envelope.lastSeq) {

@@ -67,6 +67,7 @@ public class SecurityConfig {
         }
         return secured
             .authorizeHttpRequests(a -> a.anyRequest().authenticated())
+            .addFilterBefore(new com.manao.poc4.ai.InternalBodyLimitFilter(), UsernamePasswordAuthenticationFilter.class)
             .addFilterBefore(new InternalTokenFilter(token), UsernamePasswordAuthenticationFilter.class)
             .build();
     }

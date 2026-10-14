@@ -38,6 +38,11 @@ class AgentInternalSecurityTest {
             return "internal-ok";
         }
 
+        @org.springframework.web.bind.annotation.PostMapping("/internal/ai/probe")
+        String postInternal(@org.springframework.web.bind.annotation.RequestBody String body) {
+            return "internal-ok:" + body.length();
+        }
+
         @GetMapping("/api/v1/probe")
         String api(org.springframework.security.core.Authentication authentication) {
             return "api-ok:" + authentication.getName();
@@ -125,6 +130,31 @@ class AgentInternalSecurityTest {
                     int status = result.getResponse().getStatus();
                     assertThat(status).as("token=" + token).isIn(401, 403, 404);
                 }
+            });
+    }
+
+    @Test
+    void anOversizedInternalBodyIsRefusedWithTheFixedSafeError() {
+        RUNNER.withPropertyValues("MANAO_JWT_SECRET=" + JWT_SECRET, "MANAO_AI_INTERNAL_TOKEN=internal-token")
+            .run(context -> {
+                MockMvc mvc = mockMvc(context);
+                byte[] oversized = new byte[600 * 1024];
+                MvcResult result = mvc.perform(
+                        org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                            .post("/internal/ai/probe")
+                            .header("X-Manao-Worker-Token", "internal-token")
+                            .content(oversized))
+                    .andReturn();
+                assertThat(result.getResponse().getStatus()).isEqualTo(413);
+                assertThat(result.getResponse().getContentAsString()).contains("AI_REQUEST_TOO_LARGE");
+                // A body within the bound still passes the chain.
+                MvcResult small = mvc.perform(
+                        org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                            .post("/internal/ai/probe")
+                            .header("X-Manao-Worker-Token", "internal-token")
+                            .content("hello"))
+                    .andReturn();
+                assertThat(small.getResponse().getStatus()).isEqualTo(200);
             });
     }
 

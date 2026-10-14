@@ -259,6 +259,44 @@ describe("task server", () => {
     }
   });
 
+  it("replays the current item when a gap answer names its own seq", async () => {
+    // The backend persisted nothing yet but answers expectedSeq: 1 — the equality
+    // branch must retry the CURRENT item instead of silently dropping it.
+    backendServer.removeAllListeners("request");
+    const progressBodies: Array<Record<string, unknown>> = [];
+    backendServer.on("request", (req: IncomingMessage, res: ServerResponse) => {
+      let raw = "";
+      req.on("data", (chunk: Buffer) => {
+        raw += chunk.toString("utf-8");
+      });
+      req.on("end", () => {
+        if (req.url?.includes("/progress")) {
+          progressBodies.push(JSON.parse(raw));
+          if (progressBodies.length === 1) {
+            backendResponse(res, 409, { code: "AI_PROGRESS_GAP", expectedSeq: 1 });
+            return;
+          }
+          backendResponse(res, 200, { accepted: true });
+          return;
+        }
+        backendResponse(res, 200, { toolCallId: "call-1", workspaceRevision: "8", data: {}, truncated: false });
+      });
+    });
+
+    const client = new BackendClient({
+      baseUrl: `http://127.0.0.1:${backendPort}`,
+      token: "backend-token",
+      instanceId: "worker-1",
+      epoch: "1",
+    });
+    const chain = new ProgressChain(client, "task-1");
+    chain.send("message", "the only full message");
+    await chain.drain();
+    expect(progressBodies.length).toBe(2);
+    expect(progressBodies[0]).toEqual(progressBodies[1]);
+    expect(progressBodies[0]).toEqual({ seq: 1, kind: "message", text: "the only full message", truncated: false });
+  });
+
   it("retransmits a lost progress response with the same seq and identical payload", async () => {
     // The fake backend drops the first progress POST's response after reading it.
     backendServer.removeAllListeners("request");
