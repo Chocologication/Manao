@@ -10,8 +10,9 @@
  */
 import { createHash, timingSafeEqual } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
+import { pathToFileURL } from "node:url";
 import { BackendClient, ProgressChain } from "./backend-client.js";
-import { modelConfigProblems, type WorkerConfig } from "./config.js";
+import { ConfigError, loadWorkerConfig, modelConfigProblems, type WorkerConfig } from "./config.js";
 import { createPiSession, type PiTaskOutcome, type PiTaskSession } from "./pi-session.js";
 
 export interface WorkerStartBody {
@@ -343,4 +344,42 @@ async function readJson(request: IncomingMessage): Promise<unknown> {
 function writeJson(response: ServerResponse, status: number, body: unknown): void {
   response.writeHead(status, { "content-type": "application/json" });
   response.end(JSON.stringify(body));
+}
+
+/**
+ * Production boot (the container CMD is `node dist/server.js`): read the whole
+ * configuration from the environment, fail fast with every missing field listed
+ * (`.env.example` contract — the worker refuses to start while the non-model
+ * fields are missing), then serve. Model fields are NOT boot requirements: a
+ * worker may boot for health and reconciliation, and refusals of unconfigured
+ * starts happen per start (503 AI_WORKER_NOT_CONFIGURED). Loaded as a module
+ * (tests, tooling) this file never starts a server.
+ */
+async function run(): Promise<void> {
+  let config: WorkerConfig;
+  try {
+    config = loadWorkerConfig(process.env);
+  } catch (error) {
+    if (error instanceof ConfigError) {
+      console.error(`manao-pi-worker: ${error.message}`);
+      process.exitCode = 78; // EX_CONFIG: never serve starts the configuration cannot drive
+      return;
+    }
+    throw error;
+  }
+  const handle = createTaskServer(config);
+  const port = await handle.listen();
+  console.log(`manao-pi-worker listening on ${port} (instance ${config.instanceId})`);
+  const shutdown = (signal: string): void => {
+    console.log(`manao-pi-worker received ${signal}; closing`);
+    void handle.close().finally(() => process.exit(0));
+  };
+  process.on("SIGTERM", () => shutdown("SIGTERM"));
+  process.on("SIGINT", () => shutdown("SIGINT"));
+}
+
+const invokedDirectly = process.argv[1] !== undefined
+  && import.meta.url === pathToFileURL(process.argv[1]).href;
+if (invokedDirectly) {
+  await run();
 }

@@ -33,3 +33,9 @@ poc4/workspace-agent/** text=auto eol=lf
 # never hands CRLF files to the docker build context or the Node runtime (AI stage-one
 # plan, global constraints: "UTF-8 无 BOM，shell/Docker 入口 LF；对新目录扩展 .gitattributes").
 poc4/pi-worker/** text=auto eol=lf
+
+# The stage-one acceptance fixture is seeded byte-for-byte into a Linux Maven runner
+# build through the workspace file API, and its sha256 is recorded acceptance evidence:
+# keep LF in index and working tree so a fresh checkout under core.autocrlf reproduces
+# the recorded digest exactly (AI stage-one plan Task 6).
+poc4/frontend/tests/fixtures/ai-stage1/** text=auto eol=lf

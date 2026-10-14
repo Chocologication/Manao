@@ -6,7 +6,10 @@
 # - VITE_ENABLE_MOCK_API gates the MSW mock worker (src/main.tsx).
 # - VITE_ENABLE_EXPERIMENTAL_TERMINAL gates the experimental terminal panel
 #   (src/components/shell/WorkbenchShell.tsx).
-# Both must be non-"true" for the production bundle. The legacy VITE_USE_MSW
+# - VITE_ENABLE_AI gates the stage-one AI task panel (WorkbenchShell.tsx). It
+#   defaults to false: only the dedicated AI acceptance deployment builds with
+#   --build-arg VITE_ENABLE_AI=true (AI stage-one plan Task 6 release prep).
+# All must be non-"true" for the regular production bundle. The legacy VITE_USE_MSW
 # variable (only present in .env.local-cluster.example) is NOT read by any code
 # and must not be relied on (Task 3 brief).
 # syntax=docker/dockerfile:1
@@ -14,6 +17,9 @@
 # Pinned: node 22 LTS line, Alpine 3.23 (tag verified on Docker Hub 2026-09-18).
 FROM node:22.23.2-alpine3.23 AS build
 WORKDIR /app
+
+# The AI panel switch is a build argument so the accepted default stays off.
+ARG VITE_ENABLE_AI=false
 
 # pnpm is pinned to the exact version declared by package.json
 # ("packageManager": "pnpm@10.33.0"). Installed via npm instead of corepack so
@@ -28,6 +34,7 @@ RUN pnpm install --frozen-lockfile
 
 COPY . .
 RUN VITE_ENABLE_MOCK_API=false VITE_ENABLE_EXPERIMENTAL_TERMINAL=false \
+    VITE_ENABLE_AI="${VITE_ENABLE_AI}" \
     pnpm build
 
 # Runtime: nginxinc/nginx-unprivileged is the official nginx build running as

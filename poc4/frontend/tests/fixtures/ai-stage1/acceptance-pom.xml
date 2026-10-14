@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Stage-one independent acceptance pom (Task 6 fixture).
+
+  The acceptance operator copies this file over the scratch copy's pom.xml for the
+  INDEPENDENT re-verification build only - never into the user's saved project and
+  never visible to the model. It mirrors the java-spring-boot-web template's stack
+  (Spring Boot 3.5.9, Java 17, web/actuator/test) so the copied sources compile
+  unchanged, and it pins the test execution to the acceptance fixture: skipTests and
+  maven.test.skip are forced false regardless of any user pom or settings state, and
+  surefire's includes are fixed to DemoControllerAcceptanceTest so the verdict can
+  only come from that test's real Surefire XML (target/surefire-reports, which
+  manao-dev-build appends between its fixed log-tail markers).
+-->
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <parent>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-starter-parent</artifactId>
+        <version>3.5.9</version>
+        <relativePath/>
+    </parent>
+    <groupId>com.example.app</groupId>
+    <artifactId>manao-acceptance</artifactId>
+    <version>0.1.0-SNAPSHOT</version>
+    <packaging>jar</packaging>
+    <properties>
+        <java.version>17</java.version>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <!-- Acceptance-controlled test execution: nothing in the user project, user
+             settings or environment may turn these tests off. -->
+        <skipTests>false</skipTests>
+        <maven.test.skip>false</maven.test.skip>
+    </properties>
+    <dependencies>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-web</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-actuator</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <configuration>
+                    <!-- Both plugin-level switches are forced: the property above covers
+                         anything reading user properties, this covers anything merging
+                         plugin configuration. A missing report or zero tests can therefore
+                         only mean the test really did not pass. -->
+                    <skipTests>false</skipTests>
+                    <skip>false</skip>
+                    <includes>
+                        <include>**/DemoControllerAcceptanceTest.java</include>
+                    </includes>
+                </configuration>
+            </plugin>
+            <plugin>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-maven-plugin</artifactId>
+            </plugin>
+        </plugins>
+    </build>
+</project>
