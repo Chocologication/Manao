@@ -63,25 +63,30 @@ public final class Fabric8DevelopmentBuildExecutor implements DevelopmentBuildEx
     private final long pollMillis;
     private final long waitBudgetSeconds;
     private final long cleanupWaitSeconds;
-    /** The last-point create fence: false means the task has armed its closing intent. */
-    private final java.util.function.Predicate<AgentContracts.BuildRequest> createAllowed;
+    /** Executes the actual create inside the authorization/close critical section. */
+    @FunctionalInterface
+    public interface BuildCreation {
+        Job create(AgentContracts.BuildRequest request, java.util.function.Supplier<Job> create);
+    }
+
+    private final BuildCreation creation;
 
     public Fabric8DevelopmentBuildExecutor(KubernetesClient client, JobResourceFactory factory, String namespace,
                                            BiConsumer<AgentContracts.BuildRequest, AgentContracts.BuildIdentity> identityListener,
-                                           java.util.function.Predicate<AgentContracts.BuildRequest> createAllowed) {
-        this(client, factory, namespace, identityListener, createAllowed, Clock.systemUTC(),
+                                           BuildCreation creation) {
+        this(client, factory, namespace, identityListener, creation, Clock.systemUTC(),
             DEFAULT_POLL_MILLIS, DEFAULT_WAIT_BUDGET_SECONDS, DEFAULT_CLEANUP_WAIT_SECONDS);
     }
 
     Fabric8DevelopmentBuildExecutor(KubernetesClient client, JobResourceFactory factory, String namespace,
                                     BiConsumer<AgentContracts.BuildRequest, AgentContracts.BuildIdentity> identityListener,
-                                    java.util.function.Predicate<AgentContracts.BuildRequest> createAllowed,
+                                    BuildCreation creation,
                                     Clock clock, long pollMillis, long waitBudgetSeconds, long cleanupWaitSeconds) {
         this.client = Objects.requireNonNull(client, "client");
         this.factory = Objects.requireNonNull(factory, "factory");
         this.namespace = Objects.requireNonNull(namespace, "namespace");
         this.identityListener = identityListener;
-        this.createAllowed = Objects.requireNonNull(createAllowed, "createAllowed");
+        this.creation = Objects.requireNonNull(creation, "creation");
         this.clock = clock == null ? Clock.systemUTC() : clock;
         this.pollMillis = pollMillis;
         this.waitBudgetSeconds = waitBudgetSeconds;
@@ -109,17 +114,12 @@ public final class Fabric8DevelopmentBuildExecutor implements DevelopmentBuildEx
             return unresolved(jobName, null, null, "BUILD_IDENTITY_UNVERIFIABLE");
         }
         if (job == null) {
-            // The LAST point before creation. A task that armed its closing intent must
-            // never gain a Job: an execution thread that was claimed and paused between
-            // the REGISTERED->RUNNING claim and this create re-evaluates the fence here
-            // and settles as a deterministic no-side-effect abort — nothing is created,
-            // so there is nothing left to clean.
-            if (!createAllowed.test(request)) {
+            job = creation.create(request, () -> createJob(request));
+            if (job == null) {
                 return new AgentContracts.BuildResult(
                     new AgentContracts.BuildIdentity(jobName, null, null),
                     null, "BUILD_CLOSING_ABORTED", "", false, List.of(), true);
             }
-            job = createJob(request);
         }
         return awaitSettlement(request, jobName, uid(job), null);
     }

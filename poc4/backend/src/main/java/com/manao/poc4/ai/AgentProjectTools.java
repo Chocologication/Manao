@@ -203,7 +203,7 @@ public final class AgentProjectTools {
         }
         for (AgentTaskStore.ToolCallRow row : unsettled) {
             if ("build".equals(row.toolName())) {
-                if ("RUNNING".equals(row.state()) && row.jobName() == null) {
+                if ("RUNNING".equals(row.state())) {
                     // A claimed-but-unsettled build is IN FLIGHT: its execution thread
                     // sits between the atomic REGISTERED->RUNNING claim and the Job
                     // create, so the negative cluster query proves nothing — the Job
@@ -235,7 +235,8 @@ public final class AgentProjectTools {
                     }
                 }
             }
-            tasks.markToolCallNeedsAttention(taskId, row.toolCallId());
+            // Never overwrite a RUNNING claim that appeared after the snapshot.
+            tasks.markRegisteredCallForClose(taskId, row.toolCallId());
         }
         return true;
     }

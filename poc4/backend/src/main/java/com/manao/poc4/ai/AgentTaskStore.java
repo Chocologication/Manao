@@ -238,10 +238,11 @@ public final class AgentTaskStore implements AgentTaskOccupancy {
      * observe the recorded identity, never start the build again. Returns false for a row that
      * was already RUNNING or settled — the caller must then follow the recovery path instead.
      */
-    public boolean markToolCallRunning(String taskId, String toolCallId) {
+    public synchronized boolean markToolCallRunning(String taskId, String toolCallId) {
         return jdbc.update(
             "UPDATE agent_tool_call SET state = 'RUNNING', updated_at = ? "
-                + "WHERE task_id = ? AND tool_call_id = ? AND state = 'REGISTERED'",
+                + "WHERE task_id = ? AND tool_call_id = ? AND state = 'REGISTERED' "
+                + "AND EXISTS (SELECT 1 FROM agent_task t WHERE t.id = task_id AND t.state IN ('QUEUED', 'RUNNING'))",
             Timestamp.from(clock.instant()), taskId, toolCallId) > 0;
     }
 
@@ -267,6 +268,13 @@ public final class AgentTaskStore implements AgentTaskOccupancy {
         jdbc.update(
             "UPDATE agent_tool_call SET state = 'NEEDS_ATTENTION', updated_at = ? "
                 + "WHERE task_id = ? AND tool_call_id = ? AND state IN ('REGISTERED', 'RUNNING')",
+            Timestamp.from(clock.instant()), taskId, toolCallId);
+    }
+
+    /** Close may retire an unclaimed call, never settle another thread's execution. */
+    public void markRegisteredCallForClose(String taskId, String toolCallId) {
+        jdbc.update("UPDATE agent_tool_call SET state = 'NEEDS_ATTENTION', updated_at = ? "
+                + "WHERE task_id = ? AND tool_call_id = ? AND state = 'REGISTERED'",
             Timestamp.from(clock.instant()), taskId, toolCallId);
     }
 
@@ -481,18 +489,32 @@ public final class AgentTaskStore implements AgentTaskOccupancy {
 
     private record Row(String state, String failureCode) { }
 
-    /**
-     * The closing fence the build execution path consults immediately before Job
-     * creation: true once the task carries the AI_CLOSING marker, so an execution
-     * thread claimed before the close can never create a Job afterwards.
-     */
+    /** Advisory only: absence, unknown states and terminal states all deny creation. */
     public boolean hasClosingIntent(String taskId) {
-        List<Row> rows = jdbc.query(
-            "SELECT state, failure_code FROM agent_task WHERE id = ?",
-            (rs, row) -> new Row(rs.getString(1), rs.getString(2)), taskId);
-        return !rows.isEmpty()
-            && "NEEDS_ATTENTION".equals(rows.get(0).state())
-            && CLOSING_MARKER.equals(rows.get(0).failureCode());
+        List<String> states = jdbc.query("SELECT state FROM agent_task WHERE id = ?",
+            (rs, row) -> rs.getString(1), taskId);
+        return states.isEmpty() || !("QUEUED".equals(states.get(0)) || "RUNNING".equals(states.get(0)));
+    }
+
+    /**
+     * Single-instance creation linearization point. This monitor is also held by claims,
+     * markClosing and the final close proof/release. Persist a one-shot name reservation
+     * before the API call; on restart even an uncertain create is observe-only. The
+     * monitor covers the actual create, not merely an earlier permission read. No DB
+     * transaction or ProjectLifecycleGate is held while waiting for the build.
+     */
+    public synchronized <T> T createBuildIfAllowed(AgentContracts.BuildRequest request,
+                                                  java.util.function.Supplier<T> create) {
+        int reserved = jdbc.update("""
+            UPDATE agent_tool_call c INNER JOIN agent_task t ON t.id = c.task_id
+            SET c.job_name = ?, c.updated_at = ?
+            WHERE c.task_id = ? AND c.tool_call_id = ? AND c.workspace_operation_id = ?
+              AND c.tool_name = 'build' AND c.state = 'RUNNING' AND c.job_name IS NULL
+              AND t.project_id = ? AND t.state IN ('QUEUED', 'RUNNING')
+            """, com.manao.poc4.kubernetes.JobResourceFactory.developmentJobName(request.commandId()),
+            Timestamp.from(clock.instant()), request.taskId(), request.toolCallId(), request.commandId(),
+            request.projectId());
+        return reserved == 1 ? create.get() : null;
     }
 
     /**
@@ -501,7 +523,7 @@ public final class AgentTaskStore implements AgentTaskOccupancy {
      * registration while the worker is stopped and the evidence is finished. False
      * when the task was already settled or already closing.
      */
-    public boolean markClosing(String taskId) {
+    public synchronized boolean markClosing(String taskId) {
         return jdbc.update("""
                 UPDATE agent_task SET state = 'NEEDS_ATTENTION', failure_code = ?, updated_at = ?
                 WHERE id = ? AND state IN ('QUEUED', 'RUNNING')
@@ -510,10 +532,12 @@ public final class AgentTaskStore implements AgentTaskOccupancy {
     }
 
     /** The close flow's final step: only its own AI_CLOSING marker releases the project. */
-    public boolean failClosedTask(String taskId, String failureCode, String summary) {
+    public synchronized boolean failClosedTask(String taskId, String failureCode, String summary) {
         return jdbc.update("""
                 UPDATE agent_task SET state = 'FAILED', failure_code = ?, summary = ?, updated_at = ?
                 WHERE id = ? AND state = 'NEEDS_ATTENTION' AND failure_code = 'AI_CLOSING'
+                  AND NOT EXISTS (SELECT 1 FROM agent_tool_call c
+                      WHERE c.task_id = agent_task.id AND c.state = 'RUNNING')
                 """,
             failureCode, summary, Timestamp.from(clock.instant()), taskId) > 0;
     }

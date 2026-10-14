@@ -30,6 +30,55 @@ class AgentTaskStoreTest {
     private static final Instant NOW = Instant.parse("2026-10-13T00:00:00Z");
 
     @Test
+    void aDurableCreationReservationIsOneShotAndClosingWaitsForTheActualCreate() throws Exception {
+        try (var db = JdbcStoreTestSupport.create()) {
+            seed(db.jdbc());
+            var store = store(db);
+            String taskId = UUID.randomUUID().toString();
+            store.create(OWNER, PROJECT, new TaskRequest(taskId, "build", 7));
+            store.registerToolCall(taskId, "call-build", "a".repeat(64), "build", "{\"goal\":\"test\"}", 7, "command-1");
+            assertThat(store.markToolCallRunning(taskId, "call-build")).isTrue();
+            var request = new AgentContracts.BuildRequest(taskId, "call-build", PROJECT, "command-1", 7,
+                AgentContracts.BuildGoal.TEST);
+            CountDownLatch creating = new CountDownLatch(1);
+            CountDownLatch finishCreate = new CountDownLatch(1);
+            CountDownLatch closeAttempted = new CountDownLatch(1);
+            var pool = java.util.concurrent.Executors.newFixedThreadPool(2);
+            try {
+                var creator = pool.submit(() -> store.createBuildIfAllowed(request, () -> {
+                    creating.countDown();
+                    try {
+                        assertThat(finishCreate.await(10, TimeUnit.SECONDS)).isTrue();
+                    } catch (InterruptedException ex) {
+                        throw new IllegalStateException(ex);
+                    }
+                    return "created";
+                }));
+                assertThat(creating.await(5, TimeUnit.SECONDS)).isTrue();
+                var closer = pool.submit(() -> {
+                    closeAttempted.countDown();
+                    return store.beginClose(taskId);
+                });
+                assertThat(closeAttempted.await(5, TimeUnit.SECONDS)).isTrue();
+                assertThatThrownBy(() -> closer.get(150, TimeUnit.MILLISECONDS))
+                    .isInstanceOf(java.util.concurrent.TimeoutException.class);
+                finishCreate.countDown();
+                assertThat(creator.get(5, TimeUnit.SECONDS)).isEqualTo("created");
+                assertThat(closer.get(5, TimeUnit.SECONDS)).isEqualTo(AgentTaskStore.CloseEntry.START);
+                assertThat(store.failClosedTask(taskId, "AI_CLOSED", "still executing")).isFalse();
+                // A new store instance represents a restart: the durable reservation survives.
+                assertThat(store(db).<String>createBuildIfAllowed(request, () -> {
+                    throw new AssertionError("a reserved command may never create twice");
+                })).isNull();
+                assertThat(store.findToolCall(taskId, "call-build").orElseThrow().jobName()).isNotBlank();
+            } finally {
+                finishCreate.countDown();
+                pool.shutdownNow();
+            }
+        }
+    }
+
+    @Test
     void oneProjectCannotAcquireTwoTasks() {
         try (var db = JdbcStoreTestSupport.create()) {
             var jdbc = db.jdbc();

@@ -77,13 +77,11 @@ public class AiConfig {
     @Conditional(AiEnabledCondition.class)
     DevelopmentBuildExecutor developmentBuildExecutor(KubernetesClient client, JobResourceFactory factory,
                                                       BackendProperties properties, AgentTaskStore tasks) {
-        // The create fence: the executor re-reads the task's closing intent at the LAST
-        // point before Job creation, so an execution thread claimed before a close can
-        // never create a Job for a task that is closing.
+        // The store owns both durable authorization and the create/close critical section.
         return new Fabric8DevelopmentBuildExecutor(client, factory, properties.kubernetes().namespace(),
             (request, identity) -> tasks.bindToolCallIdentity(request.taskId(), request.toolCallId(),
                 identity.jobName(), identity.jobUid(), identity.podUid()),
-            request -> !tasks.hasClosingIntent(request.taskId()));
+            tasks::createBuildIfAllowed);
     }
 
     @Bean

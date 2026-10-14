@@ -431,6 +431,7 @@ class AgentTaskServiceTest {
         try (Harness h = new Harness()) {
             h.submit();
             h.insertBoundBuildCall("call-build", "manao-dev-x");
+            h.tasks.markToolCallNeedsAttention(h.taskId, "call-build");
             org.mockito.Mockito.when(h.builds.close(org.mockito.ArgumentMatchers.any(),
                     org.mockito.ArgumentMatchers.any()))
                 .thenReturn(new AgentContracts.BuildResult(
@@ -444,10 +445,88 @@ class AgentTaskServiceTest {
     }
 
     @Test
+    void aBoundRunningClaimBlocksReleaseUntilTheExecutingThreadSettles() throws Exception {
+        try (Harness h = new Harness()) {
+            h.submit();
+            CountDownLatch bound = new CountDownLatch(1);
+            CountDownLatch settle = new CountDownLatch(1);
+            org.mockito.Mockito.when(h.builds.build(org.mockito.ArgumentMatchers.any())).thenAnswer(invocation -> {
+                h.tasks.bindToolCallIdentity(h.taskId, "call-build", "manao-dev-x", "uid-job", "uid-pod");
+                bound.countDown();
+                assertThat(settle.await(10, TimeUnit.SECONDS)).isTrue();
+                return new AgentContracts.BuildResult(
+                    new AgentContracts.BuildIdentity("manao-dev-x", "uid-job", "uid-pod"),
+                    0, "Completed", "", false, List.of(), true);
+            });
+            org.mockito.Mockito.when(h.builds.close(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
+                .thenReturn(new AgentContracts.BuildResult(
+                    new AgentContracts.BuildIdentity("manao-dev-x", "uid-job", "uid-pod"),
+                    null, "BUILD_CLOSED", "", false, List.of(), true));
+            ExecutorService pool = Executors.newSingleThreadExecutor();
+            try {
+                Future<?> builder = pool.submit(() -> h.service.invokeTool(h.taskId, "call-build", INSTANCE,
+                    h.rowEpoch(), new ToolRequest("call-build", "build", 7,
+                        JSON.createObjectNode().put("goal", "compile"))));
+                assertThat(bound.await(5, TimeUnit.SECONDS)).isTrue();
+                h.service.close(h.taskId, "AI_CLOSED", "close while bound execution is paused");
+                assertThat(h.rowState()).isEqualTo("NEEDS_ATTENTION");
+                assertThat(h.callRowState("call-build")).isEqualTo("RUNNING");
+                settle.countDown();
+                builder.get(5, TimeUnit.SECONDS);
+                h.service.close(h.taskId, "AI_CLOSED", "retry after settlement");
+                assertThat(h.rowState()).isEqualTo("FAILED");
+            } finally {
+                settle.countDown();
+                pool.shutdownNow();
+            }
+        }
+    }
+
+    @Test
+    void aClaimNewerThanTheEvidenceSnapshotIsReReadBeforeRelease() throws Exception {
+        try (Harness h = new Harness()) {
+            h.submit();
+            h.insertUnrecordedBuildCall("call-build", "REGISTERED");
+            var snapshotTaken = new CountDownLatch(1);
+            var claimDone = new CountDownLatch(1);
+            var pool = Executors.newSingleThreadExecutor();
+            try {
+                var claimant = pool.submit(() -> {
+                    assertThat(snapshotTaken.await(5, TimeUnit.SECONDS)).isTrue();
+                    assertThat(h.tasks.markToolCallRunning(h.taskId, "call-build")).isTrue();
+                    claimDone.countDown();
+                    return null;
+                });
+                var stale = h.tasks.unsettledCalls(h.taskId);
+                snapshotTaken.countDown();
+                assertThat(claimDone.await(5, TimeUnit.SECONDS)).isTrue();
+                claimant.get(5, TimeUnit.SECONDS);
+                // Inject only the stale read, not the DB claim or release decision.
+                var tasks = org.mockito.Mockito.spy(h.tasks);
+                org.mockito.Mockito.doReturn(stale).when(tasks).unsettledCalls(h.taskId);
+                var store = new WorkspaceJdbcStore(h.jdbc,
+                    new DataSourceTransactionManager(h.jdbc.getDataSource()));
+                var operations = new WorkspaceOperationService(store, h.agent, h.gate);
+                var workspace = new WorkspaceService(store, operations, h.agent, h.gate, tasks);
+                var tools = new AgentProjectTools(tasks, store, workspace, operations, h.gate, h.builds);
+                var service = new AgentTaskService(tasks, h.gate, h.worker, tools,
+                    new AiProperties(true, "", null, null));
+                service.close(h.taskId, "AI_CLOSED", "stale snapshot must not release");
+                assertThat(h.rowState()).isEqualTo("NEEDS_ATTENTION");
+                assertThat(h.callRowState("call-build")).isEqualTo("RUNNING");
+                assertThat(h.tasks.markToolCallRunning(h.taskId, "call-build")).isFalse();
+            } finally {
+                pool.shutdownNow();
+            }
+        }
+    }
+
+    @Test
     void closeKeepsTheTaskOccupiedWhenTheBuildCleanupIsNotConfirmed() {
         try (Harness h = new Harness()) {
             h.submit();
             h.insertBoundBuildCall("call-build", "manao-dev-x");
+            h.tasks.markToolCallNeedsAttention(h.taskId, "call-build");
             org.mockito.Mockito.when(h.builds.close(org.mockito.ArgumentMatchers.any(),
                     org.mockito.ArgumentMatchers.any()))
                 .thenReturn(new AgentContracts.BuildResult(

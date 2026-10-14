@@ -194,12 +194,17 @@ public final class AgentTaskService {
         } catch (RuntimeException ex) {
             // The worker may already be gone; the marker already blocks new calls.
         }
-        if (!tools.finishForClose(taskId)) {
-            // Evidence is still unknown: the task stays NEEDS_ATTENTION/AI_CLOSING and
-            // the project stays occupied until a later close finishes the evidence.
-            return;
+        try (ProjectLifecycleGate.Lease lease = lifecycle.tryAcquire(owner.projectId()).orElseThrow(
+                () -> new ApiException("PROJECT_BUSY", 409, "Project is busy"))) {
+            // Lock order is gate -> store monitor. Build creation never takes the gate.
+            // Re-read claims, prove cluster absence and release in one atomic interval.
+            synchronized (tasks) {
+                if (!tools.finishForClose(taskId)) {
+                    return;
+                }
+                tasks.failClosedTask(taskId, failureCode, summary);
+            }
         }
-        tasks.failClosedTask(taskId, failureCode, summary);
     }
 
     private void requireProjectEnabled(String projectId) {

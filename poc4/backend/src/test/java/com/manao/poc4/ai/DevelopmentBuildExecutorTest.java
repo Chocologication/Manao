@@ -127,7 +127,7 @@ class DevelopmentBuildExecutorTest {
             new JobResourceFactory.RunResources(8000, 16L * 1024 * 1024 * 1024, 10L * 1024 * 1024 * 1024),
             IMAGE, "registry.example/manao/python-runner@sha256:" + "b".repeat(64));
         executor = new Fabric8DevelopmentBuildExecutor(client, factory, NS, (ignored, identity) -> boundIdentities.add(identity),
-            request -> true, Clock.systemUTC(), 10, 5, 5);
+            (request, create) -> create.get(), Clock.systemUTC(), 10, 5, 5);
     }
 
     @AfterEach
@@ -352,7 +352,7 @@ class DevelopmentBuildExecutorTest {
         Pod pod = seedPod(job.getMetadata().getName(), job.getMetadata().getUid(), null, null);
         seedLog(pod.getMetadata().getName(), "[INFO] still compiling...\n");
         executor = new Fabric8DevelopmentBuildExecutor(client, factory, NS, (ignored, identity) -> boundIdentities.add(identity),
-            request -> true, Clock.systemUTC(), 10, 1, 1);
+            (request, create) -> create.get(), Clock.systemUTC(), 10, 1, 1);
 
         BuildResult result = executor.build(request());
 
@@ -409,7 +409,7 @@ class DevelopmentBuildExecutorTest {
             boundIdentities.add(identity);
             bound.countDown();
             // A long poll keeps the wait inside its sleep when the interrupt arrives.
-        }, request -> true, Clock.systemUTC(), 200, 60, 5);
+        }, (request, create) -> create.get(), Clock.systemUTC(), 200, 60, 5);
         AtomicReference<Throwable> thrown = new AtomicReference<>();
         Thread waiter = new Thread(() -> {
             try {
@@ -500,7 +500,7 @@ class DevelopmentBuildExecutorTest {
             client.batch().v1().jobs().inNamespace(NS).withName(identity.jobName()).delete();
             client.batch().v1().jobs().inNamespace(NS)
                 .resource(factory.createDevelopmentJob(request())).create();
-        }, request -> true, Clock.systemUTC(), 10, 30, 5);
+        }, (request, create) -> create.get(), Clock.systemUTC(), 10, 30, 5);
 
         assertThatThrownBy(() -> executor.build(request())).isInstanceOf(IllegalStateException.class);
         // The refused evidence was not destroyed.
@@ -655,12 +655,64 @@ class DevelopmentBuildExecutorTest {
     }
 
     @Test
+    void anEarlierAllowedReadCannotAuthorizeCreationAfterCloseOrTerminal() throws Exception {
+        try (var db = com.manao.poc4.persistence.JdbcStoreTestSupport.create()) {
+            var jdbc = db.jdbc();
+            var now = new java.sql.Timestamp(System.currentTimeMillis());
+            String taskId = java.util.UUID.randomUUID().toString();
+            jdbc.update("INSERT INTO app_user(id, username, password_hash, created_at) VALUES ('build-owner', 'build-owner', 'unused', ?)", now);
+            jdbc.update("INSERT INTO project(id, owner_id, name, state, workspace_revision, created_at, updated_at) VALUES (?, 'build-owner', 'build', 'READY', 7, ?, ?)", PROJECT, now, now);
+            var tasks = new AgentTaskStore(jdbc,
+                new org.springframework.jdbc.datasource.DataSourceTransactionManager(jdbc.getDataSource()), Clock.systemUTC());
+            tasks.create("build-owner", PROJECT, new AgentContracts.TaskRequest(taskId, "build", 7));
+            tasks.registerToolCall(taskId, CALL, "a".repeat(64), "build", "{\"goal\":\"test\"}", 7, COMMAND);
+            assertThat(tasks.markToolCallRunning(taskId, CALL)).isTrue();
+            BuildRequest request = new BuildRequest(taskId, CALL, PROJECT, COMMAND, 7, BuildGoal.TEST);
+            var readAllowed = new java.util.concurrent.CountDownLatch(1);
+            var resume = new java.util.concurrent.CountDownLatch(1);
+            executor = new Fabric8DevelopmentBuildExecutor(client, factory, NS, (ignored, identity) -> {},
+                (candidate, create) -> {
+                    boolean allowed = !tasks.hasClosingIntent(taskId);
+                    readAllowed.countDown();
+                    try {
+                        assertThat(resume.await(10, TimeUnit.SECONDS)).isTrue();
+                    } catch (InterruptedException ex) {
+                        throw new IllegalStateException(ex);
+                    }
+                    assertThat(allowed).isTrue();
+                    return tasks.createBuildIfAllowed(candidate, create);
+                }, Clock.systemUTC(), 10, 0, 1);
+            var pool = java.util.concurrent.Executors.newSingleThreadExecutor();
+            try {
+                var pending = pool.submit(() -> executor.build(request));
+                assertThat(readAllowed.await(5, TimeUnit.SECONDS)).isTrue();
+                tasks.beginClose(taskId);
+                resume.countDown();
+                assertThat(pending.get(10, TimeUnit.SECONDS).terminationReason()).isEqualTo("BUILD_CLOSING_ABORTED");
+                // The same late execution is refused even after the close marker is gone.
+                tasks.markToolCallNeedsAttention(taskId, CALL);
+                assertThat(tasks.failClosedTask(taskId, "AI_CLOSED", "closed")).isTrue();
+                assertThat(tasks.hasClosingIntent(taskId)).isTrue();
+                executor = new Fabric8DevelopmentBuildExecutor(client, factory, NS,
+                    (ignored, identity) -> boundIdentities.add(identity), tasks::createBuildIfAllowed,
+                    Clock.systemUTC(), 10, 0, 1);
+                assertThat(executor.build(request).terminationReason()).isEqualTo("BUILD_CLOSING_ABORTED");
+                assertThat(boundIdentities).isEmpty();
+                assertThat(client.batch().v1().jobs().inNamespace(NS).list().getItems()).isEmpty();
+            } finally {
+                resume.countDown();
+                pool.shutdownNow();
+            }
+        }
+    }
+
+    @Test
     void theClosingFenceForbidsJobCreationAndSettlesWithoutSideEffects() {
         // A build claimed before the close but paused before its create: the executor
         // re-evaluates the fence at the LAST point and must not create any Job.
         executor = new Fabric8DevelopmentBuildExecutor(client, factory, NS,
             (ignored, identity) -> boundIdentities.add(identity),
-            request -> false, Clock.systemUTC(), 10, 5, 5);
+            (request, create) -> null, Clock.systemUTC(), 10, 5, 5);
 
         BuildResult result = executor.build(request());
 
