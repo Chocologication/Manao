@@ -431,6 +431,44 @@ public class RunControllerTest {
         }
     }
 
+    /**
+     * Entry-point occupancy behavior against the REAL agent task store: while a task owns the
+     * project, Run.start refuses inside its gate critical section before any run row exists
+     * and before the Job coordinator is touched, and starting works again once the task
+     * settles. Wiring the real store's occupancy makes this test fail if the production guard
+     * call disappears.
+     */
+    @Nested
+    class AgentTaskOccupancyBehavior {
+        @Test
+        void startRefusesWhileAnAgentTaskOwnsTheProjectThenWorksAgainAfterItSettles() {
+            try (com.manao.poc4.ai.AgentTaskOccupancyFixture fixture =
+                     com.manao.poc4.ai.AgentTaskOccupancyFixture.open(PROJECT, ALICE, 12)) {
+                String taskId = fixture.occupy("change demo");
+                RunService service = new RunService(store, coordinator, RunControllerTest.policy(),
+                    new com.manao.poc4.project.ProjectLifecycleGate(), fixture.occupancy(),
+                    runtimeStore, dependencies, endpoints);
+                RunController occupiedController = new RunController(service);
+                assertThatThrownBy(() -> occupiedController.start(auth(ALICE), PROJECT,
+                        new RunController.StartRunRequest("12")))
+                    .isInstanceOfSatisfying(ApiException.class, ex -> {
+                        assertThat(ex.code()).isEqualTo("AI_TASK_ACTIVE");
+                        assertThat(ex.status()).isEqualTo(409);
+                    });
+                // Refused before any durable run and before any coordinator call.
+                assertThat(store.runs).isEmpty();
+                assertThat(coordinator.ensureJobCalls).isEmpty();
+                fixture.release(taskId);
+
+                RunSummary summary = occupiedController.start(auth(ALICE), PROJECT,
+                    new RunController.StartRunRequest("12"));
+                assertThat(summary.state()).isEqualTo("STARTING");
+                assertThat(store.runs).hasSize(1);
+                assertThat(coordinator.ensureJobCalls).hasSize(1);
+            }
+        }
+    }
+
     public static org.springframework.security.core.Authentication auth(String userId) {
         return new org.springframework.security.authentication.UsernamePasswordAuthenticationToken(userId, "n/a");
     }
