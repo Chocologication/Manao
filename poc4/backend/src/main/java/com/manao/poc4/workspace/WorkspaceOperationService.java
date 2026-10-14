@@ -71,10 +71,11 @@ public final class WorkspaceOperationService {
      * revision without touching the agent again, and a PENDING one is settled from the agent's
      * durable receipt alone (no digest recomputation, no second mutate). For a first execution,
      * {@code expectedSha256} pins the optimistic-write contract: non-null must match the live
-     * file's sha256, null must find the path absent (the agent's SAVE then creates the file and
-     * its parent directories and the before digest is the explicit absent digest). Deterministic
-     * rejections throw before any durable registration; ambiguity fails closed. The caller must
-     * hold the project lifecycle lease (reentrant), as {@link #apply} does.
+     * file's sha256, null must find the path absent — the agent's definite 404 for a missing
+     * file is converted to the explicit absent digest HERE ONLY (the browser save keeps
+     * refusing it), and the agent's SAVE then creates the file and its parent directories.
+     * Deterministic rejections throw before any durable registration; ambiguity fails closed.
+     * The caller must hold the project lifecycle lease (reentrant), as {@link #apply} does.
      */
     public long applyAgentSave(String projectId, String operationId, String path, byte[] content,
                                long expectedRevision, String expectedSha256) {
@@ -85,7 +86,21 @@ public final class WorkspaceOperationService {
             if (registered.isPresent()) {
                 return settleRegisteredAgentSave(projectId, registered.get());
             }
-            Digests digests = computeDigests(projectId, "SAVE", path, null, null, content);
+            Digests digests;
+            try {
+                digests = computeDigests(projectId, "SAVE", path, null, null, content);
+            } catch (ApiException ex) {
+                if (!"ENTRY_NOT_FOUND".equals(ex.code())) {
+                    throw ex;
+                }
+                // The agent transport reports a missing file as a definite ENTRY_NOT_FOUND (HTTP
+                // 404), not a null meta. Only this AI save entry converts that verified absence
+                // into the explicit absent digest so first-time creation works; the browser save
+                // keeps refusing it. With expectedSha256 set, the comparison below still refuses
+                // (absent never equals the pinned file digest) and Pi re-reads.
+                digests = new Digests(entryDigest("absent", path, null),
+                    entryDigest("file", path, sha256Hex(content)));
+            }
             String expectedBefore = expectedSha256 == null
                 ? entryDigest("absent", path, null)
                 : entryDigest("file", path, expectedSha256);

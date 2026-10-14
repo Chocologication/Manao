@@ -189,10 +189,15 @@ public final class AgentProjectTools {
     private AgentContracts.ToolResult listFiles(AgentTaskStore.TaskOwner owner, AgentContracts.ToolRequest request) {
         String directory = toolDirectory(request.args().path("directory").asText(""));
         WorkspaceAgent.Tree tree = workspace.tree(owner.ownerId(), owner.projectId(), directory);
-        boolean hasMore = tree.entries().size() > MAX_LIST_ENTRIES;
+        // The listing may only show what a read of the same path would answer: every entry is
+        // filtered through the policy + allowlist gate BEFORE the entry and byte caps apply.
+        List<WorkspaceAgent.TreeEntry> visible = tree.entries().stream()
+            .filter(entry -> toolReadable(entry.path()))
+            .toList();
+        boolean hasMore = visible.size() > MAX_LIST_ENTRIES;
         ObjectNode data = JSON.createObjectNode();
         data.put("directory", directory);
-        data.set("entries", (ArrayNode) JSON.valueToTree(tree.entries()));
+        data.set("entries", (ArrayNode) JSON.valueToTree(visible));
         data.put("hasMore", hasMore);
         return fittedListResult(new AgentContracts.ToolResult(request.toolCallId(),
             revisionOf(owner.projectId()), data, hasMore));
@@ -204,7 +209,7 @@ public final class AgentProjectTools {
         ArrayNode entries = (ArrayNode) data.withArray("entries");
         boolean truncated = false;
         while (entries.size() > MAX_LIST_ENTRIES
-            || (!entries.isEmpty() && jsonOf(result).length() > MAX_RESULT_BYTES)) {
+            || (!entries.isEmpty() && utf8JsonBytes(result) > MAX_RESULT_BYTES)) {
             entries.remove(entries.size() - 1);
             data.put("hasMore", true);
             truncated = true;
@@ -231,7 +236,7 @@ public final class AgentProjectTools {
             .put("sha256", content.sha256());
         AgentContracts.ToolResult result = new AgentContracts.ToolResult(request.toolCallId(),
             revisionOf(owner.projectId()), data, false);
-        if (jsonOf(result).length() > MAX_RESULT_BYTES) {
+        if (utf8JsonBytes(result) > MAX_RESULT_BYTES) {
             throw new ApiException("AI_RESULT_TOO_LARGE", 422,
                 "The file content does not fit the bounded tool result");
         }
@@ -316,6 +321,16 @@ public final class AgentProjectTools {
         return directory;
     }
 
+    /** One gate for "may the tools access this project-relative path at all": policy + allowlist. */
+    static boolean toolReadable(String path) {
+        try {
+            WorkspacePathPolicy.validateRelativePath(path);
+        } catch (WorkspacePathPolicy.InvalidPathException ex) {
+            return false;
+        }
+        return toolAllowlist(path);
+    }
+
     /**
      * The stage-one tool allowlist, fixed in trusted code (design section 4): build scripts,
      * sources and ordinary top-level text documents. Beyond the allowlist it denies the
@@ -377,6 +392,11 @@ public final class AgentProjectTools {
         } catch (JsonProcessingException ex) {
             throw new IllegalStateException("cannot serialize the tool result", ex);
         }
+    }
+
+    /** The 192 KiB bound is on the stored JSON's UTF-8 bytes, not its UTF-16 length. */
+    private static int utf8JsonBytes(AgentContracts.ToolResult result) {
+        return jsonOf(result).getBytes(StandardCharsets.UTF_8).length;
     }
 
     private static String sha256Hex(byte[] bytes) {

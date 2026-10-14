@@ -11,6 +11,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.manao.poc4.ai.AgentContracts.TaskRequest;
@@ -265,6 +266,29 @@ class AgentProjectToolsTest {
     }
 
     @Test
+    void agentSaveCreatesMissingFilesThroughTheAgent404Path() {
+        try (Harness env = new Harness()) {
+            // The real adapter reports a missing file as a definite agent 404 (ENTRY_NOT_FOUND
+            // WorkspaceAgentException), never as a null meta: the AI save entry must convert
+            // exactly that response into the absent digest or first-time creation can never work.
+            String newPath = "src/main/java/com/example/app/Created.java";
+            when(env.agent.meta(PROJECT, newPath))
+                .thenThrow(new WorkspaceAgentException(404, "ENTRY_NOT_FOUND", "entry does not exist"));
+            env.stubMutateEcho();
+
+            ToolResult result = env.tools.invoke(env.taskId,
+                env.writeRequest("call-create-404", newPath, "class Created {}", null, 7));
+
+            assertThat(result.workspaceRevision()).isEqualTo("8");
+            assertThat(result.data().path("sha256").asText()).isEqualTo(env.sha256Hex("class Created {}"));
+            ArgumentCaptor<WorkspaceAgent.Command> command = ArgumentCaptor.forClass(WorkspaceAgent.Command.class);
+            verify(env.agent).mutate(eq(PROJECT), command.capture());
+            assertThat(command.getValue().expectedBeforeSha256()).isEqualTo(env.entryDigest("absent", newPath, null));
+            assertThat(env.revision()).isEqualTo(8L);
+        }
+    }
+
+    @Test
     void staleExpectedRevisionIsAPersistedRejectionWithoutAgentWrite() {
         try (Harness env = new Harness()) {
             env.stubLiveFile(PATH, "class DemoController {\n}\n");
@@ -343,6 +367,27 @@ class AgentProjectToolsTest {
     }
 
     @Test
+    void readResultEnvelopeIsMeasuredInUtf8BytesNotChars() {
+        try (Harness env = new Harness()) {
+            // 86 072 escaped newlines + 15 000 CJK chars: the raw file is exactly 128 KiB and the
+            // result stays under 192 KiB in UTF-16 chars, yet its UTF-8 JSON exceeds the
+            // envelope — the bound is bytes, so this compliant-looking file is still rejected.
+            String content = "\n".repeat(86072) + "中".repeat(15000);
+            String sha = env.sha256Hex(content);
+            when(env.agent.meta(PROJECT, "src/main/Mixed.java")).thenReturn(new WorkspaceAgent.FileMeta(
+                "src/main/Mixed.java", "Mixed.java", (long) content.getBytes(StandardCharsets.UTF_8).length,
+                "text/plain", "UTF-8", "java", "MONACO_TEXT", null, sha));
+            when(env.agent.content(PROJECT, "src/main/Mixed.java"))
+                .thenReturn(new WorkspaceAgent.Content("src/main/Mixed.java", content, sha));
+
+            ToolResult result = env.tools.invoke(env.taskId, env.readRequest("call-utf8", "src/main/Mixed.java"));
+
+            assertThat(result.data().path("error").path("code").asText()).isEqualTo("AI_RESULT_TOO_LARGE");
+            assertThat(env.rowState("call-utf8")).isEqualTo("COMPLETED");
+        }
+    }
+
+    @Test
     void listFilesCapsAt200EntriesAndRefusesForbiddenDirectories() {
         try (Harness env = new Harness()) {
             List<WorkspaceAgent.TreeEntry> entries = new ArrayList<>();
@@ -359,6 +404,42 @@ class AgentProjectToolsTest {
 
             ToolResult forbidden = env.tools.invoke(env.taskId, env.listRequest("call-list-git", ".git"));
             assertThat(forbidden.data().path("error").path("code").asText()).isEqualTo("PATH_FORBIDDEN");
+        }
+    }
+
+    @Test
+    void listFilesFiltersForbiddenEntriesBeforeCapsApply() {
+        try (Harness env = new Harness()) {
+            List<WorkspaceAgent.TreeEntry> entries = new ArrayList<>();
+            for (int i = 0; i < 205; i++) {
+                entries.add(new WorkspaceAgent.TreeEntry("src/F" + i + ".java", "F" + i + ".java", "file", false, 10L, null));
+            }
+            entries.add(new WorkspaceAgent.TreeEntry("src/target/classes/A.class", "A.class", "file", false, 10L, null));
+            entries.add(new WorkspaceAgent.TreeEntry("src/.manao/cache/x", "x", "file", true, 10L, null));
+            entries.add(new WorkspaceAgent.TreeEntry("src/server.pem", "server.pem", "file", false, 10L, null));
+            when(env.agent.tree(PROJECT, "src")).thenReturn(new WorkspaceAgent.Tree("src", entries));
+
+            ToolResult listed = env.tools.invoke(env.taskId, env.listRequest("call-filter", "src"));
+
+            // Filtering runs BEFORE the 200 cap: the forbidden entries are invisible and the
+            // remaining allowed entries fill the page.
+            assertThat(listed.data().path("entries").size()).isEqualTo(200);
+            assertThat(listed.data().path("hasMore").asBoolean()).isTrue();
+            for (JsonNode entry : listed.data().path("entries")) {
+                assertThat(entry.path("path").asText())
+                    .doesNotContain("target").doesNotContain(".manao").doesNotContain(".pem");
+            }
+
+            // Forbidden entries do not count toward hasMore: a small directory with noise in it
+            // reads as fully browsable.
+            when(env.agent.tree(PROJECT, "")).thenReturn(new WorkspaceAgent.Tree("", List.of(
+                new WorkspaceAgent.TreeEntry("notes.md", "notes.md", "file", false, 10L, null),
+                new WorkspaceAgent.TreeEntry("target", "target", "directory", false, null, true),
+                new WorkspaceAgent.TreeEntry(".env", ".env", "file", false, 10L, null))));
+            ToolResult small = env.tools.invoke(env.taskId, env.listRequest("call-filter-small", ""));
+            assertThat(small.data().path("entries").size()).isEqualTo(1);
+            assertThat(small.data().path("entries").get(0).path("path").asText()).isEqualTo("notes.md");
+            assertThat(small.data().path("hasMore").asBoolean()).isFalse();
         }
     }
 
