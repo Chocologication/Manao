@@ -39,4 +39,12 @@ public interface DevelopmentBuildExecutor {
      */
     AgentContracts.BuildResult close(AgentContracts.BuildRequest request,
                                      AgentContracts.BuildIdentity identity);
+
+    /**
+     * Answers whether a build side effect may exist under this call's stable commandId at
+     * all. False ONLY after a successful cluster query that proves no Job was ever created
+     * under the deterministic name (and no stray pod remains); true when a Job exists or
+     * the answer is unclear, so an uncertain answer never releases a project.
+     */
+    boolean hasRecordedSideEffect(AgentContracts.BuildRequest request);
 }

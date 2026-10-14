@@ -204,23 +204,15 @@ public final class AgentProjectTools {
         for (AgentTaskStore.ToolCallRow row : unsettled) {
             if ("build".equals(row.toolName())) {
                 if (row.jobName() == null) {
-                    if ("RUNNING".equals(row.state())) {
-                        // Started before the identity binding landed: observe by the
-                        // deterministic name — never create, never re-execute. The
-                        // evidence stays unknown when the observation cannot confirm
-                        // the cleanup.
-                        AgentContracts.BuildResult observed;
-                        try {
-                            observed = builds.observe(buildRequestOf(owner, row),
-                                new AgentContracts.BuildIdentity(null, null, null));
-                        } catch (RuntimeException ex) {
-                            return false;
-                        }
-                        if (observed == null || !observed.cleanupConfirmed()) {
-                            return false;
-                        }
+                    // No recorded identity: the build MAY have started and died before
+                    // its identity was bound — a NEEDS_ATTENTION marker alone proves
+                    // nothing. Only a successful cluster query that proves no Job (and
+                    // no stray pod) was ever created under the stable commandId may
+                    // release; a live or vanished build, or an unclear answer, stays
+                    // unknown and blocks the release.
+                    if (builds.hasRecordedSideEffect(buildRequestOf(owner, row))) {
+                        return false;
                     }
-                    // REGISTERED without an identity never started: nothing in the cluster.
                 } else {
                     AgentContracts.BuildResult closed;
                     try {

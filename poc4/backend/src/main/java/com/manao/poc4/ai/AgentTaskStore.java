@@ -448,6 +448,39 @@ public final class AgentTaskStore implements AgentTaskOccupancy {
             state.name(), summary, failureCode, Timestamp.from(clock.instant()), taskId) > 0;
     }
 
+    /** The close flow's marker failure code; a close may only release from its own marker. */
+    public static final String CLOSING_MARKER = "AI_CLOSING";
+
+    /** The close-flow entry state: START armed the marker now, RETRY re-enters an already armed close, SETTLED means nothing to release. */
+    public enum CloseEntry { START, RETRY, SETTLED }
+
+    /**
+     * The close flow's gate-protected entry. A QUEUED/RUNNING task is marked
+     * NEEDS_ATTENTION with the AI_CLOSING marker (START), which refuses every new
+     * tool-call registration while the evidence is finished. A task already marked
+     * AI_CLOSING by an earlier close whose evidence could not be finished answers
+     * RETRY — the close may be re-driven until it provably succeeds. Anything else is
+     * SETTLED: an already released task never re-enters the flow.
+     */
+    public CloseEntry beginClose(String taskId) {
+        if (markClosing(taskId)) {
+            return CloseEntry.START;
+        }
+        List<Row> rows = jdbc.query(
+            "SELECT state, failure_code FROM agent_task WHERE id = ?",
+            (rs, row) -> new Row(rs.getString(1), rs.getString(2)), taskId);
+        if (rows.isEmpty()) {
+            throw new ApiException("AI_TASK_NOT_FOUND", 404, "Task not found");
+        }
+        if ("NEEDS_ATTENTION".equals(rows.get(0).state())
+            && CLOSING_MARKER.equals(rows.get(0).failureCode())) {
+            return CloseEntry.RETRY;
+        }
+        return CloseEntry.SETTLED;
+    }
+
+    private record Row(String state, String failureCode) { }
+
     /**
      * The close flow's first, gate-protected step: a QUEUED/RUNNING task becomes
      * NEEDS_ATTENTION with the AI_CLOSING marker, which refuses every new tool-call
@@ -456,10 +489,10 @@ public final class AgentTaskStore implements AgentTaskOccupancy {
      */
     public boolean markClosing(String taskId) {
         return jdbc.update("""
-                UPDATE agent_task SET state = 'NEEDS_ATTENTION', failure_code = 'AI_CLOSING', updated_at = ?
+                UPDATE agent_task SET state = 'NEEDS_ATTENTION', failure_code = ?, updated_at = ?
                 WHERE id = ? AND state IN ('QUEUED', 'RUNNING')
                 """,
-            Timestamp.from(clock.instant()), taskId) > 0;
+            CLOSING_MARKER, Timestamp.from(clock.instant()), taskId) > 0;
     }
 
     /** The close flow's final step: only its own AI_CLOSING marker releases the project. */

@@ -24,7 +24,7 @@ public record ApiError(String code, String message, String traceId) {
         "AI_RESULT_TOO_LARGE",
         "AI_PROGRESS_MISMATCH", "AI_PROGRESS_TOO_LARGE",
         "AI_EPOCH_MISMATCH", "AI_INSTANCE_MISMATCH",
-        "AI_REQUEST_TOO_LARGE",
+        "AI_REQUEST_TOO_LARGE", "AI_PROJECT_NOT_ENABLED",
         "AI_WORKER_NOT_CONFIGURED", "AI_WORKER_CONFLICT", "AI_WORKER_UNREACHABLE",
         "AI_WORKER_BAD_RESPONSE", "AI_WORKER_ERROR");
 
@@ -79,6 +79,7 @@ public record ApiError(String code, String message, String traceId) {
             case "AI_EPOCH_MISMATCH" -> "The worker epoch does not match the task";
             case "AI_INSTANCE_MISMATCH" -> "The task is bound to another worker instance";
             case "AI_REQUEST_TOO_LARGE" -> "The request body exceeds the bounded size";
+            case "AI_PROJECT_NOT_ENABLED" -> "Project not found";
             case "AI_WORKER_NOT_CONFIGURED" -> "The worker has no model configuration";
             case "AI_WORKER_CONFLICT" -> "The worker refused the request as a conflict";
             case "AI_WORKER_UNREACHABLE" -> "The worker could not be reached";

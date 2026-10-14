@@ -103,11 +103,24 @@ public final class AgentTaskService {
             // Unreachable or transient: fall through to the explicit reconciliation below.
         }
         try {
-            // The start response was lost: ask the worker about the ORIGINAL task. A
-            // running (or even already settled) session is bound under the current
-            // epoch, so its callbacks are accepted instead of silently refused.
+            // The start response was lost: ask the worker about the ORIGINAL task and
+            // branch on the reported state — never blindly bind RUNNING over a worker
+            // that already settled.
             WorkerStatus status = worker.status(taskId);
-            tasks.bindWorkerInstance(taskId, epoch, status.instanceId());
+            if ("RUNNING".equals(status.state())) {
+                // A running session is bound under the current epoch, so its callbacks
+                // are accepted instead of silently refused.
+                tasks.bindWorkerInstance(taskId, epoch, status.instanceId());
+            } else if ("COMPLETED".equals(status.state()) || "FAILED".equals(status.state())) {
+                // The worker settled but no terminal ever reached the ledger durably:
+                // no outcome is fabricated and RUNNING is never bound over the settled
+                // worker — the explicit undecided state (occupied, new calls refused)
+                // only the re-entrant close flow can resolve.
+                tasks.beginClose(taskId);
+            }
+            // An unclear state leaves the task QUEUED with its persisted epoch, an
+            // explicit undecided state that only a re-drive of the same request or the
+            // close flow can resolve.
         } catch (RuntimeException reconcileFailure) {
             // Both calls failed: the task keeps its persisted epoch and stays QUEUED —
             // an explicit undecided state that only a re-drive of the same request or
@@ -156,20 +169,26 @@ public final class AgentTaskService {
      * then the worker is stopped and the evidence is finished. The project is
      * released ONLY when every applicable piece of evidence is provably finished —
      * every workspace file receipt verified through the shared reconcile path and
-     * every recorded build cleanup confirmed. Any unknown state (an unverifiable
-     * receipt, an unconfirmed build cleanup, a close that could not run) keeps the
-     * task NEEDS_ATTENTION with the project occupied; a late terminal can never
-     * release the project first because the release CAS matches only the close's own
-     * marker. Idempotent: an already settled or already closing task is a no-op.
+     * every build proven either closed with confirmed cleanup or never created. Any
+     * unknown state keeps the task NEEDS_ATTENTION with the project occupied, and the
+     * close may be re-driven: a task already marked AI_CLOSING by an earlier close
+     * re-enters the finishing steps until they provably succeed. A late terminal can
+     * never release the project first because the release CAS matches only the
+     * close's own marker. An already settled task is a no-op.
      */
     public void close(String taskId, String failureCode, String summary) {
         AgentTaskStore.TaskOwner owner = tasks.taskOwner(taskId);
+        AgentTaskStore.CloseEntry entry;
         try (ProjectLifecycleGate.Lease lease = lifecycle.tryAcquire(owner.projectId()).orElseThrow(
                 () -> new ApiException("PROJECT_BUSY", 409, "Project is busy"))) {
-            if (!tasks.markClosing(taskId)) {
-                return;
-            }
+            entry = tasks.beginClose(taskId);
         }
+        if (entry == AgentTaskStore.CloseEntry.SETTLED) {
+            return;
+        }
+        // START (marker armed now) or RETRY (an earlier close left the evidence
+        // unknown): re-drive the finishing idempotently — the worker stop and every
+        // evidence check may repeat until they provably succeed.
         try {
             worker.stop(taskId);
         } catch (RuntimeException ex) {
@@ -177,7 +196,7 @@ public final class AgentTaskService {
         }
         if (!tools.finishForClose(taskId)) {
             // Evidence is still unknown: the task stays NEEDS_ATTENTION/AI_CLOSING and
-            // the project stays occupied until a later close can finish the evidence.
+            // the project stays occupied until a later close finishes the evidence.
             return;
         }
         tasks.failClosedTask(taskId, failureCode, summary);

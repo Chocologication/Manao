@@ -147,6 +147,24 @@ public final class Fabric8DevelopmentBuildExecutor implements DevelopmentBuildEx
             null, "BUILD_CLOSED", log.text(), log.truncated(), parseReports(log.text()), cleanupConfirmed);
     }
 
+    /**
+     * The negative proof the close flow needs for a call whose identity was never bound:
+     * a successful query under the deterministic job name plus the commandId pod sweep
+     * that finds NOTHING proves the build was never created. A found Job, a vanished
+     * witness, or any API failure answers true — an unclear answer never releases.
+     */
+    @Override public boolean hasRecordedSideEffect(AgentContracts.BuildRequest request) {
+        String jobName = JobResourceFactory.developmentJobName(request.commandId());
+        try {
+            if (client.batch().v1().jobs().inNamespace(namespace).withName(jobName).get() != null) {
+                return true;
+            }
+            return !buildPods(request.commandId()).isEmpty();
+        } catch (KubernetesClientException apiFailure) {
+            return true;
+        }
+    }
+
     private static AgentContracts.BuildResult unresolved(String jobName, String jobUid, String podUid,
                                                          String reason) {
         return new AgentContracts.BuildResult(

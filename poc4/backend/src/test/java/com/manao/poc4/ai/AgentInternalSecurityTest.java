@@ -159,6 +159,57 @@ class AgentInternalSecurityTest {
     }
 
     @Test
+    void aStreamedBodyWithoutContentLengthIsCountedAndRefusedBeforeHandlers()
+        throws jakarta.servlet.ServletException, java.io.IOException {
+        // A lying/missing declaration changes nothing: the filter pre-reads the real
+        // bytes and refuses before any handler runs.
+        InternalBodyLimitFilter filter = new InternalBodyLimitFilter();
+        org.springframework.mock.web.MockHttpServletRequest request =
+            new org.springframework.mock.web.MockHttpServletRequest("POST", "/internal/ai/probe");
+        request.setContent(new byte[600 * 1024]);
+        org.springframework.mock.web.MockHttpServletResponse response =
+            new org.springframework.mock.web.MockHttpServletResponse();
+        java.util.concurrent.atomic.AtomicBoolean chainReached = new java.util.concurrent.atomic.AtomicBoolean(false);
+        filter.doFilter(request, response,
+            (servletRequest, servletResponse) -> chainReached.set(true));
+        assertThat(response.getStatus()).isEqualTo(413);
+        assertThat(response.getContentAsString()).contains("AI_REQUEST_TOO_LARGE");
+        assertThat(chainReached).isFalse();
+        // A body within the bound reaches the chain with its exact bytes.
+        org.springframework.mock.web.MockHttpServletRequest small =
+            new org.springframework.mock.web.MockHttpServletRequest("POST", "/internal/ai/probe");
+        small.setContent("hello".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        org.springframework.mock.web.MockHttpServletResponse smallResponse =
+            new org.springframework.mock.web.MockHttpServletResponse();
+        java.util.concurrent.atomic.AtomicReference<byte[]> seen = new java.util.concurrent.atomic.AtomicReference<>();
+        filter.doFilter(small, smallResponse, (servletRequest, servletResponse) -> {
+            chainReached.set(true);
+            seen.set(((jakarta.servlet.http.HttpServletRequest) servletRequest).getInputStream().readAllBytes());
+        });
+        assertThat(chainReached).isTrue();
+        assertThat(new String(seen.get(), java.nio.charset.StandardCharsets.UTF_8)).isEqualTo("hello");
+    }
+
+    @Test
+    void aValidJsonFollowedByPaddingIsRefusedAsOversized() {
+        RUNNER.withPropertyValues("MANAO_JWT_SECRET=" + JWT_SECRET, "MANAO_AI_INTERNAL_TOKEN=internal-token")
+            .run(context -> {
+                MockMvc mvc = mockMvc(context);
+                // Valid JSON up front, hundreds of KiB of legal whitespace after it:
+                // the real byte count, not the JSON validity, decides.
+                String padded = "{\"probe\":\"x\"}" + " ".repeat(600 * 1024);
+                MvcResult result = mvc.perform(
+                        org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                            .post("/internal/ai/probe")
+                            .header("X-Manao-Worker-Token", "internal-token")
+                            .content(padded))
+                    .andReturn();
+                assertThat(result.getResponse().getStatus()).isEqualTo(413);
+                assertThat(result.getResponse().getContentAsString()).contains("AI_REQUEST_TOO_LARGE");
+            });
+    }
+
+    @Test
     void thePublicApiChainKeepsItsOwnerJwtBehavior() {
         RUNNER.withPropertyValues("MANAO_JWT_SECRET=" + JWT_SECRET, "MANAO_AI_INTERNAL_TOKEN=internal-token")
             .run(context -> {

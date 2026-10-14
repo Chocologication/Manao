@@ -54,6 +54,7 @@ class AgentTaskServiceTest {
         boolean unreachable;
         boolean statusBroken;
         String statusInstance = INSTANCE;
+        String statusState = "RUNNING";
         StartBehavior startBehavior = this::defaultStart;
 
         interface StartBehavior {
@@ -79,7 +80,7 @@ class AgentTaskServiceTest {
             if (statusBroken) {
                 throw new ApiException("AI_WORKER_UNREACHABLE", 502, "the worker could not be reached");
             }
-            return new WorkerStatus(taskId, statusInstance, "RUNNING");
+            return new WorkerStatus(taskId, statusInstance, statusState);
         }
 
         @Override public WorkerStatus stop(String taskId) {
@@ -148,6 +149,17 @@ class AgentTaskServiceTest {
                     VALUES (?, ?, ?, 'build', '{"goal":"compile"}', 'RUNNING', ?, 7, ?, 'uid-job', 'uid-pod', ?, ?)
                     """,
                 taskId, callId, "a".repeat(64), "cmd-" + callId, jobName, now, now);
+        }
+
+        /** A build call row whose identity was never bound — the outcome is unknown. */
+        void insertUnrecordedBuildCall(String callId, String state) {
+            Timestamp now = new Timestamp(System.currentTimeMillis());
+            jdbc.update("""
+                    INSERT INTO agent_tool_call(task_id, tool_call_id, request_sha256, tool_name, args_json,
+                        state, workspace_operation_id, expected_revision, created_at, updated_at)
+                    VALUES (?, ?, ?, 'build', '{"goal":"compile"}', ?, ?, 7, ?, ?)
+                    """,
+                taskId, callId, "a".repeat(64), state, "cmd-" + callId, now, now);
         }
 
         TaskRequest request() {
@@ -440,6 +452,81 @@ class AgentTaskServiceTest {
             assertThat(h.rowFailureCode()).isEqualTo("AI_CLOSING");
             assertThatThrownBy(() -> h.tasks.requireBrowserWritable(PROJECT))
                 .isInstanceOfSatisfying(ApiException.class, ex -> assertThat(ex.code()).isEqualTo("AI_TASK_ACTIVE"));
+        }
+    }
+
+    @Test
+    void closeKeepsTheTaskOccupiedWhileAnUnrecordedBuildMayExist() {
+        try (Harness h = new Harness()) {
+            h.submit();
+            // The build started abnormally: no identity was ever bound and the row was
+            // left NEEDS_ATTENTION — the Job may still exist.
+            h.insertUnrecordedBuildCall("call-build", "NEEDS_ATTENTION");
+            org.mockito.Mockito.when(h.builds.hasRecordedSideEffect(org.mockito.ArgumentMatchers.any()))
+                .thenReturn(true);
+            h.service.close(h.taskId, "AI_CLOSED", "closed by operator");
+            assertThat(h.rowState()).isEqualTo("NEEDS_ATTENTION");
+            assertThat(h.rowFailureCode()).isEqualTo("AI_CLOSING");
+            assertThatThrownBy(() -> h.tasks.requireBrowserWritable(PROJECT))
+                .isInstanceOfSatisfying(ApiException.class, ex -> assertThat(ex.code()).isEqualTo("AI_TASK_ACTIVE"));
+        }
+    }
+
+    @Test
+    void closeReleasesWhenAnUnrecordedBuildIsProvenAbsent() {
+        try (Harness h = new Harness()) {
+            h.submit();
+            h.insertUnrecordedBuildCall("call-build", "RUNNING");
+            // A successful cluster query proves no Job and no pod was ever created.
+            org.mockito.Mockito.when(h.builds.hasRecordedSideEffect(org.mockito.ArgumentMatchers.any()))
+                .thenReturn(false);
+            h.service.close(h.taskId, "AI_CLOSED", "closed by operator");
+            assertThat(h.rowState()).isEqualTo("FAILED");
+            assertThat(h.rowFailureCode()).isEqualTo("AI_CLOSED");
+            h.tasks.requireBrowserWritable(PROJECT);
+        }
+    }
+
+    @Test
+    void aSettledWorkerStatusLeavesTheTaskUndecidedInsteadOfBindingRunning() {
+        try (Harness h = new Harness()) {
+            h.worker.unreachable = true;
+            h.worker.statusState = "COMPLETED";
+            h.service.submit(OWNER, PROJECT, h.request());
+            // The worker settled but no terminal reached the ledger: the explicit
+            // undecided state keeps the project occupied; RUNNING is never bound over
+            // a settled worker and no outcome is fabricated.
+            assertThat(h.rowState()).isEqualTo("NEEDS_ATTENTION");
+            assertThat(h.rowFailureCode()).isEqualTo("AI_CLOSING");
+            assertThatThrownBy(() -> h.tasks.requireBrowserWritable(PROJECT))
+                .isInstanceOfSatisfying(ApiException.class, ex -> assertThat(ex.code()).isEqualTo("AI_TASK_ACTIVE"));
+        }
+    }
+
+    @Test
+    void aFailedEvidenceCloseCanBeRetriedAfterTheEvidenceRecovers() {
+        try (Harness h = new Harness()) {
+            h.submit();
+            h.insertUnrecordedBuildCall("call-build", "NEEDS_ATTENTION");
+            // First close: the cluster answer is unclear (a Job may exist) — the close
+            // stays armed and the project stays occupied.
+            org.mockito.Mockito.when(h.builds.hasRecordedSideEffect(org.mockito.ArgumentMatchers.any()))
+                .thenReturn(true);
+            h.service.close(h.taskId, "AI_CLOSED", "closed by operator");
+            assertThat(h.rowState()).isEqualTo("NEEDS_ATTENTION");
+            assertThat(h.rowFailureCode()).isEqualTo("AI_CLOSING");
+            assertThat(h.worker.stops).hasSize(1);
+            assertThatThrownBy(() -> h.tasks.requireBrowserWritable(PROJECT))
+                .isInstanceOfSatisfying(ApiException.class, ex -> assertThat(ex.code()).isEqualTo("AI_TASK_ACTIVE"));
+            // The evidence recovers: a later successful query proves the build never
+            // existed; the re-entrant close finishes and releases.
+            org.mockito.Mockito.when(h.builds.hasRecordedSideEffect(org.mockito.ArgumentMatchers.any()))
+                .thenReturn(false);
+            h.service.close(h.taskId, "AI_CLOSED", "closed by operator");
+            assertThat(h.worker.stops).hasSize(2);
+            assertThat(h.rowState()).isEqualTo("FAILED");
+            assertThat(h.rowFailureCode()).isEqualTo("AI_CLOSED");
+            h.tasks.requireBrowserWritable(PROJECT);
         }
     }
 
