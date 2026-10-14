@@ -532,33 +532,49 @@ public final class AgentTaskStore implements AgentTaskOccupancy {
 
     /**
      * Applies a worker-reported terminal state — the backend's unified terminal verdict.
-     * The whole decision runs under this store monitor, the same monitor a tool-call
-     * registration and a build claim take, so the verdict and the side effects it talks
-     * about are serialized: a terminal may only settle the task COMPLETED/FAILED when
-     * every tool call of the task is settled (no RUNNING/NEEDS_ATTENTION build, no
-     * unverified file receipt, no un-closed build identity). Otherwise the verdict is
-     * recorded as a to-be-verified event — its progress item stays in the envelope and
-     * the {@link #TERMINAL_PENDING_MARKER} keeps the project occupied — and only the
-     * close flow resolves it. A late terminal can never overwrite a settled task, and a
-     * task marked for close (NEEDS_ATTENTION) is released by the close flow alone.
+     * The decision is ONE atomic SQL statement (fix round 2, C1): the side-effect check
+     * and the state transition are the same conditional UPDATE, so a concurrent tool-call
+     * registration or receipt from ANY database connection — not merely another thread of
+     * this JVM — is either durably visible before the verdict (the verdict cannot apply)
+     * or lands after it (the row is already terminal and refuses it). The unsettled set
+     * covers both halves of a side effect: any tool call still REGISTERED/RUNNING/
+     * NEEDS_ATTENTION (an executing build, an unknown outcome) and any task-linked
+     * workspace_operation still PENDING (a file receipt that was never verified through
+     * the shared reconcile path).
+     *
+     * <p>Zero affected rows mean either a late terminal (the task already settled or is
+     * closing — nothing to record) or an unsettled side effect; one atomic fallback
+     * statement then records the verdict as a to-be-verified event — its progress item
+     * stays in the envelope and the {@link #TERMINAL_PENDING_MARKER} keeps the project
+     * occupied — and only the close flow resolves it. A verdict may never settle the
+     * task COMPLETED/FAILED while any side effect is undecided.</p>
      */
     public synchronized boolean applyTerminal(String taskId, AgentContracts.TaskState state,
                                               String summary, String failureCode) {
         if (state != AgentContracts.TaskState.COMPLETED && state != AgentContracts.TaskState.FAILED) {
             throw new IllegalArgumentException("only COMPLETED or FAILED may be applied as a terminal state");
         }
-        if (hasUnsettledCall(taskId)) {
-            return jdbc.update("""
-                    UPDATE agent_task SET state = 'NEEDS_ATTENTION', failure_code = ?, summary = ?, updated_at = ?
-                    WHERE id = ? AND state IN ('QUEUED', 'RUNNING')
-                    """,
-                TERMINAL_PENDING_MARKER, summary, Timestamp.from(clock.instant()), taskId) > 0;
+        Timestamp now = Timestamp.from(clock.instant());
+        int applied = jdbc.update("""
+                UPDATE agent_task
+                SET state = ?, summary = ?, failure_code = ?, updated_at = ?
+                WHERE id = ? AND state IN ('QUEUED', 'RUNNING')
+                  AND NOT EXISTS (SELECT 1 FROM agent_tool_call c
+                      WHERE c.task_id = agent_task.id
+                        AND c.state IN ('REGISTERED', 'RUNNING', 'NEEDS_ATTENTION'))
+                  AND NOT EXISTS (SELECT 1 FROM agent_tool_call c2
+                      JOIN workspace_operation w ON w.id = c2.workspace_operation_id
+                      WHERE c2.task_id = agent_task.id AND w.state = 'PENDING')
+                """,
+            state.name(), summary, failureCode, now, taskId);
+        if (applied > 0) {
+            return true;
         }
         return jdbc.update("""
-                UPDATE agent_task SET state = ?, summary = ?, failure_code = ?, updated_at = ?
+                UPDATE agent_task SET state = 'NEEDS_ATTENTION', failure_code = ?, summary = ?, updated_at = ?
                 WHERE id = ? AND state IN ('QUEUED', 'RUNNING')
                 """,
-            state.name(), summary, failureCode, Timestamp.from(clock.instant()), taskId) > 0;
+            TERMINAL_PENDING_MARKER, summary, now, taskId) > 0;
     }
 
     /** The close flow's marker failure code; a close may only release from its own marker. */

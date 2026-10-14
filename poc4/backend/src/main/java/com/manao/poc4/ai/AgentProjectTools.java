@@ -154,7 +154,10 @@ public final class AgentProjectTools {
             }
         }
         if (buildGoal != null) {
-            result = runBuild(owner, row, request, buildGoal);
+            // The build path settles its own call row (and retires its live claim only
+            // after that settlement) — a concurrent close must never see a half-finished
+            // build settlement as a restart leftover.
+            return runBuild(owner, row, request, buildGoal);
         }
         AgentContracts.ToolResult settled = boundedResult(result);
         tasks.completeToolCall(taskId, request.toolCallId(), jsonOf(settled));
@@ -462,15 +465,19 @@ public final class AgentProjectTools {
     }
 
     /**
-     * Drives one development build against the saved sources. The executor works on a read-only
-     * copy, so the workspace revision never moves; the verified Job/Pod identity is bound to the
-     * ledger row backend-side only, and the call settles COMPLETED only when the build's cleanup
-     * is confirmed — an unconfirmed cleanup or any executor failure stays NEEDS_ATTENTION and
-     * keeps the project occupied instead of letting the next write race the build pod. A call
-     * whose execution has never started (REGISTERED, no recorded identity) goes through build
-     * after being marked RUNNING; any call that already carries a recorded identity is a
-     * recovery that only observes it — evidence that has vanished stays unsettled and the build
-     * is never executed a second time.
+     * Drives one development build against the saved sources and SETTLES its call row
+     * itself (fix round 2): the verified Job/Pod identity is bound to the ledger row
+     * backend-side only, and the call settles COMPLETED only when the build's cleanup
+     * is confirmed — an unconfirmed cleanup or any executor failure stays NEEDS_ATTENTION
+     * and keeps the project occupied instead of letting the next write race the build
+     * pod. A call whose execution has never started (REGISTERED, no recorded identity)
+     * goes through build after being marked RUNNING; any call that already carries a
+     * recorded identity is a recovery that only observes it — evidence that has vanished
+     * stays unsettled and the build is never executed a second time. The live claim of
+     * the executing thread is retired ONLY after the row has fully settled (identity
+     * bound, cleanup judged, row state persisted): a close running concurrently always
+     * sees the claim and takes the active path, never misreading an in-settlement build
+     * as a restart leftover.
      */
     private AgentContracts.ToolResult runBuild(AgentTaskStore.TaskOwner owner, AgentTaskStore.ToolCallRow row,
                                                AgentContracts.ToolRequest request,
@@ -481,59 +488,70 @@ public final class AgentProjectTools {
         AgentContracts.BuildRequest buildRequest = new AgentContracts.BuildRequest(row.taskId(),
             row.toolCallId(), owner.projectId(), row.workspaceOperationId(),
             currentRevision(owner.projectId()), goal);
-        AgentContracts.BuildResult built;
+        boolean claimed = false;
         try {
-            AgentContracts.BuildIdentity recorded = tasks.boundBuildIdentity(row.taskId(), row.toolCallId())
-                .orElse(null);
-            if (recorded != null) {
-                // Recovery: this call already started under its recorded identity. It is only
-                // observed — never rebuilt, never re-executed.
-                built = builds.observe(buildRequest, recorded);
-            } else if ("RUNNING".equals(row.state())) {
-                // Started before the identity binding landed: adopt by the deterministic name,
-                // still never create.
-                built = builds.observe(buildRequest, new AgentContracts.BuildIdentity(null, null, null));
-            } else {
-                // First execution is claimed by the atomic REGISTERED->RUNNING transition: the
-                // request that wins it runs the build; the loser of the race re-reads the
-                // durable state and follows the recovery path, so one call id can never start
-                // a second build even when two requests raced past the gate together. The
-                // live-claim marker is retired only after the row has settled, so a close
-                // running concurrently always sees the claim for what it is (review fix I6).
-                if (tasks.markToolCallRunning(row.taskId(), row.toolCallId())) {
-                    try {
-                        built = builds.build(buildRequest);
-                    } finally {
-                        tasks.releaseBuildClaim(row.taskId(), row.toolCallId());
-                    }
+            AgentContracts.BuildResult built;
+            try {
+                AgentContracts.BuildIdentity recorded = tasks.boundBuildIdentity(row.taskId(), row.toolCallId())
+                    .orElse(null);
+                if (recorded != null) {
+                    // Recovery: this call already started under its recorded identity. It is only
+                    // observed — never rebuilt, never re-executed.
+                    built = builds.observe(buildRequest, recorded);
+                } else if ("RUNNING".equals(row.state())) {
+                    // Started before the identity binding landed: adopt by the deterministic name,
+                    // still never create.
+                    built = builds.observe(buildRequest, new AgentContracts.BuildIdentity(null, null, null));
                 } else {
-                    built = tasks.boundBuildIdentity(row.taskId(), row.toolCallId())
-                        .map(durable -> builds.observe(buildRequest, durable))
-                        .orElseGet(() -> builds.observe(buildRequest,
-                            new AgentContracts.BuildIdentity(null, null, null)));
+                    // First execution is claimed by the atomic REGISTERED->RUNNING transition: the
+                    // request that wins it runs the build; the loser of the race re-reads the
+                    // durable state and follows the recovery path, so one call id can never start
+                    // a second build even when two requests raced past the gate together.
+                    if (tasks.markToolCallRunning(row.taskId(), row.toolCallId())) {
+                        claimed = true;
+                        built = builds.build(buildRequest);
+                    } else {
+                        built = tasks.boundBuildIdentity(row.taskId(), row.toolCallId())
+                            .map(durable -> builds.observe(buildRequest, durable))
+                            .orElseGet(() -> builds.observe(buildRequest,
+                                new AgentContracts.BuildIdentity(null, null, null)));
+                    }
                 }
+            } catch (RuntimeException ex) {
+                tasks.markToolCallNeedsAttention(row.taskId(), row.toolCallId());
+                throw ex;
             }
-        } catch (RuntimeException ex) {
-            tasks.markToolCallNeedsAttention(row.taskId(), row.toolCallId());
-            throw ex;
+            AgentContracts.ToolResult settled;
+            if ("BUILD_CLOSING_ABORTED".equals(built.terminationReason())) {
+                // The closing fence aborted the create: settle the deterministic
+                // no-side-effect answer WITHOUT binding an identity for a Job that was
+                // never created — the abort is reported in the call's data.
+                settled = fittedBuildResult(new AgentContracts.ToolResult(request.toolCallId(),
+                    Long.toString(currentRevision(owner.projectId())), buildData(buildRequest, built),
+                    built.truncated()));
+            } else {
+                tasks.bindToolCallIdentity(row.taskId(), row.toolCallId(), built.identity().jobName(),
+                    built.identity().jobUid(), built.identity().podUid());
+                if (!built.cleanupConfirmed()) {
+                    tasks.markToolCallNeedsAttention(row.taskId(), row.toolCallId());
+                    throw new IllegalStateException("the build cleanup was not confirmed; the call stays needs-attention");
+                }
+                settled = fittedBuildResult(new AgentContracts.ToolResult(request.toolCallId(),
+                    Long.toString(currentRevision(owner.projectId())), buildData(buildRequest, built),
+                    built.truncated()));
+            }
+            // The row settles HERE, while this thread's live claim is still held: a
+            // concurrent close sees the claim, never the half-finished settlement.
+            AgentContracts.ToolResult bounded = boundedResult(settled);
+            tasks.completeToolCall(row.taskId(), row.toolCallId(), jsonOf(bounded));
+            return bounded;
+        } finally {
+            if (claimed) {
+                // Retired only after the call row is fully settled (or the failure path
+                // has marked it NEEDS_ATTENTION) — never mid-settlement.
+                tasks.releaseBuildClaim(row.taskId(), row.toolCallId());
+            }
         }
-        if ("BUILD_CLOSING_ABORTED".equals(built.terminationReason())) {
-            // The closing fence aborted the create: settle the deterministic
-            // no-side-effect answer WITHOUT binding an identity for a Job that was
-            // never created — the caller reports the abort in the call's data.
-            return fittedBuildResult(new AgentContracts.ToolResult(request.toolCallId(),
-                Long.toString(currentRevision(owner.projectId())), buildData(buildRequest, built),
-                built.truncated()));
-        }
-        tasks.bindToolCallIdentity(row.taskId(), row.toolCallId(), built.identity().jobName(),
-            built.identity().jobUid(), built.identity().podUid());
-        if (!built.cleanupConfirmed()) {
-            tasks.markToolCallNeedsAttention(row.taskId(), row.toolCallId());
-            throw new IllegalStateException("the build cleanup was not confirmed; the call stays needs-attention");
-        }
-        return fittedBuildResult(new AgentContracts.ToolResult(request.toolCallId(),
-            Long.toString(currentRevision(owner.projectId())), buildData(buildRequest, built),
-            built.truncated()));
     }
 
     /** The durable build answer: real exit facts, bounded output and parsed report summaries. */

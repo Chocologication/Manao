@@ -272,8 +272,10 @@ async function safeJson(response: Response): Promise<Record<string, unknown> | n
  * Shrinks a terminal summary until the COMPLETE serialized terminal payload fits the
  * 8 KiB UTF-8 text bound (review fix I8). The cut works on the real serialized bytes,
  * so every quoting, escaping (newlines, quotes, backslashes) and multi-byte effect is
- * already accounted for; the cut never splits a multi-byte character and always keeps
- * a true prefix of the summary.
+ * already accounted for; the cut never splits a multi-byte character, never ends
+ * inside a surrogate pair (an explicit code-point back-off — review round 2 — so a
+ * boundary emoji can never be corrupted into a lone surrogate) and always keeps a
+ * true prefix of the summary.
  */
 export function fitSummary(summary: string, state: "COMPLETED" | "FAILED", failureCode: string | null): string {
   const serializedBytes = (candidate: string): number =>
@@ -291,7 +293,23 @@ export function fitSummary(summary: string, state: "COMPLETED" | "FAILED", failu
       && serializedBytes(summary.slice(0, cut + 1)) <= PROGRESS_TEXT_MAX_BYTES) {
     cut += 1;
   }
+  // Explicit surrogate safety: a cut whose last unit is a high surrogate whose low
+  // pair member follows would emit a lone surrogate (serialized as an escape that
+  // corrupts the emoji). Back the cut off to the complete code-point boundary.
+  while (cut > 0 && cut < summary.length
+      && isHighSurrogate(summary.charCodeAt(cut - 1))
+      && isLowSurrogate(summary.charCodeAt(cut))) {
+    cut -= 1;
+  }
   return summary.slice(0, cut);
+}
+
+function isHighSurrogate(unit: number): boolean {
+  return unit >= 0xd800 && unit <= 0xdbff;
+}
+
+function isLowSurrogate(unit: number): boolean {
+  return unit >= 0xdc00 && unit <= 0xdfff;
 }
 
 /**

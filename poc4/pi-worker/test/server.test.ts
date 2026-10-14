@@ -106,6 +106,34 @@ it("shrinks the terminal summary so the whole serialized payload fits the 8 KiB 
   expect(summary.startsWith(payload.summary)).toBe(true);
 });
 
+it("cuts the terminal summary on a code-point boundary, never inside a surrogate pair", async () => {
+  // Filler plus emoji sized so the serialized budget boundary lands INSIDE the
+  // emoji run. Whatever the cut position, the shrunken summary must never end
+  // with (or contain) a lone surrogate: JSON.stringify would emit it as an
+  // escape and the emoji would be corrupted at the boundary.
+  const summary = "x".repeat(8100) + "😀".repeat(60) + "🏁";
+  const bodies: string[] = [];
+  const transport = vi.fn<typeof fetch>(async (_url, init) => {
+    bodies.push(String(init?.body ?? ""));
+    return new Response(JSON.stringify({ accepted: true }), { status: 200 });
+  });
+  const client = new BackendClient({ baseUrl: "http://backend.invalid", token: "test-only",
+    instanceId: "worker-1", epoch: "epoch-1", fetch: transport });
+  const progress = new ProgressChain(client, "task-1");
+  await progress.sendTerminal("COMPLETED", summary, null);
+  const terminal = bodies.map((body) => JSON.parse(body) as { kind: string; text: string })
+    .find((item) => item.kind === "terminal");
+  expect(terminal).toBeDefined();
+  expect(Buffer.byteLength(terminal!.text, "utf-8")).toBeLessThanOrEqual(8 * 1024);
+  const payload = JSON.parse(terminal!.text) as { summary: string };
+  const unpairedSurrogate =
+    /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
+  expect(unpairedSurrogate.test(payload.summary)).toBe(false);
+  // The cut stays a true prefix and keeps complete emoji at the boundary.
+  expect(summary.startsWith(payload.summary)).toBe(true);
+  expect(payload.summary).toContain("😀");
+});
+
 it("keeps a terminal summary that exactly fits the serialized budget", async () => {
   const bodies: string[] = [];
   const transport = vi.fn<typeof fetch>(async (_url, init) => {

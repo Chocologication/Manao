@@ -542,6 +542,95 @@ class AgentTaskStoreTest {
         }
     }
 
+    @Test
+    void aTerminalDecisionIsAtomicAgainstAConcurrentToolCallRegistration() throws Exception {
+        try (var db = JdbcStoreTestSupport.create()) {
+            var jdbc = db.jdbc();
+            seed(jdbc);
+            var store = store(db);
+            String taskId = UUID.randomUUID().toString();
+            store.create(OWNER, PROJECT, new TaskRequest(taskId, "change demo", 7));
+            // A SECOND, independent database connection registers an unsettled tool call
+            // and holds the insert uncommitted: only a single-statement decision (the
+            // side-effect check evaluated by the same UPDATE that transitions the row)
+            // can close this window — a check-then-act pair reads through the uncommitted
+            // insert and applies the verdict regardless.
+            var other = db.jdbc().getDataSource().getConnection();
+            other.setAutoCommit(false);
+            var insert = other.prepareStatement("""
+                INSERT INTO agent_tool_call(task_id, tool_call_id, request_sha256, tool_name, args_json,
+                    state, workspace_operation_id, expected_revision, created_at, updated_at)
+                VALUES (?, ?, ?, 'write_file', '{}', 'REGISTERED', ?, 7, NOW(6), NOW(6))
+                """);
+            insert.setString(1, taskId);
+            insert.setString(2, "call-concurrent");
+            insert.setString(3, "a".repeat(64));
+            insert.setString(4, "op-concurrent");
+            insert.executeUpdate();
+            var verdict = java.util.concurrent.Executors.newSingleThreadExecutor()
+                .submit(() -> store.applyTerminal(taskId, AgentContracts.TaskState.COMPLETED, "done", null));
+            // The verdict decision must not complete while the concurrent registration
+            // is undecided: the atomic UPDATE blocks on the uncommitted row's lock.
+            Thread.sleep(500);
+            assertThat(verdict.isDone())
+                .as("the terminal decision waited for the concurrent registration to resolve")
+                .isFalse();
+            other.commit();
+            assertThat(verdict.get(10, TimeUnit.SECONDS)).isTrue();
+            // The decision was made AFTER the registration became visible: the verdict
+            // cannot settle the task; the pending-terminal marker keeps the occupancy.
+            var row = jdbc.queryForObject(
+                "SELECT CONCAT_WS('|', state, failure_code) FROM agent_task WHERE id = ?",
+                String.class, taskId);
+            assertThat(row).isEqualTo("NEEDS_ATTENTION|" + AgentTaskStore.TERMINAL_PENDING_MARKER);
+            assertThatThrownBy(() -> store.requireBrowserWritable(PROJECT))
+                .isInstanceOfSatisfying(ApiException.class,
+                    ex -> assertThat(ex.code()).isEqualTo("AI_TASK_ACTIVE"));
+            other.close();
+        }
+    }
+
+    @Test
+    void aTerminalCannotSettleWhileAWorkspaceReceiptIsUnverified() {
+        try (var db = JdbcStoreTestSupport.create()) {
+            var jdbc = db.jdbc();
+            seed(jdbc);
+            var store = store(db);
+            String taskId = UUID.randomUUID().toString();
+            store.create(OWNER, PROJECT, new TaskRequest(taskId, "change demo", 7));
+            // A settled-looking call row whose workspace receipt was never verified:
+            // the PENDING operation is an unsettled side effect of this task.
+            jdbc.update("""
+                INSERT INTO agent_tool_call(task_id, tool_call_id, request_sha256, tool_name, args_json,
+                    state, workspace_operation_id, expected_revision, created_at, updated_at)
+                VALUES (?, 'call-write', ?, 'write_file', '{}', 'COMPLETED', 'op-pending', 7, NOW(6), NOW(6))
+                """, taskId, "a".repeat(64));
+            jdbc.update("""
+                INSERT INTO workspace_operation(id, project_id, expected_revision, before_sha256, after_sha256,
+                    receipt_path, receipt_sha256, state, created_at)
+                VALUES ('op-pending', ?, 7, ?, ?, 'receipts/op-pending', ?, 'PENDING', NOW(6))
+                """, PROJECT, "b".repeat(64), "c".repeat(64), "d".repeat(64));
+            // The verdict is arbitrated atomically: an unverified receipt keeps the
+            // task undecided under the pending-terminal marker.
+            assertThat(store.applyTerminal(taskId, AgentContracts.TaskState.COMPLETED, "done", null))
+                .isTrue();
+            assertThat(jdbc.queryForObject(
+                "SELECT CONCAT_WS('|', state, failure_code) FROM agent_task WHERE id = ?",
+                String.class, taskId)).isEqualTo("NEEDS_ATTENTION|" + AgentTaskStore.TERMINAL_PENDING_MARKER);
+            assertThatThrownBy(() -> store.requireBrowserWritable(PROJECT))
+                .isInstanceOfSatisfying(ApiException.class,
+                    ex -> assertThat(ex.code()).isEqualTo("AI_TASK_ACTIVE"));
+            // A pending-terminal state is never re-settled by a later verdict; it is
+            // resolved by the close flow, which proves the (by now committed) receipt
+            // and releases the occupancy.
+            jdbc.update("UPDATE workspace_operation SET state = 'COMMITTED' WHERE id = 'op-pending'");
+            assertThat(store.beginClose(taskId)).isEqualTo(AgentTaskStore.CloseEntry.START);
+            assertThat(store.failClosedTask(taskId, "AI_CLOSED", "closed")).isTrue();
+            assertThat(jdbc.queryForObject("SELECT state FROM agent_task WHERE id = ?", String.class, taskId))
+                .isEqualTo("FAILED");
+        }
+    }
+
     private static AgentTaskStore store(JdbcStoreTestSupport db) {
         var jdbc = db.jdbc();
         return new AgentTaskStore(jdbc, new DataSourceTransactionManager(jdbc.getDataSource()), Clock.systemUTC());

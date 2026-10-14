@@ -504,6 +504,74 @@ class AgentTaskServiceTest {
     }
 
     @Test
+    void aLiveClaimIsNotRetiredBeforeTheBuildRowSettles() throws Exception {
+        try (Harness h = new Harness()) {
+            h.submit();
+            CountDownLatch bindingReached = new CountDownLatch(1);
+            CountDownLatch closeVerified = new CountDownLatch(1);
+            // The spy holds the executing thread at the exact post-build, pre-settlement
+            // point (the durable identity binding) while a close runs concurrently.
+            var tasksSpy = org.mockito.Mockito.spy(h.tasks);
+            org.mockito.Mockito.doAnswer(invocation -> {
+                bindingReached.countDown();
+                if (!closeVerified.await(5, TimeUnit.SECONDS)) {
+                    throw new AssertionError("the concurrent close never finished");
+                }
+                return invocation.callRealMethod();
+            }).when(tasksSpy).bindToolCallIdentity(org.mockito.ArgumentMatchers.eq(h.taskId),
+                org.mockito.ArgumentMatchers.eq("call-build"),
+                org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.any());
+            org.mockito.Mockito.when(h.builds.build(org.mockito.ArgumentMatchers.any()))
+                .thenReturn(new AgentContracts.BuildResult(
+                    new AgentContracts.BuildIdentity(null, null, null),
+                    0, "Completed", "", false, List.of(), true));
+            org.mockito.Mockito.when(h.builds.close(org.mockito.ArgumentMatchers.any(),
+                    org.mockito.ArgumentMatchers.any()))
+                .thenReturn(new AgentContracts.BuildResult(
+                    new AgentContracts.BuildIdentity("manao-dev-x", "uid-job", "uid-pod"),
+                    null, "BUILD_CLOSED", "", false, List.of(), true));
+            var store = new WorkspaceJdbcStore(h.jdbc,
+                new DataSourceTransactionManager(h.jdbc.getDataSource()));
+            var operations = new WorkspaceOperationService(store, h.agent, h.gate);
+            var workspace = new WorkspaceService(store, operations, h.agent, h.gate, tasksSpy);
+            var tools = new AgentProjectTools(tasksSpy, store, workspace, operations, h.gate, h.builds);
+            var service = new AgentTaskService(tasksSpy, h.gate, h.worker, tools,
+                new AiProperties(true, PROJECT, null, null));
+            ExecutorService pool = Executors.newSingleThreadExecutor();
+            try {
+                Future<?> builder = pool.submit(() -> {
+                    service.invokeTool(h.taskId, "call-build", INSTANCE, h.rowEpoch(),
+                        new ToolRequest("call-build", "build", 7,
+                            JSON.createObjectNode().put("goal", "compile")));
+                    return null;
+                });
+                assertThat(bindingReached.await(5, TimeUnit.SECONDS)).isTrue();
+                // The thread is past builds.build() but its call row is NOT settled yet:
+                // the live claim is still held, so the close must take the active path
+                // and keep the project occupied — never misread the build as a restart
+                // leftover and never close/settle it concurrently.
+                service.close(h.taskId, "AI_CLOSED", "close during settlement");
+                assertThat(h.rowState()).isEqualTo("NEEDS_ATTENTION");
+                assertThat(h.rowFailureCode()).isEqualTo("AI_CLOSING");
+                assertThat(h.callRowState("call-build")).isEqualTo("RUNNING");
+                org.mockito.Mockito.verify(h.builds, org.mockito.Mockito.never())
+                    .close(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any());
+                closeVerified.countDown();
+                builder.get(5, TimeUnit.SECONDS);
+                // The executing thread settled its row (and only then retired its claim).
+                assertThat(h.callRowState("call-build")).isEqualTo("COMPLETED");
+                service.close(h.taskId, "AI_CLOSED", "retry after settlement");
+                assertThat(h.rowState()).isEqualTo("FAILED");
+                h.tasks.requireBrowserWritable(PROJECT);
+            } finally {
+                closeVerified.countDown();
+                pool.shutdownNow();
+            }
+        }
+    }
+
+    @Test
     void closeStopsTheWorkerRefusesNewCallsAndReleasesTheProject() {
         try (Harness h = new Harness()) {
             h.submit();
