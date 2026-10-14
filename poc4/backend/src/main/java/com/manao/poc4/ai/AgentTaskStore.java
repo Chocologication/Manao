@@ -211,8 +211,11 @@ public final class AgentTaskStore implements AgentTaskOccupancy {
     /**
      * Registers a tool call under its stable identity. The whole decision runs under this
      * store monitor — the same monitor the terminal application (C1) and the build claim
-     * take — so a brand-new registration is durably arbitrated against a concurrently
-     * applied terminal verdict and against earlier unsettled side-effect calls:
+     * take — and the task-state condition lives INSIDE the registration statement itself
+     * (fix round 3): the pre-check below is advisory, and a terminal verdict that commits
+     * from ANY other connection between it and the INSERT makes the INSERT a no-op, so a
+     * late REGISTERED row can never land on a settled task. The refused registration takes
+     * the deterministic settled-task rejection path; everything else behaves as before:
      *
      * <ul>
      *   <li>the first insert wins and re-validates, inside the monitor, that the task is
@@ -241,13 +244,69 @@ public final class AgentTaskStore implements AgentTaskOccupancy {
         }
         Timestamp now = Timestamp.from(clock.instant());
         try {
-            jdbc.update("""
+            int registered = jdbc.update("""
                 INSERT INTO agent_tool_call(task_id, tool_call_id, request_sha256, tool_name, args_json,
                     state, workspace_operation_id, expected_revision, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, 'REGISTERED', ?, ?, ?, ?)
-                """, taskId, toolCallId, requestSha256, toolName, argsJson, operationId, expectedRevision, now, now);
+                SELECT ?, ?, ?, ?, ?, 'REGISTERED', ?, ?, ?, ?
+                FROM agent_task t
+                WHERE t.id = ? AND t.state IN ('QUEUED', 'RUNNING')
+                """, taskId, toolCallId, requestSha256, toolName, argsJson,
+                operationId, expectedRevision, now, now, taskId);
+            if (registered == 0) {
+                return registerSettledTaskRejection(taskId, toolCallId, requestSha256, toolName,
+                    argsJson, expectedRevision, now);
+            }
         } catch (DuplicateKeyException ex) {
             // The stable identity is already registered: the stored row decides below.
+        }
+        ToolCallRow stored = findToolCall(taskId, toolCallId).orElseThrow(
+            () -> new IllegalStateException("agent tool call registration vanished"));
+        if (!requestSha256.equals(stored.requestSha256())) {
+            throw new ApiException("AI_CALL_MISMATCH", 409,
+                "This tool call id was already used for a different request");
+        }
+        return stored;
+    }
+
+    /**
+     * The deterministic refusal when a registration raced a terminal verdict (fix round 3,
+     * C1): the pre-check read the task active, the terminal committed from another
+     * connection, and the atomic registration INSERT was refused. Nothing was ever
+     * pre-executed for the refused call (no workspace operation row, no Job), so the
+     * refusal is side-effect-free and persists as the call's settled COMPLETED answer
+     * carrying {@code data.error} — the established deterministic-rejection semantics the
+     * worker feeds back to Pi. The row can never block a later terminal, a close or a
+     * release: it is born settled.
+     */
+    private ToolCallRow registerSettledTaskRejection(String taskId, String toolCallId,
+                                                     String requestSha256, String toolName,
+                                                     String argsJson, long expectedRevision,
+                                                     Timestamp now) {
+        Long revision = jdbc.query("""
+            SELECT p.workspace_revision FROM agent_task t JOIN project p ON p.id = t.project_id
+            WHERE t.id = ?
+            """, (rs, row) -> rs.getLong(1), taskId).stream().findFirst().orElse(0L);
+        com.fasterxml.jackson.databind.node.ObjectNode error = JSON.createObjectNode()
+            .put("code", "AI_TASK_NOT_ACTIVE")
+            .put("message", "The task already settled; the call was refused");
+        com.fasterxml.jackson.databind.node.ObjectNode data = JSON.createObjectNode();
+        data.set("error", error);
+        String resultJson;
+        try {
+            resultJson = JSON.writeValueAsString(new AgentContracts.ToolResult(toolCallId,
+                Long.toString(revision), data, false));
+        } catch (com.fasterxml.jackson.core.JsonProcessingException ex) {
+            throw new IllegalStateException("cannot serialize the settled-task rejection", ex);
+        }
+        try {
+            jdbc.update("""
+                INSERT INTO agent_tool_call(task_id, tool_call_id, request_sha256, tool_name, args_json,
+                    state, workspace_operation_id, expected_revision, result_json, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, 'COMPLETED', NULL, ?, ?, ?, ?)
+                """, taskId, toolCallId, requestSha256, toolName, argsJson, expectedRevision,
+                resultJson, now, now);
+        } catch (DuplicateKeyException ex) {
+            // A concurrent registration won the identity: the stored row decides below.
         }
         ToolCallRow stored = findToolCall(taskId, toolCallId).orElseThrow(
             () -> new IllegalStateException("agent tool call registration vanished"));

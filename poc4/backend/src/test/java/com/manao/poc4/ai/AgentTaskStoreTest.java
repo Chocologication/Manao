@@ -556,37 +556,44 @@ class AgentTaskStoreTest {
             // can close this window — a check-then-act pair reads through the uncommitted
             // insert and applies the verdict regardless.
             var other = db.jdbc().getDataSource().getConnection();
-            other.setAutoCommit(false);
-            var insert = other.prepareStatement("""
-                INSERT INTO agent_tool_call(task_id, tool_call_id, request_sha256, tool_name, args_json,
-                    state, workspace_operation_id, expected_revision, created_at, updated_at)
-                VALUES (?, ?, ?, 'write_file', '{}', 'REGISTERED', ?, 7, NOW(6), NOW(6))
-                """);
-            insert.setString(1, taskId);
-            insert.setString(2, "call-concurrent");
-            insert.setString(3, "a".repeat(64));
-            insert.setString(4, "op-concurrent");
-            insert.executeUpdate();
-            var verdict = java.util.concurrent.Executors.newSingleThreadExecutor()
-                .submit(() -> store.applyTerminal(taskId, AgentContracts.TaskState.COMPLETED, "done", null));
-            // The verdict decision must not complete while the concurrent registration
-            // is undecided: the atomic UPDATE blocks on the uncommitted row's lock.
-            Thread.sleep(500);
-            assertThat(verdict.isDone())
-                .as("the terminal decision waited for the concurrent registration to resolve")
-                .isFalse();
-            other.commit();
-            assertThat(verdict.get(10, TimeUnit.SECONDS)).isTrue();
-            // The decision was made AFTER the registration became visible: the verdict
-            // cannot settle the task; the pending-terminal marker keeps the occupancy.
-            var row = jdbc.queryForObject(
-                "SELECT CONCAT_WS('|', state, failure_code) FROM agent_task WHERE id = ?",
-                String.class, taskId);
-            assertThat(row).isEqualTo("NEEDS_ATTENTION|" + AgentTaskStore.TERMINAL_PENDING_MARKER);
-            assertThatThrownBy(() -> store.requireBrowserWritable(PROJECT))
-                .isInstanceOfSatisfying(ApiException.class,
-                    ex -> assertThat(ex.code()).isEqualTo("AI_TASK_ACTIVE"));
-            other.close();
+            var verdictExecutor = java.util.concurrent.Executors.newSingleThreadExecutor();
+            try {
+                other.setAutoCommit(false);
+                var insert = other.prepareStatement("""
+                    INSERT INTO agent_tool_call(task_id, tool_call_id, request_sha256, tool_name, args_json,
+                        state, workspace_operation_id, expected_revision, created_at, updated_at)
+                    VALUES (?, ?, ?, 'write_file', '{}', 'REGISTERED', ?, 7, NOW(6), NOW(6))
+                    """);
+                insert.setString(1, taskId);
+                insert.setString(2, "call-concurrent");
+                insert.setString(3, "a".repeat(64));
+                insert.setString(4, "op-concurrent");
+                insert.executeUpdate();
+                var verdict = verdictExecutor.submit(
+                    () -> store.applyTerminal(taskId, AgentContracts.TaskState.COMPLETED, "done", null));
+                // The verdict decision must not complete while the concurrent registration
+                // is undecided: the atomic UPDATE blocks on the uncommitted row's lock.
+                Thread.sleep(500);
+                assertThat(verdict.isDone())
+                    .as("the terminal decision waited for the concurrent registration to resolve")
+                    .isFalse();
+                other.commit();
+                assertThat(verdict.get(10, TimeUnit.SECONDS)).isTrue();
+                // The decision was made AFTER the registration became visible: the verdict
+                // cannot settle the task; the pending-terminal marker keeps the occupancy.
+                var row = jdbc.queryForObject(
+                    "SELECT CONCAT_WS('|', state, failure_code) FROM agent_task WHERE id = ?",
+                    String.class, taskId);
+                assertThat(row).isEqualTo("NEEDS_ATTENTION|" + AgentTaskStore.TERMINAL_PENDING_MARKER);
+                assertThatThrownBy(() -> store.requireBrowserWritable(PROJECT))
+                    .isInstanceOfSatisfying(ApiException.class,
+                        ex -> assertThat(ex.code()).isEqualTo("AI_TASK_ACTIVE"));
+            } finally {
+                // The independent connection and the executor are always released, so an
+                // assertion failure can never leak a thread or block the schema cleanup.
+                other.close();
+                verdictExecutor.shutdownNow();
+            }
         }
     }
 
@@ -628,6 +635,57 @@ class AgentTaskStoreTest {
             assertThat(store.failClosedTask(taskId, "AI_CLOSED", "closed")).isTrue();
             assertThat(jdbc.queryForObject("SELECT state FROM agent_task WHERE id = ?", String.class, taskId))
                 .isEqualTo("FAILED");
+        }
+    }
+
+    @Test
+    void aRegistrationRacingATerminalVerdictIsRefusedAsSettled() throws Exception {
+        try (var db = JdbcStoreTestSupport.create()) {
+            var jdbc = db.jdbc();
+            seed(jdbc);
+            var registrationStore = store(db);
+            // A second store view over its own pooled connection plays the concurrent
+            // terminal verdict — the opposite interleaving of the atomic-terminal test
+            // above: the pre-check passes, THEN the terminal commits, THEN the
+            // registration INSERT runs against the already-settled task.
+            var terminalStore = store(db);
+            String taskId = UUID.randomUUID().toString();
+            registrationStore.create(OWNER, PROJECT, new TaskRequest(taskId, "change demo", 7));
+            var spy = org.mockito.Mockito.spy(registrationStore);
+            var precheckPassed = new CountDownLatch(1);
+            var terminalCommitted = new CountDownLatch(1);
+            org.mockito.Mockito.doAnswer(invocation -> {
+                precheckPassed.countDown();
+                if (!terminalCommitted.await(5, TimeUnit.SECONDS)) {
+                    throw new AssertionError("the concurrent terminal never committed");
+                }
+                return invocation.callRealMethod();
+            }).when(spy).hasUnsettledCall(taskId);
+            var pool = java.util.concurrent.Executors.newSingleThreadExecutor();
+            try {
+                var registration = pool.submit(() -> spy.registerToolCall(taskId, "call-raced",
+                    "a".repeat(64), "write_file", "{\"path\":\"src/Demo.java\"}", 7, "op-raced"));
+                assertThat(precheckPassed.await(5, TimeUnit.SECONDS)).isTrue();
+                assertThat(terminalStore.applyTerminal(taskId, AgentContracts.TaskState.FAILED,
+                    "worker failed", "AI_PROVIDER_ERROR")).isTrue();
+                terminalCommitted.countDown();
+                var row = registration.get(5, TimeUnit.SECONDS);
+                // The INSERT was refused by its own task-state condition: a late
+                // REGISTERED row can never land on a settled task. The deterministic,
+                // side-effect-free refusal is the call's durable settled answer.
+                assertThat(row.state()).isEqualTo("COMPLETED");
+                var error = new com.fasterxml.jackson.databind.ObjectMapper()
+                    .readTree(row.resultJson()).path("data").path("error");
+                assertThat(error.path("code").asText()).isEqualTo("AI_TASK_NOT_ACTIVE");
+                // The settled task stays settled and the refusal row never wedges the
+                // close flow.
+                assertThat(jdbc.queryForObject("SELECT state FROM agent_task WHERE id = ?",
+                    String.class, taskId)).isEqualTo("FAILED");
+                assertThat(spy.beginClose(taskId)).isEqualTo(AgentTaskStore.CloseEntry.SETTLED);
+            } finally {
+                terminalCommitted.countDown();
+                pool.shutdownNow();
+            }
         }
     }
 
