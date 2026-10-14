@@ -131,8 +131,9 @@ public final class AgentProjectTools {
                 tasks.markToolCallNeedsAttention(taskId, request.toolCallId());
                 throw ex;
             }
-            tasks.completeToolCall(taskId, request.toolCallId(), jsonOf(result));
-            return result;
+            AgentContracts.ToolResult settled = boundedResult(result);
+            tasks.completeToolCall(taskId, request.toolCallId(), jsonOf(settled));
+            return settled;
         }
     }
 
@@ -254,9 +255,17 @@ public final class AgentProjectTools {
         if (bytes.length > MAX_FILE_BYTES) {
             throw new ApiException("FILE_TOO_LARGE", 422, "File content exceeds the 128 KiB tool limit");
         }
+        ObjectNode data = JSON.createObjectNode().put("path", path).put("sha256", sha256Hex(bytes));
+        // The write result is fully determined by (path, sha256): the same UTF-8 byte gate runs
+        // BEFORE the mutate, so an unrepresentable answer is a deterministic, side-effect-free
+        // rejection — never an applied write whose result cannot be stored.
+        if (utf8JsonBytes(new AgentContracts.ToolResult(request.toolCallId(),
+                revisionOf(owner.projectId()), data, false)) > MAX_RESULT_BYTES) {
+            throw new ApiException("AI_RESULT_TOO_LARGE", 422,
+                "The write result does not fit the bounded tool result");
+        }
         long revision = operations.applyAgentSave(owner.projectId(), row.workspaceOperationId(), path, bytes,
             request.expectedRevision(), expectedSha256(request.args()));
-        ObjectNode data = JSON.createObjectNode().put("path", path).put("sha256", sha256Hex(bytes));
         return new AgentContracts.ToolResult(request.toolCallId(), Long.toString(revision), data, false);
     }
 
@@ -267,6 +276,25 @@ public final class AgentProjectTools {
      */
     private AgentContracts.ToolResult build() {
         throw new ApiException("AI_BUILD_NOT_AVAILABLE", 409, "The build tool is not available yet");
+    }
+
+    /**
+     * The one gate every persisted result passes (defense in depth behind the per-tool bounds):
+     * no tool result may exceed the 192 KiB JSON envelope in UTF-8 bytes. read_file and
+     * list_files reject or trim upstream, and write_file pre-checks its deterministic result
+     * before the mutate, so reaching here with an oversized result means an unmapped path — the
+     * bounded error envelope keeps the ledger invariant absolute instead of storing overflow.
+     */
+    private AgentContracts.ToolResult boundedResult(AgentContracts.ToolResult result) {
+        if (utf8JsonBytes(result) <= MAX_RESULT_BYTES) {
+            return result;
+        }
+        ObjectNode error = JSON.createObjectNode()
+            .put("code", "AI_RESULT_TOO_LARGE")
+            .put("message", "The tool result exceeded the bounded size");
+        ObjectNode data = JSON.createObjectNode();
+        data.set("error", error);
+        return new AgentContracts.ToolResult(result.toolCallId(), result.workspaceRevision(), data, false);
     }
 
     /** Persists a deterministic, side-effect-free rejection as the call's durable answer. */

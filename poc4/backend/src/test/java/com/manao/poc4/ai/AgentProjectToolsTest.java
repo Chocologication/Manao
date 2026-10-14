@@ -388,6 +388,26 @@ class AgentProjectToolsTest {
     }
 
     @Test
+    void writeResultBeyondTheEnvelopeIsRejectedBeforeAnySideEffect() {
+        try (Harness env = new Harness()) {
+            // A multi-byte path blows up the deterministic write result (path + sha256): the
+            // answer stays under 192 KiB in UTF-16 chars but exceeds it in UTF-8 bytes. The
+            // byte gate runs before the mutate, so this is a persisted, side-effect-free
+            // rejection — never an applied write whose result cannot be stored.
+            String path = "src/" + "中".repeat(66000) + ".java";
+            ToolResult result = env.tools.invoke(env.taskId,
+                env.writeRequest("call-utf8-write", path, "class Boundary {}", null, 7));
+
+            assertThat(result.data().path("error").path("code").asText()).isEqualTo("AI_RESULT_TOO_LARGE");
+            verify(env.agent, never()).mutate(any(), any());
+            verify(env.agent, never()).meta(any(), any());
+            assertThat(env.revision()).isEqualTo(7L);
+            assertThat(env.rowState("call-utf8-write")).isEqualTo("COMPLETED");
+            assertThat(env.tools.getCall(env.taskId, "call-utf8-write")).contains(result);
+        }
+    }
+
+    @Test
     void listFilesCapsAt200EntriesAndRefusesForbiddenDirectories() {
         try (Harness env = new Harness()) {
             List<WorkspaceAgent.TreeEntry> entries = new ArrayList<>();
