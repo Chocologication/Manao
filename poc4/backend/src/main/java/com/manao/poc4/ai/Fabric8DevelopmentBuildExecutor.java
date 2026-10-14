@@ -8,6 +8,7 @@ import io.fabric8.kubernetes.api.model.Pod;
 import io.fabric8.kubernetes.api.model.batch.v1.Job;
 import io.fabric8.kubernetes.client.KubernetesClient;
 import io.fabric8.kubernetes.client.KubernetesClientException;
+import io.fabric8.kubernetes.client.dsl.internal.BaseOperation;
 import java.io.StringReader;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -305,10 +306,7 @@ public final class Fabric8DevelopmentBuildExecutor implements DevelopmentBuildEx
             throw new IllegalStateException("ambiguous build pods for one tool call");
         }
         Pod pod = pods.get(0);
-        boolean owned = pod.getMetadata() != null && pod.getMetadata().getOwnerReferences() != null
-            && pod.getMetadata().getOwnerReferences().stream()
-                .anyMatch(owner -> jobUid.equals(owner.getUid()));
-        if (!owned) {
+        if (!ownedByJob(pod, jobUid)) {
             throw new IllegalStateException("build pod is not owned by the verified build job");
         }
         return pod;
@@ -339,31 +337,40 @@ public final class Fabric8DevelopmentBuildExecutor implements DevelopmentBuildEx
     }
 
     /**
-     * Deletes this build's pods and job, then confirms both are 404. The delete precondition is
-     * the ORIGINAL identity: the live job must still carry the recorded UID, so a job replaced
-     * under the same name is never deleted by this build. The pods go first — while this job
-     * still holds its name no replacement can exist, so the tool-call label can only match this
-     * build's own pods. Anything less than a fully confirmed 404 — a refused precondition, a
-     * delete error, a pod stuck terminating, a replacement appearing — is reported unconfirmed.
-     * Package-private so the precondition contract is directly testable.
+     * Deletes this build's pods and job, then confirms both are 404. Every delete is bound to
+     * the identity verified in the same breath: the job is deleted through a request carrying
+     * the verified object's resourceVersion as a server-side delete precondition, and only
+     * pods still owned by the verified job are deleted at all. A same-name replacement that
+     * appears between the check and a delete therefore surfaces as a 409 conflict — reported
+     * as an unconfirmed cleanup, never as a success — or as untouched evidence belonging to
+     * the other build. Anything less than a fully confirmed 404 — a refused precondition, a
+     * delete error, a pod stuck terminating, a replacement appearing — is reported
+     * unconfirmed. Package-private so the precondition contract is directly testable.
      */
     boolean cleanup(String jobName, String jobUid, String commandId) {
         try {
             Job job = client.batch().v1().jobs().inNamespace(namespace).withName(jobName).get();
+            if (job != null && (jobUid == null || !jobUid.equals(uid(job)))) {
+                // A live job that does not carry the recorded UID belongs to a different
+                // build: this call refuses to touch it and stays unconfirmed.
+                return false;
+            }
+            deleteOwnedPods(jobUid, commandId);
             if (job != null) {
-                if (jobUid == null || !jobUid.equals(uid(job))) {
-                    // A live job that does not carry the recorded UID belongs to a different
-                    // build: this call refuses to touch it and stays unconfirmed.
+                try {
+                    // The delete carries the verified object's resourceVersion as a server-side
+                    // delete precondition (DeleteOptions.preconditions): a same-name replacement
+                    // appearing between the check and this delete surfaces as a 409 conflict
+                    // instead of deleting another build's job. The typed fluent interface only
+                    // exposes withResourceVersion for watches, so the delete goes through the
+                    // concrete operation the client is pinned to (fabric8 7.7.0).
+                    jobOperation(jobName).withResourceVersion(resourceVersion(job)).delete();
+                } catch (KubernetesClientException ex) {
+                    // A 409 conflict means the server no longer holds the exact object that
+                    // was just verified (it was replaced between the check and the delete):
+                    // the cleanup is unconfirmed, never a success.
                     return false;
                 }
-                client.pods().inNamespace(namespace)
-                    .withLabel(JobResourceFactory.LABEL_TOOL_CALL_ID, commandId).delete();
-                client.batch().v1().jobs().inNamespace(namespace).withName(jobName).delete();
-            } else {
-                // No job holds the name; the tool-call label can only match this build's
-                // orphaned evidence.
-                client.pods().inNamespace(namespace)
-                    .withLabel(JobResourceFactory.LABEL_TOOL_CALL_ID, commandId).delete();
             }
             Instant deadline = clock.instant().plusSeconds(cleanupWaitSeconds);
             while (clock.instant().isBefore(deadline)) {
@@ -382,6 +389,48 @@ public final class Fabric8DevelopmentBuildExecutor implements DevelopmentBuildEx
         } catch (RuntimeException ex) {
             return false;
         }
+    }
+
+    /**
+     * Deletes exactly the pods still owned by the verified job, each through a request
+     * carrying that pod's own resourceVersion as a server-side delete precondition. A pod
+     * carrying this build's tool-call label but owned by a different job is another build's
+     * evidence and is never touched; with no recorded UID nothing is attributable and nothing
+     * is deleted (fail closed).
+     */
+    private void deleteOwnedPods(String jobUid, String commandId) {
+        for (Pod pod : buildPods(commandId)) {
+            if (jobUid == null || !ownedByJob(pod, jobUid)) {
+                continue;
+            }
+            podOperation(podName(pod)).withResourceVersion(resourceVersion(pod)).delete();
+        }
+    }
+
+    /**
+     * The concrete job operation for one name: only the implementation class exposes
+     * {@code withResourceVersion}, which the delete needs to carry the verified object's
+     * resourceVersion as a server-side delete precondition.
+     */
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    private BaseOperation<Job, ?, ?> jobOperation(String jobName) {
+        return (BaseOperation) client.batch().v1().jobs().inNamespace(namespace).withName(jobName);
+    }
+
+    /** The concrete pod operation for one name; see {@link #jobOperation(String)}. */
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    private BaseOperation<Pod, ?, ?> podOperation(String podName) {
+        return (BaseOperation) client.pods().inNamespace(namespace).withName(podName);
+    }
+
+    private static boolean ownedByJob(Pod pod, String jobUid) {
+        return pod.getMetadata() != null && pod.getMetadata().getOwnerReferences() != null
+            && pod.getMetadata().getOwnerReferences().stream()
+                .anyMatch(owner -> jobUid.equals(owner.getUid()));
+    }
+
+    private static String resourceVersion(io.fabric8.kubernetes.api.model.HasMetadata resource) {
+        return resource.getMetadata() == null ? null : resource.getMetadata().getResourceVersion();
     }
 
     /**

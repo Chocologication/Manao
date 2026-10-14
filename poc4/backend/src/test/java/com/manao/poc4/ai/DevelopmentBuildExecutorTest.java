@@ -74,6 +74,14 @@ class DevelopmentBuildExecutorTest {
     /** Serves the pod log endpoints the crud store does not know, including a stubbed 403. */
     private static final class LogAwareCrudDispatcher extends KubernetesCrudDispatcher {
         final Map<String, MockResponse> logs = new HashMap<>();
+        /**
+         * When set, DELETEs for this job are answered with a 409 conflict — the server-side
+         * representation of "the verified object was replaced between the check and the
+         * delete" — and the delete request bodies are recorded for the precondition
+         * assertion.
+         */
+        String conflictJobDelete;
+        final List<String> jobDeleteBodies = new ArrayList<>();
 
         @Override public MockResponse dispatch(RecordedRequest request) {
             if ("GET".equals(request.getMethod()) && request.getPath() != null) {
@@ -85,6 +93,11 @@ class DevelopmentBuildExecutorTest {
                         return response;
                     }
                 }
+            }
+            if ("DELETE".equals(request.getMethod()) && request.getPath() != null
+                && conflictJobDelete != null && request.getPath().endsWith("/jobs/" + conflictJobDelete)) {
+                jobDeleteBodies.add(request.getBody().readUtf8());
+                return new MockResponse().setResponseCode(409);
             }
             return super.dispatch(request);
         }
@@ -573,6 +586,59 @@ class DevelopmentBuildExecutorTest {
         assertThat(client.batch().v1().jobs().inNamespace(NS)
             .withName(job.getMetadata().getName()).get()).isNull();
         assertThat(client.pods().inNamespace(NS).withName(pod.getMetadata().getName()).get()).isNull();
+    }
+
+    @Test
+    void aJobReplacedBetweenTheCheckAndTheDeleteIsNeverDeleted() {
+        Job job = seedJob();
+        Pod pod = seedPod(job.getMetadata().getName(), job.getMetadata().getUid(), 0, "Completed");
+        seedLog(pod.getMetadata().getName(), "[INFO] BUILD SUCCESS\n");
+        // The stub 409 stands in for a precondition-enforcing server: between the executor's
+        // identity check and its delete the job was deleted and same-name replaced, so the
+        // delete carrying the verified resourceVersion must be refused with a conflict.
+        dispatcher.conflictJobDelete = job.getMetadata().getName();
+
+        BuildResult result = executor.build(request());
+
+        assertThat(result.exitCode()).isZero();
+        // The conflict is an unconfirmed cleanup, never a success.
+        assertThat(result.cleanupConfirmed()).isFalse();
+        // The server still holds a job under that name: the replacement was not deleted.
+        assertThat(client.batch().v1().jobs().inNamespace(NS)
+            .withName(job.getMetadata().getName()).get()).isNotNull();
+        // Our own pod, owned by the verified job, was legitimately deleted first.
+        assertThat(client.pods().inNamespace(NS).withName(pod.getMetadata().getName()).get()).isNull();
+        // The delete was bound to the verified object: its resourceVersion rode along as the
+        // server-side delete precondition.
+        assertThat(dispatcher.jobDeleteBodies).isNotEmpty();
+        assertThat(dispatcher.jobDeleteBodies.get(0)).contains(
+            "\"resourceVersion\":\"" + job.getMetadata().getResourceVersion() + "\"");
+    }
+
+    @Test
+    void aCleanupLeavesPodsOwnedByOtherBuildsUntouched() {
+        Job job = seedJob();
+        Pod ours = seedPod(job.getMetadata().getName(), job.getMetadata().getUid(), 0, "Completed");
+        // A second pod under the same tool-call label but owned by another incarnation's job:
+        // evidence this build can never attribute to itself.
+        var foreign = new PodBuilder().withNewMetadata()
+            .withName(job.getMetadata().getName() + "-pod-foreign")
+            .withLabels(Map.of(JobResourceFactory.LABEL_TOOL_CALL_ID, COMMAND))
+            .withOwnerReferences(new OwnerReferenceBuilder().withApiVersion("batch/v1").withKind("Job")
+                .withName(job.getMetadata().getName()).withUid("another-incarnation-uid")
+                .withController(true).build())
+            .endMetadata()
+            .withNewSpec().endSpec()
+            .build();
+        client.pods().inNamespace(NS).resource(foreign).create();
+
+        // The confirmed evidence is deleted; the unattributable pod keeps the cleanup from
+        // ever being confirmed while it lingers.
+        assertThat(executor.cleanup(job.getMetadata().getName(), job.getMetadata().getUid(), COMMAND)).isFalse();
+        assertThat(client.batch().v1().jobs().inNamespace(NS)
+            .withName(job.getMetadata().getName()).get()).isNull();
+        assertThat(client.pods().inNamespace(NS).withName(ours.getMetadata().getName()).get()).isNull();
+        assertThat(client.pods().inNamespace(NS).withName(foreign.getMetadata().getName()).get()).isNotNull();
     }
 
     private static String sha256(String content) {
