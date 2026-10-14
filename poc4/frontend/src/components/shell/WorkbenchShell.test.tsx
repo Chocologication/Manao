@@ -2488,6 +2488,11 @@ describe('WorkbenchShell agent task panel', () => {
     });
     expect(screen.getByRole('button', { name: 'Reload workspace' })).toBeEnabled();
 
+    // The AI panel shares the lock: Start stays disabled while the reload is
+    // failed, so the panel cannot bypass the read-only workspace.
+    await user.click(screen.getByRole('tab', { name: 'AI' }));
+    expect(screen.getByRole('button', { name: 'Start task' })).toBeDisabled();
+
     failReloadTrees = false;
     await user.click(screen.getByRole('button', { name: 'Reload workspace' }));
     await waitUntilWritesUnlocked();
@@ -2551,5 +2556,76 @@ describe('WorkbenchShell agent task panel', () => {
     await waitFor(() => {
       expect(monaco.editor.getModel(uri)?.getValue()).toContain('<agent-edit />');
     });
+  }, 15_000);
+
+  it('keeps writes locked while the settled snapshot is loading and unlocks once it confirms', async () => {
+    const settledSnapshot = agentTask({ state: 'COMPLETED', writesLocked: false, summary: 'Fixed' });
+    let occupying = false;
+    let releaseSettled = () => {};
+    const holdSettled = new Promise<void>((resolve) => {
+      releaseSettled = resolve;
+    });
+    server.use(
+      http.get(`${AGENT_TASKS_URL}/current`, () =>
+        occupying ? HttpResponse.json(agentTask()) : agentCurrentNotFound()),
+      http.get(`${AGENT_TASKS_URL}/${AGENT_TASK_ID}`, async () => {
+        // The final snapshot request hangs: the release must not unlock early.
+        await holdSettled;
+        return HttpResponse.json(settledSnapshot);
+      }),
+    );
+    await authenticateAsAlice();
+    renderShell();
+    await loadedEditable();
+
+    occupying = true;
+    await occupyWorkspace();
+    occupying = false;
+    await queryClient.invalidateQueries({ queryKey: agentTaskKeys.current(ALICE_SEED_PROJECT_ID) });
+
+    // The occupying task released but the final revision is not confirmed yet.
+    expect(screen.getByRole('button', { name: 'New file' })).toBeDisabled();
+
+    act(() => {
+      releaseSettled();
+    });
+    await waitUntilWritesUnlocked();
+  }, 15_000);
+
+  it('keeps writes locked when the settled snapshot request fails until the retry succeeds', async () => {
+    const user = userEvent.setup();
+    const settledSnapshot = agentTask({ state: 'COMPLETED', writesLocked: false, summary: 'Fixed' });
+    let occupying = false;
+    let settledFails = true;
+    server.use(
+      http.get(`${AGENT_TASKS_URL}/current`, () =>
+        occupying ? HttpResponse.json(agentTask()) : agentCurrentNotFound()),
+      http.get(`${AGENT_TASKS_URL}/${AGENT_TASK_ID}`, () => {
+        if (settledFails) {
+          return HttpResponse.json(
+            { code: 'INTERNAL_ERROR', message: 'Mock settled failure', traceId: 'trace-settled' },
+            { status: 500 },
+          );
+        }
+        return HttpResponse.json(settledSnapshot);
+      }),
+    );
+    await authenticateAsAlice();
+    renderShell();
+    await loadedEditable();
+
+    occupying = true;
+    await occupyWorkspace();
+    occupying = false;
+    await queryClient.invalidateQueries({ queryKey: agentTaskKeys.current(ALICE_SEED_PROJECT_ID) });
+
+    // The failed final-snapshot read stays user-visible and keeps the gate closed.
+    expect(await screen.findByText(/final result could not be loaded/i)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'New file' })).toBeDisabled();
+
+    settledFails = false;
+    await user.click(screen.getByRole('button', { name: 'Retry loading the result' }));
+    await waitUntilWritesUnlocked();
+    expect(screen.queryByRole('button', { name: 'Retry loading the result' })).not.toBeInTheDocument();
   }, 15_000);
 });

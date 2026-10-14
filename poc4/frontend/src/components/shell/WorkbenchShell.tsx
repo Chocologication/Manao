@@ -226,9 +226,16 @@ export function WorkbenchShell({ project }: { project: ProjectSummary }) {
   const [agentReloadAttempt, setAgentReloadAttempt] = useState(0);
   const agentReloadRevisionRef = useRef<string | null>(null);
   const [settledAgentTask, setSettledAgentTask] = useState<AgentTaskSnapshot | null>(null);
+  // The settled snapshot fetch gates the release too: until the final revision is
+  // confirmed (and any needed reload ran) the workspace must not unlock, and a
+  // failed fetch keeps it locked behind its own Retry affordance.
+  const [settledSnapshotPending, setSettledSnapshotPending] = useState(false);
+  const [settledSnapshotFailed, setSettledSnapshotFailed] = useState(false);
+  const [settledSnapshotAttempt, setSettledSnapshotAttempt] = useState(0);
   const lastAgentTaskIdRef = useRef<string | null>(null);
   const agentTaskOccupying = agentTask !== null && agentTask.writesLocked;
   const agentReloading = agentReloadPending || agentReloadFailed || agentReloadBlocked;
+  const settledSnapshotSettling = settledSnapshotPending || settledSnapshotFailed;
   // The shell reuses the panel's start gate for its write-lock decision: the
   // workspace is locked exactly while the shared function would refuse a task
   // start because one occupies the project or a reload is in flight, failed or
@@ -239,7 +246,7 @@ export function WorkbenchShell({ project }: { project: ProjectSummary }) {
     hasActiveRun: false,
     workspaceRevision: '0',
     taskWritesLocked: agentTaskOccupying,
-    reloading: agentReloading,
+    reloading: agentReloading || settledSnapshotSettling,
   }).canStart;
   const seedAgentTask = useCallback(
     (snapshot: AgentTaskSnapshot) => {
@@ -271,14 +278,24 @@ export function WorkbenchShell({ project }: { project: ProjectSummary }) {
       },
     );
   }, [project.id, queryClient]);
+  const retrySettledSnapshot = useCallback(() => {
+    setSettledSnapshotFailed(false);
+    setSettledSnapshotAttempt((attempt) => attempt + 1);
+  }, []);
   // One settled snapshot per released task: GET current only answers while a
   // task occupies the project, so the final result is fetched by its id once.
+  // The fetch participates in the write gate: pending and failed both keep the
+  // workspace locked, and a failure offers its own Retry affordance instead of
+  // silently releasing it.
   useEffect(() => {
     if (agentTask !== null) {
       if (lastAgentTaskIdRef.current !== agentTask.taskId) {
         lastAgentTaskIdRef.current = agentTask.taskId;
         setSettledAgentTask(null);
       }
+      // The project is occupied again: no settled fetch may hold or fail the gate.
+      setSettledSnapshotPending(false);
+      setSettledSnapshotFailed(false);
       return undefined;
     }
     const taskId = lastAgentTaskIdRef.current;
@@ -286,23 +303,28 @@ export function WorkbenchShell({ project }: { project: ProjectSummary }) {
       return undefined;
     }
     let cancelled = false;
+    setSettledSnapshotPending(true);
     getAgentTask(project.id, taskId)
       .then((snapshot) => {
         if (cancelled) {
           return;
         }
         setSettledAgentTask(snapshot);
+        setSettledSnapshotPending(false);
+        setSettledSnapshotFailed(false);
       })
       .catch(() => {
         if (cancelled) {
           return;
         }
         setSettledAgentTask(null);
+        setSettledSnapshotPending(false);
+        setSettledSnapshotFailed(true);
       });
     return () => {
       cancelled = true;
     };
-  }, [agentTask, project.id]);
+  }, [agentTask, project.id, settledSnapshotAttempt]);
   // The reload trigger observes the occupying task's revision and, after the
   // task settled between two polls, the settled snapshot's final revision.
   const agentReloadRevision = agentTask?.workspaceRevision ?? settledAgentTask?.workspaceRevision ?? null;
@@ -497,6 +519,14 @@ export function WorkbenchShell({ project }: { project: ProjectSummary }) {
           </InlineAlert>
           <Button type="button" variant="outline" onClick={retryAgentReload}>
             Reload workspace
+          </Button>
+        </div>
+      ) : null}
+      {settledSnapshotFailed ? (
+        <div className="flex flex-col items-start gap-2 border-b bg-background px-4 py-2">
+          <InlineAlert>The agent task finished, but its final result could not be loaded.</InlineAlert>
+          <Button type="button" variant="outline" onClick={retrySettledSnapshot}>
+            Retry loading the result
           </Button>
         </div>
       ) : null}
@@ -752,7 +782,12 @@ export function WorkbenchShell({ project }: { project: ProjectSummary }) {
                   pollFailed={agentTaskQuery.isError}
                   writePending={agentWritePending}
                   hasActiveRun={snapshot.observedLockingRunId !== null}
-                  reloading={reloadingWorkspace}
+                  reloading={
+                    reloadingWorkspace ||
+                    agentReloadFailed ||
+                    agentReloadBlocked ||
+                    settledSnapshotSettling
+                  }
                   closePending={closeAgentTaskMutation.isPending}
                   onTaskAccepted={seedAgentTask}
                   onClose={() => {
