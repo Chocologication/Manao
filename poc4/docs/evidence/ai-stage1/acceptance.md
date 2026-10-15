@@ -18,10 +18,10 @@ NOT_REVERIFIED / NOT_RUN 的严格区分；缺什么条件就记什么，不合�
 | Operator ledger verification script (`ai-stage1-verify-ledger.mjs`) authored and exercised | PASS (real runs against fixture ledger rows, section 7) |
 | Independent re-verification script (`ai-stage1-independent-reverify.mjs`, same read-only-copy executor path + pom overlay) authored and exercised | PASS (real runs, broken→FAIL and repaired→PASS, section 7) |
 | Worker Deployment/Service manifest (`pi-worker.yaml`) with placeholders | DONE (review-only; applied only with authorization) |
-| Real model coding-and-repair loop in a browser against a real deployment | NOT_RUN |
-| Cluster rollout (V11 on the runtime schema, images, worker manifest, network policy apply) | NOT_RUN — needs explicit user authorization |
-| CNI enforcement measurement of the development network policy | NOT_RUN |
-| `PI_STAGE1_CODE_TEST_LOOP_PASS` | **NOT_GRANTED** — the real loop never ran; nothing in this record claims it |
+| Real model coding-and-repair loop in a browser against a real deployment | PASS (2026-10-15 real round, section 8: browser scene 6/6 plus both operator scripts on the same taskId) |
+| Cluster rollout (V11+V12 on the runtime schema, images, worker manifest, network policy apply) | PASS (2026-10-15, user-authorized; section 8.1) |
+| CNI enforcement measurement of the development network policy | PASS (2026-10-15 live measurement, section 8.2; a DNS gap was found and fixed before measuring) |
+| `PI_STAGE1_CODE_TEST_LOOP_PASS` | **PASS (GRANTED 2026-10-15)** — the real loop ran end to end and both operator-side verifications passed on the same taskId (section 8) |
 
 `PI_STAGE1_CODE_TEST_LOOP_PASS` may only be claimed by the real acceptance round
 (real cloud model, real cluster, browser E2E plus the independent re-verification
@@ -209,12 +209,12 @@ section 3.3 (503/401 refusals, full-chain FAILED verdict) came from this boot pa
 
 | Item | Status | Missing condition (exact) |
 | --- | --- | --- |
-| Real model coding-and-repair loop (the acceptance scene of `ai-stage1.spec.ts`) | NOT_RUN | (a) a real cloud provider configuration on the worker: `MANAO_AI_PROVIDER`/`MANAO_AI_API_TYPE`/`MANAO_AI_BASE_URL`/`MANAO_AI_MODEL`/`MANAO_AI_API_KEY` — no such key exists and none may be invented; (b) the user-authorized acceptance deployment (backend `MANAO_AI_ENABLED=true` + `MANAO_AI_PROJECT_ID`, worker, frontend built with `VITE_ENABLE_AI=true`); (c) Playwright browser binaries for the acceptance run (not installed on this machine; not force-installed) |
-| Cloud rollout: V11 on `manao_poc4_6b`, new backend/worker/frontend/runner images, worker manifest, network policy apply | NOT_RUN | Explicit user authorization for touching the existing cloud deployment; the prepared, reviewable content is in `poc4/deploy/ai-stage1/README.md`. Nothing was applied to `manao-stage6b` or its database |
-| CNI enforcement measurement of `development-network-policy.yaml` | NOT_RUN | A real cluster authorized for the round; a policy resource alone is not evidence (manifest header records the operator duties and the measurement requirement) |
-| Single-worker/single-backend no-overlap update verification | NOT_RUN | Same authorization; the rollout order (Recreate strategy, one replica each) is prepared in the deploy README |
-| Post-E2E dedicated-project deletion and leftover reconciliation | NOT_RUN | Follows the real E2E round; the runbook step is in the deploy README section 7 |
-| `PI_STAGE1_CODE_TEST_LOOP_PASS` | **NOT_GRANTED** | The real loop above never ran; component drills and the fixture verification do not substitute for it |
+| Real model coding-and-repair loop (the acceptance scene of `ai-stage1.spec.ts`) | ~~NOT_RUN~~ → **PASS** | Resolved 2026-10-15: the user provided the cloud model configuration (secret `manao-pi-worker-model`: provider `deepseek`, api-type `openai`, base-url `https://api.deepseek.com`, model `deepseek-flash`, real api key), authorized the acceptance deployment, and Playwright browsers were installed (section 8) |
+| Cloud rollout: V11+V12 on `manao_poc4_6b`, new backend/worker/frontend/runner images, worker manifest, network policy apply | ~~NOT_RUN~~ → **PASS** | Resolved 2026-10-15 with the user's explicit authorization; V11+V12 applied additively (schema `manao_poc4_6b` now at v12); images and identities in section 8.1 |
+| CNI enforcement measurement of `development-network-policy.yaml` | ~~NOT_RUN~~ → **PASS** | Measured live 2026-10-15 with a labeled probe pod; the measurement first exposed a real gap (NodeLocal DNSCache at 169.254.25.10 was cut off by the metadata exclude — fixed in commit `7f2f5fd`) and then the enforced behavior was verified (section 8.2) |
+| Single-worker/single-backend no-overlap update verification | ~~NOT_RUN~~ → **PASS** | Every rollout in section 8 used Recreate/replicas=1 (backend ×3, worker ×2, frontend ×1); no overlap observed at any point |
+| Post-E2E dedicated-project deletion and leftover reconciliation | ~~NOT_RUN~~ → **PASS** | Project `e956022d` deleted (HTTP 204); 0 K8s resources, 0 `project`/`agent_task`/`workspace_operation` rows remained (section 8.6) |
+| `PI_STAGE1_CODE_TEST_LOOP_PASS` | ~~NOT_GRANTED~~ → **GRANTED (2026-10-15)** | Granted by section 8 per the evidence contract in section 6 |
 
 Nothing in this round was SKIPPED silently: every check that could run locally
 ran and passed; everything else is listed here with its missing condition.
@@ -349,3 +349,102 @@ fixture rows are ledger-shaped, NOT a real loop):
   `pnpm typecheck:stage6` clean.
 - `--api` full-chain against a real deployment remains NOT_RUN (no acceptance
   deployment, no real model; conditions in section 5).
+
+## 8. Real acceptance round (2026-10-15): authorized deployment and verified loop
+
+Everything in this section ran against the user-authorized acceptance deployment in
+`manao-stage6b` on 2026-10-15. Four deployment-day defects were found by the real
+round and fixed with focused commits before the final green scene (section 8.3); no
+check was softened to get there.
+
+### 8.1 Deployment identities (release round 2026-10-15)
+
+| Artifact | Reference |
+| --- | --- |
+| Backend image | `chocologic/manao_images_repository@sha256:780146ec3316ef9455fd5865479d0dcf499ace7c21684548cd1ee85abe46ff84` (tag `ai-stage1-backend-20261015-r3`; carries V11+V12 and the NFS-source/delete-retry fixes) |
+| Frontend image | `chocologic/manao_images_repository@sha256:e89b2ad41c7ae679ef0f7937e630b5e76a633b0795a640a84a37b87afc5350f0` (built with `VITE_ENABLE_AI=true`) |
+| Pi worker image | `chocologic/manao_images_repository@sha256:0f32408db76a0220906b9178ea1cc9b8cc80db0d2af8ebda1bcef0ba0928a6d8` (tag `ai-stage1-pi-worker-20261015-r2`) |
+| Maven runner image | `chocologic/manao_images_repository@sha256:59a83cb94ac271b24b837f6fe55a27a308cc6f67fee43a46ca628d03fdf85e98` (tag `ai-stage1-runner-20261015`; published into secret `manao-backend-images` as `MANAO_MAVEN_RUNNER_IMAGE`) |
+| Worker model secret | `manao-pi-worker-model`: provider `deepseek`, api-type `openai` (mapped to the SDK transport `openai-completions` in code), base-url `https://api.deepseek.com`, model `deepseek-flash` (served by DeepSeek-V4.1-Flash), real api key supplied by the user |
+| Worker wiring secret | `manao-pi-worker-secrets` (worker-token / backend-internal-token, generated this round); backend `MANAO_AI_ENABLED=true`, `MANAO_AI_PROJECT_ID=e956022d-...` |
+| SDK identity | `@earendil-works/pi-coding-agent@1.2.0` (reference snapshot `7d75a0e3`), Node 24 (node:24-bookworm-slim), pnpm pinned 10.33.0 |
+| Cluster verify | Flyway `Migrating schema manao_poc4_6b to version 11/12 ... now at version v12` (backend startup log); single worker pod verified, UID 1000 first write on `/work/agent` confirmed live (review fix I5's deployment-period check) |
+
+### 8.2 CNI enforcement measurement (live, before the acceptance scene)
+
+A probe pod labeled `manao.poc4/component=development-build`:
+
+- First measurement FAILED on DNS for everything: this cluster resolves through
+  NodeLocal DNSCache (hostNetwork pods at `169.254.25.10`), which the policy's
+  `169.254.0.0/16` exclude cut off. Fixed by adding the dedicated `/32` DNS peer
+  (commit `7f2f5fd`) — the policy resource alone would have been false isolation.
+- Second measurement: `https://repo.maven.apache.org/` returned HTTP 200 (allowed);
+  the platform backend service, MySQL service, Pi worker service and
+  `169.254.169.254` all hit connect timeouts (denied). The isolation is enforced by
+  the CNI, not merely declared.
+
+### 8.3 Defects found and fixed during the real round (honest failures, no false green)
+
+| Symptom | Root cause | Fix (commit) |
+| --- | --- | --- |
+| Worker image build failed: `ERR_PNPM_IGNORED_BUILDS` | The Dockerfile left pnpm unpinned; corepack pulled pnpm 12, which fails on ignored build scripts | Pin `pnpm@10.33.0` via corepack (`285863a`) |
+| First real task hung silently 37 min (RUNNING, zero progress, zero outbound connections) | (a) pi-ai's builtin API transports are registered by a side-effect import the worker never made, and the transport id is `openai-completions`, not `openai` — every model call threw "No API provider registered"; (b) the worker manifest pointed at a nonexistent Service (`manao-backend` instead of `backend`), so the resulting terminal never reached the backend; (c) the pre-settle failure was swallowed without logging | compat import + `sdkApiId` mapping + launch() error logging (`285863a`); manifest service name (`7f2f5fd`) — a local repro then reached DeepSeek for real and settled honestly (401 with a fake key) |
+| Dev-build pod stuck in `ContainerCreating` past the 600 s budget (twice) | This cluster's kubelet/NFS cannot mount the SAME NFS PV read-only and read-write in one pod (controlled probes: RO+RW hangs, RW+RW via subPath starts instantly) | The development Job mounts the source through a dedicated NFS-direct volume (`readOnly: true`, same export) while the cache keeps the PVC (`a05a3c5`); EROFS evidence preserved (probe touch printed "Read-only") |
+| Build executed for real (exit 1) but settled NEEDS_ATTENTION instead of carrying the exit code | The identity-verified delete (Task 3 fix) 409-conflicts when the Job/Pod's OWN status write bumps the resourceVersion between read and delete — a same-object case the precondition was never meant to block | On 409: re-read, re-verify the UID, retry with the fresh version (`7bd1ca5`); a same-name replacement (different UID) is still refused — verified live in section 8.5 |
+| Acceptance browser scene failed at navigation/tree/reload | The app keeps the token in memory only (a deliberate security choice), so `page.goto` after login drops the session; the file tree renders collapsed; a reload needs re-login | Deep-link first + sign-in second, per-path tree expansion, reload re-login (`64c4567`); the bootstrap fixture seeding was fixed to create the directory chain level by level |
+
+### 8.4 The accepted round (evidence per the section 6 contract)
+
+- Bootstrap summary: project `ai-stage1-20261015100858-7bd3`, projectId
+  `e956022d-0b39-4cb5-898a-294616175429`, initial revision `28`, fixture sha256
+  `78ffdfc166210ca204e0e1a2e23d36b9148f293fdc134ce4c6791ab57714bf84` (verbatim
+  fixture round-tripped byte-for-byte).
+- Submitted task: `505de7be-2d8f-4d85-bd70-77304a8b6d0a`, prompt (verbatim):
+  「先执行测试确认当前错误；修复项目，并让 /api/demo 的 message 为 Hello from
+  Pi；保留现有验收测试，重新运行测试并报告结果。」
+- Model identity: DeepSeek `deepseek-flash` over the OpenAI-compatible API; SDK
+  `@earendil-works/pi-coding-agent@1.2.0`; 18 tool calls, every one COMPLETED.
+- Loop shape from the authoritative ledger (`ai-stage1-verify-ledger.mjs`, PASS,
+  checkedAt 2026-10-15T12:53:14Z): the first `build` (goal=test, toolCallId
+  `call_01_3LCNKFoDjXguJFWMljly1548`) recorded a REAL `exitCode=1` with cleanup
+  confirmed and full Job/Pod identity (`manao-dev-<commandId>`); a receipted
+  `write_file` to `DemoController` followed (workspace operation
+  `5b082554-6435-430b-9fb4-207c4627f54f`); a later `build` (goal=test, toolCallId
+  `call_00_ET_CpH3lmt97CpyOIZ6zI8g3166`) exited 0 with cleanup confirmed, and its
+  Surefire report read `tests=1 failures=0 errors=0 skipped=0`.
+- Browser scene: 6/6 passed — occupancy refusals verified (ordinary write and Run
+  start both 409 `AI_TASK_ACTIVE` while the task owned the project), a full reload
+  landed back in the SAME task, the editor displayed the repaired source
+  (`Hello from Pi`), the fixture stayed byte-identical, revision `28 → 29` under the
+  task and `30` after the post-run write probe, writes released afterwards.
+- Independent re-verification (`ai-stage1-independent-reverify.mjs --api` over the
+  saved source with the release runner digest `59a83cb9...`, PASS, checkedAt
+  2026-10-15T12:57:02Z): source exported through the owner file API, copy container
+  exit 0 on a real read-only `/source` mount, the operator acceptance pom overlaid on
+  the SCRATCH copy only (never visible to the model, saved source untouched), run
+  container exit 0 with NO `/source` mount, Surefire `tests=1 failures=0 errors=0
+  skipped=0`, source fingerprint unchanged, no containers left behind.
+
+### 8.5 Close-flow rehearsal on the pre-acceptance tasks
+
+Four exploration tasks created before the final green scene (`b7a9c74b`, `8d66cd1f`,
+`bfb74131`, `1f823327`) were ended through the owner close flow after each exposed a
+defect (section 8.3). Those closes exercised, on the real cluster: terminal
+arbitration over an unsettled build (NEEDS_ATTENTION retained occupancy until
+evidence existed), close-by-identity observation of a really-failed build,
+identity-verified Job/Pod deletion with the live 409-retry, and release. Every
+ambiguous state was recorded as NEEDS_ATTENTION first — no false success and no blind
+replay happened at any point.
+
+### 8.6 Cleanup and leftover reconciliation
+
+Project `e956022d-0b39-4cb5-898a-294616175429` was deleted through the owner API
+(HTTP 204). Reconciliation: 0 K8s resources carrying the project id (pods, PVCs,
+Jobs, Services, NetworkPolicies), 0 rows in `project`, `agent_task`,
+`workspace_operation`. The probe/warmup pods used for measurements were deleted by
+name during the round. The deployment assets (secrets `manao-pi-worker-model`,
+`manao-pi-worker-secrets`, the runner digest in `manao-backend-images`, the network
+policy, the worker Deployment/Service and the AI-enabled images) remain deployed in
+`manao-stage6b` as the working stage-one installation; the AI entry stays limited to
+the single acceptance projectId, which no longer exists, so the task entry is
+effectively dormant until the user configures another project.
