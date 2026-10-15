@@ -176,12 +176,29 @@ await api('save broken DemoController',
   body: { content: BROKEN_DEMO_CONTENT, expectedWorkspaceRevision: await currentRevision() },
 });
 
-// The fixture is a new file: create the entry, then save its verbatim bytes.
-let revision = await currentRevision();
+// The fixture lives in a directory the template does not carry. The agent
+// requires each entry's immediate parent to exist, so the directory chain is
+// created level by level, tolerating levels the template already carries.
+const fixtureDir = FIXTURE_FILE.slice(0, FIXTURE_FILE.lastIndexOf('/'));
+const levels = fixtureDir.split('/');
+for (let depth = 1; depth <= levels.length; depth++) {
+  const prefix = levels.slice(0, depth).join('/');
+  try {
+    await api(`create fixture parent directory ${prefix}`, `/api/v1/projects/${summary.projectId}/entries`, {
+      method: 'POST',
+      token,
+      body: { kind: 'directory', path: prefix, expectedWorkspaceRevision: await currentRevision() },
+    });
+  } catch (error) {
+    if (!/ENTRY_ALREADY_EXISTS/.test(String(error.message))) {
+      throw error;
+    }
+  }
+}
 await api('create fixture entry', `/api/v1/projects/${summary.projectId}/entries`, {
   method: 'POST',
   token,
-  body: { kind: 'file', path: FIXTURE_FILE, expectedWorkspaceRevision: revision },
+  body: { kind: 'file', path: FIXTURE_FILE, expectedWorkspaceRevision: await currentRevision() },
 });
 await api('save fixture content',
   `/api/v1/projects/${summary.projectId}/files/content?path=${encodeURIComponent(FIXTURE_FILE)}`, {

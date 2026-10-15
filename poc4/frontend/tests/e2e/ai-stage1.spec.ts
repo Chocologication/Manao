@@ -142,15 +142,12 @@ test.describe.serial('AI stage one coding and repair loop', () => {
   });
 
   test('accept the bootstrapped project and verify the AI workbench', async ({ page }) => {
-    await signIn(page);
-    await page.goto(`/projects/${SCENE.projectId}`);
-    await expect(page).toHaveURL(new RegExp(`/projects/${SCENE.projectId}$`));
+    await openProject(page);
 
     // The workbench loaded: the repaired controller's tree entry is visible, and the
     // deployment was built with the AI stage on (VITE_ENABLE_AI=true). A missing AI
     // tab means this entry is not the prepared acceptance deployment - refuse loudly.
-    const demoName = DEMO_FILE.split('/').pop()!;
-    await expect(page.getByRole('treeitem', { name: demoName, exact: true })).toBeVisible();
+    await revealInTree(page, DEMO_FILE);
     const aiTab = page.getByRole('tab', { name: 'AI' });
     if (!(await aiTab.isVisible())) {
       throw new Error(
@@ -189,8 +186,7 @@ test.describe.serial('AI stage one coding and repair loop', () => {
   });
 
   test('submit the stage-one goal; the task locks ordinary writes and Run', async ({ page }) => {
-    await signIn(page);
-    await page.goto(`/projects/${SCENE.projectId}`);
+    await openProject(page);
     await page.getByRole('tab', { name: 'AI' }).click();
 
     const submitResponse = page.waitForResponse((response) => {
@@ -236,8 +232,11 @@ test.describe.serial('AI stage one coding and repair loop', () => {
     // UI mirror: the goal textarea is disabled while the task occupies.
     await expect(page.locator('#agent-task-goal')).toBeDisabled();
 
-    // A full reload must land back in the SAME task - never a second one.
+    // A full reload must land back in the SAME task - never a second one. The
+    // reload drops the memory-only token, so sign in again on the way back;
+    // RequireAuth's router state returns the workbench, same task, same lock.
     await page.reload();
+    await signIn(page);
     await page.getByRole('tab', { name: 'AI' }).click();
     const current = await taskById(page, SCENE.taskId);
     expect(OCCUPYING.has(current.state), 'the same task must still occupy after a reload').toBe(true);
@@ -330,11 +329,9 @@ test.describe.serial('AI stage one coding and repair loop', () => {
   });
 
   test('the editor shows the repaired source', async ({ page }) => {
-    await signIn(page);
-    await page.goto(`/projects/${SCENE.projectId}`);
-    const demoName = DEMO_FILE.split('/').pop()!;
-    await expect(page.getByRole('treeitem', { name: demoName, exact: true })).toBeVisible();
-    await page.getByRole('treeitem', { name: demoName, exact: true }).click();
+    await openProject(page);
+    await revealInTree(page, DEMO_FILE);
+    await treeItemByPath(page, DEMO_FILE).click();
     await expect(page.locator('.monaco-editor .view-lines')).toContainText(TARGET_MESSAGE, {
       timeout: 60_000,
     });
@@ -376,6 +373,43 @@ async function signIn(page: Page): Promise<void> {
   // Login normally lands on the list; after an unauthenticated reload the app
   // returns to the pre-reload deep link, so both /projects and /projects/{id} hold.
   await expect(page).toHaveURL(/\/projects(\/[0-9a-f-]+)?$/);
+}
+
+/**
+ * The app keeps the access token in memory only (a deliberate 6A security choice:
+ * never in localStorage/sessionStorage/URL), so ANY page.goto after signing in
+ * drops the session and RequireAuth redirects back to /login. The workbench is
+ * therefore reached by deep-linking FIRST and signing in SECOND - RequireAuth
+ * records the requested path in router state and LoginPage returns to it.
+ */
+async function openProject(page: Page): Promise<void> {
+  await page.goto(`/projects/${SCENE.projectId}`);
+  await signIn(page);
+  await expect(page).toHaveURL(new RegExp(`/projects/${SCENE.projectId}$`));
+}
+
+/**
+ * The file tree renders collapsed roots and each tree item's children load on
+ * expansion, so a deep path (src/main/java/com/example/app) is only visible
+ * after every ancestor is expanded in order. Clicking a directory item toggles
+ * it (FileTreeNode onClick) - the same interaction a workbench user performs.
+ */
+async function revealInTree(page: Page, path: string): Promise<void> {
+  const segments = path.split('/');
+  for (let depth = 1; depth < segments.length; depth += 1) {
+    const prefix = segments.slice(0, depth).join('/');
+    await expect(treeItemByPath(page, prefix)).toBeVisible();
+    const isExpanded = await treeItemByPath(page, prefix).getAttribute('aria-expanded');
+    if (isExpanded !== 'true') {
+      await treeItemByPath(page, prefix).click();
+    }
+  }
+  await expect(treeItemByPath(page, path)).toBeVisible();
+}
+
+function treeItemByPath(page: Page, path: string): Locator {
+  const name = path.split('/').pop()!;
+  return page.getByRole('treeitem', { name, exact: true });
 }
 
 async function sleep(ms: number): Promise<void> {
