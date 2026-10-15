@@ -3,6 +3,7 @@ package com.manao.poc4.ai;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.manao.poc4.ai.AgentContracts.BuildGoal;
 import com.manao.poc4.ai.AgentContracts.BuildIdentity;
 import com.manao.poc4.ai.AgentContracts.BuildRequest;
@@ -22,10 +23,12 @@ import io.fabric8.kubernetes.client.KubernetesClient;
 import io.fabric8.kubernetes.client.KubernetesClientException;
 import io.fabric8.kubernetes.client.server.mock.KubernetesCrudDispatcher;
 import io.fabric8.kubernetes.client.server.mock.KubernetesMockServer;
+import io.fabric8.kubernetes.client.utils.Serialization;
 import io.fabric8.mockwebserver.Context;
 import io.fabric8.mockwebserver.MockWebServer;
 import io.fabric8.mockwebserver.http.MockResponse;
 import io.fabric8.mockwebserver.http.RecordedRequest;
+import java.io.IOException;
 import java.time.Clock;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -81,13 +84,35 @@ class DevelopmentBuildExecutorTest {
     private static final class LogAwareCrudDispatcher extends KubernetesCrudDispatcher {
         final Map<String, MockResponse> logs = new HashMap<>();
         /**
-         * When set, DELETEs for this job are answered with a 409 conflict — the server-side
-         * representation of "the verified object was replaced between the check and the
-         * delete" — and the delete request bodies are recorded for the precondition
-         * assertion.
+         * When set, DELETEs for this job are answered with a persistent 409 conflict and the
+         * delete request bodies are recorded for the precondition assertion: a delete that
+         * never stops conflicting is an unconfirmed cleanup, never a success.
          */
         String conflictJobDelete;
+        /**
+         * When set, the FIRST delete for this job is answered with a 409 conflict and the
+         * next one goes through to the store. Before the 409 is answered the stored job's
+         * resourceVersion is bumped — the benign case: the job controller's own status write
+         * bumped the resourceVersion between the executor's read and its delete.
+         */
+        String conflictJobDeleteOnce;
+        /**
+         * When set, the FIRST delete for this job is answered with a 409 conflict and the
+         * stored job is same-name replaced with a different uid before the 409 is answered —
+         * the hostile case: the job was deleted and recreated between the executor's read
+         * and its delete, so the post-conflict re-read observes a replacement.
+         */
+        String conflictThenReplaceJob;
+        /**
+         * When set, the FIRST delete for this pod is answered with a 409 conflict and the
+         * stored pod's resourceVersion is bumped before the 409 is answered; the next delete
+         * goes through to the store.
+         */
+        String conflictPodDeleteOnce;
+        /** When set, the body of every DELETE for a path ending in this suffix is recorded. */
+        String recordDeleteBodiesFor;
         final List<String> jobDeleteBodies = new ArrayList<>();
+        final List<String> recordedDeleteBodies = new ArrayList<>();
 
         @Override public MockResponse dispatch(RecordedRequest request) {
             if ("GET".equals(request.getMethod()) && request.getPath() != null) {
@@ -100,12 +125,61 @@ class DevelopmentBuildExecutorTest {
                     }
                 }
             }
-            if ("DELETE".equals(request.getMethod()) && request.getPath() != null
-                && conflictJobDelete != null && request.getPath().endsWith("/jobs/" + conflictJobDelete)) {
-                jobDeleteBodies.add(request.getBody().readUtf8());
-                return new MockResponse().setResponseCode(409);
+            if ("DELETE".equals(request.getMethod()) && request.getPath() != null) {
+                String path = request.getPath();
+                if (recordDeleteBodiesFor != null && path.endsWith(recordDeleteBodiesFor)) {
+                    recordedDeleteBodies.add(request.getBody().readUtf8());
+                }
+                if (conflictJobDelete != null && path.endsWith("/jobs/" + conflictJobDelete)) {
+                    jobDeleteBodies.add(request.getBody().readUtf8());
+                    return new MockResponse().setResponseCode(409);
+                }
+                if (conflictJobDeleteOnce != null && path.endsWith("/jobs/" + conflictJobDeleteOnce)) {
+                    String jobName = conflictJobDeleteOnce;
+                    conflictJobDeleteOnce = null;
+                    mutateStoredResource("/apis/batch/v1/namespaces/" + NS + "/jobs/" + jobName, null);
+                    return new MockResponse().setResponseCode(409);
+                }
+                if (conflictThenReplaceJob != null && path.endsWith("/jobs/" + conflictThenReplaceJob)) {
+                    String jobName = conflictThenReplaceJob;
+                    conflictThenReplaceJob = null;
+                    mutateStoredResource("/apis/batch/v1/namespaces/" + NS + "/jobs/" + jobName, "replaced-job-uid");
+                    return new MockResponse().setResponseCode(409);
+                }
+                if (conflictPodDeleteOnce != null && path.endsWith("/pods/" + conflictPodDeleteOnce)) {
+                    String podName = conflictPodDeleteOnce;
+                    conflictPodDeleteOnce = null;
+                    mutateStoredResource("/api/v1/namespaces/" + NS + "/pods/" + podName, null);
+                    return new MockResponse().setResponseCode(409);
+                }
             }
             return super.dispatch(request);
+        }
+
+        /**
+         * Mutates the stored resource the way the object's own controller would: bumps its
+         * resourceVersion and, when a replacement uid is given, rewrites the identity in
+         * place — a same-name replacement.
+         */
+        private void mutateStoredResource(String path, String replacementUid) {
+            try {
+                var key = getKey(path);
+                var entry = findResource(key);
+                if (entry == null) {
+                    return;
+                }
+                ObjectNode resource = (ObjectNode) Serialization.jsonMapper().readTree(entry.getValue());
+                ObjectNode metadata = (ObjectNode) resource.get("metadata");
+                if (replacementUid != null) {
+                    metadata.put("uid", replacementUid);
+                }
+                metadata.put("resourceVersion", String.valueOf(requestResourceVersion()));
+                synchronized (map) {
+                    map.put(entry.getKey(), resource.toString());
+                }
+            } catch (IOException ex) {
+                throw new IllegalStateException(ex);
+            }
         }
 
         private static String containerParam(String query) {
@@ -653,6 +727,85 @@ class DevelopmentBuildExecutorTest {
         assertThat(dispatcher.jobDeleteBodies).isNotEmpty();
         assertThat(dispatcher.jobDeleteBodies.get(0)).contains(
             "\"resourceVersion\":\"" + job.getMetadata().getResourceVersion() + "\"");
+    }
+
+    @Test
+    void aBenignStatusBumpOnTheJobDeleteIsRetriedWithTheReverifiedIdentity() {
+        Job job = seedJob();
+        Pod pod = seedPod(job.getMetadata().getName(), job.getMetadata().getUid(), 0, "Completed");
+        seedLog(pod.getMetadata().getName(), "[INFO] BUILD SUCCESS\n");
+        // The job controller's own status write (Failed/Complete conditions) bumps the job's
+        // resourceVersion between the executor's read and its delete: the first delete
+        // conflicts, but the re-read observes the SAME uid and the retried delete — carrying
+        // the freshly re-read resourceVersion — confirms the cleanup instead of dropping the
+        // real build result.
+        dispatcher.recordDeleteBodiesFor = "/jobs/" + job.getMetadata().getName();
+        dispatcher.conflictJobDeleteOnce = job.getMetadata().getName();
+
+        BuildResult result = executor.build(request());
+
+        assertThat(result.exitCode()).isZero();
+        assertThat(result.cleanupConfirmed()).isTrue();
+        assertThat(client.batch().v1().jobs().inNamespace(NS)
+            .withName(job.getMetadata().getName()).get()).isNull();
+        assertThat(client.pods().inNamespace(NS).withLabel(JobResourceFactory.LABEL_TOOL_CALL_ID, COMMAND)
+            .list().getItems()).isEmpty();
+        // The first attempt carried the verified (stale) resourceVersion; the retried delete
+        // carried the freshly re-read one.
+        assertThat(dispatcher.recordedDeleteBodies).hasSize(2);
+        assertThat(dispatcher.recordedDeleteBodies.get(0))
+            .contains("\"resourceVersion\":\"" + job.getMetadata().getResourceVersion() + "\"");
+        assertThat(dispatcher.recordedDeleteBodies.get(1))
+            .contains("\"resourceVersion\":")
+            .doesNotContain("\"resourceVersion\":\"" + job.getMetadata().getResourceVersion() + "\"");
+    }
+
+    @Test
+    void aJobReplacedBetweenTheConflictedDeleteAndTheRereadIsRefused() {
+        Job job = seedJob();
+        Pod pod = seedPod(job.getMetadata().getName(), job.getMetadata().getUid(), 0, "Completed");
+        seedLog(pod.getMetadata().getName(), "[INFO] BUILD SUCCESS\n");
+        // The first delete conflicts and the job was deleted-and-recreated under the same
+        // name before the executor's re-read: the re-verified identity catches the
+        // replacement, the cleanup stays unconfirmed and the replacement is never deleted.
+        dispatcher.conflictThenReplaceJob = job.getMetadata().getName();
+
+        BuildResult result = executor.build(request());
+
+        assertThat(result.exitCode()).isZero();
+        assertThat(result.cleanupConfirmed()).isFalse();
+        Job survivor = client.batch().v1().jobs().inNamespace(NS)
+            .withName(job.getMetadata().getName()).get();
+        assertThat(survivor).isNotNull();
+        assertThat(survivor.getMetadata().getUid()).isEqualTo("replaced-job-uid");
+        // Our own pod, owned by the verified job, was legitimately deleted first.
+        assertThat(client.pods().inNamespace(NS).withName(pod.getMetadata().getName()).get()).isNull();
+    }
+
+    @Test
+    void aStatusBumpOnAPodDeleteIsRetriedWithTheReverifiedOwnership() {
+        Job job = seedJob();
+        Pod pod = seedPod(job.getMetadata().getName(), job.getMetadata().getUid(), 1, "Error");
+        seedLog(pod.getMetadata().getName(), buildLog(SUREFIRE_XML));
+        // The pod's own status write bumps its resourceVersion between the executor's list
+        // and its delete: the first delete conflicts, the re-read still finds the pod owned
+        // by the verified job and the retried delete confirms the cleanup.
+        dispatcher.recordDeleteBodiesFor = "/pods/" + pod.getMetadata().getName();
+        dispatcher.conflictPodDeleteOnce = pod.getMetadata().getName();
+
+        BuildResult result = executor.build(request());
+
+        assertThat(result.exitCode()).isEqualTo(1);
+        assertThat(result.cleanupConfirmed()).isTrue();
+        assertThat(client.batch().v1().jobs().inNamespace(NS)
+            .withName(job.getMetadata().getName()).get()).isNull();
+        assertThat(client.pods().inNamespace(NS).withName(pod.getMetadata().getName()).get()).isNull();
+        assertThat(dispatcher.recordedDeleteBodies).hasSize(2);
+        assertThat(dispatcher.recordedDeleteBodies.get(0))
+            .contains("\"resourceVersion\":\"" + pod.getMetadata().getResourceVersion() + "\"");
+        assertThat(dispatcher.recordedDeleteBodies.get(1))
+            .contains("\"resourceVersion\":")
+            .doesNotContain("\"resourceVersion\":\"" + pod.getMetadata().getResourceVersion() + "\"");
     }
 
     @Test
