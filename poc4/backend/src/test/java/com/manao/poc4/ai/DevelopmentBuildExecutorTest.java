@@ -9,8 +9,11 @@ import com.manao.poc4.ai.AgentContracts.BuildRequest;
 import com.manao.poc4.ai.AgentContracts.BuildResult;
 import com.manao.poc4.ai.AgentContracts.TestReport;
 import com.manao.poc4.kubernetes.JobResourceFactory;
+import com.manao.poc4.kubernetes.WorkspaceResourceFactory;
 import io.fabric8.kubernetes.api.model.ContainerStatusBuilder;
 import io.fabric8.kubernetes.api.model.OwnerReferenceBuilder;
+import io.fabric8.kubernetes.api.model.PersistentVolumeBuilder;
+import io.fabric8.kubernetes.api.model.PersistentVolumeClaimBuilder;
 import io.fabric8.kubernetes.api.model.Pod;
 import io.fabric8.kubernetes.api.model.PodBuilder;
 import io.fabric8.kubernetes.api.model.PodStatusBuilder;
@@ -54,6 +57,9 @@ class DevelopmentBuildExecutorTest {
     private static final String INIT_IMAGE = "registry.example/manao/busybox@sha256:"
         + "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd";
     private static final Pattern POD_LOG = Pattern.compile("/pods/([^/]+)/log(\\?.*)?$");
+    private static final String WORKSPACE_PV = "manao-pv-" + PROJECT;
+    private static final JobResourceFactory.DevelopmentSourceVolume SOURCE =
+        new JobResourceFactory.DevelopmentSourceVolume("nfs.example", "/export/manao-workspaces");
 
     private static final String SUREFIRE_XML = """
         <?xml version="1.0" encoding="UTF-8"?>
@@ -128,6 +134,22 @@ class DevelopmentBuildExecutorTest {
             IMAGE, "registry.example/manao/python-runner@sha256:" + "b".repeat(64));
         executor = new Fabric8DevelopmentBuildExecutor(client, factory, NS, (ignored, identity) -> boundIdentities.add(identity),
             (request, create) -> create.get(), Clock.systemUTC(), 10, 5, 5);
+        seedNfsWorkspaceVolume();
+    }
+
+    /** The project's workspace volume as this stage's cluster binds it: an NFS-backed PV. */
+    private void seedNfsWorkspaceVolume() {
+        client.persistentVolumes().resource(new PersistentVolumeBuilder()
+            .withNewMetadata().withName(WORKSPACE_PV).endMetadata()
+            .withNewSpec()
+            .withNewNfs().withServer(SOURCE.nfsServer()).withPath(SOURCE.nfsPath())
+                .withReadOnly(false).endNfs()
+            .endSpec()
+            .build()).create();
+        client.persistentVolumeClaims().inNamespace(NS).resource(new PersistentVolumeClaimBuilder()
+            .withNewMetadata().withName(WorkspaceResourceFactory.pvcName(PROJECT)).endMetadata()
+            .withNewSpec().withVolumeName(WORKSPACE_PV).endSpec()
+            .build()).create();
     }
 
     @AfterEach
@@ -140,7 +162,7 @@ class DevelopmentBuildExecutorTest {
     }
 
     private Job seedJob() {
-        Job job = factory.createDevelopmentJob(request());
+        Job job = factory.createDevelopmentJob(request(), SOURCE);
         client.batch().v1().jobs().inNamespace(NS).resource(job).create();
         return client.batch().v1().jobs().inNamespace(NS).withName(job.getMetadata().getName()).get();
     }
@@ -253,6 +275,24 @@ class DevelopmentBuildExecutorTest {
         // The pre-existing job was queried and reused, never replaced by a second one.
         assertThat(boundIdentities).contains(result.identity());
         assertThat(client.batch().v1().jobs().inNamespace(NS).list().getItems()).isEmpty();
+    }
+
+    @Test
+    void aNonNfsWorkspaceVolumeFailsClosedBeforeAnyJobIsCreated() {
+        // Replace the seeded NFS volume with a PV that carries no NFS spec at all: stage one
+        // runs on NFS-backed workspaces only, and an unresolvable read-only source must
+        // refuse the build instead of starting it.
+        client.persistentVolumes().withName(WORKSPACE_PV).delete();
+        client.persistentVolumes().resource(new PersistentVolumeBuilder()
+            .withNewMetadata().withName(WORKSPACE_PV).endMetadata()
+            .withNewSpec().endSpec()
+            .build()).create();
+
+        assertThatThrownBy(() -> executor.build(request()))
+            .isInstanceOf(IllegalStateException.class)
+            .hasMessageContaining("development build requires an NFS-backed workspace volume");
+        assertThat(client.batch().v1().jobs().inNamespace(NS).list().getItems()).isEmpty();
+        assertThat(client.pods().inNamespace(NS).list().getItems()).isEmpty();
     }
 
     @Test
@@ -499,7 +539,7 @@ class DevelopmentBuildExecutorTest {
             boundIdentities.add(identity);
             client.batch().v1().jobs().inNamespace(NS).withName(identity.jobName()).delete();
             client.batch().v1().jobs().inNamespace(NS)
-                .resource(factory.createDevelopmentJob(request())).create();
+                .resource(factory.createDevelopmentJob(request(), SOURCE)).create();
         }, (request, create) -> create.get(), Clock.systemUTC(), 10, 30, 5);
 
         assertThatThrownBy(() -> executor.build(request())).isInstanceOf(IllegalStateException.class);

@@ -114,7 +114,11 @@ public final class Fabric8DevelopmentBuildExecutor implements DevelopmentBuildEx
             return unresolved(jobName, null, null, "BUILD_IDENTITY_UNVERIFIABLE");
         }
         if (job == null) {
-            job = creation.create(request, () -> createJob(request));
+            // The read-only source volume is resolved from the bound workspace PV before the
+            // creation critical section: a workspace the manifest cannot be built for fails
+            // closed before anything is created.
+            JobResourceFactory.DevelopmentSourceVolume source = developmentSourceVolume(request.projectId());
+            job = creation.create(request, () -> createJob(request, source));
             if (job == null) {
                 return new AgentContracts.BuildResult(
                     new AgentContracts.BuildIdentity(jobName, null, null),
@@ -273,14 +277,39 @@ public final class Fabric8DevelopmentBuildExecutor implements DevelopmentBuildEx
     }
 
     /**
+     * Resolves the workspace volume this project's PVC binds to and requires it to be an NFS
+     * volume: the development build reads its source through a dedicated NFS volume because
+     * this stage's cluster cannot mix a read-only and a read-write mount of one PVC, and its
+     * workspaces are NFS-backed. Anything else — a missing claim, a claim without a bound
+     * volume, a vanished PV or a non-NFS PV — fails closed: the build never starts on a
+     * source this manifest cannot mount read-only.
+     */
+    private JobResourceFactory.DevelopmentSourceVolume developmentSourceVolume(String projectId) {
+        String claimName = WorkspaceResourceFactory.pvcName(projectId);
+        var pvc = client.persistentVolumeClaims().inNamespace(namespace).withName(claimName).get();
+        String volumeName = pvc == null || pvc.getSpec() == null ? null : pvc.getSpec().getVolumeName();
+        if (volumeName == null || volumeName.isBlank()) {
+            throw new IllegalStateException("development build requires an NFS-backed workspace volume: "
+                + claimName + " has no bound volume");
+        }
+        var pv = client.persistentVolumes().withName(volumeName).get();
+        if (pv == null || pv.getSpec() == null || pv.getSpec().getNfs() == null) {
+            throw new IllegalStateException("development build requires an NFS-backed workspace volume: "
+                + claimName + " is bound to " + volumeName + ", which is not NFS-backed");
+        }
+        return new JobResourceFactory.DevelopmentSourceVolume(
+            pv.getSpec().getNfs().getServer(), pv.getSpec().getNfs().getPath());
+    }
+
+    /**
      * Creates the development job once; a create race (409) is re-verified instead of retried
      * blindly, so a fuzzy create can never produce a second job for the same commandId.
      */
-    private Job createJob(AgentContracts.BuildRequest request) {
+    private Job createJob(AgentContracts.BuildRequest request, JobResourceFactory.DevelopmentSourceVolume source) {
         String jobName = JobResourceFactory.developmentJobName(request.commandId());
         try {
             client.batch().v1().jobs().inNamespace(namespace)
-                .resource(factory.createDevelopmentJob(request)).create();
+                .resource(factory.createDevelopmentJob(request, source)).create();
         } catch (KubernetesClientException ex) {
             if (ex.getCode() != 409) {
                 throw ex;

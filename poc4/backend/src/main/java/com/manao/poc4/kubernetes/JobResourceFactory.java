@@ -80,6 +80,20 @@ public class JobResourceFactory {
     public record RunResources(long cpuMillis, long memoryBytes, long ephemeralStorageBytes) { }
 
     /**
+     * The resolved NFS endpoints of the workspace volume a development build reads its source
+     * from. The source volume is a dedicated NFS volume (not a second PVC mount) because this
+     * stage's cluster cannot mix a read-only and a read-write mount of one PVC — such pods
+     * never leave ContainerCreating — while a direct NFS volume alongside the PVC mount starts
+     * normally and still enforces the read-only isolation on the volume.
+     */
+    public record DevelopmentSourceVolume(String nfsServer, String nfsPath) {
+        public DevelopmentSourceVolume {
+            nfsServer = requireText(nfsServer, "nfsServer");
+            nfsPath = requireText(nfsPath, "nfsPath");
+        }
+    }
+
+    /**
      * The per-language fixed manifest inputs, resolved from the persisted Run template. The
      * image, the cache mount, the TASK command and the SERVICE supervisor profile are server
      * policy; the supervisor profile argument exists only for Python because the legacy
@@ -174,9 +188,15 @@ public class JobResourceFactory {
      * main container never mounts the source or the PVC root — it can only touch its scratch
      * copy, the cache and tmp. One single-run job bounded by its own deadline, no
      * ServiceAccount token, no application environment and no database credentials; the goal
-     * comes from the fixed enum, never from raw argv.
+     * comes from the fixed enum, never from raw argv. The read-only source comes through a
+     * dedicated NFS volume resolved from the workspace PV (volume-level readOnly) instead of
+     * a second PVC mount: this stage's cluster cannot mount one PVC read-only and read-write
+     * at the same time, while the NFS volume + PVC cache combination starts normally.
      */
-    public Job createDevelopmentJob(BuildRequest request) {
+    public Job createDevelopmentJob(BuildRequest request, DevelopmentSourceVolume sourceVolume) {
+        if (sourceVolume == null) {
+            throw new IllegalArgumentException("sourceVolume is required");
+        }
         String commandId = requireText(request.commandId(), "commandId");
         var labels = WorkspaceResourceFactory.projectIdentityLabels(request.projectId());
         labels.put(LABEL_COMPONENT, COMPONENT_DEVELOPMENT_BUILD);
@@ -208,10 +228,11 @@ public class JobResourceFactory {
             .withVolumes(
                 new io.fabric8.kubernetes.api.model.VolumeBuilder()
                     .withName("source")
-                    .withNewPersistentVolumeClaim()
-                    .withClaimName(WorkspaceResourceFactory.pvcName(request.projectId()))
+                    .withNewNfs()
+                    .withServer(sourceVolume.nfsServer())
+                    .withPath(sourceVolume.nfsPath())
                     .withReadOnly(true)
-                    .endPersistentVolumeClaim()
+                    .endNfs()
                     .build(),
                 new io.fabric8.kubernetes.api.model.VolumeBuilder()
                     .withName("cache")

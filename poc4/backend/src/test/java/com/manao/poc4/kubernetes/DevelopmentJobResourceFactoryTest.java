@@ -1,6 +1,7 @@
 package com.manao.poc4.kubernetes;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.manao.poc4.ai.AgentContracts.BuildGoal;
@@ -27,6 +28,8 @@ class DevelopmentJobResourceFactoryTest {
         new JobResourceFactory.RunResources(1000, 1L * 1024 * 1024 * 1024, 1L * 1024 * 1024 * 1024);
     private static final JobResourceFactory.RunResources LIMITS =
         new JobResourceFactory.RunResources(8000, 16L * 1024 * 1024 * 1024, 10L * 1024 * 1024 * 1024);
+    private static final JobResourceFactory.DevelopmentSourceVolume SOURCE =
+        new JobResourceFactory.DevelopmentSourceVolume("nfs.example", "/export/manao-workspaces");
     private final JobResourceFactory factory = new JobResourceFactory(
         "manao-test", 1800, INIT_IMAGE, REQUESTS, LIMITS, IMAGE, pythonImageDigest());
     private final ObjectMapper json = new ObjectMapper();
@@ -47,7 +50,7 @@ class DevelopmentJobResourceFactoryTest {
 
     @Test
     void developmentBuildIsASingleRunOfTheFixedLauncher() throws Exception {
-        Job job = factory.createDevelopmentJob(request(BuildGoal.TEST));
+        Job job = factory.createDevelopmentJob(request(BuildGoal.TEST), SOURCE);
         assertThat(job.getMetadata().getName()).isEqualTo("manao-dev-" + COMMAND);
         assertThat(job.getSpec().getParallelism()).isEqualTo(1);
         assertThat(job.getSpec().getCompletions()).isEqualTo(1);
@@ -65,24 +68,24 @@ class DevelopmentJobResourceFactoryTest {
 
     @Test
     void everyGoalMapsToItsFixedLowercaseArgument() {
-        assertThat(factory.createDevelopmentJob(request(BuildGoal.COMPILE))
+        assertThat(factory.createDevelopmentJob(request(BuildGoal.COMPILE), SOURCE)
             .getSpec().getTemplate().getSpec().getContainers().get(0).getCommand())
             .containsExactly("/usr/local/bin/manao-dev-build", "run", "compile");
-        assertThat(factory.createDevelopmentJob(request(BuildGoal.PACKAGE))
+        assertThat(factory.createDevelopmentJob(request(BuildGoal.PACKAGE), SOURCE)
             .getSpec().getTemplate().getSpec().getContainers().get(0).getCommand())
             .containsExactly("/usr/local/bin/manao-dev-build", "run", "package");
     }
 
     @Test
     void theMainContainerNeverSeesTheSourceMountOrThePvcRoot() {
-        Job job = factory.createDevelopmentJob(request(BuildGoal.TEST));
+        Job job = factory.createDevelopmentJob(request(BuildGoal.TEST), SOURCE);
         var spec = job.getSpec().getTemplate().getSpec();
         var main = spec.getContainers().get(0);
         assertThat(main.getName()).isEqualTo(ResourceIdentityVerifier.APPLICATION_CONTAINER);
         assertThat(main.getVolumeMounts()).extracting(mount -> mount.getMountPath())
             .doesNotContain("/source")
             .containsExactlyInAnyOrder("/workspace", "/maven-cache", "/tmp");
-        // The only PVC-backed volume is the read-only source; the main container references
+        // The only PVC-backed volume is the writable cache; the main container references
         // only the scratch and tmp volumes, so it cannot reach the source at all.
         var volumeNames = main.getVolumeMounts().stream().map(mount -> mount.getName()).toList();
         assertThat(volumeNames).doesNotContain("source");
@@ -91,15 +94,37 @@ class DevelopmentJobResourceFactoryTest {
         var scratch = spec.getVolumes().stream()
             .filter(volume -> "workspace".equals(volume.getName())).findFirst().orElseThrow();
         assertThat(scratch.getEmptyDir()).isNotNull();
+        // The read-only source comes through a dedicated NFS volume (volume-level readOnly):
+        // this stage's cluster cannot mix a read-only and a read-write mount of one PVC, so
+        // the source volume is no longer a PVC entry at all.
         var source = spec.getVolumes().stream()
             .filter(volume -> "source".equals(volume.getName())).findFirst().orElseThrow();
-        assertThat(source.getPersistentVolumeClaim().getClaimName())
+        assertThat(source.getNfs()).isNotNull();
+        assertThat(source.getNfs().getServer()).isEqualTo(SOURCE.nfsServer());
+        assertThat(source.getNfs().getPath()).isEqualTo(SOURCE.nfsPath());
+        assertThat(source.getNfs().getReadOnly()).isTrue();
+        assertThat(source.getPersistentVolumeClaim()).isNull();
+        // The writable cache is still the project PVC.
+        var cache = spec.getVolumes().stream()
+            .filter(volume -> "cache".equals(volume.getName())).findFirst().orElseThrow();
+        assertThat(cache.getPersistentVolumeClaim().getClaimName())
             .isEqualTo(WorkspaceResourceFactory.pvcName(PROJECT));
+        assertThat(cache.getPersistentVolumeClaim().getReadOnly()).isFalse();
+    }
+
+    @Test
+    void theDevelopmentSourceVolumeRequiresBothNfsEndpoints() {
+        assertThatThrownBy(() -> new JobResourceFactory.DevelopmentSourceVolume(" ", "/export/manao"))
+            .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> new JobResourceFactory.DevelopmentSourceVolume("nfs.example", ""))
+            .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> new JobResourceFactory.DevelopmentSourceVolume("nfs.example", null))
+            .isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test
     void theInitContainersCopyTheReadOnlySourceIntoTheScratch() throws Exception {
-        Job job = factory.createDevelopmentJob(request(BuildGoal.TEST));
+        Job job = factory.createDevelopmentJob(request(BuildGoal.TEST), SOURCE);
         var spec = job.getSpec().getTemplate().getSpec();
         assertThat(spec.getInitContainers()).hasSize(2);
         var copy = spec.getInitContainers().stream()
@@ -136,7 +161,7 @@ class DevelopmentJobResourceFactoryTest {
 
     @Test
     void theDevelopmentJobCarriesTheProjectAndToolCallIdentity() {
-        Job job = factory.createDevelopmentJob(request(BuildGoal.TEST));
+        Job job = factory.createDevelopmentJob(request(BuildGoal.TEST), SOURCE);
         var labels = job.getMetadata().getLabels();
         assertThat(labels)
             .containsEntry(WorkspaceResourceFactory.LABEL_PROJECT_ID, PROJECT)
@@ -149,7 +174,7 @@ class DevelopmentJobResourceFactoryTest {
 
     @Test
     void theDevelopmentJobSharesTheRunSecurityEnvelope() {
-        Job job = factory.createDevelopmentJob(request(BuildGoal.TEST));
+        Job job = factory.createDevelopmentJob(request(BuildGoal.TEST), SOURCE);
         var spec = job.getSpec().getTemplate().getSpec();
         var security = spec.getSecurityContext();
         assertThat(security.getRunAsNonRoot()).isTrue();
