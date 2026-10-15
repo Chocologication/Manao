@@ -8,9 +8,9 @@ import { TerminalSession, type TerminalAdapter } from '@/terminal/TerminalSessio
 import { WebSocketTerminalTransport } from '@/terminal/WebSocketTerminalTransport';
 import { TerminalSearchBar } from './TerminalSearchBar';
 import '@xterm/xterm/css/xterm.css';
+import { terminalThemes, useThemePreferences } from '@/features/preferences/themePreferences';
 
 const TERMINAL_URL = 'ws://127.0.0.1:4174/terminal';
-const terminalTheme = { background: '#1e1e1e', foreground: '#d4d4d4' };
 
 type TerminalStatus = 'connecting' | 'connected' | 'disconnected' | 'error';
 
@@ -35,6 +35,8 @@ function createXtermAdapter(terminal: Terminal): TerminalAdapter {
 }
 
 export function TerminalPanel({ active }: { active: boolean }) {
+  const theme = useThemePreferences((state) => state.theme);
+  const terminalTheme = terminalThemes[theme];
   const containerRef = useRef<HTMLDivElement>(null);
   const sessionRef = useRef<TerminalSession | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
@@ -72,7 +74,7 @@ export function TerminalPanel({ active }: { active: boolean }) {
       cursorStyle: 'bar',
       convertEol: true,
       fontSize: 14,
-      theme: terminalTheme,
+      theme: terminalThemes[useThemePreferences.getState().theme],
     });
     const fitAddon = new FitAddon();
     const searchAddon = new SearchAddon();
@@ -169,6 +171,9 @@ export function TerminalPanel({ active }: { active: boolean }) {
   }, [active]);
 
   useEffect(() => () => teardown(), [teardown]);
+  useEffect(() => {
+    if (terminalRef.current) terminalRef.current.options.theme = terminalTheme;
+  }, [terminalTheme]);
 
   const canConnect = status === 'disconnected' || status === 'error';
   const canDisconnect = status === 'connecting' || status === 'connected';

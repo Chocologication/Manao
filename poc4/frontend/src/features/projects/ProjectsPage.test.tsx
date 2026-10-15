@@ -1,4 +1,4 @@
-import { cleanup, renderHook, screen, waitFor, within } from '@testing-library/react';
+import { cleanup, fireEvent, renderHook, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import { readFileSync } from 'node:fs';
@@ -16,7 +16,7 @@ import {
 } from '../../mocks/state';
 import {
   advanceFakeTimersUntil,
-  renderApp,
+  renderApp as renderBaseApp,
   resetAppRuntime,
   simulateWindowRefocus,
 } from '../../test/renderApp';
@@ -32,6 +32,15 @@ import {
 } from './projectQueries';
 
 const ALICE = { username: 'alice', password: 'demo-pass' };
+function renderApp(options: Parameters<typeof renderBaseApp>[0] = {}) {
+  const view = renderBaseApp(options);
+  const createButton = screen.queryAllByRole('button', { name: '新建项目' })[0];
+  if (createButton) {
+    fireEvent.click(createButton);
+    fireEvent.click(screen.getByRole('button', { name: '所有配置' }));
+  }
+  return view;
+}
 const ACCESS_DENIED_LEAK = /not found|does not exist|bob|prj-bob|exist/i;
 
 async function authenticateAsAlice(): Promise<void> {
@@ -172,7 +181,7 @@ describe('ProjectsPage', () => {
     await authenticateAsAlice();
     renderApp();
 
-    expect(await screen.findByText(/no projects yet/i)).toBeInTheDocument();
+    expect(await screen.findByText('你的第一个实验，从这里开始')).toBeInTheDocument();
     expect(screen.getByLabelText('Project name')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /create project/i })).toBeDisabled();
   });
@@ -187,7 +196,7 @@ describe('ProjectsPage', () => {
     await user.click(screen.getByRole('button', { name: /create project/i }));
 
     const card = await screen.findByRole('article', { name: 'Workspace Alpha' });
-    expect(within(card).getByText('CREATING')).toBeInTheDocument();
+    expect(within(card).getByText('正在创建')).toBeInTheDocument();
     expect(within(card).getByTestId('spinner')).toBeInTheDocument();
     expect(within(card).getByRole('button', { name: 'Open' })).toBeDisabled();
     expect(card.parentElement?.closest('article')).toBeNull();
@@ -198,7 +207,7 @@ describe('ProjectsPage', () => {
     renderApp();
 
     const card = await screen.findByRole('article', { name: 'Alice Notebook' });
-    expect(within(card).getByText('READY')).toBeInTheDocument();
+    expect(within(card).getByText('环境就绪')).toBeInTheDocument();
     const open = within(card).getByRole('link', { name: 'Open' });
     expect(open).toBeEnabled();
     expect(open).toHaveAttribute('href', `/projects/${ALICE_SEED_PROJECT_ID}`);
@@ -260,7 +269,7 @@ describe('ProjectsPage', () => {
       },
       { timeout: 4000 },
     );
-    expect(within(card).getByText('FAILED')).toBeInTheDocument();
+    expect(within(card).getByText('创建失败')).toBeInTheDocument();
     expect(within(card).queryByRole('link', { name: 'Open' })).not.toBeInTheDocument();
     expect(within(card).queryByRole('button', { name: 'Open' })).not.toBeInTheDocument();
   });
@@ -278,7 +287,7 @@ describe('ProjectsPage', () => {
     renderApp();
 
     const card = await screen.findByRole('article', { name: 'Deleting project' });
-    expect(within(card).getByText('Deleting')).toBeInTheDocument();
+    expect(within(card).getByText('正在删除')).toBeInTheDocument();
     expect(within(card).queryByRole('link', { name: 'Open' })).not.toBeInTheDocument();
     expect(within(card).queryByRole('button', { name: 'Open' })).not.toBeInTheDocument();
   });
@@ -470,7 +479,7 @@ describe('ProjectRoutePage', () => {
 
     await waitForWorkbench();
     expect(await screen.findByRole('heading', { name: 'Alice Notebook' })).toBeInTheDocument();
-    expect(screen.getByText('READY')).toBeInTheDocument();
+    expect(screen.getByText('无未保存修改')).toBeInTheDocument();
     expect(screen.getByRole('tab', { name: 'File' })).toHaveAttribute('aria-selected', 'true');
     expect(getFileRequestCount('tree', ALICE_SEED_PROJECT_ID, '')).toBeGreaterThan(0);
     expect(screen.queryByTestId('terminal-spike-panel')).not.toBeInTheDocument();

@@ -81,7 +81,7 @@ describe('PythonDependencyRecovery ready page', () => {
     const user = userEvent.setup();
     const view = renderRecovery({ variant: 'ready', operationId: OPERATION_ID, onRecovered });
 
-    expect(screen.getByText('Dependency change is unconfirmed')).toBeInTheDocument();
+    expect(screen.getByText('依赖变更尚未确认')).toBeInTheDocument();
     const check = screen.getByRole('button', { name: 'Check dependency change' });
     expect(check).toBeEnabled();
     await user.click(check);
@@ -103,7 +103,7 @@ describe('PythonDependencyRecovery ready page', () => {
         onRecovered={onRecovered}
       />,
     );
-    expect(screen.queryByText('Dependency change is unconfirmed')).not.toBeInTheDocument();
+    expect(screen.queryByText('依赖变更尚未确认')).not.toBeInTheDocument();
     fetchSpy.mockRestore();
   });
 
@@ -161,7 +161,7 @@ describe('PythonDependencyRecovery ready page', () => {
     ]);
     // A missing record is not a proof of absence: the id stays and the entry stays.
     expect(readPythonDependencyOperationId(ALICE_USER_ID, PROJECT_ID)).toBe(OPERATION_ID);
-    expect(screen.getByText('Dependency change is unconfirmed')).toBeInTheDocument();
+    expect(screen.getByText('依赖变更尚未确认')).toBeInTheDocument();
     fetchSpy.mockRestore();
   });
 
@@ -179,7 +179,7 @@ describe('PythonDependencyRecovery ready page', () => {
       expect(screen.getByRole('button', { name: 'Check dependency change' })).toBeEnabled();
     });
     expect(onRecovered).not.toHaveBeenCalled();
-    expect(screen.getByText('Dependency change is unconfirmed')).toBeInTheDocument();
+    expect(screen.getByText('依赖变更尚未确认')).toBeInTheDocument();
   });
 });
 
@@ -330,7 +330,7 @@ describe('PythonDependencyRecovery failed page', () => {
     ]);
     // The discovered id stays so the next Check re-queries the same operation.
     expect(readPythonDependencyOperationId(ALICE_USER_ID, PROJECT_ID)).toBe(OPERATION_ID);
-    expect(screen.getByText('Dependency change is unconfirmed')).toBeInTheDocument();
+    expect(screen.getByText('依赖变更尚未确认')).toBeInTheDocument();
     fetchSpy.mockRestore();
   });
 
@@ -351,7 +351,7 @@ describe('PythonDependencyRecovery failed page', () => {
       expect(screen.getByRole('button', { name: 'Check dependency change' })).toBeEnabled();
     });
     expect(onRecovered).not.toHaveBeenCalled();
-    expect(screen.getByText('Dependency change is unconfirmed')).toBeInTheDocument();
+    expect(screen.getByText('依赖变更尚未确认')).toBeInTheDocument();
     expect(recordedDependencyCalls(fetchSpy)).toEqual([
       { method: 'GET', path: `/api/v1/projects/${PROJECT_ID}/python-dependencies/pending` },
     ]);
@@ -405,7 +405,7 @@ describe('PythonDependencyRecovery dirty ready page', () => {
     });
     const check = screen.getByRole('button', { name: 'Check dependency change' });
     expect(check).toBeDisabled();
-    expect(screen.getByText('Save or discard file changes first')).toBeInTheDocument();
+    expect(screen.getByText('请先保存或放弃文件修改')).toBeInTheDocument();
 
     act(() => {
       useWorkspaceSession.getState().setDirty(parseProjectRelativePath('main.py'), false);
@@ -437,7 +437,7 @@ describe('PythonDependencyRecovery dirty ready page', () => {
       useWorkspaceSession.getState().setDirty(parseProjectRelativePath('main.py'), true);
     });
     expect(screen.getByRole('button', { name: 'Check dependency change' })).toBeEnabled();
-    expect(screen.queryByText('Save or discard file changes first')).not.toBeInTheDocument();
+    expect(screen.queryByText('请先保存或放弃文件修改')).not.toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: 'Check dependency change' }));
     await waitFor(() => {

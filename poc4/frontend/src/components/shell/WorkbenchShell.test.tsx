@@ -233,30 +233,44 @@ describe('WorkbenchShell experimental surfaces', () => {
 });
 
 describe('WorkbenchShell layout', () => {
-  it('renders a 48px top bar with back, name, READY and logout', async () => {
+  it('opens the command panel with Ctrl+K and runs the highlighted item with Enter', async () => {
+    const user = userEvent.setup();
+    await authenticateAsAlice();
+    renderShell();
+    await loadedRoot();
+
+    await user.keyboard('{Control>}k{/Control}');
+    const search = await screen.findByRole('combobox', { name: '搜索命令或已打开文件' });
+    await user.keyboard('{ArrowDown}{Enter}');
+
+    await waitFor(() => expect(search.closest('dialog')).not.toHaveAttribute('open'));
+    expect(screen.getByRole('tab', { name: 'Run' })).toHaveAttribute('aria-selected', 'true');
+  });
+
+  it('renders the branded header with navigation, name and logout', async () => {
     await authenticateAsAlice();
     renderShell();
     await loadedRoot();
 
     const header = screen.getByRole('banner');
-    expect(header).toHaveClass('h-12');
+    expect(header).toHaveClass('lab-workbench-header');
     expect(within(header).getByRole('link', { name: 'Back to projects' })).toHaveAttribute(
       'href',
       '/projects',
     );
     expect(within(header).getByRole('heading', { name: 'Alice Notebook' })).toBeInTheDocument();
-    expect(within(header).getByText('READY')).toBeInTheDocument();
+    expect(within(header).getByText('无未保存修改')).toBeInTheDocument();
     expect(within(header).getByRole('button', { name: 'Log out' })).toBeInTheDocument();
   });
 
-  it('renders a 256px sidebar with the project-relative root, refresh and collapse-all', async () => {
+  it('renders the responsive explorer with refresh and collapse-all', async () => {
     await authenticateAsAlice();
     renderShell();
     await loadedRoot();
 
     const sidebar = screen.getByRole('complementary', { name: 'Project files' });
-    expect(sidebar).toHaveClass('w-[256px]');
-    expect(within(sidebar).getByText('/')).toBeInTheDocument();
+    expect(sidebar).toHaveClass('lab-file-sidebar');
+    expect(within(sidebar).getByText('EXPLORER')).toBeInTheDocument();
     expect(within(sidebar).getByRole('button', { name: 'Refresh' })).toBeInTheDocument();
     expect(within(sidebar).getByRole('button', { name: 'Collapse all folders' })).toBeInTheDocument();
   });
@@ -301,7 +315,7 @@ describe('WorkbenchShell layout', () => {
     const shell = container.querySelector('.workbench-shell');
     expect(shell).not.toBeNull();
     expect(shell).toHaveClass('overflow-hidden');
-    expect(screen.getByRole('complementary', { name: 'Project files' })).toHaveClass('w-[256px]');
+    expect(screen.getByRole('complementary', { name: 'Project files' })).toHaveClass('lab-file-sidebar');
     expect(screen.getByLabelText('Editor')).toHaveClass('min-w-0');
 
     document.documentElement.style.width = '1280px';
@@ -1609,7 +1623,7 @@ describe('WorkbenchShell python dependencies', () => {
     await user.click(screen.getByRole('button', { name: 'Add dependency' }));
 
     // The result is unknown: the entry appears and no further change may start.
-    expect(await screen.findByText('Dependency change is unconfirmed')).toBeInTheDocument();
+    expect(await screen.findByText('依赖变更尚未确认')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Check dependency change' })).toBeEnabled();
     expect(screen.getByRole('button', { name: 'Add dependency' })).toBeDisabled();
 
@@ -1617,7 +1631,7 @@ describe('WorkbenchShell python dependencies', () => {
     await user.click(screen.getByRole('button', { name: 'Check dependency change' }));
 
     await waitFor(() => {
-      expect(screen.queryByText('Dependency change is unconfirmed')).not.toBeInTheDocument();
+      expect(screen.queryByText('依赖变更尚未确认')).not.toBeInTheDocument();
     });
     expect(screen.getByRole('button', { name: 'Add dependency' })).toBeEnabled();
     // The recovered reload re-read the workspace with the committed dependency files.
@@ -1646,7 +1660,7 @@ describe('WorkbenchShell python dependencies', () => {
     await user.click(screen.getByRole('tab', { name: 'Dependencies' }));
     await user.type(screen.getByLabelText('Package name'), 'httpx');
     await user.click(screen.getByRole('button', { name: 'Add dependency' }));
-    expect(await screen.findByText('Dependency change is unconfirmed')).toBeInTheDocument();
+    expect(await screen.findByText('依赖变更尚未确认')).toBeInTheDocument();
     expect(sessionStorage.getItem(pythonDependencyStorageKey('usr-alice', ready.id))).not.toBeNull();
 
     await user.click(screen.getByRole('button', { name: 'Log out' }));
@@ -1680,24 +1694,24 @@ describe('WorkbenchShell python dependencies', () => {
     await user.click(screen.getByRole('tab', { name: 'Dependencies' }));
     await user.type(screen.getByLabelText('Package name'), 'httpx');
     await user.click(screen.getByRole('button', { name: 'Add dependency' }));
-    expect(await screen.findByText('Dependency change is unconfirmed')).toBeInTheDocument();
+    expect(await screen.findByText('依赖变更尚未确认')).toBeInTheDocument();
 
     failRootTree = true;
     await user.click(screen.getByRole('button', { name: 'Check dependency change' }));
 
     // The change is committed but the surface is stale: the shell must say so.
     await waitFor(() => {
-      expect(screen.queryByText('Dependency change is unconfirmed')).not.toBeInTheDocument();
+      expect(screen.queryByText('依赖变更尚未确认')).not.toBeInTheDocument();
     });
     expect(
-      await screen.findByText('Dependency change confirmed, but reloading the workspace failed.'),
+      await screen.findByText('依赖变更已确认，但工作区重新加载失败。'),
     ).toBeInTheDocument();
 
     failRootTree = false;
     await user.click(screen.getByRole('button', { name: 'Reload workspace' }));
     await waitFor(() => {
       expect(
-        screen.queryByText('Dependency change confirmed, but reloading the workspace failed.'),
+        screen.queryByText('依赖变更已确认，但工作区重新加载失败。'),
       ).not.toBeInTheDocument();
     });
     // The retried reload reads the committed workspace.
@@ -1747,7 +1761,7 @@ describe('WorkbenchShell python dependencies', () => {
     await waitUntilWritesUnlocked();
     // The rejection alert lives in the now-inactive Dependencies panel.
     expect(await screen.findByRole('alert', { hidden: true })).toHaveTextContent(
-      /dependency resolution failed/i,
+      /依赖解析失败/,
     );
     expect(screen.getByTestId('mock-editor')).toHaveAttribute('data-readonly', 'false');
 
@@ -1785,14 +1799,14 @@ describe('WorkbenchShell python dependencies', () => {
     await user.click(screen.getByRole('button', { name: 'Add dependency' }));
 
     // Committed: the panel reloads the workspace and the gate stays closed.
-    await screen.findByText('Reloading workspace');
+    await screen.findByText('正在重新加载工作区');
     await waitFor(() => {
       expect(screen.getByRole('button', { name: 'New file' })).toBeDisabled();
     });
 
     releaseTree();
     await waitUntilWritesUnlocked();
-    expect(screen.queryByText('Reloading workspace')).not.toBeInTheDocument();
+    expect(screen.queryByText('正在重新加载工作区')).not.toBeInTheDocument();
     expect(await screen.findByTestId('mock-editor')).toHaveAttribute('data-readonly', 'false');
   }, 15_000);
 
@@ -1805,7 +1819,7 @@ describe('WorkbenchShell python dependencies', () => {
       '33333333-3333-4333-8333-333333333333',
     );
     renderPythonShell(project);
-    expect(await screen.findByText('Dependency change is unconfirmed')).toBeInTheDocument();
+    expect(await screen.findByText('依赖变更尚未确认')).toBeInTheDocument();
 
     // The run authority itself resolves (Start run enables) but the gate stays closed.
     await user.click(screen.getByRole('tab', { name: 'Run' }));
@@ -1835,7 +1849,7 @@ describe('WorkbenchShell python dependencies', () => {
     await user.click(screen.getByRole('tab', { name: 'Dependencies' }));
     const add = screen.getByRole('button', { name: 'Add dependency' });
     expect(add).toBeDisabled();
-    expect(add).toHaveAttribute('title', 'Save or discard file changes first');
+    expect(add).toHaveAttribute('title', '请先保存或放弃文件修改');
     await user.click(add);
 
     // No dependency request was issued, so the success reload is unreachable.
@@ -1872,7 +1886,7 @@ describe('WorkbenchShell python dependencies', () => {
     await user.click(screen.getByRole('tab', { name: 'Dependencies' }));
     await user.type(screen.getByLabelText('Package name'), 'httpx');
     await user.click(screen.getByRole('button', { name: 'Add dependency' }));
-    expect(await screen.findByText('Dependency change is unconfirmed')).toBeInTheDocument();
+    expect(await screen.findByText('依赖变更尚未确认')).toBeInTheDocument();
 
     setDependencyScenario('normal');
     holdTree = true;
@@ -1881,7 +1895,7 @@ describe('WorkbenchShell python dependencies', () => {
     // The unconfirmed entry is resolved, but the authoritative reload is still in
     // flight: the write gate must stay closed (delayed recovery).
     await waitFor(() => {
-      expect(screen.queryByText('Dependency change is unconfirmed')).not.toBeInTheDocument();
+      expect(screen.queryByText('依赖变更尚未确认')).not.toBeInTheDocument();
     });
     await waitFor(() => {
       expect(screen.getByRole('button', { name: 'New file' })).toBeDisabled();
@@ -1928,7 +1942,7 @@ describe('WorkbenchShell python dependencies', () => {
     await user.click(screen.getByRole('tab', { name: 'Dependencies' }));
     await user.type(screen.getByLabelText('Package name'), 'httpx');
     await user.click(screen.getByRole('button', { name: 'Add dependency' }));
-    expect(await screen.findByText('Dependency change is unconfirmed')).toBeInTheDocument();
+    expect(await screen.findByText('依赖变更尚未确认')).toBeInTheDocument();
 
     setDependencyScenario('normal');
     failRootTree = true;
@@ -1937,7 +1951,7 @@ describe('WorkbenchShell python dependencies', () => {
     // The reload failed, but its Retry affordance exists: the gate must stay closed
     // so no dirty buffer can reach the retry (dirty-retry regression).
     expect(
-      await screen.findByText('Dependency change confirmed, but reloading the workspace failed.'),
+      await screen.findByText('依赖变更已确认，但工作区重新加载失败。'),
     ).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'New file' })).toBeDisabled();
     await user.click(screen.getByRole('tab', { name: 'File' }));
@@ -1952,7 +1966,7 @@ describe('WorkbenchShell python dependencies', () => {
     await waitUntilWritesUnlocked();
     expect(screen.getByTestId('mock-editor')).toHaveAttribute('data-readonly', 'false');
     expect(
-      screen.queryByText('Dependency change confirmed, but reloading the workspace failed.'),
+      screen.queryByText('依赖变更已确认，但工作区重新加载失败。'),
     ).not.toBeInTheDocument();
 
     setDependencyScenario('normal');
@@ -2012,7 +2026,7 @@ describe('WorkbenchShell python dependencies', () => {
 
     // A new browser session has no stored id: the shell discovers the durable
     // PENDING itself, persists the identity and engages the recovery entry.
-    expect(await screen.findByText('Dependency change is unconfirmed')).toBeInTheDocument();
+    expect(await screen.findByText('依赖变更尚未确认')).toBeInTheDocument();
     expect(sessionStorage.getItem(pythonDependencyStorageKey('usr-alice', project.id))).toBe(
       SERVER_PENDING_OPERATION_ID,
     );
@@ -2029,7 +2043,7 @@ describe('WorkbenchShell python dependencies', () => {
     // Checking the discovered operation recovers the dead end end to end.
     await user.click(screen.getByRole('button', { name: 'Check dependency change' }));
     await waitFor(() => {
-      expect(screen.queryByText('Dependency change is unconfirmed')).not.toBeInTheDocument();
+      expect(screen.queryByText('依赖变更尚未确认')).not.toBeInTheDocument();
     });
     expect(sessionStorage.getItem(pythonDependencyStorageKey('usr-alice', project.id))).toBeNull();
     expect(
@@ -2049,9 +2063,9 @@ describe('WorkbenchShell python dependencies', () => {
     await waitFor(() => {
       expect(pendingDiscoveryGetCount(fetchSpy)).toBe(1);
     });
-    expect(screen.queryByText('Dependency change is unconfirmed')).not.toBeInTheDocument();
+    expect(screen.queryByText('依赖变更尚未确认')).not.toBeInTheDocument();
     expect(
-      screen.queryByText('Could not check for a pending dependency change.'),
+      screen.queryByText('无法核对待确认的依赖变更。'),
     ).not.toBeInTheDocument();
     fetchSpy.mockRestore();
   }, 15_000);
@@ -2080,7 +2094,7 @@ describe('WorkbenchShell python dependencies', () => {
     // A failed discovery must not fabricate absence: the shell says so and offers a
     // retry, but only after the shared PROJECT_BUSY read budget is exhausted.
     expect(
-      await screen.findByText('Could not check for a pending dependency change.', {}, { timeout: 10_000 }),
+      await screen.findByText('无法核对待确认的依赖变更。', {}, { timeout: 10_000 }),
     ).toBeInTheDocument();
     expect(pendingDiscoveryGetCount(fetchSpy)).toBe(PROJECT_BUSY_READ_MAX_RETRIES + 1);
 
@@ -2094,9 +2108,9 @@ describe('WorkbenchShell python dependencies', () => {
       ).not.toBeInTheDocument();
     });
     expect(
-      screen.queryByText('Could not check for a pending dependency change.'),
+      screen.queryByText('无法核对待确认的依赖变更。'),
     ).not.toBeInTheDocument();
-    expect(screen.queryByText('Dependency change is unconfirmed')).not.toBeInTheDocument();
+    expect(screen.queryByText('依赖变更尚未确认')).not.toBeInTheDocument();
     fetchSpy.mockRestore();
   }, 15_000);
 
@@ -2121,7 +2135,7 @@ describe('WorkbenchShell python dependencies', () => {
     renderPythonShell(project);
     await waitUntilWritesUnlocked();
     expect(
-      await screen.findByText('Could not check for a pending dependency change.', {}, { timeout: 10_000 }),
+      await screen.findByText('无法核对待确认的依赖变更。', {}, { timeout: 10_000 }),
     ).toBeInTheDocument();
     expect(pendingDiscoveryGetCount(fetchSpy)).toBe(PROJECT_BUSY_READ_MAX_RETRIES + 1);
 
@@ -2135,13 +2149,13 @@ describe('WorkbenchShell python dependencies', () => {
     // The retry re-queried (GET count 4 -> 5, succeeded on its first attempt) and
     // the discovered operation engages the recovery entry from a previously empty
     // surface.
-    expect(await screen.findByText('Dependency change is unconfirmed')).toBeInTheDocument();
+    expect(await screen.findByText('依赖变更尚未确认')).toBeInTheDocument();
     expect(pendingDiscoveryGetCount(fetchSpy)).toBe(PROJECT_BUSY_READ_MAX_RETRIES + 2);
     expect(sessionStorage.getItem(pythonDependencyStorageKey('usr-alice', project.id))).toBe(
       SERVER_PENDING_OPERATION_ID,
     );
     expect(
-      screen.queryByText('Could not check for a pending dependency change.'),
+      screen.queryByText('无法核对待确认的依赖变更。'),
     ).not.toBeInTheDocument();
     fetchSpy.mockRestore();
   }, 15_000);
@@ -2170,10 +2184,10 @@ describe('WorkbenchShell python dependencies', () => {
     // The busy read recovers within the shared retry budget: the pending operation
     // is discovered and the red banner never appears.
     expect(
-      await screen.findByText('Dependency change is unconfirmed', {}, { timeout: 10_000 }),
+      await screen.findByText('依赖变更尚未确认', {}, { timeout: 10_000 }),
     ).toBeInTheDocument();
     expect(
-      screen.queryByText('Could not check for a pending dependency change.'),
+      screen.queryByText('无法核对待确认的依赖变更。'),
     ).not.toBeInTheDocument();
     expect(pendingDiscoveryGetCount(fetchSpy)).toBe(2);
     fetchSpy.mockRestore();
@@ -2197,7 +2211,7 @@ describe('WorkbenchShell python dependencies', () => {
     // A non-PROJECT_BUSY failure is a real error: no busy retry, the banner and its
     // Retry affordance appear after the single attempt.
     expect(
-      await screen.findByText('Could not check for a pending dependency change.'),
+      await screen.findByText('无法核对待确认的依赖变更。'),
     ).toBeInTheDocument();
     expect(
       screen.getByRole('button', { name: 'Retry pending dependency check' }),
@@ -2253,7 +2267,7 @@ describe('WorkbenchShell python dependencies', () => {
 
     // Design 6.1: the discovery result is ignored entirely — no adoption, no
     // overwrite of the client-saved id, no re-issued query.
-    expect(screen.queryByText('Dependency change is unconfirmed')).not.toBeInTheDocument();
+    expect(screen.queryByText('依赖变更尚未确认')).not.toBeInTheDocument();
     expect(sessionStorage.getItem(pythonDependencyStorageKey('usr-alice', project.id))).toBe(
       MIDFLIGHT_CLIENT_OPERATION_ID,
     );
@@ -2270,7 +2284,7 @@ describe('WorkbenchShell python dependencies', () => {
       '77777777-7777-4777-8777-777777777777',
     );
     renderPythonShell(project);
-    expect(await screen.findByText('Dependency change is unconfirmed')).toBeInTheDocument();
+    expect(await screen.findByText('依赖变更尚未确认')).toBeInTheDocument();
     expect(await screen.findByRole('treeitem', { name: 'notes.md' })).toBeInTheDocument();
 
     expect(pendingDiscoveryGetCount(fetchSpy)).toBe(0);

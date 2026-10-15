@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef } from 'react';
+import { Code2 } from 'lucide-react';
 import { workspaceBufferRegistry, workspaceResourceRegistry } from '@/app/appRuntime';
 import { InlineAlert } from '@/components/feedback/InlineAlert';
 import { Button } from '@/components/ui/button';
@@ -386,7 +387,7 @@ export function EditorWorkspace({
               void save.savePath(visibleActivePath);
             }}
           />
-        ) : null}
+        ) : <div className="lab-editor-empty"><Code2 size={48} /><h2>你的代码工作空间</h2><p>尚未打开文件</p><span className="lab-eyebrow">MANAO / CLOUD LAB</span></div>}
       </div>
       <UnsavedChangesDialog
         open={closeGuard.open && closeGuard.mode === 'close-tab'}

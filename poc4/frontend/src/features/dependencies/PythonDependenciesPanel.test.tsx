@@ -237,7 +237,7 @@ describe('PythonDependenciesPanel committed changes', () => {
 
     expect(
       await screen.findByRole('status', { name: 'Dependency change result' }),
-    ).toHaveTextContent('Dependency change saved.');
+    ).toHaveTextContent('依赖变更已保存。');
     const posts = dependencyPosts(fetchSpy);
     expect(posts).toHaveLength(1);
     const body = posts[0]!.body as Record<string, unknown>;
@@ -267,7 +267,7 @@ describe('PythonDependenciesPanel committed changes', () => {
 
     expect(
       await screen.findByRole('status', { name: 'Dependency change result' }),
-    ).toHaveTextContent('Dependency change saved.');
+    ).toHaveTextContent('依赖变更已保存。');
     const posts = dependencyPosts(fetchSpy);
     expect(posts).toHaveLength(1);
     const body = posts[0]!.body as Record<string, unknown>;
@@ -303,7 +303,7 @@ describe('PythonDependenciesPanel rejected changes', () => {
     await user.click(screen.getByRole('button', { name: 'Add dependency' }));
 
     const alert = await screen.findByRole('alert');
-    expect(alert).toHaveTextContent('Finish or stop the active Run before changing dependencies.');
+    expect(alert).toHaveTextContent('请先完成或停止当前 Run，再修改依赖。');
     // A proven no-side-effect rejection never reports a lost response and removes
     // the stored id, so a corrected change may start a NEW operation.
     expect(onResponseLost).not.toHaveBeenCalled();
@@ -327,7 +327,7 @@ describe('PythonDependenciesPanel rejected changes', () => {
         HttpResponse.json(
           {
             code: 'PYTHON_DEPENDENCY_NO_WHEEL',
-            message: 'No compatible wheel is available for the requested package or version.',
+            message: '当前 package 或版本没有可用的兼容 wheel。',
             traceId: 'mock-trace-no-wheel',
           },
           { status: 422 },
@@ -342,7 +342,7 @@ describe('PythonDependenciesPanel rejected changes', () => {
 
     const alert = await screen.findByRole('alert');
     expect(alert).toHaveTextContent(
-      'No compatible wheel is available for the requested package or version.',
+      '当前 package 或版本没有可用的兼容 wheel。',
     );
     expect(onResponseLost).not.toHaveBeenCalled();
     expect(readPythonDependencyOperationId(ALICE_USER_ID, project.id)).toBeNull();
@@ -364,7 +364,7 @@ describe('PythonDependenciesPanel rejected changes', () => {
     await user.click(screen.getByRole('button', { name: 'Add dependency' }));
 
     const alert = await screen.findByRole('alert');
-    expect(alert).toHaveTextContent(/dependency resolution failed/i);
+    expect(alert).toHaveTextContent(/依赖解析失败/);
 
     // An explicitly rejected POST has no side effects: the stored id is gone and a
     // corrected resubmission starts a NEW operation id.
@@ -436,7 +436,7 @@ describe('PythonDependenciesPanel lost responses', () => {
     // tells the user to stop a Run.
     const alert = await screen.findByRole('alert');
     expect(alert).toHaveTextContent(
-      'The result of the dependency change is unknown. Check it before making another change.',
+      '依赖变更结果未知，请先核对后再提交新的变更。',
     );
     expect(alert).not.toHaveTextContent(/stop the/i);
     const posts = dependencyPosts(fetchSpy);
@@ -486,7 +486,7 @@ describe('PythonDependenciesPanel busy reporting', () => {
     await waitFor(() => {
       expect(onBusyChange).toHaveBeenLastCalledWith(false);
     });
-    expect(await screen.findByRole('alert')).toHaveTextContent(/dependency resolution failed/i);
+    expect(await screen.findByRole('alert')).toHaveTextContent(/依赖解析失败/);
 
     setDependencyScenario('normal');
   });
@@ -518,13 +518,13 @@ describe('PythonDependenciesPanel busy reporting', () => {
     await user.click(screen.getByRole('button', { name: 'Add dependency' }));
 
     // The commit succeeded; the reload of the workspace is still in flight.
-    await screen.findByText('Reloading workspace');
+    await screen.findByText('正在重新加载工作区');
     expect(onBusyChange).toHaveBeenLastCalledWith(true);
 
     releaseTree();
     expect(
       await screen.findByRole('status', { name: 'Dependency change result' }),
-    ).toHaveTextContent('Dependency change saved.');
+    ).toHaveTextContent('依赖变更已保存。');
     await waitFor(() => {
       expect(onBusyChange).toHaveBeenLastCalledWith(false);
     });
@@ -548,7 +548,7 @@ describe('PythonDependenciesPanel requirements.txt import', () => {
 
     expect(
       await screen.findByRole('status', { name: 'Dependency change result' }),
-    ).toHaveTextContent('Dependency change saved.');
+    ).toHaveTextContent('依赖变更已保存。');
     const posts = batchDependencyPosts(fetchSpy);
     expect(posts).toHaveLength(1);
     const body = posts[0]!.body as Record<string, unknown>;
@@ -576,7 +576,7 @@ describe('PythonDependenciesPanel requirements.txt import', () => {
 
     expect(
       await screen.findByRole('status', { name: 'Dependency change result' }),
-    ).toHaveTextContent('Dependency change saved.');
+    ).toHaveTextContent('依赖变更已保存。');
     expect(batchDependencyPosts(fetchSpy)).toHaveLength(1);
     expect(singleDependencyPosts(fetchSpy)).toHaveLength(0);
 
@@ -597,7 +597,7 @@ describe('PythonDependenciesPanel requirements.txt import', () => {
 
     expect(
       await screen.findByRole('status', { name: 'Dependency change result' }),
-    ).toHaveTextContent('Dependency change saved.');
+    ).toHaveTextContent('依赖变更已保存。');
     // One committed batch means ONE managed workspace reload.
     expect(treeGetCount(fetchSpy) - treeCallsBefore).toBe(1);
     expect(readPythonDependencyOperationId(ALICE_USER_ID, project.id)).toBeNull();
@@ -648,7 +648,7 @@ describe('PythonDependenciesPanel requirements.txt import', () => {
     await user.click(screen.getByRole('button', { name: 'Import requirements.txt' }));
     expect(
       await screen.findByRole('status', { name: 'Dependency change result' }),
-    ).toHaveTextContent('Dependency change saved.');
+    ).toHaveTextContent('依赖变更已保存。');
     // The commit advanced the workspace revision...
     const revisionAfterCommit = mockWorkspaceRevision(project.id);
     expect(revisionAfterCommit).not.toBe(revisionBeforeImport);
@@ -698,7 +698,7 @@ describe('PythonDependenciesPanel requirements.txt import', () => {
 
     const alert = await screen.findByRole('alert');
     expect(alert).toHaveTextContent(
-      'Project is busy. Wait for the current operation to finish, then try again.',
+      '项目正忙，请等待当前操作完成后重试。',
     );
     expect(onResponseLost).not.toHaveBeenCalled();
     expect(readPythonDependencyOperationId(ALICE_USER_ID, project.id)).toBeNull();
@@ -724,7 +724,7 @@ describe('PythonDependenciesPanel requirements.txt import', () => {
 
     const alert = await screen.findByRole('alert');
     expect(alert).toHaveTextContent(
-      'The result of the dependency change is unknown. Check it before making another change.',
+      '依赖变更结果未知，请先核对后再提交新的变更。',
     );
     const posts = batchDependencyPosts(fetchSpy);
     expect(posts).toHaveLength(1);
@@ -790,12 +790,12 @@ describe('PythonDependenciesPanel requirements.txt import', () => {
 
     const alert = await screen.findByRole('alert');
     expect(alert).toHaveTextContent(
-      'The requirements.txt import only accepts plain public-PyPI requirement lines within the size and count limits.',
+      'requirements.txt 仅支持大小和数量限制内的公开 PyPI 依赖行。',
     );
     // The rejection is explicit: no fabricated success message.
     expect(
       screen.queryByRole('status', { name: 'Dependency change result' }),
-    ).not.toHaveTextContent('Dependency change saved.');
+    ).not.toHaveTextContent('依赖变更已保存。');
     // A proven no-side-effect rejection clears the stored id.
     expect(readPythonDependencyOperationId(ALICE_USER_ID, project.id)).toBeNull();
     expect(batchDependencyPosts(fetchSpy)).toHaveLength(1);
@@ -823,7 +823,7 @@ describe('PythonDependenciesPanel requirements.txt import', () => {
     );
     expect(
       screen.queryByRole('status', { name: 'Dependency change result' }),
-    ).not.toHaveTextContent('Dependency change saved.');
+    ).not.toHaveTextContent('依赖变更已保存。');
     expect(readPythonDependencyOperationId(ALICE_USER_ID, project.id)).toBeNull();
     expect(batchDependencyPosts(fetchSpy)).toHaveLength(1);
     expect(singleDependencyPosts(fetchSpy)).toHaveLength(0);
@@ -845,7 +845,7 @@ describe('PythonDependenciesPanel requirements.txt import', () => {
 
     const alert = await screen.findByRole('alert');
     expect(alert).toHaveTextContent(
-      'The requirements.txt import only accepts plain public-PyPI requirement lines within the size and count limits.',
+      'requirements.txt 仅支持大小和数量限制内的公开 PyPI 依赖行。',
     );
     expect(readPythonDependencyOperationId(ALICE_USER_ID, project.id)).toBeNull();
     expect(screen.getByRole('button', { name: 'Import requirements.txt' })).toBeEnabled();
@@ -913,7 +913,7 @@ describe('PythonDependenciesPanel requirements.txt import', () => {
     await user.click(screen.getByRole('button', { name: 'Import requirements.txt' }));
 
     const alert = await screen.findByRole('alert');
-    expect(alert).toHaveTextContent('requirements.txt was not found in the project root.');
+    expect(alert).toHaveTextContent('requirements.txt 未找到，请确认它位于项目根目录。');
     // No batch and no single-package change was ever submitted.
     expect(batchDependencyPosts(fetchSpy)).toHaveLength(0);
     expect(singleDependencyPosts(fetchSpy)).toHaveLength(0);
