@@ -98,8 +98,11 @@ spec:
             - name: MANAO_AI_SESSION_DIR
               value: /work/sessions
             # Backend internal routes: the worker presents this token on /internal/*.
+            # NOTE: the 6B backend Service is named `backend` (namespace manao-stage6b),
+            # NOT `manao-backend` - the wrong name resolves nowhere and the worker
+            # silently loses every progress/terminal report (measured 2026-10-15).
             - name: MANAO_AI_BACKEND_BASE_URL
-              value: http://manao-backend.manao-stage6b.svc.cluster.local:8080
+              value: http://backend.manao-stage6b.svc.cluster.local:8080
             - name: MANAO_AI_BACKEND_TOKEN
               valueFrom:
                 secretKeyRef:

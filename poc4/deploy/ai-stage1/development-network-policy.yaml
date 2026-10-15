@@ -60,6 +60,21 @@ spec:
           port: 53
         - protocol: TCP
           port: 53
+    # The kube-system DNS pod rule above does NOT match this cluster's actual resolver
+    # path: manao-stage6b runs NodeLocal DNSCache (hostNetwork pods, k8s-app=nodelocaldns)
+    # and every pod's resolv.conf points at the node's 169.254.25.10 listener. Without
+    # this explicit peer the metadata exclude (169.254.0.0/16) below cuts off ALL name
+    # resolution - measured live 2026-10-15: a labeled probe pod could not resolve even
+    # repo.maven.apache.org until this entry was applied. A dedicated /32 peer is OR'd
+    # with the public ipBlock entry, so the metadata service itself stays denied.
+    - to:
+        - ipBlock:
+            cidr: 169.254.25.10/32
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
     # Public HTTP/HTTPS for Maven/dependency downloads. The except list denies every
     # private, link-local, CGNAT and loopback segment: cluster-internal addresses
     # (pods, services, nodes on private networks), the cloud metadata service and
