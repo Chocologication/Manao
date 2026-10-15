@@ -24,6 +24,13 @@ import {
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
+// Registers the built-in API transports ("openai-completions", "anthropic-messages",
+// ...) into the pi-ai provider registry. Without this side-effect import the
+// registry is empty: models.json can declare whatever api id it likes and every
+// prompt dies with "No API provider registered for api: ..." — measured live in the
+// stage-one acceptance deployment on 2026-10-15, where the task hung silently
+// because the resulting terminal could not be reported either.
+import "@earendil-works/pi-ai/compat";
 import type { BackendClient, ProgressChain } from "./backend-client.js";
 import { PROGRESS_TEXT_MAX_BYTES } from "./backend-client.js";
 import { modelConfigProblems, type PiModelConfig, type WorkerBudgets, type WorkerPaths } from "./config.js";
@@ -178,6 +185,16 @@ export async function createPiSession(options: {
  * declares exactly the configured provider/model, and the API key is registered at
  * runtime only — nothing is written to the project, the Job, or any shared volume.
  */
+/**
+ * Maps the deployment's friendly API-type value onto the pi-ai transport id. The
+ * secret carries "openai" (OpenAI-compatible /chat/completions — the DeepSeek
+ * shape), but the registry's builtin id for that transport is "openai-completions";
+ * any other value is the operator naming the transport directly and passes through.
+ */
+function sdkApiId(apiType: string): string {
+  return apiType === "openai" ? "openai-completions" : apiType;
+}
+
 async function buildModelRuntime(model: PiModelConfig, agentDir: string): Promise<ModelRuntimeType> {
   mkdirSync(agentDir, { recursive: true });
   const modelsPath = join(agentDir, "models.json");
@@ -186,7 +203,7 @@ async function buildModelRuntime(model: PiModelConfig, agentDir: string): Promis
       [model.provider]: {
         name: model.provider,
         baseUrl: model.baseUrl,
-        api: model.apiType,
+        api: sdkApiId(model.apiType),
         models: [{
           id: model.model,
           name: model.model,

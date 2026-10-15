@@ -167,7 +167,12 @@ export function createTaskServer(config: WorkerConfig, deps: ServerDeps = {}): T
 
   function launch(record: TaskRecord): void {
     void record.runner.start()
-      .catch(() => {
+      .catch((error: unknown) => {
+        // The runner failing before it could settle must leave a trace: this path
+        // is the last line of defense and its error is otherwise invisible (the
+        // stage-one acceptance hit exactly that silence on 2026-10-15).
+        console.error(`[task ${record.start.taskId}] runner failed before settling:`,
+          error instanceof Error ? `${error.name}: ${error.message}` : error);
         record.outcome = { state: "FAILED", summary: "", failureCode: "AI_WORKER_ERROR", reason: "the task runner failed before it could settle" };
         // Even a failure before any session existed must reach the backend as a
         // terminal state through the same serialized progress chain.
