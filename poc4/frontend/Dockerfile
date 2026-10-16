@@ -21,11 +21,8 @@ WORKDIR /app
 # The AI panel switch is a build argument so the accepted default stays off.
 ARG VITE_ENABLE_AI=false
 
-# pnpm is pinned to the exact version declared by package.json
-# ("packageManager": "pnpm@10.33.0"). Installed via npm instead of corepack so
-# the version is fully deterministic and corepack's signature-key lookup can
-# never break the build.
-RUN npm install --global pnpm@10.33.0
+# Use the same pinned Corepack setup as the Pi worker image.
+RUN corepack enable && corepack prepare pnpm@10.33.0 --activate
 
 # Install dependencies in a separate layer so it stays cached while only the
 # lockfile is unchanged.
