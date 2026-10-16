@@ -67,6 +67,109 @@ test('complete operator evidence passes, without claiming real model acceptance'
   assert.equal(result.stagePassGranted, false);
 });
 
+function withUntrackedProjectRun(start, ready, finish) {
+  const input = evidence();
+  input.runs.push({ ...input.runs[1], id: id(93), requestedRevision: '11',
+    createdAt: stamp(start), firstReadyAt: stamp(ready), finishedAt: stamp(finish) });
+  return input;
+}
+
+test('rejects a terminal project Run overlapping the final active Run without mutation overlap', () => {
+  assert.equal(verify(withUntrackedProjectRun(37, 38, 40)).verdict, 'FAIL');
+});
+
+test('rejects terminal project Runs with overlapping execution intervals', () => {
+  assert.equal(verify(withUntrackedProjectRun(21, 22, 24)).verdict, 'FAIL');
+});
+
+test('rejects equal project Run finish and next creation timestamps as ambiguous', () => {
+  assert.equal(verify(withUntrackedProjectRun(37, 38, 39)).verdict, 'FAIL');
+});
+
+test('accepts an additional project Run strictly between other Runs with no mutation overlap', () => {
+  const input = evidence();
+  input.runs.push({ ...input.runs[1], id: id(93), requestedRevision: '11',
+    createdAt: '2026-10-16 10:00:36.000002', firstReadyAt: stamp(37), finishedAt: '2026-10-16 10:00:37.000002' });
+  assert.equal(verify(input).verdict, 'PASS');
+});
+
+function withRejectedMissingRunStop() {
+  const input = evidence();
+  input.calls.unshift({ taskId: input.taskId, toolCallId: 'rejected-stop', toolName: 'application',
+    args: { action: 'stop' }, state: 'COMPLETED', expectedRevision: '10', operationId: id(91),
+    jobName: null, jobUid: null, podUid: null,
+    createdAt: '2026-10-16 10:00:02.000002', updatedAt: '2026-10-16 10:00:02.000003',
+    result: { toolCallId: 'rejected-stop', workspaceRevision: '10', truncated: false,
+      data: { error: { code: 'VALIDATION_ERROR', message: 'Invalid application arguments' } } },
+  });
+  return input;
+}
+
+function withExtraGuestGet() {
+  const input = evidence();
+  const target = input.calls.at(-1);
+  input.calls.push({ ...structuredClone(target), toolCallId: 'guest-get',
+    args: { runId: target.args.runId, path: '/api/demo' },
+    createdAt: '2026-10-16 10:00:43.000002', updatedAt: '2026-10-16 10:00:43.000003',
+    result: { ...structuredClone(target.result), toolCallId: 'guest-get', data: {
+      ...structuredClone(target.result.data), path: '/api/demo', body: '{"message":"Hello guest"}',
+    } },
+  });
+  return input;
+}
+
+for (const status of [200, 404, 500]) {
+  test(`an extra real HTTP${status} GET does not replace the required final Pi GET`, () => {
+    const input = withExtraGuestGet();
+    input.calls.at(-1).result.data.statusCode = status;
+    assert.equal(verify(input).verdict, 'PASS');
+  });
+}
+
+for (const [name, mutate] of Object.entries({
+  'extra GET wrong result Run': (e) => { e.calls.at(-1).result.data.runId = e.seed.r0Id; },
+  'extra GET unknown Run': (e) => { e.calls.at(-1).args.runId = id(99); e.calls.at(-1).result.data.runId = id(99); },
+  'extra GET wrong returned path': (e) => { e.calls.at(-1).result.data.path = '/other'; },
+  'extra GET absolute path': (e) => { e.calls.at(-1).args.path = 'http://attacker.invalid/'; e.calls.at(-1).result.data.path = e.calls.at(-1).args.path; },
+  'extra GET before ready': (e) => { e.calls.at(-1).args.runId = e.seed.r0Id; e.calls.at(-1).result.data.runId = e.seed.r0Id; },
+  'extra GET invalid HTTP status': (e) => { e.calls.at(-1).result.data.statusCode = 600; },
+  'extra GET unknown status': (e) => { e.calls.at(-1).result.data.statusCode = null; },
+  'extra GET transport error': (e) => { e.calls.at(-1).result.data.error = { code: 'AI_APP_HTTP_TIMEOUT' }; },
+  'extra GET truncated': (e) => { e.calls.at(-1).result.data.truncated = true; },
+  'extra GET exceeds body byte limit': (e) => { e.calls.at(-1).result.data.body = '界'.repeat(21846); },
+  'missing required Pi success despite guest success': (e) => { e.calls.splice(-2, 1); },
+})) {
+  test(`rejects ${name}`, () => {
+    const input = withExtraGuestGet();
+    mutate(input);
+    assert.equal(verify(input).verdict, 'FAIL');
+  });
+}
+
+test('a settled missing-run stop rejection permits a later fully evidenced normal chain', () => {
+  assert.equal(verify(withRejectedMissingRunStop()).verdict, 'PASS');
+});
+
+for (const [name, mutate] of Object.entries({
+  'valid stop args disguised as validation rejection': (e) => { e.calls[0].args.runId = e.seed.r0Id; },
+  'unknown rejection code': (e) => { e.calls[0].result.data.error.code = 'AI_CALL_UNKNOWN'; },
+  'extra rejected argument': (e) => { e.calls[0].args.waitSeconds = 1; },
+  'unsettled rejection': (e) => { e.calls[0].state = 'NEEDS_ATTENTION'; },
+  'truncated rejection': (e) => { e.calls[0].result.truncated = true; },
+  'rejection includes a Run result': (e) => { e.calls[0].result.data.run = { id: e.seed.r0Id }; },
+  'rejection changed revision': (e) => { e.calls[0].result.workspaceRevision = '11'; },
+  'rejection has a Job identity': (e) => { e.calls[0].jobUid = 'unexpected-job'; },
+  'rejection operation became a Run': (e) => { e.runs.push({ ...e.runs[0], id: e.calls[0].operationId }); },
+  'rejection operation became a receipt': (e) => { e.operations.push({ ...e.operations[0], id: e.calls[0].operationId }); },
+  'rejection substitutes for real stop': (e) => { e.calls = e.calls.filter((call) => call.toolCallId !== 'call-1'); },
+})) {
+  test(`rejects ${name}`, () => {
+    const input = withRejectedMissingRunStop();
+    mutate(input);
+    assert.equal(verify(input).verdict, 'FAIL');
+  });
+}
+
 test('confirmed terminal stop permits the next mutation without redundant status calls', () => {
   const input = evidence();
   input.calls = input.calls.filter((call) => call.args.action !== 'status');

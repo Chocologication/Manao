@@ -22,6 +22,20 @@ const nonempty = (value) => typeof value === 'string' && value.length > 0;
 const dataOf = (call) => call.result.data;
 const before = (a, b) => time(a) < time(b);
 
+// This exact rejection occurs after ledger identity reservation but before any
+// application claim or Run control. A reserved operationId alone is not execution.
+function rejectedMissingRunStop(call, runs, operations) {
+  const data = call.result?.data, error = data?.error;
+  return call.toolName === 'application' && call.args?.action === 'stop'
+    && Object.keys(call.args).length === 1
+    && data && Object.keys(data).length === 1 && error
+    && Object.keys(error).length === 2 && error.code === 'VALIDATION_ERROR'
+    && error.message === 'Invalid application arguments' && call.result.truncated === false
+    && UUID.test(call.operationId) && call.jobName === null && call.jobUid === null && call.podUid === null
+    && !runs.some((run) => run.id === call.operationId)
+    && !operations.some((operation) => operation.id === call.operationId);
+}
+
 function successTest(call) {
   const data = dataOf(call);
   const report = data.testReports?.filter((entry) => entry.testClass === SUITE);
@@ -65,14 +79,26 @@ function verifyService(service, projectId, run, primary) {
     && ports[0].nodePort === primary.publicPort, 'SERVICE_PORT');
 }
 
-function verifyHttp(call, run, expectedStatus) {
+function verifyHttpObservation(call, run) {
   const data = dataOf(call);
-  requireEvidence(call.args.runId === run.id && call.args.path === HTTP_PATH
-    && data.kind === 'app_http_get' && data.runId === run.id && data.path === HTTP_PATH
-    && data.statusCode === expectedStatus && data.error === null && data.truncated === false
+  const path = call.args.path;
+  requireEvidence(typeof path === 'string' && path.length <= 2048 && path.startsWith('/') && !path.startsWith('//')
+    && !/[\\#\u0000-\u0020\u007f]/.test(path), 'HTTP_PATH');
+  const url = new URL(path, 'http://project.invalid');
+  requireEvidence(url.origin === 'http://project.invalid' && run && call.args.runId === run.id
+    && data.kind === 'app_http_get' && data.runId === run.id && data.path === path
+    && Number.isInteger(data.statusCode) && data.statusCode >= 100 && data.statusCode <= 599
+    && data.error === null && data.truncated === false
     && call.result.truncated === false && typeof data.body === 'string'
-    && before(run.firstReadyAt, call.createdAt)
+    && Buffer.byteLength(data.body, 'utf8') <= 65536
+    && before(run.createdAt, run.firstReadyAt) && before(run.firstReadyAt, call.createdAt)
     && (run.finishedAt === null || before(call.updatedAt, run.finishedAt)), 'HTTP_RUN_RESULT');
+}
+
+function verifyHttp(call, run, expectedStatus) {
+  verifyHttpObservation(call, run);
+  const data = dataOf(call);
+  requireEvidence(call.args.path === HTTP_PATH && data.statusCode === expectedStatus, 'HTTP_RUN_RESULT');
   if (expectedStatus === 200) {
     requireEvidence(data.contentType?.toLowerCase().includes('application/json')
       && JSON.parse(data.body).message === 'Hello Pi', 'HTTP_JSON_CONTRACT');
@@ -95,7 +121,8 @@ export function verifyStage2Ledger(input) {
       const call = calls[index];
       requireEvidence(call.taskId === taskId && call.state === 'COMPLETED' && TOOLS.has(call.toolName)
         && call.args && call.result?.data && call.result.toolCallId === call.toolCallId
-        && call.result.data.error == null && REVISION.test(call.expectedRevision), 'UNKNOWN_TOOL_RESULT');
+        && (call.result.data.error == null || rejectedMissingRunStop(call, runs, operations))
+        && REVISION.test(call.expectedRevision), 'UNKNOWN_TOOL_RESULT');
       requireEvidence(before(task.createdAt, call.createdAt) && before(call.createdAt, call.updatedAt)
         && before(call.updatedAt, task.updatedAt)
         && (index === 0 || before(calls[index - 1].updatedAt, call.createdAt)), 'AMBIGUOUS_TOOL_ORDER');
@@ -111,6 +138,11 @@ export function verifyStage2Ledger(input) {
       if (TERMINAL.has(run.state)) requireEvidence(before(run.createdAt, run.finishedAt)
         && run.activeRunMarker === null, 'RUN_EXIT_MISSING');
       else requireEvidence(run.finishedAt === null && run.activeRunMarker === 1, 'RUN_AUTHORITY_UNKNOWN');
+    }
+    const orderedRuns = [...runs].sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+    for (let index = 1; index < orderedRuns.length; index++) {
+      const previous = orderedRuns[index - 1], current = orderedRuns[index];
+      requireEvidence(previous.finishedAt !== null && before(previous.finishedAt, current.createdAt), 'PROJECT_RUN_OVERLAP');
     }
     const r0 = runs.find((run) => run.id === seed.r0Id);
     requireEvidence(r0 && r0.requestedRevision === seed.revision && before(r0.createdAt, r0.firstReadyAt)
@@ -170,8 +202,10 @@ export function verifyStage2Ledger(input) {
       && writes.every((call) => task.changedPaths.includes(call.args.path)), 'TASK_SETTLED_REVISION');
 
     const httpCalls = calls.filter((call) => call.toolName === 'app_http_get');
-    requireEvidence(httpCalls.length >= 2, 'HTTP_CHAIN_MISSING');
-    const firstHttp = httpCalls[0], lastHttp = httpCalls.at(-1);
+    for (const call of httpCalls) verifyHttpObservation(call, runs.find((run) => run.id === call.args.runId));
+    const targetHttpCalls = httpCalls.filter((call) => call.args.path === HTTP_PATH);
+    requireEvidence(targetHttpCalls.length >= 2, 'HTTP_CHAIN_MISSING');
+    const firstHttp = targetHttpCalls[0], lastHttp = targetHttpCalls.at(-1);
     const r1 = runs.find((run) => run.id === dataOf(firstHttp).runId);
     const r2 = runs.find((run) => run.id === dataOf(lastHttp).runId);
     requireEvidence(r1 && r2 && new Set([r0.id, r1.id, r2.id]).size === 3
