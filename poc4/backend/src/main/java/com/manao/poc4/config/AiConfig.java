@@ -1,6 +1,7 @@
 package com.manao.poc4.config;
 
 import com.manao.poc4.ai.AgentProjectTools;
+import com.manao.poc4.ai.AgentApplicationTools;
 import com.manao.poc4.ai.AgentTaskService;
 import com.manao.poc4.ai.AgentTaskStore;
 import com.manao.poc4.ai.DevelopmentBuildExecutor;
@@ -93,10 +94,18 @@ public class AiConfig {
 
     @Bean
     @Conditional(AiEnabledCondition.class)
+    AgentApplicationTools agentApplicationTools(AgentTaskStore tasks, com.manao.poc4.run.RunService runs,
+                                                com.manao.poc4.run.RunStore runStore,
+                                                com.manao.poc4.log.RunLogService logs) {
+        return new AgentApplicationTools(tasks, runs, runStore, logs);
+    }
+
+    @Bean
+    @Conditional(AiEnabledCondition.class)
     AgentProjectTools agentProjectTools(AgentTaskStore tasks, WorkspaceStore store, WorkspaceService workspace,
                                         WorkspaceOperationService operations, ProjectLifecycleGate lifecycle,
-                                        DevelopmentBuildExecutor builds) {
-        return new AgentProjectTools(tasks, store, workspace, operations, lifecycle, builds);
+                                        DevelopmentBuildExecutor builds, AgentApplicationTools application) {
+        return new AgentProjectTools(tasks, store, workspace, operations, lifecycle, builds, application);
     }
 
     @Bean

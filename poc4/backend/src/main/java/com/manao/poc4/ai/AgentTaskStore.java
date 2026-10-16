@@ -13,6 +13,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.regex.Pattern;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -369,6 +370,44 @@ public final class AgentTaskStore implements AgentTaskOccupancy {
         return liveBuildClaims.contains(taskId + "/" + toolCallId);
     }
 
+    /** Application recovery observes an existing invocation; it never reissues its command. */
+    public synchronized boolean reclaimApplicationObservation(String taskId, String toolCallId) {
+        ToolCallRow call = findToolCall(taskId, toolCallId).orElse(null);
+        if (call == null || !Set.of("application", "app_http_get").contains(call.toolName())
+            || !"RUNNING".equals(call.state()) || isBuildClaimLive(taskId, toolCallId)) return false;
+        requireTaskAcceptsNewCalls(taskId);
+        return liveBuildClaims.add(taskId + "/" + toolCallId);
+    }
+
+    /** The same claims also fence bounded cleanup against concurrent close requests. */
+    public synchronized boolean claimApplicationCleanup(String taskId, String toolCallId) {
+        return claimToolCleanup(taskId, toolCallId, "application");
+    }
+
+    public synchronized boolean claimBuildCleanup(String taskId, String toolCallId) {
+        return claimToolCleanup(taskId, toolCallId, "build");
+    }
+
+    private boolean claimToolCleanup(String taskId, String toolCallId, String toolName) {
+        ToolCallRow call = findToolCall(taskId, toolCallId).orElse(null);
+        if (call == null || !toolName.equals(call.toolName()) || hasLiveToolClaims(taskId)
+            || ("build".equals(toolName) && "COMPLETED".equals(call.state()))) return false;
+        Integer closing = jdbc.queryForObject("SELECT COUNT(*) FROM agent_task WHERE id=? "
+            + "AND state='NEEDS_ATTENTION' AND failure_code='AI_CLOSING'", Integer.class, taskId);
+        return closing != null && closing == 1 && liveBuildClaims.add(taskId + "/" + toolCallId);
+    }
+
+    public synchronized boolean hasLiveToolClaims(String taskId) {
+        return liveBuildClaims.stream().anyMatch(key -> key.startsWith(taskId + "/"));
+    }
+
+    /** A closed call has an unknown result, never a fabricated successful tool snapshot. */
+    public synchronized void retireApplicationCall(String taskId, String toolCallId) {
+        jdbc.update("UPDATE agent_tool_call SET state='NEEDS_ATTENTION', updated_at=? "
+            + "WHERE task_id=? AND tool_call_id=? AND tool_name IN ('application','app_http_get') "
+            + "AND state IN ('REGISTERED','RUNNING')", Timestamp.from(clock.instant()), taskId, toolCallId);
+    }
+
     /**
      * Retires the live claim of one build call. Called by the executing thread AFTER its call
      * row has settled (COMPLETED or NEEDS_ATTENTION), so a close that reads the row as RUNNING
@@ -381,7 +420,7 @@ public final class AgentTaskStore implements AgentTaskOccupancy {
     /**
      * Settles a claimed build row whose execution the close flow has just finished by its
      * stable identity (a restart leftover): the collected close evidence becomes the row's
-     * durable answer. The caller proves — under this monitor — that no live claim exists.
+     * durable answer. The caller holds the cleanup claim through this settlement.
      */
     public synchronized void settleClosedBuildCall(String taskId, String toolCallId, String resultJson) {
         jdbc.update(
@@ -543,7 +582,7 @@ public final class AgentTaskStore implements AgentTaskOccupancy {
      * different-payload replay is a 409, a gap is answered with the expected seq, and
      * the envelope keeps at most the most recent 100 items of 8 KiB each.
      */
-    public ProgressAppend appendProgress(String taskId, AgentContracts.ProgressItem item) {
+    public synchronized ProgressAppend appendProgress(String taskId, AgentContracts.ProgressItem item) {
         validateProgressItem(item);
         String payloadSha = progressPayloadSha(item);
         Timestamp now = Timestamp.from(clock.instant());
@@ -554,7 +593,7 @@ public final class AgentTaskStore implements AgentTaskOccupancy {
             if (states.isEmpty()) {
                 throw new ApiException("AI_TASK_NOT_FOUND", 404, "Task not found");
             }
-            if (!OCCUPYING_STATES.contains(states.get(0))) {
+            if (!Set.of("QUEUED", "RUNNING").contains(states.get(0))) {
                 throw new ApiException("AI_TASK_NOT_ACTIVE", 409, "Task is not active");
             }
             Envelope envelope = readEnvelope(taskId);
@@ -678,11 +717,11 @@ public final class AgentTaskStore implements AgentTaskOccupancy {
         if ("NEEDS_ATTENTION".equals(row.state()) && CLOSING_MARKER.equals(row.failureCode())) {
             return CloseEntry.RETRY;
         }
-        if ("NEEDS_ATTENTION".equals(row.state()) && TERMINAL_PENDING_MARKER.equals(row.failureCode())) {
+        if ("NEEDS_ATTENTION".equals(row.state())) {
             boolean armed = jdbc.update(
                 "UPDATE agent_task SET failure_code = ?, updated_at = ? "
-                    + "WHERE id = ? AND state = 'NEEDS_ATTENTION' AND failure_code = ?",
-                CLOSING_MARKER, Timestamp.from(clock.instant()), taskId, TERMINAL_PENDING_MARKER) > 0;
+                    + "WHERE id = ? AND state = 'NEEDS_ATTENTION'",
+                CLOSING_MARKER, Timestamp.from(clock.instant()), taskId) > 0;
             return armed ? CloseEntry.START : CloseEntry.SETTLED;
         }
         return CloseEntry.SETTLED;
@@ -734,6 +773,7 @@ public final class AgentTaskStore implements AgentTaskOccupancy {
 
     /** The close flow's final step: only its own AI_CLOSING marker releases the project. */
     public synchronized boolean failClosedTask(String taskId, String failureCode, String summary) {
+        if (hasLiveToolClaims(taskId)) return false;
         return jdbc.update("""
                 UPDATE agent_task SET state = 'FAILED', failure_code = ?, summary = ?, updated_at = ?
                 WHERE id = ? AND state = 'NEEDS_ATTENTION' AND failure_code = 'AI_CLOSING'
@@ -741,6 +781,18 @@ public final class AgentTaskStore implements AgentTaskOccupancy {
                       WHERE c.task_id = agent_task.id AND c.state = 'RUNNING')
                 """,
             failureCode, summary, Timestamp.from(clock.instant()), taskId) > 0;
+    }
+
+    /** The durable worker intent remains in the frozen progress envelope through cleanup retries. */
+    public Optional<AgentContracts.ProgressItem> terminalProgress(String taskId) {
+        return readEnvelope(taskId).items().stream().filter(item -> "terminal".equals(item.kind()))
+            .reduce((first, last) -> last);
+    }
+
+    public synchronized void deferTerminal(String taskId, String summary) {
+        jdbc.update("UPDATE agent_task SET state='NEEDS_ATTENTION', failure_code=?, summary=?, updated_at=? "
+            + "WHERE id=? AND state IN ('QUEUED','RUNNING')", TERMINAL_PENDING_MARKER, summary,
+            Timestamp.from(clock.instant()), taskId);
     }
 
     /** Every still-unsettled call of one task; the close flow finishes what it can of these. */

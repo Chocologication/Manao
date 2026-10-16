@@ -99,6 +99,8 @@ class AgentTaskServiceTest {
         final AgentTaskStore tasks;
         final WorkspaceAgent agent = org.mockito.Mockito.mock(WorkspaceAgent.class);
         final DevelopmentBuildExecutor builds = org.mockito.Mockito.mock(DevelopmentBuildExecutor.class);
+        final com.manao.poc4.run.RunService runs = org.mockito.Mockito.mock(com.manao.poc4.run.RunService.class);
+        final com.manao.poc4.run.RunStore runStore = org.mockito.Mockito.mock(com.manao.poc4.run.RunStore.class);
         final AgentProjectTools tools;
         final AgentTaskService service;
 
@@ -115,10 +117,20 @@ class AgentTaskServiceTest {
             WorkspaceJdbcStore store = new WorkspaceJdbcStore(jdbc, new DataSourceTransactionManager(jdbc.getDataSource()));
             WorkspaceOperationService operations = new WorkspaceOperationService(store, agent, gate);
             WorkspaceService workspace = new WorkspaceService(store, operations, agent, gate, tasks);
-            tools = new AgentProjectTools(tasks, store, workspace, operations, gate, builds);
+            tools = new AgentProjectTools(tasks, store, workspace, operations, gate, builds,
+                new AgentApplicationTools(tasks, runs, runStore,
+                    org.mockito.Mockito.mock(com.manao.poc4.log.RunLogService.class)));
             service = new AgentTaskService(tasks, gate, worker, tools,
                 new AiProperties(true, PROJECT, new AiProperties.Worker("http://worker.invalid", "worker-token"),
                     new AiProperties.Internal("internal-token")));
+        }
+
+        void completedStart(String call, String runId) {
+            tasks.registerToolCall(taskId, call, "a".repeat(64), "application", "{\"action\":\"start\"}", 7,
+                UUID.randomUUID().toString());
+            jdbc.update("UPDATE agent_tool_call SET workspace_operation_id=? WHERE task_id=? AND tool_call_id=?",
+                runId, taskId, call);
+            tasks.completeToolCall(taskId, call, "{}");
         }
 
         /** A write_file call row carrying an unresolved PENDING workspace receipt. */
@@ -216,6 +228,216 @@ class AgentTaskServiceTest {
 
         @Override public void close() {
             db.close();
+        }
+    }
+
+    @Test
+    void closingAValidationRejectedStopNeverTouchesTheExistingApplication() {
+        try (Harness h = new Harness()) {
+            h.submit();
+            org.mockito.Mockito.when(h.runs.get(OWNER, PROJECT, "old-run"))
+                .thenReturn(applicationRun("old-run", "RUNNING", true));
+            org.mockito.Mockito.when(h.runs.stopForAgent(OWNER, PROJECT, h.taskId, "invalid-stop", "old-run"))
+                .thenAnswer(call -> {
+                    org.mockito.Mockito.when(h.runs.get(OWNER, PROJECT, "old-run"))
+                        .thenReturn(applicationRun("old-run", "CANCELLED", false));
+                    return applicationRun("old-run", "CANCELLED", false);
+                });
+            var request = new ToolRequest("invalid-stop", "application", 7,
+                JSON.createObjectNode().put("action", "stop").put("runId", "old-run").put("waitSeconds", 11));
+            var rejected = h.tools.invoke(h.taskId, request);
+            assertThat(rejected.data().path("error").path("code").asText()).isEqualTo("VALIDATION_ERROR");
+            assertThat(h.callRowState("invalid-stop")).isEqualTo("COMPLETED");
+            assertThat(h.tools.invoke(h.taskId, request)).isEqualTo(rejected);
+            org.mockito.Mockito.verifyNoInteractions(h.runs);
+
+            h.service.close(h.taskId, "AI_CLOSED", "closed");
+
+            org.mockito.Mockito.verifyNoInteractions(h.runs);
+            assertThat(h.rowState()).isEqualTo("FAILED");
+            h.tasks.requireBrowserWritable(PROJECT);
+        }
+    }
+
+    @Test
+    void anAmbiguousStopStillRequiresCleanupBeforeCloseCanRelease() {
+        for (boolean completedError : List.of(false, true)) {
+            try (Harness h = new Harness()) {
+                h.submit();
+                org.mockito.Mockito.when(h.runs.get(OWNER, PROJECT, "stop-target"))
+                    .thenReturn(applicationRun("stop-target", "STOPPING", false));
+                if (completedError) {
+                    h.tasks.registerToolCall(h.taskId, "uncertain-stop", "a".repeat(64), "application",
+                        "{\"action\":\"stop\",\"runId\":\"stop-target\",\"waitSeconds\":0}", 7, UUID.randomUUID().toString());
+                    h.tasks.completeToolCall(h.taskId, "uncertain-stop",
+                        "{\"data\":{\"error\":{\"code\":\"AI_APPLICATION_UNAVAILABLE\"}}}");
+                } else {
+                    org.mockito.Mockito.when(h.runs.stopForAgent(OWNER, PROJECT, h.taskId, "uncertain-stop", "stop-target"))
+                        .thenThrow(new ApiException("PROJECT_BUSY", 409, "outcome unknown"));
+                    assertThatThrownBy(() -> h.tools.invoke(h.taskId, new ToolRequest("uncertain-stop", "application", 7,
+                        JSON.createObjectNode().put("action", "stop").put("runId", "stop-target").put("waitSeconds", 0))))
+                        .isInstanceOfSatisfying(ApiException.class,
+                            ex -> assertThat(ex.code()).isEqualTo("AI_APPLICATION_UNAVAILABLE"));
+                    assertThat(h.callRowState("uncertain-stop")).isEqualTo("NEEDS_ATTENTION");
+                }
+                org.mockito.Mockito.doAnswer(call -> {
+                    org.mockito.Mockito.when(h.runs.get(OWNER, PROJECT, "stop-target"))
+                        .thenReturn(applicationRun("stop-target", "CANCELLED", false));
+                    return applicationRun("stop-target", "CANCELLED", false);
+                }).when(h.runs).stopForAgent(OWNER, PROJECT, h.taskId, "uncertain-stop", "stop-target");
+
+                h.service.close(h.taskId, "AI_CLOSED", "closed");
+
+                org.mockito.Mockito.verify(h.runs, org.mockito.Mockito.times(completedError ? 1 : 2))
+                    .stopForAgent(OWNER, PROJECT, h.taskId, "uncertain-stop", "stop-target");
+                assertThat(h.rowState()).isEqualTo("FAILED");
+                h.tasks.requireBrowserWritable(PROJECT);
+            }
+        }
+    }
+
+    @Test
+    void failedTerminalStopsEvenACompletedStartAndRetainsTheOriginalFailureOnRetry() {
+        try (Harness h = new Harness()) {
+            h.submit();
+            h.completedStart("start-done", "run-created");
+            org.mockito.Mockito.when(h.runs.get(OWNER, PROJECT, "run-created"))
+                .thenReturn(applicationRun("run-created", "STOPPING", false));
+            org.mockito.Mockito.when(h.runs.stopForAgent(OWNER, PROJECT, h.taskId, "start-done", "run-created"))
+                .thenThrow(new ApiException("INTERNAL_ERROR", 503, "temporarily unavailable"));
+            h.service.applyProgress(h.taskId, INSTANCE, h.rowEpoch(), h.item(1, "terminal",
+                "{\"state\":\"FAILED\",\"failureCode\":\"PROVIDER_FAILED\",\"summary\":\"original failure\"}"));
+            assertThat(h.rowState()).isEqualTo("NEEDS_ATTENTION");
+            assertThatThrownBy(() -> h.service.applyProgress(h.taskId, INSTANCE, h.rowEpoch(),
+                h.item(2, "terminal", "{\"state\":\"COMPLETED\"}"))).isInstanceOf(ApiException.class);
+            org.mockito.Mockito.when(h.runs.get(OWNER, PROJECT, "run-created"))
+                .thenReturn(applicationRun("run-created", "CANCELLED", false));
+            h.service.close(h.taskId, "AI_CLOSED", "replacement summary");
+            assertThat(h.rowState()).isEqualTo("FAILED");
+            assertThat(h.rowFailureCode()).isEqualTo("PROVIDER_FAILED");
+            assertThat(h.jdbc.queryForObject("SELECT summary FROM agent_task WHERE id=?", String.class, h.taskId))
+                .isEqualTo("original failure");
+            org.mockito.Mockito.verify(h.runs).stopForAgent(OWNER, PROJECT, h.taskId, "start-done", "run-created");
+        }
+    }
+
+    @Test
+    void untouchedOldApplicationSurvivesProviderFailureAndReadyNewRunSurvivesSuccess() {
+        try (Harness h = new Harness()) {
+            h.submit();
+            org.mockito.Mockito.when(h.runs.active(OWNER, PROJECT))
+                .thenReturn(java.util.Optional.of(applicationRun("old", "RUNNING", true)));
+            h.service.applyProgress(h.taskId, INSTANCE, h.rowEpoch(), h.item(1, "terminal",
+                "{\"state\":\"FAILED\",\"failureCode\":\"PROVIDER_FAILED\"}"));
+            assertThat(h.rowState()).isEqualTo("FAILED");
+            org.mockito.Mockito.verify(h.runs, org.mockito.Mockito.never()).stopForAgent(
+                org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any());
+        }
+        try (Harness h = new Harness()) {
+            h.submit();
+            h.completedStart("start-ready", "ready");
+            org.mockito.Mockito.when(h.runs.get(OWNER, PROJECT, "ready"))
+                .thenReturn(applicationRun("ready", "RUNNING", true));
+            org.mockito.Mockito.when(h.runs.active(OWNER, PROJECT))
+                .thenReturn(java.util.Optional.of(applicationRun("ready", "RUNNING", true)));
+            h.service.applyProgress(h.taskId, INSTANCE, h.rowEpoch(), h.item(1, "terminal", "{\"state\":\"COMPLETED\"}"));
+            assertThat(h.rowState()).isEqualTo("COMPLETED");
+            org.mockito.Mockito.verify(h.runs, org.mockito.Mockito.never()).stopForAgent(
+                org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any());
+        }
+    }
+
+    @Test
+    void closeDoesNotHoldTheProjectGateOrStoreMonitorWhileWaitingForRunSettlement() throws Exception {
+        try (Harness h = new Harness()) {
+            h.submit();
+            h.completedStart("start-done", "run-created");
+            CountDownLatch stopEntered = new CountDownLatch(1);
+            CountDownLatch observed = new CountDownLatch(1);
+            java.util.concurrent.atomic.AtomicBoolean terminal = new java.util.concurrent.atomic.AtomicBoolean();
+            org.mockito.Mockito.when(h.runs.get(OWNER, PROJECT, "run-created")).thenAnswer(call ->
+                applicationRun("run-created", terminal.get() ? "CANCELLED" : "STOPPING", false));
+            org.mockito.Mockito.when(h.runs.stopForAgent(OWNER, PROJECT, h.taskId, "start-done", "run-created"))
+                .thenAnswer(call -> {
+                    stopEntered.countDown();
+                    assertThat(observed.await(5, TimeUnit.SECONDS)).isTrue();
+                    return applicationRun("run-created", "CANCELLED", false);
+                });
+            ExecutorService pool = Executors.newSingleThreadExecutor();
+            try {
+                Future<?> closing = pool.submit(() -> h.service.close(h.taskId, "AI_CLOSED", "closed"));
+                assertThat(stopEntered.await(5, TimeUnit.SECONDS)).isTrue();
+                try (var lease = h.gate.tryAcquire(PROJECT).orElseThrow()) {
+                    synchronized (h.tasks) { terminal.set(true); }
+                }
+                // Another close sees a terminal Run but must not release while the first control IO is still live.
+                h.service.close(h.taskId, "AI_CLOSED", "concurrent retry");
+                assertThat(h.rowState()).isEqualTo("NEEDS_ATTENTION");
+                assertThat(h.callRowState("start-done")).isEqualTo("COMPLETED");
+                observed.countDown();
+                closing.get(5, TimeUnit.SECONDS);
+                assertThat(h.rowState()).isEqualTo("FAILED");
+            } finally { observed.countDown(); pool.shutdownNow(); }
+        }
+    }
+
+    private static com.manao.poc4.run.RunSummary applicationRun(String id, String state, boolean ready) {
+        return new com.manao.poc4.run.RunSummary(id, state, "7", JSON.createObjectNode(),
+            "2026-10-16T00:00:00Z", null, "CANCELLED".equals(state) ? "2026-10-16T00:01:00Z" : null,
+            null, null, false, 0, null, ready ? "2026-10-16T00:00:00Z" : null, null);
+    }
+
+    @Test
+    void aStartingApplicationDefersSuccessAndAnUnknownTaskCanStillBeClosed() {
+        try (Harness h = new Harness()) {
+            h.submit();
+            h.completedStart("start-pending", "pending");
+            org.mockito.Mockito.when(h.runs.get(OWNER, PROJECT, "pending"))
+                .thenReturn(applicationRun("pending", "STARTING", false));
+            h.service.applyProgress(h.taskId, INSTANCE, h.rowEpoch(), h.item(1, "terminal", "{\"state\":\"COMPLETED\"}"));
+            assertThat(h.rowState()).isEqualTo("NEEDS_ATTENTION");
+            org.mockito.Mockito.when(h.runs.get(OWNER, PROJECT, "pending"))
+                .thenReturn(applicationRun("pending", "CANCELLED", false));
+            h.jdbc.update("UPDATE agent_task SET failure_code='AI_APPLICATION_UNAVAILABLE' WHERE id=?", h.taskId);
+            h.service.close(h.taskId, "AI_CLOSED", "close unknown");
+            assertThat(h.rowState()).isEqualTo("FAILED");
+        }
+    }
+
+    @Test
+    void closeCannotReleaseWhileApplicationStartOrItsResultSettlementIsStillExecuting() throws Exception {
+        try (Harness h = new Harness()) {
+            h.submit();
+            CountDownLatch entered = new CountDownLatch(1);
+            CountDownLatch release = new CountDownLatch(1);
+            org.mockito.Mockito.when(h.runs.startForAgent(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.any())).thenAnswer(call -> {
+                    entered.countDown();
+                    assertThat(release.await(5, TimeUnit.SECONDS)).isTrue();
+                    return applicationRun(call.getArgument(4), "STARTING", false);
+                });
+            ExecutorService pool = Executors.newSingleThreadExecutor();
+            try {
+                Future<?> starting = pool.submit(() -> h.tools.invoke(h.taskId, new ToolRequest("live-start", "application", 7,
+                    JSON.createObjectNode().put("action", "start"))));
+                assertThat(entered.await(5, TimeUnit.SECONDS)).isTrue();
+                h.service.close(h.taskId, "AI_CLOSED", "close during create");
+                assertThat(h.rowState()).isEqualTo("NEEDS_ATTENTION");
+                assertThat(h.callRowState("live-start")).isEqualTo("RUNNING");
+                org.mockito.Mockito.verify(h.runs, org.mockito.Mockito.never()).stopForAgent(
+                    org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(),
+                    org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any());
+                release.countDown();
+                starting.get(5, TimeUnit.SECONDS);
+                var row = h.tasks.findToolCall(h.taskId, "live-start").orElseThrow();
+                org.mockito.Mockito.when(h.runs.get(OWNER, PROJECT, row.workspaceOperationId()))
+                    .thenReturn(applicationRun(row.workspaceOperationId(), "CANCELLED", false));
+                h.service.close(h.taskId, "AI_CLOSED", "retry");
+                assertThat(h.rowState()).isEqualTo("FAILED");
+            } finally { release.countDown(); pool.shutdownNow(); }
         }
     }
 
@@ -795,6 +1017,53 @@ class AgentTaskServiceTest {
             assertThat(h.rowState()).isEqualTo("FAILED");
             assertThat(h.rowFailureCode()).isEqualTo("AI_CLOSED");
             h.tasks.requireBrowserWritable(PROJECT);
+        }
+    }
+
+    @Test
+    void concurrentCloseCannotDuplicateBuildCleanupOrReleaseItsLiveClaim() throws Exception {
+        for (String state : List.of("RUNNING", "NEEDS_ATTENTION", "UNBOUND_RUNNING")) {
+            try (Harness h = new Harness()) {
+                h.submit();
+                if ("UNBOUND_RUNNING".equals(state)) {
+                    h.insertUnrecordedBuildCall("call-build", "RUNNING");
+                } else {
+                    h.insertBoundBuildCall("call-build", "manao-dev-x");
+                    if ("NEEDS_ATTENTION".equals(state)) h.tasks.markToolCallNeedsAttention(h.taskId, "call-build");
+                }
+                CountDownLatch entered = new CountDownLatch(1);
+                CountDownLatch release = new CountDownLatch(1);
+                java.util.concurrent.atomic.AtomicInteger cleanupCalls = new java.util.concurrent.atomic.AtomicInteger();
+                org.mockito.Mockito.when(h.builds.close(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
+                    .thenAnswer(call -> {
+                        if (cleanupCalls.incrementAndGet() == 1) {
+                            entered.countDown();
+                            assertThat(release.await(10, TimeUnit.SECONDS)).isTrue();
+                        }
+                        return new AgentContracts.BuildResult(
+                            new AgentContracts.BuildIdentity("manao-dev-x", "uid-job", "uid-pod"),
+                            null, "BUILD_CLOSED", "collected tail", false, List.of(), true);
+                    });
+                ExecutorService pool = Executors.newSingleThreadExecutor();
+                try {
+                    Future<?> first = pool.submit(() -> h.service.close(h.taskId, "AI_CLOSED", "first close"));
+                    assertThat(entered.await(5, TimeUnit.SECONDS)).isTrue();
+                    h.service.close(h.taskId, "AI_CLOSED", "concurrent close");
+                    assertThat(cleanupCalls.get()).as(state).isEqualTo(1);
+                    assertThat(h.tasks.isBuildClaimLive(h.taskId, "call-build")).isTrue();
+                    assertThat(h.rowState()).isEqualTo("NEEDS_ATTENTION");
+                    assertThat(h.callRowState("call-build")).isEqualTo("NEEDS_ATTENTION".equals(state)
+                        ? "NEEDS_ATTENTION" : "RUNNING");
+                    assertThatThrownBy(() -> h.tasks.requireBrowserWritable(PROJECT)).isInstanceOf(ApiException.class);
+                    release.countDown();
+                    first.get(5, TimeUnit.SECONDS);
+                    assertThat(h.tasks.hasLiveToolClaims(h.taskId)).isFalse();
+                    assertThat(h.rowState()).isEqualTo("FAILED");
+                    assertThat(h.callRowState("call-build")).isEqualTo("NEEDS_ATTENTION".equals(state)
+                        ? "NEEDS_ATTENTION" : "COMPLETED");
+                    h.tasks.requireBrowserWritable(PROJECT);
+                } finally { release.countDown(); pool.shutdownNow(); }
+            }
         }
     }
 

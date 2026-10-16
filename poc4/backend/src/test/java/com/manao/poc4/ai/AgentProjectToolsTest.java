@@ -68,6 +68,9 @@ class AgentProjectToolsTest {
         final String taskId = UUID.randomUUID().toString();
         final WorkspaceAgent agent = mock(WorkspaceAgent.class);
         final DevelopmentBuildExecutor builds = mock(DevelopmentBuildExecutor.class);
+        final com.manao.poc4.run.RunService runs = mock(com.manao.poc4.run.RunService.class);
+        final com.manao.poc4.run.RunStore runStore = mock(com.manao.poc4.run.RunStore.class);
+        final com.manao.poc4.log.RunLogService logs = mock(com.manao.poc4.log.RunLogService.class);
         final ProjectLifecycleGate gate = new ProjectLifecycleGate();
         final AgentTaskStore tasks;
         final WorkspaceJdbcStore store;
@@ -86,7 +89,8 @@ class AgentProjectToolsTest {
             store = new WorkspaceJdbcStore(jdbc, new DataSourceTransactionManager(jdbc.getDataSource()));
             operations = new WorkspaceOperationService(store, agent, gate);
             workspace = new WorkspaceService(store, operations, agent, gate, tasks);
-            tools = new AgentProjectTools(tasks, store, workspace, operations, gate, builds);
+            tools = new AgentProjectTools(tasks, store, workspace, operations, gate, builds,
+                new AgentApplicationTools(tasks, runs, runStore, logs));
         }
 
         /** The agent answers meta for a live file and echoes every mutate exactly like the real agent. */
@@ -157,6 +161,133 @@ class AgentProjectToolsTest {
 
         @Override public void close() {
             db.close();
+        }
+    }
+
+    @Test
+    void aStopReplayReturnsTheRecordedSnapshotAndNeverChangesItsTarget() {
+        try (var h = new Harness()) {
+            ToolRequest request = new ToolRequest("stop-original", "application", 7,
+                JSON.createObjectNode().put("action", "stop").put("runId", "run-0").put("waitSeconds", 0));
+            when(h.runs.get(OWNER, PROJECT, "run-0"))
+                .thenThrow(new ApiException("RUN_NOT_FOUND", 404, "http://user:password@internal/secret"));
+            ToolResult first = h.tools.invoke(h.taskId, request);
+            assertThat(h.tools.invoke(h.taskId, request)).isEqualTo(first);
+            assertThat(first.data().path("error").path("code").asText()).isEqualTo("AI_RUN_NOT_FOUND");
+            assertThat(h.tools.browserToolCall(h.taskId, "stop-original").orElseThrow().data().toString())
+                .doesNotContain("password", "internal", "secret");
+            verify(h.runs, times(1)).get(OWNER, PROJECT, "run-0");
+        }
+    }
+
+    @Test
+    void concurrentApplicationStartIsClaimedOnceUntilItsResultIsDurable() throws Exception {
+        try (var h = new Harness()) {
+            CountDownLatch entered = new CountDownLatch(1);
+            CountDownLatch release = new CountDownLatch(1);
+            when(h.runs.startForAgent(any(), any(), any(), any(), any(), any())).thenAnswer(call -> {
+                entered.countDown();
+                assertThat(release.await(5, TimeUnit.SECONDS)).isTrue();
+                return appRun(call.getArgument(4), "STARTING", false);
+            });
+            ToolRequest request = new ToolRequest("start-once", "application", 7,
+                JSON.createObjectNode().put("action", "start"));
+            ExecutorService pool = Executors.newSingleThreadExecutor();
+            try {
+                Future<ToolResult> winner = pool.submit(() -> h.tools.invoke(h.taskId, request));
+                assertThat(entered.await(5, TimeUnit.SECONDS)).isTrue();
+                assertThatThrownBy(() -> h.tools.invoke(h.taskId, request))
+                    .isInstanceOfSatisfying(ApiException.class, ex -> assertThat(ex.code()).isEqualTo("AI_CALL_RUNNING"));
+                assertThat(h.tools.getCall(h.taskId, "start-once")).isEmpty();
+                release.countDown();
+                ToolResult result = winner.get(5, TimeUnit.SECONDS);
+                assertThat(h.tools.invoke(h.taskId, request)).isEqualTo(result);
+                assertThat(h.tasks.isBuildClaimLive(h.taskId, "start-once")).isFalse();
+                verify(h.runs, times(1)).startForAgent(any(), any(), any(), any(), any(), eq("7"));
+            } finally {
+                release.countDown();
+                pool.shutdownNow();
+            }
+        }
+    }
+
+    @Test
+    void applicationRejectsIdReuseAndProjectsOnlySafeBrowserFields() throws Exception {
+        try (var h = new Harness()) {
+            when(h.runs.get(OWNER, PROJECT, "run-0")).thenReturn(appRun("run-0", "RUNNING", true));
+            ToolRequest request = new ToolRequest("status-one", "application", 7,
+                JSON.createObjectNode().put("action", "status").put("runId", "run-0"));
+            h.tools.invoke(h.taskId, request);
+            assertThatThrownBy(() -> h.tools.invoke(h.taskId, new ToolRequest("status-one", "application", 7,
+                JSON.createObjectNode().put("action", "status").put("runId", "run-other"))))
+                .isInstanceOfSatisfying(ApiException.class, ex -> assertThat(ex.status()).isEqualTo(409));
+            var row = h.tasks.findToolCall(h.taskId, "status-one").orElseThrow();
+            ObjectNode stored = (ObjectNode) JSON.readTree(row.resultJson());
+            ((ObjectNode) stored.path("data")).put("namespace", "secret");
+            ((ObjectNode) stored.path("data").path("run")).put("policy", "secret");
+            h.jdbc.update("UPDATE agent_tool_call SET result_json=? WHERE task_id=? AND tool_call_id=?",
+                stored.toString(), h.taskId, "status-one");
+            String browser = JSON.writeValueAsString(h.tools.browserToolCall(h.taskId, "status-one").orElseThrow());
+            assertThat(browser).contains("run-0").doesNotContain("secret", "policy", "namespace");
+            ((ObjectNode) stored.path("data")).putObject("error")
+                .put("code", "http://user:password@internal/secret").put("message", "secret");
+            h.jdbc.update("UPDATE agent_tool_call SET result_json=? WHERE task_id=? AND tool_call_id=?",
+                stored.toString(), h.taskId, "status-one");
+            assertThat(h.tools.browserToolCall(h.taskId, "status-one").orElseThrow().data().toString())
+                .contains("AI_APPLICATION_UNAVAILABLE").doesNotContain("secret", "password", "internal");
+        }
+    }
+
+    private static com.manao.poc4.run.RunSummary appRun(String id, String state, boolean ready) {
+        return new com.manao.poc4.run.RunSummary(id, state, "7", JSON.createObjectNode().put("env", "secret"),
+            "2026-10-16T00:00:00Z", null, null, null, null, false, 0, null,
+            ready ? "2026-10-16T00:00:00Z" : null, null);
+    }
+
+    @Test
+    void stoppingAfterTenSecondsSettlesTheCallAndStatusRemainsAvailableWhileWritesAreBlocked() {
+        try (var h = new Harness()) {
+            Timestamp now = new Timestamp(System.currentTimeMillis());
+            h.jdbc.update("INSERT INTO run(id,project_id,requested_revision,state,policy_json,version,"
+                + "created_at,updated_at,fencing_token) VALUES ('stopping', ?, 7, 'STOPPING', '{}', 0, ?, ?, 1)",
+                PROJECT, now, now);
+            when(h.runs.get(OWNER, PROJECT, "stopping")).thenReturn(appRun("stopping", "STOPPING", false));
+            when(h.runs.stopForAgent(any(), any(), any(), any(), eq("stopping")))
+                .thenReturn(appRun("stopping", "STOPPING", false));
+            when(h.runs.active(OWNER, PROJECT)).thenReturn(Optional.of(appRun("stopping", "STOPPING", false)));
+            long began = System.nanoTime();
+            var stopped = h.tools.invoke(h.taskId, new ToolRequest("stop-ten", "application", 7,
+                JSON.createObjectNode().put("action", "stop").put("runId", "stopping").put("waitSeconds", 10)));
+            assertThat(TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - began)).isBetween(9900L, 13000L);
+            assertThat(stopped.data().path("stoppedConfirmed").asBoolean()).isFalse();
+            assertThat(h.rowState("stop-ten")).isEqualTo("COMPLETED");
+            var status = h.tools.invoke(h.taskId, new ToolRequest("status-next", "application", 7,
+                JSON.createObjectNode().put("action", "status")));
+            assertThat(status.data().path("run").path("state").asText()).isEqualTo("STOPPING");
+            assertThat(h.tools.invoke(h.taskId, new ToolRequest("build-blocked", "build", 7,
+                JSON.createObjectNode().put("goal", "test"))).data().path("error").path("code").asText())
+                .isEqualTo("AI_RUN_ACTIVE");
+            assertThat(h.tools.invoke(h.taskId, h.writeRequest("write-blocked", PATH, "x", null, 7))
+                .data().path("error").path("code").asText()).isEqualTo("AI_RUN_ACTIVE");
+        }
+    }
+
+    @Test
+    void aRestartedStartObservesTheOriginalRevisionAndDoesNotCreateAgain() {
+        try (var h = new Harness()) {
+            ToolRequest request = new ToolRequest("restart-start", "application", 7,
+                JSON.createObjectNode().put("action", "start"));
+            String runId = UUID.randomUUID().toString();
+            h.tasks.registerToolCall(h.taskId, request.toolCallId(), AgentProjectTools.callDigest(h.taskId, request),
+                request.name(), request.args().toString(), 7, runId);
+            h.jdbc.update("UPDATE agent_tool_call SET state='RUNNING' WHERE task_id=?", h.taskId);
+            h.jdbc.update("UPDATE project SET workspace_revision=8 WHERE id=?", PROJECT);
+            when(h.runs.get(OWNER, PROJECT, runId)).thenReturn(appRun(runId, "FAILED", false));
+            var result = h.tools.invoke(h.taskId, request);
+            assertThat(result.data().path("run").path("state").asText()).isEqualTo("FAILED");
+            assertThat(result.data().path("run").path("requestedWorkspaceRevision").asText()).isEqualTo("7");
+            verify(h.runs, never()).startForAgent(any(), any(), any(), any(), any(), any());
+            assertThat(h.tasks.isBuildClaimLive(h.taskId, request.toolCallId())).isFalse();
         }
     }
 

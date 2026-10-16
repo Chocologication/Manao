@@ -104,8 +104,7 @@ public final class AgentTaskService {
         } catch (ApiException ex) {
             if ("AI_WORKER_NOT_CONFIGURED".equals(ex.code())) {
                 // The worker refuses before any session exists: fail the task now, release it.
-                tasks.applyTerminal(taskId, TaskState.FAILED,
-                    "the worker has no model configuration", "AI_WORKER_NOT_CONFIGURED");
+                close(taskId, "AI_WORKER_NOT_CONFIGURED", "the worker has no model configuration");
                 return;
             }
             // Unreachable or transient: fall through to the explicit reconciliation below.
@@ -170,11 +169,26 @@ public final class AgentTaskService {
      */
     public void applyProgress(String taskId, String instanceId, long epoch, ProgressItem item) {
         tasks.requireWorkerIdentity(taskId, epoch, instanceId);
-        AgentTaskStore.ProgressAppend append = tasks.appendProgress(taskId, item);
-        if (append.appended() && "terminal".equals(item.kind())) {
-            TerminalReport report = parseTerminal(item.text());
-            tasks.applyTerminal(taskId, report.state(), report.summary(), report.failureCode());
+        TerminalReport report = "terminal".equals(item.kind()) ? parseTerminal(item.text()) : null;
+        var owner = tasks.taskOwner(taskId);
+        boolean failed = false;
+        try (var lease = lifecycle.tryAcquire(owner.projectId()).orElseThrow(
+                () -> new ApiException("PROJECT_BUSY", 409, "Project is busy"))) {
+            synchronized (tasks) {
+                AgentTaskStore.ProgressAppend append = tasks.appendProgress(taskId, item);
+                if (append.appended() && report != null) {
+                    if (report.state() == TaskState.FAILED) {
+                        tasks.beginClose(taskId);
+                        failed = true;
+                    } else if (tasks.hasLiveToolClaims(taskId) || !tools.applicationCanRelease(taskId, true)) {
+                        tasks.deferTerminal(taskId, report.summary());
+                    } else {
+                        tasks.applyTerminal(taskId, report.state(), report.summary(), report.failureCode());
+                    }
+                }
+            }
         }
+        if (failed) close(taskId, report.failureCode(), report.summary());
     }
 
     /**
@@ -221,15 +235,17 @@ public final class AgentTaskService {
         } catch (RuntimeException ex) {
             // The worker may already be gone; the marker already blocks new calls.
         }
+        // No project gate or task-store monitor across external IO or observation waits.
+        if (tasks.hasLiveToolClaims(taskId) || !tools.finishForClose(taskId) || !tools.finishApplication(taskId)) return;
         try (ProjectLifecycleGate.Lease lease = lifecycle.tryAcquire(owner.projectId()).orElseThrow(
                 () -> new ApiException("PROJECT_BUSY", 409, "Project is busy"))) {
-            // Lock order is gate -> store monitor. Build creation never takes the gate.
-            // Re-read claims, prove cluster absence and release in one atomic interval.
+            // Closing forbids new claims. Re-read all durable application identities and live IO.
             synchronized (tasks) {
-                if (!tools.finishForClose(taskId)) {
-                    return;
-                }
-                tasks.failClosedTask(taskId, failureCode, summary);
+                if (tasks.hasLiveToolClaims(taskId) || !tools.applicationCanRelease(taskId, false)) return;
+                TerminalReport original = tasks.terminalProgress(taskId).map(item -> parseTerminal(item.text()))
+                    .filter(report -> report.state() == TaskState.FAILED).orElse(null);
+                tasks.failClosedTask(taskId, original == null ? failureCode : original.failureCode(),
+                    original == null ? summary : original.summary());
             }
         }
     }

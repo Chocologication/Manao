@@ -53,7 +53,7 @@ public final class AgentProjectTools {
     /** Key-sorted serialization: the canonical form the request digest is computed over. */
     private static final ObjectMapper CANONICAL = new ObjectMapper()
         .configure(SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS, true);
-    private static final Set<String> KNOWN_TOOLS = Set.of("list_files", "read_file", "write_file", "build");
+    private static final Set<String> KNOWN_TOOLS = Set.of("list_files", "read_file", "write_file", "build", "application");
     /** Tools that register a durable side effect and are blocked while another call is unsettled. */
     private static final Set<String> SIDE_EFFECT_TOOLS = Set.of("write_file", "build");
     private static final String BUILD_TOOL = "build";
@@ -79,16 +79,24 @@ public final class AgentProjectTools {
     private final ProjectLifecycleGate lifecycle;
     /** The isolated development build executor: read-only source copy, real exit, proven cleanup. */
     private final DevelopmentBuildExecutor builds;
+    private final AgentApplicationTools application;
 
     public AgentProjectTools(AgentTaskStore tasks, WorkspaceStore store, WorkspaceService workspace,
                              WorkspaceOperationService operations, ProjectLifecycleGate lifecycle,
                              DevelopmentBuildExecutor builds) {
+        this(tasks, store, workspace, operations, lifecycle, builds, null);
+    }
+
+    public AgentProjectTools(AgentTaskStore tasks, WorkspaceStore store, WorkspaceService workspace,
+                             WorkspaceOperationService operations, ProjectLifecycleGate lifecycle,
+                             DevelopmentBuildExecutor builds, AgentApplicationTools application) {
         this.tasks = tasks;
         this.store = store;
         this.workspace = workspace;
         this.operations = operations;
         this.lifecycle = lifecycle;
         this.builds = builds;
+        this.application = application;
     }
 
     /**
@@ -106,6 +114,7 @@ public final class AgentProjectTools {
         AgentTaskStore.ToolCallRow row;
         AgentContracts.ToolResult result = null;
         AgentContracts.BuildGoal buildGoal = null;
+        boolean applicationCall = false;
         try (ProjectLifecycleGate.Lease lease = lifecycle.tryAcquire(owner.projectId()).orElseThrow(
                 () -> new ApiException("PROJECT_BUSY", 409, "Project is busy"))) {
             tasks.requireTaskWritable(taskId, owner.projectId());
@@ -116,7 +125,7 @@ public final class AgentProjectTools {
             if (!replay) {
                 tasks.requireTaskAcceptsNewCall(taskId, owner.projectId());
             }
-            boolean sideEffect = SIDE_EFFECT_TOOLS.contains(request.name());
+            boolean sideEffect = isSideEffect(request);
             // A brand-new call must not register while an earlier one is unresolved; replays of
             // a known call always pass so their settled answer stays reachable.
             if (sideEffect && !replay && tasks.hasUnsettledCallOtherThan(taskId, request.toolCallId())) {
@@ -142,6 +151,9 @@ public final class AgentProjectTools {
                 }
                 if (BUILD_TOOL.equals(request.name())) {
                     buildGoal = buildGoal(request);
+                } else if ("application".equals(request.name())) {
+                    AgentApplicationTools.validate(request.args());
+                    applicationCall = true;
                 } else {
                     result = execute(owner, row, request);
                 }
@@ -155,7 +167,14 @@ public final class AgentProjectTools {
                 tasks.markToolCallNeedsAttention(taskId, request.toolCallId());
                 throw ex;
             }
+            if (applicationCall) {
+                boolean claimed = "REGISTERED".equals(row.state())
+                    ? tasks.markToolCallRunning(taskId, row.toolCallId())
+                    : tasks.reclaimApplicationObservation(taskId, row.toolCallId());
+                if (!claimed) throw new ApiException("AI_CALL_RUNNING", 409, "The tool call is still running");
+            }
         }
+        if (applicationCall) return runApplication(taskId, owner, row, request);
         if (buildGoal != null) {
             // The build path settles its own call row (and retires its live claim only
             // after that settlement) — a concurrent close must never see a half-finished
@@ -165,6 +184,64 @@ public final class AgentProjectTools {
         AgentContracts.ToolResult settled = boundedResult(result);
         tasks.completeToolCall(taskId, request.toolCallId(), jsonOf(settled));
         return settled;
+    }
+
+    private static boolean isSideEffect(AgentContracts.ToolRequest request) {
+        return SIDE_EFFECT_TOOLS.contains(request.name()) || ("application".equals(request.name())
+            && Set.of("start", "stop").contains(request.args().path("action").asText("")));
+    }
+
+    private AgentContracts.ToolResult runApplication(String taskId, AgentTaskStore.TaskOwner owner,
+                                                      AgentTaskStore.ToolCallRow row,
+                                                      AgentContracts.ToolRequest request) {
+        try {
+            AgentContracts.ToolResult result;
+            try {
+                result = application.invoke(taskId, row, request);
+            } catch (ApiException ex) {
+                // A lost control response may have applied. Keep its original identity for observation/close.
+                if (ex.status() >= 500 || "PROJECT_BUSY".equals(ex.code())) {
+                    tasks.markToolCallNeedsAttention(taskId, row.toolCallId());
+                    throw new ApiException("AI_APPLICATION_UNAVAILABLE", 503, "Application outcome is not confirmed");
+                }
+                ObjectNode data = JSON.createObjectNode();
+                data.set("error", safeApplicationError(ex.code()));
+                result = new AgentContracts.ToolResult(row.toolCallId(), revisionOf(owner.projectId()), data, false);
+            }
+            AgentContracts.ToolResult bounded = boundedResult(result);
+            tasks.completeToolCall(taskId, row.toolCallId(), jsonOf(bounded));
+            return bounded;
+        } catch (RuntimeException ex) {
+            tasks.markToolCallNeedsAttention(taskId, row.toolCallId());
+            throw ex;
+        } finally {
+            tasks.releaseBuildClaim(taskId, row.toolCallId());
+        }
+    }
+
+    public boolean finishApplication(String taskId) {
+        return application == null ? tasks.applicationCalls(taskId).isEmpty() : application.finish(taskId);
+    }
+
+    public boolean applicationCanRelease(String taskId, boolean completed) {
+        return application == null ? tasks.applicationCalls(taskId).isEmpty() : application.canRelease(taskId, completed);
+    }
+
+    private static ObjectNode safeApplicationError(String code) {
+        code = Set.of("AI_RUN_NOT_FOUND", "RUN_NOT_FOUND", "WORKSPACE_REVISION_CONFLICT", "VALIDATION_ERROR",
+            "RUN_ALREADY_ACTIVE", "AI_RUN_ACTIVE", "AI_APPLICATION_START_LIMIT", "AI_TASK_NOT_ACTIVE",
+            "AI_CALL_UNSETTLED", "AI_RESULT_TOO_LARGE", "DEPENDENCY_NOT_READY", "PROJECT_LOCKED",
+            "AI_APPLICATION_UNAVAILABLE").contains(code) ? code : "AI_APPLICATION_UNAVAILABLE";
+        String message = switch (code) {
+            case "AI_RUN_NOT_FOUND", "RUN_NOT_FOUND" -> "Run not found";
+            case "WORKSPACE_REVISION_CONFLICT" -> "The workspace revision does not match";
+            case "VALIDATION_ERROR" -> "Invalid application arguments";
+            case "RUN_ALREADY_ACTIVE", "AI_RUN_ACTIVE" -> "An application is still active";
+            case "AI_APPLICATION_START_LIMIT" -> "The application start limit was reached";
+            default -> "Application operation was refused";
+        };
+        return JSON.createObjectNode().put("code", "RUN_NOT_FOUND".equals(code) ? "AI_RUN_NOT_FOUND" : code)
+            .put("message", message);
     }
 
     /** Read-only ledger lookup: answers the persisted result, never re-drives anything. */
@@ -232,60 +309,36 @@ public final class AgentProjectTools {
             return false;
         }
         for (AgentTaskStore.ToolCallRow row : unsettled) {
+            if ("application".equals(row.toolName()) || "app_http_get".equals(row.toolName())) continue;
             if ("build".equals(row.toolName())) {
-                if ("RUNNING".equals(row.state())) {
-                    if (tasks.isBuildClaimLive(taskId, row.toolCallId())) {
-                        // An active execution thread of THIS process sits between the
-                        // atomic REGISTERED->RUNNING claim and its settlement: the Job
-                        // may not exist YET, so the negative cluster query proves nothing
-                        // and the row is the authority — never release while it runs.
-                        return false;
-                    }
-                    // A RUNNING row without a live claim is a restart leftover (review fix
-                    // I6): the executing thread is gone, so the durable row is finished by
-                    // its stable identity — the recorded Job/Pod identity when one was
-                    // bound, the deterministic commandId name otherwise. Close never
-                    // creates and never re-executes; a confirmed cleanup settles the row
-                    // with the collected evidence, an unconfirmed one keeps the task
-                    // occupied for another close attempt.
-                    AgentContracts.BuildResult closed;
-                    try {
-                        closed = builds.close(buildRequestOf(owner, row), new AgentContracts.BuildIdentity(
+                // Atomically exclude both live execution and another close. Keep this same
+                // claim through external cleanup AND the durable evidence transition.
+                if (!tasks.claimBuildCleanup(taskId, row.toolCallId())) return false;
+                try {
+                    if ("RUNNING".equals(row.state()) || row.jobName() != null) {
+                        // Restart leftovers use the bound identity or deterministic commandId;
+                        // close never creates or re-executes a build.
+                        AgentContracts.BuildResult closed = builds.close(buildRequestOf(owner, row), new AgentContracts.BuildIdentity(
                             row.jobName(), row.jobUid(), row.podUid()));
-                    } catch (RuntimeException ex) {
-                        // The evidence could not be finished: stay occupied.
+                        if (closed == null || !closed.cleanupConfirmed()) return false;
+                        if ("RUNNING".equals(row.state())) {
+                            tasks.settleClosedBuildCall(taskId, row.toolCallId(), jsonOf(fittedBuildResult(
+                                new AgentContracts.ToolResult(row.toolCallId(),
+                                    Long.toString(currentRevision(owner.projectId())),
+                                    buildData(buildRequestOf(owner, row), closed), closed.truncated()))));
+                            continue;
+                        }
+                    } else if (builds.hasRecordedSideEffect(buildRequestOf(owner, row))) {
                         return false;
                     }
-                    if (closed == null || !closed.cleanupConfirmed()) {
-                        return false;
-                    }
-                    tasks.settleClosedBuildCall(taskId, row.toolCallId(), jsonOf(fittedBuildResult(
-                        new AgentContracts.ToolResult(row.toolCallId(),
-                            Long.toString(currentRevision(owner.projectId())),
-                            buildData(buildRequestOf(owner, row), closed), closed.truncated()))));
-                    continue;
+                    tasks.markRegisteredCallForClose(taskId, row.toolCallId());
+                } catch (RuntimeException ex) {
+                    // Unknown cleanup or settlement keeps the project occupied.
+                    return false;
+                } finally {
+                    tasks.releaseBuildClaim(taskId, row.toolCallId());
                 }
-                if (row.jobName() == null) {
-                    // REGISTERED or NEEDS_ATTENTION without identity: no claim is in
-                    // flight (a closing task refuses claims — its build path aborts
-                    // before creating). Prove the absence of any Job side effect by
-                    // the stable commandId; an unclear answer blocks the release.
-                    if (builds.hasRecordedSideEffect(buildRequestOf(owner, row))) {
-                        return false;
-                    }
-                } else {
-                    AgentContracts.BuildResult closed;
-                    try {
-                        closed = builds.close(buildRequestOf(owner, row), new AgentContracts.BuildIdentity(
-                            row.jobName(), row.jobUid(), row.podUid()));
-                    } catch (RuntimeException ex) {
-                        // The evidence could not be finished: stay occupied.
-                        return false;
-                    }
-                    if (closed == null || !closed.cleanupConfirmed()) {
-                        return false;
-                    }
-                }
+                continue;
             }
             // Never overwrite a RUNNING claim that appeared after the snapshot.
             tasks.markRegisteredCallForClose(taskId, row.toolCallId());
@@ -632,8 +685,35 @@ public final class AgentProjectTools {
             .map(row -> {
                 AgentContracts.ToolResult result = storedResult(row);
                 return new AgentContracts.AgentToolCallView(row.toolCallId(), row.toolName(),
-                    boundedBrowserData(result.data()));
+                    "application".equals(row.toolName()) ? applicationBrowserData(result.data())
+                        : boundedBrowserData(result.data()));
             });
+    }
+
+    private static JsonNode applicationBrowserData(JsonNode data) {
+        ObjectNode safe = JSON.createObjectNode();
+        if (data.has("error")) {
+            safe.set("error", safeApplicationError(data.path("error").path("code").asText("AI_APPLICATION_UNAVAILABLE")));
+            return safe;
+        }
+        copyFields(data, safe, List.of("kind", "action", "activeRunId", "stoppedConfirmed"));
+        if (data.path("run").isObject()) {
+            ObjectNode run = safe.putObject("run");
+            copyFields(data.path("run"), run, List.of("id", "state", "requestedWorkspaceRevision", "firstReadyAt",
+                "expiresAt", "finishedAt", "exitCode", "terminationReason"));
+        } else safe.putNull("run");
+        if (data.path("logs").isObject()) {
+            ObjectNode logs = safe.putObject("logs");
+            copyFields(data.path("logs"), logs, List.of("text", "firstSeq", "lastSeq", "truncated", "complete"));
+        } else safe.putNull("logs");
+        return safe;
+    }
+
+    private static void copyFields(JsonNode source, ObjectNode target, List<String> fields) {
+        for (String field : fields) {
+            JsonNode value = source.get(field);
+            if (value != null && value.isValueNode()) target.set(field, value);
+        }
     }
 
     /** Caps any oversized output excerpt in the browser view and marks it honestly. */
