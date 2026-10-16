@@ -46,20 +46,38 @@ describe("worker project tools", () => {
     expect(outcome.details).toEqual(expected);
   });
 
-  it("limits application schemas to the action union and relative GET fields", () => {
+  it("advertises application as a provider-compatible top-level object with bounded fields", () => {
     const tools = createProjectTools({ backend: backendStub() as never, taskId: "task-1", getRevision: () => "7" });
     const app = tools.find((tool) => tool.name === "application")!;
     expect(app).toBeDefined();
-    const schema = app.parameters as unknown as { anyOf: Array<Record<string, any>> };
-    expect(schema.anyOf).toHaveLength(4);
-    for (const variant of schema.anyOf) expect(variant.additionalProperties).toBe(false);
-    const stop = schema.anyOf.find((variant) => variant.properties.action.const === "stop")!;
-    expect(stop.required).toContain("runId");
-    expect(stop.properties.waitSeconds).toMatchObject({ type: "integer", minimum: 0, maximum: 10 });
+    const schema = JSON.parse(JSON.stringify(app.parameters));
+    expect(schema.type).toBe("object");
+    expect(schema.additionalProperties).toBe(false);
+    expect(Object.keys(schema.properties)).toEqual(["action", "runId", "waitSeconds"]);
+    expect(schema.required).toEqual(["action"]);
+    expect(schema.properties.action).toMatchObject({ type: "string", enum: ["start", "status", "stop", "logs"] });
+    expect(schema.properties.runId.type).toBe("string");
+    expect(schema.properties.waitSeconds).toMatchObject({ type: "integer", minimum: 0, maximum: 10 });
+    expect(schema.anyOf).toBeUndefined();
+    expect(schema.oneOf).toBeUndefined();
     const http = tools.find((tool) => tool.name === "app_http_get")!.parameters as unknown as Record<string, any>;
     expect(http.additionalProperties).toBe(false);
     expect(http.required).toEqual(["runId", "path"]);
     expect(http.properties.path.maxLength).toBe(2048);
+  });
+
+  it("keeps action-specific requirements visible while forwarding backend rejections unchanged", async () => {
+    const rejected = toolResult("call-missing-run", { error: { code: "VALIDATION_ERROR", message: "Request validation failed" } });
+    const backend = backendStub([rejected]);
+    const app = createProjectTools({ backend: backend as never, taskId: "task-1", getRevision: () => "13" })
+      .find((tool) => tool.name === "application")!;
+    const schema = JSON.parse(JSON.stringify(app.parameters));
+    expect(schema.properties.runId.description).toMatch(/required.*stop.*logs/i);
+    expect(schema.properties.waitSeconds.description).toMatch(/only.*status.*stop/i);
+    const result = await app.execute("call-missing-run", { action: "stop" }, undefined, undefined, {} as never);
+    expect(backend.invoke).toHaveBeenCalledWith("task-1", { toolCallId: "call-missing-run", name: "application", expectedRevision: 13, args: { action: "stop" } });
+    expect(result.details).toEqual(rejected);
+    expect(JSON.parse(result.content[0]!.text)).toEqual(rejected);
   });
   it("registers the six backend-mediated tools, each sequential", () => {
     const backend = backendStub();

@@ -43,12 +43,13 @@ const buildArgs = Type.Object({
   ], { description: "The fixed build goal; there is no arbitrary command execution." }),
 });
 
-const applicationArgs = Type.Union([
-  Type.Object({ action: Type.Literal("start") }, { additionalProperties: false }),
-  Type.Object({ action: Type.Literal("status"), runId: Type.Optional(Type.String()), waitSeconds: Type.Optional(Type.Integer({ minimum: 0, maximum: 10 })) }, { additionalProperties: false }),
-  Type.Object({ action: Type.Literal("stop"), runId: Type.String(), waitSeconds: Type.Optional(Type.Integer({ minimum: 0, maximum: 10 })) }, { additionalProperties: false }),
-  Type.Object({ action: Type.Literal("logs"), runId: Type.String() }, { additionalProperties: false }),
-]);
+// Model providers require a top-level object. The backend remains authoritative
+// for each action's required/allowed fields; the model sees those rules below.
+const applicationArgs = Type.Object({
+  action: Type.String({ enum: ["start", "status", "stop", "logs"] }),
+  runId: Type.Optional(Type.String({ description: "Required for stop and logs; optional for status; omit for start. Use the exact Run ID from an earlier result." })),
+  waitSeconds: Type.Optional(Type.Integer({ minimum: 0, maximum: 10, description: "Only for status and stop. Integer seconds to wait, 0–10; omit for start and logs." })),
+}, { additionalProperties: false });
 
 const appHttpGetArgs = Type.Object({ runId: Type.String(), path: Type.String({ maxLength: 2048 }) }, { additionalProperties: false });
 
