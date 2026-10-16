@@ -61,6 +61,7 @@ function renderPanel(props: Partial<AgentTaskPanelProps> = {}): PanelHarness {
         pollFailed={false}
         writePending={false}
         hasActiveRun={false}
+        runAuthorityKnown
         reloading={false}
         closePending={false}
         onTaskAccepted={(task) => {
@@ -113,13 +114,19 @@ describe('AgentTaskPanel preconditions', () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
-  it('does not POST while a run is active or the workspace reloads', () => {
+  it('allows a running application but keeps reload blocked', () => {
     const fetchSpy = vi.spyOn(globalThis, 'fetch');
     renderPanel({ hasActiveRun: true });
-    expect(screen.getByText('RUN_ACTIVE')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Start task' })).toBeEnabled();
     renderPanel({ reloading: true });
     expect(screen.getAllByText('RELOADING').length).toBeGreaterThan(0);
     expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('blocks unknown Run authority explicitly', () => {
+    renderPanel({ hasActiveRun: true, runAuthorityKnown: false });
+    expect(screen.getByRole('button', { name: 'Start task' })).toBeDisabled();
+    expect(screen.getByText('RUN_AUTHORITY_UNKNOWN')).toBeInTheDocument();
   });
 
   it('does not POST while the workspace revision is unknown', () => {
@@ -414,6 +421,157 @@ describe('agent task poll', () => {
 });
 
 describe('AgentTaskPanel build results (review fix I9)', () => {
+  it.each(['application', 'app_http_get'] as const)('keeps a %s result with an empty Run ID readable without invalid navigation', async (name) => {
+    const onViewRun = vi.fn();
+    const data = name === 'app_http_get' ? {
+      kind: 'app_http_get', runId: '', path: '/health', statusCode: null, contentType: null,
+      body: '', truncated: false, error: { code: 'VALIDATION_ERROR', message: 'Request validation failed' },
+    } : {
+      kind: 'application', action: 'status', run: {
+        id: '', state: 'RUNNING', requestedWorkspaceRevision: '19', firstReadyAt: null,
+        expiresAt: null, finishedAt: null, exitCode: null, terminationReason: null,
+      }, activeRunId: '', stoppedConfirmed: false, logs: null,
+    };
+    server.use(http.get(`${TASKS_URL}/${TASK_ID}/tools/empty-id`, () => HttpResponse.json({ toolCallId: 'empty-id', toolName: name, data })));
+    renderPanel({ task: occupyingTask({ progress: [{ seq: 1, kind: 'tool_end', text: `${name} empty-id`, truncated: false }] }), onViewRun });
+    await userEvent.setup().click(screen.getByRole('button', { name: name === 'application' ? 'View application result' : 'View HTTP result' }));
+    expect(await screen.findByText(name === 'application' ? 'Application: status' : /VALIDATION_ERROR/)).toBeInTheDocument();
+    const invalidNavigation = screen.queryByRole('button', { name: 'View run' });
+    if (invalidNavigation !== null) await userEvent.setup().click(invalidNavigation);
+    expect(onViewRun).not.toHaveBeenCalled();
+    expect(invalidNavigation).not.toBeInTheDocument();
+  });
+
+  it.each(['success', 'error'] as const)('does not let a stale %s or finally clear a new task request', async (outcome) => {
+    let releaseOld: (() => void) | undefined;
+    let releaseNew: (() => void) | undefined;
+    let oldAnswered = false;
+    const newTaskId = 'task-new';
+    server.use(
+      http.get(`${TASKS_URL}/${TASK_ID}/tools/call-9`, async () => {
+        await new Promise<void>((resolve) => { releaseOld = resolve; });
+        oldAnswered = true;
+        return outcome === 'error' ? new HttpResponse(null, { status: 404 }) : HttpResponse.json({ toolCallId: 'call-9', toolName: 'build', data: { output: 'OLD' } });
+      }),
+      http.get(`${TASKS_URL}/${newTaskId}/tools/call-9`, async () => {
+        await new Promise<void>((resolve) => { releaseNew = resolve; });
+        return HttpResponse.json({ toolCallId: 'call-9', toolName: 'build', data: { output: 'CURRENT' } });
+      }),
+    );
+    const props: AgentTaskPanelProps = {
+      projectId: PROJECT_ID, userId: USER_ID, task: occupyingTask({ progress: [{ seq: 1, kind: 'tool_end', text: 'build call-9', truncated: false }] }),
+      settledTask: null, pollFailed: false, writePending: false, hasActiveRun: false, runAuthorityKnown: true, reloading: false,
+      closePending: false, onTaskAccepted: vi.fn(), onClose: vi.fn(),
+    };
+    const view = render(<AppProviders><AgentTaskPanel {...props} /></AppProviders>);
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: 'View build result' }));
+    await waitFor(() => expect(releaseOld).toBeDefined());
+    view.rerender(<AppProviders><AgentTaskPanel {...props} task={{ ...props.task!, taskId: newTaskId }} /></AppProviders>);
+    await user.click(screen.getByRole('button', { name: 'View build result' }));
+    await waitFor(() => expect(releaseNew).toBeDefined());
+    await act(async () => { releaseOld!(); });
+    await waitFor(() => expect(oldAnswered).toBe(true));
+    expect(screen.getByRole('button', { name: 'View build result' })).toBeDisabled();
+    expect(screen.queryByText('Could not load the build result.')).not.toBeInTheDocument();
+    expect(screen.queryByText('OLD')).not.toBeInTheDocument();
+    await act(async () => { releaseNew!(); });
+    expect(await screen.findByText('CURRENT')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'View build result' })).toBeEnabled();
+  });
+
+  it('shows a real application rejection without fabricating Run facts', async () => {
+    server.use(http.get(`${TASKS_URL}/${TASK_ID}/tools/reject-1`, () => HttpResponse.json({
+      toolCallId: 'reject-1', toolName: 'application', data: { error: { code: 'AI_APPLICATION_START_LIMIT', message: 'Application start limit reached' } },
+    })));
+    renderPanel({ task: occupyingTask({ progress: [{ seq: 1, kind: 'tool_end', text: 'application reject-1', truncated: false }] }) });
+    await userEvent.setup().click(screen.getByRole('button', { name: 'View application result' }));
+    expect(await screen.findByText(/AI_APPLICATION_START_LIMIT/)).toBeInTheDocument();
+    expect(screen.queryByText(/Ready: yes/)).not.toBeInTheDocument();
+  });
+
+  it.each([
+    ['application', { kind: 'application', action: 'status', run: { id: 'run-bad', firstReadyAt: true }, activeRunId: null, stoppedConfirmed: true, logs: null }],
+    ['app_http_get', { kind: 'app_http_get', runId: 'run-bad', path: '/', statusCode: '200', contentType: null, body: 'bad', truncated: false, error: null }],
+    ['app_http_get', { kind: 'application', run: null }],
+  ])('refuses malformed or mismatched %s result data', async (name, data) => {
+    server.use(http.get(`${TASKS_URL}/${TASK_ID}/tools/bad-1`, () => HttpResponse.json({ toolCallId: 'bad-1', toolName: name, data })));
+    renderPanel({ task: occupyingTask({ progress: [{ seq: 1, kind: 'tool_end', text: `${name} bad-1`, truncated: false }] }) });
+    await userEvent.setup().click(screen.getByRole('button', { name: name === 'application' ? 'View application result' : 'View HTTP result' }));
+    expect(await screen.findByText('Result unavailable')).toBeInTheDocument();
+    expect(screen.queryByText(/Ready: yes|Status: 200/)).not.toBeInTheDocument();
+  });
+
+  it.each(['task', 'project', 'unmount'] as const)('ignores late tool results after a %s switch', async (switchKind) => {
+    const user = userEvent.setup();
+    let release: (() => void) | undefined;
+    server.use(http.get(`${TASKS_URL}/${TASK_ID}/tools/call-9`, async () => {
+      await new Promise<void>((resolve) => { release = resolve; });
+      return HttpResponse.json({ toolCallId: 'call-9', toolName: 'build', data: { exitCode: 9, output: 'STALE-OUTPUT' } });
+    }));
+    const original = occupyingTask({ progress: [{ seq: 1, kind: 'tool_end', text: 'build call-9', truncated: false }] });
+    const props: AgentTaskPanelProps = {
+      projectId: PROJECT_ID, userId: USER_ID, task: original, settledTask: null, pollFailed: false,
+      writePending: false, hasActiveRun: false, runAuthorityKnown: true, reloading: false, closePending: false,
+      onTaskAccepted: vi.fn(), onClose: vi.fn(),
+    };
+    const view = render(<AppProviders><AgentTaskPanel {...props} /></AppProviders>);
+    await user.click(screen.getByRole('button', { name: 'View build result' }));
+    await waitFor(() => expect(release).toBeDefined());
+    if (switchKind === 'unmount') view.unmount();
+    else view.rerender(<AppProviders><AgentTaskPanel {...props} projectId={switchKind === 'project' ? 'other-project' : PROJECT_ID} task={switchKind === 'task' ? { ...original, taskId: 'other-task' } : original} /></AppProviders>);
+    await act(async () => { release!(); });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(screen.queryByText('STALE-OUTPUT')).not.toBeInTheDocument();
+    if (switchKind !== 'unmount') expect(screen.getByRole('button', { name: 'View build result' })).toBeEnabled();
+  });
+
+  it.each([
+    ['RUNNING', null, 'no'],
+    ['RUNNING', '2026-10-16T10:00:00Z', 'yes'],
+    ['FAILED', '2026-10-16T10:00:00Z', 'no'],
+  ] as const)('renders actual readiness for %s with firstReadyAt=%s and selects its Run', async (state, firstReadyAt, ready) => {
+    const user = userEvent.setup();
+    const onViewRun = vi.fn();
+    server.use(http.get(`${TASKS_URL}/${TASK_ID}/tools/app-1`, () => HttpResponse.json({
+      toolCallId: 'app-1', toolName: 'application', data: {
+        kind: 'application', action: 'status', run: {
+          id: 'run-real', state, requestedWorkspaceRevision: '19', firstReadyAt,
+          expiresAt: null, finishedAt: null, exitCode: null, terminationReason: null,
+        }, activeRunId: 'run-real', stoppedConfirmed: false,
+        logs: { text: '<script>literal-log</script>', firstSeq: 4, lastSeq: 7, truncated: true, complete: false },
+      },
+    })));
+    renderPanel({ task: occupyingTask({ progress: [{ seq: 1, kind: 'tool_end', text: 'application app-1', truncated: false }] }), onViewRun });
+    await user.click(screen.getByRole('button', { name: 'View application result' }));
+    expect(await screen.findByText(/run-real/)).toBeInTheDocument();
+    expect(screen.getByText(/Revision: 19/)).toBeInTheDocument();
+    expect(screen.getByText(`Ready: ${ready}`)).toBeInTheDocument();
+    expect(screen.getByText(/Stopped confirmed: no/)).toBeInTheDocument();
+    expect(screen.getByText(/<script>literal-log<\/script>/)).toBeInTheDocument();
+    expect(document.querySelector('script')).toBeNull();
+    await user.click(screen.getByRole('button', { name: 'View run' }));
+    expect(onViewRun).toHaveBeenCalledWith('run-real');
+  });
+
+  it('renders real HTTP status, bounded literal body and structured errors', async () => {
+    const user = userEvent.setup();
+    server.use(http.get(`${TASKS_URL}/${TASK_ID}/tools/http-1`, () => HttpResponse.json({
+      toolCallId: 'http-1', toolName: 'app_http_get', data: {
+        kind: 'app_http_get', runId: 'run-real', path: '/api/demo?name=Pi', statusCode: 500,
+        contentType: 'text/html', body: '<img src=x onerror=alert(1)>', truncated: true,
+        error: { code: 'AI_APP_RUN_CHANGED', message: 'Application changed' },
+      },
+    })));
+    renderPanel({ task: occupyingTask({ progress: [{ seq: 1, kind: 'tool_end', text: 'app_http_get http-1', truncated: false }] }) });
+    await user.click(screen.getByRole('button', { name: 'View HTTP result' }));
+    expect(await screen.findByText(/Status: 500/)).toBeInTheDocument();
+    expect(screen.getByText(/AI_APP_RUN_CHANGED/)).toBeInTheDocument();
+    expect(screen.getByText(/<img src=x onerror=alert\(1\)>/)).toBeInTheDocument();
+    expect(screen.getByText(/truncated/)).toBeInTheDocument();
+    expect(document.querySelector('img')).toBeNull();
+  });
+
   const TOOLS_URL = `${TASKS_URL}/${TASK_ID}/tools/call-9`;
 
   function taskWithSettledBuild(): AgentTaskSnapshot {

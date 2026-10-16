@@ -176,6 +176,7 @@ const BUDGETS = { wallClockSeconds: 1800, toolCalls: 60, builds: 8 };
 interface SessionOverrides {
   budgets?: typeof BUDGETS;
   settingsManager?: unknown;
+  observeOptions?: (options: CreateAgentSessionOptions) => void;
 }
 
 const tempDirs: string[] = [];
@@ -229,7 +230,10 @@ async function runScriptedTask(
     progress: chain,
     taskId: "task-1",
     deps: {
-      createSession: scriptedSessionFactory(responses) as never,
+      createSession: ((options: CreateAgentSessionOptions) => {
+        overrides.observeOptions?.(options);
+        return scriptedSessionFactory(responses)(options);
+      }) as never,
       ...(overrides.settingsManager !== undefined
         ? { settingsManager: overrides.settingsManager as never }
         : {}),
@@ -245,6 +249,17 @@ async function runScriptedTask(
 // ---------------------------------------------------------------------------
 
 describe("pi session", () => {
+  it("gives Pi application feedback capabilities and evidence rules without enabling built-in tools", async () => {
+    let options: CreateAgentSessionOptions | undefined;
+    await runScriptedTask([{ text: "done" }], [resultFor], { observeOptions: (value) => { options = value; } });
+    const prompt = options!.resourceLoader!.getSystemPrompt()!;
+    expect(prompt).toContain("application");
+    expect(prompt).toContain("app_http_get");
+    expect(prompt).toMatch(/accepted.*not.*ready/i);
+    expect(prompt).toMatch(/stop.*confirmed/i);
+    expect(prompt).toMatch(/write.*build.*active/i);
+    expect(options!.noTools).toBe("builtin");
+  });
   it("drives read -> write -> failing build -> fix -> passing build to completion", async () => {
     const { outcome, backend } = await runScriptedTask([
       { text: "Reading the source.", toolCalls: [{ id: "c1", name: "read_file", args: { path: "src/Demo.java" } }] },
@@ -273,9 +288,9 @@ describe("pi session", () => {
     expect(JSON.parse(terminals[0]!.text)).toMatchObject({ state: "COMPLETED" });
   });
 
-  it("registers exactly the four project tools and nothing else", async () => {
+  it("registers exactly the six project tools and nothing else", async () => {
     const { tools } = await runScriptedTask([{ text: "done" }]);
-    expect(tools.map((tool) => tool.name)).toEqual(["list_files", "read_file", "write_file", "build"]);
+    expect(tools.map((tool) => tool.name)).toEqual(["list_files", "read_file", "write_file", "build", "application", "app_http_get"]);
   });
 
   it("persists complete messages only, never per-token deltas", async () => {

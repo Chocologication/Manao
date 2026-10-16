@@ -7,7 +7,7 @@
 export type AgentTaskPreconditionReason =
   | 'DIRTY_FILES'
   | 'WRITE_PENDING'
-  | 'RUN_ACTIVE'
+  | 'RUN_AUTHORITY_UNKNOWN'
   | 'REVISION_UNAVAILABLE'
   | 'TASK_ACTIVE'
   | 'RELOADING';
@@ -20,6 +20,7 @@ export type AgentTaskPreconditionsInput = {
   dirtyCount: number;
   writePending: boolean;
   hasActiveRun: boolean;
+  runAuthorityKnown: boolean;
   /** The known workspace revision; unknown or empty means it was never loaded. */
   workspaceRevision: string | undefined;
   /** The backend's writesLocked — the authoritative task occupancy signal. */
@@ -36,8 +37,8 @@ export function resolveAgentTaskPreconditions(
   if (input.writePending) {
     return { canStart: false, reason: 'WRITE_PENDING' };
   }
-  if (input.hasActiveRun) {
-    return { canStart: false, reason: 'RUN_ACTIVE' };
+  if (input.runAuthorityKnown === false) {
+    return { canStart: false, reason: 'RUN_AUTHORITY_UNKNOWN' };
   }
   if (input.workspaceRevision === undefined || input.workspaceRevision.length === 0) {
     return { canStart: false, reason: 'REVISION_UNAVAILABLE' };

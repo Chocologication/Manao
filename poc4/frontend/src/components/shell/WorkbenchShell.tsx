@@ -21,6 +21,7 @@ import { projectFileWritePredicate } from '@/components/files/editorSaveCommand'
 import { RunPanel } from '@/components/runs/RunPanel';
 import { Button } from '@/components/ui/button';
 import type { AgentTaskSnapshot } from '@/contracts/agentTask';
+import { parseRunId, type RunId } from '@/contracts/run';
 import type { ProjectSummary } from '@/contracts/project';
 import { isPythonRuntimeTemplate } from '@/contracts/project';
 import {
@@ -110,6 +111,7 @@ function authorityErrorMessage(error: unknown): string {
 
 export function WorkbenchShell({ project }: { project: ProjectSummary }) {
   const [activePanel, setActivePanel] = useState<WorkbenchPanel>('file');
+  const [runSelection, setRunSelection] = useState<{ projectId: string; runId: RunId; seq: number } | null>(null);
   const [terminalLoaded, setTerminalLoaded] = useState(false);
   const queryClient = useQueryClient();
   const coordinator = useRunAuthorityCoordinator(project.id);
@@ -244,6 +246,7 @@ export function WorkbenchShell({ project }: { project: ProjectSummary }) {
     dirtyCount: 0,
     writePending: false,
     hasActiveRun: false,
+    runAuthorityKnown: true,
     workspaceRevision: '0',
     taskWritesLocked: agentTaskOccupying,
     reloading: agentReloading || settledSnapshotSettling,
@@ -709,6 +712,7 @@ export function WorkbenchShell({ project }: { project: ProjectSummary }) {
                 projectTemplateId={project.runtime?.templateId ?? 'java-console'}
                 coordinator={coordinator}
                 agentTaskActive={agentTaskLocked}
+                requestRunSelection={runSelection?.projectId === project.id ? runSelection : null}
               />
             </div>
             {pythonWorkbench ? (
@@ -782,6 +786,7 @@ export function WorkbenchShell({ project }: { project: ProjectSummary }) {
                   pollFailed={agentTaskQuery.isError}
                   writePending={agentWritePending}
                   hasActiveRun={snapshot.observedLockingRunId !== null}
+                  runAuthorityKnown={snapshot.phase !== 'LOADING_AUTHORITY' && activeQuery.isSuccess && !snapshot.startPending}
                   reloading={
                     reloadingWorkspace ||
                     agentReloadFailed ||
@@ -790,6 +795,16 @@ export function WorkbenchShell({ project }: { project: ProjectSummary }) {
                   }
                   closePending={closeAgentTaskMutation.isPending}
                   onTaskAccepted={seedAgentTask}
+                  onViewRun={(runId) => {
+                    let selectedRunId: RunId;
+                    try {
+                      selectedRunId = parseRunId(runId);
+                    } catch {
+                      return;
+                    }
+                    setRunSelection((previous) => ({ projectId: project.id, runId: selectedRunId, seq: (previous?.seq ?? 0) + 1 }));
+                    setActivePanel('run');
+                  }}
                   onClose={() => {
                     // The only close path: the owner's explicit button click.
                     if (agentTask !== null) {

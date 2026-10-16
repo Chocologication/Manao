@@ -27,10 +27,44 @@ function toolResult(toolCallId: string, data: unknown): ToolResult {
 }
 
 describe("worker project tools", () => {
-  it("registers exactly the four backend-mediated tools, each sequential", () => {
+  it.each([
+    ["application", { action: "start" }],
+    ["application", { action: "status", runId: "run-1", waitSeconds: 10 }],
+    ["application", { action: "stop", runId: "run-1", waitSeconds: 0 }],
+    ["application", { action: "logs", runId: "run-1" }],
+    ["app_http_get", { runId: "run-1", path: "/api/demo?name=Pi" }],
+  ])("forwards %s arguments and tracked revision through the existing ledger", async (name, args) => {
+    const expected = toolResult("call-app", { kind: name, runId: "run-1" });
+    const backend = backendStub([expected]);
+    const onResult = vi.fn();
+    const tools = createProjectTools({ backend: backend as never, taskId: "task-1", getRevision: () => "13", onResult });
+    const tool = tools.find((item) => item.name === name);
+    expect(tool).toBeDefined();
+    const outcome = await tool!.execute("call-app", args, undefined, undefined, {} as never);
+    expect(backend.invoke).toHaveBeenCalledWith("task-1", { toolCallId: "call-app", name, expectedRevision: 13, args });
+    expect(onResult).toHaveBeenCalledWith(expected);
+    expect(outcome.details).toEqual(expected);
+  });
+
+  it("limits application schemas to the action union and relative GET fields", () => {
+    const tools = createProjectTools({ backend: backendStub() as never, taskId: "task-1", getRevision: () => "7" });
+    const app = tools.find((tool) => tool.name === "application")!;
+    expect(app).toBeDefined();
+    const schema = app.parameters as unknown as { anyOf: Array<Record<string, any>> };
+    expect(schema.anyOf).toHaveLength(4);
+    for (const variant of schema.anyOf) expect(variant.additionalProperties).toBe(false);
+    const stop = schema.anyOf.find((variant) => variant.properties.action.const === "stop")!;
+    expect(stop.required).toContain("runId");
+    expect(stop.properties.waitSeconds).toMatchObject({ type: "integer", minimum: 0, maximum: 10 });
+    const http = tools.find((tool) => tool.name === "app_http_get")!.parameters as unknown as Record<string, any>;
+    expect(http.additionalProperties).toBe(false);
+    expect(http.required).toEqual(["runId", "path"]);
+    expect(http.properties.path.maxLength).toBe(2048);
+  });
+  it("registers the six backend-mediated tools, each sequential", () => {
     const backend = backendStub();
     const tools = createProjectTools({ backend: backend as never, taskId: "task-1", getRevision: () => "7" });
-    expect(tools.map((tool) => tool.name)).toEqual(["list_files", "read_file", "write_file", "build"]);
+    expect(tools.map((tool) => tool.name)).toEqual(["list_files", "read_file", "write_file", "build", "application", "app_http_get"]);
     for (const tool of tools) {
       expect(tool.executionMode).toBe("sequential");
     }

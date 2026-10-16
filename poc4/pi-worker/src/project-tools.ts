@@ -1,6 +1,5 @@
 /**
- * The worker-side projection of the backend's project tools (stage one): exactly
- * four ToolDefinitions — list_files, read_file, write_file, build — whose execute()
+ * The worker-side projection of the backend's six project tools. Each execute()
  * only forwards to the backend's durable tool-call ledger. The worker never touches
  * the local filesystem, a shell, or any user code: this module imports nothing that
  * could, and every execution goes through {@link BackendClient.invoke}. The expected
@@ -11,7 +10,7 @@ import { Type, type Static } from "typebox";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import type { BackendClient, ToolResult } from "./backend-client.js";
 
-export const TOOL_NAMES = ["list_files", "read_file", "write_file", "build"] as const;
+export const TOOL_NAMES = ["list_files", "read_file", "write_file", "build", "application", "app_http_get"] as const;
 
 export interface ProjectToolDeps {
   backend: BackendClient;
@@ -44,8 +43,17 @@ const buildArgs = Type.Object({
   ], { description: "The fixed build goal; there is no arbitrary command execution." }),
 });
 
+const applicationArgs = Type.Union([
+  Type.Object({ action: Type.Literal("start") }, { additionalProperties: false }),
+  Type.Object({ action: Type.Literal("status"), runId: Type.Optional(Type.String()), waitSeconds: Type.Optional(Type.Integer({ minimum: 0, maximum: 10 })) }, { additionalProperties: false }),
+  Type.Object({ action: Type.Literal("stop"), runId: Type.String(), waitSeconds: Type.Optional(Type.Integer({ minimum: 0, maximum: 10 })) }, { additionalProperties: false }),
+  Type.Object({ action: Type.Literal("logs"), runId: Type.String() }, { additionalProperties: false }),
+]);
+
+const appHttpGetArgs = Type.Object({ runId: Type.String(), path: Type.String({ maxLength: 2048 }) }, { additionalProperties: false });
+
 /**
- * Creates the four sequential tool definitions. The SDK runs the loop; these tools
+ * Creates the six sequential tool definitions. The SDK runs the loop; these tools
  * only carry the call to the backend and return the durable answer as the model-
  * facing JSON. A deterministic backend rejection (path rules, conflicts, non-zero
  * build diagnostics) arrives as data.error / exitCode content — an ordinary tool
@@ -135,6 +143,26 @@ export function createProjectTools(deps: ProjectToolDeps): Array<ToolDefinition>
       executionMode: "sequential",
       async execute(toolCallId, params: Static<typeof buildArgs>, signal) {
         return await invoke(toolCallId, "build", { goal: params.goal }, signal);
+      },
+    },
+    {
+      name: "application",
+      label: "Control project application",
+      description: "Starts, stops or observes this project application and reads its persisted log tail. Stop must be confirmed before editing or building.",
+      parameters: applicationArgs,
+      executionMode: "sequential",
+      async execute(toolCallId, params: Static<typeof applicationArgs>, signal) {
+        return await invoke(toolCallId, "application", params, signal);
+      },
+    },
+    {
+      name: "app_http_get",
+      label: "Check project HTTP endpoint",
+      description: "GET a relative path on the current ready project application. Returns the real HTTP status and bounded body; no arbitrary network target.",
+      parameters: appHttpGetArgs,
+      executionMode: "sequential",
+      async execute(toolCallId, params: Static<typeof appHttpGetArgs>, signal) {
+        return await invoke(toolCallId, "app_http_get", params, signal);
       },
     },
   ];

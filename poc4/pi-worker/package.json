@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Manao stage-one Pi worker: one agent task at a time, four backend-mediated project tools, no local file or shell access to user code.",
+  "description": "Manao Pi worker: one agent task at a time, six backend-mediated project tools with application feedback, no local file or shell access to user code.",
   "engines": {
     "node": ">=22.19.0"
   },

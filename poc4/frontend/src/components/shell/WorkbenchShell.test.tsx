@@ -2338,6 +2338,68 @@ describe('WorkbenchShell agent task panel', () => {
     expect(screen.getByRole('button', { name: 'New file' })).toBeEnabled();
   });
 
+  it('keeps AI start blocked while Run authority is unavailable', async () => {
+    server.use(
+      http.get(`${AGENT_TASKS_URL}/current`, () => agentCurrentNotFound()),
+      http.get('/api/v1/projects/:projectId/runs/active', () => HttpResponse.json({ code: 'UNAVAILABLE', message: 'Unavailable', traceId: 'trace-run' }, { status: 503 })),
+    );
+    await authenticateAsAlice();
+    renderShell();
+    await loadedRoot();
+    await userEvent.setup().click(screen.getByRole('tab', { name: 'AI' }));
+    expect(screen.getByRole('button', { name: 'Start task' })).toBeDisabled();
+    expect(await screen.findByText('RUN_AUTHORITY_UNKNOWN')).toBeInTheDocument();
+  });
+
+  it('keeps a structured HTTP validation error with no Run ID visible without invalid navigation', async () => {
+    const task = agentTask({ state: 'COMPLETED', writesLocked: false,
+      progress: [{ seq: 1, kind: 'tool_end', text: 'app_http_get http-empty', truncated: false }] });
+    server.use(
+      http.get(`${AGENT_TASKS_URL}/current`, () => HttpResponse.json(task)),
+      http.get(`${AGENT_TASKS_URL}/${AGENT_TASK_ID}/tools/http-empty`, () => HttpResponse.json({
+        toolCallId: 'http-empty', toolName: 'app_http_get', data: {
+          kind: 'app_http_get', runId: '', path: '/health', statusCode: null, contentType: null,
+          body: '', truncated: false, error: { code: 'VALIDATION_ERROR', message: 'Request validation failed' },
+        },
+      })),
+    );
+    await authenticateAsAlice();
+    renderShell();
+    await loadedRoot();
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('tab', { name: 'AI' }));
+    await user.click(screen.getByRole('button', { name: 'View HTTP result' }));
+    expect(await screen.findByText(/VALIDATION_ERROR/)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'View run' })).not.toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: 'AI' })).toHaveAttribute('aria-selected', 'true');
+  });
+
+  it('opens the existing Run panel from an application result and keeps a completed task with an active Run read-only', async () => {
+    await authenticateAsAlice();
+    await seedLockingRun();
+    const run = getActiveRun(ALICE_SEED_PROJECT_ID)!;
+    const task = agentTask({ state: 'COMPLETED', writesLocked: false,
+      progress: [{ seq: 1, kind: 'tool_end', text: 'application app-real', truncated: false }] });
+    server.use(
+      http.get(`${AGENT_TASKS_URL}/current`, () => HttpResponse.json(task)),
+      http.get(`${AGENT_TASKS_URL}/${AGENT_TASK_ID}/tools/app-real`, () => HttpResponse.json({
+        toolCallId: 'app-real', toolName: 'application', data: {
+          kind: 'application', action: 'status', run: { id: run.id, state: run.state, requestedWorkspaceRevision: run.requestedWorkspaceRevision,
+            firstReadyAt: null, expiresAt: null, finishedAt: null, exitCode: null, terminationReason: null },
+          activeRunId: run.id, stoppedConfirmed: false, logs: null,
+        },
+      })),
+    );
+    renderShell();
+    await loadedRoot();
+    expect(screen.getByRole('button', { name: 'New file' })).toBeDisabled();
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('tab', { name: 'AI' }));
+    await user.click(screen.getByRole('button', { name: 'View application result' }));
+    await user.click(await screen.findByRole('button', { name: 'View run' }));
+    expect(screen.getByRole('tab', { name: 'Run' })).toHaveAttribute('aria-selected', 'true');
+  }, 15000);
+
   it('locks the editor, file tree and Run start while an agent task occupies the workspace', async () => {
     const user = userEvent.setup();
     const task = agentTask();

@@ -2,7 +2,7 @@
  * The minimal Pi assembly (stage one): one agent session per task, driven by the
  * SDK's own loop, with discovery explicitly disabled — no project extensions, no
  * Skills, no prompt templates, no themes, no AGENTS/context files, and no built-in
- * file/bash tools. The session sees exactly the four backend-mediated project tools
+ * file/bash tools. The session sees exactly the six backend-mediated project tools
  * and one fixed, server-owned system prompt. The model key lives only in the worker
  * environment and the private ModelRuntime; the session cwd is a worker-private
  * scratch directory, never a user project or the Manao repository.
@@ -53,17 +53,24 @@ const MAX_PROGRESS_TEXT_BYTES = PROGRESS_TEXT_MAX_BYTES;
  * steps — the model plans its own rounds from the tool results.
  */
 const SYSTEM_PROMPT = [
-  "You are the Manao stage-one coding agent working on ONE user project through four mediated tools.",
+  "You are the Manao coding agent working on ONE user project through six mediated tools.",
   "",
   "Goal: complete the user's task inside the project and report what you changed.",
   "",
   "Tools: list_files, read_file and write_file reach the project's allowlisted files through the",
   "Manao workspace; build runs one fixed goal (compile, test or package) on an isolated read-only",
-  "copy and returns the real exit result with bounded diagnostics. You have no other tools, no",
+  "copy and returns the real exit result with bounded diagnostics. application starts, stops, observes",
+  "and reads persisted logs for this project's application; app_http_get performs a bounded GET",
+  "on the current ready application and returns the real status and body. You have no other tools, no",
   "shell, and no direct filesystem access.",
   "",
   "Limits: files are capped at 128 KiB; the tool answers are bounded; a non-zero build exit code",
   "or a data.error answer is an ordinary result you should read and act on in your next round.",
+  "A start accepted result does not prove the application is ready. Stop must be confirmed before",
+  "editing or building. Source writes and builds are refused while any application Run is active.",
+  "Use status to confirm readiness and stoppedConfirmed to confirm exit; unknown or timeout is not exit proof.",
+  "A ready application may stay available after completion. Use real build, Run, logs and HTTP results",
+  "as completion evidence, and distinguish accepted startup, readiness and successful HTTP checks.",
   "You cannot see or touch anything outside the mediated tool answers.",
   "",
   "Completion evidence: finish with a short summary of what you changed (paths) and the build",
@@ -104,7 +111,7 @@ export class WorkerNotConfiguredError extends Error { }
 /**
  * Creates the session for one task. The model runtime is built (or reused from the
  * injected dependency), the model is resolved from the private models.json, the
- * controlled resource loader fixes the system prompt, and the four custom tools are
+ * controlled resource loader fixes the system prompt, and the six custom tools are
  * registered through an explicit allowlist with noTools "builtin". Sequential tool
  * execution is enforced twice: on the agent loop and per tool definition.
  */

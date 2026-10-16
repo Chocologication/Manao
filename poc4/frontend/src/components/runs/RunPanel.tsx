@@ -41,6 +41,7 @@ export type RunPanelProps = {
    * derives this itself.
    */
   agentTaskActive?: boolean;
+  requestRunSelection?: { runId: RunId; seq: number } | null;
 };
 
 function runQueryFallback(error: unknown, fallback: string): string {
@@ -91,7 +92,7 @@ function statusText(options: {
   return 'Idle';
 }
 
-export function RunPanel({ projectId, projectTemplateId, coordinator, agentTaskActive }: RunPanelProps) {
+export function RunPanel({ projectId, projectTemplateId, coordinator, agentTaskActive, requestRunSelection }: RunPanelProps) {
   const queryClient = useQueryClient();
   const snapshot = useSyncExternalStore(
     coordinator.subscribe,
@@ -141,6 +142,7 @@ export function RunPanel({ projectId, projectTemplateId, coordinator, agentTaskA
   );
   const activeRun = activeQuery.data?.run ?? null;
   const followActiveRef = useRef(true);
+  const consumedSelectionRef = useRef<number | null>(null);
   const [selectedRunId, setSelectedRunId] = useState<RunId | null>(null);
   const [stopOpen, setStopOpen] = useState(false);
   const [nowMs, setNowMs] = useState(() => Date.now());
@@ -221,7 +223,7 @@ export function RunPanel({ projectId, projectTemplateId, coordinator, agentTaskA
   }, [coordinator, projectId, queryClient, selectedRunId]);
 
   const activeState = activeRun?.state;
-  const canStop = (activeState === 'STARTING' || activeState === 'RUNNING') && !stopMutation.isPending;
+  const canStop = (activeState === 'STARTING' || activeState === 'RUNNING') && !stopMutation.isPending && !agentTaskActive;
   const stopWaiting = activeState === 'STOPPING' || activeState === 'RECOVERING';
   const loadingAuthority = snapshot.phase === 'LOADING_AUTHORITY';
   const reloading = snapshot.phase === 'RELOADING_WORKSPACE';
@@ -245,6 +247,12 @@ export function RunPanel({ projectId, projectTemplateId, coordinator, agentTaskA
     },
     [activeRun?.id],
   );
+
+  useEffect(() => {
+    if (!requestRunSelection || consumedSelectionRef.current === requestRunSelection.seq) return;
+    consumedSelectionRef.current = requestRunSelection.seq;
+    onSelect(requestRunSelection.runId);
+  }, [onSelect, requestRunSelection]);
 
   return (
     <section aria-label="Run" className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-background">
@@ -314,6 +322,7 @@ export function RunPanel({ projectId, projectTemplateId, coordinator, agentTaskA
         }}
         onConfirm={() => {
           setStopOpen(false);
+          if (!canStop) return;
           stopMutation.mutate();
         }}
       />

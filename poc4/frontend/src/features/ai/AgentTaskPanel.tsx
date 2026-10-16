@@ -1,5 +1,5 @@
 import { useQueryClient } from '@tanstack/react-query';
-import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import {
   getAgentTask,
   getAgentToolCallResult,
@@ -11,10 +11,14 @@ import {
 } from '@/api/agentTaskApi';
 import { ApiRequestError } from '@/api/ApiRequestError';
 import { Button } from '@/components/ui/button';
+import { parseRunId } from '@/contracts/run';
 import {
   buildCleanupConfirmed,
   buildExitCode,
   isAgentTaskOccupying,
+  applicationData,
+  applicationError,
+  appHttpGetData,
   type AgentTaskSnapshot,
   type AgentToolCallResult,
 } from '@/contracts/agentTask';
@@ -35,19 +39,21 @@ export type AgentTaskPanelProps = {
   /** Shell-computed write pending: file saves plus dependency and recovery work. */
   writePending: boolean;
   hasActiveRun: boolean;
+  runAuthorityKnown: boolean;
   reloading: boolean;
   closePending: boolean;
   /** Reports a task this browser now knows about (submitted or recovered). */
   onTaskAccepted: (task: AgentTaskSnapshot) => void;
   /** The explicit owner abandon; the shell performs the close request. */
   onClose: () => void;
+  onViewRun?: (runId: string) => void;
 };
 
 type Probe = { kind: 'found'; task: AgentTaskSnapshot } | { kind: 'missing' } | { kind: 'unknown' };
 
-/** The toolCallId of a settled build call from a tool_end progress item, if it is one. */
+/** Only mediated tools with an owner result view can be opened. */
 export function buildToolCallId(progressText: string): string | null {
-  const match = /^build ([A-Za-z0-9-]+)$/.exec(progressText.trim());
+  const match = /^(?:build|application|app_http_get) ([A-Za-z0-9-]+)$/.exec(progressText.trim());
   return match === null ? null : match[1]!;
 }
 
@@ -69,10 +75,12 @@ export function AgentTaskPanel({
   pollFailed,
   writePending,
   hasActiveRun,
+  runAuthorityKnown,
   reloading,
   closePending,
   onTaskAccepted,
   onClose,
+  onViewRun,
 }: AgentTaskPanelProps) {
   const queryClient = useQueryClient();
   const dirtyCount = useWorkspaceSession((state) => state.dirtyPaths.size);
@@ -80,29 +88,35 @@ export function AgentTaskPanel({
   const [starting, setStarting] = useState(false);
   const [startError, setStartError] = useState<string | null>(null);
   const previousTaskRef = useRef<AgentTaskSnapshot | null>(null);
-  // The settled build results this browser fetched (review fix I9): the real exit
-  // facts and cleanup proof behind each tool_end build item, per task id so a
-  // project or task switch never shows another task's evidence.
-  const [buildResults, setBuildResults] = useState<Record<string, AgentToolCallResult | 'error'>>({});
-  const [loadingCallId, setLoadingCallId] = useState<string | null>(null);
   const activeTaskId = (task ?? settledTask)?.taskId ?? null;
+  const scope = useMemo(() => ({ active: true, token: 0 }), [projectId, activeTaskId]);
+  const [resultCache, setResultCache] = useState<{ scope: typeof scope; calls: Record<string, AgentToolCallResult | 'error'> } | null>(null);
+  const [loading, setLoading] = useState<{ scope: typeof scope; callId: string } | null>(null);
+  const buildResults = resultCache?.scope === scope ? resultCache.calls : {};
+  const loadingCallId = loading?.scope === scope ? loading.callId : null;
+  useEffect(() => {
+    scope.active = true;
+    return () => { scope.active = false; scope.token += 1; };
+  }, [scope]);
 
   const handleViewBuildResult = useCallback(
     async (toolCallId: string) => {
       if (activeTaskId === null) {
         return;
       }
-      setLoadingCallId(toolCallId);
+      const token = ++scope.token;
+      const current = () => scope.active && scope.token === token;
+      setLoading({ scope, callId: toolCallId });
       try {
         const result = await getAgentToolCallResult(projectId, activeTaskId, toolCallId);
-        setBuildResults((current) => ({ ...current, [toolCallId]: result }));
+        if (current()) setResultCache((cache) => ({ scope, calls: { ...(cache?.scope === scope ? cache.calls : {}), [toolCallId]: result } }));
       } catch {
-        setBuildResults((current) => ({ ...current, [toolCallId]: 'error' }));
+        if (current()) setResultCache((cache) => ({ scope, calls: { ...(cache?.scope === scope ? cache.calls : {}), [toolCallId]: 'error' } }));
       } finally {
-        setLoadingCallId(null);
+        if (current()) setLoading(null);
       }
     },
-    [activeTaskId, projectId],
+    [activeTaskId, projectId, scope],
   );
 
   const workspaceRevision = useWorkspaceRevision(projectId);
@@ -110,6 +124,7 @@ export function AgentTaskPanel({
     dirtyCount,
     writePending,
     hasActiveRun,
+    runAuthorityKnown,
     workspaceRevision,
     taskWritesLocked: task !== null && task.writesLocked,
     reloading,
@@ -291,7 +306,7 @@ export function AgentTaskPanel({
                                 void handleViewBuildResult(buildCallId);
                               }}
                             >
-                              View build result
+                              View {item.text.startsWith('application ') ? 'application result' : item.text.startsWith('app_http_get ') ? 'HTTP result' : 'build result'}
                             </Button>
                           </span>
                         ) : null}
@@ -302,7 +317,7 @@ export function AgentTaskPanel({
                         ) : null}
                         {buildCallId !== null && buildResults[buildCallId] !== undefined
                           && buildResults[buildCallId] !== 'error' ? (
-                          <BuildResultView result={buildResults[buildCallId] as AgentToolCallResult} />
+                          <ToolResultView result={buildResults[buildCallId] as AgentToolCallResult} onViewRun={onViewRun} />
                         ) : null}
                       </li>
                     );
@@ -327,6 +342,55 @@ export function AgentTaskPanel({
       </div>
     </section>
   );
+}
+
+function isNavigableRunId(runId: unknown): boolean {
+  try {
+    parseRunId(runId);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function ToolResultView({ result, onViewRun }: { result: AgentToolCallResult; onViewRun?: (runId: string) => void }) {
+  const rejected = applicationError(result);
+  if (rejected !== null) return <div className="text-destructive">{rejected.code}: {rejected.message}</div>;
+  const app = applicationData(result);
+  const http = appHttpGetData(result);
+  if (app !== null) {
+    const runId = app.run?.id ?? app.activeRunId;
+    return (
+      <div className="mt-1 flex flex-col gap-1 rounded border p-2">
+        <div>Application: {app.action}</div>
+        <div>Run: {runId ?? 'none'}</div>
+        <div>State: {app.run?.state ?? 'unknown'}</div>
+        <div>Revision: {app.run?.requestedWorkspaceRevision ?? 'unknown'}</div>
+        <div>Ready: {app.run === null ? 'unknown' : app.run.state === 'RUNNING' && app.run.firstReadyAt !== null ? 'yes' : 'no'}</div>
+        <div>Stopped confirmed: {app.stoppedConfirmed ? 'yes' : 'no'}</div>
+        {runId !== null && isNavigableRunId(runId) && onViewRun ? <Button type="button" size="sm" variant="outline" onClick={() => onViewRun(runId)}>View run</Button> : null}
+        {app.logs !== null ? <>
+          <div>Log sequence: {app.logs.firstSeq ?? 'unknown'}–{app.logs.lastSeq ?? 'unknown'} · Complete: {app.logs.complete ? 'yes' : 'no'}{app.logs.truncated ? ' (truncated)' : ''}</div>
+          <pre className="max-h-48 overflow-auto whitespace-pre-wrap font-mono text-xs">{app.logs.text}</pre>
+        </> : null}
+      </div>
+    );
+  }
+  if (http !== null) {
+    return (
+      <div className="mt-1 flex flex-col gap-1 rounded border p-2">
+        <div>Run: {http.runId}</div>
+        <div>HTTP GET {http.path}</div>
+        <div>Status: {http.statusCode ?? 'unknown'}</div>
+        <div>Content-Type: {http.contentType ?? 'unknown'}</div>
+        {http.error !== null ? <div className="text-destructive">{http.error.code}: {http.error.message}</div> : null}
+        {http.truncated ? <div>(truncated)</div> : null}
+        <pre className="max-h-48 overflow-auto whitespace-pre-wrap font-mono text-xs">{http.body}</pre>
+        {isNavigableRunId(http.runId) && onViewRun ? <Button type="button" size="sm" variant="outline" onClick={() => onViewRun(http.runId)}>View run</Button> : null}
+      </div>
+    );
+  }
+  return result.toolName === 'build' ? <BuildResultView result={result} /> : <div>Result unavailable</div>;
 }
 
 /** The settled build evidence the backend serves the owner: real exit facts, bounded output. */
