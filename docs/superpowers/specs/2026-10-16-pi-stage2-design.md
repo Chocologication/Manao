@@ -1,5 +1,7 @@
 # Pi 第二阶段设计：应用运行与反馈
 
+> 历史设计快照：下文的“尚未实现/仅规划”描述编写当时状态。后续授权的五项实现已审查提交至 `559f998`；当前测试、裁定、清理及真实验收缺项统一由 [Stage 2 实施记录](../../../poc4/docs/evidence/ai-stage2/acceptance.md) 拥有。原范围与规划历史保留，不能据本设计宣称云端阶段 PASS。
+
 日期：2026-10-16。状态：设计与实施计划，尚未实现第二阶段。本轮仅授权规划与交接，不启动模型任务、不部署、不操作运行资源。
 
 依据：[已确认决定](../../research/2026-10-13-ai-integration-framework-evaluation.md#10-最小集成设计的已确认决定2026-10-13)、[四阶段拆分](../../research/2026-10-13-pi-minimal-integration-implementation-slicing.md)。配套：[实施计划](../plans/2026-10-16-pi-stage2-implementation-plan.md)、[实施提示词](../plans/2026-10-16-pi-stage2-agent-handoff.md)。

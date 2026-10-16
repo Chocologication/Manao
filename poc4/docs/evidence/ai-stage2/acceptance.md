@@ -1,10 +1,10 @@
 # Pi Stage 2 implementation and acceptance record
 
-日期：2026-10-16。实现分支 `codex/ai-integration`；第二阶段代码基线 `b2c6ec3`，Task 5 起点 `186a634`。本文件拥有第二阶段实施与真实验收的当前结论；索引只链接本文件。PASS / FAILED / SKIPPED / WAIVED_BY_USER / NOT_REVERIFIED / NOT_RUN 不混用。
+日期：2026-10-16。实现分支 `codex/ai-integration`；规划代码基线 `b2c6ec3`，实际开工 HEAD `66b8742bf2113e88c70374089789346bd435eb76`、工作区 clean，已验证 `b2c6ec3` 为其 ancestor（exit0）。Task 5 起点 `186a634`，五项实现的最终提交 `559f998c8fa8287968b3504387f4917f4f52bdf9`。本文件拥有第二阶段实施与真实验收的当前结论；索引只链接本文件。PASS / FAILED / SKIPPED / WAIVED_BY_USER / NOT_REVERIFIED / NOT_RUN 不混用。
 
 ## 1. 当前结论
 
-Tasks 1–4 已实现、审查并提交；Task 5 验收资产与本地验证已完成，等待本轮独立审查/提交。**没有进行第二阶段云端发布、真实模型修复或浏览器运行，`PI_STAGE2_APPLICATION_FEEDBACK_PASS` 为 NOT_GRANTED。** 第一阶段真实验收与 revision-cache 后续限制仍由 [Stage 1 §8](../ai-stage1/acceptance.md) 拥有，本轮不改写。
+Tasks 1–5 均已实现、逐项审查修复并提交。最终整分支 `66b8742..559f998` 经独立 Sol 规格/质量复审 **Approved：0 Critical / 0 Important / 0 Minor**，没有遗留实现测试失败；此次文档收口不修改已审查代码。**没有进行第二阶段云端发布、真实模型修复或浏览器运行，`PI_STAGE2_APPLICATION_FEEDBACK_PASS` 为 NOT_GRANTED。** 第一阶段真实验收与 revision-cache 后续限制仍由 [Stage 1 §8](../ai-stage1/acceptance.md) 拥有，本轮不改写。
 
 | 证据范围 | 实际状态 |
 | --- | --- |
@@ -33,7 +33,7 @@ Tasks 1–4 已实现、审查并提交；Task 5 验收资产与本地验证已�
 | 2 | `ec5c375` | application start/status/stop/logs、已持久日志、close/FAILED claim 收尾 |
 | 3 | `e3d3039` | 已验证 Service 内有界 HTTP GET、单次发送/超时/结果与 JVM 启动约束 |
 | 4 | `186a634419f11c601c76532f2348c419b894f87a` | Pi 六工具/提示约束、浏览器真实结果和 Run 导航/只读边界 |
-| 5 | PENDING_REVIEW_COMMIT | 固定 fixture、bootstrap、纯 verifier+只读 operator CLI、两项串行 E2E、发布清单/本记录与索引 |
+| 5 | `559f998c8fa8287968b3504387f4917f4f52bdf9` | 固定 fixture、bootstrap、纯 verifier+只读 operator CLI、两项串行 E2E、发布清单/本记录与索引；两项 Important 已修复并复审通过 |
 
 Task 5 文件：`frontend/tests/fixtures/ai-stage2/` 固定测试和 seeded controller；`scripts/ai-stage2-bootstrap.mjs` 创建专用无 DB 项目并启动 R0；`scripts/ai-stage2-verify-ledger.mjs` 导出纯判定并提供只读 CLI；对应 `.test.mjs` 为反例；`playwright.ai-stage2.config.ts` 与 `tests/e2e/ai-stage2.spec.ts` 提供真实入口。package/tsconfig/.gitattributes 只接线；Stage 1 spec 仅补遗漏 type import。发布步骤在 [Stage 2 release README](../../../deploy/ai-stage2/README.md)。
 
@@ -72,6 +72,43 @@ Task 5 审查修复：先新增正反stop变体，原判定器65项中2项正向
 
 operator CLI 只支持 canonical task/project UUID；SQL 显式按 task/project 限定，mysql CLI 直接 spawn，密码仅环境、错误只用固定脱敏代码。最终公开 URL 来自 owner API；读取 Service 的完整 selector 和主端口，独立 GET 前后核对 active Run/Service，随后重读全部 Run 防止跨时刻拼接。真实 CLI 采集本轮 NOT_RUN。
 
+### 3.1 各任务有效失败、修复与通过证据
+
+下列计数是不同阶段的执行样本，存在重叠，**不能相加成为唯一测试总数**；当前整合总数以 §1 的230 backend、35 worker、1397 frontend、66 verifier分别报告。以下摘要保存必要失败诊断，避免临时SDD清理后只留下“全绿”结论。
+
+| Task | 有效RED与审查问题 | 修复后的实际验证/复审 |
+| --- | --- | --- |
+| 1 | `AgentProjectToolsTest#activeApplicationBlocksWriteAndBuildWithoutSideEffects` 与 `RunControllerTest$AgentRuns`：5 tests，4 failures/1 error，暴露缺互斥、browser stop未阻挡、Agent start走错授权路径；另completed-start授权case1 failure。首次审查2 Important：browser start解锁后late Job创建、Agent stop持锁等待IO | 三类回归88/88；受影响Store/Observation53/53；修复后Run边界8/8。Fabric8/endpoint新4case先2 failures/2 errors，最小requestStop/requestWithdraw实现后19/19与21/21通过。中途75-test组合有1个null log-ingestor测试装配error，不记组合PASS；补mock后最终8-case命令通过。两项Important均关闭，规格/质量复审Approved |
+| 2 | terminal/close定向2 tests/2 assertion failures（FAILED过早释放、未进入目标stop）；日志authority2 failures；safe error allowlist1 failure。审查2 Important：误清理已拒绝的stop、并发build cleanup无claim；修复前定向2/2失败 | 原六类139/139；审查修复后受影响三类84/84（Application10+Tools33+Service41），0 failure/error/skip。completed validation拒绝stop不触旧Run；cleanup同一claim覆盖IO/结算。两项Important关闭，规格/质量复审Approved |
+| 3 | 最小probe stub后网络8 tests/8 assertion failures；新HTTP工具3例被旧allowlist拒绝；orphan close1 assertion failure。最终78-test组合曾**FAILED：1 failure/1 error**（短body测试未真实reset、既有close竞态误假设单次抢锁必胜），不是通过 | probe/应用/HTTP边界25/25先通过。短body改真实ServerSocket reset，保留HTTP_UNAVAILABLE/null断言；close仅允许PROJECT_BUSY、registrar退出后同close重试一次。两项各自定向1/1通过；78组合仍保留历史FAILED，其余42 TaskService+11 Probe+23 Workspace cases当次通过。后来同一修正代码的计划10类整合**230/230通过**，没有遗留测试失败。规格/质量复审Approved |
+| 4 | 纠正TDD流程后，worker8 failures/26 pass，frontend admission/result6 failures/30 pass；后续晚到结果、Run控制和prompt各有有效行为RED。审查1 Important：空/无效RunId结果导航抛出parser异常；修复前3 failures/110 skipped | worker35/35+build；frontend受影响范围192/192、最新panel36/36；导航修复定向7 pass/106 skipped（跳过为`-t`选择范围），最新production build含typecheck通过。Task5随后frontend全套1397/1397通过。审查Important关闭，规格/质量复审Approved |
+| 5 | permissive判定器1 pass/59 assertion failures；mysql parser新增1 failure。审查2 Important：owner PUT错误码不符、confirmed stop仍被迫追加status。修复RED65例63 pass/2 fail；额外no-active反例66例65 pass/1 fail | 原61/61，审查修复后66/66，0 failure/skip；stage6 typecheck通过、Playwright仅发现2例。精确409 PROJECT_LOCKED；确认stop/新status两条证据均受实际Run/时间/项目无active约束。两项Important关闭，规格/质量复审PASS |
+
+Task 4 曾在新测试前修改7个生产文件，违反本轮严格TDD。控制者要求把全部Task4自有生产改动从HEAD原字节恢复，删除临时备份、不保留修复参考patch；保留并补强行为测试，实际取得RED后重新做最小实现。旧四工具数量/旧RUN_ACTIVE期望的失败不冒充新行为RED。此流程错误与纠正明确保留，不回写成“从未违反”。初始日志路径错误、无效测试UUID、数据库环境变量拼写错误、Fabric8 stale resourceVersion等装配/设置失败也未算作有效行为RED或PASS。
+
+主要复现入口（均为已执行记录，本次文档收口不重跑）：
+
+```text
+# poc4/backend: Task1初次三类GREEN；最终整合命令见§3
+mvn -Dtest=AgentTaskStoreTest,AgentProjectToolsTest,RunControllerTest test
+# Task1最后锁/目标边界GREEN（PowerShell参数整体引用）
+mvn '-Dtest=RunControllerTest$RunCreationProtection,RunControllerTest$AgentRuns' test
+# Task2审查修复后受影响范围84/84
+mvn -Dtest=AgentApplicationToolsTest,AgentProjectToolsTest,AgentTaskServiceTest test
+# Task3修正后的真实body-loss单例1/1
+mvn -Dtest=ProjectApplicationProbeTest#enormousContentLengthDoesNotAllocateItAndEarlyBodyLossNeverPretendsToBe200 test
+# poc4/pi-worker: 最新35/35与build
+pnpm test
+pnpm build
+# poc4/frontend: 最新1397/1397、66/66、入口编译/发现
+pnpm test
+node --test scripts/ai-stage2-verify-ledger.test.mjs
+pnpm typecheck:stage6
+pnpm exec playwright test --config playwright.ai-stage2.config.ts --list
+```
+
+最终独立整分支复审审阅 `66b8742bf2113e88c70374089789346bd435eb76..559f998c8fa8287968b3504387f4917f4f52bdf9`，确认tracked工作区clean，规格/质量均Approved，0 Critical/Important/Minor。复审没有发现需重跑测试的新增风险，未重复suite或外部操作；复审批准的是本地交付，不授予真实阶段PASS。
+
 ## 4. 独立本地 Linux fixture 演练
 
 root 在本轮独立执行，overall exit0。使用已接受 production runner `chocologic/manao_images_repository@sha256:59a83cb94ac271b24b837f6fe55a27a308cc6f67fee43a46ca628d03fdf85e98`，UID10001、只读 root、只读 `/source`、network none 执行原 `manao-dev-build copy`，实际复制 4 files / 1238 bytes。scratch 才覆盖既有 Stage 1 `acceptance-pom.xml`，不复制新工具链、不改用户/仓库 pom。
@@ -81,7 +118,7 @@ root 在本轮独立执行，overall exit0。使用已接受 production runner `
 3. 停止并确认旧本地容器后，在另一个临时 scratch 副本移除 seeded exception。其 `test` 和 `package` 均 exit0，各自 Surefire **1/0/0/0**；ready200，同 GET **HTTP200**，JSON `{"message":"Hello Pi"}`。
 4. 固定测试 SHA256 `a7663e44983b9487ffe196ea5601b6aabe5d0e6f32a6488946ec2cea3296bf2c`；controller SHA256 `6b040a65b9659802d60e09955c172af70e6c8ae4af9c133591b943d274350ebb`。原完整 source fingerprint 与 fixture 字节前后不变。
 
-这段修复由 operator 在临时副本控制完成，**不是 Pi 自主修复**。直接 jar 的 actuator readiness 不证明生产 `/health/ready`、Run supervisor、Service retarget 或云端环境。实际日志/HTTP body/image/清理结果已保留最小本地证据；Docker stop 的 `--time` 弃用提示不影响 exit0。
+这段修复由 operator 在临时副本控制完成，**不是 Pi 自主修复**。直接 jar 的 actuator readiness 不证明生产 `/health/ready`、Run supervisor、Service retarget 或云端环境。本记录保留实际HTTP、镜像、清理结果及必要失败诊断；临时原始输出完成核对后清理。Docker stop 的 `--time` 弃用提示不影响 exit0。
 
 ## 5. 确切 backend JRE 单例
 
@@ -99,6 +136,8 @@ root 在本轮独立执行，overall exit0。使用已接受 production runner `
 
 root 的专用测试 MySQL 容器 `manao-ai-stage2-local-mysql-20261016`（ID `cfd6466e...`）：backend 测试后 disposable `manao_stage6_` schema **0**，精确 `docker rm -f -v` exit0，最终 name-filter inventory 空、匿名测试 data volume 移除。runtime schemas、local3306、cloud 未触碰。
 
+临时SDD工作目录中的 **134个ignored文件为RETAINED**：按用户要求清理时，两次删除调用均在执行前被工具自动审批策略拒绝，未删除任何文件；返回仅说明 blocked by policy，未提供具体原因。必要失败事实与六项裁定已转入§3.1/§8。该未完成项是本地临时文档/日志清理，不是运行资源清理失败；上述Docker、临时fixture目录/cache/端口及专用MySQL清理结果仍为PASS。
+
 本轮没有平台项目、R0/R1/R2、集群 Job/Pod/Service/PVC 或新 NetworkPolicy，平台/集群删除数为 **0 created / 0 deleted**；不能据此授予真实项目资源回收 PASS。以后真实验收的项目未获删除授权时记录 RETAINED 与清单；owner stop/close、资源核对和最终删除按 release README 记录实际结果。
 
 ## 7. 范围与过度工程化复核
@@ -106,3 +145,18 @@ root 的专用测试 MySQL 容器 `manao-ai-stage2-local-mysql-20261016`（ID `c
 复用既有两张 Agent 表、Run/log/receipt authority、原 Job+Service、owner API/Run 面板和已有 MySQL CLI；Task 5 没有新生产 Module、table、migration、数据库驱动、SDK 升级、provider registry、HTTP代理或新依赖。六工具由 Tasks 1–4 实现，本阶段只有固定 GET 和日志 tail，不扩展 Shell、CRUD/MySQL、完整故障矩阵或两小时重跑。
 
 验收代码只分纯判定、薄 CLI 采集和浏览器场景；脱敏失败与严格时间/身份检查直接服务 false-pass 风险。临时受控修复没有进入 bootstrap 或真实模型提示，不提供模型答案。后续必须完成的真实授权与证据缺项已逐项保留 NOT_RUN；不因本地通过自动发布、push、merge 或授予阶段 PASS。
+
+## 8. 控制者六项实施裁定
+
+按本轮作出顺序保存裁定、理由和错判代价；这些是已实现并复审的边界，不是新增待做框架。
+
+| 顺序 | 裁定（what） | 依据（why） | 错判代价/所需约束（cost if wrong） |
+| --- | --- | --- | --- |
+| 1 | 保留既有occupancy接口，由外层application调用持有原live claim，跨RunService/ensureJob直到持久结果结算；Task1短锁内原子鉴权/插入，Task2完成claim/close seam。不新增通用release/callback接口 | 设计已把工具调用生命周期交给AgentProjectTools/AgentApplicationTools，RunService不拥有模型结果结算 | 若claim提前释放，close可越过late ensureJob，造成已释放任务又创建Run；必须保留阻塞IO与结算窗口的竞态回归，若边界不成立才重新评估接口 |
+| 2 | JVM启动时设置retrylimit=1、disableRetryConnect=true，启动校验与测试使用相同参数；不在运行中System.setProperty | 默认JDK17一次sendAsync已复现两次GET，单靠Redirect.NEVER不禁止隐式重发；§5确切JRE样本补证1次 | JVM全局影响其他HttpClient路径，瞬态网络错误会更显式；已有worker/Workspace相关回归必须通过，且不承诺所有故障exactly-once |
+| 3 | browser start保留原完整gate；仅为Agent在原JobCoordinator增requestStop，以短锁准备持久stop后在锁外发非等待删除请求 | 旧stop可等待60秒，持gate/monitor会阻断所需有界异步stop和观察；browser没有工具live claim保护late launch | 改动共享coordinator契约可能破坏旧caller；必须保留browser launch保护与定向回归，application live claim覆盖晚到IO；删除接受不等于退出确认 |
+| 4 | 在原endpoint接口/Fabric8增加有界条件requestWithdraw(projectId,runId)，保留其他caller的原withdraw | 旧owned GET+edit重试/超时无此约束；锁外晚到withdraw不得撤掉更新Run路由 | UID/resourceVersion/selector变化可能使撤路由被拒绝；用条件patch与mock验证，失败记NOT_CONFIRMED并阻挡后续写/build，不能转为盲patch |
+| 5 | build claim维持REGISTERED-only；application orphan RUNNING仅用窄命名Store入口回收观察/结果结算，复用同一live-claim set | 放宽既有build claim可重播已持久副作用；application重启恢复只需观察原身份 | 可能需要manual close/attention而无法自动重做缺失动作；这是fail-closed代价，不用重播换取表面进展，不造第二套claim registry |
+| 6 | 修正既有close/registration竞态测试：phase3仅允许PROJECT_BUSY，竞争registrar结束后只重试同task的close一次；保留FAILED、行数上界、无执行、有界完成断言 | shared gate刻意tryAcquire，旧测试错误假定并发close一次必胜；Task3未改变该生产close路径 | 若放宽过度会掩盖持续锁泄漏；不允许无界retry或其他异常，最终release与原安全断言仍必须成立。历史78-test失败和后续230整合通过见§3.1 |
+
+原临时SDD ledger/报告可在必要事实转移后由控制者精确清理；本文件保留裁定、有效失败、修复、最终结果与证据限制。临时日志存在或被清理均不扩大模型、集群、浏览器、业务验收结论。

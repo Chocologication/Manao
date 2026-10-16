@@ -1,5 +1,7 @@
 # Pi Stage 2 Application Feedback Implementation Plan
 
+> 历史实施计划：后续授权的 Tasks 1–5 已逐项实现、审查修复并提交至 `559f998`，最终整分支复审 Approved。当前交付、有效 RED/GREEN、六项裁定及 NOT_RUN 边界以 [Stage 2 实施记录](../../../poc4/docs/evidence/ai-stage2/acceptance.md) 为准；下文原步骤/复选框保留规划历史，不是重新执行指令，也不代表真实模型/集群验收 PASS。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking. 每个任务先读本计划和设计，再做失败测试、最小实现与两阶段审查；只读研究可并行，共享文件的实现顺序进行。
 
 **Goal:** Pi 自动停止已有应用、等待退出后改测代码、创建新 Run，并依据真实状态、日志与项目 HTTP GET 反馈完成修复。
