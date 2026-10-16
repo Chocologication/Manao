@@ -1,4 +1,4 @@
-import { cleanup, renderHook, waitFor } from '@testing-library/react';
+import { act, cleanup, renderHook, waitFor } from '@testing-library/react';
 import { http, HttpResponse } from 'msw';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { login } from '../../api/authApi';
@@ -19,6 +19,7 @@ import {
   useDirectoryTreeQuery,
   useFileContentQuery,
   useFileMetadataQuery,
+  useWorkspaceRevision,
 } from './fileQueries';
 import { server } from '../../mocks/node';
 import {
@@ -82,6 +83,30 @@ describe('fileKeys', () => {
       'pom.xml',
     ]);
     expect(fileKeys.revision('prj-1')).toEqual(['project-files', 'prj-1', 'revision']);
+  });
+});
+
+describe('workspace revision query', () => {
+  it('observes cache updates without issuing a revision request', async () => {
+    await authenticateAsAlice();
+    const { result } = renderHook(() => useWorkspaceRevision(ALICE_SEED_PROJECT_ID), {
+      wrapper: AppProviders,
+    });
+
+    expect(result.current).toBeUndefined();
+    expect(getFileRequestCount('tree', ALICE_SEED_PROJECT_ID, '')).toBe(0);
+
+    act(() => {
+      queryClient.setQueryData(fileKeys.revision(ALICE_SEED_PROJECT_ID), parseWorkspaceRevision('rev-8'));
+    });
+
+    await waitFor(() => expect(result.current).toBe('rev-8'));
+    expect(
+      queryClient
+        .getQueryCache()
+        .find({ queryKey: fileKeys.revision(ALICE_SEED_PROJECT_ID), exact: true })
+        ?.getObserversCount(),
+    ).toBe(1);
   });
 });
 

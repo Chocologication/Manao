@@ -1,8 +1,8 @@
 # Pi 最小集成的实现拆分建议
 
-日期：2026-10-13。状态：整体拆分建议；用户已要求编制第一阶段计划，[设计](../superpowers/specs/2026-10-13-pi-stage1-design.md)、[实施计划](../superpowers/plans/2026-10-13-pi-stage1-implementation-plan.md)与[交接提示词](../superpowers/plans/2026-10-13-pi-stage1-agent-handoff.md)已准备，尚未实现。第二至第四阶段继续作为后续范围。
+日期：2026-10-13；2026-10-16 更新状态。第一阶段已实现并取得 `PI_STAGE1_CODE_TEST_LOOP_PASS`，真实执行边界以[验收记录第 8 节](../../poc4/docs/evidence/ai-stage1/acceptance.md)为准；后续 revision-cache 修复的验证限制单列于第 8.7 节。用户已要求第二阶段规划，[第二阶段设计](../superpowers/specs/2026-10-16-pi-stage2-design.md)、[五任务计划](../superpowers/plans/2026-10-16-pi-stage2-implementation-plan.md)与[实施提示词](../superpowers/plans/2026-10-16-pi-stage2-agent-handoff.md)已完成，尚未实现第二阶段。第三、四阶段仍为后续范围。
 
-当前工作目录为 `.worktree/ai-integration`，分支 `codex/ai-integration`。本轮核对时 HEAD 为 `ef852b7`，该提交只包含方向、设计提案、决策记录与术语更新，没有 AI 产品实现。已确认范围由[框架评估第 10 节](2026-10-13-ai-integration-framework-evaluation.md)拥有；本文件提出实现顺序，不把新增技术选择记为用户决定。
+当前工作目录为 `.worktree/ai-integration`，分支 `codex/ai-integration`。第二阶段规划开始时 HEAD `0824481`；保留工作树已有前端 revision 修复与部署/验收文档改动。已确认范围由[框架评估第 10 节](2026-10-13-ai-integration-framework-evaluation.md)拥有；本文件提出实现顺序，不把新增技术选择记为用户决定。
 
 ## 1. 从闭环推导最小职责
 
@@ -75,4 +75,4 @@ Java 依赖先通过修改 `pom.xml` 和执行 Maven 正常处理，无需新增
 
 多 Agent、Python 与 Go/TS 用户项目适配、MCP/Skills 平台化、向量检索、通用工作流引擎、自动故障续跑、任意项目旧数据保护、执行池和复杂任务看板均不进入这条首轮实现链路。MCP/Skills 的后续接入复用同一项目工具约束，不需要现在建设插件平台。
 
-第一阶段计划已按用户要求收敛：文件直接改真实项目，构建仅固定 compile/test/package，在只读源码复制的临时目录执行且不回写；暂不实现自由 Shell 源码写入协议。具体接口、上限、六项实施任务及验收以链接的设计和计划为准。本轮仅完成规划与交接文本，没有编写产品代码、启动服务、调用模型或部署。
+第一阶段交付保留 receipt 直接写真实代码与固定 compile/test/package 的只读-copy构建。第二阶段的五项计划只补应用运行反馈，新增 application 与 app_http_get 两工具，日志有界tail、HTTP限GET；具体Interface与验证由链接的第二阶段设计/计划拥有。本次2026-10-16轮只编写规划、交接和索引，没有修改产品代码、启动服务、调用模型或部署。

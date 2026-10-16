@@ -191,7 +191,7 @@ flowchart TD
 
 ### 10.1 待审阅的开发执行方案
 
-实现顺序见 [Pi 最小集成的实现拆分建议](2026-10-13-pi-minimal-integration-implementation-slicing.md)：先真实读改测，再接应用运行反馈、CRUD 与用户验收，最后完成已约定的接管和异常恢复。用户已要求编制第一阶段计划；[设计](../superpowers/specs/2026-10-13-pi-stage1-design.md)、[实施计划](../superpowers/plans/2026-10-13-pi-stage1-implementation-plan.md)和[实施提示词](../superpowers/plans/2026-10-13-pi-stage1-agent-handoff.md)已准备（2026-10-13 快照：Tasks 1–5 已实现并测试通过，Task 6 验收 harness 与发布准备已交付；2026-10-15 更新：最终整分支审查的跨接缝修复已完成，实施记录见 poc4/docs/evidence/ai-stage1/acceptance.md）。第一阶段只提供固定 Maven goal，在只读源码复制的 scratch 中构建，不引入自由 Shell 源码变更核对；下述通用执行提案由该阶段设计具体收敛。
+实现顺序见 [Pi 最小集成的实现拆分建议](2026-10-13-pi-minimal-integration-implementation-slicing.md)：先真实读改测，再接应用运行反馈、CRUD 与用户验收，最后完成接管和异常恢复。第一阶段已实现，2026-10-15 真实云端验收和 `PI_STAGE1_CODE_TEST_LOOP_PASS` 由[实施记录第 8 节](../../poc4/docs/evidence/ai-stage1/acceptance.md)拥有，后续 revision 修复验证限制见第 8.7 节。2026-10-16 用户请求的[第二阶段设计](../superpowers/specs/2026-10-16-pi-stage2-design.md)、[五任务计划](../superpowers/plans/2026-10-16-pi-stage2-implementation-plan.md)与[实施提示词](../superpowers/plans/2026-10-16-pi-stage2-agent-handoff.md)已完成；仅规划应用 Run、日志与有界 GET 反馈，不代表第二阶段实现或发布。第一阶段固定 Maven goal、只读-copy构建继续复用；下述早期通用执行提案由具体阶段设计收敛，不作为自由 Shell 的实施指令。
 
 建议使用稳定 Pi coding SDK，在单独的 Agent 控制进程中调用云端模型；Manao 后端继续作为项目身份、写入占用、审批及 Run 的权威。首版新增独立开发执行 Job，复用 Java runner 的工具链、当前项目源码挂载与私有 Maven 缓存。它负责一次受控 Shell／构建／测试命令，不复用应用 Run 的状态与控制目录。开发命令串行执行；命令退出并核对改动后刷新文件版本，再通过既有 Run 启动应用验证。
 

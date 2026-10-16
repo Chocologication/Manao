@@ -448,3 +448,25 @@ policy, the worker Deployment/Service and the AI-enabled images) remain deployed
 `manao-stage6b` as the working stage-one installation; the AI entry stays limited to
 the single acceptance projectId, which no longer exists, so the task entry is
 effectively dormant until the user configures another project.
+
+### 8.7 Post-acceptance frontend revision-cache repair deployment
+
+On 2026-10-15, a frontend-only repair was built from the `codex/ai-integration`
+worktree after the live browser exposed `REVISION_UNAVAILABLE` with a healthy
+file tree. The repair adds an observed, no-request workspace-revision cache and
+keeps that query connected across workspace reload; backend, worker, database,
+and migration assets were not changed.
+
+- Local verification before rollout: frontend unit suite 73 files / 1374 tests
+  PASS; TypeScript check and production Vite build PASS.
+- Published image: `chocologic/manao_images_repository@sha256:9aeb673b81f6f3f09fec436aa0ecb5ec89901667811e5e9a779608e9f20e32b7`
+  (tag `6b-frontend-20261015-ai-revision-fix`, built with `VITE_ENABLE_AI=true`).
+- Rollout: `deployment/frontend` in `manao-stage6b` reports `replicas=1`,
+  `ready=1`, `updated=1`; the running Pod is `frontend-7d786594c8-kjc82`.
+- Public static entry returned HTTP 200 and served the new asset bundle.
+
+The post-rollout browser interaction was not converted into an acceptance PASS
+in this record: the authorized browser session had to be re-authenticated after
+reload, and the browser automation connection was interrupted after the user
+completed login. The local regression and rollout evidence above do not replace
+the missing post-rollout click-path observation.

@@ -1,4 +1,4 @@
-import { useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
+import { skipToken, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { createContext, useContext } from 'react';
 import { ApiRequestError } from '../../api/ApiRequestError';
 import {
@@ -126,6 +126,21 @@ export function getWorkspaceRevision(
   projectId: string,
 ): WorkspaceRevision | undefined {
   return queryClient.getQueryData(fileKeys.revision(projectId));
+}
+
+/**
+ * Keeps the revision cache observed by the workbench without creating a second
+ * revision endpoint or a background request. File reads remain the only source
+ * that writes this query.
+ */
+export function useWorkspaceRevision(projectId: string): WorkspaceRevision | undefined {
+  const query = useQuery({
+    queryKey: fileKeys.revision(projectId),
+    queryFn: skipToken,
+    enabled: false,
+    staleTime: Infinity,
+  });
+  return query.data as WorkspaceRevision | undefined;
 }
 
 export function useDirectoryTreeQuery(projectId: string, path: ProjectDirectoryPath) {

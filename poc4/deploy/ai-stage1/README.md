@@ -1,46 +1,33 @@
-# AI Stage One Deployment Assets (poc4/deploy/ai-stage1) — release preparation only
+# AI 第一阶段部署资产（poc4/deploy/ai-stage1）——仅发布准备
 
-This directory holds the reviewed release preparation for the AI stage-one
-acceptance (pi-stage1 plan Task 6): the images to build, the V11 migration, the
-development-build network policy and the rollback path. **Every execution step
-here is pending the user's explicit authorization.** Nothing in this round has
-been applied to `manao-stage6b`, its database, or any shared cluster; this file
-does not modify any existing 6B resource or private configuration.
+本目录存放 AI 第一阶段验收（pi-stage1 计划 Task 6）的已审阅发布准备：待构建镜像、V11 迁移、开发构建网络策略与回滚路径。**这里的每个执行步骤都等待用户明确授权。** 本轮没有任何内容应用到 `manao-stage6b`、其数据库或任何共享集群；本文件不修改任何现有 6B 资源或私有配置。
 
-Files:
+文件：
 
-| File | Purpose |
+| 文件 | 用途 |
 | --- | --- |
-| `README.md` | This release preparation: images, migration, rollout order, rollback, acceptance runbook |
-| `pi-worker.yaml` | Review-ready worker Deployment + Service with placeholders (digest, tokens, model Secret); single instance, Recreate, worker-private emptyDirs, no SA token — applied only with authorization |
-| `development-network-policy.yaml` | Manifest-level egress isolation for development build pods (DNS + public HTTP/HTTPS only). Actual CNI enforcement is NOT_RUN until a real cluster is authorized for the round |
+| `README.md` | 本发布准备：镜像、迁移、上线顺序、回滚、验收操作手册 |
+| `pi-worker.yaml` | 可审阅的 worker Deployment + Service，带占位符（digest、token、模型 Secret）；单实例、Recreate、worker 私有 emptyDir、无 SA token——仅在获授权后应用 |
+| `development-network-policy.yaml` | 开发构建 Pod 的 manifest 层出口隔离（仅 DNS + 公网 HTTP/HTTPS）。真实 CNI enforcement 在本轮获得集群授权前为 NOT_RUN |
 
-Status (2026-10-14): source Tasks 1–5 implemented and locally verified; the
-harness, fixtures and release preparation are authored and statically checked.
-The real model loop, cluster rollout, CNI enforcement measurement and browser
-E2E are NOT_RUN — see
-[poc4/docs/evidence/ai-stage1/acceptance.md](../../docs/evidence/ai-stage1/acceptance.md)
-for the exact missing conditions. `PI_STAGE1_CODE_TEST_LOOP_PASS` is NOT_GRANTED.
+状态（2026-10-14）：源码 Tasks 1–5 已实现并本地验证；harness、fixture 与发布准备已编写并通过静态检查。真实模型闭环、集群 rollout、CNI enforcement 实测与浏览器 E2E 为 NOT_RUN——确切缺失条件见
+[poc4/docs/evidence/ai-stage1/acceptance.md](../../docs/evidence/ai-stage1/acceptance.md)。`PI_STAGE1_CODE_TEST_LOOP_PASS` 为 NOT_GRANTED。
 
-## 1. Prerequisites (every one must genuinely exist before the round)
+## 1. 前置条件（每项都必须在本轮开始前真实存在）
 
-| Requirement | Notes |
+| 要求 | 说明 |
 | --- | --- |
-| Cloud model provider configuration | `MANAO_AI_PROVIDER` / `MANAO_AI_API_TYPE` / `MANAO_AI_BASE_URL` / `MANAO_AI_MODEL` / `MANAO_AI_API_KEY` on the **worker only**. As of this round no real key exists; the round must not invent one, switch to a mock, or choose a paid provider on its own |
-| Docker on the operator machine | Verified available this round (29.8.1) for the isolated local checks |
-| Disposable MySQL for local drills | Local MySQL is available; disposable schemas only — never reset `manao_poc4` or `manao_poc4_6b` |
-| Acceptance K8s context/namespace | Cluster work (rollout, policy apply, enforcement measurement) is a separate user-authorized operation |
-| Acceptance account | Username/password for the acceptance deployment (private env file, never committed) |
+| 云端模型 provider 配置 | `MANAO_AI_PROVIDER` / `MANAO_AI_API_TYPE` / `MANAO_AI_BASE_URL` / `MANAO_AI_MODEL` / `MANAO_AI_API_KEY`，只在 **worker 侧**。截至本轮不存在真实密钥；本轮不得编造密钥、不得换 mock、不得自行选择付费 provider |
+| 操作者机器上的 Docker | 本轮已确认可用（29.8.1），用于隔离本地检查 |
+| 本地演练用 disposable MySQL | 本地 MySQL 可用；仅用 disposable schema——禁止重置 `manao_poc4` 或 `manao_poc4_6b` |
+| 验收 K8s context/namespace | 集群操作（rollout、策略应用、enforcement 实测）是另一项需用户单独授权的操作 |
+| 验收账号 | 验收部署的用户名/密码（私有 env 文件，绝不提交） |
 
-Configuration checks may verify only that the necessary fields are non-empty;
-they must never print secrets.
+配置检查只允许核实必要字段非空；绝不打印秘密。
 
-## 2. Images to build and publish (digests recorded at release time)
+## 2. 待构建与发布的镜像（digest 在发布时记录）
 
-Build from the checkout that carries the accepted stage-one code
-(`codex/ai-integration`); record every `...@sha256:<64 hex>` digest in the
-private env file and in the acceptance record. Local test tags are not release
-references — never deploy a floating tag.
+从承载已验收第一阶段代码的检出（`codex/ai-integration`）构建；把每个 `...@sha256:<64 hex>` digest 记入私有 env 文件与验收记录。本地测试 tag 不是发布引用——绝不部署浮动 tag。
 
 ```bash
 # 2.1 Backend (contains the V11 Flyway migration; applied at startup, section 3)
@@ -72,86 +59,55 @@ docker push chocologic/manao_images_repository:ai-stage1-runner-<yyyymmdd>
 docker inspect --format '{{index .RepoDigests 0}}' chocologic/manao_images_repository:ai-stage1-runner-<yyyymmdd>
 ```
 
-No rebuild is needed for the initializer and workspace-agent images (Task 6
-constraint: "初始化cache和workspace-agent镜像不需重构").
+initializer 与 workspace-agent 镜像无需重建（Task 6 约束："初始化cache和workspace-agent镜像不需重构"）。
 
-## 3. V11 migration (`V11__agent_tasks.sql`, ships inside the backend image)
+## 3. V11 迁移（`V11__agent_tasks.sql`，随 backend 镜像携带）
 
-Additive only: two new tables (`agent_task`, `agent_tool_call`), the project
-foreign keys, and the generated `active_project` unique index that limits one
-occupying task per project. No existing table, row or column is changed. Flyway
-applies V11 automatically when the new backend starts against `manao_poc4_6b`.
+纯新增：两张新表（`agent_task`、`agent_tool_call`）、项目外键、以及限制每项目一个占用任务的生成列 `active_project` 唯一索引。不修改任何现有表、行或列。新 backend 针对 `manao_poc4_6b` 启动时 Flyway 自动应用 V11。
 
-- Applying it touches the runtime schema — that is exactly why the rollout needs
-  the user's explicit authorization.
-- Rollback (only with no in-flight tasks, and only with authorization):
-  `DROP TABLE agent_tool_call; DROP TABLE agent_task;` — the tables are pure
-  additions; dropping them cannot affect project/run/workspace data.
-- V12 (`V12__agent_task_verified_writes.sql`, review fix I1) ships the same way:
-  two nullable columns on `agent_task` (`settled_revision`, `changed_paths_json`)
-  that record the latest verified write revision and the deduped changed paths.
-  Flyway applies it with V11 on the first post-fix backend start; no rollback is
-  required beyond dropping the two columns together with the tables above.
+- 应用它会触碰运行库——这正是 rollout 需要用户明确授权的原因。
+- 回滚（仅当无进行中任务，且仅在获授权时）：`DROP TABLE agent_tool_call; DROP TABLE agent_task;`——两张表是纯新增；删除它们不会影响 project/run/workspace 数据。
+- V12（`V12__agent_task_verified_writes.sql`，审查修复 I1）以同样方式携带：`agent_task` 上两个可空列（`settled_revision`、`changed_paths_json`），记录最新已核实写入 revision 与去重后的修改路径。修复后 backend 首次启动时 Flyway 会与 V11 一起应用；除随上述两张表一起删除外，无需其他回滚。
 
-## 4. Worker configuration contract (the model key lives only here)
+## 4. Worker 配置契约（模型密钥只在这里）
 
-| Variable | Meaning |
+| 变量 | 含义 |
 | --- | --- |
-| `MANAO_AI_WORKER_PORT` | HTTP surface (default 18090) |
-| `MANAO_AI_WORKER_TOKEN` | Shared secret the backend presents on `/tasks/*`; empty disables every route |
-| `MANAO_AI_INSTANCE_ID` | Stable instance identity (optional) |
-| `MANAO_AI_BACKEND_BASE_URL` / `MANAO_AI_BACKEND_TOKEN` | Backend internal routes + internal token |
-| `MANAO_AI_SCRATCH_DIR` / `MANAO_AI_AGENT_DIR` / `MANAO_AI_SESSION_DIR` | Worker-private paths; never a user project, never a shared volume |
-| `MANAO_AI_PROVIDER` / `MANAO_AI_API_TYPE` / `MANAO_AI_BASE_URL` / `MANAO_AI_MODEL` / `MANAO_AI_API_KEY` | Real cloud model configuration; no real value exists as of this round |
+| `MANAO_AI_WORKER_PORT` | HTTP 端口（默认 18090） |
+| `MANAO_AI_WORKER_TOKEN` | backend 访问 `/tasks/*` 时出示的共享密钥；为空则所有路由关闭 |
+| `MANAO_AI_INSTANCE_ID` | 稳定实例标识（可选） |
+| `MANAO_AI_BACKEND_BASE_URL` / `MANAO_AI_BACKEND_TOKEN` | backend 内部路由 + 内部 token |
+| `MANAO_AI_SCRATCH_DIR` / `MANAO_AI_AGENT_DIR` / `MANAO_AI_SESSION_DIR` | worker 私有路径；绝不是用户项目，绝不是共享卷 |
+| `MANAO_AI_PROVIDER` / `MANAO_AI_API_TYPE` / `MANAO_AI_BASE_URL` / `MANAO_AI_MODEL` / `MANAO_AI_API_KEY` | 真实云端模型配置；截至本轮无真实值 |
 
-Verified worker behavior (component drill, acceptance record section 4): while
-any model field is missing, the worker still boots for health but **refuses every
-task start with a fixed 503 `AI_WORKER_NOT_CONFIGURED`**, which the backend turns
-into an explicit pre-start task failure. Starts are never silently mocked.
+已核实的 worker 行为（组件演练，验收记录第 4 节）：任一模型字段缺失时，worker 仍能启动供健康检查，但**拒绝一切任务启动，固定返回 503 `AI_WORKER_NOT_CONFIGURED`**，backend 将其转为任务启动前的显式失败。任务启动绝不静默 mock。
 
-Backend side (`manao.poc4.ai.*` / env): `MANAO_AI_ENABLED=true`,
-`MANAO_AI_PROJECT_ID=<bootstrap id>`, `MANAO_AI_WORKER_BASE_URL`,
-`MANAO_AI_WORKER_TOKEN`, `MANAO_AI_INTERNAL_TOKEN` (the last two are secrets).
-The backend never receives the model key.
+backend 侧（`manao.poc4.ai.*` / env）：`MANAO_AI_ENABLED=true`、`MANAO_AI_PROJECT_ID=<bootstrap id>`、`MANAO_AI_WORKER_BASE_URL`、`MANAO_AI_WORKER_TOKEN`、`MANAO_AI_INTERNAL_TOKEN`（后两个是秘密）。backend 永远收不到模型密钥。
 
-## 5. Rollout order (single worker, single backend — no overlapping updates)
+## 5. 上线顺序（单 worker、单 backend——更新不重叠）
 
-Execute only with authorization; every Deployment involved uses `Recreate`
-(replicas 1) so old and new never overlap:
+仅在获授权后执行；涉及的所有 Deployment 均为 `Recreate`（replicas 1），新旧永不重叠：
 
-1. Apply `development-network-policy.yaml` to the acceptance namespace, then
-   complete the operator duties in its header (public management-plane excludes)
-   and plan the CNI enforcement measurement — the policy resource alone is not
-   evidence.
-2. Publish the new runner digest into the images Secret
-   (`manao-backend-images`) so the next development build uses `manao-dev-build`.
-3. Apply `pi-worker.yaml` (Deployment + Service, placeholders filled: released
-   worker digest, Secret values per section 4 — `manao-pi-worker-secrets` and
-   `manao-pi-worker-model`). Verify exactly one worker pod and that the backend
-   can reach `manao-pi-worker:18090`. Deploy-time verification item (review fix
-   I5): after the pod is running, prove a real first write to `/work/agent`
-   under UID 1000 (e.g. `kubectl exec` a model-key-configured start and confirm
-   `models.json` appears) — the manifest's `fsGroup: 1000` is a static check
-   here; the mounted-dir writability is only real once observed on the cluster.
-4. Update the backend Deployment (new image; env additions per section 4).
-   Startup runs Flyway V11 (section 3). Verify exactly one backend pod.
-5. Update the frontend Deployment with the `VITE_ENABLE_AI=true` image. Verify
-   the AI tab exists in the workbench.
+1. 把 `development-network-policy.yaml` 应用到验收 namespace，然后完成其头部注明的操作者职责（公网管理面排除项），并规划 CNI enforcement 实测——仅策略资源本身不是证据。
+2. 把新 runner digest 发布进镜像 Secret（`manao-backend-images`），让下一次开发构建用上 `manao-dev-build`。
+3. 应用 `pi-worker.yaml`（Deployment + Service，占位符已填：发布的 worker digest、按第 4 节填写的 Secret 值——`manao-pi-worker-secrets` 与 `manao-pi-worker-model`）。核实恰好一个 worker pod，且 backend 能连通 `manao-pi-worker:18090`。部署期验证项（审查修复 I5）：pod 运行后，证明 UID 1000 下对 `/work/agent` 的真实首次写入（例如 `kubectl exec` 一次已配模型密钥的启动并确认 `models.json` 出现）——manifest 的 `fsGroup: 1000` 在这里只是静态检查；挂载目录可写性只有在集群上观察到才是真的。
+4. 更新 backend Deployment（新镜像；按第 4 节补充 env）。启动时执行 Flyway V11（第 3 节）。核实恰好一个 backend pod。
+5. 用 `VITE_ENABLE_AI=true` 镜像更新 frontend Deployment。核实工作台出现 AI tab。
 
-## 6. Rollback
+## 6. 回滚
 
-| Step | Action |
+| 步骤 | 动作 |
 | --- | --- |
-| Fastest behavior rollback | `MANAO_AI_ENABLED=false` on the backend (AI beans, browser routes and internal routes simply cease to exist); scale the worker to 0 |
-| Backend image | Redeploy the previous recorded digest; the frontend keeps working — the AI tab disappears with the old panel only if the frontend is also rolled back |
-| Frontend image | Redeploy the previous recorded digest (panel gone; project data untouched) |
-| Worker | Delete the worker Deployment/Service (no other component depends on it) |
-| V11 tables | Section 3 rollback, only with no in-flight tasks and only with authorization |
-| Runner digest | Restore the previous `manao-backend-images` runner value; `manao-dev-build` disappears from new build pods |
+| 最快行为回滚 | backend 设 `MANAO_AI_ENABLED=false`（AI beans、浏览器路由与内部路由直接消失）；worker 缩到 0 |
+| Backend 镜像 | 重新部署上一个已记录 digest；frontend 继续工作——AI tab 只在 frontend 一并回滚时才消失 |
+| Frontend 镜像 | 重新部署上一个已记录 digest（面板消失；项目数据不动） |
+| Worker | 删除 worker Deployment/Service（没有其他组件依赖它） |
+| V11 表 | 第 3 节回滚，仅当无进行中任务且仅在获授权时 |
+| Runner digest | 恢复 `manao-backend-images` 的上一个 runner 值；新构建 pod 中 `manao-dev-build` 消失 |
 
-No rollback step deletes project data; tasks and tool rows are additive.
+任何回滚步骤都不删除项目数据；task 与 tool 行是纯新增。
 
-## 7. Acceptance runbook (after authorization)
+## 7. 验收操作手册（授权之后）
 
 ```bash
 # 1. Bootstrap the dedicated project against the running acceptance backend
@@ -200,8 +156,4 @@ node scripts/ai-stage1-independent-reverify.mjs --api \
 #    independently (resources, rows); record everything in the acceptance record.
 ```
 
-The independent acceptance-build re-verification (fixture + `acceptance-pom.xml`
-through the read-only-copy executor, Surefire XML with tests>=1 and
-failures/errors/skipped=0) is part of the round's evidence; the fixture and pom
-were already exercised for real in the isolated local drill (acceptance record
-section 3).
+独立验收构建复验（fixture + `acceptance-pom.xml` 经只读-copy executor，Surefire XML 要求 tests>=1 且 failures/errors/skipped=0）属于本轮证据的一部分；fixture 与 pom 已在隔离本地演练中真实跑过（验收记录第 3 节）。

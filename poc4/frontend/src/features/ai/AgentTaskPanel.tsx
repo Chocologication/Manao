@@ -18,7 +18,7 @@ import {
   type AgentTaskSnapshot,
   type AgentToolCallResult,
 } from '@/contracts/agentTask';
-import { getWorkspaceRevision } from '@/features/files/fileQueries';
+import { getWorkspaceRevision, useWorkspaceRevision } from '@/features/files/fileQueries';
 import { useWorkspaceSession } from '@/features/editor/workspaceSession';
 import { InlineAlert } from '@/components/feedback/InlineAlert';
 import { resolveAgentTaskPreconditions } from './agentTaskPreconditions';
@@ -105,7 +105,7 @@ export function AgentTaskPanel({
     [activeTaskId, projectId],
   );
 
-  const workspaceRevision = getWorkspaceRevision(queryClient, projectId);
+  const workspaceRevision = useWorkspaceRevision(projectId);
   const preconditions = resolveAgentTaskPreconditions({
     dirtyCount,
     writePending,

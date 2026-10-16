@@ -131,6 +131,20 @@ describe('AgentTaskPanel preconditions', () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
+  it('reacts when a missing workspace revision is restored from a file read', async () => {
+    queryClient.removeQueries({ queryKey: fileKeys.revision(PROJECT_ID) });
+    renderPanel();
+    expect(screen.getByRole('button', { name: 'Start task' })).toBeDisabled();
+
+    act(() => {
+      queryClient.setQueryData(fileKeys.revision(PROJECT_ID), '8');
+    });
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Start task' })).toBeEnabled();
+    });
+  });
+
   it('disables Start while the polled agent task occupies the workspace', () => {
     const fetchSpy = vi.spyOn(globalThis, 'fetch');
     renderPanel({ task: occupyingTask() });
