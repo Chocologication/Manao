@@ -172,6 +172,52 @@ class AgentApplicationToolsTest {
         } catch (java.io.IOException ex) { throw new AssertionError(ex); }
     }
 
+    @Test
+    void httpRequiresTheOwnerCurrentReadyRunAndChecksAgainAfterIo() throws Exception {
+        var probe = mock(ProjectApplicationProbe.class);
+        var tools = new AgentApplicationTools(tasks, runs, store, logs, probe, new com.manao.poc4.project.ProjectLifecycleGate());
+        var ready = ProjectApplicationProbeTest.readyRun("project", "run", "uid");
+        when(store.findRunForOwner("owner", "project", "run")).thenReturn(Optional.of(ready));
+        when(store.findActiveRun("project")).thenReturn(Optional.of(ready));
+        when(probe.get(ready, "/demo")).thenReturn(new AgentContracts.AppHttpGetData("app_http_get", "run", "/demo",
+            200, "text/plain", "ok", false, null));
+        assertThat(http(tools, "REGISTERED").data().path("statusCode").asInt()).isEqualTo(200);
+        when(store.findActiveRun("project")).thenReturn(Optional.empty());
+        assertThat(http(tools, "REGISTERED").data().path("error").path("code").asText()).isEqualTo("AI_RUN_NOT_READY");
+        when(store.findActiveRun("project")).thenReturn(Optional.of(ready), Optional.empty());
+        assertThat(http(tools, "REGISTERED").data().path("error").path("code").asText()).isEqualTo("AI_APP_RUN_CHANGED");
+        when(store.findRunForOwner("owner", "project", "run")).thenReturn(Optional.empty());
+        assertThat(http(tools, "REGISTERED").data().path("error").path("code").asText()).isEqualTo("AI_RUN_NOT_FOUND");
+        verify(probe, org.mockito.Mockito.times(2)).get(ready, "/demo");
+    }
+
+    @Test
+    void orphanHttpDoesNotRetransmitAndJsonEscapingKeepsItsFullShape() throws Exception {
+        var probe = mock(ProjectApplicationProbe.class);
+        var tools = new AgentApplicationTools(tasks, runs, store, logs, probe, new com.manao.poc4.project.ProjectLifecycleGate());
+        var ready = ProjectApplicationProbeTest.readyRun("project", "run", "uid");
+        when(store.findRunForOwner("owner", "project", "run")).thenReturn(Optional.of(ready));
+        when(store.findActiveRun("project")).thenReturn(Optional.of(ready));
+        assertThat(http(tools, "RUNNING").data().path("error").path("code").asText()).isEqualTo("AI_APP_HTTP_UNAVAILABLE");
+        org.mockito.Mockito.verifyNoInteractions(probe);
+        when(probe.get(ready, "/demo")).thenReturn(new AgentContracts.AppHttpGetData("app_http_get", "run", "/demo",
+            200, "text/plain", "\u0000".repeat(65536), false, null));
+        var result = http(tools, "REGISTERED");
+        assertThat(JSON.writeValueAsBytes(result).length).isLessThanOrEqualTo(192 * 1024);
+        assertThat(result.data().size()).isEqualTo(8);
+        assertThat(result.data().path("kind").asText()).isEqualTo("app_http_get");
+        assertThat(result.data().path("statusCode").asInt()).isEqualTo(200);
+        assertThat(result.data().path("truncated").asBoolean()).isTrue();
+        assertThat(result.truncated()).isTrue();
+    }
+
+    private AgentContracts.ToolResult http(AgentApplicationTools tools, String state) throws Exception {
+        var args = JSON.readTree("{\"runId\":\"run\",\"path\":\"/demo\"}");
+        return tools.invoke("task", new AgentTaskStore.ToolCallRow("task", "http", "sha", "app_http_get",
+            args.toString(), state, null, 7, null, null, null, null),
+            new AgentContracts.ToolRequest("http", "app_http_get", 7, args));
+    }
+
     private static RunSummary run(String state) {
         return new RunSummary("run", state, "7", JSON.createObjectNode(), "2026-10-16T00:00:00Z",
             null, "CANCELLED".equals(state) ? "2026-10-16T00:01:00Z" : null,

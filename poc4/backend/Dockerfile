@@ -33,7 +33,7 @@ USER 10001:10001
 
 ENV SERVER_PORT=8080 \
     TMPDIR=/tmp \
-    JAVA_TOOL_OPTIONS="-XX:MaxRAMPercentage=75.0 -Djava.io.tmpdir=/tmp"
+    JAVA_TOOL_OPTIONS="-XX:MaxRAMPercentage=75.0 -Djava.io.tmpdir=/tmp -Djdk.httpclient.redirects.retrylimit=1 -Djdk.httpclient.disableRetryConnect=true"
 
 EXPOSE 8080
 

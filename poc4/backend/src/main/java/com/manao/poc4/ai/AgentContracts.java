@@ -39,6 +39,11 @@ public final class AgentContracts {
     /** The durable tool answer: the workspace revision it ran against plus bounded result data. */
     public record ToolResult(String toolCallId, String workspaceRevision, JsonNode data, boolean truncated) { }
 
+    public record AppHttpGetData(String kind, String runId, String path, Integer statusCode,
+                                String contentType, String body, boolean truncated, ToolError error) { }
+
+    public record ToolError(String code, String message) { }
+
     /**
      * The owner browser's view of one settled tool call (review fix I9): the stable
      * call identity, the tool name and the bounded result data — real exit facts,

@@ -9,6 +9,8 @@ import com.manao.poc4.log.RunLogWindow;
 import com.manao.poc4.run.RunService;
 import com.manao.poc4.run.RunStore;
 import com.manao.poc4.run.RunSummary;
+import com.manao.poc4.run.RunRecord;
+import com.manao.poc4.project.ProjectLifecycleGate;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.List;
@@ -24,6 +26,13 @@ public final class AgentApplicationTools {
     private final RunStore store;
     private final RunLogService logs;
     private final Duration finishBudget;
+    private final ProjectApplicationProbe probe;
+    private final ProjectLifecycleGate lifecycle;
+
+    public AgentApplicationTools(AgentTaskStore tasks, RunService runs, RunStore store, RunLogService logs,
+                                 ProjectApplicationProbe probe, ProjectLifecycleGate lifecycle) {
+        this(tasks, runs, store, logs, Duration.ofSeconds(120), probe, lifecycle);
+    }
 
     public AgentApplicationTools(AgentTaskStore tasks, RunService runs, RunStore store, RunLogService logs) {
         this(tasks, runs, store, logs, Duration.ofSeconds(120));
@@ -31,16 +40,24 @@ public final class AgentApplicationTools {
 
     AgentApplicationTools(AgentTaskStore tasks, RunService runs, RunStore store, RunLogService logs,
                           Duration finishBudget) {
+        this(tasks, runs, store, logs, finishBudget, null, null);
+    }
+
+    private AgentApplicationTools(AgentTaskStore tasks, RunService runs, RunStore store, RunLogService logs,
+                                  Duration finishBudget, ProjectApplicationProbe probe, ProjectLifecycleGate lifecycle) {
         this.tasks = tasks;
         this.runs = runs;
         this.store = store;
         this.logs = logs;
         this.finishBudget = finishBudget;
+        this.probe = probe;
+        this.lifecycle = lifecycle;
     }
 
     /** The caller holds the ledger claim until this answer has been durably settled. */
     public AgentContracts.ToolResult invoke(String taskId, AgentTaskStore.ToolCallRow row,
                                              AgentContracts.ToolRequest request) {
+        if ("app_http_get".equals(request.name())) return http(taskId, row, request.args());
         validate(request.args());
         var owner = tasks.taskOwner(taskId);
         String action = request.args().path("action").asText();
@@ -105,6 +122,65 @@ public final class AgentApplicationTools {
             }
         }
         return new AgentContracts.ToolResult(row.toolCallId(), Long.toString(row.expectedRevision()), data, false);
+    }
+
+    private AgentContracts.ToolResult http(String taskId, AgentTaskStore.ToolCallRow row, JsonNode args) {
+        var owner = tasks.taskOwner(taskId);
+        String runId = args.path("runId").asText("");
+        String path = args.path("path").asText("");
+        AgentContracts.AppHttpGetData data;
+        try {
+            if (args.size() != 2 || !args.path("runId").isTextual() || runId.isBlank() || runId.length() > 64
+                || !args.path("path").isTextual()) throw new IllegalArgumentException();
+            ProjectApplicationProbe.relativePath(path);
+        } catch (IllegalArgumentException ex) { return httpResult(row, httpError(runId, "", "VALIDATION_ERROR")); }
+        // RUNNING with no live claim is a restart leftover: the remote GET may have happened.
+        if ("RUNNING".equals(row.state()) || probe == null) return httpResult(row, httpError(runId, path, "AI_APP_HTTP_UNAVAILABLE"));
+        RunRecord run;
+        try (var lease = lifecycle.tryAcquire(owner.projectId()).orElseThrow(
+                () -> new ApiException("PROJECT_BUSY", 409, "Project is busy"))) {
+            run = store.findRunForOwner(owner.ownerId(), owner.projectId(), runId).orElse(null);
+            if (run == null || !owner.projectId().equals(run.projectId())) return httpResult(row, httpError(runId, path, "AI_RUN_NOT_FOUND"));
+            if (!sameActive(owner, run)) return httpResult(row, httpError(runId, path, "AI_RUN_NOT_READY"));
+        }
+        try { data = probe.get(run, path); }
+        catch (RuntimeException ex) { data = httpError(runId, path, "AI_APP_HTTP_UNAVAILABLE"); }
+        // The IO holds the existing ledger claim, but never a project gate or store monitor.
+        try (var lease = lifecycle.tryAcquire(owner.projectId()).orElseThrow(
+                () -> new ApiException("PROJECT_BUSY", 409, "Project is busy"))) {
+            var current = store.findRunForOwner(owner.ownerId(), owner.projectId(), runId).orElse(null);
+            if (current == null || !sameActive(owner, current)
+                || !java.util.Objects.equals(run.executionPodUid(), current.executionPodUid())) {
+                data = httpError(runId, path, "AI_APP_RUN_CHANGED");
+            }
+        } catch (RuntimeException ex) { data = httpError(runId, path, "AI_APP_RUN_CHANGED"); }
+        return httpResult(row, data);
+    }
+
+    private boolean sameActive(AgentTaskStore.TaskOwner owner, RunRecord run) {
+        if (!owner.projectId().equals(run.projectId()) || !"RUNNING".equals(run.state().name())
+            || run.firstReadyAt() == null || run.executionPodUid() == null || run.executionPodUid().isBlank()) return false;
+        return store.findActiveRun(owner.projectId()).filter(active -> active.id().equals(run.id())
+            && active.projectId().equals(run.projectId()) && active.state() == run.state()
+            && active.firstReadyAt() != null && java.util.Objects.equals(active.executionPodUid(), run.executionPodUid())).isPresent();
+    }
+
+    private static AgentContracts.AppHttpGetData httpError(String runId, String path, String code) {
+        return new AgentContracts.AppHttpGetData("app_http_get", runId.length() <= 64 ? runId : "", path, null, null, "", false,
+            ProjectApplicationProbe.safeError(code));
+    }
+
+    private static AgentContracts.ToolResult httpResult(AgentTaskStore.ToolCallRow row, AgentContracts.AppHttpGetData data) {
+        ObjectNode node = JSON.valueToTree(data);
+        var result = new AgentContracts.ToolResult(row.toolCallId(), Long.toString(row.expectedRevision()), node, data.truncated());
+        while (jsonBytes(result) > AgentProjectTools.MAX_RESULT_BYTES) {
+            String field = node.path("body").asText().isEmpty() ? "contentType" : "body";
+            String text = node.path(field).asText();
+            int end = text.offsetByCodePoints(0, text.codePointCount(0, text.length()) / 2);
+            node.put(field, text.substring(0, end)).put("truncated", true);
+            result = new AgentContracts.ToolResult(row.toolCallId(), Long.toString(row.expectedRevision()), node, true);
+        }
+        return result;
     }
 
     static void validate(JsonNode args) {

@@ -8,6 +8,7 @@ import com.manao.poc4.ai.DevelopmentBuildExecutor;
 import com.manao.poc4.ai.Fabric8DevelopmentBuildExecutor;
 import com.manao.poc4.ai.HttpPiWorkerClient;
 import com.manao.poc4.ai.PiWorkerClient;
+import com.manao.poc4.ai.ProjectApplicationProbe;
 import com.manao.poc4.kubernetes.JobResourceFactory;
 import com.manao.poc4.project.ProjectLifecycleGate;
 import com.manao.poc4.workspace.WorkspaceOperationService;
@@ -94,10 +95,19 @@ public class AiConfig {
 
     @Bean
     @Conditional(AiEnabledCondition.class)
+    ProjectApplicationProbe projectApplicationProbe(KubernetesClient client, BackendProperties properties,
+                                                      com.manao.poc4.project.ProjectRuntimeStore runtime) {
+        return new ProjectApplicationProbe(client, properties.kubernetes().namespace(), runtime,
+            ProjectApplicationProbe.httpClient());
+    }
+
+    @Bean
+    @Conditional(AiEnabledCondition.class)
     AgentApplicationTools agentApplicationTools(AgentTaskStore tasks, com.manao.poc4.run.RunService runs,
                                                 com.manao.poc4.run.RunStore runStore,
-                                                com.manao.poc4.log.RunLogService logs) {
-        return new AgentApplicationTools(tasks, runs, runStore, logs);
+                                                com.manao.poc4.log.RunLogService logs,
+                                                ProjectApplicationProbe probe, ProjectLifecycleGate lifecycle) {
+        return new AgentApplicationTools(tasks, runs, runStore, logs, probe, lifecycle);
     }
 
     @Bean

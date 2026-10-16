@@ -25,11 +25,11 @@ import org.slf4j.LoggerFactory;
  */
 public final class Fabric8PublicEndpointGateway implements PublicEndpointGateway {
     private static final Logger LOG = LoggerFactory.getLogger(Fabric8PublicEndpointGateway.class);
-    static final String LABEL_RUN_ID = "manao.poc4/run-id";
-    static final String LABEL_PROJECT_ID = "manao.poc4/project-id";
-    static final String LABEL_COMPONENT = "manao.poc4/component";
-    static final String LABEL_POD_UID = "manao.poc4/pod-uid";
-    static final String COMPONENT_VALUE = "maven-run";
+    public static final String LABEL_RUN_ID = "manao.poc4/run-id";
+    public static final String LABEL_PROJECT_ID = "manao.poc4/project-id";
+    public static final String LABEL_COMPONENT = "manao.poc4/component";
+    public static final String LABEL_POD_UID = "manao.poc4/pod-uid";
+    public static final String COMPONENT_VALUE = "maven-run";
     static final String INITIAL_RUN_SELECTOR = "stopped";
     private static final String NODEPORT_FIELD_PREFIX = "spec.ports[";
     // The apiserver field path is spec.ports[<index>].nodePort; the closing bracket belongs to

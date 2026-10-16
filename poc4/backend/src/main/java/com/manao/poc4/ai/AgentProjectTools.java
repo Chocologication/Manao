@@ -53,7 +53,7 @@ public final class AgentProjectTools {
     /** Key-sorted serialization: the canonical form the request digest is computed over. */
     private static final ObjectMapper CANONICAL = new ObjectMapper()
         .configure(SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS, true);
-    private static final Set<String> KNOWN_TOOLS = Set.of("list_files", "read_file", "write_file", "build", "application");
+    private static final Set<String> KNOWN_TOOLS = Set.of("list_files", "read_file", "write_file", "build", "application", "app_http_get");
     /** Tools that register a durable side effect and are blocked while another call is unsettled. */
     private static final Set<String> SIDE_EFFECT_TOOLS = Set.of("write_file", "build");
     private static final String BUILD_TOOL = "build";
@@ -153,6 +153,8 @@ public final class AgentProjectTools {
                     buildGoal = buildGoal(request);
                 } else if ("application".equals(request.name())) {
                     AgentApplicationTools.validate(request.args());
+                    applicationCall = true;
+                } else if ("app_http_get".equals(request.name())) {
                     applicationCall = true;
                 } else {
                     result = execute(owner, row, request);
@@ -309,7 +311,16 @@ public final class AgentProjectTools {
             return false;
         }
         for (AgentTaskStore.ToolCallRow row : unsettled) {
-            if ("application".equals(row.toolName()) || "app_http_get".equals(row.toolName())) continue;
+            if ("application".equals(row.toolName())) continue;
+            if ("app_http_get".equals(row.toolName())) {
+                // Closing forbids new claims. A restart leftover has no live transport to
+                // await and its outcome stays unknown; never retransmit a possibly applied GET.
+                synchronized (tasks) {
+                    if (tasks.hasLiveToolClaims(taskId)) return false;
+                    tasks.retireApplicationCall(taskId, row.toolCallId());
+                }
+                continue;
+            }
             if ("build".equals(row.toolName())) {
                 // Atomically exclude both live execution and another close. Keep this same
                 // claim through external cleanup AND the durable evidence transition.
@@ -685,9 +696,19 @@ public final class AgentProjectTools {
             .map(row -> {
                 AgentContracts.ToolResult result = storedResult(row);
                 return new AgentContracts.AgentToolCallView(row.toolCallId(), row.toolName(),
-                    "application".equals(row.toolName()) ? applicationBrowserData(result.data())
+                    "app_http_get".equals(row.toolName()) ? httpBrowserData(result.data())
+                        : "application".equals(row.toolName()) ? applicationBrowserData(result.data())
                         : boundedBrowserData(result.data()));
             });
+    }
+
+    private static JsonNode httpBrowserData(JsonNode data) {
+        ObjectNode safe = JSON.createObjectNode();
+        copyFields(data, safe, List.of("kind", "runId", "path", "statusCode", "contentType", "body", "truncated"));
+        if (data.path("error").isObject()) safe.set("error", JSON.valueToTree(
+            ProjectApplicationProbe.safeError(data.path("error").path("code").asText())));
+        else safe.putNull("error");
+        return safe;
     }
 
     private static JsonNode applicationBrowserData(JsonNode data) {

@@ -71,6 +71,7 @@ class AgentProjectToolsTest {
         final com.manao.poc4.run.RunService runs = mock(com.manao.poc4.run.RunService.class);
         final com.manao.poc4.run.RunStore runStore = mock(com.manao.poc4.run.RunStore.class);
         final com.manao.poc4.log.RunLogService logs = mock(com.manao.poc4.log.RunLogService.class);
+        final ProjectApplicationProbe probe = mock(ProjectApplicationProbe.class);
         final ProjectLifecycleGate gate = new ProjectLifecycleGate();
         final AgentTaskStore tasks;
         final WorkspaceJdbcStore store;
@@ -90,7 +91,7 @@ class AgentProjectToolsTest {
             operations = new WorkspaceOperationService(store, agent, gate);
             workspace = new WorkspaceService(store, operations, agent, gate, tasks);
             tools = new AgentProjectTools(tasks, store, workspace, operations, gate, builds,
-                new AgentApplicationTools(tasks, runs, runStore, logs));
+                new AgentApplicationTools(tasks, runs, runStore, logs, probe, gate));
         }
 
         /** The agent answers meta for a live file and echoes every mutate exactly like the real agent. */
@@ -161,6 +162,47 @@ class AgentProjectToolsTest {
 
         @Override public void close() {
             db.close();
+        }
+    }
+
+    @Test
+    void httpCallsSettleOnceAndOrphansNeverReplayTheRequest() {
+        try (var h = new Harness()) {
+            var ready = ProjectApplicationProbeTest.readyRun(PROJECT, "run", "uid");
+            when(h.runStore.findRunForOwner(OWNER, PROJECT, "run")).thenReturn(Optional.of(ready));
+            when(h.runStore.findActiveRun(PROJECT)).thenReturn(Optional.of(ready));
+            when(h.probe.get(ready, "/demo")).thenReturn(new AgentContracts.AppHttpGetData("app_http_get", "run", "/demo",
+                500, "text/plain", "real failure", false, null));
+            var request = new ToolRequest("http", "app_http_get", 7, JSON.createObjectNode().put("runId", "run").put("path", "/demo"));
+            var first = h.tools.invoke(h.taskId, request);
+            assertThat(first.data().path("statusCode").asInt()).isEqualTo(500);
+            assertThat(h.tools.invoke(h.taskId, request)).isEqualTo(first);
+            verify(h.probe, times(1)).get(ready, "/demo");
+            var orphan = new ToolRequest("orphan", "app_http_get", 7, request.args());
+            h.tasks.registerToolCall(h.taskId, "orphan", AgentProjectTools.callDigest(h.taskId, orphan),
+                "app_http_get", AgentProjectTools.canonicalArgsJson(orphan.args()), 7, null);
+            h.jdbc.update("UPDATE agent_tool_call SET state='RUNNING' WHERE task_id=? AND tool_call_id='orphan'", h.taskId);
+            assertThat(h.tools.invoke(h.taskId, orphan).data().path("error").path("code").asText()).isEqualTo("AI_APP_HTTP_UNAVAILABLE");
+            verify(h.probe, times(1)).get(ready, "/demo");
+            assertThat(h.rowState("orphan")).isEqualTo("COMPLETED");
+        }
+    }
+
+    @Test
+    void browserHttpProjectionDropsInternalFieldsAndUsesFixedErrors() throws Exception {
+        try (var h = new Harness()) {
+            var args = JSON.createObjectNode().put("runId", "run").put("path", "/");
+            h.tasks.registerToolCall(h.taskId, "http", "a".repeat(64), "app_http_get", args.toString(), 7, null);
+            var data = JSON.createObjectNode().put("kind", "app_http_get").put("runId", "run").put("path", "/")
+                .putNull("statusCode").putNull("contentType").put("body", "").put("truncated", false)
+                .put("clusterIP", "10.0.0.1").put("namespace", "private").put("podUid", "secret-uid");
+            data.putObject("error").put("code", "http://user:password@internal/").put("message", "private password");
+            h.tasks.completeToolCall(h.taskId, "http", JSON.writeValueAsString(new ToolResult("http", "7", data, false)));
+            var safe = h.tools.browserToolCall(h.taskId, "http").orElseThrow().data();
+            assertThat(safe.size()).isEqualTo(8);
+            assertThat(safe.path("error").path("code").asText()).isEqualTo("AI_APP_HTTP_UNAVAILABLE");
+            assertThat(safe.toString()).doesNotContain("password", "private", "internal", "secret-uid", "10.0.0.1");
+            verifyNoInteractions(h.probe);
         }
     }
 

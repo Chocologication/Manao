@@ -101,6 +101,7 @@ class AgentTaskServiceTest {
         final DevelopmentBuildExecutor builds = org.mockito.Mockito.mock(DevelopmentBuildExecutor.class);
         final com.manao.poc4.run.RunService runs = org.mockito.Mockito.mock(com.manao.poc4.run.RunService.class);
         final com.manao.poc4.run.RunStore runStore = org.mockito.Mockito.mock(com.manao.poc4.run.RunStore.class);
+        final ProjectApplicationProbe probe = org.mockito.Mockito.mock(ProjectApplicationProbe.class);
         final AgentProjectTools tools;
         final AgentTaskService service;
 
@@ -119,7 +120,7 @@ class AgentTaskServiceTest {
             WorkspaceService workspace = new WorkspaceService(store, operations, agent, gate, tasks);
             tools = new AgentProjectTools(tasks, store, workspace, operations, gate, builds,
                 new AgentApplicationTools(tasks, runs, runStore,
-                    org.mockito.Mockito.mock(com.manao.poc4.log.RunLogService.class)));
+                    org.mockito.Mockito.mock(com.manao.poc4.log.RunLogService.class), probe, gate));
             service = new AgentTaskService(tasks, gate, worker, tools,
                 new AiProperties(true, PROJECT, new AiProperties.Worker("http://worker.invalid", "worker-token"),
                     new AiProperties.Internal("internal-token")));
@@ -437,6 +438,60 @@ class AgentTaskServiceTest {
                     .thenReturn(applicationRun(row.workspaceOperationId(), "CANCELLED", false));
                 h.service.close(h.taskId, "AI_CLOSED", "retry");
                 assertThat(h.rowState()).isEqualTo("FAILED");
+            } finally { release.countDown(); pool.shutdownNow(); }
+        }
+    }
+
+    @Test
+    void orphanHttpCloseRetiresUnknownWithoutRetransmittingOrStoppingTheUntouchedRun() {
+        try (Harness h = new Harness()) {
+            h.submit();
+            h.tasks.registerToolCall(h.taskId, "http", "a".repeat(64), "app_http_get", "{\"runId\":\"old\",\"path\":\"/\"}", 7, null);
+            h.jdbc.update("UPDATE agent_tool_call SET state='RUNNING' WHERE task_id=? AND tool_call_id='http'", h.taskId);
+            h.service.close(h.taskId, "AI_CLOSED", "close after restart");
+            assertThat(h.rowState()).isEqualTo("FAILED");
+            assertThat(h.callRowState("http")).isEqualTo("NEEDS_ATTENTION");
+            org.mockito.Mockito.verifyNoInteractions(h.probe, h.runs);
+            h.tasks.requireBrowserWritable(PROJECT);
+        }
+    }
+
+    @Test
+    void unfinishedHttpKeepsOccupancyThroughIoAndDurableSettlement() throws Exception {
+        try (Harness h = new Harness()) {
+            h.submit();
+            var ready = ProjectApplicationProbeTest.readyRun(PROJECT, "run", "uid");
+            org.mockito.Mockito.when(h.runStore.findRunForOwner(OWNER, PROJECT, "run")).thenReturn(java.util.Optional.of(ready));
+            org.mockito.Mockito.when(h.runStore.findActiveRun(PROJECT)).thenReturn(java.util.Optional.of(ready));
+            CountDownLatch entered = new CountDownLatch(1);
+            CountDownLatch release = new CountDownLatch(1);
+            org.mockito.Mockito.when(h.probe.get(ready, "/slow")).thenAnswer(call -> {
+                entered.countDown();
+                assertThat(release.await(5, TimeUnit.SECONDS)).isTrue();
+                return new AgentContracts.AppHttpGetData("app_http_get", "run", "/slow", 200, "text/plain", "ok", false, null);
+            });
+            var pool = Executors.newSingleThreadExecutor();
+            try {
+                var request = new ToolRequest("http", "app_http_get", 7, JSON.createObjectNode().put("runId", "run").put("path", "/slow"));
+                var pending = pool.submit(() -> h.tools.invoke(h.taskId, request));
+                assertThat(entered.await(5, TimeUnit.SECONDS)).isTrue();
+                // While the network is live, another thread can acquire both short authorities.
+                try (var lease = h.gate.tryAcquire(PROJECT).orElseThrow()) { synchronized (h.tasks) { } }
+                assertThatThrownBy(() -> h.tools.invoke(h.taskId, request)).isInstanceOfSatisfying(ApiException.class,
+                    ex -> assertThat(ex.code()).isEqualTo("AI_CALL_RUNNING"));
+                h.service.applyProgress(h.taskId, INSTANCE, h.rowEpoch(), h.item(1, "terminal", "{\"state\":\"COMPLETED\"}"));
+                assertThat(h.rowState()).isEqualTo("NEEDS_ATTENTION");
+                assertThat(h.tasks.hasLiveToolClaims(h.taskId)).isTrue();
+                h.service.close(h.taskId, "AI_CLOSED", "close during HTTP");
+                assertThat(h.rowState()).isEqualTo("NEEDS_ATTENTION");
+                assertThat(h.callRowState("http")).isEqualTo("RUNNING");
+                release.countDown();
+                assertThat(pending.get(5, TimeUnit.SECONDS).data().path("statusCode").asInt()).isEqualTo(200);
+                assertThat(h.callRowState("http")).isEqualTo("COMPLETED");
+                h.service.close(h.taskId, "AI_CLOSED", "close after HTTP");
+                assertThat(h.rowState()).isEqualTo("FAILED");
+                h.tasks.requireBrowserWritable(PROJECT);
+                org.mockito.Mockito.verify(h.probe, org.mockito.Mockito.times(1)).get(ready, "/slow");
             } finally { release.countDown(); pool.shutdownNow(); }
         }
     }
@@ -1206,11 +1261,16 @@ class AgentTaskServiceTest {
             h.submit();
             ExecutorService pool = Executors.newFixedThreadPool(2);
             CountDownLatch ready = new CountDownLatch(2);
-            Future<?> closer = pool.submit(() -> {
+            Future<Boolean> closer = pool.submit(() -> {
                 ready.countDown();
                 ready.await(5, TimeUnit.SECONDS);
-                h.service.close(h.taskId, "AI_CLOSED", "raced close");
-                return null;
+                try {
+                    h.service.close(h.taskId, "AI_CLOSED", "raced close");
+                    return false;
+                } catch (ApiException expected) {
+                    assertThat(expected.code()).isEqualTo("PROJECT_BUSY");
+                    return true;
+                }
             });
             Future<?> registrar = pool.submit(() -> {
                 ready.countDown();
@@ -1223,10 +1283,14 @@ class AgentTaskServiceTest {
                 }
                 return null;
             });
-            closer.get(10, TimeUnit.SECONDS);
+            boolean busy = closer.get(10, TimeUnit.SECONDS);
             registrar.get(10, TimeUnit.SECONDS);
+            // The close phases use the documented nonblocking gate. Retry the same close
+            // once, after its sole contender has exited; no execution identity is replayed.
+            if (busy) h.service.close(h.taskId, "AI_CLOSED", "raced close");
             pool.shutdownNow();
             assertThat(h.rowState()).isEqualTo("FAILED");
+            org.mockito.Mockito.verifyNoInteractions(h.runs, h.probe, h.builds);
             // At most one of the two effects: a refused registration never registered a row.
             Integer rows = h.jdbc.queryForObject(
                 "SELECT COUNT(*) FROM agent_tool_call WHERE task_id = ? AND tool_call_id = ?",
