@@ -161,6 +161,30 @@ class AgentProjectToolsTest {
     }
 
     @Test
+    void activeApplicationBlocksWriteAndBuildWithoutSideEffects() {
+        for (String state : List.of("STARTING", "RUNNING", "STOPPING", "RECOVERING")) {
+            try (var h = new Harness()) {
+                Timestamp now = new Timestamp(System.currentTimeMillis());
+                h.jdbc.update("INSERT INTO run(id,project_id,requested_revision,state,policy_json,version,"
+                    + "created_at,updated_at,fencing_token) VALUES (?, ?, 7, ?, '{}', 0, ?, ?, 1)",
+                    UUID.randomUUID().toString(), PROJECT, state, now, now);
+                when(h.builds.build(any())).thenReturn(new AgentContracts.BuildResult(
+                    new AgentContracts.BuildIdentity("manao-dev-live", "job-live", "pod-live"),
+                    0, "Completed", "unexpected build", false, List.of(), true));
+                ToolResult build = h.tools.invoke(h.taskId, new ToolRequest(
+                    "build-with-live-app", "build", 7, JSON.createObjectNode().put("goal", "test")));
+                assertThat(build.data().path("error").path("code").asText()).as(state).isEqualTo("AI_RUN_ACTIVE");
+                ToolResult write = h.tools.invoke(h.taskId, h.writeRequest("write-with-live-app", PATH, "x", null, 7));
+                assertThat(write.data().path("error").path("code").asText()).as(state).isEqualTo("AI_RUN_ACTIVE");
+                verifyNoInteractions(h.builds, h.agent);
+                assertThat(h.rowState("build-with-live-app")).isEqualTo("COMPLETED");
+                assertThat(h.rowState("write-with-live-app")).isEqualTo("COMPLETED");
+                assertThat(h.revision()).isEqualTo(7);
+            }
+        }
+    }
+
+    @Test
     void repeatedWriteCallExecutesOnceAndReplaysTheOriginalResult() throws Exception {
         try (Harness env = new Harness()) {
             env.stubLiveFile(PATH, "class DemoController {\n}\n");

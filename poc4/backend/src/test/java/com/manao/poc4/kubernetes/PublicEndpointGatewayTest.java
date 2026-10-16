@@ -59,6 +59,35 @@ class PublicEndpointGatewayTest {
     }
 
     @Test
+    void boundedWithdrawalOnlyDetachesItsExactRunAndIsIdempotentWhenStopped() {
+        assertThat(gateway.ensure("p1", List.of(new ProjectRuntimeSpec.Port("web", 8080, 30081)))).isEqualTo(CONFIRMED);
+        String podUid = seedRunPod("p1", "run-1");
+        gateway.routeToRun("p1", "run-1", podUid);
+        gateway.requestWithdraw("p1", "run-1");
+        gateway.requestWithdraw("p1", "run-1");
+        assertThat(client.services().inNamespace(NS).withName("manao-app-p1").get().getSpec().getSelector())
+            .containsOnlyKeys("manao.poc4/run-id").containsEntry("manao.poc4/run-id", "stopped");
+    }
+
+    @Test
+    void boundedWithdrawalRejectsADifferentRunAndAStaleServiceSnapshot() {
+        assertThat(gateway.ensure("p1", List.of(new ProjectRuntimeSpec.Port("web", 8080, 30081)))).isEqualTo(CONFIRMED);
+        String podUid = seedRunPod("p1", "run-1");
+        gateway.routeToRun("p1", "run-1", podUid);
+        Service old = client.services().inNamespace(NS).withName("manao-app-p1").get();
+        client.services().inNamespace(NS).withName("manao-app-p1").edit(service ->
+            new ServiceBuilder(service).editSpec().addToSelector("manao.poc4/run-id", "run-2").endSpec().build());
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> gateway.requestWithdraw("p1", "run-1"))
+            .isInstanceOf(RuntimeException.class);
+        // A stale GET passes the local check, but the conditional PATCH must fail atomically.
+        server.expect().get().withPath(SERVICE_PATH + "/manao-app-p1").andReturn(200, old).once();
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> gateway.requestWithdraw("p1", "run-1"))
+            .isInstanceOf(RuntimeException.class);
+        assertThat(client.services().inNamespace(NS).withName("manao-app-p1").get().getSpec().getSelector())
+            .containsEntry("manao.poc4/run-id", "run-2");
+    }
+
+    @Test
     void usesUserPortWithoutSubstitution() {
         var ports = List.of(new ProjectRuntimeSpec.Port("web", 80, 30081));
         assertThat(gateway.ensure("p1", ports)).isEqualTo(CONFIRMED);

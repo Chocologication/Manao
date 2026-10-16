@@ -24,7 +24,7 @@ import org.springframework.transaction.support.TransactionTemplate;
  * taskId becomes a durable {@code agent_task} row whose generated {@code active_project}
  * column, backed by a unique index, lets exactly one task own a project's writes. Creation
  * locks the project row {@code FOR UPDATE} inside one transaction and re-checks the whole
- * preflight there — owner, READY, expected revision, no active run, no pending workspace
+ * preflight there — owner, READY, expected revision, no pending workspace
  * operation, no occupying task — so a submission can never slip past a concurrent writer or
  * deletion. Same id + same request (fixed-field-order UTF-8 SHA-256) idempotently answers the
  * original task; same id + different request is a conflict. The caller MUST hold the shared
@@ -130,9 +130,6 @@ public final class AgentTaskStore implements AgentTaskOccupancy {
                 throw new ApiException("WORKSPACE_REVISION_CONFLICT", 409,
                     "The workspace changed; reload and retry.");
             }
-            if (hasActiveRun(projectId)) {
-                throw new ApiException("RUN_ALREADY_ACTIVE", 409, "A run is already active");
-            }
             if (hasPendingOperation(projectId)) {
                 throw new ApiException("PROJECT_LOCKED", 409, "Project is locked");
             }
@@ -227,7 +224,8 @@ public final class AgentTaskStore implements AgentTaskOccupancy {
      * </ul>
      *
      * <p>{@code operationId} pre-allocates the workspace operation for file writes and the
-     * stable command id for builds; side-effect-free tools pass null, which is also the
+     * stable command id for builds. Application/start uses it as Run identity, never as a
+     * workspace receipt. Side-effect-free tools pass null, which is also the
      * marker that skips the unsettled-others check.</p>
      */
     public synchronized ToolCallRow registerToolCall(String taskId, String toolCallId,
@@ -237,6 +235,13 @@ public final class AgentTaskStore implements AgentTaskOccupancy {
         Optional<ToolCallRow> existing = findToolCall(taskId, toolCallId);
         if (existing.isEmpty()) {
             requireTaskAcceptsNewCalls(taskId);
+            if ("application".equals(toolName) && isApplicationStart(argsJson)) {
+                long starts = applicationCalls(taskId).stream().filter(call -> isApplicationStart(call.argsJson())).count();
+                if (starts >= 4) {
+                    throw new ApiException("AI_APPLICATION_START_LIMIT", 409, "The application start limit was reached");
+                }
+                if (operationId == null || !TASK_ID.matcher(operationId).matches()) throw unauthorizedRunCall();
+            }
             if (operationId != null && hasUnsettledCall(taskId)) {
                 throw new ApiException("AI_CALL_UNSETTLED", 409,
                     "An earlier tool call has not settled; resolve it before writing");
@@ -951,6 +956,82 @@ public final class AgentTaskStore implements AgentTaskOccupancy {
         Integer count = jdbc.queryForObject(
             "SELECT COUNT(*) FROM agent_task WHERE active_project = ?", Integer.class, projectId);
         return count != null && count > 0;
+    }
+
+    /** Refuses AI writes/builds while any durable application Run is active. */
+    public void requireNoActiveRun(String projectId) {
+        if (hasActiveRun(projectId)) {
+            throw new ApiException("AI_RUN_ACTIVE", 409, "Stop the application before editing or building");
+        }
+    }
+
+    private static boolean isApplicationStart(String argsJson) {
+        try {
+            return "start".equals(JSON.readTree(argsJson == null ? "{}" : argsJson).path("action").asText());
+        } catch (IOException ex) {
+            return false;
+        }
+    }
+
+    /** Calls include completed starts: close must still find every Run this task created. */
+    public List<ToolCallRow> applicationCalls(String taskId) {
+        return jdbc.query("SELECT " + TOOL_CALL_COLUMNS
+            + " FROM agent_tool_call WHERE task_id = ? AND tool_name = 'application'",
+            toolCallRowMapper(), taskId);
+    }
+
+    /**
+     * Checks durable task/project ownership and the original application action/target.
+     * The caller holds the project gate and this monitor until the Run insert completes.
+     * Application dispatch keeps its live execution claim through the subsequent slow IO.
+     */
+    @Override public synchronized void requireAgentRunCall(String taskId, String projectId,
+                                                           String toolCallId, String action, String runId) {
+        List<Row> tasks = jdbc.query("""
+            SELECT t.state, t.failure_code FROM agent_task t JOIN project p ON p.id = t.project_id
+            WHERE t.id = ? AND t.project_id = ? AND t.owner_id = p.owner_id
+            """, (rs, i) -> new Row(rs.getString(1), rs.getString(2)), taskId, projectId);
+        ToolCallRow call = findToolCall(taskId, toolCallId).orElse(null);
+        if (tasks.isEmpty() || call == null || !"application".equals(call.toolName()) || runId == null) {
+            throw unauthorizedRunCall();
+        }
+        Row task = tasks.get(0);
+        boolean accepting = "QUEUED".equals(task.state()) || "RUNNING".equals(task.state());
+        boolean closing = "NEEDS_ATTENTION".equals(task.state()) && CLOSING_MARKER.equals(task.failureCode());
+        if ((!accepting && !closing)
+            || !List.of("REGISTERED", "RUNNING", "COMPLETED", "NEEDS_ATTENTION").contains(call.state())
+            || (!closing && "NEEDS_ATTENTION".equals(call.state()))) {
+            throw unauthorizedRunCall();
+        }
+        try {
+            JsonNode args = JSON.readTree(call.argsJson() == null ? "{}" : call.argsJson());
+            boolean registeredStart = "start".equals(args.path("action").asText())
+                && runId.equals(call.workspaceOperationId()) && TASK_ID.matcher(runId).matches();
+            boolean registeredStop = "stop".equals(args.path("action").asText())
+                && runId.equals(args.path("runId").asText());
+            if ("start".equals(action)) {
+                if (!accepting || !registeredStart
+                    || !("REGISTERED".equals(call.state()) || "RUNNING".equals(call.state()))) {
+                    throw unauthorizedRunCall();
+                }
+                if (hasUnsettledCallOtherThan(taskId, toolCallId)) {
+                    throw new ApiException("AI_CALL_UNSETTLED", 409, "An earlier tool call has not settled");
+                }
+                // Fence close before the first Run insert, including callers that have not
+                // yet claimed the application dispatch. This never creates a second identity.
+                jdbc.update("UPDATE agent_tool_call SET state = 'RUNNING', updated_at = ? "
+                    + "WHERE task_id = ? AND tool_call_id = ? AND state = 'REGISTERED'",
+                    Timestamp.from(clock.instant()), taskId, toolCallId);
+            } else if (!"stop".equals(action) || !(registeredStop || (closing && registeredStart))) {
+                throw unauthorizedRunCall();
+            }
+        } catch (IOException ex) {
+            throw unauthorizedRunCall();
+        }
+    }
+
+    private static ApiException unauthorizedRunCall() {
+        return new ApiException("AI_TASK_NOT_ACTIVE", 409, "Task call is not authorized");
     }
 
     private boolean hasActiveRun(String projectId) {

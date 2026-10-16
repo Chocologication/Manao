@@ -137,6 +137,9 @@ public final class AgentProjectTools {
             // Only execution failures become persisted rejections; every refusal before the
             // registration (occupancy, id reuse) propagates to the caller unchanged.
             try {
+                if (SIDE_EFFECT_TOOLS.contains(request.name())) {
+                    tasks.requireNoActiveRun(owner.projectId());
+                }
                 if (BUILD_TOOL.equals(request.name())) {
                     buildGoal = buildGoal(request);
                 } else {

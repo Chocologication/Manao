@@ -54,13 +54,93 @@ public final class RunService {
     }
 
     public RunSummary start(String ownerId, String projectId, String expectedRevision) {
-        try (var lease = lifecycle.tryAcquire(projectId).orElseThrow(
-                () -> new ApiException("PROJECT_BUSY", 409, "Project is busy"))) {
-            return startLocked(ownerId, projectId, expectedRevision);
+        try (var lease = acquireProject(projectId)) {
+            agentTasks.requireBrowserWritable(projectId);
+            StartPlan plan = startLocked(ownerId, projectId, UUID.randomUUID().toString(), expectedRevision);
+            // Browser creation has no tool claim; retain its original protected launch boundary.
+            return launch(ownerId, plan);
         }
     }
 
-    private RunSummary startLocked(String ownerId, String projectId, String expectedRevision) {
+    /** Stable application identity is allocated by the durable tool ledger before this entry. */
+    public RunSummary startForAgent(String ownerId, String projectId, String taskId,
+                                    String toolCallId, String runId, String expectedRevision) {
+        StartPlan plan;
+        try (var lease = acquireProject(projectId)) {
+            synchronized (agentTasks) {
+                agentTasks.requireAgentRunCall(taskId, projectId, toolCallId, "start", runId);
+                if (store.findProjectForOwner(ownerId, projectId) == null) {
+                    throw new ApiException("ENTRY_NOT_FOUND", 404, "Project not found");
+                }
+                Optional<RunRecord> existing = store.findRunForOwner(ownerId, projectId, runId);
+                if (existing.isPresent()) {
+                    RunRecord original = existing.get();
+                    if (!projectId.equals(original.projectId())) {
+                        throw new ApiException("AI_RUN_NOT_FOUND", 404, "Run not found");
+                    }
+                    if (original.requestedRevision() != parseRevision(expectedRevision)) {
+                        throw new ApiException("WORKSPACE_REVISION_CONFLICT", 409, "The workspace changed; reload and retry.");
+                    }
+                    // Replays, including FAILED/terminal Runs, never re-drive ensureJob.
+                    return toSummary(original);
+                }
+                if (store.findRun(runId).isPresent()) {
+                    throw new ApiException("AI_RUN_NOT_FOUND", 404, "Run not found");
+                }
+                plan = startLocked(ownerId, projectId, runId, expectedRevision);
+            }
+        }
+        // Application dispatch's live claim remains held across this IO. Close can mark
+        // intent here, but cannot release the task until the dispatch settles the call.
+        return launch(ownerId, plan);
+    }
+
+    public RunSummary stopForAgent(String ownerId, String projectId, String taskId,
+                                   String toolCallId, String runId) {
+        StopPlan plan;
+        try (var lease = acquireProject(projectId)) {
+            synchronized (agentTasks) {
+                agentTasks.requireAgentRunCall(taskId, projectId, toolCallId, "stop", runId);
+                plan = prepareAgentStop(ownerId, projectId, runId);
+            }
+        }
+        if (!plan.request()) return toSummary(plan.run());
+        // The caller keeps its live application claim through these bounded requests and
+        // durable result settlement. Run observation can acquire the project gate meanwhile.
+        if (endpoints != null && isServiceRun(plan.run())) {
+            try {
+                endpoints.requestWithdraw(projectId, runId);
+            } catch (RuntimeException ex) {
+                LOG.warn("conditional endpoint withdrawal failed during agent stop", ex);
+            }
+        }
+        coordinator.requestStop(jobRef(plan.run()));
+        return toSummary(refetch(ownerId, plan.run()));
+    }
+
+    private record StopPlan(RunRecord run, boolean request) { }
+
+    private StopPlan prepareAgentStop(String ownerId, String projectId, String runId) {
+        RunRecord run = store.findRunForOwner(ownerId, projectId, runId)
+            .orElseThrow(() -> new ApiException("RUN_NOT_FOUND", 404, "Run not found"));
+        if (RunStateReducer.isTerminal(run.state())) return new StopPlan(run, false);
+        if (run.state() == RunState.STOPPING) return new StopPlan(run, true);
+        OptionalLong token = store.acquireFencingToken();
+        if (token.isEmpty()) {
+            throw new ApiException("INTERNAL_ERROR", 503, "Backend authority is temporarily unavailable");
+        }
+        boolean moved = store.requestStop(runId, "USER_STOPPED", token.getAsLong());
+        return new StopPlan(refetch(ownerId, run), moved);
+    }
+
+    private ProjectLifecycleGate.Lease acquireProject(String projectId) {
+        return lifecycle.tryAcquire(projectId).orElseThrow(
+            () -> new ApiException("PROJECT_BUSY", 409, "Project is busy"));
+    }
+
+    private record StartPlan(RunRecord run, ProjectRuntimeSpec spec, List<EnvVar> environment) { }
+
+    private StartPlan startLocked(String ownerId, String projectId, String runId, String expectedRevision) {
         RunStore.ProjectRecord project = store.findProjectForOwner(ownerId, projectId);
         if (project == null) {
             throw new ApiException("ENTRY_NOT_FOUND", 404, "Project not found");
@@ -68,8 +148,6 @@ public final class RunService {
         if (!"READY".equals(project.state())) {
             throw new ApiException("PROJECT_LOCKED", 409, "Project is locked");
         }
-        // A write-owning agent task and a Run are mutually exclusive for the same project.
-        agentTasks.requireBrowserWritable(projectId);
         long revision = parseRevision(expectedRevision);
         if (revision != project.revision()) {
             throw new ApiException("WORKSPACE_REVISION_CONFLICT", 409, "The workspace changed; reload and retry.");
@@ -87,7 +165,6 @@ public final class RunService {
             throw new ApiException("INTERNAL_ERROR", 503, "Backend authority is temporarily unavailable");
         }
         long token = fencingToken.getAsLong();
-        String runId = UUID.randomUUID().toString();
         RunRecord record = new RunRecord(runId, projectId, revision, RunState.STARTING, runPolicy.toJson(),
             null, null, null, null, null, null, 0L, Instant.now(), token);
         RunStore.InsertResult inserted = store.insertRun(record, token);
@@ -111,8 +188,15 @@ public final class RunService {
             throw new ApiException("INTERNAL_ERROR", 503, "Run could not be started");
         }
         RunRecord persisted = store.findRunForOwner(ownerId, projectId, runId).orElseThrow();
+        return new StartPlan(persisted, spec, applicationEnvironment);
+    }
+
+    private RunSummary launch(String ownerId, StartPlan plan) {
+        RunRecord persisted = plan.run();
+        String projectId = persisted.projectId();
+        String runId = persisted.id();
         try {
-            String jobRef = coordinator.ensureJob(persisted, projectId, spec.primaryPort(), applicationEnvironment);
+            String jobRef = coordinator.ensureJob(persisted, projectId, plan.spec().primaryPort(), plan.environment());
             String podRef = coordinator.findLivePod(runId).map(JobCoordinator.LivePod::podName).orElse(null);
             store.updateJobFacts(runId, jobRef, podRef);
         } catch (RuntimeException ex) {
@@ -133,6 +217,13 @@ public final class RunService {
     }
 
     public RunSummary stop(String ownerId, String projectId, String runId) {
+        try (var lease = acquireProject(projectId)) {
+            agentTasks.requireBrowserWritable(projectId);
+            return stopLocked(ownerId, projectId, runId);
+        }
+    }
+
+    private RunSummary stopLocked(String ownerId, String projectId, String runId) {
         RunRecord run = store.findRunForOwner(ownerId, projectId, runId)
             .orElseThrow(() -> new ApiException("RUN_NOT_FOUND", 404, "Run not found"));
         if (RunStateReducer.isTerminal(run.state())) {

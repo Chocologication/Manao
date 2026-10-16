@@ -30,6 +30,77 @@ class AgentTaskStoreTest {
     private static final Instant NOW = Instant.parse("2026-10-13T00:00:00Z");
 
     @Test
+    void applicationStartBudgetAndUnsettledCallExclusionAreDurable() {
+        try (var db = JdbcStoreTestSupport.create()) {
+            seed(db.jdbc());
+            var store = store(db);
+            String task = UUID.randomUUID().toString();
+            store.create(OWNER, PROJECT, new TaskRequest(task, "run", 7));
+            String run = UUID.randomUUID().toString();
+            store.registerToolCall(task, "start-0", "a".repeat(64), "application", "{\"action\":\"start\"}", 7, run);
+            assertThatThrownBy(() -> store.registerToolCall(task, "build", "b".repeat(64), "build", "{}", 7, "build-id"))
+                .isInstanceOfSatisfying(ApiException.class, ex -> assertThat(ex.code()).isEqualTo("AI_CALL_UNSETTLED"));
+            store.completeToolCall(task, "start-0", "{}");
+            store.registerToolCall(task, "build", "b".repeat(64), "build", "{}", 7, "build-id");
+            // Restore an in-flight original start to model a stale/concurrent caller that
+            // reached the Run entry after a build registered. The backend must refuse it.
+            db.jdbc().update("UPDATE agent_tool_call SET state = 'RUNNING' WHERE task_id = ? AND tool_call_id = 'start-0'", task);
+            assertThatThrownBy(() -> store.requireAgentRunCall(task, PROJECT, "start-0", "start", run))
+                .isInstanceOfSatisfying(ApiException.class, ex -> assertThat(ex.code()).isEqualTo("AI_CALL_UNSETTLED"));
+            store.completeToolCall(task, "build", "{}");
+            store.completeToolCall(task, "start-0", "{}");
+            for (int i = 1; i < 4; i++) {
+                store.registerToolCall(task, "start-" + i, "c".repeat(64), "application", "{\"action\":\"start\"}", 7,
+                    UUID.randomUUID().toString());
+                store.completeToolCall(task, "start-" + i, "{}");
+            }
+            // A restart sees the four durable starts; replaying an existing identity is free.
+            var restarted = store(db);
+            assertThat(restarted.registerToolCall(task, "start-0", "a".repeat(64), "application",
+                "{\"action\":\"start\"}", 7, run).workspaceOperationId()).isEqualTo(run);
+            assertThatThrownBy(() -> restarted.registerToolCall(task, "start-4", "d".repeat(64), "application",
+                    "{\"action\":\"start\"}", 7, UUID.randomUUID().toString()))
+                .isInstanceOfSatisfying(ApiException.class, ex -> assertThat(ex.code()).isEqualTo("AI_APPLICATION_START_LIMIT"));
+            assertThat(restarted.applicationCalls(task)).hasSize(4).allMatch(call -> "application".equals(call.toolName()));
+        }
+    }
+
+    @Test
+    void applicationRunAuthorizationUsesTheDurableCallAndClosingScope() {
+        try (var db = JdbcStoreTestSupport.create()) {
+            seed(db.jdbc());
+            var store = store(db);
+            String task = UUID.randomUUID().toString();
+            String run = UUID.randomUUID().toString();
+            store.create(OWNER, PROJECT, new TaskRequest(task, "run", 7));
+            store.registerToolCall(task, "start", "a".repeat(64), "application", "{\"action\":\"start\"}", 7, run);
+            store.requireAgentRunCall(task, PROJECT, "start", "start", run);
+            for (String[] forged : new String[][] {
+                    {task, "foreign", "start", "start", run},
+                    {task, PROJECT, "missing", "start", run},
+                    {"missing", PROJECT, "start", "start", run},
+                    {task, PROJECT, "start", "start", UUID.randomUUID().toString()},
+                    {task, PROJECT, "start", "stop", run}}) {
+                assertThatThrownBy(() -> store.requireAgentRunCall(forged[0], forged[1], forged[2], forged[3], forged[4]))
+                    .isInstanceOfSatisfying(ApiException.class, ex -> assertThat(ex.code()).isEqualTo("AI_TASK_NOT_ACTIVE"));
+            }
+            store.completeToolCall(task, "start", "{}");
+            assertThatThrownBy(() -> store.requireAgentRunCall(task, PROJECT, "start", "start", run))
+                .isInstanceOfSatisfying(ApiException.class, ex -> assertThat(ex.code()).isEqualTo("AI_TASK_NOT_ACTIVE"));
+            store.registerToolCall(task, "stop", "b".repeat(64), "application",
+                "{\"action\":\"stop\",\"runId\":\"old-run\"}", 7, UUID.randomUUID().toString());
+            store.requireAgentRunCall(task, PROJECT, "stop", "stop", "old-run");
+            store.beginClose(task);
+            store.requireAgentRunCall(task, PROJECT, "start", "stop", run);
+            store.requireAgentRunCall(task, PROJECT, "stop", "stop", "old-run");
+            assertThatThrownBy(() -> store.requireAgentRunCall(task, PROJECT, "start", "start", run))
+                .isInstanceOfSatisfying(ApiException.class, ex -> assertThat(ex.code()).isEqualTo("AI_TASK_NOT_ACTIVE"));
+            assertThatThrownBy(() -> store.requireAgentRunCall(task, PROJECT, "start", "stop", "old-run"))
+                .isInstanceOfSatisfying(ApiException.class, ex -> assertThat(ex.code()).isEqualTo("AI_TASK_NOT_ACTIVE"));
+        }
+    }
+
+    @Test
     void aDurableCreationReservationIsOneShotAndClosingWaitsForTheActualCreate() throws Exception {
         try (var db = JdbcStoreTestSupport.create()) {
             seed(db.jdbc());
@@ -129,16 +200,12 @@ class AgentTaskStoreTest {
     }
 
     @Test
-    void anActiveRunBlocksTaskRegistration() {
+    void anActiveRunAllowsTaskRegistration() {
         try (var db = JdbcStoreTestSupport.create()) {
             seed(db.jdbc());
             insertRun(db.jdbc(), "run-starting", "STARTING");
-            assertThatThrownBy(() -> store(db).create(OWNER, PROJECT,
-                    new TaskRequest(UUID.randomUUID().toString(), "change demo", 7)))
-                .isInstanceOfSatisfying(ApiException.class, ex -> {
-                    assertThat(ex.code()).isEqualTo("RUN_ALREADY_ACTIVE");
-                    assertThat(ex.status()).isEqualTo(409);
-                });
+            var request = new TaskRequest(UUID.randomUUID().toString(), "stop then change demo", 7);
+            assertThat(store(db).create(OWNER, PROJECT, request).writesLocked()).isTrue();
         }
     }
 

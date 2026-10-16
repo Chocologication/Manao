@@ -254,6 +254,14 @@ public final class Fabric8JobCoordinator implements JobCoordinator {
             "{}", null, null, null, null, null, null, 0L, null, 0L);
     }
 
+    @Override public void requestStop(String jobName) {
+        // A request-scoped view shares the existing connection pool; never close this view.
+        KubernetesClient bounded = client.newClient(new io.fabric8.kubernetes.client.RequestConfigBuilder()
+            .withRequestTimeout(1000).withRequestRetryBackoffLimit(0).build()).adapt(KubernetesClient.class);
+        bounded.batch().v1().jobs().inNamespace(namespace).withName(jobName)
+            .withGracePeriod(STOP_GRACE_PERIOD_SECONDS).delete();
+    }
+
     @Override public boolean stop(String jobName) {
         var resource = client.batch().v1().jobs().inNamespace(namespace).withName(jobName);
         if (resource.get() == null) return true;

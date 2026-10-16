@@ -26,6 +26,11 @@ public interface PublicEndpointGateway {
     /** Detaches the Service from any run without deleting the port allocation. */
     void withdraw(String projectId);
 
+    /** Bounded, conditional withdrawal of this exact Run; never changes a newer route. */
+    default void requestWithdraw(String projectId, String runId) {
+        throw new UnsupportedOperationException("Conditional withdrawal is not available");
+    }
+
     enum ApplyResult { CONFIRMED, CONFLICT, UNKNOWN }
 
     enum PreflightResult { AVAILABLE, IN_USE, UNKNOWN }
