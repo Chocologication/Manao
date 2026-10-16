@@ -541,7 +541,7 @@ async function startLongRunningRun(page: Page, accessToken: string): Promise<voi
   await setScenario(page, accessToken, 'run', 'disconnect');
   await page.getByRole('tab', { name: 'Run' }).click();
   await page.getByRole('button', { name: 'Start run' }).click();
-  await expect(page.getByLabel('Run state')).toHaveText('RUNNING');
+  await expect(page.getByLabel('Run state')).toContainText('RUNNING');
 }
 
 async function openTerminal(page: Page) {
@@ -731,14 +731,25 @@ test('preserves Unicode, onBinary mouse bytes, resize dedupe and local search ac
     (screenBox?.x ?? 0) + (screenBox?.width ?? 0) - 4,
     (screenBox?.y ?? 0) + Math.min(20, (screenBox?.height ?? 40) / 2),
   );
+  // X10 mouse reports keep flowing through onBinary as ESC [ M Cb Cx Cy,
+  // where every payload byte encodes its 1-based coordinate as value + 0x20.
+  const resizeColumns = parsedControls((await terminalSockets(page))[0]!, 'sent')
+    .filter((control) => control.type === 'terminal.resize')
+    .map((control) => Number(control.cols))
+    .filter((cols) => Number.isInteger(cols) && cols > 1);
+  expect(resizeColumns.length).toBeGreaterThan(0);
+  const mouseColumns = resizeColumns[resizeColumns.length - 1]!;
   await expect.poll(async () =>
     (await terminalSockets(page))[0]?.frames.some((frame) =>
       frame.direction === 'sent' &&
       frame.kind === 'binary' &&
+      frame.preview.length === 6 &&
       frame.preview[0] === 0x1b &&
       frame.preview[1] === 0x5b &&
       frame.preview[2] === 0x4d &&
-      frame.preview.some((byte) => byte > 0x7f),
+      frame.preview.slice(3).every((byte) => byte >= 0x20) &&
+      (frame.preview[4] ?? 0) - 0x20 >= mouseColumns - 3 &&
+      (frame.preview[5] ?? 0) - 0x20 >= 1,
     ),
   ).toBe(true);
 
@@ -892,7 +903,7 @@ test('close is explicit and abnormal disconnect never reconnects without a fresh
   await expect(page.getByRole('status', { name: 'Terminal state' })).toHaveText('Terminal error');
   await expect.poll(async () => (await terminalSockets(page))[thirdSocketIndex]?.closeCode)
     .toBe(1011);
-  await expect(page.getByLabel('Run state')).toHaveText('RUNNING');
+  await expect(page.getByLabel('Run state')).toContainText('RUNNING');
   await expect(page.locator(`[data-stage5-terminal-generation="${third.sessionId}"]`))
     .toHaveCount(0);
   const createPath = new URL(thirdResponse.url()).pathname.split('/');
@@ -1095,7 +1106,7 @@ test('current terminal 401 expires the active login', async ({ page }) => {
   await page.getByRole('button', { name: 'Open terminal' }).click();
   await expect(page).toHaveURL(/\/login$/);
   await expect(page.getByRole('main').getByRole('alert'))
-    .toHaveText('Your session has expired. Please sign in again.');
+    .toContainText('登录会话已过期，请重新登录');
 });
 
 test('ticket unavailable at handshake preserves the current login without reconnecting', async ({
@@ -1232,7 +1243,7 @@ test.fixme('keyboard-only terminal workflow and branded visual evidence stay acc
   await tabUntilFocused(page, start);
   await assertFocusVisible(start);
   await page.keyboard.press('Enter');
-  await expect(page.getByLabel('Run state')).toHaveText('RUNNING');
+  await expect(page.getByLabel('Run state')).toContainText('RUNNING');
 
   await tabUntilFocused(page, terminalTab);
   await assertFocusVisible(terminalTab);
@@ -1378,9 +1389,16 @@ test('captures branded Terminal and Audit evidence with viewport and pixel asser
     ) {
       expect(searchBox.x).toBeGreaterThanOrEqual(terminalBox.x);
       expect(searchBox.y).toBeGreaterThanOrEqual(terminalBox.y);
-      expect(searchBox.x).toBeGreaterThan(terminalBox.x + terminalBox.width / 2);
-      expect(searchBox.width).toBeLessThan(terminalBox.width / 2);
-      expect(searchBox.x + searchBox.width).toBeLessThanOrEqual(terminalBox.x + terminalBox.width);
+      // The overlay is docked to the viewport's top-right corner: it stays
+      // right/top anchored and covers the right half of the terminal column.
+      const overlayRightInset = terminalBox.x + terminalBox.width - (searchBox.x + searchBox.width);
+      const overlayTopInset = searchBox.y - terminalBox.y;
+      expect(overlayRightInset).toBeGreaterThanOrEqual(0);
+      expect(overlayRightInset).toBeLessThanOrEqual(16);
+      expect(overlayTopInset).toBeGreaterThanOrEqual(0);
+      expect(overlayTopInset).toBeLessThanOrEqual(16);
+      expect(searchBox.x + searchBox.width / 2).toBeGreaterThan(terminalBox.x + terminalBox.width / 2);
+      expect(searchBox.width).toBeLessThan(terminalBox.width * 0.6);
       expect(searchBox.y + searchBox.height).toBeLessThanOrEqual(terminalBox.y + terminalBox.height);
       for (const topBox of [toolbarBox, stateBox, rendererBox]) {
         expect(topBox.y + topBox.height).toBeLessThanOrEqual(searchBox.y);

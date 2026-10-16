@@ -233,6 +233,10 @@ test.describe.serial('python runtime cloud lifecycle', () => {
     test.setTimeout(1_200_000); // workspace provisioning plus the first cloud run
     await signIn(page);
 
+    // The console now collapses the create form behind 新建项目; 所有配置 keeps the
+    // single-page form this cloud-lifecycle flow drives.
+    await page.getByRole('button', { name: '新建项目' }).click();
+    await page.getByRole('button', { name: '所有配置' }).click();
     await page.getByLabel('Project name').fill(SCENE.consoleProjectName);
     await page.getByLabel('Template').selectOption({ label: 'Python console' });
     // A console template offers no MySQL/Redis or public-port options at all.
@@ -244,7 +248,9 @@ test.describe.serial('python runtime cloud lifecycle', () => {
 
     const card = projectCard(page, SCENE.consoleProjectName);
     await expect(card).toBeVisible();
-    await expect(card.getByText('READY', { exact: true })).toBeVisible({ timeout: 600_000 });
+    await expect(card.locator('p[data-state]')).toHaveAttribute('data-state', 'READY', {
+      timeout: 600_000,
+    });
     await openProject(page, SCENE.consoleProjectName);
     SCENE.consoleProjectId = currentProjectId(page);
 
@@ -335,6 +341,10 @@ test.describe.serial('python runtime cloud lifecycle', () => {
     test.setTimeout(1_200_000);
     await signIn(page);
 
+    // The console now collapses the create form behind 新建项目; 所有配置 keeps the
+    // single-page form this cloud-lifecycle flow drives.
+    await page.getByRole('button', { name: '新建项目' }).click();
+    await page.getByRole('button', { name: '所有配置' }).click();
     await page.getByLabel('Project name').fill(SCENE.webProjectName);
     await page.getByLabel('Template').selectOption({ label: 'Python FastAPI web' });
     await page.getByLabel('Public access').check();
@@ -354,7 +364,9 @@ test.describe.serial('python runtime cloud lifecycle', () => {
 
     const card = projectCard(page, SCENE.webProjectName);
     await expect(card).toBeVisible();
-    await expect(card.getByText('READY', { exact: true })).toBeVisible({ timeout: 600_000 });
+    await expect(card.locator('p[data-state]')).toHaveAttribute('data-state', 'READY', {
+      timeout: 600_000,
+    });
     // The exact user-selected NodePorts were provisioned, not substituted.
     await expect(card).toContainText(String(publicPortNumber1));
     await expect(card).toContainText(String(publicPortNumber2));

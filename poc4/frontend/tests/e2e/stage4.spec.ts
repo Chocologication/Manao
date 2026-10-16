@@ -5,7 +5,7 @@ const ALICE = { username: 'alice', password: 'demo-pass' };
 const BOB = { username: 'bob', password: 'demo-pass' };
 const ALICE_SEED_PROJECT_ID = 'prj-alice-notebook';
 const BOB_SEED_PROJECT_ID = 'prj-bob-lab';
-const SESSION_EXPIRED = 'Your session has expired. Please sign in again.';
+const SESSION_EXPIRED = '登录会话已过期，请重新登录';
 const SEED_LOG_MARKER = 'ensoai-stage4-seed-log';
 const GAP_DUP_MARKER = 'ensoai-stage4-gap-dup';
 const GAP_SKIPPED_MARKER = 'ensoai-stage4-gap-skipped';
@@ -891,6 +891,25 @@ async function tabUntilFocused(page: Page, locator: Locator, maxTabs = 80): Prom
   await expect(locator).toBeFocused();
 }
 
+/**
+ * Workbench panel tabs use a roving tabindex: only the selected tab is a Tab stop, so
+ * keyboard users reach the other panels with the arrow keys the tablist already handles.
+ */
+async function focusPanelTab(page: Page, name: string): Promise<void> {
+  const tablist = page.getByRole('tablist', { name: 'Workbench panels' });
+  const target = page.getByRole('tab', { name });
+  // Arrive with real Tab presses so :focus-visible still matches, then move the roving
+  // focus with the arrow keys the tablist handles itself.
+  await tabUntilFocused(page, tablist.locator('[role="tab"][tabindex="0"]'));
+  for (let attempt = 0; attempt < 6; attempt += 1) {
+    if ((await target.getAttribute('aria-selected')) === 'true') {
+      break;
+    }
+    await page.keyboard.press('ArrowRight');
+  }
+  await expect(target).toBeFocused();
+}
+
 async function triggerSessionRefetch(page: Page): Promise<void> {
   await page.evaluate(() => {
     Object.defineProperty(document, 'visibilityState', {
@@ -1651,7 +1670,7 @@ test('logout and current 401 close the stream; stale 401 does not clear Bob', as
   }
   expect((await unauthorized).status()).toBe(401);
   await expect(page).toHaveURL(/\/login$/);
-  await expect(page.getByRole('main').getByRole('alert')).toHaveText(SESSION_EXPIRED);
+  await expect(page.getByRole('main').getByRole('alert')).toContainText(SESSION_EXPIRED);
   expect(bobToken.length).toBeGreaterThan(0);
 });
 
@@ -1682,9 +1701,9 @@ test('completes File, Run, Start, history, log, New output and Stop from the key
     await page.evaluate(() => window.matchMedia('(prefers-reduced-motion: reduce)').matches),
   ).toBe(true);
   await setRunScenario(page, accessToken, 'disconnect');
-  await tabUntilFocused(page, page.getByRole('tab', { name: 'File' }));
+  await focusPanelTab(page, 'File');
   await assertFocusVisible(page.getByRole('tab', { name: 'File' }));
-  await tabUntilFocused(page, page.getByRole('tab', { name: 'Run' }));
+  await focusPanelTab(page, 'Run');
   await assertFocusVisible(page.getByRole('tab', { name: 'Run' }));
   await page.keyboard.press('Enter');
   await expect(page.getByRole('tab', { name: 'Run' })).toHaveAttribute('aria-selected', 'true');

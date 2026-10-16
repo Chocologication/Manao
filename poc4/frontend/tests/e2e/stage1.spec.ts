@@ -5,7 +5,7 @@ const BOB = { username: 'bob', password: 'demo-pass' };
 const ALICE_SEED_PROJECT_ID = 'prj-alice-notebook';
 const BOB_SEED_PROJECT_ID = 'prj-bob-lab';
 const MOCK_FAILURE_REASON = 'Mock workspace provisioning failed';
-const SESSION_EXPIRED = 'Your session has expired. Please sign in again.';
+const SESSION_EXPIRED = '登录会话已过期，请重新登录';
 const ACCESS_DENIED_LEAK = /not found|does not exist|bob|prj-bob|exist/i;
 
 const viewports = [
@@ -16,6 +16,16 @@ const viewports = [
 
 function projectCard(page: Page, name: string): Locator {
   return page.getByRole('article', { name });
+}
+
+/** The card keeps the machine state next to the localized label (READY -> 环境就绪). */
+function projectState(page: Page, name: string): Locator {
+  return projectCard(page, name).locator('p[data-state]');
+}
+
+/** A READY project route mounts the workbench shell instead of printing a state label. */
+async function expectWorkbenchMounted(page: Page): Promise<void> {
+  await expect(page.getByRole('tablist', { name: 'Workbench panels' })).toBeVisible();
 }
 
 function pngSize(bytes: Uint8Array): { width: number; height: number } {
@@ -45,12 +55,33 @@ async function signInAsAliceOnProjects(page: Page): Promise<string> {
   const accessToken = await signIn(page, ALICE);
   await expect(page).toHaveURL(/\/projects$/);
   await expect(projectCard(page, 'Alice Notebook')).toBeVisible();
-  await expect(projectCard(page, 'Alice Notebook').getByText('READY', { exact: true })).toBeVisible();
+  await expect(projectState(page, 'Alice Notebook')).toHaveAttribute('data-state', 'READY');
   return accessToken;
 }
 
+/** Opens the create form and returns the guided wizard to its first step. */
+async function resetCreateForm(page: Page): Promise<void> {
+  const toggle = page.getByRole('button', { name: '新建项目' });
+  if ((await toggle.getAttribute('aria-expanded')) !== 'true') {
+    await toggle.click();
+  }
+  const restart = page.getByRole('button', { name: '创建另一个项目' });
+  if ((await restart.count()) > 0) {
+    await restart.click();
+  }
+  if ((await page.getByLabel('Project name').count()) === 0) {
+    await page
+      .getByRole('navigation', { name: '创建项目步骤' })
+      .getByRole('button', { name: /项目名称/ })
+      .click();
+  }
+}
+
 async function createProject(page: Page, name: string): Promise<Locator> {
+  await resetCreateForm(page);
   await page.getByLabel('Project name').fill(name);
+  await page.getByRole('button', { name: '下一步' }).click();
+  await page.getByRole('button', { name: '下一步' }).click();
   await page.getByRole('button', { name: 'Create project' }).click();
   const card = projectCard(page, name);
   await expect(card).toBeVisible();
@@ -96,17 +127,33 @@ async function assertNoPanelOverlap(page: Page): Promise<void> {
   if (headerCount === 0 || mainCount === 0) {
     return;
   }
-  const headerBox = await page.locator('header').boundingBox();
-  const mainBox = await page.locator('main').boundingBox();
-  expect(headerBox).not.toBeNull();
-  expect(mainBox).not.toBeNull();
-  if (headerBox && mainBox) {
-    expect(headerBox.y + headerBox.height).toBeLessThanOrEqual(mainBox.y + 1);
+  // The redesigned shell nests the header inside <main>, so "header ends before main
+  // starts" no longer describes the layout. Assert instead that the block following the
+  // header is never covered by it, which still holds for the login page and the console.
+  const boxes = await page.evaluate(() => {
+    const header = document.querySelector('header');
+    if (header === null) {
+      return null;
+    }
+    let sibling: Element | null = header.nextElementSibling;
+    while (sibling !== null && sibling.getBoundingClientRect().height < 1) {
+      sibling = sibling.nextElementSibling;
+    }
+    return {
+      headerBottom: header.getBoundingClientRect().bottom,
+      siblingTop: sibling === null ? null : sibling.getBoundingClientRect().top,
+    };
+  });
+  expect(boxes).not.toBeNull();
+  if (boxes !== null && boxes.siblingTop !== null) {
+    expect(boxes.headerBottom).toBeLessThanOrEqual(boxes.siblingTop + 1);
   }
 }
 
 async function assertProjectStateLabelsUnclipped(page: Page): Promise<void> {
-  const labels = page.locator('article p').filter({ hasText: /^(CREATING|READY|FAILED)$/ });
+  const labels = page.locator(
+    'article p[data-state="CREATING"], article p[data-state="READY"], article p[data-state="FAILED"]',
+  );
   const count = await labels.count();
   expect(count).toBeGreaterThan(0);
   for (let index = 0; index < count; index += 1) {
@@ -166,8 +213,8 @@ test('invalid login stays on login and exposes one alert', async ({ page }) => {
 
   const alerts = page.getByRole('alert');
   await expect(alerts).toHaveCount(1);
-  await expect(alerts).toHaveText('Invalid username or password');
-  await expect(alerts).not.toHaveText('wrong-pass');
+  await expect(alerts).toContainText('用户名或密码错误');
+  await expect(alerts).not.toContainText('wrong-pass');
   await expect(page).toHaveURL(/\/login$/);
   await expect(page.getByLabel('Username')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Sign in' })).toBeVisible();
@@ -177,7 +224,7 @@ test('valid login returns to the original protected path or /projects', async ({
   await page.goto('/login');
   await signIn(page, ALICE);
   await expect(page).toHaveURL(/\/projects$/);
-  await expect(page.getByRole('heading', { name: 'Projects' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: '我的实验项目' })).toBeVisible();
   await expect(projectCard(page, 'Alice Notebook')).toBeVisible();
 
   await page.getByRole('button', { name: 'Log out' }).click();
@@ -190,7 +237,7 @@ test('valid login returns to the original protected path or /projects', async ({
   await signIn(page, ALICE);
   await expect(page).toHaveURL(new RegExp(`/projects/${ALICE_SEED_PROJECT_ID}$`));
   await expect(page.getByRole('heading', { name: 'Alice Notebook' })).toBeVisible();
-  await expect(page.getByText('READY', { exact: true })).toBeVisible();
+  await expectWorkbenchMounted(page);
 });
 
 test('create project shows CREATING then READY and allows project route navigation', async ({
@@ -199,17 +246,17 @@ test('create project shows CREATING then READY and allows project route navigati
   await signInAsAliceOnProjects(page);
 
   const card = await createProject(page, 'Workspace Alpha');
-  await expect(card.getByText('CREATING', { exact: true })).toBeVisible();
+  await expect(card.locator('p[data-state]')).toHaveAttribute('data-state', 'CREATING');
   await expect(card.getByRole('button', { name: 'Open' })).toBeDisabled();
 
-  await expect(card.getByText('READY', { exact: true })).toBeVisible();
+  await expect(card.locator('p[data-state]')).toHaveAttribute('data-state', 'READY');
   const open = card.getByRole('link', { name: 'Open' });
   await expect(open).toBeVisible();
   await open.click();
 
   await expect(page).toHaveURL(/\/projects\/prj-\d+$/);
   await expect(page.getByRole('heading', { name: 'Workspace Alpha' })).toBeVisible();
-  await expect(page.getByText('READY', { exact: true })).toBeVisible();
+  await expectWorkbenchMounted(page);
   await expect(page.getByTestId('terminal-spike-panel')).toHaveCount(0);
 });
 
@@ -217,8 +264,8 @@ test('fail- project reaches FAILED and displays the deterministic reason', async
   await signInAsAliceOnProjects(page);
 
   const card = await createProject(page, 'fail-workspace');
-  await expect(card.getByText('CREATING', { exact: true })).toBeVisible();
-  await expect(card.getByText('FAILED', { exact: true })).toBeVisible();
+  await expect(card.locator('p[data-state]')).toHaveAttribute('data-state', 'CREATING');
+  await expect(card.locator('p[data-state]')).toHaveAttribute('data-state', 'FAILED');
   await expect(card.getByText(MOCK_FAILURE_REASON)).toBeVisible();
   await expect(card.getByRole('link', { name: 'Open' })).toHaveCount(0);
   await expect(card.getByRole('button', { name: 'Open' })).toHaveCount(0);
@@ -235,7 +282,8 @@ test('eight projects disable creation and a bypassed ninth request returns the l
   }
 
   await expect(projectCard(page, 'Alice Notebook')).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Create project' })).toBeDisabled();
+  await resetCreateForm(page);
+  await expect(page.locator('.lab-create-region').locator('button[type="submit"]')).toBeDisabled();
   await expect(page.getByLabel('Project name')).toBeDisabled();
   await expect(page.getByText('Project limit reached')).toBeVisible();
 
@@ -259,14 +307,14 @@ test('eight projects disable creation and a bypassed ninth request returns the l
   expect(bypassed.body.code).toBe('PROJECT_LIMIT_REACHED');
   expect(bypassed.body.message).toBe('Project limit reached');
   await expect(projectCard(page, 'Ninth Workspace')).toHaveCount(0);
-  await expect(page.getByRole('button', { name: 'Create project' })).toBeDisabled();
+  await expect(page.locator('.lab-create-region').locator('button[type="submit"]')).toBeDisabled();
 });
 
 test('forced 401 clears cached projects and redirects to login', async ({ page }) => {
   const accessToken = await signInAsAliceOnProjects(page);
 
   const probe = await createProject(page, 'Session Probe');
-  await expect(probe.getByText('CREATING', { exact: true })).toBeVisible();
+  await expect(probe.locator('p[data-state]')).toHaveAttribute('data-state', 'CREATING');
 
   const unauthorizedList = page.waitForResponse((response) => {
     const { pathname } = new URL(response.url());
@@ -309,8 +357,8 @@ test('forced 401 clears cached projects and redirects to login', async ({ page }
   await expect(page).toHaveURL(/\/login$/);
   const alerts = page.getByRole('alert');
   await expect(alerts).toHaveCount(1);
-  await expect(alerts).toHaveText(SESSION_EXPIRED);
-  await expect(alerts).not.toHaveText('mock-trace-unauthenticated');
+  await expect(alerts).toContainText(SESSION_EXPIRED);
+  await expect(alerts).not.toContainText('mock-trace-unauthenticated');
   await expect(page.getByText('Alice Notebook')).toHaveCount(0);
   await expect(page.getByText('Session Probe')).toHaveCount(0);
 });
@@ -323,10 +371,10 @@ test("Bob's project produces generic access denied for Alice", async ({ page }) 
 
   const alert = page.getByRole('alert');
   await expect(alert).toHaveText('Access denied');
-  await expect(alert).not.toHaveText(ACCESS_DENIED_LEAK);
+  await expect(alert).not.toContainText(ACCESS_DENIED_LEAK);
   await expect(page.getByRole('link', { name: 'Back to projects' })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Bob Lab' })).toHaveCount(0);
-  await expect(page.getByText('READY', { exact: true })).toHaveCount(0);
+  await expect(page.locator('[data-state="READY"]')).toHaveCount(0);
 });
 
 test("logout followed by Bob login never shows Alice's cached projects", async ({ page }) => {
@@ -342,7 +390,7 @@ test("logout followed by Bob login never shows Alice's cached projects", async (
   await signIn(page, BOB);
   await expect(page).toHaveURL(/\/projects$/);
   await expect(projectCard(page, 'Bob Lab')).toBeVisible();
-  await expect(projectCard(page, 'Bob Lab').getByText('READY', { exact: true })).toBeVisible();
+  await expect(projectState(page, 'Bob Lab')).toHaveAttribute('data-state', 'READY');
   await expect(projectCard(page, 'Alice Notebook')).toHaveCount(0);
   await expect(page.getByText('alice', { exact: true })).toHaveCount(0);
   await expect(page.getByText('bob', { exact: true })).toBeVisible();
@@ -366,10 +414,10 @@ for (const viewport of viewports) {
     );
 
     await signIn(page, ALICE);
-    await expect(page.getByRole('heading', { name: 'Projects' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: '我的实验项目' })).toBeVisible();
     await expect(projectCard(page, 'Alice Notebook')).toBeVisible();
-    await expect(projectCard(page, 'Alice Notebook').getByText('READY', { exact: true })).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Create project' })).toBeVisible();
+    await expect(projectState(page, 'Alice Notebook')).toHaveAttribute('data-state', 'READY');
+    await expect(page.getByRole('button', { name: '新建项目' })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Log out' })).toBeVisible();
     await prepareVisualCapture(page);
     await assertNoHorizontalOverflow(page);

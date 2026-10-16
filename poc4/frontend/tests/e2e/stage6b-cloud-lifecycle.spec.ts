@@ -85,7 +85,9 @@ test.describe.serial('stage6b cloud lifecycle', () => {
     await signIn(page);
     await createProject(page, SCENE.projectName);
     const card = projectCard(page, SCENE.projectName);
-    await expect(card.getByText('READY', { exact: true })).toBeVisible({ timeout: 600_000 });
+    await expect(card.locator('p[data-state]')).toHaveAttribute('data-state', 'READY', {
+      timeout: 600_000,
+    });
 
     const open = card.getByRole('link', { name: 'Open' });
     await expect(open).toBeVisible();
@@ -282,6 +284,8 @@ async function signIn(page: Page): Promise<void> {
 }
 
 async function createProject(page: Page, name: string): Promise<void> {
+  await page.getByRole('button', { name: '新建项目' }).click();
+  await page.getByRole('button', { name: '所有配置' }).click();
   await page.getByLabel('Project name').fill(name);
   await page.getByRole('button', { name: 'Create project' }).click();
   await expect(projectCard(page, name)).toBeVisible();

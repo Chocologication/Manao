@@ -203,6 +203,10 @@ test.describe.serial('java runtime cloud lifecycle', () => {
     test.setTimeout(1_500_000);
     await signIn(page);
 
+    // The console now collapses the create form behind 新建项目; 所有配置 keeps the
+    // single-page form this cloud-lifecycle flow drives.
+    await page.getByRole('button', { name: '新建项目' }).click();
+    await page.getByRole('button', { name: '所有配置' }).click();
     await page.getByLabel('Project name').fill(SCENE.projectName);
     await page.getByLabel('Template').selectOption({ label: 'Java Spring Boot web' });
     await page.getByLabel('Public access').check();
@@ -224,7 +228,9 @@ test.describe.serial('java runtime cloud lifecycle', () => {
     // Project READY plus both selected dependencies READY on the card's runtime view.
     const card = projectCard(page, SCENE.projectName);
     await expect(card).toBeVisible();
-    await expect(card.getByText('READY', { exact: true })).toBeVisible({ timeout: 600_000 });
+    await expect(card.locator('p[data-state]')).toHaveAttribute('data-state', 'READY', {
+      timeout: 600_000,
+    });
     await expect(card.getByText('MySQL READY')).toBeVisible({ timeout: 840_000 });
     await expect(card.getByText('Redis READY')).toBeVisible({ timeout: 840_000 });
     // The exact user-selected NodePorts were provisioned, not substituted.
