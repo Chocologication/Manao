@@ -159,6 +159,8 @@ export async function createPiSession(options: {
   // The expected revision is worker-tracked state: seeded from WorkerStart and
   // advanced by every observed tool result, never taken from model arguments.
   let observedRevision = Number.parseInt(options.startRevision ?? "0", 10) || 0;
+  let fatalToolCode: string | null = null;
+  let abortAfterFatal = () => { };
   const customTools = createProjectTools({
     backend,
     taskId,
@@ -166,6 +168,10 @@ export async function createPiSession(options: {
     onResult: (result) => {
       const seen = Number.parseInt(result.workspaceRevision, 10);
       if (Number.isFinite(seen) && seen > observedRevision) observedRevision = seen;
+    },
+    onFatal: (code) => {
+      fatalToolCode ??= code;
+      abortAfterFatal();
     },
   });
 
@@ -183,8 +189,9 @@ export async function createPiSession(options: {
     customTools,
   });
   session.agent.toolExecution = "sequential";
+  abortAfterFatal = () => session.agent.abort();
 
-  return new DefaultPiTaskSession(taskId, session, customTools, progress, budgets, () => deps?.now?.() ?? Date.now());
+  return new DefaultPiTaskSession(taskId, session, customTools, progress, budgets, () => deps?.now?.() ?? Date.now(), () => fatalToolCode);
 }
 
 /**
@@ -247,6 +254,7 @@ class DefaultPiTaskSession implements PiTaskSession {
     private readonly progress: ProgressChain,
     private readonly budgets: WorkerBudgets,
     private readonly now: () => number,
+    private readonly fatalToolCode: () => string | null,
   ) {
     this.unsubscribe = session.subscribe((event) => this.onEvent(event));
   }
@@ -339,6 +347,12 @@ class DefaultPiTaskSession implements PiTaskSession {
       .find((message) => message.role === "assistant") as AssistantMessage | undefined;
     const summary = lastAssistant === undefined ? "" : messageText(lastAssistant);
     const bounded = truncate(summary, MAX_PROGRESS_TEXT_BYTES);
+
+    const fatalCode = this.fatalToolCode();
+    if (fatalCode !== null) {
+      return { state: "FAILED", summary: bounded.text, failureCode: fatalCode,
+        reason: "the task stopped after an unresolved tool outcome" };
+    }
 
     if (promptError !== null) {
       return {

@@ -21,7 +21,7 @@ import {
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { BackendClient, ProgressChain, type ToolResult } from "../src/backend-client.js";
+import { BackendClient, BackendHttpError, ProgressChain, type ToolResult } from "../src/backend-client.js";
 import { createPiSession, type PiTaskOutcome } from "../src/pi-session.js";
 
 // ---------------------------------------------------------------------------
@@ -249,6 +249,19 @@ async function runScriptedTask(
 // ---------------------------------------------------------------------------
 
 describe("pi session", () => {
+  it.each(["AI_CALL_UNKNOWN", "AI_CALL_NEEDS_ATTENTION", "AI_APPLICATION_UNAVAILABLE"])("ends FAILED on %s and cannot execute later same-batch mutations", async (code) => {
+    const { backend, outcome } = await runScriptedTask([
+      { toolCalls: [{ id: "unknown", name: "build", args: { goal: "test" } },
+        { id: "unsafe-write", name: "write_file", args: { path: "pom.xml", content: "unsafe" } },
+        { id: "unsafe-start", name: "application", args: { action: "start" } }] },
+      { text: "I will pretend the task completed." },
+    ], [() => { throw new BackendHttpError(0, code, "unknown outcome"); }]);
+    expect(backend.calls.map((call) => call.request.toolCallId)).toEqual(["unknown"]);
+    expect(outcome).toMatchObject({ state: "FAILED", failureCode: code });
+    const terminal = backend.progressItems.filter((item) => item.kind === "terminal");
+    expect(terminal).toHaveLength(1);
+    expect(JSON.parse(terminal[0]!.text)).toMatchObject({ state: "FAILED", failureCode: code });
+  });
   it("gives Pi application feedback capabilities and evidence rules without enabling built-in tools", async () => {
     let options: CreateAgentSessionOptions | undefined;
     await runScriptedTask([{ text: "done" }], [resultFor], { observeOptions: (value) => { options = value; } });

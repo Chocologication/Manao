@@ -146,7 +146,7 @@ export class BackendClient {
     let registered = false;
     let replayed = false;
     for (;;) {
-      const currentDeadline = registered ? deadline : admissionDeadline ?? deadline;
+      const currentDeadline = registered || submissionUnknown ? deadline : admissionDeadline ?? deadline;
       if (this.now() >= currentDeadline) {
         const definitelyBusy = admissionDeadline !== null && !registered && !submissionUnknown;
         throw new BackendHttpError(definitelyBusy ? 409 : 0,
@@ -163,7 +163,9 @@ export class BackendClient {
           if (registered || (replayed && admissionDeadline === null)) {
             throw new BackendHttpError(0, "AI_CALL_UNKNOWN", "the original tool call is absent after reconciliation");
           }
-          if (this.now() >= (admissionDeadline ?? deadline)) continue;
+          if (this.now() >= (admissionDeadline ?? deadline)) {
+            throw new BackendHttpError(0, "AI_CALL_UNKNOWN", "the original call is absent after admission expired; no further execution was submitted");
+          }
           submissionUnknown = false;
           replayed = true;
           // Only a fresh ledger404 permits the SAME request; any lost reply returns to GET.
@@ -185,7 +187,7 @@ export class BackendClient {
         if (isBusy(error)) { if (!registered) noteBusy(); }
         else if (error instanceof BackendHttpError) throw error;
       }
-      const remaining = (registered ? deadline : admissionDeadline ?? deadline) - this.now();
+      const remaining = (registered || submissionUnknown ? deadline : admissionDeadline ?? deadline) - this.now();
       if (remaining > 0) await this.delay(Math.min(SETTLE_POLL_INTERVAL_MS, remaining));
     }
   }

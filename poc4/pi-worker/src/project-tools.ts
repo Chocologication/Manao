@@ -8,7 +8,7 @@
  */
 import { Type, type Static } from "typebox";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
-import type { BackendClient, ToolResult } from "./backend-client.js";
+import { BackendHttpError, type BackendClient, type ToolResult } from "./backend-client.js";
 
 export const TOOL_NAMES = ["list_files", "read_file", "write_file", "build", "application", "app_http_get"] as const;
 
@@ -19,6 +19,8 @@ export interface ProjectToolDeps {
   getRevision: () => string;
   /** Observes each settled tool result (revision tracking, diagnostics). */
   onResult?: (result: ToolResult) => void;
+  /** Stops the session after a tool outcome can no longer be safely established. */
+  onFatal?: (code: string) => void;
 }
 
 const directoryArgs = Type.Object({
@@ -61,6 +63,7 @@ const appHttpGetArgs = Type.Object({ runId: Type.String(), path: Type.String({ m
  * result the model reads and acts on in the next round, not a thrown failure.
  */
 export function createProjectTools(deps: ProjectToolDeps): Array<ToolDefinition> {
+  let fatalCode: string | null = null;
   // In-flight dedup: a replayed toolCallId joins the promise of the call still
   // running, so one backend invocation serves both. After settling the entry is
   // dropped — a later replay is answered from the backend's durable ledger.
@@ -87,15 +90,27 @@ export function createProjectTools(deps: ProjectToolDeps): Array<ToolDefinition>
     params: Record<string, unknown>,
     signal: AbortSignal | undefined,
   ): Promise<{ content: Array<{ type: "text"; text: string }>; details: ToolResult }> => {
+    if (fatalCode !== null) {
+      throw new BackendHttpError(0, fatalCode, "the task stopped after an unresolved tool outcome");
+    }
     if (signal?.aborted) {
       throw new Error(`tool ${name} was aborted before it could run`);
     }
-    const result = await deps.backend.invoke(deps.taskId, {
-      toolCallId,
-      name,
-      expectedRevision: Number.parseInt(deps.getRevision(), 10) || 0,
-      args: params,
-    });
+    let result: ToolResult;
+    try {
+      result = await deps.backend.invoke(deps.taskId, {
+        toolCallId,
+        name,
+        expectedRevision: Number.parseInt(deps.getRevision(), 10) || 0,
+        args: params,
+      });
+    } catch (error) {
+      if (error instanceof BackendHttpError && ["AI_CALL_UNKNOWN", "AI_CALL_NEEDS_ATTENTION", "AI_APPLICATION_UNAVAILABLE"].includes(error.code)) {
+        fatalCode = error.code;
+        deps.onFatal?.(fatalCode);
+      }
+      throw error;
+    }
     deps.onResult?.(result);
     return {
       content: [{ type: "text", text: JSON.stringify(result) }],

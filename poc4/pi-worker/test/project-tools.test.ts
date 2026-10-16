@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
-import type { ToolResult } from "../src/backend-client.js";
+import { BackendHttpError, type ToolResult } from "../src/backend-client.js";
 import { createProjectTools, TOOL_NAMES } from "../src/project-tools.js";
 
 interface BackendStub {
@@ -27,6 +27,30 @@ function toolResult(toolCallId: string, data: unknown): ToolResult {
 }
 
 describe("worker project tools", () => {
+  it.each(["AI_CALL_UNKNOWN", "AI_CALL_NEEDS_ATTENTION", "AI_APPLICATION_UNAVAILABLE"])("blocks later backend work after fatal %s even without an abort signal", async (code) => {
+    const invoke = vi.fn().mockRejectedValueOnce(new BackendHttpError(0, code, "unknown outcome"))
+      .mockResolvedValue(toolResult("later", {}));
+    const onFatal = vi.fn();
+    const tools = createProjectTools({ backend: { invoke } as never, taskId: "task-1", getRevision: () => "7", onFatal });
+    await expect(tools.find((tool) => tool.name === "build")!.execute("first", { goal: "test" }, undefined, undefined, {} as never)).rejects.toBeInstanceOf(Error);
+    for (const [name, args] of [["write_file", { path: "pom.xml", content: "unsafe" }], ["application", { action: "start" }]] as const) {
+      await expect(tools.find((tool) => tool.name === name)!.execute("later", args, undefined, undefined, {} as never)).rejects.toBeInstanceOf(Error);
+    }
+    expect(invoke).toHaveBeenCalledTimes(1);
+    expect(onFatal).toHaveBeenCalledExactlyOnceWith(code);
+  });
+
+  it("allows a later mediated repair after a decided validation rejection", async () => {
+    const invoke = vi.fn().mockRejectedValueOnce(new BackendHttpError(422, "VALIDATION_ERROR", "invalid arguments"))
+      .mockResolvedValue(toolResult("fixed", { path: "pom.xml" }));
+    const onFatal = vi.fn();
+    const tools = createProjectTools({ backend: { invoke } as never, taskId: "task-1", getRevision: () => "7", onFatal });
+    const write = tools.find((tool) => tool.name === "write_file")!;
+    await expect(write.execute("invalid", { path: "pom.xml", content: "x" }, undefined, undefined, {} as never)).rejects.toBeInstanceOf(Error);
+    await write.execute("fixed", { path: "pom.xml", content: "fixed" }, undefined, undefined, {} as never);
+    expect(invoke).toHaveBeenCalledTimes(2);
+    expect(onFatal).not.toHaveBeenCalled();
+  });
   it.each([
     ["application", { action: "start" }],
     ["application", { action: "status", runId: "run-1", waitSeconds: 10 }],

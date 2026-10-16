@@ -111,7 +111,7 @@ describe("bounded same-call PROJECT_BUSY admission", () => {
       .mockImplementation(async () => busy());
     const { client, now } = harness(transport);
     await expect(client.invoke("task-1", request)).rejects.toMatchObject({ code: "AI_CALL_UNKNOWN" });
-    expect(now()).toBe(10000);
+    expect(now()).toBe(720000);
     expect(transport.mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(2);
   });
   it("does not turn a registered build's settlement into a ten-second admission timeout", async () => {
@@ -125,6 +125,29 @@ describe("bounded same-call PROJECT_BUSY admission", () => {
     expect(await client.invoke("task-1", request)).toEqual(done);
     expect(now()).toBeGreaterThan(10000);
     expect(transport.mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(1);
+  });
+  it.each(["RUNNING", "COMPLETED"])("queries the original %s call after a replay POST uses the entire admission window", async (state) => {
+    let clock = 0;
+    const transport = vi.fn<typeof fetch>().mockResolvedValueOnce(busy()).mockResolvedValueOnce(response(null, 404))
+      .mockImplementationOnce(async () => { clock = 10000; throw new DOMException("response timeout", "TimeoutError"); })
+      .mockResolvedValueOnce(response(state === "COMPLETED" ? { state, result: done } : { state, result: null }))
+      .mockResolvedValueOnce(response({ state: "COMPLETED", result: done }));
+    const client = new BackendClient({ baseUrl: "http://backend.invalid", token: "test-only", instanceId: "worker-1", epoch: "1", fetch: transport,
+      now: () => clock, delay: async (ms) => { clock += ms; } });
+    expect(await client.invoke("task-1", request)).toEqual(done);
+    expect(transport.mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(2);
+    expect(transport.mock.calls[3]![1]?.method).toBe("GET");
+    if (state === "RUNNING") expect(clock).toBeGreaterThan(10000);
+  });
+  it("never replays execution when an unknown POST is found absent after admission expired", async () => {
+    let clock = 0;
+    const transport = vi.fn<typeof fetch>().mockResolvedValueOnce(busy()).mockResolvedValueOnce(response(null, 404))
+      .mockImplementationOnce(async () => { clock = 10000; throw new TypeError("reply lost"); })
+      .mockResolvedValueOnce(response(null, 404));
+    const client = new BackendClient({ baseUrl: "http://backend.invalid", token: "test-only", instanceId: "worker-1", epoch: "1", fetch: transport,
+      now: () => clock, delay: async (ms) => { clock += ms; } });
+    await expect(client.invoke("task-1", request)).rejects.toMatchObject({ code: "AI_CALL_UNKNOWN" });
+    expect(transport.mock.calls.map(([, init]) => init?.method)).toEqual(["POST", "GET", "POST", "GET"]);
   });
   it("fails closed for registered NEEDS_ATTENTION and for other GET conflicts", async () => {
     for (const refusal of [response({ state: "NEEDS_ATTENTION", result: null }), response({ code: "AI_CALL_MISMATCH" }, 409)]) {
