@@ -39,3 +39,6 @@ poc4/pi-worker/** text=auto eol=lf
 # keep LF in index and working tree so a fresh checkout under core.autocrlf reproduces
 # the recorded digest exactly (AI stage-one plan Task 6).
 poc4/frontend/tests/fixtures/ai-stage1/** text=auto eol=lf
+
+# Stage-two bootstrap and independent verification pin these exact LF fixture bytes.
+poc4/frontend/tests/fixtures/ai-stage2/** text=auto eol=lf
