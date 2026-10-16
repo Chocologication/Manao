@@ -107,6 +107,12 @@ export function isAgentTaskOccupying(state: AgentTaskState): boolean {
   return state === 'QUEUED' || state === 'RUNNING' || state === 'NEEDS_ATTENTION';
 }
 
+/** Result-bearing tool completion ID; shared by browser controls and acceptance collection. */
+export function buildToolCallId(progressText: string): string | null {
+  const match = /^(?:build|application|app_http_get) ([A-Za-z0-9_-]{1,64})$/.exec(progressText.trim());
+  return match === null ? null : match[1]!;
+}
+
 /** The owner browser's view of one settled tool call (backend AgentToolCallView). */
 export type AgentToolCallResult = {
   toolCallId: string;

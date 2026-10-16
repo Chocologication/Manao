@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { expect, test, type Page } from '@playwright/test';
+import { buildToolCallId } from '../../src/contracts/agentTask';
 
 // Real deployment/model only. Node's operator subprocess receives DB/kubectl
 // environment; those credentials are never injected into the page or attachments.
@@ -85,9 +86,9 @@ async function fixtureUnchanged(page: Page) {
 }
 async function tools(page: Page, task: Task): Promise<Tool[]> {
   const ids = task.progress.filter((entry) => entry.kind === 'tool_end')
-    .map((entry) => /^(application|app_http_get|build) ([A-Za-z0-9-]+)$/.exec(entry.text))
-    .filter((entry) => entry !== null).map((entry) => entry[2]!);
-  return Promise.all([...new Set(ids)].map((id) => json<Tool>(page, `${ROOT}/agent-tasks/${task.taskId}/tools/${id}`)));
+    .map((entry) => buildToolCallId(entry.text))
+    .filter((id): id is string => id !== null);
+  return Promise.all([...new Set(ids)].map((id) => json<Tool>(page, `${ROOT}/agent-tasks/${task.taskId}/tools/${encodeURIComponent(id)}`)));
 }
 async function operatorVerdict(taskId: string): Promise<Record<string, unknown>> {
   const script = fileURLToPath(new URL('../../scripts/ai-stage2-verify-ledger.mjs', import.meta.url));

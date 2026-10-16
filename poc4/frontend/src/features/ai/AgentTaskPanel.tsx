@@ -15,6 +15,7 @@ import { parseRunId } from '@/contracts/run';
 import {
   buildCleanupConfirmed,
   buildExitCode,
+  buildToolCallId,
   isAgentTaskOccupying,
   applicationData,
   applicationError,
@@ -51,11 +52,7 @@ export type AgentTaskPanelProps = {
 
 type Probe = { kind: 'found'; task: AgentTaskSnapshot } | { kind: 'missing' } | { kind: 'unknown' };
 
-/** Only mediated tools with an owner result view can be opened. */
-export function buildToolCallId(progressText: string): string | null {
-  const match = /^(?:build|application|app_http_get) ([A-Za-z0-9-]+)$/.exec(progressText.trim());
-  return match === null ? null : match[1]!;
-}
+export { buildToolCallId } from '@/contracts/agentTask';
 
 function agentTaskStartErrorMessage(error: unknown): string {
   if (error instanceof ApiRequestError && error.body !== null) {

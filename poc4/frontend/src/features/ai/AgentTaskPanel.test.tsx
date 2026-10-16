@@ -572,6 +572,39 @@ describe('AgentTaskPanel build results (review fix I9)', () => {
     expect(document.querySelector('img')).toBeNull();
   });
 
+  it.each(['build', 'application', 'app_http_get'] as const)('loads the exact provider underscore ID for %s and keeps Run navigation', async (name) => {
+    const user = userEvent.setup();
+    const id = `call_00_ET_CpH3lmt97CpyOIZ6zI8g3166_${name}`;
+    const runId = '1b8fd38f-0f9e-4c28-9c48-3f5f4a2b1c11';
+    const onViewRun = vi.fn();
+    const requestedIds: string[] = [];
+    const data = name === 'build'
+      ? { exitCode: 0, cleanupConfirmed: true, output: 'PROVIDER BUILD SUCCESS' }
+      : name === 'application'
+        ? { kind: 'application', action: 'status', run: { id: runId, state: 'RUNNING', requestedWorkspaceRevision: '7',
+          firstReadyAt: '2026-10-16T12:00:00Z', expiresAt: null, finishedAt: null, exitCode: null, terminationReason: null },
+          activeRunId: runId, stoppedConfirmed: false, logs: null }
+        : { kind: 'app_http_get', runId, path: '/api/demo?name=Pi', statusCode: 200,
+          contentType: 'application/json', body: '{"message":"Hello Pi underscore"}', truncated: false, error: null };
+    server.use(http.get(`${TASKS_URL}/${TASK_ID}/tools/:id`, ({ params }) => {
+      requestedIds.push(String(params.id));
+      return HttpResponse.json({ toolCallId: id, toolName: name, data });
+    }));
+    renderPanel({ task: occupyingTask({ progress: [{ seq: 1, kind: 'tool_end', text: `${name} ${id}`, truncated: false }] }), onViewRun });
+    const label = name === 'build' ? 'View build result' : name === 'application' ? 'View application result' : 'View HTTP result';
+    await user.click(screen.getByRole('button', { name: label }));
+    expect(requestedIds).toEqual([id]);
+    if (name === 'build') {
+      expect(await screen.findByText('PROVIDER BUILD SUCCESS')).toBeInTheDocument();
+      expect(screen.getByText('0')).toBeInTheDocument();
+    } else {
+      expect(await screen.findByText(name === 'application' ? 'State: RUNNING' : 'Status: 200')).toBeInTheDocument();
+      if (name === 'app_http_get') expect(screen.getByText('{"message":"Hello Pi underscore"}')).toBeInTheDocument();
+      await user.click(screen.getByRole('button', { name: 'View run' }));
+      expect(onViewRun).toHaveBeenCalledWith(runId);
+    }
+  });
+
   const TOOLS_URL = `${TASKS_URL}/${TASK_ID}/tools/call-9`;
 
   function taskWithSettledBuild(): AgentTaskSnapshot {
