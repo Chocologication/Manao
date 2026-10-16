@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { expect, test, type Page } from '@playwright/test';
 import { buildToolCallId } from '../../src/contracts/agentTask';
+import { collectToolResults, verifyMissingToolResults } from '../../scripts/ai-stage2-tool-results.ts';
 
 // Real deployment/model only. Node's operator subprocess receives DB/kubectl
 // environment; those credentials are never injected into the page or attachments.
@@ -28,7 +29,6 @@ const TERMINAL = new Set(['SUCCEEDED', 'FAILED', 'CANCELLED', 'TIMED_OUT']);
 type Run = { id: string; state: string; firstReadyAt: string | null; finishedAt: string | null; requestedWorkspaceRevision: string };
 type Task = { taskId: string; state: string; workspaceRevision: string; changedPaths: string[];
   writesLocked: boolean; progress: Array<{ kind: string; text: string }> };
-type Tool = { toolCallId: string; toolName: string; data: Record<string, unknown> };
 let token = '', mainTaskId = '', finalRunId = '';
 
 async function api(page: Page, path: string, method = 'GET', data?: unknown) {
@@ -84,11 +84,11 @@ async function fixtureUnchanged(page: Page) {
   expect(fixture.content).toBe(FIXTURE_BYTES.toString('utf8'));
   expect(createHash('sha256').update(fixture.content).digest('hex')).toBe(RECORDED_FIXTURE_SHA);
 }
-async function tools(page: Page, task: Task): Promise<Tool[]> {
+async function tools(page: Page, task: Task) {
   const ids = task.progress.filter((entry) => entry.kind === 'tool_end')
     .map((entry) => buildToolCallId(entry.text))
     .filter((id): id is string => id !== null);
-  return Promise.all([...new Set(ids)].map((id) => json<Tool>(page, `${ROOT}/agent-tasks/${task.taskId}/tools/${encodeURIComponent(id)}`)));
+  return collectToolResults(ids, (id) => api(page, `${ROOT}/agent-tasks/${task.taskId}/tools/${encodeURIComponent(id)}`));
 }
 async function operatorVerdict(taskId: string): Promise<Record<string, unknown>> {
   const script = fileURLToPath(new URL('../../scripts/ai-stage2-verify-ledger.mjs', import.meta.url));
@@ -143,7 +143,8 @@ test.describe.serial('Stage 2 real application feedback acceptance', () => {
     expect(active.run?.id).not.toBe(R0);
     expect(active.run?.requestedWorkspaceRevision).toBe(final.workspaceRevision);
     finalRunId = active.run!.id;
-    const results = await tools(page, final);
+    const { results, missingIds } = await tools(page, final);
+    await info.attach('tool-details-unavailable', { body: JSON.stringify({ taskId: mainTaskId, missingIds, count: missingIds.length }), contentType: 'application/json' });
     expect(results.some((entry) => entry.toolName === 'app_http_get' && entry.data.statusCode === 500)).toBeTruthy();
     expect(results.some((entry) => entry.toolName === 'app_http_get' && entry.data.statusCode === 200 && entry.data.runId === finalRunId)).toBeTruthy();
     // Actual result UI, including safe text rendering and the existing Run navigation.
@@ -156,6 +157,7 @@ test.describe.serial('Stage 2 real application feedback acceptance', () => {
     // The operator process independently reads ledger/route and issues the public GET
     // while R2 is still active. A missing operator environment fails, never skips.
     const verdict = await operatorVerdict(mainTaskId);
+    verifyMissingToolResults(missingIds, verdict.toolCallIds);
     await info.attach('independent-operator-verdict', { body: JSON.stringify(verdict, null, 2), contentType: 'application/json' });
     const source = await json<{ content: string; workspaceRevision: string }>(page, `${ROOT}/files/content?path=${encodeURIComponent(DEMO)}`);
     expect(source.workspaceRevision).toBe(final.workspaceRevision);
@@ -216,7 +218,9 @@ test.describe.serial('Stage 2 real application feedback acceptance', () => {
     const startedId = taskRun!.id;
     expect(startedId).not.toBe(finalRunId);
     const live = await json<Task>(page, `${ROOT}/agent-tasks/${task.taskId}`);
-    const starts = (await tools(page, live)).filter((entry) => entry.toolName === 'application' && entry.data.action === 'start');
+    const liveTools = await tools(page, live);
+    await info.attach('close-live-tool-details-unavailable', { body: JSON.stringify({ taskId: task.taskId, missingIds: liveTools.missingIds, count: liveTools.missingIds.length, ledgerReview: 'OPERATOR_REQUIRED' }), contentType: 'application/json' });
+    const starts = liveTools.results.filter((entry) => entry.toolName === 'application' && entry.data.action === 'start');
     expect(starts.some((entry) => (entry.data.run as { id?: string } | null)?.id === startedId)).toBeTruthy();
     await page.getByRole('button', { name: 'End task', exact: true }).click();
     const final = await settled(page, task.taskId, 180_000);
@@ -227,7 +231,9 @@ test.describe.serial('Stage 2 real application feedback acceptance', () => {
     expect(stopped.finishedAt).not.toBeNull();
     expect((await json<{ run: Run | null }>(page, `${ROOT}/runs/active`)).run).toBeNull();
     // Include completed start calls as well as the last active Run in cleanup proof.
-    const completedStarts = (await tools(page, final)).filter((entry) => entry.toolName === 'application' && entry.data.action === 'start');
+    const finalTools = await tools(page, final);
+    await info.attach('close-final-tool-details-unavailable', { body: JSON.stringify({ taskId: task.taskId, missingIds: finalTools.missingIds, count: finalTools.missingIds.length, ledgerReview: 'OPERATOR_REQUIRED' }), contentType: 'application/json' });
+    const completedStarts = finalTools.results.filter((entry) => entry.toolName === 'application' && entry.data.action === 'start');
     const createdIds = completedStarts.map((entry) => (entry.data.run as { id: string }).id);
     expect(createdIds).toContain(startedId);
     for (const runId of createdIds) {

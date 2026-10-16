@@ -65,6 +65,7 @@ test('complete operator evidence passes, without claiming real model acceptance'
   const result = verify(evidence());
   assert.equal(result.verdict, 'PASS', JSON.stringify(result));
   assert.equal(result.stagePassGranted, false);
+  assert.deepEqual(result.toolCallIds, evidence().calls.map((call) => call.toolCallId));
 });
 
 function withUntrackedProjectRun(start, ready, finish) {

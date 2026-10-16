@@ -275,7 +275,7 @@ export function verifyStage2Ledger(input) {
     verifyService(independent.serviceBefore, projectId, r2, primary);
     verifyService(independent.serviceAfter, projectId, r2, primary);
     return { verdict: 'PASS', stagePassGranted: false, taskId, projectId, r0: r0.id, r1: r1.id, r2: r2.id,
-      calls: calls.length, writes: writes.length, builds: builds.length, revision,
+      calls: calls.length, toolCallIds: calls.map((call) => call.toolCallId), writes: writes.length, builds: builds.length, revision,
       note: 'Operator evidence only; real model, browser, rollout and lifecycle records remain separate gates.' };
   } catch (error) {
     const code = /^[A-Z][A-Z0-9_]+$/.test(error?.message ?? '') ? error.message : 'EVIDENCE_INVALID';
