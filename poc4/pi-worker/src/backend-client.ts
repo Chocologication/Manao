@@ -69,6 +69,14 @@ export class BackendHttpError extends Error {
 }
 
 const REQUEST_TIMEOUT_MS = 30_000;
+const SAFE_TOOL_DIAGNOSTIC_CODES = new Set([
+  "PROJECT_BUSY", "AI_CALL_UNSETTLED", "AI_CALL_NEEDS_ATTENTION", "AI_TASK_NOT_ACTIVE",
+  "AI_CALL_MISMATCH", "AI_CALL_RUNNING", "WORKSPACE_REVISION_CONFLICT", "VALIDATION_ERROR",
+]);
+
+function safeToolDiagnosticCode(code: unknown): string {
+  return typeof code === "string" && SAFE_TOOL_DIAGNOSTIC_CODES.has(code) ? code : "AI_CALL_REJECTED";
+}
 /** The inter-poll wait of the bounded settle poll (matches the browser's 2s cadence). */
 const SETTLE_POLL_INTERVAL_MS = 2_000;
 /**
@@ -231,7 +239,7 @@ export class BackendClient {
     if (!response.ok || body === null || typeof body.toolCallId !== "string") {
       throw new BackendHttpError(response.status,
         typeof body?.code === "string" ? body.code : "AI_CALL_REJECTED",
-        `tool call was refused (${response.status})`);
+        `tool call was refused (${response.status}, ${safeToolDiagnosticCode(body?.code)})`);
     }
     return body as unknown as ToolResult;
   }
@@ -242,7 +250,7 @@ export class BackendClient {
     if (!response.ok || body === null) {
       throw new BackendHttpError(response.status,
         typeof body?.code === "string" ? body.code : "AI_CALL_REJECTED",
-        `tool call reconciliation was refused (${response.status})`);
+        `tool call reconciliation was refused (${response.status}, ${safeToolDiagnosticCode(body?.code)})`);
     }
     if (typeof body.toolCallId === "string") {
       // A legacy settled answer carried the bare result: still a settlement.

@@ -4,6 +4,48 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { BackendClient, ProgressChain } from "../src/backend-client.js";
 import { createTaskServer, type WorkerConfig } from "../src/server.js";
 
+describe("safe decided backend diagnostics", () => {
+  it.each([
+    "PROJECT_BUSY", "AI_CALL_UNSETTLED", "AI_CALL_NEEDS_ATTENTION", "AI_TASK_NOT_ACTIVE",
+    "AI_CALL_MISMATCH", "AI_CALL_RUNNING", "WORKSPACE_REVISION_CONFLICT", "VALIDATION_ERROR",
+  ])("includes only the fixed %s code in a decided409 message without querying or retrying", async (code) => {
+    const transport = vi.fn<typeof fetch>().mockResolvedValueOnce(new Response(JSON.stringify({
+      code, message: "http://private.invalid/secret?token=sensitive", traceId: "private-trace",
+    }), { status: 409 }));
+    const client = new BackendClient({ baseUrl: "http://backend.invalid", token: "test-only",
+      instanceId: "worker-1", epoch: "epoch-1", fetch: transport });
+    await expect(client.invoke("task-1", { toolCallId: "call-1", name: "application", expectedRevision: 7, args: { action: "status" } }))
+      .rejects.toMatchObject({ status: 409, code, message: `tool call was refused (409, ${code})` });
+    expect(transport).toHaveBeenCalledTimes(1);
+    expect(transport.mock.calls[0]![1]?.method).toBe("POST");
+  });
+
+  it.each(["SECRET_CODE", "PROJECT_BUSY\nhttp://private.invalid?token=sensitive"])("maps an unlisted code to an opaque safe message", async (code) => {
+    const transport = vi.fn<typeof fetch>().mockResolvedValueOnce(new Response(JSON.stringify({ code,
+      message: "password=sensitive", url: "http://private.invalid", credentials: "private-key" }), { status: 409 }));
+    const client = new BackendClient({ baseUrl: "http://backend.invalid", token: "test-only",
+      instanceId: "worker-1", epoch: "epoch-1", fetch: transport });
+    let failure: Error | undefined;
+    try { await client.invoke("task-1", { toolCallId: "call-1", name: "build", expectedRevision: 7, args: { goal: "test" } }); }
+    catch (error) { failure = error as Error; }
+    expect(failure?.message).toBe("tool call was refused (409, AI_CALL_REJECTED)");
+    expect(failure?.message).not.toMatch(/sensitive|private|SECRET_CODE|password|key/);
+    expect(transport).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(["PROJECT_BUSY", "http://private.invalid?password=sensitive"])("sanitizes the reconciliation refusal without retrying the original POST", async (code) => {
+    const transport = vi.fn<typeof fetch>()
+      .mockRejectedValueOnce(new TypeError("response lost"))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ code, message: "password=sensitive" }), { status: 409 }));
+    const client = new BackendClient({ baseUrl: "http://backend.invalid", token: "test-only",
+      instanceId: "worker-1", epoch: "epoch-1", fetch: transport });
+    const safeCode = code === "PROJECT_BUSY" ? code : "AI_CALL_REJECTED";
+    await expect(client.invoke("task-1", { toolCallId: "call-1", name: "build", expectedRevision: 7, args: { goal: "test" } }))
+      .rejects.toMatchObject({ status: 409, message: `tool call reconciliation was refused (409, ${safeCode})` });
+    expect(transport.mock.calls.map(([, init]) => init?.method)).toEqual(["POST", "GET"]);
+  });
+});
+
 /**
  * The brief's verbatim transport-contract test: a lost POST response is followed by a GET of
  * the ORIGINAL call — the worker never invents a second authoritative request, the backend's
