@@ -23,7 +23,7 @@ const FIXTURE = 'src/test/java/com/example/app/DemoControllerAcceptanceTest.java
 const FIXTURE_BYTES = readFileSync(new URL('../fixtures/ai-stage2/DemoControllerAcceptanceTest.java', import.meta.url));
 const FIXTURE_SHA = createHash('sha256').update(FIXTURE_BYTES).digest('hex');
 const RECORDED_FIXTURE_SHA = 'a7663e44983b9487ffe196ea5601b6aabe5d0e6f32a6488946ec2cea3296bf2c';
-const PROMPT = '先停止当前应用并确认退出。在不改源码的情况下执行现有测试并创建一次新 Run，实际 GET /api/demo?name=Pi，记录第一次 HTTP 结果及对应应用日志。然后修复这个接口，使同一请求返回 HTTP 200 和 JSON message="Hello Pi"；保留 guest 行为和现有验收测试。需要改代码或构建时先停应用并确认退出，测试通过后创建新 Run 再实际验证。完成后保持最终应用运行，报告修改路径、测试、Run 和 HTTP 结果。';
+const PROMPT = '先停止当前应用并确认退出。在不改源码的情况下执行现有测试并创建一次新 Run，实际 GET /api/demo?name=Pi，记录第一次 HTTP 结果及对应应用日志。然后修复这个接口，使同一请求返回 HTTP 200 和 JSON message="Hello Pi"；保留 guest 行为。固定验收测试 src/test/java/com/example/app/DemoControllerAcceptanceTest.java 必须逐字保留，不得修改、删除或追加任何内容；如需补充测试，可以另建其他测试文件。需要改代码或构建时先停应用并确认退出，测试通过后创建新 Run 再实际验证。完成后保持最终应用运行，报告修改路径、测试、Run 和 HTTP 结果。';
 const OCCUPYING = new Set(['QUEUED', 'RUNNING', 'NEEDS_ATTENTION']);
 const TERMINAL = new Set(['SUCCEEDED', 'FAILED', 'CANCELLED', 'TIMED_OUT']);
 type Run = { id: string; state: string; firstReadyAt: string | null; finishedAt: string | null; requestedWorkspaceRevision: string };
