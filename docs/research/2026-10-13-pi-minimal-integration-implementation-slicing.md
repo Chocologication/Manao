@@ -2,7 +2,7 @@
 
 日期：2026-10-13；2026-10-16 更新状态。第一阶段已实现并取得 `PI_STAGE1_CODE_TEST_LOOP_PASS`，真实执行边界以[验收记录第 8 节](../../poc4/docs/evidence/ai-stage1/acceptance.md)为准；后续 revision-cache 修复的验证限制单列于第 8.7 节。用户已要求第二阶段规划，[第二阶段设计](../superpowers/specs/2026-10-16-pi-stage2-design.md)、[五任务计划](../superpowers/plans/2026-10-16-pi-stage2-implementation-plan.md)与[实施提示词](../superpowers/plans/2026-10-16-pi-stage2-agent-handoff.md)已完成，尚未实现第二阶段。第三、四阶段仍为后续范围。
 
-当前工作目录为 `.worktree/ai-integration`，分支 `codex/ai-integration`。第二阶段规划开始时 HEAD `0824481`；保留工作树已有前端 revision 修复与部署/验收文档改动。已确认范围由[框架评估第 10 节](2026-10-13-ai-integration-framework-evaluation.md)拥有；本文件提出实现顺序，不把新增技术选择记为用户决定。
+当前工作目录为 `.worktree/ai-integration`，分支 `codex/ai-integration`。按用户要求提交全部待提交文件后，第二阶段实施代码基线更新为 `b2c6ec3`，已包含前端 revision 修复、部署/验收文档与第二阶段规划；后续仅同步基线的文档提交不改变此代码基线。已确认范围由[框架评估第 10 节](2026-10-13-ai-integration-framework-evaluation.md)拥有；本文件提出实现顺序，不把新增技术选择记为用户决定。
 
 ## 1. 从闭环推导最小职责
 

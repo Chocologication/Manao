@@ -28,11 +28,11 @@
 
 ## 1. 基线与执行顺序
 
-本计划所有文件路径相对实际 checkout `.worktree/ai-integration`，分支 `codex/ai-integration`，规划开始时 HEAD `0824481`。主检出 `master@49eb632` 无 AI 源码，不能在那边直接执行这些任务。
+本计划所有文件路径相对实际 checkout `.worktree/ai-integration`，分支 `codex/ai-integration`。第二阶段实施代码基线为 `b2c6ec384e2b0ed4af2019140504f74417147084`（短 SHA `b2c6ec3`，2026-10-16）；该提交已收录 revision-cache 修复、部署/验收文档及第二阶段规划。后续仅同步基线的文档提交不改变此代码基线；实施应使用包含该提交和最新计划的 HEAD。主检出 `master@49eb632` 无 AI 源码，不能在那边直接执行这些任务。
 
 第一阶段真实验收由 [acceptance §8](../../../poc4/docs/evidence/ai-stage1/acceptance.md) 拥有；旧第一阶段 spec/plan 的 NOT_RUN 段落是历史快照。本计划不重跑第一阶段全套验收，也不把第二阶段记成已实现。
 
-实施前保留并记录已有未提交的 AgentTaskPanel/fileQueries/workspaceReload 六个源码/测试文件、部署 README、acceptance，以及未跟踪的 [revision 修复计划](2026-10-15-ai-revision-availability-fix-plan.md)。实施涉及这些文件时，重读当前内容、区分已有 diff，提交只暂存本轮范围。新建实现工作树只在确有隔离需要时按 using-git-worktrees 处理，不能遗漏这些已有修改。
+此前待提交的 AgentTaskPanel/fileQueries/workspaceReload 六个源码/测试文件、部署 README、acceptance 及 [revision 修复计划](2026-10-15-ai-revision-availability-fix-plan.md) 均已纳入 `b2c6ec3`。实施前记录实际 HEAD/status，并用 `git merge-base --is-ancestor b2c6ec3 HEAD` 确认包含该基线；若出现新的未提交修改则保留并区分范围。新建实现工作树只在确有隔离需要时按 using-git-worktrees 从包含该基线及最新计划的提交创建。
 
 顺序：Task 1 → Task 2 → Task 3 → Task 4 → Task 5。Task 3 的网络实现可在 Task 2 审查时只读研究。五项均有可独立拒绝/接受的行为交付，不设置单独的脚手架、配置或文档任务。
 
@@ -435,7 +435,7 @@ SYSTEM_PROMPT更新为六工具能力和完成证据，说明start accepted不�
 
 把buildToolCallId收敛为接受build/application/app_http_get的tool_end解析，仍用既有 `GET agent-tasks/{taskId}/tools/{toolCallId}`。结果按kind分支：build保留原view；application显示ID/state/revision/readiness/stoppedConfirmed/log tail；HTTP显示path/status/body/error/truncated。RunPanel的selectedRunId目前是内部状态，在shell中添加requestRunSelection `{runId,seq}`，AgentTaskPanel通过 `onViewRun(runId)` 增加seq并切到run面板，RunPanel用该输入触发现有onSelect；不全局改变历史选择策略。复用RunLogTransport和project已配置公开入口。所有body/log用React文本/pre渲染，不使用dangerouslySetInnerHTML。
 
-移除AI precondition的RUN_ACTIVE拒绝，不移除dirty/pending/revision/Run authority unknown/reload保护。shell的写锁必须取AI与Run两种权威的并集；Agent结束后的workspace reload不因active Run卡成可写或无限reload。切换project/task时取消或忽略旧工具请求结果，避免旧call覆盖新页面。当前未提交前端修复须完整保留。
+移除AI precondition的RUN_ACTIVE拒绝，不移除dirty/pending/revision/Run authority unknown/reload保护。shell的写锁必须取AI与Run两种权威的并集；Agent结束后的workspace reload不因active Run卡成可写或无限reload。切换project/task时取消或忽略旧工具请求结果，避免旧call覆盖新页面。代码基线 `b2c6ec3` 中的前端 revision 修复须完整保留。
 
 - [ ] **Step 5: 定向 GREEN、构建并提交本轮 hunks。**
 
@@ -450,7 +450,7 @@ pnpm build
 git diff --check
 ```
 
-工作树中这些前端文件已有修改，用 `git add -p` 选择本轮hunks；如hunks依赖原revision修复，先保留独立diff证据，在执行记录写清依赖，不能擅自把原修复归成本轮提交。提交消息：`feat(ai): expose application feedback in Pi and the workbench`。
+原 revision 修复已在代码基线 `b2c6ec3` 中；本任务仅提交基于它新增的第二阶段改动。若实施时存在额外未提交修改，用 `git add -p` 区分本任务范围，不混入他人改动。提交消息：`feat(ai): expose application feedback in Pi and the workbench`。
 
 交付：浏览器从正在运行的项目启动Agent，模型实际调用六工具，用户可以查看真实Run/日志/HTTP结果；没有新看板或传输协议。
 

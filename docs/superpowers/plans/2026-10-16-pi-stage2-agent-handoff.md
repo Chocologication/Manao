@@ -11,20 +11,20 @@
 1. `docs/superpowers/specs/2026-10-16-pi-stage2-design.md`
 2. `docs/superpowers/plans/2026-10-16-pi-stage2-implementation-plan.md`
 
-实施目录：`D:/DeepLearning/MyProjects/Project_Manao/.worktree/ai-integration`，分支 `codex/ai-integration`；规划基线 HEAD `0824481`。主检出 `master@49eb632` 没有第一阶段实现。先读取实际目录的 AGENTS.md、git status/log 和上述两份文档；以当前代码为准，遇到行号或状态漂移先核对，不重写已交付能力。
+实施目录：`D:/DeepLearning/MyProjects/Project_Manao/.worktree/ai-integration`，分支 `codex/ai-integration`；第二阶段实施代码基线 `b2c6ec384e2b0ed4af2019140504f74417147084`（短 SHA `b2c6ec3`，2026-10-16）。该提交已收录 revision-cache 修复、部署/验收文档和第二阶段规划；后续仅同步基线的文档提交不改变代码基线。主检出 `master@49eb632` 没有第一阶段实现。先读取实际目录的 AGENTS.md、git status/log 和上述两份文档，并执行 `git merge-base --is-ancestor b2c6ec3 HEAD` 确认当前 HEAD 包含基线；使用包含该提交及最新计划的 HEAD 实施，不重写已交付能力。
 
 第一阶段已真实云端验收，`PI_STAGE1_CODE_TEST_LOOP_PASS` 已授予。证据权威是 `poc4/docs/evidence/ai-stage1/acceptance.md` 第8节；第一阶段旧spec/plan的NOT_RUN段落是历史快照。第8.7节的revision-cache修复已部署且本地回归通过，但部署后的浏览器点击路径没有完成复验，不得把它说成新版本完整PASS。
 
-工作树已有未提交修改，全部保留：
+以下原有修改已提交在 `b2c6ec3`，属于实施基线，保留其行为：
 
 - `poc4/frontend/src/features/ai/AgentTaskPanel.tsx` 及测试。
 - `poc4/frontend/src/features/files/fileQueries.ts` 及测试。
 - `poc4/frontend/src/features/runs/workspaceReload.ts` 及测试。
 - `poc4/deploy/ai-stage1/README.md`、`poc4/docs/evidence/ai-stage1/acceptance.md`。
 - `docs/superpowers/plans/2026-10-15-ai-revision-availability-fix-plan.md`。
-- 本轮第二阶段设计/计划/提示词及其索引修改可能尚未提交。
+- 第二阶段设计/计划/提示词及其索引修改。
 
-开始前记录已有diff，不能reset、覆盖、整文件暂存并冒充本轮成果。接触前端原修复时重读最新文件；使用小patch，失败一次先重读。仅按任务提交本轮代码；存在难分割的依赖hunk时保留独立diff并明确说明，不代替用户处置原改动。
+开始前记录实际 HEAD/status；原有修改已提交，不再按未提交补丁搬运。若届时又有新的未提交改动，保留并区分范围，不能reset、覆盖或混入本任务提交。接触前端原修复时重读最新文件；使用小patch，失败一次先重读。仅按任务提交新增的第二阶段代码。
 
 第二阶段目标是：
 

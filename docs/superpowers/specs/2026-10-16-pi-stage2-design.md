@@ -14,9 +14,9 @@
 
 ## 2. 工作基线
 
-- 实际工作树：`.worktree/ai-integration`，分支 `codex/ai-integration`，规划开始时 HEAD `0824481`。主检出 `master@49eb632` 没有第一阶段代码。
-- 原有未提交修改须保留：`poc4/frontend/src/features/ai/AgentTaskPanel{,.test}.tsx`、`features/files/fileQueries{,.test}.ts`、`features/runs/workspaceReload{,.test}.ts`（后三组均在 `poc4/frontend/src/` 下）、`poc4/deploy/ai-stage1/README.md`、`poc4/docs/evidence/ai-stage1/acceptance.md`，以及 `2026-10-15-ai-revision-availability-fix-plan.md`。
-- 实施先记录实际 HEAD/diff；不把已有修改当本轮新增、不自动提交它们。沿用该工作树，不从旧 master 重新实现 AI；如确需新工作树，先按 using-git-worktrees 的规则保全并带入这份实际基线。
+- 实际工作树：`.worktree/ai-integration`，分支 `codex/ai-integration`。第二阶段实施代码基线为 `b2c6ec384e2b0ed4af2019140504f74417147084`（短 SHA `b2c6ec3`，2026-10-16）。该提交已包含原有 revision-cache 修复、部署/验收文档及第二阶段规划；后续仅同步基线的文档提交不改变此代码基线。主检出 `master@49eb632` 没有第一阶段代码。
+- 此前待提交的 AgentTaskPanel/fileQueries/workspaceReload 源码与测试、第一阶段部署/验收文档和 revision 修复计划均已纳入 `b2c6ec3`；实施时保留这些已提交能力，不再按未提交补丁搬运。
+- 实施先记录实际 HEAD/diff，确认 HEAD 包含 `b2c6ec3`；如果届时又有新修改，保留并区分其范围。沿用该工作树，不从旧 master 重新实现 AI；如确需新工作树，按 using-git-worktrees 的规则从包含此代码基线及最新计划的提交创建。
 - 第一阶段验收项目已删除，部署仍绑定旧 projectId。真实第二阶段验收需要新的专用 Spring Boot 项目和明确配置；不复用已删除 ID，不自动扩大到全部项目。
 
 ## 3. Global Constraints
