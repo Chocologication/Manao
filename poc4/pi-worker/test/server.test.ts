@@ -6,7 +6,7 @@ import { createTaskServer, type WorkerConfig } from "../src/server.js";
 
 describe("safe decided backend diagnostics", () => {
   it.each([
-    "PROJECT_BUSY", "AI_CALL_UNSETTLED", "AI_CALL_NEEDS_ATTENTION", "AI_TASK_NOT_ACTIVE",
+    "AI_CALL_UNSETTLED", "AI_CALL_NEEDS_ATTENTION", "AI_TASK_NOT_ACTIVE",
     "AI_CALL_MISMATCH", "AI_CALL_RUNNING", "WORKSPACE_REVISION_CONFLICT", "VALIDATION_ERROR",
   ])("includes only the fixed %s code in a decided409 message without querying or retrying", async (code) => {
     const transport = vi.fn<typeof fetch>().mockResolvedValueOnce(new Response(JSON.stringify({
@@ -33,7 +33,7 @@ describe("safe decided backend diagnostics", () => {
     expect(transport).toHaveBeenCalledTimes(1);
   });
 
-  it.each(["PROJECT_BUSY", "http://private.invalid?password=sensitive"])("sanitizes the reconciliation refusal without retrying the original POST", async (code) => {
+  it.each(["http://private.invalid?password=sensitive"])("sanitizes the reconciliation refusal without retrying the original POST", async (code) => {
     const transport = vi.fn<typeof fetch>()
       .mockRejectedValueOnce(new TypeError("response lost"))
       .mockResolvedValueOnce(new Response(JSON.stringify({ code, message: "password=sensitive" }), { status: 409 }));
@@ -43,6 +43,95 @@ describe("safe decided backend diagnostics", () => {
     await expect(client.invoke("task-1", { toolCallId: "call-1", name: "build", expectedRevision: 7, args: { goal: "test" } }))
       .rejects.toMatchObject({ status: 409, message: `tool call reconciliation was refused (409, ${safeCode})` });
     expect(transport.mock.calls.map(([, init]) => init?.method)).toEqual(["POST", "GET"]);
+  });
+});
+
+describe("bounded same-call PROJECT_BUSY admission", () => {
+  const request = { toolCallId: "call-busy", name: "build", expectedRevision: 7, args: { goal: "test" } };
+  const done = { toolCallId: "call-busy", workspaceRevision: "7", data: { exitCode: 0 }, truncated: false };
+  const response = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status });
+  const busy = () => response({ code: "PROJECT_BUSY", message: "private message" }, 409);
+  function harness(transport: typeof fetch) {
+    let clock = 0;
+    const delays: number[] = [];
+    const client = new BackendClient({ baseUrl: "http://backend.invalid", token: "test-only", instanceId: "worker-1", epoch: "1", fetch: transport,
+      now: () => clock, delay: async (ms) => { clock += ms; delays.push(ms); } });
+    return { client, delays, now: () => clock };
+  }
+  it("queries absence before replaying byte-identical body and identity headers", async () => {
+    const transport = vi.fn<typeof fetch>().mockResolvedValueOnce(busy()).mockResolvedValueOnce(response(null, 404)).mockResolvedValueOnce(response(done));
+    const { client } = harness(transport);
+    expect(await client.invoke("task-1", request)).toEqual(done);
+    expect(transport.mock.calls.map(([, init]) => init?.method)).toEqual(["POST", "GET", "POST"]);
+    expect(transport.mock.calls[2]![0]).toBe(transport.mock.calls[0]![0]);
+    expect(transport.mock.calls[2]![1]?.body).toBe(transport.mock.calls[0]![1]?.body);
+    expect(transport.mock.calls[2]![1]?.headers).toEqual(transport.mock.calls[0]![1]?.headers);
+  });
+  it("returns a registered completed result without replaying execution", async () => {
+    const transport = vi.fn<typeof fetch>().mockResolvedValueOnce(busy()).mockResolvedValueOnce(response({ state: "COMPLETED", result: done }));
+    expect(await harness(transport).client.invoke("task-1", request)).toEqual(done);
+    expect(transport.mock.calls.map(([, init]) => init?.method)).toEqual(["POST", "GET"]);
+  });
+  it("caps replay transport timeout to the remaining busy admission time", async () => {
+    const timeout = vi.spyOn(AbortSignal, "timeout");
+    try {
+      const transport = vi.fn<typeof fetch>().mockResolvedValueOnce(busy()).mockResolvedValueOnce(busy())
+        .mockResolvedValueOnce(response(null, 404)).mockResolvedValueOnce(response(done));
+      expect(await harness(transport).client.invoke("task-1", request)).toEqual(done);
+      expect(timeout.mock.calls.at(-1)![0]).toBe(8000);
+    } finally { timeout.mockRestore(); }
+  });
+  it("waits through a busy GET and a failed read before a proven-absent replay", async () => {
+    const transport = vi.fn<typeof fetch>().mockResolvedValueOnce(busy()).mockResolvedValueOnce(busy())
+      .mockRejectedValueOnce(new TypeError("read lost")).mockResolvedValueOnce(response(null, 404)).mockResolvedValueOnce(response(done));
+    const { client, delays } = harness(transport);
+    expect(await client.invoke("task-1", request)).toEqual(done);
+    expect(transport.mock.calls.map(([, init]) => init?.method)).toEqual(["POST", "GET", "GET", "GET", "POST"]);
+    expect(delays.every((ms) => ms <= 2000)).toBe(true);
+  });
+  it("reconciles a lost replay response through RUNNING and never sends another POST", async () => {
+    const transport = vi.fn<typeof fetch>().mockResolvedValueOnce(busy()).mockResolvedValueOnce(response(null, 404))
+      .mockRejectedValueOnce(new TypeError("replay response lost"))
+      .mockResolvedValueOnce(response({ state: "RUNNING", result: null })).mockResolvedValueOnce(response({ state: "COMPLETED", result: done }));
+    expect(await harness(transport).client.invoke("task-1", request)).toEqual(done);
+    expect(transport.mock.calls.map(([, init]) => init?.method)).toEqual(["POST", "GET", "POST", "GET", "GET"]);
+  });
+  it.each([10000, 3000])("bounds permanent busy reads to the %sms admission cap without execution replay", async (cap) => {
+    const transport = vi.fn<typeof fetch>().mockImplementation(async () => busy());
+    const { client, now } = harness(transport);
+    await expect(client.invoke("task-1", request, { settleBudgetMs: cap === 10000 ? 720000 : cap }))
+      .rejects.toMatchObject({ code: "PROJECT_BUSY" });
+    expect(now()).toBe(cap);
+    expect(transport.mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(1);
+    expect(transport.mock.calls.length).toBeLessThanOrEqual(7);
+  });
+  it("does not disguise a lost replay outcome as a definite busy refusal", async () => {
+    const transport = vi.fn<typeof fetch>().mockResolvedValueOnce(busy()).mockResolvedValueOnce(response(null, 404))
+      .mockRejectedValueOnce(new TypeError("replay reply lost"))
+      .mockImplementation(async () => busy());
+    const { client, now } = harness(transport);
+    await expect(client.invoke("task-1", request)).rejects.toMatchObject({ code: "AI_CALL_UNKNOWN" });
+    expect(now()).toBe(10000);
+    expect(transport.mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(2);
+  });
+  it("does not turn a registered build's settlement into a ten-second admission timeout", async () => {
+    let gets = 0;
+    const transport = vi.fn<typeof fetch>().mockImplementation(async (_url, init) => {
+      if (init?.method === "POST") return busy();
+      gets++;
+      return response(gets <= 8 ? { state: "RUNNING", result: null } : { state: "COMPLETED", result: done });
+    });
+    const { client, now } = harness(transport);
+    expect(await client.invoke("task-1", request)).toEqual(done);
+    expect(now()).toBeGreaterThan(10000);
+    expect(transport.mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(1);
+  });
+  it("fails closed for registered NEEDS_ATTENTION and for other GET conflicts", async () => {
+    for (const refusal of [response({ state: "NEEDS_ATTENTION", result: null }), response({ code: "AI_CALL_MISMATCH" }, 409)]) {
+      const transport = vi.fn<typeof fetch>().mockResolvedValueOnce(busy()).mockResolvedValueOnce(refusal);
+      await expect(harness(transport).client.invoke("task-1", request)).rejects.toBeInstanceOf(Error);
+      expect(transport.mock.calls.map(([, init]) => init?.method)).toEqual(["POST", "GET"]);
+    }
   });
 });
 

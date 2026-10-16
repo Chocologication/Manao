@@ -114,84 +114,80 @@ export class BackendClient {
 
   /**
    * Submits one tool invocation and returns its durable result. When the POST response
-   * is lost the original call is queried by GET: a 404 means the POST never landed (one
-   * identical replay), a RUNNING answer means the call IS registered and executing and
+   * is lost or admission is busy the original call is queried by GET. Only a404
+   * permits an identical replay; a RUNNING answer means the call IS registered and executing and
    * is awaited with a bounded poll of the same GET, and NEEDS_ATTENTION fails the call
    * closed — the outcome is unknown, so the next side effect must never start. Anything
    * still unresolved throws.
    */
   async invoke(taskId: string, request: ToolRequest, options: InvokeOptions = {}): Promise<ToolResult> {
     const path = `/internal/ai/tasks/${encodeURIComponent(taskId)}/calls/${encodeURIComponent(request.toolCallId)}`;
-    const post = (): Promise<Response> => this.transport(`${this.baseUrl}${path}`, {
+    const body = JSON.stringify(request);
+    const post = (timeoutMs = REQUEST_TIMEOUT_MS): Promise<Response> => this.transport(`${this.baseUrl}${path}`, {
       method: "POST",
       headers: this.headers(),
-      body: JSON.stringify(request),
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      body,
+      signal: AbortSignal.timeout(timeoutMs),
     });
     const settleBudgetMs = options.settleBudgetMs ?? SETTLE_BUDGET_MS;
-    let settled: ToolResult | null = null;
+    const isBusy = (error: unknown): error is BackendHttpError => error instanceof BackendHttpError
+      && error.status === 409 && error.code === "PROJECT_BUSY";
+    let admissionDeadline: number | null = null;
+    let submissionUnknown = false;
+    const noteBusy = () => { admissionDeadline ??= this.now() + Math.min(10_000, settleBudgetMs); };
     try {
-      const response = await post();
-      return await this.parseResult(response);
+      return await this.parseResult(await post());
     } catch (postFailure) {
-      if (postFailure instanceof BackendHttpError) {
-        // A decided backend answer (refusal, validation): never re-sent, never polled.
-        throw postFailure;
-      }
-      // The POST outcome is unknown: query the original call before anything else.
-      const deadline = this.now() + settleBudgetMs;
-      let registered = false;
-      for (;;) {
-        let status: ToolCallStatus | null = null;
-        try {
-          const query = await this.transport(`${this.baseUrl}${path}`, {
-            method: "GET",
-            headers: this.headers(),
-            signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-          });
-          if (query.status === 404) {
-            if (registered) {
-              // A registered call row never disappears: the ledger is inconsistent.
-              throw new BackendHttpError(0, "AI_CALL_UNKNOWN",
-                "a registered tool call vanished from the ledger");
-            }
-            // The submission never landed; replay the identical POST once.
-            try {
-              return await this.parseResult(await post());
-            } catch (replayFailure) {
-              if (replayFailure instanceof BackendHttpError) {
-                throw replayFailure;
-              }
-              throw new BackendHttpError(0, "AI_CALL_UNKNOWN",
-                "tool call outcome is unknown after a lost submission");
-            }
-          }
-          status = await this.parseStatus(query);
-          registered = true;
-        } catch (error) {
-          if (error instanceof BackendHttpError) {
-            throw error;
-          }
-          // The query itself failed: keep the bounded wait honest — the POST may still
-          // be executing server-side, and the next poll decides.
-          status = null;
-        }
-        if (status?.state === "COMPLETED" && status.result !== null) {
-          settled = status.result;
-          break;
-        }
-        if (status?.state === "NEEDS_ATTENTION") {
-          throw new BackendHttpError(0, "AI_CALL_NEEDS_ATTENTION",
-            "the call outcome is unknown; it needs attention before further writes");
-        }
-        if (this.now() >= deadline) {
-          throw new BackendHttpError(0, "AI_CALL_UNKNOWN",
-            "the tool call did not settle within the bounded wait; the next side effect must not start");
-        }
-        await this.delay(SETTLE_POLL_INTERVAL_MS);
-      }
+      if (isBusy(postFailure)) noteBusy();
+      else if (postFailure instanceof BackendHttpError) throw postFailure;
+      else submissionUnknown = true;
     }
-    return settled!;
+    let deadline = this.now() + settleBudgetMs;
+    let registered = false;
+    let replayed = false;
+    for (;;) {
+      const currentDeadline = registered ? deadline : admissionDeadline ?? deadline;
+      if (this.now() >= currentDeadline) {
+        const definitelyBusy = admissionDeadline !== null && !registered && !submissionUnknown;
+        throw new BackendHttpError(definitelyBusy ? 409 : 0,
+          definitelyBusy ? "PROJECT_BUSY" : "AI_CALL_UNKNOWN",
+          definitelyBusy ? "tool call admission remained busy (409, PROJECT_BUSY)"
+            : "the tool call did not settle within the bounded wait; the next side effect must not start");
+      }
+      try {
+        const query = await this.transport(`${this.baseUrl}${path}`, {
+          method: "GET", headers: this.headers(),
+          signal: AbortSignal.timeout(Math.min(REQUEST_TIMEOUT_MS, currentDeadline - this.now())),
+        });
+        if (query.status === 404) {
+          if (registered || (replayed && admissionDeadline === null)) {
+            throw new BackendHttpError(0, "AI_CALL_UNKNOWN", "the original tool call is absent after reconciliation");
+          }
+          if (this.now() >= (admissionDeadline ?? deadline)) continue;
+          submissionUnknown = false;
+          replayed = true;
+          // Only a fresh ledger404 permits the SAME request; any lost reply returns to GET.
+          try { return await this.parseResult(await post(Math.min(REQUEST_TIMEOUT_MS, (admissionDeadline ?? deadline) - this.now()))); }
+          catch (error) {
+            if (isBusy(error)) noteBusy();
+            else if (error instanceof BackendHttpError) throw error;
+            else submissionUnknown = true;
+          }
+        } else {
+          const status = await this.parseStatus(query);
+          if (!registered) { registered = true; deadline = this.now() + settleBudgetMs; }
+          if (status.state === "COMPLETED" && status.result !== null) return status.result;
+          if (status.state === "NEEDS_ATTENTION") {
+            throw new BackendHttpError(0, "AI_CALL_NEEDS_ATTENTION", "the call outcome is unknown; it needs attention before further writes");
+          }
+        }
+      } catch (error) {
+        if (isBusy(error)) { if (!registered) noteBusy(); }
+        else if (error instanceof BackendHttpError) throw error;
+      }
+      const remaining = (registered ? deadline : admissionDeadline ?? deadline) - this.now();
+      if (remaining > 0) await this.delay(Math.min(SETTLE_POLL_INTERVAL_MS, remaining));
+    }
   }
 
   /**
