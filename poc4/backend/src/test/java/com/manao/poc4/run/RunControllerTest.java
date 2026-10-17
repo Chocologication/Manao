@@ -831,6 +831,9 @@ public class RunControllerTest {
                 return false;
             }
             run.state = next.name();
+            if (next == RunState.RUNNING && run.startedAt == null) {
+                run.startedAt = run.firstReadyAt == null ? Instant.now() : run.firstReadyAt;
+            }
             run.version++;
             return true;
         }

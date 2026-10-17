@@ -80,6 +80,25 @@ class RunObservationServiceTest {
     }
 
     @Test
+    void recoveringAReadyRunPreservesItsStartAndLifetime() {
+        String runId = seedServiceRun("recover-ready", RunState.RECOVERING);
+        FakeRun run = store.runs.get(runId);
+        Instant started = READY.minusSeconds(10);
+        run.startedAt = started;
+        run.firstReadyAt = READY;
+        run.expiresAt = EXPIRES;
+        run.executionPodUid = "uid-web";
+        coordinator.factsByRun.put(runId, facts(true, false, false, false, null, "pod-web", "uid-web", true, false));
+
+        service.observe();
+
+        assertThat(store.findRun(runId).orElseThrow().state()).isEqualTo(RunState.RUNNING);
+        assertThat(store.findRun(runId).orElseThrow().startedAt()).isEqualTo(started);
+        assertThat(store.findRun(runId).orElseThrow().firstReadyAt()).isEqualTo(READY);
+        assertThat(store.findRun(runId).orElseThrow().expiresAt()).isEqualTo(EXPIRES);
+    }
+
+    @Test
     void terminalJobFactsSettleTheRun() {
         String runId = seedRun("run-done", RunState.RUNNING);
         coordinator.factsByRun.put(runId, facts(false, true, false, false, 0, "pod-1", "uid-1", false, true));
@@ -454,6 +473,23 @@ class RunObservationServiceTest {
         assertThat(store.runs.get(runId).state).isEqualTo(RunState.STOPPING.name());
         assertThat(store.runs.get(runId).terminationIntent).isEqualTo("USER_STOPPED");
         assertThat(coordinator.stopCalls).hasSize(stopCallsBefore + 1);
+        assertThat(completed).isEmpty();
+    }
+
+    @Test
+    void aRecoveringStopIntentKeepsStoppingWhileExitIsNotYetConfirmed() {
+        String runId = seedServiceRun("run-web-stop-pending", RunState.RECOVERING);
+        FakeRun run = store.runs.get(runId);
+        run.startedAt = READY.minusSeconds(10);
+        run.firstReadyAt = READY;
+        run.expiresAt = EXPIRES;
+        run.terminationIntent = "USER_STOPPED";
+        coordinator.factsByRun.put(runId, facts(false, false, false, false, null, "pod-web", "uid-web", false, false));
+
+        service.observe();
+
+        assertThat(store.findRun(runId).orElseThrow().state()).isEqualTo(RunState.STOPPING);
+        assertThat(store.findRun(runId).orElseThrow().terminationIntent()).isEqualTo("USER_STOPPED");
         assertThat(completed).isEmpty();
     }
 
