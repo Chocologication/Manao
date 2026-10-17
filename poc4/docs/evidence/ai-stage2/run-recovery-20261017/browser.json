@@ -1,0 +1,29 @@
+{
+  "status": "PASS",
+  "observedAt": "2026-10-17T08:39:23.261Z",
+  "project": "905da5ae-40ef-469e-ba2b-5c0fd202070a",
+  "runId": "97795a6c-4111-4add-9e3a-7f449d2ca344",
+  "network": [
+    {
+      "kind": "active",
+      "status": 200,
+      "runId": "97795a6c-4111-4add-9e3a-7f449d2ca344",
+      "startedAt": "2026-10-17T06:52:10Z",
+      "expiresAt": "2026-10-17T08:52:10Z"
+    },
+    {
+      "kind": "history",
+      "status": 200,
+      "count": 20
+    }
+  ],
+  "screenshot": "run-authority-restored.png",
+  "checks": [
+    "Stop run enabled",
+    "authority error absent",
+    "history error absent",
+    "same Run identity",
+    "expiry unchanged"
+  ],
+  "mutations": "login only; no run start/stop, task, source or DB mutation"
+}
