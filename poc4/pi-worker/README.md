@@ -73,8 +73,9 @@ session starts.
 - Deployment wiring: the worker image and its Service, the backend's
   `MANAO_AI_WORKER_BASE_URL/TOKEN` and `MANAO_AI_INTERNAL_TOKEN` values, and the
   private directories (`SCRATCH/AGENT/SESSION`) as worker-local volumes.
-- `MANAO_AI_ENABLED=true` on the backend plus the pilot `MANAO_AI_PROJECT_ID`, if the
-  single-project switch is wanted.
+- `MANAO_AI_ENABLED=true` on the backend. Since the 2026-10-18 project-access change,
+  `MANAO_AI_PROJECT_ID` is accepted for compatibility but no longer restricts tasks;
+  admission still requires the authenticated owner's READY project and the existing locks.
 
 ## Development
 

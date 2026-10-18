@@ -11,7 +11,6 @@ import com.manao.poc4.ai.AgentContracts.ToolResult;
 import com.manao.poc4.ai.AgentContracts.WorkerStart;
 import com.manao.poc4.ai.AgentContracts.WorkerStatus;
 import com.manao.poc4.api.ApiException;
-import com.manao.poc4.config.AiConfig.AiProperties;
 import com.manao.poc4.project.ProjectLifecycleGate;
 import java.io.IOException;
 import java.util.List;
@@ -39,15 +38,13 @@ public final class AgentTaskService {
     private final ProjectLifecycleGate lifecycle;
     private final PiWorkerClient worker;
     private final AgentProjectTools tools;
-    private final AiProperties properties;
 
     public AgentTaskService(AgentTaskStore tasks, ProjectLifecycleGate lifecycle, PiWorkerClient worker,
-                            AgentProjectTools tools, AiProperties properties) {
+                            AgentProjectTools tools) {
         this.tasks = tasks;
         this.lifecycle = lifecycle;
         this.worker = worker;
         this.tools = tools;
-        this.properties = properties;
     }
 
     /**
@@ -59,7 +56,6 @@ public final class AgentTaskService {
      * submission's own drive by a status read of the same task.
      */
     public TaskSnapshot submit(String ownerId, String projectId, TaskRequest request) {
-        requireProjectEnabled(projectId);
         AgentTaskStore.TaskCreation creation;
         try (ProjectLifecycleGate.Lease lease = lifecycle.tryAcquire(projectId).orElseThrow(
                 () -> new ApiException("PROJECT_BUSY", 409, "Project is busy"))) {
@@ -247,18 +243,6 @@ public final class AgentTaskService {
                 tasks.failClosedTask(taskId, original == null ? failureCode : original.failureCode(),
                     original == null ? summary : original.summary());
             }
-        }
-    }
-
-    /**
-     * The stage's single enabled project is a hard configuration requirement (review fix
-     * I7): while AI is enabled, an absent project id can never widen the stage to every
-     * project — the AiProperties constructor already fails startup, so a blank value can
-     * never reach here, and any other project reads as not found.
-     */
-    private void requireProjectEnabled(String projectId) {
-        if (!properties.projectId().equals(projectId)) {
-            throw new ApiException("AI_PROJECT_NOT_ENABLED", 404, "Project not found");
         }
     }
 

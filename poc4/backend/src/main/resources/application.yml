@@ -86,7 +86,7 @@ manao:
       # Stage-one AI integration is DISABLED by default: with enabled=false nothing is
       # wired (no task endpoints, no internal-route controller beans, no worker client).
       enabled: ${MANAO_AI_ENABLED:false}
-      # Optional single-project pilot switch; empty lets every READY project submit tasks.
+      # Legacy compatibility only; ignored for task admission. Owners may use any READY project.
       project-id: ${MANAO_AI_PROJECT_ID:}
       # The Pi worker route and the token the backend presents on it. The backend never
       # receives a model key; the worker owns the model configuration entirely.

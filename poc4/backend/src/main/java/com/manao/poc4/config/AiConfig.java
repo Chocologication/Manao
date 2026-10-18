@@ -28,8 +28,8 @@ import org.springframework.core.env.Environment;
  * Stage-one AI wiring. Everything here is conditional on {@code manao.poc4.ai.enabled}
  * (default false): with AI disabled none of these beans exist and no internal controller
  * is mapped. The backend never receives a model key — its configuration is only the Pi
- * worker route with its token, the internal token workers must present, and the optional
- * single-project pilot switch, following the small {@code @ConfigurationProperties}
+ * worker route with its token and the internal token workers must present, following
+ * the small {@code @ConfigurationProperties}
  * precedent instead of the large BackendProperties constructor.
  */
 @Configuration
@@ -38,17 +38,11 @@ import org.springframework.core.env.Environment;
 public class AiConfig {
 
     @ConfigurationProperties(prefix = "manao.poc4.ai", ignoreUnknownFields = false)
+    // projectId is accepted for existing deployments only; it no longer limits task admission.
     public record AiProperties(boolean enabled, String projectId, Worker worker, Internal internal) {
 
         public AiProperties {
             projectId = blank(projectId) ? "" : projectId.trim();
-            // Fail closed (review fix I7): while the stage is enabled it serves exactly
-            // one explicitly configured acceptance project. An absent id must fail the
-            // startup, never widen the stage to every project; a disabled stage may omit it.
-            if (enabled && blank(projectId)) {
-                throw new IllegalArgumentException(
-                    "manao.poc4.ai.project-id is required while manao.poc4.ai.enabled is true");
-            }
             worker = worker == null ? new Worker("", "") : worker;
             internal = internal == null ? new Internal("") : internal;
         }
@@ -131,7 +125,7 @@ public class AiConfig {
     @Bean
     @Conditional(AiEnabledCondition.class)
     AgentTaskService agentTaskService(AgentTaskStore tasks, ProjectLifecycleGate lifecycle,
-                                      PiWorkerClient worker, AgentProjectTools tools, AiProperties properties) {
-        return new AgentTaskService(tasks, lifecycle, worker, tools, properties);
+                                      PiWorkerClient worker, AgentProjectTools tools) {
+        return new AgentTaskService(tasks, lifecycle, worker, tools);
     }
 }

@@ -1,6 +1,7 @@
 package com.manao.poc4.ai;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -121,9 +122,7 @@ class AgentTaskServiceTest {
             tools = new AgentProjectTools(tasks, store, workspace, operations, gate, builds,
                 new AgentApplicationTools(tasks, runs, runStore,
                     org.mockito.Mockito.mock(com.manao.poc4.log.RunLogService.class), probe, gate));
-            service = new AgentTaskService(tasks, gate, worker, tools,
-                new AiProperties(true, PROJECT, new AiProperties.Worker("http://worker.invalid", "worker-token"),
-                    new AiProperties.Internal("internal-token")));
+            service = new AgentTaskService(tasks, gate, worker, tools);
         }
 
         void completedStart(String call, String runId) {
@@ -541,21 +540,36 @@ class AgentTaskServiceTest {
     }
 
     @Test
-    void anEnabledStageWithoutAProjectIdFailsClosedAtConfiguration() {
-        assertThatThrownBy(() -> new AiProperties(true, "  ",
+    void anEnabledStageDoesNotRequireASingleProjectId() {
+        assertThatCode(() -> new AiProperties(true, "  ",
             new AiProperties.Worker("http://worker.invalid", "worker-token"),
-            new AiProperties.Internal("internal-token")))
-            .isInstanceOf(IllegalArgumentException.class);
-        // A disabled stage may omit the project id (the AI beans never exist then).
-        new AiProperties(false, "", null, null);
+            new AiProperties.Internal("internal-token"))).doesNotThrowAnyException();
     }
 
     @Test
-    void aSubmissionToANonEnabledProjectIsRefused() {
+    void anotherOwnedReadyProjectCanSubmit() {
         try (Harness h = new Harness()) {
-            assertThatThrownBy(() -> h.service.submit(OWNER, "other-project", h.request()))
+            Timestamp now = new Timestamp(System.currentTimeMillis());
+            h.jdbc.update("INSERT INTO project(id, owner_id, name, state, workspace_revision, created_at, updated_at)"
+                    + " VALUES ('other-project', ?, 'other-project', 'READY', 7, ?, ?)", OWNER, now, now);
+
+            assertThatCode(() -> h.service.submit(OWNER, "other-project", h.request()))
+                .doesNotThrowAnyException();
+            assertThat(h.tasks.findForOwner(OWNER, "other-project", h.taskId)).isPresent();
+            assertThat(h.tasks.findForOwner(OWNER, PROJECT, h.taskId)).isEmpty();
+            assertThat(h.jdbc.queryForObject("SELECT project_id FROM agent_task WHERE id = ?", String.class, h.taskId))
+                .isEqualTo("other-project");
+        }
+    }
+
+    @Test
+    void removingThePilotRestrictionStillRejectsAForeignOwner() {
+        try (Harness h = new Harness()) {
+            assertThatThrownBy(() -> h.service.submit("foreign-owner", PROJECT, h.request()))
                 .isInstanceOfSatisfying(ApiException.class,
-                    ex -> assertThat(ex.code()).isEqualTo("AI_PROJECT_NOT_ENABLED"));
+                    ex -> assertThat(ex.code()).isEqualTo("ENTRY_NOT_FOUND"));
+            assertThat(h.worker.starts).isEmpty();
+            assertThat(h.jdbc.queryForObject("SELECT COUNT(*) FROM agent_task", Integer.class)).isZero();
         }
     }
 
@@ -813,8 +827,7 @@ class AgentTaskServiceTest {
             var operations = new WorkspaceOperationService(store, h.agent, h.gate);
             var workspace = new WorkspaceService(store, operations, h.agent, h.gate, tasksSpy);
             var tools = new AgentProjectTools(tasksSpy, store, workspace, operations, h.gate, h.builds);
-            var service = new AgentTaskService(tasksSpy, h.gate, h.worker, tools,
-                new AiProperties(true, PROJECT, null, null));
+            var service = new AgentTaskService(tasksSpy, h.gate, h.worker, tools);
             ExecutorService pool = Executors.newSingleThreadExecutor();
             try {
                 Future<?> builder = pool.submit(() -> {
@@ -966,8 +979,7 @@ class AgentTaskServiceTest {
                 var operations = new WorkspaceOperationService(store, h.agent, h.gate);
                 var workspace = new WorkspaceService(store, operations, h.agent, h.gate, tasks);
                 var tools = new AgentProjectTools(tasks, store, workspace, operations, h.gate, h.builds);
-                var service = new AgentTaskService(tasks, h.gate, h.worker, tools,
-                    new AiProperties(true, PROJECT, null, null));
+                var service = new AgentTaskService(tasks, h.gate, h.worker, tools);
                 service.close(h.taskId, "AI_CLOSED", "stale snapshot must not release");
                 assertThat(h.rowState()).isEqualTo("NEEDS_ATTENTION");
                 assertThat(h.callRowState("call-build")).isEqualTo("RUNNING");
