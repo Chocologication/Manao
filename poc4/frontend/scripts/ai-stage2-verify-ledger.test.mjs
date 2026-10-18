@@ -290,6 +290,42 @@ test('invalid input fails closed instead of throwing', () => {
   assert.equal(verify(null).verdict, 'FAIL');
 });
 
+test('Run evidence differences project only fixed identity and authority fields, including missing rows', () => {
+  assert.equal(typeof module.runEvidenceDiff, 'function');
+  const first = evidence().runs[0];
+  const changed = { ...first, executionPodUid: 'changed-pod', password: 'secret-value', body: 'model-output' };
+  const diff = module.runEvidenceDiff([first, { ...first, id: id(95), token: 'secret-value' }], [changed]);
+  assert.equal(diff.strictSerializedChanged, true);
+  assert.equal(diff.rows.length, 2);
+  assert.equal(diff.rows[0].before.executionPodUid, first.executionPodUid);
+  assert.equal(diff.rows[0].after.executionPodUid, 'changed-pod');
+  assert.equal(diff.rows[1].after, null);
+  assert.deepEqual(Object.keys(diff.rows[0].after), ['id', 'projectId', 'state', 'requestedRevision', 'createdAt', 'firstReadyAt', 'finishedAt', 'executionPodUid', 'activeRunMarker']);
+  assert.doesNotMatch(JSON.stringify(diff), /secret-value|password|token|model-output|body/);
+});
+
+test('an independent active identity change stays FAIL and preserves its safe before/after evidence', () => {
+  const input = evidence();
+  input.independent.activeAfter.executionPodUid = 'changed-pod';
+  const result = verify(input);
+  assert.equal(result.verdict, 'FAIL');
+  assert.deepEqual(result.failures, ['INDEPENDENT_ACTIVE_CHANGED']);
+  assert.equal(result.evidenceDiff.rows[0].before.executionPodUid, input.runs[2].executionPodUid);
+  assert.equal(result.evidenceDiff.rows[0].after.executionPodUid, 'changed-pod');
+});
+
+for (const missing of [null, undefined]) {
+  test(`missing activeBefore ${missing} retains the pure FAIL contract with safe diagnostic`, () => {
+    const input = evidence();
+    input.independent.activeBefore = missing;
+    const result = verify(input);
+    assert.equal(result.verdict, 'FAIL');
+    assert.deepEqual(result.failures, ['INDEPENDENT_ACTIVE_CHANGED']);
+    assert.equal(result.evidenceDiff.rows[0].before, null);
+    assert.equal(result.evidenceDiff.rows[0].after.id, input.runs[2].id);
+  });
+}
+
 test('mysql batch preserves JSON escapes, tabs, newlines and CRLF row boundaries', () => {
   assert.equal(typeof module.parseMysqlJsonRows, 'function');
   const row = { text: 'line1\nline2\tC:\\source\\n.java', nil: null };

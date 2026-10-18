@@ -22,6 +22,27 @@ const nonempty = (value) => typeof value === 'string' && value.length > 0;
 const dataOf = (call) => call.result.data;
 const before = (a, b) => time(a) < time(b);
 
+const RUN_EVIDENCE_FIELDS = ['id', 'projectId', 'state', 'requestedRevision', 'createdAt', 'firstReadyAt', 'finishedAt', 'executionPodUid', 'activeRunMarker'];
+function safeRunEvidence(run) {
+  if (run === null || run === undefined) return null;
+  return Object.fromEntries(RUN_EVIDENCE_FIELDS.map((field) => {
+    const value = run[field];
+    return [field, value === null || typeof value === 'string' || typeof value === 'number' ? value : '[invalid]'];
+  }));
+}
+
+export function runEvidenceDiff(beforeRows, afterRows) {
+  const beforeById = new Map(beforeRows.filter((run) => run != null).map((run) => [run.id, run]));
+  const afterById = new Map(afterRows.filter((run) => run != null).map((run) => [run.id, run]));
+  return {
+    strictSerializedChanged: JSON.stringify([...beforeRows].sort((a,b) => String(a?.id ?? '').localeCompare(String(b?.id ?? ''))))
+      !== JSON.stringify([...afterRows].sort((a,b) => String(a?.id ?? '').localeCompare(String(b?.id ?? '')))),
+    rows: [...new Set([...beforeById.keys(), ...afterById.keys()])].sort().map((id) => ({
+      before: safeRunEvidence(beforeById.get(id)), after: safeRunEvidence(afterById.get(id)),
+    })).filter((row) => JSON.stringify(row.before) !== JSON.stringify(row.after)),
+  };
+}
+
 // This exact rejection occurs after ledger identity reservation but before any
 // application claim or Run control. A reserved operationId alone is not execution.
 function rejectedMissingRunStop(call, runs, operations) {
@@ -279,7 +300,10 @@ export function verifyStage2Ledger(input) {
       note: 'Operator evidence only; real model, browser, rollout and lifecycle records remain separate gates.' };
   } catch (error) {
     const code = /^[A-Z][A-Z0-9_]+$/.test(error?.message ?? '') ? error.message : 'EVIDENCE_INVALID';
-    return { verdict: 'FAIL', stagePassGranted: false, failures: [code] };
+    const evidenceDiff = code === 'INDEPENDENT_ACTIVE_CHANGED'
+      ? { ...runEvidenceDiff([input.independent.activeBefore], [input.independent.activeAfter]),
+        expected: safeRunEvidence(input.runs.find((run) => run.id === input.independent.runId)) } : undefined;
+    return { verdict: 'FAIL', stagePassGranted: false, failures: [code], ...(evidenceDiff ? { evidenceDiff } : {}) };
   }
 }
 
@@ -429,8 +453,13 @@ async function main() {
   const serviceAfter = await serviceRead(), activeAfter = await activeRead(), afterAt = await clock();
   // A final re-read detects changes during multi-SELECT evidence collection.
   const finalRuns = await query(runSelect);
-  requireEvidence(JSON.stringify(finalRuns.sort((a,b) => a.id.localeCompare(b.id)))
-    === JSON.stringify([...runs].sort((a,b) => a.id.localeCompare(b.id))), 'COLLECTION_RUN_CHANGED');
+  if (JSON.stringify(finalRuns.sort((a,b) => a.id.localeCompare(b.id)))
+    !== JSON.stringify([...runs].sort((a,b) => a.id.localeCompare(b.id)))) {
+    console.log(JSON.stringify({ verdict: 'FAIL', stagePassGranted: false, failures: ['COLLECTION_RUN_CHANGED'],
+      evidenceDiff: runEvidenceDiff(runs, finalRuns) }, null, 2));
+    process.exitCode = 1;
+    return;
+  }
   const verdict = verifyStage2Ledger({ taskId, projectId,
     seed: { r0Id: env.MANAO_AI_ACCEPTANCE_R0_ID, revision: env.MANAO_AI_ACCEPTANCE_INITIAL_REVISION,
       fixtureSha256: sha(expectedFixture) }, task: taskRows[0], calls, runs, operations, logs,
