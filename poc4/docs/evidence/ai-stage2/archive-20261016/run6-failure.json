@@ -1,0 +1,29 @@
+{
+  "round": 6,
+  "taskId": "e4771c7e-a43a-468b-a472-0f38d7b2f761",
+  "taskState": "COMPLETED",
+  "browserMain": "FAILED",
+  "browserClose": "NOT_RUN",
+  "reason": "AMBIGUOUS_TOOL_ORDER",
+  "r0": "70c79a09-57c7-4fb4-96db-8aeedc78aa30",
+  "r1": "b8887b91-7390-4e28-b4ca-e428da9ce5ca",
+  "r2": "3b66c34c-49a0-49d3-8d5a-5d4a73316a96",
+  "initialRevision": "38",
+  "settledRevision": "40",
+  "fixtureUnchanged": true,
+  "build": {
+    "callId": "call_00_ET_yrepzSrxTgxocINlEmBr2207",
+    "sdkToolResultAt": "2026-10-16T16:09:43.089Z",
+    "sdkIsError": true,
+    "safeError": "the tool call did not settle within the bounded wait; the next side effect must not start",
+    "ledgerCreatedAt": "2026-10-16 16:09:35.102294",
+    "ledgerUpdatedAt": "2026-10-16 16:09:45.227207"
+  },
+  "status": {
+    "callId": "call_00_kWVtFXM1zijHlJkRybIi4980",
+    "createdAt": "2026-10-16 16:09:44.224971",
+    "updatedAt": "2026-10-16 16:09:44.237063"
+  },
+  "stagePassGranted": false,
+  "projectCleanup": "RETAINED"
+}

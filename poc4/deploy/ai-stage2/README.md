@@ -1,19 +1,31 @@
-# Pi 第二阶段发布与验收准备
+# Pi 第二阶段发布与验收
 
-当前是可审阅发布清单，**没有执行第二阶段镜像构建、推送、配置更新或集群 rollout**。实际实现、测试与限制由 [Stage 2 acceptance](../../docs/evidence/ai-stage2/acceptance.md) 统一记录。第一阶段的真实 PASS 保留在原记录；现存模型 Secret 不构成本阶段发布授权。
+2026-10-16用户已授权本阶段镜像发布、配置更新、cluster rollout及真实模型/browser/operator验收，指定端口30003；**当前已发布，阶段PASS仍为NOT_GRANTED**。实际发布、前七轮失败、已审查修复及后续复验边界由 [Stage 2 acceptance §9](../../docs/evidence/ai-stage2/acceptance.md#9-2026-10-16-授权云端发布与真实验收) 统一记录。原发布前NOT_BUILT/NOT_RUN描述是历史快照，当前状态以下表为准。第一阶段真实PASS保留；未授权Git push/merge或项目删除。
 
 ## 1. 发布清单
 
-| 组件 | 本轮发布状态 | 待登记的不可变引用 |
+| 组件 | 当前发布状态/源码 | 实际不可变引用 |
 | --- | --- | --- |
-| backend | NOT_BUILT / NOT_PUBLISHED | `chocologic/manao_images_repository@sha256:<backend-64-hex>` |
-| pi-worker | NOT_BUILT / NOT_PUBLISHED | `chocologic/manao_images_repository@sha256:<worker-64-hex>` |
-| frontend (`VITE_ENABLE_AI=true`) | NOT_BUILT / NOT_PUBLISHED | `chocologic/manao_images_repository@sha256:<frontend-64-hex>` |
+| backend | 2026-10-18 项目准入`2446ca2`已发布/部署；16/16、本地打包及test1/test2准入对照通过，保留Run recovery修复 | `chocologic/manao_images_repository@sha256:2472a61595c4a9b4f8b27ecf646dbd7f16788e9c935b0090c57f41ac907ba395` |
+| pi-worker | 2026-10-18预算`180 tools / 20 builds`已发布/部署；`aa7f282`，72/72+build、独立审查及实际Pod预算核对通过 | `chocologic/manao_images_repository@sha256:33c98b8a95d818d87f02638b64d0b93f69bc796d83802a233c5f964ca2e79a6b` |
+| frontend (`VITE_ENABLE_AI=true`) | 已发布/部署工具ID修复；`0589a765edf1b1f6dd246cf1c7814dbd40baff95` | `chocologic/manao_images_repository@sha256:6f803accccd627b9b565507068482e70d0c3c4175566d407d180923536a8e532` |
 | Maven runner | 无源码变化，复用已接受镜像 | `chocologic/manao_images_repository@sha256:59a83cb94ac271b24b837f6fe55a27a308cc6f67fee43a46ca628d03fdf85e98` |
 
-这里的占位符没有被解析为真实 digest。本阶段没有新 migration、表、共用 NetworkPolicy、initializer 或 workspace-agent 变化；不为其重建镜像、重放 V11/V12 或重新应用第一阶段共用策略。
+以上是各次发布当时已核对的仓库digest及ready Pod身份，最近记录分别为2026-10-18 backend项目准入与worker预算发布。本轮整理的集群API复核timeout/EOF，未取得新实时快照；不把历史发布记录当作本轮实时健康检查。各轮历史镜像、Pod UID及失败记录见acceptance §9.2，后续变更汇总见§9.13。本阶段没有新migration、表、共用NetworkPolicy、initializer或workspace-agent变化；运行库已有V12，不重放V11/V12或重新应用第一阶段共用策略。
 
-获得发布授权后，从最终审查提交构建并记录 commit、tag、push 输出和仓库 digest：
+2026-10-18 用户明确将工具/构建次数改为180/20，并授权重建镜像推送集群，worker已完成标准构建、push与rollout；实际源码、digest、Pod预算及回退目标由[任务预算记录](../../docs/evidence/ai-task-budget/acceptance.md)拥有。任务总时长仍1800s，不自动续跑旧FAILED任务，不启动模型验收。下文settlement-r5及其Pod是历史发布快照，已由本次新worker替换；其修复行为保留，原Stage 2完整验收继续暂停且NOT_GRANTED。
+
+2026-10-18 用户明确授权后，取消单项目限制的backend已发布，详情由[项目准入记录](../../docs/evidence/ai-project-access/acceptance.md)及其JSON证据拥有。仅backend镜像变化，旧`MANAO_AI_PROJECT_ID`保留但不再生效；其他当前用户拥有且READY的项目沿用revision和互斥校验。回退镜像为`sha256:6d255a093f503c435efc13fcad70daa5cc2bc97f40a930a8df5ee14817eb9846`，回退会恢复单项目限制。原Stage 2完整验收继续暂停，不授予阶段PASS。
+
+2026-10-17 原Stage 2验收收口已暂停，红字故障已独立修复；发布源码/测试/镜像/Pod/浏览器证据与回退引用见 [Run recovery修复记录](../../../docs/superpowers/plans/2026-10-17-run-recovery-contract-fix.md)。该轮只替换backend镜像，未启动模型任务或stop/start应用。以下`3b58568`的原jar/runtime fallback是2026-10-16历史发布；10月17日修复镜像以该旧backend不可变digest为runtime父层，替换已测试jar，保持原USER/ENTRYPOINT/JVM参数。原digest只属于10月17日修复发布的回退目标，回退会重新引入已知恢复缺陷；10月18日准入发布的回退目标见上段，不混用；阶段PASS仍NOT_GRANTED。
+
+历史worker修复`70c09851a894feab5847d19208b61e020d409552`已独立Approved、66/66及build PASS，`settlement-r5`当时实际push/rollout。旧Pod=`manao-pi-worker-5fcff5cd77-68kwf`、UID=`8165f493-0e17-4f8c-a14d-e7a5e50deb92`的ready/imageID核对仅证明当时`242369ef…`发布，已被上表预算镜像替换。该修复分离10秒admission与原720秒settlement，对真实unknown复用任务abort/fatal失败，当时不提高预算、不改backend/SDK/migration；第七轮operator COLLECTION_RUN_CHANGED导致1 failed / 1 not run、close未触发，首次快照未留存、原因UNKNOWN，原验收调查已暂停；后续三次operator PASS不覆盖原失败（acceptance §9.10/9.13）。不回退旧worker或放宽判定。
+
+后续判定器`77fe238`及harness collector `668eb0c`已独立Approved，104/104（8 helper+96 verifier）及stage6 typecheck通过；它们仅改变验收harness，无需镜像rollout，不将分支新HEAD误记为镜像源码。progress工具详情404单独记录为missingIds，须由独立ledger验证其与已登记ID不相交；不能忽略已登记的unknown结果。
+
+实际backend标准多阶段构建停在`dependency:go-offline`，未完整成功；本轮使用本地缓存Maven package产物（BUILD SUCCESS、7.181s），jar SHA256=`e7c4d55a6696fc2b0b7fbf3e8021c66c4cbd6fc2994ddbcb16bd6fbd8b11ec88`，复制到`eclipse-temurin:17.0.13_11-jre@sha256:38e0afc86a10bf4cadbf1586fb617b3a9a4d09c9a0be882e29ada4ed0895fc84` runtime层后构建/push。原Docker多阶段路径不记PASS；维护时须保留artifact/source/runtime对应关系和两项JVM参数，不用相同tag代替digest核对。
+
+以下保留标准构建入口供后续已授权发布使用，`<release>`为命令模板，不是当前digest记录；本次backend实际采用上文fallback。每次从最终审查提交记录commit、tag、push输出和仓库digest：
 
 ```powershell
 docker build -t chocologic/manao_images_repository:ai-stage2-backend-<release> poc4/backend
@@ -28,9 +40,13 @@ docker image inspect --format '{{index .RepoDigests 0}}' chocologic/manao_images
 docker image inspect --format '{{index .RepoDigests 0}}' chocologic/manao_images_repository:ai-stage2-frontend-<release>
 ```
 
-backend Dockerfile 必须保留 JVM 启动参数 `-Djdk.httpclient.redirects.retrylimit=1` 与 `-Djdk.httpclient.disableRetryConnect=true`。本地直接启动 jar 时也必须显式提供；PowerShell 的 `-D` 参数须整体加引号。确切 JRE 17.0.13 的丢响应单例已本地验证，完整新 backend 镜像构建/执行仍为 NOT_RUN。
+backend Dockerfile及fallback runtime必须保留JVM启动参数`-Djdk.httpclient.redirects.retrylimit=1`与`-Djdk.httpclient.disableRetryConnect=true`。本地直接启动jar时也必须显式提供；PowerShell的`-D`参数须整体加引号。确切JRE 17.0.13的丢响应单例已本地验证，本次runtime镜像已部署执行；这不把未完成的标准多阶段构建记为PASS。
 
 ## 2. 专用项目 bootstrap
+
+本次实际context=`kubernetes-admin@learn`、namespace=`manao-stage6b`，frontend=`http://1.12.245.235:30080`；专用projectId=`905da5ae-40ef-469e-ba2b-5c0fd202070a`，端口30003→8080，endpoint=`http://1.12.245.235:30003/`。各轮seed revision/R0及Run见acceptance §9.3/§9.6–9.11；第三至六轮R2已owner-stop/确认/reseed，第七轮fresh R0=`61d9e696-9546-478e-b4a5-a64f27f415e6`、revision42、readyAt=`2026-10-16T16:25:16Z`。不得把旧轮R0当作后续复验环境变量。本项目RETAINED，未授权删除。
+
+第五轮修改固定fixture的真实模型失败保持FAILED；prompt澄清`7949823`已独立Approved，只明确固定测试完整路径不可改删追加、可另建测试，未提供修复代码或放宽判定。已恢复原fixture SHA及seed controller，第六轮固定fixture未改，但operator以AMBIGUOUS_TOOL_ORDER拒绝，实际1 failed / 1 not run、close未跑；已确认worker在10秒提前unknown、后台build继续而与后续status重叠，validator正确拒绝。修复`70c0985`已GREEN、独立Approved并部署settlement-r5，第七轮保留COLLECTION_RUN_CHANGED失败，原因待查。第六轮新增extra test经路径/SHA核验及诊断备份后单次owner DELETE成功，固定fixture原SHA保留、controller已恢复；不扩大项目资源删除授权。
 
 先核对当前真实 context/namespace、凭据、节点和容量，以及操作者明确选择的 `30000–31000` 公网端口；冲突直接失败，禁止自动更换。项目为 Spring Boot、mysql=false、redis=false，不使用平台数据库作为用户项目数据。
 
@@ -47,7 +63,7 @@ node poc4/frontend/scripts/ai-stage2-bootstrap.mjs
 
 脚本使用唯一 creationKey，逐层创建测试目录，receipt 写入两个固定 fixture、逐次读取 revision、字节回读后启动 R0 并等待权威 ready。未知 create 响应只读 creationKey 记录；未知 Run 响应只读原项目 active Run，不盲重发。失败会输出已知 project/run/creationKey 清单并标记 RETAINED，不自动删除。
 
-保存其 `projectId`、`initialRevision`、`r0Id`、`endpoint` 与 `testFixtureSha256`。脚本不修改 backend 的 AI 专用项目配置。发布时必须在已有 backend 配置源把 `MANAO_AI_PROJECT_ID` 明确改为本轮新 projectId，保留此前值以便回滚；不要把旧第一阶段项目当成本轮项目。
+保存其 `projectId`、`initialRevision`、`r0Id`、`endpoint` 与 `testFixtureSha256`。2026-10-18 的[项目准入修改](../../docs/evidence/ai-project-access/acceptance.md)已授权发布：`MANAO_AI_PROJECT_ID` 仅兼容读取，不再限制提交，不需随 bootstrap 切换。验收脚本仍须明确使用本轮项目身份，不能复用旧第一阶段项目；旧镜像依然遵守原单项目限制。
 
 ## 3. 单实例更新与回滚
 

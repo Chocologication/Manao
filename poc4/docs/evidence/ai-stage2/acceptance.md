@@ -4,7 +4,9 @@
 
 ## 1. 当前结论
 
-Tasks 1–5 均已实现、逐项审查修复并提交。最终整分支 `66b8742..559f998` 经独立 Sol 规格/质量复审 **Approved：0 Critical / 0 Important / 0 Minor**，没有遗留实现测试失败；此次文档收口不修改已审查代码。**没有进行第二阶段云端发布、真实模型修复或浏览器运行，`PI_STAGE2_APPLICATION_FEEDBACK_PASS` 为 NOT_GRANTED。** 第一阶段真实验收与 revision-cache 后续限制仍由 [Stage 1 §8](../ai-stage1/acceptance.md) 拥有，本轮不改写。
+Tasks 1–5 均已实现、逐项审查修复并提交。最终整分支 `66b8742..559f998` 经独立 Sol 规格/质量复审 **Approved：0 Critical / 0 Important / 0 Minor**。随后用户授权镜像发布、cluster rollout、真实模型/browser/operator验收；当前已部署，前七轮主场景均保留失败记录，尚未通过完整验收，**`PI_STAGE2_APPLICATION_FEEDBACK_PASS` 为 NOT_GRANTED**。当前发布、失败与修复边界见§9；第一阶段真实验收与 revision-cache 后续限制仍由 [Stage 1 §8](../ai-stage1/acceptance.md) 拥有，本轮不改写。
+
+以下表格及§2–8保留**云端发布前的本地交付快照**：其中 NOT_BUILT / NOT_PUBLISHED / NOT_RUN、没有云端资源等描述仅对应当时，不是当前发布状态；后续实际结果由§9补充，不删除历史失败和过程记录。
 
 | 证据范围 | 实际状态 |
 | --- | --- |
@@ -138,7 +140,7 @@ root 的专用测试 MySQL 容器 `manao-ai-stage2-local-mysql-20261016`（ID `c
 
 临时SDD工作目录中的 **134个ignored文件为RETAINED**：按用户要求清理时，两次删除调用均在执行前被工具自动审批策略拒绝，未删除任何文件；返回仅说明 blocked by policy，未提供具体原因。必要失败事实与六项裁定已转入§3.1/§8。该未完成项是本地临时文档/日志清理，不是运行资源清理失败；上述Docker、临时fixture目录/cache/端口及专用MySQL清理结果仍为PASS。
 
-本轮没有平台项目、R0/R1/R2、集群 Job/Pod/Service/PVC 或新 NetworkPolicy，平台/集群删除数为 **0 created / 0 deleted**；不能据此授予真实项目资源回收 PASS。以后真实验收的项目未获删除授权时记录 RETAINED 与清单；owner stop/close、资源核对和最终删除按 release README 记录实际结果。
+本地交付时没有平台项目、R0/R1/R2、集群 Job/Pod/Service/PVC 或新 NetworkPolicy，平台/集群删除数为 **0 created / 0 deleted**；不能据此授予真实项目资源回收 PASS。后续授权云端发布创建的项目及保留状态见§9；owner stop/close、资源核对和最终删除按 release README 记录实际结果。
 
 ## 7. 范围与过度工程化复核
 
@@ -160,3 +162,140 @@ root 的专用测试 MySQL 容器 `manao-ai-stage2-local-mysql-20261016`（ID `c
 | 6 | 修正既有close/registration竞态测试：phase3仅允许PROJECT_BUSY，竞争registrar结束后只重试同task的close一次；保留FAILED、行数上界、无执行、有界完成断言 | shared gate刻意tryAcquire，旧测试错误假定并发close一次必胜；Task3未改变该生产close路径 | 若放宽过度会掩盖持续锁泄漏；不允许无界retry或其他异常，最终release与原安全断言仍必须成立。历史78-test失败和后续230整合通过见§3.1 |
 
 原临时SDD ledger/报告可在必要事实转移后由控制者精确清理；本文件保留裁定、有效失败、修复、最终结果与证据限制。临时日志存在或被清理均不扩大模型、集群、浏览器、业务验收结论。
+
+## 9. 2026-10-16 授权云端发布与真实验收
+
+### 9.1 当前判定、授权与环境
+
+**`PI_STAGE2_APPLICATION_FEEDBACK_PASS`：NOT_GRANTED。** 前七轮主场景保留失败：第一轮provider拒绝schema，第二轮预算耗尽，第三轮operator拒绝，第四轮progress工具详情404，第五轮模型修改固定验收测试、被fixture字节不变检查正确拒绝，第六轮operator正确拒绝AMBIGUOUS_TOOL_ORDER、已确认worker提前unknown后继续后台build的生产缺陷，第七轮COLLECTION_RUN_CHANGED首次快照未留存、原因UNKNOWN且调查已暂停（§9.10/9.13）。判定器修复`77fe238`及harness修复`668eb0c`均独立Approved 0 findings，相关104/104及stage6 typecheck通过；第三轮后续operator单独PASS且`stagePassGranted=false`不补齐browser main/close。提示词已澄清并完成fixture/controller恢复；第六轮失败不据此放宽工具时间顺序判定。
+
+用户在本地交付后授权实际镜像发布、cluster rollout、真实模型及browser/operator测试，指定公网端口**30003**；明确禁止Git push/merge，未改变。发布开工HEAD=`3b58568539e8db0d85318cf951c4170db21e3336`、tracked工作区clean；context=`kubernetes-admin@learn`，namespace=`manao-stage6b`，浏览器入口`http://1.12.245.235:30080`。使用现有worker模型Secret，不输出/提交凭据；V12已存在，无新migration，runner不变。授权不包含删除既有项目或共享资源。
+
+### 9.2 实际镜像、源码与部署身份
+
+镜像仓库前缀均为`chocologic/manao_images_repository@sha256:`，以下是2026-10-16验收轮次的实际push历史快照；当时使用backend、工具ID修复frontend、settlement-r5 worker及原runner。后续2026-10-17/18的backend和worker替换见§9.13；后续源码修复不会自动改变已部署镜像。
+
+| 组件/轮次 | 源码边界 | 实际digest |
+| --- | --- | --- |
+| backend runtime，后续已替换 | `3b58568`生产backend源码 | `28e709556a56eb6c6c2a110735479d17504c9f90b10850e995cfaabeeb2948a6` |
+| frontend初轮，已替换 | `3b58568`及Docker/corepack修正`2b89840` | `0b275310c472845ae2b7e194b57c84e521034b2565fa3e42f836de4bc14563f6` |
+| frontend工具ID修复，当前 | `0589a765edf1b1f6dd246cf1c7814dbd40baff95` | `6f803accccd627b9b565507068482e70d0c3c4175566d407d180923536a8e532` |
+| worker初轮，已替换 | `3b58568` | `16c5c6ab4b53cda1da58a0349ab5002c3f5af4c59ac6f297ecf1cbc2ca3c84f5` |
+| worker schema修复，已替换 | `1abf696` | `8c3ef5b9c560632f302bdd77b4e63fefeb0474706173b7a02e8e617502719d94` |
+| worker安全诊断，已替换 | `a9dab89bd3d1aba86ea138f643965c18198520d3` | `8d2ffe150317b4b6b2feb0847750750148f0d0624e6798e65ad22bc5481847f1` |
+| worker bounded busy修复（busy-r4），已替换 | `3bd334a1eef61d09965ade454cf9358f363d24c5` | `8630742428e8dbaafcb035213200b20db2cf353f47c0e70c25046216cb5ee3c5` |
+| worker settlement/fatal修复（settlement-r5），后续已替换 | `70c09851a894feab5847d19208b61e020d409552` | `242369ef1c159e1f4e4a7bfd8f10eab0b878f6ce977571208bfde72dec651c50` |
+| accepted Maven runner，未改 | 本阶段无源码变化 | `59a83cb94ac271b24b837f6fe55a27a308cc6f67fee43a46ca628d03fdf85e98` |
+
+backend标准多阶段构建的`dependency:go-offline`未完成；实际使用本地缓存Maven打包的jar复制到确切runtime层，不记为原多阶段Docker完整构建PASS。package为BUILD SUCCESS、7.181s（2026-10-16T22:44:20+08:00），jar SHA256=`e7c4d55a6696fc2b0b7fbf3e8021c66c4cbd6fc2994ddbcb16bd6fbd8b11ec88`；runtime=`eclipse-temurin:17.0.13_11-jre@sha256:38e0afc86a10bf4cadbf1586fb617b3a9a4d09c9a0be882e29ada4ed0895fc84`，保留§5两项JVM参数。
+
+backend/worker按单实例停旧再启新，无新旧重叠。采集的backend Pod=`backend-558874c8d-kmr22`、UID=`c964d004-a4eb-4137-815e-74691ee4b4b7`；frontend Pod=`frontend-695668885d-ngdr5`、UID=`c50ef83a-7425-4509-aefb-18a3d15a04a7`；busy-r4 worker Pod=`manao-pi-worker-5bbcf4b96b-g6cjr`、UID=`66ee2f76-f666-42e1-9378-8ce4ac15fa7c`，均已实际ready并核对对应镜像。诊断版旧Pod/旧identity文件不能当busy-r4部署证明。
+
+随后settlement-r5已实际push/rollout，当时worker Pod=`manao-pi-worker-5fcff5cd77-68kwf`、UID=`8165f493-0e17-4f8c-a14d-e7a5e50deb92`，ready及imageID与上表对应digest核对通过；该轮backend/frontend不变。settlement-r5与busy-r4身份均只保留历史用途，最新已记录替换见§9.13。
+
+### 9.3 专用项目与固定fixture
+
+projectId=`905da5ae-40ef-469e-ba2b-5c0fd202070a`，name=`ai-stage2-7a11c73d`，creationKey=`03277d78-aabb-4f1b-bfbf-ccc6b09fdce3`，mysql=false、redis=false，端口30003→8080，endpoint=`http://1.12.245.235:30003/`。固定suite SHA256=`a7663e44983b9487ffe196ea5601b6aabe5d0e6f32a6488946ec2cea3296bf2c`，不得修改/删除suite。
+
+初轮seed revision28、R0=`191bc472-ddaf-4554-bafe-23b1536db039`。第二轮失败后恢复seeded故障controller并保留suite；第三轮seed revision30、R0=`215f05c0-f6e8-4f10-b169-1fa7e8d584d4`，真实readyAt=`2026-10-16T15:11:44.0000000Z`。bootstrap summary已纠正为`R0_READY_AFTER_FAILED_ROUND`，不沿用初轮旧readyAt。
+
+### 9.4 首轮失败及schema/工具ID修复
+
+task=`65910d8a-6830-4cae-8c5d-5e71746e474d`：FAILED/AI_PROVIDER_ERROR、ledger工具调用0；browser主场景FAILED、close NOT_RUN。持久assistant错误明确provider HTTP400：application顶层union缺object type。R0未被任务修改。提交`1abf696`改为顶层Type.Object，保留action enum及optional runId/waitSeconds、additionalProperties=false，backend严格action校验不变；有效TDD **2 failures/34 pass→36/36+build PASS**，独立审查通过。
+
+真实provider ID含`call_...`，旧UI/E2E正则漏underscore。提交`0589a76`把既有parser移入contracts供Panel/E2E共用，兼容underscore、长度上限64并保留原导出。MSW精确owner GET、结果点击与Run导航有效RED **3 failures/38 skipped**，GREEN Panel **41/41**、RunPanel **42/42**、stage6 typecheck/build PASS；独立审查通过，未重复1397全套。这些本地修复不能替代真实模型验收。
+
+### 9.5 第二轮失败、只读诊断与bounded busy修复
+
+task=`13157eca-5f3f-413a-a1cf-ef60f71e8921`：**FAILED/AI_BUDGET_EXCEEDED**，SDK61次工具尝试、ledger29行。R1=`63842e3f-2a3e-4b61-9cb5-0c1878eed70b`真实500，模型修复后R2=`3357d5d1-b18c-4a7b-b58e-0a7f7882dcbd`真实200；任务仍FAILED，不能凭500→200授予PASS。失败收尾R2 CANCELLED、无active、unsettled call0。旧SDK仅记录`tool call was refused (409)`，不能追认全部为PROJECT_BUSY。
+
+提交`a9dab89`仅把固定allowlist code加入安全错误message，不输出rawbody/凭据、不增加retry；有效TDD **12 failures/36 pass→48/48+build PASS**、独立审查通过。随后只读task=`5739cbcb-87c4-4750-a0c8-4204fb518413`仅做10次application/status waitSeconds0，无write/build/start/stop；COMPLETED，10个SDK结果中6个明确409 PROJECT_BUSY、4条ledger，独立确认当时短锁争用。
+
+提交`3bd334a`只处理exact409 PROJECT_BUSY：最多10s admission，先查询原task/call，唯fresh404可用相同URL/body/身份重发；已注册后仍用原720s settlement，lost replay保持AI_CALL_UNKNOWN。原60工具/8构建/1800s预算不变。有效RED **8 failures/46 pass**，另transport剩余timeout与lost-outcome各先1 failure；最终worker **56/56+build PASS**，独立审查Approved 0 findings，已实际发布busy-r4。
+
+### 9.6 第三轮：task完成，browser主场景失败
+
+task=`909de4e0-ca53-480e-8eed-c38ffd9def58`最终COMPLETED、failure=null；35条ledger：appHTTP3/application12/write1/read7/list8/build4。R1=`a7308dff-3881-492f-93c5-5c1455266324`、revision30，真实HTTP500及对应logs后CANCELLED；模型通过receipt修改源码并运行修复test。R2=`7f84a232-5443-441d-b314-525fc23c9358`、revision31、readyAt=`2026-10-16T15:31:32Z`，采集时RUNNING；后续已由owner正常stop、确认停止并恢复seed，不能把此历史采集状态当当前active Run。
+
+浏览器真实取得200/`Hello Pi`并通过`View run`导航，但当时operator以**UNKNOWN_TOOL_RESULT**拒绝，browser E2E实际为**1 failed / 1 not run**，close NOT_RUN。task COMPLETED、局部浏览器成功及后续operator重验均不覆盖这次失败。
+
+判定器随后先修正确定无副作用的stop拒绝结果，**78/78**通过；再补目标HTTP子链、严格验证全部extra HTTP调用，**92/92**通过。独立review又指出既有判定仅检查mutation/Run，缺少全项目Run/Run区间排斥检查，属于Important；有效RED为**93 pass / 3 failures→96/96 PASS**，最终独立Approved并提交`77fe238`。最终判定器对同一run3重新采集operator为PASS、`stagePassGranted=false`（`operator-run3-final-verifier.json`）；旧operator PASS不授予阶段PASS，也不覆盖该轮browser失败。
+
+### 9.7 第四轮失败与harness结果采集修复
+
+第四轮task（ID前缀`5079867a`）COMPLETED。R1=`99971d3a-53ec-45ed-acb4-bca08baf3f3a`、revision32、CANCELLED；R2=`3d1efbab-a55b-44a3-93f7-53d68b6d0c42`、revision33、readyAt=`2026-10-16T15:50:23Z`，采集时RUNNING。browser读取progress `tool_end`的`call_00_gpBp50CIFnXKWTMLJSoo7558`详情，owner route返回404 ENTRY_NOT_FOUND，主场景**1 failed / 1 not run**、close未触发。
+
+调查确认该ID在DB中0行，worker记录登记前409 AI_CALL_UNSETTLED；SDK的tool_end包含失败尝试，不能推定每个progress ID都有持久结果。harness修复只把404记为missingIds；独立operator要求missingIds与已严格验证的durable ledger IDs不相交，所有已登记unknown/unsettled/error仍拒绝，不把404豁免成成功。手工operator原采集先后留下INDEPENDENT_ACTIVE_CHANGED和OWNER_API_FAILED；后续两份仅增加安全诊断的副本重采PASS不抹除原失败，也不授予阶段PASS。
+
+修复提交`668eb0c`已独立Approved 0 findings，**104/104（8 helper+96 verifier）及stage6 typecheck PASS**。首次helper缺模块失败不是有效行为RED；透明纠正为丢弃过早实现、用最小stub取得实际**0 pass / 8 assertion failures**，再重写GREEN。`77fe238`/`668eb0c`均仅harness，无需镜像rollout；当前backend/frontend/worker仍为§9.2的已部署digest。
+
+第四轮R2后续已owner-stop、确认停止并恢复seed。第五轮R0=`651e01f1-3654-46f0-995d-5608212d192b`、revision34，readyAt=`2026-10-16T16:01:27Z`（北京时间已10月17日）。
+
+### 9.8 第五轮：模型修改固定fixture，主场景正确失败
+
+第五轮task=`bbbc69f9-7eaf-4082-8537-201adab5c466`最终COMPLETED、failure=null；R1=`bcbcfd16-3da8-44fe-8b8a-312c788722e5`、revision34、CANCELLED，R2=`5e69066d-ad79-4bef-afe4-f090bec5e6d7`、revision36、readyAt=`2026-10-16T16:04:09Z`，采集时RUNNING。模型进行了两次write，其中向固定`DemoControllerAcceptanceTest.java`追加`greetsPi`，违反固定fixture字节不变要求；browser `fixtureUnchanged`检查正确FAILED，实际**1 failed / 1 not run**，close未运行。
+
+固定fixture写入receipt=`99b6039c-fdb6-42b3-9cba-9d5131a9ef15`，变更后SHA256=`283eb2f16bd07d6195c7eb32b9dddd9325a1f0cdeef65c84d55d6855fd340f5c`，与§9.3原suite digest不同；controller变更后SHA256=`dc4baa88270d5485dc5259db449da316802a735d7d6a1215632492170e039e44`。该轮实际HTTP依次为目标500→目标200→guest200，仍因固定fixture被改而FAILED；这些运行结果不能覆盖测试完整性要求。
+
+这是实际模型失败，保留FAILED，不调整fixture要求或替模型修复。自然语言prompt现已澄清固定测试完整路径不得改、删或追加，可另建其他测试，不提供修复代码；独立Approved 0 findings，提交`7949823`，未新增仅检查字符串的测试，也未放宽fixture判定。第五轮R2已owner-stop并确认停止，固定fixture恢复§9.3原SHA、controller恢复seeded故障版本。
+
+第六轮fresh R0=`70c79a09-57c7-4fb4-96db-8aeedc78aa30`、revision38、readyAt=`2026-10-16T16:07:43Z`，已实际ready。prompt/harness修正无需镜像rollout，生产镜像仍为§9.2记录；第六轮失败见§9.9。
+
+### 9.9 第六轮：operator拒绝工具时间顺序
+
+task=`e4771c7e-a43a-468b-a472-0f38d7b2f761`最终COMPLETED；R1=`b8887b91-7390-4e28-b4ca-e428da9ce5ca`、revision38、CANCELLED；R2=`3b66c34c-49a0-49d3-8d5a-5d4a73316a96`、revision40、readyAt=`2026-10-16T16:10:23Z`，采集时RUNNING。模型修改controller并另建`DemoControllerHttpContractTest.java`，固定fixture未改；operator以**AMBIGUOUS_TOOL_ORDER**拒绝，browser实际**1 failed / 1 not run**，close未运行。
+
+证据中一条application工具区间与前一build的持久updated_at存在约1秒重叠。独立只读调查已实证确认**worker生产缺陷**：SDK顺序执行生效，但build工具在10秒时报unknown，后台build继续；后续status与后台build真实重叠，因此validator正确拒绝，不是时间戳误判。
+
+busy-r4把可能已登记的replay POST错误地套用10秒admission预算，在查询原GET身份前退出；普通工具error又可被SDK吞下，继续执行后续工具。修复`70c09851a894feab5847d19208b61e020d409552`已独立Approved 0 findings：known-busy admission仍限10秒、不产生新身份POST；unknown POST之后查询原identity并沿用原720秒settlement，已登记长build正常等待结算。真正unknown的三个固定code在任务内先设置fatal latch，再调用`agent.abort()`而不等待；结算优先返回安全fatal失败，阻止后续副作用。普通参数错误及build非零仍可继续修复，不新增状态或framework。
+
+有效client RED **4 failures/35 pass→39/39 PASS**；fatal路径有效RED **6 failures/21 pass**，最终worker **66/66及build PASS**。backend、SDK、migration均不变，10秒admission、720秒settlement及60工具/8构建预算不提高。`settlement-r5`镜像已实际push/rollout，digest及当前Pod身份见§9.2；第七轮未复现旧unknown错误但在采样一致性检查处FAILED（§9.10），代码GREEN和rollout不授予阶段PASS。
+
+### 9.10 第七轮：operator采样一致性失败
+
+第七轮准备已完成：第六轮R2 exact owner-stop并确认，原fixed fixture SHA不变；核验第六轮Pi新增extra test的路径/完整SHA并备份诊断后，单次owner DELETE成功，再恢复seed controller。新R0=`61d9e696-9546-478e-b4a5-a64f27f415e6`、revision42、readyAt=`2026-10-16T16:25:16Z`，已实际ready。仅清理失败轮次的新增测试，不扩大为生产项目资源删除授权。
+
+task=`3d9d9bdb-0995-45a5-9bab-113a2d821fc8`最终COMPLETED、failure=null、settledRevision44；26条ledger均COMPLETED（build2/application9/HTTP3/list4/read6/write2）。R1=`acf23f88-a2f2-4581-9f69-185631be7c69`、revision42、CANCELLED；R2=`8c0b2926-edce-4f32-a85e-0fef26f20ad2`、revision44、readyAt=`2026-10-16T16:27:10Z`，采集时RUNNING。固定fixture不变、取得真实目标500→200，但operator以**COLLECTION_RUN_CHANGED**拒绝，browser实际**1 failed / 1 not run**，close未触发。
+
+第七轮首次失败的前后完整快照未保存，具体差异无法追溯。后续只读诊断读取18条Run，九个字段值和对象键顺序一致，原严格比较通过，没有证据认定JSON键顺序是首次失败原因。随后同task/R2的三次独立operator采集均PASS、`stagePassGranted=false`，各自保留[结果1](archive-20261016/operator-run7-independent-1.json)、[结果2](archive-20261016/operator-run7-independent-2.json)、[结果3](archive-20261016/operator-run7-independent-3.json)；它们是后续观察，不替代原[browser-run7失败](archive-20261016/browser-run7.txt)，不补齐close。诊断报告和后续采样由[归档清单](archive-20261016/manifest.json)定位。
+
+首次原因仍为UNKNOWN，原轮次保持FAILED；调查与原模型验收已按用户要求暂停。第七轮未复现第六轮提前unknown旧错误，但不能据此宣布完整真实验收通过。后续授权worker预算发布保留settlement修复行为，见§9.13。
+
+### 9.11 待补证据、资源与清理边界
+
+当前保持**NOT_GRANTED**。先查明第七轮采样一致性失败根因；完整browser主场景（reload同task、真实editor内容、运行只读/精确409 PROJECT_LOCKED、正常stop后可编辑）、第二个owner-close场景与历史Run不变、同task的完整Run/工具时间/receipt/suite/Service/独立公开HTTP及资源核对仍需有效结果。未运行或未到达触发点的项逐项记NOT_RUN/FAILED，不能以独立operator旧PASS补close。
+
+项目及workspace/PVC/稳定Service **RETAINED**，第三至六轮R2均已owner-stop并恢复seed，第七轮R2采集时RUNNING、后续状态待证；不删除既有项目、共享policy或资源，也不声称项目删除/0residual PASS。后续owner stop/close须记录实际Run及Job/Pod/Service结果。项目最终删除仍需明确owner授权。
+
+§6原134个ignored文件的两次自动审批删除拒绝仍为历史RETAINED，不重试绕过，也不把134当成当前文件总数。本次新增release evidence为必要发布/失败/复验依据，保留；私有loader、rollback和原始凭据不进入提交。没有Git push/merge。
+
+### 9.12 2026-10-17 暂停原验收收口：前端 Run authority/history 故障
+
+用户要求先暂停 Stage 2 原验收收口，优先修复前端 `Unable to load run authority/history`：相关请求返回 HTTP 200，但 Run 响应为 `RUNNING`、`startedAt=null`。当前不推定它与第七轮采样失败具有同一根因。**`PI_STAGE2_APPLICATION_FEEDBACK_PASS` 仍为 NOT_GRANTED**；原 Stage 2 模型/集群验收继续暂停，禁止删除项目。本次故障的独立根因、TDD、审查和限定 backend 修复发布记录见 [Run recovery 修复记录](../../../../docs/superpowers/plans/2026-10-17-run-recovery-contract-fix.md)，沿用此前明确发布授权，修复验证不等于恢复原验收。
+
+恢复原验收前仍需完成以下事项；本清单保存暂停时的未决状态，不把实现或局部结果改记为完整验收通过：
+
+- 查明第七轮 `COLLECTION_RUN_CHANGED` 首次触发原因；目前原因不明，该轮 FAILED 不能改记为 PASS。
+- 最新 null-safe `evidenceDiff` 已于2026-10-18完成独立复审及108/108本地回归；保留严格FAIL语义。归档及提交情况见§9.13。
+- 旧续验config/spec从未执行，绑定R0 revision42、task `3d9d9bdb-0995-45a5-9bab-113a2d821fc8`、R2 `8c0b2926-edce-4f32-a85e-0fef26f20ad2` / revision44；后续用户Run/源码已变化，该绑定失效。本次独立审查确认通用检查已存在于受跟踪`ai-stage2.spec.ts`，撤回并清理这两份重复一次性文件；不将其记PASS，续验仍NOT_RUN。
+- 补齐 browser HTTP 结果展示、active 编辑锁的精确 `409 PROJECT_LOCKED`、正常 stop 后恢复编辑的真实路径证据，并完成 §9.11 的其他 browser 主场景检查。
+- owner-close 仅停止本任务新建的 Run，核对 start rows、无未决 call 及历史 Run 不变，记录实际 Job/Pod/Service 结果。
+- 完成 project-scoped 数据库与 Kubernetes 资源核查，保留项目/workspace/PVC/稳定 Service，不把保留状态写为删除或零残留 PASS。
+- 最后补齐权威文档和提交记录；Git push/merge 仍未授权。
+
+### 9.13 2026-10-18 记录核查、后续变更与本地整理
+
+用户要求核查并补全之前的阻碍与后续变更记录，清理本地工作区。开工HEAD `0f66834`；当时§9、AGENTS/Progress/发布README、诊断verifier/test及一次性续验文件仍未提交。此次不恢复真实模型验收、不部署、不改变任何运行项目或数据库。
+
+| 后续工作 | 已落盘及提交的证据 | 本阶段影响 |
+| --- | --- | --- |
+| Run authority/history红字 | 修复`16e030d`、发布记录`748d2ed`；[修复权威记录](../../../../docs/superpowers/plans/2026-10-17-run-recovery-contract-fix.md)：93/93 backend、126/126 frontend、独立Approved、2026-10-17限定浏览器检查通过；同Run补齐startedAt，未延长expiry | 已修复并发布；日志流Reconnecting未获PASS，也未证明与首次采样变化同源 |
+| 所有当前用户READY项目可提交AI任务 | `2446ca2`、`2632f7e`；[准入记录](../ai-project-access/acceptance.md)及release JSON：16/16、backend发布、test1/test2 revision拒绝对照且未创建任务；该轮自审，未运行独立子代理审查 | 已取消单项目白名单；不证明业务/模型任务完成 |
+| 180次工具 / 20次build | `aa7f282`、`0f66834`；[预算记录](../ai-task-budget/acceptance.md)及release JSON：72/72、独立Approved、worker构建/push/rollout、实际Pod两预算入口核对 | 已发布；总时长仍1800s，旧FAILED任务不自动恢复 |
+| 第七轮诊断verifier | `2f712e3`；保留完整排序JSON严格比较、原FAIL code/exit1，仅增加九字段安全差异投影和缺失active快照的null安全处理；原RED 96pass/2fail→106/106组合，修正RED 98pass/2fail→100/100 verifier，报告见归档 | 本轮最终独立Approved；`pnpm exec node --test scripts/ai-stage2-verify-ledger.test.mjs scripts/ai-stage2-tool-results.test.mjs` 108/108、0skip，两个mjs `node --check`及diff检查通过；无真实operator重跑 |
+
+最近一次已验证的backend为 `sha256:2472a61595c4a9b4f8b27ecf646dbd7f16788e9c935b0090c57f41ac907ba395`，worker为 `sha256:33c98b8a95d818d87f02638b64d0b93f69bc796d83802a233c5f964ca2e79a6b`；完整源码/Pod/回退对应关系由各自权威记录和[发布README](../../../deploy/ai-stage2/README.md)拥有。本轮集群API只读复核因timeout/EOF未完成，未取得新Pod/预算快照，不把旧发布证据表述为本轮实时健康PASS。
+
+三次后续operator和首次失败最小证据共16份已检查凭据后归档（源文件54,773字节；七份browser日志去掉14个行尾空格后为54,759字节，源/归档SHA256均见manifest）；旧trace、私有loader、重复构建context和审查副本不进入提交。本轮本地清理的逐文件清单、实际数量、保留边界和验证由[工作区整理记录](workspace-audit-20261018.md)拥有。§6及修复记录中先前审批拒绝是历史事实，本次用户重新明确授权清理，新增结果不改写当时状态。
+
+**剩余原验收事项仍为PAUSED / NOT_GRANTED**：首次采样差异UNKNOWN；完整browser主场景、精确编辑锁/stop恢复编辑、owner-close/start rows/未决call/历史Run不变、独立项目资源核查均未补验。Run记录/源码已变化，恢复时须先核对真实环境和固定fixture，不能直接套用旧续验身份或把三次operator PASS改记整轮PASS。

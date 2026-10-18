@@ -1,0 +1,103 @@
+[
+  {
+    "file": "operator-run7-independent-1.json",
+    "bytes": 1621,
+    "sha256": "a41b3f6f6c6ebd7f24a4cee0a9f7d2c7af8cfec4d8fe3ec8140cb7b1b71aa8f5"
+  },
+  {
+    "file": "operator-run7-independent-2.json",
+    "bytes": 1621,
+    "sha256": "a41b3f6f6c6ebd7f24a4cee0a9f7d2c7af8cfec4d8fe3ec8140cb7b1b71aa8f5"
+  },
+  {
+    "file": "operator-run7-independent-3.json",
+    "bytes": 1621,
+    "sha256": "a41b3f6f6c6ebd7f24a4cee0a9f7d2c7af8cfec4d8fe3ec8140cb7b1b71aa8f5"
+  },
+  {
+    "file": "run7-snapshots-diagnostic.jsonl",
+    "bytes": 14851,
+    "sha256": "240a8005d1e5aac1545ddaa16f92c7348cec64753f2ce4b8e48bc01833c7aa8f"
+  },
+  {
+    "file": "operator-evidence-diff-report.md",
+    "bytes": 4410,
+    "sha256": "7a6ce0275783fb589f3377958ed25e1ec9c4ecd8b889fcfb9ed942768b314c3a"
+  },
+  {
+    "file": "run1-failure.json",
+    "bytes": 447,
+    "sha256": "67587ae2498b0540e8e21b403a734314375ba43bd062211e823ec47e57094d90"
+  },
+  {
+    "file": "run2-failure.json",
+    "bytes": 415,
+    "sha256": "25f44c5605c676ce7c8df513040dae91aa9465bb2c9d820732b05e5954df9ee9"
+  },
+  {
+    "file": "run3-failure.json",
+    "bytes": 556,
+    "sha256": "84656ee4dc0273b390eabc7550aad8ba3a7a946de2e1068a825a6c0f293a0689"
+  },
+  {
+    "file": "run6-failure.json",
+    "bytes": 1026,
+    "sha256": "44130062f7626ed50488442a0bd05c239b6ea0a8be701cddbce8b9ec294d4a99"
+  },
+  {
+    "file": "browser-run1.txt",
+    "bytes": 3935,
+    "sha256": "c7ba3c489024b6cc1035560f68f671b090e13b5706f69bfb58c43a6aa4ee4168",
+    "sourceBytes": 3937,
+    "sourceSha256": "a883abb208c74819f37753a1c0286e9c18a20e8a2fe8ba27000e8f7af114281e",
+    "normalization": "Trailing horizontal whitespace removed; verdicts and diagnostic text unchanged."
+  },
+  {
+    "file": "browser-run2.txt",
+    "bytes": 3934,
+    "sha256": "7727d8dd5cc6f84eaeee017972744128cbb8f76f996cfaa2242520713653ad62",
+    "sourceBytes": 3936,
+    "sourceSha256": "8beb0937381f471a05b09f4a488bae8d9e505b8d15523e033e44279d2df7ed3c",
+    "normalization": "Trailing horizontal whitespace removed; verdicts and diagnostic text unchanged."
+  },
+  {
+    "file": "browser-run3.txt",
+    "bytes": 3946,
+    "sha256": "142000a5ca3d14a69a27c56d174c282220443268f9c71fb378124e96f986c3ef",
+    "sourceBytes": 3948,
+    "sourceSha256": "be677dc1a384b364cd5227358a3aa14b5cedc03a9cf8998a4f966fcf73d46699",
+    "normalization": "Trailing horizontal whitespace removed; verdicts and diagnostic text unchanged."
+  },
+  {
+    "file": "browser-run4.txt",
+    "bytes": 3963,
+    "sha256": "c14ad2d31a9260dfdfe0daab2b0a07dd889dae844d22d6128e935a1a4e573734",
+    "sourceBytes": 3965,
+    "sourceSha256": "76237289ff310884f549b4bfb439189e98ca4c8c522e306d1e164f2aff74b4f7",
+    "normalization": "Trailing horizontal whitespace removed; verdicts and diagnostic text unchanged."
+  },
+  {
+    "file": "browser-run5.txt",
+    "bytes": 4517,
+    "sha256": "76e4dcfea663a2cd18541a67c10439b47faf3863695a4f6412edd999ff694352",
+    "sourceBytes": 4519,
+    "sourceSha256": "51e9ec095d52b4c27f36208357b5e0ccb43288a46e0e73dd352e907ffb448c8a",
+    "normalization": "Trailing horizontal whitespace removed; verdicts and diagnostic text unchanged."
+  },
+  {
+    "file": "browser-run6.txt",
+    "bytes": 3947,
+    "sha256": "67d5b1c0583cbe667de0a8b8d0ddfe179ca2c35f06879125d3a47947026a66c6",
+    "sourceBytes": 3949,
+    "sourceSha256": "06a9daf69c0c4cb7add068c03a0f931cfa3bf622559920f5a716773408fba646",
+    "normalization": "Trailing horizontal whitespace removed; verdicts and diagnostic text unchanged."
+  },
+  {
+    "file": "browser-run7.txt",
+    "bytes": 3949,
+    "sha256": "7b6d6fa75d83ed9dfd41097f4ba55fbefc6bd62323a2debe14b0458e6ff7dda7",
+    "sourceBytes": 3951,
+    "sourceSha256": "201e7c74514c7937112995513ad28fcaf4130304b0933135044b2e300b62a270",
+    "normalization": "Trailing horizontal whitespace removed; verdicts and diagnostic text unchanged."
+  }
+]

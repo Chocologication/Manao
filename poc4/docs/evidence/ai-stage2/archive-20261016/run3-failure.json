@@ -1,0 +1,17 @@
+{
+  "round": 3,
+  "taskId": "909de4e0-ca53-480e-8eed-c38ffd9def58",
+  "taskState": "COMPLETED",
+  "browserMain": "FAILED",
+  "reason": "Operator UNKNOWN_TOOL_RESULT rejected a completed validation refusal",
+  "browserClose": "NOT_RUN",
+  "r0": "215f05c0-f6e8-4f10-b169-1fa7e8d584d4",
+  "r1": "a7308dff-3881-492f-93c5-5c1455266324",
+  "r2": "7f84a232-5443-441d-b314-525fc23c9358",
+  "r2State": "RUNNING",
+  "initialRevision": "30",
+  "settledRevision": "31",
+  "ledgerCalls": 35,
+  "projectCleanup": "RETAINED",
+  "stagePassGranted": false
+}

@@ -1,0 +1,11 @@
+{
+  "taskId": "65910d8a-6830-4cae-8c5d-5e71746e474d",
+  "browser": "1 FAILED / 1 NOT_RUN",
+  "taskState": "FAILED",
+  "failureCode": "AI_PROVIDER_ERROR",
+  "toolCalls": 0,
+  "providerStatus": 400,
+  "providerReason": "application tool schema top level must be type object; current union schema type null",
+  "originalRun": "191bc472-ddaf-4554-bafe-23b1536db039",
+  "source": "worker persisted assistant errorMessage, no rawcredentials"
+}
