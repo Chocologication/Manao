@@ -23,6 +23,7 @@ import {
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { BackendClient, BackendHttpError, ProgressChain, type ToolResult } from "../src/backend-client.js";
 import { createPiSession, type PiTaskOutcome } from "../src/pi-session.js";
+import { loadWorkerConfig, type WorkerBudgets } from "../src/config.js";
 
 // ---------------------------------------------------------------------------
 // Scripted model adapter: a faux streamFn the way the SDK's own test harness
@@ -171,10 +172,8 @@ const MODEL_CONFIG = {
   apiKey: "test-only-key",
 };
 
-const BUDGETS = { wallClockSeconds: 1800, toolCalls: 60, builds: 8 };
-
 interface SessionOverrides {
-  budgets?: typeof BUDGETS;
+  budgets?: WorkerBudgets;
   settingsManager?: unknown;
   observeOptions?: (options: CreateAgentSessionOptions) => void;
 }
@@ -225,7 +224,7 @@ async function runScriptedTask(
   const pi = await createPiSession({
     model: MODEL_CONFIG,
     paths: privateDirs(),
-    budgets: overrides.budgets ?? BUDGETS,
+    budgets: overrides.budgets,
     backend: backend as never,
     progress: chain,
     taskId: "task-1",
@@ -355,5 +354,58 @@ describe("pi session", () => {
     );
     expect(outcome.state).toBe("FAILED");
     expect(outcome.failureCode).toBe("AI_BUDGET_EXCEEDED");
+  });
+
+  describe.each(["session default", "server configuration"])("raised budget via %s", (source) => {
+    function productionBudgets(): WorkerBudgets | undefined {
+      if (source === "session default") return undefined;
+      return loadWorkerConfig({
+        MANAO_AI_WORKER_TOKEN: "worker-test-token",
+        MANAO_AI_BACKEND_TOKEN: "backend-test-token",
+        MANAO_AI_BACKEND_BASE_URL: "http://127.0.0.1:9",
+        MANAO_AI_SCRATCH_DIR: ".",
+        MANAO_AI_AGENT_DIR: ".",
+        MANAO_AI_SESSION_DIR: ".",
+      }).budgets;
+    }
+
+    it("allows 180 tool calls including 20 builds to finish", async () => {
+      const toolCalls = Array.from({ length: 180 }, (_, index) => index < 20
+        ? { id: `build-${index}`, name: "build", args: { goal: "test" } }
+        : { id: `read-${index}`, name: "list_files", args: { directory: "" } });
+      const { outcome, backend } = await runScriptedTask([
+        { toolCalls }, { text: "Completed within the task budget." },
+      ], [resultFor], { budgets: productionBudgets() });
+
+      expect(outcome.state).toBe("COMPLETED");
+      expect(backend.calls).toHaveLength(180);
+      expect(backend.calls.filter((call) => call.request.name === "build")).toHaveLength(20);
+    });
+
+    it("rejects the 181st tool before it reaches the backend", async () => {
+      const { outcome, backend } = await runScriptedTask([
+        { toolCalls: Array.from({ length: 181 }, (_, index) => ({
+          id: `read-${index}`, name: "list_files", args: { directory: "" },
+        })) },
+        { text: "This must not complete." },
+      ], [resultFor], { budgets: productionBudgets() });
+
+      expect(outcome.failureCode).toBe("AI_BUDGET_EXCEEDED");
+      expect(backend.calls).toHaveLength(180);
+      expect(backend.calls.at(-1)?.request.toolCallId).toBe("read-179");
+    });
+
+    it("rejects the 21st build before it reaches the backend", async () => {
+      const { outcome, backend } = await runScriptedTask([
+        { toolCalls: Array.from({ length: 21 }, (_, index) => ({
+          id: `build-${index}`, name: "build", args: { goal: "test" },
+        })) },
+        { text: "This must not complete." },
+      ], [resultFor], { budgets: productionBudgets() });
+
+      expect(outcome.failureCode).toBe("AI_BUDGET_EXCEEDED");
+      expect(backend.calls).toHaveLength(20);
+      expect(backend.calls.at(-1)?.request.toolCallId).toBe("build-19");
+    });
   });
 });

@@ -4,6 +4,8 @@ Updated: 2026-10-13. Current integrated baseline: `master` at `5e08a9e`, includi
 
 ## Current Status
 
+The 2026-10-18 user-authorized AI task budget increase to 180 tool calls / 20 builds and worker release is recorded in the [task budget authority](../poc4/docs/evidence/ai-task-budget/acceptance.md). It retains the 1800s task deadline and does not resume the paused Stage 2 acceptance.
+
 | Stage | Outcome | Authority |
 | --- | --- | --- |
 | 6A — real backend/Kubernetes MVP | PASS by user acceptance on 2026-09-17; merged on 2026-09-18 (`6dfb655`) | [6A facts](Stage6A-Current-Facts.md) |

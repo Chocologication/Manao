@@ -36,8 +36,8 @@ import { PROGRESS_TEXT_MAX_BYTES } from "./backend-client.js";
 import { modelConfigProblems, type PiModelConfig, type WorkerBudgets, type WorkerPaths } from "./config.js";
 import { createProjectTools, TOOL_NAMES } from "./project-tools.js";
 
-/** Stage-one budgets (spec section 3, binding). */
-export const DEFAULT_BUDGETS: WorkerBudgets = { wallClockSeconds: 1800, toolCalls: 60, builds: 8 };
+/** Server-owned task budgets; tool/build limits raised by user instruction on 2026-10-18. */
+export const DEFAULT_BUDGETS: WorkerBudgets = { wallClockSeconds: 1800, toolCalls: 180, builds: 20 };
 
 /**
  * Progress items are bounded at 8 KiB of UTF-8 text each (spec section 3). The

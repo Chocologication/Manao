@@ -89,8 +89,8 @@ export function loadWorkerConfig(env: NodeJS.ProcessEnv): WorkerConfig {
     paths: { scratchDir, agentDir, sessionDir },
     budgets: {
       wallClockSeconds: 1800,
-      toolCalls: 60,
-      builds: 8,
+      toolCalls: 180,
+      builds: 20,
     },
   };
 }

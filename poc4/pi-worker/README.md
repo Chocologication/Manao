@@ -36,7 +36,7 @@ Every route fails closed without the `MANAO_AI_WORKER_TOKEN` header.
 
 ## Budgets (worker-enforced, honest reporting)
 
-Task wall clock 1800s, 60 tool calls, 8 builds. Exceeding any budget aborts the SDK
+Task wall clock 1800s, 180 tool calls, 20 builds (user-authorized limits as of 2026-10-18). Exceeding any budget aborts the SDK
 run and the terminal state reports `AI_BUDGET_EXCEEDED`. A provider error that settles
 normally is never a success: the outcome is `AI_PROVIDER_ERROR`, and an `agent_end`
 with `willRetry=true` never settles (the SDK retries inside the same prompt).
