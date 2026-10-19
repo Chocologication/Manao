@@ -1,6 +1,6 @@
 # AI 多会话与上下文切片：实施和验证记录
 
-日期：2026-10-19。分支 `codex/ai-integration`，实现起点 `cb0793c`；本轮获授权实施、本地验证、顺序独立评审和发布准备，未获授权调用云模型、发布镜像、部署/重启服务、迁移运行库、Git push/merge 或删除既有项目。本记录拥有本切片证据；[设计](../../../../docs/superpowers/specs/2026-10-19-ai-conversation-context-design.md)、[计划](../../../../docs/superpowers/plans/2026-10-19-ai-conversation-context-implementation-plan.md) 与[发布准备](../../../deploy/ai-context/README.md)分别拥有接口、任务和操作步骤。
+日期：2026-10-19。分支`codex/ai-integration`，实现起点`cb0793c`。§2–6保留本地实施/发布准备证据；随后用户授权发布集群并继续计划，三镜像及V13已部署，真实模型/浏览器主链round3通过1/1，§7记录全部实际结果和两轮失败。Git push/merge、既有项目删除未执行。本记录拥有本切片证据；[设计](../../../../docs/superpowers/specs/2026-10-19-ai-conversation-context-design.md)、[计划](../../../../docs/superpowers/plans/2026-10-19-ai-conversation-context-implementation-plan.md)与[发布手册](../../../deploy/ai-context/README.md)分别拥有接口、任务和操作步骤。
 
 ## 1. 交付与判定边界
 
@@ -13,14 +13,14 @@
 | frontend 组件/API/parser + typecheck/build | 165/165；局部 Vitest/MSW，不是实际浏览器 |
 | V12→V13 additive 升级 | Store 测试通过，旧 task/tool 值保留、旧 task 的 conversation_id 为 null；新表及项目级 FK 回收在测试 schema 验证 |
 | 精确旧代码 + V13 兼容预演 | 见 §5；不等于真实部署混合版本或可回滚保证 |
-| 真实模型多轮/摘要质量 | NOT_RUN，未获本轮模型调用授权，服务端凭据未加载 |
-| 真实浏览器主链 | NOT_RUN；入口在 config 缺授权/环境时退出1，没有启动浏览器、服务或模型 |
+| 真实模型多轮/摘要质量 | round3实际通过本场景：同会话约束连续、独立B、手动原生摘要后约束保留；不是通用摘要质量保证，见§7.4 |
+| 真实浏览器主链 | round1/2各FAILED；harness修复独立审查后，round3为1passed/0failed，38.4s，见§7 |
 | 真实自动 75% 场景 | NOT_RUN；注入 usage 的 786431/786432/786433 边界不冒充云端长上下文 |
-| 云端迁移、空闲 worker 重建、手动摘要 | NOT_RUN；仅本地恢复/互斥/原生摘要合同证据 |
-| 三镜像构建/push/rollout、备份恢复、内部大包 | NOT_BUILT / NOT_RUN，见发布准备；无本切片 digest |
-| 既有项目/集群清理 | NOT_RUN，未授权；本轮只回收自己的随机测试 schema 和本地临时导出 |
+| 云端迁移、空闲 worker 重建、手动摘要 | V13成功；实际worker UID更换、重新登录恢复历史、原生摘要和最终模型验证通过 |
+| 三镜像构建/push/rollout、备份恢复、内部大包 | 全部实际完成，digest/Pod/备份hash/5项边界见§7.1；未做运行环境回滚演练 |
+| 既有项目/集群清理 | NOT_RUN，未删除；新验收项目及6会话留存，仅删除本轮随机恢复schema和无用本地临时文件 |
 
-本切片没有云端 PASS。原 Stage 1 的真实 `PI_STAGE1_CODE_TEST_LOOP_PASS` 保留；Stage 2 仍 PAUSED / NOT_GRANTED；Stage 3 由用户实际图书 CRUD 使用确认使命提前完成，未据此启动 Stage 4。
+本切片约定的部署与多会话/上下文真实主链已通过，证据范围限本场景；真实云端75%自动触发仍NOT_RUN，没有为验证烧入786432 tokens。原Stage1真实`PI_STAGE1_CODE_TEST_LOOP_PASS`保留；Stage2仍PAUSED / NOT_GRANTED；Stage3由用户实际图书CRUD使用确认使命完成，未启动Stage4。
 
 ## 2. 顺序任务、RED/GREEN 与审查
 
@@ -141,3 +141,77 @@ if (historyBefore.size() != 13 || !historyBefore.equals(
 本记录及[审查收尾](review.md)保留各任务有效失败、GREEN、评审结论和全部裁定，SDD原始报告不再是唯一长期依据。Surefire报告留在既有ignored target；短期导出、运行日志及本计划临时SDD包在提取必要证据后清理。清理只在核对过的本轮目录使用LiteralPath，不删除既有项目/集群资源或私有配置。最终功能源码`344ccb9`已获本地实现/发布准备Approved，外部主链仍NOT_RUN。
 
 实际已清理：核对临时导出绝对路径位于本轮SDD目录、全部子项均在其内且0个reparse point后，按LiteralPath逐文件删除849项、从深到浅删除151个目录（含导出根），未使用跨shell删除；另删除8个具名Task6运行日志。逐项确认导出根和8日志均不存在。旧导出265个未修改文件的hash复核在删除前完成；失败最小片段和计数已保存在本记录及Task6报告。当前测试的ignored target/dist为仍有用的本地验证产物，未做广泛clean。
+
+## 7. 2026-10-19 授权发布与真实验收
+
+用户在本地交付后明确授权“发布到集群，然后继续按计划进行”，后续再次要求继续；覆盖本切片镜像push、V13运行库升级、三组件rollout、空闲worker重建和真实模型/浏览器主链。未执行Git push/merge或既有项目删除，Stage2仍PAUSED / NOT_GRANTED。
+
+### 7.1 实际发布、备份与迁移
+
+发布源码`666bfa10d7d852dfefe8115cf149ba44fcf86b26`，工作树当时clean。Context=`kubernetes-admin@learn`，namespace=`manao-stage6b`，三节点Ready。原backend/worker/frontend digest分别为`2472a61595c4a9b4f8b27ecf646dbd7f16788e9c935b0090c57f41ac907ba395`、`33c98b8a95d818d87f02638b64d0b93f69bc796d83802a233c5f964ca2e79a6b`、`6f803accccd627b9b565507068482e70d0c3c4175566d407d180923536a8e532`；repository均`chocologic/manao_images_repository`。新digest和tag由[发布手册](../../../deploy/ai-context/README.md)§1记录。标准backend Dockerfile完整成功，go-offline418.6s、package21.6s；无fallback。worker/frontend标准构建及push成功，具体原始耗时未捕获，不推测。
+
+迁移前全局占用AgentTask0、活动Run0、FlywayV1–V12、项目5/任务25/工具616。`max_allowed_packet=67108864`。私有pre-V13 dump 3,445,056字节、SHA256=`d6701c5c5a24a59997a9067f2fa8daa183ce6042fa62ef0a2cf0b8b7f95e3c75`，路径`C:/Users/shili/AppData/Local/Temp/manao-ai-context-pre-v13-20261019.sql`，不入Git。恢复到唯一临时schema`manao_ctx_restore_20261019_bce3c07330dd`，核对项目5/任务25/工具616/history12后删除该schema；只清本轮恢复样本。dump为UTF8无BOM；完整敏感数据不进入证据附件。
+
+维护顺序：frontend scale0并确认旧Pod删除→重查全局task/run0→backend/worker scale0并确认旧实例退出→只更新BACKEND_IMAGE Secret字段及三个Deployment的image→backend scale1并等待健康/V13→worker scale1→frontend scale1。backend/worker保持Recreate，始终单执行槽，无新旧执行实例重叠。一次Windows `/dev/stdin` patch文件读取失败发生在请求前，无集群修改；改用无BOM具体文件后成功。
+
+backend日志09:13:45Z开始V13、09:13:46Z成功一次迁移，checksum1903213284；V1–V12checksum保持。旧任务25/工具616未变，全部旧task conversation_id NULL、会话表初始0。用户、project、run、tool表checksum前后分别为3707932250/1856844206/1324680815/3861662206。backend readiness UP，frontend入口HTTP200。实际Pod如下：
+
+| 组件 | Pod / UID | imageID |
+| --- | --- | --- |
+| backend | `backend-79bdd5d9cc-cplqc` / `2764df0f-e178-46b7-8c3f-51945ead0eac` | 本轮backend index digest一致 |
+| worker发布后 | `manao-pi-worker-66f5dbc644-bfxfc` / `89c1a1d3-631f-4957-8f28-4dc23fcc84c4` | 本轮worker index digest一致 |
+| frontend | `frontend-8678d4cdd5-44dtp` / `5d491fef-b9f3-4ccc-a70d-e2796a3dad2b` | 本轮frontend index digest一致 |
+
+worker内实测Pi三包1.2.0，Node24.22.0，模型key已配置（不输出值）。经真实worker→backend Service请求5/5边界通过：614400字节context和4193280字节chunked context到业务404；4194305字节context返回413/AI_REQUEST_TOO_LARGE；614400字节旧progress仍413；4193280字节compact result到业务404。均使用不存在UUID，没有持久写入；这是传输/过滤器证据，不冒充2MiB原生entry真实持久化。一次probe脚本语法错误未发请求，不计产品失败。
+
+### 7.2 真实验收 round1：FAILED，保留已完成检查点
+
+用户提供既有私有env路径后，仅进程内加载owner keys，实际登录成功，不输出密码/token。新建独立`java-console`项目`4a355478-0ec5-457c-9c73-fad09d98bf79`，creationKey=`68321486-5407-457e-bd7e-6b2dd6c145a0`，name=`ai-context-20261019-11b27a`，无publicPorts/MySQL/Redis/Run。项目Ready后通过原entries/content接口保存顶层fixture，104000字节无秘密ASCII；SHA256=`d9f9f3e50f77e8fcdc373c4cd960974c6d56a9f748e01768691b8e1c357b9766`，回读原文一致，revision23。项目与fixture留存。
+
+模型前预检发现公共ContentResponse无sha256字段；`f3ff508`修复harness从原始content本地计算SHA256，保持path/toolID/content/bytes/truncated精确断言。有效RED2失败/17通过，修复后answer/tools29/29、strict tsc成功，独立审查PASS；仅harness，无镜像变更。
+
+`pnpm test:e2e:ai-context`实际运行1项，56.7s，1failed/0passed；失败点刷新后AI tab不存在，错误页面只有Username/Password/Sign in。此前已完成真实A首轮一次read_file、A第二轮精确bookId7/marker、独立B无工具/无A标记；3task均COMPLETED且revision23未变：
+
+| 会话 | task | 状态 |
+| --- | --- | --- |
+| A `5c44320a-dc7a-4ac4-940f-26c45e02d149` | `aa90f116-f860-422a-a1be-0ac6873d2e0e` | COMPLETED，配对一次read_file及完整真实结果 |
+| A | `28e0e016-2d00-40f2-84b5-9fc785500b72` | COMPLETED，精确JSON/零工具断言已过 |
+| B `52635e21-e61a-4d6b-8a05-66c6aeb1678e` | `14842ac9-78cb-4cdd-88a8-2cf3471327a8` | COMPLETED，独立回复/零工具/历史无A标记 |
+
+worker空闲重建已成功，UID从`89c1a1d3-631f-4957-8f28-4dc23fcc84c4`变为`1b89c53c-ead7-4a47-b7c5-5e59b5a69003`（Pod`manao-pi-worker-c4dc6b489-dd7gk`），单副本Ready。之后page.reload使既有memory-only auth回匿名，harness未重新登录而等待AI标签30s；这是确定的验收登录接缝错误，不修改生产认证/不声称持久JWT。A13/13原entries、B6/6留存，无活动task/compact。手动压缩和压缩后模型尚NOT_RUN，本轮FAILED不由后续结果覆盖。
+
+### 7.3 真实验收 round2：FAILED，重复标题定位
+
+`cb2c8b8`仅抽取现有UI登录为共用helper，初始和刷新后均执行，检查HTTP200/非空token/原项目URL；独立审查PASS、strict tsc成功，不改生产认证。相同fixture/project开展明确新一轮，无旧任务重放。`pnpm test:e2e:ai-context`实际1failed/0passed，24.3s；A首轮task=`1ddd84e3-fb54-4c28-9283-733b7cc14b7c`、第二轮=`4d135a5a-8495-49b3-be0f-4a6ea83ce487`，会话A=`1f024689-9082-4694-b93b-03a0d2a65acc`；Btask=`ec43edfa-d211-495b-a159-67f9fc43155e`，会话B=`5280bf87-f1bf-4c71-a062-09d303cb4957`。三task均COMPLETED，严格JSON/工具/隔离断言通过。
+
+worker从UID`1b89c53c-ead7-4a47-b7c5-5e59b5a69003`重建为`1a814039-bcc6-4729-9638-e517b443248c`（Pod`manao-pi-worker-574ccd445d-2675x`），单副本Ready；重新登录已成功。随后按title精确选择A时，round1保留A和新A的前40字符相同，strict locator解析为两个按钮，压缩尚未调用。修复仅在首目标前加入本轮唯一marker前缀，保留精确API标题定位/原UUID/原文与后续prompt不透露约束；未删除历史或以nth绕过，strict tsc和独立限定审查PASS。该真实失败作为RED保留，不宣称本地语义测试已证明真实链路GREEN。
+
+### 7.4 真实验收 round3：PASS，1/1
+
+`1ec80fac28217f8edafb22187d622d5a8440d217`为已独立审查的唯一标题harness修复；`f3ff508`/`cb2c8b8`/`1ec80fa`三次均仅harness，不需要重建镜像。最终`pnpm test:e2e:ai-context`实际1passed/0failed/0skipped，test37.5s、总38.4s。不是`--list`、mock或scripted provider。整个运行使用实际部署、云模型和浏览器，无自动retry；两轮历史FAILED保留。
+
+| 检查点 | 身份 / 实际断言 |
+| --- | --- |
+| A首轮 | conversation=`0bf75b06-cc6e-491a-9ef6-71e107dadfd9`，task=`4eef5634-85b7-4304-a8e3-ccf11fff0b69`；一次read_file及完整104000字节真实tool result，path/hash/content/callID/非截断逐项匹配 |
+| A第二轮 | task=`285576ff-ad10-40e2-9e63-173f3c3e6b1e`；精确原始JSON对象bookId=7和最初marker，无额外字段，无工具 |
+| B隔离 | conversation=`7857d6ec-ce56-4940-86ee-01244713b3eb`，task=`ad287324-43d0-47f4-a32e-d8923b5cb88e`；NEW_CONVERSATION、无工具、历史无A marker。此非提及检查为补充，本地SDK实际provider context隔离证据仍单列 |
+| 空闲worker重建 / 重新登录 | UID`1a814039-bcc6-4729-9638-e517b443248c`→`cd932d39-14e3-459d-b015-1caa3e1571e8`，新Pod`manao-pi-worker-59bbf74f68-4d58l`，单副本Recreate/Ready；刷新后真实UI重新登录，再打开原A并显示最初完整目标 |
+| 手动真实摘要 | request=`1dece225-65e7-4901-92c2-3d6e4b8a8d44`，base13→head14；原生compaction entry=`cb31d480`，seq14，writer=request、source_task_id NULL，7740字节；COMPLETED，无失败码。不是no-op |
+| 压缩原文保留 | 压缩前每个安全HistoryItem在after中逐项存在；原13条entries未删，手动压缩追加1条 |
+| 压缩后A新轮 | task=`fb955078-5991-4fdd-89f1-2efc8285de9d`，精确原始JSON bookId=8/原marker，零工具，COMPLETED；A最终head19、19rows |
+
+四task均COMPLETED、writesLocked=false，project revision始终23，无应用Run/源码修改。最终A测量context_tokens2229、usage_head_seq19；这是新assistant测量，未把压缩后的未知误记成0。真实摘要质量仅证明本场景约束保留，仍是有损概括。所有原始entries在MySQL，浏览器只读取安全投影。
+
+### 7.5 旧路径冒烟与最终状态
+
+在相同新disposable项目通过原`POST /agent-tasks`提交task=`1155e47e-d5fd-4fc7-ad8b-d7b4c81239e0`，只要求固定`LEGACY_CONTEXT_SMOKE_OK`回复，无工具/文件/Run动作。实际COMPLETED、writesLocked=false、conversationId NULL、工具0。随后字节相同原请求POST重放仍返回同taskId/COMPLETED，没有新会话或重新执行。这是实际模型/旧路由冒烟，不替代原Run/receipt完整矩阵。
+
+最终平台项目6（新增1）、任务36（25旧+10会话轮次+1旧路径）、工具619（616旧+3次fixture只读）、原生entry63、会话6。全局活动AgentTask0、RUNNING compact0，新项目revision23、无活动Run；所有验收项目/会话/原历史留存。发布后backend/frontend Pod不再变化，worker因三轮计划checkpoint共重建三次，最终digest不变。无Git push/merge、无既有项目资源删除。
+
+剩余未执行：真实云端75%自动触发（本地固定1M边界和tool-loop合同已通过，禁止烧入真实窗口）；运行集群回滚演练；更广模型/语言/故障矩阵和Stage2暂停项。本轮按计划不扩测，不以当前主链覆盖Stage2/Stage4。
+
+### 7.6 发布审查、文档与清理边界
+
+独立发布审查核对远端镜像/最终PodUID、V13、三轮日志及显式只读SQL后为APPROVED，无未决发现；唯一Minor提示“marker键仍被提示，只有原marker值未透露”，已准确修正文案并复核关闭。三个harness修复均在提交前独立审查；后续生产源码相对发布`666bfa1`无变化。文档117个实际Markdown链接、10个本轮改动文件UTF8无BOM、git diff --check通过；链接验证剔除fenced/inline代码，避免把`[header,...entries]`代码错认链接。
+
+本轮release临时目录`.superpowers/ai-context-release-20261019`已清点29文件、0子目录、0reparse point，长期证据已提取。自动审批先拒绝整段清理命令，再拒绝具名文件删除命令，均报`blocked by policy`，未执行删除；因此29临时文件仍保留，不能声称清理完成。未继续绕过此拒绝。私有pre-V13备份刻意保留；项目、会话、数据库历史和既有集群资源均未删除。随机restore schema已实际删除并SQL确认0。

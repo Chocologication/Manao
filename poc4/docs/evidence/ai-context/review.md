@@ -55,3 +55,13 @@
 本轮临时导出、日志和本计划SDD工作包在长期证据提取后按LiteralPath清理；最后清理前核对精确绝对路径、38个文件、0个reparse point，逐文件删除38项及唯一空根目录，核实目录已不存在。保留此审查记录及acceptance、必要失败摘要、现有ignored target/dist。保留指定工作树与分支，不归档或删除项目资源，不删除私有配置。
 
 本地实现与发布准备已完成。真实模型摘要质量、多会话浏览器主链、云端75%自动触发、运行库备份/迁移、worker重启、内部大包和三镜像构建/发布/rollout仍未执行。没有云端PASS、Git push/merge或资源删除。Stage1实际验收、Stage2 PAUSED / NOT_GRANTED、Stage3用户CRUD使命完成均保持原证据。
+
+以上为本地收尾时的历史快照。用户随后另授权发布及计划验收，`666bfa1`三镜像已实际部署、V13/备份恢复/内部大包验证完成，真实browser/model主链round3通过1/1；此前两轮harness失败不覆盖。三处harness-only修复（`f3ff508`内容hash、`cb2c8b8`重新登录、`1ec80fa`唯一标题）分别独立审查PASS，无生产镜像变更。当前实际身份、失败及剩余边界以[acceptance §7](acceptance.md)和发布手册为准，云端75%自动触发仍NOT_RUN。
+
+## 5. 发布与真实证据审查（2026-10-19）
+
+独立Sol审查员以当前文档、三镜像远端身份、真实测试日志和显式只读集群/SQL核对得出 **APPROVED — NO OPEN FINDINGS**。发布源码`666bfa1`与后续harness-only提交明确区分；V13checksum/一次迁移、三组件Ready、最终workerUID、round1/2失败及round3的1/1/38.4s、summary base13/seq14/head19、最终项目6/task36/tool619/entry63/conversation6和全局task/compact0均与证据一致。
+
+审查发现唯一Minor文案：后续prompt仍明确提及marker键，不能声称完全不透露marker；已纠正为“不重新透露bookId字段拼写或原marker值，仍明确要求marker键”，复核关闭。没有重跑已过模型/测试、改写Stage2、删除项目、读取私密env或备份。未来云端75%自动触发、运行回滚及更广矩阵未执行；本次约定主链已真实完成。
+
+主控最后文档/编码检查通过。发布临时目录29文件的清理被自动审批以`blocked by policy`拒绝，具名删除同样被拒，均未执行；这些文件和必要私有备份仍留本机，未通过其它方法绕过。此限制不改变已完成的部署和真实验收结论，清理状态单列，详见acceptance§7.6。

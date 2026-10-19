@@ -1,6 +1,6 @@
 # AI 多会话与上下文管理 Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking. 原规划之后用户已授权实施、本地验证、顺序独立评审和发布准备；任务实际证据见[Context acceptance](../../../poc4/docs/evidence/ai-context/acceptance.md)，不授权模型/发布/运行库迁移/重启/push/merge/项目删除。
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. 六任务本地交付之后用户另授权发布集群并继续计划：三镜像/V13已部署，真实模型/browser主链round3通过1/1，两轮harness失败保留，详见[Context acceptance](../../../poc4/docs/evidence/ai-context/acceptance.md)§7。Git push/merge、既有项目删除未执行，云端75%自动触发仍NOT_RUN；下文原本地阶段限制是历史边界。
 
 **Goal:** 项目内多会话、同会话多轮 AgentTask 与完整历史持久化，并复用 Pi 实现固定 1M/75% 自动压缩和空闲手动压缩。
 

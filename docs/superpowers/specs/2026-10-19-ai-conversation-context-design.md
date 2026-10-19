@@ -1,6 +1,6 @@
 # AI 多会话与上下文管理设计
 
-日期：2026-10-19。状态：已按本设计实施并完成本地相关验证；最终分支审查另行记录，真实模型/browser/部署未执行。实际证据及流程偏差见[Context acceptance](../../../poc4/docs/evidence/ai-context/acceptance.md)。
+日期：2026-10-19。状态：已实施并完成本地验证/独立审查；另获用户授权后完成三镜像部署、V13运行库迁移和真实模型/browser主链round3（1/1）。两轮harness失败保留，真实云端75%自动触发仍NOT_RUN。实际证据及流程偏差见[Context acceptance](../../../poc4/docs/evidence/ai-context/acceptance.md)§7。
 
 ## 1. 目标、确认与基线
 
@@ -148,4 +148,4 @@ internal 前缀 `/internal/ai`：任务 GET/POST `/tasks/{taskId}/context` 读�
 
 已使用 Context7 查询 [Pi SDK 文档](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/sdk.md) 与 [压缩文档](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/compaction.md)，并以本分支安装的 1.2.0 declarations/JS 核实 SessionManager.inMemory 的 entries 参数、void listener、compact 的 abort、严格阈值和 getContextUsage 的 nullable 结果。在线文档包含比锁定版本新的能力，本方案不使用 durable/background compaction。
 
-规划时的SDK核对已由实施期真实安装Pi1.2.0的scripted-provider合同测试补证；本轮只迁移随机disposable测试schema，没有模型/应用/运行库迁移或集群操作。实际RED/GREEN、评审、全部裁定及错误成本见[Context acceptance](../../../poc4/docs/evidence/ai-context/acceptance.md)，执行步骤见[实施计划](../plans/2026-10-19-ai-conversation-context-implementation-plan.md)。
+规划时的SDK核对已由实施期真实安装Pi1.2.0的scripted-provider合同测试补证；本地阶段只迁移disposable测试schema。随后获授权的集群发布/V13及真实模型/browser主链见[Context acceptance](../../../poc4/docs/evidence/ai-context/acceptance.md)§7，保留本地RED/GREEN、评审、裁定及错误成本；云端75%自动触发未执行。执行步骤见[实施计划](../plans/2026-10-19-ai-conversation-context-implementation-plan.md)。
