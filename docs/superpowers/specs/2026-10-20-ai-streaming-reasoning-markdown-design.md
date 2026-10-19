@@ -143,4 +143,4 @@ HistoryItem增加contentIndex:number、modelTruncated:boolean，kind增加thinki
 - Spring SSE：`https://docs.spring.io/spring-framework/reference/web/webmvc/mvc-ann-async.html`，2026-10-20 Context7核对heartbeat/async/连接失败。
 - Markdown：`https://github.com/remarkjs/react-markdown/blob/main/readme.md`，2026-10-19 Context7核对GFM/安全URL/HTML行为。
 
-2026-10-20 execution note: confirmed contract retained. Local implementation evidence: [output acceptance](../../../poc4/docs/evidence/ai-output/acceptance.md); whole-feature late-ACK Important and Task6 gate pending. Real model/runtime migration/images/deployment NOT_RUN.
+2026-10-20 execution note: confirmed contract retained. Local implementation evidence: [output acceptance](../../../poc4/docs/evidence/ai-output/acceptance.md); I1/I2/M1 scoped fixes implemented; final scoped independent rereview pending, no overall approval. Real model/runtime migration/images/deployment NOT_RUN.

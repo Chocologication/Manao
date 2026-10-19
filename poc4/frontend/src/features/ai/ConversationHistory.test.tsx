@@ -9,24 +9,44 @@ import { server } from '@/mocks/node';
 import { ConversationHistory } from './ConversationHistory';
 import type { LiveSnapshot } from './agentLiveOutput';
 import { HttpClient, setHttpClient } from '@/api/httpClient';
-it.each(['malformed', 'disconnect'])('preserves a newer pending draft when %s races its history response', async failure => {
+it.each(['malformed', 'disconnect'])('promotes a newer ACK over an old prefix when %s races its pending history', async failure => {
   let controller!: ReadableStreamDefaultController<Uint8Array>, release!: () => void, subscriptions = 0;
   const encode = (value: unknown) => new TextEncoder().encode('event: snapshot\ndata: ' + JSON.stringify(value) + '\n\n');
   setHttpClient(new HttpClient({ getAccessToken: () => 'token', onUnauthorized: vi.fn(), fetchImpl: async (input, init) => {
     expect(init?.method).toBe('GET'); const path = String(input);
     if (path.endsWith('/live-output')) { subscriptions++; return new Response(new ReadableStream({ start(c) { controller = c; } }), { headers: { 'Content-Type': 'text/event-stream' } }); }
     if (path.includes('beforeSeq=9')) await new Promise<void>(resolve => { release = resolve; });
-    return new Response(JSON.stringify({ items: path.includes('beforeSeq=9') ? [item('reason', { seq: 6, kind: 'thinking', contentIndex: 0 }), item('old preview', { seq: 6, contentIndex: 1 })] : [], nextBeforeSeq: null, nextBeforeOffset: null }), { headers: { 'Content-Type': 'application/json' } });
+    return new Response(JSON.stringify({ items: path.includes('beforeSeq=9') ? [item('reason', { seq: 6, kind: 'thinking', contentIndex: 0 }), item('old preview now fully saved', { seq: 6, contentIndex: 1 })] : [], nextBeforeSeq: null, nextBeforeOffset: null }), { headers: { 'Content-Type': 'application/json' } });
   } }));
   render(<AppProviders><ConversationHistory userId="alice" projectId={P} conversationId={C} taskId={T} headSeq={8} terminal={false} /></AppProviders>);
   await waitFor(() => expect(controller).toBeDefined()); await act(async () => controller.enqueue(encode(live(5, 1, 'old preview')))); await screen.findByText('old preview');
   const next = { ...live(8, 2, 'new unsaved preview'), revision: 50 }; await act(async () => controller.enqueue(encode(next))); await waitFor(() => expect(release).toBeDefined());
   expect(screen.queryByText('new unsaved preview')).toBeNull(); expect(screen.getAllByText('old preview')).toHaveLength(1);
   await act(async () => { if (failure === 'malformed') controller.enqueue(encode({ bad: true })); else controller.close(); });
-  await act(async () => release()); expect(await screen.findByText('new unsaved preview')).toBeVisible(); expect(screen.getAllByText('old preview')).toHaveLength(1); expect(screen.getByLabelText('实时预览')).toHaveTextContent('new unsaved preview');
+  await act(async () => release()); expect(await screen.findByText('new unsaved preview')).toBeVisible(); expect(screen.getAllByText('old preview now fully saved')).toHaveLength(1); expect(screen.getByLabelText('实时预览')).toHaveTextContent('new unsaved preview');
   if (failure === 'malformed') await userEvent.click(screen.getByRole('button', { name: '重连实时展示' }));
   await waitFor(() => expect(subscriptions).toBe(2), { timeout: 2000 }); await act(async () => controller.enqueue(encode(next)));
-  expect(screen.getByText('new unsaved preview')).toBeVisible(); expect(screen.getAllByText('old preview')).toHaveLength(1);
+  expect(screen.getByText('new unsaved preview')).toBeVisible(); expect(screen.getAllByText('old preview now fully saved')).toHaveLength(1);
+});
+it('promotes a late normal ACK after terminal polling found a fuller saved answer', async () => {
+  let controller!: ReadableStreamDefaultController<Uint8Array>;
+  const encode = (value: LiveSnapshot) => new TextEncoder().encode('event: snapshot\ndata: ' + JSON.stringify(value) + '\n\n');
+  setHttpClient(new HttpClient({ getAccessToken: () => 'token', onUnauthorized: vi.fn(), fetchImpl: async input => {
+    const path = String(input);
+    if (path.endsWith('/live-output')) return new Response(new ReadableStream({ start(c) { controller = c; } }), { headers: { 'Content-Type': 'text/event-stream' } });
+    return new Response(JSON.stringify({ items: path.includes('beforeSeq=7') ? [item('reason', { seq: 6, kind: 'thinking' }), item('hello world', { seq: 6, contentIndex: 1 })] : [], nextBeforeSeq: null, nextBeforeOffset: null }), { headers: { 'Content-Type': 'application/json' } });
+  } }));
+  const view = (terminal: boolean) => <AppProviders><ConversationHistory userId="alice" projectId={P} conversationId={C} taskId={T} headSeq={terminal ? 6 : 5} terminal={terminal} /></AppProviders>;
+  const h = render(view(false)); await waitFor(() => expect(controller).toBeDefined());
+  const first = { ...live(5, 1, 'hello'), revision: 1 };
+  await act(async () => controller.enqueue(encode(first))); await screen.findByText('hello');
+  await userEvent.click(screen.getByText('思考中'));
+  h.rerender(view(true)); expect(await screen.findByText('实时预览未确认保存')).toBeVisible();
+  expect(screen.getByText('hello')).toBeVisible(); expect(screen.queryByText('hello world')).toBeNull();
+  await act(async () => controller.enqueue(encode({ ...first, revision: 2, durableHeadSeq: 6, current: null })));
+  expect(await screen.findByText('hello world')).toBeVisible(); expect(screen.getAllByText('hello world')).toHaveLength(1);
+  expect(screen.queryByLabelText('实时预览')).toBeNull(); expect(screen.queryByText('实时预览未确认保存')).toBeNull();
+  expect(screen.getByText('reason')).not.toBeVisible();
 });
 it('keeps advancing fallback history with current:null and does not regress on retry', async () => {
   let controller!: ReadableStreamDefaultController<Uint8Array>, subscriptions = 0; const bounds: number[] = [];

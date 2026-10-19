@@ -372,7 +372,7 @@ describe("task server", () => {
   }
 
   const TEST_MODEL = { provider: "deepseek", apiType: "openai-completions", baseUrl: "https://api.deepseek.com", model: "deepseek-chat", apiKey: "k" };
-  it.each([undefined, null, "medium", 1])("refuses invalid persisted effort %s before creating a runner", async reasoningEffort => {
+  it.each([undefined, null, "medium", 1, ["max"]].map(reasoningEffort => ({ reasoningEffort })))("refuses invalid persisted effort $reasoningEffort before creating a runner", async ({ reasoningEffort }) => {
     let created = 0;
     const handle = createTaskServer(workerConfig({ model: TEST_MODEL }), { createRunner: () => { created++; return stubRunner(); } });
     const port = await handle.listen();

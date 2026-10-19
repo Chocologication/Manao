@@ -46,3 +46,14 @@ task-6-frontend-typecheck.log
 > tsc -b --pretty false
 
 frontend build exit0,4066modules48.32s; guard expectedNOT_RUNexit1; fake-loopback --list1 no browser; actualHTTPbrowserexit0; scopedharnesstsc exit0
+
+FINAL SCOPED FIX 2026-10-20 (separate from Task6 baseline above)
+I1 RED: History real HTTP/parser/hook DOM, 3 failed / 32 filtered; missing final hello world / new pending preview.
+M1 RED: actual worker HTTP array [max], 200 instead of422; 1 failed / 4 passed / 42 filtered.
+I2 RED: identical extracted observer/original oracle, 3 failed / 3 passed; tool-only ended false failure / earlier-message false timing pass / earlier-round Markdown false pass.
+Final frontend History35+hook13+Panel23:3 files71/71 exit0;12.60s.
+Final harness node:6/6 exit0; scoped harness tsc exit0.
+Final worker server:47/47 exit0; worker build exit0 (expected error-path stderr retained).
+Final frontend typecheck exit0; build exit0,4066modules46.21s; inherited bundle warning.
+Authorization-unset real entry --list: expectedNOT_RUNexit1 before browser.
+No backend/fullsuite/model/cloud/runtimeDB/image/deployment action rerun. Independent final scoped rereview pending.

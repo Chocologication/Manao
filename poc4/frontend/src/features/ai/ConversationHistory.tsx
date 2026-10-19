@@ -38,13 +38,13 @@ function messages(pages: HistoryPage[], hasEarlier: boolean): Message[] {
   }).sort((a, b) => a.seq - b.seq || a.contentIndex - b.contentIndex);
 }
 // Match the first native assistant message after the saved cut, never a later similar reply.
-function correspondingSequence(snapshot: LiveSnapshot, rows: Message[]): number | null {
+function correspondingSequence(snapshot: LiveSnapshot, rows: Message[], acknowledged = false): number | null {
   const current = snapshot.current; if (!current) return null;
   const first = rows.find(row => row.seq > snapshot.durableHeadSeq && row.taskId === snapshot.taskId && ['assistant', 'thinking', 'tool_call'].includes(row.kind));
   if (!first) return null;
   const group = rows.filter(row => row.seq === first.seq && row.taskId === snapshot.taskId);
   if (group.some(row => row.partial)) return null;
-  const matches = current.blocks.every(block => {
+  const matches = acknowledged || current.blocks.every(block => {
     const row = group.find(row => row.contentIndex === block.contentIndex && row.kind === (block.kind === 'text' ? 'assistant' : 'thinking'));
     return row !== undefined && (current.displayTruncated ? row.text.startsWith(block.text) : row.text === block.text);
   });
@@ -69,9 +69,11 @@ function HistoryComposition(props: ConversationHistoryProps) {
   useEffect(() => { if (visible.settled && props.headSeq > visible.head) setVisible(old => ({ ...old, settled: false, warning: false })); }, [props.headSeq, visible.head, visible.settled]);
   const desired = latest && latest.revision > visible.reconciledRevision && (visible.reconciledRevision < 0 || latest.durableHeadSeq >= visible.head) ? latest : visible.snapshot;
   const pendingMessage = desired?.current && visible.snapshot?.current && desired.current.messageOrdinal !== visible.snapshot.current.messageOrdinal ? desired : null;
+  // An accepted newer cut confirms the old native message even if its last deltas were lost.
+  const normalAck = Boolean(desired && visible.snapshot?.current && desired.taskId === visible.snapshot.taskId && desired.revision > visible.snapshot.revision && desired.durableHeadSeq > visible.snapshot.durableHeadSeq && (desired.current === null || desired.current.messageOrdinal > visible.snapshot.current.messageOrdinal));
   const fallback = latest?.unavailable || props.liveSnapshot === undefined && ['history', 'unavailable', 'reconnecting'].includes(stream.connectionState);
-  const reconcile = Boolean((props.terminal || fallback) && visible.snapshot?.current && !visible.settled);
-  const targetHead = visible.settled ? visible.head : pendingMessage ? pendingMessage.durableHeadSeq : fallback || reconcile || props.terminal && !desired?.current ? Math.max(props.headSeq, desired?.durableHeadSeq ?? 0, visible.head) : desired?.durableHeadSeq ?? props.headSeq;
+  const reconcile = Boolean(!normalAck && (props.terminal || fallback) && visible.snapshot?.current && !visible.settled);
+  const targetHead = visible.settled ? visible.head : normalAck ? desired!.durableHeadSeq : pendingMessage ? pendingMessage.durableHeadSeq : fallback || reconcile || props.terminal && !desired?.current ? Math.max(props.headSeq, desired?.durableHeadSeq ?? 0, visible.head) : desired?.durableHeadSeq ?? props.headSeq;
   const history = useConversationHistory({ ...props, headSeq: visible.head });
   const pending = useConversationHistory({ ...props, headSeq: targetHead, enabled: !visible.settled });
   const needsBoundary = Boolean(visible.snapshot?.current && (reconcile || targetHead !== visible.head));
@@ -90,13 +92,13 @@ function HistoryComposition(props: ConversationHistoryProps) {
       setVisible(old => ({ head: targetHead, snapshot: pendingMessage, choices: {}, promoted: { seq, choices: old.choices }, settled: Boolean(props.terminal && pendingMessage === null), warning: false, reconciledRevision: Math.max(old.reconciledRevision, old.snapshot!.revision) })); return;
     }
     if (visible.snapshot === desired && visible.head === targetHead) return;
-    if (fallback && !desired?.current) {
+    if (fallback && !normalAck && !desired?.current) {
       setVisible(old => ({ ...old, head: targetHead, snapshot: null, settled: Boolean(props.terminal), warning: false, reconciledRevision: Math.max(old.reconciledRevision, latest?.revision ?? -1) })); return;
     }
     const sameMessage = desired?.current && visible.snapshot?.current && desired.taskId === visible.snapshot.taskId && desired.current.messageOrdinal === visible.snapshot.current.messageOrdinal;
-    const seq = !sameMessage && visible.snapshot?.current ? correspondingSequence(visible.snapshot, pendingRows) : null;
+    const seq = !sameMessage && visible.snapshot?.current ? correspondingSequence(visible.snapshot, pendingRows, normalAck) : null;
     setVisible(old => ({ head: targetHead, snapshot: desired, choices: sameMessage ? old.choices : {}, promoted: seq === null ? old.promoted : { seq, choices: old.choices }, settled: Boolean(props.terminal && desired !== null && desired.current === null), warning: false, reconciledRevision: old.reconciledRevision }));
-  }, [desired, latest, pendingMessage, fallback, targetHead, pending.data, pending.isError, pendingBroken, needsBoundary, coversCut, reconcile, visible, props.terminal]);
+  }, [desired, latest, pendingMessage, normalAck, fallback, targetHead, pending.data, pending.isError, pendingBroken, needsBoundary, coversCut, reconcile, visible, props.terminal]);
   let rows: Message[] = [], incomplete = false;
   try { rows = messages(history.data?.pages ?? [], history.hasNextPage); } catch { incomplete = true; }
   const draft = visible.snapshot?.current;
@@ -107,7 +109,7 @@ function HistoryComposition(props: ConversationHistoryProps) {
     {(incomplete || pendingBroken) ? <div role="alert">历史片段不完整，请重新加载</div> : null}
     {(history.isError || pending.isError || incomplete || pendingBroken) ? <Button variant="outline" onClick={() => { void history.refetch(); void pending.refetch(); }}>重新加载历史</Button> : null}
     {history.hasNextPage ? <Button variant="outline" disabled={history.isFetching} onClick={() => void history.fetchNextPage()}>加载更早历史</Button> : null}
-    {rows.map(row => <article key={row.key} className="min-w-0 rounded border p-2">
+    {rows.map(row => <article key={row.key} data-task-id={row.taskId ?? undefined} data-message-seq={row.seq} className="min-w-0 rounded border p-2">
       {row.kind === 'user' && row.taskId !== null ? <RoundStatus {...props} taskId={row.taskId} /> : null}
       <div className="text-xs text-muted-foreground">{row.kind === 'user' ? '用户' : row.kind === 'assistant' || row.kind === 'thinking' ? 'AI' : row.kind === 'compaction' ? '上下文已压缩' : '工具'}</div>
       {row.partial && row.kind !== 'thinking' ? <div>还有更早内容</div> : null}
@@ -117,7 +119,7 @@ function HistoryComposition(props: ConversationHistoryProps) {
       {row.modelTruncated ? <div className="text-destructive text-xs">模型响应达到输出上限，本条内容可能不完整</div> : null}
       {row.kind === 'tool_result' && row.taskId !== null && row.toolCallId !== null ? <HistoryTool key={JSON.stringify([props.userId, props.projectId, props.conversationId, row.key])} {...props} taskId={row.taskId} toolCallId={row.toolCallId} /> : null}
     </article>)}
-    {draft ? <article aria-label="实时预览" className="min-w-0 rounded border p-2">
+    {draft ? <article aria-label="实时预览" data-task-id={visible.snapshot!.taskId} data-message-ordinal={draft.messageOrdinal} className="min-w-0 rounded border p-2">
       {[...draft.blocks].sort((a, b) => a.contentIndex - b.contentIndex).map(block => block.kind === 'thinking'
         ? <ThinkingBlock key={JSON.stringify([draft.messageOrdinal, block.contentIndex])} text={block.text} active={draft.phase === 'generating'} choice={visible.choices[block.contentIndex]} onChoice={open => setVisible(old => ({ ...old, choices: { ...old.choices, [block.contentIndex]: open } }))} />
         : <AssistantMarkdown key={JSON.stringify([draft.messageOrdinal, block.contentIndex])} text={block.text} />)}

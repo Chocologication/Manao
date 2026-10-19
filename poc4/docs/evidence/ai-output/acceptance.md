@@ -4,7 +4,7 @@ Updated 2026-10-20. Branch codex/ai-integration. Final product-suite baseline ad
 
 ## Verdict
 
-Required local combination PASS. Tasks1–5 passed independent task gates. Whole-feature review at adb63f6 found one Important late-authoritative-ACK precedence defect: terminal/fallback can reject a newer ACK and retain an old partial draft. Whole-feature approval **Needs fixes**, controller focused fix/rereview pending; Task6 independent gate pending. Green counts do not override this finding.
+Required local combination PASS. Tasks1–5 passed independent task gates. Consolidated final review at 3a2b194 found I1 late-authoritative-ACK precedence, I2 cross-message/cross-round harness evidence and M1 malformed worker effort arrays. All three have a scoped local fix implemented; **final scoped independent rereview pending**, not overall approval. Historical whole-feature/Task6 verdicts remain Needs fixes until that rereview.
 
 Paid provider/real deployment acceptance, runtime V14 migration/reset, backup/restore and old-image compatibility rehearsal, image build/push/digests, rollout and resource changes/deletion **NOT_RUN**. Release PREPARED only. Stage2 PAUSED/NOT_GRANTED, Stage3 user-confirmed and original real-provider75% NOT_RUN unchanged. No push/merge.
 
@@ -38,4 +38,21 @@ Separately authorized run: existing owner-owned READY project and <=16KiB secret
 
 Task1 1d09f04..ea32755; Task2 d3ea5c7; Task3 356e492..8a1f182; Task4 fca63d2; Task5 b9853f4..adb63f6 (including b51c91e). Independent task gates passed after fixes. Task1 supplementary assertions and Task4 later capacity assertions followed core implementation; task reports disclose this, core behavioral RED observed. Task5 races RED/repair/rereview. Task6 identity is commit containing this record; controller task-6-report records SHA after commit. Guard/history stub RED3→GREEN3; initial missing-module setup failure not RED. SDK assertion passed existing behavior; reused browser fixture passed once; no production mutation. Harness quoting/patch/Python newline setup errors corrected, not behavioral RED.
 
-Whole-feature Important late-ACK pending controller fix/rereview. Deferred nonblocking: worker malformed enum array accepted internally; isolated third-per-task subscription/cache-loss-next-pulse assertions absent; full-panel browser lock/close unproven; inherited warnings. Task6 independent review pending.
+Final scoped fixes implemented, independent rereview pending. Deferred nonblocking: isolated third-per-task subscription/cache-loss-next-pulse assertions absent; full-panel browser lock/close unproven; inherited warnings. No extra coverage claim or new external acceptance.
+
+## Final scoped fix wave (2026-10-20)
+
+- I1: newer accepted ACK cuts take precedence after bounded history covers the old cut. Terminal late C6/current=null promotes the fuller answer exactly once; malformed/disconnect races retain old output while loading and promote the newest pending draft. Lost-ACK mismatch handling remains conservative; fold choices transfer. Three real History/HttpClient/parser/hook DOM cases failed before repair. A removed extra no-warning assertion incorrectly forbade the legitimate new unconfirmed draft warning under fallback; this oracle correction is not additional product RED.
+- I2: local fixture executes the same extracted browser observer as the real entry. taskId/messageOrdinal scope timing; the last answer-bearing native history group selects the answer ordinal/seq. Own ended/ACK is awaited, ignoring prior tool-only completion; current answer group scopes Markdown, folding and restored text. Three behavior REDs (tool-only false failure, earlier preamble false timing pass, prior-round Markdown false pass) became GREEN. Attachments retain identities/timestamps/revisions only, no model text. Authorization remains before browser launch.
+- M1: actual worker HTTP start rejected malformed effort array after string-type validation. RED was 200 versus expected422; no runner created after repair.
+
+| Focused command (component cwd) | Fresh result |
+| --- | --- |
+| frontend: pnpm exec vitest run src/features/ai/ConversationHistory.test.tsx src/features/ai/useAgentLiveOutput.test.tsx src/features/ai/AgentConversationPanel.test.tsx | exit0;3files71/71 (35+13+23) |
+| frontend: node --test scripts/ai-output-harness.test.mjs | exit0;6/6 (3 retained guard/history +3 oracle regressions) |
+| frontend: scoped tsc command in the baseline table | exit0 on final spec |
+| frontend: pnpm typecheck; pnpm build | exit0;4066modules;46.21s;inherited bundle warning |
+| pi-worker: pnpm exec vitest run test/server.test.ts; pnpm build | exit0;47/47;build exit0;expected fixed-error test stderr |
+| frontend: pnpm test:e2e:ai-output --list with authorization unset | expected exit1 NOT_RUN before browser |
+
+Task6 backend127/worker147/frontend282 above remain the earlier combination baseline, not rerun totals. No backend/full suite, real model/browser/cloud/runtime migration/image action was performed in this fix wave. Local DOM fixture evidence does not add HTTP-browser or provider acceptance. Raw focused logs and final-fix-report live beside the local SDD review artifacts; the commit carrying this section owns the repair delta.

@@ -298,7 +298,7 @@ pnpm build
 - watchdog不在阻塞send期间同步complete；sender实际退出才还额度，饱和503退history，不承诺强行中断socket。
 - 用户折叠状态跨实时/历史保留；非DeepSeek首版新任务统一拒绝，避免增加来源字段。
 
-2026-10-20执行状态：Tasks1–5本地实现并通过各自独立gate；Task6本地组合/真实入口/发布准备完成，Step4未执行另需授权。整体晚到权威ACK Important最终修复/独立复审及Task6gate待controller收口，不以本地通过声明整体批准。实际计数/限制由poc4/docs/evidence/ai-output/acceptance.md拥有；原确认合同保留。
+2026-10-20执行状态：Tasks1–5本地实现并通过各自独立gate；Task6本地组合/真实入口/发布准备完成，Step4未执行另需授权。最终合并审查I1/I2/M1已完成限定修复，final scoped rereview pending；Task6/整体批准仍待controller独立复审，不以本地通过自我批准。实际计数/限制由poc4/docs/evidence/ai-output/acceptance.md拥有；原确认合同保留。
 
 ## Execution record (2026-10-20)
 

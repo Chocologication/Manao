@@ -336,7 +336,7 @@ export function createTaskServer(config: WorkerConfig, deps: ServerDeps = {}): T
     if (typeof candidate["workspaceRevision"] !== "string") {
       return "workspaceRevision is required";
     }
-    if (!["off", "low", "high", "max"].includes(String(candidate["reasoningEffort"]))) return "reasoningEffort must be a supported persisted value";
+    if (typeof candidate["reasoningEffort"] !== "string" || !["off", "low", "high", "max"].includes(candidate["reasoningEffort"])) return "reasoningEffort must be a supported persisted value";
     if (typeof candidate["requestSha256"] !== "string" || !SHA256.test(candidate["requestSha256"])) {
       return "requestSha256 must be a sha-256 hex digest";
     }

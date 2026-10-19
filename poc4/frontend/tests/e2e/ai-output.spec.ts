@@ -2,6 +2,7 @@ import { expect, test, type Page } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
 import { assembleOutputHistory, validateAiOutputEnvironment, type OutputHistoryItem } from './ai-output-contract';
 import { assertConversationFixtureRead, assertConversationTools } from './ai-context-answer';
+import { installOutputAudit, assertOutputAnswerTiming, outputAnswerSelector, type Audit } from './ai-output-observer';
 
 const { projectId } = validateAiOutputEnvironment(process.env);
 const root = '/api/v1/projects/' + projectId;
@@ -9,7 +10,6 @@ const occupying = new Set(['QUEUED', 'RUNNING', 'NEEDS_ATTENTION']);
 type Task = { taskId: string; conversationId: string; state: string; writesLocked: boolean; reasoningEffort: string; failureCode: string | null; changedPaths: string[] };
 type View = { conversationId: string; title: string };
 type Item = OutputHistoryItem & { toolCallId: string | null };
-type Audit = { firstThinkingAt: number | null; firstTextAt: number | null; endedAt: number | null; textRevisions: number[]; liveGets: number; error: string | null };
 let token = '';
 async function login(page: Page): Promise<void> {
   await page.getByLabel('Username').fill(process.env.MANAO_AI_ACCEPTANCE_USERNAME!);
@@ -35,45 +35,7 @@ async function history(page: Page, id: string): Promise<Item[]> {
   throw new Error('History exceeds bounded acceptance budget');
 }
 async function observe(page: Page): Promise<void> {
-  await page.evaluate(() => {
-    const host = window as unknown as { outputAudit: Audit; outputObserver?: MutationObserver; outputFetchInstalled?: boolean };
-    host.outputObserver?.disconnect();
-    host.outputAudit = { firstThinkingAt: null, firstTextAt: null, endedAt: null, textRevisions: [], liveGets: 0, error: null };
-    const observer = new MutationObserver(() => {
-      const preview = document.querySelector('[aria-label="实时预览"]'); if (!preview) return;
-      const now = performance.now(); const audit = host.outputAudit;
-      if (preview.querySelector('details[open] pre')?.textContent?.trim()) audit.firstThinkingAt ??= now;
-      if (preview.querySelector('.ai-markdown')?.textContent?.trim()) audit.firstTextAt ??= now;
-    });
-    observer.observe(document.body, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ['open'] }); host.outputObserver = observer;
-    if (host.outputFetchInstalled) return; host.outputFetchInstalled = true;
-    const nativeFetch = window.fetch.bind(window);
-    window.fetch = async (...args) => {
-      const response = await nativeFetch(...args);
-      if (String(args[0]).includes('/live-output') && response.ok && response.body) {
-        const audit = host.outputAudit; audit.liveGets++;
-        // Read only bounded metadata/timestamps; never attach raw prompt/thinking/provider traffic.
-        void (async () => {
-          const reader = response.clone().body!.getReader(); const decoder = new TextDecoder(); let buffer = '';
-          try {
-            while (true) {
-              const chunk = await reader.read(); if (chunk.done) break; buffer += decoder.decode(chunk.value, { stream: true });
-              if (new TextEncoder().encode(buffer).length > 260 * 1024) throw new Error('Frame audit budget exceeded');
-              let end: number;
-              while ((end = buffer.indexOf('\n')) >= 0) {
-                const line = buffer.slice(0, end).replace(/\r$/, ''); buffer = buffer.slice(end + 1); if (!line.startsWith('data:')) continue;
-                const frame = JSON.parse(line.slice(5).trim()) as { revision: number; current: null | { phase: string; blocks: { kind: string; text: string }[] } };
-                if (frame.current?.phase === 'ended' || frame.current === null && audit.firstTextAt !== null) audit.endedAt ??= performance.now();
-                if (frame.current?.phase === 'generating' && frame.current.blocks.some(block => block.kind === 'text' && block.text.length)) audit.textRevisions.push(frame.revision);
-              }
-            }
-          } catch (error) { if (!(error instanceof TypeError || error instanceof DOMException && error.name === 'AbortError')) audit.error = 'Live frame audit failed'; }
-          finally { await reader.cancel().catch(() => {}); reader.releaseLock(); }
-        })();
-      }
-      return response;
-    };
-  });
+  await page.evaluate(installOutputAudit);
 }
 
 test('real read-only high → off → low → max with incremental DOM and restored history', async ({ page, context }, testInfo) => {
@@ -93,7 +55,7 @@ test('real read-only high → off → low → max with incremental DOM and resto
     await page.getByRole('button', { name: 'Start task', exact: true }).click(); const accepted = await accepting; expect(accepted.ok()).toBeTruthy();
     let task = await accepted.json() as Task; expect(task.reasoningEffort).toBe(effort); expect(task.conversationId).toBe(conversation.conversationId);
     if (effort === 'high') {
-      await expect.poll(() => page.evaluate(() => (window as unknown as { outputAudit: Audit }).outputAudit.firstTextAt), { timeout: 180_000 }).not.toBeNull();
+      await expect.poll(() => page.evaluate(taskId => (window as unknown as { outputAudit: Audit }).outputAudit.messages.some(message => message.taskId === taskId && message.firstTextAt !== null), task.taskId), { timeout: 180_000 }).toBe(true);
       await context.setOffline(true); await page.waitForTimeout(500); await context.setOffline(false);
       await expect.poll(() => page.evaluate(() => (window as unknown as { outputAudit: Audit }).outputAudit.liveGets), { timeout: 30_000 }).toBeGreaterThanOrEqual(2);
     }
@@ -107,22 +69,25 @@ test('real read-only high → off → low → max with incremental DOM and resto
     }
     const blocks = assembleOutputHistory(rows, task.taskId); expect(blocks.some(block => block.kind === 'assistant')).toBe(true);
     if (task.failureCode === 'AI_LENGTH_LIMIT') expect(blocks.some(block => block.modelTruncated)).toBe(true);
+    const answerSeq = blocks.filter(block => block.kind === 'assistant').at(-1)!.seq;
+    const nativeGroups = [...new Set(rows.filter(row => row.taskId === task.taskId && ['assistant', 'thinking', 'tool_call'].includes(row.kind)).map(row => row.seq))].sort((a, b) => a - b);
+    const answerOrdinal = nativeGroups.indexOf(answerSeq) + 1;
+    await expect.poll(() => page.evaluate(({ taskId, ordinal }) => (window as unknown as { outputAudit: Audit }).outputAudit.messages.some(message => message.taskId === taskId && message.messageOrdinal === ordinal && message.endedAt !== null), { taskId: task.taskId, ordinal: answerOrdinal }), { timeout: 15_000 }).toBe(true);
     const timing = await page.evaluate(() => (window as unknown as { outputAudit: Audit }).outputAudit);
-    await testInfo.attach('sanitized-' + effort + '-timing', { body: JSON.stringify({ effort, taskId: task.taskId, state: task.state, failureCode: task.failureCode, ...timing }), contentType: 'application/json' });
-    expect(timing.error).toBeNull(); expect(timing.firstTextAt, 'UNVERIFIED: no visible streamed text').not.toBeNull(); expect(timing.endedAt, 'UNVERIFIED: no observed end/ACK').not.toBeNull();
-    expect(timing.firstTextAt!).toBeLessThan(timing.endedAt!); expect(new Set(timing.textRevisions).size, 'UNVERIFIED: too short for multiple streamed answer snapshots').toBeGreaterThanOrEqual(2);
-    if (effort !== 'off') { expect(timing.firstThinkingAt).not.toBeNull(); expect(timing.firstThinkingAt!).toBeLessThan(timing.endedAt!); }
-    await expect(page.locator('.ai-markdown h1, .ai-markdown h2').first()).toBeVisible(); await expect(page.locator('.ai-markdown ul').first()).toBeVisible();
-    await expect(page.locator('.ai-markdown table').first()).toBeVisible(); await expect(page.locator('.ai-markdown pre code').first()).toBeVisible(); tasks.push(task);
-    if (effort === 'high') { const summary = page.locator('details summary').filter({ hasText: '思考过程' }).first(); await summary.click(); await expect(summary.locator('..').locator('pre')).toBeVisible(); await summary.click(); await expect(summary.locator('..').locator('pre')).toBeHidden(); }
+    await testInfo.attach('sanitized-' + effort + '-timing', { body: JSON.stringify({ effort, taskId: task.taskId, answerOrdinal, answerSeq, state: task.state, failureCode: task.failureCode, ...timing }), contentType: 'application/json' });
+    assertOutputAnswerTiming(timing, task.taskId, answerOrdinal, effort !== 'off');
+    const answer = page.locator(outputAnswerSelector(task.taskId, answerSeq));
+    await expect(answer.locator('.ai-markdown h1, .ai-markdown h2').first()).toBeVisible(); await expect(answer.locator('.ai-markdown ul').first()).toBeVisible();
+    await expect(answer.locator('.ai-markdown table').first()).toBeVisible(); await expect(answer.locator('.ai-markdown pre code').first()).toBeVisible(); tasks.push(task);
+    if (effort === 'high') { const summary = answer.locator('details summary').filter({ hasText: '思考过程' }).first(); await summary.click(); await expect(summary.locator('..').locator('pre')).toBeVisible(); await summary.click(); await expect(summary.locator('..').locator('pre')).toBeHidden(); }
     await context.setOffline(true); await page.waitForTimeout(500); await context.setOffline(false);
     expect(assembleOutputHistory(await history(page, conversation.conversationId), task.taskId)).toEqual(blocks);
     const current = await get<View>(page, root + '/conversations/' + conversation.conversationId);
-    const markdownBeforeReload = await page.locator('.ai-markdown').allTextContents();
+    const markdownBeforeReload = await answer.locator('.ai-markdown').allTextContents();
     await page.reload(); await login(page); await page.getByRole('tab', { name: 'AI', exact: true }).click();
     await page.getByRole('navigation', { name: '会话列表' }).getByRole('button', { name: current.title, exact: true }).click();
     expect(assembleOutputHistory(await history(page, conversation.conversationId), task.taskId)).toEqual(blocks);
-    await expect.poll(() => page.locator('.ai-markdown').allTextContents()).toEqual(markdownBeforeReload);
+    await expect.poll(() => answer.locator('.ai-markdown').allTextContents()).toEqual(markdownBeforeReload);
     await expect(page.getByLabel('推理强度', { exact: true })).toHaveValue(effort); expect(posts, 'reconnect/reload must not resubmit').toBe(tasks.length);
     expect(task.state, task.failureCode === 'AI_LENGTH_LIMIT' ? 'FAILED/AI_LENGTH_LIMIT: max must remain a failed acceptance result' : 'task must complete').toBe('COMPLETED');
   }
