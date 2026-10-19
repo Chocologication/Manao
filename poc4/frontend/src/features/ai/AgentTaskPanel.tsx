@@ -30,6 +30,7 @@ import { useWorkspaceSession } from '@/features/editor/workspaceSession';
 import { InlineAlert } from '@/components/feedback/InlineAlert';
 import { resolveAgentTaskPreconditions } from './agentTaskPreconditions';
 import { submitConversationTask } from '@/api/agentConversationApi';
+import { AssistantMarkdown } from './AssistantMarkdown';
 
 export type AgentTaskPanelProps = {
   projectId: string;
@@ -313,7 +314,7 @@ export function AgentTaskPanel({
             </div>
             <div>本轮推理强度：{displayTask.reasoningEffort ?? '未记录'}</div>
             {displayTask.failureCode === 'AI_LENGTH_LIMIT' ? <p className="text-destructive">模型响应达到输出上限，本条内容可能不完整</p> : null}
-            {!fullHistory && displayTask.summary !== null ? <p>{displayTask.summary}</p> : null}
+            {!fullHistory && displayTask.summary !== null ? <AssistantMarkdown text={displayTask.summary} /> : null}
             {displayTask.failureCode !== null ? (
               <p className="text-destructive">{displayTask.failureCode}</p>
             ) : null}

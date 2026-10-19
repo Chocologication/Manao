@@ -82,7 +82,7 @@ class AgentConversationStoreTest {
             assertCode(() -> store.appendForTask(task, "worker", 1, new ContextAppend(2, page.header(), List.of(bad), null)), "AI_CONTEXT_CONFLICT");
             assertCode(() -> store.appendForTask(task, "other-worker", 1, append), "AI_INSTANCE_MISMATCH");
             assertThat(store.history("ctx-owner", "ctx-project", id, null, 50).items())
-                .extracting(HistoryItem::text).contains("完整中文").doesNotContain("secret-thought");
+                .extracting(HistoryItem::text).contains("完整中文", "secret-thought");
             db.jdbc().update("UPDATE agent_task SET state='FAILED' WHERE id=?", task);
             assertCode(() -> store.appendForTask(task, "worker", 1, append), "AI_CONTEXT_CONFLICT");
         }
@@ -195,6 +195,8 @@ class AgentConversationStoreTest {
             db.migrateToLatest();
             var after = db.jdbc().queryForMap("SELECT * FROM agent_task WHERE id=?", task);
             assertThat(after.remove("conversation_id")).isNull();
+            assertThat(after).containsEntry("reasoning_effort", null);
+            after.remove("reasoning_effort");
             assertThat(after).isEqualTo(taskBefore);
             assertThat(db.jdbc().queryForMap("SELECT * FROM agent_tool_call WHERE task_id=?", task)).isEqualTo(callBefore);
             String conversation = UUID.randomUUID().toString();
@@ -456,6 +458,79 @@ class AgentConversationStoreTest {
             Instant created = ((Timestamp) row.get("created_at")).toInstant();
             assertThat(header).isEqualTo(NOW.plusNanos(123456000));
             assertThat(header).isEqualTo(created).isEqualTo(((Timestamp) row.get("updated_at")).toInstant());
+        }
+    }
+
+    @Test void nativeBlocksKeepOrderAndLengthFlagsWithoutExposingPrivateMetadata() throws Exception {
+        try (var db = JdbcStoreTestSupport.create()) {
+            seed(db); var store = conversations(db);
+            String conversation = UUID.randomUUID().toString(), task = UUID.randomUUID().toString();
+            store.create("ctx-owner", "ctx-project", new CreateConversationRequest(conversation));
+            tasks(db).createTask("ctx-owner", "ctx-project", new AgentContracts.TaskRequest(task, "goal", 7), conversation);
+            var header = store.readForTask(task, "worker", 1, 0, null).header();
+            var first = JSON.createObjectNode().put("id", "ordered").put("type", "message").put("parentId", task).put("timestamp", NOW.toString());
+            var message = first.putObject("message").put("role", "assistant").put("stopReason", "length").put("signature", "PRIVATE_SIGNATURE");
+            var content = message.putArray("content");
+            content.addObject().put("type", "thinking").put("thinking", "a").put("thinkingSignature", "PRIVATE_SIGNATURE");
+            content.addObject().put("type", "text").put("text", "b");
+            content.addObject().put("type", "thinking").put("thinking", "c");
+            content.addObject().put("type", "toolCall").put("id", "t").put("name", "read_file").put("arguments", "PRIVATE_ARGS");
+            content.addObject().put("type", "text").put("text", "d");
+            var last = nativeMessage("final", "ordered", "final");
+            ((com.fasterxml.jackson.databind.node.ObjectNode) last.path("message")).put("stopReason", "length");
+            store.appendForTask(task, "worker", 1, new ContextAppend(1, header, List.of(first, last), null));
+            var page = store.history("ctx-owner", "ctx-project", conversation, null, 50);
+            var rows = page.items().stream().filter(i -> i.seq() == 2).toList();
+            assertThat(rows).extracting(HistoryItem::kind).containsExactly("thinking", "assistant", "thinking", "tool_call", "assistant");
+            assertThat(rows).extracting(HistoryItem::text).containsExactly("a", "b", "c", "read_file", "d");
+            var projected = JSON.valueToTree(rows);
+            assertThat(projected.findValues("contentIndex")).extracting(n -> n.intValue()).containsExactly(0, 1, 2, 3, 4);
+            assertThat(projected.findValues("modelTruncated")).extracting(n -> n.booleanValue()).containsOnly(true);
+            assertThat(JSON.valueToTree(page).path("items").get(6).path("modelTruncated").asBoolean()).isTrue();
+            assertThat(JSON.writeValueAsString(page)).doesNotContain("PRIVATE_SIGNATURE", "PRIVATE_ARGS", "signature", "arguments");
+        }
+    }
+
+    @Test void differentLengthNativeBlocksAndEmojiFencesReassembleAcrossGroupedPages() throws Exception {
+        try (var db = JdbcStoreTestSupport.create()) {
+            seed(db); var store = conversations(db);
+            String conversation = UUID.randomUUID().toString(), task = UUID.randomUUID().toString();
+            store.create("ctx-owner", "ctx-project", new CreateConversationRequest(conversation));
+            tasks(db).createTask("ctx-owner", "ctx-project", new AgentContracts.TaskRequest(task, "goal", 7), conversation);
+            var header = store.readForTask(task, "worker", 1, 0, null).header();
+            String thought = "😀中".repeat(25000), answer = "~~~java\n" + "😀\"\\".repeat(30000) + "\n~~~";
+            var entry = nativeMessage("long-blocks", task, "unused");
+            var message = (com.fasterxml.jackson.databind.node.ObjectNode) entry.path("message");
+            message.put("stopReason", "stop");
+            var content = message.putArray("content");
+            content.addObject().put("type", "thinking").put("thinking", thought);
+            content.addObject().put("type", "text").put("text", answer);
+            content.addObject().put("type", "thinking").put("thinking", "short");
+            content.addObject().put("type", "redacted_thinking").put("data", "PRIVATE_ENCRYPTED");
+            content.addObject().put("type", "thinking").put("thinking", "PRIVATE_REDACTED").put("redacted", true);
+            content.addObject().put("type", "thinking").put("encrypted", "PRIVATE_ENCRYPTED");
+            store.appendForTask(task, "worker", 1, new ContextAppend(1, header, List.of(entry), null));
+            var pieces = new java.util.TreeMap<Integer, java.util.TreeMap<Integer, String>>();
+            Long before = null; Integer offset = null; int pages = 0;
+            do {
+                var page = store.history("ctx-owner", "ctx-project", conversation, before, offset, 1);
+                assertThat(JSON.writeValueAsBytes(page).length).isLessThanOrEqualTo(512 * 1024);
+                assertThat(JSON.writeValueAsString(page)).doesNotContain("PRIVATE_");
+                for (var item : page.items()) if (item.seq() == 2) {
+                    var node = JSON.valueToTree(item);
+                    pieces.computeIfAbsent(node.path("contentIndex").asInt(), ignored -> new java.util.TreeMap<>()).put(item.textOffset(), item.text());
+                    assertThat(item.text().getBytes(java.nio.charset.StandardCharsets.UTF_8).length).isLessThanOrEqualTo(64 * 1024);
+                    assertThat(Character.isLowSurrogate(item.text().charAt(0))).isFalse();
+                    assertThat(Character.isHighSurrogate(item.text().charAt(item.text().length() - 1))).isFalse();
+                }
+                before = page.nextBeforeSeq(); offset = page.nextBeforeOffset();
+                assertThat(++pages).isLessThan(50);
+            } while (before != null);
+            assertThat(pieces.keySet()).containsExactly(0, 1, 2, 3, 4, 5);
+            assertThat(String.join("", pieces.get(0).values())).isEqualTo(thought);
+            assertThat(String.join("", pieces.get(1).values())).isEqualTo(answer);
+            assertThat(String.join("", pieces.get(2).values())).isEqualTo("short");
+            for (int i = 3; i <= 5; i++) assertThat(String.join("", pieces.get(i).values())).isEqualTo("该段推理未提供可展示文本");
         }
     }
 

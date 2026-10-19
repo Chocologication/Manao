@@ -5,6 +5,8 @@ import type { HistoryItem, HistoryPage } from '@/contracts/agentConversation';
 import { Button } from '@/components/ui/button';
 import { ToolResultView } from './AgentTaskPanel';
 import { useConversationHistory, useConversationTask } from './agentConversationQueries';
+import { AssistantMarkdown } from './AssistantMarkdown';
+import { ThinkingBlock } from './ThinkingBlock';
 
 export type ConversationHistoryProps = {
   userId: string; projectId: string; conversationId: string; headSeq: number;
@@ -14,7 +16,7 @@ type Message = HistoryItem & { key: string; partial: boolean };
 function messages(pages: HistoryPage[], hasEarlier: boolean): Message[] {
   const groups = new Map<string, HistoryItem[]>();
   for (const page of [...pages].reverse()) for (const item of page.items) {
-    const key = JSON.stringify([item.seq, item.taskId, item.kind, item.toolCallId]);
+    const key = JSON.stringify([item.seq, item.contentIndex, item.taskId, item.kind, item.toolCallId]);
     const group = groups.get(key) ?? []; group.push(item); groups.set(key, group);
   }
   return [...groups].map(([key, fragments]) => {
@@ -30,8 +32,8 @@ function messages(pages: HistoryPage[], hasEarlier: boolean): Message[] {
       seen.set(fragment.textOffset, fragment.text); text += fragment.text; end += fragment.text.length;
     }
     if (first.textOffset > 0 && !hasEarlier) throw new Error('Missing history prefix');
-    return { ...first, text, key, partial: first.textOffset > 0 };
-  }).sort((a, b) => a.seq - b.seq);
+    return { ...first, text, key, partial: first.textOffset > 0, modelTruncated: fragments.some(fragment => fragment.modelTruncated) };
+  }).sort((a, b) => a.seq - b.seq || a.contentIndex - b.contentIndex);
 }
 export function ConversationHistory(props: ConversationHistoryProps) {
   const history = useConversationHistory(props);
@@ -44,9 +46,12 @@ export function ConversationHistory(props: ConversationHistoryProps) {
     {history.hasNextPage ? <Button variant="outline" disabled={history.isFetching} onClick={() => void history.fetchNextPage()}>加载更早历史</Button> : null}
     {rows.map(row => <article key={row.key} className="min-w-0 rounded border p-2">
       {row.kind === 'user' && row.taskId !== null ? <RoundStatus {...props} taskId={row.taskId} /> : null}
-      <div className="text-xs text-muted-foreground">{row.kind === 'user' ? '用户' : row.kind === 'assistant' ? 'AI' : row.kind === 'compaction' ? '上下文已压缩' : '工具'}</div>
-      {row.partial ? <div>还有更早内容</div> : null}
-      <pre className="overflow-auto whitespace-pre-wrap break-words font-mono text-xs">{row.text}</pre>
+      <div className="text-xs text-muted-foreground">{row.kind === 'user' ? '用户' : row.kind === 'assistant' || row.kind === 'thinking' ? 'AI' : row.kind === 'compaction' ? '上下文已压缩' : '工具'}</div>
+      {row.partial && row.kind !== 'thinking' ? <div>还有更早内容</div> : null}
+      {row.kind === 'assistant' ? <AssistantMarkdown text={row.text} />
+        : row.kind === 'thinking' ? <ThinkingBlock text={row.text} active={false} incomplete={row.partial} />
+        : <pre className="overflow-auto whitespace-pre-wrap break-words font-mono text-xs">{row.text}</pre>}
+      {row.modelTruncated ? <div className="text-destructive text-xs">模型响应达到输出上限，本条内容可能不完整</div> : null}
       {row.kind === 'tool_result' && row.taskId !== null && row.toolCallId !== null ? <HistoryTool key={JSON.stringify([props.userId, props.projectId, props.conversationId, row.key])} {...props} taskId={row.taskId} toolCallId={row.toolCallId} /> : null}
     </article>)}
   </section>;

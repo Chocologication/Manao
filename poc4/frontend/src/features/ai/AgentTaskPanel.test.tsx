@@ -419,6 +419,13 @@ describe('AgentTaskPanel close flow', () => {
     expect(screen.getByRole('button', { name: 'Start task' })).toBeEnabled();
   });
 
+  it('renders the legacy assistant summary as Markdown', () => {
+    renderPanel({ task: null, settledTask: occupyingTask({ state: 'FAILED', writesLocked: false, summary: '# 完成\n\n- 已验证\n\n~~~java\nclass A {}\n~~~' }) });
+    expect(screen.getByRole('heading', { name: '完成' })).toBeVisible();
+    expect(screen.getByText('已验证').tagName).toBe('LI');
+    expect(screen.getByText('class A {}').tagName).toBe('CODE');
+  });
+
   it('shows a poll failure without pretending the project is free', () => {
     renderPanel({ task: null, pollFailed: true });
     expect(screen.getByRole('alert')).toHaveTextContent(/could not load the agent task status/i);

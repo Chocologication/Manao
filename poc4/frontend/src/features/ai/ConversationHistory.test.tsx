@@ -9,7 +9,7 @@ import { server } from '@/mocks/node';
 import { ConversationHistory } from './ConversationHistory';
 const P = 'p-history', C = 'c-history', T = 'task-original';
 const URL = `/api/v1/projects/${P}/conversations/${C}/entries`;
-function item(text: string, extra = {}) { return { seq: 5, taskId: T, kind: 'assistant', text, toolCallId: null, textOffset: 0, ...extra }; }
+function item(text: string, extra = {}) { return { seq: 5, taskId: T, kind: 'assistant', text, toolCallId: null, textOffset: 0, contentIndex: 0, modelTruncated: false, ...extra }; }
 function mount(extra = {}) { return render(<AppProviders><ConversationHistory userId="alice" projectId={P} conversationId={C} headSeq={5} {...extra} /></AppProviders>); }
 beforeEach(() => resetAppRuntime());
 afterEach(async () => { cleanup(); await queryClient.cancelQueries(); resetAppRuntime(); });
@@ -23,7 +23,8 @@ it('reassembles UTF16 fragments, same-seq tools and literal code through the off
   }));
   mount(); expect(await screen.findByText(/alert\(1\)/)).toBeInTheDocument(); expect(screen.getByText('还有更早内容')).toBeInTheDocument();
   await userEvent.click(screen.getByRole('button', { name: '加载更早历史' }));
-  expect((await screen.findByText(/中文😀/)).textContent).toBe('中文😀<script>alert(1)</script>\n```java\ncode\n```');
+  expect((await screen.findByText(/中文😀/)).textContent).toBe('中文😀<script>alert(1)</script>');
+  expect(screen.getByText('code').tagName).toBe('CODE');
   expect(screen.getByText('build')).toBeInTheDocument(); expect(screen.getByText('application')).toBeInTheDocument(); expect(cursors[1]).toContain('beforeSeq=5'); expect(cursors[1]).toContain('beforeOffset=12'); expect(document.querySelector('script')).toBeNull();
 });
 it('rejects conflicting or gapped fragments instead of fabricating full history', async () => {
@@ -55,8 +56,40 @@ it.each([
   expect(document.querySelector('script')).toBeNull();
 });
 it('does not display internal projection kinds or raw payload fields', async () => {
-  server.use(http.get(URL, () => HttpResponse.json({ items: [item('visible'), item('SECRET THINKING', { kind: 'thinking', raw: 'PRIVATE' })], nextBeforeSeq: null, nextBeforeOffset: null })));
+  server.use(http.get(URL, () => HttpResponse.json({ items: [item('visible'), item('SECRET SYSTEM', { kind: 'system', raw: 'PRIVATE' })], nextBeforeSeq: null, nextBeforeOffset: null })));
   mount(); expect(await screen.findByText('无法加载会话历史')).toBeInTheDocument(); expect(screen.queryByText('SECRET THINKING')).not.toBeInTheDocument(); expect(screen.queryByText('PRIVATE')).not.toBeInTheDocument();
+});
+
+it('orders thinking, answers and tools by native index and keeps two same-kind blocks distinct', async () => {
+  server.use(http.get(URL, () => HttpResponse.json({ items: [
+    item('final answer', { contentIndex: 4, modelTruncated: true }),
+    item('first thought', { kind: 'thinking', contentIndex: 0 }),
+    item('middle answer', { contentIndex: 1 }),
+    item('second thought', { kind: 'thinking', contentIndex: 2 }),
+    item('read_file', { kind: 'tool_call', contentIndex: 3, toolCallId: 'read' }),
+  ], nextBeforeSeq: null, nextBeforeOffset: null })));
+  const h = mount();
+  await screen.findByText('final answer');
+  const articles = [...h.container.querySelectorAll('article')];
+  expect(articles.map(row => row.textContent)).toEqual([expect.stringContaining('first thought'), expect.stringContaining('middle answer'), expect.stringContaining('second thought'), expect.stringContaining('read_file'), expect.stringContaining('final answer')]);
+  expect(screen.getAllByText('模型响应达到输出上限，本条内容可能不完整')).toHaveLength(1);
+  expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+});
+
+it('joins a large fenced block across pages before rendering and preserves an earlier thinking block', async () => {
+  const prefix = '# 完成\n\n- 已验证\n\n~~~java\n' + '😀'.repeat(17000);
+  server.use(http.get(URL, ({ request }) => HttpResponse.json(new globalThis.URL(request.url).searchParams.has('beforeSeq')
+    ? { items: [item('reason', { kind: 'thinking', contentIndex: 0 }), item(prefix, { contentIndex: 1 })], nextBeforeSeq: null, nextBeforeOffset: null }
+    : { items: [item('class A {}\n~~~', { contentIndex: 1, textOffset: prefix.length, modelTruncated: true })], nextBeforeSeq: 5, nextBeforeOffset: prefix.length })));
+  mount();
+  await userEvent.click(await screen.findByRole('button', { name: '加载更早历史' }));
+  expect(await screen.findByRole('heading', { name: '完成' })).toBeVisible();
+  expect(screen.getByRole('list')).toBeVisible();
+  expect(screen.getByText(/class A/).tagName).toBe('CODE');
+  expect(screen.getByText(/class A/).textContent).toBe('😀'.repeat(17000) + 'class A {}\n');
+  expect(screen.getByText('reason')).toBeInTheDocument();
+  expect(screen.queryByText('还有更早内容')).not.toBeInTheDocument();
+  expect(screen.getByText('模型响应达到输出上限，本条内容可能不完整')).toBeVisible();
 });
 it('ignores late tool details when the conversation scope changes', async () => {
   let release = () => {}, started = false; const held = new Promise<void>(r => { release = r; });

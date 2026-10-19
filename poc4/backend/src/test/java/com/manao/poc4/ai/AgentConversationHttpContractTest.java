@@ -100,7 +100,13 @@ class AgentConversationHttpContractTest {
             assertThat(appended.getResponse().getContentAsString()).contains("\"headSeq\":2");
             var history = mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
                 .get("/api/v1/projects/project/conversations/" + id + "/entries").principal(() -> "owner")).andReturn();
-            assertThat(history.getResponse().getContentAsString()).contains("answer", "goal").doesNotContain("PRIVATE", "header", "signature", "thinking");
+            var browserItems = json.readTree(history.getResponse().getContentAsString()).path("items");
+            assertThat(browserItems.get(1).path("contentIndex").asInt(-1)).isZero();
+            assertThat(browserItems.get(1).path("modelTruncated").isBoolean()).isTrue();
+            assertThat(browserItems.get(2).path("contentIndex").asInt(-1)).isEqualTo(1);
+            assertThat(browserItems.get(2).path("kind").asText()).isEqualTo("thinking");
+            assertThat(browserItems.get(2).path("text").asText()).isEqualTo("PRIVATE");
+            assertThat(history.getResponse().getContentAsString()).contains("answer", "goal").doesNotContain("header", "signature");
             var missingFence = mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
                 .get("/internal/ai/tasks/" + task + "/context")).andReturn();
             assertThat(missingFence.getResponse().getStatus()).isEqualTo(422);

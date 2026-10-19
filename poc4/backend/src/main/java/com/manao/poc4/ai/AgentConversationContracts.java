@@ -23,7 +23,11 @@ public final class AgentConversationContracts {
         }
     }
     public record ConversationPage(List<ConversationView> items, String nextCursor) { }
-    public record HistoryItem(long seq, String taskId, String kind, String text, String toolCallId, int textOffset) {
+    public record HistoryItem(long seq, String taskId, String kind, String text, String toolCallId, int textOffset,
+                              int contentIndex, boolean modelTruncated) {
+        public HistoryItem(long seq, String taskId, String kind, String text, String toolCallId, int textOffset) {
+            this(seq, taskId, kind, text, toolCallId, textOffset, 0, false);
+        }
         public HistoryItem(long seq, String taskId, String kind, String text, String toolCallId) {
             this(seq, taskId, kind, text, toolCallId, 0);
         }

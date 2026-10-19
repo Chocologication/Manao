@@ -133,7 +133,7 @@ public final class AgentConversationStore {
             }
         }
         if (next == null && rows.size() == limit + 1 && !rows.isEmpty()) next = rows.get(rows.size() - 1).seq();
-        items.sort(java.util.Comparator.comparingLong(HistoryItem::seq).thenComparingInt(HistoryItem::textOffset));
+        items.sort(java.util.Comparator.comparingLong(HistoryItem::seq).thenComparingInt(HistoryItem::contentIndex).thenComparingInt(HistoryItem::textOffset));
         return new HistoryPage(List.copyOf(items), next, nextOffset);
     }
 
@@ -419,10 +419,19 @@ public final class AgentConversationStore {
         var message = entry.path("message"); String role = message.path("role").asText();
         var items = new ArrayList<HistoryItem>();
         if ("assistant".equals(role)) {
-            String text = text(message.path("content"));
-            if (!text.isEmpty()) items.add(new HistoryItem(row.seq(), row.sourceTaskId(), "assistant", text, null));
-            if (message.path("content").isArray()) for (var part : message.path("content"))
-                if ("toolCall".equals(part.path("type").asText())) items.add(new HistoryItem(row.seq(), row.sourceTaskId(), "tool_call", part.path("name").asText(), part.path("id").asText()));
+            boolean truncated = "length".equals(message.path("stopReason").asText());
+            var content = message.path("content");
+            if (content.isTextual()) items.add(new HistoryItem(row.seq(), row.sourceTaskId(), "assistant", content.textValue(), null, 0, 0, truncated));
+            if (content.isArray()) for (int index = 0; index < content.size(); index++) {
+                var part = content.get(index); String kind = part.path("type").asText();
+                if ("text".equals(kind)) items.add(new HistoryItem(row.seq(), row.sourceTaskId(), "assistant", part.path("text").asText(), null, 0, index, truncated));
+                else if ("toolCall".equals(kind)) items.add(new HistoryItem(row.seq(), row.sourceTaskId(), "tool_call", part.path("name").asText(), part.path("id").asText(), 0, index, truncated));
+                else if ("thinking".equals(kind) || "redacted_thinking".equals(kind) || "encrypted_thinking".equals(kind)) {
+                    String thinking = "thinking".equals(kind) && !part.path("redacted").asBoolean() && !part.has("encrypted") && part.path("thinking").isTextual()
+                        ? part.path("thinking").textValue() : "该段推理未提供可展示文本";
+                    items.add(new HistoryItem(row.seq(), row.sourceTaskId(), "thinking", thinking, null, 0, index, truncated));
+                }
+            }
         } else if ("toolResult".equals(role)) items.add(new HistoryItem(row.seq(), row.sourceTaskId(), "tool_result", message.path("toolName").asText(), message.path("toolCallId").asText()));
         return items;
     }
@@ -454,12 +463,12 @@ public final class AgentConversationStore {
                 int point = text.codePointAt(cursor);
                 int size = point <= 0x7f ? 1 : point <= 0x7ff ? 2 : point <= 0xffff ? 3 : 4;
                 if (utf8 + size > 64 * 1024) {
-                    fragments.add(new HistoryItem(item.seq(), item.taskId(), item.kind(), text.substring(start, cursor), item.toolCallId(), start));
+                    fragments.add(new HistoryItem(item.seq(), item.taskId(), item.kind(), text.substring(start, cursor), item.toolCallId(), start, item.contentIndex(), item.modelTruncated()));
                     start = cursor; utf8 = 0;
                 }
                 cursor += Character.charCount(point); utf8 += size;
             }
-            fragments.add(new HistoryItem(item.seq(), item.taskId(), item.kind(), text.substring(start), item.toolCallId(), start));
+            fragments.add(new HistoryItem(item.seq(), item.taskId(), item.kind(), text.substring(start), item.toolCallId(), start, item.contentIndex(), item.modelTruncated()));
         }
         return fragments;
     }
