@@ -38,13 +38,19 @@ public final class AgentTaskService {
     private final ProjectLifecycleGate lifecycle;
     private final PiWorkerClient worker;
     private final AgentProjectTools tools;
+    private final AgentConversationService conversations;
 
     public AgentTaskService(AgentTaskStore tasks, ProjectLifecycleGate lifecycle, PiWorkerClient worker,
                             AgentProjectTools tools) {
+        this(tasks, lifecycle, worker, tools, null);
+    }
+    public AgentTaskService(AgentTaskStore tasks, ProjectLifecycleGate lifecycle, PiWorkerClient worker,
+                            AgentProjectTools tools, AgentConversationService conversations) {
         this.tasks = tasks;
         this.lifecycle = lifecycle;
         this.worker = worker;
         this.tools = tools;
+        this.conversations = conversations;
     }
 
     /**
@@ -60,6 +66,7 @@ public final class AgentTaskService {
     }
 
     public TaskSnapshot submit(String ownerId, String projectId, TaskRequest request, String conversationId) {
+        if (conversations != null) conversations.reconcileProject(ownerId, projectId);
         AgentTaskStore.TaskCreation creation;
         try (ProjectLifecycleGate.Lease lease = lifecycle.tryAcquire(projectId).orElseThrow(
                 () -> new ApiException("PROJECT_BUSY", 409, "Project is busy"))) {

@@ -9,6 +9,8 @@ export interface ContextPage {
   nextAfterSeq: number | null;
 }
 export interface ContextAppend { expectedHeadSeq: number; header: SessionHeader; entries: SessionEntry[]; usage: ContextUsage | null }
+export interface CompactStart { conversationId: string; requestId: string; expectedHeadSeq: number }
+export interface CompactResult { expectedHeadSeq: number; entries: SessionEntry[]; usage: ContextUsage | null; failureCode: string | null }
 export const CONTEXT_WINDOW = 1_048_576;
 export const COMPACTION_THRESHOLD = 786_432;
 export const COMPACTION_SETTINGS = { enabled: true, reserveTokens: CONTEXT_WINDOW - COMPACTION_THRESHOLD + 1, keepRecentTokens: 20_000 };
@@ -31,13 +33,25 @@ export class ConversationContext {
     readonly fileEntries: FileEntry[], private headSeq: number) { }
 
   static async load(backend: BackendClient, taskId: string, conversationId: string): Promise<ConversationContext> {
+    return this.loadEntries(backend, taskId, conversationId, (after, through) => backend.readContext(taskId, after, through));
+  }
+
+  static async loadForCompaction(backend: BackendClient, start: CompactStart): Promise<ConversationContext> {
+    const context = await this.loadEntries(backend, start.requestId, start.conversationId,
+      (after, through) => backend.readCompactionContext(start, after, through));
+    if (context.headSeq !== start.expectedHeadSeq) throw unavailable();
+    return context;
+  }
+
+  private static async loadEntries(backend: BackendClient, taskId: string, conversationId: string,
+    read: (after: number, through?: number) => Promise<ContextPage>): Promise<ConversationContext> {
     try {
       let after = 0;
       let through: number | undefined;
       let header: SessionHeader | undefined;
       const entries: SessionEntry[] = [];
       for (;;) {
-        const page = await backend.readContext(taskId, after, through);
+        const page = await read(after, through);
         if (page.header.type !== "session" || page.header.version !== 3 || page.header.id !== conversationId
           || (header && !isDeepStrictEqual(header, page.header)) || (through !== undefined && page.headSeq !== through)
           || !Number.isSafeInteger(page.headSeq) || page.headSeq < after || page.entries.length > 32) throw unavailable();
@@ -54,6 +68,17 @@ export class ConversationContext {
         if (page.nextAfterSeq !== after || page.entries.length === 0) throw unavailable();
       }
     } catch { throw unavailable(); }
+  }
+
+  /** Manual work commits its whole suffix together with the terminal verdict, never in separate flush batches. */
+  compactionResult(session: AgentSession): CompactResult {
+    const entries = structuredClone(session.sessionManager.getEntries().slice(this.headSeq));
+    const usage = session.getContextUsage();
+    const result: CompactResult = { expectedHeadSeq: this.headSeq, entries,
+      usage: usage ? { tokens: usage.tokens, contextWindow: CONTEXT_WINDOW, percent: usage.percent } : null, failureCode: null };
+    if (entries.length > 32 || entries.some(entry => Buffer.byteLength(JSON.stringify(entry), "utf8") > ENTRY_BYTES)
+      || Buffer.byteLength(JSON.stringify(result), "utf8") > CONTEXT_PAGE_BYTES) throw unavailable();
+    return result;
   }
 
   /** Keep original rows and suppress only an incomplete old tool round in Pi's projection. */

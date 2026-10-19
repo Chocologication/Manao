@@ -11,7 +11,7 @@
  */
 
 import { isDeepStrictEqual } from "node:util";
-import { CONTEXT_PAGE_BYTES, type ContextPage, type ContextAppend } from "./conversation-context.js";
+import { CONTEXT_PAGE_BYTES, type ContextPage, type ContextAppend, type CompactStart, type CompactResult } from "./conversation-context.js";
 
 export interface ToolRequest {
   toolCallId: string;
@@ -233,6 +233,23 @@ export class BackendClient {
     });
     const body = await this.contextJson(response);
     return body as unknown as ContextPage;
+  }
+
+  async readCompactionContext(start: CompactStart, afterSeq = 0, throughSeq?: number): Promise<ContextPage> {
+    const query = new URLSearchParams({ expectedHeadSeq: String(start.expectedHeadSeq), afterSeq: String(afterSeq) });
+    if (throughSeq !== undefined) query.set("throughSeq", String(throughSeq));
+    return await this.contextJson(await this.transport(`${this.baseUrl}/internal/ai/conversations/${start.conversationId}/compactions/${start.requestId}/context?${query}`, {
+      method: "GET", headers: this.headers(), signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    })) as unknown as ContextPage;
+  }
+
+  async finishCompaction(start: CompactStart, result: CompactResult): Promise<void> {
+    const body = JSON.stringify(result);
+    if (Buffer.byteLength(body, "utf8") > CONTEXT_PAGE_BYTES) throw new BackendHttpError(0, "AI_CONTEXT_UNAVAILABLE", "compaction result is too large");
+    const ack = await this.contextJson(await this.transport(`${this.baseUrl}/internal/ai/conversations/${start.conversationId}/compactions/${start.requestId}/result`, {
+      method: "POST", headers: this.headers(), body, signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    }));
+    if (ack.headSeq !== start.expectedHeadSeq + result.entries.length) throw new BackendHttpError(0, "AI_CONTEXT_UNAVAILABLE", "compaction ACK did not match its result");
   }
 
   async appendContext(taskId: string, append: ContextAppend): Promise<{ headSeq: number }> {

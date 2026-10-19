@@ -36,7 +36,7 @@ import type { BackendClient, ProgressChain } from "./backend-client.js";
 import { PROGRESS_TEXT_MAX_BYTES } from "./backend-client.js";
 import { modelConfigProblems, type PiModelConfig, type WorkerBudgets, type WorkerPaths } from "./config.js";
 import { createProjectTools, TOOL_NAMES } from "./project-tools.js";
-import { COMPACTION_SETTINGS, CONTEXT_WINDOW, ConversationContext, needsCompaction } from "./conversation-context.js";
+import { COMPACTION_SETTINGS, CONTEXT_WINDOW, ConversationContext, needsCompaction, type CompactStart, type CompactResult } from "./conversation-context.js";
 
 /** Server-owned task budgets; tool/build limits raised by user instruction on 2026-10-18. */
 export const DEFAULT_BUDGETS: WorkerBudgets = { wallClockSeconds: 1800, toolCalls: 180, builds: 20 };
@@ -264,6 +264,43 @@ export async function createPiSession(options: {
 
   return new DefaultPiTaskSession(taskId, session, customTools, progress, budgets, () => deps?.now?.() ?? Date.now(), () => fatalToolCode,
     context ? flush : undefined, saveFinal, beforePrompt, () => { if (compactionFailed) refuseOversizedContext(); });
+}
+
+/** Idle-only native summary. This session has no prompt and no project tool authority. */
+export async function compactIdleConversation(options: {
+  model: PiModelConfig; paths: WorkerPaths; backend: BackendClient; start: CompactStart;
+  createSession?: PiSessionDeps["createSession"];
+}): Promise<CompactResult> {
+  const context = await ConversationContext.loadForCompaction(options.backend, options.start);
+  const manager = SessionManager.inMemory(options.paths.scratchDir, { id: options.start.conversationId }, structuredClone(context.fileEntries));
+  const settings = SettingsManager.inMemory({ compaction: COMPACTION_SETTINGS });
+  const runtime = await buildModelRuntime(options.model, options.paths.agentDir);
+  const model = runtime.getModel(options.model.provider, options.model.model);
+  if (!model) throw new WorkerNotConfiguredError("The summary model is unavailable");
+  const loader = new DefaultResourceLoader({ cwd: options.paths.scratchDir, agentDir: options.paths.agentDir, settingsManager: settings,
+    noExtensions: true, noSkills: true, noPromptTemplates: true, noThemes: true, noContextFiles: true, systemPrompt: "" });
+  await loader.reload();
+  const { session } = await (options.createSession ?? createAgentSession)({ cwd: options.paths.scratchDir, agentDir: options.paths.agentDir,
+    modelRuntime: runtime, model, settingsManager: settings, sessionManager: manager, resourceLoader: loader,
+    noTools: "builtin", tools: [], customTools: [] });
+  let expired = false;
+  let providerRequested = false;
+  const stream = session.agent.streamFunction;
+  session.agent.streamFunction = (model, transcript, streamOptions) => {
+    providerRequested = true;
+    return stream(model, transcript, streamOptions);
+  };
+  const timer = setTimeout(() => { expired = true; session.abortCompaction(); }, 120_000);
+  try {
+    try { await session.compact(); }
+    catch (error) {
+      if (!expired && !providerRequested && error instanceof Error && ["Already compacted", "Nothing to compact (session too small)"].includes(error.message))
+        return { expectedHeadSeq: options.start.expectedHeadSeq, entries: [], usage: null, failureCode: null };
+      throw error;
+    }
+    if (expired) throw new Error("Manual compaction exceeded its deadline");
+    return context.compactionResult(session);
+  } finally { clearTimeout(timer); session.dispose(); }
 }
 
 /**

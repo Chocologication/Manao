@@ -42,7 +42,7 @@ public final class InternalBodyLimitFilter extends jakarta.servlet.http.HttpFilt
     @Override protected void doFilter(HttpServletRequest request, HttpServletResponse response, FilterChain chain)
         throws IOException, ServletException {
         long requestLimit = request.getRequestURI().matches("/internal/ai/tasks/[^/]+/context")
-            || request.getRequestURI().matches("/internal/ai/conversations/[^/]+/compactions/[^/]+/(context|result)")
+            || request.getRequestURI().matches("/internal/ai/conversations/[^/]+/compactions/[^/]+/result")
             ? AgentConversationStore.CONTEXT_LIMIT : limitBytes;
         String declared = request.getHeader("Content-Length");
         if (declared != null) {

@@ -38,6 +38,11 @@ public final class AgentConversationController {
                                @RequestParam(defaultValue="50") int limit) {
         return conversations.history(principal.getName(), projectId, conversationId, beforeSeq, beforeOffset, limit);
     }
+    @PostMapping("/{conversationId}/compact")
+    public ConversationView compact(Principal principal, @PathVariable String projectId, @PathVariable String conversationId,
+                                     @RequestBody CompactRequest request) {
+        return conversations.compact(principal.getName(), projectId, conversationId, request);
+    }
     @PostMapping("/{conversationId}/tasks")
     public AgentContracts.TaskSnapshot submit(Principal principal, @PathVariable String projectId, @PathVariable String conversationId,
                                                @Valid @RequestBody AgentTaskController.SubmitTaskRequest request) {

@@ -13,4 +13,11 @@ public interface PiWorkerClient {
     AgentContracts.WorkerStatus status(String taskId);
 
     AgentContracts.WorkerStatus stop(String taskId);
+
+    default AgentConversationContracts.CompactStatus startCompaction(AgentConversationContracts.CompactStart start) {
+        throw new com.manao.poc4.api.ApiException("AI_WORKER_NOT_CONFIGURED", 503, "Worker unavailable");
+    }
+    default AgentConversationContracts.CompactStatus compactionStatus(String conversationId, String requestId) {
+        throw new com.manao.poc4.api.ApiException("AI_WORKER_UNREACHABLE", 502, "Worker unavailable");
+    }
 }

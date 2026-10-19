@@ -131,14 +131,15 @@ public class AiConfig {
 
     @Bean
     @Conditional(AiEnabledCondition.class)
-    com.manao.poc4.ai.AgentConversationService agentConversationService(com.manao.poc4.ai.AgentConversationStore store) {
-        return new com.manao.poc4.ai.AgentConversationService(store);
+    com.manao.poc4.ai.AgentConversationService agentConversationService(com.manao.poc4.ai.AgentConversationStore store,
+            ProjectLifecycleGate lifecycle, PiWorkerClient worker) {
+        return new com.manao.poc4.ai.AgentConversationService(store, lifecycle, worker);
     }
 
     @Bean
     @Conditional(AiEnabledCondition.class)
     AgentTaskService agentTaskService(AgentTaskStore tasks, ProjectLifecycleGate lifecycle,
-                                      PiWorkerClient worker, AgentProjectTools tools) {
-        return new AgentTaskService(tasks, lifecycle, worker, tools);
+                                      PiWorkerClient worker, AgentProjectTools tools, com.manao.poc4.ai.AgentConversationService conversations) {
+        return new AgentTaskService(tasks, lifecycle, worker, tools, conversations);
     }
 }

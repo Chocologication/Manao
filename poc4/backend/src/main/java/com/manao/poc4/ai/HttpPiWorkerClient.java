@@ -43,7 +43,22 @@ public final class HttpPiWorkerClient implements PiWorkerClient {
         return exchange("POST", "/tasks/" + taskId + "/stop", new StopBody(taskId));
     }
 
+    @Override public AgentConversationContracts.CompactStatus startCompaction(AgentConversationContracts.CompactStart start) {
+        return compactExchange("POST", "/conversations/" + start.conversationId() + "/compact", start);
+    }
+    @Override public AgentConversationContracts.CompactStatus compactionStatus(String conversationId, String requestId) {
+        return compactExchange("GET", "/conversations/" + conversationId + "/compactions/" + requestId, null);
+    }
+    private AgentConversationContracts.CompactStatus compactExchange(String method, String path, Object body) {
+        var response = send(method, path, body);
+        if (response.statusCode() != 200) { parse(method, response); throw new AssertionError("unreachable"); }
+        try { return JSON.readValue(response.body(), AgentConversationContracts.CompactStatus.class); }
+        catch (IOException ex) { throw new ApiException("AI_WORKER_BAD_RESPONSE", 502, "The worker answer was unreadable"); }
+    }
     private AgentContracts.WorkerStatus exchange(String method, String path, Object body) {
+        return parse(method, send(method, path, body));
+    }
+    private HttpResponse<String> send(String method, String path, Object body) {
         HttpRequest.Builder builder = HttpRequest.newBuilder()
             .uri(URI.create(baseUrl + path))
             .timeout(timeout)
@@ -63,7 +78,7 @@ public final class HttpPiWorkerClient implements PiWorkerClient {
             Thread.currentThread().interrupt();
             throw new ApiException("AI_WORKER_UNREACHABLE", 502, "the worker call was interrupted");
         }
-        return parse(method, response);
+        return response;
     }
 
     private AgentContracts.WorkerStatus parse(String method, HttpResponse<String> response) {

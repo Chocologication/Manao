@@ -172,6 +172,130 @@ public final class AgentConversationStore {
         });
     }
 
+    public record CompactionAdmission(ConversationView view, boolean created) { }
+    public record PendingCompaction(String conversationId, String requestId, long baseSeq, String instanceId) { }
+
+    public CompactionAdmission beginCompaction(String ownerId, String projectId, String conversationId, CompactRequest request) {
+        if (request == null || request.expectedHeadSeq() < 0) throw invalid();
+        requireUuid(request.requestId());
+        return transaction.execute(status -> {
+            requireProject(ownerId, projectId, true);
+            var current = lockCompaction(conversationId, projectId);
+            if (request.requestId().equals(current.requestId())) {
+                if (request.expectedHeadSeq() != current.baseSeq()) throw conflict();
+                return new CompactionAdmission(detail(ownerId, projectId, conversationId), false);
+            }
+            var old = jdbc.query("SELECT MIN(seq) FROM agent_conversation_entry WHERE conversation_id=? AND writer_id=? AND source_task_id IS NULL HAVING SUM(JSON_UNQUOTE(JSON_EXTRACT(payload_json,'$.type'))='compaction')=1",
+                (rs, i) -> rs.getLong(1), conversationId, request.requestId());
+            if (!old.isEmpty()) {
+                if (old.get(0) - 1 != request.expectedHeadSeq()) throw conflict();
+                var view = detail(ownerId, projectId, conversationId);
+                return new CompactionAdmission(new ConversationView(view.conversationId(), view.title(), view.headSeq(), view.lastTaskId(),
+                    view.activeTaskId(), view.usage(), request.requestId(), "COMPLETED", null), false);
+            }
+            if (!"READY".equals(jdbc.queryForObject("SELECT state FROM project WHERE id=?", String.class, projectId))) throw busy();
+            if (jdbc.queryForObject("SELECT COUNT(*) FROM agent_task WHERE project_id=? AND active_project IS NOT NULL", Integer.class, projectId) > 0) throw busy();
+            requireNoCompaction(jdbc, projectId);
+            if (current.head() != request.expectedHeadSeq()) throw conflict();
+            jdbc.update("UPDATE agent_conversation SET compact_request_id=?,compact_base_seq=?,compact_state='RUNNING',compact_worker_instance=NULL,compact_failure_code=NULL,updated_at=? WHERE id=?",
+                request.requestId(), request.expectedHeadSeq(), Timestamp.from(clock.instant()), conversationId);
+            return new CompactionAdmission(detail(ownerId, projectId, conversationId), true);
+        });
+    }
+
+    public List<PendingCompaction> pendingCompactions(String ownerId, String projectId) {
+        requireProject(ownerId, projectId, false);
+        return jdbc.query("SELECT id,compact_request_id,compact_base_seq,compact_worker_instance FROM agent_conversation WHERE project_id=? AND compact_state='RUNNING'",
+            (rs, i) -> new PendingCompaction(rs.getString(1), rs.getString(2), rs.getLong(3), rs.getString(4)), projectId);
+    }
+
+    /** ACK, first context read and result may race; the same row CAS binds the first authenticated instance. */
+    public void bindCompaction(String conversationId, String requestId, long baseSeq, String instanceId) {
+        transaction.executeWithoutResult(status -> requireCompaction(conversationId, requestId, baseSeq, instanceId, false));
+    }
+
+    public ContextPage readForCompaction(String conversationId, String requestId, long baseSeq, String instanceId, long afterSeq, Long throughSeq) {
+        return transaction.execute(status -> {
+            var row = requireCompaction(conversationId, requestId, baseSeq, instanceId, false);
+            long through = throughSeq == null ? baseSeq : throughSeq;
+            if (through != baseSeq || afterSeq < 0 || afterSeq > through) throw conflict();
+            var rows = entries(conversationId, "seq>? AND seq<=" + through, afterSeq, 33, "ASC");
+            var page = new ArrayList<StoredEntry>();
+            Long next = null;
+            for (var item : rows) {
+                var candidate = new ArrayList<>(page); candidate.add(item);
+                if (page.size() == 32 || bytes(new ContextPage(row.header(), through, candidate, item.seq())) > CONTEXT_LIMIT) {
+                    if (page.isEmpty()) throw tooLarge();
+                    next = page.get(page.size() - 1).seq(); break;
+                }
+                page.add(item);
+            }
+            return new ContextPage(row.header(), through, List.copyOf(page), next);
+        });
+    }
+
+    public ContextAck finishCompaction(String conversationId, String requestId, String instanceId, CompactResult result) {
+        if (result == null || result.entries() == null || result.entries().size() > 32 || result.expectedHeadSeq() < 0) throw invalid();
+        if (bytes(result) > CONTEXT_LIMIT) throw tooLarge();
+        validateUsage(result.usage());
+        if (result.failureCode() != null && (!"AI_CONTEXT_COMPACTION_FAILED".equals(result.failureCode()) || !result.entries().isEmpty())) throw invalid();
+        return transaction.execute(status -> {
+            var row = requireCompaction(conversationId, requestId, result.expectedHeadSeq(), instanceId, true);
+            if ("FAILED".equals(row.state())) throw conflict();
+            long head = row.head();
+            if ("COMPLETED".equals(row.state())) {
+                if (result.failureCode() != null) throw conflict();
+                int saved = jdbc.queryForObject("SELECT COUNT(*) FROM agent_conversation_entry WHERE conversation_id=? AND writer_id=? AND source_task_id IS NULL",
+                    Integer.class, conversationId, requestId);
+                if (saved != result.entries().size()) throw conflict();
+                if (result.entries().isEmpty()) return new ContextAck(result.expectedHeadSeq());
+                return new ContextAck(appendBatch(conversationId, null, requestId, head,
+                    new ContextAppend(result.expectedHeadSeq(), row.header(), result.entries(), result.usage())));
+            }
+            if (head != result.expectedHeadSeq()) throw conflict();
+            if (result.failureCode() == null && !result.entries().isEmpty()) {
+                long summaries = result.entries().stream().filter(e -> "compaction".equals(e.path("type").asText())).count();
+                if (summaries != 1 || result.entries().stream().anyMatch(e -> !Set.of("compaction", "model_change", "thinking_level_change").contains(e.path("type").asText()))) throw conflict();
+                head = appendBatch(conversationId, null, requestId, head,
+                    new ContextAppend(result.expectedHeadSeq(), row.header(), result.entries(), result.usage()));
+            }
+            jdbc.update("UPDATE agent_conversation SET compact_state=?,compact_failure_code=?,updated_at=? WHERE id=?",
+                result.failureCode() == null ? "COMPLETED" : "FAILED", result.failureCode(), Timestamp.from(clock.instant()), conversationId);
+            return new ContextAck(head);
+        });
+    }
+
+    /** A definite rejection/replaced instance fences callbacks; transport uncertainty does not call this. */
+    public void failCompaction(PendingCompaction pending) {
+        transaction.executeWithoutResult(status -> {
+            var row = lockCompaction(pending.conversationId(), null);
+            if ("RUNNING".equals(row.state()) && pending.requestId().equals(row.requestId()) && pending.baseSeq() == row.baseSeq())
+                jdbc.update("UPDATE agent_conversation SET compact_state='FAILED',compact_failure_code='AI_CONTEXT_COMPACTION_FAILED',updated_at=? WHERE id=?",
+                    Timestamp.from(clock.instant()), pending.conversationId());
+        });
+    }
+
+    private CompactRow requireCompaction(String conversationId, String requestId, long baseSeq, String instanceId, boolean terminalAllowed) {
+        if (instanceId == null || instanceId.isBlank() || instanceId.length() > 64) throw invalid();
+        var row = lockCompaction(conversationId, null);
+        if (!requestId.equals(row.requestId()) || baseSeq != row.baseSeq() || (!terminalAllowed && !"RUNNING".equals(row.state()))
+            || (row.instanceId() != null && !instanceId.equals(row.instanceId()))) throw conflict();
+        if (row.instanceId() == null) {
+            if (!"RUNNING".equals(row.state())) throw conflict();
+            jdbc.update("UPDATE agent_conversation SET compact_worker_instance=? WHERE id=? AND compact_worker_instance IS NULL", instanceId, conversationId);
+        }
+        return row;
+    }
+
+    private CompactRow lockCompaction(String conversationId, String expectedProject) {
+        var projects = jdbc.query("SELECT project_id FROM agent_conversation WHERE id=?", (rs, i) -> rs.getString(1), conversationId);
+        if (projects.isEmpty() || (expectedProject != null && !expectedProject.equals(projects.get(0)))) throw missing();
+        jdbc.queryForObject("SELECT id FROM project WHERE id=? FOR UPDATE", String.class, projects.get(0));
+        return jdbc.queryForObject("SELECT head_seq,header_json,compact_request_id,compact_base_seq,compact_state,compact_worker_instance FROM agent_conversation WHERE id=? FOR UPDATE",
+            (rs, i) -> new CompactRow(rs.getLong(1), parse(rs.getString(2)), rs.getString(3), rs.getLong(4), rs.getString(5), rs.getString(6)), conversationId);
+    }
+    private record CompactRow(long head, JsonNode header, String requestId, long baseSeq, String state, String instanceId) { }
+
     /** Called only inside TaskStore's existing project-row transaction. */
     static void bindTaskGoal(JdbcTemplate jdbc, Clock clock, String projectId, String conversationId, AgentContracts.TaskRequest request) {
         requireUuid(conversationId);

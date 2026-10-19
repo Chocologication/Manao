@@ -14,7 +14,8 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { pathToFileURL } from "node:url";
 import { BackendClient, BackendHttpError, ProgressChain } from "./backend-client.js";
 import { ConfigError, loadWorkerConfig, modelConfigProblems, type WorkerConfig } from "./config.js";
-import { createPiSession, type PiTaskOutcome, type PiTaskSession } from "./pi-session.js";
+import { compactIdleConversation, createPiSession, type PiSessionDeps, type PiTaskOutcome, type PiTaskSession } from "./pi-session.js";
+import type { CompactStart, CompactResult } from "./conversation-context.js";
 
 export interface WorkerStartBody {
   taskId: string;
@@ -42,6 +43,7 @@ export interface RunnerDeps {
 export interface ServerDeps {
   /** Overrides runner creation (tests stub the session; production drives Pi). */
   createRunner?: (deps: RunnerDeps) => TaskRunner;
+  createManualSession?: PiSessionDeps["createSession"];
   now?: () => number;
 }
 
@@ -54,6 +56,9 @@ interface TaskRecord {
 }
 
 const SHA256 = /^[0-9a-f]{64}$/;
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+type ActiveWork = { kind: "task"; taskId: string } | { kind: "compact"; conversationId: string; requestId: string };
+interface CompactRecord { start: CompactStart; backend: BackendClient; result: CompactResult | null; confirmed: boolean; rejected: boolean; delivery: Promise<void> | null }
 const MAX_BODY_BYTES = 64 * 1024;
 
 export interface TaskServerHandle {
@@ -66,7 +71,8 @@ export interface TaskServerHandle {
 
 export function createTaskServer(config: WorkerConfig, deps: ServerDeps = {}): TaskServerHandle {
   const tasks = new Map<string, TaskRecord>();
-  let active: TaskRecord | null = null;
+  const compactions = new Map<string, CompactRecord>();
+  let active: ActiveWork | null = null;
   const tokenDigest = config.workerToken === "" ? null : sha256(config.workerToken);
 
   const server: Server = createServer((request, response) => {
@@ -86,6 +92,15 @@ export function createTaskServer(config: WorkerConfig, deps: ServerDeps = {}): T
       return;
     }
     const url = new URL(request.url ?? "/", "http://localhost");
+    const compactStart = /^\/conversations\/([a-f0-9-]+)\/compact$/.exec(url.pathname);
+    const compactGet = /^\/conversations\/([a-f0-9-]+)\/compactions\/([a-f0-9-]+)$/.exec(url.pathname);
+    if (request.method === "POST" && compactStart !== null) { await handleCompactStart(compactStart[1]!, request, response); return; }
+    if (request.method === "GET" && compactGet !== null) {
+      const conversationId = compactGet[1]!; const requestId = compactGet[2]!;
+      const record = compactions.get(`${conversationId}/${requestId}`);
+      if (record) void deliverCompaction(record);
+      writeJson(response, 200, compactStatus(conversationId, requestId, record)); return;
+    }
     const startMatch = /^\/tasks\/([A-Za-z0-9-]+)\/start$/.exec(url.pathname);
     const stopMatch = /^\/tasks\/([A-Za-z0-9-]+)\/stop$/.exec(url.pathname);
     const getMatch = /^\/tasks\/([A-Za-z0-9-]+)$/.exec(url.pathname);
@@ -147,7 +162,7 @@ export function createTaskServer(config: WorkerConfig, deps: ServerDeps = {}): T
     }
     const record = createRecord(start);
     tasks.set(taskId, record);
-    active = record;
+    active = { kind: "task", taskId };
     // Accept immediately; the session prompt runs asynchronously below.
     writeJson(response, 200, statusOf(taskId));
     launch(record);
@@ -182,10 +197,54 @@ export function createTaskServer(config: WorkerConfig, deps: ServerDeps = {}): T
         void record.progress.sendTerminal("FAILED", "", failureCode);
       })
       .finally(() => {
-        if (active === record) {
+        if (active?.kind === "task" && active.taskId === record.start.taskId) {
           active = null;
         }
       });
+  }
+
+  async function handleCompactStart(conversationId: string, request: IncomingMessage, response: ServerResponse): Promise<void> {
+    const raw = await readJson(request);
+    const body = raw as Partial<CompactStart> | null;
+    if (!body || body.conversationId !== conversationId || !UUID.test(conversationId) || typeof body.requestId !== "string"
+      || !UUID.test(body.requestId) || !Number.isSafeInteger(body.expectedHeadSeq) || body.expectedHeadSeq! < 0) {
+      writeJson(response, 422, { error: "Invalid compaction identity" }); return;
+    }
+    const start = body as CompactStart;
+    const key = `${conversationId}/${start.requestId}`;
+    const existing = compactions.get(key);
+    if (existing) {
+      if (existing.start.expectedHeadSeq !== start.expectedHeadSeq) { writeJson(response, 409, { error: "Compaction identity mismatch" }); return; }
+      writeJson(response, 200, compactStatus(conversationId, start.requestId, existing)); return;
+    }
+    if (modelConfigProblems(config.model).length > 0) { writeJson(response, 503, { error: "AI_WORKER_NOT_CONFIGURED" }); return; }
+    if (active !== null) { writeJson(response, 409, { error: "The worker is busy" }); return; }
+    const backend = new BackendClient({ baseUrl: config.backendBaseUrl, token: config.backendToken, instanceId: config.instanceId, epoch: 0 });
+    const record: CompactRecord = { start, backend, result: null, confirmed: false, rejected: false, delivery: null };
+    compactions.set(key, record);
+    active = { kind: "compact", conversationId, requestId: start.requestId };
+    writeJson(response, 200, compactStatus(conversationId, start.requestId, record));
+    void compactIdleConversation({ model: config.model!, paths: config.paths, backend, start, createSession: deps.createManualSession })
+      .then(result => { record.result = result; })
+      .catch(() => { record.result = { expectedHeadSeq: start.expectedHeadSeq, entries: [], usage: null, failureCode: "AI_CONTEXT_COMPACTION_FAILED" }; })
+      .then(async () => {
+        // SDK work has stopped. Result delivery holds no execution slot or project write authority.
+        if (active?.kind === "compact" && active.conversationId === conversationId && active.requestId === start.requestId) active = null;
+        await deliverCompaction(record);
+      });
+  }
+
+  function compactStatus(conversationId: string, requestId: string, record?: CompactRecord) {
+    return { conversationId, requestId, instanceId: config.instanceId,
+      state: !record ? "NOT_FOUND" : !record.confirmed ? "RUNNING" : record.rejected || record.result?.failureCode ? "FAILED" : "COMPLETED" };
+  }
+  async function deliverCompaction(record: CompactRecord): Promise<void> {
+    if (!record.result || record.confirmed) return;
+    if (record.delivery) return record.delivery;
+    record.delivery = record.backend.finishCompaction(record.start, record.result).then(() => { record.confirmed = true; })
+      .catch(error => { if (error instanceof BackendHttpError && error.status === 409) { record.confirmed = true; record.rejected = true; } })
+      .finally(() => { record.delivery = null; });
+    return record.delivery;
   }
 
   const defaultRunner = (runnerDeps: RunnerDeps): TaskRunner => {
@@ -304,7 +363,7 @@ export function createTaskServer(config: WorkerConfig, deps: ServerDeps = {}): T
       return new Promise((resolve, reject) =>
         server.close((error) => (error === undefined ? resolve() : reject(error))));
     },
-    activeTaskId: () => active === null ? null : active.start.taskId,
+    activeTaskId: () => active?.kind === "task" ? active.taskId : null,
   };
   return serverHandle;
 }

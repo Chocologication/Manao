@@ -104,7 +104,6 @@ class AgentConversationHttpContractTest {
     @Test void onlyExactContextRoutesAcceptLargerBodies() throws Exception {
         var filter = new InternalBodyLimitFilter();
         for (String route : new String[] {"/internal/ai/tasks/task/context",
-                "/internal/ai/conversations/conversation/compactions/request/context",
                 "/internal/ai/conversations/conversation/compactions/request/result"}) {
             var request = new MockHttpServletRequest("POST", route);
             request.setContent(new byte[600 * 1024]);
@@ -112,5 +111,10 @@ class AgentConversationHttpContractTest {
             filter.doFilter(request, new MockHttpServletResponse(), (req, res) -> reached.set(true));
             assertThat(reached).as(route).isTrue();
         }
+        var unsupported = new MockHttpServletRequest("POST", "/internal/ai/conversations/conversation/compactions/request/context");
+        unsupported.setContent(new byte[600 * 1024]);
+        var response = new MockHttpServletResponse();
+        filter.doFilter(unsupported, response, (req, res) -> { throw new AssertionError("Unsupported writes retain the old body limit"); });
+        assertThat(response.getStatus()).isEqualTo(413);
     }
 }
