@@ -15,6 +15,7 @@ export type AgentProgressItem = {
 
 export type AgentTaskSnapshot = {
   taskId: string;
+  conversationId?: string | null;
   state: AgentTaskState;
   workspaceRevision: string;
   writesLocked: boolean;
@@ -69,6 +70,7 @@ export function parseAgentTaskSnapshot(payload: unknown): AgentTaskSnapshot {
   if (
     record === null ||
     typeof record.taskId !== 'string' ||
+    record.conversationId != null && typeof record.conversationId !== 'string' ||
     typeof record.state !== 'string' ||
     !AGENT_TASK_STATES.has(record.state) ||
     typeof record.workspaceRevision !== 'string' ||
@@ -80,6 +82,7 @@ export function parseAgentTaskSnapshot(payload: unknown): AgentTaskSnapshot {
   }
   return {
     taskId: record.taskId,
+    conversationId: record.conversationId as string | null | undefined ?? null,
     state: record.state as AgentTaskState,
     workspaceRevision: record.workspaceRevision,
     writesLocked: record.writesLocked,

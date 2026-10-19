@@ -7,6 +7,7 @@ import {
   clearAgentTaskId,
   generateAgentTaskId,
   readAgentTaskId,
+  readAgentTaskIntent,
   storeAgentTaskId,
 } from '@/api/agentTaskApi';
 import { ApiRequestError } from '@/api/ApiRequestError';
@@ -27,6 +28,7 @@ import { getWorkspaceRevision, useWorkspaceRevision } from '@/features/files/fil
 import { useWorkspaceSession } from '@/features/editor/workspaceSession';
 import { InlineAlert } from '@/components/feedback/InlineAlert';
 import { resolveAgentTaskPreconditions } from './agentTaskPreconditions';
+import { submitConversationTask } from '@/api/agentConversationApi';
 
 export type AgentTaskPanelProps = {
   projectId: string;
@@ -48,6 +50,11 @@ export type AgentTaskPanelProps = {
   /** The explicit owner abandon; the shell performs the close request. */
   onClose: () => void;
   onViewRun?: (runId: string) => void;
+  conversationId?: string;
+  fullHistory?: boolean;
+  displayTask?: AgentTaskSnapshot | null;
+  submissionBlocked?: boolean;
+  onSubmissionPendingChange?: (pending: boolean) => void;
 };
 
 type Probe = { kind: 'found'; task: AgentTaskSnapshot } | { kind: 'missing' } | { kind: 'unknown' };
@@ -78,6 +85,11 @@ export function AgentTaskPanel({
   onTaskAccepted,
   onClose,
   onViewRun,
+  conversationId,
+  fullHistory = false,
+  displayTask: selectedTask,
+  submissionBlocked = false,
+  onSubmissionPendingChange,
 }: AgentTaskPanelProps) {
   const queryClient = useQueryClient();
   const dirtyCount = useWorkspaceSession((state) => state.dirtyPaths.size);
@@ -85,8 +97,8 @@ export function AgentTaskPanel({
   const [starting, setStarting] = useState(false);
   const [startError, setStartError] = useState<string | null>(null);
   const previousTaskRef = useRef<AgentTaskSnapshot | null>(null);
-  const activeTaskId = (task ?? settledTask)?.taskId ?? null;
-  const scope = useMemo(() => ({ active: true, token: 0 }), [projectId, activeTaskId]);
+  const activeTaskId = (selectedTask === undefined ? task ?? settledTask : selectedTask)?.taskId ?? null;
+  const scope = useMemo(() => ({ active: true, token: 0 }), [userId, projectId, conversationId, activeTaskId]);
   const [resultCache, setResultCache] = useState<{ scope: typeof scope; calls: Record<string, AgentToolCallResult | 'error'> } | null>(null);
   const [loading, setLoading] = useState<{ scope: typeof scope; callId: string } | null>(null);
   const buildResults = resultCache?.scope === scope ? resultCache.calls : {};
@@ -128,7 +140,7 @@ export function AgentTaskPanel({
   });
   // A failed status poll means the browser cannot know whether a task occupies
   // the project: start stays locked (fail-closed) until the poll recovers.
-  const canStart = preconditions.canStart && !pollFailed && !starting;
+  const canStart = preconditions.canStart && !pollFailed && !starting && !submissionBlocked;
 
   useEffect(() => {
     const previous = previousTaskRef.current;
@@ -136,12 +148,12 @@ export function AgentTaskPanel({
     if (task !== null && !isAgentTaskOccupying(task.state)) {
       // The backend reported the task settled (for example the close response):
       // the id is done and the next start must be a new task.
-      clearAgentTaskId(userId, projectId);
+      clearAgentTaskId(userId, projectId, task.taskId);
       return;
     }
     if (previous !== null && task === null) {
       // The occupying task released (settled or closed): its id is done.
-      clearAgentTaskId(userId, projectId);
+      clearAgentTaskId(userId, projectId, previous.taskId);
     }
   }, [task, userId, projectId]);
 
@@ -161,10 +173,14 @@ export function AgentTaskPanel({
         return;
       }
       setStarting(true);
+      onSubmissionPendingChange?.(true);
       setStartError(null);
       const probe = async (taskId: string): Promise<Probe> => {
         try {
-          return { kind: 'found', task: await getAgentTask(projectId, taskId) };
+          const found = await getAgentTask(projectId, taskId);
+          const intent = readAgentTaskIntent(userId, projectId);
+          if (found.taskId !== taskId || intent?.taskId === taskId && intent.conversationId !== null && found.conversationId !== intent.conversationId) return { kind: 'unknown' };
+          return { kind: 'found', task: found };
         } catch (error) {
           if (error instanceof ApiRequestError && error.status === 404) {
             return { kind: 'missing' };
@@ -183,10 +199,10 @@ export function AgentTaskPanel({
               onTaskAccepted(existing.task);
               return;
             }
-            clearAgentTaskId(userId, projectId);
+            clearAgentTaskId(userId, projectId, storedId);
           } else if (existing.kind === 'missing') {
             // Provably never created: the stored id is free for reuse-free restart.
-            clearAgentTaskId(userId, projectId);
+            clearAgentTaskId(userId, projectId, storedId);
           } else {
             setStartError('Could not verify the previous task. Try again in a moment.');
             return;
@@ -194,14 +210,15 @@ export function AgentTaskPanel({
         }
         const taskId = generateAgentTaskId();
         // Durable BEFORE the request: a lost response still reconciles this task.
-        storeAgentTaskId(userId, projectId, taskId);
+        storeAgentTaskId(userId, projectId, taskId, conversationId);
         let snapshot: AgentTaskSnapshot;
         try {
-          snapshot = await submitAgentTask(projectId, {
+          const request = {
             taskId,
             prompt,
             expectedWorkspaceRevision: revision,
-          });
+          };
+          snapshot = conversationId === undefined ? await submitAgentTask(projectId, request) : await submitConversationTask(projectId, conversationId, request);
         } catch (submitError) {
           // The start response was lost: query the ORIGINAL task id — a second
           // task is never generated for the same intent.
@@ -211,7 +228,7 @@ export function AgentTaskPanel({
             return;
           }
           if (recovered.kind === 'missing') {
-            clearAgentTaskId(userId, projectId);
+            clearAgentTaskId(userId, projectId, taskId);
           }
           throw submitError;
         }
@@ -220,12 +237,13 @@ export function AgentTaskPanel({
         setStartError(agentTaskStartErrorMessage(error));
       } finally {
         setStarting(false);
+        onSubmissionPendingChange?.(false);
       }
     },
-    [canStart, goal, onTaskAccepted, projectId, queryClient, userId],
+    [canStart, goal, onTaskAccepted, projectId, queryClient, userId, conversationId, onSubmissionPendingChange],
   );
 
-  const displayTask = task ?? settledTask;
+  const displayTask = selectedTask === undefined ? task ?? settledTask : selectedTask;
   const occupying = task !== null && isAgentTaskOccupying(task.state);
 
   return (
@@ -256,7 +274,7 @@ export function AgentTaskPanel({
             >
               Start task
             </Button>
-            {occupying ? (
+            {occupying && displayTask?.taskId === task?.taskId ? (
               <Button
                 type="button"
                 variant="outline"
@@ -278,11 +296,11 @@ export function AgentTaskPanel({
               <span className="font-medium">Status</span>
               <span>{displayTask.state}</span>
             </div>
-            {displayTask.summary !== null ? <p>{displayTask.summary}</p> : null}
+            {!fullHistory && displayTask.summary !== null ? <p>{displayTask.summary}</p> : null}
             {displayTask.failureCode !== null ? (
               <p className="text-destructive">{displayTask.failureCode}</p>
             ) : null}
-            {displayTask.progress.length > 0 ? (
+            {!fullHistory && displayTask.progress.length > 0 ? (
               <div>
                 <h3 className="text-sm font-medium">Progress</h3>
                 <ul className="mt-1 flex flex-col gap-1">
@@ -350,7 +368,7 @@ function isNavigableRunId(runId: unknown): boolean {
   }
 }
 
-function ToolResultView({ result, onViewRun }: { result: AgentToolCallResult; onViewRun?: (runId: string) => void }) {
+export function ToolResultView({ result, onViewRun }: { result: AgentToolCallResult; onViewRun?: (runId: string) => void }) {
   const rejected = applicationError(result);
   if (rejected !== null) return <div className="text-destructive">{rejected.code}: {rejected.message}</div>;
   const app = applicationData(result);

@@ -12,14 +12,46 @@ import { fileKeys } from '../../features/files/fileQueries';
 import { parseProjectRelativePath } from '../../features/files/pathPolicy';
 import { server } from '../../mocks/node';
 import { ALICE_SEED_PROJECT_ID } from '../../mocks/state';
-import { useCurrentAgentTaskQuery } from './agentTaskQueries';
+import { fetchCurrentAgentTask, useCurrentAgentTaskQuery } from './agentTaskQueries';
 import { AgentTaskPanel, type AgentTaskPanelProps } from './AgentTaskPanel';
+import { parseAgentTaskSnapshot } from '@/contracts/agentTask';
 
 const PROJECT_ID = ALICE_SEED_PROJECT_ID;
 const USER_ID = 'user-alice';
 const TASK_ID = '0b8fd38f-0f9e-4c28-9c48-3f5f4a2b1c11';
 const CURRENT_URL = `/api/v1/projects/${PROJECT_ID}/agent-tasks/current`;
 const TASKS_URL = `/api/v1/projects/${PROJECT_ID}/agent-tasks`;
+
+it('parses nullable conversation association without inventing old task history', () => {
+  expect(parseAgentTaskSnapshot(occupyingTask()).conversationId).toBeNull();
+  expect(parseAgentTaskSnapshot({ ...occupyingTask(), conversationId: 'conversation-a' }).conversationId).toBe('conversation-a');
+  expect(() => parseAgentTaskSnapshot({ ...occupyingTask(), conversationId: 123 })).toThrow();
+});
+
+it('does not clear a newer project pending identity when an old terminal snapshot arrives', () => {
+  sessionStorage.setItem(agentTaskStorageKey(USER_ID, PROJECT_ID), 'new-task-id');
+  renderPanel({ task: occupyingTask({ state: 'COMPLETED', writesLocked: false }) });
+  expect(sessionStorage.getItem(agentTaskStorageKey(USER_ID, PROJECT_ID))).toBe('new-task-id');
+});
+
+it('does not adopt a newly persisted submission while an older current discovery read is in flight', async () => {
+  let release = () => {}, started = false, originalReads = 0;
+  const held = new Promise<void>(resolve => { release = resolve; });
+  server.use(http.get(CURRENT_URL, async () => { started = true; await held; return HttpResponse.json({ code: 'ENTRY_NOT_FOUND', message: 'none', traceId: 'none' }, { status: 404 }); }), http.get(`${TASKS_URL}/${TASK_ID}`, () => { originalReads++; return HttpResponse.json({ code: 'ENTRY_NOT_FOUND', message: 'none', traceId: 'none' }, { status: 404 }); }));
+  const read = fetchCurrentAgentTask(PROJECT_ID, USER_ID);
+  await waitFor(() => expect(started).toBe(true));
+  sessionStorage.setItem(agentTaskStorageKey(USER_ID, PROJECT_ID), JSON.stringify({ taskId: TASK_ID, conversationId: 'conversation-a' }));
+  release(); await read;
+  expect(originalReads).toBe(0); expect(sessionStorage.getItem(agentTaskStorageKey(USER_ID, PROJECT_ID))).not.toBeNull();
+});
+
+it('keeps pending identity when the shell reconciliation response has a different conversation', async () => {
+  const original = JSON.stringify({ taskId: TASK_ID, conversationId: 'conversation-a' });
+  sessionStorage.setItem(agentTaskStorageKey(USER_ID, PROJECT_ID), original);
+  server.use(http.get(`${TASKS_URL}/${TASK_ID}`, () => HttpResponse.json({ ...occupyingTask(), conversationId: 'conversation-b' })));
+  await expect(fetchCurrentAgentTask(PROJECT_ID, USER_ID)).rejects.toThrow();
+  expect(sessionStorage.getItem(agentTaskStorageKey(USER_ID, PROJECT_ID))).toBe(original);
+});
 
 function occupyingTask(overrides: Partial<AgentTaskSnapshot> = {}): AgentTaskSnapshot {
   return {

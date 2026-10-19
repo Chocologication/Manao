@@ -62,6 +62,45 @@ const README = parseProjectRelativePath('README.md');
 const APP_TEST = parseProjectRelativePath('src/test/java/demo/AppTest.java');
 const RELOAD_MARKER = 'ensoai-stage4-reload-change';
 
+it('discovers the original uncertain project task after refresh before unlocking writes', async () => {
+  const taskId = '33333333-3333-4333-8333-333333333333';
+  const url = `/api/v1/projects/${ALICE_SEED_PROJECT_ID}/agent-tasks`;
+  let originalReads = 0;
+  server.use(
+    http.get(`${url}/current`, () => HttpResponse.json({ code: 'ENTRY_NOT_FOUND', message: 'none', traceId: 'none' }, { status: 404 })),
+    http.get(`${url}/${taskId}`, () => { originalReads++; return HttpResponse.json({ taskId, state: 'NEEDS_ATTENTION', workspaceRevision: '0', writesLocked: true, progress: [], changedPaths: [], summary: null, failureCode: null, conversationId: '11111111-1111-4111-8111-111111111111' }); }),
+  );
+  await authenticateAsAlice();
+  sessionStorage.setItem(`manao.agent-task.id.usr-alice.${ALICE_SEED_PROJECT_ID}`, JSON.stringify({ taskId, conversationId: '11111111-1111-4111-8111-111111111111' }));
+  renderShell(); await loadedRoot();
+  await waitFor(() => expect(originalReads).toBeGreaterThan(0));
+  expect(screen.getByRole('button', { name: 'New file' })).toBeDisabled();
+});
+
+it('keeps the shell project write lock and original pending task while switching conversations', async () => {
+  const a = '11111111-1111-4111-8111-111111111111', b = '22222222-2222-4222-8222-222222222222';
+  const taskId = '33333333-3333-4333-8333-333333333333';
+  const base = { headSeq: 0, lastTaskId: null, activeTaskId: null, usage: null, compactRequestId: null, compactState: null, compactFailureCode: null };
+  const url = `/api/v1/projects/${ALICE_SEED_PROJECT_ID}`;
+  let closes = 0;
+  server.use(
+    http.get(`${url}/agent-tasks/current`, () => HttpResponse.json({ taskId, state: 'RUNNING', workspaceRevision: '0', writesLocked: true, progress: [], changedPaths: [], summary: null, failureCode: null, conversationId: a })),
+    http.post(`${url}/agent-tasks/${taskId}/close`, () => { closes++; return HttpResponse.error(); }),
+    http.get(`${url}/conversations`, () => HttpResponse.json({ items: [{ ...base, conversationId: a, title: '会话 A' }, { ...base, conversationId: b, title: '会话 B' }], nextCursor: null })),
+    http.get(`${url}/conversations/:id`, ({ params }) => HttpResponse.json({ ...base, conversationId: params.id, title: '会话' })),
+    http.get(`${url}/conversations/:id/entries`, () => HttpResponse.json({ items: [], nextBeforeSeq: null, nextBeforeOffset: null })),
+  );
+  await authenticateAsAlice();
+  sessionStorage.setItem(`manao.agent-task.id.usr-alice.${ALICE_SEED_PROJECT_ID}`, JSON.stringify({ taskId, conversationId: a }));
+  renderShell(); await loadedRoot();
+  await userEvent.click(screen.getByRole('tab', { name: 'AI' }));
+  await userEvent.click(await screen.findByRole('button', { name: '会话 B' }));
+  expect(screen.getByRole('button', { name: 'New file' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: 'Start task' })).toBeDisabled();
+  expect(JSON.parse(sessionStorage.getItem(`manao.agent-task.id.usr-alice.${ALICE_SEED_PROJECT_ID}`)!)).toEqual({ taskId, conversationId: a });
+  expect(closes).toBe(0);
+});
+
 const ALICE_PROJECT: ProjectSummary = {
   id: ALICE_SEED_PROJECT_ID,
   name: 'Alice Notebook',

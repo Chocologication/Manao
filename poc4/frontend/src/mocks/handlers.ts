@@ -1095,6 +1095,14 @@ export const handlers = [
   ...dependencyHandlers,
   ...runHandlers,
   ...terminalHandlers,
+  // Projection defaults only; feature tests supply owner-scoped conversation fixtures.
+  http.get('/api/v1/projects/:projectId/conversations', () => HttpResponse.json({ items: [], nextCursor: null })),
+  http.post('/api/v1/projects/:projectId/conversations', () => HttpResponse.json({ code: 'PROJECT_BUSY', message: 'Mock conversation unavailable', traceId: 'trace-conversation-none' }, { status: 409 })),
+  http.get('/api/v1/projects/:projectId/conversations/:conversationId', () => HttpResponse.json({ code: 'ENTRY_NOT_FOUND', message: 'Conversation not found', traceId: 'trace-conversation-none' }, { status: 404 })),
+  http.get('/api/v1/projects/:projectId/conversations/:conversationId/entries', () => HttpResponse.json({ code: 'ENTRY_NOT_FOUND', message: 'Conversation not found', traceId: 'trace-conversation-none' }, { status: 404 })),
+  http.post('/api/v1/projects/:projectId/conversations/:conversationId/tasks', () => HttpResponse.json({ code: 'PROJECT_BUSY', message: 'Mock task unavailable', traceId: 'trace-conversation-none' }, { status: 409 })),
+  http.post('/api/v1/projects/:projectId/conversations/:conversationId/compact', () => HttpResponse.json({ code: 'PROJECT_BUSY', message: 'Mock compaction unavailable', traceId: 'trace-conversation-none' }, { status: 409 })),
+  http.get('/api/v1/projects/:projectId/agent-tasks/:taskId/tools/:toolCallId', () => HttpResponse.json({ code: 'ENTRY_NOT_FOUND', message: 'Tool result not found', traceId: 'trace-agent-none' }, { status: 404 })),
   // Stage-one agent task endpoints: the mock backend has no task store, so the
   // honest default is "no occupying task" (404) and a refused second task.
   // Tests that exercise real task flows override these with server.use.

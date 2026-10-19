@@ -12,7 +12,7 @@ import {
 } from 'react';
 import { Link } from 'react-router';
 import { logout } from '@/app/appRuntime';
-import { getAgentTask } from '@/api/agentTaskApi';
+import { clearAgentTaskId, getAgentTask, readAgentTaskId } from '@/api/agentTaskApi';
 import { EditorWorkspace } from '@/components/files/EditorWorkspace';
 import { UnsavedChangesDialog } from '@/components/files/UnsavedChangesDialog';
 import { FileTree } from '@/components/files/FileTree';
@@ -46,8 +46,8 @@ import {
 } from '@/features/editor/unsavedChangesGuard';
 import { useWorkspaceSession } from '@/features/editor/workspaceSession';
 import {
-  AgentTaskPanel,
-} from '@/features/ai/AgentTaskPanel';
+  AgentConversationPanel,
+} from '@/features/ai/AgentConversationPanel';
 import {
   agentTaskKeys,
   useCloseAgentTaskMutation,
@@ -208,8 +208,14 @@ export function WorkbenchShell({ project }: { project: ProjectSummary }) {
   // writesLocked, and reloads the workspace at a safe node whenever the task
   // reports a new revision (the agent saved code the editor must show).
   // ---------------------------------------------------------------------
-  const agentTaskQuery = useCurrentAgentTaskQuery(project.id, agentPanelEnabled);
+  const [agentSubmissionInFlight, setAgentSubmissionInFlight] = useState(false);
+  const [agentSubmissionPending, setAgentSubmissionPending] = useState(() => readAgentTaskId(userId, project.id) !== null);
+  const agentTaskQuery = useCurrentAgentTaskQuery(project.id, agentPanelEnabled, userId, !agentSubmissionInFlight);
   const agentTask = agentTaskQuery.data ?? null;
+  useEffect(() => {
+    if (agentTask !== null && !agentTask.writesLocked) clearAgentTaskId(userId, project.id, agentTask.taskId);
+    setAgentSubmissionPending(agentSubmissionInFlight || readAgentTaskId(userId, project.id) !== null);
+  }, [agentTask, agentTaskQuery.dataUpdatedAt, agentSubmissionInFlight, userId, project.id]);
   const closeAgentTaskMutation = useCloseAgentTaskMutation(project.id);
   const fileWritePending =
     useIsMutating({ predicate: projectFileWritePredicate(project.id) }) > 0;
@@ -242,7 +248,7 @@ export function WorkbenchShell({ project }: { project: ProjectSummary }) {
   // workspace is locked exactly while the shared function would refuse a task
   // start because one occupies the project or a reload is in flight, failed or
   // blocked (the neutral inputs pin everything the shell is not deciding here).
-  const agentTaskLocked = !resolveAgentTaskPreconditions({
+  const agentTaskLocked = agentSubmissionPending || !resolveAgentTaskPreconditions({
     dirtyCount: 0,
     writePending: false,
     hasActiveRun: false,
@@ -778,7 +784,7 @@ export function WorkbenchShell({ project }: { project: ProjectSummary }) {
                   activePanel === 'agent' ? 'z-10' : 'invisible pointer-events-none',
                 )}
               >
-                <AgentTaskPanel
+                <AgentConversationPanel
                   projectId={project.id}
                   userId={userId}
                   task={agentTask}
@@ -795,6 +801,11 @@ export function WorkbenchShell({ project }: { project: ProjectSummary }) {
                   }
                   closePending={closeAgentTaskMutation.isPending}
                   onTaskAccepted={seedAgentTask}
+                  onSubmissionPendingChange={(pending) => {
+                    setAgentSubmissionInFlight(pending);
+                    setAgentSubmissionPending(pending || readAgentTaskId(userId, project.id) !== null);
+                    if (!pending) void queryClient.invalidateQueries({ queryKey: agentTaskKeys.current(project.id) });
+                  }}
                   onViewRun={(runId) => {
                     let selectedRunId: RunId;
                     try {

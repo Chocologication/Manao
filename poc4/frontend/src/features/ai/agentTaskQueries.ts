@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ApiRequestError } from '../../api/ApiRequestError';
-import { closeAgentTask, getCurrentAgentTask } from '../../api/agentTaskApi';
+import { clearAgentTaskId, closeAgentTask, getAgentTask, getCurrentAgentTask, readAgentTaskId, readAgentTaskIntent } from '../../api/agentTaskApi';
 import type { AgentTaskSnapshot } from '../../contracts/agentTask';
 
 /**
@@ -19,21 +19,36 @@ export const agentTaskKeys = {
 
 const AGENT_TASK_POLL_INTERVAL_MS = 2_000;
 
-export async function fetchCurrentAgentTask(projectId: string): Promise<AgentTaskSnapshot | null> {
+export async function fetchCurrentAgentTask(projectId: string, userId?: string, reconcilePending = true): Promise<AgentTaskSnapshot | null> {
+  // A current read started before a new POST must never discover/clear that new intent.
+  const pending = userId && reconcilePending ? readAgentTaskIntent(userId, projectId) : null;
   try {
     return await getCurrentAgentTask(projectId);
   } catch (error) {
     if (error instanceof ApiRequestError && error.status === 404) {
-      return null;
+      const pendingId = pending?.taskId ?? null;
+      if (pendingId === null) return null;
+      try {
+        const found = await getAgentTask(projectId, pendingId);
+        if (found.taskId !== pendingId || pending!.conversationId !== null && found.conversationId !== pending!.conversationId || readAgentTaskId(userId!, projectId) !== pendingId) throw new Error('Unconfirmed agent task identity');
+        return found;
+      }
+      catch (pendingError) {
+        if (pendingError instanceof ApiRequestError && pendingError.status === 404) {
+          clearAgentTaskId(userId!, projectId, pendingId);
+          return null;
+        }
+        throw pendingError;
+      }
     }
     throw error;
   }
 }
 
-export function useCurrentAgentTaskQuery(projectId: string, enabled: boolean) {
+export function useCurrentAgentTaskQuery(projectId: string, enabled: boolean, userId?: string, reconcilePending = true) {
   return useQuery({
     queryKey: agentTaskKeys.current(projectId),
-    queryFn: () => fetchCurrentAgentTask(projectId),
+    queryFn: () => fetchCurrentAgentTask(projectId, userId, reconcilePending),
     refetchInterval: AGENT_TASK_POLL_INTERVAL_MS,
     refetchOnWindowFocus: false,
     retry: false,

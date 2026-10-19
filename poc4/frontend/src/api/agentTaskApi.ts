@@ -110,16 +110,28 @@ function sessionStorageOrNull(): Storage | null {
 }
 
 /** Called BEFORE the first submission of a task, per user/project. */
-export function storeAgentTaskId(userId: string, projectId: string, taskId: string): void {
-  sessionStorageOrNull()?.setItem(agentTaskStorageKey(userId, projectId), taskId);
+export function storeAgentTaskId(userId: string, projectId: string, taskId: string, conversationId?: string): void {
+  sessionStorageOrNull()?.setItem(agentTaskStorageKey(userId, projectId), conversationId === undefined ? taskId : JSON.stringify({ taskId, conversationId }));
 }
 
 export function readAgentTaskId(userId: string, projectId: string): string | null {
-  return sessionStorageOrNull()?.getItem(agentTaskStorageKey(userId, projectId)) ?? null;
+  return readAgentTaskIntent(userId, projectId)?.taskId ?? null;
+}
+
+export function readAgentTaskIntent(userId: string, projectId: string): { taskId: string; conversationId: string | null } | null {
+  const raw = sessionStorageOrNull()?.getItem(agentTaskStorageKey(userId, projectId));
+  if (!raw) return null;
+  if (!raw.startsWith('{')) return { taskId: raw, conversationId: null };
+  try {
+    const value: unknown = JSON.parse(raw);
+    if (value && typeof value === 'object' && 'taskId' in value && typeof value.taskId === 'string' && 'conversationId' in value && typeof value.conversationId === 'string') return { taskId: value.taskId, conversationId: value.conversationId };
+  } catch { /* Invalid storage is never a task identity. */ }
+  return null;
 }
 
 /** Removed once the task is provably settled or the id is provably unused. */
-export function clearAgentTaskId(userId: string, projectId: string): void {
+export function clearAgentTaskId(userId: string, projectId: string, expectedTaskId?: string): void {
+  if (expectedTaskId !== undefined && readAgentTaskId(userId, projectId) !== expectedTaskId) return;
   sessionStorageOrNull()?.removeItem(agentTaskStorageKey(userId, projectId));
 }
 
