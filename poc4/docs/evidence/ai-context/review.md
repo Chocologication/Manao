@@ -65,3 +65,13 @@
 审查发现唯一Minor文案：后续prompt仍明确提及marker键，不能声称完全不透露marker；已纠正为“不重新透露bookId字段拼写或原marker值，仍明确要求marker键”，复核关闭。没有重跑已过模型/测试、改写Stage2、删除项目、读取私密env或备份。未来云端75%自动触发、运行回滚及更广矩阵未执行；本次约定主链已真实完成。
 
 主控最后文档/编码检查通过。发布临时目录29文件的清理被自动审批以`blocked by policy`拒绝，具名删除同样被拒，均未执行；这些文件和必要私有备份仍留本机，未通过其它方法绕过。此限制不改变已完成的部署和真实验收结论，清理状态单列，详见acceptance§7.6。
+
+## 6. 文件工具展示修复审查（2026-10-19）
+
+`13d8d1e`修复共享ToolResultView遗漏的read_file/list_files/write_file成功、空、截断、确定性错误与畸形结果。独立审查对照[修复计划](../../../../docs/superpowers/plans/2026-10-19-ai-tool-result-display-fix.md)和后端真实字段，规格Approved、质量Approved，0 Critical/Important/Minor；显式字段、纯文本和原task历史详情路径均符合要求，未增加接口、依赖、状态或第二份历史。
+
+有效RED18 failed/8 passed→GREEN26/26；相关整合111/111及typecheck/build通过，已有bundle提示准确保留。审查未重复这些测试。主控生成审查包时PowerShell嵌套数组导致tracked diff显示System.Object[]；审查员实际只读git diff核对，随后包已重建并检查完整性，该流程错误未影响代码或测试结论。
+
+主控裁定：同一遗漏分支中的write_file按既有path/sha256一并补齐，错误成本为少量UI/测试范围；继续复用本会话已明确授权的集群发布，错误成本为可按旧digest回退的前端rollout。保留原工作树、后端/worker/运行库和所有项目，不Git push/merge。
+
+实际发布和浏览器证据见[acceptance §8](acceptance.md)。frontend单镜像按`13d8d1e`发布并以Pod imageID核验；原会话历史中的`src/test/java`列表及`AppTest.java`正文均在无需模型/工具重放时可见。当前修复不改写Stage2 PAUSED/NOT_GRANTED、Stage3用户使命验收，也不验证云端75%自动阈值。

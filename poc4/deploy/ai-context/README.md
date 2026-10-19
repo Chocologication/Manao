@@ -1,6 +1,6 @@
 # AI 多会话上下文：发布与验收准备
 
-2026-10-19：本地实现之后用户明确授权“发布到集群，然后继续按计划进行”。三镜像已构建/push并部署到`kubernetes-admin@learn`的`manao-stage6b`，运行库V13成功。round1/2的harness失败保留；修复独立审查后，round3真实主链1/1通过（38.4s），旧task-only真实冒烟和同请求重放通过。云端75%自动触发仍NOT_RUN，不扩授Stage2/Stage4。Git push/merge和既有项目删除未执行。[本切片证据](../../docs/evidence/ai-context/acceptance.md)拥有实际结果；下列模板与实际记录分开。
+2026-10-19：本地实现之后用户明确授权“发布到集群，然后继续按计划进行”。三镜像已构建/push并部署到`kubernetes-admin@learn`的`manao-stage6b`，运行库V13成功。round1/2的harness失败保留；修复独立审查后，round3真实主链1/1通过（38.4s），旧task-only真实冒烟和同请求重放通过。后续`13d8d1e`文件工具结果展示修复另行构建并发布frontend单镜像，digest=`sha256:738c3c73d4201cc2d2e67b9eb8e8209f5d63a0518fc88ab9e0292d8893c082cb`，原历史read_file/list_files在浏览器回放成功；不涉及模型、backend/worker、迁移或既有项目清理。云端75%自动触发仍NOT_RUN，不扩授Stage2/Stage4。Git push/merge和既有项目删除未执行。[本切片证据](../../docs/evidence/ai-context/acceptance.md)拥有实际结果；以下原发布模板与本次follow-up实际记录分开。
 
 ## 1. 构建和不变身份
 
@@ -73,6 +73,12 @@ $env:MANAO_AI_CONTEXT_RESTART_AUTHORIZED = 'true'
 $env:MANAO_AI_CONTEXT_GLOBAL_IDLE_CONFIRMED = 'true'
 pnpm test:e2e:ai-context
 ```
+
+## 4. 文件工具结果展示 follow-up
+
+2026-10-19按提交`13d8d1e6afc2ead19a8e30ce8b2c0fc7ceb95345`只发布frontend，tag为`ai-tool-result-frontend-13d8d1e`、registry digest为`sha256:738c3c73d4201cc2d2e67b9eb8e8209f5d63a0518fc88ab9e0292d8893c082cb`。`manao-stage6b/frontend` rollout成功；新Pod为`frontend-6956975667-cxcdc`、UID=`8a1229de-c723-4b16-8a12-378edc67fb49`，实际imageID与digest一致。没有后端/worker/schema变更，不需要迁移或模型请求。
+
+同一disposable项目`4a355478-0ec5-457c-9c73-fad09d98bf79`中，UI重新读取原持久化`list_files src/test/java`和`read_file AppTest.java`结果并按文本展示。原历史未重放工具。精确命令、测试和证据见[acceptance §8](../../docs/evidence/ai-context/acceptance.md)；可回滚frontend image digest为本切片先前的`sha256:d337a613f6e60ecfd59eb7b5fe03e6eaa12b2ed536654aebf24dc91381b41e5a`。
 
 主链：UI创建A→read_file读取有界fixture并记住bookId和随机标记→新task遵守→UI创建B并检查历史隔离→确认A/B及项目无占用→固定worker重建→重新打开A→UI手动压缩→逐项原历史仍在→下一轮仍遵守。B真实模型不提及标记仅是补充，本地真实Pi scripted provider实际context捕获才证明上下文未带A。摘要是有损概括，真实模型质量仍需该轮结果；no-op摘要不能满足本主链的新增compaction标记。
 

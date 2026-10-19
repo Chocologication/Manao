@@ -215,3 +215,26 @@ worker从UID`1b89c53c-ead7-4a47-b7c5-5e59b5a69003`重建为`1a814039-bcc6-4729-9
 独立发布审查核对远端镜像/最终PodUID、V13、三轮日志及显式只读SQL后为APPROVED，无未决发现；唯一Minor提示“marker键仍被提示，只有原marker值未透露”，已准确修正文案并复核关闭。三个harness修复均在提交前独立审查；后续生产源码相对发布`666bfa1`无变化。文档117个实际Markdown链接、10个本轮改动文件UTF8无BOM、git diff --check通过；链接验证剔除fenced/inline代码，避免把`[header,...entries]`代码错认链接。
 
 本轮release临时目录`.superpowers/ai-context-release-20261019`已清点29文件、0子目录、0reparse point，长期证据已提取。自动审批先拒绝整段清理命令，再拒绝具名文件删除命令，均报`blocked by policy`，未执行删除；因此29临时文件仍保留，不能声称清理完成。未继续绕过此拒绝。私有pre-V13备份刻意保留；项目、会话、数据库历史和既有集群资源均未删除。随机restore schema已实际删除并SQL确认0。
+
+## 8. 文件工具详情展示修复（2026-10-19）
+
+用户在实际项目历史发现 `read_file` / `list_files` 展开显示 `Result unavailable`。已确认历史按原 task 读取 settled 结果，但共享展示器只处理 application/app_http_get/build，文件工具成功结果及确定性错误均落到兜底；该文案不能用来判断工具执行成败。修复计划见[文件工具展示](../../../../docs/superpowers/plans/2026-10-19-ai-tool-result-display-fix.md)。
+
+线上只读复现：项目`4a355478-0ec5-457c-9c73-fad09d98bf79`、task`1c69d7c0-9dcd-4927-aec6-1b241eab8ec6`、call`call_01_ET_ddNOLR16C14mWMUxfQZi6651`的详情 GET HTTP200；toolName=list_files，directory=`src/test/java`，entries=1，hasMore=false，无error，页面仍显示兜底。没有重执行工具或调用模型。
+
+本地 TDD：新增文件工具组件测试和原 task 历史入口测试，生产改动前实际运行18 failed / 8 passed，失败为期望内容缺失且DOM只有`Result unavailable`；随后最小实现，同一范围26/26通过。修复仅展示既有安全结果的明确字段，区分空内容/空目录、截断、业务错误及畸形结果，不透传未知字段。write_file 复用同一遗漏分支，一并展示既有path/sha256确认；未增加API、依赖、表、状态或模型调用。
+
+执行目录`poc4/frontend`，实际命令：
+
+- `pnpm test src/features/ai/ToolResultView.test.tsx src/features/ai/ConversationHistory.test.tsx --reporter=dot`：RED18 failed/8 passed；GREEN26 passed/0 failed/0 skipped。
+- `pnpm test src/features/ai src/contracts/agentConversation.test.ts src/api/agentConversationApi.test.ts --reporter=dot`：7 files、111 passed/0 failed/0 skipped，10.58s；这是同轮相关整合，不与定向数虚加。
+- `pnpm build`：typecheck与Vite构建通过，3805 modules，45.06s；保留已有bundle大小提示，不影响构建，未声称零警告。
+- `git diff --check`及三个前端文件UTF-8无BOM检查通过；Git提示现有core.autocrlf会转换LF/CRLF，不是diff空白错误。
+
+独立审查规格和质量均Approved，0 findings。父任务审查包最初由PowerShell数组错误生成，审查员改以实际只读diff核对，主控重建完整包并检查后才完成评审；完整长期结论见[审查记录](review.md) §6。
+
+真实浏览器/发布：frontend镜像`chocologic/manao_images_repository:ai-tool-result-frontend-13d8d1e`按提交`13d8d1e6afc2ead19a8e30ce8b2c0fc7ceb95345`标准Dockerfile构建成功（pnpm typecheck/Vite通过，有既有chunk-size warning），push digest=`sha256:738c3c73d4201cc2d2e67b9eb8e8209f5d63a0518fc88ab9e0292d8893c082cb`。`kubernetes-admin@learn` / `manao-stage6b` 的 frontend Deployment rollout成功，replicas/Ready=1；新Pod`frontend-6956975667-cxcdc` UID=`8a1229de-c723-4b16-8a12-378edc67fb49`，container imageID与该digest一致。旧frontend Pod按RollingUpdate正常退出。未改backend、worker、数据库或schema，未调用模型。
+
+发布后重新登录同一保留项目并打开原会话，无需重执行工具：原`list_files`调用`call_01_ET_ddNOLR16C14mWMUxfQZi6651`（task=`1c69d7c0-9dcd-4927-aec6-1b241eab8ec6`）现在显示目录`src/test/java`和`src/test/java/com`；原`read_file`结果显示`src/test/java/com/example/app/AppTest.java`全文及SHA-256=`ee9cd3fcb1c8695a490df5b37dd52e4faa14bde502a0d24c48d8d1b4c404c321`。二者此前展开均为`Result unavailable`。不含凭据的截图仅保留于本机忽略证据目录，作为本轮浏览器检查留档。
+
+最终状态：Task1/2完成；真实模型不在本次复验范围（无需新工具或任务），真实浏览器历史回放PASS；frontend镜像build/push/rollout PASS。数据库迁移NOT_NEEDED，后端/worker重启NOT_NEEDED，项目及集群资源清理NOT_RUN且不授权。Git push/merge未执行。原兜底文案不再遮蔽已返回的文件工具结果；请求失败和工具业务错误仍分别显示加载失败与返回错误。
