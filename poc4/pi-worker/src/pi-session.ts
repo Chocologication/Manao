@@ -12,6 +12,7 @@ import { join } from "node:path";
 import {
   createAgentSession,
   DefaultResourceLoader,
+  estimateTokens,
   ModelRuntime,
   SessionManager,
   SettingsManager,
@@ -35,7 +36,7 @@ import type { BackendClient, ProgressChain } from "./backend-client.js";
 import { PROGRESS_TEXT_MAX_BYTES } from "./backend-client.js";
 import { modelConfigProblems, type PiModelConfig, type WorkerBudgets, type WorkerPaths } from "./config.js";
 import { createProjectTools, TOOL_NAMES } from "./project-tools.js";
-import { ConversationContext } from "./conversation-context.js";
+import { COMPACTION_SETTINGS, CONTEXT_WINDOW, ConversationContext, needsCompaction } from "./conversation-context.js";
 
 /** Server-owned task budgets; tool/build limits raised by user instruction on 2026-10-18. */
 export const DEFAULT_BUDGETS: WorkerBudgets = { wallClockSeconds: 1800, toolCalls: 180, builds: 20 };
@@ -135,7 +136,7 @@ export async function createPiSession(options: {
     throw new WorkerNotConfiguredError(`model configuration is incomplete: ${problems.join("; ")}`);
   }
 
-  const settingsManager = deps?.settingsManager ?? SettingsManager.inMemory();
+  const settingsManager = deps?.settingsManager ?? SettingsManager.inMemory({ compaction: COMPACTION_SETTINGS });
   const context = options.conversationId ? await ConversationContext.load(backend, taskId, options.conversationId) : undefined;
   const sessionManager = context
     ? SessionManager.inMemory(paths.scratchDir, { id: options.conversationId! }, structuredClone(context.fileEntries))
@@ -197,7 +198,41 @@ export async function createPiSession(options: {
     customTools,
   });
   session.agent.toolExecution = "sequential";
-  abortAfterFatal = () => session.agent.abort();
+  abortAfterFatal = () => { session.abortCompaction(); session.agent.abort(); void session.abort().catch(() => {}); };
+  let compactionFailed = false;
+  let compactionAborted = false;
+  session.subscribe((event) => {
+    if (event.type === "compaction_start") compactionAborted = false;
+    if (event.type === "compaction_end") {
+      compactionFailed = !event.result && !event.aborted;
+      compactionAborted = event.aborted;
+    }
+  });
+  const refuseOversizedContext = () => {
+    if (!needsCompaction(session)) return;
+    fatalToolCode ??= "AI_CONTEXT_COMPACTION_FAILED";
+    abortAfterFatal();
+    throw new Error("active context could not be compacted below the fixed threshold");
+  };
+  const beforePrompt = async (prompt: string) => {
+    // _prepareRun checks the old assistant usage before it inserts the new prompt.
+    // Account for the pending trigger and initial system/tool declaration while idle.
+    let pending = estimateTokens({ role: "user", content: prompt, timestamp: Date.now() });
+    if (!session.sessionManager.buildSessionContext().messages.some((message) => message.role === "system")) {
+      pending += estimateTokens({ role: "system", content: session.systemPrompt, timestamp: Date.now(),
+        toolsAdded: session.agent.state.tools.map(({ name, description, parameters }) => ({ name, description, parameters })) });
+    }
+    if (!needsCompaction(session, pending)) return;
+    try { await session.compact(); }
+    catch (error) {
+      if (!compactionAborted) fatalToolCode ??= "AI_CONTEXT_COMPACTION_FAILED";
+      throw error;
+    }
+    if (needsCompaction(session, pending)) {
+      fatalToolCode ??= "AI_CONTEXT_COMPACTION_FAILED";
+      throw new Error("compacted context still exceeds the fixed threshold");
+    }
+  };
   let saveFinal: (() => Promise<void>) | undefined;
   if (context) {
     saveFinal = async () => {
@@ -208,21 +243,27 @@ export async function createPiSession(options: {
       if (fatalToolCode !== null) throw new Error("the task has already stopped");
       await saveFinal!();
     };
-    const previousPrepare = session.agent.prepareRequest;
-    session.agent.prepareRequest = async (request, signal) => {
-      const prepared = await previousPrepare?.(request, signal);
-      await flush();
-      return prepared || undefined;
-    };
     // Native summary providers bypass prepareRequest; every provider still awaits ACK.
     const previousStream = session.agent.streamFunction;
     session.agent.streamFunction = async (model, transcript, streamOptions) => {
+      streamOptions?.signal?.throwIfAborted();
       await flush();
+      streamOptions?.signal?.throwIfAborted();
       return previousStream(model, transcript, streamOptions);
     };
   }
+  const previousPrepare = session.agent.prepareRequest;
+  session.agent.prepareRequest = async (request, signal) => {
+    signal?.throwIfAborted();
+    const prepared = await previousPrepare?.(request, signal);
+    signal?.throwIfAborted();
+    refuseOversizedContext();
+    await flush();
+    return prepared || undefined;
+  };
 
-  return new DefaultPiTaskSession(taskId, session, customTools, progress, budgets, () => deps?.now?.() ?? Date.now(), () => fatalToolCode, context ? flush : undefined, saveFinal);
+  return new DefaultPiTaskSession(taskId, session, customTools, progress, budgets, () => deps?.now?.() ?? Date.now(), () => fatalToolCode,
+    context ? flush : undefined, saveFinal, beforePrompt, () => { if (compactionFailed) refuseOversizedContext(); });
 }
 
 /**
@@ -253,7 +294,7 @@ async function buildModelRuntime(model: PiModelConfig, agentDir: string): Promis
           id: model.model,
           name: model.model,
           reasoning: true,
-          contextWindow: 200000,
+          contextWindow: CONTEXT_WINDOW,
           maxTokens: 8192,
           input: ["text"],
           cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
@@ -289,13 +330,17 @@ class DefaultPiTaskSession implements PiTaskSession {
     private readonly fatalToolCode: () => string | null,
     private readonly flush?: () => Promise<void>,
     private readonly saveFinal?: () => Promise<void>,
+    private readonly beforePrompt?: (prompt: string) => Promise<void>,
+    private readonly afterPrompt?: () => void,
   ) {
     this.unsubscribe = session.subscribe((event) => this.onEvent(event));
   }
 
   stop(): void {
     this.aborted = true;
+    this.session.abortCompaction();
     this.session.agent.abort();
+    void this.session.abort().catch(() => {});
   }
 
   dispose(): void {
@@ -310,13 +355,15 @@ class DefaultPiTaskSession implements PiTaskSession {
     this.deadlineAt = this.now() + this.budgets.wallClockSeconds * 1000;
     const deadline = setTimeout(() => {
       // Budget wall clock: stop the loop; the settlement reports the breach.
-      this.aborted = true;
-      this.session.agent.abort();
+      this.stop();
     }, this.budgets.wallClockSeconds * 1000);
     let promptError: unknown = null;
     try {
       await this.flush?.();
-      await this.session.prompt(this.flush ? "Execute the user's most recent programming goal recorded above. Use the current workspace revision; re-read relevant files before changes." : start.prompt);
+      const prompt = this.flush ? "Execute the user's most recent programming goal recorded above. Use the current workspace revision; re-read relevant files before changes." : start.prompt;
+      if (!this.aborted) await this.beforePrompt?.(prompt);
+      if (!this.aborted) await this.session.prompt(prompt);
+      this.afterPrompt?.();
     } catch (error) {
       promptError = error;
     } finally {
@@ -389,14 +436,6 @@ class DefaultPiTaskSession implements PiTaskSession {
         reason: "the task stopped after an unresolved tool outcome" };
     }
 
-    if (promptError !== null) {
-      return {
-        state: "FAILED",
-        summary: bounded.text,
-        failureCode: "AI_PROVIDER_ERROR",
-        reason: promptError instanceof Error ? promptError.message : "the prompt run failed",
-      };
-    }
     if (this.overBudget()) {
       return {
         state: "FAILED",
@@ -411,6 +450,14 @@ class DefaultPiTaskSession implements PiTaskSession {
         summary: bounded.text,
         failureCode: "AI_ABORTED",
         reason: "the task was aborted before it completed",
+      };
+    }
+    if (promptError !== null) {
+      return {
+        state: "FAILED",
+        summary: bounded.text,
+        failureCode: "AI_PROVIDER_ERROR",
+        reason: promptError instanceof Error ? promptError.message : "the prompt run failed",
       };
     }
     if (lastAssistant?.stopReason === "error") {

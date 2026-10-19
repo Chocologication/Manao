@@ -34,6 +34,7 @@ export interface ScriptedResponse {
   toolCalls?: Array<{ id: string; name: string; args: Record<string, unknown> }>;
   stopReason?: StopReason;
   errorMessage?: string;
+  usageTokens?: number;
 }
 
 const USAGE: Usage = {
@@ -56,7 +57,7 @@ function scriptedMessage(response: ScriptedResponse): AssistantMessage {
     api: "openai-completions",
     provider: "manao-test",
     model: "scripted-1",
-    usage: USAGE,
+    usage: response.usageTokens === undefined ? USAGE : { ...USAGE, input: response.usageTokens, output: 0, totalTokens: response.usageTokens },
     stopReason,
     ...(response.errorMessage ? { errorMessage: response.errorMessage } : {}),
     timestamp: Date.now(),
@@ -86,7 +87,8 @@ function emitScriptedStream(stream: AssistantMessageEventStream, message: Assist
   stream.push({ type: "done", reason: message.stopReason as "stop" | "toolUse" | "length", message });
 }
 
-export function scriptedSessionFactory(responses: ScriptedResponse[], observe?: (context: TranscriptContext, session: AgentSession) => void) {
+export function scriptedSessionFactory(responses: ScriptedResponse[], observe?: (context: TranscriptContext, session: AgentSession) => void,
+  respond?: (context: TranscriptContext, session: AgentSession, signal?: AbortSignal) => ScriptedResponse | Promise<ScriptedResponse>) {
   let call = 0;
   return (options: CreateAgentSessionOptions): { session: AgentSession } => {
     let session: AgentSession;
@@ -104,10 +106,10 @@ export function scriptedSessionFactory(responses: ScriptedResponse[], observe?: 
           queueMicrotask(() => emitScriptedStream(stream, aborted));
           return stream;
         }
-        const response = responses[Math.min(call, responses.length - 1)]!;
+        const response = respond ? respond(_context, session, streamOptions?.signal) : responses[Math.min(call, responses.length - 1)]!;
         call++;
         const stream = createAssistantMessageEventStream();
-        queueMicrotask(() => emitScriptedStream(stream, scriptedMessage(response)));
+        void Promise.resolve(response).then((value) => emitScriptedStream(stream, scriptedMessage(value)));
         return stream;
       },
     });

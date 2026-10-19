@@ -1,5 +1,5 @@
 import { isDeepStrictEqual } from "node:util";
-import { SessionManager, type AgentSession, type FileEntry, type SessionEntry, type SessionHeader } from "@earendil-works/pi-coding-agent";
+import { estimateTokens, shouldCompact, SessionManager, type AgentSession, type FileEntry, type SessionEntry, type SessionHeader } from "@earendil-works/pi-coding-agent";
 import { BackendHttpError, type BackendClient } from "./backend-client.js";
 
 export interface ContextUsage { tokens: number | null; contextWindow: number; percent: number | null }
@@ -9,6 +9,16 @@ export interface ContextPage {
   nextAfterSeq: number | null;
 }
 export interface ContextAppend { expectedHeadSeq: number; header: SessionHeader; entries: SessionEntry[]; usage: ContextUsage | null }
+export const CONTEXT_WINDOW = 1_048_576;
+export const COMPACTION_THRESHOLD = 786_432;
+export const COMPACTION_SETTINGS = { enabled: true, reserveTokens: CONTEXT_WINDOW - COMPACTION_THRESHOLD + 1, keepRecentTokens: 20_000 };
+
+/** SDK usage calibrates the active projection; a fresh compaction has no measured usage yet. */
+export function needsCompaction(session: AgentSession, pendingTokens = 0): boolean {
+  const tokens = session.getContextUsage()?.tokens
+    ?? session.sessionManager.buildSessionContext().messages.reduce((total, message) => total + estimateTokens(message), 0);
+  return shouldCompact(tokens + pendingTokens, CONTEXT_WINDOW, COMPACTION_SETTINGS);
+}
 export const CONTEXT_PAGE_BYTES = 4 * 1024 * 1024;
 const ENTRY_BYTES = 2 * 1024 * 1024;
 const unavailable = () => new BackendHttpError(0, "AI_CONTEXT_UNAVAILABLE", "conversation history could not be durably confirmed");
@@ -75,7 +85,9 @@ export class ConversationContext {
       try {
         const entries = session.sessionManager.getEntries();
         while (this.headSeq < entries.length) {
-          const batch: ContextAppend = { expectedHeadSeq: this.headSeq, header: structuredClone(this.fileEntries[0] as SessionHeader), entries: [], usage: null };
+          const usage = session.getContextUsage();
+          const batch: ContextAppend = { expectedHeadSeq: this.headSeq, header: structuredClone(this.fileEntries[0] as SessionHeader), entries: [],
+            usage: usage ? { tokens: usage.tokens, contextWindow: CONTEXT_WINDOW, percent: usage.percent } : null };
           for (const entry of entries.slice(this.headSeq, this.headSeq + 32)) {
             if (Buffer.byteLength(JSON.stringify(entry), "utf8") > ENTRY_BYTES) throw unavailable();
             batch.entries.push(structuredClone(entry));
@@ -83,6 +95,9 @@ export class ConversationContext {
           }
           if (!batch.entries.length) throw unavailable();
           const expected = this.headSeq + batch.entries.length;
+          // Only the final batch represents this exact SDK projection/head. Intermediate
+          // chunks must invalidate the previous measurement rather than label it current.
+          if (expected !== entries.length) batch.usage = null;
           const ack = await this.backend.appendContext(this.taskId, batch);
           if (ack.headSeq !== expected) throw unavailable();
           this.headSeq = expected;

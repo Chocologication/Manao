@@ -62,6 +62,8 @@ describe("pi session", () => {
     expect(prompt).toMatch(/stop.*confirmed/i);
     expect(prompt).toMatch(/write.*build.*active/i);
     expect(options!.noTools).toBe("builtin");
+    expect(options!.model).toMatchObject({ contextWindow: 1_048_576, maxTokens: 8192 });
+    expect(options!.settingsManager!.getCompactionSettings(options!.model)).toEqual({ enabled: true, reserveTokens: 262_145, keepRecentTokens: 20_000 });
   });
   it("drives read -> write -> failing build -> fix -> passing build to completion", async () => {
     const { outcome, backend } = await runScriptedTask([

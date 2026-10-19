@@ -239,6 +239,19 @@ class AgentConversationStoreTest {
             var nextPage = store.readForTask(next, "worker", 1, 4, null);
             assertThat(nextPage.entries().get(0).entry().path("parentId").asText()).isEqualTo("compact");
             assertThat(store.detail("ctx-owner", "ctx-project", a).title()).isEqualTo("goal");
+            var measured = nativeMessage("measured", next, "new answer");
+            store.appendForTask(next, "worker", 1, new ContextAppend(5, page.header(), List.of(measured), new ContextUsage(5432L, 1048576, 0.518035888671875)));
+            assertThat(store.detail("ctx-owner", "ctx-project", a).usage()).isEqualTo(new ContextUsage(5432L, 1048576, 0.518035888671875));
+            assertThat(db.jdbc().queryForObject("SELECT usage_head_seq FROM agent_conversation WHERE id=?", Long.class, a)).isEqualTo(6L);
+            db.jdbc().update("UPDATE agent_task SET state='FAILED' WHERE id=?", next);
+            String latest = UUID.randomUUID().toString();
+            tasks(db).createTask("ctx-owner", "ctx-project", new AgentContracts.TaskRequest(latest, "new goal", 7), a);
+            assertThat(store.detail("ctx-owner", "ctx-project", a).usage()).isEqualTo(new ContextUsage(null, 1048576, null));
+            assertThat(db.jdbc().queryForObject("SELECT usage_head_seq FROM agent_conversation WHERE id=?", Long.class, a)).isEqualTo(6L);
+            var unmeasured = nativeMessage("unmeasured", latest, "new unmeasured content");
+            store.appendForTask(latest, "worker", 1, new ContextAppend(7, page.header(), List.of(unmeasured), null));
+            assertThat(store.detail("ctx-owner", "ctx-project", a).usage()).isNull();
+            assertThat(db.jdbc().queryForObject("SELECT usage_head_seq FROM agent_conversation WHERE id=?", Long.class, a)).isNull();
         }
     }
 
