@@ -4,6 +4,8 @@ Updated: 2026-10-19. Main checkout: `master` at `49eb632`, including Python merg
 
 ## Current Status
 
+On 2026-10-19 the user requested context-management planning on `codex/ai-integration` and confirmed multi-turn AgentTasks sharing context within one conversation, isolation between conversations, and idle-only manual compaction. The [context design](superpowers/specs/2026-10-19-ai-conversation-context-design.md) and [six-task implementation plan](superpowers/plans/2026-10-19-ai-conversation-context-implementation-plan.md) cover persistent project conversations and Pi-native 1M/75% compaction with an explicit overengineering self-review. This is a documentation delivery, not implemented/deployed context management or automatic task recovery; the existing stage verdicts below remain unchanged.
+
 On 2026-10-19 the user confirmed from actual use that book-data CRUD already works and **stage three has fulfilled its mission early**. The [stage-three user confirmation](../poc4/docs/evidence/ai-stage3/acceptance.md) records that completed mission. Stage two remains unpassed and paused; stage four remains future scope. These decisions are tracked independently.
 
 The 2026-10-18 user-authorized AI task budget increase to 180 tool calls / 20 builds and worker release is recorded in the [task budget authority](../poc4/docs/evidence/ai-task-budget/acceptance.md). It retains the 1800s task deadline and does not resume the paused Stage 2 acceptance.
