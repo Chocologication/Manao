@@ -307,3 +307,37 @@ it("keeps a truncated live block as a true prefix when later smaller deltas arri
     expect((original + "a").startsWith(sent.at(-1)!.current!.blocks[0]!.text)).toBe(true);
   } finally { live.dispose(); }
 });
+
+it("keeps a later block prefix after earlier block growth passively clips it", async () => {
+  vi.useFakeTimers();
+  const sent: LiveSnapshot[] = [];
+  const live = new LiveOutput({ liveOutput: async (_task: string, snapshot: LiveSnapshot) => { sent.push(snapshot); } } as BackendClient, "task", conversationId, 0);
+  const native = message();
+  const update = (contentIndex: number, delta: string) => live.observe({ type: "message_update", message: native, assistantMessageEvent: { type: "text_delta", contentIndex, delta, partial: native } });
+  try {
+    live.observe({ type: "message_start", message: native });
+    const original = "😀".repeat(32_700);
+    update(0, "a");
+    update(1, original);
+    await vi.advanceTimersByTimeAsync(250);
+    expect(sent.at(-1)!.current!.blocks[1]!.text).toBe(original);
+    expect(sent.at(-1)!.current!.displayTruncated).toBe(false);
+    const initial = sent.at(-1)!;
+    update(0, "b".repeat(200));
+    await vi.advanceTimersByTimeAsync(250);
+    const clipped = sent.at(-1)!;
+    const clippedText = clipped.current!.blocks[1]!.text;
+    expect(clippedText.length).toBeLessThan(original.length);
+    expect(original.startsWith(clippedText)).toBe(true);
+    expect(clipped.current).toMatchObject({ displayTruncated: true, modelTruncated: false });
+    expect(clipped.revision).toBeGreaterThan(initial.revision);
+    expect(initial.current!.blocks[1]!.text).toBe(original);
+    update(1, "z");
+    await vi.advanceTimersByTimeAsync(250);
+    const after = sent.at(-1)!;
+    expect((original + "z").startsWith(after.current!.blocks[1]!.text)).toBe(true);
+    expect(after.current!.blocks[1]!.text).toBe(clippedText);
+    expect(after.revision).toBe(clipped.revision);
+    expect(Buffer.byteLength(JSON.stringify(after), "utf8")).toBeLessThanOrEqual(256 * 1024);
+  } finally { live.dispose(); }
+});

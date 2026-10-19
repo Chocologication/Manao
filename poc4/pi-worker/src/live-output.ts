@@ -96,8 +96,10 @@ export class LiveOutput {
     const blocks = existing ? current.blocks.map((block) => block === existing ? { ...block, text: block.text + delta } : block)
       : [...current.blocks, { contentIndex, kind, text: delta }].sort((a, b) => a.contentIndex - b.contentIndex);
     const fitted = fitBlocks(blocks);
-    if (fitted.blocks.find((block) => block.contentIndex === contentIndex)?.text !== blocks.find((block) => block.contentIndex === contentIndex)?.text)
-      this.clipped.add(contentIndex);
+    for (const source of blocks) {
+      if (fitted.blocks.find((block) => block.contentIndex === source.contentIndex)?.text !== source.text)
+        this.clipped.add(source.contentIndex);
+    }
     this.change({ ...this.latest, current: { ...current, blocks: fitted.blocks, displayTruncated: current.displayTruncated || fitted.truncated } });
   }
 
