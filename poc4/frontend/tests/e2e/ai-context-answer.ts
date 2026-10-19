@@ -1,4 +1,16 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
+
+type WorkspaceContent = { path: string; content: string; workspaceRevision: string };
+type FixtureRead = { toolCallId: string; toolName: string; data: { path: string; content: string; sha256: string; truncated?: boolean } };
+
+export function assertConversationFixtureRead(fixture: WorkspaceContent, read: FixtureRead, fixturePath: string, toolCallId: string): void {
+  assert.equal(read.toolCallId, toolCallId); assert.equal(read.toolName, 'read_file'); assert.equal(read.data.path, fixturePath);
+  assert.equal(read.data.truncated === true, false);
+  assert.equal(read.data.sha256, createHash('sha256').update(fixture.content, 'utf8').digest('hex'));
+  assert.equal(read.data.content, fixture.content);
+  assert.equal(Buffer.byteLength(read.data.content, 'utf8'), Buffer.byteLength(fixture.content, 'utf8'));
+}
 
 /** The two context-acceptance rounds must preserve the book identifier and remembered marker. */
 export function assertConversationBookAnswer(answer: string, bookId: number, marker: string): void {

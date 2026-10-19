@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import { expect, test, type Page } from '@playwright/test';
-import { assertConversationBookAnswer, assertConversationTools } from './ai-context-answer';
+import { assertConversationBookAnswer, assertConversationFixtureRead, assertConversationTools } from './ai-context-answer';
 
 // Real deployment/model only; this file neither seeds nor deletes a project.
 const project = process.env.MANAO_AI_ACCEPTANCE_PROJECT_ID!;
@@ -79,7 +79,7 @@ test('A reads a bounded fixture and continues → isolated B → idle worker rec
   token = (await (await login).json() as { accessToken: string }).accessToken;
   expect(typeof token).toBe('string'); await expect(page).toHaveURL(new RegExp(`/projects/${project}$`));
   const fixturePath = process.env.MANAO_AI_CONTEXT_FIXTURE_PATH!;
-  const fixture = await get<{ content: string; sha256: string }>(page, `${root}/files/content?path=${encodeURIComponent(fixturePath)}`);
+  const fixture = await get<{ path: string; content: string; workspaceRevision: string }>(page, `${root}/files/content?path=${encodeURIComponent(fixturePath)}`);
   const fixtureBytes = Buffer.byteLength(fixture.content, 'utf8');
   expect(fixtureBytes).toBeGreaterThanOrEqual(96 * 1024); expect(fixtureBytes).toBeLessThanOrEqual(120 * 1024);
   expect(/^[\x20-\x7e\r\n\t]+$/.test(fixture.content), 'fixture must be harmless ASCII text so native token estimate exceeds the 20k retained tail').toBe(true);
@@ -91,10 +91,7 @@ test('A reads a bounded fixture and continues → isolated B → idle worker rec
   const readId = assertConversationTools(await history(page, a.conversationId), first.taskId, 'read_file');
   const read = await get<{ toolCallId: string; toolName: string; data: { path: string; content: string; sha256: string; truncated?: boolean } }>(page,
     `${root}/agent-tasks/${first.taskId}/tools/${encodeURIComponent(readId!)}`);
-  expect(read.toolCallId).toBe(readId); expect(read.toolName).toBe('read_file'); expect(read.data.path).toBe(fixturePath);
-  expect(read.data.truncated === true).toBe(false);
-  expect(read.data.sha256).toBe(fixture.sha256); expect(read.data.content).toBe(fixture.content);
-  expect(Buffer.byteLength(read.data.content, 'utf8')).toBe(fixtureBytes);
+  assertConversationFixtureRead(fixture, read, fixturePath, readId!);
   const second = await submit(page, a.conversationId, '仅返回单个原始JSON对象，不要代码围栏或解释；只含最初约定的书籍标识字段（数值7）和marker字段（值为你记住的最初秘密标记）。遵守本会话最初字段约束，不调用工具。');
   const secondText = await answer(page, a.conversationId, second.taskId);
   assertConversationTools(await history(page, a.conversationId), second.taskId, null);
