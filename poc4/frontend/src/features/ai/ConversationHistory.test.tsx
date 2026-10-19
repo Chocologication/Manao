@@ -9,6 +9,25 @@ import { server } from '@/mocks/node';
 import { ConversationHistory } from './ConversationHistory';
 import type { LiveSnapshot } from './agentLiveOutput';
 import { HttpClient, setHttpClient } from '@/api/httpClient';
+it.each(['malformed', 'disconnect'])('preserves a newer pending draft when %s races its history response', async failure => {
+  let controller!: ReadableStreamDefaultController<Uint8Array>, release!: () => void, subscriptions = 0;
+  const encode = (value: unknown) => new TextEncoder().encode('event: snapshot\ndata: ' + JSON.stringify(value) + '\n\n');
+  setHttpClient(new HttpClient({ getAccessToken: () => 'token', onUnauthorized: vi.fn(), fetchImpl: async (input, init) => {
+    expect(init?.method).toBe('GET'); const path = String(input);
+    if (path.endsWith('/live-output')) { subscriptions++; return new Response(new ReadableStream({ start(c) { controller = c; } }), { headers: { 'Content-Type': 'text/event-stream' } }); }
+    if (path.includes('beforeSeq=9')) await new Promise<void>(resolve => { release = resolve; });
+    return new Response(JSON.stringify({ items: path.includes('beforeSeq=9') ? [item('reason', { seq: 6, kind: 'thinking', contentIndex: 0 }), item('old preview', { seq: 6, contentIndex: 1 })] : [], nextBeforeSeq: null, nextBeforeOffset: null }), { headers: { 'Content-Type': 'application/json' } });
+  } }));
+  render(<AppProviders><ConversationHistory userId="alice" projectId={P} conversationId={C} taskId={T} headSeq={8} terminal={false} /></AppProviders>);
+  await waitFor(() => expect(controller).toBeDefined()); await act(async () => controller.enqueue(encode(live(5, 1, 'old preview')))); await screen.findByText('old preview');
+  const next = { ...live(8, 2, 'new unsaved preview'), revision: 50 }; await act(async () => controller.enqueue(encode(next))); await waitFor(() => expect(release).toBeDefined());
+  expect(screen.queryByText('new unsaved preview')).toBeNull(); expect(screen.getAllByText('old preview')).toHaveLength(1);
+  await act(async () => { if (failure === 'malformed') controller.enqueue(encode({ bad: true })); else controller.close(); });
+  await act(async () => release()); expect(await screen.findByText('new unsaved preview')).toBeVisible(); expect(screen.getAllByText('old preview')).toHaveLength(1); expect(screen.getByLabelText('实时预览')).toHaveTextContent('new unsaved preview');
+  if (failure === 'malformed') await userEvent.click(screen.getByRole('button', { name: '重连实时展示' }));
+  await waitFor(() => expect(subscriptions).toBe(2), { timeout: 2000 }); await act(async () => controller.enqueue(encode(next)));
+  expect(screen.getByText('new unsaved preview')).toBeVisible(); expect(screen.getAllByText('old preview')).toHaveLength(1);
+});
 it('keeps advancing fallback history with current:null and does not regress on retry', async () => {
   let controller!: ReadableStreamDefaultController<Uint8Array>, subscriptions = 0; const bounds: number[] = [];
   setHttpClient(new HttpClient({ getAccessToken: () => 'token', onUnauthorized: vi.fn(), fetchImpl: async input => {

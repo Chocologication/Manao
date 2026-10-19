@@ -68,9 +68,10 @@ function HistoryComposition(props: ConversationHistoryProps) {
   const latest = props.liveSnapshot === undefined ? stream.latest : props.liveSnapshot;
   useEffect(() => { if (visible.settled && props.headSeq > visible.head) setVisible(old => ({ ...old, settled: false, warning: false })); }, [props.headSeq, visible.head, visible.settled]);
   const desired = latest && latest.revision > visible.reconciledRevision && (visible.reconciledRevision < 0 || latest.durableHeadSeq >= visible.head) ? latest : visible.snapshot;
+  const pendingMessage = desired?.current && visible.snapshot?.current && desired.current.messageOrdinal !== visible.snapshot.current.messageOrdinal ? desired : null;
   const fallback = latest?.unavailable || props.liveSnapshot === undefined && ['history', 'unavailable', 'reconnecting'].includes(stream.connectionState);
   const reconcile = Boolean((props.terminal || fallback) && visible.snapshot?.current && !visible.settled);
-  const targetHead = visible.settled ? visible.head : fallback || reconcile || props.terminal && !desired?.current ? Math.max(props.headSeq, desired?.durableHeadSeq ?? 0, visible.head) : desired?.durableHeadSeq ?? props.headSeq;
+  const targetHead = visible.settled ? visible.head : pendingMessage ? pendingMessage.durableHeadSeq : fallback || reconcile || props.terminal && !desired?.current ? Math.max(props.headSeq, desired?.durableHeadSeq ?? 0, visible.head) : desired?.durableHeadSeq ?? props.headSeq;
   const history = useConversationHistory({ ...props, headSeq: visible.head });
   const pending = useConversationHistory({ ...props, headSeq: targetHead, enabled: !visible.settled });
   const needsBoundary = Boolean(visible.snapshot?.current && (reconcile || targetHead !== visible.head));
@@ -86,7 +87,7 @@ function HistoryComposition(props: ConversationHistoryProps) {
     if (reconcile) {
       const seq = correspondingSequence(visible.snapshot!, pendingRows);
       if (seq === null) { if (!visible.warning) setVisible(old => ({ ...old, warning: true })); return; }
-      setVisible(old => ({ head: targetHead, snapshot: null, choices: {}, promoted: { seq, choices: old.choices }, settled: Boolean(props.terminal), warning: false, reconciledRevision: Math.max(old.reconciledRevision, latest?.revision ?? old.snapshot!.revision) })); return;
+      setVisible(old => ({ head: targetHead, snapshot: pendingMessage, choices: {}, promoted: { seq, choices: old.choices }, settled: Boolean(props.terminal && pendingMessage === null), warning: false, reconciledRevision: Math.max(old.reconciledRevision, old.snapshot!.revision) })); return;
     }
     if (visible.snapshot === desired && visible.head === targetHead) return;
     if (fallback && !desired?.current) {
@@ -95,7 +96,7 @@ function HistoryComposition(props: ConversationHistoryProps) {
     const sameMessage = desired?.current && visible.snapshot?.current && desired.taskId === visible.snapshot.taskId && desired.current.messageOrdinal === visible.snapshot.current.messageOrdinal;
     const seq = !sameMessage && visible.snapshot?.current ? correspondingSequence(visible.snapshot, pendingRows) : null;
     setVisible(old => ({ head: targetHead, snapshot: desired, choices: sameMessage ? old.choices : {}, promoted: seq === null ? old.promoted : { seq, choices: old.choices }, settled: Boolean(props.terminal && desired !== null && desired.current === null), warning: false, reconciledRevision: old.reconciledRevision }));
-  }, [desired, latest, fallback, targetHead, pending.data, pending.isError, pendingBroken, needsBoundary, coversCut, reconcile, visible, props.terminal]);
+  }, [desired, latest, pendingMessage, fallback, targetHead, pending.data, pending.isError, pendingBroken, needsBoundary, coversCut, reconcile, visible, props.terminal]);
   let rows: Message[] = [], incomplete = false;
   try { rows = messages(history.data?.pages ?? [], history.hasNextPage); } catch { incomplete = true; }
   const draft = visible.snapshot?.current;
