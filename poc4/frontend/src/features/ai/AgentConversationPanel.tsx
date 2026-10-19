@@ -112,7 +112,7 @@ function ConversationPanel(props: AgentTaskPanelProps) {
       {compactIntent ? <Button size="sm" variant="outline" disabled={compactSending} onClick={() => void reconcileCompact(compactIntent)}>核对压缩状态</Button> : null}
       {compactIntent ? <Button size="sm" variant="outline" disabled={compactSending} onClick={() => void sendCompact(compactIntent, true)}>重试原压缩请求</Button> : null}
     </div> : null}
-    {selected && metadata ? <ConversationHistory userId={userId} projectId={projectId} conversationId={selected} headSeq={metadata.headSeq} onViewRun={props.onViewRun} /> : null}
+    {selected && metadata ? <ConversationHistory userId={userId} projectId={projectId} conversationId={selected} headSeq={metadata.headSeq} taskId={legacy ? null : selectedSnapshot?.taskId ?? selectedTaskId} terminal={selectedSnapshot != null && !['QUEUED', 'RUNNING'].includes(selectedSnapshot.state)} onViewRun={props.onViewRun} /> : null}
     <div className="min-h-64 shrink-0">{(!selected || metadata) ? <AgentTaskPanel key={selected ?? 'legacy'} nextReasoningEffort={metadata?.nextReasoningEffort} {...props} conversationId={selected ?? undefined} fullHistory={!legacy && selected !== null} displayTask={legacy ? legacyTask : selectedSnapshot} submissionBlocked={selected === null || !metadata || detail.isError || list.isError || compactBusy} onTaskAccepted={onAccepted} onSubmissionPendingChange={pending => { if (scope.active) { setTaskSubmitting(pending); props.onSubmissionPendingChange?.(pending); } }} /> : null}</div>
   </section>;
 }

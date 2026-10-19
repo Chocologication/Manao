@@ -1,4 +1,4 @@
-import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
@@ -7,6 +7,84 @@ import { queryClient } from '@/app/appRuntime';
 import { resetAppRuntime } from '@/test/renderApp';
 import { server } from '@/mocks/node';
 import { ConversationHistory } from './ConversationHistory';
+import type { LiveSnapshot } from './agentLiveOutput';
+function live(head = 5, ordinal = 1, text = 'preview'): LiveSnapshot { return { revision: head + ordinal, taskId: 'task-original', conversationId: 'c-history', durableHeadSeq: head, current: { messageOrdinal: ordinal, phase: 'generating', blocks: [{ contentIndex: 0, kind: 'thinking', text: 'reason' }, { contentIndex: 1, kind: 'text', text }], modelTruncated: false, displayTruncated: false }, unavailable: false }; }
+function historyView(snapshot: LiveSnapshot, headSeq = 5, terminal = false) { return <AppProviders><ConversationHistory userId="alice" projectId="p-history" conversationId="c-history" headSeq={headSeq} liveSnapshot={snapshot} terminal={terminal} /></AppProviders>; }
+it('loads final durable history when the last received ACK has no current draft', async () => {
+  server.use(http.get('/api/v1/projects/p-history/conversations/c-history/entries', ({ request }) => HttpResponse.json({ items: new globalThis.URL(request.url).searchParams.get('beforeSeq') === '6' ? [] : [item('last durable answer', { seq: 8 })], nextBeforeSeq: null, nextBeforeOffset: null })));
+  const acknowledged = { ...live(), current: null }; const h = render(historyView(acknowledged)); await act(async () => {}); h.rerender(historyView(acknowledged, 8, true)); expect(await screen.findByText('last durable answer')).toBeVisible();
+});
+it('follows new output only while already near the bottom', async () => {
+  server.use(http.get('/api/v1/projects/p-history/conversations/c-history/entries', () => HttpResponse.json({ items: [], nextBeforeSeq: null, nextBeforeOffset: null })));
+  const view = (value: LiveSnapshot) => <div data-testid="scroll" style={{ overflowY: 'auto' }}>{historyView(value)}</div>;
+  const h = render(view(live())); await screen.findByText('preview'); const scroller = screen.getByTestId('scroll');
+  Object.defineProperties(scroller, { scrollHeight: { configurable: true, value: 1000 }, clientHeight: { value: 200 } }); scroller.scrollTop = 790; fireEvent.scroll(scroller);
+  h.rerender(view({ ...live(5, 1, 'longer preview'), revision: 10 })); await screen.findByText('longer preview'); expect(scroller.scrollTop).toBe(1000);
+  scroller.scrollTop = 100; fireEvent.scroll(scroller); h.rerender(view({ ...live(5, 1, 'latest preview'), revision: 11 })); await screen.findByText('latest preview'); expect(scroller.scrollTop).toBe(100);
+});
+
+it('reconciles when the final detail head arrives after the terminal task poll', async () => {
+  server.use(http.get('/api/v1/projects/p-history/conversations/c-history/entries', ({ request }) => HttpResponse.json({ items: new globalThis.URL(request.url).searchParams.get('beforeSeq') === '6' ? [] : [item('reason', { seq: 6, kind: 'thinking', contentIndex: 0 }), item('preview', { seq: 6, contentIndex: 1 })], nextBeforeSeq: null, nextBeforeOffset: null })));
+  const first = live(); const h = render(historyView(first)); await screen.findByText('preview'); h.rerender(historyView(first, 5, true)); await act(async () => {});
+  h.rerender(historyView(first, 6, true)); await waitFor(() => expect(screen.queryByLabelText('实时预览')).toBeNull()); expect(screen.getAllByText('preview')).toHaveLength(1);
+});
+it.each([true, false])('uses prefix correspondence only for display truncation, displayTruncated=%s', async displayTruncated => {
+  server.use(http.get('/api/v1/projects/p-history/conversations/c-history/entries', ({ request }) => HttpResponse.json({ items: new globalThis.URL(request.url).searchParams.get('beforeSeq') === '6' ? [] : [item('reason complete', { seq: 6, kind: 'thinking', contentIndex: 0 }), item('preview complete', { seq: 6, contentIndex: 1 })], nextBeforeSeq: null, nextBeforeOffset: null })));
+  const first = live(); first.current!.displayTruncated = displayTruncated; first.current!.modelTruncated = true;
+  const h = render(historyView(first)); await screen.findByText('preview'); expect(screen.getByText('模型响应达到输出上限，本条内容可能不完整')).toBeVisible();
+  expect(Boolean(screen.queryByText('实时预览已裁切，完整内容请在保存后查看历史'))).toBe(displayTruncated);
+  h.rerender(historyView(first, 6, true));
+  if (displayTruncated) { expect(await screen.findByText('preview complete')).toBeVisible(); expect(screen.queryByLabelText('实时预览')).toBeNull(); }
+  else expect(await screen.findByText('实时预览未确认保存')).toBeVisible();
+});
+it('preserves a preview when terminal history pagination fails', async () => {
+  server.use(http.get('/api/v1/projects/p-history/conversations/c-history/entries', ({ request }) => {
+    const b = new globalThis.URL(request.url).searchParams.get('beforeSeq');
+    return b === '6' ? HttpResponse.json({ items: [], nextBeforeSeq: null, nextBeforeOffset: null }) : b === '11' ? HttpResponse.json({ items: [item('later', { seq: 10 })], nextBeforeSeq: 7, nextBeforeOffset: 0 }) : new HttpResponse(null, { status: 503 });
+  }));
+  const first = live(); const h = render(historyView(first)); await screen.findByText('preview'); h.rerender(historyView(first, 10, true)); expect(await screen.findByText('无法加载会话历史')).toBeVisible(); expect(screen.getByText('同步中')).toBeVisible(); expect(screen.getByLabelText('实时预览')).toBeVisible();
+});
+
+it('holds a coherent cut until newest bounded history arrives and ignores an older pending promise', async () => {
+  const releases = new Map<number, () => void>(), seen: number[] = [];
+  server.use(http.get('/api/v1/projects/p-history/conversations/c-history/entries', async ({ request }) => {
+    const bound = Number(new globalThis.URL(request.url).searchParams.get('beforeSeq')); seen.push(bound);
+    if (bound === 9 || bound === 11) await new Promise<void>(r => releases.set(bound, r));
+    return HttpResponse.json({ items: [item('history ' + bound, { seq: bound - 1 })], nextBeforeSeq: null, nextBeforeOffset: null });
+  }));
+  const h = render(historyView(live())); await screen.findByText('preview'); expect(screen.getByText('history 6')).toBeVisible();
+  h.rerender(historyView(live(8, 2, 'new preview'), 99)); await waitFor(() => expect(releases.has(9)).toBe(true)); expect(screen.getByText('preview')).toBeVisible(); expect(screen.queryByText('new preview')).toBeNull();
+  h.rerender(historyView(live(10, 3, '# newest'), 99)); await waitFor(() => expect(releases.has(11)).toBe(true)); await act(async () => releases.get(11)!());
+  expect(await screen.findByRole('heading', { name: 'newest' })).toBeVisible(); expect(screen.getByText('history 11')).toBeVisible(); expect(screen.queryByText('preview')).toBeNull();
+  await act(async () => releases.get(9)!()); expect(screen.queryByText('history 9')).toBeNull(); expect(seen).not.toContain(100);
+});
+it('preserves user thinking choice through delta, ended and the acknowledged history promotion', async () => {
+  server.use(http.get('/api/v1/projects/p-history/conversations/c-history/entries', ({ request }) => HttpResponse.json({ items: Number(new globalThis.URL(request.url).searchParams.get('beforeSeq')) === 6 ? [] : [item('reason', { seq: 6, kind: 'thinking', contentIndex: 0 }), item('preview', { seq: 6, contentIndex: 1 })], nextBeforeSeq: null, nextBeforeOffset: null })));
+  const first = live(); const h = render(historyView(first)); const thought = await screen.findByText('reason'); expect(thought).toBeVisible(); await userEvent.click(screen.getByText('思考中')); expect(thought).not.toBeVisible();
+  h.rerender(historyView({ ...first, revision: 9, current: { ...first.current!, phase: 'ended' } })); expect(screen.getByText('reason')).not.toBeVisible();
+  h.rerender(historyView({ ...first, revision: 10, durableHeadSeq: 6, current: null }, 6)); await waitFor(() => expect(screen.getAllByText('preview')).toHaveLength(1)); await waitFor(() => expect(screen.queryByLabelText('实时预览')).toBeNull()); expect(screen.getByText('reason')).not.toBeVisible();
+});
+it('paginates terminal history to the original cut before replacing a lost-ACK draft', async () => {
+  let release!: () => void; const cursors: string[] = [];
+  server.use(http.get('/api/v1/projects/p-history/conversations/c-history/entries', async ({ request }) => {
+    const url = new globalThis.URL(request.url); cursors.push(url.search); const b = url.searchParams.get('beforeSeq');
+    if (b === '6') return HttpResponse.json({ items: [], nextBeforeSeq: null, nextBeforeOffset: null });
+    if (b === '11') return HttpResponse.json({ items: [item('later', { seq: 10 })], nextBeforeSeq: 7, nextBeforeOffset: 0 });
+    await new Promise<void>(r => { release = r; }); return HttpResponse.json({ items: [item('reason', { seq: 6, kind: 'thinking', contentIndex: 0 }), item('preview', { seq: 6, contentIndex: 1 })], nextBeforeSeq: null, nextBeforeOffset: null });
+  }));
+  const first = live(); const h = render(historyView(first)); await screen.findByText('preview'); h.rerender(historyView(first, 10, true)); await waitFor(() => expect(release).toBeDefined());
+  expect(screen.getByLabelText('实时预览')).toBeVisible(); expect(screen.getByText('同步中')).toBeVisible(); await act(async () => release());
+  await waitFor(() => expect(screen.queryByLabelText('实时预览')).toBeNull()); expect(screen.getAllByText('preview')).toHaveLength(1); expect(cursors.some(v => v.includes('beforeSeq=7') && v.includes('beforeOffset=0'))).toBe(true);
+});
+it.each(['wrong task', 'wrong index', 'wrong kind', 'wrong text', 'later match'])('retains an unconfirmed preview when the first complete native group has %s', async problem => {
+  server.use(http.get('/api/v1/projects/p-history/conversations/c-history/entries', ({ request }) => {
+    const bounded = new globalThis.URL(request.url).searchParams.get('beforeSeq') === '6';
+    const candidate = [item('reason', { seq: 6, kind: 'thinking', contentIndex: 0 }), item(problem === 'wrong text' || problem === 'later match' ? 'different' : 'preview', { seq: 6, contentIndex: problem === 'wrong index' ? 2 : 1, kind: problem === 'wrong kind' ? 'thinking' : 'assistant' })].map(v => problem === 'wrong task' ? { ...v, taskId: 'another' } : v);
+    if (problem === 'later match') candidate.push(item('reason', { seq: 7, kind: 'thinking', contentIndex: 0 }), item('preview', { seq: 7, contentIndex: 1 }));
+    return HttpResponse.json({ items: bounded ? [] : candidate, nextBeforeSeq: null, nextBeforeOffset: null });
+  }));
+  const first = live(); const h = render(historyView(first)); await screen.findByText('preview'); h.rerender(historyView(first, 10, true)); expect(await screen.findByText('实时预览未确认保存')).toBeVisible(); expect(screen.getByLabelText('实时预览')).toBeVisible();
+});
 const P = 'p-history', C = 'c-history', T = 'task-original';
 const URL = `/api/v1/projects/${P}/conversations/${C}/entries`;
 function item(text: string, extra = {}) { return { seq: 5, taskId: T, kind: 'assistant', text, toolCallId: null, textOffset: 0, contentIndex: 0, modelTruncated: false, ...extra }; }
@@ -17,7 +95,7 @@ it('reassembles UTF16 fragments, same-seq tools and literal code through the off
   const cursors: string[] = [];
   server.use(http.get(URL, ({ request }) => {
     const url = new globalThis.URL(request.url); cursors.push(url.search);
-    const older = url.searchParams.has('beforeSeq');
+    const older = url.searchParams.has('beforeOffset');
     return HttpResponse.json(older ? { items: [item('中文😀<script>'), item('build', { kind: 'tool_call', toolCallId: 'one' }), item('application', { kind: 'tool_call', toolCallId: 'two' })], nextBeforeSeq: null, nextBeforeOffset: null }
       : { items: [item('alert(1)</script>\n```java\ncode\n```', { textOffset: 12 })], nextBeforeSeq: 5, nextBeforeOffset: 12 });
   }));
@@ -28,7 +106,7 @@ it('reassembles UTF16 fragments, same-seq tools and literal code through the off
   expect(screen.getByText('build')).toBeInTheDocument(); expect(screen.getByText('application')).toBeInTheDocument(); expect(cursors[1]).toContain('beforeSeq=5'); expect(cursors[1]).toContain('beforeOffset=12'); expect(document.querySelector('script')).toBeNull();
 });
 it('rejects conflicting or gapped fragments instead of fabricating full history', async () => {
-  server.use(http.get(URL, ({ request }) => HttpResponse.json(new globalThis.URL(request.url).searchParams.has('beforeSeq') ? { items: [item('head')], nextBeforeSeq: null, nextBeforeOffset: null } : { items: [item('tail', { textOffset: 10 })], nextBeforeSeq: 5, nextBeforeOffset: 10 })));
+  server.use(http.get(URL, ({ request }) => HttpResponse.json(new globalThis.URL(request.url).searchParams.has('beforeOffset') ? { items: [item('head')], nextBeforeSeq: null, nextBeforeOffset: null } : { items: [item('tail', { textOffset: 10 })], nextBeforeSeq: 5, nextBeforeOffset: 10 })));
   mount(); await userEvent.click(await screen.findByRole('button', { name: '加载更早历史' })); expect(await screen.findByText('历史片段不完整，请重新加载')).toBeInTheDocument(); expect(screen.queryByText('headtail')).not.toBeInTheDocument();
 });
 it('reads historical safe tool details using the original task and reuses View run', async () => {
@@ -78,7 +156,7 @@ it('orders thinking, answers and tools by native index and keeps two same-kind b
 
 it('joins a large fenced block across pages before rendering and preserves an earlier thinking block', async () => {
   const prefix = '# 完成\n\n- 已验证\n\n~~~java\n' + '😀'.repeat(17000);
-  server.use(http.get(URL, ({ request }) => HttpResponse.json(new globalThis.URL(request.url).searchParams.has('beforeSeq')
+  server.use(http.get(URL, ({ request }) => HttpResponse.json(new globalThis.URL(request.url).searchParams.has('beforeOffset')
     ? { items: [item('reason', { kind: 'thinking', contentIndex: 0 }), item(prefix, { contentIndex: 1 })], nextBeforeSeq: null, nextBeforeOffset: null }
     : { items: [item('class A {}\n~~~', { contentIndex: 1, textOffset: prefix.length, modelTruncated: true })], nextBeforeSeq: 5, nextBeforeOffset: prefix.length })));
   mount();

@@ -111,6 +111,10 @@ export class HttpClient {
     return readSuccessBody<T>(response);
   }
 
+  async requestStream(url: string, options: { signal?: AbortSignal } = {}): Promise<Response> {
+    return this.send(url, { method: 'GET', headers: new Headers({ Accept: 'text/event-stream' }), signal: options.signal });
+  }
+
   async requestBlob(url: string, options: BlobRequestOptions = {}): Promise<BlobResponse> {
     const headers = new Headers();
     headers.set('Accept', 'application/octet-stream');

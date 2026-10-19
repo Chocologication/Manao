@@ -1,4 +1,7 @@
 import { getHttpClient } from './httpClient';
+export function getAgentLiveOutput(projectId: string, taskId: string, signal: AbortSignal) {
+  return getHttpClient().requestStream('/api/v1/projects/' + encodeURIComponent(projectId) + '/agent-tasks/' + encodeURIComponent(taskId) + '/live-output', { signal });
+}
 import { parseConversationPage, parseConversationView, parseHistoryPage, type HistoryCursor } from '@/contracts/agentConversation';
 import { parseAgentTaskSnapshot, type SubmitAgentTaskRequest } from '@/contracts/agentTask';
 function url(projectId: string, conversationId?: string) { return `/api/v1/projects/${encodeURIComponent(projectId)}/conversations${conversationId === undefined ? '' : `/${encodeURIComponent(conversationId)}`}`; }

@@ -17,6 +17,18 @@ import type { AgentTaskPanelProps } from './AgentTaskPanel';
 const P = ALICE_SEED_PROJECT_ID, U = 'user-alice';
 const A = '11111111-1111-4111-8111-111111111111', B = '22222222-2222-4222-8222-222222222222';
 const T = '33333333-3333-4333-8333-333333333333';
+it('shows actual live Markdown while locked, aborts on switching, and leaves explicit close untouched', async () => {
+  let emit!: (value: unknown) => void; let aborted = false; const posts: string[] = [];
+  server.use(http.get('/api/v1/projects/:projectId/agent-tasks/:taskId/live-output', ({ request }) => {
+    request.signal.addEventListener('abort', () => { aborted = true; });
+    return new HttpResponse(new ReadableStream({ start(controller) { emit = value => controller.enqueue(new TextEncoder().encode('event: snapshot\ndata: ' + JSON.stringify(value) + '\n\n')); } }), { headers: { 'Content-Type': 'text/event-stream' } });
+  }), http.post('/api/v1/projects/:projectId/agent-tasks/:taskId/close', ({ request }) => { posts.push(request.url); return HttpResponse.error(); }));
+  const h = panel({ task: task({ conversationId: A }) }); await waitFor(() => expect(emit).toBeDefined());
+  await act(async () => emit({ revision: 1, taskId: T, conversationId: A, durableHeadSeq: 1, current: { messageOrdinal: 0, phase: 'generating', blocks: [{ contentIndex: 0, kind: 'thinking', text: 'live reason' }, { contentIndex: 1, kind: 'text', text: '# live heading\n\n| a | b |\n| --- | --- |\n| 1 | 2 |\n\n~~~js\nhello();\n~~~' }], modelTruncated: false, displayTruncated: false }, unavailable: false }));
+  expect(await screen.findByRole('heading', { name: 'live heading' })).toBeVisible(); expect(screen.getByRole('table')).toBeVisible(); expect(screen.getByText('hello();').tagName).toBe('CODE'); expect(screen.getByText('live reason')).toBeVisible();
+  expect(screen.getByRole('button', { name: 'Start task' })).toBeDisabled();
+  await userEvent.click(screen.getByRole('button', { name: '会话 B' })); await screen.findByText('B 原文'); await waitFor(() => expect(aborted).toBe(true)); expect(screen.queryByText('live reason')).toBeNull(); expect(h.close).not.toHaveBeenCalled(); expect(posts).toEqual([]);
+});
 const URL = `/api/v1/projects/${P}/conversations`;
 it('initializes effort per conversation and polling keeps a dirty selection', async () => {
   server.use(http.get(`${URL}/:id`, ({ params }) => HttpResponse.json(conversation(String(params.id), { nextReasoningEffort: params.id === A ? 'low' : 'max' }))));
@@ -41,7 +53,7 @@ beforeEach(() => {
   server.use(
     http.get(URL, () => HttpResponse.json({ items: [conversation(), conversation(B)], nextCursor: null })),
     http.get(`${URL}/:id`, ({ params }) => HttpResponse.json(conversation(String(params.id)))),
-    http.get(`${URL}/:id/entries`, ({ params }) => HttpResponse.json({ items: [{ seq: 1, taskId: T, kind: 'assistant', text: `${params.id === A ? 'A' : 'B'} 原文`, toolCallId: null, textOffset: 0 }], nextBeforeSeq: null, nextBeforeOffset: null })),
+    http.get(`${URL}/:id/entries`, ({ params }) => HttpResponse.json({ items: [{ seq: 1, taskId: T, kind: 'assistant', text: `${params.id === A ? 'A' : 'B'} 原文`, toolCallId: null, textOffset: 0, contentIndex: 0, modelTruncated: false }], nextBeforeSeq: null, nextBeforeOffset: null })),
   );
 });
 afterEach(async () => { cleanup(); await queryClient.cancelQueries(); resetAppRuntime(); });
@@ -56,7 +68,7 @@ it('creates an empty conversation without submitting a model task', async () => 
 it('switches history and ignores a late A response in B', async () => {
   let release = () => {}; let started = false;
   const held = new Promise<void>(resolve => { release = resolve; });
-  server.use(http.get(`${URL}/${A}/entries`, async () => { started = true; await held; return HttpResponse.json({ items: [{ seq: 1, taskId: T, kind: 'assistant', text: 'A late', toolCallId: null, textOffset: 0 }], nextBeforeSeq: null, nextBeforeOffset: null }); }));
+  server.use(http.get(`${URL}/${A}/entries`, async () => { started = true; await held; return HttpResponse.json({ items: [{ seq: 1, taskId: T, kind: 'assistant', text: 'A late', toolCallId: null, textOffset: 0, contentIndex: 0, modelTruncated: false }], nextBeforeSeq: null, nextBeforeOffset: null }); }));
   panel(); await waitFor(() => expect(started).toBe(true));
   await userEvent.click(screen.getByRole('button', { name: '会话 B' }));
   expect(await screen.findByText('B 原文')).toBeInTheDocument();
@@ -208,7 +220,7 @@ it('keeps the original text after a completed manual compaction and never invent
   server.use(
     http.get(`${URL}/${A}`, () => HttpResponse.json(conversation(A, { headSeq: state === 'COMPLETED' ? 2 : 1, compactState: state, compactRequestId: requestId, usage: state === 'COMPLETED' ? { tokens: null, contextWindow: 1048576, percent: null } : { tokens: 786432, contextWindow: 1048576, percent: 75 } }))),
     http.post(`${URL}/${A}/compact`, async ({ request }) => { requestId = (await request.json() as { requestId: string }).requestId; state = 'RUNNING'; return HttpResponse.json(conversation(A, { compactRequestId: requestId, compactState: state })); }),
-    http.get(`${URL}/${A}/entries`, () => HttpResponse.json({ items: [{ seq: 1, taskId: T, kind: 'assistant', text: '永久保留的原文', toolCallId: null, textOffset: 0 }, ...(state === 'COMPLETED' ? [{ seq: 2, taskId: null, kind: 'compaction', text: '上下文已压缩', toolCallId: null, textOffset: 0 }] : [])], nextBeforeSeq: null, nextBeforeOffset: null })),
+    http.get(`${URL}/${A}/entries`, () => HttpResponse.json({ items: [{ seq: 1, taskId: T, kind: 'assistant', text: '永久保留的原文', toolCallId: null, textOffset: 0, contentIndex: 0, modelTruncated: false }, ...(state === 'COMPLETED' ? [{ seq: 2, taskId: null, kind: 'compaction', text: '上下文已压缩', toolCallId: null, textOffset: 0, contentIndex: 0, modelTruncated: false }] : [])], nextBeforeSeq: null, nextBeforeOffset: null })),
   );
   panel(); expect(await screen.findByText('约 75.0%')).toBeInTheDocument(); await userEvent.click(screen.getByRole('button', { name: '压缩上下文' }));
   expect(await screen.findByText('压缩中')).toBeInTheDocument(); state = 'COMPLETED';

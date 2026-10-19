@@ -19,7 +19,6 @@ it('toggles thinking visibility while retaining the exact text in the DOM', asyn
 it('marks active and incomplete thinking without confusing model length with missing history', async () => {
   render(<ThinkingBlock text="pending thought" active incomplete />);
   expect(screen.getByText('思考中')).toBeVisible();
-  await userEvent.click(screen.getByText('思考中'));
   expect(screen.getByText('还有更早内容')).toBeVisible();
   expect(screen.queryByText('模型响应达到输出上限，本条内容可能不完整')).not.toBeInTheDocument();
 });

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { getAgentToolCallResult } from '@/api/agentTaskApi';
 import type { HistoryItem, HistoryPage } from '@/contracts/agentConversation';
@@ -7,10 +7,12 @@ import { ToolResultView } from './AgentTaskPanel';
 import { useConversationHistory, useConversationTask } from './agentConversationQueries';
 import { AssistantMarkdown } from './AssistantMarkdown';
 import { ThinkingBlock } from './ThinkingBlock';
+import type { LiveSnapshot } from './agentLiveOutput';
+import { useAgentLiveOutput } from './useAgentLiveOutput';
 
 export type ConversationHistoryProps = {
   userId: string; projectId: string; conversationId: string; headSeq: number;
-  onViewRun?: (runId: string) => void;
+  onViewRun?: (runId: string) => void; taskId?: string | null; terminal?: boolean; liveSnapshot?: LiveSnapshot | null;
 };
 type Message = HistoryItem & { key: string; partial: boolean };
 function messages(pages: HistoryPage[], hasEarlier: boolean): Message[] {
@@ -35,25 +37,91 @@ function messages(pages: HistoryPage[], hasEarlier: boolean): Message[] {
     return { ...first, text, key, partial: first.textOffset > 0, modelTruncated: fragments.some(fragment => fragment.modelTruncated) };
   }).sort((a, b) => a.seq - b.seq || a.contentIndex - b.contentIndex);
 }
+// Match the first native assistant message after the saved cut, never a later similar reply.
+function correspondingSequence(snapshot: LiveSnapshot, rows: Message[]): number | null {
+  const current = snapshot.current; if (!current) return null;
+  const first = rows.find(row => row.seq > snapshot.durableHeadSeq && row.taskId === snapshot.taskId && ['assistant', 'thinking', 'tool_call'].includes(row.kind));
+  if (!first) return null;
+  const group = rows.filter(row => row.seq === first.seq && row.taskId === snapshot.taskId);
+  if (group.some(row => row.partial)) return null;
+  const matches = current.blocks.every(block => {
+    const row = group.find(row => row.contentIndex === block.contentIndex && row.kind === (block.kind === 'text' ? 'assistant' : 'thinking'));
+    return row !== undefined && (current.displayTruncated ? row.text.startsWith(block.text) : row.text === block.text);
+  });
+  return matches ? first.seq : null;
+}
+type Visible = { head: number; snapshot: LiveSnapshot | null; choices: Record<number, boolean>; promoted: { seq: number; choices: Record<number, boolean> } | null; settled: boolean; warning: boolean };
 export function ConversationHistory(props: ConversationHistoryProps) {
-  const history = useConversationHistory(props);
+  return <HistoryComposition key={JSON.stringify([props.userId, props.projectId, props.conversationId, props.taskId])} {...props} />;
+}
+function HistoryComposition(props: ConversationHistoryProps) {
+  const element = useRef<HTMLElement>(null), scrollContainer = useRef<HTMLElement | null>(null), follow = useRef(true);
+  useLayoutEffect(() => {
+    let parent = element.current?.parentElement ?? null;
+    while (parent && !['auto', 'scroll'].includes(getComputedStyle(parent).overflowY)) parent = parent.parentElement;
+    scrollContainer.current = parent;
+    const track = () => { if (parent) follow.current = parent.scrollHeight - parent.scrollTop - parent.clientHeight < 80; };
+    track(); parent?.addEventListener('scroll', track, { passive: true }); return () => parent?.removeEventListener('scroll', track);
+  }, []);
+  const [visible, setVisible] = useState<Visible>(() => ({ head: props.liveSnapshot?.durableHeadSeq ?? props.headSeq, snapshot: null, choices: {}, promoted: null, settled: false, warning: false }));
+  const stream = useAgentLiveOutput({ ...props, taskId: props.taskId ?? null, enabled: !visible.settled && props.liveSnapshot === undefined });
+  const latest = props.liveSnapshot === undefined ? stream.latest : props.liveSnapshot;
+  useEffect(() => { if (visible.settled && props.headSeq > visible.head) setVisible(old => ({ ...old, settled: false, warning: false })); }, [props.headSeq, visible.head, visible.settled]);
+  const desired = latest ?? visible.snapshot;
+  const reconcile = Boolean(props.terminal && visible.snapshot?.current && !visible.settled);
+  const targetHead = visible.settled ? visible.head : reconcile || props.terminal && !desired?.current ? Math.max(props.headSeq, desired?.durableHeadSeq ?? 0) : desired?.durableHeadSeq ?? props.headSeq;
+  const history = useConversationHistory({ ...props, headSeq: visible.head });
+  const pending = useConversationHistory({ ...props, headSeq: targetHead, enabled: !visible.settled });
+  const needsBoundary = Boolean(visible.snapshot?.current && (reconcile || targetHead !== visible.head));
+  const tail = pending.data?.pages.at(-1);
+  const coversCut = tail !== undefined && (tail.nextBeforeSeq === null || tail.nextBeforeSeq <= (visible.snapshot?.durableHeadSeq ?? 0));
+  let pendingRows: Message[] = [], pendingBroken = false;
+  try { pendingRows = messages(pending.data?.pages ?? [], pending.hasNextPage); } catch { pendingBroken = true; }
+  useEffect(() => {
+    if (needsBoundary && !coversCut && pending.hasNextPage && !pending.isFetching && !pending.isError) void pending.fetchNextPage();
+  }, [needsBoundary, coversCut, pending.hasNextPage, pending.isFetching, pending.isError, pending.fetchNextPage]);
+  useEffect(() => {
+    if (visible.settled || !pending.data || pending.isError || pendingBroken || needsBoundary && !coversCut) return;
+    if (reconcile) {
+      const seq = correspondingSequence(visible.snapshot!, pendingRows);
+      if (seq === null) { setVisible(old => ({ ...old, head: targetHead, settled: true, warning: true })); return; }
+      setVisible(old => ({ head: targetHead, snapshot: null, choices: {}, promoted: { seq, choices: old.choices }, settled: true, warning: false })); return;
+    }
+    if (visible.snapshot === desired && visible.head === targetHead) return;
+    const sameMessage = desired?.current && visible.snapshot?.current && desired.taskId === visible.snapshot.taskId && desired.current.messageOrdinal === visible.snapshot.current.messageOrdinal;
+    const seq = !sameMessage && visible.snapshot?.current ? correspondingSequence(visible.snapshot, pendingRows) : null;
+    setVisible(old => ({ head: targetHead, snapshot: desired, choices: sameMessage ? old.choices : {}, promoted: seq === null ? old.promoted : { seq, choices: old.choices }, settled: Boolean(props.terminal && desired !== null && desired.current === null), warning: false }));
+  }, [desired, targetHead, pending.data, pending.isError, pendingBroken, needsBoundary, coversCut, reconcile, visible, props.terminal]);
   let rows: Message[] = [], incomplete = false;
   try { rows = messages(history.data?.pages ?? [], history.hasNextPage); } catch { incomplete = true; }
-  return <section aria-label="会话历史" className="flex flex-col gap-3 p-3 text-sm">
-    {history.isError ? <div role="alert">无法加载会话历史</div> : null}
-    {incomplete ? <div role="alert">历史片段不完整，请重新加载</div> : null}
-    {(history.isError || incomplete) ? <Button variant="outline" onClick={() => void history.refetch()}>重新加载历史</Button> : null}
+  const draft = visible.snapshot?.current;
+  useLayoutEffect(() => { const parent = scrollContainer.current; if (parent && follow.current) parent.scrollTop = parent.scrollHeight; }, [visible.snapshot, history.data]);
+  const syncing = !visible.settled && (reconcile || desired !== visible.snapshot || !latest && props.taskId != null || stream.connectionState === 'connecting' || stream.connectionState === 'reconnecting') && (props.taskId != null || latest !== null);
+  return <section ref={element} aria-label="会话历史" className="flex flex-col gap-3 p-3 text-sm">
+    {(history.isError || pending.isError) ? <div role="alert">无法加载会话历史</div> : null}
+    {(incomplete || pendingBroken) ? <div role="alert">历史片段不完整，请重新加载</div> : null}
+    {(history.isError || pending.isError || incomplete || pendingBroken) ? <Button variant="outline" onClick={() => { void history.refetch(); void pending.refetch(); }}>重新加载历史</Button> : null}
     {history.hasNextPage ? <Button variant="outline" disabled={history.isFetching} onClick={() => void history.fetchNextPage()}>加载更早历史</Button> : null}
     {rows.map(row => <article key={row.key} className="min-w-0 rounded border p-2">
       {row.kind === 'user' && row.taskId !== null ? <RoundStatus {...props} taskId={row.taskId} /> : null}
       <div className="text-xs text-muted-foreground">{row.kind === 'user' ? '用户' : row.kind === 'assistant' || row.kind === 'thinking' ? 'AI' : row.kind === 'compaction' ? '上下文已压缩' : '工具'}</div>
       {row.partial && row.kind !== 'thinking' ? <div>还有更早内容</div> : null}
       {row.kind === 'assistant' ? <AssistantMarkdown text={row.text} />
-        : row.kind === 'thinking' ? <ThinkingBlock text={row.text} active={false} incomplete={row.partial} />
+        : row.kind === 'thinking' ? <ThinkingBlock text={row.text} active={false} incomplete={row.partial} initialChoice={visible.promoted?.seq === row.seq ? visible.promoted.choices[row.contentIndex] : undefined} />
         : <pre className="overflow-auto whitespace-pre-wrap break-words font-mono text-xs">{row.text}</pre>}
       {row.modelTruncated ? <div className="text-destructive text-xs">模型响应达到输出上限，本条内容可能不完整</div> : null}
       {row.kind === 'tool_result' && row.taskId !== null && row.toolCallId !== null ? <HistoryTool key={JSON.stringify([props.userId, props.projectId, props.conversationId, row.key])} {...props} taskId={row.taskId} toolCallId={row.toolCallId} /> : null}
     </article>)}
+    {draft ? <article aria-label="实时预览" className="min-w-0 rounded border p-2">
+      {[...draft.blocks].sort((a, b) => a.contentIndex - b.contentIndex).map(block => block.kind === 'thinking'
+        ? <ThinkingBlock key={JSON.stringify([draft.messageOrdinal, block.contentIndex])} text={block.text} active={draft.phase === 'generating'} choice={visible.choices[block.contentIndex]} onChoice={open => setVisible(old => ({ ...old, choices: { ...old.choices, [block.contentIndex]: open } }))} />
+        : <AssistantMarkdown key={JSON.stringify([draft.messageOrdinal, block.contentIndex])} text={block.text} />)}
+      {draft.modelTruncated ? <div>模型响应达到输出上限，本条内容可能不完整</div> : null}
+      {draft.displayTruncated ? <div>实时预览已裁切，完整内容请在保存后查看历史</div> : null}
+    </article> : null}
+    {syncing ? <div role="status">同步中</div> : null}
+    {visible.warning ? <div role="alert">实时预览未确认保存</div> : null}
+    {!visible.settled && (stream.connectionState === 'unavailable' || latest?.unavailable) ? <div role="status">实时展示暂不可用，继续同步历史 <Button size="sm" variant="outline" onClick={stream.retry}>重连实时展示</Button></div> : null}
   </section>;
 }
 function RoundStatus(props: ConversationHistoryProps & { taskId: string }) {

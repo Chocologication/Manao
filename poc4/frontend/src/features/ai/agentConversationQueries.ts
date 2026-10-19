@@ -15,8 +15,8 @@ export function useConversationList(userId: string, projectId: string) {
 export function useConversationDetail(userId: string, projectId: string, id: string | null) {
   return useQuery({ queryKey: conversationKeys.detail(userId, projectId, id ?? ''), queryFn: ({ signal }) => getAgentConversation(projectId, id!, signal), enabled: id !== null && userId !== '', retry: false, refetchOnWindowFocus: false, refetchInterval: 2_000 });
 }
-export function useConversationHistory({ userId, projectId, conversationId, headSeq }: { userId: string; projectId: string; conversationId: string; headSeq: number }) {
-  return useInfiniteQuery({ queryKey: conversationKeys.history(userId, projectId, conversationId, headSeq), queryFn: ({ pageParam, signal }) => getConversationHistory(projectId, conversationId, pageParam, signal), initialPageParam: null as HistoryCursor | null, getNextPageParam: page => page.nextBeforeSeq === null ? undefined : { beforeSeq: page.nextBeforeSeq, beforeOffset: page.nextBeforeOffset }, retry: false, refetchOnWindowFocus: false });
+export function useConversationHistory({ userId, projectId, conversationId, headSeq, enabled = true }: { userId: string; projectId: string; conversationId: string; headSeq: number; enabled?: boolean }) {
+  return useInfiniteQuery({ queryKey: conversationKeys.history(userId, projectId, conversationId, headSeq), queryFn: ({ pageParam, signal }) => getConversationHistory(projectId, conversationId, pageParam, signal), initialPageParam: { beforeSeq: headSeq + 1, beforeOffset: null } as HistoryCursor, getNextPageParam: page => page.nextBeforeSeq === null ? undefined : { beforeSeq: page.nextBeforeSeq, beforeOffset: page.nextBeforeOffset }, enabled: enabled && userId !== '', retry: false, refetchOnWindowFocus: false });
 }
 export function useConversationTask(userId: string, projectId: string, id: string | null, taskId: string | null) {
   return useQuery({ queryKey: conversationKeys.task(userId, projectId, id ?? '', taskId ?? ''), queryFn: () => getAgentTask(projectId, taskId!), enabled: id !== null && taskId !== null && userId !== '', retry: false, refetchOnWindowFocus: false, refetchInterval: 2_000 });
