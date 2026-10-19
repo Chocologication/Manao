@@ -35,6 +35,7 @@ import type { BackendClient, ProgressChain } from "./backend-client.js";
 import { PROGRESS_TEXT_MAX_BYTES } from "./backend-client.js";
 import { modelConfigProblems, type PiModelConfig, type WorkerBudgets, type WorkerPaths } from "./config.js";
 import { createProjectTools, TOOL_NAMES } from "./project-tools.js";
+import { ConversationContext } from "./conversation-context.js";
 
 /** Server-owned task budgets; tool/build limits raised by user instruction on 2026-10-18. */
 export const DEFAULT_BUDGETS: WorkerBudgets = { wallClockSeconds: 1800, toolCalls: 180, builds: 20 };
@@ -122,6 +123,7 @@ export async function createPiSession(options: {
   backend: BackendClient;
   progress: ProgressChain;
   taskId: string;
+  conversationId?: string | null;
   /** The workspace revision carried by WorkerStart; seeds the tracked revision. */
   startRevision?: string;
   deps?: PiSessionDeps;
@@ -134,7 +136,11 @@ export async function createPiSession(options: {
   }
 
   const settingsManager = deps?.settingsManager ?? SettingsManager.inMemory();
-  const sessionManager = deps?.sessionManager ?? SessionManager.create(paths.scratchDir, paths.sessionDir);
+  const context = options.conversationId ? await ConversationContext.load(backend, taskId, options.conversationId) : undefined;
+  const sessionManager = context
+    ? SessionManager.inMemory(paths.scratchDir, { id: options.conversationId! }, structuredClone(context.fileEntries))
+    : deps?.sessionManager ?? SessionManager.create(paths.scratchDir, paths.sessionDir);
+  context?.prepare(sessionManager, options.startRevision ?? "0");
   const modelRuntime = deps?.modelRuntime ?? await buildModelRuntime(model, paths.agentDir);
   const resolved = modelRuntime.getModel(model.provider, model.model);
   if (!resolved) {
@@ -161,10 +167,12 @@ export async function createPiSession(options: {
   let observedRevision = Number.parseInt(options.startRevision ?? "0", 10) || 0;
   let fatalToolCode: string | null = null;
   let abortAfterFatal = () => { };
+  let flush = async () => {};
   const customTools = createProjectTools({
     backend,
     taskId,
     getRevision: () => String(observedRevision),
+    ...(context ? { beforeInvoke: () => flush() } : {}),
     onResult: (result) => {
       const seen = Number.parseInt(result.workspaceRevision, 10);
       if (Number.isFinite(seen) && seen > observedRevision) observedRevision = seen;
@@ -190,8 +198,31 @@ export async function createPiSession(options: {
   });
   session.agent.toolExecution = "sequential";
   abortAfterFatal = () => session.agent.abort();
+  let saveFinal: (() => Promise<void>) | undefined;
+  if (context) {
+    saveFinal = async () => {
+      try { await context.flush(session); }
+      catch (error) { fatalToolCode ??= "AI_CONTEXT_UNAVAILABLE"; session.agent.abort(); throw error; }
+    };
+    flush = async () => {
+      if (fatalToolCode !== null) throw new Error("the task has already stopped");
+      await saveFinal!();
+    };
+    const previousPrepare = session.agent.prepareRequest;
+    session.agent.prepareRequest = async (request, signal) => {
+      const prepared = await previousPrepare?.(request, signal);
+      await flush();
+      return prepared || undefined;
+    };
+    // Native summary providers bypass prepareRequest; every provider still awaits ACK.
+    const previousStream = session.agent.streamFunction;
+    session.agent.streamFunction = async (model, transcript, streamOptions) => {
+      await flush();
+      return previousStream(model, transcript, streamOptions);
+    };
+  }
 
-  return new DefaultPiTaskSession(taskId, session, customTools, progress, budgets, () => deps?.now?.() ?? Date.now(), () => fatalToolCode);
+  return new DefaultPiTaskSession(taskId, session, customTools, progress, budgets, () => deps?.now?.() ?? Date.now(), () => fatalToolCode, context ? flush : undefined, saveFinal);
 }
 
 /**
@@ -246,6 +277,7 @@ class DefaultPiTaskSession implements PiTaskSession {
   private toolCalls = 0;
   private builds = 0;
   private deadlineAt = 0;
+  private lastAssistant: AssistantMessage | undefined;
 
   constructor(
     readonly taskId: string,
@@ -255,6 +287,8 @@ class DefaultPiTaskSession implements PiTaskSession {
     private readonly budgets: WorkerBudgets,
     private readonly now: () => number,
     private readonly fatalToolCode: () => string | null,
+    private readonly flush?: () => Promise<void>,
+    private readonly saveFinal?: () => Promise<void>,
   ) {
     this.unsubscribe = session.subscribe((event) => this.onEvent(event));
   }
@@ -281,12 +315,14 @@ class DefaultPiTaskSession implements PiTaskSession {
     }, this.budgets.wallClockSeconds * 1000);
     let promptError: unknown = null;
     try {
-      await this.session.prompt(start.prompt);
+      await this.flush?.();
+      await this.session.prompt(this.flush ? "Execute the user's most recent programming goal recorded above. Use the current workspace revision; re-read relevant files before changes." : start.prompt);
     } catch (error) {
       promptError = error;
     } finally {
       clearTimeout(deadline);
     }
+    try { await this.saveFinal?.(); } catch (error) { promptError ??= error; }
     const outcome = this.settle(promptError);
     this.running = false;
     // The terminal state is only sent after the progress chain has drained, so the
@@ -301,6 +337,7 @@ class DefaultPiTaskSession implements PiTaskSession {
         // Complete messages only — message_update deltas are never persisted.
         const message = event.message;
         if (message?.role === "assistant") {
+          this.lastAssistant = message as AssistantMessage;
           const text = (message as AssistantMessage).content
             .map((block) => (block.type === "text" ? block.text : ""))
             .join("")
@@ -342,9 +379,7 @@ class DefaultPiTaskSession implements PiTaskSession {
       throw new Error("the task session already settled");
     }
     this.settled = true;
-    const messages = this.session.agent.state.messages;
-    const lastAssistant = [...messages].reverse()
-      .find((message) => message.role === "assistant") as AssistantMessage | undefined;
+    const lastAssistant = this.lastAssistant;
     const summary = lastAssistant === undefined ? "" : messageText(lastAssistant);
     const bounded = truncate(summary, MAX_PROGRESS_TEXT_BYTES);
 

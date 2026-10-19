@@ -1,7 +1,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { AddressInfo } from "node:net";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { BackendClient, ProgressChain } from "../src/backend-client.js";
+import { BackendClient, BackendHttpError, ProgressChain } from "../src/backend-client.js";
 import { createTaskServer, type WorkerConfig } from "../src/server.js";
 
 describe("safe decided backend diagnostics", () => {
@@ -372,6 +372,23 @@ describe("task server", () => {
 
   const TEST_MODEL = { provider: "p", apiType: "openai-completions", baseUrl: "http://127.0.0.1:9", model: "m", apiKey: "k" };
 
+  it("carries a validated conversation identity to the runner while preserving legacy null starts", async () => {
+    const starts: Array<string | null | undefined> = [];
+    const handle = createTaskServer(workerConfig({ model: TEST_MODEL }), {
+      createRunner: (deps) => { starts.push(deps.start.conversationId); return stubRunner(); },
+    });
+    const port = await handle.listen();
+    try {
+      const conversationId = "00000000-0000-4000-8000-000000000001";
+      expect((await post(`http://127.0.0.1:${port}/tasks/first/start`, { ...startBody("first"), conversationId })).status).toBe(200);
+      await vi.waitFor(() => expect(handle.activeTaskId()).toBeNull());
+      expect((await post(`http://127.0.0.1:${port}/tasks/legacy/start`, { ...startBody("legacy"), conversationId: null })).status).toBe(200);
+      await vi.waitFor(() => expect(handle.activeTaskId()).toBeNull());
+      expect((await post(`http://127.0.0.1:${port}/tasks/invalid/start`, { ...startBody("invalid"), conversationId: "not-a-conversation" })).status).toBe(422);
+      expect(starts).toEqual([conversationId, null]);
+    } finally { await handle.close(); }
+  });
+
   it("answers a replayed start for the same task once without a second runner", async () => {
     let created = 0;
     const handle = createTaskServer(workerConfig({ model: TEST_MODEL }), {
@@ -465,7 +482,7 @@ describe("task server", () => {
     }
   });
 
-  it("reports a terminal through the progress chain when the runner fails before settling", async () => {
+  it.each(["AI_WORKER_ERROR", "AI_CONTEXT_UNAVAILABLE"])("reports %s through the progress chain when the runner fails before settling", async (failureCode) => {
     backendServer.removeAllListeners("request");
     const progressBodies: Array<Record<string, unknown>> = [];
     backendServer.on("request", (req: IncomingMessage, res: ServerResponse) => {
@@ -487,6 +504,7 @@ describe("task server", () => {
         taskId: "task-1",
         state: () => "RUNNING",
         start: async () => {
+          if (failureCode === "AI_CONTEXT_UNAVAILABLE") throw new BackendHttpError(0, failureCode, "history unavailable");
           throw new Error("boom before any session existed");
         },
         stop: async () => undefined,
@@ -504,7 +522,7 @@ describe("task server", () => {
       const terminal = progressBodies.find((body) => body["kind"] === "terminal");
       expect(terminal).toBeDefined();
       expect(JSON.parse(terminal!["text"] as string)).toMatchObject({
-        state: "FAILED", failureCode: "AI_WORKER_ERROR",
+        state: "FAILED", failureCode,
       });
     } finally {
       await handle.close();

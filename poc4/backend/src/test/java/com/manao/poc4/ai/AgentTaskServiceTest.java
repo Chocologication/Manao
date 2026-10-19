@@ -513,6 +513,40 @@ class AgentTaskServiceTest {
     }
 
     @Test
+    void conversationIdentityAndNativeHistorySurviveServiceReconstructionAndClose() {
+        for (String outcome : List.of("COMPLETED", "FAILED", "CLOSED")) {
+            try (Harness h = new Harness()) {
+                String conversationId = UUID.randomUUID().toString();
+                var transactions = new DataSourceTransactionManager(h.jdbc.getDataSource());
+                var conversations = new AgentConversationStore(h.jdbc, transactions, Clock.systemUTC(), h.tasks);
+                conversations.create(OWNER, PROJECT, new AgentConversationContracts.CreateConversationRequest(conversationId));
+                h.service.submit(OWNER, PROJECT, h.request(), conversationId);
+                assertThat(h.worker.starts.get(0).conversationId()).isEqualTo(conversationId);
+                var page = conversations.readForTask(h.taskId, INSTANCE, h.rowEpoch(), 0, null);
+                var entry = new ObjectMapper().createObjectNode().put("type", "message").put("id", UUID.randomUUID().toString())
+                    .put("parentId", h.taskId).put("timestamp", "2026-10-19T00:00:00Z");
+                entry.putObject("message").put("role", "assistant").putArray("content")
+                    .addObject().put("type", "text").put("text", "真实回答 " + outcome);
+                conversations.appendForTask(h.taskId, INSTANCE, h.rowEpoch(),
+                    new AgentConversationContracts.ContextAppend(1, page.header(), List.of(entry), null));
+                var rebuiltTasks = new AgentTaskStore(h.jdbc, transactions, Clock.systemUTC());
+                var rebuilt = new AgentConversationStore(h.jdbc, transactions, Clock.systemUTC(), rebuiltTasks);
+                assertThat(rebuilt.history(OWNER, PROJECT, conversationId, null, 50).items())
+                    .anySatisfy(item -> assertThat(item.kind()).isEqualTo("user"));
+                var rebuiltService = new AgentTaskService(rebuiltTasks, h.gate, h.worker, h.tools);
+                if ("CLOSED".equals(outcome)) rebuiltService.close(h.taskId, "AI_CLOSED", "explicitly closed");
+                else rebuiltService.applyProgress(h.taskId, INSTANCE, h.rowEpoch(),
+                    h.item(1, "terminal", "{\"state\":\"" + outcome + "\",\"summary\":\"settled\",\"failureCode\":null}"));
+                assertThat(rebuilt.history(OWNER, PROJECT, conversationId, null, 50).items())
+                    .anySatisfy(item -> assertThat(item.kind()).isEqualTo("user"));
+                assertThat(rebuilt.history(OWNER, PROJECT, conversationId, null, 50).items())
+                    .anySatisfy(item -> assertThat(item.text()).isEqualTo("真实回答 " + outcome));
+                assertThat(h.worker.starts).hasSize(1);
+            }
+        }
+    }
+
+    @Test
     void theStartAckBindsTheInstanceAndRunsTheTask() {
         try (Harness h = new Harness()) {
             assertThat(h.submit().state()).isEqualTo(AgentContracts.TaskState.QUEUED);

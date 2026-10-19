@@ -10,6 +10,9 @@
  * "unregistered", and a budget exhaustion fails closed instead of guessing.
  */
 
+import { isDeepStrictEqual } from "node:util";
+import { CONTEXT_PAGE_BYTES, type ContextPage, type ContextAppend } from "./conversation-context.js";
+
 export interface ToolRequest {
   toolCallId: string;
   name: string;
@@ -220,6 +223,58 @@ export class BackendClient {
       }
     }
     throw new BackendHttpError(response.status, "AI_PROGRESS_REJECTED", `progress submission was refused (${response.status})`);
+  }
+
+  async readContext(taskId: string, afterSeq = 0, throughSeq?: number): Promise<ContextPage> {
+    const query = new URLSearchParams({ afterSeq: String(afterSeq) });
+    if (throughSeq !== undefined) query.set("throughSeq", String(throughSeq));
+    const response = await this.transport(`${this.baseUrl}/internal/ai/tasks/${encodeURIComponent(taskId)}/context?${query}`, {
+      method: "GET", headers: this.headers(), signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+    const body = await this.contextJson(response);
+    return body as unknown as ContextPage;
+  }
+
+  async appendContext(taskId: string, append: ContextAppend): Promise<{ headSeq: number }> {
+    const body = JSON.stringify(append);
+    const wire = JSON.parse(body) as ContextAppend;
+    const post = async () => this.contextJson(await this.transport(`${this.baseUrl}/internal/ai/tasks/${encodeURIComponent(taskId)}/context`, {
+      method: "POST", headers: this.headers(), body, signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    }));
+    try { return await post() as unknown as { headSeq: number }; }
+    catch (error) {
+      if (error instanceof BackendHttpError) throw error;
+      // A lost POST response never permits a new identity: inspect the original suffix.
+      let page = await this.readContext(taskId, append.expectedHeadSeq);
+      if (!isDeepStrictEqual(page.header, wire.header)) throw new BackendHttpError(409, "AI_CONTEXT_CONFLICT", "conversation header changed");
+      if (page.headSeq === append.expectedHeadSeq && page.entries.length === 0) {
+        return await post() as unknown as { headSeq: number };
+      }
+      const expected = append.expectedHeadSeq + append.entries.length;
+      const rows = [...page.entries];
+      while (page.nextAfterSeq !== null && rows.length < append.entries.length) {
+        const after = append.expectedHeadSeq + rows.length;
+        if (page.headSeq !== expected || page.nextAfterSeq !== after || page.entries.length === 0) break;
+        page = await this.readContext(taskId, after, expected);
+        if (!isDeepStrictEqual(page.header, wire.header)) break;
+        rows.push(...page.entries);
+      }
+      if (page.headSeq !== expected || page.nextAfterSeq !== null
+        || !isDeepStrictEqual(rows.map((row) => row.entry), wire.entries)
+        || rows.some((row, index) => row.seq !== append.expectedHeadSeq + index + 1 || row.writerId !== taskId)) {
+        throw new BackendHttpError(409, "AI_CONTEXT_CONFLICT", "conversation suffix changed");
+      }
+      return { headSeq: page.headSeq };
+    }
+  }
+
+  private async contextJson(response: Response): Promise<Record<string, unknown>> {
+    const raw = await response.text();
+    if (Buffer.byteLength(raw, "utf8") > CONTEXT_PAGE_BYTES) throw new BackendHttpError(0, "AI_CONTEXT_UNAVAILABLE", "context response exceeds its byte limit");
+    let body: Record<string, unknown>;
+    try { body = JSON.parse(raw) as Record<string, unknown>; } catch { throw new Error("unreadable context response"); }
+    if (!response.ok) throw new BackendHttpError(response.status, "AI_CONTEXT_UNAVAILABLE", "context request was refused");
+    return body;
   }
 
   private headers(): Record<string, string> {

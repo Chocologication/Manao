@@ -21,6 +21,7 @@ export interface ProjectToolDeps {
   onResult?: (result: ToolResult) => void;
   /** Stops the session after a tool outcome can no longer be safely established. */
   onFatal?: (code: string) => void;
+  beforeInvoke?: () => Promise<void>;
 }
 
 const directoryArgs = Type.Object({
@@ -98,6 +99,8 @@ export function createProjectTools(deps: ProjectToolDeps): Array<ToolDefinition>
     }
     let result: ToolResult;
     try {
+      if (deps.beforeInvoke) await deps.beforeInvoke();
+      if (signal?.aborted) throw new Error("tool was stopped before backend invocation");
       result = await deps.backend.invoke(deps.taskId, {
         toolCallId,
         name,
@@ -105,7 +108,7 @@ export function createProjectTools(deps: ProjectToolDeps): Array<ToolDefinition>
         args: params,
       });
     } catch (error) {
-      if (error instanceof BackendHttpError && ["AI_CALL_UNKNOWN", "AI_CALL_NEEDS_ATTENTION", "AI_APPLICATION_UNAVAILABLE"].includes(error.code)) {
+      if (error instanceof BackendHttpError && ["AI_CALL_UNKNOWN", "AI_CALL_NEEDS_ATTENTION", "AI_APPLICATION_UNAVAILABLE", "AI_CONTEXT_UNAVAILABLE"].includes(error.code)) {
         fatalCode = error.code;
         deps.onFatal?.(fatalCode);
       }

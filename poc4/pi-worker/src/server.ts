@@ -12,7 +12,7 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { pathToFileURL } from "node:url";
-import { BackendClient, ProgressChain } from "./backend-client.js";
+import { BackendClient, BackendHttpError, ProgressChain } from "./backend-client.js";
 import { ConfigError, loadWorkerConfig, modelConfigProblems, type WorkerConfig } from "./config.js";
 import { createPiSession, type PiTaskOutcome, type PiTaskSession } from "./pi-session.js";
 
@@ -22,6 +22,7 @@ export interface WorkerStartBody {
   workspaceRevision: string;
   requestSha256: string;
   workerEpoch: number;
+  conversationId?: string | null;
 }
 
 export interface TaskRunner {
@@ -173,10 +174,12 @@ export function createTaskServer(config: WorkerConfig, deps: ServerDeps = {}): T
         // stage-one acceptance hit exactly that silence on 2026-10-15).
         console.error(`[task ${record.start.taskId}] runner failed before settling:`,
           error instanceof Error ? `${error.name}: ${error.message}` : error);
-        record.outcome = { state: "FAILED", summary: "", failureCode: "AI_WORKER_ERROR", reason: "the task runner failed before it could settle" };
+        const failureCode = error instanceof BackendHttpError && error.code === "AI_CONTEXT_UNAVAILABLE"
+          ? "AI_CONTEXT_UNAVAILABLE" : "AI_WORKER_ERROR";
+        record.outcome = { state: "FAILED", summary: "", failureCode, reason: "the task runner failed before it could settle" };
         // Even a failure before any session existed must reach the backend as a
         // terminal state through the same serialized progress chain.
-        void record.progress.sendTerminal("FAILED", "", "AI_WORKER_ERROR");
+        void record.progress.sendTerminal("FAILED", "", failureCode);
       })
       .finally(() => {
         if (active === record) {
@@ -205,6 +208,7 @@ export function createTaskServer(config: WorkerConfig, deps: ServerDeps = {}): T
           progress: runnerDeps.progress,
           taskId: runnerDeps.taskId,
           startRevision: runnerDeps.start.workspaceRevision,
+          conversationId: runnerDeps.start.conversationId,
         });
         const outcome = await session.run({
           prompt: runnerDeps.start.prompt,
@@ -271,12 +275,17 @@ export function createTaskServer(config: WorkerConfig, deps: ServerDeps = {}): T
     if (typeof candidate["workerEpoch"] !== "number" || !Number.isInteger(candidate["workerEpoch"]) || candidate["workerEpoch"] < 0) {
       return "workerEpoch must be a non-negative integer";
     }
+    if (candidate["conversationId"] !== undefined && candidate["conversationId"] !== null
+      && (typeof candidate["conversationId"] !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(candidate["conversationId"]))) {
+      return "conversationId must be a UUID or null";
+    }
     return {
       taskId,
       prompt: candidate["prompt"],
       workspaceRevision: candidate["workspaceRevision"],
       requestSha256: candidate["requestSha256"],
       workerEpoch: candidate["workerEpoch"],
+      conversationId: candidate["conversationId"] as string | null | undefined,
     };
   }
 
