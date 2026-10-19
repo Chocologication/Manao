@@ -26,9 +26,23 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/internal/ai/tasks/{taskId}")
 public final class AgentInternalController {
     private final AgentTaskService tasks;
+    private final AgentTaskStore store;
+    private final AgentLiveOutput live;
 
-    public AgentInternalController(AgentTaskService tasks) {
+    public AgentInternalController(AgentTaskService tasks, AgentTaskStore store, AgentLiveOutput live) {
         this.tasks = tasks;
+        this.store = store;
+        this.live = live;
+    }
+
+    @PostMapping("/live-output")
+    public ResponseEntity<Void> liveOutput(@PathVariable String taskId,
+            @RequestHeader(value = "X-Manao-Worker-Instance", required = false) String instanceId,
+            @RequestHeader(value = "X-Manao-Worker-Epoch", required = false) String epochHeader,
+            @RequestBody com.fasterxml.jackson.databind.JsonNode snapshot) {
+        store.requireBoundWorkerIdentity(taskId, parseEpoch(epochHeader), instanceId);
+        live.accept(taskId, snapshot);
+        return ResponseEntity.noContent().build();
     }
 
     /** Submits one tool invocation; the durable ledger deduplicates replays. */

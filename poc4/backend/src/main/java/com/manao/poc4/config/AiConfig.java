@@ -142,4 +142,10 @@ public class AiConfig {
                                       PiWorkerClient worker, AgentProjectTools tools, com.manao.poc4.ai.AgentConversationService conversations) {
         return new AgentTaskService(tasks, lifecycle, worker, tools, conversations);
     }
+
+    @Bean(destroyMethod = "close")
+    @Conditional(AiEnabledCondition.class)
+    com.manao.poc4.ai.AgentLiveOutput agentLiveOutput(AgentTaskStore tasks) {
+        return new com.manao.poc4.ai.AgentLiveOutput(tasks);
+    }
 }

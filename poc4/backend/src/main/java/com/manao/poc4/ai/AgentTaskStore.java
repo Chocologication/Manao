@@ -184,6 +184,32 @@ public final class AgentTaskStore implements AgentTaskOccupancy {
     /** The durable owner/project identity behind one task; tool dispatch never trusts caller input. */
     public record TaskOwner(String ownerId, String projectId) { }
 
+    /** Read-only display eligibility: one current task and the most recently settled task. */
+    public record LiveTask(String taskId, String conversationId, java.time.Instant terminalAt) { }
+
+    public List<LiveTask> liveOutputTasks() {
+        return jdbc.query("""
+            (SELECT t.id, t.conversation_id, NULL AS terminal_at FROM agent_task t
+             JOIN agent_conversation c ON c.id=t.conversation_id AND c.project_id=t.project_id
+             WHERE t.active_project IS NOT NULL ORDER BY t.created_at DESC,t.id DESC LIMIT 1)
+            UNION ALL
+            (SELECT t.id, t.conversation_id, t.updated_at AS terminal_at FROM agent_task t
+             JOIN agent_conversation c ON c.id=t.conversation_id AND c.project_id=t.project_id
+             WHERE t.state IN ('COMPLETED','FAILED') ORDER BY t.updated_at DESC,t.id DESC LIMIT 1)
+            """, (rs, row) -> new LiveTask(rs.getString(1), rs.getString(2),
+                rs.getTimestamp(3) == null ? null : rs.getTimestamp(3).toInstant()));
+    }
+
+    public String liveOutputConversation(String taskId) {
+        var rows = jdbc.query("""
+            SELECT t.conversation_id FROM agent_task t JOIN agent_conversation c
+              ON c.id=t.conversation_id AND c.project_id=t.project_id
+            WHERE t.id=?
+            """, (rs, row) -> rs.getString(1), taskId);
+        if (rows.isEmpty()) throw new ApiException("AI_LIVE_UNSUPPORTED", 409, "Live output requires a conversation");
+        return rows.get(0);
+    }
+
     /** Resolves the task's durable owner/project pair; refuses unknown ids. */
     public TaskOwner taskOwner(String taskId) {
         List<TaskOwner> owners = jdbc.query(
@@ -527,6 +553,20 @@ public final class AgentTaskStore implements AgentTaskOccupancy {
     }
 
     private record WorkerRow(String state, long workerEpoch, String instanceId) { }
+
+    /** Display callbacks may validate a binding, but never create one or start a task. */
+    public void requireBoundWorkerIdentity(String taskId, long epoch, String instanceId) {
+        if (instanceId == null || instanceId.isBlank()) throw validation();
+        List<WorkerRow> rows = jdbc.query(
+            "SELECT state, worker_epoch, worker_instance_id FROM agent_task WHERE id = ?",
+            (rs, row) -> new WorkerRow(rs.getString(1), rs.getLong(2), rs.getString(3)), taskId);
+        if (rows.isEmpty()) throw new ApiException("AI_TASK_NOT_FOUND", 404, "Task not found");
+        WorkerRow row = rows.get(0);
+        if (row.workerEpoch() != epoch)
+            throw new ApiException("AI_EPOCH_MISMATCH", 409, "The worker epoch does not match the task");
+        if (row.instanceId() == null || !row.instanceId().equals(instanceId))
+            throw new ApiException("AI_INSTANCE_MISMATCH", 409, "The task has no matching worker binding");
+    }
 
     /**
      * Validates a worker callback against the durable fencing state: unknown task is
