@@ -35,6 +35,25 @@ it('reads historical safe tool details using the original task and reuses View r
   server.use(http.get(URL, () => HttpResponse.json({ items: [item('app_http_get', { kind: 'tool_result', toolCallId: 'http-original' })], nextBeforeSeq: null, nextBeforeOffset: null })), http.get(`/api/v1/projects/${P}/agent-tasks/${T}/tools/http-original`, () => HttpResponse.json({ toolCallId: 'http-original', toolName: 'app_http_get', data: { kind: 'app_http_get', runId: '44444444-4444-4444-8444-444444444444', path: '/api/books', statusCode: 200, contentType: 'text/plain', body: '<h1>safe</h1>', truncated: false, error: null } })));
   mount({ onViewRun: viewRun }); await userEvent.click(await screen.findByRole('button', { name: '查看工具结果' })); expect(await screen.findByText('<h1>safe</h1>')).toBeInTheDocument(); await userEvent.click(screen.getByRole('button', { name: 'View run' })); expect(viewRun).toHaveBeenCalledWith('44444444-4444-4444-8444-444444444444'); expect(document.querySelector('h1')).toBeNull();
 });
+it.each([
+  ['read_file', { path: 'src/历史.java', content: '历史文件内容 <script>literal</script>', sha256: 'b'.repeat(64) }, '历史文件内容 <script>literal</script>'],
+  ['list_files', { directory: 'src', entries: [{ path: 'src/历史.java', name: '历史.java', kind: 'file', hidden: false, sizeBytes: 64, hasChildren: null }], hasMore: false }, 'src/历史.java'],
+])('opens the original task %s detail from conversation history', async (toolName, data, visible) => {
+  const requestedPaths: string[] = [];
+  server.use(
+    http.get(URL, () => HttpResponse.json({ items: [item(toolName, { kind: 'tool_result', toolCallId: 'call_original_file' })], nextBeforeSeq: null, nextBeforeOffset: null })),
+    http.get(`/api/v1/projects/${P}/agent-tasks/:taskId/tools/:callId`, ({ request }) => {
+      requestedPaths.push(new globalThis.URL(request.url).pathname);
+      return HttpResponse.json({ toolCallId: 'call_original_file', toolName, data });
+    }),
+  );
+  mount();
+  await userEvent.click(await screen.findByRole('button', { name: '查看工具结果' }));
+  expect(await screen.findByText(visible)).toBeInTheDocument();
+  expect(requestedPaths).toEqual([`/api/v1/projects/${P}/agent-tasks/${T}/tools/call_original_file`]);
+  expect(screen.queryByText('Result unavailable')).not.toBeInTheDocument();
+  expect(document.querySelector('script')).toBeNull();
+});
 it('does not display internal projection kinds or raw payload fields', async () => {
   server.use(http.get(URL, () => HttpResponse.json({ items: [item('visible'), item('SECRET THINKING', { kind: 'thinking', raw: 'PRIVATE' })], nextBeforeSeq: null, nextBeforeOffset: null })));
   mount(); expect(await screen.findByText('无法加载会话历史')).toBeInTheDocument(); expect(screen.queryByText('SECRET THINKING')).not.toBeInTheDocument(); expect(screen.queryByText('PRIVATE')).not.toBeInTheDocument();

@@ -405,7 +405,52 @@ export function ToolResultView({ result, onViewRun }: { result: AgentToolCallRes
       </div>
     );
   }
+  if (['read_file', 'list_files', 'write_file'].includes(result.toolName)) return <FileToolResultView result={result} />;
   return result.toolName === 'build' ? <BuildResultView result={result} /> : <div>Result unavailable</div>;
+}
+
+/** Only explicit browser result fields are rendered; file content and paths stay literal text. */
+function FileToolResultView({ result }: { result: AgentToolCallResult }) {
+  const data = result.data;
+  const malformed = <div role="alert" className="text-destructive">工具结果格式不完整</div>;
+  if (data.error !== undefined) {
+    const error = data.error;
+    if (error === null || typeof error !== 'object' || Array.isArray(error) ||
+        !('code' in error) || typeof error.code !== 'string' ||
+        !('message' in error) || typeof error.message !== 'string') return malformed;
+    return <div role="alert" className="whitespace-pre-wrap break-words text-destructive">{error.code}: {error.message}</div>;
+  }
+  if (result.toolName === 'list_files') {
+    const { directory, entries, hasMore } = data;
+    if (typeof directory !== 'string' || !Array.isArray(entries) || typeof hasMore !== 'boolean') return malformed;
+    const rows: { path: string; kind: 'file' | 'directory' }[] = [];
+    for (const entry of entries) {
+      if (entry === null || typeof entry !== 'object' || Array.isArray(entry) ||
+          typeof entry.path !== 'string' || (entry.kind !== 'file' && entry.kind !== 'directory')) return malformed;
+      rows.push({ path: entry.path, kind: entry.kind });
+    }
+    return <div className="mt-1 flex min-w-0 flex-col gap-1 rounded border p-2">
+      <div className="whitespace-pre-wrap break-words">目录：{directory === '' ? '/' : directory}</div>
+      {rows.length === 0 && !hasMore ? <div>目录为空</div> : null}
+      {rows.length > 0 ? <ul className="max-h-48 overflow-auto font-mono text-xs">
+        {rows.map((entry, index) => <li key={index} className="flex gap-2">
+          <span className="shrink-0 text-muted-foreground">{entry.kind === 'directory' ? '目录' : '文件'}</span>
+          <span className="whitespace-pre-wrap break-words">{entry.path}</span>
+        </li>)}
+      </ul> : null}
+      {hasMore ? <div>列表已截断，仍有更多条目</div> : null}
+    </div>;
+  }
+  const { path, sha256, content } = data;
+  if (typeof path !== 'string' || typeof sha256 !== 'string' || !/^[a-f0-9]{64}$/.test(sha256) ||
+      (result.toolName === 'read_file' && typeof content !== 'string')) return malformed;
+  return <div className="mt-1 flex min-w-0 flex-col gap-1 rounded border p-2">
+    {result.toolName === 'write_file' ? <div>文件已写入</div> : null}
+    <div className="whitespace-pre-wrap break-words">路径：{path}</div>
+    <div className="break-all font-mono text-xs">SHA-256: {sha256}</div>
+    {result.toolName === 'read_file' ? content === '' ? <div>文件内容为空</div>
+      : <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-words font-mono text-xs">{content as string}</pre> : null}
+  </div>;
 }
 
 /** The settled build evidence the backend serves the owner: real exit facts, bounded output. */
