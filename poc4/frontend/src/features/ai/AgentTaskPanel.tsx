@@ -250,6 +250,11 @@ export function AgentTaskPanel({
 
   const displayTask = selectedTask === undefined ? task ?? settledTask : selectedTask;
   const occupying = task !== null && isAgentTaskOccupying(task.state);
+  // A retained identity can still have been admitted after both POST and GET fail.
+  // Keep its effort immutable until reconciliation returns a matching task or clears it.
+  const pendingIntent = readAgentTaskIntent(userId, projectId);
+  const admissionUnknown = pendingIntent !== null && ![task, settledTask, displayTask].some(snapshot =>
+    snapshot?.taskId === pendingIntent.taskId && (pendingIntent.conversationId === null || snapshot.conversationId === pendingIntent.conversationId));
 
   return (
     <section aria-label="AI task" className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-background">
@@ -260,7 +265,7 @@ export function AgentTaskPanel({
         {startError !== null ? <InlineAlert>{startError}</InlineAlert> : null}
         <form onSubmit={handleStart} className="flex flex-col gap-2">
           <label htmlFor="agent-reasoning-effort">推理强度</label>
-          <select id="agent-reasoning-effort" value={reasoningEffort} disabled={occupying || starting || submissionBlocked}
+          <select id="agent-reasoning-effort" value={reasoningEffort} disabled={occupying || starting || submissionBlocked || admissionUnknown}
             onChange={event => setReasoningEffort(event.target.value as ReasoningEffort)}>
             <option value="off">关闭</option><option value="low">低</option><option value="high">高</option><option value="max">最高</option>
           </select>

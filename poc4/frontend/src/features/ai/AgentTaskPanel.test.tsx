@@ -21,6 +21,36 @@ const USER_ID = 'user-alice';
 const TASK_ID = '0b8fd38f-0f9e-4c28-9c48-3f5f4a2b1c11';
 const CURRENT_URL = `/api/v1/projects/${PROJECT_ID}/agent-tasks/current`;
 const TASKS_URL = `/api/v1/projects/${PROJECT_ID}/agent-tasks`;
+it('keeps effort locked after both POST and original task GET fail, and retries only the original GET', async () => {
+  let posts = 0, original = ''; const gets: string[] = [];
+  server.use(http.post(TASKS_URL, async ({ request }) => { posts++; original = (await request.json() as { taskId: string }).taskId; return HttpResponse.error(); }),
+    http.get(`${TASKS_URL}/:id`, ({ params }) => { gets.push(String(params.id)); return HttpResponse.error(); }));
+  renderPanel();
+  await userEvent.selectOptions(screen.getByLabelText('推理强度'), 'max');
+  await userEvent.type(screen.getByLabelText('Task goal'), 'do work');
+  await userEvent.click(screen.getByRole('button', { name: 'Start task' }));
+  await screen.findByRole('alert');
+  expect(screen.getByLabelText('推理强度')).toBeDisabled();
+  expect(screen.getByLabelText('推理强度')).toHaveValue('max');
+  expect(sessionStorage.getItem(agentTaskStorageKey(USER_ID, PROJECT_ID))).toBe(original);
+  await userEvent.click(screen.getByRole('button', { name: 'Start task' }));
+  await screen.findByText('Could not verify the previous task. Try again in a moment.');
+  expect(gets).toEqual([original, original]); expect(posts).toBe(1);
+  expect(screen.getByLabelText('推理强度')).toBeDisabled();
+});
+it('locks a retained unknown identity on remount and releases effort after confirmed absence', async () => {
+  sessionStorage.setItem(agentTaskStorageKey(USER_ID, PROJECT_ID), TASK_ID);
+  let posts = 0;
+  const absent = () => HttpResponse.json({ code: 'ENTRY_NOT_FOUND', message: 'none', traceId: 'none' }, { status: 404 });
+  server.use(http.get(`${TASKS_URL}/:id`, absent), http.post(TASKS_URL, () => { posts++; return absent(); }));
+  renderPanel();
+  expect(screen.getByLabelText('推理强度')).toBeDisabled();
+  await userEvent.type(screen.getByLabelText('Task goal'), 'do work');
+  await userEvent.click(screen.getByRole('button', { name: 'Start task' }));
+  await screen.findByRole('alert');
+  expect(sessionStorage.getItem(agentTaskStorageKey(USER_ID, PROJECT_ID))).toBeNull();
+  expect(screen.getByLabelText('推理强度')).toBeEnabled(); expect(posts).toBe(1);
+});
 it('submits the chosen effort and locks it while admission is unknown', async () => {
   let posted: Record<string, unknown> | null = null, release = () => {};
   const held = new Promise<void>(resolve => { release = resolve; });
