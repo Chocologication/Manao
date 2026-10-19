@@ -4,7 +4,7 @@ Updated 2026-10-20. Branch codex/ai-integration. Final product-suite baseline ad
 
 ## Verdict
 
-Required local combination PASS. Tasks1–5 passed independent task gates. Consolidated final review at 3a2b194 found I1 late-authoritative-ACK precedence, I2 cross-message/cross-round harness evidence and M1 malformed worker effort arrays. All three have a scoped local fix implemented; **final scoped independent rereview pending**, not overall approval. Historical whole-feature/Task6 verdicts remain Needs fixes until that rereview.
+Required local combination PASS. All six tasks are complete within the authorized local implementation / verification / release-preparation scope. Independent final scoped rereview at `c68c773` confirms I1 late-authoritative-ACK precedence, I2 cross-message/cross-round harness evidence and M1 malformed worker effort arrays ADDRESSED, with no new Critical/Important finding. Task6 Spec COMPLIANT / Quality Approved; whole feature **Approved for local implementation completion**. The earlier Needs fixes verdicts are retained as review history, not the current local verdict.
 
 Paid provider/real deployment acceptance, runtime V14 migration/reset, backup/restore and old-image compatibility rehearsal, image build/push/digests, rollout and resource changes/deletion **NOT_RUN**. Release PREPARED only. Stage2 PAUSED/NOT_GRANTED, Stage3 user-confirmed and original real-provider75% NOT_RUN unchanged. No push/merge.
 
@@ -38,7 +38,7 @@ Separately authorized run: existing owner-owned READY project and <=16KiB secret
 
 Task1 1d09f04..ea32755; Task2 d3ea5c7; Task3 356e492..8a1f182; Task4 fca63d2; Task5 b9853f4..adb63f6 (including b51c91e). Independent task gates passed after fixes. Task1 supplementary assertions and Task4 later capacity assertions followed core implementation; task reports disclose this, core behavioral RED observed. Task5 races RED/repair/rereview. Task6 identity is commit containing this record; controller task-6-report records SHA after commit. Guard/history stub RED3→GREEN3; initial missing-module setup failure not RED. SDK assertion passed existing behavior; reused browser fixture passed once; no production mutation. Harness quoting/patch/Python newline setup errors corrected, not behavioral RED.
 
-Final scoped fixes implemented, independent rereview pending. Deferred nonblocking: isolated third-per-task subscription/cache-loss-next-pulse assertions absent; full-panel browser lock/close unproven; inherited warnings. No extra coverage claim or new external acceptance.
+Final scoped independent rereview passed at `c68c773`. Deferred nonblocking: isolated third-per-task subscription/cache-loss-next-pulse assertions absent; full-panel browser lock/close unproven; inherited warnings. No extra coverage claim or new external acceptance.
 
 ## Final scoped fix wave (2026-10-20)
 
@@ -50,9 +50,17 @@ Final scoped fixes implemented, independent rereview pending. Deferred nonblocki
 | --- | --- |
 | frontend: pnpm exec vitest run src/features/ai/ConversationHistory.test.tsx src/features/ai/useAgentLiveOutput.test.tsx src/features/ai/AgentConversationPanel.test.tsx | exit0;3files71/71 (35+13+23) |
 | frontend: node --test scripts/ai-output-harness.test.mjs | exit0;6/6 (3 retained guard/history +3 oracle regressions) |
-| frontend: scoped tsc command in the baseline table | exit0 on final spec |
+| frontend: scoped tsc command in the baseline table | reported exit0 on final spec; report/summary evidence only, named raw log was not retained |
 | frontend: pnpm typecheck; pnpm build | exit0;4066modules;46.21s;inherited bundle warning |
 | pi-worker: pnpm exec vitest run test/server.test.ts; pnpm build | exit0;47/47;build exit0;expected fixed-error test stderr |
 | frontend: pnpm test:e2e:ai-output --list with authorization unset | expected exit1 NOT_RUN before browser |
 
 Task6 backend127/worker147/frontend282 above remain the earlier combination baseline, not rerun totals. No backend/full suite, real model/browser/cloud/runtime migration/image action was performed in this fix wave. Local DOM fixture evidence does not add HTTP-browser or provider acceptance. Raw focused logs and final-fix-report live beside the local SDD review artifacts; the commit carrying this section owns the repair delta.
+
+## Final independent closeout
+
+The [independent final rereview](review.md) checked the exact `3a2b194..c68c773` repair, the original findings and focused RED/GREEN evidence. I1/I2/M1 are ADDRESSED; no new Critical/Important finding. Fresh focused results are frontend71/71, worker47/47 and harness6/6, with the corresponding builds/typecheck passing; these supplement, rather than replace or inflate, the earlier127/147/282 combination. The absent `final-fix-harness-tsc.log` is a Minor evidence bookkeeping issue: the command was silent and its successful execution result was not saved as a raw log. Exit0 is supported by the implementer report and tracked summary, rather than independently inspected raw output. No validation run was invented or repeated to conceal it.
+
+The plan's Task6 Step4 remains NOT_RUN / separately authorized. Actual DeepSeek/provider-wire acceptance, production migration, image publication, deployment and user acceptance of this new feature have not been obtained. The branch and isolated worktree are retained; no push or merge. Useful RED/failure logs and independent review reports remain in this plan's ignored SDD directory. Only regenerable review packages and byte-identical browser artifact duplicates are eligible for local cleanup.
+
+Local temporary cleanup is BLOCKED: automatic approval review rejected the targeted removal of those regenerable packages/duplicate files with `blocked by policy`. The command did not execute, no alternate deletion method was attempted and no files were removed. The exact current-plan inventory and blocked outcome remain in ignored SDD `cleanup-inventory.md` / `cleanup-results.md`. This artifact-cleanup limit does not change the completed local feature verdict.

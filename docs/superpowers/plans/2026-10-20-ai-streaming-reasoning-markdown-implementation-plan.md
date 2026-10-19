@@ -298,9 +298,11 @@ pnpm build
 - watchdog不在阻塞send期间同步complete；sender实际退出才还额度，饱和503退history，不承诺强行中断socket。
 - 用户折叠状态跨实时/历史保留；非DeepSeek首版新任务统一拒绝，避免增加来源字段。
 
-2026-10-20执行状态：Tasks1–5本地实现并通过各自独立gate；Task6本地组合/真实入口/发布准备完成，Step4未执行另需授权。最终合并审查I1/I2/M1已完成限定修复，final scoped rereview pending；Task6/整体批准仍待controller独立复审，不以本地通过自我批准。实际计数/限制由poc4/docs/evidence/ai-output/acceptance.md拥有；原确认合同保留。
+2026-10-20最终执行状态：六个任务在授权的本地实施、验证和发布准备范围内完成；Task6 Step4 仍未执行，需真实模型/发布单独授权。最终独立限定复审在 `c68c773` 确认 I1/I2/M1 ADDRESSED，无新增 Critical/Important；Task6 Spec COMPLIANT / Quality Approved，整体 Approved for local implementation completion。实际计数、TDD 顺序限制及未覆盖项由 poc4/docs/evidence/ai-output/acceptance.md 拥有；原确认合同保留，不授予云端或用户验收 PASS。
 
 ## Execution record (2026-10-20)
+
+The following Task1–5 entries are dated intermediate checkpoints; their then-pending task notes are historical. The final status above and the final Task6 closeout below own completion.
 
 Task1 completed locally: 1d09f04 + ea32755; independent specification/quality review and scoped I1 rereview cleared. Backend78/78, worker79/79, frontend71/71, worker build/frontend typecheck passed. Core behavioral RED preceded implementation; supplementary legacy/HTTP assertions were characterization after core changes. No real cloud model/deployment accepted. Tasks2-6 pending.
 
@@ -311,3 +313,5 @@ Task3 completed locally: 356e492 + 8a1f182. Independent spec/quality Approved af
 Task4 completed locally: fca63d2; independent spec compliant/quality Approved. Required16/16 plus package; real Servlet first-frame and blocked4→RST→actual0→GET200 evidence. Minor isolated per-task3rd and cache-loss pulse assertions deferred; no30minute endurance/process restart evidence. Tasks5-6 pending.
 
 Task5 completed locally: b9853f4 + b51c91e + adb63f6. Independent spec/quality gate passed after active fallback and pendingLatest race repairs. Initial108/108, fix114/114, finalcover70/70; typecheck/buildpass, realHTTP Chromium fixture passed. FullPanel lock/close remains component evidence; fixture proves SSE/history/render/reconnect. Task6 local verification/release preparation next; paidmodel/deploy forbidden.
+
+Task6 completed within local authorization: `3a2b194` prepared the guarded real entry, evidence and existing release-guide appendix. Required combination backend127/127, worker147/147 and frontend282/282 passed. Final scoped fix `c68c773` corrected late normal ACK, per-message acceptance timing/DOM oracles and malformed worker effort types; fresh frontend71/71, worker47/47 and harness6/6 plus builds/typecheck passed. Independent final rereview confirms all findings addressed and local completion Approved. The final harness-specific tsc raw log was not retained; its reported exit0 is distinguished from independently inspected raw evidence. Step4 remains unchecked / NOT_RUN. No paid model, runtime migration/reset, images, deployment, resource deletion, push or merge occurred.
