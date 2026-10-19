@@ -11,6 +11,7 @@
  */
 
 import { isDeepStrictEqual } from "node:util";
+import { LIVE_OUTPUT_MAX_BYTES, type LiveSnapshot } from "./live-output.js";
 import { CONTEXT_PAGE_BYTES, type ContextPage, type ContextAppend, type CompactStart, type CompactResult } from "./conversation-context.js";
 
 export interface ToolRequest {
@@ -223,6 +224,36 @@ export class BackendClient {
       }
     }
     throw new BackendHttpError(response.status, "AI_PROGRESS_REJECTED", `progress submission was refused (${response.status})`);
+  }
+
+  async liveOutput(taskId: string, snapshot: LiveSnapshot, signal?: AbortSignal): Promise<void> {
+    const body = JSON.stringify({ revision: snapshot.revision, taskId: snapshot.taskId, conversationId: snapshot.conversationId,
+      durableHeadSeq: snapshot.durableHeadSeq, current: snapshot.current === null ? null : {
+        messageOrdinal: snapshot.current.messageOrdinal, phase: snapshot.current.phase,
+        blocks: snapshot.current.blocks.map(({ contentIndex, kind, text }) => ({ contentIndex, kind, text })),
+        modelTruncated: snapshot.current.modelTruncated, displayTruncated: snapshot.current.displayTruncated,
+      }, unavailable: snapshot.unavailable });
+    if (Buffer.byteLength(body, "utf8") > LIVE_OUTPUT_MAX_BYTES) throw new Error("live output exceeds its byte limit");
+    const controller = new AbortController();
+    const cancel = () => controller.abort();
+    if (signal?.aborted) controller.abort();
+    else signal?.addEventListener("abort", cancel, { once: true });
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    let abort!: () => void;
+    const cancelled = new Promise<never>((_resolve, reject) => { abort = () => reject(new Error("live output cancelled")); });
+    controller.signal.addEventListener("abort", abort, { once: true });
+    timeout = setTimeout(() => controller.abort(), 2000);
+    try {
+      if (controller.signal.aborted) throw new Error("live output cancelled");
+      const response = await Promise.race([this.transport(`${this.baseUrl}/internal/ai/tasks/${encodeURIComponent(taskId)}/live-output`, {
+        method: "POST", headers: this.headers(), body, signal: controller.signal,
+      }), cancelled]);
+      if (response.status !== 204) throw new BackendHttpError(response.status, "AI_LIVE_OUTPUT_REJECTED", "live output was refused");
+    } finally {
+      clearTimeout(timeout);
+      signal?.removeEventListener("abort", cancel);
+      controller.signal.removeEventListener("abort", abort);
+    }
   }
 
   async readContext(taskId: string, afterSeq = 0, throughSeq?: number): Promise<ContextPage> {

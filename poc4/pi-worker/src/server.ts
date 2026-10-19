@@ -275,10 +275,12 @@ export function createTaskServer(config: WorkerConfig, deps: ServerDeps = {}): T
           conversationId: runnerDeps.start.conversationId,
           reasoningEffort: runnerDeps.start.reasoningEffort,
         });
-        const outcome = await session.run({
+        const runningSession = session;
+        let outcome: PiTaskOutcome;
+        try { outcome = await runningSession.run({
           prompt: runnerDeps.start.prompt,
           workspaceRevision: runnerDeps.start.workspaceRevision,
-        });
+        }); } catch (error) { runningSession.dispose(); throw error; }
         const record = tasks.get(runnerDeps.taskId);
         if (record !== undefined) {
           record.outcome = outcome;

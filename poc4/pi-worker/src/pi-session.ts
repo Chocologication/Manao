@@ -37,6 +37,7 @@ import { PROGRESS_TEXT_MAX_BYTES } from "./backend-client.js";
 import { modelConfigProblems, type PiModelConfig, type WorkerBudgets, type WorkerPaths } from "./config.js";
 import { createProjectTools, TOOL_NAMES } from "./project-tools.js";
 import { COMPACTION_SETTINGS, CONTEXT_WINDOW, ConversationContext, needsCompaction, type CompactStart, type CompactResult } from "./conversation-context.js";
+import { LiveOutput } from "./live-output.js";
 
 /** Server-owned task budgets; tool/build limits raised by user instruction on 2026-10-18. */
 export const DEFAULT_BUDGETS: WorkerBudgets = { wallClockSeconds: 1800, toolCalls: 180, builds: 20 };
@@ -236,9 +237,11 @@ export async function createPiSession(options: {
     }
   };
   let saveFinal: (() => Promise<void>) | undefined;
+  const live = context ? new LiveOutput(backend, taskId, options.conversationId!, context.acknowledgedHeadSeq) : undefined;
+  const unsubscribeLive = live ? session.subscribe((event) => live.observe(event)) : undefined;
   if (context) {
     saveFinal = async () => {
-      try { await context.flush(session); }
+      try { await context.flush(session, (entries, headSeq) => live!.checkpoint(entries, headSeq)); }
       catch (error) { fatalToolCode ??= "AI_CONTEXT_UNAVAILABLE"; session.agent.abort(); throw error; }
     };
     flush = async () => {
@@ -265,7 +268,7 @@ export async function createPiSession(options: {
   };
 
   return new DefaultPiTaskSession(taskId, session, customTools, progress, budgets, () => deps?.now?.() ?? Date.now(), () => fatalToolCode,
-    context ? flush : undefined, saveFinal, beforePrompt, () => { if (compactionFailed) refuseOversizedContext(); });
+    context ? flush : undefined, saveFinal, beforePrompt, () => { if (compactionFailed) refuseOversizedContext(); }, live, unsubscribeLive);
 }
 
 /** Idle-only native summary. This session has no prompt and no project tool authority. */
@@ -373,6 +376,8 @@ class DefaultPiTaskSession implements PiTaskSession {
     private readonly saveFinal?: () => Promise<void>,
     private readonly beforePrompt?: (prompt: string) => Promise<void>,
     private readonly afterPrompt?: () => void,
+    private readonly live?: LiveOutput,
+    private readonly unsubscribeLive?: () => void,
   ) {
     this.unsubscribe = session.subscribe((event) => this.onEvent(event));
   }
@@ -386,6 +391,8 @@ class DefaultPiTaskSession implements PiTaskSession {
 
   dispose(): void {
     this.unsubscribe();
+    this.unsubscribeLive?.();
+    this.live?.dispose();
   }
 
   async run(start: PiTaskStart): Promise<PiTaskOutcome> {
@@ -414,9 +421,12 @@ class DefaultPiTaskSession implements PiTaskSession {
     try { await this.saveFinal?.(); } catch (error) { promptError ??= error; }
     const outcome = this.settle(promptError);
     this.running = false;
+    this.live?.finish();
     // The terminal state is only sent after the progress chain has drained, so the
     // complete-message and tool items always precede it.
     await this.progress.sendTerminal(outcome.state, outcome.summary, outcome.failureCode);
+    this.unsubscribe();
+    this.unsubscribeLive?.();
     return outcome;
   }
 

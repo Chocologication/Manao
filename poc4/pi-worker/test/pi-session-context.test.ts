@@ -203,3 +203,40 @@ describe("durable native conversation restoration", () => {
     expect(fixture.entries.filter((entry) => entry.type === "context_edit")).toHaveLength(2);
   });
 });
+
+describe("native ACK observer contract", () => {
+  it("reports each acknowledged original batch only and isolates display observer failure from durable success", async () => {
+    const { ConversationContext } = await import("../src/conversation-context.js");
+    const manager = SessionManager.inMemory("manao-project", { id: conversationId });
+    const fixture = backendFor(manager);
+    const context = await ConversationContext.load(fixture.backend as unknown as BackendClient, "new-task", conversationId);
+    for (let index = 0; index < 35; index++) manager.appendCustomEntry("native-contract", { index });
+    const original = manager.getEntries();
+    const observed: Array<{ entries: SessionEntry[]; head: number }> = [];
+    await context.flush({ sessionManager: manager, getContextUsage: () => undefined } as any, (entries, head) => {
+      observed.push({ entries, head });
+      throw new Error("display notification failed");
+    });
+    expect(observed.map(({ entries, head }) => [entries.length, head])).toEqual([[32, 32], [3, 35]]);
+    expect(observed[0]!.entries[0]).toBe(original[0]);
+    expect(observed[0]!.entries[31]).toBe(original[31]);
+    expect(observed[1]!.entries[0]).toBe(original[32]);
+    expect(observed[0]!.entries[0]).not.toBe(fixture.backend.appendContext.mock.calls[0]![1].entries[0]);
+    await context.flush({ sessionManager: manager, getContextUsage: () => undefined } as any, () => { throw new Error("should not repeat ACK"); });
+    expect(fixture.backend.appendContext).toHaveBeenCalledTimes(2);
+    expect(context.acknowledgedHeadSeq).toBe(35);
+  });
+
+  it("does not notify an unconfirmed original suffix after a mismatched ACK", async () => {
+    const { ConversationContext } = await import("../src/conversation-context.js");
+    const manager = SessionManager.inMemory("manao-project", { id: conversationId });
+    const fixture = backendFor(manager);
+    const context = await ConversationContext.load(fixture.backend as unknown as BackendClient, "new-task", conversationId);
+    manager.appendCustomEntry("unconfirmed", {});
+    fixture.backend.appendContext.mockResolvedValue({ headSeq: 0 });
+    let observed = 0;
+    await expect(context.flush({ sessionManager: manager, getContextUsage: () => undefined } as any, () => { observed++; })).rejects.toMatchObject({ code: "AI_CONTEXT_UNAVAILABLE" });
+    expect(observed).toBe(0);
+    expect(context.acknowledgedHeadSeq).toBe(0);
+  });
+});

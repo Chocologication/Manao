@@ -104,7 +104,9 @@ export class ConversationContext {
       + (interrupted ? " The previous task was interrupted. Its incomplete tool round is omitted; re-read current results and files. Do not execute or resume old tool calls." : ""), false);
   }
 
-  flush(session: AgentSession): Promise<void> {
+  get acknowledgedHeadSeq(): number { return this.headSeq; }
+
+  flush(session: AgentSession, onAcknowledged?: (entries: SessionEntry[], headSeq: number) => void): Promise<void> {
     const operation = this.tail.then(async () => {
       if (this.failure) throw this.failure;
       try {
@@ -125,7 +127,10 @@ export class ConversationContext {
           if (expected !== entries.length) batch.usage = null;
           const ack = await this.backend.appendContext(this.taskId, batch);
           if (ack.headSeq !== expected) throw unavailable();
+          const acknowledgedEntries = entries.slice(this.headSeq, expected);
           this.headSeq = expected;
+          // A display observer cannot invalidate an already successful durable ACK.
+          try { onAcknowledged?.(acknowledgedEntries, this.headSeq); } catch {}
         }
       } catch { this.failure = unavailable(); throw this.failure; }
     });
