@@ -355,6 +355,7 @@ class DefaultPiTaskSession implements PiTaskSession {
   private toolCalls = 0;
   private builds = 0;
   private deadlineAt = 0;
+  private deadlineExpired = false;
   private lastAssistant: AssistantMessage | undefined;
 
   constructor(
@@ -392,6 +393,7 @@ class DefaultPiTaskSession implements PiTaskSession {
     this.deadlineAt = this.now() + this.budgets.wallClockSeconds * 1000;
     const deadline = setTimeout(() => {
       // Budget wall clock: stop the loop; the settlement reports the breach.
+      this.deadlineExpired = true;
       this.stop();
     }, this.budgets.wallClockSeconds * 1000);
     let promptError: unknown = null;
@@ -453,7 +455,7 @@ class DefaultPiTaskSession implements PiTaskSession {
   }
 
   private overBudget(): boolean {
-    return this.toolCalls > this.budgets.toolCalls
+    return this.deadlineExpired || this.toolCalls > this.budgets.toolCalls
       || this.builds > this.budgets.builds
       || this.now() > this.deadlineAt;
   }

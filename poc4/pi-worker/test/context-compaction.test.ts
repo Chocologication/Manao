@@ -30,7 +30,7 @@ function history() {
   return manager;
 }
 type Respond = NonNullable<Parameters<typeof scriptedSessionFactory>[2]>;
-async function fixture(manager: SessionManager, respond: Respond, seconds = 1800, fixedSdkConfig = false) {
+async function fixture(manager: SessionManager, respond: Respond, seconds = 1800, fixedSdkConfig = false, now?: () => number) {
   const entries = structuredClone(manager.getEntries());
   const batches: ContextAppend[] = [];
   const requests: Array<{ summary: boolean; context: TranscriptContext }> = [];
@@ -50,7 +50,7 @@ async function fixture(manager: SessionManager, respond: Respond, seconds = 1800
   const pi = await createPiSession({ model: MODEL_CONFIG, paths: privateDirs(), taskId: "task", conversationId: id, startRevision: "7",
     budgets: { wallClockSeconds: seconds, toolCalls: 180, builds: 20 }, backend: backend as unknown as BackendClient,
     progress: new ProgressChain(backend as unknown as BackendClient, "task"),
-    deps: { createSession: async (options) => {
+    deps: { now, createSession: async (options) => {
       if (fixedSdkConfig) {
         options.model = { ...options.model!, contextWindow: 1_048_576 };
         options.settingsManager = SettingsManager.inMemory({ compaction: { enabled: true, reserveTokens: 262_145, keepRecentTokens: 20_000 },
@@ -249,6 +249,21 @@ describe("fixed-window native Pi compaction", () => {
     expect(await running).toMatchObject({ state: "FAILED", failureCode: "AI_ABORTED" });
     expect(f.requests).toHaveLength(phase === "initial" ? 0 : 1);
     f.pi.dispose();
+  });
+
+  it("records a fired idle-compaction deadline even at the exact clock boundary", async () => {
+    const manager = history();
+    manager.appendMessage(assistant("prior", 786_000));
+    manager.appendCustomMessageEntry("manao_user_request", "fresh goal" + "g".repeat(4000), true);
+    let clock = 1000;
+    const f = await fixture(manager, (_context, _session, signal) => {
+      clock = 1050;
+      return new Promise<ScriptedResponse>(resolve => signal!.addEventListener("abort", () => resolve({ stopReason: "aborted" }), { once: true }));
+    }, 0.05, false, () => clock);
+    try {
+      expect(await f.run()).toMatchObject({ state: "FAILED", failureCode: "AI_BUDGET_EXCEEDED" });
+      expect(f.requests.every(request => request.summary)).toBe(true);
+    } finally { f.pi.dispose(); }
   });
 
   it.each(["stop", "deadline"])("cancels idle pre-prompt compaction honestly on %s", async (mode) => {
