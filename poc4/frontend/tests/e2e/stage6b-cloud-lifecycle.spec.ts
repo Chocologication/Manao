@@ -1,4 +1,5 @@
 import { expect, test, type Locator, type Page } from '@playwright/test';
+import { openCloudProjectCreation } from '../support/cloudWorkbench';
 
 /**
  * Stage 6B: cloud lifecycle acceptance driven purely through the browser against
@@ -284,8 +285,7 @@ async function signIn(page: Page): Promise<void> {
 }
 
 async function createProject(page: Page, name: string): Promise<void> {
-  await page.getByRole('button', { name: '新建项目' }).click();
-  await page.getByRole('button', { name: '所有配置' }).click();
+  await openCloudProjectCreation(page);
   await page.getByLabel('Project name').fill(name);
   await page.getByRole('button', { name: 'Create project' }).click();
   await expect(projectCard(page, name)).toBeVisible();

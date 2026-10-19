@@ -1,4 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
+import { openCloudProjectCreation } from '../support/cloudWorkbench';
 
 /**
  * Java project runtime: cloud lifecycle acceptance, driven purely through the browser
@@ -189,6 +190,7 @@ test.describe.serial('java runtime cloud lifecycle', () => {
 
     // The deployed entry must expose the runtime-capable creation form, not just the
     // legacy console-only view.
+    await openCloudProjectCreation(page);
     const templateSelect = page.getByLabel('Template');
     await expect(templateSelect).toBeVisible();
     await expect(templateSelect.locator('option', { hasText: 'Java Spring Boot web' })).toHaveCount(1);
@@ -203,10 +205,7 @@ test.describe.serial('java runtime cloud lifecycle', () => {
     test.setTimeout(1_500_000);
     await signIn(page);
 
-    // The console now collapses the create form behind 新建项目; 所有配置 keeps the
-    // single-page form this cloud-lifecycle flow drives.
-    await page.getByRole('button', { name: '新建项目' }).click();
-    await page.getByRole('button', { name: '所有配置' }).click();
+    await openCloudProjectCreation(page);
     await page.getByLabel('Project name').fill(SCENE.projectName);
     await page.getByLabel('Template').selectOption({ label: 'Java Spring Boot web' });
     await page.getByLabel('Public access').check();
