@@ -1,6 +1,6 @@
 # AI 多会话与上下文管理设计
 
-日期：2026-10-19。状态：设计与实施计划，尚未实施。
+日期：2026-10-19。状态：已按本设计实施并完成本地相关验证；最终分支审查另行记录，真实模型/browser/部署未执行。实际证据及流程偏差见[Context acceptance](../../../poc4/docs/evidence/ai-context/acceptance.md)。
 
 ## 1. 目标、确认与基线
 
@@ -12,7 +12,7 @@
 - 不同会话只共享项目代码，不共享聊天历史；“暂不考虑跨任务”不再解释为禁止同一会话的多轮 AgentTask。
 - 手动压缩只在会话空闲时可用；运行中的自动压缩在 Pi 的安全边界处理。
 - 沿用引用聊天中的固定 1M 窗口与 75% 自动压缩要求，不提供用户配置。
-- 本轮交付设计、实现计划和过度设计自检，未授权开始功能实现或部署。
+- 规划之后，用户明确授权功能实施、本地验证、顺序评审和发布准备；未授权真实模型调用、部署/重启、运行库迁移、push/merge或项目删除。
 
 工作目录为仓库中的 `.worktree/ai-integration`，分支 `codex/ai-integration`，规划代码基线 `c5a76fd`；开始规划时工作树干净。主检出 `master@49eb632` 不包含这份 AI 实现，不在主检出修改功能。两段直接依据为聊天 `ai集成--阶段二实现`（`01a1438e-1482-70f1-9c68-cd0a8e63f40f`）和 `ai集成--chatbot启发`（`01a151be-c543-7780-8b90-699ac88a5463`），已通过 read_thread 读取。
 
@@ -66,7 +66,7 @@ project→conversation 和 conversation→entry 使用 ON DELETE CASCADE；task�
 
 用户目标在创建 AgentTask 的同一事务中追加为 Pi 原生 custom_message（customType=manao_user_request，entry id=taskId，details.taskId 关联轮次）。它本身参与模型上下文，因此 worker 尚未启动就失败的目标也能显示和恢复。创建会话时由后端写固定 Pi v3 header（id=conversationId，cwd=manao-project，timestamp=created_at）；worker 用实际 scratch cwd 恢复，不改写原 header。
 
-浏览器历史是读取时的安全投影：上述用户目标、assistant 的 text、工具名称/调用 ID、压缩标记、任务状态。worker 在新会话路径调用 prompt 时只发送固定的“执行上文最新记录的用户编程目标”触发消息，不重复加入目标正文；这一内部触发消息不展示。旧 task-only 路径仍发送原 prompt。工具详情沿用现有 owner-scoped result route 的字段白名单；不在会话 DTO 暴露原生 system/thinking/signature、worker 路径、执行 UID、连接信息或凭据。代码/HTTP body 继续按文本渲染。
+浏览器历史是读取时的安全投影：上述用户目标、assistant 的 text、工具名称/调用 ID和压缩标记。每轮状态由历史taskId关联既有owner-scoped TaskSnapshot读取，不制造会随状态变化的原生seq项。worker 在新会话路径调用 prompt 时只发送固定的“执行上文最新记录的用户编程目标”触发消息，不重复加入目标正文；这一内部触发消息不展示。旧 task-only 路径仍发送原 prompt。工具详情沿用现有 owner-scoped result route 的字段白名单；不在会话 DTO 暴露原生 system/thinking/signature、worker 路径、执行 UID、连接信息或凭据。代码/HTTP body 继续按文本渲染。
 
 原始消息长期保留至项目删除；压缩仅改变下一次模型请求的投影，不删除、改写或截断原始历史。这里的“完整”指已完成的 SDK 消息和原工具返回的内容，工具自身原有 128 KiB/64 KiB 等限制不被取消；流式半条消息不承诺逐 token 持久化。
 
@@ -74,7 +74,7 @@ project→conversation 和 conversation→entry 使用 ON DELETE CASCADE；task�
 
 internal API 返回有界分页的原生 entries；worker 按 seq 恢复全部已保存 entries，使用 `SessionManager.inMemory(cwd, { id }, fileEntries)`。首版不额外建 checkpoint、投影缓存或独立 JSONL 副本；模型看到的仍是 Pi 压缩后的有效投影。历史越来越长时的 worker 恢复成本需要测量后再优化。
 
-追加请求携带 expectedHeadSeq、稳定 entry IDs、source task/writer 身份及可空 usage。事务锁定 conversation，校验项目/任务/worker 身份，整批插入并更新 head_seq。完整相同批次重放返回原确认；同 ID 不同 payload、乱序、跨会话 parent、过期 writer 或 head 冲突返回固定错误，不覆盖。JSON payload 按解析后的值比较，避免 MySQL JSON 键排序造成误判；无需另建消息 digest 平台。
+追加请求携带 expectedHeadSeq、稳定 entry IDs及可空usage；source task/writer由后端已验证身份推导。ConversationStore使用独立READ_COMMITTED事务，保留project→conversation→task/entries锁顺序，原TaskStore事务不改。事务锁定conversation，校验项目/任务/worker 身份，整批插入并更新 head_seq。完整相同批次重放返回原确认；同 ID 不同 payload、乱序、跨会话 parent、过期 writer 或 head 冲突返回固定错误，不覆盖。JSON payload 按解析后的值比较，避免 MySQL JSON 键排序造成误判；无需另建消息 digest 平台。
 
 现有任务的 epoch/instance 校验继续使用。新任务准入、conversation 归属和手动压缩占用检查须在同一个现有 project-row 事务内完成；只做 service 层的前置读取不足以防并发。
 
@@ -85,11 +85,11 @@ internal API 返回有界分页的原生 entries；worker 按 seq 恢复全部�
 3. 下一条模型请求前，保存所有工具结果及已完成的压缩条目。
 4. `session.prompt()` 或手动 `compact()` 返回后，保存最终回答/压缩结果，再发送 terminal 或成功状态。
 
-将已有 `session.agent.prepareRequest` 包装为“调用原实现→flush→返回”，保留 SDK 的上下文投影；工具 invoke 前增加一个 beforeInvoke 的 await 接缝；结束时再 flush。不得用 `session.subscribe(async ...)` 充当保存屏障：Pi 的 listener 返回 void，而且 message_end 通知先于原生 append。SDK 合同测试必须覆盖这个真实顺序。
+将已有 `session.agent.prepareRequest` 包装为“调用原实现→flush→返回”，并包装原 `streamFunction`，使绕过prepareRequest的原生摘要及其重试也先等待ACK，保留SDK上下文投影；工具invoke前增加beforeInvoke await；结束时独立saveFinal，即使先前工具fatal也保存已完成失败消息。不得用 `session.subscribe(async ...)` 充当保存屏障：Pi 的 listener 返回 void，而且 message_end 通知先于原生 append。SDK 合同测试必须覆盖这个真实顺序。
 
 保存超时先查询原 IDs/head，已落盘则确认，确认未写入才重发同一批次；不能确定时中止本轮，使用现有 FAILED/NEEDS_ATTENTION 与收尾，不继续新工具/模型请求或假报成功。已执行工具仍以原 ledger/receipt 对账，不能因缺一条聊天记录重做。
 
-worker 突然退出时最多缺少尚未到下一保存屏障的完整消息；任务/工具 ledger 不因此消失。保留中断提示。历史能重新打开不代表原任务自动恢复。只有原任务按既有流程停止/close 后，用户才能发起新轮。若恢复的尾部存在未配对 toolCall，使用 Pi 的 appendContextEdit 省略该未完成工具轮在有效上下文中的贡献，并追加“上轮中断、结果需重新读取”的 custom message；保存这些追加项后才处理新目标。原始历史不删、不伪造成功 toolResult、不调用旧工具。
+worker 突然退出时最多缺少尚未到下一保存屏障的完整消息；任务/工具 ledger 不因此消失。保留中断提示。历史能重新打开不代表原任务自动恢复。只有原任务按既有流程停止/close 后，用户才能发起新轮。若恢复的尾部存在未配对 toolCall，在创建AgentSession之前使用Pi的appendContextEdit(targetId, null)，原生entry字段为replacement:null，省略该未完成工具轮在有效上下文中的贡献，并追加“上轮中断、结果需重新读取”的 custom message；保存这些追加项后才处理新目标。原始历史不删、不伪造成功 toolResult、不调用旧工具。
 
 ## 6. 固定窗口、自动压缩和占用展示
 
@@ -99,9 +99,9 @@ worker 突然退出时最多缺少尚未到下一保存屏障的完整消息；�
 
 判断对象是当前有效上下文，包含 SDK 的 system/tool loadout、最新摘要、保留消息和新增内容；优先使用 provider usage 校准，未计量部分由 Pi 估计，不把历次消耗相加。无有效 usage 时显示“约”或“占用暂不可用”；Pi 在压缩后可能返回 tokens=null，不能显示成 0，也不能沿用压缩前的百分比。
 
-自动检查覆盖用户输入和工具循环中每次后续模型请求，不在工具调用及其结果之间压缩。保留 Pi 原生摘要与重复压缩的 previousSummary/firstKeptEntryId 语义，不另写摘要链/切片算法。用含 read_file/write_file/build/application 的实际消息测试目标、约束、文件变化、验证结果和未完成事项的延续；不能依赖只识别 read/write/edit 的原生文件名提取器，也不为此新增文件索引。
+首轮先在idle、prompt之前检查当前SDK上下文加待发trigger和初始system/tool声明，必要时public session.compact；活动prepareRequest只能fail-closed，不能在其内部compact导致中止当前run。工具增长和后续响应继续由Pi原生loop压缩，不在toolCall及其结果之间压缩。保留 Pi 原生摘要与重复压缩的 previousSummary/firstKeptEntryId 语义，不另写摘要链/切片算法。用含 read_file/write_file/build/application 的实际消息测试目标、约束、文件变化、验证结果和未完成事项的延续；不能依赖只识别 read/write/edit 的原生文件名提取器，也不为此新增文件索引。
 
-摘要失败不追加成功压缩记录、不删除旧上下文。自动压缩失败且仍超过阈值时，本轮报固定 AI_CONTEXT_COMPACTION_FAILED 并走既有任务收尾，不能无界重试或继续向超限模型请求；下一轮由用户处理。成功摘要必须先经过保存屏障，才能进入下一次请求。自动摘要耗时计入原 1800s，原 180 次工具/20 次 build 预算不变；stop/deadline 必须同时终止 Pi 的独立 compaction 和 agent 请求，不能只调用 agent.abort。
+摘要失败不追加成功压缩记录、不删除旧上下文。自动压缩失败且仍超过阈值时，本轮报固定 AI_CONTEXT_COMPACTION_FAILED 并走既有任务收尾，不能无界重试或继续向超限模型请求；下一轮由用户处理。成功摘要必须先经过保存屏障，才能进入下一次请求。自动摘要耗时计入原 1800s，原 180 次工具/20 次 build 预算不变；stop/deadline必须同时终止Pi独立compaction和agent请求；实际deadline timer记录expired事实，不能因now恰等于截止毫秒把到期误报为普通stop。
 
 ## 7. 空闲手动压缩
 
@@ -122,15 +122,15 @@ worker 异步接受，浏览器通过会话详情查询状态，模型处理限�
 | POST /conversations | `{ conversationId }`；幂等创建，空会话无模型调用 |
 | GET /conversations?before=…&limit=20 | 按 updated_at/id 逆序，返回 nextCursor；最大 50 |
 | GET /conversations/{id} | 会话元数据、lastTaskId/activeTaskId、headSeq、usage、手动压缩状态 |
-| GET /conversations/{id}/entries?beforeSeq=…&limit=50 | 展示投影，按 seq 分页；最大 100，返回 nextBeforeSeq |
+| GET /conversations/{id}/entries?beforeSeq=…&beforeOffset=…&limit=50 | 展示投影，seq+textOffset组合分页；最大100，返回nextBeforeSeq/nextBeforeOffset；offset为null保留旧seq逻辑 |
 | POST /conversations/{id}/tasks | 复用原 TaskRequest；conversationId 从 route 注入服务，加入新任务请求绑定 |
 | POST /conversations/{id}/compact | `{ requestId, expectedHeadSeq }`；异步接受或固定冲突 |
 
 路由前缀 `/api/v1/projects/{projectId}`。TaskSnapshot/WorkerStart 增加可空 conversationId，旧 request/调用构造方式与 task-only 验收兼容；旧请求 digest 保持不变，新请求将会话身份纳入 digest。
 
-internal 前缀 `/internal/ai`：任务 GET/POST `/tasks/{taskId}/context` 读取分页或追加；空闲摘要 GET/POST `/conversations/{id}/compactions/{requestId}/context`；POST 同路径 `/result` 原子提交摘要和状态。任务路由仍校验 epoch/instance；摘要路由校验预登记 request/instance/baseSeq。worker 增加 POST `/conversations/{id}/compact`、GET `/conversations/{id}/compactions/{requestId}`，沿用原 token 鉴权及单槽。
+internal 前缀 `/internal/ai`：任务 GET/POST `/tasks/{taskId}/context` 读取分页或追加；空闲摘要仅GET `/conversations/{id}/compactions/{requestId}/context`，固定baseSeq读取；POST同路径`/result`在一次事务原子提交完整suffix、usage和终态，没有POST /context。任务路由仍校验 epoch/instance；摘要路由校验预登记 request/instance/baseSeq。worker 增加 POST `/conversations/{id}/compact`、GET `/conversations/{id}/compactions/{requestId}`，沿用原 token 鉴权及单槽。
 
-原生单 entry 上限 2 MiB；context 请求/响应页按实际 UTF-8 字节最多 4 MiB、最多 32 entries，浏览器投影页最多 512 KiB。internal 只对新增 context/result 路由放宽至 4 MiB，既有 calls/progress 保持 512 KiB；不能全局放开。分页或分批不截断单 entry；超单项限制明确失败。数据库写入按 entry 参数化提交，发布前核实 max_allowed_packet 能容纳单项与协议；不默认修改运行库配置。
+原生单entry上限2MiB；context页/批及manual result按真实UTF-8 JSON最多4MiB、32entries，浏览器页最多512KiB。长文本读时按64KiB UTF-8安全片段投影，textOffset为不切code point的UTF-16索引；不存第二份历史。append ACK前检查同seq/textOffset不可分工具metadata组的完整HistoryPage序列化字节（含最大cursor），超界整批拒绝；不增加任意identifier长度限制。internal 只对新增 context/result 路由放宽至 4 MiB，既有 calls/progress 保持 512 KiB；不能全局放开。分页或分批不截断单 entry；超单项限制明确失败。数据库写入按 entry 参数化提交，发布前核实 max_allowed_packet 能容纳单项与协议；不默认修改运行库配置。
 
 错误使用固定白名单，包括 AI_CONVERSATION_NOT_FOUND、AI_CONTEXT_CONFLICT、AI_CONTEXT_UNAVAILABLE、AI_CONTEXT_COMPACTION_FAILED、AI_CONTEXT_BUSY 和既有 AI_REQUEST_TOO_LARGE；浏览器不接收原异常。不同 owner/project 的会话统一按不存在处理。
 
@@ -138,7 +138,7 @@ internal 前缀 `/internal/ai`：任务 GET/POST `/tasks/{taskId}/context` 读�
 
 必要验证是：两个会话隔离、同会话多轮重启后仍可继续、完整长消息与真实工具结果能回放、压缩后原文仍在、重复压缩不漏边界、阈值含等号、工具循环内触发、持久化失败阻止继续、手动空闲互斥与丢响应对账、中断历史不重放工具、原 Run/receipt/close/预算回归。
 
-真实模型/browser 验收使用最小项目：A 记住一条约束→重启空闲 worker→A 继续；B 不携带 A 的聊天；A 手动压缩后仍按约束工作且原文可查。自动 75% 的精确边界由固定 1M 配置与注入 usage 的本地 SDK 测试验证，不为测试烧入 786,432 个真实 tokens，也不新增生产小窗口开关。真实自动触发未发生时必须单列 NOT_RUN，不能写成云端 75% 场景已 PASS。
+真实模型/browser验收使用明确disposable项目；为超过Pi keepRecent20k而产生真实摘要，操作者先通过既有工作区入口准备96–120KiB无秘密ASCII顶层txt，A首轮只read_file一次并核对完整settled结果，harness不写fixture、不改生产窗口。主链：A记住一条约束→重启空闲 worker→A 继续；B 不携带 A 的聊天；A 手动压缩后仍按约束工作且原文可查。自动 75% 的精确边界由固定 1M 配置与注入 usage 的本地 SDK 测试验证，不为测试烧入 786,432 个真实 tokens，也不新增生产小窗口开关。真实自动触发未发生时必须单列 NOT_RUN，不能写成云端 75% 场景已 PASS。
 
 不增加向量库、RAG、跨会话记忆、Agent 编排器、消息队列、同步 JSONL、副本消息表、通用 event store、lease/审批框架、执行池、自动续跑或跨平台重构。顺序/CAS、保存屏障和手动压缩的最小请求状态分别对应现有网络不确定性、SDK void listener 和 compact 中止执行的实际接缝，均有直接必要性。
 
@@ -146,4 +146,4 @@ internal 前缀 `/internal/ai`：任务 GET/POST `/tasks/{taskId}/context` 读�
 
 已使用 Context7 查询 [Pi SDK 文档](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/sdk.md) 与 [压缩文档](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/compaction.md)，并以本分支安装的 1.2.0 declarations/JS 核实 SessionManager.inMemory 的 entries 参数、void listener、compact 的 abort、严格阈值和 getContextUsage 的 nullable 结果。在线文档包含比锁定版本新的能力，本方案不使用 durable/background compaction。
 
-本轮没有运行模型、应用、数据库迁移或集群验证；设计核对不是 SDK 合同测试通过。实现步骤与自检结论见 [实施计划](../plans/2026-10-19-ai-conversation-context-implementation-plan.md)。
+规划时的SDK核对已由实施期真实安装Pi1.2.0的scripted-provider合同测试补证；本轮只迁移随机disposable测试schema，没有模型/应用/运行库迁移或集群操作。实际RED/GREEN、评审、全部裁定及错误成本见[Context acceptance](../../../poc4/docs/evidence/ai-context/acceptance.md)，执行步骤见[实施计划](../plans/2026-10-19-ai-conversation-context-implementation-plan.md)。

@@ -1,6 +1,6 @@
 # AI 多会话与上下文管理 Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking. 本轮只交付计划；后续获得实施授权后再执行这些步骤。
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking. 原规划之后用户已授权实施、本地验证、顺序独立评审和发布准备；任务实际证据见[Context acceptance](../../../poc4/docs/evidence/ai-context/acceptance.md)，不授权模型/发布/运行库迁移/重启/push/merge/项目删除。
 
 **Goal:** 项目内多会话、同会话多轮 AgentTask 与完整历史持久化，并复用 Pi 实现固定 1M/75% 自动压缩和空闲手动压缩。
 
@@ -27,7 +27,7 @@
 
 ## 1. 执行目录、完成方式与文件职责
 
-在 `D:/DeepLearning/MyProjects/Project_Manao/.worktree/ai-integration` 的 `codex/ai-integration` 执行，代码基线 `c5a76fd`。先读实际 AGENTS，检查以下命令；保留之后出现的无关改动，不再创建另一个实现分支。
+在 `D:/DeepLearning/MyProjects/Project_Manao/.worktree/ai-integration` 的 `codex/ai-integration` 执行，规划代码基线`c5a76fd`，实施起点`cb0793c`。先读实际AGENTS，检查以下命令；保留之后出现的无关改动，不再创建另一个实现分支。
 
 ```powershell
 git status --short --branch
@@ -75,8 +75,8 @@ record ConversationView(String conversationId, String title, long headSeq,
                         String lastTaskId, String activeTaskId, ContextUsage usage,
                         String compactRequestId, String compactState, String compactFailureCode) {}
 record ConversationPage(List<ConversationView> items, String nextCursor) {}
-record HistoryItem(long seq, String taskId, String kind, String text, String toolCallId) {}
-record HistoryPage(List<HistoryItem> items, Long nextBeforeSeq) {}
+record HistoryItem(long seq, String taskId, String kind, String text, String toolCallId, int textOffset) {}
+record HistoryPage(List<HistoryItem> items, Long nextBeforeSeq, Integer nextBeforeOffset) {}
 record CompactStart(String conversationId, String requestId, long expectedHeadSeq) {}
 record CompactStatus(String conversationId, String requestId, String instanceId, String state) {}
 ```
@@ -95,12 +95,15 @@ export const COMPACTION_SETTINGS = {
 export class ConversationContext {
   // 内部只持有 BackendClient、身份、已确认 head/entries；不持有平台文件或 credentials。
   static load(backend: BackendClient, taskId: string, conversationId: string): Promise<ConversationContext>;
-  fileEntries(): FileEntry[];
+  readonly fileEntries: FileEntry[];
+  prepare(manager: SessionManager, revision: string): void;
   flush(session: AgentSession): Promise<void>;
+  static loadForCompaction(backend: BackendClient, start: CompactStart): Promise<ConversationContext>;
+  compactionResult(session: AgentSession): CompactResult;
 }
 ```
 
-空闲压缩复用同模块的恢复/flush 计算，传输身份由具体 callback 传入；不要为两种身份再建 ContextProvider/StorageAdapter 接口层。source_task_id/writer_id 在后端由已验证 task/request 推导，不能信任 payload 声明。
+空闲压缩复用同模块的loadForCompaction/compactionResult；只GET固定baseSeq历史，完整suffix与usage/终态只POST result原子提交，不POST context；不要为两种身份再建 ContextProvider/StorageAdapter 接口层。source_task_id/writer_id 在后端由已验证 task/request 推导，不能信任 payload 声明。
 
 ## Task 1：持久会话、原子绑定与有界读取
 
@@ -110,7 +113,7 @@ export class ConversationContext {
 
 **Produces:** §2 DTO；浏览器创建/list/detail/history/tasks 与任务 context GET/POST；后续使用的 `AgentConversationStore.appendForTask(taskId, instanceId, epoch, ContextAppend)`、`readForTask(taskId, instanceId, epoch, afterSeq, throughSeq)`。`throughSeq` 固定首次返回 head，避免分页读取漂移。
 
-- [ ] **Step 1 — RED：** 用 disposable MySQL 测试创建/幂等、owner/project 隔离、同一事务绑定 task/用户目标、worker 未启动时输入仍在、nullable 旧任务、跨会话改用同 taskId 的 digest 冲突、顺序追加/相同批重放/异内容冲突、分页和 FK 回收。新测试用 JdbcStoreTestSupport，每次随机 schema；禁止运行库 reset。
+- [x] **Step 1 — RED：** 用 disposable MySQL 测试创建/幂等、owner/project 隔离、同一事务绑定 task/用户目标、worker 未启动时输入仍在、nullable 旧任务、跨会话改用同 taskId 的 digest 冲突、顺序追加/相同批重放/异内容冲突、分页和 FK 回收。新测试用 JdbcStoreTestSupport，每次随机 schema；禁止运行库 reset。
 
 第一条具体回归从数据库约束入手，类中使用真实现有 scaffold：
 
@@ -131,8 +134,8 @@ export class ConversationContext {
 }
 ```
 
-- [ ] **Step 2 — 运行并确认目标失败：** `mvn -Dtest=AgentConversationStoreTest,AgentConversationHttpContractTest,AgentTaskStoreTest,AgentInternalSecurityTest test`（cwd `poc4/backend`）。记录 schema/行为缺失的有效失败，凭据或编译夹具错误不能当作行为 RED。
-- [ ] **Step 3 — 最小实现：** V13 按 spec 字段创建，时间由应用 Clock 写入；会话唯一身份和 owner 查找均通过 project。创建会话同时存 Pi v3 header：type=session、version=3、id=conversationId、cwd=manao-project、timestamp=created_at。TaskStore 在原 `SELECT project ... FOR UPDATE` 事务内锁定会话、核对归属/压缩占用，插入 task 和以下原生用户目标条目并增加 head，不做检查后再跨事务写入。新会话参与新请求 digest，旧 null 路径 digest 兼容。
+- [x] **Step 2 — 运行并确认目标失败：** `mvn -Dtest=AgentConversationStoreTest,AgentConversationHttpContractTest,AgentTaskStoreTest,AgentInternalSecurityTest test`（cwd `poc4/backend`）。记录 schema/行为缺失的有效失败，凭据或编译夹具错误不能当作行为 RED。
+- [x] **Step 3 — 最小实现：** V13 按 spec 字段创建，时间由应用 Clock 写入；会话唯一身份和 owner 查找均通过 project。创建会话同时存 Pi v3 header：type=session、version=3、id=conversationId、cwd=manao-project、timestamp=created_at。TaskStore 在原 `SELECT project ... FOR UPDATE` 事务内锁定会话、核对归属/压缩占用，插入 task 和以下原生用户目标条目并增加 head，不做检查后再跨事务写入。新会话参与新请求 digest，旧 null 路径 digest 兼容。
 
 ```json
 {"type":"custom_message","id":"00000000-0000-4000-8000-000000000002","parentId":null,"timestamp":"2026-10-19T00:00:00Z","customType":"manao_user_request","content":"用户提交的目标原文","details":{"taskId":"00000000-0000-4000-8000-000000000002"},"display":true}
@@ -152,10 +155,10 @@ UPDATE agent_conversation SET head_seq = ?, updated_at = ? WHERE id = ?;
 
 `parentId` 只能为 null、同会话已存在 entry 或本批前项；retain-none 的 firstKeptEntryId 可以等于 compaction 自己的 id。重复批次按 entry_id、顺序、writer 和 JsonNode.equals 验证；混合旧/新批次拒绝，worker 只发送互不重叠的原子批次。header 由后端创建，worker 只能核对/回传相同值。
 
-context 按 4 MiB/32 条分批，过滤器仅对这些精确新路由放宽；补声明长度、无 Content-Length 流式超限和单 entry 超限测试。浏览器投影使用 allowlist；toolResult 的 details 不直接透传。
+context按4MiB/32条分批，过滤器仅对精确task context和manual result路由放宽；补声明长度、流式超限和单entry超限测试。浏览器projection用seq/textOffset组合游标与nextBeforeOffset/beforeOffset，读时64KiB UTF-8安全片段、UTF-16 offset不切code point，不另存历史。append ACK前检查完整不可分HistoryPage group（含最大cursor）≤512KiB；不新增任意identifier长度限制。每轮状态由原taskId的owner-scoped TaskSnapshot读取，不新增动态seq项；toolResult details不透传。ConversationStore独立READ_COMMITTED，保留project-first锁和旧TaskStore事务。
 
-- [ ] **Step 4 — GREEN/复核：** 重新运行 Step 2；检查断言实际执行数，补并发两个连接的 task/compact 准入测试接口（Task 4 完成具体压缩准入）。与原 TaskStore 测试一起确认仍只有一个占用任务。使用真实 schema 从 V12 升到 V13，确认既有 task/tool rows 未改写。
-- [ ] **Step 5 — 审查并提交：** 重点审查锁顺序 project→conversation→entries、数据隔离/重放和 body 限制；提交 `feat(ai): persist project conversations and native entries`。
+- [x] **Step 4 — GREEN/复核：** 重新运行 Step 2；检查断言实际执行数，补并发两个连接的 task/compact 准入测试接口（Task 4 完成具体压缩准入）。与原 TaskStore 测试一起确认仍只有一个占用任务。使用真实 schema 从 V12 升到 V13，确认既有 task/tool rows 未改写。
+- [x] **Step 5 — 审查并提交：** 重点审查锁顺序 project→conversation→entries、数据隔离/重放和 body 限制；提交 `feat(ai): persist project conversations and native entries`。
 
 ## Task 2：多轮恢复和必须等待的保存屏障
 
@@ -165,7 +168,7 @@ context 按 4 MiB/32 条分批，过滤器仅对这些精确新路由放宽；�
 
 **Produces:** §2 ConversationContext；ProjectToolDeps 新增 `beforeInvoke?: () => Promise<void>`；每轮新的 PiTaskSession 从同一 conversation 的 FileEntry[] 创建，无本地历史副本。
 
-- [ ] **Step 1 — RED：** 先加以下 SDK 恢复合同测试，再在现有 scriptedSessionFactory 附近扩展模型 context 捕获，不另造 fake AgentSession。覆盖同会话第二轮含旧目标、独立会话不含旧目标、消息超过 8 KiB、中文/结构化工具调用保真、旧 toolCall 不执行、当前轮结果不误用旧 assistant。
+- [x] **Step 1 — RED：** 先加以下 SDK 恢复合同测试，再在现有 scriptedSessionFactory 附近扩展模型 context 捕获，不另造 fake AgentSession。覆盖同会话第二轮含旧目标、独立会话不含旧目标、消息超过 8 KiB、中文/结构化工具调用保真、旧 toolCall 不执行、当前轮结果不误用旧 assistant。
 
 ```typescript
 it("restores a native user request from external entries", () => {
@@ -182,8 +185,8 @@ it("restores a native user request from external entries", () => {
 
 在 scripted stream 的第二次 provider 请求处断言之前的 toolResult 已收到后端 ACK；用未 resolve 的保存 Promise 证明 backend.invoke/model stream 都不会提前调用。最后一条 assistant 保存失败时，terminal 不能是 COMPLETED。测试 Event listener 先通知后 append 的实际顺序。
 
-- [ ] **Step 2 — 运行 RED：** `pnpm test -- test/conversation-context.test.ts test/pi-session-context.test.ts test/pi-session.test.ts test/project-tools.test.ts test/server.test.ts`（cwd `poc4/pi-worker`）。记录有效行为失败。
-- [ ] **Step 3 — 最小实现：** context 分页固定 throughSeq；还原 `[header,...entries]`，注入 `SessionManager.inMemory`。绑定新会话 id，核对后端 header。新会话路径 `session.prompt` 发送固定触发文本 `Execute the user's most recent programming goal recorded above. Use the current workspace revision; re-read relevant files before changes.`；真实用户目标已存在于原生 custom_message，不再重复发送正文。旧 task-only 路径继续原 prompt 行为。每次只 flush 未确认 entries 的后缀；网络不确定只核对原 batch IDs/head，不分配新 IDs。
+- [x] **Step 2 — 运行 RED：** `pnpm test -- test/conversation-context.test.ts test/pi-session-context.test.ts test/pi-session.test.ts test/project-tools.test.ts test/server.test.ts`（cwd `poc4/pi-worker`）。记录有效行为失败。
+- [x] **Step 3 — 最小实现：** context 分页固定 throughSeq；还原 `[header,...entries]`，注入 `SessionManager.inMemory`。绑定新会话 id，核对后端 header。新会话路径 `session.prompt` 发送固定触发文本 `Execute the user's most recent programming goal recorded above. Use the current workspace revision; re-read relevant files before changes.`；真实用户目标已存在于原生 custom_message，不再重复发送正文。旧 task-only 路径继续原 prompt 行为。每次只 flush 未确认 entries 的后缀；网络不确定只核对原 batch IDs/head，不分配新 IDs。
 
 ```typescript
 const previousPrepare = session.agent.prepareRequest;
@@ -192,6 +195,7 @@ session.agent.prepareRequest = async (request, signal) => {
   await context.flush(session);
   return prepared;
 };
+// 还包装原streamFunction：native compact绕过prepareRequest，原stream前必须await ACK并检查abort signal。
 // createProjectTools 的 runToolCall 中、backend.invoke 之前：
 await deps.beforeInvoke?.();
 // DefaultPiTaskSession.run 中、sendTerminal 之前：
@@ -202,10 +206,10 @@ await context.flush(session);
 
 `settle()` 改为本轮 message_end 观察到的最后 assistant，不能从恢复后全部消息 reverse().find 取旧回答；压缩改变 message 数组长度，因此也不能只记一个旧数组下标。新一轮添加包含当前 revision/上轮中断提示的 SDK custom context note，要求重新读相关文件。
 
-如果旧任务已关闭但尾部 toolCall 不完整，只对该未完成工具轮追加 Pi `context_edit(content:null)`，再追加明确中断说明；两者先持久化。不得删除原 row、伪造成功 toolResult、执行旧 call 或恢复原 task。未关闭 NEEDS_ATTENTION 仍由旧任务占用，不能靠开新会话绕开。
+如果旧任务已关闭但尾部 toolCall 不完整，只对该未完成工具轮追加 Pi `context_edit(replacement:null)`（appendContextEdit(targetId, null)，在创建AgentSession前prepare），再追加明确中断说明；两者先持久化。不得删除原 row、伪造成功 toolResult、执行旧 call 或恢复原 task。未关闭 NEEDS_ATTENTION 仍由旧任务占用，不能靠开新会话绕开。
 
-- [ ] **Step 4 — GREEN/复核：** Step 2 全通过，`pnpm build`；后端运行 `mvn -Dtest=AgentConversationStoreTest,AgentTaskStoreTest,AgentTaskServiceTest,AgentInternalSecurityTest test`。补服务重建后从 DB 恢复的组件测试，确认成功、失败和 close 均能展示真实历史且没有旧工具调用。
-- [ ] **Step 5 — 审查并提交：** 重点检查所有 provider/tool/terminal 边界以及旧 task-only 兼容；提交 `feat(ai): restore conversation context and await durable history`。
+- [x] **Step 4 — GREEN/复核：** Step 2 全通过，`pnpm build`；后端运行 `mvn -Dtest=AgentConversationStoreTest,AgentTaskStoreTest,AgentTaskServiceTest,AgentInternalSecurityTest test`。补服务重建后从 DB 恢复的组件测试，确认成功、失败和 close 均能展示真实历史且没有旧工具调用。
+- [x] **Step 5 — 审查并提交：** 重点检查所有 provider/tool/terminal 边界以及旧 task-only 兼容；提交 `feat(ai): restore conversation context and await durable history`。
 
 ## Task 3：原生自动压缩、1M 配置与真实占用
 
@@ -215,7 +219,7 @@ await context.flush(session);
 
 **Produces:** §2 固定常量、COMPACTION_SETTINGS；ContextUsage 持久化，压缩后的原始历史不变。
 
-- [ ] **Step 1 — RED：** 运行真实锁定 SDK 的边界测试，覆盖 786431/786432/786433、摘要+recent 投影、多次压缩和工具结果增长跨阈值。首次请求前与工具循环后都要触发；以 injected usage/脚本化摘要实现，不发真实 75% 长请求。
+- [x] **Step 1 — RED：** 运行真实锁定 SDK 的边界测试，覆盖 786431/786432/786433、摘要+recent 投影、多次压缩和工具结果增长跨阈值。首次请求前与工具循环后都要触发；以 injected usage/脚本化摘要实现，不发真实 75% 长请求。
 
 ```typescript
 it("uses the fixed 1M window and inclusive 75 percent boundary", () => {
@@ -228,15 +232,15 @@ it("uses the fixed 1M window and inclusive 75 percent boundary", () => {
 
 此常量断言不能单独证明自动压缩：同一测试文件必须通过真实 AgentSession 与 scripted provider 捕获实际摘要请求和后续压缩投影，证明等号触发及 toolCall/result 没被分开。
 
-- [ ] **Step 2 — 运行 RED：** `pnpm test -- test/context-compaction.test.ts test/pi-session-context.test.ts test/pi-session.test.ts`。
-- [ ] **Step 3 — 最小实现：** model runtime 使用 CONTEXT_WINDOW；SettingsManager.inMemory 显式注入 COMPACTION_SETTINGS；不加自己的切分/摘要生成器。compaction_end 标记结果，由原保存屏障追加 SDK 已生成的 compaction/usage entries。usage 可空；保存时记对应 usage_head_seq，新增内容后以估算/未知标识，不能显示旧值为精确当前值。
+- [x] **Step 2 — 运行 RED：** `pnpm test -- test/context-compaction.test.ts test/pi-session-context.test.ts test/pi-session.test.ts`。
+- [x] **Step 3 — 最小实现：** model runtime使用CONTEXT_WINDOW；SettingsManager.inMemory显式注入COMPACTION_SETTINGS；首轮idle/pre-prompt计算新目标、pending trigger和初始system/tools，必要时public compact，活动hook只fail-closed；不加自己的切分/摘要生成器。compaction_end 标记结果，由原保存屏障追加 SDK 已生成的 compaction/usage entries。usage 可空；保存时记对应 usage_head_seq，新增内容后以估算/未知标识，不能显示旧值为精确当前值。
 
 摘要输入保留六工具实际消息，不依赖原生 read/write/edit 文件提取列表。用目标、明确约束、文件变化、build/HTTP 真结果、下一步的样例验证前后 context；模型摘要质量只有后续真实验收才能证明。
 
 自动摘要失败后，若下一请求仍在阈值上方，设置 AI_CONTEXT_COMPACTION_FAILED 并终止后续 provider 请求，保留原 entries；不能从 listener 中异步抛错指望 SDK 等待。stop 和 1800s deadline 同时调用公开的 session.abortCompaction() 与原 agent.abort()，否则原有仅 abort agent 的代码不能终止独立摘要请求；加真实 SDK 的 abort signal 测试。SDK 原生自动重试受此预算控制，不增加 Manao 重试循环。压缩后的 tokens=null 显示未知，不能回填成 0。断言 ACK 失败不进入压缩后的下一请求。
 
-- [ ] **Step 4 — GREEN/复核：** Step 2 与 `pnpm build` 通过；保存失败和中断的 Task 2 测试复验。核对 package/lock 没有升级，预算仍 1800/180/20。不要为本地阈值测试添加生产可调窗口。
-- [ ] **Step 5 — 审查并提交：** 重点审查阈值等号、累计 usage 误用和旧 summary 边界；提交 `feat(ai): compact active context at the fixed 75 percent threshold`。
+- [x] **Step 4 — GREEN/复核：** Step 2 与 `pnpm build` 通过；保存失败和中断的 Task 2 测试复验。核对 package/lock 没有升级，预算仍 1800/180/20。不要为本地阈值测试添加生产可调窗口。
+- [x] **Step 5 — 审查并提交：** 重点审查阈值等号、累计 usage 误用和旧 summary 边界；提交 `feat(ai): compact active context at the fixed 75 percent threshold`。
 
 ## Task 4：同一执行槽中的空闲手动压缩
 
@@ -244,14 +248,16 @@ it("uses the fixed 1M window and inclusive 75 percent boundary", () => {
 
 **Consumes:** 已持久历史、Pi compact、Task 3 设置；project-row 事务与 worker 单槽。
 
+实施结论：功能已完成并独立Approved；最初真实双连接准入/first-instance matrix测试在实现后首次GREEN，未完成其test-first要求。缺路由和后续修复有有效RED，详见acceptance§2，不追认替代。
+
 **Produces:** 浏览器 compact route；§2 CompactStart/Status/Result；worker start/status 与内部 context/result routes。Store 具体方法 `beginCompaction(ownerId, projectId, conversationId, CompactRequest)`、`finishCompaction(conversationId, requestId, instanceId, CompactResult)`；Service 负责锁外派发和只读核对。
 
-- [ ] **Step 1 — RED：** 测试同项目 task/compact 并发准入只接受一个；不同会话运行也拒绝 compact；其它项目占 worker 时明确忙；重复 request/丢 ACK 只查原状态；摘要成功但 callback 响应丢失不再摘要；baseSeq 已变/旧 instance/失败后的迟到回调全部拒绝。空会话/无可压缩新增内容返回 COMPLETED no-op，不调用模型。
+- [ ] **Step 1 — RED（流程偏差，未全量test-first）：** 测试同项目 task/compact 并发准入只接受一个；不同会话运行也拒绝 compact；其它项目占 worker 时明确忙；重复 request/丢 ACK 只查原状态；摘要成功但 callback 响应丢失不再摘要；baseSeq 已变/旧 instance/失败后的迟到回调全部拒绝。空会话/无可压缩新增内容返回 COMPLETED no-op，不调用模型。
 
 SDK 侧额外用 spy 断言手动入口只在 active slot 空闲后调用 compact，且从不调用 prompt 或六工具；不把 `compact()` 的 abort 行为当作“暂停后恢复”。
 
-- [ ] **Step 2 — 运行 RED：** 后端 `mvn -Dtest=AgentConversationCompactionTest,AgentConversationStoreTest,AgentTaskStoreTest test`；worker `pnpm test -- test/manual-compaction.test.ts test/server.test.ts`。
-- [ ] **Step 3 — 最小实现：** 短锁登记 RUNNING→锁外发送 CompactStart→worker 以同槽异步 compact、120s abort→单事务提交 entries+head+COMPLETED，失败不写摘要、记固定错误。worker 同槽状态使用简单 task/compact 判别联合，不建立工作队列。
+- [x] **Step 2 — 运行 RED：** 后端 `mvn -Dtest=AgentConversationCompactionTest,AgentConversationStoreTest,AgentTaskStoreTest test`；worker `pnpm test -- test/manual-compaction.test.ts test/server.test.ts`。
+- [x] **Step 3 — 最小实现：** 短锁登记 RUNNING→锁外发送 CompactStart→worker 以同槽异步 compact、120s abort→单事务提交 entries+head+COMPLETED，失败不写摘要、记固定错误。worker 同槽状态使用简单 task/compact 判别联合，不建立工作队列。
 
 ```typescript
 // server.ts 的共享占用表达，替代仅能记录 TaskRecord 的 active；不是执行池。
@@ -266,8 +272,8 @@ HttpPiWorkerClient 保留原 task 方法，增加 `startCompaction(CompactStart)
 
 同实例在途继续等待；原 worker 实例确认更换或明确失败时将旧请求置 FAILED 并封住写入。连接超时保持待对账，不猜作失败；查询或下次准入时核对，不开后台扫描器。显式再次点击创建新 requestId；已成功旧 request 可按原 writer_id 查得。无摘要历史的 no-op 从最近请求状态答复。
 
-- [ ] **Step 4 — GREEN/复核：** 运行 Step 2 与 worker build；扩展测试证明手动摘要不停止原 ready Run、不授予源码写权限、backend 重建不永久卡死会话、取消/超时不覆盖旧 context。不额外测试无关完整 Run 故障矩阵。
-- [ ] **Step 5 — 审查并提交：** 重点审查慢 IO 不持 gate、两个入口同事务互斥、迟到提交封锁；提交 `feat(ai): support idle conversation compaction in the existing worker slot`。
+- [x] **Step 4 — GREEN/复核：** 运行 Step 2 与 worker build；扩展测试证明手动摘要不停止原 ready Run、不授予源码写权限、backend 重建不永久卡死会话、取消/超时不覆盖旧 context。不额外测试无关完整 Run 故障矩阵。
+- [x] **Step 5 — 审查并提交：** 重点审查慢 IO 不持 gate、两个入口同事务互斥、迟到提交封锁；提交 `feat(ai): support idle conversation compaction in the existing worker slot`。
 
 ## Task 5：项目内多会话界面与历史回放
 
@@ -277,7 +283,7 @@ HttpPiWorkerClient 保留原 task 方法，增加 `startCompaction(CompactStart)
 
 **Produces:** AI 页的会话列表、新建/切换、历史分页、多轮输入、约占用、空闲压缩按钮和状态；原任务关闭/Run 查看继续可用。
 
-- [ ] **Step 1 — RED：** 先在 API/解析和组件测试中覆盖新建不调用模型、A/B 切换不串历史、异步 A 响应不覆盖 B、刷新从后端恢复、新轮提交到当前会话、旧 task-only 数据兼容、长文本按原文显示、压缩原文保留。运行中的会话可查看但所有编程新提交仍受项目级占用禁止。
+- [x] **Step 1 — RED：** 先在 API/解析和组件测试中覆盖新建不调用模型、A/B 切换不串历史、异步 A 响应不覆盖 B、刷新从后端恢复、新轮提交到当前会话、旧 task-only 数据兼容、长文本按原文显示、压缩原文保留。运行中的会话可查看但所有编程新提交仍受项目级占用禁止。
 
 前端条件的具体回归可以先使用组件现有 testing-library 风格：
 
@@ -291,15 +297,15 @@ expect(screen.getByText('占用暂不可用')).toBeInTheDocument();
 
 上述断言放在各测试实际 render/更新 props 或 MSW query 之后；测试 fixture 复用现有 WorkbenchShell/AgentTaskPanel 的 provider wrapper，不增加生产状态机来配合测试。
 
-- [ ] **Step 2 — 运行 RED：** `pnpm test -- src/features/ai/AgentConversationPanel.test.tsx src/features/ai/ConversationHistory.test.tsx src/features/ai/AgentTaskPanel.test.tsx src/components/shell/WorkbenchShell.test.tsx`（cwd `poc4/frontend`）。
-- [ ] **Step 3 — 最小实现：** 查询 key 含 user/project/conversation；历史游标与响应有 scope guard。会话选择可保存为 UI 偏好，真实历史/activeTask 始终读后端。发送任务先生成原 taskId，再保存该 taskId+conversationId 绑定；丢响应查原 task，不能因切换会话生成替代任务。
+- [x] **Step 2 — 运行 RED：** `pnpm test -- src/features/ai/AgentConversationPanel.test.tsx src/features/ai/ConversationHistory.test.tsx src/features/ai/AgentTaskPanel.test.tsx src/components/shell/WorkbenchShell.test.tsx`（cwd `poc4/frontend`）。
+- [x] **Step 3 — 最小实现：** 查询 key 含 user/project/conversation；历史游标与响应有 scope guard。会话选择可保存为 UI 偏好，真实历史/activeTask 始终读后端。发送任务先生成原 taskId，再保存该 taskId+conversationId 绑定；丢响应查原 task，不能因切换会话生成替代任务。
 
 复用原 TaskPanel 的占用、close、Run/HTTP/build 结果展示，只做必要的组件导出；完整消息在 ConversationHistory 展示，不再重复显示同一条截断 progress。用户目标只投影 customType=manao_user_request，隐藏 SDK 内部触发 user message；pending 或启动前失败的目标也已在 entries 中。active task 属于另一个会话时显示可导航的“项目有任务运行中”。
 
 手动请求先生成并保留 requestId/baseSeq，POST 不确定读会话原请求状态；明确失败后用户再次点击才新建 request。没有完整 usage 时不显示虚构百分比。文本/代码按文本，工具详情从已有安全 route 读取，隐藏内部 entries 与 thinking。
 
-- [ ] **Step 4 — GREEN/复核：** Step 2、`pnpm typecheck`、`pnpm build`；测试浏览器/项目切换时请求失效和原 revision-cache 修复。确保切换会话不释放 Agent/Run 锁、不主动 close、不清空别的会话消息。
-- [ ] **Step 5 — 审查并提交：** 重点审查缓存隔离、原 taskId 对账、raw payload 泄露与重复消息；提交 `feat(ai): add persistent conversations to the project AI panel`。
+- [x] **Step 4 — GREEN/复核：** Step 2、`pnpm typecheck`、`pnpm build`；测试浏览器/项目切换时请求失效和原 revision-cache 修复。确保切换会话不释放 Agent/Run 锁、不主动 close、不清空别的会话消息。
+- [x] **Step 5 — 审查并提交：** 重点审查缓存隔离、原 taskId 对账、raw payload 泄露与重复消息；提交 `feat(ai): add persistent conversations to the project AI panel`。
 
 ## Task 6：整合验证、发布准备与证据
 
@@ -309,15 +315,17 @@ expect(screen.getByText('占用暂不可用')).toBeInTheDocument();
 
 **Produces:** 可运行的最小主链、一次必要集成回归、明确未执行的外部验收与逐项发布清单。
 
-- [ ] **Step 1 — RED：** Playwright 按既有 AI config 的 auth/env 检查搭建当前入口；缺必要外部条件时标 NOT_RUN，不能以 mock E2E 冒充真实主链。主链为 A 记住字段约束→同会话新 task 遵守→创建 B 并核实上下文未带 A→空闲重建 worker→重开 A→手动压缩→原文仍在且下一轮仍遵守约束。会话隔离同时在 scripted provider 的实际 context 捕获处断言，不能只凭真实模型“没有提到约束”判断。
+实际本地整合：backend163/163、worker最终121/121+build、frontend165/165+typecheck/build，精确cb0793c旧代码在V13 disposable schema的27/27。Task6发现deadline timer已触发但now==deadline时误报AI_ABORTED；稳定deps.now回归先RED，再以deadlineExpired事实标记最小修复（7a7976d），只重跑受影响worker。真实E2E缺授权/env在config退出1并标NOT_RUN，未调用模型或kubectl。三镜像NOT_BUILT。完整命令/计数/时间/裁定见acceptance。
+
+- [x] **Step 1 — 验收入口（真实主链NOT_RUN）：** Playwright 按既有 AI config 的 auth/env 检查搭建当前入口；缺必要外部条件时标 NOT_RUN，不能以 mock E2E 冒充真实主链。操作者先在disposable项目准备96–120KiB无秘密ASCII顶层txt，A首轮只read_file一次，harness比对owner文件sha/content与原task的安全settled工具结果，以原生20k保留量产生真实摘要而非no-op；不降低窗口、不由本轮写文件。主链为A记住字段约束→同会话新 task 遵守→创建 B 并核实上下文未带 A→空闲重建 worker→重开 A→手动压缩→原文仍在且下一轮仍遵守约束。会话隔离同时在 scripted provider 的实际 context 捕获处断言，不能只凭真实模型“没有提到约束”判断。
 
 ```json
 "test:e2e:ai-context": "playwright test --config playwright.ai-context.config.ts"
 ```
 
-空闲 worker 重建是后续部署/验收步骤，执行前必须已获该轮授权；本轮规划不会重启它。不复用 Stage 2 未完成场景要求删除旧项目，验收用一个明确 disposable 项目；项目回收仍需执行授权并独立核查。
+空闲 worker 重建是后续部署/验收步骤，执行前必须已获该轮授权；本轮实施/本地验证不会重启它。不复用 Stage 2 未完成场景要求删除旧项目，验收用一个明确 disposable 项目；项目回收仍需执行授权并独立核查。
 
-- [ ] **Step 2 — 必要整合回归：** Task 1–5 定向测试通过后运行一次下列相关组合，逐项记录执行数/失败/跳过与报告。不因单纯文档变更重复全部测试。
+- [x] **Step 2 — 必要整合回归：** Task 1–5 定向测试通过后运行一次下列相关组合，逐项记录执行数/失败/跳过与报告。不因单纯文档变更重复全部测试。
 
 ```powershell
 # cwd: poc4/backend；测试账户仅允许 disposable schemas，禁止指向运行 schema reset。
@@ -334,16 +342,16 @@ pnpm test:e2e:ai-context
 
 这些 cwd 是逐条切换目录的说明，不把三组命令在一个错误目录直接连续执行。后端测试使用现有 JdbcStoreTestSupport 的配置，不打印配置值；缺测试库条件先完成其余验证，缺项如实记录。
 
-- [ ] **Step 3 — 发布准备：** README 按现有 Stage 2 发布方式列 backend/worker/frontend 三镜像、源码 SHA、实际 digest 与构建执行状态、V12→V13 备份/迁移前置检查、max_allowed_packet/内部 proxy body limit、旧 task-only 冒烟、发布前无运行 task/compact 的确认命令。发布前条件未满足写 NOT_RUN，镜像未构建写 NOT_BUILT，不杜撰 digest。
+- [x] **Step 3 — 发布准备：** README 按现有 Stage 2 发布方式列 backend/worker/frontend 三镜像、源码 SHA、实际 digest 与构建执行状态、V12→V13 备份/迁移前置检查、max_allowed_packet/内部 proxy body limit、旧 task-only 冒烟、发布前无运行 task/compact 的确认命令。发布前条件未满足写 NOT_RUN，镜像未构建写 NOT_BUILT，不杜撰 digest。
 
 升级是 additive V13；短维护窗口允许，先停新任务/摘要入口并确认现有任务结算再部署。回滚旧应用代码可保留新增表/可空列，不能为回滚删除历史；验证旧代码在 V13 schema 上的 task-only 路径，并遵守现有 Flyway 对未来版本的实际配置，未验证前不承诺可回滚。没有授权时只写准备，不执行发布。
 
-- [ ] **Step 4 — 证据与最小清理：** acceptance 分开记录代码/本地 SDK、真实模型、浏览器、迁移/重启、自动阈值、手动摘要、清理；本地注入 usage 不等于真实云端 75% 场景。真实未触发自动压缩填 NOT_RUN；真实摘要仍保留有损概括的限制。删除本轮无用本地临时文件，保留最小必要失败记录，不删除已有项目资源或重置运行库。
+- [x] **Step 4 — 证据与最小清理：** acceptance 分开记录代码/本地 SDK、真实模型、浏览器、迁移/重启、自动阈值、手动摘要、清理；本地注入 usage 不等于真实云端 75% 场景。真实未触发自动压缩填 NOT_RUN；真实摘要仍保留有损概括的限制。删除本轮无用本地临时文件，保留最小必要失败记录，不删除已有项目资源或重置运行库。
 - [ ] **Step 5 — 最终审查/提交：** 检查整体规格与质量、BOM/链接、git diff --check。提交 `test(ai): verify conversation persistence and compaction`；更新索引为实际结果，不修改旧阶段 PASS 边界。没有真实全链证据不授予上下文切片的云端 PASS。
 
 ## 3. 规划自检与过度工程化专项复核（2026-10-19）
 
-这是设计/计划审查，所有 Task checkbox 保持未执行；没有运行本节未来列出的功能测试。
+以下保留规划时的设计自检；当时未运行功能测试。实施期已补真实SDK/随机schema/组件证据，Task1–5完成且独立审查通过；Task4最初准入/first-instance测试首次GREEN的TDD偏差明确保留。Task6真实外部主链仍NOT_RUN，最终审查由主控记录。
 
 | 需求或实际接缝 | 落点 | 最小性判断 |
 | --- | --- | --- |
@@ -370,4 +378,4 @@ pnpm test:e2e:ai-context
 9. 移除预先设计的 checkpoint/向量检索/独立消息表/worker JSONL 权威及完整旧数据迁移；首版恢复全部 entries 的成本保留为可测限制。
 10. 用户目标改为准入事务内的原生 custom_message，既参与模型上下文又支持统一 seq 分页，避免启动前失败的输入只有 task.prompt、历史无法完整列出的缺口；不增加第三张表。
 
-自检结论：六个任务足以覆盖已确认范围。必要复杂度集中在持久保存时序、跨轮执行身份和空闲摘要互斥；没有引入新的 Agent 平台。实际实现时若 SDK 合同测试否定某个接缝，先给出该项最小调整及证据，不静默升级 Pi 或扩展产品范围。当前最大未验证点是新保存屏障与自动压缩的实际 SDK 时序，Task 2/3 专门以真实锁定 SDK 测试验证。
+自检结论：六个任务足以覆盖已确认范围。必要复杂度集中在持久保存时序、跨轮执行身份和空闲摘要互斥；没有引入新的 Agent 平台。实际实现时若 SDK 合同测试否定某个接缝，先给出该项最小调整及证据，不静默升级 Pi 或扩展产品范围。原最大未验证点（保存屏障/自动压缩SDK时序）已由Task2/3真实锁定SDK scripted-provider测试补证；真实云模型质量、浏览器/重启、运行库迁移及发布仍未验证。
