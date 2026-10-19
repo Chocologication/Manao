@@ -41,10 +41,13 @@ public final class InternalBodyLimitFilter extends jakarta.servlet.http.HttpFilt
 
     @Override protected void doFilter(HttpServletRequest request, HttpServletResponse response, FilterChain chain)
         throws IOException, ServletException {
+        long requestLimit = request.getRequestURI().matches("/internal/ai/tasks/[^/]+/context")
+            || request.getRequestURI().matches("/internal/ai/conversations/[^/]+/compactions/[^/]+/(context|result)")
+            ? AgentConversationStore.CONTEXT_LIMIT : limitBytes;
         String declared = request.getHeader("Content-Length");
         if (declared != null) {
             try {
-                if (Long.parseLong(declared) > limitBytes) {
+                if (Long.parseLong(declared) > requestLimit) {
                     writeTooLarge(response);
                     return;
                 }
@@ -55,7 +58,7 @@ public final class InternalBodyLimitFilter extends jakarta.servlet.http.HttpFilt
         }
         // Pre-read against the bound. null means the real bytes exceeded the limit:
         // refuse immediately, before the request reaches any handler.
-        byte[] body = readBounded(request.getInputStream());
+        byte[] body = readBounded(request.getInputStream(), requestLimit);
         if (body == null) {
             writeTooLarge(response);
             return;
@@ -71,14 +74,14 @@ public final class InternalBodyLimitFilter extends jakarta.servlet.http.HttpFilt
     }
 
     /** The exact body bytes, or null once the real byte count exceeded the bound. */
-    private byte[] readBounded(jakarta.servlet.ServletInputStream source) throws IOException {
+    private byte[] readBounded(jakarta.servlet.ServletInputStream source, long requestLimit) throws IOException {
         ByteArrayOutputStream buffer = new ByteArrayOutputStream();
         byte[] chunk = new byte[8192];
         long total = 0;
         int read;
         while ((read = source.read(chunk)) != -1) {
             total += read;
-            if (total > limitBytes) {
+            if (total > requestLimit) {
                 return null;
             }
             buffer.write(chunk, 0, read);

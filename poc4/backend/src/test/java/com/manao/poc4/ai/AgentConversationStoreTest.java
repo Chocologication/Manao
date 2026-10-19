@@ -1,0 +1,321 @@
+package com.manao.poc4.ai;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static com.manao.poc4.ai.AgentConversationContracts.*;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.manao.poc4.api.ApiException;
+import com.manao.poc4.persistence.JdbcStoreTestSupport;
+import java.sql.Timestamp;
+import java.time.Clock;
+import java.time.Instant;
+import java.time.ZoneOffset;
+import java.util.List;
+import java.util.UUID;
+import org.junit.jupiter.api.Test;
+import org.springframework.jdbc.datasource.DataSourceTransactionManager;
+
+class AgentConversationStoreTest {
+    private static final Instant NOW = Instant.parse("2026-10-19T00:00:00Z");
+    private static final ObjectMapper JSON = new ObjectMapper();
+
+    @Test void creationIsIdempotentAndOwnerScoped() {
+        try (var db = JdbcStoreTestSupport.create()) {
+            seed(db);
+            var conversations = conversations(db);
+            String id = UUID.randomUUID().toString();
+            assertThat(conversations.create("ctx-owner", "ctx-project", new CreateConversationRequest(id)))
+                .isEqualTo(new ConversationView(id, "新会话", 0, null, null, null, null, null, null));
+            assertThat(conversations.create("ctx-owner", "ctx-project", new CreateConversationRequest(id)).headSeq()).isZero();
+            assertThat(conversations.list("ctx-owner", "ctx-project", null, 20).items()).hasSize(1);
+            assertCode(() -> conversations.detail("other-owner", "ctx-project", id), "AI_CONVERSATION_NOT_FOUND");
+            assertCode(() -> conversations.create("ctx-owner", "other-project", new CreateConversationRequest(id)), "AI_CONVERSATION_NOT_FOUND");
+        }
+    }
+
+    @Test void taskAdmissionPersistsOriginalGoalAtomicallyAndBindsReplayDigest() throws Exception {
+        try (var db = JdbcStoreTestSupport.create()) {
+            seed(db);
+            var conversations = conversations(db);
+            String id = UUID.randomUUID().toString();
+            String other = UUID.randomUUID().toString();
+            conversations.create("ctx-owner", "ctx-project", new CreateConversationRequest(id));
+            conversations.create("ctx-owner", "ctx-project", new CreateConversationRequest(other));
+            String task = UUID.randomUUID().toString();
+            String goal = "😀".repeat(41) + "原始目标";
+            var request = new AgentContracts.TaskRequest(task, goal, 7);
+            assertThat(tasks(db).createTask("ctx-owner", "ctx-project", request, id).snapshot().conversationId()).isEqualTo(id);
+            assertThat(tasks(db).createTask("ctx-owner", "ctx-project", request, id).created()).isFalse();
+            assertCode(() -> tasks(db).createTask("ctx-owner", "ctx-project", request, other), "AI_TASK_MISMATCH");
+            assertThat(conversations.detail("ctx-owner", "ctx-project", id).title()).isEqualTo("😀".repeat(40));
+            assertThat(conversations.history("ctx-owner", "ctx-project", id, null, 50).items())
+                .containsExactly(new HistoryItem(1, task, "user", goal, null));
+            var entry = JSON.readTree(db.jdbc().queryForObject("SELECT payload_json FROM agent_conversation_entry", String.class));
+            assertThat(entry.path("id").asText()).isEqualTo(task);
+            assertThat(entry.path("parentId").isNull()).isTrue();
+            assertThat(entry.path("timestamp").asText()).isEqualTo("2026-10-19T00:00:00Z");
+            assertThat(entry.path("details").path("taskId").asText()).isEqualTo(task);
+            db.jdbc().update("UPDATE agent_task SET state='FAILED' WHERE id=?", task);
+            var legacy = tasks(db).create("ctx-owner", "ctx-project", new AgentContracts.TaskRequest(UUID.randomUUID().toString(), "legacy", 7));
+            assertThat(legacy.conversationId()).isNull();
+        }
+    }
+
+    @Test void nativeAppendReplaysOnlyWholeIdenticalBatchesAndRejectsStaleWritersAndForeignReferences() throws Exception {
+        try (var db = JdbcStoreTestSupport.create()) {
+            seed(db);
+            var store = conversations(db);
+            String id = UUID.randomUUID().toString(), task = UUID.randomUUID().toString();
+            store.create("ctx-owner", "ctx-project", new CreateConversationRequest(id));
+            tasks(db).createTask("ctx-owner", "ctx-project", new AgentContracts.TaskRequest(task, "goal", 7), id);
+            var page = store.readForTask(task, "worker", 1, 0, null);
+            assertThat(page.headSeq()).isEqualTo(1);
+            assertThat(page.header().path("id").asText()).isEqualTo(id);
+            var first = JSON.readTree("{\"id\":\"native-1\",\"type\":\"message\",\"parentId\":\"" + task + "\",\"timestamp\":\"2026-10-19T00:00:00Z\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"完整中文\"},{\"type\":\"thinking\",\"thinking\":\"secret-thought\"}]}}");
+            var append = new ContextAppend(1, page.header(), List.of(first), new ContextUsage(321L, 1048576, null));
+            assertThat(store.appendForTask(task, "worker", 1, append).headSeq()).isEqualTo(2);
+            assertThat(store.appendForTask(task, "worker", 1, append).headSeq()).isEqualTo(2);
+            var changed = first.deepCopy(); ((com.fasterxml.jackson.databind.node.ObjectNode) changed).put("timestamp", "changed");
+            assertCode(() -> store.appendForTask(task, "worker", 1, new ContextAppend(1, page.header(), List.of(changed), null)), "AI_CONTEXT_CONFLICT");
+            var bad = JSON.readTree("{\"id\":\"native-2\",\"type\":\"context_edit\",\"parentId\":\"foreign\",\"targetId\":\"native-1\",\"replacement\":null}");
+            assertCode(() -> store.appendForTask(task, "worker", 1, new ContextAppend(2, page.header(), List.of(bad), null)), "AI_CONTEXT_CONFLICT");
+            assertCode(() -> store.appendForTask(task, "other-worker", 1, append), "AI_INSTANCE_MISMATCH");
+            assertThat(store.history("ctx-owner", "ctx-project", id, null, 50).items())
+                .extracting(HistoryItem::text).contains("完整中文").doesNotContain("secret-thought");
+            db.jdbc().update("UPDATE agent_task SET state='FAILED' WHERE id=?", task);
+            assertCode(() -> store.appendForTask(task, "worker", 1, append), "AI_CONTEXT_CONFLICT");
+        }
+    }
+
+    @Test void nativePagesPinHeadAndBatchLimitsDoNotTruncateEntries() throws Exception {
+        try (var db = JdbcStoreTestSupport.create()) {
+            seed(db);
+            var store = conversations(db);
+            String conversation = UUID.randomUUID().toString(), task = UUID.randomUUID().toString();
+            store.create("ctx-owner", "ctx-project", new CreateConversationRequest(conversation));
+            tasks(db).createTask("ctx-owner", "ctx-project", new AgentContracts.TaskRequest(task, "goal", 7), conversation);
+            var initial = store.readForTask(task, "worker", 1, 0, null);
+            var entries = new java.util.ArrayList<com.fasterxml.jackson.databind.JsonNode>();
+            String parent = task;
+            for (int i = 0; i < 32; i++) {
+                var entry = nativeMessage("page-" + i, parent, "中文".repeat(5000));
+                entries.add(entry); parent = "page-" + i;
+            }
+            assertThat(store.appendForTask(task, "worker", 1, new ContextAppend(1, initial.header(), entries, null)).headSeq()).isEqualTo(33);
+            var page = store.readForTask(task, "worker", 1, 0, null);
+            assertThat(page.entries()).hasSize(32);
+            assertThat(page.nextAfterSeq()).isEqualTo(32);
+            store.appendForTask(task, "worker", 1, new ContextAppend(33, page.header(), List.of(nativeMessage("later", parent, "later")), null));
+            var tail = store.readForTask(task, "worker", 1, page.nextAfterSeq(), page.headSeq());
+            assertThat(tail.headSeq()).isEqualTo(33);
+            assertThat(tail.entries()).extracting(StoredEntry::seq).containsExactly(33L);
+            assertThat(tail.entries().get(0).entry().path("message").path("content").get(0).path("text").asText()).hasSize(10000);
+            assertThat(tail.nextAfterSeq()).isNull();
+            var big = nativeMessage("big", "later", "x".repeat(2 * 1024 * 1024));
+            assertCode(() -> store.appendForTask(task, "worker", 1, new ContextAppend(34, page.header(), List.of(big), null)), "AI_REQUEST_TOO_LARGE");
+            assertThat(store.detail("ctx-owner", "ctx-project", conversation).headSeq()).isEqualTo(34);
+            var history = store.history("ctx-owner", "ctx-project", conversation, null, 2);
+            assertThat(history.items()).hasSize(2);
+            assertThat(history.nextBeforeSeq()).isEqualTo(33);
+            assertThat(store.history("ctx-owner", "ctx-project", conversation, history.nextBeforeSeq(), 2).items())
+                .extracting(HistoryItem::seq).containsExactly(31L, 32L);
+        }
+    }
+
+    @Test void entryBytesBoundResponsePagesAndHeaderAndMixedBatchConflictsAreAtomic() throws Exception {
+        try (var db = JdbcStoreTestSupport.create()) {
+            seed(db); var store = conversations(db);
+            String conversation = UUID.randomUUID().toString(), task = UUID.randomUUID().toString();
+            store.create("ctx-owner", "ctx-project", new CreateConversationRequest(conversation));
+            tasks(db).createTask("ctx-owner", "ctx-project", new AgentContracts.TaskRequest(task, "goal", 7), conversation);
+            var page = store.readForTask(task, "worker", 1, 0, null);
+            var e1 = nativeMessage("large-1", task, "中".repeat(600000));
+            store.appendForTask(task, "worker", 1, new ContextAppend(1, page.header(), List.of(e1), null));
+            store.appendForTask(task, "worker", 1, new ContextAppend(2, page.header(), List.of(nativeMessage("large-2", "large-1", "中".repeat(600000))), null));
+            store.appendForTask(task, "worker", 1, new ContextAppend(3, page.header(), List.of(nativeMessage("large-3", "large-2", "中".repeat(600000))), null));
+            var first = store.readForTask(task, "worker", 1, 0, null);
+            assertThat(JSON.writeValueAsBytes(first).length).isLessThanOrEqualTo(4 * 1024 * 1024);
+            assertThat(first.nextAfterSeq()).isEqualTo(3);
+            assertThat(store.readForTask(task, "worker", 1, 3, first.headSeq()).entries()).extracting(StoredEntry::seq).containsExactly(4L);
+            assertCode(() -> store.appendForTask(task, "worker", 1, new ContextAppend(1, page.header(), List.of(e1, nativeMessage("new", "large-3", "new")), null)), "AI_CONTEXT_CONFLICT");
+            var forged = page.header().deepCopy(); ((com.fasterxml.jackson.databind.node.ObjectNode) forged).put("cwd", "/other");
+            assertCode(() -> store.appendForTask(task, "worker", 1, new ContextAppend(4, forged, List.of(), null)), "AI_CONTEXT_CONFLICT");
+            assertCode(() -> store.appendForTask(task, "worker", 0, new ContextAppend(4, page.header(), List.of(), null)), "AI_EPOCH_MISMATCH");
+            assertThat(store.detail("ctx-owner", "ctx-project", conversation).headSeq()).isEqualTo(4);
+        }
+    }
+
+    @Test void oversizedBrowserTextIsLosslesslyPagedAtUnicodeBoundaries() throws Exception {
+        try (var db = JdbcStoreTestSupport.create()) {
+            seed(db); var store = conversations(db);
+            String conversation = UUID.randomUUID().toString(), task = UUID.randomUUID().toString();
+            store.create("ctx-owner", "ctx-project", new CreateConversationRequest(conversation));
+            tasks(db).createTask("ctx-owner", "ctx-project", new AgentContracts.TaskRequest(task, "goal", 7), conversation);
+            var page = store.readForTask(task, "worker", 1, 0, null);
+            String text = "😀中文\\\"".repeat(80000);
+            store.appendForTask(task, "worker", 1, new ContextAppend(1, page.header(), List.of(nativeMessage("long", task, text)), null));
+            Long before = null; Integer offset = null;
+            var fragments = new java.util.TreeMap<Integer, String>();
+            int pages = 0;
+            do {
+                var history = store.history("ctx-owner", "ctx-project", conversation, before, offset, 2);
+                assertThat(JSON.writeValueAsBytes(history).length).isLessThanOrEqualTo(512 * 1024);
+                for (var item : history.items()) if (item.seq() == 2) fragments.put(item.textOffset(), item.text());
+                before = history.nextBeforeSeq(); offset = history.nextBeforeOffset(); pages++;
+                assertThat(pages).isLessThan(100);
+            } while (before != null);
+            assertThat(String.join("", fragments.values())).isEqualTo(text);
+            assertThat(pages).isGreaterThan(1);
+        }
+    }
+
+    @Test void missingConversationAndCompactionOccupancyNeverLeaveTaskOrGoalRows() {
+        try (var db = JdbcStoreTestSupport.create()) {
+            seed(db); var store = conversations(db);
+            String conversation = UUID.randomUUID().toString();
+            store.create("ctx-owner", "ctx-project", new CreateConversationRequest(conversation));
+            assertCode(() -> tasks(db).createTask("ctx-owner", "ctx-project", new AgentContracts.TaskRequest(UUID.randomUUID().toString(), "goal", 7), UUID.randomUUID().toString()), "AI_CONVERSATION_NOT_FOUND");
+            db.jdbc().update("UPDATE agent_conversation SET compact_state='RUNNING' WHERE id=?", conversation);
+            assertCode(() -> tasks(db).createTask("ctx-owner", "ctx-project", new AgentContracts.TaskRequest(UUID.randomUUID().toString(), "goal", 7), conversation), "AI_CONTEXT_BUSY");
+            assertCode(() -> tasks(db).createTask("ctx-owner", "ctx-project", new AgentContracts.TaskRequest(UUID.randomUUID().toString(), "legacy", 7)), "AI_CONTEXT_BUSY");
+            assertThat(db.jdbc().queryForObject("SELECT COUNT(*) FROM agent_task", Integer.class)).isZero();
+            assertThat(db.jdbc().queryForObject("SELECT COUNT(*) FROM agent_conversation_entry", Integer.class)).isZero();
+        }
+    }
+
+    @Test void v12UpgradePreservesLegacyTaskAndToolRowsAndConversationForeignKeysCascade() {
+        try (var db = JdbcStoreTestSupport.createAtVersion("12")) {
+            seed(db); var now = Timestamp.from(NOW);
+            String task = UUID.randomUUID().toString();
+            db.jdbc().update("INSERT INTO agent_task(id,project_id,owner_id,request_sha256,prompt,state,worker_epoch,workspace_revision,created_at,updated_at) VALUES (?,'ctx-project','ctx-owner',?,'legacy','COMPLETED',1,7,?,?)", task, "a".repeat(64), now, now);
+            db.jdbc().update("INSERT INTO agent_tool_call(task_id,tool_call_id,request_sha256,tool_name,state,expected_revision,created_at,updated_at) VALUES (?,'old',?,'read_file','COMPLETED',7,?,?)", task, "b".repeat(64), now, now);
+            var taskBefore = db.jdbc().queryForMap("SELECT * FROM agent_task WHERE id=?", task);
+            var callBefore = db.jdbc().queryForMap("SELECT * FROM agent_tool_call WHERE task_id=?", task);
+            db.migrateToLatest();
+            var after = db.jdbc().queryForMap("SELECT * FROM agent_task WHERE id=?", task);
+            assertThat(after.remove("conversation_id")).isNull();
+            assertThat(after).isEqualTo(taskBefore);
+            assertThat(db.jdbc().queryForMap("SELECT * FROM agent_tool_call WHERE task_id=?", task)).isEqualTo(callBefore);
+            String conversation = UUID.randomUUID().toString();
+            conversations(db).create("ctx-owner", "ctx-project", new CreateConversationRequest(conversation));
+            tasks(db).createTask("ctx-owner", "ctx-project", new AgentContracts.TaskRequest(UUID.randomUUID().toString(), "goal", 7), conversation);
+            db.jdbc().update("DELETE FROM project WHERE id='ctx-project'");
+            assertThat(db.jdbc().queryForObject("SELECT COUNT(*) FROM agent_conversation_entry", Integer.class)).isZero();
+            assertThat(db.jdbc().queryForObject("SELECT COUNT(*) FROM agent_tool_call", Integer.class)).isZero();
+            assertThat(db.jdbc().queryForObject("SELECT COUNT(*) FROM agent_conversation", Integer.class)).isZero();
+        }
+    }
+
+    private static com.fasterxml.jackson.databind.JsonNode nativeMessage(String id, String parent, String text) {
+        var entry = JSON.createObjectNode().put("id", id).put("type", "message").put("parentId", parent).put("timestamp", NOW.toString());
+        entry.putObject("message").put("role", "assistant").putArray("content").addObject().put("type", "text").put("text", text);
+        return entry;
+    }
+
+    @Test void nativeReferencesAndUsageRemainScopedWhileJsonReplayIgnoresKeyOrder() throws Exception {
+        try (var db = JdbcStoreTestSupport.create()) {
+            seed(db); var store = conversations(db);
+            String a = UUID.randomUUID().toString(), b = UUID.randomUUID().toString(), task = UUID.randomUUID().toString();
+            store.create("ctx-owner", "ctx-project", new CreateConversationRequest(a));
+            store.create("ctx-owner", "ctx-project", new CreateConversationRequest(b));
+            tasks(db).createTask("ctx-owner", "ctx-project", new AgentContracts.TaskRequest(task, "goal", 7), a);
+            var page = store.readForTask(task, "worker", 1, 0, null);
+            var message = nativeMessage("message", task, "answer");
+            var edit = JSON.readTree("{\"id\":\"edit\",\"type\":\"context_edit\",\"timestamp\":\"2026-10-19T00:00:00Z\",\"parentId\":\"message\",\"targetId\":\"message\",\"replacement\":null}");
+            var compact = JSON.readTree("{\"id\":\"compact\",\"type\":\"compaction\",\"timestamp\":\"2026-10-19T00:00:00Z\",\"parentId\":\"edit\",\"firstKeptEntryId\":\"compact\",\"tokensBefore\":900000,\"summary\":\"summary\"}");
+            var append = new ContextAppend(1, page.header(), List.of(message, edit, compact), new ContextUsage(null, 1048576, null));
+            assertThat(store.appendForTask(task, "worker", 1, append).headSeq()).isEqualTo(4);
+            assertThat(store.readForTask(task, "worker", 1, 1, null).entries()).extracting(StoredEntry::entry).containsExactly(message, edit, compact);
+            assertThat(store.detail("ctx-owner", "ctx-project", a).usage()).isEqualTo(new ContextUsage(null, 1048576, null));
+            var reordered = JSON.readTree("{\"summary\":\"summary\",\"tokensBefore\":900000,\"firstKeptEntryId\":\"compact\",\"parentId\":\"edit\",\"timestamp\":\"2026-10-19T00:00:00Z\",\"type\":\"compaction\",\"id\":\"compact\"}");
+            assertThat(store.appendForTask(task, "worker", 1, new ContextAppend(1, page.header(), List.of(message, edit, reordered), null)).headSeq()).isEqualTo(4);
+            var foreign = nativeMessage("foreign", "not-in-a", "invalid");
+            assertCode(() -> store.appendForTask(task, "worker", 1, new ContextAppend(4, page.header(), List.of(foreign), null)), "AI_CONTEXT_CONFLICT");
+            assertThat(store.history("ctx-owner", "ctx-project", b, null, 50).items()).isEmpty();
+            db.jdbc().update("UPDATE agent_task SET state='FAILED' WHERE id=?", task);
+            String next = UUID.randomUUID().toString();
+            tasks(db).createTask("ctx-owner", "ctx-project", new AgentContracts.TaskRequest(next, "next", 7), a);
+            var nextPage = store.readForTask(next, "worker", 1, 4, null);
+            assertThat(nextPage.entries().get(0).entry().path("parentId").asText()).isEqualTo("compact");
+            assertThat(store.detail("ctx-owner", "ctx-project", a).title()).isEqualTo("goal");
+        }
+    }
+
+    @Test void conversationListCursorNeverCrossesProjectAndHandlesEqualTimestamps() {
+        try (var db = JdbcStoreTestSupport.create()) {
+            seed(db); var store = conversations(db);
+            for (String id : List.of("00000000-0000-4000-8000-000000000001", "00000000-0000-4000-8000-000000000002", "00000000-0000-4000-8000-000000000003"))
+                store.create("ctx-owner", "ctx-project", new CreateConversationRequest(id));
+            var first = store.list("ctx-owner", "ctx-project", null, 2);
+            assertThat(first.items()).extracting(ConversationView::conversationId).containsExactly("00000000-0000-4000-8000-000000000003", "00000000-0000-4000-8000-000000000002");
+            var second = store.list("ctx-owner", "ctx-project", first.nextCursor(), 2);
+            assertThat(second.items()).extracting(ConversationView::conversationId).containsExactly("00000000-0000-4000-8000-000000000001");
+            assertThat(second.nextCursor()).isNull();
+            assertCode(() -> store.list("other-owner", "ctx-project", first.nextCursor(), 2), "AI_CONVERSATION_NOT_FOUND");
+        }
+    }
+
+    @Test void taskAdmissionWaitsForTheSameProjectRowAsCompactionAndThenSeesItsCommittedReservation() throws Exception {
+        try (var db = JdbcStoreTestSupport.create()) {
+            seed(db); String conversation = UUID.randomUUID().toString();
+            conversations(db).create("ctx-owner", "ctx-project", new CreateConversationRequest(conversation));
+            var locked = new java.util.concurrent.CountDownLatch(1);
+            var started = new java.util.concurrent.CountDownLatch(1);
+            var release = new java.util.concurrent.CountDownLatch(1);
+            var pool = java.util.concurrent.Executors.newFixedThreadPool(2);
+            try {
+                var reservation = pool.submit(() -> new org.springframework.transaction.support.TransactionTemplate(
+                        new DataSourceTransactionManager(db.jdbc().getDataSource())).execute(status -> {
+                    db.jdbc().queryForObject("SELECT id FROM project WHERE id='ctx-project' FOR UPDATE", String.class);
+                    locked.countDown();
+                    try { if (!release.await(5, java.util.concurrent.TimeUnit.SECONDS)) throw new AssertionError("reservation not released"); }
+                    catch (InterruptedException ex) { throw new AssertionError(ex); }
+                    AgentConversationStore.requireNoCompaction(db.jdbc(), "ctx-project");
+                    db.jdbc().update("UPDATE agent_conversation SET compact_state='RUNNING' WHERE id=?", conversation);
+                    return true;
+                }));
+                assertThat(locked.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+                var submit = pool.submit(() -> {
+                    started.countDown();
+                    return tasks(db).createTask("ctx-owner", "ctx-project", new AgentContracts.TaskRequest(UUID.randomUUID().toString(), "goal", 7), conversation);
+                });
+                assertThat(started.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+                release.countDown(); reservation.get(5, java.util.concurrent.TimeUnit.SECONDS);
+                assertThatThrownBy(() -> submit.get(5, java.util.concurrent.TimeUnit.SECONDS))
+                    .hasCauseInstanceOf(ApiException.class).satisfies(ex -> assertThat(((ApiException) ex.getCause()).code()).isEqualTo("AI_CONTEXT_BUSY"));
+                assertThat(db.jdbc().queryForObject("SELECT COUNT(*) FROM agent_task", Integer.class)).isZero();
+                assertThat(db.jdbc().queryForObject("SELECT COUNT(*) FROM agent_conversation_entry", Integer.class)).isZero();
+            } finally { release.countDown(); pool.shutdownNow(); }
+        }
+    }
+
+    private static void seed(JdbcStoreTestSupport db) {
+        var now = Timestamp.from(NOW);
+        db.jdbc().update("INSERT INTO app_user(id,username,password_hash,created_at) VALUES ('ctx-owner','ctx-owner','unused',?)", now);
+        db.jdbc().update("INSERT INTO project(id,owner_id,name,state,workspace_revision,created_at,updated_at) VALUES ('ctx-project','ctx-owner','ctx','READY',7,?,?)", now, now);
+    }
+    private static AgentTaskStore tasks(JdbcStoreTestSupport db) {
+        return new AgentTaskStore(db.jdbc(), new DataSourceTransactionManager(db.jdbc().getDataSource()), Clock.fixed(NOW, ZoneOffset.UTC));
+    }
+    private static AgentConversationStore conversations(JdbcStoreTestSupport db) {
+        return new AgentConversationStore(db.jdbc(), new DataSourceTransactionManager(db.jdbc().getDataSource()), Clock.fixed(NOW, ZoneOffset.UTC), tasks(db));
+    }
+    private static void assertCode(Runnable action, String code) {
+        assertThatThrownBy(action::run).isInstanceOfSatisfying(ApiException.class, ex -> assertThat(ex.code()).isEqualTo(code));
+    }
+    @Test void conversationSchemaIsAdditiveAndProjectScoped() {
+        try (var db = JdbcStoreTestSupport.create()) {
+            var jdbc = db.jdbc();
+            var now = Timestamp.from(Instant.parse("2026-10-19T00:00:00Z"));
+            jdbc.update("INSERT INTO app_user(id,username,password_hash,created_at) VALUES ('ctx-owner','ctx-owner','unused',?)", now);
+            jdbc.update("INSERT INTO project(id,owner_id,name,state,workspace_revision,created_at,updated_at) VALUES ('ctx-project','ctx-owner','ctx','READY',7,?,?)", now, now);
+            jdbc.update("INSERT INTO agent_conversation(id,project_id,title,header_json,head_seq,created_at,updated_at) VALUES (?,?,?,?,0,?,?)",
+                "00000000-0000-4000-8000-000000000001", "ctx-project", "新会话",
+                "{\"type\":\"session\",\"version\":3,\"id\":\"00000000-0000-4000-8000-000000000001\",\"cwd\":\"manao-project\",\"timestamp\":\"2026-10-19T00:00:00Z\"}", now, now);
+            assertThat(jdbc.queryForObject("SELECT head_seq FROM agent_conversation WHERE project_id='ctx-project'", Long.class)).isZero();
+            jdbc.update("DELETE FROM project WHERE id='ctx-project'");
+            assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM agent_conversation", Integer.class)).isZero();
+        }
+    }
+}

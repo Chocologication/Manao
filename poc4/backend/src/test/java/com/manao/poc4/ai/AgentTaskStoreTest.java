@@ -29,6 +29,18 @@ class AgentTaskStoreTest {
     private static final String PROJECT = "ai-project";
     private static final Instant NOW = Instant.parse("2026-10-13T00:00:00Z");
 
+    @Test void legacyTaskRequestDigestAndNullableConversationRemainCompatible() {
+        try (var db = JdbcStoreTestSupport.create()) {
+            seed(db.jdbc());
+            var taskStore = store(db);
+            String task = "00000000-0000-4000-8000-000000000011";
+            var request = new TaskRequest(task, "legacy", 7);
+            assertThat(taskStore.create(OWNER, PROJECT, request).conversationId()).isNull();
+            assertThat(taskStore.requestSha256Of(task)).isEqualTo("2f72ac96a74b07ef49c986f3f19ff9b18e7470aabc02b56bd0b0c3185d3abcf5");
+            assertThat(taskStore.createTask(OWNER, PROJECT, request).created()).isFalse();
+        }
+    }
+
     @Test
     void applicationStartBudgetAndUnsettledCallExclusionAreDurable() {
         try (var db = JdbcStoreTestSupport.create()) {

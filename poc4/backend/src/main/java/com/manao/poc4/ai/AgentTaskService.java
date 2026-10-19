@@ -56,10 +56,14 @@ public final class AgentTaskService {
      * submission's own drive by a status read of the same task.
      */
     public TaskSnapshot submit(String ownerId, String projectId, TaskRequest request) {
+        return submit(ownerId, projectId, request, null);
+    }
+
+    public TaskSnapshot submit(String ownerId, String projectId, TaskRequest request, String conversationId) {
         AgentTaskStore.TaskCreation creation;
         try (ProjectLifecycleGate.Lease lease = lifecycle.tryAcquire(projectId).orElseThrow(
                 () -> new ApiException("PROJECT_BUSY", 409, "Project is busy"))) {
-            creation = tasks.createTask(ownerId, projectId, request);
+            creation = tasks.createTask(ownerId, projectId, request, conversationId);
         }
         if (!creation.created()) {
             // The original task is the whole answer: its start was driven (or reconciled)
@@ -70,7 +74,7 @@ public final class AgentTaskService {
             return creation.snapshot();
         }
         driveStart(request.taskId(), request.prompt(), creation.snapshot().workspaceRevision(),
-            creation.epoch());
+            creation.epoch(), conversationId);
         return creation.snapshot();
     }
 
@@ -90,9 +94,9 @@ public final class AgentTaskService {
      * worker with a status read of the SAME task before the task is left undecided —
      * the worker may already be running a session nobody bound.
      */
-    private void driveStart(String taskId, String prompt, String workspaceRevision, long epoch) {
+    private void driveStart(String taskId, String prompt, String workspaceRevision, long epoch, String conversationId) {
         WorkerStart start = new WorkerStart(taskId, prompt, workspaceRevision,
-            tasks.requestSha256Of(taskId), epoch);
+            tasks.requestSha256Of(taskId), epoch, conversationId);
         try {
             WorkerStatus ack = worker.start(start);
             onStartAck(taskId, epoch, ack);

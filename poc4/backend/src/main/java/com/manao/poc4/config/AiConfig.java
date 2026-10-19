@@ -124,6 +124,19 @@ public class AiConfig {
 
     @Bean
     @Conditional(AiEnabledCondition.class)
+    com.manao.poc4.ai.AgentConversationStore agentConversationStore(org.springframework.jdbc.core.JdbcTemplate jdbc,
+            org.springframework.transaction.PlatformTransactionManager transactions, AgentTaskStore tasks) {
+        return new com.manao.poc4.ai.AgentConversationStore(jdbc, transactions, Clock.systemUTC(), tasks);
+    }
+
+    @Bean
+    @Conditional(AiEnabledCondition.class)
+    com.manao.poc4.ai.AgentConversationService agentConversationService(com.manao.poc4.ai.AgentConversationStore store) {
+        return new com.manao.poc4.ai.AgentConversationService(store);
+    }
+
+    @Bean
+    @Conditional(AiEnabledCondition.class)
     AgentTaskService agentTaskService(AgentTaskStore tasks, ProjectLifecycleGate lifecycle,
                                       PiWorkerClient worker, AgentProjectTools tools) {
         return new AgentTaskService(tasks, lifecycle, worker, tools);

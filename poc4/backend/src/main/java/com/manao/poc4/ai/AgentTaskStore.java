@@ -100,8 +100,14 @@ public final class AgentTaskStore implements AgentTaskOccupancy {
      */
     public TaskCreation createTask(String ownerId, String projectId,
                                    AgentContracts.TaskRequest request) {
+        return createTask(ownerId, projectId, request, null);
+    }
+
+    public TaskCreation createTask(String ownerId, String projectId,
+                                   AgentContracts.TaskRequest request, String conversationId) {
         validate(request);
-        String requestSha256 = requestSha256(ownerId, projectId, request);
+        if (conversationId != null) AgentConversationStore.requireUuid(conversationId);
+        String requestSha256 = requestSha256(ownerId, projectId, request, conversationId);
         Timestamp now = Timestamp.from(clock.instant());
         return java.util.Objects.requireNonNull(transaction.execute(status -> {
             List<ProjectRow> projects = jdbc.query(
@@ -137,24 +143,28 @@ public final class AgentTaskStore implements AgentTaskOccupancy {
             if (hasActiveTask(projectId)) {
                 throw new ApiException("AI_TASK_ACTIVE", 409, "The project already has an active task");
             }
+            AgentConversationStore.requireNoCompaction(jdbc, projectId);
+            if (conversationId != null) {
+                AgentConversationStore.bindTaskGoal(jdbc, clock, projectId, conversationId, request);
+            }
             try {
                 // The fencing epoch is persisted exactly once, at creation: a re-submission
                 // of the same request never moves it, so a start response loss is reconciled
                 // by the same-epoch status read instead of a second, overlapping session.
                 jdbc.update("""
                     INSERT INTO agent_task(id, project_id, owner_id, request_sha256, prompt,
-                        state, worker_epoch, workspace_revision, created_at, updated_at)
-                    VALUES (?, ?, ?, ?, ?, 'QUEUED', 1, ?, ?, ?)
+                        state, worker_epoch, workspace_revision, created_at, updated_at, conversation_id)
+                    VALUES (?, ?, ?, ?, ?, 'QUEUED', 1, ?, ?, ?, ?)
                     """,
                     request.taskId(), projectId, ownerId, requestSha256, request.prompt(),
-                    request.expectedRevision(), now, now);
+                    request.expectedRevision(), now, now, conversationId);
             } catch (DuplicateKeyException ex) {
                 // The unique index is the backstop behind the in-transaction pre-check.
                 throw new ApiException("AI_TASK_ACTIVE", 409, "The project already has an active task");
             }
             return new TaskCreation(new AgentContracts.TaskSnapshot(request.taskId(),
                 AgentContracts.TaskState.QUEUED, Long.toString(request.expectedRevision()),
-                true, List.of(), List.of(), null, null), true, 1L);
+                true, List.of(), List.of(), null, null, conversationId), true, 1L);
         }));
     }
 
@@ -878,7 +888,7 @@ public final class AgentTaskStore implements AgentTaskOccupancy {
         String sql = """
             SELECT t.id, t.request_sha256, t.state, t.worker_epoch, t.workspace_revision,
                    t.settled_revision, t.changed_paths_json, t.progress_json, t.summary,
-                   t.failure_code, t.active_project
+                   t.failure_code, t.active_project, t.conversation_id
             FROM agent_task t INNER JOIN project p ON p.id = t.project_id
             WHERE p.owner_id = ? AND t.project_id = ? %s
             """.formatted(extraCondition);
@@ -889,7 +899,7 @@ public final class AgentTaskStore implements AgentTaskOccupancy {
         List<TaskRow> rows = jdbc.query(sql, (rs, row) -> new TaskRow(
             rs.getString(1), rs.getString(2), rs.getString(3), rs.getLong(4),
             rs.getLong(5), (Long) rs.getObject(6), rs.getString(7),
-            rs.getString(8), rs.getString(9), rs.getString(10), rs.getString(11) != null),
+            rs.getString(8), rs.getString(9), rs.getString(10), rs.getString(11) != null, rs.getString(12)),
             parameters.toArray());
         return rows.stream().findFirst().map(this::snapshot);
     }
@@ -897,12 +907,12 @@ public final class AgentTaskStore implements AgentTaskOccupancy {
     private Optional<TaskRow> findTaskById(String taskId) {
         List<TaskRow> rows = jdbc.query("""
             SELECT id, request_sha256, state, worker_epoch, workspace_revision, settled_revision,
-                   changed_paths_json, progress_json, summary, failure_code, active_project
+                   changed_paths_json, progress_json, summary, failure_code, active_project, conversation_id
             FROM agent_task WHERE id = ?
             """, (rs, row) -> new TaskRow(
             rs.getString(1), rs.getString(2), rs.getString(3), rs.getLong(4),
             rs.getLong(5), (Long) rs.getObject(6), rs.getString(7),
-            rs.getString(8), rs.getString(9), rs.getString(10), rs.getString(11) != null), taskId);
+            rs.getString(8), rs.getString(9), rs.getString(10), rs.getString(11) != null, rs.getString(12)), taskId);
         return rows.stream().findFirst();
     }
 
@@ -975,7 +985,7 @@ public final class AgentTaskStore implements AgentTaskOccupancy {
             ? Long.toString(row.settledRevision()) : Long.toString(row.workspaceRevision());
         return new AgentContracts.TaskSnapshot(row.id(), AgentContracts.TaskState.valueOf(row.state()),
             revision, writesLocked, parseProgress(row.progressJson()),
-            changedPaths(row.changedPathsJson()), row.summary(), row.failureCode());
+            changedPaths(row.changedPathsJson()), row.summary(), row.failureCode(), row.conversationId());
     }
 
     /**
@@ -1121,13 +1131,14 @@ public final class AgentTaskStore implements AgentTaskOccupancy {
      * bytes for any different request.
      */
     private static String requestSha256(String ownerId, String projectId,
-                                        AgentContracts.TaskRequest request) {
+                                        AgentContracts.TaskRequest request, String conversationId) {
         Map<String, Object> fields = new LinkedHashMap<>();
         fields.put("taskId", request.taskId());
         fields.put("ownerId", ownerId);
         fields.put("projectId", projectId);
         fields.put("prompt", request.prompt());
         fields.put("expectedRevision", request.expectedRevision());
+        if (conversationId != null) fields.put("conversationId", conversationId);
         try {
             return sha256Hex(JSON.writeValueAsBytes(fields));
         } catch (Exception ex) {
@@ -1161,5 +1172,5 @@ public final class AgentTaskStore implements AgentTaskOccupancy {
      */
     private record TaskRow(String id, String requestSha256, String state, long workerEpoch,
                            long workspaceRevision, Long settledRevision, String changedPathsJson,
-                           String progressJson, String summary, String failureCode, boolean active) { }
+                           String progressJson, String summary, String failureCode, boolean active, String conversationId) { }
 }

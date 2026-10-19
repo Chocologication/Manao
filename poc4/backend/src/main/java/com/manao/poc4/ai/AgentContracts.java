@@ -28,7 +28,13 @@ public final class AgentContracts {
     /** What the browser polls: state, revision, persisted progress and the settled evidence. */
     public record TaskSnapshot(String taskId, TaskState state, String workspaceRevision,
                                boolean writesLocked, List<ProgressItem> progress,
-                               List<String> changedPaths, String summary, String failureCode) { }
+                               List<String> changedPaths, String summary, String failureCode,
+                               String conversationId) {
+        public TaskSnapshot(String taskId, TaskState state, String workspaceRevision, boolean writesLocked,
+                            List<ProgressItem> progress, List<String> changedPaths, String summary, String failureCode) {
+            this(taskId, state, workspaceRevision, writesLocked, progress, changedPaths, summary, failureCode, null);
+        }
+    }
 
     /** One persisted progress entry (full message, tool start/end or terminal state). */
     public record ProgressItem(long seq, String kind, String text, boolean truncated) { }
@@ -80,7 +86,11 @@ public final class AgentContracts {
 
     /** Backend-to-worker start command; carries no project owner. */
     public record WorkerStart(String taskId, String prompt, String workspaceRevision,
-                              String requestSha256, long workerEpoch) { }
+                              String requestSha256, long workerEpoch, String conversationId) {
+        public WorkerStart(String taskId, String prompt, String workspaceRevision, String requestSha256, long workerEpoch) {
+            this(taskId, prompt, workspaceRevision, requestSha256, workerEpoch, null);
+        }
+    }
 
     /** Worker answer to start/status/stop; {@code instanceId} binds the running session. */
     public record WorkerStatus(String taskId, String instanceId, String state) { }

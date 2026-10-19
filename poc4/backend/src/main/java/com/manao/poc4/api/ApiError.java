@@ -25,6 +25,8 @@ public record ApiError(String code, String message, String traceId) {
         "AI_PROGRESS_MISMATCH", "AI_PROGRESS_TOO_LARGE",
         "AI_EPOCH_MISMATCH", "AI_INSTANCE_MISMATCH",
         "AI_REQUEST_TOO_LARGE", "AI_PROJECT_NOT_ENABLED",
+        "AI_CONVERSATION_NOT_FOUND", "AI_CONTEXT_CONFLICT", "AI_CONTEXT_UNAVAILABLE",
+        "AI_CONTEXT_COMPACTION_FAILED", "AI_CONTEXT_BUSY",
         "AI_WORKER_NOT_CONFIGURED", "AI_WORKER_CONFLICT", "AI_WORKER_UNREACHABLE",
         "AI_WORKER_BAD_RESPONSE", "AI_WORKER_ERROR");
 
@@ -79,6 +81,11 @@ public record ApiError(String code, String message, String traceId) {
             case "AI_EPOCH_MISMATCH" -> "The worker epoch does not match the task";
             case "AI_INSTANCE_MISMATCH" -> "The task is bound to another worker instance";
             case "AI_REQUEST_TOO_LARGE" -> "The request body exceeds the bounded size";
+            case "AI_CONVERSATION_NOT_FOUND" -> "Conversation not found";
+            case "AI_CONTEXT_CONFLICT" -> "Conversation context changed";
+            case "AI_CONTEXT_UNAVAILABLE" -> "Conversation context is unavailable";
+            case "AI_CONTEXT_COMPACTION_FAILED" -> "Conversation compaction failed";
+            case "AI_CONTEXT_BUSY" -> "Conversation context is busy";
             case "AI_PROJECT_NOT_ENABLED" -> "Project not found";
             case "AI_WORKER_NOT_CONFIGURED" -> "The worker has no model configuration";
             case "AI_WORKER_CONFLICT" -> "The worker refused the request as a conflict";

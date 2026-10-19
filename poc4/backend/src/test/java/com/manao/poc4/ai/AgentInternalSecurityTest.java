@@ -38,6 +38,11 @@ class AgentInternalSecurityTest {
             return "internal-ok";
         }
 
+        @org.springframework.web.bind.annotation.PostMapping("/internal/ai/tasks/{taskId}/context")
+        String context(@org.springframework.web.bind.annotation.RequestBody String body) {
+            return "context-ok:" + body.length();
+        }
+
         @org.springframework.web.bind.annotation.PostMapping("/internal/ai/probe")
         String postInternal(@org.springframework.web.bind.annotation.RequestBody String body) {
             return "internal-ok:" + body.length();
@@ -58,6 +63,20 @@ class AgentInternalSecurityTest {
 
     private static String jwt(JwtService service, String subject) {
         return service.issue(subject).accessToken();
+    }
+
+    @Test void contextRouteStillRequiresWorkerTokenWhileAllowingItsLargerBound() {
+        RUNNER.withPropertyValues("MANAO_JWT_SECRET=" + JWT_SECRET, "MANAO_AI_INTERNAL_TOKEN=internal-token")
+            .run(context -> {
+                MockMvc mvc = mockMvc(context);
+                String body = "x".repeat(600 * 1024);
+                var allowed = mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                    .post("/internal/ai/tasks/task/context").header("X-Manao-Worker-Token", "internal-token").content(body)).andReturn();
+                assertThat(allowed.getResponse().getStatus()).isEqualTo(200);
+                var denied = mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                    .post("/internal/ai/tasks/task/context").header("Authorization", "Bearer " + jwt(context.getBean(JwtService.class), "browser-user")).content(body)).andReturn();
+                assertThat(denied.getResponse().getStatus()).isEqualTo(401);
+            });
     }
 
     @Test
