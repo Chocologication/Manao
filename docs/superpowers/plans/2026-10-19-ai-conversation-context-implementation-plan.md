@@ -302,7 +302,7 @@ expect(screen.getByText('占用暂不可用')).toBeInTheDocument();
 
 复用原 TaskPanel 的占用、close、Run/HTTP/build 结果展示，只做必要的组件导出；完整消息在 ConversationHistory 展示，不再重复显示同一条截断 progress。用户目标只投影 customType=manao_user_request，隐藏 SDK 内部触发 user message；pending 或启动前失败的目标也已在 entries 中。active task 属于另一个会话时显示可导航的“项目有任务运行中”。
 
-手动请求先生成并保留 requestId/baseSeq，POST 不确定读会话原请求状态；明确失败后用户再次点击才新建 request。没有完整 usage 时不显示虚构百分比。文本/代码按文本，工具详情从已有安全 route 读取，隐藏内部 entries 与 thinking。
+手动请求先生成并保留 requestId/baseSeq，POST 不确定读会话原请求状态；GET 未登记不清身份、不自动重发。刷新或切换会话后仍可由用户显式“重试原压缩请求”，复用原 conversationId/requestId/baseSeq，不产生新身份。retry 遇拒绝只有原终态或成功 GET 证明 head 已变化、旧 base 不再可能准入时才释放；同 head 的 busy/鉴权拒绝和查询失败继续保留待对账，迟到 A 响应不污染 B。明确失败后用户再次点击普通压缩才新建 request。没有完整 usage 时不显示虚构百分比。文本/代码按文本，工具详情从已有安全 route 读取，隐藏内部 entries 与 thinking。
 
 - [x] **Step 4 — GREEN/复核：** Step 2、`pnpm typecheck`、`pnpm build`；测试浏览器/项目切换时请求失效和原 revision-cache 修复。确保切换会话不释放 Agent/Run 锁、不主动 close、不清空别的会话消息。
 - [x] **Step 5 — 审查并提交：** 重点审查缓存隔离、原 taskId 对账、raw payload 泄露与重复消息；提交 `feat(ai): add persistent conversations to the project AI panel`。
@@ -316,6 +316,8 @@ expect(screen.getByText('占用暂不可用')).toBeInTheDocument();
 **Produces:** 可运行的最小主链、一次必要集成回归、明确未执行的外部验收与逐项发布清单。
 
 实际本地整合：backend163/163、worker最终121/121+build、frontend165/165+typecheck/build，精确cb0793c旧代码在V13 disposable schema的27/27。Task6发现deadline timer已触发但now==deadline时误报AI_ABORTED；稳定deps.now回归先RED，再以deadlineExpired事实标记最小修复（7a7976d），只重跑受影响worker。真实E2E缺授权/env在config退出1并标NOT_RUN，未调用模型或kubectl。三镜像NOT_BUILT。完整命令/计数/时间/裁定见acceptance。
+
+整体终审修复 I1/M1：补原身份显式 retry 与安全拒绝对账；主链按原 task 核对全部 tool_call/tool_result，首轮仅一个 read_file 调用及配对结果，安全结果 call ID 一致，其余三轮（含压缩后）无工具。定向 RED/GREEN 与受影响组件/helper 的最终结果见 acceptance；整体终审 closeout 仍由主控完成。
 
 - [x] **Step 1 — 验收入口（真实主链NOT_RUN）：** Playwright 按既有 AI config 的 auth/env 检查搭建当前入口；缺必要外部条件时标 NOT_RUN，不能以 mock E2E 冒充真实主链。操作者先在disposable项目准备96–120KiB无秘密ASCII顶层txt，A首轮只read_file一次，harness比对owner文件sha/content与原task的安全settled工具结果，以原生20k保留量产生真实摘要而非no-op；不降低窗口、不由本轮写文件。主链为A记住字段约束→同会话新 task 遵守→创建 B 并核实上下文未带 A→空闲重建 worker→重开 A→手动压缩→原文仍在且下一轮仍遵守约束。会话隔离同时在 scripted provider 的实际 context 捕获处断言，不能只凭真实模型“没有提到约束”判断。
 

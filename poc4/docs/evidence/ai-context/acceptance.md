@@ -91,6 +91,20 @@ I1定向语义回归命令（cwd `poc4/frontend`）：`pnpm test -- tests/accept
 
 E2E命令实际退出1并明确NOT_RUN：缺本轮model/restart/global-idle授权及BASE_URL/project/owner/Kubernetes目标/fixture路径。自检安装SDK的prepareCompaction发现短聊天会合法no-op，因此加入操作者预先准备的96–120KiB无秘密ASCII文件，A首轮只读一次；通过原owner文件API和原task的read_file安全结果比对sha/content/真实字节，禁止本轮自动写fixture。修订后只重跑harness strict类型检查和缺条件拒绝，均符合预期，不重跑已过165项。未设置假的授权env绕过配置，未调用kubectl，未启动browser/webServer。后续真实验收步骤见发布准备；不把discover/list/typecheck/guard视为E2E PASS。
 
+### 整体终审 I1/M1 的局部修复
+
+整体终审对 `505e316` 发现 Important I1（未知且未登记的 compactIntent 永久禁用项目）及 Minor M1（只筛 read_file result，遗漏额外工具）。本轮仅修这两个接缝；整体复审/closeout 仍待主控，不改早期任务审查结论。
+
+UI 保留“核对压缩状态”的 GET，另加用户显式“重试原压缩请求”：保存的 conversationId/requestId/baseSeq 原样 POST，刷新/切 B 仍作用原 A，不生成新身份或自动重发。GET null/不同请求或失败不单独清除；同 request 终态照原逻辑释放。retry 被 HTTP 拒绝后，仅成功 GET 证明 head 已变化、旧 base 不再可能准入才清除；same-head busy/权限拒绝仍保留，防止原 POST 尚在 gate 外 IO、稍后登记。原后端同 ID/base 幂等和迟到 callback fencing 不变，既有 backend163/worker121/旧代码27不重跑。
+
+所有命令 cwd 为 `poc4/frontend`。UI 初始 RED：`pnpm test -- src/features/ai/AgentConversationPanel.test.tsx -t 'unregistered compact|original retry refusal'`，14:32:22+08:00，3 failed/16 skipped，5.86s；均因不存在显式重试入口失败。最小实现后同命令3 passed/16 skipped，14:34:03，5.52s。中途两项 fixture 误将现有 POST 的 conversationId 排除导致 MSW assertion，纠正为完整原 intent；此运行不记产品 RED。
+
+补充直接关联的 in-flight 拒绝边界 RED：`pnpm test -- src/features/ai/AgentConversationPanel.test.tsx -t 'unchanged base can still be admitted'`，14:36:41，2 failed/19 skipped，7.01s；same-head retry409/403 错误清除了身份及按钮。仅显式 retry 的拒绝分支加旧 base 失效条件后，同命令2 passed/19 skipped，14:37:37，5.02s。保留初次明确拒绝处理和 A→B scope guard。
+
+工具语义 helper 从原 E2E 的 read_result 筛选/计数原样抽出，后续无工具检查初始为空；单独 unit 不导入/注册 Playwright。`pnpm test -- tests/acceptance/ai-context-tools.test.ts` 有效 RED 为6 failed/4 passed，14:33:08，3.25s：正确 read 加 write、正确 JSON 加额外 call/result、缺 call/错 call ID/错工具名均被误接收。一次早期 table fixture 被 it.each 展开为单对象而非数组，已修正，未计入上述 RED。最小 helper 按原 task 检查全部工具项，首轮严格一对同名 read_file、非空且一致 call ID；后三轮（含压缩后）零工具。真实 E2E 四处使用它，并比对 owner-safe 原 task/result route 返回的 call ID；原 sha/content/bytes 验证保留。工具10/10 GREEN，14:33:47，3.36s。
+
+最终 `pnpm test -- src/features/ai/AgentConversationPanel.test.tsx tests/acceptance/ai-context-answer.test.ts tests/acceptance/ai-context-tools.test.ts`：3文件40/40，0失败/跳过，14:38:42，8.82s（Panel21、精确 JSON9、工具10），保留已登记丢 ACK、迟到 A/B、原文和旧 task-only 回归。harness strict tsc（含 helper、两份 acceptance unit）退出0。最终 `pnpm build` 的 typecheck/Vite 均退出0，3805 modules、48.44s，保留旧大 chunk 警告；此前50.61s构建之后有生产修改，故不作为最终构建。真实 E2E/model/browser/cluster/restart/migration 仍 NOT_RUN；未执行真实入口、未设置授权变量。
+
 ## 5. 旧代码 / V13 disposable 兼容预演
 
 旧源码基线为 `cb0793c`，隔离临时导出266个backend文件；使用 `git cat-file blob cb0793c:<path>` 保存原始字节，对每个文件计算Git blob SHA1并与 `git rev-parse cb0793c:<path>`核对。首次git archive的工作树换行转换导致raw hash不符，未执行测试；随后全部改用blob字节导出。旧生产源、pom、旧V1–V12 migration及AgentTaskStoreTest保持原样，只改该导出内的 `JdbcStoreTestSupport` 测试scaffold。预演后再次验证其余265文件的原始Git blob hash，确认没有旧生产补丁或migration替换。

@@ -69,19 +69,26 @@ function ConversationPanel(props: AgentTaskPanelProps) {
     try { const view = await getAgentConversation(projectId, intent.conversationId); if (scope.active) acceptCompact(view, intent); return view; }
     catch { if (scope.active && scope.selected === intent.conversationId) setError('压缩状态暂不可用，请核对原请求'); return null; }
   };
-  const compact = async () => {
-    if (!canCompact || !metadata) return;
-    const intent = { conversationId: metadata.conversationId, requestId: generateAgentTaskId(), expectedHeadSeq: metadata.headSeq };
-    // Persist the original identity BEFORE POST. Switching conversations never removes it.
-    sessionStorage.setItem(compactKey, JSON.stringify(intent)); setCompactIntent(intent); setCompactSending(true); setError(null);
+  const sendCompact = async (intent: CompactIntent, retry = false) => {
+    if (compactSending || storedCompact(compactKey)?.requestId !== intent.requestId) return;
+    setCompactSending(true);
+    if (scope.selected === intent.conversationId) setError(null);
     try { const view = await compactAgentConversation(projectId, intent.conversationId, intent); if (scope.active) acceptCompact(view, intent); }
     catch (failure) {
       const original = await reconcileCompact(intent);
-      if (scope.active && original !== null && original.compactRequestId !== intent.requestId && failure instanceof ApiRequestError && [400, 401, 403, 404, 409, 413, 422].includes(failure.status)) {
+      // A retry refusal cannot fence an original POST still in flight. A changed head fences its old base.
+      if (scope.active && original !== null && original.compactRequestId !== intent.requestId && (!retry || original.headSeq !== intent.expectedHeadSeq) && failure instanceof ApiRequestError && [400, 401, 403, 404, 409, 413, 422].includes(failure.status)) {
         forgetCompact(intent.requestId);
         if (scope.selected === intent.conversationId) setError('压缩请求被拒绝，请稍后重试');
       }
     } finally { if (scope.active) setCompactSending(false); }
+  };
+  const compact = async () => {
+    if (!canCompact || !metadata) return;
+    const intent = { conversationId: metadata.conversationId, requestId: generateAgentTaskId(), expectedHeadSeq: metadata.headSeq };
+    // Persist the original identity BEFORE POST. Explicit retry reuses it, even after remount/switch.
+    sessionStorage.setItem(compactKey, JSON.stringify(intent)); setCompactIntent(intent);
+    await sendCompact(intent);
   };
   const onAccepted: AgentTaskPanelProps['onTaskAccepted'] = snapshot => {
     if (!scope.active) return;
@@ -103,6 +110,7 @@ function ConversationPanel(props: AgentTaskPanelProps) {
       {metadata.compactState === 'COMPLETED' ? <span>压缩完成</span> : null}
       {metadata.compactState === 'FAILED' ? <span>压缩失败</span> : null}
       {compactIntent ? <Button size="sm" variant="outline" disabled={compactSending} onClick={() => void reconcileCompact(compactIntent)}>核对压缩状态</Button> : null}
+      {compactIntent ? <Button size="sm" variant="outline" disabled={compactSending} onClick={() => void sendCompact(compactIntent, true)}>重试原压缩请求</Button> : null}
     </div> : null}
     {selected && metadata ? <ConversationHistory userId={userId} projectId={projectId} conversationId={selected} headSeq={metadata.headSeq} onViewRun={props.onViewRun} /> : null}
     <div className="min-h-64 shrink-0"><AgentTaskPanel key={selected ?? 'legacy'} {...props} conversationId={selected ?? undefined} fullHistory={!legacy && selected !== null} displayTask={legacy ? legacyTask : selectedSnapshot} submissionBlocked={selected === null || !metadata || detail.isError || list.isError || compactBusy} onTaskAccepted={onAccepted} onSubmissionPendingChange={pending => { if (scope.active) { setTaskSubmitting(pending); props.onSubmissionPendingChange?.(pending); } }} /></div>

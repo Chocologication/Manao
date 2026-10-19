@@ -8,7 +8,7 @@
 | --- | --- | --- | --- |
 | backend | `72b75ed`包含Task1–5；无后端后续变更，最终打包仍需记录最终提交 | NOT_BUILT / NOT_RUN | 未生成 |
 | pi-worker | `7a7976d`包含deadline边界修复；Pi三包1.2.0 | NOT_BUILT / NOT_RUN | 未生成 |
-| frontend | `72b75ed`包含UI；Task6仅补测试/入口，构建需 `VITE_ENABLE_AI=true` | NOT_BUILT / NOT_RUN | 未生成 |
+| frontend | `72b75ed`包含UI；整体终审另补原身份显式压缩重试，发布须使用最终复审提交；构建需 `VITE_ENABLE_AI=true` | NOT_BUILT / NOT_RUN | 未生成 |
 
 runner、workspace-agent、initializer、共用NetworkPolicy没有本切片重建需求。发布者从最终审查的完整SHA构建，记录source SHA/tag/构建命令/测试报告/实际RepoDigest；tag不可代替digest。当前并未构建或推送三镜像。
 
@@ -77,6 +77,10 @@ pnpm test:e2e:ai-context
 主链：UI创建A→read_file读取有界fixture并记住bookId和随机标记→新task遵守→UI创建B并检查历史隔离→确认A/B及项目无占用→固定worker重建→重新打开A→UI手动压缩→逐项原历史仍在→下一轮仍遵守。B真实模型不提及标记仅是补充，本地真实Pi scripted provider实际context捕获才证明上下文未带A。摘要是有损概括，真实模型质量仍需该轮结果；no-op摘要不能满足本主链的新增compaction标记。
 
 新A轮和压缩后A轮只允许单个原始JSON对象，精确键为`bookId`/`marker`，书籍编号分别数值7/8，marker必须为最初记住的值；prompt只引用原字段约束，不重新透露字段拼写或marker。harness直接JSON.parse后精确比较整个对象，拒绝代码围栏、解释、id替代字段、额外字段和错值；仅提到bookId或marker不能通过。该断言本地9项语义回归通过，真实模型输出仍NOT_RUN。
+
+harness 核对每轮原 task 的全部 tool_call/tool_result：首轮严格一个 read_file 调用和一个同名、同 call ID 的结果，并比对 owner-safe 原 task/result route 返回的 call ID；后续 A/B/压缩后 A 三轮不得出现任何工具项。额外 write_file/build/application 即使答案正确也失败；本地工具语义10项回归不替代真实主链。
+
+压缩 POST 未知且 GET 未登记时保留项目级原身份；“核对压缩状态”仅 GET，“重试原压缩请求”仅由用户显式点击，复用保存的 conversationId/requestId/baseSeq（刷新/切 B 仍操作 A），后端原幂等准入保证至多一次摘要。retry 拒绝且 GET head 未变或查询失败时继续待对账；原终态或成功 GET 证明旧 base 已失效后才释放，不自动换身份或盲重试。
 
 测试唯一集群写步骤是显式目标worker的 `kubectl --context … --namespace … rollout restart deployment/<worker>`，随后固定 `rollout status … --timeout=180s`；只读get Deployment/Pod JSON核对前后UID不同、replicas=1、Recreate、仅一个Ready且未deleting的Pod。没有任意shell脚本、kubeconfig打印、其它Deployment操作或自动回收。失败保留项目和诊断，禁止自动重试restart或模型任务。测试无trace/screenshot，防止owner凭据和项目原文进入自动附件；仅报告脱敏任务/会话/Pod身份。
 

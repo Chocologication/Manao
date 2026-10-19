@@ -110,6 +110,79 @@ it('preserves an uncertain compact request and checks the original detail before
   h.unmount(); panel(); await screen.findByText('压缩中'); expect(posts).toBe(1); expect(posted).toMatchObject({ expectedHeadSeq: 1 });
 });
 
+it('explicitly retries an unregistered compact after remount with the byte-identical original identity from B', async () => {
+  const bodies: string[] = [], paths: string[] = []; let completed = false;
+  const key = `manao.agent-compact.${U}.${P}`;
+  server.use(
+    http.get(`${URL}/${A}`, () => HttpResponse.json(conversation(A, completed ? { compactRequestId: JSON.parse(bodies[0]!).requestId, compactState: 'COMPLETED' } : {}))),
+    http.post(`${URL}/:id/compact`, async ({ request, params }) => {
+      bodies.push(await request.text()); paths.push(String(params.id));
+      if (bodies.length === 1) return HttpResponse.error(); // Never registered by the backend.
+      completed = true;
+      return HttpResponse.json(conversation(A, { compactRequestId: JSON.parse(bodies[0]!).requestId, compactState: 'COMPLETED' }));
+    }),
+  );
+  const h = panel(); await screen.findByText('A 原文');
+  await userEvent.click(screen.getByRole('button', { name: '压缩上下文' }));
+  await waitFor(() => expect(bodies).toHaveLength(1));
+  await waitFor(() => expect(screen.getByRole('button', { name: '核对压缩状态' })).toBeEnabled());
+  const stored = sessionStorage.getItem(key);
+  expect(JSON.parse(stored!)).toMatchObject({ conversationId: A, expectedHeadSeq: 1, requestId: JSON.parse(bodies[0]!).requestId });
+  h.unmount(); panel(); await screen.findByText('A 原文');
+  await userEvent.click(screen.getByRole('button', { name: '会话 B' })); await screen.findByText('B 原文');
+  await userEvent.type(screen.getByLabelText('Task goal'), 'B 下一轮');
+  await userEvent.click(screen.getByRole('button', { name: '核对压缩状态' }));
+  expect(sessionStorage.getItem(key)).toBe(stored); expect(bodies).toHaveLength(1);
+  expect(screen.getByRole('button', { name: 'Start task' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: '压缩上下文' })).toBeDisabled();
+  await userEvent.click(screen.getByRole('button', { name: '重试原压缩请求' }));
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Start task' })).toBeEnabled());
+  expect(bodies).toEqual([bodies[0], bodies[0]]); expect(paths).toEqual([A, A]);
+  expect(sessionStorage.getItem(key)).toBeNull();
+  expect(screen.getByRole('button', { name: '压缩上下文' })).toBeEnabled();
+  expect(screen.getByRole('button', { name: '会话 B' })).toHaveAttribute('aria-pressed', 'true');
+  expect(screen.queryByText('压缩完成')).not.toBeInTheDocument();
+});
+
+it.each([true, false])('reconciles a definite original retry refusal without leaking A into B; detail available: %s', async available => {
+  const key = `manao.agent-compact.${U}.${P}`;
+  const intent = { conversationId: A, requestId: T, expectedHeadSeq: 1 };
+  sessionStorage.setItem(key, JSON.stringify(intent));
+  let refused = false, posts = 0;
+  server.use(
+    http.get(`${URL}/${A}`, () => refused && !available ? HttpResponse.error() : HttpResponse.json(conversation(A, { headSeq: 2 }))),
+    http.post(`${URL}/${A}/compact`, async ({ request }) => {
+      expect(await request.json()).toEqual(intent); posts++; refused = true;
+      return HttpResponse.json({ code: 'AI_CONTEXT_CONFLICT', message: 'conflict', traceId: 'conflict' }, { status: 409 });
+    }),
+  );
+  panel(); await userEvent.click(await screen.findByRole('button', { name: '会话 B' })); await screen.findByText('B 原文');
+  await userEvent.type(screen.getByLabelText('Task goal'), 'B 下一轮');
+  await userEvent.click(screen.getByRole('button', { name: '重试原压缩请求' }));
+  await waitFor(() => expect(posts).toBe(1));
+  if (!available) await waitFor(() => expect(screen.getByRole('button', { name: '重试原压缩请求' })).toBeEnabled());
+  await waitFor(() => expect(sessionStorage.getItem(key)).toBe(available ? null : JSON.stringify(intent)));
+  expect(screen.getByRole('button', { name: '会话 B' })).toHaveAttribute('aria-pressed', 'true');
+  expect(screen.queryByText('压缩请求被拒绝，请稍后重试')).not.toBeInTheDocument();
+  if (available) expect(screen.getByRole('button', { name: 'Start task' })).toBeEnabled();
+  else expect(screen.getByRole('button', { name: 'Start task' })).toBeDisabled();
+});
+
+it.each([409, 403])('keeps the original pending identity after retry refusal %i while its unchanged base can still be admitted', async status => {
+  const key = `manao.agent-compact.${U}.${P}`;
+  const stored = JSON.stringify({ conversationId: A, requestId: T, expectedHeadSeq: 1 });
+  sessionStorage.setItem(key, stored); let posts = 0;
+  server.use(http.post(`${URL}/${A}/compact`, () => { posts++; return HttpResponse.json({ code: 'AI_CONTEXT_BUSY', message: 'refused', traceId: 'refused' }, { status }); }));
+  panel(); await screen.findByText('A 原文');
+  await userEvent.type(screen.getByLabelText('Task goal'), '下一轮');
+  await userEvent.click(screen.getByRole('button', { name: '重试原压缩请求' }));
+  await waitFor(() => expect(posts).toBe(1));
+  await waitFor(() => expect(screen.getByRole('button', { name: '重试原压缩请求' })).toBeEnabled());
+  expect(sessionStorage.getItem(key)).toBe(stored);
+  expect(screen.getByRole('button', { name: 'Start task' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: '压缩上下文' })).toBeDisabled();
+});
+
 it('does not apply a late A compaction failure to the selected B view', async () => {
   let release = () => {}, started = false; const held = new Promise<void>(resolve => { release = resolve; });
   server.use(http.post(`${URL}/${A}/compact`, async () => { started = true; await held; return HttpResponse.json({ code: 'PROJECT_BUSY', message: 'busy', traceId: 'busy' }, { status: 409 }); }));
