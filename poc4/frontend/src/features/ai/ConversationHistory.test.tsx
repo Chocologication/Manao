@@ -8,8 +8,58 @@ import { resetAppRuntime } from '@/test/renderApp';
 import { server } from '@/mocks/node';
 import { ConversationHistory } from './ConversationHistory';
 import type { LiveSnapshot } from './agentLiveOutput';
+import { HttpClient, setHttpClient } from '@/api/httpClient';
+it('keeps advancing fallback history with current:null and does not regress on retry', async () => {
+  let controller!: ReadableStreamDefaultController<Uint8Array>, subscriptions = 0; const bounds: number[] = [];
+  setHttpClient(new HttpClient({ getAccessToken: () => 'token', onUnauthorized: vi.fn(), fetchImpl: async input => {
+    const path = String(input); if (path.endsWith('/live-output')) { subscriptions++; return new Response(new ReadableStream({ start(c) { controller = c; } }), { headers: { 'Content-Type': 'text/event-stream' } }); }
+    const bound = Number(new globalThis.URL(path, 'http://fixture').searchParams.get('beforeSeq')); bounds.push(bound); return new Response(JSON.stringify({ items: [item('saved ' + bound, { seq: bound - 1 })], nextBeforeSeq: null, nextBeforeOffset: null }), { headers: { 'Content-Type': 'application/json' } });
+  } }));
+  const view = (headSeq: number) => <AppProviders><ConversationHistory userId="alice" projectId={P} conversationId={C} taskId={T} headSeq={headSeq} terminal={false} /></AppProviders>;
+  const h = render(view(5)); await waitFor(() => expect(controller).toBeDefined()); await act(async () => controller.enqueue(new TextEncoder().encode('event: snapshot\ndata: ' + JSON.stringify({ ...live(), current: null }) + '\n\n')));
+  await act(async () => controller.enqueue(new TextEncoder().encode('event: snapshot\ndata: broken\n\n'))); h.rerender(view(8)); await screen.findByText('saved 9'); h.rerender(view(10)); await screen.findByText('saved 11');
+  await userEvent.click(screen.getByRole('button', { name: '重连实时展示' })); await waitFor(() => expect(subscriptions).toBe(2)); await act(async () => controller.enqueue(new TextEncoder().encode('event: snapshot\ndata: ' + JSON.stringify({ ...live(), current: null }) + '\n\n')));
+  expect(screen.getByText('saved 11')).toBeVisible(); expect(bounds.slice(1)).not.toContain(6); expect(screen.queryByLabelText('实时预览')).toBeNull();
+});
 function live(head = 5, ordinal = 1, text = 'preview'): LiveSnapshot { return { revision: head + ordinal, taskId: 'task-original', conversationId: 'c-history', durableHeadSeq: head, current: { messageOrdinal: ordinal, phase: 'generating', blocks: [{ contentIndex: 0, kind: 'thinking', text: 'reason' }, { contentIndex: 1, kind: 'text', text }], modelTruncated: false, displayTruncated: false }, unavailable: false }; }
 function historyView(snapshot: LiveSnapshot, headSeq = 5, terminal = false) { return <AppProviders><ConversationHistory userId="alice" projectId="p-history" conversationId="c-history" headSeq={headSeq} liveSnapshot={snapshot} terminal={terminal} /></AppProviders>; }
+it.each([204, 429, 503, 'malformed'] as const)('advances RUNNING-task history after transport fallback %s without duplicate previews', async status => {
+  let controller!: ReadableStreamDefaultController<Uint8Array>, subscriptions = 0, release!: () => void;
+  const requests: string[] = []; const encode = (value: unknown) => new TextEncoder().encode('event: snapshot\ndata: ' + JSON.stringify(value) + '\n\n');
+  setHttpClient(new HttpClient({ getAccessToken: () => 'token', onUnauthorized: vi.fn(), fetchImpl: async (input, init) => {
+    expect(init?.method).toBe('GET'); const path = String(input); requests.push(path);
+    if (path.endsWith('/live-output')) {
+      if (++subscriptions === 2 && status !== 'malformed') return new Response(null, { status });
+      return new Response(new ReadableStream({ start(c) { controller = c; } }), { headers: { 'Content-Type': 'text/event-stream' } });
+    }
+    const bound = new globalThis.URL(path, 'http://fixture').searchParams.get('beforeSeq');
+    if (bound === '9') await new Promise<void>(resolve => { release = resolve; });
+    return new Response(JSON.stringify({ items: bound === '6' ? [] : [item('reason', { seq: 6, kind: 'thinking', contentIndex: 0 }), item('preview', { seq: 6, contentIndex: 1 }), item('later durable', { seq: 8 })], nextBeforeSeq: null, nextBeforeOffset: null }), { headers: { 'Content-Type': 'application/json' } });
+  } }));
+  const view = (headSeq: number) => <AppProviders><ConversationHistory userId="alice" projectId={P} conversationId={C} taskId={T} headSeq={headSeq} terminal={false} /></AppProviders>;
+  const h = render(view(5)); await waitFor(() => expect(controller).toBeDefined()); await act(async () => controller.enqueue(encode(live()))); await screen.findByText('preview');
+  await act(async () => { if (status === 'malformed') controller.enqueue(encode({ broken: true })); else controller.close(); });
+  await waitFor(() => expect(status === 'malformed' ? screen.queryByText(/实时展示暂不可用/) !== null : subscriptions === 2).toBe(true), { timeout: 2000 });
+  h.rerender(view(8)); await waitFor(() => expect(release).toBeDefined()); expect(screen.getAllByText('preview')).toHaveLength(1); expect(screen.getByLabelText('实时预览')).toBeVisible();
+  await act(async () => release()); expect(await screen.findByText('later durable')).toBeVisible(); expect(screen.queryByLabelText('实时预览')).toBeNull(); expect(screen.getAllByText('preview')).toHaveLength(1);
+  if (status !== 204) {
+    await userEvent.click(screen.getByRole('button', { name: '重连实时展示' })); await waitFor(() => expect(subscriptions).toBe(status === 'malformed' ? 2 : 3));
+    await act(async () => controller.enqueue(encode(live()))); expect(screen.queryByLabelText('实时预览')).toBeNull();
+    await act(async () => controller.enqueue(encode({ ...live(8, 2, 'resumed preview'), revision: 99 }))); expect(await screen.findByText('resumed preview')).toBeVisible(); expect(screen.getAllByText('preview')).toHaveLength(1);
+  }
+  expect(requests.some(path => path.includes('beforeSeq=9'))).toBe(true);
+});
+it('keeps an unconfirmed live preview alone when active fallback history has a mismatched first group', async () => {
+  let controller!: ReadableStreamDefaultController<Uint8Array>; let finalBound = false;
+  setHttpClient(new HttpClient({ getAccessToken: () => 'token', onUnauthorized: vi.fn(), fetchImpl: async input => {
+    const path = String(input); if (path.endsWith('/live-output')) return new Response(new ReadableStream({ start(c) { controller = c; } }), { headers: { 'Content-Type': 'text/event-stream' } });
+    finalBound ||= path.includes('beforeSeq=9'); return new Response(JSON.stringify({ items: path.includes('beforeSeq=9') ? [item('mismatched', { seq: 6 }), item('preview', { seq: 8 })] : [], nextBeforeSeq: null, nextBeforeOffset: null }), { headers: { 'Content-Type': 'application/json' } });
+  } }));
+  const view = (headSeq: number) => <AppProviders><ConversationHistory userId="alice" projectId={P} conversationId={C} taskId={T} headSeq={headSeq} terminal={false} /></AppProviders>;
+  const h = render(view(5)); await waitFor(() => expect(controller).toBeDefined()); await act(async () => controller.enqueue(new TextEncoder().encode('event: snapshot\ndata: ' + JSON.stringify(live()) + '\n\n'))); await screen.findByText('preview');
+  await act(async () => controller.enqueue(new TextEncoder().encode('event: snapshot\ndata: broken\n\n'))); h.rerender(view(8));
+  expect(await screen.findByText('实时预览未确认保存')).toBeVisible(); expect(finalBound).toBe(true); expect(screen.getByLabelText('实时预览')).toBeVisible(); expect(screen.getAllByText('preview')).toHaveLength(1); expect(screen.queryByText('mismatched')).toBeNull();
+});
 it('loads final durable history when the last received ACK has no current draft', async () => {
   server.use(http.get('/api/v1/projects/p-history/conversations/c-history/entries', ({ request }) => HttpResponse.json({ items: new globalThis.URL(request.url).searchParams.get('beforeSeq') === '6' ? [] : [item('last durable answer', { seq: 8 })], nextBeforeSeq: null, nextBeforeOffset: null })));
   const acknowledged = { ...live(), current: null }; const h = render(historyView(acknowledged)); await act(async () => {}); h.rerender(historyView(acknowledged, 8, true)); expect(await screen.findByText('last durable answer')).toBeVisible();
