@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process';
 import { expect, test, type Page } from '@playwright/test';
+import { assertConversationBookAnswer } from './ai-context-answer';
 
 // Real deployment/model only; this file neither seeds nor deletes a project.
 const project = process.env.MANAO_AI_ACCEPTANCE_PROJECT_ID!;
@@ -95,9 +96,9 @@ test('A reads a bounded fixture and continues → isolated B → idle worker rec
   expect(read.data.truncated === true).toBe(false);
   expect(read.data.sha256).toBe(fixture.sha256); expect(read.data.content).toBe(fixture.content);
   expect(Buffer.byteLength(read.data.content, 'utf8')).toBe(fixtureBytes);
-  const second = await submit(page, a.conversationId, '仅输出一本编号为7的书的JSON和你记得的秘密标记；遵守本会话先前约束，不调用工具。');
+  const second = await submit(page, a.conversationId, '仅返回单个原始JSON对象，不要代码围栏或解释；只含最初约定的书籍标识字段（数值7）和marker字段（值为你记住的最初秘密标记）。遵守本会话最初字段约束，不调用工具。');
   const secondText = await answer(page, a.conversationId, second.taskId);
-  expect(secondText).toContain('bookId'); expect(secondText).toContain(marker);
+  assertConversationBookAnswer(secondText, 7, marker);
   const b = await create(page);
   const bTask = await submit(page, b.conversationId, '这是独立新会话，只回复 NEW_CONVERSATION，不调用工具或修改文件。');
   expect(await answer(page, b.conversationId, bTask.taskId)).toContain('NEW_CONVERSATION');
@@ -127,8 +128,8 @@ test('A reads a bounded fixture and continues → isolated B → idle worker rec
   const after = await history(page, a.conversationId);
   for (const original of before) expect(after).toContainEqual(original);
   expect(after.some(i => i.kind === 'compaction')).toBe(true);
-  const last = await submit(page, a.conversationId, '仍只输出一本编号为8的书的JSON和最初的秘密标记，遵守原字段约束，不调用工具。');
+  const last = await submit(page, a.conversationId, '仅返回单个原始JSON对象，不要代码围栏或解释；只含最初约定的书籍标识字段（数值8）和marker字段（值为你记住的最初秘密标记）。遵守本会话最初字段约束，不调用工具。');
   const lastText = await answer(page, a.conversationId, last.taskId);
-  expect(lastText).toContain('bookId'); expect(lastText).toContain(marker);
+  assertConversationBookAnswer(lastText, 8, marker);
   info.annotations.push({ type: 'retained-project', description: project });
 });

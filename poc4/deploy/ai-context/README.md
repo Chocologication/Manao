@@ -76,6 +76,8 @@ pnpm test:e2e:ai-context
 
 主链：UI创建A→read_file读取有界fixture并记住bookId和随机标记→新task遵守→UI创建B并检查历史隔离→确认A/B及项目无占用→固定worker重建→重新打开A→UI手动压缩→逐项原历史仍在→下一轮仍遵守。B真实模型不提及标记仅是补充，本地真实Pi scripted provider实际context捕获才证明上下文未带A。摘要是有损概括，真实模型质量仍需该轮结果；no-op摘要不能满足本主链的新增compaction标记。
 
+新A轮和压缩后A轮只允许单个原始JSON对象，精确键为`bookId`/`marker`，书籍编号分别数值7/8，marker必须为最初记住的值；prompt只引用原字段约束，不重新透露字段拼写或marker。harness直接JSON.parse后精确比较整个对象，拒绝代码围栏、解释、id替代字段、额外字段和错值；仅提到bookId或marker不能通过。该断言本地9项语义回归通过，真实模型输出仍NOT_RUN。
+
 测试唯一集群写步骤是显式目标worker的 `kubectl --context … --namespace … rollout restart deployment/<worker>`，随后固定 `rollout status … --timeout=180s`；只读get Deployment/Pod JSON核对前后UID不同、replicas=1、Recreate、仅一个Ready且未deleting的Pod。没有任意shell脚本、kubeconfig打印、其它Deployment操作或自动回收。失败保留项目和诊断，禁止自动重试restart或模型任务。测试无trace/screenshot，防止owner凭据和项目原文进入自动附件；仅报告脱敏任务/会话/Pod身份。
 
 `--list`、类型检查或缺条件拒绝仅证明harness装配/guard，不构成真实E2E PASS。自动75%不为验收烧入786432 tokens，真实未触发仍NOT_RUN。发布/主链完成后把各项实际计数、SHA、digest、imageID/UID、运行库版本、备份恢复与项目留存/回收结果写入证据，不改写Stage1真实PASS、Stage2 PAUSED/NOT_GRANTED和Stage3用户确认。

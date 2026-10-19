@@ -26,6 +26,8 @@
 
 以下是当时版本的局部证据，不把早期组合改称最终 HEAD。每项完成后由主控派发独立规格/质量审查；Task 1 的 Important/Minor 已关闭，Task 2–5 最终无未解决功能发现。Task 6 和整体分支的最终审查由主控另行记录。
 
+Task6初审对`e8248e8`给出Changes requested，唯一Important I1：E2E仅检查回答包含bookId/marker，会将`{"id":7,"note":"the requested key was bookId","marker":"原标记"}`误判通过。修复轮1将同会话及压缩后两轮都约定为单个raw JSON，数值分别7/8，只有原约定书籍标识字段和marker；prompt不重新透露bookId拼写或原marker值。测试helper只JSON.parse并对精确`{ bookId, marker }`做deepEqual，拒绝解释文字、替代id、额外字段和错值；不是通用JSON提取器。修复提交和复审结论由主控登记，不追认初审通过。
+
 | 任务 / 提交 | 有效 RED 摘要 | GREEN / 审查 |
 | --- | --- | --- |
 | 1 `585884d`，修复 `b9227a8` | 初始37项：1断言失败+1缺表错误，旧512KiB过滤器拦截600KiB新 context；后续合法长文本读取失败。评审修复7项中5断言失败+1真实冲突：RR旧快照错ACK/漏行、不可分页metadata超界、header时戳不一致 | 初始最终组合96/96，后续HTTP3/3；修复Store19/19，12:25:17+08:00，01:05。复审 PASS/Approved，I1/I2/M1关闭 |
@@ -84,6 +86,8 @@ pnpm test -- test/context-compaction.test.ts -t 'exact clock boundary'
 修复前1 failed/18 skipped（13:56:47，3.43s）；修复后1 passed/18 skipped（13:57:04，3.05s）。`7a7976d`仅让实际deadline timer先记expired，再调用原stop，预算结算读取该事实，保留普通用户stop分类。最终全worker121/121，7文件，13:58:14，6.84s，build退出0。两个原runner-failure fixture的stderr为预期诊断。
 
 frontend相关7文件165/165，13:52:19，61.38s；typecheck退出0；Vite build49.73s，旧大chunk警告保留。独立strict `tsc --noEmit --target es2023 --module esnext --moduleResolution bundler --strict --skipLibCheck --types node playwright.ai-context.config.ts tests/e2e/ai-context.spec.ts` 退出0，证明harness可类型检查，不证明主链执行。
+
+I1定向语义回归命令（cwd `poc4/frontend`）：`pnpm test -- tests/acceptance/ai-context-answer.test.ts`。先将两处原包含检查原样抽入helper，修复前有效RED为6 failed / 3 passed，14:17:21+08:00，3.93s：两轮id+note反例、散文、残缺JSON、错bookId和额外id均未抛错；正确JSON已通过。改为raw JSON精确对象断言后9/9，14:17:59，3.40s，0failed/skipped。helper不导入Playwright，unit不会注册E2E；原163/121/165组合未因harness-only修复重跑或改称174项。带helper及unit文件的strict tsc退出0，`pnpm test:e2e:ai-context`仍缺授权/env而exit1 NOT_RUN；未访问模型/browser/cluster。
 
 E2E命令实际退出1并明确NOT_RUN：缺本轮model/restart/global-idle授权及BASE_URL/project/owner/Kubernetes目标/fixture路径。自检安装SDK的prepareCompaction发现短聊天会合法no-op，因此加入操作者预先准备的96–120KiB无秘密ASCII文件，A首轮只读一次；通过原owner文件API和原task的read_file安全结果比对sha/content/真实字节，禁止本轮自动写fixture。修订后只重跑harness strict类型检查和缺条件拒绝，均符合预期，不重跑已过165项。未设置假的授权env绕过配置，未调用kubectl，未启动browser/webServer。后续真实验收步骤见发布准备；不把discover/list/typecheck/guard视为E2E PASS。
 
