@@ -290,6 +290,186 @@ class AgentConversationStoreTest {
         }
     }
 
+    @Test void concurrentFirstBindingRejectsTheInstanceFromTheEarlierReadView() throws Exception {
+        try (var db = JdbcStoreTestSupport.create()) {
+            seed(db); var store = conversations(db);
+            String conversation = UUID.randomUUID().toString(), task = UUID.randomUUID().toString();
+            store.create("ctx-owner", "ctx-project", new CreateConversationRequest(conversation));
+            tasks(db).createTask("ctx-owner", "ctx-project", new AgentContracts.TaskRequest(task, "goal", 7), conversation);
+            var header = JSON.readTree(db.jdbc().queryForObject("SELECT header_json FROM agent_conversation WHERE id=?", String.class, conversation));
+            var read = new java.util.concurrent.CountDownLatch(1); var resume = new java.util.concurrent.CountDownLatch(1);
+            var readerConnection = new java.util.concurrent.atomic.AtomicReference<Long>();
+            var reader = pausedAfterTaskLookup(db, task, read, resume, readerConnection);
+            var pool = java.util.concurrent.Executors.newSingleThreadExecutor();
+            try {
+                var late = pool.submit(() -> reader.appendForTask(task, "wrong-worker", 1,
+                    new ContextAppend(1, header, List.of(nativeMessage("wrong", task, "must not save")), null)));
+                assertThat(read.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+                assertThat(db.jdbc().queryForObject("SELECT CONNECTION_ID()", Long.class)).isNotEqualTo(readerConnection.get());
+                assertThat(tasks(db).bindWorkerInstance(task, 1, "correct-worker")).isTrue();
+                resume.countDown();
+                assertThatThrownBy(() -> late.get(5, java.util.concurrent.TimeUnit.SECONDS))
+                    .hasCauseInstanceOf(ApiException.class).satisfies(ex -> assertThat(((ApiException) ex.getCause()).code()).isEqualTo("AI_INSTANCE_MISMATCH"));
+                assertThat(store.detail("ctx-owner", "ctx-project", conversation).headSeq()).isEqualTo(1);
+                assertThat(db.jdbc().queryForObject("SELECT worker_instance_id FROM agent_task WHERE id=?", String.class, task)).isEqualTo("correct-worker");
+            } finally { resume.countDown(); pool.shutdownNow(); }
+        }
+    }
+
+    @Test void concurrentIdenticalAppendReturnsTheOriginalAckAfterAnotherConnectionCommits() throws Exception {
+        try (var db = JdbcStoreTestSupport.create()) {
+            seed(db); var store = conversations(db);
+            String conversation = UUID.randomUUID().toString(), task = UUID.randomUUID().toString();
+            store.create("ctx-owner", "ctx-project", new CreateConversationRequest(conversation));
+            tasks(db).createTask("ctx-owner", "ctx-project", new AgentContracts.TaskRequest(task, "goal", 7), conversation);
+            var header = store.readForTask(task, "worker", 1, 0, null).header();
+            var append = new ContextAppend(1, header, List.of(nativeMessage("same", task, "answer")), null);
+            var read = new java.util.concurrent.CountDownLatch(1); var resume = new java.util.concurrent.CountDownLatch(1);
+            var readerConnection = new java.util.concurrent.atomic.AtomicReference<Long>();
+            var reader = pausedAfterTaskLookup(db, task, read, resume, readerConnection);
+            var pool = java.util.concurrent.Executors.newSingleThreadExecutor();
+            try {
+                var retry = pool.submit(() -> reader.appendForTask(task, "worker", 1, append));
+                assertThat(read.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+                assertThat(db.jdbc().queryForObject("SELECT CONNECTION_ID()", Long.class)).isNotEqualTo(readerConnection.get());
+                assertThat(store.appendForTask(task, "worker", 1, append).headSeq()).isEqualTo(2);
+                resume.countDown();
+                assertThat(retry.get(5, java.util.concurrent.TimeUnit.SECONDS).headSeq()).isEqualTo(2);
+                assertThat(db.jdbc().queryForObject("SELECT COUNT(*) FROM agent_conversation_entry WHERE conversation_id=?", Integer.class, conversation)).isEqualTo(2);
+            } finally { resume.countDown(); pool.shutdownNow(); }
+        }
+    }
+
+    @Test void concurrentContextReadPairsTheNewHeadWithItsCommittedEntries() throws Exception {
+        try (var db = JdbcStoreTestSupport.create()) {
+            seed(db); var store = conversations(db);
+            String conversation = UUID.randomUUID().toString(), task = UUID.randomUUID().toString();
+            store.create("ctx-owner", "ctx-project", new CreateConversationRequest(conversation));
+            tasks(db).createTask("ctx-owner", "ctx-project", new AgentContracts.TaskRequest(task, "goal", 7), conversation);
+            var header = store.readForTask(task, "worker", 1, 0, null).header();
+            var read = new java.util.concurrent.CountDownLatch(1); var resume = new java.util.concurrent.CountDownLatch(1);
+            var readerConnection = new java.util.concurrent.atomic.AtomicReference<Long>();
+            var reader = pausedAfterTaskLookup(db, task, read, resume, readerConnection);
+            var pool = java.util.concurrent.Executors.newSingleThreadExecutor();
+            try {
+                var pending = pool.submit(() -> reader.readForTask(task, "worker", 1, 0, null));
+                assertThat(read.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+                assertThat(db.jdbc().queryForObject("SELECT CONNECTION_ID()", Long.class)).isNotEqualTo(readerConnection.get());
+                store.appendForTask(task, "worker", 1, new ContextAppend(1, header, List.of(nativeMessage("committed", task, "answer")), null));
+                resume.countDown();
+                var page = pending.get(5, java.util.concurrent.TimeUnit.SECONDS);
+                assertThat(page.headSeq()).isEqualTo(2);
+                assertThat(page.entries()).extracting(StoredEntry::seq).containsExactly(1L, 2L);
+                assertThat(page.entries().get(1).entry().path("id").asText()).isEqualTo("committed");
+            } finally { resume.countDown(); pool.shutdownNow(); }
+        }
+    }
+
+    @Test void oversizedToolIdentityIsRejectedBeforeAnyEntryInTheBatchIsSaved() throws Exception {
+        try (var db = JdbcStoreTestSupport.create()) {
+            seed(db); var store = conversations(db);
+            String conversation = UUID.randomUUID().toString(), task = UUID.randomUUID().toString();
+            store.create("ctx-owner", "ctx-project", new CreateConversationRequest(conversation));
+            tasks(db).createTask("ctx-owner", "ctx-project", new AgentContracts.TaskRequest(task, "goal", 7), conversation);
+            var header = store.readForTask(task, "worker", 1, 0, null).header();
+            var oversized = toolMessage("bad-tools", "preceding", "", 1);
+            ((com.fasterxml.jackson.databind.node.ObjectNode) oversized.path("message").path("content").get(0)).put("id", "x".repeat(600 * 1024));
+            assertThat(JSON.writeValueAsBytes(oversized).length).isLessThan(2 * 1024 * 1024);
+            assertCode(() -> store.appendForTask(task, "worker", 1, new ContextAppend(1, header,
+                List.of(nativeMessage("preceding", task, "must rollback"), oversized), null)), "AI_REQUEST_TOO_LARGE");
+            assertThat(store.detail("ctx-owner", "ctx-project", conversation).headSeq()).isEqualTo(1);
+            assertThat(db.jdbc().queryForObject("SELECT COUNT(*) FROM agent_conversation_entry", Integer.class)).isEqualTo(1);
+        }
+    }
+
+    @Test void anIndivisibleToolGroupMustFitOneSerializedHistoryPageBeforeItIsAccepted() throws Exception {
+        try (var db = JdbcStoreTestSupport.create()) {
+            seed(db); var store = conversations(db);
+            String conversation = UUID.randomUUID().toString(), task = UUID.randomUUID().toString();
+            store.create("ctx-owner", "ctx-project", new CreateConversationRequest(conversation));
+            tasks(db).createTask("ctx-owner", "ctx-project", new AgentContracts.TaskRequest(task, "goal", 7), conversation);
+            var header = store.readForTask(task, "worker", 1, 0, null).header();
+            var many = toolMessage("many-tools", task, "", 5000);
+            assertThat(JSON.writeValueAsBytes(many).length).isLessThan(2 * 1024 * 1024);
+            assertCode(() -> store.appendForTask(task, "worker", 1, new ContextAppend(1, header, List.of(many), null)), "AI_REQUEST_TOO_LARGE");
+            assertThat(store.detail("ctx-owner", "ctx-project", conversation).headSeq()).isEqualTo(1);
+        }
+    }
+
+    @Test void acceptedToolMetadataAndLongTextAreLosslessAcrossBoundedHistoryPages() throws Exception {
+        try (var db = JdbcStoreTestSupport.create()) {
+            seed(db); var store = conversations(db);
+            String conversation = UUID.randomUUID().toString(), task = UUID.randomUUID().toString();
+            store.create("ctx-owner", "ctx-project", new CreateConversationRequest(conversation));
+            tasks(db).createTask("ctx-owner", "ctx-project", new AgentContracts.TaskRequest(task, "goal", 7), conversation);
+            var header = store.readForTask(task, "worker", 1, 0, null).header();
+            String text = "😀中文\\\"".repeat(80000);
+            var message = toolMessage("tools", task, text, 40);
+            var result = JSON.createObjectNode().put("id", "result").put("type", "message").put("timestamp", NOW.toString()).put("parentId", "tools");
+            result.putObject("message").put("role", "toolResult").put("toolName", "read_file").put("toolCallId", "tool-0").putObject("details").put("private", "DO_NOT_EXPOSE");
+            store.appendForTask(task, "worker", 1, new ContextAppend(1, header, List.of(message, result), null));
+            Long before = null; Integer offset = null; int pages = 0;
+            var fragments = new java.util.TreeMap<Integer, String>(); var ids = new java.util.HashSet<String>();
+            do {
+                var history = store.history("ctx-owner", "ctx-project", conversation, before, offset, 2);
+                assertThat(JSON.writeValueAsBytes(history).length).isLessThanOrEqualTo(512 * 1024);
+                assertThat(JSON.writeValueAsString(history)).doesNotContain("DO_NOT_EXPOSE", "details");
+                for (var item : history.items()) {
+                    if ("assistant".equals(item.kind())) fragments.put(item.textOffset(), item.text());
+                    if ("tool_call".equals(item.kind())) { assertThat(ids.add(item.toolCallId())).isTrue(); assertThat(item.text()).isEqualTo("read_file"); }
+                }
+                before = history.nextBeforeSeq(); offset = history.nextBeforeOffset();
+                assertThat(++pages).isLessThan(100);
+            } while (before != null);
+            assertThat(String.join("", fragments.values())).isEqualTo(text);
+            assertThat(ids).containsExactlyInAnyOrderElementsOf(java.util.stream.IntStream.range(0, 40).mapToObj(i -> "tool-" + i).toList());
+        }
+    }
+
+    @Test void headerAndDatabaseCreationTimeUseTheSameMicrosecondInstant() throws Exception {
+        try (var db = JdbcStoreTestSupport.create()) {
+            seed(db);
+            var ticks = new java.util.concurrent.atomic.AtomicInteger();
+            Clock advancing = new Clock() {
+                public java.time.ZoneId getZone() { return ZoneOffset.UTC; }
+                public Clock withZone(java.time.ZoneId zone) { return this; }
+                public Instant instant() { return NOW.plusNanos(123456789L + ticks.getAndIncrement() * 1234567L); }
+            };
+            var store = new AgentConversationStore(db.jdbc(), new DataSourceTransactionManager(db.jdbc().getDataSource()), advancing, tasks(db));
+            String conversation = UUID.randomUUID().toString();
+            store.create("ctx-owner", "ctx-project", new CreateConversationRequest(conversation));
+            var row = db.jdbc().queryForMap("SELECT header_json,created_at,updated_at FROM agent_conversation WHERE id=?", conversation);
+            Instant header = Instant.parse(JSON.readTree((String) row.get("header_json")).path("timestamp").asText());
+            Instant created = ((Timestamp) row.get("created_at")).toInstant();
+            assertThat(header).isEqualTo(NOW.plusNanos(123456000));
+            assertThat(header).isEqualTo(created).isEqualTo(((Timestamp) row.get("updated_at")).toInstant());
+        }
+    }
+
+    private static com.fasterxml.jackson.databind.JsonNode toolMessage(String id, String parent, String text, int calls) {
+        var entry = JSON.createObjectNode().put("id", id).put("type", "message").put("timestamp", NOW.toString()).put("parentId", parent);
+        var content = entry.putObject("message").put("role", "assistant").putArray("content");
+        if (!text.isEmpty()) content.addObject().put("type", "text").put("text", text);
+        for (int i = 0; i < calls; i++) content.addObject().put("type", "toolCall").put("id", "tool-" + i).put("name", "read_file").putObject("arguments").put("path", "file");
+        return entry;
+    }
+
+    /** Only the pause is mocked: all SQL, locks, commits and returned behavior use real MySQL connections. */
+    private static AgentConversationStore pausedAfterTaskLookup(JdbcStoreTestSupport db, String task,
+            java.util.concurrent.CountDownLatch read, java.util.concurrent.CountDownLatch resume,
+            java.util.concurrent.atomic.AtomicReference<Long> connection) {
+        var jdbc = org.mockito.Mockito.spy(db.jdbc());
+        org.mockito.Mockito.doAnswer(invocation -> {
+            var answer = invocation.callRealMethod();
+            connection.set(jdbc.queryForObject("SELECT CONNECTION_ID()", Long.class));
+            read.countDown();
+            if (!resume.await(5, java.util.concurrent.TimeUnit.SECONDS)) throw new AssertionError("concurrent commit did not finish");
+            return answer;
+        }).when(jdbc).query(org.mockito.ArgumentMatchers.eq("SELECT project_id FROM agent_task WHERE id=?"),
+            org.mockito.ArgumentMatchers.<org.springframework.jdbc.core.RowMapper<String>>any(), org.mockito.ArgumentMatchers.eq(task));
+        return new AgentConversationStore(jdbc, new DataSourceTransactionManager(jdbc.getDataSource()), Clock.fixed(NOW, ZoneOffset.UTC), tasks(db));
+    }
+
     private static void seed(JdbcStoreTestSupport db) {
         var now = Timestamp.from(NOW);
         db.jdbc().update("INSERT INTO app_user(id,username,password_hash,created_at) VALUES ('ctx-owner','ctx-owner','unused',?)", now);

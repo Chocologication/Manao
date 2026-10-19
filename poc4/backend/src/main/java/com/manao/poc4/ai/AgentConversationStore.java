@@ -34,6 +34,9 @@ public final class AgentConversationStore {
                                   AgentTaskStore tasks) {
         this.jdbc = jdbc;
         this.transaction = new TransactionTemplate(transactions);
+        // The routing lookup precedes the project lock. Its old read view must not
+        // hide a binding or append committed while this transaction waited for that lock.
+        this.transaction.setIsolationLevel(org.springframework.transaction.TransactionDefinition.ISOLATION_READ_COMMITTED);
         this.clock = clock;
         this.tasks = tasks;
     }
@@ -49,9 +52,10 @@ public final class AgentConversationStore {
                 if (!projectId.equals(existing.get(0))) throw missing();
                 return detail(ownerId, projectId, request.conversationId());
             }
-            var now = Timestamp.from(clock.instant());
+            var instant = clock.instant().truncatedTo(java.time.temporal.ChronoUnit.MICROS);
+            var now = Timestamp.from(instant);
             var header = JSON.createObjectNode().put("type", "session").put("version", 3)
-                .put("id", request.conversationId()).put("cwd", "manao-project").put("timestamp", clock.instant().toString());
+                .put("id", request.conversationId()).put("cwd", "manao-project").put("timestamp", instant.toString());
             jdbc.update("INSERT INTO agent_conversation(id,project_id,title,header_json,head_seq,created_at,updated_at) VALUES (?,?,?, ?,0,?,?)",
                 request.conversationId(), projectId, "新会话", json(header), now, now);
             return detail(ownerId, projectId, request.conversationId());
@@ -199,8 +203,10 @@ public final class AgentConversationStore {
             (rs, i) -> rs.getString(1), conversationId));
         Set<String> batch = new HashSet<>();
         int old = 0;
+        long checkedSeq = append.expectedHeadSeq();
         for (var entry : append.entries()) {
             validateEntry(entry);
+            validateBrowsable(new StoredEntry(++checkedSeq, sourceTaskId, writerId, entry));
             String id = entry.path("id").asText();
             if (!batch.add(id)) throw conflict();
             if (known.contains(id)) old++;
@@ -299,6 +305,17 @@ public final class AgentConversationStore {
         var text = new StringBuilder();
         if (content.isArray()) for (var part : content) if ("text".equals(part.path("type").asText())) text.append(part.path("text").asText());
         return text.toString();
+    }
+    /** Every accepted offset group must remain readable without clipping metadata. */
+    private void validateBrowsable(StoredEntry row) {
+        var groups = new java.util.HashMap<Integer, List<HistoryItem>>();
+        for (var item : fragments(project(row)))
+            groups.computeIfAbsent(item.textOffset(), ignored -> new ArrayList<>()).add(item);
+        for (var group : groups.values()) {
+            // Reserve the largest legal cursor envelope, including JSON escaping and
+            // repeated tool IDs, before inserting any entry in the atomic batch.
+            if (bytes(new HistoryPage(group, Long.MAX_VALUE, Integer.MAX_VALUE)) > HISTORY_LIMIT) throw tooLarge();
+        }
     }
     /** UTF-16 offsets always land on complete code points; fragments are bounded before JSON escaping. */
     private static ArrayList<HistoryItem> fragments(List<HistoryItem> projected) {
