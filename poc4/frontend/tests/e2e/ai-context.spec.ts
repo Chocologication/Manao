@@ -11,6 +11,16 @@ type Task = { taskId: string; conversationId: string; state: string; writesLocke
 type View = { conversationId: string; title: string; headSeq: number; activeTaskId: string | null; compactRequestId: string | null; compactState: string | null };
 type Item = { seq: number; textOffset: number; kind: string; text: string; taskId: string | null; toolCallId: string | null };
 let token = '';
+async function login(page: Page): Promise<void> {
+  await page.getByLabel('Username').fill(process.env.MANAO_AI_ACCEPTANCE_USERNAME!);
+  await page.getByLabel('Password').fill(process.env.MANAO_AI_ACCEPTANCE_PASSWORD!);
+  const response = page.waitForResponse(r => new URL(r.url()).pathname === '/api/v1/auth/login' && r.request().method() === 'POST');
+  await page.getByRole('button', { name: 'Sign in' }).click();
+  const accepted = await response; expect(accepted.status()).toBe(200);
+  token = (await accepted.json() as { accessToken: string }).accessToken;
+  expect(typeof token).toBe('string'); expect(token.length).toBeGreaterThan(0);
+  await expect(page).toHaveURL(new RegExp(`/projects/${project}$`));
+}
 async function get<T>(page: Page, path: string): Promise<T> {
   const response = await page.request.get(path, { headers: { Authorization: `Bearer ${token}` }, maxRedirects: 0, maxRetries: 0 });
   expect(response.ok(), 'owner-scoped read must succeed').toBeTruthy(); return response.json() as Promise<T>;
@@ -72,12 +82,7 @@ async function readyWorker() {
 
 test('A reads a bounded fixture and continues → isolated B → idle worker recreation → native compact retains original history', async ({ page }, info) => {
   await page.goto(`/projects/${project}`);
-  await page.getByLabel('Username').fill(process.env.MANAO_AI_ACCEPTANCE_USERNAME!);
-  await page.getByLabel('Password').fill(process.env.MANAO_AI_ACCEPTANCE_PASSWORD!);
-  const login = page.waitForResponse(r => new URL(r.url()).pathname === '/api/v1/auth/login' && r.request().method() === 'POST');
-  await page.getByRole('button', { name: 'Sign in' }).click();
-  token = (await (await login).json() as { accessToken: string }).accessToken;
-  expect(typeof token).toBe('string'); await expect(page).toHaveURL(new RegExp(`/projects/${project}$`));
+  await login(page);
   const fixturePath = process.env.MANAO_AI_CONTEXT_FIXTURE_PATH!;
   const fixture = await get<{ path: string; content: string; workspaceRevision: string }>(page, `${root}/files/content?path=${encodeURIComponent(fixturePath)}`);
   const fixtureBytes = Buffer.byteLength(fixture.content, 'utf8');
@@ -115,7 +120,7 @@ test('A reads a bounded fixture and continues → isolated B → idle worker rec
   await kubectl(['rollout', 'status', `deployment/${process.env.MANAO_AI_CONTEXT_WORKER_DEPLOYMENT}`, '--timeout=180s']);
   const newUid = await readyWorker(); expect(newUid).not.toBe(oldUid);
   info.annotations.push({ type: 'worker-recreated', description: `${oldUid} -> ${newUid}` });
-  await page.reload(); await page.getByRole('tab', { name: 'AI', exact: true }).click();
+  await page.reload(); await login(page); await page.getByRole('tab', { name: 'AI', exact: true }).click();
   const aView = await get<View>(page, `${root}/conversations/${a.conversationId}`);
   await page.getByRole('navigation', { name: '会话列表' }).getByRole('button', { name: aView.title, exact: true }).click();
   await expect(page.getByRole('region', { name: '会话历史' }).getByText(goal, { exact: true })).toBeVisible();
