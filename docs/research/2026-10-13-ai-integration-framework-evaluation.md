@@ -153,6 +153,8 @@ flowchart TD
 
 ## 9. 下一步建议与选型退出条件
 
+本节保留2026-10-13选型时的下一步建议。当前阶段状态以[实现拆分总览](2026-10-13-pi-minimal-integration-implementation-slicing.md)和§10.2的2026-10-19用户决定为准，不将下文原建议重新列作待开始的实施任务。
+
 下一项是 **Pi 与 Manao 项目工具的最小集成方案及验证设计**，随后在实现授权后执行。用户已确定先在没有重要既有数据的专用 Spring Boot 验收项目中完成真实书籍 CRUD，项目数据库操作全部自动，验证单 Agent 的读改代码、依赖处理、构建测试、启动应用及失败修复闭环，再扩展到 Python。Java/Python 是已交付的两类用户项目，Go/TS 不再前置。
 
 建议验收一条明确链路：用户目标 → 读取项目 → 修改与依赖处理 → 构建/测试 → 启动 Manao 应用 Run → 读取失败或业务结果 → 修复 → 新 Run → 展示文件版本、修改清单和真实验证证据。结束消息不能直接记为任务验收成功。
@@ -165,7 +167,7 @@ flowchart TD
 
 ## 10. 最小集成设计的已确认决定（2026-10-13）
 
-用户同意本报告的选型方向，进入 Pi SDK 与 Manao 项目工具的最小集成设计。当前工作目录为 `.worktree/ai-integration`，分支 `codex/ai-integration`，设计基线为 `master@49eb632`。本节记录讨论决定，不代表实现、部署或验收结果。
+用户同意本报告的选型方向，进入 Pi SDK 与 Manao 项目工具的最小集成设计。工作目录为 `.worktree/ai-integration`，分支 `codex/ai-integration`，原设计基线为 `master@49eb632`。本节保留2026-10-13讨论决定及后续日期明确的补充；原设计本身不作为实现、部署或验收证据。2026-10-19第三阶段使命的用户确认见§10.2。
 
 | 设计问题 | 已确认选择 |
 | --- | --- |
@@ -191,7 +193,7 @@ flowchart TD
 
 ### 10.1 待审阅的开发执行方案
 
-实现顺序见 [Pi 最小集成的实现拆分建议](2026-10-13-pi-minimal-integration-implementation-slicing.md)：先真实读改测，再接应用运行反馈、CRUD 与用户验收，最后完成接管和异常恢复。第一阶段已实现，2026-10-15 真实云端验收和 `PI_STAGE1_CODE_TEST_LOOP_PASS` 由[实施记录第 8 节](../../poc4/docs/evidence/ai-stage1/acceptance.md)拥有，后续 revision 修复验证限制见第 8.7 节。2026-10-16 用户请求的[第二阶段设计](../superpowers/specs/2026-10-16-pi-stage2-design.md)、[五任务计划](../superpowers/plans/2026-10-16-pi-stage2-implementation-plan.md)与[实施提示词](../superpowers/plans/2026-10-16-pi-stage2-agent-handoff.md)已完成；仅规划应用 Run、日志与有界 GET 反馈，不代表第二阶段实现或发布。第一阶段固定 Maven goal、只读-copy构建继续复用；下述早期通用执行提案由具体阶段设计收敛，不作为自由 Shell 的实施指令。
+原实现顺序见 [Pi 最小集成的实现拆分建议](2026-10-13-pi-minimal-integration-implementation-slicing.md)：真实读改测、应用运行反馈、CRUD 与用户验收、接管和异常恢复。第一阶段已实现，2026-10-15 真实云端验收和 `PI_STAGE1_CODE_TEST_LOOP_PASS` 由[实施记录第 8 节](../../poc4/docs/evidence/ai-stage1/acceptance.md)拥有，后续 revision 修复验证限制见第 8.7 节。第二阶段[设计](../superpowers/specs/2026-10-16-pi-stage2-design.md)、[五任务计划](../superpowers/plans/2026-10-16-pi-stage2-implementation-plan.md)与[实施提示词](../superpowers/plans/2026-10-16-pi-stage2-agent-handoff.md)对应的代码和发布已完成，但[真实验收](../../poc4/docs/evidence/ai-stage2/acceptance.md)未通过且暂停。第三阶段使命已由用户基于实际使用于2026-10-19确认提前完成（§10.2）；第四阶段仍属后续范围。第一阶段固定 Maven goal、只读-copy构建继续复用；下述早期通用执行提案由具体阶段设计收敛，不作为自由 Shell 的实施指令。
 
 建议使用稳定 Pi coding SDK，在单独的 Agent 控制进程中调用云端模型；Manao 后端继续作为项目身份、写入占用、审批及 Run 的权威。首版新增独立开发执行 Job，复用 Java runner 的工具链、当前项目源码挂载与私有 Maven 缓存。它负责一次受控 Shell／构建／测试命令，不复用应用 Run 的状态与控制目录。开发命令串行执行；命令退出并核对改动后刷新文件版本，再通过既有 Run 启动应用验证。
 
@@ -203,3 +205,9 @@ flowchart TD
 当前依据：workspace-agent 的[运行镜像](../../poc4/workspace-agent/Dockerfile)明确不含 Maven；[Java runner](../../poc4/maven-runner/Dockerfile)已含 JDK 17、Maven 3.9.9 和 `manao-maven`；[应用 Job 工厂](../../poc4/backend/src/main/java/com/manao/poc4/kubernetes/JobResourceFactory.java)有项目源码与 Maven 缓存挂载模式，但应用命令固定，不能当作现成通用 Shell。新增执行 Job 不与应用 Run 并发执行 Maven，保留项目缓存的单写者假设。
 
 Pi 快照 `7d75a0e3` 的 SDK 接入使用 `ModelRuntime` 配置 provider/baseUrl/model 与运行时 API key，再传给 `createAgentSession`。禁用内置工具并使用明确工具 allowlist；自定义工具通过 Manao 的项目限定接口执行。Pi 会话和模型密钥不放入项目源码或用户代码容器，用户项目的可执行扩展不加载进控制进程。稳定 SDK 的会话持久化只负责对话继续，远端副作用仍由 Manao 的操作记录核对。以上为架构提案，尚未完成设计审阅或实现。
+
+### 10.2 第三阶段使命提前完成的用户决定（2026-10-19）
+
+用户明确表示：第二阶段依然不视为通过；实际使用当前AI集成已经能够实现书籍数据CRUD，因此认为第三阶段提前完成其使命。该判断承接原“书籍CRUD与用户验收”目标，现记为**第三阶段使命经用户实际使用验收，提前完成**，详情由[第三阶段用户确认记录](../../poc4/docs/evidence/ai-stage3/acceptance.md)拥有。
+
+第三阶段不再作为默认待启动的独立实现轮次。该用户决定与第二阶段工程验收分别记录：第二阶段保持PAUSED / NOT_GRANTED及其原失败、待补证据；不因书籍CRUD可用改授第二阶段PASS。原独立接口/数据库/重启持久化验收建议保持历史设计，本轮没有补造逐项工程测试或运行身份。第四阶段接管与异常恢复仍是后续范围，本次只授权更新文档。

@@ -299,3 +299,7 @@ task=`3d9d9bdb-0995-45a5-9bab-113a2d821fc8`最终COMPLETED、failure=null、sett
 三次后续operator和首次失败最小证据共16份已检查凭据后归档（源文件54,773字节；七份browser日志去掉14个行尾空格后为54,759字节，源/归档SHA256均见manifest）；旧trace、私有loader、重复构建context和审查副本不进入提交。本轮本地清理的逐文件清单、实际数量、保留边界和验证由[工作区整理记录](workspace-audit-20261018.md)拥有。§6及修复记录中先前审批拒绝是历史事实，本次用户重新明确授权清理，新增结果不改写当时状态。
 
 **剩余原验收事项仍为PAUSED / NOT_GRANTED**：首次采样差异UNKNOWN；完整browser主场景、精确编辑锁/stop恢复编辑、owner-close/start rows/未决call/历史Run不变、独立项目资源核查均未补验。Run记录/源码已变化，恢复时须先核对真实环境和固定fixture，不能直接套用旧续验身份或把三次operator PASS改记整轮PASS。
+
+### 9.14 2026-10-19 用户确认第三阶段使命提前完成，第二阶段仍未通过
+
+用户依据实际使用当前AI已能实现书籍数据CRUD，明确认为第三阶段提前完成其使命；该用户验收决定由[第三阶段确认记录](../ai-stage3/acceptance.md)拥有。用户同时明确“二阶段依然不视为通过”，因此本记录的原FAILED、PAUSED / NOT_GRANTED及未补验事项均保留。第三阶段的使命完成与本阶段工程验收分别记账，本次仅更新文档，没有恢复验收或新增运行证据。
