@@ -16,7 +16,12 @@ public final class AgentConversationContracts {
     public record CompactResult(long expectedHeadSeq, List<JsonNode> entries, ContextUsage usage, String failureCode) { }
     public record ConversationView(String conversationId, String title, long headSeq,
                                    String lastTaskId, String activeTaskId, ContextUsage usage,
-                                   String compactRequestId, String compactState, String compactFailureCode) { }
+                                   String compactRequestId, String compactState, String compactFailureCode, String nextReasoningEffort) {
+        public ConversationView(String conversationId, String title, long headSeq, String lastTaskId, String activeTaskId, ContextUsage usage,
+                                String compactRequestId, String compactState, String compactFailureCode) {
+            this(conversationId, title, headSeq, lastTaskId, activeTaskId, usage, compactRequestId, compactState, compactFailureCode, "high");
+        }
+    }
     public record ConversationPage(List<ConversationView> items, String nextCursor) { }
     public record HistoryItem(long seq, String taskId, String kind, String text, String toolCallId, int textOffset) {
         public HistoryItem(long seq, String taskId, String kind, String text, String toolCallId) {

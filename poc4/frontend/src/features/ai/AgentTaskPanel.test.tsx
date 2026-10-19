@@ -21,6 +21,24 @@ const USER_ID = 'user-alice';
 const TASK_ID = '0b8fd38f-0f9e-4c28-9c48-3f5f4a2b1c11';
 const CURRENT_URL = `/api/v1/projects/${PROJECT_ID}/agent-tasks/current`;
 const TASKS_URL = `/api/v1/projects/${PROJECT_ID}/agent-tasks`;
+it('submits the chosen effort and locks it while admission is unknown', async () => {
+  let posted: Record<string, unknown> | null = null, release = () => {};
+  const held = new Promise<void>(resolve => { release = resolve; });
+  server.use(http.post(TASKS_URL, async ({ request }) => { posted = await request.json() as Record<string, unknown>; await held; return HttpResponse.error(); }),
+    http.get(`${TASKS_URL}/:id`, ({ params }) => HttpResponse.json(occupyingTask({ taskId: String(params.id) }))));
+  const h = renderPanel();
+  await userEvent.selectOptions(screen.getByLabelText('推理强度'), 'max');
+  await userEvent.type(screen.getByLabelText('Task goal'), 'do work');
+  await userEvent.click(screen.getByRole('button', { name: 'Start task' }));
+  await waitFor(() => expect(posted).toMatchObject({ reasoningEffort: 'max' }));
+  expect(screen.getByLabelText('推理强度')).toBeDisabled();
+  release(); await waitFor(() => expect(h.getAccepted()).not.toBeNull());
+});
+it('shows old effort as unrecorded and explains the final output limit', () => {
+  renderPanel({ settledTask: occupyingTask({ state: 'FAILED', writesLocked: false, failureCode: 'AI_LENGTH_LIMIT' }) });
+  expect(screen.getByText('本轮推理强度：未记录')).toBeInTheDocument();
+  expect(screen.getByText('模型响应达到输出上限，本条内容可能不完整')).toBeInTheDocument();
+});
 
 it('parses nullable conversation association without inventing old task history', () => {
   expect(parseAgentTaskSnapshot(occupyingTask()).conversationId).toBeNull();

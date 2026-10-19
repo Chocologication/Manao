@@ -50,6 +50,6 @@ public final class AgentConversationController {
         long revision;
         try { revision = Long.parseLong(request.expectedWorkspaceRevision()); } catch (NumberFormatException ex) { throw AgentConversationStore.invalid(); }
         return tasks.submit(principal.getName(), projectId,
-            new AgentContracts.TaskRequest(request.taskId(), request.prompt(), revision), conversationId);
+            new AgentContracts.TaskRequest(request.taskId(), request.prompt(), revision, request.reasoningEffort()), conversationId);
     }
 }

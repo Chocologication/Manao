@@ -4,6 +4,8 @@
  * payload never becomes a fabricated task state.
  */
 
+export type ReasoningEffort = 'off' | 'low' | 'high' | 'max';
+export function isReasoningEffort(value: unknown): value is ReasoningEffort { return typeof value === 'string' && ['off', 'low', 'high', 'max'].includes(value); }
 export type AgentTaskState = 'QUEUED' | 'RUNNING' | 'COMPLETED' | 'FAILED' | 'NEEDS_ATTENTION';
 
 export type AgentProgressItem = {
@@ -16,6 +18,7 @@ export type AgentProgressItem = {
 export type AgentTaskSnapshot = {
   taskId: string;
   conversationId?: string | null;
+  reasoningEffort?: ReasoningEffort | null;
   state: AgentTaskState;
   workspaceRevision: string;
   writesLocked: boolean;
@@ -29,6 +32,7 @@ export type SubmitAgentTaskRequest = {
   taskId: string;
   prompt: string;
   expectedWorkspaceRevision: string;
+  reasoningEffort?: ReasoningEffort;
 };
 
 const AGENT_TASK_STATES: ReadonlySet<string> = new Set([
@@ -71,6 +75,7 @@ export function parseAgentTaskSnapshot(payload: unknown): AgentTaskSnapshot {
     record === null ||
     typeof record.taskId !== 'string' ||
     record.conversationId != null && typeof record.conversationId !== 'string' ||
+    record.reasoningEffort != null && !isReasoningEffort(record.reasoningEffort) ||
     typeof record.state !== 'string' ||
     !AGENT_TASK_STATES.has(record.state) ||
     typeof record.workspaceRevision !== 'string' ||
@@ -82,6 +87,7 @@ export function parseAgentTaskSnapshot(payload: unknown): AgentTaskSnapshot {
   }
   return {
     taskId: record.taskId,
+    reasoningEffort: record.reasoningEffort as ReasoningEffort | null | undefined ?? null,
     conversationId: record.conversationId as string | null | undefined ?? null,
     state: record.state as AgentTaskState,
     workspaceRevision: record.workspaceRevision,

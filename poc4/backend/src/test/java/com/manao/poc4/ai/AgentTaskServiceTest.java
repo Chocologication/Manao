@@ -43,6 +43,12 @@ import org.springframework.jdbc.datasource.DataSourceTransactionManager;
  * fake; every durable decision is observed in the database.
  */
 class AgentTaskServiceTest {
+    @Test void startsWithThePersistedDefaultEffort() {
+        try (var h = new Harness()) {
+            h.submit();
+            assertThat(JSON.valueToTree(h.worker.starts.get(0)).path("reasoningEffort").asText()).isEqualTo("high");
+        }
+    }
     private static final ObjectMapper JSON = new ObjectMapper();
     private static final String OWNER = "ai-owner";
     private static final String PROJECT = "ai-project";

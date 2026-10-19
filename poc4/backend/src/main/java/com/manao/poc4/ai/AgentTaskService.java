@@ -81,7 +81,7 @@ public final class AgentTaskService {
             return creation.snapshot();
         }
         driveStart(request.taskId(), request.prompt(), creation.snapshot().workspaceRevision(),
-            creation.epoch(), conversationId);
+            creation.epoch(), conversationId, creation.snapshot().reasoningEffort());
         return creation.snapshot();
     }
 
@@ -101,17 +101,17 @@ public final class AgentTaskService {
      * worker with a status read of the SAME task before the task is left undecided —
      * the worker may already be running a session nobody bound.
      */
-    private void driveStart(String taskId, String prompt, String workspaceRevision, long epoch, String conversationId) {
+    private void driveStart(String taskId, String prompt, String workspaceRevision, long epoch, String conversationId, String reasoningEffort) {
         WorkerStart start = new WorkerStart(taskId, prompt, workspaceRevision,
-            tasks.requestSha256Of(taskId), epoch, conversationId);
+            tasks.requestSha256Of(taskId), epoch, conversationId, reasoningEffort);
         try {
             WorkerStatus ack = worker.start(start);
             onStartAck(taskId, epoch, ack);
             return;
         } catch (ApiException ex) {
-            if ("AI_WORKER_NOT_CONFIGURED".equals(ex.code())) {
+            if ("AI_WORKER_NOT_CONFIGURED".equals(ex.code()) || "AI_REASONING_UNSUPPORTED".equals(ex.code())) {
                 // The worker refuses before any session exists: fail the task now, release it.
-                close(taskId, "AI_WORKER_NOT_CONFIGURED", "the worker has no model configuration");
+                close(taskId, ex.code(), "the worker refused the configured model before starting");
                 return;
             }
             // Unreachable or transient: fall through to the explicit reconciliation below.

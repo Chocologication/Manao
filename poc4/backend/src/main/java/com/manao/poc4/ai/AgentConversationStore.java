@@ -191,7 +191,7 @@ public final class AgentConversationStore {
                 if (old.get(0) - 1 != request.expectedHeadSeq()) throw conflict();
                 var view = detail(ownerId, projectId, conversationId);
                 return new CompactionAdmission(new ConversationView(view.conversationId(), view.title(), view.headSeq(), view.lastTaskId(),
-                    view.activeTaskId(), view.usage(), request.requestId(), "COMPLETED", null), false);
+                    view.activeTaskId(), view.usage(), request.requestId(), "COMPLETED", null, view.nextReasoningEffort()), false);
             }
             if (!"READY".equals(jdbc.queryForObject("SELECT state FROM project WHERE id=?", String.class, projectId))) throw busy();
             if (jdbc.queryForObject("SELECT COUNT(*) FROM agent_task WHERE project_id=? AND active_project IS NOT NULL", Integer.class, projectId) > 0) throw busy();
@@ -390,15 +390,17 @@ public final class AgentConversationStore {
 
     private ConversationView view(java.sql.ResultSet rs) throws java.sql.SQLException {
         String id = rs.getString("id");
-        var last = jdbc.query("SELECT id FROM agent_task WHERE conversation_id=? ORDER BY created_at DESC,id DESC LIMIT 1", (r, i) -> r.getString(1), id);
+        var last = jdbc.query("SELECT id,reasoning_effort FROM agent_task WHERE conversation_id=? ORDER BY created_at DESC,id DESC LIMIT 1",
+            (r, i) -> new String[] {r.getString(1), r.getString(2)}, id);
         var active = jdbc.query("SELECT id FROM agent_task WHERE conversation_id=? AND active_project IS NOT NULL", (r, i) -> r.getString(1), id);
         Long tokens = (Long) rs.getObject("context_tokens");
         Long usageHead = (Long) rs.getObject("usage_head_seq");
         long head = rs.getLong("head_seq");
         ContextUsage usage = usageHead == null ? null : new ContextUsage(java.util.Objects.equals(usageHead, head) ? tokens : null,
             CONTEXT_WINDOW, tokens != null && usageHead == head ? tokens * 100.0 / CONTEXT_WINDOW : null);
-        return new ConversationView(id, rs.getString("title"), head, last.isEmpty() ? null : last.get(0),
-            active.isEmpty() ? null : active.get(0), usage, rs.getString("compact_request_id"), rs.getString("compact_state"), rs.getString("compact_failure_code"));
+        return new ConversationView(id, rs.getString("title"), head, last.isEmpty() ? null : last.get(0)[0],
+            active.isEmpty() ? null : active.get(0), usage, rs.getString("compact_request_id"), rs.getString("compact_state"), rs.getString("compact_failure_code"),
+            last.isEmpty() || last.get(0)[1] == null ? "high" : last.get(0)[1]);
     }
 
     private List<StoredEntry> entries(String id, String condition, long cursor, int limit, String direction) {

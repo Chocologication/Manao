@@ -54,6 +54,7 @@ class AgentConversationHttpContractTest {
                 .post("/api/v1/projects/project/conversations").principal(() -> "owner")
                 .contentType("application/json").content("{\"conversationId\":\"" + id + "\"}" )).andReturn();
             assertThat(created.getResponse().getStatus()).isEqualTo(200);
+            assertThat(created.getResponse().getContentAsString()).contains("\"nextReasoningEffort\":\"high\"");
             assertThat(starts).isEmpty();
             var foreign = mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
                 .get("/api/v1/projects/project/conversations/" + id).principal(() -> "foreign")).andReturn();
@@ -64,7 +65,7 @@ class AgentConversationHttpContractTest {
             assertThat(entries.getResponse().getStatus()).isEqualTo(200);
             assertThat(entries.getResponse().getContentAsString()).contains("\"items\":[]").doesNotContain("header", "payload", "cwd");
             String task = java.util.UUID.randomUUID().toString();
-            String body = "{\"taskId\":\"" + task + "\",\"prompt\":\"goal\",\"expectedWorkspaceRevision\":\"7\"}";
+            String body = "{\"taskId\":\"" + task + "\",\"prompt\":\"goal\",\"expectedWorkspaceRevision\":\"7\",\"reasoningEffort\":\"max\"}";
             for (int replay = 0; replay < 2; replay++) {
                 var submitted = mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
                     .post("/api/v1/projects/project/conversations/" + id + "/tasks").principal(() -> "owner")
@@ -74,6 +75,10 @@ class AgentConversationHttpContractTest {
             }
             assertThat(starts).hasSize(1);
             assertThat(starts.get(0).conversationId()).isEqualTo(id);
+            assertThat(starts.get(0).reasoningEffort()).isEqualTo("max");
+            var detail = mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                .get("/api/v1/projects/project/conversations/" + id).principal(() -> "owner")).andReturn();
+            assertThat(detail.getResponse().getContentAsString()).contains("\"nextReasoningEffort\":\"max\"");
             var foreignTask = mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
                 .post("/api/v1/projects/project/conversations/" + java.util.UUID.randomUUID() + "/tasks").principal(() -> "owner")
                 .contentType("application/json").content(body.replace(task, java.util.UUID.randomUUID().toString()))).andReturn();

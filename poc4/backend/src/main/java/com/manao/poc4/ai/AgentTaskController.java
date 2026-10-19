@@ -36,7 +36,7 @@ public final class AgentTaskController {
                                               @Valid @RequestBody SubmitTaskRequest request) {
         long expectedRevision = parseRevision(request.expectedWorkspaceRevision());
         return tasks.submit(authentication.getName(), projectId,
-            new AgentContracts.TaskRequest(request.taskId(), request.prompt(), expectedRevision));
+            new AgentContracts.TaskRequest(request.taskId(), request.prompt(), expectedRevision, request.reasoningEffort()));
     }
 
     @GetMapping("/current")
@@ -99,5 +99,7 @@ public final class AgentTaskController {
 
     @JsonIgnoreProperties(ignoreUnknown = false)
     public record SubmitTaskRequest(@NotBlank String taskId, @NotBlank String prompt,
-                                    @NotBlank String expectedWorkspaceRevision) { }
+                                    @NotBlank String expectedWorkspaceRevision, String reasoningEffort) {
+        public SubmitTaskRequest(String taskId, String prompt, String expectedWorkspaceRevision) { this(taskId, prompt, expectedWorkspaceRevision, null); }
+    }
 }

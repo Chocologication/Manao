@@ -13,7 +13,7 @@ const requestId = "00000000-0000-4000-8000-000000000002";
 const handles: ReturnType<typeof createTaskServer>[] = [];
 afterEach(async () => { for (const handle of handles.splice(0)) await handle.close(); });
 const config = (): WorkerConfig => ({ port: 0, workerToken: "worker-token", backendToken: "backend-token",
-  backendBaseUrl: "http://127.0.0.1:9", instanceId: "worker-1", model: MODEL_CONFIG, paths: privateDirs(),
+  backendBaseUrl: "http://127.0.0.1:9", instanceId: "worker-1", model: { ...MODEL_CONFIG, baseUrl: "https://api.deepseek.com" }, paths: privateDirs(),
   budgets: { wallClockSeconds: 1800, toolCalls: 180, builds: 20 } });
 async function post(base: string, path: string, body: unknown) {
   return fetch(base + path, { method: "POST", headers: { "content-type": "application/json", "x-manao-worker-token": "worker-token" }, body: JSON.stringify(body) });
@@ -30,7 +30,7 @@ describe("manual compact HTTP admission", () => {
     const handle = createTaskServer(config(), { createRunner: () => ({ taskId: "task", state: () => "RUNNING",
       start: () => new Promise<void>(() => {}), stop: async () => {} }) }); handles.push(handle);
     const base = `http://127.0.0.1:${await handle.listen()}`;
-    expect((await post(base, "/tasks/task/start", { taskId: "task", prompt: "goal", workspaceRevision: "7", requestSha256: "a".repeat(64), workerEpoch: 1 })).status).toBe(200);
+    expect((await post(base, "/tasks/task/start", { taskId: "task", prompt: "goal", workspaceRevision: "7", requestSha256: "a".repeat(64), workerEpoch: 1, reasoningEffort: "high" })).status).toBe(200);
     expect((await post(base, `/conversations/${conversationId}/compact`, { conversationId, requestId, expectedHeadSeq: 0 })).status).toBe(409);
   });
   it("uses native compact only, returns status on duplicate starts and reconciles a lost result ACK without resummarizing", async () => {
@@ -69,7 +69,7 @@ describe("manual compact HTTP admission", () => {
     try {
       expect((await post(base, `/conversations/${conversationId}/compact`, body)).status).toBe(200);
       await vi.waitFor(() => expect(summaries).toBe(1));
-      expect((await post(base, `/tasks/new/start`, { taskId: "new", prompt: "goal", workspaceRevision: "7", requestSha256: "a".repeat(64), workerEpoch: 1 })).status).toBe(409);
+      expect((await post(base, `/tasks/new/start`, { taskId: "new", prompt: "goal", workspaceRevision: "7", requestSha256: "a".repeat(64), workerEpoch: 1, reasoningEffort: "high" })).status).toBe(409);
       expect((await post(base, `/conversations/${conversationId}/compact`, body)).status).toBe(200);
       expect((await post(base, `/conversations/${conversationId}/compact`, { ...body, expectedHeadSeq: 1 })).status).toBe(409);
       release();

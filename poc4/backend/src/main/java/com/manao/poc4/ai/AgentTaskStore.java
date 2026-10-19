@@ -107,7 +107,7 @@ public final class AgentTaskStore implements AgentTaskOccupancy {
                                    AgentContracts.TaskRequest request, String conversationId) {
         validate(request);
         if (conversationId != null) AgentConversationStore.requireUuid(conversationId);
-        String requestSha256 = requestSha256(ownerId, projectId, request, conversationId);
+        String effort = request.reasoningEffort() == null ? "high" : request.reasoningEffort();
         Timestamp now = Timestamp.from(clock.instant());
         return java.util.Objects.requireNonNull(transaction.execute(status -> {
             List<ProjectRow> projects = jdbc.query(
@@ -120,12 +120,15 @@ public final class AgentTaskStore implements AgentTaskOccupancy {
             // same request (idempotent original) or a foreign reuse of the id.
             Optional<TaskRow> existing = findTaskById(request.taskId());
             if (existing.isPresent()) {
-                if (!requestSha256.equals(existing.get().requestSha256())) {
+                boolean legacy = existing.get().reasoningEffort() == null;
+                String digest = requestSha256(ownerId, projectId, request, conversationId, legacy);
+                if (legacy && request.reasoningEffort() != null || !digest.equals(existing.get().requestSha256())) {
                     throw new ApiException("AI_TASK_MISMATCH", 409,
                         "This task id was already used for a different request");
                 }
                 return new TaskCreation(snapshot(existing.get()), false, existing.get().workerEpoch());
             }
+            String requestSha256 = requestSha256(ownerId, projectId, request, conversationId, false);
             ProjectRow project = projects.get(0);
             if (!ownerId.equals(project.ownerId())) {
                 throw new ApiException("ENTRY_NOT_FOUND", 404, "Project not found");
@@ -153,18 +156,18 @@ public final class AgentTaskStore implements AgentTaskOccupancy {
                 // by the same-epoch status read instead of a second, overlapping session.
                 jdbc.update("""
                     INSERT INTO agent_task(id, project_id, owner_id, request_sha256, prompt,
-                        state, worker_epoch, workspace_revision, created_at, updated_at, conversation_id)
-                    VALUES (?, ?, ?, ?, ?, 'QUEUED', 1, ?, ?, ?, ?)
+                        state, worker_epoch, workspace_revision, created_at, updated_at, conversation_id, reasoning_effort)
+                    VALUES (?, ?, ?, ?, ?, 'QUEUED', 1, ?, ?, ?, ?, ?)
                     """,
                     request.taskId(), projectId, ownerId, requestSha256, request.prompt(),
-                    request.expectedRevision(), now, now, conversationId);
+                    request.expectedRevision(), now, now, conversationId, effort);
             } catch (DuplicateKeyException ex) {
                 // The unique index is the backstop behind the in-transaction pre-check.
                 throw new ApiException("AI_TASK_ACTIVE", 409, "The project already has an active task");
             }
             return new TaskCreation(new AgentContracts.TaskSnapshot(request.taskId(),
                 AgentContracts.TaskState.QUEUED, Long.toString(request.expectedRevision()),
-                true, List.of(), List.of(), null, null, conversationId), true, 1L);
+                true, List.of(), List.of(), null, null, conversationId, effort), true, 1L);
         }));
     }
 
@@ -888,7 +891,7 @@ public final class AgentTaskStore implements AgentTaskOccupancy {
         String sql = """
             SELECT t.id, t.request_sha256, t.state, t.worker_epoch, t.workspace_revision,
                    t.settled_revision, t.changed_paths_json, t.progress_json, t.summary,
-                   t.failure_code, t.active_project, t.conversation_id
+                   t.failure_code, t.active_project, t.conversation_id, t.reasoning_effort
             FROM agent_task t INNER JOIN project p ON p.id = t.project_id
             WHERE p.owner_id = ? AND t.project_id = ? %s
             """.formatted(extraCondition);
@@ -899,7 +902,7 @@ public final class AgentTaskStore implements AgentTaskOccupancy {
         List<TaskRow> rows = jdbc.query(sql, (rs, row) -> new TaskRow(
             rs.getString(1), rs.getString(2), rs.getString(3), rs.getLong(4),
             rs.getLong(5), (Long) rs.getObject(6), rs.getString(7),
-            rs.getString(8), rs.getString(9), rs.getString(10), rs.getString(11) != null, rs.getString(12)),
+            rs.getString(8), rs.getString(9), rs.getString(10), rs.getString(11) != null, rs.getString(12), rs.getString(13)),
             parameters.toArray());
         return rows.stream().findFirst().map(this::snapshot);
     }
@@ -907,12 +910,12 @@ public final class AgentTaskStore implements AgentTaskOccupancy {
     private Optional<TaskRow> findTaskById(String taskId) {
         List<TaskRow> rows = jdbc.query("""
             SELECT id, request_sha256, state, worker_epoch, workspace_revision, settled_revision,
-                   changed_paths_json, progress_json, summary, failure_code, active_project, conversation_id
+                   changed_paths_json, progress_json, summary, failure_code, active_project, conversation_id, reasoning_effort
             FROM agent_task WHERE id = ?
             """, (rs, row) -> new TaskRow(
             rs.getString(1), rs.getString(2), rs.getString(3), rs.getLong(4),
             rs.getLong(5), (Long) rs.getObject(6), rs.getString(7),
-            rs.getString(8), rs.getString(9), rs.getString(10), rs.getString(11) != null, rs.getString(12)), taskId);
+            rs.getString(8), rs.getString(9), rs.getString(10), rs.getString(11) != null, rs.getString(12), rs.getString(13)), taskId);
         return rows.stream().findFirst();
     }
 
@@ -985,7 +988,7 @@ public final class AgentTaskStore implements AgentTaskOccupancy {
             ? Long.toString(row.settledRevision()) : Long.toString(row.workspaceRevision());
         return new AgentContracts.TaskSnapshot(row.id(), AgentContracts.TaskState.valueOf(row.state()),
             revision, writesLocked, parseProgress(row.progressJson()),
-            changedPaths(row.changedPathsJson()), row.summary(), row.failureCode(), row.conversationId());
+            changedPaths(row.changedPathsJson()), row.summary(), row.failureCode(), row.conversationId(), row.reasoningEffort());
     }
 
     /**
@@ -1123,6 +1126,7 @@ public final class AgentTaskStore implements AgentTaskOccupancy {
         if (request.expectedRevision() < 0) {
             throw validation();
         }
+        if (request.reasoningEffort() != null && !java.util.Set.of("off", "low", "high", "max").contains(request.reasoningEffort())) throw validation();
     }
 
     /**
@@ -1131,7 +1135,7 @@ public final class AgentTaskStore implements AgentTaskOccupancy {
      * bytes for any different request.
      */
     private static String requestSha256(String ownerId, String projectId,
-                                        AgentContracts.TaskRequest request, String conversationId) {
+                                        AgentContracts.TaskRequest request, String conversationId, boolean legacy) {
         Map<String, Object> fields = new LinkedHashMap<>();
         fields.put("taskId", request.taskId());
         fields.put("ownerId", ownerId);
@@ -1139,6 +1143,7 @@ public final class AgentTaskStore implements AgentTaskOccupancy {
         fields.put("prompt", request.prompt());
         fields.put("expectedRevision", request.expectedRevision());
         if (conversationId != null) fields.put("conversationId", conversationId);
+        if (!legacy) fields.put("reasoningEffort", request.reasoningEffort() == null ? "high" : request.reasoningEffort());
         try {
             return sha256Hex(JSON.writeValueAsBytes(fields));
         } catch (Exception ex) {
@@ -1172,5 +1177,5 @@ public final class AgentTaskStore implements AgentTaskOccupancy {
      */
     private record TaskRow(String id, String requestSha256, String state, long workerEpoch,
                            long workspaceRevision, Long settledRevision, String changedPathsJson,
-                           String progressJson, String summary, String failureCode, boolean active, String conversationId) { }
+                           String progressJson, String summary, String failureCode, boolean active, String conversationId, String reasoningEffort) { }
 }

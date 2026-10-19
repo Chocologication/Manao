@@ -125,6 +125,7 @@ export async function createPiSession(options: {
   progress: ProgressChain;
   taskId: string;
   conversationId?: string | null;
+  reasoningEffort?: "off" | "low" | "high" | "max";
   /** The workspace revision carried by WorkerStart; seeds the tracked revision. */
   startRevision?: string;
   deps?: PiSessionDeps;
@@ -197,6 +198,7 @@ export async function createPiSession(options: {
     tools: [...TOOL_NAMES],
     customTools,
   });
+  session.setThinkingLevel(options.reasoningEffort ?? "high", { persist: false });
   session.agent.toolExecution = "sequential";
   abortAfterFatal = () => { session.abortCompaction(); session.agent.abort(); void session.abort().catch(() => {}); };
   let compactionFailed = false;
@@ -331,6 +333,7 @@ async function buildModelRuntime(model: PiModelConfig, agentDir: string): Promis
           id: model.model,
           name: model.model,
           reasoning: true,
+          thinkingLevelMap: { minimal: null, low: "low", medium: null, high: "high", max: "max" },
           contextWindow: CONTEXT_WINDOW,
           maxTokens: 8192,
           input: ["text"],

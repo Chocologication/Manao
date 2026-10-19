@@ -23,6 +23,7 @@ export interface WorkerStartBody {
   workspaceRevision: string;
   requestSha256: string;
   workerEpoch: number;
+  reasoningEffort: "off" | "low" | "high" | "max";
   conversationId?: string | null;
 }
 
@@ -160,6 +161,10 @@ export function createTaskServer(config: WorkerConfig, deps: ServerDeps = {}): T
       writeJson(response, 409, { error: "the worker already runs another task" });
       return;
     }
+    let deepSeek = false;
+    try { deepSeek = new URL(config.model!.baseUrl).hostname === "api.deepseek.com"
+      && ["openai", "openai-completions"].includes(config.model!.apiType); } catch { /* Refuse unsupported server configuration. */ }
+    if (!deepSeek) { writeJson(response, 422, { error: "AI_REASONING_UNSUPPORTED" }); return; }
     const record = createRecord(start);
     tasks.set(taskId, record);
     active = { kind: "task", taskId };
@@ -268,6 +273,7 @@ export function createTaskServer(config: WorkerConfig, deps: ServerDeps = {}): T
           taskId: runnerDeps.taskId,
           startRevision: runnerDeps.start.workspaceRevision,
           conversationId: runnerDeps.start.conversationId,
+          reasoningEffort: runnerDeps.start.reasoningEffort,
         });
         const outcome = await session.run({
           prompt: runnerDeps.start.prompt,
@@ -328,6 +334,7 @@ export function createTaskServer(config: WorkerConfig, deps: ServerDeps = {}): T
     if (typeof candidate["workspaceRevision"] !== "string") {
       return "workspaceRevision is required";
     }
+    if (!["off", "low", "high", "max"].includes(String(candidate["reasoningEffort"]))) return "reasoningEffort must be a supported persisted value";
     if (typeof candidate["requestSha256"] !== "string" || !SHA256.test(candidate["requestSha256"])) {
       return "requestSha256 must be a sha-256 hex digest";
     }
@@ -344,6 +351,7 @@ export function createTaskServer(config: WorkerConfig, deps: ServerDeps = {}): T
       workspaceRevision: candidate["workspaceRevision"],
       requestSha256: candidate["requestSha256"],
       workerEpoch: candidate["workerEpoch"],
+      reasoningEffort: candidate["reasoningEffort"] as WorkerStartBody["reasoningEffort"],
       conversationId: candidate["conversationId"] as string | null | undefined,
     };
   }

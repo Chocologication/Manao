@@ -367,10 +367,31 @@ describe("task server", () => {
       workspaceRevision: "7",
       requestSha256: "a".repeat(64),
       workerEpoch: epoch,
+      reasoningEffort: "high",
     };
   }
 
-  const TEST_MODEL = { provider: "p", apiType: "openai-completions", baseUrl: "http://127.0.0.1:9", model: "m", apiKey: "k" };
+  const TEST_MODEL = { provider: "deepseek", apiType: "openai-completions", baseUrl: "https://api.deepseek.com", model: "deepseek-chat", apiKey: "k" };
+  it.each([undefined, null, "medium", 1])("refuses invalid persisted effort %s before creating a runner", async reasoningEffort => {
+    let created = 0;
+    const handle = createTaskServer(workerConfig({ model: TEST_MODEL }), { createRunner: () => { created++; return stubRunner(); } });
+    const port = await handle.listen();
+    try {
+      expect((await post(`http://127.0.0.1:${port}/tasks/task/start`, { ...startBody("task"), reasoningEffort })).status).toBe(422);
+      expect(created).toBe(0);
+    } finally { await handle.close(); }
+  });
+
+  it("rejects unsupported reasoning before creating a runner and validates persisted effort", async () => {
+    let created = 0;
+    const handle = createTaskServer(workerConfig({ model: { ...TEST_MODEL, provider: "other", baseUrl: "https://other.invalid" } }), { createRunner: () => { created++; return stubRunner(); } });
+    const port = await handle.listen();
+    try {
+      const response = await post(`http://127.0.0.1:${port}/tasks/task/start`, startBody("task"));
+      expect(response.status).toBe(422); expect(await response.json()).toEqual({ error: "AI_REASONING_UNSUPPORTED" });
+      expect(created).toBe(0);
+    } finally { await handle.close(); }
+  });
 
   it("carries a validated conversation identity to the runner while preserving legacy null starts", async () => {
     const starts: Array<string | null | undefined> = [];

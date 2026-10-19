@@ -22,6 +22,7 @@ import {
   applicationError,
   appHttpGetData,
   type AgentTaskSnapshot,
+  type ReasoningEffort,
   type AgentToolCallResult,
 } from '@/contracts/agentTask';
 import { getWorkspaceRevision, useWorkspaceRevision } from '@/features/files/fileQueries';
@@ -51,6 +52,7 @@ export type AgentTaskPanelProps = {
   onClose: () => void;
   onViewRun?: (runId: string) => void;
   conversationId?: string;
+  nextReasoningEffort?: ReasoningEffort;
   fullHistory?: boolean;
   displayTask?: AgentTaskSnapshot | null;
   submissionBlocked?: boolean;
@@ -90,10 +92,12 @@ export function AgentTaskPanel({
   displayTask: selectedTask,
   submissionBlocked = false,
   onSubmissionPendingChange,
+  nextReasoningEffort = 'high',
 }: AgentTaskPanelProps) {
   const queryClient = useQueryClient();
   const dirtyCount = useWorkspaceSession((state) => state.dirtyPaths.size);
   const [goal, setGoal] = useState('');
+  const [reasoningEffort, setReasoningEffort] = useState<ReasoningEffort>(() => nextReasoningEffort);
   const [starting, setStarting] = useState(false);
   const [startError, setStartError] = useState<string | null>(null);
   const previousTaskRef = useRef<AgentTaskSnapshot | null>(null);
@@ -217,6 +221,7 @@ export function AgentTaskPanel({
             taskId,
             prompt,
             expectedWorkspaceRevision: revision,
+            reasoningEffort,
           };
           snapshot = conversationId === undefined ? await submitAgentTask(projectId, request) : await submitConversationTask(projectId, conversationId, request);
         } catch (submitError) {
@@ -240,7 +245,7 @@ export function AgentTaskPanel({
         onSubmissionPendingChange?.(false);
       }
     },
-    [canStart, goal, onTaskAccepted, projectId, queryClient, userId, conversationId, onSubmissionPendingChange],
+    [canStart, goal, reasoningEffort, onTaskAccepted, projectId, queryClient, userId, conversationId, onSubmissionPendingChange],
   );
 
   const displayTask = selectedTask === undefined ? task ?? settledTask : selectedTask;
@@ -254,6 +259,11 @@ export function AgentTaskPanel({
         ) : null}
         {startError !== null ? <InlineAlert>{startError}</InlineAlert> : null}
         <form onSubmit={handleStart} className="flex flex-col gap-2">
+          <label htmlFor="agent-reasoning-effort">推理强度</label>
+          <select id="agent-reasoning-effort" value={reasoningEffort} disabled={occupying || starting || submissionBlocked}
+            onChange={event => setReasoningEffort(event.target.value as ReasoningEffort)}>
+            <option value="off">关闭</option><option value="low">低</option><option value="high">高</option><option value="max">最高</option>
+          </select>
           <label htmlFor="agent-task-goal" className="text-sm font-medium">
             Task goal
           </label>
@@ -296,6 +306,8 @@ export function AgentTaskPanel({
               <span className="font-medium">Status</span>
               <span>{displayTask.state}</span>
             </div>
+            <div>本轮推理强度：{displayTask.reasoningEffort ?? '未记录'}</div>
+            {displayTask.failureCode === 'AI_LENGTH_LIMIT' ? <p className="text-destructive">模型响应达到输出上限，本条内容可能不完整</p> : null}
             {!fullHistory && displayTask.summary !== null ? <p>{displayTask.summary}</p> : null}
             {displayTask.failureCode !== null ? (
               <p className="text-destructive">{displayTask.failureCode}</p>

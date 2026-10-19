@@ -29,15 +29,37 @@ class AgentTaskStoreTest {
     private static final String PROJECT = "ai-project";
     private static final Instant NOW = Instant.parse("2026-10-13T00:00:00Z");
 
-    @Test void legacyTaskRequestDigestAndNullableConversationRemainCompatible() {
+    private static TaskRequest effortRequest(String id, String effort) {
+        return new com.fasterxml.jackson.databind.ObjectMapper().disable(com.fasterxml.jackson.databind.DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES)
+            .convertValue(java.util.Map.of("taskId", id, "prompt", "goal", "expectedRevision", 7, "reasoningEffort", effort), TaskRequest.class);
+    }
+    @Test void persistsEffortAndRefusesChangedOrInvalidIntent() {
         try (var db = JdbcStoreTestSupport.create()) {
+            seed(db.jdbc()); var store = store(db); String id = UUID.randomUUID().toString();
+            var snapshot = store.create(OWNER, PROJECT, effortRequest(id, "max"));
+            assertThat(new com.fasterxml.jackson.databind.ObjectMapper().valueToTree(snapshot).path("reasoningEffort").asText()).isEqualTo("max");
+            assertThat(store.createTask(OWNER, PROJECT, effortRequest(id, "max")).created()).isFalse();
+            assertThatThrownBy(() -> store.createTask(OWNER, PROJECT, effortRequest(id, "high")))
+                .isInstanceOfSatisfying(ApiException.class, ex -> assertThat(ex.code()).isEqualTo("AI_TASK_MISMATCH"));
+            assertThatThrownBy(() -> store.create(OWNER, PROJECT, effortRequest(UUID.randomUUID().toString(), "medium")))
+                .isInstanceOfSatisfying(ApiException.class, ex -> assertThat(ex.code()).isEqualTo("VALIDATION_ERROR"));
+        }
+    }
+
+    @Test void legacyTaskRequestDigestAndNullableConversationRemainCompatible() {
+        try (var db = JdbcStoreTestSupport.createAtVersion("13")) {
             seed(db.jdbc());
-            var taskStore = store(db);
             String task = "00000000-0000-4000-8000-000000000011";
+            db.jdbc().update("INSERT INTO agent_task(id,project_id,owner_id,request_sha256,prompt,state,worker_epoch,workspace_revision,created_at,updated_at) VALUES (?,?,?,?,'legacy','QUEUED',1,7,?,?)",
+                task, PROJECT, OWNER, "2f72ac96a74b07ef49c986f3f19ff9b18e7470aabc02b56bd0b0c3185d3abcf5", Timestamp.from(NOW), Timestamp.from(NOW));
+            db.migrateToLatest();
+            var taskStore = store(db);
             var request = new TaskRequest(task, "legacy", 7);
-            assertThat(taskStore.create(OWNER, PROJECT, request).conversationId()).isNull();
+            assertThat(taskStore.create(OWNER, PROJECT, request).reasoningEffort()).isNull();
             assertThat(taskStore.requestSha256Of(task)).isEqualTo("2f72ac96a74b07ef49c986f3f19ff9b18e7470aabc02b56bd0b0c3185d3abcf5");
             assertThat(taskStore.createTask(OWNER, PROJECT, request).created()).isFalse();
+            assertThatThrownBy(() -> taskStore.createTask(OWNER, PROJECT, new TaskRequest(task, "legacy", 7, "high")))
+                .isInstanceOfSatisfying(ApiException.class, ex -> assertThat(ex.code()).isEqualTo("AI_TASK_MISMATCH"));
         }
     }
 

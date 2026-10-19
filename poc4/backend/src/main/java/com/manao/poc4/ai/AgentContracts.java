@@ -23,13 +23,19 @@ public final class AgentContracts {
     public enum BuildGoal { COMPILE, TEST, PACKAGE }
 
     /** The browser's task submission: a pre-generated UUID, the goal text and the saved revision. */
-    public record TaskRequest(String taskId, String prompt, long expectedRevision) { }
+    public record TaskRequest(String taskId, String prompt, long expectedRevision, String reasoningEffort) {
+        public TaskRequest(String taskId, String prompt, long expectedRevision) { this(taskId, prompt, expectedRevision, null); }
+    }
 
     /** What the browser polls: state, revision, persisted progress and the settled evidence. */
     public record TaskSnapshot(String taskId, TaskState state, String workspaceRevision,
                                boolean writesLocked, List<ProgressItem> progress,
                                List<String> changedPaths, String summary, String failureCode,
-                               String conversationId) {
+                               String conversationId, String reasoningEffort) {
+        public TaskSnapshot(String taskId, TaskState state, String workspaceRevision, boolean writesLocked,
+                            List<ProgressItem> progress, List<String> changedPaths, String summary, String failureCode, String conversationId) {
+            this(taskId, state, workspaceRevision, writesLocked, progress, changedPaths, summary, failureCode, conversationId, null);
+        }
         public TaskSnapshot(String taskId, TaskState state, String workspaceRevision, boolean writesLocked,
                             List<ProgressItem> progress, List<String> changedPaths, String summary, String failureCode) {
             this(taskId, state, workspaceRevision, writesLocked, progress, changedPaths, summary, failureCode, null);
@@ -86,7 +92,10 @@ public final class AgentContracts {
 
     /** Backend-to-worker start command; carries no project owner. */
     public record WorkerStart(String taskId, String prompt, String workspaceRevision,
-                              String requestSha256, long workerEpoch, String conversationId) {
+                              String requestSha256, long workerEpoch, String conversationId, String reasoningEffort) {
+        public WorkerStart(String taskId, String prompt, String workspaceRevision, String requestSha256, long workerEpoch, String conversationId) {
+            this(taskId, prompt, workspaceRevision, requestSha256, workerEpoch, conversationId, "high");
+        }
         public WorkerStart(String taskId, String prompt, String workspaceRevision, String requestSha256, long workerEpoch) {
             this(taskId, prompt, workspaceRevision, requestSha256, workerEpoch, null);
         }

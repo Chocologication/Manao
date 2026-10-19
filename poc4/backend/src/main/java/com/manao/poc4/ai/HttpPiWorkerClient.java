@@ -92,6 +92,12 @@ public final class HttpPiWorkerClient implements PiWorkerClient {
         if (response.statusCode() == 503) {
             throw new ApiException("AI_WORKER_NOT_CONFIGURED", 503, "the worker has no model configuration");
         }
+        if (response.statusCode() == 422) {
+            try {
+                if ("AI_REASONING_UNSUPPORTED".equals(JSON.readTree(response.body()).path("error").asText()))
+                    throw new ApiException("AI_REASONING_UNSUPPORTED", 422, "The configured model does not support reasoning effort");
+            } catch (IOException ignored) { /* Other responses stay opaque. */ }
+        }
         if (response.statusCode() == 409) {
             throw new ApiException("AI_WORKER_CONFLICT", 409, "the worker refused the " + method + " as a conflict");
         }

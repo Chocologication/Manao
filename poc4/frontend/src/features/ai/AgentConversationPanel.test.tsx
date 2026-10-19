@@ -18,6 +18,16 @@ const P = ALICE_SEED_PROJECT_ID, U = 'user-alice';
 const A = '11111111-1111-4111-8111-111111111111', B = '22222222-2222-4222-8222-222222222222';
 const T = '33333333-3333-4333-8333-333333333333';
 const URL = `/api/v1/projects/${P}/conversations`;
+it('initializes effort per conversation and polling keeps a dirty selection', async () => {
+  server.use(http.get(`${URL}/:id`, ({ params }) => HttpResponse.json(conversation(String(params.id), { nextReasoningEffort: params.id === A ? 'low' : 'max' }))));
+  panel(); await screen.findByText('A 原文');
+  expect(screen.getByLabelText('推理强度')).toHaveValue('low');
+  await userEvent.selectOptions(screen.getByLabelText('推理强度'), 'off');
+  await act(async () => { await queryClient.invalidateQueries(); });
+  expect(screen.getByLabelText('推理强度')).toHaveValue('off');
+  await userEvent.click(screen.getByRole('button', { name: '会话 B' })); await screen.findByText('B 原文');
+  expect(screen.getByLabelText('推理强度')).toHaveValue('max');
+});
 function conversation(id = A, extra = {}) { return { conversationId: id, title: id === A ? '会话 A' : '会话 B', headSeq: 1, lastTaskId: null, activeTaskId: null, usage: null, compactRequestId: null, compactState: null, compactFailureCode: null, ...extra }; }
 function task(extra = {}): AgentTaskSnapshot { return { taskId: T, state: 'RUNNING', workspaceRevision: '7', writesLocked: true, progress: [], changedPaths: [], summary: null, failureCode: null, ...extra }; }
 function panel(extra: Partial<AgentTaskPanelProps> = {}) {
