@@ -8,9 +8,9 @@
 | --- | --- | --- | --- |
 | backend | `72b75ed`包含Task1–5；无后端后续变更，最终打包仍需记录最终提交 | NOT_BUILT / NOT_RUN | 未生成 |
 | pi-worker | `7a7976d`包含deadline边界修复；Pi三包1.2.0 | NOT_BUILT / NOT_RUN | 未生成 |
-| frontend | `72b75ed`包含UI；整体终审另补原身份显式压缩重试，发布须使用最终复审提交；构建需 `VITE_ENABLE_AI=true` | NOT_BUILT / NOT_RUN | 未生成 |
+| frontend | `344ccb94ee4bb32472a7c91c7bceb338429f7e7e`包含原身份显式压缩重试，最终40/40及build、限定范围复审Approved；构建需 `VITE_ENABLE_AI=true` | NOT_BUILT / NOT_RUN | 未生成 |
 
-runner、workspace-agent、initializer、共用NetworkPolicy没有本切片重建需求。发布者从最终审查的完整SHA构建，记录source SHA/tag/构建命令/测试报告/实际RepoDigest；tag不可代替digest。当前并未构建或推送三镜像。
+runner、workspace-agent、initializer、共用NetworkPolicy没有本切片重建需求。[审查收尾](../../docs/evidence/ai-context/review.md)记录实现审核范围和证据；功能源码终态为`344ccb94ee4bb32472a7c91c7bceb338429f7e7e`，之后仅文档收尾。发布者仍应记录实际构建时完整HEAD、source/tag/命令/报告/RepoDigest；tag不可代替digest。当前并未构建或推送三镜像。
 
 ```powershell
 # cwd: repository root；先填最终已审查提交和release标识，不直接运行占位符

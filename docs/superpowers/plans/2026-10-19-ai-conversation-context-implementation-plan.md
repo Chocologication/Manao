@@ -317,7 +317,7 @@ expect(screen.getByText('占用暂不可用')).toBeInTheDocument();
 
 实际本地整合：backend163/163、worker最终121/121+build、frontend165/165+typecheck/build，精确cb0793c旧代码在V13 disposable schema的27/27。Task6发现deadline timer已触发但now==deadline时误报AI_ABORTED；稳定deps.now回归先RED，再以deadlineExpired事实标记最小修复（7a7976d），只重跑受影响worker。真实E2E缺授权/env在config退出1并标NOT_RUN，未调用模型或kubectl。三镜像NOT_BUILT。完整命令/计数/时间/裁定见acceptance。
 
-整体终审修复 I1/M1：补原身份显式 retry 与安全拒绝对账；主链按原 task 核对全部 tool_call/tool_result，首轮仅一个 read_file 调用及配对结果，安全结果 call ID 一致，其余三轮（含压缩后）无工具。定向 RED/GREEN 与受影响组件/helper 的最终结果见 acceptance；整体终审 closeout 仍由主控完成。
+整体终审修复 I1/M1：`344ccb9`补原身份显式 retry 与安全拒绝对账；主链按原 task 核对全部 tool_call/tool_result，首轮仅一个 read_file 调用及配对结果，其余三轮零工具。最终定向40/40及build通过；限定范围复审I1/M1均ADDRESSED，无新增阻断项，批准本地实现/发布准备。六项任务已完成，严格TDD的Task4历史偏差不追认通过；详见[审查收尾](../../../poc4/docs/evidence/ai-context/review.md)。
 
 - [x] **Step 1 — 验收入口（真实主链NOT_RUN）：** Playwright 按既有 AI config 的 auth/env 检查搭建当前入口；缺必要外部条件时标 NOT_RUN，不能以 mock E2E 冒充真实主链。操作者先在disposable项目准备96–120KiB无秘密ASCII顶层txt，A首轮只read_file一次，harness比对owner文件sha/content与原task的安全settled工具结果，以原生20k保留量产生真实摘要而非no-op；不降低窗口、不由本轮写文件。主链为A记住字段约束→同会话新 task 遵守→创建 B 并核实上下文未带 A→空闲重建 worker→重开 A→手动压缩→原文仍在且下一轮仍遵守约束。会话隔离同时在 scripted provider 的实际 context 捕获处断言，不能只凭真实模型“没有提到约束”判断。
 
@@ -349,11 +349,11 @@ pnpm test:e2e:ai-context
 升级是 additive V13；短维护窗口允许，先停新任务/摘要入口并确认现有任务结算再部署。回滚旧应用代码可保留新增表/可空列，不能为回滚删除历史；验证旧代码在 V13 schema 上的 task-only 路径，并遵守现有 Flyway 对未来版本的实际配置，未验证前不承诺可回滚。没有授权时只写准备，不执行发布。
 
 - [x] **Step 4 — 证据与最小清理：** acceptance 分开记录代码/本地 SDK、真实模型、浏览器、迁移/重启、自动阈值、手动摘要、清理；本地注入 usage 不等于真实云端 75% 场景。真实未触发自动压缩填 NOT_RUN；真实摘要仍保留有损概括的限制。删除本轮无用本地临时文件，保留最小必要失败记录，不删除已有项目资源或重置运行库。
-- [ ] **Step 5 — 最终审查/提交：** 检查整体规格与质量、BOM/链接、git diff --check。提交 `test(ai): verify conversation persistence and compaction`；更新索引为实际结果，不修改旧阶段 PASS 边界。没有真实全链证据不授予上下文切片的云端 PASS。
+- [x] **Step 5 — 最终审查/提交：** `e8248e8`提交验证/证据；Task6 I1由`505e316`修复并复审；整体终审I1/M1由`344ccb9`修复并限定范围复审Approved。规格/质量、BOM/链接、git diff --check通过，长期记录见审查收尾。没有真实全链证据，不授予云端PASS，不改旧阶段边界。
 
 ## 3. 规划自检与过度工程化专项复核（2026-10-19）
 
-以下保留规划时的设计自检；当时未运行功能测试。实施期已补真实SDK/随机schema/组件证据，Task1–5完成且独立审查通过；Task4最初准入/first-instance测试首次GREEN的TDD偏差明确保留。Task6真实外部主链仍NOT_RUN，最终审查由主控记录。
+以下保留规划时的设计自检；当时未运行功能测试。实施期六项任务及整体规格/质量审查已完成，真实SDK/随机schema/组件证据见acceptance；Task4最初准入/first-instance测试首次GREEN的TDD偏差明确保留。Task6真实外部主链仍NOT_RUN；最终Approved仅限本地实现/发布准备。
 
 | 需求或实际接缝 | 落点 | 最小性判断 |
 | --- | --- | --- |

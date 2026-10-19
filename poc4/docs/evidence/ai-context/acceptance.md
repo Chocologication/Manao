@@ -24,7 +24,7 @@
 
 ## 2. 顺序任务、RED/GREEN 与审查
 
-以下是当时版本的局部证据，不把早期组合改称最终 HEAD。每项完成后由主控派发独立规格/质量审查；Task 1 的 Important/Minor 已关闭，Task 2–5 最终无未解决功能发现。Task 6 和整体分支的最终审查由主控另行记录。
+以下是当时版本的局部证据，不把早期组合改称最终 HEAD。六项任务及整体改动均完成独立规格/质量审查；所有发现已关闭，最终Approved仅限本地实现/发布准备，详见[审查收尾](review.md)。Task4历史TDD顺序偏差保持披露。
 
 Task6初审对`e8248e8`给出Changes requested，唯一Important I1：E2E仅检查回答包含bookId/marker，会将`{"id":7,"note":"the requested key was bookId","marker":"原标记"}`误判通过。修复轮1将同会话及压缩后两轮都约定为单个raw JSON，数值分别7/8，只有原约定书籍标识字段和marker；prompt不重新透露bookId拼写或原marker值。测试helper只JSON.parse并对精确`{ bookId, marker }`做deepEqual，拒绝解释文字、替代id、额外字段和错值；不是通用JSON提取器。修复提交和复审结论由主控登记，不追认初审通过。
 
@@ -93,7 +93,7 @@ E2E命令实际退出1并明确NOT_RUN：缺本轮model/restart/global-idle授�
 
 ### 整体终审 I1/M1 的局部修复
 
-整体终审对 `505e316` 发现 Important I1（未知且未登记的 compactIntent 永久禁用项目）及 Minor M1（只筛 read_file result，遗漏额外工具）。本轮仅修这两个接缝；整体复审/closeout 仍待主控，不改早期任务审查结论。
+整体终审对 `505e316` 发现 Important I1（未知且未登记的 compactIntent 永久禁用项目）及 Minor M1（只筛 read_file result，遗漏额外工具）。`344ccb9`仅修这两个接缝；限定范围复审均为ADDRESSED，无新增Critical/Important或延期Minor，批准本地实现/发布准备，不改早期审查历史。
 
 UI 保留“核对压缩状态”的 GET，另加用户显式“重试原压缩请求”：保存的 conversationId/requestId/baseSeq 原样 POST，刷新/切 B 仍作用原 A，不生成新身份或自动重发。GET null/不同请求或失败不单独清除；同 request 终态照原逻辑释放。retry 被 HTTP 拒绝后，仅成功 GET 证明 head 已变化、旧 base 不再可能准入才清除；same-head busy/权限拒绝仍保留，防止原 POST 尚在 gate 外 IO、稍后登记。原后端同 ID/base 幂等和迟到 callback fencing 不变，既有 backend163/worker121/旧代码27不重跑。
 
@@ -134,10 +134,10 @@ if (historyBefore.size() != 13 || !historyBefore.equals(
     throw new AssertionError("history changed");
 ```
 
-旧完整源码SHA为`cb0793c74fe76c2aa862560d59e62f467f5c30d8`；本轮唯一生产修复SHA为`7a7976da9d1791676860fa3fb73cbb6fb4894c05`。本地兼容仅证明默认 `ignoreMigrationPatterns=["*:future"]` 和当前MySQL/JDK/Flyway；真实部署配置可以覆盖它，混合worker/backend/frontend协议、实际迁移权限、大包及备份恢复均未证明。保留新增表/列/V13 history，不能删历史来“回滚”。
+旧完整源码SHA为`cb0793c74fe76c2aa862560d59e62f467f5c30d8`；该整合阶段worker生产修复SHA为`7a7976da9d1791676860fa3fb73cbb6fb4894c05`，后续前端终审修复为`344ccb9`。本地兼容仅证明默认 `ignoreMigrationPatterns=["*:future"]` 和当前MySQL/JDK/Flyway；真实部署配置可以覆盖它，混合worker/backend/frontend协议、实际迁移权限、大包及备份恢复均未证明。保留新增表/列/V13 history，不能删历史来“回滚”。
 
 ## 6. 保留证据和清理
 
-本记录保留各任务有效失败、GREEN、评审结论和全部裁定，忽略目录中的SDD原始报告无需作为唯一长期依据。Surefire报告留在既有ignored target；短期导出和运行日志在提取计数/失败后清理。清理只在核对过的本轮临时目录使用LiteralPath，不删除既有项目/集群资源或私有配置。最终提交/整体验收状态由主控在最终审查后登记；此处不自授整体PASS。
+本记录及[审查收尾](review.md)保留各任务有效失败、GREEN、评审结论和全部裁定，SDD原始报告不再是唯一长期依据。Surefire报告留在既有ignored target；短期导出、运行日志及本计划临时SDD包在提取必要证据后清理。清理只在核对过的本轮目录使用LiteralPath，不删除既有项目/集群资源或私有配置。最终功能源码`344ccb9`已获本地实现/发布准备Approved，外部主链仍NOT_RUN。
 
 实际已清理：核对临时导出绝对路径位于本轮SDD目录、全部子项均在其内且0个reparse point后，按LiteralPath逐文件删除849项、从深到浅删除151个目录（含导出根），未使用跨shell删除；另删除8个具名Task6运行日志。逐项确认导出根和8日志均不存在。旧导出265个未修改文件的hash复核在删除前完成；失败最小片段和计数已保存在本记录及Task6报告。当前测试的ignored target/dist为仍有用的本地验证产物，未做广泛clean。
