@@ -93,3 +93,24 @@ harness 核对每轮原 task 的全部 tool_call/tool_result：首轮严格一�
 测试唯一集群写步骤是显式目标worker的 `kubectl --context … --namespace … rollout restart deployment/<worker>`，随后固定 `rollout status … --timeout=180s`；只读get Deployment/Pod JSON核对前后UID不同、replicas=1、Recreate、仅一个Ready且未deleting的Pod。没有任意shell脚本、kubeconfig打印、其它Deployment操作或自动回收。失败保留项目和诊断，禁止自动重试restart或模型任务。测试无trace/screenshot，防止owner凭据和项目原文进入自动附件；仅报告脱敏任务/会话/Pod身份。
 
 `--list`、类型检查或缺条件拒绝仅证明harness装配/guard，不构成真实E2E PASS。自动75%不为验收烧入786432 tokens，真实未触发仍NOT_RUN。发布/主链完成后把各项实际计数、SHA、digest、imageID/UID、运行库版本、备份恢复与项目留存/回收结果写入证据，不改写Stage1真实PASS、Stage2 PAUSED/NOT_GRANTED和Stage3用户确认。
+
+
+## 5. Streaming / reasoning / Markdown V14 preparation
+
+2026-10-20: **PREPARED / NOT_RUN**. [Output acceptance](../../docs/evidence/ai-output/acceptance.md) owns actual status. Local combination passed; whole-feature late-ACK Important and Task6 independent gate pending. This append preserves preceding actual V13/context rollout; old digests are not output-release identities.
+
+| New component | Release identity | Execution |
+| --- | --- | --- |
+| backend |Final fixed/reviewed SHA; OCI digest/child/imageID to fill |NOT_RUN |
+| pi-worker |Same SHA, Pi three packages1.2.0; digest/child/imageID to fill |NOT_RUN |
+| frontend |Same SHA,VITE_ENABLE_AI=true; digest/child/imageID to fill |NOT_RUN |
+
+After separate current-round authorization:
+
+1. Recheck context/namespace and global task/compact/Run occupancy, worker single slot; idle/short maintenance; preserve matching old digests/replicas/Recreate. Section2 drain safeguards apply; MANAO_AI_ENABLED=false is not graceful drain. Active Run does not authorize stop/delete.
+2. Private backup plus disposable restore and V13→V14 rehearsal. V14__agent_reasoning_effort.sql adds nullable reasoning_effort; preserve legacyNULL and task/tool/history/receipts. Verify actual old image ignores new column and Flyway futureV14 compatibility; new-code local tests do not prove old image. Backup/restore/compatibility NOT_RUN. DDL failure requires actual schema/history reconciliation before retry; no reset/drop/repair blindly.
+3. Build three matching images with section1 Dockerfiles and final reviewed SHA/tag/actual OCI digest/platform child/imageID. Retain backend JRE/USER and -Djdk.httpclient.redirects.retrylimit=1 / -Djdk.httpclient.disableRetryConnect=true. Frontend VITE_ENABLE_AI=true. No runner/workspace-agent/initializer changes. Build/push NOT_RUN, no fabricated digest.
+4. Existing single-replica backend/worker Recreate; old Pod exits, matching new versions, frontend last. Verify UID/imageID/health, V14 applied once, old/new task/history intact. Rollback old matched images/config while **retaining nullable column and V14 history**, no drop/reset. Deployment/rollback NOT_RUN.
+5. Separate real-model authorization then pnpm test:e2e:ai-output (cwd poc4/frontend): existing owner-owned READY project, <=16KiB secret-free README.md; four short read-only high/off/low/max tasks plus read_file. Live DOM before end, thinking/Markdown, disconnect/reconnect, refresh/relogin/history/effort. No local webServer/restart/code edit/app start/project deletion; no8192/75% stress burn. Too short UNVERIFIED; length FAILED/AI_LENGTH_LIMIT.
+
+Private required environment: MANAO_AI_ACCEPTANCE_BASE_URL explicitHTTPorigin, MANAO_AI_ACCEPTANCE_PROJECT_ID canonicalUUID, MANAO_AI_ACCEPTANCE_USERNAME/PASSWORD, current MANAO_AI_OUTPUT_MODEL_AUTHORIZED=true only after authorization. Missing conditions refuseNOT_RUN beforebrowser;workers1/retries0. Browser does not capture providerwire: separately preserve authorizedboundary whitelist thinking/reasoning_effort/stream/max_tokens and compare task effort. No key/prompt/thinking/rawpubliclogs. Guard/--list is not realPASS. Stage2 PAUSED/NOT_GRANTED,Stage3 confirmation,75%NOT_RUN unchanged.

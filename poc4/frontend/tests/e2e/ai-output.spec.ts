@@ -1,0 +1,131 @@
+import { expect, test, type Page } from '@playwright/test';
+import { randomUUID } from 'node:crypto';
+import { assembleOutputHistory, validateAiOutputEnvironment, type OutputHistoryItem } from './ai-output-contract';
+import { assertConversationFixtureRead, assertConversationTools } from './ai-context-answer';
+
+const { projectId } = validateAiOutputEnvironment(process.env);
+const root = '/api/v1/projects/' + projectId;
+const occupying = new Set(['QUEUED', 'RUNNING', 'NEEDS_ATTENTION']);
+type Task = { taskId: string; conversationId: string; state: string; writesLocked: boolean; reasoningEffort: string; failureCode: string | null; changedPaths: string[] };
+type View = { conversationId: string; title: string };
+type Item = OutputHistoryItem & { toolCallId: string | null };
+type Audit = { firstThinkingAt: number | null; firstTextAt: number | null; endedAt: number | null; textRevisions: number[]; liveGets: number; error: string | null };
+let token = '';
+async function login(page: Page): Promise<void> {
+  await page.getByLabel('Username').fill(process.env.MANAO_AI_ACCEPTANCE_USERNAME!);
+  await page.getByLabel('Password').fill(process.env.MANAO_AI_ACCEPTANCE_PASSWORD!);
+  const pending = page.waitForResponse(r => new URL(r.url()).pathname === '/api/v1/auth/login' && r.request().method() === 'POST');
+  await page.getByRole('button', { name: 'Sign in' }).click();
+  const response = await pending; expect(response.status()).toBe(200);
+  token = (await response.json() as { accessToken: string }).accessToken;
+  expect(token.length).toBeGreaterThan(0); await expect(page).toHaveURL(new RegExp('/projects/' + projectId + '$'));
+}
+async function get<T>(page: Page, path: string): Promise<T> {
+  const response = await page.request.get(path, { headers: { Authorization: 'Bearer ' + token }, maxRedirects: 0, maxRetries: 0 });
+  expect(response.ok(), 'owner-scoped read must succeed').toBeTruthy(); return response.json() as Promise<T>;
+}
+async function history(page: Page, id: string): Promise<Item[]> {
+  const items: Item[] = []; const seen = new Set<string>(); let cursor = '';
+  for (let count = 0; count < 100; count++) {
+    expect(seen.has(cursor), 'history cursor must advance').toBe(false); seen.add(cursor);
+    const result = await get<{ items: Item[]; nextBeforeSeq: number | null; nextBeforeOffset: number | null }>(page, root + '/conversations/' + id + '/entries?limit=100' + cursor);
+    items.push(...result.items); if (result.nextBeforeSeq === null) return items;
+    cursor = '&beforeSeq=' + result.nextBeforeSeq + (result.nextBeforeOffset === null ? '' : '&beforeOffset=' + result.nextBeforeOffset);
+  }
+  throw new Error('History exceeds bounded acceptance budget');
+}
+async function observe(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    const host = window as unknown as { outputAudit: Audit; outputObserver?: MutationObserver; outputFetchInstalled?: boolean };
+    host.outputObserver?.disconnect();
+    host.outputAudit = { firstThinkingAt: null, firstTextAt: null, endedAt: null, textRevisions: [], liveGets: 0, error: null };
+    const observer = new MutationObserver(() => {
+      const preview = document.querySelector('[aria-label="实时预览"]'); if (!preview) return;
+      const now = performance.now(); const audit = host.outputAudit;
+      if (preview.querySelector('details[open] pre')?.textContent?.trim()) audit.firstThinkingAt ??= now;
+      if (preview.querySelector('.ai-markdown')?.textContent?.trim()) audit.firstTextAt ??= now;
+    });
+    observer.observe(document.body, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ['open'] }); host.outputObserver = observer;
+    if (host.outputFetchInstalled) return; host.outputFetchInstalled = true;
+    const nativeFetch = window.fetch.bind(window);
+    window.fetch = async (...args) => {
+      const response = await nativeFetch(...args);
+      if (String(args[0]).includes('/live-output') && response.ok && response.body) {
+        const audit = host.outputAudit; audit.liveGets++;
+        // Read only bounded metadata/timestamps; never attach raw prompt/thinking/provider traffic.
+        void (async () => {
+          const reader = response.clone().body!.getReader(); const decoder = new TextDecoder(); let buffer = '';
+          try {
+            while (true) {
+              const chunk = await reader.read(); if (chunk.done) break; buffer += decoder.decode(chunk.value, { stream: true });
+              if (new TextEncoder().encode(buffer).length > 260 * 1024) throw new Error('Frame audit budget exceeded');
+              let end: number;
+              while ((end = buffer.indexOf('\n')) >= 0) {
+                const line = buffer.slice(0, end).replace(/\r$/, ''); buffer = buffer.slice(end + 1); if (!line.startsWith('data:')) continue;
+                const frame = JSON.parse(line.slice(5).trim()) as { revision: number; current: null | { phase: string; blocks: { kind: string; text: string }[] } };
+                if (frame.current?.phase === 'ended' || frame.current === null && audit.firstTextAt !== null) audit.endedAt ??= performance.now();
+                if (frame.current?.phase === 'generating' && frame.current.blocks.some(block => block.kind === 'text' && block.text.length)) audit.textRevisions.push(frame.revision);
+              }
+            }
+          } catch (error) { if (!(error instanceof TypeError || error instanceof DOMException && error.name === 'AbortError')) audit.error = 'Live frame audit failed'; }
+          finally { await reader.cancel().catch(() => {}); reader.releaseLock(); }
+        })();
+      }
+      return response;
+    };
+  });
+}
+
+test('real read-only high → off → low → max with incremental DOM and restored history', async ({ page, context }, testInfo) => {
+  const marker = randomUUID().slice(0, 8); const tasks: Task[] = [];
+  await page.goto('/projects/' + projectId); await login(page); await page.getByRole('tab', { name: 'AI', exact: true }).click();
+  const fixture = await get<{ path: string; content: string; workspaceRevision: string }>(page, root + '/files/content?path=README.md');
+  expect(Buffer.byteLength(fixture.content, 'utf8'), 'operator must prepare an existing small secret-free README.md').toBeLessThanOrEqual(16 * 1024);
+  const creating = page.waitForResponse(r => new URL(r.url()).pathname === root + '/conversations' && r.request().method() === 'POST');
+  await page.getByRole('button', { name: '新建会话', exact: true }).click(); const created = await creating;
+  expect(created.ok()).toBeTruthy(); const conversation = await created.json() as View; let posts = 0;
+  page.on('request', request => { if (request.method() === 'POST' && new URL(request.url()).pathname === root + '/conversations/' + conversation.conversationId + '/tasks') posts++; });
+  for (const effort of ['high', 'off', 'low', 'max']) {
+    await page.getByLabel('推理强度', { exact: true }).selectOption(effort); await observe(page);
+    const prompt = marker + ' ' + effort + ': Short read-only answer. ' + (effort === 'high' ? 'Call read_file exactly once with path README.md (the operator prepared this existing safe small file). No other tools.' : 'Use no tools.') + ' Never modify files, install dependencies, run shell/build/application, create or delete anything. Return under 250 words of Markdown with a heading, two bullets, a two-row table and a fenced code example; expose no secrets.';
+    await page.locator('#agent-task-goal').fill(prompt);
+    const accepting = page.waitForResponse(r => new URL(r.url()).pathname === root + '/conversations/' + conversation.conversationId + '/tasks' && r.request().method() === 'POST');
+    await page.getByRole('button', { name: 'Start task', exact: true }).click(); const accepted = await accepting; expect(accepted.ok()).toBeTruthy();
+    let task = await accepted.json() as Task; expect(task.reasoningEffort).toBe(effort); expect(task.conversationId).toBe(conversation.conversationId);
+    if (effort === 'high') {
+      await expect.poll(() => page.evaluate(() => (window as unknown as { outputAudit: Audit }).outputAudit.firstTextAt), { timeout: 180_000 }).not.toBeNull();
+      await context.setOffline(true); await page.waitForTimeout(500); await context.setOffline(false);
+      await expect.poll(() => page.evaluate(() => (window as unknown as { outputAudit: Audit }).outputAudit.liveGets), { timeout: 30_000 }).toBeGreaterThanOrEqual(2);
+    }
+    await expect.poll(async () => { task = await get<Task>(page, root + '/agent-tasks/' + task.taskId); return occupying.has(task.state); }, { timeout: 420_000, intervals: [1000] }).toBe(false);
+    expect(task.reasoningEffort).toBe(effort); expect(task.writesLocked).toBe(false); expect(task.changedPaths).toEqual([]);
+    if (task.state === 'FAILED') { expect(task.failureCode).toBe('AI_LENGTH_LIMIT'); expect(effort).toBe('max'); } else expect(task.state).toBe('COMPLETED');
+    const rows = await history(page, conversation.conversationId); const readId = assertConversationTools(rows, task.taskId, effort === 'high' ? 'read_file' : null);
+    if (readId) {
+      const read = await get<{ toolCallId: string; toolName: string; data: { path: string; content: string; sha256: string; truncated?: boolean } }>(page, root + '/agent-tasks/' + task.taskId + '/tools/' + encodeURIComponent(readId));
+      assertConversationFixtureRead(fixture, read, 'README.md', readId);
+    }
+    const blocks = assembleOutputHistory(rows, task.taskId); expect(blocks.some(block => block.kind === 'assistant')).toBe(true);
+    if (task.failureCode === 'AI_LENGTH_LIMIT') expect(blocks.some(block => block.modelTruncated)).toBe(true);
+    const timing = await page.evaluate(() => (window as unknown as { outputAudit: Audit }).outputAudit);
+    await testInfo.attach('sanitized-' + effort + '-timing', { body: JSON.stringify({ effort, taskId: task.taskId, state: task.state, failureCode: task.failureCode, ...timing }), contentType: 'application/json' });
+    expect(timing.error).toBeNull(); expect(timing.firstTextAt, 'UNVERIFIED: no visible streamed text').not.toBeNull(); expect(timing.endedAt, 'UNVERIFIED: no observed end/ACK').not.toBeNull();
+    expect(timing.firstTextAt!).toBeLessThan(timing.endedAt!); expect(new Set(timing.textRevisions).size, 'UNVERIFIED: too short for multiple streamed answer snapshots').toBeGreaterThanOrEqual(2);
+    if (effort !== 'off') { expect(timing.firstThinkingAt).not.toBeNull(); expect(timing.firstThinkingAt!).toBeLessThan(timing.endedAt!); }
+    await expect(page.locator('.ai-markdown h1, .ai-markdown h2').first()).toBeVisible(); await expect(page.locator('.ai-markdown ul').first()).toBeVisible();
+    await expect(page.locator('.ai-markdown table').first()).toBeVisible(); await expect(page.locator('.ai-markdown pre code').first()).toBeVisible(); tasks.push(task);
+    if (effort === 'high') { const summary = page.locator('details summary').filter({ hasText: '思考过程' }).first(); await summary.click(); await expect(summary.locator('..').locator('pre')).toBeVisible(); await summary.click(); await expect(summary.locator('..').locator('pre')).toBeHidden(); }
+    await context.setOffline(true); await page.waitForTimeout(500); await context.setOffline(false);
+    expect(assembleOutputHistory(await history(page, conversation.conversationId), task.taskId)).toEqual(blocks);
+    const current = await get<View>(page, root + '/conversations/' + conversation.conversationId);
+    const markdownBeforeReload = await page.locator('.ai-markdown').allTextContents();
+    await page.reload(); await login(page); await page.getByRole('tab', { name: 'AI', exact: true }).click();
+    await page.getByRole('navigation', { name: '会话列表' }).getByRole('button', { name: current.title, exact: true }).click();
+    expect(assembleOutputHistory(await history(page, conversation.conversationId), task.taskId)).toEqual(blocks);
+    await expect.poll(() => page.locator('.ai-markdown').allTextContents()).toEqual(markdownBeforeReload);
+    await expect(page.getByLabel('推理强度', { exact: true })).toHaveValue(effort); expect(posts, 'reconnect/reload must not resubmit').toBe(tasks.length);
+    expect(task.state, task.failureCode === 'AI_LENGTH_LIMIT' ? 'FAILED/AI_LENGTH_LIMIT: max must remain a failed acceptance result' : 'task must complete').toBe('COMPLETED');
+  }
+  expect(tasks.map(task => task.reasoningEffort)).toEqual(['high', 'off', 'low', 'max']);
+  await testInfo.attach('provider-wire-status', { body: JSON.stringify({ status: 'NOT_CAPTURED_BY_BROWSER', operatorWhitelist: ['thinking', 'reasoning_effort', 'stream', 'max_tokens'], evidence: 'controlled installed SDK local tests; real wire requires operator evidence' }), contentType: 'application/json' });
+});

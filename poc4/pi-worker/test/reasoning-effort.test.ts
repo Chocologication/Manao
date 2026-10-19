@@ -11,6 +11,9 @@ function fixture() {
   const manager = SessionManager.inMemory("manao-project", { id: conversationId });
   const entries: SessionEntry[] = [];
   const payloads: Record<string, unknown>[] = [];
+  const invoked: string[] = [];
+  const snapshots: { taskId: string; snapshot: any }[] = [];
+  let incremental = false;
   let finishReason = "stop";
   let toolNext = false;
   let growNext = false;
@@ -20,18 +23,51 @@ function fixture() {
     const grow = growNext; growNext = false;
     const chunk = { choices: [{ index: 0, delta: tool ? { role: "assistant", tool_calls: [{ index: 0, id: "read-one", type: "function", function: { name: "read_file", arguments: '{"path":"demo.txt"}' } }] } : { role: "assistant", content: "ok" }, finish_reason: tool ? "tool_calls" : finishReason }],
       ...(grow ? { usage: { prompt_tokens: 786432, completion_tokens: 1, total_tokens: 786433 } } : {}) };
+    if (incremental && !tool) {
+      const body = payloads.at(-1)!;
+      const deltas = body.reasoning_effort ? [{ reasoning_content: 'first reasoning' }, { reasoning_content: ' second reasoning' }] : [];
+      const events = [...deltas, { content: '# Incremental' }, { content: ' answer' }].map(delta => ({ choices: [{ index: 0, delta, finish_reason: null }] }));
+      events.push({ choices: [{ index: 0, delta: {}, finish_reason: finishReason }] } as typeof events[number]);
+      return new Response(new ReadableStream({ async start(controller) {
+        for (const event of events) { controller.enqueue(new TextEncoder().encode('data: '+JSON.stringify(event)+'\n\n')); await new Promise(resolve => setTimeout(resolve, 320)); }
+        controller.enqueue(new TextEncoder().encode('data: [DONE]\n\n')); controller.close();
+      } }), { headers: { 'content-type': 'text/event-stream' } });
+    }
     return new Response('data: '+JSON.stringify(chunk)+'\n\ndata: [DONE]\n\n', { headers: { 'content-type': 'text/event-stream' } });
   };
   vi.stubGlobal("fetch", fixtureFetch);
   const page = () => ({ header: manager.getHeader(), headSeq: entries.length, entries: entries.map((entry, i) => ({ seq: i + 1, writerId: "old", sourceTaskId: null, entry })), nextAfterSeq: null });
   const backend = { readContext: async () => page(), readCompactionContext: async () => page(),
     appendContext: async (_task: string, batch: { entries: SessionEntry[] }) => { entries.push(...structuredClone(batch.entries)); return { headSeq: entries.length }; },
-    invoke: async (_task: string, request: { toolCallId: string }) => ({ toolCallId: request.toolCallId, workspaceRevision: "7", data: { content: "fixture content" }, truncated: false }),
+    invoke: async (_task: string, request: { toolCallId: string; name: string }) => { invoked.push(request.name); return { toolCallId: request.toolCallId, workspaceRevision: "7", data: { content: "fixture content" }, truncated: false }; },
+    liveOutput: async (taskId: string, snapshot: any) => { snapshots.push({ taskId, snapshot: structuredClone(snapshot) }); },
     progress: async () => ({ accepted: true }) } as unknown as BackendClient;
   const paths = privateDirs();
-  return { entries, payloads, backend, paths, length: () => { finishReason = "length"; }, tool: () => { toolNext = true; }, grow: () => { growNext = true; } };
+  return { entries, payloads, backend, paths, invoked, snapshots, incremental: () => { incremental = true; }, length: () => { finishReason = "length"; }, tool: () => { toolNext = true; }, grow: () => { growNext = true; } };
 }
 describe("persisted reasoning effort through the installed Pi SDK", () => {
+  it("restores high to off to low to max with read_file, incremental native output and honest length", async () => {
+    const f = fixture(); f.incremental(); f.tool();
+    for (const effort of ["high", "off", "low", "max"] as const) {
+      if (effort === "max") f.length();
+      const firstWire = f.payloads.length;
+      const task = await createPiSession({ model, paths: f.paths, taskId: effort, conversationId, startRevision: "7", reasoningEffort: effort, backend: f.backend, progress: new ProgressChain(f.backend, effort) });
+      try {
+        const result = await task.run({ prompt: "read only fixture", workspaceRevision: "7" });
+        expect(result).toMatchObject(effort === "max" ? { state: "FAILED", failureCode: "AI_LENGTH_LIMIT" } : { state: "COMPLETED", failureCode: null });
+        for (const payload of f.payloads.slice(firstWire)) expect(payload).toMatchObject(effort === "off" ? { stream: true, max_tokens: 8192, thinking: { type: "disabled" } } : { stream: true, max_tokens: 8192, thinking: { type: "enabled" }, reasoning_effort: effort });
+        const generating = f.snapshots.filter(row => row.taskId === effort && row.snapshot.current?.phase === "generating").map(row => row.snapshot.current.blocks);
+        expect(generating.some(blocks => blocks.some((block: any) => block.kind === "text" && block.text === "# Incremental"))).toBe(true);
+        expect(generating.some(blocks => blocks.some((block: any) => block.kind === "text" && block.text === "# Incremental answer"))).toBe(true);
+        if (effort !== "off") {
+          expect(generating.some(blocks => blocks.some((block: any) => block.kind === "thinking" && block.text === "first reasoning"))).toBe(true);
+          expect(generating.some(blocks => blocks.some((block: any) => block.kind === "thinking" && block.text === "first reasoning second reasoning"))).toBe(true);
+        }
+      } finally { task.dispose(); }
+    }
+    expect(f.invoked).toEqual(["read_file"]);
+    expect(f.entries.filter(entry => entry.type === "thinking_level_change").map(entry => entry.thinkingLevel)).toEqual(["high", "off", "low", "max"]);
+  }, 20_000);
   it.each(["off", "low", "high", "max"])("sends %s in the actual DeepSeek request without lowering max", async effort => {
     const f = fixture();
     const task = await createPiSession({ model, paths: f.paths, taskId: "task", reasoningEffort: effort, backend: f.backend, progress: new ProgressChain(f.backend, "task") } as Parameters<typeof createPiSession>[0]);

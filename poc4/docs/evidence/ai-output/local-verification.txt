@@ -1,0 +1,48 @@
+[INFO] Tests run: 12, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 22.21 s -- in com.manao.poc4.ai.AgentConversationCompactionTest
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 2.132 s -- in com.manao.poc4.ai.AgentConversationHttpContractTest
+[INFO] Tests run: 21, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 42.09 s -- in com.manao.poc4.ai.AgentConversationStoreTest
+[INFO] Tests run: 9, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 2.312 s -- in com.manao.poc4.ai.AgentInternalSecurityTest
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 9.965 s -- in com.manao.poc4.ai.AgentLiveOutputHttpTest
+[INFO] Tests run: 4, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 7.396 s -- in com.manao.poc4.ai.AgentLiveOutputTest
+[INFO] Tests run: 46, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 114.6 s -- in com.manao.poc4.ai.AgentTaskServiceTest
+[INFO] Tests run: 29, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 91.08 s -- in com.manao.poc4.ai.AgentTaskStoreTest
+[INFO] Tests run: 127, Failures: 0, Errors: 0, Skipped: 0
+[INFO] BUILD SUCCESS
+[INFO] Total time:  04:56 min
+task-6-worker.log
+   ✓ pi session > reports FAILED when a provider error settles normally  302ms
+   ✓ pi session > raised budget via session default > allows 180 tool calls including 20 builds to finish  475ms
+   ✓ pi session > raised budget via session default > rejects the 181st tool before it reaches the backend  414ms
+   ✓ pi session > raised budget via server configuration > allows 180 tool calls including 20 builds to finish  326ms
+ ✓ test/reasoning-effort.test.ts (9 tests) 7951ms
+   ✓ persisted reasoning effort through the installed Pi SDK > restores high to off to low to max with read_file, incremental native output and honest length  7225ms
+
+ Test Files  9 passed (9)
+      Tests  147 passed (147)
+   Start at  03:23:15
+   Duration  17.36s (transform 8.77s, setup 0ms, collect 71.34s, tests 26.37s, environment 3ms, prepare 5.64s)
+
+task-6-worker-build.log
+
+> manao-pi-worker@0.1.0 build D:\DeepLearning\MyProjects\Project_Manao\.worktree\ai-integration\poc4\pi-worker
+> tsc -p tsconfig.json
+
+task-6-frontend.log
+   ✓ WorkbenchShell python dependencies > a retry of a failed discovery re-queries the server and recovers a pending operation  2133ms
+   ✓ WorkbenchShell python dependencies > retries a transient PROJECT_BUSY pending failure and then discovers normally  438ms
+   ✓ WorkbenchShell agent task panel > opens the existing Run panel from an application result and keeps a completed task with an active Run read-only  366ms
+   ✓ WorkbenchShell agent task panel > locks the editor, file tree and Run start while an agent task occupies the workspace  303ms
+   ✓ WorkbenchShell agent task panel > refreshes the workspace when the agent task writes files and unlocks after it settles  317ms
+   ✓ WorkbenchShell agent task panel > does not replace dirty buffers when the agent changes files and surfaces the conflict  426ms
+
+ Test Files  13 passed (13)
+      Tests  282 passed (282)
+   Start at  03:23:16
+   Duration  57.56s (transform 11.57s, setup 35.76s, collect 38.99s, tests 51.89s, environment 65.16s, prepare 7.22s)
+
+task-6-frontend-typecheck.log
+
+> frontend@0.0.0 typecheck D:\DeepLearning\MyProjects\Project_Manao\.worktree\ai-integration\poc4\frontend
+> tsc -b --pretty false
+
+frontend build exit0,4066modules48.32s; guard expectedNOT_RUNexit1; fake-loopback --list1 no browser; actualHTTPbrowserexit0; scopedharnesstsc exit0
