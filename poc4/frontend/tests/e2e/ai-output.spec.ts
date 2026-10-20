@@ -34,8 +34,8 @@ async function history(page: Page, id: string): Promise<Item[]> {
   }
   throw new Error('History exceeds bounded acceptance budget');
 }
-async function observe(page: Page): Promise<void> {
-  await page.evaluate(installOutputAudit);
+async function observe(page: Page, interrupt: boolean): Promise<void> {
+  await page.evaluate(installOutputAudit, { abortOnGeneratingThinking: interrupt });
 }
 
 test('real read-only high → off → low → max with incremental DOM and restored history', async ({ page, context }, testInfo) => {
@@ -47,19 +47,25 @@ test('real read-only high → off → low → max with incremental DOM and resto
   await page.getByRole('button', { name: '新建会话', exact: true }).click(); const created = await creating;
   expect(created.ok()).toBeTruthy(); const conversation = await created.json() as View; let posts = 0;
   page.on('request', request => { if (request.method() === 'POST' && new URL(request.url()).pathname === root + '/conversations/' + conversation.conversationId + '/tasks') posts++; });
+  let liveResponses = 0;
+  let reconnectTaskCheck: Promise<{ taskId: string; state: string; observedAtUtc: string }> | null = null;
+  page.on('response', response => {
+    const path = new URL(response.url()).pathname;
+    if (response.ok() && path.startsWith(root + '/agent-tasks/') && path.endsWith('/live-output') && ++liveResponses === 2) {
+      reconnectTaskCheck = get<Task>(page, path.slice(0, -'/live-output'.length)).then(value => ({ taskId: value.taskId, state: value.state, observedAtUtc: new Date().toISOString() }));
+    }
+  });
   for (const effort of ['high', 'off', 'low', 'max']) {
-    await page.getByLabel('推理强度', { exact: true }).selectOption(effort); await observe(page);
+    liveResponses = 0; reconnectTaskCheck = null;
+    await page.getByLabel('推理强度', { exact: true }).selectOption(effort); await observe(page, effort === 'high');
     const prompt = marker + ' ' + effort + ': Short read-only answer. ' + (effort === 'high' ? 'Call read_file exactly once with path README.md (the operator prepared this existing safe small file). No other tools.' : 'Use no tools.') + ' Never modify files, install dependencies, run shell/build/application, create or delete anything. Return under 250 words of Markdown with a heading, two bullets, a two-row table and a fenced code example; expose no secrets.';
     await page.locator('#agent-task-goal').fill(prompt);
     const accepting = page.waitForResponse(r => new URL(r.url()).pathname === root + '/conversations/' + conversation.conversationId + '/tasks' && r.request().method() === 'POST');
     await page.getByRole('button', { name: 'Start task', exact: true }).click(); const accepted = await accepting; expect(accepted.ok()).toBeTruthy();
     let task = await accepted.json() as Task; expect(task.reasoningEffort).toBe(effort); expect(task.conversationId).toBe(conversation.conversationId);
-    if (effort === 'high') {
-      await expect.poll(() => page.evaluate(taskId => (window as unknown as { outputAudit: Audit }).outputAudit.messages.some(message => message.taskId === taskId && message.firstTextAt !== null), task.taskId), { timeout: 180_000 }).toBe(true);
-      await context.setOffline(true); await page.waitForTimeout(500); await context.setOffline(false);
-      await expect.poll(() => page.evaluate(() => (window as unknown as { outputAudit: Audit }).outputAudit.liveGets), { timeout: 30_000 }).toBeGreaterThanOrEqual(2);
-    }
+    const acceptedAtUtc = new Date().toISOString();
     await expect.poll(async () => { task = await get<Task>(page, root + '/agent-tasks/' + task.taskId); return occupying.has(task.state); }, { timeout: 420_000, intervals: [1000] }).toBe(false);
+    const terminalObservedAtUtc = new Date().toISOString();
     expect(task.reasoningEffort).toBe(effort); expect(task.writesLocked).toBe(false); expect(task.changedPaths).toEqual([]);
     if (task.state === 'FAILED') { expect(task.failureCode).toBe('AI_LENGTH_LIMIT'); expect(effort).toBe('max'); } else expect(task.state).toBe('COMPLETED');
     const rows = await history(page, conversation.conversationId); const readId = assertConversationTools(rows, task.taskId, effort === 'high' ? 'read_file' : null);
@@ -74,12 +80,24 @@ test('real read-only high → off → low → max with incremental DOM and resto
     const answerOrdinal = nativeGroups.indexOf(answerSeq) + 1;
     await expect.poll(() => page.evaluate(({ taskId, ordinal }) => (window as unknown as { outputAudit: Audit }).outputAudit.messages.some(message => message.taskId === taskId && message.messageOrdinal === ordinal && message.endedAt !== null), { taskId: task.taskId, ordinal: answerOrdinal }), { timeout: 15_000 }).toBe(true);
     const timing = await page.evaluate(() => (window as unknown as { outputAudit: Audit }).outputAudit);
-    await testInfo.attach('sanitized-' + effort + '-timing', { body: JSON.stringify({ effort, taskId: task.taskId, answerOrdinal, answerSeq, state: task.state, failureCode: task.failureCode, ...timing }), contentType: 'application/json' });
+    const reconnectTask = reconnectTaskCheck === null ? null : await reconnectTaskCheck;
+    await testInfo.attach('sanitized-' + effort + '-timing', { body: JSON.stringify({ effort, taskId: task.taskId, answerOrdinal, answerSeq, state: task.state, failureCode: task.failureCode, acceptedAtUtc, terminalObservedAtUtc, reconnectTask, ...timing }), contentType: 'application/json' });
+    if (effort === 'high') {
+      expect(timing.reconnect?.taskId, 'UNVERIFIED: no generating API/DOM thinking fetch abort').toBe(task.taskId);
+      expect(timing.liveGets, 'UNVERIFIED: no second actual live GET before terminal reconciliation').toBeGreaterThanOrEqual(2);
+      expect(timing.connections[1]?.taskId).toBe(task.taskId);
+      expect(reconnectTask?.taskId).toBe(task.taskId);
+      expect(reconnectTask?.state, 'UNVERIFIED: reconnect was not observed while task RUNNING').toBe('RUNNING');
+    }
     assertOutputAnswerTiming(timing, task.taskId, answerOrdinal, effort !== 'off');
     const answer = page.locator(outputAnswerSelector(task.taskId, answerSeq));
     await expect(answer.locator('.ai-markdown h1, .ai-markdown h2').first()).toBeVisible(); await expect(answer.locator('.ai-markdown ul').first()).toBeVisible();
     await expect(answer.locator('.ai-markdown table').first()).toBeVisible(); await expect(answer.locator('.ai-markdown pre code').first()).toBeVisible(); tasks.push(task);
-    if (effort === 'high') { const summary = answer.locator('details summary').filter({ hasText: '思考过程' }).first(); await summary.click(); await expect(summary.locator('..').locator('pre')).toBeVisible(); await summary.click(); await expect(summary.locator('..').locator('pre')).toBeHidden(); }
+    if (effort === 'high') {
+      const thinking = page.locator(outputAnswerSelector(task.taskId, blocks.find(block => block.kind === 'thinking')!.seq));
+      const summary = thinking.locator('details summary').filter({ hasText: '思考过程' }).first();
+      await summary.click(); await expect(summary.locator('..').locator('pre')).toBeVisible(); await summary.click(); await expect(summary.locator('..').locator('pre')).toBeHidden();
+    }
     await context.setOffline(true); await page.waitForTimeout(500); await context.setOffline(false);
     expect(assembleOutputHistory(await history(page, conversation.conversationId), task.taskId)).toEqual(blocks);
     const current = await get<View>(page, root + '/conversations/' + conversation.conversationId);
