@@ -137,3 +137,30 @@ pnpm exec playwright test tests/e2e/cloud-workbench-ui.spec.ts --project=chromiu
 本地验证：`pnpm install --frozen-lockfile`、`pnpm build`、`pnpm typecheck:stage6` 和 `pnpm test:boundary` 通过（边界单测 36/36）；`pnpm exec vitest run --maxWorkers=4 --reporter=dot` 全套 94 文件、1598/1598 通过；上述 Cloud IDE 本地 Playwright 回归 3/3 通过。首次默认并发单测出现一项首次懒加载等待超时，该文件单独复跑 5/5 通过，限制四个 worker 后全套通过，未通过修改业务代码或放宽断言消除失败。
 
 本次同步只验证合并后的本地前端，不代表 AI 集成阶段完成，也不改变已有阶段验收结论；未执行云端部署或真实模型验收。
+
+### AI 界面本地交付（2026-10-20）
+
+本轮在 `codex/ai-integration` 完成 AI 展示改造，产品源码基线为 `efd0a52`（Tasks 1–3 已独立审核）。保留现有任务、会话、流式、Markdown、上下文、写锁和 Run 合同；AI 页右栏显示项目会话历史，切回其他页恢复原 Run Insights。Task 4 仅增加 mock-only 展示夹具、浏览器测试与证据，没有新增 Agent 服务或模型状态机。
+
+复现命令按以下顺序执行，浏览器 mock build 之后必须重新生产构建：
+
+```powershell
+pnpm exec vitest run src/features/ai src/components/shell/WorkbenchShell.test.tsx --maxWorkers=4
+pnpm typecheck:stage6
+pnpm exec playwright test --config playwright.ai-ui.config.ts
+pnpm build
+pnpm test:boundary
+git diff --check
+```
+
+2026-10-20 实际结果：定向 Vitest 12 文件、259/259（71.79s），`typecheck:stage6` 通过，最终 Chromium 10/10（1.7m，7 项 AI UI + 3 项既有 cloud-workbench-ui 本地回归）。`pnpm build` exit 0（Vite 53.66s），`pnpm test:boundary` 36/36 且 Browser boundary check passed，`git diff --check` exit 0。最终生产 `dist` 显式扫描 `AI_UI_VISUAL_FIXTURE_ONLY|ui-conversation-reading|ui-task-completed|aiUiFixture|mockServiceWorker|/api/v1/session/` 无匹配。Controller 另跑全前端 Vitest 95 文件、1608/1608（145.37s）。新配置和 visual spec 不在 stage6 include 内，另执行 `pnpm exec tsc --noEmit --target ES2022 --lib 'ES2022,DOM,DOM.Iterable' --module ESNext --moduleResolution bundler --skipLibCheck --strict --types node playwright.ai-ui.config.ts tests/visual/ai-ui.spec.ts tests/e2e/cloud-workbench-ui.spec.ts`，exit 0。
+
+专用配置仅启用 Chromium/单 worker，并通过 `VITE_ENABLE_AI=true` 与 `VITE_AI_UI_FIXTURE=true` 的 mock build 提供固定内容。原 4173 已有 Vite，未终止该进程；配置改用独立 `127.0.0.1:4183`，保留 `reuseExistingServer:false`。夹具只匹配 `prj-alice-notebook` 和 `usr-alice` 认证；其他项目沿用原默认 handler。两个会话分两页，新建只写空会话集合，任务提交、压缩和真实执行不由夹具模拟。
+
+浏览器覆盖 1440×900 三主题、1024×768、1023×768 和 390×844：原生 slider 的 Home/ArrowRight/End、四档数值与中文值、刻度点击和鼠标拖动、胶囊端点边界、Escape/外侧关闭及焦点返回；AI 隐藏关闭弹层、草稿/选中会话保留；抽屉 Tab/Shift+Tab/Escape、单消息纵向滚动祖先、上翻保持、composer 保持可见及手动增高；代码/表格局部横向滚动；会话分页/空会话新建不 POST task；已有 View run 回到原 Run 与洞察；上下文环、压缩入口、思考、Markdown 和工具结果可见。禁用/准入未知、任务收尾/压缩语义由已有定向单测覆盖。
+
+最终代表截图保留在 [AI UI screenshots](../docs/evidence/ai-ui/screenshots/)：`lab-1440x900.png`、`graphite-1440x900.png`、`light-1440x900.png`、`lab-1024x768.png`、`lab-1023-history.png`、`lab-1023-slider-input.png`、`lab-390-history.png`、`lab-390-slider-input.png`。Controller 已人工核对宽屏三主题和 390 抽屉/滑块图：用户气泡、助手阅读正文、思考、输入框和历史栏可辨，未见明显裁切或页面横向溢出。
+
+首轮浏览器 8 passed / 2 failed：向上弹层覆盖 textarea 中心导致外侧点击目标不成立；全局 Run ID `.first()` 命中隐藏 AI 页的代码节点。修正测试为实际外侧 heading 和 Run tabpanel scope 后第二轮 10/10，最终顺序复跑仍 10/10；未改产品代码掩盖失败。必要错误上下文保留在 [diagnostics](../docs/evidence/ai-ui/diagnostics/)。现有大 chunk、NO_COLOR/FORCE_COLOR 和 jsdom HTMLMediaElement play/pause 提示仍保留。
+
+本地 fixture 不证明真实 DeepSeek、流式时序、云端发布或工程阶段验收。两个会话不足触发长会话列表滚动，浏览器未覆盖该极端场景；没有模拟活跃任务或压缩执行来声称成功。阶段三仍为用户确认使命完成；阶段二 `PAUSED / NOT_GRANTED`，阶段四未开始。本轮没有真实模型请求、镜像发布、集群/数据库操作或 Git push/merge。
