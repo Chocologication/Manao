@@ -238,3 +238,15 @@ worker从UID`1b89c53c-ead7-4a47-b7c5-5e59b5a69003`重建为`1a814039-bcc6-4729-9
 发布后重新登录同一保留项目并打开原会话，无需重执行工具：原`list_files`调用`call_01_ET_ddNOLR16C14mWMUxfQZi6651`（task=`1c69d7c0-9dcd-4927-aec6-1b241eab8ec6`）现在显示目录`src/test/java`和`src/test/java/com`；原`read_file`结果显示`src/test/java/com/example/app/AppTest.java`全文及SHA-256=`ee9cd3fcb1c8695a490df5b37dd52e4faa14bde502a0d24c48d8d1b4c404c321`。二者此前展开均为`Result unavailable`。不含凭据的截图仅保留于本机忽略证据目录，作为本轮浏览器检查留档。
 
 最终状态：Task1/2完成；真实模型不在本次复验范围（无需新工具或任务），真实浏览器历史回放PASS；frontend镜像build/push/rollout PASS。数据库迁移NOT_NEEDED，后端/worker重启NOT_NEEDED，项目及集群资源清理NOT_RUN且不授权。Git push/merge未执行。原兜底文案不再遮蔽已返回的文件工具结果；请求失败和工具业务错误仍分别显示加载失败与返回错误。
+
+## 9. 上下文占用圆环（2026-10-20，本地完成）
+
+用户撤回停止按钮需求，授权直接实现现有占用展示的小改造并更新文档；不另建计划。ContextUsageIndicator 放在推理强度旁，以 SVG 圆环和百分比展示所选会话已有 usage；悬停原生 title 和辅助技术描述含 tokens/contextWindow、75% 自动压缩阈值和最近一次估算说明。沿用两秒会话查询，未新增依赖、API、token 计数器或逐 token 推送。
+
+达到75%使用现有 warning 主题色；图形/ARIA范围限制在0–100，超限原始估算仍显示在文字。已测量0与未知明确区分；压缩后null、缺失usage或所选会话查询失败均不标0，也不继续把缓存值显示为有效测量。切换会话沿用已有owner/project/conversation查询隔离。旧task-only路径不添加无来源的占用估算。停止逻辑、窗口大小、压缩机制和原阶段结论均未修改。
+
+验证：先运行新增组件测试得到缺失实现RED；组件GREEN后新增集成断言得到缺失progressbar RED。最终 pnpm test -- src/features/ai/ContextUsageIndicator.test.tsx src/features/ai/AgentConversationPanel.test.tsx src/features/ai/AgentTaskPanel.test.tsx 为77/77（3+24+50）；覆盖统计更新、0/null、超过100%、A/B切换、查询失败和既有压缩/任务回归。集成失败刷新断言等待React Query异步通知后通过。pnpm build（含typecheck）退出0，保留既有大chunk警告。
+
+本地 Chromium fixture 使用实际 AgentTaskPanel 和项目样式，在1440px viewport内实测504px/320px面板无内部横向溢出、圆环20px、75%和token说明正确，切至未知后无aria-valuenow，pageerror为0；320px截图经人工查看。全局既有1280px最小页面宽度不变，不能把窄面板检查写成移动端页面验收。临时fixture早期因路由匹配/SPA fallback未加载，修正测试入口后通过；未修改产品路由。临时脚本、截图在核对后清理。
+
+本轮仅本地实现/验证；镜像构建、push/rollout、真实云端浏览器/模型验证NOT_RUN。后续发布仅需frontend，backend/worker/schema无需变更；当前云端镜像仍为前次发布。未Git提交/push/merge，未操作项目或集群资源，不进入第四阶段。

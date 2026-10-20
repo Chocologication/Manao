@@ -30,6 +30,19 @@ it('shows actual live Markdown while locked, aborts on switching, and leaves exp
   await userEvent.click(screen.getByRole('button', { name: '会话 B' })); await screen.findByText('B 原文'); await waitFor(() => expect(aborted).toBe(true)); expect(screen.queryByText('live reason')).toBeNull(); expect(h.close).not.toHaveBeenCalled(); expect(posts).toEqual([]);
 });
 const URL = `/api/v1/projects/${P}/conversations`;
+it('shows the selected conversation usage and clears a cached measurement when its refresh fails', async () => {
+  server.use(http.get(URL + '/:id', ({ params }) => HttpResponse.json(conversation(String(params.id), {
+    usage: { tokens: params.id === A ? 262144 : 786432, contextWindow: 1048576, percent: params.id === A ? 25 : 75 },
+  }))));
+  panel(); await screen.findByText('A 原文');
+  expect(screen.getByRole('progressbar', { name: '上下文占用' })).toHaveAttribute('aria-valuenow', '25');
+  await userEvent.click(screen.getByRole('button', { name: '会话 B' })); await screen.findByText('B 原文');
+  expect(screen.getByRole('progressbar', { name: '上下文占用' })).toHaveAttribute('aria-valuenow', '75');
+  server.use(http.get(URL + '/' + B, () => HttpResponse.json({ message: 'unavailable' }, { status: 503 })));
+  await act(async () => { await queryClient.invalidateQueries({ queryKey: ['agent-conversations', U, P, B, 'detail'] }); });
+  await waitFor(() => expect(screen.getByRole('progressbar', { name: '上下文占用' })).not.toHaveAttribute('aria-valuenow'));
+  expect(screen.getByText('占用暂不可用')).toBeInTheDocument();
+});
 it('initializes effort per conversation and polling keeps a dirty selection', async () => {
   server.use(http.get(`${URL}/:id`, ({ params }) => HttpResponse.json(conversation(String(params.id), { nextReasoningEffort: params.id === A ? 'low' : 'max' }))));
   panel(); await screen.findByText('A 原文');

@@ -31,6 +31,8 @@ import { InlineAlert } from '@/components/feedback/InlineAlert';
 import { resolveAgentTaskPreconditions } from './agentTaskPreconditions';
 import { submitConversationTask } from '@/api/agentConversationApi';
 import { AssistantMarkdown } from './AssistantMarkdown';
+import type { ContextUsage } from '@/contracts/agentConversation';
+import { ContextUsageIndicator } from './ContextUsageIndicator';
 
 export type AgentTaskPanelProps = {
   projectId: string;
@@ -54,6 +56,7 @@ export type AgentTaskPanelProps = {
   onViewRun?: (runId: string) => void;
   conversationId?: string;
   nextReasoningEffort?: ReasoningEffort;
+  contextUsage?: ContextUsage | null;
   fullHistory?: boolean;
   displayTask?: AgentTaskSnapshot | null;
   submissionBlocked?: boolean;
@@ -94,6 +97,7 @@ export function AgentTaskPanel({
   submissionBlocked = false,
   onSubmissionPendingChange,
   nextReasoningEffort = 'high',
+  contextUsage,
 }: AgentTaskPanelProps) {
   const queryClient = useQueryClient();
   const dirtyCount = useWorkspaceSession((state) => state.dirtyPaths.size);
@@ -265,11 +269,14 @@ export function AgentTaskPanel({
         ) : null}
         {startError !== null ? <InlineAlert>{startError}</InlineAlert> : null}
         <form onSubmit={handleStart} className="flex flex-col gap-2">
-          <label htmlFor="agent-reasoning-effort">推理强度</label>
-          <select id="agent-reasoning-effort" value={reasoningEffort} disabled={occupying || starting || submissionBlocked || admissionUnknown}
-            onChange={event => setReasoningEffort(event.target.value as ReasoningEffort)}>
-            <option value="off">关闭</option><option value="low">低</option><option value="high">高</option><option value="max">最高</option>
-          </select>
+          <div className="flex flex-wrap items-center gap-2">
+            <label htmlFor="agent-reasoning-effort">推理强度</label>
+            <select id="agent-reasoning-effort" value={reasoningEffort} disabled={occupying || starting || submissionBlocked || admissionUnknown}
+              onChange={event => setReasoningEffort(event.target.value as ReasoningEffort)}>
+              <option value="off">关闭</option><option value="low">低</option><option value="high">高</option><option value="max">最高</option>
+            </select>
+            {conversationId ? <ContextUsageIndicator usage={contextUsage ?? null} /> : null}
+          </div>
           <label htmlFor="agent-task-goal" className="text-sm font-medium">
             Task goal
           </label>
