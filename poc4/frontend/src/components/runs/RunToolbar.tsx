@@ -10,6 +10,7 @@ import {
   Square,
 } from 'lucide-react';
 import type { ReactNode } from 'react';
+import { runStateLabels } from '@/components/ui/labPresentation';
 import { InlineAlert } from '@/components/feedback/InlineAlert';
 import type { RuntimeTemplateId } from '@/contracts/project';
 import {
@@ -161,10 +162,13 @@ export function RunToolbar({
       ? serviceLifetimeLabel(run, nowMs)
       : null;
   const loading = /loading/i.test(statusText);
+  const displayedStatus = run !== null && statusText === run.state
+    ? runStateLabels[run.state]
+    : statusText === 'Ready' ? '可以运行' : statusText;
   const stopTitle = stopWaiting ? 'Waiting for the server' : 'Stop run';
 
   return (
-    <div className="flex shrink-0 flex-col gap-1 border-b px-2 py-1">
+    <div className="lab-run-toolbar flex shrink-0 flex-col gap-1 border-b">
       <div role="toolbar" aria-label="Run controls" className="flex h-8 min-w-0 items-center gap-2">
         <button
           type="button"
@@ -190,7 +194,9 @@ export function RunToolbar({
         </button>
         <div role="status" aria-label="Run state" className="flex min-w-0 items-center gap-1.5 text-sm">
           {stateIcon(run?.state ?? null, loading)}
-          <span className="truncate">{statusText}</span>
+          <span className="truncate" title={statusText}>{displayedStatus}</span>
+          {run && <code className="lab-machine-state">{run.state}</code>}
+          {stopWaiting && <span className="lab-machine-state">Waiting for server</span>}
         </div>
         <span className="font-mono truncate text-sm">{command}</span>
         {clock !== null ? (

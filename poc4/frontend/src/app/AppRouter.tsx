@@ -26,6 +26,8 @@ const router = createBrowserRouter([
         children: [
           { index: true, element: <ProjectsPage /> },
           { path: ':projectId', element: <ProjectRoutePage /> },
+          { path: ':projectId/overview', element: <ProjectRoutePage /> },
+          { path: ':projectId/compare', element: <ProjectRoutePage /> },
         ],
       },
       {

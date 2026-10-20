@@ -2,6 +2,7 @@ import { FitAddon } from '@xterm/addon-fit';
 import { SearchAddon, type ISearchOptions } from '@xterm/addon-search';
 import { WebglAddon } from '@xterm/addon-webgl';
 import { Terminal, type ITerminalAddon, type ITerminalOptions } from '@xterm/xterm';
+import { terminalThemes, useThemePreferences } from '@/features/preferences/themePreferences';
 
 export type XtermDisposable = {
   dispose(): void;
@@ -86,16 +87,16 @@ const terminalOptions: ITerminalOptions = {
   fontFamily: '"JetBrains Mono", "Cascadia Code", Consolas, monospace',
   fontSize: 14,
   scrollback: 5_000,
-  theme: {
-    background: '#1e1e1e',
-    foreground: '#d4d4d4',
-  },
 };
 
 function createBrowserTerminal(): XtermTerminalPort {
   const reducedMotion = typeof globalThis.matchMedia === 'function' &&
     globalThis.matchMedia('(prefers-reduced-motion: reduce)').matches;
-  const terminal = new Terminal({ ...terminalOptions, cursorBlink: !reducedMotion });
+  const terminal = new Terminal({ ...terminalOptions, cursorBlink: !reducedMotion, theme: terminalThemes[useThemePreferences.getState().theme] });
+  // Update colors on the existing terminal so its transport and scrollback survive.
+  const unsubscribeTheme = useThemePreferences.subscribe((state) => {
+    terminal.options.theme = terminalThemes[state.theme];
+  });
   return {
     get cols() {
       return terminal.cols;
@@ -113,7 +114,7 @@ function createBrowserTerminal(): XtermTerminalPort {
     onBinary: (listener) => terminal.onBinary(listener),
     loadAddon: (addon) => terminal.loadAddon(addon as ITerminalAddon),
     clear: () => terminal.clear(),
-    dispose: () => terminal.dispose(),
+    dispose: () => { unsubscribeTheme(); terminal.dispose(); },
   };
 }
 

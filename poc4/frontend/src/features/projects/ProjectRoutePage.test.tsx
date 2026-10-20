@@ -112,7 +112,7 @@ describe('ProjectRoutePage dependency recovery after refresh', () => {
     await user.click(screen.getByRole('button', { name: 'Add dependency' }));
 
     // The response is lost: the entry appears and the original id is kept in the session.
-    expect(await screen.findByText('Dependency change is unconfirmed')).toBeInTheDocument();
+    expect(await screen.findByText('依赖变更尚未确认')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Check dependency change' })).toBeEnabled();
     const posts = dependencyChangePosts(fetchSpy);
     expect(posts).toHaveLength(1);
@@ -133,7 +133,7 @@ describe('ProjectRoutePage dependency recovery after refresh', () => {
     await user.click(check);
 
     await waitFor(() => {
-      expect(screen.queryByText('Dependency change is unconfirmed')).not.toBeInTheDocument();
+      expect(screen.queryByText('依赖变更尚未确认')).not.toBeInTheDocument();
     });
     // The captured GET carried the first operation id; no second ADD was sent.
     expect(dependencyChangePosts(fetchSpy)).toHaveLength(1);
@@ -170,7 +170,8 @@ describe('ProjectRoutePage dependency recovery after refresh', () => {
     await user.click(check);
 
     // Reconciling the PENDING operation lifts exactly this failure and reopens the workbench.
-    expect(await screen.findByText('READY', { exact: true }, { timeout: 10_000 })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: project.name }, { timeout: 10_000 })).toBeInTheDocument();
+    expect(screen.getByRole('tabpanel', { name: 'Editor' })).toBeInTheDocument();
     expect(dependencyChangePosts(fetchSpy)).toHaveLength(0);
     expect(dependencyStatusGets(fetchSpy).map((call) => call.path)).toEqual([
       `/api/v1/projects/${project.id}/python-dependencies/${FAILED_OPERATION_ID}`,
@@ -195,7 +196,8 @@ describe('ProjectRoutePage dependency recovery after refresh', () => {
     expect(await screen.findByText('WORKSPACE_RECONCILIATION_REQUIRED')).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Check dependency change' }));
 
-    expect(await screen.findByText('READY', { exact: true }, { timeout: 10_000 })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: project.name }, { timeout: 10_000 })).toBeInTheDocument();
+    expect(screen.getByRole('tabpanel', { name: 'Editor' })).toBeInTheDocument();
     expect(dependencyStatusGets(fetchSpy).map((call) => call.path)).toEqual([
       `/api/v1/projects/${project.id}/python-dependencies/${FAILED_OPERATION_ID}`,
     ]);
@@ -221,7 +223,7 @@ describe('ProjectRoutePage recovery entry eligibility', () => {
     renderApp({ initialEntries: [`/projects/${failing.id}`] });
     expect(await screen.findByText(MOCK_FAILURE_REASON)).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Check dependency change' })).not.toBeInTheDocument();
-    expect(screen.queryByText('Dependency change is unconfirmed')).not.toBeInTheDocument();
+    expect(screen.queryByText('依赖变更尚未确认')).not.toBeInTheDocument();
   });
 
   it('offers no recovery entry when the failed project is not a Python runtime', async () => {

@@ -1,5 +1,7 @@
 import { lazy, Suspense, useEffect } from 'react';
-import { Link, useParams } from 'react-router';
+import { Link, useParams, useLocation } from 'react-router';
+import { ProjectOverview } from './ProjectOverview';
+import { RunCompare } from './RunCompare';
 import { ApiRequestError } from '../../api/ApiRequestError';
 import { workspaceBufferRegistry } from '@/app/appRuntime';
 import { AccessDeniedPage } from '@/components/feedback/AccessDeniedPage';
@@ -25,6 +27,7 @@ import { useWorkspaceSession } from '@/features/editor/workspaceSession';
 import { useAuth } from '../auth/AuthProvider';
 import { AppChrome } from './ProjectsPage';
 import { useProjectQuery } from './projectQueries';
+import { markProjectVisited } from './projectPreferences';
 
 const WorkbenchPage = lazy(() => import('./WorkbenchPage'));
 
@@ -111,11 +114,15 @@ function isNetworkError(error: unknown): boolean {
 }
 
 export function ProjectRoutePage() {
+  const location = useLocation();
   const { projectId } = useParams();
   const id = decodeProjectId(typeof projectId === 'string' ? projectId : undefined);
   const { snapshot } = useAuth();
   const userId = snapshot.status === 'authenticated' ? snapshot.user.id : '';
   const query = useProjectQuery(id);
+  useEffect(() => {
+    if (query.data?.state === 'READY' && !query.isError) markProjectVisited(userId, id);
+  }, [id, userId, query.data?.state, query.isError]);
 
   if (query.isPending) {
     return (
@@ -231,6 +238,9 @@ export function ProjectRoutePage() {
       </AppChrome>
     );
   }
+
+  if (location.pathname.endsWith('/overview')) return <ProjectOverview project={project} />;
+  if (location.pathname.endsWith('/compare')) return <RunCompare project={project} />;
 
   // A failed background refresh keeps the workbench mounted with a local,
   // actionable hint instead of a full-page error. The hint appears once the

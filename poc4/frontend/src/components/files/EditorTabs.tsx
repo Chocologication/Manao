@@ -1,6 +1,8 @@
 import { motion } from 'framer-motion';
-import { Save, X } from 'lucide-react';
-import { useCallback, useEffect, useRef, type DragEvent } from 'react';
+import { Save, X, Settings2 } from 'lucide-react';
+import { useCallback, useEffect, useRef, useState, type DragEvent } from 'react';
+import { useEditorPreferences } from '@/features/editor/editorPreferences';
+import { useReducedMotion } from '@/features/preferences/motionPreferences';
 import { Spinner } from '@/components/ui/spinner';
 import type { EditorTab } from '@/features/editor/editorTypes';
 import { springFast } from '@/lib/motion';
@@ -28,6 +30,8 @@ export function EditorTabs({
   saveDisabled = true,
   savePending = false,
 }: EditorTabsProps) {
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const preferences = useEditorPreferences();
   const draggedIndexRef = useRef<number | null>(null);
   const tabRefsRef = useRef<Map<string, HTMLDivElement>>(new Map());
 
@@ -54,7 +58,7 @@ export function EditorTabs({
     [onReorder]
   );
 
-  const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const reduceMotion = useReducedMotion();
 
   useEffect(() => {
     if (!activePath) return;
@@ -74,7 +78,7 @@ export function EditorTabs({
   }
 
   return (
-    <div className="flex h-[36px] shrink-0 items-center overflow-hidden">
+    <div className="lab-editor-tabs flex h-[36px] shrink-0 items-center">
       <div className="h-[36px] min-w-0 flex-1 overflow-x-auto overflow-y-hidden">
         <div role="tablist" aria-label="Editor tabs" className="flex h-[36px] w-max">
           {tabs.map((tab, index) => {
@@ -164,6 +168,8 @@ export function EditorTabs({
           {savePending ? <Spinner /> : <Save className="size-4" aria-hidden />}
         </button>
       ) : null}
+      <button type="button" className="lab-editor-settings-button" aria-label="编辑器设置" title="编辑器设置" aria-expanded={settingsOpen} onClick={() => setSettingsOpen(!settingsOpen)}><Settings2 size={16} /></button>
+      {settingsOpen && <div className="lab-editor-settings" role="group" aria-label="编辑器设置" onKeyDown={(event) => { if (event.key === 'Escape') setSettingsOpen(false); }}><label>字号 <input type="number" min={12} max={24} value={preferences.fontSize} onChange={(event) => preferences.update({ fontSize: Number(event.target.value) })} /></label><label>自动换行 <input type="checkbox" checked={preferences.wordWrap} onChange={(event) => preferences.update({ wordWrap: event.target.checked })} /></label><label>代码缩略图 <input type="checkbox" checked={preferences.minimap} onChange={(event) => preferences.update({ minimap: event.target.checked })} /></label><button type="button" onClick={() => setSettingsOpen(false)}>关闭</button></div>}
     </div>
   );
 }

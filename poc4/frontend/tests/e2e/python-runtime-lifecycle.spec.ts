@@ -1,4 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
+import { openCloudProjectCreation, unconfirmedDependencyAlert } from '../support/cloudWorkbench';
 
 /**
  * Python project runtime: cloud lifecycle acceptance, driven purely through the browser
@@ -222,6 +223,7 @@ test.describe.serial('python runtime cloud lifecycle', () => {
     await expect(page).toHaveURL(/\/projects$/);
 
     // The deployed entry must expose the python templates next to the java ones.
+    await openCloudProjectCreation(page);
     const templateSelect = page.getByLabel('Template');
     await expect(templateSelect).toBeVisible();
     await expect(templateSelect.locator('option', { hasText: 'Python console' })).toHaveCount(1);
@@ -233,6 +235,7 @@ test.describe.serial('python runtime cloud lifecycle', () => {
     test.setTimeout(1_200_000); // workspace provisioning plus the first cloud run
     await signIn(page);
 
+    await openCloudProjectCreation(page);
     await page.getByLabel('Project name').fill(SCENE.consoleProjectName);
     await page.getByLabel('Template').selectOption({ label: 'Python console' });
     // A console template offers no MySQL/Redis or public-port options at all.
@@ -244,7 +247,9 @@ test.describe.serial('python runtime cloud lifecycle', () => {
 
     const card = projectCard(page, SCENE.consoleProjectName);
     await expect(card).toBeVisible();
-    await expect(card.getByText('READY', { exact: true })).toBeVisible({ timeout: 600_000 });
+    await expect(card.locator('p[data-state]')).toHaveAttribute('data-state', 'READY', {
+      timeout: 600_000,
+    });
     await openProject(page, SCENE.consoleProjectName);
     SCENE.consoleProjectId = currentProjectId(page);
 
@@ -335,6 +340,7 @@ test.describe.serial('python runtime cloud lifecycle', () => {
     test.setTimeout(1_200_000);
     await signIn(page);
 
+    await openCloudProjectCreation(page);
     await page.getByLabel('Project name').fill(SCENE.webProjectName);
     await page.getByLabel('Template').selectOption({ label: 'Python FastAPI web' });
     await page.getByLabel('Public access').check();
@@ -354,7 +360,9 @@ test.describe.serial('python runtime cloud lifecycle', () => {
 
     const card = projectCard(page, SCENE.webProjectName);
     await expect(card).toBeVisible();
-    await expect(card.getByText('READY', { exact: true })).toBeVisible({ timeout: 600_000 });
+    await expect(card.locator('p[data-state]')).toHaveAttribute('data-state', 'READY', {
+      timeout: 600_000,
+    });
     // The exact user-selected NodePorts were provisioned, not substituted.
     await expect(card).toContainText(String(publicPortNumber1));
     await expect(card).toContainText(String(publicPortNumber2));
@@ -575,7 +583,7 @@ test.describe.serial('python runtime cloud lifecycle', () => {
     expect(deliveredDependencyPost, 'the ADD was sent exactly once').toBe(1);
 
     // The unconfirmed entry appears and no automatic retry is sent.
-    await expect(page.getByText('Dependency change is unconfirmed')).toBeVisible();
+    await expect(unconfirmedDependencyAlert(page)).toBeVisible();
     expect(deliveredDependencyPost).toBe(1);
 
     // Refresh: the same session still offers the check entry for the SAME operation.
@@ -587,6 +595,7 @@ test.describe.serial('python runtime cloud lifecycle', () => {
       await expect(page.getByRole('heading', { name: SCENE.consoleProjectName })).toBeVisible();
     }
     const check = page.getByRole('button', { name: 'Check dependency change' });
+    await expect(unconfirmedDependencyAlert(page)).toBeVisible();
     await expect(check).toBeEnabled();
     expect(deliveredDependencyPost, 'the refresh must not resend the ADD').toBe(1);
 
@@ -595,7 +604,7 @@ test.describe.serial('python runtime cloud lifecycle', () => {
     // interceptor would silently survive and drop every later change response.
     await page.unroute(dependencyChangePostRoute);
     await check.click();
-    await expect(page.getByText('Dependency change is unconfirmed')).toBeHidden({ timeout: 180_000 });
+    await expect(unconfirmedDependencyAlert(page)).toBeHidden({ timeout: 180_000 });
     await expect
       .poll(async () => readPyproject(page), { timeout: 120_000, intervals: [2_000, 5_000] })
       .toContain('requests');
@@ -608,7 +617,7 @@ test.describe.serial('python runtime cloud lifecycle', () => {
     await openDependenciesPanel(page);
     await page.getByLabel('Package name').fill('requests');
     await page.getByRole('button', { name: 'Remove dependency' }).click();
-    await expect(page.getByText('Dependency change is unconfirmed')).toBeHidden({ timeout: 180_000 });
+    await expect(unconfirmedDependencyAlert(page)).toBeHidden({ timeout: 180_000 });
     await expect
       .poll(async () => readPyproject(page), { timeout: 120_000, intervals: [2_000, 5_000] })
       .not.toContain('requests');

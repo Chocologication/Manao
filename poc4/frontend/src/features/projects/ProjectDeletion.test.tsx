@@ -77,7 +77,10 @@ describe('user project deletion', () => {
       return new HttpResponse(null, { status: 204 });
     }));
     queryClient.setQueryData(['project-files', project.id, 'tree'], ['old-file']);
-    queryClient.setQueryData(['project-runs', project.id, 'history'], ['old-run']);
+    queryClient.setQueryData(['project-runs', project.id, 'history'], {
+      pages: [{ items: [], nextCursor: null }],
+      pageParams: [null],
+    });
     queryClient.setQueryData(['terminal-audits', project.id, 'run'], ['old-audit']);
     queryClient.setQueryData(['project-files', 'keep', 'tree'], ['keep-file']);
     renderApp();

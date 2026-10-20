@@ -1,13 +1,16 @@
 import { Component, type ReactNode } from 'react';
 import { Button } from '@/components/ui/button';
+import { Brand } from '@/components/ui/Brand';
+import { CircleAlert, RefreshCw } from 'lucide-react';
 
 export function ErrorRecoveryView() {
   return (
-    <main className="flex min-h-full flex-col items-start gap-4 bg-background px-6 py-5 text-foreground">
+    <main className="lab-feedback-page">
+      <Brand /><CircleAlert size={38} />
       <h1 className="text-lg font-medium">Something went wrong</h1>
       <p className="text-sm text-muted-foreground">Reload the page to continue.</p>
       <Button type="button" onClick={() => window.location.reload()}>
-        Reload
+        <RefreshCw />Reload
       </Button>
     </main>
   );

@@ -102,3 +102,38 @@ namespace `manao-stage6b`，公网入口 `http://1.12.245.235:30080`（NodePort�
 
 - 验收记录（唯一阶段验收正文）：`../docs/evidence/stage-6b/acceptance.md`
 - 部署与维护手册：`../deploy/6b/README.md`
+
+## Manao Cloud IDE 界面体验
+
+前端工作台保持 Stage 5 浏览器边界与现有 API 合同，并补充以下交互：
+
+- 登录、项目列表、项目概览和工作台采用统一的 Manao 深色实验室视觉；登录页动效支持减少动态效果偏好。
+- 项目列表支持搜索、状态筛选、排序、收藏、最近访问，以及网格/列表视图；偏好保存在当前浏览器本地。
+- 项目概览与工作台可查看真实 Run 历史、日志证据和两次运行对比；错误日志可搜索并跳转到对应源码位置。
+- 工作台支持 `Ctrl/Cmd+K` 命令面板、Activity Center、主题与编辑器偏好，以及窄屏抽屉布局。
+- Activity Center 的已读状态和清空操作只影响本地通知；Run Insights 使用已有运行与日志数据，不补造后端事件。
+- AI 诊断展示为预览且未连接；不会执行 AI 分析或自动修复。
+
+### 云端验收脚本的本地回归
+
+Java、Python 和 Stage 6B 的云端 lifecycle 脚本共用 `tests/support/cloudWorkbench.ts`：先通过带 `aria-expanded` 的控制台按钮展开创建区，再进入“所有配置”。该操作可重复调用，空项目列表中的同名快捷按钮不会造成定位歧义。Java/Python 首项入口检查也通过该操作读取模板。
+
+Python 依赖恢复的出现、刷新后仍可核对和核对后消失断言共用实际中文告警定位，避免旧英文零匹配让 `toBeHidden()` 提前通过。原云端脚本保留整页刷新、单次 ADD 和依赖声明核验。
+
+本地浏览器回归使用现有 MSW，覆盖折叠表单的完整模板、空列表创建、重复打开表单，以及丢失依赖响应后离开并重进工作台，通过原 operationId 核对且不重发 ADD：
+
+```powershell
+pnpm exec playwright test tests/e2e/cloud-workbench-ui.spec.ts --project=chromium
+```
+
+该命令自动构建并启动本地 mock 服务。MSW 的项目和依赖回执保存在页面内存中，因此本地用例通过 SPA 导航重进工作台；真实整页刷新、后端持久化和集群资源生命周期仍须在云端部署后运行对应 lifecycle 套件验证。
+
+### AI 集成分支同步（2026-10-20）
+
+将 `master@4c9fb89`（PR #2，包含 Cloud IDE 界面和 lifecycle 测试修复）合入 `codex/ai-integration`，保留该分支原有 AI 提交历史；master 不接收 AI 分支的改动。
+
+两个内容冲突按功能组合解决：`RunPanel` 同时保留 Agent 占用锁、AI 指定 Run 选择和错误日志定位；`WorkbenchShell` 同时保留 AI 会话入口、任务收尾与工作区重载流程，以及新版布局、面板偏好和源码定位。依赖锁文件保留两侧新增依赖。Run Insights 的 AI 诊断预览与已有 AI 会话入口是独立功能。
+
+本地验证：`pnpm install --frozen-lockfile`、`pnpm build`、`pnpm typecheck:stage6` 和 `pnpm test:boundary` 通过（边界单测 36/36）；`pnpm exec vitest run --maxWorkers=4 --reporter=dot` 全套 94 文件、1598/1598 通过；上述 Cloud IDE 本地 Playwright 回归 3/3 通过。首次默认并发单测出现一项首次懒加载等待超时，该文件单独复跑 5/5 通过，限制四个 worker 后全套通过，未通过修改业务代码或放宽断言消除失败。
+
+本次同步只验证合并后的本地前端，不代表 AI 集成阶段完成，也不改变已有阶段验收结论；未执行云端部署或真实模型验收。

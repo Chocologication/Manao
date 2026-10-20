@@ -41,7 +41,7 @@ describe('ProjectCard', () => {
         <ProjectCard project={deleting} />
       </MemoryRouter>,
     );
-    expect(screen.getByText('Deleting')).toBeInTheDocument();
+    expect(screen.getByText('正在删除')).toBeInTheDocument();
     expect(screen.queryByRole('link', { name: 'Open' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Open' })).not.toBeInTheDocument();
   });

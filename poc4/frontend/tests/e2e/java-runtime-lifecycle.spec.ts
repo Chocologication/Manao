@@ -1,4 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
+import { openCloudProjectCreation } from '../support/cloudWorkbench';
 
 /**
  * Java project runtime: cloud lifecycle acceptance, driven purely through the browser
@@ -189,6 +190,7 @@ test.describe.serial('java runtime cloud lifecycle', () => {
 
     // The deployed entry must expose the runtime-capable creation form, not just the
     // legacy console-only view.
+    await openCloudProjectCreation(page);
     const templateSelect = page.getByLabel('Template');
     await expect(templateSelect).toBeVisible();
     await expect(templateSelect.locator('option', { hasText: 'Java Spring Boot web' })).toHaveCount(1);
@@ -203,6 +205,7 @@ test.describe.serial('java runtime cloud lifecycle', () => {
     test.setTimeout(1_500_000);
     await signIn(page);
 
+    await openCloudProjectCreation(page);
     await page.getByLabel('Project name').fill(SCENE.projectName);
     await page.getByLabel('Template').selectOption({ label: 'Java Spring Boot web' });
     await page.getByLabel('Public access').check();
@@ -224,7 +227,9 @@ test.describe.serial('java runtime cloud lifecycle', () => {
     // Project READY plus both selected dependencies READY on the card's runtime view.
     const card = projectCard(page, SCENE.projectName);
     await expect(card).toBeVisible();
-    await expect(card.getByText('READY', { exact: true })).toBeVisible({ timeout: 600_000 });
+    await expect(card.locator('p[data-state]')).toHaveAttribute('data-state', 'READY', {
+      timeout: 600_000,
+    });
     await expect(card.getByText('MySQL READY')).toBeVisible({ timeout: 840_000 });
     await expect(card.getByText('Redis READY')).toBeVisible({ timeout: 840_000 });
     // The exact user-selected NodePorts were provisioned, not substituted.

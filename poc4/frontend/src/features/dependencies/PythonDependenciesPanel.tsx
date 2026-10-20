@@ -17,6 +17,7 @@ import { reloadWorkspaceAfterTerminalRun } from '../../features/runs/workspaceRe
 import { useWorkspaceSession } from '../../features/editor/workspaceSession';
 import { InlineAlert } from '@/components/feedback/InlineAlert';
 import { Button } from '@/components/ui/button';
+import { Package, Plus, Minus, FileInput } from 'lucide-react';
 
 export type PythonDependenciesPanelProps = {
   projectId: string;
@@ -106,9 +107,9 @@ function settleSubmissionFailure(options: {
 /** The fixed root file read registers no operation, so any read failure is a safe correction. */
 function requirementsReadErrorMessage(error: unknown): string {
   if (error instanceof ApiRequestError && error.body?.code === 'ENTRY_NOT_FOUND') {
-    return 'requirements.txt was not found in the project root.';
+    return 'requirements.txt 未找到，请确认它位于项目根目录。';
   }
-  return 'Unable to read requirements.txt.';
+  return '无法读取 requirements.txt。';
 }
 
 function rejectionMessage(error: unknown, importContract = false): string {
@@ -117,30 +118,30 @@ function rejectionMessage(error: unknown, importContract = false): string {
       case 'VALIDATION_ERROR':
         // The import contract lives on the root requirements.txt, not single packages.
         return importContract
-          ? 'The requirements.txt import only accepts plain public-PyPI requirement lines within the size and count limits.'
-          : 'Only package names with an optional exact version are supported.';
+          ? 'requirements.txt 仅支持大小和数量限制内的公开 PyPI 依赖行。'
+          : '仅支持 package 名称和可选的精确版本。';
       case 'PYTHON_DEPENDENCY_UNSUPPORTED':
         return error.body.message;
       case 'PYTHON_DEPENDENCY_NO_WHEEL':
-        return 'No compatible wheel is available for the requested package or version.';
+        return '当前 package 或版本没有可用的兼容 wheel。';
       case 'PYTHON_DEPENDENCY_RESOLUTION_FAILED':
-        return 'Dependency resolution failed. No files were changed.';
+        return '依赖解析失败，文件未改动。';
       case 'PYTHON_DEPENDENCY_TIMEOUT':
-        return 'Dependency resolution timed out. No files were changed.';
+        return '依赖解析超时，文件未改动。';
       case 'WORKSPACE_REVISION_CONFLICT':
-        return 'The workspace changed. Refresh the workspace and try again.';
+        return '工作区已发生变化，请刷新后重试。';
       case 'WORKSPACE_RECONCILIATION_REQUIRED':
-        return 'The result of the dependency change is unknown. Check it before making another change.';
+        return '依赖变更结果未知，请先核对后再提交新的变更。';
       case 'PROJECT_BUSY':
-        return 'Project is busy. Wait for the current operation to finish, then try again.';
+        return '项目正忙，请等待当前操作完成后重试。';
       case 'PROJECT_LOCKED':
       case 'RUN_ALREADY_ACTIVE':
-        return 'Finish or stop the active Run before changing dependencies.';
+        return '请先完成或停止当前 Run，再修改依赖。';
       default:
-        return error.body?.message ?? 'Unable to change dependencies';
+        return error.body?.message ?? '无法修改依赖。';
     }
   }
-  return 'Unable to change dependencies';
+  return '无法修改依赖。';
 }
 
 function disableReason(options: {
@@ -151,19 +152,19 @@ function disableReason(options: {
   unconfirmed: boolean;
 }): string | null {
   if (options.phase !== 'idle') {
-    return 'Waiting for the current dependency change';
+    return '正在等待当前依赖变更完成';
   }
   if (options.unconfirmed) {
-    return 'Check the unconfirmed dependency change first';
+    return '请先核对未确认的依赖变更';
   }
   if (options.dirty) {
-    return 'Save or discard file changes first';
+    return '请先保存或放弃文件修改';
   }
   if (options.workspaceLocked) {
-    return 'Finish or stop the active Run first';
+    return '请先完成或停止当前 Run';
   }
   if (!options.revisionAvailable) {
-    return 'Waiting for the workspace revision';
+    return '正在等待工作区 revision';
   }
   return null;
 }
@@ -204,7 +205,7 @@ export function PythonDependenciesPanel({
     }
     const name = packageName.trim();
     if (name === '') {
-      setRejection('Enter a package name.');
+      setRejection('请输入 package 名称。');
       setSaved(false);
       return;
     }
@@ -336,16 +337,13 @@ export function PythonDependenciesPanel({
   }
 
   return (
-    <section aria-label="Python dependencies" className="flex h-full min-h-0 flex-col gap-3 overflow-auto p-4">
-      <h2 className="text-sm font-medium">Python dependencies</h2>
-      <p className="text-sm text-muted-foreground">
-        Adds or removes a main dependency through uv. Only public PyPI packages with an optional
-        exact version are supported.
-      </p>
+    <section aria-label="Python dependencies" className="lab-dependencies flex h-full min-h-0 flex-col gap-3 overflow-auto">
+      <div className="lab-dependency-header"><Package size={28} /><p className="lab-eyebrow">PYTHON / UV</p><h2>项目依赖管理</h2><p>公开 PyPI package · 精确版本可选</p></div>
       <form className="flex flex-col items-start gap-3" onSubmit={(event) => event.preventDefault()}>
         <label className="flex flex-col gap-1 text-sm">
-          Package name
+          package 名称
           <input
+            aria-label="Package name"
             className="h-8 w-64 rounded-md border bg-background px-2 text-sm"
             value={packageName}
             onChange={(event) => setPackageName(event.target.value)}
@@ -354,8 +352,9 @@ export function PythonDependenciesPanel({
           />
         </label>
         <label className="flex flex-col gap-1 text-sm">
-          Version (optional)
+          版本（可选）
           <input
+            aria-label="Version (optional)"
             className="h-8 w-64 rounded-md border bg-background px-2 text-sm"
             value={version}
             onChange={(event) => setVersion(event.target.value)}
@@ -367,37 +366,42 @@ export function PythonDependenciesPanel({
         <div className="flex items-center gap-2">
           <Button
             type="button"
+            aria-label="Add dependency"
             disabled={disabledReason !== null}
-            title={disabledReason ?? 'Add dependency'}
+            title={disabledReason ?? '添加依赖'}
             onClick={() => void submit('ADD')}
           >
-            Add dependency
+            <Plus />添加依赖
           </Button>
           <Button
             type="button"
+            aria-label="Remove dependency"
             variant="outline"
             disabled={disabledReason !== null}
-            title={disabledReason ?? 'Remove dependency'}
+            title={disabledReason ?? '移除依赖'}
             onClick={() => void submit('REMOVE')}
           >
-            Remove dependency
+            <Minus />移除依赖
           </Button>
           <Button
             type="button"
+            aria-label="Import requirements.txt"
             variant="outline"
             disabled={disabledReason !== null}
-            title={disabledReason ?? 'Import dependencies from requirements.txt'}
+            title={disabledReason ?? '从 requirements.txt 导入依赖'}
             onClick={() => void submitImport()}
           >
-            Import requirements.txt
+            <FileInput />导入 requirements.txt
           </Button>
         </div>
       </form>
+      <p className="lab-dependency-notice">批量导入读取项目根目录的 requirements.txt。</p>
+      {disabledReason && <p className="lab-warning" role="status">{disabledReason}</p>}
       {rejection !== null ? <InlineAlert>{rejection}</InlineAlert> : null}
       <p role="status" aria-label="Dependency change result" className="min-h-5 text-sm text-muted-foreground">
-        {phase === 'submitting' ? 'Saving dependency change' : null}
-        {phase === 'reloading' ? 'Reloading workspace' : null}
-        {phase === 'idle' && saved ? 'Dependency change saved.' : null}
+        {phase === 'submitting' ? '正在提交依赖变更' : null}
+        {phase === 'reloading' ? '正在重新加载工作区' : null}
+        {phase === 'idle' && saved ? '依赖变更已保存。' : null}
       </p>
     </section>
   );

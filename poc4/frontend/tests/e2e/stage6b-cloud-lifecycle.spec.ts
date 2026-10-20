@@ -1,4 +1,5 @@
 import { expect, test, type Locator, type Page } from '@playwright/test';
+import { openCloudProjectCreation } from '../support/cloudWorkbench';
 
 /**
  * Stage 6B: cloud lifecycle acceptance driven purely through the browser against
@@ -85,7 +86,9 @@ test.describe.serial('stage6b cloud lifecycle', () => {
     await signIn(page);
     await createProject(page, SCENE.projectName);
     const card = projectCard(page, SCENE.projectName);
-    await expect(card.getByText('READY', { exact: true })).toBeVisible({ timeout: 600_000 });
+    await expect(card.locator('p[data-state]')).toHaveAttribute('data-state', 'READY', {
+      timeout: 600_000,
+    });
 
     const open = card.getByRole('link', { name: 'Open' });
     await expect(open).toBeVisible();
@@ -282,6 +285,7 @@ async function signIn(page: Page): Promise<void> {
 }
 
 async function createProject(page: Page, name: string): Promise<void> {
+  await openCloudProjectCreation(page);
   await page.getByLabel('Project name').fill(name);
   await page.getByRole('button', { name: 'Create project' }).click();
   await expect(projectCard(page, name)).toBeVisible();

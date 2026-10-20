@@ -2,15 +2,17 @@ import { describe, expect, it, vi } from 'vitest';
 
 vi.mock('@xterm/addon-webgl', () => ({ WebglAddon: class {} }));
 const browserTerminalConstructorOptions = vi.hoisted(() => [] as unknown[]);
+const browserTerminalInstances = vi.hoisted(() => [] as { options: { theme?: { background?: string } } }[]);
 vi.mock('@xterm/xterm', () => ({
   Terminal: class {
     cols = 80;
     rows = 24;
-    options: { disableStdin?: boolean };
+    options: { disableStdin?: boolean; theme?: { background?: string } };
 
     constructor(options: { disableStdin?: boolean }) {
       browserTerminalConstructorOptions.push(options);
       this.options = { ...options };
+      browserTerminalInstances.push(this);
     }
 
     open(): void {}
@@ -41,6 +43,7 @@ import {
   type XtermTerminalPort,
   type XtermWebglAddonPort,
 } from './XtermTerminalAdapter';
+import { useThemePreferences } from '@/features/preferences/themePreferences';
 
 class FakeDisposable implements XtermDisposable {
   private readonly name: string;
@@ -298,6 +301,21 @@ function setElementSize(element: HTMLElement, width: number, height: number): vo
 }
 
 describe('XtermTerminalAdapter browser options', () => {
+  it('updates colors on the same terminal and unsubscribes on disposal', () => {
+    const disposeLog: string[] = [];
+    const adapter = new XtermTerminalAdapter({
+      fitAddonFactory: () => new FakeFitAddon(disposeLog),
+      searchAddonFactory: () => new FakeSearchAddon(disposeLog),
+    });
+    const terminal = browserTerminalInstances.at(-1)!;
+    const count = browserTerminalInstances.length;
+    useThemePreferences.getState().setPreference('light');
+    expect(terminal.options.theme?.background).toBe('#f7f9fa');
+    expect(browserTerminalInstances).toHaveLength(count);
+    adapter.dispose();
+    useThemePreferences.getState().setPreference('lab');
+    expect(terminal.options.theme?.background).toBe('#f7f9fa');
+  });
   it.each([false, true])(
     'constructs the browser Terminal directly with reduced motion %s',
     (reducedMotion) => {
@@ -319,8 +337,8 @@ describe('XtermTerminalAdapter browser options', () => {
         fontSize: 14,
         scrollback: 5_000,
         theme: {
-          background: '#1e1e1e',
-          foreground: '#d4d4d4',
+          background: '#0b1110',
+          foreground: '#e0ebe4',
         },
       });
 

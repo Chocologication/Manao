@@ -4,8 +4,10 @@ import { AppProviders } from './app/AppProviders';
 import { AppRouter } from './app/AppRouter';
 import { AppErrorBoundary } from './components/feedback/AppErrorBoundary';
 import './styles/globals.css';
+import { applyTheme } from './features/preferences/themePreferences';
 
 async function bootstrap(): Promise<void> {
+  applyTheme();
   if (import.meta.env.VITE_ENABLE_MOCK_API === 'true') {
     const { startMockWorker } = await import('./mocks/browser');
     await startMockWorker();

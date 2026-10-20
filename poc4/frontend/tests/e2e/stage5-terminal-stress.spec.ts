@@ -193,14 +193,30 @@ async function metrics(page: Page): Promise<StressMetrics> {
   });
 }
 
+function isBrowserChrome404(pathname: string): boolean {
+  return (
+    pathname === '/favicon.ico' ||
+    pathname === '/apple-touch-icon.png' ||
+    pathname === '/apple-touch-icon-precomposed.png'
+  );
+}
+
 test('streams at least 8 MiB with bounded terminal flow control and remains responsive', async ({
   page,
 }) => {
   test.setTimeout(180_000);
   const consoleErrors: string[] = [];
   const pageErrors: string[] = [];
+  const notFoundPaths: string[] = [];
+  page.on('response', (response) => {
+    if (response.status() === 404) notFoundPaths.push(new URL(response.url()).pathname);
+  });
   page.on('console', (message) => {
-    if (message.type() === 'error') consoleErrors.push(message.text());
+    if (message.type() !== 'error') return;
+    const text = message.text();
+    // Browser chrome probes like /favicon.ico 404 without a page-level response event.
+    if (text.includes('Failed to load resource') && text.includes('404')) return;
+    consoleErrors.push(text);
   });
   page.on('pageerror', (error) => pageErrors.push(error.message));
 
@@ -215,7 +231,7 @@ test('streams at least 8 MiB with bounded terminal flow control and remains resp
   await setScenario(page, token, 'terminal', 'stress');
   await page.getByRole('tab', { name: 'Run' }).click();
   await page.getByRole('button', { name: 'Start run' }).click();
-  await expect(page.getByLabel('Run state')).toHaveText('RUNNING');
+  await expect(page.getByLabel('Run state')).toContainText('RUNNING');
   await page.getByRole('tab', { name: 'Terminal' }).click();
   await page.getByRole('button', { name: 'Open terminal' }).click();
   await expect(page.getByRole('status', { name: 'Terminal state' })).toHaveText(/Ready|Input paused/);
@@ -278,6 +294,7 @@ test('streams at least 8 MiB with bounded terminal flow control and remains resp
   expect(final.markerAt!).toBeGreaterThanOrEqual(final.readyAt!);
   expect(['WebGL', 'DOM fallback']).toContain(final.renderer);
   expect(responsivenessMs).toBeLessThan(5_000);
+  expect(notFoundPaths.filter((pathname) => !isBrowserChrome404(pathname))).toEqual([]);
   expect(consoleErrors).toEqual([]);
   expect(pageErrors).toEqual([]);
   await page.getByRole('tab', { name: 'Run' }).click();
@@ -287,5 +304,6 @@ test('streams at least 8 MiB with bounded terminal flow control and remains resp
     responsivenessMs,
     consoleErrors,
     pageErrors,
+    notFoundPaths,
   }));
 });

@@ -509,7 +509,7 @@ test('streams more than 6 MiB, keeps a 5 MiB window, reconnects, and stays respo
   await expect(page.getByRole('button', { name: 'New file' })).toBeDisabled();
 
   await expect(page.getByLabel('Log truncation')).toBeVisible({ timeout: 120_000 });
-  await expect(page.getByLabel('Log truncation')).toContainText(/Log truncated/);
+  await expect(page.getByLabel('Log truncation')).toContainText(/日志窗口已截断/);
   const log = page.getByRole('region', { name: 'Run logs' });
   await expect(log).toContainText(LATEST_MARKER, { timeout: 60_000 });
   await expect(log).not.toContainText(HEAD_MARKER);
@@ -606,10 +606,10 @@ test('streams more than 6 MiB, keeps a 5 MiB window, reconnects, and stays respo
       return stats.completeCount;
     }, { timeout: 60_000 })
     .toBeGreaterThan(0);
-  await expect(page.getByLabel('Run state')).toHaveText(/SUCCEEDED|Reloading workspace/, {
+  await expect(page.getByLabel('Run state')).toContainText(/SUCCEEDED|Reloading workspace/, {
     timeout: 60_000,
   });
-  await expect(page.getByLabel('Run state')).not.toHaveText(/^RUNNING$/);
+  await expect(page.getByLabel('Run state')).not.toContainText('RUNNING');
 
   expect(issues.pageErrors).toEqual([]);
   const unexpectedConsole = issues.consoleErrors.filter(

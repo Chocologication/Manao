@@ -10,6 +10,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { InlineAlert } from '@/components/feedback/InlineAlert';
 import { useCheckProjectCreation, useCreateProject } from './projectQueries';
+import { ArrowLeft, ArrowRight, Check, Code2, Server, Settings2 } from 'lucide-react';
 
 const NAME_MAX = 64;
 const MAX_PUBLIC_PORTS = 3;
@@ -102,10 +103,15 @@ function isNetworkError(error: unknown): boolean {
 export function CreateProjectForm({
   locked,
   limitReached,
+  guided = false,
 }: {
   locked: boolean;
   limitReached: boolean;
+  guided?: boolean;
 }) {
+  const [step, setStep] = useState(0);
+  const [advanced, setAdvanced] = useState(false);
+  const useSteps = guided && !advanced;
   const [name, setName] = useState('');
   const [template, setTemplate] = useState<RuntimeTemplateId>('java-console');
   const [mysql, setMysql] = useState(false);
@@ -243,15 +249,19 @@ export function CreateProjectForm({
   }
 
   return (
-    <div className="flex flex-col gap-2">
-      <form className="flex flex-wrap items-end gap-2" onSubmit={onSubmit}>
+    <div className="lab-create-form flex flex-col gap-2">
+      {guided && <div className="lab-creation-mode"><nav className="lab-create-steps" aria-label="创建项目步骤">{['项目名称', '运行模板', '资源配置'].map((label, index) => <button key={label} type="button" disabled={index > step || create.isPending || check.isPending || advanced} aria-current={!advanced && index === step ? 'step' : undefined} onClick={() => setStep(index)}><span>{index < step ? <Check size={14} /> : index + 1}</span>{label}</button>)}</nav><Button size="sm" variant="ghost" disabled={create.isPending || check.isPending} onClick={() => setAdvanced(!advanced)}>{advanced ? '分步配置' : '所有配置'}</Button></div>}
+      <form className="lab-create-fields flex flex-wrap items-end gap-4" onSubmit={(event) => { if (useSteps && step < 2) { event.preventDefault(); if (nameValid) setStep(step + 1); } else { void onSubmit(event); } }}>
+        {(!useSteps || step === 0) && <>
         <div className="w-80 max-w-full">
           <label htmlFor="project-name" className="mb-1 block text-sm">
-            Project name
+            项目名称
           </label>
           <Input
             id="project-name"
             name="project-name"
+            aria-label="Project name"
+            placeholder="例如：我的第一个 Python 实验"
             value={name}
             maxLength={NAME_MAX}
             disabled={locked || limitReached || create.isPending}
@@ -261,9 +271,11 @@ export function CreateProjectForm({
             }}
           />
         </div>
+        </>}
+        {(!useSteps || step === 1) && <>
         <div className="w-56 max-w-full">
           <label htmlFor="project-template" className="mb-1 block text-sm">
-            Template
+            运行模板
           </label>
           <select
             id="project-template"
@@ -282,6 +294,10 @@ export function CreateProjectForm({
             ))}
           </select>
         </div>
+        {guided && <div className="lab-template-options">{TEMPLATES.map((entry) => <button key={entry.value} type="button" aria-pressed={template === entry.value} onClick={() => selectTemplate(entry.value)} disabled={locked || limitReached || create.isPending}>{RUNTIME_TEMPLATE_META[entry.value].web ? <Server size={21} /> : <Code2 size={21} />}<strong>{entry.label}</strong><span>{RUNTIME_TEMPLATE_META[entry.value].web ? 'Web 服务' : '命令行程序'}</span></button>)}</div>}
+        </>}
+        {(!useSteps || step === 2) && <>
+        {guided && <div className="lab-create-summary"><Settings2 size={17} /><strong>{trimmed}</strong><span>{RUNTIME_TEMPLATE_META[template].label}</span></div>}
         {webTemplate ? (
           <div className="flex flex-col gap-2">
             <label htmlFor="project-public-access" className="flex items-center gap-2 text-sm">
@@ -325,11 +341,15 @@ export function CreateProjectForm({
             </label>
           </div>
         ) : null}
-        <Button type="submit" disabled={submitDisabled}>
-          Create project
+        </>}
+        <div className="lab-create-navigation">
+        {useSteps && step > 0 && <Button variant="outline" disabled={create.isPending || check.isPending} onClick={() => setStep(step - 1)}><ArrowLeft />上一步</Button>}
+        <Button type="submit" aria-label={useSteps && step < 2 ? '下一步' : 'Create project'} disabled={useSteps && step < 2 ? locked || limitReached || !nameValid || create.isPending || check.isPending : submitDisabled}>
+          {useSteps && step < 2 ? <><ArrowRight />下一步</> : <><Check />{create.isPending ? '正在提交创建请求' : '创建项目'}</>}
         </Button>
+        </div>
       </form>
-      {portsActive ? (
+      {portsActive && (!useSteps || step === 2) ? (
         <div className="flex flex-col gap-2">
           {portRows.map((row, index) => (
             <div key={index} className="flex flex-wrap items-end gap-2">
@@ -393,9 +413,12 @@ export function CreateProjectForm({
         <p className="text-sm text-muted-foreground">1–64 characters. Display name only.</p>
       )}
       {success ? (
+        <>
         <p role="status" aria-label="Create result" className="text-sm">
           {success}
         </p>
+        {useSteps && <div><Button variant="outline" onClick={() => { setStep(0); setSuccess(null); }}>创建另一个项目</Button></div>}
+        </>
       ) : null}
       {awaitingConfirmation && pendingKey !== null ? (
         <div>

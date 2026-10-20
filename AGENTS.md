@@ -7,6 +7,8 @@
 - As of 2026-10-13, the main checkout is `D:/DeepLearning/MyProjects/Project_Manao`, on `master` at `5e08a9e`. Stage 6A was merged on 2026-09-18 (`6dfb655`); Stage 6B was accepted, closed and merged on 2026-09-20 (`860cdda`); Java was integrated by `ef1b5bb` (2026-09-25), and the Python slice by `2ef32a5` (2026-10-12, no fast-forward).
 - Create new implementation branches under `.worktree/`. The retained `.worktree/poc4-stage-6b` / `codex/poc4-stage-6b` is a completed-stage checkout, not the default workspace for new work. Check the branch and local changes before editing; preserve unrelated changes.
 - Resolve repository-relative paths from the checkout actually being edited. Documentation links must work from `master`; do not link through a private or retained `.worktree` path.
+- Cloud IDE frontend review fixes (2026-10-19): Java/Python/6B lifecycle specs share the creation-form operation and Python recovery alert locator. Local browser regression commands and evidence limits are in [Frontend README](poc4/frontend/README.md#云端验收脚本的本地回归); these checks do not establish cloud acceptance of the revised UI.
+- On 2026-10-20, `codex/ai-integration` integrates `master@4c9fb89` (PR #2, Cloud IDE UI and lifecycle coverage) into the existing AI worktree. The direction is master into the AI branch; this does not merge AI work back to master or establish AI completion. Conflict integration and verification are recorded in [Frontend README](poc4/frontend/README.md#ai-集成分支同步2026-10-20).
 
 ## Read the document that owns the question
 

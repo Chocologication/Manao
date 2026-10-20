@@ -1,11 +1,18 @@
-import { cleanup, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { login } from '../../api/authApi';
 import { authSession } from '../../app/appRuntime';
 import { server } from '../../mocks/node';
-import { renderApp, resetAppRuntime } from '../../test/renderApp';
+import { renderApp as renderBaseApp, resetAppRuntime } from '../../test/renderApp';
+
+function renderApp(options: Parameters<typeof renderBaseApp>[0]) {
+  const view = renderBaseApp(options);
+  fireEvent.click(screen.getAllByRole('button', { name: '新建项目' })[0]);
+  fireEvent.click(screen.getByRole('button', { name: '所有配置' }));
+  return view;
+}
 
 const ALICE = { username: 'alice', password: 'demo-pass' };
 
@@ -349,7 +356,7 @@ describe('CreateProjectForm creation key', () => {
     );
     await authenticateAsAlice();
     renderApp({ initialEntries: ['/projects'] });
-    await screen.findByText(/no projects yet/i);
+    await screen.findByText('你的第一个实验，从这里开始');
     await user.type(screen.getByLabelText('Project name'), 'demo');
     await user.selectOptions(screen.getByLabelText('Template'), 'java-spring-boot-web');
     await user.click(screen.getByLabelText('Public access'));

@@ -32,6 +32,7 @@ import {
 import { cn } from '@/lib/utils';
 import { CloseTerminalDialog } from './CloseTerminalDialog';
 import { JobTerminalSearch } from './JobTerminalSearch';
+import { terminalThemes, useThemePreferences } from '@/features/preferences/themePreferences';
 import {
   resolveTerminalAuditRunId,
   type RetainedTerminalAuditRun,
@@ -201,6 +202,7 @@ export function JobTerminalPanel({
   run,
   createController = createDefaultController,
 }: JobTerminalPanelProps) {
+  const theme = useThemePreferences((state) => state.theme);
   const queryClient = useQueryClient();
   const [controller, setController] = useState<JobTerminalPanelController | null>(null);
   const [renderer, setRenderer] = useState<XtermRenderer>('dom');
@@ -358,7 +360,7 @@ export function JobTerminalPanel({
           aria-hidden={activeView !== 'session'}
           inert={activeView !== 'session' ? true : undefined}
           className={cn(
-            'absolute inset-0 min-h-0 min-w-0 overflow-hidden bg-[#1e1e1e]',
+            'absolute inset-0 min-h-0 min-w-0 overflow-hidden bg-background',
             activeView !== 'session' && 'invisible pointer-events-none',
           )}
         >
@@ -372,6 +374,7 @@ export function JobTerminalPanel({
               active={canUseXtermTools}
               isOpen={searchOpen}
               terminal={controller}
+              theme={terminalThemes[theme]}
               onOpenChange={setSearchOpen}
             />
           ) : null}
@@ -379,7 +382,7 @@ export function JobTerminalPanel({
             <p
               role="status"
               aria-label="Terminal viewport state"
-              className="pointer-events-none absolute inset-0 flex items-center justify-center px-4 text-sm text-[#b8b8b8]"
+              className="pointer-events-none absolute inset-0 flex items-center justify-center px-4 text-sm text-muted-foreground"
             >
               {statusText}
             </p>

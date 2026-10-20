@@ -5,10 +5,12 @@ import type { EditorTab } from '@/features/editor/editorTypes';
 import { disposeAllPoc4Models, disposeModel, toModelUri } from '@/lib/monacoModels';
 import { mockFiles, type MockFile } from '@/spike/mockFiles';
 import { EditorTabs } from './EditorTabs';
+import { useThemePreferences } from '@/features/preferences/themePreferences';
 
 type OpenFile = MockFile & { isDirty: boolean };
 
 export function MonacoPanel() {
+  const theme = useThemePreferences((state) => state.theme);
   const originals = useMemo(() => new Map(mockFiles.map((file) => [file.path, file.content])), []);
   const [files, setFiles] = useState<OpenFile[]>(() =>
     mockFiles.map((file) => ({ ...file, isDirty: false }))
@@ -79,7 +81,7 @@ export function MonacoPanel() {
             path={toModelUri(activeFile.path).toString()}
             value={activeFile.content}
             language={activeFile.language}
-            theme="vs-dark"
+            theme={`manao-${theme}`}
             onChange={(value) => updateContent(activeFile.path, value ?? '')}
             options={{ automaticLayout: true, scrollBeyondLastLine: false }}
           />

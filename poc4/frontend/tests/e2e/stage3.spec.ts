@@ -4,7 +4,7 @@ const ALICE = { username: 'alice', password: 'demo-pass' };
 const BOB = { username: 'bob', password: 'demo-pass' };
 const ALICE_SEED_PROJECT_ID = 'prj-alice-notebook';
 const BOB_SEED_PROJECT_ID = 'prj-bob-lab';
-const SESSION_EXPIRED = 'Your session has expired. Please sign in again.';
+const SESSION_EXPIRED = '登录会话已过期，请重新登录';
 
 const viewports = [
   { name: '1280x720', width: 1280, height: 720 },
@@ -1084,7 +1084,7 @@ test('isolates Alice and Bob projects and stale 401 cleanup', async ({ page }) =
   expect((await unauthorized).status()).toBe(401);
   await expect(page.getByLabel('Username')).toBeVisible();
   await expect(page).toHaveURL(/\/login$/);
-  await expect(page.getByRole('main').getByRole('alert')).toHaveText(SESSION_EXPIRED);
+  await expect(page.getByRole('main').getByRole('alert')).toContainText(SESSION_EXPIRED);
   await expect(editorTab(page, /pom\.xml/)).toHaveCount(0);
   await expect(page.getByRole('dialog', { name: 'Unsaved changes' })).toHaveCount(0);
 });
