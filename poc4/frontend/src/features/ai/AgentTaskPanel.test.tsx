@@ -17,6 +17,15 @@ import { AgentTaskPanel, type AgentTaskPanelProps } from './AgentTaskPanel';
 import { parseAgentTaskSnapshot } from '@/contracts/agentTask';
 
 const PROJECT_ID = ALICE_SEED_PROJECT_ID;
+it('places conversation presentation before the bottom submission form', () => {
+  renderPanel({ conversationHeader: <h2>当前会话</h2>, conversationHistory: <p>历史正文</p> });
+  const header = screen.getByRole('heading', { name: '当前会话' });
+  const history = screen.getByText('历史正文');
+  const form = screen.getByLabelText('Task goal').closest('form')!;
+  expect(header.compareDocumentPosition(history) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(history.compareDocumentPosition(form) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(form.parentElement).toBe(screen.getByRole('region', { name: 'AI task' }));
+});
 const USER_ID = 'user-alice';
 const TASK_ID = '0b8fd38f-0f9e-4c28-9c48-3f5f4a2b1c11';
 const CURRENT_URL = `/api/v1/projects/${PROJECT_ID}/agent-tasks/current`;

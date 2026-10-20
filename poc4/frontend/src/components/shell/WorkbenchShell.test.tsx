@@ -57,6 +57,42 @@ import { agentTaskKeys } from '../../features/ai/agentTaskQueries';
 import { isAgentPanelEnabled, isExperimentalTerminalEnabled, WorkbenchShell } from './WorkbenchShell';
 
 const ALICE = { username: 'alice', password: 'demo-pass' };
+it('moves AI history to the right and retains the draft through panel and history visibility changes', async () => {
+  const media = vi.spyOn(window, 'matchMedia').mockImplementation(query => ({ matches: query === '(min-width: 1024px)', media: query, onchange: null, addListener() {}, removeListener() {}, addEventListener() {}, removeEventListener() {}, dispatchEvent: () => false }));
+  try {
+  await authenticateAsAlice(); renderShell(); await loadedRoot();
+  const user = userEvent.setup();
+  await user.click(screen.getByRole('tab', { name: 'AI' }));
+  const history = await screen.findByRole('complementary', { name: '对话历史' });
+  expect(within(history).getByRole('button', { name: '新建会话' })).toBeInTheDocument();
+  await user.type(screen.getByLabelText('Task goal'), '保留草稿');
+  await user.click(screen.getByRole('button', { name: '切换对话历史' }));
+  expect(history).toHaveAttribute('hidden'); expect(history).toHaveAttribute('inert');
+  await user.click(screen.getByRole('tab', { name: 'File' }));
+  expect(screen.getByRole('button', { name: '切换项目洞察' })).toBeInTheDocument();
+  await user.click(screen.getByRole('tab', { name: 'AI' }));
+  expect(screen.getByLabelText('Task goal')).toHaveValue('保留草稿');
+  await user.click(screen.getByRole('button', { name: '切换对话历史' }));
+  expect(screen.getByRole('complementary', { name: '对话历史' })).toBe(history);
+  } finally { media.mockRestore(); }
+});
+it('traps narrow history focus and restores keyboard access to the composer on Escape', async () => {
+  await authenticateAsAlice(); renderShell(); await loadedRoot();
+  const user = userEvent.setup();
+  await user.click(screen.getByRole('tab', { name: 'AI' }));
+  const toggle = screen.getByRole('button', { name: '切换对话历史' });
+  await user.click(toggle);
+  const drawer = screen.getByRole('dialog', { name: '对话历史' });
+  const buttons = within(drawer).getAllByRole('button');
+  await waitFor(() => expect(buttons[0]).toHaveFocus());
+  await user.tab({ shift: true }); expect(buttons.at(-1)).toHaveFocus();
+  await user.tab(); expect(buttons[0]).toHaveFocus();
+  expect(drawer.closest('[inert]')).toBeNull();
+  await user.keyboard('{Escape}'); expect(toggle).toHaveFocus();
+  expect(drawer).toHaveAttribute('hidden'); expect(drawer).toHaveAttribute('inert');
+  screen.getByLabelText('Task goal').focus();
+  await user.keyboard('继续输入'); expect(screen.getByLabelText('Task goal')).toHaveValue('继续输入');
+});
 const POM = parseProjectRelativePath('pom.xml');
 const README = parseProjectRelativePath('README.md');
 const APP_TEST = parseProjectRelativePath('src/test/java/demo/AppTest.java');
@@ -94,7 +130,9 @@ it('keeps the shell project write lock and original pending task while switching
   sessionStorage.setItem(`manao.agent-task.id.usr-alice.${ALICE_SEED_PROJECT_ID}`, JSON.stringify({ taskId, conversationId: a }));
   renderShell(); await loadedRoot();
   await userEvent.click(screen.getByRole('tab', { name: 'AI' }));
+  await userEvent.click(screen.getByRole('button', { name: '切换对话历史' }));
   await userEvent.click(await screen.findByRole('button', { name: '会话 B' }));
+  await userEvent.keyboard('{Escape}');
   expect(screen.getByRole('button', { name: 'New file' })).toBeDisabled();
   expect(screen.getByRole('button', { name: 'Start task' })).toBeDisabled();
   expect(JSON.parse(sessionStorage.getItem(`manao.agent-task.id.usr-alice.${ALICE_SEED_PROJECT_ID}`)!)).toEqual({ taskId, conversationId: a });

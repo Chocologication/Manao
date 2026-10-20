@@ -131,6 +131,9 @@ export function WorkbenchShell({ project }: { project: ProjectSummary }) {
   const [insightsVisible, setInsightsVisible] = useState(() => layout.insightsVisible && !layout.focusMode && window.matchMedia('(min-width: 1024px)').matches);
   const filePanelRef = useRef<HTMLElement>(null);
   const insightsPanelRef = useRef<HTMLElement>(null);
+  const historyPanelRef = useRef<HTMLElement>(null);
+  const [historyTarget, setHistoryTarget] = useState<HTMLDivElement | null>(null);
+  const aiMode = activePanel === 'agent';
   const fileToggleRef = useRef<HTMLButtonElement>(null);
   const insightsToggleRef = useRef<HTMLButtonElement>(null);
   const drawerReturnFocusRef = useRef<HTMLElement | null>(null);
@@ -166,7 +169,7 @@ export function WorkbenchShell({ project }: { project: ProjectSummary }) {
       drawerReturnFocusRef.current = null;
       return;
     }
-    const drawer = filesVisible ? filePanelRef.current : insightsPanelRef.current;
+    const drawer = filesVisible ? filePanelRef.current : aiMode ? historyPanelRef.current : insightsPanelRef.current;
     const returnFocus = filesVisible ? fileToggleRef.current : insightsToggleRef.current;
     drawerReturnFocusRef.current = returnFocus;
     const focusableSelector = 'button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
@@ -201,7 +204,7 @@ export function WorkbenchShell({ project }: { project: ProjectSummary }) {
       window.cancelAnimationFrame(animation);
       document.removeEventListener('keydown', onKeyDown);
     };
-  }, [closeDrawers, drawerOpen, filesVisible]);
+  }, [closeDrawers, drawerOpen, filesVisible, aiMode]);
   const queryClient = useQueryClient();
   const coordinator = useRunAuthorityCoordinator(project.id);
   const { snapshot: authSnapshot } = useAuth();
@@ -611,8 +614,8 @@ export function WorkbenchShell({ project }: { project: ProjectSummary }) {
         <div className="lab-workbench-title"><h1>{project.name}</h1><span>{RUNTIME_TEMPLATE_META[project.runtime?.templateId ?? 'java-console'].label}</span></div>
         <span className="lab-save-indicator" data-dirty={dirtyCount > 0}><span />{dirtyCount > 0 ? `${dirtyCount} 个文件未保存` : '无未保存修改'}</span>
         <Button ref={fileToggleRef} variant="ghost" size="icon" aria-label="切换文件面板" title="文件面板" aria-expanded={filesVisible} onClick={toggleFiles}><PanelLeft /></Button>
-        <Button ref={insightsToggleRef} variant="ghost" size="icon" aria-label="切换项目洞察" title="项目洞察" aria-expanded={insightsVisible} onClick={toggleInsights}><PanelRight /></Button>
-        <WorkbenchCommands python={pythonWorkbench} onSelectPanel={setActivePanel} onToggleFiles={toggleFiles} onToggleInsights={toggleInsights} />
+        <Button ref={insightsToggleRef} variant="ghost" size="icon" aria-label={aiMode ? '切换对话历史' : '切换项目洞察'} title={aiMode ? '对话历史' : '项目洞察'} aria-expanded={insightsVisible} onClick={toggleInsights}><PanelRight /></Button>
+        <WorkbenchCommands python={pythonWorkbench} insightsLabel={aiMode ? '对话历史' : undefined} onSelectPanel={setActivePanel} onToggleFiles={toggleFiles} onToggleInsights={toggleInsights} />
         <ActivityCenter key={`${userId}:${project.id}`} projectId={project.id} userId={userId} onOpenRuns={() => setActivePanel('run')} />
         <AccountPanel compact onLogout={handleLogoutClick} />
         <Button
@@ -944,6 +947,8 @@ export function WorkbenchShell({ project }: { project: ProjectSummary }) {
                 )}
               >
                 <AgentConversationPanel
+                  historyTarget={historyTarget}
+                  uiActive={aiMode}
                   projectId={project.id}
                   userId={userId}
                   task={agentTask}
@@ -986,7 +991,21 @@ export function WorkbenchShell({ project }: { project: ProjectSummary }) {
             ) : null}
           </div>
         </div>
-        {insightsVisible && (
+        {agentPanelEnabled ? <aside
+          ref={historyPanelRef}
+          aria-label="对话历史"
+          hidden={!aiMode || !insightsVisible}
+          inert={!aiMode || !insightsVisible ? true : undefined}
+          role={drawerOpen && insightsVisible && aiMode ? 'dialog' : undefined}
+          aria-modal={drawerOpen && insightsVisible && aiMode ? 'true' : undefined}
+          tabIndex={drawerOpen && insightsVisible && aiMode ? -1 : undefined}
+          className="lab-insights manao-ai-history-sidebar"
+          data-open={aiMode && insightsVisible}
+        >
+          <div className="lab-file-sidebar-title"><span>对话历史</span><button className="lab-mobile-close" aria-label="关闭对话历史" onClick={() => setInsightsVisible(false)}><X size={16} /></button></div>
+          <div ref={setHistoryTarget} className="min-h-0 flex-1" />
+        </aside> : null}
+        {insightsVisible && !aiMode && (
           <RunInsights
             ref={insightsPanelRef}
             compactViewport={compactViewport}

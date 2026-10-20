@@ -1,4 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
+import { ConversationSidebar } from './ConversationSidebar';
+import './AgentChat.css';
 import { useQueryClient } from '@tanstack/react-query';
 import { ApiRequestError } from '@/api/ApiRequestError';
 import { compactAgentConversation, createAgentConversation, getAgentConversation } from '@/api/agentConversationApi';
@@ -14,10 +17,11 @@ function storedCompact(key: string): CompactIntent | null {
   try { const p = JSON.parse(sessionStorage.getItem(key) ?? 'null') as CompactIntent | null; return p && typeof p.conversationId === 'string' && typeof p.requestId === 'string' && Number.isSafeInteger(p.expectedHeadSeq) && p.expectedHeadSeq >= 0 ? p : null; } catch { return null; }
 }
 // A project switch unmounts all local UI state; query data and pending intents remain owner scoped.
-export function AgentConversationPanel(props: AgentTaskPanelProps) {
+export type AgentConversationPanelProps = AgentTaskPanelProps & { historyTarget?: HTMLElement | null };
+export function AgentConversationPanel(props: AgentConversationPanelProps) {
   return <ConversationPanel key={JSON.stringify([props.userId, props.projectId])} {...props} />;
 }
-function ConversationPanel(props: AgentTaskPanelProps) {
+function ConversationPanel(props: AgentConversationPanelProps) {
   const { userId, projectId } = props; const client = useQueryClient();
   const selectedKey = `manao.agent-conversation.${userId}.${projectId}`;
   const compactKey = `manao.agent-compact.${userId}.${projectId}`;
@@ -95,23 +99,24 @@ function ConversationPanel(props: AgentTaskPanelProps) {
     props.onTaskAccepted(snapshot);
     void client.invalidateQueries({ queryKey: conversationKeys.all(userId, projectId) });
   };
-  return <section aria-label="AI 会话" className="flex h-full min-h-0 flex-col overflow-y-auto">
-    <nav aria-label="会话列表" className="flex shrink-0 flex-wrap gap-2 border-b p-3">
-      <Button size="sm" disabled={creating} onClick={() => void create()}>新建会话</Button>
-      {conversations.map(c => <Button key={c.conversationId} size="sm" variant="outline" aria-pressed={selected === c.conversationId} onClick={() => choose(c.conversationId)}>{c.title}</Button>)}
-      {list.hasNextPage ? <Button size="sm" variant="outline" disabled={list.isFetching} onClick={() => void list.fetchNextPage()}>更多会话</Button> : null}
-    </nav>
-    {(error || list.isError || detail.isError) ? <div role="alert" className="p-3">{error ?? '无法加载会话'}</div> : null}
-    {props.task?.writesLocked && props.task.conversationId && props.task.conversationId !== selected ? <Button variant="outline" onClick={() => choose(props.task!.conversationId!)}>项目有任务运行中</Button> : null}
-    {metadata ? <div className="flex flex-wrap items-center gap-2 p-3 text-xs">
+  const sidebar = <ConversationSidebar items={conversations} selectedId={selected} creating={creating}
+    hasMore={list.hasNextPage} loadingMore={list.isFetching} onSelect={choose}
+    onCreate={() => void create()} onLoadMore={() => void list.fetchNextPage()} />;
+  const historyNavigation = props.historyTarget === undefined ? sidebar
+    : props.historyTarget === null ? null : createPortal(sidebar, props.historyTarget);
+  const conversationHeader = metadata ? <div className="flex flex-wrap items-center gap-2 p-3 text-xs">
       <Button size="sm" variant="outline" disabled={!canCompact} onClick={() => void compact()}>压缩上下文</Button>
       {metadata.compactState === 'RUNNING' ? <span>压缩中</span> : null}
       {metadata.compactState === 'COMPLETED' ? <span>压缩完成</span> : null}
       {metadata.compactState === 'FAILED' ? <span>压缩失败</span> : null}
       {compactIntent ? <Button size="sm" variant="outline" disabled={compactSending} onClick={() => void reconcileCompact(compactIntent)}>核对压缩状态</Button> : null}
       {compactIntent ? <Button size="sm" variant="outline" disabled={compactSending} onClick={() => void sendCompact(compactIntent, true)}>重试原压缩请求</Button> : null}
-    </div> : null}
-    {selected && metadata ? <ConversationHistory userId={userId} projectId={projectId} conversationId={selected} headSeq={metadata.headSeq} taskId={legacy ? null : selectedSnapshot?.taskId ?? selectedTaskId} terminal={selectedSnapshot != null && !['QUEUED', 'RUNNING'].includes(selectedSnapshot.state)} onViewRun={props.onViewRun} /> : null}
-    <div className="min-h-64 shrink-0">{(!selected || metadata) ? <AgentTaskPanel key={selected ?? 'legacy'} nextReasoningEffort={metadata?.nextReasoningEffort} {...props} contextUsage={detail.isError ? null : metadata?.usage} conversationId={selected ?? undefined} fullHistory={!legacy && selected !== null} displayTask={legacy ? legacyTask : selectedSnapshot} submissionBlocked={selected === null || !metadata || detail.isError || list.isError || compactBusy} onTaskAccepted={onAccepted} onSubmissionPendingChange={pending => { if (scope.active) { setTaskSubmitting(pending); props.onSubmissionPendingChange?.(pending); } }} /> : null}</div>
+    </div> : null;
+  const conversationHistory = selected && metadata ? <ConversationHistory userId={userId} projectId={projectId} conversationId={selected} headSeq={metadata.headSeq} taskId={legacy ? null : selectedSnapshot?.taskId ?? selectedTaskId} terminal={selectedSnapshot != null && !['QUEUED', 'RUNNING'].includes(selectedSnapshot.state)} onViewRun={props.onViewRun} /> : null;
+  return <section aria-label="AI 会话" className="manao-ai-conversation">
+    {historyNavigation}
+    {(error || list.isError || detail.isError) ? <div role="alert" className="p-3">{error ?? '无法加载会话'}</div> : null}
+    {props.task?.writesLocked && props.task.conversationId && props.task.conversationId !== selected ? <Button variant="outline" onClick={() => choose(props.task!.conversationId!)}>项目有任务运行中</Button> : null}
+    {(!selected || metadata) ? <AgentTaskPanel conversationHeader={conversationHeader} conversationHistory={conversationHistory} key={selected ?? 'legacy'} nextReasoningEffort={metadata?.nextReasoningEffort} {...props} contextUsage={detail.isError ? null : metadata?.usage} conversationId={selected ?? undefined} fullHistory={!legacy && selected !== null} displayTask={legacy ? legacyTask : selectedSnapshot} submissionBlocked={selected === null || !metadata || detail.isError || list.isError || compactBusy} onTaskAccepted={onAccepted} onSubmissionPendingChange={pending => { if (scope.active) { setTaskSubmitting(pending); props.onSubmissionPendingChange?.(pending); } }} /> : null}
   </section>;
 }

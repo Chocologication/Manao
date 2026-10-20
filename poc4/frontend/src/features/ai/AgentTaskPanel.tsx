@@ -1,5 +1,5 @@
 import { useQueryClient } from '@tanstack/react-query';
-import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type FormEvent } from 'react';
 import {
   getAgentTask,
   getAgentToolCallResult,
@@ -33,8 +33,12 @@ import { submitConversationTask } from '@/api/agentConversationApi';
 import { AssistantMarkdown } from './AssistantMarkdown';
 import type { ContextUsage } from '@/contracts/agentConversation';
 import { ContextUsageIndicator } from './ContextUsageIndicator';
+import './AgentChat.css';
 
 export type AgentTaskPanelProps = {
+  conversationHeader?: ReactNode;
+  conversationHistory?: ReactNode;
+  uiActive?: boolean;
   projectId: string;
   userId: string;
   /** The occupying task from the shell's 2s poll; null when the project is free. */
@@ -98,6 +102,8 @@ export function AgentTaskPanel({
   onSubmissionPendingChange,
   nextReasoningEffort = 'high',
   contextUsage,
+  conversationHeader,
+  conversationHistory,
 }: AgentTaskPanelProps) {
   const queryClient = useQueryClient();
   const dirtyCount = useWorkspaceSession((state) => state.dirtyPaths.size);
@@ -262,57 +268,15 @@ export function AgentTaskPanel({
     snapshot?.taskId === pendingIntent.taskId && (pendingIntent.conversationId === null || snapshot.conversationId === pendingIntent.conversationId));
 
   return (
-    <section aria-label="AI task" className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-background">
-      <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-3 overflow-y-auto p-4">
+    <section aria-label="AI task" className="manao-ai-chat bg-background">
+      {conversationHeader}
+      <div className="manao-ai-scroll flex flex-col gap-3">
+        {conversationHistory}
         {pollFailed ? (
           <InlineAlert>Could not load the agent task status.</InlineAlert>
         ) : null}
         {startError !== null ? <InlineAlert>{startError}</InlineAlert> : null}
-        <form onSubmit={handleStart} className="flex flex-col gap-2">
-          <div className="flex flex-wrap items-center gap-2">
-            <label htmlFor="agent-reasoning-effort">推理强度</label>
-            <select id="agent-reasoning-effort" value={reasoningEffort} disabled={occupying || starting || submissionBlocked || admissionUnknown}
-              onChange={event => setReasoningEffort(event.target.value as ReasoningEffort)}>
-              <option value="off">关闭</option><option value="low">低</option><option value="high">高</option><option value="max">最高</option>
-            </select>
-            {conversationId ? <ContextUsageIndicator usage={contextUsage ?? null} /> : null}
-          </div>
-          <label htmlFor="agent-task-goal" className="text-sm font-medium">
-            Task goal
-          </label>
-          <textarea
-            id="agent-task-goal"
-            value={goal}
-            onChange={(event) => setGoal(event.target.value)}
-            disabled={occupying || starting}
-            rows={4}
-            className="min-h-16 w-full resize-y rounded-md border bg-background p-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-64"
-          />
-          <div className="flex items-center gap-2">
-            <Button
-              type="submit"
-              size="sm"
-              disabled={!canStart}
-              title={canStart ? 'Start task' : (preconditions.reason ?? 'Start task')}
-            >
-              Start task
-            </Button>
-            {occupying && displayTask?.taskId === task?.taskId ? (
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                disabled={closePending}
-                onClick={onClose}
-              >
-                End task
-              </Button>
-            ) : null}
-            {!canStart && preconditions.reason !== null ? (
-              <span className="text-xs text-muted-foreground">{preconditions.reason}</span>
-            ) : null}
-          </div>
-        </form>
+
         {displayTask !== null ? (
           <div className="flex flex-col gap-2 text-sm">
             <div className="flex items-center gap-2">
@@ -380,6 +344,51 @@ export function AgentTaskPanel({
           </div>
         ) : null}
       </div>
+        <form onSubmit={handleStart} className="manao-ai-composer flex flex-col gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <label htmlFor="agent-reasoning-effort">推理强度</label>
+            <select id="agent-reasoning-effort" value={reasoningEffort} disabled={occupying || starting || submissionBlocked || admissionUnknown}
+              onChange={event => setReasoningEffort(event.target.value as ReasoningEffort)}>
+              <option value="off">关闭</option><option value="low">低</option><option value="high">高</option><option value="max">最高</option>
+            </select>
+            {conversationId ? <ContextUsageIndicator usage={contextUsage ?? null} /> : null}
+          </div>
+          <label htmlFor="agent-task-goal" className="text-sm font-medium">
+            Task goal
+          </label>
+          <textarea
+            id="agent-task-goal"
+            value={goal}
+            onChange={(event) => setGoal(event.target.value)}
+            disabled={occupying || starting}
+            rows={4}
+            className="min-h-16 w-full resize-y rounded-md border bg-background p-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-64"
+          />
+          <div className="flex items-center gap-2">
+            <Button
+              type="submit"
+              size="sm"
+              disabled={!canStart}
+              title={canStart ? 'Start task' : (preconditions.reason ?? 'Start task')}
+            >
+              Start task
+            </Button>
+            {occupying && displayTask?.taskId === task?.taskId ? (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={closePending}
+                onClick={onClose}
+              >
+                End task
+              </Button>
+            ) : null}
+            {!canStart && preconditions.reason !== null ? (
+              <span className="text-xs text-muted-foreground">{preconditions.reason}</span>
+            ) : null}
+          </div>
+        </form>
     </section>
   );
 }

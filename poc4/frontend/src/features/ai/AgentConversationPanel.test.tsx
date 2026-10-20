@@ -1,4 +1,4 @@
-import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
@@ -55,7 +55,7 @@ it('initializes effort per conversation and polling keeps a dirty selection', as
 });
 function conversation(id = A, extra = {}) { return { conversationId: id, title: id === A ? '会话 A' : '会话 B', headSeq: 1, lastTaskId: null, activeTaskId: null, usage: null, compactRequestId: null, compactState: null, compactFailureCode: null, ...extra }; }
 function task(extra = {}): AgentTaskSnapshot { return { taskId: T, state: 'RUNNING', workspaceRevision: '7', writesLocked: true, progress: [], changedPaths: [], summary: null, failureCode: null, ...extra }; }
-function panel(extra: Partial<AgentTaskPanelProps> = {}) {
+function panel(extra: Partial<AgentTaskPanelProps> & { historyTarget?: HTMLElement | null } = {}) {
   const accepted = vi.fn(), close = vi.fn();
   const props = { projectId: P, userId: U, task: null, settledTask: null, pollFailed: false, writePending: false, hasActiveRun: false, runAuthorityKnown: true, reloading: false, closePending: false, onTaskAccepted: accepted, onClose: close, ...extra };
   return { ...render(<AppProviders><AgentConversationPanel {...props} /></AppProviders>), props, accepted, close };
@@ -70,6 +70,23 @@ beforeEach(() => {
   );
 });
 afterEach(async () => { cleanup(); await queryClient.cancelQueries(); resetAppRuntime(); });
+
+it('portals only navigation and keeps the original selection and task controller', async () => {
+  const host = document.createElement('aside'); document.body.append(host);
+  const h = panel({ historyTarget: host, task: task({ conversationId: A }) });
+  await screen.findByText('A 原文');
+  expect(within(host).getByRole('navigation', { name: '会话列表' })).toBeInTheDocument();
+  expect(within(h.container).queryByRole('navigation', { name: '会话列表' })).toBeNull();
+  await userEvent.click(within(host).getByRole('button', { name: '会话 B' }));
+  await screen.findByText('B 原文');
+  expect(sessionStorage.getItem(`manao.agent-conversation.${U}.${P}`)).toBe(B);
+  expect(h.close).not.toHaveBeenCalled();
+  host.remove();
+});
+it('does not duplicate navigation while the shell history host is pending', async () => {
+  panel({ historyTarget: null }); await screen.findByText('A 原文');
+  expect(screen.queryByRole('navigation', { name: '会话列表' })).toBeNull();
+});
 
 it('creates an empty conversation without submitting a model task', async () => {
   let taskPosts = 0;
