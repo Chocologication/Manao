@@ -57,7 +57,14 @@ test('real read-only high → off → low → max with incremental DOM and resto
   });
   for (const effort of ['high', 'off', 'low', 'max']) {
     liveResponses = 0; reconnectTaskCheck = null;
-    await page.getByLabel('推理强度', { exact: true }).selectOption(effort); await observe(page, effort === 'high');
+    await page.getByRole('button', { name: /推理强度/ }).click();
+    const slider = page.getByRole('slider', { name: '推理强度' });
+    const index = ['off', 'low', 'high', 'max'].indexOf(effort);
+    await slider.focus(); await slider.press('Home');
+    for (let step = 0; step < index; step++) await slider.press('ArrowRight');
+    await expect(slider).toHaveValue(String(index));
+    await expect(slider).toHaveAttribute('aria-valuetext', ['关闭', '低', '高', '最高'][index]);
+    await slider.press('Escape'); await observe(page, effort === 'high');
     const prompt = marker + ' ' + effort + ': Short read-only answer. ' + (effort === 'high' ? 'Call read_file exactly once with path README.md (the operator prepared this existing safe small file). No other tools.' : 'Use no tools.') + ' Never modify files, install dependencies, run shell/build/application, create or delete anything. Return under 250 words of Markdown with a heading, two bullets, a two-row table and a fenced code example; expose no secrets.';
     await page.locator('#agent-task-goal').fill(prompt);
     const accepting = page.waitForResponse(r => new URL(r.url()).pathname === root + '/conversations/' + conversation.conversationId + '/tasks' && r.request().method() === 'POST');
@@ -80,7 +87,7 @@ test('real read-only high → off → low → max with incremental DOM and resto
     const answerOrdinal = nativeGroups.indexOf(answerSeq) + 1;
     await expect.poll(() => page.evaluate(({ taskId, ordinal }) => (window as unknown as { outputAudit: Audit }).outputAudit.messages.some(message => message.taskId === taskId && message.messageOrdinal === ordinal && message.endedAt !== null), { taskId: task.taskId, ordinal: answerOrdinal }), { timeout: 15_000 }).toBe(true);
     const timing = await page.evaluate(() => (window as unknown as { outputAudit: Audit }).outputAudit);
-    const reconnectTask = reconnectTaskCheck === null ? null : await reconnectTaskCheck;
+    const reconnectTask = await (reconnectTaskCheck as Promise<{ taskId: string; state: string; observedAtUtc: string }> | null);
     await testInfo.attach('sanitized-' + effort + '-timing', { body: JSON.stringify({ effort, taskId: task.taskId, answerOrdinal, answerSeq, state: task.state, failureCode: task.failureCode, acceptedAtUtc, terminalObservedAtUtc, reconnectTask, ...timing }), contentType: 'application/json' });
     if (effort === 'high') {
       expect(timing.reconnect?.taskId, 'UNVERIFIED: no generating API/DOM thinking fetch abort').toBe(task.taskId);
@@ -106,7 +113,11 @@ test('real read-only high → off → low → max with incremental DOM and resto
     await page.getByRole('navigation', { name: '会话列表' }).getByRole('button', { name: current.title, exact: true }).click();
     expect(assembleOutputHistory(await history(page, conversation.conversationId), task.taskId)).toEqual(blocks);
     await expect.poll(() => answer.locator('.ai-markdown').allTextContents()).toEqual(markdownBeforeReload);
-    await expect(page.getByLabel('推理强度', { exact: true })).toHaveValue(effort); expect(posts, 'reconnect/reload must not resubmit').toBe(tasks.length);
+    await page.getByRole('button', { name: /推理强度/ }).click();
+    const restoredSlider = page.getByRole('slider', { name: '推理强度' });
+    await expect(restoredSlider).toHaveValue(String(index));
+    await expect(restoredSlider).toHaveAttribute('aria-valuetext', ['关闭', '低', '高', '最高'][index]);
+    await restoredSlider.press('Escape'); expect(posts, 'reconnect/reload must not resubmit').toBe(tasks.length);
     expect(task.state, task.failureCode === 'AI_LENGTH_LIMIT' ? 'FAILED/AI_LENGTH_LIMIT: max must remain a failed acceptance result' : 'task must complete').toBe('COMPLETED');
   }
   expect(tasks.map(task => task.reasoningEffort)).toEqual(['high', 'off', 'low', 'max']);

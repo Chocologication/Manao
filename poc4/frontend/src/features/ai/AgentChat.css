@@ -3,6 +3,29 @@
 .manao-ai-scroll > *, .manao-ai-composer { width: 100%; max-width: 72rem; margin-inline: auto; }
 .manao-ai-composer { flex-shrink: 0; width: calc(100% - 40px); margin-block: 8px; padding: 8px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--lab-raised); }
 .manao-ai-composer textarea { width: 100%; max-height: min(240px, 30dvh); background: transparent; }
+.manao-ai-composer-toolbar { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; }
+.manao-ai-composer-settings, .manao-ai-composer-actions { display: flex; align-items: center; gap: 8px; }
+.manao-ai-composer-actions { margin-left: auto; }
+.manao-ai-effort-trigger { display: inline-flex; align-items: center; gap: 8px; padding: 6px 10px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--background); color: var(--foreground); font-size: 12px; }
+.manao-ai-effort-trigger:disabled { opacity: .6; cursor: not-allowed; }
+.manao-ai-effort-positioner { z-index: 60; }
+.manao-ai-effort-popup { width: min(360px, calc(100vw - 24px)); padding: 16px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--popover); color: var(--popover-foreground); box-shadow: 0 8px 24px #0003; }
+.manao-ai-effort-title { font-size: 14px; font-weight: 600; margin: 0 0 16px; }
+.manao-ai-effort-control { position: relative; height: 32px; }
+.manao-ai-effort-decoration { position: absolute; inset: 0 32px; pointer-events: none; }
+.manao-ai-effort-track { position: absolute; inset: 9px 0; border-radius: 999px; background: var(--muted); }
+.manao-ai-effort-fill { height: 100%; width: calc(var(--manao-ai-effort-position) * 100%); border-radius: inherit; background: linear-gradient(to right, var(--info), var(--success)); }
+.manao-ai-effort-capsule { position: absolute; left: calc(var(--manao-ai-effort-position) * 100%); top: 4px; transform: translateX(-50%); min-width: 64px; height: 24px; display: flex; align-items: center; justify-content: center; border: 1px solid var(--border); border-radius: 999px; background: var(--popover); color: var(--popover-foreground); font-size: 12px; box-shadow: 0 1px 4px #0003; }
+.manao-ai-effort-control input { appearance: none; -webkit-appearance: none; position: absolute; inset: 0; width: 100%; height: 32px; margin: 0; background: transparent; cursor: pointer; border-radius: 999px; }
+.manao-ai-effort-control input::-webkit-slider-runnable-track { height: 32px; background: transparent; }
+.manao-ai-effort-control input::-webkit-slider-thumb { appearance: none; -webkit-appearance: none; width: 64px; height: 32px; background: transparent; border: 0; }
+.manao-ai-effort-control input::-moz-range-track { height: 32px; background: transparent; }
+.manao-ai-effort-control input::-moz-range-thumb { width: 64px; height: 32px; background: transparent; border: 0; }
+.manao-ai-effort-trigger:focus-visible, .manao-ai-effort-control input:focus-visible, .manao-ai-effort-ticks button:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+.manao-ai-effort-ticks { display: flex; justify-content: space-between; margin-top: 4px; }
+.manao-ai-effort-ticks button { width: 64px; padding: 4px 0; font-size: 12px; color: var(--muted-foreground); }
+.manao-ai-effort-ticks button[aria-pressed="true"] { color: var(--foreground); font-weight: 600; }
+.manao-ai-effort-description { margin: 12px 0 0; font-size: 12px; color: var(--muted-foreground); }
 .manao-ai-sidebar { display: flex; flex-direction: column; gap: 12px; min-height: 0; height: 100%; padding: 12px; }
 .manao-ai-sidebar-list { display: flex; flex-direction: column; gap: 8px; min-height: 0; overflow-y: auto; }
 .manao-ai-sidebar-list > button { justify-content: space-between; min-width: 0; }

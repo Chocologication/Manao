@@ -1,4 +1,4 @@
-import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
@@ -46,12 +46,12 @@ it('shows the selected conversation usage and clears a cached measurement when i
 it('initializes effort per conversation and polling keeps a dirty selection', async () => {
   server.use(http.get(`${URL}/:id`, ({ params }) => HttpResponse.json(conversation(String(params.id), { nextReasoningEffort: params.id === A ? 'low' : 'max' }))));
   panel(); await screen.findByText('A 原文');
-  expect(screen.getByLabelText('推理强度')).toHaveValue('low');
-  await userEvent.selectOptions(screen.getByLabelText('推理强度'), 'off');
+  expect(screen.getByRole('button', { name: /推理强度/ })).toHaveTextContent('推理强度 · 低');
+  await userEvent.click(screen.getByRole('button', { name: /推理强度/ })); fireEvent.change(screen.getByRole('slider', { name: '推理强度' }), { target: { value: '0' } }); await userEvent.keyboard('{Escape}');
   await act(async () => { await queryClient.invalidateQueries(); });
-  expect(screen.getByLabelText('推理强度')).toHaveValue('off');
+  expect(screen.getByRole('button', { name: /推理强度/ })).toHaveTextContent('推理强度 · 关闭');
   await userEvent.click(screen.getByRole('button', { name: '会话 B' })); await screen.findByText('B 原文');
-  expect(screen.getByLabelText('推理强度')).toHaveValue('max');
+  expect(screen.getByRole('button', { name: /推理强度/ })).toHaveTextContent('推理强度 · 最高');
 });
 function conversation(id = A, extra = {}) { return { conversationId: id, title: id === A ? '会话 A' : '会话 B', headSeq: 1, lastTaskId: null, activeTaskId: null, usage: null, compactRequestId: null, compactState: null, compactFailureCode: null, ...extra }; }
 function task(extra = {}): AgentTaskSnapshot { return { taskId: T, state: 'RUNNING', workspaceRevision: '7', writesLocked: true, progress: [], changedPaths: [], summary: null, failureCode: null, ...extra }; }

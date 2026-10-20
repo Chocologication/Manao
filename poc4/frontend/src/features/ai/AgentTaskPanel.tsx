@@ -33,6 +33,7 @@ import { submitConversationTask } from '@/api/agentConversationApi';
 import { AssistantMarkdown } from './AssistantMarkdown';
 import type { ContextUsage } from '@/contracts/agentConversation';
 import { ContextUsageIndicator } from './ContextUsageIndicator';
+import { ReasoningEffortPicker } from './ReasoningEffortPicker';
 import './AgentChat.css';
 
 export type AgentTaskPanelProps = {
@@ -104,6 +105,7 @@ export function AgentTaskPanel({
   contextUsage,
   conversationHeader,
   conversationHistory,
+  uiActive = true,
 }: AgentTaskPanelProps) {
   const queryClient = useQueryClient();
   const dirtyCount = useWorkspaceSession((state) => state.dirtyPaths.size);
@@ -345,14 +347,6 @@ export function AgentTaskPanel({
         ) : null}
       </div>
         <form onSubmit={handleStart} className="manao-ai-composer flex flex-col gap-2">
-          <div className="flex flex-wrap items-center gap-2">
-            <label htmlFor="agent-reasoning-effort">推理强度</label>
-            <select id="agent-reasoning-effort" value={reasoningEffort} disabled={occupying || starting || submissionBlocked || admissionUnknown}
-              onChange={event => setReasoningEffort(event.target.value as ReasoningEffort)}>
-              <option value="off">关闭</option><option value="low">低</option><option value="high">高</option><option value="max">最高</option>
-            </select>
-            {conversationId ? <ContextUsageIndicator usage={contextUsage ?? null} /> : null}
-          </div>
           <label htmlFor="agent-task-goal" className="text-sm font-medium">
             Task goal
           </label>
@@ -364,7 +358,12 @@ export function AgentTaskPanel({
             rows={4}
             className="min-h-16 w-full resize-y rounded-md border bg-background p-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-64"
           />
-          <div className="flex items-center gap-2">
+          <div className="manao-ai-composer-toolbar">
+            <div className="manao-ai-composer-settings">
+              <ReasoningEffortPicker value={reasoningEffort} disabled={occupying || starting || submissionBlocked || admissionUnknown} active={uiActive} onChange={setReasoningEffort} />
+              {conversationId ? <ContextUsageIndicator usage={contextUsage ?? null} /> : null}
+            </div>
+            <div className="manao-ai-composer-actions">
             <Button
               type="submit"
               size="sm"
@@ -384,10 +383,11 @@ export function AgentTaskPanel({
                 End task
               </Button>
             ) : null}
+            </div>
+          </div>
             {!canStart && preconditions.reason !== null ? (
               <span className="text-xs text-muted-foreground">{preconditions.reason}</span>
             ) : null}
-          </div>
         </form>
     </section>
   );
