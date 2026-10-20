@@ -129,3 +129,29 @@ Private required environment: MANAO_AI_ACCEPTANCE_BASE_URL explicitHTTPorigin, M
 On kubernetes-admin@learn / manao-stage6b, set image deployment/frontend container frontend to the new OCI index digest. Rollout succeeded; Pod=frontend-94bd6cff9-bxg86, UID=c42b3cba-3316-46ba-8229-d597b43cd7a6, imageID matches the index digest, generation/observed21, Ready1/1/restart0. Previous frontend digest8d90abdf44f5e2af50c61810b8640e532e1e8b95bffdd9172f017f929e82b89a remains the rollback target. Backend and worker images/Pod identities unchanged; no migration or data cleanup.
 
 Public root200 now references index-0JstDDrj.js / index-dST7lErr.css. Actual browser login and owner-scoped existing-history replay PASS: measured2,633/1,048,576 tokens displays0.3%, correct75% threshold and20px ring, zero page errors/unexpected API mutations. No task/tool/compaction/model execution. Unknown/failed-refresh usage keeps the existing null semantics and two-second polling. No Git push/merge; later release-documentation commit does not change image source. Stop-button request withdrawn; Stage4 not started.
+
+### 5.3 ThinkRail 界面实际前端发布（2026-10-20）
+
+用户在本地 mock 展示与独立审查后明确授权集群发布。本次 frontend 单镜像已 **BUILT / PUSHED / DEPLOYED**；源码 `b3a1b8ef28f883b577280c2bf06589edeb54f6bd`，tag `chocologic/manao_images_repository:ai-thinkrail-frontend-b3a1b8e`，OCI index `sha256:a45d8c0ad6abf7e138b31a3ac43e79937fc33cddac109e943ea15e2789b5fca2`，linux/amd64 child `sha256:a0daaaa8f6b3ed30d4864c8f50c3dd1ac0e996c656561d2d22b66738c37d1b3b`，USER101。使用标准 Dockerfile、`--build-arg VITE_ENABLE_AI=true` 与 `--label org.opencontainers.image.revision=b3a1b8ef28f883b577280c2bf06589edeb54f6bd`；frozen lockfile 安装、typecheck、Vite build exit0，保留已知 chunk 大小警告。push 与 registry digest inspect 成功。
+
+发布前对实际镜像 HTML/assets/sourcemap 做 `grep -r -l -E` 扫描，无 fixture/session/mock 标记（status1）；mock SW 文件不存在。最初使用的 `grep --include` 在 BusyBox 不支持，该次扫描无效，已丢弃并以上述有效扫描重验。3 个 Node 均 Ready、无 Pending Pod，node1 无 pressure，request CPU57%/memory58%；Metrics API 不可用，这些 request 比率不是实时利用率。
+
+[集群安全记录](../../docs/evidence/ai-ui/cluster-release-safe.json)拥有前后 Deployment/Pod 身份：`kubernetes-admin@learn` / `manao-stage6b`，frontend generation/observed 21→22，Ready1/1，Pod `frontend-844c8f768-2wtcb`，UID `be2f3587-8684-4997-98aa-55983add65d3`，restart0、imageID 与新 OCI index 一致。backend generation39、Pod UID `a5851be2-d432-4cbc-8c4d-3e5fb1d653f9`、restart5、digest `726c095f15d4866fbcea48146c90faf2fb1a6d680f02629f6ea893e49f694af1`；worker generation29、Pod UID `216e83c1-63b8-4ec2-a709-20ed58b15ea9`、restart2、digest `dd06e4148d466127914ebf0bc04e27b5f078d4061f4485f1c0b4221831e269f8`，均与发布前一致。没有 backend/worker 部署或重启、迁移、数据修改或资源清理。
+
+本次前端切换对应的可复用命令（运行时仅替换 frontend）：
+
+```powershell
+kubectl --context kubernetes-admin@learn -n manao-stage6b set image deployment/frontend frontend=chocologic/manao_images_repository@sha256:a45d8c0ad6abf7e138b31a3ac43e79937fc33cddac109e943ea15e2789b5fca2
+kubectl --context kubernetes-admin@learn -n manao-stage6b rollout status deployment/frontend --timeout=180s
+```
+
+回滚目标是发布前 frontend OCI index `sha256:7149afb9cd7feed8c9a5d0ff1ea5048f54103e93a8974a957ea094309b6bf37c`（§5.2），未实际执行回滚：
+
+```powershell
+kubectl --context kubernetes-admin@learn -n manao-stage6b set image deployment/frontend frontend=chocologic/manao_images_repository@sha256:7149afb9cd7feed8c9a5d0ff1ea5048f54103e93a8974a957ea094309b6bf37c
+kubectl --context kubernetes-admin@learn -n manao-stage6b rollout status deployment/frontend --timeout=180s
+```
+
+公网 `http://1.12.245.235:30080/` HTTP200，引用 `index-Be3JTCfu.js` / `index-CiiA_nSb.css`；这两项和 `WorkbenchPage-Um_W5ZqW.js` / `WorkbenchPage-BRSegDPZ.css` 均 HTTP200。[公网安全回放记录](../../docs/evidence/ai-ui/public-release-safe.json)记录真实登录后的既有项目 `4a355478-0ec5-457c-9c73-fad09d98bf79` 前后均 READY、10 个既有会话；选中 `6328bc93-fb38-4da3-a305-dad64b825f69`，head26、history12，上下文 2,633/1,048,576（0.251102%）。四档滑块只改变本地值、未 Submit；侧栏显隐保留选择，切到 File 恢复 Run Insights，回到 AI 恢复会话侧栏，打开一个既有工具结果 GET。page errors/API5xx/意外 mutation 均0，无 mock SW、无页面横向溢出。浏览器拦截除登录外的非 GET；task submission/model call/compaction 均0。未保留凭据、原始用户内容、截图或 trace。
+
+此镜像相对先前线上 `1f41cf5` 也包含 `94c8047` 合入的 Cloud IDE 视觉变化（登录、项目、主题、工作台、日志 UI），以及本轮 AI 样式；没有 API/业务合同变化。本地证据保留在 [Frontend README](../../frontend/README.md#ai-界面本地交付2026-10-20)，本节只证明实际前端发布与现有历史只读回放，不建立新的模型/工程阶段 PASS。Stage2 仍 PAUSED / NOT_GRANTED；Stage3 用户确认使命完成；Stage4 未开始。Git push/merge 未执行。

@@ -1,0 +1,33 @@
+{
+  "verifiedAt": "2026-10-20T15:21:43.960Z",
+  "origin": "http://1.12.245.235:30080",
+  "projectId": "4a355478-0ec5-457c-9c73-fad09d98bf79",
+  "stateBefore": "READY",
+  "stateAfter": "READY",
+  "conversationId": "6328bc93-fb38-4da3-a305-dad64b825f69",
+  "conversationCount": 10,
+  "historyMessages": 12,
+  "headSeq": 26,
+  "contextTokens": 2633,
+  "contextPercent": 0.2511024475097656,
+  "effortDisabled": false,
+  "effortValuesVerified": [
+    "0",
+    "1",
+    "2",
+    "3"
+  ],
+  "existingToolResultsOpened": 1,
+  "pageErrors": 0,
+  "api5xx": 0,
+  "unexpectedMutations": 0,
+  "mockWorker": false,
+  "geometry": {
+    "documentOverflow": false,
+    "composerPresent": true,
+    "mockWorker": false
+  },
+  "modelCalls": 0,
+  "taskSubmissions": 0,
+  "compactions": 0
+}

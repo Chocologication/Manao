@@ -1,0 +1,122 @@
+{
+  "verifiedAt": "2026-10-20T15:22:32.4763282Z",
+  "context": "kubernetes-admin@learn",
+  "namespace": "manao-stage6b",
+  "sourceCommit": "b3a1b8ef28f883b577280c2bf06589edeb54f6bd",
+  "tag": "chocologic/manao_images_repository:ai-thinkrail-frontend-b3a1b8e",
+  "indexDigest": "sha256:a45d8c0ad6abf7e138b31a3ac43e79937fc33cddac109e943ea15e2789b5fca2",
+  "amd64Digest": "sha256:a0daaaa8f6b3ed30d4864c8f50c3dd1ac0e996c656561d2d22b66738c37d1b3b",
+  "runtimeUser": "101",
+  "before": {
+    "backend": {
+      "generation": 39,
+      "pod": "backend-7498788bdd-ktdhn",
+      "uid": "a5851be2-d432-4cbc-8c4d-3e5fb1d653f9",
+      "restarts": 5
+    },
+    "frontend": {
+      "generation": 21,
+      "image": "chocologic/manao_images_repository@sha256:7149afb9cd7feed8c9a5d0ff1ea5048f54103e93a8974a957ea094309b6bf37c",
+      "pod": "frontend-94bd6cff9-bxg86",
+      "uid": "c42b3cba-3316-46ba-8229-d597b43cd7a6",
+      "restarts": 4
+    },
+    "worker": {
+      "generation": 29,
+      "pod": "manao-pi-worker-56fc457bf-g87q9",
+      "uid": "216e83c1-63b8-4ec2-a709-20ed58b15ea9",
+      "restarts": 2
+    }
+  },
+  "deployments": [
+    {
+      "name": "frontend",
+      "generation": 22,
+      "observed": 22,
+      "replicas": 1,
+      "updated": 1,
+      "ready": 1,
+      "strategy": "RollingUpdate",
+      "images": [
+        {
+          "name": "frontend",
+          "image": "chocologic/manao_images_repository@sha256:a45d8c0ad6abf7e138b31a3ac43e79937fc33cddac109e943ea15e2789b5fca2"
+        }
+      ]
+    },
+    {
+      "name": "backend",
+      "generation": 39,
+      "observed": 39,
+      "replicas": 1,
+      "updated": 1,
+      "ready": 1,
+      "strategy": "Recreate",
+      "images": [
+        {
+          "name": "backend",
+          "image": "chocologic/manao_images_repository@sha256:726c095f15d4866fbcea48146c90faf2fb1a6d680f02629f6ea893e49f694af1"
+        }
+      ]
+    },
+    {
+      "name": "manao-pi-worker",
+      "generation": 29,
+      "observed": 29,
+      "replicas": 1,
+      "updated": 1,
+      "ready": 1,
+      "strategy": "Recreate",
+      "images": [
+        {
+          "name": "pi-worker",
+          "image": "chocologic/manao_images_repository@sha256:dd06e4148d466127914ebf0bc04e27b5f078d4061f4485f1c0b4221831e269f8"
+        }
+      ]
+    }
+  ],
+  "pods": [
+    {
+      "name": "backend-7498788bdd-ktdhn",
+      "uid": "a5851be2-d432-4cbc-8c4d-3e5fb1d653f9",
+      "phase": "Running",
+      "deleting": null,
+      "containers": [
+        {
+          "name": "backend",
+          "ready": true,
+          "restartCount": 5,
+          "imageID": "docker.io/chocologic/manao_images_repository@sha256:726c095f15d4866fbcea48146c90faf2fb1a6d680f02629f6ea893e49f694af1"
+        }
+      ]
+    },
+    {
+      "name": "frontend-844c8f768-2wtcb",
+      "uid": "be2f3587-8684-4997-98aa-55983add65d3",
+      "phase": "Running",
+      "deleting": null,
+      "containers": [
+        {
+          "name": "frontend",
+          "ready": true,
+          "restartCount": 0,
+          "imageID": "docker.io/chocologic/manao_images_repository@sha256:a45d8c0ad6abf7e138b31a3ac43e79937fc33cddac109e943ea15e2789b5fca2"
+        }
+      ]
+    },
+    {
+      "name": "manao-pi-worker-56fc457bf-g87q9",
+      "uid": "216e83c1-63b8-4ec2-a709-20ed58b15ea9",
+      "phase": "Running",
+      "deleting": null,
+      "containers": [
+        {
+          "name": "pi-worker",
+          "ready": true,
+          "restartCount": 2,
+          "imageID": "docker.io/chocologic/manao_images_repository@sha256:dd06e4148d466127914ebf0bc04e27b5f078d4061f4485f1c0b4221831e269f8"
+        }
+      ]
+    }
+  ]
+}

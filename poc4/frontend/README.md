@@ -164,3 +164,11 @@ git diff --check
 首轮浏览器 8 passed / 2 failed：向上弹层覆盖 textarea 中心导致外侧点击目标不成立；全局 Run ID `.first()` 命中隐藏 AI 页的代码节点。修正测试为实际外侧 heading 和 Run tabpanel scope 后第二轮 10/10，最终顺序复跑仍 10/10；未改产品代码掩盖失败。必要错误上下文保留在 [diagnostics](../docs/evidence/ai-ui/diagnostics/)。现有大 chunk、NO_COLOR/FORCE_COLOR 和 jsdom HTMLMediaElement play/pause 提示仍保留。
 
 本地 fixture 不证明真实 DeepSeek、流式时序、云端发布或工程阶段验收。两个会话不足触发长会话列表滚动，浏览器未覆盖该极端场景；没有模拟活跃任务或压缩执行来声称成功。阶段三仍为用户确认使命完成；阶段二 `PAUSED / NOT_GRANTED`，阶段四未开始。本轮没有真实模型请求、镜像发布、集群/数据库操作或 Git push/merge。
+
+### AI 界面实际前端发布（2026-10-20）
+
+以上是本地实施阶段历史；用户随后明确授权集群发布。源码 `b3a1b8ef28f883b577280c2bf06589edeb54f6bd` 的标准 frontend 镜像已构建、push 并按 OCI index `sha256:a45d8c0ad6abf7e138b31a3ac43e79937fc33cddac109e943ea15e2789b5fca2` 部署到 `kubernetes-admin@learn` / `manao-stage6b`，generation/observed 22、Ready1/1、restart0。镜像构建使用 `VITE_ENABLE_AI=true`、frozen lockfile、revision label 和 USER101；typecheck/Vite build exit0，仅有已知 chunk 大小警告。有效镜像扫描覆盖 HTML、assets 和 sourcemap，无 fixture/session/mock 标记，`mockServiceWorker.js` 不存在；最初 BusyBox 不支持 `grep --include` 的扫描无效，已丢弃并改用 `grep -r -l -E` 重查（status1，无匹配）。
+
+公网 `http://1.12.245.235:30080/` 与新 JS/CSS 均 HTTP200。真实登录后读取原 READY 项目的 10 个既有会话，选中会话 head26/history12、上下文 2,633/1,048,576（0.251102%）；四档滑块只作本地切换，侧栏显隐保留选择，切到 File 恢复 Run Insights，回到 AI 恢复会话侧栏，打开一个既有工具结果。page errors/API5xx/意外 mutation 均0，无 mock SW 或横向溢出。浏览器除登录外阻止非 GET，请求未提交任务、压缩或模型调用；未保留原始用户内容、凭据、截图或 trace。
+
+本次同时发布 `94c8047` 已合入、相对于此前线上 `1f41cf5` 的 Cloud IDE 视觉变化（登录、项目、主题、工作台、日志 UI）及 AI 样式；未改 API/合同、backend/worker、数据库或用户项目资源；仅更新 frontend Deployment。详细 digest、前后 Pod 身份、可复制回滚命令与证据在[发布指南 §5.3](../deploy/ai-context/README.md#53-thinkrail-界面实际前端发布2026-10-20)。这次只读回放不建立新的模型/工程阶段 PASS；阶段二仍 `PAUSED / NOT_GRANTED`，阶段三使命已由用户确认完成，阶段四未开始；未 Git push/merge 或资源清理。
