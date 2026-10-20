@@ -10,7 +10,7 @@
 
 **Spec:** 本计划第 2–4 节记录本轮需求与用户已确认的布局；业务契约继续由 [会话与上下文设计](../specs/2026-10-19-ai-conversation-context-design.md) 和 [流式输出、推理强度与 Markdown 设计](../specs/2026-10-20-ai-streaming-reasoning-markdown-design.md) 定义。
 
-日期：2026-10-20。状态：**Tasks 1–3 已实施并独立审核通过；Task 4 本地验证已完成，待独立审核，未部署**。本地交付状态和证据由 [Frontend README](../../../poc4/frontend/README.md#ai-界面本地交付2026-10-20) 记录；阶段二 PAUSED / NOT_GRANTED、阶段三用户确认使命完成、阶段四未开始均不变。
+日期：2026-10-20。状态：**Tasks 1–4 本地实施与验证完成，四项任务独立审核均通过；整体变更 `94c8047..fc2c307` 独立审查 Approved（0 findings），本次仅文档收尾，未部署**。本地交付状态和证据由 [Frontend README](../../../poc4/frontend/README.md#ai-界面本地交付2026-10-20) 记录；阶段二 PAUSED / NOT_GRANTED、阶段三用户确认使命完成、阶段四未开始均不变。
 
 ## 1. 实际基线与阶段边界
 

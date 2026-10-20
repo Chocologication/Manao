@@ -140,7 +140,7 @@ pnpm exec playwright test tests/e2e/cloud-workbench-ui.spec.ts --project=chromiu
 
 ### AI 界面本地交付（2026-10-20）
 
-本轮在 `codex/ai-integration` 完成 AI 展示改造，产品源码基线为 `efd0a52`（Tasks 1–3 已独立审核）。保留现有任务、会话、流式、Markdown、上下文、写锁和 Run 合同；AI 页右栏显示项目会话历史，切回其他页恢复原 Run Insights。Task 4 仅增加 mock-only 展示夹具、浏览器测试与证据，没有新增 Agent 服务或模型状态机。
+本轮在 `codex/ai-integration` 完成 AI 展示改造，产品源码基线为 `efd0a52`。Tasks 1–4 的独立任务审核均通过，整体变更 `94c8047..fc2c307` 独立审查 Approved，Critical / Important / Minor 均为 0；本次仅文档状态收尾。保留现有任务、会话、流式、Markdown、上下文、写锁和 Run 合同；AI 页右栏显示项目会话历史，切回其他页恢复原 Run Insights。Task 4 仅增加 mock-only 展示夹具、浏览器测试与证据，没有新增 Agent 服务或模型状态机。
 
 复现命令按以下顺序执行，浏览器 mock build 之后必须重新生产构建：
 
