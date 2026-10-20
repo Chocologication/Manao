@@ -104,7 +104,8 @@ function ConversationPanel(props: AgentConversationPanelProps) {
     onCreate={() => void create()} onLoadMore={() => void list.fetchNextPage()} />;
   const historyNavigation = props.historyTarget === undefined ? sidebar
     : props.historyTarget === null ? null : createPortal(sidebar, props.historyTarget);
-  const conversationHeader = metadata ? <div className="flex flex-wrap items-center gap-2 p-3 text-xs">
+  const conversationHeader = metadata ? <div className="manao-ai-conversation-header">
+      <h2 className="manao-ai-conversation-title">{metadata.title}</h2>
       <Button size="sm" variant="outline" disabled={!canCompact} onClick={() => void compact()}>压缩上下文</Button>
       {metadata.compactState === 'RUNNING' ? <span>压缩中</span> : null}
       {metadata.compactState === 'COMPLETED' ? <span>压缩完成</span> : null}

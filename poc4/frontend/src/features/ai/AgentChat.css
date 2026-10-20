@@ -33,5 +33,24 @@
 .manao-ai-sidebar-list [aria-pressed="true"] { background: var(--accent); color: var(--accent-foreground); }
 .manao-ai-history-sidebar { display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
 .manao-ai-history-sidebar[hidden] { display: none; }
+.manao-ai-conversation-header { display: flex; flex-shrink: 0; flex-wrap: wrap; align-items: center; gap: 8px; padding: 12px 20px; font-size: 12px; }
+.manao-ai-conversation-title { flex: 1 1 180px; min-width: 0; margin: 0; font-size: 14px; font-weight: 600; overflow-wrap: anywhere; }
+.manao-ai-messages { display: flex; flex-direction: column; gap: 16px; min-width: 0; font-size: 14px; line-height: 1.65; }
+.manao-ai-message { min-width: 0; max-width: 100%; overflow-wrap: anywhere; }
+.manao-ai-message-user { align-self: flex-end; max-width: 85%; padding: 10px 14px; border: 1px solid color-mix(in srgb, var(--primary) 20%, var(--border)); border-radius: 8px; background: color-mix(in srgb, var(--primary) 8%, var(--background)); }
+.manao-ai-message-label, .manao-ai-round-status { margin-bottom: 4px; color: var(--muted-foreground); font-size: 12px; line-height: 1.5; }
+.manao-ai-message-text { max-width: 100%; margin: 0; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font-family: var(--font-family-mono, monospace); font-size: 12px; }
+.manao-ai-message-user .manao-ai-message-text { font-family: inherit; font-size: 14px; }
+.manao-ai-message-tool_call, .manao-ai-message-tool_result, .manao-ai-message-compaction { padding-left: 12px; border-left: 1px solid var(--border); }
+.manao-ai-message-notice, .manao-ai-message-warning { margin-top: 8px; font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
+.manao-ai-message-notice { color: var(--muted-foreground); }
+.manao-ai-message-warning, .manao-ai-messages [role="alert"] { color: var(--destructive); }
+.manao-ai-thinking { min-width: 0; margin-block: 4px; color: var(--muted-foreground); }
+.manao-ai-thinking-summary { width: fit-content; max-width: 100%; cursor: pointer; font-size: 12px; line-height: 1.6; }
+.manao-ai-thinking-summary::marker { color: var(--muted-foreground); }
+.manao-ai-thinking-summary:focus-visible { outline: 2px solid var(--ring); outline-offset: 3px; border-radius: 2px; }
+.manao-ai-thinking-text { max-width: 100%; max-height: 16rem; margin: 8px 0 0; padding-left: 12px; border-left: 1px solid var(--border); overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font-family: var(--font-family-mono, monospace); font-size: 12px; line-height: 1.65; }
+.manao-ai-tool-result { min-width: 0; margin-top: 8px; font-size: 12px; }
+.manao-ai-tool-result > div { min-width: 0; max-width: 100%; border-radius: 4px; border-color: color-mix(in srgb, var(--border) 65%, transparent); overflow-wrap: anywhere; }
 @media (max-width: 1023px) { .manao-ai-history-sidebar[data-open="true"] { display: flex; } }
-@media (max-width: 1023px) { .manao-ai-scroll { padding: 12px; } .manao-ai-composer { width: calc(100% - 24px); } }
+@media (max-width: 1023px) { .manao-ai-scroll { padding: 12px; } .manao-ai-composer { width: calc(100% - 24px); } .manao-ai-conversation-header { padding-inline: 12px; } }

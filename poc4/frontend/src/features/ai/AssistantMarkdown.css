@@ -1,4 +1,4 @@
-.ai-markdown { overflow-wrap: anywhere; line-height: 1.6; }
+.ai-markdown { min-width: 0; max-width: 100%; overflow-wrap: anywhere; font-size: 14px; line-height: 1.65; }
 .ai-markdown > :first-child { margin-top: 0; }
 .ai-markdown > :last-child { margin-bottom: 0; }
 .ai-markdown p, .ai-markdown ul, .ai-markdown ol, .ai-markdown blockquote,

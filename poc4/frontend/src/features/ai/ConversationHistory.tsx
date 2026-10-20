@@ -104,41 +104,41 @@ function HistoryComposition(props: ConversationHistoryProps) {
   const draft = visible.snapshot?.current;
   useLayoutEffect(() => { const parent = scrollContainer.current; if (parent && follow.current) parent.scrollTop = parent.scrollHeight; }, [visible.snapshot, history.data]);
   const syncing = !visible.settled && (reconcile || desired !== visible.snapshot || !latest && props.taskId != null || stream.connectionState === 'connecting' || stream.connectionState === 'reconnecting') && (props.taskId != null || latest !== null);
-  return <section ref={element} aria-label="会话历史" className="flex flex-col gap-3 p-3 text-sm">
+  return <section ref={element} aria-label="会话历史" className="manao-ai-messages">
     {(history.isError || pending.isError) ? <div role="alert">无法加载会话历史</div> : null}
     {(incomplete || pendingBroken) ? <div role="alert">历史片段不完整，请重新加载</div> : null}
     {(history.isError || pending.isError || incomplete || pendingBroken) ? <Button variant="outline" onClick={() => { void history.refetch(); void pending.refetch(); }}>重新加载历史</Button> : null}
     {history.hasNextPage ? <Button variant="outline" disabled={history.isFetching} onClick={() => void history.fetchNextPage()}>加载更早历史</Button> : null}
-    {rows.map(row => <article key={row.key} data-task-id={row.taskId ?? undefined} data-message-seq={row.seq} className="min-w-0 rounded border p-2">
+    {rows.map(row => <article key={row.key} data-task-id={row.taskId ?? undefined} data-message-seq={row.seq} className={`manao-ai-message manao-ai-message-${row.kind}`}>
       {row.kind === 'user' && row.taskId !== null ? <RoundStatus {...props} taskId={row.taskId} /> : null}
-      <div className="text-xs text-muted-foreground">{row.kind === 'user' ? '用户' : row.kind === 'assistant' || row.kind === 'thinking' ? 'AI' : row.kind === 'compaction' ? '上下文已压缩' : '工具'}</div>
-      {row.partial && row.kind !== 'thinking' ? <div>还有更早内容</div> : null}
+      <div className="manao-ai-message-label">{row.kind === 'user' ? '用户' : row.kind === 'assistant' || row.kind === 'thinking' ? 'AI' : row.kind === 'compaction' ? '上下文已压缩' : '工具'}</div>
+      {row.partial && row.kind !== 'thinking' ? <div className="manao-ai-message-notice">还有更早内容</div> : null}
       {row.kind === 'assistant' ? <AssistantMarkdown text={row.text} />
         : row.kind === 'thinking' ? <ThinkingBlock text={row.text} active={false} incomplete={row.partial} initialChoice={visible.promoted?.seq === row.seq ? visible.promoted.choices[row.contentIndex] : undefined} />
-        : <pre className="overflow-auto whitespace-pre-wrap break-words font-mono text-xs">{row.text}</pre>}
-      {row.modelTruncated ? <div className="text-destructive text-xs">模型响应达到输出上限，本条内容可能不完整</div> : null}
+        : <pre className="manao-ai-message-text">{row.text}</pre>}
+      {row.modelTruncated ? <div className="manao-ai-message-warning">模型响应达到输出上限，本条内容可能不完整</div> : null}
       {row.kind === 'tool_result' && row.taskId !== null && row.toolCallId !== null ? <HistoryTool key={JSON.stringify([props.userId, props.projectId, props.conversationId, row.key])} {...props} taskId={row.taskId} toolCallId={row.toolCallId} /> : null}
     </article>)}
-    {draft ? <article aria-label="实时预览" data-task-id={visible.snapshot!.taskId} data-message-ordinal={draft.messageOrdinal} className="min-w-0 rounded border p-2">
+    {draft ? <article aria-label="实时预览" data-task-id={visible.snapshot!.taskId} data-message-ordinal={draft.messageOrdinal} className="manao-ai-message manao-ai-message-assistant">
       {[...draft.blocks].sort((a, b) => a.contentIndex - b.contentIndex).map(block => block.kind === 'thinking'
         ? <ThinkingBlock key={JSON.stringify([draft.messageOrdinal, block.contentIndex])} text={block.text} active={draft.phase === 'generating'} choice={visible.choices[block.contentIndex]} onChoice={open => setVisible(old => ({ ...old, choices: { ...old.choices, [block.contentIndex]: open } }))} />
         : <AssistantMarkdown key={JSON.stringify([draft.messageOrdinal, block.contentIndex])} text={block.text} />)}
-      {draft.modelTruncated ? <div>模型响应达到输出上限，本条内容可能不完整</div> : null}
-      {draft.displayTruncated ? <div>实时预览已裁切，完整内容请在保存后查看历史</div> : null}
+      {draft.modelTruncated ? <div className="manao-ai-message-warning">模型响应达到输出上限，本条内容可能不完整</div> : null}
+      {draft.displayTruncated ? <div className="manao-ai-message-notice">实时预览已裁切，完整内容请在保存后查看历史</div> : null}
     </article> : null}
-    {syncing ? <div role="status">同步中</div> : null}
-    {visible.warning ? <div role="alert">实时预览未确认保存</div> : null}
-    {!visible.settled && (stream.connectionState === 'unavailable' || latest?.unavailable) ? <div role="status">实时展示暂不可用，继续同步历史 <Button size="sm" variant="outline" onClick={stream.retry}>重连实时展示</Button></div> : null}
+    {syncing ? <div role="status" className="manao-ai-message-notice">同步中</div> : null}
+    {visible.warning ? <div role="alert" className="manao-ai-message-warning">实时预览未确认保存</div> : null}
+    {!visible.settled && (stream.connectionState === 'unavailable' || latest?.unavailable) ? <div role="status" className="manao-ai-message-notice">实时展示暂不可用，继续同步历史 <Button size="sm" variant="outline" onClick={stream.retry}>重连实时展示</Button></div> : null}
   </section>;
 }
 function RoundStatus(props: ConversationHistoryProps & { taskId: string }) {
   const task = useConversationTask(props.userId, props.projectId, props.conversationId, props.taskId);
-  return <div className="text-xs">本轮状态：{task.data?.state ?? (task.isError ? '暂不可用' : '加载中')}</div>;
+  return <div className="manao-ai-round-status">本轮状态：{task.data?.state ?? (task.isError ? '暂不可用' : '加载中')}</div>;
 }
 function HistoryTool(props: ConversationHistoryProps & { taskId: string; toolCallId: string }) {
   const [open, setOpen] = useState(false);
   const result = useQuery({ queryKey: ['conversation-tool-result', props.userId, props.projectId, props.conversationId, props.taskId, props.toolCallId], queryFn: () => getAgentToolCallResult(props.projectId, props.taskId, props.toolCallId), enabled: open, retry: false, refetchOnWindowFocus: false });
-  return <div>
+  return <div className="manao-ai-tool-result">
     <Button variant="outline" size="sm" disabled={result.isFetching} onClick={() => setOpen(true)}>查看工具结果</Button>
     {open && result.isError ? <div role="alert">无法加载工具结果</div> : null}
     {open && result.data ? <ToolResultView result={result.data} onViewRun={props.onViewRun} /> : null}
