@@ -1,6 +1,6 @@
-import { cleanup, render, screen } from '@testing-library/react';
+import { act, cleanup, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   MemoryRouter,
   Route,
@@ -14,6 +14,7 @@ import { AuthProvider } from './AuthProvider';
 import { createAuthSession, type AuthSession } from './authSession';
 import { LoginPage } from './LoginPage';
 import { RequireAuth } from './RequireAuth';
+import { useMotionPreferences } from '@/features/preferences/motionPreferences';
 
 const loginResponse: LoginResponse = {
   accessToken: 'mem-token',
@@ -95,12 +96,83 @@ function renderAuthApp(options: {
   return { ...view, session };
 }
 
+beforeEach(() => {
+  vi.spyOn(HTMLMediaElement.prototype, 'play').mockResolvedValue();
+  vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => {});
+});
+
 afterEach(() => {
   cleanup();
   setHttpClient(null);
+  useMotionPreferences.setState({ enabled: true });
+  Reflect.deleteProperty(document, 'startViewTransition');
 });
 
 describe('LoginPage', () => {
+  it('authenticates with motion disabled without invoking browser transitions', async () => {
+    useMotionPreferences.setState({ enabled: false });
+    const transition = vi.fn();
+    Object.defineProperty(document, 'startViewTransition', { configurable: true, value: transition });
+    const session = createAuthSession();
+    installClient(session, vi.fn<typeof fetch>(async () => jsonResponse(loginResponse)));
+    renderAuthApp({ session });
+    const user = userEvent.setup();
+    await user.type(screen.getByLabelText('Username'), 'alice');
+    await user.type(screen.getByLabelText('Password'), 'demo-pass');
+    await user.click(screen.getByRole('button', { name: /sign in/i }));
+    expect(await screen.findByText('Projects')).toBeInTheDocument();
+    expect(transition).not.toHaveBeenCalled();
+    expect(HTMLMediaElement.prototype.play).not.toHaveBeenCalled();
+  });
+
+  it('honors the system reduced-motion setting during login', async () => {
+    const matchMedia = window.matchMedia;
+    vi.spyOn(window, 'matchMedia').mockImplementation((query) => ({
+      ...matchMedia(query), matches: query === '(prefers-reduced-motion: reduce)',
+    }));
+    const transition = vi.fn();
+    Object.defineProperty(document, 'startViewTransition', { configurable: true, value: transition });
+    const session = createAuthSession();
+    installClient(session, vi.fn<typeof fetch>(async () => jsonResponse(loginResponse)));
+    renderAuthApp({ session });
+    const user = userEvent.setup();
+    await user.type(screen.getByLabelText('Username'), 'alice');
+    await user.type(screen.getByLabelText('Password'), 'demo-pass');
+    await user.click(screen.getByRole('button', { name: /sign in/i }));
+    expect(await screen.findByText('Projects')).toBeInTheDocument();
+    expect(transition).not.toHaveBeenCalled();
+    expect(HTMLMediaElement.prototype.play).not.toHaveBeenCalled();
+  });
+
+  it('commits successful authentication when a browser transition is rejected', async () => {
+    const transition = vi.fn(() => ({ finished: Promise.reject(new DOMException('Skipped', 'AbortError')) }));
+    Object.defineProperty(document, 'startViewTransition', { configurable: true, value: transition });
+    const session = createAuthSession();
+    installClient(session, vi.fn<typeof fetch>(async () => jsonResponse(loginResponse)));
+    renderAuthApp({ session });
+    const user = userEvent.setup();
+    await user.type(screen.getByLabelText('Username'), 'alice');
+    await user.type(screen.getByLabelText('Password'), 'demo-pass');
+    await user.click(screen.getByRole('button', { name: /sign in/i }));
+    expect(await screen.findByText('Projects')).toBeInTheDocument();
+    expect(transition).toHaveBeenCalledOnce();
+    expect(session.getAccessToken()).toBe('mem-token');
+  });
+
+  it('ignores a login response arriving after the page unmounts', async () => {
+    let resolveLogin!: (value: Response) => void;
+    const session = createAuthSession();
+    installClient(session, vi.fn<typeof fetch>(() => new Promise((resolve) => { resolveLogin = resolve; })));
+    const view = renderAuthApp({ session });
+    const user = userEvent.setup();
+    await user.type(screen.getByLabelText('Username'), 'alice');
+    await user.type(screen.getByLabelText('Password'), 'demo-pass');
+    await user.click(screen.getByRole('button', { name: /sign in/i }));
+    view.unmount();
+    await act(async () => { resolveLogin(jsonResponse(loginResponse)); });
+    expect(session.getSnapshot().status).toBe('anonymous');
+  });
+
   it('renders username and password inputs with explicit labels', () => {
     renderAuthApp({});
 

@@ -798,7 +798,7 @@ describe('RunPanel history', () => {
       }),
     );
     renderPanel();
-    const historyAlert = await screen.findByText('Unable to load run history');
+    const historyAlert = await screen.findByText('无法加载运行历史');
     expect(historyAlert).toHaveAttribute('role', 'alert');
     expect(historyAlert).not.toHaveTextContent('trace-history-403');
     await userEvent.setup().click(screen.getByRole('button', { name: 'Retry loading run history' }));
@@ -1168,7 +1168,7 @@ describe('RunLogView auto-follow and truncation', () => {
     });
     render(<RunLogView store={store} />);
     const banner = screen.getByRole('status', { name: 'Log truncation' });
-    expect(banner).toHaveTextContent(/truncated/i);
+    expect(banner).toHaveTextContent('日志窗口已截断');
     expect(banner).toHaveTextContent('2048');
     expect(screen.getByRole('region', { name: 'Run logs' })).toHaveTextContent('kept-window');
     expect(banner.compareDocumentPosition(logRegion()) & Node.DOCUMENT_POSITION_FOLLOWING).toBe(

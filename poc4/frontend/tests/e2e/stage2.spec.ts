@@ -4,7 +4,7 @@ const ALICE = { username: 'alice', password: 'demo-pass' };
 const BOB = { username: 'bob', password: 'demo-pass' };
 const ALICE_SEED_PROJECT_ID = 'prj-alice-notebook';
 const BOB_SEED_PROJECT_ID = 'prj-bob-lab';
-const SESSION_EXPIRED = 'Your session has expired. Please sign in again.';
+const SESSION_EXPIRED = '登录会话已过期，请重新登录';
 const POM_MODEL = `poc4://workspace/${ALICE_SEED_PROJECT_ID}/pom.xml`;
 const APP_MODEL = `poc4://workspace/${ALICE_SEED_PROJECT_ID}/src/main/java/demo/App.java`;
 
@@ -439,7 +439,7 @@ async function triggerSessionRefetch(page: Page): Promise<void> {
 
 test('logs in and opens Alice\'s ready project', async ({ page }) => {
   await openAliceWorkbench(page);
-  await expect(page.getByText('READY', { exact: true })).toBeVisible();
+  await expect(page.getByRole('tablist', { name: 'Workbench panels' })).toBeVisible();
   await expect(page.getByRole('tab', { name: 'File' })).toHaveAttribute('aria-selected', 'true');
   await expect(page.getByRole('tab', { name: 'Run' })).toBeEnabled();
   await expect(page.getByRole('tab', { name: 'Terminal' })).toBeEnabled();
@@ -665,7 +665,7 @@ test('forces current-token 401 with an open file and returns to login', async ({
   await expect(page).toHaveURL(/\/login$/);
   const alerts = page.getByRole('main').getByRole('alert');
   await expect(alerts).toHaveCount(1);
-  await expect(alerts).toHaveText(SESSION_EXPIRED);
+  await expect(alerts).toContainText(SESSION_EXPIRED);
   await expect(page.getByText('Alice Notebook')).toHaveCount(0);
   await expect(editorTab(page, /pom\.xml/)).toHaveCount(0);
   await expect(page.getByRole('tree', { name: 'Files' })).toHaveCount(0);

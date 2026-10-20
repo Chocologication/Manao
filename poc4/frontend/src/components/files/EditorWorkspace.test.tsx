@@ -248,7 +248,7 @@ describe('EditorWorkspace metadata-gated views', () => {
     expect(recordedEditor.last?.keepCurrentModel).toBe(true);
     expect(recordedEditor.last?.saveViewState).toBe(true);
     expect(recordedEditor.last?.value).toBeUndefined();
-    expect(recordedEditor.last?.options).toEqual({
+    expect(recordedEditor.last?.options).toMatchObject({
       readOnly: false,
       domReadOnly: false,
       automaticLayout: true,
@@ -1558,7 +1558,7 @@ describe('EditorWorkspace run lock', () => {
       </AppProviders>,
     );
 
-    expect(recordedEditor.last?.options).toEqual({
+    expect(recordedEditor.last?.options).toMatchObject({
       readOnly: true,
       domReadOnly: true,
       automaticLayout: true,

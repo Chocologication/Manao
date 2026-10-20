@@ -46,7 +46,7 @@ export function JobTerminalToolbar({
   onViewChange,
 }: JobTerminalToolbarProps) {
   return (
-    <div className="flex h-10 shrink-0 min-w-0 items-center gap-1 border-b px-2">
+    <div className="flex min-h-10 shrink-0 min-w-0 flex-wrap items-center gap-x-2 gap-y-1 border-b px-2 py-1">
       <div role="toolbar" aria-label="Terminal controls" className="flex shrink-0 items-center gap-1">
         <button
           type="button"
@@ -91,7 +91,7 @@ export function JobTerminalToolbar({
         </button>
       </div>
 
-      <div role="tablist" aria-label="Terminal views" className="ml-2 flex h-full shrink-0 items-center gap-1">
+      <div role="tablist" aria-label="Terminal views" className="flex h-8 shrink-0 items-center gap-1">
         {(['session', 'audit'] as const).map((view) => (
           <button
             key={view}
@@ -119,7 +119,7 @@ export function JobTerminalToolbar({
         aria-label="Terminal state"
         aria-live="polite"
         data-phase={phase}
-        className="ml-auto flex w-36 shrink-0 items-center justify-end truncate text-sm"
+        className="ml-auto flex min-w-24 max-w-36 flex-1 items-center justify-end truncate text-sm"
       >
         {statusText}
       </div>

@@ -1,4 +1,5 @@
-import { useLayoutEffect, useState, type KeyboardEvent } from 'react';
+import { useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react';
+import { useEditorNavigation } from '@/features/editor/editorNavigation';
 import { workspaceBufferRegistry } from '@/app/appRuntime';
 import type { FileMetadata, ProjectRelativePath } from '@/contracts/file';
 import type { WorkspaceBuffer } from '@/features/editor/editorTypes';
@@ -30,6 +31,19 @@ export function PlainTextEditor({
 }) {
   const [buffer, setBuffer] = useState(() => currentPlainTextBuffer(projectId, path));
   const current = buffer !== null && buffer.path === path ? buffer : null;
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const target = useEditorNavigation((state) => state.target);
+  useLayoutEffect(() => {
+    const textarea = textareaRef.current;
+    if (!textarea || !target || target.projectId !== projectId || target.path !== path) return;
+    const lines = textarea.value.split('\n');
+    const line = Math.min(lines.length, Math.max(1, target.line));
+    const start = lines.slice(0, line - 1).reduce((offset, text) => offset + text.length + 1, 0);
+    textarea.focus();
+    textarea.setSelectionRange(start, start + lines[line - 1].length);
+    textarea.scrollTop = (line - 1) * (Number.parseFloat(getComputedStyle(textarea).lineHeight) || 24);
+    useEditorNavigation.getState().clear(target);
+  }, [current, path, projectId, target]);
 
   useLayoutEffect(() => {
     setBuffer(
@@ -61,6 +75,7 @@ export function PlainTextEditor({
       </div>
       {current !== null ? (
         <textarea
+          ref={textareaRef}
           key={`${projectId}:${path}:plain-text`}
           wrap="off"
           spellCheck={false}

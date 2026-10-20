@@ -29,12 +29,14 @@ import { RunHistory } from './RunHistory';
 import { RunLogView } from './RunLogView';
 import { RunToolbar } from './RunToolbar';
 import { StopRunDialog } from './StopRunDialog';
+import type { RunErrorLocation } from './runErrorLocator';
 
 export type RunPanelProps = {
   projectId: string;
   /** Current project template; the toolbar shows it only while no run is selected. */
   projectTemplateId: RuntimeTemplateId;
   coordinator: RunAuthorityCoordinator;
+  onLocateError?: (location: RunErrorLocation) => void;
 };
 
 function runQueryFallback(error: unknown, fallback: string): string {
@@ -85,7 +87,7 @@ function statusText(options: {
   return 'Idle';
 }
 
-export function RunPanel({ projectId, projectTemplateId, coordinator }: RunPanelProps) {
+export function RunPanel({ projectId, projectTemplateId, coordinator, onLocateError }: RunPanelProps) {
   const queryClient = useQueryClient();
   const snapshot = useSyncExternalStore(
     coordinator.subscribe,
@@ -281,7 +283,8 @@ export function RunPanel({ projectId, projectTemplateId, coordinator }: RunPanel
           coordinator.retryReload();
         }}
       />
-      <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden">
+      <div className="lab-selected-run" role="status"><span>{selectedRunId && selectedRunId === activeRun?.id ? '当前运行' : selectedRunId ? '历史运行' : '尚未选择运行'}</span><code title={selectedRunId ?? ''}>{selectedRunId ?? '等待首次运行'}</code>{activeRun && selectedRunId !== activeRun.id && <button type="button" onClick={() => onSelect(activeRun.id)}>返回当前运行</button>}</div>
+      <div className="lab-run-body flex min-h-0 min-w-0 flex-1 overflow-hidden">
         <RunHistory
           items={historyItems}
           selectedRunId={selectedRunId}
@@ -297,7 +300,7 @@ export function RunPanel({ projectId, projectTemplateId, coordinator }: RunPanel
             void historyQuery.refetch();
           }}
         />
-        <RunLogView key={selectedRunId ?? 'none'} store={logStore} />
+        <RunLogView key={selectedRunId ?? 'none'} projectId={projectId} store={logStore?.projectId === projectId && logStore.runId === selectedRunId ? logStore : null} onLocateError={onLocateError} run={selectedRun} />
       </div>
       <StopRunDialog
         open={stopOpen}

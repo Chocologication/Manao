@@ -63,6 +63,7 @@ export function PythonDependencyRecovery({
     controlled ? null : readPythonDependencyOperationId(userId, projectId),
   );
   const [checking, setChecking] = useState(false);
+  const [feedback, setFeedback] = useState('');
   const dirtyPaths = useWorkspaceSession((state) => state.dirtyPaths.size);
   // Only the READY page has an editor mounted: a dirty buffer means the workspace
   // content is not authoritative, so a Check (which may reload it) waits (design 6.1).
@@ -77,16 +78,18 @@ export function PythonDependencyRecovery({
   }
 
   async function check(): Promise<void> {
-    if (checking) {
+    if (checking || checkBlocked) {
       return;
     }
     setChecking(true);
+    setFeedback('');
     try {
       let target = activeId;
       if (target === null) {
         const pending = await listPendingPythonDependencies(projectId);
         target = pending[0]?.operationId ?? null;
         if (target === null) {
+          setFeedback('未找到可核对的记录，变更仍未确认。可以稍后重试。');
           // No record anywhere: keep showing the unconfirmed entry, never fabricate success.
           return;
         }
@@ -98,19 +101,21 @@ export function PythonDependencyRecovery({
       }
       const status = await getPythonDependencyStatus(projectId, target);
       if (status.state === 'UNCONFIRMED') {
+        setFeedback('服务端尚未确认该操作结果，请稍后再次核对。');
         // A missing record is not a proof of absence; keep the id and the entry.
         return;
       }
       if (status.state === 'PENDING') {
         const reconciled = await reconcilePythonDependency(projectId, target);
         if (reconciled.state !== 'COMMITTED') {
+          setFeedback('变更尚未提交完成，请稍后再次核对。');
           return;
         }
       }
       clearPythonDependencyOperationId(userId, projectId);
       onRecovered();
     } catch {
-      // The check failed without a durable answer; the user can check again.
+      setFeedback('核对失败，操作结果仍未知。原 operationId 已保留，请重试核对。');
     } finally {
       setChecking(false);
     }
@@ -118,27 +123,29 @@ export function PythonDependencyRecovery({
 
   return (
     <div className="flex flex-col items-start gap-2">
-      <InlineAlert>Dependency change is unconfirmed</InlineAlert>
+      <InlineAlert>依赖变更尚未确认</InlineAlert>
       <p className="text-sm text-muted-foreground">
-        The result of the last dependency change is unknown. Check it before making another change.
+        上一次依赖变更的结果未知，请先核对后再提交新的变更。
       </p>
       <Button
         type="button"
         variant="outline"
         disabled={checking || checkBlocked}
-        title={checkBlocked ? 'Save or discard file changes first' : undefined}
+        title={checkBlocked ? '请先保存或放弃文件修改' : undefined}
         onClick={() => void check()}
+        aria-label="Check dependency change"
       >
-        Check dependency change
+        核对依赖变更
       </Button>
       {checkBlocked ? (
-        <p className="text-sm text-muted-foreground">Save or discard file changes first</p>
+        <p className="text-sm text-muted-foreground">请先保存或放弃文件修改</p>
       ) : null}
       {checking ? (
         <p role="status" className="text-sm text-muted-foreground">
-          Checking dependency change
+          正在核对依赖变更
         </p>
       ) : null}
+      {feedback && <p role="status" className="text-sm text-muted-foreground">{feedback}</p>}
     </div>
   );
 }
