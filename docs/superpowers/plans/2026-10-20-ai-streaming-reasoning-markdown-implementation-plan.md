@@ -267,7 +267,7 @@ pnpm build
 
 发布步骤：空闲/短维护检查→备份及disposable迁移验证→构建三镜像记录digest→按既有Recreate部署→健康检查→集中真实入口。V14为additive，回滚镜像保留该列，不drop或reset历史；验证旧代码忽略新列。真实验收无需改用户代码、启应用或删项目。
 
-- [ ] **Step 4 — 真实验收（另获授权后）：** pnpm test:e2e:ai-output；四个短只读任务，记录首thinking/text可见时间与结束时间，验证首段先于message_end、Markdown DOM、思考折叠/回看、档位、工具循环、重连。输出过短无法观察中途多帧就诚实记未覆盖；最高档length如实FAILED/AI_LENGTH_LIMIT。mock/--list/打字动画均不是流式PASS。白名单记录effort/stream/max_tokens，不记录key/prompt/thinking到公共日志。
+- [x] **Step 4 — 真实验收（另获授权后）：** pnpm test:e2e:ai-output；四个短只读任务，记录首thinking/text可见时间与结束时间，验证首段先于message_end、Markdown DOM、思考折叠/回看、档位、工具循环、重连。输出过短无法观察中途多帧就诚实记未覆盖；最高档length如实FAILED/AI_LENGTH_LIMIT。mock/--list/打字动画均不是流式PASS。白名单记录effort/stream/max_tokens，不记录key/prompt/thinking到公共日志。**执行状态：本轮另获授权并实际执行，勾选不代表全通过；round1/round2 FAILED 保留，high/off 检查点和单次 max 补验通过，low 流式时序 UNVERIFIED。四档真实参数/持久化均已核实。**
 - [x] **Step 5 — 收尾：** 更新唯一acceptance、索引、本计划勾选；清本轮无用临时文件、保留最小失败证据。建议提交 test(ai): verify streaming effort and Markdown delivery，不push/merge。
 
 ## 3. 完成标准与需求覆盖
@@ -298,7 +298,7 @@ pnpm build
 - watchdog不在阻塞send期间同步complete；sender实际退出才还额度，饱和503退history，不承诺强行中断socket。
 - 用户折叠状态跨实时/历史保留；非DeepSeek首版新任务统一拒绝，避免增加来源字段。
 
-2026-10-20最终执行状态：六个任务在授权的本地实施、验证和发布准备范围内完成；Task6 Step4 仍未执行，需真实模型/发布单独授权。最终独立限定复审在 `c68c773` 确认 I1/I2/M1 ADDRESSED，无新增 Critical/Important；Task6 Spec COMPLIANT / Quality Approved，整体 Approved for local implementation completion。实际计数、TDD 顺序限制及未覆盖项由 poc4/docs/evidence/ai-output/acceptance.md 拥有；原确认合同保留，不授予云端或用户验收 PASS。
+2026-10-20最终执行状态：六个任务本地完成并获独立 Approved；用户随后授权发布和真实验收。三镜像 `a7d0041` 已部署，V14 一次、备份恢复/旧 artifact 兼容及旧数据核对通过。Task6 Step4 已执行但未全通过：round1/round2 FAILED，high/off 检查点及单次 max 通过，low 流式时序 UNVERIFIED；四档真实 wire/任务记录均已核实。临时探针与恢复 schema 已撤除。实际状态由 poc4/docs/evidence/ai-output/acceptance.md 拥有；不授予完整真实 E2E 或用户验收 PASS，Stage2 仍 PAUSED/NOT_GRANTED。
 
 ## Execution record (2026-10-20)
 
@@ -315,3 +315,5 @@ Task4 completed locally: fca63d2; independent spec compliant/quality Approved. R
 Task5 completed locally: b9853f4 + b51c91e + adb63f6. Independent spec/quality gate passed after active fallback and pendingLatest race repairs. Initial108/108, fix114/114, finalcover70/70; typecheck/buildpass, realHTTP Chromium fixture passed. FullPanel lock/close remains component evidence; fixture proves SSE/history/render/reconnect. Task6 local verification/release preparation next; paidmodel/deploy forbidden.
 
 Task6 completed within local authorization: `3a2b194` prepared the guarded real entry, evidence and existing release-guide appendix. Required combination backend127/127, worker147/147 and frontend282/282 passed. Final scoped fix `c68c773` corrected late normal ACK, per-message acceptance timing/DOM oracles and malformed worker effort types; fresh frontend71/71, worker47/47 and harness6/6 plus builds/typecheck passed. Independent final rereview confirms all findings addressed and local completion Approved. The final harness-specific tsc raw log was not retained; its reported exit0 is distinguished from independently inspected raw evidence. Step4 remains unchecked / NOT_RUN. No paid model, runtime migration/reset, images, deployment, resource deletion, push or merge occurred.
+
+Authorized release checkpoint supersedes that local-only snapshot: source `a7d0041` three images built/pushed/deployed, V14 migrated once, backup/disposable/actual old-artifact checks passed; all four real efforts completed in one retained conversation with provider whitelist unchanged8192/max. Harness-only `310fa9a` received independent review and9/9 local observer tests. Real round2 failed at low composite timing oracle; exact cause unknown because original attachment metadata was not retained. One max-only continuation passed with direct sanitized metadata and own-message timing. Prior failures remain, no paid repeat to force a green matrix; no combined E2E PASS. Probe/sample removed, final single worker Ready, no Git push/merge or existing project deletion.

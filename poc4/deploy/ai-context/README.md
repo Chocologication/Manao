@@ -95,17 +95,17 @@ harness 核对每轮原 task 的全部 tool_call/tool_result：首轮严格一�
 `--list`、类型检查或缺条件拒绝仅证明harness装配/guard，不构成真实E2E PASS。自动75%不为验收烧入786432 tokens，真实未触发仍NOT_RUN。发布/主链完成后把各项实际计数、SHA、digest、imageID/UID、运行库版本、备份恢复与项目留存/回收结果写入证据，不改写Stage1真实PASS、Stage2 PAUSED/NOT_GRANTED和Stage3用户确认。
 
 
-## 5. Streaming / reasoning / Markdown V14 preparation
+## 5. Streaming / reasoning / Markdown V14 release
 
-2026-10-20: **PREPARED / NOT_RUN**. [Output acceptance](../../docs/evidence/ai-output/acceptance.md) owns actual status. Local combination passed; whole-feature late-ACK Important and Task6 independent gate pending. This append preserves preceding actual V13/context rollout; old digests are not output-release identities.
+2026-10-20: user authorized publication and continuation after final local review Approved. Source `a7d004119dd2439d09a4ef86890b2f8ab00658d7` is **BUILT / PUSHED / DEPLOYED** to `kubernetes-admin@learn` / `manao-stage6b`; runtime V14 applied once, private backup/disposable restore and old-artifact compatibility passed. [Output acceptance](../../docs/evidence/ai-output/acceptance.md) owns actual identities, data checks, failed real rounds and final real-model verdict. Real round1 FAILED at a reconnect checkpoint after its high task completed; subsequent harness-only `310fa9a` changes no deployed image. This section preserves preceding actual V13/context rollout; those old digests remain rollback references, not this output release.
 
 | New component | Release identity | Execution |
 | --- | --- | --- |
-| backend |Final fixed/reviewed SHA; OCI digest/child/imageID to fill |NOT_RUN |
-| pi-worker |Same SHA, Pi three packages1.2.0; digest/child/imageID to fill |NOT_RUN |
-| frontend |Same SHA,VITE_ENABLE_AI=true; digest/child/imageID to fill |NOT_RUN |
+| backend |a7d0041; OCI sha256:726c095f15d4866fbcea48146c90faf2fb1a6d680f02629f6ea893e49f694af1 |BUILT / PUSHED / DEPLOYED |
+| pi-worker |a7d0041; OCI sha256:dd06e4148d466127914ebf0bc04e27b5f078d4061f4485f1c0b4221831e269f8; actual Pi packages1.2.0 |BUILT / PUSHED / DEPLOYED |
+| frontend |a7d0041; OCI sha256:8d90abdf44f5e2af50c61810b8640e532e1e8b95bffdd9172f017f929e82b89a; VITE_ENABLE_AI=true |BUILT / PUSHED / DEPLOYED |
 
-After separate current-round authorization:
+The following was the authorized release sequence; future reruns still require their own current authorization. Actual results supersede the original NOT_RUN preparation statements within the steps:
 
 1. Recheck context/namespace and global task/compact/Run occupancy, worker single slot; idle/short maintenance; preserve matching old digests/replicas/Recreate. Section2 drain safeguards apply; MANAO_AI_ENABLED=false is not graceful drain. Active Run does not authorize stop/delete.
 2. Private backup plus disposable restore and V13→V14 rehearsal. V14__agent_reasoning_effort.sql adds nullable reasoning_effort; preserve legacyNULL and task/tool/history/receipts. Verify actual old image ignores new column and Flyway futureV14 compatibility; new-code local tests do not prove old image. Backup/restore/compatibility NOT_RUN. DDL failure requires actual schema/history reconciliation before retry; no reset/drop/repair blindly.
@@ -114,3 +114,10 @@ After separate current-round authorization:
 5. Separate real-model authorization then pnpm test:e2e:ai-output (cwd poc4/frontend): existing owner-owned READY project, <=16KiB secret-free README.md; four short read-only high/off/low/max tasks plus read_file. Live DOM before end, thinking/Markdown, disconnect/reconnect, refresh/relogin/history/effort. No local webServer/restart/code edit/app start/project deletion; no8192/75% stress burn. Too short UNVERIFIED; length FAILED/AI_LENGTH_LIMIT.
 
 Private required environment: MANAO_AI_ACCEPTANCE_BASE_URL explicitHTTPorigin, MANAO_AI_ACCEPTANCE_PROJECT_ID canonicalUUID, MANAO_AI_ACCEPTANCE_USERNAME/PASSWORD, current MANAO_AI_OUTPUT_MODEL_AUTHORIZED=true only after authorization. Missing conditions refuseNOT_RUN beforebrowser;workers1/retries0. Browser does not capture providerwire: separately preserve authorizedboundary whitelist thinking/reasoning_effort/stream/max_tokens and compare task effort. No key/prompt/thinking/rawpubliclogs. Guard/--list is not realPASS. Stage2 PAUSED/NOT_GRANTED,Stage3 confirmation,75%NOT_RUN unchanged.
+
+### 5.1 Actual 2026-10-20 closeout (supersedes preparation status in steps above)
+
+- Publication PASS: all three standard images above are deployed, Ready/single replica; actual imageIDs match OCI digests. Backend/worker Recreate preserved. Runtime V14 checksum1063954255 succeeded once;38 legacy efforts remainNULL and six tables' original columns retain equal ordered SHA256. Private pre-V14 backup retained, random disposable restore matched and was migrated using the actual new artifact; actual previous backend artifact validated futureV14 and read all38 tasks. Full old app startup/write/real-cluster rollback was not exercised. Rollback image tuple remains previous backend `bc23140a3130f5bd5c0e598c3edbd00d95f99d5f2135969e4f6b9d04242295ec`, worker `8a933471e8b92bbd167ceda4b24ee4976d7150f48f7f1831f234fa90aa402971`, frontend `738c3c73d4201cc2d2e67b9eb8e8209f5d63a0518fc88ab9e0292d8893c082cb`; retain V14 column/history, never drop/reset to roll back.
+- Real acceptance is partial, not a combined PASS. Round1 FAILED at late reconnect checkpoint; reviewed harness-only `310fa9a` fixes display abort timing. Round2 high/off browser checkpoints passed, low task COMPLETED but streaming timing UNVERIFIED; no precise missing-condition diagnosis is claimed. A fixed-identity max-only continuation passed1/1, verified prior histories and refreshed max history/default, and made exactly one new max task. All four task efforts and actual provider whitelist are verified, all max_tokens8192/max unchanged. The earlier failed matrix remains FAILED. No repeated whole paid run was used to force a pass.
+- The temporary worker-only request whitelist preload was removed at global idle; final worker Pod `manao-pi-worker-56fc457bf-g87q9`, UID `216e83c1-63b8-4ec2-a709-20ed58b15ea9`, same digest/Ready/restart0. NODE_OPTIONS/mount/volume absent, dedicated ConfigMap count0. Disposable restore schema dropped1→0; private backup kept. Verification port-forward closed. No project/application/diagnostic resources were deleted.
+- Final global task/compact/Run occupancy0/0/0, project remains READY/revision23, all five new paid tasks COMPLETED. Actual Pi three packages1.2.0, readiness200/UP/public200. Source images remain `a7d0041`; later `310fa9a` only changes the local real-acceptance harness. See [unique acceptance](../../docs/evidence/ai-output/acceptance.md) and [sanitized evidence](../../docs/evidence/ai-output/real-release-safe.json) for task IDs, timings and final identities. No Git push/merge, Stage2 remains PAUSED/NOT_GRANTED; user acceptance is not inferred.
