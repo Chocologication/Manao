@@ -239,7 +239,7 @@ worker从UID`1b89c53c-ead7-4a47-b7c5-5e59b5a69003`重建为`1a814039-bcc6-4729-9
 
 最终状态：Task1/2完成；真实模型不在本次复验范围（无需新工具或任务），真实浏览器历史回放PASS；frontend镜像build/push/rollout PASS。数据库迁移NOT_NEEDED，后端/worker重启NOT_NEEDED，项目及集群资源清理NOT_RUN且不授权。Git push/merge未执行。原兜底文案不再遮蔽已返回的文件工具结果；请求失败和工具业务错误仍分别显示加载失败与返回错误。
 
-## 9. 上下文占用圆环（2026-10-20，本地完成）
+## 9. 上下文占用圆环（2026-10-20，本地完成并获授权发布）
 
 用户撤回停止按钮需求，授权直接实现现有占用展示的小改造并更新文档；不另建计划。ContextUsageIndicator 放在推理强度旁，以 SVG 圆环和百分比展示所选会话已有 usage；悬停原生 title 和辅助技术描述含 tokens/contextWindow、75% 自动压缩阈值和最近一次估算说明。沿用两秒会话查询，未新增依赖、API、token 计数器或逐 token 推送。
 
@@ -249,4 +249,14 @@ worker从UID`1b89c53c-ead7-4a47-b7c5-5e59b5a69003`重建为`1a814039-bcc6-4729-9
 
 本地 Chromium fixture 使用实际 AgentTaskPanel 和项目样式，在1440px viewport内实测504px/320px面板无内部横向溢出、圆环20px、75%和token说明正确，切至未知后无aria-valuenow，pageerror为0；320px截图经人工查看。全局既有1280px最小页面宽度不变，不能把窄面板检查写成移动端页面验收。临时fixture早期因路由匹配/SPA fallback未加载，修正测试入口后通过；未修改产品路由。临时脚本、截图在核对后清理。
 
-本轮仅本地实现/验证；镜像构建、push/rollout、真实云端浏览器/模型验证NOT_RUN。后续发布仅需frontend，backend/worker/schema无需变更；当前云端镜像仍为前次发布。未Git提交/push/merge，未操作项目或集群资源，不进入第四阶段。
+初次本地交付时镜像构建、push/rollout、真实云端浏览器/模型验证NOT_RUN，尚未Git提交；这是本地检查点。用户随后明确授权“提交git之后部署到集群”，实际执行与结果由下面9.1取代该检查点的未发布状态。
+
+### 9.1 Git 提交、前端单镜像发布与真实浏览器核对
+
+实现提交1f41cf575014d70aa83212b26cca45b00cd801a5（feat(ai): show conversation context usage ring），提交前重新运行三个定向测试文件77/77。标准frontend Dockerfile使用VITE_ENABLE_AI=true与该源码revision标签构建成功，包含typecheck/Vite；保留既有chunk-size warning，运行USER101、linux/amd64。镜像tag为chocologic/manao_images_repository:ai-context-usage-frontend-1f41cf5，实际push/registry确认OCI index sha256:7149afb9cd7feed8c9a5d0ff1ea5048f54103e93a8974a957ea094309b6bf37c，amd64 child sha256:42acac365dc5eae8ac161055b5b59e4ec4b7ec40d5ab92e792a30d5b1524250d。
+
+实时确认context=kubernetes-admin@learn、namespace=manao-stage6b，三个节点Ready、三Deployment原Ready1/1。仅frontend从旧摘要8d90abdf44f5e2af50c61810b8640e532e1e8b95bffdd9172f017f929e82b89a更新至新index摘要；RollingUpdate成功，新Pod frontend-94bd6cff9-bxg86，UID=c42b3cba-3316-46ba-8229-d597b43cd7a6，imageID匹配新摘要，generation/observed21、updated/ready/replicas1，restart0。旧frontend Pod按滚动更新退出；backend与worker的Pod UID、generation、digest均与本次发布前一致，Ready1/1/restart0。未执行数据库迁移或项目/Run/集群诊断资源清理。
+
+公网http://1.12.245.235:30080/返回200，新入口index-0JstDDrj.js和index-dST7lErr.css已生效。真实Chromium使用私有已有owner凭据通过正常登录页，打开保留READY项目4a355478-0ec5-457c-9c73-fad09d98bf79的已有会话6328bc93-fb38-4da3-a305-dad64b825f69（headSeq26）。DOM圆环20×20、显示“约0.3%”（页面实际含空格），ARIA原值0.2511024475097656；title显示2,633 / 1,048,576 tokens与75%阈值，逐项匹配owner会话GET。pageerror0；浏览器拦截并拒绝登录之外的非只读API，实际unexpectedMutations0。仅回放已有历史，没有新task、工具、压缩或模型请求，项目前后READY。临时浏览器验证脚本已清理，未留凭据或原始会话正文。
+
+本次frontend镜像build/push/rollout与公网真实浏览器回放PASS；未知/超限/75%边界仍由前述本地测试证明，本次没有烧入真实上下文窗口或扩测。发布事实另作文档提交，镜像源码仍为1f41cf5，无须为文档重建。Git push/merge未执行；Stage2原暂停/未授予状态与Stage4范围不变。
