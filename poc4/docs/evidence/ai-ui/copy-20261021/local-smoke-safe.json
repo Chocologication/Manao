@@ -1,0 +1,17 @@
+{
+  "verifiedAt": "2026-10-21",
+  "mode": "local-mock-only",
+  "command": "pnpm exec playwright test --config playwright.ai-ui.config.ts",
+  "result": "10/10 passed",
+  "coverage": [
+    "login copy and input placeholders",
+    "lab, graphite and light themes",
+    "1440x900, 1024x768, 1023x768 and 390x844 viewports",
+    "AI reading layout, effort slider, history drawer and composer",
+    "existing Run navigation and project insight restoration"
+  ],
+  "pageErrors": 0,
+  "taskSubmissions": 0,
+  "compactions": 0,
+  "clusterOrModelAcceptance": false
+}

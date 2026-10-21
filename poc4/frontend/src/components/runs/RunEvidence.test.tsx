@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
+import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -55,13 +55,13 @@ describe('Run evidence surfaces', () => {
     expect((await listRuns(project.id, null)).items.map((item) => item.id)).toContain(run.id);
   });
 
-  it('keeps completed run evidence visible with no active Run and labels AI as unconnected', async () => {
+  it('keeps completed run evidence visible with no active Run and hides the AI diagnostic placeholder', async () => {
     const run = await createFinishedRun();
     render(<AppProviders><MemoryRouter><RunInsights project={project} activeRun={null} activePending={false} activeError={false} writesLocked={false} compactViewport={false} onOpenRuns={vi.fn()} onClose={vi.fn()} /></MemoryRouter></AppProviders>);
     expect(await screen.findByText(run.id)).toBeInTheDocument();
     expect(screen.getByText(run.policy.command)).toBeInTheDocument();
     expect(screen.getByText(run.requestedWorkspaceRevision)).toBeInTheDocument();
-    expect(within(screen.getByLabelText('AI 诊断预览')).getByText('预览 · 未接入')).toBeInTheDocument();
+    expect(screen.queryByLabelText('AI 诊断预览')).not.toBeInTheDocument();
     expect(screen.getByText(/不代表后端实时阶段事件/)).toBeInTheDocument();
   });
 });

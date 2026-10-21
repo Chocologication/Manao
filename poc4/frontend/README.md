@@ -172,3 +172,9 @@ git diff --check
 公网 `http://1.12.245.235:30080/` 与新 JS/CSS 均 HTTP200。真实登录后读取原 READY 项目的 10 个既有会话，选中会话 head26/history12、上下文 2,633/1,048,576（0.251102%）；四档滑块只作本地切换，侧栏显隐保留选择，切到 File 恢复 Run Insights，回到 AI 恢复会话侧栏，打开一个既有工具结果。page errors/API5xx/意外 mutation 均0，无 mock SW 或横向溢出。浏览器除登录外阻止非 GET，请求未提交任务、压缩或模型调用；未保留原始用户内容、凭据、截图或 trace。
 
 本次同时发布 `94c8047` 已合入、相对于此前线上 `1f41cf5` 的 Cloud IDE 视觉变化（登录、项目、主题、工作台、日志 UI）及 AI 样式；未改 API/合同、backend/worker、数据库或用户项目资源；仅更新 frontend Deployment。详细 digest、前后 Pod 身份、可复制回滚命令与证据在[发布指南 §5.3](../deploy/ai-context/README.md#53-thinkrail-界面实际前端发布2026-10-20)。这次只读回放不建立新的模型/工程阶段 PASS；阶段二仍 `PAUSED / NOT_GRANTED`，阶段三使命已由用户确认完成，阶段四未开始；未 Git push/merge 或资源清理。
+
+### AI 界面文案与洞察收敛（2026-10-21）
+
+按用户对已发布页面的标注，登录页将导航状态改为 `Agent已就绪`，运行能力项改为 `AI / READY · AI 诊断 · 已就绪`，主说明改为“人工智能为你保驾护航”，并将输入 placeholder 改为“用户名”和“请输入密码”。mock-only 演示账号提示及测试登录值仍保留，未改变认证行为。非 AI 页面右侧 Run Insights 移除“AI 诊断 · 预览 · 未接入”占位卡，运行、日志、服务访问和项目洞察入口继续保留。
+
+本轮针对性 Vitest 为 3 files / 98 tests passed，`pnpm typecheck:stage6` passed，生产 `pnpm build` passed（仅保留既有 chunk size warnings）。mock 浏览器 smoke 覆盖 lab/graphite/light、宽屏和 390px 窄屏登录内容、工作台洞察移除和 AI 草稿跨 File 切换保留；证明范围限于本地 fixture，不代表真实模型或云端验收。截图与 JSON 记录保存在 `../docs/evidence/ai-ui/copy-20261021/`。

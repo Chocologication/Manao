@@ -1,5 +1,5 @@
 import { forwardRef, useMemo } from 'react';
-import { CircleCheck, CircleDashed, ExternalLink, FileClock, LayoutDashboard, LockKeyhole, Play, X } from 'lucide-react';
+import { CircleCheck, CircleDashed, ExternalLink, FileClock, LayoutDashboard, Play, X } from 'lucide-react';
 import { Link } from 'react-router';
 import { Button } from '@/components/ui/button';
 import { InlineAlert } from '@/components/feedback/InlineAlert';
@@ -126,14 +126,6 @@ export const RunInsights = forwardRef<HTMLElement, {
           ))}
         </section>
       ) : null}
-      <section className="lab-ai-placeholder" aria-label="AI 诊断预览">
-        <div className="lab-insight-section-heading">
-          <h3>AI 诊断</h3>
-          <span className="lab-planned">预览 · 未接入</span>
-        </div>
-        <p>当前不会生成 AI 诊断结论；接入真实 AI 服务后再展示分析结果。</p>
-        <LockKeyhole aria-hidden="true" />
-      </section>
     </aside>
   );
 });

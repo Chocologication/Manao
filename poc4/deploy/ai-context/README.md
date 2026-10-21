@@ -155,3 +155,25 @@ kubectl --context kubernetes-admin@learn -n manao-stage6b rollout status deploym
 公网 `http://1.12.245.235:30080/` HTTP200，引用 `index-Be3JTCfu.js` / `index-CiiA_nSb.css`；这两项和 `WorkbenchPage-Um_W5ZqW.js` / `WorkbenchPage-BRSegDPZ.css` 均 HTTP200。[公网安全回放记录](../../docs/evidence/ai-ui/public-release-safe.json)记录真实登录后的既有项目 `4a355478-0ec5-457c-9c73-fad09d98bf79` 前后均 READY、10 个既有会话；选中 `6328bc93-fb38-4da3-a305-dad64b825f69`，head26、history12，上下文 2,633/1,048,576（0.251102%）。四档滑块只改变本地值、未 Submit；侧栏显隐保留选择，切到 File 恢复 Run Insights，回到 AI 恢复会话侧栏，打开一个既有工具结果 GET。page errors/API5xx/意外 mutation 均0，无 mock SW、无页面横向溢出。浏览器拦截除登录外的非 GET；task submission/model call/compaction 均0。未保留凭据、原始用户内容、截图或 trace。
 
 此镜像相对先前线上 `1f41cf5` 也包含 `94c8047` 合入的 Cloud IDE 视觉变化（登录、项目、主题、工作台、日志 UI），以及本轮 AI 样式；没有 API/业务合同变化。本地证据保留在 [Frontend README](../../frontend/README.md#ai-界面本地交付2026-10-20)，本节只证明实际前端发布与现有历史只读回放，不建立新的模型/工程阶段 PASS。Stage2 仍 PAUSED / NOT_GRANTED；Stage3 用户确认使命完成；Stage4 未开始。Git push/merge 未执行。
+
+### 5.4 AI 界面文案与洞察收敛（2026-10-21）
+
+本次仅更新 frontend：源码改动为登录页文案/placeholder 和 `RunInsights` 的未接入 AI 占位卡移除；认证值、AI 任务、Run/日志、API、backend、worker、数据库和用户项目资源均未改动。发布前本地针对性 Vitest 3 files / 98 tests、`typecheck:stage6`、生产 `pnpm build` 均通过；mock smoke 结果保存在 `../../docs/evidence/ai-ui/copy-20261021/local-smoke-safe.json`，截图在同目录。
+
+本轮发布需先将源码提交后的标准 frontend 镜像按以下形式构建并取得实际 OCI index digest；不要把 tag 当作部署身份：
+
+```powershell
+docker build --build-arg VITE_ENABLE_AI=true --label org.opencontainers.image.revision=<fullSHA> -t chocologic/manao_images_repository:ai-copy-frontend-<shortSHA> poc4/frontend
+docker push chocologic/manao_images_repository:ai-copy-frontend-<shortSHA>
+docker buildx imagetools inspect chocologic/manao_images_repository:ai-copy-frontend-<shortSHA>
+docker run --rm --entrypoint sh chocologic/manao_images_repository:ai-copy-frontend-<shortSHA> -c 'test ! -e /usr/share/nginx/html/mockServiceWorker.js && ! grep -r -l -E "AI_UI_VISUAL_FIXTURE_ONLY|ui-conversation-reading|ui-task-completed|prj-alice-notebook|mockServiceWorker|Mock Service Worker" /usr/share/nginx/html'
+```
+
+使用 `D:/DeepLearning/MyProjects/Project_Manao_kubeconfig/stage6b-admin-public.yaml`、context `kubernetes-admin@learn`、namespace `manao-stage6b`，只更新 `frontend`：
+
+```powershell
+kubectl --kubeconfig D:/DeepLearning/MyProjects/Project_Manao_kubeconfig/stage6b-admin-public.yaml --context kubernetes-admin@learn -n manao-stage6b set image deployment/frontend frontend=chocologic/manao_images_repository@<new-index-digest>
+kubectl --kubeconfig D:/DeepLearning/MyProjects/Project_Manao_kubeconfig/stage6b-admin-public.yaml --context kubernetes-admin@learn -n manao-stage6b rollout status deployment/frontend --timeout=180s
+```
+
+回滚目标为本轮发布前实际 frontend OCI index `sha256:a45d8c0ad6abf7e138b31a3ac43e79937fc33cddac109e943ea15e2789b5fca2`。发布后重新核对 frontend Ready1/1、imageID、generation、restart，以及 backend/worker generation、Pod UID、digest、restart 未改变；不执行真实模型请求、数据库迁移或资源清理。
