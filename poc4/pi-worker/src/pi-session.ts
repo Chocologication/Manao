@@ -419,20 +419,16 @@ class DefaultPiTaskSession implements PiTaskSession {
       clearTimeout(deadline);
     }
     try { await this.saveFinal?.(); } catch (error) { promptError ??= error; }
+    // The final Context was persisted (or its failure recorded) BEFORE the outcome is
+    // frozen; only now does the execution loop exit with its terminal result.
     const outcome = this.settle(promptError);
     this.running = false;
     this.live?.finish();
-    // The terminal state is only sent after the progress chain has drained, so the
-    // complete-message and tool items always precede it. An unacknowledged delivery
-    // must never enter the "create another FAILED result" path (repair design section
-    // 5): the frozen outcome stands and the delivery layer (task 4) owns the retry,
-    // so the refusal is surfaced here and the outcome is returned unchanged.
-    try {
-      await this.progress.sendTerminal(outcome.state, outcome.summary, outcome.failureCode);
-    } catch (deliveryError) {
-      console.error(`[task ${this.taskId}] terminal delivery was not acknowledged:`,
-        deliveryError instanceof Error ? `${deliveryError.name}: ${deliveryError.message}` : deliveryError);
-    }
+    // The terminal report is NOT sent here (repair task 4): the frozen outcome is
+    // returned to the server, which persists it and hands it to the independent
+    // terminal delivery. A delivery failure can therefore never enter this method's
+    // error paths nor create a second execution outcome, and the terminal does not
+    // depend on the display progress seq at all.
     this.unsubscribe();
     this.unsubscribeLive?.();
     return outcome;

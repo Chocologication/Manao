@@ -30,6 +30,9 @@ async function runScriptedTask(
     },
   });
   const outcome = await pi.run({ prompt: "Fix the failing build and report what changed.", workspaceRevision: "7" });
+  // The session returns its frozen outcome without waiting on the display chain; the
+  // tests that observe progress items await the drain explicitly.
+  await chain.drain();
   const tools = pi.registeredTools;
   return { outcome, backend, tools };
 }
@@ -48,9 +51,6 @@ describe("pi session", () => {
     ], [() => { throw new BackendHttpError(0, code, "unknown outcome"); }]);
     expect(backend.calls.map((call) => call.request.toolCallId)).toEqual(["unknown"]);
     expect(outcome).toMatchObject({ state: "FAILED", failureCode: code });
-    const terminal = backend.progressItems.filter((item) => item.kind === "terminal");
-    expect(terminal).toHaveLength(1);
-    expect(JSON.parse(terminal[0]!.text)).toMatchObject({ state: "FAILED", failureCode: code });
   });
   it("gives Pi application feedback capabilities and evidence rules without enabling built-in tools", async () => {
     let options: CreateAgentSessionOptions | undefined;
@@ -87,10 +87,6 @@ describe("pi session", () => {
     ]);
     expect(outcome.state).toBe("COMPLETED");
     expect(outcome.summary).toContain("Changed src/Demo.java");
-    // Terminal state is reported exactly once through the progress chain.
-    const terminals = backend.progressItems.filter((item) => item.kind === "terminal");
-    expect(terminals).toHaveLength(1);
-    expect(JSON.parse(terminals[0]!.text)).toMatchObject({ state: "COMPLETED" });
   });
 
   it("registers exactly the six project tools and nothing else", async () => {
@@ -120,9 +116,6 @@ describe("pi session", () => {
     });
     expect(outcome.state).toBe("COMPLETED");
     // No terminal state was reported for the retrying first attempt.
-    const terminals = backend.progressItems.filter((item) => item.kind === "terminal");
-    expect(terminals).toHaveLength(1);
-    expect(JSON.parse(terminals[0]!.text)).toMatchObject({ state: "COMPLETED" });
   });
 
   it("reports FAILED when a provider error settles normally", async () => {
@@ -135,8 +128,35 @@ describe("pi session", () => {
     });
     expect(outcome.state).toBe("FAILED");
     expect(outcome.failureCode).toBe("AI_PROVIDER_ERROR");
-    const terminals = backend.progressItems.filter((item) => item.kind === "terminal");
-    expect(JSON.parse(terminals[0]!.text)).toMatchObject({ state: "FAILED", failureCode: "AI_PROVIDER_ERROR" });
+  });
+
+  it("leaves the terminal report to the delivery layer instead of the progress chain", async () => {
+    const { outcome, backend } = await runScriptedTask([{ text: "完成" }]);
+    expect(outcome).toMatchObject({ state: "COMPLETED", summary: "完成" });
+    // The session never sends a terminal item (repair task 4): the server freezes the
+    // outcome after the loop exits and the terminal delivery owns the reporting.
+    expect(backend.progressItems.some((item) => item.kind === "terminal")).toBe(false);
+  });
+
+  it("applies a stop requested before the run and never prompts afterwards", async () => {
+    const backend = backendStub([resultFor]);
+    const chain = new ProgressChain(backend as unknown as BackendClient, "task-1");
+    const pi = await createPiSession({
+      model: MODEL_CONFIG,
+      paths: privateDirs(),
+      backend: backend as never,
+      progress: chain,
+      taskId: "task-1",
+      deps: { createSession: scriptedSessionFactory([{ text: "must never be generated" }]) as never },
+    });
+    // The stop arrives while the run has not started (the server records it during
+    // async init): after initialization the session must not prompt again.
+    pi.stop();
+    const outcome = await pi.run({ prompt: "Fix the failing build and report what changed.", workspaceRevision: "7" });
+    await chain.drain();
+    expect(outcome).toMatchObject({ state: "FAILED", failureCode: "AI_ABORTED" });
+    expect(backend.calls).toHaveLength(0);
+    expect(backend.progressItems.filter((item) => item.kind === "message")).toHaveLength(0);
   });
 
   it("stops honestly at the tool-call budget", async () => {

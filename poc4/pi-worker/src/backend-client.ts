@@ -13,6 +13,7 @@
 import { isDeepStrictEqual } from "node:util";
 import { LIVE_OUTPUT_MAX_BYTES, type LiveSnapshot } from "./live-output.js";
 import { CONTEXT_PAGE_BYTES, type ContextPage, type ContextAppend, type CompactStart, type CompactResult } from "./conversation-context.js";
+import type { TerminalAck } from "./report-identity.js";
 
 export interface ToolRequest {
   toolCallId: string;
@@ -77,10 +78,36 @@ const SAFE_TOOL_DIAGNOSTIC_CODES = new Set([
   "PROJECT_BUSY", "AI_CALL_UNSETTLED", "AI_CALL_NEEDS_ATTENTION", "AI_TASK_NOT_ACTIVE",
   "AI_CALL_MISMATCH", "AI_CALL_RUNNING", "WORKSPACE_REVISION_CONFLICT", "VALIDATION_ERROR",
 ]);
+/** Concrete codes safe to carry in progress diagnostics; anything else stays generic. */
+const SAFE_PROGRESS_DIAGNOSTIC_CODES = new Set([
+  "PROJECT_BUSY", "AI_PROGRESS_GAP", "AI_PROGRESS_MISMATCH", "AI_PROGRESS_TOO_LARGE",
+  "AI_TERMINAL_IDENTITY", "AI_TERMINAL_TOO_LARGE", "AI_TASK_NOT_FOUND", "AI_TASK_NOT_ACTIVE",
+  "AI_EPOCH_MISMATCH", "AI_INSTANCE_MISMATCH", "VALIDATION_ERROR",
+]);
+/** Concrete codes safe to carry in terminal diagnostics (the delivery classifies by status). */
+const SAFE_TERMINAL_DIAGNOSTIC_CODES = new Set([
+  "PROJECT_BUSY", "AI_TERMINAL_IDENTITY", "AI_TERMINAL_TOO_LARGE", "AI_PROGRESS_TOO_LARGE",
+  "AI_TASK_NOT_FOUND", "AI_TERMINAL_NOT_FOUND", "AI_EPOCH_MISMATCH", "AI_INSTANCE_MISMATCH",
+  "AI_TASK_NOT_ACTIVE", "VALIDATION_ERROR",
+]);
 
 function safeToolDiagnosticCode(code: unknown): string {
   return typeof code === "string" && SAFE_TOOL_DIAGNOSTIC_CODES.has(code) ? code : "AI_CALL_REJECTED";
 }
+
+function safeProgressDiagnosticCode(code: unknown): string {
+  return typeof code === "string" && SAFE_PROGRESS_DIAGNOSTIC_CODES.has(code) ? code : "AI_PROGRESS_REJECTED";
+}
+
+function safeTerminalDiagnosticCode(code: unknown): string {
+  return typeof code === "string" && SAFE_TERMINAL_DIAGNOSTIC_CODES.has(code) ? code : "AI_TERMINAL_REJECTED";
+}
+
+function isTerminalAck(body: Record<string, unknown> | null): boolean {
+  return body !== null && typeof body["reportId"] === "string" && typeof body["reportSha256"] === "string"
+    && ["RECORDED", "SETTLED", "CLOSING"].includes(body["disposition"] as string);
+}
+
 /** The inter-poll wait of the bounded settle poll (matches the browser's 2s cadence). */
 const SETTLE_POLL_INTERVAL_MS = 2_000;
 /**
@@ -223,7 +250,52 @@ export class BackendClient {
         return { accepted: false, mismatch: true };
       }
     }
-    throw new BackendHttpError(response.status, "AI_PROGRESS_REJECTED", `progress submission was refused (${response.status})`);
+    // The concrete backend code is preserved (safe list) so callers can distinguish a
+    // contended gate from a decided refusal instead of a generic rejection.
+    const code = safeProgressDiagnosticCode(body?.code);
+    throw new BackendHttpError(response.status, code, `progress submission was refused (${response.status}, ${code})`);
+  }
+
+  /**
+   * One terminal report POST on the dedicated receipt route. The caller (the terminal
+   * delivery) owns the per-request timeout through the signal and retries the SAME
+   * bytes; this method only carries the report and surfaces the decided refusal with
+   * its safe concrete code. A 404 is preserved as a 404 — never collapsed into a
+   * generic transport failure — so the delivery can distinguish "no receipt stored"
+   * from an unreachable backend.
+   */
+  async postTerminal(taskId: string, body: string, signal?: AbortSignal): Promise<TerminalAck> {
+    const response = await this.transport(`${this.baseUrl}/internal/ai/tasks/${encodeURIComponent(taskId)}/terminal`, {
+      method: "POST",
+      headers: this.headers(),
+      body,
+      signal,
+    });
+    const parsed = await safeJson(response);
+    if (response.ok && isTerminalAck(parsed)) {
+      return parsed as unknown as TerminalAck;
+    }
+    const code = safeTerminalDiagnosticCode(parsed?.code);
+    throw new BackendHttpError(response.status, code, `terminal report was refused (${response.status}, ${code})`);
+  }
+
+  /**
+   * The read-only pull of the stored terminal decision (worker-side compensation): the
+   * stored TerminalAck, or a 404 kept as AI_TERMINAL_NOT_FOUND when no receipt exists
+   * yet. This route only reads; it never starts a side effect.
+   */
+  async getTerminalAck(taskId: string): Promise<TerminalAck> {
+    const response = await this.transport(`${this.baseUrl}/internal/ai/tasks/${encodeURIComponent(taskId)}/terminal`, {
+      method: "GET",
+      headers: this.headers(),
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+    const parsed = await safeJson(response);
+    if (response.ok && isTerminalAck(parsed)) {
+      return parsed as unknown as TerminalAck;
+    }
+    const code = safeTerminalDiagnosticCode(parsed?.code);
+    throw new BackendHttpError(response.status, code, `terminal decision was refused (${response.status}, ${code})`);
   }
 
   async liveOutput(taskId: string, snapshot: LiveSnapshot, signal?: AbortSignal): Promise<void> {
@@ -421,25 +493,30 @@ function isLowSurrogate(unit: number): boolean {
   return unit >= 0xdc00 && unit <= 0xdfff;
 }
 
+/** The bounded wait before a progress item's identical retry (design section 5). */
+export const PROGRESS_RETRY_DELAY_MS = 250;
+
 /**
  * Serialized, at-most-one-HTTP-call-at-a-time progress delivery. SDK listeners are
  * never awaited by the agent loop, so every item goes through this promise chain;
  * the terminal state is only sent after the chain has drained. A lost response is
- * retried with the same seq and identical payload; a gap answer from the backend
- * re-sends the buffered items starting at the expected seq; a mismatch answer is
- * dropped (the backend kept its authoritative copy) and never re-sent.
+ * retried with the same seq and identical payload after a bounded delay; a gap answer
+ * from the backend re-sends the buffered items starting at the expected seq; a mismatch
+ * answer is dropped (the backend kept its authoritative copy) and never re-sent.
  */
 export class ProgressChain {
   private readonly client: BackendClient;
   private readonly taskId: string;
   private readonly buffer: ProgressItem[] = [];
+  private readonly retryDelay: (ms: number) => Promise<void>;
   private nextSeq = 1;
   private queue: Promise<void> = Promise.resolve();
   private lastError: unknown = null;
 
-  constructor(client: BackendClient, taskId: string) {
+  constructor(client: BackendClient, taskId: string, retryDelay?: (ms: number) => Promise<void>) {
     this.client = client;
     this.taskId = taskId;
+    this.retryDelay = retryDelay ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
   }
 
   /** Enqueues one item; never throws, never blocks the caller. */
@@ -468,9 +545,13 @@ export class ProgressChain {
    * all count — so a summary that only overflows after serialization is cut here
    * instead of being rejected backend-side (which would leave the task occupied).
    *
-   * A terminal the backend never acknowledged REJECTS (repair task 2): a refused
-   * or lost delivery must never resolve as if it had been acknowledged — the
-   * settlement layer (task 4) owns the retry loop and the unconfirmed state.
+   * A terminal the backend never acknowledged REJECTS (repair task 2): a refused,
+   * lost OR MISMATCHED delivery must never resolve as if it had been acknowledged —
+   * a same-seq different-payload answer means the backend kept ANOTHER payload, so
+   * this content was never accepted (repair round 1, I-1: resolving here let the
+   * legacy fallback report a false ACK). The settlement layer (task 4) owns the
+   * retry loop and the unconfirmed state; the mismatch surfaces as the decided 409
+   * the delivery classifies as permanent.
    */
   async sendTerminal(state: "COMPLETED" | "FAILED", summary: string, failureCode: string | null): Promise<void> {
     await this.drain();
@@ -478,6 +559,12 @@ export class ProgressChain {
     const item: ProgressItem = { seq: this.nextSeq++, kind: "terminal", text: payload, truncated: false };
     this.buffer.push(item);
     const outcome = await this.deliver(item);
+    if (outcome === "dropped") {
+      // The backend kept a different payload at this seq: not our content, never a
+      // delivery — resending would only repeat the conflict.
+      throw new BackendHttpError(409, "AI_PROGRESS_MISMATCH",
+        "terminal delivery was not acknowledged: the backend kept a different payload at this seq");
+    }
     if (outcome === "failed") {
       throw this.lastError instanceof BackendHttpError
         ? this.lastError
@@ -527,8 +614,9 @@ export class ProgressChain {
       }
     } catch (error) {
       this.lastError = error;
-      // One identical retry for transport-level losses; the same seq + payload is
-      // idempotent on the backend.
+      // One bounded identical retry (same seq, same payload — idempotent on the
+      // backend) after the bounded delay; the retry never invents a new identity.
+      await this.retryDelay(PROGRESS_RETRY_DELAY_MS);
       try {
         const retry = await this.client.progress(this.taskId, item);
         if (retry.accepted) {

@@ -1,13 +1,19 @@
 /**
- * The worker's task HTTP surface (stage one): Node's built-in http module, three
- * routes, no framework. POST /tasks/{taskId}/start accepts immediately and drives
+ * The worker's task HTTP surface (stage one + terminal settlement): Node's built-in
+ * http module, no framework. POST /tasks/{taskId}/start accepts immediately and drives
  * the SDK session asynchronously; a replayed identical start is idempotent, a
- * different epoch for a known task is refused (the epoch is persisted exactly once
- * at creation — review fix I2), and a second task is refused with 409 while one is
- * running; GET /tasks/{taskId} serves the reconciliation path for a lost start
- * response; POST /tasks/{taskId}/stop aborts the SDK session — occupancy is only
- * ever released by the backend's close flow, never by this worker's own abort
- * result. Every route fails closed without the worker token.
+ * different epoch for a known task is refused (the epoch is persisted exactly once at
+ * creation — review fix I2), and a second task is refused with 409 while one is
+ * running — the slot is only released once the task's terminal delivery is confirmed
+ * (ACKED/CLOSING), so a PENDING/REJECTED delivery never lets a new model task start
+ * while GET/stop keep answering. GET /tasks/{taskId} serves the reconciliation path
+ * for a lost start response and carries the full protocol identity
+ * (protocolVersion/workerEpoch/requestSha256/executionState/terminalDelivery) beside
+ * the legacy state field. POST /tasks/{taskId}/stop aborts the SDK session —
+ * occupancy is only ever released by the backend's confirmed decision, never by this
+ * worker's own abort result. GET /status reports the per-process boot identity and the
+ * current slot for restart diagnostics without exposing prompts or keys. Every route
+ * fails closed without the worker token.
  */
 import { createHash, timingSafeEqual } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
@@ -15,6 +21,8 @@ import { pathToFileURL } from "node:url";
 import { BackendClient, BackendHttpError, ProgressChain } from "./backend-client.js";
 import { ConfigError, loadWorkerConfig, modelConfigProblems, type WorkerConfig } from "./config.js";
 import { compactIdleConversation, createPiSession, type PiSessionDeps, type PiTaskOutcome, type PiTaskSession } from "./pi-session.js";
+import { TerminalDelivery, selectConfirmedEvictions, type DeliveryState } from "./terminal-delivery.js";
+import { terminalContentSha256, terminalReportId } from "./report-identity.js";
 import type { CompactStart, CompactResult } from "./conversation-context.js";
 
 export interface WorkerStartBody {
@@ -39,19 +47,31 @@ export interface RunnerDeps {
   readonly start: WorkerStartBody;
   readonly backend: BackendClient;
   readonly progress: ProgressChain;
+  /**
+   * Freezes the execution outcome exactly once (the first frozen outcome wins — a
+   * delivery or late failure never creates a second, overriding outcome) and starts
+   * the independent terminal delivery.
+   */
+  readonly settle: (outcome: PiTaskOutcome) => void;
 }
 
 export interface ServerDeps {
   /** Overrides runner creation (tests stub the session; production drives Pi). */
   createRunner?: (deps: RunnerDeps) => TaskRunner;
+  /** Overrides agent-session creation for compaction AND the default task runner (tests). */
   createManualSession?: PiSessionDeps["createSession"];
   now?: () => number;
 }
 
 interface TaskRecord {
   readonly start: WorkerStartBody;
-  readonly runner: TaskRunner;
+  /** Assigned once during the two-phase record creation (delivery needs the record). */
+  runner: TaskRunner;
   readonly progress: ProgressChain;
+  /** Assigned once during the two-phase record creation (delivery needs the record). */
+  delivery: TerminalDelivery;
+  /** When the backend confirmed the delivery (ACKED/CLOSING); null while unconfirmed. */
+  confirmedAt: number | null;
   /** The worker-reported terminal outcome, kept for reconciliation GETs. */
   outcome: PiTaskOutcome | null;
 }
@@ -93,6 +113,10 @@ export function createTaskServer(config: WorkerConfig, deps: ServerDeps = {}): T
       return;
     }
     const url = new URL(request.url ?? "/", "http://localhost");
+    if (request.method === "GET" && url.pathname === "/status") {
+      writeJson(response, 200, statusSnapshot());
+      return;
+    }
     const compactStart = /^\/conversations\/([a-f0-9-]+)\/compact$/.exec(url.pathname);
     const compactGet = /^\/conversations\/([a-f0-9-]+)\/compactions\/([a-f0-9-]+)$/.exec(url.pathname);
     if (request.method === "POST" && compactStart !== null) { await handleCompactStart(compactStart[1]!, request, response); return; }
@@ -165,6 +189,9 @@ export function createTaskServer(config: WorkerConfig, deps: ServerDeps = {}): T
     try { deepSeek = new URL(config.model!.baseUrl).hostname === "api.deepseek.com"
       && ["openai", "openai-completions"].includes(config.model!.apiType); } catch { /* Refuse unsupported server configuration. */ }
     if (!deepSeek) { writeJson(response, 422, { error: "AI_REASONING_UNSUPPORTED" }); return; }
+    // Confirmed records are pruned before a new one is admitted, so the retention
+    // bounds (100 / 24h) hold without a background sweeper.
+    pruneConfirmed();
     const record = createRecord(start);
     tasks.set(taskId, record);
     active = { kind: "task", taskId };
@@ -181,9 +208,80 @@ export function createTaskServer(config: WorkerConfig, deps: ServerDeps = {}): T
       epoch: start.workerEpoch,
     });
     const progress = new ProgressChain(backend, start.taskId);
+    const record: TaskRecord = {
+      start,
+      runner: null as unknown as TaskRunner,
+      progress,
+      delivery: null as unknown as TerminalDelivery,
+      confirmedAt: null,
+      outcome: null,
+    };
+    record.delivery = new TerminalDelivery({
+      client: backend,
+      taskId: start.taskId,
+      epoch: start.workerEpoch,
+      legacyTerminal: (report) => progress.sendTerminal(report.state, report.summary, report.failureCode),
+      onConfirmed: () => {
+        record.confirmedAt = (deps.now ?? Date.now)();
+        maybeReleaseSlot(record);
+        pruneConfirmed();
+      },
+    });
     const createRunner = deps.createRunner ?? defaultRunner;
-    const runner = createRunner({ taskId: start.taskId, start, backend, progress });
-    return { start, runner, progress, outcome: null };
+    record.runner = createRunner({ taskId: start.taskId, start, backend, progress, settle: (outcome) => freezeOutcome(record, outcome) });
+    return record;
+  }
+
+  /**
+   * Freezes the execution outcome exactly once and hands it to the terminal delivery.
+   * Execution failures and delivery failures are distinguished here: only the FIRST
+   * frozen outcome stands, so a refused or lost delivery can never create a second
+   * FAILED result that overwrites a COMPLETED one.
+   */
+  function freezeOutcome(record: TaskRecord, outcome: PiTaskOutcome): void {
+    if (record.outcome !== null) return;
+    record.outcome = outcome;
+    const reportId = terminalReportId(record.start.taskId, record.start.workerEpoch, record.start.requestSha256);
+    record.delivery.publish({
+      protocolVersion: 1,
+      reportId,
+      state: outcome.state,
+      summary: outcome.summary,
+      failureCode: outcome.failureCode,
+    });
+  }
+
+  /**
+   * The slot is released only when the execution loop has exited AND the delivery is
+   * confirmed (ACKED/CLOSING) — a PENDING/REJECTED delivery keeps holding it (new model
+   * tasks are refused; GET/stop keep working). A record without a frozen outcome is
+   * only possible for an injected test runner and releases like the legacy behavior.
+   */
+  function maybeReleaseSlot(record: TaskRecord): void {
+    if (active?.kind !== "task" || active.taskId !== record.start.taskId) return;
+    if (record.outcome === null) {
+      active = null;
+      return;
+    }
+    const state = record.delivery.snapshot().state;
+    if (state === "ACKED" || state === "CLOSING") {
+      active = null;
+    }
+  }
+
+  /**
+   * Confirmed records are retained by the explicit bounds (at most 100, at most 24h —
+   * either bound may evict); PENDING/REJECTED deliveries are never evicted because
+   * they still hold the execution slot. An eviction only forgets the worker-side
+   * record (its GET answers 404); the backend's durable receipt is unaffected.
+   */
+  function pruneConfirmed(): void {
+    const now = deps.now ?? Date.now;
+    const entries = [...tasks.entries()].map((entry) => [entry[0], { confirmedAt: entry[1].confirmedAt }] as const);
+    for (const key of selectConfirmedEvictions(entries, now())) {
+      tasks.get(key)?.delivery.dispose();
+      tasks.delete(key);
+    }
   }
 
   function launch(record: TaskRecord): void {
@@ -196,19 +294,12 @@ export function createTaskServer(config: WorkerConfig, deps: ServerDeps = {}): T
           error instanceof Error ? `${error.name}: ${error.message}` : error);
         const failureCode = error instanceof BackendHttpError && error.code === "AI_CONTEXT_UNAVAILABLE"
           ? "AI_CONTEXT_UNAVAILABLE" : "AI_WORKER_ERROR";
-        record.outcome = { state: "FAILED", summary: "", failureCode, reason: "the task runner failed before it could settle" };
-        // Even a failure before any session existed must reach the backend as a
-        // terminal state through the same serialized progress chain. The last-line
-        // delivery can itself be refused; it must never become an unhandled rejection.
-        record.progress.sendTerminal("FAILED", "", failureCode).catch((deliveryError: unknown) => {
-          console.error(`[task ${record.start.taskId}] last-line terminal delivery was not acknowledged:`,
-            deliveryError instanceof Error ? `${deliveryError.name}: ${deliveryError.message}` : deliveryError);
-        });
+        // The freeze is first-wins: even a failure racing an already-frozen outcome
+        // never overwrites it with a second FAILED result.
+        freezeOutcome(record, { state: "FAILED", summary: "", failureCode, reason: "the task runner failed before it could settle" });
       })
       .finally(() => {
-        if (active?.kind === "task" && active.taskId === record.start.taskId) {
-          active = null;
-        }
+        maybeReleaseSlot(record);
       });
   }
 
@@ -266,7 +357,9 @@ export function createTaskServer(config: WorkerConfig, deps: ServerDeps = {}): T
     let stopped = false;
     return {
       taskId: runnerDeps.taskId,
-      state: () => session === null ? "RUNNING" : stopped ? "STOPPING" : "RUNNING",
+      // Abort已请求仅STOPPING: the state reflects a requested stop even while the
+      // session is still being created (the request is recorded, not lost).
+      state: () => stopped ? "STOPPING" : "RUNNING",
       async start(): Promise<void> {
         session = await createPiSession({
           model: config.model!,
@@ -278,17 +371,18 @@ export function createTaskServer(config: WorkerConfig, deps: ServerDeps = {}): T
           startRevision: runnerDeps.start.workspaceRevision,
           conversationId: runnerDeps.start.conversationId,
           reasoningEffort: runnerDeps.start.reasoningEffort,
+          deps: { createSession: deps.createManualSession },
         });
         const runningSession = session;
+        // A stop requested during the async init was recorded (not lost): apply it
+        // before anything else so the initialized session never prompts.
+        if (stopped) runningSession.stop();
         let outcome: PiTaskOutcome;
         try { outcome = await runningSession.run({
           prompt: runnerDeps.start.prompt,
           workspaceRevision: runnerDeps.start.workspaceRevision,
         }); } catch (error) { runningSession.dispose(); throw error; }
-        const record = tasks.get(runnerDeps.taskId);
-        if (record !== undefined) {
-          record.outcome = outcome;
-        }
+        runnerDeps.settle(outcome);
       },
       async stop(): Promise<void> {
         stopped = true;
@@ -319,11 +413,51 @@ export function createTaskServer(config: WorkerConfig, deps: ServerDeps = {}): T
     writeJson(response, 200, statusOf(taskId));
   }
 
-  function statusOf(taskId: string): { taskId: string; instanceId: string; state: string } {
+  function statusOf(taskId: string): {
+    taskId: string; instanceId: string; state: string; protocolVersion: 1;
+    workerEpoch: number; requestSha256: string; executionState: string;
+    terminalDelivery: { state: DeliveryState; reportId: string | null; reportSha256: string | null };
+  } {
     const record = tasks.get(taskId)!;
     const outcome = record.outcome;
-    const state = outcome !== null ? outcome.state : record.runner.state();
-    return { taskId, instanceId: config.instanceId, state };
+    // The execution state reports COMPLETED/FAILED only after the loop truly exited;
+    // a requested abort is visible as STOPPING until then.
+    const executionState = outcome !== null ? outcome.state : record.runner.state();
+    const delivery = record.delivery.snapshot();
+    return {
+      taskId,
+      instanceId: config.instanceId,
+      // Legacy field, unchanged shape: settled tasks still answer COMPLETED/FAILED.
+      state: executionState,
+      protocolVersion: 1,
+      workerEpoch: record.start.workerEpoch,
+      requestSha256: record.start.requestSha256,
+      executionState,
+      terminalDelivery: {
+        state: delivery.state,
+        reportId: delivery.report?.reportId ?? null,
+        reportSha256: delivery.report === null ? null : terminalContentSha256(
+          delivery.report.reportId, delivery.report.state, delivery.report.summary, delivery.report.failureCode),
+      },
+    };
+  }
+
+  /** The boot/slot snapshot for GET /status: no prompts, no keys, no model bodies. */
+  function statusSnapshot(): {
+    bootId: string; instanceId: string; activeTaskId: string | null;
+    activeExecutionState: string | null; activeKind: "task" | "compact" | null; modelConfigured: boolean;
+  } {
+    const activeRecord = active?.kind === "task" ? tasks.get(active.taskId) : undefined;
+    return {
+      bootId: config.bootId,
+      instanceId: config.instanceId,
+      activeTaskId: active?.kind === "task" ? active.taskId : null,
+      activeExecutionState: activeRecord
+        ? (activeRecord.outcome !== null ? activeRecord.outcome.state : activeRecord.runner.state())
+        : null,
+      activeKind: active?.kind ?? null,
+      modelConfigured: config.model !== null && modelConfigProblems(config.model).length === 0,
+    };
   }
 
   function validateStart(taskId: string, body: unknown): WorkerStartBody | string {
@@ -374,6 +508,11 @@ export function createTaskServer(config: WorkerConfig, deps: ServerDeps = {}): T
       });
     },
     close(): Promise<void> {
+      // Every delivery stops retrying and clears its timers, so shutdown leaves no
+      // pending work behind.
+      for (const record of tasks.values()) {
+        record.delivery.dispose();
+      }
       return new Promise((resolve, reject) =>
         server.close((error) => (error === undefined ? resolve() : reject(error))));
     },

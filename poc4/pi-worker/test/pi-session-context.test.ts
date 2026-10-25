@@ -146,7 +146,9 @@ describe("durable native conversation restoration", () => {
     });
     const outcome = await fixture.pi.run({ prompt: "继续", workspaceRevision: "7" });
     expect(outcome).toMatchObject({ state: "FAILED", failureCode: "AI_CONTEXT_UNAVAILABLE" });
-    expect(JSON.parse(fixture.progressItems.at(-1)!.text).state).toBe("FAILED");
+    // The session reports no terminal itself: the server's delivery owns it, and the
+    // FAILED outcome above is what gets published after the loop exits.
+    expect(fixture.progressItems.some((item) => item.kind === "terminal")).toBe(false);
   });
   it("saves completed failure messages before terminal when a tool outcome is unresolved", async () => {
     const fixture = await task(history(), [{ toolCalls: [{ id: "unknown-call", name: "read_file", args: { path: "a" } }] }]);

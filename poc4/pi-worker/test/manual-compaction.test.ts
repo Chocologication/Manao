@@ -13,7 +13,7 @@ const requestId = "00000000-0000-4000-8000-000000000002";
 const handles: ReturnType<typeof createTaskServer>[] = [];
 afterEach(async () => { for (const handle of handles.splice(0)) await handle.close(); });
 const config = (): WorkerConfig => ({ port: 0, workerToken: "worker-token", backendToken: "backend-token",
-  backendBaseUrl: "http://127.0.0.1:9", instanceId: "worker-1", model: { ...MODEL_CONFIG, baseUrl: "https://api.deepseek.com" }, paths: privateDirs(),
+  backendBaseUrl: "http://127.0.0.1:9", instanceId: "worker-1", bootId: "boot-test", model: { ...MODEL_CONFIG, baseUrl: "https://api.deepseek.com" }, paths: privateDirs(),
   budgets: { wallClockSeconds: 1800, toolCalls: 180, builds: 20 } });
 async function post(base: string, path: string, body: unknown) {
   return fetch(base + path, { method: "POST", headers: { "content-type": "application/json", "x-manao-worker-token": "worker-token" }, body: JSON.stringify(body) });
