@@ -198,8 +198,12 @@ export function createTaskServer(config: WorkerConfig, deps: ServerDeps = {}): T
           ? "AI_CONTEXT_UNAVAILABLE" : "AI_WORKER_ERROR";
         record.outcome = { state: "FAILED", summary: "", failureCode, reason: "the task runner failed before it could settle" };
         // Even a failure before any session existed must reach the backend as a
-        // terminal state through the same serialized progress chain.
-        void record.progress.sendTerminal("FAILED", "", failureCode);
+        // terminal state through the same serialized progress chain. The last-line
+        // delivery can itself be refused; it must never become an unhandled rejection.
+        record.progress.sendTerminal("FAILED", "", failureCode).catch((deliveryError: unknown) => {
+          console.error(`[task ${record.start.taskId}] last-line terminal delivery was not acknowledged:`,
+            deliveryError instanceof Error ? `${deliveryError.name}: ${deliveryError.message}` : deliveryError);
+        });
       })
       .finally(() => {
         if (active?.kind === "task" && active.taskId === record.start.taskId) {

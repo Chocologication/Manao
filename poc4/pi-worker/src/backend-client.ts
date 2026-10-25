@@ -451,7 +451,7 @@ export class ProgressChain {
     if (this.buffer.length > 100) {
       this.buffer.shift();
     }
-    this.queue = this.queue.then(() => this.deliver(item));
+    this.queue = this.queue.then(() => this.deliver(item)).then(() => undefined);
   }
 
   /** Waits until every enqueued item has been delivered. */
@@ -467,13 +467,22 @@ export class ProgressChain {
    * bounds the item TEXT in UTF-8 bytes, and the JSON wrapper, quotes and escapes
    * all count — so a summary that only overflows after serialization is cut here
    * instead of being rejected backend-side (which would leave the task occupied).
+   *
+   * A terminal the backend never acknowledged REJECTS (repair task 2): a refused
+   * or lost delivery must never resolve as if it had been acknowledged — the
+   * settlement layer (task 4) owns the retry loop and the unconfirmed state.
    */
   async sendTerminal(state: "COMPLETED" | "FAILED", summary: string, failureCode: string | null): Promise<void> {
     await this.drain();
     const payload = JSON.stringify({ state, summary: fitSummary(summary, state, failureCode), failureCode });
     const item: ProgressItem = { seq: this.nextSeq++, kind: "terminal", text: payload, truncated: false };
     this.buffer.push(item);
-    await this.deliver(item);
+    const outcome = await this.deliver(item);
+    if (outcome === "failed") {
+      throw this.lastError instanceof BackendHttpError
+        ? this.lastError
+        : new BackendHttpError(0, "AI_PROGRESS_REJECTED", "terminal delivery was not acknowledged");
+    }
   }
 
   /** The first delivery error, for diagnostics at settlement time. */
@@ -481,11 +490,17 @@ export class ProgressChain {
     return this.lastError;
   }
 
-  private async deliver(item: ProgressItem): Promise<void> {
+  /**
+   * Delivers one item with the identical-retry contract and reports what happened:
+   * accepted (the backend appended it), dropped (a same-seq different-payload replay —
+   * the backend kept its authoritative copy) or failed (nothing acknowledged). Progress
+   * items never abort the chain on failure; the TERMINAL caller inspects the outcome.
+   */
+  private async deliver(item: ProgressItem): Promise<"accepted" | "dropped" | "failed"> {
     try {
       const ack = await this.client.progress(this.taskId, item);
       if (ack.accepted) {
-        return;
+        return "accepted";
       }
       if (ack.expectedSeq !== undefined && ack.expectedSeq <= item.seq) {
         // The backend has not durably reached this item yet: replay the buffered
@@ -497,15 +512,18 @@ export class ProgressChain {
           }
         }
         const retry = await this.client.progress(this.taskId, item);
-        if (retry.accepted || retry.mismatch) {
-          return;
+        if (retry.accepted) {
+          return "accepted";
+        }
+        if (retry.mismatch) {
+          return "dropped";
         }
         throw new BackendHttpError(0, "AI_PROGRESS_REJECTED", "progress gap replay did not settle");
       }
       if (ack.mismatch) {
         // Same seq, different payload: the backend's copy wins and this item is
         // dropped — resending would only repeat the conflict.
-        return;
+        return "dropped";
       }
     } catch (error) {
       this.lastError = error;
@@ -513,8 +531,11 @@ export class ProgressChain {
       // idempotent on the backend.
       try {
         const retry = await this.client.progress(this.taskId, item);
-        if (retry.accepted || retry.mismatch) {
-          return;
+        if (retry.accepted) {
+          return "accepted";
+        }
+        if (retry.mismatch) {
+          return "dropped";
         }
       } catch (retryError) {
         this.lastError = retryError;
@@ -522,5 +543,6 @@ export class ProgressChain {
       // Delivery stays failed but the chain continues: progress loss must never
       // wedge the task; the terminal state below is sent through the same chain.
     }
+    return "failed";
   }
 }

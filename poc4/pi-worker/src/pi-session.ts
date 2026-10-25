@@ -423,8 +423,16 @@ class DefaultPiTaskSession implements PiTaskSession {
     this.running = false;
     this.live?.finish();
     // The terminal state is only sent after the progress chain has drained, so the
-    // complete-message and tool items always precede it.
-    await this.progress.sendTerminal(outcome.state, outcome.summary, outcome.failureCode);
+    // complete-message and tool items always precede it. An unacknowledged delivery
+    // must never enter the "create another FAILED result" path (repair design section
+    // 5): the frozen outcome stands and the delivery layer (task 4) owns the retry,
+    // so the refusal is surfaced here and the outcome is returned unchanged.
+    try {
+      await this.progress.sendTerminal(outcome.state, outcome.summary, outcome.failureCode);
+    } catch (deliveryError) {
+      console.error(`[task ${this.taskId}] terminal delivery was not acknowledged:`,
+        deliveryError instanceof Error ? `${deliveryError.name}: ${deliveryError.message}` : deliveryError);
+    }
     this.unsubscribe();
     this.unsubscribeLive?.();
     return outcome;

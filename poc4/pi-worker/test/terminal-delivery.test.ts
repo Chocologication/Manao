@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { BackendClient, BackendHttpError, ProgressChain } from "../src/backend-client.js";
+import { terminalContentSha256, terminalReportId } from "../src/report-identity.js";
 
 /**
  * Terminal settlement regression fixtures (repair plan 2026-10-25, task 1). RED baseline
@@ -47,5 +48,31 @@ describe("terminal delivery", () => {
     const terminal = deliveries.filter((item) => item.kind === "terminal");
     expect(terminal.length).toBeGreaterThanOrEqual(2);
     expect(new Set(terminal.map((item) => `${item.seq}:${item.text}`))).toHaveLength(1);
+  });
+});
+
+/**
+ * The terminal identity algorithm is pinned by the cross-language vectors (repair design
+ * protocol supplement): reportId and the content digest are the lowercase SHA-256 of the
+ * compact JSON array with raw Unicode, unescaped slashes and preserved nulls. The pinned
+ * values below were computed independently and are asserted identically by the Java test
+ * {@code AgentTaskStoreTest.terminalIdentityMatchesThePinnedCrossLanguageVectors} — any
+ * serialization drift on either side breaks both.
+ */
+describe("terminal identity", () => {
+  it("matches the pinned cross-language Unicode vectors", () => {
+    const taskId = "00000000-0000-4000-8000-000000000002";
+    const requestSha256 = "a".repeat(64);
+    const summary = "模型已完成任务 ✅🚀 \"引用\" a/b\n第二行";
+    expect(terminalReportId(taskId, 1, requestSha256)).toBe(
+      "263ade2fcde171dbcea4fc769d7b2f39ee0c5ef92beee2b559ab75458c4ec606",
+    );
+    const reportId = terminalReportId(taskId, 1, requestSha256);
+    expect(terminalContentSha256(reportId, "COMPLETED", summary, null)).toBe(
+      "11feecc769a1fe7f825999d9260131e5a5461b08cf004bcc9d5e88019be70a2a",
+    );
+    expect(terminalContentSha256(reportId, "FAILED", summary, "AI_PROVIDER_ERROR")).toBe(
+      "2f3c92b5efe892a112a63d6bcdc5372e852aa65f81b8a0e20dd45e0f15ff8051",
+    );
   });
 });
