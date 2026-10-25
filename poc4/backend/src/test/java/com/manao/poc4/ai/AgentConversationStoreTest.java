@@ -197,6 +197,15 @@ class AgentConversationStoreTest {
             assertThat(after.remove("conversation_id")).isNull();
             assertThat(after).containsEntry("reasoning_effort", null);
             after.remove("reasoning_effort");
+            // The V15 terminal-receipt columns are additive by design: they appear as
+            // NULL on a legacy row and never rewrite any legacy value (repair task 2).
+            assertThat(after.remove("terminal_report_id")).isNull();
+            assertThat(after.remove("terminal_report_json")).isNull();
+            assertThat(after.remove("terminal_report_sha256")).isNull();
+            assertThat(after.remove("terminal_received_at")).isNull();
+            assertThat(after.remove("deadline_at")).isNull();
+            assertThat(after.remove("close_reason_code")).isNull();
+            assertThat(after.remove("next_reconcile_at")).isNull();
             assertThat(after).isEqualTo(taskBefore);
             assertThat(db.jdbc().queryForMap("SELECT * FROM agent_tool_call WHERE task_id=?", task)).isEqualTo(callBefore);
             String conversation = UUID.randomUUID().toString();
