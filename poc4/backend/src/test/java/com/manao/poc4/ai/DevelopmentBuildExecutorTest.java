@@ -882,6 +882,12 @@ class DevelopmentBuildExecutorTest {
                 tasks.beginClose(taskId);
                 resume.countDown();
                 assertThat(pending.get(10, TimeUnit.SECONDS).terminationReason()).isEqualTo("BUILD_CLOSING_ABORTED");
+                // The tool layer releases the live execution claim in its finally once the
+                // build call has returned (AgentProjectTools); this test drives the executor
+                // directly, so it reproduces that release here. The close flow's finish step
+                // must then be able to settle a task whose execution is provably over —
+                // never one whose execution thread is still live.
+                tasks.releaseBuildClaim(taskId, CALL);
                 // The same late execution is refused even after the close marker is gone.
                 tasks.markToolCallNeedsAttention(taskId, CALL);
                 assertThat(tasks.failClosedTask(taskId, "AI_CLOSED", "closed")).isTrue();

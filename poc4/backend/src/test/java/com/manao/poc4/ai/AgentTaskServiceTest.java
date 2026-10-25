@@ -749,8 +749,12 @@ class AgentTaskServiceTest {
             String late = JSON.createObjectNode()
                 .put("state", "FAILED").put("summary", "late").put("failureCode", "AI_PROVIDER_ERROR")
                 .toString();
+            // Repair task 2: the late report carries the SAME stable legacy report id with
+            // DIFFERENT canonical content, so the receipt entry answers the explicit
+            // identity conflict instead of the generic not-active refusal — the settled
+            // task stays settled either way.
             assertThatThrownBy(() -> h.service.applyProgress(h.taskId, INSTANCE, h.rowEpoch(), h.item(2, "terminal", late)))
-                .isInstanceOfSatisfying(ApiException.class, ex -> assertThat(ex.code()).isEqualTo("AI_TASK_NOT_ACTIVE"));
+                .isInstanceOfSatisfying(ApiException.class, ex -> assertThat(ex.code()).isEqualTo("AI_TERMINAL_MISMATCH"));
             assertThat(h.rowState()).isEqualTo("COMPLETED");
         }
     }
@@ -1094,15 +1098,16 @@ class AgentTaskServiceTest {
             h.service.applyProgress(h.taskId, INSTANCE, h.rowEpoch(), h.item(1, "terminal", terminal));
             // The verdict is arbitrated by the backend: with an unsettled write side
             // effect the task stays NEEDS_ATTENTION under the pending-terminal marker,
-            // the project stays occupied, and the report stays recorded as the
-            // to-be-verified terminal event in the progress envelope.
+            // the project stays occupied, and the report stays recorded as the durable
+            // terminal receipt (repair task 2) — the display envelope keeps its real
+            // message head and never carries the terminal.
             assertThat(h.rowState()).isEqualTo("NEEDS_ATTENTION");
             assertThat(h.rowFailureCode()).isEqualTo("AI_TERMINAL_PENDING");
             assertThat(h.jdbc.queryForObject("SELECT summary FROM agent_task WHERE id = ?", String.class, h.taskId))
                 .isEqualTo("done");
             assertThatThrownBy(() -> h.tasks.requireBrowserWritable(PROJECT))
                 .isInstanceOfSatisfying(ApiException.class, ex -> assertThat(ex.code()).isEqualTo("AI_TASK_ACTIVE"));
-            assertThat(h.progressCount()).isEqualTo(1);
+            assertThat(h.progressCount()).isEqualTo(0);
         }
     }
 

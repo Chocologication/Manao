@@ -43,6 +43,18 @@ class AgentInternalSecurityTest {
             return "context-ok:" + body.length();
         }
 
+        /** The terminal receipt route stays inside the same worker-token chain. */
+        @org.springframework.web.bind.annotation.PostMapping("/internal/ai/tasks/{taskId}/terminal")
+        String terminal(@org.springframework.web.bind.annotation.RequestBody String body) {
+            return "terminal-ok:" + body.length();
+        }
+
+        /** The terminal reconciliation read stays inside the same worker-token chain. */
+        @org.springframework.web.bind.annotation.GetMapping("/internal/ai/tasks/{taskId}/terminal")
+        String terminalAck() {
+            return "terminal-ack-ok";
+        }
+
         @org.springframework.web.bind.annotation.PostMapping("/internal/ai/probe")
         String postInternal(@org.springframework.web.bind.annotation.RequestBody String body) {
             return "internal-ok:" + body.length();
@@ -76,6 +88,33 @@ class AgentInternalSecurityTest {
                 var denied = mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
                     .post("/internal/ai/tasks/task/context").header("Authorization", "Bearer " + jwt(context.getBean(JwtService.class), "browser-user")).content(body)).andReturn();
                 assertThat(denied.getResponse().getStatus()).isEqualTo(401);
+            });
+    }
+
+    @Test void theTerminalRoutesStayInsideTheWorkerTokenChain() {
+        RUNNER.withPropertyValues("MANAO_JWT_SECRET=" + JWT_SECRET, "MANAO_AI_INTERNAL_TOKEN=internal-token")
+            .run(context -> {
+                MockMvc mvc = mockMvc(context);
+                var posted = mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                    .post("/internal/ai/tasks/task/terminal")
+                    .header("X-Manao-Worker-Token", "internal-token")
+                    .content("{\"protocolVersion\":1}")).andReturn();
+                assertThat(posted.getResponse().getStatus()).isEqualTo(200);
+                var read = mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                    .get("/internal/ai/tasks/task/terminal")
+                    .header("X-Manao-Worker-Token", "internal-token")).andReturn();
+                assertThat(read.getResponse().getStatus()).isEqualTo(200);
+                // A browser JWT is never a worker token, on the receipt or its read.
+                String browser = jwt(context.getBean(JwtService.class), "browser-user");
+                var jwtPost = mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                    .post("/internal/ai/tasks/task/terminal")
+                    .header("Authorization", "Bearer " + browser)
+                    .content("{}")).andReturn();
+                assertThat(jwtPost.getResponse().getStatus()).isEqualTo(401);
+                var jwtGet = mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                    .get("/internal/ai/tasks/task/terminal")
+                    .header("Authorization", "Bearer " + browser)).andReturn();
+                assertThat(jwtGet.getResponse().getStatus()).isEqualTo(401);
             });
     }
 

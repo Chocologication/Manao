@@ -111,6 +111,13 @@ public final class AgentProjectTools {
     public AgentContracts.ToolResult invoke(String taskId, AgentContracts.ToolRequest request) {
         requireRequestShape(request);
         AgentTaskStore.TaskOwner owner = tasks.taskOwner(taskId);
+        // The receipt/close freeze must hold WITHOUT gate luck (repair design contract 1):
+        // a brand-new call is refused while the task is parked by a terminal receipt or
+        // closing, even when something else holds the project gate. Replays of already
+        // registered calls keep their original path and settle their original result.
+        if (tasks.findToolCall(taskId, request.toolCallId()).isEmpty()) {
+            tasks.requireTaskAcceptsNewCall(taskId, owner.projectId());
+        }
         AgentTaskStore.ToolCallRow row;
         AgentContracts.ToolResult result = null;
         AgentContracts.BuildGoal buildGoal = null;
