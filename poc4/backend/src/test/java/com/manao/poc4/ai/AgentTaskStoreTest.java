@@ -908,8 +908,10 @@ class AgentTaskStoreTest {
                 .isInstanceOfSatisfying(ApiException.class,
                     ex -> assertThat(ex.code()).isEqualTo("AI_INSTANCE_MISMATCH"));
 
-            // After the receipt settles the task, the same report stays an idempotent ACK.
-            store.applyTerminal(task, AgentContracts.TaskState.COMPLETED, "done", null);
+            // After the receipt settles the task — the receipt-identity CAS is the only
+            // path that completes a parked row (repair plan task 3) — the same report
+            // stays an idempotent ACK.
+            assertThat(store.completeFromReceipt(task, reportId, receipt.contentSha256(), "done", null)).isTrue();
             var settled = store.recordTerminal(task, 1, WORKER, reportId, reportJson,
                 AgentContracts.TaskState.COMPLETED, "done", null);
             assertThat(settled.disposition()).isEqualTo(AgentContracts.TerminalDisposition.SETTLED);
@@ -1066,11 +1068,12 @@ class AgentTaskStoreTest {
             assertThat(row.get("terminal_report_id")).isEqualTo(reportId);
             assertThat(row.get("terminal_report_sha256")).isEqualTo(receipt.contentSha256());
             // The re-delivered report is the idempotent ACK of the attached receipt, and
-            // the parked task settles exactly like a receipt created here.
+            // the parked task settles exactly like a receipt created here — by the
+            // receipt-identity CAS, the only completion path for a parked row.
             assertThat(store.recordTerminal(task, 1, WORKER, reportId, reportJson,
                 AgentContracts.TaskState.COMPLETED, "done", null).disposition())
                 .isEqualTo(AgentContracts.TerminalDisposition.RECORDED);
-            store.applyTerminal(task, AgentContracts.TaskState.COMPLETED, "done", null);
+            assertThat(store.completeFromReceipt(task, reportId, receipt.contentSha256(), "done", null)).isTrue();
             assertThat(db.jdbc().queryForObject("SELECT state FROM agent_task WHERE id = ?",
                 String.class, task)).isEqualTo("COMPLETED");
         }

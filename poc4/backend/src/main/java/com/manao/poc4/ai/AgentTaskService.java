@@ -1,6 +1,5 @@
 package com.manao.poc4.ai;
 
-import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.manao.poc4.ai.AgentContracts.ProgressItem;
 import com.manao.poc4.ai.AgentContracts.TaskRequest;
@@ -12,7 +11,6 @@ import com.manao.poc4.ai.AgentContracts.WorkerStart;
 import com.manao.poc4.ai.AgentContracts.WorkerStatus;
 import com.manao.poc4.api.ApiException;
 import com.manao.poc4.project.ProjectLifecycleGate;
-import java.io.IOException;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
@@ -24,11 +22,13 @@ import java.util.Set;
  * correct (instance, epoch) callback or start ACK binds the running session atomically;
  * progress is a monotonic, idempotent sequence whose terminal item applies the
  * worker-reported verdict ONLY after every tool side effect has settled (the store's
- * unified terminal arbitration keeps the project occupied otherwise, and the close
- * flow is the only path that resolves such a pending verdict). A re-submission of the
- * same request answers the ORIGINAL task without re-driving, re-fencing or re-prompting
- * it; a lost start response is reconciled by a status read of the same task inside that
- * one submission — never by a second task id or a second session.
+ * unified terminal arbitration keeps the project occupied otherwise, and the unified
+ * settlement driver is the only path that resolves such a pending verdict). A
+ * re-submission of the same request answers the ORIGINAL task without re-driving,
+ * re-fencing or re-prompting it; a lost start response is reconciled by a status read
+ * of the same task inside that one submission — never by a second task id or a second
+ * session. The close flow persists its intent first and finishes in bounded re-entrant
+ * settlement steps (repair design section 6) — it never waits on a run.
  */
 public final class AgentTaskService {
     private static final ObjectMapper JSON = new ObjectMapper();
@@ -39,6 +39,8 @@ public final class AgentTaskService {
     private final PiWorkerClient worker;
     private final AgentProjectTools tools;
     private final AgentConversationService conversations;
+    /** The unified settlement driver: receipts, user closes and budget closes all settle here. */
+    private final AgentTaskSettlementService settlement;
 
     public AgentTaskService(AgentTaskStore tasks, ProjectLifecycleGate lifecycle, PiWorkerClient worker,
                             AgentProjectTools tools) {
@@ -51,6 +53,7 @@ public final class AgentTaskService {
         this.worker = worker;
         this.tools = tools;
         this.conversations = conversations;
+        this.settlement = new AgentTaskSettlementService(tasks, lifecycle, worker, tools);
     }
 
     /**
@@ -209,7 +212,7 @@ public final class AgentTaskService {
                 > AgentTaskStore.MAX_PROGRESS_TEXT_BYTES) {
             throw new ApiException("AI_PROGRESS_TOO_LARGE", 422, "Progress item exceeds the 8 KiB bound");
         }
-        TerminalReport report = parseTerminal(item.text());
+        AgentTaskSettlementService.TerminalReport report = AgentTaskSettlementService.parseTerminal(item.text());
         String reportId = AgentTaskStore.terminalReportId(taskId, epoch, tasks.requestSha256Of(taskId));
         var receipt = tasks.recordTerminal(taskId, epoch, instanceId, reportId,
             receiptJson(report.state(), report.summary(), report.failureCode()),
@@ -217,7 +220,8 @@ public final class AgentTaskService {
         boolean inOrder = item.seq() == tasks.progressHeadSeq(taskId) + 1;
         if ((receipt.firstReceipt() && inOrder)
             || (!receipt.firstReceipt() && receipt.disposition() == AgentContracts.TerminalDisposition.RECORDED)) {
-            settleParkedTerminal(taskId, reportId, receipt.contentSha256(), report);
+            settlement.settleParkedTerminal(taskId, reportId, receipt.contentSha256(),
+                report.state(), report.summary(), report.failureCode());
         }
     }
 
@@ -257,8 +261,8 @@ public final class AgentTaskService {
             receiptJson(report.state(), report.summary(), report.failureCode()),
             report.state(), report.summary(), report.failureCode());
         if (!receipt.firstReceipt() && receipt.disposition() == AgentContracts.TerminalDisposition.RECORDED) {
-            settleParkedTerminal(taskId, reportId, receipt.contentSha256(),
-                new TerminalReport(report.state(), report.summary(), report.failureCode()));
+            settlement.settleParkedTerminal(taskId, reportId, receipt.contentSha256(),
+                report.state(), report.summary(), report.failureCode());
         }
         AgentContracts.TerminalDisposition disposition = tasks
             .storedTerminalDisposition(taskId, reportId, receipt.contentSha256())
@@ -270,40 +274,6 @@ public final class AgentTaskService {
     public Optional<AgentContracts.TerminalAck> storedTerminalAck(String taskId, String instanceId,
                                                                   long epoch) {
         return tasks.storedTerminalAck(taskId, epoch, instanceId);
-    }
-
-    /**
-     * The settlement decision for a receipt that is parked under the pending marker:
-     * FAILED reports re-enter the close flow, reports over unsettled side effects stay
-     * parked, and a clear report settles by the store's atomic CAS. The decision needs
-     * the project gate; a busy gate leaves the receipt parked for the next re-delivery
-     * or the reconcile scan — the refusal is never projected onto the worker.
-     */
-    private void settleParkedTerminal(String taskId, String reportId, String contentSha256,
-                                      TerminalReport report) {
-        AgentTaskStore.TaskOwner owner = tasks.taskOwner(taskId);
-        var lease = lifecycle.tryAcquire(owner.projectId());
-        if (lease.isEmpty()) {
-            return;
-        }
-        boolean failed = false;
-        try (ProjectLifecycleGate.Lease gateLease = lease.get()) {
-            synchronized (tasks) {
-                if (!tasks.terminalReceiptParked(taskId, reportId, contentSha256)) {
-                    return;
-                }
-                if (report.state() == TaskState.FAILED) {
-                    tasks.beginClose(taskId, report.failureCode());
-                    failed = true;
-                } else if (tasks.hasLiveToolClaims(taskId) || !tools.applicationCanRelease(taskId, true)) {
-                    // Side effects still unsettled: the receipt stays parked for the close
-                    // flow or the reconcile scan; the project keeps its occupancy.
-                } else {
-                    tasks.applyTerminal(taskId, report.state(), report.summary(), report.failureCode());
-                }
-            }
-        }
-        if (failed) close(taskId, report.failureCode(), report.summary());
     }
 
     /**
@@ -320,17 +290,16 @@ public final class AgentTaskService {
     }
 
     /**
-     * The close flow: inside the gate the task is marked NEEDS_ATTENTION with the
-     * AI_CLOSING marker (which refuses every new tool registration from this moment),
-     * then the worker is stopped and the evidence is finished. The project is
-     * released ONLY when every applicable piece of evidence is provably finished —
-     * every workspace file receipt verified through the shared reconcile path and
-     * every build proven either closed with confirmed cleanup or never created. Any
-     * unknown state keeps the task NEEDS_ATTENTION with the project occupied, and the
-     * close may be re-driven: a task already marked AI_CLOSING by an earlier close
-     * re-enters the finishing steps until they provably succeed. A late terminal can
-     * never release the project first because the release CAS matches only the
-     * close's own marker. An already settled task is a no-op.
+     * The fast close (repair design section 6): inside the gate the close intent is
+     * persisted first — the task is marked NEEDS_ATTENTION with the AI_CLOSING marker
+     * (which refuses every new tool registration from this moment) and the durable
+     * close reason is written exactly once — then ONE bounded, re-entrant settlement
+     * step finishes the evidence and answers immediately. The caller's snapshot after
+     * this call may still be NEEDS_ATTENTION: that means accepted, not yet confirmed
+     * finished — the settlement continues (the next close, the reconcile scan) until
+     * every piece of evidence is provably finished and the project is released. No step
+     * here waits on a run or holds the gate across external IO; a repeated close keeps
+     * the original reason and a settled task is a final no-op.
      */
     public void close(String taskId, String failureCode, String summary) {
         AgentTaskStore.TaskOwner owner = tasks.taskOwner(taskId);
@@ -345,34 +314,8 @@ public final class AgentTaskService {
         // START (marker armed now) or RETRY (an earlier close left the evidence
         // unknown): re-drive the finishing idempotently — the worker stop and every
         // evidence check may repeat until they provably succeed.
-        try {
-            worker.stop(taskId);
-        } catch (RuntimeException ex) {
-            // The worker may already be gone; the marker already blocks new calls.
-        }
-        // No project gate or task-store monitor across external IO or observation waits.
-        if (tasks.hasLiveToolClaims(taskId) || !tools.finishForClose(taskId) || !tools.finishApplication(taskId)) return;
-        try (ProjectLifecycleGate.Lease lease = lifecycle.tryAcquire(owner.projectId()).orElseThrow(
-                () -> new ApiException("PROJECT_BUSY", 409, "Project is busy"))) {
-            // Closing forbids new claims. Re-read all durable application identities and live IO.
-            synchronized (tasks) {
-                if (tasks.hasLiveToolClaims(taskId) || !tools.applicationCanRelease(taskId, false)) return;
-                // The original failure comes from the stored receipt first; the frozen
-                // progress envelope stays the source for pre-receipt legacy rows.
-                TerminalReport original = tasks.storedTerminalReport(taskId)
-                    .map(stored -> new TerminalReport(stored.state(), stored.summary(), stored.failureCode()))
-                    .filter(report -> report.state() == TaskState.FAILED)
-                    .orElseGet(() -> tasks.terminalProgress(taskId)
-                        .map(item -> parseTerminal(item.text()))
-                        .filter(report -> report.state() == TaskState.FAILED)
-                        .orElse(null));
-                tasks.failClosedTask(taskId, original == null ? failureCode : original.failureCode(),
-                    original == null ? summary : original.summary());
-            }
-        }
+        settlement.settleCloseIntent(taskId, failureCode, summary);
     }
-
-    private record TerminalReport(TaskState state, String summary, String failureCode) { }
 
     /** The normalized durable receipt JSON: protocol version plus the report fields. */
     private static String receiptJson(TaskState state, String summary, String failureCode) {
@@ -397,22 +340,5 @@ public final class AgentTaskService {
             node.put("failureCode", failureCode);
         }
         return node.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8).length;
-    }
-
-    private TerminalReport parseTerminal(String text) {
-        try {
-            JsonNode node = JSON.readTree(text);
-            String stateName = node.path("state").asText("");
-            if (!"COMPLETED".equals(stateName) && !"FAILED".equals(stateName)) {
-                throw new ApiException("VALIDATION_ERROR", 422, "Request validation failed");
-            }
-            String summary = node.path("summary").asText(null);
-            JsonNode failureCodeNode = node.path("failureCode");
-            String failureCode = failureCodeNode.isNull() || failureCodeNode.isMissingNode()
-                ? null : failureCodeNode.asText(null);
-            return new TerminalReport(TaskState.valueOf(stateName), summary, failureCode);
-        } catch (IOException ex) {
-            throw new ApiException("VALIDATION_ERROR", 422, "Request validation failed");
-        }
     }
 }

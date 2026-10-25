@@ -211,6 +211,10 @@ class AgentTaskServiceTest {
             return jdbc.queryForObject("SELECT failure_code FROM agent_task WHERE id = ?", String.class, taskId);
         }
 
+        String closeReasonCode() {
+            return jdbc.queryForObject("SELECT close_reason_code FROM agent_task WHERE id = ?", String.class, taskId);
+        }
+
         String callRowState(String callId) {
             return jdbc.queryForObject(
                 "SELECT state FROM agent_tool_call WHERE task_id = ? AND tool_call_id = ?",
@@ -352,6 +356,68 @@ class AgentTaskServiceTest {
             org.mockito.Mockito.verify(h.runs, org.mockito.Mockito.never()).stopForAgent(
                 org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(),
                 org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any());
+        }
+    }
+
+    /**
+     * The fast close contract (repair design section 6): the close persists its intent
+     * and returns promptly WITHOUT waiting for the run to settle — an unsettled run
+     * leaves the task NEEDS_ATTENTION with the occupancy retained and the next close
+     * (or reconcile) round finishes the verified cessation. The 120s budget wait is
+     * gone: no close step ever waits on a run inside the close.
+     */
+    @Test
+    void closeReturnsPromptlyWithTheIntentPersistedAndFinishesInLaterSteps() throws Exception {
+        try (Harness h = new Harness()) {
+            h.submit();
+            h.completedStart("start-done", "run-created");
+            // The stop is accepted but the run is still withdrawing: nobody may wait for it.
+            org.mockito.Mockito.when(h.runs.get(OWNER, PROJECT, "run-created"))
+                .thenReturn(applicationRun("run-created", "STOPPING", false));
+            org.mockito.Mockito.when(h.runs.stopForAgent(OWNER, PROJECT, h.taskId, "start-done", "run-created"))
+                .thenReturn(applicationRun("run-created", "STOPPING", false));
+            ExecutorService pool = Executors.newSingleThreadExecutor();
+            try {
+                Future<?> closing = pool.submit(() -> h.service.close(h.taskId, "AI_CLOSED", "closed"));
+                closing.get(10, TimeUnit.SECONDS);
+                // The intent is durably accepted; the occupancy is retained for the next round.
+                assertThat(h.rowState()).isEqualTo("NEEDS_ATTENTION");
+                assertThat(h.rowFailureCode()).isEqualTo("AI_CLOSING");
+                assertThat(h.closeReasonCode()).isEqualTo("AI_CLOSED");
+                assertThatThrownBy(() -> h.tasks.requireBrowserWritable(PROJECT))
+                    .isInstanceOfSatisfying(ApiException.class,
+                        ex -> assertThat(ex.code()).isEqualTo("AI_TASK_ACTIVE"));
+                // The later step finishes: the run reached its terminal state off-thread.
+                org.mockito.Mockito.when(h.runs.get(OWNER, PROJECT, "run-created"))
+                    .thenReturn(applicationRun("run-created", "CANCELLED", false));
+                h.service.close(h.taskId, "AI_CLOSED", "retry");
+                assertThat(h.rowState()).isEqualTo("FAILED");
+                assertThat(h.rowFailureCode()).isEqualTo("AI_CLOSED");
+                assertThat(h.closeReasonCode()).isEqualTo("AI_CLOSED");
+                h.tasks.requireBrowserWritable(PROJECT);
+            } finally {
+                pool.shutdownNow();
+            }
+        }
+    }
+
+    /**
+     * A repeated close never overwrites the persisted reason, and a close of an already
+     * settled task is a final no-op: the state, the failure code and the reason stay
+     * exactly as the first close decided them.
+     */
+    @Test
+    void repeatedCloseKeepsTheFirstReasonAndIsAFinalNoOp() {
+        try (Harness h = new Harness()) {
+            h.submit();
+            h.service.close(h.taskId, "AI_CLOSED", "closed by the owner");
+            assertThat(h.rowState()).isEqualTo("FAILED");
+            assertThat(h.closeReasonCode()).isEqualTo("AI_CLOSED");
+            h.service.close(h.taskId, "AI_TASK_BUDGET_EXCEEDED", "a different reason must not land");
+            assertThat(h.rowState()).isEqualTo("FAILED");
+            assertThat(h.rowFailureCode()).isEqualTo("AI_CLOSED");
+            assertThat(h.closeReasonCode()).isEqualTo("AI_CLOSED");
+            h.tasks.requireBrowserWritable(PROJECT);
         }
     }
 

@@ -67,9 +67,12 @@ public final class AgentTaskController {
     }
 
     /**
-     * The owner's explicit abandon: the close flow runs in the service — the marker
-     * persists inside the gate first, the worker is stopped, and the project is only
-     * released when every piece of evidence is provably finished. Idempotent.
+     * The owner's explicit abandon (repair design section 6): the close intent is
+     * persisted first and the answer returns the CURRENT snapshot fast — a snapshot
+     * still showing NEEDS_ATTENTION means the close was accepted but not yet confirmed
+     * finished, and the settlement continues in the background until the project is
+     * provably released. A repeated close keeps the original reason; a close of an
+     * already settled task is a no-op.
      */
     @PostMapping("/{taskId}/close")
     public AgentContracts.TaskSnapshot close(Authentication authentication, @PathVariable String projectId,

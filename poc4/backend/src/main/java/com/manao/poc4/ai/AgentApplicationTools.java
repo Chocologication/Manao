@@ -25,33 +25,21 @@ public final class AgentApplicationTools {
     private final RunService runs;
     private final RunStore store;
     private final RunLogService logs;
-    private final Duration finishBudget;
     private final ProjectApplicationProbe probe;
     private final ProjectLifecycleGate lifecycle;
 
     public AgentApplicationTools(AgentTaskStore tasks, RunService runs, RunStore store, RunLogService logs,
                                  ProjectApplicationProbe probe, ProjectLifecycleGate lifecycle) {
-        this(tasks, runs, store, logs, Duration.ofSeconds(120), probe, lifecycle);
-    }
-
-    public AgentApplicationTools(AgentTaskStore tasks, RunService runs, RunStore store, RunLogService logs) {
-        this(tasks, runs, store, logs, Duration.ofSeconds(120));
-    }
-
-    AgentApplicationTools(AgentTaskStore tasks, RunService runs, RunStore store, RunLogService logs,
-                          Duration finishBudget) {
-        this(tasks, runs, store, logs, finishBudget, null, null);
-    }
-
-    private AgentApplicationTools(AgentTaskStore tasks, RunService runs, RunStore store, RunLogService logs,
-                                  Duration finishBudget, ProjectApplicationProbe probe, ProjectLifecycleGate lifecycle) {
         this.tasks = tasks;
         this.runs = runs;
         this.store = store;
         this.logs = logs;
-        this.finishBudget = finishBudget;
         this.probe = probe;
         this.lifecycle = lifecycle;
+    }
+
+    public AgentApplicationTools(AgentTaskStore tasks, RunService runs, RunStore store, RunLogService logs) {
+        this(tasks, runs, store, logs, null, null);
     }
 
     /** The caller holds the ledger claim until this answer has been durably settled. */
@@ -261,11 +249,18 @@ public final class AgentApplicationTools {
         return result;
     }
 
-    /** Only registered original start/stop targets are stopped; an untouched old app survives. */
+    /**
+     * One re-entrant close-finishing step over the task's application calls (repair
+     * design section 6): each registered original start/stop target gets at most ONE
+     * stop request and ONE bounded re-read — an unconfirmed run returns false
+     * immediately for the next reconcile round instead of waiting out an observation
+     * budget inside the close. Only registered original targets are stopped; an
+     * untouched old app survives. Control is never replayed from the original call
+     * after close; completed answers are preserved.
+     */
     public boolean finish(String taskId) {
         if (tasks.hasLiveToolClaims(taskId)) return false;
         var owner = tasks.taskOwner(taskId);
-        long deadline = System.nanoTime() + finishBudget.toNanos();
         for (var row : tasks.applicationCalls(taskId)) {
             if (!tasks.claimApplicationCleanup(taskId, row.toolCallId())) return false;
             try {
@@ -274,11 +269,11 @@ public final class AgentApplicationTools {
                     RunSummary run = cleanupRun(owner, row, target);
                     if (run != null && !terminal(run)) {
                         runs.stopForAgent(owner.ownerId(), owner.projectId(), taskId, row.toolCallId(), target);
-                        run = observe(owner, requiredRun(owner, target), deadline, true);
-                        if (!terminal(run)) return false;
+                        // One bounded re-read: an unconfirmed run defers this step; the
+                        // next reconcile round re-drives it from the durable facts.
+                        if (!terminal(requiredRun(owner, target))) return false;
                     }
                 }
-                // Control is never replayed from the original call after close. Preserve completed answers.
                 tasks.retireApplicationCall(taskId, row.toolCallId());
             } catch (RuntimeException ex) {
                 return false;

@@ -692,7 +692,7 @@ public final class AgentTaskStore implements AgentTaskOccupancy {
     }
 
     /**
-     * Applies a worker-reported terminal state — the backend's unified terminal verdict.
+     * Applies a worker-reported terminal state to a task that still accepts new calls.
      * The decision is ONE atomic SQL statement (fix round 2, C1): the side-effect check
      * and the state transition are the same conditional UPDATE, so a concurrent tool-call
      * registration or receipt from ANY database connection — not merely another thread of
@@ -701,16 +701,17 @@ public final class AgentTaskStore implements AgentTaskOccupancy {
      * covers both halves of a side effect: any tool call still REGISTERED/RUNNING/
      * NEEDS_ATTENTION (an executing build, an unknown outcome) and any task-linked
      * workspace_operation still PENDING (a file receipt that was never verified through
-     * the shared reconcile path). The verdict may also settle a task parked under the
-     * pending-terminal marker — that marker IS the recorded receipt awaiting exactly this
-     * verification.
+     * the shared reconcile path).
      *
-     * <p>Zero affected rows mean either a late terminal (the task already settled or is
-     * closing — nothing to record) or an unsettled side effect; one atomic fallback
-     * statement then records the verdict as a to-be-verified event — its progress item
-     * stays in the envelope and the {@link #TERMINAL_PENDING_MARKER} keeps the project
-     * occupied — and only the close flow resolves it. A verdict may never settle the
-     * task COMPLETED/FAILED while any side effect is undecided.</p>
+     * <p>The verdict completes ONLY from QUEUED or RUNNING (repair plan task 3): a task
+     * parked under the pending-terminal marker is settled exclusively by
+     * {@link #completeFromReceipt}, the CAS that matches the stored receipt's identity
+     * and canonical content digest. Zero affected rows from a QUEUED/RUNNING task mean
+     * an unsettled side effect; one atomic fallback statement then records the verdict
+     * as a to-be-verified event — its progress item stays in the envelope and the
+     * {@link #TERMINAL_PENDING_MARKER} keeps the project occupied — and only the
+     * settlement flow resolves it. A verdict may never settle the task COMPLETED/FAILED
+     * while any side effect is undecided.</p>
      */
     public synchronized boolean applyTerminal(String taskId, AgentContracts.TaskState state,
                                               String summary, String failureCode) {
@@ -721,8 +722,7 @@ public final class AgentTaskStore implements AgentTaskOccupancy {
         int applied = jdbc.update("""
                 UPDATE agent_task
                 SET state = ?, summary = ?, failure_code = ?, updated_at = ?
-                WHERE id = ? AND (state IN ('QUEUED', 'RUNNING')
-                    OR (state = 'NEEDS_ATTENTION' AND failure_code = ?))
+                WHERE id = ? AND state IN ('QUEUED', 'RUNNING')
                   AND NOT EXISTS (SELECT 1 FROM agent_tool_call c
                       WHERE c.task_id = agent_task.id
                         AND c.state IN ('REGISTERED', 'RUNNING', 'NEEDS_ATTENTION'))
@@ -730,7 +730,7 @@ public final class AgentTaskStore implements AgentTaskOccupancy {
                       JOIN workspace_operation w ON w.id = c2.workspace_operation_id
                       WHERE c2.task_id = agent_task.id AND w.state = 'PENDING')
                 """,
-            state.name(), summary, failureCode, now, taskId, TERMINAL_PENDING_MARKER);
+            state.name(), summary, failureCode, now, taskId);
         if (applied > 0) {
             return true;
         }
@@ -1197,6 +1197,98 @@ public final class AgentTaskStore implements AgentTaskOccupancy {
     public Optional<AgentContracts.ProgressItem> terminalProgress(String taskId) {
         return readEnvelope(taskId).items().stream().filter(item -> "terminal".equals(item.kind()))
             .reduce((first, last) -> last);
+    }
+
+    // ------------------------------------------------------------------
+    // Durable settlement (repair design section 6). reconcile(taskId) in
+    // AgentTaskSettlementService drives every stored receipt, user close
+    // and budget close through the existing business verification. These
+    // primitives give that driver a consistent read of the durable row,
+    // the receipt-identity completion CAS, and the deferral marker for
+    // the next round. Same lock discipline as recordTerminal: the store
+    // monitor covers the whole decision; a CAS UPDATE touches the task
+    // row and its subqueries only — never a project row after a task row.
+    // ------------------------------------------------------------------
+
+    /** The durable row behind one settlement decision: state, close intent and receipt identity. */
+    public record SettlementView(String state, String failureCode, String closeReasonCode,
+                                 String terminalReportId, String terminalReportSha256) { }
+
+    /** The consistent settlement read of one task; unknown ids are a 404. */
+    public SettlementView settlementView(String taskId) {
+        List<SettlementView> rows = jdbc.query("""
+            SELECT state, failure_code, close_reason_code, terminal_report_id, terminal_report_sha256
+            FROM agent_task WHERE id = ?
+            """, (rs, row) -> new SettlementView(rs.getString(1), rs.getString(2), rs.getString(3),
+            rs.getString(4), rs.getString(5)), taskId);
+        if (rows.isEmpty()) {
+            throw new ApiException("AI_TASK_NOT_FOUND", 404, "Task not found");
+        }
+        return rows.get(0);
+    }
+
+    /** True while the row carries any persisted close intent: reason, close marker or settled FAILED. */
+    public static boolean hasCloseIntent(SettlementView view) {
+        return "FAILED".equals(view.state())
+            || (view.closeReasonCode() != null && !view.closeReasonCode().isBlank())
+            || ("NEEDS_ATTENTION".equals(view.state()) && CLOSING_MARKER.equals(view.failureCode()));
+    }
+
+    /** True while any task-linked workspace receipt is still PENDING (an unverified file write). */
+    public boolean hasPendingReceipts(String taskId) {
+        Integer count = jdbc.queryForObject("""
+            SELECT COUNT(*) FROM agent_tool_call c
+            JOIN workspace_operation w ON w.id = c.workspace_operation_id
+            WHERE c.task_id = ? AND w.state = 'PENDING'
+            """, Integer.class, taskId);
+        return count != null && count > 0;
+    }
+
+    /**
+     * The deferral of one settlement round (design section 6): the still-occupying task
+     * is marked for the next reconcile pass. The interval is this round's engineering
+     * default on the scheduler's 5s cadence; the scheduler (later task) owns the backoff
+     * policy on top of it.
+     */
+    public static final long RECONCILE_DEFER_MILLIS = 5000;
+
+    public void scheduleReconcile(String taskId) {
+        jdbc.update("""
+            UPDATE agent_task SET next_reconcile_at = ?, updated_at = ?
+            WHERE id = ? AND state IN ('QUEUED', 'RUNNING', 'NEEDS_ATTENTION')
+            """,
+            Timestamp.from(clock.instant().plusMillis(RECONCILE_DEFER_MILLIS)),
+            Timestamp.from(clock.instant()), taskId);
+    }
+
+    /**
+     * The parked receipt's completion CAS (repair plan task 3): the ONE atomic statement
+     * that settles a task parked under the pending-terminal marker from ITS OWN stored
+     * receipt. The WHERE matches the receipt identity AND the canonical content digest
+     * (a foreign report never completes), requires the parked marker itself (an armed
+     * close intent — reason, close marker or settled FAILED — can never be overridden),
+     * and re-verifies every durable side effect in the same statement: no unsettled tool
+     * call and no task-linked PENDING workspace receipt. Zero affected rows mean a close
+     * won the race, an effect is still undecided, or the task already settled — the
+     * caller defers and re-reads instead of assuming.
+     */
+    public synchronized boolean completeFromReceipt(String taskId, String reportId, String contentSha256,
+                                                    String summary, String failureCode) {
+        Timestamp now = Timestamp.from(clock.instant());
+        return jdbc.update("""
+            UPDATE agent_task
+            SET state = 'COMPLETED', summary = ?, failure_code = ?, updated_at = ?
+            WHERE id = ? AND state = 'NEEDS_ATTENTION' AND failure_code = ?
+              AND terminal_report_id = ? AND terminal_report_sha256 = ?
+              AND close_reason_code IS NULL
+              AND NOT EXISTS (SELECT 1 FROM agent_tool_call c
+                  WHERE c.task_id = agent_task.id
+                    AND c.state IN ('REGISTERED', 'RUNNING', 'NEEDS_ATTENTION'))
+              AND NOT EXISTS (SELECT 1 FROM agent_tool_call c2
+                  JOIN workspace_operation w ON w.id = c2.workspace_operation_id
+                  WHERE c2.task_id = agent_task.id AND w.state = 'PENDING')
+            """, summary, failureCode, now, taskId, TERMINAL_PENDING_MARKER, reportId,
+            contentSha256) > 0;
     }
 
     /** Every still-unsettled call of one task; the close flow finishes what it can of these. */

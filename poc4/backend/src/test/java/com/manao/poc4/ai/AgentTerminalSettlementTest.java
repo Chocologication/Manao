@@ -487,6 +487,363 @@ class AgentTerminalSettlementTest {
         }
     }
 
+    // ------------------------------------------------------------------
+    // Task 3: the unified settlement driver (repair design section 6).
+    // reconcile(taskId) drives every stored receipt, user close and budget
+    // close through the existing business verification; the completion of
+    // a parked receipt is a CAS matching the receipt identity/digest with
+    // no close intent; a close persists its intent and finishes in
+    // re-entrant single steps without any 120s wait.
+    // ------------------------------------------------------------------
+
+    /** Progress 1..36 followed by one gapped authenticated terminal that parks the receipt. */
+    private static void parkReceipt(SettlementHarness h, String state, String summary, String failureCode) {
+        for (long seq = 1; seq <= 36; seq++) {
+            h.recordProgress(seq);
+        }
+        h.submitTerminal(38, state, summary, failureCode);
+        assertThat(h.rowState()).isEqualTo("NEEDS_ATTENTION");
+        assertThat(h.rowFailureCode()).isEqualTo(AgentTaskStore.TERMINAL_PENDING_MARKER);
+    }
+
+    private static com.manao.poc4.run.RunSummary runSummary(String id, String state, boolean ready) {
+        return new com.manao.poc4.run.RunSummary(id, state, "7", JSON.createObjectNode(),
+            "2026-10-25T00:00:00Z", null, "CANCELLED".equals(state) ? "2026-10-25T00:01:00Z" : null,
+            null, null, false, 0, null, ready ? "2026-10-25T00:00:00Z" : null, null);
+    }
+
+    /**
+     * The settlement survives a process restart (acceptance case D): a receipt parked
+     * before the interruption is driven to its verified completion by a settlement
+     * service rebuilt over nothing but the same database — no browser, no re-delivery,
+     * no second model or tool side effect. A repeated reconcile of the settled task is
+     * a no-op.
+     */
+    @Test
+    void reconcileSettlesAParkedReceiptAfterTheProcessRestarts() {
+        try (SettlementHarness h = new SettlementHarness()) {
+            parkReceipt(h, "COMPLETED", SUMMARY, null);
+            h.rebuiltSettlement().reconcile(h.taskId);
+            assertThat(h.rowState()).isEqualTo("COMPLETED");
+            assertThat(h.rowSummary()).isEqualTo(SUMMARY);
+            assertThat(h.rowFailureCode()).isNull();
+            h.tasks.requireBrowserWritable(PROJECT);
+            // A repeated reconcile after the settled task changes nothing.
+            h.rebuiltSettlement().reconcile(h.taskId);
+            assertThat(h.rowState()).isEqualTo("COMPLETED");
+            assertThat(h.closeReasonCode()).isNull();
+        }
+    }
+
+    /**
+     * The verified success completes WITHOUT touching the task's READY application
+     * (acceptance case H): no stop request ever reaches the worker or the Run authority,
+     * and a repeated reconcile never repeats a side effect.
+     */
+    @Test
+    void reconcileCompletesTheSuccessWithoutTouchingTheReadyApplication() {
+        try (SettlementHarness h = new SettlementHarness()) {
+            parkReceipt(h, "COMPLETED", SUMMARY, null);
+            String runId = UUID.randomUUID().toString();
+            h.insertCompletedStartCall("start-ready", runId);
+            var ready = runSummary(runId, "RUNNING", true);
+            Mockito.when(h.runs.get(OWNER, PROJECT, runId)).thenReturn(ready);
+            Mockito.when(h.runs.active(OWNER, PROJECT)).thenReturn(java.util.Optional.of(ready));
+            h.settlement.reconcile(h.taskId);
+            assertThat(h.rowState()).isEqualTo("COMPLETED");
+            Mockito.verify(h.runs, Mockito.never()).stopForAgent(Mockito.any(), Mockito.any(),
+                Mockito.any(), Mockito.any(), Mockito.any());
+            Mockito.verify(h.worker, Mockito.never()).stop(Mockito.any());
+            h.tasks.requireBrowserWritable(PROJECT);
+            // The repeated reconcile never repeats a side effect.
+            h.settlement.reconcile(h.taskId);
+            assertThat(h.rowState()).isEqualTo("COMPLETED");
+            Mockito.verify(h.runs, Mockito.never()).stopForAgent(Mockito.any(), Mockito.any(),
+                Mockito.any(), Mockito.any(), Mockito.any());
+        }
+    }
+
+    /**
+     * An unresolved effect keeps the occupancy through reconcile (acceptance case G):
+     * a REGISTERED call, a NEEDS_ATTENTION call with an unknown outcome, a PENDING
+     * workspace receipt and a live execution claim each hold the task parked under the
+     * pending marker; once the effect settles durably, the next reconcile completes the
+     * task exactly once.
+     */
+    @Test
+    void reconcileKeepsTheOccupancyWhileAnyEffectIsUnresolved() {
+        // (a) a REGISTERED call that never executed.
+        try (SettlementHarness h = new SettlementHarness()) {
+            parkReceipt(h, "COMPLETED", SUMMARY, null);
+            Timestamp now = new Timestamp(System.currentTimeMillis());
+            h.jdbc.update("""
+                INSERT INTO agent_tool_call(task_id, tool_call_id, request_sha256, tool_name, args_json,
+                    state, workspace_operation_id, expected_revision, created_at, updated_at)
+                VALUES (?, 'call-registered', ?, 'list_files', '{}', 'REGISTERED', NULL, 7, ?, ?)
+                """, h.taskId, "a".repeat(64), now, now);
+            h.settlement.reconcile(h.taskId);
+            assertThat(h.rowState()).isEqualTo("NEEDS_ATTENTION");
+            assertThat(h.rowFailureCode()).isEqualTo(AgentTaskStore.TERMINAL_PENDING_MARKER);
+            assertThatThrownBy(() -> h.tasks.requireBrowserWritable(PROJECT))
+                .isInstanceOfSatisfying(ApiException.class,
+                    ex -> assertThat(ex.code()).isEqualTo("AI_TASK_ACTIVE"));
+            h.tasks.completeToolCall(h.taskId, "call-registered", "{}");
+            h.settlement.reconcile(h.taskId);
+            assertThat(h.rowState()).isEqualTo("COMPLETED");
+            h.tasks.requireBrowserWritable(PROJECT);
+        }
+        // (b) a NEEDS_ATTENTION call whose outcome is unknown.
+        try (SettlementHarness h = new SettlementHarness()) {
+            parkReceipt(h, "COMPLETED", SUMMARY, null);
+            Timestamp now = new Timestamp(System.currentTimeMillis());
+            h.jdbc.update("""
+                INSERT INTO agent_tool_call(task_id, tool_call_id, request_sha256, tool_name, args_json,
+                    state, workspace_operation_id, expected_revision, created_at, updated_at)
+                VALUES (?, 'call-unknown', ?, 'list_files', '{}', 'NEEDS_ATTENTION', NULL, 7, ?, ?)
+                """, h.taskId, "a".repeat(64), now, now);
+            h.settlement.reconcile(h.taskId);
+            assertThat(h.rowState()).isEqualTo("NEEDS_ATTENTION");
+            assertThat(h.rowFailureCode()).isEqualTo(AgentTaskStore.TERMINAL_PENDING_MARKER);
+            h.tasks.completeToolCall(h.taskId, "call-unknown", "{}");
+            h.settlement.reconcile(h.taskId);
+            assertThat(h.rowState()).isEqualTo("COMPLETED");
+        }
+        // (c) a PENDING workspace receipt of an unverified write.
+        try (SettlementHarness h = new SettlementHarness()) {
+            parkReceipt(h, "COMPLETED", SUMMARY, null);
+            h.insertPendingReceiptCall("call-write", "op-pending");
+            h.settlement.reconcile(h.taskId);
+            assertThat(h.rowState()).isEqualTo("NEEDS_ATTENTION");
+            assertThat(h.rowFailureCode()).isEqualTo(AgentTaskStore.TERMINAL_PENDING_MARKER);
+            h.jdbc.update("UPDATE workspace_operation SET state = 'COMMITTED' WHERE id = 'op-pending'");
+            h.tasks.completeToolCall(h.taskId, "call-write", "{}");
+            h.settlement.reconcile(h.taskId);
+            assertThat(h.rowState()).isEqualTo("COMPLETED");
+            h.tasks.requireBrowserWritable(PROJECT);
+        }
+        // (d) a live execution claim of the parked task.
+        try (SettlementHarness h = new SettlementHarness()) {
+            for (long seq = 1; seq <= 36; seq++) {
+                h.recordProgress(seq);
+            }
+            Timestamp now = new Timestamp(System.currentTimeMillis());
+            h.jdbc.update("""
+                INSERT INTO agent_tool_call(task_id, tool_call_id, request_sha256, tool_name, args_json,
+                    state, workspace_operation_id, expected_revision, created_at, updated_at)
+                VALUES (?, 'call-build', ?, 'build', '{"goal":"compile"}', 'REGISTERED', 'cmd-live', 7, ?, ?)
+                """, h.taskId, "a".repeat(64), now, now);
+            assertThat(h.tasks.markToolCallRunning(h.taskId, "call-build")).isTrue();
+            h.submitTerminal(38, "COMPLETED");
+            assertThat(h.rowState()).isEqualTo("NEEDS_ATTENTION");
+            h.settlement.reconcile(h.taskId);
+            // The executing claim holds the occupancy; nothing is settled under it.
+            assertThat(h.rowState()).isEqualTo("NEEDS_ATTENTION");
+            assertThat(h.rowFailureCode()).isEqualTo(AgentTaskStore.TERMINAL_PENDING_MARKER);
+            assertThat(h.callRowState("call-build")).isEqualTo("RUNNING");
+            // The execution settles durably and retires its claim; the next reconcile completes.
+            h.tasks.completeToolCall(h.taskId, "call-build", "{}");
+            h.tasks.releaseBuildClaim(h.taskId, "call-build");
+            h.settlement.reconcile(h.taskId);
+            assertThat(h.rowState()).isEqualTo("COMPLETED");
+            h.tasks.requireBrowserWritable(PROJECT);
+        }
+    }
+
+    /**
+     * A parked FAILED receipt drives the close through reconcile: the close intent is
+     * persisted from the receipt's own failure code, the worker is stopped, and the
+     * verified cessation releases the project with the original failure retained. The
+     * cleanup stays scoped to the durable owner's identity.
+     */
+    @Test
+    void aParkedFailedReceiptDrivesTheCloseThroughReconcile() {
+        try (SettlementHarness h = new SettlementHarness()) {
+            parkReceipt(h, "FAILED", "provider exploded", "AI_PROVIDER_ERROR");
+            h.settlement.reconcile(h.taskId);
+            assertThat(h.rowState()).isEqualTo("FAILED");
+            assertThat(h.rowFailureCode()).isEqualTo("AI_PROVIDER_ERROR");
+            assertThat(h.closeReasonCode()).isEqualTo("AI_PROVIDER_ERROR");
+            assertThat(h.rowSummary()).isEqualTo("provider exploded");
+            Mockito.verify(h.worker).stop(h.taskId);
+            h.tasks.requireBrowserWritable(PROJECT);
+            // A repeated reconcile of the settled task never overwrites the reason.
+            h.settlement.reconcile(h.taskId);
+            assertThat(h.closeReasonCode()).isEqualTo("AI_PROVIDER_ERROR");
+            assertThat(h.rowState()).isEqualTo("FAILED");
+        }
+    }
+
+    /**
+     * An unanswerable worker stop never blocks a close whose durable evidence verifies
+     * (the "stop unknown" delivery): the worker may already be gone when the close is
+     * driven, and the armed marker already refuses every new call — so the settlement
+     * still completes on the verified Run/build/claim evidence and releases the project
+     * with the original failure retained.
+     */
+    @Test
+    void aCloseWithAnUnanswerableWorkerStopStillFinishesOnVerifiedEvidence() {
+        try (SettlementHarness h = new SettlementHarness()) {
+            parkReceipt(h, "FAILED", "provider exploded", "AI_PROVIDER_ERROR");
+            Mockito.doThrow(new RuntimeException("worker is gone")).when(h.worker).stop(h.taskId);
+            h.settlement.reconcile(h.taskId);
+            assertThat(h.rowState()).isEqualTo("FAILED");
+            assertThat(h.rowFailureCode()).isEqualTo("AI_PROVIDER_ERROR");
+            assertThat(h.closeReasonCode()).isEqualTo("AI_PROVIDER_ERROR");
+            Mockito.verify(h.worker).stop(h.taskId);
+            h.tasks.requireBrowserWritable(PROJECT);
+        }
+    }
+
+    /**
+     * A budget close intent recorded at the deadline finishes through reconcile: the
+     * persisted reason becomes the final failure once the cessation is verified, and
+     * the occupancy is released only then.
+     */
+    @Test
+    void theBudgetCloseIntentFinishesThroughReconcile() {
+        MutableClock pastDeadline = new MutableClock(Instant.parse("2026-10-25T00:00:00Z"));
+        try (SettlementHarness h = new SettlementHarness(pastDeadline)) {
+            for (long seq = 1; seq <= 36; seq++) {
+                h.recordProgress(seq);
+            }
+            pastDeadline.advance(java.time.Duration.ofSeconds(3600));
+            h.submitTerminal(37, "COMPLETED");
+            assertThat(h.rowState()).isEqualTo("NEEDS_ATTENTION");
+            assertThat(h.rowFailureCode()).isEqualTo(AgentTaskStore.CLOSING_MARKER);
+            assertThat(h.closeReasonCode()).isEqualTo(AgentTaskStore.BUDGET_CLOSE_REASON);
+            h.settlement.reconcile(h.taskId);
+            assertThat(h.rowState()).isEqualTo("FAILED");
+            assertThat(h.rowFailureCode()).isEqualTo(AgentTaskStore.BUDGET_CLOSE_REASON);
+            h.tasks.requireBrowserWritable(PROJECT);
+        }
+    }
+
+    /**
+     * A user close beats a parked success (acceptance case I): the fast close persists
+     * its intent, the late re-delivery of the SAME report answers CLOSING and changes
+     * nothing, and the reconcile of the settled task is a no-op.
+     */
+    @Test
+    void aUserCloseBeatsAParkedSuccessAndTheLateReportCannotReverseIt() {
+        try (SettlementHarness h = new SettlementHarness()) {
+            parkReceipt(h, "COMPLETED", SUMMARY, null);
+            h.service.close(h.taskId, "AI_CLOSED", "closed by the owner");
+            assertThat(h.rowState()).isEqualTo("FAILED");
+            assertThat(h.closeReasonCode()).isEqualTo("AI_CLOSED");
+            h.submitTerminal(38, "COMPLETED");
+            assertThat(h.rowState()).isEqualTo("FAILED");
+            assertThat(h.closeReasonCode()).isEqualTo("AI_CLOSED");
+            h.settlement.reconcile(h.taskId);
+            assertThat(h.rowState()).isEqualTo("FAILED");
+            h.tasks.requireBrowserWritable(PROJECT);
+        }
+    }
+
+    /**
+     * The completion CAS matches ONLY the stored receipt identity and canonical content
+     * digest of a task that carries no close intent (repair plan task 3): a foreign id
+     * or digest never completes, an armed close intent blocks the completion, the exact
+     * receipt completes exactly once, and a settled task is never completed again.
+     */
+    @Test
+    void theCompletionCasMatchesOnlyTheReceiptIdentityWithoutACloseIntent() {
+        try (SettlementHarness h = new SettlementHarness()) {
+            parkReceipt(h, "COMPLETED", SUMMARY, null);
+            String reportId = h.receiptReportId();
+            String sha = h.receiptSha256();
+            // An armed close intent blocks the completion CAS.
+            h.tasks.beginClose(h.taskId);
+            assertThat(h.tasks.completeFromReceipt(h.taskId, reportId, sha, SUMMARY, null)).isFalse();
+            assertThat(h.rowState()).isEqualTo("NEEDS_ATTENTION");
+            assertThat(h.rowFailureCode()).isEqualTo(AgentTaskStore.CLOSING_MARKER);
+        }
+        try (SettlementHarness h = new SettlementHarness()) {
+            parkReceipt(h, "COMPLETED", SUMMARY, null);
+            String reportId = h.receiptReportId();
+            String sha = h.receiptSha256();
+            // A foreign report id or a foreign digest never completes the task.
+            assertThat(h.tasks.completeFromReceipt(h.taskId, "f".repeat(64), sha, SUMMARY, null)).isFalse();
+            assertThat(h.tasks.completeFromReceipt(h.taskId, reportId, "e".repeat(64), SUMMARY, null)).isFalse();
+            assertThat(h.rowState()).isEqualTo("NEEDS_ATTENTION");
+            assertThat(h.rowFailureCode()).isEqualTo(AgentTaskStore.TERMINAL_PENDING_MARKER);
+            // The exact receipt identity and digest complete it exactly once.
+            assertThat(h.tasks.completeFromReceipt(h.taskId, reportId, sha, SUMMARY, null)).isTrue();
+            assertThat(h.rowState()).isEqualTo("COMPLETED");
+            assertThat(h.rowSummary()).isEqualTo(SUMMARY);
+            assertThat(h.tasks.completeFromReceipt(h.taskId, reportId, sha, SUMMARY, null)).isFalse();
+            h.tasks.requireBrowserWritable(PROJECT);
+        }
+    }
+
+    /**
+     * A replaced application identity holds the success back (acceptance cases G/H): a
+     * COMPLETED start whose READY run is no longer the project's active Run is an
+     * unresolved effect — the occupancy is retained until the task's own run is the
+     * active identity again, and the completion never stops anything.
+     */
+    @Test
+    void reconcileKeepsTheOccupancyWhileTheApplicationIdentityWasReplaced() {
+        try (SettlementHarness h = new SettlementHarness()) {
+            parkReceipt(h, "COMPLETED", SUMMARY, null);
+            String runId = UUID.randomUUID().toString();
+            h.insertCompletedStartCall("start-ready", runId);
+            var ready = runSummary(runId, "RUNNING", true);
+            Mockito.when(h.runs.get(OWNER, PROJECT, runId)).thenReturn(ready);
+            // The project's ACTIVE Run is a different run: the task's application
+            // identity was replaced — an unresolved effect, never a completed task.
+            Mockito.when(h.runs.active(OWNER, PROJECT))
+                .thenReturn(java.util.Optional.of(runSummary("replacement", "RUNNING", true)));
+            h.settlement.reconcile(h.taskId);
+            assertThat(h.rowState()).isEqualTo("NEEDS_ATTENTION");
+            assertThat(h.rowFailureCode()).isEqualTo(AgentTaskStore.TERMINAL_PENDING_MARKER);
+            assertThatThrownBy(() -> h.tasks.requireBrowserWritable(PROJECT))
+                .isInstanceOfSatisfying(ApiException.class,
+                    ex -> assertThat(ex.code()).isEqualTo("AI_TASK_ACTIVE"));
+            // The task's own run is the active identity again: the success completes
+            // without ever stopping the application.
+            Mockito.when(h.runs.active(OWNER, PROJECT)).thenReturn(java.util.Optional.of(ready));
+            h.settlement.reconcile(h.taskId);
+            assertThat(h.rowState()).isEqualTo("COMPLETED");
+            Mockito.verify(h.runs, Mockito.never()).stopForAgent(Mockito.any(), Mockito.any(),
+                Mockito.any(), Mockito.any(), Mockito.any());
+            h.tasks.requireBrowserWritable(PROJECT);
+        }
+    }
+
+    /**
+     * A close intent with an unconfirmed stop keeps the occupancy and returns without
+     * waiting (acceptance case F): the stop request is issued once, the unconfirmed run
+     * leaves the step deferred, and the next reconcile round finishes the verified
+     * cessation — cleanup always scoped to the durable owner's identity.
+     */
+    @Test
+    void aCloseIntentWithAnUnconfirmedStopStaysOccupiedUntilTheCessationIsVerified() {
+        try (SettlementHarness h = new SettlementHarness()) {
+            parkReceipt(h, "FAILED", "provider exploded", "AI_PROVIDER_ERROR");
+            String runId = UUID.randomUUID().toString();
+            h.insertCompletedStartCall("start-done", runId);
+            Mockito.when(h.runs.get(OWNER, PROJECT, runId)).thenReturn(runSummary(runId, "STOPPING", false));
+            Mockito.when(h.runs.stopForAgent(OWNER, PROJECT, h.taskId, "start-done", runId))
+                .thenReturn(runSummary(runId, "STOPPING", false));
+            h.settlement.reconcile(h.taskId);
+            assertThat(h.rowState()).isEqualTo("NEEDS_ATTENTION");
+            assertThat(h.closeReasonCode()).isEqualTo("AI_PROVIDER_ERROR");
+            // The deferral is durable: the next reconcile round is marked on the row.
+            assertThat(h.nextReconcileAt()).isNotNull();
+            Mockito.verify(h.runs).stopForAgent(OWNER, PROJECT, h.taskId, "start-done", runId);
+            // cleanupRun's read plus exactly ONE post-stop re-read: no wait loop.
+            Mockito.verify(h.runs, Mockito.times(2)).get(OWNER, PROJECT, runId);
+            Mockito.verify(h.runs, Mockito.never()).stopForAgent(Mockito.eq("other-owner"),
+                Mockito.any(), Mockito.any(), Mockito.any(), Mockito.any());
+            // The verified cessation releases on the next round.
+            Mockito.when(h.runs.get(OWNER, PROJECT, runId)).thenReturn(runSummary(runId, "CANCELLED", false));
+            h.settlement.reconcile(h.taskId);
+            assertThat(h.rowState()).isEqualTo("FAILED");
+            assertThat(h.rowFailureCode()).isEqualTo("AI_PROVIDER_ERROR");
+            h.tasks.requireBrowserWritable(PROJECT);
+        }
+    }
+
     /**
      * The test's own canonical digest over the fixed JSON array form, independent of the
      * production code and of Jackson (whose default generator escapes non-BMP
@@ -668,7 +1025,13 @@ class AgentTerminalSettlementTest {
         final AgentTaskStore tasks;
         final AgentProjectTools tools;
         final AgentTaskService service;
-        private final JdbcRunStore runStore;
+        final AgentTaskSettlementService settlement;
+        final PiWorkerClient worker = Mockito.mock(PiWorkerClient.class);
+        final com.manao.poc4.run.RunService runs = Mockito.mock(com.manao.poc4.run.RunService.class);
+        final com.manao.poc4.run.RunStore runStore = Mockito.mock(com.manao.poc4.run.RunStore.class);
+        final com.manao.poc4.log.RunLogService logs = Mockito.mock(com.manao.poc4.log.RunLogService.class);
+        final ProjectApplicationProbe probe = Mockito.mock(ProjectApplicationProbe.class);
+        private final JdbcRunStore jdbcRunStore;
 
         SettlementHarness() {
             this(Clock.systemUTC());
@@ -690,12 +1053,60 @@ class AgentTerminalSettlementTest {
             WorkspaceOperationService operations = new WorkspaceOperationService(store, agent, gate);
             WorkspaceService workspace = new WorkspaceService(store, operations, agent, gate, tasks);
             tools = new AgentProjectTools(tasks, store, workspace, operations, gate,
-                Mockito.mock(DevelopmentBuildExecutor.class));
-            service = new AgentTaskService(tasks, gate, Mockito.mock(PiWorkerClient.class), tools);
-            runStore = new JdbcRunStore(jdbc);
+                Mockito.mock(DevelopmentBuildExecutor.class),
+                new AgentApplicationTools(tasks, runs, runStore, logs, probe, gate));
+            service = new AgentTaskService(tasks, gate, worker, tools);
+            settlement = new AgentTaskSettlementService(tasks, gate, worker, tools);
+            jdbcRunStore = new JdbcRunStore(jdbc);
             // A RUNNING task with its worker identity bound — the authenticated callback state.
             tasks.create(OWNER, PROJECT, new TaskRequest(taskId, "settle the diagnosed race", 7));
             tasks.bindWorkerInstance(taskId, 1, INSTANCE);
+        }
+
+        /**
+         * A settlement service fully rebuilt over the same database — the post-restart
+         * continuation: a fresh store (no inherited in-process claims), fresh tools, the
+         * same durable rows. Nothing but the database carries the settlement forward.
+         */
+        AgentTaskSettlementService rebuiltSettlement() {
+            var transactions = new DataSourceTransactionManager(jdbc.getDataSource());
+            var rebuiltTasks = new AgentTaskStore(jdbc, transactions, Clock.systemUTC());
+            WorkspaceAgent agent = Mockito.mock(WorkspaceAgent.class);
+            Mockito.when(agent.tree(Mockito.eq(PROJECT), Mockito.anyString()))
+                .thenReturn(new WorkspaceAgent.Tree("", List.of()));
+            WorkspaceJdbcStore store = new WorkspaceJdbcStore(jdbc, transactions);
+            WorkspaceOperationService operations = new WorkspaceOperationService(store, agent, gate);
+            WorkspaceService workspace = new WorkspaceService(store, operations, agent, gate, rebuiltTasks);
+            AgentProjectTools rebuiltTools = new AgentProjectTools(rebuiltTasks, store, workspace,
+                operations, gate, Mockito.mock(DevelopmentBuildExecutor.class),
+                new AgentApplicationTools(rebuiltTasks, runs, runStore, logs, probe, gate));
+            return new AgentTaskSettlementService(rebuiltTasks, gate, worker, rebuiltTools);
+        }
+
+        /** One unverified write call row with its PENDING workspace receipt, inserted directly. */
+        void insertPendingReceiptCall(String callId, String operationId) {
+            Timestamp now = new Timestamp(System.currentTimeMillis());
+            jdbc.update("""
+                INSERT INTO agent_tool_call(task_id, tool_call_id, request_sha256, tool_name, args_json,
+                    state, workspace_operation_id, expected_revision, created_at, updated_at)
+                VALUES (?, ?, ?, 'write_file', '{"path":"src/Demo.java"}', 'REGISTERED', ?, 7, ?, ?)
+                """, taskId, callId, "a".repeat(64), operationId, now, now);
+            jdbc.update("""
+                INSERT INTO workspace_operation(id, project_id, expected_revision, before_sha256, after_sha256,
+                    receipt_path, receipt_sha256, state, created_at)
+                VALUES (?, ?, 7, ?, ?, ?, ?, 'PENDING', ?)
+                """, operationId, PROJECT, "b".repeat(64), "c".repeat(64),
+                ".manao/receipts/" + operationId + ".json", "d".repeat(64), now);
+        }
+
+        /** A settled application start call row over the given run id. */
+        void insertCompletedStartCall(String callId, String runId) {
+            Timestamp now = new Timestamp(System.currentTimeMillis());
+            jdbc.update("""
+                INSERT INTO agent_tool_call(task_id, tool_call_id, request_sha256, tool_name, args_json,
+                    state, workspace_operation_id, expected_revision, created_at, updated_at)
+                VALUES (?, ?, ?, 'application', '{"action":"start"}', 'COMPLETED', ?, 7, ?, ?)
+                """, taskId, callId, "a".repeat(64), runId, now, now);
         }
 
         /** One authenticated in-order display progress item from the bound worker. */
@@ -727,17 +1138,17 @@ class AgentTerminalSettlementTest {
             var budget = new RunPolicy.Resources(1000, 1073741824L, 1073741824L);
             var policy = new RunPolicy("java-spring-boot-web", new RunPolicy.RuntimeInfo.Java(17, 3),
                 "mvn -q -DskipTests spring-boot:run", 1800, "SERVICE", 1800, 7200, budget, budget);
-            long fence = runStore.acquireFencingToken().orElseThrow();
+            long fence = jdbcRunStore.acquireFencingToken().orElseThrow();
             String runId = UUID.randomUUID().toString();
             var created = new RunRecord(runId, PROJECT, 7, RunState.STARTING, policy.toJson(),
                 null, null, null, null, null, null, 0, Instant.now(), fence);
-            runStore.insertRun(created, fence);
-            runStore.markRunning(runId, PROJECT, 0);
+            jdbcRunStore.insertRun(created, fence);
+            jdbcRunStore.markRunning(runId, PROJECT, 0);
             return runId;
         }
 
         JdbcRunStore runStore() {
-            return runStore;
+            return jdbcRunStore;
         }
 
         String rowState() {
@@ -750,6 +1161,12 @@ class AgentTerminalSettlementTest {
 
         String rowSummary() {
             return jdbc.queryForObject("SELECT summary FROM agent_task WHERE id = ?", String.class, taskId);
+        }
+
+        String callRowState(String callId) {
+            return jdbc.queryForObject(
+                "SELECT state FROM agent_tool_call WHERE task_id = ? AND tool_call_id = ?",
+                String.class, taskId, callId);
         }
 
         int progressCount() {
