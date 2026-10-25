@@ -1,0 +1,99 @@
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.manao.poc4.ai.*;
+import com.manao.poc4.api.ApiException;
+import com.manao.poc4.kubernetes.JobCoordinator;
+import com.manao.poc4.persistence.JdbcStoreTestSupport;
+import com.manao.poc4.persistence.RunState;
+import com.manao.poc4.project.ProjectLifecycleGate;
+import com.manao.poc4.run.*;
+import com.sun.net.httpserver.HttpServer;
+import java.net.InetSocketAddress;
+import java.nio.charset.StandardCharsets;
+import java.sql.Timestamp;
+import java.time.Clock;
+import java.time.Instant;
+import java.util.*;
+import java.util.concurrent.*;
+import org.mockito.Mockito;
+import org.springframework.jdbc.datasource.DataSourceTransactionManager;
+
+public class TerminalRaceDiagnostic {
+  static final ObjectMapper JSON = new ObjectMapper();
+  static final String PROJECT = "diagnostic-project";
+  static final String OWNER = "diagnostic-owner";
+  static final String TASK = "00000000-0000-4000-8000-000000000001";
+  public static void main(String[] args) throws Exception {
+    try (var db = JdbcStoreTestSupport.create()) {
+      var jdbc = db.jdbc();
+      var now = Timestamp.from(Instant.now());
+      jdbc.update("INSERT INTO app_user(id,username,password_hash,created_at) VALUES (?,?,?,?)", OWNER, OWNER, "unused", now);
+      jdbc.update("INSERT INTO project(id,owner_id,name,state,workspace_revision,created_at,updated_at) VALUES (?,?,?,'READY',37,?,?)", PROJECT, OWNER, PROJECT, now, now);
+      var gate = new ProjectLifecycleGate();
+      var tasks = new AgentTaskStore(jdbc, new DataSourceTransactionManager(jdbc.getDataSource()), Clock.systemUTC());
+      tasks.create(OWNER, PROJECT, new AgentContracts.TaskRequest(TASK, "diagnose terminal delivery", 37));
+      tasks.bindWorkerInstance(TASK, 1, "diagnostic-worker");
+      var tools = Mockito.mock(AgentProjectTools.class);
+      Mockito.when(tools.applicationCanRelease(TASK, true)).thenReturn(true);
+      var service = new AgentTaskService(tasks, gate, Mockito.mock(PiWorkerClient.class), tools);
+      var store = new JdbcRunStore(jdbc);
+      var budget = new RunPolicy.Resources(1000, 1073741824L, 1073741824L);
+      var policy = new RunPolicy("java-spring-boot-web", new RunPolicy.RuntimeInfo.Java(17,3), "mvn -q -DskipTests spring-boot:run", 1800, "SERVICE", 1800, 7200, budget, budget);
+      long fence = store.acquireFencingToken().orElseThrow();
+      String runId = UUID.randomUUID().toString();
+      var created = new RunRecord(runId, PROJECT, 37, RunState.STARTING, policy.toJson(), null, null, null, null, null, null, 0, Instant.now(), fence);
+      store.insertRun(created, fence);
+      store.markRunning(runId, PROJECT, 0);
+      var entered = new CountDownLatch(1);
+      var release = new CountDownLatch(1);
+      var finished = new CountDownLatch(1);
+      var coordinator = Mockito.mock(JobCoordinator.class);
+      Mockito.when(coordinator.observe(Mockito.any())).thenAnswer(invocation -> {
+        entered.countDown();
+        if (!release.await(30, TimeUnit.SECONDS)) throw new IllegalStateException("diagnostic observation timeout");
+        return new JobCoordinator.JobObservation(JobCoordinator.ObservationKind.FOUND,
+          new JobCoordinator.JobFacts(true,false,false,false,null,"diagnostic-pod","diagnostic-uid",true,false),null);
+      });
+      var recovery = new RunRecoveryService(store, coordinator, null, null, gate, null);
+      var workers = Executors.newCachedThreadPool();
+      var server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+      server.setExecutor(workers);
+      server.createContext("/", exchange -> {
+        int status = 200;
+        Object body;
+        try {
+          String path = exchange.getRequestURI().getPath();
+          if (path.endsWith("/progress")) {
+            var item = JSON.readValue(exchange.getRequestBody(), AgentContracts.ProgressItem.class);
+            service.applyProgress(TASK, "diagnostic-worker", 1, item);
+            body = Map.of("accepted",true);
+          } else if (path.equals("/recovery/start")) {
+            workers.submit(() -> { try { recovery.recoverRuns(); } finally { finished.countDown(); } });
+            if (!entered.await(5,TimeUnit.SECONDS)) throw new IllegalStateException("recovery never entered");
+            body = Map.of("observationHoldingGate",true);
+          } else if (path.equals("/recovery/release")) {
+            release.countDown();
+            if (!finished.await(5,TimeUnit.SECONDS)) throw new IllegalStateException("recovery never finished");
+            body = Map.of("released",true);
+          } else if (path.equals("/state")) {
+            var task = tasks.findForOwner(OWNER,PROJECT,TASK).orElseThrow();
+            body = Map.of("taskState",task.state(),"writesLocked",task.writesLocked(),"lastSeq",task.progress().isEmpty()?0:task.progress().get(task.progress().size()-1).seq(),"runState",store.findRun(runId).orElseThrow().state());
+          } else {
+            status=404; body=Map.of("error","not found");
+          }
+        } catch(ApiException e) {
+          status = 409; body=Map.of("code",e.code());
+        } catch(Exception e) {
+          status = 500; body=Map.of("error",e.getClass().getSimpleName());
+        }
+        byte[] bytes=JSON.writeValueAsBytes(body);
+        exchange.getResponseHeaders().set("Content-Type","application/json");
+        exchange.sendResponseHeaders(status,bytes.length);
+        exchange.getResponseBody().write(bytes); exchange.close();
+      });
+      server.start();
+      System.out.println("DIAGNOSTIC_READY port="+server.getAddress().getPort());
+      System.out.flush();
+      try { System.in.read(); } finally { release.countDown(); server.stop(0); workers.shutdownNow(); }
+    }
+  }
+}
