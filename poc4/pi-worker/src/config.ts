@@ -5,7 +5,14 @@
  * starts with a fixed, safe error before any session is created — the model key only
  * ever lives in the worker environment and the model runtime, never in the backend,
  * the project, or a development Job.
+ *
+ * The boot identity is never a fixed instance string: MANAO_AI_INSTANCE_ID only
+ * prefixes the identity and a fresh bootId is embedded per process, so a restarted
+ * worker can never answer under the dead process's identity (the backend binds the
+ * instance once per task and refuses a foreign instance afterwards).
  */
+import { randomUUID } from "node:crypto";
+
 export interface PiModelConfig {
   provider: string;
   apiType: string;
@@ -36,7 +43,10 @@ export interface WorkerConfig {
   backendBaseUrl: string;
   /** Internal token the worker presents on backend /internal routes. */
   backendToken: string;
+  /** The per-boot auth identity presented to the backend (never a fixed string). */
   instanceId: string;
+  /** The per-process boot identifier surfaced by GET /status for restart diagnostics. */
+  bootId: string;
   model: PiModelConfig | null;
   paths: WorkerPaths;
   budgets: WorkerBudgets;
@@ -69,7 +79,8 @@ export function loadWorkerConfig(env: NodeJS.ProcessEnv): WorkerConfig {
   const workerToken = required(env, "MANAO_AI_WORKER_TOKEN", problems);
   const backendBaseUrl = required(env, "MANAO_AI_BACKEND_BASE_URL", problems);
   const backendToken = required(env, "MANAO_AI_BACKEND_TOKEN", problems);
-  const instanceId = optional(env, "MANAO_AI_INSTANCE_ID");
+  const instancePrefix = optional(env, "MANAO_AI_INSTANCE_ID");
+  const bootId = randomUUID();
   const scratchDir = optional(env, "MANAO_AI_SCRATCH_DIR");
   const agentDir = optional(env, "MANAO_AI_AGENT_DIR");
   const sessionDir = optional(env, "MANAO_AI_SESSION_DIR");
@@ -84,7 +95,8 @@ export function loadWorkerConfig(env: NodeJS.ProcessEnv): WorkerConfig {
     workerToken,
     backendBaseUrl: backendBaseUrl.replace(/\/+$/, ""),
     backendToken,
-    instanceId: instanceId === "" ? `pi-worker-${process.pid}-${Date.now()}` : instanceId,
+    instanceId: `${instancePrefix === "" ? "pi-worker" : instancePrefix}-${bootId}`,
+    bootId,
     model: readModelConfig(env),
     paths: { scratchDir, agentDir, sessionDir },
     budgets: {

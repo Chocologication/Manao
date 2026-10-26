@@ -54,6 +54,15 @@ it('initializes effort per conversation and polling keeps a dirty selection', as
   expect(screen.getByRole('button', { name: /推理强度/ })).toHaveTextContent('推理强度 · 最高');
 });
 function conversation(id = A, extra = {}) { return { conversationId: id, title: id === A ? '会话 A' : '会话 B', headSeq: 1, lastTaskId: null, activeTaskId: null, usage: null, compactRequestId: null, compactState: null, compactFailureCode: null, ...extra }; }
+it('keeps the current task end control while the selected historical conversation cannot load', async () => {
+  sessionStorage.setItem(`manao.agent-conversation.${U}.${P}`, B);
+  server.use(http.get(`${URL}/${B}`, () => HttpResponse.json({ message: 'unavailable' }, { status: 503 })));
+  const h = panel({ task: task({ conversationId: A }) });
+  await screen.findByRole('alert');
+  await userEvent.click(screen.getByRole('button', { name: 'End task' }));
+  expect(h.close).toHaveBeenCalledTimes(1);
+  expect(screen.getByRole('button', { name: 'Start task' })).toBeDisabled();
+});
 function task(extra = {}): AgentTaskSnapshot { return { taskId: T, state: 'RUNNING', workspaceRevision: '7', writesLocked: true, progress: [], changedPaths: [], summary: null, failureCode: null, ...extra }; }
 function panel(extra: Partial<AgentTaskPanelProps> & { historyTarget?: HTMLElement | null } = {}) {
   const accepted = vi.fn(), close = vi.fn();

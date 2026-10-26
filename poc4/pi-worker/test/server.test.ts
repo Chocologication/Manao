@@ -3,6 +3,49 @@ import { AddressInfo } from "node:net";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { BackendClient, BackendHttpError, ProgressChain } from "../src/backend-client.js";
 import { createTaskServer, type WorkerConfig } from "../src/server.js";
+import { loadWorkerConfig } from "../src/config.js";
+import { terminalContentSha256, terminalReportId } from "../src/report-identity.js";
+import { privateDirs, scriptedSessionFactory } from "./scripted-session.js";
+
+/**
+ * The canonical test backend for the terminal receipt route: hashes whatever report
+ * actually arrived (exactly what the real backend recomputes), so only a report the
+ * worker really sent can ever confirm.
+ */
+function canonicalTerminalHandler(
+  terminalBodies: Array<Record<string, unknown>>,
+  onProgress?: (body: Record<string, unknown>) => void,
+) {
+  return (req: IncomingMessage, res: ServerResponse): void => {
+    let raw = "";
+    req.on("data", (chunk: Buffer) => {
+      raw += chunk.toString("utf-8");
+    });
+    req.on("end", () => {
+      if (req.method === "POST" && req.url?.endsWith("/terminal")) {
+        const received = JSON.parse(raw) as { reportId: string; state: "COMPLETED" | "FAILED"; summary: string; failureCode: string | null };
+        terminalBodies.push(received);
+        backendResponse(res, 200, {
+          reportId: received.reportId,
+          reportSha256: terminalContentSha256(received.reportId, received.state, received.summary, received.failureCode),
+          disposition: "RECORDED",
+        });
+        return;
+      }
+      if (req.url?.includes("/progress")) {
+        onProgress?.(JSON.parse(raw) as Record<string, unknown>);
+        backendResponse(res, 200, { accepted: true });
+        return;
+      }
+      backendResponse(res, 200, { toolCallId: "call-1", workspaceRevision: "8", data: {}, truncated: false });
+    });
+  };
+}
+
+function backendResponse(res: ServerResponse, status: number, body: unknown): void {
+  res.writeHead(status, { "content-type": "application/json" });
+  res.end(JSON.stringify(body));
+}
 
 describe("safe decided backend diagnostics", () => {
   it.each([
@@ -353,6 +396,7 @@ describe("task server", () => {
       backendBaseUrl: `http://127.0.0.1:${backendPort}`,
       backendToken: "backend-token",
       instanceId: "worker-1",
+      bootId: "boot-test",
       model: null,
       paths: { scratchDir: ".", agentDir: ".", sessionDir: "." },
       budgets: { wallClockSeconds: 1800, toolCalls: 60, builds: 8 },
@@ -503,23 +547,11 @@ describe("task server", () => {
     }
   });
 
-  it.each(["AI_WORKER_ERROR", "AI_CONTEXT_UNAVAILABLE"])("reports %s through the progress chain when the runner fails before settling", async (failureCode) => {
+  it.each(["AI_WORKER_ERROR", "AI_CONTEXT_UNAVAILABLE"])("reports %s through the terminal delivery when the runner fails before settling", async (failureCode) => {
     backendServer.removeAllListeners("request");
     const progressBodies: Array<Record<string, unknown>> = [];
-    backendServer.on("request", (req: IncomingMessage, res: ServerResponse) => {
-      let raw = "";
-      req.on("data", (chunk: Buffer) => {
-        raw += chunk.toString("utf-8");
-      });
-      req.on("end", () => {
-        if (req.url?.includes("/progress")) {
-          progressBodies.push(JSON.parse(raw));
-          backendResponse(res, 200, { accepted: true });
-          return;
-        }
-        backendResponse(res, 200, { toolCallId: "call-1", workspaceRevision: "8", data: {}, truncated: false });
-      });
-    });
+    const terminalBodies: Array<Record<string, unknown>> = [];
+    backendServer.on("request", canonicalTerminalHandler(terminalBodies, (body) => progressBodies.push(body)));
     const handle = createTaskServer(workerConfig({ model: TEST_MODEL }), {
       createRunner: () => ({
         taskId: "task-1",
@@ -535,16 +567,218 @@ describe("task server", () => {
     try {
       const started = await post(`http://127.0.0.1:${port}/tasks/task-1/start`, startBody("task-1"));
       expect(started.status).toBe(200);
-      // The failure must reach the backend as a terminal state, never leave the task stuck.
+      // The failure must reach the backend as a durable terminal REPORT on the receipt
+      // route — never as a progress item and never as a second execution outcome.
       const deadline = Date.now() + 5000;
-      while (Date.now() < deadline && !progressBodies.some((body) => body["kind"] === "terminal")) {
+      while (Date.now() < deadline && terminalBodies.length === 0) {
         await new Promise((resolve) => setTimeout(resolve, 50));
       }
-      const terminal = progressBodies.find((body) => body["kind"] === "terminal");
-      expect(terminal).toBeDefined();
-      expect(JSON.parse(terminal!["text"] as string)).toMatchObject({
-        state: "FAILED", failureCode,
+      expect(progressBodies.filter((body) => body["kind"] === "terminal")).toEqual([]);
+      const expectedReportId = terminalReportId("task-1", 1, "a".repeat(64));
+      expect(terminalBodies[0]).toMatchObject({
+        protocolVersion: 1,
+        reportId: expectedReportId,
+        state: "FAILED",
+        failureCode,
       });
+      // Once the backend confirmed the receipt, the execution slot is released.
+      await vi.waitFor(() => expect(handle.activeTaskId()).toBeNull());
+    } finally {
+      await handle.close();
+    }
+  });
+
+  it("holds the slot while the delivery is unconfirmed and never sends a second FAILED outcome", async () => {
+    backendServer.removeAllListeners("request");
+    const terminalBodies: string[] = [];
+    backendServer.on("request", (req: IncomingMessage, res: ServerResponse) => {
+      let raw = "";
+      req.on("data", (chunk: Buffer) => {
+        raw += chunk.toString("utf-8");
+      });
+      req.on("end", () => {
+        if (req.method === "POST" && req.url?.endsWith("/terminal")) {
+          terminalBodies.push(raw);
+          backendResponse(res, 500, { code: "AI_TERMINAL_REJECTED", message: "backend unavailable" });
+          return;
+        }
+        if (req.url?.includes("/progress")) {
+          backendResponse(res, 200, { accepted: true });
+          return;
+        }
+        backendResponse(res, 200, { toolCallId: "call-1", workspaceRevision: "8", data: {}, truncated: false });
+      });
+    });
+    const handle = createTaskServer(workerConfig({ model: TEST_MODEL }), {
+      createRunner: (deps) => ({
+        taskId: deps.taskId,
+        state: () => "RUNNING",
+        start: async () => {
+          // The outcome freezes first; a failure AFTER the freeze (a delivery or late
+          // execution error) must never create a second, overriding FAILED outcome.
+          deps.settle({ state: "COMPLETED", summary: "done", failureCode: null, reason: "the model finished" });
+          throw new Error("late failure after the frozen outcome");
+        },
+        stop: async () => undefined,
+      }),
+    } as never);
+    const port = await handle.listen();
+    try {
+      expect((await post(`http://127.0.0.1:${port}/tasks/task-1/start`, startBody("task-1"))).status).toBe(200);
+      // At least two identical push attempts were made against the failing backend.
+      await vi.waitFor(() => expect(terminalBodies.length).toBeGreaterThanOrEqual(2));
+      expect(new Set(terminalBodies)).toHaveLength(1);
+      expect(JSON.parse(terminalBodies[0]!)).toMatchObject({ protocolVersion: 1, state: "COMPLETED", failureCode: null });
+      const status = await (await fetch(`http://127.0.0.1:${port}/tasks/task-1`, {
+        headers: { "x-manao-worker-token": "worker-token" },
+      })).json();
+      expect(status).toMatchObject({
+        state: "COMPLETED",
+        executionState: "COMPLETED",
+        terminalDelivery: { state: "PENDING", reportId: terminalReportId("task-1", 1, "a".repeat(64)) },
+      });
+      // PENDING keeps the execution slot: a new model task is refused, but stop and GET
+      // still answer.
+      expect((await post(`http://127.0.0.1:${port}/tasks/task-2/start`, startBody("task-2"))).status).toBe(409);
+      expect(handle.activeTaskId()).toBe("task-1");
+      expect((await post(`http://127.0.0.1:${port}/tasks/task-1/stop`, {})).status).toBe(200);
+    } finally {
+      await handle.close();
+    }
+  });
+
+  it("releases the slot and reports the full protocol status after the terminal ack", async () => {
+    backendServer.removeAllListeners("request");
+    const terminalBodies: Array<Record<string, unknown>> = [];
+    backendServer.on("request", canonicalTerminalHandler(terminalBodies));
+    const handle = createTaskServer(workerConfig({ model: TEST_MODEL }), {
+      createRunner: (deps) => ({
+        taskId: deps.taskId,
+        state: () => "RUNNING",
+        start: async () => {
+          deps.settle({ state: "COMPLETED", summary: "完成", failureCode: null, reason: "the model finished" });
+        },
+        stop: async () => undefined,
+      }),
+    } as never);
+    const port = await handle.listen();
+    try {
+      expect((await post(`http://127.0.0.1:${port}/tasks/task-1/start`, startBody("task-1"))).status).toBe(200);
+      await vi.waitFor(() => expect(handle.activeTaskId()).toBeNull());
+      const expectedReportId = terminalReportId("task-1", 1, "a".repeat(64));
+      const status = await (await fetch(`http://127.0.0.1:${port}/tasks/task-1`, {
+        headers: { "x-manao-worker-token": "worker-token" },
+      })).json();
+      expect(status).toEqual({
+        taskId: "task-1",
+        instanceId: "worker-1",
+        state: "COMPLETED",
+        protocolVersion: 1,
+        workerEpoch: 1,
+        requestSha256: "a".repeat(64),
+        executionState: "COMPLETED",
+        terminalDelivery: {
+          state: "ACKED",
+          reportId: expectedReportId,
+          reportSha256: terminalContentSha256(expectedReportId, "COMPLETED", "完成", null),
+          report: { protocolVersion: 1, reportId: expectedReportId, state: "COMPLETED", summary: "完成", failureCode: null },
+        },
+      });
+      // The confirmed slot is free: another task starts, and the settled task replay
+      // stays idempotent.
+      expect((await post(`http://127.0.0.1:${port}/tasks/task-2/start`, startBody("task-2"))).status).toBe(200);
+      expect((await post(`http://127.0.0.1:${port}/tasks/task-1/start`, startBody("task-1"))).status).toBe(200);
+    } finally {
+      await handle.close();
+    }
+  });
+
+  it("reports STOPPING as the execution state once abort is requested", async () => {
+    let stopCalled = 0;
+    const handle = createTaskServer(workerConfig({ model: TEST_MODEL }), {
+      createRunner: () => ({
+        taskId: "task-1",
+        state: () => (stopCalled > 0 ? "STOPPING" : "RUNNING"),
+        start: () => new Promise<void>(() => { }),
+        stop: async () => { stopCalled += 1; },
+      }),
+    } as never);
+    const port = await handle.listen();
+    try {
+      expect((await post(`http://127.0.0.1:${port}/tasks/task-1/start`, startBody("task-1"))).status).toBe(200);
+      const running = await (await fetch(`http://127.0.0.1:${port}/tasks/task-1`, {
+        headers: { "x-manao-worker-token": "worker-token" },
+      })).json();
+      expect(running).toMatchObject({ state: "RUNNING", executionState: "RUNNING" });
+      expect((await post(`http://127.0.0.1:${port}/tasks/task-1/stop`, {})).status).toBe(200);
+      const stopping = await (await fetch(`http://127.0.0.1:${port}/tasks/task-1`, {
+        headers: { "x-manao-worker-token": "worker-token" },
+      })).json();
+      expect(stopping).toMatchObject({ state: "STOPPING", executionState: "STOPPING" });
+    } finally {
+      await handle.close();
+    }
+  });
+
+  it("answers GET /status with the boot identity and slot without secrets", async () => {
+    const handle = createTaskServer(workerConfig({ model: TEST_MODEL }), {
+      createRunner: () => ({
+        taskId: "task-1",
+        state: () => "RUNNING",
+        start: () => new Promise<void>(() => { }),
+        stop: async () => undefined,
+      }),
+    } as never);
+    const port = await handle.listen();
+    const statusHeaders = { "x-manao-worker-token": "worker-token" };
+    try {
+      expect((await fetch(`http://127.0.0.1:${port}/status`)).status).toBe(401);
+      const idle = await (await fetch(`http://127.0.0.1:${port}/status`, { headers: statusHeaders })).json();
+      expect(idle).toEqual({
+        bootId: "boot-test",
+        instanceId: "worker-1",
+        activeTaskId: null,
+        activeExecutionState: null,
+        activeKind: null,
+        modelConfigured: true,
+      });
+      expect((await post(`http://127.0.0.1:${port}/tasks/task-1/start`, startBody("task-1"))).status).toBe(200);
+      const busy = await (await fetch(`http://127.0.0.1:${port}/status`, { headers: statusHeaders })).json();
+      expect(busy).toMatchObject({ activeTaskId: "task-1", activeExecutionState: "RUNNING", activeKind: "task" });
+      // Diagnostics never carry the prompt or any credential.
+      const rendered = JSON.stringify(busy);
+      expect(rendered).not.toContain("fix the build");
+      expect(rendered).not.toContain("backend-token");
+    } finally {
+      await handle.close();
+    }
+  });
+
+  it("applies a stop requested during session init and never prompts afterwards", async () => {
+    backendServer.removeAllListeners("request");
+    const progressBodies: Array<Record<string, unknown>> = [];
+    const terminalBodies: Array<Record<string, unknown>> = [];
+    backendServer.on("request", canonicalTerminalHandler(terminalBodies, (body) => progressBodies.push(body)));
+    let releaseSession!: () => void;
+    const gate = new Promise<void>((resolve) => { releaseSession = resolve; });
+    const handle = createTaskServer(workerConfig({ model: TEST_MODEL, paths: privateDirs() }), {
+      // The REAL default runner drives this test: createPiSession is held mid-init.
+      createManualSession: async (options) => {
+        await gate;
+        return scriptedSessionFactory([{ text: "must never be generated" }])(options);
+      },
+    });
+    const port = await handle.listen();
+    try {
+      expect((await post(`http://127.0.0.1:${port}/tasks/task-1/start`, startBody("task-1"))).status).toBe(200);
+      expect((await post(`http://127.0.0.1:${port}/tasks/task-1/stop`, {})).status).toBe(200);
+      releaseSession();
+      // The run settles cancelled — FAILED/AI_ABORTED — without any prompt round, and
+      // the frozen outcome goes out through the terminal delivery.
+      await vi.waitFor(() => expect(terminalBodies.length).toBeGreaterThan(0));
+      expect(terminalBodies[0]).toMatchObject({ state: "FAILED", failureCode: "AI_ABORTED" });
+      expect(progressBodies.filter((body) => body["kind"] === "message")).toEqual([]);
+      await vi.waitFor(() => expect(handle.activeTaskId()).toBeNull());
     } finally {
       await handle.close();
     }
@@ -666,6 +900,31 @@ describe("task server", () => {
     expect(progressBodies[0]).toEqual({ seq: firstSeq, kind: "message", text: "first full message", truncated: false });
     expect(progressBodies[1]).toEqual(progressBodies[0]);
     expect(progressBodies.at(-1)).toEqual({ seq: firstSeq! + 1, kind: "message", text: "second full message", truncated: false });
+  });
+});
+
+describe("worker boot identity", () => {
+  const env = {
+    MANAO_AI_WORKER_TOKEN: "worker-test-token",
+    MANAO_AI_BACKEND_TOKEN: "backend-test-token",
+    MANAO_AI_BACKEND_BASE_URL: "http://127.0.0.1:9",
+    MANAO_AI_SCRATCH_DIR: ".",
+    MANAO_AI_AGENT_DIR: ".",
+    MANAO_AI_SESSION_DIR: ".",
+  };
+  it("never reuses a fixed instance string across process boots", () => {
+    const first = loadWorkerConfig({ ...env, MANAO_AI_INSTANCE_ID: "pi-worker-stage1" });
+    const second = loadWorkerConfig({ ...env, MANAO_AI_INSTANCE_ID: "pi-worker-stage1" });
+    // The configured value is only a prefix: every boot identity embeds a fresh bootId,
+    // so a restarted process can never answer under the dead process's identity.
+    expect(first.bootId).not.toBe(second.bootId);
+    expect(first.instanceId).toBe(`pi-worker-stage1-${first.bootId}`);
+    expect(second.instanceId).toBe(`pi-worker-stage1-${second.bootId}`);
+    expect(first.instanceId.length).toBeLessThanOrEqual(64); // fits worker_instance_id VARCHAR(64)
+  });
+  it("prefixes the boot identity with pi-worker without an instance override", () => {
+    const config = loadWorkerConfig(env);
+    expect(config.instanceId).toBe(`pi-worker-${config.bootId}`);
   });
 });
 

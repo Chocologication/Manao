@@ -128,15 +128,25 @@ class AgentApplicationToolsTest {
         assertThat(application.canRelease("task", true)).isFalse();
     }
 
+    /**
+     * The close-path finishing is a single re-entrant step (repair design section 6):
+     * exactly ONE stop request and ONE bounded re-read — an unconfirmed stop returns
+     * false immediately for the next reconcile round instead of waiting out the old
+     * 120s observation budget inside the close.
+     */
     @Test
-    void anUnconfirmedStopKeepsCleanupUnfinishedAfterItsBudget() {
+    void anUnconfirmedStopKeepsCleanupUnfinishedAndReturnsWithoutWaiting() {
         when(tasks.applicationCalls("task")).thenReturn(List.of(new AgentTaskStore.ToolCallRow("task", "stop", "sha",
             "application", "{\"action\":\"stop\",\"runId\":\"run\"}", "COMPLETED", "operation", 7,
             null, null, null, null)));
         when(tasks.claimApplicationCleanup("task", "stop")).thenReturn(true);
         when(runs.get("owner", "project", "run")).thenReturn(run("STOPPING"));
-        AgentApplicationTools bounded = new AgentApplicationTools(tasks, runs, store, logs, java.time.Duration.ofMillis(5));
+        when(runs.stopForAgent(any(), any(), any(), any(), any())).thenReturn(run("STOPPING"));
+        AgentApplicationTools bounded = new AgentApplicationTools(tasks, runs, store, logs);
         assertThat(bounded.finish("task")).isFalse();
+        verify(runs, org.mockito.Mockito.times(1)).stopForAgent(any(), any(), any(), any(), any());
+        // cleanupRun's read plus exactly ONE post-stop re-read: no observation polling loop.
+        verify(runs, org.mockito.Mockito.times(2)).get("owner", "project", "run");
         verify(tasks).releaseBuildClaim("task", "stop");
         verify(tasks, never()).retireApplicationCall("task", "stop");
     }

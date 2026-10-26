@@ -54,6 +54,7 @@ export type AgentTaskPanelProps = {
   runAuthorityKnown: boolean;
   reloading: boolean;
   closePending: boolean;
+  closeError?: string | null;
   /** Reports a task this browser now knows about (submitted or recovered). */
   onTaskAccepted: (task: AgentTaskSnapshot) => void;
   /** The explicit owner abandon; the shell performs the close request. */
@@ -93,6 +94,7 @@ export function AgentTaskPanel({
   runAuthorityKnown,
   reloading,
   closePending,
+  closeError,
   onTaskAccepted,
   onClose,
   onViewRun,
@@ -114,8 +116,8 @@ export function AgentTaskPanel({
   const [starting, setStarting] = useState(false);
   const [startError, setStartError] = useState<string | null>(null);
   const previousTaskRef = useRef<AgentTaskSnapshot | null>(null);
-  const activeTaskId = (selectedTask === undefined ? task ?? settledTask : selectedTask)?.taskId ?? null;
-  const scope = useMemo(() => ({ active: true, token: 0 }), [userId, projectId, conversationId, activeTaskId]);
+  const displayTaskId = (selectedTask === undefined ? task ?? settledTask : selectedTask)?.taskId ?? null;
+  const scope = useMemo(() => ({ active: true, token: 0 }), [userId, projectId, conversationId, displayTaskId]);
   const [resultCache, setResultCache] = useState<{ scope: typeof scope; calls: Record<string, AgentToolCallResult | 'error'> } | null>(null);
   const [loading, setLoading] = useState<{ scope: typeof scope; callId: string } | null>(null);
   const buildResults = resultCache?.scope === scope ? resultCache.calls : {};
@@ -127,14 +129,14 @@ export function AgentTaskPanel({
 
   const handleViewBuildResult = useCallback(
     async (toolCallId: string) => {
-      if (activeTaskId === null) {
+      if (displayTaskId === null) {
         return;
       }
       const token = ++scope.token;
       const current = () => scope.active && scope.token === token;
       setLoading({ scope, callId: toolCallId });
       try {
-        const result = await getAgentToolCallResult(projectId, activeTaskId, toolCallId);
+        const result = await getAgentToolCallResult(projectId, displayTaskId, toolCallId);
         if (current()) setResultCache((cache) => ({ scope, calls: { ...(cache?.scope === scope ? cache.calls : {}), [toolCallId]: result } }));
       } catch {
         if (current()) setResultCache((cache) => ({ scope, calls: { ...(cache?.scope === scope ? cache.calls : {}), [toolCallId]: 'error' } }));
@@ -142,7 +144,7 @@ export function AgentTaskPanel({
         if (current()) setLoading(null);
       }
     },
-    [activeTaskId, projectId, scope],
+    [displayTaskId, projectId, scope],
   );
 
   const workspaceRevision = useWorkspaceRevision(projectId);
@@ -347,6 +349,13 @@ export function AgentTaskPanel({
         ) : null}
       </div>
         <form onSubmit={handleStart} className="manao-ai-composer flex flex-col gap-2">
+          {occupying ? <div className="flex flex-col gap-1 text-xs text-muted-foreground">
+            <p>Ending the AI task may stop applications it started.</p>
+            {task.state === 'NEEDS_ATTENTION' ? <p role="status" aria-label="Task settlement">
+              {task.failureCode === 'AI_CLOSING' ? 'Settling task. ' : ''}Waiting for confirmation; project controls stay locked. You can retry ending the task.
+            </p> : null}
+          </div> : null}
+          {occupying && closeError ? <InlineAlert>{closeError}</InlineAlert> : null}
           <label htmlFor="agent-task-goal" className="text-sm font-medium">
             Task goal
           </label>
@@ -372,7 +381,7 @@ export function AgentTaskPanel({
             >
               Start task
             </Button>
-            {occupying && displayTask?.taskId === task?.taskId ? (
+            {occupying ? (
               <Button
                 type="button"
                 variant="outline"
@@ -380,11 +389,12 @@ export function AgentTaskPanel({
                 disabled={closePending}
                 onClick={onClose}
               >
-                End task
+                {task.state === 'NEEDS_ATTENTION' ? 'Retry ending task' : 'End task'}
               </Button>
             ) : null}
             </div>
           </div>
+            <span className="text-xs text-muted-foreground">AI task time budget is separate from application startup and ready lifetime limits.</span>
             {!canStart && preconditions.reason !== null ? (
               <span className="text-xs text-muted-foreground">{preconditions.reason}</span>
             ) : null}

@@ -482,6 +482,24 @@ describe('RunPanel run policy display', () => {
 });
 
 describe('RunPanel run states and stop', () => {
+  it.each(['RUNNING', 'TIMED_OUT'] as const)('restores Stop from %s authority after Agent occupancy releases', async state => {
+    const run = makeRun('run-release', state);
+    stubRuns({ active: state === 'RUNNING' ? run : null, history: [run] });
+    await authenticateAsAlice();
+    const coordinator = new RunAuthorityCoordinator({ projectId: ALICE_SEED_PROJECT_ID, fetchRun: id => getRun(ALICE_SEED_PROJECT_ID, id) });
+    const props = { projectId: ALICE_SEED_PROJECT_ID, projectTemplateId: 'java-console' as const, coordinator };
+    const view = render(<AppProviders><RunPanel {...props} agentTaskActive /></AppProviders>);
+    await waitFor(() => expect(runStateStatus()).toHaveTextContent(state));
+    expect(screen.getByRole('button', { name: 'Stop run' })).toBeDisabled();
+    if (state === 'RUNNING') expect(screen.getByRole('button', { name: 'Stop run' })).toHaveAttribute('title', 'AI task is controlling the application. End the AI task first.');
+    view.rerender(<AppProviders><RunPanel {...props} agentTaskActive={false} /></AppProviders>);
+    await waitFor(() => {
+      if (state === 'RUNNING') expect(screen.getByRole('button', { name: 'Stop run' })).toBeEnabled();
+      else expect(screen.getByRole('button', { name: 'Stop run' })).toBeDisabled();
+    });
+    expect(screen.queryByText(/AI task is controlling the application/)).not.toBeInTheDocument();
+  });
+
   it('keeps start and stop locked during an Agent while retaining logs', async () => {
     stubRuns({ active: makeRun('run-owned', 'RUNNING') });
     await authenticateAsAlice();

@@ -49,7 +49,7 @@ All fields are required-empty in `.env.example`; nothing real is committed.
 | --- | --- |
 | `MANAO_AI_WORKER_PORT` | Worker listen port (default 18090). |
 | `MANAO_AI_WORKER_TOKEN` | Shared secret the backend presents on `/tasks/*`; empty disables every route. |
-| `MANAO_AI_INSTANCE_ID` | Stable instance identity (default generated per process). |
+| `MANAO_AI_INSTANCE_ID` | Instance identity prefix; every process boot embeds a fresh `bootId` (never a fixed instance string — see `GET /status`). |
 | `MANAO_AI_BACKEND_BASE_URL` | Backend base URL for internal callbacks. |
 | `MANAO_AI_BACKEND_TOKEN` | The internal token (must equal the backend's `MANAO_AI_INTERNAL_TOKEN`). |
 | `MANAO_AI_SCRATCH_DIR` | Worker-private session cwd; never a user project. |

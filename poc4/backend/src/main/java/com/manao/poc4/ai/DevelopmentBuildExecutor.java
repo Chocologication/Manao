@@ -40,6 +40,11 @@ public interface DevelopmentBuildExecutor {
     AgentContracts.BuildResult close(AgentContracts.BuildRequest request,
                                      AgentContracts.BuildIdentity identity);
 
+    /** One scheduler step; implementations with wait loops must override with a single observation. */
+    default AgentContracts.BuildResult closeStep(AgentContracts.BuildRequest request,AgentContracts.BuildIdentity identity) {
+        return close(request,identity);
+    }
+
     /**
      * Answers whether a build side effect may exist under this call's stable commandId at
      * all. False ONLY after a successful cluster query that proves no Job was ever created

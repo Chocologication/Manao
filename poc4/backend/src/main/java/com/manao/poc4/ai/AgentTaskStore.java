@@ -154,13 +154,18 @@ public final class AgentTaskStore implements AgentTaskOccupancy {
                 // The fencing epoch is persisted exactly once, at creation: a re-submission
                 // of the same request never moves it, so a start response loss is reconciled
                 // by the same-epoch status read instead of a second, overlapping session.
+                // The budget deadline is bound from the SAME clock in the same write
+                // (design section 4): created_at + 1800s; legacy rows keep NULL and never
+                // enter the automatic budget close.
+                Timestamp deadline = new Timestamp(now.getTime() + TERMINAL_DEADLINE_SECONDS * 1000L);
                 jdbc.update("""
                     INSERT INTO agent_task(id, project_id, owner_id, request_sha256, prompt,
-                        state, worker_epoch, workspace_revision, created_at, updated_at, conversation_id, reasoning_effort)
-                    VALUES (?, ?, ?, ?, ?, 'QUEUED', 1, ?, ?, ?, ?, ?)
+                        state, worker_epoch, workspace_revision, created_at, updated_at,
+                        conversation_id, reasoning_effort, deadline_at, next_reconcile_at)
+                    VALUES (?, ?, ?, ?, ?, 'QUEUED', 1, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     request.taskId(), projectId, ownerId, requestSha256, request.prompt(),
-                    request.expectedRevision(), now, now, conversationId, effort);
+                    request.expectedRevision(), now, now, conversationId, effort, deadline, now);
             } catch (DuplicateKeyException ex) {
                 // The unique index is the backstop behind the in-transaction pre-check.
                 throw new ApiException("AI_TASK_ACTIVE", 409, "The project already has an active task");
@@ -687,7 +692,7 @@ public final class AgentTaskStore implements AgentTaskOccupancy {
     }
 
     /**
-     * Applies a worker-reported terminal state — the backend's unified terminal verdict.
+     * Applies a worker-reported terminal state to a task that still accepts new calls.
      * The decision is ONE atomic SQL statement (fix round 2, C1): the side-effect check
      * and the state transition are the same conditional UPDATE, so a concurrent tool-call
      * registration or receipt from ANY database connection — not merely another thread of
@@ -698,12 +703,15 @@ public final class AgentTaskStore implements AgentTaskOccupancy {
      * workspace_operation still PENDING (a file receipt that was never verified through
      * the shared reconcile path).
      *
-     * <p>Zero affected rows mean either a late terminal (the task already settled or is
-     * closing — nothing to record) or an unsettled side effect; one atomic fallback
-     * statement then records the verdict as a to-be-verified event — its progress item
-     * stays in the envelope and the {@link #TERMINAL_PENDING_MARKER} keeps the project
-     * occupied — and only the close flow resolves it. A verdict may never settle the
-     * task COMPLETED/FAILED while any side effect is undecided.</p>
+     * <p>The verdict completes ONLY from QUEUED or RUNNING (repair plan task 3): a task
+     * parked under the pending-terminal marker is settled exclusively by
+     * {@link #completeFromReceipt}, the CAS that matches the stored receipt's identity
+     * and canonical content digest. Zero affected rows from a QUEUED/RUNNING task mean
+     * an unsettled side effect; one atomic fallback statement then records the verdict
+     * as a to-be-verified event — its progress item stays in the envelope and the
+     * {@link #TERMINAL_PENDING_MARKER} keeps the project occupied — and only the
+     * settlement flow resolves it. A verdict may never settle the task COMPLETED/FAILED
+     * while any side effect is undecided.</p>
      */
     public synchronized boolean applyTerminal(String taskId, AgentContracts.TaskState state,
                                               String summary, String failureCode) {
@@ -743,6 +751,331 @@ public final class AgentTaskStore implements AgentTaskOccupancy {
      */
     public static final String TERMINAL_PENDING_MARKER = "AI_TERMINAL_PENDING";
 
+    /**
+     * The budget deadline of a NEW task, bound from the same clock as its creation
+     * (design section 4): created_at + 1800s. Legacy rows keep NULL and never enter the
+     * automatic budget close.
+     */
+    static final int TERMINAL_DEADLINE_SECONDS = 1800;
+
+    /** The durable close reason a deadline-reached receipt records (design section 6). */
+    public static final String BUDGET_CLOSE_REASON = "AI_TASK_BUDGET_EXCEEDED";
+
+    // ------------------------------------------------------------------
+    // Durable terminal receipts (repair design section 4). The receipt —
+    // report id, normalized report JSON, canonical content digest, receive
+    // time — is the single durable terminal evidence of one execution. The
+    // recordTerminal transaction locks the project row then the task row,
+    // re-verifies the execution identity, and either acknowledges the same
+    // receipt, refuses a conflict explicitly, answers a stored close
+    // intent CLOSING, records the budget close at the deadline, or stores
+    // the report and parks the task — all before the ACK, with zero
+    // Kubernetes/Worker IO and no project memory gate.
+    // ------------------------------------------------------------------
+
+    /** The lowercase sha-256 hex form of the report identity and content digest. */
+    private static final java.util.regex.Pattern REPORT_ID = Pattern.compile("[0-9a-f]{64}");
+
+    /**
+     * The stable terminal report identity of one execution (design protocol supplement):
+     * lowercase SHA-256 over the UTF-8 compact JSON array
+     * {@code [1, taskId, epoch, requestSha256, "terminal"]} — compact, raw Unicode,
+     * unescaped slashes, preserved nulls. The TS worker computes the same bytes.
+     */
+    public static String terminalReportId(String taskId, long epoch, String requestSha256) {
+        return sha256Hex(identityJsonBytes(java.util.Arrays.asList(
+            1, taskId, epoch, requestSha256, "terminal")));
+    }
+
+    /**
+     * The canonical content digest of one terminal report (design protocol supplement):
+     * lowercase SHA-256 over the UTF-8 compact JSON array
+     * {@code [1, reportId, state, summary, failureCode]} — server time is never part of
+     * the content, so an idempotent re-delivery compares equal.
+     */
+    public static String terminalContentSha256(String reportId, AgentContracts.TaskState state,
+                                               String summary, String failureCode) {
+        if (!REPORT_ID.matcher(reportId).matches()) {
+            throw new IllegalArgumentException("the report id must be a lowercase sha-256 hex string");
+        }
+        return sha256Hex(identityJsonBytes(java.util.Arrays.asList(
+            1, reportId, state.name(), summary, failureCode)));
+    }
+
+    /**
+     * The canonical identity-array bytes: exactly the ECMAScript {@code JSON.stringify}
+     * semantics for an array of integers, strings and nulls — compact, raw Unicode
+     * characters (supplementary pairs included), unescaped slashes, preserved nulls.
+     * Jackson's default generator escapes non-BMP characters as surrogate escapes, which
+     * would silently diverge from the TS worker; the identity arrays therefore never pass
+     * through the shared mapper.
+     */
+    private static byte[] identityJsonBytes(List<Object> array) {
+        StringBuilder builder = new StringBuilder("[");
+        for (int i = 0; i < array.size(); i++) {
+            if (i > 0) {
+                builder.append(',');
+            }
+            appendIdentityValue(builder, array.get(i));
+        }
+        return builder.append(']').toString().getBytes(StandardCharsets.UTF_8);
+    }
+
+    private static void appendIdentityValue(StringBuilder builder, Object value) {
+        if (value == null) {
+            builder.append("null");
+            return;
+        }
+        if (value instanceof Integer || value instanceof Long) {
+            builder.append(value);
+            return;
+        }
+        builder.append('"');
+        String text = value.toString();
+        for (int i = 0; i < text.length(); i++) {
+            char c = text.charAt(i);
+            switch (c) {
+                case '"' -> builder.append("\\\"");
+                case '\\' -> builder.append("\\\\");
+                case '\n' -> builder.append("\\n");
+                case '\r' -> builder.append("\\r");
+                case '\t' -> builder.append("\\t");
+                case '\b' -> builder.append("\\b");
+                case '\f' -> builder.append("\\f");
+                default -> {
+                    if (c < 0x20) {
+                        builder.append(String.format("\\u%04x", (int) c));
+                    } else {
+                        builder.append(c);
+                    }
+                }
+            }
+        }
+        builder.append('"');
+    }
+
+    /** What one recordTerminal call decided: whether it created the receipt, the disposition, and the content digest. */
+    public record TerminalReceipt(boolean firstReceipt, AgentContracts.TerminalDisposition disposition,
+                                  String contentSha256) { }
+
+    /** The locked task row behind one receipt decision. */
+    private record ReceiptRow(String state, String failureCode, String closeReasonCode,
+                              Timestamp deadlineAt, String terminalReportId, String terminalReportSha256,
+                              long workerEpoch, String workerInstanceId) { }
+
+    private static final String RECEIPT_ROW_COLUMNS = """
+        state, failure_code, close_reason_code, deadline_at, terminal_report_id,
+        terminal_report_sha256, worker_epoch, worker_instance_id
+        """;
+
+    private static final org.springframework.jdbc.core.RowMapper<ReceiptRow> RECEIPT_ROW_MAPPER =
+        (rs, row) -> new ReceiptRow(rs.getString(1), rs.getString(2), rs.getString(3),
+            rs.getTimestamp(4), rs.getString(5), rs.getString(6), rs.getLong(7), rs.getString(8));
+
+    /**
+     * Records one terminal report for the verified execution. One short transaction locks
+     * the project row, then the task row, re-verifies (epoch, instance) on the locked row
+     * and commits the decision BEFORE the caller acknowledges. The monitor is shared with
+     * claim registration and the create reservation, so a side-effect permission can never
+     * be read before the receipt and used after it.
+     *
+     * <ul>
+     *   <li>same report id + same canonical content: idempotent ACK of the stored receipt
+     *       (the disposition follows the current task decision);</li>
+     *   <li>same id with different content, or a foreign report id: explicit 409;</li>
+     *   <li>a stored close intent (AI_CLOSING, or a settled FAILED row): CLOSING with the
+     *       late identity stored as the refused one — never a reversal, never a reason
+     *       overwrite;</li>
+     *   <li>the deadline reached without an earlier receipt: the budget close intent
+     *       (AI_CLOSING + AI_TASK_BUDGET_EXCEEDED) is recorded from the backend clock and
+     *       CLOSING is answered — no retroactive waiver from worker-supplied times;</li>
+     *   <li>otherwise the report is stored and the task parked
+     *       NEEDS_ATTENTION / AI_TERMINAL_PENDING, refusing every new tool registration
+     *       and new side-effect creation from that commit on.</li>
+     * </ul>
+     */
+    public synchronized TerminalReceipt recordTerminal(String taskId, long epoch, String instanceId,
+                                                       String reportId, String reportJson,
+                                                       AgentContracts.TaskState state,
+                                                       String summary, String failureCode) {
+        if (state != AgentContracts.TaskState.COMPLETED && state != AgentContracts.TaskState.FAILED) {
+            throw new IllegalArgumentException("only COMPLETED or FAILED may be recorded as a terminal report");
+        }
+        if (!REPORT_ID.matcher(reportId).matches()) {
+            throw new ApiException("AI_TERMINAL_IDENTITY", 409, "The terminal report id is malformed");
+        }
+        TaskOwner owner = taskOwner(taskId);
+        Timestamp now = Timestamp.from(clock.instant());
+        String contentSha256 = terminalContentSha256(reportId, state, summary, failureCode);
+        return java.util.Objects.requireNonNull(transaction.execute(status -> {
+            // Unified lock order: the project row first, then the task row.
+            jdbc.query("SELECT id FROM project WHERE id = ? FOR UPDATE",
+                (rs, row) -> rs.getString(1), owner.projectId());
+            List<ReceiptRow> rows = jdbc.query("""
+                SELECT %s FROM agent_task WHERE id = ? FOR UPDATE
+                """.formatted(RECEIPT_ROW_COLUMNS), RECEIPT_ROW_MAPPER, taskId);
+            if (rows.isEmpty()) {
+                throw new ApiException("AI_TASK_NOT_FOUND", 404, "Task not found");
+            }
+            ReceiptRow task = rows.get(0);
+            // Recheck the execution identity on the locked row: a stale epoch or a foreign
+            // instance never receipts anything.
+            if (task.workerEpoch() != epoch) {
+                throw new ApiException("AI_EPOCH_MISMATCH", 409, "The worker epoch does not match the task");
+            }
+            if (instanceId == null || instanceId.isBlank() || task.workerInstanceId() == null
+                || !task.workerInstanceId().equals(instanceId)) {
+                throw new ApiException("AI_INSTANCE_MISMATCH", 409, "The task has no matching worker binding");
+            }
+            if (task.terminalReportId() != null) {
+                if (!reportId.equals(task.terminalReportId())
+                    || !contentSha256.equals(task.terminalReportSha256())) {
+                    throw new ApiException("AI_TERMINAL_MISMATCH", 409,
+                        "This terminal report was already recorded with different content or identity");
+                }
+                return new TerminalReceipt(false, dispositionOf(task.state(), task.failureCode()),
+                    contentSha256);
+            }
+            if ("COMPLETED".equals(task.state()) || isCloseIntent(task)) {
+                // A late report to a closed/closing execution: record its identity as the
+                // refused one (immutable), change nothing else, answer by the close decision.
+                storeLateReceiptIdentity(taskId, reportId, reportJson, contentSha256, now);
+                return new TerminalReceipt(false, dispositionOf(task.state(), task.failureCode()),
+                    contentSha256);
+            }
+            if (task.deadlineAt() != null && !now.before(task.deadlineAt())) {
+                // Close-first at the deadline: the budget close intent is persisted from
+                // the backend clock in the same transaction that answers CLOSING.
+                jdbc.update("""
+                    UPDATE agent_task SET state = 'NEEDS_ATTENTION', failure_code = ?,
+                        close_reason_code = ?, next_reconcile_at = ?, terminal_report_id = ?,
+                        terminal_report_json = ?, terminal_report_sha256 = ?, terminal_received_at = ?,
+                        updated_at = ?, reconcile_attempt = 0
+                    WHERE id = ? AND state IN ('QUEUED', 'RUNNING')
+                    """, CLOSING_MARKER, BUDGET_CLOSE_REASON, now, reportId, reportJson,
+                    contentSha256, now, now, taskId);
+                return new TerminalReceipt(false, AgentContracts.TerminalDisposition.CLOSING,
+                    contentSha256);
+            }
+            // A pre-receipt legacy row parked by the previous backend (AI_TERMINAL_PENDING,
+            // no receipt yet) accepts its first receipt here: the new terminal callback
+            // attaches the durable receipt to the already-parked task (design section 4).
+            int parked = jdbc.update("""
+                UPDATE agent_task SET state = 'NEEDS_ATTENTION', failure_code = ?, summary = ?,
+                    terminal_report_id = ?, terminal_report_json = ?, terminal_report_sha256 = ?,
+                    terminal_received_at = ?, updated_at = ?, next_reconcile_at = ?, reconcile_attempt = 0
+                WHERE id = ? AND (state IN ('QUEUED', 'RUNNING')
+                    OR (state = 'NEEDS_ATTENTION' AND failure_code = ? AND terminal_report_id IS NULL))
+                """, TERMINAL_PENDING_MARKER, summary, reportId, reportJson, contentSha256, now, now, now,
+                taskId, TERMINAL_PENDING_MARKER);
+            if (parked == 0) {
+                // Fail closed: an unexpected state never claims a receipt it did not store.
+                throw new ApiException("AI_TASK_NOT_ACTIVE", 409, "Task is not active");
+            }
+            return new TerminalReceipt(true, AgentContracts.TerminalDisposition.RECORDED, contentSha256);
+        }));
+    }
+
+    /** A NEEDS_ATTENTION close marker, a settled FAILED row, or any persisted close reason. */
+    private static boolean isCloseIntent(ReceiptRow task) {
+        return "FAILED".equals(task.state())
+            || (task.closeReasonCode() != null && !task.closeReasonCode().isBlank())
+            || ("NEEDS_ATTENTION".equals(task.state()) && CLOSING_MARKER.equals(task.failureCode()));
+    }
+
+    /** The committed disposition for a re-delivered receipt, read from the current task decision. */
+    private static AgentContracts.TerminalDisposition dispositionOf(String state, String failureCode) {
+        if ("COMPLETED".equals(state)) {
+            return AgentContracts.TerminalDisposition.SETTLED;
+        }
+        if ("FAILED".equals(state)
+            || ("NEEDS_ATTENTION".equals(state) && CLOSING_MARKER.equals(failureCode))) {
+            return AgentContracts.TerminalDisposition.CLOSING;
+        }
+        return AgentContracts.TerminalDisposition.RECORDED;
+    }
+
+    /** Late reports never overwrite a stored receipt: the identity is written exactly once. */
+    private void storeLateReceiptIdentity(String taskId, String reportId, String reportJson,
+                                          String contentSha256, Timestamp now) {
+        jdbc.update("""
+            UPDATE agent_task SET terminal_report_id = ?, terminal_report_json = ?,
+                terminal_report_sha256 = ?, terminal_received_at = ?, updated_at = ?
+            WHERE id = ? AND terminal_report_id IS NULL
+            """, reportId, reportJson, contentSha256, now, now, taskId);
+    }
+
+    /**
+     * The read-only reconciliation answer for one task's stored receipt (design protocol
+     * supplement): the execution identity is verified exactly as for a delivery, and the
+     * answer is empty when no receipt exists (the controller maps that to 404). This
+     * never starts a side effect.
+     */
+    public Optional<AgentContracts.TerminalAck> storedTerminalAck(String taskId, long epoch,
+                                                                  String instanceId) {
+        requireWorkerIdentity(taskId, epoch, instanceId);
+        return storedAckRow(taskId)
+            .filter(row -> row.terminalReportId() != null)
+            .map(row -> new AgentContracts.TerminalAck(
+                row.terminalReportId(), row.terminalReportSha256(),
+                dispositionOf(row.state(), row.failureCode())));
+    }
+
+    /** The current disposition of THIS stored receipt, or empty when it is absent or different. */
+    public Optional<AgentContracts.TerminalDisposition> storedTerminalDisposition(
+            String taskId, String reportId, String contentSha256) {
+        return storedAckRow(taskId)
+            .filter(row -> reportId.equals(row.terminalReportId())
+                && contentSha256.equals(row.terminalReportSha256()))
+            .map(row -> dispositionOf(row.state(), row.failureCode()));
+    }
+
+    /** True while THIS receipt is the recorded one and the task still waits under the pending marker. */
+    public boolean terminalReceiptParked(String taskId, String reportId, String contentSha256) {
+        return storedAckRow(taskId)
+            .filter(row -> reportId.equals(row.terminalReportId())
+                && contentSha256.equals(row.terminalReportSha256()))
+            .map(row -> "NEEDS_ATTENTION".equals(row.state())
+                && TERMINAL_PENDING_MARKER.equals(row.failureCode()))
+            .orElse(false);
+    }
+
+    private Optional<ReceiptRow> storedAckRow(String taskId) {
+        return jdbc.query("SELECT %s FROM agent_task WHERE id = ?"
+                .formatted(RECEIPT_ROW_COLUMNS), RECEIPT_ROW_MAPPER, taskId).stream().findFirst();
+    }
+
+    /** The stored receipt's normalized report — the close flow's original-failure source. */
+    public Optional<StoredTerminal> storedTerminalReport(String taskId) {
+        String json = jdbc.queryForObject(
+            "SELECT terminal_report_json FROM agent_task WHERE id = ?", String.class, taskId);
+        if (json == null || json.isBlank()) {
+            return Optional.empty();
+        }
+        try {
+            JsonNode node = JSON.readTree(json);
+            String stateName = node.path("state").asText("");
+            if (!"COMPLETED".equals(stateName) && !"FAILED".equals(stateName)) {
+                return Optional.empty();
+            }
+            JsonNode failureCodeNode = node.path("failureCode");
+            return Optional.of(new StoredTerminal(AgentContracts.TaskState.valueOf(stateName),
+                node.path("summary").asText(null),
+                failureCodeNode.isNull() || failureCodeNode.isMissingNode()
+                    ? null : failureCodeNode.asText(null)));
+        } catch (IOException ex) {
+            throw new IllegalStateException("stored terminal report is unreadable", ex);
+        }
+    }
+
+    /** The normalized report behind one stored receipt. */
+    public record StoredTerminal(AgentContracts.TaskState state, String summary, String failureCode) { }
+
+    /** The durable display-progress head seq (0 before the first item). */
+    public long progressHeadSeq(String taskId) {
+        return readEnvelope(taskId).lastSeq();
+    }
+
     /** The close-flow entry state: START armed the marker now, RETRY re-enters an already armed close, SETTLED means nothing to release. */
     public enum CloseEntry { START, RETRY, SETTLED }
 
@@ -757,7 +1090,19 @@ public final class AgentTaskStore implements AgentTaskOccupancy {
      * it. Anything else is SETTLED: an already released task never re-enters the flow.
      */
     public synchronized CloseEntry beginClose(String taskId) {
+        return beginClose(taskId, null);
+    }
+
+    /**
+     * The close entry with a durable reason (design section 6): the reason is persisted
+     * with the FIRST close intent and never overwritten — a repeated close, a late report
+     * or a restart keeps the original one. A null reason leaves the column NULL.
+     */
+    public synchronized CloseEntry beginClose(String taskId, String reasonCode) {
+        jdbc.update("UPDATE agent_task SET next_reconcile_at = ?, reconcile_attempt = 0 WHERE id = ? AND state IN ('QUEUED','RUNNING','NEEDS_ATTENTION') AND close_reason_code IS NULL AND (failure_code IS NULL OR failure_code <> ?)",
+            Timestamp.from(clock.instant()), taskId,CLOSING_MARKER);
         if (markClosing(taskId)) {
+            persistCloseReason(taskId, reasonCode);
             return CloseEntry.START;
         }
         List<Row> rows = jdbc.query(
@@ -768,6 +1113,7 @@ public final class AgentTaskStore implements AgentTaskOccupancy {
         }
         Row row = rows.get(0);
         if ("NEEDS_ATTENTION".equals(row.state()) && CLOSING_MARKER.equals(row.failureCode())) {
+            persistCloseReason(taskId, reasonCode);
             return CloseEntry.RETRY;
         }
         if ("NEEDS_ATTENTION".equals(row.state())) {
@@ -775,9 +1121,22 @@ public final class AgentTaskStore implements AgentTaskOccupancy {
                 "UPDATE agent_task SET failure_code = ?, updated_at = ? "
                     + "WHERE id = ? AND state = 'NEEDS_ATTENTION'",
                 CLOSING_MARKER, Timestamp.from(clock.instant()), taskId) > 0;
+            if (armed) {
+                persistCloseReason(taskId, reasonCode);
+            }
             return armed ? CloseEntry.START : CloseEntry.SETTLED;
         }
         return CloseEntry.SETTLED;
+    }
+
+    /** The close reason is written exactly once: a repeat close can never overwrite it. */
+    private void persistCloseReason(String taskId, String reasonCode) {
+        if (reasonCode == null || reasonCode.isBlank()) {
+            return;
+        }
+        jdbc.update("UPDATE agent_task SET close_reason_code = ?, updated_at = ? "
+                + "WHERE id = ? AND close_reason_code IS NULL",
+            reasonCode, Timestamp.from(clock.instant()), taskId);
     }
 
     private record Row(String state, String failureCode) { }
@@ -842,10 +1201,141 @@ public final class AgentTaskStore implements AgentTaskOccupancy {
             .reduce((first, last) -> last);
     }
 
-    public synchronized void deferTerminal(String taskId, String summary) {
-        jdbc.update("UPDATE agent_task SET state='NEEDS_ATTENTION', failure_code=?, summary=?, updated_at=? "
-            + "WHERE id=? AND state IN ('QUEUED','RUNNING')", TERMINAL_PENDING_MARKER, summary,
+    // ------------------------------------------------------------------
+    // Durable settlement (repair design section 6). reconcile(taskId) in
+    // AgentTaskSettlementService drives every stored receipt, user close
+    // and budget close through the existing business verification. These
+    // primitives give that driver a consistent read of the durable row,
+    // the receipt-identity completion CAS, and the deferral marker for
+    // the next round. Same lock discipline as recordTerminal: the store
+    // monitor covers the whole decision; a CAS UPDATE touches the task
+    // row and its subqueries only — never a project row after a task row.
+    // ------------------------------------------------------------------
+
+    /** The durable row behind one settlement decision: state, close intent and receipt identity. */
+    public record SettlementView(String state, String failureCode, String closeReasonCode,
+                                 String terminalReportId, String terminalReportSha256) { }
+
+    public record ReconcileCandidate(String taskId, long epoch, String instanceId, String requestSha256,
+                                      java.time.Instant nextReconcileAt) { }
+
+    /** NULL scheduling rows are legacy active tasks, never historical released rows. */
+    public List<ReconcileCandidate> dueReconciliations(int limit) {
+        return jdbc.query("""
+            SELECT id,worker_epoch,worker_instance_id,request_sha256,next_reconcile_at FROM agent_task
+            WHERE state IN ('QUEUED','RUNNING','NEEDS_ATTENTION')
+              AND (next_reconcile_at IS NULL OR next_reconcile_at <= ?)
+            ORDER BY next_reconcile_at,id LIMIT ?
+            """, (rs,row) -> new ReconcileCandidate(rs.getString(1),rs.getLong(2),rs.getString(3),rs.getString(4),
+                rs.getTimestamp(5)==null ? null : rs.getTimestamp(5).toInstant()),
+            Timestamp.from(clock.instant()), Math.min(10,Math.max(1,limit)));
+    }
+
+    public ReconcileCandidate reconcileCandidate(String taskId) {
+        return jdbc.queryForObject("SELECT id,worker_epoch,worker_instance_id,request_sha256,next_reconcile_at FROM agent_task WHERE id=?",
+            (rs,row) -> new ReconcileCandidate(rs.getString(1),rs.getLong(2),rs.getString(3),rs.getString(4),
+                rs.getTimestamp(5)==null ? null : rs.getTimestamp(5).toInstant()),taskId);
+    }
+
+    /** Receipt/close races resolve in this single CAS; only no-receipt tasks can be budget closed. */
+    public synchronized boolean armExpiredBudget(String taskId) {
+        Timestamp now=Timestamp.from(clock.instant());
+        return jdbc.update("""
+            UPDATE agent_task SET state='NEEDS_ATTENTION',failure_code=?,close_reason_code=?,
+                next_reconcile_at=?,updated_at=?,reconcile_attempt=0 WHERE id=?
+              AND state IN ('QUEUED','RUNNING','NEEDS_ATTENTION')
+              AND terminal_report_id IS NULL AND close_reason_code IS NULL
+              AND (failure_code IS NULL OR failure_code<>?)
+              AND deadline_at IS NOT NULL AND deadline_at<=?
+            """,CLOSING_MARKER,BUDGET_CLOSE_REASON,now,now,taskId,CLOSING_MARKER,now)>0;
+    }
+
+    /** Attempt accounting is independent of progress timestamps and survives backend restart. */
+    public void deferReconcile(String taskId) {
+        Timestamp now=Timestamp.from(clock.instant());
+        jdbc.update("""
+            UPDATE agent_task SET next_reconcile_at=TIMESTAMPADD(SECOND,
+                LEAST(30,5*POW(2,LEAST(reconcile_attempt,3))),?),updated_at=?,
+                reconcile_attempt=LEAST(reconcile_attempt+1,4)
+            WHERE id=? AND state IN ('QUEUED','RUNNING','NEEDS_ATTENTION')
+            """,now,now,taskId);
+    }
+
+    /** The consistent settlement read of one task; unknown ids are a 404. */
+    public SettlementView settlementView(String taskId) {
+        List<SettlementView> rows = jdbc.query("""
+            SELECT state, failure_code, close_reason_code, terminal_report_id, terminal_report_sha256
+            FROM agent_task WHERE id = ?
+            """, (rs, row) -> new SettlementView(rs.getString(1), rs.getString(2), rs.getString(3),
+            rs.getString(4), rs.getString(5)), taskId);
+        if (rows.isEmpty()) {
+            throw new ApiException("AI_TASK_NOT_FOUND", 404, "Task not found");
+        }
+        return rows.get(0);
+    }
+
+    /** True while the row carries any persisted close intent: reason, close marker or settled FAILED. */
+    public static boolean hasCloseIntent(SettlementView view) {
+        return "FAILED".equals(view.state())
+            || (view.closeReasonCode() != null && !view.closeReasonCode().isBlank())
+            || ("NEEDS_ATTENTION".equals(view.state()) && CLOSING_MARKER.equals(view.failureCode()));
+    }
+
+    /** True while any task-linked workspace receipt is still PENDING (an unverified file write). */
+    public boolean hasPendingReceipts(String taskId) {
+        Integer count = jdbc.queryForObject("""
+            SELECT COUNT(*) FROM agent_tool_call c
+            JOIN workspace_operation w ON w.id = c.workspace_operation_id
+            WHERE c.task_id = ? AND w.state = 'PENDING'
+            """, Integer.class, taskId);
+        return count != null && count > 0;
+    }
+
+    /**
+     * The deferral of one settlement round (design section 6): the still-occupying task
+     * is marked for the next reconcile pass. The interval is this round's engineering
+     * default on the scheduler's 5s cadence; the scheduler (later task) owns the backoff
+     * policy on top of it.
+     */
+    public static final long RECONCILE_DEFER_MILLIS = 5000;
+
+    public void scheduleReconcile(String taskId) {
+        jdbc.update("""
+            UPDATE agent_task SET next_reconcile_at = ?, updated_at = ?
+            WHERE id = ? AND state IN ('QUEUED', 'RUNNING', 'NEEDS_ATTENTION')
+            """,
+            Timestamp.from(clock.instant().plusMillis(RECONCILE_DEFER_MILLIS)),
             Timestamp.from(clock.instant()), taskId);
+    }
+
+    /**
+     * The parked receipt's completion CAS (repair plan task 3): the ONE atomic statement
+     * that settles a task parked under the pending-terminal marker from ITS OWN stored
+     * receipt. The WHERE matches the receipt identity AND the canonical content digest
+     * (a foreign report never completes), requires the parked marker itself (an armed
+     * close intent — reason, close marker or settled FAILED — can never be overridden),
+     * and re-verifies every durable side effect in the same statement: no unsettled tool
+     * call and no task-linked PENDING workspace receipt. Zero affected rows mean a close
+     * won the race, an effect is still undecided, or the task already settled — the
+     * caller defers and re-reads instead of assuming.
+     */
+    public synchronized boolean completeFromReceipt(String taskId, String reportId, String contentSha256,
+                                                    String summary, String failureCode) {
+        Timestamp now = Timestamp.from(clock.instant());
+        return jdbc.update("""
+            UPDATE agent_task
+            SET state = 'COMPLETED', summary = ?, failure_code = ?, updated_at = ?
+            WHERE id = ? AND state = 'NEEDS_ATTENTION' AND failure_code = ?
+              AND terminal_report_id = ? AND terminal_report_sha256 = ?
+              AND close_reason_code IS NULL
+              AND NOT EXISTS (SELECT 1 FROM agent_tool_call c
+                  WHERE c.task_id = agent_task.id
+                    AND c.state IN ('REGISTERED', 'RUNNING', 'NEEDS_ATTENTION'))
+              AND NOT EXISTS (SELECT 1 FROM agent_tool_call c2
+                  JOIN workspace_operation w ON w.id = c2.workspace_operation_id
+                  WHERE c2.task_id = agent_task.id AND w.state = 'PENDING')
+            """, summary, failureCode, now, taskId, TERMINAL_PENDING_MARKER, reportId,
+            contentSha256) > 0;
     }
 
     /** Every still-unsettled call of one task; the close flow finishes what it can of these. */

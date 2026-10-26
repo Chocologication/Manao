@@ -102,5 +102,34 @@ public final class AgentContracts {
     }
 
     /** Worker answer to start/status/stop; {@code instanceId} binds the running session. */
-    public record WorkerStatus(String taskId, String instanceId, String state) { }
+    public record WorkerStatus(String taskId, String instanceId, String state, Integer protocolVersion,
+                               Long workerEpoch, String requestSha256, String executionState,
+                               WorkerTerminalDelivery terminalDelivery) {
+        public WorkerStatus(String taskId, String instanceId, String state) {
+            this(taskId, instanceId, state, null, null, null, null, null);
+        }
+    }
+
+    public record WorkerTerminalDelivery(String state, String reportId, String reportSha256, TerminalReport report) { }
+
+    public record WorkerProcessStatus(String bootId, String instanceId, String activeTaskId,
+                                      String activeExecutionState, String activeKind, boolean modelConfigured) { }
+
+    /**
+     * The worker's terminal execution report (repair design section 4). The backend
+     * recomputes {@code reportId} from the durable execution identity and refuses a
+     * mismatch; only COMPLETED or FAILED are terminal states.
+     */
+    public record TerminalReport(int protocolVersion, String reportId, TaskState state,
+                                 String summary, String failureCode) { }
+
+    /** The committed backend decision for one terminal report. */
+    public enum TerminalDisposition { RECORDED, SETTLED, CLOSING }
+
+    /**
+     * The durable terminal answer: the report identity, the backend-computed canonical
+     * content digest and the committed disposition. A 200 response means this decision
+     * has been persisted — it is never a proxy for "the task settled".
+     */
+    public record TerminalAck(String reportId, String reportSha256, TerminalDisposition disposition) { }
 }

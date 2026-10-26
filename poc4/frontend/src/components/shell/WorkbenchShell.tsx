@@ -19,6 +19,7 @@ import {
 import { Link, useLocation } from 'react-router';
 import { logout } from '@/app/appRuntime';
 import { clearAgentTaskId, getAgentTask, readAgentTaskId } from '@/api/agentTaskApi';
+import { ApiRequestError } from '@/api/ApiRequestError';
 import { EditorWorkspace } from '@/components/files/EditorWorkspace';
 import { UnsavedChangesDialog } from '@/components/files/UnsavedChangesDialog';
 import { FileTree } from '@/components/files/FileTree';
@@ -879,6 +880,7 @@ export function WorkbenchShell({ project }: { project: ProjectSummary }) {
                 projectTemplateId={project.runtime?.templateId ?? 'java-console'}
                 coordinator={coordinator}
                 agentTaskActive={agentTaskLocked}
+                onOpenAgentTask={agentPanelEnabled ? () => { setActivePanel('agent'); if (compactViewport) closeDrawers(); } : undefined}
                 requestRunSelection={runSelection?.projectId === project.id ? runSelection : null}
                 onLocateError={(target) => void handleLocateRunError(target)}
               />
@@ -964,6 +966,9 @@ export function WorkbenchShell({ project }: { project: ProjectSummary }) {
                     settledSnapshotSettling
                   }
                   closePending={closeAgentTaskMutation.isPending}
+                  closeError={closeAgentTaskMutation.isError && closeAgentTaskMutation.variables === agentTask?.taskId
+                    ? `Could not end the task${closeAgentTaskMutation.error instanceof ApiRequestError && closeAgentTaskMutation.error.body ? ` (${closeAgentTaskMutation.error.body.code})` : ''}. Try again.`
+                    : null}
                   onTaskAccepted={seedAgentTask}
                   onSubmissionPendingChange={(pending) => {
                     setAgentSubmissionInFlight(pending);

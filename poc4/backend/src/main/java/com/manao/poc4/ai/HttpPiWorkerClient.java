@@ -28,7 +28,7 @@ public final class HttpPiWorkerClient implements PiWorkerClient {
         this.baseUrl = baseUrl == null ? "" : baseUrl.replaceAll("/+$", "");
         this.token = token;
         this.timeout = timeout == null ? Duration.ofSeconds(15) : timeout;
-        this.http = HttpClient.newBuilder().connectTimeout(timeout).build();
+        this.http = HttpClient.newBuilder().connectTimeout(this.timeout).build();
     }
 
     @Override public AgentContracts.WorkerStatus start(AgentContracts.WorkerStart start) {
@@ -41,6 +41,13 @@ public final class HttpPiWorkerClient implements PiWorkerClient {
 
     @Override public AgentContracts.WorkerStatus stop(String taskId) {
         return exchange("POST", "/tasks/" + taskId + "/stop", new StopBody(taskId));
+    }
+
+    @Override public AgentContracts.WorkerProcessStatus processStatus() {
+        var response = send("GET", "/status", null);
+        if (response.statusCode() != 200) { parse("GET", response); throw new AssertionError("unreachable"); }
+        try { return JSON.readValue(response.body(), AgentContracts.WorkerProcessStatus.class); }
+        catch (IOException ex) { throw new ApiException("AI_WORKER_BAD_RESPONSE", 502, "The worker answer was unreadable"); }
     }
 
     @Override public AgentConversationContracts.CompactStatus startCompaction(AgentConversationContracts.CompactStart start) {
@@ -61,7 +68,7 @@ public final class HttpPiWorkerClient implements PiWorkerClient {
     private HttpResponse<String> send(String method, String path, Object body) {
         HttpRequest.Builder builder = HttpRequest.newBuilder()
             .uri(URI.create(baseUrl + path))
-            .timeout(timeout)
+            .timeout(ReconcileWorkBudget.requestTimeout(timeout))
             .header("X-Manao-Worker-Token", token);
         if (body == null) {
             builder.GET();
@@ -88,6 +95,12 @@ public final class HttpPiWorkerClient implements PiWorkerClient {
             } catch (IOException ex) {
                 throw new ApiException("AI_WORKER_BAD_RESPONSE", 502, "the worker answer was unreadable");
             }
+        }
+        if (response.statusCode() == 404) {
+            throw new ApiException("AI_WORKER_NOT_FOUND", 404, "The worker task was not found");
+        }
+        if (response.statusCode() == 401 || response.statusCode() == 403) {
+            throw new ApiException("AI_WORKER_UNAUTHORIZED", 502, "The worker refused authentication");
         }
         if (response.statusCode() == 503) {
             throw new ApiException("AI_WORKER_NOT_CONFIGURED", 503, "the worker has no model configuration");

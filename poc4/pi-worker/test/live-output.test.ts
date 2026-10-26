@@ -121,7 +121,7 @@ function textStream(stream: AssistantMessageEventStream, text: string, tool = fa
 afterEach(() => vi.useRealTimers());
 
 describe("real Pi live-output integration", () => {
-  it("shows reasoning and answer before message_end and keeps terminal independent of a stalled live POST", async () => {
+  it("shows reasoning and answer before message_end and settles the outcome while a live POST stays stalled", async () => {
     let stream!: AssistantMessageEventStream;
     let partial!: AssistantMessage;
     const post = deferred();
@@ -142,8 +142,12 @@ describe("real Pi live-output integration", () => {
       expect(JSON.stringify(generating)).not.toContain("private-signature");
       stream.push({ type: "done", reason: "toolUse", message: { ...partial, stopReason: "toolUse" } });
       const outcome = await run;
-      const terminalWasDeliveredWhileLivePostStalled = fixture.terminal.length === 1 && !livePostSettled;
-      expect(terminalWasDeliveredWhileLivePostStalled).toBe(true);
+      // The stalled live display POST never blocked the execution loop: the outcome is
+      // frozen and ready for the delivery layer, and the session itself sent no
+      // terminal through the progress chain.
+      const runSettledWhileLivePostStalled = !livePostSettled;
+      expect(runSettledWhileLivePostStalled).toBe(true);
+      expect(fixture.terminal).toEqual([]);
       expect(outcome).toMatchObject({ state: "COMPLETED", summary: "工具续轮完成" });
       expect(fixture.invoked).toEqual(["read_file"]);
       expect(generating.current?.phase).toBe("generating");

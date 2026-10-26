@@ -35,6 +35,8 @@ export type RunToolbarProps = {
   startTitle: string;
   startPending: boolean;
   canStop: boolean;
+  stopBlockedByAgent?: boolean;
+  onOpenAgentTask?: () => void;
   stopWaiting: boolean;
   stopPending: boolean;
   authorityError: string | null;
@@ -125,7 +127,7 @@ function serviceLifetimeLabel(run: RunSummary, nowMs: number): string {
     return 'Starting';
   }
   if (availability === 'READY' && run.expiresAt !== null) {
-    return `Accessible · ${formatRunElapsed(run.expiresAt, nowMs)} left`;
+    return `Accessible · ${formatRunElapsed(new Date(nowMs).toISOString(), Date.parse(run.expiresAt))} left`;
   }
   return 'Unavailable';
 }
@@ -139,6 +141,8 @@ export function RunToolbar({
   startTitle,
   startPending,
   canStop,
+  stopBlockedByAgent = false,
+  onOpenAgentTask,
   stopWaiting,
   stopPending,
   authorityError,
@@ -156,6 +160,11 @@ export function RunToolbar({
   const command = run?.policy.command ?? templateDisplay.command;
   const runtimeLabel = run !== null ? runRuntimeLabel(run.policy.runtime) : templateDisplay.runtimeLabel;
   const timeoutSeconds = run?.policy.timeoutSeconds ?? templateDisplay.timeoutSeconds;
+  const servicePolicy = run?.policy.executionKind === 'SERVICE' ? run.policy : null;
+  const servicePreview = run === null && (projectTemplateId === 'java-spring-boot-web' || projectTemplateId === 'python-fastapi-web');
+  const policyLabel = servicePolicy !== null
+    ? `startup limit ${servicePolicy.startupTimeoutSeconds}s · after ready ${servicePolicy.serviceLifetimeSeconds}s`
+    : servicePreview ? `startup limit ${timeoutSeconds}s · after ready 7200s` : `timeout ${timeoutSeconds}s`;
   const clock = clockLabel(run, nowMs);
   const serviceLifetime =
     run !== null && run.policy.executionKind === 'SERVICE'
@@ -165,7 +174,8 @@ export function RunToolbar({
   const displayedStatus = run !== null && statusText === run.state
     ? runStateLabels[run.state]
     : statusText === 'Ready' ? '可以运行' : statusText;
-  const stopTitle = stopWaiting ? 'Waiting for the server' : 'Stop run';
+  const stopTitle = stopBlockedByAgent ? 'AI task is controlling the application. End the AI task first.'
+    : stopWaiting ? 'Waiting for the server' : 'Stop run';
 
   return (
     <div className="lab-run-toolbar flex shrink-0 flex-col gap-1 border-b">
@@ -187,7 +197,7 @@ export function RunToolbar({
           aria-label="Stop run"
           aria-busy={stopPending}
           className={RUN_ICON_BUTTON_CLASS}
-          disabled={!canStop || stopPending}
+          disabled={!canStop || stopPending || stopBlockedByAgent}
           onClick={onStop}
         >
           <Square className="h-4 w-4" aria-hidden />
@@ -212,9 +222,14 @@ export function RunToolbar({
           </span>
         ) : null}
         <span className="min-w-0 truncate text-sm text-muted-foreground">
-          {runtimeLabel} · timeout {timeoutSeconds}s
+          {runtimeLabel} · {policyLabel}
         </span>
       </div>
+      {servicePolicy !== null && run?.expiresAt != null ? <span className="text-xs text-muted-foreground">Expires {run.expiresAt}</span> : null}
+      {stopBlockedByAgent ? <div className="flex items-center gap-2 pb-1 text-sm text-muted-foreground">
+        <span>{stopTitle}</span>
+        {onOpenAgentTask ? <button type="button" className="h-8 shrink-0 rounded-md px-2 text-sm hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none" onClick={onOpenAgentTask}>Open AI task</button> : null}
+      </div> : null}
       {authorityError !== null ? (
         <div className="flex items-center gap-2 pb-1">
           <InlineAlert>{authorityError}</InlineAlert>

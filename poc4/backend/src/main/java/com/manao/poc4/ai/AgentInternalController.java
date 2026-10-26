@@ -69,7 +69,8 @@ public final class AgentInternalController {
 
     /**
      * One monotonic progress item; a sequence gap answers 409 with the expected seq
-     * so the worker can replay its buffered range.
+     * so the worker can replay its buffered range. A terminal item is diverted to the
+     * receipt entry before the gate and the seq check and answers like any other item.
      */
     @PostMapping("/progress")
     public ResponseEntity<Object> progress(@PathVariable String taskId,
@@ -83,6 +84,34 @@ public final class AgentInternalController {
             return ResponseEntity.status(409).body(java.util.Map.of(
                 "code", "AI_PROGRESS_GAP", "expectedSeq", gap.expectedSeq()));
         }
+    }
+
+    /**
+     * One terminal execution report (repair design section 4): the durable receipt entry.
+     * The 200 answer carries the committed TerminalAck — RECORDED (the receipt parks the
+     * task for verification), SETTLED (the receipt decided the task) or CLOSING (a close
+     * intent or the budget deadline governs). Conflicts and foreign identities are
+     * explicit 409s, never successes.
+     */
+    @PostMapping("/terminal")
+    public AgentContracts.TerminalAck terminal(@PathVariable String taskId,
+            @RequestHeader(value = "X-Manao-Worker-Instance", required = false) String instanceId,
+            @RequestHeader(value = "X-Manao-Worker-Epoch", required = false) String epochHeader,
+            @RequestBody AgentContracts.TerminalReport report) {
+        return tasks.recordTerminal(taskId, instanceId, parseEpoch(epochHeader), report);
+    }
+
+    /**
+     * Read-only reconciliation of one stored terminal decision: the stored TerminalAck,
+     * or 404 while no receipt exists. It never starts a side effect, and the execution
+     * identity is verified exactly as for a delivery.
+     */
+    @GetMapping("/terminal")
+    public AgentContracts.TerminalAck terminalAck(@PathVariable String taskId,
+            @RequestHeader(value = "X-Manao-Worker-Instance", required = false) String instanceId,
+            @RequestHeader(value = "X-Manao-Worker-Epoch", required = false) String epochHeader) {
+        return tasks.storedTerminalAck(taskId, instanceId, parseEpoch(epochHeader))
+            .orElseThrow(() -> new ApiException("AI_TERMINAL_NOT_FOUND", 404, "Terminal report not found"));
     }
 
     /** The fencing epoch header: required, a non-negative integer, validated before any effect. */

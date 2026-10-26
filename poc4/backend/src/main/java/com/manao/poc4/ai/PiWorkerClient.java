@@ -14,6 +14,10 @@ public interface PiWorkerClient {
 
     AgentContracts.WorkerStatus stop(String taskId);
 
+    default AgentContracts.WorkerProcessStatus processStatus() {
+        throw new com.manao.poc4.api.ApiException("AI_WORKER_BAD_RESPONSE", 502, "Worker protocol unavailable");
+    }
+
     default AgentConversationContracts.CompactStatus startCompaction(AgentConversationContracts.CompactStart start) {
         throw new com.manao.poc4.api.ApiException("AI_WORKER_NOT_CONFIGURED", 503, "Worker unavailable");
     }

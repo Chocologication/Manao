@@ -39,6 +39,43 @@ class JdbcRunStoreTest {
     }
 
     @Test
+    void periodicRecoveryOnlyMarksAgainAfterARealAuthorityTakeover() {
+        String projectId = seedProject("recovery-cycle");
+        String runId = "recovery-cycle-" + UUID.randomUUID();
+        long token = store.acquireFencingToken().orElseThrow();
+        assertThat(store.insertRun(run(runId, projectId, 0L), token)).isEqualTo(RunStore.InsertResult.INSERTED);
+        var coordinator = new RunControllerTest.StubCoordinator();
+        coordinator.factsByRun.put(runId, new com.manao.poc4.kubernetes.JobCoordinator.JobFacts(
+            true, false, false, false, null, null, null, false, false));
+        var recovery = new RunRecoveryService(store, coordinator);
+        recovery.recoverRuns();
+        RunRecord first = store.findRun(runId).orElseThrow();
+
+        coordinator.observationKinds.put(runId, com.manao.poc4.kubernetes.JobCoordinator.ObservationKind.UNKNOWN);
+        clock.advance(Duration.ofSeconds(15));
+        assertThat(recovery.recoverRuns().processed()).doesNotContain(runId);
+        RunRecord healthy = store.findRun(runId).orElseThrow();
+        assertThat(healthy.state()).isEqualTo(RunState.RUNNING);
+        assertThat(healthy.version()).isEqualTo(first.version());
+        assertThat(healthy.startedAt()).isEqualTo(first.startedAt());
+
+        String previousInstance = System.getProperty("manao.instance.id");
+        try {
+            System.setProperty("manao.instance.id", "recovery-cycle-" + UUID.randomUUID());
+            assertThat(recovery.recoverRuns().processed()).contains(runId);
+            RunRecord takenOver = store.findRun(runId).orElseThrow();
+            assertThat(takenOver.state()).isEqualTo(RunState.RECOVERING);
+            assertThat(takenOver.fencingToken()).isGreaterThan(token);
+            assertThat(takenOver.startedAt()).isEqualTo(first.startedAt());
+            assertThat(store.transition(runId, projectId, takenOver.version(), RunState.RUNNING, token,
+                RunState.RECOVERING)).isFalse();
+        } finally {
+            if (previousInstance == null) System.clearProperty("manao.instance.id");
+            else System.setProperty("manao.instance.id", previousInstance);
+        }
+    }
+
+    @Test
     void acquireReturnsSameTokenWhileSameHolderRenews() {
         long first = store.acquireFencingToken().orElseThrow();
         clock.advance(Duration.ofSeconds(30));          // 仍在 60s TTL 内
