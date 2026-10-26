@@ -10,9 +10,11 @@
 
 **Spec:** [修复设计](../specs/2026-10-25-ai-terminal-settlement-design.md)；[调查报告](../../../poc4/docs/evidence/ai-output/terminal-settlement-20261025.md)；[交接提示词](2026-10-25-ai-terminal-settlement-agent-handoff.md)。
 
+**2026-10-26 执行状态：** Task1–7已完成并通过逐项审查；Task8本地验证与发布准备完成，独立Task8/整分支审查待完成。实际browser8/8、Worker181、前端211、backend初次962失败及最终相关fixture60/60计数、清理拒绝残留归[验收记录](../../../poc4/docs/evidence/ai-terminal-settlement/acceptance.md)；发布与原Task dry-run归[手册](../../../poc4/deploy/ai-terminal-settlement/README.md)。尚不授予LOCAL_REPAIR_VERIFIED；云端NOT_RUN、原Task NOT_REPAIRED、Stage2 PAUSED/NOT_GRANTED。
+
 ## Global Constraints
 
-- 文档状态PLANNED：不等于实现、部署、云端验收或原故障Task已修复。
+- 原设计的PLANNED是2026-10-25快照；当前任务状态见执行记录。本地实现不等于部署、云端验收或原故障Task已修复。
 - AI执行预算1800s、180次工具调用、20次构建；Web服务就绪起7200s。投递重试和重启不能延长deadline。
 - Pi固定1.2.0、Node >=22.19.0、Java17、pnpm；不使用npm，不升级框架，不引入MQ/Worker PVC/通用工作流。
 - 单实例后端、单Worker执行slot；不扩大为HA，不宣称多实例fencing。身份校验instance/epoch/requestSha必须保留。
@@ -227,19 +229,21 @@ assert pending,pending,acked; same body; one inflight; execution outcome unchang
 
 ## Task 8：完整验证、发布准备与存量恢复手册
 
+执行结果：本地8场景全部通过、相关fixture60/60复验通过；完整backend原次962中4F7E已逐项定位并修复测试夹具，未声称单次full全绿。独立审查待完成；实际证据和清理拒绝见验收记录。
+
 **Files:** 新建poc4/docs/evidence/ai-terminal-settlement/acceptance.md、poc4/deploy/ai-terminal-settlement/README.md、poc4/frontend/tests/e2e/ai-terminal-settlement.spec.ts、poc4/frontend/playwright.ai-terminal-settlement.config.ts；修改frontend/package.json增加专用test:e2e脚本、AGENTS.md及本计划状态。
 
 **Consumes:** Task1–7。
 **Produces:** 一组可复核本地证据、兼容发布/回滚说明、原Task处理程序。
 
-- [ ] 本地真实MySQL、后端HTTP、Worker scripted provider重放：持锁、37号缺失、丢ACK、backend重启、Worker重启、close竞争、deadline。测试故障注入仅测试夹具可用，生产不能用公网参数触发。
-- [ ] 浏览器链：AI执行→收尾→完成→写入/新任务恢复，READY Run保留；结束链：End task→收尾等待→确认停止→解锁；刷新/重登仍依据DB。
-- [ ] 明确断言报告一次落库、结果不逆转、无第二次模型/工具副作用、owner隔离、无敏感日志。
-- [ ] 执行下列命令，记录计数/退出码/SHA；失败则修，不能部分PASS冒充全绿。
-- [ ] 准备加法迁移→兼容后端→新Worker→前端，实际发布未授权。pending收据/close未清空时，不能回退不认识收据的旧后端；回滚不DROP字段。
-- [ ] 原故障Task仅dry-run，核对任务、receipt、claim、Run、资源归属。旧Worker已丢结果，不能从最终回答拼COMPLETED；后续授权用owner close关闭，不直接SQL改状态，不重跑原模型任务。
-- [ ] 文档标本地验证/云端NOT_RUN/原Task NOT_REPAIRED，保留Stage2 PAUSED/NOT_GRANTED。盘点临时产物并清理；审批拒绝如实记录，不更换工具绕过。
-- [ ] 复核竞态矩阵和部署兼容，提交test(ai): verify terminal settlement recovery and release boundaries。
+- [x] 本地真实MySQL、后端HTTP、Worker scripted provider重放：持锁、37号缺失、丢ACK、backend重启、Worker重启、close竞争、deadline。测试故障注入仅测试夹具可用，生产不能用公网参数触发。
+- [x] 浏览器链：AI执行→收尾→完成→写入/新任务恢复，READY Run保留；结束链：End task→收尾等待→确认停止→解锁；刷新/重登仍依据DB。
+- [x] 明确断言报告一次落库、结果不逆转、无第二次模型/工具副作用、owner隔离、无敏感日志。
+- [x] 执行验证命令并记录计数/退出码；原full失败与最终targeted复验分别记录，不冒充单次full全绿。
+- [x] 准备加法迁移→兼容后端→新Worker→前端，实际发布未授权。pending收据/close未清空时，不能回退不认识收据的旧后端；回滚不DROP字段。
+- [x] 原故障Task仅编写dry-run程序，未访问原Task；后续授权用owner close关闭，不直接SQL改状态，不重跑原模型任务。
+- [x] 文档标云端NOT_RUN/原Task NOT_REPAIRED，保留Stage2 PAUSED/NOT_GRANTED；新owned服务/schema已清理，旧11目录+隔离classes删除被策略拒绝，已记准确保留清单，不绕过。
+- [x] 竞态矩阵、兼容、release与report已准备；提交test(ai): verify terminal settlement recovery and release boundaries；独立审查待controller执行。
 
 ## 2. 验证命令
 

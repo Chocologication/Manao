@@ -206,6 +206,7 @@ class AgentConversationStoreTest {
             assertThat(after.remove("deadline_at")).isNull();
             assertThat(after.remove("close_reason_code")).isNull();
             assertThat(after.remove("next_reconcile_at")).isNull();
+            assertThat(after.remove("reconcile_attempt")).isEqualTo(0);
             assertThat(after).isEqualTo(taskBefore);
             assertThat(db.jdbc().queryForMap("SELECT * FROM agent_tool_call WHERE task_id=?", task)).isEqualTo(callBefore);
             String conversation = UUID.randomUUID().toString();
