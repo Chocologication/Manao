@@ -65,6 +65,15 @@ test.skipIf(process.env.MANAO_TERMINAL_LOCAL_HARNESS !== 'true')('serve the actu
   const proxy=createServer(async(req,res)=>{
     if(req.url?.startsWith('/__control')){
       const url=new URL(req.url,'http://127.0.0.1');
+      if(url.pathname==='/__control/delivery'){
+        const taskId=url.searchParams.get('taskId');
+        if(!taskId||!/^[0-9a-f-]{36}$/.test(taskId)){res.writeHead(422);res.end('{}');return;}
+        const response=await fetch(`http://127.0.0.1:18989/tasks/${taskId}`,{headers:{'x-manao-worker-token':token}});
+        if(!response.ok){res.writeHead(response.status);res.end('{}');return;}
+        const status=await response.json() as {taskId:string;executionState:string;terminalDelivery:{state:string;reportId:string|null;reportSha256:string|null;report:{state:string}|null}};
+        res.writeHead(200,{'content-type':'application/json'});
+        res.end(JSON.stringify({taskId:status.taskId,executionState:status.executionState,deliveryState:status.terminalDelivery.state,reportId:status.terminalDelivery.reportId,reportSha256:status.terminalDelivery.reportSha256,reportedOutcome:status.terminalDelivery.report?.state??null,activeTaskId:handle.activeTaskId()}));return;
+      }
       if(url.pathname==='/__control/mode'){
         waitModel=url.searchParams.get('wait')==='true';holdTerminal=url.searchParams.get('terminal')==='true';dropAck=url.searchParams.get('dropAck')==='true';gap37=url.searchParams.get('gap37')==='true';toolCount=1;
       }

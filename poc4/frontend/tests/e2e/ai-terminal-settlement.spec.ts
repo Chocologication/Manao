@@ -9,6 +9,7 @@ const api=backend+'/api/v1/projects/terminal-project';
 async function auth(request:APIRequestContext,owner='terminal-owner'){const r=await request.post(`${backend}/__fixture/login?owner=${owner}`);return {Authorization:`Bearer ${(await r.json()).accessToken}`};}
 async function row(request:APIRequestContext,id:string){return (await request.get(`${backend}/__fixture/rows/${id}`)).json();}
 async function stats(request:APIRequestContext){return (await request.get(`${worker}/__control/stats`)).json();}
+async function delivery(request:APIRequestContext,id:string){const response=await request.get(`${worker}/__control/delivery?taskId=${id}`);expect(response.ok()).toBe(true);return response.json();}
 async function mode(request:APIRequestContext,query=''){await request.post(`${worker}/__control/mode?${query}`);}
 async function submit(request:APIRequestContext){const id=randomUUID();const response=await request.post(api+'/agent-tasks',{headers:await auth(request),data:{taskId:id,prompt:'local deterministic task',expectedWorkspaceRevision:'7',reasoningEffort:'off'}});expect(response.ok(),await response.text()).toBe(true);return id;}
 async function completed(request:APIRequestContext,id:string){await expect.poll(async()=>{const r=await row(request,id);return r.state==='FAILED'?`FAILED:${r.failure_code}`:r.state;},{timeout:25_000}).toBe('COMPLETED');}
@@ -92,7 +93,15 @@ test('I owner close waits for actual Run observation and late completion cannot 
   await expect.poll(async()=>(await row(request,id)).state).toBe('FAILED');await expect(page.getByTestId('browser-write')).toBeEnabled();
   await page.reload();await page.getByRole('button',{name:'重新登录'}).click();await expect(page.getByTestId('task-state')).toHaveText('FAILED');
   const foreign=await request.get(api+`/agent-tasks/${id}`,{headers:await auth(request,'foreign-owner')});expect(foreign.status()).toBe(404);
-  const saved=await row(request,id);await release(request);await request.post(`${backend}/__fixture/tick/${id}`);expect((await row(request,id)).state).toBe('FAILED');expect((await row(request,id)).close_reason_code).toBe(saved.close_reason_code);
+  const saved=await row(request,id);const frozen=await delivery(request,id);
+  expect(frozen).toMatchObject({taskId:id,executionState:'COMPLETED',deliveryState:'PENDING',reportedOutcome:'COMPLETED'});expect(frozen.reportId).toMatch(/^[0-9a-f]{64}$/);expect(frozen.reportSha256).toMatch(/^[0-9a-f]{64}$/);
+  await release(request);
+  await expect.poll(async()=>{const current=await delivery(request,id);return {taskId:current.taskId,reportId:current.reportId,reportSha256:current.reportSha256,deliveryState:current.deliveryState,activeTaskId:current.activeTaskId};},{timeout:15_000}).toEqual({taskId:id,reportId:frozen.reportId,reportSha256:frozen.reportSha256,deliveryState:'CLOSING',activeTaskId:null});
+  const accepted=await delivery(request,id);expect(accepted).toMatchObject({executionState:'COMPLETED',reportedOutcome:'COMPLETED'});
+  await request.post(`${backend}/__fixture/tick/${id}`);const after=await row(request,id);
+  expect(after).toMatchObject({state:'FAILED',failure_code:saved.failure_code,close_reason_code:saved.close_reason_code,receipts:1,calls:saved.calls,terminal_report_id:frozen.reportId,terminal_report_sha256:frozen.reportSha256});
+  const counts=await stats(request);expect(counts.starts-before.starts).toBe(1);expect(counts.modelCalls-before.modelCalls).toBe(2);expect(counts.externalFetches).toBe(0);expect(counts.terminalPosts).toBeGreaterThan(before.terminalPosts);
+  await page.reload();await page.getByRole('button',{name:'重新登录'}).click();await expect(page.getByTestId('task-state')).toHaveText('FAILED');
 });
 test('H and N browser completion preserves READY Run then new task and write resume',async({request,page})=>{
   await mode(request,'wait=true');const id=await submit(request);await expect.poll(async()=>(await row(request,id)).calls).toBe(1);const {runId}=await (await request.post(`${backend}/__fixture/ready-run/${id}`)).json();

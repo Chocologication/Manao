@@ -38,7 +38,7 @@ RED：26 tests，4 failures（latest 断言 11，实际 16），10 errors（Atom
 | F budget | PASS；E使用注入Clock前进1801s，生产budget close后FAILED，close_reason=AI_TASK_BUDGET_EXCEEDED，无receipt不能伪造成功 | 未实际等待1800s |
 | G 未决副作用 | PASS；AgentTerminalSettlementTest21、AgentProjectToolsTest35、AgentApplicationToolsTest12均0失败；实际I在RunSTOPPING时保持占用，生产观察确认后才释放 | 不解锁未知claim/receipt/Run |
 | H 成功保持应用 | PASS；实际HTTP/浏览器验证COMPLETED时Run仍RUNNING且firstReadyAt存在、Stop恢复；新任务完成后用户Stop，经生产观察CANCELLED后写入201 | 受控已就绪Job事实，非真实应用 |
-| I close 竞争 | dedicated browser case 已执行通过；End→NEEDS_ATTENTION→Job观察确认→FAILED→解锁；晚到结果不逆转 | 生产 RunObservation + controlled MISSING |
+| I close 竞争 | PASS；End→NEEDS_ATTENTION→Job观察确认→FAILED→解锁；审查补强后等待同task/report/hash的真实Worker delivery=CLOSING且slot为空，再断言DB仍FAILED、原close_reason/failure不变、唯一receipt匹配且model2/start1/calls不变；刷新仍FAILED | 生产 RunObservation + controlled MISSING；实际ACK后断言，不以释放transport后立即读代替 |
 | J 身份/摘要 | PASS；实际browser foreign owner404；AgentInternalSecurityTest10、AgentTaskStoreTest35、HttpPiWorkerClientTest2，以及Worker181检查instance/epoch/report摘要 | 不使用跨owner fixture成功冒充鉴权 |
 | K 周期恢复 | PASS；RunRecoveryServiceTest21、RunObservationServiceTest28均0失败，保留启动/接管/STOPPING与token CAS覆盖 | 原始6A/6B不重验 |
 | L 兼容 | PASS；Flyway14、conversation21最终复验0失败；legacy terminal在Settlement21/TaskService48中覆盖；V15/V16保持加法及旧任务NULL deadline | 未实际发布/旧集群切换 |
@@ -78,6 +78,15 @@ git diff --check
 - 最终相关backend复验：`mvn -f poc4/backend/pom.xml '-Dtest=AgentConversationStoreTest,ConfigurationTest,HealthEndpointTest,FlywaySchemaTest,AtomicTransitionTest,ProjectDeletionStateMigrationTest' test`，**60/60，exit0，03:55**，`task-8-backend-fixtures-green.log`，结束10:34:43。计数21+11+2+14+10+2。所有此前失败类均复验通过；测试夹具修正后没有重跑完整962项，因此不声称单次完整全绿。
 - 两条计划focused链被完整backend命令实际覆盖；最终只复验失败fixture类，没有重复运行相同完整集合。controller因延迟协调短暂启动重复Maven，已按PID49096终止；单数`task-8-backend-fixture-green.log`为中止诊断，**不作为PASS**。权威是复数`fixtures-green.log`。
 - 生产实现源码基线`3e9ffa0`；本Task仅测试/文档。Task8提交SHA见本节后续提交记录及SDD报告。
+
+### 5.1 Task8 review 修正：晚到报告实际ACK之后核对
+
+review指出原I场景释放terminal代理后立即读FAILED，可能先于Worker下一次backoff POST；afterEach只等待空slot，缺少ACK之后的数据库断言。补充test-only安全delivery投影，内部通过token读取生产Worker `GET /tasks/{id}`，只暴露task/report/hash/outcome/delivery与slot，不包含token、summary或模型内容。
+
+- RED：`pnpm --dir poc4/frontend test:e2e:ai-terminal-settlement --grep 'I owner'`，1 failed，exit1，`task-8-review-i-red.log`；立即读actualWorker确为PENDING且slot仍被当前task占用，证明原时间窗口。
+- GREEN：同命令，**1 passed，exit0，38.1s**（用例6.0s），`task-8-review-i-green.log`。等待实际CLOSING ACK、同report/hash、slot为空后才核对DB，保存的仍是原FAILED/close_reason；晚到COMPLETED报告只保存一个receipt身份，不能逆转结果，model2/start1/calls不变，刷新/重登仍FAILED。实际Worker日志显示attempt5、status200、codeCLOSING。
+- 新harness tsc exit0：`pnpm --dir poc4/frontend exec tsc --noEmit -p tests/fixtures/ai-terminal-settlement/tsconfig.json`，`task-8-review-i-typecheck.log`；无生产修改，无Maven或完整矩阵重复运行。
+- 此轮owned schema `manao_terminal_ea0bc2f7f05d46c8b8fd22527ce4e6f8` 与新scratch清理成功，18989–18994无LISTEN；此前被拒绝目录完全未触碰。
 
 ## 6. 清理实际结果与保留项
 
