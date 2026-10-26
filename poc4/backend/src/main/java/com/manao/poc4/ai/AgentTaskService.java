@@ -129,19 +129,16 @@ public final class AgentTaskService {
                 // are accepted instead of silently refused.
                 tasks.bindWorkerInstance(taskId, epoch, status.instanceId());
             } else if ("COMPLETED".equals(status.state()) || "FAILED".equals(status.state())) {
-                // The worker settled but no terminal ever reached the ledger durably:
-                // no outcome is fabricated and RUNNING is never bound over the settled
-                // worker — the explicit undecided state (occupied, new calls refused)
-                // only the re-entrant close flow can resolve.
-                tasks.beginClose(taskId);
+                // A state alone cannot decide the outcome or authorize a close. The
+                // unified path settles a parked receipt or imports the authenticated
+                // same-execution report, preserving successful READY applications.
+                settlement.reconcile(taskId);
             }
             // An unclear state leaves the task QUEUED with its persisted epoch, an
-            // explicit undecided state that only a re-drive of the same request or the
-            // close flow can resolve.
+            // explicit undecided state for scheduled reconciliation or owner close.
         } catch (RuntimeException reconcileFailure) {
-            // Both calls failed: the task keeps its persisted epoch and stays QUEUED —
-            // an explicit undecided state that only a re-drive of the same request or
-            // the close flow can resolve.
+            // Unresolved evidence retains the persisted identity and occupancy for
+            // scheduled reconciliation or owner close, never a second start.
         }
     }
 

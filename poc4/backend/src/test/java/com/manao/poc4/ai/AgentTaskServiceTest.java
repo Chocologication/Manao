@@ -62,6 +62,7 @@ class AgentTaskServiceTest {
         boolean statusBroken;
         String statusInstance = INSTANCE;
         String statusState = "RUNNING";
+        WorkerStatus frozenStatus;
         StartBehavior startBehavior = this::defaultStart;
 
         interface StartBehavior {
@@ -87,7 +88,11 @@ class AgentTaskServiceTest {
             if (statusBroken) {
                 throw new ApiException("AI_WORKER_UNREACHABLE", 502, "the worker could not be reached");
             }
-            return new WorkerStatus(taskId, statusInstance, statusState);
+            return frozenStatus != null ? frozenStatus : new WorkerStatus(taskId, statusInstance, statusState);
+        }
+
+        @Override public AgentContracts.WorkerProcessStatus processStatus() {
+            return new AgentContracts.WorkerProcessStatus("1", INSTANCE, null, null, null, true);
         }
 
         @Override public WorkerStatus stop(String taskId) {
@@ -1292,13 +1297,108 @@ class AgentTaskServiceTest {
             h.worker.unreachable = true;
             h.worker.statusState = "COMPLETED";
             h.service.submit(OWNER, PROJECT, h.request());
-            // The worker settled but no terminal reached the ledger: the explicit
-            // undecided state keeps the project occupied; RUNNING is never bound over
-            // a settled worker and no outcome is fabricated.
-            assertThat(h.rowState()).isEqualTo("NEEDS_ATTENTION");
-            assertThat(h.rowFailureCode()).isEqualTo("AI_CLOSING");
+            // A legacy state alone is not a terminal report or a reason to close.
+            assertThat(h.rowState()).isEqualTo("QUEUED");
+            assertThat(h.rowFailureCode()).isNull();
+            assertThat(h.closeReasonCode()).isNull();
+            assertThat(h.tasks.storedTerminalReport(h.taskId)).isEmpty();
             assertThatThrownBy(() -> h.tasks.requireBrowserWritable(PROJECT))
                 .isInstanceOfSatisfying(ApiException.class, ex -> assertThat(ex.code()).isEqualTo("AI_TASK_ACTIVE"));
+        }
+    }
+
+    @Test
+    void lostStartImportsTheFrozenCompletedReportAndPreservesTheReadyApplication() {
+        assertLostStartPreservesCompletedApplication(false);
+    }
+
+    @Test
+    void lostStartSettlesAnAlreadyParkedCompletedReceiptAndPreservesTheReadyApplication() {
+        assertLostStartPreservesCompletedApplication(true);
+    }
+
+    @Test
+    void lostStartRejectsAForeignFrozenReportWithoutInventingAClose() {
+        try (Harness h = new Harness()) {
+            h.worker.startBehavior = start -> {
+                h.worker.frozenStatus = frozenCompletedStatus(start, "foreign-task");
+                throw new ApiException("AI_WORKER_UNREACHABLE", 502, "start ACK lost");
+            };
+            h.submit();
+            assertThat(h.rowState()).isEqualTo("QUEUED");
+            assertThat(h.rowFailureCode()).isNull();
+            assertThat(h.closeReasonCode()).isNull();
+            assertThat(h.rowInstance()).isNull();
+            assertThat(h.tasks.storedTerminalReport(h.taskId)).isEmpty();
+            assertThatThrownBy(() -> h.tasks.requireBrowserWritable(PROJECT))
+                .isInstanceOfSatisfying(ApiException.class, ex -> assertThat(ex.code()).isEqualTo("AI_TASK_ACTIVE"));
+            assertThat(h.worker.starts).hasSize(1);
+            assertThat(h.worker.stops).isEmpty();
+        }
+    }
+
+    @Test
+    void lostStartCannotReverseAnOwnerCloseThatAlreadyWon() {
+        try (Harness h = new Harness()) {
+            h.worker.startBehavior = start -> {
+                h.tasks.requireWorkerIdentity(h.taskId, start.workerEpoch(), INSTANCE);
+                h.tasks.beginClose(h.taskId, "AI_OWNER_CLOSED");
+                h.worker.frozenStatus = frozenCompletedStatus(start, h.taskId);
+                throw new ApiException("AI_WORKER_UNREACHABLE", 502, "start ACK lost");
+            };
+            h.submit();
+            assertThat(h.rowState()).isIn("NEEDS_ATTENTION", "FAILED");
+            assertThat(h.closeReasonCode()).isEqualTo("AI_OWNER_CLOSED");
+            assertThat(h.worker.starts).hasSize(1);
+            assertThat(h.tasks.storedTerminalReport(h.taskId)).isEmpty();
+        }
+    }
+
+    private static WorkerStatus frozenCompletedStatus(WorkerStart start, String observedTaskId) {
+        String reportId = AgentTaskStore.terminalReportId(start.taskId(), start.workerEpoch(), start.requestSha256());
+        var report = new AgentContracts.TerminalReport(1, reportId, AgentContracts.TaskState.COMPLETED, "completed before ACK", null);
+        return new WorkerStatus(observedTaskId, INSTANCE, "COMPLETED", 1, start.workerEpoch(), start.requestSha256(),
+            "COMPLETED", new AgentContracts.WorkerTerminalDelivery("PENDING", reportId,
+                AgentTaskStore.terminalContentSha256(reportId, report.state(), report.summary(), null), report));
+    }
+
+    private void assertLostStartPreservesCompletedApplication(boolean alreadyParked) {
+        try (Harness h = new Harness()) {
+            org.mockito.Mockito.when(h.runs.get(OWNER, PROJECT, "ready"))
+                .thenReturn(applicationRun("ready", "RUNNING", true));
+            org.mockito.Mockito.when(h.runs.active(OWNER, PROJECT))
+                .thenReturn(java.util.Optional.of(applicationRun("ready", "RUNNING", true)));
+            h.worker.startBehavior = start -> {
+                h.tasks.requireWorkerIdentity(h.taskId, start.workerEpoch(), INSTANCE);
+                h.completedStart("start-ready", "ready");
+                h.worker.frozenStatus = frozenCompletedStatus(start, h.taskId);
+                var report = h.worker.frozenStatus.terminalDelivery().report();
+                if (alreadyParked) {
+                    h.tasks.recordTerminal(h.taskId, start.workerEpoch(), INSTANCE, report.reportId(),
+                        "{\"protocolVersion\":1,\"state\":\"COMPLETED\",\"summary\":\"completed before ACK\",\"failureCode\":null}",
+                        report.state(), report.summary(), null);
+                    assertThat(h.rowFailureCode()).isEqualTo("AI_TERMINAL_PENDING");
+                }
+                throw new ApiException("AI_WORKER_UNREACHABLE", 502, "start ACK lost after acceptance");
+            };
+
+            h.submit();
+            assertThat(h.rowState()).isEqualTo("COMPLETED");
+            assertThat(h.rowFailureCode()).isNull();
+            assertThat(h.closeReasonCode()).isNull();
+            assertThat(h.tasks.storedTerminalReport(h.taskId).orElseThrow().summary()).isEqualTo("completed before ACK");
+            assertThat(h.runs.get(OWNER, PROJECT, "ready").state()).isEqualTo("RUNNING");
+            assertThat(h.runs.get(OWNER, PROJECT, "ready").firstReadyAt()).isNotNull();
+            assertThatCode(() -> h.tasks.requireBrowserWritable(PROJECT)).doesNotThrowAnyException();
+            h.submit();
+            assertThat(h.worker.starts).hasSize(1);
+            assertThat(h.worker.stops).isEmpty();
+            assertThat(h.jdbc.queryForObject("SELECT COUNT(*) FROM agent_tool_call WHERE task_id=?", Integer.class, h.taskId)).isEqualTo(1);
+            assertThat(h.callRowState("start-ready")).isEqualTo("COMPLETED");
+            org.mockito.Mockito.verify(h.runs, org.mockito.Mockito.never()).stopForAgent(
+                org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any());
+            org.mockito.Mockito.verifyNoInteractions(h.builds);
         }
     }
 

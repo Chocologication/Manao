@@ -88,6 +88,15 @@ review指出原I场景释放terminal代理后立即读FAILED，可能先于Worke
 - 新harness tsc exit0：`pnpm --dir poc4/frontend exec tsc --noEmit -p tests/fixtures/ai-terminal-settlement/tsconfig.json`，`task-8-review-i-typecheck.log`；无生产修改，无Maven或完整矩阵重复运行。
 - 此轮owned schema `manao_terminal_ea0bc2f7f05d46c8b8fd22527ce4e6f8` 与新scratch清理成功，18989–18994无LISTEN；此前被拒绝目录完全未触碰。
 
+### 5.2 整分支 review 修正：lost-start 保留原成功结果
+
+整分支 review 发现唯一 Important：Worker 已接受 start、但 ACK 丢失后，旧恢复分支仅凭 `status.state=COMPLETED/FAILED` 就写入 `AI_CLOSING`，可能把已完成任务及 READY Run 误送入失败清理。该分支现复用 `AgentTaskSettlementService.reconcile`：已有收据按原裁定结算；无收据时核验进程 boot、task、instance、epoch、request digest 和冻结报告，再走统一 `recordTerminal` / CAS。state-only 旧响应及 foreign identity 不推断结果，保持未决占用；既有 owner close 决定仍优先。
+
+- 真实 MySQL 定向 RED：5 tests，4 failures / 0 errors / 0 skipped，exit1；两条完整成功报告预期 `COMPLETED`、实际 `NEEDS_ATTENTION`，旧 state-only / foreign task 预期 `QUEUED`、实际 `NEEDS_ATTENTION`。`final-fix-red-confirmed.log`，41.154s，2026-10-26 11:32:09+08:00。最初测试误读 submit 返回的创建快照，已改为检查持久状态；该诊断运行不作为根因 RED 证据。
+- 同一五条定向 GREEN：5/5，exit0，45.825s，2026-10-26 11:33:38+08:00，`final-fix-green.log`。覆盖无收据与 `AI_TERMINAL_PENDING` 已落盘两种 ACK 丢失窗口；最终成功、READY Run 不停、start1 / 原 call1、不重放工具或模型入口；不完整旧状态/foreign identity 保持占用，owner close 不被逆转。
+- 最终串行直接相关复验：Service 全部52 + Settlement选定7 + Reconciler选定6，**65/65，0 failures/errors/skipped，exit0，02:45**，2026-10-26 11:37:02+08:00，`final-fix-regression.log`。GREEN实际重新编译143个生产源文件及100个测试源文件；此后只改文档。日志提取本轮87个唯一 `manao_stage6_*` schema，精确只读复核剩余0（mysql exit0）；未执行额外删除。
+- 此轮只修改 lost-start 生产分支及测试；直接相关复验和自查结果见 SDD `final-fix-report.md`。不重复浏览器矩阵或完整962项，不把旧结果称为最终源码的完整重跑。整分支独立复审仍待完成，尚不授予 `LOCAL_REPAIR_VERIFIED`；云端、原故障 Task 和 Stage2 边界不变。
+
 ## 6. 清理实际结果与保留项
 
 最终正常classpath运行的新schema `manao_terminal_254b1b30b9a94f1592ad4c614898b91d` 已销毁，其新owned scratch root已移除；监听端口18989–18994无LISTEN，旧PID50776不存在。此前所有专用browser teardown均销毁各自owned schema；最终setup只清理自己拥有的PID树、schema与scratch root。
