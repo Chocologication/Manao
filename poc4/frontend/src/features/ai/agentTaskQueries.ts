@@ -61,8 +61,8 @@ export function useCloseAgentTaskMutation(projectId: string) {
   return useMutation({
     mutationFn: (taskId: string) => closeAgentTask(projectId, taskId),
     onSuccess: (snapshot) => {
-      // The closed task is terminal, so GET current would answer 404 within two
-      // seconds; seeding the snapshot keeps the settled result visible meanwhile.
+      // Close records intent and may return NEEDS_ATTENTION with writesLocked.
+      // Preserve that snapshot until polling confirms terminal state or absence.
       queryClient.setQueryData(agentTaskKeys.current(projectId), snapshot);
     },
   });

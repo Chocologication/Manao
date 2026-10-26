@@ -382,6 +382,25 @@ describe('AgentTaskPanel start flow', () => {
 });
 
 describe('AgentTaskPanel close flow', () => {
+  it('keeps current task ending reachable while a historical task is displayed', async () => {
+    const harness = renderPanel({ task: occupyingTask(), displayTask: occupyingTask({ taskId: 'history-task', state: 'COMPLETED', writesLocked: false }) });
+    expect(screen.getByText(/Ending the AI task may stop applications it started/)).toBeVisible();
+    await userEvent.click(screen.getByRole('button', { name: 'End task' }));
+    expect(harness.getCloseCalls()).toBe(1);
+    expect(screen.getByRole('button', { name: 'Start task' })).toBeDisabled();
+    expect(screen.getByText(/AI task time budget is separate/)).toBeVisible();
+  });
+
+  it('offers retry ending and shows settlement without releasing the task identity', async () => {
+    sessionStorage.setItem(agentTaskStorageKey(USER_ID, PROJECT_ID), TASK_ID);
+    const harness = renderPanel({ task: occupyingTask({ state: 'NEEDS_ATTENTION', failureCode: 'AI_CLOSING' }) });
+    expect(screen.getByRole('status', { name: 'Task settlement' })).toHaveTextContent(/Waiting for confirmation/);
+    await userEvent.click(screen.getByRole('button', { name: 'Retry ending task' }));
+    expect(harness.getCloseCalls()).toBe(1);
+    expect(sessionStorage.getItem(agentTaskStorageKey(USER_ID, PROJECT_ID))).toBe(TASK_ID);
+    expect(screen.getByRole('button', { name: 'Start task' })).toBeDisabled();
+  });
+
   it('offers End task for an occupying task and calls it only on the explicit click', async () => {
     const user = userEvent.setup();
     const harness = renderPanel({ task: occupyingTask() });

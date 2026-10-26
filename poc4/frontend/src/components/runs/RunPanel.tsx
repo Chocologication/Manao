@@ -42,6 +42,7 @@ export type RunPanelProps = {
    * derives this itself.
    */
   agentTaskActive?: boolean;
+  onOpenAgentTask?: () => void;
   requestRunSelection?: { runId: RunId; seq: number } | null;
   onLocateError?: (location: RunErrorLocation) => void;
 };
@@ -94,7 +95,7 @@ function statusText(options: {
   return 'Idle';
 }
 
-export function RunPanel({ projectId, projectTemplateId, coordinator, agentTaskActive, requestRunSelection, onLocateError }: RunPanelProps) {
+export function RunPanel({ projectId, projectTemplateId, coordinator, agentTaskActive, onOpenAgentTask, requestRunSelection, onLocateError }: RunPanelProps) {
   const queryClient = useQueryClient();
   const snapshot = useSyncExternalStore(
     coordinator.subscribe,
@@ -276,6 +277,8 @@ export function RunPanel({ projectId, projectTemplateId, coordinator, agentTaskA
         }
         startPending={startPending}
         canStop={canStop}
+        stopBlockedByAgent={agentTaskActive === true && (activeState === 'STARTING' || activeState === 'RUNNING')}
+        onOpenAgentTask={onOpenAgentTask}
         stopWaiting={stopWaiting}
         stopPending={stopMutation.isPending}
         authorityError={

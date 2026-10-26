@@ -2419,6 +2419,75 @@ describe('WorkbenchShell agent task panel', () => {
     });
   }
 
+  it('ends the current occupying task from history, retries safely and unlocks only after real settlement', async () => {
+    const a = '11111111-1111-4111-8111-111111111111', b = '22222222-2222-4222-8222-222222222222';
+    const historicalId = '44444444-4444-4444-8444-444444444444';
+    let current = agentTask({ conversationId: a });
+    const closedIds: string[] = [];
+    let releaseError!: () => void;
+    const held = new Promise<void>(resolve => { releaseError = resolve; });
+    const base = { headSeq: 0, lastTaskId: historicalId, activeTaskId: null, usage: null, compactRequestId: null, compactState: null, compactFailureCode: null };
+    const url = `/api/v1/projects/${ALICE_SEED_PROJECT_ID}/conversations`;
+    server.use(
+      http.get(`${AGENT_TASKS_URL}/current`, () => HttpResponse.json(current)),
+      http.get(`${AGENT_TASKS_URL}/${historicalId}`, () => HttpResponse.json(agentTask({ taskId: historicalId, conversationId: b, state: 'COMPLETED', writesLocked: false }))),
+      http.post(`${AGENT_TASKS_URL}/:taskId/close`, async ({ params }) => {
+        closedIds.push(String(params.taskId));
+        if (closedIds.length === 1) { await held; return HttpResponse.json({ code: 'INTERNAL_ERROR', message: 'private-token-do-not-show', traceId: 'trace-close' }, { status: 500 }); }
+        current = agentTask({ conversationId: a, state: 'NEEDS_ATTENTION', failureCode: 'AI_CLOSING' });
+        return HttpResponse.json(current);
+      }),
+      http.get(url, () => HttpResponse.json({ items: [{ ...base, conversationId: a, title: '会话 A' }, { ...base, conversationId: b, title: '会话 B' }], nextCursor: null })),
+      http.get(`${url}/:id`, ({ params }) => HttpResponse.json({ ...base, conversationId: params.id, title: '历史会话' })),
+      http.get(`${url}/:id/entries`, () => HttpResponse.json({ items: [], nextBeforeSeq: null, nextBeforeOffset: null })),
+    );
+    await authenticateAsAlice();
+    sessionStorage.setItem(`manao.agent-conversation.usr-alice.${ALICE_SEED_PROJECT_ID}`, b);
+    sessionStorage.setItem(`manao.agent-task.id.usr-alice.${ALICE_SEED_PROJECT_ID}`, JSON.stringify({ taskId: AGENT_TASK_ID, conversationId: a }));
+    renderShell(); await loadedRoot();
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('tab', { name: 'AI' }));
+    await screen.findByRole('heading', { name: '历史会话' });
+    await user.click(screen.getByRole('button', { name: 'End task' }));
+    await waitFor(() => expect(closedIds).toEqual([AGENT_TASK_ID]));
+    expect(screen.getByRole('button', { name: 'End task' })).toBeDisabled();
+    releaseError();
+    expect(await screen.findByText(/Could not end the task/)).toHaveTextContent('INTERNAL_ERROR');
+    expect(screen.queryByText(/private-token-do-not-show/)).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'End task' })).toBeEnabled();
+    await user.click(screen.getByRole('button', { name: 'End task' }));
+    expect(await screen.findByRole('button', { name: 'Retry ending task' })).toBeEnabled();
+    expect(screen.getByRole('status', { name: 'Task settlement' })).toHaveTextContent(/Waiting for confirmation/);
+    expect(closedIds).toEqual([AGENT_TASK_ID, AGENT_TASK_ID]);
+    expect(screen.getByRole('button', { name: 'New file' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Start task' })).toBeDisabled();
+    expect(sessionStorage.getItem(`manao.agent-task.id.usr-alice.${ALICE_SEED_PROJECT_ID}`)).not.toBeNull();
+    current = agentTask({ conversationId: a, state: 'FAILED', writesLocked: false, failureCode: 'AI_CLOSED' });
+    await act(async () => { await queryClient.invalidateQueries({ queryKey: agentTaskKeys.current(ALICE_SEED_PROJECT_ID) }); });
+    await waitFor(() => expect(screen.getByRole('button', { name: 'New file' })).toBeEnabled());
+    expect(screen.getByRole('button', { name: 'Start task' })).toBeEnabled();
+    expect(screen.queryByRole('button', { name: 'Retry ending task' })).not.toBeInTheDocument();
+    expect(sessionStorage.getItem(`manao.agent-task.id.usr-alice.${ALICE_SEED_PROJECT_ID}`)).toBeNull();
+  }, 15_000);
+
+  it('opens AI from the occupied Stop control and restores Stop after true task release', async () => {
+    await authenticateAsAlice(); await seedLockingRun();
+    let current = agentTask();
+    server.use(http.get(`${AGENT_TASKS_URL}/current`, () => HttpResponse.json(current)));
+    renderShell(); await loadedRoot();
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('tab', { name: 'Run' }));
+    expect(screen.getByRole('button', { name: 'Stop run' })).toBeDisabled();
+    expect(screen.getByText(/AI task is controlling the application/)).toBeVisible();
+    await user.click(screen.getByRole('button', { name: 'Open AI task' }));
+    expect(screen.getByRole('tab', { name: 'AI' })).toHaveAttribute('aria-selected', 'true');
+    current = agentTask({ state: 'FAILED', writesLocked: false, failureCode: 'AI_CLOSED' });
+    await act(async () => { await queryClient.invalidateQueries({ queryKey: agentTaskKeys.current(ALICE_SEED_PROJECT_ID) }); });
+    await user.click(screen.getByRole('tab', { name: 'Run' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Stop run' })).toBeEnabled());
+    expect(screen.queryByRole('button', { name: 'Open AI task' })).not.toBeInTheDocument();
+  }, 15_000);
+
   it('shows the AI tab and keeps the workspace editable while no task occupies the project', async () => {
     server.use(http.get(`${AGENT_TASKS_URL}/current`, () => agentCurrentNotFound()));
     await authenticateAsAlice();
