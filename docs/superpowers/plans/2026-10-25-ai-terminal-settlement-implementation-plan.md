@@ -10,7 +10,7 @@
 
 **Spec:** [修复设计](../specs/2026-10-25-ai-terminal-settlement-design.md)；[调查报告](../../../poc4/docs/evidence/ai-output/terminal-settlement-20261025.md)；[交接提示词](2026-10-25-ai-terminal-settlement-agent-handoff.md)。
 
-**2026-10-26 执行状态：** Task1–7已完成并通过逐项审查；Task8本地验证与发布准备完成，独立Task8/整分支审查待完成。实际browser8/8、Worker181、前端211、backend初次962失败及最终相关fixture60/60计数、清理拒绝残留归[验收记录](../../../poc4/docs/evidence/ai-terminal-settlement/acceptance.md)；发布与原Task dry-run归[手册](../../../poc4/deploy/ai-terminal-settlement/README.md)。尚不授予LOCAL_REPAIR_VERIFIED；云端NOT_RUN、原Task NOT_REPAIRED、Stage2 PAUSED/NOT_GRANTED。
+**2026-10-26 执行状态：** Task1–8逐项审查、整分支审查及lost-start限定修复复审完成，LOCAL_REPAIR_VERIFIED；生产代码终点5739d1b。实际browser8/8及晚到ACK补强1/1、Worker181、前端211、backend原962项失败与fixture60/60复验、最终修复65/65及清理拒绝残留归[验收记录](../../../poc4/docs/evidence/ai-terminal-settlement/acceptance.md)；[最终审查](../../../poc4/docs/evidence/ai-terminal-settlement/review.md)记录裁定及非阻塞项；发布与原Task dry-run归[手册](../../../poc4/deploy/ai-terminal-settlement/README.md)。不声称单次完整全绿；云端NOT_RUN、原Task NOT_REPAIRED、Stage2 PAUSED/NOT_GRANTED。
 
 ## Global Constraints
 
@@ -63,7 +63,7 @@ git -C $repo worktree add .worktree/ai-terminal-settlement -b codex/fix-ai-termi
 | B/config/RuntimeMaintenanceLoop.java、B/run/RunRecoveryService.java | 启动恢复和周期核对分离 |
 | 前端AgentTaskPanel/agentTaskQueries/RunPanel/RunToolbar | 当前Task结束入口、收尾反馈与时限文案 |
 
-新接口约定（本计划要求实现，当前尚不存在）：
+新接口约定（以下接口已按本计划实现，当前证据见验收记录）：
 
 ~~~java
 // AgentContracts中的嵌套record
@@ -91,11 +91,11 @@ Store包级方法由Task2实现，后续只调用真实实现，不复制状态�
 **Consumes:** 当前TaskStore、ProjectLifecycleGate、RunRecoveryService、ProgressChain。
 **Produces:** 可显式暂停/释放Kubernetes观察的真实MySQL夹具与命名RED案例。
 
-- [ ] 将已有诊断转换为真实DB夹具：只mock外部JobCoordinator，不能mockTaskStore/gate；Latch有超时及finally释放。
-- [ ] 添加terminalReportIsDurableWhileRunRecoveryHoldsTheProjectGate、terminalDeliveryFailureNeverClaimsAcknowledgement、missingDisplayProgressDoesNotBlockTerminalReceipt。
-- [ ] 两个线程制造竞争，禁止同线程重入。先记录36条，观察线程持锁，回传线程送最后消息/终态。
-- [ ] 在现有实现运行，记录lastSeq36、占用未释放、投递错误被吞的RED；Task2后用新收据入口使其GREEN。
-- [ ] 提交测试与失败证据，不能删断言只求绿。
+- [x] 将已有诊断转换为真实DB夹具：只mock外部JobCoordinator，不能mockTaskStore/gate；Latch有超时及finally释放。
+- [x] 添加terminalReportIsDurableWhileRunRecoveryHoldsTheProjectGate、terminalDeliveryFailureNeverClaimsAcknowledgement、missingDisplayProgressDoesNotBlockTerminalReceipt。
+- [x] 两个线程制造竞争，禁止同线程重入。先记录36条，观察线程持锁，回传线程送最后消息/终态。
+- [x] 在现有实现运行，记录lastSeq36、占用未释放、投递错误被吞的RED；Task2后用新收据入口使其GREEN。
+- [x] 提交测试与失败证据，不能删断言只求绿。
 
 验收算法：
 ~~~text
@@ -116,13 +116,13 @@ then one terminal decision releases occupancy
 **Consumes:** Task1夹具与当前owner/instance/epoch校验。
 **Produces:** recordTerminal/TerminalAck、加法迁移、新任务deadline。
 
-- [ ] 先测同report同内容并发、丢ACK重发、终态后重发、同ID不同内容、错身份、Unicode、8KiB完整JSON上限。
-- [ ] 按设计添加terminal_report_id/json/sha256/received_at、deadline_at、close_reason_code、next_reconcile_at；旧deadline=NULL，新任务同一Clock赋created_at+1800s。
-- [ ] 无project gate的短事务保存报告并冻结新工具/新创建；统一project row→task row锁顺序，沿用任务监视器保护并测死锁/并发。reportId/摘要按设计固定数组计算，添加Java/TS共享Unicode测试向量。
-- [ ] 最后副作用创建授权点（build create、application预约、write操作）检查receipt/close冻结；覆盖已读到许可但尚未创建资源的竞态。
-- [ ] 旧progress terminal在gate/seq前转入recordTerminal，legacy reportId稳定；普通message仍按seq检查，缺号不伪造。
-- [ ] 到deadline的新报告遵守关闭优先；已close或关闭后FAILED的合法晚到结果ACK CLOSING，不覆盖原因；已结束同报告仍幂等ACK。增加terminal GET查询已存ACK，继续校验执行身份。
-- [ ] 运行迁移/安全/收据测试，GREEN后提交fix(ai): persist terminal receipts before settlement。
+- [x] 先测同report同内容并发、丢ACK重发、终态后重发、同ID不同内容、错身份、Unicode、8KiB完整JSON上限。
+- [x] 按设计添加terminal_report_id/json/sha256/received_at、deadline_at、close_reason_code、next_reconcile_at；旧deadline=NULL，新任务同一Clock赋created_at+1800s。
+- [x] 无project gate的短事务保存报告并冻结新工具/新创建；统一project row→task row锁顺序，沿用任务监视器保护并测死锁/并发。reportId/摘要按设计固定数组计算，添加Java/TS共享Unicode测试向量。
+- [x] 最后副作用创建授权点（build create、application预约、write操作）检查receipt/close冻结；覆盖已读到许可但尚未创建资源的竞态。
+- [x] 旧progress terminal在gate/seq前转入recordTerminal，legacy reportId稳定；普通message仍按seq检查，缺号不伪造。
+- [x] 到deadline的新报告遵守关闭优先；已close或关闭后FAILED的合法晚到结果ACK CLOSING，不覆盖原因；已结束同报告仍幂等ACK。增加terminal GET查询已存ACK，继续校验执行身份。
+- [x] 运行迁移/安全/收据测试，GREEN后提交fix(ai): persist terminal receipts before settlement。
 
 事务顺序：
 ~~~text
@@ -142,13 +142,13 @@ commit before ACK; zero Kubernetes/Worker IO here
 **Consumes:** 收据、冻结状态、原工具/receipt/Run清理规则。
 **Produces:** reconcile(taskId)与持久close意图快速响应。
 
-- [ ] RED覆盖保存报告后进程中断、重建服务继续收尾、重复reconcile不重复副作用。
-- [ ] 新增只匹配receipt身份/摘要且无close意图的完成CAS；旧applyTerminal仅允许QUEUED/RUNNING，不能原样用于NEEDS_ATTENTION。
-- [ ] 成功路径核对live claims、持久未决calls、PENDING receipts、applicationCanRelease(true)，保留READY应用。
-- [ ] 失败/结束先持久close_reason_code和冻结，再锁外单步清理；将120s等待改成未决即返回、下轮续核对。不得重放结果未知的工具。
-- [ ] close Controller快速返回当前snapshot；NEEDS_ATTENTION表示已受理但未确认结束。重复close不改原因、最终任务no-op。
-- [ ] 测试REGISTERED/RUNNING/NEEDS_ATTENTION call、PENDING receipt、live claim竞态、不同owner、Run身份更换、Stop未知、close胜过晚到结果。
-- [ ] 运行对应测试，提交fix(ai): reconcile receipts through verified task settlement。
+- [x] RED覆盖保存报告后进程中断、重建服务继续收尾、重复reconcile不重复副作用。
+- [x] 新增只匹配receipt身份/摘要且无close意图的完成CAS；旧applyTerminal仅允许QUEUED/RUNNING，不能原样用于NEEDS_ATTENTION。
+- [x] 成功路径核对live claims、持久未决calls、PENDING receipts、applicationCanRelease(true)，保留READY应用。
+- [x] 失败/结束先持久close_reason_code和冻结，再锁外单步清理；将120s等待改成未决即返回、下轮续核对。不得重放结果未知的工具。
+- [x] close Controller快速返回当前snapshot；NEEDS_ATTENTION表示已受理但未确认结束。重复close不改原因、最终任务no-op。
+- [x] 测试REGISTERED/RUNNING/NEEDS_ATTENTION call、PENDING receipt、live claim竞态、不同owner、Run身份更换、Stop未知、close胜过晚到结果。
+- [x] 运行对应测试，提交fix(ai): reconcile receipts through verified task settlement。
 
 ~~~text
 COMPLETED report + verified effects -> COMPLETED; READY application survives
@@ -164,15 +164,15 @@ close intent + unknown receipt/job/claim -> NEEDS_ATTENTION; retry later
 **Consumes:** Task2 terminal契约和Task3 CLOSING语义。
 **Produces:** TerminalDelivery、完整状态查询、boot身份、冻结报告重复发送。
 
-- [ ] 用可控fetch和fake timers写RED：PROJECT_BUSY/transport/5xx、丢ACK、永久身份冲突；每次reportId及JSON字节相同、最多一个在途。
-- [ ] 普通progress保留具体code，有界退避同seq；GAP范围有限；MISMATCH不能谎报同一内容已送达。
-- [ ] 最终Context先持久化，再冻结outcome；progress drain失败不挡terminal。Context失败明确FAILED/AI_CONTEXT_UNAVAILABLE。
-- [ ] 按250/500/1000/2000/4000/5000ms上限+20%jitter投递，单请求<=10s；只有匹配reportId/hash的ACK才确认，dispose清timer/订阅。
-- [ ] server区分执行异常与交付异常；发送失败不生成第二个FAILED覆盖COMPLETED。PENDING/REJECTED不接新模型任务，但GET/stop可用。
-- [ ] 新进程boot身份不能是固定instance字符串；任务/compaction鉴权一致使用该身份。任务GET返回epoch/requestSha/executionState/报告；GET /status返回bootId和activeTaskId，不带prompt/密钥。
-- [ ] abort请求仅STOPPING；循环真正退出才执行终态。stop发生在createPiSession未完成时记录取消，初始化后不再prompt。ACK前重启允许结果丢失，后端安全失败关闭兜底，不承诺恢复COMPLETED、不新增磁盘outbox。
-- [ ] 推送永久拒绝后可用terminal GET确认后端拉取补偿已接收/关闭；匹配身份才释放slot。已确认记录最多100条/24h，PENDING/REJECTED不淘汰。
-- [ ] worker全部测试+build，提交fix(worker): separate terminal delivery from model execution。
+- [x] 用可控fetch和fake timers写RED：PROJECT_BUSY/transport/5xx、丢ACK、永久身份冲突；每次reportId及JSON字节相同、最多一个在途。
+- [x] 普通progress保留具体code，有界退避同seq；GAP范围有限；MISMATCH不能谎报同一内容已送达。
+- [x] 最终Context先持久化，再冻结outcome；progress drain失败不挡terminal。Context失败明确FAILED/AI_CONTEXT_UNAVAILABLE。
+- [x] 按250/500/1000/2000/4000/5000ms上限+20%jitter投递，单请求<=10s；只有匹配reportId/hash的ACK才确认，dispose清timer/订阅。
+- [x] server区分执行异常与交付异常；发送失败不生成第二个FAILED覆盖COMPLETED。PENDING/REJECTED不接新模型任务，但GET/stop可用。
+- [x] 新进程boot身份不能是固定instance字符串；任务/compaction鉴权一致使用该身份。任务GET返回epoch/requestSha/executionState/报告；GET /status返回bootId和activeTaskId，不带prompt/密钥。
+- [x] abort请求仅STOPPING；循环真正退出才执行终态。stop发生在createPiSession未完成时记录取消，初始化后不再prompt。ACK前重启允许结果丢失，后端安全失败关闭兜底，不承诺恢复COMPLETED、不新增磁盘outbox。
+- [x] 推送永久拒绝后可用terminal GET确认后端拉取补偿已接收/关闭；匹配身份才释放slot。已确认记录最多100条/24h，PENDING/REJECTED不淘汰。
+- [x] worker全部测试+build，提交fix(worker): separate terminal delivery from model execution。
 
 测试用例步骤必须实际实现以下序列，不使用固定sleep碰运气：
 ~~~text
@@ -192,14 +192,14 @@ assert pending,pending,acked; same body; one inflight; execution outcome unchang
 **Consumes:** Task2–4的收据、单步收尾及Worker状态协议。
 **Produces:** 无浏览器依赖的有界对账、服务器期限及持久调度。
 
-- [ ] RED矩阵：DB RUNNING/Worker有报告；收据后backend重启；Worker404；不可达；deadline前/等于/之后；历史deadline=NULL；坏Task不饿死后项。
-- [ ] 将404、鉴权失败、错误JSON、身份不匹配、transport分开；所有网络在锁外，回来重新读Task并CAS，不能用旧snapshot覆盖新close。
-- [ ] 有报告走recordTerminal；deadline到期且无已接收报告时持久预算close。不能根据无进度认定模型死掉，不能每次更新deadline。
-- [ ] 独立单线程每5s选至多10个到期候选、无重入；按next_reconcile_at/id公平排序。单IO<=2s、单任务工作预算5s；未决退避5s至30s。
-- [ ] 新Task/receipt/close初始化next时间；backend重启从DB恢复。旧progress已存terminal可导入receipt，历史无deadline不得自动停止。
-- [ ] 诊断只保留taskId/reportId/epoch/seq/kind/status/code/attempt/elapsed/nextRetryAt，不记录响应原文、token、模型内容。
-- [ ] 不可达仍NEEDS_ATTENTION且占用是有效安全状态；有结束/重试入口，禁止为全自动解锁而跳过证据。
-- [ ] GREEN后提交fix(ai): reconcile pending task outcomes and enforce deadlines。
+- [x] RED矩阵：DB RUNNING/Worker有报告；收据后backend重启；Worker404；不可达；deadline前/等于/之后；历史deadline=NULL；坏Task不饿死后项。
+- [x] 将404、鉴权失败、错误JSON、身份不匹配、transport分开；所有网络在锁外，回来重新读Task并CAS，不能用旧snapshot覆盖新close。
+- [x] 有报告走recordTerminal；deadline到期且无已接收报告时持久预算close。不能根据无进度认定模型死掉，不能每次更新deadline。
+- [x] 独立单线程每5s选至多10个到期候选、无重入；按next_reconcile_at/id公平排序。单IO<=2s、单任务工作预算5s；未决退避5s至30s。
+- [x] 新Task/receipt/close初始化next时间；backend重启从DB恢复。旧progress已存terminal可导入receipt，历史无deadline不得自动停止。
+- [x] 诊断只保留taskId/reportId/epoch/seq/kind/status/code/attempt/elapsed/nextRetryAt，不记录响应原文、token、模型内容。
+- [x] 不可达仍NEEDS_ATTENTION且占用是有效安全状态；有结束/重试入口，禁止为全自动解锁而跳过证据。
+- [x] GREEN后提交fix(ai): reconcile pending task outcomes and enforce deadlines。
 
 ## Task 6：Run恢复的周期语义
 
@@ -208,11 +208,11 @@ assert pending,pending,acked; same body; one inflight; execution outcome unchang
 **Consumes:** 现有RunStore、fencing token、observation。
 **Produces:** 正常RUNNING不再每15s进入RECOVERING，启动/接管完整恢复。
 
-- [ ] RED：同token连续两轮不会再次mark健康RUNNING；首次启动/新token会mark；无token不做恢复写入。
-- [ ] 分离一次性初始化与周期RECOVERING核对；初始化完整完成后才标记，中断重试。gate忙跳过的原Run留待下轮，初始化后新Run不重复mark。不靠单一内存boolean判断跨实例权威。
-- [ ] 保留STOPPING/USER_STOPPED意图、UNKNOWN/MISSING/Pod身份核对、token CAS。3s普通observation继续追踪健康Run。
-- [ ] 不整体搬动普通observation的锁外IO；关键保护来自独立terminal入口。Task1仍可主动制造锁竞争，不能靠不执行巡检让测试变绿。
-- [ ] GREEN后提交fix(run): separate startup recovery from periodic reconciliation。
+- [x] RED：同token连续两轮不会再次mark健康RUNNING；首次启动/新token会mark；无token不做恢复写入。
+- [x] 分离一次性初始化与周期RECOVERING核对；初始化完整完成后才标记，中断重试。gate忙跳过的原Run留待下轮，初始化后新Run不重复mark。不靠单一内存boolean判断跨实例权威。
+- [x] 保留STOPPING/USER_STOPPED意图、UNKNOWN/MISSING/Pod身份核对、token CAS。3s普通observation继续追踪健康Run。
+- [x] 不整体搬动普通observation的锁外IO；关键保护来自独立terminal入口。Task1仍可主动制造锁竞争，不能靠不执行巡检让测试变绿。
+- [x] GREEN后提交fix(run): separate startup recovery from periodic reconciliation。
 
 ## Task 7：结束入口与超时展示
 
@@ -221,11 +221,11 @@ assert pending,pending,acked; same body; one inflight; execution outcome unchang
 **Consumes:** TaskSnapshot现有状态、close快速响应及安全failureCode。
 **Produces:** 当前Task始终可结束/重试、收尾可见、两类时限不混淆。
 
-- [ ] RED：选中历史会话仍能结束当前占用Task；NEEDS_ATTENTION可重试；HTTP失败后按钮恢复；未释放时编辑与Start仍禁用。
-- [ ] close针对当前taskId，不用displayTaskId；文案“结束AI任务可能停止其启动的应用”。本轮不加暂停/恢复。
-- [ ] Stop run因AI占用禁用时给出说明及切换AI入口；成功释放且Run仍活跃时恢复Stop，Run已超时时保持合理禁用。
-- [ ] SERVICE显示启动上限1800s、就绪后7200s及expiresAt；TASK显示自己的timeout；AI预算另行说明，不能全局把1800替换7200。
-- [ ] 目标组件测试、typecheck、build、boundary通过后提交fix(ui): clarify task settlement and application stop controls。
+- [x] RED：选中历史会话仍能结束当前占用Task；NEEDS_ATTENTION可重试；HTTP失败后按钮恢复；未释放时编辑与Start仍禁用。
+- [x] close针对当前taskId，不用displayTaskId；文案“结束AI任务可能停止其启动的应用”。本轮不加暂停/恢复。
+- [x] Stop run因AI占用禁用时给出说明及切换AI入口；成功释放且Run仍活跃时恢复Stop，Run已超时时保持合理禁用。
+- [x] SERVICE显示启动上限1800s、就绪后7200s及expiresAt；TASK显示自己的timeout；AI预算另行说明，不能全局把1800替换7200。
+- [x] 目标组件测试、typecheck、build、boundary通过后提交fix(ui): clarify task settlement and application stop controls。
 
 ## Task 8：完整验证、发布准备与存量恢复手册
 

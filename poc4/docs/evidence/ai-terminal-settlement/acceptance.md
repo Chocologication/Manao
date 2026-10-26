@@ -2,7 +2,7 @@
 
 日期：2026-10-26。分支：`codex/fix-ai-terminal-settlement`。Task 1–7 基线：`3e9ffa0`。
 
-当前状态：本地必需场景已验证，Task 8 / 整分支独立审查待完成；尚不授予 `LOCAL_REPAIR_VERIFIED`。云端 `NOT_RUN`；原故障 Task `NOT_REPAIRED`；Stage 2 保持 `PAUSED / NOT_GRANTED`。没有发布、集群访问、付费模型、Git push 或 merge。
+当前状态：**LOCAL_REPAIR_VERIFIED**。Task 1–8逐项审查、整分支审查及唯一Important的限定修复复审均已通过；生产代码终点5739d1b。[最终审查、裁定与非阻塞项](review.md)记录交付依据。云端 `NOT_RUN`；原故障Task `NOT_REPAIRED`；Stage2保持 `PAUSED / NOT_GRANTED`。没有发布、集群访问、付费模型、Git push或merge；不声称最终源码单次完整962项全绿。
 
 ## 1. 验收架构与证据边界
 
@@ -95,7 +95,7 @@ review指出原I场景释放terminal代理后立即读FAILED，可能先于Worke
 - 真实 MySQL 定向 RED：5 tests，4 failures / 0 errors / 0 skipped，exit1；两条完整成功报告预期 `COMPLETED`、实际 `NEEDS_ATTENTION`，旧 state-only / foreign task 预期 `QUEUED`、实际 `NEEDS_ATTENTION`。`final-fix-red-confirmed.log`，41.154s，2026-10-26 11:32:09+08:00。最初测试误读 submit 返回的创建快照，已改为检查持久状态；该诊断运行不作为根因 RED 证据。
 - 同一五条定向 GREEN：5/5，exit0，45.825s，2026-10-26 11:33:38+08:00，`final-fix-green.log`。覆盖无收据与 `AI_TERMINAL_PENDING` 已落盘两种 ACK 丢失窗口；最终成功、READY Run 不停、start1 / 原 call1、不重放工具或模型入口；不完整旧状态/foreign identity 保持占用，owner close 不被逆转。
 - 最终串行直接相关复验：Service 全部52 + Settlement选定7 + Reconciler选定6，**65/65，0 failures/errors/skipped，exit0，02:45**，2026-10-26 11:37:02+08:00，`final-fix-regression.log`。GREEN实际重新编译143个生产源文件及100个测试源文件；此后只改文档。日志提取本轮87个唯一 `manao_stage6_*` schema，精确只读复核剩余0（mysql exit0）；未执行额外删除。
-- 此轮只修改 lost-start 生产分支及测试；直接相关复验和自查结果见 SDD `final-fix-report.md`。不重复浏览器矩阵或完整962项，不把旧结果称为最终源码的完整重跑。整分支独立复审仍待完成，尚不授予 `LOCAL_REPAIR_VERIFIED`；云端、原故障 Task 和 Stage2 边界不变。
+- 此轮只修改 lost-start 生产分支及测试；直接相关复验和自查结果见 SDD `final-fix-report.md`。不重复浏览器矩阵或完整962项，不把旧结果称为最终源码的完整重跑。整分支限定复审已确认I1 ADDRESSED、无新增Critical/Important，Ready for local delivery: Yes；据此授予 `LOCAL_REPAIR_VERIFIED`。云端、原故障Task和Stage2边界不变。
 
 ## 6. 清理实际结果与保留项
 
