@@ -13,6 +13,7 @@
 
 ## Read the document that owns the question
 
+- AI terminal settlement Task 6 (2026-10-26, local worktree only): Run recovery snapshots original unfinished Run IDs once per fencing token, retries gate-busy/interrupted initialization, and leaves later Runs to ordinary observation. Repeated recovery ticks only reconcile `RECOVERING` after initialization; STOPPING/USER_STOPPED, identity checks and fencing CAS remain. This is local implementation/testing only; [repair design section 7](docs/superpowers/specs/2026-10-25-ai-terminal-settlement-design.md#7-run恢复语义) owns the contract.
 - AI terminal settlement Task 5 (2026-10-26, local worktree only): background reconciliation uses persisted `next_reconcile_at` and additive V16 `reconcile_attempt` backoff. Authenticated Worker task status includes its frozen terminal report; the process status stays diagnostic-only. The independent scheduler and owner-close finishing share bounded single-seat work, preserve unresolved occupancy, and never replay model tasks. This is local implementation, not deployment or recovery authorization for original tasks; [repair design](docs/superpowers/specs/2026-10-25-ai-terminal-settlement-design.md) remains the contract.
 
 | Question | Authority |

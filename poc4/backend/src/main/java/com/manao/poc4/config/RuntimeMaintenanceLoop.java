@@ -55,6 +55,8 @@ public class RuntimeMaintenanceLoop {
 
     @Scheduled(fixedDelay = 15000)
     public void recoverRuns() {
+        // The service owns per-fencing-token startup/takeover initialization; recurring ticks
+        // retry its pending original IDs and reconcile RECOVERING, never re-mark healthy Runs.
         safe("run recovery", () -> { var service = runRecovery.getIfAvailable(); if (service != null) service.recoverRuns(); });
     }
 

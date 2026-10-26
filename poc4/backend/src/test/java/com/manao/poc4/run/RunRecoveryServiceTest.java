@@ -1,6 +1,7 @@
 package com.manao.poc4.run;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.manao.poc4.kubernetes.JobCoordinator;
 import com.manao.poc4.log.RunLogIngestor;
@@ -83,6 +84,122 @@ class RunRecoveryServiceTest {
                                                  boolean deadlineExceeded, Integer exitCode) {
         return new JobCoordinator.JobFacts(running, succeeded, failed, deadlineExceeded, exitCode,
             null, null, false, running == false && (succeeded || failed || deadlineExceeded));
+    }
+
+    @Test
+    void sameAuthorityDoesNotMarkAHealthyRunRecoveringAgain() {
+        seedRun("run-live", RunState.RUNNING);
+        coordinator.factsByRun.put("run-live", facts(true, false, false, false, null));
+        service.recoverRuns();
+        long recoveredVersion = store.findRun("run-live").orElseThrow().version();
+
+        // A temporary unknown Job fact must be left to normal observation, not a fresh recovery.
+        coordinator.observationKinds.put("run-live", JobCoordinator.ObservationKind.UNKNOWN);
+        var report = service.recoverRuns();
+
+        assertThat(store.findRun("run-live").orElseThrow().state()).isEqualTo(RunState.RUNNING);
+        assertThat(store.findRun("run-live").orElseThrow().version()).isEqualTo(recoveredVersion);
+        assertThat(report.processed()).isEmpty();
+    }
+
+    @Test
+    void aNewAuthorityInitializesTheUnfinishedSnapshotAgain() {
+        seedRun("run-live", RunState.RUNNING);
+        coordinator.factsByRun.put("run-live", facts(true, false, false, false, null));
+        service.recoverRuns();
+        store.fencingToken = OptionalLong.of(8L);
+        coordinator.observationKinds.put("run-live", JobCoordinator.ObservationKind.UNKNOWN);
+
+        var report = service.recoverRuns();
+
+        assertThat(report.processed()).containsExactly("run-live");
+        assertThat(store.findRun("run-live").orElseThrow().state()).isEqualTo(RunState.RECOVERING);
+    }
+
+    @Test
+    void noAuthorityLeavesTheStartupSnapshotUninitializedAndDoesNotSettleRecoveringRuns() {
+        seedRun("run-original", RunState.RUNNING);
+        seedRun("run-recovering", RunState.RECOVERING);
+        store.fencingToken = OptionalLong.empty();
+
+        assertThat(service.recoverRuns().processed()).isEmpty();
+        assertThat(store.findRun("run-original").orElseThrow().state()).isEqualTo(RunState.RUNNING);
+        assertThat(store.findRun("run-recovering").orElseThrow().state()).isEqualTo(RunState.RECOVERING);
+
+        store.fencingToken = OptionalLong.of(7L);
+        coordinator.observationKinds.put("run-original", JobCoordinator.ObservationKind.UNKNOWN);
+        assertThat(service.recoverRuns().processed()).containsExactlyInAnyOrder("run-original", "run-recovering");
+        assertThat(store.findRun("run-original").orElseThrow().state()).isEqualTo(RunState.RECOVERING);
+    }
+
+    @Test
+    void aBusyOriginalRunRemainsPendingButLaterRunsAreNotAddedToItsSnapshot() throws Exception {
+        seedRun("run-original", RunState.RUNNING);
+        var gate = new com.manao.poc4.project.ProjectLifecycleGate();
+        var recovering = new RunRecoveryService(store, coordinator, null, null, gate, null);
+        var pool = java.util.concurrent.Executors.newSingleThreadExecutor();
+        try {
+            try (var held = gate.tryAcquire(PROJECT).orElseThrow()) {
+                assertThat(pool.submit(recovering::recoverRuns).get(5, java.util.concurrent.TimeUnit.SECONDS)
+                    .processed()).isEmpty();
+                assertThat(store.findRun("run-original").orElseThrow().state()).isEqualTo(RunState.RUNNING);
+            }
+            seedRun("run-later", RunState.STARTING);
+            coordinator.observationKinds.put("run-original", JobCoordinator.ObservationKind.UNKNOWN);
+
+            assertThat(recovering.recoverRuns().processed()).containsExactly("run-original");
+            assertThat(store.findRun("run-original").orElseThrow().state()).isEqualTo(RunState.RECOVERING);
+            assertThat(store.findRun("run-later").orElseThrow().state()).isEqualTo(RunState.STARTING);
+        } finally {
+            pool.shutdownNow();
+        }
+    }
+
+    @Test
+    void interruptedInitializationRetriesItsOriginalIdsWithoutRemarkingCompletedIds() {
+        seedRun("run-first", RunState.RUNNING);
+        seedRun("run-pending", RunState.STARTING);
+        var interrupted = org.mockito.Mockito.spy(store);
+        org.mockito.Mockito.doThrow(new IllegalStateException("interrupted initialization"))
+            .doCallRealMethod().when(interrupted).transition(
+                org.mockito.ArgumentMatchers.eq("run-pending"), org.mockito.ArgumentMatchers.eq(PROJECT),
+                org.mockito.ArgumentMatchers.anyLong(), org.mockito.ArgumentMatchers.eq(RunState.RECOVERING),
+                org.mockito.ArgumentMatchers.eq(7L), org.mockito.ArgumentMatchers.eq(RunState.STARTING),
+                org.mockito.ArgumentMatchers.eq(RunState.RUNNING), org.mockito.ArgumentMatchers.eq(RunState.STOPPING));
+        var recovering = new RunRecoveryService(interrupted, coordinator);
+        assertThatThrownBy(recovering::recoverRuns).hasMessage("interrupted initialization");
+        assertThat(store.findRun("run-first").orElseThrow().state()).isEqualTo(RunState.RECOVERING);
+
+        // Ordinary observation can adopt the already-marked Run before recovery retries.
+        coordinator.factsByRun.put("run-first", facts(true, false, false, false, null));
+        new RunObservationService(store, coordinator, null, null).observe();
+        long adoptedVersion = store.findRun("run-first").orElseThrow().version();
+        seedRun("run-later", RunState.STARTING);
+        coordinator.observationKinds.put("run-first", JobCoordinator.ObservationKind.UNKNOWN);
+        coordinator.observationKinds.put("run-pending", JobCoordinator.ObservationKind.UNKNOWN);
+
+        assertThat(recovering.recoverRuns().processed()).containsExactly("run-pending");
+        assertThat(store.findRun("run-first").orElseThrow().state()).isEqualTo(RunState.RUNNING);
+        assertThat(store.findRun("run-first").orElseThrow().version()).isEqualTo(adoptedVersion);
+        assertThat(store.findRun("run-pending").orElseThrow().state()).isEqualTo(RunState.RECOVERING);
+        assertThat(store.findRun("run-later").orElseThrow().state()).isEqualTo(RunState.STARTING);
+    }
+
+    @Test
+    void aRunCreatedAfterInitializationIsHandledByOrdinaryObservation() {
+        service.recoverRuns();
+        seedRun("run-new", RunState.STARTING);
+        coordinator.factsByRun.put("run-new", facts(true, false, false, false, null));
+
+        assertThat(service.recoverRuns().processed()).isEmpty();
+        assertThat(store.findRun("run-new").orElseThrow().state()).isEqualTo(RunState.STARTING);
+        var observation = new RunObservationService(store, coordinator,
+            org.mockito.Mockito.mock(RunLogIngestor.class), null);
+        observation.observe();
+        assertThat(store.findRun("run-new").orElseThrow().state()).isEqualTo(RunState.RUNNING);
+        coordinator.factsByRun.put("run-new", facts(false, true, false, false, 0));
+        observation.observe();
+        assertThat(store.findRun("run-new").orElseThrow().state()).isEqualTo(RunState.SUCCEEDED);
     }
 
     @Test
