@@ -1,6 +1,6 @@
 # AI 任务可靠收尾修复设计
 
-设计日期：2026-10-25。2026-10-26 状态：Task 1–8、本地验证及整分支独立审查完成，LOCAL_REPAIR_VERIFIED；生产修复代码终点为5739d1b。实际证据、已知限制与保留项见[验收记录](../../../poc4/docs/evidence/ai-terminal-settlement/acceptance.md)及[最终审查](../../../poc4/docs/evidence/ai-terminal-settlement/review.md)。云端NOT_RUN，原故障Task NOT_REPAIRED，Stage2 PAUSED/NOT_GRANTED；未部署或push/merge。
+设计日期：2026-10-25。2026-10-26 状态：Task 1–8、本地验证及整分支独立审查完成，LOCAL_REPAIR_VERIFIED；生产修复代码终点为5739d1b。实际证据、已知限制与保留项见[验收记录](../../../poc4/docs/evidence/ai-terminal-settlement/acceptance.md)及[最终审查](../../../poc4/docs/evidence/ai-terminal-settlement/review.md)。该本地审查之后，用户另行授权并完成758aae6集群发布和一次最小真实模型收尾验证，DEPLOYED_SMOKE_VERIFIED，见验收第8节。完整云端故障矩阵NOT_RUN，原故障Task NOT_REPAIRED，Stage2 PAUSED/NOT_GRANTED；未Git push/merge。
 
 ## 1. 目标与事实
 

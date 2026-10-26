@@ -10,7 +10,7 @@
 
 **Spec:** [修复设计](../specs/2026-10-25-ai-terminal-settlement-design.md)；[调查报告](../../../poc4/docs/evidence/ai-output/terminal-settlement-20261025.md)；[交接提示词](2026-10-25-ai-terminal-settlement-agent-handoff.md)。
 
-**2026-10-26 执行状态：** Task1–8逐项审查、整分支审查及lost-start限定修复复审完成，LOCAL_REPAIR_VERIFIED；生产代码终点5739d1b。实际browser8/8及晚到ACK补强1/1、Worker181、前端211、backend原962项失败与fixture60/60复验、最终修复65/65及清理拒绝残留归[验收记录](../../../poc4/docs/evidence/ai-terminal-settlement/acceptance.md)；[最终审查](../../../poc4/docs/evidence/ai-terminal-settlement/review.md)记录裁定及非阻塞项；发布与原Task dry-run归[手册](../../../poc4/deploy/ai-terminal-settlement/README.md)。不声称单次完整全绿；云端NOT_RUN、原Task NOT_REPAIRED、Stage2 PAUSED/NOT_GRANTED。
+**2026-10-26 执行状态：** Task1–8逐项审查、整分支审查及lost-start限定修复复审完成，LOCAL_REPAIR_VERIFIED；生产代码终点5739d1b。实际browser8/8及晚到ACK补强1/1、Worker181、前端211、backend原962项失败与fixture60/60复验、最终修复65/65及清理拒绝残留归[验收记录](../../../poc4/docs/evidence/ai-terminal-settlement/acceptance.md)；[最终审查](../../../poc4/docs/evidence/ai-terminal-settlement/review.md)记录裁定及非阻塞项；发布与原Task dry-run归[手册](../../../poc4/deploy/ai-terminal-settlement/README.md)。不声称单次完整全绿。随后用户授权并完成758aae6集群发布及一次最小真实模型验证：DEPLOYED_SMOKE_VERIFIED，见验收第8节；完整云端故障矩阵NOT_RUN、原Task NOT_REPAIRED、Stage2 PAUSED/NOT_GRANTED，未Git push/merge。
 
 ## Global Constraints
 

@@ -1,6 +1,6 @@
 # AI terminal settlement 发布准备与恢复程序
 
-日期：2026-10-26。状态：本地发布准备，实际云端 `NOT_RUN`，没有发布授权。当前本地结果见[验收记录](../../docs/evidence/ai-terminal-settlement/acceptance.md)。
+日期：2026-10-26。当前状态：**DEPLOYED_SMOKE_VERIFIED**；用户已授权并实际发布三组件及V15/V16迁移，一次最小真实模型与浏览器收尾通过。实际证据见[验收记录第8节](../../docs/evidence/ai-terminal-settlement/acceptance.md#8-2026-10-26-实际集群部署与最小真实验证)与[脱敏发布身份](../../docs/evidence/ai-terminal-settlement/cloud-release-20261026.json)。完整云端故障矩阵未执行；原Task NOT_REPAIRED，Stage2 PAUSED/NOT_GRANTED。下文发布步骤作为后续维护契约保留。
 
 ## 1. 发布前提与顺序
 
@@ -47,3 +47,17 @@ pnpm --dir poc4/frontend test:e2e:ai-terminal-settlement
 ```
 
 不复用AI-stage1/stage2云端配置，不读集群env，不调用付费模型。端口占用即退出；setup teardown只终止本轮拥有的PID树并销毁本轮新schema。若自动审批拒绝清理，记录拒绝与残留路径，不能换工具绕过。
+
+## 5. 本次发布与回退基线
+
+源码758aae6，生产修复5739d1b，context=kubernetes-admin@learn，namespace=manao-stage6b。实际新镜像及Pod见验收第8节；标准Dockerfile构建成功，没有fallback替换jar。Maven/Python runner、workspace-agent、initializer及模型Secret未变更。
+
+发布前保存的回退镜像（同仓库chocologic/manao_images_repository）：
+
+- backend：sha256:726c095f15d4866fbcea48146c90faf2fb1a6d680f02629f6ea893e49f694af1。
+- Worker：sha256:dd06e4148d466127914ebf0bc04e27b5f078d4061f4485f1c0b4221831e269f8。
+- frontend：sha256:297a81e47cc421223b552562acee5d99920aeda20bc5b5190dadbd1991059698。
+
+这些仅是回退身份，不允许忽略pending receipt/close。旧后端不认识收据，仍须遵守第2节；V15/V16字段及Flyway历史不DROP。私有备份已恢复演练，9张关键表行数匹配；恢复库与远端临时SQL已清理，私有副本保留。
+
+验证项目caafbc12-9831-4ff7-a411-0eb0f1c7ef75保留；只运行真实模型Task978cddbb-5d51-45f3-9b3b-475a4c33791e，一次list_files，自动COMPLETED/ACKED并释放写锁。原故障项目未关闭或恢复。账号密码登录、完整云端故障矩阵、应用启动/停止/保留不属于此次冒烟通过范围。

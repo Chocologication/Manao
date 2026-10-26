@@ -2,7 +2,7 @@
 
 日期：2026-10-26。分支：`codex/fix-ai-terminal-settlement`。Task 1–7 基线：`3e9ffa0`。
 
-当前状态：**LOCAL_REPAIR_VERIFIED**。Task 1–8逐项审查、整分支审查及唯一Important的限定修复复审均已通过；生产代码终点5739d1b。[最终审查、裁定与非阻塞项](review.md)记录交付依据。云端 `NOT_RUN`；原故障Task `NOT_REPAIRED`；Stage2保持 `PAUSED / NOT_GRANTED`。没有发布、集群访问、付费模型、Git push或merge；不声称最终源码单次完整962项全绿。
+当前状态：**LOCAL_REPAIR_VERIFIED / DEPLOYED_SMOKE_VERIFIED**。Task1–8及整分支审查通过；2026-10-26用户另行授权部署和一次最小真实模型验证，已从758aae6发布三组件并完成V15/V16迁移。生产修复代码终点5739d1b；实际发布证据见第8节。原故障Task仍NOT_REPAIRED，Stage2保持PAUSED/NOT_GRANTED，未Git push/merge。完整云端故障矩阵未执行；不声称最终源码单次完整962项全绿。
 
 ## 1. 验收架构与证据边界
 
@@ -120,6 +120,41 @@ D:/DeepLearning/MyProjects/Project_Manao/.worktree/ai-terminal-settlement/.super
 
 有用日志、审查rulings、初始失败与最终通过记录保留在SDD目录，未删。controller对重复中止Maven日志中的13个唯一schema作精确只读核对：12个已不存在，唯一残留`manao_stage6_15367f6af82d43718d61488fc68dd8ab`已按该精确身份DROP成功，复核剩余0；未触碰其他库。
 
-## 7. 未执行与后续授权
+## 7. 部署前的授权边界（历史快照，已被第8节本次授权更新）
 
 云端镜像构建/推送/部署/数据库迁移：`NOT_RUN`。原故障Task：`NOT_REPAIRED`，仅[发布与恢复手册](../../../deploy/ai-terminal-settlement/README.md)中的dry-run程序。原Stage2验收保持 `PAUSED / NOT_GRANTED`。
+
+## 8. 2026-10-26 实际集群部署与最小真实验证
+
+结论：**DEPLOYED_SMOKE_VERIFIED**。用户先授权部署，随后明确授权一次最小真实AI任务，并仅在项目上限阻塞时允许清理较早项目。实际7/8项目，新建成功，未删除旧项目。源码758aae6（生产代码5739d1b），context=kubernetes-admin@learn，namespace=manao-stage6b，公共入口http://1.12.245.235:30080。[脱敏机器证据](cloud-release-20261026.json)记录完整digest、Pod UID及回退身份。
+
+### 8.1 发布、备份与健康
+
+- 三节点Ready；Metrics API不可用，改核对可调度状态和requests：node1 CPU65%/memory67%，node2 CPU63%/memory28%。这是当时请求量，不是实时利用率。
+- 标准Dockerfile三组件build/push均exit0；frontend显式VITE_ENABLE_AI=true。backend/Worker保持单副本Recreate，先将frontend/Worker/backend缩至0并确认旧Pod消失，再依次启动兼容backend、Worker、frontend。未应用测试配置或fault hooks。
+- 运行库manao_poc4_6b从V14升级至V15/V16，Flyway均success=1。私有备份6,207,643bytes，SHA256=0c06abfcf74963589658df46e6b419b46d05dea906688a537daca0b43282006f；独立恢复库验证9张关键表行数一致后删除。备份留私有目录、未入Git，远端临时SQL已精确删除。
+- backend、Worker、frontend分别Ready1/1，最终restartCount均0；backend readiness HTTP200/UP，公共首页HTTP200。
+
+| 组件 | 实际digest（仓库chocologic/manao_images_repository） | Pod |
+| --- | --- | --- |
+| backend | sha256:2b8d3d21e4af8a0cdf488fae4b785f41e675f63f6e08cd4147f864082dc5e695 | backend-75c4f446f5-qwtvs |
+| Worker | sha256:696080571ba556d983aa578163be3d6494261057e960a9686b15f814e7d0c93e | manao-pi-worker-6b6b79574b-qwlfr |
+| frontend | sha256:77ba0d19320ac238badf694a0bdd8eb6508d3c2aee6de50ed98f8192dc0ed708 | frontend-5f6fd7bf8c-86q5m |
+
+### 8.2 一次真实模型与浏览器结果
+
+项目caafbc12-9831-4ff7-a411-0eb0f1c7ef75，名称terminal-settlement-cloud-20261026，Java console、无MySQL/Redis/公网端口，保留供用户查看。只提交Task978cddbb-5d51-45f3-9b3b-475a4c33791e一次，要求list_files根目录后简短回答，不修改、构建或启动应用。
+
+- 生产浏览器工作台提交HTTP200，QUEUED且writesLocked=true，End task可见；随后自动COMPLETED、failureCode=NULL、writesLocked=false，current查询404，Start task/New file恢复可用。
+- 数据库只有1条list_files且COMPLETED；模型未改变revision21、没有Run。终态receipt唯一，reportId=192a5b229668bbd2d3309c5fdc700d9f52152937df2478470ed9f39f0116e3be，SHA256=fe53fb4a6a3767351ef78ee25452b140b55cdc61cf77604aea012ac5c6ea2226，与Worker ACKED逐项匹配，activeTaskId=NULL。
+- UTC创建04:29:22.892231、收据04:29:25.487688、完成04:29:30.089421（北京时间12:29:22至12:29:30）。deadline04:59:22.892000固定，close_reason=NULL。Worker第一次投递HTTP200/RECORDED，elapsed23ms。
+- 完成后owner API创建terminal-release-proof目录HTTP201，workspace_operation=COMMITTED，revision21→22；退出并重新进入后仍显示COMPLETED和可编辑。浏览器只在登录响应处引导短时operator签名owner JWT，其余项目/会话/任务/文件请求均真实，**未验证账号密码登录流程**。
+- 初始浏览器导航/角色定位超时均发生在模型提交前；误查/workspace与ledger不存在列产生的诊断错误已改用实际API/表字段复验，不作为通过证据。
+
+### 8.3 本轮不扩大的结论
+
+这是实际发布与一次最小成功收尾冒烟，不等同完整云端A–N故障注入、强制重启、1800秒期限、失败/close/READY应用保留或资源删除验收。这些本轮云端NOT_RUN，已有本地证据保持原边界。没有重新启动Stage2验收或授予阶段PASS。
+
+原故障Task b3b32518-f0ed-411e-aa85-1ecef95fbdc5发布后仍RUNNING、deadline=NULL、receipt=NULL、close_reason=NULL：**NOT_REPAIRED**。后台为历史占用更新对账时间，但未自动预算关闭、未发owner close、未重跑原模型/工具；若要恢复原项目，需另行处理该历史任务。
+
+测试浏览器已关闭，恢复演练库和远端临时SQL已清理，私有备份、回退基线和脱敏证据保留。未触碰此前策略拒绝的临时目录；未Git push/merge。

@@ -6,7 +6,7 @@
 
 **LOCAL_REPAIR_VERIFIED / Ready for local delivery: Yes。** Task1–8逐项规范与质量审查完成；整分支审查发现0 Critical、1 Important，经唯一修复波次及限定复审确认ADDRESSED、无新增Critical/Important。此前Minor按实际影响分级后保留，不宣称不存在所有缺陷。
 
-云端 `NOT_RUN`、原故障Task `NOT_REPAIRED`、Stage2 `PAUSED / NOT_GRANTED`。未部署、调用付费模型、push或merge；保留工作分支。完整证据及保留项见[验收记录](acceptance.md)，发布与原任务边界见[手册](../../../deploy/ai-terminal-settlement/README.md)。
+此处LOCAL结论是发布前审查。随后用户另行授权集群部署和一次最小真实模型任务，2026-10-26已取得DEPLOYED_SMOKE_VERIFIED，详见[验收第8节](acceptance.md#8-2026-10-26-实际集群部署与最小真实验证)。完整云端故障矩阵NOT_RUN，原故障Task NOT_REPAIRED、Stage2 PAUSED/NOT_GRANTED不变；未Git push/merge。发布身份、备份与回退边界见[手册](../../../deploy/ai-terminal-settlement/README.md)。
 
 ## 2. 审查经过
 
