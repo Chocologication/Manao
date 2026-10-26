@@ -19,6 +19,10 @@ import java.io.IOException;
  * it is pure verification plus the store's receipt-identity CAS.</p>
  */
 public final class AgentTaskSettlementService {
+    private static final org.slf4j.Logger LOG=org.slf4j.LoggerFactory.getLogger(AgentTaskSettlementService.class);
+    private static final java.util.Set<String> SAFE_PULL_CODES=java.util.Set.of(
+        "AI_WORKER_NOT_FOUND","AI_WORKER_UNAUTHORIZED","AI_WORKER_BAD_RESPONSE",
+        "AI_WORKER_UNREACHABLE","AI_WORKER_IDENTITY_MISMATCH","AI_RECONCILE_DEFERRED");
 
     private final AgentTaskStore tasks;
     private final ProjectLifecycleGate lifecycle;
@@ -42,13 +46,31 @@ public final class AgentTaskSettlementService {
      * background scheduler, and nothing is settleable here yet.
      */
     public void reconcile(String taskId) {
+        reconcile(taskId,new ReconcileWorkBudget(taskId));
+    }
+
+    void reconcile(String taskId, ReconcileWorkBudget budget) {
+        tasks.armExpiredBudget(taskId);
+        if(ReconcileWorkBudget.inFlight(taskId)) return;
         AgentTaskStore.SettlementView view = tasks.settlementView(taskId);
         if ("COMPLETED".equals(view.state()) || "FAILED".equals(view.state())) {
             return;
         }
         if (AgentTaskStore.hasCloseIntent(view)) {
-            settleCloseIntent(taskId, null, null);
+            settleCloseIntent(taskId, null, null,budget);
             return;
+        }
+        if(view.terminalReportId()==null) {
+            try { importTerminal(taskId,budget); }
+            catch(RuntimeException ex) {
+                String code=ex instanceof ApiException api && SAFE_PULL_CODES.contains(api.code())
+                    ? api.code() : "AI_RECONCILE_UNRESOLVED";
+                LOG.warn("taskId={} kind=worker-reconcile code={}",taskId,code);
+                tasks.scheduleReconcile(taskId);
+                return;
+            }
+            view=tasks.settlementView(taskId);
+            if(AgentTaskStore.hasCloseIntent(view)) { settleCloseIntent(taskId,null,null,budget); return; }
         }
         if (view.terminalReportId() != null) {
             AgentTaskStore.StoredTerminal receipt = tasks.storedTerminalReport(taskId).orElse(null);
@@ -62,7 +84,7 @@ public final class AgentTaskSettlementService {
                     tasks.scheduleReconcile(taskId);
                     return;
                 }
-                settleCloseIntent(taskId, receipt.failureCode(), receipt.summary());
+                settleCloseIntent(taskId, receipt.failureCode(), receipt.summary(),budget);
                 return;
             }
             settleCompletedReceipt(taskId, view, receipt);
@@ -116,13 +138,22 @@ public final class AgentTaskSettlementService {
      * reconcile round.
      */
     public void settleCloseIntent(String taskId, String failureCode, String summary) {
+        settleCloseIntent(taskId,failureCode,summary,new ReconcileWorkBudget(taskId));
+    }
+
+    private void settleCloseIntent(String taskId, String failureCode, String summary, ReconcileWorkBudget budget) {
+        if(ReconcileWorkBudget.inFlight(taskId)) return;
         try {
-            worker.stop(taskId);
+            budget.io(() -> worker.stop(taskId));
         } catch (RuntimeException ex) {
             // The worker may already be gone; the marker already blocks new calls.
         }
-        if (tasks.hasLiveToolClaims(taskId) || !tools.finishForClose(taskId)
-            || !tools.finishApplication(taskId)) {
+        boolean finished=false;
+        try {
+            if(!tasks.hasLiveToolClaims(taskId)) finished=budget.io(() -> tools.finishForClose(taskId))
+                && budget.io(() -> tools.finishApplication(taskId));
+        } catch(RuntimeException ex) { /* unknown evidence retains occupancy and any live seat */ }
+        if (!finished) {
             tasks.scheduleReconcile(taskId);
             return;
         }
@@ -169,7 +200,7 @@ public final class AgentTaskSettlementService {
     private boolean completeFromVerifiedReceipt(String taskId, String reportId, String contentSha256,
                                                 String summary, String failureCode) {
         synchronized (tasks) {
-            if (tasks.hasLiveToolClaims(taskId) || tasks.hasUnsettledCall(taskId)
+            if (ReconcileWorkBudget.inFlight(taskId) || tasks.hasLiveToolClaims(taskId) || tasks.hasUnsettledCall(taskId)
                 || tasks.hasPendingReceipts(taskId) || !tools.applicationCanRelease(taskId, true)) {
                 return false;
             }
@@ -211,6 +242,51 @@ public final class AgentTaskSettlementService {
         String reason = tasks.settlementView(taskId).closeReasonCode();
         return reason != null && !reason.isBlank() ? reason : AgentTaskStore.CLOSING_MARKER;
     }
+
+    /** Worker observations are authenticated and complete; never infer terminality from 404 or silence. */
+    private void importTerminal(String taskId, ReconcileWorkBudget budget) {
+        var candidate=tasks.reconcileCandidate(taskId);
+        var legacy=tasks.terminalProgress(taskId);
+        if(legacy.isPresent() && candidate.instanceId()!=null) {
+            TerminalReport old=parseTerminal(legacy.get().text());
+            String id=AgentTaskStore.terminalReportId(taskId,candidate.epoch(),candidate.requestSha256());
+            recordObserved(candidate,new AgentContracts.TerminalReport(1,id,old.state(),old.summary(),old.failureCode()));
+            return;
+        }
+        AgentContracts.WorkerProcessStatus process=budget.io(worker::processStatus);
+        if(process==null || process.bootId()==null || process.bootId().isBlank() || process.instanceId()==null
+            || !process.instanceId().endsWith("-"+process.bootId()))
+            throw badWorker();
+        AgentContracts.WorkerStatus status=budget.io(() -> worker.status(taskId));
+        if(status==null || !taskId.equals(status.taskId()) || !process.instanceId().equals(status.instanceId())
+            || candidate.instanceId()!=null && !candidate.instanceId().equals(status.instanceId())
+            || !Integer.valueOf(1).equals(status.protocolVersion()) || !Long.valueOf(candidate.epoch()).equals(status.workerEpoch())
+            || !candidate.requestSha256().equals(status.requestSha256()) || status.executionState()==null
+            || !status.executionState().equals(status.state())) throw badWorker();
+        // The bound instance carries the process boot identity. A slot for another task does not
+        // invalidate retained terminal history; it may never establish this task's completion.
+        if(candidate.instanceId()==null) tasks.requireWorkerIdentity(taskId,candidate.epoch(),status.instanceId());
+        if(!"COMPLETED".equals(status.executionState()) && !"FAILED".equals(status.executionState())) return;
+        var delivery=status.terminalDelivery();
+        var report=delivery==null ? null : delivery.report();
+        if(report==null || report.state()==null || !report.state().name().equals(status.executionState())
+            || !report.reportId().equals(delivery.reportId())
+            || !AgentTaskStore.terminalContentSha256(report.reportId(),report.state(),report.summary(),report.failureCode()).equals(delivery.reportSha256()))
+            throw badWorker();
+        recordObserved(tasks.reconcileCandidate(taskId),report);
+    }
+
+    private void recordObserved(AgentTaskStore.ReconcileCandidate candidate,AgentContracts.TerminalReport report) {
+        if(report.protocolVersion()!=1 || report.summary()==null
+            || !AgentTaskStore.terminalReportId(candidate.taskId(),candidate.epoch(),candidate.requestSha256()).equals(report.reportId())) throw badWorker();
+        var json=REPORT_JSON.createObjectNode().put("protocolVersion",1).put("state",report.state().name()).put("summary",report.summary());
+        if(report.failureCode()==null) json.putNull("failureCode"); else json.put("failureCode",report.failureCode());
+        if(json.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8).length>8192) throw badWorker();
+        tasks.recordTerminal(candidate.taskId(),candidate.epoch(),candidate.instanceId(),report.reportId(),json.toString(),
+            report.state(),report.summary(),report.failureCode());
+    }
+
+    private static ApiException badWorker() { return new ApiException("AI_WORKER_IDENTITY_MISMATCH",502,"Worker evidence did not match the execution"); }
 
     /** The normalized terminal verdict behind a receipt or a frozen progress item. */
     record TerminalReport(AgentContracts.TaskState state, String summary, String failureCode) { }

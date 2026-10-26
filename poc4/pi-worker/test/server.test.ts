@@ -681,6 +681,7 @@ describe("task server", () => {
           state: "ACKED",
           reportId: expectedReportId,
           reportSha256: terminalContentSha256(expectedReportId, "COMPLETED", "完成", null),
+          report: { protocolVersion: 1, reportId: expectedReportId, state: "COMPLETED", summary: "完成", failureCode: null },
         },
       });
       // The confirmed slot is free: another task starts, and the settled task replay

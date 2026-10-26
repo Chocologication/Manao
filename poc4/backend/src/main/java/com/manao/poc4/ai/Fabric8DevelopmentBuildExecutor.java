@@ -177,13 +177,51 @@ public final class Fabric8DevelopmentBuildExecutor implements DevelopmentBuildEx
     @Override public boolean hasRecordedSideEffect(AgentContracts.BuildRequest request) {
         String jobName = JobResourceFactory.developmentJobName(request.commandId());
         try {
-            if (client.batch().v1().jobs().inNamespace(namespace).withName(jobName).get() != null) {
+            KubernetesClient bounded=client.newClient(new io.fabric8.kubernetes.client.RequestConfigBuilder()
+                .withRequestTimeout((int)ReconcileWorkBudget.requestTimeout(java.time.Duration.ofSeconds(2)).toMillis())
+                .withRequestRetryBackoffLimit(0).build()).adapt(KubernetesClient.class);
+            if (ReconcileWorkBudget.boundary(() -> bounded.batch().v1().jobs().inNamespace(namespace).withName(jobName).get()) != null) {
                 return true;
             }
-            return !buildPods(request.commandId()).isEmpty();
+            return !ReconcileWorkBudget.boundary(() -> bounded.pods().inNamespace(namespace)
+                .withLabel(JobResourceFactory.LABEL_TOOL_CALL_ID,request.commandId()).list().getItems()).isEmpty();
         } catch (KubernetesClientException apiFailure) {
             return true;
         }
+    }
+
+    /** No polling or conflict retry: one original-identity cleanup observation per scheduler drive. */
+    @Override public AgentContracts.BuildResult closeStep(AgentContracts.BuildRequest request,AgentContracts.BuildIdentity identity) {
+        KubernetesClient bounded=client.newClient(new io.fabric8.kubernetes.client.RequestConfigBuilder()
+            .withRequestTimeout((int)ReconcileWorkBudget.requestTimeout(java.time.Duration.ofSeconds(2)).toMillis())
+            .withRequestRetryBackoffLimit(0).build()).adapt(KubernetesClient.class);
+        String name=identity.jobName()==null ? JobResourceFactory.developmentJobName(request.commandId()) : identity.jobName();
+        Job job=ReconcileWorkBudget.boundary(() -> bounded.batch().v1().jobs().inNamespace(namespace).withName(name).get());
+        if(job!=null) {
+            var labels=job.getMetadata()==null ? null : job.getMetadata().getLabels();
+            if(labels==null || !request.projectId().equals(labels.get(WorkspaceResourceFactory.LABEL_PROJECT_ID))
+                || !request.commandId().equals(labels.get(JobResourceFactory.LABEL_TOOL_CALL_ID))
+                || !JobResourceFactory.COMPONENT_DEVELOPMENT_BUILD.equals(labels.get(JobResourceFactory.LABEL_COMPONENT)))
+                throw new IllegalStateException("build identity mismatch");
+            if(identity.jobUid()!=null && !identity.jobUid().equals(uid(job))) throw new IllegalStateException("build identity mismatch");
+        }
+        String jobUid=job==null ? identity.jobUid() : uid(job);
+        List<Pod> pods=ReconcileWorkBudget.boundary(() -> bounded.pods().inNamespace(namespace)
+            .withLabel(JobResourceFactory.LABEL_TOOL_CALL_ID,request.commandId()).list().getItems());
+        if(pods==null) pods=List.of();
+        boolean absent=job==null && pods.isEmpty();
+        for(Pod pod:pods) {
+            if(jobUid==null || !ownedByJob(pod,jobUid)) return unresolved(name,jobUid,identity.podUid(),"BUILD_CLEANUP_UNKNOWN");
+            ReconcileWorkBudget.check();
+            @SuppressWarnings({"unchecked","rawtypes"}) BaseOperation<Pod,?,?> operation=(BaseOperation)bounded.pods().inNamespace(namespace).withName(podName(pod));
+            ReconcileWorkBudget.boundary(() -> operation.withResourceVersion(resourceVersion(pod)).delete());
+        }
+        if(job!=null) {
+            @SuppressWarnings({"unchecked","rawtypes"}) BaseOperation<Job,?,?> operation=(BaseOperation)bounded.batch().v1().jobs().inNamespace(namespace).withName(name);
+            ReconcileWorkBudget.boundary(() -> operation.withResourceVersion(resourceVersion(job)).delete());
+        }
+        return new AgentContracts.BuildResult(new AgentContracts.BuildIdentity(name,jobUid,identity.podUid()),null,
+            "BUILD_CLOSED","",false,List.of(),absent);
     }
 
     private static AgentContracts.BuildResult unresolved(String jobName, String jobUid, String podUid,

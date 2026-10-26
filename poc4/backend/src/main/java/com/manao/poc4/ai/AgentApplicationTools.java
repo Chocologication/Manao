@@ -262,13 +262,14 @@ public final class AgentApplicationTools {
         if (tasks.hasLiveToolClaims(taskId)) return false;
         var owner = tasks.taskOwner(taskId);
         for (var row : tasks.applicationCalls(taskId)) {
+            ReconcileWorkBudget.check();
             if (!tasks.claimApplicationCleanup(taskId, row.toolCallId())) return false;
             try {
                 String target = cleanupTarget(row);
                 if (target != null) {
                     RunSummary run = cleanupRun(owner, row, target);
                     if (run != null && !terminal(run)) {
-                        runs.stopForAgent(owner.ownerId(), owner.projectId(), taskId, row.toolCallId(), target);
+                        ReconcileWorkBudget.boundary(() -> runs.stopForAgent(owner.ownerId(), owner.projectId(), taskId, row.toolCallId(), target));
                         // One bounded re-read: an unconfirmed run defers this step; the
                         // next reconcile round re-drives it from the durable facts.
                         if (!terminal(requiredRun(owner, target))) return false;

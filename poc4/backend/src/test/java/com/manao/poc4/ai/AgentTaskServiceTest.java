@@ -927,7 +927,7 @@ class AgentTaskServiceTest {
                 .thenReturn(new AgentContracts.BuildResult(
                     new AgentContracts.BuildIdentity(null, null, null),
                     0, "Completed", "", false, List.of(), true));
-            org.mockito.Mockito.when(h.builds.close(org.mockito.ArgumentMatchers.any(),
+            org.mockito.Mockito.when(h.builds.closeStep(org.mockito.ArgumentMatchers.any(),
                     org.mockito.ArgumentMatchers.any()))
                 .thenReturn(new AgentContracts.BuildResult(
                     new AgentContracts.BuildIdentity("manao-dev-x", "uid-job", "uid-pod"),
@@ -1012,7 +1012,7 @@ class AgentTaskServiceTest {
             h.submit();
             h.insertBoundBuildCall("call-build", "manao-dev-x");
             h.tasks.markToolCallNeedsAttention(h.taskId, "call-build");
-            org.mockito.Mockito.when(h.builds.close(org.mockito.ArgumentMatchers.any(),
+            org.mockito.Mockito.when(h.builds.closeStep(org.mockito.ArgumentMatchers.any(),
                     org.mockito.ArgumentMatchers.any()))
                 .thenReturn(new AgentContracts.BuildResult(
                     new AgentContracts.BuildIdentity("manao-dev-x", "uid-job", "uid-pod"),
@@ -1038,7 +1038,7 @@ class AgentTaskServiceTest {
                     new AgentContracts.BuildIdentity("manao-dev-x", "uid-job", "uid-pod"),
                     0, "Completed", "", false, List.of(), true);
             });
-            org.mockito.Mockito.when(h.builds.close(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
+            org.mockito.Mockito.when(h.builds.closeStep(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
                 .thenReturn(new AgentContracts.BuildResult(
                     new AgentContracts.BuildIdentity("manao-dev-x", "uid-job", "uid-pod"),
                     null, "BUILD_CLOSED", "", false, List.of(), true));
@@ -1106,7 +1106,7 @@ class AgentTaskServiceTest {
             h.submit();
             h.insertBoundBuildCall("call-build", "manao-dev-x");
             h.tasks.markToolCallNeedsAttention(h.taskId, "call-build");
-            org.mockito.Mockito.when(h.builds.close(org.mockito.ArgumentMatchers.any(),
+            org.mockito.Mockito.when(h.builds.closeStep(org.mockito.ArgumentMatchers.any(),
                     org.mockito.ArgumentMatchers.any()))
                 .thenReturn(new AgentContracts.BuildResult(
                     new AgentContracts.BuildIdentity("manao-dev-x", "uid-job", "uid-pod"),
@@ -1212,7 +1212,7 @@ class AgentTaskServiceTest {
                 CountDownLatch entered = new CountDownLatch(1);
                 CountDownLatch release = new CountDownLatch(1);
                 java.util.concurrent.atomic.AtomicInteger cleanupCalls = new java.util.concurrent.atomic.AtomicInteger();
-                org.mockito.Mockito.when(h.builds.close(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
+                org.mockito.Mockito.when(h.builds.closeStep(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
                     .thenAnswer(call -> {
                         if (cleanupCalls.incrementAndGet() == 1) {
                             entered.countDown();
@@ -1253,7 +1253,7 @@ class AgentTaskServiceTest {
             // (a backend restart): no live claim exists in this process, so the close
             // finishes the durable row by its recorded identity.
             h.insertBoundBuildCall("call-build", "manao-dev-x");
-            org.mockito.Mockito.when(h.builds.close(org.mockito.ArgumentMatchers.any(),
+            org.mockito.Mockito.when(h.builds.closeStep(org.mockito.ArgumentMatchers.any(),
                     org.mockito.ArgumentMatchers.any()))
                 .thenReturn(new AgentContracts.BuildResult(
                     new AgentContracts.BuildIdentity("manao-dev-x", "uid-job", "uid-pod"),
@@ -1272,7 +1272,7 @@ class AgentTaskServiceTest {
         try (Harness h = new Harness()) {
             h.submit();
             h.insertBoundBuildCall("call-build", "manao-dev-x");
-            org.mockito.Mockito.when(h.builds.close(org.mockito.ArgumentMatchers.any(),
+            org.mockito.Mockito.when(h.builds.closeStep(org.mockito.ArgumentMatchers.any(),
                     org.mockito.ArgumentMatchers.any()))
                 .thenReturn(new AgentContracts.BuildResult(
                     new AgentContracts.BuildIdentity("manao-dev-x", "uid-job", "uid-pod"),

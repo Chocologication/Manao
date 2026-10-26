@@ -227,6 +227,22 @@ public final class WorkspaceOperationService {
         }
     }
 
+    /** Task settlement observes only its original receipt, outside the project gate, then rechecks. */
+    public boolean reconcileTaskOperation(String projectId,String operationId) {
+        var original=store.findOperation(projectId,operationId).orElse(null);
+        if(original==null || "COMMITTED".equals(original.state())) return true;
+        if(!"PENDING".equals(original.state())) return false;
+        var receipt=com.manao.poc4.ai.ReconcileWorkBudget.boundary(() -> agent.receipt(projectId,operationId));
+        try(var lease=lifecycle.tryAcquire(projectId).orElse(null)) {
+            if(lease==null) return false;
+            var current=store.findOperation(projectId,operationId).orElse(null);
+            if(current==null) return false;
+            if("COMMITTED".equals(current.state())) return true;
+            if(!original.equals(current) || receipt.isEmpty() || !receiptMatches(current,receipt.get())) return false;
+            return store.commitOperation(current.id(),projectId,current.expectedRevision());
+        }
+    }
+
     private boolean reconcilePendingLocked(String projectId) {
         List<WorkspaceStore.OperationRecord> pending = store.pendingOperations(projectId);
         if (pending.isEmpty()) return true;

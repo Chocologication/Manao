@@ -651,6 +651,18 @@ class DevelopmentBuildExecutorTest {
     }
 
     @Test
+    void closeStepDeletesOnceAndRequiresASeparateAbsenceObservation() {
+        Job job=seedJob();
+        Pod pod=seedPod(job.getMetadata().getName(),job.getMetadata().getUid(),1,"Error");
+        var identity=new BuildIdentity(job.getMetadata().getName(),job.getMetadata().getUid(),pod.getMetadata().getUid());
+        BuildResult first=executor.closeStep(request(),identity);
+        assertThat(first.cleanupConfirmed()).isFalse();
+        assertThat(client.batch().v1().jobs().inNamespace(NS).list().getItems()).isEmpty();
+        assertThat(client.pods().inNamespace(NS).list().getItems()).isEmpty();
+        assertThat(executor.closeStep(request(),identity).cleanupConfirmed()).isTrue();
+    }
+
+    @Test
     void multiByteOutputIsBoundedByUtf8BytesAndKeepsAValidTail() {
         Job job = seedJob();
         Pod pod = seedPod(job.getMetadata().getName(), job.getMetadata().getUid(), 1, "Error");

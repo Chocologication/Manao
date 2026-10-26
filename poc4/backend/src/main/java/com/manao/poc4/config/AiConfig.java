@@ -143,6 +143,14 @@ public class AiConfig {
         return new AgentTaskService(tasks, lifecycle, worker, tools, conversations);
     }
 
+    @Bean(initMethod = "start",destroyMethod = "close")
+    @Conditional(AiEnabledCondition.class)
+    com.manao.poc4.ai.AgentTaskReconciler agentTaskReconciler(AgentTaskStore tasks,ProjectLifecycleGate lifecycle,
+            PiWorkerClient worker,AgentProjectTools tools) {
+        return new com.manao.poc4.ai.AgentTaskReconciler(tasks,
+            new com.manao.poc4.ai.AgentTaskSettlementService(tasks,lifecycle,worker,tools));
+    }
+
     @Bean(destroyMethod = "close")
     @Conditional(AiEnabledCondition.class)
     com.manao.poc4.ai.AgentLiveOutput agentLiveOutput(AgentTaskStore tasks) {

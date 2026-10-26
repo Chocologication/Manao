@@ -47,6 +47,7 @@
 | deadline_at | TIMESTAMP(6) NULL；新任务创建时固定created_at+1800s |
 | close_reason_code | VARCHAR(64) NULL；持久关闭原因，防止重启后丢失/被晚到结果覆盖 |
 | next_reconcile_at | TIMESTAMP(6) NULL；下次自动核对时间 |
+| reconcile_attempt | V16新增INT NOT NULL DEFAULT 0；独立持久退避计数，不以progress的updated_at推算 |
 
 只迁移结构，不在Flyway里自动改变历史RUNNING状态。新任务写deadline_at；老任务保持NULL，默认不参加自动预算关闭，需由operator明确选定接管。新终态回调可接收旧任务的结果并建立收据。添加覆盖扫描所需索引，避免扫描所有历史任务。
 
@@ -108,6 +109,7 @@ interface TerminalDelivery {
 - 不新增Worker PVC/磁盘outbox。本修复保证后台已接收收据后可跨重启继续；Worker在ACK前丢失且无法恢复收据时，只能安全失败关闭，不能保证保留COMPLETED。这一降级必须明示。
 - Worker `/tasks/{id}` 的内部状态增加 `protocolVersion/taskId/instanceId/workerEpoch/requestSha256/executionState/terminalDelivery`；保留旧state字段兼容。只有执行循环退出才能报告COMPLETED/FAILED，abort已请求仅STOPPING。后端必须核对所有已存在的身份字段；缺字段的旧Worker响应不作为新协议终态证据。
 - 提供已认证的GET `/status` 返回当前进程bootId和activeTaskId/执行状态，供诊断识别重启和slot；不暴露模型key或prompt。404由HTTP client保留为NOT_FOUND，不能统一改成502，也不能单凭404解锁。
+- Task 5 协议补齐：已认证GET `/tasks/{id}` 的 `terminalDelivery.report` 返回冻结的完整TerminalReport，供后端拉取收据；`/status`不返回报告正文。
 
 已确认的Worker记录最多保留100条/24小时，任一阈值到达可淘汰；PENDING/REJECTED不淘汰。淘汰导致的NOT_FOUND不会删除后端持久收据。stop发生在异步createPiSession期间时，TaskRecord保存取消意图；初始化完成后先检查取消，不能再prompt。对账比创建ACK更早发现记录时，绑定原taskId/epoch/requestSha，不按project匹配另一个执行。
 

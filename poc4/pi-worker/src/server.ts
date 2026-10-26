@@ -416,7 +416,7 @@ export function createTaskServer(config: WorkerConfig, deps: ServerDeps = {}): T
   function statusOf(taskId: string): {
     taskId: string; instanceId: string; state: string; protocolVersion: 1;
     workerEpoch: number; requestSha256: string; executionState: string;
-    terminalDelivery: { state: DeliveryState; reportId: string | null; reportSha256: string | null };
+    terminalDelivery: { state: DeliveryState; reportId: string | null; reportSha256: string | null; report: ReturnType<TerminalDelivery["snapshot"]>["report"] };
   } {
     const record = tasks.get(taskId)!;
     const outcome = record.outcome;
@@ -434,6 +434,7 @@ export function createTaskServer(config: WorkerConfig, deps: ServerDeps = {}): T
       requestSha256: record.start.requestSha256,
       executionState,
       terminalDelivery: {
+        report: delivery.report,
         state: delivery.state,
         reportId: delivery.report?.reportId ?? null,
         reportSha256: delivery.report === null ? null : terminalContentSha256(

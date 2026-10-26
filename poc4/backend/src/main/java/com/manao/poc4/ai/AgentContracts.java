@@ -102,7 +102,18 @@ public final class AgentContracts {
     }
 
     /** Worker answer to start/status/stop; {@code instanceId} binds the running session. */
-    public record WorkerStatus(String taskId, String instanceId, String state) { }
+    public record WorkerStatus(String taskId, String instanceId, String state, Integer protocolVersion,
+                               Long workerEpoch, String requestSha256, String executionState,
+                               WorkerTerminalDelivery terminalDelivery) {
+        public WorkerStatus(String taskId, String instanceId, String state) {
+            this(taskId, instanceId, state, null, null, null, null, null);
+        }
+    }
+
+    public record WorkerTerminalDelivery(String state, String reportId, String reportSha256, TerminalReport report) { }
+
+    public record WorkerProcessStatus(String bootId, String instanceId, String activeTaskId,
+                                      String activeExecutionState, String activeKind, boolean modelConfigured) { }
 
     /**
      * The worker's terminal execution report (repair design section 4). The backend

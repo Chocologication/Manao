@@ -314,10 +314,12 @@ public final class AgentProjectTools {
         // commits every one of them or records the project fail-closed.
         boolean mayHavePendingReceipts = unsettled.stream()
             .anyMatch(row -> "write_file".equals(row.toolName()) && row.workspaceOperationId() != null);
-        if (mayHavePendingReceipts && !operations.reconcilePending(owner.projectId())) {
-            return false;
+        if(mayHavePendingReceipts) for(var row:unsettled) {
+            if("write_file".equals(row.toolName()) && row.workspaceOperationId()!=null
+                && !operations.reconcileTaskOperation(owner.projectId(),row.workspaceOperationId())) return false;
         }
         for (AgentTaskStore.ToolCallRow row : unsettled) {
+            ReconcileWorkBudget.check();
             if ("application".equals(row.toolName())) continue;
             if ("app_http_get".equals(row.toolName())) {
                 // Closing forbids new claims. A restart leftover has no live transport to
@@ -336,7 +338,7 @@ public final class AgentProjectTools {
                     if ("RUNNING".equals(row.state()) || row.jobName() != null) {
                         // Restart leftovers use the bound identity or deterministic commandId;
                         // close never creates or re-executes a build.
-                        AgentContracts.BuildResult closed = builds.close(buildRequestOf(owner, row), new AgentContracts.BuildIdentity(
+                        AgentContracts.BuildResult closed = builds.closeStep(buildRequestOf(owner, row), new AgentContracts.BuildIdentity(
                             row.jobName(), row.jobUid(), row.podUid()));
                         if (closed == null || !closed.cleanupConfirmed()) return false;
                         if ("RUNNING".equals(row.state())) {
@@ -346,7 +348,7 @@ public final class AgentProjectTools {
                                     buildData(buildRequestOf(owner, row), closed), closed.truncated()))));
                             continue;
                         }
-                    } else if (builds.hasRecordedSideEffect(buildRequestOf(owner, row))) {
+                    } else if (ReconcileWorkBudget.boundary(() -> builds.hasRecordedSideEffect(buildRequestOf(owner, row)))) {
                         return false;
                     }
                     tasks.markRegisteredCallForClose(taskId, row.toolCallId());

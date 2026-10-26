@@ -109,11 +109,13 @@ public final class RunService {
         // durable result settlement. Run observation can acquire the project gate meanwhile.
         if (endpoints != null && isServiceRun(plan.run())) {
             try {
+                com.manao.poc4.ai.ReconcileWorkBudget.check();
                 endpoints.requestWithdraw(projectId, runId);
             } catch (RuntimeException ex) {
-                LOG.warn("conditional endpoint withdrawal failed during agent stop", ex);
+                LOG.warn("kind=agent-stop code=ENDPOINT_WITHDRAW_UNRESOLVED");
             }
         }
+        com.manao.poc4.ai.ReconcileWorkBudget.check();
         coordinator.requestStop(jobRef(plan.run()));
         return toSummary(refetch(ownerId, plan.run()));
     }

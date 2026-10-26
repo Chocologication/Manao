@@ -13,6 +13,8 @@
 
 ## Read the document that owns the question
 
+- AI terminal settlement Task 5 (2026-10-26, local worktree only): background reconciliation uses persisted `next_reconcile_at` and additive V16 `reconcile_attempt` backoff. Authenticated Worker task status includes its frozen terminal report; the process status stays diagnostic-only. The independent scheduler and owner-close finishing share bounded single-seat work, preserve unresolved occupancy, and never replay model tasks. This is local implementation, not deployment or recovery authorization for original tasks; [repair design](docs/superpowers/specs/2026-10-25-ai-terminal-settlement-design.md) remains the contract.
+
 | Question | Authority |
 | --- | --- |
 | Product goal, delivered POC4 scope and non-goals | [Project Goal](docs/Manao-Projects-goal.md) |

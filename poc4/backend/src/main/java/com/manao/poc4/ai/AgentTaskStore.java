@@ -161,11 +161,11 @@ public final class AgentTaskStore implements AgentTaskOccupancy {
                 jdbc.update("""
                     INSERT INTO agent_task(id, project_id, owner_id, request_sha256, prompt,
                         state, worker_epoch, workspace_revision, created_at, updated_at,
-                        conversation_id, reasoning_effort, deadline_at)
-                    VALUES (?, ?, ?, ?, ?, 'QUEUED', 1, ?, ?, ?, ?, ?, ?)
+                        conversation_id, reasoning_effort, deadline_at, next_reconcile_at)
+                    VALUES (?, ?, ?, ?, ?, 'QUEUED', 1, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     request.taskId(), projectId, ownerId, requestSha256, request.prompt(),
-                    request.expectedRevision(), now, now, conversationId, effort, deadline);
+                    request.expectedRevision(), now, now, conversationId, effort, deadline, now);
             } catch (DuplicateKeyException ex) {
                 // The unique index is the backstop behind the in-transaction pre-check.
                 throw new ApiException("AI_TASK_ACTIVE", 409, "The project already has an active task");
@@ -950,7 +950,7 @@ public final class AgentTaskStore implements AgentTaskOccupancy {
                     UPDATE agent_task SET state = 'NEEDS_ATTENTION', failure_code = ?,
                         close_reason_code = ?, next_reconcile_at = ?, terminal_report_id = ?,
                         terminal_report_json = ?, terminal_report_sha256 = ?, terminal_received_at = ?,
-                        updated_at = ?
+                        updated_at = ?, reconcile_attempt = 0
                     WHERE id = ? AND state IN ('QUEUED', 'RUNNING')
                     """, CLOSING_MARKER, BUDGET_CLOSE_REASON, now, reportId, reportJson,
                     contentSha256, now, now, taskId);
@@ -963,10 +963,10 @@ public final class AgentTaskStore implements AgentTaskOccupancy {
             int parked = jdbc.update("""
                 UPDATE agent_task SET state = 'NEEDS_ATTENTION', failure_code = ?, summary = ?,
                     terminal_report_id = ?, terminal_report_json = ?, terminal_report_sha256 = ?,
-                    terminal_received_at = ?, updated_at = ?
+                    terminal_received_at = ?, updated_at = ?, next_reconcile_at = ?, reconcile_attempt = 0
                 WHERE id = ? AND (state IN ('QUEUED', 'RUNNING')
                     OR (state = 'NEEDS_ATTENTION' AND failure_code = ? AND terminal_report_id IS NULL))
-                """, TERMINAL_PENDING_MARKER, summary, reportId, reportJson, contentSha256, now, now,
+                """, TERMINAL_PENDING_MARKER, summary, reportId, reportJson, contentSha256, now, now, now,
                 taskId, TERMINAL_PENDING_MARKER);
             if (parked == 0) {
                 // Fail closed: an unexpected state never claims a receipt it did not store.
@@ -1099,6 +1099,8 @@ public final class AgentTaskStore implements AgentTaskOccupancy {
      * or a restart keeps the original one. A null reason leaves the column NULL.
      */
     public synchronized CloseEntry beginClose(String taskId, String reasonCode) {
+        jdbc.update("UPDATE agent_task SET next_reconcile_at = ?, reconcile_attempt = 0 WHERE id = ? AND state IN ('QUEUED','RUNNING','NEEDS_ATTENTION') AND close_reason_code IS NULL AND (failure_code IS NULL OR failure_code <> ?)",
+            Timestamp.from(clock.instant()), taskId,CLOSING_MARKER);
         if (markClosing(taskId)) {
             persistCloseReason(taskId, reasonCode);
             return CloseEntry.START;
@@ -1213,6 +1215,51 @@ public final class AgentTaskStore implements AgentTaskOccupancy {
     /** The durable row behind one settlement decision: state, close intent and receipt identity. */
     public record SettlementView(String state, String failureCode, String closeReasonCode,
                                  String terminalReportId, String terminalReportSha256) { }
+
+    public record ReconcileCandidate(String taskId, long epoch, String instanceId, String requestSha256,
+                                      java.time.Instant nextReconcileAt) { }
+
+    /** NULL scheduling rows are legacy active tasks, never historical released rows. */
+    public List<ReconcileCandidate> dueReconciliations(int limit) {
+        return jdbc.query("""
+            SELECT id,worker_epoch,worker_instance_id,request_sha256,next_reconcile_at FROM agent_task
+            WHERE state IN ('QUEUED','RUNNING','NEEDS_ATTENTION')
+              AND (next_reconcile_at IS NULL OR next_reconcile_at <= ?)
+            ORDER BY next_reconcile_at,id LIMIT ?
+            """, (rs,row) -> new ReconcileCandidate(rs.getString(1),rs.getLong(2),rs.getString(3),rs.getString(4),
+                rs.getTimestamp(5)==null ? null : rs.getTimestamp(5).toInstant()),
+            Timestamp.from(clock.instant()), Math.min(10,Math.max(1,limit)));
+    }
+
+    public ReconcileCandidate reconcileCandidate(String taskId) {
+        return jdbc.queryForObject("SELECT id,worker_epoch,worker_instance_id,request_sha256,next_reconcile_at FROM agent_task WHERE id=?",
+            (rs,row) -> new ReconcileCandidate(rs.getString(1),rs.getLong(2),rs.getString(3),rs.getString(4),
+                rs.getTimestamp(5)==null ? null : rs.getTimestamp(5).toInstant()),taskId);
+    }
+
+    /** Receipt/close races resolve in this single CAS; only no-receipt tasks can be budget closed. */
+    public synchronized boolean armExpiredBudget(String taskId) {
+        Timestamp now=Timestamp.from(clock.instant());
+        return jdbc.update("""
+            UPDATE agent_task SET state='NEEDS_ATTENTION',failure_code=?,close_reason_code=?,
+                next_reconcile_at=?,updated_at=?,reconcile_attempt=0 WHERE id=?
+              AND state IN ('QUEUED','RUNNING','NEEDS_ATTENTION')
+              AND terminal_report_id IS NULL AND close_reason_code IS NULL
+              AND (failure_code IS NULL OR failure_code<>?)
+              AND deadline_at IS NOT NULL AND deadline_at<=?
+            """,CLOSING_MARKER,BUDGET_CLOSE_REASON,now,now,taskId,CLOSING_MARKER,now)>0;
+    }
+
+    /** Attempt accounting is independent of progress timestamps and survives backend restart. */
+    public void deferReconcile(String taskId) {
+        Timestamp now=Timestamp.from(clock.instant());
+        jdbc.update("""
+            UPDATE agent_task SET next_reconcile_at=TIMESTAMPADD(SECOND,
+                LEAST(30,5*POW(2,LEAST(reconcile_attempt,3))),?),updated_at=?,
+                reconcile_attempt=LEAST(reconcile_attempt+1,4)
+            WHERE id=? AND state IN ('QUEUED','RUNNING','NEEDS_ATTENTION')
+            """,now,now,taskId);
+    }
 
     /** The consistent settlement read of one task; unknown ids are a 404. */
     public SettlementView settlementView(String taskId) {
