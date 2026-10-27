@@ -31,7 +31,12 @@ public final class AgentContracts {
     public record TaskSnapshot(String taskId, TaskState state, String workspaceRevision,
                                boolean writesLocked, List<ProgressItem> progress,
                                List<String> changedPaths, String summary, String failureCode,
-                               String conversationId, String reasoningEffort) {
+                               String conversationId, String reasoningEffort, String closeReasonCode) {
+        public TaskSnapshot(String taskId, TaskState state, String workspaceRevision, boolean writesLocked,
+                            List<ProgressItem> progress, List<String> changedPaths, String summary, String failureCode,
+                            String conversationId, String reasoningEffort) {
+            this(taskId, state, workspaceRevision, writesLocked, progress, changedPaths, summary, failureCode, conversationId, reasoningEffort, null);
+        }
         public TaskSnapshot(String taskId, TaskState state, String workspaceRevision, boolean writesLocked,
                             List<ProgressItem> progress, List<String> changedPaths, String summary, String failureCode, String conversationId) {
             this(taskId, state, workspaceRevision, writesLocked, progress, changedPaths, summary, failureCode, conversationId, null);

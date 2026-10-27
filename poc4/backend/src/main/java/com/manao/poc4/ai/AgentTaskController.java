@@ -82,6 +82,14 @@ public final class AgentTaskController {
         return requireOwnedTask(authentication.getName(), projectId, taskId);
     }
 
+    @PostMapping("/{taskId}/pause")
+    public AgentContracts.TaskSnapshot pause(Authentication authentication, @PathVariable String projectId,
+                                             @PathVariable String taskId) {
+        requireOwnedTask(authentication.getName(), projectId, taskId);
+        tasks.pause(taskId);
+        return requireOwnedTask(authentication.getName(), projectId, taskId);
+    }
+
     /** The task snapshot only through this owner's project; a foreign id reads as 404. */
     private AgentContracts.TaskSnapshot requireOwnedTask(String ownerId, String projectId, String taskId) {
         return tasks.findForOwner(ownerId, projectId, taskId).orElseThrow(
