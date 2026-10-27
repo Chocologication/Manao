@@ -43,7 +43,9 @@ import org.springframework.jdbc.datasource.DataSourceTransactionManager;
  * fake; every durable decision is observed in the database.
  */
 class AgentTaskServiceTest {
-    @Test void pauseKeepsOccupancyUntilTerminalAckAndWorkerSlotRelease() throws Exception {
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"ACKED", "CLOSING"})
+    void pauseKeepsOccupancyUntilTerminalAckAndWorkerSlotRelease(String deliveryState) throws Exception {
         try (var h = new Harness()) {
             h.submit();
             var mvc = pauseMvc(h);
@@ -57,7 +59,7 @@ class AgentTaskServiceTest {
             assertThat(ack.disposition()).isEqualTo(AgentContracts.TerminalDisposition.CLOSING);
             h.worker.frozenStatus = new WorkerStatus(h.taskId, INSTANCE, "FAILED", 1, 1L,
                 h.tasks.requestSha256Of(h.taskId), "FAILED",
-                new AgentContracts.WorkerTerminalDelivery("ACKED", reportId, ack.reportSha256(), report));
+                new AgentContracts.WorkerTerminalDelivery(deliveryState, reportId, ack.reportSha256(), report));
             h.worker.activeTaskId = h.taskId;
             pause(mvc, h.taskId, OWNER);
             new AgentTaskSettlementService(h.tasks, h.gate, h.worker, h.tools).reconcile(h.taskId);
@@ -144,6 +146,31 @@ class AgentTaskServiceTest {
             new AgentTaskSettlementService(h.tasks, h.gate, h.worker, h.tools).reconcile(h.taskId);
             assertThat(h.tasks.settlementView(h.taskId).closeReasonCode()).isNull();
             assertThat(h.rowState()).isEqualTo("COMPLETED");
+        }
+    }
+
+    @Test void pausedTaskBlocksDeletionUntilVerifiedThenOriginalCleanupRemovesOwnedRows() {
+        try (var h = new Harness()) {
+            h.submit();
+            var tx = new DataSourceTransactionManager(h.jdbc.getDataSource());
+            var gateway = new com.manao.poc4.kubernetes.FakeKubernetesGateway();
+            var cleaner = new com.manao.poc4.project.ProjectCleanupService(
+                new com.manao.poc4.project.ProjectDeletionRepository(h.jdbc, tx), h.gate,
+                org.mockito.Mockito.mock(com.manao.poc4.project.ProjectRuntimeCleaner.class), gateway, new WorkspaceJdbcStore(h.jdbc,tx));
+            h.service.pause(h.taskId);
+            assertThatThrownBy(() -> cleaner.delete(OWNER, PROJECT)).isInstanceOfSatisfying(ApiException.class,
+                ex -> assertThat(ex.code()).isEqualTo("PROJECT_BUSY"));
+            assertThat(gateway.deletedProjects).isEmpty();
+            String reportId = AgentTaskStore.terminalReportId(h.taskId,1,h.tasks.requestSha256Of(h.taskId));
+            var report = new AgentContracts.TerminalReport(1,reportId,AgentContracts.TaskState.FAILED,"aborted","AI_ABORTED");
+            var ack = h.service.recordTerminal(h.taskId,INSTANCE,1,report);
+            h.worker.frozenStatus = new WorkerStatus(h.taskId,INSTANCE,"FAILED",1,1L,h.tasks.requestSha256Of(h.taskId),
+                "FAILED",new AgentContracts.WorkerTerminalDelivery("CLOSING",reportId,ack.reportSha256(),report));
+            new AgentTaskSettlementService(h.tasks,h.gate,h.worker,h.tools).reconcile(h.taskId);
+            cleaner.delete(OWNER,PROJECT);
+            assertThat(gateway.deletedProjects).containsExactly(PROJECT);
+            assertThat(h.jdbc.queryForObject("SELECT COUNT(*) FROM project WHERE id=?",Integer.class,PROJECT)).isZero();
+            assertThat(h.jdbc.queryForObject("SELECT COUNT(*) FROM agent_task WHERE id=?",Integer.class,h.taskId)).isZero();
         }
     }
 

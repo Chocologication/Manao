@@ -147,6 +147,12 @@ public final class AgentTaskSettlementService {
         var closeView = tasks.settlementView(taskId);
         boolean strictStop = "AI_PAUSED_BY_OWNER".equals(closeView.closeReasonCode())
             || "AI_WORKER_RESTARTED".equals(closeView.closeReasonCode());
+        // Resource progress must not be starved by repeated slow worker observations.
+        boolean finished=false;
+        try {
+            if(!tasks.hasLiveToolClaims(taskId)) finished=budget.io(() -> tools.finishForClose(taskId))
+                && budget.io(() -> tools.finishApplication(taskId));
+        } catch(RuntimeException ex) { /* unknown evidence retains occupancy and any live seat */ }
         try {
             budget.io(() -> worker.stop(taskId));
         } catch (RuntimeException ex) {
@@ -157,11 +163,6 @@ public final class AgentTaskSettlementService {
             try { workerExited = workerExited(candidate, budget); }
             catch (RuntimeException ex) { /* unknown worker evidence retains occupancy */ }
         }
-        boolean finished=false;
-        try {
-            if(!tasks.hasLiveToolClaims(taskId)) finished=budget.io(() -> tools.finishForClose(taskId))
-                && budget.io(() -> tools.finishApplication(taskId));
-        } catch(RuntimeException ex) { /* unknown evidence retains occupancy and any live seat */ }
         if (!finished || !workerExited) {
             tasks.scheduleReconcile(taskId);
             return;
@@ -347,6 +348,7 @@ public final class AgentTaskSettlementService {
     private boolean stableReplacement(AgentTaskStore.ReconcileCandidate candidate,
             AgentContracts.WorkerProcessStatus first, ReconcileWorkBudget budget) {
         if (candidate.instanceId() == null || candidate.instanceId().equals(first.instanceId())
+            || candidate.instanceId().endsWith("-" + first.bootId())
             || candidate.taskId().equals(first.activeTaskId())) return false;
         var second = budget.io(worker::processStatus);
         validateProcess(second);

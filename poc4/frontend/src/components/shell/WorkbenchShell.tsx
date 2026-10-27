@@ -60,6 +60,7 @@ import {
 import {
   agentTaskKeys,
   useCloseAgentTaskMutation,
+  usePauseAgentTaskMutation,
   useCurrentAgentTaskQuery,
 } from '@/features/ai/agentTaskQueries';
 import { resolveAgentTaskPreconditions } from '@/features/ai/agentTaskPreconditions';
@@ -71,7 +72,7 @@ import {
   isWorkspaceEditable,
   useRunAuthorityCoordinator,
 } from '@/features/runs/RunAuthorityCoordinator';
-import { useActiveRunQuery } from '@/features/runs/runQueries';
+import { useActiveRunQuery, runKeys } from '@/features/runs/runQueries';
 import { reloadWorkspaceAfterTerminalRun } from '@/features/runs/workspaceReload';
 import { cn } from '@/lib/utils';
 import { useWorkbenchPreferences } from '@/features/preferences/workbenchPreferences';
@@ -310,6 +311,7 @@ export function WorkbenchShell({ project }: { project: ProjectSummary }) {
     setAgentSubmissionPending(agentSubmissionInFlight || readAgentTaskId(userId, project.id) !== null);
   }, [agentTask, agentTaskQuery.dataUpdatedAt, agentSubmissionInFlight, userId, project.id]);
   const closeAgentTaskMutation = useCloseAgentTaskMutation(project.id);
+  const pauseAgentTaskMutation = usePauseAgentTaskMutation(project.id);
   const fileWritePending =
     useIsMutating({ predicate: projectFileWritePredicate(project.id) }) > 0;
   const agentWritePending =
@@ -327,6 +329,12 @@ export function WorkbenchShell({ project }: { project: ProjectSummary }) {
   const [agentReloadAttempt, setAgentReloadAttempt] = useState(0);
   const agentReloadRevisionRef = useRef<string | null>(null);
   const [settledAgentTask, setSettledAgentTask] = useState<AgentTaskSnapshot | null>(null);
+  const [controlReloadedTaskId, setControlReloadedTaskId] = useState<string | null>(null);
+  const releasedControlTask = agentTask?.writesLocked === false ? agentTask : settledAgentTask;
+  const controlReloadTaskId = releasedControlTask && !releasedControlTask.writesLocked
+    && ['AI_PAUSED_BY_OWNER', 'AI_WORKER_RESTARTED'].includes(releasedControlTask.closeReasonCode ?? '')
+    ? releasedControlTask.taskId : null;
+  const controlReloadRequired = controlReloadTaskId !== null && controlReloadedTaskId !== controlReloadTaskId;
   // The settled snapshot fetch gates the release too: until the final revision is
   // confirmed (and any needed reload ran) the workspace must not unlock, and a
   // failed fetch keeps it locked behind its own Retry affordance.
@@ -335,13 +343,13 @@ export function WorkbenchShell({ project }: { project: ProjectSummary }) {
   const [settledSnapshotAttempt, setSettledSnapshotAttempt] = useState(0);
   const lastAgentTaskIdRef = useRef<string | null>(null);
   const agentTaskOccupying = agentTask !== null && agentTask.writesLocked;
-  const agentReloading = agentReloadPending || agentReloadFailed || agentReloadBlocked;
+  const agentReloading = agentReloadPending || agentReloadFailed || agentReloadBlocked || controlReloadRequired;
   const settledSnapshotSettling = settledSnapshotPending || settledSnapshotFailed;
   // The shell reuses the panel's start gate for its write-lock decision: the
   // workspace is locked exactly while the shared function would refuse a task
   // start because one occupies the project or a reload is in flight, failed or
   // blocked (the neutral inputs pin everything the shell is not deciding here).
-  const agentTaskLocked = agentSubmissionPending || !resolveAgentTaskPreconditions({
+  const agentTaskLocked = agentSubmissionPending || agentPanelEnabled && (agentTaskQuery.isPending || agentTaskQuery.isError) || !resolveAgentTaskPreconditions({
     dirtyCount: 0,
     writePending: false,
     hasActiveRun: false,
@@ -356,6 +364,9 @@ export function WorkbenchShell({ project }: { project: ProjectSummary }) {
     },
     [project.id, queryClient],
   );
+  const observeReleasedControlTask = useCallback((snapshot: AgentTaskSnapshot) => {
+    setSettledAgentTask(previous => previous?.taskId === snapshot.taskId ? previous : snapshot);
+  }, []);
   const retryAgentReload = useCallback(() => {
     agentReloadRevisionRef.current = null;
     setAgentReloadFailed(false);
@@ -367,10 +378,12 @@ export function WorkbenchShell({ project }: { project: ProjectSummary }) {
   // pending state would otherwise re-run the effect, run the cleanup and mark
   // the in-flight reload cancelled forever, leaving the editor unmounted.
   // A project switch is guarded inside reloadWorkspaceAfterTerminalRun itself.
-  const runAgentReload = useCallback(() => {
+  const runAgentReload = useCallback((controlTaskId: string | null = null) => {
     setAgentReloadPending(true);
-    reloadWorkspaceAfterTerminalRun({ projectId: project.id, queryClient }).then(
+    Promise.all([reloadWorkspaceAfterTerminalRun({ projectId: project.id, queryClient }),
+      queryClient.invalidateQueries({ queryKey: runKeys.all(project.id) })]).then(
       () => {
+        if (controlTaskId !== null) setControlReloadedTaskId(controlTaskId);
         setAgentReloadFailed(false);
         setAgentReloadPending(false);
       },
@@ -434,14 +447,14 @@ export function WorkbenchShell({ project }: { project: ProjectSummary }) {
     if (!agentPanelEnabled || agentReloadRevision === null) {
       return undefined;
     }
-    if (agentReloadRevision === agentReloadRevisionRef.current) {
+    if (!controlReloadRequired && agentReloadRevision === agentReloadRevisionRef.current) {
       return undefined;
     }
     if (agentReloadRevisionRef.current === null) {
       // First observation of a task: it was submitted against this browser's
       // saved revision, so only a difference from the local cache needs a reload.
       const localRevision = getWorkspaceRevision(queryClient, project.id);
-      if (agentReloadRevision === localRevision) {
+      if (!controlReloadRequired && agentReloadRevision === localRevision) {
         agentReloadRevisionRef.current = agentReloadRevision;
         return undefined;
       }
@@ -450,6 +463,7 @@ export function WorkbenchShell({ project }: { project: ProjectSummary }) {
       // One reload at a time: concurrent polls never start a second one.
       return undefined;
     }
+    if (controlReloadRequired && agentReloadFailed) return undefined;
     if (snapshot.phase === 'RELOADING_WORKSPACE' || snapshot.phase === 'RELOAD_FAILED') {
       // The run authority reload owns the workspace; the agent reload re-runs
       // once the phase settles back to editable.
@@ -463,11 +477,14 @@ export function WorkbenchShell({ project }: { project: ProjectSummary }) {
     }
     setAgentReloadBlocked(false);
     agentReloadRevisionRef.current = agentReloadRevision;
-    runAgentReload();
+    runAgentReload(controlReloadTaskId);
   }, [
     agentReloadAttempt,
+    agentReloadFailed,
     agentReloadPending,
     agentReloadRevision,
+    controlReloadRequired,
+    controlReloadTaskId,
     project.id,
     queryClient,
     recoveryReloadPending,
@@ -949,6 +966,8 @@ export function WorkbenchShell({ project }: { project: ProjectSummary }) {
                 )}
               >
                 <AgentConversationPanel
+                  onReleasedControlTask={observeReleasedControlTask}
+                  controlReloadedTaskId={controlReloadedTaskId}
                   historyTarget={historyTarget}
                   uiActive={aiMode}
                   projectId={project.id}
@@ -963,9 +982,14 @@ export function WorkbenchShell({ project }: { project: ProjectSummary }) {
                     reloadingWorkspace ||
                     agentReloadFailed ||
                     agentReloadBlocked ||
+                    controlReloadRequired ||
                     settledSnapshotSettling
                   }
                   closePending={closeAgentTaskMutation.isPending}
+                  pausePending={pauseAgentTaskMutation.isPending}
+                  pauseError={pauseAgentTaskMutation.isError && pauseAgentTaskMutation.variables === agentTask?.taskId
+                    ? `Could not pause the task${pauseAgentTaskMutation.error instanceof ApiRequestError && pauseAgentTaskMutation.error.body ? ` (${pauseAgentTaskMutation.error.body.code})` : ''}. Try again.` : null}
+                  onPause={() => { if (agentTask !== null) pauseAgentTaskMutation.mutate(agentTask.taskId); }}
                   closeError={closeAgentTaskMutation.isError && closeAgentTaskMutation.variables === agentTask?.taskId
                     ? `Could not end the task${closeAgentTaskMutation.error instanceof ApiRequestError && closeAgentTaskMutation.error.body ? ` (${closeAgentTaskMutation.error.body.code})` : ''}. Try again.`
                     : null}

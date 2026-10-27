@@ -30,6 +30,16 @@ it('shows actual live Markdown while locked, aborts on switching, and leaves exp
   await userEvent.click(screen.getByRole('button', { name: '会话 B' })); await screen.findByText('B 原文'); await waitFor(() => expect(aborted).toBe(true)); expect(screen.queryByText('live reason')).toBeNull(); expect(h.close).not.toHaveBeenCalled(); expect(posts).toEqual([]);
 });
 const URL = `/api/v1/projects/${P}/conversations`;
+it('pauses project current while browsing another conversation', async () => {
+  const pause = vi.fn();
+  panel({ task: task({ conversationId: A }), onPause: pause });
+  await screen.findByText('A 原文');
+  await userEvent.click(screen.getByRole('button', { name: '会话 B' }));
+  await screen.findByText('B 原文');
+  await userEvent.click(screen.getByRole('button', { name: 'Pause & take over' }));
+  expect(pause).toHaveBeenCalledTimes(1);
+  expect(screen.queryByRole('button', { name: 'Continue task' })).toBeNull();
+});
 it('shows the selected conversation usage and clears a cached measurement when its refresh fails', async () => {
   server.use(http.get(URL + '/:id', ({ params }) => HttpResponse.json(conversation(String(params.id), {
     usage: { tokens: params.id === A ? 262144 : 786432, contextWindow: 1048576, percent: params.id === A ? 25 : 75 },

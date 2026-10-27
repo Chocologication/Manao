@@ -26,16 +26,31 @@ function backendFor(manager: SessionManager) {
   };
   return { backend, entries, progressItems };
 }
-async function task(manager: SessionManager, responses: ScriptedResponse[], observe?: Parameters<typeof scriptedSessionFactory>[1]) {
+async function task(manager: SessionManager, responses: ScriptedResponse[], observe?: Parameters<typeof scriptedSessionFactory>[1], revision = '7') {
   const fixture = backendFor(manager);
   const pi = await createPiSession({ model: MODEL_CONFIG, paths: privateDirs(), taskId: "new-task", conversationId,
-    startRevision: "7", backend: fixture.backend as unknown as BackendClient,
+    startRevision: revision, backend: fixture.backend as unknown as BackendClient,
     progress: new ProgressChain(fixture.backend as unknown as BackendClient, "new-task"),
     deps: { createSession: (async (options) => scriptedSessionFactory(responses, observe)(options)) } } as Parameters<typeof createPiSession>[0]);
   return { ...fixture, pi };
 }
 
 describe("durable native conversation restoration", () => {
+  it('starts a continuation from the saved revision and reads the current user edit', async () => {
+    let seen = '';
+    const f = await task(history(), [
+      { toolCalls: [{ id: 'read-current', name: 'read_file', args: { path: 'Demo.java' } }] },
+      { text: 'continued from current saved file' },
+    ], context => { seen += JSON.stringify(context); }, '9');
+    f.backend.invoke.mockResolvedValue({ toolCallId: 'read-current', workspaceRevision: '9', data: { content: 'user saved B' }, truncated: false });
+    const result = await f.pi.run({ prompt: 'continue', workspaceRevision: '9' });
+    expect(result.state).toBe('COMPLETED');
+    expect(seen).toContain('Current workspace revision: 9');
+    expect(seen).toContain('user saved B');
+    expect(f.backend.invoke).toHaveBeenCalledTimes(1);
+    expect(f.backend.invoke.mock.calls[0]?.[0]).toBe('new-task');
+    f.pi.dispose();
+  });
   it("flushes only an acknowledged suffix in atomic batches within both protocol bounds", async () => {
     const fixture = await task(history(), [{ text: "完成" }], (_context, session) => {
       for (let index = 0; index < 40; index++) session.sessionManager.appendCustomEntry("test-metadata", { index });

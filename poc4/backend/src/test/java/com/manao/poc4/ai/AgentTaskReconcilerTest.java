@@ -15,6 +15,33 @@ import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 
 class AgentTaskReconcilerTest {
     private static final Instant NOW = Instant.parse("2026-10-26T00:00:00Z");
+    @Test void changedInstancePrefixWithTheSameBootIsNotReplacementEvidence() {
+        try(var h=new Harness()) {
+            Mockito.when(h.worker.processStatus()).thenReturn(new AgentContracts.WorkerProcessStatus("boot","different-boot",null,null,null,true));
+            Mockito.when(h.worker.status(h.id)).thenThrow(new com.manao.poc4.api.ApiException("AI_WORKER_NOT_FOUND",404,"missing"));
+            h.settlement.reconcile(h.id);
+            assertThat(h.reason()).isNull();
+            assertThat(h.tasks.currentForOwner("owner","project")).isPresent();
+        }
+    }
+
+    @Test void unknownSlowWorkerDoesNotStarveResourceFinishing() {
+        try (var h = new Harness()) {
+            h.tasks.beginPause(h.id);
+            var cleaned = new java.util.concurrent.atomic.AtomicBoolean();
+            Mockito.when(h.tools.finishForClose(h.id)).thenAnswer(call -> { cleaned.set(true); return true; });
+            Mockito.when(h.tools.finishApplication(h.id)).thenReturn(true);
+            Mockito.when(h.worker.processStatus()).thenAnswer(call -> {
+                var wait = new java.util.concurrent.CountDownLatch(1);
+                wait.await(2, java.util.concurrent.TimeUnit.SECONDS);
+                throw new com.manao.poc4.api.ApiException("AI_WORKER_UNREACHABLE", 502, "unknown");
+            });
+            h.settlement.reconcile(h.id, new ReconcileWorkBudget(h.id,
+                java.time.Duration.ofMillis(150), java.time.Duration.ofMillis(100)));
+            assertThat(cleaned.get()).isTrue();
+            assertThat(h.tasks.currentForOwner("owner", "project")).isPresent();
+        }
+    }
 
     @Test void stableReplacementBootAndAuthenticatedMissingTaskCloseWithoutReplay() {
         try (var h = new Harness()) {

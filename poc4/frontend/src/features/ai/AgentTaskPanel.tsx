@@ -34,6 +34,7 @@ import { AssistantMarkdown } from './AssistantMarkdown';
 import type { ContextUsage } from '@/contracts/agentConversation';
 import { ContextUsageIndicator } from './ContextUsageIndicator';
 import { ReasoningEffortPicker } from './ReasoningEffortPicker';
+import { canContinueTask, CONTINUE_TASK_PROMPT } from './agentTaskControl';
 import './AgentChat.css';
 
 export type AgentTaskPanelProps = {
@@ -55,6 +56,10 @@ export type AgentTaskPanelProps = {
   reloading: boolean;
   closePending: boolean;
   closeError?: string | null;
+  pausePending?: boolean;
+  pauseError?: string | null;
+  onPause?: () => void;
+  continuationAllowed?: boolean;
   /** Reports a task this browser now knows about (submitted or recovered). */
   onTaskAccepted: (task: AgentTaskSnapshot) => void;
   /** The explicit owner abandon; the shell performs the close request. */
@@ -97,6 +102,10 @@ export function AgentTaskPanel({
   closeError,
   onTaskAccepted,
   onClose,
+  onPause,
+  pausePending = false,
+  pauseError,
+  continuationAllowed = true,
   onViewRun,
   conversationId,
   fullHistory = false,
@@ -160,6 +169,11 @@ export function AgentTaskPanel({
   // A failed status poll means the browser cannot know whether a task occupies
   // the project: start stays locked (fail-closed) until the poll recovers.
   const canStart = preconditions.canStart && !pollFailed && !starting && !submissionBlocked;
+  const displayTask = selectedTask === undefined ? task ?? settledTask : selectedTask;
+  const continuation = continuationAllowed && canContinueTask(displayTask, conversationId);
+  const continuationClosing = continuationAllowed && displayTask?.conversationId === conversationId
+    && Boolean(conversationId) && displayTask?.writesLocked
+    && ['AI_PAUSED_BY_OWNER', 'AI_WORKER_RESTARTED'].includes(displayTask.closeReasonCode ?? '');
 
   useEffect(() => {
     const previous = previousTaskRef.current;
@@ -182,7 +196,7 @@ export function AgentTaskPanel({
       if (!canStart) {
         return;
       }
-      const prompt = goal.trim();
+      const prompt = goal.trim() || (continuation ? CONTINUE_TASK_PROMPT : '');
       if (prompt === '') {
         setStartError('Enter a goal for the task.');
         return;
@@ -214,11 +228,10 @@ export function AgentTaskPanel({
           // browser: ask about the SAME task id before ever creating a second one.
           const existing = await probe(storedId);
           if (existing.kind === 'found') {
-            if (isAgentTaskOccupying(existing.task.state)) {
-              onTaskAccepted(existing.task);
-              return;
-            }
-            clearAgentTaskId(userId, projectId, storedId);
+            if (!isAgentTaskOccupying(existing.task.state)) clearAgentTaskId(userId, projectId, storedId);
+            setGoal('');
+            onTaskAccepted(existing.task);
+            return;
           } else if (existing.kind === 'missing') {
             // Provably never created: the stored id is free for reuse-free restart.
             clearAgentTaskId(userId, projectId, storedId);
@@ -244,6 +257,8 @@ export function AgentTaskPanel({
           // task is never generated for the same intent.
           const recovered = await probe(taskId);
           if (recovered.kind === 'found') {
+            if (!isAgentTaskOccupying(recovered.task.state)) clearAgentTaskId(userId, projectId, taskId);
+            setGoal('');
             onTaskAccepted(recovered.task);
             return;
           }
@@ -252,6 +267,8 @@ export function AgentTaskPanel({
           }
           throw submitError;
         }
+        if (!isAgentTaskOccupying(snapshot.state)) clearAgentTaskId(userId, projectId, taskId);
+        setGoal('');
         onTaskAccepted(snapshot);
       } catch (error) {
         setStartError(agentTaskStartErrorMessage(error));
@@ -260,10 +277,9 @@ export function AgentTaskPanel({
         onSubmissionPendingChange?.(false);
       }
     },
-    [canStart, goal, reasoningEffort, onTaskAccepted, projectId, queryClient, userId, conversationId, onSubmissionPendingChange],
+    [canStart, continuation, goal, reasoningEffort, onTaskAccepted, projectId, queryClient, userId, conversationId, onSubmissionPendingChange],
   );
 
-  const displayTask = selectedTask === undefined ? task ?? settledTask : selectedTask;
   const occupying = task !== null && isAgentTaskOccupying(task.state);
   // A retained identity can still have been admitted after both POST and GET fail.
   // Keep its effort immutable until reconciliation returns a matching task or clears it.
@@ -285,7 +301,9 @@ export function AgentTaskPanel({
           <div className="flex flex-col gap-2 text-sm">
             <div className="flex items-center gap-2">
               <span className="font-medium">Status</span>
-              <span>{displayTask.state}</span>
+              <span>{displayTask.closeReasonCode === 'AI_PAUSED_BY_OWNER' ? displayTask.writesLocked ? 'Stopping and verifying' : 'Paused'
+                : displayTask.closeReasonCode === 'AI_WORKER_RESTARTED' ? displayTask.writesLocked ? 'Stopping and verifying' : 'Interrupted by service restart; verified'
+                : displayTask.state}</span>
             </div>
             <div>本轮推理强度：{displayTask.reasoningEffort ?? '未记录'}</div>
             {displayTask.failureCode === 'AI_LENGTH_LIMIT' ? <p className="text-destructive">模型响应达到输出上限，本条内容可能不完整</p> : null}
@@ -356,6 +374,10 @@ export function AgentTaskPanel({
             </p> : null}
           </div> : null}
           {occupying && closeError ? <InlineAlert>{closeError}</InlineAlert> : null}
+          {occupying && pauseError ? <InlineAlert>{pauseError}</InlineAlert> : null}
+          {task?.state === 'QUEUED' ? <p>Task is starting; pause will be available shortly.</p> : null}
+          {(continuation || continuationClosing) ? <p>Continue in this conversation with a new task and a fresh budget (up to 30 minutes).</p> : null}
+          {continuation && hasActiveRun ? <p>AI is paused. The application is still running; stop it before editing.</p> : null}
           <label htmlFor="agent-task-goal" className="text-sm font-medium">
             Task goal
           </label>
@@ -376,11 +398,14 @@ export function AgentTaskPanel({
             <Button
               type="submit"
               size="sm"
-              disabled={!canStart}
-              title={canStart ? 'Start task' : (preconditions.reason ?? 'Start task')}
+              disabled={!canStart || continuationClosing}
+              title={canStart ? continuation ? 'Continue task' : 'Start task' : (preconditions.reason ?? 'Start task')}
             >
-              Start task
+              {continuation || continuationClosing ? 'Continue task' : 'Start task'}
             </Button>
+            {occupying ? <Button type="button" variant="outline" size="sm"
+              disabled={task.state === 'QUEUED' || Boolean(task.closeReasonCode) || pausePending || closePending || !onPause}
+              onClick={onPause}>Pause &amp; take over</Button> : null}
             {occupying ? (
               <Button
                 type="button"

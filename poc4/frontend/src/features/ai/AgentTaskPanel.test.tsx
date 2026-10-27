@@ -17,6 +17,57 @@ import { AgentTaskPanel, type AgentTaskPanelProps } from './AgentTaskPanel';
 import { parseAgentTaskSnapshot } from '@/contracts/agentTask';
 
 const PROJECT_ID = ALICE_SEED_PROJECT_ID;
+it('clears an accepted goal so Continue defaults to the continuation instruction', async () => {
+  server.use(http.post(TASKS_URL, async ({request}) => {
+    const body = await request.json() as {taskId:string}; return HttpResponse.json(occupyingTask({taskId:body.taskId}));
+  }));
+  const h=renderPanel();
+  await userEvent.type(screen.getByLabelText('Task goal'), 'previous task goal');
+  await userEvent.click(screen.getByRole('button',{name:'Start task'}));
+  await waitFor(()=>expect(h.getAccepted()).not.toBeNull());
+  expect(screen.getByLabelText('Task goal')).toHaveValue('');
+});
+it('keeps continuation disabled while a pause is settling', () => {
+  renderPanel({ conversationId: 'conversation-a', task: { ...occupyingTask({ state: 'NEEDS_ATTENTION' }),
+    conversationId: 'conversation-a', closeReasonCode: 'AI_PAUSED_BY_OWNER' } as AgentTaskSnapshot });
+  expect(screen.getByRole('button', { name: 'Continue task' })).toBeDisabled();
+  expect(screen.getByText(/Stopping and verifying/)).toBeVisible();
+});
+it('continues the selected conversation with a new id and the latest saved revision', async () => {
+  let posted: Record<string, unknown> | null = null;
+  server.use(http.post(`/api/v1/projects/${PROJECT_ID}/conversations/conversation-a/tasks`, async ({ request }) => {
+    posted = await request.json() as Record<string, unknown>;
+    return HttpResponse.json(occupyingTask({ taskId: String(posted.taskId), conversationId: 'conversation-a', workspaceRevision: '9' }));
+  }));
+  queryClient.setQueryData(fileKeys.revision(PROJECT_ID), '9');
+  const h = renderPanel({ conversationId: 'conversation-a', settledTask: {
+    ...occupyingTask({ state: 'FAILED', writesLocked: false, conversationId: 'conversation-a' }), closeReasonCode: 'AI_PAUSED_BY_OWNER',
+  } as AgentTaskSnapshot });
+  await userEvent.click(screen.getByRole('button', { name: 'Continue task' }));
+  await waitFor(() => expect(h.getAccepted()).not.toBeNull());
+  expect(posted).toMatchObject({ expectedWorkspaceRevision: '9' });
+  const sent = posted as Record<string, unknown> | null;
+  expect(sent?.taskId).not.toBe(TASK_ID);
+  expect(String(sent?.prompt)).toContain('不要重放');
+});
+it('retains dirty edits and blocks continuation after a safe pause', () => {
+  act(() => workspaceSessionStore.getState().setDirty(parseProjectRelativePath('pom.xml'), true));
+  renderPanel({ conversationId: 'conversation-a', settledTask: {
+    ...occupyingTask({ state: 'FAILED', writesLocked: false, conversationId: 'conversation-a' }), closeReasonCode: 'AI_PAUSED_BY_OWNER',
+  } as AgentTaskSnapshot });
+  expect(screen.getByRole('button', { name: 'Continue task' })).toBeDisabled();
+  expect(workspaceSessionStore.getState().dirtyPaths.size).toBe(1);
+});
+it('shows startup pause as disabled while End task remains available', () => {
+  renderPanel({ task: occupyingTask({ state: 'QUEUED' }) });
+  expect(screen.getByRole('button', { name: 'Pause & take over' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: 'End task' })).toBeEnabled();
+});
+it('reads the optional close reason without inventing one for legacy JSON', () => {
+  expect(parseAgentTaskSnapshot(occupyingTask()).closeReasonCode).toBeNull();
+  expect(parseAgentTaskSnapshot({ ...occupyingTask(), closeReasonCode: 'AI_PAUSED_BY_OWNER' }).closeReasonCode).toBe('AI_PAUSED_BY_OWNER');
+  expect(() => parseAgentTaskSnapshot({ ...occupyingTask(), closeReasonCode: 1 })).toThrow();
+});
 it('places conversation presentation before the bottom submission form', () => {
   renderPanel({ conversationHeader: <h2>当前会话</h2>, conversationHistory: <p>历史正文</p> });
   const header = screen.getByRole('heading', { name: '当前会话' });
@@ -30,6 +81,19 @@ const USER_ID = 'user-alice';
 const TASK_ID = '0b8fd38f-0f9e-4c28-9c48-3f5f4a2b1c11';
 const CURRENT_URL = `/api/v1/projects/${PROJECT_ID}/agent-tasks/current`;
 const TASKS_URL = `/api/v1/projects/${PROJECT_ID}/agent-tasks`;
+it('reconciles a lost-response task that already completed without submitting another round', async () => {
+  sessionStorage.setItem(agentTaskStorageKey(USER_ID, PROJECT_ID), JSON.stringify({taskId:TASK_ID,conversationId:'conversation-a'}));
+  let posts=0;
+  const original=occupyingTask({state:'COMPLETED',writesLocked:false,conversationId:'conversation-a'});
+  server.use(http.get(`${TASKS_URL}/${TASK_ID}`,()=>HttpResponse.json(original)),
+    http.post(`/api/v1/projects/${PROJECT_ID}/conversations/conversation-a/tasks`,()=>{posts++;return HttpResponse.error();}));
+  const h=renderPanel({conversationId:'conversation-a'});
+  await userEvent.type(screen.getByLabelText('Task goal'),'retry the uncertain intent');
+  await userEvent.click(screen.getByRole('button',{name:'Start task'}));
+  await waitFor(()=>expect(h.getAccepted()?.taskId).toBe(TASK_ID));
+  expect(posts).toBe(0);
+  expect(sessionStorage.getItem(agentTaskStorageKey(USER_ID,PROJECT_ID))).toBeNull();
+});
 it('keeps effort locked after both POST and original task GET fail, and retries only the original GET', async () => {
   let posts = 0, original = ''; const gets: string[] = [];
   server.use(http.post(TASKS_URL, async ({ request }) => { posts++; original = (await request.json() as { taskId: string }).taskId; return HttpResponse.error(); }),

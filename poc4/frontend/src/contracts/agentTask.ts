@@ -26,6 +26,7 @@ export type AgentTaskSnapshot = {
   changedPaths: string[];
   summary: string | null;
   failureCode: string | null;
+  closeReasonCode?: string | null;
 };
 
 export type SubmitAgentTaskRequest = {
@@ -76,6 +77,7 @@ export function parseAgentTaskSnapshot(payload: unknown): AgentTaskSnapshot {
     typeof record.taskId !== 'string' ||
     record.conversationId != null && typeof record.conversationId !== 'string' ||
     record.reasoningEffort != null && !isReasoningEffort(record.reasoningEffort) ||
+    record.closeReasonCode != null && typeof record.closeReasonCode !== 'string' ||
     typeof record.state !== 'string' ||
     !AGENT_TASK_STATES.has(record.state) ||
     typeof record.workspaceRevision !== 'string' ||
@@ -89,6 +91,7 @@ export function parseAgentTaskSnapshot(payload: unknown): AgentTaskSnapshot {
     taskId: record.taskId,
     reasoningEffort: record.reasoningEffort as ReasoningEffort | null | undefined ?? null,
     conversationId: record.conversationId as string | null | undefined ?? null,
+    closeReasonCode: record.closeReasonCode as string | null | undefined ?? null,
     state: record.state as AgentTaskState,
     workspaceRevision: record.workspaceRevision,
     writesLocked: record.writesLocked,

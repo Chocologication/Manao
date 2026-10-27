@@ -17,7 +17,9 @@ function storedCompact(key: string): CompactIntent | null {
   try { const p = JSON.parse(sessionStorage.getItem(key) ?? 'null') as CompactIntent | null; return p && typeof p.conversationId === 'string' && typeof p.requestId === 'string' && Number.isSafeInteger(p.expectedHeadSeq) && p.expectedHeadSeq >= 0 ? p : null; } catch { return null; }
 }
 // A project switch unmounts all local UI state; query data and pending intents remain owner scoped.
-export type AgentConversationPanelProps = AgentTaskPanelProps & { historyTarget?: HTMLElement | null };
+export type AgentConversationPanelProps = AgentTaskPanelProps & { historyTarget?: HTMLElement | null;
+  onReleasedControlTask?: (task: NonNullable<AgentTaskPanelProps['settledTask']>) => void;
+  controlReloadedTaskId?: string | null };
 export function AgentConversationPanel(props: AgentConversationPanelProps) {
   return <ConversationPanel key={JSON.stringify([props.userId, props.projectId])} {...props} />;
 }
@@ -55,6 +57,13 @@ function ConversationPanel(props: AgentConversationPanelProps) {
   const round = useConversationTask(userId, projectId, selected, metadata?.activeTaskId ?? metadata?.lastTaskId ?? null);
   const selectedTaskId = metadata?.activeTaskId ?? metadata?.lastTaskId ?? null;
   const selectedSnapshot = props.task?.conversationId === selected ? props.task : props.settledTask?.conversationId === selected && props.settledTask.taskId === selectedTaskId ? props.settledTask : round.data ?? null;
+  useEffect(() => {
+    if (!props.task?.writesLocked && !detail.isError && !round.isError && selectedSnapshot
+      && selectedSnapshot.taskId === selectedTaskId && !selectedSnapshot.writesLocked
+      && ['AI_PAUSED_BY_OWNER', 'AI_WORKER_RESTARTED'].includes(selectedSnapshot.closeReasonCode ?? '')) {
+      props.onReleasedControlTask?.(selectedSnapshot);
+    }
+  }, [props.task?.writesLocked, props.onReleasedControlTask, detail.isError, round.isError, selectedSnapshot, selectedTaskId]);
   const legacyTask = props.task?.conversationId == null && props.task !== null ? props.task : selectedSnapshot === null && props.settledTask?.conversationId == null ? props.settledTask : null;
   const legacy = legacyTask !== null;
   const compactBusy = compactIntent !== null || compactSending || taskSubmitting || metadata?.compactState === 'RUNNING' || conversations.some(c => c.compactState === 'RUNNING');
@@ -118,6 +127,6 @@ function ConversationPanel(props: AgentConversationPanelProps) {
     {historyNavigation}
     {(error || list.isError || detail.isError) ? <div role="alert" className="p-3">{error ?? '无法加载会话'}</div> : null}
     {props.task?.writesLocked && props.task.conversationId && props.task.conversationId !== selected ? <Button variant="outline" onClick={() => choose(props.task!.conversationId!)}>项目有任务运行中</Button> : null}
-    <AgentTaskPanel conversationHeader={conversationHeader} conversationHistory={conversationHistory} key={`${selected ?? 'legacy'}:${metadata ? 'ready' : 'pending'}`} nextReasoningEffort={metadata?.nextReasoningEffort} {...props} contextUsage={detail.isError ? null : metadata?.usage} conversationId={selected ?? undefined} fullHistory={!legacy && selected !== null} displayTask={legacy ? legacyTask : selectedSnapshot} submissionBlocked={selected === null || !metadata || detail.isError || list.isError || compactBusy} onTaskAccepted={onAccepted} onSubmissionPendingChange={pending => { if (scope.active) { setTaskSubmitting(pending); props.onSubmissionPendingChange?.(pending); } }} />
+    <AgentTaskPanel conversationHeader={conversationHeader} conversationHistory={conversationHistory} key={`${selected ?? 'legacy'}:${metadata ? 'ready' : 'pending'}`} nextReasoningEffort={metadata?.nextReasoningEffort} {...props} contextUsage={detail.isError ? null : metadata?.usage} conversationId={selected ?? undefined} fullHistory={!legacy && selected !== null} displayTask={legacy ? legacyTask : selectedSnapshot} continuationAllowed={!legacy && selectedTaskId !== null && selectedSnapshot?.taskId === selectedTaskId && !round.isError} submissionBlocked={selected === null || !metadata || detail.isError || list.isError || compactBusy || Boolean(props.onReleasedControlTask && selectedSnapshot && !selectedSnapshot.writesLocked && ['AI_PAUSED_BY_OWNER', 'AI_WORKER_RESTARTED'].includes(selectedSnapshot.closeReasonCode ?? '') && props.controlReloadedTaskId !== selectedSnapshot.taskId)} onTaskAccepted={onAccepted} onSubmissionPendingChange={pending => { if (scope.active) { setTaskSubmitting(pending); props.onSubmissionPendingChange?.(pending); } }} />
   </section>;
 }
