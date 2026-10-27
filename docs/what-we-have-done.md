@@ -4,7 +4,7 @@ Updated: 2026-10-20. Main checkout: `master` at `49eb632`, including Python merg
 
 ## Current Status
 
-2026-10-27：Pi 阶段四已在 `codex/pi-stage4-control-recovery` 本地实现暂停接管、用户保存后同会话新 Task、浏览器重进与确定 Worker 丢失后的手动继续。执行资源继续沿原 receipt/claim/Run/build 收尾。实际测试、未验证项和清理由[阶段四验收](../poc4/docs/evidence/ai-stage4/acceptance.md)拥有；本轮未部署、未调用付费模型、未 push/merge，Stage2 保持 PAUSED / NOT_GRANTED，原故障 Task 保持 NOT_REPAIRED。下文各日期记录保留其历史边界。
+2026-10-27：Pi阶段四本地实现与用户后续授权的云端发布/真实模型验证均完成，裁定PI_STAGE4_CONTROL_RECOVERY_PASS。暂停接管、人工保存后同conversation新Task、重进、Worker异常核对后手动继续、专用项目资源删除均有真实证据。实际范围由[阶段四验收](../poc4/docs/evidence/ai-stage4/acceptance.md)第7节拥有；未Git push/merge，Stage2保持PAUSED / NOT_GRANTED，原故障Task保持NOT_REPAIRED，不代表整个AI首版通过。下文各日期记录保留历史边界。
 
 2026-10-20：AI-only ThinkRail 展示改造的四项任务和整体独立审查已通过，[四任务计划](superpowers/plans/2026-10-20-ai-thinkrail-style-implementation-plan.md)与 [Frontend README](../poc4/frontend/README.md#ai-界面本地交付2026-10-20)保留本地 fixture 验证。随后用户明确授权发布，`b3a1b8e` frontend 单镜像已按 digest 部署至 `manao-stage6b`，Ready1/1；公网登录后既有会话历史、四档滑块、侧栏恢复和既有工具结果回放通过，未提交任务或调用模型。[发布指南 §5.3](../poc4/deploy/ai-context/README.md#53-thinkrail-界面实际前端发布2026-10-20)记录镜像、运行身份、证据及回滚；本次也发布此前合入的 Cloud IDE 视觉变化。backend/worker、数据库和业务合同未改；阶段二 PAUSED / NOT_GRANTED、阶段三用户确认使命完成、阶段四未开始，Git push/merge 未执行。
 

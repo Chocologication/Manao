@@ -1,6 +1,6 @@
 # Pi 阶段四：接管与手动继续设计
 
-日期：2026-10-27。状态：**LOCAL_STAGE4_CONTROL_VERIFIED**。本地测试与云端边界由[阶段四验收](../../../poc4/docs/evidence/ai-stage4/acceptance.md)拥有；本轮不发布。
+日期：2026-10-27。状态：**PI_STAGE4_CONTROL_RECOVERY_PASS**。本地测试与已授权云端验证边界由[阶段四验收](../../../poc4/docs/evidence/ai-stage4/acceptance.md)拥有；生产源码e3c06dd已发布，Stage2和原故障Task边界不变。
 
 ## 1. 用户决定与范围
 

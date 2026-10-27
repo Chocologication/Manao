@@ -4,7 +4,9 @@
 
 ## 阶段四增量发布准备（2026-10-27）
 
-本地实现和证据见[阶段四验收](../../docs/evidence/ai-stage4/acceptance.md)。镜像构建/推送、部署、云端验收均 **NOT_RUN**，本节是后续授权后的维护约束。
+用户后续明确授权后已完成阶段四发布与真实模型验证：**PI_STAGE4_CONTROL_RECOVERY_PASS**。实际证据见[阶段四验收第7节](../../docs/evidence/ai-stage4/acceptance.md#7-2026-10-27-实际云端发布与阶段四验证)及[脱敏发布身份](../../docs/evidence/ai-stage4/cloud-20261027.json)。
+
+实际linux/amd64 digest：backend sha256:c0c56bc35ffc485350f42153f1833f94527c1cceda2f3ccba762c6654ba4eb56；frontend sha256:120ebc30a2ab00a090ab89d7f1184ec402ae391bc0aced7a45ea72fea4c45ae1；Worker仍sha256:696080571ba556d983aa578163be3d6494261057e960a9686b15f814e7d0c93e。源码e3c06dde8fc02b3e00c80373be870e5dc413bb6f，generation45/27/34，三组件Ready1/1；V15/V16未新增执行。发布前回退tuple与私有备份恢复演练在验收第7节；本轮未Git push/merge，原故障Task未恢复。以下兼容/回退约束继续有效。
 
 - 无新增迁移/表/依赖；沿用已存在的V15/V16。新backend兼容旧frontend，新增 `closeReasonCode` 可被旧客户端忽略；先部署backend，再部署frontend。
 - Worker生产代码没有本阶段改动，继续Pi1.2.0，不为测试夹具重发Worker镜像；发布前重新核对 `replicas: 1 / strategy: Recreate`，禁止并发新旧Worker实例。

@@ -1,8 +1,8 @@
 # EnsoAI Stage 5 Active Job Terminal
 
-## Pi 阶段四本地接管验证（2026-10-27）
+## Pi 阶段四接管验证（2026-10-27）
 
-`Pause & take over` 先持久化关闭意图，权威核对完成并重读文件/Run事实后才交还编辑权；`Continue task` 在同conversation创建新Task，使用新预算和当前已保存revision。dirty内容保留，Task/Run权威未知闭锁，原End task继续可用。下文旧阶段说明保留历史范围，当前AI本地结果见[阶段四验收](../docs/evidence/ai-stage4/acceptance.md)。
+`Pause & take over` 先持久化关闭意图，权威核对完成并重读文件/Run事实后才交还编辑权；`Continue task` 在同conversation创建新Task，使用新预算和当前已保存revision。dirty内容保留，Task/Run权威未知闭锁，原End task继续可用。下文旧阶段说明保留历史范围，本地结果和随后已授权发布的真实云端结果见[阶段四验收](../docs/evidence/ai-stage4/acceptance.md)第7节：PI_STAGE4_CONTROL_RECOVERY_PASS；默认空Continue提示词云端路径仍未单独验证。
 
 ```powershell
 pnpm test:e2e:ai-stage4

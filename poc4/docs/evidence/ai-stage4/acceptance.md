@@ -1,6 +1,6 @@
-# Pi 阶段四本地实施与验收
+# Pi 阶段四实施与验收
 
-日期：2026-10-27（Asia/Shanghai）。当前裁定：**LOCAL_STAGE4_CONTROL_VERIFIED**。云端为 **NOT_RUN**，未授予 `PI_STAGE4_CONTROL_RECOVERY_PASS`。Stage2 保持 **PAUSED / NOT_GRANTED**，原故障 Task `b3b32518-f0ed-411e-aa85-1ecef95fbdc5` 保持 **NOT_REPAIRED**。
+日期：2026-10-27（Asia/Shanghai）。当前裁定：**PI_STAGE4_CONTROL_RECOVERY_PASS**。本地 **LOCAL_STAGE4_CONTROL_VERIFIED** 保留；用户后续授权发布和真实模型验证，实际结果见第7节。Stage2 保持 **PAUSED / NOT_GRANTED**，原故障 Task 保持 **NOT_REPAIRED**；不代表整个AI首版通过。
 
 ## 1. 工作区与身份
 
@@ -76,3 +76,56 @@ git diff --check
 ## 6. 发布准备
 
 增量发布顺序与回退见[维护手册](../../../deploy/ai-terminal-settlement/README.md#阶段四增量发布准备2026-10-27)。本阶段无新迁移；兼容backend先于frontend；Worker源码未变，无本阶段Worker镜像发布需求。部署前仍须重核单Worker `replicas: 1 / strategy: Recreate`、旧close/receipt/claim及原Run约束。三条云端目标仅在后续授权后执行。
+
+
+## 7. 2026-10-27 实际云端发布与阶段四验证
+
+用户在本地交付后明确授权部署和模型调用。本节 supersedes 第1–6节的本地阶段 NOT_RUN；本地结果与当时清理拒绝仍保留历史。此次没有修改生产代码，发布源为 e3c06dde8fc02b3e00c80373be870e5dc413bb6f，production code截止9ff87fa。目标kubernetes-admin@learn / manao-stage6b，浏览器通过公共入口真实账号密码登录。脱敏结构化证据见[cloud-20261027.json](cloud-20261027.json)。
+
+### 7.1 发布身份与恢复准备
+
+- 标准Dockerfile构建、推送backend/frontend均exit0；frontend显式VITE_ENABLE_AI=true。backend先于frontend，最终Ready1/1；Worker继续原Pi1.2.0镜像，本次只为故障验证替换其Pod。无新迁移，V15/V16仍各成功一次。
+- backend linux/amd64 digest：sha256:c0c56bc35ffc485350f42153f1833f94527c1cceda2f3ccba762c6654ba4eb56；frontend：sha256:120ebc30a2ab00a090ab89d7f1184ec402ae391bc0aced7a45ea72fea4c45ae1。源码label均e3c06dd完整SHA。部署generation分别45/27，Worker34；实际imageID匹配。
+- 发布前私有全库备份3,235,900 bytes，SHA256=089e0ece51765758ee483cf91a2de98a86a548fb32d5bc669f293becf523e728；独立restore schema恢复后9表计数一致，restore schema已DROP确认，备份只保留仓库外。运行库未reset，模型密钥和应用凭据未修改。
+- 回退tuple保留发布前backend 2b8d3d21e4af8a0cdf488fae4b785f41e675f63f6e08cd4147f864082dc5e695 / frontend 77ba0d19320ac238badf694a0bdd8eb6508d3c2aee6de50ed98f8192dc0ed708 / Worker 696080571ba556d983aa578163be3d6494261057e960a9686b15f814e7d0c93e；存在未完成pause/restart close时不能直接退旧backend。
+
+### 7.2 三条真实链的结果
+
+| 链 | 实际任务与证据 | 裁定 |
+| --- | --- | --- |
+| A 暂停接管/人工保存/继续 | caa8d794-ed6c-4dc9-8b6a-3dea7418bd75：真实长JUnit test打印marker且Maven/Surefire子进程存在后UI Pause；200/NEEDS_ATTENTION/writesLocked=true，Continue disabled。最终FAILED/AI_PAUSED_BY_OWNER、CLOSING报告与DB匹配、slot空/current404、原Job/Pod消失，build为BUILD_CLOSED/null exitCode/cleanupConfirmed=true | PASS |
+| A 同会话新执行/READY保留/重进 | 人工通过真实编辑器键盘与Save保存revision29。7cb13065-0c6a-4e9b-9f56-6d4944296123同conversation新Task读取revision29新marker，test exit0，application就绪与/api/demo HTTP200，Task COMPLETED。reload无新增Task，应用仍READY、人工写保持锁；正式stop后CANCELLED并恢复编辑 | PASS |
+| B Worker异常后手动继续 | 6179769b-cf21-4d96-bb0a-f051bd0019f1已绑定且无receipt，长test真实运行时force删除原Worker Pod；新Pod UID、新boot，两次认证status同新boot且旧task404。原Task AI_WORKER_RESTARTED安全FAILED、report=NULL，原build清理、slot空/current404；reload taskCount仍3，等待用户点击 | PASS |
+| B 同会话手动新Task | 点击Continue后才产生0fc779bd-e13e-4942-beb7-ef7a67ecb7d6，同conversation、revision31，重新read_file读到stage4-after-restart，COMPLETED，只一次read_file，未重放旧build。两个继续Task均created_at至新deadline约1800秒 | PASS |
+| C 专用项目删除 | 新项目3531cb41-f668-4517-aa84-1e49000d3746由本轮创建，browser Delete project→Delete permanently，HTTP204，GET404。10类项目label对象为空、绑定PVC/PV原name+UID不存在，12类关联DB计数0；NFS原目录与匹配项目/归档目录均不存在，平台MySQL PVC保留 | PASS |
+
+A的原failureCode为AI_CONTEXT_UNAVAILABLE，closeReason为AI_PAUSED_BY_OWNER，按原合同保留失败事实；它不表示暂停未安全完成。只保留已持久化上下文，未宣称保留最后未ACK token。B旧Task无收据，不补造COMPLETED。
+
+真实子进程证据：两次暂停/异常前均记录4条Maven/Surefire/Java进程及Pod/Job/container身份；结束后在原node1只读扫描/proc cgroup无原container/Pod匹配PID，CRI记录已被回收。可判定核对时原执行进程不存在，不能宣称获得真实退出码或精确退出时刻；取消构建exitCode仍null。live claim是内存Set，本轮不声称SQL查得claim=0。
+
+### 7.3 范围、失败尝试与最终状态
+
+- 总共4次真实模型Task；没有重放旧Task或自动补发模型调用。读取K8s API曾连接超时，后续仅核对同taskId；旧Monaco window/textarea locator不适用生产native EditContext，改用可见编辑器键盘路径后保存成功，未修改产品源码。SSH known-host/远端key-mode与Python3.6只读观察脚本适配也保留attempt历史。最终无未解决业务失败。
+- 额外最终只读扫描覆盖Job/Pod/Service/PVC/Deployment/StatefulSet/ReplicaSet/Secret/NetworkPolicy/ConfigMap；项目未启用MySQL/Redis。NFS storageclass为Delete/onDelete=delete/archiveOnDelete=false；没有手动删除PV或存储目录。平台三组件Ready1/1、Worker slot空，平台mysql-0与data-mysql-0保留。
+- 原故障Task仍RUNNING、deadline/receipt/close=NULL，NOT_REPAIRED。Stage2仍PAUSED / NOT_GRANTED；完整故障矩阵、真实1800秒耗尽、180工具/20构建耗尽、默认空Continue提示词云端路径未测，不授予整个AI首版PASS。重进验证覆盖Task数/READY/写锁；未单独保存重进后编辑器全文重读检查点。
+- 本轮未Git push/merge，不处理前轮拒绝删除的本地产物。云端项目、资源、存储及关联行实际已清理；私有备份保留。新操作脚本/日志作为复现证据保留；另两份无用scratch脚本bootstrap.mjs、inspect-editor.mjs已核对归属，精确删除请求在执行前被自动审批拒绝（blocked by policy），实际删除0，不重试或换工具。旧轮拒绝产物未碰。
+
+
+### 7.4 实际发布命令与最终复核
+
+标准Dockerfile构建、push均exit0；镜像标签只用于构建追踪，Deployment引用推送后的linux/amd64不可变digest。如下命令从本阶段checkout执行，无Git push：
+
+```powershell
+docker build --label org.opencontainers.image.revision=e3c06dde8fc02b3e00c80373be870e5dc413bb6f -t chocologic/manao_images_repository:pi-stage4-backend-e3c06dd poc4/backend
+docker build --build-arg VITE_ENABLE_AI=true --label org.opencontainers.image.revision=e3c06dde8fc02b3e00c80373be870e5dc413bb6f -t chocologic/manao_images_repository:pi-stage4-frontend-e3c06dd poc4/frontend
+docker push chocologic/manao_images_repository:pi-stage4-backend-e3c06dd
+docker push chocologic/manao_images_repository:pi-stage4-frontend-e3c06dd
+kubectl --context kubernetes-admin@learn -n manao-stage6b set image deployment/backend backend=chocologic/manao_images_repository@sha256:c0c56bc35ffc485350f42153f1833f94527c1cceda2f3ccba762c6654ba4eb56
+kubectl --context kubernetes-admin@learn -n manao-stage6b rollout status deployment/backend --timeout=240s
+kubectl --context kubernetes-admin@learn -n manao-stage6b set image deployment/frontend frontend=chocologic/manao_images_repository@sha256:120ebc30a2ab00a090ab89d7f1184ec402ae391bc0aced7a45ea72fea4c45ae1
+kubectl --context kubernetes-admin@learn -n manao-stage6b rollout status deployment/frontend --timeout=240s
+```
+
+实际operator kubeconfig由仓库外显式路径传入，未写入产品。上述有状态操作只执行一次，部署成功后模型脚本通过原API核对状态。原Worker仅Pod故障注入，不改变镜像/env/Secret/replicas或策略。
+
+最终只读复核确认Deployment observedGeneration与generation匹配（45/27/34）、三组件Ready1/1、slot为空、旧Worker Pod cgroup无PID、项目GET404、恢复演练schema计数0；原故障Task仍RUNNING/NULL期限/NULL收据/NULL关闭原因。独立只读审查认为核心证据满足限定阶段四PASS；补入NFS/额外资源种类核对及进程退出证据限制后归档。未重跑与此次发布无关的全平台测试。

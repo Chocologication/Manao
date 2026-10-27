@@ -10,13 +10,13 @@
 
 **Spec:** [接管与手动继续设计](../specs/2026-10-27-pi-stage4-control-recovery-design.md)。
 
-**Status:** LOCAL_STAGE4_CONTROL_VERIFIED。日期：2026-10-27。实施和证据以[阶段四验收](../../../poc4/docs/evidence/ai-stage4/acceptance.md)为准；勾选框只跟踪步骤，不建立云端 PASS。
+**Status:** PI_STAGE4_CONTROL_RECOVERY_PASS。日期：2026-10-27。实施和证据以[阶段四验收](../../../poc4/docs/evidence/ai-stage4/acceptance.md)为准；勾选框只跟踪本地步骤；用户后续授权的云端PASS由验收第7节独立记录。
 
 ## Global Constraints
 
 - 用户确认同一会话内新建执行：新 taskId、新1800秒/180工具/20构建预算；旧执行终态不可逆，禁止重放旧工具。
 - 原故障Task `b3b32518-f0ed-411e-aa85-1ecef95fbdc5` 处理与Stage2验收暂缓；Stage2保持 PAUSED / NOT_GRANTED。第三项仅 KEY_CLOUD_FAULTS_VERIFIED，不冒充完整矩阵。
-- 本轮执行范围是本地实现/定向测试/文档/本地提交；集群发布、付费模型、push/merge、历史资源处理不在范围。
+- 原实施范围为本地实现/定向测试/文档/本地提交；用户后续明确授权集群发布和真实模型验证，结果另记验收第7节。Git push/merge与历史资源处理仍不在范围。
 - 沿用六个mediated tools与固定Maven goal/只读副本构建；无自由Shell、语言适配、多Agent产品能力、MCP/Skills平台或MQ。
 - 预期零迁移、零新表、零新依赖、零新生产服务；复用close_reason_code和现有任务/收据/对账字段。
 - 保持原锁序与创建fence；外部I/O不放在事务、project gate或TaskStore monitor里；未决副作用或存活Pod不能解锁。
