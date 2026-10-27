@@ -72,6 +72,7 @@ public final class Fabric8DevelopmentBuildExecutor implements DevelopmentBuildEx
     }
 
     private final BuildCreation creation;
+    private final java.util.function.Predicate<AgentContracts.BuildRequest> stopRequested;
 
     public Fabric8DevelopmentBuildExecutor(KubernetesClient client, JobResourceFactory factory, String namespace,
                                            BiConsumer<AgentContracts.BuildRequest, AgentContracts.BuildIdentity> identityListener,
@@ -84,11 +85,26 @@ public final class Fabric8DevelopmentBuildExecutor implements DevelopmentBuildEx
                                     BiConsumer<AgentContracts.BuildRequest, AgentContracts.BuildIdentity> identityListener,
                                     BuildCreation creation,
                                     Clock clock, long pollMillis, long waitBudgetSeconds, long cleanupWaitSeconds) {
+        this(client, factory, namespace, identityListener, creation, request -> false, clock, pollMillis, waitBudgetSeconds, cleanupWaitSeconds);
+    }
+
+    public Fabric8DevelopmentBuildExecutor(KubernetesClient client, JobResourceFactory factory, String namespace,
+            BiConsumer<AgentContracts.BuildRequest, AgentContracts.BuildIdentity> identityListener,
+            BuildCreation creation, java.util.function.Predicate<AgentContracts.BuildRequest> stopRequested) {
+        this(client, factory, namespace, identityListener, creation, stopRequested, Clock.systemUTC(),
+            DEFAULT_POLL_MILLIS, DEFAULT_WAIT_BUDGET_SECONDS, DEFAULT_CLEANUP_WAIT_SECONDS);
+    }
+
+    Fabric8DevelopmentBuildExecutor(KubernetesClient client, JobResourceFactory factory, String namespace,
+            BiConsumer<AgentContracts.BuildRequest, AgentContracts.BuildIdentity> identityListener,
+            BuildCreation creation, java.util.function.Predicate<AgentContracts.BuildRequest> stopRequested,
+            Clock clock, long pollMillis, long waitBudgetSeconds, long cleanupWaitSeconds) {
         this.client = Objects.requireNonNull(client, "client");
         this.factory = Objects.requireNonNull(factory, "factory");
         this.namespace = Objects.requireNonNull(namespace, "namespace");
         this.identityListener = identityListener;
         this.creation = Objects.requireNonNull(creation, "creation");
+        this.stopRequested = Objects.requireNonNull(stopRequested, "stopRequested");
         this.clock = clock == null ? Clock.systemUTC() : clock;
         this.pollMillis = pollMillis;
         this.waitBudgetSeconds = waitBudgetSeconds;
@@ -244,6 +260,11 @@ public final class Fabric8DevelopmentBuildExecutor implements DevelopmentBuildEx
         try {
             Instant waitDeadline = clock.instant().plusSeconds(waitBudgetSeconds);
             while (true) {
+                if (stopRequested.test(request)) {
+                    boolean confirmed = cleanup(jobName, jobUid, request.commandId());
+                    return new AgentContracts.BuildResult(new AgentContracts.BuildIdentity(jobName, jobUid, podUid),
+                        null, "BUILD_CLOSED", "", false, List.of(), confirmed);
+                }
                 Job job = currentJob(jobName, jobUid, request);
                 if (job == null) {
                     // The verified job vanished mid-wait: the evidence is gone and can never be

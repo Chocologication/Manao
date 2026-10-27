@@ -279,6 +279,24 @@ class DevelopmentBuildExecutorTest {
             + Fabric8DevelopmentBuildExecutor.REPORT_END + " truncated=0 files=1\n";
     }
 
+    @Test void cooperativeCloseStopsTheOriginalJobWithoutWaitingForBuildDeadline() throws Exception {
+        Job job = seedJob();
+        Pod pod = seedPod(job.getMetadata().getName(), job.getMetadata().getUid(), null, null);
+        var reads = new java.util.concurrent.atomic.AtomicInteger();
+        var controlled = new Fabric8DevelopmentBuildExecutor(client, factory, NS,
+            (java.util.function.BiConsumer<BuildRequest, BuildIdentity>) (r, i) -> boundIdentities.add(i),
+            (Fabric8DevelopmentBuildExecutor.BuildCreation) (r, create) -> create.get(),
+            (java.util.function.Predicate<BuildRequest>) r -> reads.incrementAndGet() >= 2,
+            Clock.systemUTC(), 10L, 600L, 1L);
+        BuildResult result = controlled.build(request());
+        assertThat(result.terminationReason()).isEqualTo("BUILD_CLOSED");
+        assertThat(result.exitCode()).isNull();
+        assertThat(result.cleanupConfirmed()).isTrue();
+        assertThat(result.identity().jobUid()).isEqualTo(job.getMetadata().getUid());
+        assertThat(client.pods().inNamespace(NS).withName(pod.getMetadata().getName()).get()).isNull();
+        assertThat(client.batch().v1().jobs().inNamespace(NS).withName(job.getMetadata().getName()).get()).isNull();
+    }
+
     @Test
     void reportsTheRealFailureThenConfirmsTheCleanup() {
         Job job = seedJob();
