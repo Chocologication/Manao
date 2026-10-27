@@ -2,6 +2,16 @@
 
 日期：2026-10-26。当前状态：**DEPLOYED_SMOKE_VERIFIED**；用户已授权并实际发布三组件及V15/V16迁移，一次最小真实模型与浏览器收尾通过。实际证据见[验收记录第8节](../../docs/evidence/ai-terminal-settlement/acceptance.md#8-2026-10-26-实际集群部署与最小真实验证)与[脱敏发布身份](../../docs/evidence/ai-terminal-settlement/cloud-release-20261026.json)。完整云端故障矩阵未执行；原Task NOT_REPAIRED，Stage2 PAUSED/NOT_GRANTED。下文发布步骤作为后续维护契约保留。
 
+## 阶段四增量发布准备（2026-10-27）
+
+本地实现和证据见[阶段四验收](../../docs/evidence/ai-stage4/acceptance.md)。镜像构建/推送、部署、云端验收均 **NOT_RUN**，本节是后续授权后的维护约束。
+
+- 无新增迁移/表/依赖；沿用已存在的V15/V16。新backend兼容旧frontend，新增 `closeReasonCode` 可被旧客户端忽略；先部署backend，再部署frontend。
+- Worker生产代码没有本阶段改动，继续Pi1.2.0，不为测试夹具重发Worker镜像；发布前重新核对 `replicas: 1 / strategy: Recreate`，禁止并发新旧Worker实例。
+- 暂停/重启收尾仍占用时不得回退到不认识严格退出门槛的backend。先停止新Task预约，保留兼容backend结清 `AI_PAUSED_BY_OWNER / AI_WORKER_RESTARTED`、pending receipt、live claim、Run/Job；未知证据不能SQL清状态。结清后才按现场确认的镜像身份回退，不DROP列或覆盖数据。
+- 后续仅三条专用项目云端链：①真实长构建暂停→核对本Task Job/Pod与子进程退出→人工保存→同conversation新Task读到修改→完整Workbench重进；②Worker真实新boot/Pod UID与旧Task404→核对后手动继续，无旧工具重放；③用户明确删除专用项目→核对Job/Pod/Service/PVC/适用PV及DB行，保留平台资源。正常COMPLETED保留READY应用作为同链控制断言。
+- 不重跑已完成的关键故障整矩阵或真实1800秒等待，不恢复原故障Task。通过真实云端验证后才考虑 `PI_STAGE4_CONTROL_RECOVERY_PASS`，不连带授予Stage2或整个AI首版PASS。
+
 ## 1. 发布前提与顺序
 
 后续取得明确发布授权后才执行：

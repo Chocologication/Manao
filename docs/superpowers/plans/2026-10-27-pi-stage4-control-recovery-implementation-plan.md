@@ -10,13 +10,13 @@
 
 **Spec:** [接管与手动继续设计](../specs/2026-10-27-pi-stage4-control-recovery-design.md)。
 
-**Status:** PLANNED / IMPLEMENTATION_NOT_STARTED。日期：2026-10-27。勾选框供后续实施跟踪，不是完成证据。
+**Status:** LOCAL_STAGE4_CONTROL_VERIFIED。日期：2026-10-27。实施和证据以[阶段四验收](../../../poc4/docs/evidence/ai-stage4/acceptance.md)为准；勾选框只跟踪步骤，不建立云端 PASS。
 
 ## Global Constraints
 
 - 用户确认同一会话内新建执行：新 taskId、新1800秒/180工具/20构建预算；旧执行终态不可逆，禁止重放旧工具。
 - 原故障Task `b3b32518-f0ed-411e-aa85-1ecef95fbdc5` 处理与Stage2验收暂缓；Stage2保持 PAUSED / NOT_GRANTED。第三项仅 KEY_CLOUD_FAULTS_VERIFIED，不冒充完整矩阵。
-- 本轮仅规划。后续交接默认范围是本地实现/定向测试/文档；集群发布、付费模型、push/merge、历史资源处理不在默认范围。
+- 本轮执行范围是本地实现/定向测试/文档/本地提交；集群发布、付费模型、push/merge、历史资源处理不在范围。
 - 沿用六个mediated tools与固定Maven goal/只读副本构建；无自由Shell、语言适配、多Agent产品能力、MCP/Skills平台或MQ。
 - 预期零迁移、零新表、零新依赖、零新生产服务；复用close_reason_code和现有任务/收据/对账字段。
 - 保持原锁序与创建fence；外部I/O不放在事务、project gate或TaskStore monitor里；未决副作用或存活Pod不能解锁。
@@ -56,7 +56,7 @@ git -C D:/DeepLearning/MyProjects/Project_Manao worktree add .worktree/pi-stage4
 - Produces: `void AgentTaskService.pause(String taskId)`；`POST /api/v1/projects/{projectId}/agent-tasks/{taskId}/pause -> TaskSnapshot`；TaskSnapshot末尾可空 `String closeReasonCode`。
 - 复用已有Worker绑定；新增暂停不处理未绑定的启动窗口，返回409 `AI_TASK_STARTING`，不增加补绑协议。
 
-- [ ] **1. 写RED与竞争测试。** 在现有真实MySQL Harness中保留默认STOPPING fake：
+- [x] **1. 写RED与竞争测试。** 在现有真实MySQL Harness中保留默认STOPPING fake：
 
 ```java
 @Test void pauseDoesNotReleaseWhileWorkerStillStopping() {
@@ -73,7 +73,7 @@ git -C D:/DeepLearning/MyProjects/Project_Manao worktree add .worktree/pi-stage4
 
 使用当前测试类已有fixture字段，必要时扩展fixture，不增加生产测试入口。还需：STOPPING→合法终态/ACK/slot释放→解锁；超时/401/坏身份锁住；pause→close保持首因；终态先赢不逆转；deadline先赢；外owner/project404；gate409后可重试；启动ACK晚到不复活。
 
-- [ ] **2. 运行RED。**
+- [x] **2. 运行RED。**
 
 ```powershell
 mvn -f poc4/backend/pom.xml '-Dtest=AgentTaskServiceTest,AgentTaskStoreTest,AgentTerminalSettlementTest,AgentConversationHttpContractTest' test
@@ -81,7 +81,7 @@ mvn -f poc4/backend/pom.xml '-Dtest=AgentTaskServiceTest,AgentTaskStoreTest,Agen
 
 新增行为缺失应失败；数据库权限/连接错误不算业务RED。
 
-- [ ] **3. 最小实现。** pause只存固定 `AI_PAUSED_BY_OWNER` 并安排原reconciler；不等待网络/集群后才返回。入口形状：
+- [x] **3. 最小实现。** pause只存固定 `AI_PAUSED_BY_OWNER` 并安排原reconciler；不等待网络/集群后才返回。入口形状：
 
 ```java
 @PostMapping("/{taskId}/pause")
@@ -97,12 +97,12 @@ public AgentContracts.TaskSnapshot pause(Authentication authentication,
 
 严格停止门槛只用于新pause/worker-restart控制：原instance完整Task身份、合法终态report/hash、CLOSING/ACKED确认、认证status的activeTaskId不再是原Task，或Task2定义的确定旧进程被替换。CLOSING ACK必须可在最终释放前返回，否则slot和结算会互等。记录被原100条/24h规则淘汰时，只有后端已有匹配receipt、同boot认证status不占旧Task且明确task404才可补充退出证据。其他404一律未知。
 
-退出观测不能成为阻止finishForClose/finishApplication推进的前置return：每轮先取得观测、推进原收尾，最终同时检查两类证据再释放，防止Worker等待在途工具、工具又等收尾的循环等待。三种校验（Worker身份/资源身份/最终CAS）保持各自原职责。
+退出观测不能成为阻止finishForClose/finishApplication推进的前置return：实施时先推进原资源finish，再读取Worker退出证据，防止慢查询耗尽每轮预算。最终同时检查两类证据再释放；三种校验（Worker身份/资源身份/最终CAS）保持各自原职责。
 
 **启动窗口采用最小限制。** 在短gate内检查尚未绑定instance的非终态Task，返回409 `AI_TASK_STARTING`且不改行；前端QUEUED显示“正在启动，稍后可暂停”，仍提供原结束入口。Worker绑定后可以正常暂停；用测试覆盖请求与ACK并发，不新增bindClosingWorker或修改原绑定状态机。已终态先返回原snapshot；已关闭的重复请求不被启动限制错误拦住。
 
-- [ ] **4. GREEN。** 复跑Step2；验证旧snapshot/构造器兼容、GET仍纯读、重复pause不增加worker.start、原失败事实不被控制文案覆盖。
-- [ ] **5. 提交本任务明确文件。** 建议 `feat(ai): add safe pause intent and stop verification`。
+- [x] **4. GREEN。** 复跑Step2；验证旧snapshot/构造器兼容、GET仍纯读、重复pause不增加worker.start、原失败事实不被控制文案覆盖。
+- [x] **5. 提交本任务明确文件。** 建议 `feat(ai): add safe pause intent and stop verification`。
 
 ## Task 2：Worker确定丢失后核对，等待手动继续
 
@@ -116,7 +116,7 @@ public AgentContracts.TaskSnapshot pause(Authentication authentication,
 - Consumes: Task1关闭协议、`WorkerProcessStatus`、`ReconcileCandidate`、`ReconcileWorkBudget`。
 - Produces: `boolean AgentTaskStore.beginWorkerRestartClose(String taskId, long epoch, String expectedInstanceId)`；没有新resume/recover API或scheduler。
 
-- [ ] **1. 写RED事实矩阵。**
+- [x] **1. 写RED事实矩阵。**
 
 | 输入 | 期待 |
 | --- | --- |
@@ -141,13 +141,13 @@ AgentTaskReconcilerTest现有Harness已创建并绑定worker-boot，可直接增
 }
 ```
 
-- [ ] **2. RED。**
+- [x] **2. RED。**
 
 ```powershell
 mvn -f poc4/backend/pom.xml '-Dtest=AgentTaskReconcilerTest,AgentTerminalSettlementTest' test
 ```
 
-- [ ] **3. 最小实现。** 原importTerminal的404分支执行status→task404→status，认证且两次稳定新boot、与已绑定旧instance不同；共享原5秒预算，未读全就下一轮。随后短gate中调用CAS：
+- [x] **3. 最小实现。** 原importTerminal的404分支执行status→task404→status，认证且两次稳定新boot、与已绑定旧instance不同；共享原5秒预算，未读全就下一轮。随后短gate中调用CAS：
 
 ```sql
 UPDATE agent_task
@@ -162,8 +162,8 @@ WHERE id=? AND worker_epoch=? AND worker_instance_id=?
 ```
 
 沿用Clock/锁序；CAS只存意图，不做网络或释放。失败重读，不覆盖新receipt/关闭原因；成功交原settleCloseIntent。多Worker并发/滚动重叠不是现有单Worker假设，不在本轮建设分布式恢复。
-- [ ] **4. GREEN。** 复跑Step2；核对无自动新Task/工具、epoch/deadline未重置。
-- [ ] **5. 提交。** 建议 `feat(ai): reconcile lost worker executions before manual continuation`。
+- [x] **4. GREEN。** 复跑Step2；核对无自动新Task/工具、epoch/deadline未重置。
+- [x] **5. 提交。** 建议 `feat(ai): reconcile lost worker executions before manual continuation`。
 
 ## Task 3：长构建主动停止，保留原资源证明
 
@@ -179,7 +179,7 @@ WHERE id=? AND worker_epoch=? AND worker_instance_id=?
 - Consumes: 原BuildRequest/BuildResult/creation fence、`AgentTaskStore.hasCloseIntent(SettlementView)`。
 - Produces: 构造注入 `Predicate<AgentContracts.BuildRequest> stopRequested`；BuildResult沿用 `BUILD_CLOSED`、未知exitCode=null及真实cleanupConfirmed。
 
-- [ ] **1. RED。** 在原Fabric8 mock server测试夹具中创建尚未退出的Job，给executor增加谓词构造参数；测试内部AtomicBoolean初始false，确认Job/Pod已出现后设true，不推进600秒deadline。用Future获取真实BuildResult并断言：
+- [x] **1. RED。** 在原Fabric8 mock server测试夹具中创建尚未退出的Job，给executor增加谓词构造参数；测试内部AtomicBoolean初始false，确认Job/Pod已出现后设true，不推进600秒deadline。用Future获取真实BuildResult并断言：
 
 ```java
 BuildResult result = runningBuild.get(10, TimeUnit.SECONDS);
@@ -193,13 +193,13 @@ assertThat(client.pods().inNamespace(NS).withLabel(
 ```
 
 `runningBuild`是该fixture调用executor.build的Future，复用原request()/Pod/UID创建辅助函数。还要让mock删除持续409或Pod仍存在，断言cleanupConfirmed=false；UID替换不得删除；close与create竞争不得新建；claim未释放仍不能写。
-- [ ] **2. 执行RED。**
+- [x] **2. 执行RED。**
 
 ```powershell
 mvn -f poc4/backend/pom.xml '-Dtest=DevelopmentBuildExecutorTest,AgentProjectToolsTest,AgentTerminalSettlementTest' test
 ```
 
-- [ ] **3. 最小实现。** 保留旧构造器委托默认false，生产AiConfig明确注入：
+- [x] **3. 最小实现。** 保留旧构造器委托默认false，生产AiConfig明确注入：
 
 ```java
 request -> AgentTaskStore.hasCloseIntent(tasks.settlementView(request.taskId()))
@@ -217,8 +217,8 @@ if (stopRequested.test(request)) {
 ```
 
 查询异常/删除不确定走既有NEEDS_ATTENTION，不伪造成功。runBuild保持claim直到落库或记录未知，finally才释放；后台close不能提前清claim抢删。保留原有有界日志，不能为日志等自然构建完成。不引入取消注册中心、Future表、线程强杀或新执行池。
-- [ ] **4. GREEN。** 复跑Step2并核对原commandId只创建一次、Pod/UID证明、原成功构建与READY应用保留回归。实际响应受原轮询和I/O边界约束，不承诺集群异常时固定秒数解锁。
-- [ ] **5. 提交。** 建议 `fix(ai): stop active builds cooperatively during takeover`。
+- [x] **4. GREEN。** 复跑Step2并核对原commandId只创建一次、Pod/UID证明、原成功构建与READY应用保留回归。实际响应受原轮询和I/O边界约束，不承诺集群异常时固定秒数解锁。
+- [x] **5. 提交。** 建议 `fix(ai): stop active builds cooperatively during takeover`。
 
 ## Task 4：暂停、接管与同会话继续的浏览器体验
 
@@ -241,7 +241,7 @@ if (stopRequested.test(request)) {
 - Produces: `pauseAgentTask(projectId: string, taskId: string): Promise<AgentTaskSnapshot>`、`usePauseAgentTaskMutation(projectId: string)`、纯函数 `canContinueTask(task: AgentTaskSnapshot | null, conversationId: string | undefined): boolean`、`CONTINUE_TASK_PROMPT`。
 - canContinueTask仅表达历史最新执行的语义资格，最终按钮还须满足原canStart/dirty/writePending/Run authority/revision/compaction/占用限制。
 
-- [ ] **1. RED组件和协议测试。** 用当前完整snapshot fixture检查：
+- [x] **1. RED组件和协议测试。** 用当前完整snapshot fixture检查：
 
 ```typescript
 expect(canContinueTask({ ...snapshot, writesLocked: true,
@@ -255,7 +255,7 @@ expect(canContinueTask({ ...snapshot, state: 'FAILED', writesLocked: false,
 组件点击/网络断言必须覆盖：pause200但锁true仍不可写；失败后按钮恢复；QUEUED提示启动且End task仍可用；历史会话中可暂停project current；最新Task才能继续；新Task同conversation/不同taskId/最新revision；响应丢失核对同id；reload不发start/pause；dirty保留并阻止继续；其他Run仍活跃时编辑保持锁。旧JSON缺closeReasonCode按null。
 
 Worker回归经真实SDK scripted session：历史未完成工具轮不重放、新prompt有当前revision。用户将文件SHA A改成B，新Task使用新revision但旧SHA A写入应拒绝；模型重读得到B后可正常写入。省略SHA只能创建不存在文件。复用原校验，不新增读取凭证Map。
-- [ ] **2. RED。**
+- [x] **2. RED。**
 
 ```powershell
 pnpm --dir poc4/frontend exec vitest run src/features/ai/agentTaskControl.test.ts src/features/ai/AgentTaskPanel.test.tsx src/features/ai/AgentConversationPanel.test.tsx src/features/ai/agentTaskPreconditions.test.ts
@@ -263,7 +263,7 @@ pnpm --dir poc4/pi-worker exec vitest run test/conversation-context.test.ts test
 mvn -f poc4/backend/pom.xml '-Dtest=AgentProjectToolsTest' test
 ```
 
-- [ ] **3. 最小实现。** 将handleStart的提交/探测逻辑提为同组件内submitPrompt(prompt)，表单与继续共用，不能复制两套request-id恢复。新纯函数模块只容纳有多个真实调用点的控制标签/资格与默认prompt：
+- [x] **3. 最小实现。** 实施时保留唯一handleStart提交/探测路径：同一表单根据最新Task资格展示Start或Continue，空目标使用默认继续prompt；无需再提取只有单一调用点的submitPrompt。两种提交共用原request-id核对。纯函数模块只容纳继续资格与默认prompt：
 
 ```typescript
 export const CONTINUE_TASK_PROMPT =
@@ -284,7 +284,7 @@ export function canContinueTask(
 同conversation最新Task处于暂停收尾中时展示禁用的Continue task，明确等待核对；已释放后再按canStart启用。历史旧Task不显示继续。只在QUEUED启动窗口禁用Pause并提示稍后再试，不能把所有NEEDS_ATTENTION一律隐藏控制入口。
 
 pause mutation走原close invalidate/reload路径；最终释放后刷新树、打开文件、revision、Run authority。dirty内容不丢，读取失败不允许编辑。历史会话控制项目当前占用Task，提供跳回当前会话；不能停止displayTask。没有conversation的历史任务只保留结束/接管，不静默创建会话搬历史。其他失败沿用输入框提交修正，不自动重试模型。
-- [ ] **4. GREEN与类型构建。** 复跑Step2，再运行：
+- [x] **4. GREEN与类型构建。** 复跑Step2，再运行：
 
 ```powershell
 pnpm --dir poc4/frontend typecheck
@@ -293,7 +293,7 @@ pnpm --dir poc4/pi-worker build
 ```
 
 Worker生产代码默认不改，只在红测证明缺口时小改原context/session/server。
-- [ ] **5. 提交。** 建议 `feat(ai-ui): add takeover and same-conversation continuation`。
+- [x] **5. 提交。** 建议 `feat(ai-ui): add takeover and same-conversation continuation`。
 
 ## Task 5：精简端到端验证与交付
 
@@ -312,7 +312,7 @@ Worker生产代码默认不改，只在红测证明缺口时小改原context/ses
 - Consumes: Tasks1–4、原local terminal真实HTTP/MySQL/scripted-provider夹具。
 - Produces: 有证据的 `LOCAL_STAGE4_CONTROL_VERIFIED` 或失败/阻塞结论；取得后续发布授权并真实通过后才记 `PI_STAGE4_CONTROL_RECOVERY_PASS`。
 
-- [ ] **1. 复用原夹具，增加本阶段控制点。** setup新增可选 `MANAO_AI_LOCAL_EVIDENCE_DIR`，默认保留旧证据目录，本阶段传新目录；不建立通用配置框架。继续端口占用即失败，同一时间只运行一个local套件。scripted场景增加“等待暂停、下一轮读取用户修改文件”，保存走生产workspace API，控制route只存在test Spring上下文。
+- [x] **1. 复用原夹具，增加本阶段控制点。** setup新增可选 `MANAO_AI_LOCAL_EVIDENCE_DIR`，默认保留旧证据目录，本阶段传新目录；不建立通用配置框架。继续端口占用即失败，同一时间只运行一个local套件。scripted场景增加“等待暂停、下一轮读取用户修改文件”，保存走生产workspace API，控制route只存在test Spring上下文。
 
 ```typescript
 import { defineConfig } from '@playwright/test';
@@ -325,7 +325,7 @@ export default defineConfig({
 
 原page.tsx只加载AI面板，不能把它称为完整Workbench验收。局部浏览器测试核对按钮/HTTP/持久事实；编辑器保存与Run锁联动由原组件集成测试覆盖，完整工作台留到授权后的云端场景。不复制完整前端或另建集群来补夹具。
 
-- [ ] **2. 三条端到端链先RED后GREEN。**
+- [x] **2. 三条端到端链先RED后GREEN。**
 
 | 用例 | 必须观察的事实 |
 | --- | --- |
@@ -357,7 +357,7 @@ Remove-Item Env:MANAO_AI_LOCAL_EVIDENCE_DIR
 
 使用现有 `MANAO_TERMINAL_TEST_DB_USERNAME/PASSWORD`，只连本机disposable schema，不从云端env推导或输出凭据。
 
-- [ ] **3. 必要汇总回归一次。**
+- [x] **3. 必要汇总回归一次。**
 
 ```powershell
 mvn -f poc4/backend/pom.xml '-Dtest=AgentTaskServiceTest,AgentTaskStoreTest,AgentTerminalSettlementTest,AgentTaskReconcilerTest,AgentConversationHttpContractTest,AgentProjectToolsTest,AgentApplicationToolsTest,DevelopmentBuildExecutorTest,RunControllerTest' test
@@ -369,11 +369,11 @@ git diff --check
 
 失败先定位本轮影响；不能跳过或放宽断言冒充PASS。无关基线失败单列，不扩成额外修复任务。若共享fixture改动，原ai-terminal-settlement local套件回归一次；不重做Stage2、完整A–N云端矩阵或1800秒真实等待。
 
-- [ ] **4. 写验收和发布增量。** acceptance列HEAD、日期、命令、退出码、范围与限制，区分mock资源/真实资源。维护手册新增阶段四兼容节：无迁移；兼容backend先于frontend；Worker仅生产代码改动才发布；旧frontend忽略新字段。回退前暂停新任务并结清pause/restart close，旧backend不能接管尚未完成的新严格门槛。镜像未构建就写NOT_RUN，不填占位digest。
+- [x] **4. 写验收和发布增量。** acceptance列HEAD、日期、命令、退出码、范围与限制，区分mock资源/真实资源。维护手册新增阶段四兼容节：无迁移；兼容backend先于frontend；Worker仅生产代码改动才发布；旧frontend忽略新字段。回退前暂停新任务并结清pause/restart close，旧backend不能接管尚未完成的新严格门槛。镜像未构建就写NOT_RUN，不填占位digest。
 
 云端后续只需专用项目三场景：①真实长构建暂停、确认其Job/Pod和子进程退出、人工保存、同会话继续、完整工作台刷新；②Worker真实换boot/Pod UID、旧执行不重放、手动继续；③删除该专用项目，核对项目Job/Pod/Service/PVC/PV及数据库行，保留平台资源。将正常COMPLETED保留READY Run作为同链控制断言。发布预检还要确认Worker `replicas: 1 / strategy: Recreate`，与当前部署清单一致。
 
-- [ ] **5. 清理与交付。** 实际核对本轮临时schema、PID、scratch删除结果；保留必要证据，不碰其他会话残留。无BOM/链接/diff检查后提交明确文件，建议 `test(ai): verify stage four takeover and recovery flows`。报告列实现、本地证据、云端NOT_RUN、未push/merge和真实遗留，不称整个AI首版已完成。
+- [x] **5. 清理与交付。** 实际核对本轮临时schema、PID、scratch删除结果；保留必要证据，不碰其他会话残留。无BOM/链接/diff检查后提交明确文件，建议 `test(ai): verify stage four takeover and recovery flows`。报告列实现、本地证据、云端NOT_RUN、未push/merge和真实遗留，不称整个AI首版已完成。
 
 ## 计划自检（2026-10-27）
 
@@ -390,7 +390,7 @@ git diff --check
 | 扩展性 | conversation、Task、工具、执行器边界保持；未来Shell/MCP接入须继承同样占用/核对合同 |
 | 测试成本 | 复用harness，三条E2E+定向套件，云端三场景；不重复全平台验收 |
 | 类型一致 | pause、closeReasonCode与两原因码一致；继续使用conversation提交，无隐含resume API |
-| 证据边界 | 本轮未实施，后续本地/云端分别验证；计划不升级Stage2或原Task结论 |
+| 证据边界 | 本地结果见验收；云端NOT_RUN，Stage2和原Task结论保持 |
 
 自检已删除两处不必要状态（读取Map、启动补绑），修正构建停止谓词误用风险，并明确本地夹具的完整Workbench/真实集群证据缺口。保留停止、receipt和版本检查，因为它们直接支撑接管正确性。
 

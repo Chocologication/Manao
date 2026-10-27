@@ -1,5 +1,16 @@
 # EnsoAI Stage 5 Active Job Terminal
 
+## Pi 阶段四本地接管验证（2026-10-27）
+
+`Pause & take over` 先持久化关闭意图，权威核对完成并重读文件/Run事实后才交还编辑权；`Continue task` 在同conversation创建新Task，使用新预算和当前已保存revision。dirty内容保留，Task/Run权威未知闭锁，原End task继续可用。下文旧阶段说明保留历史范围，当前AI本地结果见[阶段四验收](../docs/evidence/ai-stage4/acceptance.md)。
+
+```powershell
+pnpm test:e2e:ai-stage4
+pnpm test:e2e:ai-terminal-settlement
+```
+
+先从仓库根目录运行 `mvn -f poc4/backend/pom.xml test-compile dependency:build-classpath '-Dmdep.outputFile=target/terminal-local-classpath.txt'`；显式传入本机 `MANAO_TERMINAL_TEST_DB_USERNAME/PASSWORD`，账号需有独立 `manao_stage6_*` schema的创建/删除权限。可选 `MANAO_AI_LOCAL_EVIDENCE_DIR` 隔离输出；两个套件按顺序运行，端口占用立即失败。夹具采用真实HTTP/MySQL/Pi1.2.0 SDK与scripted provider，资源mock，不调用付费模型或集群，不证明完整Workbench云验收。
+
 阶段 5 仍是纯浏览器前端：在阶段 4 Run / 日志闭环上增加只绑定当前 owned `RUNNING` Run 的 xterm 会话、同源 ticket WebSocket、显式关闭、输出流控、本地搜索与结构化命令审计。不连接真实 Spring Boot、MySQL、Kubernetes Job、PVC、Pod、exec API 或集群。MSW 只在 mock 模式与自动化测试中启用。本目录一律使用 pnpm，禁止 npm。
 
 工作目录：`poc4/frontend`。需要 Node.js >= 20 与 pnpm 10。`pnpm test:e2e:channels` 还需要本机已安装 Chrome 与 Edge。

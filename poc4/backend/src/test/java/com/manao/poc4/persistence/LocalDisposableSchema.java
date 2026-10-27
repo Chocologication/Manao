@@ -6,7 +6,7 @@ import java.sql.DriverManager;
 public final class LocalDisposableSchema {
     public static void main(String[] args) throws Exception {
         String schema = args[1];
-        if (!schema.matches("manao_terminal_[0-9a-f]{32}")) throw new IllegalArgumentException("Disposable schema required");
+        if (!schema.matches("manao_(stage6_)?terminal_[0-9a-f]{32}")) throw new IllegalArgumentException("Disposable schema required");
         String url = System.getenv("MANAO_DB_URL");
         if (url == null || !url.startsWith("jdbc:mysql://127.0.0.1:")) throw new IllegalArgumentException("Loopback MySQL required");
         String server = url.substring(0, url.indexOf('/', "jdbc:mysql://".length()) + 1);

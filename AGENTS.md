@@ -13,6 +13,8 @@
 
 ## Read the document that owns the question
 
+- Pi 阶段四暂停接管与手动继续：合同见[设计](docs/superpowers/specs/2026-10-27-pi-stage4-control-recovery-design.md)，本地结果、清理与云端边界见[验收记录](poc4/docs/evidence/ai-stage4/acceptance.md)。继续创建同 conversation 的新 Task；发布与云端验收遵循本次授权。
+
 - AI terminal settlement cleanup/merge (2026-10-26): merged codex/fix-ai-terminal-settlement into codex/ai-integration by no-ff merge da46643, no conflicts and identical source/merge trees. Merged-worktree checks passed: backend65, frontend serial211 after one initial asynchronous Terminal timeout, Worker181 plus one explicit harness skip, typecheck/build/boundary36. Both cleanup deletion batches were rejected before execution, actual0 deleted; no workaround. [Cleanup and merge record](poc4/docs/evidence/ai-terminal-settlement/cleanup-merge-20261026.md) owns retained paths, safely preserved original planning documents and exact results. Repair worktree/branch retained; no master integration, Git push, old task recovery, runtime cleanup or cluster redeployment.
 
 - AI terminal settlement actual release (2026-10-26): user authorized cluster deployment and one minimal real model task. Three images from758aae6 plus V15/V16 are deployed in manao-stage6b, Ready1/1 each; public browser task978cddbb completed with one matching receipt/ACK, writes unlocked and owner directory creation201. [Acceptance section8](poc4/docs/evidence/ai-terminal-settlement/acceptance.md#8-2026-10-26-实际集群部署与最小真实验证) owns DEPLOYED_SMOKE_VERIFIED and evidence limits; [release guide](poc4/deploy/ai-terminal-settlement/README.md) owns digests, backup rehearsal and rollback. Original task remains NOT_REPAIRED, Stage2 PAUSED/NOT_GRANTED; full cloud fault matrix and password login NOT_RUN. No old project deletion or Git push/merge.

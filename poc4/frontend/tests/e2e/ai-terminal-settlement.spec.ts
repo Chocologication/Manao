@@ -26,7 +26,7 @@ test.afterEach(async({request})=>{
   await expect.poll(async()=>(await stats(request)).activeTaskId,{timeout:15_000}).toBeNull();
 });
 test.afterAll(async()=>{
-  const dir=resolve(import.meta.dirname,'../../../../.superpowers/sdd/2026-10-25-ai-terminal-settlement-implementation-plan');
+  const dir=resolve(process.env.MANAO_AI_LOCAL_EVIDENCE_DIR ?? resolve(import.meta.dirname,'../../../../.superpowers/sdd/2026-10-25-ai-terminal-settlement-implementation-plan'));
   for(const name of ['http-backend','http-backend-rebuilt','scripted-worker','scripted-worker-rebuilt']){
     const path=resolve(dir,`task-8-${name}.log`);if(!existsSync(path))continue;const text=readFileSync(path,'utf8');
     expect(text).not.toMatch(/local deterministic task|browser second deterministic task|本地 scripted provider 已完成|x-manao-worker-token|Authorization: Bearer|MANAO_DB_PASSWORD|apiKey|test-only-key/i);
@@ -72,14 +72,17 @@ test('D backend process rebuild resumes a persisted receipt without browser or r
   await expect.poll(async()=>{try{return (await request.get(`${backend}/__fixture/ready`)).ok();}catch{return false;}},{timeout:45_000}).toBe(true);await completed(request,id);
   expect((await row(request,id)).terminal_report_id).toBe(saved.terminal_report_id);expect((await stats(request)).modelCalls).toBe(before.modelCalls+2);expect((await stats(request)).starts).toBe(before.starts+1);
 });
-test('E Worker reboot before receipt preserves occupancy until durable deadline close',async({request})=>{
+test('E legacy Worker reboot before receipt preserves occupancy until durable deadline close',async({request})=>{
   await request.post(`${backend}/__fixture/reconcile?enabled=false`);await mode(request,'terminal=true');const id=await submit(request);
   await expect.poll(async()=>(await row(request,id)).calls).toBe(1);await expect.poll(async()=>(await stats(request)).terminalPosts).toBeGreaterThan(0);expect((await row(request,id)).receipts).toBe(0);
+  await request.post(`${backend}/__fixture/legacy-task/${id}`);
   await new Promise<void>((resolve,reject)=>{const socket=connect(18994,'127.0.0.1');socket.once('connect',()=>socket.end());socket.once('close',()=>resolve());socket.once('error',reject);});
   await expect.poll(async()=>{try{return (await request.get(`${worker}/__control/stats`)).ok();}catch{return false;}},{timeout:30_000}).toBe(true);
   await request.post(`${backend}/__fixture/tick/${id}`);expect((await row(request,id)).state).toBe('RUNNING');
   await request.post(`${backend}/__fixture/clock?advance=1801`);await request.post(`${backend}/__fixture/tick/${id}`);
-  await expect.poll(async()=>(await row(request,id)).state).toBe('FAILED');expect((await row(request,id)).close_reason_code).toBe('AI_TASK_BUDGET_EXCEEDED');expect((await row(request,id)).receipts).toBe(0);
+  expect((await row(request,id)).state).toBe('RUNNING');expect((await row(request,id)).close_reason_code).toBeNull();
+  await request.post(api+`/agent-tasks/${id}/close`,{headers:await auth(request)});
+  await expect.poll(async()=>(await row(request,id)).state).toBe('FAILED');expect((await row(request,id)).close_reason_code).toBe('AI_CLOSED');expect((await row(request,id)).receipts).toBe(0);
 });
 test('I owner close waits for actual Run observation and late completion cannot reverse it',async({request,page})=>{
   await request.post(`${backend}/__fixture/reconcile?enabled=false`);const before=await stats(request);await mode(request,'wait=true&terminal=true');const id=await submit(request);await expect.poll(async()=>(await row(request,id)).calls).toBe(1);
@@ -106,7 +109,7 @@ test('I owner close waits for actual Run observation and late completion cannot 
 test('H and N browser completion preserves READY Run then new task and write resume',async({request,page})=>{
   await mode(request,'wait=true');const id=await submit(request);await expect.poll(async()=>(await row(request,id)).calls).toBe(1);const {runId}=await (await request.post(`${backend}/__fixture/ready-run/${id}`)).json();
   await page.goto('/tests/fixtures/ai-terminal-settlement/index.html');await page.getByRole('button',{name:'重新登录'}).click();await expect(page.getByTestId('browser-write')).toBeDisabled();
-  await request.post(`${worker}/__control/release`);await completed(request,id);await expect(page.getByTestId('browser-write')).toBeEnabled();
+  await request.post(`${worker}/__control/release`);await completed(request,id);await expect(page.getByTestId('browser-write')).toBeDisabled();
   const run=await (await request.get(api+`/runs/${runId}`,{headers:await auth(request)})).json();expect(run.state).toBe('RUNNING');expect(run.firstReadyAt).toBeTruthy();
   await page.getByRole('button',{name:'新建会话'}).click();await expect(page.getByRole('heading',{name:'新会话'})).toBeVisible();await page.getByRole('button',{name:/推理强度/}).click();await page.getByRole('button',{name:'关闭',exact:true}).click();await page.getByLabel('Task goal').fill('browser second deterministic task');await expect(page.getByLabel('Task goal')).toHaveValue('browser second deterministic task');
   const taskResponse=page.waitForResponse(response=>response.request().method()==='POST'&&response.url().includes('/tasks'));await page.getByRole('button',{name:'Start task'}).click();const response=await taskResponse;expect(response.ok(),await response.text()).toBe(true);

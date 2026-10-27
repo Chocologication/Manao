@@ -1,10 +1,10 @@
 # Pi 阶段四：接管与手动继续设计
 
-日期：2026-10-27。状态：**PLANNED / IMPLEMENTATION_NOT_STARTED**。本轮只编写设计、实施计划和交接提示词。
+日期：2026-10-27。状态：**LOCAL_STAGE4_CONTROL_VERIFIED**。本地测试与云端边界由[阶段四验收](../../../poc4/docs/evidence/ai-stage4/acceptance.md)拥有；本轮不发布。
 
 ## 1. 用户决定与范围
 
-本轮依据关联聊天“ai集成--bug修复及整理”的五项后续建议：第一项原故障 Task 恢复、第二项阶段二正式验收暂缓；第三项关键云端故障验证已完成；现在规划第四阶段。第三项的实际边界由[2026-10-27 专项记录](../../../poc4/docs/evidence/ai-terminal-settlement/cloud-faults-20261027.md)拥有，不能扩写成完整故障矩阵 PASS。阶段二仍为 PAUSED / NOT_GRANTED，原 Task 仍为 NOT_REPAIRED。
+本轮依据关联聊天“ai集成--bug修复及整理”的五项后续建议：第一项原故障 Task 恢复、第二项阶段二正式验收暂缓；第三项关键云端故障验证已完成；当前实现第四阶段。第三项实际边界由源 AI checkout 的 `poc4/docs/evidence/ai-terminal-settlement/cloud-faults-20261027.md` 拥有；该文件为其他会话未提交资料，仅只读核对，未复制到本分支，不能扩写成完整故障矩阵 PASS。阶段二仍为 PAUSED / NOT_GRANTED，原 Task 仍为 NOT_REPAIRED。
 
 用户本轮明确接受：**同一会话内新建执行**。暂停后停止并结算旧 Task、交还编辑权；用户保存修改后，“继续”创建新的 Task，继承同一 conversation 的已持久化上下文，重新获得现有的 1800 秒、180 次工具、20 次构建预算。旧 Task 不复活、不续剩余预算、不重放旧工具。
 
@@ -61,10 +61,10 @@ TaskSnapshot 加可空 `closeReasonCode`，取已有 `close_reason_code`，不�
 ## 5. 暂停与释放的次序
 
 1. 在原短 gate/事务协议下保存关闭意图，拒绝旧 Task 新工具、创建预约及新上下文写者。不重新设计锁序。
-2. gate/事务/Task monitor 外通知 Worker stop。停止请求或 STOPPING 不是退出完成。
-3. 对 `AI_PAUSED_BY_OWNER / AI_WORKER_RESTARTED`，用现有认证 `/status` 和 Task status 核对旧执行已终止且该 Task 已释放 Worker slot，或旧进程已被替换。未知则维持占用并由原 reconciler 重试。旧 Worker 的终态投递继续走既有 CLOSING ACK，不能先要求 slot 空再允许 ACK 而造成死锁。未绑定实例的Task不能进入本次新增暂停路径。
+2. 原 reconciler 在 gate/事务/Task monitor 外先推进原资源 finish，再通知 Worker stop、读取退出证据，避免慢 Worker 查询反复耗尽共享预算而使资源清理饥饿。停止请求或 STOPPING 不是退出完成。
+3. 对 `AI_PAUSED_BY_OWNER / AI_WORKER_RESTARTED`，用现有认证 `/status` 和 Task status 核对旧执行已终止且该 Task 已释放 Worker slot，或旧进程已被替换。终态交付的 `ACKED` 与 `CLOSING` 都是匹配报告已获确认的状态；CLOSING 不会再转成 ACKED。未知则维持占用并由原 reconciler 重试。旧 Worker 的终态投递继续走既有 CLOSING ACK，不能先要求 slot 空再允许 ACK 而造成死锁。未绑定实例的Task不能进入本次新增暂停路径。
 4. 原执行线程响应关闭：构建主动结束 Job，文件写入按 receipt 核对，应用仅处理本 Task 已登记的原 start/stop 目标。不得重发不明文件 mutation 或 app HTTP。
-5. 原收尾在最终短锁内复核：无 live claim、无未决写 receipt/call、原关联应用结束，以及必要的 Worker 退出证据仍对应同一 Task/epoch/实例；随后终态释放。未知任何一项都继续占用。Worker退出观测不得阻止本轮原资源核对推进：先保存观测结果，再执行原finish步骤，最终结合证明决定是否释放，避免在途工具等清理、Worker又等工具的循环等待。
+5. 原收尾在最终短锁内复核：无 live claim、无未决写 receipt/call、原关联应用结束，以及必要的 Worker 退出证据仍对应同一 Task/epoch/实例；随后终态释放。未知任何一项都继续占用。Worker退出观测不得阻止本轮原资源核对推进，最终结合两类证明决定是否释放。
 6. 前端失效并重取文件树、已打开文件和 workspace revision；保留用户尚未保存的草稿，出现冲突走原冲突流程。人工编辑仍受现有 Run 锁约束。
 
 暂停会停止本次 Task 创建/已登记处理的应用 Run，以便接管；正常 COMPLETED 保留 READY 应用的行为不变。对未被该 Task 触碰的其他旧 Run，不扩大停止范围；UI 明示“AI 已暂停，应用仍运行，请先停止应用再编辑”，使用原 Run stop 入口。

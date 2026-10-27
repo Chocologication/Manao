@@ -13,6 +13,8 @@ test.skipIf(process.env.MANAO_TERMINAL_LOCAL_HARNESS !== 'true')('serve the actu
   let modelCalls = 0, starts = 0, terminalPosts = 0, dropped = 0;
   let waitModel = false, holdTerminal = false, dropAck = false, gap37 = false, toolCount=1;
   let externalFetches=0;
+  let readCurrent=false, unknownStatus=false;
+  let modelWaiting=false;
   const originalFetch=globalThis.fetch;
   globalThis.fetch=((input: string|URL|Request,init?:RequestInit)=>{
     const url=new URL(typeof input==='string'||input instanceof URL?String(input):input.url);
@@ -43,9 +45,11 @@ test.skipIf(process.env.MANAO_TERMINAL_LOCAL_HARNESS !== 'true')('serve the actu
         }
         let step=0;return scriptedSessionFactory([], () => {modelCalls++;}, async (_context,_session,signal) => {
         const current=step++;
-        if(waitModel && current>=toolCount) await new Promise<void>(resolve => {release=resolve;signal?.addEventListener('abort',resolve,{once:true});});
+        if(waitModel && current>=toolCount) { modelWaiting=true; await new Promise<void>(resolve => {release=resolve;signal?.addEventListener('abort',resolve,{once:true});}); modelWaiting=false; }
         if(signal?.aborted)return {stopReason:'aborted'};
-        if(current<toolCount){await new Promise(r=>setTimeout(r,25));return {toolCalls:[{id:`list-${current}`,name:'list_files',args:{directory:''}}]};}
+        if(current<toolCount){await new Promise(r=>setTimeout(r,25));return {toolCalls:[readCurrent
+          ? {id:`read-${current}`,name:'read_file',args:{path:'pom.xml'}}
+          : {id:`list-${current}`,name:'list_files',args:{directory:''}}]};}
         return {text:'本地 scripted provider 已完成。'};
       })(options);},
     });
@@ -76,12 +80,14 @@ test.skipIf(process.env.MANAO_TERMINAL_LOCAL_HARNESS !== 'true')('serve the actu
       }
       if(url.pathname==='/__control/mode'){
         waitModel=url.searchParams.get('wait')==='true';holdTerminal=url.searchParams.get('terminal')==='true';dropAck=url.searchParams.get('dropAck')==='true';gap37=url.searchParams.get('gap37')==='true';toolCount=1;
+        readCurrent=url.searchParams.get('readCurrent')==='true';unknownStatus=url.searchParams.get('unknown')==='true';
       }
       if(url.pathname==='/__control/release'){waitModel=false;release?.();release=null;holdTerminal=false;}
       if(url.pathname==='/__control/finish-model'){waitModel=false;release?.();release=null;}
       if(url.pathname==='/__control/reboot'){await handle.close();await boot();}
-      res.writeHead(200,{'content-type':'application/json'});res.end(JSON.stringify({modelCalls,starts,terminalPosts,dropped,externalFetches,gapDrops,lastProgressAccepted,activeTaskId:handle.activeTaskId()}));return;
+      res.writeHead(200,{'content-type':'application/json'});res.end(JSON.stringify({modelCalls,starts,terminalPosts,dropped,externalFetches,gapDrops,lastProgressAccepted,modelWaiting,activeTaskId:handle.activeTaskId()}));return;
     }
+    if(unknownStatus && req.method==='GET' && (req.url==='/status'||req.url?.startsWith('/tasks/'))){res.writeHead(503);res.end('{}');return;}
     if(req.method==='POST' && req.url?.endsWith('/start')){starts++;lastProgressAccepted=0;originalTask=req.url.split('/')[2]!;}
     forward(req,res,18989);
   });
