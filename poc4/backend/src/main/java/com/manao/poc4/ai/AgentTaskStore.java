@@ -1261,6 +1261,20 @@ public final class AgentTaskStore implements AgentTaskOccupancy {
             """,CLOSING_MARKER,BUDGET_CLOSE_REASON,now,now,taskId,CLOSING_MARKER,now)>0;
     }
 
+    /** The authenticated replacement observation only arms the original close flow. */
+    public synchronized boolean beginWorkerRestartClose(String taskId, long epoch, String expectedInstanceId) {
+        Timestamp now = Timestamp.from(clock.instant());
+        return jdbc.update("""
+            UPDATE agent_task SET state='NEEDS_ATTENTION', failure_code='AI_CLOSING',
+                close_reason_code='AI_WORKER_RESTARTED', next_reconcile_at=?, updated_at=?, reconcile_attempt=0
+            WHERE id=? AND worker_epoch=? AND worker_instance_id=?
+              AND deadline_at IS NOT NULL AND deadline_at>?
+              AND state IN ('QUEUED','RUNNING','NEEDS_ATTENTION')
+              AND terminal_report_id IS NULL AND close_reason_code IS NULL
+              AND (failure_code IS NULL OR failure_code<>'AI_CLOSING')
+            """, now, now, taskId, epoch, expectedInstanceId, now) == 1;
+    }
+
     /** Attempt accounting is independent of progress timestamps and survives backend restart. */
     public void deferReconcile(String taskId) {
         Timestamp now=Timestamp.from(clock.instant());

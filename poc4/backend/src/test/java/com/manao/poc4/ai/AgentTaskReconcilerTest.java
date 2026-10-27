@@ -16,6 +16,80 @@ import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 class AgentTaskReconcilerTest {
     private static final Instant NOW = Instant.parse("2026-10-26T00:00:00Z");
 
+    @Test void stableReplacementBootAndAuthenticatedMissingTaskCloseWithoutReplay() {
+        try (var h = new Harness()) {
+            var replacement = new AgentContracts.WorkerProcessStatus("new", "worker-new", null, null, null, true);
+            Mockito.when(h.worker.processStatus()).thenReturn(replacement);
+            Mockito.when(h.worker.status(h.id)).thenThrow(new com.manao.poc4.api.ApiException("AI_WORKER_NOT_FOUND", 404, "missing"));
+            h.settlement.reconcile(h.id);
+            assertThat(h.reason()).isEqualTo("AI_WORKER_RESTARTED");
+            assertThat(h.tasks.currentForOwner("owner", "project")).isPresent();
+            Mockito.when(h.tools.finishForClose(h.id)).thenReturn(true);
+            Mockito.when(h.tools.finishApplication(h.id)).thenReturn(true);
+            Mockito.when(h.tools.applicationCanRelease(h.id, false)).thenReturn(true);
+            h.settlement.reconcile(h.id);
+            assertThat(h.state()).isEqualTo("FAILED");
+            assertThat(h.tasks.currentForOwner("owner", "project")).isEmpty();
+            Mockito.verify(h.worker, Mockito.never()).start(Mockito.any());
+        }
+    }
+
+    @Test void missingTaskWithoutStableReplacementNeverCloses() {
+        for (String code : new String[] {"AI_WORKER_NOT_FOUND", "AI_WORKER_UNREACHABLE", "AI_WORKER_UNAUTHORIZED", "AI_WORKER_BAD_RESPONSE"}) {
+            try (var h = new Harness()) {
+                Mockito.when(h.worker.processStatus()).thenReturn(
+                    new AgentContracts.WorkerProcessStatus("boot", "worker-boot", null, null, null, true));
+                Mockito.when(h.worker.status(h.id)).thenThrow(new com.manao.poc4.api.ApiException(code, 502, "unknown"));
+                h.settlement.reconcile(h.id);
+                assertThat(h.reason()).as(code).isNull();
+                assertThat(h.state()).isEqualTo("RUNNING");
+            }
+        }
+        try (var h = new Harness()) {
+            Mockito.when(h.worker.processStatus()).thenReturn(
+                new AgentContracts.WorkerProcessStatus("new", "worker-new", null, null, null, true),
+                new AgentContracts.WorkerProcessStatus("newer", "worker-newer", null, null, null, true));
+            Mockito.when(h.worker.status(h.id)).thenThrow(new com.manao.poc4.api.ApiException("AI_WORKER_NOT_FOUND", 404, "missing"));
+            h.settlement.reconcile(h.id);
+            assertThat(h.reason()).isNull();
+        }
+    }
+
+    @Test void legacyAndUnboundTasksNeverEnterReplacementRecovery() {
+        for (String change : new String[] {"deadline_at=NULL", "worker_instance_id=NULL"}) {
+            try (var h = new Harness()) {
+                h.jdbc.update("UPDATE agent_task SET " + change + " WHERE id=?", h.id);
+                Mockito.when(h.worker.processStatus()).thenReturn(
+                    new AgentContracts.WorkerProcessStatus("new", "worker-new", null, null, null, true));
+                Mockito.when(h.worker.status(h.id)).thenThrow(new com.manao.poc4.api.ApiException("AI_WORKER_NOT_FOUND", 404, "missing"));
+                h.settlement.reconcile(h.id);
+                assertThat(h.reason()).isNull();
+                assertThat(h.tasks.currentForOwner("owner", "project")).isPresent();
+            }
+        }
+    }
+
+    @Test void receiptPersistedDuringReplacementObservationWinsTheCloseCas() {
+        try (var h = new Harness()) {
+            var replacement = new AgentContracts.WorkerProcessStatus("new", "worker-new", null, null, null, true);
+            var reads = new java.util.concurrent.atomic.AtomicInteger();
+            Mockito.when(h.worker.processStatus()).thenAnswer(call -> {
+                if (reads.incrementAndGet() == 2) {
+                    String reportId = AgentTaskStore.terminalReportId(h.id, 1, h.tasks.requestSha256Of(h.id));
+                    h.tasks.recordTerminal(h.id, 1, "worker-boot", reportId,
+                        "{\"state\":\"COMPLETED\",\"summary\":\"done\",\"failureCode\":null}",
+                        AgentContracts.TaskState.COMPLETED, "done", null);
+                }
+                return replacement;
+            });
+            Mockito.when(h.worker.status(h.id)).thenThrow(new com.manao.poc4.api.ApiException("AI_WORKER_NOT_FOUND", 404, "missing"));
+            Mockito.when(h.tools.applicationCanRelease(h.id, true)).thenReturn(true);
+            h.settlement.reconcile(h.id);
+            assertThat(h.reason()).isNull();
+            assertThat(h.state()).isEqualTo("COMPLETED");
+        }
+    }
+
     @Test void armsTheBudgetAtTheExactDeadlineWithoutAReceipt() {
         try (Harness h = new Harness()) {
             h.jdbc.update("UPDATE agent_task SET deadline_at=? WHERE id=?", Timestamp.from(NOW), h.id);
