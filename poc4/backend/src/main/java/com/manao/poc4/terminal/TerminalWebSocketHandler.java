@@ -390,29 +390,43 @@ public final class TerminalWebSocketHandler extends AbstractWebSocketHandler {
     void handleExit(BoundSession bound, Integer exitCode) {
         if (bound.settled || bound.revoked) return;
         if (!bound.terminationStarted.compareAndSet(false, true)) return;
-        ObjectNode frame = JSON.createObjectNode();
-        frame.put("type", "terminal.exit");
-        if (exitCode == null) {
-            frame.putNull("exitCode");
-        } else {
-            frame.put("exitCode", exitCode);
+        try {
+            ObjectNode frame = JSON.createObjectNode();
+            frame.put("type", "terminal.exit");
+            if (exitCode == null) {
+                frame.putNull("exitCode");
+            } else {
+                frame.put("exitCode", exitCode);
+            }
+            frame.put("reason", "SHELL_EXITED");
+            sendText(bound, frame);
+        } finally {
+            try {
+                settle(bound, "CLOSED", "SHELL_EXITED", exitCode);
+            } finally {
+                closeQuietly(bound.session, CloseStatus.NORMAL);
+            }
         }
-        frame.put("reason", "SHELL_EXITED");
-        sendText(bound, frame);
-        settle(bound, "CLOSED", "SHELL_EXITED", exitCode);
-        closeQuietly(bound.session, CloseStatus.NORMAL);
     }
 
     private void settleAndClose(BoundSession bound, String reason, String sessionState, Integer exitCode,
                                 CloseStatus status) {
         if (!bound.terminationStarted.compareAndSet(false, true)) return;
-        ObjectNode frame = JSON.createObjectNode();
-        frame.put("type", "terminal.exit");
-        frame.putNull("exitCode");
-        frame.put("reason", reason);
-        sendText(bound, frame);
-        settle(bound, sessionState, reason, exitCode);
-        closeQuietly(bound.session, status);
+        try {
+            ObjectNode frame = JSON.createObjectNode();
+            frame.put("type", "terminal.exit");
+            frame.putNull("exitCode");
+            frame.put("reason", reason);
+            // The frame is best effort: a throwing transport must not leave the single session
+            // LIVE just because the termination gate was already taken.
+            sendText(bound, frame);
+        } finally {
+            try {
+                settle(bound, sessionState, reason, exitCode);
+            } finally {
+                closeQuietly(bound.session, status);
+            }
+        }
     }
 
     /** Idempotent session settlement; the store only moves LIVE rows once. */

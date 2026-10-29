@@ -1,6 +1,7 @@
 package com.manao.poc4.terminal;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -45,6 +46,7 @@ class TerminalWebSocketTest {
     private CapturingSession session;
     private TerminalSessionService sessionService;
     private TerminalSessionServiceTest.FakeTerminalStore store;
+    private FakeRunStore runStore;
     private TerminalSessionServiceTest.MutableClock clock;
     private String liveTicket;
 
@@ -54,7 +56,7 @@ class TerminalWebSocketTest {
         session = new CapturingSession();
         store = new TerminalSessionServiceTest.FakeTerminalStore();
         clock = new TerminalSessionServiceTest.MutableClock();
-        FakeRunStore runStore = new FakeRunStore();
+        runStore = new FakeRunStore();
         runStore.projects.put(PROJECT, "READY");
         runStore.projectOwners.put(PROJECT, ALICE);
         runStore.runs.put(RUN, new FakeRun(new RunRecord(RUN, PROJECT, 5, RunState.RUNNING,
@@ -400,10 +402,34 @@ class TerminalWebSocketTest {
         // that exact session once, release the unique active-terminal slot and not open the PTY.
         assertThat(session.closed.getCode()).isEqualTo(4401);
         assertThat(bridge.opened).isFalse();
+        // The Run record/state is untouched (no RunStore mutation from revocation).
+        assertThat(runStore.runs).containsKey(RUN);
         assertThat(store.sessions.values()).noneMatch(record -> "LIVE".equals(record.state()));
         assertThat(store.sessions.values().stream()
             .filter(record -> "INTERRUPTED".equals(record.state())).count()).isEqualTo(1);
         // A subsequent terminal reservation for the same Run is not blocked by a leaked LIVE row.
+        assertThat(sessionService.reserve(80, 24,
+            new com.manao.poc4.auth.AuthContracts.AccountIdentity(ALICE, 0), PROJECT, RUN).ticket()).isNotBlank();
+    }
+
+    @Test
+    void throwingTransportStillSettlesTheSessionExactlyOnceAndFreesTheSlot() throws Exception {
+        TerminalWebSocketHandler handler = newHandler(session, liveTicket);
+        assertThat(bridge.opened).isTrue();
+        session.throwOnSend = true;
+
+        assertThatThrownBy(() -> handler.closeRun(RUN))
+            .isInstanceOf(IllegalStateException.class);
+
+        // The exit frame send failed, but the termination gate must still settle the LIVE row.
+        assertThat(store.sessions.values()).noneMatch(record -> "LIVE".equals(record.state()));
+        assertThat(store.sessions.values().stream()
+            .filter(record -> "INTERRUPTED".equals(record.state())).count()).isEqualTo(1);
+        // A later container close is idempotent: still exactly one settlement, no duplicate frame.
+        session.throwOnSend = false;
+        session.containerCallback();
+        assertThat(store.sessions.values().stream()
+            .filter(record -> "INTERRUPTED".equals(record.state())).count()).isEqualTo(1);
         assertThat(sessionService.reserve(80, 24,
             new com.manao.poc4.auth.AuthContracts.AccountIdentity(ALICE, 0), PROJECT, RUN).ticket()).isNotBlank();
     }
@@ -464,6 +490,7 @@ class TerminalWebSocketTest {
         final List<String> text = new ArrayList<>();
         final List<byte[]> binary = new ArrayList<>();
         CloseStatus closed;
+        boolean throwOnSend;
         String uri = "/api/v1/ws/terminals?ticket=skip";
         private final String id = "session-" + System.nanoTime();
         private final Map<String, Object> attributes = new ConcurrentHashMap<>();
@@ -502,6 +529,7 @@ class TerminalWebSocketTest {
         @Override public Map<String, Object> getAttributes() { return attributes; }
         @Override public boolean isOpen() { return closed == null; }
         @Override public void sendMessage(WebSocketMessage<?> message) throws IOException {
+            if (throwOnSend) throw new IllegalStateException("transport down");
             if (message instanceof TextMessage textMessage) text.add(textMessage.getPayload());
             if (message instanceof BinaryMessage binaryMessage) binary.add(binaryMessage.getPayload().array());
         }

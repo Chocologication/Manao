@@ -258,12 +258,12 @@ class RunLogWebSocketTest {
         revoker.closeOlder("user", 1);
 
         assertThat(target.closed.getCode()).isEqualTo(4401);
-        // Simulate the transport actually being closed; its listener must be gone while the
-        // collector and persisted log service keep working.
-        target.stayOpen = false;
+        // Even while the fake transport still reports open, a revoked session receives no
+        // publish/heartbeat frames; the collector and persisted log service keep working.
         assertThat(logService.publish(RUN, 1, "after revoke\n")).isTrue();
         revocable.heartbeat();
         assertThat(target.text).hasSize(beforeRevoke);
+        target.stayOpen = false;
         assertThat(logService.windowFor(RUN).meta().lastAvailableSeq()).isEqualTo(1);
 
         // A handshake that raced the password commit (registered after the watermark rose) is
