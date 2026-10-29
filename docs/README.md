@@ -20,21 +20,21 @@
 
 - 选型、已确认需求与原始分期：[AI 方案评估](research/2026-10-13-ai-integration-framework-evaluation.md)。这是设计来源，当前交付状态看项目进度。
 - 任务收尾、持久化回执、Run 恢复与用户结束控制：[收尾修复设计](superpowers/specs/2026-10-25-ai-terminal-settlement-design.md)。
-- 阶段四暂停接管、同会话手动继续：[控制与恢复设计](superpowers/specs/2026-10-27-pi-stage4-control-recovery-design.md)，其末尾链接五任务实施计划和Agent交接；当前仅规划完成。
+- 阶段四暂停接管、同会话手动继续：[控制与恢复设计](superpowers/specs/2026-10-27-pi-stage4-control-recovery-design.md)，其末尾链接五任务实施计划和Agent交接；实现与已授权云端验证已完成，范围见[阶段四验收](../poc4/docs/evidence/ai-stage4/acceptance.md)。
 - 多轮会话与压缩：[会话上下文设计](superpowers/specs/2026-10-19-ai-conversation-context-design.md)。
 - 流式输出、思考强度与 Markdown：[输出设计](superpowers/specs/2026-10-20-ai-streaming-reasoning-markdown-design.md)。
 
-只在执行对应任务时再读[执行计划与交接目录](superpowers/plans/)中同主题、同日期的文档；该目录集中保留收尾修复计划/交接、ThinkRail 改造及 Python 修复/依赖导入等已完成计划，不逐项增加导航。阶段验收、复审及实际发布证据由项目进度中的对应专题记录负责。
+只在执行对应任务时再读[AI 执行计划与交接目录](superpowers/plans/)中同主题、同日期的文档；该目录保留 AI 各阶段、会话上下文、流式输出、ThinkRail 及收尾修复等资料，不逐项增加导航。阶段验收、复审及实际发布证据由项目进度中的对应专题记录负责；已完成计划不作为默认待办队列。
 
 </details>
 
 <details>
 <summary>Java / Python 运行时</summary>
 
-- 项目端口、MySQL/Redis、应用寿命与 Maven 缓存：[Java 运行时设计](superpowers/specs/2026-09-21-java-project-runtime-design.md)。
-- Python console / FastAPI、uv 依赖编辑与恢复：[Python 运行时设计](superpowers/specs/2026-09-25-python-runtime-design.md)。
+- 项目端口、MySQL/Redis、应用寿命与 Maven 缓存：[Java 运行时设计](old_docs/superpowers/specs/2026-09-21-java-project-runtime-design.md)。
+- Python console / FastAPI、uv 依赖编辑与恢复：[Python 运行时设计](old_docs/superpowers/specs/2026-09-25-python-runtime-design.md)。
 
-实现计划保留在 `superpowers/plans/`，实际结果在 `poc4/docs/evidence/java-runtime/` 和 `poc4/docs/evidence/python-runtime/`。已完成的计划不作为默认待办队列。
+设计、审查、实施计划与交接归档在 `old_docs/superpowers/` 下；实际结果见[Java 验收](../poc4/docs/evidence/java-runtime/acceptance.md)和[Python 验收](../poc4/docs/evidence/python-runtime/acceptance.md)。归档保留设计合同与历史边界，修改对应运行时时仍应按需查阅。
 
 </details>
 
@@ -44,6 +44,7 @@
 - 云环境初始化、基础组件与维护：[6B 部署手册](../poc4/deploy/6b/README.md)。
 - 云端与本地联调的环境边界：[基础设施说明](Stage6-Infrastructure-Status.md)。
 - 已接受的 6A 基线：[6A 当前事实](Stage6A-Current-Facts.md)；旧方案为何调整：[阶段演进记录](Stage6A-Evolution-Timeline.md)。
+- AI 集成前的 POC2、POC4、6A/6B 及 Java/Python 资料：[历史计划与交接](old_docs/superpowers/plans/)、[历史设计与审查](old_docs/superpowers/specs/)。以 2026-10-13 AI 集成开始为分界归档此前的17份文档，文件名和历史结论保留；这些资料用于追溯，不作为当前执行指令。
 
 后续 AI 发布是基础环境之上的增量；具体镜像、迁移和回滚读该次发布手册，不能只重放旧的 6B 部署步骤。旧 gate、旧 FAIL 和历史环境快照都不代表当前状态。
 
@@ -58,7 +59,8 @@
 | `what-we-have-done.md` | 当前交付结论、待定事项及对应证据入口 |
 | `Manao-Projects-goal.md` / `CONTEXT.md` | 产品范围 / 领域定义 |
 | `development-guide.md` | 按操作场景查阅的长期工作约定 |
-| `research/` / `superpowers/specs/` / `superpowers/plans/` | 方案评估 / 设计合同 / 执行计划与交接 |
+| `research/` / `superpowers/specs/` / `superpowers/plans/` | 方案评估 / AI 设计合同 / AI 执行计划与交接 |
+| `old_docs/superpowers/specs/` / `old_docs/superpowers/plans/` | AI 集成前的历史设计、审查、实施计划与交接；按主题追溯 |
 | `../poc4/docs/evidence/<topic>/` | 日期、验证范围、失败与实际结果 |
 | `../poc4/deploy/<topic>/` | 发布身份、操作命令、迁移与回滚 |
 

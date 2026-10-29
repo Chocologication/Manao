@@ -1,7 +1,7 @@
 # Java 项目运行环境升级设计
 
 **日期：** 2026-09-21
-**状态：** 用户已确认异常退出后手动再次运行、不自动拉起。原 Job + Service 方案已有实施分支，实际验收以[运行时记录](../../../poc4/docs/evidence/java-runtime/acceptance.md)为准。2026-09-22 新增的 Maven 预置依赖与项目缓存方案已获用户确认，本次仅更新文档，尚未实现或测量提速。
+**状态：** 用户已确认异常退出后手动再次运行、不自动拉起。原 Job + Service 方案已有实施分支，实际验收以[运行时记录](../../../../poc4/docs/evidence/java-runtime/acceptance.md)为准。2026-09-22 新增的 Maven 预置依赖与项目缓存方案已获用户确认，本次仅更新文档，尚未实现或测量提速。
 **代码基线：** `e9c702e`，包含已验收的 POC4 / Stage 6B 基线 `860cdda`。
 **范围：** 多语言适配前的 Java 运行环境升级；不重新编号历史 POC，不改变 6A/6B 的验收结论。
 
@@ -45,22 +45,22 @@ MySQL 保留表示平台不会因停止、应用失败或重启主动清空数�
 
 | 当前事实 | 源码 | 必要变化 |
 | --- | --- | --- |
-| 创建请求仅有 `name`，模板固定 Java/Maven | [ProjectController](../../../poc4/backend/src/main/java/com/manao/poc4/project/ProjectController.java)、[WorkspaceTemplate](../../../poc4/backend/src/main/java/com/manao/poc4/workspace/WorkspaceTemplate.java) | 增加受控模板、端口和依赖配置 |
-| 固定 Maven 命令、Job、1800 秒上限 | [JobResourceFactory](../../../poc4/backend/src/main/java/com/manao/poc4/kubernetes/JobResourceFactory.java)、[BackendProperties](../../../poc4/backend/src/main/java/com/manao/poc4/config/BackendProperties.java) | 保留任务路径；服务路径使用不同运行策略 |
-| 活动 Run 阻止文件写入 | [WorkspaceJdbcStore](../../../poc4/backend/src/main/java/com/manao/poc4/workspace/WorkspaceJdbcStore.java) | 保留约束；停止必须以实际工作负载退出为依据 |
-| workspace Service:8080 指向文件管理 agent | [WorkspaceResourceFactory](../../../poc4/backend/src/main/java/com/manao/poc4/kubernetes/WorkspaceResourceFactory.java) | 新建应用 Service，不公开或复用 workspace Service |
-| 运行观察和身份核验已支持 Job，固定容器名 `maven` | [RunObservationService](../../../poc4/backend/src/main/java/com/manao/poc4/run/RunObservationService.java)、[ResourceIdentityVerifier](../../../poc4/backend/src/main/java/com/manao/poc4/kubernetes/ResourceIdentityVerifier.java) | 复用 Job 身份链，补充 UID、就绪、期限及未知事实分类 |
-| 日志 watch 按 Run 复用，重接时跳过已有日志前缀 | [RunLogIngestor](../../../poc4/backend/src/main/java/com/manao/poc4/log/RunLogIngestor.java) | 增加 Pod/container 实例维度，防止重建后跳错新日志 |
-| 工作区恢复删除按项目标签选中的 Pod/Service | [ProjectResourceCleaner](../../../poc4/backend/src/main/java/com/manao/poc4/kubernetes/ProjectResourceCleaner.java) | 恢复必须限定 workspace/initializer，不能误删依赖或应用 |
+| 创建请求仅有 `name`，模板固定 Java/Maven | [ProjectController](../../../../poc4/backend/src/main/java/com/manao/poc4/project/ProjectController.java)、[WorkspaceTemplate](../../../../poc4/backend/src/main/java/com/manao/poc4/workspace/WorkspaceTemplate.java) | 增加受控模板、端口和依赖配置 |
+| 固定 Maven 命令、Job、1800 秒上限 | [JobResourceFactory](../../../../poc4/backend/src/main/java/com/manao/poc4/kubernetes/JobResourceFactory.java)、[BackendProperties](../../../../poc4/backend/src/main/java/com/manao/poc4/config/BackendProperties.java) | 保留任务路径；服务路径使用不同运行策略 |
+| 活动 Run 阻止文件写入 | [WorkspaceJdbcStore](../../../../poc4/backend/src/main/java/com/manao/poc4/workspace/WorkspaceJdbcStore.java) | 保留约束；停止必须以实际工作负载退出为依据 |
+| workspace Service:8080 指向文件管理 agent | [WorkspaceResourceFactory](../../../../poc4/backend/src/main/java/com/manao/poc4/kubernetes/WorkspaceResourceFactory.java) | 新建应用 Service，不公开或复用 workspace Service |
+| 运行观察和身份核验已支持 Job，固定容器名 `maven` | [RunObservationService](../../../../poc4/backend/src/main/java/com/manao/poc4/run/RunObservationService.java)、[ResourceIdentityVerifier](../../../../poc4/backend/src/main/java/com/manao/poc4/kubernetes/ResourceIdentityVerifier.java) | 复用 Job 身份链，补充 UID、就绪、期限及未知事实分类 |
+| 日志 watch 按 Run 复用，重接时跳过已有日志前缀 | [RunLogIngestor](../../../../poc4/backend/src/main/java/com/manao/poc4/log/RunLogIngestor.java) | 增加 Pod/container 实例维度，防止重建后跳错新日志 |
+| 工作区恢复删除按项目标签选中的 Pod/Service | [ProjectResourceCleaner](../../../../poc4/backend/src/main/java/com/manao/poc4/kubernetes/ProjectResourceCleaner.java) | 恢复必须限定 workspace/initializer，不能误删依赖或应用 |
 | 完整清理以 Job/Pod/Service/PVC 为中心，PV 关联偏向单个 workspace PVC | 同上 | 纳入新控制器、Secret、策略和每个数据卷的完整清单 |
-| 当前 Role 不含 Deployment、StatefulSet、Secret、NetworkPolicy 等写权限 | [backend-rbac.yaml](../../../poc4/deploy/6b/backend-rbac.yaml) | 在新功能部署中声明所需的命名空间权限；不是凭据刷新即可解决 |
-| 前端 RunPolicy/原因码严格限定当前 Maven 流程 | [run.ts](../../../poc4/frontend/src/contracts/run.ts) | 联合类型识别任务/服务，保留旧记录兼容 |
+| 当前 Role 不含 Deployment、StatefulSet、Secret、NetworkPolicy 等写权限 | [backend-rbac.yaml](../../../../poc4/deploy/6b/backend-rbac.yaml) | 在新功能部署中声明所需的命名空间权限；不是凭据刷新即可解决 |
+| 前端 RunPolicy/原因码严格限定当前 Maven 流程 | [run.ts](../../../../poc4/frontend/src/contracts/run.ts) | 联合类型识别任务/服务，保留旧记录兼容 |
 
 以上是代码检查，不是新能力已经可用的证据。当前集群容量、网络规则和策略执行能力没有在本轮实测。
 
 ## 3. 产品概念与生命周期
 
-产品术语见 [CONTEXT.md](../../../CONTEXT.md)。项目包含工作区、环境配置、项目依赖和多次 Run。每个项目仍最多有一个活动 Run；任务型与服务型执行共享这条约束。
+产品术语见 [CONTEXT.md](../../../../CONTEXT.md)。项目包含工作区、环境配置、项目依赖和多次 Run。每个项目仍最多有一个活动 Run；任务型与服务型执行共享这条约束。
 
 | 用户操作或事件 | 应用与工作区 | MySQL | Redis 缓存 | 公开端点 |
 | --- | --- | --- | --- | --- |
@@ -174,7 +174,7 @@ MySQL 为每项目创建独立数据库、非 root 应用账号和随机密码�
 - readiness 覆盖主监听器和选中的依赖；只开放最小 health 路径，不开放 env/config。Pod 不 Ready 时不发布服务端点；额外端口是否真实监听另行观察，配置转发不等于 Java 自动打开监听器。
 - 已经 Ready 的应用若临时不可用，停止转发、显示 UNAVAILABLE，但不重启进程或重置寿命；用户可提前停止，最终仍受原到期时间限制。
 - 未请求停止而服务进程退出（即使 exit code 0）是 FAILED / APPLICATION_EXITED，不是 BUILD_SUCCEEDED。用户停止为 CANCELLED / USER_STOPPED；到期为 TIMED_OUT / TIME_LIMIT_EXCEEDED；启动超时使用 TIMED_OUT / STARTUP_TIME_LIMIT_EXCEEDED。
-- **（2026-09-25 补充：就绪探测的固定路径是契约的一部分。）** supervisor 固定轮询主端口 `/actuator/health/readiness`（Spring Boot Actuator）。导入的不带 Actuator 的应用即使端口在监听、依赖（如 MySQL）连接正常，也无法通过就绪验证：Run 按启动预算终态 TIMED_OUT / STARTUP_TIME_LIMIT_EXCEEDED，Service selector 保持不转发（fail-closed）。实测记录见 [acceptance §9.3](../../../poc4/docs/evidence/java-runtime/acceptance.md)。仅 TCP 端口打开不构成就绪证据；平台不引入自动 TCP 回退，启动预算与 7200s 就绪武装不变（用户决定暂不为任意应用健康检查另行立项）。
+- **（2026-09-25 补充：就绪探测的固定路径是契约的一部分。）** supervisor 固定轮询主端口 `/actuator/health/readiness`（Spring Boot Actuator）。导入的不带 Actuator 的应用即使端口在监听、依赖（如 MySQL）连接正常，也无法通过就绪验证：Run 按启动预算终态 TIMED_OUT / STARTUP_TIME_LIMIT_EXCEEDED，Service selector 保持不转发（fail-closed）。实测记录见 [acceptance §9.3](../../../../poc4/docs/evidence/java-runtime/acceptance.md)。仅 TCP 端口打开不构成就绪证据；平台不引入自动 TCP 回退，启动预算与 7200s 就绪武装不变（用户决定暂不为任意应用健康检查另行立项）。
 
 ### 7.3.1 到期终止与单次执行
 

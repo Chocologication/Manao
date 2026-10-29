@@ -10,7 +10,7 @@
 
 **Spec:** [收敛后的设计](../specs/2026-09-21-java-project-runtime-design.md)；先读 [codebase-design 模块审查](../specs/2026-09-21-java-runtime-module-review.md)。
 
-**Status / baseline:** 原计划于 2026-09-21 基于 `e9c702e` 编写。2026-09-22 检查实施分支 `codex/java-runtime-implementation` 的 `ec14339`，已有原任务代码与 Task 8 准备记录；实际部署/验收以[运行时记录](../../../poc4/docs/evidence/java-runtime/acceptance.md)为准，不以本文尚未勾选的历史步骤推断任务未执行。实施前检查最新分支/未提交改动；文件路径相对于实际实施检出，不在 master 或已完成的 6B 工作树直接写实现。
+**Status / baseline:** 原计划于 2026-09-21 基于 `e9c702e` 编写。2026-09-22 检查实施分支 `codex/java-runtime-implementation` 的 `ec14339`，已有原任务代码与 Task 8 准备记录；实际部署/验收以[运行时记录](../../../../poc4/docs/evidence/java-runtime/acceptance.md)为准，不以本文尚未勾选的历史步骤推断任务未执行。实施前检查最新分支/未提交改动；文件路径相对于实际实施检出，不在 master 或已完成的 6B 工作树直接写实现。
 
 **2026-09-22 已批准补充：** 按[Maven 缓存补充计划](2026-09-22-java-maven-cache-implementation-plan.md)实施镜像预置模板依赖与现有 workspace PVC 内的项目缓存。C1/C2 在 Task 9 之前完成，C3 并入 Task 9；不重新执行已完成的 Task 1–8，不新增依赖缓存 PVC。本次文档更新未实现或验收缓存。
 

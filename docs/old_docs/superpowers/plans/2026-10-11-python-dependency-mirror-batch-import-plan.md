@@ -1,6 +1,6 @@
 # Python 依赖镜像源与批量导入实施计划
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use `superpowers:executing-plans` to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking. 本文件只描述计划；后记：全部任务已于 2026-10-11/12 按 SDD 实施并部署（执行记录见 [Python Acceptance](../../poc4/docs/evidence/python-runtime/acceptance.md) 第 7–8 节），分支于 2026-10-12 由 `2ef32a5` 合并到 `master`。
+> **For agentic workers:** REQUIRED SUB-SKILL: Use `superpowers:executing-plans` to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking. 本文件只描述计划；后记：全部任务已于 2026-10-11/12 按 SDD 实施并部署（执行记录见 [Python Acceptance](../../../../poc4/docs/evidence/python-runtime/acceptance.md) 第 7–8 节），分支于 2026-10-12 由 `2ef32a5` 合并到 `master`。
 
 **Goal:** 在现有 Python `uv add/remove` 可靠操作协议上，将新依赖解析默认切换到阿里云 PyPI 镜像，并增加一个把根目录 `requirements.txt` 批量导入合并为一次事务的入口。
 

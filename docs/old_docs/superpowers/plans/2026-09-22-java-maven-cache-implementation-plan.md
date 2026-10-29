@@ -10,7 +10,7 @@
 
 **Spec:** [设计 §7.5](../specs/2026-09-21-java-project-runtime-design.md#75-maven-预置依赖与项目缓存2026-09-22-补充)；实施前读[模块审查 §3.6](../specs/2026-09-21-java-runtime-module-review.md#36-maven-预置与缓存2026-09-22-补充)。
 
-**Status / baseline:** 2026-09-22 用户已确认方案。本文件基于实施分支 `codex/java-runtime-implementation`、`ec14339` 的代码检查编写；仅完成文档，缓存实现、镜像发布和提速测量尚未执行。原计划 Task 8 已有准备记录，云端结果以[运行时验收记录](../../../poc4/docs/evidence/java-runtime/acceptance.md)为准，不能把旧 6B PASS 当成本功能验收。
+**Status / baseline:** 2026-09-22 用户已确认方案。本文件基于实施分支 `codex/java-runtime-implementation`、`ec14339` 的代码检查编写；仅完成文档，缓存实现、镜像发布和提速测量尚未执行。原计划 Task 8 已有准备记录，云端结果以[运行时验收记录](../../../../poc4/docs/evidence/java-runtime/acceptance.md)为准，不能把旧 6B PASS 当成本功能验收。
 
 ## Global Constraints
 

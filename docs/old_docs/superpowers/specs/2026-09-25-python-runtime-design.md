@@ -2,7 +2,7 @@
 
 **日期：** 2026-09-25
 
-**状态：** 2026-09-25 自审修订版 r2；用户同意按自审结果收紧方案，模板范围和 uv 入口已确认。后记：设计已按 r2 全部实施（2026-09-26/27），其后的工作台/日志修复轮（2026-09-29）与依赖镜像/批量导入轮（2026-10-11/12）记录于 [Python Acceptance](../../poc4/docs/evidence/python-runtime/acceptance.md) 第 5–8 节；整个分支已于 2026-10-12 由 `2ef32a5` 合并到 `master`。
+**状态：** 2026-09-25 自审修订版 r2；用户同意按自审结果收紧方案，模板范围和 uv 入口已确认。后记：设计已按 r2 全部实施（2026-09-26/27），其后的工作台/日志修复轮（2026-09-29）与依赖镜像/批量导入轮（2026-10-11/12）记录于 [Python Acceptance](../../../../poc4/docs/evidence/python-runtime/acceptance.md) 第 5–8 节；整个分支已于 2026-10-12 由 `2ef32a5` 合并到 `master`。
 
 **基线：** `06e8133820867cc9d200ab63913d1a282d2dedf6`，包含 Java 集成提交 `ef1b5bb`。
 
@@ -230,6 +230,6 @@ Python 验收结果写入新 `poc4/docs/evidence/python-runtime/acceptance.md`�
 - [uv project synchronization](https://docs.astral.sh/uv/concepts/projects/sync)：`--locked` 校验声明与锁一致；`--frozen` 跳过锁新鲜度检查，不能拿来掩盖不一致；`--no-sync` 跳过环境同步。
 - [uv dependencies](https://docs.astral.sh/uv/concepts/projects/dependencies)：`uv add/remove` 管理依赖。
 - [FastAPI containers](https://fastapi.tiangolo.com/deployment/docker) 与 [server workers](https://fastapi.tiangolo.com/deployment/server-workers)：容器内单 Uvicorn 进程的部署方式。
-- [Java Runtime Design](2026-09-21-java-project-runtime-design.md)、[Java Runtime Acceptance](../../../poc4/docs/evidence/java-runtime/acceptance.md)：已有契约与证据边界。
+- [Java Runtime Design](2026-09-21-java-project-runtime-design.md)、[Java Runtime Acceptance](../../../../poc4/docs/evidence/java-runtime/acceptance.md)：已有契约与证据边界。
 
 这些文档支持方案选择；容器分发、缓存复制兼容性和目标集群可用性仍由实施中的实测证明。

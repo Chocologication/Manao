@@ -24,8 +24,8 @@ D:\DeepLearning\MyProjects\Project_Manao\.worktree\python-runtime
 
 1. `AGENTS.md`
 2. `CONTEXT.md`
-3. `docs/superpowers/specs/2026-09-25-python-runtime-design.md`
-4. `docs/superpowers/plans/2026-09-25-python-runtime-implementation-plan.md`
+3. `docs/old_docs/superpowers/specs/2026-09-25-python-runtime-design.md`
+4. `docs/old_docs/superpowers/plans/2026-09-25-python-runtime-implementation-plan.md`
 5. `poc4/docs/evidence/java-runtime/acceptance.md` 的当前结论与限制
 
 实施计划定义任务顺序与验证，设计定义产品行为和协议。用源码核对接口，不把历史报告当本轮测试结果。保留主目录以及其他工作树的无关改动。

@@ -14,7 +14,7 @@
 
 ## 全局约束
 
-- 6A 阶段结论以 [Stage6A-Current-Facts.md](../../Stage6A-Current-Facts.md) 为准：已按 MVP 生命周期接受。历史完整工程矩阵未全部通过，不重新把它设为 6B 的前置门禁。
+- 6A 阶段结论以 [Stage6A-Current-Facts.md](../../../Stage6A-Current-Facts.md) 为准：已按 MVP 生命周期接受。历史完整工程矩阵未全部通过，不重新把它设为 6B 的前置门禁。
 - 仅本人使用；全新数据；公网 IP，无域名；允许部署更新、服务重启期间短暂不可用，恢复后刷新或重新登录。
 - 已保存文件和项目必须跨服务重启保留；不承诺保存未显式提交的浏览器缓冲，也不承诺运行任务在服务器故障中无中断。
 - 保留 owner 校验、文件 revision、Run 状态、日志回放、操作回执与手动删除语义；传输结果不确定时先对账，不盲目重放写请求。
@@ -52,17 +52,17 @@
 
 | 当前事实 | 证据与含义 |
 | --- | --- |
-| 6A 已按真实 MVP 生命周期验收，6B 分支已建立 | [现行事实](../../Stage6A-Current-Facts.md)及本轮 Git 检查；不是本轮重新跑过真实生命周期 |
-| 前端当前依赖本机 Vite 的 `/api` 代理 | [vite.config.ts](../../../poc4/frontend/vite.config.ts)指向 `127.0.0.1:18080`；生产静态资源需要真正的服务器代理 |
-| 正式 API 和日志传输可复用同源入口 | [httpClient.ts](../../../poc4/frontend/src/api/httpClient.ts)使用相对 `/api/v1/`；[RunLogTransport.ts](../../../poc4/frontend/src/features/logs/RunLogTransport.ts)从页面协议/host 构造 WS/WSS |
-| 云端后端适配已有代码 | [application-cluster.yml](../../../poc4/backend/src/main/resources/application-cluster.yml)、[WorkspaceConfig.java](../../../poc4/backend/src/main/java/com/manao/poc4/config/WorkspaceConfig.java)支持集群身份和 workspace Service 直连；未证明实际 Pod 启动成功 |
-| 后端生命周期互斥是单实例语义 | [ProjectLifecycleGate.java](../../../poc4/backend/src/main/java/com/manao/poc4/project/ProjectLifecycleGate.java)；保留现有 lease/fencing，不通过多副本部署改变语义 |
-| 外部日志连接需要精确 Origin | [WebSocketConfig.java](../../../poc4/backend/src/main/java/com/manao/poc4/config/WebSocketConfig.java)提供 `MANAO_WS_EXTRA_ORIGIN`；只改代理而漏配公网 Origin 会使日志握手失败 |
-| 新库不会自动拥有可登录用户 | Flyway [V1 建表](../../../poc4/backend/src/main/resources/db/migration/V1__initial_schema.sql)与 [AuthController.java](../../../poc4/backend/src/main/java/com/manao/poc4/auth/AuthController.java)；需一次性建立本人账号，不复用 E2E 硬编码密码 |
-| 删除依赖真实存储策略和只读集群信息 | [ProjectResourceCleaner.java](../../../poc4/backend/src/main/java/com/manao/poc4/kubernetes/ProjectResourceCleaner.java)会 list PV、get StorageClass，核查 Delete/NFS 删除参数；旧计划禁止一切 PV 权限已不适用 |
-| 镜像和测试材料需要补齐 | 有 agent/runner Dockerfile；没有前后端完整部署资产。现有 [Playwright 配置](../../../poc4/frontend/playwright.config.ts)固定本机 URL，并可能启动 mock 服务，不能直接称为云端验收 |
+| 6A 已按真实 MVP 生命周期验收，6B 分支已建立 | [现行事实](../../../Stage6A-Current-Facts.md)及本轮 Git 检查；不是本轮重新跑过真实生命周期 |
+| 前端当前依赖本机 Vite 的 `/api` 代理 | [vite.config.ts](../../../../poc4/frontend/vite.config.ts)指向 `127.0.0.1:18080`；生产静态资源需要真正的服务器代理 |
+| 正式 API 和日志传输可复用同源入口 | [httpClient.ts](../../../../poc4/frontend/src/api/httpClient.ts)使用相对 `/api/v1/`；[RunLogTransport.ts](../../../../poc4/frontend/src/features/logs/RunLogTransport.ts)从页面协议/host 构造 WS/WSS |
+| 云端后端适配已有代码 | [application-cluster.yml](../../../../poc4/backend/src/main/resources/application-cluster.yml)、[WorkspaceConfig.java](../../../../poc4/backend/src/main/java/com/manao/poc4/config/WorkspaceConfig.java)支持集群身份和 workspace Service 直连；未证明实际 Pod 启动成功 |
+| 后端生命周期互斥是单实例语义 | [ProjectLifecycleGate.java](../../../../poc4/backend/src/main/java/com/manao/poc4/project/ProjectLifecycleGate.java)；保留现有 lease/fencing，不通过多副本部署改变语义 |
+| 外部日志连接需要精确 Origin | [WebSocketConfig.java](../../../../poc4/backend/src/main/java/com/manao/poc4/config/WebSocketConfig.java)提供 `MANAO_WS_EXTRA_ORIGIN`；只改代理而漏配公网 Origin 会使日志握手失败 |
+| 新库不会自动拥有可登录用户 | Flyway [V1 建表](../../../../poc4/backend/src/main/resources/db/migration/V1__initial_schema.sql)与 [AuthController.java](../../../../poc4/backend/src/main/java/com/manao/poc4/auth/AuthController.java)；需一次性建立本人账号，不复用 E2E 硬编码密码 |
+| 删除依赖真实存储策略和只读集群信息 | [ProjectResourceCleaner.java](../../../../poc4/backend/src/main/java/com/manao/poc4/kubernetes/ProjectResourceCleaner.java)会 list PV、get StorageClass，核查 Delete/NFS 删除参数；旧计划禁止一切 PV 权限已不适用 |
+| 镜像和测试材料需要补齐 | 有 agent/runner Dockerfile；没有前后端完整部署资产。现有 [Playwright 配置](../../../../poc4/frontend/playwright.config.ts)固定本机 URL，并可能启动 mock 服务，不能直接称为云端验收 |
 
-旧 [6B 设计](../../../poc4/docs/2026-08-27-ensoai-stage-6-real-backend-kubernetes-design.md)保留本机 Vite 和 backend Service port-forward，明确不含云端前端入口。本文在本次目标范围内替代旧 [Tasks 10–12](../../../poc4/docs/plans/2026-08-27-ensoai-stage-6-real-backend-kubernetes-implementation-plan.md)的执行顺序，不改写历史记录。
+旧 [6B 设计](../../../../poc4/docs/2026-08-27-ensoai-stage-6-real-backend-kubernetes-design.md)保留本机 Vite 和 backend Service port-forward，明确不含云端前端入口。本文在本次目标范围内替代旧 [Tasks 10–12](../../../../poc4/docs/plans/2026-08-27-ensoai-stage-6-real-backend-kubernetes-implementation-plan.md)的执行顺序，不改写历史记录。
 
 ## 4. 仍未验证的假设
 

@@ -28,14 +28,14 @@
 
 | 源码事实 | 对本次设计的影响 |
 | --- | --- |
-| [ProjectService](../../../poc4/backend/src/main/java/com/manao/poc4/project/ProjectService.java) 约 83 行，提供 owner-scoped create/list/get；[ProjectController](../../../poc4/backend/src/main/java/com/manao/poc4/project/ProjectController.java) 在创建后触发异步初始化 | 不需要仅为转发多建一层通用 ProjectManager；在创建入口统一配置契约，把 Kubernetes 副作用留在初始化内部 |
-| [ProjectProvisioningService](../../../poc4/backend/src/main/java/com/manao/poc4/project/ProjectProvisioningService.java) 先建 PVC、initializer、workspace，写模板后 READY；失败会调用整个项目资源清理 | 增加数据库前必须明确“初次创建失败”与“已有数据的恢复失败”，不能沿用笼统 catch 后删除全部资源 |
-| [RunService](../../../poc4/backend/src/main/java/com/manao/poc4/run/RunService.java) 已包含 revision、单活动 Run、租约及 start/stop；[JobCoordinator](../../../poc4/backend/src/main/java/com/manao/poc4/kubernetes/JobCoordinator.java) 已提供 ensure/facts/stop | 若复用 Job，只需扩展模板/运行策略/就绪/到期，无需先发明通用 WorkloadCoordinator 和两条平行运行流程 |
-| [JobResourceFactory](../../../poc4/backend/src/main/java/com/manao/poc4/kubernetes/JobResourceFactory.java) 使用 `restartPolicy: Never`、`backoffLimit: 0`，当前时限从 Job 开始计算 | 适合显式启动的一次运行；但不能直接改成 activeDeadlineSeconds=7200 便声称满足“首次成功启动后 2 小时” |
-| [RunObservationService](../../../poc4/backend/src/main/java/com/manao/poc4/run/RunObservationService.java) 与 [RunRecoveryService](../../../poc4/backend/src/main/java/com/manao/poc4/run/RunRecoveryService.java) 已观察现有 Job 并恢复状态 | 两条路径必须共用同一寿命/终态规则；后端恢复不是自动再次执行用户代码 |
-| [RunLogIngestor](../../../poc4/backend/src/main/java/com/manao/poc4/log/RunLogIngestor.java) 已复用持久化序号和重接 | 不新增第二套日志存储或 WebSocket 通道；日志来源变化仍需准确识别，不把旧来源行号用于跳过新日志 |
-| [ProjectResourceCleaner](../../../poc4/backend/src/main/java/com/manao/poc4/kubernetes/ProjectResourceCleaner.java) 的 deleteWorkloads 选择整个项目 Pod/Service；PV 查询依赖当前 PVC 列表和固定 workspace PVC 名称 | 工作区修复要缩小选择范围；多个 PVC 被删后仍需识别其历史绑定 PV，不能只增加一行创建 MySQL PVC |
-| [ApiError](../../../poc4/backend/src/main/java/com/manao/poc4/api/ApiError.java) 有固定错误码与安全文案；[CreateProjectForm](../../../poc4/frontend/src/features/projects/CreateProjectForm.tsx) 当前只区分项目数上限和通用失败 | 端口冲突需要前后端一起增加有限错误码，否则会降级成“Request failed”，无法让用户改端口 |
+| [ProjectService](../../../../poc4/backend/src/main/java/com/manao/poc4/project/ProjectService.java) 约 83 行，提供 owner-scoped create/list/get；[ProjectController](../../../../poc4/backend/src/main/java/com/manao/poc4/project/ProjectController.java) 在创建后触发异步初始化 | 不需要仅为转发多建一层通用 ProjectManager；在创建入口统一配置契约，把 Kubernetes 副作用留在初始化内部 |
+| [ProjectProvisioningService](../../../../poc4/backend/src/main/java/com/manao/poc4/project/ProjectProvisioningService.java) 先建 PVC、initializer、workspace，写模板后 READY；失败会调用整个项目资源清理 | 增加数据库前必须明确“初次创建失败”与“已有数据的恢复失败”，不能沿用笼统 catch 后删除全部资源 |
+| [RunService](../../../../poc4/backend/src/main/java/com/manao/poc4/run/RunService.java) 已包含 revision、单活动 Run、租约及 start/stop；[JobCoordinator](../../../../poc4/backend/src/main/java/com/manao/poc4/kubernetes/JobCoordinator.java) 已提供 ensure/facts/stop | 若复用 Job，只需扩展模板/运行策略/就绪/到期，无需先发明通用 WorkloadCoordinator 和两条平行运行流程 |
+| [JobResourceFactory](../../../../poc4/backend/src/main/java/com/manao/poc4/kubernetes/JobResourceFactory.java) 使用 `restartPolicy: Never`、`backoffLimit: 0`，当前时限从 Job 开始计算 | 适合显式启动的一次运行；但不能直接改成 activeDeadlineSeconds=7200 便声称满足“首次成功启动后 2 小时” |
+| [RunObservationService](../../../../poc4/backend/src/main/java/com/manao/poc4/run/RunObservationService.java) 与 [RunRecoveryService](../../../../poc4/backend/src/main/java/com/manao/poc4/run/RunRecoveryService.java) 已观察现有 Job 并恢复状态 | 两条路径必须共用同一寿命/终态规则；后端恢复不是自动再次执行用户代码 |
+| [RunLogIngestor](../../../../poc4/backend/src/main/java/com/manao/poc4/log/RunLogIngestor.java) 已复用持久化序号和重接 | 不新增第二套日志存储或 WebSocket 通道；日志来源变化仍需准确识别，不把旧来源行号用于跳过新日志 |
+| [ProjectResourceCleaner](../../../../poc4/backend/src/main/java/com/manao/poc4/kubernetes/ProjectResourceCleaner.java) 的 deleteWorkloads 选择整个项目 Pod/Service；PV 查询依赖当前 PVC 列表和固定 workspace PVC 名称 | 工作区修复要缩小选择范围；多个 PVC 被删后仍需识别其历史绑定 PV，不能只增加一行创建 MySQL PVC |
+| [ApiError](../../../../poc4/backend/src/main/java/com/manao/poc4/api/ApiError.java) 有固定错误码与安全文案；[CreateProjectForm](../../../../poc4/frontend/src/features/projects/CreateProjectForm.tsx) 当前只区分项目数上限和通用失败 | 端口冲突需要前后端一起增加有限错误码，否则会降级成“Request failed”，无法让用户改端口 |
 
 ## 3. 模块职责、调用接口和测试位置
 
@@ -58,7 +58,7 @@ Optional<Project> create(String ownerId, String name, ProjectRuntimeSpec runtime
 
 `Optional.empty` 继续表示现有配额/用户创建失败约定；端口/配置不合法和明确冲突用固定错误码。不要在浏览器、Controller、ResourceFactory 各自维护一套不同的规则。
 
-**测试位置：** 扩展 [ProjectAuthorizationTest](../../../poc4/backend/src/test/java/com/manao/poc4/project/ProjectAuthorizationTest.java)、[ProjectProvisioningServiceTest](../../../poc4/backend/src/test/java/com/manao/poc4/project/ProjectProvisioningServiceTest.java)；新增 `project/ProjectRuntimeSpecTest.java` 验证配置值对象、`project/ProjectCreateHttpContractTest.java` 验证请求/响应和端口失败回到表单。持久化与迁移测试继续使用 [JdbcStoreTestSupport](../../../poc4/backend/src/test/java/com/manao/poc4/persistence/JdbcStoreTestSupport.java) 创建一次性 schema，不重置运行库。
+**测试位置：** 扩展 [ProjectAuthorizationTest](../../../../poc4/backend/src/test/java/com/manao/poc4/project/ProjectAuthorizationTest.java)、[ProjectProvisioningServiceTest](../../../../poc4/backend/src/test/java/com/manao/poc4/project/ProjectProvisioningServiceTest.java)；新增 `project/ProjectRuntimeSpecTest.java` 验证配置值对象、`project/ProjectCreateHttpContractTest.java` 验证请求/响应和端口失败回到表单。持久化与迁移测试继续使用 [JdbcStoreTestSupport](../../../../poc4/backend/src/test/java/com/manao/poc4/persistence/JdbcStoreTestSupport.java) 创建一次性 schema，不重置运行库。
 
 ### 3.2 公网端点
 
@@ -75,7 +75,7 @@ Optional<Project> create(String ownerId, String name, ProjectRuntimeSpec runtime
 - 用户原值申请明确被拒绝时，只有证实没有该申请的 Service/环境副作用后，才可取消临时创建记录/释放本次配额并返回 409，让用户改号再提交；禁止失败项目不断累积占配额。
 - 若请求结果未知，保留稳定项目/申请身份并核对，不自动新建第二个项目、不自动改号。实施计划需把这个状态纳入已有项目查询与创建结果恢复，不另建通用分布式事务平台。
 
-**测试位置：** 新增 `kubernetes/PublicEndpointGatewayTest.java`，对 mock server 注入冲突/超时/已存在同一资源，观察 Service nodePort 始终等于用户输入；扩展 [ErrorSanitizationTest](../../../poc4/backend/src/test/java/com/manao/poc4/api/ErrorSanitizationTest.java) 和前端表单测试。不能在普通 mock CRUD 能创建对象后就声称真实集群端口冲突行为已验证。
+**测试位置：** 新增 `kubernetes/PublicEndpointGatewayTest.java`，对 mock server 注入冲突/超时/已存在同一资源，观察 Service nodePort 始终等于用户输入；扩展 [ErrorSanitizationTest](../../../../poc4/backend/src/test/java/com/manao/poc4/api/ErrorSanitizationTest.java) 和前端表单测试。不能在普通 mock CRUD 能创建对象后就声称真实集群端口冲突行为已验证。
 
 ### 3.3 应用执行与寿命
 
@@ -89,7 +89,7 @@ Optional<Project> create(String ownerId, String name, ProjectRuntimeSpec runtime
 
 **不引入的抽象：** 首版只有 Job 应用实现，继续使用既有 JobCoordinator 与生产/test 适配位置；不创建 WorkloadCoordinator、DeploymentRunCoordinator 或语言插件注册器。
 
-**测试位置：** [RunControllerTest](../../../poc4/backend/src/test/java/com/manao/poc4/run/RunControllerTest.java)、[RunObservationServiceTest](../../../poc4/backend/src/test/java/com/manao/poc4/run/RunObservationServiceTest.java)、[RunRecoveryServiceTest](../../../poc4/backend/src/test/java/com/manao/poc4/run/RunRecoveryServiceTest.java)、[JobResourceFactoryTest](../../../poc4/backend/src/test/java/com/manao/poc4/kubernetes/JobResourceFactoryTest.java)、[Fabric8JobCoordinatorTest](../../../poc4/backend/src/test/java/com/manao/poc4/kubernetes/Fabric8JobCoordinatorTest.java)；新增寿命执行器的真实子进程测试位于 `poc4/maven-runner/tests/`。单元层用受控时钟，进程层验证确实退出，最后集中做一次正式 7200 秒验证，不在每层都等两小时。
+**测试位置：** [RunControllerTest](../../../../poc4/backend/src/test/java/com/manao/poc4/run/RunControllerTest.java)、[RunObservationServiceTest](../../../../poc4/backend/src/test/java/com/manao/poc4/run/RunObservationServiceTest.java)、[RunRecoveryServiceTest](../../../../poc4/backend/src/test/java/com/manao/poc4/run/RunRecoveryServiceTest.java)、[JobResourceFactoryTest](../../../../poc4/backend/src/test/java/com/manao/poc4/kubernetes/JobResourceFactoryTest.java)、[Fabric8JobCoordinatorTest](../../../../poc4/backend/src/test/java/com/manao/poc4/kubernetes/Fabric8JobCoordinatorTest.java)；新增寿命执行器的真实子进程测试位于 `poc4/maven-runner/tests/`。单元层用受控时钟，进程层验证确实退出，最后集中做一次正式 7200 秒验证，不在每层都等两小时。
 
 ### 3.4 项目依赖与清理
 
@@ -99,17 +99,17 @@ Optional<Project> create(String ownerId, String name, ProjectRuntimeSpec runtime
 
 清理复用 `ProjectCleanupService` → `ProjectResourceCleaner`，内部区分工作区修复与永久删除。`ProjectRuntimeCleaner` 当前负责关闭日志/socket/bridge 句柄，不因名称相近而塞入数据库卷删除逻辑。资源清单应是这个生命周期内部需要的最小持久化事实，不把一次 E2E 的证据台账变成通用产品模块。
 
-**测试位置：** 扩展 [ProjectResourceCleanerTest](../../../poc4/backend/src/test/java/com/manao/poc4/kubernetes/ProjectResourceCleanerTest.java)、[ProjectStorageReclamationTest](../../../poc4/backend/src/test/java/com/manao/poc4/kubernetes/ProjectStorageReclamationTest.java)、[ProjectCleanupServiceTest](../../../poc4/backend/src/test/java/com/manao/poc4/project/ProjectCleanupServiceTest.java)；新增 `project/ProjectDependenciesTest.java` 测选择/恢复/凭据复用。正常替换数据库 Pod 的数据保留只由真实数据库与存储验证，不用一个 Mockito 返回 true 代替。
+**测试位置：** 扩展 [ProjectResourceCleanerTest](../../../../poc4/backend/src/test/java/com/manao/poc4/kubernetes/ProjectResourceCleanerTest.java)、[ProjectStorageReclamationTest](../../../../poc4/backend/src/test/java/com/manao/poc4/kubernetes/ProjectStorageReclamationTest.java)、[ProjectCleanupServiceTest](../../../../poc4/backend/src/test/java/com/manao/poc4/project/ProjectCleanupServiceTest.java)；新增 `project/ProjectDependenciesTest.java` 测选择/恢复/凭据复用。正常替换数据库 Pod 的数据保留只由真实数据库与存储验证，不用一个 Mockito 返回 true 代替。
 
 ### 3.5 前端界面与契约
 
 **职责：** 收集模板、依赖和双端口输入，显示字段错误、运行/就绪/剩余时间和访问地址；不承担保留端口权威、最终冲突判断、杀进程或重试未知变更。
 
-延用 `CreateProjectForm` / `projectApi` / `projectQueries` / `contracts/project.ts`；每行明确“容器端口”和“公网端口”。只增加一个小型端口行视图（如果 JSX 复杂度确有必要），不建设动态表单框架。端口原值随请求提交，无自动补值。错误码同步修改 [ApiError](../../../poc4/backend/src/main/java/com/manao/poc4/api/ApiError.java) 和 [contracts/api.ts](../../../poc4/frontend/src/contracts/api.ts)，使用固定可理解文案。
+延用 `CreateProjectForm` / `projectApi` / `projectQueries` / `contracts/project.ts`；每行明确“容器端口”和“公网端口”。只增加一个小型端口行视图（如果 JSX 复杂度确有必要），不建设动态表单框架。端口原值随请求提交，无自动补值。错误码同步修改 [ApiError](../../../../poc4/backend/src/main/java/com/manao/poc4/api/ApiError.java) 和 [contracts/api.ts](../../../../poc4/frontend/src/contracts/api.ts)，使用固定可理解文案。
 
-继续使用 [RunPanel](../../../poc4/frontend/src/components/runs/RunPanel.tsx)、[RunToolbar](../../../poc4/frontend/src/components/runs/RunToolbar.tsx) 和现有日志通道。倒计时只展示 expiresAt 与当前时间差，浏览器关闭不影响执行时限。
+继续使用 [RunPanel](../../../../poc4/frontend/src/components/runs/RunPanel.tsx)、[RunToolbar](../../../../poc4/frontend/src/components/runs/RunToolbar.tsx) 和现有日志通道。倒计时只展示 expiresAt 与当前时间差，浏览器关闭不影响执行时限。
 
-**测试位置：** 在 [ProjectsPage.test.tsx](../../../poc4/frontend/src/features/projects/ProjectsPage.test.tsx) 覆盖创建流程；必要时新增 `CreateProjectForm.test.tsx` 承载输入组合，避免在两个文件重复同一断言。扩展 [RunPanel.test.tsx](../../../poc4/frontend/src/components/runs/RunPanel.test.tsx)、[contracts/run.test.ts](../../../poc4/frontend/src/contracts/run.test.ts)。一条新增的 `tests/e2e/java-runtime-lifecycle.spec.ts` 承担公网双端口、MySQL 数据保留、停止/到期与最终删除，复用现有 E2E 登录、Run 和 cleanup 工具。
+**测试位置：** 在 [ProjectsPage.test.tsx](../../../../poc4/frontend/src/features/projects/ProjectsPage.test.tsx) 覆盖创建流程；必要时新增 `CreateProjectForm.test.tsx` 承载输入组合，避免在两个文件重复同一断言。扩展 [RunPanel.test.tsx](../../../../poc4/frontend/src/components/runs/RunPanel.test.tsx)、[contracts/run.test.ts](../../../../poc4/frontend/src/contracts/run.test.ts)。一条新增的 `tests/e2e/java-runtime-lifecycle.spec.ts` 承担公网双端口、MySQL 数据保留、停止/到期与最终删除，复用现有 E2E 登录、Run 和 cleanup 工具。
 
 ### 3.6 Maven 预置与缓存（2026-09-22 补充）
 
