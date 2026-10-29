@@ -20,9 +20,12 @@ import io.fabric8.kubernetes.client.KubernetesClient;
 import io.fabric8.kubernetes.client.KubernetesClientBuilder;
 import io.fabric8.kubernetes.client.server.mock.KubernetesCrudDispatcher;
 import io.fabric8.kubernetes.client.server.mock.KubernetesMockServer;
+import io.fabric8.mockwebserver.http.RecordedRequest;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -92,15 +95,42 @@ class ProjectDependenciesTest {
             .withName(DependencyResourceFactory.redisSecretName(PROJECT)).get() != null;
     }
 
+    private boolean networkPolicyExists(String projectId) {
+        return client.network().networkPolicies().inNamespace(NS)
+            .withName(DependencyResourceFactory.networkPolicyName(projectId)).get() != null;
+    }
+
+    /** Drains the mock server's recorded requests and returns the POST paths in arrival order. */
+    private List<String> recordedCreates() throws InterruptedException {
+        List<String> creates = new ArrayList<>();
+        RecordedRequest request;
+        while ((request = server.takeRequest(50, TimeUnit.MILLISECONDS)) != null) {
+            if ("POST".equals(request.getMethod())) {
+                creates.add(request.getPath());
+            }
+        }
+        return creates;
+    }
+
+    private static int firstCreate(List<String> creates, String pathFragment) {
+        for (int i = 0; i < creates.size(); i++) {
+            if (creates.get(i).contains(pathFragment)) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
     @Test
     void ensureCreatesExactlyTheSelectedDependencies() {
-        // Console selection (no dependencies): nothing is created at all.
+        // Console selection (no dependencies): nothing is created at all, including no policy.
         dependencies.ensure(PROJECT, ProjectRuntimeSpec.console());
         assertThat(mysqlClaimExists()).isFalse();
         assertThat(mysqlStatefulSetExists()).isFalse();
         assertThat(mysqlSecretExists()).isFalse();
         assertThat(redisDeploymentExists()).isFalse();
         assertThat(redisSecretExists()).isFalse();
+        assertThat(networkPolicyExists(PROJECT)).isFalse();
 
         // MySQL only.
         dependencies.ensure(PROJECT, spec(true, false));
@@ -109,6 +139,7 @@ class ProjectDependenciesTest {
         assertThat(mysqlSecretExists()).isTrue();
         assertThat(redisDeploymentExists()).isFalse();
         assertThat(redisSecretExists()).isFalse();
+        assertThat(networkPolicyExists(PROJECT)).isTrue();
 
         // Redis only.
         dependencies.ensure("p2", spec(false, true));
@@ -118,6 +149,7 @@ class ProjectDependenciesTest {
             .withName(DependencyResourceFactory.redisDeploymentName("p2")).get()).isNotNull();
         assertThat(client.secrets().inNamespace(NS)
             .withName(DependencyResourceFactory.redisSecretName("p2")).get()).isNotNull();
+        assertThat(networkPolicyExists("p2")).isTrue();
 
         // Both.
         dependencies.ensure("p3", spec(true, true));
@@ -130,19 +162,60 @@ class ProjectDependenciesTest {
     }
 
     @Test
+    void dependencyNetworkPolicyIsCreatedOnceBeforeAnyDependencyWorkload() throws InterruptedException {
+        // A project without dependency selection gets no policy at all.
+        dependencies.ensure(PROJECT, ProjectRuntimeSpec.console());
+        assertThat(recordedCreates()).isEmpty();
+        assertThat(networkPolicyExists(PROJECT)).isFalse();
+
+        dependencies.ensure(PROJECT, spec(true, true));
+        List<String> creates = recordedCreates();
+        int policy = firstCreate(creates, "/networkpolicies");
+        // The policy must exist before the mysql/redis workloads it governs, and it is
+        // created exactly once even though both dependency branches are selected.
+        assertThat(policy).as("create order was %s", creates).isZero();
+        assertThat(firstCreate(creates, "/secrets")).isGreaterThan(policy);
+        assertThat(firstCreate(creates, "/persistentvolumeclaims")).isGreaterThan(policy);
+        assertThat(firstCreate(creates, "/statefulsets")).isGreaterThan(policy);
+        assertThat(firstCreate(creates, "/deployments")).isGreaterThan(policy);
+        assertThat(firstCreate(creates, "/services")).isGreaterThan(policy);
+        assertThat(creates.stream().filter(path -> path.contains("/networkpolicies")).count()).isEqualTo(1);
+
+        // A repeated ensure neither re-creates the policy nor writes anything.
+        dependencies.ensure(PROJECT, spec(true, true));
+        assertThat(recordedCreates()).isEmpty();
+        assertThat(networkPolicyExists(PROJECT)).isTrue();
+    }
+
+    @Test
     void repeatedEnsureNeverRotatesCredentials() {
         dependencies.ensure(PROJECT, spec(true, true));
         Secret firstMysql = client.secrets().inNamespace(NS)
             .withName(DependencyResourceFactory.mysqlSecretName(PROJECT)).get();
         Secret firstRedis = client.secrets().inNamespace(NS)
             .withName(DependencyResourceFactory.redisSecretName(PROJECT)).get();
+        var firstClaim = client.persistentVolumeClaims().inNamespace(NS)
+            .withName(DependencyResourceFactory.mysqlPvcName(PROJECT)).get();
+        var firstPolicy = client.network().networkPolicies().inNamespace(NS)
+            .withName(DependencyResourceFactory.networkPolicyName(PROJECT)).get();
         dependencies.ensure(PROJECT, spec(true, true));
         Secret secondMysql = client.secrets().inNamespace(NS)
             .withName(DependencyResourceFactory.mysqlSecretName(PROJECT)).get();
         Secret secondRedis = client.secrets().inNamespace(NS)
             .withName(DependencyResourceFactory.redisSecretName(PROJECT)).get();
+        var secondClaim = client.persistentVolumeClaims().inNamespace(NS)
+            .withName(DependencyResourceFactory.mysqlPvcName(PROJECT)).get();
+        var secondPolicy = client.network().networkPolicies().inNamespace(NS)
+            .withName(DependencyResourceFactory.networkPolicyName(PROJECT)).get();
         assertThat(secondMysql.getStringData()).isEqualTo(firstMysql.getStringData());
         assertThat(secondRedis.getStringData()).isEqualTo(firstRedis.getStringData());
+        // The data claim and the governing policy are reused, never replaced or rewritten.
+        assertThat(secondClaim.getMetadata().getUid()).isEqualTo(firstClaim.getMetadata().getUid());
+        assertThat(secondClaim.getMetadata().getResourceVersion())
+            .isEqualTo(firstClaim.getMetadata().getResourceVersion());
+        assertThat(secondPolicy.getMetadata().getUid()).isEqualTo(firstPolicy.getMetadata().getUid());
+        assertThat(secondPolicy.getMetadata().getResourceVersion())
+            .isEqualTo(firstPolicy.getMetadata().getResourceVersion());
     }
 
     @Test

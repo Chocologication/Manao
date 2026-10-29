@@ -137,6 +137,43 @@ class DependencyResourceFactoryTest {
     }
 
     @Test
+    void networkPolicyTargetSelectorCombinesTheProjectScopeWithTheComponentSelector() {
+        var first = factory.dependencyNetworkPolicy("p1");
+        var second = factory.dependencyNetworkPolicy("p2");
+        // The target selector must identify this project's dependency pods; selecting only
+        // component In(mysql,redis) would target every project's dependencies.
+        assertThat(first.getSpec().getPodSelector().getMatchLabels())
+            .containsEntry(WorkspaceResourceFactory.LABEL_PROJECT_ID, "p1");
+        assertThat(second.getSpec().getPodSelector().getMatchLabels())
+            .containsEntry(WorkspaceResourceFactory.LABEL_PROJECT_ID, "p2");
+        assertThat(first.getSpec().getPodSelector().getMatchLabels())
+            .doesNotContainEntry(WorkspaceResourceFactory.LABEL_PROJECT_ID, "p2");
+        // The target selector is never empty: an empty podSelector targets every pod.
+        assertThat(first.getSpec().getPodSelector().getMatchLabels()).hasSize(1);
+        assertThat(first.getSpec().getPodSelector().getMatchExpressions())
+            .anySatisfy(requirement -> {
+                assertThat(requirement.getKey()).isEqualTo(WorkspaceResourceFactory.LABEL_COMPONENT);
+                assertThat(requirement.getOperator()).isEqualTo("In");
+                assertThat(requirement.getValues()).containsExactly("mysql", "redis");
+            });
+        // The ingress source selector, policy type and dependency ports keep the pre-fix contract.
+        assertThat(first.getSpec().getPolicyTypes()).containsExactly("Ingress");
+        assertThat(first.getSpec().getIngress()).hasSize(1);
+        var rule = first.getSpec().getIngress().get(0);
+        assertThat(rule.getFrom()).hasSize(1);
+        assertThat(rule.getFrom().get(0).getPodSelector().getMatchLabels())
+            .containsEntry(WorkspaceResourceFactory.LABEL_PROJECT_ID, "p1")
+            .hasSize(1);
+        assertThat(rule.getPorts()).allSatisfy(port ->
+            assertThat(port.getProtocol()).isEqualTo("TCP"));
+        assertThat(rule.getPorts())
+            .extracting(port -> port.getPort().getIntVal())
+            .containsExactly(3306, 6379);
+        assertThat(first.getMetadata().getName()).isEqualTo(DependencyResourceFactory.networkPolicyName("p1"));
+        assertThat(second.getMetadata().getName()).isEqualTo(DependencyResourceFactory.networkPolicyName("p2"));
+    }
+
+    @Test
     void authSecretsHoldOnlyTheCredentialKeys() {
         var mysql = factory.mysqlAuthSecret(PROJECT, "app", "generated-app", "generated-root");
         assertThat(mysql.getMetadata().getName()).isEqualTo("manao-mysql-auth-p1");

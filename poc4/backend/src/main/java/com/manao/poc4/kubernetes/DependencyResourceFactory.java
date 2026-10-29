@@ -316,6 +316,9 @@ public class DependencyResourceFactory {
      * Dependency pods admit ingress only from pods of the same project (workspace pod,
      * initializer and run Jobs share the project label) on the two dependency ports. Probes
      * come from the kubelet and are not subject to NetworkPolicy, so no extra peer is opened.
+     * The target selector ANDs the project identity with the dependency component set: a
+     * component-only selector would govern (and keep admitting traffic to) every project's
+     * dependency pods in the shared namespace.
      */
     public NetworkPolicy dependencyNetworkPolicy(String projectId) {
         return new NetworkPolicyBuilder()
@@ -326,6 +329,7 @@ public class DependencyResourceFactory {
             .endMetadata()
             .withNewSpec()
             .withPodSelector(new io.fabric8.kubernetes.api.model.LabelSelectorBuilder()
+                .withMatchLabels(Map.of(WorkspaceResourceFactory.LABEL_PROJECT_ID, projectId))
                 .withMatchExpressions(new io.fabric8.kubernetes.api.model.LabelSelectorRequirementBuilder()
                     .withKey(WorkspaceResourceFactory.LABEL_COMPONENT)
                     .withOperator("In")
