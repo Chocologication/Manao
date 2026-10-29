@@ -2337,3 +2337,71 @@ describe('mock authenticated /me contract', () => {
     expect(anonymous.status).toBe(401);
   });
 });
+
+describe('mock auth request field strictness', () => {
+  it('rejects unknown fields on the four account-lifecycle requests', async () => {
+    const captcha = await issueCaptcha();
+    const emailCodeExtra = await postJson('/api/v1/auth/email-codes', {
+      purpose: 'REGISTER_EMAIL',
+      email: 'shape@example.com',
+      captchaId: captcha.challengeId,
+      captchaAnswer: '12345',
+      password: 'must-not-be-accepted',
+    });
+    expect(emailCodeExtra.status).toBe(422);
+    expect(((await emailCodeExtra.json()) as ApiErrorBody).code).toBe('VALIDATION_ERROR');
+
+    const registerExtra = await postJson('/api/v1/auth/register', {
+      username: 'extrauser',
+      password: 'extra-pass-1',
+      email: 'extra@example.com',
+      emailChallengeId: 'challenge-unknown',
+      emailCode: '123456',
+      confirmPassword: 'extra-pass-1',
+    });
+    expect(registerExtra.status).toBe(422);
+    expect(((await registerExtra.json()) as ApiErrorBody).code).toBe('VALIDATION_ERROR');
+
+    const resetExtra = await postJson('/api/v1/auth/password-reset', {
+      email: 'alice@example.com',
+      emailChallengeId: 'challenge-unknown',
+      emailCode: '123456',
+      newPassword: 'reset-extra-pass-1',
+      token: 'must-not-be-accepted',
+    });
+    expect(resetExtra.status).toBe(422);
+    expect(((await resetExtra.json()) as ApiErrorBody).code).toBe('VALIDATION_ERROR');
+
+    const session = await loginOk(ALICE.username, ALICE.password);
+    const changeExtra = await postJson(
+      '/api/v1/auth/password-change',
+      {
+        currentPassword: ALICE.password,
+        newPassword: 'next-pass-123',
+        extra: true,
+      },
+      session.accessToken,
+    );
+    expect(changeExtra.status).toBe(422);
+    expect(((await changeExtra.json()) as ApiErrorBody).code).toBe('VALIDATION_ERROR');
+  });
+
+  it('rejects missing required fields on account-lifecycle requests', async () => {
+    const missing = await postJson('/api/v1/auth/email-codes', {
+      purpose: 'REGISTER_EMAIL',
+      email: 'shape@example.com',
+      captchaId: 'mock-captcha-1',
+    });
+    expect(missing.status).toBe(422);
+    expect(((await missing.json()) as ApiErrorBody).code).toBe('VALIDATION_ERROR');
+
+    const missingRegister = await postJson('/api/v1/auth/register', {
+      username: 'missinguser',
+      email: 'missing@example.com',
+      emailChallengeId: 'challenge-unknown',
+      emailCode: '123456',
+    });
+    expect(missingRegister.status).toBe(422);
+    expect(((await missingRegister.json()) as ApiErrorBody).code).toBe('VALIDATION_ERROR');
+  });
+});

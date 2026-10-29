@@ -79,7 +79,7 @@ function authenticatedSnapshot(username = 'alice'): AuthSnapshot {
     status: 'authenticated',
     accessToken: `${username}-token`,
     expiresAt: '2099-01-01T00:00:00.000Z',
-    user: { id: `usr-${username}`, username },
+    user: { id: `usr-${username}`, username, email: null, emailVerified: false },
   };
 }
 
@@ -839,7 +839,7 @@ describe('JobTerminalTransport terminal close policy', () => {
     authSession.authenticate({
       accessToken: 'alice-terminal-token',
       expiresAt: '2099-01-01T00:00:00.000Z',
-      user: { id: 'usr-alice', username: 'alice' },
+      user: { id: 'usr-alice', username: 'alice', email: null, emailVerified: false },
     });
     const item = createHarness({
       getAuthSnapshot: () => authSession.getSnapshot(),
@@ -853,7 +853,7 @@ describe('JobTerminalTransport terminal close policy', () => {
     authSession.authenticate({
       accessToken: 'bob-terminal-token',
       expiresAt: '2099-01-01T00:00:00.000Z',
-      user: { id: 'usr-bob', username: 'bob' },
+      user: { id: 'usr-bob', username: 'bob', email: null, emailVerified: false },
     });
     aliceSocket.remoteClose(4401, 'old token revoked');
 

@@ -19,7 +19,7 @@ import { useMotionPreferences } from '@/features/preferences/motionPreferences';
 const loginResponse: LoginResponse = {
   accessToken: 'mem-token',
   expiresAt: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
-  user: { id: 'u1', username: 'alice' },
+  user: { id: 'u1', username: 'alice', email: null, emailVerified: false },
 };
 
 function jsonResponse(body: unknown, status = 200): Response {
@@ -288,7 +288,7 @@ describe('LoginPage', () => {
       status: 'authenticated',
       accessToken: 'mem-token',
       expiresAt: loginResponse.expiresAt,
-      user: { id: 'u1', username: 'alice' },
+      user: { id: 'u1', username: 'alice', email: null, emailVerified: false },
     });
     expect(localSet).not.toHaveBeenCalled();
     expect(sessionSet).not.toHaveBeenCalled();

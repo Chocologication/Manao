@@ -107,6 +107,7 @@ export function RegisterPage() {
   const [username, setUsername] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
   const [captchaAnswer, setCaptchaAnswer] = useState('');
   const [captchaId, setCaptchaId] = useState<string | null>(null);
   const [captchaKey, setCaptchaKey] = useState(0);
@@ -163,7 +164,7 @@ export function RegisterPage() {
     usernameReady &&
     emailReady &&
     password.length > 0 &&
-    (!stepTwo || cooldownSeconds === 0);
+    cooldownSeconds === 0;
 
   const resetEmailChallenge = useCallback(() => {
     setEmailChallengeId(null);
@@ -209,8 +210,12 @@ export function RegisterPage() {
       const code = authErrorCode(reason);
       if (code === 'REGISTRATION_CLOSED') {
         setError('注册暂未开放，暂时无法注册新账号。');
-      } else if (code === 'MAIL_NOT_CONFIGURED' || code === 'MAIL_SEND_FAILED') {
-        setError('邮件服务未配置或暂不可用，暂时无法发送验证码。');
+      } else if (code === 'MAIL_NOT_CONFIGURED') {
+        setError('邮件服务未配置，暂时无法发送验证码。');
+      } else if (code === 'MAIL_SEND_FAILED') {
+        // A failed send attempt still starts the server-side cooldown.
+        setError('邮件发送失败，请稍后重试。');
+        setCooldownSeconds(60);
       } else if (code === 'CAPTCHA_INVALID') {
         setError('图形验证码不正确，请重新输入。');
         setCaptchaAnswer('');
@@ -231,8 +236,12 @@ export function RegisterPage() {
 
   async function onRegister(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
-    if (!stepTwo || submitting) return;
+    if (!stepTwo || submitting || sending) return;
     setError(null);
+    if (password !== confirmPassword) {
+      setError('两次输入的密码不一致。');
+      return;
+    }
     const trimmedCode = emailCode.trim();
     if (!/^\d{6}$/.test(trimmedCode)) {
       setError('请输入 6 位数字邮箱验证码。');
@@ -313,6 +322,7 @@ export function RegisterPage() {
         <AuthField id="register-username" label="用户名" value={username} onChange={setUsername} autoComplete="username" placeholder="3–32 位小写字母、数字或下划线" disabled={sending || submitting} />
         <AuthField id="register-email" label="邮箱" type="email" inputMode="email" value={email} onChange={onEmailChanged} autoComplete="email" placeholder="用于接收验证码" disabled={sending || submitting} />
         <AuthField id="register-password" label="密码" type="password" value={password} onChange={setPassword} autoComplete="new-password" placeholder="8–64 个字符" disabled={sending || submitting} />
+        <AuthField id="register-confirm-password" label="确认密码" type="password" value={confirmPassword} onChange={setConfirmPassword} autoComplete="new-password" placeholder="再次输入密码" disabled={sending || submitting} />
         {mailUnavailable ? (
           <p role="status" className="rounded-md border border-amber-300/30 bg-amber-400/10 px-3 py-2 text-sm text-amber-100">
             邮件服务未配置，暂时无法发送验证码。
@@ -335,15 +345,15 @@ export function RegisterPage() {
             {error}
           </p>
         ) : null}
+        {cooldownSeconds > 0 ? (
+          <p className="text-xs text-white/50">重新发送需等待 {cooldownSeconds} 秒</p>
+        ) : null}
         {stepTwo ? (
           <div className="space-y-4 border-t border-white/10 pt-4">
             <AuthField id="register-email-code" label="邮箱验证码" inputMode="numeric" value={emailCode} onChange={setEmailCode} autoComplete="one-time-code" placeholder="6 位数字" disabled={submitting} />
-            {cooldownSeconds > 0 ? (
-              <p className="text-xs text-white/50">重新发送需等待 {cooldownSeconds} 秒</p>
-            ) : null}
             <button
               type="submit"
-              disabled={submitting || emailCode.trim().length === 0}
+              disabled={submitting || sending || emailCode.trim().length === 0}
               className="h-11 w-full rounded-md border border-[#dfff82] bg-[#dfff82] px-4 text-sm font-semibold text-[#10140d] transition hover:bg-[#edffb2] disabled:cursor-default disabled:opacity-55"
             >
               {submitting ? '正在注册…' : SUBMIT_LABEL}

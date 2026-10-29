@@ -2,9 +2,9 @@ export type LoginRequest = { username: string; password: string };
 export type AuthUser = {
   id: string;
   username: string;
-  /** Display-only fields; legacy accounts may have a null email. */
-  email?: string | null;
-  emailVerified?: boolean;
+  /** Legacy accounts may have a null email; the field is always present. */
+  email: string | null;
+  emailVerified: boolean;
 };
 export type LoginResponse = {
   accessToken: string;
@@ -64,13 +64,8 @@ export type PasswordChangeRequest = {
   newPassword: string;
 };
 
-/** Design section 9: GET /api/v1/auth/me */
-export type MeResponse = {
-  id: string;
-  username: string;
-  email: string | null;
-  emailVerified: boolean;
-};
+/** Design section 9: GET /api/v1/auth/me — the same identity shape as the login user. */
+export type MeResponse = AuthUser;
 
 /** Fixed account-lifecycle error codes from design section 9. */
 export type AuthErrorCode =

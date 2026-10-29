@@ -1302,7 +1302,12 @@ function authenticateFabricated(accessToken: string, expiresAt: string, username
   authSession.authenticate({
     accessToken,
     expiresAt,
-    user: { id: username === 'alice' ? ALICE_USER_ID : BOB_USER_ID, username },
+    user: {
+      id: username === 'alice' ? ALICE_USER_ID : BOB_USER_ID,
+      username,
+      email: null,
+      emailVerified: false,
+    },
   });
 }
 

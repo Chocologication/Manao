@@ -1,4 +1,4 @@
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import { MemoryRouter, Route, Routes, useLocation, useNavigationType } from 'react-router';
@@ -13,6 +13,7 @@ const EMAIL_INPUT = '邮箱';
 const CAPTCHA_INPUT = '图形验证码';
 const CODE_INPUT = '邮箱验证码';
 const NEW_PASSWORD_INPUT = '新密码';
+const CONFIRM_NEW_PASSWORD_INPUT = '确认新密码';
 const SEND_LABEL = '发送找回验证码';
 const SUBMIT_LABEL = '重置密码';
 const UNIFORM_NOTICE = '若该邮箱已绑定账号，将收到验证码';
@@ -64,6 +65,12 @@ async function requestCode(
   await user.click(screen.getByRole('button', { name: SEND_LABEL }));
 }
 
+async function refreshCaptchaAndAnswer(user: ReturnType<typeof userEvent.setup>, answer: string) {
+  await user.click(screen.getByRole('button', { name: '刷新图形验证码' }));
+  await waitFor(() => expect(screen.getByLabelText(CAPTCHA_INPUT)).toBeEnabled());
+  await user.type(screen.getByLabelText(CAPTCHA_INPUT), answer);
+}
+
 beforeEach(() => {
   setHttpClient(httpClient);
 });
@@ -88,6 +95,7 @@ describe('ForgotPasswordPage', { timeout: 15_000 }, () => {
 
     await user.type(screen.getByLabelText(CODE_INPUT), '123456');
     await user.type(screen.getByLabelText(NEW_PASSWORD_INPUT), newPassword);
+    await user.type(screen.getByLabelText(CONFIRM_NEW_PASSWORD_INPUT), newPassword);
     await user.click(screen.getByRole('button', { name: SUBMIT_LABEL }));
 
     expect(await screen.findByText('LOGIN_PAGE')).toBeInTheDocument();
@@ -136,6 +144,7 @@ describe('ForgotPasswordPage', { timeout: 15_000 }, () => {
     await screen.findByLabelText(CODE_INPUT);
     await user.type(screen.getByLabelText(CODE_INPUT), '000000');
     await user.type(screen.getByLabelText(NEW_PASSWORD_INPUT), 'invalid-pass-1');
+    await user.type(screen.getByLabelText(CONFIRM_NEW_PASSWORD_INPUT), 'invalid-pass-1');
     await user.click(screen.getByRole('button', { name: SUBMIT_LABEL }));
 
     expect(await screen.findByRole('alert')).toHaveTextContent(/邮箱验证码无效/);
@@ -162,5 +171,153 @@ describe('ForgotPasswordPage', { timeout: 15_000 }, () => {
 
     expect(screen.getByText(/未绑定邮箱/)).toBeInTheDocument();
     expect(screen.getByText(/无法通过邮箱找回/)).toBeInTheDocument();
+  });
+
+  it('keeps the first-step send in cooldown after a rate-limited send even with a fresh captcha', async () => {
+    let sendCalls = 0;
+    server.use(
+      http.post('/api/v1/auth/email-codes', () => {
+        sendCalls += 1;
+        return HttpResponse.json(
+          { code: 'AUTH_RATE_LIMITED', message: 'Too many requests', traceId: 'trace-429' },
+          { status: 429, headers: { 'Retry-After': '60' } },
+        );
+      }),
+    );
+    const user = userEvent.setup();
+    renderForgotPage();
+    await requestCode(user, 'alice@example.com');
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(/发送过于频繁/);
+    expect(screen.getByText(/60 ?秒/)).toBeInTheDocument();
+    await refreshCaptchaAndAnswer(user, '54321');
+
+    const send = screen.getByRole('button', { name: SEND_LABEL });
+    expect(send).toBeDisabled();
+    await user.click(send);
+    expect(sendCalls).toBe(1);
+  });
+
+  it('blocks the reset submit while a resend is pending', async () => {
+    let sendCalls = 0;
+    let releaseResend: () => void = () => {};
+    const resendGate = new Promise<void>((resolve) => {
+      releaseResend = resolve;
+    });
+    server.use(
+      http.post('/api/v1/auth/email-codes', async () => {
+        sendCalls += 1;
+        if (sendCalls === 1) {
+          return HttpResponse.json(
+            {
+              challengeId: 'reset-challenge-first',
+              expiresAt: new Date(Date.now() + 600_000).toISOString(),
+              retryAfterSeconds: 0,
+            },
+            { status: 202 },
+          );
+        }
+        await resendGate;
+        return HttpResponse.json(
+          {
+            challengeId: 'reset-challenge-second',
+            expiresAt: new Date(Date.now() + 600_000).toISOString(),
+            retryAfterSeconds: 60,
+          },
+          { status: 202 },
+        );
+      }),
+    );
+    let resetCalls = 0;
+    server.use(
+      http.post('/api/v1/auth/password-reset', () => {
+        resetCalls += 1;
+        return new HttpResponse(null, { status: 204 });
+      }),
+    );
+    const user = userEvent.setup();
+    renderForgotPage();
+    await requestCode(user, 'alice@example.com');
+    await screen.findByLabelText(CODE_INPUT);
+    await user.type(screen.getByLabelText(CODE_INPUT), '123456');
+    await user.type(screen.getByLabelText(NEW_PASSWORD_INPUT), 'reborn-pass-1');
+    await user.type(screen.getByLabelText(CONFIRM_NEW_PASSWORD_INPUT), 'reborn-pass-1');
+    // The first send consumed the captcha: fill the freshly mounted challenge so
+    // the resend button is enabled by the cooldown/captcha rules, then click it.
+    await waitFor(() => expect(screen.getByLabelText(CAPTCHA_INPUT)).toBeEnabled());
+    await user.type(screen.getByLabelText(CAPTCHA_INPUT), '54321');
+    await waitFor(() => expect(screen.getByRole('button', { name: /重新发送/ })).toBeEnabled());
+
+    await user.click(screen.getByRole('button', { name: /重新发送/ }));
+    expect(screen.getByRole('button', { name: '正在发送…' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: SUBMIT_LABEL })).toBeDisabled();
+    await user.click(screen.getByRole('button', { name: SUBMIT_LABEL }));
+    expect(resetCalls).toBe(0);
+
+    releaseResend();
+    await waitFor(() => expect(screen.getByRole('button', { name: SUBMIT_LABEL })).toBeEnabled());
+  });
+
+  it('blocks a resend while the reset submit is pending', async () => {
+    let releaseReset: (() => void) | undefined;
+    const resetGate = new Promise<void>((resolve) => {
+      releaseReset = resolve;
+    });
+    let sendCalls = 0;
+    server.use(
+      http.post('/api/v1/auth/email-codes', () => {
+        sendCalls += 1;
+        return HttpResponse.json(
+          {
+            challengeId: 'reset-challenge-' + sendCalls,
+            expiresAt: new Date(Date.now() + 600_000).toISOString(),
+            retryAfterSeconds: 0,
+          },
+          { status: 202 },
+        );
+      }),
+    );
+    server.use(
+      http.post('/api/v1/auth/password-reset', async () => {
+        await resetGate;
+        return new HttpResponse(null, { status: 204 });
+      }),
+    );
+    const user = userEvent.setup();
+    renderForgotPage();
+    await requestCode(user, 'alice@example.com');
+    await screen.findByLabelText(CODE_INPUT);
+    await user.type(screen.getByLabelText(CODE_INPUT), '123456');
+    await user.type(screen.getByLabelText(NEW_PASSWORD_INPUT), 'reborn-pass-1');
+    await user.type(screen.getByLabelText(CONFIRM_NEW_PASSWORD_INPUT), 'reborn-pass-1');
+
+    await user.click(screen.getByRole('button', { name: SUBMIT_LABEL }));
+    expect(await screen.findByRole('button', { name: '正在重置…' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: /重新发送/ })).toBeDisabled();
+
+    releaseReset?.();
+    expect(await screen.findByText('LOGIN_PAGE')).toBeInTheDocument();
+  });
+
+  it('blocks password reset when the new password confirmation differs', async () => {
+    let resetCalls = 0;
+    server.use(
+      http.post('/api/v1/auth/password-reset', () => {
+        resetCalls += 1;
+        return new HttpResponse(null, { status: 204 });
+      }),
+    );
+    const user = userEvent.setup();
+    renderForgotPage();
+    await requestCode(user, 'alice@example.com');
+    await screen.findByLabelText(CODE_INPUT);
+    await user.type(screen.getByLabelText(CODE_INPUT), '123456');
+    await user.type(screen.getByLabelText(NEW_PASSWORD_INPUT), 'reborn-pass-1');
+    await user.type(screen.getByLabelText(CONFIRM_NEW_PASSWORD_INPUT), 'different-pass-1');
+    await user.click(screen.getByRole('button', { name: SUBMIT_LABEL }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(/两次输入的新密码不一致/);
+    expect(resetCalls).toBe(0);
+    expect(screen.queryByText('LOGIN_PAGE')).not.toBeInTheDocument();
   });
 });

@@ -12,6 +12,7 @@ import { RegisterPage } from './RegisterPage';
 const USER_INPUT = '用户名';
 const EMAIL_INPUT = '邮箱';
 const PASSWORD_INPUT = '密码';
+const CONFIRM_PASSWORD_INPUT = '确认密码';
 const CAPTCHA_INPUT = '图形验证码';
 const CODE_INPUT = '邮箱验证码';
 const SEND_LABEL = '发送邮箱验证码';
@@ -61,13 +62,23 @@ async function waitForCaptcha() {
 
 async function fillStepOne(
   user: ReturnType<typeof userEvent.setup>,
-  values: { username: string; email: string; password: string },
+  values: { username: string; email: string; password: string; confirmPassword?: string },
 ) {
   await user.type(screen.getByLabelText(USER_INPUT), values.username);
   await user.type(screen.getByLabelText(EMAIL_INPUT), values.email);
   await user.type(screen.getByLabelText(PASSWORD_INPUT), values.password);
+  await user.type(
+    screen.getByLabelText(CONFIRM_PASSWORD_INPUT),
+    values.confirmPassword ?? values.password,
+  );
   await waitForCaptcha();
   await user.type(screen.getByLabelText(CAPTCHA_INPUT), '12345');
+}
+
+async function refreshCaptchaAndAnswer(user: ReturnType<typeof userEvent.setup>, answer: string) {
+  await user.click(screen.getByRole('button', { name: '刷新图形验证码' }));
+  await waitFor(() => expect(screen.getByLabelText(CAPTCHA_INPUT)).toBeEnabled());
+  await user.type(screen.getByLabelText(CAPTCHA_INPUT), answer);
 }
 
 async function sendEmailCode(user: ReturnType<typeof userEvent.setup>) {
@@ -240,7 +251,7 @@ describe('RegisterPage', { timeout: 15_000 }, () => {
     authSession.authenticate({
       accessToken: 'existing-session-token',
       expiresAt: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
-      user: { id: 'usr-existing', username: 'existing' },
+      user: { id: 'usr-existing', username: 'existing', email: null, emailVerified: false },
     });
     server.use(
       http.post('/api/v1/auth/email-codes', () =>
@@ -264,5 +275,179 @@ describe('RegisterPage', { timeout: 15_000 }, () => {
       status: 'authenticated',
       accessToken: 'existing-session-token',
     });
+  });
+
+  it('keeps the first-step send in cooldown after a rate-limited send even with a fresh captcha', async () => {
+    let sendCalls = 0;
+    server.use(
+      http.post('/api/v1/auth/email-codes', () => {
+        sendCalls += 1;
+        return HttpResponse.json(
+          { code: 'AUTH_RATE_LIMITED', message: 'Too many requests', traceId: 'trace-429' },
+          { status: 429, headers: { 'Retry-After': '60' } },
+        );
+      }),
+    );
+    const user = userEvent.setup();
+    renderRegisterPage();
+    await fillStepOne(user, { username: 'rate', email: 'rate@example.com', password: 'rate-pass-1' });
+    await user.click(screen.getByRole('button', { name: SEND_LABEL }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(/发送过于频繁/);
+    expect(screen.getByText(/60 ?秒/)).toBeInTheDocument();
+    await refreshCaptchaAndAnswer(user, '54321');
+
+    const send = screen.getByRole('button', { name: SEND_LABEL });
+    expect(send).toBeDisabled();
+    await user.click(send);
+    expect(sendCalls).toBe(1);
+  });
+
+  it('keeps the first-step send in cooldown after a mail send failure', async () => {
+    let sendCalls = 0;
+    server.use(
+      http.post('/api/v1/auth/email-codes', () => {
+        sendCalls += 1;
+        return HttpResponse.json(
+          { code: 'MAIL_SEND_FAILED', message: 'Mail delivery failed', traceId: 'trace-mail' },
+          { status: 503 },
+        );
+      }),
+    );
+    const user = userEvent.setup();
+    renderRegisterPage();
+    await fillStepOne(user, { username: 'mailsend', email: 'mailsend@example.com', password: 'mailsend-pass-1' });
+    await user.click(screen.getByRole('button', { name: SEND_LABEL }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(/邮件发送失败/);
+    expect(screen.getByText(/60 ?秒/)).toBeInTheDocument();
+    await refreshCaptchaAndAnswer(user, '54321');
+
+    const send = screen.getByRole('button', { name: SEND_LABEL });
+    expect(send).toBeDisabled();
+    await user.click(send);
+    expect(sendCalls).toBe(1);
+  });
+
+  it('blocks the final register submit while a resend is pending', async () => {
+    let sendCalls = 0;
+    let releaseResend: () => void = () => {};
+    const resendGate = new Promise<void>((resolve) => {
+      releaseResend = resolve;
+    });
+    server.use(
+      http.post('/api/v1/auth/email-codes', async () => {
+        sendCalls += 1;
+        if (sendCalls === 1) {
+          return HttpResponse.json(
+            {
+              challengeId: 'challenge-first',
+              expiresAt: new Date(Date.now() + 600_000).toISOString(),
+              retryAfterSeconds: 0,
+            },
+            { status: 202 },
+          );
+        }
+        await resendGate;
+        return HttpResponse.json(
+          {
+            challengeId: 'challenge-second',
+            expiresAt: new Date(Date.now() + 600_000).toISOString(),
+            retryAfterSeconds: 60,
+          },
+          { status: 202 },
+        );
+      }),
+    );
+    let registerCalls = 0;
+    server.use(
+      http.post('/api/v1/auth/register', () => {
+        registerCalls += 1;
+        return HttpResponse.json({ user: { id: 'usr-gated', username: 'gated' } }, { status: 201 });
+      }),
+    );
+    const user = userEvent.setup();
+    renderRegisterPage();
+    await fillStepOne(user, { username: 'gated', email: 'gated@example.com', password: 'gated-pass-1' });
+    await sendEmailCode(user);
+    await user.type(screen.getByLabelText(CODE_INPUT), '123456');
+    // The first send consumed the captcha: fill the freshly mounted challenge so
+    // the resend button is enabled by the cooldown/captcha rules, then click it.
+    await waitFor(() => expect(screen.getByLabelText(CAPTCHA_INPUT)).toBeEnabled());
+    await user.type(screen.getByLabelText(CAPTCHA_INPUT), '54321');
+    await waitFor(() => expect(screen.getByRole('button', { name: /重新发送/ })).toBeEnabled());
+
+    await user.click(screen.getByRole('button', { name: /重新发送/ }));
+    expect(screen.getByRole('button', { name: '正在发送…' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: SUBMIT_LABEL })).toBeDisabled();
+    await user.click(screen.getByRole('button', { name: SUBMIT_LABEL }));
+    expect(registerCalls).toBe(0);
+
+    releaseResend();
+    await waitFor(() => expect(screen.getByRole('button', { name: SUBMIT_LABEL })).toBeEnabled());
+  });
+
+  it('blocks a resend while the final register submit is pending', async () => {
+    let releaseRegister: (() => void) | undefined;
+    const registerGate = new Promise<void>((resolve) => {
+      releaseRegister = resolve;
+    });
+    let sendCalls = 0;
+    server.use(
+      http.post('/api/v1/auth/email-codes', () => {
+        sendCalls += 1;
+        return HttpResponse.json(
+          {
+            challengeId: 'challenge-' + sendCalls,
+            expiresAt: new Date(Date.now() + 600_000).toISOString(),
+            retryAfterSeconds: 0,
+          },
+          { status: 202 },
+        );
+      }),
+    );
+    server.use(
+      http.post('/api/v1/auth/register', async () => {
+        await registerGate;
+        return HttpResponse.json({ user: { id: 'usr-slow', username: 'slow' } }, { status: 201 });
+      }),
+    );
+    const user = userEvent.setup();
+    renderRegisterPage();
+    await fillStepOne(user, { username: 'slow', email: 'slow@example.com', password: 'slow-pass-1' });
+    await sendEmailCode(user);
+    await user.type(screen.getByLabelText(CODE_INPUT), '123456');
+
+    await user.click(screen.getByRole('button', { name: SUBMIT_LABEL }));
+    expect(await screen.findByRole('button', { name: '正在注册…' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: /重新发送/ })).toBeDisabled();
+
+    releaseRegister?.();
+    expect(await screen.findByText('LOGIN_PAGE')).toBeInTheDocument();
+  });
+
+  it('blocks registration when the password confirmation differs', async () => {
+    let registerCalls = 0;
+    server.use(
+      http.post('/api/v1/auth/register', () => {
+        registerCalls += 1;
+        return HttpResponse.json({ user: { id: 'usr-mismatch', username: 'mismatch' } }, { status: 201 });
+      }),
+    );
+    const user = userEvent.setup();
+    renderRegisterPage();
+    await fillStepOne(user, {
+      username: 'mismatch',
+      email: 'mismatch@example.com',
+      password: 'mismatch-pass-1',
+      confirmPassword: 'different-pass-1',
+    });
+    await sendEmailCode(user);
+    await user.type(screen.getByLabelText(CODE_INPUT), '123456');
+    await user.click(screen.getByRole('button', { name: SUBMIT_LABEL }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(/两次输入的密码不一致/);
+    expect(registerCalls).toBe(0);
+    expect(screen.queryByText('LOGIN_PAGE')).not.toBeInTheDocument();
   });
 });

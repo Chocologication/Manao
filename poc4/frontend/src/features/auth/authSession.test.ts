@@ -5,13 +5,13 @@ import { createAuthSession } from './authSession';
 const liveResponse: LoginResponse = {
   accessToken: 'mem-token',
   expiresAt: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
-  user: { id: 'u1', username: 'alice' },
+  user: { id: 'u1', username: 'alice', email: null, emailVerified: false },
 };
 
 const timedResponse: LoginResponse = {
   accessToken: 'mem-token',
   expiresAt: '2026-08-21T00:15:00.000Z',
-  user: { id: 'u1', username: 'alice' },
+  user: { id: 'u1', username: 'alice', email: null, emailVerified: false },
 };
 
 describe('authSession', () => {
@@ -33,7 +33,7 @@ describe('authSession', () => {
       status: 'authenticated',
       accessToken: 'mem-token',
       expiresAt: liveResponse.expiresAt,
-      user: { id: 'u1', username: 'alice' },
+      user: { id: 'u1', username: 'alice', email: null, emailVerified: false },
     });
     expect(session.getAccessToken()).toBe('mem-token');
     expect(listener).toHaveBeenCalledTimes(1);
@@ -230,7 +230,7 @@ describe('authSession unified termination onBeforeClear', () => {
     const replacement: LoginResponse = {
       accessToken: 'second-token',
       expiresAt: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
-      user: { id: 'u2', username: 'bob' },
+      user: { id: 'u2', username: 'bob', email: null, emailVerified: false },
     };
 
     session.authenticate(replacement);
@@ -241,7 +241,7 @@ describe('authSession unified termination onBeforeClear', () => {
       status: 'authenticated',
       accessToken: 'second-token',
       expiresAt: replacement.expiresAt,
-      user: { id: 'u2', username: 'bob' },
+      user: { id: 'u2', username: 'bob', email: null, emailVerified: false },
     });
   });
 
@@ -264,7 +264,7 @@ describe('authSession unified termination onBeforeClear', () => {
       const replacement: LoginResponse = {
         accessToken: 'new-token',
         expiresAt: '2026-08-21T01:00:00.000Z',
-        user: { id: 'u1', username: 'alice' },
+        user: { id: 'u1', username: 'alice', email: null, emailVerified: false },
       };
       session.authenticate(replacement);
 
@@ -275,7 +275,7 @@ describe('authSession unified termination onBeforeClear', () => {
         status: 'authenticated',
         accessToken: 'new-token',
         expiresAt: replacement.expiresAt,
-        user: { id: 'u1', username: 'alice' },
+        user: { id: 'u1', username: 'alice', email: null, emailVerified: false },
       });
       expect(session.getAccessToken()).toBe('new-token');
     } finally {
@@ -290,12 +290,12 @@ describe('authSession unified termination onBeforeClear', () => {
       const expiredAlice: LoginResponse = {
         accessToken: 'alice-expired-token',
         expiresAt: '2026-08-24T10:30:00.000Z',
-        user: { id: 'u1', username: 'alice' },
+        user: { id: 'u1', username: 'alice', email: null, emailVerified: false },
       };
       const replacementBob: LoginResponse = {
         accessToken: 'bob-replacement-token',
         expiresAt: '2026-08-24T11:00:00.000Z',
-        user: { id: 'u2', username: 'bob' },
+        user: { id: 'u2', username: 'bob', email: null, emailVerified: false },
       };
       const beforeClear = vi.fn();
       const session = createAuthSession({ onBeforeClear: beforeClear });
@@ -316,7 +316,7 @@ describe('authSession unified termination onBeforeClear', () => {
 
       expect(beforeClear).toHaveBeenCalledTimes(1);
       expect(beforeClear).toHaveBeenCalledWith(
-        expect.objectContaining({ status: 'authenticated', user: { id: 'u1', username: 'alice' } }),
+        expect.objectContaining({ status: 'authenticated', user: { id: 'u1', username: 'alice', email: null, emailVerified: false } }),
         'expired',
       );
       expect(session.getSnapshot()).toEqual({
@@ -348,12 +348,12 @@ describe('authSession unified termination onBeforeClear', () => {
       const expiredAlice: LoginResponse = {
         accessToken: 'alice-expired-token',
         expiresAt: '2026-08-24T10:30:00.000Z',
-        user: { id: 'u1', username: 'alice' },
+        user: { id: 'u1', username: 'alice', email: null, emailVerified: false },
       };
       const replacementBob: LoginResponse = {
         accessToken: 'bob-replacement-token',
         expiresAt: '2026-08-24T11:00:00.000Z',
-        user: { id: 'u2', username: 'bob' },
+        user: { id: 'u2', username: 'bob', email: null, emailVerified: false },
       };
       const beforeClear = vi.fn();
       const session = createAuthSession({ onBeforeClear: beforeClear });
@@ -387,7 +387,7 @@ describe('authSession unified termination onBeforeClear', () => {
       expect(session.getSnapshot()).toEqual({ status: 'anonymous', reason: 'expired' });
       expect(beforeClear).toHaveBeenCalledTimes(2);
       expect(beforeClear).toHaveBeenLastCalledWith(
-        expect.objectContaining({ status: 'authenticated', user: { id: 'u2', username: 'bob' } }),
+        expect.objectContaining({ status: 'authenticated', user: { id: 'u2', username: 'bob', email: null, emailVerified: false } }),
         'expired',
       );
     } finally {

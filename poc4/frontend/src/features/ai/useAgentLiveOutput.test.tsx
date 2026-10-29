@@ -1,7 +1,7 @@
 import { act, cleanup, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
 import { HttpClient, setHttpClient } from '@/api/httpClient';
-import { authSession } from '@/app/appRuntime';
+import { authSession, handleUnauthorized } from '@/app/appRuntime';
 import { useAgentLiveOutput, type LiveScope } from './useAgentLiveOutput';
 
 const scope: LiveScope = { userId: 'alice', projectId: 'p', conversationId: 'c', taskId: 't' };
@@ -91,7 +91,7 @@ it('closes the display stream through the existing session cleanup path', async 
   authSession.authenticate({
     accessToken: 'live-output-token',
     expiresAt: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
-    user: { id: 'usr-alice', username: 'alice' },
+    user: { id: 'usr-alice', username: 'alice', email: null, emailVerified: false },
   });
   const f = fixture();
   const h = renderHook(() => useAgentLiveOutput(scope));
@@ -171,7 +171,7 @@ it('clears the current session when the one-shot /auth/me check answers 401', as
   authSession.authenticate({
     accessToken: 'revoked-token',
     expiresAt: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
-    user: { id: 'usr-alice', username: 'alice' },
+    user: { id: 'usr-alice', username: 'alice', email: null, emailVerified: false },
   });
   const f = fixture();
   const h = renderHook(() => useAgentLiveOutput(scope));
@@ -196,7 +196,7 @@ it('only shows disconnected when the session check itself has a network failure'
   authSession.authenticate({
     accessToken: 'still-valid-token',
     expiresAt: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
-    user: { id: 'usr-alice', username: 'alice' },
+    user: { id: 'usr-alice', username: 'alice', email: null, emailVerified: false },
   });
   const f = fixture();
   const h = renderHook(() => useAgentLiveOutput(scope));
@@ -218,7 +218,7 @@ it('raises the auth.revoked SSE event into the unified session cleanup', async (
   authSession.authenticate({
     accessToken: 'sse-revoked-token',
     expiresAt: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
-    user: { id: 'usr-alice', username: 'alice' },
+    user: { id: 'usr-alice', username: 'alice', email: null, emailVerified: false },
   });
   const f = fixture();
   const h = renderHook(() => useAgentLiveOutput(scope));
@@ -237,7 +237,7 @@ it('ignores a late /auth/me answer for an old login instead of clearing the newe
   authSession.authenticate({
     accessToken: 'alice-old-token',
     expiresAt: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
-    user: { id: 'usr-alice', username: 'alice' },
+    user: { id: 'usr-alice', username: 'alice', email: null, emailVerified: false },
   });
   const f = fixture();
   const h = renderHook(() => useAgentLiveOutput(scope));
@@ -256,7 +256,7 @@ it('ignores a late /auth/me answer for an old login instead of clearing the newe
   authSession.authenticate({
     accessToken: 'bob-new-token',
     expiresAt: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
-    user: { id: 'usr-bob', username: 'bob' },
+    user: { id: 'usr-bob', username: 'bob', email: null, emailVerified: false },
   });
   await act(async () => {
     resolveMe(
@@ -276,6 +276,70 @@ it('ignores a late /auth/me answer for an old login instead of clearing the newe
   });
 });
 
+it('does not let an old suppressed /auth/me 401 clear a newer same-token login', async () => {
+  authSession.authenticate({
+    accessToken: 'same-token',
+    expiresAt: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
+    user: { id: 'usr-alice', username: 'alice', email: null, emailVerified: false },
+  });
+  let controller!: ReadableStreamDefaultController<Uint8Array>;
+  let resolveMe: (response: Response) => void = () => {};
+  let meStarted = false;
+  const fetchImpl = vi.fn<typeof fetch>(async (input) => {
+    const url = requestUrl(input);
+    if (url.includes(LIVE_OUTPUT_PATH)) {
+      return new Response(
+        new ReadableStream({
+          start(next) {
+            controller = next;
+          },
+        }),
+        { headers: { 'Content-Type': 'text/event-stream' } },
+      );
+    }
+    meStarted = true;
+    return new Promise<Response>((resolve) => {
+      resolveMe = resolve;
+    });
+  });
+  setHttpClient(
+    new HttpClient({
+      getAccessToken: () => authSession.getAccessToken(),
+      onUnauthorized: handleUnauthorized,
+      fetchImpl,
+    }),
+  );
+  renderHook(() => useAgentLiveOutput(scope));
+  await waitFor(() => expect(controller).toBeDefined());
+  act(() => controller.close());
+  await waitFor(() => expect(meStarted).toBe(true));
+
+  // Logout and a newer login that happens to carry the identical JWT string
+  // (JWT signatures are second-granular); the old check must not clear it.
+  authSession.clear('logout');
+  authSession.authenticate({
+    accessToken: 'same-token',
+    expiresAt: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
+    user: { id: 'usr-bob', username: 'bob', email: null, emailVerified: false },
+  });
+  const bobSnapshot = authSession.getSnapshot();
+  await act(async () => {
+    resolveMe(
+      jsonResponse(
+        { code: 'UNAUTHENTICATED', message: 'Authentication required', traceId: 'trace-me' },
+        401,
+      ),
+    );
+  });
+
+  await waitFor(() => expect(authSession.getSnapshot()).toBe(bobSnapshot));
+  expect(authSession.getSnapshot()).toMatchObject({
+    status: 'authenticated',
+    accessToken: 'same-token',
+    user: { username: 'bob' },
+  });
+});
+
 it.each([204, 429, 503, 401])('falls back without a busy loop for HTTP %s', async (status) => {
   const meResponses: Array<() => Response> = [];
   const fetchImpl = vi.fn<typeof fetch>(async () => {
@@ -289,25 +353,54 @@ it.each([204, 429, 503, 401])('falls back without a busy loop for HTTP %s', asyn
   await waitFor(() =>
     expect(h.result.current.connectionState).toBe(status === 204 ? 'history' : 'unavailable'),
   );
-  expect(fetchImpl).toHaveBeenCalledTimes(1);
+  expect(fetchImpl).toHaveBeenCalledTimes(status === 204 ? 1 : 2);
   expect(logout).toHaveBeenCalledTimes(status === 401 ? 1 : 0);
 });
 
-it('malformed stream preserves the last preview and falls back; retry and remount only subscribe', async () => {
+it('malformed SSE performs exactly one /auth/me check and preserves the last preview', async () => {
   const f = fixture();
   const h = renderHook(() => useAgentLiveOutput(scope));
   await waitFor(() => expect(f.controllers).toHaveLength(1));
+  act(() => {
+    f.meResponses.push(() => Promise.reject(new TypeError('network down')));
+  });
   await act(async () => {
     f.publish(snap());
     f.publish({ bad: true });
   });
+
+  await waitFor(() => expect(h.result.current.connectionState).toBe('unavailable'));
   expect(h.result.current.latest?.revision).toBe(1);
-  expect(h.result.current.connectionState).toBe('unavailable');
-  expect(f.fetchImpl).toHaveBeenCalledTimes(1);
+  expect(f.fetchImpl).toHaveBeenCalledTimes(2);
+  expect(requestUrl(f.fetchImpl.mock.calls[1]![0])).toBe(ME_PATH);
+
   act(() => h.result.current.retry());
   await waitFor(() => expect(f.controllers).toHaveLength(2));
   h.unmount();
   renderHook(() => useAgentLiveOutput(scope));
   await waitFor(() => expect(f.controllers).toHaveLength(3));
   expect(f.fetchImpl.mock.calls.every(([, init]) => init?.method === 'GET')).toBe(true);
+});
+
+it('HTTP 503 stream response performs exactly one /auth/me check', async () => {
+  const requests: string[] = [];
+  let meStarted = false;
+  const fetchImpl = vi.fn<typeof fetch>(async (input) => {
+    const url = requestUrl(input);
+    requests.push(url);
+    if (url.includes(LIVE_OUTPUT_PATH)) {
+      return new Response(null, { status: 503 });
+    }
+    meStarted = true;
+    return Promise.reject(new TypeError('network down'));
+  });
+  setHttpClient(
+    new HttpClient({ getAccessToken: () => 'token', onUnauthorized: vi.fn(), fetchImpl }),
+  );
+  const h = renderHook(() => useAgentLiveOutput(scope));
+
+  await waitFor(() => expect(h.result.current.connectionState).toBe('unavailable'));
+  expect(meStarted).toBe(true);
+  expect(fetchImpl).toHaveBeenCalledTimes(2);
+  expect(requests[1]).toBe(ME_PATH);
 });

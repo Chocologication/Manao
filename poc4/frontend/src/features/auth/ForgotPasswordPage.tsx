@@ -25,6 +25,7 @@ export function ForgotPasswordPage() {
   const [emailChallengeId, setEmailChallengeId] = useState<string | null>(null);
   const [emailCode, setEmailCode] = useState('');
   const [newPassword, setNewPassword] = useState('');
+  const [confirmNewPassword, setConfirmNewPassword] = useState('');
   const [cooldownSeconds, setCooldownSeconds] = useState(0);
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -70,7 +71,7 @@ export function ForgotPasswordPage() {
     !mailUnavailable &&
     captchaReady &&
     email.trim().length > 0 &&
-    (!stepTwo || cooldownSeconds === 0);
+    cooldownSeconds === 0;
 
   const resetChallenge = useCallback(() => {
     setEmailChallengeId(null);
@@ -141,7 +142,7 @@ export function ForgotPasswordPage() {
 
   async function onReset(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
-    if (!stepTwo || submitting) return;
+    if (!stepTwo || submitting || sending) return;
     setError(null);
     const trimmedCode = emailCode.trim();
     if (!/^\d{6}$/.test(trimmedCode)) {
@@ -151,6 +152,10 @@ export function ForgotPasswordPage() {
     const passwordError = validateNewPassword(newPassword);
     if (passwordError !== null) {
       setError(passwordError);
+      return;
+    }
+    if (newPassword !== confirmNewPassword) {
+      setError('两次输入的新密码不一致。');
       return;
     }
     setSubmitting(true);
@@ -234,6 +239,9 @@ export function ForgotPasswordPage() {
             {error}
           </p>
         ) : null}
+        {cooldownSeconds > 0 ? (
+          <p className="text-xs text-white/50">重新发送需等待 {cooldownSeconds} 秒</p>
+        ) : null}
         {stepTwo ? (
           <div className="space-y-4 border-t border-white/10 pt-4">
             <AuthField
@@ -256,12 +264,19 @@ export function ForgotPasswordPage() {
               placeholder="8–64 个字符"
               disabled={submitting}
             />
-            {cooldownSeconds > 0 ? (
-              <p className="text-xs text-white/50">重新发送需等待 {cooldownSeconds} 秒</p>
-            ) : null}
+            <AuthField
+              id="forgot-confirm-new-password"
+              label="确认新密码"
+              type="password"
+              value={confirmNewPassword}
+              onChange={setConfirmNewPassword}
+              autoComplete="new-password"
+              placeholder="再次输入新密码"
+              disabled={submitting}
+            />
             <button
               type="submit"
-              disabled={submitting || emailCode.trim().length === 0 || newPassword.length === 0}
+              disabled={submitting || sending || emailCode.trim().length === 0 || newPassword.length === 0}
               className="h-11 w-full rounded-md border border-[#dfff82] bg-[#dfff82] px-4 text-sm font-semibold text-[#10140d] transition hover:bg-[#edffb2] disabled:cursor-default disabled:opacity-55"
             >
               {submitting ? '正在重置…' : SUBMIT_LABEL}

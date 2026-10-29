@@ -1,4 +1,4 @@
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import { MemoryRouter, Route, Routes, useLocation, useNavigationType } from 'react-router';
@@ -153,13 +153,16 @@ describe('ChangePasswordPage', { timeout: 15_000 }, () => {
       release = resolve;
     });
     let intercepted = false;
+    let aResponseSettled = false;
     globalThis.fetch = (async (input, init) => {
       const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
       if (!intercepted && url.endsWith('/api/v1/auth/password-change')) {
         intercepted = true;
         await gate;
       }
-      return originalFetch(input, init);
+      const response = await originalFetch(input, init);
+      if (url.endsWith('/api/v1/auth/password-change')) aResponseSettled = true;
+      return response;
     }) as typeof fetch;
     setHttpClient(
       new HttpClient({
@@ -179,14 +182,23 @@ describe('ChangePasswordPage', { timeout: 15_000 }, () => {
       authSession.clear('logout');
       const bob = await login({ username: 'bob', password: 'demo-pass' });
       authSession.authenticate(bob);
+      const bobSnapshot = authSession.getSnapshot();
       release();
 
-      const bobSnapshot = authSession.getSnapshot();
+      // Wait until A's 204 is really back and the page finished handling it, so
+      // an unconditional clear would be observed before the assertions run.
+      await waitFor(() => expect(aResponseSettled).toBe(true));
+      await waitFor(() =>
+        expect(screen.getByRole('button', { name: SUBMIT_LABEL })).toBeEnabled(),
+      );
+
+      expect(authSession.getSnapshot()).toBe(bobSnapshot);
       expect(bobSnapshot).toMatchObject({
         status: 'authenticated',
         user: { username: 'bob' },
         accessToken: bob.accessToken,
       });
+      expect(authSession.getAccessToken()).toBe(bob.accessToken);
       expect(readLocation().pathname).toBe('/account/password');
       expect(screen.queryByText('LOGIN_PAGE')).not.toBeInTheDocument();
     } finally {

@@ -65,8 +65,12 @@ export function changePassword(request: PasswordChangeRequest): Promise<void> {
   });
 }
 
-export function getMe(): Promise<MeResponse> {
-  return getHttpClient().request<MeResponse>('/api/v1/auth/me');
+export type GetMeOptions = { suppressUnauthorized?: boolean };
+
+export function getMe(options: GetMeOptions = {}): Promise<MeResponse> {
+  return getHttpClient().request<MeResponse>('/api/v1/auth/me', {
+    suppressUnauthorized: options.suppressUnauthorized,
+  });
 }
 
 /**

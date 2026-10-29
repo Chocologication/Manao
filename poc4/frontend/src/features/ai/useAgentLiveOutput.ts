@@ -72,14 +72,17 @@ export function useAgentLiveOutput({
     update('connecting');
 
     /**
-     * A stream that ends without auth.revoked (normal EOF, reader failure or a
-     * rejected request) gets exactly ONE /auth/me check. A 401 runs the unified
-     * snapshot-guarded cleanup; every other failure only shows "disconnected".
-     * There is deliberately no timer-driven reconnect loop and no auto-relogin.
+     * A stream that ends without auth.revoked (normal EOF, reader failure,
+     * malformed frame or a rejected HTTP response) gets exactly ONE /auth/me
+     * check. The check suppresses the shared HttpClient 401 cleanup so the
+     * captured snapshot owns the decision: a 401 runs the snapshot-guarded
+     * unified cleanup, and every other failure only shows "disconnected".
+     * There is no infinite reconnect loop and no auto-relogin; a verified
+     * session gets at most one bounded retry for network-ish endings.
      */
-    const verifySessionOnce = async (): Promise<void> => {
+    const verifySessionOnce = async (allowBoundedReconnect: boolean): Promise<void> => {
       try {
-        await getMe();
+        await getMe({ suppressUnauthorized: true });
       } catch (error) {
         if (controller.signal.aborted) return;
         if (error instanceof ApiRequestError && error.status === 401) {
@@ -93,7 +96,7 @@ export function useAgentLiveOutput({
         return;
       }
       if (controller.signal.aborted) return;
-      if (!autoReconnectUsed) {
+      if (allowBoundedReconnect && !autoReconnectUsed) {
         // The session is still valid: allow exactly ONE bounded reconnect for a
         // transient stream end. A second abnormal end shows "disconnected"
         // instead of looping forever.
@@ -142,7 +145,7 @@ export function useAgentLiveOutput({
           controller.signal,
         );
         if (controller.signal.aborted) return;
-        await verifySessionOnce();
+        await verifySessionOnce(true);
       } catch (error) {
         if (controller.signal.aborted) return;
         if (error instanceof LiveOutputRevokedError) {
@@ -151,10 +154,12 @@ export function useAgentLiveOutput({
           return;
         }
         if (error instanceof LiveOutputError || error instanceof ApiRequestError) {
-          update('unavailable');
+          // Malformed frames / rejected HTTP stream responses still count as an
+          // abnormal end: run the one-shot identity check, then show disconnected.
+          await verifySessionOnce(false);
           return;
         }
-        await verifySessionOnce();
+        await verifySessionOnce(true);
       }
     };
     void connect();

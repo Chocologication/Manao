@@ -270,6 +270,14 @@ function isLoginRequest(value: unknown): value is LoginRequest {
   return typeof record.username === 'string' && typeof record.password === 'string';
 }
 
+function hasExactKeys(value: object, keys: readonly string[]): boolean {
+  const actual = Object.keys(value);
+  return (
+    actual.length === keys.length &&
+    keys.every((key) => Object.prototype.hasOwnProperty.call(value, key))
+  );
+}
+
 type MockEmailCodeBody = {
   purpose: 'REGISTER_EMAIL' | 'RESET_PASSWORD';
   email: string;
@@ -278,7 +286,8 @@ type MockEmailCodeBody = {
 };
 
 function isEmailCodeBody(value: unknown): value is MockEmailCodeBody {
-  if (value === null || typeof value !== 'object') return false;
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return false;
+  if (!hasExactKeys(value, ['purpose', 'email', 'captchaId', 'captchaAnswer'])) return false;
   const record = value as Record<string, unknown>;
   return (
     (record.purpose === 'REGISTER_EMAIL' || record.purpose === 'RESET_PASSWORD') &&
@@ -297,7 +306,12 @@ function isRegisterBody(
   emailChallengeId: string;
   emailCode: string;
 } {
-  if (value === null || typeof value !== 'object') return false;
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return false;
+  if (
+    !hasExactKeys(value, ['username', 'password', 'email', 'emailChallengeId', 'emailCode'])
+  ) {
+    return false;
+  }
   const record = value as Record<string, unknown>;
   return (
     typeof record.username === 'string' &&
@@ -316,7 +330,10 @@ function isPasswordResetBody(
   emailCode: string;
   newPassword: string;
 } {
-  if (value === null || typeof value !== 'object') return false;
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return false;
+  if (!hasExactKeys(value, ['email', 'emailChallengeId', 'emailCode', 'newPassword'])) {
+    return false;
+  }
   const record = value as Record<string, unknown>;
   return (
     typeof record.email === 'string' &&
@@ -329,7 +346,8 @@ function isPasswordResetBody(
 function isPasswordChangeBody(
   value: unknown,
 ): value is { currentPassword: string; newPassword: string } {
-  if (value === null || typeof value !== 'object') return false;
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return false;
+  if (!hasExactKeys(value, ['currentPassword', 'newPassword'])) return false;
   const record = value as Record<string, unknown>;
   return typeof record.currentPassword === 'string' && typeof record.newPassword === 'string';
 }

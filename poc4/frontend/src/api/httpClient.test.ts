@@ -9,7 +9,7 @@ import type { ProjectListResponse, ProjectSummary } from '../contracts/project';
 const loginResponse: LoginResponse = {
   accessToken: 'new-token',
   expiresAt: '2026-08-21T00:15:00.000Z',
-  user: { id: 'u1', username: 'alice' },
+  user: { id: 'u1', username: 'alice', email: null, emailVerified: false },
 };
 
 const projectSummary: ProjectSummary = {
