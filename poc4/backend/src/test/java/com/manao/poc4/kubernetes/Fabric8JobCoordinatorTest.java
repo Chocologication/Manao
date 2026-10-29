@@ -126,6 +126,61 @@ class Fabric8JobCoordinatorTest {
     }
 
     @Test
+    void requestStopOnlySendsDeleteAndDoesNotWaitForTheStillExistingJob() {
+        var wire = new io.fabric8.mockwebserver.MockWebServer();
+        var dispatcher = new io.fabric8.mockwebserver.http.Dispatcher() {
+            @Override public io.fabric8.mockwebserver.http.MockResponse dispatch(
+                    io.fabric8.mockwebserver.http.RecordedRequest request) {
+                return new io.fabric8.mockwebserver.http.MockResponse().setResponseCode(202)
+                    .setHeader("Content-Type", "application/json")
+                    .setBody("{\"kind\":\"Status\",\"apiVersion\":\"v1\",\"status\":\"Success\"}");
+            }
+        };
+        var deleting = new KubernetesMockServer(new io.fabric8.mockwebserver.Context(), wire,
+            new java.util.HashMap<>(), dispatcher, false);
+        deleting.init();
+        try (var deletingClient = deleting.createClient()) {
+            var requests = new Fabric8JobCoordinator(deletingClient, null, null, NS, null);
+            org.junit.jupiter.api.Assertions.assertTimeoutPreemptively(java.time.Duration.ofSeconds(3),
+                () -> requests.requestStop(JOB_NAME));
+            assertThat(wire.getRequestCount()).isEqualTo(1);
+            var request = wire.takeRequest(1, TimeUnit.SECONDS);
+            assertThat(request.getMethod()).isEqualTo("DELETE");
+            assertThat(request.getPath()).isEqualTo("/apis/batch/v1/namespaces/" + NS + "/jobs/" + JOB_NAME);
+        } catch (InterruptedException ex) {
+            throw new AssertionError(ex);
+        } finally {
+            deleting.destroy();
+        }
+    }
+
+    @Test
+    void requestStopBoundsASlowDeleteResponseAndDoesNotRetry() {
+        var wire = new io.fabric8.mockwebserver.MockWebServer();
+        var dispatcher = new io.fabric8.mockwebserver.http.Dispatcher() {
+            @Override public io.fabric8.mockwebserver.http.MockResponse dispatch(
+                    io.fabric8.mockwebserver.http.RecordedRequest request) {
+                return new io.fabric8.mockwebserver.http.MockResponse().setResponseCode(202)
+                    .setHeader("Content-Type", "application/json")
+                    .setBody("{\"kind\":\"Status\",\"apiVersion\":\"v1\",\"status\":\"Success\"}")
+                    .setBodyDelay(3, TimeUnit.SECONDS);
+            }
+        };
+        var slow = new KubernetesMockServer(new io.fabric8.mockwebserver.Context(), wire,
+            new java.util.HashMap<>(), dispatcher, false);
+        slow.init();
+        try (var slowClient = slow.createClient()) {
+            var requests = new Fabric8JobCoordinator(slowClient, null, null, NS, null);
+            org.junit.jupiter.api.Assertions.assertTimeoutPreemptively(java.time.Duration.ofMillis(2500), () ->
+                org.assertj.core.api.Assertions.assertThatThrownBy(() -> requests.requestStop(JOB_NAME))
+                    .isInstanceOf(RuntimeException.class));
+            assertThat(wire.getRequestCount()).isEqualTo(1);
+        } finally {
+            slow.destroy();
+        }
+    }
+
+    @Test
     void ensureJobDispatchesAPythonServiceSnapshotToThePythonManifest() {
         RunRecord pythonRun = new RunRecord(RUN, PROJECT, 0, RunState.STARTING, pythonServicePolicyJson(),
             null, null, null, null, null, null, 0L, Instant.parse("2026-09-21T10:00:00Z"), 0L);

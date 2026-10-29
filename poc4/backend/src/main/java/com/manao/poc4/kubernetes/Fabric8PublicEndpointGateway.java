@@ -25,11 +25,11 @@ import org.slf4j.LoggerFactory;
  */
 public final class Fabric8PublicEndpointGateway implements PublicEndpointGateway {
     private static final Logger LOG = LoggerFactory.getLogger(Fabric8PublicEndpointGateway.class);
-    static final String LABEL_RUN_ID = "manao.poc4/run-id";
-    static final String LABEL_PROJECT_ID = "manao.poc4/project-id";
-    static final String LABEL_COMPONENT = "manao.poc4/component";
-    static final String LABEL_POD_UID = "manao.poc4/pod-uid";
-    static final String COMPONENT_VALUE = "maven-run";
+    public static final String LABEL_RUN_ID = "manao.poc4/run-id";
+    public static final String LABEL_PROJECT_ID = "manao.poc4/project-id";
+    public static final String LABEL_COMPONENT = "manao.poc4/component";
+    public static final String LABEL_POD_UID = "manao.poc4/pod-uid";
+    public static final String COMPONENT_VALUE = "maven-run";
     static final String INITIAL_RUN_SELECTOR = "stopped";
     private static final String NODEPORT_FIELD_PREFIX = "spec.ports[";
     // The apiserver field path is spec.ports[<index>].nodePort; the closing bracket belongs to
@@ -152,6 +152,35 @@ public final class Fabric8PublicEndpointGateway implements PublicEndpointGateway
         }
         client.services().inNamespace(namespace).withName(serviceName(projectId)).edit(existing ->
             new ServiceBuilder(existing).editSpec().withSelector(initial).endSpec().build());
+    }
+
+    @Override public void requestWithdraw(String projectId, String runId) {
+        // This view shares client resources and must not be closed. Each of the GET/PATCH
+        // requests has a one-second bound and retries are disabled for this mutation.
+        KubernetesClient bounded = client.newClient(new io.fabric8.kubernetes.client.RequestConfigBuilder()
+            .withRequestTimeout(1000).withRequestRetryBackoffLimit(0).build()).adapt(KubernetesClient.class);
+        var resource = bounded.services().inNamespace(namespace).withName(serviceName(projectId));
+        Service service = resource.get();
+        var metadata = service == null ? null : service.getMetadata();
+        if (metadata == null || metadata.getLabels() == null
+            || !projectId.equals(metadata.getLabels().get(LABEL_PROJECT_ID))
+            || metadata.getUid() == null || metadata.getResourceVersion() == null) {
+            throw new IllegalStateException("the application service identity is not verifiable");
+        }
+        Map<String, String> selector = service.getSpec() == null ? null : service.getSpec().getSelector();
+        if (Map.of(LABEL_RUN_ID, INITIAL_RUN_SELECTOR).equals(selector)) return;
+        if (selector == null || !runId.equals(selector.get(LABEL_RUN_ID))) {
+            throw new IllegalStateException("the application service no longer routes to this run");
+        }
+        var json = new com.fasterxml.jackson.databind.ObjectMapper();
+        var patch = json.createArrayNode();
+        patch.addObject().put("op", "test").put("path", "/metadata/uid").put("value", metadata.getUid());
+        patch.addObject().put("op", "test").put("path", "/metadata/resourceVersion").put("value", metadata.getResourceVersion());
+        patch.addObject().put("op", "test").put("path", "/spec/selector/manao.poc4~1run-id").put("value", runId);
+        patch.addObject().put("op", "replace").put("path", "/spec/selector")
+            .set("value", json.valueToTree(Map.of(LABEL_RUN_ID, INITIAL_RUN_SELECTOR)));
+        resource.patch(io.fabric8.kubernetes.client.dsl.base.PatchContext.of(
+            io.fabric8.kubernetes.client.dsl.base.PatchType.JSON), patch.toString());
     }
 
     /** The Service is only ever touched when its project identity label matches exactly. */

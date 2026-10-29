@@ -1,0 +1,31 @@
+{
+  "name": "manao-pi-worker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Manao Pi worker: one agent task at a time, six backend-mediated project tools with application feedback, no local file or shell access to user code.",
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild"
+    ]
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "start": "node dist/server.js"
+  },
+  "dependencies": {
+    "@earendil-works/pi-agent-core": "1.2.0",
+    "@earendil-works/pi-ai": "1.2.0",
+    "@earendil-works/pi-coding-agent": "1.2.0",
+    "typebox": "1.3.27"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "~5.9.3",
+    "vitest": "^3.2.7"
+  }
+}

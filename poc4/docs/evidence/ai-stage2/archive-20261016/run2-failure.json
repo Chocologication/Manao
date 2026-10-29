@@ -1,0 +1,15 @@
+{
+  "taskId": "13157eca-5f3f-413a-a1cf-ef60f71e8921",
+  "state": "FAILED",
+  "failureCode": "AI_BUDGET_EXCEEDED",
+  "sdkAttempts": 61,
+  "ledgerCalls": 29,
+  "historical409Codes": "not retained by SDK",
+  "R1": "63842e3f-2a3e-4b61-9cb5-0c1878eed70b",
+  "R2": "3357d5d1-b18c-4a7b-b58e-0a7f7882dcbd",
+  "actualHTTPs": [
+    500,
+    200
+  ],
+  "failureCleanup": "R2 CANCELLED/noactive/0unsettledcalls"
+}

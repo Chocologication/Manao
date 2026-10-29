@@ -6,8 +6,9 @@ import { useWorkspaceSession } from '@/features/editor/workspaceSession';
 type WorkbenchPanel = 'file' | 'run' | 'dependencies';
 type WorkbenchCommand = { name: string; icon: LucideIcon; run: () => void };
 
-export function WorkbenchCommands({ python, onSelectPanel, onToggleFiles, onToggleInsights }: {
+export function WorkbenchCommands({ python, onSelectPanel, onToggleFiles, onToggleInsights, insightsLabel = '项目洞察' }: {
   python: boolean;
+  insightsLabel?: string;
   onSelectPanel: (panel: WorkbenchPanel) => void;
   onToggleFiles: () => void;
   onToggleInsights: () => void;
@@ -23,14 +24,14 @@ export function WorkbenchCommands({ python, onSelectPanel, onToggleFiles, onTogg
     { name: '运行与日志', icon: Play, run: () => onSelectPanel('run') },
     ...(python ? [{ name: 'Python 依赖管理', icon: Package, run: () => onSelectPanel('dependencies') }] : []),
     { name: '切换文件面板', icon: PanelLeft, run: onToggleFiles },
-    { name: '切换项目洞察', icon: PanelRight, run: onToggleInsights },
+    { name: '切换' + insightsLabel, icon: PanelRight, run: onToggleInsights },
     ...paths.map((path) => ({
       name: String(path),
       icon: FileCode2,
       run: () => { useWorkspaceSession.getState().openFile(path); onSelectPanel('file'); },
     })),
   ].filter((command) => command.name.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase())),
-  [onSelectPanel, onToggleFiles, onToggleInsights, paths, python, query]);
+  [onSelectPanel, onToggleFiles, onToggleInsights, paths, python, query, insightsLabel]);
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {

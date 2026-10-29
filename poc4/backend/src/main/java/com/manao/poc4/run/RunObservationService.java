@@ -97,14 +97,21 @@ public final class RunObservationService {
             if (observation.kind() != ObservationKind.FOUND) {
                 return; // UNKNOWN or IDENTITY_MISMATCH keep RECOVERING; nothing is guessed.
             }
-            if (stopIntent && observation.facts().running()) {
-                // Re-drive the persisted stop; the application is never resurrected.
-                coordinator.stop(jobRef(run));
+            if (stopIntent) {
+                // A persisted stop intent always wins recovery. Re-drive deletion when the Job
+                // is still running, and keep STOPPING while terminal evidence/log cleanup settles.
+                if (observation.facts().running()) {
+                    coordinator.stop(jobRef(run));
+                }
                 store.transition(run.id(), run.projectId(), run.version(), RunState.STOPPING,
                     token, RunState.RECOVERING);
                 return;
             }
-            if (!store.transition(run.id(), run.projectId(), run.version(), RunState.STARTING,
+            // Already-started Runs must not pass through STARTING or overwrite their start.
+            // The RUNNING transition atomically fills a missing start on first observation.
+            RunState resumed = observation.facts().running() || run.startedAt() != null || run.firstReadyAt() != null
+                ? RunState.RUNNING : RunState.STARTING;
+            if (!store.transition(run.id(), run.projectId(), run.version(), resumed,
                 token, RunState.RECOVERING)) {
                 return;
             }

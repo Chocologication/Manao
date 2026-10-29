@@ -55,7 +55,8 @@ public final class WorkspaceHttpContractCheck {
             store.projects.put(PROJECT, new WorkspaceStore.ProjectRecord(PROJECT, "contract-owner", "contract",
                 "CREATING", 0, null, Instant.now()));
             var operations = new WorkspaceOperationService(store, client);
-            var workspace = new WorkspaceService(store, operations, client);
+            var workspace = new WorkspaceService(store, operations, client,
+                new com.manao.poc4.project.ProjectLifecycleGate(), projectId -> { });
             var factory = new WorkspaceResourceFactory("contract-only", "not-used",
                 "registry.example/agent@sha256:" + "a".repeat(64),
                 "registry.example/init@sha256:" + "b".repeat(64));

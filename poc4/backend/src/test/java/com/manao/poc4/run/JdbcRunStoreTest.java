@@ -39,6 +39,43 @@ class JdbcRunStoreTest {
     }
 
     @Test
+    void periodicRecoveryOnlyMarksAgainAfterARealAuthorityTakeover() {
+        String projectId = seedProject("recovery-cycle");
+        String runId = "recovery-cycle-" + UUID.randomUUID();
+        long token = store.acquireFencingToken().orElseThrow();
+        assertThat(store.insertRun(run(runId, projectId, 0L), token)).isEqualTo(RunStore.InsertResult.INSERTED);
+        var coordinator = new RunControllerTest.StubCoordinator();
+        coordinator.factsByRun.put(runId, new com.manao.poc4.kubernetes.JobCoordinator.JobFacts(
+            true, false, false, false, null, null, null, false, false));
+        var recovery = new RunRecoveryService(store, coordinator);
+        recovery.recoverRuns();
+        RunRecord first = store.findRun(runId).orElseThrow();
+
+        coordinator.observationKinds.put(runId, com.manao.poc4.kubernetes.JobCoordinator.ObservationKind.UNKNOWN);
+        clock.advance(Duration.ofSeconds(15));
+        assertThat(recovery.recoverRuns().processed()).doesNotContain(runId);
+        RunRecord healthy = store.findRun(runId).orElseThrow();
+        assertThat(healthy.state()).isEqualTo(RunState.RUNNING);
+        assertThat(healthy.version()).isEqualTo(first.version());
+        assertThat(healthy.startedAt()).isEqualTo(first.startedAt());
+
+        String previousInstance = System.getProperty("manao.instance.id");
+        try {
+            System.setProperty("manao.instance.id", "recovery-cycle-" + UUID.randomUUID());
+            assertThat(recovery.recoverRuns().processed()).contains(runId);
+            RunRecord takenOver = store.findRun(runId).orElseThrow();
+            assertThat(takenOver.state()).isEqualTo(RunState.RECOVERING);
+            assertThat(takenOver.fencingToken()).isGreaterThan(token);
+            assertThat(takenOver.startedAt()).isEqualTo(first.startedAt());
+            assertThat(store.transition(runId, projectId, takenOver.version(), RunState.RUNNING, token,
+                RunState.RECOVERING)).isFalse();
+        } finally {
+            if (previousInstance == null) System.clearProperty("manao.instance.id");
+            else System.setProperty("manao.instance.id", previousInstance);
+        }
+    }
+
+    @Test
     void acquireReturnsSameTokenWhileSameHolderRenews() {
         long first = store.acquireFencingToken().orElseThrow();
         clock.advance(Duration.ofSeconds(30));          // 仍在 60s TTL 内
@@ -90,6 +127,85 @@ class JdbcRunStoreTest {
         clock.advance(Duration.ofMinutes(10));
         assertThat(store.settle(runId, RunState.SUCCEEDED, "BUILD_SUCCEEDED", 0)).isTrue();
         assertThat(store.findActiveRun(projectId)).isEmpty();
+    }
+
+    @Test
+    void recoveringAStartingRunPersistsItsFirstStartedAt() {
+        String projectId = seedProject("recovered-start");
+        String runId = "recovered-start-" + UUID.randomUUID();
+        long token = store.acquireFencingToken().orElseThrow();
+        store.insertRun(run(runId, projectId, 0L), token);
+
+        var coordinator = new RunControllerTest.StubCoordinator();
+        coordinator.factsByRun.put(runId, new com.manao.poc4.kubernetes.JobCoordinator.JobFacts(
+            true, false, false, false, null, null, null, false, false));
+        var report = new RunRecoveryService(store, coordinator).recoverRuns();
+
+        assertThat(report.resumed()).contains(runId);
+        assertThat(store.findActiveRun(projectId).orElseThrow().state()).isEqualTo(RunState.RUNNING);
+        assertThat(store.findRun(runId).orElseThrow().startedAt()).isEqualTo(clock.instant());
+    }
+
+    @Test
+    void recoveringALegacyReadyRunUsesReadinessWhenItsStartIsMissing() {
+        String projectId = seedProject("legacy-ready");
+        String runId = "legacy-ready-" + UUID.randomUUID();
+        long token = store.acquireFencingToken().orElseThrow();
+        store.insertRun(run(runId, projectId, 0L), token);
+        Instant readyAt = clock.instant();
+        Instant expiresAt = readyAt.plusSeconds(7200);
+        assertThat(store.recordFirstReady(runId, "uid-ready", readyAt, expiresAt)).isTrue();
+        // The already-persisted defective shape returned by the deployed backend.
+        db.jdbc().update("UPDATE run SET state = 'RUNNING', started_at = NULL WHERE id = ?", runId);
+        clock.advance(Duration.ofSeconds(30));
+        var coordinator = new RunControllerTest.StubCoordinator();
+        coordinator.factsByRun.put(runId, new com.manao.poc4.kubernetes.JobCoordinator.JobFacts(
+            true, false, false, false, null, null, null, false, false));
+        var recovery = new RunRecoveryService(store, coordinator);
+
+        recovery.recoverRuns();
+        recovery.recoverRuns();
+
+        RunRecord recovered = store.findRun(runId).orElseThrow();
+        assertThat(recovered.state()).isEqualTo(RunState.RUNNING);
+        assertThat(recovered.startedAt()).isEqualTo(readyAt);
+        assertThat(recovered.firstReadyAt()).isEqualTo(readyAt);
+        assertThat(recovered.expiresAt()).isEqualTo(expiresAt);
+    }
+
+    @Test
+    void recoveringAnAlreadyStartedRunPreservesItsOriginalStartedAt() {
+        String projectId = seedProject("recovered-running");
+        String runId = "recovered-running-" + UUID.randomUUID();
+        long token = store.acquireFencingToken().orElseThrow();
+        store.insertRun(run(runId, projectId, 0L), token);
+        assertThat(store.markRunning(runId, projectId, 0L)).isTrue();
+        Instant originalStartedAt = store.findRun(runId).orElseThrow().startedAt();
+        clock.advance(Duration.ofSeconds(30));
+
+        assertThat(store.transition(runId, projectId, 1L, RunState.RECOVERING, token, RunState.RUNNING)).isTrue();
+        assertThat(store.transition(runId, projectId, 2L, RunState.RUNNING, token, RunState.RECOVERING)).isTrue();
+
+        assertThat(store.findRun(runId).orElseThrow().startedAt()).isEqualTo(originalStartedAt);
+    }
+
+    @Test
+    void aRejectedRunningTransitionDoesNotWriteEitherStateOrStartedAt() {
+        String projectId = seedProject("recovery-authority");
+        String runId = "recovery-authority-" + UUID.randomUUID();
+        long token = store.acquireFencingToken().orElseThrow();
+        store.insertRun(run(runId, projectId, 0L), token);
+        assertThat(store.transition(runId, projectId, 0L, RunState.RECOVERING, token, RunState.STARTING)).isTrue();
+
+        assertThat(store.transition(runId, projectId, 0L, RunState.RUNNING, token, RunState.RECOVERING)).isFalse();
+        assertThat(store.transition(runId, projectId, 1L, RunState.RUNNING, token + 1, RunState.RECOVERING)).isFalse();
+        assertThat(store.transition(runId, "other-project", 1L, RunState.RUNNING, token, RunState.RECOVERING)).isFalse();
+        assertThat(store.transition(runId, projectId, 1L, RunState.RUNNING, token, RunState.STARTING)).isFalse();
+
+        RunRecord unchanged = store.findRun(runId).orElseThrow();
+        assertThat(unchanged.state()).isEqualTo(RunState.RECOVERING);
+        assertThat(unchanged.startedAt()).isNull();
+        assertThat(unchanged.version()).isEqualTo(1L);
     }
 
     @Test

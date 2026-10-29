@@ -1,0 +1,7 @@
+# Archived Stage 2 failure and diagnostic evidence
+
+These 16 historical artifacts were moved from the ignored SDD release directory during the 2026-10-18 workspace audit. [manifest.json](manifest.json) records their sizes and SHA256 hashes. Browser logs use `.txt` so the generic `*.log` ignore rule does not hide required evidence. Fourteen trailing spaces were removed from the seven browser logs for `git diff --check`; their source sizes/hashes and the normalized archive sizes/hashes are both recorded. Verdicts and diagnostic text are unchanged (source total 54,773 bytes; archive total 54,759 bytes).
+
+`browser-run1.txt` through `browser-run7.txt` retain the original failures. The three `operator-run7-independent-*.json` files are later independent read-only samples with PASS and `stagePassGranted=false`; they do not replace the seventh browser failure or prove its cause. `run7-snapshots-diagnostic.jsonl` contains later diagnostic samples, not the missing original before/after snapshots. The diagnostic report is a historical handoff frozen before the final independent review; its pending-review statements are superseded by [acceptance section 9.13](../acceptance.md).
+
+Private loaders, rollback environments, raw browser traces and redundant build contexts were not archived. Links to the removed scratch paths inside historical browser logs are provenance, not live artifact links. The authority record preserves the paused browser/close/resource gates and Stage 2 NOT_GRANTED boundary.

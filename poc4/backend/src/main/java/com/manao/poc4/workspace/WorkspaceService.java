@@ -1,6 +1,7 @@
 package com.manao.poc4.workspace;
 
 import com.manao.poc4.api.ApiException;
+import com.manao.poc4.project.AgentTaskOccupancy;
 import com.manao.poc4.project.ProjectLifecycleGate;
 import java.nio.charset.StandardCharsets;
 
@@ -16,17 +17,15 @@ public final class WorkspaceService {
     private final WorkspaceOperationService operations;
     private final WorkspaceAgent agent;
     private final ProjectLifecycleGate lifecycle;
-
-    public WorkspaceService(WorkspaceStore store, WorkspaceOperationService operations, WorkspaceAgent agent) {
-        this(store, operations, agent, new ProjectLifecycleGate());
-    }
+    private final AgentTaskOccupancy agentTasks;
 
     public WorkspaceService(WorkspaceStore store, WorkspaceOperationService operations, WorkspaceAgent agent,
-                            ProjectLifecycleGate lifecycle) {
+                            ProjectLifecycleGate lifecycle, AgentTaskOccupancy agentTasks) {
         this.store = store;
         this.operations = operations;
         this.agent = agent;
         this.lifecycle = lifecycle;
+        this.agentTasks = agentTasks;
     }
 
     public WorkspaceAgent.Tree tree(String ownerId, String projectId, String directory) {
@@ -137,7 +136,10 @@ public final class WorkspaceService {
     /** Internal mutation used by provisioning (template writes) while the project is CREATING. */
     public long applyInternal(String projectId, String type, String path, String nextPath, String kind,
                               byte[] content, long expectedRevision) {
-        return gated(projectId, () -> operations.apply(projectId, type, path, nextPath, kind, content, expectedRevision));
+        return gated(projectId, () -> {
+            agentTasks.requireBrowserWritable(projectId);
+            return operations.apply(projectId, type, path, nextPath, kind, content, expectedRevision);
+        });
     }
 
     public long currentRevision(String ownerId, String projectId) {
@@ -176,10 +178,12 @@ public final class WorkspaceService {
         }
     }
 
+    /** Every browser file mutation: no active Run and no write-owning agent task. */
     private void requireWritable(String projectId) {
         if (store.hasActiveRun(projectId)) {
             throw new ApiException("PROJECT_LOCKED", 409, "Project is locked");
         }
+        agentTasks.requireBrowserWritable(projectId);
     }
 
     private void requireSaveSize(String path, int length) {

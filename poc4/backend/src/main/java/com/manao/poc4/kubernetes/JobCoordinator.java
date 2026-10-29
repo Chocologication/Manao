@@ -37,6 +37,11 @@ public interface JobCoordinator {
      */
     boolean stop(String jobName);
 
+    /** Sends a bounded deletion request; observation, not this call, proves exit. */
+    default void requestStop(String jobName) {
+        throw new UnsupportedOperationException("Non-waiting stop is not available");
+    }
+
     record JobFacts(boolean running, boolean succeeded, boolean failed, boolean deadlineExceeded, Integer exitCode,
                     String podName, String podUid, boolean applicationReady, boolean applicationTerminated) { }
 

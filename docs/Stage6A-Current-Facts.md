@@ -135,7 +135,7 @@ AI、Git、多语言、协作、管理员平台、多副本高可用、生产级
 | 完成收据 | 2026-09-17 17:04:52 +08:00，USER_LIFECYCLE_AND_RESUME_PASS |
 | 运行方式 | 真实前后端，无 API 拦截；代码写入已加载 Monaco model，保存/运行/删除使用 UI 按钮；任务记录独立驱动正常退出 0 |
 
-原始附件：[生命周期收据](../poc4/docs/evidence/stage-6/2026-09-17-project-deletion/live-ui-receipt.json)、[最终驱动日志](../poc4/docs/evidence/stage-6/2026-09-17-project-deletion/live-ui-resume4-run.log)、[未完成状态证据](../poc4/docs/evidence/stage-6/2026-09-17-project-deletion/live-ui-incomplete-proof.json)、[失败截图](../poc4/docs/evidence/stage-6/2026-09-17-project-deletion/live-ui-failed.png)、[成功截图](../poc4/docs/evidence/stage-6/2026-09-17-project-deletion/live-ui-succeeded.png)、[刷新截图](../poc4/docs/evidence/stage-6/2026-09-17-project-deletion/live-ui-incomplete-after-reload.png)、[删除截图](../poc4/docs/evidence/stage-6/2026-09-17-project-deletion/live-ui-deleted.png)。
+原始附件：[生命周期收据](old_docs/poc4/evidence/stage-6/2026-09-17-project-deletion/live-ui-receipt.json)、[最终驱动日志](old_docs/poc4/evidence/stage-6/2026-09-17-project-deletion/live-ui-resume4-run.log)、[未完成状态证据](old_docs/poc4/evidence/stage-6/2026-09-17-project-deletion/live-ui-incomplete-proof.json)、[失败截图](old_docs/poc4/evidence/stage-6/2026-09-17-project-deletion/live-ui-failed.png)、[成功截图](old_docs/poc4/evidence/stage-6/2026-09-17-project-deletion/live-ui-succeeded.png)、[刷新截图](old_docs/poc4/evidence/stage-6/2026-09-17-project-deletion/live-ui-incomplete-after-reload.png)、[删除截图](old_docs/poc4/evidence/stage-6/2026-09-17-project-deletion/live-ui-deleted.png)。
 
 收据也保留了之前的文件树 PROJECT_BUSY 和测试驱动操作失败；最终是复用同一项目继续完成，**不是第一次尝试全程无错误**。留档成功适用于专用删除存储类，不证明旧存储项目已迁移。
 
@@ -146,7 +146,7 @@ AI、Git、多语言、协作、管理员平台、多副本高可用、生产级
 - Playwright JSON：expected=1、unexpected=0、skipped=0，122.5 秒；严格 FAILED/SUCCEEDED、成功 exit code 0、真实编译错误及 Hello from Manao，之后用户删除、404 和资源不存在。
 - **断言 PASS，CLI 进程 FAILED：** Node v24.12.0 在报告写完后出现 UV_HANDLE_CLOSING，退出 -1073740791，不能称为干净 runner 全绿。
 
-附件：[测试 JSON](../poc4/docs/evidence/stage-6/2026-09-17-project-deletion/attempt-3-results.json)、[独立核验/退出状态](../poc4/docs/evidence/stage-6/2026-09-17-project-deletion/attempt-3-independent-verification.json)。当前测试源码 [stage6-real-backend.spec.ts](../poc4/frontend/tests/e2e/stage6-real-backend.spec.ts) 中，旧基础 Run 场景仍允许任意终态，但新增 MVP 场景严格断言；不能把二者混写成“所有旧 smoke 都已严格化”。
+附件：[测试 JSON](old_docs/poc4/evidence/stage-6/2026-09-17-project-deletion/attempt-3-results.json)、[独立核验/退出状态](old_docs/poc4/evidence/stage-6/2026-09-17-project-deletion/attempt-3-independent-verification.json)。当前测试源码 [stage6-real-backend.spec.ts](../poc4/frontend/tests/e2e/stage6-real-backend.spec.ts) 中，旧基础 Run 场景仍允许任意终态，但新增 MVP 场景严格断言；不能把二者混写成“所有旧 smoke 都已严格化”。
 
 ### 5.3 删除后的独立对账（RETAINED_RUNTIME）
 
@@ -163,16 +163,16 @@ AI、Git、多语言、协作、管理员平台、多副本高可用、生产级
 - 对账 TSV 中 project、run、workspace_operation、run_log_chunk、terminal_audit、terminal_session、log_ticket 七类关联记录均为 0；范围是这些项目/五个记录 Run，不是整个运行库清空。
 - baseline 比较为原 71 个对象缺失 0；当时原 7 个数据库项目仍 READY。**这是 17 点时点的结果，不是对今天稍后所有项目的零残留保证。**
 
-附件：[资源/物理存储](../poc4/docs/evidence/stage-6/2026-09-17-project-deletion/all-test-projects-final-storage.json)、[数据库对账](../poc4/docs/evidence/stage-6/2026-09-17-project-deletion/database-after.tsv)、[既有对象保留](../poc4/docs/evidence/stage-6/2026-09-17-project-deletion/existing-resources-after.json)。读取本地 TSV 只是证据读取，本次没有连接运行数据库。
+附件：[资源/物理存储](old_docs/poc4/evidence/stage-6/2026-09-17-project-deletion/all-test-projects-final-storage.json)、[数据库对账](old_docs/poc4/evidence/stage-6/2026-09-17-project-deletion/database-after.tsv)、[既有对象保留](old_docs/poc4/evidence/stage-6/2026-09-17-project-deletion/existing-resources-after.json)。读取本地 TSV 只是证据读取，本次没有连接运行数据库。
 
 ### 5.4 更早的已记录闭环（HISTORICAL_REPORT）
 
 | 日期 | 记录 | 证据范围 |
 | --- | --- | --- |
-| 09-13 | C01–C08 8/8 + basic 5/5，包含后端重启续作 | [清理历史](../poc4/docs/evidence/stage-6/cleanup-acceptance.md)；旧版本/旧存储核查边界，不等于当前完整重跑 |
-| 09-15 | project a8eebcbb-8490-4de7-b7f1-aa87dcb4721d，失败 Run 后修正成功，重新登录文件/日志/历史保留 | [MVP 历史](../poc4/docs/2026-09-15-poc4-mvp-core-loop-evidence.md)；发生在 Run 命令改成 exec:java 之前 |
-| 09-16 | 原 PVC 存在、workspace Pod 缺失时恢复，并读到原 App.java | [打开恢复](../poc4/docs/evidence/stage-6/2026-09-16-workspace-open-recovery.md)；当时用临时 opt-in harness 验证，新自动行为待共享后端重启加载，不能倒写为当时已加载 |
-| 09-16 | ce0c750d-2a1b-4370-af99-e63264567881 成功、ecacebec-e7ad-4ead-aeaa-be41efa3ebf7 失败后，撤销只读 GET 故障并 Retry；编辑恢复、Save 200 | [重载记录](../poc4/docs/evidence/stage-6/2026-09-16-workspace-reload-retry.md)；真实后端，故障注入只中止读取，不 mock 成功响应 |
+| 09-13 | C01–C08 8/8 + basic 5/5，包含后端重启续作 | [清理历史](old_docs/poc4/evidence/stage-6/cleanup-acceptance.md)；旧版本/旧存储核查边界，不等于当前完整重跑 |
+| 09-15 | project a8eebcbb-8490-4de7-b7f1-aa87dcb4721d，失败 Run 后修正成功，重新登录文件/日志/历史保留 | [MVP 历史](old_docs/poc4/2026-09-15-poc4-mvp-core-loop-evidence.md)；发生在 Run 命令改成 exec:java 之前 |
+| 09-16 | 原 PVC 存在、workspace Pod 缺失时恢复，并读到原 App.java | [打开恢复](old_docs/poc4/evidence/stage-6/2026-09-16-workspace-open-recovery.md)；当时用临时 opt-in harness 验证，新自动行为待共享后端重启加载，不能倒写为当时已加载 |
+| 09-16 | ce0c750d-2a1b-4370-af99-e63264567881 成功、ecacebec-e7ad-4ead-aeaa-be41efa3ebf7 失败后，撤销只读 GET 故障并 Retry；编辑恢复、Save 200 | [重载记录](old_docs/poc4/evidence/stage-6/2026-09-16-workspace-reload-retry.md)；真实后端，故障注入只中止读取，不 mock 成功响应 |
 
 ## 6. 6A 留档测试与文档核查的区别
 
@@ -186,7 +186,7 @@ AI、Git、多语言、协作、管理员平台、多副本高可用、生产级
 | 09-16 重载修复 | 90 个相关测试通过，类型检查通过 | 全部前后端回归通过 |
 | 本次文档核查 | 检查来源/链接/编码/差异，固定源码/附件哈希；不执行产品测试 | 新鲜真实 E2E 或当前 HEAD 全量 PASS |
 
-测试数来源：[删除实现历史](../poc4/docs/evidence/stage-6/2026-09-16-project-deletion-mvp.md)、[重载历史](../poc4/docs/evidence/stage-6/2026-09-16-workspace-reload-retry.md)。9 月 15 日 cleanup 的 6 failures / 1 error 后续在定向范围修正；Maven 决策任务还报告过全量 332 tests / 7 failures / 2 errors，涉及 transport、端口与清理。上述 09-17 核查材料未证明当时完整实际源码的全量后端重新全绿，因此该项保留 **NOT_REVERIFIED**；不能把这一历史基线表述为 master 仍含未跟踪源码，也不能将后续局部通过扩大为全量通过。
+测试数来源：[删除实现历史](old_docs/poc4/evidence/stage-6/2026-09-16-project-deletion-mvp.md)、[重载历史](old_docs/poc4/evidence/stage-6/2026-09-16-workspace-reload-retry.md)。9 月 15 日 cleanup 的 6 failures / 1 error 后续在定向范围修正；Maven 决策任务还报告过全量 332 tests / 7 failures / 2 errors，涉及 transport、端口与清理。上述 09-17 核查材料未证明当时完整实际源码的全量后端重新全绿，因此该项保留 **NOT_REVERIFIED**；不能把这一历史基线表述为 master 仍含未跟踪源码，也不能将后续局部通过扩大为全量通过。
 
 ## 7. 6A 已知边界与后续变更
 
@@ -199,7 +199,7 @@ AI、Git、多语言、协作、管理员平台、多副本高可用、生产级
 | stage6-6a-local-cluster.env | nfs-storage |
 | stage6-6a-project-deletion.env | manao-poc4-delete |
 
-9 月 17 日真实验收使用后一配置。留档中旧 nfs-storage 为 archiveOnDelete=true；独立 manao-poc4-delete 为 onDelete=delete、archiveOnDelete=false、reclaimPolicy=Delete，并给后端身份增加 list persistentvolumes / get storageclasses 的只读权限。来源：[当时前置资源清单](../poc4/docs/evidence/stage-6/2026-09-17-project-deletion/6a-deletion-runtime-prerequisites.json)。
+9 月 17 日真实验收使用后一配置。留档中旧 nfs-storage 为 archiveOnDelete=true；独立 manao-poc4-delete 为 onDelete=delete、archiveOnDelete=false、reclaimPolicy=Delete，并给后端身份增加 list persistentvolumes / get storageclasses 的只读权限。来源：[当时前置资源清单](old_docs/poc4/evidence/stage-6/2026-09-17-project-deletion/6a-deletion-runtime-prerequisites.json)。
 
 删除任务 19:21 的最后可读取诊断指出 browser-mvp-manual-20260915 与 test4 仍 DELETING，旧策略导致继续删除无效；其方案只 dry-run，没有实际迁移完成证据。本次用户随后报告全生命周期可用，**按用户结果记录通过，但没有足够材料将其解释为“旧项目全部迁移、两份配置已统一”**。源码仍只输出清理异常类名，未见该轮提出的详细原因日志改动。
 
@@ -239,11 +239,11 @@ AI、Git、多语言、协作、管理员平台、多副本高可用、生产级
 | --- | --- |
 | [DeleteProjectDialog.tsx](../poc4/frontend/src/features/projects/DeleteProjectDialog.tsx) | `e3f7b7f5f63b19c5acfb181a5127853f5453b8f55ab3c09164d539f388f79dd0` |
 | [playwright.project-deletion.config.ts](../poc4/frontend/playwright.project-deletion.config.ts) | `783e404f79418eb6c088e99941c5447fa09e95b74cc43f514ecc689c1cb40d89` |
-| [live-ui-receipt.json](../poc4/docs/evidence/stage-6/2026-09-17-project-deletion/live-ui-receipt.json) | `a3827d15ae4fc90ea6803a1c39852c73bfa950d6bfa5ee9ad4d86fe5ea3a7204` |
-| [live-ui-incomplete-proof.json](../poc4/docs/evidence/stage-6/2026-09-17-project-deletion/live-ui-incomplete-proof.json) | `dfed2162126acbab992c02276840abae34d7b3d12e312935fe3082ee514d4fcc` |
-| [all-test-projects-final-storage.json](../poc4/docs/evidence/stage-6/2026-09-17-project-deletion/all-test-projects-final-storage.json) | `f782e5e1c785d7d06dca19e4ab8258415d3325e0c61411fbd9daaf53fc0e22d5` |
-| [database-after.tsv](../poc4/docs/evidence/stage-6/2026-09-17-project-deletion/database-after.tsv) | `8b51d9500e36893f32ed53ac7db51e52b7b242af132cf7a1d686f6c371877771` |
-| [attempt-3-independent-verification.json](../poc4/docs/evidence/stage-6/2026-09-17-project-deletion/attempt-3-independent-verification.json) | `e23ebb588f8033fa17044426aad26c3b6fa8144586c21bcce5794443720f8058` |
+| [live-ui-receipt.json](old_docs/poc4/evidence/stage-6/2026-09-17-project-deletion/live-ui-receipt.json) | `a3827d15ae4fc90ea6803a1c39852c73bfa950d6bfa5ee9ad4d86fe5ea3a7204` |
+| [live-ui-incomplete-proof.json](old_docs/poc4/evidence/stage-6/2026-09-17-project-deletion/live-ui-incomplete-proof.json) | `dfed2162126acbab992c02276840abae34d7b3d12e312935fe3082ee514d4fcc` |
+| [all-test-projects-final-storage.json](old_docs/poc4/evidence/stage-6/2026-09-17-project-deletion/all-test-projects-final-storage.json) | `f782e5e1c785d7d06dca19e4ab8258415d3325e0c61411fbd9daaf53fc0e22d5` |
+| [database-after.tsv](old_docs/poc4/evidence/stage-6/2026-09-17-project-deletion/database-after.tsv) | `8b51d9500e36893f32ed53ac7db51e52b7b242af132cf7a1d686f6c371877771` |
+| [attempt-3-independent-verification.json](old_docs/poc4/evidence/stage-6/2026-09-17-project-deletion/attempt-3-independent-verification.json) | `e23ebb588f8033fa17044426aad26c3b6fa8144586c21bcce5794443720f8058` |
 
 ## 10. 文档核查范围
 

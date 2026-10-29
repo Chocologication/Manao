@@ -274,7 +274,7 @@ for (const viewport of viewports) {
     await expect(page.locator('.monaco-editor')).toBeVisible();
     await expect(page.locator('.view-lines')).toContainText('artifactId');
     await page.screenshot({
-      path: `../docs/evidence/stage-0/${testInfo.project.name}-${viewport.name}.png`,
+      path: testInfo.outputPath(`${testInfo.project.name}-${viewport.name}.png`),
       fullPage: true,
     });
   });

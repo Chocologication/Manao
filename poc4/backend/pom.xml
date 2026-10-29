@@ -31,6 +31,13 @@
         <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-test</artifactId><scope>test</scope></dependency>
     </dependencies>
     <build><plugins>
+        <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-surefire-plugin</artifactId>
+            <configuration>
+                <argLine>-Djdk.httpclient.redirects.retrylimit=1 -Djdk.httpclient.disableRetryConnect=true</argLine>
+            </configuration>
+        </plugin>
         <!-- addDefaultExcludes must be off: the default excludes **/.gitignore, which
              would silently drop the packaged workspace template resource
              workspace-template/.gitignore (WorkspaceTemplate.FILES) from the jar and

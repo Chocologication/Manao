@@ -18,6 +18,10 @@
 # /opt/manao-maven-seed/repository (read-only) plus the seed-id content version file.
 # /usr/local/bin/manao-maven initializes the per-project cache mounted at /maven-cache and
 # execs Maven with -Dmaven.repo.local=/maven-cache/repository (plan 1.3).
+# The stage-one AI integration adds the fixed root-owned development-build launcher:
+#   manao-dev-build copy       init phase: read-only source copy into the scratch workspace
+#   manao-dev-build run <goal> execution phase: fixed manao-maven -B -ntp <goal> on the
+#                              scratch copy, real exit code, bounded Surefire XML tail markers
 FROM maven:3.9.9-eclipse-temurin-17 AS runner-build
 WORKDIR /build
 COPY runtime/src/ src/
@@ -42,8 +46,9 @@ COPY manao-pty-wrapper /usr/local/bin/manao-pty-wrapper
 COPY manao-shell-hook.sh /usr/local/bin/manao-shell-hook
 COPY manao-run-supervisor /usr/local/bin/manao-run-supervisor
 COPY manao-maven /usr/local/bin/manao-maven
-RUN chown root:root /usr/local/bin/manao-pty-wrapper /usr/local/bin/manao-shell-hook /usr/local/bin/manao-run-supervisor /usr/local/bin/manao-maven \
- && chmod 0555 /usr/local/bin/manao-pty-wrapper /usr/local/bin/manao-shell-hook /usr/local/bin/manao-run-supervisor /usr/local/bin/manao-maven
+COPY manao-dev-build /usr/local/bin/manao-dev-build
+RUN chown root:root /usr/local/bin/manao-pty-wrapper /usr/local/bin/manao-shell-hook /usr/local/bin/manao-run-supervisor /usr/local/bin/manao-maven /usr/local/bin/manao-dev-build \
+ && chmod 0555 /usr/local/bin/manao-pty-wrapper /usr/local/bin/manao-shell-hook /usr/local/bin/manao-run-supervisor /usr/local/bin/manao-maven /usr/local/bin/manao-dev-build
 COPY --from=runner-build /build/classes /opt/manao-runner/classes
 COPY --from=runner-test-build /build/test-classes /opt/manao-runner/test-classes
 COPY --from=seed-build /opt/manao-maven-seed /opt/manao-maven-seed
@@ -57,8 +62,9 @@ COPY manao-pty-wrapper /usr/local/bin/manao-pty-wrapper
 COPY manao-shell-hook.sh /usr/local/bin/manao-shell-hook
 COPY manao-run-supervisor /usr/local/bin/manao-run-supervisor
 COPY manao-maven /usr/local/bin/manao-maven
-RUN chown root:root /usr/local/bin/manao-pty-wrapper /usr/local/bin/manao-shell-hook /usr/local/bin/manao-run-supervisor /usr/local/bin/manao-maven \
- && chmod 0555 /usr/local/bin/manao-pty-wrapper /usr/local/bin/manao-shell-hook /usr/local/bin/manao-run-supervisor /usr/local/bin/manao-maven
+COPY manao-dev-build /usr/local/bin/manao-dev-build
+RUN chown root:root /usr/local/bin/manao-pty-wrapper /usr/local/bin/manao-shell-hook /usr/local/bin/manao-run-supervisor /usr/local/bin/manao-maven /usr/local/bin/manao-dev-build \
+ && chmod 0555 /usr/local/bin/manao-pty-wrapper /usr/local/bin/manao-shell-hook /usr/local/bin/manao-run-supervisor /usr/local/bin/manao-maven /usr/local/bin/manao-dev-build
 COPY --from=runner-build /build/classes /opt/manao-runner/classes
 COPY --from=seed-build /opt/manao-maven-seed /opt/manao-maven-seed
 WORKDIR /workspace

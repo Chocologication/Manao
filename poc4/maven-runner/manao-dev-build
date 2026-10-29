@@ -1,0 +1,189 @@
+#!/bin/bash
+# manao-dev-build - fixed development-build launcher of the Manao Maven runner image (stage one).
+# Root-owned 0555 image content (same trust pattern as manao-maven). Two subcommands:
+#   copy        init-container phase: copy the read-only project source (/source) into the
+#               scratch workspace (/workspace) for exactly one build. Excludes every .manao*,
+#               .git and target directory, refuses symlinks/FIFOs/device nodes, and fails
+#               closed beyond 1000 files or 20 MiB of source. The plan is enumerated ONCE into
+#               a manifest and both the budget check and the copy consume that manifest, so a
+#               failed enumeration can never be reported as a successful copy. Nothing from the
+#               project itself is ever executed.
+#   run <goal>  execution phase: run the fixed `/usr/local/bin/manao-maven -B -ntp <goal>`
+#               against the scratch copy, keep the real exit code, and append a bounded copy
+#               of the Surefire XML reports (fixed target path only) to the log tail between
+#               the fixed markers before exiting with that code. The launcher must survive to
+#               attach the reports, so Maven runs as a child process — never an exec
+#               replacement. Report collection is independent evidence: every anomaly (missing
+#               directory, symlink component, unreadable file, over-budget section) becomes an
+#               explicit state on the END marker and NEVER changes the exit code, and the
+#               appended bytes are capped by staging a pinned-descriptor read and debiting
+#               the budget with the bytes actually staged (wc -c), so files swapped or grown
+#               between the checks and the read can neither redirect the append nor exceed
+#               the budget. TERM/INT never exit from the trap in the run phase — a signal
+#               landing between Maven's exit and the rc assignment would otherwise freeze
+#               rc=0 and mask the real result; the main flow attaches the reports and exits
+#               with the real rc in every ordering.
+# The backend reads the tail markers after the pod terminates; a missing or truncated report
+# section is reported as such and never read as a passing run.
+set -eu
+
+MAX_SOURCE_FILES=1000
+MAX_SOURCE_BYTES=20971520          # 20 MiB
+MAX_REPORT_BYTES=65536             # 64 KiB
+SOURCE_DIR="/source"
+WORKSPACE_DIR="/workspace"
+REPORT_DIR="$WORKSPACE_DIR/target/surefire-reports"
+REPORT_BEGIN="MANAO-SUREFIRE-REPORT-BEGIN"
+REPORT_END="MANAO-SUREFIRE-REPORT-END"
+
+die() { echo "manao-dev-build: $1" >&2; exit 1; }
+
+# True when NO component of $1 (the last one included) is a symbolic link.
+link_free() {
+  local rest="$1" walked="" part=""
+  case "$rest" in
+    /*) walked="/"; rest="${rest#/}" ;;
+  esac
+  while [ -n "$rest" ]; do
+    part="${rest%%/*}"
+    rest="${rest#"$part"}"
+    rest="${rest#/}"
+    walked="${walked}${part}"
+    [ ! -L "$walked" ] || return 1
+    walked="${walked}/"
+  done
+  return 0
+}
+
+attach_reports() {
+  # Report collection is independent evidence: it always emits the tail markers, never
+  # changes the launcher's exit code and never appends more than the budget. Every command
+  # below is guarded, so no failure (including a failed mktemp) can abort the launcher or
+  # skip the END marker under set -e.
+  local truncated=0 count=0 budget=$MAX_REPORT_BYTES state=ok
+  local report list staging actual
+  echo "$REPORT_BEGIN"
+  list="$(mktemp "${TMPDIR:-/tmp}/manao-dev-build-reports.XXXXXX" 2>/dev/null)" || list=""
+  staging="$(mktemp "${TMPDIR:-/tmp}/manao-dev-build-staging.XXXXXX" 2>/dev/null)" || staging=""
+  if [ -z "$list" ] || [ -z "$staging" ]; then
+    state="failed"
+  elif ! link_free "$REPORT_DIR"; then
+    state="link-refused"
+  elif [ ! -d "$REPORT_DIR" ]; then
+    state="missing"
+  elif ! find "$REPORT_DIR" -maxdepth 1 -type f -name '*.xml' -print0 2>/dev/null > "$list"; then
+    state="unreadable"
+  else
+    while IFS= read -r -d '' report; do
+      [ -n "$report" ] || continue
+      if ! link_free "$report"; then
+        state="link-refused"
+        continue
+      fi
+      # Pin the inode, then stage a bounded read into a local file: the budget is debited by
+      # the bytes ACTUALLY staged (wc -c), never by a size measured through the procfs
+      # symlink, and a report swapped or grown after the checks can neither redirect the
+      # append nor exceed the budget.
+      if ! exec 3< "$report" 2>/dev/null; then
+        state="unreadable"
+        continue
+      fi
+      if ! head -c "$budget" <&3 > "$staging" 2>/dev/null; then
+        exec 3<&-
+        state="unreadable"
+        continue
+      fi
+      actual="$(wc -c < "$staging")" || { exec 3<&-; state="unreadable"; continue; }
+      if [ "$actual" -ge "$budget" ]; then
+        # The budget was filled: this file was cut or nothing more fits, so the section may
+        # be incomplete and no further file can be attached.
+        exec 3<&-
+        truncated=1
+        break
+      fi
+      exec 3<&-
+      if ! cat -- "$staging" 2>/dev/null; then
+        state="unreadable"
+        continue
+      fi
+      budget=$((budget - actual))
+      count=$((count + 1))
+    done < "$list"
+  fi
+  if [ -n "$list" ]; then
+    rm -f -- "$list" 2>/dev/null || true
+  fi
+  if [ -n "$staging" ]; then
+    rm -f -- "$staging" 2>/dev/null || true
+  fi
+  echo "$REPORT_END truncated=$truncated files=$count state=$state"
+}
+
+rc=""
+phase="copy"
+finish_run() {
+  if [ "$phase" != "run" ]; then
+    exit 143
+  fi
+  # Run phase: NEVER exit from the trap. A signal can land between Maven's exit and the
+  # `|| rc=$?` assignment; exiting here would freeze rc=0 and mask a real Maven failure.
+  # Bash defers this trap until the foreground Maven returns anyway, and the main flow
+  # already attaches the reports and exits with the real rc, so there is nothing to do.
+  :
+}
+trap finish_run TERM INT
+
+cmd="${1:-}"
+case "$cmd" in
+  copy)
+    [ -d "$SOURCE_DIR" ] || die "source directory is not mounted"
+    [ -d "$WORKSPACE_DIR" ] || die "workspace directory is not mounted"
+    # A project that ships symlinks, FIFOs or device nodes is never copied, never followed.
+    bad="$(find "$SOURCE_DIR" \( -type l -o -type p -o -type b -o -type c -o -type s \) -print -quit)" \
+      || die "cannot scan the source for non-regular entries"
+    [ -z "$bad" ] || die "refusing non-regular source entry: ${bad#"$SOURCE_DIR"/}"
+    # One enumeration feeds both the budget check and the copy, and find's status is checked:
+    # a failed scan can never be reported as a successful copy.
+    manifest="$(mktemp "${TMPDIR:-/tmp}/manao-dev-build-manifest.XXXXXX")"
+    if ! find "$SOURCE_DIR" \( -name .git -o -name target -o -name '.manao*' \) -prune -o -type f -print0 > "$manifest"; then
+      rm -f -- "$manifest"
+      die "cannot enumerate the source files"
+    fi
+    files=0
+    bytes=0
+    while IFS= read -r -d '' entry; do
+      files=$((files + 1))
+      size="$(stat -c %s -- "$entry")" \
+        || { rm -f -- "$manifest"; die "cannot stat source file $entry"; }
+      bytes=$((bytes + size))
+      [ "$files" -le "$MAX_SOURCE_FILES" ] \
+        || { rm -f -- "$manifest"; die "source exceeds the 1000 file limit"; }
+      [ "$bytes" -le "$MAX_SOURCE_BYTES" ] \
+        || { rm -f -- "$manifest"; die "source exceeds the 20 MiB limit"; }
+    done < "$manifest"
+    while IFS= read -r -d '' entry; do
+      rel="${entry#"$SOURCE_DIR"/}"
+      mkdir -p -- "$WORKSPACE_DIR/$(dirname -- "$rel")"
+      cp -- "$entry" "$WORKSPACE_DIR/$rel" \
+        || { rm -f -- "$manifest"; die "cannot copy source file $entry"; }
+    done < "$manifest"
+    rm -f -- "$manifest"
+    echo "manao-dev-build: copied $files files ($bytes bytes)"
+    ;;
+  run)
+    goal="${2:-}"
+    case "$goal" in
+      compile|test|package) ;;
+      *) die "usage: manao-dev-build run <compile|test|package>" ;;
+    esac
+    [ -d "$WORKSPACE_DIR" ] || die "workspace directory is not mounted"
+    phase="run"
+    rc=0
+    /usr/local/bin/manao-maven -B -ntp "$goal" || rc=$?
+    attach_reports
+    exit "$rc"
+    ;;
+  *)
+    die "usage: manao-dev-build copy | run <compile|test|package>"
+    ;;
+esac

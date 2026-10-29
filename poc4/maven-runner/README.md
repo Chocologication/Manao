@@ -36,11 +36,11 @@ will schedule Run Jobs before startup measurements (or record the cold-image con
 
 An image-seeded Maven repository plus a private persistent cache on each project's
 existing workspace PVC is implemented (C1/C2 of the
-[implementation supplement](../../docs/superpowers/plans/2026-09-22-java-maven-cache-implementation-plan.md)):
+[implementation supplement](../../docs/old_docs/superpowers/plans/2026-09-22-java-maven-cache-implementation-plan.md)):
 actual-template export, the named Docker build context, the fixed root-owned
 `manao-maven` wrapper, non-root cache access and focused container tests
 (`poc4/maven-runner/tests/maven-cache.sh`). Performance and cloud acceptance evidence is
-recorded only in [poc4/docs/evidence/java-runtime/acceptance.md](../../docs/evidence/java-runtime/acceptance.md).
+recorded only in [poc4/docs/evidence/java-runtime/acceptance.md](../docs/evidence/java-runtime/acceptance.md).
 
 Cache integration preserves the current Maven goals and the Web supervisor's claim,
 stop and deadline behavior. No cache PVC or user-facing cache option is added.

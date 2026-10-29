@@ -173,6 +173,7 @@ function stubRuns(options: {
 function renderPanel(
   coordinator?: RunAuthorityCoordinator,
   projectTemplateId: RuntimeTemplateId = 'java-console',
+  extraProps: { agentTaskActive?: boolean } = {},
 ) {
   function Harness() {
     const hooked = useRunAuthorityCoordinator(ALICE_SEED_PROJECT_ID);
@@ -181,6 +182,7 @@ function renderPanel(
         projectId={ALICE_SEED_PROJECT_ID}
         coordinator={coordinator ?? hooked}
         projectTemplateId={projectTemplateId}
+        {...extraProps}
       />
     );
   }
@@ -375,6 +377,17 @@ describe('RunPanel authority and start preconditions', () => {
     expect(Object.keys(bodies[0] as object)).toEqual(['expectedWorkspaceRevision']);
   });
 
+  it('disables Start while an agent task occupies the workspace', async () => {
+    stubRuns({ active: null });
+    await authenticateAsAlice();
+    renderPanel(undefined, 'java-console', { agentTaskActive: true });
+    const start = await screen.findByRole('button', { name: 'Start run' });
+    await waitFor(() => {
+      expect(start).toHaveAttribute('title', runPreconditionDescription('AGENT_TASK_ACTIVE'));
+    });
+    expect(start).toBeDisabled();
+  });
+
   it('disables Start for dirty files, write pending, start pending, and active runs', async () => {
     setRunScenario('disconnect');
     await authenticateAsAlice();
@@ -469,6 +482,48 @@ describe('RunPanel run policy display', () => {
 });
 
 describe('RunPanel run states and stop', () => {
+  it.each(['RUNNING', 'TIMED_OUT'] as const)('restores Stop from %s authority after Agent occupancy releases', async state => {
+    const run = makeRun('run-release', state);
+    stubRuns({ active: state === 'RUNNING' ? run : null, history: [run] });
+    await authenticateAsAlice();
+    const coordinator = new RunAuthorityCoordinator({ projectId: ALICE_SEED_PROJECT_ID, fetchRun: id => getRun(ALICE_SEED_PROJECT_ID, id) });
+    const props = { projectId: ALICE_SEED_PROJECT_ID, projectTemplateId: 'java-console' as const, coordinator };
+    const view = render(<AppProviders><RunPanel {...props} agentTaskActive /></AppProviders>);
+    await waitFor(() => expect(runStateStatus()).toHaveTextContent(state));
+    expect(screen.getByRole('button', { name: 'Stop run' })).toBeDisabled();
+    if (state === 'RUNNING') expect(screen.getByRole('button', { name: 'Stop run' })).toHaveAttribute('title', 'AI task is controlling the application. End the AI task first.');
+    view.rerender(<AppProviders><RunPanel {...props} agentTaskActive={false} /></AppProviders>);
+    await waitFor(() => {
+      if (state === 'RUNNING') expect(screen.getByRole('button', { name: 'Stop run' })).toBeEnabled();
+      else expect(screen.getByRole('button', { name: 'Stop run' })).toBeDisabled();
+    });
+    expect(screen.queryByText(/AI task is controlling the application/)).not.toBeInTheDocument();
+  });
+
+  it('keeps start and stop locked during an Agent while retaining logs', async () => {
+    stubRuns({ active: makeRun('run-owned', 'RUNNING') });
+    await authenticateAsAlice();
+    renderPanel(undefined, 'java-console', { agentTaskActive: true });
+    await waitFor(() => expect(runStateStatus()).toHaveTextContent('RUNNING'));
+    expect(screen.getByRole('button', { name: 'Start run' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Stop run' })).toBeDisabled();
+    expect(screen.getByRole('list', { name: 'Recent runs' })).toBeInTheDocument();
+  });
+
+  it('rechecks Agent occupancy when an already open stop dialog is confirmed', async () => {
+    stubRuns({ active: makeRun('run-dialog', 'RUNNING') });
+    await authenticateAsAlice();
+    const coordinator = new RunAuthorityCoordinator({ projectId: ALICE_SEED_PROJECT_ID, fetchRun: (id) => getRun(ALICE_SEED_PROJECT_ID, id) });
+    const stop = vi.fn();
+    server.use(http.post('/api/v1/projects/:projectId/runs/active/stop', () => { stop(); return HttpResponse.json({}); }));
+    const view = render(<AppProviders><RunPanel projectId={ALICE_SEED_PROJECT_ID} projectTemplateId="java-console" coordinator={coordinator} agentTaskActive={false} /></AppProviders>);
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Stop run' })).toBeEnabled());
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Stop run' }));
+    view.rerender(<AppProviders><RunPanel projectId={ALICE_SEED_PROJECT_ID} projectTemplateId="java-console" coordinator={coordinator} agentTaskActive /></AppProviders>);
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Stop' }));
+    expect(fetchSpy.mock.calls.filter(([, init]) => init?.method === 'POST')).toHaveLength(0);
+  });
   it.each([
     ['STARTING', true, false],
     ['RUNNING', true, false],
@@ -764,6 +819,21 @@ describe('RunPanel service lifetime display', () => {
 });
 
 describe('RunPanel history', () => {
+  it('consumes Run selection once per seq and preserves subsequent manual history selection', async () => {
+    const first = makeRun('run-first', 'SUCCEEDED');
+    const second = makeRun('run-second', 'FAILED', { createdAt: '2026-08-24T09:00:00.000Z' });
+    stubRuns({ history: [first, second] });
+    await authenticateAsAlice();
+    const coordinator = new RunAuthorityCoordinator({ projectId: ALICE_SEED_PROJECT_ID, fetchRun: (id) => getRun(ALICE_SEED_PROJECT_ID, id) });
+    const panel = (seq: number) => <AppProviders><RunPanel projectId={ALICE_SEED_PROJECT_ID} projectTemplateId="java-console" coordinator={coordinator} requestRunSelection={{ runId: second.id, seq }} /></AppProviders>;
+    const view = render(panel(1));
+    await waitFor(() => expect(historyRunButton(second.id)).toHaveAttribute('aria-current', 'true'));
+    await userEvent.setup().click(historyRunButton(first.id));
+    view.rerender(panel(1));
+    expect(historyRunButton(first.id)).toHaveAttribute('aria-current', 'true');
+    view.rerender(panel(2));
+    await waitFor(() => expect(historyRunButton(second.id)).toHaveAttribute('aria-current', 'true'));
+  });
   it('renders empty, loading, error, and cursor paging', async () => {
     let release = () => {};
     const hold = new Promise<void>((resolve) => {

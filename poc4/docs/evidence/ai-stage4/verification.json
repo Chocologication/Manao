@@ -1,0 +1,311 @@
+{
+  "date": "2026-10-27",
+  "timezone": "Asia/Shanghai",
+  "verdict": "LOCAL_STAGE4_CONTROL_VERIFIED",
+  "base": "1d410cdccdb725e3b863e3adf1c942271975f00a",
+  "productionHead": "9ff87fa03c861e439e060f5683a768d3a90a913b",
+  "branch": "codex/pi-stage4-control-recovery",
+  "counts": {
+    "backend": 268,
+    "frontend": 285,
+    "workerPassed": 182,
+    "workerSkipped": 1,
+    "stage4Browser": 3,
+    "terminalCompatibilityBrowser": 8,
+    "browserBoundary": 36
+  },
+  "logs": [
+    {
+      "file": "backend-delivery.log",
+      "sha256": "affbec8171a016cd35f42473bcc38f76132858b21c54b931c8685b62f359886c",
+      "summary": [
+        "[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 3.209 s -- in com.manao.poc4.run.RunControllerTest$AgentTaskOccupancyBehavior",
+        "[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.002 s -- in com.manao.poc4.run.RunControllerTest$PolicySnapshot",
+        "[INFO] Tests run: 5, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.018 s -- in com.manao.poc4.run.RunControllerTest$Reads",
+        "[INFO] Tests run: 6, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.009 s -- in com.manao.poc4.run.RunControllerTest$Stop",
+        "[INFO] Tests run: 13, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.021 s -- in com.manao.poc4.run.RunControllerTest$Start",
+        "[INFO] Tests run: 0, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 27.35 s -- in com.manao.poc4.run.RunControllerTest",
+        "[INFO] Tests run: 268, Failures: 0, Errors: 0, Skipped: 0",
+        "[INFO] BUILD SUCCESS"
+      ]
+    },
+    {
+      "file": "ui-verified-complete.log",
+      "sha256": "7ccac0c9f6dd70231c9c26d155738e791873cde5df14e01bc34f42f7b1ca590c",
+      "summary": [
+        " Test Files  15 passed (15)",
+        "      Tests  285 passed (285)"
+      ]
+    },
+    {
+      "file": "worker-final-verified.log",
+      "sha256": "e7c2dc5a0c6773a1a2d72aada9f93dd86f7639e8d71229356edd9c20109d7d3d",
+      "summary": [
+        " Test Files  10 passed | 1 skipped (11)",
+        "      Tests  182 passed | 1 skipped (183)"
+      ]
+    },
+    {
+      "file": "frontend-final-build.log",
+      "sha256": "acd7b22a2ab7e49b48a6038ff034670e92da1059613c40a78bc7d9af3a31d509",
+      "summary": []
+    },
+    {
+      "file": "worker-final-build.log",
+      "sha256": "f90e10a10d090db19a478da97610182d111bc214bb5296fb25792a67552e6063",
+      "summary": []
+    },
+    {
+      "file": "final-typecheck.log",
+      "sha256": "1c6a3c63cfe8d32d982111cf45f8eb8f34fb566cee84c8e237dd5b5abeda184f",
+      "summary": []
+    },
+    {
+      "file": "final-boundary.log",
+      "sha256": "d665f9c47a86419e3735a6f6c4421a395029a24cd3c7ea945a90fdff8a6d819b",
+      "summary": [
+        "ℹ tests 36",
+        "ℹ pass 36",
+        "ℹ fail 0",
+        "Browser boundary check passed."
+      ]
+    },
+    {
+      "file": "browser-final-delivery.log",
+      "sha256": "57d7e83fc159263d9e20b35ebf286b77ec7ae2ed13bbb7c9200a5b087f70eb5c",
+      "summary": [
+        "  3 passed (1.2m)",
+        "  7 passed (1.6m)"
+      ]
+    },
+    {
+      "file": "terminal-compatibility-passed.log",
+      "sha256": "9d58675050ee7fb49eda3dda8da5aa201a3405e46ff7051d3057ac3a3a740967",
+      "summary": [
+        "  8 passed (1.4m)"
+      ]
+    },
+    {
+      "file": "cleanup-regression-final.log",
+      "sha256": "53bc9fa95e95e05fb0c91110a133fb7d2616993c41673bfe1a558c313b36f005",
+      "summary": [
+        "[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 10.29 s -- in com.manao.poc4.ai.AgentTaskServiceTest",
+        "[INFO] Tests run: 8, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.136 s -- in com.manao.poc4.project.ProjectCleanupServiceTest",
+        "[INFO] Tests run: 7, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 1.751 s -- in com.manao.poc4.project.ProjectDeleteHttpContractTest",
+        "[INFO] Tests run: 16, Failures: 0, Errors: 0, Skipped: 0",
+        "[INFO] BUILD SUCCESS"
+      ]
+    },
+    {
+      "file": "task1-red.log",
+      "sha256": "264310d04c32e9dc983c5b34406ceae5ae0a3021215f3491b65f206b690793b5",
+      "summary": [
+        "[ERROR] Tests run: 5, Failures: 5, Errors: 0, Skipped: 0, Time elapsed: 18.36 s <<< FAILURE! -- in com.manao.poc4.ai.AgentTaskServiceTest",
+        "[ERROR] Tests run: 5, Failures: 5, Errors: 0, Skipped: 0",
+        "[INFO] BUILD FAILURE"
+      ]
+    },
+    {
+      "file": "controls-red.log",
+      "sha256": "9e4801dc7837ddafe30feeb50ed1c936627454d8e94df450a5cff0296ae49c2d",
+      "summary": [
+        "[ERROR] Tests run: 4, Failures: 2, Errors: 0, Skipped: 0, Time elapsed: 38.44 s <<< FAILURE! -- in com.manao.poc4.ai.AgentTaskReconcilerTest",
+        "[ERROR] Tests run: 6, Failures: 1, Errors: 0, Skipped: 0, Time elapsed: 27.37 s <<< FAILURE! -- in com.manao.poc4.ai.AgentTaskServiceTest",
+        "[ERROR] Tests run: 1, Failures: 0, Errors: 1, Skipped: 0, Time elapsed: 2.335 s <<< FAILURE! -- in com.manao.poc4.ai.DevelopmentBuildExecutorTest",
+        "[ERROR] Tests run: 11, Failures: 3, Errors: 1, Skipped: 0",
+        "[INFO] BUILD FAILURE"
+      ]
+    },
+    {
+      "file": "task4-red.log",
+      "sha256": "f276bce1be32d3a41d733bbe68d2ef86d51f0f3acbb0df6b999ecc3b540c9d7e",
+      "summary": [
+        " Test Files  1 failed (1)",
+        "      Tests  5 failed | 53 skipped (58)"
+      ]
+    },
+    {
+      "file": "stopping-progress-red.log",
+      "sha256": "8420240690f1df66213b7a419f6349353f1d4d286abe5936114804bf02c27e5d",
+      "summary": [
+        "[ERROR] Tests run: 1, Failures: 1, Errors: 0, Skipped: 0, Time elapsed: 10.07 s <<< FAILURE! -- in com.manao.poc4.ai.AgentTaskReconcilerTest",
+        "[ERROR] Tests run: 1, Failures: 1, Errors: 0, Skipped: 0",
+        "[INFO] BUILD FAILURE"
+      ]
+    },
+    {
+      "file": "stopping-progress-green.log",
+      "sha256": "00ad114d98dbea8a00600b29971f56eeda1ea13f82e537efc3ea3054303267f7",
+      "summary": [
+        "[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 10.19 s -- in com.manao.poc4.ai.AgentTaskReconcilerTest",
+        "[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0",
+        "[INFO] BUILD SUCCESS"
+      ]
+    },
+    {
+      "file": "boot-red.log",
+      "sha256": "3f23b8541405212ba73697df003fa99c7898a14f55ddf767fcb93f62cfd0d34a",
+      "summary": [
+        "[ERROR] Tests run: 1, Failures: 1, Errors: 0, Skipped: 0, Time elapsed: 11.51 s <<< FAILURE! -- in com.manao.poc4.ai.AgentTaskReconcilerTest",
+        "[ERROR] Tests run: 1, Failures: 1, Errors: 0, Skipped: 0",
+        "[INFO] BUILD FAILURE"
+      ]
+    },
+    {
+      "file": "boot-green.log",
+      "sha256": "1905ed721a35c54f40476892b292497615c504d387f72f2c191947b117bacc5a",
+      "summary": [
+        "[INFO] Tests run: 18, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 96.83 s -- in com.manao.poc4.ai.AgentTaskReconcilerTest",
+        "[INFO] Tests run: 18, Failures: 0, Errors: 0, Skipped: 0",
+        "[INFO] BUILD SUCCESS"
+      ]
+    },
+    {
+      "file": "final-review-red.log",
+      "sha256": "6054fdd4648ecc3a85ddc2839a190c04da69d8a05883c035f3e8559b1f64145a",
+      "summary": [
+        " Test Files  2 failed (2)",
+        "      Tests  3 failed | 142 skipped (145)"
+      ]
+    },
+    {
+      "file": "final-review-green.log",
+      "sha256": "55caf1bd425ae886ef45791cea98a44bef76c35d0301f142da919b3d9c5d5bf7",
+      "summary": [
+        " Test Files  2 passed (2)",
+        "      Tests  3 passed | 142 skipped (145)"
+      ]
+    }
+  ],
+  "cleanup": {
+    "successfulBrowserRuns": [
+      {
+        "schema": "manao_stage6_terminal_2db7970093604f10a587df49ff65c70f",
+        "dropped": true,
+        "scratch": "C:\\Users\\shili\\AppData\\Local\\Temp\\manao-terminal-local-Nx1nZd",
+        "scratchRemoved": true,
+        "pids": [
+          26768,
+          32476,
+          55792,
+          50456
+        ],
+        "processesExited": true
+      },
+      {
+        "schema": "manao_stage6_terminal_febfc03aa97c4375a66f5eac2e45e6fd",
+        "dropped": true,
+        "scratch": "C:\\Users\\shili\\AppData\\Local\\Temp\\manao-terminal-local-ZZY2ld",
+        "scratchRemoved": true,
+        "pids": [
+          55420,
+          51600,
+          43568,
+          50060
+        ],
+        "processesExited": true
+      }
+    ],
+    "ownedSchemasObserved": 605,
+    "ownedSchemasRemaining": [],
+    "terminalSchemasRemaining": [],
+    "livePids": [],
+    "blockedScratch": [
+      {
+        "path": "C:/Users/shili/AppData/Local/Temp/manao-terminal-local-45DnBQ",
+        "exists": true,
+        "entries": 0,
+        "deleteResult": "BLOCKED_BY_POLICY",
+        "actualDeleted": 0
+      },
+      {
+        "path": "C:/Users/shili/AppData/Local/Temp/manao-terminal-local-upirMZ",
+        "exists": true,
+        "entries": 0,
+        "deleteResult": "BLOCKED_BY_POLICY",
+        "actualDeleted": 0
+      }
+    ],
+    "localArtifactDeletion": {
+      "result": "BLOCKED_BY_POLICY",
+      "reason": "Automatic approval rejected before execution; no alternate tool or retry",
+      "actualDeleted": 0,
+      "rootLogCount": 51,
+      "rootLogBytes": 4066100,
+      "retainedDirectories": [
+        {
+          "path": ".superpowers/ai-stage4-local",
+          "exists": true,
+          "files": 4
+        },
+        {
+          "path": ".superpowers/ai-stage4-local-final",
+          "exists": true,
+          "files": 3
+        },
+        {
+          "path": ".superpowers/ai-stage4-local-verified",
+          "exists": true,
+          "files": 4
+        },
+        {
+          "path": ".superpowers/stage4-delivery",
+          "exists": true,
+          "files": 5
+        },
+        {
+          "path": ".superpowers/stage4-final-delivery",
+          "exists": true,
+          "files": 5
+        },
+        {
+          "path": ".superpowers/terminal-final-compatibility",
+          "exists": true,
+          "files": 5
+        },
+        {
+          "path": ".superpowers/terminal-compatibility-passed",
+          "exists": true,
+          "files": 5
+        },
+        {
+          "path": "poc4/frontend/test-results/ai-stage4",
+          "exists": true,
+          "files": 1
+        },
+        {
+          "path": "poc4/frontend/test-results/ai-terminal-settlement",
+          "exists": true,
+          "files": 1
+        }
+      ]
+    },
+    "verifiedNoListeningPorts": [
+      4189,
+      18989,
+      18990,
+      18991,
+      18992,
+      18993,
+      18994
+    ]
+  },
+  "limits": {
+    "cloud": "NOT_RUN",
+    "images": "NOT_RUN",
+    "paidModels": "NOT_RUN",
+    "push": "NOT_RUN",
+    "merge": "NOT_RUN",
+    "stage2": "PAUSED / NOT_GRANTED",
+    "oldFaultTask": "NOT_REPAIRED",
+    "resources": "mock; local process replacement is not Kubernetes Pod or child-process proof"
+  },
+  "finalChecks": {
+    "utf8WithoutBom": true,
+    "relativeMarkdownLinks": true,
+    "completedPlanSteps": 25,
+    "logHashesMatch": true,
+    "gitDiffCheck": "PASS",
+    "productionCodeChangedAfterTask4": false
+  }
+}

@@ -1,0 +1,183 @@
+# AI stage one: Pi worker Deployment + Service (review-only release preparation).
+#
+# Placeholder contract — every <ANGLE-BRACKET> value is filled at release time from
+# the private env file and the recorded image digests; NOTHING in this file is a
+# real secret, and applying it to manao-stage6b requires the user's explicit
+# authorization (poc4/deploy/ai-stage1/README.md section 5, step 3).
+#
+# Security shape (mirrors the accepted runner/agent patterns):
+#   - replicas 1 with Recreate: the single-worker/no-overlap stage-one constraint.
+#   - runAsNonRoot (the image's USER node, uid 1000), no privilege escalation,
+#     all capabilities dropped, seccomp RuntimeDefault. fsGroup 1000 (review fix
+#     I5) makes every emptyDir group-writable for the run group, so the first
+#     write to /work/agent or /work/sessions cannot fail with EACCES when the
+#     mount overlays the image directory's ownership. The real mounted-dir
+#     writability under UID 1000 is a deploy-time verification item (README 5).
+#   - automountServiceAccountToken: false — the worker never talks to Kubernetes.
+#   - read-only root filesystem: every writable path is a worker-private emptyDir
+#     (scratch, agent dir, session dir, tmp). No user project, no workspace PVC,
+#     no platform credential and no kubeconfig is mounted — the model key and
+#     tokens arrive only through Secrets wired into the environment.
+#   - Probes are TCP-only because the worker's stage-one HTTP surface is exactly
+#     the three /tasks/* routes (no health endpoint); a TCP connect proves the
+#     server is accepting, which is the honest liveness signal available.
+#
+# The model Secret fields (MANAO_AI_PROVIDER/_API_TYPE/_BASE_URL/_MODEL/_API_KEY)
+# exist ONLY here and in the ModelRuntime; as of 2026-10-15 no real values exist
+# and none may be invented (acceptance record section 5).
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: manao-pi-worker
+  namespace: manao-stage6b
+  labels:
+    app.kubernetes.io/managed-by: manao-poc4-backend
+    app.kubernetes.io/component: ai-pi-worker
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/managed-by: manao-poc4-backend
+    app.kubernetes.io/component: ai-pi-worker
+  ports:
+    - name: tasks
+      port: 18090
+      targetPort: 18090
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: manao-pi-worker
+  namespace: manao-stage6b
+  labels:
+    app.kubernetes.io/managed-by: manao-poc4-backend
+    app.kubernetes.io/component: ai-pi-worker
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/managed-by: manao-poc4-backend
+      app.kubernetes.io/component: ai-pi-worker
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/managed-by: manao-poc4-backend
+        app.kubernetes.io/component: ai-pi-worker
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        # Group-write for the emptyDirs (scratch, agent dir, session dir): the run
+        # group owns the mounted volumes (review fix I5 — deploy-time item: verify a
+        # real first write to /work/agent/models.json under UID 1000).
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: pi-worker
+          image: chocologic/manao_images_repository@sha256:<PI_WORKER_RELEASE_DIGEST>
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          env:
+            - name: MANAO_AI_WORKER_PORT
+              value: "18090"
+            - name: MANAO_AI_INSTANCE_ID
+              value: "pi-worker-stage1"
+            - name: MANAO_AI_SCRATCH_DIR
+              value: /work/scratch
+            - name: MANAO_AI_AGENT_DIR
+              value: /work/agent
+            - name: MANAO_AI_SESSION_DIR
+              value: /work/sessions
+            # Backend internal routes: the worker presents this token on /internal/*.
+            # NOTE: the 6B backend Service is named `backend` (namespace manao-stage6b),
+            # NOT `manao-backend` - the wrong name resolves nowhere and the worker
+            # silently loses every progress/terminal report (measured 2026-10-15).
+            - name: MANAO_AI_BACKEND_BASE_URL
+              value: http://backend.manao-stage6b.svc.cluster.local:8080
+            - name: MANAO_AI_BACKEND_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: manao-pi-worker-secrets
+                  key: backend-internal-token
+            # Shared secret the backend presents on the worker's /tasks/* routes.
+            - name: MANAO_AI_WORKER_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: manao-pi-worker-secrets
+                  key: worker-token
+            # Model configuration: worker-side only, from its own Secret. The real
+            # round must fill every field; a worker missing any model field refuses
+            # task starts with 503 AI_WORKER_NOT_CONFIGURED (verified behavior).
+            - name: MANAO_AI_PROVIDER
+              valueFrom:
+                secretKeyRef:
+                  name: manao-pi-worker-model
+                  key: provider
+            - name: MANAO_AI_API_TYPE
+              valueFrom:
+                secretKeyRef:
+                  name: manao-pi-worker-model
+                  key: api-type
+            - name: MANAO_AI_BASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: manao-pi-worker-model
+                  key: base-url
+            - name: MANAO_AI_MODEL
+              valueFrom:
+                secretKeyRef:
+                  name: manao-pi-worker-model
+                  key: model
+            - name: MANAO_AI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: manao-pi-worker-model
+                  key: api-key
+          ports:
+            - name: tasks
+              containerPort: 18090
+          readinessProbe:
+            tcpSocket:
+              port: 18090
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: 18090
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 250m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi
+          volumeMounts:
+            - name: scratch
+              mountPath: /work/scratch
+            - name: agent-dir
+              mountPath: /work/agent
+            - name: session-dir
+              mountPath: /work/sessions
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: scratch
+          emptyDir: {}
+        - name: agent-dir
+          emptyDir: {}
+        - name: session-dir
+          emptyDir: {}
+        - name: tmp
+          emptyDir:
+            medium: Memory

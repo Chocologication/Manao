@@ -482,7 +482,7 @@ export function LoginPage() {
           <div className="hidden items-center gap-7 text-xs text-white/62 md:flex">
             <span>实验环境</span>
             <span>运行证据</span>
-            <span>AI 诊断 · 规划中</span>
+            <span>Agent已就绪</span>
           </div>
           <span className="flex items-center gap-2 rounded-md border border-[#dfff82]/35 bg-[#dfff82]/8 px-3 py-1.5 font-mono text-[10px] uppercase text-[#dfff82]">
             <span className="size-1.5 rounded-full bg-[#dfff82] shadow-[0_0_12px_rgba(223,255,130,0.8)]" />
@@ -513,13 +513,13 @@ export function LoginPage() {
               </span>
             </h1>
             <p className="nexa-copy mt-7 max-w-xl text-base leading-7 text-white/70 sm:text-lg">
-              码瑙把可复现实验环境、文件编辑与运行证据收进同一个工作台。AI 诊断规划中。
+              码瑙把可复现实验环境、文件编辑与运行证据收进同一个工作台。人工智能为你保驾护航。
             </p>
 
             <div className="nexa-login-runtimes mt-9 grid max-w-3xl grid-cols-1 gap-4 border-t border-white/15 pt-5 sm:grid-cols-3">
               {[
                 ['ENV', 'JAVA / PYTHON', '支持的运行环境'],
-                ['AI', 'PLANNED', 'AI 诊断 · 规划中'],
+                ['AI', 'READY', 'AI 诊断 · 已就绪'],
                 ['LOG', 'RUN HISTORY', '运行日志与历史记录'],
               ].map(([group, state, label]) => (
                 <div className="nexa-runtime-row flex items-start gap-3" key={group}>
@@ -578,7 +578,7 @@ export function LoginPage() {
                   value={username}
                   onChange={(event) => setUsername(event.target.value)}
                   className="h-12 w-full rounded-md border border-white/18 bg-white/8 px-3 text-base text-white outline-none transition placeholder:text-white/30 focus:border-white/55 focus:bg-white/12 focus-visible:ring-2 focus-visible:ring-white/20"
-                  placeholder="alice"
+                  placeholder="用户名"
                 />
               </div>
 
@@ -598,7 +598,7 @@ export function LoginPage() {
                   value={password}
                   onChange={(event) => setPassword(event.target.value)}
                   className="h-12 w-full rounded-md border border-white/18 bg-white/8 px-3 text-base text-white outline-none transition placeholder:text-white/30 focus:border-white/55 focus:bg-white/12 focus-visible:ring-2 focus-visible:ring-white/20"
-                  placeholder="demo-pass"
+                  placeholder="请输入密码"
                   style={{ paddingRight: 48 }}
                 />
                 <button type="button" className="absolute right-3 bottom-3 text-white/60 hover:text-white focus-visible:outline-2" title={showPassword ? '隐藏密码' : '显示密码'} aria-label={showPassword ? '隐藏密码' : '显示密码'} aria-pressed={showPassword} onClick={() => setShowPassword((value) => !value)}>

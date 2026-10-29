@@ -12,7 +12,7 @@
 - 记录者：Task 1（只读环境核实），全部结论来自本轮实测命令输出
 - 分支：`codex/poc4-stage-6b`，HEAD `0a7d8635bb0b1f83903c7ba1efb15ddf8bcede94`
 - 工作树：`D:/DeepLearning/MyProjects/Project_Manao/.worktree/poc4-stage-6b`
-- 工作树状态：无 tracked diff；唯一未跟踪文件为计划文档 `docs/superpowers/plans/2026-09-18-stage6b-cloud-workbench-implementation-plan.md`
+- 工作树状态：无 tracked diff；唯一未跟踪文件为计划文档 `docs/superpowers/plans/2026-09-18-stage6b-cloud-workbench-implementation-plan.md`（现归档至[历史计划](../../../../docs/old_docs/superpowers/plans/2026-09-18-stage6b-cloud-workbench-implementation-plan.md)）
 - 凭据边界：kubeconfig 与 env 文件位于私有目录 `D:/DeepLearning/MyProjects/Project_Manao_kubeconfig/`，本文件只记录非敏感连接参数，不记录密码、token、证书内容。
 
 ## 1. 环境检查（Task 1，2026-09-18）

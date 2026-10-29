@@ -34,7 +34,9 @@ public final class GlobalExceptionHandler {
 
     @ExceptionHandler(Exception.class)
     ResponseEntity<ApiError> internal(Exception exception) {
-        LOG.error("unhandled {}", exception.getClass().getName());
+        // No stack trace (existing safety trade-off), but the message makes failures like
+        // "the build cleanup was not confirmed" visible in the logs.
+        LOG.error("unhandled {}: {}", exception.getClass().getName(), exception.getMessage());
         return response(500, "INTERNAL_ERROR", "Request failed");
     }
 

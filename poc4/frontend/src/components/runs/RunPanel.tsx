@@ -36,6 +36,14 @@ export type RunPanelProps = {
   /** Current project template; the toolbar shows it only while no run is selected. */
   projectTemplateId: RuntimeTemplateId;
   coordinator: RunAuthorityCoordinator;
+  /**
+   * Explicitly forwarded by the shell: an occupying agent task owns the
+   * workspace writes, so Run starts are refused while it runs. The panel never
+   * derives this itself.
+   */
+  agentTaskActive?: boolean;
+  onOpenAgentTask?: () => void;
+  requestRunSelection?: { runId: RunId; seq: number } | null;
   onLocateError?: (location: RunErrorLocation) => void;
 };
 
@@ -87,7 +95,7 @@ function statusText(options: {
   return 'Idle';
 }
 
-export function RunPanel({ projectId, projectTemplateId, coordinator, onLocateError }: RunPanelProps) {
+export function RunPanel({ projectId, projectTemplateId, coordinator, agentTaskActive, onOpenAgentTask, requestRunSelection, onLocateError }: RunPanelProps) {
   const queryClient = useQueryClient();
   const snapshot = useSyncExternalStore(
     coordinator.subscribe,
@@ -126,6 +134,7 @@ export function RunPanel({ projectId, projectTemplateId, coordinator, onLocateEr
     hasActiveLockingRun: snapshot.observedLockingRunId !== null,
     startPending,
     reloadPhase: snapshot.phase,
+    agentTaskActive,
   });
   const workspaceEditable = isWorkspaceEditable(snapshot);
   const canStart = preconditions.canRequestRun;
@@ -136,6 +145,7 @@ export function RunPanel({ projectId, projectTemplateId, coordinator, onLocateEr
   );
   const activeRun = activeQuery.data?.run ?? null;
   const followActiveRef = useRef(true);
+  const consumedSelectionRef = useRef<number | null>(null);
   const [selectedRunId, setSelectedRunId] = useState<RunId | null>(null);
   const [stopOpen, setStopOpen] = useState(false);
   const [nowMs, setNowMs] = useState(() => Date.now());
@@ -216,7 +226,7 @@ export function RunPanel({ projectId, projectTemplateId, coordinator, onLocateEr
   }, [coordinator, projectId, queryClient, selectedRunId]);
 
   const activeState = activeRun?.state;
-  const canStop = (activeState === 'STARTING' || activeState === 'RUNNING') && !stopMutation.isPending;
+  const canStop = (activeState === 'STARTING' || activeState === 'RUNNING') && !stopMutation.isPending && !agentTaskActive;
   const stopWaiting = activeState === 'STOPPING' || activeState === 'RECOVERING';
   const loadingAuthority = snapshot.phase === 'LOADING_AUTHORITY';
   const reloading = snapshot.phase === 'RELOADING_WORKSPACE';
@@ -241,6 +251,12 @@ export function RunPanel({ projectId, projectTemplateId, coordinator, onLocateEr
     [activeRun?.id],
   );
 
+  useEffect(() => {
+    if (!requestRunSelection || consumedSelectionRef.current === requestRunSelection.seq) return;
+    consumedSelectionRef.current = requestRunSelection.seq;
+    onSelect(requestRunSelection.runId);
+  }, [onSelect, requestRunSelection]);
+
   return (
     <section aria-label="Run" className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-background">
       <RunToolbar
@@ -261,6 +277,8 @@ export function RunPanel({ projectId, projectTemplateId, coordinator, onLocateEr
         }
         startPending={startPending}
         canStop={canStop}
+        stopBlockedByAgent={agentTaskActive === true && (activeState === 'STARTING' || activeState === 'RUNNING')}
+        onOpenAgentTask={onOpenAgentTask}
         stopWaiting={stopWaiting}
         stopPending={stopMutation.isPending}
         authorityError={
@@ -310,6 +328,7 @@ export function RunPanel({ projectId, projectTemplateId, coordinator, onLocateEr
         }}
         onConfirm={() => {
           setStopOpen(false);
+          if (!canStop) return;
           stopMutation.mutate();
         }}
       />

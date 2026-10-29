@@ -1,0 +1,80 @@
+{
+  "podBefore": {
+    "ready": true,
+    "uid": "befebca5-aa9e-4ac9-9275-dc687c0f8aaf",
+    "imageID": "docker.io/chocologic/manao_images_repository@sha256:6d255a093f503c435efc13fcad70daa5cc2bc97f40a930a8df5ee14817eb9846",
+    "name": "backend-7486f8675b-h7gld"
+  },
+  "after": {
+    "checks": [
+      {
+        "admissionStatus": 409,
+        "taskId": "84572f86-3828-4d99-8d64-71c3d689fc49",
+        "currentTaskStatus": 404,
+        "code": "WORKSPACE_REVISION_CONFLICT",
+        "projectId": "20e4d296-5b67-43a5-8c6d-fa3adfe2b373",
+        "taskLookupStatus": 404
+      },
+      {
+        "admissionStatus": 409,
+        "taskId": "dc350eab-ca2d-40bd-a275-5815eac0b8c2",
+        "currentTaskStatus": 404,
+        "code": "WORKSPACE_REVISION_CONFLICT",
+        "projectId": "52c7b53e-3f08-4d83-aae7-dcdd7896967b",
+        "taskLookupStatus": 404
+      }
+    ],
+    "phase": "after",
+    "observedAt": "2026-10-18T03:20:50.1389485Z",
+    "modelInvoked": false,
+    "taskCreated": false
+  },
+  "before": {
+    "observedAt": "2026-10-18T03:13:03.4738234Z",
+    "phase": "before",
+    "modelInvoked": false,
+    "taskCreated": false,
+    "checks": [
+      {
+        "code": "AI_PROJECT_NOT_ENABLED",
+        "taskId": "79e26ada-22bf-4968-b6fb-c0ba041ab678",
+        "projectId": "20e4d296-5b67-43a5-8c6d-fa3adfe2b373",
+        "taskLookupStatus": 404,
+        "admissionStatus": 404,
+        "currentTaskStatus": 404
+      },
+      {
+        "code": "AI_PROJECT_NOT_ENABLED",
+        "taskId": "62285c7f-a63e-45f5-8e45-bedf5fd575b3",
+        "projectId": "52c7b53e-3f08-4d83-aae7-dcdd7896967b",
+        "taskLookupStatus": 404,
+        "admissionStatus": 404,
+        "currentTaskStatus": 404
+      }
+    ]
+  },
+  "jarSha256": "e8fce0026d3a2ab299407b0ebdcba29435b3b24c415bdf1b482a5b88e47c50f6",
+  "context": "kubernetes-admin@learn",
+  "namespace": "manao-stage6b",
+  "podAfter": {
+    "uid": "ccf38553-d442-448e-9780-8200aac8ff1d",
+    "imageID": "docker.io/chocologic/manao_images_repository@sha256:2472a61595c4a9b4f8b27ecf646dbd7f16788e9c935b0090c57f41ac907ba395",
+    "name": "backend-746597654f-6mm4k",
+    "phase": "Running",
+    "ready": true
+  },
+  "scope": "Project admission only; not model or Stage 2 end-to-end acceptance",
+  "rollbackImage": "chocologic/manao_images_repository@sha256:6d255a093f503c435efc13fcad70daa5cc2bc97f40a930a8df5ee14817eb9846",
+  "image": "chocologic/manao_images_repository@sha256:2472a61595c4a9b4f8b27ecf646dbd7f16788e9c935b0090c57f41ac907ba395",
+  "rollout": "completed",
+  "workerAndFrontend": "unchanged",
+  "status": "PASS",
+  "sourceCommit": "2446ca2e9a74c4f1e41fa3b3bb5d32cef378a084",
+  "tests": {
+    "run": 16,
+    "errors": 0,
+    "failures": 0,
+    "skipped": 0
+  },
+  "observedAt": "2026-10-18T03:21:42.6284951Z"
+}

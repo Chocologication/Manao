@@ -45,6 +45,26 @@ function authorizationHeader(init: RequestInit | undefined): string | null {
   return new Headers(init?.headers).get('Authorization');
 }
 
+it('returns an unread authenticated stream with the caller signal and relative URL guard', async () => {
+  const response = new Response(new ReadableStream()); const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(response);
+  const client = createClient(fetchImpl); const signal = new AbortController().signal;
+  expect(await client.requestStream('/api/v1/live', { signal })).toBe(response);
+  expect(response.bodyUsed).toBe(false);
+  expect(authorizationHeader(fetchImpl.mock.calls[0]?.[1])).toBe('Bearer access-token');
+  expect(new Headers(fetchImpl.mock.calls[0]?.[1]?.headers).get('Accept')).toBe('text/event-stream');
+  expect(fetchImpl.mock.calls[0]?.[1]?.signal).toBe(signal);
+  await expect(client.requestStream('https://evil.example/api/v1/live')).rejects.toThrow('Relative');
+  expect(fetchImpl).toHaveBeenCalledTimes(1);
+});
+it('handles current stream 401 through logout while preserving a newer session from stale 401', async () => {
+  let token = 'old'; let release!: (r: Response) => void; const logout = vi.fn();
+  const fetchImpl = vi.fn<typeof fetch>().mockImplementationOnce(() => new Promise(r => { release = r; })).mockResolvedValueOnce(jsonResponse({}, 401));
+  const client = createClient(fetchImpl, { getAccessToken: () => token, onUnauthorized: logout });
+  const pending = client.requestStream('/api/v1/live'); token = 'new'; release(jsonResponse({}, 401));
+  await expect(pending).rejects.toBeInstanceOf(ApiRequestError); expect(logout).not.toHaveBeenCalled();
+  await expect(client.requestStream('/api/v1/live')).rejects.toBeInstanceOf(ApiRequestError); expect(logout).toHaveBeenCalledOnce();
+});
+
 async function expectRejection(promise: Promise<unknown>): Promise<unknown> {
   try {
     await promise;

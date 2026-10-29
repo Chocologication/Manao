@@ -1,0 +1,72 @@
+{
+  "moduleSha256": "f3e401e62b8792fb634ca660b27bf646e7dc98708bf00807f52d66063d78b69f",
+  "before": {
+    "runState": "RUNNING",
+    "lastSeq": 36,
+    "taskState": "RUNNING",
+    "writesLocked": true
+  },
+  "held": {
+    "observationHoldingGate": true
+  },
+  "failedDeliveries": [
+    {
+      "seq": 37,
+      "kind": "message",
+      "status": 409,
+      "code": "PROJECT_BUSY",
+      "elapsedMs": 29.49
+    },
+    {
+      "seq": 37,
+      "kind": "message",
+      "status": 409,
+      "code": "PROJECT_BUSY",
+      "elapsedMs": 31.53
+    },
+    {
+      "seq": 38,
+      "kind": "terminal",
+      "status": 409,
+      "code": "PROJECT_BUSY",
+      "elapsedMs": 36.09
+    },
+    {
+      "seq": 38,
+      "kind": "terminal",
+      "status": 409,
+      "code": "PROJECT_BUSY",
+      "elapsedMs": 31.74
+    }
+  ],
+  "during": {
+    "runState": "RECOVERING",
+    "lastSeq": 36,
+    "taskState": "RUNNING",
+    "writesLocked": true
+  },
+  "after": {
+    "runState": "RUNNING",
+    "lastSeq": 36,
+    "taskState": "RUNNING",
+    "writesLocked": true
+  },
+  "uncompensated": {
+    "runState": "RUNNING",
+    "lastSeq": 36,
+    "taskState": "RUNNING",
+    "writesLocked": true
+  },
+  "sendTerminalResolved": true,
+  "lastError": {
+    "name": "BackendHttpError",
+    "status": 409,
+    "code": "AI_PROGRESS_REJECTED"
+  },
+  "identicalReplayAfterRelease": {
+    "runState": "RUNNING",
+    "lastSeq": 38,
+    "taskState": "COMPLETED",
+    "writesLocked": false
+  }
+}

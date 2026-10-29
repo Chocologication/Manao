@@ -10,6 +10,7 @@ export type RunPreconditionReason =
   | 'RUN_ACTIVE'
   | 'RELOADING_WORKSPACE'
   | 'RELOAD_FAILED'
+  | 'AGENT_TASK_ACTIVE'
   | 'STAGE_4_UNAVAILABLE';
 
 export type RunPreconditions =
@@ -24,6 +25,8 @@ export type RunPreconditionsInput = {
   hasActiveLockingRun?: boolean;
   startPending?: boolean;
   reloadPhase?: RunAuthorityPhase;
+  /** Explicitly forwarded: an occupying agent task blocks Run starts. */
+  agentTaskActive?: boolean;
 };
 
 function authorityFieldsOmitted(input: RunPreconditionsInput): boolean {
@@ -52,6 +55,9 @@ export function resolveRunPreconditions(input: RunPreconditionsInput): RunPrecon
   }
   if (input.workspaceRevision === undefined || input.workspaceRevision.length === 0) {
     return { canRequestRun: false, reason: 'REVISION_UNAVAILABLE' };
+  }
+  if (input.agentTaskActive === true) {
+    return { canRequestRun: false, reason: 'AGENT_TASK_ACTIVE' };
   }
   if (authorityFieldsOmitted(input)) {
     return { canRequestRun: false, reason: 'STAGE_4_UNAVAILABLE' };
@@ -107,6 +113,9 @@ export function runPreconditionDescription(reason: RunPreconditionReason | null)
   }
   if (reason === 'RELOAD_FAILED') {
     return 'RELOAD_FAILED: Workspace reload failed';
+  }
+  if (reason === 'AGENT_TASK_ACTIVE') {
+    return 'AGENT_TASK_ACTIVE: An agent task owns the workspace';
   }
   return 'STAGE_4_UNAVAILABLE: Run is not available in this stage';
 }

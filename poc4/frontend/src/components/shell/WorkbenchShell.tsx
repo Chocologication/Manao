@@ -1,5 +1,5 @@
-import { useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, FileCode, LogOut, Package, Play, SquareTerminal, PanelLeft, PanelRight, Scan, X } from 'lucide-react';
+import { useIsMutating, useQueryClient } from '@tanstack/react-query';
+import { ArrowLeft, Bot, FileCode, LogOut, Package, Play, SquareTerminal, PanelLeft, PanelRight, Scan, X } from 'lucide-react';
 import { Brand } from '@/components/ui/Brand';
 import { ActivityCenter } from './ActivityCenter';
 import { AccountPanel } from './AccountPanel';
@@ -18,14 +18,19 @@ import {
 } from 'react';
 import { Link, useLocation } from 'react-router';
 import { logout } from '@/app/appRuntime';
+import { clearAgentTaskId, getAgentTask, readAgentTaskId } from '@/api/agentTaskApi';
+import { ApiRequestError } from '@/api/ApiRequestError';
 import { EditorWorkspace } from '@/components/files/EditorWorkspace';
 import { UnsavedChangesDialog } from '@/components/files/UnsavedChangesDialog';
 import { FileTree } from '@/components/files/FileTree';
 import { InlineAlert } from '@/components/feedback/InlineAlert';
+import { projectFileWritePredicate } from '@/components/files/editorSaveCommand';
 import { RunPanel } from '@/components/runs/RunPanel';
 import { type RunErrorLocation } from '@/components/runs/runErrorLocator';
 import { resolveErrorFile } from '@/features/files/resolveErrorFile';
 import { Button } from '@/components/ui/button';
+import type { AgentTaskSnapshot } from '@/contracts/agentTask';
+import { parseRunId, type RunId } from '@/contracts/run';
 import type { ProjectSummary } from '@/contracts/project';
 import { isPythonRuntimeTemplate } from '@/contracts/project';
 import {
@@ -49,15 +54,25 @@ import {
   useUnsavedDialogState,
 } from '@/features/editor/unsavedChangesGuard';
 import { useWorkspaceSession } from '@/features/editor/workspaceSession';
+import {
+  AgentConversationPanel,
+} from '@/features/ai/AgentConversationPanel';
+import {
+  agentTaskKeys,
+  useCloseAgentTaskMutation,
+  usePauseAgentTaskMutation,
+  useCurrentAgentTaskQuery,
+} from '@/features/ai/agentTaskQueries';
+import { resolveAgentTaskPreconditions } from '@/features/ai/agentTaskPreconditions';
+import { WorkspaceFileReadsPaused, getWorkspaceRevision } from '@/features/files/fileQueries';
 import { useEditorNavigation } from '@/features/editor/editorNavigation';
 import { parseProjectRelativePath } from '@/features/files/pathPolicy';
-import { WorkspaceFileReadsPaused } from '@/features/files/fileQueries';
 import { useAuth } from '@/features/auth/AuthProvider';
 import {
   isWorkspaceEditable,
   useRunAuthorityCoordinator,
 } from '@/features/runs/RunAuthorityCoordinator';
-import { useActiveRunQuery } from '@/features/runs/runQueries';
+import { useActiveRunQuery, runKeys } from '@/features/runs/runQueries';
 import { reloadWorkspaceAfterTerminalRun } from '@/features/runs/workspaceReload';
 import { cn } from '@/lib/utils';
 import { useWorkbenchPreferences } from '@/features/preferences/workbenchPreferences';
@@ -66,8 +81,9 @@ const EDITOR_REGION_ID = 'workbench-editor';
 const RUN_PANEL_ID = 'workbench-run-panel';
 const DEPENDENCIES_PANEL_ID = 'workbench-dependencies-panel';
 const TERMINAL_PANEL_ID = 'workbench-terminal-panel';
+const AGENT_PANEL_ID = 'workbench-agent-panel';
 
-type WorkbenchPanel = 'file' | 'run' | 'dependencies' | 'terminal';
+type WorkbenchPanel = 'file' | 'run' | 'dependencies' | 'terminal' | 'agent';
 
 /**
  * One-shot discovery of a server-pending dependency operation for a READY
@@ -80,9 +96,16 @@ export function isExperimentalTerminalEnabled(value: string | undefined): boolea
   return value === 'true';
 }
 
+/** The agent stage ships switched off; the panel only exists when explicitly enabled. */
+export function isAgentPanelEnabled(value: string | undefined): boolean {
+  return value === 'true';
+}
+
 const experimentalTerminalEnabled = isExperimentalTerminalEnabled(
   import.meta.env.VITE_ENABLE_EXPERIMENTAL_TERMINAL,
 );
+
+const agentPanelEnabled = isAgentPanelEnabled(import.meta.env.VITE_ENABLE_AI);
 
 const LazyJobTerminalPanel = lazy(() => import('@/components/terminal/JobTerminalPanel'));
 
@@ -103,12 +126,16 @@ export function WorkbenchShell({ project }: { project: ProjectSummary }) {
   const location = useLocation();
   const layout = useWorkbenchPreferences();
   const [activePanel, setActivePanel] = useState<WorkbenchPanel>(() => new URLSearchParams(location.search).get('panel') === 'run' ? 'run' : 'file');
+  const [runSelection, setRunSelection] = useState<{ projectId: string; runId: RunId; seq: number } | null>(null);
   const [terminalLoaded, setTerminalLoaded] = useState(false);
   const [compactViewport, setCompactViewport] = useState(() => !window.matchMedia('(min-width: 1024px)').matches);
   const [filesVisible, setFilesVisible] = useState(() => layout.filesVisible && !layout.focusMode && window.matchMedia('(min-width: 1024px)').matches);
   const [insightsVisible, setInsightsVisible] = useState(() => layout.insightsVisible && !layout.focusMode && window.matchMedia('(min-width: 1024px)').matches);
   const filePanelRef = useRef<HTMLElement>(null);
   const insightsPanelRef = useRef<HTMLElement>(null);
+  const historyPanelRef = useRef<HTMLElement>(null);
+  const [historyTarget, setHistoryTarget] = useState<HTMLDivElement | null>(null);
+  const aiMode = activePanel === 'agent';
   const fileToggleRef = useRef<HTMLButtonElement>(null);
   const insightsToggleRef = useRef<HTMLButtonElement>(null);
   const drawerReturnFocusRef = useRef<HTMLElement | null>(null);
@@ -144,7 +171,7 @@ export function WorkbenchShell({ project }: { project: ProjectSummary }) {
       drawerReturnFocusRef.current = null;
       return;
     }
-    const drawer = filesVisible ? filePanelRef.current : insightsPanelRef.current;
+    const drawer = filesVisible ? filePanelRef.current : aiMode ? historyPanelRef.current : insightsPanelRef.current;
     const returnFocus = filesVisible ? fileToggleRef.current : insightsToggleRef.current;
     drawerReturnFocusRef.current = returnFocus;
     const focusableSelector = 'button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
@@ -179,7 +206,7 @@ export function WorkbenchShell({ project }: { project: ProjectSummary }) {
       window.cancelAnimationFrame(animation);
       document.removeEventListener('keydown', onKeyDown);
     };
-  }, [closeDrawers, drawerOpen, filesVisible]);
+  }, [closeDrawers, drawerOpen, filesVisible, aiMode]);
   const queryClient = useQueryClient();
   const coordinator = useRunAuthorityCoordinator(project.id);
   const { snapshot: authSnapshot } = useAuth();
@@ -269,12 +296,211 @@ export function WorkbenchShell({ project }: { project: ProjectSummary }) {
   // one with an unconfirmed result, or the authoritative reload after a recovered
   // operation also locks workspace writes — the workspace content is not
   // authoritative until every one of them resolves (design 6.1, fail-closed).
+  // ---------------------------------------------------------------------
+  // Stage-one agent task: the shell polls GET current every two seconds while
+  // the AI stage is enabled, derives the write lock from the backend's
+  // writesLocked, and reloads the workspace at a safe node whenever the task
+  // reports a new revision (the agent saved code the editor must show).
+  // ---------------------------------------------------------------------
+  const [agentSubmissionInFlight, setAgentSubmissionInFlight] = useState(false);
+  const [agentSubmissionPending, setAgentSubmissionPending] = useState(() => readAgentTaskId(userId, project.id) !== null);
+  const agentTaskQuery = useCurrentAgentTaskQuery(project.id, agentPanelEnabled, userId, !agentSubmissionInFlight);
+  const agentTask = agentTaskQuery.data ?? null;
+  useEffect(() => {
+    if (agentTask !== null && !agentTask.writesLocked) clearAgentTaskId(userId, project.id, agentTask.taskId);
+    setAgentSubmissionPending(agentSubmissionInFlight || readAgentTaskId(userId, project.id) !== null);
+  }, [agentTask, agentTaskQuery.dataUpdatedAt, agentSubmissionInFlight, userId, project.id]);
+  const closeAgentTaskMutation = useCloseAgentTaskMutation(project.id);
+  const pauseAgentTaskMutation = usePauseAgentTaskMutation(project.id);
+  const fileWritePending =
+    useIsMutating({ predicate: projectFileWritePredicate(project.id) }) > 0;
+  const agentWritePending =
+    fileWritePending ||
+    dependencyOperationBusy ||
+    unconfirmedOperationId !== null ||
+    recoveryReloadPending;
+  // Agent-driven reload state: pending spans the in-flight reload (the editor
+  // is unmounted and file reads paused), failed keeps the workspace read-only
+  // behind a Retry affordance, and blocked marks a dirty-buffer conflict that
+  // must never be silently replaced.
+  const [agentReloadPending, setAgentReloadPending] = useState(false);
+  const [agentReloadFailed, setAgentReloadFailed] = useState(false);
+  const [agentReloadBlocked, setAgentReloadBlocked] = useState(false);
+  const [agentReloadAttempt, setAgentReloadAttempt] = useState(0);
+  const agentReloadRevisionRef = useRef<string | null>(null);
+  const [settledAgentTask, setSettledAgentTask] = useState<AgentTaskSnapshot | null>(null);
+  const [controlReloadedTaskId, setControlReloadedTaskId] = useState<string | null>(null);
+  const releasedControlTask = agentTask?.writesLocked === false ? agentTask : settledAgentTask;
+  const controlReloadTaskId = releasedControlTask && !releasedControlTask.writesLocked
+    && ['AI_PAUSED_BY_OWNER', 'AI_WORKER_RESTARTED'].includes(releasedControlTask.closeReasonCode ?? '')
+    ? releasedControlTask.taskId : null;
+  const controlReloadRequired = controlReloadTaskId !== null && controlReloadedTaskId !== controlReloadTaskId;
+  // The settled snapshot fetch gates the release too: until the final revision is
+  // confirmed (and any needed reload ran) the workspace must not unlock, and a
+  // failed fetch keeps it locked behind its own Retry affordance.
+  const [settledSnapshotPending, setSettledSnapshotPending] = useState(false);
+  const [settledSnapshotFailed, setSettledSnapshotFailed] = useState(false);
+  const [settledSnapshotAttempt, setSettledSnapshotAttempt] = useState(0);
+  const lastAgentTaskIdRef = useRef<string | null>(null);
+  const agentTaskOccupying = agentTask !== null && agentTask.writesLocked;
+  const agentReloading = agentReloadPending || agentReloadFailed || agentReloadBlocked || controlReloadRequired;
+  const settledSnapshotSettling = settledSnapshotPending || settledSnapshotFailed;
+  // The shell reuses the panel's start gate for its write-lock decision: the
+  // workspace is locked exactly while the shared function would refuse a task
+  // start because one occupies the project or a reload is in flight, failed or
+  // blocked (the neutral inputs pin everything the shell is not deciding here).
+  const agentTaskLocked = agentSubmissionPending || agentPanelEnabled && (agentTaskQuery.isPending || agentTaskQuery.isError) || !resolveAgentTaskPreconditions({
+    dirtyCount: 0,
+    writePending: false,
+    hasActiveRun: false,
+    runAuthorityKnown: true,
+    workspaceRevision: '0',
+    taskWritesLocked: agentTaskOccupying,
+    reloading: agentReloading || settledSnapshotSettling,
+  }).canStart;
+  const seedAgentTask = useCallback(
+    (snapshot: AgentTaskSnapshot) => {
+      queryClient.setQueryData(agentTaskKeys.current(project.id), snapshot);
+    },
+    [project.id, queryClient],
+  );
+  const observeReleasedControlTask = useCallback((snapshot: AgentTaskSnapshot) => {
+    setSettledAgentTask(previous => previous?.taskId === snapshot.taskId ? previous : snapshot);
+  }, []);
+  const retryAgentReload = useCallback(() => {
+    agentReloadRevisionRef.current = null;
+    setAgentReloadFailed(false);
+    setAgentReloadBlocked(false);
+    setAgentReloadAttempt((attempt) => attempt + 1);
+  }, []);
+  // The reload always settles its own pending/failed state. It runs outside the
+  // effect's cancellation reach (like reloadAfterRecovery): the effect's own
+  // pending state would otherwise re-run the effect, run the cleanup and mark
+  // the in-flight reload cancelled forever, leaving the editor unmounted.
+  // A project switch is guarded inside reloadWorkspaceAfterTerminalRun itself.
+  const runAgentReload = useCallback((controlTaskId: string | null = null) => {
+    setAgentReloadPending(true);
+    Promise.all([reloadWorkspaceAfterTerminalRun({ projectId: project.id, queryClient }),
+      queryClient.invalidateQueries({ queryKey: runKeys.all(project.id) })]).then(
+      () => {
+        if (controlTaskId !== null) setControlReloadedTaskId(controlTaskId);
+        setAgentReloadFailed(false);
+        setAgentReloadPending(false);
+      },
+      () => {
+        setAgentReloadFailed(true);
+        setAgentReloadPending(false);
+      },
+    );
+  }, [project.id, queryClient]);
+  const retrySettledSnapshot = useCallback(() => {
+    setSettledSnapshotFailed(false);
+    setSettledSnapshotAttempt((attempt) => attempt + 1);
+  }, []);
+  // One settled snapshot per released task: GET current only answers while a
+  // task occupies the project, so the final result is fetched by its id once.
+  // The fetch participates in the write gate: pending and failed both keep the
+  // workspace locked, and a failure offers its own Retry affordance instead of
+  // silently releasing it.
+  useEffect(() => {
+    if (agentTask !== null) {
+      if (lastAgentTaskIdRef.current !== agentTask.taskId) {
+        lastAgentTaskIdRef.current = agentTask.taskId;
+        setSettledAgentTask(null);
+      }
+      // The project is occupied again: no settled fetch may hold or fail the gate.
+      setSettledSnapshotPending(false);
+      setSettledSnapshotFailed(false);
+      return undefined;
+    }
+    const taskId = lastAgentTaskIdRef.current;
+    if (taskId === null) {
+      return undefined;
+    }
+    let cancelled = false;
+    setSettledSnapshotPending(true);
+    getAgentTask(project.id, taskId)
+      .then((snapshot) => {
+        if (cancelled) {
+          return;
+        }
+        setSettledAgentTask(snapshot);
+        setSettledSnapshotPending(false);
+        setSettledSnapshotFailed(false);
+      })
+      .catch(() => {
+        if (cancelled) {
+          return;
+        }
+        setSettledAgentTask(null);
+        setSettledSnapshotPending(false);
+        setSettledSnapshotFailed(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [agentTask, project.id, settledSnapshotAttempt]);
+  // The reload trigger observes the occupying task's revision and, after the
+  // task settled between two polls, the settled snapshot's final revision.
+  const agentReloadRevision = agentTask?.workspaceRevision ?? settledAgentTask?.workspaceRevision ?? null;
+  useEffect(() => {
+    if (!agentPanelEnabled || agentReloadRevision === null) {
+      return undefined;
+    }
+    if (!controlReloadRequired && agentReloadRevision === agentReloadRevisionRef.current) {
+      return undefined;
+    }
+    if (agentReloadRevisionRef.current === null) {
+      // First observation of a task: it was submitted against this browser's
+      // saved revision, so only a difference from the local cache needs a reload.
+      const localRevision = getWorkspaceRevision(queryClient, project.id);
+      if (!controlReloadRequired && agentReloadRevision === localRevision) {
+        agentReloadRevisionRef.current = agentReloadRevision;
+        return undefined;
+      }
+    }
+    if (agentReloadPending || recoveryReloadPending) {
+      // One reload at a time: concurrent polls never start a second one.
+      return undefined;
+    }
+    if (controlReloadRequired && agentReloadFailed) return undefined;
+    if (snapshot.phase === 'RELOADING_WORKSPACE' || snapshot.phase === 'RELOAD_FAILED') {
+      // The run authority reload owns the workspace; the agent reload re-runs
+      // once the phase settles back to editable.
+      return undefined;
+    }
+    if (useWorkspaceSession.getState().dirtyPaths.size > 0) {
+      // A start racing local input left a dirty buffer: replacing it would
+      // silently drop the user's edits, so the conflict is surfaced instead.
+      setAgentReloadBlocked(true);
+      return undefined;
+    }
+    setAgentReloadBlocked(false);
+    agentReloadRevisionRef.current = agentReloadRevision;
+    runAgentReload(controlReloadTaskId);
+  }, [
+    agentReloadAttempt,
+    agentReloadFailed,
+    agentReloadPending,
+    agentReloadRevision,
+    controlReloadRequired,
+    controlReloadTaskId,
+    project.id,
+    queryClient,
+    recoveryReloadPending,
+    runAgentReload,
+    snapshot.phase,
+  ]);
   const writesLocked =
     runWritesLocked ||
     dependencyOperationBusy ||
     unconfirmedOperationId !== null ||
-    recoveryReloadPending;
-  const reloadingWorkspace = snapshot.phase === 'RELOADING_WORKSPACE' || snapshot.phase === 'RELOAD_FAILED';
+    recoveryReloadPending ||
+    agentTaskLocked;
+  const reloadingWorkspace =
+    snapshot.phase === 'RELOADING_WORKSPACE' ||
+    snapshot.phase === 'RELOAD_FAILED' ||
+    agentReloadPending;
 
   useEffect(() => {
     if (snapshot.phase !== 'RELOADING_WORKSPACE') {
@@ -406,8 +632,8 @@ export function WorkbenchShell({ project }: { project: ProjectSummary }) {
         <div className="lab-workbench-title"><h1>{project.name}</h1><span>{RUNTIME_TEMPLATE_META[project.runtime?.templateId ?? 'java-console'].label}</span></div>
         <span className="lab-save-indicator" data-dirty={dirtyCount > 0}><span />{dirtyCount > 0 ? `${dirtyCount} 个文件未保存` : '无未保存修改'}</span>
         <Button ref={fileToggleRef} variant="ghost" size="icon" aria-label="切换文件面板" title="文件面板" aria-expanded={filesVisible} onClick={toggleFiles}><PanelLeft /></Button>
-        <Button ref={insightsToggleRef} variant="ghost" size="icon" aria-label="切换项目洞察" title="项目洞察" aria-expanded={insightsVisible} onClick={toggleInsights}><PanelRight /></Button>
-        <WorkbenchCommands python={pythonWorkbench} onSelectPanel={setActivePanel} onToggleFiles={toggleFiles} onToggleInsights={toggleInsights} />
+        <Button ref={insightsToggleRef} variant="ghost" size="icon" aria-label={aiMode ? '切换对话历史' : '切换项目洞察'} title={aiMode ? '对话历史' : '项目洞察'} aria-expanded={insightsVisible} onClick={toggleInsights}><PanelRight /></Button>
+        <WorkbenchCommands python={pythonWorkbench} insightsLabel={aiMode ? '对话历史' : undefined} onSelectPanel={setActivePanel} onToggleFiles={toggleFiles} onToggleInsights={toggleInsights} />
         <ActivityCenter key={`${userId}:${project.id}`} projectId={project.id} userId={userId} onOpenRuns={() => setActivePanel('run')} />
         <AccountPanel compact onLogout={handleLogoutClick} />
         <Button
@@ -448,6 +674,26 @@ export function WorkbenchShell({ project }: { project: ProjectSummary }) {
           <InlineAlert>无法核对待确认的依赖变更。</InlineAlert>
           <Button type="button" variant="outline" aria-label="Retry pending dependency check" onClick={retryPendingDiscovery}>
             重试依赖核对
+          </Button>
+        </div>
+      ) : null}
+      {agentReloadFailed || agentReloadBlocked ? (
+        <div className="flex flex-col items-start gap-2 border-b bg-background px-4 py-2">
+          <InlineAlert>
+            {agentReloadBlocked
+              ? 'The agent changed workspace files. Save or discard your unsaved changes, then reload.'
+              : 'The agent changed the workspace files, but reloading them failed.'}
+          </InlineAlert>
+          <Button type="button" variant="outline" onClick={retryAgentReload}>
+            Reload workspace
+          </Button>
+        </div>
+      ) : null}
+      {settledSnapshotFailed ? (
+        <div className="flex flex-col items-start gap-2 border-b bg-background px-4 py-2">
+          <InlineAlert>The agent task finished, but its final result could not be loaded.</InlineAlert>
+          <Button type="button" variant="outline" onClick={retrySettledSnapshot}>
+            Retry loading the result
           </Button>
         </div>
       ) : null}
@@ -572,6 +818,29 @@ export function WorkbenchShell({ project }: { project: ProjectSummary }) {
                 终端 <small>Beta</small>
               </button>
             ) : null}
+            {agentPanelEnabled ? (
+              <button
+                type="button"
+                role="tab"
+                id="workbench-tab-agent"
+                aria-label="AI"
+                aria-controls={AGENT_PANEL_ID}
+                aria-selected={activePanel === 'agent'}
+                tabIndex={activePanel === 'agent' ? 0 : -1}
+                className={cn(
+                  panelTabClassName,
+                  activePanel === 'agent'
+                    ? 'bg-accent text-accent-foreground'
+                    : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground',
+                )}
+                onClick={() => {
+                  setActivePanel('agent');
+                }}
+              >
+                <Bot className="h-4 w-4" aria-hidden />
+                AI
+              </button>
+            ) : null}
             <button type="button" className="lab-focus-toggle" aria-label="切换专注模式" title="专注模式" aria-pressed={layout.focusMode} onClick={() => layout.update({ focusMode: !layout.focusMode })}><Scan size={16} /></button>
           </div>
           {locationFeedback && <p className="lab-location-feedback" role="status">{locationFeedback}<button type="button" aria-label="关闭定位提示" onClick={() => setLocationFeedback('')}><X size={14} /></button></p>}
@@ -627,6 +896,9 @@ export function WorkbenchShell({ project }: { project: ProjectSummary }) {
                 projectId={project.id}
                 projectTemplateId={project.runtime?.templateId ?? 'java-console'}
                 coordinator={coordinator}
+                agentTaskActive={agentTaskLocked}
+                onOpenAgentTask={agentPanelEnabled ? () => { setActivePanel('agent'); if (compactViewport) closeDrawers(); } : undefined}
+                requestRunSelection={runSelection?.projectId === project.id ? runSelection : null}
                 onLocateError={(target) => void handleLocateRunError(target)}
               />
             </div>
@@ -681,9 +953,88 @@ export function WorkbenchShell({ project }: { project: ProjectSummary }) {
                 </Suspense>
               </div>
             ) : null}
+            {agentPanelEnabled ? (
+              <div
+                id={AGENT_PANEL_ID}
+                role="tabpanel"
+                aria-labelledby="workbench-tab-agent"
+                aria-hidden={activePanel !== 'agent'}
+                inert={activePanel !== 'agent' ? true : undefined}
+                className={cn(
+                  panelSurfaceClassName,
+                  activePanel === 'agent' ? 'z-10' : 'invisible pointer-events-none',
+                )}
+              >
+                <AgentConversationPanel
+                  onReleasedControlTask={observeReleasedControlTask}
+                  controlReloadedTaskId={controlReloadedTaskId}
+                  historyTarget={historyTarget}
+                  uiActive={aiMode}
+                  projectId={project.id}
+                  userId={userId}
+                  task={agentTask}
+                  settledTask={settledAgentTask}
+                  pollFailed={agentTaskQuery.isError}
+                  writePending={agentWritePending}
+                  hasActiveRun={snapshot.observedLockingRunId !== null}
+                  runAuthorityKnown={snapshot.phase !== 'LOADING_AUTHORITY' && activeQuery.isSuccess && !snapshot.startPending}
+                  reloading={
+                    reloadingWorkspace ||
+                    agentReloadFailed ||
+                    agentReloadBlocked ||
+                    controlReloadRequired ||
+                    settledSnapshotSettling
+                  }
+                  closePending={closeAgentTaskMutation.isPending}
+                  pausePending={pauseAgentTaskMutation.isPending}
+                  pauseError={pauseAgentTaskMutation.isError && pauseAgentTaskMutation.variables === agentTask?.taskId
+                    ? `Could not pause the task${pauseAgentTaskMutation.error instanceof ApiRequestError && pauseAgentTaskMutation.error.body ? ` (${pauseAgentTaskMutation.error.body.code})` : ''}. Try again.` : null}
+                  onPause={() => { if (agentTask !== null) pauseAgentTaskMutation.mutate(agentTask.taskId); }}
+                  closeError={closeAgentTaskMutation.isError && closeAgentTaskMutation.variables === agentTask?.taskId
+                    ? `Could not end the task${closeAgentTaskMutation.error instanceof ApiRequestError && closeAgentTaskMutation.error.body ? ` (${closeAgentTaskMutation.error.body.code})` : ''}. Try again.`
+                    : null}
+                  onTaskAccepted={seedAgentTask}
+                  onSubmissionPendingChange={(pending) => {
+                    setAgentSubmissionInFlight(pending);
+                    setAgentSubmissionPending(pending || readAgentTaskId(userId, project.id) !== null);
+                    if (!pending) void queryClient.invalidateQueries({ queryKey: agentTaskKeys.current(project.id) });
+                  }}
+                  onViewRun={(runId) => {
+                    let selectedRunId: RunId;
+                    try {
+                      selectedRunId = parseRunId(runId);
+                    } catch {
+                      return;
+                    }
+                    setRunSelection((previous) => ({ projectId: project.id, runId: selectedRunId, seq: (previous?.seq ?? 0) + 1 }));
+                    setActivePanel('run');
+                  }}
+                  onClose={() => {
+                    // The only close path: the owner's explicit button click.
+                    if (agentTask !== null) {
+                      closeAgentTaskMutation.mutate(agentTask.taskId);
+                    }
+                  }}
+                />
+              </div>
+            ) : null}
           </div>
         </div>
-        {insightsVisible && (
+        {agentPanelEnabled ? <aside
+          ref={historyPanelRef}
+          aria-label="对话历史"
+          hidden={!aiMode || !insightsVisible}
+          inert={!aiMode || !insightsVisible ? true : undefined}
+          role={drawerOpen && insightsVisible && aiMode ? 'dialog' : undefined}
+          aria-modal={drawerOpen && insightsVisible && aiMode ? 'true' : undefined}
+          tabIndex={drawerOpen && insightsVisible && aiMode ? -1 : undefined}
+          className="lab-insights manao-ai-history-sidebar"
+          data-open={aiMode && insightsVisible}
+        >
+          <div className="lab-file-sidebar-title"><span>对话历史</span><button className="lab-mobile-close" aria-label="关闭对话历史" onClick={() => setInsightsVisible(false)}><X size={16} /></button></div>
+          <div ref={setHistoryTarget} className="min-h-0 flex-1" />
+        </aside> : null}
+        {insightsVisible && !aiMode && (
           <RunInsights
             ref={insightsPanelRef}
             compactViewport={compactViewport}

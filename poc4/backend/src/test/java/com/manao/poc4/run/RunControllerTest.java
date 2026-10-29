@@ -46,7 +46,9 @@ public class RunControllerTest {
         endpoints = new RecordingEndpoints();
         runtimeStore = new com.manao.poc4.kubernetes.FakeProjectRuntimeStore();
         RunService service = new RunService(store, coordinator, RunControllerTest.policy(),
-            new com.manao.poc4.project.ProjectLifecycleGate(), runtimeStore, dependencies, endpoints);
+            new com.manao.poc4.project.ProjectLifecycleGate(),
+            com.manao.poc4.workspace.WorkspaceControllerTest.NO_AGENT_TASKS,
+            runtimeStore, dependencies, endpoints);
         controller = new RunController(service);
         store.projects.put(PROJECT, "READY");
         store.projectOwners.put(PROJECT, ALICE);
@@ -429,6 +431,307 @@ public class RunControllerTest {
         }
     }
 
+    /**
+     * Entry-point occupancy behavior against the REAL agent task store: while a task owns the
+     * project, Run.start refuses inside its gate critical section before any run row exists
+     * and before the Job coordinator is touched, and starting works again once the task
+     * settles. Wiring the real store's occupancy makes this test fail if the production guard
+     * call disappears.
+     */
+    @Nested
+    class AgentTaskOccupancyBehavior {
+        @Test
+        void startRefusesWhileAnAgentTaskOwnsTheProjectThenWorksAgainAfterItSettles() {
+            try (com.manao.poc4.ai.AgentTaskOccupancyFixture fixture =
+                     com.manao.poc4.ai.AgentTaskOccupancyFixture.open(PROJECT, ALICE, 12)) {
+                String taskId = fixture.occupy("change demo");
+                RunService service = new RunService(store, coordinator, RunControllerTest.policy(),
+                    new com.manao.poc4.project.ProjectLifecycleGate(), fixture.occupancy(),
+                    runtimeStore, dependencies, endpoints);
+                RunController occupiedController = new RunController(service);
+                assertThatThrownBy(() -> occupiedController.start(auth(ALICE), PROJECT,
+                        new RunController.StartRunRequest("12")))
+                    .isInstanceOfSatisfying(ApiException.class, ex -> {
+                        assertThat(ex.code()).isEqualTo("AI_TASK_ACTIVE");
+                        assertThat(ex.status()).isEqualTo(409);
+                    });
+                // Refused before any durable run and before any coordinator call.
+                assertThat(store.runs).isEmpty();
+                assertThat(coordinator.ensureJobCalls).isEmpty();
+                fixture.release(taskId);
+
+                RunSummary summary = occupiedController.start(auth(ALICE), PROJECT,
+                    new RunController.StartRunRequest("12"));
+                assertThat(summary.state()).isEqualTo("STARTING");
+                assertThat(store.runs).hasSize(1);
+                assertThat(coordinator.ensureJobCalls).hasSize(1);
+            }
+        }
+    }
+
+    @Nested
+    class RunCreationProtection {
+        @Test
+        void browserCreationKeepsStopAndObservationOutUntilLaunchFinishes() throws Exception {
+            var gate = new com.manao.poc4.project.ProjectLifecycleGate();
+            var creating = new java.util.concurrent.CountDownLatch(1);
+            var finishCreate = new java.util.concurrent.CountDownLatch(1);
+            var jobs = org.mockito.Mockito.spy(coordinator);
+            org.mockito.Mockito.doAnswer(invocation -> {
+                creating.countDown();
+                assertThat(finishCreate.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+                return invocation.callRealMethod();
+            }).when(jobs).ensureJob(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.anyInt(), org.mockito.ArgumentMatchers.any());
+            var service = new RunService(store, jobs, policy(), gate,
+                com.manao.poc4.workspace.WorkspaceControllerTest.NO_AGENT_TASKS, runtimeStore, dependencies, endpoints);
+            var observer = new RunObservationService(store, jobs,
+                org.mockito.Mockito.mock(com.manao.poc4.log.RunLogIngestor.class), null, gate, endpoints);
+            var pool = java.util.concurrent.Executors.newSingleThreadExecutor();
+            try {
+                var start = pool.submit(() -> service.start(ALICE, PROJECT, "12"));
+                assertThat(creating.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+                String run = store.runs.keySet().iterator().next();
+                assertThatThrownBy(() -> service.stop(ALICE, PROJECT, run))
+                    .isInstanceOfSatisfying(ApiException.class, ex -> assertThat(ex.code()).isEqualTo("PROJECT_BUSY"));
+                observer.observe();
+                assertThat(store.runs.get(run).state).isEqualTo("STARTING");
+                assertThat(jobs.stopCalls).isEmpty();
+                org.mockito.Mockito.verify(jobs, org.mockito.Mockito.never()).observe(org.mockito.ArgumentMatchers.any());
+                finishCreate.countDown();
+                assertThat(start.get(5, java.util.concurrent.TimeUnit.SECONDS).id()).isEqualTo(run);
+                assertThat(jobs.ensureJobCalls).containsExactly(run);
+                assertThat(service.stop(ALICE, PROJECT, run).state()).isEqualTo("STOPPING");
+                observer.observe();
+                assertThat(store.runs.get(run).state).isEqualTo("CANCELLED");
+                assertThat(jobs.ensureJobCalls).containsExactly(run);
+            } finally {
+                finishCreate.countDown();
+                pool.shutdownNow();
+            }
+        }
+    }
+
+    @Nested
+    class AgentRuns {
+        @Test
+        void stableRunIdentityReplaysOnceIncludingAfterFailure() {
+            try (var f = com.manao.poc4.ai.AgentTaskOccupancyFixture.open(PROJECT, ALICE, 12)) {
+                String task = f.occupy("run application");
+                var tasks = (com.manao.poc4.ai.AgentTaskStore) f.occupancy();
+                String run = java.util.UUID.randomUUID().toString();
+                tasks.registerToolCall(task, "start", "a".repeat(64), "application", "{\"action\":\"start\"}", 12, run);
+                RunService agent = agentService(tasks);
+                assertThat(agent.startForAgent(ALICE, PROJECT, task, "start", run, "12").id()).isEqualTo(run);
+                assertThat(agent.startForAgent(ALICE, PROJECT, task, "start", run, "12").id()).isEqualTo(run);
+                assertThat(store.runs).hasSize(1);
+                assertThat(coordinator.ensureJobCalls).containsExactly(run);
+                store.settle(run, RunState.FAILED, "START_FAILED", null);
+                store.revision.put(PROJECT, 13L);
+                assertThat(agent.startForAgent(ALICE, PROJECT, task, "start", run, "12").state()).isEqualTo("FAILED");
+                assertThatThrownBy(() -> agent.startForAgent(ALICE, PROJECT, task, "start", run, "13"))
+                    .isInstanceOfSatisfying(ApiException.class, ex -> assertThat(ex.code()).isEqualTo("WORKSPACE_REVISION_CONFLICT"));
+                assertThatThrownBy(() -> agent.startForAgent("foreign-owner", PROJECT, task, "start", run, "12"))
+                    .isInstanceOf(ApiException.class);
+                assertThatThrownBy(() -> agent.startForAgent(ALICE, "foreign-project", task, "start", run, "12"))
+                    .isInstanceOf(ApiException.class);
+                assertThatThrownBy(() -> agent.startForAgent(ALICE, PROJECT, task, "forged", run, "12"))
+                    .isInstanceOf(ApiException.class);
+                assertThat(coordinator.ensureJobCalls).containsExactly(run);
+            }
+        }
+
+        @Test
+        void uncertainCreationOnlyObservesTheOriginalRecoveringRunOnReplay() {
+            try (var f = com.manao.poc4.ai.AgentTaskOccupancyFixture.open(PROJECT, ALICE, 12)) {
+                String task = f.occupy("run application");
+                var tasks = (com.manao.poc4.ai.AgentTaskStore) f.occupancy();
+                String run = java.util.UUID.randomUUID().toString();
+                tasks.registerToolCall(task, "start", "a".repeat(64), "application", "{\"action\":\"start\"}", 12, run);
+                var applied = org.mockito.Mockito.spy(coordinator);
+                applied.fallbackKind = JobCoordinator.ObservationKind.FOUND;
+                org.mockito.Mockito.doAnswer(invocation -> {
+                    invocation.callRealMethod();
+                    throw new IllegalStateException("response lost after creation");
+                }).when(applied).ensureJob(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(),
+                    org.mockito.ArgumentMatchers.anyInt(), org.mockito.ArgumentMatchers.any());
+                RunService agent = new RunService(store, applied, policy(),
+                    new com.manao.poc4.project.ProjectLifecycleGate(), tasks, runtimeStore, dependencies, endpoints);
+                assertThatThrownBy(() -> agent.startForAgent(ALICE, PROJECT, task, "start", run, "12"))
+                    .isInstanceOf(ApiException.class);
+                assertThat(store.runs).containsOnlyKeys(run);
+                assertThat(agent.startForAgent(ALICE, PROJECT, task, "start", run, "12").state()).isEqualTo("RECOVERING");
+                assertThat(store.runs).hasSize(1);
+                assertThat(applied.ensureJobCalls).containsExactly(run);
+                org.mockito.Mockito.verify(applied, org.mockito.Mockito.times(1)).ensureJob(
+                    org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(),
+                    org.mockito.ArgumentMatchers.anyInt(), org.mockito.ArgumentMatchers.any());
+            }
+        }
+
+        @Test
+        void browserStopIsBlockedAndAgentStopRequiresTheExactPersistedTarget() {
+            RunSummary original = controller.start(auth(ALICE), PROJECT, new RunController.StartRunRequest("12"));
+            try (var f = com.manao.poc4.ai.AgentTaskOccupancyFixture.open(PROJECT, ALICE, 12)) {
+                String task = f.occupy("stop application");
+                var tasks = (com.manao.poc4.ai.AgentTaskStore) f.occupancy();
+                RunService agent = agentService(tasks);
+                assertThatThrownBy(() -> agent.stop(ALICE, PROJECT, original.id()))
+                    .isInstanceOfSatisfying(ApiException.class, ex -> assertThat(ex.code()).isEqualTo("AI_TASK_ACTIVE"));
+                assertThat(coordinator.stopCalls).isEmpty();
+                tasks.registerToolCall(task, "stop", "b".repeat(64), "application",
+                    "{\"action\":\"stop\",\"runId\":\"" + original.id() + "\"}", 12, java.util.UUID.randomUUID().toString());
+                assertThatThrownBy(() -> agent.stopForAgent(ALICE, PROJECT, task, "stop", "another-run"))
+                    .isInstanceOf(ApiException.class);
+                assertThat(agent.stopForAgent(ALICE, PROJECT, task, "stop", original.id()).state()).isEqualTo("STOPPING");
+                assertThat(coordinator.stopCalls).hasSize(1);
+            }
+        }
+
+        @Test
+        void closingBeforeAgentStartPreventsInsertion() {
+            try (var f = com.manao.poc4.ai.AgentTaskOccupancyFixture.open(PROJECT, ALICE, 12)) {
+                String task = f.occupy("run application");
+                var tasks = (com.manao.poc4.ai.AgentTaskStore) f.occupancy();
+                String run = java.util.UUID.randomUUID().toString();
+                tasks.registerToolCall(task, "start", "a".repeat(64), "application", "{\"action\":\"start\"}", 12, run);
+                RunService agent = agentService(tasks);
+                tasks.beginClose(task);
+                assertThatThrownBy(() -> agent.startForAgent(ALICE, PROJECT, task, "start", run, "12"))
+                    .isInstanceOfSatisfying(ApiException.class, ex -> assertThat(ex.code()).isEqualTo("AI_TASK_NOT_ACTIVE"));
+                assertThat(store.runs).isEmpty();
+            }
+        }
+
+        @Test
+        void startInsertionAndCloseShareOneShortCriticalSection() throws Exception {
+            try (var f = com.manao.poc4.ai.AgentTaskOccupancyFixture.open(PROJECT, ALICE, 12)) {
+                String task = f.occupy("run application");
+                var tasks = (com.manao.poc4.ai.AgentTaskStore) f.occupancy();
+                String run = java.util.UUID.randomUUID().toString();
+                tasks.registerToolCall(task, "start", "a".repeat(64), "application", "{\"action\":\"start\"}", 12, run);
+                var inserting = new java.util.concurrent.CountDownLatch(1);
+                var finishInsert = new java.util.concurrent.CountDownLatch(1);
+                var ensuring = new java.util.concurrent.CountDownLatch(1);
+                var finishEnsure = new java.util.concurrent.CountDownLatch(1);
+                var closing = new java.util.concurrent.CountDownLatch(1);
+                var spyStore = org.mockito.Mockito.spy(store);
+                org.mockito.Mockito.doAnswer(invocation -> {
+                    inserting.countDown();
+                    assertThat(finishInsert.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+                    return invocation.callRealMethod();
+                }).when(spyStore).insertRun(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.anyLong());
+                var spyCoordinator = org.mockito.Mockito.spy(coordinator);
+                org.mockito.Mockito.doAnswer(invocation -> {
+                    ensuring.countDown();
+                    assertThat(finishEnsure.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+                    return invocation.callRealMethod();
+                }).when(spyCoordinator).ensureJob(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(),
+                    org.mockito.ArgumentMatchers.anyInt(), org.mockito.ArgumentMatchers.any());
+                var gate = new com.manao.poc4.project.ProjectLifecycleGate();
+                var agent = new RunService(spyStore, spyCoordinator, policy(), gate, tasks, runtimeStore, dependencies, endpoints);
+                var pool = java.util.concurrent.Executors.newFixedThreadPool(2);
+                try {
+                    var start = pool.submit(() -> agent.startForAgent(ALICE, PROJECT, task, "start", run, "12"));
+                    assertThat(inserting.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+                    var close = pool.submit(() -> { closing.countDown(); return tasks.beginClose(task); });
+                    assertThat(closing.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+                    assertThatThrownBy(() -> close.get(100, java.util.concurrent.TimeUnit.MILLISECONDS))
+                        .isInstanceOf(java.util.concurrent.TimeoutException.class);
+                    finishInsert.countDown();
+                    assertThat(ensuring.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+                    assertThat(close.get(5, java.util.concurrent.TimeUnit.SECONDS))
+                        .isEqualTo(com.manao.poc4.ai.AgentTaskStore.CloseEntry.START);
+                    // Slow ensureJob does not block observation's project gate, while its
+                    // durable RUNNING call prevents close from releasing project ownership.
+                    try (var lease = gate.tryAcquire(PROJECT).orElseThrow()) {
+                        assertThat(tasks.failClosedTask(task, "AI_CLOSED", "closed")).isFalse();
+                    }
+                    finishEnsure.countDown();
+                    assertThat(start.get(5, java.util.concurrent.TimeUnit.SECONDS).id()).isEqualTo(run);
+                    assertThat(spyStore.runs).containsOnlyKeys(run);
+                } finally {
+                    finishInsert.countDown();
+                    finishEnsure.countDown();
+                    pool.shutdownNow();
+                }
+            }
+        }
+
+        @Test
+        void agentStopReleasesProjectAndTaskLocksBeforeDeletionRequest() throws Exception {
+            runtimeStore.putSpec(PROJECT, new ProjectRuntimeSpec(ProjectRuntimeSpec.TEMPLATE_JAVA_SPRING_BOOT_WEB,
+                false, false, List.of(new ProjectRuntimeSpec.Port("web", 8080, 30081))));
+            RunSummary original = controller.start(auth(ALICE), PROJECT, new RunController.StartRunRequest("12"));
+            try (var f = com.manao.poc4.ai.AgentTaskOccupancyFixture.open(PROJECT, ALICE, 12)) {
+                String task = f.occupy("stop application");
+                var tasks = (com.manao.poc4.ai.AgentTaskStore) f.occupancy();
+                tasks.registerToolCall(task, "stop", "b".repeat(64), "application",
+                    "{\"action\":\"stop\",\"runId\":\"" + original.id() + "\"}", 12, java.util.UUID.randomUUID().toString());
+                assertThat(tasks.markToolCallRunning(task, "stop")).isTrue();
+                var requesting = new java.util.concurrent.CountDownLatch(1);
+                var finishRequest = new java.util.concurrent.CountDownLatch(1);
+                var jobs = org.mockito.Mockito.spy(coordinator);
+                org.mockito.stubbing.Answer<Boolean> blocked = invocation -> {
+                    requesting.countDown();
+                    assertThat(finishRequest.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+                    return true;
+                };
+                org.mockito.Mockito.doAnswer(blocked).when(jobs).stop(org.mockito.ArgumentMatchers.any());
+                org.mockito.Mockito.doAnswer(invocation -> { blocked.answer(invocation); return null; })
+                    .when(jobs).requestStop(org.mockito.ArgumentMatchers.any());
+                var gate = new com.manao.poc4.project.ProjectLifecycleGate();
+                var routes = org.mockito.Mockito.spy(endpoints);
+                var service = new RunService(store, jobs, policy(), gate, tasks, runtimeStore, dependencies, routes);
+                var pool = java.util.concurrent.Executors.newFixedThreadPool(2);
+                try {
+                    var stop = pool.submit(() -> service.stopForAgent(ALICE, PROJECT, task, "stop", original.id()));
+                    assertThat(requesting.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+                    try (var lease = gate.tryAcquire(PROJECT).orElseThrow()) {
+                        assertThat(store.runs.get(original.id()).state).isEqualTo("STOPPING");
+                    }
+                    assertThat(pool.submit(() -> tasks.beginClose(task)).get(1, java.util.concurrent.TimeUnit.SECONDS))
+                        .isEqualTo(com.manao.poc4.ai.AgentTaskStore.CloseEntry.START);
+                    assertThat(tasks.failClosedTask(task, "AI_CLOSED", "still running")).isFalse();
+                    finishRequest.countDown();
+                    assertThat(stop.get(5, java.util.concurrent.TimeUnit.SECONDS).state()).isEqualTo("STOPPING");
+                    org.mockito.Mockito.verify(routes).requestWithdraw(PROJECT, original.id());
+                    org.mockito.Mockito.verify(routes, org.mockito.Mockito.never()).withdraw(org.mockito.ArgumentMatchers.any());
+                    org.mockito.Mockito.verify(jobs).requestStop("manao-run-" + original.id());
+                    org.mockito.Mockito.verify(jobs, org.mockito.Mockito.never()).stop(org.mockito.ArgumentMatchers.any());
+                } finally {
+                    finishRequest.countDown();
+                    tasks.releaseBuildClaim(task, "stop");
+                    pool.shutdownNow();
+                }
+            }
+        }
+
+        @Test
+        void stoppingATerminalOriginalRunNeverWithdrawsTheNewActiveApplication() {
+            runtimeStore.putSpec(PROJECT, new ProjectRuntimeSpec(ProjectRuntimeSpec.TEMPLATE_JAVA_SPRING_BOOT_WEB,
+                false, false, List.of(new ProjectRuntimeSpec.Port("web", 8080, 30081))));
+            RunSummary original = controller.start(auth(ALICE), PROJECT, new RunController.StartRunRequest("12"));
+            store.settle(original.id(), RunState.FAILED, "FAILED", null);
+            RunSummary current = controller.start(auth(ALICE), PROJECT, new RunController.StartRunRequest("12"));
+            try (var f = com.manao.poc4.ai.AgentTaskOccupancyFixture.open(PROJECT, ALICE, 12)) {
+                String task = f.occupy("stop old application");
+                var tasks = (com.manao.poc4.ai.AgentTaskStore) f.occupancy();
+                tasks.registerToolCall(task, "stop", "b".repeat(64), "application",
+                    "{\"action\":\"stop\",\"runId\":\"" + original.id() + "\"}", 12, java.util.UUID.randomUUID().toString());
+                assertThat(agentService(tasks).stopForAgent(ALICE, PROJECT, task, "stop", original.id()).state()).isEqualTo("FAILED");
+                assertThat(endpoints.withdrawn).isEmpty();
+                assertThat(coordinator.stopCalls).isEmpty();
+                assertThat(store.findActiveRun(PROJECT).orElseThrow().id()).isEqualTo(current.id());
+            }
+        }
+
+        private RunService agentService(com.manao.poc4.project.AgentTaskOccupancy tasks) {
+            return new RunService(store, coordinator, policy(), new com.manao.poc4.project.ProjectLifecycleGate(),
+                tasks, runtimeStore, dependencies, endpoints);
+        }
+    }
+
     public static org.springframework.security.core.Authentication auth(String userId) {
         return new org.springframework.security.authentication.UsernamePasswordAuthenticationToken(userId, "n/a");
     }
@@ -528,6 +831,9 @@ public class RunControllerTest {
                 return false;
             }
             run.state = next.name();
+            if (next == RunState.RUNNING && run.startedAt == null) {
+                run.startedAt = run.firstReadyAt == null ? Instant.now() : run.firstReadyAt;
+            }
             run.version++;
             return true;
         }
@@ -701,6 +1007,10 @@ public class RunControllerTest {
             stopCalls.add(jobName);
             return true;
         }
+
+        @Override public void requestStop(String jobName) {
+            stopCalls.add(jobName);
+        }
     }
 
     /** Selected-dependency double: only READY lets a Run be created. */
@@ -741,6 +1051,10 @@ public class RunControllerTest {
         }
 
         @Override public void withdraw(String projectId) {
+            withdrawn.add(projectId);
+        }
+
+        @Override public void requestWithdraw(String projectId, String runId) {
             withdrawn.add(projectId);
         }
     }

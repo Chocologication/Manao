@@ -44,12 +44,12 @@ class FlywaySchemaTest {
     }
 
     @Test
-    void latestSchemaIsVersion10AndAcceptsDeleting() throws Exception {
+    void latestSchemaIsVersion16AndAcceptsDeleting() throws Exception {
         try (var version = connection.prepareStatement(
                 "SELECT version FROM flyway_schema_history WHERE success = 1 ORDER BY installed_rank DESC LIMIT 1")) {
             try (var rows = version.executeQuery()) {
                 assertThat(rows.next()).isTrue();
-                assertThat(rows.getString(1)).isEqualTo("10");
+                assertThat(rows.getString(1)).isEqualTo("16");
             }
         }
         String userId = UUID.randomUUID().toString();
@@ -267,7 +267,7 @@ class FlywaySchemaTest {
     }
 
     @Test
-    void upgradeFromV9ToV10DefaultsLegacyOperationsToFileIdentity() throws Exception {
+    void upgradeFromV9DefaultsLegacyOperationsToFileIdentity() throws Exception {
         try (JdbcStoreTestSupport v9 = JdbcStoreTestSupport.createAtVersion("9")) {
             var jdbc = v9.jdbc();
             String userId = UUID.randomUUID().toString();
@@ -285,7 +285,7 @@ class FlywaySchemaTest {
             v9.migrateToLatest();
             assertThat(jdbc.queryForObject(
                 "SELECT version FROM flyway_schema_history WHERE success = 1 ORDER BY installed_rank DESC LIMIT 1",
-                String.class)).isEqualTo("10");
+                String.class)).isEqualTo("16");
             // The in-place upgrade keeps every legacy row and defaults it to the FILE identity.
             assertThat(jdbc.queryForObject("SELECT operation_kind FROM workspace_operation WHERE id = ?", String.class, operationId))
                 .isEqualTo("FILE");
@@ -317,7 +317,7 @@ class FlywaySchemaTest {
             v8.migrateToLatest();
             assertThat(jdbc.queryForObject(
                 "SELECT version FROM flyway_schema_history WHERE success = 1 ORDER BY installed_rank DESC LIMIT 1",
-                String.class)).isEqualTo("10");
+                String.class)).isEqualTo("16");
             // Existing rows survive V9 and legacy JSON NULL keeps the old console reading.
             assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM project WHERE id = ?", Integer.class, projectId)).isEqualTo(1);
             assertThat(jdbc.queryForObject("SELECT runtime_spec_json FROM project WHERE id = ?", String.class, projectId)).isNull();
@@ -346,14 +346,11 @@ class FlywaySchemaTest {
 
     @Test
     void upgradeFailsClosedWhenLegacyReceiptDigestIsNull() throws Exception {
+        connection.close();
+        database.close();
+        database = JdbcStoreTestSupport.createAtVersion("3");
+        connection = database.jdbc().getDataSource().getConnection();
         assertThat(connection.getCatalog()).matches("manao_stage6_[0-9a-f]{32}");
-        try (Statement statement = connection.createStatement()) {
-            statement.execute("DROP TABLE IF EXISTS project_storage_binding, terminal_audit, terminal_session, log_ticket, run_log_chunk, run, workspace_operation, project, app_user, instance_lease, flyway_schema_history");
-        }
-        Flyway.configure().dataSource(connection.getMetaData().getURL(),
-                System.getenv().getOrDefault("MANAO_DB_USERNAME", "manao"),
-                System.getenv().getOrDefault("MANAO_DB_PASSWORD", ""))
-            .target("3").locations("classpath:db/migration").load().migrate();
         String userId = UUID.randomUUID().toString();
         String projectId = UUID.randomUUID().toString();
         try (var user = connection.prepareStatement("INSERT INTO app_user(id, username, password_hash, created_at) VALUES (?, ?, 'hash', ?)");

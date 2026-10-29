@@ -1,0 +1,1724 @@
+{
+  "date": "2026-10-27",
+  "timezone": "Asia/Shanghai",
+  "source": "e3c06dde8fc02b3e00c80373be870e5dc413bb6f",
+  "status": "PI_STAGE4_CONTROL_RECOVERY_PASS",
+  "scope": "Stage4 cloud deployment and real-model validation; Stage2 paused; old task untouched",
+  "origin": "http://1.12.245.235:30080",
+  "context": "kubernetes-admin@learn",
+  "namespace": "manao-stage6b",
+  "startedUtc": "2026-10-27T12:02:19.107Z",
+  "before": {
+    "deployments": [
+      {
+        "name": "backend",
+        "generation": 44,
+        "ready": 1,
+        "replicas": 1,
+        "strategy": "Recreate",
+        "images": [
+          {
+            "name": "backend",
+            "image": "chocologic/manao_images_repository@sha256:2b8d3d21e4af8a0cdf488fae4b785f41e675f63f6e08cd4147f864082dc5e695"
+          }
+        ],
+        "aiConfig": [
+          {
+            "name": "SPRING_PROFILES_ACTIVE",
+            "value": "cluster"
+          },
+          {
+            "name": "MANAO_AI_ENABLED",
+            "value": "true"
+          },
+          {
+            "name": "MANAO_AI_PROJECT_ID",
+            "value": "905da5ae-40ef-469e-ba2b-5c0fd202070a"
+          }
+        ]
+      },
+      {
+        "name": "frontend",
+        "generation": 26,
+        "ready": 1,
+        "replicas": 1,
+        "strategy": "RollingUpdate",
+        "images": [
+          {
+            "name": "frontend",
+            "image": "chocologic/manao_images_repository@sha256:77ba0d19320ac238badf694a0bdd8eb6508d3c2aee6de50ed98f8192dc0ed708"
+          }
+        ]
+      },
+      {
+        "name": "manao-pi-worker",
+        "generation": 34,
+        "ready": 1,
+        "replicas": 1,
+        "strategy": "Recreate",
+        "images": [
+          {
+            "name": "pi-worker",
+            "image": "chocologic/manao_images_repository@sha256:696080571ba556d983aa578163be3d6494261057e960a9686b15f814e7d0c93e"
+          }
+        ]
+      }
+    ],
+    "pods": [
+      {
+        "name": "backend-5ff8446db-9mldk",
+        "uid": "fab1dce3-ee9c-4bfd-bb92-ceee6a39c98b",
+        "node": "node1",
+        "phase": "Running",
+        "deleting": null,
+        "ready": [
+          true
+        ],
+        "imageIDs": [
+          "docker.io/chocologic/manao_images_repository@sha256:2b8d3d21e4af8a0cdf488fae4b785f41e675f63f6e08cd4147f864082dc5e695"
+        ]
+      },
+      {
+        "name": "frontend-5f6fd7bf8c-86q5m",
+        "uid": "113878df-e3ad-4dc6-bb47-70e9dddc7b92",
+        "node": "node1",
+        "phase": "Running",
+        "deleting": null,
+        "ready": [
+          true
+        ],
+        "imageIDs": [
+          "docker.io/chocologic/manao_images_repository@sha256:77ba0d19320ac238badf694a0bdd8eb6508d3c2aee6de50ed98f8192dc0ed708"
+        ]
+      },
+      {
+        "name": "manao-pi-worker-6b6b79574b-27z6w",
+        "uid": "1418d280-adae-44ae-a55f-826eba660bf7",
+        "node": "node1",
+        "phase": "Running",
+        "deleting": null,
+        "ready": [
+          true
+        ],
+        "imageIDs": [
+          "docker.io/chocologic/manao_images_repository@sha256:696080571ba556d983aa578163be3d6494261057e960a9686b15f814e7d0c93e"
+        ]
+      },
+      {
+        "name": "mysql-0",
+        "uid": "821c2d2e-0c44-4b38-b0e1-08fd8b498aa4",
+        "node": "node2",
+        "phase": "Running",
+        "deleting": null,
+        "ready": [
+          true
+        ],
+        "imageIDs": [
+          "docker.io/library/mysql@sha256:d58ac93387f644e4e040c636b8f50494e78e5afc27ca0a87348b2f577da2b7ff"
+        ]
+      }
+    ],
+    "nodes": [
+      {
+        "name": "master",
+        "ready": "True",
+        "allocatable": {
+          "cpu": "3600m",
+          "ephemeral-storage": "51539404Ki",
+          "hugepages-1Gi": "0",
+          "hugepages-2Mi": "0",
+          "memory": "7024593300",
+          "pods": "110"
+        }
+      },
+      {
+        "name": "node1",
+        "ready": "True",
+        "allocatable": {
+          "cpu": "7600m",
+          "ephemeral-storage": "51539404Ki",
+          "hugepages-1Gi": "0",
+          "hugepages-2Mi": "0",
+          "memory": "14672163214",
+          "pods": "110"
+        }
+      },
+      {
+        "name": "node2",
+        "ready": "True",
+        "allocatable": {
+          "cpu": "3600m",
+          "ephemeral-storage": "51539404Ki",
+          "hugepages-1Gi": "0",
+          "hugepages-2Mi": "0",
+          "memory": "14676996085",
+          "pods": "110"
+        }
+      }
+    ],
+    "worker": {
+      "http": 200,
+      "process": {
+        "bootId": "930af4e7-8dd2-473c-b837-65716b2ffe59",
+        "instanceId": "pi-worker-stage1-930af4e7-8dd2-473c-b837-65716b2ffe59",
+        "activeTaskId": null,
+        "activeExecutionState": null,
+        "activeKind": null,
+        "modelConfigured": true
+      },
+      "task": null
+    },
+    "owner": "082d1027-b33d-11f1-b6a5-122676b27565",
+    "database": {
+      "occupyingTask": "b3b32518-f0ed-411e-aa85-1ecef95fbdc5\tbdddc018-f472-4fb9-a636-f164ed37b0cc\tRUNNING\tNULL\tNULL\tNULL\tpi-worker-stage1\t1",
+      "migrations": [
+        "15\t1",
+        "16\t1"
+      ],
+      "pendingWorkspaceOperations": 0
+    }
+  },
+  "cases": {
+    "A": {
+      "conversationId": "bdfbb117-6121-4d8b-a3e7-cab42ab0a3c4",
+      "status": "PASS",
+      "taskId": "caa8d794-ed6c-4dc9-8b6a-3dea7418bd75",
+      "revision": "28",
+      "build": {
+        "name": "build",
+        "state": "RUNNING",
+        "callId": "call_00_v5219OiVEFZ97PVWnuzd2922",
+        "jobUid": "b873fd87-cca4-4dce-aa1c-199093574bf9",
+        "podUid": "5e74b5b7-d598-4077-9326-eef899756145",
+        "result": null,
+        "jobName": "manao-dev-4e3c72f0-1edf-43a3-beb0-2236cf304ee7",
+        "commandId": "4e3c72f0-1edf-43a3-beb0-2236cf304ee7",
+        "podName": "manao-dev-4e3c72f0-1edf-43a3-beb0-2236cf304ee7-vnng8",
+        "node": "node1",
+        "containerIDs": [
+          "containerd://546954c14e790434ce5e2a80edc2ccc96667cf046268079f6b2ad457b2469dd1"
+        ]
+      },
+      "processes": [
+        "      1       0 /bin/bash /usr/local/bin/manao-dev-build run test",
+        "      7       1 /opt/java/openjdk/bin/java -classpath /usr/share/maven/boot/plexus-classworlds-2.8.0.jar -Dclassworlds.conf=/usr/share/maven/bin/m2.conf -Dmaven.home=/usr/share/maven -Dlibrary.jansi.path=/usr/share/maven/lib/jansi-native -Dmaven.multiModuleProjectDirectory=/workspace org.codehaus.plexus.classworlds.launcher.Launcher -Dmaven.repo.local=/maven-cache/repository -B -ntp test",
+        "  12534       7 /bin/sh -c cd '/workspace' && '/opt/java/openjdk/bin/java' '-jar' '/workspace/target/surefire/surefirebooter-20261027122614250_3.jar' '/workspace/target/surefire' '2026-10-27T12-26-07_932-jvmRun1' 'surefire-20261027122614250_1tmp' 'surefire_0-20261027122614250_2tmp'",
+        "  12535   12534 /opt/java/openjdk/bin/java -jar /workspace/target/surefire/surefirebooter-20261027122614250_3.jar /workspace/target/surefire 2026-10-27T12-26-07_932-jvmRun1 surefire-20261027122614250_1tmp surefire_0-20261027122614250_2tmp"
+      ],
+      "beforePause": {
+        "task": {
+          "id": "caa8d794-ed6c-4dc9-8b6a-3dea7418bd75",
+          "epoch": 1,
+          "state": "RUNNING",
+          "reportId": null,
+          "revision": 28,
+          "createdAt": "2026-10-27 12:24:59.552450",
+          "deadlineAt": "2026-10-27 12:54:59.552000",
+          "instanceId": "pi-worker-stage1-930af4e7-8dd2-473c-b837-65716b2ffe59",
+          "failureCode": null,
+          "reportSha256": null,
+          "activeProject": "3531cb41-f668-4517-aa84-1e49000d3746",
+          "conversationId": "bdfbb117-6121-4d8b-a3e7-cab42ab0a3c4",
+          "closeReasonCode": null
+        },
+        "calls": [
+          {
+            "name": "read_file",
+            "state": "COMPLETED",
+            "callId": "call_00_gw9FaEhZIq5pYPxWP9KL1317",
+            "jobUid": null,
+            "podUid": null,
+            "result": {
+              "toolCallId": "call_00_gw9FaEhZIq5pYPxWP9KL1317",
+              "workspaceRevision": "28",
+              "truncated": false,
+              "data": {
+                "path": "stage4-control.txt",
+                "sha256": "e8a1b286ba132ea2e763526936b69153a9d28dfc570a6bde67f4ea91322f37c5",
+                "content": "300000:stage4-initial-3531cb41-f668-4517-aa84-1e49000d3746",
+                "contentSha256": "e8a1b286ba132ea2e763526936b69153a9d28dfc570a6bde67f4ea91322f37c5"
+              }
+            },
+            "jobName": null,
+            "commandId": null
+          },
+          {
+            "name": "read_file",
+            "state": "COMPLETED",
+            "callId": "call_01_vPtzQw81vQcPrwmOgL800688",
+            "jobUid": null,
+            "podUid": null,
+            "result": {
+              "toolCallId": "call_01_vPtzQw81vQcPrwmOgL800688",
+              "workspaceRevision": "28",
+              "truncated": false,
+              "data": {
+                "path": "src/test/java/com/example/app/Stage4LongBuildTest.java",
+                "sha256": "7a0d543bcdc677512be705eba24156f01e28d3d0f69d15f4616f26a8815b8a79",
+                "contentSha256": "7a0d543bcdc677512be705eba24156f01e28d3d0f69d15f4616f26a8815b8a79"
+              }
+            },
+            "jobName": null,
+            "commandId": null
+          },
+          {
+            "name": "build",
+            "state": "RUNNING",
+            "callId": "call_00_v5219OiVEFZ97PVWnuzd2922",
+            "jobUid": "b873fd87-cca4-4dce-aa1c-199093574bf9",
+            "podUid": "5e74b5b7-d598-4077-9326-eef899756145",
+            "result": null,
+            "jobName": "manao-dev-4e3c72f0-1edf-43a3-beb0-2236cf304ee7",
+            "commandId": "4e3c72f0-1edf-43a3-beb0-2236cf304ee7"
+          }
+        ]
+      },
+      "workerBefore": {
+        "http": 200,
+        "process": {
+          "bootId": "930af4e7-8dd2-473c-b837-65716b2ffe59",
+          "instanceId": "pi-worker-stage1-930af4e7-8dd2-473c-b837-65716b2ffe59",
+          "activeTaskId": "caa8d794-ed6c-4dc9-8b6a-3dea7418bd75",
+          "activeExecutionState": "RUNNING",
+          "activeKind": "task",
+          "modelConfigured": true
+        },
+        "task": {
+          "http": 200,
+          "taskId": "caa8d794-ed6c-4dc9-8b6a-3dea7418bd75",
+          "instanceId": "pi-worker-stage1-930af4e7-8dd2-473c-b837-65716b2ffe59",
+          "state": "RUNNING",
+          "protocolVersion": 1,
+          "workerEpoch": 1,
+          "requestSha256": "a522ce8dec6d955a0e109f9845765cd0e421b8bf78bc54610307857e642a503d",
+          "executionState": "RUNNING",
+          "terminalDelivery": {
+            "state": "PENDING",
+            "reportId": null,
+            "reportSha256": null
+          }
+        }
+      },
+      "pause": {
+        "http": 200,
+        "state": "NEEDS_ATTENTION",
+        "writesLocked": true,
+        "closeReasonCode": "AI_PAUSED_BY_OWNER"
+      },
+      "final": {
+        "task": {
+          "id": "caa8d794-ed6c-4dc9-8b6a-3dea7418bd75",
+          "epoch": 1,
+          "state": "FAILED",
+          "reportId": "5aa0e38bc43a9a98348de72b59250096c509c2cbd7adec3e99530873ac138d37",
+          "revision": 28,
+          "createdAt": "2026-10-27 12:24:59.552450",
+          "deadlineAt": "2026-10-27 12:54:59.552000",
+          "instanceId": "pi-worker-stage1-930af4e7-8dd2-473c-b837-65716b2ffe59",
+          "failureCode": "AI_CONTEXT_UNAVAILABLE",
+          "reportSha256": "0a0dcd70f9b5e3943b576671cc7a415af01a8cef134d589550f1149834a0f2bd",
+          "activeProject": null,
+          "conversationId": "bdfbb117-6121-4d8b-a3e7-cab42ab0a3c4",
+          "closeReasonCode": "AI_PAUSED_BY_OWNER"
+        },
+        "calls": [
+          {
+            "name": "read_file",
+            "state": "COMPLETED",
+            "callId": "call_00_gw9FaEhZIq5pYPxWP9KL1317",
+            "jobUid": null,
+            "podUid": null,
+            "result": {
+              "toolCallId": "call_00_gw9FaEhZIq5pYPxWP9KL1317",
+              "workspaceRevision": "28",
+              "truncated": false,
+              "data": {
+                "path": "stage4-control.txt",
+                "sha256": "e8a1b286ba132ea2e763526936b69153a9d28dfc570a6bde67f4ea91322f37c5",
+                "content": "300000:stage4-initial-3531cb41-f668-4517-aa84-1e49000d3746",
+                "contentSha256": "e8a1b286ba132ea2e763526936b69153a9d28dfc570a6bde67f4ea91322f37c5"
+              }
+            },
+            "jobName": null,
+            "commandId": null
+          },
+          {
+            "name": "read_file",
+            "state": "COMPLETED",
+            "callId": "call_01_vPtzQw81vQcPrwmOgL800688",
+            "jobUid": null,
+            "podUid": null,
+            "result": {
+              "toolCallId": "call_01_vPtzQw81vQcPrwmOgL800688",
+              "workspaceRevision": "28",
+              "truncated": false,
+              "data": {
+                "path": "src/test/java/com/example/app/Stage4LongBuildTest.java",
+                "sha256": "7a0d543bcdc677512be705eba24156f01e28d3d0f69d15f4616f26a8815b8a79",
+                "contentSha256": "7a0d543bcdc677512be705eba24156f01e28d3d0f69d15f4616f26a8815b8a79"
+              }
+            },
+            "jobName": null,
+            "commandId": null
+          },
+          {
+            "name": "build",
+            "state": "COMPLETED",
+            "callId": "call_00_v5219OiVEFZ97PVWnuzd2922",
+            "jobUid": "b873fd87-cca4-4dce-aa1c-199093574bf9",
+            "podUid": "5e74b5b7-d598-4077-9326-eef899756145",
+            "result": {
+              "toolCallId": "call_00_v5219OiVEFZ97PVWnuzd2922",
+              "workspaceRevision": "28",
+              "truncated": false,
+              "data": {
+                "goal": "test",
+                "exitCode": null,
+                "terminationReason": "BUILD_CLOSED",
+                "cleanupConfirmed": true,
+                "sourceRevision": "28",
+                "testReports": [],
+                "outputSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+                "outputContainsSuccess": false
+              }
+            },
+            "jobName": "manao-dev-4e3c72f0-1edf-43a3-beb0-2236cf304ee7",
+            "commandId": "4e3c72f0-1edf-43a3-beb0-2236cf304ee7"
+          }
+        ]
+      },
+      "workerAfter": {
+        "http": 200,
+        "process": {
+          "bootId": "930af4e7-8dd2-473c-b837-65716b2ffe59",
+          "instanceId": "pi-worker-stage1-930af4e7-8dd2-473c-b837-65716b2ffe59",
+          "activeTaskId": null,
+          "activeExecutionState": null,
+          "activeKind": null,
+          "modelConfigured": true
+        },
+        "task": {
+          "http": 200,
+          "taskId": "caa8d794-ed6c-4dc9-8b6a-3dea7418bd75",
+          "instanceId": "pi-worker-stage1-930af4e7-8dd2-473c-b837-65716b2ffe59",
+          "state": "FAILED",
+          "protocolVersion": 1,
+          "workerEpoch": 1,
+          "requestSha256": "a522ce8dec6d955a0e109f9845765cd0e421b8bf78bc54610307857e642a503d",
+          "executionState": "FAILED",
+          "terminalDelivery": {
+            "state": "CLOSING",
+            "reportId": "5aa0e38bc43a9a98348de72b59250096c509c2cbd7adec3e99530873ac138d37",
+            "reportSha256": "0a0dcd70f9b5e3943b576671cc7a415af01a8cef134d589550f1149834a0f2bd"
+          }
+        }
+      },
+      "currentHttp": 404,
+      "deadlineIntervalMilliseconds": 1800000
+    },
+    "AContinue": {
+      "conversationId": "bdfbb117-6121-4d8b-a3e7-cab42ab0a3c4",
+      "status": "PASS",
+      "taskId": "7cb13065-0c6a-4e9b-9f56-6d4944296123",
+      "revision": "29",
+      "final": {
+        "task": {
+          "id": "7cb13065-0c6a-4e9b-9f56-6d4944296123",
+          "epoch": 1,
+          "state": "COMPLETED",
+          "reportId": "cc8d33f24adee5d58c93ee04d567f6b7a6a6d6f41193f3dc4cf496ef0f323131",
+          "revision": 29,
+          "createdAt": "2026-10-27 12:33:44.431645",
+          "deadlineAt": "2026-10-27 13:03:44.431000",
+          "instanceId": "pi-worker-stage1-930af4e7-8dd2-473c-b837-65716b2ffe59",
+          "failureCode": null,
+          "reportSha256": "5d5193dc4e66717ac718a882e3b6aa13c3db5e25f3581e5dd12b421c936e2d55",
+          "activeProject": null,
+          "conversationId": "bdfbb117-6121-4d8b-a3e7-cab42ab0a3c4",
+          "closeReasonCode": null
+        },
+        "calls": [
+          {
+            "name": "read_file",
+            "state": "COMPLETED",
+            "callId": "call_00_hQidqeAu6b7tJ3OCXFJa8497",
+            "jobUid": null,
+            "podUid": null,
+            "result": {
+              "toolCallId": "call_00_hQidqeAu6b7tJ3OCXFJa8497",
+              "workspaceRevision": "29",
+              "truncated": false,
+              "data": {
+                "path": "stage4-control.txt",
+                "sha256": "4266de6afd6fe9cee21d6007d77912c70f15f540828f818a3a60cef1da3569aa",
+                "content": "0:stage4-user-saved-3531cb41-f668-4517-aa84-1e49000d3746",
+                "contentSha256": "4266de6afd6fe9cee21d6007d77912c70f15f540828f818a3a60cef1da3569aa"
+              }
+            },
+            "jobName": null,
+            "commandId": null
+          },
+          {
+            "name": "build",
+            "state": "COMPLETED",
+            "callId": "call_00_LgMC0X3PoXq9zq4M84Q79137",
+            "jobUid": "d1345b6b-cee3-4c9d-8a63-525ad88e953d",
+            "podUid": "c56bf47f-e634-4b89-9338-bc73bf09921f",
+            "result": {
+              "toolCallId": "call_00_LgMC0X3PoXq9zq4M84Q79137",
+              "workspaceRevision": "29",
+              "truncated": false,
+              "data": {
+                "goal": "test",
+                "exitCode": 0,
+                "terminationReason": "Completed",
+                "cleanupConfirmed": true,
+                "sourceRevision": "29",
+                "testReports": [
+                  {
+                    "tests": 1,
+                    "errors": 0,
+                    "sha256": "cacf779d0ec1b8f95b75933d53521a8b3600395dc0a81901f0bc7706709a8491",
+                    "skipped": 0,
+                    "failures": 0,
+                    "testClass": "com.example.app.Stage4LongBuildTest"
+                  }
+                ],
+                "outputSha256": "ebd82401744a7a6c1a393602c63454bc3fb29dcce4e871f32e5b007960febbcd",
+                "outputContainsSuccess": true
+              }
+            },
+            "jobName": "manao-dev-fe5a3feb-4422-45c8-b82f-af1970a5abdb",
+            "commandId": "fe5a3feb-4422-45c8-b82f-af1970a5abdb"
+          },
+          {
+            "name": "application",
+            "state": "COMPLETED",
+            "callId": "call_00_MtGucHadznL2ts24ziBO2817",
+            "jobUid": null,
+            "podUid": null,
+            "result": {
+              "toolCallId": "call_00_MtGucHadznL2ts24ziBO2817",
+              "workspaceRevision": "29",
+              "truncated": false,
+              "data": {
+                "action": "start",
+                "run": {
+                  "id": "c8e19942-091d-4bed-b46c-e98f78c8f3d1",
+                  "state": "STARTING",
+                  "requestedWorkspaceRevision": "29",
+                  "firstReadyAt": null,
+                  "expiresAt": null
+                }
+              }
+            },
+            "jobName": null,
+            "commandId": "c8e19942-091d-4bed-b46c-e98f78c8f3d1"
+          },
+          {
+            "name": "application",
+            "state": "COMPLETED",
+            "callId": "call_00_8s44OHDTcXSo0ptPERjx8688",
+            "jobUid": null,
+            "podUid": null,
+            "result": {
+              "toolCallId": "call_00_8s44OHDTcXSo0ptPERjx8688",
+              "workspaceRevision": "29",
+              "truncated": false,
+              "data": {
+                "action": "status",
+                "run": {
+                  "id": "c8e19942-091d-4bed-b46c-e98f78c8f3d1",
+                  "state": "RUNNING",
+                  "requestedWorkspaceRevision": "29",
+                  "firstReadyAt": null,
+                  "expiresAt": null
+                }
+              }
+            },
+            "jobName": null,
+            "commandId": null
+          },
+          {
+            "name": "application",
+            "state": "COMPLETED",
+            "callId": "call_00_N8qpToda3fLSRAsXsLmG4725",
+            "jobUid": null,
+            "podUid": null,
+            "result": {
+              "toolCallId": "call_00_N8qpToda3fLSRAsXsLmG4725",
+              "workspaceRevision": "29",
+              "truncated": false,
+              "data": {
+                "action": "status",
+                "run": {
+                  "id": "c8e19942-091d-4bed-b46c-e98f78c8f3d1",
+                  "state": "RUNNING",
+                  "requestedWorkspaceRevision": "29",
+                  "firstReadyAt": "2026-10-27T12:34:10Z",
+                  "expiresAt": "2026-10-27T14:34:10Z"
+                }
+              }
+            },
+            "jobName": null,
+            "commandId": null
+          },
+          {
+            "name": "app_http_get",
+            "state": "COMPLETED",
+            "callId": "call_00_8ko8luUeuOR64U4FUokz1133",
+            "jobUid": null,
+            "podUid": null,
+            "result": {
+              "toolCallId": "call_00_8ko8luUeuOR64U4FUokz1133",
+              "workspaceRevision": "29",
+              "truncated": false,
+              "data": {
+                "kind": "app_http_get",
+                "runId": "c8e19942-091d-4bed-b46c-e98f78c8f3d1",
+                "path": "/api/demo",
+                "statusCode": 200,
+                "contentType": "application/json",
+                "bodySha256": "c3d5f93efe9b821a24575ce75b1880cbdd747f5c9def421b42b000f6e6fa1d9d",
+                "error": null
+              }
+            },
+            "jobName": null,
+            "commandId": null
+          }
+        ]
+      },
+      "workerAfter": {
+        "http": 200,
+        "process": {
+          "bootId": "930af4e7-8dd2-473c-b837-65716b2ffe59",
+          "instanceId": "pi-worker-stage1-930af4e7-8dd2-473c-b837-65716b2ffe59",
+          "activeTaskId": null,
+          "activeExecutionState": null,
+          "activeKind": null,
+          "modelConfigured": true
+        },
+        "task": {
+          "http": 200,
+          "taskId": "7cb13065-0c6a-4e9b-9f56-6d4944296123",
+          "instanceId": "pi-worker-stage1-930af4e7-8dd2-473c-b837-65716b2ffe59",
+          "state": "COMPLETED",
+          "protocolVersion": 1,
+          "workerEpoch": 1,
+          "requestSha256": "e00420e5e7ccd9fee8507309ad62e92016d547efd3c912031308bbe225ede088",
+          "executionState": "COMPLETED",
+          "terminalDelivery": {
+            "state": "ACKED",
+            "reportId": "cc8d33f24adee5d58c93ee04d567f6b7a6a6d6f41193f3dc4cf496ef0f323131",
+            "reportSha256": "5d5193dc4e66717ac718a882e3b6aa13c3db5e25f3581e5dd12b421c936e2d55"
+          }
+        }
+      },
+      "deadlineIntervalMilliseconds": 1800000
+    },
+    "B": {
+      "conversationId": "aa817d85-c166-4fc1-8b79-ed15daf1d1e8",
+      "status": "PASS",
+      "taskId": "6179769b-cf21-4d96-bb0a-f051bd0019f1",
+      "revision": "30",
+      "build": {
+        "name": "build",
+        "state": "RUNNING",
+        "callId": "call_00_Z1yMpsJyXnmMTaCPr0ZM0871",
+        "jobUid": "bd4d7b04-dbfc-4cb0-8aba-51f8b7fc3a84",
+        "podUid": "c163bda4-e6b7-480b-bc35-eefec4f606d1",
+        "result": null,
+        "jobName": "manao-dev-c9853d8d-846f-465f-b934-e53573bbb793",
+        "commandId": "c9853d8d-846f-465f-b934-e53573bbb793",
+        "podName": "manao-dev-c9853d8d-846f-465f-b934-e53573bbb793-mmpbp",
+        "node": "node1",
+        "containerIDs": [
+          "containerd://aef66fffe8909886c5abb277569286d30e1aec1f3b01b8fb777184655b519eb6"
+        ]
+      },
+      "processes": [
+        "      1       0 /bin/bash /usr/local/bin/manao-dev-build run test",
+        "      7       1 /opt/java/openjdk/bin/java -classpath /usr/share/maven/boot/plexus-classworlds-2.8.0.jar -Dclassworlds.conf=/usr/share/maven/bin/m2.conf -Dmaven.home=/usr/share/maven -Dlibrary.jansi.path=/usr/share/maven/lib/jansi-native -Dmaven.multiModuleProjectDirectory=/workspace org.codehaus.plexus.classworlds.launcher.Launcher -Dmaven.repo.local=/maven-cache/repository -B -ntp test",
+        "     61       7 /bin/sh -c cd '/workspace' && '/opt/java/openjdk/bin/java' '-jar' '/workspace/target/surefire/surefirebooter-20261027123704413_3.jar' '/workspace/target/surefire' '2026-10-27T12-37-04_314-jvmRun1' 'surefire-20261027123704413_1tmp' 'surefire_0-20261027123704413_2tmp'",
+        "     62      61 /opt/java/openjdk/bin/java -jar /workspace/target/surefire/surefirebooter-20261027123704413_3.jar /workspace/target/surefire 2026-10-27T12-37-04_314-jvmRun1 surefire-20261027123704413_1tmp surefire_0-20261027123704413_2tmp"
+      ],
+      "beforePause": {
+        "task": {
+          "id": "6179769b-cf21-4d96-bb0a-f051bd0019f1",
+          "epoch": 1,
+          "state": "RUNNING",
+          "reportId": null,
+          "revision": 30,
+          "createdAt": "2026-10-27 12:36:54.003462",
+          "deadlineAt": "2026-10-27 13:06:54.003000",
+          "instanceId": "pi-worker-stage1-930af4e7-8dd2-473c-b837-65716b2ffe59",
+          "failureCode": null,
+          "reportSha256": null,
+          "activeProject": "3531cb41-f668-4517-aa84-1e49000d3746",
+          "conversationId": "aa817d85-c166-4fc1-8b79-ed15daf1d1e8",
+          "closeReasonCode": null
+        },
+        "calls": [
+          {
+            "name": "read_file",
+            "state": "COMPLETED",
+            "callId": "call_00_ET_3jTalFMxRsd4OrR4Ink73624",
+            "jobUid": null,
+            "podUid": null,
+            "result": {
+              "toolCallId": "call_00_ET_3jTalFMxRsd4OrR4Ink73624",
+              "workspaceRevision": "30",
+              "truncated": false,
+              "data": {
+                "path": "stage4-control.txt",
+                "sha256": "eba35dd24b2f1f29c94a22403c8ac8200183132aec99b0f30d02fe4360aa62be",
+                "content": "300000:stage4-worker-restart-3531cb41-f668-4517-aa84-1e49000d3746",
+                "contentSha256": "eba35dd24b2f1f29c94a22403c8ac8200183132aec99b0f30d02fe4360aa62be"
+              }
+            },
+            "jobName": null,
+            "commandId": null
+          },
+          {
+            "name": "read_file",
+            "state": "COMPLETED",
+            "callId": "call_01_ET_mNHWjGJKFmRgdYzU9mDl4143",
+            "jobUid": null,
+            "podUid": null,
+            "result": {
+              "toolCallId": "call_01_ET_mNHWjGJKFmRgdYzU9mDl4143",
+              "workspaceRevision": "30",
+              "truncated": false,
+              "data": {
+                "path": "src/test/java/com/example/app/Stage4LongBuildTest.java",
+                "sha256": "7a0d543bcdc677512be705eba24156f01e28d3d0f69d15f4616f26a8815b8a79",
+                "contentSha256": "7a0d543bcdc677512be705eba24156f01e28d3d0f69d15f4616f26a8815b8a79"
+              }
+            },
+            "jobName": null,
+            "commandId": null
+          },
+          {
+            "name": "build",
+            "state": "RUNNING",
+            "callId": "call_00_Z1yMpsJyXnmMTaCPr0ZM0871",
+            "jobUid": "bd4d7b04-dbfc-4cb0-8aba-51f8b7fc3a84",
+            "podUid": "c163bda4-e6b7-480b-bc35-eefec4f606d1",
+            "result": null,
+            "jobName": "manao-dev-c9853d8d-846f-465f-b934-e53573bbb793",
+            "commandId": "c9853d8d-846f-465f-b934-e53573bbb793"
+          }
+        ]
+      },
+      "workerBefore": {
+        "http": 200,
+        "process": {
+          "bootId": "930af4e7-8dd2-473c-b837-65716b2ffe59",
+          "instanceId": "pi-worker-stage1-930af4e7-8dd2-473c-b837-65716b2ffe59",
+          "activeTaskId": "6179769b-cf21-4d96-bb0a-f051bd0019f1",
+          "activeExecutionState": "RUNNING",
+          "activeKind": "task",
+          "modelConfigured": true
+        },
+        "task": {
+          "http": 200,
+          "taskId": "6179769b-cf21-4d96-bb0a-f051bd0019f1",
+          "instanceId": "pi-worker-stage1-930af4e7-8dd2-473c-b837-65716b2ffe59",
+          "state": "RUNNING",
+          "protocolVersion": 1,
+          "workerEpoch": 1,
+          "requestSha256": "65aec2d75c5fdb1efd853b32f7c835c537b121c2be299fadc598638d4b7c07b9",
+          "executionState": "RUNNING",
+          "terminalDelivery": {
+            "state": "PENDING",
+            "reportId": null,
+            "reportSha256": null
+          }
+        }
+      },
+      "replacement": {
+        "oldWorker": {
+          "http": 200,
+          "process": {
+            "bootId": "930af4e7-8dd2-473c-b837-65716b2ffe59",
+            "instanceId": "pi-worker-stage1-930af4e7-8dd2-473c-b837-65716b2ffe59",
+            "activeTaskId": "6179769b-cf21-4d96-bb0a-f051bd0019f1",
+            "activeExecutionState": "RUNNING",
+            "activeKind": "task",
+            "modelConfigured": true
+          },
+          "task": {
+            "http": 200,
+            "taskId": "6179769b-cf21-4d96-bb0a-f051bd0019f1",
+            "instanceId": "pi-worker-stage1-930af4e7-8dd2-473c-b837-65716b2ffe59",
+            "state": "RUNNING",
+            "protocolVersion": 1,
+            "workerEpoch": 1,
+            "requestSha256": "65aec2d75c5fdb1efd853b32f7c835c537b121c2be299fadc598638d4b7c07b9",
+            "executionState": "RUNNING",
+            "terminalDelivery": {
+              "state": "PENDING",
+              "reportId": null,
+              "reportSha256": null
+            }
+          }
+        },
+        "oldPod": {
+          "name": "manao-pi-worker-6b6b79574b-27z6w",
+          "uid": "1418d280-adae-44ae-a55f-826eba660bf7"
+        },
+        "beforeTask": {
+          "id": "6179769b-cf21-4d96-bb0a-f051bd0019f1",
+          "epoch": 1,
+          "state": "RUNNING",
+          "reportId": null,
+          "revision": 30,
+          "createdAt": "2026-10-27 12:36:54.003462",
+          "deadlineAt": "2026-10-27 13:06:54.003000",
+          "instanceId": "pi-worker-stage1-930af4e7-8dd2-473c-b837-65716b2ffe59",
+          "failureCode": null,
+          "reportSha256": null,
+          "activeProject": "3531cb41-f668-4517-aa84-1e49000d3746",
+          "conversationId": "aa817d85-c166-4fc1-8b79-ed15daf1d1e8",
+          "closeReasonCode": null
+        },
+        "method": "explicit force Pod deletion; old execution not gracefully replayed",
+        "newWorkerFirst": {
+          "http": 200,
+          "process": {
+            "bootId": "f65cd0cc-4a92-4d3b-bb5e-aabc4ea82605",
+            "instanceId": "pi-worker-stage1-f65cd0cc-4a92-4d3b-bb5e-aabc4ea82605",
+            "activeTaskId": null,
+            "activeExecutionState": null,
+            "activeKind": null,
+            "modelConfigured": true
+          },
+          "task": {
+            "http": 404,
+            "terminalDelivery": null
+          }
+        },
+        "newWorkerSecond": {
+          "http": 200,
+          "process": {
+            "bootId": "f65cd0cc-4a92-4d3b-bb5e-aabc4ea82605",
+            "instanceId": "pi-worker-stage1-f65cd0cc-4a92-4d3b-bb5e-aabc4ea82605",
+            "activeTaskId": null,
+            "activeExecutionState": null,
+            "activeKind": null,
+            "modelConfigured": true
+          },
+          "task": {
+            "http": 404,
+            "terminalDelivery": null
+          }
+        },
+        "newPods": [
+          {
+            "name": "manao-pi-worker-6b6b79574b-s8rsv",
+            "uid": "3a6affb4-60e1-4a47-a90f-05379c464e18"
+          }
+        ],
+        "oldWorkerProcessAbsent": {
+          "oldPodUid": "1418d280-adae-44ae-a55f-826eba660bf7",
+          "matchingCgroupPids": []
+        }
+      },
+      "final": {
+        "task": {
+          "id": "6179769b-cf21-4d96-bb0a-f051bd0019f1",
+          "epoch": 1,
+          "state": "FAILED",
+          "reportId": null,
+          "revision": 30,
+          "createdAt": "2026-10-27 12:36:54.003462",
+          "deadlineAt": "2026-10-27 13:06:54.003000",
+          "instanceId": "pi-worker-stage1-930af4e7-8dd2-473c-b837-65716b2ffe59",
+          "failureCode": "AI_WORKER_RESTARTED",
+          "reportSha256": null,
+          "activeProject": null,
+          "conversationId": "aa817d85-c166-4fc1-8b79-ed15daf1d1e8",
+          "closeReasonCode": "AI_WORKER_RESTARTED"
+        },
+        "calls": [
+          {
+            "name": "read_file",
+            "state": "COMPLETED",
+            "callId": "call_00_ET_3jTalFMxRsd4OrR4Ink73624",
+            "jobUid": null,
+            "podUid": null,
+            "result": {
+              "toolCallId": "call_00_ET_3jTalFMxRsd4OrR4Ink73624",
+              "workspaceRevision": "30",
+              "truncated": false,
+              "data": {
+                "path": "stage4-control.txt",
+                "sha256": "eba35dd24b2f1f29c94a22403c8ac8200183132aec99b0f30d02fe4360aa62be",
+                "content": "300000:stage4-worker-restart-3531cb41-f668-4517-aa84-1e49000d3746",
+                "contentSha256": "eba35dd24b2f1f29c94a22403c8ac8200183132aec99b0f30d02fe4360aa62be"
+              }
+            },
+            "jobName": null,
+            "commandId": null
+          },
+          {
+            "name": "read_file",
+            "state": "COMPLETED",
+            "callId": "call_01_ET_mNHWjGJKFmRgdYzU9mDl4143",
+            "jobUid": null,
+            "podUid": null,
+            "result": {
+              "toolCallId": "call_01_ET_mNHWjGJKFmRgdYzU9mDl4143",
+              "workspaceRevision": "30",
+              "truncated": false,
+              "data": {
+                "path": "src/test/java/com/example/app/Stage4LongBuildTest.java",
+                "sha256": "7a0d543bcdc677512be705eba24156f01e28d3d0f69d15f4616f26a8815b8a79",
+                "contentSha256": "7a0d543bcdc677512be705eba24156f01e28d3d0f69d15f4616f26a8815b8a79"
+              }
+            },
+            "jobName": null,
+            "commandId": null
+          },
+          {
+            "name": "build",
+            "state": "COMPLETED",
+            "callId": "call_00_Z1yMpsJyXnmMTaCPr0ZM0871",
+            "jobUid": "bd4d7b04-dbfc-4cb0-8aba-51f8b7fc3a84",
+            "podUid": "c163bda4-e6b7-480b-bc35-eefec4f606d1",
+            "result": {
+              "toolCallId": "call_00_Z1yMpsJyXnmMTaCPr0ZM0871",
+              "workspaceRevision": "30",
+              "truncated": false,
+              "data": {
+                "goal": "test",
+                "exitCode": null,
+                "terminationReason": "BUILD_CLOSED",
+                "cleanupConfirmed": true,
+                "sourceRevision": "30",
+                "testReports": [],
+                "outputSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+                "outputContainsSuccess": false
+              }
+            },
+            "jobName": "manao-dev-c9853d8d-846f-465f-b934-e53573bbb793",
+            "commandId": "c9853d8d-846f-465f-b934-e53573bbb793"
+          }
+        ]
+      },
+      "workerAfter": {
+        "http": 200,
+        "process": {
+          "bootId": "f65cd0cc-4a92-4d3b-bb5e-aabc4ea82605",
+          "instanceId": "pi-worker-stage1-f65cd0cc-4a92-4d3b-bb5e-aabc4ea82605",
+          "activeTaskId": null,
+          "activeExecutionState": null,
+          "activeKind": null,
+          "modelConfigured": true
+        },
+        "task": {
+          "http": 404,
+          "terminalDelivery": null
+        }
+      },
+      "currentHttp": 404,
+      "deadlineIntervalMilliseconds": 1800000
+    },
+    "BContinue": {
+      "conversationId": "aa817d85-c166-4fc1-8b79-ed15daf1d1e8",
+      "status": "PASS",
+      "taskId": "0fc779bd-e13e-4942-beb7-ef7a67ecb7d6",
+      "revision": "31",
+      "final": {
+        "task": {
+          "id": "0fc779bd-e13e-4942-beb7-ef7a67ecb7d6",
+          "epoch": 1,
+          "state": "COMPLETED",
+          "reportId": "b11546e420a5eb68a4614a138dd51b4d5811153a6799c9d7fa9e62ce05656e26",
+          "revision": 31,
+          "createdAt": "2026-10-27 12:38:15.514019",
+          "deadlineAt": "2026-10-27 13:08:15.514000",
+          "instanceId": "pi-worker-stage1-f65cd0cc-4a92-4d3b-bb5e-aabc4ea82605",
+          "failureCode": null,
+          "reportSha256": "e3a3c90ac3a67710d1646bbf5015bb0869c7ca9ede2b164ce3997447f5f97714",
+          "activeProject": null,
+          "conversationId": "aa817d85-c166-4fc1-8b79-ed15daf1d1e8",
+          "closeReasonCode": null
+        },
+        "calls": [
+          {
+            "name": "read_file",
+            "state": "COMPLETED",
+            "callId": "call_00_BYvfKJQmPCZb8BlkDWCj3967",
+            "jobUid": null,
+            "podUid": null,
+            "result": {
+              "toolCallId": "call_00_BYvfKJQmPCZb8BlkDWCj3967",
+              "workspaceRevision": "31",
+              "truncated": false,
+              "data": {
+                "path": "stage4-control.txt",
+                "sha256": "2c162a00b6dbe5da7a23a18e3bbf51d70a787134f43c9873f41d8a18b77cc67e",
+                "content": "0:stage4-after-restart-3531cb41-f668-4517-aa84-1e49000d3746",
+                "contentSha256": "2c162a00b6dbe5da7a23a18e3bbf51d70a787134f43c9873f41d8a18b77cc67e"
+              }
+            },
+            "jobName": null,
+            "commandId": null
+          }
+        ]
+      },
+      "workerAfter": {
+        "http": 200,
+        "process": {
+          "bootId": "f65cd0cc-4a92-4d3b-bb5e-aabc4ea82605",
+          "instanceId": "pi-worker-stage1-f65cd0cc-4a92-4d3b-bb5e-aabc4ea82605",
+          "activeTaskId": null,
+          "activeExecutionState": null,
+          "activeKind": null,
+          "modelConfigured": true
+        },
+        "task": {
+          "http": 200,
+          "taskId": "0fc779bd-e13e-4942-beb7-ef7a67ecb7d6",
+          "instanceId": "pi-worker-stage1-f65cd0cc-4a92-4d3b-bb5e-aabc4ea82605",
+          "state": "COMPLETED",
+          "protocolVersion": 1,
+          "workerEpoch": 1,
+          "requestSha256": "b3bc097fb164d701639902d515872059fc124a49fee56d53d965f9ac5859a7b7",
+          "executionState": "COMPLETED",
+          "terminalDelivery": {
+            "state": "ACKED",
+            "reportId": "b11546e420a5eb68a4614a138dd51b4d5811153a6799c9d7fa9e62ce05656e26",
+            "reportSha256": "e3a3c90ac3a67710d1646bbf5015bb0869c7ca9ede2b164ce3997447f5f97714"
+          }
+        }
+      },
+      "deadlineIntervalMilliseconds": 1800000
+    }
+  },
+  "limits": {
+    "stage2": "PAUSED / NOT_GRANTED",
+    "originalTask": "NOT_REPAIRED",
+    "fullFaultMatrix": "NOT_RUN",
+    "globalAiFirstRelease": "NOT_GRANTED",
+    "actual1800SecondWait": "NOT_RUN",
+    "multiAgentMcpShellPython": "OUT_OF_SCOPE",
+    "historicalResources": "PRESERVED",
+    "gitPushMerge": "NOT_RUN"
+  },
+  "backup": {
+    "privateBackupRetained": true,
+    "bytes": 3235900,
+    "sha256": "089e0ece51765758ee483cf91a2de98a86a548fb32d5bc669f293becf523e728",
+    "restoreSchema": "manao_stage4_restore_b83fd50c2fc84803ba627a1075c5da37",
+    "status": "RESTORE_VERIFIED",
+    "restoreVerified": true,
+    "restoreSchemaDropped": true,
+    "tableCounts": [
+      "app_user\t1\t1",
+      "project\t6\t6",
+      "run\t14\t14",
+      "workspace_operation\t155\t155",
+      "agent_task\t29\t29",
+      "agent_tool_call\t164\t164",
+      "agent_conversation\t14\t14",
+      "agent_conversation_entry\t397\t397",
+      "flyway_schema_history\t16\t16"
+    ]
+  },
+  "images": {
+    "backend": {
+      "tag": "chocologic/manao_images_repository:pi-stage4-backend-e3c06dd",
+      "reference": "chocologic/manao_images_repository@sha256:c0c56bc35ffc485350f42153f1833f94527c1cceda2f3ccba762c6654ba4eb56",
+      "sourceLabel": "e3c06dde8fc02b3e00c80373be870e5dc413bb6f",
+      "user": "10001:10001",
+      "generation": 45,
+      "ready": 1,
+      "indexDigest": "sha256:5e76711e6bfdac6c80cfb65bef4883df0d533cf8346e1dd236bb95971e937f5e"
+    },
+    "frontend": {
+      "tag": "chocologic/manao_images_repository:pi-stage4-frontend-e3c06dd",
+      "reference": "chocologic/manao_images_repository@sha256:120ebc30a2ab00a090ab89d7f1184ec402ae391bc0aced7a45ea72fea4c45ae1",
+      "sourceLabel": "e3c06dde8fc02b3e00c80373be870e5dc413bb6f",
+      "user": "101",
+      "generation": 27,
+      "ready": 1,
+      "indexDigest": "sha256:db895cdbd0ff28647bc7a738a1f5636cd8713e87e82530253123a81045c77342"
+    }
+  },
+  "afterDeployment": {
+    "atUtc": "2026-10-27T12:07:00.922Z",
+    "pods": [
+      {
+        "name": "backend-5f49cbf777-2fswz",
+        "uid": "f31bad65-4fce-4068-ace9-c1f5a283d8b5",
+        "phase": "Running",
+        "ready": [
+          true
+        ],
+        "imageIDs": [
+          "docker.io/chocologic/manao_images_repository@sha256:c0c56bc35ffc485350f42153f1833f94527c1cceda2f3ccba762c6654ba4eb56"
+        ]
+      },
+      {
+        "name": "frontend-5f6fd7bf8c-86q5m",
+        "uid": "113878df-e3ad-4dc6-bb47-70e9dddc7b92",
+        "phase": "Succeeded",
+        "ready": [
+          false
+        ],
+        "imageIDs": [
+          "docker.io/chocologic/manao_images_repository@sha256:77ba0d19320ac238badf694a0bdd8eb6508d3c2aee6de50ed98f8192dc0ed708"
+        ]
+      },
+      {
+        "name": "frontend-78d55b6946-r47qj",
+        "uid": "d23029b3-4bc7-493f-a5b1-221286f3b135",
+        "phase": "Running",
+        "ready": [
+          true
+        ],
+        "imageIDs": [
+          "docker.io/chocologic/manao_images_repository@sha256:120ebc30a2ab00a090ab89d7f1184ec402ae391bc0aced7a45ea72fea4c45ae1"
+        ]
+      },
+      {
+        "name": "manao-pi-worker-6b6b79574b-27z6w",
+        "uid": "1418d280-adae-44ae-a55f-826eba660bf7",
+        "phase": "Running",
+        "ready": [
+          true
+        ],
+        "imageIDs": [
+          "docker.io/chocologic/manao_images_repository@sha256:696080571ba556d983aa578163be3d6494261057e960a9686b15f814e7d0c93e"
+        ]
+      }
+    ],
+    "worker": {
+      "http": 200,
+      "process": {
+        "bootId": "930af4e7-8dd2-473c-b837-65716b2ffe59",
+        "instanceId": "pi-worker-stage1-930af4e7-8dd2-473c-b837-65716b2ffe59",
+        "activeTaskId": null,
+        "activeExecutionState": null,
+        "activeKind": null,
+        "modelConfigured": true
+      },
+      "task": null
+    },
+    "migrations": "15\t1\n16\t1\n",
+    "originalTask": "b3b32518-f0ed-411e-aa85-1ecef95fbdc5\tRUNNING\tNULL\tNULL\tNULL\n"
+  },
+  "project": {
+    "creationKey": "6f3e30fa-30da-4c72-8001-e05be1f895b6",
+    "name": "pi-stage4-cloud-20261027-18f2e",
+    "publicPort": 30727,
+    "status": "READY",
+    "id": "3531cb41-f668-4517-aa84-1e49000d3746",
+    "testPath": "src/test/java/com/example/app/Stage4LongBuildTest.java",
+    "controlPath": "stage4-control.txt",
+    "revision": "28",
+    "onlyCreatedByThisRun": true
+  },
+  "checkpoints": [
+    {
+      "name": "public-workbench",
+      "at": "2026-10-27T12:24:58.459Z",
+      "passwordLogin": true
+    },
+    {
+      "name": "A-submitted",
+      "at": "2026-10-27T12:24:59.372Z",
+      "taskId": "caa8d794-ed6c-4dc9-8b6a-3dea7418bd75",
+      "conversationId": "bdfbb117-6121-4d8b-a3e7-cab42ab0a3c4"
+    },
+    {
+      "name": "public-workbench",
+      "at": "2026-10-27T12:26:26.727Z",
+      "passwordLogin": true
+    },
+    {
+      "name": "A-long-build",
+      "at": "2026-10-27T12:26:28.703Z",
+      "jobUid": "b873fd87-cca4-4dce-aa1c-199093574bf9",
+      "podUid": "5e74b5b7-d598-4077-9326-eef899756145",
+      "processes": 4
+    },
+    {
+      "name": "A-released",
+      "at": "2026-10-27T12:27:10.374Z",
+      "state": "FAILED",
+      "closeReasonCode": "AI_PAUSED_BY_OWNER",
+      "currentHttp": 404
+    },
+    {
+      "name": "public-workbench",
+      "at": "2026-10-27T12:31:20.476Z",
+      "passwordLogin": true
+    },
+    {
+      "name": "public-workbench",
+      "at": "2026-10-27T12:33:43.206Z",
+      "passwordLogin": true
+    },
+    {
+      "name": "AContinue-submitted",
+      "at": "2026-10-27T12:33:44.256Z",
+      "taskId": "7cb13065-0c6a-4e9b-9f56-6d4944296123",
+      "conversationId": "bdfbb117-6121-4d8b-a3e7-cab42ab0a3c4"
+    },
+    {
+      "name": "AContinue-completed",
+      "at": "2026-10-27T12:34:19.638Z",
+      "taskId": "7cb13065-0c6a-4e9b-9f56-6d4944296123",
+      "calls": 6
+    },
+    {
+      "name": "A-reentry-ready-preserved",
+      "at": "2026-10-27T12:34:22.362Z",
+      "taskCount": 2,
+      "runId": "c8e19942-091d-4bed-b46c-e98f78c8f3d1",
+      "runStillReady": true
+    },
+    {
+      "name": "A-pass",
+      "at": "2026-10-27T12:34:26.763Z"
+    },
+    {
+      "name": "B-submitted",
+      "at": "2026-10-27T12:36:53.837Z",
+      "taskId": "6179769b-cf21-4d96-bb0a-f051bd0019f1",
+      "conversationId": "aa817d85-c166-4fc1-8b79-ed15daf1d1e8"
+    },
+    {
+      "name": "B-long-build",
+      "at": "2026-10-27T12:37:07.734Z",
+      "jobUid": "bd4d7b04-dbfc-4cb0-8aba-51f8b7fc3a84",
+      "podUid": "c163bda4-e6b7-480b-bc35-eefec4f606d1",
+      "processes": 4
+    },
+    {
+      "name": "B-released",
+      "at": "2026-10-27T12:38:11.371Z",
+      "state": "FAILED",
+      "closeReasonCode": "AI_WORKER_RESTARTED",
+      "currentHttp": 404
+    },
+    {
+      "name": "B-awaiting-manual",
+      "at": "2026-10-27T12:38:14.194Z",
+      "taskCount": 3,
+      "continueEnabled": true
+    },
+    {
+      "name": "BContinue-submitted",
+      "at": "2026-10-27T12:38:15.354Z",
+      "taskId": "0fc779bd-e13e-4942-beb7-ef7a67ecb7d6",
+      "conversationId": "aa817d85-c166-4fc1-8b79-ed15daf1d1e8"
+    },
+    {
+      "name": "BContinue-completed",
+      "at": "2026-10-27T12:38:22.353Z",
+      "taskId": "0fc779bd-e13e-4942-beb7-ef7a67ecb7d6",
+      "calls": 1
+    },
+    {
+      "name": "B-pass",
+      "at": "2026-10-27T12:38:22.355Z"
+    },
+    {
+      "name": "C-delete",
+      "at": "2026-10-27T12:46:33.232Z",
+      "projectId": "3531cb41-f668-4517-aa84-1e49000d3746",
+      "http": 204,
+      "resourceCount": 0,
+      "dbTables": 12
+    }
+  ],
+  "userEdit": {
+    "revision": "29",
+    "content": "0:stage4-user-saved-3531cb41-f668-4517-aa84-1e49000d3746"
+  },
+  "readyRun": {
+    "id": "c8e19942-091d-4bed-b46c-e98f78c8f3d1",
+    "state": "RUNNING",
+    "requestedWorkspaceRevision": "29",
+    "policy": {
+      "command": "mvn -q -DskipTests spring-boot:run",
+      "runtime": {
+        "language": "java",
+        "javaMajor": 17,
+        "mavenMajor": 3
+      },
+      "resources": {
+        "limits": {
+          "cpuMillis": 8000,
+          "memoryBytes": 17179869184,
+          "ephemeralStorageBytes": 10737418240
+        },
+        "requests": {
+          "cpuMillis": 1000,
+          "memoryBytes": 1073741824,
+          "ephemeralStorageBytes": 1073741824
+        }
+      },
+      "templateId": "java-spring-boot-web",
+      "executionKind": "SERVICE",
+      "timeoutSeconds": 1800,
+      "startupTimeoutSeconds": 1800,
+      "serviceLifetimeSeconds": 7200
+    },
+    "createdAt": "2026-10-27T12:34:00.830995Z",
+    "startedAt": "2026-10-27T12:34:05.995461Z",
+    "finishedAt": null,
+    "terminationReason": null,
+    "exitCode": null,
+    "logTruncated": false,
+    "logEvictedBytes": 0,
+    "lastLogSeq": null,
+    "firstReadyAt": "2026-10-27T12:34:10Z",
+    "expiresAt": "2026-10-27T14:34:10Z"
+  },
+  "restartEdit": {
+    "revision": "30",
+    "content": "300000:stage4-worker-restart-3531cb41-f668-4517-aa84-1e49000d3746"
+  },
+  "restartSaved": {
+    "revision": "31",
+    "content": "0:stage4-after-restart-3531cb41-f668-4517-aa84-1e49000d3746"
+  },
+  "executionExit": [
+    {
+      "case": "A",
+      "node": "node1",
+      "containerId": "546954c14e790434ce5e2a80edc2ccc96667cf046268079f6b2ad457b2469dd1",
+      "inspectExit": 1,
+      "state": null,
+      "exitCode": null,
+      "finishedAt": null,
+      "matchingCgroupPids": []
+    },
+    {
+      "case": "B",
+      "node": "node1",
+      "containerId": "aef66fffe8909886c5abb277569286d30e1aec1f3b01b8fb777184655b519eb6",
+      "inspectExit": 1,
+      "state": null,
+      "exitCode": null,
+      "finishedAt": null,
+      "matchingCgroupPids": []
+    }
+  ],
+  "beforeDelete": {
+    "resources": [
+      {
+        "kind": "Pod",
+        "name": "manao-ws-3531cb41-f668-4517-aa84-1e49000d3746",
+        "uid": "bb053ef4-8635-4468-b2e8-fd143bb44e37",
+        "node": "node1",
+        "phase": "Running"
+      },
+      {
+        "kind": "Service",
+        "name": "manao-app-3531cb41-f668-4517-aa84-1e49000d3746",
+        "uid": "0ab1dfdd-3bc6-4525-a05b-8df9de1929b1"
+      },
+      {
+        "kind": "Service",
+        "name": "manao-ws-3531cb41-f668-4517-aa84-1e49000d3746",
+        "uid": "a01e5db1-dd07-4042-b664-1f070ef5ca5f"
+      },
+      {
+        "kind": "PersistentVolumeClaim",
+        "name": "manao-pvc-3531cb41-f668-4517-aa84-1e49000d3746",
+        "uid": "67b6cbbf-7ebf-4257-a76c-8152449a69b2",
+        "volumeName": "pvc-67b6cbbf-7ebf-4257-a76c-8152449a69b2",
+        "phase": "Bound"
+      }
+    ],
+    "at": "2026-10-27T12:46:16.838Z",
+    "pvs": [
+      {
+        "name": "pvc-67b6cbbf-7ebf-4257-a76c-8152449a69b2",
+        "uid": "25578771-ef26-4533-b8e1-135e5bfc6571",
+        "claimUid": "67b6cbbf-7ebf-4257-a76c-8152449a69b2",
+        "reclaim": "Delete",
+        "nfs": {
+          "path": "/nfs/data/manao-stage6b-manao-pvc-3531cb41-f668-4517-aa84-1e49000d3746-pvc-67b6cbbf-7ebf-4257-a76c-8152449a69b2",
+          "server": "172.16.0.5"
+        }
+      }
+    ],
+    "ids": {
+      "runs": "c8e19942-091d-4bed-b46c-e98f78c8f3d1",
+      "tasks": "0fc779bd-e13e-4942-beb7-ef7a67ecb7d6,6179769b-cf21-4d96-bb0a-f051bd0019f1,7cb13065-0c6a-4e9b-9f56-6d4944296123,caa8d794-ed6c-4dc9-8b6a-3dea7418bd75",
+      "conversations": "bdfbb117-6121-4d8b-a3e7-cab42ab0a3c4,aa817d85-c166-4fc1-8b79-ed15daf1d1e8"
+    }
+  },
+  "deletion": {
+    "http": 204,
+    "at": "2026-10-27T12:46:30.947Z",
+    "resourcesAfter": [],
+    "pvs": [
+      {
+        "name": "pvc-67b6cbbf-7ebf-4257-a76c-8152449a69b2",
+        "uid": "25578771-ef26-4533-b8e1-135e5bfc6571",
+        "absent": true
+      }
+    ],
+    "databaseCounts": [
+      "project\t0",
+      "workspace_operation\t0",
+      "run\t0",
+      "agent_task\t0",
+      "agent_tool_call\t0",
+      "agent_conversation\t0",
+      "agent_conversation_entry\t0",
+      "run_log_chunk\t0",
+      "log_ticket\t0",
+      "terminal_session\t0",
+      "terminal_audit\t0",
+      "project_storage_binding\t0"
+    ],
+    "storage": {
+      "server": "172.16.0.5",
+      "path": "/nfs/data/manao-stage6b-manao-pvc-3531cb41-f668-4517-aa84-1e49000d3746-pvc-67b6cbbf-7ebf-4257-a76c-8152449a69b2",
+      "originalAbsent": true,
+      "matchingProjectOrArchivedDirectories": [],
+      "readOnlyCheck": true
+    },
+    "checkedKinds": [
+      "Job",
+      "Pod",
+      "Service",
+      "PersistentVolumeClaim",
+      "Deployment",
+      "StatefulSet",
+      "ReplicaSet",
+      "Secret",
+      "NetworkPolicy",
+      "ConfigMap"
+    ],
+    "additionalKindsAbsent": true,
+    "projectGetHttp": 404
+  },
+  "after": {
+    "worker": {
+      "http": 200,
+      "process": {
+        "bootId": "f65cd0cc-4a92-4d3b-bb5e-aabc4ea82605",
+        "instanceId": "pi-worker-stage1-f65cd0cc-4a92-4d3b-bb5e-aabc4ea82605",
+        "activeTaskId": null,
+        "activeExecutionState": null,
+        "activeKind": null,
+        "modelConfigured": true
+      },
+      "task": null
+    },
+    "originalTask": "b3b32518-f0ed-411e-aa85-1ecef95fbdc5\tRUNNING\tNULL\tNULL\tNULL\n",
+    "deployments": [
+      {
+        "name": "backend",
+        "generation": 45,
+        "replicas": 1,
+        "ready": 1,
+        "strategy": "Recreate",
+        "images": [
+          "chocologic/manao_images_repository@sha256:c0c56bc35ffc485350f42153f1833f94527c1cceda2f3ccba762c6654ba4eb56"
+        ]
+      },
+      {
+        "name": "frontend",
+        "generation": 27,
+        "replicas": 1,
+        "ready": 1,
+        "strategy": "RollingUpdate",
+        "images": [
+          "chocologic/manao_images_repository@sha256:120ebc30a2ab00a090ab89d7f1184ec402ae391bc0aced7a45ea72fea4c45ae1"
+        ]
+      },
+      {
+        "name": "manao-pi-worker",
+        "generation": 34,
+        "replicas": 1,
+        "ready": 1,
+        "strategy": "Recreate",
+        "images": [
+          "chocologic/manao_images_repository@sha256:696080571ba556d983aa578163be3d6494261057e960a9686b15f814e7d0c93e"
+        ]
+      }
+    ],
+    "platformMysql": {
+      "pod": "mysql-0",
+      "uid": "821c2d2e-0c44-4b38-b0e1-08fd8b498aa4",
+      "ready": true,
+      "pvcs": [
+        "data-mysql-0"
+      ]
+    }
+  },
+  "finishedUtc": "2026-10-27T12:46:33.231Z",
+  "attempts": [
+    {
+      "kind": "harness-observation",
+      "result": "FAILED_THEN_RECOVERED",
+      "reason": "Kubernetes API transient connection timeout while reading original Task; same Task observed again, no resubmission"
+    },
+    {
+      "kind": "harness-editor",
+      "result": "FAILED_THEN_RECOVERED",
+      "reason": "Old window.monaco/textarea locator not exposed by production native EditContext; switched to visible editor keyboard path before any continuation Task"
+    },
+    {
+      "kind": "host-observation",
+      "result": "FAILED_THEN_RECOVERED",
+      "reason": "SSH host key discovery and remote key mode rejected; no chmod or key copy; local existing key through ProxyCommand used. Python3.6 subprocess arguments corrected in read-only probe"
+    },
+    {
+      "kind": "lastSavedHarnessFailure",
+      "result": "RECOVERED",
+      "scene": "A",
+      "message": "expect(locator).toBeVisible() failed\n\nLocator: locator('.monaco-editor textarea.inputarea').first()\nExpected: visible\nTimeout: 5000ms\nError: element(s) not found\n\nCall log:\n  - Expect \"to.be.visible\" with timeout 5000ms\n  - waiting for locator('.monaco-editor textarea.inputarea').first()\n",
+      "at": "2026-10-27T12:31:25.572Z"
+    }
+  ],
+  "finalAuditUtc": "2026-10-27T12:54:14.978Z",
+  "realModelTasks": [
+    "caa8d794-ed6c-4dc9-8b6a-3dea7418bd75",
+    "7cb13065-0c6a-4e9b-9f56-6d4944296123",
+    "6179769b-cf21-4d96-bb0a-f051bd0019f1",
+    "0fc779bd-e13e-4942-beb7-ef7a67ecb7d6"
+  ],
+  "processProofLimits": "CRI records already garbage-collected; no PID matches original container/Pod cgroups at audit. Original Maven/Surefire processes seen before stop; no fabricated exitCode or exact exit timestamp.",
+  "localArtifacts": {
+    "reproducibilityScripts": [
+      {
+        "path": ".superpowers/pi-stage4-cloud-20261027/backup.mjs",
+        "bytes": 2062,
+        "sha256": "d3639adc3fc12fed263c276594647b9297327f926fdf64cbcee8eb099f0b7f26"
+      },
+      {
+        "path": ".superpowers/pi-stage4-cloud-20261027/bootstrap.mjs",
+        "bytes": 3518,
+        "sha256": "c3f898cd1d21ce93e04186f73917e30fedcb5bf134414b0ffc32f8a85c101dd4"
+      },
+      {
+        "path": ".superpowers/pi-stage4-cloud-20261027/build.mjs",
+        "bytes": 4204,
+        "sha256": "873032e24f9c69ec089ba74422884ac027b501b31ea4495d6332af1cadeca8c4"
+      },
+      {
+        "path": ".superpowers/pi-stage4-cloud-20261027/delete-project.mjs",
+        "bytes": 4596,
+        "sha256": "a83872a2f3885ded5f8f839963e3a94b1ff795a6d849d9505c607c7063ba4562"
+      },
+      {
+        "path": ".superpowers/pi-stage4-cloud-20261027/deploy.mjs",
+        "bytes": 2868,
+        "sha256": "f6bcdc6d51765be69a027e7e5dd85914932d12686a48af7037752fdfffeeb42b"
+      },
+      {
+        "path": ".superpowers/pi-stage4-cloud-20261027/editor.mjs",
+        "bytes": 1085,
+        "sha256": "02ee01cb635f657eee42325c3b6e0407af09762f6c01cc6a3e81e6c55117e7a4"
+      },
+      {
+        "path": ".superpowers/pi-stage4-cloud-20261027/final-state.mjs",
+        "bytes": 2200,
+        "sha256": "33da551a59e49926fedbdb93628bea00dbc521addaa31f099f4593694c287f5d"
+      },
+      {
+        "path": ".superpowers/pi-stage4-cloud-20261027/inspect-editor.mjs",
+        "bytes": 822,
+        "sha256": "373dd2a474860300afe1eeee1558843e591a40297d7ca5a87f2a6d7e22c7b930"
+      },
+      {
+        "path": ".superpowers/pi-stage4-cloud-20261027/ops.mjs",
+        "bytes": 4238,
+        "sha256": "0dc36f9cc5216ab6ecdf6c25f8057d30c0dd6dc5bc30c582ac5232e4f6a2f7f8"
+      },
+      {
+        "path": ".superpowers/pi-stage4-cloud-20261027/preflight.mjs",
+        "bytes": 2689,
+        "sha256": "608c760aaf8d3f99dd7f806b1960b1d111ed009817e0e5d8dfc4fdc7551fb111"
+      },
+      {
+        "path": ".superpowers/pi-stage4-cloud-20261027/process-proof.mjs",
+        "bytes": 1640,
+        "sha256": "5aac1044b05212470aa6028b5f528e04d28eb66b871707a148a0170d254ca2cc"
+      },
+      {
+        "path": ".superpowers/pi-stage4-cloud-20261027/scene-a.mjs",
+        "bytes": 4224,
+        "sha256": "2ece370248f8b5fbcf8b4fa69cb78d7193c542ea26457a1268f50c5782190394"
+      },
+      {
+        "path": ".superpowers/pi-stage4-cloud-20261027/scene-b.mjs",
+        "bytes": 4245,
+        "sha256": "cbdc50696d5032d1438a22b34367714dfbfd8a5328a4b5625a51b93d2128a013"
+      },
+      {
+        "path": ".superpowers/pi-stage4-cloud-20261027/seal.mjs",
+        "bytes": 5657,
+        "sha256": "4211e704a8c2e4ae09796b1725b584147fff32452ed332254c46741bb2c4b279"
+      },
+      {
+        "path": ".superpowers/pi-stage4-cloud-20261027/seed.mjs",
+        "bytes": 1882,
+        "sha256": "126ef6de3f17d5477b0d127023cf7b7de5d0b969f1c0d40e58f3369bb0d6cfa4"
+      },
+      {
+        "path": ".superpowers/pi-stage4-cloud-20261027/Stage4LongBuildTest.java",
+        "bytes": 642,
+        "sha256": "7a0d543bcdc677512be705eba24156f01e28d3d0f69d15f4616f26a8815b8a79"
+      },
+      {
+        "path": ".superpowers/pi-stage4-cloud-20261027/ui.mjs",
+        "bytes": 4396,
+        "sha256": "2c5c6999dba4e77648bdc3f5e0181b85591ce2de577f8bd31ea843d3c431755e"
+      }
+    ],
+    "privateBackupRetained": true,
+    "privateRawSnapshotRetained": true,
+    "priorRejectedArtifacts": "PRESERVED; no retry",
+    "newTemporaryDeletion": {
+      "status": "BLOCKED_BY_POLICY",
+      "actualDeleted": 0,
+      "reason": "Automatic approval rejected before execution; no retry or alternate tool",
+      "targets": [
+        ".superpowers/pi-stage4-cloud-20261027/bootstrap.mjs",
+        ".superpowers/pi-stage4-cloud-20261027/inspect-editor.mjs"
+      ]
+    },
+    "retainedLogs": [
+      {
+        "file": "backend-cloud-build.log",
+        "bytes": 3234,
+        "sha256": "581458f7a89d18454d321049d0afee1743526bf8859c011c02554cc32e6781a8"
+      },
+      {
+        "file": "backend-cloud-push.log",
+        "bytes": 2545,
+        "sha256": "46d4891db233e0b245969dd34d2a0442f7bd06d7b7c7340e117a065a296ff8ab"
+      },
+      {
+        "file": "frontend-cloud-build.log",
+        "bytes": 18999,
+        "sha256": "b83de9816932c8bb18a243afcfb63f1c11822b8b865bd6ddbcd91c1931dbe91b"
+      },
+      {
+        "file": "frontend-cloud-push.log",
+        "bytes": 2632,
+        "sha256": "5dd0bd5d6105caf40342400f6a20df3199108954b5c84f73152b25a60862c922"
+      },
+      {
+        "file": "stage4-cloud-bootstrap.log",
+        "bytes": 1003,
+        "sha256": "bf5b5736af547d0b7b716119fa2ce3f791cadacf7aa8c826466bb7328796819c"
+      },
+      {
+        "file": "stage4-cloud-delete.log",
+        "bytes": 121,
+        "sha256": "d20a95a2c244a1dbedf7c97ef0fb08e10dcd113cbd873c32a3442ed364089163"
+      },
+      {
+        "file": "stage4-cloud-deploy.log",
+        "bytes": 2065,
+        "sha256": "2ed61709e59bff5df56e14a8da43d4dee5f4fa147b57aaa7ff68e6c072599801"
+      },
+      {
+        "file": "stage4-cloud-scene-a-continue.log",
+        "bytes": 373,
+        "sha256": "8fc471033f26cf82fdc66c9f1c3083ab6deb75177455133e09bcc6ca4b82fc4e"
+      },
+      {
+        "file": "stage4-cloud-scene-a-resume.log",
+        "bytes": 531,
+        "sha256": "adb7f59f3f98d1a6311992f12456176608412f3de45fe23d3f3be04af07b54f2"
+      },
+      {
+        "file": "stage4-cloud-scene-a-saved.log",
+        "bytes": 445,
+        "sha256": "32ba0fccb04f59b0f712015ef66bf7afd26a6f59b8570d4ff8dfa5a5d7a57aa6"
+      },
+      {
+        "file": "stage4-cloud-scene-a.log",
+        "bytes": 461,
+        "sha256": "e46e876ae9736297886eef3296a6c4d0cbbcd56fbc7ed94aa4b543645769c7f6"
+      },
+      {
+        "file": "stage4-cloud-scene-b.log",
+        "bytes": 715,
+        "sha256": "0a748c97c8a6e2247d67c27a790d4680f15feb75e937ec01a9f3b009386b9426"
+      }
+    ]
+  },
+  "cleanupFinal": {
+    "cloudProjectDeleted": true,
+    "databaseRestoreSchemaDropped": true,
+    "cloudResourcesRemoved": true,
+    "storageDirectoryRemoved": true,
+    "platformMysqlPvcPreserved": true,
+    "priorArtifactsUntouched": true,
+    "newUnneededLocalScratchFilesDeleted": 0,
+    "newUnneededLocalScratchDeletion": "BLOCKED_BY_POLICY"
+  },
+  "finalRuntime": {
+    "atUtc": "2026-10-27T13:05:10.592Z",
+    "deployments": [
+      {
+        "name": "backend",
+        "generation": 45,
+        "observedGeneration": 45,
+        "replicas": 1,
+        "ready": 1,
+        "strategy": "Recreate",
+        "images": [
+          "chocologic/manao_images_repository@sha256:c0c56bc35ffc485350f42153f1833f94527c1cceda2f3ccba762c6654ba4eb56"
+        ]
+      },
+      {
+        "name": "frontend",
+        "generation": 27,
+        "observedGeneration": 27,
+        "replicas": 1,
+        "ready": 1,
+        "strategy": "RollingUpdate",
+        "images": [
+          "chocologic/manao_images_repository@sha256:120ebc30a2ab00a090ab89d7f1184ec402ae391bc0aced7a45ea72fea4c45ae1"
+        ]
+      },
+      {
+        "name": "manao-pi-worker",
+        "generation": 34,
+        "observedGeneration": 34,
+        "replicas": 1,
+        "ready": 1,
+        "strategy": "Recreate",
+        "images": [
+          "chocologic/manao_images_repository@sha256:696080571ba556d983aa578163be3d6494261057e960a9686b15f814e7d0c93e"
+        ]
+      }
+    ],
+    "worker": {
+      "http": 200,
+      "process": {
+        "bootId": "f65cd0cc-4a92-4d3b-bb5e-aabc4ea82605",
+        "instanceId": "pi-worker-stage1-f65cd0cc-4a92-4d3b-bb5e-aabc4ea82605",
+        "activeTaskId": null,
+        "activeExecutionState": null,
+        "activeKind": null,
+        "modelConfigured": true
+      },
+      "task": null
+    },
+    "projectHttp": 404,
+    "originalTaskAndRestoreSchemaCount": "b3b32518-f0ed-411e-aa85-1ecef95fbdc5\tRUNNING\tNULL\tNULL\tNULL\n0\n"
+  },
+  "review": {
+    "independentReadOnly": true,
+    "verdict": "Core Stage4 evidence sufficient; final storage, extra-resource-kind, sanitized attempts and process limits incorporated",
+    "productionCodeChangesAfterReleaseSource": 0
+  }
+}

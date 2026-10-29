@@ -1,0 +1,23 @@
+.ai-markdown { min-width: 0; max-width: 100%; overflow-wrap: anywhere; font-size: 14px; line-height: 1.65; }
+.ai-markdown > :first-child { margin-top: 0; }
+.ai-markdown > :last-child { margin-bottom: 0; }
+.ai-markdown p, .ai-markdown ul, .ai-markdown ol, .ai-markdown blockquote,
+.ai-markdown pre, .ai-markdown-table { margin: 0.75em 0; }
+.ai-markdown h1, .ai-markdown h2, .ai-markdown h3,
+.ai-markdown h4, .ai-markdown h5, .ai-markdown h6 { margin: 1em 0 0.5em; font-weight: 600; line-height: 1.3; }
+.ai-markdown h1 { font-size: 1.5em; }
+.ai-markdown h2 { font-size: 1.25em; }
+.ai-markdown h3 { font-size: 1.1em; }
+.ai-markdown ul { list-style: disc; padding-left: 1.5em; }
+.ai-markdown ol { list-style: decimal; padding-left: 1.5em; }
+.ai-markdown blockquote { border-left: 3px solid var(--border); padding-left: 1em; color: var(--muted-foreground); }
+.ai-markdown a { color: var(--primary); text-decoration: underline; text-underline-offset: 2px; }
+.ai-markdown code { font-family: var(--font-family-mono, monospace); font-size: 0.9em; }
+.ai-markdown :not(pre) > code { border-radius: 3px; background: var(--muted); padding: 0.1em 0.3em; }
+.ai-markdown pre { max-width: 100%; overflow-x: auto; white-space: pre; border-radius: 5px; background: var(--muted); padding: 0.75em; }
+.ai-markdown pre code { overflow-wrap: normal; word-break: normal; }
+.ai-markdown-table { max-width: 100%; overflow-x: auto; }
+.ai-markdown table { width: max-content; min-width: 100%; border-collapse: collapse; }
+.ai-markdown th, .ai-markdown td { border: 1px solid var(--border); padding: 0.4em 0.75em; text-align: left; }
+.ai-markdown th { background: var(--muted); font-weight: 600; }
+.ai-markdown img { max-width: 100%; }

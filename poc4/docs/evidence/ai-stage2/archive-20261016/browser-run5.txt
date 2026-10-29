@@ -1,0 +1,63 @@
+
+> frontend@0.0.0 test:e2e:ai-stage2 D:\DeepLearning\MyProjects\Project_Manao\.worktree\ai-integration\poc4\frontend
+> playwright test --config playwright.ai-stage2.config.ts "--output" "D:/DeepLearning/MyProjects/Project_Manao/.worktree/ai-integration/.superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/browser-run5"
+
+
+Running 2 tests using 1 worker
+
+(node:52592) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+  x  1 [ai-stage2] › tests\e2e\ai-stage2.spec.ts:113:3 › Stage 2 real application feedback acceptance › R0 → real R1 HTTP500/logs → receipted repair/test → new R2 HTTP200 (2.7m)
+  -  2 [ai-stage2] › tests\e2e\ai-stage2.spec.ts:205:3 › Stage 2 real application feedback acceptance › owner close stops only the new task Run and releases occupancy
+
+
+  1) [ai-stage2] › tests\e2e\ai-stage2.spec.ts:113:3 › Stage 2 real application feedback acceptance › R0 → real R1 HTTP500/logs → receipted repair/test → new R2 HTTP200
+
+    Error: expect(received).toBe(expected) // Object.is equality
+
+    - Expected  - 1
+    + Received  + 5
+
+    @@ -4,8 +4,12 @@
+      import org.junit.jupiter.api.Test;
+
+      class DemoControllerAcceptanceTest {
+          @Test void keepsTheGuestContract() {
+              assertEquals("Hello guest", new DemoController().demo("guest").get("message"));
+    -     }
+    +     }
+    +
+    +     @Test void greetsPi() {
+    +         assertEquals("Hello Pi", new DemoController().demo("Pi").get("message"));
+    +     }
+      }
+      ↵
+
+      82 | async function fixtureUnchanged(page: Page) {
+      83 |   const fixture = await json<{ content: string }>(page, `${ROOT}/files/content?path=${encodeURIComponent(FIXTURE)}`);
+    > 84 |   expect(fixture.content).toBe(FIXTURE_BYTES.toString('utf8'));
+         |                           ^
+      85 |   expect(createHash('sha256').update(fixture.content).digest('hex')).toBe(RECORDED_FIXTURE_SHA);
+      86 | }
+      87 | async function tools(page: Page, task: Task) {
+        at fixtureUnchanged (D:\DeepLearning\MyProjects\Project_Manao\.worktree\ai-integration\poc4\frontend\tests\e2e\ai-stage2.spec.ts:84:27)
+        at D:\DeepLearning\MyProjects\Project_Manao\.worktree\ai-integration\poc4\frontend\tests\e2e\ai-stage2.spec.ts:139:5
+
+    attachment #2: screenshot (image/png) ──────────────────────────────────────────────────────────
+    ..\..\.superpowers\sdd\2026-10-16-pi-stage2-implementation-plan\release-20261016\browser-run5\ai-stage2-Stage-2-real-app-453a6-epair-test-→-new-R2-HTTP200-ai-stage2\test-failed-1.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    Error Context: ..\..\.superpowers\sdd\2026-10-16-pi-stage2-implementation-plan\release-20261016\browser-run5\ai-stage2-Stage-2-real-app-453a6-epair-test-→-new-R2-HTTP200-ai-stage2\error-context.md
+
+    attachment #4: trace (application/zip) ─────────────────────────────────────────────────────────
+    ..\..\.superpowers\sdd\2026-10-16-pi-stage2-implementation-plan\release-20261016\browser-run5\ai-stage2-Stage-2-real-app-453a6-epair-test-→-new-R2-HTTP200-ai-stage2\trace.zip
+    Usage:
+
+        pnpm exec playwright show-trace ..\..\.superpowers\sdd\2026-10-16-pi-stage2-implementation-plan\release-20261016\browser-run5\ai-stage2-Stage-2-real-app-453a6-epair-test-→-new-R2-HTTP200-ai-stage2\trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+  1 failed
+    [ai-stage2] › tests\e2e\ai-stage2.spec.ts:113:3 › Stage 2 real application feedback acceptance › R0 → real R1 HTTP500/logs → receipted repair/test → new R2 HTTP200
+  1 did not run
+ ELIFECYCLE  Command failed with exit code 1.

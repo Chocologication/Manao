@@ -60,6 +60,78 @@ public final class WorkspaceOperationService {
                              byte[] content, long expectedRevision) {
         String operationId = UUID.randomUUID().toString();
         Digests digests = computeDigests(projectId, type, path, nextPath, kind, content);
+        return executePendingMutation(projectId, type, path, nextPath, kind, content,
+            expectedRevision, operationId, digests);
+    }
+
+    /**
+     * The AI agent's file-save entry: the same two-phase SAVE protocol as {@link #apply}, under
+     * the caller's pre-allocated stable operationId plus replay settlement. A replayed call must
+     * never be treated as a new write — an already COMMITTED operation answers its original
+     * revision without touching the agent again, and a PENDING one is settled from the agent's
+     * durable receipt alone (no digest recomputation, no second mutate). For a first execution,
+     * {@code expectedSha256} pins the optimistic-write contract: non-null must match the live
+     * file's sha256, null must find the path absent — the agent's definite 404 for a missing
+     * file is converted to the explicit absent digest HERE ONLY (the browser save keeps
+     * refusing it), and the agent's SAVE then creates the file and its parent directories.
+     * Deterministic rejections throw before any durable registration; ambiguity fails closed.
+     * The caller must hold the project lifecycle lease (reentrant), as {@link #apply} does.
+     */
+    public long applyAgentSave(String projectId, String operationId, String path, byte[] content,
+                               long expectedRevision, String expectedSha256) {
+        try (var lease = lifecycle.tryAcquire(projectId).orElseThrow(
+                () -> new ApiException("PROJECT_BUSY", 409, "Project is busy"))) {
+            // Replay check FIRST: a registered operation must never be re-digested as a new write.
+            Optional<WorkspaceStore.OperationRecord> registered = store.findOperation(projectId, operationId);
+            if (registered.isPresent()) {
+                return settleRegisteredAgentSave(projectId, registered.get());
+            }
+            Digests digests;
+            try {
+                digests = computeDigests(projectId, "SAVE", path, null, null, content);
+            } catch (ApiException ex) {
+                if (!"ENTRY_NOT_FOUND".equals(ex.code())) {
+                    throw ex;
+                }
+                // The agent transport reports a missing file as a definite ENTRY_NOT_FOUND (HTTP
+                // 404), not a null meta. Only this AI save entry converts that verified absence
+                // into the explicit absent digest so first-time creation works; the browser save
+                // keeps refusing it. With expectedSha256 set, the comparison below still refuses
+                // (absent never equals the pinned file digest) and Pi re-reads.
+                digests = new Digests(entryDigest("absent", path, null),
+                    entryDigest("file", path, sha256Hex(content)));
+            }
+            String expectedBefore = expectedSha256 == null
+                ? entryDigest("absent", path, null)
+                : entryDigest("file", path, expectedSha256);
+            if (!expectedBefore.equals(digests.before())) {
+                throw new ApiException("FILE_SHA_CONFLICT", 409,
+                    "The file changed since it was read; reload it before writing");
+            }
+            return executePendingMutation(projectId, "SAVE", path, null, null, content,
+                expectedRevision, operationId, digests);
+        }
+    }
+
+    /** Settles a replayed agent save from its durable record and the agent's receipt alone. */
+    private long settleRegisteredAgentSave(String projectId, WorkspaceStore.OperationRecord operation) {
+        if ("COMMITTED".equals(operation.state())) {
+            return operation.expectedRevision() + 1;
+        }
+        // PENDING: the write may or may not have applied — only the agent receipt decides.
+        Optional<WorkspaceAgent.FetchedReceipt> receipt = agent.receipt(projectId, operation.id());
+        if (receipt.isEmpty() || !receiptMatches(operation, receipt.get())) {
+            throw failClosed(projectId, operation.id(), "RECONCILE", null);
+        }
+        if (!store.commitOperation(operation.id(), projectId, operation.expectedRevision())) {
+            throw failClosed(projectId, operation.id(), "COMMIT", null);
+        }
+        return operation.expectedRevision() + 1;
+    }
+
+    /** Shared mutation tail: register PENDING, drive the agent's atomic write, verify, commit. */
+    private long executePendingMutation(String projectId, String type, String path, String nextPath, String kind,
+                                        byte[] content, long expectedRevision, String operationId, Digests digests) {
         String receiptPath = RECEIPT_PATH_PREFIX + operationId + ".json";
         String receiptJson = receiptJson(operationId, type, path, nextPath, digests.before(), digests.after());
         String receiptSha256 = sha256Hex(receiptJson.getBytes(StandardCharsets.UTF_8));
@@ -152,6 +224,22 @@ public final class WorkspaceOperationService {
                 return false;
             }
             return reconcilePendingLocked(projectId);
+        }
+    }
+
+    /** Task settlement observes only its original receipt, outside the project gate, then rechecks. */
+    public boolean reconcileTaskOperation(String projectId,String operationId) {
+        var original=store.findOperation(projectId,operationId).orElse(null);
+        if(original==null || "COMMITTED".equals(original.state())) return true;
+        if(!"PENDING".equals(original.state())) return false;
+        var receipt=com.manao.poc4.ai.ReconcileWorkBudget.boundary(() -> agent.receipt(projectId,operationId));
+        try(var lease=lifecycle.tryAcquire(projectId).orElse(null)) {
+            if(lease==null) return false;
+            var current=store.findOperation(projectId,operationId).orElse(null);
+            if(current==null) return false;
+            if("COMMITTED".equals(current.state())) return true;
+            if(!original.equals(current) || receipt.isEmpty() || !receiptMatches(current,receipt.get())) return false;
+            return store.commitOperation(current.id(),projectId,current.expectedRevision());
         }
     }
 

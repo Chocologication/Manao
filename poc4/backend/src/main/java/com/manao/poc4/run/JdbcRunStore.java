@@ -171,15 +171,21 @@ public final class JdbcRunStore implements RunStore {
     @Override public boolean transition(String runId, String projectId, long expectedVersion, RunState next,
                                         long fencingToken, RunState... allowedStates) {
         String placeholders = Arrays.stream(allowedStates).map(s -> "?").collect(Collectors.joining(", "));
+        // Recovery may observe execution before markRunning ever ran. Publish RUNNING and its
+        // first start observation atomically; a legacy ready row already proves it was running.
+        String started = next == RunState.RUNNING
+            ? "started_at = COALESCE(started_at, first_ready_at, ?), " : "";
+        Timestamp now = Timestamp.from(clock.now());
         List<Object> args = new java.util.ArrayList<>();
         args.add(next.name());
-        args.add(Timestamp.from(clock.now()));
+        if (next == RunState.RUNNING) args.add(now);
+        args.add(now);
         args.add(runId);
         args.add(projectId);
         args.add(expectedVersion);
         args.add(fencingToken);
         args.addAll(Arrays.asList(allowedStates).stream().map(Enum::name).toList());
-        return jdbc.update("UPDATE run SET state = ?, version = version + 1, updated_at = ? WHERE id = ? AND project_id = ? AND version = ? AND fencing_token = ? AND state IN ("
+        return jdbc.update("UPDATE run SET state = ?, " + started + "version = version + 1, updated_at = ? WHERE id = ? AND project_id = ? AND version = ? AND fencing_token = ? AND state IN ("
             + placeholders + ")", args.toArray()) == 1;
     }
 

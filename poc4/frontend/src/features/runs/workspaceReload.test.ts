@@ -14,6 +14,7 @@ import {
   useDirectoryTreeQuery,
   useFileContentQuery,
   useFileMetadataQuery,
+  useWorkspaceRevision,
 } from '../files/fileQueries';
 import { parseProjectDirectoryPath, parseProjectRelativePath } from '../files/pathPolicy';
 import { disposeAllProjectModels, toProjectModelUri } from '../../lib/projectMonacoModels';
@@ -244,6 +245,24 @@ describe('reloadWorkspaceAfterTerminalRun ordering', () => {
     expect(queryClient.getQueryData(fileKeys.content(ALICE_SEED_PROJECT_ID, README))).toEqual(
       expect.objectContaining({ path: README, content: expect.stringContaining('Alice Notebook') }),
     );
+  });
+
+  it('keeps the observed revision query connected while replacing workspace reads', async () => {
+    await authenticateAsAlice();
+    activateAndOpen([], README);
+    renderHook(() => useWorkspaceRevision(ALICE_SEED_PROJECT_ID), { wrapper: AppProviders });
+    queryClient.setQueryData(fileKeys.revision(ALICE_SEED_PROJECT_ID), parseWorkspaceRevision('stale-rev'));
+
+    await reloadWorkspaceAfterTerminalRun({
+      projectId: ALICE_SEED_PROJECT_ID,
+      queryClient,
+    });
+
+    const revisionQuery = queryClient
+      .getQueryCache()
+      .find({ queryKey: fileKeys.revision(ALICE_SEED_PROJECT_ID), exact: true });
+    expect(revisionQuery?.getObserversCount()).toBe(1);
+    expect(queryClient.getQueryData(fileKeys.revision(ALICE_SEED_PROJECT_ID))).toBeTruthy();
   });
 });
 

@@ -1,0 +1,60 @@
+{
+  "multipleThinkingAndTextChunks": true,
+  "intermediateGeneratingDOM": true,
+  "utf8Split": true,
+  "readingUpPreserved": true,
+  "realHttpReconnect": true,
+  "modelLengthDistinctFromDisplayClipping": true,
+  "terminalLostAckHistoryPromotion": true,
+  "thinkingChoiceTransfer": true,
+  "scopeSwitch": true,
+  "onlyGet": true,
+  "allBearer": true,
+  "boundedHistory": true,
+  "closeCalls": 0,
+  "requests": [
+    {
+      "method": "GET",
+      "path": "/api/v1/projects/fixture/agent-tasks/t-a/live-output",
+      "query": "",
+      "bearer": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/projects/fixture/conversations/a/entries",
+      "query": "?limit=50&beforeSeq=6",
+      "bearer": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/projects/fixture/agent-tasks/t-a/live-output",
+      "query": "",
+      "bearer": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/projects/fixture/conversations/a/entries",
+      "query": "?limit=50&beforeSeq=7",
+      "bearer": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/projects/fixture/conversations/a/entries",
+      "query": "?limit=50&beforeSeq=7",
+      "bearer": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/projects/fixture/agent-tasks/t-b/live-output",
+      "query": "",
+      "bearer": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/projects/fixture/conversations/b/entries",
+      "query": "?limit=50&beforeSeq=6",
+      "bearer": true
+    }
+  ],
+  "errors": []
+}

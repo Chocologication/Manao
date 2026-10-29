@@ -1,0 +1,18 @@
+{
+  "verifiedAt": "2026-10-21T14:58:52.872Z",
+  "origin": "http://1.12.245.235:30080",
+  "source": "9e0c831ebda0762b10ef21a2b6721a2bbb692366",
+  "frontendDigest": "sha256:297a81e47cc421223b552562acee5d99920aeda20bc5b5190dadbd1991059698",
+  "command": "pnpm exec node --input-type=module (stdin guarded public browser smoke)",
+  "login": "PASS",
+  "projectCount": 5,
+  "copy": "PASS",
+  "runInsightAiPlaceholder": "ABSENT",
+  "aiEntryAndFileInsightRestoration": "PASS",
+  "pageErrors": 0,
+  "api5xx": 0,
+  "unexpectedMutations": 0,
+  "taskSubmissions": 0,
+  "compactions": 0,
+  "realModelTest": "NOT_RUN"
+}

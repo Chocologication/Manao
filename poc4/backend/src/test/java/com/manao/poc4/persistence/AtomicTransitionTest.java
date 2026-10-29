@@ -3,40 +3,37 @@ package com.manao.poc4.persistence;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.sql.Connection;
-import java.sql.DriverManager;
-import java.sql.Statement;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
-import org.flywaydb.core.Flyway;
 
 class AtomicTransitionTest {
     private Connection connection;
+    private JdbcStoreTestSupport database;
     private Repositories repositories;
     private AtomicReference<Instant> currentTime;
 
     @BeforeEach
     void setUp() throws Exception {
-        String url = System.getenv().getOrDefault("MANAO_DB_URL", "jdbc:mysql://127.0.0.1:3306/manao_poc4_atomic_test");
-        if (!url.startsWith("jdbc:mysql:")) throw new AssertionError("REAL_MYSQL_REQUIRED");
-        try {
-            connection = DriverManager.getConnection(url, System.getenv().getOrDefault("MANAO_DB_USERNAME", "manao"), System.getenv().getOrDefault("MANAO_DB_PASSWORD", ""));
-        } catch (Exception ex) { throw new AssertionError("REAL_MYSQL_BLOCKED: cannot connect to test schema", ex); }
-        try (Statement statement = connection.createStatement()) {
-            statement.execute("DROP TABLE IF EXISTS project_storage_binding, terminal_audit, terminal_session, log_ticket, run_log_chunk, run, workspace_operation, project, app_user, instance_lease, flyway_schema_history");
-        }
-        Flyway.configure().dataSource(url, System.getenv().getOrDefault("MANAO_DB_USERNAME", "manao"), System.getenv().getOrDefault("MANAO_DB_PASSWORD", ""))
-            .locations("classpath:db/migration").load().migrate();
+        database = JdbcStoreTestSupport.create();
+        connection = database.jdbc().getDataSource().getConnection();
         currentTime = new AtomicReference<>(Instant.parse("2026-01-01T00:00:00Z"));
         repositories = Repositories.create(connection, new DatabaseClock(new Clock() {
             public ZoneOffset getZone() { return ZoneOffset.UTC; }
             public Clock withZone(java.time.ZoneId zone) { return this; }
             public Instant instant() { return currentTime.get(); }
         }));
+    }
+
+    @AfterEach
+    void closeDatabase() throws Exception {
+        try { if (connection != null) connection.close(); }
+        finally { if (database != null) database.close(); }
     }
 
     @Test

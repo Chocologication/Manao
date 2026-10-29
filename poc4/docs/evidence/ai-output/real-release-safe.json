@@ -1,0 +1,298 @@
+{
+  "source": "a7d004119dd2439d09a4ef86890b2f8ab00658d7",
+  "harnessCommit": "310fa9a61727796323308d5644fac7edf9a49044",
+  "projectId": "4a355478-0ec5-457c-9c73-fad09d98bf79",
+  "conversationId": "6328bc93-fb38-4da3-a305-dad64b825f69",
+  "publication": "PASS",
+  "realCombinedAcceptance": "FAILED / low streaming coverage UNVERIFIED",
+  "round1": {
+    "status": "FAILED",
+    "taskId": "57731c5c-67f5-473f-b339-fd555fd640cd",
+    "reason": "No second live GET after late offline checkpoint"
+  },
+  "round2": {
+    "status": "FAILED",
+    "highAndOffCheckpointsPassed": true,
+    "lowFailure": "Composite timing oracle; exact branch metadata not persisted"
+  },
+  "maxContinuation": {
+    "conversationId": "6328bc93-fb38-4da3-a305-dad64b825f69",
+    "projectId": "4a355478-0ec5-457c-9c73-fad09d98bf79",
+    "startedAtUtc": "2026-10-20T03:55:55.914Z",
+    "prior": [
+      {
+        "effort": "high",
+        "taskId": "1ca1b911-2742-4a1f-986d-5d0f676751d9",
+        "state": "COMPLETED",
+        "readOnlyHistoryVerified": true,
+        "blocks": [
+          {
+            "seq": 6,
+            "contentIndex": 0,
+            "kind": "thinking",
+            "characters": 353,
+            "modelTruncated": false
+          },
+          {
+            "seq": 8,
+            "contentIndex": 0,
+            "kind": "assistant",
+            "characters": 625,
+            "modelTruncated": false
+          }
+        ],
+        "timing": "PASSED_IN_ORIGINAL_ROUND2_NOT_RECREATED"
+      },
+      {
+        "effort": "off",
+        "taskId": "8ed0fa3b-89e9-47bb-a03d-bca8ca87d22b",
+        "state": "COMPLETED",
+        "readOnlyHistoryVerified": true,
+        "blocks": [
+          {
+            "seq": 14,
+            "contentIndex": 0,
+            "kind": "assistant",
+            "characters": 574,
+            "modelTruncated": false
+          }
+        ],
+        "timing": "PASSED_IN_ORIGINAL_ROUND2_NOT_RECREATED"
+      },
+      {
+        "effort": "low",
+        "taskId": "15282f92-b37a-40f7-b55e-4201903eb482",
+        "state": "COMPLETED",
+        "readOnlyHistoryVerified": true,
+        "blocks": [
+          {
+            "seq": 20,
+            "contentIndex": 0,
+            "kind": "assistant",
+            "characters": 413,
+            "modelTruncated": false
+          }
+        ],
+        "timing": "UNVERIFIED_ORIGINAL_COMPOSITE_ORACLE_FAILURE_METADATA_NOT_PERSISTED"
+      }
+    ],
+    "max": {
+      "taskId": "1a33f7b3-0dc2-4543-a315-a35333925150",
+      "effort": "max",
+      "acceptedAtUtc": "2026-10-20T03:55:58.862Z",
+      "status": "PASS",
+      "state": "COMPLETED",
+      "failureCode": null,
+      "terminalObservedAtUtc": "2026-10-20T03:56:00.950Z",
+      "answerSeq": 26,
+      "answerOrdinal": 1,
+      "blocks": [
+        {
+          "seq": 26,
+          "contentIndex": 0,
+          "kind": "thinking",
+          "characters": 163,
+          "modelTruncated": false
+        },
+        {
+          "seq": 26,
+          "contentIndex": 1,
+          "kind": "assistant",
+          "characters": 408,
+          "modelTruncated": false
+        }
+      ],
+      "timing": {
+        "messages": [
+          {
+            "taskId": "1a33f7b3-0dc2-4543-a315-a35333925150",
+            "messageOrdinal": 1,
+            "durableHeadSeq": 25,
+            "firstApiThinkingAt": 2285.699999988079,
+            "firstThinkingAt": 2296.699999988079,
+            "firstTextAt": 2296.699999988079,
+            "endedAt": 2714.2999999970198,
+            "textRevisions": [
+              59,
+              111
+            ]
+          }
+        ],
+        "liveGets": 1,
+        "error": null,
+        "connections": [
+          {
+            "requestedAt": 1090.8999999910593,
+            "requestedAtUtc": "2026-10-20T03:55:58.855Z",
+            "receivedAt": 1137.699999988079,
+            "taskId": "1a33f7b3-0dc2-4543-a315-a35333925150",
+            "status": 200
+          }
+        ],
+        "abortOnGeneratingThinking": false,
+        "reconnect": null
+      },
+      "reloadHistoryVerified": true
+    },
+    "priorReloadHistoryVerified": true,
+    "beforeMax": {
+      "lastTaskId": "15282f92-b37a-40f7-b55e-4201903eb482",
+      "activeTaskId": null,
+      "compactState": null,
+      "observedAtUtc": "2026-10-20T03:55:58.765Z",
+      "noAdditionalTaskHistory": true
+    },
+    "taskPosts": 1,
+    "finishedAtUtc": "2026-10-20T03:56:01.923Z"
+  },
+  "tasks": [
+    {
+      "id": "1ca1b911-2742-4a1f-986d-5d0f676751d9",
+      "conversation_id": "6328bc93-fb38-4da3-a305-dad64b825f69",
+      "state": "COMPLETED",
+      "reasoning_effort": "high",
+      "failure_code": "NULL",
+      "created_at": "2026-10-20 03:47:43.126680",
+      "updated_at": "2026-10-20 03:47:45.724135",
+      "wireSequences": [
+        3,
+        4
+      ],
+      "timingCoverage": "PASS"
+    },
+    {
+      "id": "8ed0fa3b-89e9-47bb-a03d-bca8ca87d22b",
+      "conversation_id": "6328bc93-fb38-4da3-a305-dad64b825f69",
+      "state": "COMPLETED",
+      "reasoning_effort": "off",
+      "failure_code": "NULL",
+      "created_at": "2026-10-20 03:47:48.393985",
+      "updated_at": "2026-10-20 03:47:49.529668",
+      "wireSequences": [
+        5
+      ],
+      "timingCoverage": "PASS"
+    },
+    {
+      "id": "15282f92-b37a-40f7-b55e-4201903eb482",
+      "conversation_id": "6328bc93-fb38-4da3-a305-dad64b825f69",
+      "state": "COMPLETED",
+      "reasoning_effort": "low",
+      "failure_code": "NULL",
+      "created_at": "2026-10-20 03:47:52.513820",
+      "updated_at": "2026-10-20 03:47:53.574019",
+      "wireSequences": [
+        6
+      ],
+      "timingCoverage": "UNVERIFIED"
+    },
+    {
+      "id": "1a33f7b3-0dc2-4543-a315-a35333925150",
+      "conversation_id": "6328bc93-fb38-4da3-a305-dad64b825f69",
+      "state": "COMPLETED",
+      "reasoning_effort": "max",
+      "failure_code": "NULL",
+      "created_at": "2026-10-20 03:55:58.499144",
+      "updated_at": "2026-10-20 03:56:00.167081",
+      "wireSequences": [
+        7
+      ],
+      "timingCoverage": "PASS"
+    }
+  ],
+  "providerWhitelist": [
+    {
+      "sequence": 1,
+      "at": "2026-10-20T03:32:48.982Z",
+      "thinking": "enabled",
+      "reasoning_effort": "high",
+      "stream": true,
+      "max_tokens": 8192
+    },
+    {
+      "sequence": 2,
+      "at": "2026-10-20T03:32:50.117Z",
+      "thinking": "enabled",
+      "reasoning_effort": "high",
+      "stream": true,
+      "max_tokens": 8192
+    },
+    {
+      "sequence": 3,
+      "at": "2026-10-20T03:47:43.221Z",
+      "thinking": "enabled",
+      "reasoning_effort": "high",
+      "stream": true,
+      "max_tokens": 8192
+    },
+    {
+      "sequence": 4,
+      "at": "2026-10-20T03:47:44.282Z",
+      "thinking": "enabled",
+      "reasoning_effort": "high",
+      "stream": true,
+      "max_tokens": 8192
+    },
+    {
+      "sequence": 5,
+      "at": "2026-10-20T03:47:48.507Z",
+      "thinking": "disabled",
+      "reasoning_effort": null,
+      "stream": true,
+      "max_tokens": 8192
+    },
+    {
+      "sequence": 6,
+      "at": "2026-10-20T03:47:52.592Z",
+      "thinking": "enabled",
+      "reasoning_effort": "low",
+      "stream": true,
+      "max_tokens": 8192
+    },
+    {
+      "sequence": 7,
+      "at": "2026-10-20T03:55:58.610Z",
+      "thinking": "enabled",
+      "reasoning_effort": "max",
+      "stream": true,
+      "max_tokens": 8192
+    }
+  ],
+  "finalPods": [
+    {
+      "name": "backend-7498788bdd-ktdhn",
+      "uid": "a5851be2-d432-4cbc-8c4d-3e5fb1d653f9",
+      "ready": "True",
+      "imageID": "docker.io/chocologic/manao_images_repository@sha256:726c095f15d4866fbcea48146c90faf2fb1a6d680f02629f6ea893e49f694af1",
+      "restarts": 0
+    },
+    {
+      "name": "frontend-54f498b688-gcrs4",
+      "uid": "d20fb23d-b2b9-45bb-b015-bf5146aa1337",
+      "ready": "True",
+      "imageID": "docker.io/chocologic/manao_images_repository@sha256:8d90abdf44f5e2af50c61810b8640e532e1e8b95bffdd9172f017f929e82b89a",
+      "restarts": 0
+    },
+    {
+      "name": "manao-pi-worker-56fc457bf-g87q9",
+      "uid": "216e83c1-63b8-4ec2-a709-20ed58b15ea9",
+      "ready": "True",
+      "imageID": "docker.io/chocologic/manao_images_repository@sha256:dd06e4148d466127914ebf0bc04e27b5f078d4061f4485f1c0b4221831e269f8",
+      "restarts": 0
+    }
+  ],
+  "disposableRestoreCleanup": {
+    "schema": "manao_output_restore_20261020_4cd010e2056f",
+    "before": 1,
+    "after": 0,
+    "runtimeSchemaUntouched": true
+  },
+  "globalOccupancy": [
+    0,
+    0,
+    0
+  ],
+  "temporaryProbe": "REMOVED",
+  "userAcceptance": "NOT_GRANTED",
+  "stage2": "PAUSED / NOT_GRANTED"
+}

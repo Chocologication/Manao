@@ -1,0 +1,39 @@
+{
+  "observedAt": "2026-10-18T06:27:39.2785676Z",
+  "sourceCommit": "aa7f2821fd839356929b41bd50203ed205670ec5",
+  "context": "kubernetes-admin@learn",
+  "namespace": "manao-stage6b",
+  "deployment": "manao-pi-worker",
+  "tag": "chocologic/manao_images_repository:ai-task-budget-20261018-aa7f282",
+  "digest": "sha256:33c98b8a95d818d87f02638b64d0b93f69bc796d83802a233c5f964ca2e79a6b",
+  "rollbackDigest": "sha256:242369ef1c159e1f4e4a7bfd8f10eab0b878f6ce977571208bfde72dec651c50",
+  "pod": {
+    "name": "manao-pi-worker-7499578849-6r2db",
+    "uid": "4cdc1142-377f-4d5f-a886-d3b033709fe3",
+    "ready": true,
+    "restartCount": 0,
+    "imageID": "docker.io/chocologic/manao_images_repository@sha256:33c98b8a95d818d87f02638b64d0b93f69bc796d83802a233c5f964ca2e79a6b"
+  },
+  "runtimeBudgets": {
+    "configured": {
+      "wallClockSeconds": 1800,
+      "toolCalls": 180,
+      "builds": 20
+    },
+    "defaults": {
+      "wallClockSeconds": 1800,
+      "toolCalls": 180,
+      "builds": 20
+    }
+  },
+  "validation": {
+    "redTargetTestsFailed": 6,
+    "greenTestsPassed": 72,
+    "build": "PASS",
+    "review": "Approved",
+    "activeTasksBeforeRollout": 0,
+    "rollout": "PASS",
+    "cloudModelCalls": "NOT_RUN",
+    "stage2Acceptance": "PAUSED_NOT_GRANTED"
+  }
+}

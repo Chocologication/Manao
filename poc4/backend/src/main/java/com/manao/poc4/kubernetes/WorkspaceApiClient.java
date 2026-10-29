@@ -255,7 +255,7 @@ public final class WorkspaceApiClient implements WorkspaceAgent {
         byte[] payload = body == null ? new byte[0] : body;
         return HttpRequest.newBuilder()
             .uri(resolver.endpoint(projectId).resolve(pathAndQuery))
-            .timeout(requestTimeout)
+            .timeout(com.manao.poc4.ai.ReconcileWorkBudget.requestTimeout(requestTimeout))
             .header("X-Manao-Workspace-Capability", signer.sign(method, pathAndQuery, payload, projectId));
     }
 

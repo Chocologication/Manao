@@ -121,7 +121,14 @@ export async function reloadWorkspaceAfterTerminalRun(options: {
   await cancelProjectFileReads(queryClient, projectId);
   workspaceBufferRegistry.disposeProject(projectId);
   projectMonacoModels.disposeProjectModels(projectId);
-  queryClient.removeQueries({ queryKey: fileKeys.all(projectId) });
+  // Keep the observed revision query instance alive. Removing it detaches the
+  // disabled observer used by the AI panel; reset it instead and let the next
+  // root read publish the authoritative revision.
+  await queryClient.resetQueries({ queryKey: fileKeys.revision(projectId), exact: true });
+  queryClient.removeQueries({
+    queryKey: fileKeys.all(projectId),
+    predicate: (query) => query.queryKey[2] !== 'revision',
+  });
   assertCurrentProject(projectId);
 
   const tree = await listDirectory(projectId, parseProjectDirectoryPath(''));

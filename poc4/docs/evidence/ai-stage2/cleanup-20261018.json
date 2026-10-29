@@ -1,0 +1,1717 @@
+{
+  "date": "2026-10-18",
+  "worktree": "D:/DeepLearning/MyProjects/Project_Manao/.worktree/ai-integration",
+  "authorization": "User explicitly requested current AI workspace temporary-file cleanup after record reconciliation.",
+  "status": "DELETED_AND_VERIFIED",
+  "fileCount": 334,
+  "bytes": 137957686.0,
+  "directories": [
+    ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/browser-run7/ai-stage2-Stage-2-real-app-453a6-epair-test-→-new-R2-HTTP200-ai-stage2",
+    ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/browser-run5/ai-stage2-Stage-2-real-app-453a6-epair-test-→-new-R2-HTTP200-ai-stage2",
+    ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/browser-run4/ai-stage2-Stage-2-real-app-453a6-epair-test-→-new-R2-HTTP200-ai-stage2",
+    ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/browser-run3/ai-stage2-Stage-2-real-app-453a6-epair-test-→-new-R2-HTTP200-ai-stage2",
+    ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/browser-run2/ai-stage2-Stage-2-real-app-453a6-epair-test-→-new-R2-HTTP200-ai-stage2",
+    ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/browser-run1/ai-stage2-Stage-2-real-app-453a6-epair-test-→-new-R2-HTTP200-ai-stage2",
+    ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/browser-run6/ai-stage2-Stage-2-real-app-453a6-epair-test-→-new-R2-HTTP200-ai-stage2",
+    ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/backend-runtime-context",
+    "poc4/frontend/test-results/ai-stage1-AI-stage-one-cod-b7377--fixture-and-the-loop-shape-ai-stage1",
+    "poc4/frontend/test-results/ai-stage1-AI-stage-one-cod-d301a-through-the-real-model-loop-ai-stage1",
+    ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/browser-run7",
+    ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/browser-run6",
+    ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/browser-run5",
+    ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/browser-run4",
+    ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/browser-run1",
+    ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/browser-run2",
+    ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/browser-run3",
+    ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/local-container-evidence",
+    ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016",
+    ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/jdk-retry-check",
+    ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan",
+    ".superpowers/sdd/2026-10-13-pi-stage1-implementation-plan",
+    "poc4/backend/target/run-recovery-evidence",
+    "poc4/backend/target/run-recovery-image",
+    "poc4/frontend/test-results",
+    "poc4/pi-worker;W"
+  ],
+  "files": [
+    {
+      "path": ".superpowers/sdd/2026-10-13-pi-stage1-implementation-plan/deploy-fix-report.md",
+      "bytes": 11607,
+      "sha256": "ed971c47a8092a4846a124c947472a9b3cd6163f1f52d6ffdaedb585399a399a"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-13-pi-stage1-implementation-plan/final-review-findings.md",
+      "bytes": 7431,
+      "sha256": "a522cf0e25a1427661063455d83dfbd364d31e058b8009f88e8c2afb9cca9c56"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-13-pi-stage1-implementation-plan/final-review-fix-report.md",
+      "bytes": 21541,
+      "sha256": "9aa9bb9ce2c15aa98d443da7d03fd54b712b9ef3c92221b837962e4bcce4f718"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-13-pi-stage1-implementation-plan/progress.md",
+      "bytes": 28811,
+      "sha256": "8dc53d932c6eac989028a2a59ca555bba44e7e8785789e60ba20193075eae847"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-13-pi-stage1-implementation-plan/review-0ad76cc..72d6eda.diff",
+      "bytes": 38132,
+      "sha256": "66560c703a0f4c75909c1f0cecc1d7c593850cac96816936c6354364d86d0351"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-13-pi-stage1-implementation-plan/review-1a78404..8aafdb3.diff",
+      "bytes": 57261,
+      "sha256": "a97e6f2c66ae9bbdf09cf33d19ee2795fe7601207fb394304919c231b01412c2"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-13-pi-stage1-implementation-plan/review-1f2298e..79ca5c5.diff",
+      "bytes": 20326,
+      "sha256": "9d5b1f44a180405d390ddfaccf5d4aa8958e3d0b3831a48f1cf8667a9659ffd7"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-13-pi-stage1-implementation-plan/review-46eaae0..7ef0760.diff",
+      "bytes": 44455,
+      "sha256": "2d40ba2df363e54d8652e127102d11606790dcdce1973ebe92af23581f4650d4"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-13-pi-stage1-implementation-plan/review-70c7bf2..f791e00.diff",
+      "bytes": 8540,
+      "sha256": "0023f781a66fc1fa4651e1cc6d3eed6c100eb350299f8e7deabde068cad44875"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-13-pi-stage1-implementation-plan/review-72d6eda..a77aa36.diff",
+      "bytes": 18498,
+      "sha256": "bb38baf8882a1c7039b1dc5e5264208bc04338b6a880d76e75876c311b78e67f"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-13-pi-stage1-implementation-plan/review-79ca5c5..c5fe549.diff",
+      "bytes": 62808,
+      "sha256": "51f1f73f6fafd6873f6c59c636911d50f101eac8853ddeef7517e96ba144b1be"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-13-pi-stage1-implementation-plan/review-7e7c29a..b5ad11f.diff",
+      "bytes": 71802,
+      "sha256": "6701e2a8e0e0d7bf0a708e2a0da83a5904385b1162517890b650803535391e14"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-13-pi-stage1-implementation-plan/review-7ef0760..f499a7f.diff",
+      "bytes": 94117,
+      "sha256": "93d979704b999f7fc117709660c04983295fa461f649c1fb503d83dc3002c2a6"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-13-pi-stage1-implementation-plan/review-83a1d03..9eb54e7.diff",
+      "bytes": 124990,
+      "sha256": "0087c5dd54e7f1eafa954172c7b75d20c4287037961e44e57e43688485d3046c"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-13-pi-stage1-implementation-plan/review-8898c95..0ad76cc.diff",
+      "bytes": 196984,
+      "sha256": "9c6e6ecf5059b62e881b1357c1db2bdac2f9d6aab7183bb266e7443162905afb"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-13-pi-stage1-implementation-plan/review-8aafdb3..9f93dce.diff",
+      "bytes": 43294,
+      "sha256": "470293945f79a1f9340915f039322a0499bf15c7d7ec2bf96b0ac7ad16c2583f"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-13-pi-stage1-implementation-plan/review-92b1a15..d30fb33.diff",
+      "bytes": 20958,
+      "sha256": "e95deb765a9909e8c2455082074c49028f4371b444b1ddc283715169d83353b7"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-13-pi-stage1-implementation-plan/review-9eb54e7..a585480.diff",
+      "bytes": 76901,
+      "sha256": "1807ae4638f4c5a72ad9fec24b661ee7266445c924d8f499d6921227a4fddeae"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-13-pi-stage1-implementation-plan/review-9f93dce..46eaae0.diff",
+      "bytes": 29005,
+      "sha256": "cecf5a19f19b0b73056564b35ddfcf11a8b01dab98c378708708e228ab08afc0"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-13-pi-stage1-implementation-plan/review-a585480..92b1a15.diff",
+      "bytes": 40281,
+      "sha256": "0b2e5b4d90c0dc55db0ac4a15860deeb53bdc6a588e673882bfdce93e81ecd37"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-13-pi-stage1-implementation-plan/review-b5ad11f..8898c95.diff",
+      "bytes": 41308,
+      "sha256": "53d734571cfdf37c93d3fac96be7f10a390ce2941c2e62c984d94116f7317952"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-13-pi-stage1-implementation-plan/review-c5fe549..70c7bf2.diff",
+      "bytes": 21489,
+      "sha256": "fc7afc0b02b21bf9ec8b2d8159c57e3606c226e7358acd9e35b2d904658c3951"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-13-pi-stage1-implementation-plan/review-d0952b4..7e7c29a.diff",
+      "bytes": 187555,
+      "sha256": "fa80920ca986571a30841f8b3af3fcb6f37ca019b3229d9bc5f3f5c532f6a980"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-13-pi-stage1-implementation-plan/review-d30fb33..1a78404.diff",
+      "bytes": 259386,
+      "sha256": "e0bd7bf485e90a84eb6ae79a4a2ffd439a302cef2d6fbee04cbf7276d6257c83"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-13-pi-stage1-implementation-plan/review-ef852b7..1f2298e.diff",
+      "bytes": 113939,
+      "sha256": "eab306d4b1aae1bf40480e351467af98bfd4064dac2677e1f6d1e2393e1217ab"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-13-pi-stage1-implementation-plan/review-ef852b7..8898c95.diff",
+      "bytes": 1015395,
+      "sha256": "ed3ff8f9dbdddf20a6cc29b99a38d7ccb28408e656810ddf93d3bbdf4330e8e8"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-13-pi-stage1-implementation-plan/review-f499a7f..d0952b4.diff",
+      "bytes": 13358,
+      "sha256": "9f072cf56481d9057ec77fc54e75da4ec05cbe76e37ea206a29d3a9959e43ed7"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-13-pi-stage1-implementation-plan/review-f791e00..83a1d03.diff",
+      "bytes": 8232,
+      "sha256": "c9b7fa8c2cec19948356144f2bd42115a1908a295fc7e2b8cfcf8dd81623cffb"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-13-pi-stage1-implementation-plan/task-1-brief.md",
+      "bytes": 4340,
+      "sha256": "9562185d7e8314887dbd790ae00235bddd27429c3cbc60887dc61f431ea629bb"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-13-pi-stage1-implementation-plan/task-1-report.md",
+      "bytes": 18579,
+      "sha256": "3aac16379690a33c1820e47982d69470e7b7ebd112443265fdef2d091a723244"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-13-pi-stage1-implementation-plan/task-2-brief.md",
+      "bytes": 3700,
+      "sha256": "a9a28188ba9343e721d12595a1cbe93fe436448f368457bdaa91fd8f3a9d839f"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-13-pi-stage1-implementation-plan/task-2-report.md",
+      "bytes": 21533,
+      "sha256": "c4ea76578cbb459b12d50b80481e1ec175e1834ff4f834e9841bc3567011f145"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-13-pi-stage1-implementation-plan/task-3-brief.md",
+      "bytes": 5310,
+      "sha256": "67905899dcb23a8c4c8a8729ec201245febd90cebdb9242b07e935816de0d946"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-13-pi-stage1-implementation-plan/task-3-report.md",
+      "bytes": 44678,
+      "sha256": "0c4413c3a6615dc54d74643afaa8b232d4c7b6901aafcfd70e583e3409cb26fb"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-13-pi-stage1-implementation-plan/task-4-brief.md",
+      "bytes": 6313,
+      "sha256": "6dadb3cd4ad9a567293a6f9ac6bf1a1f76c98f989936828a36ce451ac60be5cb"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-13-pi-stage1-implementation-plan/task-4-report.md",
+      "bytes": 28854,
+      "sha256": "ebc981e8bb25d0ee7fd3d911a3910f562f296910070d6294dcac820d51c69889"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-13-pi-stage1-implementation-plan/task-5-brief.md",
+      "bytes": 2893,
+      "sha256": "16634b45e27abff2eee95bf794e848379721ecbe65fb2448986c66c5f4f7d870"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-13-pi-stage1-implementation-plan/task-5-report.md",
+      "bytes": 13709,
+      "sha256": "aa390baa574ce13e2817d39e42b980d8e67fc4a89513edfd8293b844166d4efd"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-13-pi-stage1-implementation-plan/task-6-brief.md",
+      "bytes": 6421,
+      "sha256": "4f75c98013fce38ef23b93407cd08e7760560725820c18a43750c66ced6c1e0a"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-13-pi-stage1-implementation-plan/task-6-report.md",
+      "bytes": 20856,
+      "sha256": "955b77af70320025873eabc1aaad711e3451a8c560dd07a478579e7e73fdfc2a"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/backend-integration.log",
+      "bytes": 537537,
+      "sha256": "36834d420202355788c03cb3ca5c78ec121ec9671c2485ff108cec76e2f8e3f1"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/final-docs-report.md",
+      "bytes": 3364,
+      "sha256": "263ef486ea3b489651e5427875cbd2adc668af544677f6556e2629314c4603b5"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/final-review.md",
+      "bytes": 7599,
+      "sha256": "60a5b730ed8206b9ca19a2037dcc68e8ece8a9b66c5616cc2459cf71c3f31922"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/jdk-container-result.md",
+      "bytes": 1234,
+      "sha256": "0ca64e51928a078c41ac6a580df2cf9647e9a644d30d211cbb999e37e250fa21"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/local-container-procedure.md",
+      "bytes": 13872,
+      "sha256": "beabdfa6fc67cce51cda8c0ee229d4e54bbd30702a9aa68816325ab36b77307e"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/local-container-result.md",
+      "bytes": 1832,
+      "sha256": "0563a68d34c5f29357da1f165abe35b4612b253f3b5ae297daae4a06a9aa1608"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/local-container-run.log",
+      "bytes": 558,
+      "sha256": "85a38eec1212114515ccbf3c20edd8fe9ad9516fef2ec3736234a9b3cc13212d"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/local-container-run.ps1",
+      "bytes": 10438,
+      "sha256": "fcd7c414939fd663756b573ed180904f8b893d6f432723fb30c82d335c5a42a7"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/local-mysql-cleanup.md",
+      "bytes": 421,
+      "sha256": "13a2bcd6ed163866b263093a4e1d6c4c35b18f18744271913241a79d5bf5cfdc"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/progress.md",
+      "bytes": 10510,
+      "sha256": "36d00f382e26c4734a004b0f87a7bb9f278b9d3e499d8d46b65e8d29fcef549a"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/review-66b8742..559f998.diff",
+      "bytes": 439886,
+      "sha256": "f39c99a06d4a45ab068ab732daa2854556ff5c17308e2faf0f7e6ead775386ee"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/task-1-brief.md",
+      "bytes": 5875,
+      "sha256": "fe33cb2d521113e609f2aaf14f23063a3d2474ba0bf7655028b5a3319e189b3f"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/task-1-fix1-green-runs.log",
+      "bytes": 38656,
+      "sha256": "061f860d080047b41e3d15c11d1ad7214d0a306c63db43531d79f84f62996a32"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/task-1-fix1-green.log",
+      "bytes": 145803,
+      "sha256": "3b1e3daf90efc10f72887b37fbf2e544ea0c49e931d083cbf04bc8a211aa42de"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/task-1-fix1-red-io.log",
+      "bytes": 16158,
+      "sha256": "75e15819fe862ef1131a58c3a89299edd252e18c8aea4a1e772dafaf9b25ac7d"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/task-1-fix1-red.log",
+      "bytes": 11019,
+      "sha256": "87ea26a106d9bbe68d24be47d0af7caaa2d9da45208a63797d0d8f326d07c67b"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/task-1-fix1-review.diff",
+      "bytes": 100905,
+      "sha256": "8766aa1b2af0fc9d0bac1462ca3126c7e6d082f718ff1483f87cabaa281261e2"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/task-1-fix1-review.md",
+      "bytes": 4488,
+      "sha256": "2c89d665884e18ec63aeb74146259ae2fc80d71e4e2bbf1b741389e6eb0abcbd"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/task-1-green-final.log",
+      "bytes": 140114,
+      "sha256": "38e51a25e2044a634bc09648bc16b3eed5cc1429e3f413bb1a64d291727f1b33"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/task-1-green-focused.log",
+      "bytes": 48243,
+      "sha256": "4157212ec7e58c2b25d696268ce146a59796ccf8c4c83b573220586f9de0a8b6"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/task-1-green-run-final.log",
+      "bytes": 32784,
+      "sha256": "67ec9f4cfe93d25c192d6d8f646f24a31300e460baf80b8a9e9ae1a67e2a9771"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/task-1-green.log",
+      "bytes": 227271,
+      "sha256": "e7bb1be178b6ae90fda594113f04ceff5a02ba23441a4f5cdeff355769275d55"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/task-1-red-runs.log",
+      "bytes": 27148,
+      "sha256": "bd910233c3fe837e4430c1cc9f1bc030a7e001c36b684f382db310480a82a53a"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/task-1-red-settled.log",
+      "bytes": 8617,
+      "sha256": "f87f0439de70740eecd3654a47d3b551225260dc4b732e544b97980563187f36"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/task-1-red.log",
+      "bytes": 184657,
+      "sha256": "0c3b949ad5d629142227b443e2e93a4cf46e091134cc8f94911bc715878dab56"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/task-1-report.md",
+      "bytes": 11528,
+      "sha256": "703e49cb7f7b05a5042b2a59d7913381c097037925733d56b6905f6aca56e865"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/task-1-review.diff",
+      "bytes": 48917,
+      "sha256": "2047579e85190a33a6dcdca7f90cc51280641afaf260bd5400fa93f4cdcdfd35"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/task-1-review.index",
+      "bytes": 116872,
+      "sha256": "1a582fc08edba127550c3b8ec85f2c4053516ebae01323a37a539f33e589b946"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/task-1-review.md",
+      "bytes": 6325,
+      "sha256": "8bb703738ef77aaf17a29ef2272c1e58ac3b3dfdb8bab531b7acf6f8888bead0"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/task-2-brief.md",
+      "bytes": 7262,
+      "sha256": "65620d596361f43d1f727497aa224ceedb9db06cb7e6177af573160f0411db8d"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/task-2-fix1-green-focused.log",
+      "bytes": 18125,
+      "sha256": "6cc87b827917e5cf17ef31c77028a5f231bc98518d23be2dcadccec79cf115f6"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/task-2-fix1-green-regression.log",
+      "bytes": 269348,
+      "sha256": "96fb5f552e58210f9b5a53d5cf44d76e31cb6cb099a141a41c301522ce0a1c17"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/task-2-fix1-red-behavior.log",
+      "bytes": 13075,
+      "sha256": "86fdac8a7eed35556c7f57d622219a060bc194eda6256cf8ab15d767eff844db"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/task-2-fix1-red.log",
+      "bytes": 8461,
+      "sha256": "9e2047148efc18a877d158c221bdb0b9ff52c0fcb49f7f082450c8455f65333a"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/task-2-fix1-review.diff",
+      "bytes": 22638,
+      "sha256": "e50d45565de794c1e2ee690657b009c99ab6d8e4f06cb120ef873f6566907e77"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/task-2-fix1-review.md",
+      "bytes": 3915,
+      "sha256": "00cb378574c2b3233117ec151d812848c846eff2440af9cb43a586b6b07defe2"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/task-2-fix1.index",
+      "bytes": 117152,
+      "sha256": "a753334bfe323700b446a0b5c5bd64a8450a75693ca723d4a97010e9dd4afe97"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/task-2-green-boundaries.log",
+      "bytes": 25120,
+      "sha256": "781838342e28a950bd0358a34ed3993f070308ff6c22712276b56bc47d8740f5"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/task-2-green-final.log",
+      "bytes": 402354,
+      "sha256": "b947db0718e1cc99aec462838a9d10fa8448f964f27373008979a1cc60f9f905"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/task-2-green-initial.log",
+      "bytes": 237215,
+      "sha256": "49fe72e5d5873c117e7c752c44446853fb955cf8d7911caf6becfc1761829187"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/task-2-red-behavior.log",
+      "bytes": 18610,
+      "sha256": "ec84ba83da50fc5cb4ced880ad78b068d6266e4f008bcff826c0ea06e3af7c92"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/task-2-red-log-authority.log",
+      "bytes": 6255,
+      "sha256": "ef17aa9f3e5b64a71ecc619dcbae931e1052e638f75fbe95fc6d0fd99ce1352d"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/task-2-red-safe-error.log",
+      "bytes": 9031,
+      "sha256": "ebcdf09b54a7148cc7b28964d3c561f41a1515111679b74da46a6e460d42c37f"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/task-2-red-terminal.log",
+      "bytes": 12880,
+      "sha256": "22285be4ba92f5817253cbe95adcd593ca99f8e0f70b5e445f07f61d3ba58436"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/task-2-red.log",
+      "bytes": 6732,
+      "sha256": "64bd6c42ab907e1e1cbf08aacf2e2e87bad954b8ad2d5a8d3b192bc0419c34fc"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/task-2-report.md",
+      "bytes": 11220,
+      "sha256": "818ff32c5f45ec5349ed88ecadfe60716f9085646178563d5d2310e7c1fd3ca5"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/task-2-review.diff",
+      "bytes": 92873,
+      "sha256": "991b4cc55fa877fd35eb25aea9d333902d9cb199ba13bc4b46421a2be8eea5e6"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/task-2-review.index",
+      "bytes": 117152,
+      "sha256": "b82ed23d5e17570c94dbd80f20a7b5ac1c7803552d59536454eaed1732ae1797"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/task-2-review.md",
+      "bytes": 6450,
+      "sha256": "00756c26817f7b695f1789e52831fbee899698ff4d142f497bd5a5acc12b9216"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/task-3-brief.md",
+      "bytes": 6221,
+      "sha256": "44ac493ea05309fe175c91e2e2778bc4853ea3f00b9b9429d53e2c0e9aad2b07"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/task-3-final-test-delta.diff",
+      "bytes": 7165,
+      "sha256": "0cead887e841e98b03249cf5a2e095be93285f10a85047e22e0648f6dd3d8441"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/task-3-green-body-reset.log",
+      "bytes": 5706,
+      "sha256": "ef6956355430f3697968d438129bd1f120065f963900ae3d217a4a1ff5b1b7ec"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/task-3-green-boundaries.log",
+      "bytes": 29396,
+      "sha256": "05ec97ff5212dac519fe21696c0380108f838fdadce26ebb77e5d5b7c751b157"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/task-3-green-contract-correction.log",
+      "bytes": 9971,
+      "sha256": "404338de2b753c82ff46a6ff43b606e2be5925026801217d90c66fb07db96e04"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/task-3-green-final-followup.log",
+      "bytes": 16591,
+      "sha256": "7d8dba79bbcdc3177e1433735a5a66a6b82944eb255ea0cc8e83d1ce30ac22ce"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/task-3-green-final.log",
+      "bytes": 176842,
+      "sha256": "c8d09d29165fc4dd1d2f5b64c5889e5d0570d5becd90f28381ce5518de259367"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/task-3-green-probe.log",
+      "bytes": 19234,
+      "sha256": "731c70d0c928e6895c7eb5fcdbb8539a0e9f45e6b8a1ff9585a69cc93145670e"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/task-3-green-tools.log",
+      "bytes": 146065,
+      "sha256": "4f868422fdd08e2c1ba8a9bb6837184bab4a8e48cd80407631ca5354785dccaf"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/task-3-red-network.log",
+      "bytes": 17266,
+      "sha256": "9b0992c1d528eb21a4816ed03dc415a44fbeadce87e98bad09825c0bda2e192c"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/task-3-red-orphan-close.log",
+      "bytes": 8732,
+      "sha256": "a599cd44e1bd003f299a1718a7a082f00742d6bb0f25cb736350ba3b3bd402bb"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/task-3-red-tools.log",
+      "bytes": 12001,
+      "sha256": "d7ee4f4e37ec294f2f4b8415515ed8c086585fed461606bd971802be8b17ef02"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/task-3-red.log",
+      "bytes": 7434,
+      "sha256": "aa7a1077a031be932c3b6aa4eef7a2af3bfe7a0d968269c74ca8bdcc262a1833"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/task-3-report.md",
+      "bytes": 16988,
+      "sha256": "eb1aca4deb3249a305e079d43ee14ca717f5f5f943366823f0098814116b8be2"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/task-3-research.md",
+      "bytes": 15128,
+      "sha256": "586da44645657fdfbb80e36e69ed95a2e857701ce8cdc2ddf86737a45420a3c6"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/task-3-review-final.index",
+      "bytes": 117432,
+      "sha256": "9482fc0caa4c24c8fb66d636a351f05195f72d5e26fa3097d42651c7bc67d81c"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/task-3-review.diff",
+      "bytes": 81707,
+      "sha256": "1de56224b3cae6fad1f29ba264b6807f18ae934a64b86df5d85abe36d738da02"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/task-3-review.index",
+      "bytes": 117432,
+      "sha256": "ab53bea2ec2caf8725201427d04ee501a3e3b6926be1cb7a0c9c24c905398879"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/task-3-review.md",
+      "bytes": 6779,
+      "sha256": "475f1914dedf109cc19fce396f4980eaf8ac0c92dae4a8b670f36716f003015a"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/task-4-brief.md",
+      "bytes": 6841,
+      "sha256": "a0feb3aa542d33d515303aa13bf43077981e1afc76866c4adad20cfe3e4e9765"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/task-4-fix1-review.diff",
+      "bytes": 12196,
+      "sha256": "ceff8d355688598ccf09dd21b87642c6317f1f99fcd0e67fe3f5802b16ee22ca"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/task-4-fix1-review.index",
+      "bytes": 117432,
+      "sha256": "bf5c3bbdffba84e8eb0b10d27e526fe742f06d4bde109d3070968dcf4f821ba7"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/task-4-fix1-review.md",
+      "bytes": 2516,
+      "sha256": "840b1f0f18a72d461391d132977987e8be51b46af7a8cda195ad8d845cfdf6e9"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/task-4-readiness-delta.diff",
+      "bytes": 5280,
+      "sha256": "3c55fdc6d9d9377aa6685df26d05c32468ad6ca9fba1e05608656c706d6e7051"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/task-4-report.md",
+      "bytes": 10061,
+      "sha256": "b0bf5f49b7703583a6c5c5b53014ef9ef23c25e4c4c302e87c782cc16a6dc5d9"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/task-4-research.md",
+      "bytes": 7412,
+      "sha256": "015cf90392eb873f4173ee02189d83b880d7f4e2b5c370770963ff852f5f6c25"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/task-4-review-final.index",
+      "bytes": 117432,
+      "sha256": "1cd6d32b1b657e1164ea060c55a27e205183e7b83d381fc3f53eb16cc6de0c80"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/task-4-review.diff",
+      "bytes": 75351,
+      "sha256": "b2e9c118f42b7753f27260f93ba5f66267ee9ba960155bb67ad7c88526d07115"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/task-4-review.index",
+      "bytes": 117432,
+      "sha256": "d19ff5bdd2f989cc339e5f8a179abf3b471d15859e91ba2011429954120e3643"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/task-4-review.md",
+      "bytes": 6189,
+      "sha256": "3355046a5394fa01a392bf4206df564e5db758d6c24cc7a12472de190b8a8343"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/task-5-brief.md",
+      "bytes": 10981,
+      "sha256": "cfc74ece5c7c7db366180e56919ef6b8e9ea7cd31d6a54f3577130d1ea083121"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/task-5-fix1-review.diff",
+      "bytes": 21389,
+      "sha256": "38f1845017113447b693806e49aac96b297be12aa156eb384c4715f433bb5633"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/task-5-fix1-review.index",
+      "bytes": 118566,
+      "sha256": "727af3dcdd6d7e3b4849619c819da2c0245a0d809292bc190f132fc105ff8586"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/task-5-fix1-review.md",
+      "bytes": 3732,
+      "sha256": "71cf72129134c70ded3b666ea9bc792c0a157636a7221749050d4e9310c222fd"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/task-5-report.md",
+      "bytes": 9984,
+      "sha256": "039db3b54ba198cb25e1b6fdda9b894fa8545dc8202af82f73beb1a59a0b5aad"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/task-5-research.md",
+      "bytes": 16821,
+      "sha256": "adc0c1ce2cbd062edb4d9cdcd14b8d4543bf73e4bbd30af4f73cf9528ed88126"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/task-5-review.diff",
+      "bytes": 121938,
+      "sha256": "2f22dfff54e9211ea26cbff3c3e15df20ad30624d96d0fd2f5953d00c29d54fe"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/task-5-review.index",
+      "bytes": 118566,
+      "sha256": "16c7a04f448eb5da3839f19291ee52f6cc5066c0195866406312851d14805da1"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/task-5-review.md",
+      "bytes": 7631,
+      "sha256": "c7b94861ed6cb14b5d74107de2c120899b02c775fbf5b8f5afa493f3bf4a4c78"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/task4-application-error-red.log",
+      "bytes": 33658,
+      "sha256": "b6c1e80a9f2948a5357f166c325df878e2d68c76387149a3c6c3ca19021cf991"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/task4-first-green.log",
+      "bytes": 1640,
+      "sha256": "2b90d9315b8153b10183880e8875a2d44eb492c3f82a5a0e22f851176441125d"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/task4-frontend-build.log",
+      "bytes": 10533,
+      "sha256": "b468172d2b50c26a452fa266e4b46b0ecd4a7ebec949a944ee2e56da1d7ae18e"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/task4-frontend-green.log",
+      "bytes": 8211,
+      "sha256": "5c9404a979edd2e1f9c62b2a5355b12456a9bac9126ce41fb8b64d0075fadf44"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/task4-frontend-red.log",
+      "bytes": 56174,
+      "sha256": "ce38492ec02efbd6d09d476cdf290c026778907deb1516aaa80d2cd128700e3b"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/task4-frontend-typecheck.log",
+      "bytes": 137,
+      "sha256": "3fee2bebd13d52d956440377a08a4ea9dc301b8e3dd242e44c29b738a9f7c482"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/task4-prompt-red.log",
+      "bytes": 2876,
+      "sha256": "0eab9f6a15f0125e58f95ae6b6760f2e3fa3a8a9014ec5b58332aa34a25e999d"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/task4-readiness-green.log",
+      "bytes": 908,
+      "sha256": "2daeca8ef223885580f45aa72b04bceecf2a71bf4807948f092a8bb7d6b71a28"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/task4-readiness-red.log",
+      "bytes": 26191,
+      "sha256": "cee797006d3b2168cc6ddb279b72a68f6ccf2109ad839018b99fdbd070b7f7ed"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/task4-review1-build.log",
+      "bytes": 10533,
+      "sha256": "1228dcf02e4a819e323a46f5afb5440e5dab799caec88272f2a3bc51bdb356fd"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/task4-review1-green.log",
+      "bytes": 915,
+      "sha256": "b391f40cc1a1c0e4ec33a01bbc54b1e3c0eb217c7db1a860cbbab48a538476d9"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/task4-review1-red.log",
+      "bytes": 18859,
+      "sha256": "762a2796c1507c38c5b42df17b41e8f2c9491177893ae947b38bbc7946b8aaa2"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/task4-run-red.log",
+      "bytes": 26444,
+      "sha256": "0707138b66f20a8fd432beaad830ded3445e8bca676ca0ded8204117cf8d774d"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/task4-shell-red.log",
+      "bytes": 38802,
+      "sha256": "516a5631f204e7e7131aa42fe7acd31bd8d6ce139359a5e18afc222110756ae9"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/task4-stale-run-red.log",
+      "bytes": 55571,
+      "sha256": "b09ffd3240404f64a7f3917c4a1029b6de50a6fa15bbe1a388a28dbc45e6113c"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/task4-worker-build.log",
+      "bytes": 140,
+      "sha256": "1d217fe967ee3607c0ba88be6d872c67a3abda851711745fb689d2546d2f5128"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/task4-worker-green.log",
+      "bytes": 775,
+      "sha256": "2a64e68f8affca0c4e25061d82f07f787566fcf951b756a4b5f2cbca87b7510a"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/task4-worker-red.log",
+      "bytes": 6862,
+      "sha256": "01482690faac98ecc72881b7bed82aa2b6f17afa1282fc1331a918acb975df7f"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/task5-frontend-full.log",
+      "bytes": 27898,
+      "sha256": "d0e5ac917b2c57b3500251ac7fd102444f35750e6ade6f1b9fe18eacc0c3eeb1"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/task5-playwright-discovery.log",
+      "bytes": 365,
+      "sha256": "832ac1a69edcd2094bb7e4a8b43958b96bd1d990c9887da700d5568e689e9182"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/task5-review1-active-red.log",
+      "bytes": 4579,
+      "sha256": "c4f468f64beb5a58bbea88f422e53ea83003860a1c961d874623d3d15e75e66b"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/task5-review1-discovery.log",
+      "bytes": 365,
+      "sha256": "832ac1a69edcd2094bb7e4a8b43958b96bd1d990c9887da700d5568e689e9182"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/task5-review1-green-final.log",
+      "bytes": 3573,
+      "sha256": "764cd85bd5be583d7ae07023522acd91920ba85fdf96717864bf54fb3e678ea9"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/task5-review1-green.log",
+      "bytes": 3466,
+      "sha256": "429f4be2b53ce505e5c9bcfeec99e795e4387ca5aa8db0506013e502fd0c018b"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/task5-review1-red.log",
+      "bytes": 5432,
+      "sha256": "cc2e923fd79932f6358106bc9321a1c942849148d5c218e080636ee12b9f4a30"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/task5-review1-typecheck.log",
+      "bytes": 154,
+      "sha256": "8f0b005b9b92ed01e2ecef73d07126aa4d5c6ec0000e1934c8bfdb32a7a160e5"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/task5-stage6-typecheck-final.log",
+      "bytes": 154,
+      "sha256": "8f0b005b9b92ed01e2ecef73d07126aa4d5c6ec0000e1934c8bfdb32a7a160e5"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/task5-stage6-typecheck-green.log",
+      "bytes": 154,
+      "sha256": "8f0b005b9b92ed01e2ecef73d07126aa4d5c6ec0000e1934c8bfdb32a7a160e5"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/task5-stage6-typecheck.log",
+      "bytes": 283,
+      "sha256": "b668b134170049630788b1b7c34709384148d094a030d035844041f011afdaef"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/task5-transport-red.log",
+      "bytes": 4115,
+      "sha256": "60e4feba17d720eeda1010451f52a02f0cc16ac74b813773c1c763b63619409c"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/task5-verifier-green-initial.log",
+      "bytes": 2999,
+      "sha256": "db7119c088aa599566f8ed691cfe4f3c1507ad49f4849653184dd22803c07f52"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/task5-verifier-green.log",
+      "bytes": 3089,
+      "sha256": "68d8a098ad163182b0ae08620b9e47b6243e2ebdd6b9c8f31c642b4f2cbce7a6"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/task5-verifier-red-behavior.log",
+      "bytes": 57265,
+      "sha256": "6903cc45cd3c0101adead97eac7d6604f63692e13d9cd613aaba18c0c331ec73"
+    },
+    {
+      "path": "poc4/backend/target/run-recovery-image/backend.jar",
+      "bytes": 57143198,
+      "sha256": "7bcbf3c132aaea4fe878c45b404a47c95acef610e413e5281a4f1fbd427e62bb"
+    },
+    {
+      "path": "poc4/backend/target/run-recovery-image/Dockerfile",
+      "bytes": 226,
+      "sha256": "ebf7e21fa4bc095973a3d35abbac77582bfd69666c422c8525953384bdbd46fd"
+    },
+    {
+      "path": "poc4/backend/target/run-recovery-evidence/browser.json",
+      "bytes": 737,
+      "sha256": "794efec21156617010d39ac21087e3fd425024d5be79980eefc6cb3e495b7a5f"
+    },
+    {
+      "path": "poc4/backend/target/run-recovery-evidence/run-authority-restored.png",
+      "bytes": 61433,
+      "sha256": "3dc7a9efac1fb1a2870896df4bb873262050781f0e3988259a00dfe109c36902"
+    },
+    {
+      "path": "poc4/frontend/test-results/.last-run.json",
+      "bytes": 45,
+      "sha256": "91d1c43004802cd49950d78eb11c8fa7d05da8ffffe219a8b13b2f561bc00903"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/jdk-retry-check/HttpRetryCheck.class",
+      "bytes": 5195,
+      "sha256": "a4fc345fdd0b4a99073154ca0df0926f04f418f2bd346e58d6f24865aed41577"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/jdk-retry-check/HttpRetryCheck.java",
+      "bytes": 2345,
+      "sha256": "a8e4ba4b9b8a6724cb42edc7551148f06c00d7b3fbb2e3298ba8d6392add2b34"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/local-container-evidence/ai-stage2-local-62fa61a68d624ed8bdb7003bc9feda9a-app-final.log",
+      "bytes": 10119,
+      "sha256": "46f69200e4411feba0dfd132f36961d6f9dcf62e562237dbb01789ecc4bfd5f8"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/local-container-evidence/ai-stage2-local-62fa61a68d624ed8bdb7003bc9feda9a-app-fixed-final.log",
+      "bytes": 2322,
+      "sha256": "d40036be9fa46f13c70a204ac62a8618bd505ea03c5372eb687e547d2329c7c0"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/local-container-evidence/cleanup.txt",
+      "bytes": 127,
+      "sha256": "dc21770387d8c79b3c3a4034c5ac8c99a78a6fb8179f7f8ba52d4b98274c34c9"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/local-container-evidence/fixed-http-body.json",
+      "bytes": 24,
+      "sha256": "8030079d450a92a1663a5fd761048004c11693195a4aa3c1047f9839579df9c1"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/local-container-evidence/fixed-package.log",
+      "bytes": 20550,
+      "sha256": "22458191d5d24b05a9a2d8c8c29f9bda0d4bc6f99c8ccee53150b3d05d296cc9"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/local-container-evidence/fixed-test.log",
+      "bytes": 20253,
+      "sha256": "6f0cf9840044225892881f1099b1835a74c7a84a948ffc54fd15991161536ebb"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/local-container-evidence/image-id.txt",
+      "bytes": 73,
+      "sha256": "fd903e57f8b2c0afea71e90f81262d6ea3591cece1744cbd21e9cfa4c54106cf"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/local-container-evidence/package.log",
+      "bytes": 20547,
+      "sha256": "20e5bf275b1cc27db8acd5f224eba11f1c0ab7488b5829503c73d99fe89ba67e"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/local-container-evidence/seeded-app.log",
+      "bytes": 9824,
+      "sha256": "be71592dfe073eab1af057186ea962e0ed3e2791b3d0258b469881c0ef50dadd"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/local-container-evidence/seeded-http-body.json",
+      "bytes": 111,
+      "sha256": "11c9c3fc88d59bbee883ef68173a71221c69049223d895ac1e3b49b961c01945"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/local-container-evidence/test.log",
+      "bytes": 20253,
+      "sha256": "7d7ebcef67e799a8f900ce6dcbca36a170ff5995d34b8e670201b12155546c3d"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/admission-fatal-build.log",
+      "bytes": 140,
+      "sha256": "1d217fe967ee3607c0ba88be6d872c67a3abda851711745fb689d2546d2f5128"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/admission-fatal-green.log",
+      "bytes": 777,
+      "sha256": "cd106a536586af0cfd4d42f36978329e49b59fc5417f3c9b5f9d743d98f1254d"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/admission-settlement-fatal-report.md",
+      "bytes": 6145,
+      "sha256": "75373ae3ed126035d6e6e5e5f6f416ea155db07363a88238e9afe54c1bec3e21"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/admission-settlement-green.log",
+      "bytes": 551,
+      "sha256": "3718dbe0cd6a5f235f3668f87b2b3782498596ff1b405544a32ca09de425181c"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/admission-settlement-red.log",
+      "bytes": 8069,
+      "sha256": "b3693f1d1b78f0087875cb3f095de87c359b62de8d2388230d4440e7632346eb"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/audit-stage2-final.ps1",
+      "bytes": 9241,
+      "sha256": "d00907a510e07d98ea06520704b4dd46b2d7345c3f76c5f84de9ded9809caafc"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/backend-artifact.sha256",
+      "bytes": 64,
+      "sha256": "400f37fc8b5a90ae7b5f7710dd068d887801e7641baaa6603a6a0c89c1b5f466"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/backend-build.log",
+      "bytes": 1755,
+      "sha256": "c4c6c2077fb67e28ec632d7ff7bfa737d446d06fd9873c741ac44d243f6150d0"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/backend-local-package.log",
+      "bytes": 2211,
+      "sha256": "70a67ef97691f2961111e649526cbd1dbb5bfad0b87c225fa5d3597962e9a76d"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/backend-push.log",
+      "bytes": 4233,
+      "sha256": "a8c3c3ea3b19c05b3b7eb4e6983957c95005d11cb51b206dca96d0257144aff6"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/backend-runtime-build.log",
+      "bytes": 2135,
+      "sha256": "54b677814b874fdcabdeab9bae84095a35f0842e140017df291116191fd8d944"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/bootstrap-initial-rounds.json",
+      "bytes": 615,
+      "sha256": "a155b8857b1bd32e9b219111c86fe9a9962c29a298e2d746aa590230a1c7e0ee"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/bootstrap-round3.json",
+      "bytes": 628,
+      "sha256": "77ba692fcb1ea9b92a6d582aa3315262f0541f36bfb6687a0399f69f477ba660"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/bootstrap-round4.json",
+      "bytes": 630,
+      "sha256": "51063fc7416d60115842d5da46e0521a708227557087babb6a3bfbe1d06e76c5"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/bootstrap-round5.json",
+      "bytes": 629,
+      "sha256": "2d10c5091f2c2f600fcf4ef6879fe893053a35542fbd86201cf4a5c065c81a86"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/bootstrap-round6.json",
+      "bytes": 630,
+      "sha256": "aa3e5e4e2423ea690b88f9df8122418f968741b051f809e9b8b81d5bf6d09a91"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/bootstrap-summary.json",
+      "bytes": 628,
+      "sha256": "17acb0369b74ecf36bd89afe4e23fca57e0f751f74a7e664d2d6ea20d0abfe69"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/bootstrap.log",
+      "bytes": 933,
+      "sha256": "244f06cce7f156faee6df31325959d4b922adb40e9bcdb9cb4928d8099457377"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/browser-run1.log",
+      "bytes": 3937,
+      "sha256": "a883abb208c74819f37753a1c0286e9c18a20e8a2fe8ba27000e8f7af114281e"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/browser-run2.log",
+      "bytes": 3936,
+      "sha256": "8beb0937381f471a05b09f4a488bae8d9e505b8d15523e033e44279d2df7ed3c"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/browser-run3.log",
+      "bytes": 3948,
+      "sha256": "be677dc1a384b364cd5227358a3aa14b5cedc03a9cf8998a4f966fcf73d46699"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/browser-run4.log",
+      "bytes": 3965,
+      "sha256": "76237289ff310884f549b4bfb439189e98ca4c8c522e306d1e164f2aff74b4f7"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/browser-run5.log",
+      "bytes": 4519,
+      "sha256": "51e9ec095d52b4c27f36208357b5e0ccb43288a46e0e73dd352e907ffb448c8a"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/browser-run6.log",
+      "bytes": 3949,
+      "sha256": "06a9daf69c0c4cb7add068c03a0f931cfa3bf622559920f5a716773408fba646"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/browser-run7.log",
+      "bytes": 3951,
+      "sha256": "201e7c74514c7937112995513ad28fcaf4130304b0933135044b2e300b62a270"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/busy-cloud-proof.json",
+      "bytes": 451,
+      "sha256": "d4f67e617bf5c5db9a9e67b0fa6be6da4235bf64723ca29841d9afd3c85c505a"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/busy-diagnostic-build.log",
+      "bytes": 140,
+      "sha256": "1d217fe967ee3607c0ba88be6d872c67a3abda851711745fb689d2546d2f5128"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/busy-diagnostic-green.log",
+      "bytes": 775,
+      "sha256": "5ea1e1f81a2639f88c9b393d3f642222152013f0868097180d31ab5eb0109b70"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/busy-diagnostic-red.log",
+      "bytes": 10025,
+      "sha256": "e2c05057dfe2f1db8a4382d42a6aa77469cc737fca74613a92be486679d2f092"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/busy-diagnostic-report.md",
+      "bytes": 2680,
+      "sha256": "e51df57b1682e5fb0fcd32d69d80295f6011124099386c1f19417fb63e4ff9f7"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/busy-fix-build.log",
+      "bytes": 140,
+      "sha256": "1d217fe967ee3607c0ba88be6d872c67a3abda851711745fb689d2546d2f5128"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/busy-fix-green.log",
+      "bytes": 775,
+      "sha256": "17d1d71181f9e15c4a418dbd1045dd4a6c4a48f21a24e21353020acdfe2a5887"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/busy-fix-red.log",
+      "bytes": 11589,
+      "sha256": "7ea094ce40130142976fae81fa9d8a852218399f0789fe05a345cdeee3c4d1bc"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/busy-fix-report.md",
+      "bytes": 4066,
+      "sha256": "f2b4cbbb91f5d7f35bbe271e5dce14452e293289a3068be6bf1a4004ef6f17ec"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/busy-fix-timeout-red.log",
+      "bytes": 5041,
+      "sha256": "a9d2999f179cf24fb61fa0e7a782e35f659403f426dd5790137b6cbc59ccb2fd"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/busy-fix-unknown-red.log",
+      "bytes": 5430,
+      "sha256": "8f6ee33a1a0864afafe926155b19c7486706ce5ddc692b1ee24c4125f3166b9a"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/cloud-acceptance-section9-draft.md",
+      "bytes": 11019,
+      "sha256": "458239a23e001c0a8c2edda386f7bca55e21105207876293389ea21c715b1d6f"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/deployment-identities-latest.json",
+      "bytes": 1256,
+      "sha256": "d1be806a1f92c1ed8329d71b656587e97f36f78f5d044daf73370fd183e626a1"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/deployment-identities.json",
+      "bytes": 1253,
+      "sha256": "cedd1651ce049b956f2bd918d0ff42c360fe324bb1f9c07bac6e8082cbf39baf"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/extra-http-verifier-green.log",
+      "bytes": 5169,
+      "sha256": "d2d8bd73582a507053f8c29d30b4477a879cafcec8d58bc88be92c49ad1e4f9c"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/extra-http-verifier-red.log",
+      "bytes": 8121,
+      "sha256": "b27af926e18c638fbe6aa8cbe83d5cc9458777427f2d3314ff75bbc1695eeaa1"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/extra-http-verifier-report.md",
+      "bytes": 3037,
+      "sha256": "b9bdc545ca6997953df452a73b81acc7e1a7761be2470543eb1d7219e1943cc2"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/fatal-outcome-red.log",
+      "bytes": 6560,
+      "sha256": "c66082e30042b56d345807d6fbb405ab3d666c5f219e23bb09ee5a42b8eac11e"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/fixture-prompt-clarification-report.md",
+      "bytes": 1864,
+      "sha256": "0c408b7575a021e6061c526a4fbd9226e0930bfde4cc31e7d9877ed0e34d50b7"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/frontend-build-r2.log",
+      "bytes": 19473,
+      "sha256": "3696883fb45c9ddc432e44372b78c0b86a76f4878fb7336d3fdf8ecf3a6bf7f4"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/frontend-build.log",
+      "bytes": 19006,
+      "sha256": "bfe628eb02c36959ffaedd8efd5c14f4f2a89c96111ccdeb2e1557cb003ef508"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/frontend-push.log",
+      "bytes": 5028,
+      "sha256": "ee12ed21bd228f5f1242e224e8224cb45a007105ba01afed76d366ed1e7b1731"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/frontend-toolids-build.log",
+      "bytes": 14660,
+      "sha256": "6df44656c56f58ac890fcf31543c2a0d59f2ceb6f1288b9cf3f4848b20dfdf84"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/frontend-toolids-push.log",
+      "bytes": 4714,
+      "sha256": "e6f1ee0bebbea21e2bb680da85d8a64c96186ef07b01dd7d98819b2d100f8e24"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/images.json",
+      "bytes": 650,
+      "sha256": "ec6cf0b2ed4406a98330580d44090007282dd04eb3f52a7471e16bbb889d8385"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/independent-run5-before-close.json",
+      "bytes": 40893,
+      "sha256": "30c715104e821c1b1c4a28e0042525d016b76a293091fa08d7d0ae07e3c892c9"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/independent-run5-preparation.json",
+      "bytes": 40891,
+      "sha256": "8abb4d060d9681292b09d9c64978fdf21ced5ce39836ccd4e8b8f148820d3693"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/load-private.ps1",
+      "bytes": 1657,
+      "sha256": "4898d1a7cb4a850e6ba5c840fc1bcd91149ecf39f020b2d028b9a02df6c06f9c"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/missing-tool-results-behavior-red.log",
+      "bytes": 6319,
+      "sha256": "155bb3937a820bbad49b892c39389c18e28036c0e641ad44dae549e6f879968c"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/missing-tool-results-green.log",
+      "bytes": 6053,
+      "sha256": "8ce1c2e17011e7883ff7c6f718f35dfa5bf567cd77c323bc3e764341b43056c1"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/missing-tool-results-kind-red.log",
+      "bytes": 1301,
+      "sha256": "c30451d523d367b5e917039a5778db70808af62b267bbb7a2d9d30cba14354f3"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/missing-tool-results-red.log",
+      "bytes": 14105,
+      "sha256": "cba53c5a483d5dee7f9f3fbb169e9335070130fae24c273294d83b91cb26b3a7"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/missing-tool-results-report.md",
+      "bytes": 3968,
+      "sha256": "dee7dd4e0ccf16b094b8cb152d06da129ef8f333f9c1d27d51a963fcc02c85a9"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/missing-tool-results-typecheck.log",
+      "bytes": 159,
+      "sha256": "426a3e68df09ccf82b9d70365edcd45607df62ea1ba195dcacae108daa79642a"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/operator-evidence-diff-green.log",
+      "bytes": 6272,
+      "sha256": "94d858e7c1fcbfad444da8a58f8495724ad55e70f1aee2762c0bc797e4548754"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/operator-evidence-diff-red.log",
+      "bytes": 7657,
+      "sha256": "dc65d85d6b8ddd5fb82b436f1a401fde478c52db8ed072de4e4b5b92fd3e294f"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/operator-evidence-diff-report.md",
+      "bytes": 4410,
+      "sha256": "7a6ce0275783fb589f3377958ed25e1ec9c4ecd8b889fcfb9ed942768b314c3a"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/operator-evidence-null-green.log",
+      "bytes": 5969,
+      "sha256": "e748ecfa3788139232656d5ff366aeb51e9a39aaedb1b2e0c4581679af425859"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/operator-evidence-null-red.log",
+      "bytes": 8599,
+      "sha256": "66a07cf4dc95a82df2ea1401e8a2150ddce00e438a6cc7974ca24914e9b49570"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/operator-run3-after-extra-http-fix.json",
+      "bytes": 494,
+      "sha256": "c68c61992a32c189923afed9dcf9e922f55efedbb21defb1f105c6d041e235f1"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/operator-run3-after-verifier-fix.json",
+      "bytes": 103,
+      "sha256": "b79b9cab56569addf74766c5d48a9d43c22aa713f953281690ce7b5aa255e58f"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/operator-run3-final-verifier.json",
+      "bytes": 494,
+      "sha256": "c68c61992a32c189923afed9dcf9e922f55efedbb21defb1f105c6d041e235f1"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/operator-run4-active-diagnostic.json",
+      "bytes": 1013,
+      "sha256": "49d97afe52629512e99c5352eaa138a582f6acf1c15c33355813a5996ce70fe7"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/operator-run4-owner-diagnostic.json",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/operator-run4-recollection.json",
+      "bytes": 77,
+      "sha256": "50a6cb3043100c99394069ca15733e8c68ef6787993a6c1bbf03e4f99d39ff65"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/operator-run4.json",
+      "bytes": 114,
+      "sha256": "bd1b7f82952bbabbaa125988dd3361e6f44690a25fb93df515e803eaf284ea95"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/operator-run7-independent-1.json",
+      "bytes": 1621,
+      "sha256": "a41b3f6f6c6ebd7f24a4cee0a9f7d2c7af8cfec4d8fe3ec8140cb7b1b71aa8f5"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/operator-run7-independent-2.json",
+      "bytes": 1621,
+      "sha256": "a41b3f6f6c6ebd7f24a4cee0a9f7d2c7af8cfec4d8fe3ec8140cb7b1b71aa8f5"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/operator-run7-independent-3.json",
+      "bytes": 1621,
+      "sha256": "a41b3f6f6c6ebd7f24a4cee0a9f7d2c7af8cfec4d8fe3ec8140cb7b1b71aa8f5"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/progress.md",
+      "bytes": 298,
+      "sha256": "b9ee1eb2d10274118c366a8b044ddd3d1f09775a6247964c4d80c16d9ff849bf"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/readonly-diagnostic-task.json",
+      "bytes": 194,
+      "sha256": "10fbb50adc7d76558efa133080ed481fbe658d0b78a2de903ce0d5bdb153a273"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/rejected-stop-verifier-green.log",
+      "bytes": 4339,
+      "sha256": "d607401ca37c91f906cd7172a03b3805ab9d754ae4914592ef728677956910bb"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/rejected-stop-verifier-red.log",
+      "bytes": 5357,
+      "sha256": "f772b5912ae860a260ed18bcca5e58745e6a161b18e6dbdbcc87066fa0a1a8c9"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/rejected-stop-verifier-report.md",
+      "bytes": 3182,
+      "sha256": "9e6b8ba230c201e6f5a77d6f8601c8258a98aab298cce08d3812e5fa20e25704"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/reseed-after-round3.log",
+      "bytes": 646,
+      "sha256": "ae185090e90dc6f2a4edaad0d47081d08d2ae95557768692271aec822f611991"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/reseed-after-round3.mjs",
+      "bytes": 4482,
+      "sha256": "52cce09ea4bc276c3f4ae3b87ae8409d560d39537bea2fc946730f6bc87eab3d"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/reseed-after-round4.log",
+      "bytes": 645,
+      "sha256": "300a00b17d71646821d58e3279a78fe8c90d36de8da9dd30a6b4f76d971aeb90"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/reseed-after-round4.mjs",
+      "bytes": 4481,
+      "sha256": "5b0397759fefb85089a4378b7fad9d159045ab8b5f30e32acc8de89f02a1e6e8"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/reseed-after-round5.log",
+      "bytes": 646,
+      "sha256": "c5012e68facda8b39eaf92d7942e9b5303b249cad6ccc97e3fbf481b113de0fb"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/reseed-after-round5.mjs",
+      "bytes": 5337,
+      "sha256": "a320346f1ea09e5f6e1bba2a11266cc8eb3b450ff33486927c04b2221605e8f2"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/reseed-after-round6.log",
+      "bytes": 644,
+      "sha256": "b05356216f2f79d41f6255712c70ffdc4f372f5bdef33a7c83d802462ce9133c"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/reseed-after-round6.mjs",
+      "bytes": 5546,
+      "sha256": "c38e0a75b8fc915f9c6fe536614dae3d6f4bf078a6845e759cedaf445a33444c"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/rollback.json",
+      "bytes": 2711,
+      "sha256": "a8ba0bd93984bc16a68cb7e1973f05aa29db5d3c1be50f1ccae74558698a318f"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/round6-extra-test.java",
+      "bytes": 1175,
+      "sha256": "b21fc080711b57c6a66ef5ed4c7fbe0f6deb6cf7d11e4340b6fd95cdca92f0e6"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/run-interval-verifier-green.log",
+      "bytes": 5544,
+      "sha256": "ae95c089a9ef1cf825f1df1395c4837762e08d2fa8a64873f45ebffddeeb3e1f"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/run-interval-verifier-red.log",
+      "bytes": 8532,
+      "sha256": "f5db0540fa2a00cb2c9e99f62a651c5f43d35de49eddb403e3e96277794584df"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/run-interval-verifier-report.md",
+      "bytes": 1907,
+      "sha256": "a4cd2624fca7e79dd4d3bf351a5d7284a86eaf80a12bb7c5b439c525a8325875"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/run1-failure.json",
+      "bytes": 447,
+      "sha256": "67587ae2498b0540e8e21b403a734314375ba43bd062211e823ec47e57094d90"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/run2-failure.json",
+      "bytes": 415,
+      "sha256": "25f44c5605c676ce7c8df513040dae91aa9465bb2c9d820732b05e5954df9ee9"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/run3-failure.json",
+      "bytes": 556,
+      "sha256": "84656ee4dc0273b390eabc7550aad8ba3a7a946de2e1068a825a6c0f293a0689"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/run6-failure.json",
+      "bytes": 1026,
+      "sha256": "44130062f7626ed50488442a0bd05c239b6ea0a8be701cddbce8b9ec294d4a99"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/run7-snapshots-diagnostic.jsonl",
+      "bytes": 14851,
+      "sha256": "240a8005d1e5aac1545ddaa16f92c7348cec64753f2ce4b8e48bc01833c7aa8f"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/schema-fix-build.log",
+      "bytes": 140,
+      "sha256": "1d217fe967ee3607c0ba88be6d872c67a3abda851711745fb689d2546d2f5128"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/schema-fix-green.log",
+      "bytes": 775,
+      "sha256": "7b99a0e66a5d773086aa7de5d58d3c8ce98fb44c40ce545d7321798fa84f2f31"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/schema-fix-red.log",
+      "bytes": 3987,
+      "sha256": "0c1f1a7883dd2ba4eb301cbae0e22a33be4b0b29a7ac777309ef65cb7b158bb2"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/schema-fix-report.md",
+      "bytes": 3229,
+      "sha256": "7fc1d0063ca97dc15a90113574d5ab7809e38e94e4b66c11d3af1f77cc0ca62e"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/tool-id-fix-report.md",
+      "bytes": 2958,
+      "sha256": "cc63393fbbe82ad66f5da0b889142ccd3a9274ff2dd34f3a79f797ea0f56a4a1"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/tool-id-frontend-build.log",
+      "bytes": 10413,
+      "sha256": "13250222641f9582956deae42372cde01f24191f506ef41ac70ebf3074030ad9"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/tool-id-panel-green.log",
+      "bytes": 892,
+      "sha256": "7618b644d21af96d96343771b61ae06a0cee5434d0acea3913c46cab3e15acec"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/tool-id-red.log",
+      "bytes": 68426,
+      "sha256": "983df7c47aad91463a170840ea78e67828f78df156d28f38de44cac4190604bb"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/tool-id-runpanel-green.log",
+      "bytes": 1370,
+      "sha256": "ebc37fe6fad490463ca26ff3d9ef71e7651a0fe604d28a76e34799299c378771"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/tool-id-stage6-typecheck.log",
+      "bytes": 154,
+      "sha256": "8f0b005b9b92ed01e2ecef73d07126aa4d5c6ec0000e1934c8bfdb32a7a160e5"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/worker-build.log",
+      "bytes": 6247,
+      "sha256": "14549cdab19b78bcbd7aeb3ec491e03b3a2ce9c45ac0927bf462d1a701f95ef2"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/worker-busy-build.log",
+      "bytes": 4169,
+      "sha256": "31a8048a04dc42caea86964ca4708f1c26e0dbbaa493d43d5c1c42604b64b9f8"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/worker-busy-push.log",
+      "bytes": 4751,
+      "sha256": "a73e5aa68c24f7960225e563cc6695f2d4d60300fae3c64d01af9254e498f2db"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/worker-diagnostic-build.log",
+      "bytes": 4316,
+      "sha256": "9d671a79994e06a9f16423ba512d4c9f0c936228af953cd1986c48c3649080a1"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/worker-diagnostic-push.log",
+      "bytes": 5171,
+      "sha256": "aa883bf42fed077f7f64988bf2a34c569917f0a5cac1be643dab9876f16922bc"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/worker-push.log",
+      "bytes": 4714,
+      "sha256": "5049fdf40f9e29e993f63644ed9bf8490be67c1bc2f1981b0214e1c2d5db20fd"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/worker-run1-sanitized.log",
+      "bytes": 64,
+      "sha256": "7d698522a367d5814a0d15391920468a6b7d23bb78231e7bc9c1b906acda9fd1"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/worker-schema-build.log",
+      "bytes": 4270,
+      "sha256": "e1713dc2feb8584e72d16ae94d26a2745e53c30b967b9d54120f360bea9ef0df"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/worker-schema-push.log",
+      "bytes": 5282,
+      "sha256": "28e71dba56a5c5c8d5af24f98fb4185bbaffdabeadc93bc760053a001bcce604"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/worker-settlement-build.log",
+      "bytes": 4189,
+      "sha256": "9a827cecf37f9c0f500a85bce924d34666e852687b79649878a706409792579e"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/worker-settlement-push.log",
+      "bytes": 4297,
+      "sha256": "77dea03892277015579fe2c5085bc1806aae81a6903423e9620eb8d6278a3ceb"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/backend-runtime-context/Dockerfile",
+      "bytes": 1148,
+      "sha256": "be1b3d6f389e2d87b1c5a716d861d3aefdb7f2ede7a4b13ede6810e1950a6fe6"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/backend-runtime-context/manao-poc4-backend-0.0.1-SNAPSHOT.jar",
+      "bytes": 57143016,
+      "sha256": "e7c4d55a6696fc2b0b7fbf3e8021c66c4cbd6fc2994ddbcb16bd6fbd8b11ec88"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/browser-run1/.last-run.json",
+      "bytes": 96,
+      "sha256": "a6e2585ce2caa6d1fdfb74c870640389ee1950c242e014c662b588c5db3597e9"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/browser-run2/.last-run.json",
+      "bytes": 96,
+      "sha256": "a6e2585ce2caa6d1fdfb74c870640389ee1950c242e014c662b588c5db3597e9"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/browser-run3/.last-run.json",
+      "bytes": 96,
+      "sha256": "a6e2585ce2caa6d1fdfb74c870640389ee1950c242e014c662b588c5db3597e9"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/browser-run4/.last-run.json",
+      "bytes": 96,
+      "sha256": "a6e2585ce2caa6d1fdfb74c870640389ee1950c242e014c662b588c5db3597e9"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/browser-run5/.last-run.json",
+      "bytes": 96,
+      "sha256": "a6e2585ce2caa6d1fdfb74c870640389ee1950c242e014c662b588c5db3597e9"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/browser-run6/.last-run.json",
+      "bytes": 96,
+      "sha256": "a6e2585ce2caa6d1fdfb74c870640389ee1950c242e014c662b588c5db3597e9"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/browser-run7/.last-run.json",
+      "bytes": 96,
+      "sha256": "a6e2585ce2caa6d1fdfb74c870640389ee1950c242e014c662b588c5db3597e9"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/browser-run1/ai-stage2-Stage-2-real-app-453a6-epair-test-→-new-R2-HTTP200-ai-stage2/error-context.md",
+      "bytes": 17047,
+      "sha256": "261a1c53deff236d8fa30525aef34bc2ae1264a91d59ff9a12eb146b57b67333"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/browser-run1/ai-stage2-Stage-2-real-app-453a6-epair-test-→-new-R2-HTTP200-ai-stage2/test-failed-1.png",
+      "bytes": 17827,
+      "sha256": "d03e530b7ba9a3320fbfef5ecd01783e49e4dc5a6d342922e600a79082c485ff"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/browser-run1/ai-stage2-Stage-2-real-app-453a6-epair-test-→-new-R2-HTTP200-ai-stage2/trace.zip",
+      "bytes": 1166822,
+      "sha256": "1264e829a0c5129b27e827f42f877c716f7c3d37efed0f91d0ea1e69ee3b08f5"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/browser-run2/ai-stage2-Stage-2-real-app-453a6-epair-test-→-new-R2-HTTP200-ai-stage2/error-context.md",
+      "bytes": 29127,
+      "sha256": "03438d8540adbff69fb1d253cdc712e52902b0d6503239446b0041e1dcf1850c"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/browser-run2/ai-stage2-Stage-2-real-app-453a6-epair-test-→-new-R2-HTTP200-ai-stage2/test-failed-1.png",
+      "bytes": 54358,
+      "sha256": "4706b8439e8df7563e204d7067a712225dc230631c6ce71b92c6f6217bb440e9"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/browser-run2/ai-stage2-Stage-2-real-app-453a6-epair-test-→-new-R2-HTTP200-ai-stage2/trace.zip",
+      "bytes": 2062775,
+      "sha256": "7a27f2f7d34520c42d8bcccc0a587470c2a10926a6c78f6195b180ed318fd6c8"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/browser-run3/ai-stage2-Stage-2-real-app-453a6-epair-test-→-new-R2-HTTP200-ai-stage2/error-context.md",
+      "bytes": 21295,
+      "sha256": "8ef0835fda8ef9e39aed6ce33af8d2fece7794fcf9e3041e2dcfc9901a3631bc"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/browser-run3/ai-stage2-Stage-2-real-app-453a6-epair-test-→-new-R2-HTTP200-ai-stage2/test-failed-1.png",
+      "bytes": 91916,
+      "sha256": "0a46fcc4156efabd2050914841681293faa625df8e0392dc30320817634182a8"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/browser-run3/ai-stage2-Stage-2-real-app-453a6-epair-test-→-new-R2-HTTP200-ai-stage2/trace.zip",
+      "bytes": 2264001,
+      "sha256": "f5d75ef00a472ecda0a645c62f7b817ed280f1bc9e0a9a1c52c1a9c55a2e0298"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/browser-run4/ai-stage2-Stage-2-real-app-453a6-epair-test-→-new-R2-HTTP200-ai-stage2/error-context.md",
+      "bytes": 30900,
+      "sha256": "3e8b16084869c33ba8f491a96694076d733bca7517ad2c0e5e4dc1f6150aec86"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/browser-run4/ai-stage2-Stage-2-real-app-453a6-epair-test-→-new-R2-HTTP200-ai-stage2/test-failed-1.png",
+      "bytes": 102218,
+      "sha256": "f79e36e5342401977eae8f5f96e871da60899274f97ca4ba4f0f6ffee30dd6b4"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/browser-run4/ai-stage2-Stage-2-real-app-453a6-epair-test-→-new-R2-HTTP200-ai-stage2/trace.zip",
+      "bytes": 1629912,
+      "sha256": "b10de5e20f8efc4168380826060ca26988f80f61e55dd39088e8d9d875a6068b"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/browser-run5/ai-stage2-Stage-2-real-app-453a6-epair-test-→-new-R2-HTTP200-ai-stage2/error-context.md",
+      "bytes": 35695,
+      "sha256": "bdddfb3b712b091db1196451e0428e67ae35d978608bfad9a2d0807a30be5bee"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/browser-run5/ai-stage2-Stage-2-real-app-453a6-epair-test-→-new-R2-HTTP200-ai-stage2/test-failed-1.png",
+      "bytes": 104441,
+      "sha256": "479e7ebef7893644c96952d8f1c3c824cc65a7cf4ed21c5e3ac6ba961e507f38"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/browser-run5/ai-stage2-Stage-2-real-app-453a6-epair-test-→-new-R2-HTTP200-ai-stage2/trace.zip",
+      "bytes": 1731464,
+      "sha256": "35a7237587762e97b0d8bb38f0f4dd8ea2e8d0a989fd899e0418405ce7e683df"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/browser-run6/ai-stage2-Stage-2-real-app-453a6-epair-test-→-new-R2-HTTP200-ai-stage2/error-context.md",
+      "bytes": 24046,
+      "sha256": "bb88e4cc0954356844785bc29ac554a1f941403dfd38ad4356ce6669a1f66bf4"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/browser-run6/ai-stage2-Stage-2-real-app-453a6-epair-test-→-new-R2-HTTP200-ai-stage2/test-failed-1.png",
+      "bytes": 109887,
+      "sha256": "2dbf5a98bd30c2c9fee1e8b78bc1973fb459dbe4287d47709f460278f3d7953c"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/browser-run6/ai-stage2-Stage-2-real-app-453a6-epair-test-→-new-R2-HTTP200-ai-stage2/trace.zip",
+      "bytes": 2313721,
+      "sha256": "895015515d3d0c6d612069986fccef31558bedcca3c173478b95cdf98101c6ce"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/browser-run7/ai-stage2-Stage-2-real-app-453a6-epair-test-→-new-R2-HTTP200-ai-stage2/error-context.md",
+      "bytes": 24845,
+      "sha256": "c4f6822f3a29dfcba6c338ea0f9693d408e8e15f5ce6629e98ffdcfb03ed0ce7"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/browser-run7/ai-stage2-Stage-2-real-app-453a6-epair-test-→-new-R2-HTTP200-ai-stage2/test-failed-1.png",
+      "bytes": 113908,
+      "sha256": "b80d48afcfc0461a019289576c6c9659469f1dcf259b4aeefe0eb715132dbd42"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/browser-run7/ai-stage2-Stage-2-real-app-453a6-epair-test-→-new-R2-HTTP200-ai-stage2/trace.zip",
+      "bytes": 2227487,
+      "sha256": "60baee0425f37f3202eaa0ea378d9934b0c3fce78da91921433ea9506c06b0f8"
+    },
+    {
+      "path": "poc4/frontend/run-recovery-browser-check.mjs",
+      "bytes": 3321,
+      "sha256": "59fdbe1a5eee43975daeda00d2605fd9e60c570c70593fa64a7a554e80e1e3e6"
+    },
+    {
+      "path": "poc4/frontend/playwright.ai-stage2-continuation.config.ts",
+      "bytes": 733,
+      "sha256": "991e4eec8b6ae69cae4b93ee662b18be960d5b307e7338048ae5faf996db7a5f"
+    },
+    {
+      "path": "poc4/frontend/tests/e2e/ai-stage2-continuation.spec.ts",
+      "bytes": 16860,
+      "sha256": "a8c163caed49e2ef005c0ba2a175b5d766dc8ce6117eb3bdfd2bc4d1134b7732"
+    },
+    {
+      "path": "poc4/backend/target/run-recovery-green.log",
+      "bytes": 102427,
+      "sha256": "de639252f7d2a5eed8efb7b2ae111ae6e8bc33e0450b6fc0e2056cc08f3ebcfd"
+    },
+    {
+      "path": "poc4/backend/target/run-recovery-package.log",
+      "bytes": 2211,
+      "sha256": "7a64546303a9acc0c0a5b20ab80d97cfdb8f0698b6f2910eab173da3b0098cdd"
+    },
+    {
+      "path": "poc4/backend/target/run-recovery-path-red.log",
+      "bytes": 9190,
+      "sha256": "8c560ab0e5f62b8e118bc403070d5dfcfa89b56953a1c13c44fdc6f9f2d6512e"
+    },
+    {
+      "path": "poc4/backend/target/run-stop-intent-green.log",
+      "bytes": 4658,
+      "sha256": "ab89d7b146afdc6976677e91f97f53e84e7c1f9e259b993b3c692c261fcffda3"
+    }
+  ],
+  "result": {
+    "deletedFiles": 334,
+    "deletedBytes": 137957686.0,
+    "deletedDirectories": 26,
+    "remainingFiles": [],
+    "remainingDirectories": [],
+    "bulkDeletion": "Rejected before execution by automatic approval: blocked by policy",
+    "completedMethod": "Separate explicitly named, path-checked PowerShell file/directory removals, without cross-shell operations"
+  }
+}

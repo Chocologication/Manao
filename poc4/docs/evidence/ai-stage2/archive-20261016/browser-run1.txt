@@ -1,0 +1,47 @@
+
+> frontend@0.0.0 test:e2e:ai-stage2 D:\DeepLearning\MyProjects\Project_Manao\.worktree\ai-integration\poc4\frontend
+> playwright test --config playwright.ai-stage2.config.ts "--output" "D:/DeepLearning/MyProjects/Project_Manao/.worktree/ai-integration/.superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/browser-run1"
+
+
+Running 2 tests using 1 worker
+
+(node:17560) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+  x  1 [ai-stage2] › tests\e2e\ai-stage2.spec.ts:112:3 › Stage 2 real application feedback acceptance › R0 → real R1 HTTP500/logs → receipted repair/test → new R2 HTTP200 (6.0s)
+  -  2 [ai-stage2] › tests\e2e\ai-stage2.spec.ts:202:3 › Stage 2 real application feedback acceptance › owner close stops only the new task Run and releases occupancy
+
+
+  1) [ai-stage2] › tests\e2e\ai-stage2.spec.ts:112:3 › Stage 2 real application feedback acceptance › R0 → real R1 HTTP500/logs → receipted repair/test → new R2 HTTP200
+
+    Error: expect(received).toBe(expected) // Object.is equality
+
+    Expected: "COMPLETED"
+    Received: "FAILED"
+
+      134 |     expect((await json<Task>(page, `${ROOT}/agent-tasks/${mainTaskId}`)).taskId).toBe(mainTaskId);
+      135 |     const final = await settled(page, mainTaskId, 2_400_000);
+    > 136 |     expect(final.state).toBe('COMPLETED');
+          |                         ^
+      137 |     expect(final.changedPaths).toContain(DEMO);
+      138 |     await fixtureUnchanged(page);
+      139 |     const active = await json<{ run: Run | null }>(page, `${ROOT}/runs/active`);
+        at D:\DeepLearning\MyProjects\Project_Manao\.worktree\ai-integration\poc4\frontend\tests\e2e\ai-stage2.spec.ts:136:25
+
+    attachment #2: screenshot (image/png) ──────────────────────────────────────────────────────────
+    ..\..\.superpowers\sdd\2026-10-16-pi-stage2-implementation-plan\release-20261016\browser-run1\ai-stage2-Stage-2-real-app-453a6-epair-test-→-new-R2-HTTP200-ai-stage2\test-failed-1.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    Error Context: ..\..\.superpowers\sdd\2026-10-16-pi-stage2-implementation-plan\release-20261016\browser-run1\ai-stage2-Stage-2-real-app-453a6-epair-test-→-new-R2-HTTP200-ai-stage2\error-context.md
+
+    attachment #4: trace (application/zip) ─────────────────────────────────────────────────────────
+    ..\..\.superpowers\sdd\2026-10-16-pi-stage2-implementation-plan\release-20261016\browser-run1\ai-stage2-Stage-2-real-app-453a6-epair-test-→-new-R2-HTTP200-ai-stage2\trace.zip
+    Usage:
+
+        pnpm exec playwright show-trace ..\..\.superpowers\sdd\2026-10-16-pi-stage2-implementation-plan\release-20261016\browser-run1\ai-stage2-Stage-2-real-app-453a6-epair-test-→-new-R2-HTTP200-ai-stage2\trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+  1 failed
+    [ai-stage2] › tests\e2e\ai-stage2.spec.ts:112:3 › Stage 2 real application feedback acceptance › R0 → real R1 HTTP500/logs → receipted repair/test → new R2 HTTP200
+  1 did not run
+ ELIFECYCLE  Command failed with exit code 1.

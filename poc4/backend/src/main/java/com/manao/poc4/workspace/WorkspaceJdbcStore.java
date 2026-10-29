@@ -58,6 +58,10 @@ public final class WorkspaceJdbcStore implements WorkspaceStore {
             jdbc.update("DELETE FROM run_log_chunk WHERE run_id IN (SELECT id FROM run WHERE project_id = ?)", projectId);
             jdbc.update("DELETE FROM run WHERE project_id = ?", projectId);
             jdbc.update("DELETE FROM workspace_operation WHERE project_id = ?", projectId);
+            // The agent task ledger dies with the project (occupancy is blocked upstream while
+            // a task is active, so this only removes settled rows); the FK also cascades these.
+            jdbc.update("DELETE FROM agent_tool_call WHERE task_id IN (SELECT id FROM agent_task WHERE project_id = ?)", projectId);
+            jdbc.update("DELETE FROM agent_task WHERE project_id = ?", projectId);
             // Remembered storage identity dies with the project row (the FK also cascades this).
             jdbc.update("DELETE FROM project_storage_binding WHERE project_id = ?", projectId);
             return jdbc.update("DELETE FROM project WHERE id = ? AND owner_id = ?", projectId, ownerId) == 1;

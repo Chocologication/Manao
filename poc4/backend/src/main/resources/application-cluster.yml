@@ -19,3 +19,11 @@ manao:
         api-server-port: ${KUBERNETES_SERVICE_PORT_HTTPS:0}
         service-account-token-file: /var/run/secrets/kubernetes.io/serviceaccount/token
         service-account-ca-certificate-file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+    ai:
+      enabled: ${MANAO_AI_ENABLED:false}
+      project-id: ${MANAO_AI_PROJECT_ID:}
+      worker:
+        base-url: ${MANAO_AI_WORKER_BASE_URL:}
+        token: ${MANAO_AI_WORKER_TOKEN:}
+      internal:
+        token: ${MANAO_AI_INTERNAL_TOKEN:}

@@ -1,0 +1,44 @@
+
+> frontend@0.0.0 test:e2e:ai-stage2 D:\DeepLearning\MyProjects\Project_Manao\.worktree\ai-integration\poc4\frontend
+> playwright test --config playwright.ai-stage2.config.ts "--output" "D:/DeepLearning/MyProjects/Project_Manao/.worktree/ai-integration/.superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/browser-run6"
+
+
+Running 2 tests using 1 worker
+
+(node:53088) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+  x  1 [ai-stage2] › tests\e2e\ai-stage2.spec.ts:113:3 › Stage 2 real application feedback acceptance › R0 → real R1 HTTP500/logs → receipted repair/test → new R2 HTTP200 (2.7m)
+  -  2 [ai-stage2] › tests\e2e\ai-stage2.spec.ts:205:3 › Stage 2 real application feedback acceptance › owner close stops only the new task Run and releases occupancy
+
+
+  1) [ai-stage2] › tests\e2e\ai-stage2.spec.ts:113:3 › Stage 2 real application feedback acceptance › R0 → real R1 HTTP500/logs → receipted repair/test → new R2 HTTP200
+
+    Error: Operator evidence rejected: ["AMBIGUOUS_TOOL_ORDER"]
+
+      103 |       try {
+      104 |         const verdict = JSON.parse(output) as Record<string, unknown>;
+    > 105 |         if (code !== 0 || verdict.verdict !== 'PASS') reject(new Error(`Operator evidence rejected: ${JSON.stringify(verdict.failures ?? [])}`));
+          |                                                              ^
+      106 |         else resolve(verdict);
+      107 |       } catch { reject(new Error('Operator verifier did not return a passing sanitized verdict')); }
+      108 |     });
+        at ChildProcess.<anonymous> (D:\DeepLearning\MyProjects\Project_Manao\.worktree\ai-integration\poc4\frontend\tests\e2e\ai-stage2.spec.ts:105:62)
+
+    attachment #3: screenshot (image/png) ──────────────────────────────────────────────────────────
+    ..\..\.superpowers\sdd\2026-10-16-pi-stage2-implementation-plan\release-20261016\browser-run6\ai-stage2-Stage-2-real-app-453a6-epair-test-→-new-R2-HTTP200-ai-stage2\test-failed-1.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    Error Context: ..\..\.superpowers\sdd\2026-10-16-pi-stage2-implementation-plan\release-20261016\browser-run6\ai-stage2-Stage-2-real-app-453a6-epair-test-→-new-R2-HTTP200-ai-stage2\error-context.md
+
+    attachment #5: trace (application/zip) ─────────────────────────────────────────────────────────
+    ..\..\.superpowers\sdd\2026-10-16-pi-stage2-implementation-plan\release-20261016\browser-run6\ai-stage2-Stage-2-real-app-453a6-epair-test-→-new-R2-HTTP200-ai-stage2\trace.zip
+    Usage:
+
+        pnpm exec playwright show-trace ..\..\.superpowers\sdd\2026-10-16-pi-stage2-implementation-plan\release-20261016\browser-run6\ai-stage2-Stage-2-real-app-453a6-epair-test-→-new-R2-HTTP200-ai-stage2\trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+  1 failed
+    [ai-stage2] › tests\e2e\ai-stage2.spec.ts:113:3 › Stage 2 real application feedback acceptance › R0 → real R1 HTTP500/logs → receipted repair/test → new R2 HTTP200
+  1 did not run
+ ELIFECYCLE  Command failed with exit code 1.

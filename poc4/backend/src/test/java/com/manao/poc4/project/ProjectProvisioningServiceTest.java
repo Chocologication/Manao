@@ -36,7 +36,9 @@ class ProjectProvisioningServiceTest {
         gateway = new FakeKubernetesGateway();
         factory = new RecordingFactory();
         WorkspaceOperationService operations = new WorkspaceOperationService(store, agent);
-        WorkspaceService workspace = new WorkspaceService(store, operations, agent);
+        WorkspaceService workspace = new WorkspaceService(store, operations, agent,
+            new com.manao.poc4.project.ProjectLifecycleGate(),
+            com.manao.poc4.workspace.WorkspaceControllerTest.NO_AGENT_TASKS);
         service = new ProjectProvisioningService(store, gateway, workspace, factory,
             new WorkspaceTemplate(), "cHVibGljLWtleQ==", null, 3, 1);
     }
@@ -108,7 +110,9 @@ class ProjectProvisioningServiceTest {
 
     private com.manao.poc4.workspace.WorkspaceService workspaceService() {
         return new com.manao.poc4.workspace.WorkspaceService(store,
-            new com.manao.poc4.workspace.WorkspaceOperationService(store, agent), agent);
+            new com.manao.poc4.workspace.WorkspaceOperationService(store, agent), agent,
+            new com.manao.poc4.project.ProjectLifecycleGate(),
+            com.manao.poc4.workspace.WorkspaceControllerTest.NO_AGENT_TASKS);
     }
 
     private ProjectCleanupService cleanupService(ProjectDeletionRepository.BeginDeletion began, List<String> runIds) {

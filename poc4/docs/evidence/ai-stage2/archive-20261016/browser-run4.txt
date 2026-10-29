@@ -1,0 +1,49 @@
+
+> frontend@0.0.0 test:e2e:ai-stage2 D:\DeepLearning\MyProjects\Project_Manao\.worktree\ai-integration\poc4\frontend
+> playwright test --config playwright.ai-stage2.config.ts "--output" "D:/DeepLearning/MyProjects/Project_Manao/.worktree/ai-integration/.superpowers/sdd/2026-10-16-pi-stage2-implementation-plan/release-20261016/browser-run4"
+
+
+Running 2 tests using 1 worker
+
+(node:47884) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+  x  1 [ai-stage2] › tests\e2e\ai-stage2.spec.ts:113:3 › Stage 2 real application feedback acceptance › R0 → real R1 HTTP500/logs → receipted repair/test → new R2 HTTP200 (2.5m)
+  -  2 [ai-stage2] › tests\e2e\ai-stage2.spec.ts:203:3 › Stage 2 real application feedback acceptance › owner close stops only the new task Run and releases occupancy
+
+
+  1) [ai-stage2] › tests\e2e\ai-stage2.spec.ts:113:3 › Stage 2 real application feedback acceptance › R0 → real R1 HTTP500/logs → receipted repair/test → new R2 HTTP200
+
+    Error: owner-scoped API must succeed
+
+    expect(received).toBeTruthy()
+
+    Received: false
+
+      37 | async function json<T>(page: Page, path: string): Promise<T> {
+      38 |   const response = await api(page, path);
+    > 39 |   expect(response.ok(), 'owner-scoped API must succeed').toBeTruthy();
+         |                                                          ^
+      40 |   return response.json() as Promise<T>;
+      41 | }
+      42 | async function login(page: Page) {
+        at json (D:\DeepLearning\MyProjects\Project_Manao\.worktree\ai-integration\poc4\frontend\tests\e2e\ai-stage2.spec.ts:39:58)
+        at D:\DeepLearning\MyProjects\Project_Manao\.worktree\ai-integration\poc4\frontend\tests\e2e\ai-stage2.spec.ts:146:21
+
+    attachment #2: screenshot (image/png) ──────────────────────────────────────────────────────────
+    ..\..\.superpowers\sdd\2026-10-16-pi-stage2-implementation-plan\release-20261016\browser-run4\ai-stage2-Stage-2-real-app-453a6-epair-test-→-new-R2-HTTP200-ai-stage2\test-failed-1.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    Error Context: ..\..\.superpowers\sdd\2026-10-16-pi-stage2-implementation-plan\release-20261016\browser-run4\ai-stage2-Stage-2-real-app-453a6-epair-test-→-new-R2-HTTP200-ai-stage2\error-context.md
+
+    attachment #4: trace (application/zip) ─────────────────────────────────────────────────────────
+    ..\..\.superpowers\sdd\2026-10-16-pi-stage2-implementation-plan\release-20261016\browser-run4\ai-stage2-Stage-2-real-app-453a6-epair-test-→-new-R2-HTTP200-ai-stage2\trace.zip
+    Usage:
+
+        pnpm exec playwright show-trace ..\..\.superpowers\sdd\2026-10-16-pi-stage2-implementation-plan\release-20261016\browser-run4\ai-stage2-Stage-2-real-app-453a6-epair-test-→-new-R2-HTTP200-ai-stage2\trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+  1 failed
+    [ai-stage2] › tests\e2e\ai-stage2.spec.ts:113:3 › Stage 2 real application feedback acceptance › R0 → real R1 HTTP500/logs → receipted repair/test → new R2 HTTP200
+  1 did not run
+ ELIFECYCLE  Command failed with exit code 1.

@@ -8,9 +8,11 @@ import com.manao.poc4.log.RunLogIngestor;
 import com.manao.poc4.persistence.RunState;
 import com.manao.poc4.project.ProjectLifecycleGate;
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Optional;
 import java.util.OptionalLong;
+import java.util.Set;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -30,6 +32,8 @@ public final class RunRecoveryService {
     private final RunCompletionListener completionListener;
     private final ProjectLifecycleGate lifecycle;
     private final PublicEndpointGateway endpoints;
+    private Long recoveryToken;
+    private Set<String> pendingInitialization = new LinkedHashSet<>();
 
     public RunRecoveryService(RunStore store, JobCoordinator coordinator) {
         this(store, coordinator, null, null, new ProjectLifecycleGate(), null);
@@ -54,7 +58,7 @@ public final class RunRecoveryService {
     public record RecoveryReport(List<String> processed, List<String> settled,
                                  List<String> resumed, List<String> failedClosed) { }
 
-    public RecoveryReport recoverRuns() {
+    public synchronized RecoveryReport recoverRuns() {
         List<String> processed = new ArrayList<>();
         List<String> settled = new ArrayList<>();
         List<String> resumed = new ArrayList<>();
@@ -65,22 +69,14 @@ public final class RunRecoveryService {
             return new RecoveryReport(List.of(), List.of(), List.of(), List.of());
         }
         long token = lease.getAsLong();
-        for (RunRecord run : store.findRunsInState(RunState.STARTING, RunState.RUNNING, RunState.STOPPING)) {
-            try (var projectLease = lifecycle.tryAcquire(run.projectId()).orElse(null)) {
-                if (projectLease == null || deleting(run.projectId())) {
-                    continue;
-                }
-                store.transition(run.id(), run.projectId(), run.version(), RunState.RECOVERING,
-                    token, RunState.STARTING, RunState.RUNNING, RunState.STOPPING);
-            }
-        }
+        initializeForAuthority(token);
         for (RunRecord snapshot : store.findRunsInState(RunState.RECOVERING)) {
             try (var projectLease = lifecycle.tryAcquire(snapshot.projectId()).orElse(null)) {
                 if (projectLease == null || deleting(snapshot.projectId())) {
                     continue;
                 }
                 RunRecord run = store.findRun(snapshot.id()).orElse(null);
-                if (run == null) {
+                if (run == null || run.state() != RunState.RECOVERING) {
                     continue;
                 }
                 processed.add(run.id());
@@ -89,6 +85,44 @@ public final class RunRecoveryService {
         }
         return new RecoveryReport(List.copyOf(processed), List.copyOf(settled), List.copyOf(resumed),
             List.copyOf(failedClosed));
+    }
+
+    private void initializeForAuthority(long token) {
+        if (recoveryToken == null || recoveryToken != token) {
+            // Capture once per authority, before attempting any gate. Runs created later belong
+            // to ordinary observation, even while an original Run is still waiting on its gate.
+            Set<String> snapshot = new LinkedHashSet<>();
+            for (RunRecord run : store.findRunsInState(RunState.STARTING, RunState.RUNNING, RunState.STOPPING)) {
+                snapshot.add(run.id());
+            }
+            pendingInitialization = snapshot;
+            recoveryToken = token;
+        }
+        for (var pending = pendingInitialization.iterator(); pending.hasNext();) {
+            RunRecord snapshot = store.findRun(pending.next()).orElse(null);
+            if (snapshot == null) {
+                pending.remove();
+                continue;
+            }
+            try (var projectLease = lifecycle.tryAcquire(snapshot.projectId()).orElse(null)) {
+                if (projectLease == null) {
+                    continue;
+                }
+                RunRecord run = store.findRun(snapshot.id()).orElse(null);
+                if (run == null || deleting(snapshot.projectId()) || run.state() == RunState.RECOVERING
+                    || (run.state() != RunState.STARTING && run.state() != RunState.RUNNING
+                        && run.state() != RunState.STOPPING)) {
+                    pending.remove();
+                    continue;
+                }
+                // Keep gate-busy, rejected CAS and interrupted IDs pending. Only a completed
+                // mark (or a Run already handled elsewhere) finishes its initialization.
+                if (store.transition(run.id(), run.projectId(), run.version(), RunState.RECOVERING,
+                    token, RunState.STARTING, RunState.RUNNING, RunState.STOPPING)) {
+                    pending.remove();
+                }
+            }
+        }
     }
 
     private void recoverOne(RunRecord run, long token, List<String> settled, List<String> resumed,

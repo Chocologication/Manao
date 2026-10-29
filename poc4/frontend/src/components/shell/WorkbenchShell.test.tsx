@@ -52,13 +52,92 @@ import {
 import { pythonDependencyStorageKey } from '../../api/pythonDependencyApi';
 import { PROJECT_BUSY_READ_MAX_RETRIES } from '../../api/projectBusyRetry';
 import { renderApp, resetAppRuntime } from '../../test/renderApp';
-import { isExperimentalTerminalEnabled, WorkbenchShell } from './WorkbenchShell';
+import type { AgentTaskSnapshot } from '../../contracts/agentTask';
+import { agentTaskKeys } from '../../features/ai/agentTaskQueries';
+import { isAgentPanelEnabled, isExperimentalTerminalEnabled, WorkbenchShell } from './WorkbenchShell';
 
 const ALICE = { username: 'alice', password: 'demo-pass' };
+it('moves AI history to the right and retains the draft through panel and history visibility changes', async () => {
+  const media = vi.spyOn(window, 'matchMedia').mockImplementation(query => ({ matches: query === '(min-width: 1024px)', media: query, onchange: null, addListener() {}, removeListener() {}, addEventListener() {}, removeEventListener() {}, dispatchEvent: () => false }));
+  try {
+  await authenticateAsAlice(); renderShell(); await loadedRoot();
+  const user = userEvent.setup();
+  await user.click(screen.getByRole('tab', { name: 'AI' }));
+  const history = await screen.findByRole('complementary', { name: '对话历史' });
+  expect(within(history).getByRole('button', { name: '新建会话' })).toBeInTheDocument();
+  await user.type(screen.getByLabelText('Task goal'), '保留草稿');
+  await user.click(screen.getByRole('button', { name: '切换对话历史' }));
+  expect(history).toHaveAttribute('hidden'); expect(history).toHaveAttribute('inert');
+  await user.click(screen.getByRole('tab', { name: 'File' }));
+  expect(screen.getByRole('button', { name: '切换项目洞察' })).toBeInTheDocument();
+  await user.click(screen.getByRole('tab', { name: 'AI' }));
+  expect(screen.getByLabelText('Task goal')).toHaveValue('保留草稿');
+  await user.click(screen.getByRole('button', { name: '切换对话历史' }));
+  expect(screen.getByRole('complementary', { name: '对话历史' })).toBe(history);
+  } finally { media.mockRestore(); }
+});
+it('traps narrow history focus and restores keyboard access to the composer on Escape', async () => {
+  await authenticateAsAlice(); renderShell(); await loadedRoot();
+  const user = userEvent.setup();
+  await user.click(screen.getByRole('tab', { name: 'AI' }));
+  const toggle = screen.getByRole('button', { name: '切换对话历史' });
+  await user.click(toggle);
+  const drawer = screen.getByRole('dialog', { name: '对话历史' });
+  const buttons = within(drawer).getAllByRole('button');
+  await waitFor(() => expect(buttons[0]).toHaveFocus());
+  await user.tab({ shift: true }); expect(buttons.at(-1)).toHaveFocus();
+  await user.tab(); expect(buttons[0]).toHaveFocus();
+  expect(drawer.closest('[inert]')).toBeNull();
+  await user.keyboard('{Escape}'); expect(toggle).toHaveFocus();
+  expect(drawer).toHaveAttribute('hidden'); expect(drawer).toHaveAttribute('inert');
+  screen.getByLabelText('Task goal').focus();
+  await user.keyboard('继续输入'); expect(screen.getByLabelText('Task goal')).toHaveValue('继续输入');
+});
 const POM = parseProjectRelativePath('pom.xml');
 const README = parseProjectRelativePath('README.md');
 const APP_TEST = parseProjectRelativePath('src/test/java/demo/AppTest.java');
 const RELOAD_MARKER = 'ensoai-stage4-reload-change';
+
+it('discovers the original uncertain project task after refresh before unlocking writes', async () => {
+  const taskId = '33333333-3333-4333-8333-333333333333';
+  const url = `/api/v1/projects/${ALICE_SEED_PROJECT_ID}/agent-tasks`;
+  let originalReads = 0;
+  server.use(
+    http.get(`${url}/current`, () => HttpResponse.json({ code: 'ENTRY_NOT_FOUND', message: 'none', traceId: 'none' }, { status: 404 })),
+    http.get(`${url}/${taskId}`, () => { originalReads++; return HttpResponse.json({ taskId, state: 'NEEDS_ATTENTION', workspaceRevision: '0', writesLocked: true, progress: [], changedPaths: [], summary: null, failureCode: null, conversationId: '11111111-1111-4111-8111-111111111111' }); }),
+  );
+  await authenticateAsAlice();
+  sessionStorage.setItem(`manao.agent-task.id.usr-alice.${ALICE_SEED_PROJECT_ID}`, JSON.stringify({ taskId, conversationId: '11111111-1111-4111-8111-111111111111' }));
+  renderShell(); await loadedRoot();
+  await waitFor(() => expect(originalReads).toBeGreaterThan(0));
+  expect(screen.getByRole('button', { name: 'New file' })).toBeDisabled();
+});
+
+it('keeps the shell project write lock and original pending task while switching conversations', async () => {
+  const a = '11111111-1111-4111-8111-111111111111', b = '22222222-2222-4222-8222-222222222222';
+  const taskId = '33333333-3333-4333-8333-333333333333';
+  const base = { headSeq: 0, lastTaskId: null, activeTaskId: null, usage: null, compactRequestId: null, compactState: null, compactFailureCode: null };
+  const url = `/api/v1/projects/${ALICE_SEED_PROJECT_ID}`;
+  let closes = 0;
+  server.use(
+    http.get(`${url}/agent-tasks/current`, () => HttpResponse.json({ taskId, state: 'RUNNING', workspaceRevision: '0', writesLocked: true, progress: [], changedPaths: [], summary: null, failureCode: null, conversationId: a })),
+    http.post(`${url}/agent-tasks/${taskId}/close`, () => { closes++; return HttpResponse.error(); }),
+    http.get(`${url}/conversations`, () => HttpResponse.json({ items: [{ ...base, conversationId: a, title: '会话 A' }, { ...base, conversationId: b, title: '会话 B' }], nextCursor: null })),
+    http.get(`${url}/conversations/:id`, ({ params }) => HttpResponse.json({ ...base, conversationId: params.id, title: '会话' })),
+    http.get(`${url}/conversations/:id/entries`, () => HttpResponse.json({ items: [], nextBeforeSeq: null, nextBeforeOffset: null })),
+  );
+  await authenticateAsAlice();
+  sessionStorage.setItem(`manao.agent-task.id.usr-alice.${ALICE_SEED_PROJECT_ID}`, JSON.stringify({ taskId, conversationId: a }));
+  renderShell(); await loadedRoot();
+  await userEvent.click(screen.getByRole('tab', { name: 'AI' }));
+  await userEvent.click(screen.getByRole('button', { name: '切换对话历史' }));
+  await userEvent.click(await screen.findByRole('button', { name: '会话 B' }));
+  await userEvent.keyboard('{Escape}');
+  expect(screen.getByRole('button', { name: 'New file' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: 'Start task' })).toBeDisabled();
+  expect(JSON.parse(sessionStorage.getItem(`manao.agent-task.id.usr-alice.${ALICE_SEED_PROJECT_ID}`)!)).toEqual({ taskId, conversationId: a });
+  expect(closes).toBe(0);
+});
 
 const ALICE_PROJECT: ProjectSummary = {
   id: ALICE_SEED_PROJECT_ID,
@@ -229,6 +308,12 @@ describe('WorkbenchShell experimental surfaces', () => {
     expect(isExperimentalTerminalEnabled(undefined)).toBe(false);
     expect(isExperimentalTerminalEnabled('false')).toBe(false);
     expect(isExperimentalTerminalEnabled('true')).toBe(true);
+  });
+
+  it('keeps the AI panel disabled unless explicitly enabled', () => {
+    expect(isAgentPanelEnabled(undefined)).toBe(false);
+    expect(isAgentPanelEnabled('false')).toBe(false);
+    expect(isAgentPanelEnabled('true')).toBe(true);
   });
 });
 
@@ -832,17 +917,21 @@ describe('WorkbenchShell run preconditions', () => {
     expect(workspaceSessionStore.getState().dirtyPaths.size).toBe(0);
     expect(runStartPostCount(fetchSpy)).toBe(0);
     release();
+    await screen.findByRole('treeitem', {name:'pending.md'});
+    await waitFor(()=>expect(queryClient.isMutating()).toBe(0));
   }, 15_000);
 
   it('disables Start with REVISION_UNAVAILABLE until the root tree revision arrives', async () => {
     const fetchSpy = vi.spyOn(globalThis, 'fetch');
     const user = userEvent.setup();
+    let entered=false;
     let release = () => {};
     const held = new Promise<void>((resolve) => {
       release = resolve;
     });
     server.use(
       http.get('/api/v1/projects/:projectId/files/tree', async () => {
+        entered=true;
         await held;
         return undefined;
       }),
@@ -851,6 +940,8 @@ describe('WorkbenchShell run preconditions', () => {
     queryClient.removeQueries({ queryKey: fileKeys.all(ALICE_SEED_PROJECT_ID) });
     renderApp({ initialEntries: [`/projects/${ALICE_SEED_PROJECT_ID}`] });
     expect(await screen.findByRole('tab', { name: 'Run' })).toBeEnabled();
+    await waitFor(()=>expect(entered).toBe(true));
+    expect(queryClient.getQueryData(fileKeys.revision(ALICE_SEED_PROJECT_ID))).toBeUndefined();
     const start = screen.getByRole('button', { name: 'Start run', hidden: true });
     expect(start).toBeDisabled();
     expect(start.getAttribute('title')).toMatch(/REVISION_UNAVAILABLE|AUTHORITY_LOADING/);
@@ -2299,5 +2390,523 @@ describe('WorkbenchShell python dependencies', () => {
 
     expect(pendingDiscoveryGetCount(fetchSpy)).toBe(0);
     fetchSpy.mockRestore();
+  }, 15_000);
+});
+
+describe('WorkbenchShell agent task panel', () => {
+  const AGENT_TASK_ID = '0b8fd38f-0f9e-4c28-9c48-3f5f4a2b1c11';
+  const AGENT_TASKS_URL = `/api/v1/projects/${ALICE_SEED_PROJECT_ID}/agent-tasks`;
+
+  function agentTask(overrides: Partial<AgentTaskSnapshot> = {}): AgentTaskSnapshot {
+    return {
+      taskId: AGENT_TASK_ID,
+      state: 'RUNNING',
+      workspaceRevision: 'mock-rev-0001',
+      writesLocked: true,
+      progress: [{ seq: 1, kind: 'message', text: 'Reading pom.xml', truncated: false }],
+      changedPaths: [],
+      summary: null,
+      failureCode: null,
+      ...overrides,
+    };
+  }
+
+  function agentCurrentNotFound() {
+    return HttpResponse.json(
+      { code: 'ENTRY_NOT_FOUND', message: 'Task not found', traceId: 'trace-agent-none' },
+      { status: 404 },
+    );
+  }
+
+  async function occupyWorkspace(): Promise<void> {
+    await queryClient.invalidateQueries({ queryKey: agentTaskKeys.current(ALICE_SEED_PROJECT_ID) });
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'New file' })).toBeDisabled();
+    });
+  }
+
+  it('pauses the current task and reloads saved facts on safe release even when its revision is unchanged', async () => {
+    let current = agentTask();
+    let occupied = true, treeReads = 0;
+    const pausedIds: string[] = [];
+    server.use(
+      http.get(`${AGENT_TASKS_URL}/current`, () => occupied ? HttpResponse.json(current) : agentCurrentNotFound()),
+      http.get(`${AGENT_TASKS_URL}/${AGENT_TASK_ID}`, () => HttpResponse.json(current)),
+      http.post(`${AGENT_TASKS_URL}/:taskId/pause`, ({ params }) => {
+        pausedIds.push(String(params.taskId));
+        current = agentTask({ state: 'NEEDS_ATTENTION', failureCode: 'AI_CLOSING', closeReasonCode: 'AI_PAUSED_BY_OWNER' });
+        return HttpResponse.json(current);
+      }),
+      http.get('/api/v1/projects/:projectId/files/tree', () => { treeReads++; return undefined; }),
+    );
+    await authenticateAsAlice(); renderShell(); await loadedRoot();
+    await userEvent.click(screen.getByRole('tab', { name: 'AI' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Pause & take over' }));
+    expect(pausedIds).toEqual([AGENT_TASK_ID]);
+    await screen.findByText('Stopping and verifying');
+    expect(screen.getByRole('button', { name: 'New file' })).toBeDisabled();
+    const before = treeReads;
+    current = agentTask({ state: 'FAILED', writesLocked: false, closeReasonCode: 'AI_PAUSED_BY_OWNER' }); occupied = false;
+    await act(async () => { await queryClient.invalidateQueries({ queryKey: agentTaskKeys.current(ALICE_SEED_PROJECT_ID) }); });
+    await waitUntilWritesUnlocked();
+    await waitFor(() => expect(treeReads).toBeGreaterThan(before));
+  }, 15000);
+
+  it('keeps editing locked when current task authority is unavailable without a cached task', async () => {
+    server.use(http.get(`${AGENT_TASKS_URL}/current`,()=>HttpResponse.json({code:'INTERNAL_ERROR',message:'unavailable',traceId:'test'},{status:503})));
+    await authenticateAsAlice(); renderShell(); await loadedRoot();
+    await userEvent.click(screen.getByRole('tab',{name:'AI'}));
+    await screen.findByText('Could not load the agent task status.');
+    expect(screen.getByRole('button',{name:'New file'})).toBeDisabled();
+  });
+
+  it('reloads a latest paused conversation after re-entry without a retained current task', async () => {
+    const conversationId='11111111-1111-4111-8111-111111111111';
+    let treeReads=0;
+    const url=`/api/v1/projects/${ALICE_SEED_PROJECT_ID}/conversations`;
+    const meta={conversationId,title:'re-entry',headSeq:0,lastTaskId:AGENT_TASK_ID,activeTaskId:null,usage:null,compactRequestId:null,compactState:null,compactFailureCode:null};
+    server.use(http.get(`${AGENT_TASKS_URL}/current`,agentCurrentNotFound),
+      http.get(`${AGENT_TASKS_URL}/${AGENT_TASK_ID}`,()=>HttpResponse.json(agentTask({state:'FAILED',writesLocked:false,conversationId,closeReasonCode:'AI_PAUSED_BY_OWNER'}))),
+      http.get(url,()=>HttpResponse.json({items:[meta],nextCursor:null})),
+      http.get(`${url}/${conversationId}`,()=>HttpResponse.json(meta)),
+      http.get(`${url}/${conversationId}/entries`,()=>HttpResponse.json({items:[],nextBeforeSeq:null,nextBeforeOffset:null})),
+      http.get('/api/v1/projects/:projectId/files/tree',()=>{treeReads++;return undefined;}));
+    await authenticateAsAlice(); renderShell(); await loadedRoot();
+    await userEvent.click(screen.getByRole('tab',{name:'AI'}));
+    await screen.findByText('Paused');
+    await waitFor(()=>expect(treeReads).toBeGreaterThan(1));
+    await expect(screen.findByRole('button',{name:'Continue task'})).resolves.toBeEnabled();
+  },15000);
+
+  it('ends the current occupying task from history, retries safely and unlocks only after real settlement', async () => {
+    const a = '11111111-1111-4111-8111-111111111111', b = '22222222-2222-4222-8222-222222222222';
+    const historicalId = '44444444-4444-4444-8444-444444444444';
+    let current = agentTask({ conversationId: a });
+    const closedIds: string[] = [];
+    let releaseError!: () => void;
+    const held = new Promise<void>(resolve => { releaseError = resolve; });
+    const base = { headSeq: 0, lastTaskId: historicalId, activeTaskId: null, usage: null, compactRequestId: null, compactState: null, compactFailureCode: null };
+    const url = `/api/v1/projects/${ALICE_SEED_PROJECT_ID}/conversations`;
+    server.use(
+      http.get(`${AGENT_TASKS_URL}/current`, () => HttpResponse.json(current)),
+      http.get(`${AGENT_TASKS_URL}/${historicalId}`, () => HttpResponse.json(agentTask({ taskId: historicalId, conversationId: b, state: 'COMPLETED', writesLocked: false }))),
+      http.post(`${AGENT_TASKS_URL}/:taskId/close`, async ({ params }) => {
+        closedIds.push(String(params.taskId));
+        if (closedIds.length === 1) { await held; return HttpResponse.json({ code: 'INTERNAL_ERROR', message: 'private-token-do-not-show', traceId: 'trace-close' }, { status: 500 }); }
+        current = agentTask({ conversationId: a, state: 'NEEDS_ATTENTION', failureCode: 'AI_CLOSING' });
+        return HttpResponse.json(current);
+      }),
+      http.get(url, () => HttpResponse.json({ items: [{ ...base, conversationId: a, title: '会话 A' }, { ...base, conversationId: b, title: '会话 B' }], nextCursor: null })),
+      http.get(`${url}/:id`, ({ params }) => HttpResponse.json({ ...base, conversationId: params.id, title: '历史会话' })),
+      http.get(`${url}/:id/entries`, () => HttpResponse.json({ items: [], nextBeforeSeq: null, nextBeforeOffset: null })),
+    );
+    await authenticateAsAlice();
+    sessionStorage.setItem(`manao.agent-conversation.usr-alice.${ALICE_SEED_PROJECT_ID}`, b);
+    sessionStorage.setItem(`manao.agent-task.id.usr-alice.${ALICE_SEED_PROJECT_ID}`, JSON.stringify({ taskId: AGENT_TASK_ID, conversationId: a }));
+    renderShell(); await loadedRoot();
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('tab', { name: 'AI' }));
+    await screen.findByRole('heading', { name: '历史会话' });
+    await user.click(screen.getByRole('button', { name: 'End task' }));
+    await waitFor(() => expect(closedIds).toEqual([AGENT_TASK_ID]));
+    expect(screen.getByRole('button', { name: 'End task' })).toBeDisabled();
+    releaseError();
+    expect(await screen.findByText(/Could not end the task/)).toHaveTextContent('INTERNAL_ERROR');
+    expect(screen.queryByText(/private-token-do-not-show/)).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'End task' })).toBeEnabled();
+    await user.click(screen.getByRole('button', { name: 'End task' }));
+    expect(await screen.findByRole('button', { name: 'Retry ending task' })).toBeEnabled();
+    expect(screen.getByRole('status', { name: 'Task settlement' })).toHaveTextContent(/Waiting for confirmation/);
+    expect(closedIds).toEqual([AGENT_TASK_ID, AGENT_TASK_ID]);
+    expect(screen.getByRole('button', { name: 'New file' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Start task' })).toBeDisabled();
+    expect(sessionStorage.getItem(`manao.agent-task.id.usr-alice.${ALICE_SEED_PROJECT_ID}`)).not.toBeNull();
+    current = agentTask({ conversationId: a, state: 'FAILED', writesLocked: false, failureCode: 'AI_CLOSED' });
+    await act(async () => { await queryClient.invalidateQueries({ queryKey: agentTaskKeys.current(ALICE_SEED_PROJECT_ID) }); });
+    await waitFor(() => expect(screen.getByRole('button', { name: 'New file' })).toBeEnabled());
+    expect(screen.getByRole('button', { name: 'Start task' })).toBeEnabled();
+    expect(screen.queryByRole('button', { name: 'Retry ending task' })).not.toBeInTheDocument();
+    expect(sessionStorage.getItem(`manao.agent-task.id.usr-alice.${ALICE_SEED_PROJECT_ID}`)).toBeNull();
+  }, 15_000);
+
+  it('opens AI from the occupied Stop control and restores Stop after true task release', async () => {
+    await authenticateAsAlice(); await seedLockingRun();
+    let current = agentTask();
+    server.use(http.get(`${AGENT_TASKS_URL}/current`, () => HttpResponse.json(current)));
+    renderShell(); await loadedRoot();
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('tab', { name: 'Run' }));
+    expect(screen.getByRole('button', { name: 'Stop run' })).toBeDisabled();
+    expect(screen.getByText(/AI task is controlling the application/)).toBeVisible();
+    await user.click(screen.getByRole('button', { name: 'Open AI task' }));
+    expect(screen.getByRole('tab', { name: 'AI' })).toHaveAttribute('aria-selected', 'true');
+    current = agentTask({ state: 'FAILED', writesLocked: false, failureCode: 'AI_CLOSED' });
+    await act(async () => { await queryClient.invalidateQueries({ queryKey: agentTaskKeys.current(ALICE_SEED_PROJECT_ID) }); });
+    await user.click(screen.getByRole('tab', { name: 'Run' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Stop run' })).toBeEnabled());
+    expect(screen.queryByRole('button', { name: 'Open AI task' })).not.toBeInTheDocument();
+  }, 15_000);
+
+  it('shows the AI tab and keeps the workspace editable while no task occupies the project', async () => {
+    server.use(http.get(`${AGENT_TASKS_URL}/current`, () => agentCurrentNotFound()));
+    await authenticateAsAlice();
+    renderShell();
+    await loadedEditable();
+
+    expect(screen.getByRole('tab', { name: 'AI' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'New file' })).toBeEnabled();
+  });
+
+  it('keeps AI start blocked while Run authority is unavailable', async () => {
+    server.use(
+      http.get(`${AGENT_TASKS_URL}/current`, () => agentCurrentNotFound()),
+      http.get('/api/v1/projects/:projectId/runs/active', () => HttpResponse.json({ code: 'UNAVAILABLE', message: 'Unavailable', traceId: 'trace-run' }, { status: 503 })),
+    );
+    await authenticateAsAlice();
+    renderShell();
+    await loadedRoot();
+    await userEvent.setup().click(screen.getByRole('tab', { name: 'AI' }));
+    expect(screen.getByRole('button', { name: 'Start task' })).toBeDisabled();
+    expect(await screen.findByText('RUN_AUTHORITY_UNKNOWN')).toBeInTheDocument();
+  });
+
+  it('keeps a structured HTTP validation error with no Run ID visible without invalid navigation', async () => {
+    const task = agentTask({ state: 'COMPLETED', writesLocked: false,
+      progress: [{ seq: 1, kind: 'tool_end', text: 'app_http_get http-empty', truncated: false }] });
+    server.use(
+      http.get(`${AGENT_TASKS_URL}/current`, () => HttpResponse.json(task)),
+      http.get(`${AGENT_TASKS_URL}/${AGENT_TASK_ID}/tools/http-empty`, () => HttpResponse.json({
+        toolCallId: 'http-empty', toolName: 'app_http_get', data: {
+          kind: 'app_http_get', runId: '', path: '/health', statusCode: null, contentType: null,
+          body: '', truncated: false, error: { code: 'VALIDATION_ERROR', message: 'Request validation failed' },
+        },
+      })),
+    );
+    await authenticateAsAlice();
+    renderShell();
+    await loadedRoot();
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('tab', { name: 'AI' }));
+    await user.click(screen.getByRole('button', { name: 'View HTTP result' }));
+    expect(await screen.findByText(/VALIDATION_ERROR/)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'View run' })).not.toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: 'AI' })).toHaveAttribute('aria-selected', 'true');
+  });
+
+  it('opens the existing Run panel from an application result and keeps a completed task with an active Run read-only', async () => {
+    await authenticateAsAlice();
+    await seedLockingRun();
+    const run = getActiveRun(ALICE_SEED_PROJECT_ID)!;
+    const task = agentTask({ state: 'COMPLETED', writesLocked: false,
+      progress: [{ seq: 1, kind: 'tool_end', text: 'application app-real', truncated: false }] });
+    server.use(
+      http.get(`${AGENT_TASKS_URL}/current`, () => HttpResponse.json(task)),
+      http.get(`${AGENT_TASKS_URL}/${AGENT_TASK_ID}/tools/app-real`, () => HttpResponse.json({
+        toolCallId: 'app-real', toolName: 'application', data: {
+          kind: 'application', action: 'status', run: { id: run.id, state: run.state, requestedWorkspaceRevision: run.requestedWorkspaceRevision,
+            firstReadyAt: null, expiresAt: null, finishedAt: null, exitCode: null, terminationReason: null },
+          activeRunId: run.id, stoppedConfirmed: false, logs: null,
+        },
+      })),
+    );
+    renderShell();
+    await loadedRoot();
+    expect(screen.getByRole('button', { name: 'New file' })).toBeDisabled();
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('tab', { name: 'AI' }));
+    await user.click(screen.getByRole('button', { name: 'View application result' }));
+    await user.click(await screen.findByRole('button', { name: 'View run' }));
+    expect(screen.getByRole('tab', { name: 'Run' })).toHaveAttribute('aria-selected', 'true');
+  }, 15000);
+
+  it('locks the editor, file tree and Run start while an agent task occupies the workspace', async () => {
+    const user = userEvent.setup();
+    const task = agentTask();
+    let occupying = false;
+    server.use(
+      http.get(`${AGENT_TASKS_URL}/current`, () => (occupying ? HttpResponse.json(task) : agentCurrentNotFound())),
+      http.get(`${AGENT_TASKS_URL}/${task.taskId}`, () => HttpResponse.json(task)),
+    );
+    await authenticateAsAlice();
+    renderShell();
+    await loadedEditable();
+
+    occupying = true;
+    await occupyWorkspace();
+    await user.click(screen.getByRole('treeitem', { name: 'pom.xml' }));
+    expect(await screen.findByTestId('mock-editor')).toHaveAttribute('data-readonly', 'true');
+
+    await user.click(screen.getByRole('tab', { name: 'Run' }));
+    const start = await screen.findByRole('button', { name: 'Start run' });
+    expect(start).toBeDisabled();
+    expect(start).toHaveAttribute('title', runPreconditionDescription('AGENT_TASK_ACTIVE'));
+  }, 15_000);
+
+  it('does not POST close when the workbench unmounts', async () => {
+    const task = agentTask();
+    let occupying = false;
+    let closePosts = 0;
+    server.use(
+      http.get(`${AGENT_TASKS_URL}/current`, () => (occupying ? HttpResponse.json(task) : agentCurrentNotFound())),
+      http.post(`${AGENT_TASKS_URL}/${task.taskId}/close`, () => {
+        closePosts += 1;
+        return HttpResponse.json(task);
+      }),
+    );
+    await authenticateAsAlice();
+    const view = renderShell();
+    await loadedEditable();
+
+    occupying = true;
+    await occupyWorkspace();
+    view.unmount();
+    expect(closePosts).toBe(0);
+  }, 15_000);
+
+  it('refreshes the workspace when the agent task writes files and unlocks after it settles', async () => {
+    const user = userEvent.setup();
+    const settledSnapshot = agentTask({
+      state: 'COMPLETED',
+      writesLocked: false,
+      summary: 'Fixed the failing test',
+      changedPaths: ['pom.xml'],
+    });
+    const agentPomBody = '<project xmlns="http://maven.apache.org/POM/4.0.0"><agent-edit /></project>';
+    let occupying = false;
+    let settled = false;
+    let agentWrote = false;
+    let agentRevision = 'mock-rev-0001';
+    server.use(
+      http.get(`${AGENT_TASKS_URL}/current`, () =>
+        occupying ? HttpResponse.json(agentTask({ workspaceRevision: agentRevision })) : agentCurrentNotFound()),
+      http.get(`${AGENT_TASKS_URL}/${AGENT_TASK_ID}`, () =>
+        HttpResponse.json(settled ? settledSnapshot : agentTask({ workspaceRevision: agentRevision }))),
+      http.get('/api/v1/projects/:projectId/files/content', ({ request }) => {
+        const path = new URL(request.url).searchParams.get('path');
+        if (!agentWrote || path !== 'pom.xml') {
+          return undefined;
+        }
+        return HttpResponse.json({
+          path: 'pom.xml',
+          content: agentPomBody,
+          workspaceRevision: 'mock-rev-0002',
+        });
+      }),
+    );
+    await authenticateAsAlice();
+    renderShell();
+    await loadedEditable();
+    await user.click(screen.getByRole('treeitem', { name: 'pom.xml' }));
+    const uri = toProjectModelUri(ALICE_SEED_PROJECT_ID, POM);
+    await waitFor(() => {
+      expect(monaco.editor.getModel(uri)).not.toBeNull();
+    });
+    expect(monaco.editor.getModel(uri)!.getValue()).not.toContain('<agent-edit />');
+
+    occupying = true;
+    await occupyWorkspace();
+
+    // The agent writes a new revision: the shell reloads and disposes the stale model.
+    agentWrote = true;
+    agentRevision = 'mock-rev-0002';
+    await queryClient.invalidateQueries({ queryKey: agentTaskKeys.current(ALICE_SEED_PROJECT_ID) });
+    await waitFor(() => {
+      expect(monaco.editor.getModel(uri)?.getValue()).toContain('<agent-edit />');
+    });
+    // Still occupying: the agent owns every write until it settles.
+    expect(screen.getByRole('button', { name: 'New file' })).toBeDisabled();
+
+    settled = true;
+    occupying = false;
+    await queryClient.invalidateQueries({ queryKey: agentTaskKeys.current(ALICE_SEED_PROJECT_ID) });
+    await waitUntilWritesUnlocked();
+    expect(monaco.editor.getModel(uri)?.getValue()).toContain('<agent-edit />');
+  }, 15_000);
+
+  it('keeps writes locked when the agent-driven reload fails and releases them only after Retry succeeds', async () => {
+    const user = userEvent.setup();
+    const settledSnapshot = agentTask({ state: 'COMPLETED', writesLocked: false });
+    let occupying = false;
+    let settled = false;
+    let agentRevision = 'mock-rev-0001';
+    let failReloadTrees = false;
+    server.use(
+      http.get(`${AGENT_TASKS_URL}/current`, () =>
+        occupying ? HttpResponse.json(agentTask({ workspaceRevision: agentRevision })) : agentCurrentNotFound()),
+      http.get(`${AGENT_TASKS_URL}/${AGENT_TASK_ID}`, () =>
+        HttpResponse.json(settled ? settledSnapshot : agentTask({ workspaceRevision: agentRevision }))),
+      http.get('/api/v1/projects/:projectId/files/tree', ({ request }) => {
+        const path = new URL(request.url).searchParams.get('path') ?? '';
+        if (failReloadTrees && path === '') {
+          return HttpResponse.json(
+            { code: 'INTERNAL_ERROR', message: 'Mock reload tree failure', traceId: 'trace-reload' },
+            { status: 500 },
+          );
+        }
+        return undefined;
+      }),
+    );
+    await authenticateAsAlice();
+    renderShell();
+    await loadedEditable();
+
+    occupying = true;
+    await occupyWorkspace();
+
+    agentRevision = 'mock-rev-0002';
+    failReloadTrees = true;
+    await queryClient.invalidateQueries({ queryKey: agentTaskKeys.current(ALICE_SEED_PROJECT_ID) });
+    expect(
+      await screen.findByText(/agent changed the workspace files, but reloading them failed/i),
+    ).toBeInTheDocument();
+
+    // The task settles while the reload is still failed: the workspace stays locked.
+    settled = true;
+    occupying = false;
+    await queryClient.invalidateQueries({ queryKey: agentTaskKeys.current(ALICE_SEED_PROJECT_ID) });
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'New file' })).toBeDisabled();
+    });
+    expect(screen.getByRole('button', { name: 'Reload workspace' })).toBeEnabled();
+
+    // The AI panel shares the lock: Start stays disabled while the reload is
+    // failed, so the panel cannot bypass the read-only workspace.
+    await user.click(screen.getByRole('tab', { name: 'AI' }));
+    expect(screen.getByRole('button', { name: 'Start task' })).toBeDisabled();
+
+    failReloadTrees = false;
+    await user.click(screen.getByRole('button', { name: 'Reload workspace' }));
+    await waitUntilWritesUnlocked();
+    expect(screen.queryByRole('button', { name: 'Reload workspace' })).not.toBeInTheDocument();
+  }, 15_000);
+
+  it('does not replace dirty buffers when the agent changes files and surfaces the conflict', async () => {
+    const user = userEvent.setup();
+    let occupying = false;
+    let agentWrote = false;
+    let agentRevision = 'mock-rev-0001';
+    let rootTreeHits = 0;
+    const agentPomBody = '<project xmlns="http://maven.apache.org/POM/4.0.0"><agent-edit /></project>';
+    server.use(
+      http.get(`${AGENT_TASKS_URL}/current`, () =>
+        occupying ? HttpResponse.json(agentTask({ workspaceRevision: agentRevision })) : agentCurrentNotFound()),
+      http.get(`${AGENT_TASKS_URL}/${AGENT_TASK_ID}`, () => HttpResponse.json(agentTask({ workspaceRevision: agentRevision }))),
+      http.get('/api/v1/projects/:projectId/files/tree', ({ request }) => {
+        const path = new URL(request.url).searchParams.get('path') ?? '';
+        if (path === '') {
+          rootTreeHits += 1;
+        }
+        return undefined;
+      }),
+      http.get('/api/v1/projects/:projectId/files/content', ({ request }) => {
+        const path = new URL(request.url).searchParams.get('path');
+        if (!agentWrote || path !== 'pom.xml') {
+          return undefined;
+        }
+        return HttpResponse.json({
+          path: 'pom.xml',
+          content: agentPomBody,
+          workspaceRevision: 'mock-rev-0002',
+        });
+      }),
+    );
+    await authenticateAsAlice();
+    renderShell();
+    await loadedEditable();
+    await dirtyPomFromWorkbench(user);
+    const uri = toProjectModelUri(ALICE_SEED_PROJECT_ID, POM);
+    const dirtyContent = monaco.editor.getModel(uri)!.getValue();
+
+    occupying = true;
+    await occupyWorkspace();
+    rootTreeHits = 0;
+    agentWrote = true;
+    agentRevision = 'mock-rev-0002';
+    await queryClient.invalidateQueries({ queryKey: agentTaskKeys.current(ALICE_SEED_PROJECT_ID) });
+
+    expect(await screen.findByText(/save or discard your unsaved changes/i)).toBeInTheDocument();
+    expect(monaco.editor.getModel(uri)?.getValue()).toBe(dirtyContent);
+    expect(workspaceSessionStore.getState().dirtyPaths.has(POM)).toBe(true);
+    // No reload ran into the dirty buffer.
+    expect(rootTreeHits).toBe(0);
+
+    act(() => {
+      workspaceSessionStore.getState().setDirty(POM, false);
+    });
+    await user.click(screen.getByRole('button', { name: 'Reload workspace' }));
+    await waitFor(() => {
+      expect(monaco.editor.getModel(uri)?.getValue()).toContain('<agent-edit />');
+    });
+  }, 15_000);
+
+  it('keeps writes locked while the settled snapshot is loading and unlocks once it confirms', async () => {
+    const settledSnapshot = agentTask({ state: 'COMPLETED', writesLocked: false, summary: 'Fixed' });
+    let occupying = false;
+    let releaseSettled = () => {};
+    const holdSettled = new Promise<void>((resolve) => {
+      releaseSettled = resolve;
+    });
+    server.use(
+      http.get(`${AGENT_TASKS_URL}/current`, () =>
+        occupying ? HttpResponse.json(agentTask()) : agentCurrentNotFound()),
+      http.get(`${AGENT_TASKS_URL}/${AGENT_TASK_ID}`, async () => {
+        // The final snapshot request hangs: the release must not unlock early.
+        await holdSettled;
+        return HttpResponse.json(settledSnapshot);
+      }),
+    );
+    await authenticateAsAlice();
+    renderShell();
+    await loadedEditable();
+
+    occupying = true;
+    await occupyWorkspace();
+    occupying = false;
+    await queryClient.invalidateQueries({ queryKey: agentTaskKeys.current(ALICE_SEED_PROJECT_ID) });
+
+    // The occupying task released but the final revision is not confirmed yet.
+    expect(screen.getByRole('button', { name: 'New file' })).toBeDisabled();
+
+    act(() => {
+      releaseSettled();
+    });
+    await waitUntilWritesUnlocked();
+  }, 15_000);
+
+  it('keeps writes locked when the settled snapshot request fails until the retry succeeds', async () => {
+    const user = userEvent.setup();
+    const settledSnapshot = agentTask({ state: 'COMPLETED', writesLocked: false, summary: 'Fixed' });
+    let occupying = false;
+    let settledFails = true;
+    server.use(
+      http.get(`${AGENT_TASKS_URL}/current`, () =>
+        occupying ? HttpResponse.json(agentTask()) : agentCurrentNotFound()),
+      http.get(`${AGENT_TASKS_URL}/${AGENT_TASK_ID}`, () => {
+        if (settledFails) {
+          return HttpResponse.json(
+            { code: 'INTERNAL_ERROR', message: 'Mock settled failure', traceId: 'trace-settled' },
+            { status: 500 },
+          );
+        }
+        return HttpResponse.json(settledSnapshot);
+      }),
+    );
+    await authenticateAsAlice();
+    renderShell();
+    await loadedEditable();
+
+    occupying = true;
+    await occupyWorkspace();
+    occupying = false;
+    await queryClient.invalidateQueries({ queryKey: agentTaskKeys.current(ALICE_SEED_PROJECT_ID) });
+
+    // The failed final-snapshot read stays user-visible and keeps the gate closed.
+    expect(await screen.findByText(/final result could not be loaded/i)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'New file' })).toBeDisabled();
+
+    settledFails = false;
+    await user.click(screen.getByRole('button', { name: 'Retry loading the result' }));
+    await waitUntilWritesUnlocked();
+    expect(screen.queryByRole('button', { name: 'Retry loading the result' })).not.toBeInTheDocument();
   }, 15_000);
 });

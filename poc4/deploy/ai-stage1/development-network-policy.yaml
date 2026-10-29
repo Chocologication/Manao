@@ -1,0 +1,103 @@
+# AI stage one (development builds): manifest-level egress isolation for the
+# development Maven build pods (pi-stage1 design section 5, Task 6 release prep).
+#
+# The backend labels every development-build Job pod with
+#   manao.poc4/component: development-build
+# (JobResourceFactory.createDevelopmentJob; the pod template carries the same
+# labels). This namespace-scoped policy selects exactly those pods:
+#   ALLOWED   DNS (UDP/TCP 53) to kube-dns, and public HTTP/HTTPS (TCP 80/443)
+#             so dependency downloads keep working.
+#   DENIED    everything else - by NetworkPolicy semantics, selecting pods under an
+#             Egress policy default-denies all egress not explicitly allowed above.
+#             That covers the platform backend, the Pi worker, the platform MySQL,
+#             application run pods, other projects' pods and workspaces, and private
+#             network segments (the ipBlock `except` list below).
+#
+# OPERATOR DUTIES BEFORE APPLY (values are environment-specific and stay private):
+#   1. Add the cluster's own management-plane addresses to the `except` lists if
+#      they are NOT inside the private ranges (for example a PUBLIC node/API-server
+#      address, and the service-cluster-ip-range / pod CIDR if they fall outside
+#      10.0.0.0/8). A public 6443 endpoint is NOT covered by the private-range
+#      excludes and MUST be excluded explicitly.
+#   2. Confirm the CNI actually enforces egress NetworkPolicy. A policy resource
+#      that exists is NOT evidence: the enforcement must be measured with a real
+#      build pod probing a denied address (pi-stage1 design: "不能只以清单存在记
+#      隔离通过"). That measurement is recorded in
+#      poc4/docs/evidence/ai-stage1/acceptance.md and is NOT_RUN until the cluster
+#      work is authorized.
+#
+# This file is review-only release preparation. Applying it to manao-stage6b or any
+# shared cluster requires the user's explicit authorization and is not part of the
+# current implementation round.
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: ai-stage1-development-build-egress
+  namespace: manao-stage6b  # the acceptance namespace; adjust only with authorization
+  labels:
+    app.kubernetes.io/managed-by: manao-poc4-backend
+    manao.poc4/component: development-build
+spec:
+  podSelector:
+    matchLabels:
+      manao.poc4/component: development-build
+  policyTypes:
+    - Egress
+  egress:
+    # DNS to the cluster resolver (kube-dns pods in kube-system). Selected-pod rules
+    # are evaluated after service DNAT, so the ClusterIP path is permitted here even
+    # though the service CIDR itself is inside the excluded private ranges.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # The kube-system DNS pod rule above does NOT match this cluster's actual resolver
+    # path: manao-stage6b runs NodeLocal DNSCache (hostNetwork pods, k8s-app=nodelocaldns)
+    # and every pod's resolv.conf points at the node's 169.254.25.10 listener. Without
+    # this explicit peer the metadata exclude (169.254.0.0/16) below cuts off ALL name
+    # resolution - measured live 2026-10-15: a labeled probe pod could not resolve even
+    # repo.maven.apache.org until this entry was applied. A dedicated /32 peer is OR'd
+    # with the public ipBlock entry, so the metadata service itself stays denied.
+    - to:
+        - ipBlock:
+            cidr: 169.254.25.10/32
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # Public HTTP/HTTPS for Maven/dependency downloads. The except list denies every
+    # private, link-local, CGNAT and loopback segment: cluster-internal addresses
+    # (pods, services, nodes on private networks), the cloud metadata service and
+    # localhost all refuse at the CNI once enforcement is verified. Operator duty 1
+    # above adds any public management-plane address this environment exposes.
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+              - 100.64.0.0/10
+              - 127.0.0.0/8
+              - 169.254.0.0/16
+              - 224.0.0.0/4
+              - 240.0.0.0/4
+              # Operator placeholders (fill from the private env file, never commit
+              # real values elsewhere): the cluster API server / node public
+              # addresses if outside the ranges above, e.g.
+              # - 203.0.113.7/32
+      ports:
+        - protocol: TCP
+          port: 80
+        - protocol: TCP
+          port: 443

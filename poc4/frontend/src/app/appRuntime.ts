@@ -1,5 +1,6 @@
 import { HttpClient, setHttpClient } from '../api/httpClient';
 import { clearPythonDependencyOperationIdsForUser } from '../api/pythonDependencyApi';
+import { clearAgentTaskIdsForUser } from '../api/agentTaskApi';
 import { createAuthSession } from '../features/auth/authSession';
 import { resetUnsavedDialog } from '../features/editor/unsavedChangesGuard';
 import { WorkspaceBufferRegistry } from '../features/editor/WorkspaceBufferRegistry';
@@ -58,7 +59,7 @@ function disposeWorkspaceSession(): void {
 }
 
 /**
- * Dependency operation ids live per user in sessionStorage; ending the session
+ * Operation and task ids live per user in sessionStorage; ending the session
  * must not hand an unresolved operation to the next user.
  */
 function clearUserScopedDependencyOperations(): void {
@@ -67,6 +68,7 @@ function clearUserScopedDependencyOperations(): void {
     return;
   }
   clearPythonDependencyOperationIdsForUser(snapshot.user.id);
+  clearAgentTaskIdsForUser(snapshot.user.id);
 }
 
 export function handleUnauthorized(): void {

@@ -1,0 +1,64 @@
+{
+  "verifiedAt": "2026-10-21T15:00:41.772Z",
+  "mode": "local-mock-only",
+  "command": "pnpm exec node --input-type=module (stdin Playwright annotation smoke)",
+  "result": "4/4 passed",
+  "cases": [
+    {
+      "theme": "lab",
+      "width": 1707,
+      "height": 927,
+      "status": "PASS",
+      "pageErrors": 0,
+      "taskOrCompactionRequests": 0,
+      "screenshots": [
+        "lab-1707x927-login.png",
+        "lab-1707x927-workbench.png"
+      ]
+    },
+    {
+      "theme": "graphite",
+      "width": 1440,
+      "height": 900,
+      "status": "PASS",
+      "pageErrors": 0,
+      "taskOrCompactionRequests": 0,
+      "screenshots": [
+        "graphite-1440x900-login.png",
+        "graphite-1440x900-workbench.png"
+      ]
+    },
+    {
+      "theme": "light",
+      "width": 1440,
+      "height": 900,
+      "status": "PASS",
+      "pageErrors": 0,
+      "taskOrCompactionRequests": 0,
+      "screenshots": [
+        "light-1440x900-login.png",
+        "light-1440x900-workbench.png"
+      ]
+    },
+    {
+      "theme": "lab",
+      "width": 390,
+      "height": 844,
+      "status": "PASS",
+      "pageErrors": 0,
+      "taskOrCompactionRequests": 0,
+      "screenshots": [
+        "lab-390x844-login.png",
+        "lab-390x844-workbench.png"
+      ]
+    }
+  ],
+  "existingSuite": {
+    "command": "pnpm exec playwright test --config playwright.ai-ui.config.ts",
+    "result": "10/10 passed"
+  },
+  "notes": [
+    "Existing responsive CSS hides the login capability strip and desktop navigation at 390px; DOM copy is checked without changing visibility rules."
+  ],
+  "clusterOrModelAcceptance": false
+}

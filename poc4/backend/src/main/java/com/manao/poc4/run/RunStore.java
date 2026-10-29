@@ -30,6 +30,10 @@ public interface RunStore {
 
     RunPage listForOwner(String ownerId, String projectId, RunCursor cursor, int limit);
 
+    /**
+     * Version/fence-guarded state change. Entering RUNNING atomically fills a missing start
+     * observation from persisted readiness or the current time, preserving an existing start.
+     */
     boolean transition(String runId, String projectId, long expectedVersion, RunState next, long fencingToken,
                        RunState... allowedStates);
 

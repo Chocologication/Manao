@@ -39,6 +39,10 @@ const API_ERROR_CODES: ReadonlySet<string> = new Set([
   'PYTHON_DEPENDENCY_NO_WHEEL',
   'PYTHON_DEPENDENCY_RESOLUTION_FAILED',
   'PYTHON_DEPENDENCY_TIMEOUT',
+  'AI_PROJECT_NOT_ENABLED',
+  'AI_TASK_ACTIVE',
+  'AI_TASK_MISMATCH',
+  'AI_TASK_NOT_FOUND',
 ]);
 
 export type HttpClientOptions = {
@@ -105,6 +109,10 @@ export class HttpClient {
       signal: options.signal,
     });
     return readSuccessBody<T>(response);
+  }
+
+  async requestStream(url: string, options: { signal?: AbortSignal } = {}): Promise<Response> {
+    return this.send(url, { method: 'GET', headers: new Headers({ Accept: 'text/event-stream' }), signal: options.signal });
   }
 
   async requestBlob(url: string, options: BlobRequestOptions = {}): Promise<BlobResponse> {

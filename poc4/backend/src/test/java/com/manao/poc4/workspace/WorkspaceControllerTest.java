@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.manao.poc4.ai.AgentTaskOccupancyFixture;
 import com.manao.poc4.api.ApiException;
 import com.manao.poc4.project.ProjectLifecycleGate;
 import java.nio.charset.StandardCharsets;
@@ -25,6 +26,12 @@ public class WorkspaceControllerTest {
     private static final String BOB = "bob-id";
     private static final String PROJECT = "prj-1";
     private static final ObjectMapper JSON = new ObjectMapper();
+    /**
+     * Explicit no-active-task occupancy for fake-store tests: no agent task rows exist behind
+     * these fakes, so the guard is the empty check the production store performs against a
+     * project without tasks. Production wiring never defaults to this.
+     */
+    public static final com.manao.poc4.project.AgentTaskOccupancy NO_AGENT_TASKS = projectId -> { };
 
     private FakeStore store;
     private StubAgent agent;
@@ -36,7 +43,8 @@ public class WorkspaceControllerTest {
         store.projects.put(PROJECT, new WorkspaceStore.ProjectRecord(PROJECT, ALICE, "demo", "READY", 7, null, java.time.Instant.parse("2026-08-29T00:00:00Z")));
         agent = new StubAgent();
         WorkspaceOperationService operations = new WorkspaceOperationService(store, agent);
-        controller = new WorkspaceController(new WorkspaceService(store, operations, agent));
+        controller = new WorkspaceController(new WorkspaceService(store, operations, agent,
+            new ProjectLifecycleGate(), NO_AGENT_TASKS));
     }
 
     private static String sha256Hex(byte[] bytes) {
@@ -347,6 +355,80 @@ public class WorkspaceControllerTest {
                 WorkspaceController.SaveFileRequest.class)).isInstanceOf(Exception.class);
             assertThatThrownBy(() -> JSON.readValue("{\"kind\":\"file\",\"path\":\"a\",\"expectedWorkspaceRevision\":\"1\",\"pod\":\"leak\"}",
                 WorkspaceController.CreateEntryRequest.class)).isInstanceOf(Exception.class);
+        }
+    }
+
+    /**
+     * Entry-point occupancy behavior against the REAL agent task store: while a task owns the
+     * project, every browser mutation (the four file mutations and the provisioning-internal
+     * apply) refuses inside its gate critical section before any agent write or durable
+     * registration; once the task settles, the old path works again. Because the service is
+     * wired with the real store's occupancy, removing a production guard call fails these
+     * tests instead of passing them.
+     */
+    @Nested
+    class AgentTaskOccupancyBehavior {
+        private WorkspaceService service(AgentTaskOccupancyFixture fixture) {
+            return new WorkspaceService(store, new WorkspaceOperationService(store, agent), agent,
+                new ProjectLifecycleGate(), fixture.occupancy());
+        }
+
+        @Test
+        void mutationsRefuseWhileAnAgentTaskOwnsTheProject() {
+            try (AgentTaskOccupancyFixture fixture = AgentTaskOccupancyFixture.open(PROJECT, ALICE, 7)) {
+                String taskId = fixture.occupy("change demo");
+                WorkspaceService workspace = service(fixture);
+                List<org.assertj.core.api.ThrowableAssert.ThrowingCallable> mutations = List.of(
+                    () -> workspace.save(ALICE, PROJECT, "src/App.java", "class App {}", "7"),
+                    () -> workspace.createEntry(ALICE, PROJECT, "file", "src/New.java", "7"),
+                    () -> workspace.renameEntry(ALICE, PROJECT, "src/App.java", "src/Renamed.java", "7"),
+                    () -> workspace.deleteEntry(ALICE, PROJECT, "src/App.java", "7"));
+                for (org.assertj.core.api.ThrowableAssert.ThrowingCallable mutation : mutations) {
+                    assertThatThrownBy(mutation).isInstanceOfSatisfying(ApiException.class, ex -> {
+                        assertThat(ex.code()).isEqualTo("AI_TASK_ACTIVE");
+                        assertThat(ex.status()).isEqualTo(409);
+                    });
+                }
+                // The refusals precede every side effect: no agent write, no durable registration.
+                assertThat(agent.mutateCalls).isZero();
+                assertThat(store.pending).isEmpty();
+                assertThat(store.records).isEmpty();
+                assertThat(store.committed).isEmpty();
+                assertThat(store.revision.get(PROJECT)).isEqualTo(7L);
+                fixture.release(taskId);
+            }
+        }
+
+        @Test
+        void applyInternalRefusesWhileAnAgentTaskOwnsTheProject() {
+            try (AgentTaskOccupancyFixture fixture = AgentTaskOccupancyFixture.open(PROJECT, ALICE, 7)) {
+                String taskId = fixture.occupy("change demo");
+                WorkspaceService workspace = service(fixture);
+                assertThatThrownBy(() -> workspace.applyInternal(PROJECT, "SAVE", "pom.xml", null, null,
+                        "template bytes".getBytes(StandardCharsets.UTF_8), 7))
+                    .isInstanceOfSatisfying(ApiException.class, ex -> {
+                        assertThat(ex.code()).isEqualTo("AI_TASK_ACTIVE");
+                        assertThat(ex.status()).isEqualTo(409);
+                    });
+                assertThat(agent.mutateCalls).isZero();
+                assertThat(store.pending).isEmpty();
+                assertThat(store.committed).isEmpty();
+                fixture.release(taskId);
+            }
+        }
+
+        @Test
+        void mutationsWorkAgainAfterTheTaskSettles() {
+            agent.pendingMetaRequired = false; // the save path runs its digest step without meta
+            try (AgentTaskOccupancyFixture fixture = AgentTaskOccupancyFixture.open(PROJECT, ALICE, 7)) {
+                String taskId = fixture.occupy("change demo");
+                WorkspaceService workspace = service(fixture);
+                fixture.release(taskId);
+                long revision = workspace.save(ALICE, PROJECT, "src/App.java", "class App {}", "7");
+                assertThat(revision).isEqualTo(8L);
+                assertThat(store.committed).hasSize(1);
+                assertThat(agent.mutateCalls).isEqualTo(1);
+            }
         }
     }
 

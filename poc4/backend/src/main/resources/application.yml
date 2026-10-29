@@ -82,6 +82,21 @@ manao:
         mysql-image-digest: ${MANAO_MYSQL_IMAGE_DIGEST:}
         redis-image-digest: ${MANAO_REDIS_IMAGE_DIGEST:}
         mysql-storage-class-name: ${MANAO_MYSQL_STORAGE_CLASS:}
+    ai:
+      # Stage-one AI integration is DISABLED by default: with enabled=false nothing is
+      # wired (no task endpoints, no internal-route controller beans, no worker client).
+      enabled: ${MANAO_AI_ENABLED:false}
+      # Legacy compatibility only; ignored for task admission. Owners may use any READY project.
+      project-id: ${MANAO_AI_PROJECT_ID:}
+      # The Pi worker route and the token the backend presents on it. The backend never
+      # receives a model key; the worker owns the model configuration entirely.
+      worker:
+        base-url: ${MANAO_AI_WORKER_BASE_URL:}
+        token: ${MANAO_AI_WORKER_TOKEN:}
+      # The internal token every worker callback must present on /internal/ai/**.
+      # While empty, the internal security chain denies everything (fail closed).
+      internal:
+        token: ${MANAO_AI_INTERNAL_TOKEN:}
   runtime:
     # Acceptance-only fault injection for the e2e FAILED-recovery case (deploy README 11.4):
     # when armed with a canary package name, the FIRST-PARTY ADD of exactly that package fails

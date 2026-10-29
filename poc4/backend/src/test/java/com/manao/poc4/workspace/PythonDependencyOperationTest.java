@@ -3,6 +3,7 @@ package com.manao.poc4.workspace;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.manao.poc4.ai.AgentTaskOccupancyFixture;
 import com.manao.poc4.api.ApiException;
 import com.manao.poc4.project.ProjectLifecycleGate;
 import com.manao.poc4.project.ProjectRuntimeSpec;
@@ -13,6 +14,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
 /**
@@ -50,7 +52,8 @@ class PythonDependencyOperationTest {
         // runs through the SAME lease instance every other workspace consumer uses.
         store.gate = lifecycle;
         WorkspaceOperationService operations = new WorkspaceOperationService(store, agent, lifecycle);
-        dependencies = new PythonDependencyService(store, operations, agent, lifecycle, pythonRuntimeStore());
+        dependencies = new PythonDependencyService(store, operations, agent, lifecycle, pythonRuntimeStore(),
+            WorkspaceControllerTest.NO_AGENT_TASKS);
     }
 
     /** The Python template runtime store the owner checks read before accepting a change. */
@@ -79,7 +82,8 @@ class PythonDependencyOperationTest {
     /** The dependency stack wired with the operator-armed dependency-pending fault value. */
     private PythonDependencyService dependenciesWithArmedFault(String armedPackage) {
         WorkspaceOperationService operations = new WorkspaceOperationService(store, agent, lifecycle, armedPackage);
-        return new PythonDependencyService(store, operations, agent, lifecycle, pythonRuntimeStore());
+        return new PythonDependencyService(store, operations, agent, lifecycle, pythonRuntimeStore(),
+            WorkspaceControllerTest.NO_AGENT_TASKS);
     }
 
     private ApiException assertRejected(Runnable call, String code, int status) {
@@ -560,7 +564,8 @@ class PythonDependencyOperationTest {
             command.expectedBeforeSha256(), command.expectedAfterSha256(),
             ".manao/receipts/" + command.operationId() + ".json", command.expectedReceiptSha256());
         WorkspaceService workspace = new WorkspaceService(store,
-            new WorkspaceOperationService(store, agent), agent);
+            new WorkspaceOperationService(store, agent), agent,
+            new com.manao.poc4.project.ProjectLifecycleGate(), WorkspaceControllerTest.NO_AGENT_TASKS);
 
         long revision = workspace.save(ALICE, PROJECT, "src/App.java", "class App {}", "7");
 
@@ -581,7 +586,8 @@ class PythonDependencyOperationTest {
         store.pending.put(PROJECT, registered);
         agent.pendingMetaRequired = false; // the single-file digest step runs before the pending check
         WorkspaceService workspace = new WorkspaceService(store,
-            new WorkspaceOperationService(store, agent), agent);
+            new WorkspaceOperationService(store, agent), agent,
+            new com.manao.poc4.project.ProjectLifecycleGate(), WorkspaceControllerTest.NO_AGENT_TASKS);
 
         assertThatThrownBy(() -> workspace.save(ALICE, PROJECT, "src/App.java", "class App {}", "7"))
             .isInstanceOfSatisfying(ApiException.class,
@@ -647,7 +653,8 @@ class PythonDependencyOperationTest {
         agent.receiptFor.put(OPERATION, new WorkspaceAgent.FetchedReceipt(OPERATION, "PYTHON_DEPENDENCIES",
             "pyproject.toml", "uv.lock", "a".repeat(64), "b".repeat(64), receiptSha));
         WorkspaceService workspace = new WorkspaceService(store,
-            new WorkspaceOperationService(store, agent), agent);
+            new WorkspaceOperationService(store, agent), agent,
+            new com.manao.poc4.project.ProjectLifecycleGate(), WorkspaceControllerTest.NO_AGENT_TASKS);
 
         assertThatThrownBy(() -> workspace.save(ALICE, PROJECT, "src/App.java", "class App {}", "7"))
             .isInstanceOfSatisfying(ApiException.class,
@@ -887,5 +894,79 @@ class PythonDependencyOperationTest {
         assertThat(store.failures).isEmpty();
         assertThat(store.records.get(OPERATION).state()).isEqualTo("COMMITTED");
         assertThat(store.revision.get(PROJECT)).isEqualTo(8L);
+    }
+
+    /**
+     * Entry-point occupancy behavior against the REAL agent task store: while a task owns the
+     * project, change/changeBatch/reconcile refuse inside their gate critical section before
+     * any agent prepare/commit call or durable registration, and the change path works again
+     * once the task settles. Wiring the real store's occupancy makes these tests fail if a
+     * production guard call disappears.
+     */
+    @Nested
+    class AgentTaskOccupancyBehavior {
+        private PythonDependencyService service(AgentTaskOccupancyFixture fixture) {
+            return new PythonDependencyService(store, new WorkspaceOperationService(store, agent, lifecycle),
+                agent, lifecycle, pythonRuntimeStore(), fixture.occupancy());
+        }
+
+        private void armPrepare() {
+            agent.prepareResult = new WorkspaceAgent.PreparedPythonDependencies(OPERATION,
+                PythonDependencyService.requestDigest(PROJECT, "ADD", "httpx", "0.28.1", 7),
+                "a".repeat(64), "b".repeat(64));
+        }
+
+        @Test
+        void dependencyChangesRefuseWhileAnAgentTaskOwnsTheProject() {
+            armPrepare();
+            try (AgentTaskOccupancyFixture fixture = AgentTaskOccupancyFixture.open(PROJECT, ALICE, 7)) {
+                String taskId = fixture.occupy("change demo");
+                PythonDependencyService dependencies = service(fixture);
+                assertRejected(() -> dependencies.change(ALICE, PROJECT, OPERATION,
+                    new WorkspaceAgent.DependencyChange("ADD", "httpx", "0.28.1"), "7"), "AI_TASK_ACTIVE", 409);
+                assertRejected(() -> dependencies.changeBatch(ALICE, PROJECT, OPERATION, BATCH_TEXT, "7"),
+                    "AI_TASK_ACTIVE", 409);
+                // Refused before any agent call and before any durable row.
+                assertThat(agent.prepareCalls).isZero();
+                assertThat(agent.prepareBatchCalls).isZero();
+                assertThat(agent.commitCalls).isZero();
+                assertThat(store.records).isEmpty();
+                assertThat(store.pending).isEmpty();
+                assertThat(store.committed).isEmpty();
+                assertThat(store.failures).isEmpty();
+                assertThat(store.revision.get(PROJECT)).isEqualTo(7L);
+                fixture.release(taskId);
+            }
+        }
+
+        @Test
+        void changeWorksAgainAfterTheTaskSettles() {
+            armPrepare();
+            try (AgentTaskOccupancyFixture fixture = AgentTaskOccupancyFixture.open(PROJECT, ALICE, 7)) {
+                String taskId = fixture.occupy("change demo");
+                PythonDependencyService dependencies = service(fixture);
+                fixture.release(taskId);
+                PythonDependencyService.Status status = dependencies.change(ALICE, PROJECT, OPERATION,
+                    new WorkspaceAgent.DependencyChange("ADD", "httpx", "0.28.1"), "7");
+                assertThat(status.state()).isEqualTo("COMMITTED");
+                assertThat(status.resultWorkspaceRevision()).isEqualTo(8L);
+                assertThat(store.committed).hasSize(1);
+                assertThat(agent.prepareCalls).isEqualTo(1);
+            }
+        }
+
+        @Test
+        void reconcileRefusesWhileAnAgentTaskOwnsTheProject() {
+            try (AgentTaskOccupancyFixture fixture = AgentTaskOccupancyFixture.open(PROJECT, ALICE, 7)) {
+                String taskId = fixture.occupy("change demo");
+                PythonDependencyService dependencies = service(fixture);
+                assertRejected(() -> dependencies.reconcile(ALICE, PROJECT, OPERATION), "AI_TASK_ACTIVE", 409);
+                assertThat(agent.prepareCalls).isZero();
+                assertThat(agent.commitCalls).isZero();
+                fixture.release(taskId);
+                // Released: the reconciliation path answers normally again (no row → UNCONFIRMED).
+                assertThat(dependencies.reconcile(ALICE, PROJECT, OPERATION).state()).isEqualTo("UNCONFIRMED");
+            }
+        }
     }
 }

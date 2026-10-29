@@ -26,6 +26,10 @@
     "playwright.project-deletion.config.ts",
     "tests/tools/stage6-cleanup-resume.spec.ts",
     "playwright.stage6-tools.config.ts",
-    "vitest.stage6-cleanup.config.ts"
+    "vitest.stage6-cleanup.config.ts",
+    "tests/e2e/ai-stage1.spec.ts",
+    "playwright.ai-stage1.config.ts",
+    "tests/e2e/ai-stage2.spec.ts",
+    "playwright.ai-stage2.config.ts"
   ]
 }
