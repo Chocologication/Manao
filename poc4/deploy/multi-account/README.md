@@ -32,9 +32,14 @@ NOT_RUN，等待用户单独授权与人工执行。**
 - 必须显式给出 `-Context` 与 `-Namespace`。所有 kubectl 调用都带
   `--context <ctx> --namespace <ns>`；脚本**不使用** `-A` / `--all-namespaces`，
   不做跨 namespace 自动发现或自动修复。
-- `-ProjectsFile` 是**人工核对过**的 `{ownerId, projectId}` JSON 数组（`projectId` 为
-  平台项目 UUID，`ownerId` 用于审阅记录）。脚本只按清单逐项验证，不会自动生成、
-  补全或扩大清单。
+- `-ProjectsFile` 是**人工核对过**的**顶层 JSON 数组**，元素必须是含字符串
+  `ownerId` 与 `projectId` 的对象（`ownerId` 用于审阅记录）；`projectId` 必须精确等于
+  小写 DNS label：`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`（最多 63 字符、不能有末尾连字符），
+  且清单内不得重复。非数组、数字/对象字段、`P1`、`p1-` 等输入都会被拒绝。脚本只按
+  清单逐项验证，不会自动生成、补全或扩大清单。
+- 所有名称、标签、spec、UID/resourceVersion 比较都是**大小写敏感（ordinal）**的：例如
+  ingress 来源是 `P1` 而清单是 `p1` 会判为 `UNKNOWN_SPEC`，managed-by 大小写不符会判为
+  `IDENTITY_MISMATCH`，绝不按错误大小写执行 patch。
 - 脚本只读取 NetworkPolicy；**从不读取 Secret**。备份目录里只可能是 NetworkPolicy。
 - 不自动创建缺失策略、不自动处理清单外策略、不重试被拒 patch、不自动回滚。
 - 不修改 RBAC，不引入全局自动修复器。
@@ -42,7 +47,7 @@ NOT_RUN，等待用户单独授权与人工执行。**
 ## 4. 用法
 
 ```powershell
-# 1) 只读预览（默认）：不写集群、也不写磁盘
+# 1) 只读预览（默认）：不写集群、不写磁盘（也不创建任何临时文件）
 pwsh -NoProfile -File poc4/deploy/multi-account/repair-dependency-policy.ps1 `
   -Context <kube-context> `
   -Namespace <namespace> `
@@ -95,21 +100,32 @@ pwsh -NoProfile -File poc4/deploy/multi-account/repair-dependency-policy.ps1 `
    等于清单值、`manao.poc4/component=dependencies`；
 3. `metadata.uid` 与 `metadata.resourceVersion` 非空（patch 前置条件用）；
 4. `spec` 与“完整预期旧 spec”（target 仅 component 表达式、ingress 来源为本项目、
-   端口 TCP 3306/6379、policyTypes 仅 Ingress）或“完整预期窄 spec”**精确相等**；
-5. 清单外任何仍可能命中依赖 Pod 且有 ingress 规则的策略（含空 podSelector、
-   component 选择 mysql/redis、任意 project-id 约束、`manao-dep-netpol-*` 名称）都会被
-   报告为 `OUT_OF_SCOPE` 并阻止完成判定，而不是偷偷扩大清单。
+   端口 TCP 3306/6379、policyTypes 仅 Ingress）或“完整预期窄 spec”**精确相等**，且
+   比较是大小写敏感的 canonical JSON 比较（不允许多余字段）；
+5. 清单外策略按 **fail-closed** 处理：只有能**证明**其 podSelector 排除全部依赖 Pod 时才
+   记为 `IGNORED`。依赖 Pod 已知标签是 `manao.poc4/project-id`（任意项目值）、
+   `manao.poc4/component ∈ {mysql,redis}`、`app.kubernetes.io/managed-by=manao-poc4-backend`。
+   可证明排除的情形：component 的等值/In 值不含 mysql、redis；component NotIn **同时**
+   包含 mysql 与 redis；component DoesNotExist；managed-by 等值/In 值不是本平台；managed-by
+   NotIn 含本平台；managed-by DoesNotExist；project-id DoesNotExist。没有 ingress 规则或
+   policyTypes 明确不含 Ingress 的策略也不放行。除此之外（空 selector、任意 project-id
+   约束、managed-by=本平台或 Exists、未知 label key/operator 等）一律 `OUT_OF_SCOPE` 并
+   阻止完成判定，而不是偷偷扩大清单。
 
 Apply 时对每条 `NEEDS_MIGRATION`：
 
 1. 先把修改前策略对象写入 `<OutputDirectory>/backup/<policy>.json`（只有 NetworkPolicy）；
 2. 发送 JSON Patch：`test /metadata/uid`、`test /metadata/resourceVersion`、
    `replace /spec/podSelector`——**只替换 podSelector**，不动 ingress、来源、端口、
-   labels 或名称；
+   labels 或名称。patch 负载是紧凑 JSON，作为 `--patch` **参数数组**直接传给 kubectl
+   （不写临时 patch 文件、不拼接 shell 字符串）；
 3. 任一 test 前置条件失败（并发修改）→ 立即停止并以 `3` 退出，不重试、不继续后续策略；
-4. 成功后回读该策略，验证 UID 不变、spec 等于窄契约；失败同样以 `3` 退出；
-5. 全部完成后写 `<OutputDirectory>/apply-report.json`（context/namespace/每个项目的
-   状态与 uid/resourceVersion）。
+4. 成功后回读该策略，验证 UID 不变、spec 等于窄契约、selector 只为本项目；失败同样
+   以 `3` 退出，不重试；
+5. 全部完成后写 `<OutputDirectory>/apply-report.json`：context/namespace、顶层状态/
+   appliedCount，以及每个项目的**最终状态**（`PATCHED` / `ALREADY_FIXED` / `FAILED` /
+   `NOT_ATTEMPTED`）与 **before/after** `uid` 和 `resourceVersion`；已迁移项目不会再
+   报告为 `NEEDS_MIGRATION` 或旧的 resourceVersion。
 
 ## 6. 零遗漏完成判定与旧策略叠加
 
@@ -135,10 +151,15 @@ pwsh -NoProfile -File poc4/deploy/multi-account/repair-dependency-policy.test.ps
 ```
 
 测试用本地生成的 `mock-kubectl.cmd` 读取 JSON fixture 并记录每次调用，完全不接触
-集群。覆盖：默认预览不写集群/不写文件、旧/新 selector 识别、清单外宽策略拒绝、
-未知 spec 拒绝、清单内缺失策略拒绝、UID/resourceVersion 冲突中止（不重试/不回读）、
-already-fixed 幂等、备份仅包含 NetworkPolicy、patch 仅替换 podSelector 且带 uid/rv
-测试、patch 后回读。
+集群。覆盖（15 个 fixture 场景）：默认预览不写集群/不写文件（TEMP 指向文件时也必须成功、
+空 TEMP 不残留文件、OutputDirectory 不创建）、旧/新 selector 识别、清单外宽策略拒绝、
+fail-closed 复现（managed-by=本平台、component NotIn [workspace]、未知 label 必须拒绝；
+component=web、component NotIn [mysql,redis]、其它 manager、无 ingress 规则可忽略）、
+未知 spec 拒绝、清单内缺失策略拒绝、ProjectsFile 严格校验（非数组/数字字段/大写/末尾
+连字符/null/重复）、大小写敏感身份与 spec、UID 与 resourceVersion 冲突分别模拟（含两条
+候选时首条失败即停止、不触碰第二条、不重试、不回读、失败报告状态）、already-fixed 幂等、
+备份仅包含 NetworkPolicy、patch 只含 3 个操作且 test 的 uid/resourceVersion 值与审阅对象
+完全一致、patch 后回读、回读 UID/spec/GET 失败负例、apply report 的最终状态与 before/after 值。
 
 退出码 `0` 表示全部 fixture 场景通过，非 0 表示失败。脚本兼容 Windows PowerShell 5.1
 与 PowerShell 7；当前机器若没有 `pwsh`，可用

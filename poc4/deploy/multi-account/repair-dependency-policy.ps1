@@ -15,12 +15,15 @@
   -Apply) patches only spec.podSelector with a JSON Patch whose test operations pin
   /metadata/uid and /metadata/resourceVersion.
 
-  The default mode is a read-only preview: it prints the classification and writes
-  nothing to the cluster and nothing to disk. Completion is refused (exit code 2) when a
-  reviewed project's policy is missing, when any policy cannot be proven to match the
-  reviewed legacy contract, or when the namespace still contains a broad policy outside
-  the reviewed project list. The script never creates missing policies, never widens the
-  reviewed list, never retries a rejected patch and never rolls anything back.
+  The default mode is a read-only preview: it prints the classification and performs no
+  cluster writes and no filesystem writes (it uses no temporary files at all). Out-of-scope
+  policies are fail-closed: a policy outside the reviewed list is ignored only when a
+  selector constraint provably excludes every dependency pod; otherwise it blocks
+  completion. Completion is refused (exit code 2) when a reviewed project's policy is
+  missing, when any policy cannot be proven to match the reviewed legacy contract, or when
+  the namespace still contains a broad policy outside the reviewed project list. The
+  script never creates missing policies, never widens the reviewed list, never retries a
+  rejected patch and never rolls anything back.
 
 .PARAMETER Context
   Explicit kubectl context. Required; every cluster call passes it as --context.
@@ -30,14 +33,17 @@
   never uses -A / --all-namespaces.
 
 .PARAMETER ProjectsFile
-  Path to a reviewed JSON array of {ownerId, projectId} entries. Every entry is verified:
-  the dependency policy must exist, carry the platform managed-by/project/component
-  labels, carry a UID, and match the expected legacy spec exactly.
+  Path to a reviewed top-level JSON array of {ownerId, projectId} objects. ownerId and
+  projectId must be JSON strings; projectId must be an exact lowercase DNS label of at most
+  63 characters (no trailing hyphen). Every entry is verified: the dependency policy must
+  exist, carry the platform managed-by/project/component labels, carry a UID, and match the
+  expected legacy spec exactly (case-sensitively).
 
 .PARAMETER OutputDirectory
   Directory for apply artifacts. Only used with -Apply: <dir>/backup/<policy>.json holds
   one NetworkPolicy per patched policy (never Secrets) and <dir>/apply-report.json holds
-  the summary. A preview does not create this directory.
+  the per-item before/after status, UID and resourceVersion values. A preview does not
+  create this directory.
 
 .PARAMETER Apply
   Apply the migration. Without it the script is a read-only preview that performs no
@@ -95,12 +101,28 @@ function Assert-NonEmptyText {
     return $Value.Trim()
 }
 
+# Exact, ordinal JSON property access. PowerShell's normal property accelerator is
+# case-insensitive; identity and spec checks must not be.
 function Get-JsonProperty {
     param($Object, [string]$Name)
     if ($null -eq $Object) { return $null }
-    $property = $Object.PSObject.Properties[$Name]
-    if ($null -eq $property) { return $null }
-    return $property.Value
+    if ($Object -is [System.Collections.IDictionary]) {
+        $key = $null
+        foreach ($candidate in @($Object.Keys)) {
+            if ([string]::Equals([string]$candidate, $Name, [System.StringComparison]::Ordinal)) {
+                $key = $candidate
+                break
+            }
+        }
+        if ($null -eq $key) { return $null }
+        return $Object[$key]
+    }
+    foreach ($property in @($Object.PSObject.Properties)) {
+        if ([string]::Equals($property.Name, $Name, [System.StringComparison]::Ordinal)) {
+            return $property.Value
+        }
+    }
+    return $null
 }
 
 function Get-JsonString {
@@ -113,7 +135,14 @@ function Get-JsonString {
 function Get-JsonPropertyNames {
     param($Object)
     if ($null -eq $Object) { return @() }
-    return @($Object.PSObject.Properties.Name)
+    if ($Object -is [System.Collections.IDictionary]) {
+        $names = @()
+        foreach ($key in @($Object.Keys)) { $names += [string]$key }
+        return $names
+    }
+    $names = @()
+    foreach ($property in @($Object.PSObject.Properties)) { $names += $property.Name }
+    return $names
 }
 
 function Write-Utf8NoBom {
@@ -122,22 +151,9 @@ function Write-Utf8NoBom {
     [System.IO.File]::WriteAllText($Path, $Text, $encoding)
 }
 
-function Read-JsonFile {
-    param([string]$Path, [string]$Description)
-    $resolved = Resolve-Path -LiteralPath $Path -ErrorAction Stop
-    $raw = [System.IO.File]::ReadAllText($resolved.Path)
-    if ($raw.Trim().Length -eq 0) {
-        throw "$Description is empty: $Path"
-    }
-    try {
-        return ($raw | ConvertFrom-Json)
-    } catch {
-        throw "$Description is not valid JSON ($Path): $($_.Exception.Message)"
-    }
-}
-
-# Deterministic JSON used for strict structural comparison: object properties are sorted,
-# array order is preserved and scalars keep their JSON type.
+# Deterministic case-sensitive JSON used for strict structural comparison: object
+# properties are sorted with an ordinal sort, array order is preserved and scalars keep
+# their JSON type.
 function ConvertTo-CanonicalJson {
     param($Value)
     if ($null -eq $Value) { return 'null' }
@@ -151,14 +167,16 @@ function ConvertTo-CanonicalJson {
     }
     if ($Value -is [System.Collections.IDictionary]) {
         $parts = New-Object System.Collections.Generic.List[string]
-        foreach ($key in @($Value.Keys | Sort-Object)) {
+        foreach ($key in @($Value.Keys | Sort-Object -CaseSensitive)) {
             $parts.Add(((ConvertTo-Json -InputObject ([string]$key) -Compress) + ':' + (ConvertTo-CanonicalJson -Value $Value[$key])))
         }
         return '{' + ($parts -join ',') + '}'
     }
     if ($Value -is [System.Management.Automation.PSCustomObject]) {
         $parts = New-Object System.Collections.Generic.List[string]
-        foreach ($name in @($Value.PSObject.Properties.Name | Sort-Object)) {
+        $names = @()
+        foreach ($property in @($Value.PSObject.Properties)) { $names += $property.Name }
+        foreach ($name in @($names | Sort-Object -CaseSensitive)) {
             $parts.Add(((ConvertTo-Json -InputObject ([string]$name) -Compress) + ':' + (ConvertTo-CanonicalJson -Value $Value.PSObject.Properties[$name].Value)))
         }
         return '{' + ($parts -join ',') + '}'
@@ -172,7 +190,9 @@ function ConvertTo-CanonicalJson {
 }
 
 # ---------------------------------------------------------------------------
-# kubectl access (explicit context/namespace on every cluster call)
+# kubectl access (explicit context/namespace on every cluster call).
+# Everything is captured in memory: the preview must not create files, not even
+# temporary stderr files.
 # ---------------------------------------------------------------------------
 
 function Invoke-Kubectl {
@@ -184,33 +204,38 @@ function Invoke-Kubectl {
     if (-not [string]::IsNullOrWhiteSpace($env:MANAO_REPAIR_KUBECTL)) {
         $kubectl = $env:MANAO_REPAIR_KUBECTL
     }
-    $stderrFile = [System.IO.Path]::GetTempFileName()
     $previousErrorActionPreference = $ErrorActionPreference
+    $raw = @()
     try {
-        # Windows PowerShell 5.1 turns redirected native stderr into a terminating
-        # NativeCommandError under ErrorActionPreference=Stop; capture the exit code and
-        # stderr file explicitly instead.
+        # Windows PowerShell 5.1 turns redirected native stderr into ErrorRecords; keep
+        # ErrorActionPreference at Continue so a failing command is classified by us
+        # instead of aborting the script through a NativeCommandError.
         $ErrorActionPreference = 'Continue'
-        $output = & $kubectl @KubectlArguments 2> $stderrFile
+        $raw = & $kubectl @KubectlArguments 2>&1
         $exitCode = $LASTEXITCODE
-        $ErrorActionPreference = $previousErrorActionPreference
-        $outputText = ($output | Out-String)
-        $stderrText = ''
-        if (Test-Path -LiteralPath $stderrFile) {
-            $stderrText = [System.IO.File]::ReadAllText($stderrFile)
-        }
-        if ($exitCode -ne 0 -and -not $AllowFailure) {
-            $command = (@($KubectlArguments) -join ' ')
-            throw "kubectl $command failed (exit $exitCode): $($stderrText.Trim())"
-        }
-        return [pscustomobject]@{
-            ExitCode  = $exitCode
-            Output    = $outputText
-            ErrorText = $stderrText
-        }
     } finally {
         $ErrorActionPreference = $previousErrorActionPreference
-        Remove-Item -LiteralPath $stderrFile -Force -ErrorAction SilentlyContinue
+    }
+    $stdoutBuilder = New-Object System.Text.StringBuilder
+    $stderrBuilder = New-Object System.Text.StringBuilder
+    foreach ($item in @($raw)) {
+        if ($null -eq $item) { continue }
+        if ($item -is [System.Management.Automation.ErrorRecord]) {
+            [void]$stderrBuilder.AppendLine([string]$item)
+        } else {
+            [void]$stdoutBuilder.AppendLine([string]$item)
+        }
+    }
+    $outputText = $stdoutBuilder.ToString()
+    $stderrText = $stderrBuilder.ToString()
+    if ($exitCode -ne 0 -and -not $AllowFailure) {
+        $command = (@($KubectlArguments) -join ' ')
+        throw "kubectl $command failed (exit $exitCode): $($stderrText.Trim())"
+    }
+    return [pscustomobject]@{
+        ExitCode  = $exitCode
+        Output    = $outputText
+        ErrorText = $stderrText
     }
 }
 
@@ -228,7 +253,7 @@ function Assert-KubectlContextConfigured {
     # --context/--namespace pair so every kubectl invocation has an explicit scope.
     $result = Invoke-ClusterKubectl -KubectlArguments @('config', 'get-contexts', '-o', 'name')
     $contexts = @($result.Output -split "\r?\n" | ForEach-Object { $_.Trim() } | Where-Object { $_.Length -gt 0 })
-    if ($contexts -notcontains $script:ContextName) {
+    if ($contexts -cnotcontains $script:ContextName) {
         throw "kubectl context '$($script:ContextName)' is not configured (available: $($contexts -join ', '))"
     }
 }
@@ -246,7 +271,7 @@ function Get-JsonFromKubectl {
 function Get-NamespaceNetworkPolicies {
     $parsed = Get-JsonFromKubectl -KubectlArguments @('get', 'networkpolicies', '-o', 'json')
     $kind = Get-JsonString $parsed 'kind'
-    if ($null -ne $kind -and $kind -ne 'NetworkPolicyList') {
+    if ($null -ne $kind -and $kind -cne 'NetworkPolicyList') {
         throw "kubectl get networkpolicies returned unexpected kind '$kind'"
     }
     $items = Get-JsonProperty $parsed 'items'
@@ -304,7 +329,7 @@ function Test-PolicyMatchesSpec {
     if ($null -eq $spec) { return $false }
     $actual = ConvertTo-CanonicalJson -Value $spec
     $expected = ConvertTo-CanonicalJson -Value (New-ExpectedPolicySpec -ProjectId $ProjectId -Narrowed $Narrowed)
-    return ($actual -eq $expected)
+    return ($actual -ceq $expected)
 }
 
 function Get-PolicyIdentityMismatchReasons {
@@ -317,11 +342,11 @@ function Get-PolicyIdentityMismatchReasons {
     }
     $expectedName = $script:PolicyNamePrefix + $ProjectId
     $actualName = Get-JsonString $metadata 'name'
-    if ($actualName -ne $expectedName) {
+    if ($actualName -cne $expectedName) {
         $reasons.Add("metadata.name is '$actualName', expected '$expectedName'")
     }
     $actualNamespace = Get-JsonString $metadata 'namespace'
-    if ($actualNamespace -ne $script:NamespaceName) {
+    if ($actualNamespace -cne $script:NamespaceName) {
         $reasons.Add("metadata.namespace is '$actualNamespace', expected '$($script:NamespaceName)'")
     }
     $uid = Get-JsonString $metadata 'uid'
@@ -334,15 +359,15 @@ function Get-PolicyIdentityMismatchReasons {
     }
     $labels = Get-JsonProperty $metadata 'labels'
     $managedBy = Get-JsonString $labels 'app.kubernetes.io/managed-by'
-    if ($managedBy -ne $script:ManagedByLabelValue) {
+    if ($managedBy -cne $script:ManagedByLabelValue) {
         $reasons.Add("label app.kubernetes.io/managed-by is '$managedBy', expected '$($script:ManagedByLabelValue)'")
     }
     $projectLabel = Get-JsonString $labels $script:ProjectIdLabel
-    if ($projectLabel -ne $ProjectId) {
+    if ($projectLabel -cne $ProjectId) {
         $reasons.Add("label $($script:ProjectIdLabel) is '$projectLabel', expected '$ProjectId'")
     }
     $componentLabel = Get-JsonString $labels $script:ComponentLabel
-    if ($componentLabel -ne 'dependencies') {
+    if ($componentLabel -cne 'dependencies') {
         $reasons.Add("label $($script:ComponentLabel) is '$componentLabel', expected 'dependencies'")
     }
     return $reasons.ToArray()
@@ -359,64 +384,133 @@ function Get-PolicySpecMismatchReasons {
     $actualPodSelector = ConvertTo-CanonicalJson -Value (Get-JsonProperty $spec 'podSelector')
     $legacySelector = ConvertTo-CanonicalJson -Value (New-ExpectedPodSelector -ProjectId $ProjectId -Narrowed $false)
     $narrowedSelector = ConvertTo-CanonicalJson -Value (New-ExpectedPodSelector -ProjectId $ProjectId -Narrowed $true)
-    if ($actualPodSelector -ne $legacySelector -and $actualPodSelector -ne $narrowedSelector) {
+    if ($actualPodSelector -cne $legacySelector -and $actualPodSelector -cne $narrowedSelector) {
         $reasons.Add('spec.podSelector is neither the reviewed legacy selector nor the narrowed selector')
     }
     $actualPolicyTypes = ConvertTo-CanonicalJson -Value (Get-JsonProperty $spec 'policyTypes')
-    if ($actualPolicyTypes -ne (ConvertTo-CanonicalJson -Value @('Ingress'))) {
+    if ($actualPolicyTypes -cne (ConvertTo-CanonicalJson -Value @('Ingress'))) {
         $reasons.Add('spec.policyTypes is not exactly [Ingress]')
     }
     $actualIngress = ConvertTo-CanonicalJson -Value (Get-JsonProperty $spec 'ingress')
-    $expectedIngress = ConvertTo-CanonicalJson -Value (Get-JsonProperty (New-ExpectedPolicySpec -ProjectId $ProjectId -Narrowed $false) 'ingress')
-    if ($actualIngress -ne $expectedIngress) {
+    $expectedIngress = ConvertTo-CanonicalJson -Value ((New-ExpectedPolicySpec -ProjectId $ProjectId -Narrowed $false)['ingress'])
+    if ($actualIngress -cne $expectedIngress) {
         $reasons.Add('spec.ingress does not match the reviewed same-project source and 3306/6379 ports')
     }
-    $actualNames = @(Get-JsonPropertyNames $spec | Sort-Object)
+    $actualNames = @(Get-JsonPropertyNames $spec | Sort-Object -CaseSensitive)
     $expectedNames = @('ingress', 'podSelector', 'policyTypes')
-    if (($actualNames -join ',') -ne ($expectedNames -join ',')) {
+    if (($actualNames -join ',') -cne ($expectedNames -join ',')) {
         $reasons.Add("spec has unexpected fields: $($actualNames -join ',')")
     }
     return $reasons.ToArray()
 }
 
-# A policy outside the reviewed list is a completion blocker when it can still govern
-# dependency pods and admit ingress. Any project-id constraint selects that project's pods
-# (including its MySQL/Redis pods), and an empty selector selects every pod.
+# A dependency pod is known to carry: manao.poc4/project-id = <any project>,
+# manao.poc4/component in {mysql, redis}, and app.kubernetes.io/managed-by =
+# manao-poc4-backend. Other labels are unknown. A single selector constraint proves that
+# a policy excludes every dependency pod only for the exact cases below; anything else is
+# treated as possibly matching (fail-closed).
+function Test-LabelConstraintExcludesDependencyPods {
+    param([string]$Key, [string]$Operator, $Values)
+    if ($Key -ceq $script:ComponentLabel) {
+        if ($Operator -ceq 'In') {
+            foreach ($value in @($Values)) {
+                if ([string]$value -ceq 'mysql' -or [string]$value -ceq 'redis') { return $false }
+            }
+            return $true
+        }
+        if ($Operator -ceq 'NotIn') {
+            $coversMysql = $false
+            $coversRedis = $false
+            foreach ($value in @($Values)) {
+                if ([string]$value -ceq 'mysql') { $coversMysql = $true }
+                if ([string]$value -ceq 'redis') { $coversRedis = $true }
+            }
+            return ($coversMysql -and $coversRedis)
+        }
+        if ($Operator -ceq 'Exists') { return $false }
+        if ($Operator -ceq 'DoesNotExist') { return $true }
+        return $false
+    }
+    if ($Key -ceq 'app.kubernetes.io/managed-by') {
+        if ($Operator -ceq 'In') {
+            foreach ($value in @($Values)) {
+                if ([string]$value -ceq $script:ManagedByLabelValue) { return $false }
+            }
+            return $true
+        }
+        if ($Operator -ceq 'NotIn') {
+            foreach ($value in @($Values)) {
+                if ([string]$value -ceq $script:ManagedByLabelValue) { return $true }
+            }
+            return $false
+        }
+        if ($Operator -ceq 'Exists') { return $false }
+        if ($Operator -ceq 'DoesNotExist') { return $true }
+        return $false
+    }
+    if ($Key -ceq $script:ProjectIdLabel) {
+        return ($Operator -ceq 'DoesNotExist')
+    }
+    # Unknown label key: cannot prove that dependency pods are excluded.
+    return $false
+}
+
+function Test-SelectorProvablyExcludesDependencyPods {
+    param($PodSelector)
+    if ($null -eq $PodSelector) { return $false }
+    $matchLabels = Get-JsonProperty $PodSelector 'matchLabels'
+    $matchExpressions = Get-JsonProperty $PodSelector 'matchExpressions'
+    if ($null -ne $matchLabels) {
+        foreach ($labelName in @(Get-JsonPropertyNames $matchLabels)) {
+            $labelValue = Get-JsonProperty $matchLabels $labelName
+            if ($null -eq $labelValue) { continue }
+            if (Test-LabelConstraintExcludesDependencyPods -Key $labelName -Operator 'In' -Values @([string]$labelValue)) {
+                return $true
+            }
+        }
+    }
+    if ($null -ne $matchExpressions) {
+        foreach ($requirement in @($matchExpressions)) {
+            $key = Get-JsonString $requirement 'key'
+            $operator = Get-JsonString $requirement 'operator'
+            if ([string]::IsNullOrEmpty($key) -or [string]::IsNullOrEmpty($operator)) { continue }
+            $valuesValue = Get-JsonProperty $requirement 'values'
+            $values = @()
+            if ($null -ne $valuesValue) { $values = @($valuesValue) }
+            if (Test-LabelConstraintExcludesDependencyPods -Key $key -Operator $operator -Values $values) {
+                return $true
+            }
+        }
+    }
+    return $false
+}
+
+# An out-of-scope policy is a completion blocker when it can still admit ingress to
+# dependency pods. Policies with no ingress rules (or with policyTypes that exclude
+# Ingress) cannot allow dependency ingress. Otherwise the policy blocks unless its
+# pod selector provably excludes every dependency pod (fail-closed).
 function Test-PolicyCanStillAllowDependencyIngress {
     param($Policy)
     $spec = Get-JsonProperty $Policy 'spec'
+    if ($null -eq $spec) {
+        # A NetworkPolicy with no spec selects every pod and has no rules, but fail closed.
+        return $true
+    }
+    $policyTypesValue = Get-JsonProperty $spec 'policyTypes'
+    if ($null -ne $policyTypesValue) {
+        $policyTypes = @($policyTypesValue)
+        if ($policyTypes.Count -gt 0 -and -not ($policyTypes -ccontains 'Ingress')) {
+            return $false
+        }
+    }
     $ingressValue = Get-JsonProperty $spec 'ingress'
     if ($null -eq $ingressValue) { return $false }
     $ingress = @($ingressValue)
     if ($ingress.Count -eq 0) { return $false }
     $podSelector = Get-JsonProperty $spec 'podSelector'
     if ($null -eq $podSelector) { return $true }
-    $matchLabels = Get-JsonProperty $podSelector 'matchLabels'
-    $matchExpressions = Get-JsonProperty $podSelector 'matchExpressions'
-    $labelCount = 0
-    if ($null -ne $matchLabels) { $labelCount = @(Get-JsonPropertyNames $matchLabels).Count }
-    $expressionCount = 0
-    if ($null -ne $matchExpressions) { $expressionCount = @($matchExpressions).Count }
-    if ($labelCount -eq 0 -and $expressionCount -eq 0) { return $true }
-    if ($null -ne $matchLabels) {
-        $component = Get-JsonString $matchLabels $script:ComponentLabel
-        if ($component -eq 'mysql' -or $component -eq 'redis') { return $true }
-        $project = Get-JsonString $matchLabels $script:ProjectIdLabel
-        if (-not [string]::IsNullOrWhiteSpace($project)) { return $true }
-    }
-    if ($null -ne $matchExpressions) {
-        foreach ($requirement in @($matchExpressions)) {
-            $key = Get-JsonString $requirement 'key'
-            $valuesValue = Get-JsonProperty $requirement 'values'
-            $values = @()
-            if ($null -ne $valuesValue) { $values = @($valuesValue) }
-            if ($key -eq $script:ComponentLabel -and ($values.Count -eq 0 -or $values -contains 'mysql' -or $values -contains 'redis')) {
-                return $true
-            }
-            if ($key -eq $script:ProjectIdLabel) { return $true }
-        }
-    }
-    return $false
+    if (Test-SelectorProvablyExcludesDependencyPods -PodSelector $podSelector) { return $false }
+    return $true
 }
 
 # ---------------------------------------------------------------------------
@@ -425,29 +519,54 @@ function Test-PolicyCanStillAllowDependencyIngress {
 
 function Read-ReviewedProjects {
     param([string]$Path)
-    $parsed = Read-JsonFile -Path $Path -Description 'ProjectsFile'
+    $resolved = Resolve-Path -LiteralPath $Path -ErrorAction Stop
+    $raw = [System.IO.File]::ReadAllText($resolved.Path)
+    $trimmed = $raw.Trim()
+    if ($trimmed.Length -eq 0) {
+        throw 'ProjectsFile is empty'
+    }
+    if (-not $trimmed.StartsWith('[', [System.StringComparison]::Ordinal)) {
+        throw 'ProjectsFile must be a top-level JSON array of {ownerId, projectId} objects'
+    }
+    $parsed = $null
+    try {
+        $parsed = $raw | ConvertFrom-Json
+    } catch {
+        throw "ProjectsFile is not valid JSON ($Path): $($_.Exception.Message)"
+    }
     $entries = @($parsed)
     if ($entries.Count -eq 0) {
         throw 'ProjectsFile must contain at least one reviewed {ownerId, projectId} entry'
     }
-    $seen = @{}
+    $seen = [System.Collections.Generic.Dictionary[string,bool]]::new([System.StringComparer]::Ordinal)
     $projects = New-Object System.Collections.Generic.List[object]
     foreach ($entry in $entries) {
-        if ($null -eq $entry) { throw 'ProjectsFile contains a null entry' }
-        $ownerId = Get-JsonString $entry 'ownerId'
-        $projectId = Get-JsonString $entry 'projectId'
-        if ([string]::IsNullOrWhiteSpace($ownerId)) {
+        if ($null -eq $entry) {
+            throw 'ProjectsFile contains a null entry'
+        }
+        if (-not ($entry -is [System.Management.Automation.PSCustomObject])) {
+            throw 'ProjectsFile entries must be JSON objects with ownerId and projectId'
+        }
+        $ownerValue = Get-JsonProperty $entry 'ownerId'
+        $projectValue = Get-JsonProperty $entry 'projectId'
+        if (-not ($ownerValue -is [string])) {
+            throw 'ProjectsFile entry ownerId must be a JSON string'
+        }
+        if (-not ($projectValue -is [string])) {
+            throw 'ProjectsFile entry projectId must be a JSON string'
+        }
+        $ownerId = $ownerValue.Trim()
+        $projectId = $projectValue.Trim()
+        if ($ownerId.Length -eq 0) {
             throw 'ProjectsFile entry is missing ownerId'
         }
-        if ([string]::IsNullOrWhiteSpace($projectId)) {
+        if ($projectId.Length -eq 0) {
             throw 'ProjectsFile entry is missing projectId'
         }
-        $ownerId = $ownerId.Trim()
-        $projectId = $projectId.Trim()
-        # Project ids are UUID strings and label values; refuse anything that is not a
-        # safe lowercase DNS label before it is concatenated into a resource name.
-        if ($projectId -notmatch '^[a-z0-9][a-z0-9-]{0,99}$') {
-            throw "ProjectsFile projectId '$projectId' is not a safe lowercase DNS label"
+        # Project ids are UUID strings used as label values and resource-name suffixes:
+        # require an exact lowercase DNS label of at most 63 characters, no trailing hyphen.
+        if ($projectId -cnotmatch '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$') {
+            throw "ProjectsFile projectId '$projectId' is not a safe lowercase DNS label (at most 63 characters, no trailing hyphen)"
         }
         if ($seen.ContainsKey($projectId)) {
             throw "ProjectsFile contains duplicate projectId '$projectId'"
@@ -466,7 +585,7 @@ function Get-PolicyClassification {
     param($Projects, $Policies)
     $projectIds = @($Projects | ForEach-Object { $_.ProjectId })
     $expectedNames = @($projectIds | ForEach-Object { $script:PolicyNamePrefix + $_ })
-    $byName = @{}
+    $byName = [System.Collections.Generic.Dictionary[string,object]]::new([System.StringComparer]::Ordinal)
     foreach ($policy in $Policies) {
         $name = Get-JsonString (Get-JsonProperty $policy 'metadata') 'name'
         if ([string]::IsNullOrWhiteSpace($name)) {
@@ -557,8 +676,8 @@ function Get-PolicyClassification {
 
     foreach ($policy in $Policies) {
         $name = Get-JsonString (Get-JsonProperty $policy 'metadata') 'name'
-        if ($expectedNames -contains $name) { continue }
-        if ($name.StartsWith($script:PolicyNamePrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+        if ($expectedNames -ccontains $name) { continue }
+        if ($name.StartsWith($script:PolicyNamePrefix, [System.StringComparison]::Ordinal)) {
             $outOfScope.Add([pscustomobject]@{
                 PolicyName = $name
                 Reasons    = @('dependency policy name is outside the reviewed project list (zero-omission check)')
@@ -585,7 +704,7 @@ function Get-PolicyClassification {
 function Test-ClassificationIsComplete {
     param($Classification)
     foreach ($result in @($Classification.Results)) {
-        if ($result.Status -eq 'MISSING' -or $result.Status -eq 'IDENTITY_MISMATCH' -or $result.Status -eq 'UNKNOWN_SPEC') {
+        if ($result.Status -ceq 'MISSING' -or $result.Status -ceq 'IDENTITY_MISMATCH' -or $result.Status -ceq 'UNKNOWN_SPEC') {
             return $false
         }
     }
@@ -602,7 +721,7 @@ function Write-PolicyBackup {
     $metadata = Get-JsonProperty $Policy 'metadata'
     $name = Get-JsonString $metadata 'name'
     $kind = Get-JsonString $Policy 'kind'
-    if ($kind -ne 'NetworkPolicy') {
+    if ($kind -cne 'NetworkPolicy') {
         throw "refusing to back up '$name': object kind is '$kind', not NetworkPolicy"
     }
     if (-not (Test-Path -LiteralPath $BackupDirectory)) {
@@ -627,25 +746,22 @@ function Invoke-PolicyPatch {
         [ordered]@{ op = 'test'; path = '/metadata/resourceVersion'; value = $resourceVersion },
         [ordered]@{ op = 'replace'; path = '/spec/podSelector'; value = (New-ExpectedPodSelector -ProjectId $ProjectId -Narrowed $true) }
     )
-    $patchFile = [System.IO.Path]::GetTempFileName()
-    try {
-        Write-Utf8NoBom -Path $patchFile -Text (ConvertTo-Json -InputObject $operations -Depth 30 -Compress)
-        $result = Invoke-ClusterKubectl -KubectlArguments @(
-            'patch', 'networkpolicy', $name, '--type=json', '--patch-file', $patchFile
-        ) -AllowFailure
-        if ($result.ExitCode -ne 0) {
-            $message = $result.ErrorText.Trim()
-            if ($message.Length -eq 0) { $message = $result.Output.Trim() }
-            return [pscustomobject]@{
-                Ok       = $false
-                Conflict = $true
-                Message  = "patch rejected (uid/resourceVersion test failed or concurrent change): $message"
-            }
+    # No temporary patch file: pass the compact JSON as one argument in the native
+    # argument array (never assembled into a shell string).
+    $patchJson = ConvertTo-Json -InputObject $operations -Depth 30 -Compress
+    $result = Invoke-ClusterKubectl -KubectlArguments @(
+        'patch', 'networkpolicy', $name, '--type=json', '--patch', $patchJson
+    ) -AllowFailure
+    if ($result.ExitCode -ne 0) {
+        $message = $result.ErrorText.Trim()
+        if ($message.Length -eq 0) { $message = $result.Output.Trim() }
+        return [pscustomobject]@{
+            Ok       = $false
+            Conflict = $true
+            Message  = "patch rejected (uid/resourceVersion test failed or concurrent change): $message"
         }
-        return [pscustomobject]@{ Ok = $true; Conflict = $false; Message = '' }
-    } finally {
-        Remove-Item -LiteralPath $patchFile -Force -ErrorAction SilentlyContinue
     }
+    return [pscustomobject]@{ Ok = $true; Conflict = $false; Message = '' }
 }
 
 function Test-MigratedPolicyReadBack {
@@ -653,34 +769,86 @@ function Test-MigratedPolicyReadBack {
     try {
         $readBack = Get-NamespaceNetworkPolicy -Name $Name
     } catch {
-        return [pscustomobject]@{ Ok = $false; Message = $_.Exception.Message }
+        return [pscustomobject]@{ Ok = $false; Message = $_.Exception.Message; Uid = $null; ResourceVersion = $null }
     }
     $metadata = Get-JsonProperty $readBack 'metadata'
     $uid = Get-JsonString $metadata 'uid'
-    if ($uid -ne $ExpectedUid) {
-        return [pscustomobject]@{ Ok = $false; Message = "read-back metadata.uid '$uid' differs from the patched object '$ExpectedUid'" }
+    $resourceVersion = Get-JsonString $metadata 'resourceVersion'
+    if ($uid -cne $ExpectedUid) {
+        return [pscustomobject]@{
+            Ok = $false
+            Message = "read-back metadata.uid '$uid' differs from the patched object '$ExpectedUid'"
+            Uid = $uid
+            ResourceVersion = $resourceVersion
+        }
     }
     if (-not (Test-PolicyMatchesSpec -Policy $readBack -ProjectId $ProjectId -Narrowed $true)) {
-        return [pscustomobject]@{ Ok = $false; Message = 'read-back spec does not equal the narrowed dependency policy contract' }
+        return [pscustomobject]@{
+            Ok = $false
+            Message = 'read-back spec does not equal the narrowed dependency policy contract'
+            Uid = $uid
+            ResourceVersion = $resourceVersion
+        }
     }
-    return [pscustomobject]@{ Ok = $true; Message = '' }
+    return [pscustomobject]@{ Ok = $true; Message = ''; Uid = $uid; ResourceVersion = $resourceVersion }
+}
+
+function New-ReportEntries {
+    param($ClassificationResults)
+    $entries = New-Object System.Collections.Generic.List[object]
+    foreach ($result in @($ClassificationResults)) {
+        $status = $result.Status
+        if ($status -ceq 'NEEDS_MIGRATION') { $status = 'PENDING' }
+        $entries.Add([pscustomobject]@{
+            OwnerId               = $result.OwnerId
+            ProjectId             = $result.ProjectId
+            PolicyName            = $result.PolicyName
+            Status                = $status
+            BeforeUid             = $result.Uid
+            BeforeResourceVersion = $result.ResourceVersion
+            AfterUid              = $null
+            AfterResourceVersion  = $null
+            Reasons               = @($result.Reasons)
+        })
+    }
+    return $entries.ToArray()
+}
+
+function Get-ReportEntry {
+    param($Entries, [string]$PolicyName)
+    foreach ($entry in @($Entries)) {
+        if ([string]::Equals($entry.PolicyName, $PolicyName, [System.StringComparison]::Ordinal)) {
+            return $entry
+        }
+    }
+    return $null
 }
 
 function Write-ApplyReport {
-    param([string]$Status, [int]$AppliedCount, $Results, [string]$Directory)
+    param([string]$Status, [int]$AppliedCount, $Entries, [string]$Directory)
     if (-not (Test-Path -LiteralPath $Directory)) {
         New-Item -ItemType Directory -Force -Path $Directory | Out-Null
     }
     $reportResults = @()
-    foreach ($result in @($Results)) {
+    foreach ($entry in @($Entries)) {
+        $entryStatus = $entry.Status
+        if ($entryStatus -ceq 'PENDING') { $entryStatus = 'NOT_ATTEMPTED' }
+        $afterUid = $entry.AfterUid
+        $afterResourceVersion = $entry.AfterResourceVersion
+        if ($entryStatus -ceq 'ALREADY_FIXED') {
+            $afterUid = $entry.BeforeUid
+            $afterResourceVersion = $entry.BeforeResourceVersion
+        }
         $reportResults += [ordered]@{
-            ownerId         = $result.OwnerId
-            projectId       = $result.ProjectId
-            policyName      = $result.PolicyName
-            status          = $result.Status
-            uid             = $result.Uid
-            resourceVersion = $result.ResourceVersion
-            reasons         = @($result.Reasons)
+            ownerId               = $entry.OwnerId
+            projectId             = $entry.ProjectId
+            policyName            = $entry.PolicyName
+            status                = $entryStatus
+            beforeUid             = $entry.BeforeUid
+            beforeResourceVersion = $entry.BeforeResourceVersion
+            afterUid              = $afterUid
+            afterResourceVersion  = $afterResourceVersion
+            reasons               = @($entry.Reasons)
         }
     }
     $report = [ordered]@{
@@ -742,7 +910,7 @@ function Invoke-RepairDependencyPolicy {
         return
     }
 
-    $candidates = @($classification.Results | Where-Object { $_.Status -eq 'NEEDS_MIGRATION' })
+    $candidates = @($classification.Results | Where-Object { $_.Status -ceq 'NEEDS_MIGRATION' })
 
     if (-not $Apply) {
         if ($candidates.Count -eq 0) {
@@ -771,41 +939,62 @@ function Invoke-RepairDependencyPolicy {
         New-Item -ItemType Directory -Force -Path $script:OutputDirectoryPath | Out-Null
     }
     $backupDirectory = Join-Path $script:OutputDirectoryPath 'backup'
+    $reportEntries = @(New-ReportEntries -ClassificationResults $classification.Results)
     $applied = 0
     foreach ($candidate in $candidates) {
+        $reportEntry = Get-ReportEntry -Entries $reportEntries -PolicyName $candidate.PolicyName
         try {
             $backupPath = Write-PolicyBackup -Policy $candidate.Policy -BackupDirectory $backupDirectory
         } catch {
+            if ($null -ne $reportEntry) {
+                $reportEntry.Status = 'FAILED'
+                $reportEntry.Reasons = @('backup failed: ' + $_.Exception.Message)
+            }
             Write-Line "[FAILED] policy=$($candidate.PolicyName) reason=backup failed: $($_.Exception.Message)"
             Write-Line 'RESULT=APPLY_FAILED'
-            Write-ApplyReport -Status 'FAILED' -AppliedCount $applied -Results $classification.Results -Directory $script:OutputDirectoryPath | Out-Null
+            Write-ApplyReport -Status 'FAILED' -AppliedCount $applied -Entries $reportEntries -Directory $script:OutputDirectoryPath | Out-Null
             $script:RepairExitCode = $script:ExitApplyFailed
             return
         }
         Write-Line "[BACKUP] policy=$($candidate.PolicyName) path=$backupPath"
         $patchResult = Invoke-PolicyPatch -Policy $candidate.Policy -ProjectId $candidate.ProjectId
         if (-not $patchResult.Ok) {
+            if ($null -ne $reportEntry) {
+                $reportEntry.Status = 'FAILED'
+                $reportEntry.Reasons = @($patchResult.Message)
+            }
             Write-Line "[FAILED] policy=$($candidate.PolicyName) status=CONFLICT reason=$($patchResult.Message)"
             Write-Line 'RESULT=APPLY_FAILED'
-            Write-ApplyReport -Status 'FAILED' -AppliedCount $applied -Results $classification.Results -Directory $script:OutputDirectoryPath | Out-Null
+            Write-ApplyReport -Status 'FAILED' -AppliedCount $applied -Entries $reportEntries -Directory $script:OutputDirectoryPath | Out-Null
             $script:RepairExitCode = $script:ExitApplyFailed
             return
         }
         $readBack = Test-MigratedPolicyReadBack -Name $candidate.PolicyName -ProjectId $candidate.ProjectId -ExpectedUid $candidate.Uid
         if (-not $readBack.Ok) {
+            if ($null -ne $reportEntry) {
+                $reportEntry.Status = 'FAILED'
+                $reportEntry.AfterUid = $readBack.Uid
+                $reportEntry.AfterResourceVersion = $readBack.ResourceVersion
+                $reportEntry.Reasons = @($readBack.Message)
+            }
             Write-Line "[FAILED] policy=$($candidate.PolicyName) status=READBACK_MISMATCH reason=$($readBack.Message)"
             Write-Line 'RESULT=APPLY_FAILED'
-            Write-ApplyReport -Status 'FAILED' -AppliedCount $applied -Results $classification.Results -Directory $script:OutputDirectoryPath | Out-Null
+            Write-ApplyReport -Status 'FAILED' -AppliedCount $applied -Entries $reportEntries -Directory $script:OutputDirectoryPath | Out-Null
             $script:RepairExitCode = $script:ExitApplyFailed
             return
         }
         $applied++
+        if ($null -ne $reportEntry) {
+            $reportEntry.Status = 'PATCHED'
+            $reportEntry.AfterUid = $readBack.Uid
+            $reportEntry.AfterResourceVersion = $readBack.ResourceVersion
+        }
         Write-Line "[PATCHED] policy=$($candidate.PolicyName) uid=$($candidate.Uid)"
-        Write-Line "[VERIFIED] policy=$($candidate.PolicyName) selector=project-scoped"
+        Write-Line "[VERIFIED] policy=$($candidate.PolicyName) selector=project-scoped uid=$($readBack.Uid) resourceVersion=$($readBack.ResourceVersion)"
     }
     Write-Line "RESULT=APPLIED count=$applied"
     Write-Line 'APPLY_SUMMARY every reviewed policy now targets only its own project''s dependency pods.'
-    $reportPath = Write-ApplyReport -Status 'APPLIED' -AppliedCount $applied -Results $classification.Results -Directory $script:OutputDirectoryPath
+    $reportPath = Write-ApplyReport -Status 'APPLIED' -AppliedCount $applied -Entries $reportEntries -Directory $script:OutputDirectoryPath
     Write-Line "applyReport=$reportPath"
     $script:RepairExitCode = 0
     return
