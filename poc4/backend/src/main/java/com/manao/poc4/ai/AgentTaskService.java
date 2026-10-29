@@ -314,6 +314,15 @@ public final class AgentTaskService {
         settlement.settleCloseIntent(taskId, failureCode, summary);
     }
 
+    /** Persist the fixed owner pause intent; the existing reconciler drives all external work. */
+    public void pause(String taskId) {
+        var owner = tasks.taskOwner(taskId);
+        try (var lease = lifecycle.tryAcquire(owner.projectId()).orElseThrow(
+                () -> new ApiException("PROJECT_BUSY", 409, "Project is busy"))) {
+            tasks.beginPause(taskId);
+        }
+    }
+
     /** The normalized durable receipt JSON: protocol version plus the report fields. */
     private static String receiptJson(TaskState state, String summary, String failureCode) {
         var node = JSON.createObjectNode()

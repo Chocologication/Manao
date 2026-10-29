@@ -1129,6 +1129,17 @@ public final class AgentTaskStore implements AgentTaskOccupancy {
         return CloseEntry.SETTLED;
     }
 
+    public synchronized CloseEntry beginPause(String taskId) {
+        armExpiredBudget(taskId);
+        var view = settlementView(taskId);
+        if ("COMPLETED".equals(view.state()) || "FAILED".equals(view.state())) return CloseEntry.SETTLED;
+        if (view.terminalReportId() != null && !hasCloseIntent(view)) return CloseEntry.RETRY;
+        if (!hasCloseIntent(view) && reconcileCandidate(taskId).instanceId() == null) {
+            throw new ApiException("AI_TASK_STARTING", 409, "Task is starting; try pausing shortly");
+        }
+        return beginClose(taskId, "AI_PAUSED_BY_OWNER");
+    }
+
     /** The close reason is written exactly once: a repeat close can never overwrite it. */
     private void persistCloseReason(String taskId, String reasonCode) {
         if (reasonCode == null || reasonCode.isBlank()) {
@@ -1248,6 +1259,20 @@ public final class AgentTaskStore implements AgentTaskOccupancy {
               AND (failure_code IS NULL OR failure_code<>?)
               AND deadline_at IS NOT NULL AND deadline_at<=?
             """,CLOSING_MARKER,BUDGET_CLOSE_REASON,now,now,taskId,CLOSING_MARKER,now)>0;
+    }
+
+    /** The authenticated replacement observation only arms the original close flow. */
+    public synchronized boolean beginWorkerRestartClose(String taskId, long epoch, String expectedInstanceId) {
+        Timestamp now = Timestamp.from(clock.instant());
+        return jdbc.update("""
+            UPDATE agent_task SET state='NEEDS_ATTENTION', failure_code='AI_CLOSING',
+                close_reason_code='AI_WORKER_RESTARTED', next_reconcile_at=?, updated_at=?, reconcile_attempt=0
+            WHERE id=? AND worker_epoch=? AND worker_instance_id=?
+              AND deadline_at IS NOT NULL AND deadline_at>?
+              AND state IN ('QUEUED','RUNNING','NEEDS_ATTENTION')
+              AND terminal_report_id IS NULL AND close_reason_code IS NULL
+              AND (failure_code IS NULL OR failure_code<>'AI_CLOSING')
+            """, now, now, taskId, epoch, expectedInstanceId, now) == 1;
     }
 
     /** Attempt accounting is independent of progress timestamps and survives backend restart. */
@@ -1421,7 +1446,7 @@ public final class AgentTaskStore implements AgentTaskOccupancy {
         String sql = """
             SELECT t.id, t.request_sha256, t.state, t.worker_epoch, t.workspace_revision,
                    t.settled_revision, t.changed_paths_json, t.progress_json, t.summary,
-                   t.failure_code, t.active_project, t.conversation_id, t.reasoning_effort
+                   t.failure_code, t.active_project, t.conversation_id, t.reasoning_effort, t.close_reason_code
             FROM agent_task t INNER JOIN project p ON p.id = t.project_id
             WHERE p.owner_id = ? AND t.project_id = ? %s
             """.formatted(extraCondition);
@@ -1432,7 +1457,7 @@ public final class AgentTaskStore implements AgentTaskOccupancy {
         List<TaskRow> rows = jdbc.query(sql, (rs, row) -> new TaskRow(
             rs.getString(1), rs.getString(2), rs.getString(3), rs.getLong(4),
             rs.getLong(5), (Long) rs.getObject(6), rs.getString(7),
-            rs.getString(8), rs.getString(9), rs.getString(10), rs.getString(11) != null, rs.getString(12), rs.getString(13)),
+            rs.getString(8), rs.getString(9), rs.getString(10), rs.getString(11) != null, rs.getString(12), rs.getString(13), rs.getString(14)),
             parameters.toArray());
         return rows.stream().findFirst().map(this::snapshot);
     }
@@ -1440,12 +1465,12 @@ public final class AgentTaskStore implements AgentTaskOccupancy {
     private Optional<TaskRow> findTaskById(String taskId) {
         List<TaskRow> rows = jdbc.query("""
             SELECT id, request_sha256, state, worker_epoch, workspace_revision, settled_revision,
-                   changed_paths_json, progress_json, summary, failure_code, active_project, conversation_id, reasoning_effort
+                   changed_paths_json, progress_json, summary, failure_code, active_project, conversation_id, reasoning_effort, close_reason_code
             FROM agent_task WHERE id = ?
             """, (rs, row) -> new TaskRow(
             rs.getString(1), rs.getString(2), rs.getString(3), rs.getLong(4),
             rs.getLong(5), (Long) rs.getObject(6), rs.getString(7),
-            rs.getString(8), rs.getString(9), rs.getString(10), rs.getString(11) != null, rs.getString(12), rs.getString(13)), taskId);
+            rs.getString(8), rs.getString(9), rs.getString(10), rs.getString(11) != null, rs.getString(12), rs.getString(13), rs.getString(14)), taskId);
         return rows.stream().findFirst();
     }
 
@@ -1518,7 +1543,7 @@ public final class AgentTaskStore implements AgentTaskOccupancy {
             ? Long.toString(row.settledRevision()) : Long.toString(row.workspaceRevision());
         return new AgentContracts.TaskSnapshot(row.id(), AgentContracts.TaskState.valueOf(row.state()),
             revision, writesLocked, parseProgress(row.progressJson()),
-            changedPaths(row.changedPathsJson()), row.summary(), row.failureCode(), row.conversationId(), row.reasoningEffort());
+            changedPaths(row.changedPathsJson()), row.summary(), row.failureCode(), row.conversationId(), row.reasoningEffort(), row.closeReasonCode());
     }
 
     /**
@@ -1707,5 +1732,5 @@ public final class AgentTaskStore implements AgentTaskOccupancy {
      */
     private record TaskRow(String id, String requestSha256, String state, long workerEpoch,
                            long workspaceRevision, Long settledRevision, String changedPathsJson,
-                           String progressJson, String summary, String failureCode, boolean active, String conversationId, String reasoningEffort) { }
+                           String progressJson, String summary, String failureCode, boolean active, String conversationId, String reasoningEffort, String closeReasonCode) { }
 }

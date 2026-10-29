@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ApiRequestError } from '../../api/ApiRequestError';
-import { clearAgentTaskId, closeAgentTask, getAgentTask, getCurrentAgentTask, readAgentTaskId, readAgentTaskIntent } from '../../api/agentTaskApi';
+import { clearAgentTaskId, closeAgentTask, pauseAgentTask, getAgentTask, getCurrentAgentTask, readAgentTaskId, readAgentTaskIntent } from '../../api/agentTaskApi';
 import type { AgentTaskSnapshot } from '../../contracts/agentTask';
 
 /**
@@ -65,5 +65,13 @@ export function useCloseAgentTaskMutation(projectId: string) {
       // Preserve that snapshot until polling confirms terminal state or absence.
       queryClient.setQueryData(agentTaskKeys.current(projectId), snapshot);
     },
+  });
+}
+
+export function usePauseAgentTaskMutation(projectId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (taskId: string) => pauseAgentTask(projectId, taskId),
+    onSuccess: snapshot => { queryClient.setQueryData(agentTaskKeys.current(projectId), snapshot); },
   });
 }

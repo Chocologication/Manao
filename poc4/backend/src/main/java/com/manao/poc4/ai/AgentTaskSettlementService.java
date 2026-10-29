@@ -143,17 +143,27 @@ public final class AgentTaskSettlementService {
 
     private void settleCloseIntent(String taskId, String failureCode, String summary, ReconcileWorkBudget budget) {
         if(ReconcileWorkBudget.inFlight(taskId)) return;
-        try {
-            budget.io(() -> worker.stop(taskId));
-        } catch (RuntimeException ex) {
-            // The worker may already be gone; the marker already blocks new calls.
-        }
+        var candidate = tasks.reconcileCandidate(taskId);
+        var closeView = tasks.settlementView(taskId);
+        boolean strictStop = "AI_PAUSED_BY_OWNER".equals(closeView.closeReasonCode())
+            || "AI_WORKER_RESTARTED".equals(closeView.closeReasonCode());
+        // Resource progress must not be starved by repeated slow worker observations.
         boolean finished=false;
         try {
             if(!tasks.hasLiveToolClaims(taskId)) finished=budget.io(() -> tools.finishForClose(taskId))
                 && budget.io(() -> tools.finishApplication(taskId));
         } catch(RuntimeException ex) { /* unknown evidence retains occupancy and any live seat */ }
-        if (!finished) {
+        try {
+            budget.io(() -> worker.stop(taskId));
+        } catch (RuntimeException ex) {
+            // The worker may already be gone; the marker already blocks new calls.
+        }
+        boolean workerExited = !strictStop;
+        if (strictStop) {
+            try { workerExited = workerExited(candidate, budget); }
+            catch (RuntimeException ex) { /* unknown worker evidence retains occupancy */ }
+        }
+        if (!finished || !workerExited) {
             tasks.scheduleReconcile(taskId);
             return;
         }
@@ -165,7 +175,11 @@ public final class AgentTaskSettlementService {
         }
         try (ProjectLifecycleGate.Lease gateLease = lease.get()) {
             synchronized (tasks) {
-                if (tasks.hasLiveToolClaims(taskId) || !tools.applicationCanRelease(taskId, false)) {
+                var current = tasks.reconcileCandidate(taskId);
+                if (tasks.hasLiveToolClaims(taskId) || !tools.applicationCanRelease(taskId, false)
+                    || strictStop && (current.epoch() != candidate.epoch()
+                        || !java.util.Objects.equals(current.instanceId(), candidate.instanceId())
+                        || !java.util.Objects.equals(tasks.settlementView(taskId).closeReasonCode(), closeView.closeReasonCode()))) {
                     tasks.scheduleReconcile(taskId);
                     return;
                 }
@@ -181,7 +195,8 @@ public final class AgentTaskSettlementService {
                         .filter(report -> report.state() == AgentContracts.TaskState.FAILED)
                         .orElse(null));
                 String code = original == null
-                    ? (failureCode != null ? failureCode : fallbackCloseCode(taskId))
+                    ? (closeView.closeReasonCode() != null ? closeView.closeReasonCode()
+                        : failureCode != null ? failureCode : fallbackCloseCode(taskId))
                     : original.failureCode();
                 String text = original == null
                     ? (summary != null ? summary : fallbackCloseCode(taskId))
@@ -189,6 +204,58 @@ public final class AgentTaskSettlementService {
                 tasks.failClosedTask(taskId, code, text);
             }
         }
+    }
+
+    /** Observe execution and delivery independently of resource cleanup; no stop response is proof. */
+    private boolean workerExited(AgentTaskStore.ReconcileCandidate candidate, ReconcileWorkBudget budget) {
+        if (candidate.instanceId() == null) return false;
+        var process = budget.io(worker::processStatus);
+        validateProcess(process);
+        if (!candidate.instanceId().equals(process.instanceId())) {
+            try { budget.io(() -> worker.status(candidate.taskId())); return false; }
+            catch (ApiException ex) {
+                return "AI_WORKER_NOT_FOUND".equals(ex.code()) && stableReplacement(candidate, process, budget);
+            }
+        }
+        AgentContracts.WorkerStatus status;
+        try { status = budget.io(() -> worker.status(candidate.taskId())); }
+        catch (ApiException ex) {
+            var stored = tasks.settlementView(candidate.taskId());
+            return "AI_WORKER_NOT_FOUND".equals(ex.code()) && stored.terminalReportId() != null
+                && tasks.storedTerminalReport(candidate.taskId()).isPresent()
+                && !candidate.taskId().equals(process.activeTaskId());
+        }
+        validateStatus(candidate, process, status);
+        if (!"COMPLETED".equals(status.executionState()) && !"FAILED".equals(status.executionState())) return false;
+        var delivery = status.terminalDelivery();
+        var report = validatedReport(status);
+        recordObserved(candidate, report);
+        return ("ACKED".equals(delivery.state()) || "CLOSING".equals(delivery.state()))
+            && !candidate.taskId().equals(process.activeTaskId());
+    }
+
+    private static void validateProcess(AgentContracts.WorkerProcessStatus process) {
+        if (process == null || process.bootId() == null || process.bootId().isBlank()
+            || process.instanceId() == null || !process.instanceId().endsWith("-" + process.bootId())) throw badWorker();
+    }
+
+    private static void validateStatus(AgentTaskStore.ReconcileCandidate candidate,
+            AgentContracts.WorkerProcessStatus process, AgentContracts.WorkerStatus status) {
+        if (status == null || !candidate.taskId().equals(status.taskId()) || !process.instanceId().equals(status.instanceId())
+            || candidate.instanceId() != null && !candidate.instanceId().equals(status.instanceId())
+            || !Integer.valueOf(1).equals(status.protocolVersion()) || !Long.valueOf(candidate.epoch()).equals(status.workerEpoch())
+            || !candidate.requestSha256().equals(status.requestSha256()) || status.executionState() == null
+            || !status.executionState().equals(status.state())) throw badWorker();
+    }
+
+    private static AgentContracts.TerminalReport validatedReport(AgentContracts.WorkerStatus status) {
+        var delivery = status.terminalDelivery();
+        var report = delivery == null ? null : delivery.report();
+        if (report == null || report.state() == null || !report.state().name().equals(status.executionState())
+            || !report.reportId().equals(delivery.reportId())
+            || !AgentTaskStore.terminalContentSha256(report.reportId(), report.state(), report.summary(), report.failureCode())
+                .equals(delivery.reportSha256())) throw badWorker();
+        return report;
     }
 
     /**
@@ -254,26 +321,39 @@ public final class AgentTaskSettlementService {
             return;
         }
         AgentContracts.WorkerProcessStatus process=budget.io(worker::processStatus);
-        if(process==null || process.bootId()==null || process.bootId().isBlank() || process.instanceId()==null
-            || !process.instanceId().endsWith("-"+process.bootId()))
-            throw badWorker();
-        AgentContracts.WorkerStatus status=budget.io(() -> worker.status(taskId));
-        if(status==null || !taskId.equals(status.taskId()) || !process.instanceId().equals(status.instanceId())
-            || candidate.instanceId()!=null && !candidate.instanceId().equals(status.instanceId())
-            || !Integer.valueOf(1).equals(status.protocolVersion()) || !Long.valueOf(candidate.epoch()).equals(status.workerEpoch())
-            || !candidate.requestSha256().equals(status.requestSha256()) || status.executionState()==null
-            || !status.executionState().equals(status.state())) throw badWorker();
+        validateProcess(process);
+        AgentContracts.WorkerStatus status;
+        try { status = budget.io(() -> worker.status(taskId)); }
+        catch (ApiException ex) {
+            if (!"AI_WORKER_NOT_FOUND".equals(ex.code()) || !stableReplacement(candidate, process, budget)) throw ex;
+            var owner = tasks.taskOwner(taskId);
+            var lease = lifecycle.tryAcquire(owner.projectId());
+            if (lease.isEmpty()) { tasks.scheduleReconcile(taskId); return; }
+            try (var held = lease.get()) {
+                tasks.armExpiredBudget(taskId);
+                tasks.beginWorkerRestartClose(taskId, candidate.epoch(), candidate.instanceId());
+            }
+            return;
+        }
+        validateStatus(candidate, process, status);
         // The bound instance carries the process boot identity. A slot for another task does not
         // invalidate retained terminal history; it may never establish this task's completion.
         if(candidate.instanceId()==null) tasks.requireWorkerIdentity(taskId,candidate.epoch(),status.instanceId());
         if(!"COMPLETED".equals(status.executionState()) && !"FAILED".equals(status.executionState())) return;
-        var delivery=status.terminalDelivery();
-        var report=delivery==null ? null : delivery.report();
-        if(report==null || report.state()==null || !report.state().name().equals(status.executionState())
-            || !report.reportId().equals(delivery.reportId())
-            || !AgentTaskStore.terminalContentSha256(report.reportId(),report.state(),report.summary(),report.failureCode()).equals(delivery.reportSha256()))
-            throw badWorker();
+        var report = validatedReport(status);
         recordObserved(tasks.reconcileCandidate(taskId),report);
+    }
+
+    /** Called only after an authenticated explicit task 404, within the same bounded observation. */
+    private boolean stableReplacement(AgentTaskStore.ReconcileCandidate candidate,
+            AgentContracts.WorkerProcessStatus first, ReconcileWorkBudget budget) {
+        if (candidate.instanceId() == null || candidate.instanceId().equals(first.instanceId())
+            || candidate.instanceId().endsWith("-" + first.bootId())
+            || candidate.taskId().equals(first.activeTaskId())) return false;
+        var second = budget.io(worker::processStatus);
+        validateProcess(second);
+        return first.bootId().equals(second.bootId()) && first.instanceId().equals(second.instanceId())
+            && !candidate.taskId().equals(second.activeTaskId());
     }
 
     private void recordObserved(AgentTaskStore.ReconcileCandidate candidate,AgentContracts.TerminalReport report) {

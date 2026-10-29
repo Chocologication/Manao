@@ -43,6 +43,150 @@ import org.springframework.jdbc.datasource.DataSourceTransactionManager;
  * fake; every durable decision is observed in the database.
  */
 class AgentTaskServiceTest {
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"ACKED", "CLOSING"})
+    void pauseKeepsOccupancyUntilTerminalAckAndWorkerSlotRelease(String deliveryState) throws Exception {
+        try (var h = new Harness()) {
+            h.submit();
+            var mvc = pauseMvc(h);
+            var paused = pause(mvc, h.taskId, OWNER);
+            assertThat(paused.getStatus()).isEqualTo(200);
+            assertThat(paused.getContentAsString()).contains("\"closeReasonCode\":\"AI_PAUSED_BY_OWNER\"", "\"writesLocked\":true");
+            assertThat(h.rowState()).isEqualTo("NEEDS_ATTENTION");
+            String reportId = AgentTaskStore.terminalReportId(h.taskId, 1, h.tasks.requestSha256Of(h.taskId));
+            var report = new AgentContracts.TerminalReport(1, reportId, AgentContracts.TaskState.FAILED, "aborted", "AI_ABORTED");
+            var ack = h.service.recordTerminal(h.taskId, INSTANCE, 1, report);
+            assertThat(ack.disposition()).isEqualTo(AgentContracts.TerminalDisposition.CLOSING);
+            h.worker.frozenStatus = new WorkerStatus(h.taskId, INSTANCE, "FAILED", 1, 1L,
+                h.tasks.requestSha256Of(h.taskId), "FAILED",
+                new AgentContracts.WorkerTerminalDelivery(deliveryState, reportId, ack.reportSha256(), report));
+            h.worker.activeTaskId = h.taskId;
+            pause(mvc, h.taskId, OWNER);
+            new AgentTaskSettlementService(h.tasks, h.gate, h.worker, h.tools).reconcile(h.taskId);
+            assertThat(h.tasks.currentForOwner(OWNER, PROJECT)).isPresent();
+            h.worker.activeTaskId = null;
+            pause(mvc, h.taskId, OWNER);
+            new AgentTaskSettlementService(h.tasks, h.gate, h.worker, h.tools).reconcile(h.taskId);
+            assertThat(h.tasks.currentForOwner(OWNER, PROJECT)).isEmpty();
+            assertThat(h.rowState()).isEqualTo("FAILED");
+            assertThat(h.worker.starts).hasSize(1);
+        }
+    }
+
+    @Test void pauseUnknownWorkerEvidenceKeepsLockAndEndPreservesPauseReason() throws Exception {
+        try (var h = new Harness()) {
+            h.submit();
+            h.worker.statusBroken = true;
+            assertThat(pause(pauseMvc(h), h.taskId, OWNER).getStatus()).isEqualTo(200);
+            h.service.close(h.taskId, "AI_CLOSED", "closed");
+            assertThat(h.tasks.currentForOwner(OWNER, PROJECT)).isPresent();
+            assertThat(h.tasks.settlementView(h.taskId).closeReasonCode()).isEqualTo("AI_PAUSED_BY_OWNER");
+        }
+    }
+
+    @Test void pauseRejectsUnboundStartupWithoutRecordingIntent() throws Exception {
+        try (var h = new Harness()) {
+            h.tasks.create(OWNER, PROJECT, new TaskRequest(h.taskId, "goal", 7));
+            var response = pause(pauseMvc(h), h.taskId, OWNER);
+            assertThat(response.getStatus()).isEqualTo(409);
+            assertThat(response.getContentAsString()).contains("AI_TASK_STARTING");
+            assertThat(h.tasks.settlementView(h.taskId).closeReasonCode()).isNull();
+            h.service.close(h.taskId, "AI_CLOSED", "closed");
+            assertThat(h.rowState()).isEqualTo("FAILED");
+        }
+    }
+
+    @Test void pauseDeadlineAndExistingTerminalDecisionWin() throws Exception {
+        try (var h = new Harness()) {
+            h.submit();
+            h.jdbc.update("UPDATE agent_task SET deadline_at=? WHERE id=?", Timestamp.from(java.time.Instant.now().minusSeconds(1)), h.taskId);
+            assertThat(pause(pauseMvc(h), h.taskId, OWNER).getStatus()).isEqualTo(200);
+            assertThat(h.tasks.settlementView(h.taskId).closeReasonCode()).isEqualTo("AI_TASK_BUDGET_EXCEEDED");
+        }
+        try (var h = new Harness()) {
+            h.submit();
+            h.service.close(h.taskId, "AI_CLOSED", "closed");
+            assertThat(pause(pauseMvc(h), h.taskId, OWNER).getStatus()).isEqualTo(200);
+            assertThat(h.tasks.settlementView(h.taskId).closeReasonCode()).isEqualTo("AI_CLOSED");
+            assertThat(h.rowState()).isEqualTo("FAILED");
+        }
+    }
+
+    @Test void pauseIsOwnerScopedAndGateBusyCanRetry() throws Exception {
+        try (var h = new Harness()) {
+            h.submit();
+            var mvc = pauseMvc(h);
+            assertThat(pause(mvc, h.taskId, "foreign").getStatus()).isEqualTo(404);
+            var entered = new CountDownLatch(1);
+            var release = new CountDownLatch(1);
+            var holder = new Thread(() -> {
+                try (var lease = h.gate.tryAcquire(PROJECT).orElseThrow()) {
+                    entered.countDown();
+                    release.await();
+                } catch (InterruptedException ex) { Thread.currentThread().interrupt(); }
+            });
+            holder.start();
+            try {
+                assertThat(entered.await(3, TimeUnit.SECONDS)).isTrue();
+                assertThat(pause(mvc, h.taskId, OWNER).getStatus()).isEqualTo(409);
+            } finally { release.countDown(); holder.join(3000); }
+            assertThat(h.tasks.settlementView(h.taskId).closeReasonCode()).isNull();
+            assertThat(pause(mvc, h.taskId, OWNER).getStatus()).isEqualTo(200);
+            assertThat(h.worker.starts).hasSize(1);
+        }
+    }
+
+    @Test void aPersistedSuccessReceiptWinsBeforePauseAndKeepsItsOutcome() throws Exception {
+        try (var h = new Harness()) {
+            h.submit();
+            String id = AgentTaskStore.terminalReportId(h.taskId, 1, h.tasks.requestSha256Of(h.taskId));
+            h.service.recordTerminal(h.taskId, INSTANCE, 1, new AgentContracts.TerminalReport(
+                1, id, AgentContracts.TaskState.COMPLETED, "done", null));
+            assertThat(pause(pauseMvc(h), h.taskId, OWNER).getStatus()).isEqualTo(200);
+            new AgentTaskSettlementService(h.tasks, h.gate, h.worker, h.tools).reconcile(h.taskId);
+            assertThat(h.tasks.settlementView(h.taskId).closeReasonCode()).isNull();
+            assertThat(h.rowState()).isEqualTo("COMPLETED");
+        }
+    }
+
+    @Test void pausedTaskBlocksDeletionUntilVerifiedThenOriginalCleanupRemovesOwnedRows() {
+        try (var h = new Harness()) {
+            h.submit();
+            var tx = new DataSourceTransactionManager(h.jdbc.getDataSource());
+            var gateway = new com.manao.poc4.kubernetes.FakeKubernetesGateway();
+            var cleaner = new com.manao.poc4.project.ProjectCleanupService(
+                new com.manao.poc4.project.ProjectDeletionRepository(h.jdbc, tx), h.gate,
+                org.mockito.Mockito.mock(com.manao.poc4.project.ProjectRuntimeCleaner.class), gateway, new WorkspaceJdbcStore(h.jdbc,tx));
+            h.service.pause(h.taskId);
+            assertThatThrownBy(() -> cleaner.delete(OWNER, PROJECT)).isInstanceOfSatisfying(ApiException.class,
+                ex -> assertThat(ex.code()).isEqualTo("PROJECT_BUSY"));
+            assertThat(gateway.deletedProjects).isEmpty();
+            String reportId = AgentTaskStore.terminalReportId(h.taskId,1,h.tasks.requestSha256Of(h.taskId));
+            var report = new AgentContracts.TerminalReport(1,reportId,AgentContracts.TaskState.FAILED,"aborted","AI_ABORTED");
+            var ack = h.service.recordTerminal(h.taskId,INSTANCE,1,report);
+            h.worker.frozenStatus = new WorkerStatus(h.taskId,INSTANCE,"FAILED",1,1L,h.tasks.requestSha256Of(h.taskId),
+                "FAILED",new AgentContracts.WorkerTerminalDelivery("CLOSING",reportId,ack.reportSha256(),report));
+            new AgentTaskSettlementService(h.tasks,h.gate,h.worker,h.tools).reconcile(h.taskId);
+            cleaner.delete(OWNER,PROJECT);
+            assertThat(gateway.deletedProjects).containsExactly(PROJECT);
+            assertThat(h.jdbc.queryForObject("SELECT COUNT(*) FROM project WHERE id=?",Integer.class,PROJECT)).isZero();
+            assertThat(h.jdbc.queryForObject("SELECT COUNT(*) FROM agent_task WHERE id=?",Integer.class,h.taskId)).isZero();
+        }
+    }
+
+    private static org.springframework.test.web.servlet.MockMvc pauseMvc(Harness h) {
+        return org.springframework.test.web.servlet.setup.MockMvcBuilders.standaloneSetup(new AgentTaskController(h.service))
+            .setControllerAdvice(new com.manao.poc4.api.GlobalExceptionHandler()).build();
+    }
+
+    private static org.springframework.mock.web.MockHttpServletResponse pause(org.springframework.test.web.servlet.MockMvc mvc,
+            String taskId, String owner) throws Exception {
+        return mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+            .post("/api/v1/projects/" + PROJECT + "/agent-tasks/" + taskId + "/pause")
+            .principal(new org.springframework.security.authentication.UsernamePasswordAuthenticationToken(owner, "unused")))
+            .andReturn().getResponse();
+    }
+
     @Test void startsWithThePersistedDefaultEffort() {
         try (var h = new Harness()) {
             h.submit();
@@ -63,6 +207,7 @@ class AgentTaskServiceTest {
         String statusInstance = INSTANCE;
         String statusState = "RUNNING";
         WorkerStatus frozenStatus;
+        String activeTaskId;
         StartBehavior startBehavior = this::defaultStart;
 
         interface StartBehavior {
@@ -92,7 +237,7 @@ class AgentTaskServiceTest {
         }
 
         @Override public AgentContracts.WorkerProcessStatus processStatus() {
-            return new AgentContracts.WorkerProcessStatus("1", INSTANCE, null, null, null, true);
+            return new AgentContracts.WorkerProcessStatus("1", INSTANCE, activeTaskId, null, null, true);
         }
 
         @Override public WorkerStatus stop(String taskId) {

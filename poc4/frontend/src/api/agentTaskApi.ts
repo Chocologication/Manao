@@ -55,6 +55,12 @@ export async function closeAgentTask(
   return parseAgentTaskSnapshot(payload);
 }
 
+/** Persist the owner's fixed pause intent; the returned snapshot may still hold the lock. */
+export async function pauseAgentTask(projectId: string, taskId: string): Promise<AgentTaskSnapshot> {
+  const payload = await getHttpClient().request<unknown>(agentTaskUrl(projectId, `/${encodeURIComponent(taskId)}/pause`), { method: 'POST' });
+  return parseAgentTaskSnapshot(payload);
+}
+
 /**
  * One settled tool call of the task (review fix I9): the browser's data path to the
  * real build evidence. The backend answers 404 for unsettled or foreign calls, and

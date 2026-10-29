@@ -19,7 +19,7 @@ public record ApiError(String code, String message, String traceId) {
         "PYTHON_DEPENDENCY_UNSUPPORTED", "PYTHON_DEPENDENCY_NO_WHEEL",
         "PYTHON_DEPENDENCY_RESOLUTION_FAILED", "PYTHON_DEPENDENCY_TIMEOUT",
         "DEPENDENCY_REQUEST_MISMATCH",
-        "AI_TASK_ACTIVE", "AI_TASK_MISMATCH", "AI_TASK_NOT_FOUND", "AI_TASK_NOT_ACTIVE",
+        "AI_TASK_ACTIVE", "AI_TASK_STARTING", "AI_TASK_MISMATCH", "AI_TASK_NOT_FOUND", "AI_TASK_NOT_ACTIVE",
         "AI_CALL_MISMATCH", "AI_CALL_UNSETTLED", "AI_CALL_NEEDS_ATTENTION", "AI_CALL_NOT_FOUND",
         "AI_RESULT_TOO_LARGE",
         "AI_PROGRESS_MISMATCH", "AI_PROGRESS_TOO_LARGE",
@@ -68,6 +68,7 @@ public record ApiError(String code, String message, String traceId) {
             case "PYTHON_DEPENDENCY_TIMEOUT" -> "Dependency resolution timed out. Try again later.";
             case "DEPENDENCY_REQUEST_MISMATCH" -> "This operation id was already used for a different request";
             case "AI_TASK_ACTIVE" -> "An AI task owns this project's writes";
+            case "AI_TASK_STARTING" -> "Task is starting; try pausing shortly";
             case "AI_TASK_MISMATCH" -> "This task id was already used for a different request";
             case "AI_TASK_NOT_FOUND" -> "Task not found";
             case "AI_TASK_NOT_ACTIVE" -> "Task is not active";

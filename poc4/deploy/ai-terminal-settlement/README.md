@@ -4,6 +4,18 @@
 
 2026-10-27 补充完成失败、手动结束、执行中backend重启、Worker收据前丢失及真实1800s期限关闭，四类专项场景PASS（KEY_CLOUD_FAULTS_VERIFIED），沿用相同镜像。该轮故障注入、配置恢复及最终结果见[关键云端故障记录](../../docs/evidence/ai-terminal-settlement/cloud-faults-20261027.md)；不启动第四阶段，不授予完整A–N矩阵PASS。
 
+## 阶段四增量发布准备（2026-10-27）
+
+用户后续明确授权后已完成阶段四发布与真实模型验证：**PI_STAGE4_CONTROL_RECOVERY_PASS**。实际证据见[阶段四验收第7节](../../docs/evidence/ai-stage4/acceptance.md#7-2026-10-27-实际云端发布与阶段四验证)及[脱敏发布身份](../../docs/evidence/ai-stage4/cloud-20261027.json)。
+
+实际linux/amd64 digest：backend sha256:c0c56bc35ffc485350f42153f1833f94527c1cceda2f3ccba762c6654ba4eb56；frontend sha256:120ebc30a2ab00a090ab89d7f1184ec402ae391bc0aced7a45ea72fea4c45ae1；Worker仍sha256:696080571ba556d983aa578163be3d6494261057e960a9686b15f814e7d0c93e。源码e3c06dde8fc02b3e00c80373be870e5dc413bb6f，generation45/27/34，三组件Ready1/1；V15/V16未新增执行。发布前回退tuple与私有备份恢复演练在验收第7节；本轮未Git push/merge，原故障Task未恢复。以下兼容/回退约束继续有效。
+
+- 无新增迁移/表/依赖；沿用已存在的V15/V16。新backend兼容旧frontend，新增 `closeReasonCode` 可被旧客户端忽略；先部署backend，再部署frontend。
+- Worker生产代码没有本阶段改动，继续Pi1.2.0，不为测试夹具重发Worker镜像；发布前重新核对 `replicas: 1 / strategy: Recreate`，禁止并发新旧Worker实例。
+- 暂停/重启收尾仍占用时不得回退到不认识严格退出门槛的backend。先停止新Task预约，保留兼容backend结清 `AI_PAUSED_BY_OWNER / AI_WORKER_RESTARTED`、pending receipt、live claim、Run/Job；未知证据不能SQL清状态。结清后才按现场确认的镜像身份回退，不DROP列或覆盖数据。
+- 后续仅三条专用项目云端链：①真实长构建暂停→核对本Task Job/Pod与子进程退出→人工保存→同conversation新Task读到修改→完整Workbench重进；②Worker真实新boot/Pod UID与旧Task404→核对后手动继续，无旧工具重放；③用户明确删除专用项目→核对Job/Pod/Service/PVC/适用PV及DB行，保留平台资源。正常COMPLETED保留READY应用作为同链控制断言。
+- 不重跑已完成的关键故障整矩阵或真实1800秒等待，不恢复原故障Task。通过真实云端验证后才考虑 `PI_STAGE4_CONTROL_RECOVERY_PASS`，不连带授予Stage2或整个AI首版PASS。
+
 ## 1. 发布前提与顺序
 
 后续取得明确发布授权后才执行：

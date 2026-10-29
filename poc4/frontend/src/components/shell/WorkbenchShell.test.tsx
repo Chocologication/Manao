@@ -917,17 +917,21 @@ describe('WorkbenchShell run preconditions', () => {
     expect(workspaceSessionStore.getState().dirtyPaths.size).toBe(0);
     expect(runStartPostCount(fetchSpy)).toBe(0);
     release();
+    await screen.findByRole('treeitem', {name:'pending.md'});
+    await waitFor(()=>expect(queryClient.isMutating()).toBe(0));
   }, 15_000);
 
   it('disables Start with REVISION_UNAVAILABLE until the root tree revision arrives', async () => {
     const fetchSpy = vi.spyOn(globalThis, 'fetch');
     const user = userEvent.setup();
+    let entered=false;
     let release = () => {};
     const held = new Promise<void>((resolve) => {
       release = resolve;
     });
     server.use(
       http.get('/api/v1/projects/:projectId/files/tree', async () => {
+        entered=true;
         await held;
         return undefined;
       }),
@@ -936,6 +940,8 @@ describe('WorkbenchShell run preconditions', () => {
     queryClient.removeQueries({ queryKey: fileKeys.all(ALICE_SEED_PROJECT_ID) });
     renderApp({ initialEntries: [`/projects/${ALICE_SEED_PROJECT_ID}`] });
     expect(await screen.findByRole('tab', { name: 'Run' })).toBeEnabled();
+    await waitFor(()=>expect(entered).toBe(true));
+    expect(queryClient.getQueryData(fileKeys.revision(ALICE_SEED_PROJECT_ID))).toBeUndefined();
     const start = screen.getByRole('button', { name: 'Start run', hidden: true });
     expect(start).toBeDisabled();
     expect(start.getAttribute('title')).toMatch(/REVISION_UNAVAILABLE|AUTHORITY_LOADING/);
@@ -2418,6 +2424,59 @@ describe('WorkbenchShell agent task panel', () => {
       expect(screen.getByRole('button', { name: 'New file' })).toBeDisabled();
     });
   }
+
+  it('pauses the current task and reloads saved facts on safe release even when its revision is unchanged', async () => {
+    let current = agentTask();
+    let occupied = true, treeReads = 0;
+    const pausedIds: string[] = [];
+    server.use(
+      http.get(`${AGENT_TASKS_URL}/current`, () => occupied ? HttpResponse.json(current) : agentCurrentNotFound()),
+      http.get(`${AGENT_TASKS_URL}/${AGENT_TASK_ID}`, () => HttpResponse.json(current)),
+      http.post(`${AGENT_TASKS_URL}/:taskId/pause`, ({ params }) => {
+        pausedIds.push(String(params.taskId));
+        current = agentTask({ state: 'NEEDS_ATTENTION', failureCode: 'AI_CLOSING', closeReasonCode: 'AI_PAUSED_BY_OWNER' });
+        return HttpResponse.json(current);
+      }),
+      http.get('/api/v1/projects/:projectId/files/tree', () => { treeReads++; return undefined; }),
+    );
+    await authenticateAsAlice(); renderShell(); await loadedRoot();
+    await userEvent.click(screen.getByRole('tab', { name: 'AI' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Pause & take over' }));
+    expect(pausedIds).toEqual([AGENT_TASK_ID]);
+    await screen.findByText('Stopping and verifying');
+    expect(screen.getByRole('button', { name: 'New file' })).toBeDisabled();
+    const before = treeReads;
+    current = agentTask({ state: 'FAILED', writesLocked: false, closeReasonCode: 'AI_PAUSED_BY_OWNER' }); occupied = false;
+    await act(async () => { await queryClient.invalidateQueries({ queryKey: agentTaskKeys.current(ALICE_SEED_PROJECT_ID) }); });
+    await waitUntilWritesUnlocked();
+    await waitFor(() => expect(treeReads).toBeGreaterThan(before));
+  }, 15000);
+
+  it('keeps editing locked when current task authority is unavailable without a cached task', async () => {
+    server.use(http.get(`${AGENT_TASKS_URL}/current`,()=>HttpResponse.json({code:'INTERNAL_ERROR',message:'unavailable',traceId:'test'},{status:503})));
+    await authenticateAsAlice(); renderShell(); await loadedRoot();
+    await userEvent.click(screen.getByRole('tab',{name:'AI'}));
+    await screen.findByText('Could not load the agent task status.');
+    expect(screen.getByRole('button',{name:'New file'})).toBeDisabled();
+  });
+
+  it('reloads a latest paused conversation after re-entry without a retained current task', async () => {
+    const conversationId='11111111-1111-4111-8111-111111111111';
+    let treeReads=0;
+    const url=`/api/v1/projects/${ALICE_SEED_PROJECT_ID}/conversations`;
+    const meta={conversationId,title:'re-entry',headSeq:0,lastTaskId:AGENT_TASK_ID,activeTaskId:null,usage:null,compactRequestId:null,compactState:null,compactFailureCode:null};
+    server.use(http.get(`${AGENT_TASKS_URL}/current`,agentCurrentNotFound),
+      http.get(`${AGENT_TASKS_URL}/${AGENT_TASK_ID}`,()=>HttpResponse.json(agentTask({state:'FAILED',writesLocked:false,conversationId,closeReasonCode:'AI_PAUSED_BY_OWNER'}))),
+      http.get(url,()=>HttpResponse.json({items:[meta],nextCursor:null})),
+      http.get(`${url}/${conversationId}`,()=>HttpResponse.json(meta)),
+      http.get(`${url}/${conversationId}/entries`,()=>HttpResponse.json({items:[],nextBeforeSeq:null,nextBeforeOffset:null})),
+      http.get('/api/v1/projects/:projectId/files/tree',()=>{treeReads++;return undefined;}));
+    await authenticateAsAlice(); renderShell(); await loadedRoot();
+    await userEvent.click(screen.getByRole('tab',{name:'AI'}));
+    await screen.findByText('Paused');
+    await waitFor(()=>expect(treeReads).toBeGreaterThan(1));
+    await expect(screen.findByRole('button',{name:'Continue task'})).resolves.toBeEnabled();
+  },15000);
 
   it('ends the current occupying task from history, retries safely and unlocks only after real settlement', async () => {
     const a = '11111111-1111-4111-8111-111111111111', b = '22222222-2222-4222-8222-222222222222';

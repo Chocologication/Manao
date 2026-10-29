@@ -433,6 +433,25 @@ class AgentProjectToolsTest {
         }
     }
 
+    @Test void newTaskOnSavedRevisionRejectsOldShaAndCanReadThenSaveCurrentContent() {
+        try (Harness h = new Harness()) {
+            h.tasks.beginClose(h.taskId, "AI_PAUSED_BY_OWNER");
+            h.tasks.failClosedTask(h.taskId, "AI_PAUSED_BY_OWNER", "paused");
+            h.jdbc.update("UPDATE project SET workspace_revision=8 WHERE id=?", PROJECT);
+            String next = UUID.randomUUID().toString();
+            h.tasks.create(OWNER, PROJECT, new TaskRequest(next, "continue after user edit", 8));
+            h.stubLiveFile(PATH, "user saved B");
+            when(h.agent.content(PROJECT, PATH)).thenReturn(new WorkspaceAgent.Content(PATH, "user saved B", h.sha256Hex("user saved B")));
+            var rejected = h.tools.invoke(next, h.writeRequest("stale", PATH, "C", h.sha256Hex("old A"), 8));
+            assertThat(rejected.data().path("error").path("code").asText()).isEqualTo("FILE_SHA_CONFLICT");
+            var read = h.tools.invoke(next, new ToolRequest("reread", "read_file", 8, JSON.createObjectNode().put("path", PATH)));
+            assertThat(read.data().path("content").asText()).isEqualTo("user saved B");
+            var saved = h.tools.invoke(next, h.writeRequest("fresh", PATH, "C", read.data().path("sha256").asText(), 8));
+            assertThat(saved.workspaceRevision()).isEqualTo("9");
+            assertThat(h.revision()).isEqualTo(9);
+        }
+    }
+
     @Test
     void staleExpectedShaIsAPersistedRejectionThatLetsPiReread() {
         try (Harness env = new Harness()) {

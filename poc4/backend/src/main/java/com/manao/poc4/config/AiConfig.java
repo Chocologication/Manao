@@ -84,7 +84,7 @@ public class AiConfig {
         return new Fabric8DevelopmentBuildExecutor(client, factory, properties.kubernetes().namespace(),
             (request, identity) -> tasks.bindToolCallIdentity(request.taskId(), request.toolCallId(),
                 identity.jobName(), identity.jobUid(), identity.podUid()),
-            tasks::createBuildIfAllowed);
+            tasks::createBuildIfAllowed, request -> AgentTaskStore.hasCloseIntent(tasks.settlementView(request.taskId())));
     }
 
     @Bean
