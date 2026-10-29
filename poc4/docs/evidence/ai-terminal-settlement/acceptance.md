@@ -4,6 +4,8 @@
 
 当前状态：**LOCAL_REPAIR_VERIFIED / DEPLOYED_SMOKE_VERIFIED**。Task1–8及整分支审查通过；2026-10-26用户另行授权部署和一次最小真实模型验证，已从758aae6发布三组件并完成V15/V16迁移。生产修复代码终点5739d1b；实际发布证据见第8节。原故障Task仍NOT_REPAIRED，Stage2保持PAUSED/NOT_GRANTED，未Git push/merge。完整云端故障矩阵未执行；不声称最终源码单次完整962项全绿。
 
+2026-10-27 用户授权的后续第三项已完成：真实provider失败、owner close、执行中backend重启、Worker收据前丢失及真实1800s期限关闭，四类专项场景PASS，标记 **KEY_CLOUD_FAULTS_VERIFIED**。实际结果及逐项边界见[本轮记录](cloud-faults-20261027.md)；前两项跳过，第四阶段不启动，不能将局部场景扩大为完整 A–N PASS。
+
 ## 1. 验收架构与证据边界
 
 - 一次性真实 MySQL schema：`manao_terminal_<uuid>`。`LocalDisposableSchema` 只允许该命名且只连 `127.0.0.1`，创建/销毁本次 schema；从不重置旧固定名称库或运行库。
