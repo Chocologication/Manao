@@ -165,3 +165,14 @@ kubectl --context kubernetes-admin@learn -n manao-stage6b rollout status deploym
 | Git/文档 | 对比合并index与2423fa6的backend/frontend/Worker；UTF-8严格解码、BOM、相对链接、`git diff --check` | 产品/测试/锁文件差异0；编码、链接、空白检查通过；11份未提交原文档SHA256不变 |
 
 9份本次验证日志及其SHA256、清理清单保存在仓库外 `pi-stage4-merge-20261029/verification-summary.json`；不包含凭据。未重跑云端三链或完整后端套件，不将本次58项定向回归写成全平台验收。既有 **PI_STAGE4_CONTROL_RECOVERY_PASS** 保持；Stage2 **PAUSED / NOT_GRANTED**、旧Task **NOT_REPAIRED**及整个AI首版未授予PASS的边界不变。
+
+### 8.4 AI worktree 内其余临时文件清理
+
+2026-10-29，用户追加明确要求清理 `.worktree/ai-integration/.superpowers/` 中其余临时测试文件。先清点1,442文件、234,518,961 bytes；所有目录及子项无 reparse point，也没有引用这些脚本的运行进程。
+
+- 删除5处临时目录：`ai-context-release-20261019`、`ai-output-release-20261020`、`cloud-faults-20261027`、`sdd/2026-10-20-ai-streaming-reasoning-markdown-implementation-plan`、`sdd/tool-result-display-fix`。实际删除 **1,438文件、142目录、234,484,500 bytes**；包含旧/新backend JAR、解包副本及已完成测试脚本。删除后5处路径均不存在。
+- 删除前将194份必要日志、审查、失败记录、截图及复现资料逐字归档至仓库外 `ai-integration-superpowers-cleanup-20261029/evidence/`，共3,448,572 bytes；逐项SHA256与原文件一致。大型可重新生成的JAR及解包副本只登记清单与SHA256，不复制。目录内可能涉及私人环境的操作资料仍只留仓库外，不进入Git。
+- `.superpowers/` 保留3份Git跟踪历史SDD报告及 `sdd/.gitignore`，共4文件、34,461 bytes；保留文件哈希不变，Git跟踪删除0。其他11份既有未提交文档/故障证据仍逐字不变。
+- 完整原清单、逐项哈希、校验计划及实际删除结果位于仓库外 `ai-integration-superpowers-cleanup-20261029/`。此次原方法删除成功，无审批拒绝；旧验收中当时的BLOCKED记录保留为历史事实，以本节记录后续实际清理和证据归档位置。
+
+本次仅本地临时文件与文档操作，不触碰运行schema、集群、模型、源码或其他worktree；不重跑业务测试，验证实际路径消失、归档/保留文件哈希、原改动不变、UTF-8无BOM和 `git diff --check`。阶段四与阶段二的验收边界不变。
