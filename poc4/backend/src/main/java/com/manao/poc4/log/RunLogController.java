@@ -1,15 +1,13 @@
 package com.manao.poc4.log;
 
-import com.manao.poc4.api.ApiException;
-import java.time.Clock;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
+import com.manao.poc4.auth.AuthContracts;
 import org.springframework.http.MediaType;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RestController;
 
-/** Issues single-use, 30-second log tickets bound to the authenticated owner's run. */
+/** Issues single-use, 30-second log tickets bound to the owner's request identity version. */
 @RestController
 @org.springframework.context.annotation.Conditional(com.manao.poc4.config.SecurityConfig.BackendAuthCondition.class)
 public final class RunLogController {
@@ -23,7 +21,9 @@ public final class RunLogController {
         produces = MediaType.APPLICATION_JSON_VALUE)
     public TicketResponse issueLogTicket(Authentication authentication, @PathVariable String projectId,
                                          @PathVariable String runId) {
-        LogTicketService.IssuedTicket ticket = tickets.issue(authentication.getName(), projectId, runId);
+        AuthContracts.AccountIdentity identity = AuthContracts.identity(authentication);
+        LogTicketService.IssuedTicket ticket = tickets.issue(identity.userId(), identity.authVersion(),
+            projectId, runId);
         return new TicketResponse(ticket.ticket(), ticket.expiresAt().toString());
     }
 

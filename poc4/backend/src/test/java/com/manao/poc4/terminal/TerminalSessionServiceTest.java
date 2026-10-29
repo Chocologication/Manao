@@ -75,6 +75,21 @@ class TerminalSessionServiceTest {
     }
 
     @Test
+    void reservationBindsTheRequestVersionAndRejectsStaleCredentials() {
+        var identity = new com.manao.poc4.auth.AuthContracts.AccountIdentity(ALICE, 4);
+        service.reserve(80, 24, identity, PROJECT, RUN);
+        assertThat(store.sessions.values()).anySatisfy(session ->
+            assertThat(session.authVersion()).isEqualTo(4L));
+
+        store.failStale = true;
+        assertThatThrownBy(() -> service.reserve(80, 24, identity, PROJECT, RUN))
+            .isInstanceOfSatisfying(ApiException.class, ex -> {
+                assertThat(ex.code()).isEqualTo("UNAUTHENTICATED");
+                assertThat(ex.status()).isEqualTo(401);
+            });
+    }
+
+    @Test
     void reserveEnforcesDimensionBounds() {
         assertThatThrownBy(() -> service.reserve(1, 24, ALICE, PROJECT, RUN))
             .isInstanceOfSatisfying(ApiException.class, ex -> assertThat(ex.code()).isEqualTo("VALIDATION_ERROR"));
@@ -134,16 +149,19 @@ class TerminalSessionServiceTest {
         final java.util.function.Supplier<Instant> now = () -> NOW;
         boolean failReservation;
 
-        @Override public boolean insertReservation(ReservationRecord record) {
-            if (failReservation) return false;
+        boolean failStale;
+
+        @Override public InsertResult insertReservation(ReservationRecord record) {
+            if (failStale) return InsertResult.STALE_CREDENTIALS;
+            if (failReservation) return InsertResult.ACTIVE_SESSION_EXISTS;
             boolean hasActiveSession = sessions.values().stream().anyMatch(candidate ->
                 candidate.runId().equals(record.runId())
                     && ("RESERVED".equals(candidate.state()) || "LIVE".equals(candidate.state())));
-            if (hasActiveSession) return false;
+            if (hasActiveSession) return InsertResult.ACTIVE_SESSION_EXISTS;
             sessions.put(record.sessionId(), new SessionRecord(record.sessionId(), record.projectId(),
-                record.runId(), record.userId(), record.ticketHash(), record.expiresAt(), null, "RESERVED",
-                null, null, null, record.cols(), record.rows()));
-            return true;
+                record.runId(), record.userId(), record.authVersion(), record.ticketHash(), record.expiresAt(),
+                null, "RESERVED", null, null, null, record.cols(), record.rows()));
+            return InsertResult.INSERTED;
         }
 
         @Override public Optional<SessionRecord> consumeReservation(String ticketHash) {
@@ -155,8 +173,8 @@ class TerminalSessionServiceTest {
                 return Optional.empty();
             }
             SessionRecord live = new SessionRecord(session.sessionId(), session.projectId(), session.runId(),
-                session.userId(), session.ticketHash(), session.expiresAt(), Instant.now(), "LIVE",
-                session.podRef(), session.containerRef(), session.closeReason(), session.cols(), session.rows());
+                session.userId(), session.authVersion(), session.ticketHash(), session.expiresAt(), Instant.now(),
+                "LIVE", session.podRef(), session.containerRef(), session.closeReason(), session.cols(), session.rows());
             sessions.put(live.sessionId(), live);
             return Optional.of(live);
         }
@@ -170,8 +188,9 @@ class TerminalSessionServiceTest {
             SessionRecord session = sessions.get(sessionId);
             if (session != null) {
                 sessions.put(sessionId, new SessionRecord(session.sessionId(), session.projectId(), session.runId(),
-                    session.userId(), session.ticketHash(), session.expiresAt(), session.consumedAt(), session.state(),
-                    podRef, containerRef, session.closeReason(), session.cols(), session.rows()));
+                    session.userId(), session.authVersion(), session.ticketHash(), session.expiresAt(),
+                    session.consumedAt(), session.state(), podRef, containerRef, session.closeReason(),
+                    session.cols(), session.rows()));
             }
         }
 
@@ -179,9 +198,14 @@ class TerminalSessionServiceTest {
             SessionRecord session = sessions.get(sessionId);
             if (session == null || !"LIVE".equals(session.state())) return false;
             sessions.put(sessionId, new SessionRecord(session.sessionId(), session.projectId(), session.runId(),
-                session.userId(), session.ticketHash(), session.expiresAt(), session.consumedAt(), state,
-                session.podRef(), session.containerRef(), closeReason, session.cols(), session.rows()));
+                session.userId(), session.authVersion(), session.ticketHash(), session.expiresAt(),
+                session.consumedAt(), state, session.podRef(), session.containerRef(), closeReason,
+                session.cols(), session.rows()));
             return true;
+        }
+
+        @Override public int expireLegacyReservations(String runId) {
+            return 0;
         }
     }
 }

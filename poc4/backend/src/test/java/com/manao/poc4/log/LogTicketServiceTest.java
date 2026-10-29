@@ -29,9 +29,12 @@ class LogTicketServiceTest {
     static final class FakeTicketStore implements LogTicketService.Store {
         final Map<String, LogTicketService.TicketRecord> tickets = new HashMap<>();
         java.util.function.Supplier<Instant> now = () -> NOW;
+        boolean rejectInsert;
 
-        @Override public void insert(LogTicketService.TicketRecord record) {
+        @Override public boolean insert(LogTicketService.TicketRecord record) {
+            if (rejectInsert) return false;
             tickets.put(record.ticketHash(), record);
+            return true;
         }
 
         @Override public Optional<LogTicketService.TicketRecord> consumeByHash(String ticketHash) {
@@ -41,7 +44,8 @@ class LogTicketServiceTest {
                 return Optional.empty();
             }
             LogTicketService.TicketRecord consumed = new LogTicketService.TicketRecord(record.ticketHash(),
-                record.userId(), record.projectId(), record.runId(), record.expiresAt(), nowInstant);
+                record.userId(), record.authVersion(), record.projectId(), record.runId(),
+                record.expiresAt(), nowInstant);
             tickets.put(ticketHash, consumed);
             return Optional.of(consumed);
         }
@@ -61,21 +65,35 @@ class LogTicketServiceTest {
 
     @Test
     void issueReturnsOpaqueTicketWithThirtySecondExpiry() {
-        LogTicketService.IssuedTicket ticket = service.issue(ALICE, PROJECT, RUN);
+        LogTicketService.IssuedTicket ticket = service.issue(ALICE, 4L, PROJECT, RUN);
         assertThat(ticket.ticket()).isNotBlank();
         assertThat(ticket.ticket().length()).isGreaterThanOrEqualTo(32);
         assertThat(ticket.expiresAt()).isEqualTo(NOW.plus(Duration.ofSeconds(30)));
         // Only the hash is persisted; the raw ticket value is never stored.
         assertThat(store.tickets).doesNotContainKey(ticket.ticket());
         assertThat(store.tickets).hasSize(1);
+        // The ticket is bound to the REQUEST's original version, never a DB-current guess.
+        assertThat(store.tickets.values()).allSatisfy(record -> assertThat(record.authVersion()).isEqualTo(4L));
+    }
+
+    @Test
+    void staleRequestVersionRejectsIssuanceWithoutPersistingATicket() {
+        store.rejectInsert = true;
+        assertThatThrownBy(() -> service.issue(ALICE, 0L, PROJECT, RUN))
+            .isInstanceOfSatisfying(ApiException.class, ex -> {
+                assertThat(ex.code()).isEqualTo("UNAUTHENTICATED");
+                assertThat(ex.status()).isEqualTo(401);
+            });
+        assertThat(store.tickets).isEmpty();
     }
 
     @Test
     void consumeIsSingleUseAndReturnsBinding() {
-        LogTicketService.IssuedTicket ticket = service.issue(ALICE, PROJECT, RUN);
+        LogTicketService.IssuedTicket ticket = service.issue(ALICE, 4L, PROJECT, RUN);
         Optional<LogTicketService.TicketRecord> first = service.consume(ticket.ticket());
         assertThat(first).isPresent();
         assertThat(first.get().userId()).isEqualTo(ALICE);
+        assertThat(first.get().authVersion()).isEqualTo(4L);
         assertThat(first.get().projectId()).isEqualTo(PROJECT);
         assertThat(first.get().runId()).isEqualTo(RUN);
         assertThat(service.consume(ticket.ticket())).isEmpty();

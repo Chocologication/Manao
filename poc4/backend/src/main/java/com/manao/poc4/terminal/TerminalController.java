@@ -1,12 +1,11 @@
 package com.manao.poc4.terminal;
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
-import com.manao.poc4.api.ApiException;
+import com.manao.poc4.auth.AuthContracts;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotNull;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.http.MediaType;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -14,7 +13,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
 
-/** Issues one terminal reservation (sessionId + ticket) for the run's live application container. */
+/** Issues one version-bound terminal reservation (sessionId + ticket) for the run's container. */
 @RestController
 @org.springframework.context.annotation.Conditional(com.manao.poc4.config.SecurityConfig.BackendAuthCondition.class)
 public final class TerminalController {
@@ -29,12 +28,9 @@ public final class TerminalController {
     public CreateTerminalSessionResponse create(Authentication authentication, @PathVariable String projectId,
                                                 @PathVariable String runId,
                                                 @Valid @RequestBody CreateTerminalSessionRequest request) {
-        TerminalSessionService.Reservation reservation;
-        try {
-            reservation = sessions.reserve(request.cols(), request.rows(), authentication.getName(), projectId, runId);
-        } catch (ApiException ex) {
-            throw ex;
-        }
+        AuthContracts.AccountIdentity identity = AuthContracts.identity(authentication);
+        TerminalSessionService.Reservation reservation = sessions.reserve(
+            request.cols(), request.rows(), identity, projectId, runId);
         return new CreateTerminalSessionResponse(reservation.sessionId(), reservation.ticket(),
             reservation.expiresAt().toString());
     }

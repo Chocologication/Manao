@@ -1,9 +1,13 @@
 package com.manao.poc4.terminal;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.manao.poc4.auth.UserSessionRevoker;
+import com.manao.poc4.auth.UserStore;
 import com.manao.poc4.persistence.RunState;
 import com.manao.poc4.run.RunControllerTest.FakeRun;
 import com.manao.poc4.run.RunControllerTest.FakeRunStore;
@@ -326,6 +330,57 @@ class TerminalWebSocketTest {
             .filter(record -> "INTERRUPTED".equals(record.state())).count()).isEqualTo(1);
     }
 
+    private TerminalWebSocketHandler revocableHandler(CapturingSession target, String ticket,
+                                                     UserSessionRevoker revoker, StubBridge targetBridge) throws Exception {
+        UserStore users = mock(UserStore.class);
+        when(users.findById(ALICE)).thenReturn(Optional.of(
+            new UserStore.UserAccount(ALICE, "alice", "unused", true, null, null, 0)));
+        TerminalWebSocketHandler handler = new TerminalWebSocketHandler(sessionService, targetBridge,
+            runId -> summary(RunState.RUNNING, runId), clock,
+            runId -> Optional.of(new com.manao.poc4.kubernetes.JobCoordinator.LivePod(RESOLVED_POD, "maven")),
+            null, null, revoker, users);
+        target.bind(handler);
+        target.setUri("/api/v1/ws/terminals?ticket=" + ticket);
+        handler.afterConnectionEstablished(target);
+        return handler;
+    }
+
+    @Test
+    void revocationSettlesTheSingleSessionClosesPtyAndSocketWith4401() throws Exception {
+        UserSessionRevoker revoker = new UserSessionRevoker();
+        revocableHandler(session, liveTicket, revoker, bridge);
+        assertThat(bridge.opened).isTrue();
+
+        revoker.closeOlder(ALICE, 1);
+
+        assertThat(session.closed.getCode()).isEqualTo(4401);
+        assertThat(bridge.closed).isTrue();
+        assertThat(store.sessions.values().stream()
+            .filter(record -> "INTERRUPTED".equals(record.state())).count()).isEqualTo(1);
+        // Run and PTY state: only the single session settles once, then a late container callback
+        // does not settle it again.
+        JsonNode exit = JSON.readTree(session.text.get(session.text.size() - 1));
+        assertThat(exit.get("type").asText()).isEqualTo("terminal.exit");
+        assertThat(exit.get("reason").asText()).isEqualTo("CONNECTION_LOST");
+        revoker.closeOlder(ALICE, 2);
+        assertThat(store.sessions.values().stream()
+            .filter(record -> "INTERRUPTED".equals(record.state())).count()).isEqualTo(1);
+    }
+
+    @Test
+    void latePtyHandleAfterRevocationIsClosedImmediatelyAndNeverReady() throws Exception {
+        UserSessionRevoker revoker = new UserSessionRevoker();
+        StubBridge lateBridge = new StubBridge();
+        lateBridge.duringOpen = () -> revoker.closeOlder(ALICE, 1);
+        revocableHandler(session, liveTicket, revoker, lateBridge);
+
+        assertThat(lateBridge.closed).isTrue();
+        assertThat(store.sessions.values().stream()
+            .filter(record -> "INTERRUPTED".equals(record.state())).count()).isEqualTo(1);
+        assertThat(session.closed.getCode()).isEqualTo(4401);
+        assertThat(session.text).noneMatch(frame -> frame.contains("terminal.ready"));
+    }
+
     @Test
     void connectionLostSettlesInterrupted() throws Exception {
         newHandler(session, liveTicket);
@@ -336,7 +391,8 @@ class TerminalWebSocketTest {
     }
 
 
-    static final class StubBridge implements PtyBridge {
+    static class StubBridge implements PtyBridge {
+        Runnable duringOpen;
         boolean acceptWrites = true;
         boolean opened;
         boolean closed;
@@ -349,6 +405,11 @@ class TerminalWebSocketTest {
         final List<byte[]> written = new ArrayList<>();
 
         @Override public PtyHandle open(String openPodName, String openContainerName, int openCols, int openRows, PtyListener listener) {
+            if (duringOpen != null) {
+                Runnable action = duringOpen;
+                duringOpen = null;
+                action.run();
+            }
             this.opened = true;
             this.podName = openPodName;
             this.containerName = openContainerName;

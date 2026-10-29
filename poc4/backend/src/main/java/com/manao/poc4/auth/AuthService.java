@@ -8,8 +8,12 @@ import java.util.UUID;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Conditional;
 import org.springframework.context.annotation.Configuration;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /**
  * Account lifecycle transactions for registration, login, password reset and password change
@@ -27,15 +31,23 @@ import org.springframework.jdbc.core.JdbcTemplate;
  * existing per-request auth_version check fails.
  */
 public final class AuthService {
+    private static final Logger LOG = LoggerFactory.getLogger(AuthService.class);
+
     private final JdbcTemplate jdbc;
     private final UserStore users;
     private final PasswordService passwords;
     private final JwtService jwt;
     private final AuthChallengeStore challenges;
     private final AuthProperties properties;
+    private final UserSessionRevoker revoker;
 
     public AuthService(JdbcTemplate jdbc, UserStore users, PasswordService passwords, JwtService jwt,
                        AuthChallengeStore challenges, AuthProperties properties) {
+        this(jdbc, users, passwords, jwt, challenges, properties, null);
+    }
+
+    public AuthService(JdbcTemplate jdbc, UserStore users, PasswordService passwords, JwtService jwt,
+                       AuthChallengeStore challenges, AuthProperties properties, UserSessionRevoker revoker) {
         if (jdbc == null) throw new IllegalArgumentException("jdbc template required");
         if (users == null) throw new IllegalArgumentException("user store required");
         if (passwords == null) throw new IllegalArgumentException("password service required");
@@ -48,6 +60,7 @@ public final class AuthService {
         this.jwt = jwt;
         this.challenges = challenges;
         this.properties = properties;
+        this.revoker = revoker;
     }
 
     /** Existing login contract: generic 401, no captcha, signs the CURRENT auth_version. */
@@ -116,8 +129,15 @@ public final class AuthService {
                 request.emailChallengeId(), AuthContracts.EmailPurpose.RESET_PASSWORD, email,
                 request.emailCode());
             if (!verified.consumed()) return false;
-            return users.updatePassword(verified.userId(), passwordHash,
-                verified.authVersionSnapshot()) == 1;
+            if (users.updatePassword(verified.userId(), passwordHash,
+                verified.authVersionSnapshot()) != 1) {
+                return false;
+            }
+            // Revoke only AFTER the password/version commit (design 8.2); a rollback or a later
+            // failure must not close the old streams, and a callback failure must not undo the
+            // committed password change.
+            revokeOlderAfterCommit(verified.userId(), verified.authVersionSnapshot() + 1);
+            return true;
         });
         if (!Boolean.TRUE.equals(updated)) throw emailCodeInvalid();
     }
@@ -139,8 +159,39 @@ public final class AuthService {
             throw currentPasswordInvalid();
         }
         String passwordHash = passwords.hash(newPassword);
-        if (users.updatePassword(identity.userId(), passwordHash, identity.authVersion()) != 1) {
-            throw staleAuthentication();
+        boolean updated = Boolean.TRUE.equals(challenges.transactions().execute(status -> {
+            if (users.updatePassword(identity.userId(), passwordHash, identity.authVersion()) != 1) {
+                return false;
+            }
+            revokeOlderAfterCommit(identity.userId(), identity.authVersion() + 1);
+            return true;
+        }));
+        if (!updated) throw staleAuthentication();
+    }
+
+    /**
+     * Schedules stream/ticket revocation for after the current password transaction commits.
+     * Callback failures are contained: the committed password stays changed and the response is
+     * not reported as a failed change.
+     */
+    private void revokeOlderAfterCommit(String userId, long newAuthVersion) {
+        UserSessionRevoker target = revoker;
+        if (target == null) return;
+        Runnable revoke = () -> {
+            try {
+                target.closeOlder(userId, newAuthVersion);
+            } catch (RuntimeException ex) {
+                LOG.warn("credential revocation callback failed");
+            }
+        };
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override public void afterCommit() {
+                    revoke.run();
+                }
+            });
+        } else {
+            revoke.run();
         }
     }
 
@@ -244,6 +295,12 @@ public final class AuthService {
 @Configuration(proxyBeanMethods = false)
 @Conditional(SecurityConfig.BackendAuthCondition.class)
 final class AuthServiceConfiguration {
+    /** One in-process registry shared by log/terminal sockets and AI live-output streams. */
+    @Bean
+    UserSessionRevoker userSessionRevoker() {
+        return new UserSessionRevoker();
+    }
+
     @Bean
     AuthChallengeStore authChallengeStore(JdbcTemplate jdbc, AuthProperties properties) {
         return new AuthChallengeStore(jdbc, properties);
@@ -263,7 +320,8 @@ final class AuthServiceConfiguration {
 
     @Bean
     AuthService authService(JdbcTemplate jdbc, UserStore users, PasswordService passwords, JwtService jwt,
-                            AuthChallengeStore challenges, AuthProperties properties) {
-        return new AuthService(jdbc, users, passwords, jwt, challenges, properties);
+                            AuthChallengeStore challenges, AuthProperties properties,
+                            UserSessionRevoker revoker) {
+        return new AuthService(jdbc, users, passwords, jwt, challenges, properties, revoker);
     }
 }

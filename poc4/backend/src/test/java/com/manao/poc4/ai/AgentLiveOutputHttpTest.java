@@ -5,6 +5,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.manao.poc4.api.GlobalExceptionHandler;
 import com.manao.poc4.auth.JwtService;
+import com.manao.poc4.auth.UserSessionRevoker;
+import com.manao.poc4.auth.UserStore;
 import com.manao.poc4.config.SecurityConfig;
 import com.manao.poc4.persistence.JdbcStoreTestSupport;
 import java.net.URI;
@@ -155,6 +157,50 @@ class AgentLiveOutputHttpTest {
         } finally { reader.shutdownNow(); }
     }
 
+    @Test void passwordVersionBumpDetachesOnlyTheOldLiveSubscriptionWithAuthRevoked() throws Exception {
+        try (var f = new Fixture()) {
+            f.tasks.bindWorkerInstance(f.task, 1, "worker");
+            assertThat(f.post(f.task, f.snapshot(1), true, "worker", "1").statusCode()).isEqualTo(204);
+            var response = f.stream(f.livePath());
+            try (var body = response.body()) {
+                assertThat(response.statusCode()).isEqualTo(200);
+                assertThat(firstFrame(body)).contains("event:snapshot");
+
+                // The committed password change raises the watermark; only the old subscription
+                // is detached and receives the fixed signal, never a global close.
+                f.revoker().closeOlder("owner", 1);
+                String frames = readUntil(body, "auth.revoked", Duration.ofSeconds(5));
+                assertThat(frames).contains("event:auth.revoked");
+            }
+            // Run/AI task and its durable progress survive the connection revocation.
+            var task = f.tasks.findForOwner("owner", "project", f.task).orElseThrow();
+            assertThat(task.state().name()).isEqualTo("RUNNING");
+            assertThat(f.db.jdbc().queryForObject("SELECT progress_json FROM agent_task WHERE id=?",
+                String.class, f.task)).isNull();
+            // The live-output machinery is still usable for a newer connection version.
+            assertThat(f.live().diagnostics().resources()).isZero();
+        }
+    }
+
+    static String readUntil(java.io.InputStream body, String marker, Duration budget) throws Exception {
+        var reader = java.util.concurrent.Executors.newSingleThreadExecutor();
+        try {
+            return reader.submit(() -> {
+                var bytes = new java.io.ByteArrayOutputStream();
+                long deadline = System.nanoTime() + budget.toNanos();
+                while (System.nanoTime() < deadline) {
+                    int value = body.read();
+                    if (value == -1) break;
+                    bytes.write(value);
+                    if (bytes.toString(java.nio.charset.StandardCharsets.UTF_8).contains(marker)) break;
+                }
+                return bytes.toString(java.nio.charset.StandardCharsets.UTF_8);
+            }).get(budget.toMillis() + 1000, java.util.concurrent.TimeUnit.MILLISECONDS);
+        } finally {
+            reader.shutdownNow();
+        }
+    }
+
     @Test void authenticatedSnapshotPostRejectsUnboundWorkerWithoutStartingTaskThenRecovers() throws Exception {
         try (var fixture = new Fixture()) {
             String task = fixture.task;
@@ -178,6 +224,7 @@ class AgentLiveOutputHttpTest {
         final String conversation = UUID.randomUUID().toString();
         final String token;
         final String intruderToken;
+        final UserSessionRevoker revoker = new UserSessionRevoker();
         final int port;
         Fixture() {
             var jdbc = db.jdbc();
@@ -203,7 +250,13 @@ class AgentLiveOutputHttpTest {
                 var web = (AnnotationConfigServletWebServerApplicationContext) context;
                 web.registerBean(org.springframework.jdbc.core.JdbcTemplate.class, () -> jdbc);
                 web.registerBean(AgentTaskStore.class, () -> tasks);
-                web.registerBean(AgentLiveOutput.class, () -> new AgentLiveOutput(tasks));
+                var accountStore = new UserStore(jdbc);
+                web.registerBean(UserSessionRevoker.class, () -> revoker);
+                web.registerBean(AgentLiveOutput.class, () -> new AgentLiveOutput(tasks, revoker,
+                    userId -> accountStore.findById(userId)
+                        .filter(UserStore.UserAccount::enabled)
+                        .map(account -> java.util.OptionalLong.of(account.authVersion()))
+                        .orElseGet(java.util.OptionalLong::empty)));
                 web.registerBean(AgentTaskService.class, () -> new AgentTaskService(tasks,
                     new com.manao.poc4.project.ProjectLifecycleGate(), null, null));
             });
@@ -237,6 +290,7 @@ class AgentLiveOutputHttpTest {
             return client.send(request.POST(HttpRequest.BodyPublishers.ofString(body)).build(), HttpResponse.BodyHandlers.ofString());
         }
         AgentLiveOutput live() { return app.getBean(AgentLiveOutput.class); }
+        UserSessionRevoker revoker() { return revoker; }
         public void close() { live().close(); app.close(); db.close(); }
     }
 }

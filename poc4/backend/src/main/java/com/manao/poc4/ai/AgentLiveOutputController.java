@@ -1,6 +1,7 @@
 package com.manao.poc4.ai;
 
 import com.manao.poc4.api.ApiException;
+import com.manao.poc4.auth.AuthContracts;
 import com.manao.poc4.config.AiConfig.AiEnabledCondition;
 import com.manao.poc4.config.SecurityConfig.BackendAuthCondition;
 import jakarta.servlet.http.HttpServletRequest;
@@ -32,11 +33,12 @@ public final class AgentLiveOutputController implements WebMvcConfigurer {
     @GetMapping("/api/v1/projects/{projectId}/agent-tasks/{taskId}/live-output")
     public ResponseEntity<SseEmitter> subscribe(Authentication authentication, @PathVariable String projectId,
             @PathVariable String taskId, HttpServletRequest request, HttpServletResponse response) {
-        var task = tasks.findForOwner(authentication.getName(), projectId, taskId)
+        AuthContracts.AccountIdentity identity = AuthContracts.identity(authentication);
+        var task = tasks.findForOwner(identity.userId(), projectId, taskId)
             .orElseThrow(() -> new ApiException("ENTRY_NOT_FOUND", 404, "Task not found"));
         if (task.conversationId() == null)
             throw new ApiException("AI_LIVE_UNSUPPORTED", 409, "Live output requires a conversation");
-        SseEmitter emitter = live.subscribe(taskId);
+        SseEmitter emitter = live.subscribe(taskId, identity);
         if (emitter == null) return ResponseEntity.noContent().header("Cache-Control", "no-store").build();
         response.setHeader("Cache-Control", "no-store");
         response.setContentType("text/event-stream");

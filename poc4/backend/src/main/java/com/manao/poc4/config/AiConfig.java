@@ -153,7 +153,14 @@ public class AiConfig {
 
     @Bean(destroyMethod = "close")
     @Conditional(AiEnabledCondition.class)
-    com.manao.poc4.ai.AgentLiveOutput agentLiveOutput(AgentTaskStore tasks) {
-        return new com.manao.poc4.ai.AgentLiveOutput(tasks);
+    com.manao.poc4.ai.AgentLiveOutput agentLiveOutput(AgentTaskStore tasks,
+                                                      com.manao.poc4.auth.UserSessionRevoker revoker,
+                                                      com.manao.poc4.auth.UserStore users) {
+        // The authenticated version is bound per SSE subscription; a password change detaches
+        // only the older subscriptions and never touches the task or durable progress.
+        return new com.manao.poc4.ai.AgentLiveOutput(tasks, revoker, userId -> users.findById(userId)
+            .filter(com.manao.poc4.auth.UserStore.UserAccount::enabled)
+            .map(account -> java.util.OptionalLong.of(account.authVersion()))
+            .orElseGet(java.util.OptionalLong::empty));
     }
 }

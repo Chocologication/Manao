@@ -1,5 +1,7 @@
 package com.manao.poc4.config;
 
+import com.manao.poc4.auth.UserSessionRevoker;
+import com.manao.poc4.auth.UserStore;
 import com.manao.poc4.log.LogTicketAuthenticator;
 import com.manao.poc4.log.RunLogService;
 import com.manao.poc4.log.RunLogWebSocketHandler;
@@ -55,24 +57,26 @@ public class WebSocketConfig implements WebSocketConfigurer {
     @Bean
     RunLogWebSocketHandler runLogWebSocketHandler(RunLogService logService, LogTicketAuthenticator tickets,
                                                   RunService runService, RunStore runStore,
-                                                  ProjectLifecycleGate lifecycle) {
+                                                  ProjectLifecycleGate lifecycle,
+                                                  UserSessionRevoker revoker, UserStore users) {
         return new RunLogWebSocketHandler(tickets, logService, runService::findSummaryById, Clock.systemUTC(),
             lifecycle, projectId -> {
                 RunStore.ProjectRecord project = runStore.findProject(projectId);
                 return project == null ? null : project.state();
-            });
+            }, revoker, users);
     }
 
     @Bean
     TerminalWebSocketHandler terminalWebSocketHandler(TerminalSessionService sessions, PtyBridge bridge,
                                                       RunService runService, com.manao.poc4.kubernetes.JobCoordinator coordinator,
-                                                      RunStore runStore, ProjectLifecycleGate lifecycle) {
+                                                      RunStore runStore, ProjectLifecycleGate lifecycle,
+                                                      UserSessionRevoker revoker, UserStore users) {
         return new TerminalWebSocketHandler(sessions, bridge, runService::findSummaryById, Clock.systemUTC(),
             runId -> coordinator.findLivePod(runId).map(pod ->
                 new com.manao.poc4.kubernetes.JobCoordinator.LivePod(pod.podName(), pod.containerName())),
             lifecycle, projectId -> {
                 RunStore.ProjectRecord project = runStore.findProject(projectId);
                 return project == null ? null : project.state();
-            });
+            }, revoker, users);
     }
 }

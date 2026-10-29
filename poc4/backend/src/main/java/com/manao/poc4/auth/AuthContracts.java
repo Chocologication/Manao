@@ -40,6 +40,17 @@ public final class AuthContracts {
         }
     }
 
+    /**
+     * The authenticated account for an HTTP request. The JWT filter stores exactly this principal;
+     * anything else is refused instead of silently binding an empty/zero version.
+     */
+    public static AccountIdentity identity(org.springframework.security.core.Authentication authentication) {
+        if (authentication != null && authentication.getPrincipal() instanceof AccountIdentity identity) {
+            return identity;
+        }
+        throw new com.manao.poc4.api.ApiException("UNAUTHENTICATED", 401, "Authentication required");
+    }
+
     /** The only two purposes that can email a one-time code (design section 9). */
     public enum EmailPurpose {
         REGISTER_EMAIL, RESET_PASSWORD

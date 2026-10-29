@@ -1,6 +1,7 @@
 package com.manao.poc4.terminal;
 
 import com.manao.poc4.api.ApiException;
+import com.manao.poc4.auth.AuthContracts;
 import com.manao.poc4.persistence.RunState;
 import com.manao.poc4.run.RunRecord;
 import com.manao.poc4.run.RunStore;
@@ -14,7 +15,9 @@ import java.util.UUID;
 
 /**
  * One opaque terminal reservation per RUNNING Run of a READY project; the unique active-terminal
- * marker makes the single-live-session rule a database guarantee instead of a race.
+ * marker makes the single-live-session rule a database guarantee instead of a race. A reservation
+ * binds the REQUEST's auth_version; the conditional INSERT re-checks the current account version
+ * so an old JWT can neither race a password change nor be upgraded to the DB's newer version.
  */
 public final class TerminalSessionService implements TerminalTicketService {
     public static final Duration TICKET_TTL = Duration.ofSeconds(30);
@@ -32,7 +35,20 @@ public final class TerminalSessionService implements TerminalTicketService {
 
     public record Reservation(String sessionId, String ticket, Instant expiresAt) { }
 
+    /** Production path: binds the authenticated request identity (user id + version). */
+    public Reservation reserve(int cols, int rows, AuthContracts.AccountIdentity identity,
+                               String projectId, String runId) {
+        if (identity == null) throw new ApiException("UNAUTHENTICATED", 401, "Authentication required");
+        return reserve(cols, rows, identity.userId(), identity.authVersion(), projectId, runId);
+    }
+
+    /** Compatibility overload for call sites without an explicit version. */
     public Reservation reserve(int cols, int rows, String ownerId, String projectId, String runId) {
+        return reserve(cols, rows, ownerId, 0L, projectId, runId);
+    }
+
+    private Reservation reserve(int cols, int rows, String ownerId, long authVersion,
+                                String projectId, String runId) {
         requireDimension(cols, 2, 500, "cols");
         requireDimension(rows, 1, 200, "rows");
         RunStore.ProjectRecord project = runStore.findProjectForOwner(ownerId, projectId);
@@ -53,9 +69,13 @@ public final class TerminalSessionService implements TerminalTicketService {
         String ticket = Base64.getUrlEncoder().withoutPadding().encodeToString(raw);
         String sessionId = UUID.randomUUID().toString();
         Instant expiresAt = clock.instant().plus(TICKET_TTL);
-        boolean inserted = store.insertReservation(new TerminalStore.ReservationRecord(sessionId, projectId, runId,
-            ownerId, TerminalTicketService.sha256Hex(ticket), expiresAt, cols, rows));
-        if (!inserted) {
+        TerminalStore.InsertResult result = store.insertReservation(new TerminalStore.ReservationRecord(
+            sessionId, projectId, runId, ownerId, authVersion, TerminalTicketService.sha256Hex(ticket),
+            expiresAt, cols, rows));
+        if (result == TerminalStore.InsertResult.STALE_CREDENTIALS) {
+            throw new ApiException("UNAUTHENTICATED", 401, "Authentication required");
+        }
+        if (result != TerminalStore.InsertResult.INSERTED) {
             throw new ApiException("TERMINAL_SESSION_ALREADY_ACTIVE", 409, "Terminal session already active");
         }
         return new Reservation(sessionId, ticket, expiresAt);
