@@ -179,6 +179,30 @@ class CredentialRevocationTest {
     }
 
     @Test
+    void bcryptRunsOnlyAfterTheEmailCodeWasAccepted() {
+        AuthChallengeStore.ReserveResult reserved = challenges.reserveEmailSend(
+            AuthContracts.EmailPurpose.REGISTER_EMAIL, "fresh@example.test", "654321", null, null);
+        assertThat(challenges.activateSent(reserved.challengeId())).isTrue();
+        PasswordService bcrypt = mock(PasswordService.class);
+        // Registration must be enabled for this test to reach the code validation/hash ordering.
+        AuthProperties enabled = new AuthProperties(true, SECRET, null, null);
+        AuthService auth = new AuthService(jdbc, users, bcrypt, jwt, challenges, enabled, revoker);
+
+        ApiException invalid = org.assertj.core.api.Assertions.catchThrowableOfType(() -> auth.register(
+            new AuthContracts.RegisterRequest("fresh_name", "new-password-123", "fresh@example.test",
+                reserved.challengeId(), "000000")), ApiException.class);
+        assertThat(invalid.code()).isEqualTo("EMAIL_CODE_INVALID");
+        // An anonymous invalid-code request must not reach the expensive password hash.
+        org.mockito.Mockito.verify(bcrypt, org.mockito.Mockito.never()).hash(anyString());
+
+        when(bcrypt.hash(anyString())).thenReturn("bcrypt-hash");
+        AuthContracts.RegisteredUser registered = auth.register(new AuthContracts.RegisterRequest(
+            "fresh_name", "new-password-123", "fresh@example.test", reserved.challengeId(), "654321"));
+        assertThat(registered.username()).isEqualTo("fresh_name");
+        org.mockito.Mockito.verify(bcrypt).hash("new-password-123");
+    }
+
+    @Test
     void aRolledBackPasswordTransactionNeverRevokes() {
         AuthChallengeStore.ReserveResult reserved = challenges.reserveEmailSend(
             AuthContracts.EmailPurpose.RESET_PASSWORD, "user@example.test", "654321", USER, 1L);

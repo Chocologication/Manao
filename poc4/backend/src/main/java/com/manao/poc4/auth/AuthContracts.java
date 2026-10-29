@@ -60,8 +60,8 @@ public final class AuthContracts {
     @JsonIgnoreProperties(ignoreUnknown = false)
     public record EmailCodeRequest(@NotNull EmailPurpose purpose,
                                    @NotBlank @Size(max = 254) String email,
-                                   @NotBlank String captchaId,
-                                   @NotBlank String captchaAnswer) {
+                                   @NotBlank @Size(max = 64) String captchaId,
+                                   @NotBlank @Size(max = 16) String captchaAnswer) {
     }
 
     /**
@@ -109,10 +109,10 @@ public final class AuthContracts {
     /** POST /api/v1/auth/register body; unknown JSON fields are rejected. */
     @JsonIgnoreProperties(ignoreUnknown = false)
     public record RegisterRequest(@NotBlank @Size(max = 128) String username,
-                                  @NotBlank String password,
+                                  @NotBlank @Size(max = 256) String password,
                                   @NotBlank @Size(max = 254) String email,
-                                  @NotBlank String emailChallengeId,
-                                  @NotBlank String emailCode) {
+                                  @NotBlank @Size(max = 64) String emailChallengeId,
+                                  @NotBlank @Size(max = 16) String emailCode) {
     }
 
     /** 201 response body: the created user only; registration never returns a token. */
@@ -122,15 +122,15 @@ public final class AuthContracts {
     /** POST /api/v1/auth/password-reset body; unknown JSON fields are rejected. */
     @JsonIgnoreProperties(ignoreUnknown = false)
     public record PasswordResetRequest(@NotBlank @Size(max = 254) String email,
-                                       @NotBlank String emailChallengeId,
-                                       @NotBlank String emailCode,
-                                       @NotBlank String newPassword) {
+                                       @NotBlank @Size(max = 64) String emailChallengeId,
+                                       @NotBlank @Size(max = 16) String emailCode,
+                                       @NotBlank @Size(max = 256) String newPassword) {
     }
 
     /** POST /api/v1/auth/password-change body for an already authenticated account. */
     @JsonIgnoreProperties(ignoreUnknown = false)
-    public record PasswordChangeRequest(@NotBlank String currentPassword,
-                                        @NotBlank String newPassword) {
+    public record PasswordChangeRequest(@NotBlank @Size(max = 256) String currentPassword,
+                                        @NotBlank @Size(max = 256) String newPassword) {
     }
 
     /** GET /api/v1/auth/options: only the two switches, never sender/secret details. */

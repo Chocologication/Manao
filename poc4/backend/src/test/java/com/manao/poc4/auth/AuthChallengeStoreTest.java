@@ -398,6 +398,24 @@ class AuthChallengeStoreTest {
             .isEqualTo(AuthChallengeStore.VerifyOutcome.INVALID);
     }
 
+    @Test
+    void subMicrosecondClockFractionCannotFakeACooldownOnTheFirstSend() {
+        // MySQL rounds Timestamp nanos UP to TIMESTAMP(6) microseconds: a first-slot placeholder
+        // stamped exactly "now" could read back in the future and produce a spurious 1 s cooldown.
+        MutableClock roundUpClock = new MutableClock(Instant.parse("2026-05-06T07:08:09.999999500Z"));
+        var roundedStore = new AuthChallengeStore(jdbc, properties(50, 100), roundUpClock);
+
+        var first = roundedStore.reserveEmailSend(AuthContracts.EmailPurpose.REGISTER_EMAIL,
+            "rounding@example.test", "111111", null, null);
+        assertThat(first.outcome()).isEqualTo(AuthChallengeStore.ReserveOutcome.RESERVED);
+
+        // A real resend inside the cooldown still reports 60 s (and the same round-trip clock).
+        var resend = roundedStore.reserveEmailSend(AuthContracts.EmailPurpose.REGISTER_EMAIL,
+            "rounding@example.test", "222222", null, null);
+        assertThat(resend.outcome()).isEqualTo(AuthChallengeStore.ReserveOutcome.COOLDOWN);
+        assertThat(resend.retryAfterSeconds()).isEqualTo(60);
+    }
+
     // --- review fixes: concurrency, allocation quota, first-slot creation ------------------
 
     @Test

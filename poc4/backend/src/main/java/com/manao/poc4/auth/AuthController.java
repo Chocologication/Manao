@@ -10,6 +10,8 @@ import org.springframework.context.annotation.Conditional;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.web.bind.MethodArgumentNotValidException;
+import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -107,6 +109,30 @@ public final class AuthController {
     @GetMapping("/me")
     public AuthContracts.UserView me(@AuthenticationPrincipal AuthContracts.AccountIdentity identity) {
         return auth.me(identity);
+    }
+
+    // Design section 9: every verification-code response is Cache-Control: no-store, including
+    // the fixed error responses. Controller-level handlers keep the ApiError body contract.
+    @ExceptionHandler(AuthContracts.RateLimitedException.class)
+    public ResponseEntity<ApiError> rateLimitedResponse(AuthContracts.RateLimitedException ex) {
+        return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
+            .header("Retry-After", Long.toString(ex.retryAfterSeconds()))
+            .header("Cache-Control", NO_STORE)
+            .body(new ApiError("AUTH_RATE_LIMITED", null, null));
+    }
+
+    @ExceptionHandler(ApiException.class)
+    public ResponseEntity<ApiError> authFailure(ApiException ex) {
+        return ResponseEntity.status(ex.status())
+            .header("Cache-Control", NO_STORE)
+            .body(new ApiError(ex.code(), null, null));
+    }
+
+    @ExceptionHandler(MethodArgumentNotValidException.class)
+    public ResponseEntity<ApiError> invalidRequest(MethodArgumentNotValidException ex) {
+        return ResponseEntity.status(HttpStatus.UNPROCESSABLE_ENTITY)
+            .header("Cache-Control", NO_STORE)
+            .body(new ApiError("VALIDATION_ERROR", null, null));
     }
 
     /** Real Retry-After for a challenge rate limit; the body keeps the ApiError contract. */

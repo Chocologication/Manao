@@ -33,7 +33,6 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 public final class AuthService {
     private static final Logger LOG = LoggerFactory.getLogger(AuthService.class);
 
-    private final JdbcTemplate jdbc;
     private final UserStore users;
     private final PasswordService passwords;
     private final JwtService jwt;
@@ -54,7 +53,8 @@ public final class AuthService {
         if (jwt == null) throw new IllegalArgumentException("jwt service required");
         if (challenges == null) throw new IllegalArgumentException("challenge store required");
         if (properties == null) throw new IllegalArgumentException("auth properties required");
-        this.jdbc = jdbc;
+        // The JdbcTemplate collaborator is kept in the signature for wiring/tests; all account
+        // writes go through UserStore and the challenge store's shared transaction template.
         this.users = users;
         this.passwords = passwords;
         this.jwt = jwt;
@@ -83,13 +83,13 @@ public final class AuthService {
         if (!properties.registrationEnabled()) throw registrationClosed();
         if (request == null) throw validationError();
         String username = normalizedUsername(request.username());
-        String passwordHash = passwords.hash(normalizedNewPassword(request.password()));
+        String newPassword = normalizedNewPassword(request.password());
         String email = normalizedEmail(request.email());
         Instant now = challenges.clock().instant();
         RegisterOutcome outcome;
         try {
             outcome = challenges.inTransaction(status -> registerInTransaction(
-                username, passwordHash, email, request.emailChallengeId(), request.emailCode(), now));
+                username, newPassword, email, request.emailChallengeId(), request.emailCode(), now));
         } catch (RegistrationConflictException race) {
             // A unique-key race after the pre-check rolled the consume back with the transaction.
             throw users.findByUsername(username).isPresent() ? usernameTaken() : emailTaken();
@@ -98,13 +98,17 @@ public final class AuthService {
         return outcome.registered();
     }
 
-    private RegisterOutcome registerInTransaction(String username, String passwordHash, String email,
+    private RegisterOutcome registerInTransaction(String username, String newPassword, String email,
                                                   String challengeId, String code, Instant now) {
         if (users.findByUsername(username).isPresent()) return RegisterOutcome.failure(usernameTaken());
         if (users.findByEmail(email).isPresent()) return RegisterOutcome.failure(emailTaken());
         AuthChallengeStore.VerifyResult verified = challenges.verifyAndConsume(
             challengeId, AuthContracts.EmailPurpose.REGISTER_EMAIL, email, code);
         if (!verified.consumed()) return RegisterOutcome.failure(emailCodeInvalid());
+        // Hash only after the one-time code was accepted: an anonymous invalid-code request must
+        // not be able to amplify BCrypt cost. The short transaction grows by the hash work, which
+        // is accepted for this small-scale single-backend release.
+        String passwordHash = passwords.hash(newPassword);
         String userId = UUID.randomUUID().toString();
         try {
             users.insertRegisteredAccount(userId, username, passwordHash, email, now);
@@ -120,26 +124,33 @@ public final class AuthService {
      * version-bound code of a bound, verified, enabled account can update the password, and the
      * consume + conditional update commit together.
      */
-    public void resetPassword(AuthContracts.PasswordResetRequest request) {
+    public PasswordChangeResult resetPassword(AuthContracts.PasswordResetRequest request) {
         if (request == null) throw validationError();
         String email = normalizedEmail(request.email());
-        String passwordHash = passwords.hash(normalizedNewPassword(request.newPassword()));
+        String newPassword = normalizedNewPassword(request.newPassword());
+        String[] revokedUser = new String[1];
+        long[] revokedVersion = new long[1];
         Boolean updated = challenges.inTransaction(status -> {
             AuthChallengeStore.VerifyResult verified = challenges.verifyAndConsume(
                 request.emailChallengeId(), AuthContracts.EmailPurpose.RESET_PASSWORD, email,
                 request.emailCode());
             if (!verified.consumed()) return false;
+            // BCrypt runs only for a valid, version-bound code (no anonymous CPU amplification).
+            String passwordHash = passwords.hash(newPassword);
             if (users.updatePassword(verified.userId(), passwordHash,
                 verified.authVersionSnapshot()) != 1) {
                 return false;
             }
+            revokedUser[0] = verified.userId();
+            revokedVersion[0] = verified.authVersionSnapshot() + 1;
             // Revoke only AFTER the password/version commit (design 8.2); a rollback or a later
             // failure must not close the old streams, and a callback failure must not undo the
             // committed password change.
-            revokeOlderAfterCommit(verified.userId(), verified.authVersionSnapshot() + 1);
+            revokeOlderAfterCommit(revokedUser[0], revokedVersion[0]);
             return true;
         });
         if (!Boolean.TRUE.equals(updated)) throw emailCodeInvalid();
+        return new PasswordChangeResult(revokedUser[0], revokedVersion[0]);
     }
 
     /**
@@ -148,8 +159,8 @@ public final class AuthService {
      * includes the request's auth_version. A stale/concurrent request is refused with 401 without
      * overwriting the newer password; no replacement token is issued.
      */
-    public void changePassword(AuthContracts.AccountIdentity identity,
-                               AuthContracts.PasswordChangeRequest request) {
+    public PasswordChangeResult changePassword(AuthContracts.AccountIdentity identity,
+                                                AuthContracts.PasswordChangeRequest request) {
         if (identity == null || request == null) throw validationError();
         String newPassword = normalizedNewPassword(request.newPassword());
         UserStore.UserAccount account = users.findById(identity.userId())
@@ -167,6 +178,7 @@ public final class AuthService {
             return true;
         }));
         if (!updated) throw staleAuthentication();
+        return new PasswordChangeResult(identity.userId(), identity.authVersion() + 1);
     }
 
     /**
@@ -265,6 +277,13 @@ public final class AuthService {
 
     private static ApiException registrationClosed() {
         return new ApiException("REGISTRATION_CLOSED", 403, "Registration is closed");
+    }
+
+    /**
+     * The result of a committed password transaction: the internal hook payload Task 6 uses for
+     * after-commit revocation. The HTTP contract stays 204 with no replacement token.
+     */
+    public record PasswordChangeResult(String userId, long newAuthVersion) {
     }
 
     private record RegisterOutcome(AuthContracts.RegisteredUser registered, ApiException error) {

@@ -18,6 +18,7 @@ import org.springframework.dao.DataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.RowMapper;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.TransactionCallback;
 import org.springframework.transaction.support.TransactionTemplate;
 
@@ -66,6 +67,7 @@ public final class AuthChallengeStore {
     private final AuthProperties.Challenge limits;
     private final Clock clock;
     private final TransactionTemplate transactions;
+    private final TransactionTemplate cleanupTransactions;
     private final SecureRandom random = new SecureRandom();
 
     public AuthChallengeStore(JdbcTemplate jdbc, AuthProperties properties) {
@@ -84,7 +86,13 @@ public final class AuthChallengeStore {
         if (dataSource == null) {
             throw new IllegalArgumentException("JdbcTemplate requires a DataSource");
         }
-        this.transactions = new TransactionTemplate(new DataSourceTransactionManager(dataSource));
+        DataSourceTransactionManager transactionManager = new DataSourceTransactionManager(dataSource);
+        this.transactions = new TransactionTemplate(transactionManager);
+        // Opportunistic cleanup never joins the caller's password/reservation transaction: it
+        // runs in its own short transaction and can never mark the caller's transaction
+        // rollback-only.
+        this.cleanupTransactions = new TransactionTemplate(transactionManager);
+        this.cleanupTransactions.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
     }
 
     public Clock clock() {
@@ -352,11 +360,12 @@ public final class AuthChallengeStore {
      */
     private void cleanupExpiredBestEffort(Instant now) {
         try {
-            jdbc.update("DELETE FROM auth_challenge WHERE expires_at < ? AND (purpose = ? "
+            cleanupTransactions.executeWithoutResult(status -> jdbc.update(
+                "DELETE FROM auth_challenge WHERE expires_at < ? AND (purpose = ? "
                     + "OR window_started_at IS NULL OR window_started_at <= ?) ORDER BY expires_at LIMIT "
                     + CLEANUP_BATCH,
-                Timestamp.from(now), CAPTCHA_PURPOSE, Timestamp.from(now.minus(SEND_WINDOW)));
-        } catch (DataAccessException ex) {
+                Timestamp.from(now), CAPTCHA_PURPOSE, Timestamp.from(now.minus(SEND_WINDOW))));
+        } catch (DataAccessException | org.springframework.transaction.TransactionException ex) {
             // Opportunistic cleanup only: a concurrent lock conflict skips this pass.
         }
     }

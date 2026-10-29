@@ -206,6 +206,7 @@ class AccountHttpContractTest {
                     .content("{\"purpose\":\"REGISTER_EMAIL\",\"email\":\"errors@example.test\","
                         + "\"captchaId\":\"" + insertCaptcha(jdbc, CAPTCHA_ANSWER) + "\",\"captchaAnswer\":\"ZZZZZ\"}"))
                 .andExpect(status().isUnprocessableEntity())
+                .andExpect(header().string("Cache-Control", "no-store"))
                 .andExpect(jsonPath("$.code").value("CAPTCHA_INVALID"));
 
             // Successful send then the real 60 s cooldown: 429 with Retry-After.
@@ -215,6 +216,7 @@ class AccountHttpContractTest {
                         + "\"captchaId\":\"" + insertCaptcha(jdbc, CAPTCHA_ANSWER) + "\",\"captchaAnswer\":\"AB23C\"}"))
                 .andExpect(status().isTooManyRequests())
                 .andExpect(header().string("Retry-After", "60"))
+                .andExpect(header().string("Cache-Control", "no-store"))
                 .andExpect(jsonPath("$.code").value("AUTH_RATE_LIMITED"));
 
             // Register SMTP failure surfaces 503 MAIL_SEND_FAILED (reset stays uniform).
@@ -227,6 +229,7 @@ class AccountHttpContractTest {
                 .as("register mail failure response: " + failed.getResponse().getContentAsString())
                 .isEqualTo(503);
             assertThat(failed.getResponse().getContentAsString()).contains("MAIL_SEND_FAILED");
+            assertThat(failed.getResponse().getHeader("Cache-Control")).isEqualTo("no-store");
 
             // The per-address captcha limiter also reports a real Retry-After.
             for (int i = 0; i < 10; i++) {
@@ -282,6 +285,35 @@ class AccountHttpContractTest {
             mvc.perform(post("/api/v1/auth/login").contentType(MediaType.APPLICATION_JSON)
                     .content("{\"username\":\"reset_user\",\"password\":\"brand-new-password\"}"))
                 .andExpect(status().isOk());
+        });
+    }
+
+    @Test
+    void conflictsAndDisabledLoginUseTheFixedHttpContract() throws Exception {
+        run(new CapturingMail(), new String[0], (mvc, jdbc, mail) -> {
+            insertUser(jdbc, "taken-id", "taken_user", "taken@example.test", "correct-password", 0);
+            String code = requestRegisterCode(mvc, jdbc, "fresh@example.test");
+            mvc.perform(post("/api/v1/auth/register").contentType(MediaType.APPLICATION_JSON)
+                    .content("{\"username\":\"taken_user\",\"password\":\"new-password-123\","
+                        + "\"email\":\"fresh@example.test\",\"emailChallengeId\":\"" + code
+                        + "\",\"emailCode\":\"" + mail.codes.get(mail.codes.size() - 1) + "\"}"))
+                .andExpect(status().isConflict())
+                .andExpect(header().string("Cache-Control", "no-store"))
+                .andExpect(jsonPath("$.code").value("USERNAME_TAKEN"));
+
+            String duplicateCode = requestRegisterCode(mvc, jdbc, "second@example.test");
+            mvc.perform(post("/api/v1/auth/register").contentType(MediaType.APPLICATION_JSON)
+                    .content("{\"username\":\"fresh_name\",\"password\":\"new-password-123\","
+                        + "\"email\":\"taken@example.test\",\"emailChallengeId\":\"" + duplicateCode
+                        + "\",\"emailCode\":\"" + mail.codes.get(mail.codes.size() - 1) + "\"}"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("EMAIL_TAKEN"));
+
+            jdbc.update("UPDATE app_user SET enabled=FALSE WHERE id='taken-id'");
+            mvc.perform(post("/api/v1/auth/login").contentType(MediaType.APPLICATION_JSON)
+                    .content("{\"username\":\"taken_user\",\"password\":\"correct-password\"}"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.code").value("UNAUTHENTICATED"));
         });
     }
 
