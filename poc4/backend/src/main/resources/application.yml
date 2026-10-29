@@ -82,6 +82,33 @@ manao:
         mysql-image-digest: ${MANAO_MYSQL_IMAGE_DIGEST:}
         redis-image-digest: ${MANAO_REDIS_IMAGE_DIGEST:}
         mysql-storage-class-name: ${MANAO_MYSQL_STORAGE_CLASS:}
+    auth:
+      # Account lifecycle switches (design sections 5.3 and 7). Registration and mail are closed
+      # by default; the challenge HMAC secret and the SMTP client authorization code are injected
+      # at runtime only and are never committed. The 126 deployment supplies MANAO_MAIL_HOST,
+      # MANAO_MAIL_PORT, MANAO_MAIL_USERNAME, MANAO_MAIL_FROM and MANAO_MAIL_TLS_MODE as plain env.
+      registration-enabled: ${MANAO_REGISTRATION_ENABLED:false}
+      auth-challenge-secret: ${MANAO_AUTH_CHALLENGE_SECRET:}
+      mail:
+        enabled: ${MANAO_MAIL_ENABLED:false}
+        host: ${MANAO_MAIL_HOST:}
+        port: ${MANAO_MAIL_PORT:465}
+        username: ${MANAO_MAIL_USERNAME:}
+        from: ${MANAO_MAIL_FROM:}
+        tls-mode: ${MANAO_MAIL_TLS_MODE:ssl}
+        password: ${MANAO_MAIL_PASSWORD:}
+        connect-timeout: ${MANAO_MAIL_CONNECT_TIMEOUT:5s}
+        read-timeout: ${MANAO_MAIL_READ_TIMEOUT:3s}
+        write-timeout: ${MANAO_MAIL_WRITE_TIMEOUT:5s}
+      challenge:
+        captcha-ttl: ${MANAO_AUTH_CAPTCHA_TTL:2m}
+        captcha-attempts: ${MANAO_AUTH_CAPTCHA_ATTEMPTS:5}
+        captcha-max-active: ${MANAO_AUTH_CAPTCHA_MAX_ACTIVE:1000}
+        captcha-per-address-per-minute: ${MANAO_AUTH_CAPTCHA_RATE_PER_MINUTE:10}
+        email-code-ttl: ${MANAO_AUTH_EMAIL_CODE_TTL:10m}
+        email-code-attempts: ${MANAO_AUTH_EMAIL_CODE_ATTEMPTS:5}
+        email-code-cooldown: ${MANAO_AUTH_EMAIL_CODE_COOLDOWN:60s}
+        email-code-hourly-limit: ${MANAO_AUTH_EMAIL_CODE_HOURLY_LIMIT:5}
     ai:
       # Stage-one AI integration is DISABLED by default: with enabled=false nothing is
       # wired (no task endpoints, no internal-route controller beans, no worker client).

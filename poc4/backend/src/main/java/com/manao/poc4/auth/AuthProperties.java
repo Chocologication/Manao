@@ -5,16 +5,19 @@ import java.util.Locale;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
 /**
- * Account lifecycle configuration (design sections 5 and 7). Security sensitive switches default
- * to off/empty: registration stays closed, mail stays disabled and the challenge HMAC secret must
- * be injected. The deployment maps the MANAO_* environment variables onto this prefix; this class
- * only defines the safe baseline, never a credential.
+ * Account lifecycle configuration (design sections 5.3 and 7). Security sensitive switches
+ * default to off/empty: registration stays closed, mail stays disabled and the challenge HMAC
+ * secret must be injected. The deployment maps the MANAO_* environment variables onto this
+ * prefix; this class only defines the safe baseline, never a credential.
  */
 @ConfigurationProperties(prefix = "manao.poc4.auth", ignoreUnknownFields = false)
 public record AuthProperties(boolean registrationEnabled, String authChallengeSecret, Mail mail,
                              Challenge challenge) {
     public AuthProperties {
         authChallengeSecret = authChallengeSecret == null ? "" : authChallengeSecret.trim();
+        if (!authChallengeSecret.isEmpty() && authChallengeSecret.length() < 32) {
+            throw new IllegalArgumentException("auth challenge secret must be at least 32 characters");
+        }
         mail = mail == null ? Mail.safeDefaults() : mail;
         challenge = challenge == null ? Challenge.safeDefaults() : challenge;
     }
@@ -42,19 +45,31 @@ public record AuthProperties(boolean registrationEnabled, String authChallengeSe
             writeTimeout = positive(writeTimeout, Duration.ofSeconds(5));
         }
 
+        /**
+         * True only when mail is explicitly enabled AND every SMTP parameter, including the
+         * runtime-only client authorization code, is present. An empty password is never treated
+         * as a valid configuration.
+         */
+        public boolean configured() {
+            return enabled && !host.isBlank() && !username.isBlank() && !from.isBlank()
+                && !password.isBlank();
+        }
+
         static Mail safeDefaults() {
             return new Mail(false, "", 465, "", "", "ssl", "",
                 Duration.ofSeconds(5), Duration.ofSeconds(3), Duration.ofSeconds(5));
         }
     }
 
-    /** Challenge lifetimes and retry bounds from design section 5.3. */
-    public record Challenge(Duration captchaTtl, int captchaAttempts, Duration emailCodeTtl,
-                            int emailCodeAttempts, Duration emailCodeCooldown,
-                            int emailCodeHourlyLimit) {
+    /** Challenge lifetimes, attempts and simple rate limits from design sections 5.3 and 7. */
+    public record Challenge(Duration captchaTtl, int captchaAttempts, int captchaMaxActive,
+                            int captchaPerAddressPerMinute, Duration emailCodeTtl, int emailCodeAttempts,
+                            Duration emailCodeCooldown, int emailCodeHourlyLimit) {
         public Challenge {
             captchaTtl = positive(captchaTtl, Duration.ofMinutes(2));
             captchaAttempts = atLeastOne(captchaAttempts, 5);
+            captchaMaxActive = atLeastOne(captchaMaxActive, 1000);
+            captchaPerAddressPerMinute = atLeastOne(captchaPerAddressPerMinute, 10);
             emailCodeTtl = positive(emailCodeTtl, Duration.ofMinutes(10));
             emailCodeAttempts = atLeastOne(emailCodeAttempts, 5);
             emailCodeCooldown = positive(emailCodeCooldown, Duration.ofSeconds(60));
@@ -62,8 +77,8 @@ public record AuthProperties(boolean registrationEnabled, String authChallengeSe
         }
 
         static Challenge safeDefaults() {
-            return new Challenge(Duration.ofMinutes(2), 5, Duration.ofMinutes(10), 5,
-                Duration.ofSeconds(60), 5);
+            return new Challenge(Duration.ofMinutes(2), 5, 1000, 10,
+                Duration.ofMinutes(10), 5, Duration.ofSeconds(60), 5);
         }
     }
 
