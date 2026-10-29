@@ -1,11 +1,7 @@
 import { HttpClient, setHttpClient } from '../api/httpClient';
 import { clearPythonDependencyOperationIdsForUser } from '../api/pythonDependencyApi';
 import { clearAgentTaskIdsForUser } from '../api/agentTaskApi';
-import {
-  createAuthSession,
-  type AnonymousReason,
-  type AuthenticatedSnapshot,
-} from '../features/auth/authSession';
+import { createAuthSession, type AuthenticatedSnapshot } from '../features/auth/authSession';
 import { resetUnsavedDialog } from '../features/editor/unsavedChangesGuard';
 import { WorkspaceBufferRegistry } from '../features/editor/WorkspaceBufferRegistry';
 import { workspaceSessionStore } from '../features/editor/workspaceSession';
@@ -64,14 +60,12 @@ function runCleanupStep(step: () => void): void {
 /**
  * Logout, natural expiry and a current-token 401 all end through this cleanup.
  * User-scoped ids and live state belong to the previous user, never to the next session.
- * `previous` is absent only for the defensive already-anonymous teardown below.
  */
-function clearSessionState(previous?: AuthenticatedSnapshot): void {
+function clearSessionState(previous: AuthenticatedSnapshot): void {
   runCleanupStep(() => {
-    if (previous === undefined) {
-      return;
-    }
     clearPythonDependencyOperationIdsForUser(previous.user.id);
+  });
+  runCleanupStep(() => {
     clearAgentTaskIdsForUser(previous.user.id);
   });
   runCleanupStep(() => {
@@ -91,27 +85,12 @@ function clearSessionState(previous?: AuthenticatedSnapshot): void {
   });
 }
 
-/**
- * A public termination request normally ends the authenticated session through
- * authSession.clear, so the onBeforeClear callback owns the cleanup. When the
- * snapshot is already anonymous (for example a component registered a live
- * stream before login in a test harness), still tear down leftover runtime
- * resources instead of leaving them attached to no session.
- */
-function endSession(reason: AnonymousReason): void {
-  if (authSession.getSnapshot().status === 'authenticated') {
-    authSession.clear(reason);
-    return;
-  }
-  clearSessionState();
-}
-
 export function handleUnauthorized(): void {
-  endSession('unauthorized');
+  authSession.clear('unauthorized');
 }
 
 export function logout(): void {
-  endSession('logout');
+  authSession.clear('logout');
 }
 
 export const httpClient = new HttpClient({

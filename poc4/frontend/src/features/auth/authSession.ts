@@ -123,7 +123,11 @@ export function createAuthSession(options: AuthSessionOptions = {}): AuthSession
         // A failing cleanup observer must not keep the stale credentials alive.
       }
     } finally {
-      snapshot = { status: 'anonymous', reason };
+      // A cleanup step (or a disposer it runs) may have accepted a replacement
+      // login while this clear was in progress: never overwrite that newer session.
+      if (snapshot === previous) {
+        snapshot = { status: 'anonymous', reason };
+      }
       clearing = false;
       emit();
     }

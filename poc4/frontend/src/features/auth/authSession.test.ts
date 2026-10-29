@@ -282,4 +282,62 @@ describe('authSession unified termination onBeforeClear', () => {
       vi.useRealTimers();
     }
   });
+
+  it('keeps a login accepted during cleanup and arms its expiry instead of overwriting it', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-08-24T10:00:00.000Z'));
+    try {
+      const expiredAlice: LoginResponse = {
+        accessToken: 'alice-expired-token',
+        expiresAt: '2026-08-24T10:30:00.000Z',
+        user: { id: 'u1', username: 'alice' },
+      };
+      const replacementBob: LoginResponse = {
+        accessToken: 'bob-replacement-token',
+        expiresAt: '2026-08-24T11:00:00.000Z',
+        user: { id: 'u2', username: 'bob' },
+      };
+      const beforeClear = vi.fn();
+      const session = createAuthSession({ onBeforeClear: beforeClear });
+      beforeClear.mockImplementation((previous) => {
+        if (previous.user.id === 'u1') {
+          session.authenticate(replacementBob);
+        }
+      });
+      session.authenticate(expiredAlice);
+      const emittedStatuses: string[] = [];
+      session.subscribe(() => {
+        emittedStatuses.push(session.getSnapshot().status);
+      });
+
+      // The expiry timer calls clear('expired') when it fires; drive the same call
+      // directly so the reentrant login inside the cleanup callback is deterministic.
+      session.clear('expired');
+
+      expect(beforeClear).toHaveBeenCalledTimes(1);
+      expect(beforeClear).toHaveBeenCalledWith(
+        expect.objectContaining({ status: 'authenticated', user: { id: 'u1', username: 'alice' } }),
+        'expired',
+      );
+      expect(session.getSnapshot()).toEqual({
+        status: 'authenticated',
+        accessToken: replacementBob.accessToken,
+        expiresAt: replacementBob.expiresAt,
+        user: replacementBob.user,
+      });
+      expect(emittedStatuses).not.toContain('anonymous');
+      expect(session.getAccessToken()).toBe('bob-replacement-token');
+
+      // The replacement login's own absolute expiry timer is armed.
+      vi.advanceTimersByTime(60 * 60 * 1000 - 1);
+      expect(session.getSnapshot()).toMatchObject({
+        status: 'authenticated',
+        accessToken: 'bob-replacement-token',
+      });
+      vi.advanceTimersByTime(1);
+      expect(session.getSnapshot()).toEqual({ status: 'anonymous', reason: 'expired' });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

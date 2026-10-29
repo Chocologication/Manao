@@ -2,7 +2,7 @@ import { act, cleanup, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
 import { HttpClient, setHttpClient } from '@/api/httpClient';
 import { useAgentLiveOutput, type LiveScope } from './useAgentLiveOutput';
-import { handleUnauthorized, logout } from '@/app/appRuntime';
+import { authSession, handleUnauthorized, logout } from '@/app/appRuntime';
 const scope: LiveScope = { userId: 'alice', projectId: 'p', conversationId: 'c', taskId: 't' };
 const snap = (revision = 1, taskId = 't', conversationId = 'c') => ({ revision, taskId, conversationId, durableHeadSeq: 5, current: { messageOrdinal: 0, phase: 'generating', blocks: [{ contentIndex: 0, kind: 'text', text: 'visible ' + revision }], modelTruncated: false, displayTruncated: false }, unavailable: false });
 function fixture() {
@@ -13,6 +13,13 @@ function fixture() {
 }
 afterEach(() => { cleanup(); setHttpClient(null); vi.useRealTimers(); });
 it.each([logout, handleUnauthorized])('closes the display stream through the existing session cleanup path', async closeSession => {
+  // Session cleanup only runs for an authenticated session now: authenticate a
+  // fixture user so logout/401 exercise the real onBeforeClear path.
+  authSession.authenticate({
+    accessToken: 'live-output-token',
+    expiresAt: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
+    user: { id: 'usr-alice', username: 'alice' },
+  });
   const f = fixture(); const h = renderHook(() => useAgentLiveOutput(scope)); await waitFor(() => expect(f.controllers).toHaveLength(1));
   await act(async () => f.publish(snap())); act(() => closeSession()); await waitFor(() => expect(f.signals[0]!.aborted).toBe(true));
   expect(h.result.current.latest).toBeNull(); expect(f.canceled).toHaveBeenCalled();
