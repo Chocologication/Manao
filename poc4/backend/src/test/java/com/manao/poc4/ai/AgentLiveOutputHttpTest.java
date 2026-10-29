@@ -119,7 +119,9 @@ class AgentLiveOutputHttpTest {
             assertThat(f.post(f.task, f.snapshot(1), true, "worker", "1").statusCode()).isEqualTo(204);
             assertThat(f.get(f.livePath(), null).statusCode()).isEqualTo(401);
             assertThat(f.get(f.livePath(), "invalid").statusCode()).isEqualTo(401);
-            assertThat(f.get(f.livePath(), f.app.getBean(JwtService.class).issue("foreign").accessToken()).statusCode()).isEqualTo(404);
+            // An unknown account can no longer authenticate at all (the database check runs
+            // before owner scoping), so the refusal is 401 rather than an empty owner scope.
+            assertThat(f.get(f.livePath(), f.app.getBean(JwtService.class).issue("foreign", 0).accessToken()).statusCode()).isEqualTo(401);
             assertThat(f.get(f.livePath().replace("projects/project/", "projects/foreign/"), f.token).statusCode()).isEqualTo(404);
             var response = f.stream(f.livePath());
             try (var body = response.body()) {
@@ -192,6 +194,7 @@ class AgentLiveOutputHttpTest {
                 "MANAO_AI_INTERNAL_TOKEN", "internal-token"));
             application.addInitializers(context -> {
                 var web = (AnnotationConfigServletWebServerApplicationContext) context;
+                web.registerBean(org.springframework.jdbc.core.JdbcTemplate.class, () -> jdbc);
                 web.registerBean(AgentTaskStore.class, () -> tasks);
                 web.registerBean(AgentLiveOutput.class, () -> new AgentLiveOutput(tasks));
                 web.registerBean(AgentTaskService.class, () -> new AgentTaskService(tasks,
@@ -200,7 +203,7 @@ class AgentLiveOutputHttpTest {
             app = (AnnotationConfigServletWebServerApplicationContext) application.run();
             assertThat(app.getBean(FilterChainProxy.class)).isNotNull();
             port = app.getWebServer().getPort();
-            token = app.getBean(JwtService.class).issue("owner").accessToken();
+            token = app.getBean(JwtService.class).issue("owner", 0).accessToken();
         }
         String snapshot(long revision) {
             return "{\"revision\":" + revision + ",\"taskId\":\"" + task + "\",\"conversationId\":\"" + conversation

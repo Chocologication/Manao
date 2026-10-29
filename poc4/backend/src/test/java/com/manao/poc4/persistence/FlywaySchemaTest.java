@@ -44,12 +44,12 @@ class FlywaySchemaTest {
     }
 
     @Test
-    void latestSchemaIsVersion16AndAcceptsDeleting() throws Exception {
+    void latestSchemaIsVersion17AndAcceptsDeleting() throws Exception {
         try (var version = connection.prepareStatement(
                 "SELECT version FROM flyway_schema_history WHERE success = 1 ORDER BY installed_rank DESC LIMIT 1")) {
             try (var rows = version.executeQuery()) {
                 assertThat(rows.next()).isTrue();
-                assertThat(rows.getString(1)).isEqualTo("16");
+                assertThat(rows.getString(1)).isEqualTo("17");
             }
         }
         String userId = UUID.randomUUID().toString();
@@ -285,7 +285,7 @@ class FlywaySchemaTest {
             v9.migrateToLatest();
             assertThat(jdbc.queryForObject(
                 "SELECT version FROM flyway_schema_history WHERE success = 1 ORDER BY installed_rank DESC LIMIT 1",
-                String.class)).isEqualTo("16");
+                String.class)).isEqualTo("17");
             // The in-place upgrade keeps every legacy row and defaults it to the FILE identity.
             assertThat(jdbc.queryForObject("SELECT operation_kind FROM workspace_operation WHERE id = ?", String.class, operationId))
                 .isEqualTo("FILE");
@@ -317,7 +317,7 @@ class FlywaySchemaTest {
             v8.migrateToLatest();
             assertThat(jdbc.queryForObject(
                 "SELECT version FROM flyway_schema_history WHERE success = 1 ORDER BY installed_rank DESC LIMIT 1",
-                String.class)).isEqualTo("16");
+                String.class)).isEqualTo("17");
             // Existing rows survive V9 and legacy JSON NULL keeps the old console reading.
             assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM project WHERE id = ?", Integer.class, projectId)).isEqualTo(1);
             assertThat(jdbc.queryForObject("SELECT runtime_spec_json FROM project WHERE id = ?", String.class, projectId)).isNull();

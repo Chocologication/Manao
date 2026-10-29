@@ -12,6 +12,10 @@ class SecurityConfigTest {
         new ApplicationContextRunner()
             .withUserConfiguration(SecurityConfig.class)
             .withBean(DataSource.class, () -> new DriverManagerDataSource("jdbc:invalid:test"))
+            // The account store needs the JDBC template bean; the failing bean under test is
+            // still the empty JWT secret, not a missing collaborator.
+            .withBean(org.springframework.jdbc.core.JdbcTemplate.class,
+                () -> org.mockito.Mockito.mock(org.springframework.jdbc.core.JdbcTemplate.class))
             .withPropertyValues("MANAO_JWT_SECRET=")
             .run(context -> assertThat(context.getStartupFailure()).isNotNull());
     }

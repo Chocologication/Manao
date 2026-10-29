@@ -3,6 +3,7 @@ package com.manao.poc4.ai;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.manao.poc4.api.GlobalExceptionHandler;
 import com.manao.poc4.auth.JwtService;
+import com.manao.poc4.auth.UserStore;
 import com.manao.poc4.config.SecurityConfig;
 import com.manao.poc4.kubernetes.JobCoordinator;
 import com.manao.poc4.persistence.DatabaseClock;
@@ -118,10 +119,10 @@ public class TerminalSettlementLocalServer {
     }
     @RestController @Profile("terminal-settlement-local") @RequestMapping("/__fixture")
     class Controls {
-        final JdbcTemplate jdbc;final JwtService jwt;final AgentTaskStore tasks;final AgentTaskSettlementService settlement;final JobCoordinator jobs;final RunObservationService observation;
-        Controls(JdbcTemplate jdbc,JwtService jwt,AgentTaskStore tasks,AgentTaskSettlementService settlement,JobCoordinator jobs,RunObservationService observation){this.jdbc=jdbc;this.jwt=jwt;this.tasks=tasks;this.settlement=settlement;this.jobs=jobs;this.observation=observation;}
+        final JdbcTemplate jdbc;final JwtService jwt;final UserStore users;final AgentTaskStore tasks;final AgentTaskSettlementService settlement;final JobCoordinator jobs;final RunObservationService observation;
+        Controls(JdbcTemplate jdbc,JwtService jwt,UserStore users,AgentTaskStore tasks,AgentTaskSettlementService settlement,JobCoordinator jobs,RunObservationService observation){this.jdbc=jdbc;this.jwt=jwt;this.users=users;this.tasks=tasks;this.settlement=settlement;this.jobs=jobs;this.observation=observation;}
         @GetMapping("/ready") Map<String,Object> ready(){return Map.of("ready",true,"projectId",PROJECT,"userId",OWNER,"pid",ProcessHandle.current().pid());}
-        @PostMapping("/login") Object login(@RequestParam(defaultValue=OWNER) String owner){return jwt.issue(owner);}
+        @PostMapping("/login") Object login(@RequestParam(defaultValue=OWNER) String owner){var user=users.findById(owner).orElseThrow();return jwt.issue(owner,user.authVersion());}
         @PostMapping("/gate/hold") void hold() throws Exception {
             heldRelease=new CountDownLatch(1);var acquired=new CountDownLatch(1);
             new Thread(() -> {try(var lease=gate.tryAcquire(PROJECT).orElseThrow()){acquired.countDown();heldRelease.await(60,TimeUnit.SECONDS);}catch(InterruptedException e){Thread.currentThread().interrupt();}},"terminal-test-gate").start();
