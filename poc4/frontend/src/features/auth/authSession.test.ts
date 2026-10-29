@@ -340,4 +340,58 @@ describe('authSession unified termination onBeforeClear', () => {
       vi.useRealTimers();
     }
   });
+
+  it('keeps the replacement session timer when the cleanup callback clears reentrantly', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-08-24T10:00:00.000Z'));
+    try {
+      const expiredAlice: LoginResponse = {
+        accessToken: 'alice-expired-token',
+        expiresAt: '2026-08-24T10:30:00.000Z',
+        user: { id: 'u1', username: 'alice' },
+      };
+      const replacementBob: LoginResponse = {
+        accessToken: 'bob-replacement-token',
+        expiresAt: '2026-08-24T11:00:00.000Z',
+        user: { id: 'u2', username: 'bob' },
+      };
+      const beforeClear = vi.fn();
+      const session = createAuthSession({ onBeforeClear: beforeClear });
+      beforeClear.mockImplementation((previous) => {
+        if (previous.user.id === 'u1') {
+          session.authenticate(replacementBob);
+          // This reentrant clear is ignored; it must not cancel Bob's expiry timer.
+          session.clear('unauthorized');
+        }
+      });
+      session.authenticate(expiredAlice);
+
+      session.clear('expired');
+
+      expect(beforeClear).toHaveBeenCalledTimes(1);
+      expect(session.getSnapshot()).toEqual({
+        status: 'authenticated',
+        accessToken: replacementBob.accessToken,
+        expiresAt: replacementBob.expiresAt,
+        user: replacementBob.user,
+      });
+
+      // Bob's timer survived the ignored reentrant clear and clears him at his own expiry.
+      vi.advanceTimersByTime(60 * 60 * 1000 - 1);
+      expect(session.getSnapshot()).toMatchObject({
+        status: 'authenticated',
+        accessToken: 'bob-replacement-token',
+      });
+      vi.advanceTimersByTime(1);
+
+      expect(session.getSnapshot()).toEqual({ status: 'anonymous', reason: 'expired' });
+      expect(beforeClear).toHaveBeenCalledTimes(2);
+      expect(beforeClear).toHaveBeenLastCalledWith(
+        expect.objectContaining({ status: 'authenticated', user: { id: 'u2', username: 'bob' } }),
+        'expired',
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

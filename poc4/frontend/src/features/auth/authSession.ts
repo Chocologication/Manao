@@ -107,11 +107,15 @@ export function createAuthSession(options: AuthSessionOptions = {}): AuthSession
   }
 
   function clear(reason: AnonymousReason): void {
+    // An ignored reentrant clear (a cleanup step ending the session again) must not
+    // cancel the expiry timer of a replacement session accepted during that cleanup.
+    if (clearing) {
+      return;
+    }
     expiryGeneration += 1;
     clearExpiryTimer();
-    // Reentrant clears (for example a disposer that ends the session again) and
-    // repeated clears are no-ops: one session runs its cleanup exactly once.
-    if (clearing || snapshot.status !== 'authenticated') {
+    // Repeated clears are no-ops: one session runs its cleanup exactly once.
+    if (snapshot.status !== 'authenticated') {
       return;
     }
     const previous = snapshot;
