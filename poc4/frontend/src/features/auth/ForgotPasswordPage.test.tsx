@@ -290,10 +290,18 @@ describe('ForgotPasswordPage', { timeout: 15_000 }, () => {
     await user.type(screen.getByLabelText(CODE_INPUT), '123456');
     await user.type(screen.getByLabelText(NEW_PASSWORD_INPUT), 'reborn-pass-1');
     await user.type(screen.getByLabelText(CONFIRM_NEW_PASSWORD_INPUT), 'reborn-pass-1');
+    // Recreate a genuinely resendable state (cooldown 0 + fresh captcha): this is
+    // what makes the reverse-mutex assertion meaningful.
+    await waitFor(() => expect(screen.getByLabelText(CAPTCHA_INPUT)).toBeEnabled());
+    await user.type(screen.getByLabelText(CAPTCHA_INPUT), '54321');
+    expect(await screen.findByRole('button', { name: /重新发送/ })).toBeEnabled();
+    const sendsBeforeSubmit = sendCalls;
 
     await user.click(screen.getByRole('button', { name: SUBMIT_LABEL }));
     expect(await screen.findByRole('button', { name: '正在重置…' })).toBeDisabled();
     expect(screen.getByRole('button', { name: /重新发送/ })).toBeDisabled();
+    await user.click(screen.getByRole('button', { name: /重新发送/ }));
+    expect(sendCalls).toBe(sendsBeforeSubmit);
 
     releaseReset?.();
     expect(await screen.findByText('LOGIN_PAGE')).toBeInTheDocument();

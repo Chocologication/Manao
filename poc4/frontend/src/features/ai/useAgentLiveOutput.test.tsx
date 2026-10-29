@@ -354,7 +354,9 @@ it.each([204, 429, 503, 401])('falls back without a busy loop for HTTP %s', asyn
     expect(h.result.current.connectionState).toBe(status === 204 ? 'history' : 'unavailable'),
   );
   expect(fetchImpl).toHaveBeenCalledTimes(status === 204 ? 1 : 2);
-  expect(logout).toHaveBeenCalledTimes(status === 401 ? 1 : 0);
+  // The stream request is snapshot-owned: a real 401 must not run the global
+  // cleanup before the hook's one-shot /auth/me check decides.
+  expect(logout).not.toHaveBeenCalled();
 });
 
 it('malformed SSE performs exactly one /auth/me check and preserves the last preview', async () => {
@@ -403,4 +405,97 @@ it('HTTP 503 stream response performs exactly one /auth/me check', async () => {
   expect(meStarted).toBe(true);
   expect(fetchImpl).toHaveBeenCalledTimes(2);
   expect(requests[1]).toBe(ME_PATH);
+});
+
+it('turns a real live-output HTTP 401 into one snapshot-guarded /auth/me check', async () => {
+  authSession.authenticate({
+    accessToken: 'stream-401-token',
+    expiresAt: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
+    user: { id: 'usr-alice', username: 'alice', email: null, emailVerified: false },
+  });
+  const authenticatedSnapshot = authSession.getSnapshot();
+  const requests: string[] = [];
+  const unauthorized = () =>
+    new Response(
+      JSON.stringify({ code: 'UNAUTHENTICATED', message: 'Authentication required', traceId: 'trace' }),
+      { status: 401, headers: { 'Content-Type': 'application/json' } },
+    );
+  const fetchImpl = vi.fn<typeof fetch>(async (input) => {
+    requests.push(requestUrl(input));
+    return unauthorized();
+  });
+  setHttpClient(
+    new HttpClient({
+      getAccessToken: () => authSession.getAccessToken(),
+      onUnauthorized: handleUnauthorized,
+      fetchImpl,
+    }),
+  );
+  const h = renderHook(() => useAgentLiveOutput(scope));
+
+  await waitFor(() => expect(authSession.getSnapshot().status).toBe('anonymous'));
+  expect(authSession.getSnapshot()).toEqual({ status: 'anonymous', reason: 'unauthorized' });
+  expect(authenticatedSnapshot.status).toBe('authenticated');
+  expect(requests.filter((url) => url === ME_PATH)).toHaveLength(1);
+  expect(fetchImpl).toHaveBeenCalledTimes(2);
+  await waitFor(() => expect(h.result.current.connectionState).toBe('history'));
+});
+
+it('keeps a newer same-token login when an old live-output 401 arrives late', async () => {
+  authSession.authenticate({
+    accessToken: 'same-token',
+    expiresAt: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
+    user: { id: 'usr-alice', username: 'alice', email: null, emailVerified: false },
+  });
+  let resolveStream: (response: Response) => void = () => {};
+  let streamStarted = false;
+  let meRequests = 0;
+  const fetchImpl = vi.fn<typeof fetch>(async (input) => {
+    const url = requestUrl(input);
+    if (url.includes(LIVE_OUTPUT_PATH)) {
+      streamStarted = true;
+      return new Promise<Response>((resolve) => {
+        resolveStream = resolve;
+      });
+    }
+    meRequests += 1;
+    throw new TypeError('unexpected session check');
+  });
+  setHttpClient(
+    new HttpClient({
+      getAccessToken: () => authSession.getAccessToken(),
+      onUnauthorized: handleUnauthorized,
+      fetchImpl,
+    }),
+  );
+  renderHook(() => useAgentLiveOutput(scope));
+  await waitFor(() => expect(streamStarted).toBe(true));
+
+  // Logout + newer login that happens to carry the identical JWT string; the
+  // old stream 401 (same token) must not clear the newer snapshot.
+  authSession.clear('logout');
+  authSession.authenticate({
+    accessToken: 'same-token',
+    expiresAt: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
+    user: { id: 'usr-bob', username: 'bob', email: null, emailVerified: false },
+  });
+  const bobSnapshot = authSession.getSnapshot();
+  await act(async () => {
+    resolveStream(
+      new Response(
+        JSON.stringify({ code: 'UNAUTHENTICATED', message: 'Authentication required', traceId: 'trace' }),
+        { status: 401, headers: { 'Content-Type': 'application/json' } },
+      ),
+    );
+  });
+
+  await waitFor(() => expect(authSession.getSnapshot()).toBe(bobSnapshot));
+  expect(authSession.getSnapshot()).toMatchObject({
+    status: 'authenticated',
+    accessToken: 'same-token',
+    user: { username: 'bob' },
+  });
+  // The old hook was already aborted by the session switch; the global 401 path
+  // must not run, and no session check may clear the newer snapshot.
+  expect(meRequests).toBe(0);
 });

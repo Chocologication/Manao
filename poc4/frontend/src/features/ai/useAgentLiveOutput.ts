@@ -113,7 +113,9 @@ export function useAgentLiveOutput({
 
     const connect = async () => {
       try {
-        const response = await getAgentLiveOutput(projectId, taskId, controller.signal);
+        const response = await getAgentLiveOutput(projectId, taskId, controller.signal, {
+          suppressUnauthorized: true,
+        });
         if (controller.signal.aborted) {
           await response.body?.cancel().catch(() => {});
           return;

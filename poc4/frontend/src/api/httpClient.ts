@@ -127,8 +127,16 @@ export class HttpClient {
     return readSuccessBody<T>(response);
   }
 
-  async requestStream(url: string, options: { signal?: AbortSignal } = {}): Promise<Response> {
-    return this.send(url, { method: 'GET', headers: new Headers({ Accept: 'text/event-stream' }), signal: options.signal });
+  async requestStream(
+    url: string,
+    options: { signal?: AbortSignal; suppressUnauthorized?: boolean } = {},
+  ): Promise<Response> {
+    return this.send(url, {
+      method: 'GET',
+      headers: new Headers({ Accept: 'text/event-stream' }),
+      signal: options.signal,
+      suppressUnauthorized: options.suppressUnauthorized,
+    });
   }
 
   async requestBlob(url: string, options: BlobRequestOptions = {}): Promise<BlobResponse> {

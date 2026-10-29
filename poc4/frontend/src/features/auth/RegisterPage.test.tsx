@@ -417,10 +417,18 @@ describe('RegisterPage', { timeout: 15_000 }, () => {
     await fillStepOne(user, { username: 'slow', email: 'slow@example.com', password: 'slow-pass-1' });
     await sendEmailCode(user);
     await user.type(screen.getByLabelText(CODE_INPUT), '123456');
+    // Recreate a genuinely resendable state (cooldown 0 + fresh captcha): this is
+    // what makes the reverse-mutex assertion meaningful.
+    await waitFor(() => expect(screen.getByLabelText(CAPTCHA_INPUT)).toBeEnabled());
+    await user.type(screen.getByLabelText(CAPTCHA_INPUT), '54321');
+    expect(await screen.findByRole('button', { name: /重新发送/ })).toBeEnabled();
+    const sendsBeforeSubmit = sendCalls;
 
     await user.click(screen.getByRole('button', { name: SUBMIT_LABEL }));
     expect(await screen.findByRole('button', { name: '正在注册…' })).toBeDisabled();
     expect(screen.getByRole('button', { name: /重新发送/ })).toBeDisabled();
+    await user.click(screen.getByRole('button', { name: /重新发送/ }));
+    expect(sendCalls).toBe(sendsBeforeSubmit);
 
     releaseRegister?.();
     expect(await screen.findByText('LOGIN_PAGE')).toBeInTheDocument();

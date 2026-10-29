@@ -1,6 +1,16 @@
 import { getHttpClient } from './httpClient';
-export function getAgentLiveOutput(projectId: string, taskId: string, signal: AbortSignal) {
-  return getHttpClient().requestStream('/api/v1/projects/' + encodeURIComponent(projectId) + '/agent-tasks/' + encodeURIComponent(taskId) + '/live-output', { signal });
+export function getAgentLiveOutput(
+  projectId: string,
+  taskId: string,
+  signal: AbortSignal,
+  options: { suppressUnauthorized?: boolean } = {},
+) {
+  // The live-output stream is snapshot-owned by the caller: a real 401 is an
+  // abnormal stream end whose session decision belongs to the captured snapshot.
+  return getHttpClient().requestStream(
+    '/api/v1/projects/' + encodeURIComponent(projectId) + '/agent-tasks/' + encodeURIComponent(taskId) + '/live-output',
+    { signal, suppressUnauthorized: options.suppressUnauthorized },
+  );
 }
 import { parseConversationPage, parseConversationView, parseHistoryPage, type HistoryCursor } from '@/contracts/agentConversation';
 import { parseAgentTaskSnapshot, type SubmitAgentTaskRequest } from '@/contracts/agentTask';
