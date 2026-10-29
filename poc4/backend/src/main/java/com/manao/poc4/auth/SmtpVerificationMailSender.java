@@ -103,6 +103,11 @@ public final class SmtpVerificationMailSender implements VerificationMailSender 
         if (mail == null || !mail.configured()) {
             throw new IllegalArgumentException("mail is not configured");
         }
+        // The fixed contract is implicit TLS on 465 only; any other port is a misconfiguration
+        // that must fail fast instead of silently building a different submission mode.
+        if (mail.port() != 465) {
+            throw new IllegalArgumentException("mail port must be 465 for implicit TLS");
+        }
         return mail;
     }
 

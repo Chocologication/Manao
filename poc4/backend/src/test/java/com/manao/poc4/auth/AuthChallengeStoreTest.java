@@ -11,7 +11,15 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
+import java.util.List;
 import java.util.Map;
+import java.util.concurrent.Callable;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 import org.junit.jupiter.api.AfterEach;
@@ -388,6 +396,101 @@ class AuthChallengeStoreTest {
             "alice@example.com", "111111").outcome()).isEqualTo(AuthChallengeStore.VerifyOutcome.INVALID);
         assertThat(store.verifyAndConsumeCaptcha("missing", "AB23C").outcome())
             .isEqualTo(AuthChallengeStore.VerifyOutcome.INVALID);
+    }
+
+    // --- review fixes: concurrency, allocation quota, first-slot creation ------------------
+
+    @Test
+    void concurrentVersionBumpInvalidatesTheResetCodeWithTwoConnections() throws Exception {
+        insertUser("reset-race-user", "reset-race@example.test", true, NOW, 3);
+        insertChallenge("reset-race", "RESET_PASSWORD", "reset-race@example.test", "reset-race-user", 3L,
+            "ACTIVE", NOW.plus(Duration.ofMinutes(10)), 0, "123456",
+            NOW.plus(Duration.ofSeconds(60)), NOW, 1);
+
+        CountDownLatch snapshotTaken = new CountDownLatch(1);
+        CountDownLatch versionBumped = new CountDownLatch(1);
+        ExecutorService executor = Executors.newSingleThreadExecutor();
+        try {
+            Future<AuthChallengeStore.VerifyResult> verification = executor.submit(() ->
+                store.inTransaction(status -> {
+                    // Establish the first transaction's REPEATABLE READ snapshot before the
+                    // second connection changes the account row.
+                    Integer snapshotVersion = jdbc.queryForObject(
+                        "SELECT auth_version FROM app_user WHERE id=?", Integer.class, "reset-race-user");
+                    assertThat(snapshotVersion).isEqualTo(3);
+                    snapshotTaken.countDown();
+                    try {
+                        assertThat(versionBumped.await(5, TimeUnit.SECONDS)).isTrue();
+                    } catch (InterruptedException ex) {
+                        throw new IllegalStateException(ex);
+                    }
+                    return store.verifyAndConsume("reset-race", AuthContracts.EmailPurpose.RESET_PASSWORD,
+                        "reset-race@example.test", "123456");
+                }));
+            assertThat(snapshotTaken.await(5, TimeUnit.SECONDS)).isTrue();
+            // Second connection commits a password version bump and disabling while the first
+            // transaction is open: the stale snapshot must not authorize the reset code.
+            jdbc.update("UPDATE app_user SET auth_version=4, enabled=FALSE WHERE id=?", "reset-race-user");
+            versionBumped.countDown();
+
+            assertThat(verification.get(15, TimeUnit.SECONDS).outcome())
+                .isEqualTo(AuthChallengeStore.VerifyOutcome.INVALID);
+        } finally {
+            executor.shutdownNow();
+        }
+        assertThat(state("reset-race")).isEqualTo("FAILED");
+    }
+
+    @Test
+    void captchaActiveCapIsSerializedAcrossConcurrentAllocations() throws Exception {
+        var capped = new AuthChallengeStore(jdbc, properties(2, 100), clock);
+        assertThat(capped.createCaptcha("AB23C").outcome())
+            .isEqualTo(AuthChallengeStore.CaptchaOutcome.ISSUED);
+
+        CyclicBarrier barrier = new CyclicBarrier(2);
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        try {
+            Callable<AuthChallengeStore.CaptchaOutcome> allocation = () -> {
+                barrier.await(5, TimeUnit.SECONDS);
+                return capped.createCaptcha("AB23C").outcome();
+            };
+            Future<AuthChallengeStore.CaptchaOutcome> first = executor.submit(allocation);
+            Future<AuthChallengeStore.CaptchaOutcome> second = executor.submit(allocation);
+            assertThat(List.of(first.get(15, TimeUnit.SECONDS), second.get(15, TimeUnit.SECONDS)))
+                .containsExactlyInAnyOrder(AuthChallengeStore.CaptchaOutcome.ISSUED,
+                    AuthChallengeStore.CaptchaOutcome.CAPACITY_EXCEEDED);
+        } finally {
+            executor.shutdownNow();
+        }
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM auth_challenge WHERE purpose='CAPTCHA' "
+            + "AND state='ACTIVE' AND expires_at > ?", Integer.class, Timestamp.from(clock.instant())))
+            .isEqualTo(2);
+    }
+
+    @Test
+    void concurrentFirstReservationCreatesASingleSendSlot() throws Exception {
+        CyclicBarrier barrier = new CyclicBarrier(2);
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        try {
+            Callable<AuthChallengeStore.ReserveResult> reservation = () -> {
+                barrier.await(5, TimeUnit.SECONDS);
+                return store.reserveEmailSend(AuthContracts.EmailPurpose.REGISTER_EMAIL,
+                    "first-slot@example.test", "111111", null, null);
+            };
+            Future<AuthChallengeStore.ReserveResult> first = executor.submit(reservation);
+            Future<AuthChallengeStore.ReserveResult> second = executor.submit(reservation);
+            List<AuthChallengeStore.ReserveResult> results =
+                List.of(first.get(15, TimeUnit.SECONDS), second.get(15, TimeUnit.SECONDS));
+            assertThat(results).extracting(AuthChallengeStore.ReserveResult::outcome)
+                .containsExactlyInAnyOrder(AuthChallengeStore.ReserveOutcome.RESERVED,
+                    AuthChallengeStore.ReserveOutcome.COOLDOWN);
+        } finally {
+            executor.shutdownNow();
+        }
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM auth_challenge WHERE purpose='REGISTER_EMAIL' "
+            + "AND email='first-slot@example.test'", Integer.class)).isEqualTo(1);
+        assertThat(jdbc.queryForObject("SELECT window_send_count FROM auth_challenge WHERE purpose='REGISTER_EMAIL' "
+            + "AND email='first-slot@example.test'", Integer.class)).isEqualTo(1);
     }
 
     // --- fixtures -------------------------------------------------------------------------

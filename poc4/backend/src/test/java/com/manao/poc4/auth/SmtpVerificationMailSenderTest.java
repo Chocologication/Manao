@@ -66,6 +66,21 @@ class SmtpVerificationMailSenderTest {
     }
 
     @Test
+    void rejectsNon465PortsAtConstruction() {
+        // The fixed contract is implicit TLS on 465 only: a 587/25 misconfiguration must fail
+        // fast instead of silently building a sender for a different submission mode.
+        var port587 = new AuthProperties.Mail(true, "smtp.example.test", 587, "sender@example.test",
+            "sender@example.test", "ssl", PASSWORD,
+            Duration.ofSeconds(5), Duration.ofSeconds(3), Duration.ofSeconds(5));
+        assertThatThrownBy(() -> SmtpVerificationMailSender.buildMailSender(port587))
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessageContaining("465");
+        assertThatThrownBy(() -> new SmtpVerificationMailSender(port587))
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessageContaining("465");
+    }
+
+    @Test
     void configuredRequiresTheRuntimePasswordAndDerivesTheConfiguredBudgets() {
         assertThat(configuredMail().configured()).isTrue();
         assertThat(mail(false, PASSWORD).configured()).isFalse();

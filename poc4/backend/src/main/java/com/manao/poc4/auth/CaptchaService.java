@@ -1,6 +1,5 @@
 package com.manao.poc4.auth;
 
-import com.manao.poc4.api.ApiException;
 import java.awt.BasicStroke;
 import java.awt.Color;
 import java.awt.Graphics2D;
@@ -49,23 +48,32 @@ public final class CaptchaService {
     private final Clock clock;
     private final Supplier<String> answers;
     private final AddressRateLimiter rateLimiter;
+    private final Duration challengeTtl;
     private final Random random = new SecureRandom();
 
     public CaptchaService(AuthChallengeStore store, AuthProperties properties) {
-        this(store, properties, store.clock(), CaptchaService::randomAnswer);
+        this(store, properties, store.clock(), CaptchaService::randomAnswer, RATE_MAP_LIMIT);
     }
 
     public CaptchaService(AuthChallengeStore store, AuthProperties properties, Clock clock,
                           Supplier<String> answers) {
+        this(store, properties, clock, answers, RATE_MAP_LIMIT);
+    }
+
+    /** Test seam: a small address-budget table makes the saturated-map behaviour observable. */
+    CaptchaService(AuthChallengeStore store, AuthProperties properties, Clock clock,
+                   Supplier<String> answers, int addressBudget) {
         if (store == null) throw new IllegalArgumentException("challenge store required");
         if (properties == null) throw new IllegalArgumentException("auth properties required");
         if (clock == null) throw new IllegalArgumentException("clock required");
         if (answers == null) throw new IllegalArgumentException("answer source required");
+        if (addressBudget < 1) throw new IllegalArgumentException("address budget must be positive");
         this.store = store;
         this.clock = clock;
         this.answers = answers;
+        this.challengeTtl = properties.challenge().captchaTtl();
         this.rateLimiter = new AddressRateLimiter(properties.challenge().captchaPerAddressPerMinute(),
-            RATE_WINDOW, RATE_MAP_LIMIT);
+            RATE_WINDOW, addressBudget);
     }
 
     /**
@@ -75,13 +83,15 @@ public final class CaptchaService {
      */
     public AuthContracts.CaptchaResponse issue(String remoteAddress) {
         String address = remoteAddress == null || remoteAddress.isBlank() ? "unknown" : remoteAddress.trim();
-        if (!rateLimiter.tryAcquire(address, clock.instant())) {
-            throw new ApiException("AUTH_RATE_LIMITED", 429, "Too many captcha requests");
+        long addressWait = rateLimiter.retryAfter(address, clock.instant());
+        if (addressWait > 0) {
+            throw new AuthContracts.RateLimitedException(addressWait);
         }
         String answer = generatedAnswer(answers.get());
         AuthChallengeStore.CaptchaResult created = store.createCaptcha(answer);
         if (created.outcome() != AuthChallengeStore.CaptchaOutcome.ISSUED) {
-            throw new ApiException("AUTH_RATE_LIMITED", 429, "Too many active captcha challenges");
+            // Capacity frees itself only through expiry; report the configured TTL as the wait.
+            throw new AuthContracts.RateLimitedException(Math.max(1, challengeTtl.toSeconds()));
         }
         byte[] png = renderPng(answer, random);
         return new AuthContracts.CaptchaResponse(created.challengeId(),
@@ -236,33 +246,64 @@ public final class CaptchaService {
         table.put(character, rows);
     }
 
-    /** Fixed-window in-memory limiter: one backend, bounded map, restart resets the counters. */
+    /**
+     * Fixed-window in-memory limiter: one backend, bounded map, restart resets the counters.
+     * A saturated map never clears live windows: expired entries are recycled, and a brand-new
+     * address is refused until a slot expires, so a previously limited address can never regain
+     * its budget by flooding the table with other addresses.
+     */
     private static final class AddressRateLimiter {
         private final int limit;
         private final Duration duration;
-        private final int mapLimit;
+        private final int budget;
         private final Map<String, Window> windows = new HashMap<>();
 
-        private AddressRateLimiter(int limit, Duration duration, int mapLimit) {
+        private AddressRateLimiter(int limit, Duration duration, int budget) {
             this.limit = limit;
             this.duration = duration;
-            this.mapLimit = mapLimit;
+            this.budget = budget;
         }
 
-        synchronized boolean tryAcquire(String address, Instant now) {
+        /** Returns 0 when the request may proceed, or the real seconds to wait. */
+        synchronized long retryAfter(String address, Instant now) {
             Window current = windows.get(address);
-            if (current == null || !now.isBefore(current.startedAt().plus(duration))) {
-                if (windows.size() >= mapLimit) {
-                    windows.entrySet().removeIf(
-                        entry -> !now.isBefore(entry.getValue().startedAt().plus(duration)));
-                    if (windows.size() >= mapLimit) windows.clear();
+            if (current != null) {
+                if (now.isBefore(current.startedAt().plus(duration))) {
+                    if (current.count() < limit) {
+                        windows.put(address, new Window(current.startedAt(), current.count() + 1));
+                        return 0;
+                    }
+                    return secondsUntil(now, current.startedAt().plus(duration));
                 }
+                // The address's own window expired; its slot is recycled in place.
                 windows.put(address, new Window(now, 1));
-                return true;
+                return 0;
             }
-            if (current.count() >= limit) return false;
-            windows.put(address, new Window(current.startedAt(), current.count() + 1));
-            return true;
+            if (windows.size() >= budget) {
+                windows.entrySet().removeIf(
+                    entry -> !now.isBefore(entry.getValue().startedAt().plus(duration)));
+                if (windows.size() >= budget) {
+                    // Keep every live budget; refuse the new address until one window expires.
+                    Instant earliestExpiry = null;
+                    for (Window window : windows.values()) {
+                        Instant expiry = window.startedAt().plus(duration);
+                        if (earliestExpiry == null || expiry.isBefore(earliestExpiry)) {
+                            earliestExpiry = expiry;
+                        }
+                    }
+                    return earliestExpiry == null ? Math.max(1, duration.toSeconds())
+                        : secondsUntil(now, earliestExpiry);
+                }
+            }
+            windows.put(address, new Window(now, 1));
+            return 0;
+        }
+
+        private static long secondsUntil(Instant now, Instant target) {
+            Duration remaining = Duration.between(now, target);
+            if (remaining.isNegative()) return 1;
+            long millis = remaining.toMillis();
+            return millis <= 0 ? 1 : (millis + 999) / 1000;
         }
 
         private record Window(Instant startedAt, int count) {

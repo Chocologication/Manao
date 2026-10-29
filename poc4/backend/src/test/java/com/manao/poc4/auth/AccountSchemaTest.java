@@ -35,7 +35,7 @@ class AccountSchemaTest {
 
             db.migrateToLatest();
 
-            assertThat(latestVersion(jdbc)).isEqualTo("17");
+            assertThat(latestVersion(jdbc)).isEqualTo("18");
             Map<String, Object> user = jdbc.queryForMap(
                 "SELECT id, username, password_hash, email, email_verified_at, auth_version FROM app_user WHERE id=?",
                 "legacy-user");

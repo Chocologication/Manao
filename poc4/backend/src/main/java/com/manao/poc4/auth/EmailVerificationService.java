@@ -83,6 +83,10 @@ public final class EmailVerificationService {
         if (outcome.failureCode() != null) {
             throw new ApiException(outcome.failureCode(), outcome.failureStatus(), "Verification code request refused");
         }
+        if (outcome.retryAfterSeconds() > 0) {
+            // The real cooldown / remaining hour is propagated; Task 5 maps it to Retry-After.
+            throw new AuthContracts.RateLimitedException(outcome.retryAfterSeconds());
+        }
         if (!outcome.deliver()) {
             return new AuthContracts.EmailCodeResponse(outcome.challengeId(), outcome.expiresAt(),
                 retryAfterSeconds());
@@ -128,12 +132,12 @@ public final class EmailVerificationService {
         AuthChallengeStore.ReserveResult reserved =
             store.reserveEmailSend(purpose, email, code, userId, authVersion);
         if (reserved.outcome() != AuthChallengeStore.ReserveOutcome.RESERVED) {
-            return Outcome.failure("AUTH_RATE_LIMITED", 429);
+            return Outcome.rateLimited(reserved.retryAfterSeconds());
         }
         if (!deliver) {
             store.failSend(reserved.challengeId());
         }
-        return new Outcome(null, 0, reserved.challengeId(), email, purpose, code,
+        return new Outcome(null, 0, 0, reserved.challengeId(), email, purpose, code,
             reserved.expiresAt(), deliver);
     }
 
@@ -166,11 +170,15 @@ public final class EmailVerificationService {
         return new ApiException("VALIDATION_ERROR", 422, "Request validation failed");
     }
 
-    private record Outcome(String failureCode, int failureStatus, String challengeId, String email,
-                           AuthContracts.EmailPurpose purpose, String code, Instant expiresAt,
-                           boolean deliver) {
+    private record Outcome(String failureCode, int failureStatus, long retryAfterSeconds,
+                           String challengeId, String email, AuthContracts.EmailPurpose purpose,
+                           String code, Instant expiresAt, boolean deliver) {
         static Outcome failure(String code, int status) {
-            return new Outcome(code, status, null, null, null, null, null, false);
+            return new Outcome(code, status, 0, null, null, null, null, null, false);
+        }
+
+        static Outcome rateLimited(long retryAfterSeconds) {
+            return new Outcome(null, 0, Math.max(1, retryAfterSeconds), null, null, null, null, null, false);
         }
     }
 }

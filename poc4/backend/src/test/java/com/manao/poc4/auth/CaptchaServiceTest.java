@@ -3,7 +3,6 @@ package com.manao.poc4.auth;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.catchThrowableOfType;
 
-import com.manao.poc4.api.ApiException;
 import com.manao.poc4.persistence.JdbcStoreTestSupport;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayInputStream;
@@ -132,10 +131,9 @@ class CaptchaServiceTest {
         for (int i = 0; i < 10; i++) {
             assertThat(captcha.issue("198.51.100.7").challengeId()).matches("[0-9a-f]{32}");
         }
-        ApiException limited = catchThrowableOfType(
-            () -> captcha.issue("198.51.100.7"), ApiException.class);
-        assertThat(limited.code()).isEqualTo("AUTH_RATE_LIMITED");
-        assertThat(limited.status()).isEqualTo(429);
+        AuthContracts.RateLimitedException limited = catchThrowableOfType(
+            () -> captcha.issue("198.51.100.7"), AuthContracts.RateLimitedException.class);
+        assertThat(limited.retryAfterSeconds()).isPositive().isLessThanOrEqualTo(60);
 
         // A different client keeps its own budget.
         assertThat(captcha.issue("198.51.100.8").challengeId()).matches("[0-9a-f]{32}");
@@ -150,10 +148,11 @@ class CaptchaServiceTest {
         var capped = new CaptchaService(cappedStore, properties(2, 100), clock, () -> ANSWER);
         assertThat(capped.issue("198.51.100.7").challengeId()).matches("[0-9a-f]{32}");
         assertThat(capped.issue("198.51.100.7").challengeId()).matches("[0-9a-f]{32}");
-        ApiException limited = catchThrowableOfType(
-            () -> capped.issue("198.51.100.7"), ApiException.class);
-        assertThat(limited.code()).isEqualTo("AUTH_RATE_LIMITED");
-        assertThat(limited.status()).isEqualTo(429);
+        AuthContracts.RateLimitedException limited = catchThrowableOfType(
+            () -> capped.issue("198.51.100.7"), AuthContracts.RateLimitedException.class);
+        // Capacity waits for an existing challenge to expire; the advisory wait covers the TTL.
+        assertThat(limited.retryAfterSeconds()).isPositive()
+            .isLessThanOrEqualTo(Duration.ofMinutes(2).toSeconds());
 
         // The opportunistic expiry cleanup frees capacity again, with no scheduler involved.
         clock.advance(Duration.ofMinutes(2).plusSeconds(1));
@@ -161,6 +160,33 @@ class CaptchaServiceTest {
         assertThat(jdbc.queryForObject(
             "SELECT COUNT(*) FROM auth_challenge WHERE purpose='CAPTCHA' AND state='ACTIVE'", Integer.class))
             .isEqualTo(1);
+    }
+
+    @Test
+    void saturatedAddressBudgetKeepsExistingLimitsInsteadOfClearingThem() {
+        // A tiny address-budget table: exhausted addresses must keep their window even when the
+        // table is full; new addresses are refused until an entry expires instead of the limiter
+        // clearing every live budget.
+        var smallBudget = new CaptchaService(store, properties(1000, 10), clock, () -> ANSWER, 3);
+        for (int i = 0; i < 10; i++) {
+            smallBudget.issue("203.0.113.10");
+        }
+        assertThat(catchThrowableOfType(() -> smallBudget.issue("203.0.113.10"),
+            AuthContracts.RateLimitedException.class)).isNotNull();
+        smallBudget.issue("203.0.113.11");
+        smallBudget.issue("203.0.113.12");
+
+        // The map is saturated; a brand new address is refused (bounded memory, fail closed)
+        // rather than dropping the existing windows.
+        assertThat(catchThrowableOfType(() -> smallBudget.issue("203.0.113.13"),
+            AuthContracts.RateLimitedException.class)).isNotNull();
+        // The original exhausted address is still rate limited.
+        assertThat(catchThrowableOfType(() -> smallBudget.issue("203.0.113.10"),
+            AuthContracts.RateLimitedException.class)).isNotNull();
+
+        // Once the windows expire, entries are recycled and the address is allowed again.
+        clock.advance(Duration.ofSeconds(61));
+        assertThat(smallBudget.issue("203.0.113.10").challengeId()).matches("[0-9a-f]{32}");
     }
 
     @Test

@@ -55,7 +55,7 @@ class EmailVerificationServiceTest {
         store = new AuthChallengeStore(jdbc, properties, clock);
         captcha = new CaptchaService(store, properties, clock, () -> CAPTCHA_ANSWER);
         users = new UserStore(jdbc);
-        mail = new CapturingMail();
+        mail = new CapturingMail(jdbc);
         service = new EmailVerificationService(store, captcha, users, mail, properties, () -> CODE);
     }
 
@@ -80,6 +80,11 @@ class EmailVerificationServiceTest {
         assertThat(sent.purpose()).isEqualTo(AuthContracts.EmailPurpose.REGISTER_EMAIL);
         assertThat(sent.code()).isEqualTo(CODE);
         assertThat(sent.expiresAt()).isEqualTo(response.expiresAt());
+        // Delivery runs outside the short transaction and after the SENDING reservation was
+        // committed: the sender observes no active transaction and another connection can see
+        // the SENDING slot while it runs.
+        assertThat(mail.transactionActiveDuringSend).isFalse();
+        assertThat(mail.stateDuringSend).isEqualTo("SENDING");
 
         Map<String, Object> row = row(response.challengeId());
         assertThat(row.get("state")).isEqualTo("ACTIVE");
@@ -129,12 +134,13 @@ class EmailVerificationServiceTest {
                 .isEqualTo(AuthChallengeStore.VerifyOutcome.INVALID);
         }
 
-        // Unknown recovery addresses still consume the same cooldown as a real send.
-        ApiException cooldown = catchThrowableOfType(() -> service.request(new AuthContracts.EmailCodeRequest(
-            AuthContracts.EmailPurpose.RESET_PASSWORD, "unknown@example.test", issueCaptcha(), CAPTCHA_ANSWER)),
-            ApiException.class);
-        assertThat(cooldown.code()).isEqualTo("AUTH_RATE_LIMITED");
-        assertThat(cooldown.status()).isEqualTo(429);
+        // Unknown recovery addresses still consume the same cooldown as a real send, and the
+        // real wait is propagated to the HTTP layer.
+        AuthContracts.RateLimitedException cooldown = catchThrowableOfType(
+            () -> service.request(new AuthContracts.EmailCodeRequest(
+                AuthContracts.EmailPurpose.RESET_PASSWORD, "unknown@example.test", issueCaptcha(), CAPTCHA_ANSWER)),
+            AuthContracts.RateLimitedException.class);
+        assertThat(cooldown.retryAfterSeconds()).isEqualTo(60);
         assertThat(mail.attempts).isZero();
     }
 
@@ -191,11 +197,13 @@ class EmailVerificationServiceTest {
         assertThat(jdbc.queryForObject(
             "SELECT state FROM auth_challenge WHERE purpose='REGISTER_EMAIL' AND email='register@example.test'",
             String.class)).isEqualTo("FAILED");
-        // The failed send occupied the cooldown, so an immediate retry is rate limited.
-        ApiException cooldown = catchThrowableOfType(() -> service.request(new AuthContracts.EmailCodeRequest(
-            AuthContracts.EmailPurpose.REGISTER_EMAIL, "register@example.test", issueCaptcha(), CAPTCHA_ANSWER)),
-            ApiException.class);
-        assertThat(cooldown.code()).isEqualTo("AUTH_RATE_LIMITED");
+        // The failed send occupied the cooldown, so an immediate retry is rate limited and
+        // reports the real remaining cooldown (Task 5 maps it to Retry-After).
+        AuthContracts.RateLimitedException cooldown = catchThrowableOfType(
+            () -> service.request(new AuthContracts.EmailCodeRequest(
+                AuthContracts.EmailPurpose.REGISTER_EMAIL, "register@example.test", issueCaptcha(), CAPTCHA_ANSWER)),
+            AuthContracts.RateLimitedException.class);
+        assertThat(cooldown.retryAfterSeconds()).isEqualTo(60);
         assertThat(mail.attempts).isEqualTo(1);
     }
 
@@ -283,11 +291,27 @@ class EmailVerificationServiceTest {
         // A successful register send starts the per-email cooldown immediately.
         service.request(new AuthContracts.EmailCodeRequest(AuthContracts.EmailPurpose.REGISTER_EMAIL,
             "cooldown@example.test", issueCaptcha(), CAPTCHA_ANSWER));
-        ApiException cooldown = catchThrowableOfType(() -> service.request(new AuthContracts.EmailCodeRequest(
-            AuthContracts.EmailPurpose.REGISTER_EMAIL, "cooldown@example.test", issueCaptcha(), CAPTCHA_ANSWER)),
-            ApiException.class);
-        assertThat(cooldown.code()).isEqualTo("AUTH_RATE_LIMITED");
-        assertThat(cooldown.status()).isEqualTo(429);
+        AuthContracts.RateLimitedException cooldown = catchThrowableOfType(
+            () -> service.request(new AuthContracts.EmailCodeRequest(
+                AuthContracts.EmailPurpose.REGISTER_EMAIL, "cooldown@example.test", issueCaptcha(), CAPTCHA_ANSWER)),
+            AuthContracts.RateLimitedException.class);
+        assertThat(cooldown.retryAfterSeconds()).isEqualTo(60);
+    }
+
+    @Test
+    void hourlyLimitPropagatesTheRealRetryAfterSeconds() {
+        for (int i = 0; i < 5; i++) {
+            service.request(new AuthContracts.EmailCodeRequest(AuthContracts.EmailPurpose.REGISTER_EMAIL,
+                "hourly@example.test", issueCaptcha(), CAPTCHA_ANSWER));
+            clock.advance(Duration.ofSeconds(61));
+        }
+        AuthContracts.RateLimitedException limited = catchThrowableOfType(() -> service.request(
+            new AuthContracts.EmailCodeRequest(AuthContracts.EmailPurpose.REGISTER_EMAIL,
+                "hourly@example.test", issueCaptcha(), CAPTCHA_ANSWER)),
+            AuthContracts.RateLimitedException.class);
+        // The hourly wait is a real value (roughly the rest of the hour), not the fixed 60 s
+        // value of the success contract.
+        assertThat(limited.retryAfterSeconds()).isGreaterThan(60).isLessThanOrEqualTo(3600);
     }
 
     // --- fixtures -------------------------------------------------------------------------
@@ -343,15 +367,30 @@ class EmailVerificationServiceTest {
         }
     }
 
-    /** Capturing test double: records deliveries and can simulate an SMTP failure. */
+    /**
+     * Capturing test double: records deliveries, simulates an SMTP failure, and proves the send
+     * runs outside the reservation transaction (no active transaction; another connection sees
+     * the committed SENDING row while the sender runs).
+     */
     private static final class CapturingMail implements VerificationMailSender {
         private final List<SentMail> sends = new ArrayList<>();
+        private final JdbcTemplate jdbc;
         private int attempts;
         private RuntimeException failure;
+        private boolean transactionActiveDuringSend = true;
+        private String stateDuringSend;
+
+        private CapturingMail(JdbcTemplate jdbc) {
+            this.jdbc = jdbc;
+        }
 
         @Override
         public void send(String email, AuthContracts.EmailPurpose purpose, String code, Instant expiresAt) {
             attempts++;
+            transactionActiveDuringSend =
+                org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive();
+            stateDuringSend = jdbc.queryForObject(
+                "SELECT state FROM auth_challenge WHERE email = ?", String.class, email);
             if (failure != null) throw failure;
             sends.add(new SentMail(email, purpose, code, expiresAt));
         }

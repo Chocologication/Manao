@@ -14,6 +14,7 @@ import java.util.Objects;
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 import javax.sql.DataSource;
+import org.springframework.dao.DataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.RowMapper;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
@@ -50,6 +51,10 @@ public final class AuthChallengeStore {
     private static final String CONSUMED = "CONSUMED";
     private static final String FAILED = "FAILED";
     private static final Duration SEND_WINDOW = Duration.ofHours(1);
+    /** Fixed row locked FOR UPDATE while the CAPTCHA active-challenge quota is allocated. */
+    private static final String CAPTCHA_ALLOCATION = "captcha";
+    /** Fixed row locked FOR UPDATE while an email send slot is reserved. */
+    private static final String EMAIL_SLOT_ALLOCATION = "email_send_slot";
     private static final int CLEANUP_BATCH = 20;
     private static final int ID_BYTES = 16;
 
@@ -111,6 +116,9 @@ public final class AuthChallengeStore {
         if ((userId == null) != (authVersionSnapshot == null)) {
             throw new IllegalArgumentException("reset binding requires both user id and auth version");
         }
+        // Opportunistic cleanup runs outside the reservation transaction: its index scans must
+        // never become part of (or deadlock with) the send-slot serialization.
+        cleanupExpiredBestEffort(clock.instant());
         return transactions.execute(status ->
             reserveInTransaction(purpose, normalizedEmail, answer, userId, authVersionSnapshot));
     }
@@ -118,52 +126,67 @@ public final class AuthChallengeStore {
     private ReserveResult reserveInTransaction(AuthContracts.EmailPurpose purpose, String email, String answer,
                                                String userId, Long authVersionSnapshot) {
         Instant now = clock.instant();
-        cleanupExpired(now);
+        // Serialize slot reservation on a fixed row: a concurrent FIRST reservation of the same
+        // slot cannot deadlock on the unique key or the SELECT FOR UPDATE gap, and the slot
+        // logic (cooldown/window/insert-or-replace) always runs against a committed row set. The
+        // reservation transaction contains no SMTP work, so this short global lock is acceptable
+        // for the single-backend small-scale release.
+        List<String> allocation = jdbc.query(
+            "SELECT name FROM auth_challenge_allocation WHERE name = ? FOR UPDATE",
+            (rs, index) -> rs.getString(1), EMAIL_SLOT_ALLOCATION);
+        if (allocation.isEmpty()) {
+            throw new IllegalStateException("email slot allocation lock row is missing");
+        }
+        ensureSendSlot(purpose, email, now);
         List<SlotRow> slots = jdbc.query(
             "SELECT " + COLUMNS + " FROM auth_challenge WHERE purpose = ? AND email = ? FOR UPDATE",
             SLOT_ROW, purpose.name(), email);
-        SlotRow slot = slots.isEmpty() ? null : slots.get(0);
+        if (slots.isEmpty()) throw new IllegalStateException("email challenge slot is missing");
+        SlotRow slot = slots.get(0);
         Instant windowStartedAt = now;
         int windowSendCount = 0;
-        if (slot != null) {
-            if (slot.nextSendAt() != null && now.isBefore(slot.nextSendAt())) {
-                return new ReserveResult(ReserveOutcome.COOLDOWN, null, null,
-                    secondsUntil(now, slot.nextSendAt()));
-            }
-            if (slot.windowStartedAt() != null && now.isBefore(slot.windowStartedAt().plus(SEND_WINDOW))) {
-                windowStartedAt = slot.windowStartedAt();
-                windowSendCount = slot.windowSendCount();
-            }
-            if (windowSendCount >= limits.emailCodeHourlyLimit()) {
-                return new ReserveResult(ReserveOutcome.RATE_LIMITED, null, null,
-                    secondsUntil(now, windowStartedAt.plus(SEND_WINDOW)));
-            }
+        if (slot.nextSendAt() != null && now.isBefore(slot.nextSendAt())) {
+            return new ReserveResult(ReserveOutcome.COOLDOWN, null, null,
+                secondsUntil(now, slot.nextSendAt()));
+        }
+        if (slot.windowStartedAt() != null && now.isBefore(slot.windowStartedAt().plus(SEND_WINDOW))) {
+            windowStartedAt = slot.windowStartedAt();
+            windowSendCount = slot.windowSendCount();
+        }
+        if (windowSendCount >= limits.emailCodeHourlyLimit()) {
+            return new ReserveResult(ReserveOutcome.RATE_LIMITED, null, null,
+                secondsUntil(now, windowStartedAt.plus(SEND_WINDOW)));
         }
         String id = newIdentifier();
         String mac = answerMac(secret, id, purpose.name(), email, answer);
         Instant expiresAt = now.plus(limits.emailCodeTtl());
         Instant nextSendAt = now.plus(limits.emailCodeCooldown());
         Timestamp nowTimestamp = Timestamp.from(now);
-        Timestamp expiresTimestamp = Timestamp.from(expiresAt);
-        Timestamp nextSendTimestamp = Timestamp.from(nextSendAt);
-        Timestamp windowTimestamp = Timestamp.from(windowStartedAt);
-        if (slot == null) {
-            jdbc.update("INSERT INTO auth_challenge(id, purpose, email, user_id, auth_version_snapshot, answer_mac, "
-                    + "state, expires_at, attempts, next_send_at, window_started_at, window_send_count, "
-                    + "created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, 'SENDING', ?, 0, ?, ?, ?, ?, ?)",
-                id, purpose.name(), email, userId, authVersionSnapshot, mac, expiresTimestamp,
-                nextSendTimestamp, windowTimestamp, windowSendCount + 1, nowTimestamp, nowTimestamp);
-        } else {
-            int updated = jdbc.update("UPDATE auth_challenge SET id = ?, user_id = ?, auth_version_snapshot = ?, "
-                    + "answer_mac = ?, state = 'SENDING', expires_at = ?, attempts = 0, next_send_at = ?, "
-                    + "window_started_at = ?, window_send_count = ?, created_at = ?, updated_at = ? "
-                    + "WHERE purpose = ? AND email = ?",
-                id, userId, authVersionSnapshot, mac, expiresTimestamp, nextSendTimestamp, windowTimestamp,
-                windowSendCount + 1, nowTimestamp, nowTimestamp, purpose.name(), email);
-            if (updated != 1) throw new IllegalStateException("email challenge slot update lost");
-        }
+        int updated = jdbc.update("UPDATE auth_challenge SET id = ?, user_id = ?, auth_version_snapshot = ?, "
+                + "answer_mac = ?, state = 'SENDING', expires_at = ?, attempts = 0, next_send_at = ?, "
+                + "window_started_at = ?, window_send_count = ?, created_at = ?, updated_at = ? "
+                + "WHERE purpose = ? AND email = ?",
+            id, userId, authVersionSnapshot, mac, Timestamp.from(expiresAt),
+            Timestamp.from(nextSendAt), Timestamp.from(windowStartedAt), windowSendCount + 1,
+            nowTimestamp, nowTimestamp, purpose.name(), email);
+        if (updated != 1) throw new IllegalStateException("email challenge slot update lost");
         return new ReserveResult(ReserveOutcome.RESERVED, id, expiresAt,
             limits.emailCodeCooldown().toSeconds());
+    }
+
+    /**
+     * Creates the slot row if it is missing. The no-op duplicate branch serializes concurrent
+     * first reservations on the unique (purpose,email) key instead of relying on gap locks.
+     */
+    private void ensureSendSlot(AuthContracts.EmailPurpose purpose, String email, Instant now) {
+        Timestamp nowTimestamp = Timestamp.from(now);
+        jdbc.update("INSERT INTO auth_challenge(id, purpose, email, user_id, auth_version_snapshot, "
+                + "answer_mac, state, expires_at, attempts, next_send_at, window_started_at, "
+                + "window_send_count, created_at, updated_at) "
+                + "VALUES (?, ?, ?, NULL, NULL, ?, 'FAILED', ?, 0, ?, ?, 0, ?, ?) "
+                + "ON DUPLICATE KEY UPDATE id = id",
+            newIdentifier(), purpose.name(), email, "0".repeat(64), nowTimestamp, nowTimestamp,
+            nowTimestamp, nowTimestamp, nowTimestamp);
     }
 
     /** SENDING -> ACTIVE; only the exact challenge id can be activated. */
@@ -263,7 +286,11 @@ public final class AuthChallengeStore {
             markState(row.id(), FAILED, now);
             return false;
         }
-        List<AccountRow> accounts = jdbc.query("SELECT enabled, auth_version FROM app_user WHERE id = ?",
+        // Locking read (not a plain snapshot read): a concurrent password change/disable that
+        // committed since this transaction started must be visible before the code is consumed.
+        // Lock order is always challenge row -> app_user row, shared by reserve/verify.
+        List<AccountRow> accounts = jdbc.query(
+            "SELECT enabled, auth_version FROM app_user WHERE id = ? FOR UPDATE",
             (rs, index) -> new AccountRow(rs.getBoolean("enabled"), rs.getLong("auth_version")), row.userId());
         if (accounts.isEmpty() || !accounts.get(0).enabled()
             || accounts.get(0).authVersion() != row.authVersionSnapshot().longValue()) {
@@ -282,9 +309,18 @@ public final class AuthChallengeStore {
     public CaptchaResult createCaptcha(String answer) {
         requireConfigured();
         if (answer == null || answer.isBlank()) throw new IllegalArgumentException("answer required");
+        cleanupExpiredBestEffort(clock.instant());
         return transactions.execute(status -> {
             Instant now = clock.instant();
-            cleanupExpired(now);
+            // Serialize the whole count+insert allocation. The fixed quota row is the mutex; the
+            // opportunistic DELETE runs outside this transaction and is never relied on for
+            // mutual exclusion.
+            List<String> allocation = jdbc.query(
+                "SELECT name FROM auth_challenge_allocation WHERE name = ? FOR UPDATE",
+                (rs, index) -> rs.getString(1), CAPTCHA_ALLOCATION);
+            if (allocation.isEmpty()) {
+                throw new IllegalStateException("captcha allocation lock row is missing");
+            }
             Integer active = jdbc.queryForObject(
                 "SELECT COUNT(*) FROM auth_challenge WHERE purpose = ? AND state = 'ACTIVE' AND expires_at > ?",
                 Integer.class, CAPTCHA_PURPOSE, Timestamp.from(now));
@@ -306,15 +342,22 @@ public final class AuthChallengeStore {
     // --- helpers --------------------------------------------------------------------------
 
     /**
-     * Small opportunistic cleanup. Expired CAPTCHA rows are deleted; an expired email challenge is
-     * deleted only once its hourly send window has ended, so the cooldown/window counters stay
-     * effective. Rows that are not expired (including a live SENDING send) are never touched.
+     * Small opportunistic cleanup, best effort and deliberately outside any allocation
+     * transaction. Expired CAPTCHA rows are deleted; an expired email challenge is deleted only
+     * once its hourly send window has ended, so the cooldown/window counters stay effective. Rows
+     * that are not expired (including a live SENDING send) are never touched. A transient
+     * lock/deadlock failure only skips this cleanup pass; it must never affect the caller's
+     * request or be used as mutual exclusion.
      */
-    private void cleanupExpired(Instant now) {
-        jdbc.update("DELETE FROM auth_challenge WHERE expires_at < ? AND (purpose = ? "
-                + "OR window_started_at IS NULL OR window_started_at <= ?) ORDER BY expires_at LIMIT "
-                + CLEANUP_BATCH,
-            Timestamp.from(now), CAPTCHA_PURPOSE, Timestamp.from(now.minus(SEND_WINDOW)));
+    private void cleanupExpiredBestEffort(Instant now) {
+        try {
+            jdbc.update("DELETE FROM auth_challenge WHERE expires_at < ? AND (purpose = ? "
+                    + "OR window_started_at IS NULL OR window_started_at <= ?) ORDER BY expires_at LIMIT "
+                    + CLEANUP_BATCH,
+                Timestamp.from(now), CAPTCHA_PURPOSE, Timestamp.from(now.minus(SEND_WINDOW)));
+        } catch (DataAccessException ex) {
+            // Opportunistic cleanup only: a concurrent lock conflict skips this pass.
+        }
     }
 
     private List<SlotRow> lockChallenge(String challengeId) {

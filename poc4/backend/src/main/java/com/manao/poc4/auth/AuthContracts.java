@@ -65,6 +65,25 @@ public final class AuthContracts {
     }
 
     /**
+     * A challenge operation was rate limited. Unlike {@link com.manao.poc4.api.ApiException} it
+     * carries the real wait (cooldown or the rest of the hourly window or the address window), so
+     * the HTTP layer can emit an accurate Retry-After header instead of guessing the fixed 60 s
+     * of the successful accepted response (design section 9).
+     */
+    public static final class RateLimitedException extends RuntimeException {
+        private final long retryAfterSeconds;
+
+        public RateLimitedException(long retryAfterSeconds) {
+            super("challenge rate limited");
+            this.retryAfterSeconds = Math.max(1, retryAfterSeconds);
+        }
+
+        public long retryAfterSeconds() {
+            return retryAfterSeconds;
+        }
+    }
+
+    /**
      * Normalizes a NEW email identity: trim, {@link Locale#ROOT} lower-case, length and syntax
      * validation (design section 5.3). The stored value is compared binary, so callers must use
      * this method before binding, sending or looking up an address. Dots and +tags are kept.
