@@ -1,101 +1,53 @@
-# Project Progress
+# 项目进度
 
-Updated: 2026-10-20. Main checkout: `master` at `49eb632`, including Python merge `2ef32a5` (2026-10-12); the AI work described below is on `codex/ai-integration` and has not been merged. This index summarizes completed work; detailed acceptance belongs to the linked stage records.
+更新：2026-10-27。本次整理以 `codex/ai-integration@1d410cd` 的仓库记录为基准，补入已有关键云端故障验证与阶段四规划；该分支已同步 `master@4c9fb89`，AI 工作尚未合入 master。以下是已记录的交付结论，不是本次重新执行的集群检查。
 
-## Current Status
+## 当前结论
 
-2026-10-20：AI-only ThinkRail 展示改造的四项任务和整体独立审查已通过，[四任务计划](superpowers/plans/2026-10-20-ai-thinkrail-style-implementation-plan.md)与 [Frontend README](../poc4/frontend/README.md#ai-界面本地交付2026-10-20)保留本地 fixture 验证。随后用户明确授权发布，`b3a1b8e` frontend 单镜像已按 digest 部署至 `manao-stage6b`，Ready1/1；公网登录后既有会话历史、四档滑块、侧栏恢复和既有工具结果回放通过，未提交任务或调用模型。[发布指南 §5.3](../poc4/deploy/ai-context/README.md#53-thinkrail-界面实际前端发布2026-10-20)记录镜像、运行身份、证据及回滚；本次也发布此前合入的 Cloud IDE 视觉变化。backend/worker、数据库和业务合同未改；阶段二 PAUSED / NOT_GRANTED、阶段三用户确认使命完成、阶段四未开始，Git push/merge 未执行。
+- 云工作台、Java 和 Python 已按各自验收范围交付；旧 6A/6B gate 和已完成计划不再是默认待办。
+- AI 已交付代码修改/构建测试、应用反馈、多轮会话、上下文压缩及展示改进。阶段一已通过；阶段二工程验收仍为 **PAUSED / NOT_GRANTED**；阶段三由用户确认实际 CRUD 使用已完成使命。
+- 2026-10-26 收尾修复已本地审查、实际部署并完成一次最小真实模型/浏览器验证：**LOCAL_REPAIR_VERIFIED / DEPLOYED_SMOKE_VERIFIED**。修复分支已合回 AI 分支，未合入 master，未 Git push。
+- 原故障 Task 仍为 **NOT_REPAIRED**，其处理与阶段二验收按用户决定暂缓。2026-10-27关键云端故障专项已完成；阶段四设计、五任务计划及交接已编写，**实施未开始**。这些结果不授予阶段二或完整云端故障矩阵PASS。
 
-On 2026-10-20 the context-usage ring beside reasoning effort completed locally and was subsequently committed as 1f41cf5 and deployed with user authorization. [Context acceptance section 9](../poc4/docs/evidence/ai-context/acceptance.md) owns 77/77 targeted tests, production build, local narrow-panel checks and actual public-browser replay: existing conversation2,633/1,048,576 tokens displays0.3%, no new model task. [Release guide section 5.2](../poc4/deploy/ai-context/README.md) records the frontend-only digest/Ready1/1 and rollback. Unknown/failed-refresh usage remains unknown. No new dependency/API/schema or stop-button change; Git push/merge not performed and Stage 4 remains future scope.
+## AI 专题交付
 
-On 2026-10-20 the confirmed [streaming/reasoning/Markdown design](superpowers/specs/2026-10-20-ai-streaming-reasoning-markdown-design.md) and [six-task plan](superpowers/plans/2026-10-20-ai-streaming-reasoning-markdown-implementation-plan.md) completed locally and the user then authorized publication/continuation. [Output acceptance](../poc4/docs/evidence/ai-output/acceptance.md) owns three `a7d0041` images deployed by digest, V14 once, private backup/disposable restore and old-artifact checks. Four efforts are persisted and verified at the actual provider boundary, all8192/max unchanged. Real high/off browser checkpoints and bounded max continuation passed; round1/round2 FAILED remain, low streaming timing UNVERIFIED, no combined E2E or user-acceptance PASS. Reviewed harness-only `310fa9a` needs no new image. Temporary probe/restore sample removed; project/history retained. Local127/147/282 plus scoped71/47/6 evidence remains separate. Existing stage verdicts and no Git push/merge boundary unchanged.
+每行只保留结论和一个证据入口；精确提交、测试数量、失败轮次、镜像、任务身份与后续操作见对应记录。
 
-On 2026-10-19 all six conversation/context implementation tasks completed on `codex/ai-integration`; [local review closeout](../poc4/docs/evidence/ai-context/review.md) preserves the gates and Task4 TDD-order deviation. The user then authorized cluster publication and planned real acceptance: backend/worker/frontend from `666bfa1` are deployed by digest, V13 migrated once, private backup/restore and internal body limits verified. [Context acceptance §7](../poc4/docs/evidence/ai-context/acceptance.md) records two retained harness failures followed by round3 real browser/model1/1: same-conversation continuity, isolated B, idle worker recreation/relogin, native manual summary retaining original history, and exact next-round constraints; legacy task-only and same-request replay also passed. Three reviewed harness-only fixes through `1ec80fa` need no image rollout. Cloud75% automatic trigger remains NOT_RUN; the disposable project is retained, no Git push/merge or existing project deletion. The [design](superpowers/specs/2026-10-19-ai-conversation-context-design.md), [plan](superpowers/plans/2026-10-19-ai-conversation-context-implementation-plan.md) and [release guide](../poc4/deploy/ai-context/README.md) own contracts/operations. This does not resume Stage2 or Stage4; existing stage verdicts remain unchanged.
-Follow-up UI defect fix `13d8d1e` is independently reviewed and deployed to `manao-stage6b` as frontend digest `sha256:738c3c73d4201cc2d2e67b9eb8e8209f5d63a0518fc88ab9e0292d8893c082cb`; real browser replay displayed the existing `src/test/java` listing and `AppTest.java` contents without rerunning tools or models. Details and exact Pod identity are in [Context acceptance §8](../poc4/docs/evidence/ai-context/acceptance.md).
-
-On 2026-10-19 the user confirmed from actual use that book-data CRUD already works and **stage three has fulfilled its mission early**. The [stage-three user confirmation](../poc4/docs/evidence/ai-stage3/acceptance.md) records that completed mission. Stage two remains unpassed and paused; stage four remains future scope. These decisions are tracked independently.
-
-The 2026-10-18 user-authorized AI task budget increase to 180 tool calls / 20 builds and worker release is recorded in the [task budget authority](../poc4/docs/evidence/ai-task-budget/acceptance.md). It retains the 1800s task deadline and does not resume the paused Stage 2 acceptance.
-
-| Stage | Outcome | Authority |
+| 专题 | 已记录结果与边界 | 证据入口 |
 | --- | --- | --- |
-| AI stage 2 — application feedback | Implementation/deployment delivered; engineering acceptance unpassed, PAUSED / NOT_GRANTED | [Stage 2 record](../poc4/docs/evidence/ai-stage2/acceptance.md), sections 9.10–9.13 |
-| AI stage 3 — book CRUD and user acceptance | Mission fulfilled early by explicit user acceptance on 2026-10-19, based on actual CRUD use; no separate implementation round is a default next task | [Stage 3 user confirmation](../poc4/docs/evidence/ai-stage3/acceptance.md) |
-| 6A — real backend/Kubernetes MVP | PASS by user acceptance on 2026-09-17; merged on 2026-09-18 (`6dfb655`) | [6A facts](Stage6A-Current-Facts.md) |
-| 6B — cloud single-user workbench | PASS, closed and merged on 2026-09-20 (`860cdda`) | [6B acceptance](../poc4/docs/evidence/stage-6b/acceptance.md), sections 9.5–10 |
-| Java runtime slice | Deployed to `manao-stage6b` and accepted 2026-09-22: runtime deps, public ports, bounded web runs, Maven seed/cache. E2E non-7200s round 4/4 PASS; cache timings measured (first run 58s, warm 7s, per-dependency download/reuse evidenced). Formal 7200s run WAIVED_BY_USER (user self-test); one DELETING leftover awaits operator decision. Integrated to `master` by `ef1b5bb` (2026-09-25) | [Runtime acceptance](../poc4/docs/evidence/java-runtime/acceptance.md) sections 8, [cache plan](superpowers/plans/2026-09-22-java-maven-cache-implementation-plan.md) |
-| Python runtime slice | Implementation Tasks 1–10 complete 2026-09-26 + review-fix round 2026-09-26/27 (5 external Important findings closed) on branch `codex/python-runtime`; deployed to `manao-stage6b` and cloud-accepted 2026-09-27: E2E 10/10 (incl. FAILED-reconciliation fault recovery), Java regression on the rebuilt Maven runner, deletion reclamation verified (Pods/Jobs/PVCs/PV/DB rows zero-residual). Formal 7200s case SKIPPED by user instruction — unclaimed. 2026-09-29 workbench/log repair round (transient PROJECT_BUSY pending retry + terminal-state log backfill) implemented, review-clean and deployed on the same branch with real-browser verification (acceptance section 6). 2026-10-11/12 dependency mirror + requirements.txt batch import round implemented, deployed and E2E-verified (acceptance sections 7–8; one E2E failure traced to a pre-existing dependency-panel silent-gate race, deferred per section 8.5). The user completed manual acceptance and the whole slice was merged to `master` by `2ef32a5` (2026-10-12, no fast-forward) | [Python acceptance](../poc4/docs/evidence/python-runtime/acceptance.md), [Python design](superpowers/specs/2026-09-25-python-runtime-design.md), release checklist in [deployment README](../poc4/deploy/6b/README.md) section 11 |
+| 阶段一：代码/测试修复闭环 | 2026-10-15 真实模型、浏览器与集群验收通过，授予 `PI_STAGE1_CODE_TEST_LOOP_PASS`；后续 revision-cache 修复的验证边界单列于 §8.7 | [阶段一记录](../poc4/docs/evidence/ai-stage1/acceptance.md) |
+| 阶段二：应用反馈 | 已实现并部署；历史主场景失败、浏览器 main/close 与独立资源证据未闭合，验收暂停。后续 operator 样本不能替代原失败 | [阶段二记录](../poc4/docs/evidence/ai-stage2/acceptance.md) |
+| 阶段三：书籍 CRUD | 2026-10-19 用户依据实际 CRUD 使用确认使命完成；不默认再安排独立实现轮次，不替代阶段二工程验收 | [用户确认](../poc4/docs/evidence/ai-stage3/acceptance.md) |
+| AI 任务收尾修复 | 2026-10-26 发布三组件及 V15/V16，一次最小真实任务完成、回执/ACK 对齐并释放写占用；完整云端 A–N 故障矩阵未执行，原故障 Task 未修复 | [收尾验收](../poc4/docs/evidence/ai-terminal-settlement/acceptance.md) |
+| 关键云端故障专项 | 2026-10-27失败、手动结束、backend重启及Worker丢失/真实期限四类场景PASS，KEY_CLOUD_FAULTS_VERIFIED；不代表完整矩阵 | [专项记录](../poc4/docs/evidence/ai-terminal-settlement/cloud-faults-20261027.md) |
+| 阶段四：接管与手动继续 | 2026-10-27规划完成、自检已收敛；用户确认同会话新Task与新预算；IMPLEMENTATION_NOT_STARTED | [五任务计划](superpowers/plans/2026-10-27-pi-stage4-control-recovery-implementation-plan.md) |
+| 多轮会话、压缩、工具结果与用量显示 | 已实现、审查、部署；真实多轮/隔离/手动压缩通过，工具结果与用量圈经既有历史回放验证；云端 75% 自动压缩触发仍 NOT_RUN | [上下文记录](../poc4/docs/evidence/ai-context/acceptance.md) |
+| 流式输出、思考强度与 Markdown | 已发布并验证四档实际 provider 参数；high/off 检查点和有界 max 续跑通过，组合 round2 仍 FAILED，low 流式时序 UNVERIFIED | [输出记录](../poc4/docs/evidence/ai-output/acceptance.md) |
+| 项目准入 | 已移除单项目试点限制；保留 owner/READY/revision/occupancy 检查，不改变阶段二结论 | [项目准入记录](../poc4/docs/evidence/ai-project-access/acceptance.md) |
+| AI 工具预算 | 已发布 180 次工具调用 / 20 次构建上限，1800s 任务期限不变；不等于应用寿命 | [预算记录](../poc4/docs/evidence/ai-task-budget/acceptance.md) |
+| Cloud IDE 与 AI 展示 | master UI 已同步进 AI 分支；ThinkRail、用量圈及 2026-10-21 登录/洞察文案已按记录发布，详细回归和发布入口归前端文档 | [前端记录](../poc4/frontend/README.md) |
 
-## Delivered Cloud Workbench
+## 工作台与语言运行时
 
-The accepted flow is login, create, edit/save, real compilation failure and feedback, fix/run successfully, reopen saved files/history/logs, and manually delete the project. Frontend, backend and MySQL run in the cloud deployment; everyday browser use does not require local application services or a tunnel.
-
-The 2026-09-20 recheck recorded:
-
-- Public lifecycle E2E: **6/6 passed**.
-- Backend and MySQL each normally rebuilt once; saved files/history/logs survived and a new Run succeeded after each rebuild.
-- UI deletion followed by independent project-scoped Kubernetes, database, PV and NFS-directory checks; no test-project residue, MySQL volume retained.
-- Targeted frontend regression: **137 tests passed** across 5 files; typecheck passed. These counts are dated evidence, not a fresh full-suite result for every future commit.
-- The frontend image-record mismatch was closed before integration. Original FAILED snapshots remain historical, not the current stage verdict.
-
-For exact image digests, project/Run IDs, commands and evidence boundaries, use the [acceptance record](../poc4/docs/evidence/stage-6b/acceptance.md). For setup, account initialization, fixed images and maintenance, use the [deployment README](../poc4/deploy/6b/README.md). Environment identities and dated observations are summarized in [Infrastructure Status](Stage6-Infrastructure-Status.md).
-
-## Earlier Stages
-
-| Stage | Delivered slice | Evidence boundary |
+| 专题 | 已记录结果与边界 | 证据入口 |
 | --- | --- | --- |
-| 0 | Selective EnsoAI browser migration, Monaco/xterm presentation and lifecycle | Mock files and local WebSocket echo, not real Kubernetes |
-| 1 | Routing, login contract, projects and centralized errors | Browser/MSW contract validation |
-| 2 | Lazy file tree, metadata-first read-only editor, download and size policies | Mock file API, not real PVC validation |
-| 3 | Explicit save, revisions, file CRUD and dirty-buffer guards | Mock write protocol before real backend integration |
-| 4 | Run control, edit locking, history and replay/live logs | Browser protocol/state validation |
-| 5 | Experimental active-Job terminal, transport, resize and audit display | Recorded 15 PASS and 2 WAIVED_BY_USER; no implied full real-cluster PTY acceptance |
-| 6A | Real backend/agent/PVC/Job loop, workspace recovery and permanent project deletion | MVP acceptance, not the original full engineering matrix |
-| 6B | Cloud frontend/backend/MySQL, public entry, repeatable maintenance and lifecycle | Single-user MVP; conditional faults and broader hardening remain bounded |
+| 6A：真实后端/Kubernetes MVP | 用户于 2026-09-17 验收，2026-09-18 合入 master；MVP PASS 不包含原完整 PTY/audit/stress/fault matrix | [6A 事实](Stage6A-Current-Facts.md) |
+| 6B：单用户云工作台 | 2026-09-20 验收、关闭并合入 master；云端生命周期、持久化、维护与定向删除通过，条件未触发的故障项仍为 SKIPPED | [6B 验收](../poc4/docs/evidence/stage-6b/acceptance.md) |
+| Java 运行时与 Maven 缓存 | 已部署验收，2026-09-25 合入 master；正式 7200s 案例 WAIVED_BY_USER，历史 DELETING 留项待操作决策，不能由旧记录推断当前残留 | [Java 验收](../poc4/docs/evidence/java-runtime/acceptance.md) |
+| Python、依赖恢复、镜像源与批量导入 | 2026-09-27 初始云验收通过，后续修复/镜像源/批量导入已发布，2026-10-12 经用户验收合入 master；7200s 案例 SKIPPED，镜像源轮保留既有依赖面板竞态和 deferred minors | [Python 验收](../poc4/docs/evidence/python-runtime/acceptance.md) |
 
-Historical stage detail and decision changes: [Evolution Timeline](Stage6A-Evolution-Timeline.md). Old reports saying 6A FAILED or 6B NOT_STARTED are dated records, not current gates.
+早期 0–5 阶段和 6A 方案调整仅作历史来源，不重新作为当前执行步骤；从文档导航的“基础云环境与历史阶段”按需查阅。
 
-## Known Boundaries
+## 最近一次整合与清理
 
-- Experimental terminal is off by default. Full PTY/audit/stress/fault matrices were not converted into PASS by stage closure.
-- Workspace-Pod deletion and deletion fault injection were SKIPPED in the 6B recheck because their trigger conditions were not met.
-- After selecting a historical Run, starting another Run leaves that historical record selected; manually selecting the new record displays its state/logs correctly. This observation is retained in acceptance section 9.3; it was not fixed during closeout.
-- The acceptance record still distinguishes the reported focus-refetch fix from a native Alt-Tab retest not performed in this review.
-- HTTP public transport, single-backend operation and the lack of immutable per-Run file snapshots remain explicit limits.
+2026-10-26，`codex/fix-ai-terminal-settlement` 通过 `da46643` 合并到 `codex/ai-integration`，源/合并树一致，定向合并后回归通过。最初一次前端异步超时和后续串行通过均保留，不能称单次全量全绿。
 
-## Next Work
+两批本地删除请求均在执行前被策略拒绝，实际删除 **0 项 / 0 文件 / 0 bytes**；修复 worktree、分支和必要诊断证据保留，旧保护 stash 不应重新 apply 覆盖当前结果。准确路径、验证与保护措施见[整合及清理记录](../poc4/docs/evidence/ai-terminal-settlement/cleanup-merge-20261026.md)。该次本地整合没有重新部署集群，也未恢复原任务或删除运行资源。
 
-The [Pi implementation slicing proposal](research/2026-10-13-pi-minimal-integration-implementation-slicing.md) defines four increments: code editing/build/test, application runtime feedback, book CRUD with human acceptance, and takeover/recovery. Stage one is implemented on `codex/ai-integration`; the [Stage 1 Implementation Record](../poc4/docs/evidence/ai-stage1/acceptance.md), section 8, owns the real 2026-10-15 model/browser/cluster round and the granted `PI_STAGE1_CODE_TEST_LOOP_PASS`. Section 8.7 separately records the later revision-cache repair deployment and its missing post-rollout browser click-path verification. The stage-one pass does not establish CRUD/MySQL or the full AI product.
+<a id="next-work"></a>
 
-On 2026-10-16 all five stage-two implementation tasks were reviewed and committed through `559f998`, with an Approved final whole-branch review. The user subsequently authorized image publication, cluster rollout and real model/browser/operator verification on port 30003; Git push/merge and project deletion remain prohibited. The [Stage 2 implementation record](../poc4/docs/evidence/ai-stage2/acceptance.md), section 9, owns deployed digests/identities, seven failed main scenes and a confirmed worker defect with a reviewed fix deployed as settlement-r5. The third Agent task completed with real HTTP200 but its browser suite failed at operator verification; round four failed on a progress ID without a durable result; round five correctly failed because the model appended to the immutable acceptance fixture; round six preserved that fixture but operator rejected AMBIGUOUS_TOOL_ORDER, correctly detecting a production worker defect: an early unknown result let a background build overlap a later status call. Worker fix `70c0985` is independently Approved with 66/66 and build PASS; settlement-r5 was published and rolled out with digest/Pod identity verified; the seventh round failed at COLLECTION_RUN_CHANGED despite unchanged fixture and real target500→200; its original snapshot difference remains unknown and the investigation is paused, and close did not run. Independently Approved harness fixes `77fe238`/`668eb0c` passed 104/104 and stage6 typecheck, without an image rollout. Later standalone operator PASS does not complete browser main/close; `PI_STAGE2_APPLICATION_FEEDBACK_PASS` remains NOT_GRANTED pending complete browser main/close and independent resource evidence. Sections 2–8 preserve local baselines, RED/GREEN/process corrections, six controller rulings and cleanup as dated snapshots; their original NOT_BUILT/NOT_RUN statements are historical. The [release guide](../poc4/deploy/ai-stage2/README.md) records actual digests, backend build fallback and maintenance/rollback/acceptance commands. The [historical design](superpowers/specs/2026-10-16-pi-stage2-design.md), [five-task plan](superpowers/plans/2026-10-16-pi-stage2-implementation-plan.md) and [implementer prompt](superpowers/plans/2026-10-16-pi-stage2-agent-handoff.md) preserve stop/wait/start, status/logs and bounded GET over existing ledger/Run authority. No new table, migration or workflow framework was added. CRUD/MySQL and takeover/recovery were originally assigned to stages three and four; the stage-three mission has since been accepted by the user as completed (2026-10-19), while stage four remains future scope.
+## 后续工作的边界
 
-On 2026-10-17 Stage 2 acceptance was paused for a new frontend `Unable to load run authority/history` case (HTTP 200 with `RUNNING` and `startedAt=null`). The [Stage 2 implementation record](../poc4/docs/evidence/ai-stage2/acceptance.md) section 9.12 owns unresolved `COLLECTION_RUN_CHANGED`, null-safe `evidenceDiff` review and remaining browser/owner-close/resource evidence; [Run recovery repair](superpowers/plans/2026-10-17-run-recovery-contract-fix.md) owns the root cause, TDD, independent review and focused backend repair release under the earlier explicit deployment authorization. Stage PASS remains NOT_GRANTED; the original model/cluster acceptance stays paused and project deletion remains prohibited.
-
-The 2026-10-18 [record audit](../poc4/docs/evidence/ai-stage2/acceptance.md#913-2026-10-18-记录核查后续变更与本地整理) reconciles all follow-up changes and commits the previously uncommitted failure/pause records. The null-safe verifier is now independently Approved with 108/108 local tests; three archived later operator PASS samples do not replace round seven FAILED. Original browser/close/resource evidence remains missing. The [workspace audit](../poc4/docs/evidence/ai-stage2/workspace-audit-20261018.md) records exact local temporary-file deletion and retained diagnostics; live cluster recheck timed out and supplies no new acceptance evidence.
-
-Stage 6B is finished. No mandatory “finish 6A, then begin 6B” checklist remains; do not restart old Tasks 10–12 or expand the full engineering matrix merely because an old plan still contains unchecked boxes.
-
-On 2026-10-18 the user requested AI access for other projects and then explicitly authorized publication. The [AI project access record](../poc4/docs/evidence/ai-project-access/acceptance.md) owns source `2446ca2`, 16/16 tests, backend rollout and before/after admission checks on test1/test2. The single-project restriction is removed while owner/READY/revision/occupancy checks remain; Stage 2 acceptance stays paused and NOT_GRANTED.
-
-The Python slice is complete and merged to `master` by `2ef32a5` (2026-10-12). Its [acceptance record](../poc4/docs/evidence/python-runtime/acceptance.md), sections 5–8, owns the 10/10 initial cloud E2E, workbench/log repair, dependency mirror and batch import results. The formal 7200s case remains SKIPPED by user instruction. The mirror/batch round recorded 6 passed / 1 failed / 3 not run; the pre-existing dependency-panel race and deferred minors remain documented. Completed plans and the retained Python worktree are historical records, not the next task queue.
-
-On 2026-10-13 the user chose to skip Go/TypeScript adaptation and enter AI integration selection/design directly. The target is an autonomous coding Agent: it reads/writes code, manages dependencies, uses Shell, runs and repairs the current user's project after a task. Ordinary project operations run automatically; destructive or otherwise high-risk operations require confirmation. It must not operate on the Manao platform. The user confirmed cloud model APIs only, with future expansion focused on coding-oriented MCP/Skills, multiple Agents, project tools and complex tasks.
-
-The [AI Framework Evaluation](research/2026-10-13-ai-integration-framework-evaluation.md) owns candidate comparison and confirmed choices in section 10: Pi, direct project modification, exclusive Agent write access, takeover after confirmed stopping, and automatic application stop/start within a programming task. The initial core-value goal was book REST CRUD with project MySQL in a dedicated acceptance project without important existing data; on 2026-10-19 the user confirmed that actual book-data CRUD use fulfills stage three's mission early. Database operations in that dedicated project remain automatic, while important existing data policy remains deferred. The stage-three user decision and the still-unpassed stage-two engineering record are separate authorities. Go/TypeScript are not prerequisites, and self-built orchestration remains the last fallback.
-
-The Java project runtime is integrated to `master` by `ef1b5bb` (2026-09-25) and supplies the baseline for that Python plan. The [Java Runtime Design](superpowers/specs/2026-09-21-java-project-runtime-design.md) incorporates mandatory user-entered public ports in 30000–31000, conflict feedback without automatic replacement, and container ports without extra product range restrictions. Separate persistent MySQL storage, the two-hour application lifetime and manual rerun remain confirmed. The [module review](superpowers/specs/2026-09-21-java-runtime-module-review.md) and [implementation plan](superpowers/plans/2026-09-21-java-project-runtime-implementation-plan.md) define Job + Service, focused tests and one full two-hour acceptance run. The delivery boundary — the formal 7200s run WAIVED_BY_USER, the DELETING leftover and the NOT_REVERIFIED items — is owned by the [runtime acceptance record](../poc4/docs/evidence/java-runtime/acceptance.md).
-
-The 2026-09-22 [Maven cache supplement](superpowers/plans/2026-09-22-java-maven-cache-implementation-plan.md) was implemented (C1/C2) and C3 combined deployment with the lifecycle acceptance on the same day: images published and digest-pinned, V9 migration applied, the E2E non-7200s round and the Maven cache acceptance (timings, download/reuse file evidence, isolation, backfill, reclamation) recorded PASS in the [acceptance record](../poc4/docs/evidence/java-runtime/acceptance.md) section 8. The formal 7200s run remains WAIVED_BY_USER; one DELETING leftover from a mid-round defect awaits an operator decision. No earlier stage PASS was rewritten.
-
-For maintenance, follow the accepted deployment README, reconcile any ambiguous mutation before retrying, and use the actual failing scope to select verification. A new feature or new failure may justify additional tests; unchanged previously passed paths do not require repeated full-suite or cluster reruns.
-
-## Historical Diagnostics
-
-The old current-state paragraphs, outstanding cleanup claims and next-step lists from 2026-09-10 have been removed from this index because later implementation and acceptance superseded them. Their evidence is still available:
-
-- [2026-09-10 status and next-steps report](../poc4/docs/evidence/stage-6/2026-09-10-status-and-next-steps.md).
-- [Dated read-only snapshot](../poc4/docs/evidence/stage-6/2026-09-10-readonly-snapshot.json).
-- [Historical gate report](../poc4/docs/evidence/stage-6/6a-gate.md).
-- [Artifact cleanup manifest](../poc4/docs/evidence/stage-6/2026-09-10-artifact-cleanup.json).
-
-These are repository-local source records, not instructions to revisit completed gates or delete resources that may no longer exist.
+- 当前推进阶段四规划与后续本地实施交接；原故障Task恢复、阶段二验收暂缓，新语言/功能不在本轮范围。设计与交接从阶段四计划进入，发布/云验收按后续明确授权执行。
+- 不自动重跑已完成的阶段三，不由一次收尾冒烟推断阶段二 PASS；Go/TypeScript 不是 AI 的前置任务。
+- 产品目标、领域术语、设计/计划和发布维护入口统一从文档导航查找；精确操作遵循对应发布手册，不重放旧 continuation 身份或可能已应用的写操作。

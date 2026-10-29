@@ -2,6 +2,8 @@
 
 日期：2026-10-26。当前状态：**DEPLOYED_SMOKE_VERIFIED**；用户已授权并实际发布三组件及V15/V16迁移，一次最小真实模型与浏览器收尾通过。实际证据见[验收记录第8节](../../docs/evidence/ai-terminal-settlement/acceptance.md#8-2026-10-26-实际集群部署与最小真实验证)与[脱敏发布身份](../../docs/evidence/ai-terminal-settlement/cloud-release-20261026.json)。完整云端故障矩阵未执行；原Task NOT_REPAIRED，Stage2 PAUSED/NOT_GRANTED。下文发布步骤作为后续维护契约保留。
 
+2026-10-27 补充完成失败、手动结束、执行中backend重启、Worker收据前丢失及真实1800s期限关闭，四类专项场景PASS（KEY_CLOUD_FAULTS_VERIFIED），沿用相同镜像。该轮故障注入、配置恢复及最终结果见[关键云端故障记录](../../docs/evidence/ai-terminal-settlement/cloud-faults-20261027.md)；不启动第四阶段，不授予完整A–N矩阵PASS。
+
 ## 1. 发布前提与顺序
 
 后续取得明确发布授权后才执行：
