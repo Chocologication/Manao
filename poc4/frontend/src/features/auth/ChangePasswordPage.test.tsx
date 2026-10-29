@@ -1,0 +1,196 @@
+import { cleanup, render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { http, HttpResponse } from 'msw';
+import { MemoryRouter, Route, Routes, useLocation, useNavigationType } from 'react-router';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { login } from '../../api/authApi';
+import { HttpClient, setHttpClient } from '../../api/httpClient';
+import { authSession, handleUnauthorized, httpClient } from '../../app/appRuntime';
+import { server } from '../../mocks/node';
+import { AuthProvider } from './AuthProvider';
+import { ChangePasswordPage } from './ChangePasswordPage';
+
+const CURRENT_INPUT = '当前密码';
+const NEW_INPUT = '新密码';
+const CONFIRM_INPUT = '确认新密码';
+const SUBMIT_LABEL = '修改密码';
+
+function LocationEcho() {
+  const location = useLocation();
+  const historyAction = useNavigationType();
+  return (
+    <div
+      data-testid="location-echo"
+      hidden
+      data-pathname={location.pathname}
+      data-history-action={historyAction}
+      data-state={JSON.stringify(location.state)}
+    />
+  );
+}
+
+function readLocation() {
+  const echo = screen.getByTestId('location-echo');
+  return {
+    pathname: echo.getAttribute('data-pathname') ?? '',
+    stateJson: echo.getAttribute('data-state') ?? 'null',
+  };
+}
+
+function renderChangePasswordPage() {
+  setHttpClient(httpClient);
+  return render(
+    <AuthProvider session={authSession}>
+      <MemoryRouter initialEntries={['/account/password']}>
+        <LocationEcho />
+        <Routes>
+          <Route path="/account/password" element={<ChangePasswordPage />} />
+          <Route path="/login" element={<main>LOGIN_PAGE</main>} />
+        </Routes>
+      </MemoryRouter>
+    </AuthProvider>,
+  );
+}
+
+async function authenticateAsAlice(): Promise<void> {
+  const response = await login({ username: 'alice', password: 'demo-pass' });
+  authSession.authenticate(response);
+}
+
+async function fillForm(
+  user: ReturnType<typeof userEvent.setup>,
+  currentPassword: string,
+  newPassword: string,
+  confirmPassword = newPassword,
+): Promise<void> {
+  await user.type(screen.getByLabelText(CURRENT_INPUT), currentPassword);
+  await user.type(screen.getByLabelText(NEW_INPUT), newPassword);
+  await user.type(screen.getByLabelText(CONFIRM_INPUT), confirmPassword);
+}
+
+beforeEach(() => {
+  setHttpClient(httpClient);
+});
+
+afterEach(() => {
+  cleanup();
+  setHttpClient(httpClient);
+  if (authSession.getSnapshot().status === 'authenticated') {
+    authSession.clear('logout');
+  }
+});
+
+describe('ChangePasswordPage', { timeout: 15_000 }, () => {
+  it('terminates the current session with success feedback only after the password changes', async () => {
+    await authenticateAsAlice();
+    const user = userEvent.setup();
+    renderChangePasswordPage();
+    await fillForm(user, 'demo-pass', 'brand-new-pass-1');
+    await user.click(screen.getByRole('button', { name: SUBMIT_LABEL }));
+
+    expect(await screen.findByText('LOGIN_PAGE')).toBeInTheDocument();
+    const snapshot = authSession.getSnapshot();
+    expect(snapshot).toEqual({ status: 'anonymous', reason: 'logout' });
+    expect(authSession.getAccessToken()).toBeNull();
+    expect(readLocation().stateJson).toContain('passwordChanged');
+  });
+
+  it('shows an inline error for a wrong current password without logging out', async () => {
+    await authenticateAsAlice();
+    const user = userEvent.setup();
+    renderChangePasswordPage();
+    await fillForm(user, 'wrong-pass', 'brand-new-pass-1');
+    await user.click(screen.getByRole('button', { name: SUBMIT_LABEL }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(/当前密码不正确/);
+    expect(authSession.getSnapshot().status).toBe('authenticated');
+    expect(authSession.getAccessToken()).not.toBeNull();
+    expect(readLocation().pathname).toBe('/account/password');
+    expect(screen.getByLabelText(CURRENT_INPUT)).toBeInTheDocument();
+  });
+
+  it('rejects a mismatched confirmation before sending any request', async () => {
+    await authenticateAsAlice();
+    const user = userEvent.setup();
+    renderChangePasswordPage();
+    await fillForm(user, 'demo-pass', 'brand-new-pass-1', 'different-pass-1');
+    await user.click(screen.getByRole('button', { name: SUBMIT_LABEL }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(/两次输入的新密码不一致/);
+    expect(authSession.getSnapshot().status).toBe('authenticated');
+    expect(readLocation().pathname).toBe('/account/password');
+  });
+
+  it('rejects a new password outside the registration password contract', async () => {
+    await authenticateAsAlice();
+    const user = userEvent.setup();
+    renderChangePasswordPage();
+    await fillForm(user, 'demo-pass', 'short');
+    await user.click(screen.getByRole('button', { name: SUBMIT_LABEL }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(/8.*64|至少 8/);
+    expect(authSession.getSnapshot().status).toBe('authenticated');
+  });
+
+  it('keeps the page usable when the network request fails', async () => {
+    await authenticateAsAlice();
+    server.use(http.post('/api/v1/auth/password-change', () => HttpResponse.error()));
+    const user = userEvent.setup();
+    renderChangePasswordPage();
+    await fillForm(user, 'demo-pass', 'brand-new-pass-1');
+    await user.click(screen.getByRole('button', { name: SUBMIT_LABEL }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(/网络请求失败/);
+    expect(authSession.getSnapshot().status).toBe('authenticated');
+    expect(screen.getByLabelText(CURRENT_INPUT)).toBeInTheDocument();
+  });
+
+  it('never logs out a newer login when a stale change-password success arrives', async () => {
+    await authenticateAsAlice();
+    const originalFetch = globalThis.fetch;
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let intercepted = false;
+    globalThis.fetch = (async (input, init) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+      if (!intercepted && url.endsWith('/api/v1/auth/password-change')) {
+        intercepted = true;
+        await gate;
+      }
+      return originalFetch(input, init);
+    }) as typeof fetch;
+    setHttpClient(
+      new HttpClient({
+        getAccessToken: () => authSession.getAccessToken(),
+        onUnauthorized: handleUnauthorized,
+        fetchImpl: (input, init) => globalThis.fetch(input, init),
+      }),
+    );
+    const user = userEvent.setup();
+    renderChangePasswordPage();
+    await fillForm(user, 'demo-pass', 'brand-new-pass-1');
+
+    try {
+      await user.click(screen.getByRole('button', { name: SUBMIT_LABEL }));
+      expect(await screen.findByRole('button', { name: '正在修改…' })).toBeDisabled();
+
+      authSession.clear('logout');
+      const bob = await login({ username: 'bob', password: 'demo-pass' });
+      authSession.authenticate(bob);
+      release();
+
+      const bobSnapshot = authSession.getSnapshot();
+      expect(bobSnapshot).toMatchObject({
+        status: 'authenticated',
+        user: { username: 'bob' },
+        accessToken: bob.accessToken,
+      });
+      expect(readLocation().pathname).toBe('/account/password');
+      expect(screen.queryByText('LOGIN_PAGE')).not.toBeInTheDocument();
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});

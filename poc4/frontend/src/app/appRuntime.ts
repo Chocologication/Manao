@@ -1,7 +1,11 @@
 import { HttpClient, setHttpClient } from '../api/httpClient';
 import { clearPythonDependencyOperationIdsForUser } from '../api/pythonDependencyApi';
 import { clearAgentTaskIdsForUser } from '../api/agentTaskApi';
-import { createAuthSession, type AuthenticatedSnapshot } from '../features/auth/authSession';
+import {
+  createAuthSession,
+  type AuthenticatedSnapshot,
+  type AuthSnapshot,
+} from '../features/auth/authSession';
 import { resetUnsavedDialog } from '../features/editor/unsavedChangesGuard';
 import { WorkspaceBufferRegistry } from '../features/editor/WorkspaceBufferRegistry';
 import { workspaceSessionStore } from '../features/editor/workspaceSession';
@@ -87,6 +91,16 @@ function clearSessionState(previous: AuthenticatedSnapshot): void {
 
 export function handleUnauthorized(): void {
   authSession.clear('unauthorized');
+}
+
+/**
+ * Stream revocation must only clear the session it was opened under: a late
+ * 4401/revoked event from an old connection can never terminate a newer login.
+ */
+export function handleSessionRevoked(expected: AuthSnapshot): void {
+  if (expected.status === 'authenticated' && authSession.getSnapshot() === expected) {
+    authSession.clear('unauthorized');
+  }
 }
 
 export function logout(): void {

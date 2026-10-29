@@ -1,5 +1,6 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { Link } from 'react-router';
 import { Check, CheckCheck, ChevronDown, Copy, LogOut, Monitor, Palette, SlidersHorizontal, UserRound, X, PanelsTopLeft, RotateCcw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useAuth } from '@/features/auth/AuthProvider';
@@ -88,7 +89,8 @@ export function AccountPanel({ compact = false, onLogout }: { compact?: boolean;
       <section id={`${panelId}-content`} role="tabpanel" aria-labelledby={`${panelId}-${tab}`} tabIndex={0} className="lab-account-content">
         {tab === 'account' && <>
           <div className="lab-account-identity"><span className="lab-avatar" aria-hidden="true">{Array.from(user.username)[0]?.toUpperCase() ?? 'M'}</span><div><h3>{user.username}</h3><span className="lab-account-session"><CheckCheck size={14} />已登录</span></div></div>
-          <dl className="lab-account-details"><div><dt>用户名</dt><dd>{user.username}</dd></div><div><dt>账户 ID</dt><dd><code>{user.id}</code><Button variant="ghost" size="icon" aria-label="复制账户 ID" title="复制账户 ID" onClick={() => void copyId()}><Copy /></Button></dd></div><div><dt>认证状态</dt><dd>当前会话已认证</dd></div>{expiryLabel && <div><dt>会话到期</dt><dd><time dateTime={snapshot.status === 'authenticated' ? snapshot.expiresAt : undefined}>{expiryLabel}</time></dd></div>}</dl>
+          <dl className="lab-account-details"><div><dt>用户名</dt><dd>{user.username}</dd></div><div><dt>账户 ID</dt><dd><code>{user.id}</code><Button variant="ghost" size="icon" aria-label="复制账户 ID" title="复制账户 ID" onClick={() => void copyId()}><Copy /></Button></dd></div><div><dt>邮箱</dt><dd>{user.email ? user.email : '未绑定邮箱（无法通过邮箱找回）'}</dd></div><div><dt>认证状态</dt><dd>当前会话已认证</dd></div>{expiryLabel && <div><dt>会话到期</dt><dd><time dateTime={snapshot.status === 'authenticated' ? snapshot.expiresAt : undefined}>{expiryLabel}</time></dd></div>}</dl>
+          <div className="mt-4 flex justify-end"><Link to="/account/password" className="text-sm font-medium text-[#dff77e] hover:underline" onClick={() => setOpen(false)}>修改密码</Link></div>
           <p role="status" className="lab-account-feedback">{copyStatus}</p>
         </>}
         {tab === 'appearance' && <>

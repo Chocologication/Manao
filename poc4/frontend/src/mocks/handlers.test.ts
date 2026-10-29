@@ -28,6 +28,8 @@ import {
   getFileRequestCount,
   resetMockState,
   setLargeFileBodiesEnabled,
+  setMockEmailAvailable,
+  setMockRegistrationEnabled,
   WRITE_SCENARIO_DELAY_MS,
 } from './state';
 import {
@@ -277,7 +279,7 @@ describe('MSW auth handlers', () => {
 
     expect(body.accessToken).toEqual(expect.any(String));
     expect(body.accessToken.length).toBeGreaterThan(0);
-    expect(body.user).toEqual({ id: 'usr-alice', username: 'alice' });
+    expect(body.user).toMatchObject({ id: 'usr-alice', username: 'alice' });
     const expiresAt = Date.parse(body.expiresAt);
     expect(expiresAt).toBeGreaterThanOrEqual(before + ACCESS_TOKEN_TTL_MS);
     expect(expiresAt).toBeLessThanOrEqual(after + ACCESS_TOKEN_TTL_MS);
@@ -1957,5 +1959,381 @@ describe('MSW terminal handlers', () => {
       expect((await post(scenario)).status).toBe(204);
       expect(getTerminalScenario()).toBe(scenario);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Mock auth contract (design section 9): the browser fixtures mirror the exact
+// HTTP shapes so page tests never need a real backend.
+// ---------------------------------------------------------------------------
+
+const AUTH_JSON_HEADERS = {
+  Accept: 'application/json',
+  'Content-Type': 'application/json',
+};
+
+async function getJson<T>(path: string): Promise<{ response: Response; body: T }> {
+  const response = await fetch(path, { headers: { Accept: 'application/json' } });
+  return { response, body: (await response.json()) as T };
+}
+
+async function postJson(path: string, body: unknown, token?: string): Promise<Response> {
+  const headers: Record<string, string> = { ...AUTH_JSON_HEADERS };
+  if (token !== undefined) headers.Authorization = `Bearer ${token}`;
+  return fetch(path, { method: 'POST', headers, body: JSON.stringify(body) });
+}
+
+async function issueCaptcha(): Promise<{ challengeId: string; imageBase64: string }> {
+  const { response, body } = await getJson<{
+    challengeId: string;
+    imageBase64: string;
+    expiresAt: string;
+  }>('/api/v1/auth/captcha');
+  expect(response.status).toBe(200);
+  return body;
+}
+
+async function requestEmailCode(options: {
+  purpose: 'REGISTER_EMAIL' | 'RESET_PASSWORD';
+  email: string;
+  captchaId?: string;
+  captchaAnswer?: string;
+}): Promise<Response> {
+  const captchaId = options.captchaId ?? (await issueCaptcha()).challengeId;
+  return postJson('/api/v1/auth/email-codes', {
+    purpose: options.purpose,
+    email: options.email,
+    captchaId,
+    captchaAnswer: options.captchaAnswer ?? '12345',
+  });
+}
+
+async function requestRegisterChallenge(
+  email: string,
+  captcha?: { challengeId: string; captchaAnswer?: string },
+): Promise<{ challengeId: string; expiresAt: string; retryAfterSeconds: number }> {
+  const response = await requestEmailCode({
+    purpose: 'REGISTER_EMAIL',
+    email,
+    ...(captcha ?? {}),
+  });
+  expect(response.status).toBe(202);
+  return (await response.json()) as {
+    challengeId: string;
+    expiresAt: string;
+    retryAfterSeconds: number;
+  };
+}
+
+async function getMe(token: string): Promise<Response> {
+  return fetch('/api/v1/auth/me', { headers: { Authorization: `Bearer ${token}` } });
+}
+
+describe('mock auth options and captcha contract', () => {
+  it('serves registration options without sender information', async () => {
+    const { response, body } = await getJson<{
+      registrationEnabled: boolean;
+      emailAvailable: boolean;
+    }>('/api/v1/auth/options');
+
+    expect(response.status).toBe(200);
+    expect(body).toEqual({ registrationEnabled: true, emailAvailable: true });
+    const raw = JSON.stringify(body);
+    expect(raw).not.toMatch(/host|sender|username|password|smtp/i);
+  });
+
+  it('serves a PNG captcha challenge that never carries the answer', async () => {
+    const { response, body } = await getJson<{
+      challengeId: string;
+      imageBase64: string;
+      expiresAt: string;
+    }>('/api/v1/auth/captcha');
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get('Cache-Control')).toBe('no-store');
+    expect(body.challengeId).toMatch(/^mock-captcha-/);
+    expect(body.imageBase64).toMatch(/^[A-Za-z0-9+/=]+$/);
+    expect(Number.isFinite(Date.parse(body.expiresAt))).toBe(true);
+    expect(JSON.stringify(body)).not.toMatch(/answer|captchaAnswer/i);
+    expect(JSON.stringify(body)).not.toContain('12345');
+  });
+});
+
+describe('mock email-code contract', () => {
+  it('issues a 202 challenge with a 60s retry hint and rate limits the same slot', async () => {
+    const challenge = await requestRegisterChallenge('fresh@example.com');
+    expect(challenge.challengeId).toMatch(/^mock-email-/);
+    expect(challenge.retryAfterSeconds).toBe(60);
+    expect(Number.isFinite(Date.parse(challenge.expiresAt))).toBe(true);
+
+    const repeated = await requestEmailCode({
+      purpose: 'REGISTER_EMAIL',
+      email: 'fresh@example.com',
+    });
+    expect(repeated.status).toBe(429);
+    expect(((await repeated.json()) as ApiErrorBody).code).toBe('AUTH_RATE_LIMITED');
+    expect(repeated.headers.get('Retry-After')).toBe('60');
+  });
+
+  it('returns the same 202 shape for unknown and bound recovery emails', async () => {
+    const unknown = await requestEmailCode({ purpose: 'RESET_PASSWORD', email: 'nobody@example.com' });
+    expect(unknown.status).toBe(202);
+    const unknownBody = (await unknown.json()) as { challengeId: string; retryAfterSeconds: number };
+    expect(unknownBody.challengeId).toMatch(/^mock-email-/);
+    expect(unknownBody.retryAfterSeconds).toBe(60);
+
+    const bound = await requestEmailCode({ purpose: 'RESET_PASSWORD', email: 'alice@example.com' });
+    expect(bound.status).toBe(202);
+    const boundBody = (await bound.json()) as { challengeId: string; retryAfterSeconds: number };
+    expect(Object.keys(boundBody).sort()).toEqual(Object.keys(unknownBody).sort());
+    expect(boundBody.retryAfterSeconds).toBe(60);
+  });
+
+  it('rejects an unknown or already consumed captcha challenge', async () => {
+    const unknown = await requestEmailCode({
+      purpose: 'REGISTER_EMAIL',
+      email: 'x@example.com',
+      captchaId: 'not-a-captcha',
+    });
+    expect(unknown.status).toBe(422);
+    expect(((await unknown.json()) as ApiErrorBody).code).toBe('CAPTCHA_INVALID');
+
+    const captcha = await issueCaptcha();
+    const first = await requestEmailCode({
+      purpose: 'REGISTER_EMAIL',
+      email: 'consume@example.com',
+      captchaId: captcha.challengeId,
+    });
+    expect(first.status).toBe(202);
+    const reused = await requestEmailCode({
+      purpose: 'REGISTER_EMAIL',
+      email: 'consume@example.com',
+      captchaId: captcha.challengeId,
+    });
+    expect(reused.status).toBe(422);
+    expect(((await reused.json()) as ApiErrorBody).code).toBe('CAPTCHA_INVALID');
+  });
+
+  it('rejects registration sends when registration is closed', async () => {
+    setMockRegistrationEnabled(false);
+    const closed = await requestEmailCode({ purpose: 'REGISTER_EMAIL', email: 'closed@example.com' });
+    expect(closed.status).toBe(403);
+    expect(((await closed.json()) as ApiErrorBody).code).toBe('REGISTRATION_CLOSED');
+  });
+
+  it('rejects sends with MAIL_NOT_CONFIGURED before checking the target email', async () => {
+    setMockEmailAvailable(false);
+    for (const purpose of ['REGISTER_EMAIL', 'RESET_PASSWORD'] as const) {
+      const response = await requestEmailCode({ purpose, email: 'nobody@example.com' });
+      expect(response.status).toBe(503);
+      expect(((await response.json()) as ApiErrorBody).code).toBe('MAIL_NOT_CONFIGURED');
+    }
+  });
+});
+
+describe('mock registration contract', () => {
+  it('creates an account only after a valid email code and returns no token', async () => {
+    const challenge = await requestRegisterChallenge('new@example.com');
+    const response = await postJson('/api/v1/auth/register', {
+      username: 'newuser',
+      password: 'newuser-pass-1',
+      email: 'new@example.com',
+      emailChallengeId: challenge.challengeId,
+      emailCode: '123456',
+    });
+    expect(response.status).toBe(201);
+    const body = (await response.json()) as { user: { id: string; username: string } };
+    expect(body.user.username).toBe('newuser');
+    expect(body.user.id).toMatch(/^usr-/);
+    expect(JSON.stringify(body)).not.toMatch(/accessToken|token/i);
+
+    const login = await postLogin('newuser', 'newuser-pass-1');
+    expect(login.status).toBe(200);
+    const session = (await login.json()) as LoginResponse;
+    expect(session.user).toMatchObject({
+      username: 'newuser',
+      email: 'new@example.com',
+      emailVerified: true,
+    });
+  });
+
+  it('keeps the valid email code when the username is taken so a renamed retry succeeds', async () => {
+    const challenge = await requestRegisterChallenge('conflict@example.com');
+    const conflict = await postJson('/api/v1/auth/register', {
+      username: 'alice',
+      password: 'conflict-pass-1',
+      email: 'conflict@example.com',
+      emailChallengeId: challenge.challengeId,
+      emailCode: '123456',
+    });
+    expect(conflict.status).toBe(409);
+    expect(((await conflict.json()) as ApiErrorBody).code).toBe('USERNAME_TAKEN');
+
+    const retry = await postJson('/api/v1/auth/register', {
+      username: 'conflictuser',
+      password: 'conflict-pass-1',
+      email: 'conflict@example.com',
+      emailChallengeId: challenge.challengeId,
+      emailCode: '123456',
+    });
+    expect(retry.status).toBe(201);
+  });
+
+  it('rejects a duplicate email and disallows reusing the consumed code', async () => {
+    const challenge = await requestRegisterChallenge('alice@example.com');
+    const duplicate = await postJson('/api/v1/auth/register', {
+      username: 'alicecopy',
+      password: 'alicecopy-pass-1',
+      email: 'alice@example.com',
+      emailChallengeId: challenge.challengeId,
+      emailCode: '123456',
+    });
+    expect(duplicate.status).toBe(409);
+    expect(((await duplicate.json()) as ApiErrorBody).code).toBe('EMAIL_TAKEN');
+
+    const challenge2 = await requestRegisterChallenge('reuse@example.com');
+    const first = await postJson('/api/v1/auth/register', {
+      username: 'reuseuser',
+      password: 'reuse-pass-1',
+      email: 'reuse@example.com',
+      emailChallengeId: challenge2.challengeId,
+      emailCode: '123456',
+    });
+    expect(first.status).toBe(201);
+    const reused = await postJson('/api/v1/auth/register', {
+      username: 'reuseuser2',
+      password: 'reuse-pass-2',
+      email: 'reuse@example.com',
+      emailChallengeId: challenge2.challengeId,
+      emailCode: '123456',
+    });
+    expect(reused.status).toBe(422);
+    expect(((await reused.json()) as ApiErrorBody).code).toBe('EMAIL_CODE_INVALID');
+  });
+
+  it('validates username, email, password and the email code shape', async () => {
+    const challenge = await requestRegisterChallenge('shape@example.com');
+    const cases: Array<[Record<string, unknown>, string]> = [
+      [{ username: 'ab', email: 'shape@example.com', password: 'shape-pass-1', emailCode: '123456' }, 'VALIDATION_ERROR'],
+      [{ username: 'okuser', email: 'not-an-email', password: 'shape-pass-1', emailCode: '123456' }, 'VALIDATION_ERROR'],
+      [{ username: 'okuser', email: 'shape@example.com', password: 'short', emailCode: '123456' }, 'VALIDATION_ERROR'],
+      [{ username: 'okuser', email: 'shape@example.com', password: 'shape-pass-1', emailCode: 'abc' }, 'EMAIL_CODE_INVALID'],
+    ];
+    for (const [item, expectedCode] of cases) {
+      const response = await postJson('/api/v1/auth/register', {
+        ...item,
+        emailChallengeId: challenge.challengeId,
+      });
+      expect(response.status).toBe(422);
+      expect(((await response.json()) as ApiErrorBody).code).toBe(expectedCode);
+    }
+  });
+
+  it('rejects final registration while the switch is closed even with a live code', async () => {
+    const challenge = await requestRegisterChallenge('switch@example.com');
+    setMockRegistrationEnabled(false);
+    const response = await postJson('/api/v1/auth/register', {
+      username: 'switchuser',
+      password: 'switch-pass-1',
+      email: 'switch@example.com',
+      emailChallengeId: challenge.challengeId,
+      emailCode: '123456',
+    });
+    expect(response.status).toBe(403);
+    expect(((await response.json()) as ApiErrorBody).code).toBe('REGISTRATION_CLOSED');
+  });
+});
+
+describe('mock password change and reset contract', () => {
+  it('rejects a wrong current password without revoking the login', async () => {
+    const session = await loginOk(ALICE.username, ALICE.password);
+    const mismatch = await postJson(
+      '/api/v1/auth/password-change',
+      { currentPassword: 'wrong-pass', newPassword: 'next-pass-123' },
+      session.accessToken,
+    );
+    expect(mismatch.status).toBe(422);
+    expect(((await mismatch.json()) as ApiErrorBody).code).toBe('CURRENT_PASSWORD_INVALID');
+    expect((await getMe(session.accessToken)).status).toBe(200);
+
+    const changed = await postJson(
+      '/api/v1/auth/password-change',
+      { currentPassword: ALICE.password, newPassword: 'next-pass-123' },
+      session.accessToken,
+    );
+    expect(changed.status).toBe(204);
+    expect((await getMe(session.accessToken)).status).toBe(401);
+    expect((await postLogin(ALICE.username, ALICE.password)).status).toBe(401);
+    expect((await postLogin(ALICE.username, 'next-pass-123')).status).toBe(200);
+  });
+
+  it('resets the password once through a recovery code and revokes old tokens', async () => {
+    const session = await loginOk(ALICE.username, ALICE.password);
+    const codeResponse = await requestEmailCode({
+      purpose: 'RESET_PASSWORD',
+      email: 'alice@example.com',
+    });
+    expect(codeResponse.status).toBe(202);
+    const challenge = (await codeResponse.json()) as { challengeId: string };
+
+    const reset = await postJson('/api/v1/auth/password-reset', {
+      email: 'alice@example.com',
+      emailChallengeId: challenge.challengeId,
+      emailCode: '123456',
+      newPassword: 'recovered-pass-1',
+    });
+    expect(reset.status).toBe(204);
+    expect((await getMe(session.accessToken)).status).toBe(401);
+    expect((await postLogin(ALICE.username, 'recovered-pass-1')).status).toBe(200);
+
+    const reused = await postJson('/api/v1/auth/password-reset', {
+      email: 'alice@example.com',
+      emailChallengeId: challenge.challengeId,
+      emailCode: '123456',
+      newPassword: 'recovered-pass-2',
+    });
+    expect(reused.status).toBe(422);
+    expect(((await reused.json()) as ApiErrorBody).code).toBe('EMAIL_CODE_INVALID');
+  });
+
+  it('answers an unknown-account recovery once with the uniform code error', async () => {
+    const codeResponse = await requestEmailCode({
+      purpose: 'RESET_PASSWORD',
+      email: 'nobody@example.com',
+    });
+    expect(codeResponse.status).toBe(202);
+    const challenge = (await codeResponse.json()) as { challengeId: string };
+    const reset = await postJson('/api/v1/auth/password-reset', {
+      email: 'nobody@example.com',
+      emailChallengeId: challenge.challengeId,
+      emailCode: '123456',
+      newPassword: 'nobody-pass-1',
+    });
+    expect(reset.status).toBe(422);
+    expect(((await reset.json()) as ApiErrorBody).code).toBe('EMAIL_CODE_INVALID');
+  });
+});
+
+describe('mock authenticated /me contract', () => {
+  it('returns the current identity with nullable email and rejects anonymous calls', async () => {
+    const session = await loginOk(ALICE.username, ALICE.password);
+    const authenticated = await getMe(session.accessToken);
+    expect(authenticated.status).toBe(200);
+    expect(await authenticated.json()).toMatchObject({
+      username: 'alice',
+      email: 'alice@example.com',
+      emailVerified: true,
+    });
+
+    const legacy = await loginOk('legacy', 'demo-pass');
+    const legacyMe = await getMe(legacy.accessToken);
+    expect(await legacyMe.json()).toMatchObject({
+      username: 'legacy',
+      email: null,
+      emailVerified: false,
+    });
+
+    const anonymous = await fetch('/api/v1/auth/me', { headers: { Accept: 'application/json' } });
+    expect(anonymous.status).toBe(401);
   });
 });

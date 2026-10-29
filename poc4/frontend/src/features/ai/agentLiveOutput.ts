@@ -1,6 +1,8 @@
 export type LiveBlock = { contentIndex: number; kind: 'thinking' | 'text'; text: string };
 export type LiveSnapshot = { revision: number; taskId: string; conversationId: string; durableHeadSeq: number; current: null | { messageOrdinal: number; phase: 'generating' | 'ended'; blocks: LiveBlock[]; modelTruncated: boolean; displayTruncated: boolean }; unavailable: boolean };
 export class LiveOutputError extends Error {}
+/** The server signalled that the current login was revoked (password change/reset). */
+export class LiveOutputRevokedError extends Error {}
 function record(v: unknown): Record<string, unknown> { if (v === null || typeof v !== 'object' || Array.isArray(v)) throw new LiveOutputError('Malformed live output'); return v as Record<string, unknown>; }
 function integer(v: unknown): number { if (typeof v !== 'number' || !Number.isSafeInteger(v) || v < 0) throw new LiveOutputError('Invalid live index'); return v; }
 function text(v: unknown): string { if (typeof v !== 'string') throw new LiveOutputError('Invalid live text'); return v; }
@@ -28,6 +30,12 @@ export async function consumeLiveOutput(response: Response, publish: (snapshot: 
   let line = '', event = '', data: string[] = [], frameBytes = 0, previousCR = false;
   const finishLine = () => {
     if (line === '') {
+      if (event === 'auth.revoked') {
+        // Fixed revocation event (design 8.2): the hook turns this into the
+        // snapshot-guarded unified session cleanup. No payload is interpreted.
+        event = ''; data = []; frameBytes = 0;
+        throw new LiveOutputRevokedError('Live output stream was revoked');
+      }
       if (event === 'snapshot' && data.length) {
         const json = data.join('\n');
         if (encoder.encode(json).length > 256 * 1024) throw new LiveOutputError('Live JSON too large');

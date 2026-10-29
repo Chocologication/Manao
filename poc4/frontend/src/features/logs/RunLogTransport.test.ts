@@ -1,6 +1,8 @@
 import { QueryClient } from '@tanstack/react-query';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ApiRequestError } from '../../api/ApiRequestError';
+import { authSession, handleSessionRevoked, logout } from '../../app/appRuntime';
+import type { AuthSnapshot } from '../auth/authSession';
 import type { LogChunk, LogWindowMeta } from '../../contracts/log';
 import { parseRunId, type LogTicket, type RunSummary } from '../../contracts/run';
 import { isWorkspaceEditable, RunAuthorityCoordinator } from '../runs/RunAuthorityCoordinator';
@@ -14,6 +16,15 @@ import {
   RunLogTransport,
   type RunLogTransportOptions,
 } from './RunLogTransport';
+
+function authenticatedSnapshot(username = 'alice'): AuthSnapshot {
+  return {
+    status: 'authenticated',
+    accessToken: `${username}-token`,
+    expiresAt: '2099-01-01T00:00:00.000Z',
+    user: { id: `usr-${username}`, username },
+  };
+}
 
 const PROJECT_ID = 'prj-1';
 const RUN_ID = parseRunId('run-1');
@@ -224,8 +235,9 @@ type Harness = {
   sockets: FakeWebSocket[];
   clock: ReturnType<typeof createClock>;
   createTicket: ReturnType<typeof vi.fn>;
-  getAccessToken: ReturnType<typeof vi.fn>;
-  onUnauthorized: ReturnType<typeof vi.fn>;
+  onSessionRevoked: ReturnType<typeof vi.fn>;
+  getSnapshot: () => AuthSnapshot;
+  setSnapshot: (next: AuthSnapshot) => void;
   registry: ConnectionRegistry;
   queryClient: QueryClient;
   reconcile: ReturnType<typeof vi.fn>;
@@ -255,9 +267,9 @@ function createHarness(overrides: Partial<RunLogTransportOptions> = {}): Harness
     ticket: `ticket-${createTicket.mock.calls.length}` as LogTicket,
     expiresAt: TICKET_EXPIRES,
   }));
-  let token: string | null = 'alice-token';
-  const getAccessToken = vi.fn(() => token);
-  const onUnauthorized = vi.fn();
+  let currentSnapshot: AuthSnapshot = authenticatedSnapshot('alice');
+  const getAuthSnapshot = vi.fn(() => currentSnapshot);
+  const onSessionRevoked = vi.fn();
   const reconcile = vi.fn();
   const onlineListeners = new Set<() => void>();
   const offlineListeners = new Set<() => void>();
@@ -266,8 +278,8 @@ function createHarness(overrides: Partial<RunLogTransportOptions> = {}): Harness
     coordinator: { reconcile },
     connectionRegistry: registry,
     createTicket,
-    getAccessToken,
-    onUnauthorized,
+    getAuthSnapshot,
+    onSessionRevoked,
     webSocketFactory: (url) => {
       const socket = new FakeWebSocket(url);
       sockets.push(socket);
@@ -297,8 +309,7 @@ function createHarness(overrides: Partial<RunLogTransportOptions> = {}): Harness
     sockets,
     clock,
     createTicket,
-    getAccessToken,
-    onUnauthorized,
+    onSessionRevoked,
     registry,
     queryClient,
     reconcile,
@@ -306,6 +317,10 @@ function createHarness(overrides: Partial<RunLogTransportOptions> = {}): Harness
     offlineListeners,
     setOnline(value) {
       online = value;
+    },
+    getSnapshot: () => currentSnapshot,
+    setSnapshot(next) {
+      currentSnapshot = next;
     },
   };
 }
@@ -534,29 +549,62 @@ describe('RunLogTransport reconnect policy', () => {
     expect(item.createTicket).toHaveBeenCalledTimes(1);
   });
 
-  it('lets HttpClient handle ticket 401 and binds WS unauthenticated cleanup to the captured token', async () => {
+  it('leaves ticket 401 cleanup to HttpClient and never reports a stream revocation', async () => {
     const current = harness();
     current.createTicket.mockRejectedValueOnce(
       new ApiRequestError(401, { code: 'UNAUTHENTICATED', message: 'expired', traceId: 't' }),
     );
     current.transport.connect();
     await microtasks();
-    expect(current.onUnauthorized).not.toHaveBeenCalled();
+    expect(current.onSessionRevoked).not.toHaveBeenCalled();
 
-    const stale = harness();
-    const socket = await openLive(stale);
-    stale.getAccessToken.mockReturnValue('bob-token');
-    socket.remoteClose(4401, 'Bearer alice-token leaked reason');
-    expect(stale.onUnauthorized).not.toHaveBeenCalled();
-    expect(JSON.stringify(stale.store.getSnapshot())).not.toContain('alice-token');
-    expect(JSON.stringify(stale.store.getSnapshot())).not.toContain('Bearer');
-
-    const live = harness();
-    const liveSocket = await openLive(live);
-    liveSocket.message(
+    const denied = harness();
+    const deniedSocket = await openLive(denied);
+    deniedSocket.message(
       JSON.stringify({ type: 'stream.error', code: 'UNAUTHENTICATED', retryable: false }),
     );
-    expect(live.onUnauthorized).toHaveBeenCalledTimes(1);
+    expect(denied.onSessionRevoked).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify(denied.store.getSnapshot())).not.toContain('alice-token');
+    expect(JSON.stringify(denied.store.getSnapshot())).not.toContain('Bearer');
+  });
+
+  it('reports the auth snapshot captured when a connection is established, not the newest login', async () => {
+    const stale = harness();
+    const aliceSnapshot = stale.getSnapshot();
+    const socket = await openLive(stale);
+    stale.setSnapshot({ status: 'anonymous', reason: 'logout' });
+    socket.remoteClose(4401, 'Bearer alice-token leaked reason');
+
+    expect(stale.onSessionRevoked).toHaveBeenCalledTimes(1);
+    expect(stale.onSessionRevoked).toHaveBeenCalledWith(aliceSnapshot);
+    expect(stale.store.getSnapshot().connection).toBe('failed');
+  });
+
+  it('does not clear a newer login when an old log connection reports 4401', async () => {
+    authSession.authenticate({
+      accessToken: 'alice-stream-token',
+      expiresAt: '2099-01-01T00:00:00.000Z',
+      user: { id: 'usr-alice', username: 'alice' },
+    });
+    const item = harness({
+      getAuthSnapshot: () => authSession.getSnapshot(),
+      onSessionRevoked: handleSessionRevoked,
+    });
+    const socket = await openLive(item);
+
+    logout();
+    authSession.authenticate({
+      accessToken: 'bob-stream-token',
+      expiresAt: '2099-01-01T00:00:00.000Z',
+      user: { id: 'usr-bob', username: 'bob' },
+    });
+    socket.remoteClose(4401);
+
+    expect(authSession.getSnapshot()).toMatchObject({
+      status: 'authenticated',
+      accessToken: 'bob-stream-token',
+      user: { username: 'bob' },
+    });
   });
 });
 
@@ -720,11 +768,13 @@ describe('RunLogTransport reconnect transition matrix', () => {
     expect(item.createTicket).toHaveBeenCalledTimes(1);
   });
 
-  it('current-token 4401 calls onUnauthorized, fails the stream, and does not reconnect', async () => {
+  it('current-connection 4401 reports session revocation, fails the stream, and does not reconnect', async () => {
     const item = harness();
+    const connectionSnapshot = item.getSnapshot();
     const socket = await openLive(item, [chunk(1, 'keep')]);
     socket.remoteClose(LOG_WS_CLOSE_CODE.UNAUTHENTICATED, 'Bearer alice-token');
-    expect(item.onUnauthorized).toHaveBeenCalledTimes(1);
+    expect(item.onSessionRevoked).toHaveBeenCalledTimes(1);
+    expect(item.onSessionRevoked).toHaveBeenCalledWith(connectionSnapshot);
     expect(item.store.getSnapshot()).toMatchObject({
       connection: 'failed',
       error: 'UNAUTHENTICATED',

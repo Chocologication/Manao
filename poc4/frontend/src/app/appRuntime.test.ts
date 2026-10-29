@@ -33,6 +33,7 @@ import { disposeAllProjectModels, toProjectModelUri } from '../lib/projectMonaco
 import {
   authSession,
   connectionRegistry,
+  handleSessionRevoked,
   handleUnauthorized,
   logout,
   queryClient,
@@ -236,7 +237,6 @@ async function connectTestLogTransport(runId: string, replayText = `${runId}-chu
       ticket: `ticket-${runId}` as never,
       expiresAt: '2026-08-24T10:00:30.000Z',
     }),
-    getAccessToken: () => authSession.getAccessToken(),
     onUnauthorized: handleUnauthorized,
     webSocketFactory: (url) => {
       const socket = new TestLogSocket(url);
@@ -1466,7 +1466,12 @@ describe('appRuntime unified session termination', () => {
       status: 'authenticated',
       accessToken: bob.accessToken,
       expiresAt: bob.expiresAt,
-      user: { id: BOB_USER_ID, username: 'bob' },
+      user: {
+        id: BOB_USER_ID,
+        username: 'bob',
+        email: 'bob@example.com',
+        emailVerified: true,
+      },
     });
     expectEmptyWorkspaceSession();
     expect(workspaceBufferRegistry.get(ALICE_SEED_PROJECT_ID, POM)).toBeUndefined();
@@ -1615,5 +1620,65 @@ describe('appRuntime unified session termination', () => {
     } finally {
       globalThis.fetch = originalFetch;
     }
+  });
+});
+
+describe('appRuntime session revocation guard', () => {
+  it('runs the unified cleanup once when the revoked snapshot is still current', () => {
+    authenticateFabricated('revoked-token', FAR_FUTURE);
+    const artifacts = seedCleanupState();
+    const expected = authSession.getSnapshot();
+    expect(expected.status).toBe('authenticated');
+
+    handleSessionRevoked(expected);
+
+    expect(authSession.getSnapshot()).toEqual({ status: 'anonymous', reason: 'unauthorized' });
+    expect(authSession.getAccessToken()).toBeNull();
+    expectEmptyWorkspaceSession();
+    expect(queryClient.getQueryCache().getAll()).toHaveLength(0);
+    expect(artifacts.terminalClose).toHaveBeenCalledTimes(1);
+    expect(artifacts.terminalDispose).toHaveBeenCalledTimes(1);
+    expect(artifacts.aiStreamClose).toHaveBeenCalledTimes(1);
+
+    handleSessionRevoked(expected);
+    expect(artifacts.terminalClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('never clears a newer login with the snapshot of an old stream', () => {
+    authenticateFabricated('alice-old-token', FAR_FUTURE, 'alice');
+    const aliceSnapshot = authSession.getSnapshot();
+    logout();
+    authenticateFabricated('bob-token', FAR_FUTURE, 'bob');
+    const closer = vi.fn();
+    connectionRegistry.register(closer);
+
+    handleSessionRevoked(aliceSnapshot);
+
+    expect(authSession.getSnapshot()).toMatchObject({
+      status: 'authenticated',
+      user: { id: BOB_USER_ID, username: 'bob' },
+      accessToken: 'bob-token',
+    });
+    expect(authSession.getAccessToken()).toBe('bob-token');
+    expect(closer).not.toHaveBeenCalled();
+  });
+
+  it('ignores an already-cleared snapshot so the original logout reason is kept', () => {
+    authenticateFabricated('alice-token', FAR_FUTURE, 'alice');
+    const expected = authSession.getSnapshot();
+    logout();
+
+    handleSessionRevoked(expected);
+
+    expect(authSession.getSnapshot()).toEqual({ status: 'anonymous', reason: 'logout' });
+  });
+
+  it('ignores an anonymous snapshot', () => {
+    authenticateFabricated('alice-token', FAR_FUTURE, 'alice');
+    logout();
+    const anonymous = authSession.getSnapshot();
+
+    expect(() => handleSessionRevoked(anonymous)).not.toThrow();
+    expect(authSession.getSnapshot()).toEqual({ status: 'anonymous', reason: 'logout' });
   });
 });

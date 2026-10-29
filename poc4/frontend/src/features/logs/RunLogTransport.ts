@@ -1,7 +1,13 @@
 import type { QueryClient } from '@tanstack/react-query';
 import { createLogTicket } from '../../api/runApi';
 import { ApiRequestError } from '../../api/ApiRequestError';
-import { authSession, connectionRegistry, queryClient as appQueryClient } from '../../app/appRuntime';
+import {
+  authSession,
+  connectionRegistry,
+  handleSessionRevoked,
+  queryClient as appQueryClient,
+} from '../../app/appRuntime';
+import type { AuthSnapshot } from '../auth/authSession';
 import type { LogParseContext } from '../../contracts/log';
 import {
   isRunLockingState,
@@ -37,7 +43,11 @@ export type RunLogTransportOptions = {
   coordinator?: RunStateCoordinator;
   connectionRegistry?: ConnectionRegistry;
   createTicket?: (projectId: string, runId: RunId, signal?: AbortSignal) => Promise<LogTicketResponse>;
-  getAccessToken?: () => string | null;
+  /** Snapshot captured when a connection attempt starts; defaults to the live session. */
+  getAuthSnapshot?: () => AuthSnapshot;
+  /** Session revocation signal; only a still-current snapshot is cleared. */
+  onSessionRevoked?: (expected: AuthSnapshot) => void;
+  /** Retained for existing callers; stream revocation uses onSessionRevoked instead. */
   onUnauthorized?: () => void;
   webSocketFactory?: (url: string) => WebSocket;
   location?: RunLogWindowLocation;
@@ -180,8 +190,8 @@ export class RunLogTransport {
     runId: RunId,
     signal?: AbortSignal,
   ) => Promise<LogTicketResponse>;
-  private readonly getAccessToken: () => string | null;
-  private readonly onUnauthorized: () => void;
+  private readonly getAuthSnapshot: () => AuthSnapshot;
+  private readonly onSessionRevoked: (expected: AuthSnapshot) => void;
   private readonly webSocketFactory: (url: string) => WebSocket;
   private readonly location: RunLogWindowLocation;
   private readonly scheduleTimeout: (handler: () => void, ms: number) => unknown;
@@ -200,7 +210,7 @@ export class RunLogTransport {
   private reconnectAttempt = 0;
   private streamComplete = false;
   private offline = false;
-  private boundToken: string | null = null;
+  private connectionSnapshot: AuthSnapshot = { status: 'anonymous', reason: 'initial' };
   private socket: WebSocket | null = null;
   private ticketAbort: AbortController | null = null;
   private reconnectTimer: unknown = null;
@@ -213,8 +223,8 @@ export class RunLogTransport {
     this.queryClient = options.queryClient ?? appQueryClient;
     this.coordinator = options.coordinator;
     this.createTicket = options.createTicket ?? createLogTicket;
-    this.getAccessToken = options.getAccessToken ?? (() => authSession.getAccessToken());
-    this.onUnauthorized = options.onUnauthorized ?? (() => {});
+    this.getAuthSnapshot = options.getAuthSnapshot ?? (() => authSession.getSnapshot());
+    this.onSessionRevoked = options.onSessionRevoked ?? handleSessionRevoked;
     this.webSocketFactory = options.webSocketFactory ?? ((url) => new WebSocket(url));
     this.location = options.location ?? { protocol: window.location.protocol, host: window.location.host };
     this.scheduleTimeout = options.setTimeout ?? ((handler, ms) => setTimeout(handler, ms));
@@ -328,7 +338,7 @@ export class RunLogTransport {
     }
     this.store.setError(null);
     this.store.setConnection('ticketing');
-    this.boundToken = this.getAccessToken();
+    this.connectionSnapshot = this.readAuthSnapshot();
     this.abortTicket();
     const abort = new AbortController();
     this.ticketAbort = abort;
@@ -411,7 +421,7 @@ export class RunLogTransport {
     }
     if (decision.kind === 'error') {
       if (decision.code === 'UNAUTHENTICATED') {
-        this.maybeUnauthorized();
+        this.notifySessionRevoked();
       }
       if (decision.retryable) {
         this.reconnect();
@@ -451,7 +461,7 @@ export class RunLogTransport {
     }
     const action = interpretCloseCode(event.code, event.reason, { streamComplete: this.streamComplete });
     if (action === 'unauthenticated') {
-      this.maybeUnauthorized();
+      this.notifySessionRevoked();
       this.fail('UNAUTHENTICATED');
       return;
     }
@@ -470,10 +480,19 @@ export class RunLogTransport {
     this.clearSocket();
   }
 
-  private maybeUnauthorized(): void {
-    const bound = this.boundToken;
-    if (bound !== null && bound === this.getAccessToken()) {
-      this.onUnauthorized();
+  private readAuthSnapshot(): AuthSnapshot {
+    try {
+      return this.getAuthSnapshot();
+    } catch {
+      return { status: 'anonymous', reason: 'initial' };
+    }
+  }
+
+  private notifySessionRevoked(): void {
+    try {
+      this.onSessionRevoked(this.connectionSnapshot);
+    } catch {
+      // A failing revocation observer must not keep the stream alive or reconnect.
     }
   }
 

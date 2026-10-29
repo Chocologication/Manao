@@ -1,5 +1,10 @@
 import { expect, it, vi } from 'vitest';
-import { consumeLiveOutput, parseLiveSnapshot, type LiveSnapshot } from './agentLiveOutput';
+import {
+  consumeLiveOutput,
+  LiveOutputRevokedError,
+  parseLiveSnapshot,
+  type LiveSnapshot,
+} from './agentLiveOutput';
 const encoder = new TextEncoder();
 it('counts both bytes of CRLF toward the physical frame bound', async () => { const wire = ':x\r\n'.repeat(70000); await expect(consumeLiveOutput(response(encoder.encode(wire)), vi.fn())).rejects.toThrow('frame'); });
 it('keeps a network reader failure retryable rather than classifying it as malformed UTF8', async () => { const failure = new TypeError('network reset'); const stream = new ReadableStream({ start(c) { c.error(failure); } }); await expect(consumeLiveOutput(new Response(stream), vi.fn())).rejects.toBe(failure); });
@@ -34,3 +39,32 @@ it.each([':'.repeat(260 * 1024 + 1), 'data: ' + '中'.repeat(100000)])('bounds u
 it.each([{ revision: -1 }, { durableHeadSeq: NaN }, { unavailable: 'no' }, { current: { ...snapshot.current, phase: 'bad' } }, { current: { ...snapshot.current, blocks: [{ contentIndex: 0.5, kind: 'text', text: '' }] } }])('rejects malformed snapshot fields %j', patch => { expect(() => parseLiveSnapshot({ ...snapshot, ...patch })).toThrow(); });
 it('validates the real snapshot without mutating its input', () => { expect(parseLiveSnapshot(snapshot)).toEqual(snapshot); });
 it('cancels and releases the reader on malformed payload', async () => { const cancel = vi.fn(); const body = new ReadableStream({ start(c) { c.enqueue(encoder.encode(['event: snapshot', 'data: bad', '', ''].join(String.fromCharCode(10)))); }, cancel }); await expect(consumeLiveOutput(new Response(body), vi.fn())).rejects.toThrow(); expect(cancel).toHaveBeenCalledOnce(); expect(body.locked).toBe(false); });
+it('raises the dedicated revocation signal for auth.revoked instead of publishing it', async () => {
+  const wire = `event: snapshot
+data: ${JSON.stringify(snapshot)}
+
+event: auth.revoked
+data: {}
+
+`;
+  const publish = vi.fn();
+  await expect(
+    consumeLiveOutput(response(encoder.encode(wire)), publish),
+  ).rejects.toBeInstanceOf(LiveOutputRevokedError);
+  expect(publish).toHaveBeenCalledTimes(1);
+});
+
+it('cancels and releases the reader when auth.revoked arrives', async () => {
+  const cancel = vi.fn();
+  const body = new ReadableStream({
+    start(controller) {
+      controller.enqueue(encoder.encode('event: auth.revoked\ndata: {}\n\n'));
+    },
+    cancel,
+  });
+  await expect(consumeLiveOutput(new Response(body), vi.fn())).rejects.toBeInstanceOf(
+    LiveOutputRevokedError,
+  );
+  expect(cancel).toHaveBeenCalledOnce();
+  expect(body.locked).toBe(false);
+});

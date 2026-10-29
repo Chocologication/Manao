@@ -43,6 +43,16 @@ const API_ERROR_CODES: ReadonlySet<string> = new Set([
   'AI_TASK_ACTIVE',
   'AI_TASK_MISMATCH',
   'AI_TASK_NOT_FOUND',
+  // Account lifecycle fixed error codes (design section 9).
+  'CAPTCHA_INVALID',
+  'EMAIL_CODE_INVALID',
+  'AUTH_RATE_LIMITED',
+  'USERNAME_TAKEN',
+  'EMAIL_TAKEN',
+  'REGISTRATION_CLOSED',
+  'MAIL_NOT_CONFIGURED',
+  'MAIL_SEND_FAILED',
+  'CURRENT_PASSWORD_INVALID',
 ]);
 
 export type HttpClientOptions = {

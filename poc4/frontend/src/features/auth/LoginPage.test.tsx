@@ -400,3 +400,36 @@ describe('LoginPage', () => {
     expect(readLocation().pathname).toBe('/projects/prj-1');
   });
 });
+describe('LoginPage account lifecycle entries', () => {
+  it('links to registration and recovery without a captcha or demo credentials', () => {
+    renderAuthApp({});
+
+    expect(screen.getByRole('link', { name: '注册账号' })).toHaveAttribute('href', '/register');
+    expect(screen.getByRole('link', { name: '忘记密码' })).toHaveAttribute(
+      'href',
+      '/forgot-password',
+    );
+    expect(screen.queryByLabelText('图形验证码')).not.toBeInTheDocument();
+    expect(screen.queryByText(/演示账号|alice \/ demo-pass|demo-pass/)).not.toBeInTheDocument();
+  });
+
+  it.each([
+    ['registered', /注册成功/],
+    ['passwordReset', /密码已重置/],
+    ['passwordChanged', /密码已更新/],
+  ] as const)('shows success feedback for the %s lifecycle state', (flag, pattern) => {
+    renderAuthApp({
+      initialEntries: [{ pathname: '/login', state: { [flag]: true } }],
+    });
+
+    const status = screen.getByRole('status');
+    expect(status).toHaveTextContent(pattern);
+    expect(status).toHaveTextContent(/登录/);
+  });
+
+  it('does not show lifecycle success feedback for an ordinary visit', () => {
+    renderAuthApp({});
+
+    expect(screen.queryByRole('status')).not.toBeInTheDocument();
+  });
+});
