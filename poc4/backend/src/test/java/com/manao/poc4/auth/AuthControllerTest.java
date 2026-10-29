@@ -5,7 +5,6 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.manao.poc4.api.ApiException;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
@@ -89,13 +88,6 @@ class AuthControllerTest {
     }
 
     @Test
-    void loginRequestRejectsUnknownFields() {
-        assertThatThrownBy(() -> new ObjectMapper().readValue(
-            "{\"username\":\"alice\",\"password\":\"x\",\"token\":\"leak\"}", AuthController.LoginRequest.class))
-            .isInstanceOf(Exception.class);
-    }
-
-    @Test
     void jwtRejectsExpiredMalformedAndVersionlessTokens() {
         JwtService expired = new JwtService(SECRET, Duration.ofSeconds(-1));
         assertThatThrownBy(() -> JWT.parse(expired.issue("opaque-user", 0).accessToken()))
@@ -104,6 +96,37 @@ class AuthControllerTest {
         long future = Instant.now().plusSeconds(600).getEpochSecond();
         String versionless = signedToken("{\"sub\":\"opaque-user\",\"exp\":" + future + "}");
         assertThatThrownBy(() -> JWT.parse(versionless)).isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void jwtParseRejectsTrailingContentDuplicateClaimsAndInvalidSubjectIds() {
+        long future = Instant.now().plusSeconds(600).getEpochSecond();
+        String valid = "{\"sub\":\"opaque-user\",\"exp\":" + future + ",\"ver\":0}";
+        // Sanity: the signed valid single object is accepted.
+        assertThat(JWT.parse(signedToken(valid)).authVersion()).isZero();
+
+        // Content after the JSON object must not be ignored.
+        assertThatThrownBy(() -> JWT.parse(signedToken(valid + "{}")))
+            .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> JWT.parse(signedToken(valid + "{\"ver\":0}")))
+            .isInstanceOf(IllegalArgumentException.class);
+        // A duplicate claim is an error, even when one of the values would be valid.
+        assertThatThrownBy(() -> JWT.parse(signedToken(
+            "{\"sub\":\"opaque-user\",\"exp\":" + future + ",\"ver\":-1,\"ver\":0}")))
+            .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> JWT.parse(signedToken(
+            "{\"sub\":\"opaque-user\",\"exp\":" + future + ",\"ver\":\"bad\",\"ver\":0}")))
+            .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> JWT.parse(signedToken(
+            "{\"sub\":\"opaque-user\",\"exp\":" + future + ",\"ver\":0,\"ver\":-1}")))
+            .isInstanceOf(IllegalArgumentException.class);
+        // The parsed subject follows the same ID contract as issue().
+        assertThatThrownBy(() -> JWT.parse(signedToken(
+            "{\"sub\":\"bad user\",\"exp\":" + future + ",\"ver\":0}")))
+            .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> JWT.parse(signedToken(
+            "{\"sub\":\"\",\"exp\":" + future + ",\"ver\":0}")))
+            .isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test

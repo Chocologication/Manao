@@ -6,6 +6,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import com.manao.poc4.persistence.JdbcStoreTestSupport;
 import java.sql.SQLException;
 import java.sql.Timestamp;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
@@ -51,6 +52,32 @@ class AccountSchemaTest {
             assertThat(jdbc.queryForObject("SELECT owner_id FROM project WHERE id=?", String.class, "legacy-project"))
                 .isEqualTo("legacy-user");
             assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM app_user", Integer.class)).isEqualTo(1);
+        }
+    }
+
+    @Test
+    void upgradedLegacyAccountLogsInThroughTheRealStoreAndIssuesAVersionZeroToken() {
+        try (var db = JdbcStoreTestSupport.createAtVersion("16")) {
+            JdbcTemplate jdbc = db.jdbc();
+            insertUser(jdbc, "legacy-user", "legacy-name");
+            db.migrateToLatest();
+
+            // End-to-end on the upgraded schema: real UserStore + BCrypt + current-version signing.
+            JwtService jwt = new JwtService("legacy-login-test-secret-0123456789ab", Duration.ofMinutes(15));
+            AuthController controller = new AuthController(jwt, new PasswordService(), new UserStore(jdbc));
+            Map<String, Object> response = controller.login(
+                new AuthController.LoginRequest("legacy-name", "legacy-password"));
+
+            JwtService.Claims claims = jwt.parse((String) response.get("accessToken"));
+            assertThat(claims.subject()).isEqualTo("legacy-user");
+            assertThat(claims.authVersion()).isZero();
+            @SuppressWarnings("unchecked")
+            Map<String, Object> user = (Map<String, Object>) response.get("user");
+            assertThat(user.get("id")).isEqualTo("legacy-user");
+            assertThat(user.get("username")).isEqualTo("legacy-name");
+            assertThat(user.get("email")).isNull();
+            assertThat(user.get("emailVerified")).isEqualTo(false);
+            assertThat(user.values()).doesNotContain(LEGACY_HASH);
         }
     }
 

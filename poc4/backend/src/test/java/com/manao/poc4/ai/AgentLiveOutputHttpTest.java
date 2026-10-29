@@ -119,9 +119,12 @@ class AgentLiveOutputHttpTest {
             assertThat(f.post(f.task, f.snapshot(1), true, "worker", "1").statusCode()).isEqualTo(204);
             assertThat(f.get(f.livePath(), null).statusCode()).isEqualTo(401);
             assertThat(f.get(f.livePath(), "invalid").statusCode()).isEqualTo(401);
-            // An unknown account can no longer authenticate at all (the database check runs
-            // before owner scoping), so the refusal is 401 rather than an empty owner scope.
-            assertThat(f.get(f.livePath(), f.app.getBean(JwtService.class).issue("foreign", 0).accessToken()).statusCode()).isEqualTo(401);
+            // A valid, enabled account B at the matching auth_version can authenticate, but it
+            // cannot read account A's real project/task live output: owner scoping answers 404.
+            assertThat(f.get(f.livePath(), f.intruderToken).statusCode()).isEqualTo(404);
+            // Separately, an unknown account cannot authenticate at all (the database check runs
+            // before owner scoping), so the refusal is 401.
+            assertThat(f.get(f.livePath(), f.app.getBean(JwtService.class).issue("missing-user", 0).accessToken()).statusCode()).isEqualTo(401);
             assertThat(f.get(f.livePath().replace("projects/project/", "projects/foreign/"), f.token).statusCode()).isEqualTo(404);
             var response = f.stream(f.livePath());
             try (var body = response.body()) {
@@ -174,11 +177,15 @@ class AgentLiveOutputHttpTest {
         final String task = UUID.randomUUID().toString();
         final String conversation = UUID.randomUUID().toString();
         final String token;
+        final String intruderToken;
         final int port;
         Fixture() {
             var jdbc = db.jdbc();
             var now = java.sql.Timestamp.from(java.time.Instant.now());
             jdbc.update("INSERT INTO app_user(id,username,password_hash,created_at) VALUES ('owner','owner','unused',?)", now);
+            // A second real, ENABLED account at the matching auth_version: it authenticates but
+            // must never read the first account's project/task live output.
+            jdbc.update("INSERT INTO app_user(id,username,password_hash,created_at) VALUES ('intruder','intruder','unused',?)", now);
             jdbc.update("INSERT INTO project(id,owner_id,name,state,workspace_revision,created_at,updated_at) VALUES ('project','owner','project','READY',7,?,?)", now, now);
             var tx = new DataSourceTransactionManager(jdbc.getDataSource());
             tasks = new AgentTaskStore(jdbc, tx, Clock.systemUTC());
@@ -204,6 +211,7 @@ class AgentLiveOutputHttpTest {
             assertThat(app.getBean(FilterChainProxy.class)).isNotNull();
             port = app.getWebServer().getPort();
             token = app.getBean(JwtService.class).issue("owner", 0).accessToken();
+            intruderToken = app.getBean(JwtService.class).issue("intruder", 0).accessToken();
         }
         String snapshot(long revision) {
             return "{\"revision\":" + revision + ",\"taskId\":\"" + task + "\",\"conversationId\":\"" + conversation
