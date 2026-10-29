@@ -83,6 +83,81 @@ public final class AuthContracts {
         }
     }
 
+    /** POST /api/v1/auth/login body; unknown JSON fields are rejected. */
+    @JsonIgnoreProperties(ignoreUnknown = false)
+    public record LoginRequest(@NotBlank String username, @NotBlank String password) {
+    }
+
+    /** The account view exposed to the current user by login and GET /me. */
+    public record UserView(String id, String username, String email, boolean emailVerified) {
+    }
+
+    public record LoginResponse(String accessToken, Instant expiresAt, UserView user) {
+    }
+
+    /** POST /api/v1/auth/register body; unknown JSON fields are rejected. */
+    @JsonIgnoreProperties(ignoreUnknown = false)
+    public record RegisterRequest(@NotBlank @Size(max = 128) String username,
+                                  @NotBlank String password,
+                                  @NotBlank @Size(max = 254) String email,
+                                  @NotBlank String emailChallengeId,
+                                  @NotBlank String emailCode) {
+    }
+
+    /** 201 response body: the created user only; registration never returns a token. */
+    public record RegisteredUser(String id, String username) {
+    }
+
+    /** POST /api/v1/auth/password-reset body; unknown JSON fields are rejected. */
+    @JsonIgnoreProperties(ignoreUnknown = false)
+    public record PasswordResetRequest(@NotBlank @Size(max = 254) String email,
+                                       @NotBlank String emailChallengeId,
+                                       @NotBlank String emailCode,
+                                       @NotBlank String newPassword) {
+    }
+
+    /** POST /api/v1/auth/password-change body for an already authenticated account. */
+    @JsonIgnoreProperties(ignoreUnknown = false)
+    public record PasswordChangeRequest(@NotBlank String currentPassword,
+                                        @NotBlank String newPassword) {
+    }
+
+    /** GET /api/v1/auth/options: only the two switches, never sender/secret details. */
+    public record OptionsResponse(boolean registrationEnabled, boolean emailAvailable) {
+    }
+
+    /**
+     * New username rule (design section 5.3): trim, Locale.ROOT lower-case and 3-32 chars from
+     * [a-z0-9_]. Existing login input is deliberately not normalized here.
+     */
+    public static String normalizeUsername(String raw) {
+        if (raw == null) {
+            throw new IllegalArgumentException("username required");
+        }
+        String value = raw.trim().toLowerCase(Locale.ROOT);
+        if (!value.matches("[a-z0-9_]{3,32}")) {
+            throw new IllegalArgumentException("username format is invalid");
+        }
+        return value;
+    }
+
+    /**
+     * New-password rule (design section 5.3): 8-64 characters and at most 72 UTF-8 bytes, no
+     * trimming and no composition requirement. It applies only to NEW passwords; legacy login and
+     * currentPassword checks keep the historical contract.
+     */
+    public static String validateNewPassword(String raw) {
+        if (raw == null) {
+            throw new IllegalArgumentException("password required");
+        }
+        int characters = raw.codePointCount(0, raw.length());
+        int bytes = raw.getBytes(java.nio.charset.StandardCharsets.UTF_8).length;
+        if (characters < 8 || characters > 64 || bytes > 72) {
+            throw new IllegalArgumentException("password length is invalid");
+        }
+        return raw;
+    }
+
     /**
      * Normalizes a NEW email identity: trim, {@link Locale#ROOT} lower-case, length and syntax
      * validation (design section 5.3). The stored value is compared binary, so callers must use

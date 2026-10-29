@@ -49,7 +49,18 @@ public class SecurityConfig {
                     (request.getDispatcherType() == jakarta.servlet.DispatcherType.ASYNC
                         || request.getDispatcherType() == jakarta.servlet.DispatcherType.ERROR)
                     && request.getRequestURI().matches("/api/v1/projects/[^/]+/agent-tasks/[^/]+/live-output")).permitAll()
-                .requestMatchers("/api/v1/auth/login", "/api/v1/ws/run-logs", "/api/v1/ws/terminals").permitAll().anyRequest().authenticated())
+                .requestMatchers(
+                    // Anonymous account-lifecycle endpoints, listed per exact path (no /auth/**).
+                    "/api/v1/auth/login",
+                    "/api/v1/auth/options",
+                    "/api/v1/auth/captcha",
+                    "/api/v1/auth/email-codes",
+                    "/api/v1/auth/register",
+                    "/api/v1/auth/password-reset",
+                    // Existing ticket-authenticated WebSocket handshakes.
+                    "/api/v1/ws/run-logs",
+                    "/api/v1/ws/terminals").permitAll()
+                .anyRequest().authenticated())
             .exceptionHandling(e -> e.authenticationEntryPoint((request, response, exception) -> {
                 writeError(response, HttpServletResponse.SC_UNAUTHORIZED, new ApiError("UNAUTHENTICATED", "Authentication required", null));
             }).accessDeniedHandler((request, response, exception) -> {

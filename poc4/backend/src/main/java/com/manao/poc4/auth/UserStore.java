@@ -35,6 +35,12 @@ public final class UserStore {
         return findOne("SELECT " + ACCOUNT_COLUMNS + " FROM app_user WHERE username = ?", username);
     }
 
+    /** Exact lookup for the registration/email-taken check; callers pass the normalized address. */
+    public Optional<UserAccount> findByEmail(String email) {
+        if (email == null || email.isBlank()) return Optional.empty();
+        return findOne("SELECT " + ACCOUNT_COLUMNS + " FROM app_user WHERE email = ?", email);
+    }
+
     /**
      * Looks up a bound AND verified email address. A legacy NULL email (or an address that was
      * never verified) is never a recovery candidate. The caller supplies the normalized
@@ -63,6 +69,29 @@ public final class UserStore {
         } catch (RuntimeException ex) {
             return false;
         }
+    }
+
+    /**
+     * Inserts a newly registered account. The email code was verified in the same transaction, so
+     * the address is stored as verified and the initial auth_version is zero.
+     */
+    public void insertRegisteredAccount(String id, String username, String passwordHash, String email,
+                                        Instant createdAt) {
+        Timestamp timestamp = Timestamp.from(createdAt);
+        jdbc.update("INSERT INTO app_user(id, username, password_hash, enabled, email, email_verified_at, "
+                + "auth_version, created_at) VALUES (?, ?, ?, TRUE, ?, ?, 0, ?)",
+            id, username, passwordHash, email, timestamp, timestamp);
+    }
+
+    /**
+     * Updates the hash and bumps auth_version only while the account is enabled and still at the
+     * expected version. Returns 0 for a stale/concurrent request without overwriting the newer
+     * password. Reset and self-service change share this conditional write.
+     */
+    public int updatePassword(String userId, String passwordHash, long expectedAuthVersion) {
+        return jdbc.update("UPDATE app_user SET password_hash = ?, auth_version = auth_version + 1 "
+            + "WHERE id = ? AND enabled = TRUE AND auth_version = ?",
+            passwordHash, userId, expectedAuthVersion);
     }
 
     private Optional<UserAccount> findOne(String sql, Object argument) {

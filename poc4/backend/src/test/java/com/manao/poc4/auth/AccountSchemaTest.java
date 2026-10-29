@@ -64,20 +64,19 @@ class AccountSchemaTest {
 
             // End-to-end on the upgraded schema: real UserStore + BCrypt + current-version signing.
             JwtService jwt = new JwtService("legacy-login-test-secret-0123456789ab", Duration.ofMinutes(15));
-            AuthController controller = new AuthController(jwt, new PasswordService(), new UserStore(jdbc));
-            Map<String, Object> response = controller.login(
-                new AuthController.LoginRequest("legacy-name", "legacy-password"));
+            AuthProperties properties = new AuthProperties(false, "", null, null);
+            AuthService service = new AuthService(jdbc, new UserStore(jdbc), new PasswordService(), jwt,
+                new AuthChallengeStore(jdbc, properties), properties);
+            AuthContracts.LoginResponse response = service.login(
+                new AuthContracts.LoginRequest("legacy-name", "legacy-password"));
 
-            JwtService.Claims claims = jwt.parse((String) response.get("accessToken"));
+            JwtService.Claims claims = jwt.parse(response.accessToken());
             assertThat(claims.subject()).isEqualTo("legacy-user");
             assertThat(claims.authVersion()).isZero();
-            @SuppressWarnings("unchecked")
-            Map<String, Object> user = (Map<String, Object>) response.get("user");
-            assertThat(user.get("id")).isEqualTo("legacy-user");
-            assertThat(user.get("username")).isEqualTo("legacy-name");
-            assertThat(user.get("email")).isNull();
-            assertThat(user.get("emailVerified")).isEqualTo(false);
-            assertThat(user.values()).doesNotContain(LEGACY_HASH);
+            assertThat(response.user().id()).isEqualTo("legacy-user");
+            assertThat(response.user().username()).isEqualTo("legacy-name");
+            assertThat(response.user().email()).isNull();
+            assertThat(response.user().emailVerified()).isFalse();
         }
     }
 

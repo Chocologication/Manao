@@ -41,7 +41,7 @@ class AuthJsonContractTest {
             WebMvcAutoConfiguration.class, SecurityAutoConfiguration.class,
             JacksonAutoConfiguration.class, HttpMessageConvertersAutoConfiguration.class))
         .withUserConfiguration(StrictHttpJsonConfig.class, SecurityConfig.class, PasswordService.class,
-            AuthController.class, GlobalExceptionHandler.class)
+            AuthServiceConfiguration.class, AuthController.class, GlobalExceptionHandler.class)
         .withPropertyValues("MANAO_JWT_SECRET=" + SECRET);
 
     @Test
@@ -50,7 +50,9 @@ class AuthJsonContractTest {
             JdbcTemplate jdbc = db.jdbc();
             jdbc.update("INSERT INTO app_user(id, username, password_hash, created_at) VALUES (?, ?, ?, ?)",
                 "alice", "alice", PASSWORDS.hash("correct"), Timestamp.from(Instant.now()));
-            RUNNER.withBean(JdbcTemplate.class, () -> jdbc).run(context -> {
+            RUNNER.withBean(JdbcTemplate.class, () -> jdbc)
+                .withBean(VerificationMailSender.class, SmtpVerificationMailSender.Unavailable::new)
+                .run(context -> {
                 MockMvc mvc = MockMvcBuilders.webAppContextSetup((WebApplicationContext) context)
                     .addFilters(context.getBean(FilterChainProxy.class))
                     .build();
