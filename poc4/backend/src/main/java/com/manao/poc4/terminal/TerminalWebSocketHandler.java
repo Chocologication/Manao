@@ -60,6 +60,9 @@ public final class TerminalWebSocketHandler extends AbstractWebSocketHandler {
         volatile PtyBridge.PtyHandle handle;
         volatile boolean settled;
         volatile boolean revoked;
+        /** One atomic termination gate: exit frame + settlement happen exactly once. */
+        final java.util.concurrent.atomic.AtomicBoolean terminationStarted =
+            new java.util.concurrent.atomic.AtomicBoolean();
         volatile boolean pauseNotified;
         volatile UserSessionRevoker.Registration registration;
 
@@ -239,9 +242,11 @@ public final class TerminalWebSocketHandler extends AbstractWebSocketHandler {
     }
 
     private void closeRevoked(BoundSession bound) {
+        // The ticket consume already moved the row to LIVE: this branch must settle it exactly
+        // once (single-session settle path) or the active-terminal unique slot stays occupied.
+        settleAndClose(bound, "CONNECTION_LOST", "INTERRUPTED", null, CREDENTIALS_REVOKED);
         connections.remove(bound.session.getId(), bound);
         revokerRegistrationClose(bound);
-        closeQuietly(bound.session, CREDENTIALS_REVOKED);
     }
 
     private static void revokerRegistrationClose(BoundSession bound) {
@@ -263,6 +268,7 @@ public final class TerminalWebSocketHandler extends AbstractWebSocketHandler {
             if (runId.equals(bound.runId())) {
                 settleAndClose(bound, "CONNECTION_LOST", "INTERRUPTED", null, CloseStatus.GOING_AWAY);
                 connections.remove(bound.session.getId(), bound);
+                revokerRegistrationClose(bound);
             }
         }
     }
@@ -270,6 +276,8 @@ public final class TerminalWebSocketHandler extends AbstractWebSocketHandler {
     public void teardownAllSessions() {
         for (BoundSession bound : List.copyOf(connections.values())) {
             settleAndClose(bound, "CONNECTION_LOST", "INTERRUPTED", null, null);
+            connections.remove(bound.session.getId(), bound);
+            revokerRegistrationClose(bound);
         }
     }
 
@@ -381,6 +389,7 @@ public final class TerminalWebSocketHandler extends AbstractWebSocketHandler {
     /** PTY exit: settle once (CLOSED with the shell's exit code) and inform the client. */
     void handleExit(BoundSession bound, Integer exitCode) {
         if (bound.settled || bound.revoked) return;
+        if (!bound.terminationStarted.compareAndSet(false, true)) return;
         ObjectNode frame = JSON.createObjectNode();
         frame.put("type", "terminal.exit");
         if (exitCode == null) {
@@ -396,6 +405,7 @@ public final class TerminalWebSocketHandler extends AbstractWebSocketHandler {
 
     private void settleAndClose(BoundSession bound, String reason, String sessionState, Integer exitCode,
                                 CloseStatus status) {
+        if (!bound.terminationStarted.compareAndSet(false, true)) return;
         ObjectNode frame = JSON.createObjectNode();
         frame.put("type", "terminal.exit");
         frame.putNull("exitCode");
