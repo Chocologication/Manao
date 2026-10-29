@@ -968,7 +968,22 @@ function Invoke-RepairDependencyPolicy {
             return
         }
         Write-Line "[BACKUP] policy=$($candidate.PolicyName) path=$backupPath"
-        $patchResult = Invoke-PolicyPatch -Policy $candidate.Policy -ProjectId $candidate.ProjectId -PatchDirectory $patchDirectory
+        # A patch-payload write failure (for example an unwritable OutputDirectory/patch path)
+        # must follow the same unified failure path as a backup failure: keep the items that
+        # were already applied, write a FAILED apply-report, exit 3 and never retry.
+        try {
+            $patchResult = Invoke-PolicyPatch -Policy $candidate.Policy -ProjectId $candidate.ProjectId -PatchDirectory $patchDirectory
+        } catch {
+            if ($null -ne $reportEntry) {
+                $reportEntry.Status = 'FAILED'
+                $reportEntry.Reasons = @('patch payload write failed: ' + $_.Exception.Message)
+            }
+            Write-Line "[FAILED] policy=$($candidate.PolicyName) status=PATCH_PAYLOAD_FAILED reason=$($_.Exception.Message)"
+            Write-Line 'RESULT=APPLY_FAILED'
+            Write-ApplyReport -Status 'FAILED' -AppliedCount $applied -Entries $reportEntries -Directory $script:OutputDirectoryPath | Out-Null
+            $script:RepairExitCode = $script:ExitApplyFailed
+            return
+        }
         if (-not [string]::IsNullOrWhiteSpace($patchResult.PatchPath)) {
             Write-Line "[PATCH_PAYLOAD] policy=$($candidate.PolicyName) path=$($patchResult.PatchPath)"
         }

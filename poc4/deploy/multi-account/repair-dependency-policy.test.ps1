@@ -10,7 +10,8 @@
   legacy-vs-narrowed selector detection, fail-closed out-of-scope proof cases,
   case-sensitive identity/spec validation, strict reviewed-list input validation,
   refusal on out-of-scope/unknown/missing policies, uid and resourceVersion conflict
-  aborts (including stop-after-first-failure), read-back failure negatives, idempotent
+  aborts (including stop-after-first-failure), read-back failure negatives, unified
+  apply-failure reporting when a patch payload cannot be written, idempotent
   already-fixed policies, exact JSON Patch preconditions and policy-only backups.
 
   Run with: pwsh -NoProfile -File poc4/deploy/multi-account/repair-dependency-policy.test.ps1
@@ -1120,6 +1121,44 @@ function Test-ApplyReadBackFailureNegatives {
     Assert-Equal 'FAILED' $reportC.status 'read-back GET failure report status'
 }
 
+function Test-ApplyFailsClosedOnPatchPayloadWriteFailure {
+    $scenario = New-Scenario
+    Write-FixtureJson -Path $scenario.PoliciesFile -Value (New-PolicyList -Policies @(
+        (New-Policy -ProjectId 'p1'),
+        (New-Policy -ProjectId 'p2')
+    ))
+    Write-FixtureJson -Path $scenario.ProjectsFile -Value (New-ProjectList -Projects @(
+        [ordered]@{ ownerId = 'owner-1'; projectId = 'p1' },
+        [ordered]@{ ownerId = 'owner-1'; projectId = 'p2' }
+    ))
+    Write-FixtureJson -Path (Join-Path $scenario.PatchedDir 'manao-dep-netpol-p1.json') -Value (New-Policy -ProjectId 'p1' -Narrowed $true -Uid 'uid-p1' -ResourceVersion '101')
+    # p1 is patched first; for p2 the payload file path is occupied by a directory, so the
+    # patch-payload write fails after the backup. This must follow the unified apply-failure
+    # path (FAILED report, keep p1, exit 3, no retry) instead of escaping to the generic
+    # exit-1 handler.
+    $patchDirectory = Join-Path $scenario.OutputDir 'patch'
+    New-Item -ItemType Directory -Force -Path (Join-Path $patchDirectory 'manao-dep-netpol-p2.json') | Out-Null
+    $result = Invoke-RepairScript -Scenario $scenario -Apply
+    Assert-Equal 3 $result.ExitCode 'patch payload write failure must exit 3 (apply failure)'
+    Assert-Contains $result.StdOut '[FAILED] policy=manao-dep-netpol-p2 status=PATCH_PAYLOAD_FAILED' 'payload write failure is reported per policy'
+    Assert-Contains $result.StdOut 'RESULT=APPLY_FAILED' 'payload write failure must not claim success'
+    Assert-NotContains $result.StdOut 'RESULT=APPLIED' 'payload write failure must not claim success'
+    Assert-NotContains $result.StdErr 'repair-dependency-policy:' 'payload write failure must not escape to the generic exit-1 path'
+    Assert-Equal 1 @(Get-PatchCalls -Scenario $scenario).Count 'the run must stop after the payload write failure without retrying or touching p2'
+    Assert-Equal 1 @(Get-SinglePolicyReads -Scenario $scenario).Count 'only the already-patched policy is read back'
+    Assert-Equal 2 @(Get-ChildItem -LiteralPath (Join-Path $scenario.OutputDir 'backup') -File).Count 'both candidates keep their pre-patch backup'
+    $report = Get-ApplyReport -Scenario $scenario
+    Assert-Equal 'FAILED' $report.status 'payload write failure writes a FAILED apply report'
+    Assert-Equal 1 $report.appliedCount 'the already-applied item is kept in the report count'
+    $patchedItem = Get-ReportItem -Report $report -PolicyName 'manao-dep-netpol-p1'
+    Assert-Equal 'PATCHED' $patchedItem.status 'the first patched item stays PATCHED'
+    Assert-Equal 'uid-p1' $patchedItem.afterUid 'the first patched item keeps its read-back uid'
+    Assert-Equal '101' $patchedItem.afterResourceVersion 'the first patched item keeps its read-back resourceVersion'
+    $failedItem = Get-ReportItem -Report $report -PolicyName 'manao-dep-netpol-p2'
+    Assert-Equal 'FAILED' $failedItem.status 'the payload-write-failure item is FAILED'
+    Assert-Contains (@($failedItem.reasons) -join ' ') 'patch payload write failed' 'the failure reason names the payload write failure'
+}
+
 # ---------------------------------------------------------------------------
 # Run
 # ---------------------------------------------------------------------------
@@ -1141,6 +1180,7 @@ try {
     Invoke-Scenario 'apply is idempotent for already-fixed policies' { Test-ApplyIsIdempotentForAlreadyFixedPolicies }
     Invoke-Scenario 'apply backs up only policies and patches only the selector' { Test-ApplyBacksUpOnlyPoliciesAndPatchesOnlyTheSelector }
     Invoke-Scenario 'apply fails closed on read-back uid/spec/GET failures' { Test-ApplyReadBackFailureNegatives }
+    Invoke-Scenario 'apply fails closed when the patch payload cannot be written' { Test-ApplyFailsClosedOnPatchPayloadWriteFailure }
 } finally {
     Clear-MockEnvironment
     foreach ($root in $script:TempRoots) {

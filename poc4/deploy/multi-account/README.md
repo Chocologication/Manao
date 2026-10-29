@@ -88,8 +88,8 @@ pwsh -NoProfile -File poc4/deploy/multi-account/repair-dependency-policy.ps1 `
 （范围/完整性校验失败，**没有做任何修改**）；Apply 成功为 `RESULT=APPLIED count=N`
 或 `RESULT=ALREADY_SCOPED count=0`。
 
-退出码：`0` 成功/无需操作；`2` 范围与完整性校验拒绝（未做修改）；`3` patch 或回读
-失败；`1` 意外错误。
+退出码：`0` 成功/无需操作；`2` 范围与完整性校验拒绝（未做修改）；`3` patch、
+补丁负载文件写入或回读失败；`1` 意外错误。
 
 ## 5. 校验、JSON Patch 与回读
 
@@ -124,7 +124,10 @@ Apply 时对每条 `NEEDS_MIGRATION`：
    的 `.cmd` mock 通过 `%*` 看不到该问题，因此测试改为强制要求 `--patch-file` 并拒绝
    内联 `--patch`）。补丁文件不写 OS 临时目录，只在 Apply 时出现在 OutputDirectory
    下；预览不创建任何文件；
-3. 任一 test 前置条件失败（并发修改）→ 立即停止并以 `3` 退出，不重试、不继续后续策略；
+3. 任一步骤失败即走统一失败路径：保留已成功应用的项目、为该候选记 `FAILED`、写
+   FAILED `apply-report.json`、以 `3` 退出。包括任一 test 前置条件失败（并发修改）、
+   补丁负载文件无法写入（例如 `<OutputDirectory>/patch` 路径不可写）、回读失败；
+   全部都不重试、不继续后续策略；
 4. 成功后回读该策略，验证 UID 不变、spec 等于窄契约、selector 只为本项目；失败同样
    以 `3` 退出，不重试；
 5. 全部完成后写 `<OutputDirectory>/apply-report.json`：context/namespace、顶层状态/
@@ -163,7 +166,7 @@ pwsh -NoProfile -File poc4/deploy/multi-account/repair-dependency-policy.test.ps
 ```
 
 测试用本地生成的 `mock-kubectl.cmd` 读取 JSON fixture 并记录每次调用，完全不接触
-集群。覆盖（15 个 fixture 场景）：默认预览不写集群/不写文件（TEMP 指向文件时也必须成功、
+集群。覆盖（16 个 fixture 场景）：默认预览不写集群/不写文件（TEMP 指向文件时也必须成功、
 空 TEMP 不残留文件、OutputDirectory 不创建）、旧/新 selector 识别、清单外宽策略拒绝、
 fail-closed 复现（managed-by=本平台、component NotIn [workspace]、未知 label 必须拒绝；
 component=web、component NotIn [mysql,redis]、其它 manager、无 ingress 规则可忽略）、
@@ -174,6 +177,7 @@ component=web、component NotIn [mysql,redis]、其它 manager、无 ingress 规
 `--patch`**（mock kubectl 读取该文件内容并校验存在/非空，再交给 fixture 断言）、补丁只含
 3 个操作且 test 的 uid/resourceVersion 值与审阅对象完全一致、补丁文件位于
 `<OutputDirectory>/patch/` 并保留为审计证据、patch 后回读、回读 UID/spec/GET 失败负例、
+补丁负载文件写入失败时保留已应用项并写 FAILED apply-report/退出 3（不落到通用 exit-1）、
 apply report 的最终状态与 before/after 值。
 
 退出码 `0` 表示全部 fixture 场景通过，非 0 表示失败。脚本兼容 Windows PowerShell 5.1
@@ -201,3 +205,74 @@ apply report 的最终状态与 before/after 值。
 `ensure` 只会创建窄 target 策略），或至少与脚本迁移在同一变更窗口内完成；如果旧
 backend 仍在运行，它可能为新建/重启的项目重新创建旧的宽 target 策略，需要重新跑一遍
 本脚本收窄并复核。
+
+## 10. 多账号部署配置模板（config.example.env）
+
+`config.example.env` 是本次多账号后端的配置模板：已知非秘密的 126 SMTP 参数
+（`smtp.126.com` / `465` / `shilizhengnanren@126.com` / `ssl`）直接写入；
+`MANAO_MAIL_ENABLED=false` 与 `MANAO_REGISTRATION_ENABLED=false` 保持发布默认值；
+数据库、JWT、验证码 HMAC 等只保留空占位符。
+
+- `MANAO_MAIL_PASSWORD` 是 126 **客户端授权码**（不是邮箱网页登录密码），只能由运行时
+  Secret 或受控环境注入；该文件、本仓库、日志、测试报告和交接文本都不得出现真实值。
+- `MANAO_AUTH_CHALLENGE_SECRET` 为服务端验证码 HMAC secret（至少 32 随机字节），部署时
+  生成一次并持久化到运行时 Secret。
+- 邮件与注册开关只有在用户授权的人工验收窗口才可启用；启用动作不属于本地交付物，
+  本任务不执行真实 SMTP 连接/发信。
+- 6B 清单侧的引用见 `poc4/deploy/6b/backend.yaml`：`MANAO_AUTH_CHALLENGE_SECRET` 与
+  `MANAO_MAIL_PASSWORD` 通过 Secret `manao-backend-auth` 注入（key 分别为
+  `AUTH_CHALLENGE_SECRET` / `MAIL_PASSWORD`），非秘密 SMTP 参数以普通 env 值写入，
+  由部署者确认后再 Apply。
+
+## 11. 旧账号邮箱人工绑定（bind-legacy-email.ps1）
+
+历史账号的 `app_user.email` 为 NULL，无法走邮箱找回；本脚本是其**唯一**绑定入口，
+不提供公网管理 API。操作者必须先在线下确认该账号所有者控制目标邮箱，再执行绑定。
+
+**机制（为什么不是 JDBC/Python）**：先调查了仓库现状——后端使用 JDBC（
+`JdbcStoreTestSupport` 等，仅 Java 测试内使用），前端运维脚本（
+`poc4/frontend/scripts/ai-stage*-verify-ledger.mjs`）已有成熟的小型 mysql CLI 传输约定
+（仅 env 密码、显式 host/port/db/user、不打印原 stderr）。本脚本沿用该现有约定作为
+PowerShell 侧依赖最少的通道，并在其上收紧：密码经子进程环境变量 `MYSQL_PWD` 传递
+（不接受/不打印命令行密码）；SQL 经 stdin 传入（不拼 shell 命令行）；所有数据访问使用
+服务端预处理语句（`PREPARE ... ?` / `EXECUTE ... USING`），用户输入值只以十六进制
+字面量（`X'...'`）绑定为服务器变量，SQL 语句文本本身保持常量，不拼接用户文本；
+mysql client 使用 `--no-defaults` 避免本机 option file 改变目标。
+
+**用法（默认只读预览）：**
+
+```powershell
+$env:MANAO_DB_URL='jdbc:mysql://127.0.0.1:3306/manao_poc4'
+$env:MANAO_DB_USERNAME='manao'
+$env:MANAO_DB_PASSWORD=''   # 仅从环境读取；不接受密码参数、不会打印
+powershell -NoProfile -File poc4/deploy/multi-account/bind-legacy-email.ps1 -UserId '<account-id>' -ExpectedUsername '<exact-username>' -Email '<owner@example.com>'
+```
+
+- 预览打印精确的 `[WOULD_BIND] ... email=<normalized> emailVerifiedAt=<planned>`，不写任何行；
+  只有显式 `-Apply` 才执行一次条件 UPDATE：
+  `WHERE id=? AND username=? AND email IS NULL`（不覆盖既有绑定），要求恰影响 1 行，
+  显式写入 `email_verified_at`，随后回读校验 email 与 timestamp。
+- 幂等：同值重跑报告 `[ALREADY_BOUND] DB_RESULT=NO_OP`（`0`）；不同值拒绝（`4`）。
+- 邮箱按后端同一规则规范化：trim、`Locale.ROOT` 小写、长度 <= 254、格式校验；
+  不删除点、不剥离 `+tag`。
+- 脚本只读写 `app_user.email`/`email_verified_at` 一个精确 id；不创建账号、不改用户名/
+  密码/项目、不发邮件、不读取其他表。
+
+**退出码**：`0` 成功/幂等 no-op；`1` 环境/传输/SQL/回读失败；`2` 参数或邮箱格式非法；
+`3` 身份不匹配（UserId 不存在或 username 非精确匹配）；`4` 账号已有不同邮箱（拒绝覆盖）；
+`5` 邮箱已被其他账号占用。
+
+**自测（只创建/删除自己的 disposable schema，绝不触碰 `manao_poc4` / `manao_poc4_6b`）：**
+
+```powershell
+$env:MANAO_DB_URL='jdbc:mysql://127.0.0.1:3306/manao_poc4_test'
+$env:MANAO_DB_USERNAME='manao'
+$env:MANAO_DB_PASSWORD=''
+powershell -NoProfile -File poc4/deploy/multi-account/bind-legacy-email.ps1 -SelfTest
+```
+
+自测生成唯一名 `manao_stage6_t8_<32 hex>` schema，用真实子进程入口覆盖：预览只读、
+非法邮箱、错误用户名、已绑定不同邮箱拒绝覆盖、邮箱被他账号占用、`-Apply` 成功
+（规范化 + `email_verified_at`）、同值幂等 no-op、不同值再次拒绝；结束在 `finally`
+中 DROP 该 schema。若本机没有 mysql client 或不满足环境，脚本如实报 NOT_RUN/失败，
+不会连接任何运行 schema。

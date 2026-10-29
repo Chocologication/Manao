@@ -94,6 +94,36 @@ spec:
                 secretKeyRef:
                   name: manao-backend-auth
                   key: JWT_SECRET
+            # Multi-account auth: the challenge HMAC secret and the 126 client
+            # authorization code are credentials; both come from Secret
+            # manao-backend-auth at deploy time and are never committed here.
+            # The SMTP endpoint values below are the user-confirmed non-secret
+            # 126 parameters. Registration and mail stay false by default and
+            # may be enabled only in the authorized manual-acceptance window.
+            - name: MANAO_AUTH_CHALLENGE_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: manao-backend-auth
+                  key: AUTH_CHALLENGE_SECRET
+            - name: MANAO_MAIL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: manao-backend-auth
+                  key: MAIL_PASSWORD
+            - name: MANAO_REGISTRATION_ENABLED
+              value: "false"
+            - name: MANAO_MAIL_ENABLED
+              value: "false"
+            - name: MANAO_MAIL_HOST
+              value: smtp.126.com
+            - name: MANAO_MAIL_PORT
+              value: "465"
+            - name: MANAO_MAIL_USERNAME
+              value: shilizhengnanren@126.com
+            - name: MANAO_MAIL_FROM
+              value: shilizhengnanren@126.com
+            - name: MANAO_MAIL_TLS_MODE
+              value: ssl
             - name: MANAO_WORKSPACE_CAPABILITY_PRIVATE_KEY
               valueFrom:
                 secretKeyRef:
