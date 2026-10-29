@@ -115,10 +115,15 @@ pwsh -NoProfile -File poc4/deploy/multi-account/repair-dependency-policy.ps1 `
 Apply 时对每条 `NEEDS_MIGRATION`：
 
 1. 先把修改前策略对象写入 `<OutputDirectory>/backup/<policy>.json`（只有 NetworkPolicy）；
-2. 发送 JSON Patch：`test /metadata/uid`、`test /metadata/resourceVersion`、
+2. 把 JSON Patch 负载写入 `<OutputDirectory>/patch/<policy>.json`（紧凑 JSON），再用
+   `kubectl patch --type=json --patch-file <该文件>` 发送。负载包含
+   `test /metadata/uid`、`test /metadata/resourceVersion`、
    `replace /spec/podSelector`——**只替换 podSelector**，不动 ingress、来源、端口、
-   labels 或名称。patch 负载是紧凑 JSON，作为 `--patch` **参数数组**直接传给 kubectl
-   （不写临时 patch 文件、不拼接 shell 字符串）；
+   labels 或名称。**不能**用内联 `--patch '<json>'`：Windows PowerShell 5.1 的原生参数
+   引号处理会剥掉 JSON 双引号，kubectl 收到非法 JSON（本轮真实原生探测已复现，fixture
+   的 `.cmd` mock 通过 `%*` 看不到该问题，因此测试改为强制要求 `--patch-file` 并拒绝
+   内联 `--patch`）。补丁文件不写 OS 临时目录，只在 Apply 时出现在 OutputDirectory
+   下；预览不创建任何文件；
 3. 任一 test 前置条件失败（并发修改）→ 立即停止并以 `3` 退出，不重试、不继续后续策略；
 4. 成功后回读该策略，验证 UID 不变、spec 等于窄契约、selector 只为本项目；失败同样
    以 `3` 退出，不重试；
@@ -126,6 +131,11 @@ Apply 时对每条 `NEEDS_MIGRATION`：
    appliedCount，以及每个项目的**最终状态**（`PATCHED` / `ALREADY_FIXED` / `FAILED` /
    `NOT_ATTEMPTED`）与 **before/after** `uid` 和 `resourceVersion`；已迁移项目不会再
    报告为 `NEEDS_MIGRATION` 或旧的 resourceVersion。
+
+Apply 产物布局：`<OutputDirectory>/backup/<policy>.json`（修改前 NetworkPolicy）、
+`<OutputDirectory>/patch/<policy>.json`（实际发送的 JSON Patch 负载）与
+`<OutputDirectory>/apply-report.json`。补丁文件保留作为审计证据（失败/重跑时同名的
+项目会被覆盖）；它只含 uid/resourceVersion 测试值和 podSelector 替换，不含 Secret。
 
 ## 6. 零遗漏完成判定与旧策略叠加
 
@@ -139,6 +149,8 @@ Apply 时对每条 `NEEDS_MIGRATION`：
 
 - `backup/` 只保存修改前的 NetworkPolicy 对象，作为审计与对比证据；脚本不保存、
   不读取任何 Secret。
+- `patch/` 保存实际传给 kubectl `--patch-file` 的 JSON Patch 负载，作为审计证据，
+  也用于避免 Windows PowerShell 5.1 内联 JSON 引号丢失问题；它不是备份，不回滚使用。
 - **回滚不能直接恢复旧宽放行**：把 backup 原样 patch 回去会重新打开跨项目依赖访问。
   如果确需回退，应另行构造仍带 project 约束的策略/变更并重新走审阅流程；任何回滚
   都必须保持 target selector project-scoped。
@@ -158,8 +170,11 @@ component=web、component NotIn [mysql,redis]、其它 manager、无 ingress 规
 未知 spec 拒绝、清单内缺失策略拒绝、ProjectsFile 严格校验（非数组/数字字段/大写/末尾
 连字符/null/重复）、大小写敏感身份与 spec、UID 与 resourceVersion 冲突分别模拟（含两条
 候选时首条失败即停止、不触碰第二条、不重试、不回读、失败报告状态）、already-fixed 幂等、
-备份仅包含 NetworkPolicy、patch 只含 3 个操作且 test 的 uid/resourceVersion 值与审阅对象
-完全一致、patch 后回读、回读 UID/spec/GET 失败负例、apply report 的最终状态与 before/after 值。
+备份仅包含 NetworkPolicy、每个 patch 调用都使用 `--patch-file` 且**拒绝内联
+`--patch`**（mock kubectl 读取该文件内容并校验存在/非空，再交给 fixture 断言）、补丁只含
+3 个操作且 test 的 uid/resourceVersion 值与审阅对象完全一致、补丁文件位于
+`<OutputDirectory>/patch/` 并保留为审计证据、patch 后回读、回读 UID/spec/GET 失败负例、
+apply report 的最终状态与 before/after 值。
 
 退出码 `0` 表示全部 fixture 场景通过，非 0 表示失败。脚本兼容 Windows PowerShell 5.1
 与 PowerShell 7；当前机器若没有 `pwsh`，可用

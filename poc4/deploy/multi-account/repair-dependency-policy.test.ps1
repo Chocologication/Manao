@@ -311,16 +311,30 @@ type "%MOCK_CONTEXTS_FILE%"
 exit /b 0
 
 :mock_patch
-shift
-shift
-shift
-shift
-set "TARGET=%~3"
+echo %ARGS% | findstr /C:" --patch " >nul
+if not errorlevel 1 goto mock_inline_patch
+set "TARGET="
+set "PATCHFILE="
+set "PREV="
+for %%A in (%*) do call :trackpatch "%%A"
+if "%TARGET%"=="" goto mock_patch_payload_missing
+if "%PATCHFILE%"=="" goto mock_patch_payload_missing
+if not exist "%PATCHFILE%" goto mock_patch_payload_missing
+for %%A in ("%PATCHFILE%") do if %%~zA==0 goto mock_patch_payload_missing
+if not "%MOCK_PATCH_CAPTURE_DIR%"=="" copy /Y "%PATCHFILE%" "%MOCK_PATCH_CAPTURE_DIR%\%TARGET%.json" >nul
 if /I "%MOCK_PATCH_CONFLICT%"=="uid" goto mock_conflict_uid
 if /I "%MOCK_PATCH_CONFLICT%"=="resourceVersion" goto mock_conflict_rv
 if not "%MOCK_PATCHED_DIR%"=="" if exist "%MOCK_PATCHED_DIR%\%TARGET%.json" copy /Y "%MOCK_PATCHED_DIR%\%TARGET%.json" "%MOCK_STATE_DIR%\%TARGET%.json" >nul
 echo networkpolicy.networking.k8s.io/%TARGET% patched
 exit /b 0
+
+:mock_inline_patch
+echo Error from server: inline --patch arguments are not allowed; a --patch-file payload is required 1>&2
+exit /b 1
+
+:mock_patch_payload_missing
+echo Error from server: the --patch-file payload is missing or empty 1>&2
+exit /b 1
 
 :mock_conflict_uid
 echo Error from server (Conflict): test operation failed: /metadata/uid does not match 1>&2
@@ -356,6 +370,12 @@ exit /b 1
 :mock_unexpected
 echo mock kubectl: unexpected invocation: %ARGS% 1>&2
 exit /b 99
+
+:trackpatch
+if /I "%PREV%"=="networkpolicy" set "TARGET=%~1"
+if /I "%PREV%"=="--patch-file" set "PATCHFILE=%~1"
+set "PREV=%~1"
+exit /b 0
 '@
     $normalized = (($content -split "\r?\n") -join $script:NewLine)
     Write-Utf8NoBom -Path $mockPath -Text $normalized
@@ -370,13 +390,16 @@ function New-Scenario {
     $root = New-TestDirectory
     $stateDirectory = Join-Path $root 'state'
     $patchedDirectory = Join-Path $root 'patched'
+    $captureDirectory = Join-Path $root 'capture'
     New-Item -ItemType Directory -Force -Path $stateDirectory | Out-Null
     New-Item -ItemType Directory -Force -Path $patchedDirectory | Out-Null
+    New-Item -ItemType Directory -Force -Path $captureDirectory | Out-Null
     $mockPath = New-MockKubectl -Directory $root
     $scenario = [pscustomobject]@{
         Root         = $root
         StateDir     = $stateDirectory
         PatchedDir   = $patchedDirectory
+        CaptureDir   = $captureDirectory
         OutputDir    = (Join-Path $root 'output')
         MockPath     = $mockPath
         CallLog      = (Join-Path $root 'kubectl-calls.log')
@@ -391,6 +414,7 @@ function New-Scenario {
     $env:MOCK_POLICY_LIST_FILE = $scenario.PoliciesFile
     $env:MOCK_STATE_DIR = $scenario.StateDir
     $env:MOCK_PATCHED_DIR = $scenario.PatchedDir
+    $env:MOCK_PATCH_CAPTURE_DIR = $scenario.CaptureDir
     $env:MOCK_PATCH_CONFLICT = ''
     $env:MOCK_GET_EXIT = '0'
     return $scenario
@@ -400,7 +424,7 @@ function Clear-MockEnvironment {
     foreach ($name in @(
         'MANAO_REPAIR_KUBECTL', 'MOCK_KUBECTL_LOG', 'MOCK_CONTEXTS_FILE',
         'MOCK_POLICY_LIST_FILE', 'MOCK_STATE_DIR', 'MOCK_PATCHED_DIR',
-        'MOCK_PATCH_CONFLICT', 'MOCK_GET_EXIT'
+        'MOCK_PATCH_CAPTURE_DIR', 'MOCK_PATCH_CONFLICT', 'MOCK_GET_EXIT'
     )) {
         Remove-Item -LiteralPath ('Env:' + $name) -ErrorAction SilentlyContinue
     }
@@ -489,18 +513,26 @@ function Get-SinglePolicyReads {
     return @(Get-MockCalls -Scenario $Scenario | Where-Object { $_ -cmatch ' get networkpolicy ' })
 }
 
+function Get-PatchFilePaths {
+    param($Scenario)
+    $paths = @()
+    foreach ($call in @(Get-PatchCalls -Scenario $Scenario)) {
+        $match = [regex]::Match($call, '--patch-file (?<path>.+)$')
+        if (-not $match.Success) { continue }
+        $paths += $match.Groups['path'].Value.Trim('"')
+    }
+    return $paths
+}
+
 function Get-PatchPayloads {
     param($Scenario)
     $payloads = @()
-    foreach ($call in @(Get-MockCalls -Scenario $Scenario)) {
-        $match = [regex]::Match($call, ' patch networkpolicy (?<name>\S+) ')
-        if (-not $match.Success) { continue }
-        $patchIndex = $call.IndexOf(' --patch ', [System.StringComparison]::Ordinal)
-        if ($patchIndex -lt 0) { continue }
-        $raw = $call.Substring($patchIndex + ' --patch '.Length)
+    if (-not (Test-Path -LiteralPath $Scenario.CaptureDir)) { return @() }
+    foreach ($file in @(Get-ChildItem -LiteralPath $Scenario.CaptureDir -File -Filter '*.json')) {
+        $raw = [System.IO.File]::ReadAllText($file.FullName)
         $parsedOperations = $raw | ConvertFrom-Json
         $payloads += [pscustomobject]@{
-            PolicyName = $match.Groups['name'].Value
+            PolicyName = $file.BaseName
             Operations = @($parsedOperations)
             Raw        = $raw
         }
@@ -561,6 +593,8 @@ function Test-PreviewIsReadOnly {
     Assert-Contains $result.StdOut '[NEEDS_MIGRATION] ownerId=owner-1 projectId=p1 policy=manao-dep-netpol-p1' 'p1 is detected as legacy'
     Assert-Contains $result.StdOut '[NEEDS_MIGRATION] ownerId=owner-1 projectId=p2 policy=manao-dep-netpol-p2' 'p2 is detected as legacy'
     Assert-True (-not (Test-Path -LiteralPath $scenario.OutputDir)) 'preview must not create the output directory'
+    Assert-True (-not (Test-Path -LiteralPath (Join-Path $scenario.OutputDir 'patch'))) 'preview must not create the patch payload directory'
+    Assert-Equal 0 @(Get-ChildItem -LiteralPath $scenario.CaptureDir -File).Count 'preview must not produce patch payload files'
     Assert-Equal 0 @(Get-PatchCalls -Scenario $scenario).Count 'preview must not patch'
     Assert-NoClusterWrites -Scenario $scenario
     Assert-ExplicitContextAndNamespace -Scenario $scenario
@@ -821,6 +855,8 @@ function Test-PreviewPerformsNoFilesystemWrites {
     Assert-Equal 0 $resultB.ExitCode 'preview exit code with a fresh TEMP'
     Assert-Equal 0 @(Get-ChildItem -LiteralPath $tempDirectory -Force).Count 'preview must leave the TEMP directory empty'
     Assert-True (-not (Test-Path -LiteralPath $scenario.OutputDir)) 'preview must not create the output directory'
+    Assert-True (-not (Test-Path -LiteralPath (Join-Path $scenario.OutputDir 'patch'))) 'preview must not create the patch payload directory'
+    Assert-Equal 0 @(Get-ChildItem -LiteralPath $scenario.CaptureDir -File).Count 'preview must not produce patch payload files'
     Assert-Equal 0 @(Get-PatchCalls -Scenario $scenario).Count 'preview must not patch'
     Assert-NoClusterWrites -Scenario $scenario
 }
@@ -930,15 +966,30 @@ function Test-ApplyBacksUpOnlyPoliciesAndPatchesOnlyTheSelector {
     Assert-ExplicitContextAndNamespace -Scenario $scenario
     Assert-NoSecretAccess -Scenario $scenario
 
-    # The JSON Patch must be passed as one --patch argument (no temporary patch file),
-    # must pin the EXACT uid/resourceVersion values and replace ONLY the pod selector.
+    # The JSON Patch payload must travel as a --patch-file under OutputDirectory/patch (an
+    # inline --patch argument is broken on Windows PowerShell 5.1 native argv quoting), must
+    # pin the EXACT uid/resourceVersion values and replace ONLY the pod selector.
     $patchCalls = @(Get-PatchCalls -Scenario $scenario)
     foreach ($call in $patchCalls) {
-        Assert-NotContains $call '--patch-file' 'patch must not use a temporary patch file'
+        Assert-Contains $call '--patch-file' 'patch payload must be passed by file'
+        Assert-NotContains $call ' --patch ' 'inline --patch argument must not be used (PS 5.1 strips JSON quotes)'
         Assert-NotContains $call '.tmp' 'patch must not reference a temporary file'
     }
+    $patchFilePaths = @(Get-PatchFilePaths -Scenario $scenario)
+    Assert-Equal 2 $patchFilePaths.Count 'one patch payload file per migrated policy'
+    $patchDirectory = Join-Path $scenario.OutputDir 'patch'
+    foreach ($patchFilePath in $patchFilePaths) {
+        Assert-True ($patchFilePath.StartsWith($patchDirectory, [System.StringComparison]::Ordinal)) 'patch payload must live under OutputDirectory/patch'
+        Assert-True (Test-Path -LiteralPath $patchFilePath -PathType Leaf) 'patch payload file must exist under OutputDirectory/patch'
+        Assert-True ((Get-Item -LiteralPath $patchFilePath).Length -gt 0) 'patch payload file must not be empty'
+    }
     $payloads = @(Get-PatchPayloads -Scenario $scenario)
-    Assert-Equal 2 $payloads.Count 'one JSON patch payload per migrated policy'
+    Assert-Equal 2 $payloads.Count 'the mock read one --patch-file payload per migrated policy'
+    foreach ($payload in $payloads) {
+        $auditPath = Join-Path $patchDirectory ($payload.PolicyName + '.json')
+        Assert-True (Test-Path -LiteralPath $auditPath) 'patch payload is kept as audit evidence under OutputDirectory/patch'
+        Assert-Equal ([System.IO.File]::ReadAllText($auditPath)) $payload.Raw 'the mock payload equals the audit payload file'
+    }
     foreach ($payload in $payloads) {
         $expectedProjectId = 'p1'
         $expectedResourceVersion = '100'

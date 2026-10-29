@@ -41,9 +41,11 @@
 
 .PARAMETER OutputDirectory
   Directory for apply artifacts. Only used with -Apply: <dir>/backup/<policy>.json holds
-  one NetworkPolicy per patched policy (never Secrets) and <dir>/apply-report.json holds
-  the per-item before/after status, UID and resourceVersion values. A preview does not
-  create this directory.
+  one NetworkPolicy per patched policy (never Secrets), <dir>/patch/<policy>.json holds the
+  JSON Patch payload passed to kubectl --patch-file (audit evidence; it contains only the
+  uid/resourceVersion test values and the podSelector replace) and
+  <dir>/apply-report.json holds the per-item before/after status, UID and resourceVersion
+  values. A preview does not create this directory or any of its files.
 
 .PARAMETER Apply
   Apply the migration. Without it the script is a read-only preview that performs no
@@ -733,35 +735,43 @@ function Write-PolicyBackup {
 }
 
 function Invoke-PolicyPatch {
-    param($Policy, [string]$ProjectId)
+    param($Policy, [string]$ProjectId, [string]$PatchDirectory)
     $metadata = Get-JsonProperty $Policy 'metadata'
     $name = Get-JsonString $metadata 'name'
     $uid = Get-JsonString $metadata 'uid'
     $resourceVersion = Get-JsonString $metadata 'resourceVersion'
     if ([string]::IsNullOrWhiteSpace($uid) -or [string]::IsNullOrWhiteSpace($resourceVersion)) {
-        return [pscustomobject]@{ Ok = $false; Conflict = $false; Message = 'metadata.uid/resourceVersion missing before patch' }
+        return [pscustomobject]@{ Ok = $false; Conflict = $false; Message = 'metadata.uid/resourceVersion missing before patch'; PatchPath = $null }
     }
     $operations = @(
         [ordered]@{ op = 'test'; path = '/metadata/uid'; value = $uid },
         [ordered]@{ op = 'test'; path = '/metadata/resourceVersion'; value = $resourceVersion },
         [ordered]@{ op = 'replace'; path = '/spec/podSelector'; value = (New-ExpectedPodSelector -ProjectId $ProjectId -Narrowed $true) }
     )
-    # No temporary patch file: pass the compact JSON as one argument in the native
-    # argument array (never assembled into a shell string).
+    # Windows PowerShell 5.1 native argv quoting strips the JSON double quotes, so an
+    # inline --patch '<json>' argument reaches kubectl as invalid JSON. Apply mode writes
+    # the payload under OutputDirectory/patch and passes it with --patch-file instead
+    # (never the OS temp directory; preview mode never creates any of these files).
+    if (-not (Test-Path -LiteralPath $PatchDirectory)) {
+        New-Item -ItemType Directory -Force -Path $PatchDirectory | Out-Null
+    }
+    $patchPath = Join-Path $PatchDirectory ($name + '.json')
     $patchJson = ConvertTo-Json -InputObject $operations -Depth 30 -Compress
+    Write-Utf8NoBom -Path $patchPath -Text $patchJson
     $result = Invoke-ClusterKubectl -KubectlArguments @(
-        'patch', 'networkpolicy', $name, '--type=json', '--patch', $patchJson
+        'patch', 'networkpolicy', $name, '--type=json', '--patch-file', $patchPath
     ) -AllowFailure
     if ($result.ExitCode -ne 0) {
         $message = $result.ErrorText.Trim()
         if ($message.Length -eq 0) { $message = $result.Output.Trim() }
         return [pscustomobject]@{
-            Ok       = $false
-            Conflict = $true
-            Message  = "patch rejected (uid/resourceVersion test failed or concurrent change): $message"
+            Ok        = $false
+            Conflict  = $true
+            Message   = "patch rejected (uid/resourceVersion test failed or concurrent change): $message"
+            PatchPath = $patchPath
         }
     }
-    return [pscustomobject]@{ Ok = $true; Conflict = $false; Message = '' }
+    return [pscustomobject]@{ Ok = $true; Conflict = $false; Message = ''; PatchPath = $patchPath }
 }
 
 function Test-MigratedPolicyReadBack {
@@ -939,6 +949,7 @@ function Invoke-RepairDependencyPolicy {
         New-Item -ItemType Directory -Force -Path $script:OutputDirectoryPath | Out-Null
     }
     $backupDirectory = Join-Path $script:OutputDirectoryPath 'backup'
+    $patchDirectory = Join-Path $script:OutputDirectoryPath 'patch'
     $reportEntries = @(New-ReportEntries -ClassificationResults $classification.Results)
     $applied = 0
     foreach ($candidate in $candidates) {
@@ -957,7 +968,10 @@ function Invoke-RepairDependencyPolicy {
             return
         }
         Write-Line "[BACKUP] policy=$($candidate.PolicyName) path=$backupPath"
-        $patchResult = Invoke-PolicyPatch -Policy $candidate.Policy -ProjectId $candidate.ProjectId
+        $patchResult = Invoke-PolicyPatch -Policy $candidate.Policy -ProjectId $candidate.ProjectId -PatchDirectory $patchDirectory
+        if (-not [string]::IsNullOrWhiteSpace($patchResult.PatchPath)) {
+            Write-Line "[PATCH_PAYLOAD] policy=$($candidate.PolicyName) path=$($patchResult.PatchPath)"
+        }
         if (-not $patchResult.Ok) {
             if ($null -ne $reportEntry) {
                 $reportEntry.Status = 'FAILED'
