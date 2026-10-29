@@ -183,6 +183,11 @@ class SmtpVerificationMailSenderTest {
             context.registerBean(JwtService.class,
                 () -> new JwtService("0123456789abcdef0123456789abcdef", Duration.ofMinutes(15)));
             context.registerBean(UserStore.class, () -> mock(UserStore.class));
+            // The scanned account-service configuration needs a JdbcTemplate; constructing the
+            // store does not open a connection, so an unusable test URL is fine here.
+            context.registerBean(org.springframework.jdbc.core.JdbcTemplate.class,
+                () -> new org.springframework.jdbc.core.JdbcTemplate(
+                    new org.springframework.jdbc.datasource.DriverManagerDataSource("jdbc:invalid:test")));
             context.scan("com.manao.poc4.auth");
             context.refresh();
 
