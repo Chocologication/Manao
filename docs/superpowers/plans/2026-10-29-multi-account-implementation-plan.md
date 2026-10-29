@@ -1,0 +1,401 @@
+# 多账户与账号生命周期 Implementation Plan
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+
+**Goal:** 先补强依赖隔离与会话清理，再交付用户名/密码/图形验证码/邮箱验证注册、找回及修改密码，保持每账户8项目。
+
+**Architecture:** 复用 Spring Boot、MySQL、JWT、owner 校验和前端 authSession。仅增加账号服务、挑战存储、薄 SMTP 适配及单 backend 的旧连接撤销器；同一时刻一人使用，不建设调度、计费或新身份平台。
+
+**Tech Stack:** Java 17、Spring Boot 3.5.9、MySQL/Flyway、Fabric8 7.7.0；React/TypeScript、TanStack Query、pnpm、Vitest/Playwright。邮件依赖跟随 Boot BOM。
+
+**Spec:** [多账户设计](../specs/2026-10-29-multi-account-design.md)。实施前必读，产品合同及默认值以设计为准。
+
+## Global Constraints
+
+- 当前只完成规划，下列实现与验证步骤均未执行。
+- 基线 `master@35b693e416849ae4d3975bdff5d3e631b0588591`；已经创建 `.worktree/multi-account` / `codex/multi-account`，继续复用，不另从历史 AI 工作树起步。
+- Task 1→2优先，其余按3→4→5→6→7→8。Task6撤销闭环完成前不开放注册/改密入口。
+- 同时仅一人使用Manao/AI；不增加AI并发/队列、Redis、MQ、outbox、身份微服务、每用户namespace或全局使用者锁。迟到请求、重复提交仍需要边界处理。
+- 每账户8个未删除项目，全部状态占名额；不修改现有owner_id。发布应用继续公开。
+- 唯一邮箱；不改名/换绑；旧账号email=NULL仍能登录，绑定前不能邮件找回。
+- 图形码只用于注册/找回发邮件，登录不需要。改密/重置撤销旧凭据与显示连接，Run/AI继续执行。
+- 前端pnpm；UTF-8无BOM；修改前重读，遵守.gitattributes。不提交凭据、验证码或用户原始内容。
+- 真MySQL测试仅disposable schema，禁止重置运行库。SMTP信息按用户要求保留配置占位，未配置的真实邮件验收标NOT_RUN。
+- 本轮创建文档不执行发信、集群修改、服务启动或业务测试；后续按用户实施/发布指令执行，不借用旧阶段授权。
+
+## 基线与职责
+
+实施时在本工作树先执行：
+
+```powershell
+git status --short
+git branch --show-current
+git rev-parse HEAD
+git diff --check
+pnpm --version
+java -version
+mvn -version
+```
+
+CodeGraph当前警告索引来自主checkout；先用CodeGraph定位，涉及修改的内容仍从本工作树核对，不自行重建索引。首次实施需要前端依赖时用 `pnpm --dir poc4/frontend install --frozen-lockfile`，不复制其他工作树node_modules。计划写作不安装依赖或启动服务。
+
+| 单元 | 职责 |
+| --- | --- |
+| `AuthContracts` | HTTP DTO、AccountIdentity和共用返回类型 |
+| `UserStore` / `AuthService` | 用户状态、短事务与注册/登录/密码流程 |
+| `AuthChallengeStore` | challenge用途、限次/冷却、一次性消费 |
+| `CaptchaService` / `EmailVerificationService` | PNG挑战；邮箱挑战申请与发送状态 |
+| `VerificationMailSender` / `SmtpVerificationMailSender` | 一个发码接口与薄SMTP实现 |
+| `AuthProperties` | 注册开关、验证码参数、邮件配置 |
+| `UserSessionRevoker` | 单backend按user/version撤销旧连接 |
+| 三个账号页 + `CaptchaField` | 注册/找回各同页两步；修改密码 |
+| `poc4/deploy/multi-account/` | 本专题配置/维护与发布说明 |
+
+每任务执行RED→最小实现→GREEN→定向审查，显式暂存该任务文件再提交；禁止git add .。基础设施连接失败不算业务RED，测试代码存在不等于PASS。命令均从工作树根执行。
+
+## Task 1：依赖策略收窄与旧策略迁移准备
+
+**Files**
+- Modify: `poc4/backend/src/main/java/com/manao/poc4/kubernetes/DependencyResourceFactory.java`、`Fabric8ProjectDependencies.java`（同目录）
+- Test: `poc4/backend/src/test/java/com/manao/poc4/kubernetes/DependencyResourceFactoryTest.java`
+- Test: `poc4/backend/src/test/java/com/manao/poc4/project/ProjectDependenciesTest.java`
+- Create: `poc4/deploy/multi-account/repair-dependency-policy.ps1`、`repair-dependency-policy.test.ps1`、`README.md`（同目录）
+
+**Interfaces:** 保留 `dependencyNetworkPolicy(String projectId)` 和 `ensure(String projectId, ProjectRuntimeSpec spec)`。脚本参数为 `-Context -Namespace -ProjectsFile -OutputDirectory [-Apply]`，默认仅预览；ProjectsFile为已核对的 `{ownerId,projectId}` JSON数组。
+
+- [ ] **1. RED。** 在现有factory fixture加入两项目目标断言：
+
+```java
+var first = factory.dependencyNetworkPolicy("p1");
+var second = factory.dependencyNetworkPolicy("p2");
+assertThat(first.getSpec().getPodSelector().getMatchLabels())
+    .containsEntry(WorkspaceResourceFactory.LABEL_PROJECT_ID, "p1");
+assertThat(second.getSpec().getPodSelector().getMatchLabels())
+    .containsEntry(WorkspaceResourceFactory.LABEL_PROJECT_ID, "p2");
+```
+
+同时断言component、来源、端口不变、没有空selector；mock Kubernetes记录创建顺序，要求policy先于workload；无依赖不建policy，重复ensure不改Secret/PVC。
+
+- [ ] **2. 运行失败用例。**
+
+```powershell
+mvn -f poc4/backend/pom.xml '-Dtest=DependencyResourceFactoryTest,ProjectDependenciesTest' test
+```
+
+- [ ] **3. 实现。** 目标LabelSelector增加 `.withMatchLabels(Map.of(WorkspaceResourceFactory.LABEL_PROJECT_ID, projectId))`；在ensure内先创建一次policy再进入依赖分支，删除分支末尾重复调用；保留旧资源身份验证。
+- [ ] **4. 维护脚本。** 读明确context/namespace与项目清单，检查name/managed-by/project/UID/完整旧spec；namespace内还有清单外广泛策略则报告并拒绝完成，不能偷偷扩大范围。JSON Patch带 `test /metadata/uid`、`test /metadata/resourceVersion`，只替换podSelector；保存无Secret的策略备份并回读。已修复幂等，无归属/未知spec/并发变化停止。fixture测试只读预览、旧/新selector、遗漏/未知策略和版本冲突，不能连接集群。
+- [ ] **5. GREEN和提交。** 重跑两类测试与 `pwsh -NoProfile -File poc4/deploy/multi-account/repair-dependency-policy.test.ps1`；README写明旧策略叠加、零遗漏与回滚不恢复广泛放行。此处不Apply。提交 `fix: scope dependency network policies to project`。
+
+## Task 2：统一会话清理并拒绝迟到缓存回填
+
+**Files**
+- Modify: `poc4/frontend/src/features/auth/authSession.ts`、`authSession.test.ts`（同目录）
+- Modify: `poc4/frontend/src/app/appRuntime.ts`、`appRuntime.test.ts`（同目录）
+- Modify: `poc4/frontend/src/features/projects/projectQueries.ts`、`ProjectsPage.test.tsx`（同目录）
+
+**Interfaces:** `createAuthSession({onBeforeClear?: (previous: AuthenticatedSnapshot, reason: AnonymousReason) => void})`。logout/handleUnauthorized签名不变，统一调用clear；timer仍调用clear('expired')。
+
+- [ ] **1. RED。** 沿用现有fake timer，新增：
+
+```typescript
+const beforeClear = vi.fn();
+const session = createAuthSession({ onBeforeClear: beforeClear });
+session.authenticate(timedResponse);
+const previous = session.getSnapshot();
+vi.setSystemTime(new Date(timedResponse.expiresAt));
+vi.runOnlyPendingTimers();
+expect(beforeClear).toHaveBeenCalledWith(previous, 'expired');
+expect(session.getSnapshot()).toEqual({ status: 'anonymous', reason: 'expired' });
+```
+
+runtime测试用同组dirty buffer/terminal/AI流，比较logout/expired/401终态；覆盖重入、一个清理动作抛错、旧timer/401不清新会话。项目创建/核对延迟到B登录或A重登后返回，不能写缓存或invalidate。
+
+- [ ] **2. 运行RED。**
+
+```powershell
+pnpm --dir poc4/frontend exec vitest run src/features/auth/authSession.test.ts src/app/appRuntime.test.ts src/features/projects/ProjectsPage.test.tsx
+```
+
+- [ ] **3. 最小实现。** callback在变anonymous前用previous.user.id清IDs、连接、workspace/buffer、store/dialog、QueryClient。各步骤失败不能阻止后续，clear防重入并finally清认证；authenticate替换旧会话前先清理。保留reason文案、手动退出未保存确认，不自动保存/停止后台任务。
+
+```typescript
+// useMutation逐请求context，不能用会被下一请求覆盖的组件ref。
+onMutate: () => ({ session: authSession.getSnapshot() }),
+onSuccess: (created, _variables, context) => {
+  if (!context || context.session.status !== 'authenticated'
+      || context.session !== authSession.getSnapshot()) return;
+  // 此分支内保留原来的setQueryData和invalidate逻辑。
+},
+```
+
+不撤销服务器可能成功的创建，不自动重发，不重写全站QueryKey。
+- [ ] **4. GREEN和提交。** 重跑3文件及 `pnpm --dir poc4/frontend typecheck`，git diff --check。提交 `fix: share session cleanup for expiry logout and unauthorized`。
+
+## Task 3：账户迁移与JWT版本
+
+**Files**
+- Create: `poc4/backend/src/main/resources/db/migration/V17__account_registration_and_recovery.sql`
+- Create: `poc4/backend/src/main/java/com/manao/poc4/auth/AuthContracts.java`、`UserStore.java`、`AuthProperties.java`（同目录）
+- Modify in same auth directory: `JwtService.java`、`JwtAuthenticationFilter.java`、`AuthController.java`
+- Modify: `poc4/backend/src/main/java/com/manao/poc4/config/SecurityConfig.java`
+- Create tests in `poc4/backend/src/test/java/com/manao/poc4/auth/`: `AccountSchemaTest.java`、`UserStoreTest.java`、`JwtAuthenticationFilterTest.java`
+- Modify test in same directory: `AuthControllerTest.java`
+
+**Interfaces**
+- `AuthContracts.AccountIdentity(String userId,long authVersion)` implements Principal，getName返回userId；userId/version均来自认证，不接受请求体提供owner。
+- `UserStore.findById/findByUsername/findVerifiedByEmail(String) -> Optional<UserAccount>`；`isCurrent(AccountIdentity) -> boolean`。UserAccount含id/username/passwordHash/enabled/email/emailVerifiedAt/authVersion，不直接JSON序列化。
+- `JwtService.issue(String userId,long authVersion)`；Claims增加authVersion。拒绝无ver、负数、非整数/溢出。
+
+- [ ] **1. RED。** `JdbcStoreTestSupport.createAtVersion("16")`插入旧用户/项目后升级：id/owner不变、email NULL/version0，旧密码可新登录；新schema邮箱唯一。新JWT可认证，旧version/缺ver/disabled/用户删除/DB故障均不放行。
+
+```java
+String oldToken = jwt.issue(userId, 0).accessToken();
+jdbc.update("UPDATE app_user SET auth_version=1 WHERE id=?", userId);
+assertThat(users.isCurrent(new AccountIdentity(userId, 0))).isFalse();
+// 现有HTTP fixture携oldToken请求 /api/v1/projects，必须401。
+```
+
+- [ ] **2. RED命令。**
+
+```powershell
+mvn -f poc4/backend/pom.xml '-Dtest=AccountSchemaTest,UserStoreTest,JwtAuthenticationFilterTest,AuthControllerTest' test
+```
+
+- [ ] **3. 最小实现。** V17按设计第6节创建完整challenge结构和两个ticket版本列；不改旧migration。确认V17未被占用。核心用户增量：
+
+```sql
+ALTER TABLE app_user
+  ADD COLUMN email VARCHAR(254) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NULL,
+  ADD COLUMN email_verified_at TIMESTAMP(6) NULL,
+  ADD COLUMN auth_version BIGINT NOT NULL DEFAULT 0,
+  ADD UNIQUE KEY uq_app_user_email(email);
+```
+
+Jackson严格解析sub/exp/ver，继续验现有HS256签名/expiry，不扩展手工字段正则；每HTTP查UserStore的enabled/version。原login查询迁到UserStore，签当前version，不加captcha。部署一次性要求旧JWT重登，不加双格式长期兼容；修受影响测试fixture，生产不得保留绕过DB的备用filter构造路径。
+- [ ] **4. GREEN与提交。** 重跑上述测试和 `ProjectLimitTest,ProjectAuthorizationTest,AgentInternalSecurityTest,AgentLiveOutputHttpTest`；确认旧用户/项目无损。提交 `feat: add verified email identity and versioned access tokens`。
+
+## Task 4：图形码、邮箱码与SMTP适配
+
+**Files**
+- Create in `poc4/backend/src/main/java/com/manao/poc4/auth/`: `AuthChallengeStore.java`、`CaptchaService.java`、`EmailVerificationService.java`、`VerificationMailSender.java`、`SmtpVerificationMailSender.java`
+- Modify in same directory: `AuthProperties.java`、`AuthContracts.java`
+- Modify: `poc4/backend/pom.xml`、`poc4/backend/src/main/resources/application.yml`
+- Modify only if image rendering needs it: `poc4/backend/Dockerfile`（最小字体/headless依赖）
+- Create tests in `poc4/backend/src/test/java/com/manao/poc4/auth/`: `AuthChallengeStoreTest.java`、`CaptchaServiceTest.java`、`EmailVerificationServiceTest.java`、`SmtpVerificationMailSenderTest.java`
+
+**Interfaces**
+- `CaptchaService.issue() -> CaptchaResponse(challengeId,imageBase64,expiresAt)`。
+- `EmailVerificationService.request(EmailCodeRequest) -> EmailCodeResponse(challengeId,expiresAt,retryAfterSeconds)`；字段见设计第9节。
+- `VerificationMailSender.send(String email, EmailPurpose purpose, String code, Instant expiresAt)`，EmailPurpose仅REGISTER_EMAIL/RESET_PASSWORD。
+- Store提供 `reserveEmailSend`、`activateSent(id)`、`failSend(id)` 与事务内 `verifyAndConsume`，返回Result以便失败attempt先提交，调用方通过同一TransactionTemplate组合用户写入。
+
+- [ ] **1. RED。** 覆盖用途/邮箱不能混用、过期/限次、attempts提交、一次性消费、重发新id旧码失效、冷却/hour cap、图形码用后失效、SENDING不可消费、迟到SMTP回执不能激活新id。注入Clock和随机源替身，答案仅测试fixture可见，不新增生产debug接口。
+
+```sql
+SELECT id,purpose,state,attempts,expires_at
+FROM auth_challenge WHERE id=? FOR UPDATE;
+-- 错误答案持久化attempts并返回INVALID；事务提交后再映射422。
+```
+
+找回邮箱不存在/已存在但SMTP失败的状态与响应字段相同，均202；注册SMTP失败503。全局mail未配置对所有邮箱503，先检查配置再查目标用户。
+- [ ] **2. RED命令。**
+
+```powershell
+mvn -f poc4/backend/pom.xml '-Dtest=AuthChallengeStoreTest,CaptchaServiceTest,EmailVerificationServiceTest,SmtpVerificationMailSenderTest' test
+```
+
+- [ ] **3. 最小实现。** 按设计固定默认生成PNG/HMAC，独立secret；MySQL唯一发送槽保留限流窗口。短事务预留SENDING、事务外发送、同id条件激活/失败；重启残留可在冷却后重新申请，旧码不可用。按小批量清理过期challenge，不扫用户表。
+
+```xml
+<dependency>
+  <groupId>org.springframework.boot</groupId>
+  <artifactId>spring-boot-starter-mail</artifactId>
+</dependency>
+```
+
+timeout连接/读/写5000/3000/5000ms；配置选择强制STARTTLS或SSL，不明文回退。缺配置使用unavailable sender而不阻止现有登录启动；发送不自动重试。当前JVM和实际backend镜像都需生成可解码PNG；缺字体仅补必要依赖。
+- [ ] **4. GREEN与提交。** 重跑4类测试，检查没有答案/SMTP凭据日志，验证码无store/URL泄漏。提交 `feat: add one-time image and email verification challenges`。
+
+## Task 5：注册、找回、改密HTTP闭环
+
+**Files**
+- Create: `poc4/backend/src/main/java/com/manao/poc4/auth/AuthService.java`
+- Modify in same directory: `AuthController.java`、`AuthContracts.java`、`UserStore.java`、`AuthChallengeStore.java`
+- Modify: `poc4/backend/src/main/java/com/manao/poc4/config/SecurityConfig.java`
+- Create tests in `poc4/backend/src/test/java/com/manao/poc4/auth/`: `AccountLifecycleTest.java`、`AccountHttpContractTest.java`
+- Modify test in same directory: `AuthControllerTest.java`
+
+**Interfaces:** `AuthService.register(RegisterRequest) -> RegisteredUser`；`login(LoginRequest) -> LoginResponse`；`resetPassword(PasswordResetRequest)` 与 `changePassword(AccountIdentity,PasswordChangeRequest)` 完成事务。内部使用 `PasswordChangeResult(userId,newAuthVersion)`，Task6接入afterCommit撤销。HTTP字段/路径/状态严格按设计第9节，匿名白名单逐条列举。
+
+- [ ] **1. RED HTTP。** 注册前无用户，正确码201无token、随后可登录；username/email冲突409；用途/邮箱错误拒绝；注册关闭同时阻止申请与最终提交。找回存在/不存在同形，旧email NULL不支持找回但可currentPassword改密。
+
+```java
+// 用现有MockMvc、disposable MySQL与捕获型测试sender。
+mvc.perform(post("/api/v1/auth/password-change")
+    .header("Authorization", "Bearer " + currentToken)
+    .contentType("application/json")
+    .content("{\"currentPassword\":\"wrong\",\"newPassword\":\"new-pass-123\"}"))
+    .andExpect(status().isUnprocessableEntity())
+    .andExpect(jsonPath("$.code").value("CURRENT_PASSWORD_INVALID"));
+```
+
+currentToken由fixture实际用户签发；示例口令仅测试。所有新DTO拒绝未知字段/超长输入，登录不要求captcha。
+- [ ] **2. RED命令。**
+
+```powershell
+mvn -f poc4/backend/pom.xml '-Dtest=AccountLifecycleTest,AccountHttpContractTest,AuthControllerTest,AuthChallengeStoreTest' test
+```
+
+- [ ] **3. 最小实现。** Controller保持薄层；注册验证+唯一插入+消费同事务，正确码但username冲突仍可改名后提交；错误attempt不能回滚。找回按签发user/version限定；currentPassword在同一用户版本下校验，密码/hash/version更新原子化。
+
+```sql
+UPDATE app_user SET password_hash=?,auth_version=auth_version+1
+WHERE id=? AND enabled=TRUE AND auth_version=?;
+```
+
+返回0拒绝过时请求，不覆盖新密码；数据库异常仅明确对应唯一索引才映射重复账户，其余保持真实失败。成功204不签发替代token。规范化只作用于新字段/新密码规则，不锁死旧账户登录。
+- [ ] **4. GREEN与提交。** 重跑4类与Task3认证测试；此任务尚缺stream撤销，不能单独开放账号写入口。提交 `feat: implement registration and password recovery endpoints`。
+
+## Task 6：撤销旧票据及连接，后台任务继续
+
+**Files**
+- Create: `poc4/backend/src/main/java/com/manao/poc4/auth/UserSessionRevoker.java`；Modify同目录 `AuthService.java`
+- Modify in `poc4/backend/src/main/java/com/manao/poc4/log/`: `LogTicketService.java`、`JdbcLogStore.java`、`RunLogController.java`、`RunLogWebSocketHandler.java`
+- Modify in `poc4/backend/src/main/java/com/manao/poc4/terminal/`: `TerminalStore.java`、`JdbcTerminalStore.java`、`TerminalSessionService.java`、`TerminalController.java`、`TerminalWebSocketHandler.java`
+- Modify in `poc4/backend/src/main/java/com/manao/poc4/ai/`: `AgentLiveOutputController.java`、`AgentLiveOutput.java`
+- Modify in `poc4/backend/src/main/java/com/manao/poc4/config/`: `WebSocketConfig.java`、`WorkspaceConfig.java`、`AiConfig.java`
+- Create tests in `poc4/backend/src/test/java/com/manao/poc4/auth/`: `UserSessionRevokerTest.java`、`CredentialRevocationTest.java`
+- Modify backend tests: `log/LogTicketServiceTest.java`、`log/RunLogWebSocketTest.java`、`terminal/TerminalSessionServiceTest.java`、`terminal/TerminalWebSocketTest.java`、`ai/AgentLiveOutputHttpTest.java`（相对 `poc4/backend/src/test/java/com/manao/poc4/`）
+
+**Interfaces:** `register(userId,version,Runnable) -> Registration`、`closeOlder(userId,newVersion)`；Registration注销幂等。ticket绑定请求原AccountIdentity；SSE subscribe接收认证身份。客户端固定信号WS4401、SSE `auth.revoked`，无用户数据payload。
+
+- [ ] **1. RED竞态。** latch覆盖签发中改密、consume后登记前改密、登记后handle/listener安装前改密、SSE等待发送时改密；afterCommit才关闭旧版本，回滚不关，新版本不误关。
+
+```java
+var closeOld = new java.util.concurrent.atomic.AtomicInteger();
+var closeNew = new java.util.concurrent.atomic.AtomicInteger();
+revoker.register("u", 0, closeOld::incrementAndGet);
+revoker.register("u", 1, closeNew::incrementAndGet);
+revoker.closeOlder("u", 1);
+assertThat(closeOld).hasValue(1);
+assertThat(closeNew).hasValue(0);
+```
+
+晚到PTY handle立即关闭，terminal仅settle一次；已consume尚未open也要结算；Run/AI/持久历史不变。
+- [ ] **2. RED命令。**
+
+```powershell
+mvn -f poc4/backend/pom.xml '-Dtest=UserSessionRevokerTest,CredentialRevocationTest,LogTicketServiceTest,RunLogWebSocketTest,TerminalSessionServiceTest,TerminalWebSocketTest,AgentLiveOutputHttpTest' test
+```
+
+- [ ] **3. 最小实现。** 签发版本必须来自原请求，不能把旧JWT提升成新version；原子签发/消费JOIN用户版本。连接登记前后fresh DB校验，注册与撤销共用短锁和版本水位；回调锁外逐个处理。handler原子closed与handle安装同步，迟到handle/listener不复活。密码提交后关旧版本，回调失败不谎报密码没改，不回滚已提交密码。
+
+```sql
+UPDATE log_ticket t JOIN app_user u ON u.id=t.user_id
+SET t.consumed_at=?
+WHERE t.ticket_hash=? AND t.consumed_at IS NULL AND t.expires_at>?
+  AND u.enabled=TRUE AND t.auth_version=u.auth_version;
+```
+
+terminal同条件转LIVE；旧RESERVED转合法EXPIRED释放唯一约束。日志移listener不停止采集；终端复用单会话settleAndClose而非Run stop；SSE只detach旧subscription，不全局shutdown或AI close。依赖注入不得形成Auth↔AI/WS循环。已到网络缓冲的数据不承诺撤回，阻塞连接按现有期限收尾。
+- [ ] **4. GREEN与提交。** 重跑7类及Task5测试，明确Run/AI状态保持。提交 `feat: revoke old credentials and streams on password changes`。
+
+## Task 7：三个账号页面与客户端撤销信号
+
+**Files**
+- Create in `poc4/frontend/src/features/auth/`: `RegisterPage.tsx`、`ForgotPasswordPage.tsx`、`ChangePasswordPage.tsx`、`CaptchaField.tsx` 及各自同名 `.test.tsx`
+- Modify: `poc4/frontend/src/contracts/auth.ts`、`poc4/frontend/src/api/authApi.ts`
+- Modify: `poc4/frontend/src/features/auth/LoginPage.tsx`、`LoginPage.test.tsx`（同目录）
+- Modify: `poc4/frontend/src/components/shell/AccountPanel.tsx`、`AccountPanel.test.tsx`（同目录）
+- Modify in `poc4/frontend/src/app/`: `AppRouter.tsx`、`appRuntime.ts`、`appRuntime.test.ts`
+- Modify in `poc4/frontend/src/mocks/`: `handlers.ts`、`state.ts`、`handlers.test.ts`
+- Modify in `poc4/frontend/src/features/logs/`: `RunLogTransport.ts`、`RunLogTransport.test.ts`
+- Modify in `poc4/frontend/src/features/terminal/`: `JobTerminalTransport.ts`、`JobTerminalTransport.test.ts`
+- Modify in `poc4/frontend/src/features/ai/`: `agentLiveOutput.ts`、`agentLiveOutput.test.ts`、`useAgentLiveOutput.ts`、`useAgentLiveOutput.test.tsx`
+- If required by existing terminal layering: `poc4/frontend/src/terminal/WebSocketTerminalTransport.ts`及同名测试
+
+**Interfaces**
+- authApi导出 `getAuthOptions/getCaptcha/requestEmailCode/register/resetPassword/changePassword/getMe`，参数/响应类型严格对齐设计第9节。
+- CaptchaField管理challengeId+image，外部输入答案；刷新清空答案，不包含任何正确答案数据。
+- `handleSessionRevoked(expectedSnapshot)` 仅在仍为原认证snapshot时统一clear。改密提交成功与异常结束后getMe同样使用原snapshot保护。
+
+- [ ] **1. RED页面。** 注册两步成功到login，username冲突可保留有效码重填，email变动清旧challenge，刷新不保留密码/码，冷却禁重发；注册关闭/mail未配置有明确状态。找回未知/失败发送同形提示，错误码不登录；旧email NULL提示不能邮箱找回。改密currentPassword错误422不退出，成功统一清理。LoginPage无图形码、无演示密码提示。
+
+```typescript
+// 使用现有页面Testing Library harness验证可见行为。
+expect(screen.queryByLabelText('图形验证码')).not.toBeInTheDocument(); // LoginPage
+expect(screen.getByRole('link', { name: '注册账号' })).toBeVisible();
+// A改密请求pending -> logout -> B登录 -> A迟到204，B仍authenticated。
+```
+
+transport测试包含WS4401、SSE auth.revoked、异常结束的一次me校验、旧流/迟到me不会清新会话、网络失败不无限重连。
+- [ ] **2. RED命令。**
+
+```powershell
+pnpm --dir poc4/frontend exec vitest run src/features/auth src/app/appRuntime.test.ts src/components/shell/AccountPanel.test.tsx src/features/logs/RunLogTransport.test.ts src/features/terminal/JobTerminalTransport.test.ts src/features/ai/agentLiveOutput.test.ts src/features/ai/useAgentLiveOutput.test.tsx
+```
+
+- [ ] **3. 最小实现。** 仅 `/register`、`/forgot-password`、`/account/password` 三路由；每页同内两步，复用视觉与表单，不重做工作台。发码及提交禁重复点击，敏感输入只在组件内存；验证码不进URL/storage。公开auth业务422不误触401；注册开关由options显示、后端最终裁决。
+
+```typescript
+export function handleSessionRevoked(expected: AuthSnapshot): void {
+  if (expected.status === 'authenticated' && authSession.getSnapshot() === expected) {
+    authSession.clear('unauthorized');
+  }
+}
+```
+
+改密成功也捕获并比较原snapshot，可使用logout reason展示成功，但绝不能无条件logout新账号。客户端流只处理建立时snapshot；SSE无撤销事件异常结束，做一次getMe，401才清理，网络故障仅显示断开。普通logout无需新增服务端logout接口。
+- [ ] **4. GREEN和生产边界。** 重跑定向测试与Task2项目测试：
+
+```powershell
+pnpm --dir poc4/frontend typecheck
+pnpm --dir poc4/frontend build
+pnpm --dir poc4/frontend test:boundary
+```
+
+若mock构建污染dist，最后必须生产build再boundary；生产不得包含获取测试验证码入口。提交 `feat: add verified account registration and recovery UI`。
+
+## Task 8：定向验收与发布维护
+
+**Files**
+- Create: `poc4/frontend/tests/e2e/multi-account.spec.ts`（mock）
+- Create: `poc4/frontend/tests/e2e/multi-account-cloud.spec.ts`（真实云端独立配置）
+- Create: `poc4/frontend/playwright.multi-account.config.ts`
+- Create: `poc4/deploy/multi-account/config.example.env`、`bind-legacy-email.ps1`（同目录）
+- Modify: `poc4/deploy/multi-account/README.md`及Task1迁移脚本（仅验证发现的必要修正）
+- Modify: `poc4/deploy/6b/backend.yaml`（Secret/env引用，不能写实际值）
+- Create: `poc4/docs/evidence/multi-account/acceptance.md`
+- Modify after actual delivery: `docs/what-we-have-done.md`、`docs/README.md`，仅摘要和入口
+
+**Interfaces**
+- 旧账户维护 `bind-legacy-email.ps1 -UserId -ExpectedUsername -Email [-Apply]`，默认预览；数据库连接使用受控环境和参数化SQL，不命令行传密码。要求email NULL、操作者确认邮箱控制权，条件更新不覆盖现有绑定；无公网管理接口。
+- cloud Playwright配置真实baseURL、workers=1、无MSW、无自动服务启动；两个用户顺序使用。
+
+- [ ] **1. 本地浏览器及相关完整回归。**
+
+```powershell
+pnpm --dir poc4/frontend exec playwright test tests/e2e/multi-account.spec.ts --project=chromium
+mvn -f poc4/backend/pom.xml test
+pnpm --dir poc4/frontend test
+```
+
+完整backend套件仅disposable测试配置；外部依赖不齐如实标NOT_RUN/失败，不把--list当通过。通过后不无理由重复全套。
+- [ ] **2. 邮件与镜像配置。** example只列设计第7节字段和空占位。用户补sender后核对from、TLS/port，凭据通过Secret注入不回显；未补时真实邮件相关步骤NOT_RUN，Task1/2可以独立修复发布。实际backend镜像生成PNG并验证可解码；缺字体只补必要依赖。
+- [ ] **3. 受控升级。** 记录SHA/digest；单backend Recreate、注册false。保留DB恢复点和策略备份，应用V17并核对旧账号/项目；预览完整旧policy清单后才Apply并回读。新登录使用version，旧JWT统一重登，旧NULL票据拒绝。回滚不down migrate或恢复广泛policy；关闭新账号入口时仍保留认证撤销和隔离修复，不能回退到忽略version的旧镜像并声称撤销有效。
+- [ ] **4. 两账号顺序验收。** 人工输入真实图形/邮箱码，不增生产绕过口。A注册验证登录→创建/编辑/运行/终端/AI展示→退出，B顺序执行；替换对方项目/文件/Run/ticket/conversation/task ID必须拒绝。各账户8项目，第9个拒绝；复用专用项目避免重复创建。覆盖A自然到期→B登录、旧响应迟到、改密/找回旧JWT/ticket/连接失效且后台任务继续、注册开关、旧账号人工绑定与找回。
+
+网络：自身依赖连通、跨项目Service/Pod IP连接拒绝、公开应用匿名正常；补探workspace/platform是否存在跨账户读写旁路。发现可访问旁路则停止开放注册并保留最小证据，提出最小修复，不把计划当全网改造授权。
+- [ ] **5. 结果与清理。** acceptance分别列代码/mock/真实SMTP/策略迁移/流量/账号隔离/用户验收。只有范围内证据齐全才能授予 `MULTI_ACCOUNT_MVP_PASS`；否则逐项写实际状态。精确owner/project清理disposable资源，保留旧账号项目；清理不再使用的本地临时文件，禁止广泛git clean。按文件显式提交，合并/推送遵从用户后续指令。
+
+## 自检与交接
+
+- [x] 设计每项要求能对应任务；Task1/2优先，Task6前不开放账号写入口。
+- [x] DTO、枚举、路径一致，无额外verify-email/resume路由。
+- [x] sender配置以外无未明确产品决策；实际环境值发布前核对，不能虚构。
+- [x] 当前工作树正确，master和其他工作树保持原状。
+- [x] 单人使用仅简化容量，不取消owner、网络和异步会话边界。
+
+2026-10-29已完成规划自检及前端/账号合同的独立静态审查，已修正找回SMTP失败的显式邮箱枚举与改密迟到响应误退新会话两个合同问题。以上勾选只表示文档已核对，不表示Task1–8已实施或测试通过。
+
+规划交付后的第一个实施动作是Task1新增失败回归。当前未实施上述步骤，邮件及真实集群验收仍需对应执行阶段。
