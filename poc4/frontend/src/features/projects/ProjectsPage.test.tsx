@@ -5,7 +5,7 @@ import { readFileSync } from 'node:fs';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { login } from '../../api/authApi';
 import { createProject, getProject } from '../../api/projectApi';
-import { authSession, queryClient, workspaceBufferRegistry } from '../../app/appRuntime';
+import { authSession, logout, queryClient, workspaceBufferRegistry } from '../../app/appRuntime';
 import type { ProjectListResponse, ProjectSummary } from '../../contracts/project';
 import { server } from '../../mocks/node';
 import {
@@ -27,6 +27,8 @@ import {
   projectDetailRefetchInterval,
   projectKeys,
   projectsRefetchInterval,
+  useCheckProjectCreation,
+  useCreateProject,
   useProjectQuery,
   useProjectsQuery,
 } from './projectQueries';
@@ -834,4 +836,186 @@ describe('project query focus and PROJECT_BUSY reads', () => {
       vi.useRealTimers();
     }
   }, 20_000);
+});
+function createDeferred(): { promise: Promise<void>; resolve: () => void } {
+  let resolve: () => void = () => {};
+  const promise = new Promise<void>((settle) => {
+    resolve = settle;
+  });
+  return { promise, resolve };
+}
+
+async function authenticateAsBob(): Promise<void> {
+  const response = await login({ username: 'bob', password: 'demo-pass' });
+  authSession.authenticate(response);
+}
+
+describe('project create/check mutations reject late cache effects after a session change', () => {
+  const lateCreatedProject = readyProject({
+    id: 'prj-created-late',
+    name: 'Late Project',
+    state: 'CREATING',
+  });
+
+  function holdCreateRequest(): { started: Promise<void>; release: () => void } {
+    const started = createDeferred();
+    const release = createDeferred();
+    server.use(
+      http.post('/api/v1/projects', async () => {
+        started.resolve();
+        await release.promise;
+        return HttpResponse.json(lateCreatedProject, { status: 201 });
+      }),
+    );
+    return { started: started.promise, release: release.resolve };
+  }
+
+  function holdCreationCheck(): { started: Promise<void>; release: () => void } {
+    const started = createDeferred();
+    const release = createDeferred();
+    server.use(
+      http.get('/api/v1/projects/creation/:creationKey', async () => {
+        started.resolve();
+        await release.promise;
+        return HttpResponse.json(lateCreatedProject);
+      }),
+    );
+    return { started: started.promise, release: release.resolve };
+  }
+
+  it('still writes the created project when the session is unchanged', async () => {
+    await authenticateAsAlice();
+    const { result } = renderHook(() => useCreateProject(), { wrapper: AppProviders });
+    const invalidate = vi.spyOn(queryClient, 'invalidateQueries');
+
+    const created = await result.current.mutateAsync({ name: 'Fresh', creationKey: 'fresh-key' });
+
+    expect(created.name).toBe('Fresh');
+    expect(
+      queryClient.getQueryData<ProjectListResponse>(projectKeys.all)?.items.map((item) => item.id),
+    ).toContain(created.id);
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: projectKeys.all });
+  });
+
+  it('does not write a late create response into the cache after another account logs in', async () => {
+    await authenticateAsAlice();
+    const { result } = renderHook(() => useCreateProject(), { wrapper: AppProviders });
+    const hold = holdCreateRequest();
+    const invalidate = vi.spyOn(queryClient, 'invalidateQueries');
+
+    const creating = result.current.mutateAsync({ name: 'Late', creationKey: 'late-key' });
+    await hold.started;
+    logout();
+    await authenticateAsBob();
+    hold.release();
+
+    await expect(creating).resolves.toEqual(lateCreatedProject);
+    expect(queryClient.getQueryData(projectKeys.all)).toBeUndefined();
+    expect(invalidate).not.toHaveBeenCalled();
+    expect(authSession.getSnapshot()).toMatchObject({
+      status: 'authenticated',
+      user: { username: 'bob' },
+    });
+  });
+
+  it('does not write a late create response into the cache after the same account signs in again', async () => {
+    await authenticateAsAlice();
+    const { result } = renderHook(() => useCreateProject(), { wrapper: AppProviders });
+    const hold = holdCreateRequest();
+    const invalidate = vi.spyOn(queryClient, 'invalidateQueries');
+
+    const creating = result.current.mutateAsync({ name: 'Late', creationKey: 'late-key-relogin' });
+    await hold.started;
+    logout();
+    await authenticateAsAlice();
+    hold.release();
+
+    await expect(creating).resolves.toEqual(lateCreatedProject);
+    expect(queryClient.getQueryData(projectKeys.all)).toBeUndefined();
+    expect(invalidate).not.toHaveBeenCalled();
+    expect(authSession.getSnapshot()).toMatchObject({
+      status: 'authenticated',
+      user: { username: 'alice' },
+    });
+  });
+
+  it('does not write a late creation check into the cache after another account logs in', async () => {
+    await authenticateAsAlice();
+    const { result } = renderHook(() => useCheckProjectCreation(), { wrapper: AppProviders });
+    const hold = holdCreationCheck();
+    const invalidate = vi.spyOn(queryClient, 'invalidateQueries');
+
+    const checking = result.current.mutateAsync('late-check-key');
+    await hold.started;
+    logout();
+    await authenticateAsBob();
+    hold.release();
+
+    await expect(checking).resolves.toEqual(lateCreatedProject);
+    expect(queryClient.getQueryData(projectKeys.all)).toBeUndefined();
+    expect(invalidate).not.toHaveBeenCalled();
+  });
+
+  it('does not write a late creation check into the cache after the same account signs in again', async () => {
+    await authenticateAsAlice();
+    const { result } = renderHook(() => useCheckProjectCreation(), { wrapper: AppProviders });
+    const hold = holdCreationCheck();
+    const invalidate = vi.spyOn(queryClient, 'invalidateQueries');
+
+    const checking = result.current.mutateAsync('late-check-key-relogin');
+    await hold.started;
+    logout();
+    await authenticateAsAlice();
+    hold.release();
+
+    await expect(checking).resolves.toEqual(lateCreatedProject);
+    expect(queryClient.getQueryData(projectKeys.all)).toBeUndefined();
+    expect(invalidate).not.toHaveBeenCalled();
+  });
+
+  it('keeps each overlapping request identity across a session change', async () => {
+    const holds = new Map<string, () => void>();
+    const starts = new Map<string, Promise<void>>();
+    const startResolvers = new Map<string, () => void>();
+    for (const name of ['alpha', 'beta']) {
+      const started = createDeferred();
+      starts.set(name, started.promise);
+      startResolvers.set(name, started.resolve);
+    }
+    server.use(
+      http.post('/api/v1/projects', async ({ request }) => {
+        const body = (await request.json()) as { name?: string };
+        const name = body.name ?? '';
+        startResolvers.get(name)?.();
+        await new Promise<void>((resolve) => {
+          holds.set(name, resolve);
+        });
+        return HttpResponse.json(
+          readyProject({ id: 'prj-' + name, name, state: 'CREATING' }),
+          { status: 201 },
+        );
+      }),
+    );
+
+    await authenticateAsAlice();
+    const { result } = renderHook(() => useCreateProject(), { wrapper: AppProviders });
+    const alpha = result.current.mutateAsync({ name: 'alpha', creationKey: 'alpha-key' });
+    await starts.get('alpha');
+    logout();
+    await authenticateAsBob();
+    const beta = result.current.mutateAsync({ name: 'beta', creationKey: 'beta-key' });
+    await starts.get('beta');
+
+    holds.get('beta')?.();
+    await beta;
+    expect(
+      queryClient.getQueryData<ProjectListResponse>(projectKeys.all)?.items.map((item) => item.id),
+    ).toEqual(['prj-beta']);
+
+    holds.get('alpha')?.();
+    await alpha;
+    expect(
+      queryClient.getQueryData<ProjectListResponse>(projectKeys.all)?.items.map((item) => item.id),
+    ).toEqual(['prj-beta']);
+  });
 });

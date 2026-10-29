@@ -1,7 +1,11 @@
 import { HttpClient, setHttpClient } from '../api/httpClient';
 import { clearPythonDependencyOperationIdsForUser } from '../api/pythonDependencyApi';
 import { clearAgentTaskIdsForUser } from '../api/agentTaskApi';
-import { createAuthSession } from '../features/auth/authSession';
+import {
+  createAuthSession,
+  type AnonymousReason,
+  type AuthenticatedSnapshot,
+} from '../features/auth/authSession';
 import { resetUnsavedDialog } from '../features/editor/unsavedChangesGuard';
 import { WorkspaceBufferRegistry } from '../features/editor/WorkspaceBufferRegistry';
 import { workspaceSessionStore } from '../features/editor/workspaceSession';
@@ -9,7 +13,7 @@ import { ConnectionRegistry } from '../runtime/ConnectionRegistry';
 import { WorkspaceResourceRegistry } from '../runtime/WorkspaceResourceRegistry';
 import { createQueryClient } from './queryClient';
 
-export const authSession = createAuthSession();
+export const authSession = createAuthSession({ onBeforeClear: clearSessionState });
 export const queryClient = createQueryClient();
 export const connectionRegistry = new ConnectionRegistry();
 export const workspaceResourceRegistry = new WorkspaceResourceRegistry();
@@ -48,47 +52,66 @@ workspaceResourceRegistry.registerLazy(() => {
   workspaceBufferRegistry.disposeAll();
 });
 
-let unauthorizedInFlight = false;
-
-function disposeWorkspaceSession(): void {
-  connectionRegistry.closeAll();
-  workspaceResourceRegistry.disposeAll();
-  workspaceSessionStore.getState().reset();
-  resetUnsavedDialog();
-  queryClient.clear();
+/** One failing cleanup step must not skip the remaining steps or the auth clear. */
+function runCleanupStep(step: () => void): void {
+  try {
+    step();
+  } catch {
+    // The remaining session cleanup still runs; authSession.clear has its own finally.
+  }
 }
 
 /**
- * Operation and task ids live per user in sessionStorage; ending the session
- * must not hand an unresolved operation to the next user.
+ * Logout, natural expiry and a current-token 401 all end through this cleanup.
+ * User-scoped ids and live state belong to the previous user, never to the next session.
+ * `previous` is absent only for the defensive already-anonymous teardown below.
  */
-function clearUserScopedDependencyOperations(): void {
-  const snapshot = authSession.getSnapshot();
-  if (snapshot.status !== 'authenticated') {
+function clearSessionState(previous?: AuthenticatedSnapshot): void {
+  runCleanupStep(() => {
+    if (previous === undefined) {
+      return;
+    }
+    clearPythonDependencyOperationIdsForUser(previous.user.id);
+    clearAgentTaskIdsForUser(previous.user.id);
+  });
+  runCleanupStep(() => {
+    connectionRegistry.closeAll();
+  });
+  runCleanupStep(() => {
+    workspaceResourceRegistry.disposeAll();
+  });
+  runCleanupStep(() => {
+    workspaceSessionStore.getState().reset();
+  });
+  runCleanupStep(() => {
+    resetUnsavedDialog();
+  });
+  runCleanupStep(() => {
+    queryClient.clear();
+  });
+}
+
+/**
+ * A public termination request normally ends the authenticated session through
+ * authSession.clear, so the onBeforeClear callback owns the cleanup. When the
+ * snapshot is already anonymous (for example a component registered a live
+ * stream before login in a test harness), still tear down leftover runtime
+ * resources instead of leaving them attached to no session.
+ */
+function endSession(reason: AnonymousReason): void {
+  if (authSession.getSnapshot().status === 'authenticated') {
+    authSession.clear(reason);
     return;
   }
-  clearPythonDependencyOperationIdsForUser(snapshot.user.id);
-  clearAgentTaskIdsForUser(snapshot.user.id);
+  clearSessionState();
 }
 
 export function handleUnauthorized(): void {
-  if (unauthorizedInFlight) {
-    return;
-  }
-  unauthorizedInFlight = true;
-  try {
-    disposeWorkspaceSession();
-    clearUserScopedDependencyOperations();
-    authSession.clear('unauthorized');
-  } finally {
-    unauthorizedInFlight = false;
-  }
+  endSession('unauthorized');
 }
 
 export function logout(): void {
-  clearUserScopedDependencyOperations();
-  disposeWorkspaceSession();
-  authSession.clear('logout');
+  endSession('logout');
 }
 
 export const httpClient = new HttpClient({

@@ -117,3 +117,169 @@ describe('authSession absolute expiry', () => {
     expect(session.getSnapshot()).toEqual({ status: 'anonymous', reason: 'logout' });
   });
 });
+describe('authSession unified termination onBeforeClear', () => {
+  it('calls onBeforeClear with the previous snapshot and expired reason before anonymous state', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-08-21T00:00:00.000Z'));
+    try {
+      const beforeClear = vi.fn();
+      const session = createAuthSession({ onBeforeClear: beforeClear });
+      session.authenticate(timedResponse);
+      const previous = session.getSnapshot();
+      vi.setSystemTime(new Date(timedResponse.expiresAt));
+      vi.runOnlyPendingTimers();
+      expect(beforeClear).toHaveBeenCalledWith(previous, 'expired');
+      expect(session.getSnapshot()).toEqual({ status: 'anonymous', reason: 'expired' });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('runs the callback with the previous user and reason before the anonymous listener fires', () => {
+    const order: string[] = [];
+    let snapshotDuringCallback: unknown;
+    const beforeClear = vi.fn();
+    const session = createAuthSession({ onBeforeClear: beforeClear });
+    beforeClear.mockImplementation(() => {
+      snapshotDuringCallback = session.getSnapshot();
+      order.push('callback');
+    });
+    session.subscribe(() => {
+      order.push(`listener:${session.getSnapshot().status}`);
+    });
+    session.authenticate(liveResponse);
+    const previous = session.getSnapshot();
+    order.length = 0;
+
+    session.clear('logout');
+
+    expect(beforeClear).toHaveBeenCalledWith(previous, 'logout');
+    expect(snapshotDuringCallback).toEqual(previous);
+    expect(order).toEqual(['callback', 'listener:anonymous']);
+    expect(session.getSnapshot()).toEqual({ status: 'anonymous', reason: 'logout' });
+    expect(session.getAccessToken()).toBeNull();
+  });
+
+  it('runs the callback for the unauthorized 401 reason', () => {
+    const beforeClear = vi.fn();
+    const session = createAuthSession({ onBeforeClear: beforeClear });
+    session.authenticate(liveResponse);
+    const previous = session.getSnapshot();
+
+    session.clear('unauthorized');
+
+    expect(beforeClear).toHaveBeenCalledWith(previous, 'unauthorized');
+    expect(session.getSnapshot()).toEqual({ status: 'anonymous', reason: 'unauthorized' });
+  });
+
+  it('does not run the callback before the first login or for duplicate clears', () => {
+    const beforeClear = vi.fn();
+    const session = createAuthSession({ onBeforeClear: beforeClear });
+
+    session.clear('logout');
+    expect(beforeClear).not.toHaveBeenCalled();
+
+    session.authenticate(liveResponse);
+    expect(beforeClear).not.toHaveBeenCalled();
+
+    session.clear('logout');
+    session.clear('logout');
+    session.clear('unauthorized');
+
+    expect(beforeClear).toHaveBeenCalledTimes(1);
+    expect(beforeClear).toHaveBeenCalledWith(expect.objectContaining({ status: 'authenticated' }), 'logout');
+    expect(session.getSnapshot()).toEqual({ status: 'anonymous', reason: 'logout' });
+  });
+
+  it('still clears authentication when the cleanup callback throws', () => {
+    const session = createAuthSession({
+      onBeforeClear: () => {
+        throw new Error('cleanup failed');
+      },
+    });
+    session.authenticate(liveResponse);
+
+    expect(() => session.clear('unauthorized')).not.toThrow();
+
+    expect(session.getSnapshot()).toEqual({ status: 'anonymous', reason: 'unauthorized' });
+    expect(session.getAccessToken()).toBeNull();
+  });
+
+  it('guards reentrant clear from inside the cleanup callback', () => {
+    const beforeClear = vi.fn();
+    const session = createAuthSession({ onBeforeClear: beforeClear });
+    beforeClear.mockImplementation(() => {
+      session.clear('unauthorized');
+    });
+    session.authenticate(liveResponse);
+    const listener = vi.fn();
+    session.subscribe(listener);
+
+    session.clear('logout');
+
+    expect(beforeClear).toHaveBeenCalledTimes(1);
+    expect(listener).toHaveBeenCalledTimes(1);
+    expect(session.getSnapshot()).toEqual({ status: 'anonymous', reason: 'logout' });
+  });
+
+  it('ends the previous session before authenticate accepts a replacement login', () => {
+    const beforeClear = vi.fn();
+    const session = createAuthSession({ onBeforeClear: beforeClear });
+    session.authenticate(liveResponse);
+    const previous = session.getSnapshot();
+    const replacement: LoginResponse = {
+      accessToken: 'second-token',
+      expiresAt: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
+      user: { id: 'u2', username: 'bob' },
+    };
+
+    session.authenticate(replacement);
+
+    expect(beforeClear).toHaveBeenCalledTimes(1);
+    expect(beforeClear).toHaveBeenCalledWith(previous, 'logout');
+    expect(session.getSnapshot()).toEqual({
+      status: 'authenticated',
+      accessToken: 'second-token',
+      expiresAt: replacement.expiresAt,
+      user: { id: 'u2', username: 'bob' },
+    });
+  });
+
+  it('does not call the callback when authenticate starts from anonymous', () => {
+    const beforeClear = vi.fn();
+    const session = createAuthSession({ onBeforeClear: beforeClear });
+
+    session.authenticate(liveResponse);
+
+    expect(beforeClear).not.toHaveBeenCalled();
+    expect(session.getSnapshot()).toMatchObject({ status: 'authenticated' });
+  });
+
+  it('does not let the previous expiry timer clear a newly authenticated session', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-08-21T00:00:00.000Z'));
+    try {
+      const session = createAuthSession();
+      session.authenticate(timedResponse);
+      const replacement: LoginResponse = {
+        accessToken: 'new-token',
+        expiresAt: '2026-08-21T01:00:00.000Z',
+        user: { id: 'u1', username: 'alice' },
+      };
+      session.authenticate(replacement);
+
+      // The replaced session's 15-minute timer would fire here if it were still armed.
+      vi.advanceTimersByTime(15 * 60 * 1000);
+
+      expect(session.getSnapshot()).toEqual({
+        status: 'authenticated',
+        accessToken: 'new-token',
+        expiresAt: replacement.expiresAt,
+        user: { id: 'u1', username: 'alice' },
+      });
+      expect(session.getAccessToken()).toBe('new-token');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});

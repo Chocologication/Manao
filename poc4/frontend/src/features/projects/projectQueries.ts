@@ -68,7 +68,17 @@ export function useCreateProject() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: createProject,
-    onSuccess: (created) => {
+    // This request's own session identity; a component ref would be overwritten
+    // by the next request before a late response arrives.
+    onMutate: () => ({ session: authSession.getSnapshot() }),
+    onSuccess: (created, _variables, context) => {
+      if (
+        !context ||
+        context.session.status !== 'authenticated' ||
+        context.session !== authSession.getSnapshot()
+      ) {
+        return;
+      }
       queryClient.setQueryData<ProjectListResponse>(projectKeys.all, (current) => {
         if (current === undefined) {
           return { items: [created], limit: DEFAULT_PROJECT_LIMIT };
@@ -92,7 +102,15 @@ export function useCheckProjectCreation() {
   return useMutation({
     retry: false,
     mutationFn: (creationKey: string) => getProjectCreation(creationKey),
-    onSuccess: (project) => {
+    onMutate: () => ({ session: authSession.getSnapshot() }),
+    onSuccess: (project, _creationKey, context) => {
+      if (
+        !context ||
+        context.session.status !== 'authenticated' ||
+        context.session !== authSession.getSnapshot()
+      ) {
+        return;
+      }
       queryClient.setQueryData<ProjectListResponse>(projectKeys.all, (current) => {
         if (current === undefined) {
           return { items: [project], limit: DEFAULT_PROJECT_LIMIT };
