@@ -9,7 +9,7 @@
 - 2026-10-26 收尾修复已本地审查、实际部署并完成一次最小真实模型/浏览器验证：**LOCAL_REPAIR_VERIFIED / DEPLOYED_SMOKE_VERIFIED**。修复分支先合回 AI 分支，现随 AI 集成内容同步到 master；原发布和验证边界保持不变。
 - 阶段四本地实现及已授权云端发布、真实模型验证完成，授予 **PI_STAGE4_CONTROL_RECOVERY_PASS**：暂停后安全接管、保存修改后同 conversation 新 Task、浏览器重进及 Worker 异常核对后手动继续通过。范围见[阶段四验收](../poc4/docs/evidence/ai-stage4/acceptance.md)。
 - 原故障 Task 仍为 **NOT_REPAIRED**，其处理与阶段二验收按用户决定暂缓。2026-10-27 关键云端故障专项已完成；这些结果不授予阶段二、完整云端故障矩阵或整个 AI 首版 PASS。
-- 多账号与账号生命周期：本地实现、定向测试与 mock 浏览器验收已记录（V17/V18、验证码、注册/找回/改密、撤销、账号页面）；真实邮件、云端两账号隔离、集群迁移/旧策略 Apply 与用户验收仍 NOT_RUN，**MULTI_ACCOUNT_MVP_PASS 未授予**。
+- 多账号与账号生命周期：本地实现、定向测试、mock 浏览器验收与后端完整套件（1076/0/0/2，disposable MySQL）已记录（V17/V18、验证码、注册/找回/改密、撤销、账号页面）；前端全量 vitest 有 1 个已知 visual spec + 3 个隔离即通过的负载 flake（如实记录）。真实邮件、云端两账号隔离、集群迁移/旧策略 Apply 与用户验收仍 NOT_RUN，**MULTI_ACCOUNT_MVP_PASS 未授予**。
 
 ## AI 专题交付
 
@@ -44,7 +44,7 @@
 
 | 专题 | 已记录结果与边界 | 证据入口 |
 | --- | --- | --- |
-| 多账号与账号生命周期 | 本地实现、定向测试与 mock 浏览器验收已记录（V17/V18、验证码、注册/找回/改密、撤销、账号页面、部署维护脚本 fixture）；真实 SMTP/邮件、云端两账号隔离、旧策略 Apply、运行库迁移与部署均 NOT_RUN；后端完整套件待补 | [多账号验收记录](../poc4/docs/evidence/multi-account/acceptance.md) |
+| 多账号与账号生命周期 | 本地实现、定向测试、mock 浏览器验收、后端完整套件（1076/0/0/2 PASS）与部署维护脚本 fixture 已记录（V17/V18、验证码、注册/找回/改密、撤销、账号页面）；前端全量 vitest 有已知 visual spec/负载 flake（隔离通过）；真实 SMTP/邮件、云端两账号隔离、旧策略 Apply、运行库迁移与部署均 NOT_RUN | [多账号验收记录](../poc4/docs/evidence/multi-account/acceptance.md) |
 
 ## 最近一次整合与清理
 

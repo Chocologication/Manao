@@ -1,10 +1,10 @@
 # 多账号与账号生命周期验收记录
 
-- 更新：2026-10-29（Phase B-1：本地/前端全量证据 + 验收矩阵；Phase B-2 的后端完整套件待补）
-- 分支：codex/multi-account（独立 worktree，不链接本地绝对路径）
-- 记录状态：**本地实现与本地/mock 验收已完成记录；真实环境与后端全量套件仍有 NOT_RUN。**
+- 更新：2026-10-30（Phase B-2：后端完整套件 PASS + Task 6 修复闭环 + 最终本地证据；真实环境仍 NOT_RUN）
+- 分支：codex/multi-account（独立 worktree，不链接本地绝对路径）；最终本地树 HEAD b132fb1 + 本 docs 提交
+- 记录状态：**本地实现、前端全量/mock、后端完整套件与全部本地证据已记录；真实环境仍 NOT_RUN。**
 - **MULTI_ACCOUNT_MVP_PASS 未授予。** 真实邮件、云端两账号隔离、旧策略 Apply、部署/V17+V18
-  真实迁移与用户人工验收尚未执行；本地 mock/fixture/定向测试通过不等于真实环境验收。
+  真实迁移、用户人工验收与最终整分支复核尚未完成；本地测试通过不等于真实环境验收。
 
 权威设计：[多账户与账号生命周期设计](../../../../docs/superpowers/specs/2026-10-29-multi-account-design.md)；
 实施计划：[多账号实施计划](../../../../docs/superpowers/plans/2026-10-29-multi-account-implementation-plan.md)；
@@ -39,19 +39,23 @@
 - mock 浏览器验收 4/4（注册两步→登录、找回两步→登录、改密→重新登录、登录页入口/无演示凭据）。
 - 旧账号邮箱人工绑定脚本自测 10/10（disposable schema，只创建/删除自有 test schema）。
 - 前端 typecheck/build/dist mock 字符串扫描/boundary 均通过；前端全量 vitest 非全绿（见 §5 诚实记录）。
+- 后端完整 Maven 套件（disposable MySQL，HEAD b132fb1）：**1076 tests / 0 failures / 0 errors / 2 skipped，
+  BUILD SUCCESS（39:54）**；2 skipped 为真实集群/清理证据的环境门（未启用系统属性），非产品失败。
 - K1（改密成功提示丢失）已由 Task 7 fix round 3 修复，mock e2e 已断言“恰好一次且不复播”。
+- Task 6 terminal 撤销竞态 N1 与异常安全 M-a 已修复（fa5ac26/fcedcc4/b132fb1），修复轮复审 PASS；
+  M-b/M-c/M-d 记录为最终分诊项。
 
 仍为 NOT_RUN（不阻塞本地交付，但阻塞整体 PASS）：
 
 - 真实 126 邮件发送/收件与用户人工邮件验收（E1–E7）。
 - 真实集群旧策略只读预览/Apply/回读、部署、Secret 注入、V17+V18 真实运行库迁移。
 - 真实云端两账号顺序验收（登录/项目/文件/Run/终端/AI、跨账号拒绝、8 项目上限）、网络隔离探测。
-- 后端完整 Maven 套件（Phase B-2，等 Maven 串行窗口）。
+- 最终整分支独立复核（覆盖 Task 6 fix round 2 的 b132fb1 与全量套件结果）尚未执行。
 
 ## 3. 代码提交与任务级证据
 
-任务实现以 commit 为准；下表“本地证据”是实现者报告 + Lead 定向验证的记录（本轮 Phase B-1
-未重跑后端任务级命令），独立复核记录见本地 reviews 目录。
+任务实现以 commit 为准；下表“本地证据”是实现者报告 + Lead 定向验证的记录（Phase B-1 未重跑
+后端任务级命令；Phase B-2 已执行完整套件，见 §5.6），独立复核记录见本地 reviews 目录。
 
 | 任务 | 提交 | 本地证据（实现者/Lead） | 独立复核结论 |
 | --- | --- | --- | --- |
@@ -60,10 +64,11 @@
 | T3 V17 + 版本化 JWT | 181d87d、d6a1a20 | Lead 53/53（定向 11 类）；后续组合 72/72 | 修复轮后 **PASS WITH WARN**（全局 strict mapper 跨控制器回归留给 T8 全量） |
 | T4 图形码/邮箱码/SMTP 适配 | 37b65fa、fd7da3a、79fb2d8 | Lead 组合 72/72；T5 终态组合 112/112（含 T4 类） | 两轮修复后 PASS（N1 首码冷却由 79fb2d8 修复；N2/N4/N5/N6 记录最终分诊） |
 | T5 注册/找回/改密 HTTP | 9d44ac6、2fac1a7 | Lead 113/113（19 类）；终态组合 112/112 | 独立复核 PASS/APPROVED（仅 Minor/[WARN]） |
-| T6 撤销旧凭据/流 | 9c65719、af94477 | 定向 56/56；组合 111/111 | follow-up af94477 PASS；**新的 Important N1（terminal 撤销竞态未结算 LIVE session）仍 OPEN，修复轮进行中 → 修复提交与验证前整体 NOT_REVERIFIED** |
+| T6 撤销旧凭据/流 | 9c65719、af94477、fa5ac26、fcedcc4、b132fb1 | 定向 56/56 → follow-up 组合 111/111 → fix1 58/58 与组合 112/112 → fix2 组合 113/113；Lead 定向 36/36（b132fb1） | **PASS（fix rounds 后）**：初轮 review CHANGES NEEDED（N1）→ fix1 限定复审 PASS（N1 +(a)–(f) ADDRESSED）→ b132fb1 修 M-a（异常安全，最终整分支复核覆盖）；M-b/M-c/M-d 为 deferred Minor |
 | T7 账号页面 + 客户端撤销 | 4fac593、333aadf、28fb5d5、390f6a4 | 定向 209/209、adjacent 414/414、typecheck/build/boundary 通过；mock e2e 4/4 | 两轮修复后 APPROVED；K1 fix（390f6a4）复审 PASS/APPROVED |
 | T8 Phase A 交付物 | f39c788 | PS fixture 16/16、bind 自测 10/10、mock e2e 4/4、6b YAML 解析通过；均未 Apply | 本任务交付物；独立复核 NOT_RUN |
-| T8 Phase B-1 证据/文档 | 本记录所在 docs 提交 | 见 §5（前端全量/typecheck/build/dist/boundary/mock e2e，deploy 脚本复跑） | 独立复核 NOT_RUN |
+| T8 Phase B-1 证据/文档 | f453be8 | 见 §5（前端全量/typecheck/build/dist/boundary/mock e2e，deploy 脚本复跑） | 独立复核 NOT_RUN |
+| T8 Phase B-2 最终本地证据 | 本记录所在 docs 提交 | 后端完整套件 1076/0/0/2 PASS（§5.6）；其余同 §5 | 本任务交付物；最终整分支复核 NOT_RUN |
 
 复核主体说明：初始几轮独立审查由 codex/Astra 子代理完成；2026-10-29 用户模型策略变更后，
 后续复核改由 DSH teammate `reviewer-guard`（deepseek-flash，只读）执行（Task 4 fix2、Task 5、
@@ -85,11 +90,11 @@ two-account isolation = 真实云端两账号；cloud acceptance = 真实公网�
 | 6 | 图形码（5 位去混淆 PNG/2 分钟/5 次/一次性/总量限速） | T4 report/tests | PASS（CaptchaServiceTest 等；headless 渲染在测试内验证） | PASS | SKIPPED | SKIPPED | NOT_RUN | NOT_RUN |
 | 7 | 邮箱码（6 位/10 分钟/5 次/60s 冷却/小时 5 次/重发失效/SMTP 失败状态） | T4/T5 report/tests | PASS（捕获型 sender/替身；无真实 SMTP） | PASS | **NOT_RUN（用户手动）** | SKIPPED | NOT_RUN | NOT_RUN |
 | 8 | 注册/找回/改密 HTTP 合同与固定错误码 | T5 report/HTTP tests | PASS（113/113 Lead；终态组合 112/112） | PASS/APPROVED | NOT_RUN（用户手动） | SKIPPED | NOT_RUN | NOT_RUN |
-| 9 | 改密/重置撤销旧 JWT、票据、连接；Run/AI 继续 | T6 report/tests | PASS（56/56 + 111/111 定向；N1 修复轮进行中） | CHANGES NEEDED（N1 OPEN） | SKIPPED | SKIPPED | NOT_RUN | NOT_RUN |
+| 9 | 改密/重置撤销旧 JWT、票据、连接；Run/AI 继续 | T6 report/tests | PASS（fix1 58/58 + 组合 112/112 → fix2 113/113；完整套件含 T6 类全绿） | PASS（fix1 复审 N1+(a)–(f) ADDRESSED；b132fb1 M-a 由最终整分支复核覆盖；M-b/M-c/M-d deferred） | SKIPPED | SKIPPED | NOT_RUN | NOT_RUN |
 | 10 | 前端页面/transport/撤销信号 | T7 report/tests | PASS（209/209 定向 + 414/414 adjacent） | PASS/APPROVED | NOT_RUN（用户手动） | SKIPPED | NOT_RUN | NOT_RUN |
 | 11 | mock 浏览器 e2e（3 条账号流程 + 登录页） | 本文件 §5.4 / Playwright | PASS（4/4，含 K1 banner 断言） | NOT_RUN（本任务交付物） | SKIPPED（mock 不代表真实邮件） | SKIPPED | SKIPPED | NOT_RUN |
 | 12 | 前端全量回归（vitest/typecheck/build/boundary） | 本文件 §5.1–§5.3 | **非全绿**：1736 tests 中 4 failed（已知 visual spec + 3 个负载 flake；隔离 92/92 PASS）；typecheck/build/boundary PASS | NOT_RUN | SKIPPED | SKIPPED | NOT_RUN | NOT_RUN |
-| 13 | 后端完整 Maven 套件 | Phase B-2（命令已备） | **NOT_RUN（等待 Maven 串行窗口）** | NOT_RUN | SKIPPED | SKIPPED | NOT_RUN | NOT_RUN |
+| 13 | 后端完整 Maven 套件（全局 strict Jackson/V17+V18/无关控制器） | 本文件 §5.6（Phase B-2） | **PASS（1076 tests / 0 failures / 0 errors / 2 skipped，BUILD SUCCESS，39:54；disposable MySQL）** | NOT_RUN（全量套件非独立复核对象；最终整分支复核待执行） | SKIPPED | SKIPPED | NOT_RUN | NOT_RUN |
 | 14 | 旧账号邮箱人工绑定维护脚本 | T8 Phase A bind-legacy-email + self-test | PASS（10/10，disposable schema，本地 MySQL） | NOT_RUN（本任务交付物） | SKIPPED | SKIPPED | NOT_RUN | NOT_RUN |
 | 15 | 邮件/挑战配置模板与 6B Secret/env 引用 | T8 Phase A config.example.env / backend.yaml | PASS（结构/YAML 校验；mail+registration=false；password 空） | NOT_RUN | **NOT_RUN（运行时 Secret 注入未执行）** | SKIPPED | NOT_RUN | NOT_RUN |
 | 16 | 真实策略迁移预览 → 备份 → Apply → 回读 | 本文件 §6.2（未执行） | 本地 fixture PASS | PASS（脚本复审） | SKIPPED | **NOT_RUN（需用户授权）** | NOT_RUN | NOT_RUN |
@@ -100,11 +105,12 @@ two-account isolation = 真实云端两账号；cloud acceptance = 真实公网�
 | 21 | 结果与清理（disposable 资源、保留旧项目、无广泛 git clean） | 计划 Task 8 第 5 项 | NOT_RUN | NOT_RUN | NOT_RUN | NOT_RUN | NOT_RUN | NOT_RUN |
 | 22 | **MULTI_ACCOUNT_MVP_PASS** | 本文件 §10 | **NOT_GRANTED** | — | — | — | — | — |
 
-## 5. Phase B-1 本地执行证据（2026-10-29，当前 HEAD af94477 + 本任务 docs 改动）
+## 5. 本地执行证据（Phase B-1/B-2，2026-10-29/30，最终 HEAD b132fb1 + 本任务 docs 提交）
 
 环境：Windows；Node 24.12.0；pnpm 10.33.0；Playwright 1.62.1 + chromium 可用；
-Java 17.0.16；本地 MySQL 8.0.43（disposable schema）；pwsh 二进制不存在（Windows PowerShell
-5.1.26100.7344）。以下命令均在 `poc4/frontend` 或仓库根执行，未连接后端/集群/SMTP。
+Java 17.0.16；Maven 3.9.16（~/.m2 wrapper dist）；本地 MySQL 8.0.43（disposable schema）；
+pwsh 二进制不存在（Windows PowerShell 5.1.26100.7344）。以下命令均在 `poc4/frontend` 或仓库根
+执行；未连接真实集群/SMTP/真实邮箱。
 
 ### 5.1 前端完整 vitest（诚实记录，非全绿）
 
@@ -186,19 +192,35 @@ pnpm exec playwright test --config playwright.multi-account-cloud.config.ts --li
 及专用项目；配置无 webServer、无 MSW、workers=1，baseURL 仅来自 env；spec 不申请真实邮箱码、
 不读 IMAP、不绕过图形码。
 
-### 5.6 后端完整套件：本轮 NOT_RUN（Phase B-2 待执行）
-
-Maven 本轮被 Task 6 terminal-race 修复轮占用，按 Lead 指令不并跑。Phase B-2 使用命令：
+### 5.6 后端完整 Maven 套件（Phase B-2）：PASS
 
 ```
-& 'C:\Users\shili\.m2\wrapper\dists\apache-maven-3.9.16\56ba1f9f\bin\mvn.cmd' -f poc4/backend/pom.xml test
+MANAO_DB_URL=jdbc:mysql://127.0.0.1:3306/manao_poc4_test
+MANAO_DB_USERNAME=manao
+MANAO_DB_PASSWORD=
+& 'C:\Users\shili\.m2\wrapper\dists\apache-maven-3.9.16\56ba1f9f\bin\mvn.cmd' -B -f poc4/backend/pom.xml test
+
+[INFO] Tests run: 1076, Failures: 0, Errors: 0, Skipped: 2
+[INFO] BUILD SUCCESS
+[INFO] Total time:  39:54 min
+MVN_EXIT=0
 ```
 
-- 仅 disposable MySQL（JdbcStoreTestSupport 自动建/删 manao_stage6_<uuid>）；
-  **不 reset manao_poc4 / manao_poc4_6b**。
-- 该套件是首次覆盖全局 strict Jackson 变更、V18 迁移及所有与账号无关控制器的全量回归
-  （T3 复核 WARN 所指）；结果（计数/失败类名/堆栈摘要）将补写进本文件与 §4 第 13 行。
-- 若出现非预期失败，记录 FAILED/NOT_REVERIFIED，不以 --list 或定向通过替代。
+这是首个覆盖全局 strict Jackson mapper、V17+V18 迁移、组件扫描/YAML 绑定和全部与账号无关
+控制器的完整回归；**无失败/错误**，仅 2 个环境门 SKIPPED（如实记录，非产品失败）：
+
+| 跳过测试 | 原因（源码事实） |
+| --- | --- |
+| com.manao.poc4.deploy.Stage6aPreflightTest.realClusterPreflightFailsWhenKubeconfigMissingInRealMode | 需要系统属性 `-Dmanao.stage6.real=true`（真实集群预检；本轮未启用真实集群） |
+| com.manao.poc4.project.ProjectCleanupEvidenceTest.registeredProjectsHaveNoOwnerScopedResidue | 类级 `@EnabledIfSystemProperty(manao.stage6.cleanup.verify=true)`（真实清理残留核验；本轮未启用） |
+
+诊断噪声分类：日志中的 `[Fatal Error] ... "testsuite" ...` 来自
+`DevelopmentBuildExecutorTest` 故意注入的畸形 Surefire XML fixture（测试源码内
+`unterminated attribute` 用例），用于验证失败构建报告解析；该类 32/32 PASS，不是套件失败。
+
+DB 卫生：套件通过 JdbcStoreTestSupport 创建并在结束时删除各自的 `manao_stage6_<uuid>` schema；
+运行后仅剩运行前已存在的两个历史遗留 `manao_stage6_a7779c…` / `manao_stage6_edea20…`（未新增
+残留）；`manao_poc4` 未被写入（仅名称核对），本地无 `manao_poc4_6b`。未连接真实集群/邮件。
 
 ## 6. 迁移与部署步骤（全部未执行，需用户授权）
 
@@ -301,12 +323,14 @@ conversation/task ID 替换拒绝、A 到期→B 登录、旧响应迟到、改�
 | # | 问题 | 影响 | 状态 |
 | --- | --- | --- | --- |
 | K1 | 改密成功后登录页提示曾因 RequireAuth 重定向覆盖 router state 而缺失 | 提示语缺失（安全行为正常） | **FIXED（390f6a4）**：改为一过性内存提示，恰好一次、不复播；独立复核 PASS/APPROVED；本轮 mock e2e 已断言 |
-| N1 | Task 6 terminal 撤销竞态分支未结算 LIVE session（复核发现，静态分析无复现） | 可能遗留 LIVE 行/active marker，后续 terminal 409 | **OPEN / 修复轮进行中**；修复提交 + 验证 + 复核前相关行为记 NOT_REVERIFIED |
-| B1 | 后端完整 Maven 套件未运行（Maven 与 Task 6 修复轮串行） | 全局 strict Jackson/V18/无关控制器全量回归未验证 | **NOT_RUN（Phase B-2）** |
+| N1 | Task 6 terminal 撤销竞态分支未结算 LIVE session（复核发现，静态分析无复现） | 可能遗留 LIVE 行/active marker，后续 terminal 409 | **FIXED（fa5ac26 + fcedcc4）**：closeRevoked 走单会话 settleAndClose；确定性 stale-version 测试覆盖 4401、PTY 未开、无 LIVE、INTERRUPTED 恰一次、后续 reserve 成功；fix1 复审 PASS |
+| M-a | 终止门非异常安全（CAS 后 send 抛 RuntimeException 可能永久残留 LIVE） | 与 N1 同类后果（异常路径） | **FIXED（b132fb1）**：try/finally 保证 settle/close；throwing fake session 测试；Lead 定向 36/36；最终整分支复核覆盖 |
+| M-b/M-c/M-d | Task 6 fix 轮遗留：部分路径回归测试缺口、stale-version 帧序契约未固定、SSE auth.revoked 改为尽力异步的语义说明 | 测试/契约清晰度；不阻断功能 | **DEFERRED（最终分诊）**：记录在 reviews/task-6-fix1-rereview.md；修复轮复审确认非 Critical/Important |
+| B1 | 后端完整 Maven 套件未运行（Maven 与 Task 6 修复轮串行） | 全局 strict Jackson/V18/无关控制器全量回归未验证 | **PASS（Phase B-2）**：1076 tests / 0 failures / 0 errors / 2 skipped，BUILD SUCCESS，39:54，disposable MySQL（2 skipped 为真实集群/清理证据的环境门） |
 | F1 | 前端全量 vitest 非全绿：1 个已知 visual spec + 3 个并发负载 flake（隔离 92/92 PASS） | 不能声称前端全量绿 | 记录为已知/环境性；未改源码 |
 | F2 | 精确 `pwsh -NoProfile -File ...` 无法执行（本机无 pwsh） | 两脚本 ps1 证据仅 PS 5.1 | NOT_RUN（环境限制；PS 5.1 等价 PASS） |
-| R1 | 复核 deferred minors：T4 N2/N4/N5/N6、T5 若干 Minor、T6 M1–M6、T7 M1–M4、T3 跨控制器 WARN | 不阻断本地交付，但最终整分支复核需逐项分诊 | OPEN（最终复核） |
-| R2 | 最终整分支独立复核未执行；Task 6 N1 修复后需复核 | 整体质量门未闭合 | NOT_RUN |
+| R1 | 复核 deferred minors：T4 N2/N4/N5/N6、T5 若干 Minor、T6 M-b/M-c/M-d、T7 M1–M4 | 不阻断本地交付，但最终整分支复核需逐项分诊 | OPEN（最终复核） |
+| R2 | 最终整分支独立复核未执行（需覆盖 Task 6 b132fb1 与全量套件结果） | 整体质量门未闭合 | NOT_RUN |
 | S1 | 真实 SMTP/邮件/集群/部署/Secret/运行库迁移/两账号/网络/清理 | 真实环境验收与 PASS 门 | NOT_RUN（需用户授权） |
 
 ## 10. PASS 判定
@@ -314,8 +338,11 @@ conversation/task ID 替换拒绝、A 到期→B 登录、旧响应迟到、改�
 **MULTI_ACCOUNT_MVP_PASS 未授予。**
 
 授予条件（按设计与计划）：范围内证据齐全，即代码/本地测试、独立复核、用户人工邮件验证、
-旧策略预览+Apply 回读、两账号隔离与云端验收全部有真实证据，且无未解决 Critical/Important
-（含 Task 6 N1 与最终整分支复核）。当前仅完成本地实现、本地定向/全量前端证据、mock 浏览器
-验收与部署/维护脚本 fixture；真实邮件、真实迁移/Apply、云端与两账号验收仍 NOT_RUN，后端全量
-套件待 Phase B-2，Task 6 N1 修复轮未闭环。因此只能记录“本地范围内可复核的通过项”与明确的
-NOT_RUN 边界，**不能整体 PASS，也不能由 mock/fixture 替代真实邮件与云端验收**。
+旧策略预览+Apply 回读、两账号隔离与云端验收全部有真实证据，且无未解决 Critical/Important。
+当前本地范围已闭环：后端完整套件 1076/0/0/2 PASS（disposable MySQL）、前端 typecheck/build/dist/
+boundary PASS、mock 浏览器验收 4/4 PASS、部署/维护脚本 fixture PASS，K1 与 Task 6 N1/M-a 已修复；
+前端全量 vitest 仍有 1 个已知既有 visual spec 失败 + 3 个隔离即通过的负载 flake（如实记录）。
+但真实 126 邮件、真实集群/V17+V18 迁移与旧策略 Apply、云端两账号隔离、网络探测、清理与用户
+人工验收仍 NOT_RUN，最终整分支独立复核与 M-b/M-c/M-d 分诊未完成。因此只能记录“本地范围内可
+复核的通过项”与明确 NOT_RUN 边界，**MULTI_ACCOUNT_MVP_PASS 仍不授予，也不能由 mock/fixture
+替代真实邮件与云端验收**。
