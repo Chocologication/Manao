@@ -2,13 +2,20 @@ import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import { MemoryRouter, Route, Routes, useLocation, useNavigationType } from 'react-router';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { login } from '../../api/authApi';
 import { HttpClient, setHttpClient } from '../../api/httpClient';
-import { authSession, handleUnauthorized, httpClient } from '../../app/appRuntime';
+import {
+  authSession,
+  consumeLoginNotice,
+  handleUnauthorized,
+  httpClient,
+} from '../../app/appRuntime';
 import { server } from '../../mocks/node';
 import { AuthProvider } from './AuthProvider';
 import { ChangePasswordPage } from './ChangePasswordPage';
+import { LoginPage } from './LoginPage';
+import { RequireAuth } from './RequireAuth';
 
 const CURRENT_INPUT = '当前密码';
 const NEW_INPUT = '新密码';
@@ -75,6 +82,7 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   setHttpClient(httpClient);
+  consumeLoginNotice();
   if (authSession.getSnapshot().status === 'authenticated') {
     authSession.clear('logout');
   }
@@ -92,7 +100,9 @@ describe('ChangePasswordPage', { timeout: 15_000 }, () => {
     const snapshot = authSession.getSnapshot();
     expect(snapshot).toEqual({ status: 'anonymous', reason: 'logout' });
     expect(authSession.getAccessToken()).toBeNull();
-    expect(readLocation().stateJson).toContain('passwordChanged');
+    // The confirmation travels as an in-memory one-shot notice: RequireAuth's
+    // redirect may overwrite the router location state.
+    expect(consumeLoginNotice()).toBe('passwordChanged');
   });
 
   it('shows an inline error for a wrong current password without logging out', async () => {
@@ -204,5 +214,40 @@ describe('ChangePasswordPage', { timeout: 15_000 }, () => {
     } finally {
       globalThis.fetch = originalFetch;
     }
+  });
+
+  it('shows the password-changed confirmation exactly once after the guard redirect', async () => {
+    vi.spyOn(HTMLMediaElement.prototype, 'play').mockResolvedValue();
+    vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => {});
+    await authenticateAsAlice();
+    const user = userEvent.setup();
+    setHttpClient(httpClient);
+    const view = render(
+      <AuthProvider session={authSession}>
+        <MemoryRouter initialEntries={['/account/password']}>
+          <LocationEcho />
+          <Routes>
+            <Route path="/account" element={<RequireAuth />}>
+              <Route path="password" element={<ChangePasswordPage />} />
+            </Route>
+            <Route path="/login" element={<LoginPage />} />
+            <Route path="/projects" element={<main>PROJECTS_PAGE</main>} />
+          </Routes>
+        </MemoryRouter>
+      </AuthProvider>,
+    );
+    await fillForm(user, 'demo-pass', 'brand-new-pass-1');
+    await user.click(screen.getByRole('button', { name: SUBMIT_LABEL }));
+
+    // The protected route's anonymous redirect races the explicit navigate; the
+    // one-shot in-memory notice must still surface the confirmation on /login.
+    expect(await screen.findByRole('status')).toHaveTextContent('密码已更新');
+    expect(readLocation().pathname).toBe('/login');
+    expect(authSession.getSnapshot()).toEqual({ status: 'anonymous', reason: 'logout' });
+    expect(screen.getAllByRole('status')).toHaveLength(1);
+    const stored = JSON.stringify({ ...localStorage, ...sessionStorage });
+    expect(stored).not.toContain('passwordChanged');
+    expect(window.location.href).not.toContain('passwordChanged');
+    view.unmount();
   });
 });

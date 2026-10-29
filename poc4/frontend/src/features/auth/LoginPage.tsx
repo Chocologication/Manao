@@ -5,12 +5,27 @@ import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'rea
 import { Link, Navigate, useLocation, useNavigate } from 'react-router';
 import { login } from '../../api/authApi';
 import { ApiRequestError } from '../../api/ApiRequestError';
+import {
+  consumeLoginNotice,
+  type LoginLifecycleNotice,
+} from '../../app/appRuntime';
 import { useAuth } from './AuthProvider';
 import { useReducedMotion } from '@/features/preferences/motionPreferences';
 
 gsap.registerPlugin(useGSAP);
 
 const DEFAULT_POST_LOGIN_PATH = '/projects';
+
+function loginNoticeMessage(notice: LoginLifecycleNotice): string {
+  switch (notice) {
+    case 'registered':
+      return '注册成功，请使用新账号登录。';
+    case 'passwordReset':
+      return '密码已重置，请使用新密码登录。';
+    case 'passwordChanged':
+      return '密码已更新，请重新登录。';
+  }
+}
 const HERO_VIDEO =
   'https://videos.pexels.com/video-files/3130284/3130284-hd_1920_1080_30fps.mp4';
 const HERO_POSTER =
@@ -356,6 +371,16 @@ export function LoginPage() {
   const [transitioning, setTransitioning] = useState(false);
   const transitionResolveRef = useRef<(() => void) | null>(null);
   const mountedRef = useRef(true);
+  const [oneShotNotice, setOneShotNotice] = useState<LoginLifecycleNotice | null>(null);
+  const oneShotConsumedRef = useRef(false);
+
+  useEffect(() => {
+    if (snapshot.status !== 'anonymous' || oneShotConsumedRef.current) {
+      return;
+    }
+    oneShotConsumedRef.current = true;
+    setOneShotNotice(consumeLoginNotice());
+  }, [snapshot.status]);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -379,13 +404,15 @@ export function LoginPage() {
     | { registered?: boolean; passwordReset?: boolean; passwordChanged?: boolean }
     | null;
   const successMessage =
-    lifecycle?.registered === true
-      ? '注册成功，请使用新账号登录。'
-      : lifecycle?.passwordReset === true
-        ? '密码已重置，请使用新密码登录。'
-        : lifecycle?.passwordChanged === true
-          ? '密码已更新，请重新登录。'
-          : null;
+    oneShotNotice !== null
+      ? loginNoticeMessage(oneShotNotice)
+      : lifecycle?.registered === true
+        ? '注册成功，请使用新账号登录。'
+        : lifecycle?.passwordReset === true
+          ? '密码已重置，请使用新密码登录。'
+          : lifecycle?.passwordChanged === true
+            ? '密码已更新，请重新登录。'
+            : null;
   const displayAlertMessage =
     error === 'Invalid username or password'
       ? '用户名或密码错误'

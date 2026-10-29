@@ -10,6 +10,7 @@ import {
 } from 'react-router';
 import type { LoginResponse } from '../../contracts/auth';
 import { HttpClient, setHttpClient } from '../../api/httpClient';
+import { consumeLoginNotice, postLoginNotice } from '../../app/appRuntime';
 import { AuthProvider } from './AuthProvider';
 import { createAuthSession, type AuthSession } from './authSession';
 import { LoginPage } from './LoginPage';
@@ -104,6 +105,7 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   setHttpClient(null);
+  consumeLoginNotice();
   useMotionPreferences.setState({ enabled: true });
   Reflect.deleteProperty(document, 'startViewTransition');
 });
@@ -430,6 +432,27 @@ describe('LoginPage account lifecycle entries', () => {
   it('does not show lifecycle success feedback for an ordinary visit', () => {
     renderAuthApp({});
 
+    expect(screen.queryByRole('status')).not.toBeInTheDocument();
+  });
+});
+describe('LoginPage one-shot lifecycle notice', () => {
+  it('shows the password-changed banner once, consumes it and never persists it', async () => {
+    postLoginNotice('passwordChanged');
+    const first = renderAuthApp({});
+
+    expect(await screen.findByRole('status')).toHaveTextContent('密码已更新，请重新登录');
+    expect(screen.getAllByRole('status')).toHaveLength(1);
+    expect(JSON.stringify({ ...localStorage, ...sessionStorage })).not.toContain('passwordChanged');
+    expect(window.location.href).not.toContain('passwordChanged');
+    first.unmount();
+
+    // A later unrelated visit must not replay the confirmation.
+    renderAuthApp({});
+    expect(screen.queryByRole('status')).not.toBeInTheDocument();
+  });
+
+  it('keeps the ordinary visit free of lifecycle banners', () => {
+    renderAuthApp({});
     expect(screen.queryByRole('status')).not.toBeInTheDocument();
   });
 });

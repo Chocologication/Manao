@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { Link, useNavigate } from 'react-router';
 import { authErrorCode, changePassword, isNetworkError } from '../../api/authApi';
-import { authSession } from '../../app/appRuntime';
+import { authSession, postLoginNotice } from '../../app/appRuntime';
 import { useAuth } from './AuthProvider';
 import { AuthField, AuthPageFrame, validateNewPassword } from './RegisterPage';
 
@@ -56,8 +56,12 @@ export function ChangePasswordPage() {
       await changePassword({ currentPassword, newPassword });
       if (!mountedRef.current) return;
       if (authSession.getSnapshot() === expectedSnapshot) {
+        // The protected route's anonymous redirect races this navigation and can
+        // overwrite router location state, so the confirmation is a one-shot
+        // in-memory notice consumed by LoginPage instead of navigation state.
+        postLoginNotice('passwordChanged');
         clear('logout');
-        navigate('/login', { replace: true, state: { passwordChanged: true } });
+        navigate('/login', { replace: true });
         return;
       }
     } catch (reason) {

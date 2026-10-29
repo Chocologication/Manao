@@ -101,20 +101,12 @@ test('change password: success terminates the session and requires a re-login', 
   await page.getByRole('button', { name: '修改密码', exact: true }).click();
 
   // Success only clears the session captured when the request started, so the account is
-  // back on the login route and must authenticate again. KNOWN COSMETIC DEFECT (found by
-  // this real-browser run, reported for a Task 7 follow-up): the explicit
-  // navigate('/login', { state: { passwordChanged: true } }) is overwritten by
-  // RequireAuth's redirect state ({ from: '/account/password' }), so the
-  // "密码已更新，请重新登录" banner is currently NOT displayed even though the session is
-  // correctly terminated. The security-relevant behavior below is what this acceptance
-  // spec asserts; the missing banner is recorded as a finding instead of being masked.
-  test.info().annotations.push({
-    type: 'known-defect',
-    description:
-      'Change-password success banner is not displayed: RequireAuth redirect state overrides the '
-      + 'passwordChanged navigation state. Cosmetic only; session termination is verified here.',
-  });
+  // back on the login route and must authenticate again. The confirmation is carried by a
+  // one-shot in-memory notice because RequireAuth's anonymous redirect overwrites the
+  // router location state ({ from: '/account/password' }); it must be visible exactly once.
   await expect(page).toHaveURL(/\/login$/);
+  await expect(page.getByRole('status')).toContainText('密码已更新，请重新登录');
+  await expect(page.getByRole('status')).toHaveCount(1);
   await expect(page.getByRole('button', { name: 'Sign in', exact: true })).toBeVisible();
 
   // The old password is gone: the mock verification rejects it without logging in.
@@ -131,6 +123,13 @@ test('change password: success terminates the session and requires a re-login', 
   await page.getByRole('link', { name: '返回工作台', exact: true }).click();
   await expect(page).toHaveURL(/\/projects/);
   await expect(page.getByRole('button', { name: '账户与偏好', exact: true })).toBeVisible();
+
+  // A later unrelated visit to /login (after an explicit logout) must not replay the
+  // one-shot confirmation: it is consumed on first display and never persisted.
+  await page.getByRole('button', { name: '账户与偏好', exact: true }).click();
+  await page.getByRole('button', { name: '退出登录', exact: true }).click();
+  await expect(page).toHaveURL(/\/login$/);
+  await expect(page.getByText('密码已更新，请重新登录')).toHaveCount(0);
 });
 
 test('login page offers registration and recovery entries and no captcha or demo credentials', async ({ page }) => {

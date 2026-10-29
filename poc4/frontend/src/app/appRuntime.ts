@@ -93,6 +93,27 @@ export function handleUnauthorized(): void {
   authSession.clear('unauthorized');
 }
 
+/** One-shot confirmations displayed on the login page after a session-ending flow. */
+export type LoginLifecycleNotice = 'registered' | 'passwordReset' | 'passwordChanged';
+
+let pendingLoginNotice: LoginLifecycleNotice | null = null;
+
+/**
+ * Router location state is not a reliable carrier for the change-password
+ * confirmation: RequireAuth's anonymous redirect can overwrite it with
+ * { from: ... }. Keep the one-shot notice in memory only (never localStorage,
+ * sessionStorage or the URL); LoginPage consumes and clears it on render.
+ */
+export function postLoginNotice(notice: LoginLifecycleNotice): void {
+  pendingLoginNotice = notice;
+}
+
+export function consumeLoginNotice(): LoginLifecycleNotice | null {
+  const notice = pendingLoginNotice;
+  pendingLoginNotice = null;
+  return notice;
+}
+
 /**
  * Stream revocation must only clear the session it was opened under: a late
  * 4401/revoked event from an old connection can never terminate a newer login.
