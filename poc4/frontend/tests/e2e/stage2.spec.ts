@@ -798,7 +798,7 @@ for (const viewport of viewports) {
 
     await captureViewport(
       page,
-      `../docs/evidence/stage-2/${testInfo.project.name}-workbench-${viewport.name}.png`,
+      testInfo.outputPath(`${testInfo.project.name}-workbench-${viewport.name}.png`),
       viewport,
     );
 
@@ -816,7 +816,7 @@ for (const viewport of viewports) {
 
     await captureViewport(
       page,
-      `../docs/evidence/stage-2/${testInfo.project.name}-blocked-${viewport.name}.png`,
+      testInfo.outputPath(`${testInfo.project.name}-blocked-${viewport.name}.png`),
       viewport,
     );
   });

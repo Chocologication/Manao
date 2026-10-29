@@ -1224,7 +1224,7 @@ for (const viewport of viewports) {
 
     await captureViewport(
       page,
-      `../docs/evidence/stage-3/${testInfo.project.name}-dirty-${viewport.name}.png`,
+      testInfo.outputPath(`${testInfo.project.name}-dirty-${viewport.name}.png`),
       viewport,
     );
 
@@ -1241,7 +1241,7 @@ for (const viewport of viewports) {
 
     await captureViewport(
       page,
-      `../docs/evidence/stage-3/${testInfo.project.name}-delete-dialog-${viewport.name}.png`,
+      testInfo.outputPath(`${testInfo.project.name}-delete-dialog-${viewport.name}.png`),
       viewport,
     );
   });

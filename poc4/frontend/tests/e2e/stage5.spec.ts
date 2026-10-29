@@ -1314,7 +1314,7 @@ test.fixme('keyboard-only terminal workflow and branded visual evidence stay acc
     });
     expect(pngHasNonBackgroundPixels(xtermBytes)).toBe(true);
     const terminalBytes = await page.screenshot({
-      path: `../docs/evidence/stage-5/${testInfo.project.name}-terminal-${viewport.name}.png`,
+      path: testInfo.outputPath(`${testInfo.project.name}-terminal-${viewport.name}.png`),
       animations: 'disabled', caret: 'hide', scale: 'css', fullPage: false,
     });
     expect(pngSize(terminalBytes)).toEqual({ width: viewport.width, height: viewport.height });
@@ -1325,7 +1325,7 @@ test.fixme('keyboard-only terminal workflow and branded visual evidence stay acc
     await assertInsideViewport(auditTable.locator('xpath=..'));
     await assertInsideViewport(auditTable.getByRole('columnheader', { name: 'Command' }));
     const auditBytes = await page.screenshot({
-      path: `../docs/evidence/stage-5/${testInfo.project.name}-audit-${viewport.name}.png`,
+      path: testInfo.outputPath(`${testInfo.project.name}-audit-${viewport.name}.png`),
       animations: 'disabled', caret: 'hide', scale: 'css', fullPage: false,
     });
     expect(pngSize(auditBytes)).toEqual({ width: viewport.width, height: viewport.height });
@@ -1409,7 +1409,7 @@ test('captures branded Terminal and Audit evidence with viewport and pixel asser
     });
     expect(pngHasNonBackgroundPixels(xtermBytes)).toBe(true);
     const terminalBytes = await page.screenshot({
-      path: `../docs/evidence/stage-5/${testInfo.project.name}-terminal-${viewport.name}.png`,
+      path: testInfo.outputPath(`${testInfo.project.name}-terminal-${viewport.name}.png`),
       animations: 'disabled', caret: 'hide', scale: 'css', fullPage: false,
     });
     expect(pngSize(terminalBytes)).toEqual({ width: viewport.width, height: viewport.height });
@@ -1420,7 +1420,7 @@ test('captures branded Terminal and Audit evidence with viewport and pixel asser
     await assertInsideViewport(auditTable.locator('xpath=..'));
     await assertInsideViewport(auditTable.getByRole('columnheader', { name: 'Command' }));
     const auditBytes = await page.screenshot({
-      path: `../docs/evidence/stage-5/${testInfo.project.name}-audit-${viewport.name}.png`,
+      path: testInfo.outputPath(`${testInfo.project.name}-audit-${viewport.name}.png`),
       animations: 'disabled', caret: 'hide', scale: 'css', fullPage: false,
     });
     expect(pngSize(auditBytes)).toEqual({ width: viewport.width, height: viewport.height });

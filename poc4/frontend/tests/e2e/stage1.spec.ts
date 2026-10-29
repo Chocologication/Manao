@@ -409,7 +409,7 @@ for (const viewport of viewports) {
     await assertNoPanelOverlap(page);
     await captureViewport(
       page,
-      `../docs/evidence/stage-1/${testInfo.project.name}-login-${viewport.name}.png`,
+      testInfo.outputPath(`${testInfo.project.name}-login-${viewport.name}.png`),
       viewport,
     );
 
@@ -425,7 +425,7 @@ for (const viewport of viewports) {
     await assertProjectStateLabelsUnclipped(page);
     await captureViewport(
       page,
-      `../docs/evidence/stage-1/${testInfo.project.name}-projects-${viewport.name}.png`,
+      testInfo.outputPath(`${testInfo.project.name}-projects-${viewport.name}.png`),
       viewport,
     );
   });

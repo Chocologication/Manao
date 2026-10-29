@@ -62,7 +62,7 @@
 | 删除依赖真实存储策略和只读集群信息 | [ProjectResourceCleaner.java](../../../../poc4/backend/src/main/java/com/manao/poc4/kubernetes/ProjectResourceCleaner.java)会 list PV、get StorageClass，核查 Delete/NFS 删除参数；旧计划禁止一切 PV 权限已不适用 |
 | 镜像和测试材料需要补齐 | 有 agent/runner Dockerfile；没有前后端完整部署资产。现有 [Playwright 配置](../../../../poc4/frontend/playwright.config.ts)固定本机 URL，并可能启动 mock 服务，不能直接称为云端验收 |
 
-旧 [6B 设计](../../../../poc4/docs/2026-08-27-ensoai-stage-6-real-backend-kubernetes-design.md)保留本机 Vite 和 backend Service port-forward，明确不含云端前端入口。本文在本次目标范围内替代旧 [Tasks 10–12](../../../../poc4/docs/plans/2026-08-27-ensoai-stage-6-real-backend-kubernetes-implementation-plan.md)的执行顺序，不改写历史记录。
+旧 [6B 设计](../../poc4/2026-08-27-ensoai-stage-6-real-backend-kubernetes-design.md)保留本机 Vite 和 backend Service port-forward，明确不含云端前端入口。本文在本次目标范围内替代旧 [Tasks 10–12](../../poc4/plans/2026-08-27-ensoai-stage-6-real-backend-kubernetes-implementation-plan.md)的执行顺序，不改写历史记录。
 
 ## 4. 仍未验证的假设
 

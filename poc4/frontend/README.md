@@ -36,6 +36,8 @@ pnpm test:e2e:ai-terminal-settlement
 
 `pnpm test:e2e*` 会先执行 `pnpm build:mock` 并覆盖 `dist/`。扫描生产排除项之前必须再跑一次 `pnpm build`。
 
+文档与验收入口见[POC4 文档导航](../docs/README.md)。早期阶段0–6设计、计划和既有证据已归档至[历史资料](../../docs/old_docs/poc4/)；`spike.spec.ts`、`stage1.spec.ts` 至 `stage5.spec.ts` 的新截图使用 `testInfo.outputPath(...)`，写入每次测试独立的 `test-results/` 子目录，不覆盖历史验收附件。
+
 ## 合成 mock 凭据
 
 仅用于 `pnpm dev:mock` 与自动化测试，**不是真实后端凭据**，也不是生产账号：

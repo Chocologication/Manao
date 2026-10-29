@@ -11,6 +11,7 @@
 | Project、Run、AgentTask 等术语的含义 | [领域术语](../CONTEXT.md) |
 | 修改、测试、运行环境与清理的约定 | [协作与验证指南](development-guide.md) |
 | 前端启动、回归与界面变更记录 | [Frontend README](../poc4/frontend/README.md) |
+| POC4 验收专题、附件与早期工作台归档 | [POC4 文档导航](../poc4/docs/README.md) |
 | 最近一次 AI 收尾修复的发布、回滚与旧任务处理 | [AI 收尾维护手册](../poc4/deploy/ai-terminal-settlement/README.md) |
 
 ## 专题资料（按需展开）
@@ -45,6 +46,7 @@
 - 云端与本地联调的环境边界：[基础设施说明](Stage6-Infrastructure-Status.md)。
 - 已接受的 6A 基线：[6A 当前事实](Stage6A-Current-Facts.md)；旧方案为何调整：[阶段演进记录](Stage6A-Evolution-Timeline.md)。
 - AI 集成前的 POC2、POC4、6A/6B 及 Java/Python 资料：[历史计划与交接](old_docs/superpowers/plans/)、[历史设计与审查](old_docs/superpowers/specs/)。以 2026-10-13 AI 集成开始为分界归档此前的17份文档，文件名和历史结论保留；这些资料用于追溯，不作为当前执行指令。
+- 早期 POC4 / EnsoAI 工作台资料：[设计与调查](old_docs/poc4/)、[实施计划](old_docs/poc4/plans/)、[阶段0–6证据](old_docs/poc4/evidence/)。共128个历史文件按原相对层级归档，验收结论、截图和原始收据保留；AI、Java、Python与6B验收仍从[POC4 文档导航](../poc4/docs/README.md)进入。
 
 后续 AI 发布是基础环境之上的增量；具体镜像、迁移和回滚读该次发布手册，不能只重放旧的 6B 部署步骤。旧 gate、旧 FAIL 和历史环境快照都不代表当前状态。
 
@@ -61,6 +63,8 @@
 | `development-guide.md` | 按操作场景查阅的长期工作约定 |
 | `research/` / `superpowers/specs/` / `superpowers/plans/` | 方案评估 / AI 设计合同 / AI 执行计划与交接 |
 | `old_docs/superpowers/specs/` / `old_docs/superpowers/plans/` | AI 集成前的历史设计、审查、实施计划与交接；按主题追溯 |
+| `old_docs/poc4/` | 早期 POC4 工作台设计、调查、计划及阶段0–6历史证据 |
+| `../poc4/docs/README.md` | 保留的验收专题与历史资料入口，不复制验收状态矩阵 |
 | `../poc4/docs/evidence/<topic>/` | 日期、验证范围、失败与实际结果 |
 | `../poc4/deploy/<topic>/` | 发布身份、操作命令、迁移与回滚 |
 

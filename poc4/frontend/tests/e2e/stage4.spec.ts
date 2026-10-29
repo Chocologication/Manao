@@ -1787,7 +1787,7 @@ for (const viewport of viewports) {
     }
     await captureViewport(
       page,
-      `../docs/evidence/stage-4/${testInfo.project.name}-run-${viewport.name}.png`,
+      testInfo.outputPath(`${testInfo.project.name}-run-${viewport.name}.png`),
       viewport,
     );
 
@@ -1814,7 +1814,7 @@ for (const viewport of viewports) {
     }
     await captureViewport(
       page,
-      `../docs/evidence/stage-4/${testInfo.project.name}-truncated-log-${viewport.name}.png`,
+      testInfo.outputPath(`${testInfo.project.name}-truncated-log-${viewport.name}.png`),
       viewport,
     );
   });
