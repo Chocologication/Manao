@@ -16,7 +16,8 @@
 - 现有账号和项目原样保留，允许邮箱为空，后续通过受控维护流程人工绑定；绑定前不能邮件找回。
 - 不增加邀请码；提供可关闭注册的配置开关，关闭注册不影响登录、找回和修改密码。
 - 改密或重置成功后使该账号所有旧登录凭据失效，并关闭旧终端、日志和 AI 显示连接；后台应用与 AI 任务继续执行。
-- 发信账号、SMTP 主机/端口/TLS/凭据按用户要求保留待补配置；不虚构邮箱或密钥。
+- 2026-10-29用户补充发信邮箱 shilizhengnanren@126.com；采用SMTP客户端授权码认证，配置见第7节。授权码仅在后续获准配置时由Secret/受控环境注入，不写入仓库、计划、交接提示词或日志。
+- 真实验证码发送、收件与提交流程由用户手动验证。此补充仅更新计划，不授权实现、SMTP登录/发信探测或部署；agent不自动读取邮箱或发送测试验证码。
 
 ## 2. 从第一性原理确定最小结构
 
@@ -24,7 +25,7 @@
 
 采用一个账号服务、一个用户存储、一个验证码存储和薄邮件适配器。图形码与邮箱码共用一次性挑战存储，只保留本次真正需要的三种用途。前端注册和找回各用一页内的两个步骤，不增加单独的验证中心。
 
-实施顺序为：隔离修补 → 客户端会话清理 → 账号/验证码/密码合同 → 页面与联调 → 定向部署和验收。SMTP 尚未配置只阻塞真实发信与相关云端验收，不阻塞前两项或本地替身验证；替身成功不能授予真实邮箱 PASS。
+实施顺序为：隔离修补 → 客户端会话清理 → 账号/验证码/密码合同 → 页面与联调 → 定向部署和验收。发信参数已明确，运行环境中的Secret注入与启用尚未执行；它们不阻塞前两项或本地替身验证。真实邮箱流程交用户手动验证，替身成功不能授予真实邮箱 PASS。
 
 ## 3. 已核实的复用点与修复点
 
@@ -111,19 +112,25 @@ authenticate 接受新会话前若仍有旧 authenticated 状态，先结束旧�
 
 显式 connection/read/write timeout 分别为 5000/3000/5000ms；无队列、outbox、自动重试或多邮件 provider。SMTP 账号未配置时注册发码/找回返回固定 503 `MAIL_NOT_CONFIGURED`，现有登录与改密仍可用。注册开关关闭时注册发码和最终注册都拒绝，已发注册码也不能绕过开关。
 
-用户明确要求保留的配置占位：
+2026-10-29邮件配置补充：用户截图显示IMAP/SMTP服务已开启，SMTP为smtp.126.com、IMAP为imap.126.com，并支持SSL。Manao只需SMTP发送验证码，不实现IMAP收信、邮件轮询或从邮箱自动取码。截图未给端口；依据网易官方帮助选择465/隐式SSL。服务开通状态来自用户截图，不是本轮连接验证结果。
 
 | 配置 | 本次状态 | 后续用途 |
 | --- | --- | --- |
-| `MANAO_REGISTRATION_ENABLED` | 发布默认 false | 验收后手动打开 |
-| `MANAO_MAIL_ENABLED` | 默认 false | sender 配齐后打开 |
-| `MANAO_MAIL_HOST` / `MANAO_MAIL_PORT` | 用户后续补充 | SMTP 地址 |
-| `MANAO_MAIL_USERNAME` / `MANAO_MAIL_PASSWORD` | 用户后续补充，Secret 注入 | 发信账号及授权凭据 |
-| `MANAO_MAIL_FROM` | 用户后续补充 | 发件人地址 |
-| `MANAO_MAIL_TLS_MODE` | 用户后续补充，starttls 或 ssl | STARTTLS 强制或隐式 TLS，禁止明文回退 |
+| `MANAO_REGISTRATION_ENABLED` | 发布默认 false | 用户授权的人工注册验收窗口启用，正式开放依验收结果决定；本轮不启用 |
+| `MANAO_MAIL_ENABLED` | 默认 false；仅在获准配置后启用 | 参数确定不等于已启用 |
+| `MANAO_MAIL_HOST` | `smtp.126.com` | SMTP发信服务器 |
+| `MANAO_MAIL_PORT` | `465` | 隐式SSL端口，来源为官方帮助 |
+| `MANAO_MAIL_USERNAME` | `shilizhengnanren@126.com` | 完整邮箱地址作为SMTP用户名 |
+| `MANAO_MAIL_PASSWORD` | 使用用户提供的客户端授权码，运行时Secret注入；文档不保存具体值 | 不是邮箱网页登录密码 |
+| `MANAO_MAIL_FROM` | `shilizhengnanren@126.com` | 与SMTP账号一致的发件人 |
+| `MANAO_MAIL_TLS_MODE` | `ssl` | 465隐式TLS，不混用STARTTLS，不明文回退 |
 | `MANAO_AUTH_CHALLENGE_SECRET` | 发布时安全生成并持久化，至少 32 随机字节 | 验证码 HMAC |
 
-`MANAO_MAIL_*` 在配置类映射至 JavaMailSender 的 SMTP 属性；不把空占位当有效配置，不在前端暴露。真实邮件验证在配置未齐时标 `NOT_RUN`。官方依据：Spring Boot 3.5.9 [Sending Email](https://github.com/spring-projects/spring-boot/blob/v3.5.9/spring-boot-project/spring-boot-docs/src/docs/antora/modules/reference/pages/io/email.adoc)，已通过 Context7 查询。
+`MANAO_MAIL_*` 在配置类映射至 JavaMailSender 的SMTP属性，启用SMTP认证、隐式SSL和证书/主机名验证，不信任全部证书；保留5000/3000/5000ms超时。不把空授权码当有效配置，不在前端暴露，也不以邮件服务启动为由自动执行SMTP连接测试。客户端授权码已在本会话提供，但本轮不将其存入任何文件；其他agent若没有可用Secret，应在真正需要配置时请用户通过受控渠道注入，不把查找聊天历史当作部署依赖。
+
+官方依据（2026-10-29查询，仅校对配置，未连接SMTP）：网易[客户端配置与SSL端口](https://help.mail.126.com/faqDetail.do?code=d7a5dc8471cd0c0e8b4b8f4f8e49998b374173cfe9171305fa1ce630d7f67ac25c12dcb3d46222b6)、[客户端授权码说明](https://help.mail.126.com/faqDetail.do?code=d7a5dc8471cd0c0e8b4b8f4f8e49998b374173cfe9171305fa1ce630d7f67ac2a5feb28b66796d3b)；Spring Boot 3.5.9 [Sending Email](https://github.com/spring-projects/spring-boot/blob/v3.5.9/spring-boot-project/spring-boot-docs/src/docs/antora/modules/reference/pages/io/email.adoc)此前已通过Context7查询。
+
+人工邮件验收由用户操作注册/找回的发送、收件和验证码提交；agent交付操作清单及无秘密的结果记录模板，涵盖正常送达、过期、重发旧码失效、重复使用和找回闭环。自动化只使用捕获型sender或本地测试替身，不使用真实126账号。用户尚未验证时记 `NOT_RUN（等待用户手动验证）`；用户反馈通过时明确标为用户手动验证，并记录日期/场景，不伪装成agent实测或因mock通过而授予完整PASS。
 
 ## 8. 密码更新与旧访问撤销
 
@@ -181,7 +188,7 @@ void closeOlder(String userId, long newVersion);
 4. 流撤销：签发中改密、consume后登记前改密、登记后handle attach前改密、SSE已选中帧时改密；新版本连接不被误关。
 5. 双账号顺序验证：每账号8项目，第9个拒绝；项目/文件读写/Run/日志/终端/AI会话和输出不能跨owner访问；公开应用仍匿名可用。
 
-真实MySQL测试沿用 `JdbcStoreTestSupport` 的 disposable schema；禁止reset运行库。真实SMTP、集群迁移、项目创建和流量探测在明确发布/验收执行阶段进行，本规划不操作它们。测试代码存在、mock通过、源码审核分别记录，不替代部署或真实隔离证据。
+真实MySQL测试沿用 `JdbcStoreTestSupport` 的disposable schema；禁止reset运行库。集群迁移、项目创建和流量探测在明确发布/验收执行阶段进行；真实SMTP验证码流程由用户手动验证。当前邮件补充仍仅是规划，不操作这些环境。测试代码存在、mock通过、源码审核及用户手动验证分别记录，不互相替代。
 
 后续人工绑定旧账号邮箱使用新计划维护脚本，按精确 userId 比对用户名、邮箱为空和唯一性，在用户确认邮箱控制权后条件更新并记录 verified_at；重复执行不覆盖既有邮箱，不提供公网管理员绑定接口。此类账号不得通过重新注册占用旧 id 或转移项目。
 

@@ -20,8 +20,28 @@
 - 唯一邮箱；不改名/换绑；旧账号email=NULL仍能登录，绑定前不能邮件找回。
 - 图形码只用于注册/找回发邮件，登录不需要。改密/重置撤销旧凭据与显示连接，Run/AI继续执行。
 - 前端pnpm；UTF-8无BOM；修改前重读，遵守.gitattributes。不提交凭据、验证码或用户原始内容。
-- 真MySQL测试仅disposable schema，禁止重置运行库。SMTP信息按用户要求保留配置占位，未配置的真实邮件验收标NOT_RUN。
-- 本轮创建文档不执行发信、集群修改、服务启动或业务测试；后续按用户实施/发布指令执行，不借用旧阶段授权。
+- 真MySQL测试仅disposable schema，禁止重置运行库。SMTP非秘密参数已由2026-10-29补充确定；授权码仅通过运行时Secret/受控环境注入，不保存到计划、example、交接提示词或日志。
+- 真实验证码发送、收件与提交由用户手动验证；自动化只用测试sender。本次补充不授权实现计划、SMTP登录/发信探测、集群修改、服务启动或业务测试；后续按用户实际发出的实施/发布指令执行，不借用旧阶段授权。
+
+## 2026-10-29邮件补充与交接边界
+
+用户提供的126邮箱已开启IMAP/SMTP服务，截图给出SMTP主机smtp.126.com、IMAP主机imap.126.com和SSL支持。Manao仅使用SMTP发送，不实现IMAP收信或自动读取验证码。发信参数如下；465端口由网易官方帮助补充，来源见设计第7节，未做SMTP连接验证。
+
+```dotenv
+MANAO_REGISTRATION_ENABLED=false
+MANAO_MAIL_ENABLED=false
+MANAO_MAIL_HOST=smtp.126.com
+MANAO_MAIL_PORT=465
+MANAO_MAIL_USERNAME=shilizhengnanren@126.com
+MANAO_MAIL_FROM=shilizhengnanren@126.com
+MANAO_MAIL_TLS_MODE=ssl
+# 使用客户端授权码，不是网页登录密码；下方保持空值，由运行环境Secret注入。
+MANAO_MAIL_PASSWORD=
+```
+
+以上仅是规划配置样例，不创建或启用实际环境变量/Secret。SMTP必须认证，采用465隐式TLS并校验证书和主机名，不混用STARTTLS或关闭证书验证；保留有限超时。授权码已由用户在会话中提供，本轮不落盘。接手agent若拿不到安全配置，只暂停真实邮件配置/人工交付环节，不虚构授权码、不通过聊天历史或仓库寻找密钥、不阻塞其余实现。
+
+用户负责手动触发注册/找回验证码发送、收件和提交；agent准备操作步骤、页面错误提示和脱敏结果模板。自动化不调用真实126的发信/登录/收信，不开启启动时SMTP连接测试。未收到用户结果前记录 `NOT_RUN（等待用户手动验证）`；用户反馈后注明“用户手动验证”、日期与场景，不写成agent实测。配置提供不等于送达已验证。
 
 ## 基线与职责
 
@@ -213,7 +233,7 @@ mvn -f poc4/backend/pom.xml '-Dtest=AuthChallengeStoreTest,CaptchaServiceTest,Em
 </dependency>
 ```
 
-timeout连接/读/写5000/3000/5000ms；配置选择强制STARTTLS或SSL，不明文回退。缺配置使用unavailable sender而不阻止现有登录启动；发送不自动重试。当前JVM和实际backend镜像都需生成可解码PNG；缺字体仅补必要依赖。
+timeout连接/读/写5000/3000/5000ms；本次部署配置固定smtp.126.com:465/ssl，SMTP用户名和from均为shilizhengnanren@126.com，密码参数实际注入客户端授权码。启用SMTP认证、证书及主机名验证，不明文回退；不为其他邮件provider增加新抽象。缺配置使用unavailable sender而不阻止现有登录启动，发送不自动重试，也不自动开启连接测试。此任务的sender验证只用捕获型替身/本地测试服务，不使用真实126账号。当前JVM和实际backend镜像都需生成可解码PNG；缺字体仅补必要依赖。
 - [ ] **4. GREEN与提交。** 重跑4类测试，检查没有答案/SMTP凭据日志，验证码无store/URL泄漏。提交 `feat: add one-time image and email verification challenges`。
 
 ## Task 5：注册、找回、改密HTTP闭环
@@ -370,7 +390,7 @@ pnpm --dir poc4/frontend test:boundary
 
 **Interfaces**
 - 旧账户维护 `bind-legacy-email.ps1 -UserId -ExpectedUsername -Email [-Apply]`，默认预览；数据库连接使用受控环境和参数化SQL，不命令行传密码。要求email NULL、操作者确认邮箱控制权，条件更新不覆盖现有绑定；无公网管理接口。
-- cloud Playwright配置真实baseURL、workers=1、无MSW、无自动服务启动；两个用户顺序使用。
+- cloud Playwright配置真实baseURL、workers=1、无MSW、无自动服务启动；使用用户手动完成邮件注册/验证后提供的专用测试账号，两个用户顺序使用。云端脚本不得自动申请真实邮箱码、连接IMAP取码或增加验证码绕过口；邮件链路与后续账号隔离验收分别记录。
 
 - [ ] **1. 本地浏览器及相关完整回归。**
 
@@ -381,21 +401,23 @@ pnpm --dir poc4/frontend test
 ```
 
 完整backend套件仅disposable测试配置；外部依赖不齐如实标NOT_RUN/失败，不把--list当通过。通过后不无理由重复全套。
-- [ ] **2. 邮件与镜像配置。** example只列设计第7节字段和空占位。用户补sender后核对from、TLS/port，凭据通过Secret注入不回显；未补时真实邮件相关步骤NOT_RUN，Task1/2可以独立修复发布。实际backend镜像生成PNG并验证可解码；缺字体只补必要依赖。
+- [ ] **2. 邮件与镜像配置。** example写入本计划补充块中的已知非秘密参数，MANAO_MAIL_PASSWORD始终留空并说明使用客户端授权码；运行时Secret注入需在获准配置时完成，不回显、不写入仓库。保持mail/registration默认false；在用户授权的人工注册验收窗口才能启用两项，正式开放依验收结果决定，agent不执行真实发送或SMTP登录探测。交付人工清单：正常注册送达、找回送达、验证码过期、重发使旧码失效、重复提交拒绝、重置后旧密码失效。用户未验收时邮件链NOT_RUN，不阻塞Task1/2独立修复。实际backend镜像生成PNG并验证可解码；缺字体只补必要依赖。
 - [ ] **3. 受控升级。** 记录SHA/digest；单backend Recreate、注册false。保留DB恢复点和策略备份，应用V17并核对旧账号/项目；预览完整旧policy清单后才Apply并回读。新登录使用version，旧JWT统一重登，旧NULL票据拒绝。回滚不down migrate或恢复广泛policy；关闭新账号入口时仍保留认证撤销和隔离修复，不能回退到忽略version的旧镜像并声称撤销有效。
-- [ ] **4. 两账号顺序验收。** 人工输入真实图形/邮箱码，不增生产绕过口。A注册验证登录→创建/编辑/运行/终端/AI展示→退出，B顺序执行；替换对方项目/文件/Run/ticket/conversation/task ID必须拒绝。各账户8项目，第9个拒绝；复用专用项目避免重复创建。覆盖A自然到期→B登录、旧响应迟到、改密/找回旧JWT/ticket/连接失效且后台任务继续、注册开关、旧账号人工绑定与找回。
+- [ ] **4. 两账号顺序验收。** 注册/找回的真实发送、收件和验证码提交先由用户手动完成；记录用户反馈后，获准的云端脚本使用准备好的账号做后续登录→创建/编辑/运行/终端/AI展示→退出，B再顺序执行，不代替用户触发真实邮件。替换对方项目/文件/Run/ticket/conversation/task ID必须拒绝。各账户8项目，第9个拒绝；复用专用项目避免重复创建。覆盖A自然到期→B登录、旧响应迟到、改密后旧JWT/ticket/连接失效且后台任务继续、注册开关与旧账号绑定；找回重置链的真实邮件部分仍由用户手动验证，其余撤销行为可自动化验证。
 
 网络：自身依赖连通、跨项目Service/Pod IP连接拒绝、公开应用匿名正常；补探workspace/platform是否存在跨账户读写旁路。发现可访问旁路则停止开放注册并保留最小证据，提出最小修复，不把计划当全网改造授权。
-- [ ] **5. 结果与清理。** acceptance分别列代码/mock/真实SMTP/策略迁移/流量/账号隔离/用户验收。只有范围内证据齐全才能授予 `MULTI_ACCOUNT_MVP_PASS`；否则逐项写实际状态。精确owner/project清理disposable资源，保留旧账号项目；清理不再使用的本地临时文件，禁止广泛git clean。按文件显式提交，合并/推送遵从用户后续指令。
+- [ ] **5. 结果与清理。** acceptance分别列代码/mock/用户手动邮件验证/策略迁移/流量/账号隔离/用户验收，写明证据来源。只有范围内证据齐全才能授予 `MULTI_ACCOUNT_MVP_PASS`；等待用户邮件验收时可交付本地实现，但整体PASS仍未授予，不能由mock替代。精确owner/project清理disposable资源，保留旧账号项目；清理不再使用的本地临时文件，禁止广泛git clean。按文件显式提交，合并/推送遵从用户后续指令。
 
 ## 自检与交接
 
 - [x] 设计每项要求能对应任务；Task1/2优先，Task6前不开放账号写入口。
 - [x] DTO、枚举、路径一致，无额外verify-email/resume路由。
-- [x] sender配置以外无未明确产品决策；实际环境值发布前核对，不能虚构。
+- [x] sender非秘密配置已补齐；授权码只在获准时注入运行环境，实际启用与用户手动验收仍未执行。
 - [x] 当前工作树正确，master和其他工作树保持原状。
 - [x] 单人使用仅简化容量，不取消owner、网络和异步会话边界。
 
 2026-10-29已完成规划自检及前端/账号合同的独立静态审查，已修正找回SMTP失败的显式邮箱枚举与改密迟到响应误退新会话两个合同问题。以上勾选只表示文档已核对，不表示Task1–8已实施或测试通过。
 
-规划交付后的第一个实施动作是Task1新增失败回归。当前未实施上述步骤，邮件及真实集群验收仍需对应执行阶段。
+2026-10-29邮件补充仅更新设计/计划，未授权或执行实现、Secret配置、真实发信与集群部署。邮件验证码链由用户手动验证的要求优先于较早的自动验收措辞。
+
+用户后续明确启动实施后，第一个动作是Task1新增失败回归。当前未实施上述步骤，邮件及真实集群验收仍需对应执行阶段。
