@@ -180,13 +180,14 @@ public final class AuthChallengeStore {
      */
     private void ensureSendSlot(AuthContracts.EmailPurpose purpose, String email, Instant now) {
         Timestamp nowTimestamp = Timestamp.from(now);
+        Timestamp pastTimestamp = Timestamp.from(now.minusSeconds(1));
         jdbc.update("INSERT INTO auth_challenge(id, purpose, email, user_id, auth_version_snapshot, "
                 + "answer_mac, state, expires_at, attempts, next_send_at, window_started_at, "
                 + "window_send_count, created_at, updated_at) "
                 + "VALUES (?, ?, ?, NULL, NULL, ?, 'FAILED', ?, 0, ?, ?, 0, ?, ?) "
                 + "ON DUPLICATE KEY UPDATE id = id",
-            newIdentifier(), purpose.name(), email, "0".repeat(64), nowTimestamp, nowTimestamp,
-            nowTimestamp, nowTimestamp, nowTimestamp);
+            newIdentifier(), purpose.name(), email, "0".repeat(64), nowTimestamp, pastTimestamp,
+            pastTimestamp, nowTimestamp, nowTimestamp);
     }
 
     /** SENDING -> ACTIVE; only the exact challenge id can be activated. */
