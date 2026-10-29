@@ -43,7 +43,7 @@ class TerminalSessionServiceTest {
 
     @Test
     void reserveCreatesOneOpaqueReservationForRunningRun() {
-        TerminalSessionService.Reservation reservation = service.reserve(80, 24, ALICE, PROJECT, RUN);
+        TerminalSessionService.Reservation reservation = service.reserve(80, 24, new com.manao.poc4.auth.AuthContracts.AccountIdentity(ALICE, 0), PROJECT, RUN);
         assertThat(reservation.sessionId()).isNotBlank();
         assertThat(reservation.ticket()).isNotBlank();
         assertThat(reservation.expiresAt()).isEqualTo(NOW.plus(Duration.ofSeconds(30)));
@@ -57,20 +57,20 @@ class TerminalSessionServiceTest {
     @Test
     void reserveRejectsNonRunningRunsAndNonReadyProjects() {
         runStore.runs.clear();
-        assertThatThrownBy(() -> service.reserve(80, 24, ALICE, PROJECT, RUN))
+        assertThatThrownBy(() -> service.reserve(80, 24, new com.manao.poc4.auth.AuthContracts.AccountIdentity(ALICE, 0), PROJECT, RUN))
             .isInstanceOfSatisfying(ApiException.class, ex -> {
                 assertThat(ex.code()).isEqualTo("TERMINAL_NOT_AVAILABLE");
                 assertThat(ex.status()).isEqualTo(409);
             });
         runStore.runs.put(RUN, new RunControllerTest.FakeRun(new com.manao.poc4.run.RunRecord(RUN, PROJECT, 5,
             com.manao.poc4.persistence.RunState.SUCCEEDED, "{}", null, null, null, NOW, 0, "BUILD_SUCCEEDED", 2L, NOW, 0L)));
-        assertThatThrownBy(() -> service.reserve(80, 24, ALICE, PROJECT, RUN))
+        assertThatThrownBy(() -> service.reserve(80, 24, new com.manao.poc4.auth.AuthContracts.AccountIdentity(ALICE, 0), PROJECT, RUN))
             .isInstanceOfSatisfying(ApiException.class, ex -> assertThat(ex.code()).isEqualTo("TERMINAL_NOT_AVAILABLE"));
         runStore.projects.put(PROJECT, "CREATING");
-        assertThatThrownBy(() -> service.reserve(80, 24, ALICE, PROJECT, RUN))
+        assertThatThrownBy(() -> service.reserve(80, 24, new com.manao.poc4.auth.AuthContracts.AccountIdentity(ALICE, 0), PROJECT, RUN))
             .isInstanceOfSatisfying(ApiException.class, ex -> assertThat(ex.code()).isEqualTo("PROJECT_LOCKED"));
         runStore.projects.put(PROJECT, "DELETING");
-        assertThatThrownBy(() -> service.reserve(80, 24, ALICE, PROJECT, RUN))
+        assertThatThrownBy(() -> service.reserve(80, 24, new com.manao.poc4.auth.AuthContracts.AccountIdentity(ALICE, 0), PROJECT, RUN))
             .isInstanceOfSatisfying(ApiException.class, ex -> assertThat(ex.code()).isEqualTo("PROJECT_LOCKED"));
     }
 
@@ -91,26 +91,26 @@ class TerminalSessionServiceTest {
 
     @Test
     void reserveEnforcesDimensionBounds() {
-        assertThatThrownBy(() -> service.reserve(1, 24, ALICE, PROJECT, RUN))
+        assertThatThrownBy(() -> service.reserve(1, 24, new com.manao.poc4.auth.AuthContracts.AccountIdentity(ALICE, 0), PROJECT, RUN))
             .isInstanceOfSatisfying(ApiException.class, ex -> assertThat(ex.code()).isEqualTo("VALIDATION_ERROR"));
-        assertThatThrownBy(() -> service.reserve(501, 24, ALICE, PROJECT, RUN))
+        assertThatThrownBy(() -> service.reserve(501, 24, new com.manao.poc4.auth.AuthContracts.AccountIdentity(ALICE, 0), PROJECT, RUN))
             .isInstanceOf(ApiException.class);
-        assertThatThrownBy(() -> service.reserve(80, 0, ALICE, PROJECT, RUN))
+        assertThatThrownBy(() -> service.reserve(80, 0, new com.manao.poc4.auth.AuthContracts.AccountIdentity(ALICE, 0), PROJECT, RUN))
             .isInstanceOf(ApiException.class);
-        assertThatThrownBy(() -> service.reserve(80, 201, ALICE, PROJECT, RUN))
+        assertThatThrownBy(() -> service.reserve(80, 201, new com.manao.poc4.auth.AuthContracts.AccountIdentity(ALICE, 0), PROJECT, RUN))
             .isInstanceOf(ApiException.class);
     }
 
     @Test
     void secondLiveReservationForTheSameRunConflicts() {
-        service.reserve(80, 24, ALICE, PROJECT, RUN);
-        assertThatThrownBy(() -> service.reserve(80, 24, ALICE, PROJECT, RUN))
+        service.reserve(80, 24, new com.manao.poc4.auth.AuthContracts.AccountIdentity(ALICE, 0), PROJECT, RUN);
+        assertThatThrownBy(() -> service.reserve(80, 24, new com.manao.poc4.auth.AuthContracts.AccountIdentity(ALICE, 0), PROJECT, RUN))
             .isInstanceOfSatisfying(ApiException.class, ex -> assertThat(ex.code()).isEqualTo("TERMINAL_SESSION_ALREADY_ACTIVE"));
     }
 
     @Test
     void consumeTransitionsReservationToLiveExactlyOnce() {
-        TerminalSessionService.Reservation reservation = service.reserve(80, 24, ALICE, PROJECT, RUN);
+        TerminalSessionService.Reservation reservation = service.reserve(80, 24, new com.manao.poc4.auth.AuthContracts.AccountIdentity(ALICE, 0), PROJECT, RUN);
         Optional<TerminalStore.SessionRecord> first = service.consume(reservation.ticket());
         assertThat(first).isPresent();
         assertThat(first.get().state()).isEqualTo("LIVE");
@@ -119,14 +119,14 @@ class TerminalSessionServiceTest {
 
     @Test
     void expiredReservationsAreNotConsumable() {
-        TerminalSessionService.Reservation reservation = service.reserve(80, 24, ALICE, PROJECT, RUN);
+        TerminalSessionService.Reservation reservation = service.reserve(80, 24, new com.manao.poc4.auth.AuthContracts.AccountIdentity(ALICE, 0), PROJECT, RUN);
         clock.advance(Duration.ofSeconds(31));
         assertThat(service.consume(reservation.ticket())).isEmpty();
     }
 
     @Test
     void settleIsIdempotent() {
-        TerminalSessionService.Reservation reservation = service.reserve(80, 24, ALICE, PROJECT, RUN);
+        TerminalSessionService.Reservation reservation = service.reserve(80, 24, new com.manao.poc4.auth.AuthContracts.AccountIdentity(ALICE, 0), PROJECT, RUN);
         service.consume(reservation.ticket());
         assertThat(service.settle(reservation.sessionId(), "CLOSED", "CLIENT_CLOSED", null)).isTrue();
         assertThat(service.settle(reservation.sessionId(), "INTERRUPTED", "CONNECTION_LOST", null)).isFalse();

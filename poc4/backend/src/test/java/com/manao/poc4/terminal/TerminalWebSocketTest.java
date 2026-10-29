@@ -60,7 +60,7 @@ class TerminalWebSocketTest {
         runStore.runs.put(RUN, new FakeRun(new RunRecord(RUN, PROJECT, 5, RunState.RUNNING,
             "{}", "manao-run-" + RUN, null, NOW, null, null, null, 1L, NOW.minus(Duration.ofMinutes(1)), 0L)));
         sessionService = new TerminalSessionService(store, runStore, clock);
-        liveTicket = sessionService.reserve(100, 30, ALICE, PROJECT, RUN).ticket();
+        liveTicket = sessionService.reserve(100, 30, new com.manao.poc4.auth.AuthContracts.AccountIdentity(ALICE, 0), PROJECT, RUN).ticket();
     }
 
     private RunSummary summary(RunState state, String runId) {
@@ -153,13 +153,13 @@ class TerminalWebSocketTest {
         assertThat(session.closed.getCode()).isEqualTo(4409);
 
         CapturingSession credit = new CapturingSession();
-        String creditTicket = sessionService.reserve(80, 24, ALICE, PROJECT, RUN).ticket();
+        String creditTicket = sessionService.reserve(80, 24, new com.manao.poc4.auth.AuthContracts.AccountIdentity(ALICE, 0), PROJECT, RUN).ticket();
         newHandler(credit, creditTicket);
         credit.handleText("{\"type\":\"terminal.output.credit\",\"bytes\":\"256\"}");
         assertThat(credit.closed.getCode()).isEqualTo(4409);
 
         CapturingSession ack = new CapturingSession();
-        String ackTicket = sessionService.reserve(80, 24, ALICE, PROJECT, RUN).ticket();
+        String ackTicket = sessionService.reserve(80, 24, new com.manao.poc4.auth.AuthContracts.AccountIdentity(ALICE, 0), PROJECT, RUN).ticket();
         newHandler(ack, ackTicket);
         ack.handleText("{\"type\":\"terminal.output.ack\",\"bytes\":1,\"extra\":true}");
         assertThat(ack.closed.getCode()).isEqualTo(4409);
@@ -260,7 +260,7 @@ class TerminalWebSocketTest {
 
         // PTY exit settles CLOSED with the shell's exit code on a fresh reservation.
         CapturingSession second = new CapturingSession();
-        String secondTicket = sessionService.reserve(80, 24, ALICE, PROJECT, RUN).ticket();
+        String secondTicket = sessionService.reserve(80, 24, new com.manao.poc4.auth.AuthContracts.AccountIdentity(ALICE, 0), PROJECT, RUN).ticket();
         TerminalWebSocketHandler secondHandler = new TerminalWebSocketHandler(sessionService, bridge,
             runId -> summary(RunState.RUNNING, runId), clock,
             runId -> Optional.of(new com.manao.poc4.kubernetes.JobCoordinator.LivePod(RESOLVED_POD, "maven")));
@@ -379,6 +379,33 @@ class TerminalWebSocketTest {
             .filter(record -> "INTERRUPTED".equals(record.state())).count()).isEqualTo(1);
         assertThat(session.closed.getCode()).isEqualTo(4401);
         assertThat(session.text).noneMatch(frame -> frame.contains("terminal.ready"));
+    }
+
+    @Test
+    void staleVersionSnapshotOnHandshakeSettlesTheAlreadyLiveSessionAndFreesTheSlot() throws Exception {
+        UserSessionRevoker revoker = new UserSessionRevoker();
+        UserStore newerVersion = mock(UserStore.class);
+        when(newerVersion.findById(ALICE)).thenReturn(Optional.of(
+            new UserStore.UserAccount(ALICE, "alice", "unused", true, null, null, 1)));
+        TerminalWebSocketHandler handler = new TerminalWebSocketHandler(sessionService, bridge,
+            runId -> summary(RunState.RUNNING, runId), clock,
+            runId -> Optional.of(new com.manao.poc4.kubernetes.JobCoordinator.LivePod(RESOLVED_POD, "maven")),
+            null, null, revoker, newerVersion);
+        session.bind(handler);
+        session.setUri("/api/v1/ws/terminals?ticket=" + liveTicket);
+
+        handler.afterConnectionEstablished(session);
+
+        // The ticket consume already moved the row to LIVE; the stale snapshot path must settle
+        // that exact session once, release the unique active-terminal slot and not open the PTY.
+        assertThat(session.closed.getCode()).isEqualTo(4401);
+        assertThat(bridge.opened).isFalse();
+        assertThat(store.sessions.values()).noneMatch(record -> "LIVE".equals(record.state()));
+        assertThat(store.sessions.values().stream()
+            .filter(record -> "INTERRUPTED".equals(record.state())).count()).isEqualTo(1);
+        // A subsequent terminal reservation for the same Run is not blocked by a leaked LIVE row.
+        assertThat(sessionService.reserve(80, 24,
+            new com.manao.poc4.auth.AuthContracts.AccountIdentity(ALICE, 0), PROJECT, RUN).ticket()).isNotBlank();
     }
 
     @Test

@@ -92,7 +92,11 @@ public final class AgentLiveOutput implements AutoCloseable {
         }
     }
 
-    /** Caller has already checked owner/project/task. Null means history-only (204). */
+    /**
+     * Compatibility subscribe without a version binding. Production HTTP always uses
+     * subscribe(taskId, identity); this overload exists only for non-HTTP call sites.
+     */
+    @Deprecated
     public SseEmitter subscribe(String taskId) {
         return subscribe(taskId, null, 0L);
     }
@@ -118,15 +122,19 @@ public final class AgentLiveOutput implements AutoCloseable {
             if (revoker != null && userId != null) {
                 subscription.registration = revoker.register(userId, authVersion,
                     () -> revokeSubscription(subscription));
-                // Register, then take a fresh version snapshot before the subscription may send:
-                // a password change racing the handshake must not leave a usable stream behind.
-                if (subscription.detached) throw staleSubscription();
-                if (currentAuthVersion != null) {
-                    OptionalLong current = currentAuthVersion.apply(userId);
-                    if (current.isEmpty() || current.getAsLong() != authVersion) {
-                        subscription.registration.close();
-                        throw staleSubscription();
+                try {
+                    // Register, then take a fresh version snapshot before the subscription may
+                    // send: a password change racing the handshake must not leave a usable stream.
+                    if (subscription.detached) throw staleSubscription();
+                    if (currentAuthVersion != null) {
+                        OptionalLong current = currentAuthVersion.apply(userId);
+                        if (current.isEmpty() || current.getAsLong() != authVersion) {
+                            throw staleSubscription();
+                        }
                     }
+                } catch (RuntimeException | Error failure) {
+                    closeRegistration(subscription);
+                    throw failure;
                 }
             }
             // Register before sending: Spring callbacks and send share the emitter write lock.
@@ -137,6 +145,7 @@ public final class AgentLiveOutput implements AutoCloseable {
             try { senders.execute(() -> run(subscription)); }
             catch (java.util.concurrent.RejectedExecutionException ex) {
                 subscriptions.remove(subscription);
+                closeRegistration(subscription);
                 throw new ApiException("AI_LIVE_SENDERS_BUSY", 503, "Live senders are busy");
             }
             return subscription.emitter;
@@ -213,12 +222,21 @@ public final class AgentLiveOutput implements AutoCloseable {
             monitor.notifyAll();
         }
         closeRegistration(subscription);
+        // Bound the revocation send with the existing sender capacity: if no sender slot is
+        // available (e.g. all blocked on clients), the fixed event is skipped and the emitter is
+        // still completed without delaying the password response beyond the executor hand-off.
         try {
-            subscription.emitter.send(SseEmitter.event().name("auth.revoked").data("{}"));
-        } catch (IOException | RuntimeException ignored) {
-            // Transport already gone: completion below still releases the subscription.
+            senders.execute(() -> {
+                try {
+                    subscription.emitter.send(SseEmitter.event().name("auth.revoked").data("{}"));
+                } catch (IOException | RuntimeException ignored) {
+                    // Transport already gone: completion below still releases the subscription.
+                }
+                completeQuietly(subscription);
+            });
+        } catch (java.util.concurrent.RejectedExecutionException busy) {
+            completeQuietly(subscription);
         }
-        completeQuietly(subscription);
     }
 
     private void completeQuietly(Subscription subscription) {

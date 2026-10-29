@@ -231,7 +231,7 @@ public final class RunLogWebSocketHandler extends TextWebSocketHandler {
     public void publishComplete(String runId) {
         Long lastSeq = logService.windowFor(runId).meta().lastAvailableSeq();
         for (BoundSession bound : sessions.values()) {
-            if (!bound.runId.equals(runId) || bound.rejected || bound.completeSent) continue;
+            if (!bound.runId.equals(runId) || bound.rejected || bound.revoked || bound.completeSent) continue;
             bound.completeSent = true;
             send(bound, completeFrame(lastSeq));
         }
@@ -240,7 +240,7 @@ public final class RunLogWebSocketHandler extends TextWebSocketHandler {
     /** Publishes one persisted chunk to subscribed sessions of the run; duplicates are dropped. */
     public void publishAppend(String runId, RunLogWindow.Chunk chunk, RunLogWindow.WindowMeta meta) {
         for (BoundSession bound : sessions.values()) {
-            if (!bound.runId.equals(runId) || bound.rejected) continue;
+            if (!bound.runId.equals(runId) || bound.rejected || bound.revoked) continue;
             if (!bound.cursor.accept(chunk.seq())) continue;
             send(bound, appendFrame(chunk, meta));
         }
@@ -249,7 +249,7 @@ public final class RunLogWebSocketHandler extends TextWebSocketHandler {
     /** Pushes a run.state frame so the browser can reload a settled run. */
     public void publishRunState(String runId, RunSummary summary) {
         for (BoundSession bound : sessions.values()) {
-            if (!bound.runId.equals(runId) || bound.rejected) continue;
+            if (!bound.runId.equals(runId) || bound.rejected || bound.revoked) continue;
             ObjectNode frame = JSON.createObjectNode();
             frame.put("type", "run.state");
             frame.set("run", JSON.valueToTree(summary));
@@ -260,7 +260,7 @@ public final class RunLogWebSocketHandler extends TextWebSocketHandler {
     /** Periodic keep-alive for all subscribed sessions. */
     public void heartbeat() {
         for (BoundSession bound : sessions.values()) {
-            if (bound.rejected) continue;
+            if (bound.rejected || bound.revoked) continue;
             ObjectNode frame = JSON.createObjectNode();
             frame.put("type", "stream.heartbeat");
             frame.put("serverTime", clock.instant().toString());
@@ -345,6 +345,7 @@ public final class RunLogWebSocketHandler extends TextWebSocketHandler {
     }
 
     private void send(BoundSession bound, ObjectNode frame) {
+        if (bound.revoked) return;
         try {
             if (bound.session.isOpen()) {
                 bound.session.sendMessage(new TextMessage(JSON.writeValueAsBytes(frame)));

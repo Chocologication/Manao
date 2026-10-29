@@ -101,7 +101,7 @@ class LogTicketServiceTest {
 
     @Test
     void expiredTicketsAreRejected() {
-        LogTicketService.IssuedTicket ticket = service.issue(ALICE, PROJECT, RUN);
+        LogTicketService.IssuedTicket ticket = service.issue(ALICE, 0L, PROJECT, RUN);
         clock.advance(Duration.ofSeconds(31));
         assertThat(service.consume(ticket.ticket())).isEmpty();
     }
@@ -109,7 +109,7 @@ class LogTicketServiceTest {
     @Test
     void unknownTicketsAndUnresolvedRunsAreRejected() {
         assertThat(service.consume("totally-unknown")).isEmpty();
-        assertThatThrownBy(() -> service.issue(ALICE, PROJECT, "missing-run"))
+        assertThatThrownBy(() -> service.issue(ALICE, 0L, PROJECT, "missing-run"))
             .isInstanceOfSatisfying(ApiException.class, ex -> assertThat(ex.code()).isEqualTo("RUN_NOT_FOUND"));
     }
 
@@ -118,7 +118,7 @@ class LogTicketServiceTest {
         service = new LogTicketService(store, clock,
             (ownerId, projectId, runId) -> ownerId.equals(ALICE) && runId.equals(RUN),
             new com.manao.poc4.project.ProjectLifecycleGate(), projectId -> "DELETING");
-        assertThatThrownBy(() -> service.issue(ALICE, PROJECT, RUN))
+        assertThatThrownBy(() -> service.issue(ALICE, 0L, PROJECT, RUN))
             .isInstanceOfSatisfying(ApiException.class, ex -> {
                 assertThat(ex.code()).isEqualTo("PROJECT_LOCKED");
                 assertThat(ex.status()).isEqualTo(409);

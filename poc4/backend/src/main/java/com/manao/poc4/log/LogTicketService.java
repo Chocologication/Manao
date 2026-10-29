@@ -91,11 +91,6 @@ public final class LogTicketService implements LogTicketAuthenticator {
         }
     }
 
-    /** Compatibility overload for call sites without a version; production HTTP always passes one. */
-    public IssuedTicket issue(String ownerId, String projectId, String runId) {
-        return issue(ownerId, 0L, projectId, runId);
-    }
-
     @Override
     public Optional<TicketRecord> consume(String ticket) {
         if (ticket == null || ticket.isBlank()) return Optional.empty();

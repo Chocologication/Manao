@@ -42,11 +42,6 @@ public final class TerminalSessionService implements TerminalTicketService {
         return reserve(cols, rows, identity.userId(), identity.authVersion(), projectId, runId);
     }
 
-    /** Compatibility overload for call sites without an explicit version. */
-    public Reservation reserve(int cols, int rows, String ownerId, String projectId, String runId) {
-        return reserve(cols, rows, ownerId, 0L, projectId, runId);
-    }
-
     private Reservation reserve(int cols, int rows, String ownerId, long authVersion,
                                 String projectId, String runId) {
         requireDimension(cols, 2, 500, "cols");
