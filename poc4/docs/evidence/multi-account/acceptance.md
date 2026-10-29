@@ -1,117 +1,321 @@
-# 多账号与账号生命周期验收记录（Phase A）
+# 多账号与账号生命周期验收记录
 
-- 日期：2026-10-29（Asia/Shanghai）
-- 分支：`codex/multi-account`（独立 worktree）
-- 本记录状态：**进行中 — 仅 Phase A 本地交付物与本地证据**。
-- **`MULTI_ACCOUNT_MVP_PASS` 未授予。** 真实云端、真实邮件、策略 Apply、两账号隔离与
-  用户人工验收尚未执行；本地 mock/fixture 通过不等于真实环境验收。
+- 更新：2026-10-29（Phase B-1：本地/前端全量证据 + 验收矩阵；Phase B-2 的后端完整套件待补）
+- 分支：codex/multi-account（独立 worktree，不链接本地绝对路径）
+- 记录状态：**本地实现与本地/mock 验收已完成记录；真实环境与后端全量套件仍有 NOT_RUN。**
+- **MULTI_ACCOUNT_MVP_PASS 未授予。** 真实邮件、云端两账号隔离、旧策略 Apply、部署/V17+V18
+  真实迁移与用户人工验收尚未执行；本地 mock/fixture/定向测试通过不等于真实环境验收。
 
 权威设计：[多账户与账号生命周期设计](../../../../docs/superpowers/specs/2026-10-29-multi-account-design.md)；
 实施计划：[多账号实施计划](../../../../docs/superpowers/plans/2026-10-29-multi-account-implementation-plan.md)；
-任务拆解与各任务报告：`.superpowers/sdd/2026-10-29-multi-account/`。
+任务报告与独立复核：本地 SDD 目录 `.superpowers/sdd/2026-10-29-multi-account/`（该目录按仓库
+本地 exclude 配置不入库，仅作本工作分支的工作记录；结论以本文件为准）。
 
 ## 1. 状态口径
 
 | 状态 | 含义 |
 | --- | --- |
-| PASS | 在标注的环境中实际执行并通过；必须能给出命令/日志/截图/回读等证据来源 |
+| PASS | 在标注的环境中实际执行并通过；必须能给出命令/日志/回读等证据来源 |
 | FAILED | 实际执行且失败（记录命令、错误与影响） |
 | SKIPPED | 明确不适用或按设计跳过（写明原因） |
 | NOT_RUN | 尚未执行（写明阻塞/前置条件） |
-| NOT_REVERIFIED | 曾被验证过，但当前代码/环境变化后未重新验证 |
+| NOT_REVERIFIED | 曾验证过，但当前代码/环境变化后未重新验证 |
 | WAIVED_BY_USER | 用户明确豁免 |
 
 测试代码存在、mock 通过、fixture 通过、源码审阅、用户人工验证分别记录，**互不替代**。
+本轮本地日志在 `%TEMP%`（不入库）；入库证据为各任务提交、实现者报告与本文件命令结果。
 
-## 2. 证据矩阵
+## 2. 结论摘要
 
-列说明：
-- **code/local tests**：代码实现与本机自动化测试（可 mock/fixture/捕获型替身）；
-- **independent review**：独立复核记录（见 `.superpowers/sdd/2026-10-29-multi-account/reviews/`）；
-- **user-manual email verification**：真实 126 邮件由用户手动完成的发送/收件/验证码提交；
-- **policy preview+apply**：真实集群上的旧 NetworkPolicy 迁移预览与 Apply；
-- **two-account isolation**：真实云端两账号顺序验收与跨账号拒绝；
-- **cloud acceptance**：真实公网入口的浏览器/API 验收。
+已实现并取得本地证据（详见 §3/§4/§5）：
+
+- 依赖 NetworkPolicy 项目级收窄 + 旧策略迁移脚本（fixture 16/16）+ Task-1 M8 修复。
+- 前端统一会话终止（expiry/logout/401 等价清理、迟到响应快照守卫）。
+- V17 账号身份/一次性挑战 schema、V18 挑战配额分配锁；旧账号/项目保留。
+- 图形验证码 + 邮箱验证码（一次性、冷却、限次、重发失效；仅捕获型 sender 与测试替身）。
+- 注册 / 邮箱找回 / 改密 HTTP 流程与固定错误码；改密/重置后旧 JWT、旧票据、旧显示连接撤销，
+  Run/AI 后台任务不停止（本地定向与竞态测试）。
+- 三个账号页面 + 客户端撤销信号（WS 4401、SSE auth.revoked、一次性 /auth/me）；登录页无图形码。
+- mock 浏览器验收 4/4（注册两步→登录、找回两步→登录、改密→重新登录、登录页入口/无演示凭据）。
+- 旧账号邮箱人工绑定脚本自测 10/10（disposable schema，只创建/删除自有 test schema）。
+- 前端 typecheck/build/dist mock 字符串扫描/boundary 均通过；前端全量 vitest 非全绿（见 §5 诚实记录）。
+- K1（改密成功提示丢失）已由 Task 7 fix round 3 修复，mock e2e 已断言“恰好一次且不复播”。
+
+仍为 NOT_RUN（不阻塞本地交付，但阻塞整体 PASS）：
+
+- 真实 126 邮件发送/收件与用户人工邮件验收（E1–E7）。
+- 真实集群旧策略只读预览/Apply/回读、部署、Secret 注入、V17+V18 真实运行库迁移。
+- 真实云端两账号顺序验收（登录/项目/文件/Run/终端/AI、跨账号拒绝、8 项目上限）、网络隔离探测。
+- 后端完整 Maven 套件（Phase B-2，等 Maven 串行窗口）。
+
+## 3. 代码提交与任务级证据
+
+任务实现以 commit 为准；下表“本地证据”是实现者报告 + Lead 定向验证的记录（本轮 Phase B-1
+未重跑后端任务级命令），独立复核记录见本地 reviews 目录。
+
+| 任务 | 提交 | 本地证据（实现者/Lead） | 独立复核结论 |
+| --- | --- | --- | --- |
+| T1 依赖隔离 + 迁移脚本 | 9607b18、7aacf37、e19c938 | Java 定向 21/21；PS fixture 15/15（PS 5.1；精确 pwsh NOT_RUN） | 两轮修复后 PASS；遗留 1 项非阻断 Minor M8 由 T8 修复（f39c788，fixture 16/16） |
+| T2 统一会话终止 | 5fe82aa、c310eb1、1714aec | Lead 定向 104/104 + typecheck 0 | 两轮修复后独立复审 PASS |
+| T3 V17 + 版本化 JWT | 181d87d、d6a1a20 | Lead 53/53（定向 11 类）；后续组合 72/72 | 修复轮后 **PASS WITH WARN**（全局 strict mapper 跨控制器回归留给 T8 全量） |
+| T4 图形码/邮箱码/SMTP 适配 | 37b65fa、fd7da3a、79fb2d8 | Lead 组合 72/72；T5 终态组合 112/112（含 T4 类） | 两轮修复后 PASS（N1 首码冷却由 79fb2d8 修复；N2/N4/N5/N6 记录最终分诊） |
+| T5 注册/找回/改密 HTTP | 9d44ac6、2fac1a7 | Lead 113/113（19 类）；终态组合 112/112 | 独立复核 PASS/APPROVED（仅 Minor/[WARN]） |
+| T6 撤销旧凭据/流 | 9c65719、af94477 | 定向 56/56；组合 111/111 | follow-up af94477 PASS；**新的 Important N1（terminal 撤销竞态未结算 LIVE session）仍 OPEN，修复轮进行中 → 修复提交与验证前整体 NOT_REVERIFIED** |
+| T7 账号页面 + 客户端撤销 | 4fac593、333aadf、28fb5d5、390f6a4 | 定向 209/209、adjacent 414/414、typecheck/build/boundary 通过；mock e2e 4/4 | 两轮修复后 APPROVED；K1 fix（390f6a4）复审 PASS/APPROVED |
+| T8 Phase A 交付物 | f39c788 | PS fixture 16/16、bind 自测 10/10、mock e2e 4/4、6b YAML 解析通过；均未 Apply | 本任务交付物；独立复核 NOT_RUN |
+| T8 Phase B-1 证据/文档 | 本记录所在 docs 提交 | 见 §5（前端全量/typecheck/build/dist/boundary/mock e2e，deploy 脚本复跑） | 独立复核 NOT_RUN |
+
+复核主体说明：初始几轮独立审查由 codex/Astra 子代理完成；2026-10-29 用户模型策略变更后，
+后续复核改由 DSH teammate `reviewer-guard`（deepseek-flash，只读）执行（Task 4 fix2、Task 5、
+Task 6 follow-up、Task 7 K1 fix 等），**不是 codex**。最终整分支复核仍待执行。
+
+## 4. 验收矩阵
+
+列说明：code/local tests = 本机自动化（可 mock/fixture/捕获替身）；independent review = 本地独立复核；
+user-manual email = 真实 126 邮件由用户手动完成；policy preview+apply = 真实集群策略迁移；
+two-account isolation = 真实云端两账号；cloud acceptance = 真实公网入口。
 
 | # | 验收项 | 证据来源 | code/local tests | independent review | user-manual email | policy preview+apply | two-account isolation | cloud acceptance |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| 1 | 依赖 NetworkPolicy 项目级收窄 + 创建顺序 | Task 1 report / `DependencyResourceFactoryTest`、`ProjectDependenciesTest` | PASS（本地 Maven 定向，21/21） | PASS（两轮复审；1 项非阻断 Minor M8 已由 Task 8 修复） | SKIPPED（不涉及） | NOT_RUN | NOT_RUN | NOT_RUN |
-| 2 | 旧策略迁移脚本（默认预览、备份、JSON Patch、回读、零遗漏拒绝） | `poc4/deploy/multi-account/repair-dependency-policy.*` | PASS（fixture 16/16，Windows PowerShell 5.1） | PASS（复审 I1–I7/M5/M6/M8 闭环） | SKIPPED（不涉及） | NOT_RUN | NOT_RUN | NOT_RUN |
-| 3 | 统一客户端会话终止（expiry/logout/401）+ 迟到响应防护 | Task 2 report / 前端 vitest | PASS（任务报告；本次未复跑） | PASS（fix1/fix2 复审） | SKIPPED（不涉及） | SKIPPED（不涉及） | NOT_RUN | NOT_RUN |
-| 4 | V17 账号 schema（email/email_verified_at/auth_version，旧账号保留） | Task 3 report / `AccountSchemaTest`、Flyway disposable schema | PASS（任务报告；本次未复跑） | PASS（task-3 复审 + fix1 复审） | SKIPPED（不涉及） | SKIPPED（不涉及） | NOT_RUN | NOT_RUN |
-| 5 | 图形验证码 + 邮箱验证码挑战（一次性/冷却/重发失效/失败发送） | Task 4 report / 后端测试 | PASS（任务报告；本次未复跑） | PASS（task-4 复审，修复轮见 reviews） | NOT_RUN（用户人工） | SKIPPED（不涉及） | NOT_RUN | NOT_RUN |
-| 6 | 注册 / 找回 / 改密 HTTP 流程 | Task 5 | NOT_RUN（Task 5 进行中；Phase A 不运行完整后端套件） | NOT_RUN | NOT_RUN（用户人工） | SKIPPED（不涉及） | NOT_RUN | NOT_RUN |
-| 7 | 改密撤销旧 JWT/ticket/连接，后台任务继续 | Task 6 | NOT_RUN（Task 6 未开始/进行中） | NOT_RUN | SKIPPED（不涉及） | SKIPPED（不涉及） | NOT_RUN | NOT_RUN |
-| 8 | 三个账号页面 + 客户端撤销信号（WS 4401 / SSE auth.revoked / 一次 /auth/me） | Task 7 report + `reviews/task-7-*` | PASS（任务报告 206/206 定向；本次未复跑） | PASS（task-7 复审 + fix1/fix2 复审） | NOT_RUN（用户人工） | SKIPPED（不涉及） | NOT_RUN | NOT_RUN |
-| 9 | 注册/找回/改密三条 mock 浏览器流程 | 本次新 spec `multi-account.spec.ts` | PASS（Playwright mock，4/4 passed，2026-10-29） | NOT_RUN（本任务交付物待 Lead/独立复核） | NOT_RUN（mock 明确不代表真实邮件） | SKIPPED（不涉及） | SKIPPED（mock 单用户状态） | NOT_RUN |
-| 10 | 人工邮箱链路：正常注册送达 / 正常找回送达 / 过期码 / 重发旧码失效 / 重复提交拒绝 / 重置后旧密码失效 | 本文件 §4 清单模板 | NOT_RUN（用户手动） | NOT_RUN | **NOT_RUN（等待用户手动验证）** | SKIPPED（不涉及） | SKIPPED（不涉及） | NOT_RUN |
-| 11 | 部署配置模板与 Secret 引用（mail/challenge/registration） | `poc4/deploy/multi-account/config.example.env`、`poc4/deploy/6b/backend.yaml` | PASS（本地文件/结构校验，2026-10-29） | NOT_RUN | SKIPPED（不涉及） | SKIPPED（不涉及） | SKIPPED（不涉及） | NOT_RUN（未 Apply、未注入 Secret） |
-| 12 | 受控升级：V17 迁移、单 backend Recreate、旧账号/项目回读、旧 JWT 统一重登 | 计划 Task 8 第 3 项 | NOT_RUN | NOT_RUN | NOT_RUN | NOT_RUN | NOT_RUN | NOT_RUN |
-| 13 | 真实策略迁移：完整旧 policy 预览 → 备份 → Apply → 回读 | `repair-dependency-policy.ps1`（真实集群） | 本地 fixture PASS | PASS（复审） | SKIPPED（不涉及） | **NOT_RUN（本任务禁止连接集群/Apply）** | NOT_RUN | NOT_RUN |
-| 14 | 两账号顺序验收：登录→创建/编辑/运行/终端/AI→退出，B 再执行；跨账号替换/越权拒绝；每账号 8 项目、第 9 个拒绝 | 本文件 `multi-account-cloud.spec.ts` + 计划 Task 8 第 4 项 | 云端 spec 骨架已就绪（`--list` 5 项通过，未执行） | NOT_RUN | NOT_RUN | NOT_RUN | **NOT_RUN（需用户手动准备两个已验证账号与专用项目）** | NOT_RUN |
-| 15 | 网络隔离探测：自身依赖连通、跨项目 Service/Pod IP 拒绝、公开应用匿名正常、workspace/platform 旁路核查 | 计划 Task 8 第 4 项“网络” | NOT_RUN | NOT_RUN | SKIPPED（不涉及） | NOT_RUN | NOT_RUN | NOT_RUN |
-| 16 | 结果与清理：精确 owner/project 清理 disposable 资源、保留旧账号项目、无广泛 git clean | 计划 Task 8 第 5 项 | NOT_RUN | NOT_RUN | NOT_RUN | NOT_RUN | NOT_RUN | NOT_RUN |
+| 1 | 依赖 NetworkPolicy 项目标签 + 创建顺序 | T1 report/tests | PASS（21/21） | PASS（M8 已修） | SKIPPED | NOT_RUN | NOT_RUN | NOT_RUN |
+| 2 | 旧策略迁移脚本（预览/备份/Patch/回读/零遗漏/统一失败） | T1 + T8 scripts/fixtures | PASS（fixture 16/16，PS 5.1；精确 pwsh NOT_RUN） | PASS（复审 + M8 闭环） | SKIPPED | **NOT_RUN（真实集群未执行）** | NOT_RUN | NOT_RUN |
+| 3 | 会话终止等价（expiry/logout/401 + 迟到响应） | T2 report/tests | PASS（104/104 Lead 定向） | PASS | SKIPPED | SKIPPED | NOT_RUN | NOT_RUN |
+| 4 | V17 账号 schema + 旧账号/项目保留 | T3 report / Flyway tests | PASS（53/53；disposable MySQL） | PASS WITH WARN | SKIPPED | SKIPPED | NOT_RUN | NOT_RUN |
+| 5 | V18 挑战配额分配锁 | T4 fix / FlywaySchemaTest | PASS（Flyway latest 18；定向组合包含） | PASS（N3 由 Lead 裁定接受） | SKIPPED | SKIPPED | NOT_RUN | NOT_RUN |
+| 6 | 图形码（5 位去混淆 PNG/2 分钟/5 次/一次性/总量限速） | T4 report/tests | PASS（CaptchaServiceTest 等；headless 渲染在测试内验证） | PASS | SKIPPED | SKIPPED | NOT_RUN | NOT_RUN |
+| 7 | 邮箱码（6 位/10 分钟/5 次/60s 冷却/小时 5 次/重发失效/SMTP 失败状态） | T4/T5 report/tests | PASS（捕获型 sender/替身；无真实 SMTP） | PASS | **NOT_RUN（用户手动）** | SKIPPED | NOT_RUN | NOT_RUN |
+| 8 | 注册/找回/改密 HTTP 合同与固定错误码 | T5 report/HTTP tests | PASS（113/113 Lead；终态组合 112/112） | PASS/APPROVED | NOT_RUN（用户手动） | SKIPPED | NOT_RUN | NOT_RUN |
+| 9 | 改密/重置撤销旧 JWT、票据、连接；Run/AI 继续 | T6 report/tests | PASS（56/56 + 111/111 定向；N1 修复轮进行中） | CHANGES NEEDED（N1 OPEN） | SKIPPED | SKIPPED | NOT_RUN | NOT_RUN |
+| 10 | 前端页面/transport/撤销信号 | T7 report/tests | PASS（209/209 定向 + 414/414 adjacent） | PASS/APPROVED | NOT_RUN（用户手动） | SKIPPED | NOT_RUN | NOT_RUN |
+| 11 | mock 浏览器 e2e（3 条账号流程 + 登录页） | 本文件 §5.4 / Playwright | PASS（4/4，含 K1 banner 断言） | NOT_RUN（本任务交付物） | SKIPPED（mock 不代表真实邮件） | SKIPPED | SKIPPED | NOT_RUN |
+| 12 | 前端全量回归（vitest/typecheck/build/boundary） | 本文件 §5.1–§5.3 | **非全绿**：1736 tests 中 4 failed（已知 visual spec + 3 个负载 flake；隔离 92/92 PASS）；typecheck/build/boundary PASS | NOT_RUN | SKIPPED | SKIPPED | NOT_RUN | NOT_RUN |
+| 13 | 后端完整 Maven 套件 | Phase B-2（命令已备） | **NOT_RUN（等待 Maven 串行窗口）** | NOT_RUN | SKIPPED | SKIPPED | NOT_RUN | NOT_RUN |
+| 14 | 旧账号邮箱人工绑定维护脚本 | T8 Phase A bind-legacy-email + self-test | PASS（10/10，disposable schema，本地 MySQL） | NOT_RUN（本任务交付物） | SKIPPED | SKIPPED | NOT_RUN | NOT_RUN |
+| 15 | 邮件/挑战配置模板与 6B Secret/env 引用 | T8 Phase A config.example.env / backend.yaml | PASS（结构/YAML 校验；mail+registration=false；password 空） | NOT_RUN | **NOT_RUN（运行时 Secret 注入未执行）** | SKIPPED | NOT_RUN | NOT_RUN |
+| 16 | 真实策略迁移预览 → 备份 → Apply → 回读 | 本文件 §6.2（未执行） | 本地 fixture PASS | PASS（脚本复审） | SKIPPED | **NOT_RUN（需用户授权）** | NOT_RUN | NOT_RUN |
+| 17 | 受控升级：部署/V17+V18 真实迁移/旧 JWT 重登/回读 | 本文件 §6.1（未执行） | **NOT_RUN** | NOT_RUN | NOT_RUN | NOT_RUN | NOT_RUN | NOT_RUN |
+| 18 | 用户人工邮件验收 E1–E7 | 本文件 §8（未执行） | **NOT_RUN（用户手动）** | NOT_RUN | **NOT_RUN（等待用户）** | SKIPPED | SKIPPED | NOT_RUN |
+| 19 | 两账号顺序验收 + 跨账号拒绝 + 8 项目上限 | 本文件 §6.4 / cloud spec（未执行） | 云端 spec 骨架已就绪（--list 5 项） | NOT_RUN | NOT_RUN | NOT_RUN | **NOT_RUN（需用户授权）** | NOT_RUN |
+| 20 | 网络隔离探测（依赖连通/跨项目拒绝/公开应用/旁路） | 计划 Task 8 第 4 项网络 | NOT_RUN | NOT_RUN | SKIPPED | NOT_RUN | NOT_RUN | NOT_RUN |
+| 21 | 结果与清理（disposable 资源、保留旧项目、无广泛 git clean） | 计划 Task 8 第 5 项 | NOT_RUN | NOT_RUN | NOT_RUN | NOT_RUN | NOT_RUN | NOT_RUN |
+| 22 | **MULTI_ACCOUNT_MVP_PASS** | 本文件 §10 | **NOT_GRANTED** | — | — | — | — | — |
 
-## 3. Phase A 已执行命令与结果（2026-10-29）
+## 5. Phase B-1 本地执行证据（2026-10-29，当前 HEAD af94477 + 本任务 docs 改动）
 
-环境：Windows；前端 pnpm 10.33.0；Playwright 1.62.1 + chromium 可用；本地 MySQL 8.0.43
-（disposable schema 前缀 `manao_stage6%`）；**`pwsh` 二进制不存在**（Windows PowerShell
-5.1.26100.7344），因此“精确 pwsh 命令”一律记 NOT_RUN，脚本在 PS 5.1 下执行等价命令。
+环境：Windows；Node 24.12.0；pnpm 10.33.0；Playwright 1.62.1 + chromium 可用；
+Java 17.0.16；本地 MySQL 8.0.43（disposable schema）；pwsh 二进制不存在（Windows PowerShell
+5.1.26100.7344）。以下命令均在 `poc4/frontend` 或仓库根执行，未连接后端/集群/SMTP。
 
-| 命令 | 结果 |
-| --- | --- |
-| `powershell -NoProfile -File poc4/deploy/multi-account/repair-dependency-policy.test.ps1` | PASS 16/16，exit 0（含本次新增 patch 负载写入失败统一失败路径场景） |
-| `powershell -NoProfile -File poc4/deploy/multi-account/bind-legacy-email.ps1 -SelfTest`（env: MANAO_DB_URL=jdbc:mysql://127.0.0.1:3306/manao_poc4_test，MANAO_DB_USERNAME=manao，MANAO_DB_PASSWORD 空） | PASS 10/10，exit 0；自建 `manao_stage6_t8_<32hex>` schema 并在 finally 中 DROP；未触碰 `manao_poc4` / `manao_poc4_6b` |
-| `pnpm exec playwright test --config playwright.multi-account.config.ts`（`poc4/frontend`） | PASS 4/4，exit 0（Vite mock build + preview；MSW 替身；无真实后端/邮件） |
-| `pnpm exec playwright test --config playwright.multi-account-cloud.config.ts --list`（`poc4/frontend`） | PASS（收集 5 项；仅列表，未执行真实云端） |
-| PyYAML 解析 `poc4/deploy/6b/backend.yaml` | PASS（2 个文档；Deployment env 含 30 项，新增 9 项多账号变量；无重复 env 名） |
-| 完整 backend 测试套件（`mvn test`） | **NOT_RUN（Phase A 不运行；后端 Maven 归 Task 5/6 实现者，Phase B 统一执行）** |
-| 完整前端 `pnpm test` / typecheck / build | **NOT_RUN（Phase B；本次仅新增 Playwright 配置/spec，mock build 内嵌 typecheck 已通过）** |
-| 真实 126 SMTP/IMAP、真实邮件发送/收信 | **NOT_RUN（禁止；需用户手动验证并记录 §4）** |
-| 集群只读预览 / 策略 Apply / 部署 / 迁移 | **NOT_RUN（本任务禁止）** |
+### 5.1 前端完整 vitest（诚实记录，非全绿）
 
-## 4. 用户人工邮件验证清单（模板，未填写）
+```
+cd poc4/frontend && pnpm exec vitest run
+Test Files  4 failed | 98 passed (102)
+     Tests  4 failed | 1732 passed (1736)
+  Duration  137.35s
+```
+
+失败明细（4 个失败文件）：
+
+| 文件/测试 | 归因 | 隔离复跑 |
+| --- | --- | --- |
+| tests/visual/ai-ui.spec.ts | **已知既有问题**：Playwright 规范被 vitest 收集，报 “Playwright Test did not expect test() to be called here”；该文件在本分支未被修改（base..HEAD diff 为空） | 单独运行仍以同一原因失败（预期） |
+| src/components/shell/WorkbenchShell.test.tsx > moves AI history ... / traps narrow history focus ... | 并发负载下重型 UI 计时 flake | 与另外两个文件一起隔离复跑 PASS |
+| src/components/runs/RunEvidence.test.tsx > marks activity read ... | 并发负载下重型 UI 计时 flake | 同上 PASS |
+| src/features/projects/ProjectRoutePage.test.tsx > redrives a committed-but-lost change ... | 并发负载下 lazy editor/loading 计时 | 同上 PASS |
+
+隔离复跑命令与结果：
+
+```
+pnpm exec vitest run src/components/shell/WorkbenchShell.test.tsx src/components/runs/RunEvidence.test.tsx src/features/projects/ProjectRoutePage.test.tsx
+Test Files  3 passed (3)
+     Tests  92 passed (92)      exit 0
+```
+
+结论：前端全量套件**不是全绿**；4 个失败均为已知既有（1）或并发负载 flake（3，隔离全绿）。
+不把隔离通过当作全量通过，也不把 flake 归因于本分支。
+
+### 5.2 typecheck / production build / dist 扫描 / boundary
+
+```
+pnpm typecheck          -> exit 0
+pnpm build              -> exit 0（"✓ built in 48.56s"；仅 >500kB chunk 警告）
+Select-String dist/assets/*.js -Pattern 'mock-captcha|mock-email-|演示账号|demo-pass|mock-token'
+                        -> NO_MOCK_AUTH_STRINGS_IN_DIST
+pnpm test:boundary      -> 36 tests / 36 pass / 0 fail；"Browser boundary check passed."；exit 0
+```
+
+### 5.3 部署脚本复跑（当前树；Phase A 交付物未被改坏）
+
+```
+powershell -NoProfile -File poc4/deploy/multi-account/repair-dependency-policy.test.ps1
+-> PASS=16 FAIL=0，REPAIR_EXIT=0
+powershell -NoProfile -File poc4/deploy/multi-account/bind-legacy-email.ps1 -SelfTest
+   （MANAO_DB_URL=jdbc:mysql://127.0.0.1:3306/manao_poc4_test；MANAO_DB_USERNAME=manao；空密码）
+-> PASS=10 FAIL=0；自建 manao_stage6_t8_<32hex> 并 DROP；BIND_SELFTEST_EXIT=0
+```
+
+精确 `pwsh -NoProfile -File ...` 命令仍 **NOT_RUN**（本机无 pwsh）；PS 5.1 等价命令通过，
+脚本按 5.1/7 兼容编写。
+
+### 5.4 mock 浏览器验收（含 K1 修复后的断言）
+
+```
+cd poc4/frontend
+pnpm exec playwright test --config playwright.multi-account.config.ts
+Running 4 tests using 1 worker
+   ok 1 register: two mock steps create the account and the new credentials log in
+   ok 2 forgot password: two mock steps reset the password and the new one logs in
+   ok 3 change password: success terminates the session and requires a re-login
+   ok 4 login page offers registration and recovery entries and no captcha or demo credentials
+   4 passed (1.1m)      exit 0
+```
+
+测试 3 现在断言：/login 上“密码已更新，请重新登录”提示恰好一次；旧密码被拒绝；新密码可登录并
+可返回工作台；随后显式退出后再次访问 /login 不复播该一次性提示。配置只启动本项目 mock
+Vite build+preview（4188 端口），MSW 替身；无 backend、SMTP/IMAP、真实账号或真实邮件。
+
+### 5.5 云端 spec：只校验收集，不执行
+
+```
+pnpm exec playwright test --config playwright.multi-account-cloud.config.ts --list
+-> Total: 5 tests in 1 file（cloud 2 + NOT_RUN gates 3）
+```
+
+真实云端执行 **NOT_RUN**：缺 `MANAO_MULTI_ACCOUNT_BASE_URL` 与用户手动创建/验证的两个账号
+及专用项目；配置无 webServer、无 MSW、workers=1，baseURL 仅来自 env；spec 不申请真实邮箱码、
+不读 IMAP、不绕过图形码。
+
+### 5.6 后端完整套件：本轮 NOT_RUN（Phase B-2 待执行）
+
+Maven 本轮被 Task 6 terminal-race 修复轮占用，按 Lead 指令不并跑。Phase B-2 使用命令：
+
+```
+& 'C:\Users\shili\.m2\wrapper\dists\apache-maven-3.9.16\56ba1f9f\bin\mvn.cmd' -f poc4/backend/pom.xml test
+```
+
+- 仅 disposable MySQL（JdbcStoreTestSupport 自动建/删 manao_stage6_<uuid>）；
+  **不 reset manao_poc4 / manao_poc4_6b**。
+- 该套件是首次覆盖全局 strict Jackson 变更、V18 迁移及所有与账号无关控制器的全量回归
+  （T3 复核 WARN 所指）；结果（计数/失败类名/堆栈摘要）将补写进本文件与 §4 第 13 行。
+- 若出现非预期失败，记录 FAILED/NOT_REVERIFIED，不以 --list 或定向通过替代。
+
+## 6. 迁移与部署步骤（全部未执行，需用户授权）
+
+### 6.1 V17 + V18 运行库迁移（真实 manao_poc4 / manao_poc4_6b）
+
+已确认事实（本地 disposable schema 已验证，运行库未执行）：
+
+- V17：app_user 增加 email VARCHAR(254)（utf8mb4_bin 唯一）、email_verified_at、auth_version；
+  新增 auth_challenge 一次性挑战表；log_ticket / terminal_session 增加可空 auth_version。
+  旧行不重写、email 不回填，旧 id/owner 不变。
+- V18：新增 auth_challenge_allocation 分配锁表并写入 captcha / email_send_slot 两行（纯新增），
+  用于图形码总量与邮箱发送槽的原子分配；Flyway latest = 18。
+- 新 backend 启动时由 Flyway 顺序应用 V17、V18；失败即启动失败（fail-closed）。
+
+授权窗口内步骤（未执行）：
+
+1. 记录目标 deployment 镜像 SHA/digest 与 DB 备份/恢复点；确认注册/邮件开关 false。
+2. 先在备份/恢复点可回退的前提下，按 6.2 完成旧策略预览与（获准的）Apply 或确认无需迁移。
+3. 准备 6.3 的 Secret keys（缺失会 CreateContainerConfigError，属预期 fail-closed）。
+4. 单 backend Recreate 部署含本分支的镜像；等待 Flyway 应用 V17+V18 与 readiness 通过。
+5. 回读：Flyway schema history 到 18；app_user 新列与旧账号/项目数、owner 不变；旧密码可登录
+   （登录签发 ver 版 JWT）；旧 JWT 一律重新登录一次；旧 NULL ticket 被拒绝（预期，用户重登）；
+   注册/找回开关关闭时入口拒绝。
+6. 回滚不 down-migrate、不恢复宽 NetworkPolicy；若必须回退镜像，不得宣称撤销/隔离修复仍有效。
+
+### 6.2 旧依赖 NetworkPolicy 预览与 Apply（真实集群）
+
+已交付脚本与证据：poc4/deploy/multi-account/repair-dependency-policy.ps1；本地 fixture 16/16
+（默认预览不写集群/不写文件、零遗漏、fail-closed、UID/resourceVersion 冲突停止、只 patch
+podSelector、统一失败报告等）。**真实集群预览/Apply 均为 NOT_RUN。**
+
+授权窗口内步骤（未执行）：
+
+```
+# 1) 只读预览（默认，无 -Apply；由操作者从真实集群整理并人工审阅 ProjectsFile）
+powershell -NoProfile -File poc4/deploy/multi-account/repair-dependency-policy.ps1 -Context <kubectl-context> -Namespace <namespace> -ProjectsFile <reviewed-projects.json> -OutputDirectory <empty-dir>
+# 预期：逐项 [ALREADY_FIXED]/[NEEDS_MIGRATION]/[MISSING]/[UNKNOWN_SPEC]/[OUT_OF_SCOPE]；
+# 只有 RESULT=ALREADY_SCOPED 或完整 PREVIEW_RESULT=WOULD_PATCH 且无拒绝项才可继续。
+# 2) 备份与人工确认后 Apply（仅在获准窗口）
+powershell -NoProfile -File poc4/deploy/multi-account/repair-dependency-policy.ps1 -Context <kubectl-context> -Namespace <namespace> -ProjectsFile <reviewed-projects.json> -OutputDirectory <dir> -Apply
+# 预期：backup/<policy>.json、patch/<policy>.json、apply-report.json；[PATCHED]/[VERIFIED] 回读；
+# 任何失败 exit 3 且不重试、不继续后续策略。
+```
+
+部署顺序：先部署含项目级 selector 修复的 backend（或与其在同一变更窗口），否则旧 backend 可能
+重新创建宽 target 策略，需要重跑预览/迁移。回滚不得恢复宽放行。
+
+### 6.3 邮件/挑战运行时 Secret（未执行）
+
+- `MANAO_AUTH_CHALLENGE_SECRET`（≥32 随机字节）与 `MANAO_MAIL_PASSWORD`（126 客户端授权码）
+  只能由运行时 Secret（poc4/deploy/6b/backend.yaml 引用 manao-backend-auth 的
+  AUTH_CHALLENGE_SECRET / MAIL_PASSWORD）注入；仓库内 config.example.env 保持空值。
+- 仅在授权的人工验收窗口临时启用 MANAO_MAIL_ENABLED=true / MANAO_REGISTRATION_ENABLED=true，
+  验收后恢复 false；agent 不执行真实发送、SMTP 登录探测或邮箱读取。
+
+### 6.4 两账号顺序云端验收（未执行）
+
+前提：用户手动完成 E1/E2（真实注册/找回收信与验证码提交）并准备两个 verified 账号与专用项目。
+之后使用 `playwright.multi-account-cloud.config.ts`（无 MSW/webServer，baseURL 仅 env，workers=1）
+执行登录→项目/文件→（扩展后）运行/终端/AI→退出，B 顺序重复；覆盖跨账号项目/文件/Run/ticket/
+conversation/task ID 替换拒绝、A 到期→B 登录、旧响应迟到、改密后旧 JWT/ticket/连接失效且后台
+任务继续、注册开关与旧账号绑定、每账号 8 项目第 9 个拒绝。网络探测项另按计划执行。均为 NOT_RUN。
+
+## 7. 需要用户授权的真实环境操作清单
+
+以下操作**本轮均未执行**，需用户逐项授权（可分批）：
+
+1. 只读连接真实集群并运行旧策略迁移预览（kubectl context/namespace/ProjectsFile 由操作者提供）。
+2. 对真实集群 Apply 旧策略迁移（产生 NetworkPolicy patch 与 backup/apply-report 证据）。
+3. 构建/推送并部署含本分支的 backend 镜像，单 backend Recreate（含 6.3 前提）。
+4. 在真实运行库（manao_poc4 / manao_poc4_6b）应用 V17+V18（须先记录 DB 恢复点；禁止 reset schema）。
+5. 创建/注入 Secret keys：AUTH_CHALLENGE_SECRET、MAIL_PASSWORD（以及既有 JWT/镜像引用不变）。
+6. 临时启用 MANAO_MAIL_ENABLED / MANAO_REGISTRATION_ENABLED 的人工验收窗口，并在结束后恢复 false。
+7. 真实 126 邮件发送/收信与验证码提交（仅用户手动；agent 禁止）。
+8. 真实云端 Playwright 两账号顺序验收（用户提供 base URL、两个账号与专用项目 id）。
+9. 真实网络隔离探测（依赖连通/跨项目 Service-Pod 拒绝/公开应用匿名可用/workspace-platform 旁路）。
+10. 精确 owner/project 的 disposable 资源清理（不得删平台 MySQL PVC、不得删除旧账号项目）。
+11. 对运行库执行任何其它写操作（如 bind-legacy-email.ps1 -Apply 绑定旧账号邮箱；须先确认邮箱控制权）。
+
+## 8. 用户人工邮件验收清单（未填写；NOT_RUN）
 
 > 由用户手动完成；agent 不触发真实邮件、不读取 IMAP、不记录授权码/验证码/密码。
-> 每行由用户填写结果（PASS/FAILED）、日期与脱敏备注；不记录任何秘密值。
-> 依赖的前置开关：仅在用户授权的验收窗口内临时启用
-> `MANAO_MAIL_ENABLED=true` 与 `MANAO_REGISTRATION_ENABLED=true`；验收后恢复 false。
+> 每行由用户填写 PASS/FAILED、日期与脱敏备注；不记录任何秘密值。
+> 前置：仅在授权的验收窗口临时启用邮件/注册开关，验收后恢复 false。
 
 | # | 场景 | 操作步骤（用户） | 预期结果 | 用户结果 | 日期 | 备注（脱敏） |
 | --- | --- | --- | --- | --- | --- | --- |
-| E1 | 正常注册送达 | 打开 /register，输入新用户名/邮箱/密码与图形码，发送邮箱验证码，查收 126 邮件 | 邮件送达；6 位码可提交；注册成功并回到登录页（不自动登录） | 待填 | 待填 | — |
-| E2 | 正常找回送达 | 打开 /forgot-password，用已绑定邮箱发送找回码，查收邮件并重置 | 邮件送达；重置成功；新密码可登录，旧密码失效 | 待填 | 待填 | — |
-| E3 | 验证码过期 | 取得邮箱码后等待超过 10 分钟再提交 | 提交被拒绝（EMAIL_CODE_INVALID/无效），不创建账号/不重置密码 | 待填 | 待填 | — |
-| E4 | 重发使旧码失效 | 发送一次后点击“重新发送”，只使用旧邮件里的码提交 | 旧码被拒绝；新码可用（同一用途/邮箱 60 秒冷却生效） | 待填 | 待填 | — |
-| E5 | 重复提交拒绝 | 使用一个已消费的验证码再次提交注册/重置 | 请求被拒绝；不产生第二个账号/第二次重置 | 待填 | 待填 | — |
-| E6 | 重置后旧密码失效 | 找回重置成功后，用旧密码登录 | 旧密码登录失败；新密码登录成功；其他旧登录凭据被撤销 | 待填 | 待填 | — |
-| E7 | 未绑定邮箱旧账号 | 用 `bind-legacy-email.ps1` 的预览输出（不 Apply）核对：旧账号 email 为 NULL 时不能走找回 | 找回页给出统一提示且不泄露账号存在性；绑定需人工维护脚本 + 用户确认邮箱控制权 | 待填 | 待填 | — |
+| E1 | 正常注册送达 | /register 输入新用户名/邮箱/密码与图形码，发送邮箱验证码，查收 126 邮件并提交 | 邮件送达；6 位码可提交；注册成功回登录页（不自动登录） | 待填 | 待填 | — |
+| E2 | 正常找回送达 | /forgot-password 用已绑定邮箱发码，查收并重置 | 邮件送达；重置成功；新密码可登录，旧密码失效 | 待填 | 待填 | — |
+| E3 | 验证码过期 | 取得邮箱码后等待超过 10 分钟再提交 | 提交被拒绝；不创建账号/不重置密码 | 待填 | 待填 | — |
+| E4 | 重发使旧码失效 | 发送后用“重新发送”，只使用旧邮件里的旧码提交 | 旧码被拒绝；新码可用（60 秒冷却生效） | 待填 | 待填 | — |
+| E5 | 重复提交拒绝 | 用已消费的验证码再次提交注册/重置 | 拒绝；不产生第二个账号/第二次重置 | 待填 | 待填 | — |
+| E6 | 重置后旧密码失效 | 找回重置成功后用旧密码登录 | 旧密码失败；新密码成功；旧凭据被撤销 | 待填 | 待填 | — |
+| E7 | 未绑定邮箱旧账号 | 旧 NULL email 账号尝试找回；并用 bind-legacy-email 预览核对 | 统一提示且不泄露账号存在性；绑定需人工脚本+用户确认控制权 | 待填 | 待填 | — |
 
-（邮件链结论只有用户填写 E1–E7 后才可标记；当前整体 **NOT_RUN**，不得用 mock 替代。）
+当前整体邮件链状态：**NOT_RUN（等待用户手动验证）**；mock/捕获型 sender 不得替代。
 
-## 5. Phase B 待执行证据（占位）
-
-以下项在 Phase A 均未执行，等待 Lead 确认 Task 5/6 完成并授权后逐项补齐命令、结果与证据落点：
-
-1. 本地完整回归：`pnpm exec playwright test tests/e2e/multi-account.spec.ts --project=chromium`（本次已提前跑通）、`mvn -f poc4/backend/pom.xml test`（disposable MySQL）、`pnpm --dir poc4/frontend test`。
-2. 真实邮箱与图形码：实际 backend 镜像渲染 PNG 并验证可解码；邮件链由用户按 §4 手动验收。
-3. 受控升级：记录镜像 SHA/digest、单 backend Recreate、注册开关 false、DB 备份点、V17 迁移、旧账号/项目回读、旧 JWT 重登、旧 NULL ticket 拒绝；回滚不 down migrate、不恢复宽 policy。
-4. 两账号顺序验收：真实发送等待用户手动完成；随后由获准的云端脚本执行登录→创建/编辑/运行/终端/AI 展示→退出，B 顺序执行；跨账号 ID 替换拒绝；8 项目上限；A 到期→B 登录、迟到响应、改密后旧 JWT/ticket/连接失效且后台任务继续。网络探测按计划执行并保留最小证据。
-5. 清理：精确 owner/project 清理 disposable 资源，保留旧账号项目；删除本地临时文件；显式 `git add` 提交；不广泛 `git clean`。
-
-## 6. 已知问题 / 开放项
+## 9. 已知问题与开放项
 
 | # | 问题 | 影响 | 状态 |
 | --- | --- | --- | --- |
-| K1 | 改密成功后登录页不显示“密码已更新，请重新登录”提示：`ChangePasswordPage` 在 `clear('logout')` 后 `navigate('/login', { passwordChanged: true })`，但 `RequireAuth` 的匿名重定向把 router state 覆盖为 `{ from: '/account/password' }` | 仅提示语缺失；会话终止、旧密码失效、需重新登录等安全行为已由本次 mock e2e 验证 | **OPEN（本次真实浏览器 mock 运行发现；属 Task 7 前端 src，Task 8 不改前端 src；建议 Task 7 后续最小修复 + 浏览器级回归）** |
-| K2 | `pwsh` 二进制不在本机 | 精确 pwsh 命令 NOT_RUN；PS 5.1 等价运行 PASS（脚本兼容 5.1/7） | OPEN（环境限制） |
-| K3 | Cloud spec 未准备真实账号/项目/URL | 真实云端验收 NOT_RUN | 等待 Phase B 授权与用户手动准备账号 |
-| K4 | Task 5/6 未完成 | 后端完整套件与账号生命周期真实验收未运行 | 等待 Lead 确认后 Phase B |
+| K1 | 改密成功后登录页提示曾因 RequireAuth 重定向覆盖 router state 而缺失 | 提示语缺失（安全行为正常） | **FIXED（390f6a4）**：改为一过性内存提示，恰好一次、不复播；独立复核 PASS/APPROVED；本轮 mock e2e 已断言 |
+| N1 | Task 6 terminal 撤销竞态分支未结算 LIVE session（复核发现，静态分析无复现） | 可能遗留 LIVE 行/active marker，后续 terminal 409 | **OPEN / 修复轮进行中**；修复提交 + 验证 + 复核前相关行为记 NOT_REVERIFIED |
+| B1 | 后端完整 Maven 套件未运行（Maven 与 Task 6 修复轮串行） | 全局 strict Jackson/V18/无关控制器全量回归未验证 | **NOT_RUN（Phase B-2）** |
+| F1 | 前端全量 vitest 非全绿：1 个已知 visual spec + 3 个并发负载 flake（隔离 92/92 PASS） | 不能声称前端全量绿 | 记录为已知/环境性；未改源码 |
+| F2 | 精确 `pwsh -NoProfile -File ...` 无法执行（本机无 pwsh） | 两脚本 ps1 证据仅 PS 5.1 | NOT_RUN（环境限制；PS 5.1 等价 PASS） |
+| R1 | 复核 deferred minors：T4 N2/N4/N5/N6、T5 若干 Minor、T6 M1–M6、T7 M1–M4、T3 跨控制器 WARN | 不阻断本地交付，但最终整分支复核需逐项分诊 | OPEN（最终复核） |
+| R2 | 最终整分支独立复核未执行；Task 6 N1 修复后需复核 | 整体质量门未闭合 | NOT_RUN |
+| S1 | 真实 SMTP/邮件/集群/部署/Secret/运行库迁移/两账号/网络/清理 | 真实环境验收与 PASS 门 | NOT_RUN（需用户授权） |
 
-## 7. PASS 判定
+## 10. PASS 判定
 
-**`MULTI_ACCOUNT_MVP_PASS` 未授予。** 授权条件（按设计与计划）：范围内证据齐全，
-即代码/本地测试、独立复核、用户人工邮件验证、策略预览+Apply 回读、两账号隔离与云端验收
-全部有真实证据且无未解决 Critical/Important。当前仅完成 Phase A 本地交付物与本地 mock/
-fixture 证据；真实邮件、集群与两账号验收均 NOT_RUN。用户尚未完成 §4 时不能以 mock 通过
-替代整体 PASS。
+**MULTI_ACCOUNT_MVP_PASS 未授予。**
+
+授予条件（按设计与计划）：范围内证据齐全，即代码/本地测试、独立复核、用户人工邮件验证、
+旧策略预览+Apply 回读、两账号隔离与云端验收全部有真实证据，且无未解决 Critical/Important
+（含 Task 6 N1 与最终整分支复核）。当前仅完成本地实现、本地定向/全量前端证据、mock 浏览器
+验收与部署/维护脚本 fixture；真实邮件、真实迁移/Apply、云端与两账号验收仍 NOT_RUN，后端全量
+套件待 Phase B-2，Task 6 N1 修复轮未闭环。因此只能记录“本地范围内可复核的通过项”与明确的
+NOT_RUN 边界，**不能整体 PASS，也不能由 mock/fixture 替代真实邮件与云端验收**。

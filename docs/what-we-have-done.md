@@ -9,6 +9,7 @@
 - 2026-10-26 收尾修复已本地审查、实际部署并完成一次最小真实模型/浏览器验证：**LOCAL_REPAIR_VERIFIED / DEPLOYED_SMOKE_VERIFIED**。修复分支先合回 AI 分支，现随 AI 集成内容同步到 master；原发布和验证边界保持不变。
 - 阶段四本地实现及已授权云端发布、真实模型验证完成，授予 **PI_STAGE4_CONTROL_RECOVERY_PASS**：暂停后安全接管、保存修改后同 conversation 新 Task、浏览器重进及 Worker 异常核对后手动继续通过。范围见[阶段四验收](../poc4/docs/evidence/ai-stage4/acceptance.md)。
 - 原故障 Task 仍为 **NOT_REPAIRED**，其处理与阶段二验收按用户决定暂缓。2026-10-27 关键云端故障专项已完成；这些结果不授予阶段二、完整云端故障矩阵或整个 AI 首版 PASS。
+- 多账号与账号生命周期：本地实现、定向测试与 mock 浏览器验收已记录（V17/V18、验证码、注册/找回/改密、撤销、账号页面）；真实邮件、云端两账号隔离、集群迁移/旧策略 Apply 与用户验收仍 NOT_RUN，**MULTI_ACCOUNT_MVP_PASS 未授予**。
 
 ## AI 专题交付
 
@@ -38,6 +39,12 @@
 | Python、依赖恢复、镜像源与批量导入 | 2026-09-27 初始云验收通过，后续修复/镜像源/批量导入已发布，2026-10-12 经用户验收合入 master；7200s 案例 SKIPPED，镜像源轮保留既有依赖面板竞态和 deferred minors | [Python 验收](../poc4/docs/evidence/python-runtime/acceptance.md) |
 
 早期 0–5 阶段和 6A 方案调整仅作历史来源，不重新作为当前执行步骤；从文档导航的“基础云环境与历史阶段”按需查阅。
+
+## 多账号与账号生命周期（本地实现完成，真实环境待验收）
+
+| 专题 | 已记录结果与边界 | 证据入口 |
+| --- | --- | --- |
+| 多账号与账号生命周期 | 本地实现、定向测试与 mock 浏览器验收已记录（V17/V18、验证码、注册/找回/改密、撤销、账号页面、部署维护脚本 fixture）；真实 SMTP/邮件、云端两账号隔离、旧策略 Apply、运行库迁移与部署均 NOT_RUN；后端完整套件待补 | [多账号验收记录](../poc4/docs/evidence/multi-account/acceptance.md) |
 
 ## 最近一次整合与清理
 
