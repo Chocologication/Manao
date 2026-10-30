@@ -1,10 +1,9 @@
 # 多账号与账号生命周期验收记录
 
-- 更新：2026-10-30（最终整分支复核后的 docs 对齐：I1 实际镜像 PNG NOT_RUN、I2 状态刷新、C1 提醒；真实环境仍 NOT_RUN）
+- 更新：2026-10-30 17:15（**真实 6B 集群部署、V17+V18 运行库迁移、旧策略预览+Apply、实际镜像 captcha PNG、跨项目依赖隔离探测均已执行并通过**；真实 126 邮件与云端两账号验收仍 NOT_RUN；C1 提醒保留）
 - 分支：codex/multi-account（独立 worktree，不链接本地绝对路径）；最终本地树 HEAD b132fb1 + docs 提交
-- 记录状态：**本地实现、前端全量/mock、后端完整套件与全部本地证据已记录；最终整分支复核：本地 APPROVED（条件 C1/I1/I2）；真实环境仍 NOT_RUN。**
-- **MULTI_ACCOUNT_MVP_PASS 未授予。** 真实邮件、云端两账号隔离、旧策略 Apply、部署/V17+V18
-  真实迁移、实际 backend 镜像 PNG 验证、C1 凭据清理与用户人工验收尚未完成；本地测试通过不等于真实环境验收。
+- 记录状态：**本地实现 + 6B 真实部署与迁移/策略迁移/镜像 captcha/依赖隔离探测完成；最终整分支复核本地 APPROVED；真实 126 邮件与云端两账号验收仍 NOT_RUN。**
+- **MULTI_ACCOUNT_MVP_PASS 未授予。** 真实 126 邮件发送/收件与人工 E1–E7、云端两账号顺序验收与完整网络/资源清理、C1 凭据轮换与用户人工验收仍未完成；本地/依赖隔离证据不等于全部真实环境验收。
 
 权威设计：[多账户与账号生命周期设计](../../../../docs/superpowers/specs/2026-10-29-multi-account-design.md)；
 实施计划：[多账号实施计划](../../../../docs/superpowers/plans/2026-10-29-multi-account-implementation-plan.md)；
@@ -47,11 +46,8 @@
 
 仍为 NOT_RUN（不阻塞本地交付，但阻塞整体 PASS）：
 
-- 真实 126 邮件发送/收件与用户人工邮件验收（E1–E7）。
-- **实际 backend 镜像生成可解码 PNG（部署后 GET /api/v1/auth/captcha smoke）**：Docker engine 不可用；
-  当前只有本地 JVM headless PNG 渲染测试通过，真实镜像渲染仍 NOT_RUN（Task 4 报告明确记录）。
-- 真实集群旧策略只读预览/Apply/回读、部署、Secret 注入、V17+V18 真实运行库迁移。
-- 真实云端两账号顺序验收（登录/项目/文件/Run/终端/AI、跨账号拒绝、8 项目上限）、网络隔离探测。
+- 真实 126 邮件发送/收件与用户人工邮件验收（E1–E7；需注入 MAIL_PASSWORD 并临时开启开关，且仅由用户手动操作）。
+- 真实云端两账号顺序验收（登录/项目/文件/Run/终端/AI、跨账号拒绝、8 项目上限、完整网络/workspace 旁路探测），需用户提供两个 verified 账号与专用项目或另行授权创建受控临时账号。
 - 真实 owner/project 运行时资源清理（本地 disposable 测试 schema 清理已在 §5.6 PASS）。
 - C1 提醒：仓库 baseline 预先存在的明文凭据必须在任何 push/merge/发布前轮换并清理历史
   （非本分支引入、本 worktree 未修改；详见 §9 C1，不复制任何 secret 值）。
@@ -88,12 +84,12 @@ two-account isolation = 真实云端两账号；cloud acceptance = 真实公网�
 | # | 验收项 | 证据来源 | code/local tests | independent review | user-manual email | policy preview+apply | two-account isolation | cloud acceptance |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | 1 | 依赖 NetworkPolicy 项目标签 + 创建顺序 | T1 report/tests | PASS（21/21） | PASS（M8 已修） | SKIPPED | NOT_RUN | NOT_RUN | NOT_RUN |
-| 2 | 旧策略迁移脚本（预览/备份/Patch/回读/零遗漏/统一失败） | T1 + T8 scripts/fixtures | PASS（fixture 16/16，PS 5.1；精确 pwsh NOT_RUN） | PASS（复审 + M8 闭环） | SKIPPED | **NOT_RUN（真实集群未执行）** | NOT_RUN | NOT_RUN |
+| 2 | 旧策略迁移脚本（预览/备份/Patch/回读/零遗漏/统一失败） | T1 + T8 scripts/fixtures + §10 真实集群记录 | PASS（fixture 18/18，PS 5.1；精确 pwsh NOT_RUN；新增真实集群 kind=List 修复 c529fcb） | PASS（复审 + M8 闭环） | SKIPPED | **PASS（真实预览+Apply+回读：2/2 收窄，幂等 ALREADY_SCOPED；§10）** | NOT_RUN | NOT_RUN |
 | 3 | 会话终止等价（expiry/logout/401 + 迟到响应） | T2 report/tests | PASS（104/104 Lead 定向） | PASS | SKIPPED | SKIPPED | NOT_RUN | NOT_RUN |
 | 4 | V17 账号 schema + 旧账号/项目保留 | T3 report / Flyway tests | PASS（53/53；disposable MySQL） | PASS（fix 轮；跨控制器 strict-mapper WARN 已由最终全量套件 RESOLVED） | SKIPPED | SKIPPED | NOT_RUN | NOT_RUN |
 | 5 | V18 挑战配额分配锁 | T4 fix / FlywaySchemaTest | PASS（Flyway latest 18；定向组合包含） | PASS（N3 由 Lead 裁定接受） | SKIPPED | SKIPPED | NOT_RUN | NOT_RUN |
 | 6 | 图形码（5 位去混淆 PNG/2 分钟/5 次/一次性/总量限速） | T4 report/tests | PASS（CaptchaServiceTest 等；**本地 JVM headless 渲染测试**） | PASS | SKIPPED | SKIPPED | NOT_RUN | NOT_RUN |
-| 6b | **实际 backend 镜像生成可解码 PNG（部署后 GET /api/v1/auth/captcha smoke）** | Task 4 report（Docker engine 不可用）/ §6.5 | **NOT_RUN（仅本地 JVM 渲染测试，不是真实镜像 PASS）** | NOT_RUN | SKIPPED | SKIPPED | NOT_RUN | NOT_RUN |
+| 6b | **实际 backend 镜像生成可解码 PNG（部署后 GET /api/v1/auth/captcha smoke）** | §10 真实部署记录（镜像 digest 7442351d…） | **PASS（真实镜像返回 200，PNG 132x44 可解码，Cache-Control: no-store）** | PASS（Lead 执行；证据见 §10） | SKIPPED | SKIPPED | NOT_RUN | PASS（公网入口） |
 | 7 | 邮箱码（6 位/10 分钟/5 次/60s 冷却/小时 5 次/重发失效/SMTP 失败状态） | T4/T5 report/tests | PASS（捕获型 sender/替身；无真实 SMTP） | PASS | **NOT_RUN（用户手动）** | SKIPPED | NOT_RUN | NOT_RUN |
 | 8 | 注册/找回/改密 HTTP 合同与固定错误码 | T5 report/HTTP tests | PASS（113/113 Lead；终态组合 112/112） | PASS/APPROVED | NOT_RUN（用户手动） | SKIPPED | NOT_RUN | NOT_RUN |
 | 9 | 改密/重置撤销旧 JWT、票据、连接；Run/AI 继续 | T6 report/tests | PASS（fix1 58/58 + 组合 112/112 → fix2 113/113；完整套件含 T6 类全绿） | PASS（fix1 复审 N1+(a)–(f) ADDRESSED；最终复核已核 b132fb1 M-a FIXED；M-b/M-c/M-d 判为 ACCEPTABLE-DEFERRED D5） | SKIPPED | SKIPPED | NOT_RUN | NOT_RUN |
@@ -102,15 +98,15 @@ two-account isolation = 真实云端两账号；cloud acceptance = 真实公网�
 | 12 | 前端全量回归（vitest/typecheck/build/boundary） | 本文件 §5.1–§5.3 | **非全绿**：1736 tests 中 4 failed（已知 visual spec + 3 个负载 flake；隔离 92/92 PASS）；typecheck/build/boundary PASS | NOT_RUN | SKIPPED | SKIPPED | NOT_RUN | NOT_RUN |
 | 13 | 后端完整 Maven 套件（全局 strict Jackson/V17+V18/无关控制器） | 本文件 §5.6（Phase B-2） | **PASS（1076 tests / 0 failures / 0 errors / 2 skipped，BUILD SUCCESS，39:54；disposable MySQL）** | PASS（最终整分支复核已核对 surefire artifact；全量非本轮重跑） | SKIPPED | SKIPPED | NOT_RUN | NOT_RUN |
 | 14 | 旧账号邮箱人工绑定维护脚本 | T8 Phase A bind-legacy-email + self-test | PASS（10/10，disposable schema，本地 MySQL） | NOT_RUN（本任务交付物） | SKIPPED | SKIPPED | NOT_RUN | NOT_RUN |
-| 15 | 邮件/挑战配置模板与 6B Secret/env 引用 | T8 Phase A config.example.env / backend.yaml | PASS（结构/YAML 校验；mail+registration=false；password 空） | NOT_RUN | **NOT_RUN（运行时 Secret 注入未执行）** | SKIPPED | NOT_RUN | NOT_RUN |
-| 16 | 真实策略迁移预览 → 备份 → Apply → 回读 | 本文件 §6.2（未执行） | 本地 fixture PASS | PASS（脚本复审） | SKIPPED | **NOT_RUN（需用户授权）** | NOT_RUN | NOT_RUN |
-| 17 | 受控升级：部署/V17+V18 真实迁移/旧 JWT 重登/回读 | 本文件 §6.1（未执行） | **NOT_RUN** | NOT_RUN | NOT_RUN | NOT_RUN | NOT_RUN | NOT_RUN |
+| 15 | 邮件/挑战配置模板与 6B Secret/env 引用 | T8 Phase A + §10 部署记录 | PASS（结构/YAML 校验；mail+registration=false；password 空） | NOT_RUN | **PASS（AUTH_CHALLENGE_SECRET 随机注入；MAIL_PASSWORD 暂空、mail false）** | SKIPPED | NOT_RUN | NOT_RUN |
+| 16 | 真实策略迁移预览 → 备份 → Apply → 回读 | **本文件 §10（2026-10-30 已执行）** | 本地 fixture PASS | PASS（脚本复审） | SKIPPED | **PASS（2 条旧策略收窄；backup/patch/apply-report；回读 UID 不变；幂等复检）** | NOT_RUN | NOT_RUN |
+| 17 | 受控升级：部署/V17+V18 真实迁移/旧 JWT 重登/回读 | **本文件 §10（2026-10-30 已执行）** | **PASS（V16→V18；旧账号/项目数据保留；旧格式 JWT 401；ver=0 token 200；/me 回读）** | Lead 执行 + 证据 §10 | NOT_RUN（旧密码登录未测，密码未提供） | PASS（策略） | NOT_RUN | PASS（公网入口） |
 | 18 | 用户人工邮件验收 E1–E7 | 本文件 §8（未执行） | **NOT_RUN（用户手动）** | NOT_RUN | **NOT_RUN（等待用户）** | SKIPPED | SKIPPED | NOT_RUN |
 | 19 | 两账号顺序验收 + 跨账号拒绝 + 8 项目上限 | 本文件 §6.4 / cloud spec（未执行） | 云端 spec 骨架已就绪（--list 5 项） | NOT_RUN | NOT_RUN | NOT_RUN | **NOT_RUN（需用户授权）** | NOT_RUN |
-| 20 | 网络隔离探测（依赖连通/跨项目拒绝/公开应用/旁路） | 计划 Task 8 第 4 项网络 | NOT_RUN | NOT_RUN | SKIPPED | NOT_RUN | NOT_RUN | NOT_RUN |
+| 20 | 网络隔离探测（依赖连通/跨项目拒绝/公开应用/旁路） | **本文件 §10（依赖隔离已执行）** | PASS（两项目 workspace→自身 MySQL 服务/Pod IP OPEN；跨项目 BLOCKED(rc=11) 双向） | Lead 执行 | SKIPPED | PASS | **NOT_RUN（两账号 HTTP/workspace 旁路）** | NOT_RUN（公开应用当前无运行中 app） |
 | 21 | 清理：本地 disposable 测试 schema vs 真实 owner/project 运行时资源 | 本文件 §5.6 / 计划 Task 8 第 5 项 | PASS（本地 disposable 测试 schema 自动创建/删除，无新增残留；未 reset 运行库） | NOT_RUN | NOT_RUN | NOT_RUN | **NOT_RUN（真实 owner/project 运行时资源清理）** | NOT_RUN |
 | 22 | C1：仓库 baseline 预先存在的明文凭据（非本分支引入） | 最终复核 C1（本地 review 记录，不入库；未复制任何 secret 值） | **NOT_RUN / REMINDER**：任何 push/merge/发布前必须轮换并清理历史；本 worktree 未修改、分支 diff 未触碰 | NOT_RUN | — | — | — | — |
-| 23 | **MULTI_ACCOUNT_MVP_PASS** | 本文件 §10 | **NOT_GRANTED** | — | — | — | — | — |
+| 23 | **MULTI_ACCOUNT_MVP_PASS** | 本文件 §11 | **NOT_GRANTED** | — | — | — | — | — |
 
 ## 5. 本地执行证据（Phase B-1/B-2，2026-10-29/30，最终 HEAD b132fb1 + 本任务 docs 提交）
 
@@ -229,7 +225,9 @@ DB 卫生：套件通过 JdbcStoreTestSupport 创建并在结束时删除各自�
 运行后仅剩运行前已存在的两个历史遗留 `manao_stage6_a7779c…` / `manao_stage6_edea20…`（未新增
 残留）；`manao_poc4` 未被写入（仅名称核对），本地无 `manao_poc4_6b`。未连接真实集群/邮件。
 
-## 6. 迁移与部署步骤（全部未执行，需用户授权）
+## 6. 迁移与部署步骤（2026-10-30 已执行 6.1/6.2/6.3/6.5；6.4 与真实邮件仍 NOT_RUN）
+
+> 2026-10-30 用户授权后，6.1 V17+V18 运行库迁移、6.2 旧策略预览+Apply、6.3 挑战 Secret 注入（MAIL_PASSWORD 暂空）、6.5 实际镜像 captcha PNG smoke 已实际执行，完整执行记录与证据见 §10；6.4 两账号云端验收与真实邮件 E1–E7 仍 NOT_RUN。
 
 ### 6.1 V17 + V18 运行库迁移（真实 manao_poc4 / manao_poc4_6b）
 
@@ -303,7 +301,7 @@ conversation/task ID 替换拒绝、A 到期→B 登录、旧响应迟到、改�
 
 ## 7. 需要用户授权的真实环境操作清单
 
-以下操作**本轮均未执行**，需用户逐项授权（可分批）：
+以下为原始授权清单；其中 2/3/4（含 §6.5 PNG smoke）/5/6/10（依赖隔离探测部分）已于 2026-10-30 用户授权窗口执行（结果见 §10），其余仍待授权或由用户手动完成：
 
 1. **C1（安全前提）**：在任何 push/merge/发布前轮换并清理仓库 baseline 预先存在的明文凭据
    （非本分支引入、本 worktree 未修改；不复制任何 secret 值）。
@@ -348,7 +346,7 @@ conversation/task ID 替换拒绝、A 到期→B 登录、旧响应迟到、改�
 | M-a | 终止门非异常安全（CAS 后 send 抛 RuntimeException 可能永久残留 LIVE） | 与 N1 同类后果（异常路径） | **FIXED（b132fb1）**：try/finally 保证 settle/close；throwing fake session 测试；Lead 定向 36/36；最终整分支复核已核（保留多会话异常循环残余 Minor，D5 deferred） |
 | M-b/M-c/M-d | Task 6 fix 轮遗留：部分路径回归测试缺口、stale-version 帧序契约未固定、SSE auth.revoked 改为尽力异步的语义说明 | 测试/契约清晰度；不阻断功能 | **ACCEPTABLE-DEFERRED（最终复核已分诊，D5）**：记录在 reviews/task-6-fix1-rereview.md；确认非 Critical/Important |
 | B1 | 后端完整 Maven 套件未运行（Maven 与 Task 6 修复轮串行） | 全局 strict Jackson/V18/无关控制器全量回归未验证 | **PASS（Phase B-2）**：1076 tests / 0 failures / 0 errors / 2 skipped，BUILD SUCCESS，39:54，disposable MySQL（2 skipped 为真实集群/清理证据的环境门） |
-| P1 (I1) | 实际 backend 镜像 PNG 渲染验证（设计 §5.3）仍 NOT_RUN | 真实部署的 GET /api/v1/auth/captcha 是否能返回可解码 PNG 未验证；本地 JVM headless 测试不能替代 | **NOT_RUN（Docker engine 不可用）**：Task 4 报告明确 NOT_RUN；smoke 步骤见 §6.5/§7，交付前必须补齐 |
+| P1 (I1) | 实际 backend 镜像 PNG 渲染验证（设计 §5.3） | 真实部署的 GET /api/v1/auth/captcha 返回 PNG | **PASS（2026-10-30，§10）**：真实镜像 digest 7442351d…；HTTP 200、PNG 132x44、PNG 签名有效、Cache-Control: no-store；证据文件 smoke-captcha.png 在本地 deploy-evidence |
 | F1 | 前端全量 vitest 非全绿：1 个已知 visual spec + 3 个并发负载 flake（隔离 92/92 PASS） | 不能声称前端全量绿 | 记录为已知/环境性；未改源码 |
 | F2 | 精确 `pwsh -NoProfile -File ...` 无法执行（本机无 pwsh） | 两脚本 ps1 证据仅 PS 5.1 | NOT_RUN（环境限制；PS 5.1 等价 PASS） |
 | R1 | 复核 deferred minors：T4 N4/N5/N6（N2 已由 af94477 修复）、T5 若干 Minor、T6 M-b/M-c/M-d、T7 M1–M4 | 不阻断本地交付 | **DONE（最终复核分诊）**：均 ACCEPTABLE-DEFERRED（D1–D10）；无未解决 Critical/Important 代码项 |
@@ -356,7 +354,69 @@ conversation/task ID 替换拒绝、A 到期→B 登录、旧响应迟到、改�
 | S1 | 真实 SMTP/邮件、集群/部署/Secret、V17+V18 运行库迁移、实际镜像 PNG、两账号/网络/清理、用户验收 | 真实环境验收与 PASS 门 | NOT_RUN（需用户授权；清单见 §7） |
 | C1 | 仓库 baseline 预先存在的明文凭据（.claude/settings.local.json、.zcode/config.json、docs/old_docs/.../2026-09-26-python-runtime-review-fix-plan.md；非本分支引入，本 worktree 未修改） | 任何 push/merge/发布前必须轮换并清理历史；本文件不复制任何 secret 值 | **REMINDER / NOT_RUN**：轮换+历史清理未执行（由用户/发布流程处理）；不影响 local 代码 verdict |
 
-## 10. PASS 判定
+## 10. 真实 6B 集群部署执行记录（2026-10-30，用户授权）
+
+授权：用户 2026-10-30 16:45 明确“可以发布到集群并进行下一步工作”。执行位置：本地独立 worktree（codex/multi-account），context kubernetes-admin@learn，namespace manao-stage6b；部署前 3 节点 Ready。日志/输出/备份在本地 .superpowers/sdd/2026-10-29-multi-account/deploy-evidence/（repo 本地 exclude，不入库）；本文件只记录结论与关键值。
+
+### 10.1 部署前基线与恢复点
+
+- 部署源码：分支 HEAD 430d64d（本地实现 + docs；镜像构建于此），迁移工具修复 c529fcb（真实集群 generic List kind 兼容，仅部署脚本，不打入镜像）。
+- 部署前镜像：backend chocologic/manao_images_repository@sha256:c0c56bc3…，frontend …@sha256:120ebc30…（旧 digest 已记录，可用于受控回退；本轮未回退）。
+- 部署前 DB：Flyway history 最新 version=16；app_user=1、project=6（1 个 DELETING）、log_ticket=98、run=14、workspace_operation=131、agent_task=22、agent_conversation=12。
+- DB 恢复点：deploy-evidence/db-backup-manao_poc4_6b-20261030-1710.sql（mysql-0 内 mysqldump --single-transaction --routines --triggers --events，kubectl cp 回本地后删除 pod 临时文件），size=3,050,141 bytes，sha256=4f0a01156c1359a28bf0cf0b65d57c46661e4fe0480d14df4326a1211594b277。
+- 另存部署前 deployment/pods/networkpolicies YAML 到 deploy-evidence（不含 Secret 值）。
+
+### 10.2 镜像构建、推送与 Secret
+
+- backend：docker build -t chocologic/manao_images_repository:multi-account-backend-20261030 poc4/backend → push → digest sha256:7442351d2144e3de33c364a3b66720cd999825fb6a3f61e3c6071469e3b0caf9。
+- frontend：docker build -t chocologic/manao_images_repository:multi-account-frontend-20261030 poc4/frontend → push → digest sha256:be7f667ce7553ec8462915986e8d9c52d19a113df37dc226f04cbb3136e5ac5e。
+- Secret manao-backend-auth 追加 AUTH_CHALLENGE_SECRET（随机 48 字节 base64，未出现在仓库/日志/报告）与 MAIL_PASSWORD（当前空字符串；真实 126 授权码未注入，mail 保持 false）。
+- Secret manao-backend-images 的 BACKEND_IMAGE 更新为新 digest；workspace/runner 镜像引用不变。backend.yaml/frontend.yaml 以 digest 替换 placeholder 后 apply（渲染文件在 deploy-evidence）。
+
+### 10.3 部署与 V17+V18 迁移
+
+- backend 单副本 Recreate、frontend 单副本滚动；两次 rollout 成功（backend Pod backend-7ddb87c845-5jvjw、frontend Pod frontend-6776f7c449-4xcjs，均 Ready 1/1）。
+- backend 启动日志：Current version of schema manao_poc4_6b: 16 → 应用 V17、V18 → Successfully applied 2 migrations ... now at version v18（0.395s）；应用启动成功。旧账号/项目未重建、未 reset schema。
+- 部署后 DB 回读：flyway version=18；app_user=1、project=6、log_ticket=98、run=14、workspace_operation=131（与部署前一致）；auth_challenge 表存在（smoke 产生 1 行）、auth_challenge_allocation=2；98 条旧 log_ticket 的 auth_version 均为 NULL；app_user email=NULL、email_verified_at=NULL、auth_version=0。
+- 旧 JWT 行为：旧格式（无 ver）调用 /api/v1/projects → 401；ver 不匹配 → 401；签发当前 ver=0 token → 200 并列出 6 个项目。既有登录会话需重新登录一次。
+
+### 10.4 部署后 smoke（全部通过）
+
+- 公网入口 http://1.12.245.235:30080：index 200；GET /api/v1/auth/options → {registrationEnabled:false,emailAvailable:false}。
+- GET /api/v1/auth/captcha（经公网入口）：200；base64 解码为有效 PNG（signature 89 50 4E 47 0D 0A 1A 0A，132x44），响应头 Cache-Control: no-store；无答案泄漏字段。**实际 backend 镜像 PNG 验证 PASS。**
+- 未认证 GET /api/v1/projects → 401 UNAUTHENTICATED；登录错误密码 → 401 通用信息；GET /api/v1/auth/me（合法 ver=0 token）→ 200，返回既有账号 id/username、email=null、emailVerified=false；GET /api/v1/projects/<已有READY项目id> → 200 且 id/state 匹配。
+- 真实浏览器（Playwright chromium 对公网入口）：/login 有“注册账号”“忘记密码”入口、无图形码、无演示凭据；/register 显示注册关闭状态；/forgot-password 显示邮箱输入与统一找回/未绑定邮箱提示；三页 URL 均 200；生产 bundle 含 /register、/forgot-password、/account/password 路由及“注册账号/忘记密码/修改密码”文案。
+- 健康：backend readiness/liveness 均 {"status":"UP"}；部署后日志无 ERROR/Exception。
+
+### 10.5 旧依赖 NetworkPolicy 真实迁移
+
+- 工具修复：真实 kubectl get networkpolicies -o json 顶层 kind=List（非 NetworkPolicyList），原脚本 fail-closed 中止；修复为接受两种 list kind 且要求每个 item 为 NetworkPolicy，fixture 18/18 PASS（commit c529fcb）。
+- 只读预览（ProjectsFile = 人工核对的 2 个现有依赖策略项目 a5a24746…/bdddc018…）：[NEEDS_MIGRATION]×2、[IGNORED] ai-stage1-development-build-egress（无 ingress）、PREVIEW_RESULT=WOULD_PATCH count=2，exit 0，无写入。
+- Apply：先写 backup 与 patch payload（仅 NetworkPolicy）；JSON Patch 校验 /metadata/uid 与 /metadata/resourceVersion 且仅 replace podSelector；两条均 [PATCHED]+[VERIFIED]，UID 不变、resourceVersion 由 41395899/38518186 变为 41805612/41805628；apply-report 写入本地证据目录；无 Secret 读取、无范围扩展。
+- 幂等复检：再次只读预览 → 两条 [ALREADY_FIXED]、RESULT=ALREADY_SCOPED count=0，exit 0。
+- live selector 回读：两条 target 均为 project-id=<本项目> + component In(mysql,redis)，ingress 来源仅本项目；ai-stage1-development-build-egress 未改。
+
+### 10.6 网络隔离探测（真实）
+
+从两个项目的 workspace Pod 分别探测本项目和另一项目的依赖 MySQL（3306）：
+
+| 源项目 | 目标 | 结果 |
+| --- | --- | --- |
+| a5a24746 workspace | 自身 MySQL Service / Pod IP | OPEN / OPEN（connect_ex 0） |
+| a5a24746 workspace | bdddc018 MySQL Service / Pod IP | BLOCKED(rc=11) / BLOCKED(rc=11) |
+| bdddc018 workspace | 自身 MySQL Service / Pod IP | OPEN / OPEN |
+| bdddc018 workspace | a5a24746 MySQL Service / Pod IP | BLOCKED / BLOCKED |
+
+结论：自身依赖连通、跨项目 Service 与 Pod IP 连接均被拒绝；不存在“连接成功但密码错误”。公开应用当前无运行中 app（两个 app Service 无 endpoints，HTTP 502），因此“公开应用匿名可访问”本轮 NOT_RUN（未启动新 Run 以免改变用户项目状态）；依赖策略目标仅为依赖 Pod，不改变公开应用路径。
+
+### 10.7 边界与未完成项
+
+- 旧账号密码登录未执行：集群既有账号密码未提供（operator 不保存/不猜测）；旧账号数据保留与 /me/project 回读已用 operator 签发的 ver=0 token 验证，不等同于真实密码登录。
+- 旧 NULL ticket 运行期拒绝、改密后真实连接撤销、两账号 HTTP/workspace 旁路、8 项目上限、公开应用匿名访问仍 NOT_RUN（需真实账号/Run）。
+- 真实 126 邮件 E1–E7 仍 NOT_RUN；当前 MAIL_PASSWORD 为空且 mail/registration=false。人工窗口需用户注入授权码并临时启用开关（agent 不执行真实邮件）。
+- C1 baseline 明文凭据清理未执行（非本分支引入；push/merge/发布前必须完成）。
+- 回退：旧 backend/frontend digest 已记录，可按受控发布流程回退镜像；按计划不得 down-migrate、不得恢复宽 NetworkPolicy、不得回退到忽略 auth_version 的旧镜像并声称撤销有效。
+## 11. PASS 判定
 
 **MULTI_ACCOUNT_MVP_PASS 未授予。**
 
@@ -370,3 +430,5 @@ boundary PASS、mock 浏览器验收 4/4 PASS、部署/维护脚本 fixture PASS
 镜像 captcha PNG 解码 smoke**、云端两账号隔离、网络探测、真实 owner/project 清理、C1 凭据轮换
 与用户人工验收仍 NOT_RUN。因此只能记录“本地范围内可复核的通过项”与明确 NOT_RUN 边界，
 **MULTI_ACCOUNT_MVP_PASS 仍不授予，也不能由 mock/fixture 替代真实邮件、真实镜像与云端验收**。
+
+2026-10-30 部署后更新：受控升级、V17+V18 真实迁移、旧策略 Apply+回读、实际镜像 captcha PNG、依赖隔离探测已 PASS；剩余未完成项为真实 126 邮件人工 E1–E7、云端两账号顺序验收/完整网络与 workspace 旁路/8 项目上限、公开应用匿名访问（需启动 app Run）、真实 owner/project 资源清理、C1 凭据轮换与用户最终验收。
