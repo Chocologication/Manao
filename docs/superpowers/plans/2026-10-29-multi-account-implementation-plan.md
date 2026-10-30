@@ -413,18 +413,25 @@ pnpm --dir poc4/frontend test
 ```
 
 完整backend套件仅disposable测试配置；外部依赖不齐如实标NOT_RUN/失败，不把--list当通过。通过后不无理由重复全套。
-- [x] **2. 邮件与镜像配置（本地配置部分；实际 backend 镜像 PNG 冒烟已于 2026-10-30 部署后 PASS，见 acceptance §10.4）。** example写入本计划补充块中的已知非秘密参数，MANAO_MAIL_PASSWORD始终留空并说明使用客户端授权码；运行时Secret注入需在获准配置时完成，不回显、不写入仓库。保持mail/registration默认false；在用户授权的人工注册验收窗口才能启用两项，正式开放依验收结果决定，agent不执行真实发送或SMTP登录探测。交付人工清单：正常注册送达、找回送达、验证码过期、重发使旧码失效、重复提交拒绝、重置后旧密码失效。用户未验收时邮件链NOT_RUN，不阻塞Task1/2独立修复。实际backend镜像生成PNG并验证可解码；缺字体只补必要依赖。
+- [x] **2. 邮件与镜像配置（本地配置部分；实际 backend 镜像 PNG 冒烟已于 2026-10-30 部署后 PASS，见 acceptance §10.4）。** example写入本计划补充块中的已知非秘密参数，MANAO_MAIL_PASSWORD始终留空并说明使用客户端授权码；运行时Secret注入需在获准配置时完成，不回显、不写入仓库。初始发布默认 false；用户完成人工 E1–E6 验收后，2026-10-30 已按用户决定在 6B 清单中正式启用两项（acceptance §12.1），MAIL_PASSWORD 仍仅来自 Secret；agent 不执行真实发送或 SMTP 登录探测。交付人工清单：正常注册送达、找回送达、验证码过期、重发使旧码失效、重复提交拒绝、重置后旧密码失效。用户未验收时邮件链NOT_RUN，不阻塞Task1/2独立修复。实际backend镜像生成PNG并验证可解码；缺字体只补必要依赖。
 - [x] **3. 受控升级。**（2026-10-30 用户授权后已执行：6B 单 backend Recreate + 前端滚动、V16→V18 迁移、旧策略预览+Apply+回读、部署前 DB 备份；证据见 acceptance §10） 记录SHA/digest；单backend Recreate、注册false。保留DB恢复点和策略备份，应用V17并核对旧账号/项目；预览完整旧policy清单后才Apply并回读。新登录使用version，旧JWT统一重登，旧NULL票据拒绝。回滚不down migrate或恢复广泛policy；关闭新账号入口时仍保留认证撤销和隔离修复，不能回退到忽略version的旧镜像并声称撤销有效。
-- [ ] **4. 两账号顺序验收。**（真实云端 NOT_RUN，等待用户授权） 注册/找回的真实发送、收件和验证码提交先由用户手动完成；记录用户反馈后，获准的云端脚本使用准备好的账号做后续登录→创建/编辑/运行/终端/AI展示→退出，B再顺序执行，不代替用户触发真实邮件。替换对方项目/文件/Run/ticket/conversation/task ID必须拒绝。各账户8项目，第9个拒绝；复用专用项目避免重复创建。覆盖A自然到期→B登录、旧响应迟到、改密后旧JWT/ticket/连接失效且后台任务继续、注册开关与旧账号绑定；找回重置链的真实邮件部分仍由用户手动验证，其余撤销行为可自动化验证。
+- [ ] **4. 两账号顺序验收（PARTIAL；整体 MVP_PASS 未授予）。** 注册/找回的真实发送、收件和验证码提交先由用户手动完成；记录用户反馈后，获准的云端脚本使用准备好的账号做后续登录→创建/编辑/运行/终端/AI展示→退出，B再顺序执行，不代替用户触发真实邮件。替换对方项目/文件/Run/ticket/conversation/task ID必须拒绝。各账户8项目，第9个拒绝；复用专用项目避免重复创建。覆盖A自然到期→B登录、旧响应迟到、改密后旧JWT/ticket/连接失效且后台任务继续、注册开关与旧账号绑定；找回重置链的真实邮件部分仍由用户手动验证，其余撤销行为可自动化验证。（实际：cloud spec 2 passed/3 显式 skip；隔离、8 项目上限、改密撤销、跨账号文件/Run/log-ticket/conversation/agent-task 拒绝均 PASS；终端 PTY/AI 端到端/自然到期/后台继续的云端证据未重造，E7 NOT_RUN，因此整体 MVP_PASS 未授予，边界见 acceptance §12.4/§12.6。）
 
 网络：自身依赖连通、跨项目Service/Pod IP连接拒绝、公开应用匿名正常；补探workspace/platform是否存在跨账户读写旁路。发现可访问旁路则停止开放注册并保留最小证据，提出最小修复，不把计划当全网改造授权。
-- [x] **5. 结果与清理（本地证据与 disposable 清理完成；真实 owner/project 运行资源清理 NOT_RUN）。** acceptance分别列代码/mock/用户手动邮件验证/策略迁移/流量/账号隔离/用户验收，写明证据来源。只有范围内证据齐全才能授予 `MULTI_ACCOUNT_MVP_PASS`；等待用户邮件验收时可交付本地实现，但整体PASS仍未授予，不能由mock替代。精确owner/project清理disposable资源，保留旧账号项目；清理不再使用的本地临时文件，禁止广泛git clean。按文件显式提交，合并/推送遵从用户后续指令。
+- [x] **5. 结果与清理（本地证据与 disposable 清理完成；真实 owner/project 运行资源清理已于 2026-10-30 执行，K8s 回读见 acceptance §12.4）。** acceptance分别列代码/mock/用户手动邮件验证/策略迁移/流量/账号隔离/用户验收，写明证据来源。只有范围内证据齐全才能授予 `MULTI_ACCOUNT_MVP_PASS`；等待用户邮件验收时可交付本地实现，但整体PASS仍未授予，不能由mock替代。精确owner/project清理disposable资源，保留旧账号项目；清理不再使用的本地临时文件，禁止广泛git clean。按文件显式提交，合并/推送遵从用户后续指令。
 
 完成记录（本地交付范围）：Task8 Phase A f39c788（config.example.env、bind-legacy-email.ps1 + SelfTest 10/10、M8 修复 16/16、6b/backend.yaml Secret/env 引用、mock/cloud e2e 脚手架）；Phase B f453be8/cf0e381（acceptance.md 22 行矩阵、docs 摘要）。本地证据：完整 backend 1076/0/0/2 skipped PASS（39:54，disposable MySQL）；frontend 完整 1736 tests 4 failed（既有 visual spec + 3 个并行负载 flake，隔离 92/92 PASS）；targeted 209/209、adjacent 414/414、typecheck/build/dist-scan/boundary PASS；mock Playwright 4/4（含 K1 提示断言）。真实环境步骤 2/3/4/5 中的邮件发送、集群旧策略预览/Apply、V17+V18 真实迁移、云端两账号与隔离、Secret 注入、bind-legacy-email -Apply 均 NOT_RUN，等待用户授权；MULTI_ACCOUNT_MVP_PASS 未授予。
 
-最终 whole-branch 复审（DSH reviewer 队友，非 codex/Astra）：本地分支 APPROVED，可作 LOCAL implementation 交付；MULTI_ACCOUNT_MVP_PASS 未授予。
+最终 whole-branch 复审（DSH reviewer 队友，非 codex/Astra）：本地分支 APPROVED，可作 LOCAL implementation 交付；当时 MULTI_ACCOUNT_MVP_PASS 未授予（后续正式转态与 delta 复核见本节末尾；acceptance §12.6 维持 MVP_PASS 未授予）。
 
 2026-10-30 真实环境执行记录（用户授权“发布到集群并进行下一步工作”）：旧策略预览/Apply/回读 PASS（2 条收窄，幂等复检）；backend/frontend 镜像构建推送并部署（digest 见 acceptance §10）；V16→V18 迁移 PASS；部署后 smoke（options/captcha PNG/JWT ver 校验/旧项目回读/浏览器页面）PASS；依赖跨项目隔离探测 自身 OPEN、跨项目 BLOCKED；MAIL_PASSWORD 未注入、mail/registration 仍 false；真实 126 邮件人工 E1–E7 与云端两账号顺序验收仍 NOT_RUN。复审 MUST-FIX：C1 基线已提交的明文凭据（.claude/settings.local.json、.zcode/config.json、old_docs 计划）非本分支引入，任何 push/merge/发布前必须轮换并清理历史；I1 实际 backend 镜像 PNG 渲染 NOT_RUN；I2 本文件与 acceptance 状态已刷新。
+
+2026-10-30 22:00–22:30 正式转态与验收更新（用户完成 E1–E6 后要求转正式部署）：
+- 代码/配置：f8f39ec 邮件文案改"有效期 10 分钟内"（定向测试 PASS）；3a10a9f 6B 清单与模板正式启用 registration/mail（MAIL_PASSWORD 仍仅 Secret）、部署/构建文档更新；1f53e50 Dockerfile 注释明确产品构建必须 VITE_ENABLE_AI=true。
+- 镜像/部署：backend `d560ec2a…`、frontend `74c58830…`（VITE_ENABLE_AI=true，修复 AI 入口被编译掉），digest 固定部署成功；Flyway validated 18；options {registrationEnabled:true,emailAvailable:true}。
+- 验收：用户人工邮件 E1–E6 PASS（E7 NOT_RUN，用户未执行/未豁免）；cloud spec 2 passed/3 显式 skip；云端两账号隔离、8 项目上限（第 9 个 409 PROJECT_LIMIT_REACHED，7 个清理 204）、改密撤销（旧 JWT 401/旧密码 401/还原 200）、跨账号文件/Run/log-ticket/conversation/agent-task 拒绝（404/401）、公开应用匿名 200（Hello from Manao，停止后不可达）PASS；C1 用户口头确认已轮换，但历史 scrub 未完成，push/merge/publish 继续禁止。
+- 边界：本地 kubectl 隧道曾中断，后以经证书校验的直连恢复并保存 `postdeploy-*` 部署/清理回读证据；未重造终端 PTY/AI 端到端/自然到期/后台继续的云端长任务证据；前端全量 vitest 的既有 1 visual spec + 3 flake 保留原状；无 push/merge master 授权。
+- **MULTI_ACCOUNT_MVP_PASS 未授予（2026-10-30；独立 delta 复核经 4 轮后 APPROVED，但仍维持未授予判断）**；详细证据与边界以 acceptance §12.6/§12.8 为准。
 
 ## 自检与交接
 
