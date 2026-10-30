@@ -194,12 +194,8 @@ apply report 的最终状态与 before/after 值。
 | --- | --- |
 | backend target selector 与创建顺序修复 + 单元/行为测试 | PASS（本地 Maven，定向测试类） |
 | 迁移脚本与 fixture 测试 | PASS（本地，mock kubectl，无集群） |
-| 真实集群预览/Apply | NOT_RUN（本任务禁止连接集群） |
-| 跨账号依赖隔离真实验收 | NOT_RUN（需用户授权与人工操作） |
-
-下一步（需用户单独授权）：准备已核对 ProjectsFile → 在目标 context/namespace 运行
-只读预览 → 人工审阅 NEEDS_MIGRATION / OUT_OF_SCOPE 清单 → Apply → 保存
-`backup/`、`apply-report.json` 与回读证据 → 再执行跨账号隔离验收。
+| 真实集群预览/Apply | PASS（2026-10-30 用户授权窗口；2 条策略 `[PATCHED]`+`[VERIFIED]`，幂等复检 `[ALREADY_FIXED]`；见验收记录 §10.5） |
+| 跨账号依赖隔离真实验收 | PASS（2026-10-30；跨项目 Service/Pod 探测均 `BLOCKED(rc=11)`，见验收记录 §10.6） |
 
 部署顺序（避免迁移被旧 backend 回写）：先部署包含本分支 backend 修复的版本（其
 `ensure` 只会创建窄 target 策略），或至少与脚本迁移在同一变更窗口内完成；如果旧
@@ -210,15 +206,18 @@ backend 仍在运行，它可能为新建/重启的项目重新创建旧的宽 t
 
 `config.example.env` 是本次多账号后端的配置模板：已知非秘密的 126 SMTP 参数
 （`smtp.126.com` / `465` / `shilizhengnanren@126.com` / `ssl`）直接写入；
-`MANAO_MAIL_ENABLED=false` 与 `MANAO_REGISTRATION_ENABLED=false` 保持发布默认值；
-数据库、JWT、验证码 HMAC 等只保留空占位符。
+`MANAO_MAIL_ENABLED=true` 与 `MANAO_REGISTRATION_ENABLED=true` 是正式 6B 部署值
+（用户 2026-10-30 完成人工 E1–E6 验收后的上线决定）；数据库、JWT、验证码 HMAC 等只保留
+空占位符。
 
 - `MANAO_MAIL_PASSWORD` 是 126 **客户端授权码**（不是邮箱网页登录密码），只能由运行时
   Secret 或受控环境注入；该文件、本仓库、日志、测试报告和交接文本都不得出现真实值。
+  缺失时后端失败关闭：`/auth/options` 的 `emailAvailable=false`、邮箱验证码接口拒绝，
+  登录/已有会话不受影响。
 - `MANAO_AUTH_CHALLENGE_SECRET` 为服务端验证码 HMAC secret（至少 32 随机字节），部署时
   生成一次并持久化到运行时 Secret。
-- 邮件与注册开关只有在用户授权的人工验收窗口才可启用；启用动作不属于本地交付物，
-  本任务不执行真实 SMTP 连接/发信。
+- 正式部署（2026-10-30 起）已开放注册与邮件找回；前端镜像必须用
+  `--build-arg VITE_ENABLE_AI=true` 构建，否则工作台 AI 入口会被编译掉（见 6B README §8）。
 - 6B 清单侧的引用见 `poc4/deploy/6b/backend.yaml`：`MANAO_AUTH_CHALLENGE_SECRET` 与
   `MANAO_MAIL_PASSWORD` 通过 Secret `manao-backend-auth` 注入（key 分别为
   `AUTH_CHALLENGE_SECRET` / `MAIL_PASSWORD`），非秘密 SMTP 参数以普通 env 值写入，
