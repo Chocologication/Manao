@@ -116,6 +116,8 @@ class SmtpVerificationMailSenderTest {
         assertThat(message.getAllRecipients()[0].toString()).contains("recipient@example.test");
         String content = String.valueOf(message.getContent());
         assertThat(content).contains("123456");
+        assertThat(content).contains("有效期 10 分钟内");
+        assertThat(content).doesNotContain("有效期至");
         assertThat(content).doesNotContain(PASSWORD);
         assertThat(message.getSubject()).doesNotContain("123456");
     }

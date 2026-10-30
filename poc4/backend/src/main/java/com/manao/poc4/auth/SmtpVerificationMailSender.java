@@ -4,8 +4,6 @@ import com.manao.poc4.config.SecurityConfig;
 import jakarta.mail.MessagingException;
 import jakarta.mail.internet.MimeMessage;
 import java.time.Instant;
-import java.time.ZoneId;
-import java.time.format.DateTimeFormatter;
 import java.util.Properties;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
@@ -27,9 +25,6 @@ import org.springframework.mail.javamail.MimeMessageHelper;
  * creating a sender, so the existing login/password-change flows keep starting.
  */
 public final class SmtpVerificationMailSender implements VerificationMailSender {
-    private static final DateTimeFormatter EXPIRY_FORMAT =
-        DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss").withZone(ZoneId.systemDefault());
-
     private final JavaMailSender mailSender;
     private final AuthProperties.Mail mail;
 
@@ -94,8 +89,10 @@ public final class SmtpVerificationMailSender implements VerificationMailSender 
 
     static String body(AuthContracts.EmailPurpose purpose, String code, Instant expiresAt) {
         String action = purpose == AuthContracts.EmailPurpose.REGISTER_EMAIL ? "注册" : "找回密码";
+        // The 10-minute TTL is the fixed design value (AuthProperties.Challenge default);
+        // a relative sentence avoids the operator-timezone ambiguity of an absolute clock time.
         return "Manao " + action + "验证码：" + code + "\n\n"
-            + "有效期至 " + EXPIRY_FORMAT.format(expiresAt) + "，请尽快使用。\n"
+            + "有效期 10 分钟内，请尽快使用。\n"
             + "如非本人操作，请忽略本邮件；请勿向任何人泄露验证码。";
     }
 
