@@ -269,10 +269,14 @@ function New-AuxiliaryPolicy {
 }
 
 function New-PolicyList {
-    param([object[]]$Policies)
+    param(
+        [object[]]$Policies,
+        [string]$ApiVersion = 'networking.k8s.io/v1',
+        [string]$Kind = 'NetworkPolicyList'
+    )
     return [ordered]@{
-        apiVersion = 'networking.k8s.io/v1'
-        kind       = 'NetworkPolicyList'
+        apiVersion = $ApiVersion
+        kind       = $Kind
         items      = @($Policies)
     }
 }
@@ -1159,6 +1163,59 @@ function Test-ApplyFailsClosedOnPatchPayloadWriteFailure {
     Assert-Contains (@($failedItem.reasons) -join ' ') 'patch payload write failed' 'the failure reason names the payload write failure'
 }
 
+function Test-AcceptsGenericKubectlListKind {
+    $scenario = New-Scenario
+    # Real kubectl commonly returns the generic List document for
+    # `kubectl get networkpolicies -o json`; it must be accepted exactly like the
+    # typed NetworkPolicyList document.
+    Write-FixtureJson -Path $scenario.PoliciesFile -Value (New-PolicyList -ApiVersion 'v1' -Kind 'List' -Policies @(
+        (New-Policy -ProjectId 'p1'),
+        (New-Policy -ProjectId 'p2' -Narrowed $true -ResourceVersion '200')
+    ))
+    Write-FixtureJson -Path $scenario.ProjectsFile -Value (New-ProjectList -Projects @(
+        @{ ownerId = 'owner-1'; projectId = 'p1' },
+        @{ ownerId = 'owner-2'; projectId = 'p2' }
+    ))
+    $result = Invoke-RepairScript -Scenario $scenario
+    Assert-Equal 0 $result.ExitCode 'generic List kind must be accepted'
+    Assert-Contains $result.StdOut '[NEEDS_MIGRATION] ownerId=owner-1 projectId=p1 policy=manao-dep-netpol-p1' 'legacy policy is classified under the generic List kind'
+    Assert-Contains $result.StdOut '[ALREADY_FIXED] ownerId=owner-2 projectId=p2 policy=manao-dep-netpol-p2' 'narrowed policy is classified under the generic List kind'
+    Assert-Contains $result.StdOut 'PREVIEW_RESULT=WOULD_PATCH count=1' 'generic List preview counts the legacy policy'
+    Assert-True (-not (Test-Path -LiteralPath $scenario.OutputDir)) 'preview must not create the output directory'
+    Assert-Equal 0 @(Get-PatchCalls -Scenario $scenario).Count 'preview must not patch'
+    Assert-NoClusterWrites -Scenario $scenario
+    Assert-ExplicitContextAndNamespace -Scenario $scenario
+    Assert-NoSecretAccess -Scenario $scenario
+}
+
+function Test-RefusesUnexpectedPolicyListItemKind {
+    $scenario = New-Scenario
+    $foreignItem = [ordered]@{
+        apiVersion = 'v1'
+        kind       = 'Service'
+        metadata   = [ordered]@{
+            name            = 'not-a-network-policy'
+            namespace       = $script:TestNamespace
+            uid             = 'uid-not-a-policy'
+            resourceVersion = '9'
+        }
+        spec       = [ordered]@{ ports = @(@{ port = 80 }) }
+    }
+    Write-FixtureJson -Path $scenario.PoliciesFile -Value (New-PolicyList -ApiVersion 'v1' -Kind 'List' -Policies @(
+        (New-Policy -ProjectId 'p1'),
+        $foreignItem
+    ))
+    Write-FixtureJson -Path $scenario.ProjectsFile -Value (New-ProjectList -Projects @(
+        @{ ownerId = 'owner-1'; projectId = 'p1' }
+    ))
+    $result = Invoke-RepairScript -Scenario $scenario
+    Assert-Equal 1 $result.ExitCode 'unexpected list item kind must fail closed'
+    Assert-Contains $result.StdErr 'unexpected item kind' 'unexpected item kind is rejected with a clear error'
+    Assert-Contains $result.StdErr 'Service' 'the unexpected item kind is named in the error'
+    Assert-Equal 0 @(Get-PatchCalls -Scenario $scenario).Count 'unexpected item kind must not patch anything'
+    Assert-True (-not (Test-Path -LiteralPath $scenario.OutputDir)) 'unexpected item kind must not create the output directory'
+}
+
 # ---------------------------------------------------------------------------
 # Run
 # ---------------------------------------------------------------------------
@@ -1181,6 +1238,8 @@ try {
     Invoke-Scenario 'apply backs up only policies and patches only the selector' { Test-ApplyBacksUpOnlyPoliciesAndPatchesOnlyTheSelector }
     Invoke-Scenario 'apply fails closed on read-back uid/spec/GET failures' { Test-ApplyReadBackFailureNegatives }
     Invoke-Scenario 'apply fails closed when the patch payload cannot be written' { Test-ApplyFailsClosedOnPatchPayloadWriteFailure }
+    Invoke-Scenario 'preview accepts the generic kubectl List document kind' { Test-AcceptsGenericKubectlListKind }
+    Invoke-Scenario 'preview rejects a non-NetworkPolicy item in the kubectl list' { Test-RefusesUnexpectedPolicyListItemKind }
 } finally {
     Clear-MockEnvironment
     foreach ($root in $script:TempRoots) {

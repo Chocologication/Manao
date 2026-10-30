@@ -273,12 +273,22 @@ function Get-JsonFromKubectl {
 function Get-NamespaceNetworkPolicies {
     $parsed = Get-JsonFromKubectl -KubectlArguments @('get', 'networkpolicies', '-o', 'json')
     $kind = Get-JsonString $parsed 'kind'
-    if ($null -ne $kind -and $kind -cne 'NetworkPolicyList') {
+    # kubectl may return the typed NetworkPolicyList document or the generic List
+    # document (observed on a real cluster); both are valid namespace-list envelopes.
+    if ($null -ne $kind -and $kind -cne 'List' -and $kind -cne 'NetworkPolicyList') {
         throw "kubectl get networkpolicies returned unexpected kind '$kind'"
     }
     $items = Get-JsonProperty $parsed 'items'
     if ($null -eq $items) { return @() }
-    return @($items)
+    $policies = @()
+    foreach ($item in @($items)) {
+        $itemKind = Get-JsonString $item 'kind'
+        if ($itemKind -cne 'NetworkPolicy') {
+            throw "kubectl get networkpolicies returned an unexpected item kind '$itemKind'; every item must be a NetworkPolicy"
+        }
+        $policies += $item
+    }
+    return $policies
 }
 
 function Get-NamespaceNetworkPolicy {
