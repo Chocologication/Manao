@@ -1,11 +1,14 @@
 package com.manao.poc4.config;
 
+import com.manao.poc4.auth.AuthProperties;
 import com.manao.poc4.auth.JwtAuthenticationFilter;
 import com.manao.poc4.auth.JwtService;
+import com.manao.poc4.auth.UserStore;
 import com.manao.poc4.api.ApiError;
 import java.security.MessageDigest;
 import java.time.Duration;
 import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.boot.convert.DurationStyle;
 import javax.sql.DataSource;
 import jakarta.servlet.http.HttpServletResponse;
@@ -15,6 +18,7 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.context.annotation.Conditional;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.web.SecurityFilterChain;
@@ -22,6 +26,7 @@ import org.springframework.security.web.authentication.UsernamePasswordAuthentic
 
 @Configuration
 @Conditional(SecurityConfig.BackendAuthCondition.class)
+@EnableConfigurationProperties(AuthProperties.class)
 public class SecurityConfig {
     @Bean
     JwtService jwtService(@Value("${MANAO_JWT_SECRET:}") String secret,
@@ -29,8 +34,14 @@ public class SecurityConfig {
         return new JwtService(secret, DurationStyle.detectAndParse(lifetime));
     }
 
+    /** The only source of per-request account state: enabled flag and current auth_version. */
     @Bean
-    SecurityFilterChain apiSecurity(HttpSecurity http, JwtService jwt) throws Exception {
+    UserStore userStore(JdbcTemplate jdbc) {
+        return new UserStore(jdbc);
+    }
+
+    @Bean
+    SecurityFilterChain apiSecurity(HttpSecurity http, JwtService jwt, UserStore users) throws Exception {
         return http.securityMatcher("/api/**")
             .csrf(csrf -> csrf.disable())
             .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
@@ -38,13 +49,24 @@ public class SecurityConfig {
                     (request.getDispatcherType() == jakarta.servlet.DispatcherType.ASYNC
                         || request.getDispatcherType() == jakarta.servlet.DispatcherType.ERROR)
                     && request.getRequestURI().matches("/api/v1/projects/[^/]+/agent-tasks/[^/]+/live-output")).permitAll()
-                .requestMatchers("/api/v1/auth/login", "/api/v1/ws/run-logs", "/api/v1/ws/terminals").permitAll().anyRequest().authenticated())
+                .requestMatchers(
+                    // Anonymous account-lifecycle endpoints, listed per exact path (no /auth/**).
+                    "/api/v1/auth/login",
+                    "/api/v1/auth/options",
+                    "/api/v1/auth/captcha",
+                    "/api/v1/auth/email-codes",
+                    "/api/v1/auth/register",
+                    "/api/v1/auth/password-reset",
+                    // Existing ticket-authenticated WebSocket handshakes.
+                    "/api/v1/ws/run-logs",
+                    "/api/v1/ws/terminals").permitAll()
+                .anyRequest().authenticated())
             .exceptionHandling(e -> e.authenticationEntryPoint((request, response, exception) -> {
                 writeError(response, HttpServletResponse.SC_UNAUTHORIZED, new ApiError("UNAUTHENTICATED", "Authentication required", null));
             }).accessDeniedHandler((request, response, exception) -> {
                 writeError(response, HttpServletResponse.SC_FORBIDDEN, new ApiError("FORBIDDEN", "Access denied", null));
             }))
-            .addFilterBefore(new JwtAuthenticationFilter(jwt), UsernamePasswordAuthenticationFilter.class)
+            .addFilterBefore(new JwtAuthenticationFilter(jwt, users), UsernamePasswordAuthenticationFilter.class)
             .build();
     }
 

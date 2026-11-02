@@ -1,48 +1,501 @@
 import { act, cleanup, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
 import { HttpClient, setHttpClient } from '@/api/httpClient';
+import { authSession, handleUnauthorized } from '@/app/appRuntime';
 import { useAgentLiveOutput, type LiveScope } from './useAgentLiveOutput';
-import { handleUnauthorized, logout } from '@/app/appRuntime';
+
 const scope: LiveScope = { userId: 'alice', projectId: 'p', conversationId: 'c', taskId: 't' };
-const snap = (revision = 1, taskId = 't', conversationId = 'c') => ({ revision, taskId, conversationId, durableHeadSeq: 5, current: { messageOrdinal: 0, phase: 'generating', blocks: [{ contentIndex: 0, kind: 'text', text: 'visible ' + revision }], modelTruncated: false, displayTruncated: false }, unavailable: false });
-function fixture() {
-  const controllers: ReadableStreamDefaultController<Uint8Array>[] = []; const signals: AbortSignal[] = []; const canceled = vi.fn();
-  const fetchImpl = vi.fn<typeof fetch>(async (_url, options) => { signals.push(options!.signal!); return new Response(new ReadableStream({ start(c) { controllers.push(c); }, cancel: canceled }), { headers: { 'Content-Type': 'text/event-stream' } }); });
-  setHttpClient(new HttpClient({ getAccessToken: () => 'token', onUnauthorized: vi.fn(), fetchImpl }));
-  return { fetchImpl, signals, canceled, controllers, publish: (value: unknown, index = 0) => controllers[index]!.enqueue(new TextEncoder().encode('event: snapshot\ndata: ' + JSON.stringify(value) + '\n\n')) };
+const snap = (revision = 1, taskId = 't', conversationId = 'c') => ({
+  revision,
+  taskId,
+  conversationId,
+  durableHeadSeq: 5,
+  current: {
+    messageOrdinal: 0,
+    phase: 'generating',
+    blocks: [{ contentIndex: 0, kind: 'text', text: 'visible ' + revision }],
+    modelTruncated: false,
+    displayTruncated: false,
+  },
+  unavailable: false,
+});
+
+const LIVE_OUTPUT_PATH = '/live-output';
+const ME_PATH = '/api/v1/auth/me';
+
+function requestUrl(input: RequestInfo | URL): string {
+  return typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
 }
-afterEach(() => { cleanup(); setHttpClient(null); vi.useRealTimers(); });
-it.each([logout, handleUnauthorized])('closes the display stream through the existing session cleanup path', async closeSession => {
-  const f = fixture(); const h = renderHook(() => useAgentLiveOutput(scope)); await waitFor(() => expect(f.controllers).toHaveLength(1));
-  await act(async () => f.publish(snap())); act(() => closeSession()); await waitFor(() => expect(f.signals[0]!.aborted).toBe(true));
-  expect(h.result.current.latest).toBeNull(); expect(f.canceled).toHaveBeenCalled();
+
+function fixture() {
+  const controllers: ReadableStreamDefaultController<Uint8Array>[] = [];
+  const signals: AbortSignal[] = [];
+  const canceled = vi.fn();
+  const meResponses: Array<() => Promise<Response> | Response> = [];
+  const fetchImpl = vi.fn<typeof fetch>(async (input, options) => {
+    const url = requestUrl(input);
+    signals.push(options!.signal!);
+    if (url.includes(LIVE_OUTPUT_PATH)) {
+      return new Response(
+        new ReadableStream({
+          start(controller) {
+            controllers.push(controller);
+          },
+          cancel: canceled,
+        }),
+        { headers: { 'Content-Type': 'text/event-stream' } },
+      );
+    }
+    const next = meResponses.shift();
+    if (next === undefined) {
+      throw new TypeError('unexpected request ' + url);
+    }
+    return next();
+  });
+  setHttpClient(
+    new HttpClient({ getAccessToken: () => 'token', onUnauthorized: vi.fn(), fetchImpl }),
+  );
+  return {
+    fetchImpl,
+    controllers,
+    signals,
+    canceled,
+    meResponses,
+    publish: (value: unknown, index = 0) =>
+      controllers[index]!.enqueue(
+        new TextEncoder().encode('event: snapshot\ndata: ' + JSON.stringify(value) + '\n\n'),
+      ),
+    publishFrame: (frame: string, index = 0) =>
+      controllers[index]!.enqueue(new TextEncoder().encode(frame)),
+    endStream: (index = 0) => controllers[index]!.close(),
+  };
+}
+
+function jsonResponse(body: unknown, status: number): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { 'Content-Type': 'application/json' },
+  });
+}
+
+
+afterEach(() => {
+  cleanup();
+  setHttpClient(null);
+  if (authSession.getSnapshot().status === 'authenticated') {
+    authSession.clear('logout');
+  }
 });
+
+it('closes the display stream through the existing session cleanup path', async () => {
+  authSession.authenticate({
+    accessToken: 'live-output-token',
+    expiresAt: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
+    user: { id: 'usr-alice', username: 'alice', email: null, emailVerified: false },
+  });
+  const f = fixture();
+  const h = renderHook(() => useAgentLiveOutput(scope));
+  await waitFor(() => expect(f.controllers).toHaveLength(1));
+  await act(async () => f.publish(snap()));
+  act(() => authSession.clear('logout'));
+  await waitFor(() => expect(f.signals[0]!.aborted).toBe(true));
+  expect(h.result.current.latest).toBeNull();
+  expect(f.canceled).toHaveBeenCalled();
+});
+
 it('publishes latest self-contained revisions, ignoring duplicates, old revisions and wrong scope', async () => {
-  const f = fixture(); const h = renderHook(() => useAgentLiveOutput(scope)); await waitFor(() => expect(f.controllers).toHaveLength(1));
-  await act(async () => { f.publish(snap(9)); }); expect(h.result.current.latest?.revision).toBe(9);
-  await act(async () => { f.publish(snap(3)); f.publish(snap(9)); f.publish(snap(10, 'other')); });
-  expect(h.result.current.latest?.revision).toBe(9); expect(h.result.current.connectionState).toBe('live');
+  const f = fixture();
+  const h = renderHook(() => useAgentLiveOutput(scope));
+  await waitFor(() => expect(f.controllers).toHaveLength(1));
+  await act(async () => {
+    f.publish(snap(9));
+  });
+  expect(h.result.current.latest?.revision).toBe(9);
+  await act(async () => {
+    f.publish(snap(3));
+    f.publish(snap(9));
+    f.publish(snap(10, 'other'));
+  });
+  expect(h.result.current.latest?.revision).toBe(9);
+  expect(h.result.current.connectionState).toBe('live');
 });
-it.each(['userId', 'projectId', 'conversationId', 'taskId'])('aborts and clears display on %s change without mutating a task', async field => {
-  const f = fixture(); const h = renderHook(props => useAgentLiveOutput(props), { initialProps: scope }); await waitFor(() => expect(f.controllers).toHaveLength(1));
-  await act(async () => { f.publish(snap()); }); h.rerender({ ...scope, [field]: 'other' });
-  expect(h.result.current.latest).toBeNull(); expect(f.signals[0]!.aborted).toBe(true); await waitFor(() => expect(f.canceled).toHaveBeenCalled());
-  expect(f.fetchImpl.mock.calls.every(([, init]) => init?.method === 'GET')).toBe(true); h.unmount(); expect(f.signals[1]!.aborted).toBe(true);
+
+it.each(['userId', 'projectId', 'conversationId', 'taskId'])(
+  'aborts and clears display on %s change without mutating a task',
+  async (field) => {
+    const f = fixture();
+    const h = renderHook((props) => useAgentLiveOutput(props), { initialProps: scope });
+    await waitFor(() => expect(f.controllers).toHaveLength(1));
+    await act(async () => {
+      f.publish(snap());
+    });
+    h.rerender({ ...scope, [field]: 'other' });
+    expect(h.result.current.latest).toBeNull();
+    expect(f.signals[0]!.aborted).toBe(true);
+    await waitFor(() => expect(f.canceled).toHaveBeenCalled());
+    expect(f.fetchImpl.mock.calls.every(([, init]) => init?.method === 'GET')).toBe(true);
+    h.unmount();
+    expect(f.signals[1]!.aborted).toBe(true);
+  },
+);
+
+it('checks /auth/me once per abnormal end and allows only one bounded reconnect', async () => {
+  const f = fixture();
+  const h = renderHook(() => useAgentLiveOutput(scope));
+  await waitFor(() => expect(f.controllers).toHaveLength(1));
+  const meOk = () =>
+    jsonResponse({ id: 'usr-alice', username: 'alice', email: null, emailVerified: false }, 200);
+  act(() => {
+    f.meResponses.push(meOk, meOk);
+    f.endStream(0);
+  });
+
+  await waitFor(() => expect(h.result.current.connectionState).toBe('reconnecting'));
+  expect(f.fetchImpl).toHaveBeenCalledTimes(2);
+  expect(requestUrl(f.fetchImpl.mock.calls[1]![0])).toBe(ME_PATH);
+
+  // Exactly one bounded retry: a second abnormal end verifies once more and
+  // then shows "disconnected" with no further timer loop.
+  await waitFor(() => expect(f.controllers).toHaveLength(2), { timeout: 3000 });
+  act(() => f.endStream(1));
+  await waitFor(() => expect(h.result.current.connectionState).toBe('unavailable'));
+  expect(f.fetchImpl).toHaveBeenCalledTimes(4);
+
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 60));
+  });
+  expect(f.fetchImpl).toHaveBeenCalledTimes(4);
 });
-it('backs off reconnects by 1, 2, then capped 5 seconds without rerunning the task', async () => {
-  vi.useFakeTimers(); const fetchImpl = vi.fn<typeof fetch>().mockRejectedValue(new Error('offline'));
-  setHttpClient(new HttpClient({ getAccessToken: () => 't', onUnauthorized: vi.fn(), fetchImpl })); renderHook(() => useAgentLiveOutput(scope));
-  await act(async () => {}); expect(fetchImpl).toHaveBeenCalledTimes(1);
-  for (const [delay, calls] of [[1000, 2], [2000, 3], [5000, 4], [5000, 5]]) { await act(async () => { await vi.advanceTimersByTimeAsync(delay! - 1); }); expect(fetchImpl).toHaveBeenCalledTimes(calls! - 1); await act(async () => { await vi.advanceTimersByTimeAsync(1); }); expect(fetchImpl).toHaveBeenCalledTimes(calls!); }
+
+it('clears the current session when the one-shot /auth/me check answers 401', async () => {
+  authSession.authenticate({
+    accessToken: 'revoked-token',
+    expiresAt: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
+    user: { id: 'usr-alice', username: 'alice', email: null, emailVerified: false },
+  });
+  const f = fixture();
+  const h = renderHook(() => useAgentLiveOutput(scope));
+  await waitFor(() => expect(f.controllers).toHaveLength(1));
+  act(() => {
+    f.meResponses.push(() =>
+      jsonResponse(
+        { code: 'UNAUTHENTICATED', message: 'Authentication required', traceId: 'trace-me' },
+        401,
+      ),
+    );
+    f.endStream();
+  });
+
+  await waitFor(() => expect(authSession.getSnapshot().status).toBe('anonymous'));
+  expect(authSession.getSnapshot()).toEqual({ status: 'anonymous', reason: 'unauthorized' });
+  await waitFor(() => expect(h.result.current.connectionState).toBe('history'));
+  expect(f.fetchImpl).toHaveBeenCalledTimes(2);
 });
-it.each([204, 429, 503, 401])('falls back without a busy loop for HTTP %s', async status => {
-  vi.useFakeTimers(); const logout = vi.fn(); const fetchImpl = vi.fn<typeof fetch>(async () => new Response(null, { status }));
-  setHttpClient(new HttpClient({ getAccessToken: () => 'token', onUnauthorized: logout, fetchImpl })); const h = renderHook(() => useAgentLiveOutput(scope));
-  await act(async () => { await vi.advanceTimersByTimeAsync(20000); }); expect(fetchImpl).toHaveBeenCalledTimes(1); expect(h.result.current.connectionState).toBe(status === 204 ? 'history' : 'unavailable'); expect(logout).toHaveBeenCalledTimes(status === 401 ? 1 : 0);
+
+it('only shows disconnected when the session check itself has a network failure', async () => {
+  authSession.authenticate({
+    accessToken: 'still-valid-token',
+    expiresAt: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
+    user: { id: 'usr-alice', username: 'alice', email: null, emailVerified: false },
+  });
+  const f = fixture();
+  const h = renderHook(() => useAgentLiveOutput(scope));
+  await waitFor(() => expect(f.controllers).toHaveLength(1));
+  act(() => {
+    f.meResponses.push(() => Promise.reject(new TypeError('network down')));
+    f.endStream();
+  });
+
+  await waitFor(() => expect(h.result.current.connectionState).toBe('unavailable'));
+  expect(f.fetchImpl).toHaveBeenCalledTimes(2);
+  expect(authSession.getSnapshot()).toMatchObject({
+    status: 'authenticated',
+    accessToken: 'still-valid-token',
+  });
 });
-it('malformed stream preserves the last preview and falls back; retry and remount only subscribe', async () => {
-  const f = fixture(); const h = renderHook(() => useAgentLiveOutput(scope)); await waitFor(() => expect(f.controllers).toHaveLength(1));
-  await act(async () => { f.publish(snap()); f.publish({ bad: true }); }); expect(h.result.current.latest?.revision).toBe(1); expect(h.result.current.connectionState).toBe('unavailable');
-  act(() => h.result.current.retry()); await waitFor(() => expect(f.controllers).toHaveLength(2)); h.unmount();
-  renderHook(() => useAgentLiveOutput(scope)); await waitFor(() => expect(f.controllers).toHaveLength(3)); expect(f.fetchImpl.mock.calls.every(([, init]) => init?.method === 'GET')).toBe(true);
+
+it('raises the auth.revoked SSE event into the unified session cleanup', async () => {
+  authSession.authenticate({
+    accessToken: 'sse-revoked-token',
+    expiresAt: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
+    user: { id: 'usr-alice', username: 'alice', email: null, emailVerified: false },
+  });
+  const f = fixture();
+  const h = renderHook(() => useAgentLiveOutput(scope));
+  await waitFor(() => expect(f.controllers).toHaveLength(1));
+  await act(async () => {
+    f.publishFrame('event: auth.revoked\ndata: {}\n\n');
+  });
+
+  await waitFor(() => expect(authSession.getSnapshot().status).toBe('anonymous'));
+  expect(authSession.getSnapshot()).toEqual({ status: 'anonymous', reason: 'unauthorized' });
+  await waitFor(() => expect(h.result.current.connectionState).toBe('history'));
+  expect(f.fetchImpl).toHaveBeenCalledTimes(1);
+});
+
+it('ignores a late /auth/me answer for an old login instead of clearing the newer session', async () => {
+  authSession.authenticate({
+    accessToken: 'alice-old-token',
+    expiresAt: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
+    user: { id: 'usr-alice', username: 'alice', email: null, emailVerified: false },
+  });
+  const f = fixture();
+  const h = renderHook(() => useAgentLiveOutput(scope));
+  await waitFor(() => expect(f.controllers).toHaveLength(1));
+  let resolveMe: (response: Response) => void = () => {};
+  const pendingMe = new Promise<Response>((resolve) => {
+    resolveMe = resolve;
+  });
+  act(() => {
+    f.meResponses.push(() => pendingMe);
+    f.endStream();
+  });
+  await waitFor(() => expect(f.fetchImpl).toHaveBeenCalledTimes(2));
+
+  authSession.clear('logout');
+  authSession.authenticate({
+    accessToken: 'bob-new-token',
+    expiresAt: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
+    user: { id: 'usr-bob', username: 'bob', email: null, emailVerified: false },
+  });
+  await act(async () => {
+    resolveMe(
+      jsonResponse(
+        { code: 'UNAUTHENTICATED', message: 'Authentication required', traceId: 'trace-me' },
+        401,
+      ),
+    );
+  });
+
+  await waitFor(() => expect(h.result.current.latest).toBeNull());
+  expect(h.result.current.connectionState).toBe('history');
+  expect(authSession.getSnapshot()).toMatchObject({
+    status: 'authenticated',
+    accessToken: 'bob-new-token',
+    user: { username: 'bob' },
+  });
+});
+
+it('does not let an old suppressed /auth/me 401 clear a newer same-token login', async () => {
+  authSession.authenticate({
+    accessToken: 'same-token',
+    expiresAt: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
+    user: { id: 'usr-alice', username: 'alice', email: null, emailVerified: false },
+  });
+  let controller!: ReadableStreamDefaultController<Uint8Array>;
+  let resolveMe: (response: Response) => void = () => {};
+  let meStarted = false;
+  const fetchImpl = vi.fn<typeof fetch>(async (input) => {
+    const url = requestUrl(input);
+    if (url.includes(LIVE_OUTPUT_PATH)) {
+      return new Response(
+        new ReadableStream({
+          start(next) {
+            controller = next;
+          },
+        }),
+        { headers: { 'Content-Type': 'text/event-stream' } },
+      );
+    }
+    meStarted = true;
+    return new Promise<Response>((resolve) => {
+      resolveMe = resolve;
+    });
+  });
+  setHttpClient(
+    new HttpClient({
+      getAccessToken: () => authSession.getAccessToken(),
+      onUnauthorized: handleUnauthorized,
+      fetchImpl,
+    }),
+  );
+  renderHook(() => useAgentLiveOutput(scope));
+  await waitFor(() => expect(controller).toBeDefined());
+  act(() => controller.close());
+  await waitFor(() => expect(meStarted).toBe(true));
+
+  // Logout and a newer login that happens to carry the identical JWT string
+  // (JWT signatures are second-granular); the old check must not clear it.
+  authSession.clear('logout');
+  authSession.authenticate({
+    accessToken: 'same-token',
+    expiresAt: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
+    user: { id: 'usr-bob', username: 'bob', email: null, emailVerified: false },
+  });
+  const bobSnapshot = authSession.getSnapshot();
+  await act(async () => {
+    resolveMe(
+      jsonResponse(
+        { code: 'UNAUTHENTICATED', message: 'Authentication required', traceId: 'trace-me' },
+        401,
+      ),
+    );
+  });
+
+  await waitFor(() => expect(authSession.getSnapshot()).toBe(bobSnapshot));
+  expect(authSession.getSnapshot()).toMatchObject({
+    status: 'authenticated',
+    accessToken: 'same-token',
+    user: { username: 'bob' },
+  });
+});
+
+it.each([204, 429, 503, 401])('falls back without a busy loop for HTTP %s', async (status) => {
+  const meResponses: Array<() => Response> = [];
+  const fetchImpl = vi.fn<typeof fetch>(async () => {
+    const next = meResponses.shift();
+    if (next !== undefined) return next();
+    return new Response(null, { status });
+  });
+  const logout = vi.fn();
+  setHttpClient(new HttpClient({ getAccessToken: () => 'token', onUnauthorized: logout, fetchImpl }));
+  const h = renderHook(() => useAgentLiveOutput(scope));
+  await waitFor(() =>
+    expect(h.result.current.connectionState).toBe(status === 204 ? 'history' : 'unavailable'),
+  );
+  expect(fetchImpl).toHaveBeenCalledTimes(status === 204 ? 1 : 2);
+  // The stream request is snapshot-owned: a real 401 must not run the global
+  // cleanup before the hook's one-shot /auth/me check decides.
+  expect(logout).not.toHaveBeenCalled();
+});
+
+it('malformed SSE performs exactly one /auth/me check and preserves the last preview', async () => {
+  const f = fixture();
+  const h = renderHook(() => useAgentLiveOutput(scope));
+  await waitFor(() => expect(f.controllers).toHaveLength(1));
+  act(() => {
+    f.meResponses.push(() => Promise.reject(new TypeError('network down')));
+  });
+  await act(async () => {
+    f.publish(snap());
+    f.publish({ bad: true });
+  });
+
+  await waitFor(() => expect(h.result.current.connectionState).toBe('unavailable'));
+  expect(h.result.current.latest?.revision).toBe(1);
+  expect(f.fetchImpl).toHaveBeenCalledTimes(2);
+  expect(requestUrl(f.fetchImpl.mock.calls[1]![0])).toBe(ME_PATH);
+
+  act(() => h.result.current.retry());
+  await waitFor(() => expect(f.controllers).toHaveLength(2));
+  h.unmount();
+  renderHook(() => useAgentLiveOutput(scope));
+  await waitFor(() => expect(f.controllers).toHaveLength(3));
+  expect(f.fetchImpl.mock.calls.every(([, init]) => init?.method === 'GET')).toBe(true);
+});
+
+it('HTTP 503 stream response performs exactly one /auth/me check', async () => {
+  const requests: string[] = [];
+  let meStarted = false;
+  const fetchImpl = vi.fn<typeof fetch>(async (input) => {
+    const url = requestUrl(input);
+    requests.push(url);
+    if (url.includes(LIVE_OUTPUT_PATH)) {
+      return new Response(null, { status: 503 });
+    }
+    meStarted = true;
+    return Promise.reject(new TypeError('network down'));
+  });
+  setHttpClient(
+    new HttpClient({ getAccessToken: () => 'token', onUnauthorized: vi.fn(), fetchImpl }),
+  );
+  const h = renderHook(() => useAgentLiveOutput(scope));
+
+  await waitFor(() => expect(h.result.current.connectionState).toBe('unavailable'));
+  expect(meStarted).toBe(true);
+  expect(fetchImpl).toHaveBeenCalledTimes(2);
+  expect(requests[1]).toBe(ME_PATH);
+});
+
+it('turns a real live-output HTTP 401 into one snapshot-guarded /auth/me check', async () => {
+  authSession.authenticate({
+    accessToken: 'stream-401-token',
+    expiresAt: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
+    user: { id: 'usr-alice', username: 'alice', email: null, emailVerified: false },
+  });
+  const authenticatedSnapshot = authSession.getSnapshot();
+  const requests: string[] = [];
+  const unauthorized = () =>
+    new Response(
+      JSON.stringify({ code: 'UNAUTHENTICATED', message: 'Authentication required', traceId: 'trace' }),
+      { status: 401, headers: { 'Content-Type': 'application/json' } },
+    );
+  const fetchImpl = vi.fn<typeof fetch>(async (input) => {
+    requests.push(requestUrl(input));
+    return unauthorized();
+  });
+  setHttpClient(
+    new HttpClient({
+      getAccessToken: () => authSession.getAccessToken(),
+      onUnauthorized: handleUnauthorized,
+      fetchImpl,
+    }),
+  );
+  const h = renderHook(() => useAgentLiveOutput(scope));
+
+  await waitFor(() => expect(authSession.getSnapshot().status).toBe('anonymous'));
+  expect(authSession.getSnapshot()).toEqual({ status: 'anonymous', reason: 'unauthorized' });
+  expect(authenticatedSnapshot.status).toBe('authenticated');
+  expect(requests.filter((url) => url === ME_PATH)).toHaveLength(1);
+  expect(fetchImpl).toHaveBeenCalledTimes(2);
+  await waitFor(() => expect(h.result.current.connectionState).toBe('history'));
+});
+
+it('keeps a newer same-token login when an old live-output 401 arrives late', async () => {
+  authSession.authenticate({
+    accessToken: 'same-token',
+    expiresAt: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
+    user: { id: 'usr-alice', username: 'alice', email: null, emailVerified: false },
+  });
+  let resolveStream: (response: Response) => void = () => {};
+  let streamStarted = false;
+  let meRequests = 0;
+  const fetchImpl = vi.fn<typeof fetch>(async (input) => {
+    const url = requestUrl(input);
+    if (url.includes(LIVE_OUTPUT_PATH)) {
+      streamStarted = true;
+      return new Promise<Response>((resolve) => {
+        resolveStream = resolve;
+      });
+    }
+    meRequests += 1;
+    throw new TypeError('unexpected session check');
+  });
+  setHttpClient(
+    new HttpClient({
+      getAccessToken: () => authSession.getAccessToken(),
+      onUnauthorized: handleUnauthorized,
+      fetchImpl,
+    }),
+  );
+  renderHook(() => useAgentLiveOutput(scope));
+  await waitFor(() => expect(streamStarted).toBe(true));
+
+  // Logout + newer login that happens to carry the identical JWT string; the
+  // old stream 401 (same token) must not clear the newer snapshot.
+  authSession.clear('logout');
+  authSession.authenticate({
+    accessToken: 'same-token',
+    expiresAt: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
+    user: { id: 'usr-bob', username: 'bob', email: null, emailVerified: false },
+  });
+  const bobSnapshot = authSession.getSnapshot();
+  await act(async () => {
+    resolveStream(
+      new Response(
+        JSON.stringify({ code: 'UNAUTHENTICATED', message: 'Authentication required', traceId: 'trace' }),
+        { status: 401, headers: { 'Content-Type': 'application/json' } },
+      ),
+    );
+  });
+
+  await waitFor(() => expect(authSession.getSnapshot()).toBe(bobSnapshot));
+  expect(authSession.getSnapshot()).toMatchObject({
+    status: 'authenticated',
+    accessToken: 'same-token',
+    user: { username: 'bob' },
+  });
+  // The old hook was already aborted by the session switch; the global 401 path
+  // must not run, and no session check may clear the newer snapshot.
+  expect(meRequests).toBe(0);
 });

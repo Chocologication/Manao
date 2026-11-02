@@ -12,8 +12,11 @@ import java.util.Optional;
 import java.util.function.Function;
 
 /**
- * Single-use opaque log tickets bound to a run. Only the SHA-256 hash is persisted; consumption
- * is a single atomic check over hash, expiry and unconsumed state.
+ * Single-use opaque log tickets bound to a run AND to the auth_version of the request that issued
+ * them (design section 8.1). Only the SHA-256 hash is persisted. Issuing is a conditional INSERT
+ * that re-checks the current account version, and consuming is a single atomic JOIN check over
+ * hash, unconsumed, expiry, enabled and ticket.auth_version = user.auth_version; a NULL legacy
+ * version (pre-V17 rows) is therefore never treated as current.
  */
 public final class LogTicketService implements LogTicketAuthenticator {
     public static final Duration TICKET_TTL = Duration.ofSeconds(30);
@@ -24,13 +27,14 @@ public final class LogTicketService implements LogTicketAuthenticator {
     }
 
     public interface Store {
-        void insert(TicketRecord record);
+        /** Conditional insert; false means the account is no longer at the request's version. */
+        boolean insert(TicketRecord record);
 
         Optional<TicketRecord> consumeByHash(String ticketHash);
     }
 
-    public record TicketRecord(String ticketHash, String userId, String projectId, String runId,
-                               Instant expiresAt, Instant consumedAt) { }
+    public record TicketRecord(String ticketHash, String userId, long authVersion, String projectId,
+                               String runId, Instant expiresAt, Instant consumedAt) { }
 
     public record IssuedTicket(String ticket, Instant expiresAt) { }
 
@@ -54,7 +58,8 @@ public final class LogTicketService implements LogTicketAuthenticator {
         this.projectState = projectState;
     }
 
-    public IssuedTicket issue(String ownerId, String projectId, String runId) {
+    /** Issues a ticket bound to the request's original auth_version. */
+    public IssuedTicket issue(String ownerId, long authVersion, String projectId, String runId) {
         ProjectLifecycleGate.Lease lease = null;
         try {
             if (gate != null) {
@@ -71,7 +76,13 @@ public final class LogTicketService implements LogTicketAuthenticator {
             random.nextBytes(raw);
             String ticket = Base64.getUrlEncoder().withoutPadding().encodeToString(raw);
             Instant expiresAt = clock.instant().plus(TICKET_TTL);
-            store.insert(new TicketRecord(sha256Hex(ticket), ownerId, projectId, runId, expiresAt, null));
+            boolean inserted = store.insert(new TicketRecord(sha256Hex(ticket), ownerId, authVersion,
+                projectId, runId, expiresAt, null));
+            if (!inserted) {
+                // The password changed between the HTTP authentication and this issuance: never
+                // stamp the DB's newer version on a request carrying an old one.
+                throw new ApiException("UNAUTHENTICATED", 401, "Authentication required");
+            }
             return new IssuedTicket(ticket, expiresAt);
         } finally {
             if (lease != null) {

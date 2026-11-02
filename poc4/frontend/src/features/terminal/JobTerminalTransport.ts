@@ -1,3 +1,5 @@
+import { authSession, handleSessionRevoked } from '../../app/appRuntime';
+import type { AuthSnapshot } from '../auth/authSession';
 import {
   MAX_TERMINAL_OUTPUT_CREDIT_BYTES,
   parseTerminalClientControl,
@@ -69,6 +71,11 @@ export type JobTerminalTransportOptions = {
   location?: JobTerminalLocation;
   webSocketFactory?: (url: string) => TerminalWebSocketPort;
   scheduler?: TerminalInputPumpScheduler;
+  /** Snapshot captured when the terminal connection is established. */
+  getAuthSnapshot?: () => AuthSnapshot;
+  /** Revocation signal; only a still-current snapshot may clear the session. */
+  onSessionRevoked?: (expected: AuthSnapshot) => void;
+  /** Retained for existing callers; 4401 uses onSessionRevoked instead. */
   getAccessToken?: () => string | null;
   onUnauthorized?: () => void;
   onStateChange?: (state: JobTerminalTransportState) => void;
@@ -128,12 +135,11 @@ function notifySafely<Args extends readonly unknown[]>(
 export class JobTerminalTransport {
   private readonly sessionId: TerminalSessionId;
   private readonly ticket: TerminalTicket;
-  private readonly capturedAccessToken: string;
   private readonly location: JobTerminalLocation;
   private readonly webSocketFactory: (url: string) => TerminalWebSocketPort;
   private readonly scheduler: TerminalInputPumpScheduler;
-  private readonly getAccessToken: () => string | null;
-  private readonly onUnauthorized: (() => void) | undefined;
+  private readonly getAuthSnapshot: () => AuthSnapshot;
+  private readonly onSessionRevoked: (expected: AuthSnapshot) => void;
   private readonly onStateChange: ((state: JobTerminalTransportState) => void) | undefined;
   private readonly onInputEnabledChange: ((enabled: boolean) => void) | undefined;
   private readonly onReady: (() => void) | undefined;
@@ -154,19 +160,20 @@ export class JobTerminalTransport {
   private closeGraceTimer: unknown = null;
   private closeGraceToken = 0;
   private terminalCloseSent = false;
+  private connectionSnapshot: AuthSnapshot | null = null;
 
   constructor(options: JobTerminalTransportOptions) {
     this.sessionId = options.sessionId;
     this.ticket = options.ticket;
-    this.capturedAccessToken = options.accessToken;
     this.location = options.location ?? globalThis.location;
     this.webSocketFactory = options.webSocketFactory ?? createBrowserSocket;
     this.scheduler = options.scheduler ?? {
       setTimeout: (handler, delayMs) => globalThis.setTimeout(handler, delayMs),
       clearTimeout: (id) => globalThis.clearTimeout(id as ReturnType<typeof setTimeout>),
     };
-    this.getAccessToken = options.getAccessToken ?? (() => options.accessToken);
-    this.onUnauthorized = options.onUnauthorized;
+    this.getAuthSnapshot =
+      options.getAuthSnapshot ?? (() => authSession.getSnapshot());
+    this.onSessionRevoked = options.onSessionRevoked ?? handleSessionRevoked;
     this.onStateChange = options.onStateChange;
     this.onInputEnabledChange = options.onInputEnabledChange;
     this.onReady = options.onReady;
@@ -193,6 +200,7 @@ export class JobTerminalTransport {
     }
     const generation = this.generation + 1;
     this.generation = generation;
+    this.connectionSnapshot = this.readAuthSnapshot();
     this.transition('connecting');
     if (!this.isConnectingGeneration(generation)) return;
     let socket: TerminalWebSocketPort | null = null;
@@ -681,7 +689,7 @@ export class JobTerminalTransport {
   ): void {
     if (this.state === 'closed' || this.state === 'disposed') return;
     this.commitTeardown('closed', closeSocket, closeCode, sendTerminalClose);
-    if (checkUnauthorized) this.notifyUnauthorizedIfCurrent();
+    if (checkUnauthorized) this.notifySessionRevoked();
     notifySafely(this.onStateChange, 'closed');
     notifySafely(this.onClosed, reason);
   }
@@ -752,16 +760,18 @@ export class JobTerminalTransport {
     }
   }
 
-  private notifyUnauthorizedIfCurrent(): void {
-    let currentToken: string | null;
+  private readAuthSnapshot(): AuthSnapshot | null {
     try {
-      currentToken = this.getAccessToken();
+      return this.getAuthSnapshot();
     } catch {
-      return;
+      return null;
     }
-    if (this.capturedAccessToken === currentToken) {
-      notifySafely(this.onUnauthorized);
-    }
+  }
+
+  private notifySessionRevoked(): void {
+    const expected = this.connectionSnapshot;
+    if (expected === null) return;
+    notifySafely(this.onSessionRevoked, expected);
   }
 
   private isReadyGeneration(generation: number, socket: TerminalWebSocketPort): boolean {

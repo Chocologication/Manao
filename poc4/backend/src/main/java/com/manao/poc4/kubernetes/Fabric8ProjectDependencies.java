@@ -44,6 +44,11 @@ public class Fabric8ProjectDependencies implements ProjectDependencies {
     }
 
     @Override public void ensure(String projectId, ProjectRuntimeSpec spec) {
+        // The narrowed policy is written before any dependency workload, and exactly once:
+        // it is the object that allows only this project's pods to reach dependency pods.
+        if (spec.mysql() || spec.redis()) {
+            createIfAbsent(projectId, factory.dependencyNetworkPolicy(projectId));
+        }
         if (spec.mysql()) {
             ensureMysql(projectId, spec);
         }
@@ -76,7 +81,6 @@ public class Fabric8ProjectDependencies implements ProjectDependencies {
         // once per empty data directory; the container env reads the secret, never a backend value.
         createIfAbsent(projectId, factory.mysql(projectId, spec));
         createIfAbsent(projectId, factory.mysqlService(projectId));
-        createIfAbsent(projectId, factory.dependencyNetworkPolicy(projectId));
     }
 
     private void ensureRedis(String projectId, ProjectRuntimeSpec spec) {
@@ -87,7 +91,6 @@ public class Fabric8ProjectDependencies implements ProjectDependencies {
         }
         createIfAbsent(projectId, factory.redis(projectId, spec));
         createIfAbsent(projectId, factory.redisService(projectId));
-        createIfAbsent(projectId, factory.dependencyNetworkPolicy(projectId));
     }
 
     /** Persist the claim identity BEFORE anything else can depend on it, so permanent deletion stays possible. */

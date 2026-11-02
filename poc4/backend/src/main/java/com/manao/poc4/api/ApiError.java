@@ -28,7 +28,9 @@ public record ApiError(String code, String message, String traceId) {
         "AI_CONVERSATION_NOT_FOUND", "AI_CONTEXT_CONFLICT", "AI_CONTEXT_UNAVAILABLE",
         "AI_CONTEXT_COMPACTION_FAILED", "AI_CONTEXT_BUSY",
         "AI_WORKER_NOT_CONFIGURED", "AI_WORKER_CONFLICT", "AI_WORKER_UNREACHABLE",
-        "AI_WORKER_BAD_RESPONSE", "AI_WORKER_ERROR");
+        "AI_WORKER_BAD_RESPONSE", "AI_WORKER_ERROR",
+        "CAPTCHA_INVALID", "EMAIL_CODE_INVALID", "AUTH_RATE_LIMITED", "USERNAME_TAKEN", "EMAIL_TAKEN",
+        "REGISTRATION_CLOSED", "MAIL_NOT_CONFIGURED", "MAIL_SEND_FAILED", "CURRENT_PASSWORD_INVALID");
 
     public ApiError {
         if (!CODES.contains(code)) code = "INTERNAL_ERROR";
@@ -93,6 +95,15 @@ public record ApiError(String code, String message, String traceId) {
             case "AI_WORKER_UNREACHABLE" -> "The worker could not be reached";
             case "AI_WORKER_BAD_RESPONSE" -> "The worker answer was unreadable";
             case "AI_WORKER_ERROR" -> "The worker refused the request";
+            case "CAPTCHA_INVALID" -> "Captcha answer is invalid or expired";
+            case "EMAIL_CODE_INVALID" -> "Email verification code is invalid or expired";
+            case "AUTH_RATE_LIMITED" -> "Too many attempts; try again later";
+            case "USERNAME_TAKEN" -> "Username is already taken";
+            case "EMAIL_TAKEN" -> "Email is already registered";
+            case "REGISTRATION_CLOSED" -> "Registration is closed";
+            case "MAIL_NOT_CONFIGURED" -> "Email delivery is not configured";
+            case "MAIL_SEND_FAILED" -> "Verification email could not be sent";
+            case "CURRENT_PASSWORD_INVALID" -> "Current password is invalid";
             default -> "Request failed";
         };
     }

@@ -1,5 +1,11 @@
 import { DEFAULT_PROJECT_LIMIT } from '../contracts/project';
-import type { AuthUser, LoginResponse } from '../contracts/auth';
+import type {
+  AuthOptionsResponse,
+  AuthUser,
+  CaptchaResponse,
+  EmailCodePurpose,
+  LoginResponse,
+} from '../contracts/auth';
 import type {
   ProjectEndpointState,
   ProjectRuntimeConfig,
@@ -30,6 +36,8 @@ type MockUser = {
   id: string;
   username: string;
   password: string;
+  email: string | null;
+  emailVerified: boolean;
 };
 
 type MockProject = {
@@ -50,10 +58,16 @@ type IssuedToken = {
   expiresAt: string;
 };
 
-const USERS: readonly MockUser[] = [
-  { id: 'usr-alice', username: 'alice', password: 'demo-pass' },
-  { id: 'usr-bob', username: 'bob', password: 'demo-pass' },
-];
+function seedUsers(): MockUser[] {
+  return [
+    { id: 'usr-alice', username: 'alice', password: 'demo-pass', email: 'alice@example.com', emailVerified: true },
+    { id: 'usr-bob', username: 'bob', password: 'demo-pass', email: 'bob@example.com', emailVerified: true },
+    // Legacy fixture: an existing account whose email was never bound.
+    { id: 'usr-legacy', username: 'legacy', password: 'demo-pass', email: null, emailVerified: false },
+  ];
+}
+
+let users: MockUser[] = seedUsers();
 
 let projects: MockProject[] = [];
 let tokens = new Map<string, IssuedToken>();
@@ -64,6 +78,23 @@ let fileRequestCounts = new Map<string, number>();
 let largeFileBodiesEnabled = false;
 let writeScenario: WriteScenario = 'normal';
 let resetTerminalMockState = (): void => undefined;
+
+// Account lifecycle mock state (design section 9). No secrets or answers are
+// stored: the mock captcha accepts any non-empty answer and email challenges
+// accept any 6-digit code, exactly like a deterministic test double.
+let mockAuthOptions: AuthOptionsResponse = { registrationEnabled: true, emailAvailable: true };
+const MOCK_EMAIL_CODE_RETRY_AFTER_SECONDS = 60;
+const MOCK_CAPTCHA_TTL_MS = 2 * 60 * 1000;
+const MOCK_EMAIL_CODE_TTL_MS = 10 * 60 * 1000;
+let captchaChallenges = new Map<string, { expiresAt: number }>();
+let emailChallenges = new Map<
+  string,
+  { purpose: EmailCodePurpose; email: string; expiresAt: number; used: boolean }
+>();
+let emailCodeCooldowns = new Map<string, number>();
+let nextCaptchaSeq = 0;
+let nextEmailChallengeSeq = 0;
+let nextUserIdSeq = 0;
 
 // Python dependency mock state (design 6.1); declared before the module-init reset below.
 let dependencyOperations: MockDependencyOperation[] = [];
@@ -198,6 +229,14 @@ function resetSessionState(): void {
   writeScenario = 'normal';
   dependencyOperations = [];
   dependencyScenario = 'normal';
+  users = seedUsers();
+  mockAuthOptions = { registrationEnabled: true, emailAvailable: true };
+  captchaChallenges = new Map();
+  emailChallenges = new Map();
+  emailCodeCooldowns = new Map();
+  nextCaptchaSeq = 0;
+  nextEmailChallengeSeq = 0;
+  nextUserIdSeq = 0;
   resetWorkspaces();
   clearLargeFileBodyCache();
 }
@@ -216,8 +255,9 @@ export function loginWithCredentials(
   username: string,
   password: string,
 ): LoginResponse | null {
-  const user = USERS.find(
-    (candidate) => candidate.username === username && candidate.password === password,
+  const normalized = username.trim().toLowerCase();
+  const user = users.find(
+    (candidate) => candidate.username === normalized && candidate.password === password,
   );
   if (user === undefined) {
     return null;
@@ -229,7 +269,12 @@ export function loginWithCredentials(
   return {
     accessToken,
     expiresAt,
-    user: { id: user.id, username: user.username },
+    user: {
+      id: user.id,
+      username: user.username,
+      email: user.email,
+      emailVerified: user.emailVerified,
+    },
   };
 }
 
@@ -251,11 +296,16 @@ export function resolveUserByAccessToken(token: string | null): AuthUser | null 
   if (Date.now() >= Date.parse(issued.expiresAt)) {
     return null;
   }
-  const user = USERS.find((candidate) => candidate.id === issued.userId);
+  const user = users.find((candidate) => candidate.id === issued.userId);
   if (user === undefined) {
     return null;
   }
-  return { id: user.id, username: user.username };
+  return {
+    id: user.id,
+    username: user.username,
+    email: user.email,
+    emailVerified: user.emailVerified,
+  };
 }
 
 // CREATING becomes READY/FAILED after two GETs that include the project (detail or list).
@@ -680,4 +730,272 @@ export function markMockProjectDependencyReconciliationFailed(
   });
   project.state = 'FAILED';
   project.failureReason = MOCK_DEPENDENCY_RECONCILIATION_FAILURE;
+}
+
+// ---------------------------------------------------------------------------
+// Account lifecycle mock helpers (design section 9). The mock accepts any
+// non-empty captcha answer and any 6-digit email code: it is a deterministic
+// test double, never a source of a real answer or a real email.
+// ---------------------------------------------------------------------------
+
+const MOCK_CAPTCHA_PNG_BASE64 =
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+const MOCK_USERNAME_PATTERN = /^[a-z0-9_]{3,32}$/;
+const MOCK_EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+export function getMockAuthOptions(): AuthOptionsResponse {
+  return { ...mockAuthOptions };
+}
+
+export function setMockRegistrationEnabled(enabled: boolean): void {
+  mockAuthOptions = { ...mockAuthOptions, registrationEnabled: enabled };
+}
+
+export function setMockEmailAvailable(available: boolean): void {
+  mockAuthOptions = { ...mockAuthOptions, emailAvailable: available };
+}
+
+export function normalizeMockEmail(email: string): string {
+  return email.trim().toLowerCase();
+}
+
+export function isValidMockEmail(email: string): boolean {
+  const normalized = normalizeMockEmail(email);
+  return normalized.length <= 254 && MOCK_EMAIL_PATTERN.test(normalized);
+}
+
+export function isValidMockUsername(username: string): boolean {
+  return MOCK_USERNAME_PATTERN.test(username.trim().toLowerCase());
+}
+
+export function isValidMockPassword(password: string): boolean {
+  const length = Array.from(password).length;
+  return (
+    length >= 8 &&
+    length <= 64 &&
+    new TextEncoder().encode(password).length <= 72
+  );
+}
+
+export function issueMockCaptcha(): CaptchaResponse {
+  nextCaptchaSeq += 1;
+  const challengeId = `mock-captcha-${nextCaptchaSeq}`;
+  const expiresAt = Date.now() + MOCK_CAPTCHA_TTL_MS;
+  captchaChallenges.set(challengeId, { expiresAt });
+  return {
+    challengeId,
+    imageBase64: MOCK_CAPTCHA_PNG_BASE64,
+    expiresAt: new Date(expiresAt).toISOString(),
+  };
+}
+
+export function consumeMockCaptcha(challengeId: string, answer: string): boolean {
+  const challenge = captchaChallenges.get(challengeId);
+  if (
+    challenge === undefined ||
+    challenge.expiresAt <= Date.now() ||
+    answer.trim().length === 0
+  ) {
+    return false;
+  }
+  captchaChallenges.delete(challengeId);
+  return true;
+}
+
+export type MockEmailCodeResult =
+  | { status: 'ok'; challengeId: string; expiresAt: string; retryAfterSeconds: number }
+  | { status: 'registration-closed' }
+  | { status: 'mail-not-configured' }
+  | { status: 'captcha-invalid' }
+  | { status: 'rate-limited'; retryAfterSeconds: number };
+
+export function requestMockEmailCode(input: {
+  purpose: EmailCodePurpose;
+  email: string;
+  captchaId: string;
+  captchaAnswer: string;
+}): MockEmailCodeResult {
+  if (input.purpose === 'REGISTER_EMAIL' && !mockAuthOptions.registrationEnabled) {
+    return { status: 'registration-closed' };
+  }
+  if (!mockAuthOptions.emailAvailable) {
+    return { status: 'mail-not-configured' };
+  }
+  if (!consumeMockCaptcha(input.captchaId, input.captchaAnswer)) {
+    return { status: 'captcha-invalid' };
+  }
+  const email = normalizeMockEmail(input.email);
+  const slot = `${input.purpose}\0${email}`;
+  const now = Date.now();
+  const nextSendAt = emailCodeCooldowns.get(slot) ?? 0;
+  if (now < nextSendAt) {
+    return { status: 'rate-limited', retryAfterSeconds: Math.ceil((nextSendAt - now) / 1000) };
+  }
+  emailCodeCooldowns.set(slot, now + MOCK_EMAIL_CODE_RETRY_AFTER_SECONDS * 1000);
+  for (const [id, challenge] of emailChallenges) {
+    if (challenge.purpose === input.purpose && challenge.email === email) {
+      emailChallenges.delete(id);
+    }
+  }
+  nextEmailChallengeSeq += 1;
+  const challengeId = `mock-email-${nextEmailChallengeSeq}`;
+  const expiresAt = Date.now() + MOCK_EMAIL_CODE_TTL_MS;
+  emailChallenges.set(challengeId, {
+    purpose: input.purpose,
+    email,
+    expiresAt,
+    used: false,
+  });
+  return {
+    status: 'ok',
+    challengeId,
+    expiresAt: new Date(expiresAt).toISOString(),
+    retryAfterSeconds: MOCK_EMAIL_CODE_RETRY_AFTER_SECONDS,
+  };
+}
+
+function peekMockEmailChallenge(options: {
+  purpose: EmailCodePurpose;
+  email: string;
+  challengeId: string;
+  code: string;
+}): boolean {
+  const challenge = emailChallenges.get(options.challengeId);
+  return (
+    challenge !== undefined &&
+    !challenge.used &&
+    challenge.expiresAt > Date.now() &&
+    challenge.purpose === options.purpose &&
+    challenge.email === normalizeMockEmail(options.email) &&
+    /^\d{6}$/.test(options.code)
+  );
+}
+
+function consumeMockEmailChallenge(challengeId: string): void {
+  const challenge = emailChallenges.get(challengeId);
+  if (challenge !== undefined) {
+    challenge.used = true;
+  }
+}
+
+function revokeUserTokens(userId: string): void {
+  for (const [token, issued] of tokens) {
+    if (issued.userId === userId) {
+      tokens.delete(token);
+    }
+  }
+}
+
+export type MockRegisterResult =
+  | { status: 'ok'; user: { id: string; username: string } }
+  | { status: 'registration-closed' }
+  | { status: 'validation-error' }
+  | { status: 'username-taken' }
+  | { status: 'email-taken' }
+  | { status: 'email-code-invalid' };
+
+export function registerMockAccount(input: {
+  username: string;
+  password: string;
+  email: string;
+  emailChallengeId: string;
+  emailCode: string;
+}): MockRegisterResult {
+  if (!mockAuthOptions.registrationEnabled) {
+    return { status: 'registration-closed' };
+  }
+  const username = input.username.trim().toLowerCase();
+  const email = normalizeMockEmail(input.email);
+  if (
+    !isValidMockUsername(username) ||
+    !isValidMockEmail(email) ||
+    !isValidMockPassword(input.password)
+  ) {
+    return { status: 'validation-error' };
+  }
+  // The code is only checked (not consumed) before the uniqueness checks so the
+  // valid code stays usable after a USERNAME_TAKEN/EMAIL_TAKEN retry.
+  const challenge = {
+    purpose: 'REGISTER_EMAIL' as const,
+    email,
+    challengeId: input.emailChallengeId,
+    code: input.emailCode,
+  };
+  if (!peekMockEmailChallenge(challenge)) {
+    return { status: 'email-code-invalid' };
+  }
+  if (users.some((user) => user.username === username)) {
+    return { status: 'username-taken' };
+  }
+  if (users.some((user) => user.email !== null && user.email === email)) {
+    return { status: 'email-taken' };
+  }
+  consumeMockEmailChallenge(input.emailChallengeId);
+  nextUserIdSeq += 1;
+  const user: MockUser = {
+    id: `usr-new-${nextUserIdSeq}`,
+    username,
+    password: input.password,
+    email,
+    emailVerified: true,
+  };
+  users.push(user);
+  return { status: 'ok', user: { id: user.id, username: user.username } };
+}
+
+export type MockPasswordResetResult = 'ok' | 'validation-error' | 'email-code-invalid';
+
+export function resetMockPassword(input: {
+  email: string;
+  emailChallengeId: string;
+  emailCode: string;
+  newPassword: string;
+}): MockPasswordResetResult {
+  const email = normalizeMockEmail(input.email);
+  if (!isValidMockEmail(email) || !isValidMockPassword(input.newPassword)) {
+    return 'validation-error';
+  }
+  const valid = peekMockEmailChallenge({
+    purpose: 'RESET_PASSWORD',
+    email,
+    challengeId: input.emailChallengeId,
+    code: input.emailCode,
+  });
+  if (!valid) {
+    return 'email-code-invalid';
+  }
+  consumeMockEmailChallenge(input.emailChallengeId);
+  const user = users.find((candidate) => candidate.email !== null && candidate.email === email);
+  if (user === undefined) {
+    // Unknown account: same fixed code error as a bad code, never a hint.
+    return 'email-code-invalid';
+  }
+  user.password = input.newPassword;
+  revokeUserTokens(user.id);
+  return 'ok';
+}
+
+export type MockPasswordChangeResult =
+  | 'ok'
+  | 'validation-error'
+  | 'current-password-invalid';
+
+export function changeMockPassword(input: {
+  userId: string;
+  currentPassword: string;
+  newPassword: string;
+}): MockPasswordChangeResult {
+  const user = users.find((candidate) => candidate.id === input.userId);
+  if (user === undefined) {
+    return 'current-password-invalid';
+  }
+  if (!isValidMockPassword(input.newPassword)) {
+    return 'validation-error';
+  }
+  if (user.password !== input.currentPassword) {
+    return 'current-password-invalid';
+  }
+  user.password = input.newPassword;
+  revokeUserTokens(user.id);
+  return 'ok';
 }

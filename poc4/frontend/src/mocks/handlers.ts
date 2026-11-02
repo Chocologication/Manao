@@ -32,6 +32,7 @@ import { hasActiveRun, isRunScenario, setRunScenario } from './runState';
 import { terminalHandlers } from './terminalHandlers';
 import {
   canReadReadyProjectFiles,
+  changeMockPassword,
   createOwnedProject,
   findOwnedProjectCreation,
   removeOwnedProject,
@@ -56,6 +57,12 @@ import {
   registerMockDependencyOperation,
   commitMockDependencyOperation,
   findMockDependencyOperation,
+  getMockAuthOptions,
+  issueMockCaptcha,
+  isValidMockEmail,
+  registerMockAccount,
+  requestMockEmailCode,
+  resetMockPassword,
   resolveUserByAccessToken,
   setDependencyScenario,
   setLargeFileBodiesEnabled,
@@ -74,6 +81,54 @@ const REQUEST_UNAUTHENTICATED: ApiErrorBody = {
   code: 'UNAUTHENTICATED',
   message: 'Authentication required',
   traceId: 'mock-trace-unauthenticated',
+};
+
+const CAPTCHA_INVALID: ApiErrorBody = {
+  code: 'CAPTCHA_INVALID',
+  message: 'Captcha is invalid or expired',
+  traceId: 'mock-trace-captcha-invalid',
+};
+
+const EMAIL_CODE_INVALID: ApiErrorBody = {
+  code: 'EMAIL_CODE_INVALID',
+  message: 'Email code is invalid or expired',
+  traceId: 'mock-trace-email-code-invalid',
+};
+
+const AUTH_RATE_LIMITED: ApiErrorBody = {
+  code: 'AUTH_RATE_LIMITED',
+  message: 'Too many email code requests',
+  traceId: 'mock-trace-auth-rate-limited',
+};
+
+const USERNAME_TAKEN: ApiErrorBody = {
+  code: 'USERNAME_TAKEN',
+  message: 'Username is already taken',
+  traceId: 'mock-trace-username-taken',
+};
+
+const EMAIL_TAKEN: ApiErrorBody = {
+  code: 'EMAIL_TAKEN',
+  message: 'Email is already bound to another account',
+  traceId: 'mock-trace-email-taken',
+};
+
+const REGISTRATION_CLOSED: ApiErrorBody = {
+  code: 'REGISTRATION_CLOSED',
+  message: 'Registration is currently closed',
+  traceId: 'mock-trace-registration-closed',
+};
+
+const MAIL_NOT_CONFIGURED: ApiErrorBody = {
+  code: 'MAIL_NOT_CONFIGURED',
+  message: 'Mail delivery is not configured',
+  traceId: 'mock-trace-mail-not-configured',
+};
+
+const CURRENT_PASSWORD_INVALID: ApiErrorBody = {
+  code: 'CURRENT_PASSWORD_INVALID',
+  message: 'Current password is invalid',
+  traceId: 'mock-trace-current-password-invalid',
 };
 
 const FORBIDDEN: ApiErrorBody = {
@@ -213,6 +268,88 @@ function isLoginRequest(value: unknown): value is LoginRequest {
   }
   const record = value as Record<string, unknown>;
   return typeof record.username === 'string' && typeof record.password === 'string';
+}
+
+function hasExactKeys(value: object, keys: readonly string[]): boolean {
+  const actual = Object.keys(value);
+  return (
+    actual.length === keys.length &&
+    keys.every((key) => Object.prototype.hasOwnProperty.call(value, key))
+  );
+}
+
+type MockEmailCodeBody = {
+  purpose: 'REGISTER_EMAIL' | 'RESET_PASSWORD';
+  email: string;
+  captchaId: string;
+  captchaAnswer: string;
+};
+
+function isEmailCodeBody(value: unknown): value is MockEmailCodeBody {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return false;
+  if (!hasExactKeys(value, ['purpose', 'email', 'captchaId', 'captchaAnswer'])) return false;
+  const record = value as Record<string, unknown>;
+  return (
+    (record.purpose === 'REGISTER_EMAIL' || record.purpose === 'RESET_PASSWORD') &&
+    typeof record.email === 'string' &&
+    typeof record.captchaId === 'string' &&
+    typeof record.captchaAnswer === 'string'
+  );
+}
+
+function isRegisterBody(
+  value: unknown,
+): value is {
+  username: string;
+  password: string;
+  email: string;
+  emailChallengeId: string;
+  emailCode: string;
+} {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return false;
+  if (
+    !hasExactKeys(value, ['username', 'password', 'email', 'emailChallengeId', 'emailCode'])
+  ) {
+    return false;
+  }
+  const record = value as Record<string, unknown>;
+  return (
+    typeof record.username === 'string' &&
+    typeof record.password === 'string' &&
+    typeof record.email === 'string' &&
+    typeof record.emailChallengeId === 'string' &&
+    typeof record.emailCode === 'string'
+  );
+}
+
+function isPasswordResetBody(
+  value: unknown,
+): value is {
+  email: string;
+  emailChallengeId: string;
+  emailCode: string;
+  newPassword: string;
+} {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return false;
+  if (!hasExactKeys(value, ['email', 'emailChallengeId', 'emailCode', 'newPassword'])) {
+    return false;
+  }
+  const record = value as Record<string, unknown>;
+  return (
+    typeof record.email === 'string' &&
+    typeof record.emailChallengeId === 'string' &&
+    typeof record.emailCode === 'string' &&
+    typeof record.newPassword === 'string'
+  );
+}
+
+function isPasswordChangeBody(
+  value: unknown,
+): value is { currentPassword: string; newPassword: string } {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return false;
+  if (!hasExactKeys(value, ['currentPassword', 'newPassword'])) return false;
+  const record = value as Record<string, unknown>;
+  return typeof record.currentPassword === 'string' && typeof record.newPassword === 'string';
 }
 
 async function readJsonBody(request: Request): Promise<unknown> {
@@ -747,6 +884,124 @@ export const dependencyHandlers = [
 ];
 
 export const handlers = [
+  http.get('/api/v1/auth/options', () =>
+    HttpResponse.json(getMockAuthOptions(), {
+      headers: { 'Cache-Control': 'no-store' },
+    }),
+  ),
+
+  http.get('/api/v1/auth/captcha', () =>
+    HttpResponse.json(issueMockCaptcha(), {
+      headers: { 'Cache-Control': 'no-store' },
+    }),
+  ),
+
+  http.post('/api/v1/auth/email-codes', async ({ request }) => {
+    const body = await readJsonBody(request);
+    if (!isEmailCodeBody(body) || !isValidMockEmail(body.email)) {
+      return jsonError(422, VALIDATION_ERROR);
+    }
+    const result = requestMockEmailCode(body);
+    if (result.status === 'registration-closed') {
+      return jsonError(403, REGISTRATION_CLOSED);
+    }
+    if (result.status === 'mail-not-configured') {
+      return jsonError(503, MAIL_NOT_CONFIGURED);
+    }
+    if (result.status === 'captcha-invalid') {
+      return jsonError(422, CAPTCHA_INVALID);
+    }
+    if (result.status === 'rate-limited') {
+      return HttpResponse.json(AUTH_RATE_LIMITED, {
+        status: 429,
+        headers: { 'Retry-After': String(result.retryAfterSeconds) },
+      });
+    }
+    return HttpResponse.json(
+      {
+        challengeId: result.challengeId,
+        expiresAt: result.expiresAt,
+        retryAfterSeconds: result.retryAfterSeconds,
+      },
+      { status: 202, headers: { 'Cache-Control': 'no-store' } },
+    );
+  }),
+
+  http.post('/api/v1/auth/register', async ({ request }) => {
+    const body = await readJsonBody(request);
+    if (!isRegisterBody(body)) {
+      return jsonError(422, VALIDATION_ERROR);
+    }
+    const result = registerMockAccount(body);
+    if (result.status === 'registration-closed') {
+      return jsonError(403, REGISTRATION_CLOSED);
+    }
+    if (result.status === 'validation-error') {
+      return jsonError(422, VALIDATION_ERROR);
+    }
+    if (result.status === 'username-taken') {
+      return jsonError(409, USERNAME_TAKEN);
+    }
+    if (result.status === 'email-taken') {
+      return jsonError(409, EMAIL_TAKEN);
+    }
+    if (result.status === 'email-code-invalid') {
+      return jsonError(422, EMAIL_CODE_INVALID);
+    }
+    return HttpResponse.json({ user: result.user }, { status: 201 });
+  }),
+
+  http.post('/api/v1/auth/password-reset', async ({ request }) => {
+    const body = await readJsonBody(request);
+    if (!isPasswordResetBody(body)) {
+      return jsonError(422, VALIDATION_ERROR);
+    }
+    const result = resetMockPassword(body);
+    if (result === 'validation-error') {
+      return jsonError(422, VALIDATION_ERROR);
+    }
+    if (result === 'email-code-invalid') {
+      return jsonError(422, EMAIL_CODE_INVALID);
+    }
+    return new HttpResponse(null, { status: 204 });
+  }),
+
+  http.post('/api/v1/auth/password-change', async ({ request }) => {
+    const auth = authorize(request);
+    if ('response' in auth) {
+      return auth.response;
+    }
+    const body = await readJsonBody(request);
+    if (!isPasswordChangeBody(body)) {
+      return jsonError(422, VALIDATION_ERROR);
+    }
+    const result = changeMockPassword({
+      userId: auth.user.id,
+      currentPassword: body.currentPassword,
+      newPassword: body.newPassword,
+    });
+    if (result === 'validation-error') {
+      return jsonError(422, VALIDATION_ERROR);
+    }
+    if (result === 'current-password-invalid') {
+      return jsonError(422, CURRENT_PASSWORD_INVALID);
+    }
+    return new HttpResponse(null, { status: 204 });
+  }),
+
+  http.get('/api/v1/auth/me', ({ request }) => {
+    const auth = authorize(request);
+    if ('response' in auth) {
+      return auth.response;
+    }
+    return HttpResponse.json({
+      id: auth.user.id,
+      username: auth.user.username,
+      email: auth.user.email ?? null,
+      emailVerified: auth.user.emailVerified === true,
+    });
+  }),
+
   http.post('/api/v1/auth/login', async ({ request }) => {
     const body = await readJsonBody(request);
     if (!isLoginRequest(body)) {

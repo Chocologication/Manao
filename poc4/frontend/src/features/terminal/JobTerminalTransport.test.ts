@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
+import { authSession, handleSessionRevoked, logout } from '../../app/appRuntime';
 import { parseTerminalSessionId, parseTerminalTicket } from '../../contracts/terminal';
+import type { AuthSnapshot } from '../auth/authSession';
 import {
   buildJobTerminalWebSocketUrl,
   JobTerminalTransport,
@@ -72,6 +74,15 @@ class FakeTerminalSocket implements TerminalWebSocketPort {
   }
 }
 
+function authenticatedSnapshot(username = 'alice'): AuthSnapshot {
+  return {
+    status: 'authenticated',
+    accessToken: `${username}-token`,
+    expiresAt: '2099-01-01T00:00:00.000Z',
+    user: { id: `usr-${username}`, username, email: null, emailVerified: false },
+  };
+}
+
 const SESSION_ID = parseTerminalSessionId('session-1');
 const TICKET = parseTerminalTicket('short ticket?&');
 const LOCATION: JobTerminalLocation = { protocol: 'https:', host: 'workbench.example:8443' };
@@ -126,6 +137,9 @@ function createHarness(overrides: Partial<JobTerminalTransportOptions> = {}) {
   const inputEnabled: boolean[] = [];
   const onReady = vi.fn();
   const onClosed = vi.fn();
+  let currentSnapshot: AuthSnapshot = authenticatedSnapshot('alice');
+  const getAuthSnapshot = vi.fn(() => currentSnapshot);
+  const onSessionRevoked = vi.fn();
   const transport = new JobTerminalTransport({
     sessionId: SESSION_ID,
     ticket: TICKET,
@@ -143,11 +157,25 @@ function createHarness(overrides: Partial<JobTerminalTransportOptions> = {}) {
     },
     onStateChange: (state) => states.push(state),
     onInputEnabledChange: (enabled) => inputEnabled.push(enabled),
+    getAuthSnapshot,
+    onSessionRevoked,
     onReady,
     onClosed,
     ...overrides,
   });
-  return { transport, sockets, states, inputEnabled, onReady, onClosed };
+  return {
+    transport,
+    sockets,
+    states,
+    inputEnabled,
+    onReady,
+    onClosed,
+    onSessionRevoked,
+    getSnapshot: () => currentSnapshot,
+    setSnapshot(next: AuthSnapshot) {
+      currentSnapshot = next;
+    },
+  };
 }
 
 function ready(socket: FakeTerminalSocket): void {
@@ -790,28 +818,50 @@ describe('JobTerminalTransport terminal close policy', () => {
     expect(errored.sockets).toHaveLength(1);
   });
 
-  it('runs unauthorized cleanup only for the access token captured by that generation', () => {
-    let currentToken = 'alice-token';
-    const currentUnauthorized = vi.fn();
-    const current = createHarness({
-      accessToken: 'alice-token',
-      getAccessToken: () => currentToken,
-      onUnauthorized: currentUnauthorized,
-    });
+  it('reports the auth snapshot captured when the terminal connection was established', () => {
+    const current = createHarness();
+    const aliceSnapshot = current.getSnapshot();
     current.transport.connect();
     current.sockets[0]!.remoteClose(4401);
-    expect(currentUnauthorized).toHaveBeenCalledTimes(1);
+    expect(current.onSessionRevoked).toHaveBeenCalledTimes(1);
+    expect(current.onSessionRevoked).toHaveBeenCalledWith(aliceSnapshot);
 
-    const staleUnauthorized = vi.fn();
-    const stale = createHarness({
-      accessToken: 'alice-token',
-      getAccessToken: () => currentToken,
-      onUnauthorized: staleUnauthorized,
-    });
+    const stale = createHarness();
+    const staleSnapshot = stale.getSnapshot();
     stale.transport.connect();
-    currentToken = 'bob-token';
+    stale.setSnapshot(authenticatedSnapshot('bob'));
     stale.sockets[0]!.remoteClose(4401, 'UNAUTHENTICATED alice-token');
-    expect(staleUnauthorized).not.toHaveBeenCalled();
+    expect(stale.onSessionRevoked).toHaveBeenCalledTimes(1);
+    expect(stale.onSessionRevoked).toHaveBeenCalledWith(staleSnapshot);
+  });
+
+  it('does not clear a newer login when an old terminal connection reports 4401', () => {
+    authSession.authenticate({
+      accessToken: 'alice-terminal-token',
+      expiresAt: '2099-01-01T00:00:00.000Z',
+      user: { id: 'usr-alice', username: 'alice', email: null, emailVerified: false },
+    });
+    const item = createHarness({
+      getAuthSnapshot: () => authSession.getSnapshot(),
+      onSessionRevoked: handleSessionRevoked,
+    });
+    item.transport.connect();
+    const aliceSocket = item.sockets[0]!;
+    ready(aliceSocket);
+
+    logout();
+    authSession.authenticate({
+      accessToken: 'bob-terminal-token',
+      expiresAt: '2099-01-01T00:00:00.000Z',
+      user: { id: 'usr-bob', username: 'bob', email: null, emailVerified: false },
+    });
+    aliceSocket.remoteClose(4401, 'old token revoked');
+
+    expect(authSession.getSnapshot()).toMatchObject({
+      status: 'authenticated',
+      accessToken: 'bob-terminal-token',
+      user: { username: 'bob' },
+    });
   });
 });
 
@@ -875,49 +925,40 @@ describe('JobTerminalTransport observer-safe teardown', () => {
     ]);
   });
 
-  it('closes and clears the pump when current-token lookup throws on 4401', () => {
+  it('closes and clears the pump when the snapshot lookup or revocation observer fails', () => {
     const clock = createManualScheduler();
-    const onUnauthorized = vi.fn();
-    const onClosed = vi.fn();
-    const harness = createHarness({
+    const throwingLookup = createHarness({
       scheduler: clock.scheduler,
-      getAccessToken: () => {
-        throw new Error('token lookup failed');
+      getAuthSnapshot: () => {
+        throw new Error('snapshot lookup failed');
       },
-      onUnauthorized,
-      onClosed,
     });
-    harness.transport.connect();
-    const socket = harness.sockets[0]!;
-    ready(socket);
-    harness.transport.initialize(80, 24);
-    socket.bufferedAmount = 256 * 1024;
-    harness.transport.sendData('queued');
-    expect(clock.pendingCount()).toBe(2);
+    throwingLookup.transport.connect();
+    const lookupSocket = throwingLookup.sockets[0]!;
+    ready(lookupSocket);
 
-    expect(() => socket.remoteClose(4401)).not.toThrow();
+    expect(() => lookupSocket.remoteClose(4401)).not.toThrow();
+    expect(throwingLookup.transport.currentState).toBe('closed');
+    expect(throwingLookup.onSessionRevoked).not.toHaveBeenCalled();
+    expect(throwingLookup.onClosed).toHaveBeenCalledWith({ kind: 'socket-close', code: 4401 });
 
-    expect(harness.transport.currentState).toBe('closed');
-    expect(clock.pendingCount()).toBe(0);
-    expect(harness.inputEnabled).toEqual([true, false]);
-    expect(onUnauthorized).not.toHaveBeenCalled();
-    expect(onClosed).toHaveBeenCalledWith({ kind: 'socket-close', code: 4401 });
-    const sentAfterClose = socket.sent.length;
-    socket.message(JSON.stringify({ type: 'terminal.ping', nonce: 'late' }));
-    expect(socket.sent).toHaveLength(sentAfterClose);
+    const throwingObserver = createHarness({
+      onSessionRevoked: () => {
+        throw new Error('revocation observer failed');
+      },
+    });
+    throwingObserver.transport.connect();
+    const observerSocket = throwingObserver.sockets[0]!;
+    ready(observerSocket);
+    observerSocket.remoteClose(4401);
+
+    expect(throwingObserver.transport.currentState).toBe('closed');
+    expect(throwingObserver.onClosed).toHaveBeenCalledOnce();
   });
 
-  it('finishes every other notification when unauthorized cleanup throws', () => {
-    const onUnauthorized = vi.fn(() => {
-      throw new Error('unauthorized observer failed');
-    });
+  it('finishes every other notification after a terminal revocation', () => {
     const onClosed = vi.fn();
-    const harness = createHarness({
-      accessToken: 'alice-token',
-      getAccessToken: () => 'alice-token',
-      onUnauthorized,
-      onClosed,
-    });
+    const harness = createHarness({ onClosed });
     harness.transport.connect();
     const socket = harness.sockets[0]!;
     ready(socket);
@@ -928,7 +969,7 @@ describe('JobTerminalTransport observer-safe teardown', () => {
     expect(harness.transport.currentState).toBe('closed');
     expect(harness.states.at(-1)).toBe('closed');
     expect(harness.inputEnabled).toEqual([true, false]);
-    expect(onUnauthorized).toHaveBeenCalledTimes(1);
+    expect(harness.onSessionRevoked).toHaveBeenCalledTimes(1);
     expect(onClosed).toHaveBeenCalledWith({ kind: 'socket-close', code: 4401 });
   });
 

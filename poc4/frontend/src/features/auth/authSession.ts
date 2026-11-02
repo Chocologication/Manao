@@ -4,10 +4,20 @@ export type AuthSnapshot =
   | { status: 'anonymous'; reason: 'initial' | 'logout' | 'expired' | 'unauthorized' }
   | { status: 'authenticated'; accessToken: string; expiresAt: string; user: AuthUser };
 
+export type AuthenticatedSnapshot = Extract<AuthSnapshot, { status: 'authenticated' }>;
+
 export type AnonymousReason = Exclude<
   Extract<AuthSnapshot, { status: 'anonymous' }>['reason'],
   'initial'
 >;
+
+export type AuthSessionOptions = {
+  /**
+   * Runs once per authenticated session, synchronously before the anonymous
+   * snapshot is emitted, so logout/expiry/401 share one cleanup path.
+   */
+  onBeforeClear?: (previous: AuthenticatedSnapshot, reason: AnonymousReason) => void;
+};
 
 export type AuthSession = {
   getSnapshot(): AuthSnapshot;
@@ -20,11 +30,12 @@ export type AuthSession = {
 const INITIAL_SNAPSHOT: AuthSnapshot = { status: 'anonymous', reason: 'initial' };
 const MAX_TIMEOUT_MS = 2_147_483_647;
 
-export function createAuthSession(): AuthSession {
+export function createAuthSession(options: AuthSessionOptions = {}): AuthSession {
   let snapshot: AuthSnapshot = INITIAL_SNAPSHOT;
   const listeners = new Set<() => void>();
   let expiryTimer: ReturnType<typeof setTimeout> | null = null;
   let expiryGeneration = 0;
+  let clearing = false;
 
   function emit(): void {
     for (const listener of [...listeners]) {
@@ -80,6 +91,11 @@ export function createAuthSession(): AuthSession {
   }
 
   function authenticate(response: LoginResponse): void {
+    // A replacement login ends the previous authenticated session first so its
+    // user-scoped ids, connections, buffers and cache never leak into the new one.
+    if (snapshot.status === 'authenticated') {
+      clear('logout');
+    }
     snapshot = {
       status: 'authenticated',
       accessToken: response.accessToken,
@@ -91,13 +107,34 @@ export function createAuthSession(): AuthSession {
   }
 
   function clear(reason: AnonymousReason): void {
-    expiryGeneration += 1;
-    clearExpiryTimer();
-    if (snapshot.status === 'anonymous') {
+    // An ignored reentrant clear (a cleanup step ending the session again) must not
+    // cancel the expiry timer of a replacement session accepted during that cleanup.
+    if (clearing) {
       return;
     }
-    snapshot = { status: 'anonymous', reason };
-    emit();
+    expiryGeneration += 1;
+    clearExpiryTimer();
+    // Repeated clears are no-ops: one session runs its cleanup exactly once.
+    if (snapshot.status !== 'authenticated') {
+      return;
+    }
+    const previous = snapshot;
+    clearing = true;
+    try {
+      try {
+        options.onBeforeClear?.(previous, reason);
+      } catch {
+        // A failing cleanup observer must not keep the stale credentials alive.
+      }
+    } finally {
+      // A cleanup step (or a disposer it runs) may have accepted a replacement
+      // login while this clear was in progress: never overwrite that newer session.
+      if (snapshot === previous) {
+        snapshot = { status: 'anonymous', reason };
+      }
+      clearing = false;
+      emit();
+    }
   }
 
   return {

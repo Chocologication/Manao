@@ -2,15 +2,30 @@ import { useGSAP } from '@gsap/react';
 import gsap from 'gsap';
 import { ArrowUpRight, Eye, EyeOff, LoaderCircle, Pause, Play, ShieldCheck } from 'lucide-react';
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
-import { Navigate, useLocation, useNavigate } from 'react-router';
+import { Link, Navigate, useLocation, useNavigate } from 'react-router';
 import { login } from '../../api/authApi';
 import { ApiRequestError } from '../../api/ApiRequestError';
+import {
+  consumeLoginNotice,
+  type LoginLifecycleNotice,
+} from '../../app/appRuntime';
 import { useAuth } from './AuthProvider';
 import { useReducedMotion } from '@/features/preferences/motionPreferences';
 
 gsap.registerPlugin(useGSAP);
 
 const DEFAULT_POST_LOGIN_PATH = '/projects';
+
+function loginNoticeMessage(notice: LoginLifecycleNotice): string {
+  switch (notice) {
+    case 'registered':
+      return '注册成功，请使用新账号登录。';
+    case 'passwordReset':
+      return '密码已重置，请使用新密码登录。';
+    case 'passwordChanged':
+      return '密码已更新，请重新登录。';
+  }
+}
 const HERO_VIDEO =
   'https://videos.pexels.com/video-files/3130284/3130284-hd_1920_1080_30fps.mp4';
 const HERO_POSTER =
@@ -356,6 +371,16 @@ export function LoginPage() {
   const [transitioning, setTransitioning] = useState(false);
   const transitionResolveRef = useRef<(() => void) | null>(null);
   const mountedRef = useRef(true);
+  const [oneShotNotice, setOneShotNotice] = useState<LoginLifecycleNotice | null>(null);
+  const oneShotConsumedRef = useRef(false);
+
+  useEffect(() => {
+    if (snapshot.status !== 'anonymous' || oneShotConsumedRef.current) {
+      return;
+    }
+    oneShotConsumedRef.current = true;
+    setOneShotNotice(consumeLoginNotice());
+  }, [snapshot.status]);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -375,6 +400,19 @@ export function LoginPage() {
     snapshot.reason === 'unauthorized' || snapshot.reason === 'expired';
   const alertMessage =
     error ?? (sessionExpired ? 'Your session has expired. Please sign in again.' : null);
+  const lifecycle = location.state as
+    | { registered?: boolean; passwordReset?: boolean; passwordChanged?: boolean }
+    | null;
+  const successMessage =
+    oneShotNotice !== null
+      ? loginNoticeMessage(oneShotNotice)
+      : lifecycle?.registered === true
+        ? '注册成功，请使用新账号登录。'
+        : lifecycle?.passwordReset === true
+          ? '密码已重置，请使用新密码登录。'
+          : lifecycle?.passwordChanged === true
+            ? '密码已更新，请重新登录。'
+            : null;
   const displayAlertMessage =
     error === 'Invalid username or password'
       ? '用户名或密码错误'
@@ -606,6 +644,15 @@ export function LoginPage() {
                 </button>
               </div>
 
+              {successMessage !== null ? (
+                <p
+                  role="status"
+                  className="rounded-md border border-[#dfff82]/35 bg-[#dfff82]/10 px-3 py-2 text-sm text-[#eaffb8]"
+                >
+                  {successMessage}
+                </p>
+              ) : null}
+
               {alertMessage ? (
                 <p
                   role="alert"
@@ -639,10 +686,15 @@ export function LoginPage() {
               </button>
             </form>
 
-            {import.meta.env.MODE === 'mock' && <div className="nexa-field mt-5 flex items-center justify-between gap-4 border-t border-white/12 pt-4 text-xs text-white/48">
-              <span>演示账号：alice / demo-pass</span>
-              <span className="font-mono uppercase">演示环境</span>
-            </div>}
+            <div className="nexa-field mt-5 flex items-center justify-between border-t border-white/12 pt-4 text-sm">
+              <Link to="/register" className="font-medium text-[#dfff82] transition hover:underline">
+                注册账号
+              </Link>
+              <Link to="/forgot-password" className="text-white/70 transition hover:text-white">
+                忘记密码
+              </Link>
+            </div>
+
           </section>
         </div>
 

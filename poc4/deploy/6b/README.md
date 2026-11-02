@@ -359,6 +359,11 @@ Build-time flags are set explicitly in the image (do not rely on env files):
 - `VITE_ENABLE_MOCK_API=false` — gates the MSW mock worker (`src/main.tsx`).
 - `VITE_ENABLE_EXPERIMENTAL_TERMINAL=false` — gates the experimental terminal
   panel (`src/components/shell/WorkbenchShell.tsx`).
+- `VITE_ENABLE_AI=true` — required for the product deployment: it compiles the
+  workbench AI entry/panel in (`src/components/shell/WorkbenchShell.tsx`). The
+  Dockerfile default is `false`, so a build without this argument silently
+  removes the AI entry (observed during the 2026-10-30 multi-account deploy and
+  reverted by rebuilding with the flag).
 - The legacy `VITE_USE_MSW` value in `.env.local-cluster.example` is not read
   by any code and is irrelevant here.
 
@@ -367,7 +372,7 @@ Build-time flags are set explicitly in the image (do not rely on env files):
 From the root of the checkout being deployed (the accepted baseline is available on `master`):
 
 ```bash
-docker build -t chocologic/manao_images_repository:6b-frontend-<yyyymmdd> poc4/frontend
+docker build --build-arg VITE_ENABLE_AI=true -t chocologic/manao_images_repository:6b-frontend-<yyyymmdd> poc4/frontend
 docker push chocologic/manao_images_repository:6b-frontend-<yyyymmdd>
 docker inspect --format '{{index .RepoDigests 0}}' chocologic/manao_images_repository:6b-frontend-<yyyymmdd>
 ```

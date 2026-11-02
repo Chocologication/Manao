@@ -1,9 +1,14 @@
 package com.manao.poc4.terminal;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.manao.poc4.auth.UserSessionRevoker;
+import com.manao.poc4.auth.UserStore;
 import com.manao.poc4.persistence.RunState;
 import com.manao.poc4.run.RunControllerTest.FakeRun;
 import com.manao.poc4.run.RunControllerTest.FakeRunStore;
@@ -41,6 +46,7 @@ class TerminalWebSocketTest {
     private CapturingSession session;
     private TerminalSessionService sessionService;
     private TerminalSessionServiceTest.FakeTerminalStore store;
+    private FakeRunStore runStore;
     private TerminalSessionServiceTest.MutableClock clock;
     private String liveTicket;
 
@@ -50,13 +56,13 @@ class TerminalWebSocketTest {
         session = new CapturingSession();
         store = new TerminalSessionServiceTest.FakeTerminalStore();
         clock = new TerminalSessionServiceTest.MutableClock();
-        FakeRunStore runStore = new FakeRunStore();
+        runStore = new FakeRunStore();
         runStore.projects.put(PROJECT, "READY");
         runStore.projectOwners.put(PROJECT, ALICE);
         runStore.runs.put(RUN, new FakeRun(new RunRecord(RUN, PROJECT, 5, RunState.RUNNING,
             "{}", "manao-run-" + RUN, null, NOW, null, null, null, 1L, NOW.minus(Duration.ofMinutes(1)), 0L)));
         sessionService = new TerminalSessionService(store, runStore, clock);
-        liveTicket = sessionService.reserve(100, 30, ALICE, PROJECT, RUN).ticket();
+        liveTicket = sessionService.reserve(100, 30, new com.manao.poc4.auth.AuthContracts.AccountIdentity(ALICE, 0), PROJECT, RUN).ticket();
     }
 
     private RunSummary summary(RunState state, String runId) {
@@ -149,13 +155,13 @@ class TerminalWebSocketTest {
         assertThat(session.closed.getCode()).isEqualTo(4409);
 
         CapturingSession credit = new CapturingSession();
-        String creditTicket = sessionService.reserve(80, 24, ALICE, PROJECT, RUN).ticket();
+        String creditTicket = sessionService.reserve(80, 24, new com.manao.poc4.auth.AuthContracts.AccountIdentity(ALICE, 0), PROJECT, RUN).ticket();
         newHandler(credit, creditTicket);
         credit.handleText("{\"type\":\"terminal.output.credit\",\"bytes\":\"256\"}");
         assertThat(credit.closed.getCode()).isEqualTo(4409);
 
         CapturingSession ack = new CapturingSession();
-        String ackTicket = sessionService.reserve(80, 24, ALICE, PROJECT, RUN).ticket();
+        String ackTicket = sessionService.reserve(80, 24, new com.manao.poc4.auth.AuthContracts.AccountIdentity(ALICE, 0), PROJECT, RUN).ticket();
         newHandler(ack, ackTicket);
         ack.handleText("{\"type\":\"terminal.output.ack\",\"bytes\":1,\"extra\":true}");
         assertThat(ack.closed.getCode()).isEqualTo(4409);
@@ -256,7 +262,7 @@ class TerminalWebSocketTest {
 
         // PTY exit settles CLOSED with the shell's exit code on a fresh reservation.
         CapturingSession second = new CapturingSession();
-        String secondTicket = sessionService.reserve(80, 24, ALICE, PROJECT, RUN).ticket();
+        String secondTicket = sessionService.reserve(80, 24, new com.manao.poc4.auth.AuthContracts.AccountIdentity(ALICE, 0), PROJECT, RUN).ticket();
         TerminalWebSocketHandler secondHandler = new TerminalWebSocketHandler(sessionService, bridge,
             runId -> summary(RunState.RUNNING, runId), clock,
             runId -> Optional.of(new com.manao.poc4.kubernetes.JobCoordinator.LivePod(RESOLVED_POD, "maven")));
@@ -326,6 +332,108 @@ class TerminalWebSocketTest {
             .filter(record -> "INTERRUPTED".equals(record.state())).count()).isEqualTo(1);
     }
 
+    private TerminalWebSocketHandler revocableHandler(CapturingSession target, String ticket,
+                                                     UserSessionRevoker revoker, StubBridge targetBridge) throws Exception {
+        UserStore users = mock(UserStore.class);
+        when(users.findById(ALICE)).thenReturn(Optional.of(
+            new UserStore.UserAccount(ALICE, "alice", "unused", true, null, null, 0)));
+        TerminalWebSocketHandler handler = new TerminalWebSocketHandler(sessionService, targetBridge,
+            runId -> summary(RunState.RUNNING, runId), clock,
+            runId -> Optional.of(new com.manao.poc4.kubernetes.JobCoordinator.LivePod(RESOLVED_POD, "maven")),
+            null, null, revoker, users);
+        target.bind(handler);
+        target.setUri("/api/v1/ws/terminals?ticket=" + ticket);
+        handler.afterConnectionEstablished(target);
+        return handler;
+    }
+
+    @Test
+    void revocationSettlesTheSingleSessionClosesPtyAndSocketWith4401() throws Exception {
+        UserSessionRevoker revoker = new UserSessionRevoker();
+        revocableHandler(session, liveTicket, revoker, bridge);
+        assertThat(bridge.opened).isTrue();
+
+        revoker.closeOlder(ALICE, 1);
+
+        assertThat(session.closed.getCode()).isEqualTo(4401);
+        assertThat(bridge.closed).isTrue();
+        assertThat(store.sessions.values().stream()
+            .filter(record -> "INTERRUPTED".equals(record.state())).count()).isEqualTo(1);
+        // Run and PTY state: only the single session settles once, then a late container callback
+        // does not settle it again.
+        JsonNode exit = JSON.readTree(session.text.get(session.text.size() - 1));
+        assertThat(exit.get("type").asText()).isEqualTo("terminal.exit");
+        assertThat(exit.get("reason").asText()).isEqualTo("CONNECTION_LOST");
+        revoker.closeOlder(ALICE, 2);
+        assertThat(store.sessions.values().stream()
+            .filter(record -> "INTERRUPTED".equals(record.state())).count()).isEqualTo(1);
+    }
+
+    @Test
+    void latePtyHandleAfterRevocationIsClosedImmediatelyAndNeverReady() throws Exception {
+        UserSessionRevoker revoker = new UserSessionRevoker();
+        StubBridge lateBridge = new StubBridge();
+        lateBridge.duringOpen = () -> revoker.closeOlder(ALICE, 1);
+        revocableHandler(session, liveTicket, revoker, lateBridge);
+
+        assertThat(lateBridge.closed).isTrue();
+        assertThat(store.sessions.values().stream()
+            .filter(record -> "INTERRUPTED".equals(record.state())).count()).isEqualTo(1);
+        assertThat(session.closed.getCode()).isEqualTo(4401);
+        assertThat(session.text).noneMatch(frame -> frame.contains("terminal.ready"));
+    }
+
+    @Test
+    void staleVersionSnapshotOnHandshakeSettlesTheAlreadyLiveSessionAndFreesTheSlot() throws Exception {
+        UserSessionRevoker revoker = new UserSessionRevoker();
+        UserStore newerVersion = mock(UserStore.class);
+        when(newerVersion.findById(ALICE)).thenReturn(Optional.of(
+            new UserStore.UserAccount(ALICE, "alice", "unused", true, null, null, 1)));
+        TerminalWebSocketHandler handler = new TerminalWebSocketHandler(sessionService, bridge,
+            runId -> summary(RunState.RUNNING, runId), clock,
+            runId -> Optional.of(new com.manao.poc4.kubernetes.JobCoordinator.LivePod(RESOLVED_POD, "maven")),
+            null, null, revoker, newerVersion);
+        session.bind(handler);
+        session.setUri("/api/v1/ws/terminals?ticket=" + liveTicket);
+
+        handler.afterConnectionEstablished(session);
+
+        // The ticket consume already moved the row to LIVE; the stale snapshot path must settle
+        // that exact session once, release the unique active-terminal slot and not open the PTY.
+        assertThat(session.closed.getCode()).isEqualTo(4401);
+        assertThat(bridge.opened).isFalse();
+        // The Run record/state is untouched (no RunStore mutation from revocation).
+        assertThat(runStore.runs).containsKey(RUN);
+        assertThat(store.sessions.values()).noneMatch(record -> "LIVE".equals(record.state()));
+        assertThat(store.sessions.values().stream()
+            .filter(record -> "INTERRUPTED".equals(record.state())).count()).isEqualTo(1);
+        // A subsequent terminal reservation for the same Run is not blocked by a leaked LIVE row.
+        assertThat(sessionService.reserve(80, 24,
+            new com.manao.poc4.auth.AuthContracts.AccountIdentity(ALICE, 0), PROJECT, RUN).ticket()).isNotBlank();
+    }
+
+    @Test
+    void throwingTransportStillSettlesTheSessionExactlyOnceAndFreesTheSlot() throws Exception {
+        TerminalWebSocketHandler handler = newHandler(session, liveTicket);
+        assertThat(bridge.opened).isTrue();
+        session.throwOnSend = true;
+
+        assertThatThrownBy(() -> handler.closeRun(RUN))
+            .isInstanceOf(IllegalStateException.class);
+
+        // The exit frame send failed, but the termination gate must still settle the LIVE row.
+        assertThat(store.sessions.values()).noneMatch(record -> "LIVE".equals(record.state()));
+        assertThat(store.sessions.values().stream()
+            .filter(record -> "INTERRUPTED".equals(record.state())).count()).isEqualTo(1);
+        // A later container close is idempotent: still exactly one settlement, no duplicate frame.
+        session.throwOnSend = false;
+        session.containerCallback();
+        assertThat(store.sessions.values().stream()
+            .filter(record -> "INTERRUPTED".equals(record.state())).count()).isEqualTo(1);
+        assertThat(sessionService.reserve(80, 24,
+            new com.manao.poc4.auth.AuthContracts.AccountIdentity(ALICE, 0), PROJECT, RUN).ticket()).isNotBlank();
+    }
+
     @Test
     void connectionLostSettlesInterrupted() throws Exception {
         newHandler(session, liveTicket);
@@ -336,7 +444,8 @@ class TerminalWebSocketTest {
     }
 
 
-    static final class StubBridge implements PtyBridge {
+    static class StubBridge implements PtyBridge {
+        Runnable duringOpen;
         boolean acceptWrites = true;
         boolean opened;
         boolean closed;
@@ -349,6 +458,11 @@ class TerminalWebSocketTest {
         final List<byte[]> written = new ArrayList<>();
 
         @Override public PtyHandle open(String openPodName, String openContainerName, int openCols, int openRows, PtyListener listener) {
+            if (duringOpen != null) {
+                Runnable action = duringOpen;
+                duringOpen = null;
+                action.run();
+            }
             this.opened = true;
             this.podName = openPodName;
             this.containerName = openContainerName;
@@ -376,6 +490,7 @@ class TerminalWebSocketTest {
         final List<String> text = new ArrayList<>();
         final List<byte[]> binary = new ArrayList<>();
         CloseStatus closed;
+        boolean throwOnSend;
         String uri = "/api/v1/ws/terminals?ticket=skip";
         private final String id = "session-" + System.nanoTime();
         private final Map<String, Object> attributes = new ConcurrentHashMap<>();
@@ -414,6 +529,7 @@ class TerminalWebSocketTest {
         @Override public Map<String, Object> getAttributes() { return attributes; }
         @Override public boolean isOpen() { return closed == null; }
         @Override public void sendMessage(WebSocketMessage<?> message) throws IOException {
+            if (throwOnSend) throw new IllegalStateException("transport down");
             if (message instanceof TextMessage textMessage) text.add(textMessage.getPayload());
             if (message instanceof BinaryMessage binaryMessage) binary.add(binaryMessage.getPayload().array());
         }

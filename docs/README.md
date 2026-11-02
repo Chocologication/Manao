@@ -7,6 +7,7 @@
 | 要解决的问题 | 从这里开始 |
 | --- | --- |
 | 当前交付到哪一步、还有哪些未完成或暂停项 | [项目进度](what-we-have-done.md) |
+| 多账号与账号生命周期的本地实现/验收状态、真实环境 NOT_RUN 边界 | [多账号验收记录](../poc4/docs/evidence/multi-account/acceptance.md) |
 | 产品目标、已交付范围与非目标 | [项目目标](Manao-Projects-goal.md) |
 | Project、Run、AgentTask 等术语的含义 | [领域术语](../CONTEXT.md) |
 | 修改、测试、运行环境与清理的约定 | [协作与验证指南](development-guide.md) |

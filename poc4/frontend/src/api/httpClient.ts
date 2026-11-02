@@ -43,6 +43,16 @@ const API_ERROR_CODES: ReadonlySet<string> = new Set([
   'AI_TASK_ACTIVE',
   'AI_TASK_MISMATCH',
   'AI_TASK_NOT_FOUND',
+  // Account lifecycle fixed error codes (design section 9).
+  'CAPTCHA_INVALID',
+  'EMAIL_CODE_INVALID',
+  'AUTH_RATE_LIMITED',
+  'USERNAME_TAKEN',
+  'EMAIL_TAKEN',
+  'REGISTRATION_CLOSED',
+  'MAIL_NOT_CONFIGURED',
+  'MAIL_SEND_FAILED',
+  'CURRENT_PASSWORD_INVALID',
 ]);
 
 export type HttpClientOptions = {
@@ -56,6 +66,11 @@ export type HttpRequestOptions = {
   body?: unknown;
   auth?: boolean;
   signal?: AbortSignal;
+  /**
+   * The caller owns the 401 decision (e.g. a snapshot-guarded session check):
+   * do not run the global current-token unauthorized cleanup for this request.
+   */
+  suppressUnauthorized?: boolean;
 };
 
 export type BlobRequestOptions = {
@@ -107,12 +122,21 @@ export class HttpClient {
       body: options.body === undefined ? undefined : JSON.stringify(options.body),
       auth: options.auth,
       signal: options.signal,
+      suppressUnauthorized: options.suppressUnauthorized,
     });
     return readSuccessBody<T>(response);
   }
 
-  async requestStream(url: string, options: { signal?: AbortSignal } = {}): Promise<Response> {
-    return this.send(url, { method: 'GET', headers: new Headers({ Accept: 'text/event-stream' }), signal: options.signal });
+  async requestStream(
+    url: string,
+    options: { signal?: AbortSignal; suppressUnauthorized?: boolean } = {},
+  ): Promise<Response> {
+    return this.send(url, {
+      method: 'GET',
+      headers: new Headers({ Accept: 'text/event-stream' }),
+      signal: options.signal,
+      suppressUnauthorized: options.suppressUnauthorized,
+    });
   }
 
   async requestBlob(url: string, options: BlobRequestOptions = {}): Promise<BlobResponse> {
@@ -136,7 +160,14 @@ export class HttpClient {
 
   private async send(
     url: string,
-    options: { method: string; headers: Headers; body?: string; auth?: boolean; signal?: AbortSignal },
+    options: {
+      method: string;
+      headers: Headers;
+      body?: string;
+      auth?: boolean;
+      signal?: AbortSignal;
+      suppressUnauthorized?: boolean;
+    },
   ): Promise<Response> {
     assertRelativeApiV1Url(url);
 
@@ -164,7 +195,12 @@ export class HttpClient {
       const body = await readApiErrorBody(response);
       // Login 401 is invalid credentials. Session cleanup only runs when the
       // rejected Bearer token is still the current session credential.
-      if (response.status === 401 && sentToken !== null && sentToken === this.getAccessToken()) {
+      if (
+        response.status === 401 &&
+        options.suppressUnauthorized !== true &&
+        sentToken !== null &&
+        sentToken === this.getAccessToken()
+      ) {
         this.onUnauthorized();
       }
       throw new ApiRequestError(response.status, body);

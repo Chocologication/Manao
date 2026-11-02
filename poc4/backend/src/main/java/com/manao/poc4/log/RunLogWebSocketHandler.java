@@ -5,6 +5,8 @@ import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.manao.poc4.api.ApiException;
 import com.manao.poc4.api.StrictWsFrame;
+import com.manao.poc4.auth.UserSessionRevoker;
+import com.manao.poc4.auth.UserStore;
 import com.manao.poc4.persistence.RunState;
 import com.manao.poc4.project.ProjectLifecycleGate;
 import com.manao.poc4.run.RunSummary;
@@ -29,6 +31,8 @@ import org.springframework.web.socket.handler.TextWebSocketHandler;
  */
 public final class RunLogWebSocketHandler extends TextWebSocketHandler {
     private static final CloseStatus TICKET_REJECTED = new CloseStatus(4410, "log ticket rejected");
+    /** Fixed client signal: the credentials behind this connection were revoked (design 8.2). */
+    static final CloseStatus CREDENTIALS_REVOKED = new CloseStatus(4401, "credentials revoked");
     private static final ObjectMapper JSON = new ObjectMapper();
 
     private final LogTicketAuthenticator tickets;
@@ -37,6 +41,8 @@ public final class RunLogWebSocketHandler extends TextWebSocketHandler {
     private final Clock clock;
     private final ProjectLifecycleGate gate;
     private final Function<String, String> projectState;
+    private final UserSessionRevoker revoker;
+    private final UserStore users;
     private final Map<String, BoundSession> sessions = new ConcurrentHashMap<>();
 
     private static final class BoundSession {
@@ -46,6 +52,8 @@ public final class RunLogWebSocketHandler extends TextWebSocketHandler {
         final RunLogService.LogListener listener;
         volatile boolean rejected;
         volatile boolean completeSent;
+        volatile boolean revoked;
+        volatile UserSessionRevoker.Registration registration;
 
         BoundSession(WebSocketSession session, String runId, RunLogService.LogListener listener) {
             this.session = session;
@@ -57,18 +65,27 @@ public final class RunLogWebSocketHandler extends TextWebSocketHandler {
 
     public RunLogWebSocketHandler(LogTicketAuthenticator tickets, RunLogService logService,
                                   Function<String, RunSummary> runSummaryById, Clock clock) {
-        this(tickets, logService, runSummaryById, clock, null, null);
+        this(tickets, logService, runSummaryById, clock, null, null, null, null);
     }
 
     public RunLogWebSocketHandler(LogTicketAuthenticator tickets, RunLogService logService,
                                   Function<String, RunSummary> runSummaryById, Clock clock,
                                   ProjectLifecycleGate gate, Function<String, String> projectState) {
+        this(tickets, logService, runSummaryById, clock, gate, projectState, null, null);
+    }
+
+    public RunLogWebSocketHandler(LogTicketAuthenticator tickets, RunLogService logService,
+                                  Function<String, RunSummary> runSummaryById, Clock clock,
+                                  ProjectLifecycleGate gate, Function<String, String> projectState,
+                                  UserSessionRevoker revoker, UserStore users) {
         this.tickets = tickets;
         this.logService = logService;
         this.runSummaryById = runSummaryById;
         this.clock = clock;
         this.gate = gate;
         this.projectState = projectState;
+        this.revoker = revoker;
+        this.users = users;
     }
 
     @Override
@@ -89,10 +106,60 @@ public final class RunLogWebSocketHandler extends TextWebSocketHandler {
             BoundSession bound = new BoundSession(session, runId,
                 (chunk, meta) -> publishAppend(runId, chunk, meta));
             sessions.put(session.getId(), bound);
-            logService.addListener(runId, bound.listener);
+            if (revoker != null) {
+                bound.registration = revoker.register(record.get().userId(), record.get().authVersion(),
+                    () -> revoke(bound));
+                // Register, then take a fresh version snapshot before the listener may be installed:
+                // a password change between the handshake's authentication and this point must not
+                // leave a usable log stream behind.
+                if (bound.revoked || !versionCurrent(record.get())) {
+                    closeRevoked(bound);
+                    return;
+                }
+            }
+            if (!activateListener(bound)) {
+                return;
+            }
         } catch (ApiException ex) {
             closeQuietly(session, TICKET_REJECTED);
         }
+    }
+
+    /** Installs the listener only while the connection was not revoked in the meantime. */
+    private boolean activateListener(BoundSession bound) {
+        synchronized (bound) {
+            if (bound.revoked || bound.rejected) return false;
+            logService.addListener(bound.runId, bound.listener);
+            return true;
+        }
+    }
+
+    /** Revocation callback: closes this socket and removes only its listener (collector stays). */
+    private void revoke(BoundSession bound) {
+        synchronized (bound) {
+            if (bound.revoked) return;
+            bound.revoked = true;
+            logService.removeListener(bound.runId, bound.listener);
+            closeQuietly(bound.session, CREDENTIALS_REVOKED);
+        }
+    }
+
+    private void closeRevoked(BoundSession bound) {
+        sessions.remove(bound.session.getId(), bound);
+        revokerRegistrationClose(bound);
+        closeQuietly(bound.session, CREDENTIALS_REVOKED);
+    }
+
+    private static void revokerRegistrationClose(BoundSession bound) {
+        UserSessionRevoker.Registration registration = bound.registration;
+        if (registration != null) registration.close();
+    }
+
+    private boolean versionCurrent(LogTicketService.TicketRecord record) {
+        if (users == null) return true;
+        return users.findById(record.userId()).filter(UserStore.UserAccount::enabled)
+            .map(account -> account.authVersion() == record.authVersion())
+            .orElse(false);
     }
 
     @Override
@@ -164,7 +231,7 @@ public final class RunLogWebSocketHandler extends TextWebSocketHandler {
     public void publishComplete(String runId) {
         Long lastSeq = logService.windowFor(runId).meta().lastAvailableSeq();
         for (BoundSession bound : sessions.values()) {
-            if (!bound.runId.equals(runId) || bound.rejected || bound.completeSent) continue;
+            if (!bound.runId.equals(runId) || bound.rejected || bound.revoked || bound.completeSent) continue;
             bound.completeSent = true;
             send(bound, completeFrame(lastSeq));
         }
@@ -173,7 +240,7 @@ public final class RunLogWebSocketHandler extends TextWebSocketHandler {
     /** Publishes one persisted chunk to subscribed sessions of the run; duplicates are dropped. */
     public void publishAppend(String runId, RunLogWindow.Chunk chunk, RunLogWindow.WindowMeta meta) {
         for (BoundSession bound : sessions.values()) {
-            if (!bound.runId.equals(runId) || bound.rejected) continue;
+            if (!bound.runId.equals(runId) || bound.rejected || bound.revoked) continue;
             if (!bound.cursor.accept(chunk.seq())) continue;
             send(bound, appendFrame(chunk, meta));
         }
@@ -182,7 +249,7 @@ public final class RunLogWebSocketHandler extends TextWebSocketHandler {
     /** Pushes a run.state frame so the browser can reload a settled run. */
     public void publishRunState(String runId, RunSummary summary) {
         for (BoundSession bound : sessions.values()) {
-            if (!bound.runId.equals(runId) || bound.rejected) continue;
+            if (!bound.runId.equals(runId) || bound.rejected || bound.revoked) continue;
             ObjectNode frame = JSON.createObjectNode();
             frame.put("type", "run.state");
             frame.set("run", JSON.valueToTree(summary));
@@ -193,7 +260,7 @@ public final class RunLogWebSocketHandler extends TextWebSocketHandler {
     /** Periodic keep-alive for all subscribed sessions. */
     public void heartbeat() {
         for (BoundSession bound : sessions.values()) {
-            if (bound.rejected) continue;
+            if (bound.rejected || bound.revoked) continue;
             ObjectNode frame = JSON.createObjectNode();
             frame.put("type", "stream.heartbeat");
             frame.put("serverTime", clock.instant().toString());
@@ -204,7 +271,10 @@ public final class RunLogWebSocketHandler extends TextWebSocketHandler {
     @Override
     public void afterConnectionClosed(WebSocketSession session, CloseStatus status) {
         BoundSession bound = sessions.remove(session.getId());
-        if (bound != null) logService.removeListener(bound.runId, bound.listener);
+        if (bound != null) {
+            logService.removeListener(bound.runId, bound.listener);
+            revokerRegistrationClose(bound);
+        }
     }
 
     private void reject(BoundSession bound) {
@@ -275,6 +345,7 @@ public final class RunLogWebSocketHandler extends TextWebSocketHandler {
     }
 
     private void send(BoundSession bound, ObjectNode frame) {
+        if (bound.revoked) return;
         try {
             if (bound.session.isOpen()) {
                 bound.session.sendMessage(new TextMessage(JSON.writeValueAsBytes(frame)));

@@ -1,9 +1,13 @@
 package com.manao.poc4.log;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.manao.poc4.auth.UserSessionRevoker;
+import com.manao.poc4.auth.UserStore;
 import com.manao.poc4.persistence.RunState;
 import com.manao.poc4.run.RunSummary;
 import java.net.URI;
@@ -236,6 +240,40 @@ class RunLogWebSocketTest {
         assertThat(runState.get("run").get("state").asText()).isEqualTo("SUCCEEDED");
     }
 
+    @Test
+    void revocationClosesTheOldSocketWith4401AndStopsItsListenerButKeepsTheLogService() throws Exception {
+        UserSessionRevoker revoker = new UserSessionRevoker();
+        UserStore users = mock(UserStore.class);
+        when(users.findById("user")).thenReturn(Optional.of(
+            new UserStore.UserAccount("user", "user", "unused", true, null, null, 0)));
+        RunLogWebSocketHandler revocable = new RunLogWebSocketHandler(new StubTickets(), logService,
+            runId -> summary(RunState.RUNNING, runId), new MutableClock(), null, null, revoker, users);
+        CapturingSession target = new CapturingSession();
+        target.stayOpen = true;
+        revocable.afterConnectionEstablished(target);
+        revocable.handleMessage(target, new TextMessage("{\"type\":\"log.subscribe\",\"lastSeq\":null}"));
+        assertThat(target.text).isNotEmpty();
+        int beforeRevoke = target.text.size();
+
+        revoker.closeOlder("user", 1);
+
+        assertThat(target.closed.getCode()).isEqualTo(4401);
+        // Even while the fake transport still reports open, a revoked session receives no
+        // publish/heartbeat frames; the collector and persisted log service keep working.
+        assertThat(logService.publish(RUN, 1, "after revoke\n")).isTrue();
+        revocable.heartbeat();
+        assertThat(target.text).hasSize(beforeRevoke);
+        target.stayOpen = false;
+        assertThat(logService.windowFor(RUN).meta().lastAvailableSeq()).isEqualTo(1);
+
+        // A handshake that raced the password commit (registered after the watermark rose) is
+        // closed immediately and never becomes a live subscriber.
+        CapturingSession late = new CapturingSession();
+        late.stayOpen = true;
+        revocable.afterConnectionEstablished(late);
+        assertThat(late.closed.getCode()).isEqualTo(4401);
+    }
+
     static final class MutableClock extends java.time.Clock {
         @Override public java.time.ZoneOffset getZone() { return java.time.ZoneOffset.UTC; }
         @Override public java.time.Clock withZone(java.time.ZoneId zone) { return this; }
@@ -245,7 +283,7 @@ class RunLogWebSocketTest {
     static final class StubTickets implements LogTicketAuthenticator {
         @Override public Optional<LogTicketService.TicketRecord> consume(String ticket) {
             if ("valid-ticket".equals(ticket)) {
-                return Optional.of(new LogTicketService.TicketRecord("hash", "user", PROJECT, RUN,
+                return Optional.of(new LogTicketService.TicketRecord("hash", "user", 0L, PROJECT, RUN,
                     NOW.plus(Duration.ofSeconds(30)), null));
             }
             return Optional.empty();

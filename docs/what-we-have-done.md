@@ -1,6 +1,6 @@
 # 项目进度
 
-更新：2026-10-29。按用户要求，将 `codex/ai-integration@e1da794` 的实现、验收记录及文档归档以单父提交同步到 `master`，保留 master 原有 IDEA 配置；不创建 merge 提交，AI 分支和工作树继续保留。以下是已记录的交付结论，不是本次重新执行的集群检查。
+更新：2026-10-31。按用户要求，将 `codex/ai-integration@e1da794` 的实现、验收记录及文档归档以单父提交同步到 `master`，保留 master 原有 IDEA 配置；不创建 merge 提交，AI 分支和工作树继续保留。以下是已记录的交付结论，不是本次重新执行的集群检查。
 
 ## 当前结论
 
@@ -9,6 +9,7 @@
 - 2026-10-26 收尾修复已本地审查、实际部署并完成一次最小真实模型/浏览器验证：**LOCAL_REPAIR_VERIFIED / DEPLOYED_SMOKE_VERIFIED**。修复分支先合回 AI 分支，现随 AI 集成内容同步到 master；原发布和验证边界保持不变。
 - 阶段四本地实现及已授权云端发布、真实模型验证完成，授予 **PI_STAGE4_CONTROL_RECOVERY_PASS**：暂停后安全接管、保存修改后同 conversation 新 Task、浏览器重进及 Worker 异常核对后手动继续通过。范围见[阶段四验收](../poc4/docs/evidence/ai-stage4/acceptance.md)。
 - 原故障 Task 仍为 **NOT_REPAIRED**，其处理与阶段二验收按用户决定暂缓。2026-10-27 关键云端故障专项已完成；这些结果不授予阶段二、完整云端故障矩阵或整个 AI 首版 PASS。
+- 多账号与账号生命周期：本地实现、完整测试与 mock 浏览器验收已记录；2026-10-30 经用户授权完成 6B 真实部署、V17+V18 运行库迁移、旧依赖策略预览+Apply+回读、实际镜像 captcha PNG 验证、跨项目依赖隔离探测，以及正式转态部署（注册/邮件正式启用、邮件文案改相对有效期、AI 入口恢复）。用户人工邮件 E1–E6、云端两账号隔离/8 项目上限/改密撤销/跨账号拒绝、公开应用匿名访问均 PASS；E7 WAIVED_BY_USER（演示账号不绑定邮箱）；C1 用户明确不处理、不修改 Git 历史（用户所有，未 push/merge/publish）。2026-10-31 云端补测补齐真实终端 PTY WS、AI 输出 SSE、自然到期、改密后后台 Run 继续与清理证据，**MULTI_ACCOUNT_MVP_PASS 已授予（round-6 复核 APPROVED；边界见验收 §12.6/§12.10）**。
 
 ## AI 专题交付
 
@@ -38,6 +39,12 @@
 | Python、依赖恢复、镜像源与批量导入 | 2026-09-27 初始云验收通过，后续修复/镜像源/批量导入已发布，2026-10-12 经用户验收合入 master；7200s 案例 SKIPPED，镜像源轮保留既有依赖面板竞态和 deferred minors | [Python 验收](../poc4/docs/evidence/python-runtime/acceptance.md) |
 
 早期 0–5 阶段和 6A 方案调整仅作历史来源，不重新作为当前执行步骤；从文档导航的“基础云环境与历史阶段”按需查阅。
+
+## 多账号与账号生命周期（本地实现 + 6B 正式部署/迁移与云端补测完成；MVP_PASS 已授予）
+
+| 专题 | 已记录结果与边界 | 证据入口 |
+| --- | --- | --- |
+| 多账号与账号生命周期 | 本地实现、完整后端套件（1076/0/0/2 PASS）、mock 浏览器验收与维护脚本 fixture 已记录；2026-10-30 完成 6B 正式部署（backend/frontend digest 固定）、V17+V18 迁移、旧策略 2 条收窄+回读、实际镜像 captcha PNG、依赖跨项目隔离、用户人工邮件 E1–E6、云端两账号隔离/8 项目上限/改密撤销/跨账号拒绝、公开应用匿名访问；E7 WAIVED_BY_USER（用户明确豁免）；C1 用户明确不处理、不修改 Git 历史（用户所有，未 push/merge/publish）；2026-10-31 云端补测：真实终端 PTY WS、AI 输出 SSE、自然到期、改密后后台 Run 继续、清理均 PASS；MULTI_ACCOUNT_MVP_PASS 已授予（边界见 §12.6/§12.10） | [多账号验收记录](../poc4/docs/evidence/multi-account/acceptance.md) |
 
 ## 最近一次整合与清理
 

@@ -4,6 +4,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.manao.poc4.api.ApiException;
 import com.manao.poc4.api.StrictWsFrame;
+import com.manao.poc4.auth.UserSessionRevoker;
+import com.manao.poc4.auth.UserStore;
 import com.manao.poc4.project.ProjectLifecycleGate;
 import com.manao.poc4.run.RunSummary;
 import java.io.IOException;
@@ -32,6 +34,8 @@ import org.springframework.web.socket.handler.AbstractWebSocketHandler;
 public final class TerminalWebSocketHandler extends AbstractWebSocketHandler {
     public static final int INITIAL_CREDIT_BYTES = TerminalFlowController.INITIAL_CREDIT_BYTES;
     private static final CloseStatus TICKET_REJECTED = new CloseStatus(4410, "terminal ticket rejected");
+    /** Fixed client signal: the credentials behind this PTY were revoked (design 8.2). */
+    static final CloseStatus CREDENTIALS_REVOKED = new CloseStatus(4401, "credentials revoked");
     private static final CloseStatus FLOW_VIOLATION = new CloseStatus(4409, "terminal flow violation");
     private static final ObjectMapper JSON = new ObjectMapper();
 
@@ -42,6 +46,8 @@ public final class TerminalWebSocketHandler extends AbstractWebSocketHandler {
     private final Clock clock;
     private final ProjectLifecycleGate gate;
     private final Function<String, String> projectState;
+    private final UserSessionRevoker revoker;
+    private final UserStore users;
     private final Map<String, BoundSession> connections = new ConcurrentHashMap<>();
 
     private static final class BoundSession {
@@ -53,7 +59,12 @@ public final class TerminalWebSocketHandler extends AbstractWebSocketHandler {
         final AtomicLong resizeGeneration = new AtomicLong();
         volatile PtyBridge.PtyHandle handle;
         volatile boolean settled;
+        volatile boolean revoked;
+        /** One atomic termination gate: exit frame + settlement happen exactly once. */
+        final java.util.concurrent.atomic.AtomicBoolean terminationStarted =
+            new java.util.concurrent.atomic.AtomicBoolean();
         volatile boolean pauseNotified;
+        volatile UserSessionRevoker.Registration registration;
 
         BoundSession(WebSocketSession session, TerminalStore.SessionRecord record, Clock clock) {
             this.session = session;
@@ -69,13 +80,21 @@ public final class TerminalWebSocketHandler extends AbstractWebSocketHandler {
     public TerminalWebSocketHandler(TerminalSessionService sessions, PtyBridge bridge,
                                     Function<String, RunSummary> runSummaryById, Clock clock,
                                     Function<String, Optional<com.manao.poc4.kubernetes.JobCoordinator.LivePod>> livePodResolver) {
-        this(sessions, bridge, runSummaryById, clock, livePodResolver, null, null);
+        this(sessions, bridge, runSummaryById, clock, livePodResolver, null, null, null, null);
     }
 
     public TerminalWebSocketHandler(TerminalSessionService sessions, PtyBridge bridge,
                                     Function<String, RunSummary> runSummaryById, Clock clock,
                                     Function<String, Optional<com.manao.poc4.kubernetes.JobCoordinator.LivePod>> livePodResolver,
                                     ProjectLifecycleGate gate, Function<String, String> projectState) {
+        this(sessions, bridge, runSummaryById, clock, livePodResolver, gate, projectState, null, null);
+    }
+
+    public TerminalWebSocketHandler(TerminalSessionService sessions, PtyBridge bridge,
+                                    Function<String, RunSummary> runSummaryById, Clock clock,
+                                    Function<String, Optional<com.manao.poc4.kubernetes.JobCoordinator.LivePod>> livePodResolver,
+                                    ProjectLifecycleGate gate, Function<String, String> projectState,
+                                    UserSessionRevoker revoker, UserStore users) {
         this.sessions = sessions;
         this.bridge = bridge;
         this.runSummaryById = runSummaryById;
@@ -83,6 +102,8 @@ public final class TerminalWebSocketHandler extends AbstractWebSocketHandler {
         this.livePodResolver = livePodResolver;
         this.gate = gate;
         this.projectState = projectState;
+        this.revoker = revoker;
+        this.users = users;
     }
 
     @Override
@@ -101,6 +122,16 @@ public final class TerminalWebSocketHandler extends AbstractWebSocketHandler {
             }
             BoundSession bound = new BoundSession(session, record, clock);
             connections.put(session.getId(), bound);
+            if (revoker != null) {
+                bound.registration = revoker.register(record.userId(), record.authVersion(),
+                    () -> revoke(bound));
+                // Register, then take a fresh version snapshot before any PTY may be opened: a
+                // password change racing the handshake must leave no usable terminal behind.
+                if (bound.revoked || !versionCurrent(record)) {
+                    closeRevoked(bound);
+                    return;
+                }
+            }
             RunSummary run = runSummaryById.apply(record.runId());
             if (run == null || !"RUNNING".equals(run.state())) {
                 settleAndClose(bound, "RUN_LEFT_RUNNING", "INTERRUPTED", null, TICKET_REJECTED);
@@ -114,8 +145,13 @@ public final class TerminalWebSocketHandler extends AbstractWebSocketHandler {
             }
             com.manao.poc4.kubernetes.JobCoordinator.LivePod pod = live.get();
             try {
-                bound.handle = bridge.open(pod.podName(), pod.containerName(), Math.max(record.cols(), 1),
-                    Math.max(record.rows(), 1), new PtyListenerAdapter(bound));
+                PtyBridge.PtyHandle opened = bridge.open(pod.podName(), pod.containerName(),
+                    Math.max(record.cols(), 1), Math.max(record.rows(), 1), new PtyListenerAdapter(bound));
+                if (!installHandle(bound, opened)) {
+                    // Revoked while the exec was opening: close the late handle immediately and
+                    // never re-ready; the revoke path already settled the session exactly once.
+                    return;
+                }
                 sessions.updateLiveRefs(record.sessionId(), pod.podName(), pod.containerName());
             } catch (RuntimeException ex) {
                 settleAndClose(bound, "BACKEND_ERROR", "FAILED", null, TICKET_REJECTED);
@@ -181,6 +217,50 @@ public final class TerminalWebSocketHandler extends AbstractWebSocketHandler {
         }
     }
 
+    /**
+     * Installs a just-opened PTY handle only while the connection was not revoked/settled in the
+     * meantime; a late handle is closed immediately and the session is not re-readied.
+     */
+    private boolean installHandle(BoundSession bound, PtyBridge.PtyHandle opened) {
+        synchronized (bound) {
+            if (bound.revoked || bound.settled) {
+                opened.close();
+                return false;
+            }
+            bound.handle = opened;
+            return true;
+        }
+    }
+
+    /** Revocation callback: settle the single session once, close PTY/socket, keep the Run. */
+    private void revoke(BoundSession bound) {
+        synchronized (bound) {
+            if (bound.revoked) return;
+            bound.revoked = true;
+        }
+        settleAndClose(bound, "CONNECTION_LOST", "INTERRUPTED", null, CREDENTIALS_REVOKED);
+    }
+
+    private void closeRevoked(BoundSession bound) {
+        // The ticket consume already moved the row to LIVE: this branch must settle it exactly
+        // once (single-session settle path) or the active-terminal unique slot stays occupied.
+        settleAndClose(bound, "CONNECTION_LOST", "INTERRUPTED", null, CREDENTIALS_REVOKED);
+        connections.remove(bound.session.getId(), bound);
+        revokerRegistrationClose(bound);
+    }
+
+    private static void revokerRegistrationClose(BoundSession bound) {
+        UserSessionRevoker.Registration registration = bound.registration;
+        if (registration != null) registration.close();
+    }
+
+    private boolean versionCurrent(TerminalStore.SessionRecord record) {
+        if (users == null) return true;
+        return users.findById(record.userId()).filter(UserStore.UserAccount::enabled)
+            .map(account -> account.authVersion() == record.authVersion())
+            .orElse(false);
+    }
+
     /** Backend shutdown: settle every live session exactly once and never reattach old PTYs.
      *  The exit frame reason must stay inside the stage-five TerminalExitReason contract. */
     public void closeRun(String runId) {
@@ -188,6 +268,7 @@ public final class TerminalWebSocketHandler extends AbstractWebSocketHandler {
             if (runId.equals(bound.runId())) {
                 settleAndClose(bound, "CONNECTION_LOST", "INTERRUPTED", null, CloseStatus.GOING_AWAY);
                 connections.remove(bound.session.getId(), bound);
+                revokerRegistrationClose(bound);
             }
         }
     }
@@ -195,6 +276,8 @@ public final class TerminalWebSocketHandler extends AbstractWebSocketHandler {
     public void teardownAllSessions() {
         for (BoundSession bound : List.copyOf(connections.values())) {
             settleAndClose(bound, "CONNECTION_LOST", "INTERRUPTED", null, null);
+            connections.remove(bound.session.getId(), bound);
+            revokerRegistrationClose(bound);
         }
     }
 
@@ -273,6 +356,7 @@ public final class TerminalWebSocketHandler extends AbstractWebSocketHandler {
 
     /** Called by the PTY listener: chunks output into <= 32 KiB frames under the credit window. */
     void deliverOutput(BoundSession bound, byte[] bytes) {
+        if (bound.settled || bound.revoked) return;
         int offset = 0;
         while (offset < bytes.length) {
             int length = Math.min(TerminalFlowController.MAX_OUTPUT_FRAME_BYTES, bytes.length - offset);
@@ -304,28 +388,45 @@ public final class TerminalWebSocketHandler extends AbstractWebSocketHandler {
 
     /** PTY exit: settle once (CLOSED with the shell's exit code) and inform the client. */
     void handleExit(BoundSession bound, Integer exitCode) {
-        ObjectNode frame = JSON.createObjectNode();
-        frame.put("type", "terminal.exit");
-        if (exitCode == null) {
-            frame.putNull("exitCode");
-        } else {
-            frame.put("exitCode", exitCode);
+        if (bound.settled || bound.revoked) return;
+        if (!bound.terminationStarted.compareAndSet(false, true)) return;
+        try {
+            ObjectNode frame = JSON.createObjectNode();
+            frame.put("type", "terminal.exit");
+            if (exitCode == null) {
+                frame.putNull("exitCode");
+            } else {
+                frame.put("exitCode", exitCode);
+            }
+            frame.put("reason", "SHELL_EXITED");
+            sendText(bound, frame);
+        } finally {
+            try {
+                settle(bound, "CLOSED", "SHELL_EXITED", exitCode);
+            } finally {
+                closeQuietly(bound.session, CloseStatus.NORMAL);
+            }
         }
-        frame.put("reason", "SHELL_EXITED");
-        sendText(bound, frame);
-        settle(bound, "CLOSED", "SHELL_EXITED", exitCode);
-        closeQuietly(bound.session, CloseStatus.NORMAL);
     }
 
     private void settleAndClose(BoundSession bound, String reason, String sessionState, Integer exitCode,
                                 CloseStatus status) {
-        ObjectNode frame = JSON.createObjectNode();
-        frame.put("type", "terminal.exit");
-        frame.putNull("exitCode");
-        frame.put("reason", reason);
-        sendText(bound, frame);
-        settle(bound, sessionState, reason, exitCode);
-        closeQuietly(bound.session, status);
+        if (!bound.terminationStarted.compareAndSet(false, true)) return;
+        try {
+            ObjectNode frame = JSON.createObjectNode();
+            frame.put("type", "terminal.exit");
+            frame.putNull("exitCode");
+            frame.put("reason", reason);
+            // The frame is best effort: a throwing transport must not leave the single session
+            // LIVE just because the termination gate was already taken.
+            sendText(bound, frame);
+        } finally {
+            try {
+                settle(bound, sessionState, reason, exitCode);
+            } finally {
+                closeQuietly(bound.session, status);
+            }
+        }
     }
 
     /** Idempotent session settlement; the store only moves LIVE rows once. */
@@ -342,6 +443,7 @@ public final class TerminalWebSocketHandler extends AbstractWebSocketHandler {
     @Override
     public void afterConnectionClosed(WebSocketSession session, CloseStatus status) {
         BoundSession bound = connections.remove(session.getId());
+        if (bound != null) revokerRegistrationClose(bound);
         if (bound != null && !bound.settled) {
             // Connection lost without a client close frame: interrupt and settle exactly once.
             settleAndClose(bound, "CONNECTION_LOST", "INTERRUPTED", null, null);

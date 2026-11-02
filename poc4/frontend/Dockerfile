@@ -6,12 +6,14 @@
 # - VITE_ENABLE_MOCK_API gates the MSW mock worker (src/main.tsx).
 # - VITE_ENABLE_EXPERIMENTAL_TERMINAL gates the experimental terminal panel
 #   (src/components/shell/WorkbenchShell.tsx).
-# - VITE_ENABLE_AI gates the stage-one AI task panel (WorkbenchShell.tsx). It
-#   defaults to false: only the dedicated AI acceptance deployment builds with
-#   --build-arg VITE_ENABLE_AI=true (AI stage-one plan Task 6 release prep).
-# All must be non-"true" for the regular production bundle. The legacy VITE_USE_MSW
-# variable (only present in .env.local-cluster.example) is NOT read by any code
-# and must not be relied on (Task 3 brief).
+# - VITE_ENABLE_AI gates the workbench AI entry/panel (WorkbenchShell.tsx). The
+#   argument defaults to false for baseline/test builds, but the PRODUCT
+#   deployment MUST build with --build-arg VITE_ENABLE_AI=true; building without
+#   it silently removes the AI entry from the bundle.
+# VITE_ENABLE_MOCK_API and VITE_ENABLE_EXPERIMENTAL_TERMINAL must stay
+# non-"true" for every production bundle. The legacy VITE_USE_MSW variable
+# (only present in .env.local-cluster.example) is NOT read by any code and must
+# not be relied on (Task 3 brief).
 # syntax=docker/dockerfile:1
 
 # Pinned: node 22 LTS line, Alpine 3.23 (tag verified on Docker Hub 2026-09-18).

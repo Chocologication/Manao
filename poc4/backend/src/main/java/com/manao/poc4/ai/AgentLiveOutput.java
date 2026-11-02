@@ -3,12 +3,15 @@ package com.manao.poc4.ai;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.manao.poc4.api.ApiException;
+import com.manao.poc4.auth.AuthContracts;
+import com.manao.poc4.auth.UserSessionRevoker;
 import java.io.IOException;
 import java.time.Clock;
 import java.time.Duration;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
+import java.util.OptionalLong;
 import java.util.Set;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -29,6 +32,8 @@ public final class AgentLiveOutput implements AutoCloseable {
     private static final ObjectMapper JSON = new ObjectMapper();
     private final AgentTaskStore tasks;
     private final Clock clock;
+    private final UserSessionRevoker revoker;
+    private final java.util.function.Function<String, OptionalLong> currentAuthVersion;
     private final Object monitor = new Object();
     private final Map<String, Snapshot> cache = new HashMap<>();
     private final Set<Subscription> subscriptions = new HashSet<>();
@@ -43,9 +48,21 @@ public final class AgentLiveOutput implements AutoCloseable {
     private long exited;
     private boolean closed;
 
-    public AgentLiveOutput(AgentTaskStore tasks) { this(tasks, Clock.systemUTC()); }
-    AgentLiveOutput(AgentTaskStore tasks, Clock clock) {
-        this.tasks = tasks; this.clock = clock;
+    public AgentLiveOutput(AgentTaskStore tasks) { this(tasks, Clock.systemUTC(), null, null); }
+    AgentLiveOutput(AgentTaskStore tasks, Clock clock) { this(tasks, clock, null, null); }
+    /**
+     * Revocation-aware construction: registered subscriptions are bound to the subscribing
+     * request's auth_version and detach (with an auth.revoked event) when a password change
+     * commits a strictly newer version.
+     */
+    public AgentLiveOutput(AgentTaskStore tasks, UserSessionRevoker revoker,
+                           java.util.function.Function<String, OptionalLong> currentAuthVersion) {
+        this(tasks, Clock.systemUTC(), revoker, currentAuthVersion);
+    }
+    AgentLiveOutput(AgentTaskStore tasks, Clock clock, UserSessionRevoker revoker,
+                    java.util.function.Function<String, OptionalLong> currentAuthVersion) {
+        this.tasks = tasks; this.clock = clock; this.revoker = revoker;
+        this.currentAuthVersion = currentAuthVersion;
         maintenance.scheduleWithFixedDelay(this::watchdog, 100, 100, TimeUnit.MILLISECONDS);
         maintenance.scheduleWithFixedDelay(() -> {
             try { refresh(); } catch (RuntimeException ignored) { /* Never log snapshot or raw worker output. */ }
@@ -75,8 +92,22 @@ public final class AgentLiveOutput implements AutoCloseable {
         }
     }
 
-    /** Caller has already checked owner/project/task. Null means history-only (204). */
+    /**
+     * Compatibility subscribe without a version binding. Production HTTP always uses
+     * subscribe(taskId, identity); this overload exists only for non-HTTP call sites.
+     */
+    @Deprecated
     public SseEmitter subscribe(String taskId) {
+        return subscribe(taskId, null, 0L);
+    }
+
+    /** Version-bound subscribe used by the authenticated HTTP controller (design 8.2). */
+    public SseEmitter subscribe(String taskId, AuthContracts.AccountIdentity identity) {
+        if (identity == null) throw new ApiException("UNAUTHENTICATED", 401, "Authentication required");
+        return subscribe(taskId, identity.userId(), identity.authVersion());
+    }
+
+    private SseEmitter subscribe(String taskId, String userId, long authVersion) {
         synchronized (monitor) {
             var eligible = refreshLocked();
             var task = eligible.get(taskId);
@@ -88,6 +119,24 @@ public final class AgentLiveOutput implements AutoCloseable {
             if (closed || subscriptions.size() >= MAX_SUBSCRIPTIONS)
                 throw new ApiException("AI_LIVE_SENDERS_BUSY", 503, "Live senders are busy");
             var subscription = new Subscription(taskId, cache.get(taskId));
+            if (revoker != null && userId != null) {
+                subscription.registration = revoker.register(userId, authVersion,
+                    () -> revokeSubscription(subscription));
+                try {
+                    // Register, then take a fresh version snapshot before the subscription may
+                    // send: a password change racing the handshake must not leave a usable stream.
+                    if (subscription.detached) throw staleSubscription();
+                    if (currentAuthVersion != null) {
+                        OptionalLong current = currentAuthVersion.apply(userId);
+                        if (current.isEmpty() || current.getAsLong() != authVersion) {
+                            throw staleSubscription();
+                        }
+                    }
+                } catch (RuntimeException | Error failure) {
+                    closeRegistration(subscription);
+                    throw failure;
+                }
+            }
             // Register before sending: Spring callbacks and send share the emitter write lock.
             subscription.emitter.onCompletion(() -> detach(subscription));
             subscription.emitter.onError(error -> detach(subscription));
@@ -96,6 +145,7 @@ public final class AgentLiveOutput implements AutoCloseable {
             try { senders.execute(() -> run(subscription)); }
             catch (java.util.concurrent.RejectedExecutionException ex) {
                 subscriptions.remove(subscription);
+                closeRegistration(subscription);
                 throw new ApiException("AI_LIVE_SENDERS_BUSY", 503, "Live senders are busy");
             }
             return subscription.emitter;
@@ -142,8 +192,9 @@ public final class AgentLiveOutput implements AutoCloseable {
         finally {
             detach(subscription);
             try {
-                // IOException belongs to Spring/container error cleanup; never race completeWithError.
-                if (!ioFailure) subscription.emitter.complete();
+                // A credential revocation owns the auth.revoked frame and its completion; the
+                // sender thread must not complete the emitter first.
+                if (!ioFailure && !subscription.revokedByCredentials) completeQuietly(subscription);
             } finally {
                 synchronized (monitor) { subscriptions.remove(subscription); monitor.notifyAll(); }
             }
@@ -154,6 +205,59 @@ public final class AgentLiveOutput implements AutoCloseable {
         synchronized (monitor) {
             subscription.detached = true; subscription.latest = null; monitor.notifyAll();
         }
+        closeRegistration(subscription);
+    }
+
+    /**
+     * Revocation callback: detach only this subscription, send the fixed auth.revoked event when
+     * the transport allows it, complete its emitter. Never touches the task, durable history or
+     * the global output machinery.
+     */
+    private void revokeSubscription(Subscription subscription) {
+        synchronized (monitor) {
+            if (subscription.detached) return;
+            subscription.detached = true;
+            subscription.revokedByCredentials = true;
+            subscription.latest = null;
+            monitor.notifyAll();
+        }
+        closeRegistration(subscription);
+        // Bound the revocation send with the existing sender capacity: if no sender slot is
+        // available (e.g. all blocked on clients), the fixed event is skipped and the emitter is
+        // still completed without delaying the password response beyond the executor hand-off.
+        try {
+            senders.execute(() -> {
+                try {
+                    subscription.emitter.send(SseEmitter.event().name("auth.revoked").data("{}"));
+                } catch (IOException | RuntimeException ignored) {
+                    // Transport already gone: completion below still releases the subscription.
+                }
+                completeQuietly(subscription);
+            });
+        } catch (java.util.concurrent.RejectedExecutionException busy) {
+            completeQuietly(subscription);
+        }
+    }
+
+    private void completeQuietly(Subscription subscription) {
+        synchronized (monitor) {
+            if (subscription.completed) return;
+            subscription.completed = true;
+        }
+        try {
+            subscription.emitter.complete();
+        } catch (RuntimeException ignored) {
+            // The container already owns a failed/closed response.
+        }
+    }
+
+    private static void closeRegistration(Subscription subscription) {
+        UserSessionRevoker.Registration registration = subscription.registration;
+        if (registration != null) registration.close();
+    }
+
+    private static ApiException staleSubscription() {
+        return new ApiException("UNAUTHENTICATED", 401, "Authentication required");
     }
     private void watchdog() {
         synchronized (monitor) {
@@ -229,12 +333,25 @@ public final class AgentLiveOutput implements AutoCloseable {
         Snapshot latest;
         boolean ready;
         boolean detached;
+        boolean completed;
+        volatile boolean revokedByCredentials;
+        UserSessionRevoker.Registration registration;
         long sendingSince;
         long nextHeartbeat;
         Subscription(String taskId, Snapshot initial) { this.taskId = taskId; this.latest = initial; }
     }
     @Override public void close() {
-        synchronized (monitor) { closed = true; for (var subscription : subscriptions) detach(subscription); }
+        java.util.List<Subscription> snapshot;
+        synchronized (monitor) {
+            closed = true;
+            snapshot = new java.util.ArrayList<>(subscriptions);
+            for (var subscription : snapshot) {
+                subscription.detached = true;
+                subscription.latest = null;
+            }
+            monitor.notifyAll();
+        }
+        for (var subscription : snapshot) closeRegistration(subscription);
         maintenance.shutdownNow();
         // A blocked socket retains its actual thread; no replacement or fictitious release.
         senders.shutdown();

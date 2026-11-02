@@ -4,7 +4,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.manao.poc4.config.SecurityConfig;
 import com.manao.poc4.auth.JwtService;
+import java.util.List;
+import java.util.Map;
 import org.junit.jupiter.api.Test;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
 import org.springframework.boot.autoconfigure.security.servlet.SecurityAutoConfiguration;
 import org.springframework.boot.autoconfigure.web.servlet.DispatcherServletAutoConfiguration;
@@ -29,7 +32,22 @@ class AgentInternalSecurityTest {
         .withConfiguration(AutoConfigurations.of(
             DispatcherServletAutoConfiguration.class, WebMvcAutoConfiguration.class,
             SecurityAutoConfiguration.class))
-        .withUserConfiguration(SecurityConfig.class, AgentInternalSecurityTest.Probes.class);
+        .withUserConfiguration(SecurityConfig.class, AgentInternalSecurityTest.Probes.class)
+        .withBean(JdbcTemplate.class, AgentInternalSecurityTest::currentUserJdbc);
+
+    /**
+     * The public chain now also checks the current account row on every request. These tests
+     * exercise chain wiring, not persistence, so the JDBC collaborator reports a current enabled
+     * user at version 0 for every id (no real database is provisioned in this context).
+     */
+    private static JdbcTemplate currentUserJdbc() {
+        JdbcTemplate jdbc = org.mockito.Mockito.mock(JdbcTemplate.class);
+        org.mockito.Mockito.when(jdbc.queryForList(
+                org.mockito.ArgumentMatchers.anyString(),
+                org.mockito.ArgumentMatchers.any(Object[].class)))
+            .thenReturn(List.of(Map.of("enabled", true, "auth_version", 0L)));
+        return jdbc;
+    }
 
     @RestController
     static class Probes {
@@ -74,7 +92,7 @@ class AgentInternalSecurityTest {
     }
 
     private static String jwt(JwtService service, String subject) {
-        return service.issue(subject).accessToken();
+        return service.issue(subject, 0).accessToken();
     }
 
     @Test void contextRouteStillRequiresWorkerTokenWhileAllowingItsLargerBound() {

@@ -10,6 +10,7 @@ import {
 } from 'react-router';
 import type { LoginResponse } from '../../contracts/auth';
 import { HttpClient, setHttpClient } from '../../api/httpClient';
+import { consumeLoginNotice, postLoginNotice } from '../../app/appRuntime';
 import { AuthProvider } from './AuthProvider';
 import { createAuthSession, type AuthSession } from './authSession';
 import { LoginPage } from './LoginPage';
@@ -19,7 +20,7 @@ import { useMotionPreferences } from '@/features/preferences/motionPreferences';
 const loginResponse: LoginResponse = {
   accessToken: 'mem-token',
   expiresAt: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
-  user: { id: 'u1', username: 'alice' },
+  user: { id: 'u1', username: 'alice', email: null, emailVerified: false },
 };
 
 function jsonResponse(body: unknown, status = 200): Response {
@@ -104,6 +105,7 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   setHttpClient(null);
+  consumeLoginNotice();
   useMotionPreferences.setState({ enabled: true });
   Reflect.deleteProperty(document, 'startViewTransition');
 });
@@ -288,7 +290,7 @@ describe('LoginPage', () => {
       status: 'authenticated',
       accessToken: 'mem-token',
       expiresAt: loginResponse.expiresAt,
-      user: { id: 'u1', username: 'alice' },
+      user: { id: 'u1', username: 'alice', email: null, emailVerified: false },
     });
     expect(localSet).not.toHaveBeenCalled();
     expect(sessionSet).not.toHaveBeenCalled();
@@ -398,5 +400,59 @@ describe('LoginPage', () => {
 
     expect(await screen.findByText('Project')).toBeInTheDocument();
     expect(readLocation().pathname).toBe('/projects/prj-1');
+  });
+});
+describe('LoginPage account lifecycle entries', () => {
+  it('links to registration and recovery without a captcha or demo credentials', () => {
+    renderAuthApp({});
+
+    expect(screen.getByRole('link', { name: '注册账号' })).toHaveAttribute('href', '/register');
+    expect(screen.getByRole('link', { name: '忘记密码' })).toHaveAttribute(
+      'href',
+      '/forgot-password',
+    );
+    expect(screen.queryByLabelText('图形验证码')).not.toBeInTheDocument();
+    expect(screen.queryByText(/演示账号|alice \/ demo-pass|demo-pass/)).not.toBeInTheDocument();
+  });
+
+  it.each([
+    ['registered', /注册成功/],
+    ['passwordReset', /密码已重置/],
+    ['passwordChanged', /密码已更新/],
+  ] as const)('shows success feedback for the %s lifecycle state', (flag, pattern) => {
+    renderAuthApp({
+      initialEntries: [{ pathname: '/login', state: { [flag]: true } }],
+    });
+
+    const status = screen.getByRole('status');
+    expect(status).toHaveTextContent(pattern);
+    expect(status).toHaveTextContent(/登录/);
+  });
+
+  it('does not show lifecycle success feedback for an ordinary visit', () => {
+    renderAuthApp({});
+
+    expect(screen.queryByRole('status')).not.toBeInTheDocument();
+  });
+});
+describe('LoginPage one-shot lifecycle notice', () => {
+  it('shows the password-changed banner once, consumes it and never persists it', async () => {
+    postLoginNotice('passwordChanged');
+    const first = renderAuthApp({});
+
+    expect(await screen.findByRole('status')).toHaveTextContent('密码已更新，请重新登录');
+    expect(screen.getAllByRole('status')).toHaveLength(1);
+    expect(JSON.stringify({ ...localStorage, ...sessionStorage })).not.toContain('passwordChanged');
+    expect(window.location.href).not.toContain('passwordChanged');
+    first.unmount();
+
+    // A later unrelated visit must not replay the confirmation.
+    renderAuthApp({});
+    expect(screen.queryByRole('status')).not.toBeInTheDocument();
+  });
+
+  it('keeps the ordinary visit free of lifecycle banners', () => {
+    renderAuthApp({});
+    expect(screen.queryByRole('status')).not.toBeInTheDocument();
   });
 });

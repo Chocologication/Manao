@@ -5,7 +5,6 @@ import java.time.Clock;
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 
@@ -29,22 +28,33 @@ public final class JdbcLogStore implements LogTicketService.Store, RunLogService
         this.clock = clock;
     }
 
-    @Override public void insert(LogTicketService.TicketRecord record) {
-        jdbc.update("INSERT INTO log_ticket(ticket_hash, user_id, project_id, run_id, expires_at) VALUES (?, ?, ?, ?, ?)",
-            record.ticketHash(), record.userId(), record.projectId(), record.runId(), Timestamp.from(record.expiresAt()));
+    @Override public boolean insert(LogTicketService.TicketRecord record) {
+        // Conditional INSERT: the ticket carries the request's auth_version only while the account
+        // is still enabled at that version (design 8.1); no unconditional write can upgrade it.
+        int inserted = jdbc.update("INSERT INTO log_ticket(ticket_hash, user_id, project_id, run_id, "
+                + "expires_at, auth_version) SELECT ?, ?, ?, ?, ?, ? FROM app_user u "
+                + "WHERE u.id = ? AND u.enabled = TRUE AND u.auth_version = ?",
+            record.ticketHash(), record.userId(), record.projectId(), record.runId(),
+            Timestamp.from(record.expiresAt()), record.authVersion(), record.userId(), record.authVersion());
+        return inserted == 1;
     }
 
     @Override public Optional<LogTicketService.TicketRecord> consumeByHash(String ticketHash) {
         Instant now = clock.instant();
+        // Atomic consume JOIN: hash + unconsumed + unexpired + enabled + ticket version = current
+        // user version. A pre-V17 NULL auth_version can never satisfy the join.
         int consumed = jdbc.update(
-            "UPDATE log_ticket SET consumed_at = ? WHERE ticket_hash = ? AND consumed_at IS NULL AND expires_at > ?",
+            "UPDATE log_ticket t JOIN app_user u ON u.id = t.user_id SET t.consumed_at = ? "
+                + "WHERE t.ticket_hash = ? AND t.consumed_at IS NULL AND t.expires_at > ? "
+                + "AND u.enabled = TRUE AND t.auth_version IS NOT NULL AND t.auth_version = u.auth_version",
             Timestamp.from(now), ticketHash, Timestamp.from(now));
         if (consumed != 1) return Optional.empty();
         List<LogTicketService.TicketRecord> records = jdbc.query(
-            "SELECT ticket_hash, user_id, project_id, run_id, expires_at, consumed_at FROM log_ticket WHERE ticket_hash = ?",
+            "SELECT ticket_hash, user_id, auth_version, project_id, run_id, expires_at, consumed_at "
+                + "FROM log_ticket WHERE ticket_hash = ?",
             (rs, row) -> new LogTicketService.TicketRecord(rs.getString("ticket_hash"), rs.getString("user_id"),
-                rs.getString("project_id"), rs.getString("run_id"), rs.getTimestamp("expires_at").toInstant(),
-                rs.getTimestamp("consumed_at").toInstant()),
+                rs.getLong("auth_version"), rs.getString("project_id"), rs.getString("run_id"),
+                rs.getTimestamp("expires_at").toInstant(), rs.getTimestamp("consumed_at").toInstant()),
             ticketHash);
         return records.isEmpty() ? Optional.empty() : Optional.of(records.get(0));
     }

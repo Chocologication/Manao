@@ -5,6 +5,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.manao.poc4.api.GlobalExceptionHandler;
 import com.manao.poc4.auth.JwtService;
+import com.manao.poc4.auth.UserSessionRevoker;
+import com.manao.poc4.auth.UserStore;
 import com.manao.poc4.config.SecurityConfig;
 import com.manao.poc4.persistence.JdbcStoreTestSupport;
 import java.net.URI;
@@ -119,7 +121,12 @@ class AgentLiveOutputHttpTest {
             assertThat(f.post(f.task, f.snapshot(1), true, "worker", "1").statusCode()).isEqualTo(204);
             assertThat(f.get(f.livePath(), null).statusCode()).isEqualTo(401);
             assertThat(f.get(f.livePath(), "invalid").statusCode()).isEqualTo(401);
-            assertThat(f.get(f.livePath(), f.app.getBean(JwtService.class).issue("foreign").accessToken()).statusCode()).isEqualTo(404);
+            // A valid, enabled account B at the matching auth_version can authenticate, but it
+            // cannot read account A's real project/task live output: owner scoping answers 404.
+            assertThat(f.get(f.livePath(), f.intruderToken).statusCode()).isEqualTo(404);
+            // Separately, an unknown account cannot authenticate at all (the database check runs
+            // before owner scoping), so the refusal is 401.
+            assertThat(f.get(f.livePath(), f.app.getBean(JwtService.class).issue("missing-user", 0).accessToken()).statusCode()).isEqualTo(401);
             assertThat(f.get(f.livePath().replace("projects/project/", "projects/foreign/"), f.token).statusCode()).isEqualTo(404);
             var response = f.stream(f.livePath());
             try (var body = response.body()) {
@@ -150,6 +157,50 @@ class AgentLiveOutputHttpTest {
         } finally { reader.shutdownNow(); }
     }
 
+    @Test void passwordVersionBumpDetachesOnlyTheOldLiveSubscriptionWithAuthRevoked() throws Exception {
+        try (var f = new Fixture()) {
+            f.tasks.bindWorkerInstance(f.task, 1, "worker");
+            assertThat(f.post(f.task, f.snapshot(1), true, "worker", "1").statusCode()).isEqualTo(204);
+            var response = f.stream(f.livePath());
+            try (var body = response.body()) {
+                assertThat(response.statusCode()).isEqualTo(200);
+                assertThat(firstFrame(body)).contains("event:snapshot");
+
+                // The committed password change raises the watermark; only the old subscription
+                // is detached and receives the fixed signal, never a global close.
+                f.revoker().closeOlder("owner", 1);
+                String frames = readUntil(body, "auth.revoked", Duration.ofSeconds(5));
+                assertThat(frames).contains("event:auth.revoked");
+            }
+            // Run/AI task and its durable progress survive the connection revocation.
+            var task = f.tasks.findForOwner("owner", "project", f.task).orElseThrow();
+            assertThat(task.state().name()).isEqualTo("RUNNING");
+            assertThat(f.db.jdbc().queryForObject("SELECT progress_json FROM agent_task WHERE id=?",
+                String.class, f.task)).isNull();
+            // The live-output machinery is still usable for a newer connection version.
+            assertThat(f.live().diagnostics().resources()).isZero();
+        }
+    }
+
+    static String readUntil(java.io.InputStream body, String marker, Duration budget) throws Exception {
+        var reader = java.util.concurrent.Executors.newSingleThreadExecutor();
+        try {
+            return reader.submit(() -> {
+                var bytes = new java.io.ByteArrayOutputStream();
+                long deadline = System.nanoTime() + budget.toNanos();
+                while (System.nanoTime() < deadline) {
+                    int value = body.read();
+                    if (value == -1) break;
+                    bytes.write(value);
+                    if (bytes.toString(java.nio.charset.StandardCharsets.UTF_8).contains(marker)) break;
+                }
+                return bytes.toString(java.nio.charset.StandardCharsets.UTF_8);
+            }).get(budget.toMillis() + 1000, java.util.concurrent.TimeUnit.MILLISECONDS);
+        } finally {
+            reader.shutdownNow();
+        }
+    }
+
     @Test void authenticatedSnapshotPostRejectsUnboundWorkerWithoutStartingTaskThenRecovers() throws Exception {
         try (var fixture = new Fixture()) {
             String task = fixture.task;
@@ -172,11 +223,16 @@ class AgentLiveOutputHttpTest {
         final String task = UUID.randomUUID().toString();
         final String conversation = UUID.randomUUID().toString();
         final String token;
+        final String intruderToken;
+        final UserSessionRevoker revoker = new UserSessionRevoker();
         final int port;
         Fixture() {
             var jdbc = db.jdbc();
             var now = java.sql.Timestamp.from(java.time.Instant.now());
             jdbc.update("INSERT INTO app_user(id,username,password_hash,created_at) VALUES ('owner','owner','unused',?)", now);
+            // A second real, ENABLED account at the matching auth_version: it authenticates but
+            // must never read the first account's project/task live output.
+            jdbc.update("INSERT INTO app_user(id,username,password_hash,created_at) VALUES ('intruder','intruder','unused',?)", now);
             jdbc.update("INSERT INTO project(id,owner_id,name,state,workspace_revision,created_at,updated_at) VALUES ('project','owner','project','READY',7,?,?)", now, now);
             var tx = new DataSourceTransactionManager(jdbc.getDataSource());
             tasks = new AgentTaskStore(jdbc, tx, Clock.systemUTC());
@@ -192,15 +248,23 @@ class AgentLiveOutputHttpTest {
                 "MANAO_AI_INTERNAL_TOKEN", "internal-token"));
             application.addInitializers(context -> {
                 var web = (AnnotationConfigServletWebServerApplicationContext) context;
+                web.registerBean(org.springframework.jdbc.core.JdbcTemplate.class, () -> jdbc);
                 web.registerBean(AgentTaskStore.class, () -> tasks);
-                web.registerBean(AgentLiveOutput.class, () -> new AgentLiveOutput(tasks));
+                var accountStore = new UserStore(jdbc);
+                web.registerBean(UserSessionRevoker.class, () -> revoker);
+                web.registerBean(AgentLiveOutput.class, () -> new AgentLiveOutput(tasks, revoker,
+                    userId -> accountStore.findById(userId)
+                        .filter(UserStore.UserAccount::enabled)
+                        .map(account -> java.util.OptionalLong.of(account.authVersion()))
+                        .orElseGet(java.util.OptionalLong::empty)));
                 web.registerBean(AgentTaskService.class, () -> new AgentTaskService(tasks,
                     new com.manao.poc4.project.ProjectLifecycleGate(), null, null));
             });
             app = (AnnotationConfigServletWebServerApplicationContext) application.run();
             assertThat(app.getBean(FilterChainProxy.class)).isNotNull();
             port = app.getWebServer().getPort();
-            token = app.getBean(JwtService.class).issue("owner").accessToken();
+            token = app.getBean(JwtService.class).issue("owner", 0).accessToken();
+            intruderToken = app.getBean(JwtService.class).issue("intruder", 0).accessToken();
         }
         String snapshot(long revision) {
             return "{\"revision\":" + revision + ",\"taskId\":\"" + task + "\",\"conversationId\":\"" + conversation
@@ -226,6 +290,7 @@ class AgentLiveOutputHttpTest {
             return client.send(request.POST(HttpRequest.BodyPublishers.ofString(body)).build(), HttpResponse.BodyHandlers.ofString());
         }
         AgentLiveOutput live() { return app.getBean(AgentLiveOutput.class); }
+        UserSessionRevoker revoker() { return revoker; }
         public void close() { live().close(); app.close(); db.close(); }
     }
 }

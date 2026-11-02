@@ -8,6 +8,11 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vite
 import { login } from '../api/authApi';
 import { ApiRequestError } from '../api/ApiRequestError';
 import { downloadFileBlob, getFileContent, getFileMetadata, listDirectory } from '../api/fileApi';
+import { readAgentTaskId, storeAgentTaskId } from '../api/agentTaskApi';
+import {
+  readPythonDependencyOperationId,
+  storePythonDependencyOperationId,
+} from '../api/pythonDependencyApi';
 import { getProject, listProjects } from '../api/projectApi';
 import { createTerminalSession } from '../api/terminalApi';
 import { parseRunId } from '../contracts/run';
@@ -16,6 +21,7 @@ import { ALICE_SEED_PROJECT_ID, BOB_SEED_PROJECT_ID } from '../mocks/state';
 import { server } from '../mocks/node';
 import { renderApp, resetAppRuntime } from '../test/renderApp';
 import { useWorkspaceSession, workspaceSessionStore } from '../features/editor/workspaceSession';
+import { getUnsavedDialogState, requestUnsavedDialog } from '../features/editor/unsavedChangesGuard';
 import { fileKeys } from '../features/files/fileQueries';
 import { parseProjectDirectoryPath, parseProjectRelativePath } from '../features/files/pathPolicy';
 import { RunLogStore } from '../features/logs/RunLogStore';
@@ -27,6 +33,7 @@ import { disposeAllProjectModels, toProjectModelUri } from '../lib/projectMonaco
 import {
   authSession,
   connectionRegistry,
+  handleSessionRevoked,
   handleUnauthorized,
   logout,
   queryClient,
@@ -230,7 +237,6 @@ async function connectTestLogTransport(runId: string, replayText = `${runId}-chu
       ticket: `ticket-${runId}` as never,
       expiresAt: '2026-08-24T10:00:30.000Z',
     }),
-    getAccessToken: () => authSession.getAccessToken(),
     onUnauthorized: handleUnauthorized,
     webSocketFactory: (url) => {
       const socket = new TestLogSocket(url);
@@ -295,16 +301,16 @@ function trackCleanupOrder(socket: TestLogSocket): {
     order.push('query');
     clearQuery();
   };
-  const clearAuth = authSession.clear.bind(authSession);
-  authSession.clear = (reason) => {
-    order.push('auth');
-    clearAuth(reason);
-  };
+  const unsubscribeAuth = authSession.subscribe(() => {
+    if (authSession.getSnapshot().status === 'anonymous') {
+      order.push('auth');
+    }
+  });
   return {
     order,
     restore() {
       queryClient.clear = clearQuery;
-      authSession.clear = clearAuth;
+      unsubscribeAuth();
     },
   };
 }
@@ -837,11 +843,11 @@ describe('appRuntime explicit logout', () => {
       order.push('query');
       clearQuery();
     };
-    const clearAuth = authSession.clear.bind(authSession);
-    authSession.clear = (reason) => {
-      order.push('auth');
-      clearAuth(reason);
-    };
+    const unsubscribeAuth = authSession.subscribe(() => {
+      if (authSession.getSnapshot().status === 'anonymous') {
+        order.push('auth');
+      }
+    });
 
     try {
       logout();
@@ -849,7 +855,7 @@ describe('appRuntime explicit logout', () => {
       expectEmptyWorkspaceSession();
     } finally {
       queryClient.clear = clearQuery;
-      authSession.clear = clearAuth;
+      unsubscribeAuth();
       unsubscribe();
     }
   });
@@ -1025,7 +1031,8 @@ describe('appRuntime workspace buffer disposal', () => {
     expect(source).not.toMatch(/projectMonacoModels/);
   });
 
-  it('injects dirty changes into the session and disposes buffers on logout', () => {
+  it('injects dirty changes into the session and disposes buffers on logout', async () => {
+    await authenticateAsAlice();
     const store = workspaceSessionStore.getState();
     store.activateProject(ALICE_SEED_PROJECT_ID);
     const buffer = workspaceBufferRegistry.register({
@@ -1131,7 +1138,8 @@ describe('appRuntime terminal resource registration', () => {
     expect(runtimeSources).not.toMatch(/\bscreenshot\b|capturePage|toHaveScreenshot/);
   });
 
-  it('closes the socket before disposing controller/xterm and keeps heavy modules lazy', () => {
+  it('closes the socket before disposing controller/xterm and keeps heavy modules lazy', async () => {
+    await authenticateAsAlice();
     const order: string[] = [];
     registerTerminalRuntimeResource({
       closeConnection: () => {
@@ -1150,7 +1158,8 @@ describe('appRuntime terminal resource registration', () => {
     expect(source).not.toMatch(/@xterm/);
   });
 
-  it('unregisters both ownership paths and isolates throwing cleanup observers', () => {
+  it('unregisters both ownership paths and isolates throwing cleanup observers', async () => {
+    await authenticateAsAlice();
     const removedClose = vi.fn();
     const removedDispose = vi.fn();
     const unregister = registerTerminalRuntimeResource({
@@ -1180,5 +1189,501 @@ describe('appRuntime terminal resource registration', () => {
     expect(removedDispose).not.toHaveBeenCalled();
     expect(remainingClose).toHaveBeenCalledOnce();
     expect(remainingDispose).toHaveBeenCalledOnce();
+  });
+});
+const ALICE_USER_ID = 'usr-alice';
+const BOB_USER_ID = 'usr-bob';
+const FAR_FUTURE = '2099-01-01T00:00:00.000Z';
+
+type TerminationArtifacts = {
+  terminalClose: ReturnType<typeof vi.fn>;
+  terminalDispose: ReturnType<typeof vi.fn>;
+  aiStreamClose: ReturnType<typeof vi.fn>;
+};
+
+type TerminatedState = {
+  reason: string;
+  authStatus: string;
+  accessToken: string | null;
+  workspaceProjectId: string | null;
+  openPaths: readonly string[];
+  activePath: string | null;
+  selectedPath: string | null;
+  expandedPaths: number;
+  dirtyPaths: number;
+  bufferPresent: boolean;
+  queryCacheSize: number;
+  unsavedDialogOpen: boolean;
+  aliceOperationId: string | null;
+  aliceTaskId: string | null;
+  bobOperationId: string | null;
+  bobTaskId: string | null;
+  terminalCloseCalls: number;
+  terminalDisposeCalls: number;
+  aiStreamCloseCalls: number;
+};
+
+function seedSessionArtifacts(): TerminationArtifacts {
+  const terminalClose = vi.fn();
+  const terminalDispose = vi.fn();
+  registerTerminalRuntimeResource({
+    closeConnection: terminalClose,
+    disposeWorkspace: terminalDispose,
+  });
+  const aiStreamClose = vi.fn();
+  connectionRegistry.register(aiStreamClose);
+  return { terminalClose, terminalDispose, aiStreamClose };
+}
+
+function seedDirtyWorkspace(): void {
+  workspaceSessionStore.getState().activateProject(ALICE_SEED_PROJECT_ID);
+  workspaceSessionStore.getState().openFile(POM);
+  const buffer = workspaceBufferRegistry.register({
+    projectId: ALICE_SEED_PROJECT_ID,
+    path: POM,
+    kind: 'plain-text',
+    content: 'before',
+  });
+  (buffer as typeof buffer & { replace(content: string): void }).replace('dirty');
+  expect(workspaceSessionStore.getState().dirtyPaths.has(POM)).toBe(true);
+}
+
+function seedUserScopedIds(userId: string): void {
+  storePythonDependencyOperationId(userId, ALICE_SEED_PROJECT_ID, 'op-' + userId);
+  storeAgentTaskId(userId, ALICE_SEED_PROJECT_ID, 'task-' + userId);
+}
+
+/** One shared fixture: dirty buffer, terminal/AI-stream connections, cache, dialog and per-user ids. */
+function seedCleanupState(): TerminationArtifacts {
+  sessionStorage.clear();
+  seedDirtyWorkspace();
+  queryClient.setQueryData(projectKeys.all, { items: [], limit: 8 });
+  queryClient.setQueryData(projectKeys.detail(ALICE_SEED_PROJECT_ID), { id: ALICE_SEED_PROJECT_ID });
+  seedUserScopedIds(ALICE_USER_ID);
+  seedUserScopedIds(BOB_USER_ID);
+  requestUnsavedDialog({
+    open: true,
+    mode: 'close-tab',
+    action: { type: 'close-tab', path: POM },
+    message: 'dirty file',
+  });
+  expect(getUnsavedDialogState().open).toBe(true);
+  return seedSessionArtifacts();
+}
+
+function captureTerminatedState(artifacts: TerminationArtifacts): TerminatedState {
+  const state = workspaceSessionStore.getState();
+  const snapshot = authSession.getSnapshot();
+  return {
+    // Read the emitted reason instead of echoing the caller's expectation.
+    reason: snapshot.status === 'anonymous' ? snapshot.reason : 'unexpected:' + snapshot.status,
+    authStatus: snapshot.status,
+    accessToken: authSession.getAccessToken(),
+    workspaceProjectId: state.projectId,
+    openPaths: state.openPaths,
+    activePath: state.activePath,
+    selectedPath: state.selectedPath,
+    expandedPaths: state.expandedPaths.size,
+    dirtyPaths: state.dirtyPaths.size,
+    bufferPresent: workspaceBufferRegistry.get(ALICE_SEED_PROJECT_ID, POM) !== undefined,
+    queryCacheSize: queryClient.getQueryCache().getAll().length,
+    unsavedDialogOpen: getUnsavedDialogState().open,
+    aliceOperationId: readPythonDependencyOperationId(ALICE_USER_ID, ALICE_SEED_PROJECT_ID),
+    aliceTaskId: readAgentTaskId(ALICE_USER_ID, ALICE_SEED_PROJECT_ID),
+    bobOperationId: readPythonDependencyOperationId(BOB_USER_ID, ALICE_SEED_PROJECT_ID),
+    bobTaskId: readAgentTaskId(BOB_USER_ID, ALICE_SEED_PROJECT_ID),
+    terminalCloseCalls: artifacts.terminalClose.mock.calls.length,
+    terminalDisposeCalls: artifacts.terminalDispose.mock.calls.length,
+    aiStreamCloseCalls: artifacts.aiStreamClose.mock.calls.length,
+  };
+}
+
+function authenticateFabricated(accessToken: string, expiresAt: string, username = 'alice'): void {
+  authSession.authenticate({
+    accessToken,
+    expiresAt,
+    user: {
+      id: username === 'alice' ? ALICE_USER_ID : BOB_USER_ID,
+      username,
+      email: null,
+      emailVerified: false,
+    },
+  });
+}
+
+function endSessionWithLogout(): TerminatedState {
+  authenticateFabricated('logout-token', FAR_FUTURE);
+  const artifacts = seedCleanupState();
+  logout();
+  return captureTerminatedState(artifacts);
+}
+
+function endSessionWithExpiry(): TerminatedState {
+  vi.useFakeTimers();
+  try {
+    vi.setSystemTime(new Date('2026-08-24T10:00:00.000Z'));
+    authenticateFabricated('expire-token', '2026-08-24T10:00:15.000Z');
+    const artifacts = seedCleanupState();
+    vi.advanceTimersByTime(15_000);
+    return captureTerminatedState(artifacts);
+  } finally {
+    vi.useRealTimers();
+  }
+}
+
+function endSessionWithUnauthorized(): TerminatedState {
+  authenticateFabricated('unauthorized-token', FAR_FUTURE);
+  const artifacts = seedCleanupState();
+  handleUnauthorized();
+  return captureTerminatedState(artifacts);
+}
+
+function withoutReason(state: TerminatedState): Omit<TerminatedState, 'reason'> {
+  const { reason, ...rest } = state;
+  void reason;
+  return rest;
+}
+
+describe('appRuntime unified session termination', () => {
+  beforeEach(() => {
+    sessionStorage.clear();
+  });
+
+  it('reaches the same cleaned terminal state for logout, expiry and 401', () => {
+    const logoutState = endSessionWithLogout();
+    resetAppRuntime();
+    const expiredState = endSessionWithExpiry();
+    resetAppRuntime();
+    const unauthorizedState = endSessionWithUnauthorized();
+
+    const expectedState = {
+      authStatus: 'anonymous',
+      accessToken: null,
+      workspaceProjectId: null,
+      activePath: null,
+      selectedPath: null,
+      expandedPaths: 0,
+      dirtyPaths: 0,
+      bufferPresent: false,
+      queryCacheSize: 0,
+      unsavedDialogOpen: false,
+      aliceOperationId: null,
+      aliceTaskId: null,
+      bobOperationId: 'op-usr-bob',
+      bobTaskId: 'task-usr-bob',
+      terminalCloseCalls: 1,
+      terminalDisposeCalls: 1,
+      aiStreamCloseCalls: 1,
+    };
+    expect(logoutState).toMatchObject(expectedState);
+    expect(logoutState.reason).toBe('logout');
+    expect(expiredState.reason).toBe('expired');
+    expect(unauthorizedState.reason).toBe('unauthorized');
+    expect(withoutReason(expiredState)).toEqual(withoutReason(logoutState));
+    expect(withoutReason(unauthorizedState)).toEqual(withoutReason(logoutState));
+  });
+
+  it('does not repeat cleanup when logout is called again after termination', async () => {
+    const alice = await login({ username: 'alice', password: 'demo-pass' });
+    authSession.authenticate(alice);
+    seedCleanupState();
+    const clearQuery = queryClient.clear.bind(queryClient);
+    const clearSpy = vi.fn(() => {
+      clearQuery();
+    });
+    queryClient.clear = clearSpy;
+    try {
+      logout();
+      expect(authSession.getSnapshot()).toEqual({ status: 'anonymous', reason: 'logout' });
+      logout();
+      handleUnauthorized();
+      logout();
+    } finally {
+      queryClient.clear = clearQuery;
+    }
+
+    expect(clearSpy).toHaveBeenCalledTimes(1);
+    expect(authSession.getSnapshot()).toEqual({ status: 'anonymous', reason: 'logout' });
+    expect(authSession.getAccessToken()).toBeNull();
+  });
+
+  it('does not repeat cleanup when handleUnauthorized is called again after termination', async () => {
+    const alice = await login({ username: 'alice', password: 'demo-pass' });
+    authSession.authenticate(alice);
+    seedCleanupState();
+    const clearQuery = queryClient.clear.bind(queryClient);
+    const clearSpy = vi.fn(() => {
+      clearQuery();
+    });
+    queryClient.clear = clearSpy;
+    try {
+      handleUnauthorized();
+      expect(authSession.getSnapshot()).toEqual({ status: 'anonymous', reason: 'unauthorized' });
+      handleUnauthorized();
+      logout();
+      handleUnauthorized();
+    } finally {
+      queryClient.clear = clearQuery;
+    }
+
+    expect(clearSpy).toHaveBeenCalledTimes(1);
+    expect(authSession.getSnapshot()).toEqual({ status: 'anonymous', reason: 'unauthorized' });
+    expect(authSession.getAccessToken()).toBeNull();
+  });
+
+  it('still clears agent task ids when python operation-id cleanup throws', async () => {
+    const alice = await login({ username: 'alice', password: 'demo-pass' });
+    authSession.authenticate(alice);
+    const artifacts = seedCleanupState();
+    // The python operation-id cleanup reads sessionStorage.length first; make just
+    // that read fail so the two user-scoped id cleanups need separate boundaries.
+    const lengthGetter = vi
+      .spyOn(Storage.prototype, 'length', 'get')
+      .mockImplementationOnce(() => {
+        throw new Error('python operation id cleanup unavailable');
+      });
+    try {
+      expect(() => logout()).not.toThrow();
+    } finally {
+      lengthGetter.mockRestore();
+    }
+
+    expect(readPythonDependencyOperationId(ALICE_USER_ID, ALICE_SEED_PROJECT_ID)).toBe('op-usr-alice');
+    expect(readAgentTaskId(ALICE_USER_ID, ALICE_SEED_PROJECT_ID)).toBeNull();
+    expect(readAgentTaskId(BOB_USER_ID, ALICE_SEED_PROJECT_ID)).toBe('task-usr-bob');
+    expect(authSession.getSnapshot()).toEqual({ status: 'anonymous', reason: 'logout' });
+    expect(queryClient.getQueryCache().getAll()).toHaveLength(0);
+    expect(getUnsavedDialogState()).toEqual({ open: false });
+    expect(artifacts.terminalClose).toHaveBeenCalledTimes(1);
+    expect(artifacts.terminalDispose).toHaveBeenCalledTimes(1);
+    expect(artifacts.aiStreamClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('cleans the previous account state before authenticate accepts a new login', async () => {
+    const alice = await login({ username: 'alice', password: 'demo-pass' });
+    authSession.authenticate(alice);
+    const artifacts = seedCleanupState();
+
+    const bob = await login({ username: 'bob', password: 'demo-pass' });
+    authSession.authenticate(bob);
+
+    expect(authSession.getSnapshot()).toEqual({
+      status: 'authenticated',
+      accessToken: bob.accessToken,
+      expiresAt: bob.expiresAt,
+      user: {
+        id: BOB_USER_ID,
+        username: 'bob',
+        email: 'bob@example.com',
+        emailVerified: true,
+      },
+    });
+    expectEmptyWorkspaceSession();
+    expect(workspaceBufferRegistry.get(ALICE_SEED_PROJECT_ID, POM)).toBeUndefined();
+    expect(queryClient.getQueryCache().getAll()).toHaveLength(0);
+    expect(getUnsavedDialogState()).toEqual({ open: false });
+    expect(artifacts.terminalClose).toHaveBeenCalledTimes(1);
+    expect(artifacts.terminalDispose).toHaveBeenCalledTimes(1);
+    expect(artifacts.aiStreamClose).toHaveBeenCalledTimes(1);
+    expect(readPythonDependencyOperationId(ALICE_USER_ID, ALICE_SEED_PROJECT_ID)).toBeNull();
+    expect(readAgentTaskId(ALICE_USER_ID, ALICE_SEED_PROJECT_ID)).toBeNull();
+    expect(readPythonDependencyOperationId(BOB_USER_ID, ALICE_SEED_PROJECT_ID)).toBe('op-usr-bob');
+    expect(readAgentTaskId(BOB_USER_ID, ALICE_SEED_PROJECT_ID)).toBe('task-usr-bob');
+  });
+
+  it('runs the cleanup once when a disposer ends the session again', async () => {
+    const alice = await login({ username: 'alice', password: 'demo-pass' });
+    authSession.authenticate(alice);
+    seedCleanupState();
+
+    const clearQuery = queryClient.clear.bind(queryClient);
+    const clearSpy = vi.fn(() => {
+      clearQuery();
+    });
+    queryClient.clear = clearSpy;
+    const nestedLogout = vi.fn(() => {
+      logout();
+    });
+    const otherClose = vi.fn();
+    connectionRegistry.register(nestedLogout);
+    connectionRegistry.register(otherClose);
+    try {
+      expect(() => logout()).not.toThrow();
+    } finally {
+      queryClient.clear = clearQuery;
+    }
+
+    expect(nestedLogout).toHaveBeenCalledTimes(1);
+    expect(otherClose).toHaveBeenCalledTimes(1);
+    expect(clearSpy).toHaveBeenCalledTimes(1);
+    expect(authSession.getSnapshot()).toEqual({ status: 'anonymous', reason: 'logout' });
+    expectEmptyWorkspaceSession();
+  });
+
+  it('continues the remaining cleanup and clears auth when one cleanup step throws', async () => {
+    const alice = await login({ username: 'alice', password: 'demo-pass' });
+    authSession.authenticate(alice);
+    seedCleanupState();
+    const closeSpy = vi.fn();
+    connectionRegistry.register(closeSpy);
+    const originalGetState = workspaceSessionStore.getState;
+    workspaceSessionStore.getState = () => {
+      throw new Error('workspace store unavailable');
+    };
+    try {
+      expect(() => logout()).not.toThrow();
+    } finally {
+      workspaceSessionStore.getState = originalGetState;
+    }
+
+    expect(closeSpy).toHaveBeenCalledTimes(1);
+    expect(queryClient.getQueryCache().getAll()).toHaveLength(0);
+    expect(getUnsavedDialogState()).toEqual({ open: false });
+    expect(authSession.getSnapshot()).toEqual({ status: 'anonymous', reason: 'logout' });
+    expect(authSession.getAccessToken()).toBeNull();
+    expect(readPythonDependencyOperationId(ALICE_USER_ID, ALICE_SEED_PROJECT_ID)).toBeNull();
+    expect(readAgentTaskId(ALICE_USER_ID, ALICE_SEED_PROJECT_ID)).toBeNull();
+  });
+
+  it('does not let the previous expiry timer clear a newly authenticated session', () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date('2026-08-24T10:00:00.000Z'));
+      authenticateFabricated('alice-old-token', '2026-08-24T10:00:10.000Z');
+      seedDirtyWorkspace();
+      authenticateFabricated('alice-new-token', '2026-08-24T11:00:00.000Z');
+      expect(authSession.getSnapshot()).toMatchObject({
+        status: 'authenticated',
+        accessToken: 'alice-new-token',
+      });
+
+      vi.setSystemTime(new Date('2026-08-24T10:00:10.000Z'));
+      vi.advanceTimersByTime(10_000);
+
+      expect(authSession.getSnapshot()).toMatchObject({
+        status: 'authenticated',
+        accessToken: 'alice-new-token',
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not clear a re-created Alice session when a delayed old-token 401 arrives', async () => {
+    const firstLogin = await login({ username: 'alice', password: 'demo-pass' });
+    authSession.authenticate(firstLogin);
+    const oldToken = authSession.getAccessToken();
+    expect(oldToken).toBeTruthy();
+
+    let releaseAlice: () => void = () => {};
+    const aliceHold = new Promise<void>((resolve) => {
+      releaseAlice = resolve;
+    });
+    let interceptedAliceList = false;
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input, init) => {
+      const url =
+        typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+      const authorization = new Headers(init?.headers).get('Authorization');
+      if (
+        !interceptedAliceList &&
+        /\/api\/v1\/projects\/?$/.test(url) &&
+        authorization === 'Bearer ' + oldToken
+      ) {
+        interceptedAliceList = true;
+        await aliceHold;
+        return new Response(JSON.stringify(UNAUTHENTICATED_BODY), {
+          status: 401,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      return originalFetch(input, init);
+    }) as typeof fetch;
+
+    try {
+      const pendingAliceList = listProjects();
+      logout();
+      const secondLogin = await login({ username: 'alice', password: 'demo-pass' });
+      authSession.authenticate(secondLogin);
+      seedWorkspaceSession(ALICE_SEED_PROJECT_ID, 'pom.xml');
+      const closer = vi.fn();
+      connectionRegistry.register(closer);
+
+      releaseAlice();
+      const aliceError = await pendingAliceList.catch((reason: unknown) => reason);
+      expect(aliceError).toBeInstanceOf(ApiRequestError);
+      expect(aliceError).toMatchObject({ status: 401 });
+
+      expect(closer).not.toHaveBeenCalled();
+      expect(workspaceSessionStore.getState().projectId).toBe(ALICE_SEED_PROJECT_ID);
+      expect(authSession.getSnapshot()).toMatchObject({
+        status: 'authenticated',
+        user: { username: 'alice' },
+        accessToken: secondLogin.accessToken,
+      });
+      expect(authSession.getAccessToken()).toBe(secondLogin.accessToken);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+describe('appRuntime session revocation guard', () => {
+  it('runs the unified cleanup once when the revoked snapshot is still current', () => {
+    authenticateFabricated('revoked-token', FAR_FUTURE);
+    const artifacts = seedCleanupState();
+    const expected = authSession.getSnapshot();
+    expect(expected.status).toBe('authenticated');
+
+    handleSessionRevoked(expected);
+
+    expect(authSession.getSnapshot()).toEqual({ status: 'anonymous', reason: 'unauthorized' });
+    expect(authSession.getAccessToken()).toBeNull();
+    expectEmptyWorkspaceSession();
+    expect(queryClient.getQueryCache().getAll()).toHaveLength(0);
+    expect(artifacts.terminalClose).toHaveBeenCalledTimes(1);
+    expect(artifacts.terminalDispose).toHaveBeenCalledTimes(1);
+    expect(artifacts.aiStreamClose).toHaveBeenCalledTimes(1);
+
+    handleSessionRevoked(expected);
+    expect(artifacts.terminalClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('never clears a newer login with the snapshot of an old stream', () => {
+    authenticateFabricated('alice-old-token', FAR_FUTURE, 'alice');
+    const aliceSnapshot = authSession.getSnapshot();
+    logout();
+    authenticateFabricated('bob-token', FAR_FUTURE, 'bob');
+    const closer = vi.fn();
+    connectionRegistry.register(closer);
+
+    handleSessionRevoked(aliceSnapshot);
+
+    expect(authSession.getSnapshot()).toMatchObject({
+      status: 'authenticated',
+      user: { id: BOB_USER_ID, username: 'bob' },
+      accessToken: 'bob-token',
+    });
+    expect(authSession.getAccessToken()).toBe('bob-token');
+    expect(closer).not.toHaveBeenCalled();
+  });
+
+  it('ignores an already-cleared snapshot so the original logout reason is kept', () => {
+    authenticateFabricated('alice-token', FAR_FUTURE, 'alice');
+    const expected = authSession.getSnapshot();
+    logout();
+
+    handleSessionRevoked(expected);
+
+    expect(authSession.getSnapshot()).toEqual({ status: 'anonymous', reason: 'logout' });
+  });
+
+  it('ignores an anonymous snapshot', () => {
+    authenticateFabricated('alice-token', FAR_FUTURE, 'alice');
+    logout();
+    const anonymous = authSession.getSnapshot();
+
+    expect(() => handleSessionRevoked(anonymous)).not.toThrow();
+    expect(authSession.getSnapshot()).toEqual({ status: 'anonymous', reason: 'logout' });
   });
 });
