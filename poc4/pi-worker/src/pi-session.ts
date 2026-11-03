@@ -2,7 +2,7 @@
  * The minimal Pi assembly (stage one): one agent session per task, driven by the
  * SDK's own loop, with discovery explicitly disabled — no project extensions, no
  * Skills, no prompt templates, no themes, no AGENTS/context files, and no built-in
- * file/bash tools. The session sees exactly the six backend-mediated project tools
+ * file/bash tools. The session sees exactly the seven backend-mediated project tools
  * and one fixed, server-owned system prompt. The model key lives only in the worker
  * environment and the private ModelRuntime; the session cwd is a worker-private
  * scratch directory, never a user project or the Manao repository.
@@ -39,6 +39,7 @@ import { createProjectTools, TOOL_NAMES } from "./project-tools.js";
 import { COMPACTION_SETTINGS, CONTEXT_WINDOW, ConversationContext, needsCompaction, type CompactStart, type CompactResult } from "./conversation-context.js";
 import { LiveOutput } from "./live-output.js";
 import { installImageContext } from "./image-context.js";
+import { SYSTEM_PROMPT, installCompactionPrompt } from "./prompts.js";
 
 /** Server-owned task budgets; tool/build limits raised by user instruction on 2026-10-18. */
 export const DEFAULT_BUDGETS: WorkerBudgets = { wallClockSeconds: 1800, toolCalls: 180, builds: 20 };
@@ -50,39 +51,6 @@ export const DEFAULT_BUDGETS: WorkerBudgets = { wallClockSeconds: 1800, toolCall
  * text bound for message items.
  */
 const MAX_PROGRESS_TEXT_BYTES = PROGRESS_TEXT_MAX_BYTES;
-
-/**
- * The fixed server-side system prompt: goal, tool capabilities, limits and the
- * completion evidence. It deliberately does NOT pre-write code-change or retry
- * steps — the model plans its own rounds from the tool results.
- */
-const SYSTEM_PROMPT = [
-  "You are the Manao coding agent working on ONE user project through seven mediated tools.",
-  "",
-  "Goal: complete the user's task inside the project and report what you changed.",
-  "",
-  "Tools: list_files, read_file and write_file reach the project's allowlisted files through the",
-  "Manao workspace; build runs one fixed goal (compile, test or package) on an isolated read-only",
-  "copy and returns the real exit result with bounded diagnostics. application starts, stops, observes",
-  "and reads persisted logs for this project's application; app_http_get performs a bounded GET",
-  "on the current ready application and returns the real status and body. read_image reads a conversation image by attachmentId;",
-  "read_image({}) lists the first attachment page and read_image({cursor}) fetches subsequent pages.",
-  "Use the current attachment catalog to rediscover originals after compaction. Expired images require a new upload.",
-  "Image errors are explicit; a successful reference alone is not proof that image content reached the provider. You have no other tools, no",
-  "shell, and no direct filesystem access.",
-  "",
-  "Limits: files are capped at 128 KiB; the tool answers are bounded; a non-zero build exit code",
-  "or a data.error answer is an ordinary result you should read and act on in your next round.",
-  "A start accepted result does not prove the application is ready. Stop must be confirmed before",
-  "editing or building. Source writes and builds are refused while any application Run is active.",
-  "Use status to confirm readiness and stoppedConfirmed to confirm exit; unknown or timeout is not exit proof.",
-  "A ready application may stay available after completion. Use real build, Run, logs and HTTP results",
-  "as completion evidence, and distinguish accepted startup, readiness and successful HTTP checks.",
-  "You cannot see or touch anything outside the mediated tool answers.",
-  "",
-  "Completion evidence: finish with a short summary of what you changed (paths) and the build",
-  "outcome that proves it works. If you cannot complete the task, stop and say exactly why.",
-].join("\n");
 
 export interface PiSessionDeps {
   /** Overrides createAgentSession (tests script the model through the same AgentSession). */
@@ -166,6 +134,7 @@ export async function createPiSession(options: {
     noThemes: true,
     noContextFiles: true,
     systemPrompt: SYSTEM_PROMPT,
+    appendSystemPrompt: [],
   });
   await loader.reload();
 
@@ -204,6 +173,7 @@ export async function createPiSession(options: {
     customTools,
   });
   session.setThinkingLevel(options.reasoningEffort ?? "high", { persist: false });
+  installCompactionPrompt(session);
   session.agent.toolExecution = "sequential";
   abortAfterFatal = () => { session.abortCompaction(); session.agent.abort(); void session.abort().catch(() => {}); };
   let compactionFailed = false;
@@ -288,11 +258,13 @@ export async function compactIdleConversation(options: {
   const model = runtime.getModel(options.model.provider, options.model.model);
   if (!model) throw new WorkerNotConfiguredError("The summary model is unavailable");
   const loader = new DefaultResourceLoader({ cwd: options.paths.scratchDir, agentDir: options.paths.agentDir, settingsManager: settings,
-    noExtensions: true, noSkills: true, noPromptTemplates: true, noThemes: true, noContextFiles: true, systemPrompt: "" });
+    noExtensions: true, noSkills: true, noPromptTemplates: true, noThemes: true, noContextFiles: true,
+    systemPrompt: "", appendSystemPrompt: [] });
   await loader.reload();
   const { session } = await (options.createSession ?? createAgentSession)({ cwd: options.paths.scratchDir, agentDir: options.paths.agentDir,
     modelRuntime: runtime, model, settingsManager: settings, sessionManager: manager, resourceLoader: loader,
     noTools: "builtin", tools: [], customTools: [] });
+  installCompactionPrompt(session);
   let expired = false;
   let providerRequested = false;
   const stream = session.agent.streamFunction;

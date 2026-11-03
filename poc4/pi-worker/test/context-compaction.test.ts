@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { SessionManager, SettingsManager, type AgentSession } from "@earendil-works/pi-coding-agent";
-import type { TranscriptContext } from "@earendil-works/pi-ai";
+import { getSystemMessageText, type TranscriptContext } from "@earendil-works/pi-ai";
 import { BackendClient, ProgressChain } from "../src/backend-client.js";
 import type { ContextAppend } from "../src/conversation-context.js";
 import { createPiSession } from "../src/pi-session.js";
@@ -74,6 +74,12 @@ describe("fixed-window native Pi compaction", () => {
     expect(f.session.settingsManager.getCompactionSettings(f.session.model)).toEqual({ enabled: true, reserveTokens: 262_145, keepRecentTokens: 20_000 });
     expect(f.requests.filter((request) => request.summary)).toHaveLength(count);
     if (count) {
+      for (const request of f.requests.filter(request => request.summary)) {
+        const first = request.context.messages[0];
+        expect(first?.role).toBe("system");
+        if (first?.role === "system") expect(getSystemMessageText(first)).toContain("Manao continuation checkpoint rules");
+        expect(request.context.messages.some(message => message.role === "system" && message.toolsAdded?.length)).toBe(false);
+      }
       expect(f.batches.at(-1)!.usage).toEqual({ tokens: null, contextWindow: 1_048_576, percent: null });
       expect(f.entries.filter((entry) => entry.type === "message")).toHaveLength(16);
     }
@@ -88,6 +94,9 @@ describe("fixed-window native Pi compaction", () => {
     const f = await fixture(manager, (_context, session) => session.isCompacting ? { text: summary } : { text: "已遵守约束" }, 1800, true);
     expect((await f.run()).state).toBe("COMPLETED");
     expect(f.requests[0]!.summary).toBe(true);
+    const summarySystem = f.requests[0]!.context.messages[0];
+    expect(summarySystem?.role).toBe("system");
+    if (summarySystem?.role === "system") expect(getSystemMessageText(summarySystem)).toContain("Manao continuation checkpoint rules");
     const programming = JSON.stringify(f.requests.find((request) => !request.summary)!.context);
     expect(programming).toContain(summary); expect(programming).toContain("新目标必须遵守 bookId。");
     expect(programming).toContain("最近目标：继续查询接口。");
@@ -109,6 +118,11 @@ describe("fixed-window native Pi compaction", () => {
     expect((await f.run()).state).toBe("COMPLETED");
     const summaries = f.requests.filter((request) => request.summary);
     expect(summaries.length).toBeGreaterThanOrEqual(2);
+    for (const request of summaries) {
+      const first = request.context.messages[0];
+      expect(first?.role).toBe("system");
+      if (first?.role === "system") expect(getSystemMessageText(first).split("Manao continuation checkpoint rules")).toHaveLength(2);
+    }
     const first = JSON.stringify(summaries[0]!.context);
     for (const name of tools) expect(first).toContain(name);
     for (const evidence of ["bookId", "src/Book.java", "BUILD SUCCESS", "200"]) expect(first).toContain(evidence);

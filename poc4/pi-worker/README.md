@@ -10,6 +10,30 @@ explicitly discovery-disabled (no project extensions, no Skills, no prompt templ
 no themes, no AGENTS/context files). The system prompt is fixed server-side; it does
 not pre-write change or retry steps.
 
+## Trusted prompts and compaction
+
+[`src/prompts.ts`](src/prompts.ts) owns the task system prompt and the Manao
+checkpoint instructions. The task prompt covers user scope, reading before full-file
+writes with `expectedSha256`, confirmed application stop, bounded tool results,
+image availability, and evidence-based completion. Both session loaders explicitly
+disable `APPEND_SYSTEM.md` discovery as well as project context and extensions.
+
+Manual, automatic and turn-prefix compaction keep Pi's native summary formats and
+history handling. A shared stream wrapper appends the checkpoint instructions only
+to summary requests, preserving the original request and all other messages. The
+existing ACK ordering, retry, cancellation and usage accounting still apply.
+Checkpoints retain user corrections, important code, failures and fixes, verification
+state, known runtime facts, image references and the next unfinished work; they omit
+private reasoning, binary images, secrets and whole-file transcripts.
+
+The AI tool surface currently has a Java-oriented file allowlist (`pom.xml`,
+`src/**`, and ordinary top-level text documents) and a Maven-only `build` backend.
+The prompt explicitly forbids inferring Spring Boot from those capabilities or
+introducing Maven into a Python project to satisfy the tool. These are model
+instructions, not a backend runtime guard: passing the project's runtime template
+to the worker and adapting or restricting tools per runtime remain separate work.
+The wider workbench's Python support does not imply Python AI build support.
+
 ## HTTP surface (Node built-in `http`, no framework)
 
 | Route | Behavior |

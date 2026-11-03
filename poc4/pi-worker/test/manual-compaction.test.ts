@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { SessionManager, type AgentSession } from "@earendil-works/pi-coding-agent";
+import { getSystemMessageText } from "@earendil-works/pi-ai";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { createTaskServer } from "../src/server.js";
@@ -132,6 +133,36 @@ describe("native idle summary outcomes", () => {
       start: { conversationId, requestId, expectedHeadSeq: entries.length },
       createSession: async options => { const made = await scriptedSessionFactory([], undefined, respond)(options); observe?.(made.session); return made; } });
   }
+  it("sends Manao checkpoint rules in native manual and turn-prefix summaries without project tools", async () => {
+    const manager = SessionManager.inMemory("manao-project", { id: conversationId });
+    manager.appendCustomMessageEntry("manao_user_request", "保留用户约束 bookId。" + "x".repeat(100_000), true);
+    manager.appendCustomMessageEntry("manao_user_request", "最新请求：完善查询。" + "y".repeat(100_000), true);
+    const message = { role: "assistant" as const, content: [{ type: "text" as const, text: "已检查文件" }],
+      api: "openai-completions" as const, provider: "manao-test", model: "scripted-1", stopReason: "stop" as const,
+      usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 2,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } }, timestamp: 1 };
+    manager.appendMessage(message);
+    manager.appendMessage({ ...message, content: [{ type: "text", text: "当前工作" + "z".repeat(100_000) }] });
+    const original = structuredClone(manager.getEntries());
+    const summaryInputs: string[] = [];
+    const result = await run(manager, context => {
+      const first = context.messages[0];
+      expect(first?.role).toBe("system");
+      if (first?.role === "system") {
+        const text = getSystemMessageText(first);
+        expect(text).toContain("You are a context summarization assistant.");
+        expect(text).toContain("Manao continuation checkpoint rules");
+        expect(text).not.toContain("You are the Manao coding agent");
+      }
+      expect(context.messages.some(item => item.role === "system" && item.toolsAdded?.length)).toBe(false);
+      summaryInputs.push(JSON.stringify(context.messages.slice(1)));
+      return { text: "用户要求保留 bookId；已检查文件，待完善查询。" };
+    });
+    expect(summaryInputs.some(input => input.includes("<conversation>"))).toBe(true);
+    expect(summaryInputs.some(input => input.includes("# Conversation"))).toBe(true);
+    expect(result.entries.some(entry => entry.type === "compaction")).toBe(true);
+    expect(manager.getEntries()).toEqual(original);
+  });
   it.each(["empty", "already-compacted"])("returns completed no-op for verified native %s without a model request", async kind => {
     const manager = SessionManager.inMemory("manao-project", { id: conversationId });
     if (kind === "already-compacted") {
