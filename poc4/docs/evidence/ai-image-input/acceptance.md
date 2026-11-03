@@ -101,3 +101,6 @@ Worker 默认关闭图片输入。只有确认部署模型支持视觉后，设�
 
 
 现场发现并修复 HTTP randomUUID 缺失、压缩请求多发 conversationId 导致 422、切会话取消已提交任务的原 ID 确认（包括下一轮上传标志复位）。均有实际 RED→GREEN 证据与独立只读复核。最终相关 4 文件 100 PASS，标准 Dockerfile 内 pnpm build/typecheck 通过。最终 frontend amd64 digest 0275df40c76abd9a0fd8c3102018cd88341b8c2c26c0c19566f68b57b750e479，Ready 1/1；其他三端沿用本轮初始发布。自然到期为 2026-11-04 12:03:33.653（Asia/Shanghai），到期 410、失效展示和真实 PVC 删除须届时再核验；当前不授予完整功能验收 PASS。
+
+
+2026-11-03 13:2x（Asia/Shanghai）后续：用户要求提交并清空当前测试账号项目。业务提交 a27d77a 已完成；app_user 账号执行时剩余 3 个项目已全部删除，项目/关联数据/5 个 PVC/PV/NFS 目录核验无残留，其他账号与平台资源保留。原图片 fixture 随项目删除，自然 24 小时到期验收仍 NOT_RUN，需新上传才可补验。详见集群发布记录最后的清理章节。

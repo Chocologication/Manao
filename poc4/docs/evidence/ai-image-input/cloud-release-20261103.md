@@ -70,3 +70,19 @@
 脱敏身份及只读查询结果见 [cloud-safe-20261103.json](cloud-safe-20261103.json)。最终四个新 Task 全部 COMPLETED，没有新增活动 task/compaction/Run；worker 空闲。历史 b3b32518-f0ed-411e-aa85-1ecef95fbdc5 仍 RUNNING，不将其当作新占用或本轮修复。页面保留原图片会话，专用项目/中性文件/附件保留用于自然到期核验。
 
 自然 24 小时到期为 **2026-11-04 12:03:33.653（Asia/Shanghai）**。届时须再观察认证内容 410、页面失效占位、read_image/旧成功回执不能重新发图，以及清理周期后实际 PVC 原图和 .part 不存在。此轮没有修改运行库 expiresAt、服务端时钟或线上 TTL 来提前证明清理；这些现场到期项仍 **NOT_RUN**，本地可控时钟测试的 PASS 不能代替它们。用户完整功能验收仍 **NOT_RUN**。
+
+## 用户授权清空测试账号项目（2026-11-03，后续权威状态）
+
+用户要求先提交当前工作树，再删除浏览器已登录测试账号的全部项目，并补充授权对页面无法删除的项目直接运行集群命令。已先提交 80 个文件为 `a27d77a8451c026b73dc71d74cb3ef13802c77ba`，提交后工作区干净，没有 Git push/merge。浏览器账户面板与运行库共同核对账号为 app_user / 082d1027-b33d-11f1-b6a5-122676b27565，执行时剩余以下 3 个项目；没有把其他账号项目纳入删除范围。
+
+| 项目 | 删除方式与结果 |
+| --- | --- |
+| ai-image-acceptance-20261103 / 812d9d77-74c7-400f-9f5f-5110c3a2714a | 页面确认永久删除，随后项目行、PVC/PV 及原图所在 NFS 目录不存在 |
+| java-web / bdddc018-f472-4fb9-a636-f164ed37b0cc | 用户补充授权后，按 project-id + managed-by 标签清理集群，确认资源退出后用 owner+project 限定事务删除关联记录与项目行 |
+| java-runtime-20260922120102-96pj / ec03f997-3517-4078-8a60-7b0128a6f2de | 原 DELETING 项目按同样限定范围清理剩余存储和数据库记录 |
+
+直接清理前确认 worker 空闲、目标 Run 均已终态，持久化目标项目 DELETING 防止新业务操作；先删除控制器/Pod/Service/项目 Secret/NetworkPolicy，确认无工作负载再删 PVC。只在资源和存储回收核验后删除 terminal_audit/session、log_ticket、Run/日志、workspace_operation、agent_task/tool、storage binding 和项目行；没有禁用外键，没有重置 schema。历史任务 b3b32518-f0ed-411e-aa85-1ecef95fbdc5 随其项目被删除，不能解释为任务成功恢复或重新执行。
+
+最终核验：3 个项目对应的集群资源/项目 Secret 为 0，5 个 PVC 和 5 个已记录 PV 均不存在。通过临时只读 NFS audit Pod 核对这些 project/PV 身份对应的原始及归档目录匹配数为 0，helper 随后已删除。目标账号 project/task 为 0，目标项目 conversation/attachment/Run/workspace_operation/storage_binding 为 0。其他账号的 2 个 READY 项目与全部 3 个账号保留；56 个非目标集群资源 UID 与清理前一致，包括平台 MySQL Pod/PVC。浏览器显示 0 个项目，见[空项目列表截图](account-projects-deleted-20261103.png)。私有操作前后身份清单保存在仓库外发布目录，不包含 Secret 数据。
+
+**自然 24 小时验收仍 NOT_RUN，且本轮 fixture 已按用户要求删除，原定到期时间不再是可执行的待测目标。** 项目删除已证明本次原图随存储被回收，但不能替代定时 TTL 清理、到期 410 或旧回执拒绝的验收。若未来补验，需使用新上传重新建立 24 小时观察窗口。前述真实识图/压缩重读 PASS 保留为删除前的历史证据。
