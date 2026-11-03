@@ -8,6 +8,11 @@ import java.util.Optional;
  * signed requests to the project workspace-agent; they never expose Kubernetes identifiers.
  */
 public interface WorkspaceAgent {
+    record AttachmentMeta(String attachmentId, String sha256, long sizeBytes, long expiresAt) { }
+    default AttachmentMeta putAttachment(String projectId, String id, String sha256, long expiresAt, byte[] bytes) { throw new WorkspaceAgentException(503,"AI_ATTACHMENT_UNAVAILABLE","Attachment protocol unavailable"); }
+    default AttachmentMeta confirmAttachment(String projectId, String id) { throw new WorkspaceAgentException(503,"AI_ATTACHMENT_UNAVAILABLE","Attachment protocol unavailable"); }
+    default byte[] openAttachment(String projectId, String id, String sha256, long expiresAt) { throw new WorkspaceAgentException(503,"AI_ATTACHMENT_UNAVAILABLE","Attachment protocol unavailable"); }
+    default void deleteAttachment(String projectId, String id) { throw new WorkspaceAgentException(503,"AI_ATTACHMENT_UNAVAILABLE","Attachment protocol unavailable"); }
     Tree tree(String projectId, String directory);
 
     FileMeta meta(String projectId, String path);

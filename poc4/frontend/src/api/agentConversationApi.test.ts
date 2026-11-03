@@ -9,7 +9,8 @@ it('sends the original compaction identity once through the owner-authenticated 
     usage: null, compactRequestId: 'original-request', compactState: 'RUNNING', compactFailureCode: null, nextReasoningEffort: 'high' };
   setHttpClient(new HttpClient({ getAccessToken: () => 'owner-test-token', onUnauthorized: () => {},
     fetchImpl: async (input, init) => { calls.push({ url: String(input), init }); return new Response(JSON.stringify(view)); } }));
-  expect(await compactAgentConversation('project/a', 'c', { requestId: 'original-request', expectedHeadSeq: 7 })).toEqual(view);
+  const intent = { conversationId: 'c', requestId: 'original-request', expectedHeadSeq: 7 };
+  expect(await compactAgentConversation('project/a', 'c', intent)).toEqual(view);
   expect(calls).toHaveLength(1);
   expect(calls[0]!.url).toBe('/api/v1/projects/project%2Fa/conversations/c/compact');
   expect(calls[0]!.init?.method).toBe('POST');

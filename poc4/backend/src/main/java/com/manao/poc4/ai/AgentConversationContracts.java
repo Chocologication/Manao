@@ -24,7 +24,10 @@ public final class AgentConversationContracts {
     }
     public record ConversationPage(List<ConversationView> items, String nextCursor) { }
     public record HistoryItem(long seq, String taskId, String kind, String text, String toolCallId, int textOffset,
-                              int contentIndex, boolean modelTruncated) {
+                              int contentIndex, boolean modelTruncated, List<AgentAttachmentContracts.AttachmentRef> attachments) {
+        public HistoryItem(long seq,String taskId,String kind,String text,String toolCallId,int textOffset,int contentIndex,boolean modelTruncated) {
+            this(seq,taskId,kind,text,toolCallId,textOffset,contentIndex,modelTruncated,List.of());
+        }
         public HistoryItem(long seq, String taskId, String kind, String text, String toolCallId, int textOffset) {
             this(seq, taskId, kind, text, toolCallId, textOffset, 0, false);
         }

@@ -35,6 +35,8 @@ import type { ContextUsage } from '@/contracts/agentConversation';
 import { ContextUsageIndicator } from './ContextUsageIndicator';
 import { ReasoningEffortPicker } from './ReasoningEffortPicker';
 import { canContinueTask, CONTINUE_TASK_PROMPT } from './agentTaskControl';
+import { ImageAttachments, useImageAttachments } from './ImageAttachments';
+import { imageCapabilities } from '@/api/agentAttachmentApi';
 import './AgentChat.css';
 
 export type AgentTaskPanelProps = {
@@ -72,16 +74,29 @@ export type AgentTaskPanelProps = {
   displayTask?: AgentTaskSnapshot | null;
   submissionBlocked?: boolean;
   onSubmissionPendingChange?: (pending: boolean) => void;
+  /** Parent owner/project lifetime survives conversation switches, never account switches. */
+  isSubmissionScopeActive?: () => boolean;
 };
 
 type Probe = { kind: 'found'; task: AgentTaskSnapshot } | { kind: 'missing' } | { kind: 'unknown' };
 
 export { buildToolCallId } from '@/contracts/agentTask';
+const imageFailureMessages:Record<string,string>={
+  AI_IMAGE_REQUEST_TOO_LARGE:'本次图片合计超过模型请求大小限制，未向模型发送。可压缩上下文后，通过附件目录分批重读。',
+  AI_IMAGE_CONTEXT_TOO_LARGE:'图片占用超过当前上下文预算，请压缩上下文后分批读取。',
+  AI_IMAGE_INPUT_DISABLED:'当前模型未开启图片输入。',
+  AI_ATTACHMENT_EXPIRED:'图片已失效，请重新上传。',
+  AI_ATTACHMENT_UNAVAILABLE:'图片暂不可用，请稍后重试。',
+  AI_ATTACHMENT_NOT_FOUND:'未找到当前会话的图片。',
+};
 
 function agentTaskStartErrorMessage(error: unknown): string {
+  const messages:Record<string,string>={AI_ATTACHMENT_TOO_LARGE:'每张图片不得超过 10 MB',AI_ATTACHMENT_EXPIRED:'图片已失效，请重新上传',AI_ATTACHMENT_UNAVAILABLE:'图片暂不可用，请稍后重试',AI_ATTACHMENT_CONFLICT:'图片上传尚未确认或内容冲突，请重试确认',AI_IMAGE_INPUT_DISABLED:'当前模型未开启图片输入'};
   if (error instanceof ApiRequestError && error.body !== null) {
+    if(messages[error.body.code])return messages[error.body.code]!;
     return `Could not start the task (${error.body.code})`;
   }
+  if(error instanceof Error&&['图片上传确认中，请重试','图片已失效，请重新上传','每张图片不得超过 10 MB'].includes(error.message))return error.message;
   if (error instanceof Error && /network request failed/i.test(error.message)) {
     return 'Network request failed';
   }
@@ -112,6 +127,7 @@ export function AgentTaskPanel({
   displayTask: selectedTask,
   submissionBlocked = false,
   onSubmissionPendingChange,
+  isSubmissionScopeActive,
   nextReasoningEffort = 'high',
   contextUsage,
   conversationHeader,
@@ -121,9 +137,25 @@ export function AgentTaskPanel({
   const queryClient = useQueryClient();
   const dirtyCount = useWorkspaceSession((state) => state.dirtyPaths.size);
   const [goal, setGoal] = useState('');
+  const images=useImageAttachments(userId,projectId,conversationId);
+  const [imageCapability,setImageCapability]=useState<{scope:string;enabled:boolean}|null>(null);
+  const imageScope=JSON.stringify([userId,projectId,conversationId]);
+  const imageEnabled=imageCapability?.scope===imageScope&&imageCapability.enabled;
+  useEffect(()=>{
+    if(!conversationId)return;
+    const controller=new AbortController();
+    void imageCapabilities(projectId,controller.signal).then(value=>{if(!controller.signal.aborted)setImageCapability({scope:imageScope,enabled:value.imageInput===true});}).catch(()=>{});
+    return()=>controller.abort();
+  },[projectId,conversationId,imageScope]);
   const [reasoningEffort, setReasoningEffort] = useState<ReasoningEffort>(() => nextReasoningEffort);
   const [starting, setStarting] = useState(false);
   const [startError, setStartError] = useState<string | null>(null);
+  const submissionScope=useMemo(()=>({pending:false,submitted:false,callback:onSubmissionPendingChange}),[userId,projectId,conversationId]);
+  useEffect(()=>{
+    setStarting(false);setStartError(null);setGoal('');
+    return()=>{if(submissionScope.pending&&!submissionScope.submitted){submissionScope.pending=false;submissionScope.callback?.(false);}};
+  },[submissionScope]);
+  submissionScope.callback=onSubmissionPendingChange;
   const previousTaskRef = useRef<AgentTaskSnapshot | null>(null);
   const displayTaskId = (selectedTask === undefined ? task ?? settledTask : selectedTask)?.taskId ?? null;
   const scope = useMemo(() => ({ active: true, token: 0 }), [userId, projectId, conversationId, displayTaskId]);
@@ -196,7 +228,7 @@ export function AgentTaskPanel({
       if (!canStart) {
         return;
       }
-      const prompt = goal.trim() || (continuation ? CONTINUE_TASK_PROMPT : '');
+      const prompt = goal.trim() || (images.items.length ? '请分析上传的图片' : continuation ? CONTINUE_TASK_PROMPT : '');
       if (prompt === '') {
         setStartError('Enter a goal for the task.');
         return;
@@ -206,8 +238,13 @@ export function AgentTaskPanel({
         return;
       }
       setStarting(true);
+      submissionScope.submitted=false;
+      submissionScope.pending=true;
       onSubmissionPendingChange?.(true);
       setStartError(null);
+      const local=()=>!images.signal.aborted;
+      const current=()=>local()||(submissionScope.submitted&&isSubmissionScopeActive?.()===true);
+      const accept=(snapshot:AgentTaskSnapshot)=>{if(local()&&(snapshot.conversationId??null)===(conversationId??null)){setGoal('');images.clear();}onTaskAccepted(snapshot);};
       const probe = async (taskId: string): Promise<Probe> => {
         try {
           const found = await getAgentTask(projectId, taskId);
@@ -224,25 +261,31 @@ export function AgentTaskPanel({
       try {
         const storedId = readAgentTaskId(userId, projectId);
         if (storedId !== null) {
+          submissionScope.submitted=true;
           // A previous start may have landed without its response reaching this
           // browser: ask about the SAME task id before ever creating a second one.
           const existing = await probe(storedId);
+          if(!current())return;
           if (existing.kind === 'found') {
             if (!isAgentTaskOccupying(existing.task.state)) clearAgentTaskId(userId, projectId, storedId);
-            setGoal('');
-            onTaskAccepted(existing.task);
+            accept(existing.task);
             return;
           } else if (existing.kind === 'missing') {
             // Provably never created: the stored id is free for reuse-free restart.
             clearAgentTaskId(userId, projectId, storedId);
+            submissionScope.submitted=false;
           } else {
-            setStartError('Could not verify the previous task. Try again in a moment.');
+            if(local())setStartError('Could not verify the previous task. Try again in a moment.');
             return;
           }
         }
+        if(!local())return;
+        const attachmentIds=images.items.length?await images.upload():[];
+        if(!local())return;
         const taskId = generateAgentTaskId();
         // Durable BEFORE the request: a lost response still reconciles this task.
         storeAgentTaskId(userId, projectId, taskId, conversationId);
+        submissionScope.submitted=true;
         let snapshot: AgentTaskSnapshot;
         try {
           const request = {
@@ -250,16 +293,18 @@ export function AgentTaskPanel({
             prompt,
             expectedWorkspaceRevision: revision,
             reasoningEffort,
+            ...(attachmentIds.length?{attachmentIds}:{}),
           };
           snapshot = conversationId === undefined ? await submitAgentTask(projectId, request) : await submitConversationTask(projectId, conversationId, request);
         } catch (submitError) {
+          if(!current())return;
           // The start response was lost: query the ORIGINAL task id — a second
           // task is never generated for the same intent.
           const recovered = await probe(taskId);
+          if(!current())return;
           if (recovered.kind === 'found') {
             if (!isAgentTaskOccupying(recovered.task.state)) clearAgentTaskId(userId, projectId, taskId);
-            setGoal('');
-            onTaskAccepted(recovered.task);
+            accept(recovered.task);
             return;
           }
           if (recovered.kind === 'missing') {
@@ -267,17 +312,17 @@ export function AgentTaskPanel({
           }
           throw submitError;
         }
+        if(!current())return;
         if (!isAgentTaskOccupying(snapshot.state)) clearAgentTaskId(userId, projectId, taskId);
-        setGoal('');
-        onTaskAccepted(snapshot);
+        accept(snapshot);
       } catch (error) {
-        setStartError(agentTaskStartErrorMessage(error));
+        if(local())setStartError(agentTaskStartErrorMessage(error));
       } finally {
-        setStarting(false);
-        onSubmissionPendingChange?.(false);
+        if(local())setStarting(false);
+        if(submissionScope.pending){submissionScope.pending=false;submissionScope.callback?.(false);}
       }
     },
-    [canStart, continuation, goal, reasoningEffort, onTaskAccepted, projectId, queryClient, userId, conversationId, onSubmissionPendingChange],
+    [canStart, continuation, goal, reasoningEffort, onTaskAccepted, projectId, queryClient, userId, conversationId, onSubmissionPendingChange,isSubmissionScopeActive,images,submissionScope],
   );
 
   const occupying = task !== null && isAgentTaskOccupying(task.state);
@@ -309,7 +354,7 @@ export function AgentTaskPanel({
             {displayTask.failureCode === 'AI_LENGTH_LIMIT' ? <p className="text-destructive">模型响应达到输出上限，本条内容可能不完整</p> : null}
             {!fullHistory && displayTask.summary !== null ? <AssistantMarkdown text={displayTask.summary} /> : null}
             {displayTask.failureCode !== null ? (
-              <p className="text-destructive">{displayTask.failureCode}</p>
+              <p className="text-destructive">{imageFailureMessages[displayTask.failureCode]??displayTask.failureCode}</p>
             ) : null}
             {!fullHistory && displayTask.progress.length > 0 ? (
               <div>
@@ -385,10 +430,14 @@ export function AgentTaskPanel({
             id="agent-task-goal"
             value={goal}
             onChange={(event) => setGoal(event.target.value)}
+            onPaste={event=>{if(imageEnabled&&!starting&&event.clipboardData.files.length){event.preventDefault();images.select(event.clipboardData.files);}}}
+            onDragOver={event=>{if(imageEnabled)event.preventDefault();}}
+            onDrop={event=>{if(imageEnabled&&!starting){event.preventDefault();images.select(event.dataTransfer.files);}}}
             disabled={occupying || starting}
             rows={4}
             className="min-h-16 w-full resize-y rounded-md border bg-background p-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-64"
           />
+          {imageEnabled?<ImageAttachments images={images} disabled={!canStart}/>:null}
           <div className="manao-ai-composer-toolbar">
             <div className="manao-ai-composer-settings">
               <ReasoningEffortPicker value={reasoningEffort} disabled={occupying || starting || submissionBlocked || admissionUnknown} active={uiActive} onChange={setReasoningEffort} />

@@ -106,7 +106,7 @@ describe("worker project tools", () => {
   it("registers the six backend-mediated tools, each sequential", () => {
     const backend = backendStub();
     const tools = createProjectTools({ backend: backend as never, taskId: "task-1", getRevision: () => "7" });
-    expect(tools.map((tool) => tool.name)).toEqual(["list_files", "read_file", "write_file", "build", "application", "app_http_get"]);
+    expect(tools.map((tool) => tool.name)).toEqual(["read_image", "list_files", "read_file", "write_file", "build", "application", "app_http_get"]);
     for (const tool of tools) {
       expect(tool.executionMode).toBe("sequential");
     }

@@ -43,6 +43,10 @@ public final class WorkspacePathPolicy {
             Path realRoot = resolved;
             for (String segment : segments) {
                 resolved = resolved.resolve(segment);
+                if (Files.exists(resolved, LinkOption.NOFOLLOW_LINKS)
+                    && resolved.toRealPath().startsWith(realRoot.resolve(INTERNAL_DIRECTORY))) {
+                    throw new InvalidPathException("path is internal to the workspace service");
+                }
                 if (Files.exists(resolved, LinkOption.NOFOLLOW_LINKS) && !Files.isSymbolicLink(resolved)) {
                     if (!resolved.toRealPath().startsWith(realRoot)) {
                         throw new InvalidPathException("path escapes the project directory");

@@ -19,6 +19,7 @@ export interface PiModelConfig {
   baseUrl: string;
   model: string;
   apiKey: string;
+  imageInput?: boolean;
 }
 
 export interface WorkerPaths {
@@ -118,8 +119,9 @@ export function readModelConfig(env: NodeJS.ProcessEnv): PiModelConfig | null {
     baseUrl: optional(env, "MANAO_AI_BASE_URL"),
     model: optional(env, "MANAO_AI_MODEL"),
     apiKey: optional(env, "MANAO_AI_API_KEY"),
+    imageInput: optional(env, "MANAO_AI_IMAGE_INPUT") === "true",
   };
-  if (Object.values(model).every((value) => value === "")) {
+  if ([model.provider,model.apiType,model.baseUrl,model.model,model.apiKey].every((value) => value === "")) {
     return null;
   }
   return model;

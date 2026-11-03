@@ -27,4 +27,4 @@ export async function getConversationHistory(projectId: string, conversationId: 
   return parseHistoryPage(await getHttpClient().request(`${url(projectId, conversationId)}/entries?${query}`, { signal }));
 }
 export async function submitConversationTask(projectId: string, conversationId: string, request: SubmitAgentTaskRequest) { return parseAgentTaskSnapshot(await getHttpClient().request(`${url(projectId, conversationId)}/tasks`, { method: 'POST', body: request })); }
-export async function compactAgentConversation(projectId: string, conversationId: string, request: { requestId: string; expectedHeadSeq: number }) { return parseConversationView(await getHttpClient().request(`${url(projectId, conversationId)}/compact`, { method: 'POST', body: request })); }
+export async function compactAgentConversation(projectId: string, conversationId: string, request: { requestId: string; expectedHeadSeq: number }) { return parseConversationView(await getHttpClient().request(`${url(projectId, conversationId)}/compact`, { method: 'POST', body: { requestId: request.requestId, expectedHeadSeq: request.expectedHeadSeq } })); }

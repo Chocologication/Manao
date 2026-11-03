@@ -14,6 +14,7 @@ import { isDeepStrictEqual } from "node:util";
 import { LIVE_OUTPUT_MAX_BYTES, type LiveSnapshot } from "./live-output.js";
 import { CONTEXT_PAGE_BYTES, type ContextPage, type ContextAppend, type CompactStart, type CompactResult } from "./conversation-context.js";
 import type { TerminalAck } from "./report-identity.js";
+import type { AttachmentRef, AttachmentPage } from "./image-context.js";
 
 export interface ToolRequest {
   toolCallId: string;
@@ -125,6 +126,26 @@ export interface InvokeOptions {
 }
 
 export class BackendClient {
+  private async imageResponse(taskId: string, suffix: string, signal?: AbortSignal): Promise<Response> {
+    const response = await this.transport(this.baseUrl + "/internal/ai/tasks/" + encodeURIComponent(taskId) + "/attachments" + suffix,
+      { method: "GET", headers: this.headers(), signal: signal ? AbortSignal.any([signal,AbortSignal.timeout(REQUEST_TIMEOUT_MS)]) : AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
+    if (response.ok) return response;
+    const parsed = await safeJson(response);
+    const code = ["AI_ATTACHMENT_EXPIRED","AI_ATTACHMENT_NOT_FOUND","AI_EPOCH_MISMATCH","AI_INSTANCE_MISMATCH"].includes(String(parsed?.code)) ? String(parsed?.code) : "AI_ATTACHMENT_UNAVAILABLE";
+    throw new BackendHttpError(response.status,code,code);
+  }
+  async imageCatalog(taskId: string, cursor?: string, signal?: AbortSignal): Promise<AttachmentPage> {
+    return await (await this.imageResponse(taskId,cursor ? "?cursor="+encodeURIComponent(cursor) : "",signal)).json() as AttachmentPage;
+  }
+  async imageMetadata(taskId: string, id: string, signal?: AbortSignal): Promise<AttachmentRef> {
+    return await (await this.imageResponse(taskId,"/"+encodeURIComponent(id),signal)).json() as AttachmentRef;
+  }
+  async imageContent(taskId: string, id: string, signal?: AbortSignal): Promise<{bytes:Uint8Array;mimeType:string}> {
+    const response=await this.imageResponse(taskId,"/"+encodeURIComponent(id)+"/content",signal);
+    const bytes=new Uint8Array(await response.arrayBuffer());
+    if(bytes.byteLength>10_000_000)throw new BackendHttpError(0,"AI_ATTACHMENT_UNAVAILABLE","Image unavailable");
+    return {bytes,mimeType:response.headers.get("Content-Type")??"application/octet-stream"};
+  }
   private readonly baseUrl: string;
   private readonly token: string;
   private readonly instanceId: string;

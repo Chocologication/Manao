@@ -37,6 +37,27 @@ import org.springframework.core.env.Environment;
 @EnableConfigurationProperties(AiConfig.AiProperties.class)
 public class AiConfig {
 
+    @Bean
+    @Conditional(AiEnabledCondition.class)
+    com.manao.poc4.ai.AgentAttachmentReconciler agentAttachmentReconciler(com.manao.poc4.ai.AgentAttachmentService attachments) {
+        return new com.manao.poc4.ai.AgentAttachmentReconciler(attachments);
+    }
+
+    @Bean
+    @Conditional(AiEnabledCondition.class)
+    com.manao.poc4.ai.AgentAttachmentStore agentAttachmentStore(org.springframework.jdbc.core.JdbcTemplate jdbc,
+        org.springframework.transaction.PlatformTransactionManager transactions) {
+        return new com.manao.poc4.ai.AgentAttachmentStore(jdbc, transactions, Clock.systemUTC());
+    }
+
+    @Bean
+    @Conditional(AiEnabledCondition.class)
+    com.manao.poc4.ai.AgentAttachmentService agentAttachmentService(com.manao.poc4.ai.AgentAttachmentStore store,
+        com.manao.poc4.workspace.WorkspaceAgent agent, ProjectLifecycleGate gate, PiWorkerClient worker) {
+        return new com.manao.poc4.ai.AgentAttachmentService(store,agent,gate,Clock.systemUTC(),
+            () -> { var status=worker.processStatus();return status.modelConfigured() && status.imageInput(); });
+    }
+
     @ConfigurationProperties(prefix = "manao.poc4.ai", ignoreUnknownFields = false)
     // projectId is accepted for existing deployments only; it no longer limits task admission.
     public record AiProperties(boolean enabled, String projectId, Worker worker, Internal internal) {
@@ -108,8 +129,9 @@ public class AiConfig {
     @Conditional(AiEnabledCondition.class)
     AgentProjectTools agentProjectTools(AgentTaskStore tasks, WorkspaceStore store, WorkspaceService workspace,
                                         WorkspaceOperationService operations, ProjectLifecycleGate lifecycle,
-                                        DevelopmentBuildExecutor builds, AgentApplicationTools application) {
-        return new AgentProjectTools(tasks, store, workspace, operations, lifecycle, builds, application);
+                                        DevelopmentBuildExecutor builds, AgentApplicationTools application,
+                                        com.manao.poc4.ai.AgentAttachmentService attachments) {
+        return new AgentProjectTools(tasks, store, workspace, operations, lifecycle, builds, application,attachments);
     }
 
     @Bean
@@ -125,8 +147,9 @@ public class AiConfig {
     @Bean
     @Conditional(AiEnabledCondition.class)
     com.manao.poc4.ai.AgentConversationStore agentConversationStore(org.springframework.jdbc.core.JdbcTemplate jdbc,
-            org.springframework.transaction.PlatformTransactionManager transactions, AgentTaskStore tasks) {
-        return new com.manao.poc4.ai.AgentConversationStore(jdbc, transactions, Clock.systemUTC(), tasks);
+            org.springframework.transaction.PlatformTransactionManager transactions, AgentTaskStore tasks,
+            com.manao.poc4.ai.AgentAttachmentService attachments) {
+        return new com.manao.poc4.ai.AgentConversationStore(jdbc, transactions, Clock.systemUTC(), tasks,attachments);
     }
 
     @Bean

@@ -191,6 +191,27 @@ public final class WorkspaceApiClient implements WorkspaceAgent {
             text(node, "beforeSha256"), text(node, "afterSha256"));
     }
 
+    @Override public AttachmentMeta putAttachment(String projectId,String id,String sha,long expiresAt,byte[] bytes) {
+        return attachmentMeta(sendJson(projectId,"PUT",attachmentPath(id)+"?sha256="+encode(sha)+"&expiresAt="+expiresAt,bytes));
+    }
+    @Override public AttachmentMeta confirmAttachment(String projectId,String id) {
+        return attachmentMeta(sendJson(projectId,"GET",attachmentPath(id),null));
+    }
+    @Override public byte[] openAttachment(String projectId,String id,String sha,long expiresAt) {
+        String path=attachmentPath(id)+"/content?sha256="+encode(sha)+"&expiresAt="+expiresAt;
+        var response=send(projectId,requestBuilder(projectId,"GET",path,null).GET().build(),"GET",path);
+        if(response.statusCode()!=200)throw error(response);return response.body();
+    }
+    @Override public void deleteAttachment(String projectId,String id) { sendJson(projectId,"DELETE",attachmentPath(id),null); }
+    private static String attachmentPath(String id) {
+        try { if(!java.util.UUID.fromString(id).toString().equals(id))throw new IllegalArgumentException(); }
+        catch(Exception ex){throw new WorkspaceAgentException(422,"VALIDATION_ERROR","Invalid attachment ID");}
+        return "/agent/v1/attachments/"+id;
+    }
+    private static AttachmentMeta attachmentMeta(JsonNode node) {
+        return new AttachmentMeta(text(node,"attachmentId"),text(node,"sha256"),node.path("sizeBytes").asLong(),node.path("expiresAt").asLong());
+    }
+
     private JsonNode get(String projectId, String pathAndQuery, String param, String value) {
         HttpRequest request = requestBuilder(projectId, "GET", pathAndQuery + "?" + param + "=" + encode(value), null)
             .GET().build();

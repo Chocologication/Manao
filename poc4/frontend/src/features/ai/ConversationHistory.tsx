@@ -7,6 +7,7 @@ import { ToolResultView } from './AgentTaskPanel';
 import { useConversationHistory, useConversationTask } from './agentConversationQueries';
 import { AssistantMarkdown } from './AssistantMarkdown';
 import { ThinkingBlock } from './ThinkingBlock';
+import { AttachmentPreview } from './ImageAttachments';
 import type { LiveSnapshot } from './agentLiveOutput';
 import { useAgentLiveOutput } from './useAgentLiveOutput';
 
@@ -117,6 +118,7 @@ function HistoryComposition(props: ConversationHistoryProps) {
         : row.kind === 'thinking' ? <ThinkingBlock text={row.text} active={false} incomplete={row.partial} initialChoice={visible.promoted?.seq === row.seq ? visible.promoted.choices[row.contentIndex] : undefined} />
         : <pre className="manao-ai-message-text">{row.text}</pre>}
       {row.modelTruncated ? <div className="manao-ai-message-warning">模型响应达到输出上限，本条内容可能不完整</div> : null}
+      {row.attachments?.map(attachment=><AttachmentPreview key={attachment.attachmentId} userId={props.userId} projectId={props.projectId} conversationId={props.conversationId} attachment={attachment}/>)}
       {row.kind === 'tool_result' && row.taskId !== null && row.toolCallId !== null ? <HistoryTool key={JSON.stringify([props.userId, props.projectId, props.conversationId, row.key])} {...props} taskId={row.taskId} toolCallId={row.toolCallId} /> : null}
     </article>)}
     {draft ? <article aria-label="实时预览" data-task-id={visible.snapshot!.taskId} data-message-ordinal={draft.messageOrdinal} className="manao-ai-message manao-ai-message-assistant">

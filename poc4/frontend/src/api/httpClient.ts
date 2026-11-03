@@ -43,6 +43,7 @@ const API_ERROR_CODES: ReadonlySet<string> = new Set([
   'AI_TASK_ACTIVE',
   'AI_TASK_MISMATCH',
   'AI_TASK_NOT_FOUND',
+  'AI_ATTACHMENT_TOO_LARGE','AI_ATTACHMENT_EXPIRED','AI_ATTACHMENT_UNAVAILABLE','AI_ATTACHMENT_NOT_FOUND','AI_ATTACHMENT_CONFLICT','AI_IMAGE_INPUT_DISABLED',
   // Account lifecycle fixed error codes (design section 9).
   'CAPTCHA_INVALID',
   'EMAIL_CODE_INVALID',
@@ -62,6 +63,7 @@ export type HttpClientOptions = {
 };
 
 export type HttpRequestOptions = {
+  onResponse?: (response:Response)=>void;
   method?: string;
   body?: unknown;
   auth?: boolean;
@@ -113,17 +115,19 @@ export class HttpClient {
   async request<T = unknown>(url: string, options: HttpRequestOptions = {}): Promise<T> {
     const headers = new Headers();
     headers.set('Accept', 'application/json');
-    if (options.body !== undefined) {
+    const form = options.body instanceof FormData;
+    if (options.body !== undefined && !form) {
       headers.set('Content-Type', 'application/json');
     }
     const response = await this.send(url, {
       method: options.method ?? 'GET',
       headers,
-      body: options.body === undefined ? undefined : JSON.stringify(options.body),
+      body: options.body === undefined ? undefined : form ? options.body as FormData : JSON.stringify(options.body),
       auth: options.auth,
       signal: options.signal,
       suppressUnauthorized: options.suppressUnauthorized,
     });
+    options.onResponse?.(response);
     return readSuccessBody<T>(response);
   }
 
@@ -163,7 +167,7 @@ export class HttpClient {
     options: {
       method: string;
       headers: Headers;
-      body?: string;
+      body?: BodyInit;
       auth?: boolean;
       signal?: AbortSignal;
       suppressUnauthorized?: boolean;

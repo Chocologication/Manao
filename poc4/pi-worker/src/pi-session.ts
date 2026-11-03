@@ -32,12 +32,13 @@ import type { AssistantMessage } from "@earendil-works/pi-ai";
 // stage-one acceptance deployment on 2026-10-15, where the task hung silently
 // because the resulting terminal could not be reported either.
 import "@earendil-works/pi-ai/compat";
-import type { BackendClient, ProgressChain } from "./backend-client.js";
+import { BackendHttpError, type BackendClient, type ProgressChain } from "./backend-client.js";
 import { PROGRESS_TEXT_MAX_BYTES } from "./backend-client.js";
 import { modelConfigProblems, type PiModelConfig, type WorkerBudgets, type WorkerPaths } from "./config.js";
 import { createProjectTools, TOOL_NAMES } from "./project-tools.js";
 import { COMPACTION_SETTINGS, CONTEXT_WINDOW, ConversationContext, needsCompaction, type CompactStart, type CompactResult } from "./conversation-context.js";
 import { LiveOutput } from "./live-output.js";
+import { installImageContext } from "./image-context.js";
 
 /** Server-owned task budgets; tool/build limits raised by user instruction on 2026-10-18. */
 export const DEFAULT_BUDGETS: WorkerBudgets = { wallClockSeconds: 1800, toolCalls: 180, builds: 20 };
@@ -56,7 +57,7 @@ const MAX_PROGRESS_TEXT_BYTES = PROGRESS_TEXT_MAX_BYTES;
  * steps — the model plans its own rounds from the tool results.
  */
 const SYSTEM_PROMPT = [
-  "You are the Manao coding agent working on ONE user project through six mediated tools.",
+  "You are the Manao coding agent working on ONE user project through seven mediated tools.",
   "",
   "Goal: complete the user's task inside the project and report what you changed.",
   "",
@@ -64,7 +65,10 @@ const SYSTEM_PROMPT = [
   "Manao workspace; build runs one fixed goal (compile, test or package) on an isolated read-only",
   "copy and returns the real exit result with bounded diagnostics. application starts, stops, observes",
   "and reads persisted logs for this project's application; app_http_get performs a bounded GET",
-  "on the current ready application and returns the real status and body. You have no other tools, no",
+  "on the current ready application and returns the real status and body. read_image reads a conversation image by attachmentId;",
+  "read_image({}) lists the first attachment page and read_image({cursor}) fetches subsequent pages.",
+  "Use the current attachment catalog to rediscover originals after compaction. Expired images require a new upload.",
+  "Image errors are explicit; a successful reference alone is not proof that image content reached the provider. You have no other tools, no",
   "shell, and no direct filesystem access.",
   "",
   "Limits: files are capped at 128 KiB; the tool answers are bounded; a non-zero build exit code",
@@ -220,7 +224,7 @@ export async function createPiSession(options: {
   const beforePrompt = async (prompt: string) => {
     // _prepareRun checks the old assistant usage before it inserts the new prompt.
     // Account for the pending trigger and initial system/tool declaration while idle.
-    let pending = estimateTokens({ role: "user", content: prompt, timestamp: Date.now() });
+    let pending = estimateTokens({ role: "user", content: prompt, timestamp: Date.now() }) + (images ? await images.pendingTokens() : 0);
     if (!session.sessionManager.buildSessionContext().messages.some((message) => message.role === "system")) {
       pending += estimateTokens({ role: "system", content: session.systemPrompt, timestamp: Date.now(),
         toolsAdded: session.agent.state.tools.map(({ name, description, parameters }) => ({ name, description, parameters })) });
@@ -267,8 +271,9 @@ export async function createPiSession(options: {
     return prepared || undefined;
   };
 
+  const images = context ? installImageContext(session,backend,taskId,() => deps?.now?.() ?? Date.now(),model.imageInput===true,code=>{fatalToolCode??=code;}) : undefined;
   return new DefaultPiTaskSession(taskId, session, customTools, progress, budgets, () => deps?.now?.() ?? Date.now(), () => fatalToolCode,
-    context ? flush : undefined, saveFinal, beforePrompt, () => { if (compactionFailed) refuseOversizedContext(); }, live, unsubscribeLive);
+    context ? flush : undefined, saveFinal, beforePrompt, () => { if (compactionFailed) refuseOversizedContext(); }, live, () => { unsubscribeLive?.(); images?.dispose(); });
 }
 
 /** Idle-only native summary. This session has no prompt and no project tool authority. */
@@ -339,7 +344,7 @@ async function buildModelRuntime(model: PiModelConfig, agentDir: string): Promis
           thinkingLevelMap: { minimal: null, low: "low", medium: null, high: "high", max: "max" },
           contextWindow: CONTEXT_WINDOW,
           maxTokens: 8192,
-          input: ["text"],
+          input: model.imageInput ? ["text","image"] : ["text"],
           cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
         }],
       },
@@ -512,7 +517,7 @@ class DefaultPiTaskSession implements PiTaskSession {
       return {
         state: "FAILED",
         summary: bounded.text,
-        failureCode: "AI_PROVIDER_ERROR",
+        failureCode: promptError instanceof BackendHttpError && ["AI_IMAGE_REQUEST_TOO_LARGE","AI_IMAGE_CONTEXT_TOO_LARGE","AI_IMAGE_INPUT_DISABLED","AI_ATTACHMENT_EXPIRED","AI_ATTACHMENT_UNAVAILABLE","AI_ATTACHMENT_NOT_FOUND"].includes(promptError.code) ? promptError.code : "AI_PROVIDER_ERROR",
         reason: promptError instanceof Error ? promptError.message : "the prompt run failed",
       };
     }

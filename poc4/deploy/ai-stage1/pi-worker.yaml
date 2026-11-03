@@ -87,6 +87,13 @@ spec:
             capabilities:
               drop: ["ALL"]
           env:
+            # Optional, explicitly verified vision configuration; absent means text-only.
+            - name: MANAO_AI_IMAGE_INPUT
+              valueFrom:
+                secretKeyRef:
+                  name: manao-pi-worker-model
+                  key: image-input
+                  optional: true
             - name: MANAO_AI_WORKER_PORT
               value: "18090"
             - name: MANAO_AI_INSTANCE_ID

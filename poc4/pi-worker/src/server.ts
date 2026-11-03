@@ -446,7 +446,7 @@ export function createTaskServer(config: WorkerConfig, deps: ServerDeps = {}): T
   /** The boot/slot snapshot for GET /status: no prompts, no keys, no model bodies. */
   function statusSnapshot(): {
     bootId: string; instanceId: string; activeTaskId: string | null;
-    activeExecutionState: string | null; activeKind: "task" | "compact" | null; modelConfigured: boolean;
+    activeExecutionState: string | null; activeKind: "task" | "compact" | null; modelConfigured: boolean; imageInput: boolean;
   } {
     const activeRecord = active?.kind === "task" ? tasks.get(active.taskId) : undefined;
     return {
@@ -458,6 +458,7 @@ export function createTaskServer(config: WorkerConfig, deps: ServerDeps = {}): T
         : null,
       activeKind: active?.kind ?? null,
       modelConfigured: config.model !== null && modelConfigProblems(config.model).length === 0,
+      imageInput: config.model?.imageInput === true && modelConfigProblems(config.model).length === 0,
     };
   }
 

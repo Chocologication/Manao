@@ -91,7 +91,7 @@ describe("fixed-window native Pi compaction", () => {
     const programming = JSON.stringify(f.requests.find((request) => !request.summary)!.context);
     expect(programming).toContain(summary); expect(programming).toContain("新目标必须遵守 bookId。");
     expect(programming).toContain("最近目标：继续查询接口。");
-    expect(programming).toContain("six mediated tools"); expect(programming).toContain("app_http_get");
+    expect(programming).toContain("seven mediated tools"); expect(programming).toContain("app_http_get");
     expect(f.entries.slice(0, original.length)).toEqual(original);
     expect(f.backend.invoke).not.toHaveBeenCalled();
     f.pi.dispose();

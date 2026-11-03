@@ -1,6 +1,6 @@
 # AI 图片输入与 24 小时清理实施计划
 
-> **状态：调研后的实施讨论稿。** 本次只新增计划文档，没有修改业务代码、部署服务或调用付费模型。
+> **状态：2026-11-02 经 codebase-design 及独立复核补齐，可交给实现 agent 执行。** 这是计划就绪结论，不是功能或测试通过；本轮未修改业务代码、部署服务或调用付费模型。
 > **For agentic workers:** 实施获得授权后，使用 `superpowers:executing-plans` 按任务执行；本文件中的步骤当前均未执行。
 
 **Goal:** 用户在 AI 对话中上传图片，模型能实际读取并分析；图片从上传起 24 小时后失效并回收，压缩上下文不影响未过期原图的再次读取。
@@ -10,6 +10,8 @@
 **Tech Stack:** 现有 React/TypeScript、Spring Boot、MySQL/Flyway、Kubernetes workspace PVC、`@earendil-works/pi-*` 1.2.0、DeepSeek OpenAI-compatible Chat Completions。
 
 **Spec:** 本文第 1–4 节为本轮需求与设计依据；与用户本轮答复冲突时，以用户答复为准。
+
+> **本轮执行记录：** 原调研、复核稿与实施清单保留；2026-11-02 的最终本地实施/验证状态见第 8 节及[验收记录](../../../poc4/docs/evidence/ai-image-input/acceptance.md)。外部模型、PVC 和发布验收仍为 NOT_RUN。
 
 ## 1. 已确认需求与范围
 
@@ -37,7 +39,7 @@
 | 上传入口 | 文件选择、粘贴截图、拖放复用一个处理函数；本地预览，点击发送才上传 |
 | 纯图片消息 | 允许；服务端规范化为固定默认目标“请分析上传的图片”，然后参与原有幂等摘要 |
 
-不增加：对象存储、新 PVC、缩略图服务、图片编辑器、独立 OCR 模型、跨项目附件库、跨用户去重、通用 provider 框架。新增的 `read_image` 只接受当前会话已发送附件的 ID，不接受任意文件路径或 URL。
+不增加：对象存储、新 PVC、缩略图服务、图片编辑器、独立 OCR 模型、跨项目附件库、跨用户去重、通用 provider 框架。只新增 `read_image` 一个工具：接受当前会话的附件 ID，或分页目录游标；不接受任意文件路径或 URL。
 
 ## 2. 当前代码事实与外部能力
 
@@ -99,7 +101,7 @@ Pi 1.2.0 原生 `ImageContent` 仅含 Base64，没有 file_id 字段，但公开
 | 方案 | 判断 |
 | --- | --- |
 | Base64 放任务 JSON 或会话数据库 | 表面改动少，但触碰现有限额，放大会话恢复流量，也难在 24 小时后清除所有副本，不采用 |
-| 项目 PVC 保存文件，历史保存引用，模型请求时读取 | **推荐**；复用既有项目隔离和生命周期，增加一条受限附件链路 |
+| 项目 PVC 保存文件，历史保存引用，模型请求时读取 | **用户已确认**；本次唯一存储方案，复用既有项目隔离和生命周期 |
 | 只用 DeepSeek Files API | 上传一次、24 小时自动过期、发送 file_id 很方便；但目前缺少原图下载/预览的公开契约，暂不能完整满足历史预览 |
 | PVC + DeepSeek Files API | 可保留预览并减少给模型重复传图，但同时维护两份文件和两套期限；第一版不采用 |
 
@@ -145,13 +147,55 @@ Pi 1.2.0 原生 `ImageContent` 仅含 Base64，没有 file_id 字段，但公开
 
 压缩只缩短模型当前上下文，不删除附件，也不决定原图是否可用：
 
-1. 后端保留当前会话的附件目录，与 Pi 的压缩摘要分开。模型请求前提供轻量目录，含所属消息 ID、顺序/时间、文件名、附件 ID 和期限；必要的定位文本只取用户原文的简短片段，不重放整条历史，不生成 OCR 或图片摘要。目录不包含图片字节，不需要模型从摘要猜 ID。
-2. 增加一个只读工具 `read_image({ attachmentId })`。用户说“再看一下之前那张图”时，AI 从目录选取对应图片；后端校验当前 task 的 owner/project/conversation、附件已发送且未过期后返回受控引用，随后出站转换才读取图片字节，避免工具与转换阶段重复读图。
+1. 后端保留当前会话的附件目录，与 Pi 的压缩摘要分开。模型请求前只提供最新一页有效目录和 `nextCursor`，按 `(uploadedAt, attachmentId)` 倒序稳定分页；每页最多 50 条且序列化不超过 16 KiB。这是单次响应预算，不是上传张数限制。显示文件名和定位片段各最多 80 个字符；保留完整 ID/期限，不静默丢弃后续页面。
+2. 仍只新增一个只读工具：`read_image({ attachmentId })` 返回受控引用；`read_image({ cursor })` 返回后续目录，`read_image({})` 返回第一页，两参数不能同时传。目录只含已发送的当前会话图片；后端校验 task 的 owner/project/conversation，游标也只能用于本会话。真正的图片字节留到出站转换读取，不在工具执行时重复读图。
 3. 工具的持久化结果仍只有附件引用和可用性。出站转换才加入图片内容块，防止工具结果把 Base64 再写进原生历史。重读不改变 workspace revision，不重置 TTL，不触发上传。
 4. 每次模型请求依据当前有效期重建目录和图片投影；压缩摘要是否提及图片、worker 是否重启都不影响发现和读取。手动压缩本身不执行图片读取工具。
 5. 图片到期后工具返回明确失效结果；只有这时要求重新上传。存储故障与文件损坏显示不可用，不能伪装过期。
 
 这只增加一个受限工具和一份现有附件表的元数据投影，不建设检索系统，也不每轮把整个历史的图片重新发送。正常会话摘要仍可能保留已发聊天回复中的分析结论；不另建图片摘要缓存。
+
+### 3.5 实现约定：Module、Interface 与 Seam
+
+按 `codebase-design` 复核，本增量集中在以下三个 Module；文件是内部实现划分，不为每个步骤创建一层转发类。
+
+| Module | Interface 必须承诺的行为 | Seam 与测试面 |
+| --- | --- | --- |
+| Attachment lifecycle（后端 `AgentAttachmentService`） | 上传确认、授权、固定期限、消息关联、目录/内容读取与过期回收；调用方不自行计算 TTL 或拼磁盘路径 | Controller、任务事务、工具分派和清理调度都调用同一 Interface；注入 Clock、数据库与已有 WorkspaceAgent Adapter |
+| Image context（worker `image-context.ts`） | 在一次模型请求中组合附件目录、受控引用、图片字节和有效期检查；保证不修改原生持久化历史 | 包装已有 Pi hooks，注入后端读取与 Clock；测试从会话恢复/工具结果到 mock provider 实际 payload |
+| Image attachments（前端附件 Module） | 本地选图、上传确认、预览、作用域取消、过期与 Object URL 释放 | Composer 和历史展示共享附件客户端与预览逻辑；通过认证 HTTP Interface 和用户操作测试 |
+
+- **Locality：** `expiresAt = uploadedAt + 24h` 只在首次登记上传时生成；所有授权和当前可用性判断集中在 Attachment lifecycle。浏览器只按服务端时间展示，worker 在实际发送前复核；这些不是各自独立的保留策略。
+- **Depth：** 上传超时后的确认、同 ID 不同内容冲突、文件缺失、清理重试都藏在 Attachment lifecycle 的 Interface 后面。`AgentAttachmentStore` 只是内部持久化实现，其他调用方不越过 Module 直接查其表。
+- **不增加 hypothetical Seam：** 已有 `WorkspaceAgent`/`WorkspaceApiClient` 与测试 Adapter 足够。不引入 `StorageProvider` 工厂、Files API Adapter 或单实现策略层。源码调整以新增附件能力为限，不拆分整个 AI Module。
+- **依赖与装配：** Task 1 同时更新 `WorkspaceAgentConfig`、`WorkspaceConfig`、现有 WorkspaceAgent 测试 Adapter；Task 3 同时更新 `AiConfig`、worker 工具白名单、参数校验、错误映射和前端工具结果投影。不能只新增类而遗漏运行配置。
+
+Attachment lifecycle 的 Interface 使用小型、稳定的数据记录：
+
+```text
+AttachmentRef = { attachmentId, filename, mimeType, sizeBytes, sha256, uploadedAt, expiresAt }
+AttachmentPage = { items: AttachmentRef[], nextCursor: string | null }
+upload(ownerScope, attachmentId, source) -> confirmed metadata or explicit pending/conflict
+describe(scope, attachmentId) -> metadata + availability
+catalog(taskIdentity, cursor) -> AttachmentPage
+open(scope, attachmentId) -> verified bytes + metadata; recheck expiry at read time
+bindWithinTaskTransaction(taskId, orderedIds) -> immutable refs
+reapExpired(batchSize) -> counts of confirmed deletion and retryable failure
+```
+
+`ownerScope` 从登录身份和路由项目/会话生成；`taskIdentity` 从受验证的 task/epoch/instance 生成，不由模型提供 owner。`bindWithinTaskTransaction` 参加现有项目行锁事务，与 task 和 `manao_user_request` 同提交/回滚，不另开一个先提交附件绑定的事务；磁盘网络 IO 放在短数据库事务之外。
+
+**错误合同：** 外来/不存在 ID 返回 404；单图超过 `10_000_000` bytes 返回 413；相同 ID 内容不同或尚未确认上传返回 409；已到期内容返回 410；存储不可达/损坏返回明确不可用，不能转为空图片或过期。工具调用返回对应安全错误数据，不把确定的失效结果变成 `NEEDS_ATTENTION`。旧工具回执仍可幂等重放，但出站读图必须再次执行当前授权与期限检查。
+
+**上传与删除竞争：** 数据库先登记不可变 ID/digest/期限；workspace-agent 在原子 rename 前再次检查同一期限，并在同一 ID 上串行处理写入/删除。远端成功但本地 ACK 丢失时查询文件元数据和 digest，确认后再标记完成，不创建新 ID。项目删除先禁止新登记，原项目 PVC 删除合同负责最终回收。
+
+状态只保留 `UPLOADING → READY → DELETING → DELETED`，未完成上传可直接进入 `DELETING`。可用必须同时满足 `READY` 和 `now < expiresAt`；绑定消息不增加新状态。仅在文件存在且 digest 相符后从 `UPLOADING` 确认 `READY`；到期或已开始删除不能恢复可用。删除在同 ID 写入完成或被期限拒绝后确认原图/临时文件均不存在，才记 `DELETED`。测试必须覆盖“rename 完成但 DB ACK 丢失”和“清理确认后迟到 rename”两条竞争。
+
+**受控引用合同：** `AttachmentRef` 固定增加 `kind: 'manao_image_ref'` 与 `version: 1`。只识别服务端写入的 `manao_user_request.details.attachments`，以及已确认 `read_image` 的 `ToolResult.data = { kind: 'image_reference', image: AttachmentRef }`；后者位于 Pi tool result 的 `details.data`。目录结果使用 `{ kind: 'image_catalog', items, nextCursor }`。不解析任意聊天文字/Markdown 内的 ID，工具 `content/details` 均不含 Base64，引用内自报的期限不能覆盖后端当前判定。
+
+**Image context Interface：** 安装一次 session hooks，内部统一完成目录分页投影、受控引用解析、当前状态读取、图片装配、预算和发送前到期检查，返回一个 dispose 方法；外部调用方不各写一套转换。先按元数据 `4 * ceil(sizeBytes / 3)` 预估实际出站图片块占用，超上游总量时在读二进制前明确拒绝；最终序列化后再核对。新增目录/图片投影计入 token 预算，不能仅凭旧 usage 判断安全。普通 prompt/工具续轮会装配图片，自动和手动压缩仅处理文字/引用，不读二进制或把 Base64 写入摘要；测试须穿过实际 Pi 压缩入口，不能仅 mock 掉 compact 方法。
+
+**可执行的最小回归序列：** 注入 Clock=t0 上传 A，t0+23h 绑定任务，期限仍为 t0+24h；压缩移出 A 的原消息，再从目录定位 A 并重读，mock provider 收到原图且全部持久化 JSON 无 Base64；推进至 t0+24h，浏览器/worker 读图均失效，同一已接受 task 的查询重试仍返回原任务，清理第一次失败后第二次确认删除。另测 `10_000_000` bytes 接受、`10_000_001` bytes 拒绝以及另一用户/项目/会话均不能读取 A。
 
 ## 4. 失效与清理合同
 
@@ -180,6 +224,8 @@ Pi 1.2.0 原生 `ImageContent` 仅含 Base64，没有 file_id 字段，但公开
 
 **文件：** 新增后端 `ai/AgentAttachmentController.java`、`AgentAttachmentService.java`、`AgentAttachmentStore.java`、`AgentAttachmentContracts.java`；新增 workspace-agent `WorkspaceAttachmentService.java` 与对应 controller；扩展 `WorkspaceAgent.java`、`WorkspaceApiClient.java`；新增下一编号 Flyway migration（当前应为 `V19__agent_attachments.sql`，实施时先核对）。
 
+**装配与测试：** 同步 `WorkspaceAgentConfig.java`、`WorkspaceConfig.java`、`WorkspaceCapabilityFilter.java`、后端 multipart 配置与 `poc4/frontend/deploy/nginx.conf`。通过 `WorkspaceApiClientTest`/transport 测试和真实 Spring 装配的附件 HTTP 测试验证 10 MB 文件能穿过 filter，大小上限外文件在完整缓冲前拒绝。
+
 - [ ] 先写单张 10 MB 边界、跨 owner/project/conversation、UUID 路径、符号链接、相同 ID 重试和不同 digest 冲突的失败测试。
 - [ ] 实现上传登记时固定 24 小时期限、二进制读写、原子落盘和结果确认；不添加转码、尺寸检测或容量预留。
 - [ ] 对附件路由在读入内存前限制单文件大小；现有 capability filter 会全量缓存请求，新增入口须先约束读取量。multipart 和 nginx body 限制需容纳 10 MB 文件及表单开销，不把合法的上限文件误拒绝。
@@ -191,6 +237,7 @@ Pi 1.2.0 原生 `ImageContent` 仅含 Base64，没有 file_id 字段，但公开
 
 - [ ] 先验证附件未上传完成、错误会话、已过期、已绑定另一任务均不能创建新任务。
 - [ ] 将附件关联和用户请求历史放进现有任务创建事务，固定附件顺序和内容 digest；验证发送晚于上传也不会延长 24 小时期限。
+- [ ] 调整现有 `@NotBlank prompt` 的校验顺序：只有“空文字 + 非空附件”先规范化为固定目标；纯文本空请求仍拒绝，非空纯文本保持原摘要规则。测试附件绑定或任务写入失败时二者同时回滚。
 - [ ] 扩展历史投影返回附件 ID/文件名/MIME/期限/当前可用性；不向浏览器暴露内部路径。
 - [ ] 交付验证：丢失提交响应后查询原任务可恢复；重复提交不重复绑定、不延长期限；无附件的历史请求摘要保持兼容；worker 启动前失败仍能显示用户已发送的图片消息。
 
@@ -198,11 +245,14 @@ Pi 1.2.0 原生 `ImageContent` 仅含 Base64，没有 file_id 字段，但公开
 
 **文件：** 新增 `poc4/pi-worker/src/image-context.ts` 及测试；修改 `pi-session.ts`、`project-tools.ts`、`backend-client.ts`、`config.ts`、必要的 worker 能力接口，以及后端内部附件目录/读取入口和 `AgentProjectTools.java` 的受限工具分派。
 
+**装配与测试：** `AiConfig.java` 注入 Attachment lifecycle；`read_image` 加入两端工具白名单、参数 schema、安全错误/浏览器投影，不加入 side-effect 集合。图片能力由 worker 已验证的模型配置报告，后端向前端提供同一事实；关闭时带图任务在登记前明确拒绝，旧纯文本路径可用。新增真实 Spring 内部 HTTP 合同测试验证 stale epoch/instance、其他会话 ID 均被拒绝，并覆盖 `AgentProjectToolsTest`。
+
 - [ ] 用锁定的 Pi 1.2.0 和可控 stream/provider mock 先验证投影：最终请求有正确 `image_url`，原生 history/state 没有 Base64；覆盖下一轮恢复和工具调用后的再次模型请求。
 - [ ] 实现图片能力配置、会话附件目录、`read_image({ attachmentId })`、不可变出站图片转换与发送前有效期检查。目录不含未发送附件，工具拒绝其他会话/项目附件，结果只持久化引用。
 - [ ] 构造一次真实 Pi 压缩，把最早图片消息移出上下文；随后用目录 ID 调用 `read_image`，验证 mock provider 仍收到原图，未重新上传。再覆盖 worker 恢复、重复压缩和工具结果重新投影，保持 2 MiB 原生历史限制。
 - [ ] 覆盖图片 token 估算、上游整体请求超限、24 小时后无图片、未知 ID/损坏/网络故障不伪装成功；工具读取与任务提交都不续期。
 - [ ] 验证 callback 顺序不破坏原 `transformContext`，测试重试与 abort/dispose 能释放图片缓冲；确认文本流、thinking、工具回执和任务收尾行为未改变。
+- [ ] 覆盖多页目录/长文件名、若干合法 10 MB 图片累计超过上游请求上限、过期后重放旧成功工具回执：不得无界注入目录、先读入全部图片才拒绝，或让旧回执恢复原图。
 
 ### Task 4：接入前端选择、发送和失效展示
 
@@ -231,10 +281,10 @@ Pi 1.2.0 原生 `ImageContent` 仅含 Base64，没有 file_id 字段，但公开
 
 ```powershell
 # Workspace-agent：附件 IO、路径约束与清理
-mvn -f poc4/workspace-agent/pom.xml -Dtest=WorkspaceAttachmentServiceTest,WorkspaceAttachmentControllerTest test
+mvn -f poc4/workspace-agent/pom.xml '-Dtest=WorkspaceAttachmentServiceTest,WorkspaceAttachmentControllerTest' test
 
 # Backend：只使用 disposable schema 的相关合同测试
-mvn -f poc4/backend/pom.xml -Dtest=AgentAttachmentStoreTest,AgentAttachmentHttpTest,AgentAttachmentReconcilerTest,AgentTaskStoreTest,AgentConversationStoreTest test
+mvn -f poc4/backend/pom.xml '-Dtest=AgentAttachmentStoreTest,AgentAttachmentHttpTest,AgentAttachmentInternalHttpTest,AgentAttachmentReconcilerTest,AgentTaskStoreTest,AgentConversationStoreTest,AgentProjectToolsTest,WorkspaceApiClientTest,WorkspaceApiClientTransportTest' test
 
 # Worker：投影、历史与模型请求
 pnpm --dir poc4/pi-worker test -- test/image-context.test.ts test/project-tools.test.ts test/pi-session-context.test.ts test/pi-session.test.ts
@@ -255,3 +305,42 @@ git diff --check
 5. 未发送垃圾、上传/提交响应丢失、跨用户访问、worker 重启和既有 workspace 升级均有直接证据。
 
 本轮完成代码/官方文档调研、Pi file_id 出站适配的零网络离线探针及计划检查。以上附件功能、真实模型识图、压缩后重读和清理验收仍均 **NOT_RUN / 尚未实现**。
+
+## 7. 实施记录（2026-11-02）
+
+- 基线：现有 ai-image-input 工作树，codex/ai-image-input，HEAD 5e7d55d；原计划未提交修改完整保留，以下为追加证据。
+- Task 1 核心实现已完成，继续补充真实后端装配验证：V19 引用表、Attachment lifecycle、workspace 原子上传/确认/读取/删除、capability 签名 Adapter、multipart/nginx 限额已接入。
+- Task 1 RED：WorkspaceAttachmentControllerTest 在有效签名后返回 404；实现后通过。WorkspaceAttachmentServiceTest 的 internal symlink 回归确实失败，修复后通过。
+- Task 1 GREEN：workspace 的 WorkspaceAttachmentServiceTest,WorkspaceAttachmentControllerTest,WorkspaceFileServiceTest 通过；backend 的 AgentAttachmentHttpTest 使用独立 MySQL schema，通过 10 MB、丢失 ACK 确认、TTL 不续期、owner/conversation 隔离和 410；WorkspaceApiClientTest 11 项通过。此处 backend HTTP 使用真实 MVC/store，磁盘 Adapter 为有状态 fake，尚非全生产 Spring 装配。
+- 独立只读复核发现并修复：普通文件入口 symlink 可进入 .manao；带 path parameter 的 URI 绕过附件预限（补自动回归中）。
+- 真实模型、集群部署和用户验收：NOT_RUN（当前授权不包含）。
+- Task 2 已接入：有序附件 ID + digest 参与新请求摘要；空文字图片消息规范化；附件关联、用户历史和 task 同事务；已有 task 的到期后确认优先复用。RED 为旧合同拒绝纯图片；GREEN 为 AgentAttachmentHttpTest 及 AgentTaskStoreTest（35 项）通过。历史引用的当前可用性由 Attachment lifecycle 投影，文字摘要旧合同兼容。继续补原子回滚/真实装配证据。
+- Task 3 核心已接通：Image context 包装原 Pi hooks；read_image 的目录/引用两种调用、内部授权路由、两端白名单及模型能力报告已装配。5 项图片测试通过真实 Pi 会话与 OpenAI provider 离线 fetch，证实 image_url 原图、真实 compact 无二进制读取、恢复后目录+工具重读、原生历史无 Base64、多图整体超限在读取前拒绝、到期工具旧回执/实际 provider 重试不发原图。相关 worker 56 项通过，build 通过；真实模型仍 NOT_RUN。后端内部路由/工具合同回归和真实 Spring 全装配继续补证据。
+- Task 3 backend 内部 HTTP fencing 与工具 ledger 合同通过：旧 epoch/instance 被拒绝；到期读内容 410；确定失效工具调用正常完成并返回错误数据；旧成功回执保持幂等而内容入口仍拒绝。此测试使用真实 MVC/store，生产 Spring 全装配另补。
+- Task 4 已接入 composer、认证 multipart、历史图片、失效占位与账号/会话取消；RED 为 FormData 被旧 HTTP 客户端转为 JSON，以及 composer 没有图片入口；GREEN 为相关 frontend 131 项和 typecheck 通过。上传 ACK 丢失按原 ID 确认，选择时不上传，到期撤销 URL，迟到 Blob 不进入新账号。继续补全页面及部署外的本地集成证据。
+
+## 8. 最终本地执行状态（2026-11-02）
+
+第 5 节保留原实施清单文字；本表和验收记录是本轮执行结论。Task 5 的外部验收未因本地完成而获得 PASS。
+
+| Task | 本轮状态 | 实际证据 |
+| --- | --- | --- |
+| Task 1 | 本地完成 | 真实 workspace-agent Spring/filter、10 MB/超限、未知长度预限、UUID/符号链接/digest、上传确认与原子 IO；backend Spring 装配；签名 Adapter |
+| Task 2 | 本地完成 | task/附件/历史同事务；固定期限与摘要兼容；错误作用域/未完成/过期/已绑定拒绝；提交响应确认；原生及浏览器预算回滚 |
+| Task 3 | 本地完成 | 实际 Pi provider image_url；恢复、两次真实 compact 后重读；图片 token 触发压缩；旧工具回执与真正开启的 provider 重试；多图最终期限 sweep；原 hooks 顺序；stop |
+| Task 4 | 本地完成 | 134 项前端相关测试、typecheck、production build；StrictMode、待定上传同 ID 恢复、scope 取消、服务器时间偏差；本地 Chromium 刷新/24 小时失效 |
+| Task 5 | 本地实现与隔离验证完成；外部项 NOT_RUN | startup/scheduled reaper；未绑定与已绑定统一期限；失败重试/公平扫描/本地原图与 .part 删除；项目删除；V19 迁移升级；独立只读复核 |
+
+最终补充修复：availability 变长的最坏历史预算预留；合法大 JSON 历史在 MySQL filesort 下出现 1038，改用已有会话/序号主键顺序后，临界历史和既有会话回归通过。数据库测试均使用 disposable schema。
+
+真实付费模型识图/压缩后细节重读、真实项目 PVC 删除、四端发布、既有 workspace Pod 升级、云端浏览器和用户验收均 NOT_RUN。本轮不合并、不推送，保留原工作树与本地改动。
+
+
+## 9. 2026-11-03 获授权后的发布进度
+
+Task 1–5 本地完成结论不变。用户后续授权发布后，四端镜像已 build/push/deploy，Flyway V19 success=1；七个既有 workspace 原位升级，Pod UID/PVC 保留，三个 Deployment 1/1 Ready，worker imageInput=true。私有运行库备份经一次性 schema 恢复，17 张表行数和数据摘要一致，V19 SQL 演练通过；一次性恢复 schema 和 Pod 临时 dump 已清理。没有 Git push、merge 或人工修复历史任务。
+
+真实浏览器已在专用项目完成首次识图 4827、真实压缩（最早图片消息已移出上下文）、worker 重建后目录/read_image 重读未回答的 K9R4、刷新原图预览及另一会话引用拒绝，均 PASS。四个新 task 均 COMPLETED，上传保持 1 条和原 24 小时期限，持久化无 Base64。自然到期在 2026-11-04 12:03:33.653（Asia/Shanghai）；届时的真实 410、原图删除、旧成功工具回执不能重发，以及用户完整验收仍 NOT_RUN。真实多账号/跨项目和全部大包矩阵未在此次云端重跑，不以本地 PASS 替代。精确身份见[集群发布记录](../../../poc4/docs/evidence/ai-image-input/cloud-release-20261103.md)。
+
+
+2026-11-03 follow-up：公网 HTTP UUID、压缩出站字段及切会话原任务确认（含每轮 submitted 复位）均通过 RED→GREEN 和独立只读复核；最终 100 项相关前端测试 PASS，生产构建/typecheck PASS。最终 frontend amd64 sha256:0275df40c76abd9a0fd8c3102018cd88341b8c2c26c0c19566f68b57b750e479，三个 Deployment 1/1 Ready，worker 空闲，无新增活动任务/压缩/Run；旧历史任务保持 RUNNING 且未人工修复。保留专用项目等待自然到期验收；本地实现和云端核心场景完成，完整功能验收仍待自然期限与用户验收。

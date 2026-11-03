@@ -70,6 +70,23 @@ class WorkspaceApiClientTest {
     @AfterEach
     void tearDown() { if (server != null) server.stop(0); }
 
+    @Test void attachmentTransportSignsExactBinaryMetadataAndDeleteRequests() throws Exception {
+        byte[] bytes=new byte[10_000_000];bytes[0]=42;
+        String sha=WorkspaceCapabilitySigner.sha256Hex(bytes);long expires=1793664000000L;
+        responseBody=JSON.writeValueAsString(Map.of("attachmentId",OPERATION,"sha256",sha,"sizeBytes",bytes.length,"expiresAt",expires));
+        assertThat(client.putAttachment(PROJECT,OPERATION,sha,expires,bytes).sizeBytes()).isEqualTo(10_000_000);
+        assertThat(received.get().body()).isEqualTo(bytes);assertThat(query(received.get()).get("expiresAt")).isEqualTo(Long.toString(expires));
+        assertSignatureMatchesTheActualRequest(received.get());
+        assertThat(client.confirmAttachment(PROJECT,OPERATION).sha256()).isEqualTo(sha);
+        assertSignatureMatchesTheActualRequest(received.get());
+        responseBody="original bytes";
+        assertThat(new String(client.openAttachment(PROJECT,OPERATION,sha,expires),StandardCharsets.UTF_8)).isEqualTo("original bytes");
+        assertSignatureMatchesTheActualRequest(received.get());
+        responseBody="{\"deleted\":true}";
+        client.deleteAttachment(PROJECT,OPERATION);
+        assertThat(received.get().method()).isEqualTo("DELETE");assertSignatureMatchesTheActualRequest(received.get());
+    }
+
     @Test
     void createUsesJsonAcceptedByTheAgentRequestBodyConverter() throws Exception {
         client.mutate(PROJECT, command("CREATE", "src", "", new byte[0]));

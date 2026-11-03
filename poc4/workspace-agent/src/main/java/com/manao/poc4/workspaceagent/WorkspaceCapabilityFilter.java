@@ -29,8 +29,15 @@ public final class WorkspaceCapabilityFilter extends OncePerRequestFilter {
     @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain chain)
         throws ServletException, IOException {
-        CachedBodyRequestWrapper wrapped = new CachedBodyRequestWrapper(request);
-        byte[] body = StreamUtils.copyToByteArray(wrapped.getInputStream());
+        boolean attachment = org.springframework.web.util.pattern.PathPatternParser.defaultInstance
+            .parse("/agent/v1/attachments/{*path}").matches(
+                org.springframework.http.server.PathContainer.parsePath(request.getRequestURI()));
+        int limit = attachment ? WorkspaceAttachmentService.MAX_BYTES : Integer.MAX_VALUE - 1;
+        if (attachment && request.getContentLengthLong() > limit) { tooLarge(response); return; }
+        byte[] cached = request.getInputStream().readNBytes(limit + 1);
+        if (cached.length > limit) { tooLarge(response); return; }
+        CachedBodyRequestWrapper wrapped = new CachedBodyRequestWrapper(request, cached);
+        byte[] body = cached;
         String pathAndQuery = request.getRequestURI()
             + (request.getQueryString() == null ? "" : "?" + request.getQueryString());
         try {
@@ -46,12 +53,18 @@ public final class WorkspaceCapabilityFilter extends OncePerRequestFilter {
         chain.doFilter(wrapped, response);
     }
 
+    private static void tooLarge(HttpServletResponse response) throws IOException {
+        response.setStatus(413);
+        response.setContentType("application/json");
+        response.getWriter().write("{\"code\":\"AI_ATTACHMENT_TOO_LARGE\",\"message\":\"Image exceeds 10000000 bytes\"}");
+    }
+
     private static final class CachedBodyRequestWrapper extends jakarta.servlet.http.HttpServletRequestWrapper {
         private final byte[] cached;
 
-        CachedBodyRequestWrapper(HttpServletRequest request) throws IOException {
+        CachedBodyRequestWrapper(HttpServletRequest request, byte[] cached) throws IOException {
             super(request);
-            this.cached = StreamUtils.copyToByteArray(request.getInputStream());
+            this.cached = cached;
         }
 
         @Override

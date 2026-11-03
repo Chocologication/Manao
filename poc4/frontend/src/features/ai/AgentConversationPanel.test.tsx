@@ -139,16 +139,18 @@ it('submits the selected conversation with original task/conversation identity p
   expect(posted).toMatchObject({ prompt: '第二轮目标', expectedWorkspaceRevision: '7' });
   expect(JSON.parse(stored!)).toEqual({ taskId: posted!.taskId, conversationId: B });
 });
-it('recovers the original uncertain A task after switching B and never submits a replacement', async () => {
+it.each([false, true])('settles the original A submission after switching B without clearing its draft; lost response: %s', async lostResponse => {
   let release = () => {}, postedId = '', posts = 0;
   const held = new Promise<void>(r => { release = r; });
-  server.use(http.post(`${URL}/${A}/tasks`, async ({ request }) => { posts++; postedId = (await request.json() as { taskId: string }).taskId; await held; return HttpResponse.error(); }), http.get(`/api/v1/projects/${P}/agent-tasks/:id`, ({ params }) => HttpResponse.json(task({ taskId: String(params.id), conversationId: A }))));
+  server.use(http.post(`${URL}/${A}/tasks`, async ({ request }) => { posts++; postedId = (await request.json() as { taskId: string }).taskId; await held; return lostResponse ? HttpResponse.error() : HttpResponse.json(task({ taskId: postedId, conversationId: A })); }), http.get(`/api/v1/projects/${P}/agent-tasks/:id`, ({ params }) => HttpResponse.json(task({ taskId: String(params.id), conversationId: A }))));
   const h = panel(); await screen.findByText('A 原文'); await userEvent.type(screen.getByLabelText('Task goal'), 'A 目标'); await userEvent.click(screen.getByRole('button', { name: 'Start task' }));
   await waitFor(() => expect(postedId).not.toBe('')); await userEvent.click(screen.getByRole('button', { name: '会话 B' }));
   expect(screen.getByRole('button', { name: 'Start task' })).toBeDisabled();
+  await userEvent.type(screen.getByLabelText('Task goal'), 'B draft');
   release();
   await waitFor(() => expect(h.accepted).toHaveBeenCalledWith(expect.objectContaining({ taskId: postedId })));
   expect(screen.getByRole('button', { name: '会话 B' })).toHaveAttribute('aria-pressed', 'true'); expect(posts).toBe(1);
+  expect(screen.getByLabelText('Task goal')).toHaveValue('B draft');
 });
 it('keeps global occupancy and explicit close when another conversation is selected', async () => {
   const h = panel({ task: task({ conversationId: A, state: 'NEEDS_ATTENTION' }) });
@@ -223,7 +225,7 @@ it.each([true, false])('reconciles a definite original retry refusal without lea
   server.use(
     http.get(`${URL}/${A}`, () => refused && !available ? HttpResponse.error() : HttpResponse.json(conversation(A, { headSeq: 2 }))),
     http.post(`${URL}/${A}/compact`, async ({ request }) => {
-      expect(await request.json()).toEqual(intent); posts++; refused = true;
+      expect(await request.json()).toEqual({ requestId: intent.requestId, expectedHeadSeq: intent.expectedHeadSeq }); posts++; refused = true;
       return HttpResponse.json({ code: 'AI_CONTEXT_CONFLICT', message: 'conflict', traceId: 'conflict' }, { status: 409 });
     }),
   );

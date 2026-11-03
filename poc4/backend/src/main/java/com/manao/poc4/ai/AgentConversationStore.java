@@ -29,9 +29,14 @@ public final class AgentConversationStore {
     private final TransactionTemplate transaction;
     private final Clock clock;
     private final AgentTaskStore tasks;
+    private final AgentAttachmentService attachments;
 
     public AgentConversationStore(JdbcTemplate jdbc, PlatformTransactionManager transactions, Clock clock,
                                   AgentTaskStore tasks) {
+        this(jdbc,transactions,clock,tasks,null);
+    }
+    public AgentConversationStore(JdbcTemplate jdbc, PlatformTransactionManager transactions, Clock clock,
+                                  AgentTaskStore tasks, AgentAttachmentService attachments) {
         this.jdbc = jdbc;
         this.transaction = new TransactionTemplate(transactions);
         // The routing lookup precedes the project lock. Its old read view must not
@@ -39,6 +44,7 @@ public final class AgentConversationStore {
         this.transaction.setIsolationLevel(org.springframework.transaction.TransactionDefinition.ISOLATION_READ_COMMITTED);
         this.clock = clock;
         this.tasks = tasks;
+        this.attachments = attachments;
     }
 
     public ConversationView create(String ownerId, String projectId, CreateConversationRequest request) {
@@ -143,7 +149,7 @@ public final class AgentConversationStore {
             long head = identity.head();
             long through = throughSeq == null ? head : throughSeq;
             if (afterSeq < 0 || through < afterSeq || through > head) throw conflict();
-            var rows = jdbc.query("SELECT seq,source_task_id,writer_id,payload_json FROM agent_conversation_entry "
+            var rows = jdbc.query("SELECT seq,source_task_id,writer_id,payload_json FROM agent_conversation_entry FORCE INDEX (PRIMARY) "
                     + "WHERE conversation_id=? AND seq>? AND seq<=? ORDER BY seq LIMIT 33",
                 (rs, i) -> stored(rs), identity.conversationId(), afterSeq, through);
             var page = new ArrayList<StoredEntry>();
@@ -296,6 +302,17 @@ public final class AgentConversationStore {
     }
     private record CompactRow(long head, JsonNode header, String requestId, long baseSeq, String state, String instanceId) { }
 
+    /** The complete attachment goal must fit both existing native and browser transport budgets. */
+    static void validateAttachmentGoal(JsonNode entry,List<AgentAttachmentContracts.AttachmentRef> refs) {
+        if(bytes(entry)>ENTRY_LIMIT)throw tooLarge();
+        // Availability is refreshed on reads. Reserve its longest spelling so expiry cannot make
+        // an accepted near-limit history group unreadable later.
+        var reserved=refs.stream().map(r->new AgentAttachmentContracts.AttachmentRef(r.kind(),r.version(),r.attachmentId(),r.fileName(),r.mimeType(),
+            r.sizeBytes(),r.sha256(),r.uploadedAt(),r.expiresAt(),r.taskId(),"UPLOADING")).toList();
+        var projected=new HistoryItem(Long.MAX_VALUE,entry.path("id").asText(),"user",text(entry.path("content")),null,0,0,false,reserved);
+        if(bytes(new HistoryPage(List.of(projected),Long.MAX_VALUE,Integer.MAX_VALUE))>HISTORY_LIMIT)throw tooLarge();
+    }
+
     /** Called only inside TaskStore's existing project-row transaction. */
     static void bindTaskGoal(JdbcTemplate jdbc, Clock clock, String projectId, String conversationId, AgentContracts.TaskRequest request) {
         requireUuid(conversationId);
@@ -404,7 +421,8 @@ public final class AgentConversationStore {
     }
 
     private List<StoredEntry> entries(String id, String condition, long cursor, int limit, String direction) {
-        return jdbc.query("SELECT seq,source_task_id,writer_id,payload_json FROM agent_conversation_entry WHERE conversation_id=? AND "
+        // The primary key already supplies this order. Avoid a filesort buffering large JSON rows.
+        return jdbc.query("SELECT seq,source_task_id,writer_id,payload_json FROM agent_conversation_entry FORCE INDEX (PRIMARY) WHERE conversation_id=? AND "
             + condition + " ORDER BY seq " + direction + " LIMIT ?", (rs, i) -> stored(rs), id, cursor, limit);
     }
     private StoredEntry stored(java.sql.ResultSet rs) throws java.sql.SQLException {
@@ -413,7 +431,8 @@ public final class AgentConversationStore {
     private List<HistoryItem> project(StoredEntry row) {
         var entry = row.entry(); String type = entry.path("type").asText();
         if ("custom_message".equals(type) && "manao_user_request".equals(entry.path("customType").asText()))
-            return List.of(new HistoryItem(row.seq(), row.sourceTaskId(), "user", text(entry.path("content")), null));
+            return List.of(new HistoryItem(row.seq(), row.sourceTaskId(), "user", text(entry.path("content")), null,0,0,false,
+                attachments==null?List.of():attachments.historyReferences(row.sourceTaskId(),entry.path("details").path("attachments"))));
         if ("compaction".equals(type)) return List.of(new HistoryItem(row.seq(), row.sourceTaskId(), "compaction", "上下文已压缩", null));
         if (!"message".equals(type)) return List.of();
         var message = entry.path("message"); String role = message.path("role").asText();
@@ -435,6 +454,7 @@ public final class AgentConversationStore {
         } else if ("toolResult".equals(role)) items.add(new HistoryItem(row.seq(), row.sourceTaskId(), "tool_result", message.path("toolName").asText(), message.path("toolCallId").asText()));
         return items;
     }
+
     private static String text(JsonNode content) {
         if (content.isTextual()) return content.textValue();
         var text = new StringBuilder();
@@ -463,12 +483,12 @@ public final class AgentConversationStore {
                 int point = text.codePointAt(cursor);
                 int size = point <= 0x7f ? 1 : point <= 0x7ff ? 2 : point <= 0xffff ? 3 : 4;
                 if (utf8 + size > 64 * 1024) {
-                    fragments.add(new HistoryItem(item.seq(), item.taskId(), item.kind(), text.substring(start, cursor), item.toolCallId(), start, item.contentIndex(), item.modelTruncated()));
+                    fragments.add(new HistoryItem(item.seq(), item.taskId(), item.kind(), text.substring(start, cursor), item.toolCallId(), start, item.contentIndex(), item.modelTruncated(),item.attachments()));
                     start = cursor; utf8 = 0;
                 }
                 cursor += Character.charCount(point); utf8 += size;
             }
-            fragments.add(new HistoryItem(item.seq(), item.taskId(), item.kind(), text.substring(start), item.toolCallId(), start, item.contentIndex(), item.modelTruncated()));
+            fragments.add(new HistoryItem(item.seq(), item.taskId(), item.kind(), text.substring(start), item.toolCallId(), start, item.contentIndex(), item.modelTruncated(),item.attachments()));
         }
         return fragments;
     }

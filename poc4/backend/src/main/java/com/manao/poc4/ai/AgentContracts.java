@@ -23,7 +23,12 @@ public final class AgentContracts {
     public enum BuildGoal { COMPILE, TEST, PACKAGE }
 
     /** The browser's task submission: a pre-generated UUID, the goal text and the saved revision. */
-    public record TaskRequest(String taskId, String prompt, long expectedRevision, String reasoningEffort) {
+    public record TaskRequest(String taskId, String prompt, long expectedRevision, String reasoningEffort, List<String> attachmentIds) {
+        public TaskRequest {
+            attachmentIds = attachmentIds == null ? List.of() : List.copyOf(attachmentIds);
+            if ((prompt == null || prompt.isBlank()) && !attachmentIds.isEmpty()) prompt = "请分析上传的图片";
+        }
+        public TaskRequest(String taskId, String prompt, long expectedRevision, String reasoningEffort) { this(taskId,prompt,expectedRevision,reasoningEffort,List.of()); }
         public TaskRequest(String taskId, String prompt, long expectedRevision) { this(taskId, prompt, expectedRevision, null); }
     }
 
@@ -118,7 +123,11 @@ public final class AgentContracts {
     public record WorkerTerminalDelivery(String state, String reportId, String reportSha256, TerminalReport report) { }
 
     public record WorkerProcessStatus(String bootId, String instanceId, String activeTaskId,
-                                      String activeExecutionState, String activeKind, boolean modelConfigured) { }
+                                      String activeExecutionState, String activeKind, boolean modelConfigured, boolean imageInput) {
+        public WorkerProcessStatus(String bootId,String instanceId,String activeTaskId,String activeExecutionState,String activeKind,boolean modelConfigured){
+            this(bootId,instanceId,activeTaskId,activeExecutionState,activeKind,modelConfigured,false);
+        }
+    }
 
     /**
      * The worker's terminal execution report (repair design section 4). The backend

@@ -16,6 +16,11 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 public final class GlobalExceptionHandler {
     private static final Logger LOG = LoggerFactory.getLogger(GlobalExceptionHandler.class);
 
+    @ExceptionHandler(org.springframework.web.multipart.MaxUploadSizeExceededException.class)
+    ResponseEntity<ApiError> attachmentTooLarge() {
+        return response(413,"AI_ATTACHMENT_TOO_LARGE","Image exceeds 10000000 bytes");
+    }
+
     @ExceptionHandler(ApiException.class)
     ResponseEntity<ApiError> api(ApiException exception, HttpServletRequest request) {
         return response(exception.status(), exception.code(), exception.getMessage());

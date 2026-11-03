@@ -53,7 +53,7 @@ public final class AgentProjectTools {
     /** Key-sorted serialization: the canonical form the request digest is computed over. */
     private static final ObjectMapper CANONICAL = new ObjectMapper()
         .configure(SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS, true);
-    private static final Set<String> KNOWN_TOOLS = Set.of("list_files", "read_file", "write_file", "build", "application", "app_http_get");
+    private static final Set<String> KNOWN_TOOLS = Set.of("list_files", "read_file", "write_file", "build", "application", "app_http_get", "read_image");
     /** Tools that register a durable side effect and are blocked while another call is unsettled. */
     private static final Set<String> SIDE_EFFECT_TOOLS = Set.of("write_file", "build");
     private static final String BUILD_TOOL = "build";
@@ -80,6 +80,7 @@ public final class AgentProjectTools {
     /** The isolated development build executor: read-only source copy, real exit, proven cleanup. */
     private final DevelopmentBuildExecutor builds;
     private final AgentApplicationTools application;
+    private final AgentAttachmentService attachments;
 
     public AgentProjectTools(AgentTaskStore tasks, WorkspaceStore store, WorkspaceService workspace,
                              WorkspaceOperationService operations, ProjectLifecycleGate lifecycle,
@@ -90,6 +91,11 @@ public final class AgentProjectTools {
     public AgentProjectTools(AgentTaskStore tasks, WorkspaceStore store, WorkspaceService workspace,
                              WorkspaceOperationService operations, ProjectLifecycleGate lifecycle,
                              DevelopmentBuildExecutor builds, AgentApplicationTools application) {
+        this(tasks,store,workspace,operations,lifecycle,builds,application,null);
+    }
+    public AgentProjectTools(AgentTaskStore tasks, WorkspaceStore store, WorkspaceService workspace,
+                             WorkspaceOperationService operations, ProjectLifecycleGate lifecycle,
+                             DevelopmentBuildExecutor builds, AgentApplicationTools application,AgentAttachmentService attachments) {
         this.tasks = tasks;
         this.store = store;
         this.workspace = workspace;
@@ -97,6 +103,7 @@ public final class AgentProjectTools {
         this.lifecycle = lifecycle;
         this.builds = builds;
         this.application = application;
+        this.attachments = attachments;
     }
 
     /**
@@ -428,8 +435,23 @@ public final class AgentProjectTools {
             case "list_files" -> listFiles(owner, request);
             case "read_file" -> readFile(owner, request);
             case "write_file" -> writeFile(owner, row, request);
+            case "read_image" -> readImage(row,request);
             default -> throw new IllegalStateException("unsupported tool: " + request.name());
         };
+    }
+
+    private AgentContracts.ToolResult readImage(AgentTaskStore.ToolCallRow row,AgentContracts.ToolRequest request) {
+        var args=request.args();
+        if(args.size()>1||args.has("attachmentId")&&args.has("cursor"))throw new ApiException("VALIDATION_ERROR",422,"Use attachmentId or cursor");
+        var fields=args.fieldNames();while(fields.hasNext()){String key=fields.next();if(!Set.of("attachmentId","cursor").contains(key)||!args.get(key).isTextual())throw new ApiException("VALIDATION_ERROR",422,"Invalid image arguments");}
+        if(attachments==null)throw new ApiException("AI_ATTACHMENT_UNAVAILABLE",503,"Image unavailable");
+        attachments.requireImageInput();
+        JsonNode data;
+        if(args.has("attachmentId")){
+            var ref=attachments.referenceForTask(row.taskId(),args.get("attachmentId").asText());
+            var result=JSON.createObjectNode().put("kind","image_reference");result.set("image",JSON.valueToTree(ref));data=result;
+        }else data=JSON.valueToTree(attachments.catalog(row.taskId(),args.has("cursor")?args.get("cursor").asText():null));
+        return new AgentContracts.ToolResult(request.toolCallId(),Long.toString(store.findProject(attachments.taskScope(row.taskId()).projectId()).workspaceRevision()),data,false);
     }
 
     private AgentContracts.ToolResult listFiles(AgentTaskStore.TaskOwner owner, AgentContracts.ToolRequest request) {

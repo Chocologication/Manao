@@ -736,6 +736,7 @@ describe("task server", () => {
       const idle = await (await fetch(`http://127.0.0.1:${port}/status`, { headers: statusHeaders })).json();
       expect(idle).toEqual({
         bootId: "boot-test",
+        imageInput: false,
         instanceId: "worker-1",
         activeTaskId: null,
         activeExecutionState: null,

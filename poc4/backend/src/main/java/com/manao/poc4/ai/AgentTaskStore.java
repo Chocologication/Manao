@@ -48,6 +48,7 @@ public final class AgentTaskStore implements AgentTaskOccupancy {
     private final JdbcTemplate jdbc;
     private final TransactionTemplate transaction;
     private final Clock clock;
+    private final AgentAttachmentService attachments;
     /**
      * The build executions currently live in THIS process, keyed by taskId/toolCallId.
      * A key is added inside the synchronized claim transition and removed only after the
@@ -57,9 +58,13 @@ public final class AgentTaskStore implements AgentTaskOccupancy {
     private final java.util.Set<String> liveBuildClaims = new java.util.HashSet<>();
 
     public AgentTaskStore(JdbcTemplate jdbc, PlatformTransactionManager transactions, Clock clock) {
+        this(jdbc,transactions,clock,null);
+    }
+    public AgentTaskStore(JdbcTemplate jdbc, PlatformTransactionManager transactions, Clock clock, AgentAttachmentService attachments) {
         this.jdbc = jdbc;
         this.transaction = new TransactionTemplate(transactions);
         this.clock = clock;
+        this.attachments = attachments;
     }
 
     @Override public void requireBrowserWritable(String projectId) {
@@ -106,7 +111,17 @@ public final class AgentTaskStore implements AgentTaskOccupancy {
     public TaskCreation createTask(String ownerId, String projectId,
                                    AgentContracts.TaskRequest request, String conversationId) {
         validate(request);
+        if (!request.attachmentIds().isEmpty() && (conversationId == null || attachments == null)) throw validation();
         if (conversationId != null) AgentConversationStore.requireUuid(conversationId);
+        // Capability reporting crosses HTTP; do it before the short task transaction.
+        ApiException admissionFailure = null;
+        if (!request.attachmentIds().isEmpty() && findTaskById(request.taskId()).isEmpty()) {
+            try {
+                attachments.requestDigests(ownerId,projectId,conversationId,request.attachmentIds());
+                attachments.requireImageInput();
+            } catch(ApiException ex) { admissionFailure=ex; }
+        }
+        final ApiException imageAdmissionFailure=admissionFailure;
         String effort = request.reasoningEffort() == null ? "high" : request.reasoningEffort();
         Timestamp now = Timestamp.from(clock.instant());
         return java.util.Objects.requireNonNull(transaction.execute(status -> {
@@ -128,6 +143,7 @@ public final class AgentTaskStore implements AgentTaskOccupancy {
                 }
                 return new TaskCreation(snapshot(existing.get()), false, existing.get().workerEpoch());
             }
+            if (imageAdmissionFailure != null) throw imageAdmissionFailure;
             String requestSha256 = requestSha256(ownerId, projectId, request, conversationId, false);
             ProjectRow project = projects.get(0);
             if (!ownerId.equals(project.ownerId())) {
@@ -169,6 +185,16 @@ public final class AgentTaskStore implements AgentTaskOccupancy {
             } catch (DuplicateKeyException ex) {
                 // The unique index is the backstop behind the in-transaction pre-check.
                 throw new ApiException("AI_TASK_ACTIVE", 409, "The project already has an active task");
+            }
+            if (!request.attachmentIds().isEmpty()) {
+                var refs = attachments.bindWithinTaskTransaction(ownerId, projectId, conversationId, request.taskId(), request.attachmentIds());
+                var goal = jdbc.queryForObject("SELECT payload_json FROM agent_conversation_entry WHERE conversation_id=? AND entry_id=?", String.class, conversationId, request.taskId());
+                try {
+                    var entry = (com.fasterxml.jackson.databind.node.ObjectNode) JSON.readTree(goal);
+                    ((com.fasterxml.jackson.databind.node.ObjectNode) entry.get("details")).set("attachments", JSON.valueToTree(refs));
+                    AgentConversationStore.validateAttachmentGoal(entry,refs);
+                    jdbc.update("UPDATE agent_conversation_entry SET payload_json=? WHERE conversation_id=? AND entry_id=?", entry.toString(), conversationId, request.taskId());
+                } catch (java.io.IOException ex) { throw new IllegalStateException(ex); }
             }
             return new TaskCreation(new AgentContracts.TaskSnapshot(request.taskId(),
                 AgentContracts.TaskState.QUEUED, Long.toString(request.expectedRevision()),
@@ -1689,7 +1715,7 @@ public final class AgentTaskStore implements AgentTaskOccupancy {
      * projectId, prompt and expectedRevision — the same bytes for the same intent, different
      * bytes for any different request.
      */
-    private static String requestSha256(String ownerId, String projectId,
+    private String requestSha256(String ownerId, String projectId,
                                         AgentContracts.TaskRequest request, String conversationId, boolean legacy) {
         Map<String, Object> fields = new LinkedHashMap<>();
         fields.put("taskId", request.taskId());
@@ -1699,6 +1725,10 @@ public final class AgentTaskStore implements AgentTaskOccupancy {
         fields.put("expectedRevision", request.expectedRevision());
         if (conversationId != null) fields.put("conversationId", conversationId);
         if (!legacy) fields.put("reasoningEffort", request.reasoningEffort() == null ? "high" : request.reasoningEffort());
+        if (!request.attachmentIds().isEmpty()) {
+            fields.put("attachmentIds",request.attachmentIds());
+            fields.put("attachmentDigests",attachments.requestDigests(ownerId,projectId,conversationId,request.attachmentIds()));
+        }
         try {
             return sha256Hex(JSON.writeValueAsBytes(fields));
         } catch (Exception ex) {

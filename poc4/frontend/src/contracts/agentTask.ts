@@ -30,6 +30,7 @@ export type AgentTaskSnapshot = {
 };
 
 export type SubmitAgentTaskRequest = {
+  attachmentIds?: string[];
   taskId: string;
   prompt: string;
   expectedWorkspaceRevision: string;

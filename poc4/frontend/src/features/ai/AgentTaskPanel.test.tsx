@@ -17,6 +17,43 @@ import { AgentTaskPanel, type AgentTaskPanelProps } from './AgentTaskPanel';
 import { parseAgentTaskSnapshot } from '@/contracts/agentTask';
 
 const PROJECT_ID = ALICE_SEED_PROJECT_ID;
+it.each([false,true])('releases parent pending when an upload is cancelled; previous settled submission: %s',async previous=>{
+  let release!:()=>void;
+  const held=new Promise<void>(resolve=>{release=resolve;});
+  const pending=vi.fn();
+  Object.defineProperty(URL,'createObjectURL',{configurable:true,value:vi.fn(()=> 'blob:selected')});
+  Object.defineProperty(URL,'revokeObjectURL',{configurable:true,value:vi.fn()});
+  server.use(http.get('/api/v1/projects/:project/ai-capabilities',()=>HttpResponse.json({imageInput:true})),
+    http.put('/api/v1/projects/:project/conversations/:conversation/attachments/:id',async()=>{await held;return HttpResponse.error();}));
+  server.use(http.post('/api/v1/projects/:project/conversations/conversation-a/tasks',async({request})=>{
+    const body=await request.json() as {taskId:string};return HttpResponse.json(occupyingTask({taskId:body.taskId,state:'COMPLETED',writesLocked:false,conversationId:'conversation-a'}));
+  }));
+  const h=renderPanel({conversationId:'conversation-a',onSubmissionPendingChange:pending});
+  if(previous){await userEvent.type(screen.getByLabelText('Task goal'),'first round');await userEvent.click(screen.getByRole('button',{name:'Start task'}));await waitFor(()=>expect(h.getAccepted()?.state).toBe('COMPLETED'));pending.mockClear();}
+  fireEvent.change(await screen.findByLabelText('添加图片'),{target:{files:[new File(['abc'],'sample.png',{type:'image/png'})]}});
+  await userEvent.click(screen.getByRole('button',{name:'Start task'}));
+  await waitFor(()=>expect(pending).toHaveBeenCalledWith(true));
+  cleanup();
+  expect(pending).toHaveBeenLastCalledWith(false);
+  release();
+});
+it('uploads a pure image goal before submitting ordered references',async()=>{
+  let uploaded='',posted:Record<string,unknown>|null=null;
+  Object.defineProperty(URL,'createObjectURL',{configurable:true,value:vi.fn(()=> 'blob:selected')});
+  Object.defineProperty(URL,'revokeObjectURL',{configurable:true,value:vi.fn()});
+  server.use(
+    http.get('/api/v1/projects/:project/ai-capabilities',()=>HttpResponse.json({imageInput:true})),
+    http.put('/api/v1/projects/:project/conversations/:conversation/attachments/:id',({params})=>{uploaded=String(params.id);return HttpResponse.json({
+      kind:'manao_image_ref',version:1,attachmentId:uploaded,fileName:'sample.png',mimeType:'image/png',sizeBytes:3,sha256:'a'.repeat(64),
+      uploadedAt:new Date().toISOString(),expiresAt:new Date(Date.now()+86400000).toISOString(),taskId:null,availability:'READY'});}),
+    http.post('/api/v1/projects/:project/conversations/conversation-a/tasks',async({request})=>{posted=await request.json() as Record<string,unknown>;return HttpResponse.json(occupyingTask({taskId:String(posted.taskId),conversationId:'conversation-a'}));}),
+  );
+  const panel=renderPanel({conversationId:'conversation-a'});
+  fireEvent.change(await screen.findByLabelText('添加图片'),{target:{files:[new File(['abc'],'sample.png',{type:'image/png'})]}});
+  await userEvent.click(screen.getByRole('button',{name:'Start task'}));
+  await waitFor(()=>expect(panel.getAccepted()).not.toBeNull());
+  expect(posted).toMatchObject({prompt:'请分析上传的图片',attachmentIds:[uploaded]});
+});
 it('clears an accepted goal so Continue defaults to the continuation instruction', async () => {
   server.use(http.post(TASKS_URL, async ({request}) => {
     const body = await request.json() as {taskId:string}; return HttpResponse.json(occupyingTask({taskId:body.taskId}));

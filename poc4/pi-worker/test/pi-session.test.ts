@@ -91,7 +91,7 @@ describe("pi session", () => {
 
   it("registers exactly the six project tools and nothing else", async () => {
     const { tools } = await runScriptedTask([{ text: "done" }]);
-    expect(tools.map((tool) => tool.name)).toEqual(["list_files", "read_file", "write_file", "build", "application", "app_http_get"]);
+    expect(tools.map((tool) => tool.name)).toEqual(["read_image", "list_files", "read_file", "write_file", "build", "application", "app_http_get"]);
   });
 
   it("persists complete messages only, never per-token deltas", async () => {

@@ -1,4 +1,5 @@
 import { isReasoningEffort, type ReasoningEffort } from './agentTask';
+import { parseAttachment, type AttachmentRef } from '@/api/agentAttachmentApi';
 export type ContextUsage = { tokens: number | null; contextWindow: number; percent: number | null };
 export type ConversationView = {
   conversationId: string; title: string; headSeq: number; lastTaskId: string | null;
@@ -8,7 +9,7 @@ export type ConversationView = {
   nextReasoningEffort?: ReasoningEffort;
 };
 export type ConversationPage = { items: ConversationView[]; nextCursor: string | null };
-export type HistoryItem = { seq: number; taskId: string | null; kind: 'user' | 'thinking' | 'assistant' | 'tool_call' | 'tool_result' | 'compaction'; text: string; toolCallId: string | null; textOffset: number; contentIndex: number; modelTruncated: boolean };
+export type HistoryItem = { seq: number; taskId: string | null; kind: 'user' | 'thinking' | 'assistant' | 'tool_call' | 'tool_result' | 'compaction'; text: string; toolCallId: string | null; textOffset: number; contentIndex: number; modelTruncated: boolean; attachments?:AttachmentRef[] };
 export type HistoryCursor = { beforeSeq: number; beforeOffset: number | null };
 export type HistoryPage = { items: HistoryItem[]; nextBeforeSeq: number | null; nextBeforeOffset: number | null };
 function record(value: unknown): Record<string, unknown> {
@@ -41,7 +42,8 @@ export function parseHistoryPage(payload: unknown): HistoryPage {
     const i = record(value); const kind = text(i.kind);
     if (!['user', 'thinking', 'assistant', 'tool_call', 'tool_result', 'compaction'].includes(kind)) throw new Error('Unknown history kind');
     if (i.modelTruncated !== undefined && typeof i.modelTruncated !== 'boolean') throw new Error('Malformed model truncation');
-    return { seq: integer(i.seq), taskId: nullableText(i.taskId), kind: kind as HistoryItem['kind'], text: text(i.text), toolCallId: nullableText(i.toolCallId), textOffset: integer(i.textOffset), contentIndex: i.contentIndex === undefined ? 0 : integer(i.contentIndex), modelTruncated: i.modelTruncated === undefined ? false : i.modelTruncated as boolean };
+    if(i.attachments!==undefined&&!Array.isArray(i.attachments))throw new Error('Malformed image references');
+    return { seq: integer(i.seq), taskId: nullableText(i.taskId), kind: kind as HistoryItem['kind'], text: text(i.text), toolCallId: nullableText(i.toolCallId), textOffset: integer(i.textOffset), contentIndex: i.contentIndex === undefined ? 0 : integer(i.contentIndex), modelTruncated: i.modelTruncated === undefined ? false : i.modelTruncated as boolean,attachments:i.attachments===undefined?undefined:(i.attachments as unknown[]).map(parseAttachment) };
   });
   const nextBeforeSeq = nullableInteger(r.nextBeforeSeq), nextBeforeOffset = nullableInteger(r.nextBeforeOffset);
   if (nextBeforeSeq === null && nextBeforeOffset !== null) throw new Error('Malformed history cursor');

@@ -884,6 +884,7 @@ export const dependencyHandlers = [
 ];
 
 export const handlers = [
+  http.get('/api/v1/projects/:projectId/ai-capabilities',()=>HttpResponse.json({imageInput:false})),
   http.get('/api/v1/auth/options', () =>
     HttpResponse.json(getMockAuthOptions(), {
       headers: { 'Cache-Control': 'no-store' },

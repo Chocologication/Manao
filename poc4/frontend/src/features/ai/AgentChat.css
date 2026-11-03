@@ -54,3 +54,8 @@
 .manao-ai-tool-result > div { min-width: 0; max-width: 100%; border-radius: 4px; border-color: color-mix(in srgb, var(--border) 65%, transparent); overflow-wrap: anywhere; }
 @media (max-width: 1023px) { .manao-ai-history-sidebar[data-open="true"] { display: flex; } }
 @media (max-width: 1023px) { .manao-ai-scroll { padding: 12px; } .manao-ai-composer { width: calc(100% - 24px); } .manao-ai-conversation-header { padding-inline: 12px; } }
+.manao-ai-images { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; font-size: .8rem; }
+.manao-ai-images > span { color: var(--muted-foreground); }
+.manao-ai-images img, .manao-ai-image-preview img { max-width: 100%; width: auto; max-height: 12rem; border-radius: .5rem; object-fit: contain; }
+.manao-ai-image-preview { margin: .5rem 0; }
+.manao-ai-image-preview figcaption { font-size: .8rem; overflow-wrap: anywhere; }

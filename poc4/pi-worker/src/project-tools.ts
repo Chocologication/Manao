@@ -10,7 +10,7 @@ import { Type, type Static } from "typebox";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { BackendHttpError, type BackendClient, type ToolResult } from "./backend-client.js";
 
-export const TOOL_NAMES = ["list_files", "read_file", "write_file", "build", "application", "app_http_get"] as const;
+export const TOOL_NAMES = ["list_files", "read_file", "write_file", "build", "application", "app_http_get", "read_image"] as const;
 
 export interface ProjectToolDeps {
   backend: BackendClient;
@@ -55,6 +55,7 @@ const applicationArgs = Type.Object({
 }, { additionalProperties: false });
 
 const appHttpGetArgs = Type.Object({ runId: Type.String(), path: Type.String({ maxLength: 2048 }) }, { additionalProperties: false });
+const imageArgs = Type.Object({attachmentId:Type.Optional(Type.String()),cursor:Type.Optional(Type.String())},{additionalProperties:false});
 
 /**
  * Creates the six sequential tool definitions. The SDK runs the loop; these tools
@@ -122,6 +123,16 @@ export function createProjectTools(deps: ProjectToolDeps): Array<ToolDefinition>
   };
 
   return [
+    {
+      name: "read_image", label: "Read conversation image",
+      description: "Read an unexpired image by attachmentId. Use {} for the first conversation image catalog page, or {cursor} for later pages. Never pass both. Images remain readable after context compaction until their original deadline.",
+      parameters: imageArgs,
+      executionMode: "sequential",
+      async execute(toolCallId,params: Static<typeof imageArgs>,signal) {
+        if(Object.keys(params).length>1)throw new Error("Use attachmentId or cursor");
+        return await invoke(toolCallId,"read_image",params,signal);
+      },
+    },
     {
       name: "list_files",
       label: "List project files",

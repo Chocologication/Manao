@@ -55,8 +55,9 @@ public class WorkspaceConfig {
      */
     @Bean
     com.manao.poc4.ai.AgentTaskStore agentTaskStore(org.springframework.jdbc.core.JdbcTemplate jdbc,
-                                                    org.springframework.transaction.PlatformTransactionManager transactions) {
-        return new com.manao.poc4.ai.AgentTaskStore(jdbc, transactions, Clock.systemUTC());
+                                                    org.springframework.transaction.PlatformTransactionManager transactions,
+                                                    org.springframework.beans.factory.ObjectProvider<com.manao.poc4.ai.AgentAttachmentService> attachments) {
+        return new com.manao.poc4.ai.AgentTaskStore(jdbc, transactions, Clock.systemUTC(), attachments.getIfAvailable());
     }
 
     @Bean

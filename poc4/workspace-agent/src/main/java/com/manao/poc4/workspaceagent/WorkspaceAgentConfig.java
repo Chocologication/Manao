@@ -11,6 +11,11 @@ import org.springframework.context.annotation.Configuration;
 public class WorkspaceAgentConfig {
 
     @Bean
+    WorkspaceAttachmentService workspaceAttachmentService(@Value("${manao.agent.root:/workspace}") String root) {
+        return new WorkspaceAttachmentService(java.nio.file.Path.of(root), java.time.Clock.systemUTC());
+    }
+
+    @Bean
     WorkspaceFileService workspaceFileService(@Value("${manao.agent.root:/workspace}") String root) {
         return new WorkspaceFileService(java.nio.file.Path.of(root));
     }

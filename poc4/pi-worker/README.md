@@ -2,10 +2,10 @@
 
 The Node/TypeScript worker that drives the Pi SDK for Manao's stage-one AI tasks. One
 task at a time; the SDK runs its own agent loop; the model reaches the user's project
-only through four backend-mediated tools (`list_files`, `read_file`, `write_file`,
-`build`). The worker holds NO local file or shell capability over user code: it imports
+only through seven backend-mediated tools (`list_files`, `read_file`, `write_file`,
+`build`, `application`, `app_http_get`, `read_image`). The worker holds NO local file or shell capability over user code: it imports
 no `node:fs`/`node:child_process` tool surface, registers no built-in Pi tools
-(`noTools: "builtin"` plus an explicit four-tool allowlist), and its resource loading is
+(`noTools: "builtin"` plus an explicit tool allowlist), and its resource loading is
 explicitly discovery-disabled (no project extensions, no Skills, no prompt templates,
 no themes, no AGENTS/context files). The system prompt is fixed server-side; it does
 not pre-write change or retry steps.
@@ -59,7 +59,15 @@ All fields are required-empty in `.env.example`; nothing real is committed.
 | `MANAO_AI_API_TYPE` | Pi API type (for example `openai-completions`, `anthropic-messages`). |
 | `MANAO_AI_BASE_URL` | Model API base URL. |
 | `MANAO_AI_MODEL` | Model id. |
+| `MANAO_AI_IMAGE_INPUT` | Default `false`. Set exactly `true` only for a deployment verified to accept images; `/status.imageInput` supplies the backend/browser capability. |
 | `MANAO_AI_API_KEY` | Model API key. Lives ONLY in the worker environment and the ModelRuntime — never in the backend, a project, or a development Job. |
+
+Image originals live in the project's existing workspace PVC. The worker retrieves
+authorized bytes through the backend only when assembling a model request; session
+history and `read_image` results keep references. `read_image({})` lists one bounded
+catalog page, `read_image({ cursor })` continues it, and `read_image({ attachmentId })`
+requests an original until its fixed upload-time deadline. Compaction never extends
+that deadline. See the [local implementation and acceptance evidence](../docs/evidence/ai-image-input/acceptance.md).
 
 The worker boots without the model fields (health/reconciliation), but every start is
 refused with a fixed `AI_WORKER_NOT_CONFIGURED` (HTTP 503) until all five model fields
