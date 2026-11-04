@@ -40,6 +40,23 @@ describe("trusted project environment contract", () => {
 });
 
 describe("environment at the real SDK provider boundary", () => {
+  it("executes an exact-version add through native schema validation with backend-compatible intent", async () => {
+    const backend = backendStub([call => {
+      expect(call.request).toEqual({ toolCallId: "pin", name: "python_dependencies", expectedRevision: 7,
+        args: { action: "add", packageName: "pytest", version: "8.4.2", group: "test" } });
+      return { toolCallId: "pin", workspaceRevision: "8", data: { state: "COMMITTED" }, truncated: false };
+    }]);
+    const pi = await createPiSession({ environment: PYTHON_ENVIRONMENT, model: MODEL_CONFIG, paths: privateDirs(), taskId: "pin",
+      startRevision: "7", backend: backend as never, progress: new ProgressChain(backend as never, "pin"),
+      deps: { createSession: async options => scriptedSessionFactory([
+        { toolCalls: [{ id: "pin", name: "python_dependencies", args: { action: "add", packageName: "pytest", version: "8.4.2", group: "test" } }] },
+        { text: "done" },
+      ])(options) } });
+    try {
+      expect((await pi.run({ prompt: "add exact pytest", workspaceRevision: "7" })).state).toBe("COMPLETED");
+      expect(backend.calls).toHaveLength(1);
+    } finally { pi.dispose(); }
+  });
   it.each([JAVA_ENVIRONMENT, JAVA_CONSOLE, PYTHON_ENVIRONMENT, PYTHON_CONSOLE])("sends only the current $templateId capabilities before and after tool execution", async environment => {
     const backend = backendStub([resultFor]);
     const requests: TranscriptContext[] = [];
@@ -63,6 +80,8 @@ describe("environment at the real SDK provider boundary", () => {
             expect(systemText).toContain("reportComplete=true");
             expect(systemText).toContain("NO_SOURCE");
             expect(systemText).not.toMatch(/SYNTAX_ONLY|TESTS_PASSED/);
+            expect(systemText).toContain("optional exact version for add");
+            expect(systemText).not.toContain("versionSpec");
           }
         }
         for (const item of request.messages) if (item.role === "system") {
@@ -76,7 +95,7 @@ describe("environment at the real SDK provider boundary", () => {
         if (environment.language === "python") {
           const schema = active.get("python_dependencies") as { additionalProperties: boolean; properties: Record<string, unknown> };
           expect(schema.additionalProperties).toBe(false);
-          expect(Object.keys(schema.properties).sort()).toEqual(["action", "group", "packageName", "versionSpec"]);
+          expect(Object.keys(schema.properties).sort()).toEqual(["action", "group", "packageName", "version"]);
         }
       }
     } finally { pi.dispose(); }

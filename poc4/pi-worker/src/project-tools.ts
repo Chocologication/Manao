@@ -40,7 +40,8 @@ const writeArgs = Type.Object({
 const dependencyArgs = Type.Object({
   action: Type.String({ enum: ["add", "remove"] }),
   packageName: Type.String({ minLength: 1, maxLength: 128, description: "A package name; no URL, path or command." }),
-  versionSpec: Type.Optional(Type.String({ maxLength: 128, description: "Optional version constraint for add." })),
+  version: Type.Optional(Type.String({ pattern: "^[0-9A-Za-z][0-9A-Za-z.+!-]{0,127}$", maxLength: 128,
+    description: "Optional exact version for add, for example 8.4.2. No ranges or URLs. Omit for remove." })),
   group: Type.String({ enum: ["main", "test"] }),
 }, { additionalProperties: false });
 
@@ -208,14 +209,15 @@ export function createProjectTools(deps: ProjectToolDeps, value: ProjectEnvironm
       async execute(toolCallId, params: Static<typeof dependencyArgs>, signal) {
         // Also enforce strict intent for direct callers; SDK validation alone is not authority.
         const keys = Object.keys(params);
-        if (keys.some(key => !["action", "packageName", "versionSpec", "group"].includes(key))
+        if (keys.some(key => !["action", "packageName", "version", "group"].includes(key))
           || !["add", "remove"].includes(params.action) || !["main", "test"].includes(params.group)
           || typeof params.packageName !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(params.packageName)
-          || (params.versionSpec !== undefined && (typeof params.versionSpec !== "string" || params.versionSpec.length > 128))) {
+          || (params.action === "remove" && Object.hasOwn(params, "version"))
+          || (params.version !== undefined && (typeof params.version !== "string" || !/^[0-9A-Za-z][0-9A-Za-z.+!-]{0,127}$/.test(params.version)))) {
           throw new Error("Invalid Python dependency intent");
         }
         const args: Record<string, unknown> = { action: params.action, packageName: params.packageName, group: params.group };
-        if (params.versionSpec !== undefined) args.versionSpec = params.versionSpec;
+        if (params.version !== undefined) args.version = params.version;
         return await invoke(toolCallId, "python_dependencies", args, signal);
       },
     },

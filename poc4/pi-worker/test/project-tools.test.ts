@@ -199,11 +199,12 @@ describe("Python dependency authority projection", () => {
       errors: [], testSummary: { tests: 2, failures: 1, errors: 0, skipped: 0, reportComplete: true } };
     const backend = backendStub([toolResult("dependency", { state: "COMMITTED" }), toolResult("test", evidence)]);
     const tools = createEnvironmentTools({ backend: backend as never, taskId: "python-task", getRevision: () => "19" }, PYTHON_ENVIRONMENT);
-    const args = { action: "add", packageName: "pytest", versionSpec: ">=8", group: "test" };
+    const args = { action: "add", packageName: "pytest", version: "8.4.2", group: "test" };
     const dependency = tools.find(tool => tool.name === "python_dependencies")!;
     expect(dependency).toBeDefined();
     await dependency.execute("dependency", args, undefined, undefined, {} as never);
-    expect(backend.invoke).toHaveBeenCalledWith("python-task", { toolCallId: "dependency", name: "python_dependencies", expectedRevision: 19, args });
+    expect(backend.invoke).toHaveBeenCalledWith("python-task", { toolCallId: "dependency", name: "python_dependencies", expectedRevision: 19,
+      args: { action: "add", packageName: "pytest", version: "8.4.2", group: "test" } });
     const result = await tools.find(tool => tool.name === "build")!.execute("test", { goal: "test" }, undefined, undefined, {} as never);
     expect(JSON.parse(result.content[0]!.text).data).toEqual(evidence);
   });
@@ -214,6 +215,11 @@ describe("Python dependency authority projection", () => {
     { action: "add", packageName: "pytest", group: "test", projectId: "other" },
     { action: "add", packageName: "pytest", group: "test", expectedRevision: 99 },
     { action: "add", packageName: "pytest", group: "test", operationId: "replacement" },
+    { action: "add", packageName: "pytest", group: "test", versionSpec: "8.4.2" },
+    { action: "add", packageName: "pytest", group: "test", version: ">=8" },
+    { action: "add", packageName: "pytest", group: "test", version: "https://example.invalid/pkg.whl" },
+    { action: "remove", packageName: "pytest", group: "test", version: "8.4.2" },
+    { action: "remove", packageName: "pytest", group: "test", version: "" },
   ])("refuses invalid dependency intent without contacting the backend %#", async args => {
     const backend = backendStub();
     const dependency = createEnvironmentTools({ backend: backend as never, taskId: "python-task", getRevision: () => "19" }, PYTHON_ENVIRONMENT)
