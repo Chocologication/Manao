@@ -274,7 +274,7 @@ class DevelopmentBuildExecutorTest {
     }
 
     @org.junit.jupiter.params.ParameterizedTest
-    @org.junit.jupiter.params.provider.ValueSource(strings = {"close-bound", "close-unbound", "normal-pending"})
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"close-bound", "close-unbound", "normal-pending", "close-late-pod"})
     void pendingPythonEvidenceIsDurableBeforeDeleteAndSurvivesANewStore(String recovery) throws Exception {
         try (var db = com.manao.poc4.persistence.JdbcStoreTestSupport.create()) {
             var jdbc = db.jdbc();
@@ -289,17 +289,38 @@ class DevelopmentBuildExecutorTest {
             tasks.markToolCallRunning(taskId, CALL);
             var request = new BuildRequest(taskId, CALL, PROJECT, COMMAND, 7, BuildGoal.TEST, environment);
             var job = client.batch().v1().jobs().inNamespace(NS).resource(factory.createDevelopmentJob(request, SOURCE)).create();
-            var pod = seedPod(job.getMetadata().getName(), job.getMetadata().getUid(), 0, "Completed");
-            var identity = new BuildIdentity(job.getMetadata().getName(), job.getMetadata().getUid(), pod.getMetadata().getUid());
+            boolean latePod = "close-late-pod".equals(recovery);
+            Pod pod = latePod ? null : seedPod(job.getMetadata().getName(), job.getMetadata().getUid(), 0, "Completed");
+            var identity = new BuildIdentity(job.getMetadata().getName(), job.getMetadata().getUid(), pod == null ? null : pod.getMetadata().getUid());
             tasks.bindToolCallIdentity(taskId, CALL, identity.jobName(), identity.jobUid(),
                 "close-unbound".equals(recovery) ? null : identity.podUid());
-            seedLog(pod.getMetadata().getName(), PythonBuildEvidenceTest.report("<testsuite tests='1' failures='0' errors='0' skipped='0'/>"));
+            if (pod != null) seedLog(pod.getMetadata().getName(), PythonBuildEvidenceTest.report("<testsuite tests='1' failures='0' errors='0' skipped='0'/>"));
             dispatcher.conflictJobDelete = identity.jobName();
             var first = new Fabric8DevelopmentBuildExecutor(client, factory, NS, null, (r, create) -> create.get(), r -> false,
                 tasks::savePendingBuildEvidence, tasks::loadPendingBuildEvidence, Clock.systemUTC(), 1, 1, 1);
             if ("normal-pending".equals(recovery)) assertThat(first.build(request).cleanupConfirmed()).isFalse();
             else assertThatThrownBy(() -> first.closeStep(request, "close-unbound".equals(recovery)
                 ? new BuildIdentity(identity.jobName(), identity.jobUid(), null) : identity)).isInstanceOf(KubernetesClientException.class);
+            if (latePod) {
+                assertThat(tasks.loadPendingBuildEvidence(request).evidence().verificationStatus()).hasToString("UNKNOWN");
+                var runningPod = seedPod(identity.jobName(), identity.jobUid(), null, null);
+                var observedUid = runningPod.getMetadata().getUid();
+                seedLog(runningPod.getMetadata().getName(), "still running");
+                assertThatThrownBy(() -> first.closeStep(request, identity)).isInstanceOf(KubernetesClientException.class);
+                var restarted = new AgentTaskStore(jdbc, new org.springframework.jdbc.datasource.DataSourceTransactionManager(jdbc.getDataSource()), Clock.systemUTC());
+                assertThat(restarted.boundBuildIdentity(taskId, CALL).orElseThrow().podUid()).isEqualTo(observedUid);
+                assertThat(restarted.loadPendingBuildEvidence(request).identity().podUid()).isEqualTo(observedUid);
+                assertThat(restarted.loadPendingBuildEvidence(request).evidence().verificationStatus()).hasToString("UNKNOWN");
+                assertThat(restarted.findToolCall(taskId, CALL).orElseThrow().state()).isEqualTo("RUNNING");
+                dispatcher.conflictJobDelete = null;
+                var second = new Fabric8DevelopmentBuildExecutor(client, factory, NS, null, (r, create) -> { throw new AssertionError("no second Job"); }, r -> false,
+                    restarted::savePendingBuildEvidence, restarted::loadPendingBuildEvidence, Clock.systemUTC(), 1, 1, 1);
+                var closed = second.closeStep(request, new BuildIdentity(identity.jobName(), identity.jobUid(), observedUid));
+                assertThat(closed.cleanupConfirmed()).isTrue();
+                assertThat(closed.identity().podUid()).isEqualTo(observedUid);
+                tasks.releaseBuildClaim(taskId, CALL);
+                return;
+            }
             assertThat(tasks.findToolCall(taskId, CALL).orElseThrow().state()).isEqualTo("RUNNING");
             assertThat(tasks.findToolCall(taskId, CALL).orElseThrow().resultJson()).contains("pendingBuildEvidence");
             assertThat(tasks.loadPendingBuildEvidence(request).evidence().verificationStatus()).hasToString("PASS");

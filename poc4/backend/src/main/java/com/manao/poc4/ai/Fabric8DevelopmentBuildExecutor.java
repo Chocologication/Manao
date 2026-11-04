@@ -299,7 +299,8 @@ public final class Fabric8DevelopmentBuildExecutor implements DevelopmentBuildEx
         if (observed != null) return result(request, identity,
             request.environment() != null && "python".equals(request.environment().language()) ? observed.exitCode() : null,
             "BUILD_CLOSED", observed.output(), observed.truncated(), observed.reports(), false);
-        if (saved != null) return withCleanup(saved, false);
+        if (saved != null) return new AgentContracts.BuildResult(identity, saved.exitCode(), saved.terminationReason(),
+            saved.output(), saved.truncated(), saved.testReports(), false, saved.evidence());
         BoundedText log = new BoundedText("", false);
         if (pod != null) {
             try { log = ReconcileWorkBudget.boundary(() -> boundedLog(podName(pod), ResourceIdentityVerifier.APPLICATION_CONTAINER, observer)); }
