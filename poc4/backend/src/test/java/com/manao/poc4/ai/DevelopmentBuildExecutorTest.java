@@ -433,8 +433,8 @@ class DevelopmentBuildExecutorTest {
     }
 
     @org.junit.jupiter.params.ParameterizedTest
-    @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
-    void concurrentTerminalObserversReturnTheFirstDurableEvidenceAfterLateCleanup(boolean saveAfterCompletion) throws Exception {
+    @org.junit.jupiter.params.provider.CsvSource({"false,false", "true,false", "false,true"})
+    void concurrentTerminalObserversReturnTheFirstDurableEvidenceAfterLateCleanup(boolean saveAfterCompletion, boolean timeoutFirst) throws Exception {
         try (var db = com.manao.poc4.persistence.JdbcStoreTestSupport.create()) {
             var jdbc = db.jdbc();
             var now = new java.sql.Timestamp(System.currentTimeMillis());
@@ -468,18 +468,24 @@ class DevelopmentBuildExecutorTest {
             }, (r, create) -> {
                 creations.incrementAndGet();
                 Job job = create.get();
-                Pod pod = seedPod(job.getMetadata().getName(), job.getMetadata().getUid(), 0, "Completed");
+                Pod pod = seedPod(job.getMetadata().getName(), job.getMetadata().getUid(), timeoutFirst ? null : 0, "Completed");
                 podName.set(pod.getMetadata().getName());
-                seedLog(podName.get(), output);
+                seedLog(podName.get(), timeoutFirst ? "" : output);
                 return job;
             }, r -> false, (r, evidence) -> {
                 original.set(evidence);
                 var canonical = tasks.savePendingBuildEvidence(r, evidence);
-                seedLog(podName.get(), "");
+                if (timeoutFirst) {
+                    client.pods().inNamespace(NS).withName(podName.get()).edit(pod -> new PodBuilder(pod)
+                        .withNewStatus().withContainerStatuses(new ContainerStatusBuilder().withName("maven")
+                            .withNewState().withNewTerminated().withExitCode(0).withReason("Completed")
+                            .endTerminated().endState().build()).endStatus().build());
+                }
+                seedLog(podName.get(), timeoutFirst ? output : "");
                 passSaved.countDown();
                 awaitLatch(releaseFirstCleanup);
                 return canonical;
-            }, tasks::loadPendingBuildEvidence, Clock.systemUTC(), 1, 10, 1);
+            }, tasks::loadPendingBuildEvidence, Clock.systemUTC(), 1, timeoutFirst ? 0 : 10, 1);
             var replay = new Fabric8DevelopmentBuildExecutor(client, factory, NS, (r, identity) -> {
                 tasks.bindToolCallIdentity(taskId, CALL, identity.jobName(), identity.jobUid(), identity.podUid());
                 replayPolling.countDown();
@@ -509,11 +515,16 @@ class DevelopmentBuildExecutorTest {
                 awaitLatch(firstPolling);
                 var b = pool.submit(() -> replayTools.invoke(taskId, toolRequest));
                 awaitLatch(weakSaved);
-                assertThat(original.get().evidence().verificationStatus()).hasToString("PASS");
-                assertThat(replayObservation.get().evidence().verificationStatus()).hasToString("UNKNOWN");
+                assertThat(original.get().evidence().verificationStatus()).hasToString(timeoutFirst ? "UNKNOWN" : "PASS");
+                assertThat(replayObservation.get().evidence().verificationStatus()).hasToString(timeoutFirst ? "PASS" : "UNKNOWN");
+                if (timeoutFirst) {
+                    assertThat(original.get().exitCode()).isNull();
+                    assertThat(original.get().terminationReason()).isEqualTo("BUILD_WAIT_BUDGET_EXCEEDED");
+                }
+                var strongest = timeoutFirst ? replayObservation.get() : original.get();
                 assertThat(original.get().identity()).isEqualTo(replayObservation.get().identity());
                 var request = new BuildRequest(taskId, CALL, PROJECT, COMMAND, 7, BuildGoal.TEST, environment);
-                assertThat(tasks.loadPendingBuildEvidence(request)).isEqualTo(original.get());
+                assertThat(tasks.loadPendingBuildEvidence(request)).isEqualTo(strongest);
                 assertThat(original.get().cleanupConfirmed()).isFalse();
                 assertThat(client.pods().inNamespace(NS).list().getItems()).hasSize(1);
                 assertThat(client.batch().v1().jobs().inNamespace(NS).list().getItems()).hasSize(1);
@@ -521,6 +532,9 @@ class DevelopmentBuildExecutorTest {
                 releaseFirstCleanup.countDown();
                 var winner = a.get(20, TimeUnit.SECONDS);
                 assertThat(winner.data().path("verificationStatus").asText()).isEqualTo("PASS");
+                assertThat(winner.data().path("exitCode").asInt(-1)).isZero();
+                assertThat(winner.data().path("terminationReason").asText()).isEqualTo("Completed");
+                assertThat(winner.data().path("output").asText()).isEqualTo(output);
                 assertThat(winner.data().path("testSummary").path("tests").asInt()).isEqualTo(2);
                 assertThat(winner.data().path("sourceRevision").asText()).isEqualTo("7");
                 assertThat(winner.data().path("cleanupConfirmed").asBoolean()).isTrue();
@@ -528,13 +542,13 @@ class DevelopmentBuildExecutorTest {
                 assertThat(client.batch().v1().jobs().inNamespace(NS).list().getItems()).isEmpty();
                 releaseReplayCleanup.countDown();
                 assertThat(b.get(20, TimeUnit.SECONDS)).isEqualTo(winner);
-                assertThat(returnedEvidence.get()).usingRecursiveComparison().ignoringFields("cleanupConfirmed").isEqualTo(original.get());
+                assertThat(returnedEvidence.get()).usingRecursiveComparison().ignoringFields("cleanupConfirmed").isEqualTo(strongest);
                 var restarted = new AgentTaskStore(jdbc, transactions, Clock.systemUTC());
                 var laterTools = new AgentProjectTools(restarted, workspace, null, null, gate, replay);
                 assertThat(laterTools.invoke(taskId, toolRequest)).isEqualTo(winner);
                 assertThat(json.readTree(restarted.findToolCall(taskId, CALL).orElseThrow().resultJson()))
                     .isEqualTo(json.valueToTree(winner));
-                assertThat(restarted.loadPendingBuildEvidence(request)).isEqualTo(original.get());
+                assertThat(restarted.loadPendingBuildEvidence(request)).isEqualTo(strongest);
                 var foreignUid = new BuildResult(new BuildIdentity(original.get().identity().jobName(), "foreign-job", "foreign-pod"),
                     0, "Completed", "", false, List.of(), false);
                 assertThatThrownBy(() -> restarted.savePendingBuildEvidence(request, foreignUid))

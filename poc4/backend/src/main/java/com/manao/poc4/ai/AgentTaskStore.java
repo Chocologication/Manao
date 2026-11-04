@@ -571,17 +571,35 @@ public final class AgentTaskStore implements AgentTaskOccupancy {
      * stable identity (a restart leftover): the collected close evidence becomes the row's
      * durable answer. The caller holds the cleanup claim through this settlement.
      */
-    public synchronized void settleClosedBuildCall(String taskId, String toolCallId, String resultJson) {
-        completeBuildCall(taskId, toolCallId, resultJson);
+    public synchronized void settleClosedBuildCall(AgentContracts.BuildRequest request, AgentContracts.BuildResult result,
+            java.util.function.Function<AgentContracts.BuildResult, String> formatter) {
+        completeBuildCall(request, result, formatter);
     }
 
-    /** First confirmed build completion wins; every concurrent writer returns that durable answer. */
-    public synchronized ToolCallRow completeBuildCall(String taskId, String toolCallId, String resultJson) {
+    /**
+     * Reconcile the latest durable facts and publish once under the same monitor as evidence saves.
+     * The formatter must be pure: it only fits/serializes the selected facts, with no external IO.
+     */
+    public synchronized ToolCallRow completeBuildCall(AgentContracts.BuildRequest request, AgentContracts.BuildResult result,
+            java.util.function.Function<AgentContracts.BuildResult, String> formatter) {
+        ToolCallRow row = requireBuildEvidenceIdentity(request);
+        if ("COMPLETED".equals(row.state())) return row;
+        if (!result.cleanupConfirmed()) throw new IllegalStateException("build cleanup was not confirmed");
+        var saved = loadPendingBuildEvidence(request);
+        if (saved != null && saved.exitCode() != null) {
+            if (!java.util.Objects.equals(saved.identity(), result.identity()))
+                throw new IllegalStateException("build completion identity mismatch");
+            // A weaker observation may have finished cleanup first. Its confirmed absence
+            // settles the current durable terminal facts, not its older in-memory snapshot.
+            result = new AgentContracts.BuildResult(saved.identity(), saved.exitCode(), saved.terminationReason(),
+                saved.output(), saved.truncated(), saved.testReports(), true, saved.evidence());
+        }
+        String resultJson = formatter.apply(result);
         jdbc.update(
             "UPDATE agent_tool_call SET state = 'COMPLETED', result_json = ?, updated_at = ? "
                 + "WHERE task_id = ? AND tool_call_id = ? AND tool_name = 'build' AND state IN ('RUNNING','NEEDS_ATTENTION')",
-            resultJson, Timestamp.from(clock.instant()), taskId, toolCallId);
-        ToolCallRow row = findToolCall(taskId, toolCallId).orElseThrow();
+            resultJson, Timestamp.from(clock.instant()), request.taskId(), request.toolCallId());
+        row = findToolCall(request.taskId(), request.toolCallId()).orElseThrow();
         if (!"build".equals(row.toolName()) || !"COMPLETED".equals(row.state()) || row.resultJson() == null)
             throw new IllegalStateException("build completion was not persisted");
         return row;

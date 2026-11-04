@@ -358,10 +358,10 @@ public final class AgentProjectTools {
                             row.jobName(), row.jobUid(), row.podUid()));
                         if (closed == null || !closed.cleanupConfirmed()) return false;
                         if ("RUNNING".equals(row.state()) || "NEEDS_ATTENTION".equals(row.state())) {
-                            tasks.settleClosedBuildCall(taskId, row.toolCallId(), jsonOf(fittedBuildResult(
-                                new AgentContracts.ToolResult(row.toolCallId(),
-                                    Long.toString(currentRevision(owner.projectId())),
-                                    buildData(buildRequestOf(owner, row), closed), closed.truncated()))));
+                            var buildRequest = buildRequestOf(owner, row);
+                            String revision = Long.toString(currentRevision(owner.projectId()));
+                            tasks.settleClosedBuildCall(buildRequest, closed,
+                                canonical -> completedBuildJson(buildRequest, canonical, revision));
                             continue;
                         }
                     } else if (ReconcileWorkBudget.boundary(() -> builds.hasRecordedSideEffect(buildRequestOf(owner, row)))) {
@@ -634,29 +634,21 @@ public final class AgentProjectTools {
                 tasks.markToolCallNeedsAttention(row.taskId(), row.toolCallId());
                 throw ex;
             }
-            AgentContracts.ToolResult settled;
-            if ("BUILD_CLOSING_ABORTED".equals(built.terminationReason())) {
-                // The closing fence aborted the create: settle the deterministic
-                // no-side-effect answer WITHOUT binding an identity for a Job that was
-                // never created — the abort is reported in the call's data.
-                settled = fittedBuildResult(new AgentContracts.ToolResult(request.toolCallId(),
-                    Long.toString(currentRevision(owner.projectId())), buildData(buildRequest, built),
-                    built.truncated()));
-            } else {
+            // A closing fence can abort creation; do not bind an identity for a Job
+            // that was never created. All other results require confirmed cleanup.
+            if (!"BUILD_CLOSING_ABORTED".equals(built.terminationReason())) {
                 tasks.bindToolCallIdentity(row.taskId(), row.toolCallId(), built.identity().jobName(),
                     built.identity().jobUid(), built.identity().podUid());
                 if (!built.cleanupConfirmed()) {
                     tasks.markToolCallNeedsAttention(row.taskId(), row.toolCallId());
                     throw new IllegalStateException("the build cleanup was not confirmed; the call stays needs-attention");
                 }
-                settled = fittedBuildResult(new AgentContracts.ToolResult(request.toolCallId(),
-                    Long.toString(currentRevision(owner.projectId())), buildData(buildRequest, built),
-                    built.truncated()));
             }
             // The row settles HERE, while this thread's live claim is still held: a
             // concurrent close sees the claim, never the half-finished settlement.
-            AgentContracts.ToolResult bounded = boundedResult(settled);
-            return storedResult(tasks.completeBuildCall(row.taskId(), row.toolCallId(), jsonOf(bounded)));
+            String revision = Long.toString(currentRevision(owner.projectId()));
+            return storedResult(tasks.completeBuildCall(buildRequest, built,
+                canonical -> completedBuildJson(buildRequest, canonical, revision)));
         } finally {
             if (claimed) {
                 // Retired only after the call row is fully settled (or the failure path
@@ -664,6 +656,12 @@ public final class AgentProjectTools {
                 tasks.releaseBuildClaim(row.taskId(), row.toolCallId());
             }
         }
+    }
+
+    /** Pure formatter used inside the store's atomic evidence/completion boundary. */
+    private String completedBuildJson(AgentContracts.BuildRequest request, AgentContracts.BuildResult built, String revision) {
+        return jsonOf(boundedResult(fittedBuildResult(new AgentContracts.ToolResult(request.toolCallId(), revision,
+            buildData(request, built), built.truncated()))));
     }
 
     /** The durable build answer: real exit facts, bounded output and parsed report summaries. */
