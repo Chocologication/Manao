@@ -437,6 +437,8 @@ const label = data.verificationStatus === 'NO_TESTS'
 
 ## Task 9: 两类 Python 闭环验收、部署手册与交付
 
+实施核对：设计 §10 的四产物指 backend、pi-worker、workspace-agent、python-runner 四项运行时产物；Task 8 同时修改 frontend，发布必须再构建并部署配套 UI 产物，共五项，不遗漏界面交付。该补充只修正发布清单，不授权当前执行发布或真实模型调用；Step 6 保持 NOT_RUN。
+
 **Files:**
 - Create: `poc4/frontend/playwright.ai-python.config.ts`
 - Create: `poc4/frontend/tests/e2e/ai-python.spec.ts`
@@ -455,7 +457,7 @@ const label = data.verificationStatus === 'NO_TESTS'
 - Produces: 设计 E1–R1 的逐项证据；标签 `AI_PYTHON_LOCAL_PASS` 与 `AI_PYTHON_CLOSED_LOOP_PASS` 分开。
 - Produces: 配置变量 `MANAO_AI_ACCEPTANCE_BASE_URL/USERNAME/PASSWORD` 复用；新增 `MANAO_AI_PYTHON_CONSOLE_PROJECT_ID`、`MANAO_AI_PYTHON_FASTAPI_PROJECT_ID`。缺变量时脚本 fail with missing names，不能输出值、静默 skip 或连接默认生产项目。
 
-- [ ] **Step 1 — 建立两个可诊断失败场景。** console 有错误结果函数及断言；FastAPI 有错误业务响应，保留固定健康端点。fixture 不带凭据。seed 原模板后，通过受控接口准备 fixture，初始 lock 由 uv 生成；验收不手工补模型漏掉的结果。
+- [x] **Step 1 — 建立两个可诊断失败场景。** console 有错误结果函数及断言；FastAPI 有错误业务响应，保留固定健康端点。fixture 不带凭据。seed 原模板后，通过受控接口准备 fixture，初始 lock 由 uv 生成；验收不手工补模型漏掉的结果。固定容器中分别实际 exit=1/断言失败；仅容器副本修正后 exit=0，详见验收记录。
 
 ```python
 # console/main.py：初始错误为可重复证据。
@@ -474,10 +476,11 @@ def test_total():
     assert total([1, 2, 3]) == 6
 ```
 
-- [ ] **Step 2 — 编写真实验收，先验证能抓住失败。** Playwright 配置直接指向外部 baseURL，无 fixture webServer、无模型 mock。任务要求 Agent 先记录失败、修复、添加所需 main/test 依赖、验证、运行，再响应用户第二轮小修改完成重跑。console 最终核对输出与 exit=0；FastAPI 核对 firstReadyAt 和业务 GET 状态/内容。增删依赖两方向由 D1 集成测试覆盖，真实模型两场景各需发生 main/test 变更。
+- [x] **Step 2 — 编写真实验收，先验证能抓住失败。** Playwright 配置直接指向外部 baseURL，无 fixture webServer、无模型 mock。任务要求 Agent 先记录失败、修复、添加所需 main/test 依赖、验证、运行，再响应用户第二轮小修改完成重跑。console 最终核对输出与 exit=0；FastAPI 核对 firstReadyAt 和业务 GET 状态/内容。增删依赖两方向由 D1 集成测试覆盖，真实模型两场景各需发生 main/test 变更。验收合同本地 RED 5 failed → GREEN 5 passed，独立 tsc 通过；真实配置未执行，包括未运行 `--list`。
 - [ ] **Step 3 — 验证非 happy-path。** 在 disposable 项目验证 dependency commit 响应丢失、PENDING 重启、prepare/commit 边界取消、pytest 超时取消；保留原身份和失败证据，最终确认该任务无未决操作、无构建 Job/Pod。已有会话继续与一次压缩后继续要看到当前环境；图片回归用已有图片测试，不要求模型在每个 Python 场景上传图片。
+  本地实际组合、取消/重启/UID fixture 与 worker 请求边界证据已逐项收录；真实部署故障清单保留 NOT_RUN，不用本地结果替代其运行。
 - [ ] **Step 4 — 本地联合回归。** backend/workspace-agent 相关套件、worker 全量、前端相关套件、Python 容器套件均通过后才写 AI_PYTHON_LOCAL_PASS。记录每项 PASS/FAILED/SKIPPED/NOT_RUN，禁止以单一汇总遮蔽遗漏。
-- [ ] **Step 5 — 完成可审阅部署手册。** 写明四产物构建/digest、V20 迁移、旧 task 排空、旧 Python workspace Pod 更新、已有 PVC 保留、兼容顺序和回滚；从实际配置读取目标 namespace/schema，用户授权发布时再执行。不能只更新模板镜像而忽略已有 workspace Pod。
+- [x] **Step 5 — 完成可审阅部署手册。** 写明四运行产物及配套 frontend 的构建/digest、V20 迁移、旧 task 排空、旧 Python workspace Pod 更新、已有 PVC 保留、兼容顺序和回滚；从实际配置读取目标 namespace/schema，用户授权发布时再执行。不能只更新模板镜像而忽略已有 workspace Pod。
 - [ ] **Step 6 — 获得对应授权后执行真实发布与闭环。** 记录同一构建 SHA、真实模型/provider 配置标识（无密钥）及工具/operation/Run 证据；运行：
 
 ```powershell
@@ -485,7 +488,7 @@ pnpm -C poc4/frontend exec playwright test --config playwright.ai-python.config.
 ```
 
 两 Python 场景、Java 两模板烟测、恢复和资源清理证据全部满足设计后，才写 AI_PYTHON_CLOSED_LOOP_PASS；未经运行保持 NOT_RUN。
-- [ ] **Step 7 — 文档自审与提交。** README 链接可解析、没有私有 worktree 路径或凭据；`git diff --check` 和编码检查通过；清理本次不再使用的临时产物。提交 `git commit -m "test(ai): verify Python development loops and document rollout"`。代码合并/push 按实施会话授权处理。
+- [x] **Step 7 — 文档自审与本地提交。** README 链接可解析、没有私有 worktree 路径或凭据；`git diff --check` 和编码检查通过；清理本次不再使用的临时产物。提交 `git commit -m "test(ai): verify Python development loops and document rollout"`。全分支复审及本地最终标签待父任务关闭，代码合并/push 不在当前授权内。
 
 ## 2. 需求到任务的覆盖检查
 
@@ -506,6 +509,7 @@ pnpm -C poc4/frontend exec playwright test --config playwright.ai-python.config.
 
 ## 3. 本规划的完成状态
 
-- 已完成：基于新工作树源码梳理、用户确认依赖授权和验证层级、设计与九任务计划、文档自审。
-- 尚未执行：产品代码修改、依赖安装、数据库迁移、业务测试、镜像构建、部署、真实模型验收。
+- 已完成：设计与计划、Tasks 1–8 本地实现/分层验证、Task 4 真实依赖双文件故障组合、Task 9 失败 fixture/真实验收脚本/部署手册与证据导航。具体局部结果、修复后的重跑边界及 Task 9 检查见 [验收记录](../../../poc4/docs/evidence/ai-python-environment/acceptance.md)。
+- 待最终核对：Task 9 联合兼容回归及全分支复审；`AI_PYTHON_LOCAL_PASS` 尚未授予。
+- 未执行：registry 发布、运行库 V20 迁移、已有云 workspace 更新、云故障、真实模型/浏览器闭环、Git push/merge；Step 6 为 NOT_RUN，`AI_PYTHON_CLOSED_LOOP_PASS` 未授予。本地测试镜像构建/容器运行不是发布。
 - 技术边界已给出明确方案，无占位实施任务；设计评审如调整边界，应同步本文后再执行。

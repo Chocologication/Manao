@@ -4,6 +4,7 @@
 
 ## 当前结论
 
+- 2026-11-04 AI 四模板环境识别、Python 文件/依赖/语法/pytest/工具链的本地实现及分层验证已推进，真实验收脚本和发布手册已准备；本地最终标签待联合复核，云部署与真实模型闭环 **NOT_RUN**。范围见 [AI Python 验收记录](../poc4/docs/evidence/ai-python-environment/acceptance.md)。
 - 云工作台、Java 和 Python 已按各自验收范围交付；旧 6A/6B gate 和已完成计划不再是默认待办。
 - AI 已交付代码修改/构建测试、应用反馈、多轮会话、上下文压缩及展示改进。阶段一已通过；阶段二工程验收仍为 **PAUSED / NOT_GRANTED**；阶段三由用户确认实际 CRUD 使用已完成使命。
 - 2026-10-26 收尾修复已本地审查、实际部署并完成一次最小真实模型/浏览器验证：**LOCAL_REPAIR_VERIFIED / DEPLOYED_SMOKE_VERIFIED**。修复分支先合回 AI 分支，现随 AI 集成内容同步到 master；原发布和验证边界保持不变。
