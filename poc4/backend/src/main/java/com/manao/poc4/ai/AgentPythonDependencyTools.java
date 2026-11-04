@@ -63,7 +63,14 @@ public final class AgentPythonDependencyTools {
 
     private AgentContracts.ToolResult complete(String taskId, String toolCallId, PythonDependencyService.Status status) {
         var paths = List.of("pyproject.toml", "uv.lock");
-        var data = JSON.createObjectNode().put("operationId", status.operationId()).put("state", status.state());
+        var call = tasks.findToolCall(taskId, toolCallId).orElseThrow(() -> new IllegalStateException("Dependency call is missing"));
+        com.fasterxml.jackson.databind.JsonNode args;
+        try { args = JSON.readTree(call.argsJson()); }
+        catch (java.io.IOException ex) { throw new IllegalStateException("Cannot read dependency call", ex); }
+        var data = JSON.createObjectNode().put("kind", "python_dependencies")
+            .put("operationId", status.operationId()).put("action", args.path("action").asText())
+            .put("packageName", args.path("packageName").asText()).put("group", args.path("group").asText())
+            .put("state", status.state());
         data.set("changedPaths", JSON.valueToTree(paths));
         var result = new AgentContracts.ToolResult(toolCallId, Long.toString(status.resultWorkspaceRevision()), data, false);
         tasks.completeDependencyCall(taskId, toolCallId, paths, status.resultWorkspaceRevision(), serialize(result));

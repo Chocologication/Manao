@@ -56,6 +56,10 @@ public final class AgentTaskStore implements AgentTaskOccupancy {
      * claim (never release) from a restart-leftover RUNNING row (close by identity).
      */
     private final java.util.Set<String> liveBuildClaims = new java.util.HashSet<>();
+    /** Only the initial REGISTERED -> RUNNING winner may prepare a new dependency journal. */
+    private enum DependencyClaim { EXECUTION, OBSERVATION, CLEANUP }
+    // Lock-free reads avoid taking the store monitor while PENDING registration holds the task row lock.
+    private final java.util.concurrent.ConcurrentMap<String, DependencyClaim> dependencyClaims = new java.util.concurrent.ConcurrentHashMap<>();
 
     public AgentTaskStore(JdbcTemplate jdbc, PlatformTransactionManager transactions, Clock clock) {
         this(jdbc,transactions,clock,null);
@@ -439,6 +443,8 @@ public final class AgentTaskStore implements AgentTaskOccupancy {
      * was already RUNNING or settled — the caller must then follow the recovery path instead.
      */
     public synchronized boolean markToolCallRunning(String taskId, String toolCallId) {
+        boolean dependencyCall = findToolCall(taskId, toolCallId)
+            .map(call -> "python_dependencies".equals(call.toolName())).orElse(false);
         boolean claimed = jdbc.update(
             "UPDATE agent_tool_call SET state = 'RUNNING', updated_at = ? "
                 + "WHERE task_id = ? AND tool_call_id = ? AND state = 'REGISTERED' "
@@ -446,6 +452,9 @@ public final class AgentTaskStore implements AgentTaskOccupancy {
             Timestamp.from(clock.instant()), taskId, toolCallId) > 0;
         if (claimed) {
             liveBuildClaims.add(taskId + "/" + toolCallId);
+            if (dependencyCall) {
+                dependencyClaims.put(taskId + "/" + toolCallId, DependencyClaim.EXECUTION);
+            }
         }
         return claimed;
     }
@@ -474,14 +483,18 @@ public final class AgentTaskStore implements AgentTaskOccupancy {
     }
 
     public synchronized boolean claimDependencyCleanup(String taskId, String toolCallId) {
-        return claimToolCleanup(taskId, toolCallId, "python_dependencies");
+        boolean claimed = claimToolCleanup(taskId, toolCallId, "python_dependencies");
+        if (claimed) dependencyClaims.put(taskId + "/" + toolCallId, DependencyClaim.CLEANUP);
+        return claimed;
     }
 
     public synchronized boolean claimDependencyObservation(String taskId, String toolCallId) {
         var call = findToolCall(taskId, toolCallId).orElse(null);
         if (call == null || !"python_dependencies".equals(call.toolName()) || isBuildClaimLive(taskId, toolCallId)
             || !List.of("RUNNING", "NEEDS_ATTENTION").contains(call.state())) return false;
-        return liveBuildClaims.add(taskId + "/" + toolCallId);
+        boolean claimed = liveBuildClaims.add(taskId + "/" + toolCallId);
+        if (claimed) dependencyClaims.put(taskId + "/" + toolCallId, DependencyClaim.OBSERVATION);
+        return claimed;
     }
 
     public void completeDependencyCall(String taskId, String toolCallId, List<String> paths, long revision, String resultJson) {
@@ -496,10 +509,16 @@ public final class AgentTaskStore implements AgentTaskOccupancy {
         var call = findToolCall(taskId, toolCallId).orElseThrow(AgentTaskStore::unauthorizedRunCall);
         if (!projectId.equals(owner.projectId()) || !"python_dependencies".equals(call.toolName())
             || operationId == null || !operationId.equals(call.workspaceOperationId())
-            || !List.of("REGISTERED", "RUNNING", "NEEDS_ATTENTION", "COMPLETED").contains(call.state())) throw unauthorizedRunCall();
+            || !List.of("REGISTERED", "RUNNING", "NEEDS_ATTENTION", "COMPLETED").contains(call.state())
+            || !dependencyClaims.containsKey(taskId + "/" + toolCallId)) throw unauthorizedRunCall();
         Integer authorized = jdbc.queryForObject("SELECT COUNT(*) FROM agent_task t JOIN project p ON p.id=t.project_id "
             + "WHERE t.id=? AND t.owner_id=p.owner_id AND t.active_project=p.id", Integer.class, taskId);
         if (authorized == null || authorized != 1) throw unauthorizedRunCall();
+    }
+
+    public void requireAgentDependencyExecution(String taskId, String projectId, String toolCallId, String operationId) {
+        requireAgentDependencyCall(taskId, projectId, toolCallId, operationId);
+        if (dependencyClaims.get(taskId + "/" + toolCallId) != DependencyClaim.EXECUTION) throw unauthorizedRunCall();
     }
 
     public void registerAgentDependencyPending(String taskId, String toolCallId,
@@ -507,7 +526,7 @@ public final class AgentTaskStore implements AgentTaskOccupancy {
             com.manao.poc4.workspace.WorkspaceStore.OperationRecord operation) {
         transaction.executeWithoutResult(status -> {
             jdbc.queryForObject("SELECT id FROM agent_task WHERE id=? FOR UPDATE", String.class, taskId);
-            requireAgentDependencyCall(taskId, operation.projectId(), toolCallId, operation.id());
+            requireAgentDependencyExecution(taskId, operation.projectId(), toolCallId, operation.id());
             requireTaskAcceptsNewCall(taskId, operation.projectId());
             var call = findToolCall(taskId, toolCallId).orElseThrow(AgentTaskStore::unauthorizedRunCall);
             if (!"RUNNING".equals(call.state()) || call.expectedRevision() != operation.expectedRevision()) throw unauthorizedRunCall();
@@ -544,6 +563,7 @@ public final class AgentTaskStore implements AgentTaskOccupancy {
      */
     public synchronized void releaseBuildClaim(String taskId, String toolCallId) {
         liveBuildClaims.remove(taskId + "/" + toolCallId);
+        dependencyClaims.remove(taskId + "/" + toolCallId);
     }
 
     /**

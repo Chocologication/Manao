@@ -230,7 +230,9 @@ REGISTERED → claim RUNNING → prepare
 ```
 
 - [x] **Step 4 — 实现只核对原操作的恢复。** 新增依赖收尾分支及 cleanup claim；PENDING 继续同一 journal commit，COMMITTED 重建成功结果，无记录且已无执行只能退休原调用，绝不重新 prepare。每次 reconcile 服从 ReconcileWorkBudget；单次 IO timeout 不得超出剩余预算，不得用 browser reconcile 绕回 requireBrowserWritable。保持原 hasPendingReceipts 覆盖依赖行。
-- [x] **Step 5 — 覆盖失败矩阵并绿灯。** 双文件部分写入/receipt 缺失/摘要不符继续占用；登记后响应丢失重试不增第二次 revision；completed 重放不碰 uv；跨 task/owner/project 拒绝；暂停后可通过新 task 继续；结束时无 task 所属 PENDING。两条 changedPaths 与 revision 必须在同一 task 更新事务记录，恢复路径也记录。运行 Step 2 与既有收尾测试。
+- [ ] **Step 5 — 覆盖失败矩阵并绿灯。** 双文件部分写入/receipt 缺失/摘要不符继续占用；登记后响应丢失重试不增第二次 revision；completed 重放不碰 uv；跨 task/owner/project 拒绝；暂停后可通过新 task 继续；结束时无 task 所属 PENDING。两条 changedPaths 与 revision 必须在同一 task 更新事务记录，恢复路径也记录。运行 Step 2 与既有收尾测试。
+
+  审查修复后仍保留未完成项：AI service → 真实 workspace-agent 的双文件部分写入故障组合测试由 Task 9 本地集成补齐；不能以 Task 3 文件事务测试或模拟 receipt 等同该组合证据。Task 4 的细项执行结果见本次实现报告。
 - [x] **Step 6 — 提交。** `git commit -m "feat(ai): add durable Python dependency tool lifecycle"`。
 
 ## Task 5: 固定 Python 验证运行器

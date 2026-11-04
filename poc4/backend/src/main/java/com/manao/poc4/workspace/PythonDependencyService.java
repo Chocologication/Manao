@@ -70,6 +70,7 @@ public final class PythonDependencyService {
         Request request = agentRequest(projectId, call);
         var registered = store.findOperation(projectId, call.workspaceOperationId());
         if (registered.isPresent()) return reconcileForAgent(taskId, toolCallId);
+        tasks.requireAgentDependencyExecution(taskId, projectId, toolCallId, call.workspaceOperationId());
         requirePythonTemplate(projectId);
         requireOwner(owner.ownerId(), projectId);
         var project = store.findProject(projectId);
@@ -92,9 +93,9 @@ public final class PythonDependencyService {
     public Status reconcileForAgent(String taskId, String toolCallId) {
         var call = dependencyCall(taskId, toolCallId);
         String projectId = dependencyTasks().taskOwner(taskId).projectId();
-        var request = agentRequest(projectId, call);
         var operation = store.findOperation(projectId, call.workspaceOperationId()).orElse(null);
         if (operation == null) return new Status(call.workspaceOperationId(), "UNCONFIRMED", null);
+        var request = agentRequest(projectId, call);
         if (!OPERATION_KIND.equals(operation.operationKind()) || operation.expectedRevision() != call.expectedRevision()
             || !request.requestSha256().equals(operation.requestSha256())) throw new ApiException(RECONCILIATION_FAILURE, 409, "Workspace needs reconciliation");
         if ("COMMITTED".equals(operation.state())) return committed(operation);
@@ -125,7 +126,13 @@ public final class PythonDependencyService {
                 String field = fields.next();
                 if (!List.of("action", "packageName", "version", "group").contains(field) || !args.get(field).isTextual()) throw validation();
             }
-            return parseRequest(projectId, call.workspaceOperationId(), new WorkspaceAgent.DependencyChange(args.path("action").asText(),
+            String action = switch (args.path("action").asText()) {
+                case "add" -> "ADD";
+                case "remove" -> "REMOVE";
+                default -> throw validation();
+            };
+            if ("REMOVE".equals(action) && args.has("version")) throw validation();
+            return parseRequest(projectId, call.workspaceOperationId(), new WorkspaceAgent.DependencyChange(action,
                 args.path("packageName").asText(), args.has("version") ? args.path("version").asText() : null, args.path("group").asText()), Long.toString(call.expectedRevision()));
         } catch (java.io.IOException ex) { throw validation(); }
     }
