@@ -479,7 +479,7 @@ def test_total():
 - [x] **Step 2 — 编写真实验收，先验证能抓住失败。** Playwright 配置直接指向外部 baseURL，无 fixture webServer、无模型 mock。任务要求 Agent 先记录失败、修复、添加所需 main/test 依赖、验证、运行，再响应用户第二轮小修改完成重跑。console 最终核对输出与 exit=0；FastAPI 核对 firstReadyAt 和业务 GET 状态/内容。增删依赖两方向由 D1 集成测试覆盖，真实模型两场景各需发生 main/test 变更。验收合同本地 RED 5 failed → GREEN 5 passed，独立 tsc 通过；真实配置未执行，包括未运行 `--list`。
 - [ ] **Step 3 — 验证非 happy-path。** 在 disposable 项目验证 dependency commit 响应丢失、PENDING 重启、prepare/commit 边界取消、pytest 超时取消；保留原身份和失败证据，最终确认该任务无未决操作、无构建 Job/Pod。已有会话继续与一次压缩后继续要看到当前环境；图片回归用已有图片测试，不要求模型在每个 Python 场景上传图片。
   本地实际组合、取消/重启/UID fixture 与 worker 请求边界证据已逐项收录；真实部署故障清单保留 NOT_RUN，不用本地结果替代其运行。
-- [ ] **Step 4 — 本地联合回归。** backend/workspace-agent 相关套件、worker 全量、前端相关套件、Python 容器套件均通过后才写 AI_PYTHON_LOCAL_PASS。记录每项 PASS/FAILED/SKIPPED/NOT_RUN，禁止以单一汇总遮蔽遗漏。
+- [x] **Step 4 — 本地联合回归。** backend/workspace-agent 相关套件、worker 全量、前端相关套件、Python 容器套件和全分支最终复审已完成，授予范围限定的 AI_PYTHON_LOCAL_PASS。最新构建结算 149/149、兼容组 86/86、worker 266 PASS / 1 SKIPPED、前端 155 PASS；各次验证源码边界、容器证据与未执行项见[验收记录](../../../poc4/docs/evidence/ai-python-environment/acceptance.md)，不合并重复用例总数。
 - [x] **Step 5 — 完成可审阅部署手册。** 写明四运行产物及配套 frontend 的构建/digest、V20 迁移、旧 task 排空、旧 Python workspace Pod 更新、已有 PVC 保留、兼容顺序和回滚；从实际配置读取目标 namespace/schema，用户授权发布时再执行。不能只更新模板镜像而忽略已有 workspace Pod。
 - [ ] **Step 6 — 获得对应授权后执行真实发布与闭环。** 记录同一构建 SHA、真实模型/provider 配置标识（无密钥）及工具/operation/Run 证据；运行：
 
@@ -488,7 +488,7 @@ pnpm -C poc4/frontend exec playwright test --config playwright.ai-python.config.
 ```
 
 两 Python 场景、Java 两模板烟测、恢复和资源清理证据全部满足设计后，才写 AI_PYTHON_CLOSED_LOOP_PASS；未经运行保持 NOT_RUN。
-- [x] **Step 7 — 文档自审与本地提交。** README 链接可解析、没有私有 worktree 路径或凭据；`git diff --check` 和编码检查通过；清理本次不再使用的临时产物。提交 `git commit -m "test(ai): verify Python development loops and document rollout"`。全分支复审及本地最终标签待父任务关闭，代码合并/push 不在当前授权内。
+- [x] **Step 7 — 文档自审与本地提交。** README 链接可解析、没有私有 worktree 路径或凭据；`git diff --check` 和编码检查通过；本次临时产物已清理，必要证据保留。产物提交 `0f80538` 及验收合同修复 `67feff6` 已完成；全分支最终复审批准，提交清单见[交付记录](../../../poc4/docs/evidence/ai-python-environment/delivery.md)。代码合并/push 不在当前授权内。
 
 ## 2. 需求到任务的覆盖检查
 
@@ -510,6 +510,6 @@ pnpm -C poc4/frontend exec playwright test --config playwright.ai-python.config.
 ## 3. 本规划的完成状态
 
 - 已完成：设计与计划、Tasks 1–8 本地实现/分层验证、Task 4 真实依赖双文件故障组合、Task 9 失败 fixture/真实验收脚本/部署手册与证据导航。具体局部结果、修复后的重跑边界及 Task 9 检查见 [验收记录](../../../poc4/docs/evidence/ai-python-environment/acceptance.md)。
-- 待最终核对：Task 9 联合兼容回归及全分支复审；`AI_PYTHON_LOCAL_PASS` 尚未授予。
+- 本地最终核对：Task 9 联合回归与全分支复审完成，`AI_PYTHON_LOCAL_PASS` 已按本地证据范围授予；Step 3 的真实部署故障与 Step 6 的真实模型闭环仍 NOT_RUN。
 - 未执行：registry 发布、运行库 V20 迁移、已有云 workspace 更新、云故障、真实模型/浏览器闭环、Git push/merge；Step 6 为 NOT_RUN，`AI_PYTHON_CLOSED_LOOP_PASS` 未授予。本地测试镜像构建/容器运行不是发布。
 - 技术边界已给出明确方案，无占位实施任务；设计评审如调整边界，应同步本文后再执行。

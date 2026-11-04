@@ -1,6 +1,6 @@
 # AI 项目环境与 Python 开发闭环设计
 
-状态：设计评审稿；用户已确认目标、自动依赖管理与验证层级，本文的技术设计待审阅。仅规划，未实现、未部署、未执行运行时验收。
+状态：用户已确认设计和实施计划，本地实现与分层验证已执行；最终范围和复核状态见[验收记录](../../../poc4/docs/evidence/ai-python-environment/acceptance.md)。云端部署与真实模型闭环未执行，不以本地测试代替运行时验收。
 
 本次调研基线：`master` 的 `d0cf75f`；规划分支 `codex/ai-python-environment`。该提交是本次证据定位，不是未来永久基线。实施前核对实际 checkout 与差异。
 
@@ -12,7 +12,7 @@
 
 - Agent 可自动通过受控工具增删第三方依赖，沿用平台 uv 与锁文件机制，无需每次另问。
 - Python 验证包含语法检查、pytest 与真实运行反馈；测试依赖按需加入专用 `test` 组。
-- 当前工作是新工作树内的规划。没有授权本轮部署、执行真实模型任务或修改产品实现。
+- 规划完成后，用户授权在指定工作树实现、必要本地验证、文档更新与本地提交；本轮未授权部署、真实外部模型调用、push/merge 或共享资源清理。
 
 四类模板全部提供环境事实；Python 两类补齐工具能力；Java 两类保留现有构建、运行语义并回归验证。普通 Python 沿用 `main.py` 非交互入口，FastAPI 沿用 `app.main:app` 及 `/health/ready`。本阶段不扩展任意命令、stdin、CLI 参数配置、框架迁移、Python wheel 发布、任意索引或需要系统包/本地构建的依赖。
 
@@ -220,4 +220,4 @@ FastAPI：读取环境/代码 → stop 并确认退出 → 编辑/依赖/验证 
 - [uv 0.11.0 锁定与同步文档](https://github.com/astral-sh/uv/blob/0.11.0/docs/concepts/projects/sync.md)：Context7 可用的相近版本；生产固定 uv 0.11.6，flags 的最终证明必须在该镜像完成。
 - [pytest 退出码](https://docs.pytest.org/en/stable/reference/exit-codes.html)：保留实际退出码，未来未知代码一律不当 PASS。
 
-新工作树从已确认基线创建，主目录无关修改未带入。规划阶段仅做源码、文档、链接、编码与 Git 差异检查；未安装依赖或执行业务测试。
+新工作树从已确认基线创建，主目录无关修改未带入。上述现状与选型保留规划阶段的证据定位；实施期间完成的本地测试、合同修正与剩余外部验收统一由[验收记录](../../../poc4/docs/evidence/ai-python-environment/acceptance.md)维护。

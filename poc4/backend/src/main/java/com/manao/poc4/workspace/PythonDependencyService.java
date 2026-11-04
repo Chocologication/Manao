@@ -15,9 +15,9 @@ import java.util.Optional;
 import java.util.regex.Pattern;
 
 /**
- * Browser-facing Python dependency orchestration (design 6.1/6.2). This service owns the Python
+ * Browser and task-bound Python dependency orchestration (design 6.1/6.2). This service owns the Python
  * request rules — owner, template, revision, run-lock, pending checks, package normalization and
- * the request digests (protocol 1 single-package, protocol 2 batch import) — and the agent
+ * the request digests (protocol 1 main, protocol 2 batch import, protocol 3 test group) — and the agent
  * prepare/commit calls; {@link WorkspaceOperationService} owns the lifecycle lease, receipts,
  * durable operation state and revision. The call order is fixed: a registered operation id is
  * always answered before the current revision can misjudge a lost-response retry, and the durable
@@ -513,7 +513,7 @@ public final class PythonDependencyService {
                                                           WorkspaceAgent agent);
     }
 
-    /** The single-package change: one normalized ADD/REMOVE item, digest protocol 1. */
+    /** One normalized ADD/REMOVE item: main uses protocol 1; test uses protocol 3. */
     private record SingleRequest(String action, String packageName, String version, String group, long expectedRevision,
                                  String requestSha256) implements Request {
         @Override public String faultLabel() {
