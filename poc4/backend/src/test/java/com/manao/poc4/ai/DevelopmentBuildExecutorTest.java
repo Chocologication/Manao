@@ -274,7 +274,7 @@ class DevelopmentBuildExecutorTest {
     }
 
     @org.junit.jupiter.params.ParameterizedTest
-    @org.junit.jupiter.params.provider.ValueSource(strings = {"close-bound", "close-unbound", "normal-pending", "close-late-pod"})
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"close-bound", "close-unbound", "normal-pending", "close-late-pod", "observe-late-pod"})
     void pendingPythonEvidenceIsDurableBeforeDeleteAndSurvivesANewStore(String recovery) throws Exception {
         try (var db = com.manao.poc4.persistence.JdbcStoreTestSupport.create()) {
             var jdbc = db.jdbc();
@@ -289,7 +289,7 @@ class DevelopmentBuildExecutorTest {
             tasks.markToolCallRunning(taskId, CALL);
             var request = new BuildRequest(taskId, CALL, PROJECT, COMMAND, 7, BuildGoal.TEST, environment);
             var job = client.batch().v1().jobs().inNamespace(NS).resource(factory.createDevelopmentJob(request, SOURCE)).create();
-            boolean latePod = "close-late-pod".equals(recovery);
+            boolean latePod = recovery.endsWith("late-pod");
             Pod pod = latePod ? null : seedPod(job.getMetadata().getName(), job.getMetadata().getUid(), 0, "Completed");
             var identity = new BuildIdentity(job.getMetadata().getName(), job.getMetadata().getUid(), pod == null ? null : pod.getMetadata().getUid());
             tasks.bindToolCallIdentity(taskId, CALL, identity.jobName(), identity.jobUid(),
@@ -306,7 +306,8 @@ class DevelopmentBuildExecutorTest {
                 var runningPod = seedPod(identity.jobName(), identity.jobUid(), null, null);
                 var observedUid = runningPod.getMetadata().getUid();
                 seedLog(runningPod.getMetadata().getName(), "still running");
-                assertThatThrownBy(() -> first.closeStep(request, identity)).isInstanceOf(KubernetesClientException.class);
+                if ("observe-late-pod".equals(recovery)) assertThat(first.observe(request, identity).cleanupConfirmed()).isFalse();
+                else assertThatThrownBy(() -> first.closeStep(request, identity)).isInstanceOf(KubernetesClientException.class);
                 var restarted = new AgentTaskStore(jdbc, new org.springframework.jdbc.datasource.DataSourceTransactionManager(jdbc.getDataSource()), Clock.systemUTC());
                 assertThat(restarted.boundBuildIdentity(taskId, CALL).orElseThrow().podUid()).isEqualTo(observedUid);
                 assertThat(restarted.loadPendingBuildEvidence(request).identity().podUid()).isEqualTo(observedUid);

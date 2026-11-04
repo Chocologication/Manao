@@ -184,7 +184,9 @@ public final class Fabric8DevelopmentBuildExecutor implements DevelopmentBuildEx
                 throw new IllegalStateException("saved build evidence uid mismatch");
             // A persisted observation precedes the first destructive cleanup. Recovery resumes
             // that cleanup even when its Job still exists after its Pod has already disappeared.
-            return withCleanup(saved, cleanup(jobName, saved.identity().jobUid(), request.commandId()));
+            var evidence = closingEvidence(request, job, saved.identity());
+            evidenceSink.accept(request, evidence);
+            return withCleanup(evidence, cleanup(jobName, evidence.identity().jobUid(), request.commandId()));
         }
         if (job == null) {
             // Recovery never rebuilds: a recorded build without any live evidence has an
