@@ -253,7 +253,7 @@ REGISTERED → claim RUNNING → prepare
 - Produces: root-owned `/usr/local/bin/manao-python-dev-build copy|compile|test`；固定路径 `/opt/manao-python/python-check.py`。
 - Produces: `python-environment.sh` 函数 `manao_prepare_python_environment(mode)`，mode 只接受 runtime/test，共享 seed/cache/venv/extras；source 本身不执行用户代码。
 
-- [ ] **Step 1 — 写黑盒容器用例。** 成功语法、语法错、无源码、不 import 带副作用模块；pytest 成功/失败/无测试/全跳过/缺依赖；锁不匹配拒绝；main Runtime 不装 test；源码 hash 不变；副本超限、symlink、venv 排除、停止和 deadline。
+- [x] **Step 1 — 写黑盒容器用例。** 成功语法、语法错、无源码、不 import 带副作用模块；pytest 成功/失败/无测试/全跳过/缺依赖；锁不匹配拒绝；main Runtime 不装 test；源码 hash 不变；副本超限、symlink、venv 排除、停止和 deadline。
 
 ```python
 # compile 必须只检查该文件的语法，不能执行这条语句。
@@ -266,8 +266,8 @@ def test_total():
     assert 2 + 2 == 5
 ```
 
-- [ ] **Step 2 — 运行红灯。** 在带生产限制的实际容器中执行 development-build.sh，缺 launcher 应明确失败，不标记 skip。复用 tests/lib.sh 的 UID、只读根、tmp/cache 卷及精确清理方式。
-- [ ] **Step 3 — 实现 launcher。** copy 固定 1000 文件/20 MiB、无特殊文件/credential/cache；compile 的 Python helper 逐文件编译为代码对象但不执行，不生成项目 pyc；test 初始化隔离 venv、锁定同步后执行固定 pytest。保留 pytest 原退出码，即使报告采集失败也不能覆盖为 0。
+- [x] **Step 2 — 运行红灯。** 在带生产限制的实际容器中执行 development-build.sh，缺 launcher 应明确失败，不标记 skip。复用 tests/lib.sh 的 UID、只读根、tmp/cache 卷及精确清理方式。
+- [x] **Step 3 — 实现 launcher。** copy 固定 1000 文件/20 MiB、无特殊文件/credential/cache；compile 的 Python helper 逐文件编译为代码对象但不执行，不生成项目 pyc；test 初始化隔离 venv、锁定同步后执行固定 pytest。保留 pytest 原退出码，即使报告采集失败也不能覆盖为 0。
 
 ```python
 # python-check.py 的语法检查核心；路径枚举遵守副本策略。
@@ -279,8 +279,8 @@ with tokenize.open(path) as source_file:
 /tmp/manao-python/.venv/bin/python -m pytest -q -o addopts= --junitxml=/tmp/manao-python-tests.xml
 ```
 
-- [ ] **Step 4 — 加有界报告出口。** 用 `MANAO-PYTEST-REPORT-BEGIN/END` 包裹最多 64 KiB JUnit；结束标志含完整/缺失/截断状态。syntax 输出固定 JSON 结果（filesChecked/errors），上限 64 KiB；超限明确 unknown。SIGTERM/timeout 不能产生伪成功；清理受固定目录约束。
-- [ ] **Step 5 — 构建并验证。** 使用 README 既有 PythonSeedTemplateExporter 导出真实模板，Docker build `--target runtime-test`；测试 fixture 通过 uv add --group test pytest 生成锁，不修改默认项目模板增加测试依赖。精确命令：
+- [x] **Step 4 — 加有界报告出口。** 用 `MANAO-PYTEST-REPORT-BEGIN/END` 包裹最多 64 KiB JUnit；结束标志含完整/缺失/截断状态。syntax 输出固定 JSON 结果（filesChecked/errors），上限 64 KiB；超限明确 unknown。SIGTERM/timeout 不能产生伪成功；清理受固定目录约束。
+- [x] **Step 5 — 构建并验证。** 使用 README 既有 PythonSeedTemplateExporter 导出真实模板，Docker build `--target runtime-test`；测试 fixture 通过 uv add --group test pytest 生成锁，不修改默认项目模板增加测试依赖。精确命令：
 
 ```powershell
 $taskSeedOutput = Join-Path (Get-Location).Path 'poc4/backend/target/python-seed-templates'
@@ -295,7 +295,7 @@ bash poc4/python-runner/tests/python-cache.sh manao-python-ai-runtime-test
 ```
 
 Windows 使用已有 Bash/WSL 容器测试环境，路径按该环境解析；不为运行计划安装另一套工具链。记录真实版本与结果，测试后移除本任务临时容器/卷。
-- [ ] **Step 6 — 提交。** `git commit -m "feat(python): add isolated syntax and pytest runner"`。
+- [x] **Step 6 — 提交。** `git commit -m "feat(python): add isolated syntax and pytest runner"`。
 
 ## Task 6: 构建 Job 按环境分派并返回真实证据
 

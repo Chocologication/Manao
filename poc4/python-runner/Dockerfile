@@ -27,7 +27,8 @@
 #   JRE   default-jre-headless (OpenJDK 21, Debian trixie) for the supervisor; the compile
 #         stage uses default-jdk-headless of the same distribution. No Maven anywhere.
 FROM python:3.13.15-slim@sha256:8d9d0b8bcf6506481eae4907c18f5e3e7902e629f5f6d684f9e7c32e85e3ddf0 AS supervisor-build
-RUN apt-get update \
+RUN sed -i 's|http://deb.debian.org|https://deb.debian.org|g' /etc/apt/sources.list.d/debian.sources \
+ && apt-get update \
  && apt-get install -y --no-install-recommends default-jdk-headless \
  && rm -rf /var/lib/apt/lists/*
 WORKDIR /build
@@ -45,15 +46,19 @@ RUN chmod 0555 /usr/local/bin/prepare-python-seed.sh \
  && prepare-python-seed.sh /seed-projects /opt/manao-python-seed
 
 FROM python:3.13.15-slim@sha256:8d9d0b8bcf6506481eae4907c18f5e3e7902e629f5f6d684f9e7c32e85e3ddf0 AS runtime-test
-RUN apt-get update \
+RUN sed -i 's|http://deb.debian.org|https://deb.debian.org|g' /etc/apt/sources.list.d/debian.sources \
+ && apt-get update \
  && apt-get install -y --no-install-recommends default-jre-headless \
  && rm -rf /var/lib/apt/lists/*
 COPY --from=ghcr.io/astral-sh/uv:0.11.6@sha256:b1e699368d24c57cda93c338a57a8c5a119009ba809305cc8e86986d4a006754 /uv /usr/local/bin/uv
 RUN useradd -r -u 1001 manao || useradd -r manao
 COPY poc4/maven-runner/manao-run-supervisor /usr/local/bin/manao-run-supervisor
 COPY poc4/python-runner/manao-python /usr/local/bin/manao-python
-RUN chown root:root /usr/local/bin/manao-run-supervisor /usr/local/bin/manao-python \
- && chmod 0555 /usr/local/bin/manao-run-supervisor /usr/local/bin/manao-python
+COPY poc4/python-runner/python-environment.sh /usr/local/bin/python-environment.sh
+COPY poc4/python-runner/manao-python-dev-build /usr/local/bin/manao-python-dev-build
+COPY poc4/python-runner/python-check.py /opt/manao-python/python-check.py
+RUN chown root:root /usr/local/bin/manao-run-supervisor /usr/local/bin/manao-python /usr/local/bin/python-environment.sh /usr/local/bin/manao-python-dev-build /opt/manao-python/python-check.py \
+ && chmod 0555 /usr/local/bin/manao-run-supervisor /usr/local/bin/manao-python /usr/local/bin/python-environment.sh /usr/local/bin/manao-python-dev-build /opt/manao-python/python-check.py
 COPY --from=supervisor-build /build/classes /opt/manao-runner/classes
 COPY --from=seed-build /opt/manao-python-seed /opt/manao-python-seed
 COPY --from=seed-templates / /opt/manao-python-templates/
@@ -62,15 +67,19 @@ ENV TMPDIR=/tmp HOME=/tmp
 USER 1001
 
 FROM python:3.13.15-slim@sha256:8d9d0b8bcf6506481eae4907c18f5e3e7902e629f5f6d684f9e7c32e85e3ddf0
-RUN apt-get update \
+RUN sed -i 's|http://deb.debian.org|https://deb.debian.org|g' /etc/apt/sources.list.d/debian.sources \
+ && apt-get update \
  && apt-get install -y --no-install-recommends default-jre-headless \
  && rm -rf /var/lib/apt/lists/*
 COPY --from=ghcr.io/astral-sh/uv:0.11.6@sha256:b1e699368d24c57cda93c338a57a8c5a119009ba809305cc8e86986d4a006754 /uv /usr/local/bin/uv
 RUN useradd -r -u 1001 manao || useradd -r manao
 COPY poc4/maven-runner/manao-run-supervisor /usr/local/bin/manao-run-supervisor
 COPY poc4/python-runner/manao-python /usr/local/bin/manao-python
-RUN chown root:root /usr/local/bin/manao-run-supervisor /usr/local/bin/manao-python \
- && chmod 0555 /usr/local/bin/manao-run-supervisor /usr/local/bin/manao-python
+COPY poc4/python-runner/python-environment.sh /usr/local/bin/python-environment.sh
+COPY poc4/python-runner/manao-python-dev-build /usr/local/bin/manao-python-dev-build
+COPY poc4/python-runner/python-check.py /opt/manao-python/python-check.py
+RUN chown root:root /usr/local/bin/manao-run-supervisor /usr/local/bin/manao-python /usr/local/bin/python-environment.sh /usr/local/bin/manao-python-dev-build /opt/manao-python/python-check.py \
+ && chmod 0555 /usr/local/bin/manao-run-supervisor /usr/local/bin/manao-python /usr/local/bin/python-environment.sh /usr/local/bin/manao-python-dev-build /opt/manao-python/python-check.py
 COPY --from=supervisor-build /build/classes /opt/manao-runner/classes
 COPY --from=seed-build /opt/manao-python-seed /opt/manao-python-seed
 WORKDIR /workspace

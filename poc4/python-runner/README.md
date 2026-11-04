@@ -107,6 +107,7 @@ container/volume removed by exact name on exit):
 ```bash
 bash poc4/python-runner/tests/runtime-lifecycle.sh manao-python-runtime-test
 bash poc4/python-runner/tests/python-cache.sh manao-python-runtime-test
+bash poc4/python-runner/tests/development-build.sh manao-python-runtime-test
 ```
 
 `runtime-lifecycle.sh` covers the real uv/Python launch chain only (launcher mode
@@ -121,7 +122,7 @@ by real `uv add/remove`, stale-lock fail-closed, server-controlled extras boolea
 cross-project cache isolation, wiped-cache repair, stale-marker repair after a
 cache-directory-only loss, interrupted seed without marker).
 
-Both suites share their hardened Docker harness — pid-embedded unique names,
+All three suites share their hardened Docker harness — pid-embedded unique names,
 register-only-after-creation, semantic volume-name classification, daemon-clock
 staleness proof, persistent fail-fast registry, exact-name cleanup — in
 `poc4/python-runner/tests/lib.sh`, the pattern accepted for Task 3's
@@ -136,7 +137,7 @@ staleness proof, persistent fail-fast registry, exact-name cleanup — in
   per-project cache mount), `UV_LINK_MODE=copy`, `UV_PYTHON_DOWNLOADS=never`,
   `PYTHONUNBUFFERED=1`, `PYTHONDONTWRITEBYTECODE=1`.
 - Install argv is fixed and runs offline-first: `uv sync --offline --locked --no-dev
-  --no-build --no-config --python /usr/local/bin/python3`, and when that attempt fails
+  --no-default-groups --no-build --no-config --python /usr/local/bin/python3`, and when that attempt fails
   (artifacts the cache genuinely lacks) the same argv minus `--offline` retries online —
   plus `--extra mysql` / `--extra redis` only when the
   server-controlled booleans `MANAO_PYTHON_MYSQL` / `MANAO_PYTHON_REDIS` are `true`.
@@ -193,3 +194,52 @@ staleness proof, persistent fail-fast registry, exact-name cleanup — in
 - Mounts: project code at `/workspace` (container working directory), project cache at
   `/python-cache` (the workspace PVC's `.manao-cache/python` subPath), run control at
   `/run-control` (shared supervisor), `/tmp` writable. The image carries no Maven.
+
+## Isolated syntax and pytest commands
+
+The image also provides the root-owned `0555` command
+`/usr/local/bin/manao-python-dev-build copy|compile|test` and fixed helper
+`/opt/manao-python/python-check.py`. Commands accept no extra arguments or caller paths.
+`copy` reads `/source` (read-only project mount) into an **empty** `/workspace` emptyDir;
+it never deletes/replaces the mount root. Included files are limited to 1000 and 20 MiB,
+directories to 1000; symlinks and special entries are rejected. Internal/cache/venv
+directories and credential files (`.env*`, keys, `.ssh`, cloud credentials) are excluded.
+Each source path opens relative to retained directory descriptors with `O_NOFOLLOW`
+on every component; file identity/size/mtime are checked before and after reading.
+Replacing an enumerated parent with a symlink or replacing its file fails closed.
+`compile` checks the snapshot's `.py` files with `compile(..., "exec")`, without importing
+them or generating pyc. Source and dependency manifests remain unchanged.
+
+`python-environment.sh` defines `manao_prepare_python_environment(runtime|test)`; sourcing
+it performs no preparation. Both callers use the same seed, private cache, offline-first
+locked sync, fixed `/tmp/manao-python/.venv`, and server-selected mysql/redis extras.
+Both sync with `--no-dev --no-default-groups`: runtime cannot install a test group through
+`tool.uv.default-groups`. Test preparation uses `tomllib` to detect the actual
+`dependency-groups.test` key and adds only `--group test` when present. No default template
+gains pytest; missing pytest yields `PYTEST_DEPENDENCY_MISSING` and exit 1.
+
+The syntax stdout is a single JSON line, at most 64 KiB including its newline:
+
+```json
+{"language":"python","checkKind":"syntax","verificationStatus":"PASS","filesChecked":1,"errors":[]}
+```
+
+Syntax statuses are `PASS`, `FAILED`, `NO_SOURCE` (zero Python files), and `UNKNOWN`
+(report too large); only PASS exits 0. Errors include relative `path` and `message`.
+Tests run fixed `python -m pytest -q -o addopts= --junitxml=/tmp/manao-python-tests.xml`
+with inherited `PYTEST_ADDOPTS` cleared. The launcher preserves pytest's actual exit code
+(including 1 for assertion failure and 5 for no tests). Report collection failure never
+changes that code. A JUnit payload of at most 65536 bytes is framed by separate lines:
+
+```text
+MANAO-PYTEST-REPORT-BEGIN
+<JUnit XML bytes>
+MANAO-PYTEST-REPORT-END state=complete bytes=123
+```
+
+The END state is `complete`, `missing`, or `truncated`; `bytes` is the emitted payload
+length. Report symlinks/FIFOs are rejected as missing. A zero process exit alone does not
+prove tests passed: callers must parse a complete bounded report, distinguish no tests
+and all skipped, and classify missing/truncated/invalid reports as UNKNOWN. SIGTERM/INT
+forwards to the preparation/pytest process group with bounded kill/reap and a nonzero
+exit. The existing Job deadline remains the external execution budget.

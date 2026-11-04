@@ -1,0 +1,9 @@
+#!/bin/bash
+# Fixed image-owned commands only. Never evaluate caller-supplied argv or paths.
+set -euo pipefail
+case "${1:-}" in
+  copy|compile|test) [ "$#" -eq 1 ] || exit 2 ;;
+  *) echo 'manao-python-dev-build: want copy, compile or test' >&2; exit 2 ;;
+esac
+export PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
+exec /usr/local/bin/python3 /opt/manao-python/python-check.py "$1"
