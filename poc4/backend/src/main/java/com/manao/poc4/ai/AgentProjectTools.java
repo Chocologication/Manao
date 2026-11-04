@@ -60,18 +60,6 @@ public final class AgentProjectTools {
     private static final Set<String> FILE_WRITES = Set.of("write_file");
     private static final Pattern SHA256 = Pattern.compile("[0-9a-f]{64}");
 
-    /**
-     * Stage-one tool allowlist denial set (design section 4): repository internals, any target
-     * directory and credential files — fixed here in trusted code, never loaded from project
-     * configuration or prompts, and never applied to the browser's own file features.
-     */
-    private static final Set<String> DENIED_SEGMENTS = Set.of(".git", "target");
-    private static final Set<String> CREDENTIAL_FILES = Set.of(
-        ".env", ".npmrc", ".netrc", ".git-credentials", ".htpasswd", ".pgpass",
-        "id_rsa", "id_dsa", "id_ecdsa", "id_ed25519", "credentials.json");
-    private static final List<String> CREDENTIAL_SUFFIXES = List.of(
-        ".pem", ".key", ".p12", ".jks", ".keystore", ".kdbx");
-
     private final AgentTaskStore tasks;
     private final WorkspaceStore store;
     private final WorkspaceService workspace;
@@ -432,9 +420,9 @@ public final class AgentProjectTools {
     private AgentContracts.ToolResult execute(AgentTaskStore.TaskOwner owner, AgentTaskStore.ToolCallRow row,
                                               AgentContracts.ToolRequest request) {
         return switch (request.name()) {
-            case "list_files" -> listFiles(owner, request);
-            case "read_file" -> readFile(owner, request);
-            case "write_file" -> writeFile(owner, row, request);
+            case "list_files" -> listFiles(owner, request, AgentFilePolicy.forEnvironment(tasks.environmentOf(row.taskId())));
+            case "read_file" -> readFile(owner, request, AgentFilePolicy.forEnvironment(tasks.environmentOf(row.taskId())));
+            case "write_file" -> writeFile(owner, row, request, AgentFilePolicy.forEnvironment(tasks.environmentOf(row.taskId())));
             case "read_image" -> readImage(row,request);
             default -> throw new IllegalStateException("unsupported tool: " + request.name());
         };
@@ -454,13 +442,15 @@ public final class AgentProjectTools {
         return new AgentContracts.ToolResult(request.toolCallId(),Long.toString(store.findProject(attachments.taskScope(row.taskId()).projectId()).workspaceRevision()),data,false);
     }
 
-    private AgentContracts.ToolResult listFiles(AgentTaskStore.TaskOwner owner, AgentContracts.ToolRequest request) {
-        String directory = toolDirectory(request.args().path("directory").asText(""));
+    private AgentContracts.ToolResult listFiles(AgentTaskStore.TaskOwner owner, AgentContracts.ToolRequest request,
+                                               AgentFilePolicy policy) {
+        String directory = toolDirectory(request.args().path("directory").asText(""), policy);
         WorkspaceAgent.Tree tree = workspace.tree(owner.ownerId(), owner.projectId(), directory);
         // The listing may only show what a read of the same path would answer: every entry is
         // filtered through the policy + allowlist gate BEFORE the entry and byte caps apply.
         List<WorkspaceAgent.TreeEntry> visible = tree.entries().stream()
-            .filter(entry -> toolReadable(entry.path()))
+            .filter(entry -> "directory".equals(entry.kind()) ? policy.canList(entry.path())
+                : "file".equals(entry.kind()) && policy.canRead(entry.path()))
             .toList();
         boolean hasMore = visible.size() > MAX_LIST_ENTRIES;
         ObjectNode data = JSON.createObjectNode();
@@ -485,8 +475,9 @@ public final class AgentProjectTools {
         return new AgentContracts.ToolResult(result.toolCallId(), result.workspaceRevision(), data, truncated);
     }
 
-    private AgentContracts.ToolResult readFile(AgentTaskStore.TaskOwner owner, AgentContracts.ToolRequest request) {
-        String path = toolPath(request);
+    private AgentContracts.ToolResult readFile(AgentTaskStore.TaskOwner owner, AgentContracts.ToolRequest request,
+                                              AgentFilePolicy policy) {
+        String path = toolPath(request, policy, false);
         WorkspaceAgent.FileMeta meta = workspace.meta(owner.ownerId(), owner.projectId(), path);
         if (meta == null) {
             throw new ApiException("ENTRY_NOT_FOUND", 404, "Entry does not exist");
@@ -512,8 +503,8 @@ public final class AgentProjectTools {
     }
 
     private AgentContracts.ToolResult writeFile(AgentTaskStore.TaskOwner owner, AgentTaskStore.ToolCallRow row,
-                                                AgentContracts.ToolRequest request) {
-        String path = toolPath(request);
+                                                AgentContracts.ToolRequest request, AgentFilePolicy policy) {
+        String path = toolPath(request, policy, true);
         JsonNode contentNode = request.args().get("content");
         if (contentNode == null || !contentNode.isTextual()) {
             throw new ApiException("VALIDATION_ERROR", 422, "write_file requires textual content");
@@ -809,7 +800,7 @@ public final class AgentProjectTools {
     }
 
     /** Policy validation plus the fixed stage-one allowlist, applied to a file path argument. */
-    private static String toolPath(AgentContracts.ToolRequest request) {
+    private static String toolPath(AgentContracts.ToolRequest request, AgentFilePolicy policy, boolean write) {
         JsonNode node = request.args().get("path");
         if (node == null || !node.isTextual()) {
             throw new ApiException("VALIDATION_ERROR", 422, request.name() + " requires a textual path");
@@ -820,14 +811,18 @@ public final class AgentProjectTools {
         } catch (WorkspacePathPolicy.InvalidPathException ex) {
             throw new ApiException("INVALID_PATH", 422, "Invalid file path");
         }
-        if (!toolAllowlist(path)) {
+        if (write && policy.isManagedFile(path)) {
+            throw new ApiException("AI_MANAGED_FILE_WRITE_FORBIDDEN", 422,
+                "Managed project files are read-only; use python_dependencies to change dependencies");
+        }
+        if (!(write ? policy.canWrite(path) : policy.canRead(path))) {
             throw new ApiException("PATH_FORBIDDEN", 422, "Path is outside the agent tool allowlist");
         }
         return path;
     }
 
     /** Policy validation plus the fixed stage-one allowlist, applied to a directory argument. */
-    private static String toolDirectory(String directory) {
+    private static String toolDirectory(String directory, AgentFilePolicy policy) {
         if (directory.isEmpty()) {
             return "";
         }
@@ -836,49 +831,10 @@ public final class AgentProjectTools {
         } catch (WorkspacePathPolicy.InvalidPathException ex) {
             throw new ApiException("INVALID_PATH", 422, "Invalid file path");
         }
-        if (!toolAllowlist(directory)) {
+        if (!policy.canList(directory)) {
             throw new ApiException("PATH_FORBIDDEN", 422, "Path is outside the agent tool allowlist");
         }
         return directory;
-    }
-
-    /** One gate for "may the tools access this project-relative path at all": policy + allowlist. */
-    static boolean toolReadable(String path) {
-        try {
-            WorkspacePathPolicy.validateRelativePath(path);
-        } catch (WorkspacePathPolicy.InvalidPathException ex) {
-            return false;
-        }
-        return toolAllowlist(path);
-    }
-
-    /**
-     * The stage-one tool allowlist, fixed in trusted code (design section 4): build scripts,
-     * sources and ordinary top-level text documents. Beyond the allowlist it denies the
-     * repository internals and credential files the tools must never touch.
-     */
-    static boolean toolAllowlist(String path) {
-        String[] segments = path.split("/");
-        for (String segment : segments) {
-            String lower = segment.toLowerCase(Locale.ROOT);
-            if (DENIED_SEGMENTS.contains(lower) || lower.startsWith(".manao")) {
-                return false;
-            }
-            if (CREDENTIAL_FILES.contains(lower)
-                || CREDENTIAL_SUFFIXES.stream().anyMatch(lower::endsWith)) {
-                return false;
-            }
-        }
-        String first = segments[0].toLowerCase(Locale.ROOT);
-        if (first.equals("pom.xml") || first.equals("src")) {
-            return true;
-        }
-        return segments.length == 1 && isTextDocument(first);
-    }
-
-    private static boolean isTextDocument(String lowerName) {
-        return lowerName.endsWith(".md") || lowerName.endsWith(".txt")
-            || lowerName.endsWith(".adoc") || lowerName.endsWith(".rst");
     }
 
     /** null means "create a new file"; otherwise a sha-256 digest of the version being replaced. */

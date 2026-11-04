@@ -80,13 +80,23 @@ class AgentProjectToolsTest {
         final AgentProjectTools tools;
 
         Harness() {
+            this("java-console");
+        }
+
+        Harness(String template) {
             Timestamp now = new Timestamp(System.currentTimeMillis());
             jdbc.update("INSERT INTO app_user(id, username, password_hash, created_at) VALUES (?, 'ai-owner', 'unused', ?)",
                 OWNER, now);
             jdbc.update("INSERT INTO project(id, owner_id, name, state, workspace_revision, created_at, updated_at)"
                     + " VALUES (?, ?, 'ai-project', 'READY', 7, ?, ?)", PROJECT, OWNER, now, now);
             tasks = new AgentTaskStore(jdbc, new DataSourceTransactionManager(jdbc.getDataSource()), Clock.systemUTC());
-            tasks.create(OWNER, PROJECT, new TaskRequest(taskId, "repair the failing demo controller", 7));
+            var runtime = mock(com.manao.poc4.project.ProjectRuntimeStore.class);
+            boolean service = template.endsWith("web");
+            when(runtime.loadSpec(PROJECT)).thenReturn(new com.manao.poc4.project.ProjectRuntimeSpec(
+                template, false, false, service ? List.of(new com.manao.poc4.project.ProjectRuntimeSpec.Port("http", 8000, 30001)) : List.of()));
+            var environments = new AgentProjectEnvironmentService(runtime, AgentProjectEnvironmentTest.policy());
+            tasks.createTask(OWNER, PROJECT, new TaskRequest(taskId, "repair the failing demo controller", 7), null,
+                () -> environments.forProject(PROJECT));
             store = new WorkspaceJdbcStore(jdbc, new DataSourceTransactionManager(jdbc.getDataSource()));
             operations = new WorkspaceOperationService(store, agent, gate);
             workspace = new WorkspaceService(store, operations, agent, gate, tasks);
@@ -162,6 +172,76 @@ class AgentProjectToolsTest {
 
         @Override public void close() {
             db.close();
+        }
+    }
+
+    @Test
+    void pythonFilesRetainShaAndRevisionChecks() {
+        try (var env = new Harness("python-console")) {
+            env.stubLiveFile("tests/test_main.py", "old");
+            when(env.agent.content(PROJECT, "tests/test_main.py")).thenReturn(new WorkspaceAgent.Content("tests/test_main.py", "old", env.sha256Hex("old")));
+            var read = env.tools.invoke(env.taskId, env.readRequest("python-read", "tests/test_main.py"));
+            assertThat(read.data().path("content").asText()).isEqualTo("old");
+            var stale = env.tools.invoke(env.taskId, env.writeRequest("python-stale", "tests/test_main.py", "new", env.sha256Hex("stale"), 7));
+            assertThat(stale.data().path("error").path("code").asText()).isEqualTo("FILE_SHA_CONFLICT");
+            var written = env.tools.invoke(env.taskId, env.writeRequest("python-write", "tests/test_main.py", "new", env.sha256Hex("old"), 7));
+            assertThat(written.data().path("sha256").asText()).isEqualTo(env.sha256Hex("new"));
+            assertThat(written.workspaceRevision()).isEqualTo("8");
+        }
+    }
+
+    @Test
+    void pythonRefusalsHappenBeforeWorkspaceIoAndKeepExistingPom() {
+        try (var env = new Harness("python-fastapi-web")) {
+            int call = 0;
+            for (String path : List.of("pom.xml", "app/pom.xml", ".env", "app/.hidden/main.py", "venv/main.py", "app/server.key", "../main.py")) {
+                assertThat(env.tools.invoke(env.taskId, env.readRequest("deny-read-" + call, path)).data().path("error").path("code").asText())
+                    .isEqualTo(path.startsWith("..") ? "INVALID_PATH" : "PATH_FORBIDDEN");
+                assertThat(env.tools.invoke(env.taskId, env.writeRequest("deny-write-" + call++, path, "new", null, 7)).data().path("error").path("code").asText())
+                    .isEqualTo(path.startsWith("..") ? "INVALID_PATH" : "PATH_FORBIDDEN");
+            }
+            for (String path : List.of("pyproject.toml", "uv.lock", ".python-version")) {
+                var denied = env.tools.invoke(env.taskId, env.writeRequest("managed-" + call++, path, "new", null, 7));
+                assertThat(denied.data().path("error").path("code").asText()).isEqualTo("AI_MANAGED_FILE_WRITE_FORBIDDEN");
+                assertThat(denied.data().path("error").path("message").asText()).contains("python_dependencies");
+            }
+            assertThat(env.tools.invoke(env.taskId, env.listRequest("deny-list", ".venv")).data().path("error").path("code").asText()).isEqualTo("PATH_FORBIDDEN");
+            verifyNoInteractions(env.agent);
+            assertThat(env.revision()).isEqualTo(7);
+        }
+    }
+
+    @Test
+    void pythonListingUsesEntryKindsAndReadsManagedFilesWithinSizeLimit() {
+        try (var env = new Harness("python-fastapi-web")) {
+            when(env.agent.tree(PROJECT, "")).thenReturn(new WorkspaceAgent.Tree("", List.of(
+                new WorkspaceAgent.TreeEntry("mypkg", "mypkg", "directory", false, null, true),
+                new WorkspaceAgent.TreeEntry("blob.bin", "blob.bin", "file", false, 1L, null),
+                new WorkspaceAgent.TreeEntry(".python-version", ".python-version", "file", true, 4L, null),
+                new WorkspaceAgent.TreeEntry("pom.xml", "pom.xml", "file", false, 10L, null),
+                new WorkspaceAgent.TreeEntry(".hidden", ".hidden", "directory", true, null, true))));
+            var listed = env.tools.invoke(env.taskId, env.listRequest("python-list", ""));
+            assertThat(listed.data().path("entries").findValuesAsText("path")).containsExactly("mypkg", ".python-version");
+            when(env.agent.tree(PROJECT, "mypkg")).thenReturn(new WorkspaceAgent.Tree("mypkg", List.of()));
+            assertThat(env.tools.invoke(env.taskId, env.listRequest("python-package", "mypkg")).data().has("entries")).isTrue();
+            for (String path : List.of("pyproject.toml", "uv.lock", ".python-version")) {
+                env.stubLiveFile(path, "3.13");
+                when(env.agent.content(PROJECT, path)).thenReturn(new WorkspaceAgent.Content(path, "3.13", env.sha256Hex("3.13")));
+                assertThat(env.tools.invoke(env.taskId, env.readRequest("managed-read-" + path, path)).data().path("content").asText()).isEqualTo("3.13");
+            }
+            when(env.agent.meta(PROJECT, "uv.lock")).thenReturn(new WorkspaceAgent.FileMeta("uv.lock", "uv.lock", 128 * 1024 + 1L, "text/plain", "UTF-8", "text", "MONACO_TEXT", null, env.sha256Hex("large")));
+            assertThat(env.tools.invoke(env.taskId, env.readRequest("large-lock", "uv.lock")).data().path("error").path("code").asText()).isEqualTo("FILE_TOO_LARGE");
+            verify(env.agent, times(1)).content(PROJECT, "uv.lock");
+        }
+    }
+
+    @Test
+    void missingEnvironmentNeverFallsBackToJavaFileExecution() {
+        try (var env = new Harness()) {
+            env.jdbc.update("UPDATE agent_task SET environment_json=NULL, environment_sha256=NULL WHERE id=?", env.taskId);
+            var result = env.tools.invoke(env.taskId, env.readRequest("legacy-read", PATH));
+            assertThat(result.data().path("error").path("code").asText()).isEqualTo("AI_ENVIRONMENT_MISSING");
+            verifyNoInteractions(env.agent);
         }
     }
 
@@ -439,7 +519,8 @@ class AgentProjectToolsTest {
             h.tasks.failClosedTask(h.taskId, "AI_PAUSED_BY_OWNER", "paused");
             h.jdbc.update("UPDATE project SET workspace_revision=8 WHERE id=?", PROJECT);
             String next = UUID.randomUUID().toString();
-            h.tasks.create(OWNER, PROJECT, new TaskRequest(next, "continue after user edit", 8));
+            h.tasks.createTask(OWNER, PROJECT, new TaskRequest(next, "continue after user edit", 8), null,
+                () -> h.tasks.environmentOf(h.taskId));
             h.stubLiveFile(PATH, "user saved B");
             when(h.agent.content(PROJECT, PATH)).thenReturn(new WorkspaceAgent.Content(PATH, "user saved B", h.sha256Hex("user saved B")));
             var rejected = h.tools.invoke(next, h.writeRequest("stale", PATH, "C", h.sha256Hex("old A"), 8));

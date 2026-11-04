@@ -128,7 +128,7 @@ WorkerStart start = new WorkerStart(taskId, prompt, workspaceRevision,
 - Consumes: Task 1 `AgentProjectEnvironment`；既有 WorkspacePathPolicy 和 workspace 工具。
 - Produces: `AgentFilePolicy.forEnvironment(environment)`，实例方法 `canList(String)`、`canRead(String)`、`canWrite(String)`；toolPath 分读写判断。
 
-- [ ] **Step 1 — 写拒绝/允许矩阵。** 覆盖 `main.py`、`app/main.py`、`mypkg/lib.py`、`tests/test_main.py`、JSON/CSV/模板；父目录可遍历。根托管文件只读，隐藏/credential/venv/越界拒绝，Python pom 拒绝；Java 原路径不变。拒绝必须发生在 workspace IO 前。
+- [x] **Step 1 — 写拒绝/允许矩阵。** 覆盖 `main.py`、`app/main.py`、`mypkg/lib.py`、`tests/test_main.py`、JSON/CSV/模板；父目录可遍历。根托管文件只读，隐藏/credential/venv/越界拒绝，Python pom 拒绝；Java 原路径不变。拒绝必须发生在 workspace IO 前。
 
 ```java
 // 测试使用 Task 1 的真实环境工厂构造 python-console/fastapi 环境。
@@ -140,15 +140,15 @@ assertThat(policy.canWrite("pom.xml")).isFalse();
 assertThat(policy.canRead(".venv/lib/site.py")).isFalse();
 ```
 
-- [ ] **Step 2 — 运行红灯。**
+- [x] **Step 2 — 运行红灯。**
 
 ```powershell
 mvn -q -f poc4/backend/pom.xml '-Dtest=AgentFilePolicyTest,AgentProjectToolsTest' test
 ```
 
-- [ ] **Step 3 — 接入 list/read/write 同一策略。** 从 task 快照取语言，列表根据 entry 类型筛选；权限通过后继续原路径、大小、sha、revision、receipt 逻辑。拒绝托管文件普通写时返回 `AI_MANAGED_FILE_WRITE_FORBIDDEN`，固定信息指向依赖工具。禁止 Python `pom.xml` 返回 `PATH_FORBIDDEN`。超过 128 KiB 保留 FILE_TOO_LARGE。
-- [ ] **Step 4 — 验证绿灯。** 用真实 workspace-agent 文件测试证明首次写 `tests/test_main.py` 可建父目录，修改现有文件需最新 sha；预先存在错误 pom 不自动删除。运行 Step 2 和既有 WorkspaceFileServiceTest。
-- [ ] **Step 5 — 提交。** `git commit -m "feat(ai): support Python project file policies"`。
+- [x] **Step 3 — 接入 list/read/write 同一策略。** 从 task 快照取语言，列表根据 entry 类型筛选；权限通过后继续原路径、大小、sha、revision、receipt 逻辑。拒绝托管文件普通写时返回 `AI_MANAGED_FILE_WRITE_FORBIDDEN`，固定信息指向依赖工具。禁止 Python `pom.xml` 返回 `PATH_FORBIDDEN`。超过 128 KiB 保留 FILE_TOO_LARGE。
+- [x] **Step 4 — 验证绿灯。** 用真实 workspace-agent 文件测试证明首次写 `tests/test_main.py` 可建父目录，修改现有文件需最新 sha；预先存在错误 pom 不自动删除。运行 Step 2 和既有 WorkspaceFileServiceTest。
+- [x] **Step 5 — 提交。** `git commit -m "feat(ai): support Python project file policies"`。
 
 ## Task 3: 在原依赖协议中支持 test 组
 
