@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { readFileSync, readdirSync } from 'node:fs';
 import { expect, test, type Page, type TestInfo } from '@playwright/test';
-import { acceptanceEnvironment, assertDisposableProject, assertPythonRound, type ToolResult } from './ai-python-contract';
+import { acceptanceEnvironment, assertDisposableProject, assertPythonRound, readAcceptanceJson, type ToolResult } from './ai-python-contract';
 
 // Real provider only. An operator prepares two pristine dedicated projects first.
 // Writes are never retried; a lost mutation response retains the original identity for investigation.
@@ -30,8 +30,7 @@ async function request(page: Page, method: 'GET' | 'POST' | 'PUT', path: string,
     maxRetries: 0, maxRedirects: 0, timeout: 180_000 });
 }
 async function get<T>(page: Page, path: string): Promise<T> {
-  const response = await request(page, 'GET', path);
-  expect(response.ok(), 'Owner-scoped acceptance read must succeed').toBe(true); return response.json() as Promise<T>;
+  return await readAcceptanceJson(() => request(page, 'GET', path)) as T;
 }
 async function login(page: Page, scene: Scene) {
   await page.goto(`/projects/${scene.projectId}`);

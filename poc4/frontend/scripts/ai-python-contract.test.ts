@@ -1,8 +1,26 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { acceptanceEnvironment, assertDisposableProject, assertPythonRound } from '../tests/e2e/ai-python-contract.ts';
+import { acceptanceEnvironment, assertDisposableProject, assertPythonRound, readAcceptanceJson } from '../tests/e2e/ai-python-contract.ts';
 
 const ids = ['00000000-0000-4000-8000-000000000001', '00000000-0000-4000-8000-000000000002'];
+test('read-only acceptance tolerates only bounded PROJECT_BUSY admission races', async () => {
+  let calls = 0;
+  const read = async () => ++calls < 3
+    ? { ok: () => false, status: () => 409, json: async () => ({ code: 'PROJECT_BUSY' }) }
+    : { ok: () => true, status: () => 200, json: async () => ({ workspaceRevision: '7' }) };
+  assert.deepEqual(await readAcceptanceJson(read, async () => {}), { workspaceRevision: '7' });
+  assert.equal(calls, 3);
+  calls = 0;
+  await assert.rejects(() => readAcceptanceJson(async () => {
+    calls++; return { ok: () => false, status: () => 404, json: async () => ({ code: 'ENTRY_NOT_FOUND' }) };
+  }, async () => {}), /404 ENTRY_NOT_FOUND/);
+  assert.equal(calls, 1);
+  calls = 0;
+  await assert.rejects(() => readAcceptanceJson(async () => {
+    calls++; return { ok: () => false, status: () => 409, json: async () => ({ code: 'PROJECT_BUSY' }) };
+  }, async () => {}), /409 PROJECT_BUSY/);
+  assert.equal(calls, 5);
+});
 const environment = {
   MANAO_AI_ACCEPTANCE_BASE_URL: 'https://acceptance.example',
   MANAO_AI_ACCEPTANCE_USERNAME: 'private-owner', MANAO_AI_ACCEPTANCE_PASSWORD: 'private-password',
@@ -35,6 +53,11 @@ test('a wrong, shared, occupied or non-template project fails before fixture wri
   assert.throws(() => assertDisposableProject(project, ids[0]!, 'python-console', null, {}, []));
   assert.throws(() => assertDisposableProject(project, ids[0]!, 'python-console', null, null, [{}]));
 });
+test('FastAPI acceptance requires an operator configured public Service mapping before fixture writes', () => {
+  const project = { id: ids[0], name: 'ai-python-acceptance-fastapi-20261104', state: 'READY', runtime: { templateId: 'python-fastapi-web', publicPorts: [] } };
+  assert.throws(() => assertDisposableProject(project, ids[0]!, 'python-fastapi-web', null, null, []), /port|route/i);
+  assertDisposableProject({ ...project, runtime: { ...project.runtime, publicPorts: [{ name: 'http', targetPort: 8000, publicPort: 30081 }] } }, ids[0]!, 'python-fastapi-web', null, null, []);
+});
 let toolSequence = 0;
 const result = (toolName: string, data: Record<string, unknown>) => ({ toolCallId: `tool-${++toolSequence}`, toolName, data });
 const pytest = (state: string) => result('build', { language: 'python', checkKind: 'pytest', verificationStatus: state, exitCode: state === 'PASS' ? 0 : 1,
@@ -42,7 +65,16 @@ const pytest = (state: string) => result('build', { language: 'python', checkKin
 const evidence = () => [result('python_dependencies', { kind: 'python_dependencies', state: 'COMMITTED', operationId: ids[0], action: 'add', group: 'test', packageName: 'pytest', changedPaths: ['pyproject.toml', 'uv.lock'] }),
   pytest('FAILED'), result('python_dependencies', { kind: 'python_dependencies', state: 'COMMITTED', operationId: ids[1], action: 'add', group: 'main', packageName: 'rich', changedPaths: ['pyproject.toml', 'uv.lock'] }),
   result('build', { language: 'python', checkKind: 'syntax', verificationStatus: 'PASS', exitCode: 0, filesChecked: 2, cleanupConfirmed: true, sourceRevision: '9' }), pytest('PASS'),
-  result('application', { kind: 'application', action: 'logs', run: { id: 'run1', state: 'SUCCEEDED', exitCode: 0, requestedWorkspaceRevision: '9' }, logs: { text: '6\n', complete: true, truncated: false } })];
+  result('application', { kind: 'application', action: 'logs', run: { id: 'run1', state: 'SUCCEEDED', exitCode: 0, requestedWorkspaceRevision: '9' }, logs: { text: '6\n', firstSeq: 1, lastSeq: 1, complete: true, truncated: false } })];
+test('console uses terminal exit and bounded observed output without inventing service Pod completeness', () => {
+  const rows = evidence();
+  rows[5]!.data.logs = { text: '6\n', firstSeq: 1, lastSeq: 1, complete: false, truncated: false };
+  assertPythonRound(rows, { kind: 'console', output: '6', first: true });
+  for (const change of [{ truncated: true }, { firstSeq: 2 }, { lastSeq: 0 }, { complete: undefined }, { text: '[manao] log source lost\n6\n' }]) {
+    const invalid = evidence(); invalid[5]!.data.logs = { ...(rows[5]!.data.logs as object), ...change };
+    assert.throws(() => assertPythonRound(invalid, { kind: 'console', output: '6', first: true }));
+  }
+});
 test('round requires failed assertion then dependency pair, real syntax/test and exact run output', () => {
   assertPythonRound(evidence(), { kind: 'console', output: '6', first: true });
   assert.throws(() => assertPythonRound(evidence().filter(r => r.data.verificationStatus !== 'FAILED'), { kind: 'console', output: '6', first: true }));

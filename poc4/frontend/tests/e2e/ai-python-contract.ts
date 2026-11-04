@@ -1,6 +1,22 @@
 import assert from 'node:assert/strict';
 
 export type ToolResult = { toolCallId: string; toolName: string; data: Record<string, unknown> };
+type ReadResponse = { ok(): boolean; status(): number; json(): Promise<unknown> };
+/** GET-only admission retry; mutation callers never use this helper. */
+export async function readAcceptanceJson(read: () => Promise<ReadResponse>,
+  wait: (milliseconds: number) => Promise<void> = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds))): Promise<unknown> {
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const response = await read();
+    const body = await response.json();
+    if (response.ok()) return body;
+    const code = body !== null && typeof body === 'object' && 'code' in body && typeof body.code === 'string' ? body.code : 'UNKNOWN';
+    if (response.status() !== 409 || code !== 'PROJECT_BUSY' || attempt === 4) {
+      throw new Error(`Owner-scoped acceptance read refused: ${response.status()} ${code}`);
+    }
+    await wait(150 * (attempt + 1));
+  }
+  throw new Error('Acceptance read budget exhausted');
+}
 const required = ['MANAO_AI_ACCEPTANCE_BASE_URL', 'MANAO_AI_ACCEPTANCE_USERNAME', 'MANAO_AI_ACCEPTANCE_PASSWORD',
   'MANAO_AI_PYTHON_CONSOLE_PROJECT_ID', 'MANAO_AI_PYTHON_FASTAPI_PROJECT_ID'] as const;
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -28,6 +44,13 @@ export function assertDisposableProject(project: unknown, id: string, template: 
   assert.equal(p.id, id, 'Explicit owner project identity required');
   assert.ok(typeof p.name === 'string' && /^ai-python-acceptance-[a-z0-9-]+$/.test(p.name), 'Dedicated ai-python-acceptance-* project required');
   assert.equal(p.state, 'READY'); assert.equal(record(p.runtime).templateId, template);
+  if (template === 'python-fastapi-web') {
+    const ports = record(p.runtime).publicPorts;
+    assert.ok(Array.isArray(ports) && ports.length > 0, 'Operator configured application port route required');
+    const primary = record(ports[0]);
+    assert.ok(Number.isInteger(primary.targetPort) && Number(primary.targetPort) >= 1 && Number(primary.targetPort) <= 65535, 'Valid target port required');
+    assert.ok(Number.isInteger(primary.publicPort) && Number(primary.publicPort) >= 30000 && Number(primary.publicPort) <= 31000, 'Valid operator public port required');
+  }
   assert.equal(task, null, 'Project has an occupying task'); assert.equal(run, null, 'Project has an active Run');
   assert.equal(pending.length, 0, 'Project has unresolved dependency operations');
 }
@@ -59,10 +82,13 @@ export function assertPythonRound(rows: ToolResult[], expected: { kind: 'console
   if (expected.kind === 'console') {
     assert.ok(application.some(r => {
       const run = record(r.data.run), logs = r.data.logs == null ? null : record(r.data.logs);
-      return run.state === 'SUCCEEDED' && run.exitCode === 0 && run.requestedWorkspaceRevision === test.sourceRevision
-        && logs?.complete === true && logs.truncated === false && typeof logs.text === 'string'
+      return r.data.action === 'logs' && r.data.error == null
+        && run.state === 'SUCCEEDED' && run.exitCode === 0 && run.requestedWorkspaceRevision === test.sourceRevision
+        && typeof logs?.complete === 'boolean' && logs.truncated === false && typeof logs.text === 'string'
+        && Buffer.byteLength(logs.text, 'utf8') <= 64 * 1024 && !logs.text.includes('[manao] log source lost')
+        && logs.firstSeq === 1 && typeof logs.lastSeq === 'number' && Number.isSafeInteger(logs.lastSeq) && logs.lastSeq >= 1
         && logs.text.split(/\r?\n/).some(line => line.trim() === expected.output);
-    }), 'Successful Run with complete expected output at verified revision required');
+    }), 'Successful Run with untruncated observed output at verified revision required');
   } else {
     const ready = application.filter(row => ['start', 'status'].includes(String(row.data.action)))
       .map(r => record(r.data.run)).filter(run => run.state === 'RUNNING' && typeof run.firstReadyAt === 'string'
