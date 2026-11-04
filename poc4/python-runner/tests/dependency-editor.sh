@@ -820,6 +820,23 @@ scenario_timeout_kills_tool() {
   else
     fail "timeout-kills-tool (status=$HTTP_STATUS elapsed=${elapsed}ms orphans='${orphans}' journal=$journal_present)"
   fi
+  local scoped_operation="7f0a1c3d-a009-4a6b-8c9d-0e1f2a3b4c5d" before after
+  before="$(workspace_digests "$agent2")"
+  started="$(now_ms)"
+  group_prepare "$port" "$scoped_operation" ADD pytest '' test
+  elapsed=$(( $(now_ms) - started ))
+  after="$(workspace_digests "$agent2")"
+  orphans="$(dc exec "$agent2" sh -c \
+    'for d in /proc/[0-9]*; do p=${d#/proc/}; [ "$p" = "$$" ] && continue; c=$(tr "\0" " " < "$d/cmdline" 2>/dev/null || true); case "$c" in *sleep*|*"/shim/uv"*) echo "$c";; esac; done' 2>/dev/null || true)"
+  if [ "$HTTP_STATUS" = 504 ] \
+    && [ "$(json_field "$WORK/resp.json" "data['code']")" = PYTHON_DEPENDENCY_TIMEOUT ] \
+    && [ "$elapsed" -ge 2000 ] && [ "$elapsed" -lt 10000 ] && [ "$before" = "$after" ] \
+    && [ -z "$orphans" ] \
+    && ! dc exec "$agent2" test -f "/workspace/.manao/python-dependencies/$scoped_operation/manifest.json"; then
+    pass "test-group-timeout (504, budget 2s, no journal/orphan, sources unchanged) [${elapsed}ms]"
+  else
+    fail "test-group-timeout (status=$HTTP_STATUS elapsed=${elapsed}ms orphans='$orphans')"
+  fi
 }
 
 # fixed-index-argv / env-override: the resolution index may never be steered by the
@@ -1182,6 +1199,144 @@ scenario_helper_env_override_direct() {
 # Run
 # ---------------------------------------------------------------------------
 
+group_prepare() {
+  local port="$1" operation="$2" action="$3" package="$4" version="$5" group="$6"
+  "$PYTHON_BIN" - "$WORK/group.json" "$operation" "$action" "$package" "$version" "$group" <<'PYEOF'
+import hashlib, json, sys
+path, operation, action, package, version, group = sys.argv[1:]
+change = dict(action=action, packageName=package, version=version or None, group=group)
+digest = hashlib.sha256(json.dumps(change, sort_keys=True).encode()).hexdigest()
+with open(path, "w", encoding="utf-8") as handle:
+    json.dump(dict(operationId=operation, requestSha256=digest, change=change), handle)
+PYEOF
+  local endpoint=prepare
+  [ "$group" != "test" ] || endpoint=prepare-scoped
+  post_json "$port" "$PROJECT_ID_SHIM" "/agent/v1/python-dependencies/$endpoint" "$WORK/group.json"
+}
+
+group_commit() {
+  cp "$WORK/resp.json" "$WORK/group-prepared.json"
+  build_commit_body "$WORK/group-commit.json" "$WORK/group-prepared.json"
+  post_json "$1" "$PROJECT_ID_SHIM" "/agent/v1/python-dependencies/commit" "$WORK/group-commit.json"
+}
+
+scenario_managed_test_group() {
+  local shim agent2 port operation="7f0a1c3d-a001-4a6b-8c9d-0e1f2a3b4c5d"
+  shim="$(new_uv_log_shim groups)"
+  read -r agent2 port <<< "$(start_agent "${PREFIX}-groups" "$PROJECT_ID_SHIM" \
+    -e 'PATH=/shim:/usr/local/bin:/usr/bin:/bin' -v "$shim:/shim")"
+  seed_template "$agent2"
+  echo "GROUP TOOLCHAIN: $(dc exec "$agent2" /usr/local/bin/python3 --version), $(dc exec "$agent2" /usr/local/bin/uv --version)"
+  group_prepare "$port" "$operation" ADD pytest 9.0.2 test
+  if [ "$HTTP_STATUS" != 200 ]; then
+    fail "managed-test-group add (expected 200, got $HTTP_STATUS: $(cat "$WORK/resp.json"))"
+    return 0
+  fi
+  local unsigned
+  unsigned="$(curl -sS -o "$WORK/unsigned.json" -w '%{http_code}' -X POST \
+    "http://127.0.0.1:$port/agent/v1/python-dependencies/prepare-scoped" \
+    -H 'Content-Type: application/json' --data-binary @"$WORK/group.json")"
+  if [ "$unsigned" = 401 ] && grep -q CAPABILITY_REJECTED "$WORK/unsigned.json"; then
+    pass "scoped-capability (unsigned scoped prepare rejected by the shared filter)"
+  else
+    fail "scoped-capability (status=$unsigned)"
+  fi
+  post_json "$port" "$PROJECT_ID_SHIM" /agent/v1/python-dependencies/prepare "$WORK/group.json"
+  if [ "$HTTP_STATUS" = 422 ] && [ "$(json_field "$WORK/resp.json" "data['code']")" = VALIDATION_ERROR ]; then
+    pass "main-entry-refuses-test (test cannot use the legacy prepare path)"
+  else
+    fail "main-entry-refuses-test (status=$HTTP_STATUS)"
+  fi
+  group_prepare "$port" "$operation" ADD pytest 9.0.2 test
+  group_commit "$port"
+  if [ "$HTTP_STATUS" = 200 ] && dc exec "$agent2" /usr/local/bin/python3 -I -c \
+    'import tomllib; d=tomllib.load(open("/workspace/pyproject.toml","rb")); assert "pytest==9.0.2" in d["dependency-groups"]["test"]; assert not any("pytest" in v for v in d["project"]["dependencies"])'; then
+    pass "managed-test-group add (uv generated test declaration and committed lock; main excludes pytest)"
+  else
+    fail "managed-test-group add commit (status=$HTTP_STATUS)"
+    return 0
+  fi
+  if dc exec "$agent2" sh -c \
+    'UV_PROJECT_ENVIRONMENT=/tmp/test-group-install uv sync --project /workspace --locked --no-dev --group test --no-build --no-config --no-python-downloads --python /usr/local/bin/python3 && /tmp/test-group-install/bin/python -m pytest --version' ; then
+    pass "test-group-locked-install (actual uv sync installs pytest from the committed uv lock)"
+  else
+    fail "test-group-locked-install (actual locked sync failed)"
+  fi
+  dc exec "$agent2" sh -c ': > /shim/uv.log'
+  group_prepare "$port" "7f0a1c3d-a002-4a6b-8c9d-0e1f2a3b4c5d" ADD idna 3.11 main
+  if [ "$HTTP_STATUS" = 200 ] && dc exec "$agent2" sh -c \
+    'grep "^sync .*--group test" /shim/uv.log && ! grep "^add .*--group" /shim/uv.log' >/dev/null; then
+    pass "main-validates-test-group (real uv main add verifies the existing test group)"
+    group_commit "$port"
+    [ "$HTTP_STATUS" = 200 ] || fail "main-validates-test-group commit ($HTTP_STATUS)"
+  else
+    fail "main-validates-test-group (status=$HTTP_STATUS: $(cat "$WORK/resp.json"))"
+    return 0
+  fi
+  dc exec "$agent2" sh -c ': > /shim/uv.log'
+  printf 'httpx==0.28.1\n' > "$WORK/group-batch.txt"
+  build_batch_body "$WORK/group-batch.json" "7f0a1c3d-a003-4a6b-8c9d-0e1f2a3b4c5d" \
+    "$(sha256sum "$WORK/group-batch.txt" | cut -d' ' -f1)" "$WORK/group-batch.txt"
+  post_json "$port" "$PROJECT_ID_SHIM" /agent/v1/python-dependencies/prepare-batch "$WORK/group-batch.json"
+  if [ "$HTTP_STATUS" = 200 ] && dc exec "$agent2" grep -q '^sync .*--group test' /shim/uv.log; then
+    pass "batch-validates-test-group (real uv batch verifies the existing test group)"
+    group_commit "$port"
+    [ "$HTTP_STATUS" = 200 ] || fail "batch-validates-test-group commit ($HTTP_STATUS)"
+  else
+    fail "batch-validates-test-group (status=$HTTP_STATUS: $(cat "$WORK/resp.json"))"
+    return 0
+  fi
+  dc exec "$agent2" sh -c ': > /shim/uv.log'
+  group_prepare "$port" "7f0a1c3d-a004-4a6b-8c9d-0e1f2a3b4c5d" REMOVE pytest '' test
+  if [ "$HTTP_STATUS" = 200 ]; then
+    group_commit "$port"
+  fi
+  if [ "$HTTP_STATUS" = 200 ] && dc exec "$agent2" /usr/local/bin/python3 -I -c \
+    'import tomllib; d=tomllib.load(open("/workspace/pyproject.toml","rb")); assert not d.get("dependency-groups",{}).get("test",[])' \
+    && dc exec "$agent2" sh -c 'UV_PROJECT_ENVIRONMENT=/tmp/test-group-install uv sync --project /workspace --locked --no-dev --no-build --no-config --no-python-downloads --python /usr/local/bin/python3 && /tmp/test-group-install/bin/python -c "import importlib.util; assert importlib.util.find_spec(\"pytest\") is None"' >/dev/null 2>&1; then
+    pass "managed-test-group remove-last (uv removed the last test dependency; committed lock installs)"
+  else
+    fail "managed-test-group remove-last (status=$HTTP_STATUS: $(cat "$WORK/resp.json"))"
+    return 0
+  fi
+  dc exec "$agent2" sh -c ': > /shim/uv.log'
+  if dc exec "$agent2" sh -c '
+    mkdir -p /tmp/empty-test-group
+    printf "[project]\nname = \"empty-test\"\nversion = \"0.1.0\"\nrequires-python = \">=3.13\"\ndependencies = []\n[dependency-groups]\ntest = []\n" > /tmp/empty-test-group/pyproject.toml
+    /usr/local/bin/python3 -I /opt/manao-python/dependency_helper.py /tmp/empty-test-group ADD idna 3.11 120
+  ' && dc exec "$agent2" grep -q '^sync .*--group test' /shim/uv.log; then
+    pass "empty-test-group (real uv main add and locked sync accept the existing empty test group)"
+  else
+    fail "empty-test-group (helper failed or omitted actual empty test group verification)"
+  fi
+  local package version expected index=5 before after
+  before="$(workspace_digests "$agent2")"
+  for fixture in 'httpx 0.27.2 PYTHON_DEPENDENCY_RESOLUTION_FAILED' \
+      'pywin32 312 PYTHON_DEPENDENCY_NO_WHEEL' \
+      'manao-no-such-package-probe 0.0.1 PYTHON_DEPENDENCY_NO_WHEEL'; do
+    read -r package version expected <<< "$fixture"
+    operation="$(printf '7f0a1c3d-a%03d-4a6b-8c9d-0e1f2a3b4c5d' "$index")"
+    index=$((index+1))
+    group_prepare "$port" "$operation" ADD "$package" "$version" test
+    after="$(workspace_digests "$agent2")"
+    if [ "$(json_field "$WORK/resp.json" "data.get('code')")" = "$expected" ] \
+      && [ "$before" = "$after" ] \
+      && ! dc exec "$agent2" test -e "/workspace/.manao/python-dependencies/$operation/manifest.json"; then
+      pass "test-group-reject-$package ($expected, no journal, sources unchanged)"
+    else
+      fail "test-group-reject-$package (status=$HTTP_STATUS: $(cat "$WORK/resp.json"))"
+    fi
+  done
+}
+
+if [ "${3:-all}" = groups ]; then
+  scenario_managed_test_group
+  scenario_timeout_kills_tool
+  echo "dependency-editor groups: $PASS passed, $FAIL failed"
+  [ "$FAIL" -eq 0 ]
+  exit
+fi
+
 scenario_capability_enforced
 scenario_toolchain_identity
 scenario_prepare_add
@@ -1205,6 +1360,7 @@ scenario_batch_unsupported_sources
 scenario_batch_commit
 scenario_batch_idempotent
 scenario_helper_env_override_direct
+scenario_managed_test_group
 
 echo "dependency-editor: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

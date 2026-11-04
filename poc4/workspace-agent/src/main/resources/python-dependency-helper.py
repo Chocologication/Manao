@@ -2,7 +2,7 @@
 
 Launched by the agent exactly as:
 
-    /usr/local/bin/python3 -I /opt/manao-python/dependency_helper.py SCRATCH ACTION PACKAGE VERSION BUDGET
+    /usr/local/bin/python3 -I /opt/manao-python/dependency_helper.py SCRATCH ACTION PACKAGE VERSION BUDGET [GROUP]
 
 or, for a batch requirements import:
 
@@ -11,7 +11,10 @@ or, for a batch requirements import:
 - SCRATCH is a fresh agent-created directory holding the copied pyproject.toml and (optional)
   uv.lock; the workspace sources are never touched here.
 - ACTION is ADD or REMOVE, PACKAGE is the already-normalized lowercase name, VERSION is an
-  exact version or empty, BUDGET is the resolution budget in seconds. BATCH mode takes a
+  exact version or empty, BUDGET is the resolution budget in seconds. GROUP is main or test,
+  defaulting to main for legacy invocations; test adds only the fixed --group test arguments.
+  Installability verification includes test only when the resulting TOML declares that group,
+  including after main/batch changes and removal of the last test dependency. BATCH mode takes a
   REQUIREMENTS path instead of PACKAGE/VERSION: the agent stages the raw requirements text
   into a scratch-private file (SCRATCH/manao-batch-requirements.txt, never a workspace path
   or the project root) and the helper reads the original bytes from that path.
@@ -322,6 +325,15 @@ def parse_budget(budget_text):
     return budget
 
 
+def verification_argv(scratch):
+    with open(os.path.join(scratch, "pyproject.toml"), "rb") as handle:
+        data = tomllib.load(handle)
+    argv = VERIFY_ARGV.copy()
+    if "test" in data.get("dependency-groups", {}):
+        argv.extend(["--group", "test"])
+    return argv
+
+
 def filter_requirements(text):
     """Drops blank lines and whole-line comments and returns the stripped requirement lines.
 
@@ -386,7 +398,7 @@ def run_batch(scratch, requirements_path, budget_text):
     # The batch add succeeded, but a universal lock can still resolve a distribution that
     # has no wheel for THIS platform (e.g. pywin32); the dry-run installability verification
     # in the same scratch fails such a batch before any journal can exist (design 6.3).
-    code, output = run_uv(VERIFY_ARGV, scratch, deadline, "installability verification")
+    code, output = run_uv(verification_argv(scratch), scratch, deadline, "installability verification")
     if code != 0:
         classify_resolution_failure(code, output)
     sys.exit(0)
@@ -396,10 +408,13 @@ def main(argv):
     if len(argv) == 5 and argv[2] == "BATCH":
         run_batch(argv[1], argv[3], argv[4])
         return
-    if len(argv) != 6:
+    if len(argv) not in (6, 7):
         resolution_failed("usage: dependency_helper.py SCRATCH ACTION PACKAGE VERSION BUDGET"
                           " | SCRATCH BATCH REQUIREMENTS BUDGET")
     scratch, action, package, version, budget_text = argv[1], argv[2], argv[3], argv[4], argv[5]
+    group = argv[6] if len(argv) == 7 else "main"
+    if group not in ("main", "test"):
+        unsupported("unsupported dependency group")
     if action not in ("ADD", "REMOVE"):
         resolution_failed("unsupported action: %r" % action)
     if not PACKAGE_NAME.match(package or ""):
@@ -422,6 +437,8 @@ def main(argv):
 
     argv = UV_ARGV_PREFIX.copy()
     argv.insert(1, action.lower())
+    if group == "test":
+        argv.extend(["--group", "test"])
     argv.append(spec)
     code, output = run_uv(argv, scratch, deadline, "%s run" % action.lower())
     if code != 0:
@@ -429,7 +446,7 @@ def main(argv):
     # The add/remove succeeded, but a universal lock can still resolve a distribution that
     # has no wheel for THIS platform (e.g. pywin32); the dry-run installability verification
     # in the same scratch fails such a request before any journal can exist (design 6.3).
-    code, output = run_uv(VERIFY_ARGV, scratch, deadline, "installability verification")
+    code, output = run_uv(verification_argv(scratch), scratch, deadline, "installability verification")
     if code != 0:
         classify_resolution_failure(code, output)
     sys.exit(0)

@@ -255,6 +255,8 @@ public final class PythonDependencyService {
         return switch (ex.code()) {
             case "PYTHON_DEPENDENCY_UNSUPPORTED" -> new ApiException("PYTHON_DEPENDENCY_UNSUPPORTED", 422,
                 "Dependency changes are not supported for this project or package");
+            case "PYTHON_DEPENDENCY_PROTOCOL_UNSUPPORTED" -> new ApiException("PYTHON_DEPENDENCY_PROTOCOL_UNSUPPORTED", 503,
+                "Workspace dependency protocol is not supported");
             case "PYTHON_DEPENDENCY_NO_WHEEL" -> new ApiException("PYTHON_DEPENDENCY_NO_WHEEL", 422,
                 "No compatible wheel is available for the requested package or version.");
             case "PYTHON_DEPENDENCY_RESOLUTION_FAILED" -> new ApiException("PYTHON_DEPENDENCY_RESOLUTION_FAILED", 503,
@@ -284,9 +286,12 @@ public final class PythonDependencyService {
             throw validation();
         }
         String version = parseVersion(change);
+        if (!"main".equals(change.group()) && !"test".equals(change.group())) {
+            throw validation();
+        }
         long revision = parseRevision(expectedRevision);
-        return new SingleRequest(change.action(), packageName, version, revision,
-            requestDigest(projectId, change.action(), packageName, version, revision));
+        return new SingleRequest(change.action(), packageName, version, change.group(), revision,
+            requestDigest(projectId, change.action(), packageName, version, change.group(), revision));
     }
 
     /**
@@ -368,12 +373,21 @@ public final class PythonDependencyService {
      */
     public static String requestDigest(String projectId, String action, String packageName, String version,
                                        long expectedRevision) {
+        return requestDigest(projectId, action, packageName, version, "main", expectedRevision);
+    }
+
+    public static String requestDigest(String projectId, String action, String packageName, String version,
+                                       String group, long expectedRevision) {
+        if (group != null && !"main".equals(group) && !"test".equals(group)) {
+            throw validation();
+        }
         Map<String, Object> fields = new LinkedHashMap<>();
-        fields.put("protocol", 1);
+        fields.put("protocol", "test".equals(group) ? 3 : 1);
         fields.put("projectId", projectId);
         fields.put("action", action);
         fields.put("packageName", packageName);
         fields.put("version", version);
+        if ("test".equals(group)) fields.put("group", "test");
         fields.put("expectedRevision", expectedRevision);
         try {
             return WorkspaceOperationService.sha256Hex(JSON.writeValueAsBytes(fields));
@@ -425,7 +439,7 @@ public final class PythonDependencyService {
     }
 
     /** The single-package change: one normalized ADD/REMOVE item, digest protocol 1. */
-    private record SingleRequest(String action, String packageName, String version, long expectedRevision,
+    private record SingleRequest(String action, String packageName, String version, String group, long expectedRevision,
                                  String requestSha256) implements Request {
         @Override public String faultLabel() {
             return packageName;
@@ -434,7 +448,7 @@ public final class PythonDependencyService {
         @Override public WorkspaceAgent.PreparedPythonDependencies prepare(String projectId, String operationId,
                                                                           WorkspaceAgent agent) {
             return agent.prepare(projectId, operationId, requestSha256,
-                new WorkspaceAgent.DependencyChange(action, packageName, version));
+                new WorkspaceAgent.DependencyChange(action, packageName, version, group));
         }
     }
 

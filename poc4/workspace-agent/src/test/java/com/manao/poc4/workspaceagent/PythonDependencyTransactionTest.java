@@ -68,6 +68,44 @@ class PythonDependencyTransactionTest {
     }
 
     @Test
+    void testGroupJournalSurvivesAnInterruptedCommitAndCannotBeReusedAsMain(@TempDir Path root) throws Exception {
+        Files.writeString(root.resolve("pyproject.toml"), BEFORE_PYPROJECT);
+        Files.writeString(root.resolve("uv.lock"), BEFORE_LOCK);
+        String scopedToml = BEFORE_PYPROJECT + "[dependency-groups]\ntest = [\"pytest==9.0.2\"]\n";
+        var transaction = new PythonDependencyTransaction(root, renamed -> {
+            if (renamed == 1) throw new IllegalStateException("simulated crash");
+        });
+        var resolver = new PythonDependencyEditor.Resolver() {
+            @Override public void resolve(Path scratch, PythonDependencyEditor.DependencyChange change) {
+                assertThat(change.group()).isEqualTo("test");
+                try {
+                    Files.writeString(scratch.resolve("pyproject.toml"), scopedToml);
+                    Files.writeString(scratch.resolve("uv.lock"), AFTER_LOCK);
+                } catch (java.io.IOException ex) {
+                    throw new IllegalStateException(ex);
+                }
+            }
+            @Override public void resolveBatch(Path scratch, String text) { throw new AssertionError("unexpected batch"); }
+        };
+        var editor = new PythonDependencyEditor(root, transaction, resolver);
+        var prepared = editor.prepare(OPERATION_ID, REQUEST_SHA256,
+            new PythonDependencyEditor.DependencyChange("ADD", "pytest", "9.0.2", "test"));
+        assertThatThrownBy(() -> editor.prepare(OPERATION_ID, "b".repeat(64),
+            new PythonDependencyEditor.DependencyChange("ADD", "pytest", "9.0.2")))
+            .isInstanceOfSatisfying(WorkspaceFileService.WorkspaceFileException.class,
+                ex -> assertThat(ex.code()).isEqualTo("DEPENDENCY_REQUEST_MISMATCH"));
+        var command = commitCommand(prepared);
+        assertThatThrownBy(() -> transaction.commit(command)).isInstanceOf(IllegalStateException.class);
+        var restarted = new PythonDependencyTransaction(root);
+        assertThat(restarted.commit(command)).isEqualTo(prepared);
+        assertThat(restarted.commit(command)).isEqualTo(prepared);
+        assertThat(Files.readString(root.resolve("pyproject.toml"))).isEqualTo(scopedToml);
+        assertThat(Files.readString(root.resolve("uv.lock"))).isEqualTo(AFTER_LOCK);
+        assertThat(Files.readString(root.resolve(".manao/receipts/" + OPERATION_ID + ".json")))
+            .isEqualTo(command.receiptJson());
+    }
+
+    @Test
     void theSameCommitCompletesAfterRestart(@TempDir Path root) throws Exception {
         Files.writeString(root.resolve("pyproject.toml"), BEFORE_PYPROJECT);
         Files.writeString(root.resolve("uv.lock"), BEFORE_LOCK);

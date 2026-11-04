@@ -589,6 +589,21 @@ class PythonDependencyHttpContractTest {
     }
 
     @Test
+    void protocolUnsupportedIsASafe503WithoutRegisteringOrLeakingTheAgentBody() throws Exception {
+        agent.prepareError = new WorkspaceAgentException(503, "PYTHON_DEPENDENCY_PROTOCOL_UNSUPPORTED", "raw agent body");
+        http.perform(post("/api/v1/projects/" + PROJECT + "/python-dependencies")
+                .principal(new UsernamePasswordAuthenticationToken(ALICE, "n/a"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(changeBody(OPERATION, "ADD", "httpx", "0.28.1", "7")))
+            .andExpect(status().isServiceUnavailable())
+            .andExpect(jsonPath("$.code").value("PYTHON_DEPENDENCY_PROTOCOL_UNSUPPORTED"))
+            .andExpect(jsonPath("$.message").value("Workspace dependency protocol is not supported"));
+        assertThat(store.pending).isEmpty();
+        assertThat(store.records).isEmpty();
+        assertThat(store.failures).isEmpty();
+    }
+
+    @Test
     void batchErrorsCarryTheSameFixedCodesAndStatusesAsTheSingleOp() throws Exception {
         // Non-Python templates answer the unsupported code before any prepare.
         store.projects.put("prj-java", new WorkspaceStore.ProjectRecord("prj-java", ALICE, "java", "READY", 7, null,

@@ -164,6 +164,41 @@ class WorkspaceApiClientTest {
     }
 
     @Test
+    void testGroupUsesOnlyTheScopedSignedEndpointAndTravelsInTheBody() throws Exception {
+        var change = JSON.readerFor(WorkspaceAgent.DependencyChange.class)
+            .without(com.fasterxml.jackson.databind.DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES)
+            .<WorkspaceAgent.DependencyChange>readValue(
+                "{\"action\":\"ADD\",\"packageName\":\"pytest\",\"group\":\"test\"}");
+        responseBody = "{\"operationId\":\"" + OPERATION + "\",\"requestSha256\":\"" + "a".repeat(64) + "\","
+            + "\"beforeSha256\":\"" + "b".repeat(64) + "\",\"afterSha256\":\"" + "c".repeat(64) + "\"}";
+        client.prepare(PROJECT, OPERATION, "a".repeat(64), change);
+        Request request = received.get();
+        assertThat(request.uri().getPath()).isEqualTo("/agent/v1/python-dependencies/prepare-scoped");
+        assertThat(JSON.readTree(request.body()).path("change").path("group").asText()).isEqualTo("test");
+        assertSignatureMatchesTheActualRequest(request);
+    }
+
+    @Test
+    void oldAgentScoped404IsUnsupportedAndNeverFallsBackToMain() throws Exception {
+        var paths = new java.util.concurrent.CopyOnWriteArrayList<String>();
+        server.removeContext("/");
+        server.createContext("/", exchange -> {
+            paths.add(exchange.getRequestURI().getPath());
+            exchange.getRequestBody().readAllBytes();
+            exchange.sendResponseHeaders(404, -1);
+            exchange.close();
+        });
+        var change = JSON.readerFor(WorkspaceAgent.DependencyChange.class)
+            .without(com.fasterxml.jackson.databind.DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES)
+            .<WorkspaceAgent.DependencyChange>readValue(
+                "{\"action\":\"ADD\",\"packageName\":\"pytest\",\"group\":\"test\"}");
+        assertThatThrownBy(() -> client.prepare(PROJECT, OPERATION, "a".repeat(64), change))
+            .isInstanceOfSatisfying(WorkspaceAgentException.class,
+                ex -> assertThat(ex.code()).isEqualTo("PYTHON_DEPENDENCY_PROTOCOL_UNSUPPORTED"));
+        assertThat(paths).containsExactly("/agent/v1/python-dependencies/prepare-scoped");
+    }
+
+    @Test
     void prepareBatchSendsTheRequirementsTextAndReadsTheSummary() throws Exception {
         String requirements = "# batch probe\nhttpx==0.28.1\n\nidna>=3.7\n";
         responseBody = "{\"operationId\":\"" + OPERATION + "\",\"requestSha256\":\"" + "a".repeat(64) + "\","

@@ -171,15 +171,15 @@ mvn -q -f poc4/backend/pom.xml '-Dtest=AgentFilePolicyTest,AgentProjectToolsTest
 - Produces: test 单包 protocol 3 摘要；main protocol 1、batch protocol 2 保持原字节。
 - Produces: workspace-agent 新入口 `/agent/v1/python-dependencies/prepare-scoped`，只处理 test 单包变更，复用既有 editor 和 commit；WorkspaceApiClient.prepare 按 group 选固定入口，旧组件 404 映射 `PYTHON_DEPENDENCY_PROTOCOL_UNSUPPORTED`，不回退 main。
 
-- [ ] **Step 1 — 添加合同测试。** add/remove test，省略 group 等价 main，非法 group 拒绝；同 ID 改 group 拒绝；旧 digest fixtures 不变；失败不写 journal；删除最后测试依赖成功；main 变更后的 test 组仍验证可安装。旧 workspace-agent 不识别 scoped 路径时，不调用 main prepare；新 scoped 入口仍通过原 capability 签名过滤器。
-- [ ] **Step 2 — 运行红灯。**
+- [x] **Step 1 — 添加合同测试。** add/remove test，省略 group 等价 main，非法 group 拒绝；同 ID 改 group 拒绝；旧 digest fixtures 不变；失败不写 journal；删除最后测试依赖成功；main 变更后的 test 组仍验证可安装。旧 workspace-agent 不识别 scoped 路径时，不调用 main prepare；新 scoped 入口仍通过原 capability 签名过滤器。
+- [x] **Step 2 — 运行红灯。**
 
 ```powershell
 mvn -q -f poc4/workspace-agent/pom.xml '-Dtest=PythonDependencyEditorTest,PythonDependencyTransactionTest' test
 mvn -q -f poc4/backend/pom.xml '-Dtest=PythonDependencyOperationTest,PythonDependencyHttpContractTest' test
 ```
 
-- [ ] **Step 3 — 扩展 wire 与固定 helper argv。** WorkspaceApiClient 现在手工组装 change JSON，必须显式增加 group，不能只改 record。helper 兼容旧参数形状；新增组仅接受 main/test，不允许任意 `--group` 字符串。目标 argv 形状：
+- [x] **Step 3 — 扩展 wire 与固定 helper argv。** WorkspaceApiClient 现在手工组装 change JSON，必须显式增加 group，不能只改 record。helper 兼容旧参数形状；新增组仅接受 main/test，不允许任意 `--group` 字符串。目标 argv 形状：
 
 ```text
 uv add --no-sync --no-build --no-sources --no-config --no-python-downloads --python /usr/local/bin/python3 --default-index https://mirrors.aliyun.com/pypi/simple/ --group test pytest
@@ -188,8 +188,8 @@ uv sync --locked --no-dev --no-build --no-config --no-python-downloads --python 
 ```
 
 main 不传 group；dry-run 只在结果 TOML 实际有 test 组时加该固定参数。两次 uv 调用共享原 deadline；保留安全错误分类、scrubbed_env 和 source/build 限制。
-- [ ] **Step 4 — 验证实际 uv 0.11.6。** 沿用 dependency-editor.sh 的实际容器 fixture，确认新增/删除后 lock 由 uv 生成且 `uv sync --locked` 成功；test 组 missing/empty、包冲突、无 wheel、超时均有真实结果。运行 Step 2。不能用相近版本 Context7 文档代替镜像测试。
-- [ ] **Step 5 — 提交。** `git commit -m "feat(python): support managed test dependency group"`。
+- [x] **Step 4 — 验证实际 uv 0.11.6。** 沿用 dependency-editor.sh 的实际容器 fixture，确认新增/删除后 lock 由 uv 生成且 `uv sync --locked` 成功；test 组 missing/empty、包冲突、无 wheel、超时均有真实结果。运行 Step 2。不能用相近版本 Context7 文档代替镜像测试。
+- [x] **Step 5 — 提交。** `git commit -m "feat(python): support managed test dependency group"`。
 
 ## Task 4: AI 依赖调用及可恢复收尾
 

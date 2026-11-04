@@ -66,7 +66,15 @@ public interface WorkspaceAgent {
                           String beforeSha256, String afterSha256, String receiptSha256) { }
 
     /** Wire record of the requested change; the backend sends the normalized package name. */
-    record DependencyChange(String action, String packageName, String version) { }
+    record DependencyChange(String action, String packageName, String version, String group) {
+        public DependencyChange {
+            group = group == null ? "main" : group;
+        }
+
+        public DependencyChange(String action, String packageName, String version) {
+            this(action, packageName, version, "main");
+        }
+    }
 
     /** Wire record of the prepare/commit summary: ids and digests only, never file contents. */
     record PreparedPythonDependencies(String operationId, String requestSha256,
