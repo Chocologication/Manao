@@ -343,6 +343,8 @@ mvn -q -f poc4/backend/pom.xml '-Dtest=DevelopmentJobResourceFactoryTest,Develop
 
 Task 6 本地修正：原 closeStep 删除前不读取日志，异步清理/重启会丢报告。增加最小 write-ahead `pendingBuildEvidence` wrapper，沿用 tool-call `result_json`，不改变未决调用状态；验证 commandId/sourceRevision/environment hash/UID 后，仅在资源确认为空时结算。无 schema 扩展。
 
+Task 6 复审修正 I1/I2：原 Job 存在但 Pod 已删除时，observe 从持久化终态继续原 UID 清理，不再重新等待构建；Store 保留第一次已知退出与报告，拒绝弱化覆盖。首次 close 发现的真实 Pod UID 随观察在删除前持久化；与既有绑定冲突时拒绝操作。
+
 ## Task 7: worker 环境注入、工具裁剪与 Python 工作规则
 
 **Files:**

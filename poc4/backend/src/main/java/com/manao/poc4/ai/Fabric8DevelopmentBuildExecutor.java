@@ -175,13 +175,18 @@ public final class Fabric8DevelopmentBuildExecutor implements DevelopmentBuildEx
         String jobName = identity.jobName() == null
             ? JobResourceFactory.developmentJobName(request.commandId()) : identity.jobName();
         Job job = verifiedJob(jobName, request);
+        var saved = evidenceLoader.apply(request);
+        if (saved != null) {
+            if (!jobName.equals(saved.identity().jobName())
+                    || (identity.jobUid() != null && !identity.jobUid().equals(saved.identity().jobUid()))
+                    || (identity.podUid() != null && !identity.podUid().equals(saved.identity().podUid()))
+                    || (job != null && !uid(job).equals(saved.identity().jobUid())))
+                throw new IllegalStateException("saved build evidence uid mismatch");
+            // A persisted observation precedes the first destructive cleanup. Recovery resumes
+            // that cleanup even when its Job still exists after its Pod has already disappeared.
+            return withCleanup(saved, cleanup(jobName, saved.identity().jobUid(), request.commandId()));
+        }
         if (job == null) {
-            var saved = evidenceLoader.apply(request);
-            if (saved != null && buildPods(request.commandId()).isEmpty()) {
-                if (identity.jobUid() != null && !identity.jobUid().equals(saved.identity().jobUid()))
-                    throw new IllegalStateException("saved build evidence uid mismatch");
-                return withCleanup(saved, true);
-            }
             // Recovery never rebuilds: a recorded build without any live evidence has an
             // unknowable outcome and stays unsettled, and pod evidence without its job can
             // never be verified at all.
@@ -282,8 +287,14 @@ public final class Fabric8DevelopmentBuildExecutor implements DevelopmentBuildEx
         var saved = evidenceLoader.apply(request);
         if (saved != null && saved.identity().jobUid() != null && identity.jobUid() != null
                 && !saved.identity().jobUid().equals(identity.jobUid())) throw new IllegalStateException("saved build evidence uid mismatch");
+        if (saved != null && identity.podUid() != null && !identity.podUid().equals(saved.identity().podUid()))
+            throw new IllegalStateException("saved build evidence pod uid mismatch");
         if (saved != null && pods.isEmpty()) return withCleanup(saved, false);
         Pod pod = pods.isEmpty() ? null : claimedPod(pods, identity.jobUid(), identity.podUid());
+        if (pod != null) {
+            if (!ownedByJob(pod, identity.jobUid())) throw new IllegalStateException("build pod owner mismatch");
+            identity = new AgentContracts.BuildIdentity(identity.jobName(), identity.jobUid(), uid(pod));
+        }
         Observation observed = job == null || pod == null ? null : terminalObservation(job, pod, observer);
         if (observed != null) return result(request, identity,
             request.environment() != null && "python".equals(request.environment().language()) ? observed.exitCode() : null,

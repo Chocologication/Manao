@@ -589,6 +589,15 @@ public final class AgentTaskStore implements AgentTaskOccupancy {
         if (row.jobUid() != null && !row.jobUid().equals(result.identity().jobUid())) throw new IllegalStateException("build evidence uid mismatch");
         if (row.podUid() != null && result.identity().podUid() != null && !row.podUid().equals(result.identity().podUid()))
             throw new IllegalStateException("build evidence pod uid mismatch");
+        var previous = loadPendingBuildEvidence(request);
+        if (previous != null && previous.exitCode() != null) {
+            // Terminal facts are immutable across cleanup retries. A timeout/empty tail can
+            // enrich a formerly unknown Pod UID, but cannot erase the original exit/report.
+            var identity = new AgentContracts.BuildIdentity(previous.identity().jobName(), previous.identity().jobUid(),
+                previous.identity().podUid() != null ? previous.identity().podUid() : result.identity().podUid());
+            result = new AgentContracts.BuildResult(identity, previous.exitCode(), previous.terminationReason(), previous.output(),
+                previous.truncated(), previous.testReports(), false, previous.evidence());
+        }
         try {
             var wrapper = JSON.createObjectNode();
             wrapper.set("pendingBuildEvidence", JSON.valueToTree(new PendingBuildEvidence(request.commandId(), request.sourceRevision(),

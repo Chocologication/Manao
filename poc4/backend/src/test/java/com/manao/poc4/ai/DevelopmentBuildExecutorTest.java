@@ -273,7 +273,9 @@ class DevelopmentBuildExecutorTest {
         assertThat(client.batch().v1().jobs().inNamespace(NS).list().getItems()).isEmpty();
     }
 
-    @Test void pendingPythonEvidenceIsDurableBeforeDeleteAndSurvivesANewStore() throws Exception {
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"close-bound", "close-unbound", "normal-pending"})
+    void pendingPythonEvidenceIsDurableBeforeDeleteAndSurvivesANewStore(String recovery) throws Exception {
         try (var db = com.manao.poc4.persistence.JdbcStoreTestSupport.create()) {
             var jdbc = db.jdbc();
             var now = new java.sql.Timestamp(System.currentTimeMillis());
@@ -289,25 +291,46 @@ class DevelopmentBuildExecutorTest {
             var job = client.batch().v1().jobs().inNamespace(NS).resource(factory.createDevelopmentJob(request, SOURCE)).create();
             var pod = seedPod(job.getMetadata().getName(), job.getMetadata().getUid(), 0, "Completed");
             var identity = new BuildIdentity(job.getMetadata().getName(), job.getMetadata().getUid(), pod.getMetadata().getUid());
-            tasks.bindToolCallIdentity(taskId, CALL, identity.jobName(), identity.jobUid(), identity.podUid());
+            tasks.bindToolCallIdentity(taskId, CALL, identity.jobName(), identity.jobUid(),
+                "close-unbound".equals(recovery) ? null : identity.podUid());
             seedLog(pod.getMetadata().getName(), PythonBuildEvidenceTest.report("<testsuite tests='1' failures='0' errors='0' skipped='0'/>"));
             dispatcher.conflictJobDelete = identity.jobName();
             var first = new Fabric8DevelopmentBuildExecutor(client, factory, NS, null, (r, create) -> create.get(), r -> false,
                 tasks::savePendingBuildEvidence, tasks::loadPendingBuildEvidence, Clock.systemUTC(), 1, 1, 1);
-            assertThatThrownBy(() -> first.closeStep(request, identity)).isInstanceOf(KubernetesClientException.class);
+            if ("normal-pending".equals(recovery)) assertThat(first.build(request).cleanupConfirmed()).isFalse();
+            else assertThatThrownBy(() -> first.closeStep(request, "close-unbound".equals(recovery)
+                ? new BuildIdentity(identity.jobName(), identity.jobUid(), null) : identity)).isInstanceOf(KubernetesClientException.class);
             assertThat(tasks.findToolCall(taskId, CALL).orElseThrow().state()).isEqualTo("RUNNING");
             assertThat(tasks.findToolCall(taskId, CALL).orElseThrow().resultJson()).contains("pendingBuildEvidence");
             assertThat(tasks.loadPendingBuildEvidence(request).evidence().verificationStatus()).hasToString("PASS");
-            dispatcher.conflictJobDelete = null;
-            client.batch().v1().jobs().inNamespace(NS).withName(identity.jobName()).delete();
+            assertThat(tasks.boundBuildIdentity(taskId, CALL).orElseThrow().podUid()).isEqualTo(identity.podUid());
             var restarted = new AgentTaskStore(jdbc, new org.springframework.jdbc.datasource.DataSourceTransactionManager(jdbc.getDataSource()), Clock.systemUTC());
             var second = new Fabric8DevelopmentBuildExecutor(client, factory, NS, null, (r, create) -> { throw new AssertionError("no second Job"); }, r -> false,
                 restarted::savePendingBuildEvidence, restarted::loadPendingBuildEvidence, Clock.systemUTC(), 1, 1, 1);
-            var result = second.closeStep(request, identity);
+            assertThatThrownBy(() -> second.closeStep(request, new BuildIdentity(identity.jobName(), identity.jobUid(), "different-pod-uid")))
+                .isInstanceOf(IllegalStateException.class);
+            if ("normal-pending".equals(recovery)) {
+                assertThat(client.pods().inNamespace(NS).list().getItems()).isEmpty();
+                assertThat(client.batch().v1().jobs().inNamespace(NS).withName(identity.jobName()).get()).isNotNull();
+                var pending = second.observe(request, identity);
+                assertThat(pending.cleanupConfirmed()).isFalse();
+                assertThat(pending.evidence().verificationStatus()).hasToString("PASS");
+                assertThat(pending.exitCode()).isZero();
+                assertThat(pending.terminationReason()).isEqualTo("Completed");
+                assertThat(restarted.findToolCall(taskId, CALL).orElseThrow().state()).isEqualTo("RUNNING");
+            }
+            dispatcher.conflictJobDelete = null;
+            if (!"normal-pending".equals(recovery)) client.batch().v1().jobs().inNamespace(NS).withName(identity.jobName()).delete();
+            var result = "normal-pending".equals(recovery) ? second.observe(request, identity) : second.closeStep(request, identity);
             assertThat(result.cleanupConfirmed()).isTrue();
             assertThat(result.identity()).isEqualTo(identity);
             assertThat(result.evidence().testSummary().tests()).isEqualTo(1);
             assertThat(result.exitCode()).isZero();
+            var weaker = new BuildResult(identity, null, "BUILD_WAIT_BUDGET_EXCEEDED", "", false, List.of(), false,
+                PythonBuildEvidence.from(BuildGoal.TEST, null, "", false));
+            restarted.savePendingBuildEvidence(request, weaker);
+            assertThat(restarted.loadPendingBuildEvidence(request).evidence().verificationStatus()).hasToString("PASS");
+            assertThat(restarted.loadPendingBuildEvidence(request).exitCode()).isZero();
             assertThatThrownBy(() -> restarted.loadPendingBuildEvidence(new BuildRequest(taskId, CALL, PROJECT, COMMAND, 9, BuildGoal.TEST, environment))).isInstanceOf(IllegalStateException.class);
             tasks.releaseBuildClaim(taskId, CALL);
         }
