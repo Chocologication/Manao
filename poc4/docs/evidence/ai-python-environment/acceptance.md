@@ -1,8 +1,10 @@
 # AI Python 环境与开发闭环验收
 
-2026-11-04，分支 `codex/ai-python-environment`，最终实现提交 `b5b02fe`。本地实现、分层验证与全分支审查已完成，授予范围限定的 **AI_PYTHON_LOCAL_PASS**。并发构建证据覆盖及反向时序残留均已修复并独立复审批准，最终受影响回归 149 项通过。**云端发布、运行库迁移、真实 provider/model 与两类 Python 浏览器闭环均 NOT_RUN**；`AI_PYTHON_CLOSED_LOOP_PASS` **未授予**。完整本地提交清单、最新验证和下一步见[交付记录](delivery.md)。
+本地交付快照（2026-11-04）：分支 `codex/ai-python-environment`，最终实现提交 `b5b02fe`。本地实现、分层验证与全分支审查完成，授予范围限定的 **AI_PYTHON_LOCAL_PASS**。并发构建证据覆盖及反向时序残留已修复并独立复审批准，受影响回归 149 项通过。**当时**云端发布、运行库迁移、真实 provider/model 与两类 Python 浏览器闭环均 NOT_RUN；后续授权执行的当前结果见下段。`AI_PYTHON_CLOSED_LOOP_PASS` 仍未授予。完整本地提交清单见[交付记录](delivery.md)。
 
 设计合同：[设计 §9–10](../../../../docs/superpowers/specs/2026-11-04-ai-python-environment-design.md#9-验收与交付边界)；实施：[九任务计划](../../../../docs/superpowers/plans/2026-11-04-ai-python-environment-implementation-plan.md)；发布：[操作与回滚手册](../../../deploy/ai-python-environment/README.md)。
+
+**后续授权更新（2026-11-04）**：上述 NOT_RUN 是本地交付时状态。用户随后授权集群部署与真实模型，实际已完成五项发布、V20、普通 Python 两轮、FastAPI 分段继续的两轮、Java 两模板烟测和真实 pytest 暂停/继续，见[云端记录](cloud-20261104.md)及[脱敏 JSON](cloud-20261104.json)。本页下表保留历史本地证据；当前完整云故障矩阵仍未闭合，`AI_PYTHON_CLOSED_LOOP_PASS` 仍未授予，不能把下表全部 NOT_RUN 自动改成 PASS。
 
 ## 1. 本地证据与范围
 

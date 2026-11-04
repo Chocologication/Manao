@@ -2,6 +2,8 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking. 本次已授权依序实施 Tasks 1–9、必要本地测试、文档更新和本地提交；push、merge、部署、外部模型调用及共享资源清理不在授权范围内。
 
+后续授权更新：用户在本地交付后明确授权集群部署和下一阶段，已实际发布五项产物并执行真实模型核心流程；端口由用户确认为 FastAPI 30081、Spring Boot 30082。以下旧授权与 NOT_RUN 保留其本地阶段范围，当前结果见[云端记录](../../../poc4/docs/evidence/ai-python-environment/cloud-20261104.md)。Git push/merge 与共享资源删除未执行。
+
 **Goal:** 让 Agent 根据四类项目的可信环境调用适用工具，并对普通 Python 与 FastAPI 完成源码编辑、自动依赖管理、语法/pytest 验证、运行反馈与再次修复。
 
 **Architecture:** 后端将项目环境快照与摘要绑定到 AgentTask，worker 用现有 Pi resource loader 构造系统上下文和适用工具。Python 文件策略、test 组依赖及 Python build 分支复用 workspace receipt、构建 Job 与 Run 生命周期。新增依赖工具必须完整接入任务暂停、取消、重启和收尾。
@@ -478,7 +480,7 @@ def test_total():
 
 - [x] **Step 2 — 编写真实验收，先验证能抓住失败。** Playwright 配置直接指向外部 baseURL，无 fixture webServer、无模型 mock。任务要求 Agent 先记录失败、修复、添加所需 main/test 依赖、验证、运行，再响应用户第二轮小修改完成重跑。console 最终核对输出与 exit=0；FastAPI 核对 firstReadyAt 和业务 GET 状态/内容。增删依赖两方向由 D1 集成测试覆盖，真实模型两场景各需发生 main/test 变更。验收合同本地 RED 5 failed → GREEN 5 passed，独立 tsc 通过；真实配置未执行，包括未运行 `--list`。
 - [ ] **Step 3 — 验证非 happy-path。** 在 disposable 项目验证 dependency commit 响应丢失、PENDING 重启、prepare/commit 边界取消、pytest 超时取消；保留原身份和失败证据，最终确认该任务无未决操作、无构建 Job/Pod。已有会话继续与一次压缩后继续要看到当前环境；图片回归用已有图片测试，不要求模型在每个 Python 场景上传图片。
-  本地实际组合、取消/重启/UID fixture 与 worker 请求边界证据已逐项收录；真实部署故障清单保留 NOT_RUN，不用本地结果替代其运行。
+  本地实际组合、取消/重启/UID fixture 已收录；后续真实 pytest pause/安全收尾/同会话新任务已 PASS。真实 dependency 回包丢失、PENDING 重启与提交边界取消的完整云矩阵仍 NOT_RUN，本项保持未勾选。
 - [x] **Step 4 — 本地联合回归。** backend/workspace-agent 相关套件、worker 全量、前端相关套件、Python 容器套件和全分支最终复审已完成，授予范围限定的 AI_PYTHON_LOCAL_PASS。最新构建结算 149/149、兼容组 86/86、worker 266 PASS / 1 SKIPPED、前端 155 PASS；各次验证源码边界、容器证据与未执行项见[验收记录](../../../poc4/docs/evidence/ai-python-environment/acceptance.md)，不合并重复用例总数。
 - [x] **Step 5 — 完成可审阅部署手册。** 写明四运行产物及配套 frontend 的构建/digest、V20 迁移、旧 task 排空、旧 Python workspace Pod 更新、已有 PVC 保留、兼容顺序和回滚；从实际配置读取目标 namespace/schema，用户授权发布时再执行。不能只更新模板镜像而忽略已有 workspace Pod。
 - [ ] **Step 6 — 获得对应授权后执行真实发布与闭环。** 记录同一构建 SHA、真实模型/provider 配置标识（无密钥）及工具/operation/Run 证据；运行：
@@ -487,7 +489,7 @@ def test_total():
 pnpm -C poc4/frontend exec playwright test --config playwright.ai-python.config.ts
 ```
 
-两 Python 场景、Java 两模板烟测、恢复和资源清理证据全部满足设计后，才写 AI_PYTHON_CLOSED_LOOP_PASS；未经运行保持 NOT_RUN。
+后续已执行五项发布、V20、两个 Python 两轮核心流程、Java 两模板、main/test 增删往返与 pytest pause/继续。FastAPI 完整场景脚本曾在工作区 reload 失败后停止，重新进入同会话继续通过；全部故障矩阵仍未闭合，本项保持未勾选，不授予 AI_PYTHON_CLOSED_LOOP_PASS。详情与失败记录见[云端记录](../../../poc4/docs/evidence/ai-python-environment/cloud-20261104.md)。
 - [x] **Step 7 — 文档自审与本地提交。** README 链接可解析、没有私有 worktree 路径或凭据；`git diff --check` 和编码检查通过；本次临时产物已清理，必要证据保留。产物提交 `0f80538` 及验收合同修复 `67feff6` 已完成；全分支最终复审批准，提交清单见[交付记录](../../../poc4/docs/evidence/ai-python-environment/delivery.md)。代码合并/push 不在当前授权内。
 
 ## 2. 需求到任务的覆盖检查
@@ -510,6 +512,6 @@ pnpm -C poc4/frontend exec playwright test --config playwright.ai-python.config.
 ## 3. 本规划的完成状态
 
 - 已完成：设计与计划、Tasks 1–8 本地实现/分层验证、Task 4 真实依赖双文件故障组合、Task 9 失败 fixture/真实验收脚本/部署手册与证据导航。具体局部结果、修复后的重跑边界及 Task 9 检查见 [验收记录](../../../poc4/docs/evidence/ai-python-environment/acceptance.md)。
-- 本地最终核对：Task 9 联合回归与全分支复审完成，`AI_PYTHON_LOCAL_PASS` 已按本地证据范围授予；Step 3 的真实部署故障与 Step 6 的真实模型闭环仍 NOT_RUN。
-- 未执行：registry 发布、运行库 V20 迁移、已有云 workspace 更新、云故障、真实模型/浏览器闭环、Git push/merge；Step 6 为 NOT_RUN，`AI_PYTHON_CLOSED_LOOP_PASS` 未授予。本地测试镜像构建/容器运行不是发布。
+- 本地最终核对：Task 9 联合回归与全分支复审完成，`AI_PYTHON_LOCAL_PASS` 保持；后续授权的发布、V20、Python/FastAPI 两轮核心流程、Java 与 pause/继续已执行。
+- 尚未执行：完整云 dependency/重启/提交故障矩阵、真实自动压缩、新图片模型输入专项及正式回滚。旧 Python workspace 更新为 SKIPPED（发布前无 Python 项目）；Step 3/6 保持未勾选，`AI_PYTHON_CLOSED_LOOP_PASS` 未授予。Git push/merge、共享资源删除均未执行。
 - 技术边界已给出明确方案，无占位实施任务；设计评审如调整边界，应同步本文后再执行。
