@@ -412,14 +412,14 @@ pnpm -C poc4/pi-worker build
 - Consumes: 已 settle ToolResult 和 task changedPaths/revision。
 - Produces: `pythonDependencyData(result)`、`pythonBuildData(result)` 返回校验后的可空结构；扩展现有 buildToolCallId 识别依赖工具，保留旧导出兼容。
 
-- [ ] **Step 1 — 写 UI 结果测试。** 依赖提交显示包/组/状态/两条路径；Python compile/test 显示检查种类、真实 exit、计数、报告完整性；NO_TESTS/SKIPPED/UNKNOWN/NO_SOURCE 不渲染为 PASS；Java 旧结果可读。
-- [ ] **Step 2 — 运行红灯。**
+- [x] **Step 1 — 写 UI 结果测试。** 依赖提交显示包/组/状态/两条路径；Python compile/test 显示检查种类、真实 exit、计数、报告完整性；NO_TESTS/SKIPPED/UNKNOWN/NO_SOURCE 不渲染为 PASS；Java 旧结果可读。
+- [x] **Step 2 — 运行红灯。**
 
 ```powershell
 pnpm -C poc4/frontend exec vitest run src/features/ai/ToolResultView.test.tsx src/features/ai/AgentTaskPanel.test.tsx src/features/ai/AgentConversationPanel.test.tsx
 ```
 
-- [ ] **Step 3 — 实现解析与展示。** browser 投影只公开业务结果，不返回 namespace/Pod/镜像挂载细节。复用当前工具结果入口，文案区分依赖变更/语法检查/测试。已确认 changedPaths 触发现有文件刷新链路；两文件更新与 revision 同步，切换项目或接管后旧响应不能覆盖当前编辑内容。
+- [x] **Step 3 — 实现解析与展示。** browser 投影只公开业务结果，不返回 namespace/Pod/镜像挂载细节。复用当前工具结果入口，文案区分依赖变更/语法检查/测试。已确认 changedPaths 触发现有文件刷新链路；两文件更新与 revision 同步，切换项目或接管后旧响应不能覆盖当前编辑内容。
 
 ```typescript
 // 展示只消费明确状态；未拿到结构化证据时保持未知。
@@ -432,8 +432,8 @@ const label = data.verificationStatus === 'NO_TESTS'
       : data.verificationStatus;
 ```
 
-- [ ] **Step 4 — 绿灯与类型检查。** Step 2、`pnpm -C poc4/frontend typecheck`。UI 变更使用既有 fixture 页做一次浏览器检查；fixture 结果不计入真实模型验收。
-- [ ] **Step 5 — 提交。** `git commit -m "feat(frontend): show Python verification and dependency results"`。
+- [x] **Step 4 — 绿灯与类型检查。** Step 2、`pnpm -C poc4/frontend typecheck`。UI 变更使用既有 fixture 页做一次浏览器检查；fixture 结果不计入真实模型验收。
+- [x] **Step 5 — 提交。** `git commit -m "feat(frontend): show Python verification and dependency results"`。
 
 ## Task 9: 两类 Python 闭环验收、部署手册与交付
 

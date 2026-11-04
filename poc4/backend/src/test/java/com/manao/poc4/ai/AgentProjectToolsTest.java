@@ -929,6 +929,35 @@ class AgentProjectToolsTest {
         }
     }
 
+    @Test void browserPythonResultsExposeOnlyBusinessEvidenceIncludingNestedFields() throws Exception {
+        try (Harness env = new Harness("python-console")) {
+            var dependency = JSON.createObjectNode().put("kind", "python_dependencies").put("operationId", "op-1")
+                .put("action", "add").put("packageName", "pytest").put("group", "test").put("state", "COMMITTED")
+                .put("namespace", "PRIVATE_NAMESPACE").put("podName", "PRIVATE_POD");
+            dependency.putArray("changedPaths").add("pyproject.toml").add("uv.lock");
+            var build = JSON.createObjectNode().put("goal", "test").put("sourceRevision", "7").put("exitCode", 0)
+                .put("cleanupConfirmed", true).put("output", "bounded output").put("language", "python")
+                .put("checkKind", "pytest").put("verificationStatus", "PASS").putNull("filesChecked")
+                .put("image", "PRIVATE_IMAGE").put("mountPath", "PRIVATE_MOUNT");
+            build.putObject("testSummary").put("tests", 2).put("failures", 0).put("errors", 0).put("skipped", 0)
+                .put("reportComplete", true).put("podUid", "PRIVATE_UID");
+            build.putArray("errors").addObject().put("path", "main.py").put("message", "literal diagnostic").put("secret", "PRIVATE_ERROR");
+            for (var entry : java.util.Map.of("python_dependencies", dependency, "build", build).entrySet()) {
+                String id = "browser-" + entry.getKey();
+                env.tasks.registerToolCall(env.taskId, id, "a".repeat(64), entry.getKey(), "{}", 7, "command");
+                env.tasks.completeToolCall(env.taskId, id, JSON.writeValueAsString(new ToolResult(id, "7", entry.getValue(), false)));
+                var view = env.tools.browserToolCall(env.taskId, id).orElseThrow().data();
+                assertThat(view.toString()).doesNotContain("PRIVATE_");
+                if ("build".equals(entry.getKey())) {
+                    assertThat(view.path("verificationStatus").asText()).isEqualTo("PASS");
+                    assertThat(view.path("testSummary").path("tests").asInt()).isEqualTo(2);
+                    assertThat(view.path("testSummary").path("reportComplete").asBoolean()).isTrue();
+                    assertThat(view.path("errors").get(0).path("message").asText()).isEqualTo("literal diagnostic");
+                } else assertThat(view.path("changedPaths")).isEqualTo(dependency.path("changedPaths"));
+            }
+        }
+    }
+
     @Test void pythonPackageIsRejectedBeforeExecutorOrWorkspaceIo() {
         try (Harness env = new Harness("python-console")) {
             ToolResult result = env.tools.invoke(env.taskId, new ToolRequest("python-package", "build", 7,

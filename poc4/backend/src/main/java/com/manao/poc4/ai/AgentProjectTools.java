@@ -745,8 +745,44 @@ public final class AgentProjectTools {
                 return new AgentContracts.AgentToolCallView(row.toolCallId(), row.toolName(),
                     "app_http_get".equals(row.toolName()) ? httpBrowserData(result.data())
                         : "application".equals(row.toolName()) ? applicationBrowserData(result.data())
+                        : "python_dependencies".equals(row.toolName()) ? dependencyBrowserData(result.data())
+                        : "build".equals(row.toolName()) ? buildBrowserData(result.data())
                         : boundedBrowserData(result.data()));
             });
+    }
+
+    private static JsonNode dependencyBrowserData(JsonNode data) {
+        ObjectNode safe = JSON.createObjectNode();
+        copyFields(data, safe, List.of("kind", "operationId", "action", "packageName", "group", "state"));
+        if (data.path("changedPaths").isArray()) {
+            ArrayNode paths = safe.putArray("changedPaths");
+            data.path("changedPaths").forEach(path -> { if (path.isTextual()) paths.add(path); });
+        }
+        copyBrowserError(data, safe);
+        return safe;
+    }
+
+    private static JsonNode buildBrowserData(JsonNode data) {
+        ObjectNode safe = JSON.createObjectNode();
+        copyFields(data, safe, List.of("goal", "sourceRevision", "exitCode", "terminationReason", "output",
+            "cleanupConfirmed", "outputTruncated", "reportsDropped", "language", "checkKind", "verificationStatus", "filesChecked"));
+        copyBrowserError(data, safe);
+        if (data.path("testSummary").isObject()) {
+            copyFields(data.path("testSummary"), safe.putObject("testSummary"), List.of("tests", "failures", "errors", "skipped", "reportComplete"));
+        } else if (data.has("testSummary")) safe.putNull("testSummary");
+        if (data.path("errors").isArray()) {
+            ArrayNode errors = safe.putArray("errors");
+            data.path("errors").forEach(error -> copyFields(error, errors.addObject(), List.of("path", "message")));
+        }
+        if (data.path("testReports").isArray()) {
+            ArrayNode reports = safe.putArray("testReports");
+            data.path("testReports").forEach(report -> copyFields(report, reports.addObject(), List.of("testClass", "tests", "failures", "errors", "skipped", "sha256")));
+        }
+        return boundedBrowserData(safe);
+    }
+
+    private static void copyBrowserError(JsonNode data, ObjectNode safe) {
+        if (data.path("error").isObject()) copyFields(data.path("error"), safe.putObject("error"), List.of("code", "message"));
     }
 
     private static JsonNode httpBrowserData(JsonNode data) {
