@@ -44,7 +44,10 @@ class AgentConversationHttpContractTest {
                 public AgentContracts.WorkerStatus status(String task) { throw new AssertionError("Unexpected status"); }
                 public AgentContracts.WorkerStatus stop(String task) { throw new AssertionError("Unexpected stop"); }
             };
-            var service = new AgentTaskService(tasks, new com.manao.poc4.project.ProjectLifecycleGate(), worker, null);
+            var runtime = org.mockito.Mockito.mock(com.manao.poc4.project.ProjectRuntimeStore.class);
+            org.mockito.Mockito.when(runtime.loadSpec("project")).thenReturn(com.manao.poc4.project.ProjectRuntimeSpec.console());
+            var environments = new AgentProjectEnvironmentService(runtime, AgentProjectEnvironmentTest.policy());
+            var service = new AgentTaskService(tasks, new com.manao.poc4.project.ProjectLifecycleGate(), worker, null, null, environments);
             var mvc = org.springframework.test.web.servlet.setup.MockMvcBuilders.standaloneSetup(
                 new AgentConversationController(new AgentConversationService(store), service),
                 new AgentConversationInternalController(store))

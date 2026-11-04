@@ -1,6 +1,6 @@
 # AI 项目环境与 Python 开发闭环 Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking. 执行方式由用户另行选择；本次只授权规划。
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking. 本次已授权依序实施 Tasks 1–9、必要本地测试、文档更新和本地提交；push、merge、部署、外部模型调用及共享资源清理不在授权范围内。
 
 **Goal:** 让 Agent 根据四类项目的可信环境调用适用工具，并对普通 Python 与 FastAPI 完成源码编辑、自动依赖管理、语法/pytest 验证、运行反馈与再次修复。
 
@@ -8,7 +8,7 @@
 
 **Tech Stack:** Java 17 / Spring Boot 3.5.9、MySQL/Flyway、Fabric8 7.7.0；TypeScript / Pi SDK 1.2.0；Python 3.13.15 / uv 0.11.6 / pytest；React、Vitest、Playwright、pnpm。
 
-**Spec:** [设计文档](../specs/2026-11-04-ai-python-environment-design.md)。设计与实施计划共同评审；当前为完整规划稿，不表示设计审批或实现已完成。
+**Spec:** [设计文档](../specs/2026-11-04-ai-python-environment-design.md)。设计与实施计划共同评审后进入实施；各任务复选框记录完成情况，本地验证与部署后验收分别记录。
 
 ## Global Constraints
 
@@ -90,14 +90,14 @@ pnpm -C poc4/frontend install --frozen-lockfile
 - Produces: `AgentProjectEnvironment` 对应设计 §4 全字段；`AgentProjectEnvironmentService.forProject(String projectId)`、`AgentProjectEnvironment.canonicalJson()`、`sha256()`。
 - Produces: `AgentTaskStore.environmentOf(String taskId)` 读取已持久化快照；WorkerStart 增加 `environment`、`environmentSha256`。
 
-- [ ] **Step 1 — 写行为测试。** 枚举四模板，核对 framework/执行类型/工具/goals；快照中不含凭据。真实 MySQL 测试覆盖重复 submit、恢复读取、V19 升级、null 历史记录。mock runtimeStore 在首次提交后改变配置，再次提交必须仍返回原 task/快照。
-- [ ] **Step 2 — 运行红灯。**
+- [x] **Step 1 — 写行为测试。** 枚举四模板，核对 framework/执行类型/工具/goals；快照中不含凭据。真实 MySQL 测试覆盖重复 submit、恢复读取、V19 升级、null 历史记录。mock runtimeStore 在首次提交后改变配置，再次提交必须仍返回原 task/快照。
+- [x] **Step 2 — 运行红灯。**
 
 ```powershell
 mvn -q -f poc4/backend/pom.xml '-Dtest=AgentProjectEnvironmentTest,AgentTaskServiceTest' test
 ```
 
-- [ ] **Step 3 — 实现新增字段与快照写入。** 新迁移仅 additive；迁移编号冲突时使用实施 checkout 的下一号并同步文档，不改已存在迁移。首次插入 task 的事务保存两个字段，重试分支读取已存字段。环境有单一规范化序列化入口，Java/TS 跨语言测试使用同一 golden JSON。
+- [x] **Step 3 — 实现新增字段与快照写入。** 新迁移仅 additive；迁移编号冲突时使用实施 checkout 的下一号并同步文档，不改已存在迁移。首次插入 task 的事务保存两个字段，重试分支读取已存字段。环境有单一规范化序列化入口，Java/TS 跨语言测试使用同一 golden JSON。
 
 ```sql
 ALTER TABLE agent_task
@@ -113,8 +113,8 @@ WorkerStart start = new WorkerStart(taskId, prompt, workspaceRevision,
     environment, environment.sha256());
 ```
 
-- [ ] **Step 4 — 验证兼容与绿灯。** 原 request digest/terminal identity 不变；null 环境历史 task 的收尾不用新执行入口；新执行明确拒绝 null。相同 user intent 重复提交不重取动态环境。运行 Step 2、迁移升级测试与 `git diff --check`。
-- [ ] **Step 5 — 提交。** `git commit -m "feat(ai): persist trusted project environment per task"`，只 stage 本任务文件。
+- [x] **Step 4 — 验证兼容与绿灯。** 原 request digest/terminal identity 不变；null 环境历史 task 的收尾不用新执行入口；新执行明确拒绝 null。相同 user intent 重复提交不重取动态环境。运行 Step 2、迁移升级测试与 `git diff --check`。
+- [x] **Step 5 — 提交。** `git commit -m "feat(ai): persist trusted project environment per task"`，只 stage 本任务文件。
 
 ## Task 2: 按语言接通源码和测试文件
 

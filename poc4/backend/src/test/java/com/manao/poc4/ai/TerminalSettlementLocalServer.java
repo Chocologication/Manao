@@ -109,7 +109,11 @@ public class TerminalSettlementLocalServer {
     @Bean AgentProjectTools tools(AgentTaskStore tasks,WorkspaceJdbcStore store,WorkspaceService workspace,WorkspaceOperationService ops,RunService runs,JdbcRunStore runStore){
         return new AgentProjectTools(tasks,store,workspace,ops,gate,Mockito.mock(DevelopmentBuildExecutor.class),new AgentApplicationTools(tasks,runs,runStore,null,null,gate));
     }
-    @Bean AgentTaskService service(AgentTaskStore tasks,PiWorkerClient worker,AgentProjectTools tools,AgentConversationService conversations){return new AgentTaskService(tasks,gate,worker,tools,conversations);}
+    @Bean AgentTaskService service(AgentTaskStore tasks,PiWorkerClient worker,AgentProjectTools tools,AgentConversationService conversations){
+        var runtime=Mockito.mock(com.manao.poc4.project.ProjectRuntimeStore.class);
+        Mockito.when(runtime.loadSpec(PROJECT)).thenReturn(com.manao.poc4.project.ProjectRuntimeSpec.console());
+        return new AgentTaskService(tasks,gate,worker,tools,conversations,new AgentProjectEnvironmentService(runtime,policy()));
+    }
     @Bean(destroyMethod="close") AgentLiveOutput live(AgentTaskStore tasks){return new AgentLiveOutput(tasks);}
     @Bean AgentTaskSettlementService settlement(AgentTaskStore tasks,PiWorkerClient worker,AgentProjectTools tools){return new AgentTaskSettlementService(tasks,gate,worker,tools);}
     @Bean(destroyMethod="close") AgentTaskReconciler reconciler(AgentTaskStore tasks,AgentTaskSettlementService settlement){

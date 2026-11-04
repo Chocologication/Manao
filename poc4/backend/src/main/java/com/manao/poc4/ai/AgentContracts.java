@@ -102,7 +102,13 @@ public final class AgentContracts {
 
     /** Backend-to-worker start command; carries no project owner. */
     public record WorkerStart(String taskId, String prompt, String workspaceRevision,
-                              String requestSha256, long workerEpoch, String conversationId, String reasoningEffort) {
+                              String requestSha256, long workerEpoch, String conversationId, String reasoningEffort,
+                              AgentProjectEnvironment environment, String environmentSha256) {
+        /** Legacy wire fixtures carry no environment; production starts must supply the persisted snapshot. */
+        public WorkerStart(String taskId, String prompt, String workspaceRevision, String requestSha256,
+                           long workerEpoch, String conversationId, String reasoningEffort) {
+            this(taskId, prompt, workspaceRevision, requestSha256, workerEpoch, conversationId, reasoningEffort, null, null);
+        }
         public WorkerStart(String taskId, String prompt, String workspaceRevision, String requestSha256, long workerEpoch, String conversationId) {
             this(taskId, prompt, workspaceRevision, requestSha256, workerEpoch, conversationId, "high");
         }

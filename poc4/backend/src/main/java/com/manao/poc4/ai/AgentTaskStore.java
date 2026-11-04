@@ -110,6 +110,13 @@ public final class AgentTaskStore implements AgentTaskOccupancy {
 
     public TaskCreation createTask(String ownerId, String projectId,
                                    AgentContracts.TaskRequest request, String conversationId) {
+        return createTask(ownerId, projectId, request, conversationId, null);
+    }
+
+    /** The supplier runs only for a first insert, under the project row lock and task transaction. */
+    public TaskCreation createTask(String ownerId, String projectId,
+                                   AgentContracts.TaskRequest request, String conversationId,
+                                   java.util.function.Supplier<AgentProjectEnvironment> environmentSupplier) {
         validate(request);
         if (!request.attachmentIds().isEmpty() && (conversationId == null || attachments == null)) throw validation();
         if (conversationId != null) AgentConversationStore.requireUuid(conversationId);
@@ -141,6 +148,7 @@ public final class AgentTaskStore implements AgentTaskOccupancy {
                     throw new ApiException("AI_TASK_MISMATCH", 409,
                         "This task id was already used for a different request");
                 }
+                environmentOf(request.taskId());
                 return new TaskCreation(snapshot(existing.get()), false, existing.get().workerEpoch());
             }
             if (imageAdmissionFailure != null) throw imageAdmissionFailure;
@@ -163,6 +171,10 @@ public final class AgentTaskStore implements AgentTaskOccupancy {
                 throw new ApiException("AI_TASK_ACTIVE", 409, "The project already has an active task");
             }
             AgentConversationStore.requireNoCompaction(jdbc, projectId);
+            // The old store-only creation API remains usable for historical settlement fixtures.
+            // The execution service always supplies a required, trusted environment provider.
+            AgentProjectEnvironment environment = environmentSupplier == null ? null : environmentSupplier.get();
+            if (environmentSupplier != null && environment == null) throw AgentProjectEnvironmentService.missing();
             if (conversationId != null) {
                 AgentConversationStore.bindTaskGoal(jdbc, clock, projectId, conversationId, request);
             }
@@ -177,11 +189,14 @@ public final class AgentTaskStore implements AgentTaskOccupancy {
                 jdbc.update("""
                     INSERT INTO agent_task(id, project_id, owner_id, request_sha256, prompt,
                         state, worker_epoch, workspace_revision, created_at, updated_at,
-                        conversation_id, reasoning_effort, deadline_at, next_reconcile_at)
-                    VALUES (?, ?, ?, ?, ?, 'QUEUED', 1, ?, ?, ?, ?, ?, ?, ?)
+                        conversation_id, reasoning_effort, deadline_at, next_reconcile_at,
+                        environment_json, environment_sha256)
+                    VALUES (?, ?, ?, ?, ?, 'QUEUED', 1, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     request.taskId(), projectId, ownerId, requestSha256, request.prompt(),
-                    request.expectedRevision(), now, now, conversationId, effort, deadline, now);
+                    request.expectedRevision(), now, now, conversationId, effort, deadline, now,
+                    environment == null ? null : environment.canonicalJson(),
+                    environment == null ? null : environment.sha256());
             } catch (DuplicateKeyException ex) {
                 // The unique index is the backstop behind the in-transaction pre-check.
                 throw new ApiException("AI_TASK_ACTIVE", 409, "The project already has an active task");
@@ -568,6 +583,22 @@ public final class AgentTaskStore implements AgentTaskOccupancy {
             throw new ApiException("AI_TASK_NOT_FOUND", 404, "Task not found");
         }
         return digests.get(0);
+    }
+
+    /** Reads the committed snapshot; MySQL JSON formatting never participates in the digest. */
+    public AgentProjectEnvironment environmentOf(String taskId) {
+        var rows = jdbc.query("SELECT environment_json, environment_sha256 FROM agent_task WHERE id=?",
+            (rs, row) -> {
+                String json = rs.getString(1);
+                String digest = rs.getString(2);
+                if (json == null && digest == null) return null;
+                if (json == null || digest == null) throw AgentProjectEnvironment.invalid();
+                var environment = AgentProjectEnvironment.fromJson(json);
+                if (!environment.sha256().equals(digest)) throw AgentProjectEnvironment.invalid();
+                return environment;
+            }, taskId);
+        if (rows.isEmpty()) throw new ApiException("AI_TASK_NOT_FOUND", 404, "Task not found");
+        return rows.get(0);
     }
 
     /**

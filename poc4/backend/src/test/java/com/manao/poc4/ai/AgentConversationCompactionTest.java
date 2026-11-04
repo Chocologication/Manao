@@ -85,7 +85,10 @@ class AgentConversationCompactionTest {
                 catch (Exception e) { throw new AssertionError(e); } finally { pool.shutdownNow(); }
             };
             var rebuilt = new AgentConversationService(f.store, gate, worker);
-            var taskService = new AgentTaskService(f.tasks, gate, worker, null, rebuilt);
+            var runtime = org.mockito.Mockito.mock(com.manao.poc4.project.ProjectRuntimeStore.class);
+            org.mockito.Mockito.when(runtime.loadSpec("project")).thenReturn(com.manao.poc4.project.ProjectRuntimeSpec.console());
+            var environments = new AgentProjectEnvironmentService(runtime, AgentProjectEnvironmentTest.policy());
+            var taskService = new AgentTaskService(f.tasks, gate, worker, null, rebuilt, environments);
             assertThat(taskService.submit("owner", "project", new AgentContracts.TaskRequest(UUID.randomUUID().toString(), "next", 7), id).conversationId()).isEqualTo(id);
             assertThat(f.store.detail("owner", "project", id).compactState()).isEqualTo("FAILED");
             code(() -> f.store.finishCompaction(id, request, "worker-a", summary(0, "late", null)), "AI_CONTEXT_CONFLICT");

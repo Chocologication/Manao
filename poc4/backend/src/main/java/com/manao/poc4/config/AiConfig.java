@@ -161,9 +161,17 @@ public class AiConfig {
 
     @Bean
     @Conditional(AiEnabledCondition.class)
+    com.manao.poc4.ai.AgentProjectEnvironmentService agentProjectEnvironmentService(
+            com.manao.poc4.project.ProjectRuntimeStore projects, com.manao.poc4.run.RunPolicy policy) {
+        return new com.manao.poc4.ai.AgentProjectEnvironmentService(projects, policy);
+    }
+
+    @Bean
+    @Conditional(AiEnabledCondition.class)
     AgentTaskService agentTaskService(AgentTaskStore tasks, ProjectLifecycleGate lifecycle,
-                                      PiWorkerClient worker, AgentProjectTools tools, com.manao.poc4.ai.AgentConversationService conversations) {
-        return new AgentTaskService(tasks, lifecycle, worker, tools, conversations);
+                                      PiWorkerClient worker, AgentProjectTools tools, com.manao.poc4.ai.AgentConversationService conversations,
+                                      com.manao.poc4.ai.AgentProjectEnvironmentService environments) {
+        return new AgentTaskService(tasks, lifecycle, worker, tools, conversations, environments);
     }
 
     @Bean(initMethod = "start",destroyMethod = "close")
