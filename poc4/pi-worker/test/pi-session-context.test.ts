@@ -1,3 +1,5 @@
+import { JAVA_ENVIRONMENT, PYTHON_ENVIRONMENT } from "./environment-fixtures.js";
+import { getSystemMessageText } from "@earendil-works/pi-ai";
 import { describe, expect, it, vi } from "vitest";
 import { SessionManager, type SessionEntry } from "@earendil-works/pi-coding-agent";
 import { BackendHttpError, ProgressChain, type BackendClient } from "../src/backend-client.js";
@@ -26,9 +28,9 @@ function backendFor(manager: SessionManager) {
   };
   return { backend, entries, progressItems };
 }
-async function task(manager: SessionManager, responses: ScriptedResponse[], observe?: Parameters<typeof scriptedSessionFactory>[1], revision = '7') {
+async function task(manager: SessionManager, responses: ScriptedResponse[], observe?: Parameters<typeof scriptedSessionFactory>[1], revision = '7', environment = JAVA_ENVIRONMENT) {
   const fixture = backendFor(manager);
-  const pi = await createPiSession({ model: MODEL_CONFIG, paths: privateDirs(), taskId: "new-task", conversationId,
+  const pi = await createPiSession({ environment, model: MODEL_CONFIG, paths: privateDirs(), taskId: "new-task", conversationId,
     startRevision: revision, backend: fixture.backend as unknown as BackendClient,
     progress: new ProgressChain(fixture.backend as unknown as BackendClient, "new-task"),
     deps: { createSession: (async (options) => scriptedSessionFactory(responses, observe)(options)) } } as Parameters<typeof createPiSession>[0]);
@@ -36,6 +38,21 @@ async function task(manager: SessionManager, responses: ScriptedResponse[], obse
 }
 
 describe("durable native conversation restoration", () => {
+  it("supersedes a restored Spring Boot system and tool loadout with the current Python task", async () => {
+    const manager = history();
+    manager.appendMessage({ role: "system", content: "OLD JAVA AUTHORITY: use Spring Boot and Maven only", timestamp: 1,
+      toolsAdded: [{ name: "build", description: "old Maven", parameters: { type: "object", properties: { goal: { enum: ["package"] } } } }] });
+    manager.appendCompaction("历史摘要：项目是 Java Spring Boot，应使用 Maven package。", manager.getEntries()[0]!.id, 100);
+    const f = await task(manager, [{ text: "done" }], (context, session) => {
+      const system = context.messages.filter(item => item.role === "system").map(item => getSystemMessageText(item)).join("\n");
+      expect(system).toContain('"templateId":"python-fastapi-web"');
+      expect(system).toContain("current task environment takes precedence");
+      expect(session.getActiveToolNames()).toContain("python_dependencies");
+      expect(JSON.stringify(session.agent.state.tools.find(tool => tool.name === "build")!.parameters)).not.toContain("package");
+    }, "7", PYTHON_ENVIRONMENT);
+    try { expect((await f.pi.run({ prompt: "continue", workspaceRevision: "7" })).state).toBe("COMPLETED"); }
+    finally { f.pi.dispose(); }
+  });
   it('starts a continuation from the saved revision and reads the current user edit', async () => {
     let seen = '';
     const f = await task(history(), [

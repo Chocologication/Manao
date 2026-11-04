@@ -2,13 +2,14 @@
 
 The Node/TypeScript worker that drives the Pi SDK for Manao's stage-one AI tasks. One
 task at a time; the SDK runs its own agent loop; the model reaches the user's project
-only through seven backend-mediated tools (`list_files`, `read_file`, `write_file`,
-`build`, `application`, `app_http_get`, `read_image`). The worker holds NO local file or shell capability over user code: it imports
+only through the task environment's backend-mediated tools (`list_files`, `read_file`,
+`write_file`, `build`, `application`, `read_image`, service-only `app_http_get` and
+Python-only `python_dependencies`). The worker holds NO local file or shell capability over user code: it imports
 no `node:fs`/`node:child_process` tool surface, registers no built-in Pi tools
 (`noTools: "builtin"` plus an explicit tool allowlist), and its resource loading is
 explicitly discovery-disabled (no project extensions, no Skills, no prompt templates,
-no themes, no AGENTS/context files). The system prompt is fixed server-side; it does
-not pre-write change or retry steps.
+no themes, no AGENTS/context files). The system prompt combines fixed server rules
+with the validated backend-owned task environment.
 
 ## Trusted prompts and compaction
 
@@ -26,13 +27,27 @@ Checkpoints retain user corrections, important code, failures and fixes, verific
 state, known runtime facts, image references and the next unfinished work; they omit
 private reasoning, binary images, secrets and whole-file transcripts.
 
-The AI tool surface currently has a Java-oriented file allowlist (`pom.xml`,
-`src/**`, and ordinary top-level text documents) and a Maven-only `build` backend.
-The prompt explicitly forbids inferring Spring Boot from those capabilities or
-introducing Maven into a Python project to satisfy the tool. These are model
-instructions, not a backend runtime guard: passing the project's runtime template
-to the worker and adapting or restricting tools per runtime remain separate work.
-The wider workbench's Python support does not imply Python AI build support.
+`WorkerStart.environment` is a strict, complete 15-field snapshot; the worker checks
+template/language/framework/execution kind, runtime, file policy, build goals and
+ordered tools before creating a runner. `environmentSha256` binds the canonical JSON
+using the backend's field order. Missing, unknown, conflicting or mismatched snapshots
+are refused. A replay with a changed environment is 409, including the same task,
+request and epoch. Historical tasks without snapshots receive no inferred Java default.
+
+Java keeps Maven compile/test/package and java-v1 files. Python gets compile (syntax
+only), pytest test, python-v1 files and controlled lowercase add/remove dependency
+intent in main/test. The model cannot supply owner/project/revision/operation identity;
+the worker injects its observed workspace revision. Unknown dependency outcomes stop
+all later mutations. `pyproject.toml`/`uv.lock` stay read-only through file tools.
+Structured Python evidence passes through unchanged, including incomplete or missing
+test summaries; syntax, no tests and skipped tests never become test success.
+
+Console completion requires terminal state, exit and logs. Services require readiness,
+logs and relevant HTTP status/body checks. The current snapshot takes precedence over
+old summaries and native tool loadouts after restoration and compaction. Manual
+compaction remains tool-free and receives no execution environment; the next task
+injects its own snapshot. This does not change ACK-before-provider, image availability,
+cancellation or task/build budgets.
 
 ## HTTP surface (Node built-in `http`, no framework)
 
@@ -113,7 +128,7 @@ session starts.
 
 ```bash
 pnpm install        # pnpm only; SDK pinned @earendil-works/pi-coding-agent@1.2.0
-pnpm test           # vitest, 17 tests
+pnpm test           # vitest, local provider fixtures
 pnpm exec tsc --noEmit
 pnpm build          # dist/ for the image
 ```

@@ -1,3 +1,4 @@
+import { JAVA_ENVIRONMENT, JAVA_SHA256, PYTHON_ENVIRONMENT } from "./environment-fixtures.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { SessionManager, type AgentSession } from "@earendil-works/pi-coding-agent";
 import { getSystemMessageText } from "@earendil-works/pi-ai";
@@ -5,7 +6,8 @@ import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { createTaskServer } from "../src/server.js";
 import type { WorkerConfig } from "../src/config.js";
-import { compactIdleConversation } from "../src/pi-session.js";
+import { compactIdleConversation, createPiSession } from "../src/pi-session.js";
+import { ProgressChain } from "../src/backend-client.js";
 import type { BackendClient } from "../src/backend-client.js";
 import { MODEL_CONFIG, privateDirs, scriptedSessionFactory } from "./scripted-session.js";
 
@@ -31,7 +33,7 @@ describe("manual compact HTTP admission", () => {
     const handle = createTaskServer(config(), { createRunner: () => ({ taskId: "task", state: () => "RUNNING",
       start: () => new Promise<void>(() => {}), stop: async () => {} }) }); handles.push(handle);
     const base = `http://127.0.0.1:${await handle.listen()}`;
-    expect((await post(base, "/tasks/task/start", { taskId: "task", prompt: "goal", workspaceRevision: "7", requestSha256: "a".repeat(64), workerEpoch: 1, reasoningEffort: "high" })).status).toBe(200);
+    expect((await post(base, "/tasks/task/start", { environment: JAVA_ENVIRONMENT, environmentSha256: JAVA_SHA256, taskId: "task", prompt: "goal", workspaceRevision: "7", requestSha256: "a".repeat(64), workerEpoch: 1, reasoningEffort: "high" })).status).toBe(200);
     expect((await post(base, `/conversations/${conversationId}/compact`, { conversationId, requestId, expectedHeadSeq: 0 })).status).toBe(409);
   });
   it("uses native compact only, returns status on duplicate starts and reconciles a lost result ACK without resummarizing", async () => {
@@ -70,7 +72,7 @@ describe("manual compact HTTP admission", () => {
     try {
       expect((await post(base, `/conversations/${conversationId}/compact`, body)).status).toBe(200);
       await vi.waitFor(() => expect(summaries).toBe(1));
-      expect((await post(base, `/tasks/new/start`, { taskId: "new", prompt: "goal", workspaceRevision: "7", requestSha256: "a".repeat(64), workerEpoch: 1, reasoningEffort: "high" })).status).toBe(409);
+      expect((await post(base, `/tasks/new/start`, { environment: JAVA_ENVIRONMENT, environmentSha256: JAVA_SHA256, taskId: "new", prompt: "goal", workspaceRevision: "7", requestSha256: "a".repeat(64), workerEpoch: 1, reasoningEffort: "high" })).status).toBe(409);
       expect((await post(base, `/conversations/${conversationId}/compact`, body)).status).toBe(200);
       expect((await post(base, `/conversations/${conversationId}/compact`, { ...body, expectedHeadSeq: 1 })).status).toBe(409);
       release();
@@ -125,6 +127,38 @@ describe("manual compact HTTP admission", () => {
 });
 
 describe("native idle summary outcomes", () => {
+  it("reinjects current Python environment and tools in the next task after a manual old-Java summary", async () => {
+    const manager = SessionManager.inMemory("manao-project", { id: conversationId });
+    manager.appendCustomMessageEntry("manao_user_request", "历史 Java Spring Boot Maven package" + "x".repeat(100_000), true);
+    manager.appendCustomMessageEntry("manao_user_request", "最近目标" + "y".repeat(100_000), true);
+    const compacted = await run(manager, context => {
+      expect(context.messages.some(item => item.role === "system" && item.toolsAdded?.length)).toBe(false);
+      return { text: "历史 Spring Boot Maven 摘要，下一任务必须核对环境。" };
+    });
+    const entries = [...structuredClone(manager.getEntries()), ...compacted.entries];
+    const backend = {
+      readContext: async () => ({ header: manager.getHeader(), headSeq: entries.length,
+        entries: entries.map((entry, i) => ({ seq: i + 1, sourceTaskId: null, writerId: "old", entry })), nextAfterSeq: null }),
+      appendContext: async (_task: string, batch: { entries: typeof entries }) => {
+        entries.push(...structuredClone(batch.entries)); return { headSeq: entries.length };
+      }, progress: async () => ({ accepted: true }),
+    } as unknown as BackendClient;
+    let requests = 0;
+    const pi = await createPiSession({ environment: PYTHON_ENVIRONMENT, model: MODEL_CONFIG, paths: privateDirs(), backend,
+      taskId: "next-python", conversationId, progress: new ProgressChain(backend, "next-python"),
+      deps: { createSession: async options => scriptedSessionFactory([{ text: "done" }], context => {
+        requests++;
+        expect(JSON.stringify(context)).toContain('python-fastapi-web');
+        const declarations = context.messages.filter(item => item.role === "system").flatMap(item => item.toolsAdded ?? []);
+        expect(declarations.some(tool => tool.name === "python_dependencies")).toBe(true);
+        const build = declarations.filter(tool => tool.name === "build").at(-1)!;
+        expect(JSON.stringify(build.parameters)).not.toContain("package");
+      })(options) } });
+    try {
+      expect((await pi.run({ prompt: "continue current Python", workspaceRevision: "7" })).state).toBe("COMPLETED");
+      expect(requests).toBe(1);
+    } finally { pi.dispose(); }
+  });
   async function run(manager: SessionManager, respond: NonNullable<Parameters<typeof scriptedSessionFactory>[2]>, observe?: (session: AgentSession) => void) {
     const entries = structuredClone(manager.getEntries());
     const backend = { readCompactionContext: async () => ({ header: manager.getHeader(), headSeq: entries.length,

@@ -1,5 +1,5 @@
 /**
- * The worker-side projection of the backend's six project tools. Each execute()
+ * The worker-side projection of the task environment's project tools. Each execute()
  * only forwards to the backend's durable tool-call ledger. The worker never touches
  * the local filesystem, a shell, or any user code: this module imports nothing that
  * could, and every execution goes through {@link BackendClient.invoke}. The expected
@@ -9,8 +9,7 @@
 import { Type, type Static } from "typebox";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { BackendHttpError, type BackendClient, type ToolResult } from "./backend-client.js";
-
-export const TOOL_NAMES = ["list_files", "read_file", "write_file", "build", "application", "app_http_get", "read_image"] as const;
+import { parseProjectEnvironment, type ProjectEnvironment } from "./project-environment.js";
 
 export interface ProjectToolDeps {
   backend: BackendClient;
@@ -38,13 +37,12 @@ const writeArgs = Type.Object({
   expectedSha256: Type.Optional(Type.String({ description: "SHA-256 of the version being replaced; omit to create a new file." })),
 });
 
-const buildArgs = Type.Object({
-  goal: Type.Union([
-    Type.Literal("compile"),
-    Type.Literal("test"),
-    Type.Literal("package"),
-  ], { description: "The fixed build goal; there is no arbitrary command execution." }),
-});
+const dependencyArgs = Type.Object({
+  action: Type.String({ enum: ["add", "remove"] }),
+  packageName: Type.String({ minLength: 1, maxLength: 128, description: "A package name; no URL, path or command." }),
+  versionSpec: Type.Optional(Type.String({ maxLength: 128, description: "Optional version constraint for add." })),
+  group: Type.String({ enum: ["main", "test"] }),
+}, { additionalProperties: false });
 
 // Model providers require a top-level object. The backend remains authoritative
 // for each action's required/allowed fields; the model sees those rules below.
@@ -58,13 +56,17 @@ const appHttpGetArgs = Type.Object({ runId: Type.String(), path: Type.String({ m
 const imageArgs = Type.Object({attachmentId:Type.Optional(Type.String()),cursor:Type.Optional(Type.String())},{additionalProperties:false});
 
 /**
- * Creates the six sequential tool definitions. The SDK runs the loop; these tools
+ * Creates the applicable sequential tool definitions. The SDK runs the loop; these tools
  * only carry the call to the backend and return the durable answer as the model-
  * facing JSON. A deterministic backend rejection (path rules, conflicts, non-zero
  * build diagnostics) arrives as data.error / exitCode content — an ordinary tool
  * result the model reads and acts on in the next round, not a thrown failure.
  */
-export function createProjectTools(deps: ProjectToolDeps): Array<ToolDefinition> {
+export function createProjectTools(deps: ProjectToolDeps, value: ProjectEnvironment): Array<ToolDefinition> {
+  const environment = parseProjectEnvironment(value);
+  const buildArgs = Type.Object({
+    goal: Type.String({ enum: [...environment.buildGoals], description: "Fixed isolated validation goal; no arbitrary commands." }),
+  }, { additionalProperties: false });
   let fatalCode: string | null = null;
   // In-flight dedup: a replayed toolCallId joins the promise of the call still
   // running, so one backend invocation serves both. After settling the entry is
@@ -122,7 +124,7 @@ export function createProjectTools(deps: ProjectToolDeps): Array<ToolDefinition>
     };
   };
 
-  return [
+  const tools: ToolDefinition[] = [
     {
       name: "read_image", label: "Read conversation image",
       description: "Read an unexpired image by attachmentId. Use {} for the first conversation image catalog page, or {cursor} for later pages. Never pass both. Images remain readable after context compaction until their original deadline.",
@@ -168,10 +170,13 @@ export function createProjectTools(deps: ProjectToolDeps): Array<ToolDefinition>
     {
       name: "build",
       label: "Run project build",
-      description: "Runs one fixed build goal (compile, test or package) in an isolated read-only copy and returns the real exit result with bounded diagnostics.",
+      description: environment.language === "python"
+        ? "Validates an isolated copy: compile checks Python syntax only; test runs pytest and returns structured verificationStatus/testSummary. Syntax success is not a test pass."
+        : "Runs compile, test or package with Maven in an isolated read-only copy and returns the real exit result and bounded diagnostics.",
       parameters: buildArgs,
       executionMode: "sequential",
       async execute(toolCallId, params: Static<typeof buildArgs>, signal) {
+        if (!environment.buildGoals.includes(params.goal)) throw new Error("Unsupported build goal for the task environment");
         return await invoke(toolCallId, "build", { goal: params.goal }, signal);
       },
     },
@@ -195,5 +200,25 @@ export function createProjectTools(deps: ProjectToolDeps): Array<ToolDefinition>
         return await invoke(toolCallId, "app_http_get", params, signal);
       },
     },
+    {
+      name: "python_dependencies", label: "Change Python dependency",
+      description: "Add or remove a Python dependency in main or test through the controlled uv workflow. Missing pytest/TestClient test dependencies belong in test. The backend owns project identity and operation reconciliation; never edit pyproject.toml or uv.lock manually.",
+      parameters: dependencyArgs,
+      executionMode: "sequential",
+      async execute(toolCallId, params: Static<typeof dependencyArgs>, signal) {
+        // Also enforce strict intent for direct callers; SDK validation alone is not authority.
+        const keys = Object.keys(params);
+        if (keys.some(key => !["action", "packageName", "versionSpec", "group"].includes(key))
+          || !["add", "remove"].includes(params.action) || !["main", "test"].includes(params.group)
+          || typeof params.packageName !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(params.packageName)
+          || (params.versionSpec !== undefined && (typeof params.versionSpec !== "string" || params.versionSpec.length > 128))) {
+          throw new Error("Invalid Python dependency intent");
+        }
+        const args: Record<string, unknown> = { action: params.action, packageName: params.packageName, group: params.group };
+        if (params.versionSpec !== undefined) args.versionSpec = params.versionSpec;
+        return await invoke(toolCallId, "python_dependencies", args, signal);
+      },
+    },
   ];
+  return environment.tools.map(name => tools.find(tool => tool.name === name)!);
 }

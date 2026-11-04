@@ -24,8 +24,11 @@ import { compactIdleConversation, createPiSession, type PiSessionDeps, type PiTa
 import { TerminalDelivery, selectConfirmedEvictions, type DeliveryState } from "./terminal-delivery.js";
 import { terminalContentSha256, terminalReportId } from "./report-identity.js";
 import type { CompactStart, CompactResult } from "./conversation-context.js";
+import { parseProjectEnvironment, environmentSha256, type ProjectEnvironment } from "./project-environment.js";
 
 export interface WorkerStartBody {
+  environment: ProjectEnvironment;
+  environmentSha256: string;
   taskId: string;
   prompt: string;
   workspaceRevision: string;
@@ -164,6 +167,10 @@ export function createTaskServer(config: WorkerConfig, deps: ServerDeps = {}): T
     }
     const existing = tasks.get(taskId);
     if (existing !== undefined) {
+      if (existing.start.environmentSha256 !== start.environmentSha256) {
+        writeJson(response, 409, { error: "the task project environment does not match" });
+        return;
+      }
       if (existing.start.requestSha256 !== start.requestSha256) {
         writeJson(response, 409, { error: "task id was already used for a different request" });
         return;
@@ -371,6 +378,7 @@ export function createTaskServer(config: WorkerConfig, deps: ServerDeps = {}): T
           startRevision: runnerDeps.start.workspaceRevision,
           conversationId: runnerDeps.start.conversationId,
           reasoningEffort: runnerDeps.start.reasoningEffort,
+          environment: runnerDeps.start.environment,
           deps: { createSession: deps.createManualSession },
         });
         const runningSession = session;
@@ -467,6 +475,12 @@ export function createTaskServer(config: WorkerConfig, deps: ServerDeps = {}): T
       return "request body must be an object";
     }
     const candidate = body as Record<string, unknown>;
+    let environment: ProjectEnvironment;
+    try {
+      environment = parseProjectEnvironment(candidate["environment"]);
+      if (typeof candidate["environmentSha256"] !== "string" || !SHA256.test(candidate["environmentSha256"])
+        || environmentSha256(environment) !== candidate["environmentSha256"]) return "The task project environment digest is invalid";
+    } catch { return "The task project environment is invalid"; }
     if (candidate["taskId"] !== taskId) {
       return "taskId must match the URL path";
     }
@@ -488,6 +502,8 @@ export function createTaskServer(config: WorkerConfig, deps: ServerDeps = {}): T
       return "conversationId must be a UUID or null";
     }
     return {
+      environment,
+      environmentSha256: candidate["environmentSha256"] as string,
       taskId,
       prompt: candidate["prompt"],
       workspaceRevision: candidate["workspaceRevision"],

@@ -1,3 +1,4 @@
+import { JAVA_ENVIRONMENT, PYTHON_ENVIRONMENT } from "./environment-fixtures.js";
 import { describe, expect, it, vi } from "vitest";
 import { SessionManager, SettingsManager, type AgentSession } from "@earendil-works/pi-coding-agent";
 import { getSystemMessageText, type TranscriptContext } from "@earendil-works/pi-ai";
@@ -30,7 +31,7 @@ function history() {
   return manager;
 }
 type Respond = NonNullable<Parameters<typeof scriptedSessionFactory>[2]>;
-async function fixture(manager: SessionManager, respond: Respond, seconds = 1800, fixedSdkConfig = false, now?: () => number) {
+async function fixture(manager: SessionManager, respond: Respond, seconds = 1800, fixedSdkConfig = false, now?: () => number, environment = JAVA_ENVIRONMENT) {
   const entries = structuredClone(manager.getEntries());
   const batches: ContextAppend[] = [];
   const requests: Array<{ summary: boolean; context: TranscriptContext }> = [];
@@ -47,7 +48,7 @@ async function fixture(manager: SessionManager, respond: Respond, seconds = 1800
       data: { content: "工具结果增长：" + "x".repeat(90_000) }, truncated: false })),
     progress: vi.fn(async () => ({ accepted: true })),
   };
-  const pi = await createPiSession({ model: MODEL_CONFIG, paths: privateDirs(), taskId: "task", conversationId: id, startRevision: "7",
+  const pi = await createPiSession({ environment, model: MODEL_CONFIG, paths: privateDirs(), taskId: "task", conversationId: id, startRevision: "7",
     budgets: { wallClockSeconds: seconds, toolCalls: 180, builds: 20 }, backend: backend as unknown as BackendClient,
     progress: new ProgressChain(backend as unknown as BackendClient, "task"),
     deps: { now, createSession: async (options) => {
@@ -65,6 +66,24 @@ async function fixture(manager: SessionManager, respond: Respond, seconds = 1800
 }
 
 describe("fixed-window native Pi compaction", () => {
+  it.each(["before-task", "sdk-auto"])("retains current Python authority after %s compaction of old Java history", async phase => {
+    const manager = history();
+    if (phase === "before-task") manager.appendMessage(assistant("old Java usage", 786_000));
+    let ordinary = 0;
+    const f = await fixture(manager, (_context, session) => session.isCompacting
+      ? { text: "历史 Spring Boot Maven package 摘要，保留 bookId。" }
+      : (++ordinary === 1 && phase === "sdk-auto" ? { usageTokens: 785_900,
+        toolCalls: [{ id: "grow", name: "read_file", args: { path: "app/main.py" } }] } : { text: "done" }), 1800, true, undefined, PYTHON_ENVIRONMENT);
+    try {
+      expect((await f.run()).state).toBe("COMPLETED");
+      expect(f.requests.some(request => request.summary)).toBe(true);
+      for (const request of f.requests.filter(request => !request.summary)) {
+        expect(JSON.stringify(request.context)).toContain('python-fastapi-web');
+      }
+      expect(f.session.getActiveToolNames()).toEqual(PYTHON_ENVIRONMENT.tools);
+      expect(JSON.stringify(f.session.agent.state.tools.find(tool => tool.name === "build")!.parameters)).not.toContain("package");
+    } finally { f.pi.dispose(); }
+  });
   it.each([[786431, 0], [786432, 1], [786433, 1]])("compacts native assistant usage %i with inclusive 75 percent boundary", async (tokens, count) => {
     const f = await fixture(history(), (_context, session) => session.isCompacting ? { text: summary } : { text: "本轮完成", usageTokens: tokens });
     expect((await f.run()).state).toBe("COMPLETED");
@@ -100,7 +119,7 @@ describe("fixed-window native Pi compaction", () => {
     const programming = JSON.stringify(f.requests.find((request) => !request.summary)!.context);
     expect(programming).toContain(summary); expect(programming).toContain("新目标必须遵守 bookId。");
     expect(programming).toContain("最近目标：继续查询接口。");
-    expect(programming).toContain("seven mediated tools"); expect(programming).toContain("app_http_get");
+    expect(programming).toContain("environment-matched mediated tools"); expect(programming).toContain("app_http_get");
     expect(f.entries.slice(0, original.length)).toEqual(original);
     expect(f.backend.invoke).not.toHaveBeenCalled();
     f.pi.dispose();

@@ -367,14 +367,14 @@ Task 6 复审修正 I1/I2：原 Job 存在但 Pod 已删除时，observe 从持�
 - Produces: `parseProjectEnvironment(value: unknown): ProjectEnvironment`、`environmentSha256(environment)`、`buildSystemPrompt(environment): string`。
 - Produces: `createProjectTools(deps, environment): ToolDefinition[]`；Pi session 使用实际返回工具名，禁止另存一份失真的固定数量。
 
-- [ ] **Step 1 — 写模型请求级测试。** 四模板、缺字段、组合冲突、摘要不符、重复 start 变环境拒绝；工具 schema 中 Python build 没 package，Java 没依赖工具，console 没 HTTP。准备含旧 Spring Boot 摘要的 Python 会话，捕获实际 provider 请求验证当前 Python system 与 tools。
-- [ ] **Step 2 — 运行红灯。**
+- [x] **Step 1 — 写模型请求级测试。** 四模板、缺字段、组合冲突、摘要不符、重复 start 变环境拒绝；工具 schema 中 Python build 没 package，Java 没依赖工具，console 没 HTTP。准备含旧 Spring Boot 摘要的 Python 会话，捕获实际 provider 请求验证当前 Python system 与 tools。
+- [x] **Step 2 — 运行红灯。**
 
 ```powershell
 pnpm -C poc4/pi-worker exec vitest run test/project-environment.test.ts test/server.test.ts test/project-tools.test.ts test/pi-session.test.ts test/pi-session-context.test.ts test/context-compaction.test.ts test/manual-compaction.test.ts
 ```
 
-- [ ] **Step 3 — 生成固定规则加可信环境。** 资源加载仍禁止磁盘自动扩展。环境合法性和摘要校验发生在创建会话前。新增依赖参数 schema 为 strict object，不允许 owner/project/revision/operationId；worker 从自身 revision 状态注入 expectedRevision。依赖 unknown 与既有 AI_CALL_NEEDS_ATTENTION 一样终止继续写入。
+- [x] **Step 3 — 生成固定规则加可信环境。** 资源加载仍禁止磁盘自动扩展。环境合法性和摘要校验发生在创建会话前。新增依赖参数 schema 为 strict object，不允许 owner/project/revision/operationId；worker 从自身 revision 状态注入 expectedRevision。依赖 unknown 与既有 AI_CALL_NEEDS_ATTENTION 一样终止继续写入。
 
 ```typescript
 const customTools = createProjectTools(toolDeps, environment);
@@ -387,15 +387,15 @@ const loader = new DefaultResourceLoader({
 // createAgentSession 的 tools 使用 customTools.map(tool => tool.name)。
 ```
 
-- [ ] **Step 4 — 更新闭环与压缩规则。** console 等待终态/exit/log；service 等 ready/log/HTTP；测试可先失败再修复；syntax 不等于通过测试；缺测试依赖自动调用 test 组 add；不靠手写 pyproject/lock 解决。任务前、SDK 自动、手动压缩后下次请求均保留环境，实际工具不被历史 transcript 恢复成旧 loadout；继续保持 ACK-before-provider、图片复读、取消和预算。
-- [ ] **Step 5 — 绿灯与回归。** 先 Step 2，再一次 worker 全量测试与构建：
+- [x] **Step 4 — 更新闭环与压缩规则。** console 等待终态/exit/log；service 等 ready/log/HTTP；测试可先失败再修复；syntax 不等于通过测试；缺测试依赖自动调用 test 组 add；不靠手写 pyproject/lock 解决。任务前、SDK 自动、手动压缩后下次请求均保留环境，实际工具不被历史 transcript 恢复成旧 loadout；继续保持 ACK-before-provider、图片复读、取消和预算。
+- [x] **Step 5 — 绿灯与回归。** 先 Step 2，再一次 worker 全量测试与构建：
 
 ```powershell
 pnpm -C poc4/pi-worker test
 pnpm -C poc4/pi-worker build
 ```
 
-- [ ] **Step 6 — 提交。** `git commit -m "feat(ai): inject environment and expose matching Python tools"`。
+- [x] **Step 6 — 提交。** `git commit -m "feat(ai): inject environment and expose matching Python tools"`。
 
 ## Task 8: 在工作台展示依赖与 Python 验证结果
 
