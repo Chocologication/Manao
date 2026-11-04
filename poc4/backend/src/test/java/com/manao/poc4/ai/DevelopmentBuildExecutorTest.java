@@ -89,6 +89,8 @@ class DevelopmentBuildExecutorTest {
          * never stops conflicting is an unconfirmed cleanup, never a success.
          */
         String conflictJobDelete;
+        /** Keep the original terminal Pod observable while cleanup retries are pending. */
+        String conflictPodDelete;
         /**
          * When set, the FIRST delete for this job is answered with a 409 conflict and the
          * next one goes through to the store. Before the 409 is answered the stored job's
@@ -132,6 +134,9 @@ class DevelopmentBuildExecutorTest {
                 }
                 if (conflictJobDelete != null && path.endsWith("/jobs/" + conflictJobDelete)) {
                     jobDeleteBodies.add(request.getBody().readUtf8());
+                    return new MockResponse().setResponseCode(409);
+                }
+                if (conflictPodDelete != null && path.endsWith("/pods/" + conflictPodDelete)) {
                     return new MockResponse().setResponseCode(409);
                 }
                 if (conflictJobDeleteOnce != null && path.endsWith("/jobs/" + conflictJobDeleteOnce)) {
@@ -355,6 +360,75 @@ class DevelopmentBuildExecutorTest {
             assertThat(restarted.loadPendingBuildEvidence(request).exitCode()).isZero();
             assertThatThrownBy(() -> restarted.loadPendingBuildEvidence(new BuildRequest(taskId, CALL, PROJECT, COMMAND, 9, BuildGoal.TEST, environment))).isInstanceOf(IllegalStateException.class);
             tasks.releaseBuildClaim(taskId, CALL);
+        }
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"observe", "close", "closeStep"})
+    void savedTerminalFactsSurviveRetainedPodWithDegradedLogs(String recovery) throws Exception {
+        try (var db = com.manao.poc4.persistence.JdbcStoreTestSupport.create()) {
+            var jdbc = db.jdbc();
+            var now = new java.sql.Timestamp(System.currentTimeMillis());
+            String taskId = java.util.UUID.randomUUID().toString();
+            jdbc.update("INSERT INTO app_user(id,username,password_hash,created_at) VALUES ('evidence-owner','evidence-owner','unused',?)", now);
+            jdbc.update("INSERT INTO project(id,owner_id,name,state,workspace_revision,created_at,updated_at) VALUES (?,'evidence-owner','evidence','READY',7,?,?)", PROJECT, now, now);
+            var environment = AgentProjectEnvironment.fromJson(java.nio.file.Files.readString(java.nio.file.Path.of("../fixtures/agent-project-environment/python-fastapi-web.json")));
+            var transactions = new org.springframework.jdbc.datasource.DataSourceTransactionManager(jdbc.getDataSource());
+            var tasks = new AgentTaskStore(jdbc, transactions, Clock.systemUTC());
+            tasks.createTask("evidence-owner", PROJECT, new AgentContracts.TaskRequest(taskId, "verify", 7), null, () -> environment);
+            var json = new com.fasterxml.jackson.databind.ObjectMapper();
+            var toolRequest = new AgentContracts.ToolRequest(CALL, "build", 7, json.createObjectNode().put("goal", "test"));
+            tasks.registerToolCall(taskId, CALL, AgentProjectTools.callDigest(taskId, toolRequest), "build", "{\"goal\":\"test\"}", 7, COMMAND);
+            tasks.markToolCallRunning(taskId, CALL);
+            var request = new BuildRequest(taskId, CALL, PROJECT, COMMAND, 7, BuildGoal.TEST, environment);
+            var job = client.batch().v1().jobs().inNamespace(NS).resource(factory.createDevelopmentJob(request, SOURCE)).create();
+            var pod = seedPod(job.getMetadata().getName(), job.getMetadata().getUid(), 0, "Completed");
+            var identity = new BuildIdentity(job.getMetadata().getName(), job.getMetadata().getUid(), pod.getMetadata().getUid());
+            tasks.bindToolCallIdentity(taskId, CALL, identity.jobName(), identity.jobUid(), identity.podUid());
+            String originalOutput = PythonBuildEvidenceTest.report("<testsuite tests='2' failures='0' errors='0' skipped='0'/>");
+            seedLog(pod.getMetadata().getName(), originalOutput);
+            dispatcher.conflictPodDelete = pod.getMetadata().getName();
+            var first = new Fabric8DevelopmentBuildExecutor(client, factory, NS, null, (r, create) -> create.get(), r -> false,
+                tasks::savePendingBuildEvidence, tasks::loadPendingBuildEvidence, Clock.systemUTC(), 1, 1, 1);
+            var original = first.build(request);
+            assertThat(original.cleanupConfirmed()).isFalse();
+            assertThat(original.evidence().verificationStatus()).hasToString("PASS");
+            assertThat(original.terminationReason()).isEqualTo("Completed");
+            assertThat(client.pods().inNamespace(NS).withName(pod.getMetadata().getName()).get()).isNotNull();
+            assertThat(client.batch().v1().jobs().inNamespace(NS).withName(identity.jobName()).get()).isNotNull();
+            assertThat(tasks.findToolCall(taskId, CALL).orElseThrow().state()).isEqualTo("RUNNING");
+            tasks.releaseBuildClaim(taskId, CALL);
+
+            seedLog(pod.getMetadata().getName(), switch (recovery) {
+                case "observe" -> "";
+                case "close" -> "x".repeat(Fabric8DevelopmentBuildExecutor.MAX_OUTPUT_BYTES + 1);
+                default -> "MANAO-PYTEST-REPORT-BEGIN\n<testsuite";
+            });
+            var restarted = new AgentTaskStore(jdbc, transactions, Clock.systemUTC());
+            var second = new Fabric8DevelopmentBuildExecutor(client, factory, NS, null, (r, create) -> { throw new AssertionError("no second Job"); }, r -> false,
+                restarted::savePendingBuildEvidence, restarted::loadPendingBuildEvidence, Clock.systemUTC(), 1, 1, 1);
+            dispatcher.conflictPodDelete = null;
+            var recovered = switch (recovery) {
+                case "observe" -> second.observe(request, identity);
+                case "close" -> second.close(request, identity);
+                default -> second.closeStep(request, identity);
+            };
+            assertThat(recovered.cleanupConfirmed()).isTrue();
+            assertThat(client.pods().inNamespace(NS).list().getItems()).isEmpty();
+            assertThat(client.batch().v1().jobs().inNamespace(NS).list().getItems()).isEmpty();
+            assertThat(recovered).usingRecursiveComparison().ignoringFields("cleanupConfirmed").isEqualTo(original);
+            assertThat(restarted.loadPendingBuildEvidence(request)).isEqualTo(original);
+
+            var tools = new AgentProjectTools(restarted, new com.manao.poc4.workspace.WorkspaceJdbcStore(jdbc, transactions),
+                null, null, new com.manao.poc4.project.ProjectLifecycleGate(), second);
+            var completed = tools.invoke(taskId, toolRequest);
+            assertThat(completed.data().path("exitCode").asInt(-1)).isZero();
+            assertThat(completed.data().path("terminationReason").asText()).isEqualTo("Completed");
+            assertThat(completed.data().path("output").asText()).isEqualTo(originalOutput);
+            assertThat(completed.data().path("verificationStatus").asText()).isEqualTo("PASS");
+            var row = restarted.findToolCall(taskId, CALL).orElseThrow();
+            assertThat(row.state()).isEqualTo("COMPLETED");
+            assertThat(json.readTree(row.resultJson())).isEqualTo(json.valueToTree(completed));
         }
     }
 

@@ -297,10 +297,14 @@ public final class Fabric8DevelopmentBuildExecutor implements DevelopmentBuildEx
             if (!ownedByJob(pod, identity.jobUid())) throw new IllegalStateException("build pod owner mismatch");
             identity = new AgentContracts.BuildIdentity(identity.jobName(), identity.jobUid(), uid(pod));
         }
-        Observation observed = job == null || pod == null ? null : terminalObservation(job, pod, observer);
-        if (observed != null) return result(request, identity,
-            request.environment() != null && "python".equals(request.environment().language()) ? observed.exitCode() : null,
-            "BUILD_CLOSED", observed.output(), observed.truncated(), observed.reports(), false);
+        // A cleanup retry may refine identity, but a later log read cannot replace saved
+        // terminal facts. Return the same facts the write-ahead store preserves.
+        if (saved == null || saved.exitCode() == null) {
+            Observation observed = job == null || pod == null ? null : terminalObservation(job, pod, observer);
+            if (observed != null) return result(request, identity,
+                request.environment() != null && "python".equals(request.environment().language()) ? observed.exitCode() : null,
+                "BUILD_CLOSED", observed.output(), observed.truncated(), observed.reports(), false);
+        }
         if (saved != null) return new AgentContracts.BuildResult(identity, saved.exitCode(), saved.terminationReason(),
             saved.output(), saved.truncated(), saved.testReports(), false, saved.evidence());
         BoundedText log = new BoundedText("", false);
