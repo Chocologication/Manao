@@ -130,8 +130,10 @@ public class AiConfig {
     AgentProjectTools agentProjectTools(AgentTaskStore tasks, WorkspaceStore store, WorkspaceService workspace,
                                         WorkspaceOperationService operations, ProjectLifecycleGate lifecycle,
                                         DevelopmentBuildExecutor builds, AgentApplicationTools application,
-                                        com.manao.poc4.ai.AgentAttachmentService attachments) {
-        return new AgentProjectTools(tasks, store, workspace, operations, lifecycle, builds, application,attachments);
+                                        com.manao.poc4.ai.AgentAttachmentService attachments,
+                                        com.manao.poc4.workspace.PythonDependencyService dependencies) {
+        return new AgentProjectTools(tasks, store, workspace, operations, lifecycle, builds, application,attachments,
+            new com.manao.poc4.ai.AgentPythonDependencyTools(tasks, dependencies));
     }
 
     @Bean

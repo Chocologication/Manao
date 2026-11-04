@@ -212,14 +212,14 @@ main 不传 group；dry-run 只在结果 TOML 实际有 test 组时加该固定�
 - Produces: `PythonDependencyService.changeForAgent(String taskId, String toolCallId)` → Status，参数与 owner/project/operation/revision 从已登记调用读取；`reconcileForAgent(String taskId, String toolCallId)` 只核对原登记操作。
 - Produces: `AgentTaskOccupancy.requireAgentDependencyCall(taskId, projectId, toolCallId, operationId)`；测试 no-op occupancy 实现同步补齐。
 
-- [ ] **Step 1 — 写 durable 竞争测试。** 扩展 AgentProjectToolsTest 的 disposable schema/StubAgent fixture 模式。用 CountDownLatch 在 prepare 完成前、PENDING 前、commit 后回包前暂停；分别发送 close，断言未授权新提交被阻止、已登记提交可完成、live claim 未释放前任务不可结束。
-- [ ] **Step 2 — 运行红灯。**
+- [x] **Step 1 — 写 durable 竞争测试。** 扩展 AgentProjectToolsTest 的 disposable schema/StubAgent fixture 模式。用 CountDownLatch 在 prepare 完成前、PENDING 前、commit 后回包前暂停；分别发送 close，断言未授权新提交被阻止、已登记提交可完成、live claim 未释放前任务不可结束。
+- [x] **Step 2 — 运行红灯。**
 
 ```powershell
 mvn -q -f poc4/backend/pom.xml '-Dtest=AgentPythonDependencyToolsTest,PythonDependencyOperationTest,AgentTaskServiceTest' test
 ```
 
-- [ ] **Step 3 — 接入工具与受控入口。** 新工具加入 KNOWN_TOOLS、SIDE_EFFECT_TOOLS，并在 Java task 下后端拒绝。CAS 取得 claim，耗时依赖 IO 在 invoke 的项目 gate 外调度，由 service 保持现有项目操作同步；禁止长 IO 持有 AgentTaskStore monitor。首次登记 PENDING 与 task 状态锁定校验在同一事务内，不能靠不具备原子性的 callback 前置检查。
+- [x] **Step 3 — 接入工具与受控入口。** 新工具加入 KNOWN_TOOLS、SIDE_EFFECT_TOOLS，并在 Java task 下后端拒绝。CAS 取得 claim，耗时依赖 IO 在 invoke 的项目 gate 外调度，由 service 保持现有项目操作同步；禁止长 IO 持有 AgentTaskStore monitor。首次登记 PENDING 与 task 状态锁定校验在同一事务内，不能靠不具备原子性的 callback 前置检查。
 
 ```text
 REGISTERED → claim RUNNING → prepare
@@ -229,9 +229,9 @@ REGISTERED → claim RUNNING → prepare
   → record both paths and revision → persist tool result → release claim
 ```
 
-- [ ] **Step 4 — 实现只核对原操作的恢复。** 新增依赖收尾分支及 cleanup claim；PENDING 继续同一 journal commit，COMMITTED 重建成功结果，无记录且已无执行只能退休原调用，绝不重新 prepare。每次 reconcile 服从 ReconcileWorkBudget；单次 IO timeout 不得超出剩余预算，不得用 browser reconcile 绕回 requireBrowserWritable。保持原 hasPendingReceipts 覆盖依赖行。
-- [ ] **Step 5 — 覆盖失败矩阵并绿灯。** 双文件部分写入/receipt 缺失/摘要不符继续占用；登记后响应丢失重试不增第二次 revision；completed 重放不碰 uv；跨 task/owner/project 拒绝；暂停后可通过新 task 继续；结束时无 task 所属 PENDING。两条 changedPaths 与 revision 必须在同一 task 更新事务记录，恢复路径也记录。运行 Step 2 与既有收尾测试。
-- [ ] **Step 6 — 提交。** `git commit -m "feat(ai): add durable Python dependency tool lifecycle"`。
+- [x] **Step 4 — 实现只核对原操作的恢复。** 新增依赖收尾分支及 cleanup claim；PENDING 继续同一 journal commit，COMMITTED 重建成功结果，无记录且已无执行只能退休原调用，绝不重新 prepare。每次 reconcile 服从 ReconcileWorkBudget；单次 IO timeout 不得超出剩余预算，不得用 browser reconcile 绕回 requireBrowserWritable。保持原 hasPendingReceipts 覆盖依赖行。
+- [x] **Step 5 — 覆盖失败矩阵并绿灯。** 双文件部分写入/receipt 缺失/摘要不符继续占用；登记后响应丢失重试不增第二次 revision；completed 重放不碰 uv；跨 task/owner/project 拒绝；暂停后可通过新 task 继续；结束时无 task 所属 PENDING。两条 changedPaths 与 revision 必须在同一 task 更新事务记录，恢复路径也记录。运行 Step 2 与既有收尾测试。
+- [x] **Step 6 — 提交。** `git commit -m "feat(ai): add durable Python dependency tool lifecycle"`。
 
 ## Task 5: 固定 Python 验证运行器
 

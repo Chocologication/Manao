@@ -473,6 +473,50 @@ public final class AgentTaskStore implements AgentTaskOccupancy {
         return claimToolCleanup(taskId, toolCallId, "build");
     }
 
+    public synchronized boolean claimDependencyCleanup(String taskId, String toolCallId) {
+        return claimToolCleanup(taskId, toolCallId, "python_dependencies");
+    }
+
+    public synchronized boolean claimDependencyObservation(String taskId, String toolCallId) {
+        var call = findToolCall(taskId, toolCallId).orElse(null);
+        if (call == null || !"python_dependencies".equals(call.toolName()) || isBuildClaimLive(taskId, toolCallId)
+            || !List.of("RUNNING", "NEEDS_ATTENTION").contains(call.state())) return false;
+        return liveBuildClaims.add(taskId + "/" + toolCallId);
+    }
+
+    public void completeDependencyCall(String taskId, String toolCallId, List<String> paths, long revision, String resultJson) {
+        transaction.executeWithoutResult(status -> {
+            recordVerifiedWrites(taskId, paths, revision);
+            completeToolCall(taskId, toolCallId, resultJson);
+        });
+    }
+
+    @Override public void requireAgentDependencyCall(String taskId, String projectId, String toolCallId, String operationId) {
+        var owner = taskOwner(taskId);
+        var call = findToolCall(taskId, toolCallId).orElseThrow(AgentTaskStore::unauthorizedRunCall);
+        if (!projectId.equals(owner.projectId()) || !"python_dependencies".equals(call.toolName())
+            || operationId == null || !operationId.equals(call.workspaceOperationId())
+            || !List.of("REGISTERED", "RUNNING", "NEEDS_ATTENTION", "COMPLETED").contains(call.state())) throw unauthorizedRunCall();
+        Integer authorized = jdbc.queryForObject("SELECT COUNT(*) FROM agent_task t JOIN project p ON p.id=t.project_id "
+            + "WHERE t.id=? AND t.owner_id=p.owner_id AND t.active_project=p.id", Integer.class, taskId);
+        if (authorized == null || authorized != 1) throw unauthorizedRunCall();
+    }
+
+    public void registerAgentDependencyPending(String taskId, String toolCallId,
+            com.manao.poc4.workspace.WorkspaceStore workspace,
+            com.manao.poc4.workspace.WorkspaceStore.OperationRecord operation) {
+        transaction.executeWithoutResult(status -> {
+            jdbc.queryForObject("SELECT id FROM agent_task WHERE id=? FOR UPDATE", String.class, taskId);
+            requireAgentDependencyCall(taskId, operation.projectId(), toolCallId, operation.id());
+            requireTaskAcceptsNewCall(taskId, operation.projectId());
+            var call = findToolCall(taskId, toolCallId).orElseThrow(AgentTaskStore::unauthorizedRunCall);
+            if (!"RUNNING".equals(call.state()) || call.expectedRevision() != operation.expectedRevision()) throw unauthorizedRunCall();
+            var begin = workspace.beginPendingOperation(operation.projectId(), operation.expectedRevision(), operation);
+            if (begin.projectLocked()) throw new ApiException("PROJECT_LOCKED", 409, "Project is locked");
+            if (!begin.started()) throw new ApiException("WORKSPACE_REVISION_CONFLICT", 409, "The workspace revision does not match");
+        });
+    }
+
     private boolean claimToolCleanup(String taskId, String toolCallId, String toolName) {
         ToolCallRow call = findToolCall(taskId, toolCallId).orElse(null);
         if (call == null || !toolName.equals(call.toolName()) || hasLiveToolClaims(taskId)
@@ -1541,6 +1585,10 @@ public final class AgentTaskStore implements AgentTaskOccupancy {
      * turn a settled write into an undecided call.
      */
     public void recordVerifiedWrite(String taskId, String path, long revision) {
+        recordVerifiedWrites(taskId, List.of(path), revision);
+    }
+
+    public void recordVerifiedWrites(String taskId, List<String> changed, long revision) {
         transaction.executeWithoutResult(status -> {
             List<Long> settled = jdbc.query(
                 "SELECT settled_revision FROM agent_task WHERE id = ? FOR UPDATE",
@@ -1554,7 +1602,7 @@ public final class AgentTaskStore implements AgentTaskOccupancy {
             }
             List<String> paths = new ArrayList<>(changedPaths(jdbc.queryForObject(
                 "SELECT changed_paths_json FROM agent_task WHERE id = ?", String.class, taskId)));
-            if (!paths.contains(path)) {
+            for (String path : changed) if (!paths.contains(path)) {
                 paths.add(path);
                 while (paths.size() > MAX_CHANGED_PATHS) {
                     paths.remove(0);

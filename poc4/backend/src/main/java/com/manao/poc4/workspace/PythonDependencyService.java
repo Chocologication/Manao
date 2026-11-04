@@ -62,6 +62,74 @@ public final class PythonDependencyService {
     /** The status a browser polls: PENDING, COMMITTED (with its revision) or UNCONFIRMED. */
     public record Status(String operationId, String state, Long resultWorkspaceRevision) { }
 
+    public Status changeForAgent(String taskId, String toolCallId) {
+        var tasks = dependencyTasks();
+        var call = dependencyCall(taskId, toolCallId);
+        var owner = tasks.taskOwner(taskId);
+        String projectId = owner.projectId();
+        Request request = agentRequest(projectId, call);
+        var registered = store.findOperation(projectId, call.workspaceOperationId());
+        if (registered.isPresent()) return reconcileForAgent(taskId, toolCallId);
+        requirePythonTemplate(projectId);
+        requireOwner(owner.ownerId(), projectId);
+        var project = store.findProject(projectId);
+        if (project.workspaceRevision() != request.expectedRevision()) throw new ApiException("WORKSPACE_REVISION_CONFLICT", 409, "The workspace revision does not match");
+        if (!"READY".equals(project.state()) || store.hasActiveRun(projectId)) throw new ApiException("PROJECT_LOCKED", 409, "Project is locked");
+        if (!store.pendingOperations(projectId).isEmpty()) throw new ApiException(RECONCILIATION_FAILURE, 409, "Workspace needs reconciliation");
+        tasks.requireTaskAcceptsNewCall(taskId, projectId);
+        var prepared = prepare(projectId, call.workspaceOperationId(), request.requestSha256(), request);
+        String receiptJson = WorkspaceOperationService.dependencyReceiptJson(prepared.operationId(), prepared.beforeSha256(), prepared.afterSha256());
+        var operation = new WorkspaceStore.OperationRecord(prepared.operationId(), projectId, request.expectedRevision(),
+            prepared.beforeSha256(), prepared.afterSha256(), WorkspaceOperationService.RECEIPT_PATH_PREFIX + prepared.operationId() + ".json",
+            WorkspaceOperationService.sha256Hex(receiptJson.getBytes(StandardCharsets.UTF_8)), "PENDING", OPERATION_KIND, request.requestSha256());
+        try (var lease = lifecycle.tryAcquire(projectId).orElseThrow(() -> new ApiException("PROJECT_BUSY", 409, "Project is busy"))) {
+            tasks.registerAgentDependencyPending(taskId, toolCallId, store, operation);
+        }
+        long revision = operations.commitNewPythonDependency(operation, receiptJson, request.requestSha256());
+        return new Status(operation.id(), "COMMITTED", revision);
+    }
+
+    public Status reconcileForAgent(String taskId, String toolCallId) {
+        var call = dependencyCall(taskId, toolCallId);
+        String projectId = dependencyTasks().taskOwner(taskId).projectId();
+        var request = agentRequest(projectId, call);
+        var operation = store.findOperation(projectId, call.workspaceOperationId()).orElse(null);
+        if (operation == null) return new Status(call.workspaceOperationId(), "UNCONFIRMED", null);
+        if (!OPERATION_KIND.equals(operation.operationKind()) || operation.expectedRevision() != call.expectedRevision()
+            || !request.requestSha256().equals(operation.requestSha256())) throw new ApiException(RECONCILIATION_FAILURE, 409, "Workspace needs reconciliation");
+        if ("COMMITTED".equals(operation.state())) return committed(operation);
+        return redrive(operation);
+    }
+
+    private com.manao.poc4.ai.AgentTaskStore dependencyTasks() {
+        if (agentTasks instanceof com.manao.poc4.ai.AgentTaskStore tasks) return tasks;
+        throw new ApiException("AI_TASK_NOT_ACTIVE", 409, "Task is not active");
+    }
+
+    private com.manao.poc4.ai.AgentTaskStore.ToolCallRow dependencyCall(String taskId, String toolCallId) {
+        var tasks = dependencyTasks();
+        var owner = tasks.taskOwner(taskId);
+        var call = tasks.findToolCall(taskId, toolCallId).orElseThrow(() -> new ApiException("AI_TASK_NOT_ACTIVE", 409, "Task is not active"));
+        agentTasks.requireAgentDependencyCall(taskId, owner.projectId(), toolCallId, call.workspaceOperationId());
+        var environment = tasks.environmentOf(taskId);
+        if (environment == null || !"python".equals(environment.language())) throw new ApiException("PYTHON_DEPENDENCY_UNSUPPORTED", 422, "Dependency changes are not supported");
+        return call;
+    }
+
+    private Request agentRequest(String projectId, com.manao.poc4.ai.AgentTaskStore.ToolCallRow call) {
+        try {
+            var args = JSON.readTree(call.argsJson());
+            if (args == null || !args.isObject() || !args.has("action") || !args.has("packageName") || !args.has("group")) throw validation();
+            var fields = args.fieldNames();
+            while (fields.hasNext()) {
+                String field = fields.next();
+                if (!List.of("action", "packageName", "version", "group").contains(field) || !args.get(field).isTextual()) throw validation();
+            }
+            return parseRequest(projectId, call.workspaceOperationId(), new WorkspaceAgent.DependencyChange(args.path("action").asText(),
+                args.path("packageName").asText(), args.has("version") ? args.path("version").asText() : null, args.path("group").asText()), Long.toString(call.expectedRevision()));
+        } catch (java.io.IOException ex) { throw validation(); }
+    }
+
     /** First POST: prepare and commit one dependency change under its browser-chosen identity. */
     public Status change(String ownerId, String projectId, String operationId,
                          WorkspaceAgent.DependencyChange change, String expectedRevision) {

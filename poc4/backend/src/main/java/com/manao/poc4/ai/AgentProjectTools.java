@@ -53,9 +53,9 @@ public final class AgentProjectTools {
     /** Key-sorted serialization: the canonical form the request digest is computed over. */
     private static final ObjectMapper CANONICAL = new ObjectMapper()
         .configure(SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS, true);
-    private static final Set<String> KNOWN_TOOLS = Set.of("list_files", "read_file", "write_file", "build", "application", "app_http_get", "read_image");
+    private static final Set<String> KNOWN_TOOLS = Set.of("list_files", "read_file", "write_file", "build", "application", "app_http_get", "read_image", "python_dependencies");
     /** Tools that register a durable side effect and are blocked while another call is unsettled. */
-    private static final Set<String> SIDE_EFFECT_TOOLS = Set.of("write_file", "build");
+    private static final Set<String> SIDE_EFFECT_TOOLS = Set.of("write_file", "build", "python_dependencies");
     private static final String BUILD_TOOL = "build";
     private static final Set<String> FILE_WRITES = Set.of("write_file");
     private static final Pattern SHA256 = Pattern.compile("[0-9a-f]{64}");
@@ -69,6 +69,7 @@ public final class AgentProjectTools {
     private final DevelopmentBuildExecutor builds;
     private final AgentApplicationTools application;
     private final AgentAttachmentService attachments;
+    private final AgentPythonDependencyTools dependencies;
 
     public AgentProjectTools(AgentTaskStore tasks, WorkspaceStore store, WorkspaceService workspace,
                              WorkspaceOperationService operations, ProjectLifecycleGate lifecycle,
@@ -84,6 +85,13 @@ public final class AgentProjectTools {
     public AgentProjectTools(AgentTaskStore tasks, WorkspaceStore store, WorkspaceService workspace,
                              WorkspaceOperationService operations, ProjectLifecycleGate lifecycle,
                              DevelopmentBuildExecutor builds, AgentApplicationTools application,AgentAttachmentService attachments) {
+        this(tasks, store, workspace, operations, lifecycle, builds, application, attachments, null);
+    }
+
+    public AgentProjectTools(AgentTaskStore tasks, WorkspaceStore store, WorkspaceService workspace,
+                             WorkspaceOperationService operations, ProjectLifecycleGate lifecycle,
+                             DevelopmentBuildExecutor builds, AgentApplicationTools application, AgentAttachmentService attachments,
+                             AgentPythonDependencyTools dependencies) {
         this.tasks = tasks;
         this.store = store;
         this.workspace = workspace;
@@ -92,6 +100,7 @@ public final class AgentProjectTools {
         this.builds = builds;
         this.application = application;
         this.attachments = attachments;
+        this.dependencies = dependencies;
     }
 
     /**
@@ -141,7 +150,7 @@ public final class AgentProjectTools {
             if ("COMPLETED".equals(row.state())) {
                 return storedResult(row);
             }
-            if ("NEEDS_ATTENTION".equals(row.state())) {
+            if ("NEEDS_ATTENTION".equals(row.state()) && !"python_dependencies".equals(row.toolName())) {
                 throw new ApiException("AI_CALL_NEEDS_ATTENTION", 409,
                     "The call outcome is unknown; it needs attention before further writes");
             }
@@ -151,7 +160,9 @@ public final class AgentProjectTools {
                 if (SIDE_EFFECT_TOOLS.contains(request.name())) {
                     tasks.requireNoActiveRun(owner.projectId());
                 }
-                if (BUILD_TOOL.equals(request.name())) {
+                if ("python_dependencies".equals(request.name())) {
+                    if (dependencies == null) throw new ApiException("PYTHON_DEPENDENCY_UNSUPPORTED", 422, "Dependency tools unavailable");
+                } else if (BUILD_TOOL.equals(request.name())) {
                     buildGoal = buildGoal(request);
                 } else if ("application".equals(request.name())) {
                     AgentApplicationTools.validate(request.args());
@@ -179,6 +190,7 @@ public final class AgentProjectTools {
             }
         }
         if (applicationCall) return runApplication(taskId, owner, row, request);
+        if ("python_dependencies".equals(request.name()) && result == null) return dependencies.invoke(taskId, row, request);
         if (buildGoal != null) {
             // The build path settles its own call row (and retires its live claim only
             // after that settlement) — a concurrent close must never see a half-finished
@@ -315,6 +327,10 @@ public final class AgentProjectTools {
         }
         for (AgentTaskStore.ToolCallRow row : unsettled) {
             ReconcileWorkBudget.check();
+            if ("python_dependencies".equals(row.toolName())) {
+                if (dependencies == null || !dependencies.finishForClose(taskId, row)) return false;
+                continue;
+            }
             if ("application".equals(row.toolName())) continue;
             if ("app_http_get".equals(row.toolName())) {
                 // Closing forbids new claims. A restart leftover has no live transport to
