@@ -574,8 +574,56 @@ public final class AgentTaskStore implements AgentTaskOccupancy {
     public synchronized void settleClosedBuildCall(String taskId, String toolCallId, String resultJson) {
         jdbc.update(
             "UPDATE agent_tool_call SET state = 'COMPLETED', result_json = ?, updated_at = ? "
-                + "WHERE task_id = ? AND tool_call_id = ? AND state = 'RUNNING'",
+                + "WHERE task_id = ? AND tool_call_id = ? AND state IN ('RUNNING','NEEDS_ATTENTION')",
             resultJson, Timestamp.from(clock.instant()), taskId, toolCallId);
+    }
+
+    private record PendingBuildEvidence(String commandId, long sourceRevision, String environmentSha256,
+                                         AgentContracts.BuildResult result) { }
+
+    /** Write-ahead observation only; RUNNING stays occupied until a separate confirmed cleanup settlement. */
+    public synchronized void savePendingBuildEvidence(AgentContracts.BuildRequest request, AgentContracts.BuildResult result) {
+        ToolCallRow row = requireBuildEvidenceIdentity(request);
+        if ("COMPLETED".equals(row.state())) return;
+        if (result.identity() == null || result.identity().jobUid() == null) return;
+        if (row.jobUid() != null && !row.jobUid().equals(result.identity().jobUid())) throw new IllegalStateException("build evidence uid mismatch");
+        if (row.podUid() != null && result.identity().podUid() != null && !row.podUid().equals(result.identity().podUid()))
+            throw new IllegalStateException("build evidence pod uid mismatch");
+        try {
+            var wrapper = JSON.createObjectNode();
+            wrapper.set("pendingBuildEvidence", JSON.valueToTree(new PendingBuildEvidence(request.commandId(), request.sourceRevision(),
+                request.environment() == null ? null : request.environment().sha256(), result)));
+            String encoded = JSON.writeValueAsString(wrapper);
+            if (encoded.getBytes(StandardCharsets.UTF_8).length > 1024 * 1024) throw new IllegalStateException("build evidence exceeds budget");
+            int updated = jdbc.update("UPDATE agent_tool_call SET result_json=?,job_name=COALESCE(job_name,?),job_uid=COALESCE(job_uid,?),pod_uid=COALESCE(pod_uid,?),updated_at=? WHERE task_id=? AND tool_call_id=? AND state IN ('RUNNING','NEEDS_ATTENTION')",
+                encoded, result.identity().jobName(), result.identity().jobUid(), result.identity().podUid(), Timestamp.from(clock.instant()), request.taskId(), request.toolCallId());
+            if (updated != 1) throw new IllegalStateException("build observation was not persisted");
+        } catch (IOException ex) { throw new IllegalStateException("cannot persist build evidence", ex); }
+    }
+
+    public synchronized AgentContracts.BuildResult loadPendingBuildEvidence(AgentContracts.BuildRequest request) {
+        ToolCallRow row = requireBuildEvidenceIdentity(request);
+        if (row.resultJson() == null || "COMPLETED".equals(row.state())) return null;
+        try {
+            JsonNode pending = JSON.readTree(row.resultJson()).get("pendingBuildEvidence");
+            if (pending == null) return null;
+            var saved = JSON.treeToValue(pending, PendingBuildEvidence.class);
+            String environmentSha = request.environment() == null ? null : request.environment().sha256();
+            if (!request.commandId().equals(saved.commandId()) || request.sourceRevision() != saved.sourceRevision()
+                    || !java.util.Objects.equals(environmentSha, saved.environmentSha256()) || saved.result() == null
+                    || saved.result().identity() == null || !java.util.Objects.equals(row.jobUid(), saved.result().identity().jobUid())
+                    || !java.util.Objects.equals(row.podUid(), saved.result().identity().podUid()))
+                throw new IllegalStateException("saved build observation identity mismatch");
+            return saved.result();
+        } catch (IOException ex) { throw new IllegalStateException("cannot read saved build observation", ex); }
+    }
+
+    private ToolCallRow requireBuildEvidenceIdentity(AgentContracts.BuildRequest request) {
+        ToolCallRow row = findToolCall(request.taskId(), request.toolCallId()).orElseThrow();
+        if (!"build".equals(row.toolName()) || !request.commandId().equals(row.workspaceOperationId())
+                || request.sourceRevision() != row.expectedRevision() || !request.projectId().equals(taskOwner(request.taskId()).projectId()))
+            throw new IllegalStateException("build observation request identity mismatch");
+        return row;
     }
 
     /**

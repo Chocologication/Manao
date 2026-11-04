@@ -302,6 +302,8 @@ Windows 使用已有 Bash/WSL 容器测试环境，路径按该环境解析；�
 **Files:**
 - Modify: `poc4/backend/src/main/java/com/manao/poc4/ai/AgentContracts.java`
 - Modify: `poc4/backend/src/main/java/com/manao/poc4/ai/AgentProjectTools.java`
+- Modify: `poc4/backend/src/main/java/com/manao/poc4/ai/AgentTaskStore.java` (删除前持久化有界观察，收尾确认后结算)
+- Modify: `poc4/backend/src/main/java/com/manao/poc4/config/AiConfig.java` (注入 observation sink/loader)
 - Modify: `poc4/backend/src/main/java/com/manao/poc4/ai/Fabric8DevelopmentBuildExecutor.java`
 - Modify: `poc4/backend/src/main/java/com/manao/poc4/kubernetes/JobResourceFactory.java`
 - Create: `poc4/backend/src/main/java/com/manao/poc4/ai/PythonBuildEvidence.java`
@@ -319,7 +321,7 @@ Windows 使用已有 Bash/WSL 容器测试环境，路径按该环境解析；�
 enum VerificationStatus { PASS, FAILED, NO_TESTS, SKIPPED, UNKNOWN, NO_SOURCE }
 ```
 
-- [ ] **Step 1 — 添加分派与结果测试。** Java Job 与现有 manifest 保持等价；两 Python 模板 compile/test 选择 Python 镜像、cache、固定命令，package/未知语言在创建资源前拒绝。环境来自任务快照，模型不能传镜像/命令。parser 测 testsuites 嵌套、失败、collection error、全部 skipped、空报告、XXE、截断和非零返回。
+- [x] **Step 1 — 添加分派与结果测试。** Java Job 与现有 manifest 保持等价；两 Python 模板 compile/test 选择 Python 镜像、cache、固定命令，package/未知语言在创建资源前拒绝。环境来自任务快照，模型不能传镜像/命令。parser 测 testsuites 嵌套、失败、collection error、全部 skipped、空报告、XXE、截断和非零返回。
 
 ```java
 assertThat(PythonBuildEvidence.from(BuildGoal.TEST, 5, "", false).verificationStatus())
@@ -328,16 +330,18 @@ assertThat(PythonBuildEvidence.from(BuildGoal.TEST, 0, "", false).verificationSt
     .isEqualTo(VerificationStatus.UNKNOWN);
 ```
 
-- [ ] **Step 2 — 运行红灯。**
+- [x] **Step 2 — 运行红灯。**
 
 ```powershell
 mvn -q -f poc4/backend/pom.xml '-Dtest=DevelopmentJobResourceFactoryTest,DevelopmentBuildExecutorTest,PythonBuildEvidenceTest,AgentProjectToolsTest' test
 ```
 
-- [ ] **Step 3 — 扩展固定分派。** Java 使用原 launcher；Python source-copy 也使用 Python image 与新 launcher，cache 路径为 `/python-cache`。按快照 mysql/redis 传固定 extras 布尔值，验证 Job 不传数据库 Secret。Job 名/labels/UID 验证、source 只读 + emptyDir、安全上下文、预算、清理机制沿用。
-- [ ] **Step 4 — 接入结果与恢复。** 在 terminal observation/closeStep/close 的同一结果解析路径保留 Python evidence，禁止只正常执行有证据、取消恢复丢失。`buildRequestOf` 使用 row.expectedRevision；task 快照决定语言。旧 null 环境调用仅为历史 Maven 收尾建立显式 legacy build 描述，不能让新执行静默默认 Java。
-- [ ] **Step 5 — 绿灯及清理证明。** 正常、失败、超时、取消、后端重启均验证原 commandId 与 UID，没有第二 Job，cleanupConfirmed 为真才 settle。受限 XML 解析不重复累计 testsuite 父子计数。运行 Step 2 和 Task 5 容器组。
-- [ ] **Step 6 — 提交。** `git commit -m "feat(ai): dispatch builds by project runtime"`。
+- [x] **Step 3 — 扩展固定分派。** Java 使用原 launcher；Python source-copy 也使用 Python image 与新 launcher，cache 路径为 `/python-cache`。按快照 mysql/redis 传固定 extras 布尔值，验证 Job 不传数据库 Secret。Job 名/labels/UID 验证、source 只读 + emptyDir、安全上下文、预算、清理机制沿用。
+- [x] **Step 4 — 接入结果与恢复。** 在 terminal observation/closeStep/close 的同一结果解析路径保留 Python evidence，禁止只正常执行有证据、取消恢复丢失。`buildRequestOf` 使用 row.expectedRevision；task 快照决定语言。旧 null 环境调用仅为历史 Maven 收尾建立显式 legacy build 描述，不能让新执行静默默认 Java。
+- [x] **Step 5 — 绿灯及清理证明。** 四类定向测试 96/0/0；修复 NEEDS_ATTENTION 收尾结算后受影响 39/0/0。原 UID/commandId、409 删除后新 Store 恢复、cleanupConfirmed 门禁已验证。Task 5 runner 字节未改，按本轮协调指令不重复容器测试；Task 5 自身证据仍归 Task 5。真实集群/模型 NOT_RUN。
+- [x] **Step 6 — 提交。** `git commit -m "feat(ai): dispatch builds by project runtime"`。
+
+Task 6 本地修正：原 closeStep 删除前不读取日志，异步清理/重启会丢报告。增加最小 write-ahead `pendingBuildEvidence` wrapper，沿用 tool-call `result_json`，不改变未决调用状态；验证 commandId/sourceRevision/environment hash/UID 后，仅在资源确认为空时结算。无 schema 扩展。
 
 ## Task 7: worker 环境注入、工具裁剪与 Python 工作规则
 

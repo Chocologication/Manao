@@ -929,6 +929,67 @@ class AgentProjectToolsTest {
         }
     }
 
+    @Test void pythonPackageIsRejectedBeforeExecutorOrWorkspaceIo() {
+        try (Harness env = new Harness("python-console")) {
+            ToolResult result = env.tools.invoke(env.taskId, new ToolRequest("python-package", "build", 7,
+                JSON.createObjectNode().put("goal", "package")));
+            assertThat(result.data().path("error").path("code").asText()).isEqualTo("AI_BUILD_GOAL_UNSUPPORTED");
+            verifyNoInteractions(env.builds, env.agent);
+            assertThat(env.rowState("python-package")).isEqualTo("COMPLETED");
+        }
+    }
+
+    @Test void pythonRecoveryUsesPersistedEnvironmentAndOriginalSourceRevision() throws Exception {
+        try (Harness env = new Harness("python-fastapi-web")) {
+            var request = new ToolRequest("recover-python", "build", 7, JSON.createObjectNode().put("goal", "test"));
+            env.tasks.registerToolCall(env.taskId, request.toolCallId(), AgentProjectTools.callDigest(env.taskId, request),
+                "build", AgentProjectTools.canonicalArgsJson(request.args()), 7, "stable-python-command");
+            env.jdbc.update("UPDATE agent_tool_call SET state='RUNNING',job_name='original-job',job_uid='original-uid',pod_uid='original-pod' WHERE task_id=?", env.taskId);
+            env.jdbc.update("UPDATE project SET workspace_revision=9 WHERE id=?", PROJECT);
+            var evidence = PythonBuildEvidence.from(AgentContracts.BuildGoal.TEST, 0,
+                PythonBuildEvidenceTest.report("<testsuite tests='1' failures='0' errors='0' skipped='0'/>"), false);
+            when(env.builds.observe(any(), any())).thenReturn(new AgentContracts.BuildResult(
+                new AgentContracts.BuildIdentity("original-job", "original-uid", "original-pod"), 0, "Completed", "output", false, List.of(), true, evidence));
+            var result = env.tools.invoke(env.taskId, request);
+            var captured = ArgumentCaptor.forClass(AgentContracts.BuildRequest.class);
+            verify(env.builds).observe(captured.capture(), eq(new AgentContracts.BuildIdentity("original-job", "original-uid", "original-pod")));
+            assertThat(captured.getValue().sourceRevision()).isEqualTo(7);
+            assertThat(captured.getValue().environment().templateId()).isEqualTo("python-fastapi-web");
+            assertThat(result.data().path("sourceRevision").asText()).isEqualTo("7");
+            assertThat(result.data().path("language").asText()).isEqualTo("python");
+            assertThat(result.data().path("verificationStatus").asText()).isEqualTo("PASS");
+            assertThat(result.data().path("testSummary").path("tests").asInt()).isEqualTo(1);
+            verify(env.builds, never()).build(any());
+        }
+    }
+
+    @Test void missingOrCorruptTaskEnvironmentNeverExecutesABuild() {
+        for (String environment : java.util.Arrays.asList(null, "{\"language\":\"unknown\"}")) {
+            try (Harness env = new Harness()) {
+                env.jdbc.update("UPDATE agent_task SET environment_json=?,environment_sha256=NULL WHERE id=?", environment, env.taskId);
+                var result = env.tools.invoke(env.taskId, new ToolRequest("missing-env", "build", 7, JSON.createObjectNode().put("goal", "test")));
+                assertThat(result.data().path("error").path("code").asText()).isEqualTo("AI_ENVIRONMENT_INVALID");
+                verifyNoInteractions(env.builds, env.agent);
+            }
+        }
+    }
+
+    @Test void closeSettlesRecoveredPythonEvidenceAfterAnEarlierUnconfirmedCleanup() {
+        try (Harness env = new Harness("python-console")) {
+            var request = new ToolRequest("close-python", "build", 7, JSON.createObjectNode().put("goal", "test"));
+            env.tasks.registerToolCall(env.taskId, request.toolCallId(), AgentProjectTools.callDigest(env.taskId, request),
+                "build", AgentProjectTools.canonicalArgsJson(request.args()), 7, "close-command");
+            env.jdbc.update("UPDATE agent_tool_call SET state='NEEDS_ATTENTION',job_name='original',job_uid='job-uid',pod_uid='pod-uid' WHERE task_id=?", env.taskId);
+            env.tasks.beginClose(env.taskId, "AI_PAUSED_BY_OWNER");
+            var evidence = PythonBuildEvidence.from(AgentContracts.BuildGoal.TEST, 5, "", false);
+            when(env.builds.closeStep(any(), any())).thenReturn(new AgentContracts.BuildResult(
+                new AgentContracts.BuildIdentity("original", "job-uid", "pod-uid"), 5, "BUILD_CLOSED", "", false, List.of(), true, evidence));
+            assertThat(env.tools.finishForClose(env.taskId)).isTrue();
+            assertThat(env.tasks.findToolCall(env.taskId, request.toolCallId()).orElseThrow().state()).isEqualTo("COMPLETED");
+            assertThat(env.tools.browserToolCall(env.taskId, request.toolCallId()).orElseThrow().data().path("verificationStatus").asText()).isEqualTo("NO_TESTS");
+        }
+    }
+
     @Test
     void aBuildExecutorFailureStaysNeedsAttentionAndLocksFurtherWrites() {
         try (Harness env = new Harness()) {

@@ -232,7 +232,85 @@ class DevelopmentBuildExecutorTest {
     }
 
     private static BuildRequest request() {
-        return new BuildRequest(TASK, CALL, PROJECT, COMMAND, 7L, BuildGoal.TEST);
+        return new BuildRequest(TASK, CALL, PROJECT, COMMAND, 7L, BuildGoal.TEST, javaEnvironment());
+    }
+
+    private static AgentProjectEnvironment javaEnvironment() {
+        return new AgentProjectEnvironment(1, "java-console", "java", "none", "task", "com.example.app.App",
+            null, null, null, false, false, "java-v1", List.of("compile", "test", "package"), List.of(),
+            List.of("list_files", "read_file", "write_file", "build", "application", "read_image"));
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"build", "observe", "close", "closeStep"})
+    void pythonEvidenceSurvivesEveryTerminalAndClosePath(String path) throws Exception {
+        var environment = AgentProjectEnvironment.fromJson(java.nio.file.Files.readString(java.nio.file.Path.of("../fixtures/agent-project-environment/python-fastapi-web.json")));
+        var request = new BuildRequest(TASK, CALL, PROJECT, COMMAND, 7, BuildGoal.TEST, environment);
+        Job manifest = factory.createDevelopmentJob(request, SOURCE);
+        client.batch().v1().jobs().inNamespace(NS).resource(manifest).create();
+        Job job = client.batch().v1().jobs().inNamespace(NS).withName(manifest.getMetadata().getName()).get();
+        Pod pod = seedPod(job.getMetadata().getName(), job.getMetadata().getUid(), 0, "Completed");
+        seedLog(pod.getMetadata().getName(), PythonBuildEvidenceTest.report("<testsuite tests='2' failures='0' errors='0' skipped='0'/>"));
+        var identity = new BuildIdentity(job.getMetadata().getName(), job.getMetadata().getUid(), pod.getMetadata().getUid());
+        BuildResult result = switch (path) {
+            case "build" -> executor.build(request);
+            case "observe" -> executor.observe(request, identity);
+            case "close" -> executor.close(request, identity);
+            default -> executor.closeStep(request, identity);
+        };
+        assertThat(result.identity().jobUid()).isEqualTo(identity.jobUid());
+        assertThat(result.evidence()).isNotNull();
+        assertThat(result.evidence().verificationStatus()).hasToString("PASS");
+        assertThat(result.evidence().testSummary().tests()).isEqualTo(2);
+        assertThat(result.cleanupConfirmed()).isTrue();
+        assertThat(client.batch().v1().jobs().inNamespace(NS).list().getItems()).isEmpty();
+        assertThat(client.pods().inNamespace(NS).list().getItems()).isEmpty();
+    }
+
+    @Test void missingEnvironmentIsRejectedBeforeAnyNewBuild() {
+        assertThatThrownBy(() -> executor.build(new BuildRequest(TASK, CALL, PROJECT, COMMAND, 7, BuildGoal.TEST)))
+            .isInstanceOf(IllegalArgumentException.class);
+        assertThat(client.batch().v1().jobs().inNamespace(NS).list().getItems()).isEmpty();
+    }
+
+    @Test void pendingPythonEvidenceIsDurableBeforeDeleteAndSurvivesANewStore() throws Exception {
+        try (var db = com.manao.poc4.persistence.JdbcStoreTestSupport.create()) {
+            var jdbc = db.jdbc();
+            var now = new java.sql.Timestamp(System.currentTimeMillis());
+            String taskId = java.util.UUID.randomUUID().toString();
+            jdbc.update("INSERT INTO app_user(id,username,password_hash,created_at) VALUES ('evidence-owner','evidence-owner','unused',?)", now);
+            jdbc.update("INSERT INTO project(id,owner_id,name,state,workspace_revision,created_at,updated_at) VALUES (?,'evidence-owner','evidence','READY',7,?,?)", PROJECT, now, now);
+            var environment = AgentProjectEnvironment.fromJson(java.nio.file.Files.readString(java.nio.file.Path.of("../fixtures/agent-project-environment/python-fastapi-web.json")));
+            var tasks = new AgentTaskStore(jdbc, new org.springframework.jdbc.datasource.DataSourceTransactionManager(jdbc.getDataSource()), Clock.systemUTC());
+            tasks.createTask("evidence-owner", PROJECT, new AgentContracts.TaskRequest(taskId, "verify", 7), null, () -> environment);
+            tasks.registerToolCall(taskId, CALL, "a".repeat(64), "build", "{\"goal\":\"test\"}", 7, COMMAND);
+            tasks.markToolCallRunning(taskId, CALL);
+            var request = new BuildRequest(taskId, CALL, PROJECT, COMMAND, 7, BuildGoal.TEST, environment);
+            var job = client.batch().v1().jobs().inNamespace(NS).resource(factory.createDevelopmentJob(request, SOURCE)).create();
+            var pod = seedPod(job.getMetadata().getName(), job.getMetadata().getUid(), 0, "Completed");
+            var identity = new BuildIdentity(job.getMetadata().getName(), job.getMetadata().getUid(), pod.getMetadata().getUid());
+            tasks.bindToolCallIdentity(taskId, CALL, identity.jobName(), identity.jobUid(), identity.podUid());
+            seedLog(pod.getMetadata().getName(), PythonBuildEvidenceTest.report("<testsuite tests='1' failures='0' errors='0' skipped='0'/>"));
+            dispatcher.conflictJobDelete = identity.jobName();
+            var first = new Fabric8DevelopmentBuildExecutor(client, factory, NS, null, (r, create) -> create.get(), r -> false,
+                tasks::savePendingBuildEvidence, tasks::loadPendingBuildEvidence, Clock.systemUTC(), 1, 1, 1);
+            assertThatThrownBy(() -> first.closeStep(request, identity)).isInstanceOf(KubernetesClientException.class);
+            assertThat(tasks.findToolCall(taskId, CALL).orElseThrow().state()).isEqualTo("RUNNING");
+            assertThat(tasks.findToolCall(taskId, CALL).orElseThrow().resultJson()).contains("pendingBuildEvidence");
+            assertThat(tasks.loadPendingBuildEvidence(request).evidence().verificationStatus()).hasToString("PASS");
+            dispatcher.conflictJobDelete = null;
+            client.batch().v1().jobs().inNamespace(NS).withName(identity.jobName()).delete();
+            var restarted = new AgentTaskStore(jdbc, new org.springframework.jdbc.datasource.DataSourceTransactionManager(jdbc.getDataSource()), Clock.systemUTC());
+            var second = new Fabric8DevelopmentBuildExecutor(client, factory, NS, null, (r, create) -> { throw new AssertionError("no second Job"); }, r -> false,
+                restarted::savePendingBuildEvidence, restarted::loadPendingBuildEvidence, Clock.systemUTC(), 1, 1, 1);
+            var result = second.closeStep(request, identity);
+            assertThat(result.cleanupConfirmed()).isTrue();
+            assertThat(result.identity()).isEqualTo(identity);
+            assertThat(result.evidence().testSummary().tests()).isEqualTo(1);
+            assertThat(result.exitCode()).isZero();
+            assertThatThrownBy(() -> restarted.loadPendingBuildEvidence(new BuildRequest(taskId, CALL, PROJECT, COMMAND, 9, BuildGoal.TEST, environment))).isInstanceOf(IllegalStateException.class);
+            tasks.releaseBuildClaim(taskId, CALL);
+        }
     }
 
     private Job seedJob() {
@@ -669,12 +747,12 @@ class DevelopmentBuildExecutorTest {
     }
 
     @Test
-    void closeStepDeletesOnceAndRequiresASeparateAbsenceObservation() {
+    void closeStepDeletesOnceAndConfirmsAbsenceInTheSameDrive() {
         Job job=seedJob();
         Pod pod=seedPod(job.getMetadata().getName(),job.getMetadata().getUid(),1,"Error");
         var identity=new BuildIdentity(job.getMetadata().getName(),job.getMetadata().getUid(),pod.getMetadata().getUid());
         BuildResult first=executor.closeStep(request(),identity);
-        assertThat(first.cleanupConfirmed()).isFalse();
+        assertThat(first.cleanupConfirmed()).isTrue();
         assertThat(client.batch().v1().jobs().inNamespace(NS).list().getItems()).isEmpty();
         assertThat(client.pods().inNamespace(NS).list().getItems()).isEmpty();
         assertThat(executor.closeStep(request(),identity).cleanupConfirmed()).isTrue();
@@ -890,7 +968,7 @@ class DevelopmentBuildExecutorTest {
             tasks.create("build-owner", PROJECT, new AgentContracts.TaskRequest(taskId, "build", 7));
             tasks.registerToolCall(taskId, CALL, "a".repeat(64), "build", "{\"goal\":\"test\"}", 7, COMMAND);
             assertThat(tasks.markToolCallRunning(taskId, CALL)).isTrue();
-            BuildRequest request = new BuildRequest(taskId, CALL, PROJECT, COMMAND, 7, BuildGoal.TEST);
+            BuildRequest request = new BuildRequest(taskId, CALL, PROJECT, COMMAND, 7, BuildGoal.TEST, javaEnvironment());
             var readAllowed = new java.util.concurrent.CountDownLatch(1);
             var resume = new java.util.concurrent.CountDownLatch(1);
             executor = new Fabric8DevelopmentBuildExecutor(client, factory, NS, (ignored, identity) -> {},

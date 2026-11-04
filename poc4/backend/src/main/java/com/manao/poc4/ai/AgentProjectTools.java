@@ -163,7 +163,12 @@ public final class AgentProjectTools {
                 if ("python_dependencies".equals(request.name())) {
                     if (dependencies == null) throw new ApiException("PYTHON_DEPENDENCY_UNSUPPORTED", 422, "Dependency tools unavailable");
                 } else if (BUILD_TOOL.equals(request.name())) {
-                    buildGoal = buildGoal(request);
+                    var requestedGoal = buildGoal(request);
+                    var environment = tasks.environmentOf(taskId);
+                    if (environment == null) throw new ApiException("AI_ENVIRONMENT_INVALID", 409, "The task project environment is unavailable");
+                    if (!environment.buildGoals().contains(requestedGoal.name().toLowerCase(Locale.ROOT)))
+                        throw new ApiException("AI_BUILD_GOAL_UNSUPPORTED", 422, "The build goal is unsupported for this project environment");
+                    buildGoal = requestedGoal;
                 } else if ("application".equals(request.name())) {
                     AgentApplicationTools.validate(request.args());
                     applicationCall = true;
@@ -352,7 +357,7 @@ public final class AgentProjectTools {
                         AgentContracts.BuildResult closed = builds.closeStep(buildRequestOf(owner, row), new AgentContracts.BuildIdentity(
                             row.jobName(), row.jobUid(), row.podUid()));
                         if (closed == null || !closed.cleanupConfirmed()) return false;
-                        if ("RUNNING".equals(row.state())) {
+                        if ("RUNNING".equals(row.state()) || "NEEDS_ATTENTION".equals(row.state())) {
                             tasks.settleClosedBuildCall(taskId, row.toolCallId(), jsonOf(fittedBuildResult(
                                 new AgentContracts.ToolResult(row.toolCallId(),
                                     Long.toString(currentRevision(owner.projectId())),
@@ -382,8 +387,11 @@ public final class AgentProjectTools {
         if (row.workspaceOperationId() == null) {
             throw new IllegalStateException("a build call row must carry its stable command id");
         }
+        var environment = tasks.environmentOf(row.taskId());
+        if (environment == null) return AgentContracts.BuildRequest.legacyBuildRequestForClose(row.taskId(),
+            row.toolCallId(), owner.projectId(), row.workspaceOperationId(), row.expectedRevision(), buildGoalOf(row));
         return new AgentContracts.BuildRequest(row.taskId(), row.toolCallId(), owner.projectId(),
-            row.workspaceOperationId(), currentRevision(owner.projectId()), buildGoalOf(row));
+            row.workspaceOperationId(), row.expectedRevision(), buildGoalOf(row), environment);
     }
 
     private AgentContracts.BuildGoal buildGoalOf(AgentTaskStore.ToolCallRow row) {
@@ -592,7 +600,7 @@ public final class AgentProjectTools {
         }
         AgentContracts.BuildRequest buildRequest = new AgentContracts.BuildRequest(row.taskId(),
             row.toolCallId(), owner.projectId(), row.workspaceOperationId(),
-            currentRevision(owner.projectId()), goal);
+            row.expectedRevision(), goal, tasks.environmentOf(row.taskId()));
         boolean claimed = false;
         try {
             AgentContracts.BuildResult built;
@@ -673,6 +681,7 @@ public final class AgentProjectTools {
             data.put("exitCode", built.exitCode());
         }
         data.set("testReports", JSON.valueToTree(built.testReports()));
+        if (built.evidence() != null) data.setAll((ObjectNode) JSON.valueToTree(built.evidence()));
         return data;
     }
 
