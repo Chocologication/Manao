@@ -53,10 +53,46 @@ test('round requires failed assertion then dependency pair, real syntax/test and
   assert.throws(() => assertPythonRound(stale, { kind: 'console', output: '6', first: true }));
   assert.throws(() => assertPythonRound(evidence(), { kind: 'console', output: '10', first: true }));
 });
-test('FastAPI needs readiness plus GET from the same run and exact business JSON', () => {
+const fastapiEvidence = () => {
   const rows = evidence().slice(0, 5);
-  rows.push(result('application', { kind: 'application', action: 'status', run: { id: 'web1', state: 'RUNNING', firstReadyAt: '2026-11-04T00:00:00Z', requestedWorkspaceRevision: '9' } }));
+  rows.push(result('application', { kind: 'application', action: 'status',
+    run: { id: 'web1', state: 'RUNNING', firstReadyAt: '2026-11-04T00:00:00Z', requestedWorkspaceRevision: '9',
+      expiresAt: '2026-11-04T02:00:00Z', finishedAt: null, exitCode: null, terminationReason: null },
+    activeRunId: 'web1', stoppedConfirmed: false, logs: null }));
   rows.push(result('app_http_get', { kind: 'app_http_get', runId: 'web1', path: '/api/demo', statusCode: 200, body: '{"message":"Hello from Manao","total":"1,000"}', truncated: false, error: null }));
+  return rows;
+};
+const serviceLogs = () => result('application', { ...fastapiEvidence()[5]!.data, action: 'logs',
+  logs: { text: 'INFO: Application startup complete.\n', firstSeq: 1, lastSeq: 1, truncated: false, complete: false } });
+test('FastAPI needs readiness plus GET from the same run and exact business JSON', () => {
+  const rows = [...fastapiEvidence(), serviceLogs()];
   assertPythonRound(rows, { kind: 'fastapi', output: '1,000', first: true });
   rows[6]!.data.runId = 'old-run'; assert.throws(() => assertPythonRound(rows, { kind: 'fastapi', output: '1,000', first: true }));
+});
+test('FastAPI requires a successful bounded native logs observation of the same ready Run and revision', () => {
+  const expected = { kind: 'fastapi' as const, output: '1,000', first: true };
+  assert.throws(() => assertPythonRound(fastapiEvidence(), expected), /logs/i);
+  const valid = serviceLogs();
+  assertPythonRound([...fastapiEvidence(), valid], expected); // live streams honestly retain complete=false
+  for (const data of [
+    { ...valid.data, run: { ...(valid.data.run as object), id: 'old-run' } },
+    { ...valid.data, run: { ...(valid.data.run as object), requestedWorkspaceRevision: '8' } },
+    { ...valid.data, error: { code: 'AI_APPLICATION_UNAVAILABLE', message: 'Application unavailable' } },
+    { ...valid.data, action: 'status' },
+    { ...valid.data, logs: null },
+    { ...valid.data, logs: { ...(valid.data.logs as object), text: '' } },
+    { ...valid.data, logs: { ...(valid.data.logs as object), text: 'x'.repeat(64 * 1024 + 1) } },
+    { ...valid.data, logs: { ...(valid.data.logs as object), text: '[manao] log source lost' } },
+    { ...valid.data, logs: { ...(valid.data.logs as object), firstSeq: null } },
+    { ...valid.data, logs: { ...(valid.data.logs as object), lastSeq: 0 } },
+    { ...valid.data, logs: { ...(valid.data.logs as object), truncated: 'false' } },
+    { ...valid.data, logs: { ...(valid.data.logs as object), complete: undefined } },
+    { ...valid.data, logs: { ...(valid.data.logs as object), complete: true } },
+  ]) assert.throws(() => assertPythonRound([...fastapiEvidence(), result('application', data)], expected), /logs/i);
+  assertPythonRound([...fastapiEvidence(), result('application', { ...valid.data,
+    logs: { ...(valid.data.logs as object), text: 'Bounded tail of a longer log stream.\n', firstSeq: 2, lastSeq: 3, truncated: true } })], expected);
+  const otherReady = result('application', { ...fastapiEvidence()[5]!.data,
+    run: { ...(valid.data.run as object), id: 'web2' } });
+  const otherLogs = result('application', { ...valid.data, run: otherReady.data.run });
+  assert.throws(() => assertPythonRound([...fastapiEvidence(), otherReady, otherLogs], expected), /same ready Run/);
 });

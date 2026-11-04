@@ -64,13 +64,27 @@ export function assertPythonRound(rows: ToolResult[], expected: { kind: 'console
         && logs.text.split(/\r?\n/).some(line => line.trim() === expected.output);
     }), 'Successful Run with complete expected output at verified revision required');
   } else {
-    const ready = application.map(r => record(r.data.run)).filter(run => run.state === 'RUNNING' && typeof run.firstReadyAt === 'string'
+    const ready = application.filter(row => ['start', 'status'].includes(String(row.data.action)))
+      .map(r => record(r.data.run)).filter(run => run.state === 'RUNNING' && typeof run.firstReadyAt === 'string'
       && run.firstReadyAt.length > 0 && run.requestedWorkspaceRevision === test.sourceRevision);
     assert.ok(ready.length > 0, 'Live ready Run at verified revision required');
+    const observed = ready.filter(run => application.some(row => {
+      const d = row.data;
+      if (d.action !== 'logs' || d.error != null || d.logs == null) return false;
+      const loggedRun = record(d.run), logs = record(d.logs);
+      return loggedRun.id === run.id && loggedRun.state === 'RUNNING'
+        && loggedRun.requestedWorkspaceRevision === test.sourceRevision
+        && typeof logs.text === 'string' && logs.text.trim().length > 0 && Buffer.byteLength(logs.text, 'utf8') <= 64 * 1024
+        && !logs.text.includes('[manao] log source lost')
+        && typeof logs.firstSeq === 'number' && Number.isSafeInteger(logs.firstSeq) && logs.firstSeq > 0
+        && typeof logs.lastSeq === 'number' && Number.isSafeInteger(logs.lastSeq) && logs.lastSeq >= logs.firstSeq
+        && typeof logs.truncated === 'boolean' && logs.complete === false;
+    }));
+    assert.ok(observed.length > 0, 'Successful bounded live logs from the same ready Run and verified revision required');
     assert.ok(rows.some(r => {
       const d = r.data;
       if (r.toolName !== 'app_http_get' || d.kind !== 'app_http_get' || d.path !== '/api/demo' || d.statusCode !== 200
-        || d.error !== null || d.truncated !== false || !ready.some(run => run.id === d.runId) || typeof d.body !== 'string') return false;
+        || d.error !== null || d.truncated !== false || !observed.some(run => run.id === d.runId) || typeof d.body !== 'string') return false;
       try { assert.deepEqual(JSON.parse(d.body), { message: 'Hello from Manao', total: expected.output }); return true; } catch { return false; }
     }), 'Exact business GET from the same ready Run required');
   }

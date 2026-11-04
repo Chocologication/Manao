@@ -72,7 +72,7 @@ SELECT COUNT(*) FROM agent_task WHERE environment_json IS NULL AND environment_s
 ```powershell
 if (!$env:MANAO_RELEASE_CONTEXT -or !$env:MANAO_RELEASE_NAMESPACE -or !$env:MANAO_RELEASE_PROJECT_ID -or !$env:MANAO_RELEASE_WORKSPACE_IMAGE) { throw 'Missing explicit workspace rollout target' }
 $releaseProject = $env:MANAO_RELEASE_PROJECT_ID
-if ($releaseProject -notmatch '^[0-9a-f-]{36}$' -or $env:MANAO_RELEASE_WORKSPACE_IMAGE -notmatch '^[a-z0-9._/-]+@sha256:[0-9a-f]{64}$') { throw 'Invalid project or immutable image' }
+if ($releaseProject -notmatch '^[0-9a-f-]{36}$' -or $env:MANAO_RELEASE_WORKSPACE_IMAGE -notmatch '^(?:[a-z0-9.-]+(?::[0-9]+)?/)?[a-z0-9._/-]+@sha256:[0-9a-f]{64}$') { throw 'Invalid project or immutable image' }
 kubectl --context $env:MANAO_RELEASE_CONTEXT --namespace $env:MANAO_RELEASE_NAMESPACE set image "pod/manao-ws-${releaseProject}" "workspace-agent=$($env:MANAO_RELEASE_WORKSPACE_IMAGE)"
 kubectl --context $env:MANAO_RELEASE_CONTEXT --namespace $env:MANAO_RELEASE_NAMESPACE wait --for=condition=Ready "pod/manao-ws-${releaseProject}" --timeout=180s
 ```

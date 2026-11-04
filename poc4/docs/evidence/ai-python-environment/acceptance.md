@@ -19,7 +19,7 @@
 | Task 6：Python manifest/executor/parser/终态事实持久化/UID 收尾 | PASS：完整 brief 96；后续 39；复审受影响 84；saved identity 定向 41；observe identity 中间定向 42；最终终态事实保留修复后 executor 45 | [DevelopmentBuildExecutorTest](../../../backend/src/test/java/com/manao/poc4/ai/DevelopmentBuildExecutorTest.java)、[PythonBuildEvidenceTest](../../../backend/src/test/java/com/manao/poc4/ai/PythonBuildEvidenceTest.java)；最终修正 `367a468` 独立复审 APPROVE；不同修复后定向验证，不合成一次全量 |
 | Task 7：四模板真实 Pi SDK provider-stream 边界、loadout、历史/自动/手动 compact、工具参数 | PASS：一次 worker 全量 260 passed / 1 skipped；后续 prompt 定向 115；精确 version 合同修正后三文件 96 passed + tsc exit 0 | [project-environment.test.ts](../../../pi-worker/test/project-environment.test.ts)、[project-tools.test.ts](../../../pi-worker/test/project-tools.test.ts)；最终修正 `474bde7`；SKIPPED 为既有 local-terminal-harness opt-in；本地 scripted provider，不是真实模型 |
 | Task 8：Python 依赖/语法/pytest/应用反馈 UI 与旧 Java 展示 | PASS：Vitest 155；backend 45（均 0 failure/error/skip）；frontend typecheck exit 0；浏览器七个状态实际点击，0 page error / 0 model calls | [ToolResultView.test.tsx](../../../frontend/src/features/ai/ToolResultView.test.tsx)、[AgentTaskPanel.test.tsx](../../../frontend/src/features/ai/AgentTaskPanel.test.tsx)；提交 `7dae8c2`，独立复审无 findings；fixture UI 不计云闭环 |
-| Task 9：环境拒绝、专用项目写前保护、证据判定 | PASS：真实断言 RED 5 failed / 0 passed → GREEN 5 passed，0 skip；独立 tsc exit 0 | [纯函数合同测试](../../../frontend/scripts/ai-python-contract.test.ts)，直接调用同一验收函数，无源字符串断言、无服务/模型 |
+| Task 9：环境拒绝、专用项目写前保护、证据判定 | PASS：初始 RED 5 failed / 0 passed → GREEN 5 passed；复审补 FastAPI 日志回归 RED 1 failed / 5 passed → 最终 GREEN 6 passed，0 skip；独立 tsc exit 0 | [纯函数合同测试](../../../frontend/scripts/ai-python-contract.test.ts)，直接调用同一验收函数，无源字符串断言、无服务/模型 |
 | Task 9：console/FastAPI 初始 fixture 可诊断性 | PASS：console 实际 pytest exit=1，1 test/1 failure/0 error；FastAPI exit=1，2 tests/1 failure/0 error，健康测试通过；容器副本修复后分别 exit=0，1/2 tests 全通过 | [fixture 检查脚本](../../../frontend/scripts/ai-python-fixture-check.py)；真实固定 launcher/uv，不是 Agent 自动修复证明 |
 | 发布 artifact、运行库 V20、云端旧 workspace 更新/备份/回滚 | NOT_RUN | [发布手册](../../../deploy/ai-python-environment/README.md)；本地 image ID 不是已发布 RepoDigest |
 
@@ -46,6 +46,8 @@ Task 8 的实际本地浏览器截图：[syntax](ui/syntax.png)、[pytest](ui/py
 | R1 | 本地 Java 兼容与 worker 图片/历史/预算/控制/receipt 回归，范围由各任务报告限定 | 同一发布 Java console/Spring Boot 的真实 smoke、图片与暂停/接管/结束、资源闭合 | NOT_RUN |
 
 `PASS` 只在对应层级和场景内有效；未触发条件为 `SKIPPED` 或 `NOT_RUN`，不补成 PASS。`--list` 只证明测试发现，tsc 只证明类型，模型回复“完成”不证明运行成功。当前没有云端 build SHA、发布 digest、provider/model、project/task/tool/operation/Run 身份；均不得捏造或借历史结果补齐。
+
+Task 9 复审修正：FastAPI 必须同时具备 start/status 的 ready Run、同 Run/同验证 revision 的成功 `application.logs`，以及该 Run 的业务 GET。日志文本非空且不超过 native 64 KiB，有效 first/last sequence，truncated 必须为明确布尔值；允许真实有界 tail 的 `truncated=true`，不把它说成完整历史。RUNNING 日志的 `complete=false` 是实际工具合同，不能要求终态完整日志。缺日志、错误 Run/revision、工具 error、失去源、坏游标/标志或超长文本均失败。部署手册的 image guard 同时允许 `registry.example:5000/repo@sha256:<64hex>`；本地 literal PowerShell 校验 3 个合法引用接受、4 个 URL/凭据/空白/浮动引用拒绝，未执行 rollout。
 
 ## 3. 已准备的真实验收脚本
 
