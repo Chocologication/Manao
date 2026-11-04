@@ -432,6 +432,136 @@ class DevelopmentBuildExecutorTest {
         }
     }
 
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+    void concurrentTerminalObserversReturnTheFirstDurableEvidenceAfterLateCleanup(boolean saveAfterCompletion) throws Exception {
+        try (var db = com.manao.poc4.persistence.JdbcStoreTestSupport.create()) {
+            var jdbc = db.jdbc();
+            var now = new java.sql.Timestamp(System.currentTimeMillis());
+            String taskId = java.util.UUID.randomUUID().toString();
+            jdbc.update("INSERT INTO app_user(id,username,password_hash,created_at) VALUES ('evidence-owner','evidence-owner','unused',?)", now);
+            jdbc.update("INSERT INTO project(id,owner_id,name,state,workspace_revision,created_at,updated_at) VALUES (?,'evidence-owner','evidence','READY',7,?,?)", PROJECT, now, now);
+            var environment = AgentProjectEnvironment.fromJson(java.nio.file.Files.readString(java.nio.file.Path.of("../fixtures/agent-project-environment/python-fastapi-web.json")));
+            var transactions = new org.springframework.jdbc.datasource.DataSourceTransactionManager(jdbc.getDataSource());
+            var tasks = new AgentTaskStore(jdbc, transactions, Clock.systemUTC());
+            tasks.createTask("evidence-owner", PROJECT, new AgentContracts.TaskRequest(taskId, "verify", 7), null, () -> environment);
+            var json = new com.fasterxml.jackson.databind.ObjectMapper();
+            var toolRequest = new AgentContracts.ToolRequest(CALL, "build", 7, json.createObjectNode().put("goal", "test"));
+            tasks.registerToolCall(taskId, CALL, AgentProjectTools.callDigest(taskId, toolRequest), "build", "{\"goal\":\"test\"}", 7, COMMAND);
+            var firstPolling = new java.util.concurrent.CountDownLatch(1);
+            var replayPolling = new java.util.concurrent.CountDownLatch(1);
+            var passSaved = new java.util.concurrent.CountDownLatch(1);
+            var weakSaved = new java.util.concurrent.CountDownLatch(1);
+            var releaseFirstCleanup = new java.util.concurrent.CountDownLatch(1);
+            var releaseReplayCleanup = new java.util.concurrent.CountDownLatch(1);
+            var creations = new java.util.concurrent.atomic.AtomicInteger();
+            var original = new AtomicReference<BuildResult>();
+            var replayObservation = new AtomicReference<BuildResult>();
+            String output = PythonBuildEvidenceTest.report("<testsuite tests='2' failures='0' errors='0' skipped='0'/>");
+            var podName = new AtomicReference<String>();
+            var first = new Fabric8DevelopmentBuildExecutor(client, factory, NS, (r, identity) -> {
+                tasks.bindToolCallIdentity(taskId, CALL, identity.jobName(), identity.jobUid(), identity.podUid());
+                if (identity.podUid() == null) {
+                    firstPolling.countDown();
+                    awaitLatch(replayPolling);
+                }
+            }, (r, create) -> {
+                creations.incrementAndGet();
+                Job job = create.get();
+                Pod pod = seedPod(job.getMetadata().getName(), job.getMetadata().getUid(), 0, "Completed");
+                podName.set(pod.getMetadata().getName());
+                seedLog(podName.get(), output);
+                return job;
+            }, r -> false, (r, evidence) -> {
+                original.set(evidence);
+                var canonical = tasks.savePendingBuildEvidence(r, evidence);
+                seedLog(podName.get(), "");
+                passSaved.countDown();
+                awaitLatch(releaseFirstCleanup);
+                return canonical;
+            }, tasks::loadPendingBuildEvidence, Clock.systemUTC(), 1, 10, 1);
+            var replay = new Fabric8DevelopmentBuildExecutor(client, factory, NS, (r, identity) -> {
+                tasks.bindToolCallIdentity(taskId, CALL, identity.jobName(), identity.jobUid(), identity.podUid());
+                replayPolling.countDown();
+                awaitLatch(passSaved);
+            }, (r, create) -> { throw new AssertionError("replay must not create a second Job"); }, r -> false,
+                (r, evidence) -> {
+                    replayObservation.set(evidence);
+                    var canonical = saveAfterCompletion ? null : tasks.savePendingBuildEvidence(r, evidence);
+                    weakSaved.countDown();
+                    awaitLatch(releaseReplayCleanup);
+                    return saveAfterCompletion ? tasks.savePendingBuildEvidence(r, evidence) : canonical;
+                }, tasks::loadPendingBuildEvidence, Clock.systemUTC(), 1, 10, 1);
+            var gate = new com.manao.poc4.project.ProjectLifecycleGate();
+            var workspace = new com.manao.poc4.workspace.WorkspaceJdbcStore(jdbc, transactions);
+            var firstTools = new AgentProjectTools(tasks, workspace, null, null, gate, first);
+            var returnedEvidence = new AtomicReference<BuildResult>();
+            var capturedReplay = org.mockito.Mockito.spy(replay);
+            org.mockito.Mockito.doAnswer(invocation -> {
+                BuildResult result = (BuildResult) invocation.callRealMethod();
+                returnedEvidence.set(result);
+                return result;
+            }).when(capturedReplay).observe(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any());
+            var replayTools = new AgentProjectTools(tasks, workspace, null, null, gate, capturedReplay);
+            var pool = java.util.concurrent.Executors.newFixedThreadPool(2);
+            try {
+                var a = pool.submit(() -> firstTools.invoke(taskId, toolRequest));
+                awaitLatch(firstPolling);
+                var b = pool.submit(() -> replayTools.invoke(taskId, toolRequest));
+                awaitLatch(weakSaved);
+                assertThat(original.get().evidence().verificationStatus()).hasToString("PASS");
+                assertThat(replayObservation.get().evidence().verificationStatus()).hasToString("UNKNOWN");
+                assertThat(original.get().identity()).isEqualTo(replayObservation.get().identity());
+                var request = new BuildRequest(taskId, CALL, PROJECT, COMMAND, 7, BuildGoal.TEST, environment);
+                assertThat(tasks.loadPendingBuildEvidence(request)).isEqualTo(original.get());
+                assertThat(original.get().cleanupConfirmed()).isFalse();
+                assertThat(client.pods().inNamespace(NS).list().getItems()).hasSize(1);
+                assertThat(client.batch().v1().jobs().inNamespace(NS).list().getItems()).hasSize(1);
+                assertThat(tasks.findToolCall(taskId, CALL).orElseThrow().state()).isEqualTo("RUNNING");
+                releaseFirstCleanup.countDown();
+                var winner = a.get(20, TimeUnit.SECONDS);
+                assertThat(winner.data().path("verificationStatus").asText()).isEqualTo("PASS");
+                assertThat(winner.data().path("testSummary").path("tests").asInt()).isEqualTo(2);
+                assertThat(winner.data().path("sourceRevision").asText()).isEqualTo("7");
+                assertThat(winner.data().path("cleanupConfirmed").asBoolean()).isTrue();
+                assertThat(client.pods().inNamespace(NS).list().getItems()).isEmpty();
+                assertThat(client.batch().v1().jobs().inNamespace(NS).list().getItems()).isEmpty();
+                releaseReplayCleanup.countDown();
+                assertThat(b.get(20, TimeUnit.SECONDS)).isEqualTo(winner);
+                assertThat(returnedEvidence.get()).usingRecursiveComparison().ignoringFields("cleanupConfirmed").isEqualTo(original.get());
+                var restarted = new AgentTaskStore(jdbc, transactions, Clock.systemUTC());
+                var laterTools = new AgentProjectTools(restarted, workspace, null, null, gate, replay);
+                assertThat(laterTools.invoke(taskId, toolRequest)).isEqualTo(winner);
+                assertThat(json.readTree(restarted.findToolCall(taskId, CALL).orElseThrow().resultJson()))
+                    .isEqualTo(json.valueToTree(winner));
+                assertThat(restarted.loadPendingBuildEvidence(request)).isEqualTo(original.get());
+                var foreignUid = new BuildResult(new BuildIdentity(original.get().identity().jobName(), "foreign-job", "foreign-pod"),
+                    0, "Completed", "", false, List.of(), false);
+                assertThatThrownBy(() -> restarted.savePendingBuildEvidence(request, foreignUid))
+                    .isInstanceOf(IllegalStateException.class);
+                assertThatThrownBy(() -> restarted.loadPendingBuildEvidence(new BuildRequest(taskId, CALL, PROJECT, COMMAND, 8, BuildGoal.TEST, environment)))
+                    .isInstanceOf(IllegalStateException.class);
+                assertThatThrownBy(() -> restarted.loadPendingBuildEvidence(new BuildRequest(taskId, CALL, PROJECT, COMMAND, 7, BuildGoal.TEST)))
+                    .isInstanceOf(IllegalStateException.class);
+                assertThat(creations.get()).isEqualTo(1);
+            } finally {
+                releaseFirstCleanup.countDown();
+                releaseReplayCleanup.countDown();
+                pool.shutdownNow();
+                assertThat(pool.awaitTermination(20, TimeUnit.SECONDS)).isTrue();
+            }
+        }
+    }
+
+    private static void awaitLatch(java.util.concurrent.CountDownLatch latch) {
+        try {
+            if (!latch.await(15, TimeUnit.SECONDS)) throw new AssertionError("build observation barrier timed out");
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+            throw new AssertionError(interrupted);
+        }
+    }
+
     private Job seedJob() {
         Job job = factory.createDevelopmentJob(request(), SOURCE);
         client.batch().v1().jobs().inNamespace(NS).resource(job).create();

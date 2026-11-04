@@ -1152,6 +1152,7 @@ class AgentProjectToolsTest {
                 new AgentContracts.BuildIdentity("manao-dev-1", "job-uid-1", "pod-uid-1");
             CountDownLatch winnerBuilding = new CountDownLatch(1);
             CountDownLatch loserRecovered = new CountDownLatch(1);
+            CountDownLatch releaseLateObserver = new CountDownLatch(1);
             AtomicInteger builds = new AtomicInteger();
             AtomicInteger observations = new AtomicInteger();
             when(env.builds.build(any())).thenAnswer(invocation -> {
@@ -1165,6 +1166,7 @@ class AgentProjectToolsTest {
             when(env.builds.observe(any(), any())).thenAnswer(invocation -> {
                 observations.incrementAndGet();
                 loserRecovered.countDown();
+                assertThat(releaseLateObserver.await(10, TimeUnit.SECONDS)).isTrue();
                 return new AgentContracts.BuildResult(identity, 0, "Completed", "recovered", false, List.of(), true);
             });
 
@@ -1176,9 +1178,15 @@ class AgentProjectToolsTest {
                 Future<ToolResult> loser = pool.submit(() -> env.tools.invoke(env.taskId,
                     new ToolRequest("call-build", "build", 7, JSON.createObjectNode().put("goal", "test"))));
 
-                assertThat(winner.get(30, TimeUnit.SECONDS).data().path("output").asText()).isEqualTo("winner");
-                assertThat(loser.get(30, TimeUnit.SECONDS).data().path("output").asText()).isEqualTo("recovered");
+                ToolResult canonical = winner.get(30, TimeUnit.SECONDS);
+                assertThat(canonical.data().path("output").asText()).isEqualTo("winner");
+                releaseLateObserver.countDown();
+                assertThat(loser.get(30, TimeUnit.SECONDS)).isEqualTo(canonical);
+                assertThat(env.tools.invoke(env.taskId,
+                    new ToolRequest("call-build", "build", 7, JSON.createObjectNode().put("goal", "test"))))
+                    .isEqualTo(canonical);
             } finally {
+                releaseLateObserver.countDown();
                 pool.shutdownNow();
             }
             // Exactly one build execution for the one call id; the concurrent replay recovered.

@@ -572,23 +572,33 @@ public final class AgentTaskStore implements AgentTaskOccupancy {
      * durable answer. The caller holds the cleanup claim through this settlement.
      */
     public synchronized void settleClosedBuildCall(String taskId, String toolCallId, String resultJson) {
+        completeBuildCall(taskId, toolCallId, resultJson);
+    }
+
+    /** First confirmed build completion wins; every concurrent writer returns that durable answer. */
+    public synchronized ToolCallRow completeBuildCall(String taskId, String toolCallId, String resultJson) {
         jdbc.update(
             "UPDATE agent_tool_call SET state = 'COMPLETED', result_json = ?, updated_at = ? "
-                + "WHERE task_id = ? AND tool_call_id = ? AND state IN ('RUNNING','NEEDS_ATTENTION')",
+                + "WHERE task_id = ? AND tool_call_id = ? AND tool_name = 'build' AND state IN ('RUNNING','NEEDS_ATTENTION')",
             resultJson, Timestamp.from(clock.instant()), taskId, toolCallId);
+        ToolCallRow row = findToolCall(taskId, toolCallId).orElseThrow();
+        if (!"build".equals(row.toolName()) || !"COMPLETED".equals(row.state()) || row.resultJson() == null)
+            throw new IllegalStateException("build completion was not persisted");
+        return row;
     }
 
     private record PendingBuildEvidence(String commandId, long sourceRevision, String environmentSha256,
                                          AgentContracts.BuildResult result) { }
 
-    /** Write-ahead observation only; RUNNING stays occupied until a separate confirmed cleanup settlement. */
-    public synchronized void savePendingBuildEvidence(AgentContracts.BuildRequest request, AgentContracts.BuildResult result) {
+    /** Returns the canonical observation atomically; cleanup must still be confirmed by the caller. */
+    public synchronized AgentContracts.BuildResult savePendingBuildEvidence(AgentContracts.BuildRequest request, AgentContracts.BuildResult result) {
         ToolCallRow row = requireBuildEvidenceIdentity(request);
-        if ("COMPLETED".equals(row.state())) return;
-        if (result.identity() == null || result.identity().jobUid() == null) return;
+        if (result.identity() == null || result.identity().jobUid() == null)
+            return "COMPLETED".equals(row.state()) ? completedBuildEvidence(row) : result;
         if (row.jobUid() != null && !row.jobUid().equals(result.identity().jobUid())) throw new IllegalStateException("build evidence uid mismatch");
         if (row.podUid() != null && result.identity().podUid() != null && !row.podUid().equals(result.identity().podUid()))
             throw new IllegalStateException("build evidence pod uid mismatch");
+        if ("COMPLETED".equals(row.state())) return completedBuildEvidence(row);
         var previous = loadPendingBuildEvidence(request);
         if (previous != null && previous.exitCode() != null) {
             // Terminal facts are immutable across cleanup retries. A timeout/empty tail can
@@ -607,12 +617,14 @@ public final class AgentTaskStore implements AgentTaskOccupancy {
             int updated = jdbc.update("UPDATE agent_tool_call SET result_json=?,job_name=COALESCE(job_name,?),job_uid=COALESCE(job_uid,?),pod_uid=COALESCE(pod_uid,?),updated_at=? WHERE task_id=? AND tool_call_id=? AND state IN ('RUNNING','NEEDS_ATTENTION')",
                 encoded, result.identity().jobName(), result.identity().jobUid(), result.identity().podUid(), Timestamp.from(clock.instant()), request.taskId(), request.toolCallId());
             if (updated != 1) throw new IllegalStateException("build observation was not persisted");
+            return result;
         } catch (IOException ex) { throw new IllegalStateException("cannot persist build evidence", ex); }
     }
 
     public synchronized AgentContracts.BuildResult loadPendingBuildEvidence(AgentContracts.BuildRequest request) {
         ToolCallRow row = requireBuildEvidenceIdentity(request);
-        if (row.resultJson() == null || "COMPLETED".equals(row.state())) return null;
+        if (row.resultJson() == null) return null;
+        if ("COMPLETED".equals(row.state())) return completedBuildEvidence(row);
         try {
             JsonNode pending = JSON.readTree(row.resultJson()).get("pendingBuildEvidence");
             if (pending == null) return null;
@@ -632,7 +644,36 @@ public final class AgentTaskStore implements AgentTaskOccupancy {
         if (!"build".equals(row.toolName()) || !request.commandId().equals(row.workspaceOperationId())
                 || request.sourceRevision() != row.expectedRevision() || !request.projectId().equals(taskOwner(request.taskId()).projectId()))
             throw new IllegalStateException("build observation request identity mismatch");
+        var environment = environmentOf(request.taskId());
+        if (environment != null && !java.util.Objects.equals(environment.sha256(),
+                request.environment() == null ? null : request.environment().sha256()))
+            throw new IllegalStateException("build observation environment mismatch");
         return row;
+    }
+
+    /** Decode the published facts, never re-parse a potentially fitted/truncated output tail. */
+    private AgentContracts.BuildResult completedBuildEvidence(ToolCallRow row) {
+        try {
+            var completed = JSON.readValue(row.resultJson(), AgentContracts.ToolResult.class);
+            JsonNode data = completed.data();
+            if (!row.toolCallId().equals(completed.toolCallId()) || data == null || !data.isObject()
+                    || !Long.toString(row.expectedRevision()).equals(data.path("sourceRevision").asText())
+                    || !data.has("exitCode") || !(data.path("exitCode").isNull() || data.path("exitCode").isIntegralNumber())
+                    || !data.path("testReports").isArray() || !data.path("cleanupConfirmed").asBoolean())
+                throw new IllegalStateException("completed build evidence is invalid");
+            var reports = JSON.readerForListOf(AgentContracts.TestReport.class)
+                .<List<AgentContracts.TestReport>>readValue(data.path("testReports"));
+            PythonBuildEvidence evidence = null;
+            if (data.has("language")) {
+                var fields = JSON.createObjectNode();
+                for (String name : List.of("language", "checkKind", "verificationStatus", "filesChecked", "errors", "testSummary"))
+                    if (data.has(name)) fields.set(name, data.get(name));
+                evidence = JSON.treeToValue(fields, PythonBuildEvidence.class);
+            }
+            return new AgentContracts.BuildResult(new AgentContracts.BuildIdentity(row.jobName(), row.jobUid(), row.podUid()),
+                data.path("exitCode").isNull() ? null : data.path("exitCode").intValue(), data.path("terminationReason").asText(),
+                data.path("output").asText(), completed.truncated(), reports, false, evidence);
+        } catch (IOException ex) { throw new IllegalStateException("cannot read completed build evidence", ex); }
     }
 
     /**

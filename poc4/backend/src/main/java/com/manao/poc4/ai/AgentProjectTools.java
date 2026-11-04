@@ -656,8 +656,7 @@ public final class AgentProjectTools {
             // The row settles HERE, while this thread's live claim is still held: a
             // concurrent close sees the claim, never the half-finished settlement.
             AgentContracts.ToolResult bounded = boundedResult(settled);
-            tasks.completeToolCall(row.taskId(), row.toolCallId(), jsonOf(bounded));
-            return bounded;
+            return storedResult(tasks.completeBuildCall(row.taskId(), row.toolCallId(), jsonOf(bounded)));
         } finally {
             if (claimed) {
                 // Retired only after the call row is fully settled (or the failure path
