@@ -84,12 +84,12 @@ describe('unsavedChangesGuard transition matrix', () => {
       capturedPath: POM,
       saveSucceeded: false,
       bufferStillDirty: true,
-      saveErrorMessage: 'Unable to save file',
+      saveErrorMessage: '无法保存文件',
     });
 
     expect(decision.kind).toBe('keep-dialog');
     expect(decision.action).toEqual({ type: 'close-tab', path: POM });
-    expect(decision.message).toBe('Unable to save file');
+    expect(decision.message).toBe('无法保存文件');
     expect(decision.consequences).toEqual({
       route: 'unchanged',
       auth: 'unchanged',

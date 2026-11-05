@@ -642,7 +642,7 @@ describe('appRuntime current-session 401 with open workbench', () => {
     connectionRegistry.register(closer);
 
     renderApp({ initialEntries: [`/projects/${ALICE_SEED_PROJECT_ID}`] });
-    expect(await screen.findByRole('tree', { name: 'Files' }, { timeout: 10_000 })).toBeInTheDocument();
+    expect(await screen.findByRole('tree', { name: '文件列表' }, { timeout: 10_000 })).toBeInTheDocument();
     expect(screen.getByRole('tab', { name: /pom\.xml/ })).toBeInTheDocument();
     expect(screen.getByRole('tab', { name: /App\.java/ })).toBeInTheDocument();
     expect(workspaceSessionStore.getState().expandedPaths.has(SRC)).toBe(true);
@@ -672,7 +672,7 @@ describe('appRuntime current-session 401 with open workbench', () => {
     const alerts = screen.getAllByRole('alert');
     expect(alerts).toHaveLength(1);
     expect(alerts[0]).toHaveTextContent(/session has expired/i);
-    expect(screen.queryByRole('tree', { name: 'Files' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('tree', { name: '文件列表' })).not.toBeInTheDocument();
     expect(screen.queryByText('Alice Notebook')).not.toBeInTheDocument();
   }, 15_000);
 
@@ -684,7 +684,7 @@ describe('appRuntime current-session 401 with open workbench', () => {
     connectionRegistry.register(closer);
 
     renderApp({ initialEntries: [`/projects/${ALICE_SEED_PROJECT_ID}`] });
-    expect(await screen.findByRole('tree', { name: 'Files' }, { timeout: 10_000 })).toBeInTheDocument();
+    expect(await screen.findByRole('tree', { name: '文件列表' }, { timeout: 10_000 })).toBeInTheDocument();
 
     await expireCurrentSessionToken();
     const error = await downloadFileBlob(ALICE_SEED_PROJECT_ID, POM, 'pom.xml').catch(
@@ -800,7 +800,7 @@ describe('appRuntime explicit logout', () => {
     renderApp({ initialEntries: ['/projects'] });
     expect(await screen.findByRole('article', { name: 'Alice Notebook' })).toBeInTheDocument();
 
-    await user.click(screen.getByRole('button', { name: /log out/i }));
+    await user.click(screen.getByRole('button', { name: /退出登录/i }));
 
     expect(closerA).toHaveBeenCalledTimes(1);
     expect(closerB).toHaveBeenCalledTimes(1);
@@ -887,7 +887,7 @@ describe('appRuntime log stream session isolation', () => {
 
     render(createElement(RunLogView, { store }));
 
-    const runLogs = screen.getByRole('region', { name: 'Run logs' });
+    const runLogs = screen.getByRole('region', { name: '运行日志' });
     expect(runLogs).toHaveTextContent(runMarker);
     expect(runLogs).not.toHaveTextContent(
       /PTY#9|AUDIT#9|session-1|short ticket\?&|jwt-secret-that-must-not-leak/,
@@ -917,7 +917,7 @@ describe('appRuntime log stream session isolation', () => {
       onRetry: vi.fn(),
     }));
 
-    const audit = screen.getByRole('table', { name: 'Terminal command audit' });
+    const audit = screen.getByRole('table', { name: '终端命令记录' });
     expect(audit).toHaveTextContent('AUDIT#9');
     const visibleText = document.body.textContent ?? '';
     for (const hidden of [sessionSecret, ticketSecret, jwtSecret, 'PTY#9', 'RUN#9']) {
@@ -1013,12 +1013,12 @@ describe('unknown routes', () => {
   it('renders NotFoundPage without the unexpected-error recovery view', () => {
     renderApp({ initialEntries: ['/missing'] });
 
-    expect(screen.getByRole('heading', { name: /not found/i })).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: /back to projects/i })).toHaveAttribute(
+    expect(screen.getByRole('heading', { name: /页面不存在/i })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /返回项目列表/i })).toHaveAttribute(
       'href',
       '/projects',
     );
-    expect(screen.queryByRole('heading', { name: /something went wrong/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: /页面出现异常/i })).not.toBeInTheDocument();
     expect(document.body.textContent ?? '').not.toMatch(/stack|jwt|password|traceId/i);
   });
 });

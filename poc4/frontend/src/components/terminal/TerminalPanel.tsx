@@ -184,23 +184,23 @@ export function TerminalPanel({ active }: { active: boolean }) {
         <Button
           size="xs"
           variant="outline"
-          aria-label="Connect terminal"
+          aria-label="连接终端"
           disabled={!canConnect}
           onClick={handleConnect}
         >
-          Connect
+          连接
         </Button>
         <Button
           size="xs"
           variant="outline"
-          aria-label="Disconnect terminal"
+          aria-label="断开终端"
           disabled={!canDisconnect}
           onClick={handleDisconnect}
         >
-          Disconnect
+          断开连接
         </Button>
         <span role="status" className="text-xs text-muted-foreground">
-          {status}
+          {{ connecting: '正在连接', connected: '已连接', disconnected: '已断开', error: '连接异常' }[status]}
         </span>
       </div>
       <div className="relative min-h-0 flex-1 overflow-hidden" style={{ backgroundColor: terminalTheme.background }}>

@@ -103,7 +103,7 @@ describe('missing workspace revision', () => {
         path: POM,
         snapshot: { content: 'x', version: 1 },
       }),
-    ).rejects.toThrow('Workspace revision is unavailable');
+    ).rejects.toThrow('暂时无法获取工作区版本');
 
     expect(puts).toBe(0);
   });
@@ -570,11 +570,11 @@ describe('authoritative success apply', () => {
 
 describe('mutation errors', () => {
   it.each([
-    [new Error('Network request failed'), 'Network request failed'],
-    [new ApiRequestError(403, { code: 'FORBIDDEN', message: 'no', traceId: 't' }), 'Access denied'],
+    [new Error('Network request failed'), "网络请求失败，请检查连接后重试"],
+    [new ApiRequestError(403, { code: 'FORBIDDEN', message: 'no', traceId: 't' }), "无权访问"],
     [
       new ApiRequestError(409, { code: 'PROJECT_LOCKED', message: 'locked', traceId: 't' }),
-      'Project is locked',
+      "项目暂时无法修改，请等待当前操作完成",
     ],
     [
       new ApiRequestError(409, {
@@ -582,7 +582,7 @@ describe('mutation errors', () => {
         message: 'conflict',
         traceId: 't',
       }),
-      'Workspace revision conflict',
+      "工作区已发生变化，请刷新后重试",
     ],
     [
       new ApiRequestError(409, {
@@ -590,7 +590,7 @@ describe('mutation errors', () => {
         message: 'exists',
         traceId: 't',
       }),
-      'An entry with this name already exists',
+      "已存在同名文件或文件夹",
     ],
     [
       new ApiRequestError(409, {
@@ -598,19 +598,19 @@ describe('mutation errors', () => {
         message: 'not empty',
         traceId: 't',
       }),
-      'Directory is not empty',
+      "文件夹不为空",
     ],
     [
       new ApiRequestError(413, { code: 'FILE_TOO_LARGE', message: 'big', traceId: 't' }),
-      'File is too large',
+      "文件过大",
     ],
     [
       new ApiRequestError(415, { code: 'BINARY_FILE', message: 'bin', traceId: 't' }),
-      'This file type is not supported',
+      "不支持此文件类型",
     ],
     [
       new ApiRequestError(500, { code: 'INTERNAL_ERROR', message: 'boom', traceId: 't' }),
-      'Unable to update files',
+      "无法更新文件",
     ],
   ] as const)('maps %s to a stable UI message', (error, message) => {
     expect(fileMutationErrorMessage(error)).toBe(message);
@@ -665,7 +665,7 @@ describe('mutation errors', () => {
     expect(rootTree()).toEqual(treeBefore);
     expect(buffer.isDirty()).toBe(true);
     expect(buffer.snapshot()).toEqual(snapshot);
-    expect(fileMutationErrorMessage(result.current.error)).toBe('Workspace revision conflict');
+    expect(fileMutationErrorMessage(result.current.error)).toBe('工作区已发生变化，请刷新后重试');
   });
 
   it('lets a current-token 401 run appRuntime cleanup', async () => {
@@ -850,7 +850,7 @@ describe('rename/delete state matrix', () => {
       (error: unknown) => error,
     );
     expect(rejected).toBeInstanceOf(ApiRequestError);
-    expect(fileMutationErrorMessage(rejected)).toBe('Directory is not empty');
+    expect(fileMutationErrorMessage(rejected)).toBe('文件夹不为空');
     expect(useWorkspaceSession.getState().openPaths).toEqual([APP]);
     expect(workspaceBufferRegistry.get(ALICE_SEED_PROJECT_ID, APP)).toBeDefined();
     expect(queryClient.getQueryData(fileKeys.revision(ALICE_SEED_PROJECT_ID))).toBe('mock-rev-0001');
@@ -872,7 +872,7 @@ describe('rename/delete state matrix', () => {
       (error: unknown) => error,
     );
     expect(locked).toBeInstanceOf(ApiRequestError);
-    expect(fileMutationErrorMessage(locked)).toBe('Project is locked');
+    expect(fileMutationErrorMessage(locked)).toBe('项目暂时无法修改，请等待当前操作完成');
     expect(useWorkspaceSession.getState().openPaths).toEqual([README]);
     expect(workspaceBufferRegistry.get(ALICE_SEED_PROJECT_ID, README)).toBeDefined();
     expect(queryClient.getQueryData(fileKeys.revision(ALICE_SEED_PROJECT_ID))).toBe('mock-rev-0001');
@@ -886,7 +886,7 @@ describe('rename/delete state matrix', () => {
       (error: unknown) => error,
     );
     expect(conflicted).toBeInstanceOf(ApiRequestError);
-    expect(fileMutationErrorMessage(conflicted)).toBe('Workspace revision conflict');
+    expect(fileMutationErrorMessage(conflicted)).toBe('工作区已发生变化，请刷新后重试');
     expect(useWorkspaceSession.getState().openPaths).toEqual([README]);
     expect(workspaceBufferRegistry.get(ALICE_SEED_PROJECT_ID, README)).toBeDefined();
     expect(queryClient.getQueryData(fileKeys.revision(ALICE_SEED_PROJECT_ID))).toBe('mock-rev-0001');

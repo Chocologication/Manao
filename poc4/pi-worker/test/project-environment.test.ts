@@ -3,7 +3,7 @@ import { getSystemMessageText, type TranscriptContext } from "@earendil-works/pi
 import { ProgressChain, BackendHttpError } from "../src/backend-client.js";
 import { createPiSession } from "../src/pi-session.js";
 import { parseProjectEnvironment, environmentSha256 } from "../src/project-environment.js";
-import { JAVA_ENVIRONMENT, JAVA_CONSOLE, PYTHON_ENVIRONMENT, PYTHON_CONSOLE, PYTHON_SHA256 } from "./environment-fixtures.js";
+import { JAVA_ENVIRONMENT, JAVA_CONSOLE, PYTHON_ENVIRONMENT, PYTHON_CONSOLE, PYTHON_SHA256, NODE_ENVIRONMENT, NODE_ENVIRONMENTS, NODE_SHA256 } from "./environment-fixtures.js";
 import { backendStub, MODEL_CONFIG, privateDirs, scriptedSessionFactory, resultFor } from "./scripted-session.js";
 
 describe("trusted project environment contract", () => {
@@ -11,6 +11,14 @@ describe("trusted project environment contract", () => {
     const reversed = Object.fromEntries(Object.entries(PYTHON_ENVIRONMENT).reverse());
     expect(environmentSha256(parseProjectEnvironment(reversed))).toBe(PYTHON_SHA256);
     expect(parseProjectEnvironment(reversed)).toEqual(PYTHON_ENVIRONMENT);
+  });
+  it("matches the independent Node.js backend fixture and refuses mixed authority", () => {
+    expect(environmentSha256(parseProjectEnvironment(Object.fromEntries(Object.entries(NODE_ENVIRONMENT).reverse())))).toBe(NODE_SHA256);
+    for (const invalid of [
+      { ...NODE_ENVIRONMENT, language: "java" }, { ...NODE_ENVIRONMENT, filePolicy: "java-v1" },
+      { ...NODE_ENVIRONMENT, tools: [...NODE_ENVIRONMENT.tools, "python_dependencies"] },
+      { ...NODE_ENVIRONMENTS.find(value => value.executionKind === "task"), mysql: true },
+    ]) expect(() => parseProjectEnvironment(invalid)).toThrow(/environment/i);
   });
   it.each(Object.keys(PYTHON_ENVIRONMENT))("rejects missing %s instead of guessing defaults", key => {
     const value = { ...PYTHON_ENVIRONMENT }; delete value[key];
@@ -57,7 +65,7 @@ describe("environment at the real SDK provider boundary", () => {
       expect(backend.calls).toHaveLength(1);
     } finally { pi.dispose(); }
   });
-  it.each([JAVA_ENVIRONMENT, JAVA_CONSOLE, PYTHON_ENVIRONMENT, PYTHON_CONSOLE])("sends only the current $templateId capabilities before and after tool execution", async environment => {
+  it.each([JAVA_ENVIRONMENT, JAVA_CONSOLE, PYTHON_ENVIRONMENT, PYTHON_CONSOLE, ...NODE_ENVIRONMENTS])("sends only the current $templateId capabilities before and after tool execution", async environment => {
     const backend = backendStub([resultFor]);
     const requests: TranscriptContext[] = [];
     const pi = await createPiSession({ environment, model: MODEL_CONFIG, paths: privateDirs(), taskId: "env",
@@ -91,7 +99,11 @@ describe("environment at the real SDK provider boundary", () => {
         expect([...active.keys()].sort()).toEqual([...environment.tools].sort());
         const build = active.get("build") as { properties: { goal: unknown } };
         expect(JSON.stringify(build.properties.goal)).toContain("compile");
-        expect(JSON.stringify(build.properties.goal).includes("package")).toBe(environment.language === "java");
+        expect(JSON.stringify(build.properties.goal).includes("package")).toBe(environment.language !== "python");
+        if (environment.filePolicy === "node-v1") {
+          expect(systemText).toContain("Node.js 24 with pnpm");
+          expect(systemText).not.toContain("build uses Maven");
+        }
         if (environment.language === "python") {
           const schema = active.get("python_dependencies") as { additionalProperties: boolean; properties: Record<string, unknown> };
           expect(schema.additionalProperties).toBe(false);

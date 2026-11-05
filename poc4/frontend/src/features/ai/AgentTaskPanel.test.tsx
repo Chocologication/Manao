@@ -29,9 +29,9 @@ it.each([false,true])('releases parent pending when an upload is cancelled; prev
     const body=await request.json() as {taskId:string};return HttpResponse.json(occupyingTask({taskId:body.taskId,state:'COMPLETED',writesLocked:false,conversationId:'conversation-a'}));
   }));
   const h=renderPanel({conversationId:'conversation-a',onSubmissionPendingChange:pending});
-  if(previous){await userEvent.type(screen.getByLabelText('Task goal'),'first round');await userEvent.click(screen.getByRole('button',{name:'Start task'}));await waitFor(()=>expect(h.getAccepted()?.state).toBe('COMPLETED'));pending.mockClear();}
+  if(previous){await userEvent.type(screen.getByLabelText('任务目标'),'first round');await userEvent.click(screen.getByRole('button',{name:'启动任务'}));await waitFor(()=>expect(h.getAccepted()?.state).toBe('COMPLETED'));pending.mockClear();}
   fireEvent.change(await screen.findByLabelText('添加图片'),{target:{files:[new File(['abc'],'sample.png',{type:'image/png'})]}});
-  await userEvent.click(screen.getByRole('button',{name:'Start task'}));
+  await userEvent.click(screen.getByRole('button',{name:'启动任务'}));
   await waitFor(()=>expect(pending).toHaveBeenCalledWith(true));
   cleanup();
   expect(pending).toHaveBeenLastCalledWith(false);
@@ -50,7 +50,7 @@ it('uploads a pure image goal before submitting ordered references',async()=>{
   );
   const panel=renderPanel({conversationId:'conversation-a'});
   fireEvent.change(await screen.findByLabelText('添加图片'),{target:{files:[new File(['abc'],'sample.png',{type:'image/png'})]}});
-  await userEvent.click(screen.getByRole('button',{name:'Start task'}));
+  await userEvent.click(screen.getByRole('button',{name:'启动任务'}));
   await waitFor(()=>expect(panel.getAccepted()).not.toBeNull());
   expect(posted).toMatchObject({prompt:'请分析上传的图片',attachmentIds:[uploaded]});
 });
@@ -59,16 +59,16 @@ it('clears an accepted goal so Continue defaults to the continuation instruction
     const body = await request.json() as {taskId:string}; return HttpResponse.json(occupyingTask({taskId:body.taskId}));
   }));
   const h=renderPanel();
-  await userEvent.type(screen.getByLabelText('Task goal'), 'previous task goal');
-  await userEvent.click(screen.getByRole('button',{name:'Start task'}));
+  await userEvent.type(screen.getByLabelText('任务目标'), 'previous task goal');
+  await userEvent.click(screen.getByRole('button',{name:'启动任务'}));
   await waitFor(()=>expect(h.getAccepted()).not.toBeNull());
-  expect(screen.getByLabelText('Task goal')).toHaveValue('');
+  expect(screen.getByLabelText('任务目标')).toHaveValue('');
 });
 it('keeps continuation disabled while a pause is settling', () => {
   renderPanel({ conversationId: 'conversation-a', task: { ...occupyingTask({ state: 'NEEDS_ATTENTION' }),
     conversationId: 'conversation-a', closeReasonCode: 'AI_PAUSED_BY_OWNER' } as AgentTaskSnapshot });
-  expect(screen.getByRole('button', { name: 'Continue task' })).toBeDisabled();
-  expect(screen.getByText(/Stopping and verifying/)).toBeVisible();
+  expect(screen.getByRole('button', { name: '继续任务' })).toBeDisabled();
+  expect(screen.getByText(/正在停止并核对/)).toBeVisible();
 });
 it('continues the selected conversation with a new id and the latest saved revision', async () => {
   let posted: Record<string, unknown> | null = null;
@@ -80,7 +80,7 @@ it('continues the selected conversation with a new id and the latest saved revis
   const h = renderPanel({ conversationId: 'conversation-a', settledTask: {
     ...occupyingTask({ state: 'FAILED', writesLocked: false, conversationId: 'conversation-a' }), closeReasonCode: 'AI_PAUSED_BY_OWNER',
   } as AgentTaskSnapshot });
-  await userEvent.click(screen.getByRole('button', { name: 'Continue task' }));
+  await userEvent.click(screen.getByRole('button', { name: '继续任务' }));
   await waitFor(() => expect(h.getAccepted()).not.toBeNull());
   expect(posted).toMatchObject({ expectedWorkspaceRevision: '9' });
   const sent = posted as Record<string, unknown> | null;
@@ -92,13 +92,13 @@ it('retains dirty edits and blocks continuation after a safe pause', () => {
   renderPanel({ conversationId: 'conversation-a', settledTask: {
     ...occupyingTask({ state: 'FAILED', writesLocked: false, conversationId: 'conversation-a' }), closeReasonCode: 'AI_PAUSED_BY_OWNER',
   } as AgentTaskSnapshot });
-  expect(screen.getByRole('button', { name: 'Continue task' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: '继续任务' })).toBeDisabled();
   expect(workspaceSessionStore.getState().dirtyPaths.size).toBe(1);
 });
 it('shows startup pause as disabled while End task remains available', () => {
   renderPanel({ task: occupyingTask({ state: 'QUEUED' }) });
-  expect(screen.getByRole('button', { name: 'Pause & take over' })).toBeDisabled();
-  expect(screen.getByRole('button', { name: 'End task' })).toBeEnabled();
+  expect(screen.getByRole('button', { name: '暂停并接管' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: '结束任务' })).toBeEnabled();
 });
 it('reads the optional close reason without inventing one for legacy JSON', () => {
   expect(parseAgentTaskSnapshot(occupyingTask()).closeReasonCode).toBeNull();
@@ -109,10 +109,10 @@ it('places conversation presentation before the bottom submission form', () => {
   renderPanel({ conversationHeader: <h2>当前会话</h2>, conversationHistory: <p>历史正文</p> });
   const header = screen.getByRole('heading', { name: '当前会话' });
   const history = screen.getByText('历史正文');
-  const form = screen.getByLabelText('Task goal').closest('form')!;
+  const form = screen.getByLabelText('任务目标').closest('form')!;
   expect(header.compareDocumentPosition(history) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   expect(history.compareDocumentPosition(form) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-  expect(form.parentElement).toBe(screen.getByRole('region', { name: 'AI task' }));
+  expect(form.parentElement).toBe(screen.getByRole('region', { name: 'AI 任务' }));
 });
 const USER_ID = 'user-alice';
 const TASK_ID = '0b8fd38f-0f9e-4c28-9c48-3f5f4a2b1c11';
@@ -125,8 +125,8 @@ it('reconciles a lost-response task that already completed without submitting an
   server.use(http.get(`${TASKS_URL}/${TASK_ID}`,()=>HttpResponse.json(original)),
     http.post(`/api/v1/projects/${PROJECT_ID}/conversations/conversation-a/tasks`,()=>{posts++;return HttpResponse.error();}));
   const h=renderPanel({conversationId:'conversation-a'});
-  await userEvent.type(screen.getByLabelText('Task goal'),'retry the uncertain intent');
-  await userEvent.click(screen.getByRole('button',{name:'Start task'}));
+  await userEvent.type(screen.getByLabelText('任务目标'),'retry the uncertain intent');
+  await userEvent.click(screen.getByRole('button',{name:'启动任务'}));
   await waitFor(()=>expect(h.getAccepted()?.taskId).toBe(TASK_ID));
   expect(posts).toBe(0);
   expect(sessionStorage.getItem(agentTaskStorageKey(USER_ID,PROJECT_ID))).toBeNull();
@@ -137,14 +137,14 @@ it('keeps effort locked after both POST and original task GET fail, and retries 
     http.get(`${TASKS_URL}/:id`, ({ params }) => { gets.push(String(params.id)); return HttpResponse.error(); }));
   renderPanel();
   await userEvent.click(screen.getByRole('button', { name: /推理强度/ })); fireEvent.change(screen.getByRole('slider', { name: '推理强度' }), { target: { value: '3' } }); await userEvent.keyboard('{Escape}');
-  await userEvent.type(screen.getByLabelText('Task goal'), 'do work');
-  await userEvent.click(screen.getByRole('button', { name: 'Start task' }));
+  await userEvent.type(screen.getByLabelText('任务目标'), 'do work');
+  await userEvent.click(screen.getByRole('button', { name: '启动任务' }));
   await screen.findByRole('alert');
   expect(screen.getByRole('button', { name: /推理强度/ })).toBeDisabled();
   expect(screen.getByRole('button', { name: /推理强度/ })).toHaveTextContent('推理强度 · 最高');
   expect(sessionStorage.getItem(agentTaskStorageKey(USER_ID, PROJECT_ID))).toBe(original);
-  await userEvent.click(screen.getByRole('button', { name: 'Start task' }));
-  await screen.findByText('Could not verify the previous task. Try again in a moment.');
+  await userEvent.click(screen.getByRole('button', { name: '启动任务' }));
+  await screen.findByText('暂时无法核对上次任务，请稍后重试。');
   expect(gets).toEqual([original, original]); expect(posts).toBe(1);
   expect(screen.getByRole('button', { name: /推理强度/ })).toBeDisabled();
 });
@@ -155,8 +155,8 @@ it('locks a retained unknown identity on remount and releases effort after confi
   server.use(http.get(`${TASKS_URL}/:id`, absent), http.post(TASKS_URL, () => { posts++; return absent(); }));
   renderPanel();
   expect(screen.getByRole('button', { name: /推理强度/ })).toBeDisabled();
-  await userEvent.type(screen.getByLabelText('Task goal'), 'do work');
-  await userEvent.click(screen.getByRole('button', { name: 'Start task' }));
+  await userEvent.type(screen.getByLabelText('任务目标'), 'do work');
+  await userEvent.click(screen.getByRole('button', { name: '启动任务' }));
   await screen.findByRole('alert');
   expect(sessionStorage.getItem(agentTaskStorageKey(USER_ID, PROJECT_ID))).toBeNull();
   expect(screen.getByRole('button', { name: /推理强度/ })).toBeEnabled(); expect(posts).toBe(1);
@@ -168,8 +168,8 @@ it('submits the chosen effort and locks it while admission is unknown', async ()
     http.get(`${TASKS_URL}/:id`, ({ params }) => HttpResponse.json(occupyingTask({ taskId: String(params.id) }))));
   const h = renderPanel();
   await userEvent.click(screen.getByRole('button', { name: /推理强度/ })); fireEvent.change(screen.getByRole('slider', { name: '推理强度' }), { target: { value: '3' } }); await userEvent.keyboard('{Escape}');
-  await userEvent.type(screen.getByLabelText('Task goal'), 'do work');
-  await userEvent.click(screen.getByRole('button', { name: 'Start task' }));
+  await userEvent.type(screen.getByLabelText('任务目标'), 'do work');
+  await userEvent.click(screen.getByRole('button', { name: '启动任务' }));
   await waitFor(() => expect(posted).toMatchObject({ reasoningEffort: 'max' }));
   expect(screen.getByRole('button', { name: /推理强度/ })).toBeDisabled();
   release(); await waitFor(() => expect(h.getAccepted()).not.toBeNull());
@@ -290,63 +290,63 @@ describe('AgentTaskPanel preconditions', () => {
       workspaceSessionStore.getState().setDirty(parseProjectRelativePath('pom.xml'), true);
     });
     renderPanel();
-    expect(screen.getByRole('button', { name: 'Start task' })).toBeDisabled();
-    expect(screen.getByText('DIRTY_FILES')).toBeInTheDocument();
-    await user.type(screen.getByLabelText('Task goal'), 'Fix the failing test');
-    expect(screen.getByRole('button', { name: 'Start task' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: '启动任务' })).toBeDisabled();
+    expect(screen.getByText('请先保存或放弃未保存的修改')).toBeInTheDocument();
+    await user.type(screen.getByLabelText('任务目标'), 'Fix the failing test');
+    expect(screen.getByRole('button', { name: '启动任务' })).toBeDisabled();
   });
 
   it('does not POST while a save or dependency write is pending', () => {
     const fetchSpy = vi.spyOn(globalThis, 'fetch');
     renderPanel({ writePending: true });
-    expect(screen.getByRole('button', { name: 'Start task' })).toBeDisabled();
-    expect(screen.getByText('WRITE_PENDING')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '启动任务' })).toBeDisabled();
+    expect(screen.getByText('文件正在保存，请稍候')).toBeInTheDocument();
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
   it('allows a running application but keeps reload blocked', () => {
     const fetchSpy = vi.spyOn(globalThis, 'fetch');
     renderPanel({ hasActiveRun: true });
-    expect(screen.getByRole('button', { name: 'Start task' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: '启动任务' })).toBeEnabled();
     renderPanel({ reloading: true });
-    expect(screen.getAllByText('RELOADING').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('正在重新加载工作区').length).toBeGreaterThan(0);
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
   it('blocks unknown Run authority explicitly', () => {
     renderPanel({ hasActiveRun: true, runAuthorityKnown: false });
-    expect(screen.getByRole('button', { name: 'Start task' })).toBeDisabled();
-    expect(screen.getByText('RUN_AUTHORITY_UNKNOWN')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '启动任务' })).toBeDisabled();
+    expect(screen.getByText('正在核对运行状态，请稍候')).toBeInTheDocument();
   });
 
   it('does not POST while the workspace revision is unknown', () => {
     const fetchSpy = vi.spyOn(globalThis, 'fetch');
     queryClient.removeQueries({ queryKey: fileKeys.revision(PROJECT_ID) });
     renderPanel();
-    expect(screen.getByRole('button', { name: 'Start task' })).toBeDisabled();
-    expect(screen.getByText('REVISION_UNAVAILABLE')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '启动任务' })).toBeDisabled();
+    expect(screen.getByText('暂时无法获取工作区版本')).toBeInTheDocument();
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
   it('reacts when a missing workspace revision is restored from a file read', async () => {
     queryClient.removeQueries({ queryKey: fileKeys.revision(PROJECT_ID) });
     renderPanel();
-    expect(screen.getByRole('button', { name: 'Start task' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: '启动任务' })).toBeDisabled();
 
     act(() => {
       queryClient.setQueryData(fileKeys.revision(PROJECT_ID), '8');
     });
 
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: 'Start task' })).toBeEnabled();
+      expect(screen.getByRole('button', { name: '启动任务' })).toBeEnabled();
     });
   });
 
   it('disables Start while the polled agent task occupies the workspace', () => {
     const fetchSpy = vi.spyOn(globalThis, 'fetch');
     renderPanel({ task: occupyingTask() });
-    expect(screen.getByRole('button', { name: 'Start task' })).toBeDisabled();
-    expect(screen.getByText('TASK_ACTIVE')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '启动任务' })).toBeDisabled();
+    expect(screen.getByText('已有 AI 任务正在执行')).toBeInTheDocument();
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 });
@@ -370,10 +370,10 @@ describe('AgentTaskPanel start flow', () => {
       }),
     );
     const harness = renderPanel();
-    await user.type(screen.getByLabelText('Task goal'), 'Fix the failing test');
-    await user.click(screen.getByRole('button', { name: 'Start task' }));
+    await user.type(screen.getByLabelText('任务目标'), 'Fix the failing test');
+    await user.click(screen.getByRole('button', { name: '启动任务' }));
     await waitFor(() => {
-      expect(harness.getAccepted()?.state).toBe('QUEUED');
+      expect(harness.getAccepted()?.state).toBe("QUEUED");
     });
     expect(bodies).toHaveLength(1);
     expect(bodies[0]?.prompt).toBe('Fix the failing test');
@@ -393,8 +393,8 @@ describe('AgentTaskPanel start flow', () => {
     const user = userEvent.setup();
     const fetchSpy = vi.spyOn(globalThis, 'fetch');
     renderPanel();
-    await user.click(screen.getByRole('button', { name: 'Start task' }));
-    expect(await screen.findByRole('alert')).toHaveTextContent(/enter a goal/i);
+    await user.click(screen.getByRole('button', { name: '启动任务' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent(/请输入任务目标/i);
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
@@ -427,8 +427,8 @@ describe('AgentTaskPanel start flow', () => {
       }),
     );
     const harness = renderPanel();
-    await user.type(screen.getByLabelText('Task goal'), 'Fix the failing test');
-    await user.click(screen.getByRole('button', { name: 'Start task' }));
+    await user.type(screen.getByLabelText('任务目标'), 'Fix the failing test');
+    await user.click(screen.getByRole('button', { name: '启动任务' }));
     await waitFor(() => {
       expect(harness.getAccepted()?.taskId).toBe(postedTaskId);
     });
@@ -458,8 +458,8 @@ describe('AgentTaskPanel start flow', () => {
       ),
     );
     renderPanel();
-    await user.type(screen.getByLabelText('Task goal'), 'Fix the failing test');
-    await user.click(screen.getByRole('button', { name: 'Start task' }));
+    await user.type(screen.getByLabelText('任务目标'), 'Fix the failing test');
+    await user.click(screen.getByRole('button', { name: '启动任务' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('AI_TASK_ACTIVE');
   });
 
@@ -475,8 +475,8 @@ describe('AgentTaskPanel start flow', () => {
       ),
     );
     renderPanel();
-    await user.type(screen.getByLabelText('Task goal'), 'Fix the failing test');
-    await user.click(screen.getByRole('button', { name: 'Start task' }));
+    await user.type(screen.getByLabelText('任务目标'), 'Fix the failing test');
+    await user.click(screen.getByRole('button', { name: '启动任务' }));
     expect(await screen.findByRole('alert')).toBeInTheDocument();
     expect(sessionStorage.getItem(agentTaskStorageKey(USER_ID, PROJECT_ID))).toBeNull();
   });
@@ -485,30 +485,30 @@ describe('AgentTaskPanel start flow', () => {
 describe('AgentTaskPanel close flow', () => {
   it('keeps current task ending reachable while a historical task is displayed', async () => {
     const harness = renderPanel({ task: occupyingTask(), displayTask: occupyingTask({ taskId: 'history-task', state: 'COMPLETED', writesLocked: false }) });
-    expect(screen.getByText(/Ending the AI task may stop applications it started/)).toBeVisible();
-    await userEvent.click(screen.getByRole('button', { name: 'End task' }));
+    expect(screen.getByText(/结束 AI 任务可能会停止由该任务启动的应用/)).toBeVisible();
+    await userEvent.click(screen.getByRole('button', { name: '结束任务' }));
     expect(harness.getCloseCalls()).toBe(1);
-    expect(screen.getByRole('button', { name: 'Start task' })).toBeDisabled();
-    expect(screen.getByText(/AI task time budget is separate/)).toBeVisible();
+    expect(screen.getByRole('button', { name: '启动任务' })).toBeDisabled();
+    expect(screen.getByText(/AI 任务时限与应用启动、服务运行时限分别计算/)).toBeVisible();
   });
 
   it('offers retry ending and shows settlement without releasing the task identity', async () => {
     sessionStorage.setItem(agentTaskStorageKey(USER_ID, PROJECT_ID), TASK_ID);
     const harness = renderPanel({ task: occupyingTask({ state: 'NEEDS_ATTENTION', failureCode: 'AI_CLOSING' }) });
-    expect(screen.getByRole('status', { name: 'Task settlement' })).toHaveTextContent(/Waiting for confirmation/);
-    await userEvent.click(screen.getByRole('button', { name: 'Retry ending task' }));
+    expect(screen.getByRole("status", { name: '任务结束确认' })).toHaveTextContent(/正在等待结束确认/);
+    await userEvent.click(screen.getByRole('button', { name: '重试结束任务' }));
     expect(harness.getCloseCalls()).toBe(1);
     expect(sessionStorage.getItem(agentTaskStorageKey(USER_ID, PROJECT_ID))).toBe(TASK_ID);
-    expect(screen.getByRole('button', { name: 'Start task' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: '启动任务' })).toBeDisabled();
   });
 
   it('offers End task for an occupying task and calls it only on the explicit click', async () => {
     const user = userEvent.setup();
     const harness = renderPanel({ task: occupyingTask() });
-    expect(screen.getByRole('button', { name: 'End task' })).toBeEnabled();
-    await user.click(screen.getByRole('button', { name: 'End task' }));
+    expect(screen.getByRole('button', { name: '结束任务' })).toBeEnabled();
+    await user.click(screen.getByRole('button', { name: '结束任务' }));
     expect(harness.getCloseCalls()).toBe(1);
-    await user.click(screen.getByRole('button', { name: 'End task' }));
+    await user.click(screen.getByRole('button', { name: '结束任务' }));
     expect(harness.getCloseCalls()).toBe(2);
   });
 
@@ -540,12 +540,12 @@ describe('AgentTaskPanel close flow', () => {
         ],
       }),
     });
-    expect(screen.getByText('FAILED')).toBeInTheDocument();
+    expect(screen.getByText('执行失败')).toBeInTheDocument();
     expect(screen.getByText('The demo endpoint still fails to compile')).toBeInTheDocument();
     expect(screen.getByText('AI_CLOSED')).toBeInTheDocument();
     expect(screen.getByText('src/main/java/demo/DemoController.java')).toBeInTheDocument();
     // A settled task releases the project: the next goal can start immediately.
-    expect(screen.getByRole('button', { name: 'Start task' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: '启动任务' })).toBeEnabled();
   });
 
   it('renders the legacy assistant summary as Markdown', () => {
@@ -557,8 +557,8 @@ describe('AgentTaskPanel close flow', () => {
 
   it('shows a poll failure without pretending the project is free', () => {
     renderPanel({ task: null, pollFailed: true });
-    expect(screen.getByRole('alert')).toHaveTextContent(/could not load the agent task status/i);
-    expect(screen.getByRole('button', { name: 'Start task' })).toBeDisabled();
+    expect(screen.getByRole('alert')).toHaveTextContent(/无法读取 AI 任务状态/i);
+    expect(screen.getByRole('button', { name: '启动任务' })).toBeDisabled();
   });
 });
 
@@ -650,9 +650,9 @@ describe('AgentTaskPanel build results (review fix I9)', () => {
     };
     server.use(http.get(`${TASKS_URL}/${TASK_ID}/tools/empty-id`, () => HttpResponse.json({ toolCallId: 'empty-id', toolName: name, data })));
     renderPanel({ task: occupyingTask({ progress: [{ seq: 1, kind: 'tool_end', text: `${name} empty-id`, truncated: false }] }), onViewRun });
-    await userEvent.setup().click(screen.getByRole('button', { name: name === 'application' ? 'View application result' : 'View HTTP result' }));
-    expect(await screen.findByText(name === 'application' ? 'Application: status' : /VALIDATION_ERROR/)).toBeInTheDocument();
-    const invalidNavigation = screen.queryByRole('button', { name: 'View run' });
+    await userEvent.setup().click(screen.getByRole('button', { name: name === 'application' ? '查看应用操作结果' : '查看HTTP 请求结果' }));
+    expect(await screen.findByText(name === 'application' ? '应用操作： 读取状态' : /VALIDATION_ERROR/)).toBeInTheDocument();
+    const invalidNavigation = screen.queryByRole('button', { name: '查看运行' });
     if (invalidNavigation !== null) await userEvent.setup().click(invalidNavigation);
     expect(onViewRun).not.toHaveBeenCalled();
     expect(invalidNavigation).not.toBeInTheDocument();
@@ -681,19 +681,19 @@ describe('AgentTaskPanel build results (review fix I9)', () => {
     };
     const view = render(<AppProviders><AgentTaskPanel {...props} /></AppProviders>);
     const user = userEvent.setup();
-    await user.click(screen.getByRole('button', { name: 'View build result' }));
+    await user.click(screen.getByRole('button', { name: '查看构建结果' }));
     await waitFor(() => expect(releaseOld).toBeDefined());
     view.rerender(<AppProviders><AgentTaskPanel {...props} task={{ ...props.task!, taskId: newTaskId }} /></AppProviders>);
-    await user.click(screen.getByRole('button', { name: 'View build result' }));
+    await user.click(screen.getByRole('button', { name: '查看构建结果' }));
     await waitFor(() => expect(releaseNew).toBeDefined());
     await act(async () => { releaseOld!(); });
     await waitFor(() => expect(oldAnswered).toBe(true));
-    expect(screen.getByRole('button', { name: 'View build result' })).toBeDisabled();
-    expect(screen.queryByText('Could not load the build result.')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '查看构建结果' })).toBeDisabled();
+    expect(screen.queryByText('无法读取构建结果。')).not.toBeInTheDocument();
     expect(screen.queryByText('OLD')).not.toBeInTheDocument();
     await act(async () => { releaseNew!(); });
     expect(await screen.findByText('CURRENT')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'View build result' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: '查看构建结果' })).toBeEnabled();
   });
 
   it('shows a real application rejection without fabricating Run facts', async () => {
@@ -701,9 +701,9 @@ describe('AgentTaskPanel build results (review fix I9)', () => {
       toolCallId: 'reject-1', toolName: 'application', data: { error: { code: 'AI_APPLICATION_START_LIMIT', message: 'Application start limit reached' } },
     })));
     renderPanel({ task: occupyingTask({ progress: [{ seq: 1, kind: 'tool_end', text: 'application reject-1', truncated: false }] }) });
-    await userEvent.setup().click(screen.getByRole('button', { name: 'View application result' }));
+    await userEvent.setup().click(screen.getByRole('button', { name: '查看应用操作结果' }));
     expect(await screen.findByText(/AI_APPLICATION_START_LIMIT/)).toBeInTheDocument();
-    expect(screen.queryByText(/Ready: yes/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/是否就绪： 是/)).not.toBeInTheDocument();
   });
 
   it.each([
@@ -713,9 +713,9 @@ describe('AgentTaskPanel build results (review fix I9)', () => {
   ])('refuses malformed or mismatched %s result data', async (name, data) => {
     server.use(http.get(`${TASKS_URL}/${TASK_ID}/tools/bad-1`, () => HttpResponse.json({ toolCallId: 'bad-1', toolName: name, data })));
     renderPanel({ task: occupyingTask({ progress: [{ seq: 1, kind: 'tool_end', text: `${name} bad-1`, truncated: false }] }) });
-    await userEvent.setup().click(screen.getByRole('button', { name: name === 'application' ? 'View application result' : 'View HTTP result' }));
-    expect(await screen.findByText('Result unavailable')).toBeInTheDocument();
-    expect(screen.queryByText(/Ready: yes|Status: 200/)).not.toBeInTheDocument();
+    await userEvent.setup().click(screen.getByRole('button', { name: name === 'application' ? '查看应用操作结果' : '查看HTTP 请求结果' }));
+    expect(await screen.findByText('结果暂不可用')).toBeInTheDocument();
+    expect(screen.queryByText(/是否就绪： 是|状态码： 200/)).not.toBeInTheDocument();
   });
 
   it.each(['task', 'project', 'unmount'] as const)('ignores late tool results after a %s switch', async (switchKind) => {
@@ -732,14 +732,14 @@ describe('AgentTaskPanel build results (review fix I9)', () => {
       onTaskAccepted: vi.fn(), onClose: vi.fn(),
     };
     const view = render(<AppProviders><AgentTaskPanel {...props} /></AppProviders>);
-    await user.click(screen.getByRole('button', { name: 'View build result' }));
+    await user.click(screen.getByRole('button', { name: '查看构建结果' }));
     await waitFor(() => expect(release).toBeDefined());
     if (switchKind === 'unmount') view.unmount();
     else view.rerender(<AppProviders><AgentTaskPanel {...props} projectId={switchKind === 'project' ? 'other-project' : PROJECT_ID} task={switchKind === 'task' ? { ...original, taskId: 'other-task' } : original} /></AppProviders>);
     await act(async () => { release!(); });
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(screen.queryByText('STALE-OUTPUT')).not.toBeInTheDocument();
-    if (switchKind !== 'unmount') expect(screen.getByRole('button', { name: 'View build result' })).toBeEnabled();
+    if (switchKind !== 'unmount') expect(screen.getByRole('button', { name: '查看构建结果' })).toBeEnabled();
   });
 
   it.each([
@@ -759,14 +759,14 @@ describe('AgentTaskPanel build results (review fix I9)', () => {
       },
     })));
     renderPanel({ task: occupyingTask({ progress: [{ seq: 1, kind: 'tool_end', text: 'application app-1', truncated: false }] }), onViewRun });
-    await user.click(screen.getByRole('button', { name: 'View application result' }));
+    await user.click(screen.getByRole('button', { name: '查看应用操作结果' }));
     expect(await screen.findByText(/run-real/)).toBeInTheDocument();
-    expect(screen.getByText(/Revision: 19/)).toBeInTheDocument();
-    expect(screen.getByText(`Ready: ${ready}`)).toBeInTheDocument();
-    expect(screen.getByText(/Stopped confirmed: no/)).toBeInTheDocument();
+    expect(screen.getByText(/工作区版本： 19/)).toBeInTheDocument();
+    expect(screen.getByText(`是否就绪： ${ready === 'yes' ? '是' : '否'}`)).toBeInTheDocument();
+    expect(screen.getByText(/停止已确认： 否/)).toBeInTheDocument();
     expect(screen.getByText(/<script>literal-log<\/script>/)).toBeInTheDocument();
     expect(document.querySelector('script')).toBeNull();
-    await user.click(screen.getByRole('button', { name: 'View run' }));
+    await user.click(screen.getByRole('button', { name: '查看运行' }));
     expect(onViewRun).toHaveBeenCalledWith('run-real');
   });
 
@@ -780,11 +780,11 @@ describe('AgentTaskPanel build results (review fix I9)', () => {
       },
     })));
     renderPanel({ task: occupyingTask({ progress: [{ seq: 1, kind: 'tool_end', text: 'app_http_get http-1', truncated: false }] }) });
-    await user.click(screen.getByRole('button', { name: 'View HTTP result' }));
-    expect(await screen.findByText(/Status: 500/)).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '查看HTTP 请求结果' }));
+    expect(await screen.findByText(/状态码： 500/)).toBeInTheDocument();
     expect(screen.getByText(/AI_APP_RUN_CHANGED/)).toBeInTheDocument();
     expect(screen.getByText(/<img src=x onerror=alert\(1\)>/)).toBeInTheDocument();
-    expect(screen.getByText(/truncated/)).toBeInTheDocument();
+    expect(screen.getByText(/内容已截断/)).toBeInTheDocument();
     expect(document.querySelector('img')).toBeNull();
   });
 
@@ -807,16 +807,16 @@ describe('AgentTaskPanel build results (review fix I9)', () => {
       return HttpResponse.json({ toolCallId: id, toolName: name, data });
     }));
     renderPanel({ task: occupyingTask({ progress: [{ seq: 1, kind: 'tool_end', text: `${name} ${id}`, truncated: false }] }), onViewRun });
-    const label = name === 'build' ? 'View build result' : name === 'application' ? 'View application result' : 'View HTTP result';
+    const label = name === 'build' ? '查看构建结果' : name === 'application' ? '查看应用操作结果' : '查看HTTP 请求结果';
     await user.click(screen.getByRole('button', { name: label }));
     expect(requestedIds).toEqual([id]);
     if (name === 'build') {
       expect(await screen.findByText('PROVIDER BUILD SUCCESS')).toBeInTheDocument();
       expect(screen.getByText('0')).toBeInTheDocument();
     } else {
-      expect(await screen.findByText(name === 'application' ? 'State: RUNNING' : 'Status: 200')).toBeInTheDocument();
+      expect(await screen.findByText(name === 'application' ? '状态： 正在执行' : '状态码： 200')).toBeInTheDocument();
       if (name === 'app_http_get') expect(screen.getByText('{"message":"Hello Pi underscore"}')).toBeInTheDocument();
-      await user.click(screen.getByRole('button', { name: 'View run' }));
+      await user.click(screen.getByRole('button', { name: '查看运行' }));
       expect(onViewRun).toHaveBeenCalledWith(runId);
     }
   });
@@ -848,20 +848,20 @@ describe('AgentTaskPanel build results (review fix I9)', () => {
       })),
     );
     renderPanel({ task: taskWithSettledBuild() });
-    await user.click(screen.getByRole('button', { name: 'View build result' }));
+    await user.click(screen.getByRole('button', { name: '查看构建结果' }));
     expect(await screen.findByText('[ERROR] BUILD FAILURE')).toBeInTheDocument();
-    expect(screen.getByText('Exit code:')).toBeInTheDocument();
+    expect(screen.getByText('退出码：')).toBeInTheDocument();
     expect(screen.getByText('1')).toBeInTheDocument();
-    expect(screen.getByText('Cleanup confirmed:')).toBeInTheDocument();
-    expect(screen.getByText('yes')).toBeInTheDocument();
+    expect(screen.getByText('清理已确认：')).toBeInTheDocument();
+    expect(screen.getByText('是')).toBeInTheDocument();
   });
 
   it('shows an honest error when the build result is not readable', async () => {
     const user = userEvent.setup();
     server.use(http.get(TOOLS_URL, () => new HttpResponse(null, { status: 404 })));
     renderPanel({ task: taskWithSettledBuild() });
-    await user.click(screen.getByRole('button', { name: 'View build result' }));
-    expect(await screen.findByText('Could not load the build result.')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '查看构建结果' }));
+    expect(await screen.findByText('无法读取构建结果。')).toBeInTheDocument();
   });
 
   it('does not offer build results for non-build tool items', () => {
@@ -870,7 +870,7 @@ describe('AgentTaskPanel build results (review fix I9)', () => {
         progress: [{ seq: 1, kind: 'tool_end', text: 'list_files call-3', truncated: false }],
       }),
     });
-    expect(screen.queryByRole('button', { name: 'View build result' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '查看构建结果' })).not.toBeInTheDocument();
   });
 });
 
@@ -905,7 +905,7 @@ describe('AgentTaskPanel verified-write snapshot contract (review fix I1)', () =
         changedPaths: ['src/main/java/demo/DemoController.java', 'pom.xml'],
       }),
     });
-    expect(screen.getByText('Changed paths')).toBeInTheDocument();
+    expect(screen.getByText('修改的文件')).toBeInTheDocument();
     expect(screen.getByText('src/main/java/demo/DemoController.java')).toBeInTheDocument();
     expect(screen.getByText('pom.xml')).toBeInTheDocument();
   });

@@ -29,12 +29,12 @@ export function RunHistory({
 }: RunHistoryProps) {
   return (
     <aside
-      aria-label="Recent runs"
+      aria-label="最近运行"
       className="lab-run-history flex shrink-0 flex-col overflow-hidden border-r"
     >
-      <h2 className="lab-run-history-heading">运行历史 / HISTORY</h2>
+      <h2 className="lab-run-history-heading">运行历史</h2>
       {isPending && items.length === 0 ? (
-        <div role="status" aria-label="Loading recent runs" className="flex justify-center p-3">
+        <div role="status" aria-label="正在加载运行历史" className="flex justify-center p-3">
           <Spinner />
         </div>
       ) : null}
@@ -45,17 +45,17 @@ export function RunHistory({
             type="button"
             className="h-8 rounded-md px-2 text-sm hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
             onClick={onRetry}
-            aria-label="Retry loading run history"
+            aria-label="重试加载运行历史"
           >
             重试加载运行历史
           </button>
         </div>
       ) : null}
       {!isPending && !isError && items.length === 0 ? (
-        <div className="p-3 text-xs text-muted-foreground"><p>暂无运行记录</p><p className="lab-machine-state mt-2">No recent runs</p></div>
+        <p className="p-3 text-xs text-muted-foreground">暂无运行记录</p>
       ) : null}
       {items.length > 0 ? (
-        <ul role="list" aria-label="Recent runs" className="min-h-0 flex-1 overflow-auto py-1">
+        <ul role="list" aria-label="最近运行" className="min-h-0 flex-1 overflow-auto py-1">
           {items.map((item) => {
             const selected = item.id === selectedRunId;
             return (
@@ -63,9 +63,9 @@ export function RunHistory({
                 <button
                   type="button"
                   data-run-id={item.id}
-                  aria-label={`${item.createdAt} ${item.state}`}
+                  aria-label={`${item.createdAt} ${runStateLabels[item.state]}`}
                   aria-current={selected ? 'true' : undefined}
-                  title={`${item.createdAt} ${item.state}`}
+                  title={`${item.createdAt} ${runStateLabels[item.state]}`}
                   className={cn(
                     'flex w-full flex-col items-start truncate px-2 py-1 text-left text-sm hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none',
                     selected ? 'bg-accent text-accent-foreground' : 'text-foreground',
@@ -87,7 +87,7 @@ export function RunHistory({
           type="button"
           className="h-8 shrink-0 border-t px-2 text-sm hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none disabled:opacity-64"
           disabled={isFetchingNextPage}
-          aria-label="Load more"
+          aria-label="加载更多"
           onClick={onLoadMore}
         >
           {isFetchingNextPage ? '正在加载…' : '加载更多'}

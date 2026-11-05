@@ -1,9 +1,12 @@
 # 项目进度
 
-更新：2026-11-05。2026-10-31 曾按用户要求，将 `codex/ai-integration@e1da794` 的实现、验收记录及文档归档以单父提交同步到 `master`，保留 master 原有 IDEA 配置；不创建 merge 提交，AI 分支和工作树继续保留。本轮 Python 后续变更仍在独立分支，未合并到 master；各项真实检查范围见对应记录。
+更新：2026-11-05。新版 AI 对话工作台和 Node.js runtime 已与 master 的 Python 工具链整合，当前按本地验证范围准备 PR；不部署。最新范围见[PR 整合验收](../poc4/docs/evidence/assistant-studio/2026-11-05-pr-integration.md)，历史验收范围由对应记录负责。
+
+2026-10-31 历史整合：按用户要求，将 `codex/ai-integration@e1da794` 的实现、验收记录及文档归档以单父提交同步到 `master`，保留 master 原有 IDEA 配置；不创建 merge 提交，AI 分支和工作树继续保留。以下历史云端结论不是本次重新执行的集群检查。
 
 ## 当前结论
 
+- 新版 AI 对话工作台：聊天/任务、双布局、工具摘要、默认按文件审阅（可展开逐块选择）、自动应用及个人模型配置已本地实现，并与八模板可信环境整合；backend 分批完整覆盖、前端完整回归与 mock 浏览器流程 PASS，范围见[PR 整合验收](../poc4/docs/evidence/assistant-studio/2026-11-05-pr-integration.md)。真实模型、集群任务、部署和人工验收 NOT_RUN。
 - AI四模板环境与Python工具链取得 **AI_PYTHON_CLOSED_LOOP_PASS（原设计E1–R1范围）**：两类Python真实闭环、依赖故障/回滚、独立重启、自动/手动压缩、图片和B2负面/真实UI全部闭合，独立审查APPROVE。自动压缩中发现空摘要丢目标已TDD修复并发布worker66d5968；历史失败不改写。详见[最终验收](../poc4/docs/evidence/ai-python-environment/final-verification-20261105.md)，不授予全平台压力/故障/预算耗尽保证。
 - 云工作台、Java 和 Python 已按各自验收范围交付；旧 6A/6B gate 和已完成计划不再是默认待办。
 - AI 已交付代码修改/构建测试、应用反馈、多轮会话、上下文压缩及展示改进。阶段一已通过；阶段二工程验收仍为 **PAUSED / NOT_GRANTED**；阶段三由用户确认实际 CRUD 使用已完成使命。
@@ -31,6 +34,8 @@
 | Cloud IDE 与 AI 展示 | master UI 已同步进 AI 分支；ThinkRail、用量圈及 2026-10-21 登录/洞察文案已按记录发布，详细回归和发布入口归前端文档 | [前端记录](../poc4/frontend/README.md) |
 
 ## 工作台与语言运行时
+
+2026-11-04 本地新增 Node.js 24 的 JavaScript / TypeScript 控制台和 Web 模板、隔离运行器及 AI 构建选择；当前未部署，验证范围见 [Node.js 本地验收](../poc4/docs/evidence/node-runtime/2026-11-04.md)。
 
 | 专题 | 已记录结果与边界 | 证据入口 |
 | --- | --- | --- |

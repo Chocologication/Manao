@@ -1,3 +1,4 @@
+import { NODE_TEMPLATE_FILES } from './nodeTemplates';
 import type { FileBlockReason, FileRenderMode } from '../contracts/file';
 
 const TEXT_LIMIT_BYTES = 20 * 1024 * 1024;
@@ -94,6 +95,10 @@ function isMarkdown(path: string): boolean {
 
 function languageFor(path: string): string {
   const name = fileName(path);
+  if (/\.(?:js|mjs|cjs)$/.test(name)) return 'javascript';
+  if (/\.(?:ts|mts|cts)$/.test(name)) return 'typescript';
+  if (name.endsWith('.json')) return 'json';
+  if (/\.ya?ml$/.test(name)) return 'yaml';
   if (name.endsWith('.java')) {
     return 'java';
   }
@@ -413,9 +418,10 @@ export function removeWorkspace(projectId: string): void {
   workspaces.delete(projectId);
 }
 
-export function ensureWorkspace(projectId: string): void {
+export function ensureWorkspace(projectId: string, templateId?: string): void {
   if (!workspaces.has(projectId)) {
-    workspaces.set(projectId, emptyWorkspace(1));
+    const files = templateId ? NODE_TEMPLATE_FILES[templateId] : undefined;
+    workspaces.set(projectId, files ? buildWorkspace(1, Object.entries(files).map(([path, textContent]) => ({ path, textContent }))) : emptyWorkspace(1));
   }
 }
 

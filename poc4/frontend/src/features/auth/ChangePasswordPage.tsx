@@ -3,7 +3,8 @@ import { Link, useNavigate } from 'react-router';
 import { authErrorCode, changePassword, isNetworkError } from '../../api/authApi';
 import { authSession, postLoginNotice } from '../../app/appRuntime';
 import { useAuth } from './AuthProvider';
-import { AuthField, AuthPageFrame, validateNewPassword } from './RegisterPage';
+import { AuthField, AuthPageFrame } from './AuthPageFrame';
+import { validateNewPassword } from './registrationValidation';
 
 const CURRENT_INPUT = '当前密码';
 const NEW_INPUT = '新密码';
@@ -86,7 +87,7 @@ export function ChangePasswordPage() {
   const footer = (
     <span>
       修改密码后需要重新登录；后台运行中的任务不会停止。{' '}
-      <Link to="/projects" className="text-[#dfff82] hover:underline">
+      <Link to="/projects" className="entry__text-link">
         返回工作台
       </Link>
     </span>
@@ -95,7 +96,7 @@ export function ChangePasswordPage() {
   if (snapshot.status !== 'authenticated') {
     return (
       <AuthPageFrame title="修改密码" subtitle="为当前登录账号设置新密码。" footer={footer}>
-        <p role="status" className="rounded-md border border-amber-300/30 bg-amber-400/10 px-3 py-2 text-sm text-amber-100">
+        <p role="status" className="entry__notice">
           当前未登录，请先登录后再修改密码。
         </p>
       </AuthPageFrame>
@@ -108,7 +109,7 @@ export function ChangePasswordPage() {
       subtitle="修改成功后，当前账号的所有旧登录凭据和显示连接都会失效，需要重新登录。"
       footer={footer}
     >
-      <form onSubmit={onSubmit} noValidate className="space-y-4">
+      <form onSubmit={onSubmit} noValidate className="entry__fields">
         <AuthField
           id="change-current-password"
           label={CURRENT_INPUT}
@@ -140,14 +141,14 @@ export function ChangePasswordPage() {
           disabled={submitting}
         />
         {error !== null ? (
-          <p role="alert" className="rounded-md border border-red-300/25 bg-red-400/10 px-3 py-2 text-sm text-red-100">
+          <p role="alert" className="entry__error">
             {error}
           </p>
         ) : null}
         <button
           type="submit"
           disabled={submitting}
-          className="h-11 w-full rounded-md border border-[#dfff82] bg-[#dfff82] px-4 text-sm font-semibold text-[#10140d] transition hover:bg-[#edffb2] disabled:cursor-default disabled:opacity-55"
+          className="entry__submit"
         >
           {submitting ? '正在修改…' : SUBMIT_LABEL}
         </button>

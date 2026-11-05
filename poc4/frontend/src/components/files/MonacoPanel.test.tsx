@@ -23,7 +23,7 @@ describe('MonacoPanel', () => {
       toModelUri('pom.xml').toString()
     );
 
-    await user.click(screen.getByRole('button', { name: 'Close pom.xml' }));
+    await user.click(screen.getByRole('button', { name: "关闭 pom.xml" }));
 
     await waitFor(() => {
       expect(monacoModels.disposeModel).toHaveBeenCalledWith('pom.xml');

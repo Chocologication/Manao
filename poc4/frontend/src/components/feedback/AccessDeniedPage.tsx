@@ -6,9 +6,9 @@ export function AccessDeniedPage() {
   return (
     <div className="lab-access-denied">
       <ShieldAlert size={30} />
-      <InlineAlert>Access denied</InlineAlert>
+      <InlineAlert>无权访问</InlineAlert>
       <Link to="/projects" className="text-sm text-foreground underline-offset-4 hover:underline">
-        Back to projects
+        返回项目列表
       </Link>
     </div>
   );

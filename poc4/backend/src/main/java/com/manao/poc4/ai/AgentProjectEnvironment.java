@@ -38,18 +38,18 @@ public record AgentProjectEnvironment(int schemaVersion, String templateId, Stri
                 || !frameworkFor(template).equals(framework)
                 || !(template.isService() ? "service" : "task").equals(executionKind)
                 || !entrypointFor(template).equals(entrypoint)
-                || !(python ? "python-v1" : "java-v1").equals(filePolicy)
+                || !filePolicyFor(template).equals(filePolicy)
                 || !goalsFor(template).equals(buildGoals)
                 || !(python ? List.of("main", "test") : List.of()).equals(dependencyGroups)
                 || !toolsFor(template).equals(tools)
                 || (python ? !RunPolicy.RuntimeInfo.Python.DEFAULT.pythonVersion().equals(pythonVersion)
                            : pythonVersion != null)
-                || (template == RuntimeTemplate.PYTHON_CONSOLE && (mysql || redis))) {
+                || ((python || template.isNode()) && !template.isService() && (mysql || redis))) {
             throw invalid();
         }
         if (template.isService()) {
             if (primaryPort == null || primaryPort < 1 || primaryPort > 65535
-                    || !(python ? "/health/ready" : "/actuator/health").equals(readinessPath)) throw invalid();
+                    || !readinessPathFor(template).equals(readinessPath)) throw invalid();
         } else if (primaryPort != null || readinessPath != null) {
             throw invalid();
         }
@@ -98,7 +98,17 @@ public record AgentProjectEnvironment(int schemaVersion, String templateId, Stri
             case JAVA_CONSOLE, JAVA_SPRING_BOOT_WEB -> "com.example.app.App";
             case PYTHON_CONSOLE -> "main.py";
             case PYTHON_FASTAPI_WEB -> "app.main:app";
+            case NODE_JAVASCRIPT_CONSOLE, NODE_JAVASCRIPT_WEB -> "src/main.js";
+            case NODE_TYPESCRIPT_CONSOLE, NODE_TYPESCRIPT_WEB -> "src/main.ts";
         };
+    }
+
+    static String filePolicyFor(RuntimeTemplate template) {
+        return template.isNode() ? "node-v1" : "python".equals(template.language()) ? "python-v1" : "java-v1";
+    }
+
+    static String readinessPathFor(RuntimeTemplate template) {
+        return "java".equals(template.language()) ? "/actuator/health" : "/health/ready";
     }
 
     static List<String> goalsFor(RuntimeTemplate template) {

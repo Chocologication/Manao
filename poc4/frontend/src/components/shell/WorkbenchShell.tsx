@@ -30,7 +30,7 @@ import { type RunErrorLocation } from '@/components/runs/runErrorLocator';
 import { resolveErrorFile } from '@/features/files/resolveErrorFile';
 import { Button } from '@/components/ui/button';
 import type { AgentTaskSnapshot } from '@/contracts/agentTask';
-import { parseRunId, type RunId } from '@/contracts/run';
+import { parseRunId, templateRunDisplay, type RunId } from '@/contracts/run';
 import type { ProjectSummary } from '@/contracts/project';
 import { isPythonRuntimeTemplate } from '@/contracts/project';
 import {
@@ -55,8 +55,8 @@ import {
 } from '@/features/editor/unsavedChangesGuard';
 import { useWorkspaceSession } from '@/features/editor/workspaceSession';
 import {
-  AgentConversationPanel,
-} from '@/features/ai/AgentConversationPanel';
+  StudioConversationPanel,
+} from '@/features/ai/studio/StudioConversationPanel';
 import {
   agentTaskKeys,
   useCloseAgentTaskMutation,
@@ -117,9 +117,9 @@ const panelSurfaceClassName =
 
 function authorityErrorMessage(error: unknown): string {
   if (error instanceof Error && /network request failed/i.test(error.message)) {
-    return 'Network request failed';
+    return '网络请求失败，请检查连接后重试';
   }
-  return 'Unable to load run authority';
+  return '无法读取运行状态';
 }
 
 export function WorkbenchShell({ project }: { project: ProjectSummary }) {
@@ -136,6 +136,10 @@ export function WorkbenchShell({ project }: { project: ProjectSummary }) {
   const historyPanelRef = useRef<HTMLElement>(null);
   const [historyTarget, setHistoryTarget] = useState<HTMLDivElement | null>(null);
   const aiMode = activePanel === 'agent';
+  const [studioLayout, setStudioLayout] = useState<'main' | 'side'>(() => { try { return localStorage.getItem('manao.studio.layout') === 'side' ? 'side' : 'main'; } catch { return 'main'; } });
+  const [studioWidth, setStudioWidth] = useState(520);
+  const sideChat = aiMode && studioLayout === 'side';
+  const editorVisible = activePanel === 'file' || sideChat;
   const fileToggleRef = useRef<HTMLButtonElement>(null);
   const insightsToggleRef = useRef<HTMLButtonElement>(null);
   const drawerReturnFocusRef = useRef<HTMLElement | null>(null);
@@ -616,15 +620,15 @@ export function WorkbenchShell({ project }: { project: ProjectSummary }) {
     <WorkspaceFileReadsPaused.Provider value={reloadingWorkspace}>
     <div className="workbench-shell flex h-full min-h-0 w-full min-w-0 flex-col overflow-hidden bg-background text-foreground">
       <a href={`#${EDITOR_REGION_ID}`} className="skip-to-editor" onClick={handleSkipToEditor}>
-        Skip to editor
+        跳转到编辑器
       </a>
       <header className="lab-workbench-header" inert={drawerOpen ? true : undefined}>
         <Button
           render={<Link to="/projects" />}
           variant="ghost"
           size="icon"
-          aria-label="Back to projects"
-          title="Back to projects"
+          aria-label="返回项目列表"
+          title="返回项目列表"
         >
           <ArrowLeft />
         </Button>
@@ -632,7 +636,7 @@ export function WorkbenchShell({ project }: { project: ProjectSummary }) {
         <div className="lab-workbench-title"><h1>{project.name}</h1><span>{RUNTIME_TEMPLATE_META[project.runtime?.templateId ?? 'java-console'].label}</span></div>
         <span className="lab-save-indicator" data-dirty={dirtyCount > 0}><span />{dirtyCount > 0 ? `${dirtyCount} 个文件未保存` : '无未保存修改'}</span>
         <Button ref={fileToggleRef} variant="ghost" size="icon" aria-label="切换文件面板" title="文件面板" aria-expanded={filesVisible} onClick={toggleFiles}><PanelLeft /></Button>
-        <Button ref={insightsToggleRef} variant="ghost" size="icon" aria-label={aiMode ? '切换对话历史' : '切换项目洞察'} title={aiMode ? '对话历史' : '项目洞察'} aria-expanded={insightsVisible} onClick={toggleInsights}><PanelRight /></Button>
+        <Button ref={insightsToggleRef} variant="ghost" size="icon" aria-label={aiMode ? '切换对话历史' : '显示或隐藏运行概况'} title={aiMode ? '对话历史' : '运行概况'} aria-expanded={insightsVisible} onClick={toggleInsights}><PanelRight /></Button>
         <WorkbenchCommands python={pythonWorkbench} insightsLabel={aiMode ? '对话历史' : undefined} onSelectPanel={setActivePanel} onToggleFiles={toggleFiles} onToggleInsights={toggleInsights} />
         <ActivityCenter key={`${userId}:${project.id}`} projectId={project.id} userId={userId} onOpenRuns={() => setActivePanel('run')} />
         <AccountPanel compact onLogout={handleLogoutClick} />
@@ -640,8 +644,8 @@ export function WorkbenchShell({ project }: { project: ProjectSummary }) {
           type="button"
           variant="ghost"
           size="icon"
-          aria-label="Log out"
-          title="Log out"
+          aria-label="退出登录"
+          title="退出登录"
           onClick={handleLogoutClick}
         >
           <LogOut />
@@ -664,16 +668,16 @@ export function WorkbenchShell({ project }: { project: ProjectSummary }) {
       {recoveryReloadFailed ? (
         <div className="flex flex-col items-start gap-2 border-b bg-background px-4 py-2">
           <InlineAlert>依赖变更已确认，但工作区重新加载失败。</InlineAlert>
-          <Button type="button" variant="outline" aria-label="Reload workspace" onClick={reloadAfterRecovery}>
+          <Button type="button" variant="outline" aria-label="重新加载工作区" onClick={reloadAfterRecovery}>
             重新加载工作区
           </Button>
         </div>
       ) : null}
       {pendingDiscovery === 'failed' ? (
         <div className="flex flex-col items-start gap-2 border-b bg-background px-4 py-2">
-          <InlineAlert>无法核对待确认的依赖变更。</InlineAlert>
-          <Button type="button" variant="outline" aria-label="Retry pending dependency check" onClick={retryPendingDiscovery}>
-            重试依赖核对
+          <InlineAlert>暂时无法检查依赖更新是否完成。</InlineAlert>
+          <Button type="button" variant="outline" aria-label="重新检查依赖更新结果" onClick={retryPendingDiscovery}>
+            重新检查更新结果
           </Button>
         </div>
       ) : null}
@@ -681,19 +685,19 @@ export function WorkbenchShell({ project }: { project: ProjectSummary }) {
         <div className="flex flex-col items-start gap-2 border-b bg-background px-4 py-2">
           <InlineAlert>
             {agentReloadBlocked
-              ? 'The agent changed workspace files. Save or discard your unsaved changes, then reload.'
-              : 'The agent changed the workspace files, but reloading them failed.'}
+              ? 'AI 已修改项目文件，请先保存或放弃编辑器中的修改，再重新加载。'
+              : 'AI 已修改项目文件，但工作区重新加载失败。'}
           </InlineAlert>
           <Button type="button" variant="outline" onClick={retryAgentReload}>
-            Reload workspace
+            重新加载工作区
           </Button>
         </div>
       ) : null}
       {settledSnapshotFailed ? (
         <div className="flex flex-col items-start gap-2 border-b bg-background px-4 py-2">
-          <InlineAlert>The agent task finished, but its final result could not be loaded.</InlineAlert>
+          <InlineAlert>AI 任务已结束，但暂时无法读取最终结果。</InlineAlert>
           <Button type="button" variant="outline" onClick={retrySettledSnapshot}>
-            Retry loading the result
+            重试读取结果
           </Button>
         </div>
       ) : null}
@@ -701,14 +705,14 @@ export function WorkbenchShell({ project }: { project: ProjectSummary }) {
         {drawerOpen && <button className="lab-files-backdrop" aria-label="关闭面板" onClick={closeDrawers} />}
         <aside
           ref={filePanelRef}
-          aria-label="Project files"
+          aria-label="项目文件"
           aria-modal={drawerOpen && filesVisible ? 'true' : undefined}
           role={drawerOpen && filesVisible ? 'dialog' : undefined}
           tabIndex={drawerOpen && filesVisible ? -1 : undefined}
           className="lab-file-sidebar relative flex shrink-0 flex-col overflow-hidden border-r"
           data-open={filesVisible}
         >
-          <div className="lab-file-sidebar-title"><span>EXPLORER</span><button className="lab-mobile-close" aria-label="关闭文件面板" onClick={() => setFilesVisible(false)}><X size={16} /></button></div>
+          <div className="lab-file-sidebar-title"><span>文件资源管理器</span><button className="lab-mobile-close" aria-label="关闭文件面板" onClick={() => setFilesVisible(false)}><X size={16} /></button></div>
           <div className="min-h-0 min-w-0 flex-1">
             <FileTree projectId={project.id} writesLocked={writesLocked} />
           </div>
@@ -716,7 +720,7 @@ export function WorkbenchShell({ project }: { project: ProjectSummary }) {
         <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden" inert={drawerOpen ? true : undefined}>
           <div
             role="tablist"
-            aria-label="Workbench panels"
+            aria-label="工作台面板"
             className="lab-workbench-tabs flex shrink-0 items-center gap-1 border-b px-2"
             onKeyDown={(event) => {
               if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
@@ -733,7 +737,7 @@ export function WorkbenchShell({ project }: { project: ProjectSummary }) {
               type="button"
               role="tab"
               id="workbench-tab-file"
-              aria-label="File"
+              aria-label="代码"
               aria-controls={EDITOR_REGION_ID}
               aria-selected={activePanel === 'file'}
               tabIndex={activePanel === 'file' ? 0 : -1}
@@ -754,7 +758,7 @@ export function WorkbenchShell({ project }: { project: ProjectSummary }) {
               type="button"
               role="tab"
               id="workbench-tab-run"
-              aria-label="Run"
+              aria-label="运行记录"
               aria-controls={RUN_PANEL_ID}
               aria-selected={activePanel === 'run'}
               tabIndex={activePanel === 'run' ? 0 : -1}
@@ -776,7 +780,7 @@ export function WorkbenchShell({ project }: { project: ProjectSummary }) {
                 type="button"
                 role="tab"
                 id="workbench-tab-dependencies"
-                aria-label="Dependencies"
+                aria-label="依赖"
                 aria-controls={DEPENDENCIES_PANEL_ID}
                 aria-selected={activePanel === 'dependencies'}
                 tabIndex={activePanel === 'dependencies' ? 0 : -1}
@@ -799,7 +803,7 @@ export function WorkbenchShell({ project }: { project: ProjectSummary }) {
                 type="button"
                 role="tab"
                 id="workbench-tab-terminal"
-                aria-label="Terminal"
+                aria-label="终端"
                 aria-controls={TERMINAL_PANEL_ID}
                 aria-selected={activePanel === 'terminal'}
                 tabIndex={activePanel === 'terminal' ? 0 : -1}
@@ -815,7 +819,7 @@ export function WorkbenchShell({ project }: { project: ProjectSummary }) {
                 }}
               >
                 <SquareTerminal className="h-4 w-4" aria-hidden />
-                终端 <small>Beta</small>
+                终端 <small>试用</small>
               </button>
             ) : null}
             {agentPanelEnabled ? (
@@ -849,12 +853,13 @@ export function WorkbenchShell({ project }: { project: ProjectSummary }) {
               id={EDITOR_REGION_ID}
               role="tabpanel"
               tabIndex={-1}
-              aria-label="Editor"
-              aria-hidden={activePanel !== 'file'}
-              inert={activePanel !== 'file' ? true : undefined}
+              aria-label="代码编辑器"
+              aria-hidden={!editorVisible}
+              inert={!editorVisible ? true : undefined}
+              style={sideChat ? { right: `min(${studioWidth}px, 55%)` } : undefined}
               className={cn(
                 panelSurfaceClassName,
-                activePanel === 'file' ? 'z-10' : 'invisible pointer-events-none',
+                editorVisible ? 'z-10' : 'invisible pointer-events-none',
               )}
             >
               {activeQuery.isError ? (
@@ -867,7 +872,7 @@ export function WorkbenchShell({ project }: { project: ProjectSummary }) {
                       void activeQuery.refetch();
                     }}
                   >
-                    Retry loading run authority
+                    重试读取运行状态
                   </Button>
                 </div>
               ) : null}
@@ -939,7 +944,7 @@ export function WorkbenchShell({ project }: { project: ProjectSummary }) {
                 <Suspense
                   fallback={
                     <p role="status" className="flex h-full items-center justify-center text-sm text-muted-foreground">
-                      Loading terminal
+                      正在加载终端
                     </p>
                   }
                 >
@@ -956,6 +961,7 @@ export function WorkbenchShell({ project }: { project: ProjectSummary }) {
             {agentPanelEnabled ? (
               <div
                 id={AGENT_PANEL_ID}
+                style={sideChat ? { left: 'auto', width: `min(${studioWidth}px, 55%)`, borderLeft: '1px solid var(--border)' } : undefined}
                 role="tabpanel"
                 aria-labelledby="workbench-tab-agent"
                 aria-hidden={activePanel !== 'agent'}
@@ -965,7 +971,13 @@ export function WorkbenchShell({ project }: { project: ProjectSummary }) {
                   activePanel === 'agent' ? 'z-10' : 'invisible pointer-events-none',
                 )}
               >
-                <AgentConversationPanel
+                {sideChat && <div role="separator" aria-label="调整 AI 面板宽度" aria-orientation="vertical" aria-valuenow={studioWidth} aria-valuemin={360} aria-valuemax={800} tabIndex={0}
+                  className="studio-resizer" onPointerDown={event => { event.currentTarget.setPointerCapture(event.pointerId); }}
+                  onPointerMove={event => { if (event.buttons === 1 && event.currentTarget.hasPointerCapture(event.pointerId)) { const right = event.currentTarget.parentElement?.getBoundingClientRect().right; if (right) setStudioWidth(Math.max(360, Math.min(800, right - event.clientX))); } }}
+                  onKeyDown={event => { if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') { event.preventDefault(); setStudioWidth(width => Math.max(360, Math.min(800, width + (event.key === 'ArrowLeft' ? 20 : -20)))); } }} />}
+                <StudioConversationPanel
+                  layout={studioLayout}
+                  onLayoutChange={() => { const next = studioLayout === 'main' ? 'side' : 'main'; setStudioLayout(next); if (next === 'side') setInsightsVisible(false); try { localStorage.setItem('manao.studio.layout', next); } catch { /* Optional layout preference. */ } }}
                   onReleasedControlTask={observeReleasedControlTask}
                   controlReloadedTaskId={controlReloadedTaskId}
                   historyTarget={historyTarget}
@@ -988,10 +1000,10 @@ export function WorkbenchShell({ project }: { project: ProjectSummary }) {
                   closePending={closeAgentTaskMutation.isPending}
                   pausePending={pauseAgentTaskMutation.isPending}
                   pauseError={pauseAgentTaskMutation.isError && pauseAgentTaskMutation.variables === agentTask?.taskId
-                    ? `Could not pause the task${pauseAgentTaskMutation.error instanceof ApiRequestError && pauseAgentTaskMutation.error.body ? ` (${pauseAgentTaskMutation.error.body.code})` : ''}. Try again.` : null}
+                    ? `无法暂停任务${pauseAgentTaskMutation.error instanceof ApiRequestError && pauseAgentTaskMutation.error.body ? `（${pauseAgentTaskMutation.error.body.code}）` : ''}，请重试。` : null}
                   onPause={() => { if (agentTask !== null) pauseAgentTaskMutation.mutate(agentTask.taskId); }}
                   closeError={closeAgentTaskMutation.isError && closeAgentTaskMutation.variables === agentTask?.taskId
-                    ? `Could not end the task${closeAgentTaskMutation.error instanceof ApiRequestError && closeAgentTaskMutation.error.body ? ` (${closeAgentTaskMutation.error.body.code})` : ''}. Try again.`
+                    ? `无法结束任务${closeAgentTaskMutation.error instanceof ApiRequestError && closeAgentTaskMutation.error.body ? `（${closeAgentTaskMutation.error.body.code}）` : ''}，请重试。`
                     : null}
                   onTaskAccepted={seedAgentTask}
                   onSubmissionPendingChange={(pending) => {
@@ -1048,7 +1060,7 @@ export function WorkbenchShell({ project }: { project: ProjectSummary }) {
           />
         )}
       </div>
-      <footer className="lab-workbench-status"><span role="status" aria-live="polite"><span className="lab-status-dot" />{writesLocked ? '工作区写入已锁定' : '工作区可编辑'}</span><span>{project.runtime?.templateId?.startsWith('python') ? 'Python / uv' : 'Java / Maven'}</span><span>MANAO CLOUD LAB</span></footer>
+      <footer className="lab-workbench-status"><span role="status" aria-live="polite"><span className="lab-status-dot" />{writesLocked ? '工作区写入已锁定' : '工作区可编辑'}</span><span>{templateRunDisplay(project.runtime?.templateId ?? 'java-console').runtimeLabel}</span><span>码瑙云端实验室</span></footer>
       <UnsavedChangesDialog
         open={leaveGuard.open && leaveGuard.action.type === 'logout'}
         mode="leave"

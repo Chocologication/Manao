@@ -223,17 +223,14 @@ describe('resolveRunPreconditions', () => {
 });
 
 describe('run descriptions', () => {
-  it('keeps the exact reason code visible in accessible copy', () => {
-    expect(runPreconditionDescription('DIRTY_FILES')).toMatch(/DIRTY_FILES/);
-    expect(runPreconditionDescription('WRITE_PENDING')).toMatch(/WRITE_PENDING/);
-    expect(runPreconditionDescription('REVISION_UNAVAILABLE')).toMatch(/REVISION_UNAVAILABLE/);
-    expect(runPreconditionDescription('AUTHORITY_LOADING')).toMatch(/AUTHORITY_LOADING/);
-    expect(runPreconditionDescription('RUN_ACTIVE')).toMatch(/RUN_ACTIVE/);
-    expect(runPreconditionDescription('START_PENDING')).toMatch(/START_PENDING/);
-    expect(runPreconditionDescription('RELOADING_WORKSPACE')).toMatch(/RELOADING_WORKSPACE/);
-    expect(runPreconditionDescription('RELOAD_FAILED')).toMatch(/RELOAD_FAILED/);
-    expect(runPreconditionDescription('AGENT_TASK_ACTIVE')).toMatch(/AGENT_TASK_ACTIVE/);
-    expect(runPreconditionDescription('STAGE_4_UNAVAILABLE')).toMatch(/STAGE_4_UNAVAILABLE/);
+  it.each([
+    'DIRTY_FILES', 'WRITE_PENDING', 'REVISION_UNAVAILABLE', 'AUTHORITY_LOADING',
+    'RUN_ACTIVE', 'START_PENDING', 'RELOADING_WORKSPACE', 'RELOAD_FAILED',
+    'AGENT_TASK_ACTIVE', 'STAGE_4_UNAVAILABLE',
+  ] as const)('explains %s in Chinese without exposing its protocol code', (reason) => {
+    const description = runPreconditionDescription(reason);
+    expect(description).toMatch(/[\u4e00-\u9fff]/);
+    expect(description).not.toContain(reason);
   });
 });
 

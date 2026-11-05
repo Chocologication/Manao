@@ -201,7 +201,7 @@ async function openAliceWorkbench(page: Page): Promise<string> {
   const accessToken = await signIn(page);
   await expect(page).toHaveURL(/\/projects$/);
   const rootTree = waitForFileApi(page, '');
-  await projectCard(page, 'Alice Notebook').getByRole('link', { name: 'Open' }).click();
+  await projectCard(page, 'Alice Notebook').getByRole('link', { name: '进入工作台' }).click();
   await rootTree;
   await expect(page).toHaveURL(new RegExp(`/projects/${ALICE_SEED_PROJECT_ID}$`));
   await expect(treeItem(page, '.gitignore')).toBeVisible();
@@ -498,19 +498,19 @@ test('streams more than 6 MiB, keeps a 5 MiB window, reconnects, and stays respo
   await wrapPageWebSocket(page);
   const { stats, bytesBySeq, seen, frames } = installLargeLogObserver(page);
   await setRunScenario(page, accessToken, 'large-log');
-  await page.getByRole('tab', { name: 'Run' }).click();
-  await expect(page.getByRole('tab', { name: 'Run' })).toHaveAttribute('aria-selected', 'true');
-  await expect(page.getByRole('button', { name: 'Start run' })).toBeEnabled();
+  await page.getByRole('tab', { name: '运行记录' }).click();
+  await expect(page.getByRole('tab', { name: '运行记录' })).toHaveAttribute('aria-selected', 'true');
+  await expect(page.getByRole('button', { name: '启动运行' })).toBeEnabled();
 
   const startedAt = Date.now();
-  await page.getByRole('button', { name: 'Start run' }).click();
-  await expect(page.getByLabel('Log connection')).toHaveText('Live', { timeout: 20_000 });
+  await page.getByRole('button', { name: '启动运行' }).click();
+  await expect(page.getByLabel('日志连接状态')).toHaveText('实时更新中', { timeout: 20_000 });
   const readyMs = Date.now() - startedAt;
-  await expect(page.getByRole('button', { name: 'New file' })).toBeDisabled();
+  await expect(page.getByRole('button', { name: '新建文件' })).toBeDisabled();
 
-  await expect(page.getByLabel('Log truncation')).toBeVisible({ timeout: 120_000 });
-  await expect(page.getByLabel('Log truncation')).toContainText(/日志窗口已截断/);
-  const log = page.getByRole('region', { name: 'Run logs' });
+  await expect(page.getByLabel('日志截断提示')).toBeVisible({ timeout: 120_000 });
+  await expect(page.getByLabel('日志截断提示')).toContainText(/日志窗口已截断/);
+  const log = page.getByRole('region', { name: '运行日志' });
   await expect(log).toContainText(LATEST_MARKER, { timeout: 60_000 });
   await expect(log).not.toContainText(HEAD_MARKER);
   await expect(log).not.toContainText(EVICTED_EARLY_MARKER);
@@ -578,9 +578,9 @@ test('streams more than 6 MiB, keeps a 5 MiB window, reconnects, and stays respo
   await log.evaluate((element) => {
     element.scrollTop = 0;
   });
-  await expect(page.getByRole('button', { name: 'New output' })).toBeVisible();
-  await page.getByRole('button', { name: 'New output' }).click();
-  await expect(page.getByRole('button', { name: 'New output' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: '查看最新输出' })).toBeVisible();
+  await page.getByRole('button', { name: '查看最新输出' }).click();
+  await expect(page.getByRole('button', { name: '查看最新输出' })).toHaveCount(0);
   await expect
     .poll(async () => {
       return log.evaluate((element) => {
@@ -590,11 +590,11 @@ test('streams more than 6 MiB, keeps a 5 MiB window, reconnects, and stays respo
     .toBe(true);
 
   const probeStarted = Date.now();
-  await page.getByRole('tab', { name: 'File' }).click();
-  await expect(page.getByRole('tab', { name: 'File' })).toHaveAttribute('aria-selected', 'true');
+  await page.getByRole('tab', { name: '代码' }).click();
+  await expect(page.getByRole('tab', { name: '代码' })).toHaveAttribute('aria-selected', 'true');
   await expect(page.getByRole('heading', { name: 'Alice Notebook' })).toBeVisible();
-  await page.getByRole('tab', { name: 'Run' }).click();
-  await expect(page.getByRole('tab', { name: 'Run' })).toHaveAttribute('aria-selected', 'true');
+  await page.getByRole('tab', { name: '运行记录' }).click();
+  await expect(page.getByRole('tab', { name: '运行记录' })).toHaveAttribute('aria-selected', 'true');
   await expect(log).toContainText(LATEST_MARKER);
   const probeMs = Date.now() - probeStarted;
   expect(probeMs).toBeLessThan(5_000);
@@ -606,10 +606,10 @@ test('streams more than 6 MiB, keeps a 5 MiB window, reconnects, and stays respo
       return stats.completeCount;
     }, { timeout: 60_000 })
     .toBeGreaterThan(0);
-  await expect(page.getByLabel('Run state')).toContainText(/SUCCEEDED|Reloading workspace/, {
+  await expect(page.getByLabel('运行状态')).toContainText(/运行成功|正在重新加载工作区/, {
     timeout: 60_000,
   });
-  await expect(page.getByLabel('Run state')).not.toContainText('RUNNING');
+  await expect(page.getByLabel('运行状态')).not.toContainText('正在执行');
 
   expect(issues.pageErrors).toEqual([]);
   const unexpectedConsole = issues.consoleErrors.filter(

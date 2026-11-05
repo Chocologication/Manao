@@ -35,7 +35,7 @@ describe('EditorTabs', () => {
     );
     await user.click(screen.getByRole('tab', { name: /App.java/ }));
     expect(onSelect).toHaveBeenCalledWith('src/main/App.java');
-    await user.click(screen.getByRole('button', { name: 'Close pom.xml' }));
+    await user.click(screen.getByRole('button', { name: '关闭 pom.xml' }));
     expect(onClose).toHaveBeenCalledWith('pom.xml');
   });
 
@@ -50,10 +50,10 @@ describe('EditorTabs', () => {
       />,
     );
 
-    const inactiveClose = screen.getByRole('button', { name: 'Close pom.xml' });
+    const inactiveClose = screen.getByRole('button', { name: '关闭 pom.xml' });
     expect(inactiveClose).toHaveClass('opacity-0');
     expect(inactiveClose).toHaveClass('focus-visible:opacity-100');
-    expect(screen.getByRole('button', { name: 'Close App.java' })).toHaveClass(
+    expect(screen.getByRole('button', { name: '关闭 App.java' })).toHaveClass(
       'focus-visible:opacity-100',
     );
   });
@@ -74,9 +74,9 @@ describe('EditorTabs', () => {
       />,
     );
 
-    const save = screen.getByRole('button', { name: 'Save' });
-    expect(save).toHaveAttribute('title', 'Save');
-    expect(save).toHaveAttribute('aria-label', 'Save');
+    const save = screen.getByRole('button', { name: '保存' });
+    expect(save).toHaveAttribute('title', '保存');
+    expect(save).toHaveAttribute('aria-label', '保存');
     expect(save).toHaveClass('size-8');
     expect(save).toHaveClass('focus-visible:ring-2');
     expect(save).toBeEnabled();
@@ -101,7 +101,7 @@ describe('EditorTabs', () => {
       />,
     );
 
-    expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: '保存' })).toBeDisabled();
     expect(screen.queryByTestId('spinner')).not.toBeInTheDocument();
 
     rerender(
@@ -117,7 +117,7 @@ describe('EditorTabs', () => {
       />,
     );
 
-    expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: '保存' })).toBeDisabled();
     expect(screen.getByTestId('spinner')).toBeInTheDocument();
   });
 });

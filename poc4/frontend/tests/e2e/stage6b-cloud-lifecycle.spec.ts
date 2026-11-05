@@ -90,7 +90,7 @@ test.describe.serial('stage6b cloud lifecycle', () => {
       timeout: 600_000,
     });
 
-    const open = card.getByRole('link', { name: 'Open' });
+    const open = card.getByRole('link', { name: '进入工作台' });
     await expect(open).toBeVisible();
     await open.click();
     await expect(page).toHaveURL(/\/projects\/[^/]+$/);
@@ -144,7 +144,7 @@ test.describe.serial('stage6b cloud lifecycle', () => {
 
     const runId = await startRunAndAwaitTerminalState(page, 'FAILED');
     SCENE.brokenRunId = runId;
-    const logs = page.getByRole('region', { name: 'Run logs' });
+    const logs = page.getByRole('region', { name: '运行日志' });
     for (const keyword of COMPILE_ERROR_KEYWORDS) {
       await expect(logs).toContainText(keyword);
     }
@@ -171,7 +171,7 @@ test.describe.serial('stage6b cloud lifecycle', () => {
 
     const runId = await startRunAndAwaitTerminalState(page, 'SUCCEEDED');
     SCENE.fixedRunId = runId;
-    await expect(page.getByRole('region', { name: 'Run logs' })).toContainText(SUCCESS_OUTPUT);
+    await expect(page.getByRole('region', { name: '运行日志' })).toContainText(SUCCESS_OUTPUT);
 
     await testInfo.attach('stage6b-fixed-run.json', {
       body: Buffer.from(JSON.stringify({ projectId: SCENE.projectId, runId, state: 'SUCCEEDED' })),
@@ -218,9 +218,9 @@ test.describe.serial('stage6b cloud lifecycle', () => {
     expect(await workspaceRevision(page), 'reload must preserve the saved revision').toBe(SCENE.finalRevision);
 
     // Full session reset: logout, sign back in, and re-verify from the list.
-    await page.getByRole('link', { name: 'Back to projects' }).click();
+    await page.getByRole('link', { name: '返回项目列表' }).click();
     await expect(page).toHaveURL(/\/projects$/);
-    await page.getByRole('button', { name: 'Log out' }).click();
+    await page.getByRole('button', { name: '退出登录' }).click();
     await expect(page.getByLabel('Username')).toBeVisible();
     await signIn(page);
     await expect(projectCard(page, SCENE.projectName)).toBeVisible();
@@ -255,11 +255,11 @@ function treeItem(page: Page, name: string): Locator {
 }
 
 function editorTab(page: Page, name: RegExp): Locator {
-  return page.getByRole('tablist', { name: 'Editor tabs' }).getByRole('tab', { name });
+  return page.getByRole('tablist', { name: '已打开的文件' }).getByRole('tab', { name });
 }
 
 function saveButton(page: Page): Locator {
-  return page.getByRole('button', { name: 'Save', exact: true });
+  return page.getByRole('button', { name: '保存', exact: true });
 }
 
 function monacoViewLines(page: Page): Locator {
@@ -294,7 +294,7 @@ async function createProject(page: Page, name: string): Promise<void> {
 async function openProject(page: Page): Promise<void> {
   const card = projectCard(page, SCENE.projectName);
   await expect(card).toBeVisible();
-  await card.getByRole('link', { name: 'Open' }).click();
+  await card.getByRole('link', { name: '进入工作台' }).click();
   await expect(page).toHaveURL(new RegExp(`/projects/${SCENE.projectId}$`));
   await expect(page.getByRole('heading', { name: SCENE.projectName })).toBeVisible();
 }
@@ -349,11 +349,11 @@ async function startRunAndAwaitTerminalState(
   page: Page,
   expectedState: 'FAILED' | 'SUCCEEDED',
 ): Promise<string> {
-  await page.getByRole('tab', { name: 'Run' }).click();
-  const start = page.getByRole('button', { name: 'Start run' });
+  await page.getByRole('tab', { name: '运行记录' }).click();
+  const start = page.getByRole('button', { name: '启动运行' });
   await expect(start).toBeEnabled();
   await start.click();
-  const runState = page.getByRole('status', { name: 'Run state' });
+  const runState = page.getByRole('status', { name: '运行状态' });
   await expect(runState).toBeVisible();
   await expect(runState).toContainText(expectedState, { timeout: 780_000 });
 
@@ -366,7 +366,7 @@ async function startRunAndAwaitTerminalState(
 }
 
 async function assertRunHistoryPreserved(page: Page): Promise<void> {
-  await page.getByRole('tab', { name: 'Run' }).click();
+  await page.getByRole('tab', { name: '运行记录' }).click();
   const history = page.locator('aside[aria-label="Recent runs"] ul button[data-run-id]');
   await expect(history).toHaveCount(2);
   const ids = await history.evaluateAll((nodes) => nodes.map((node) => node.getAttribute('data-run-id')));
@@ -374,8 +374,8 @@ async function assertRunHistoryPreserved(page: Page): Promise<void> {
   expect(ids).toContain(SCENE.fixedRunId);
   const fixedEntry = page.locator(`aside[aria-label="Recent runs"] ul button[data-run-id="${SCENE.fixedRunId}"]`);
   await fixedEntry.click();
-  await expect(page.getByRole('status', { name: 'Run state' })).toContainText('SUCCEEDED');
-  await expect(page.getByRole('region', { name: 'Run logs' })).toContainText(SUCCESS_OUTPUT);
+  await expect(page.getByRole('status', { name: '运行状态' })).toContainText('运行成功');
+  await expect(page.getByRole('region', { name: '运行日志' })).toContainText(SUCCESS_OUTPUT);
 }
 
 // ---------------------------------------------------------------------------

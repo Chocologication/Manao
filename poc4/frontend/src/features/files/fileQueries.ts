@@ -267,13 +267,13 @@ export async function cancelProjectFileReads(
 
 export function fileQueryErrorMessage(error: unknown, fallback: string): string {
   if (error instanceof Error && /network request failed/i.test(error.message)) {
-    return 'Network request failed';
+    return '网络请求失败，请检查连接后重试';
   }
   if (
     error instanceof ApiRequestError &&
     (error.status === 403 || error.body?.code === 'FORBIDDEN')
   ) {
-    return 'Access denied';
+    return '无权访问';
   }
   return fallback;
 }

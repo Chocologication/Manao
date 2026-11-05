@@ -62,7 +62,7 @@ describe('Python verification results', () => {
     expect(screen.getByText('源码版本：9')).toBeVisible();
     expect(screen.getByText('测试：3 · 失败：0 · 错误：0 · 跳过：1')).toBeVisible();
     expect(screen.getByText('测试报告：完整')).toBeVisible();
-    expect(screen.getByText('Exit code:').parentElement).toHaveTextContent('0');
+    expect(screen.getByText('退出码：').parentElement).toHaveTextContent('0');
     expect(screen.queryByText(/PRIVATE_NAMESPACE/)).toBeNull();
   });
 
@@ -106,11 +106,11 @@ describe('Python verification results', () => {
 
   it('keeps an unknown exit unknown and preserves the legacy Java build view', () => {
     show('build', { ...pythonBuild, exitCode: null, verificationStatus: 'UNKNOWN', testSummary: null });
-    expect(screen.getByText('Exit code:').parentElement).toHaveTextContent('unknown');
+    expect(screen.getByText('退出码：').parentElement).toHaveTextContent('未知');
     cleanup();
     show('build', { goal: 'test', exitCode: 1, terminationReason: 'Completed', output: 'Java build failed', cleanupConfirmed: true });
     expect(screen.getByText('Java build failed')).toBeVisible();
-    expect(screen.getByText('Exit code:').parentElement).toHaveTextContent('1');
+    expect(screen.getByText('退出码：').parentElement).toHaveTextContent('1');
     expect(screen.queryByText(/Python/)).toBeNull();
   });
 
@@ -131,7 +131,7 @@ describe('file tool results', () => {
     expect(screen.getByText(`SHA-256: ${SHA256}`)).toBeInTheDocument();
     expect(screen.queryByText(/PRIVATE_WORKER_PATH/)).not.toBeInTheDocument();
     expect(document.querySelector('script, img, h1')).toBeNull();
-    expect(screen.queryByText('Result unavailable')).not.toBeInTheDocument();
+    expect(screen.queryByText('结果暂不可用')).not.toBeInTheDocument();
   });
 
   it('distinguishes an empty read_file from a missing result', () => {

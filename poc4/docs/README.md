@@ -17,8 +17,10 @@
 | AI 工具与构建预算 | [验收记录](evidence/ai-task-budget/acceptance.md) |
 | AI 四模板环境与 Python / FastAPI 开发闭环 | [验收](evidence/ai-python-environment/acceptance.md)、[首轮云流程](evidence/ai-python-environment/cloud-20261104.md)、[依赖/回滚](evidence/ai-python-environment/cloud-followup-20261105.md)、[最终验证](evidence/ai-python-environment/final-verification-20261105.md)、[发布手册](../deploy/ai-python-environment/README.md)；设计范围AI_PYTHON_CLOSED_LOOP_PASS |
 | AI 界面、截图与发布附件 | [附件目录](evidence/ai-ui/)、[前端记录](../frontend/README.md) |
+| 新版 AI 对话工作台与 Node.js 整合 | [PR 本地验收](evidence/assistant-studio/2026-11-05-pr-integration.md)、[Studio 使用与配置](assistant-studio.md)；真实模型/集群未重验 |
 | Java 运行时与 Maven 缓存 | [验收记录](evidence/java-runtime/acceptance.md) |
 | Python 运行时、恢复与依赖编辑 | [验收记录](evidence/python-runtime/acceptance.md) |
+| Node.js、JavaScript / TypeScript 运行环境 | [使用与配置](node-runtime.md)、[本地验收](evidence/node-runtime/2026-11-04.md) |
 | 6B 云工作台 | [验收记录](evidence/stage-6b/acceptance.md) |
 
 各专题记录中的 PASS、FAILED、SKIPPED、WAIVED_BY_USER、NOT_RUN 和 NOT_REVERIFIED 保留原有范围。附件的日期、镜像、Task/Run 身份与验收时点一起解读，不能把历史结果视为当前部署实测。

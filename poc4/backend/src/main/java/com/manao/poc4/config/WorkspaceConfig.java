@@ -269,7 +269,9 @@ public class WorkspaceConfig {
     @Bean
     com.manao.poc4.kubernetes.JobResourceFactory jobResourceFactory(BackendProperties properties,
                                                                     @Value("${MANAO_MAVEN_RUNNER_IMAGE:}") String mavenImage,
-                                                                    @Value("${MANAO_PYTHON_RUNNER_IMAGE:}") String pythonImage) {
+                                                                    @Value("${MANAO_PYTHON_RUNNER_IMAGE:}") String pythonImage,
+                                                                    @Value("${MANAO_NODE_RUNNER_IMAGE:}") String nodeImage,
+                                                                    com.manao.poc4.project.ProjectRuntimeStore runtimeStore) {
         com.manao.poc4.run.RunPolicy policy = com.manao.poc4.run.RunPolicy.fromProperties(properties);
         return new com.manao.poc4.kubernetes.JobResourceFactory(
             properties.kubernetes().namespace(),
@@ -279,7 +281,7 @@ public class WorkspaceConfig {
                 policy.requests().memoryBytes(), policy.requests().ephemeralStorageBytes()),
             new com.manao.poc4.kubernetes.JobResourceFactory.RunResources(policy.limits().cpuMillis(),
                 policy.limits().memoryBytes(), policy.limits().ephemeralStorageBytes()),
-            requiredMavenImage(mavenImage), requiredPythonImage(pythonImage));
+            requiredMavenImage(mavenImage), requiredPythonImage(pythonImage), nodeImage, runtimeStore);
     }
 
     @Bean

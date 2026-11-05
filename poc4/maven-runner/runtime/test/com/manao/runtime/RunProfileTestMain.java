@@ -35,6 +35,13 @@ public final class RunProfileTestMain {
         assert RunProfile.fromId("python-fastapi-web").command()
                 .equals(List.of("/usr/local/bin/manao-python", "web"));
         assert RunProfile.fromId("python-fastapi-web").readinessPath().equals("/health/ready");
+        for (String id : List.of("node-javascript-web", "node-typescript-web")) {
+            RunProfile profile = RunProfile.fromId(id);
+            assert profile.command().equals(List.of("/usr/local/bin/manao-node", "web"));
+            assert profile.readinessPath().equals("/health/ready");
+            assert WebRunSupervisor.requestedProfile("run", new String[] {id})
+                    == WebRunSupervisor.requestedProfile("probe", new String[] {id});
+        }
         assert RunProfile.fromId("java-spring-boot-web").readinessPath()
                 .equals("/actuator/health/readiness");
         assert RunProfile.fromId("java-spring-boot-web").command()
@@ -93,6 +100,8 @@ public final class RunProfileTestMain {
             int port = server.getAddress().getPort();
             assert WebRunSupervisor.readinessUp(port, RunProfile.PYTHON_FASTAPI_WEB)
                     : "python profile must probe /health/ready";
+            assert WebRunSupervisor.readinessUp(port, RunProfile.NODE_JAVASCRIPT_WEB);
+            assert WebRunSupervisor.readinessUp(port, RunProfile.NODE_TYPESCRIPT_WEB);
             assert !WebRunSupervisor.readinessUp(port, RunProfile.JAVA_SPRING_BOOT_WEB)
                     : "java profile must probe the actuator path, not /health/ready";
         } finally {

@@ -71,7 +71,7 @@ export function PlainTextEditor({
       <div className="flex h-8 shrink-0 items-center gap-3 border-b px-3 text-sm">
         <span className="truncate font-medium">{metadata.name}</span>
         <span className="text-muted-foreground">{formatFileSize(metadata.sizeBytes)}</span>
-        <span className="text-muted-foreground">Plain text</span>
+        <span className="text-muted-foreground">纯文本</span>
       </div>
       {current !== null ? (
         <textarea

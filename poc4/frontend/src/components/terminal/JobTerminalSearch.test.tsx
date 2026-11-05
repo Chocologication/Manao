@@ -56,8 +56,8 @@ describe('JobTerminalSearch', () => {
     fireEvent(window, event);
 
     expect(event.defaultPrevented).toBe(true);
-    expect(screen.getAllByRole('searchbox', { name: 'Search terminal output' })).toHaveLength(1);
-    expect(screen.getByRole('searchbox', { name: 'Search terminal output' })).toHaveFocus();
+    expect(screen.getAllByRole('searchbox', { name: '搜索终端输出' })).toHaveLength(1);
+    expect(screen.getByRole('searchbox', { name: '搜索终端输出' })).toHaveFocus();
     expect(inactiveTerminal.focus).not.toHaveBeenCalled();
   });
 
@@ -76,7 +76,7 @@ describe('JobTerminalSearch', () => {
 
     view.rerender(<SearchHarness active terminal={terminal} />);
     fireEvent.keyDown(window, { key: 'f', metaKey: true });
-    expect(screen.getByRole('searchbox', { name: 'Search terminal output' })).toBeInTheDocument();
+    expect(screen.getByRole('searchbox', { name: '搜索终端输出' })).toBeInTheDocument();
   });
 
   it('exposes labelled toggles and announces a no-result search', async () => {
@@ -85,9 +85,9 @@ describe('JobTerminalSearch', () => {
     render(<SearchHarness active terminal={terminal} />);
     fireEvent.keyDown(window, { key: 'f', ctrlKey: true });
 
-    const caseButton = screen.getByRole('button', { name: 'Match case' });
-    const wordButton = screen.getByRole('button', { name: 'Match whole word' });
-    const regexButton = screen.getByRole('button', { name: 'Use regular expression' });
+    const caseButton = screen.getByRole('button', { name: '区分大小写' });
+    const wordButton = screen.getByRole('button', { name: '全字匹配' });
+    const regexButton = screen.getByRole('button', { name: '使用正则表达式' });
     expect(caseButton).toHaveAttribute('aria-pressed', 'false');
     expect(wordButton).toHaveAttribute('aria-pressed', 'false');
     expect(regexButton).toHaveAttribute('aria-pressed', 'false');
@@ -95,7 +95,7 @@ describe('JobTerminalSearch', () => {
     await user.click(caseButton);
     await user.click(wordButton);
     await user.click(regexButton);
-    await user.type(screen.getByRole('searchbox', { name: 'Search terminal output' }), 'missing');
+    await user.type(screen.getByRole('searchbox', { name: '搜索终端输出' }), 'missing');
 
     expect(caseButton).toHaveAttribute('aria-pressed', 'true');
     expect(wordButton).toHaveAttribute('aria-pressed', 'true');
@@ -105,7 +105,7 @@ describe('JobTerminalSearch', () => {
       wholeWord: true,
       regex: true,
     });
-    expect(screen.getByRole('status')).toHaveTextContent('No results');
+    expect(screen.getByRole("status")).toHaveTextContent('没有匹配结果');
   });
 
   it('searches backward and restores xterm focus on Escape from any search control', async () => {
@@ -113,7 +113,7 @@ describe('JobTerminalSearch', () => {
     const terminal = createTerminal();
     render(<SearchHarness active terminal={terminal} />);
     fireEvent.keyDown(window, { key: 'f', ctrlKey: true });
-    const input = screen.getByRole('searchbox', { name: 'Search terminal output' });
+    const input = screen.getByRole('searchbox', { name: '搜索终端输出' });
     await user.type(input, 'compile');
     await user.keyboard('{Shift>}{Enter}{/Shift}');
     expect(terminal.findPrevious).toHaveBeenCalledWith('compile', {
@@ -123,7 +123,7 @@ describe('JobTerminalSearch', () => {
     });
 
     vi.mocked(terminal.clearSearch).mockClear();
-    await user.click(screen.getByRole('button', { name: 'Match case' }));
+    await user.click(screen.getByRole('button', { name: '区分大小写' }));
     await user.keyboard('{Escape}');
     expect(screen.queryByRole('searchbox')).not.toBeInTheDocument();
     expect(terminal.clearSearch).toHaveBeenCalled();

@@ -61,6 +61,17 @@ class DevelopmentJobResourceFactoryTest {
             .isInstanceOf(IllegalArgumentException.class);
     }
 
+    @Test void reviewOverlayCannotBypassThePersistedLanguageOrManagedFilePolicy() throws Exception {
+        var python = AgentProjectEnvironment.fromJson(java.nio.file.Files.readString(
+            java.nio.file.Path.of("../fixtures/agent-project-environment/python-fastapi-web.json")));
+        for (String path : java.util.List.of("pyproject.toml", "uv.lock", "pom.xml", "app/.env.local")) {
+            var request = new BuildRequest(TASK, CALL, PROJECT, COMMAND, 7, BuildGoal.TEST, python, java.util.Map.of(path, "unsafe"));
+            assertThatThrownBy(() -> factory.createDevelopmentJob(request, SOURCE)).isInstanceOf(IllegalArgumentException.class);
+        }
+        var javaRequest = new BuildRequest(TASK, CALL, PROJECT, COMMAND, 7, BuildGoal.TEST, javaEnvironment(), java.util.Map.of("main.py", "print('foreign')"));
+        assertThatThrownBy(() -> factory.createDevelopmentJob(javaRequest, SOURCE)).isInstanceOf(IllegalArgumentException.class);
+    }
+
     @Test void pythonUsesOnlyItsFixedImageCacheCommandsAndBooleanExtras() throws Exception {
         String fixture = java.nio.file.Files.readString(java.nio.file.Path.of("../fixtures/agent-project-environment/python-fastapi-web.json"));
         var environment = AgentProjectEnvironment.fromJson(fixture.replace("\"mysql\":false", "\"mysql\":true"));

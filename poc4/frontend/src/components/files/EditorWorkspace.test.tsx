@@ -235,7 +235,7 @@ describe('EditorWorkspace metadata-gated views', () => {
     renderWorkspace();
     openFile(POM);
 
-    expect(await screen.findByRole('status', { name: 'Loading file metadata' })).toBeInTheDocument();
+    expect(await screen.findByRole("status", { name: '正在读取文件信息' })).toBeInTheDocument();
     expect(getFileRequestCount('content', ALICE_SEED_PROJECT_ID, 'pom.xml')).toBe(0);
     expect(screen.queryByTestId('mock-editor')).not.toBeInTheDocument();
 
@@ -274,7 +274,7 @@ describe('EditorWorkspace metadata-gated views', () => {
     expect(
       screen.getByText(expectedFileSize(getMockFile(ALICE_SEED_PROJECT_ID, 'docs/large-notes.md')!.sizeBytes)),
     ).toBeInTheDocument();
-    expect(screen.getByText('Plain text')).toBeInTheDocument();
+    expect(screen.getByText('纯文本')).toBeInTheDocument();
     expect(document.querySelector('.monaco-editor')).toBeNull();
     expect(getFileRequestCount('meta', ALICE_SEED_PROJECT_ID, 'docs/large-notes.md')).toBe(1);
     expect(getFileRequestCount('content', ALICE_SEED_PROJECT_ID, 'docs/large-notes.md')).toBe(1);
@@ -286,21 +286,21 @@ describe('EditorWorkspace metadata-gated views', () => {
       rawPath: 'assets/logo.png',
       name: 'logo.png',
       mediaType: 'image/png',
-      reason: /binary/i,
+      reason: /二进制/i,
     },
     {
       path: TOO_LARGE,
       rawPath: 'docs/too-large.md',
       name: 'too-large.md',
       mediaType: 'text/markdown',
-      reason: /too large/i,
+      reason: /文件过大/i,
     },
     {
       path: LATIN1,
       rawPath: 'docs/latin1.txt',
       name: 'latin1.txt',
       mediaType: 'text/plain',
-      reason: /utf-8|encoding/i,
+      reason: /UTF-8|编码/i,
     },
   ])(
     'shows blocked metadata and Download for $rawPath without a content request',
@@ -316,7 +316,7 @@ describe('EditorWorkspace metadata-gated views', () => {
         screen.getByText(expectedFileSize(getMockFile(ALICE_SEED_PROJECT_ID, rawPath)!.sizeBytes)),
       ).toBeInTheDocument();
       expect(screen.getByText(reason)).toBeInTheDocument();
-      expect(screen.getByRole('button', { name: 'Download' })).toBeEnabled();
+      expect(screen.getByRole('button', { name: '下载' })).toBeEnabled();
       expect(document.querySelector('.monaco-editor')).toBeNull();
       expect(screen.queryByRole('textbox')).not.toBeInTheDocument();
       expect(getFileRequestCount('meta', ALICE_SEED_PROJECT_ID, rawPath)).toBe(1);
@@ -350,19 +350,19 @@ describe('EditorWorkspace metadata-gated views', () => {
     await authenticateAsAlice();
     renderWorkspace();
     openFile(LOGO);
-    const download = await screen.findByRole('button', { name: 'Download' });
+    const download = await screen.findByRole('button', { name: '下载' });
     await user.click(download);
     expect(download).toBeDisabled();
 
     openFile(LATIN1);
-    expect(await screen.findByText(/utf-8|encoding/i)).toBeInTheDocument();
+    expect(await screen.findByText(/UTF-8|编码/i)).toBeInTheDocument();
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Download' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: '下载' })).toBeEnabled();
 
     releaseLogo();
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Download' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: '下载' })).toBeEnabled();
   });
 });
 
@@ -376,8 +376,8 @@ describe('EditorWorkspace scoped loading and errors', () => {
     renderWorkspace();
     openFile(POM);
 
-    expect(await screen.findByRole('status', { name: 'Loading file metadata' })).toBeInTheDocument();
-    expect(screen.queryByRole('status', { name: 'Loading file content' })).not.toBeInTheDocument();
+    expect(await screen.findByRole("status", { name: '正在读取文件信息' })).toBeInTheDocument();
+    expect(screen.queryByRole("status", { name: '正在读取文件内容' })).not.toBeInTheDocument();
     expect(getFileRequestCount('content', ALICE_SEED_PROJECT_ID, 'pom.xml')).toBe(0);
 
     const contentGate = delayThenPassthrough(
@@ -386,8 +386,8 @@ describe('EditorWorkspace scoped loading and errors', () => {
     );
     metaGate.release();
 
-    expect(await screen.findByRole('status', { name: 'Loading file content' })).toBeInTheDocument();
-    expect(screen.queryByRole('status', { name: 'Loading file metadata' })).not.toBeInTheDocument();
+    expect(await screen.findByRole("status", { name: '正在读取文件内容' })).toBeInTheDocument();
+    expect(screen.queryByRole("status", { name: '正在读取文件信息' })).not.toBeInTheDocument();
     contentGate.release();
     expect(await screen.findByTestId('mock-editor')).toBeInTheDocument();
   });
@@ -415,10 +415,10 @@ describe('EditorWorkspace scoped loading and errors', () => {
     renderWorkspace();
     openFile(POM);
 
-    expect(await screen.findByRole('alert')).toHaveTextContent(/unable to load file metadata/i);
+    expect(await screen.findByRole('alert')).toHaveTextContent(/无法读取文件信息/i);
     expect(getFileRequestCount('content', ALICE_SEED_PROJECT_ID, 'pom.xml')).toBe(0);
 
-    await user.click(screen.getByRole('button', { name: 'Retry' }));
+    await user.click(screen.getByRole('button', { name: '重试' }));
     expect(await screen.findByTestId('mock-editor')).toBeInTheDocument();
     expect(getFileRequestCount('meta', ALICE_SEED_PROJECT_ID, 'pom.xml')).toBe(2);
     expect(getFileRequestCount('content', ALICE_SEED_PROJECT_ID, 'pom.xml')).toBe(1);
@@ -447,11 +447,11 @@ describe('EditorWorkspace scoped loading and errors', () => {
     renderWorkspace();
     openFile(POM);
 
-    expect(await screen.findByRole('alert')).toHaveTextContent(/unable to load file content/i);
+    expect(await screen.findByRole('alert')).toHaveTextContent(/无法读取文件内容/i);
     expect(screen.getAllByRole('tab', { name: /pom.xml/ })).toHaveLength(1);
     expect(getFileRequestCount('meta', ALICE_SEED_PROJECT_ID, 'pom.xml')).toBe(1);
 
-    await user.click(screen.getByRole('button', { name: 'Retry' }));
+    await user.click(screen.getByRole('button', { name: '重试' }));
     expect(await screen.findByTestId('mock-editor')).toBeInTheDocument();
     expect(getFileRequestCount('meta', ALICE_SEED_PROJECT_ID, 'pom.xml')).toBe(1);
     expect(getFileRequestCount('content', ALICE_SEED_PROJECT_ID, 'pom.xml')).toBe(2);
@@ -476,7 +476,7 @@ describe('EditorWorkspace authorization and path errors', () => {
     openFile(parseProjectRelativePath('lab-notes.md'));
 
     const alert = await screen.findByRole('alert');
-    expect(alert).toHaveTextContent(/access denied/i);
+    expect(alert).toHaveTextContent(/无权访问/i);
     expect(alert).not.toHaveTextContent(OWNER_OR_PHYSICAL_LEAK);
     expect(alert).not.toHaveTextContent(/lab-notes/i);
     expect(document.body.textContent ?? '').not.toMatch(/prj-bob|usr-bob/i);
@@ -506,7 +506,7 @@ describe('EditorWorkspace authorization and path errors', () => {
     openFile(POM);
 
     const alert = await screen.findByRole('alert');
-    expect(alert).toHaveTextContent(/unable to load file metadata/i);
+    expect(alert).toHaveTextContent(/无法读取文件信息/i);
     expect(alert).not.toHaveTextContent(/C:\\|\/Users\/|\/etc\//);
     expect(document.body.textContent ?? '').not.toMatch(/C:\\|\/Users\/|\/etc\//);
     expect(getFileRequestCount('content', ALICE_SEED_PROJECT_ID, 'pom.xml')).toBe(0);
@@ -537,12 +537,12 @@ describe('EditorWorkspace retry isolation', () => {
     renderWorkspace();
     openFile(POM);
 
-    expect(await screen.findByRole('alert')).toHaveTextContent(/unable to load file metadata/i);
+    expect(await screen.findByRole('alert')).toHaveTextContent(/无法读取文件信息/i);
     expect(screen.getAllByRole('tab', { name: /pom.xml/ })).toHaveLength(1);
     expect(getFileRequestCount('content', ALICE_SEED_PROJECT_ID, 'pom.xml')).toBe(0);
     expect(getFileRequestCount('meta', ALICE_SEED_PROJECT_ID, 'src/main/java/demo/App.java')).toBe(0);
 
-    await user.click(screen.getByRole('button', { name: 'Retry' }));
+    await user.click(screen.getByRole('button', { name: '重试' }));
     expect(await screen.findByTestId('mock-editor')).toBeInTheDocument();
     expect(getFileRequestCount('meta', ALICE_SEED_PROJECT_ID, 'pom.xml')).toBe(2);
     expect(getFileRequestCount('content', ALICE_SEED_PROJECT_ID, 'pom.xml')).toBe(1);
@@ -614,7 +614,7 @@ describe('EditorWorkspace model and request cleanup', () => {
       );
     });
 
-    await user.click(screen.getByRole('button', { name: 'Close pom.xml' }));
+    await user.click(screen.getByRole('button', { name: "关闭 pom.xml" }));
 
     await waitFor(() => {
       expect(projectMonacoModels.disposeProjectModel).toHaveBeenCalledWith(
@@ -645,7 +645,7 @@ describe('EditorWorkspace model and request cleanup', () => {
     expect(recordedEditor.last?.keepCurrentModel).toBe(true);
 
     openFile(APP);
-    expect(await screen.findByRole('status', { name: 'Loading file content' })).toBeInTheDocument();
+    expect(await screen.findByRole("status", { name: '正在读取文件内容' })).toBeInTheDocument();
     expect(document.querySelector('.monaco-editor')).toBeNull();
     expect(monaco.editor.getModel(pomUri)).not.toBeNull();
 
@@ -668,13 +668,13 @@ describe('EditorWorkspace model and request cleanup', () => {
     expect(monaco.editor.getModel(pomUri)).not.toBeNull();
 
     openFile(LOGO);
-    expect(await screen.findByRole('button', { name: 'Download' })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: '下载' })).toBeInTheDocument();
     expect(document.querySelector('.monaco-editor')).toBeNull();
     expect(monaco.editor.getModel(pomUri)).not.toBeNull();
 
     await user.click(screen.getByRole('tab', { name: /pom.xml/ }));
     await screen.findByTestId('mock-editor');
-    await user.click(screen.getByRole('button', { name: 'Close pom.xml' }));
+    await user.click(screen.getByRole('button', { name: "关闭 pom.xml" }));
     await waitFor(() => {
       expect(monaco.editor.getModel(pomUri)).toBeNull();
     });
@@ -719,7 +719,7 @@ describe('EditorWorkspace model and request cleanup', () => {
     await authenticateAsAlice();
     const { rerender } = renderWorkspace();
     openFile(POM);
-    expect(await screen.findByRole('status', { name: 'Loading file metadata' })).toBeInTheDocument();
+    expect(await screen.findByRole("status", { name: '正在读取文件信息' })).toBeInTheDocument();
 
     workspaceSessionStore.getState().activateProject(BOB_SEED_PROJECT_ID);
     rerender(
@@ -777,13 +777,13 @@ describe('EditorWorkspace download', () => {
     await authenticateAsAlice();
     renderWorkspace();
     openFile(LOGO);
-    const download = await screen.findByRole('button', { name: 'Download' });
+    const download = await screen.findByRole('button', { name: '下载' });
 
     await user.click(download);
     expect(download).toBeDisabled();
     release();
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: 'Download' })).toBeEnabled();
+      expect(screen.getByRole('button', { name: '下载' })).toBeEnabled();
     });
     expect(getFileRequestCount('download', ALICE_SEED_PROJECT_ID, 'assets/logo.png')).toBe(1);
   });
@@ -815,12 +815,12 @@ describe('EditorWorkspace download', () => {
     renderWorkspace();
     openFile(LOGO);
 
-    await user.click(await screen.findByRole('button', { name: 'Download' }));
-    expect(await screen.findByRole('alert')).toHaveTextContent(/unable to download/i);
+    await user.click(await screen.findByRole('button', { name: '下载' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent(/无法下载文件/i);
     expect(screen.getAllByText('logo.png').length).toBeGreaterThan(0);
-    expect(screen.getByRole('button', { name: 'Download' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: '下载' })).toBeEnabled();
 
-    await user.click(screen.getByRole('button', { name: 'Retry' }));
+    await user.click(screen.getByRole('button', { name: '重试' }));
     await waitFor(() => {
       expect(getFileRequestCount('download', ALICE_SEED_PROJECT_ID, 'assets/logo.png')).toBe(2);
     });
@@ -870,7 +870,7 @@ describe('EditorWorkspace writable buffers', () => {
     expect(first?.isDirty()).toBe(false);
     expect(monaco.editor.getModel(uri)).not.toBeNull();
     expect(recordedEditor.saveKeybinding).toBe(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS);
-    expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: '保存' })).toBeDisabled();
 
     editMonacoModel(ALICE_SEED_PROJECT_ID, POM, '<project edited />');
 
@@ -879,7 +879,7 @@ describe('EditorWorkspace writable buffers', () => {
     });
     expect(first?.isDirty()).toBe(true);
     expect(workspaceBufferRegistry.get(ALICE_SEED_PROJECT_ID, POM)).toBe(first);
-    expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: '保存' })).toBeEnabled();
 
     openFile(APP);
     await waitFor(() => {
@@ -927,9 +927,9 @@ describe('EditorWorkspace writable buffers', () => {
     await authenticateAsAlice();
     renderWorkspace();
     openFile(LOGO);
-    expect(await screen.findByRole('button', { name: 'Download' })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: '下载' })).toBeInTheDocument();
     expect(workspaceBufferRegistry.get(ALICE_SEED_PROJECT_ID, LOGO)).toBeUndefined();
-    expect(screen.queryByRole('button', { name: 'Save' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '保存' })).not.toBeInTheDocument();
   });
 });
 
@@ -941,10 +941,10 @@ describe('EditorWorkspace save lifecycle', () => {
     openFile(POM);
     await screen.findByTestId('mock-editor');
     editMonacoModel(ALICE_SEED_PROJECT_ID, POM, '<project saved />');
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled());
+    await waitFor(() => expect(screen.getByRole('button', { name: '保存' })).toBeEnabled());
 
-    await user.click(screen.getByRole('button', { name: 'Save' }));
-    expect(await screen.findByRole('status', { name: 'Saved' })).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '保存' }));
+    expect(await screen.findByRole("status", { name: '已保存' })).toBeInTheDocument();
     expect(screen.getByRole('tab', { name: /pom.xml/ })).not.toHaveTextContent('*');
     expect(workspaceBufferRegistry.get(ALICE_SEED_PROJECT_ID, POM)?.isDirty()).toBe(false);
 
@@ -952,7 +952,7 @@ describe('EditorWorkspace save lifecycle', () => {
     await waitFor(() => {
       expect(screen.getByRole('tab', { name: /pom.xml/ })).toHaveTextContent('*');
     });
-    expect(screen.queryByRole('status', { name: 'Saved' })).not.toBeInTheDocument();
+    expect(screen.queryByRole("status", { name: '已保存' })).not.toBeInTheDocument();
     expect(workspaceBufferRegistry.get(ALICE_SEED_PROJECT_ID, POM)?.isDirty()).toBe(true);
   });
 
@@ -977,9 +977,9 @@ describe('EditorWorkspace save lifecycle', () => {
     openFile(POM);
     await screen.findByTestId('mock-editor');
     editMonacoModel(ALICE_SEED_PROJECT_ID, POM, '<project failed />');
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled());
-    await user.click(screen.getByRole('button', { name: 'Save' }));
-    expect(await screen.findByRole('alert')).toHaveTextContent(/unable to save file/i);
+    await waitFor(() => expect(screen.getByRole('button', { name: '保存' })).toBeEnabled());
+    await user.click(screen.getByRole('button', { name: '保存' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent(/无法保存文件/i);
 
     openFile(APP);
     await waitFor(() => {
@@ -989,13 +989,13 @@ describe('EditorWorkspace save lifecycle', () => {
       );
     });
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '重试' })).not.toBeInTheDocument();
     editMonacoModel(ALICE_SEED_PROJECT_ID, APP, 'class App { /* dirty */ }');
     await waitFor(() => expect(screen.getByRole('tab', { name: /App.java/ })).toHaveTextContent('*'));
 
     openFile(POM);
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Retry' })).toBeEnabled());
-    await user.click(screen.getByRole('button', { name: 'Retry' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: '重试' })).toBeEnabled());
+    await user.click(screen.getByRole('button', { name: '重试' }));
     await waitFor(() => expect(putPaths).toEqual(['pom.xml', 'pom.xml']));
     expect(workspaceBufferRegistry.get(ALICE_SEED_PROJECT_ID, APP)?.isDirty()).toBe(true);
   });
@@ -1007,13 +1007,13 @@ describe('EditorWorkspace save lifecycle', () => {
     openFile(POM);
     await screen.findByTestId('mock-editor');
     editMonacoModel(ALICE_SEED_PROJECT_ID, POM, '<project saved />');
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled());
-    await user.click(screen.getByRole('button', { name: 'Save' }));
-    expect(await screen.findByRole('status', { name: 'Saved' })).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole('button', { name: '保存' })).toBeEnabled());
+    await user.click(screen.getByRole('button', { name: '保存' }));
+    expect(await screen.findByRole("status", { name: '已保存' })).toBeInTheDocument();
 
     openFile(APP);
     await waitFor(() => {
-      expect(screen.queryByRole('status', { name: 'Saved' })).not.toBeInTheDocument();
+      expect(screen.queryByRole("status", { name: '已保存' })).not.toBeInTheDocument();
     });
   });
 
@@ -1025,17 +1025,17 @@ describe('EditorWorkspace save lifecycle', () => {
     openFile(POM);
     await screen.findByTestId('mock-editor');
     editMonacoModel(ALICE_SEED_PROJECT_ID, POM, '<project pending />');
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled());
+    await waitFor(() => expect(screen.getByRole('button', { name: '保存' })).toBeEnabled());
 
-    await user.click(screen.getByRole('button', { name: 'Save' }));
-    expect(await screen.findByRole('status', { name: 'Saving' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
-    await user.click(screen.getByRole('button', { name: 'Save' }));
+    await user.click(screen.getByRole('button', { name: '保存' }));
+    expect(await screen.findByRole("status", { name: '正在保存' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '保存' })).toBeDisabled();
+    await user.click(screen.getByRole('button', { name: '保存' }));
     recordedEditor.saveHandler?.();
     expect(puts()).toBe(1);
 
     release();
-    expect(await screen.findByRole('status', { name: 'Saved' })).toBeInTheDocument();
+    expect(await screen.findByRole("status", { name: '已保存' })).toBeInTheDocument();
     expect(puts()).toBe(1);
   });
 
@@ -1054,15 +1054,15 @@ describe('EditorWorkspace save lifecycle', () => {
     openFile(POM);
     await screen.findByTestId('mock-editor');
     editMonacoModel(ALICE_SEED_PROJECT_ID, POM, '<project failed />');
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled());
+    await waitFor(() => expect(screen.getByRole('button', { name: '保存' })).toBeEnabled());
 
-    await user.click(screen.getByRole('button', { name: 'Save' }));
-    expect(await screen.findByRole('alert')).toHaveTextContent(/unable to save file/i);
+    await user.click(screen.getByRole('button', { name: '保存' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent(/无法保存文件/i);
     expect(screen.getByRole('tab', { name: /pom.xml/ })).toHaveTextContent('*');
     expect(workspaceBufferRegistry.get(ALICE_SEED_PROJECT_ID, POM)?.snapshot().content).toBe(
       '<project failed />',
     );
-    expect(screen.getByRole('button', { name: 'Retry' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: '重试' })).toBeEnabled();
   });
 
   it('saves from the monaco CtrlCmd+S handler and the plain-text keydown', async () => {
@@ -1074,14 +1074,14 @@ describe('EditorWorkspace save lifecycle', () => {
     await waitFor(() => expect(recordedEditor.saveHandler).not.toBeNull());
 
     recordedEditor.saveHandler?.();
-    expect(await screen.findByRole('status', { name: 'Saved' })).toBeInTheDocument();
+    expect(await screen.findByRole("status", { name: '已保存' })).toBeInTheDocument();
 
     openFile(LARGE_NOTES);
     const textarea = await screen.findByRole('textbox');
     fireEvent.change(textarea, { target: { value: '# Large notes\n\nshortcut save\n' } });
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled());
+    await waitFor(() => expect(screen.getByRole('button', { name: '保存' })).toBeEnabled());
     fireEvent.keyDown(textarea, { key: 's', ctrlKey: true });
-    expect(await screen.findByRole('status', { name: 'Saved' })).toBeInTheDocument();
+    expect(await screen.findByRole("status", { name: '已保存' })).toBeInTheDocument();
     expect(
       workspaceBufferRegistry.get(ALICE_SEED_PROJECT_ID, LARGE_NOTES)?.isDirty(),
     ).toBe(false);
@@ -1118,9 +1118,9 @@ describe('EditorWorkspace renderer mode transitions', () => {
     await screen.findByTestId('mock-editor');
     const monacoUri = toProjectModelUri(ALICE_SEED_PROJECT_ID, README);
     editMonacoModel(ALICE_SEED_PROJECT_ID, README, submitted);
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled());
+    await waitFor(() => expect(screen.getByRole('button', { name: '保存' })).toBeEnabled());
 
-    await user.click(screen.getByRole('button', { name: 'Save' }));
+    await user.click(screen.getByRole('button', { name: '保存' }));
     const textarea = await screen.findByRole('textbox');
     expect(textarea).toHaveValue(submitted);
     expect(document.querySelector('.monaco-editor')).toBeNull();
@@ -1162,8 +1162,8 @@ describe('EditorWorkspace renderer mode transitions', () => {
     openFile(README);
     await screen.findByTestId('mock-editor');
     editMonacoModel(ALICE_SEED_PROJECT_ID, README, leftover);
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled());
-    await user.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: '保存' })).toBeEnabled());
+    await user.click(screen.getByRole('button', { name: '保存' }));
     const readmeBox = await screen.findByRole('textbox', { name: 'README.md' });
     expect(readmeBox).toHaveValue(leftover);
     fireEvent.change(readmeBox, { target: { value: leftoverDirty } });
@@ -1242,9 +1242,9 @@ describe('EditorWorkspace renderer mode transitions', () => {
     openFile(README);
     await screen.findByTestId('mock-editor');
     editMonacoModel(ALICE_SEED_PROJECT_ID, README, submitted);
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled());
-    await user.click(screen.getByRole('button', { name: 'Save' }));
-    expect(await screen.findByRole('status', { name: 'Saving' })).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole('button', { name: '保存' })).toBeEnabled());
+    await user.click(screen.getByRole('button', { name: '保存' }));
+    expect(await screen.findByRole("status", { name: '正在保存' })).toBeInTheDocument();
     editMonacoModel(ALICE_SEED_PROJECT_ID, README, later);
     release();
 
@@ -1255,7 +1255,7 @@ describe('EditorWorkspace renderer mode transitions', () => {
     expect(buffer?.snapshot().content).toBe(later);
     expect(buffer?.isDirty()).toBe(true);
     expect(screen.getByRole('tab', { name: /README.md/ })).toHaveTextContent('*');
-    expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: '保存' })).toBeEnabled();
   });
 
   it('does not switch renderer or discard content when an over-limit save is rejected', async () => {
@@ -1274,10 +1274,10 @@ describe('EditorWorkspace renderer mode transitions', () => {
     await screen.findByTestId('mock-editor');
     const kept = '<project too large />';
     editMonacoModel(ALICE_SEED_PROJECT_ID, POM, kept);
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled());
+    await waitFor(() => expect(screen.getByRole('button', { name: '保存' })).toBeEnabled());
 
-    await user.click(screen.getByRole('button', { name: 'Save' }));
-    expect(await screen.findByRole('alert')).toHaveTextContent(/file is too large/i);
+    await user.click(screen.getByRole('button', { name: '保存' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent(/文件过大/i);
     expect(screen.getByTestId('mock-editor')).toBeInTheDocument();
     expect(screen.queryByRole('textbox')).not.toBeInTheDocument();
     expect(workspaceBufferRegistry.get(ALICE_SEED_PROJECT_ID, POM)?.kind).toBe('monaco');
@@ -1297,7 +1297,7 @@ describe('EditorWorkspace unsaved tab close', () => {
     expect(monaco.editor.getModel(pomUri)).not.toBeNull();
     expect(workspaceBufferRegistry.get(ALICE_SEED_PROJECT_ID, POM)).toBeDefined();
 
-    await user.click(screen.getByRole('button', { name: 'Close pom.xml' }));
+    await user.click(screen.getByRole('button', { name: "关闭 pom.xml" }));
 
     await waitFor(() => {
       expect(screen.queryByRole('tab', { name: /pom.xml/ })).not.toBeInTheDocument();
@@ -1324,8 +1324,8 @@ describe('EditorWorkspace unsaved tab close', () => {
     });
     const pomUri = toProjectModelUri(ALICE_SEED_PROJECT_ID, POM);
 
-    await user.click(screen.getByRole('button', { name: 'Close pom.xml' }));
-    expect(await screen.findByRole('dialog', { name: 'Unsaved changes' })).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: "关闭 pom.xml" }));
+    expect(await screen.findByRole('dialog', { name: '有未保存的修改' })).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: CANCEL_LABEL }));
 
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
@@ -1358,7 +1358,7 @@ describe('EditorWorkspace unsaved tab close', () => {
     const pomUri = toProjectModelUri(ALICE_SEED_PROJECT_ID, POM);
     const appUri = toProjectModelUri(ALICE_SEED_PROJECT_ID, APP);
 
-    await user.click(screen.getByRole('button', { name: 'Close pom.xml' }));
+    await user.click(screen.getByRole('button', { name: "关闭 pom.xml" }));
     await user.click(await screen.findByRole('button', { name: DISCARD_LABEL }));
 
     await waitFor(() => {
@@ -1401,8 +1401,8 @@ describe('EditorWorkspace unsaved tab close', () => {
     editMonacoModel(ALICE_SEED_PROJECT_ID, APP, 'class App { /* dirty */ }');
     await waitFor(() => expect(screen.getByRole('tab', { name: /App.java/ })).toHaveTextContent('*'));
 
-    await user.click(screen.getByRole('button', { name: 'Close pom.xml' }));
-    expect(await screen.findByRole('dialog', { name: 'Unsaved changes' })).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: "关闭 pom.xml" }));
+    expect(await screen.findByRole('dialog', { name: '有未保存的修改' })).toBeInTheDocument();
     await user.click(screen.getByRole('tab', { name: /App.java/ }));
     await user.click(screen.getByRole('button', { name: SAVE_AND_CLOSE_LABEL }));
 
@@ -1436,11 +1436,11 @@ describe('EditorWorkspace unsaved tab close', () => {
     await waitFor(() => expect(screen.getByRole('tab', { name: /pom.xml/ })).toHaveTextContent('*'));
     const pomUri = toProjectModelUri(ALICE_SEED_PROJECT_ID, POM);
 
-    await user.click(screen.getByRole('button', { name: 'Close pom.xml' }));
+    await user.click(screen.getByRole('button', { name: "关闭 pom.xml" }));
     await user.click(await screen.findByRole('button', { name: SAVE_AND_CLOSE_LABEL }));
 
-    expect(await screen.findByRole('dialog', { name: 'Unsaved changes' })).toHaveTextContent(
-      /unable to save file/i,
+    expect(await screen.findByRole('dialog', { name: '有未保存的修改' })).toHaveTextContent(
+      /无法保存文件/i,
     );
     expect(screen.getByRole('tab', { name: /pom.xml/ })).toHaveTextContent('*');
     expect(workspaceSessionStore.getState().openPaths).toEqual([POM]);
@@ -1463,13 +1463,13 @@ describe('EditorWorkspace unsaved tab close', () => {
     await waitFor(() => expect(screen.getByRole('tab', { name: /pom.xml/ })).toHaveTextContent('*'));
     const pomUri = toProjectModelUri(ALICE_SEED_PROJECT_ID, POM);
 
-    await user.click(screen.getByRole('button', { name: 'Close pom.xml' }));
+    await user.click(screen.getByRole('button', { name: "关闭 pom.xml" }));
     await user.click(await screen.findByRole('button', { name: SAVE_AND_CLOSE_LABEL }));
-    expect(await screen.findByRole('status', { name: 'Saving' })).toBeInTheDocument();
+    expect(await screen.findByRole("status", { name: '正在保存' })).toBeInTheDocument();
     editMonacoModel(ALICE_SEED_PROJECT_ID, POM, '<project later-close />');
     release();
 
-    expect(await screen.findByRole('dialog', { name: 'Unsaved changes' })).toHaveTextContent(
+    expect(await screen.findByRole('dialog', { name: '有未保存的修改' })).toHaveTextContent(
       REMAINING_CHANGES_MESSAGE,
     );
     expect(screen.getByRole('tab', { name: /pom.xml/ })).toHaveTextContent('*');
@@ -1493,9 +1493,9 @@ describe('EditorWorkspace unsaved tab close', () => {
     await waitFor(() => expect(screen.getByRole('tab', { name: /pom.xml/ })).toHaveTextContent('*'));
     const pomUri = toProjectModelUri(ALICE_SEED_PROJECT_ID, POM);
 
-    await user.click(screen.getByRole('button', { name: 'Close pom.xml' }));
+    await user.click(screen.getByRole('button', { name: "关闭 pom.xml" }));
     await user.click(await screen.findByRole('button', { name: SAVE_AND_CLOSE_LABEL }));
-    expect(await screen.findByRole('status', { name: 'Saving' })).toBeInTheDocument();
+    expect(await screen.findByRole("status", { name: '正在保存' })).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: CANCEL_LABEL }));
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     release();
@@ -1519,10 +1519,10 @@ describe('EditorWorkspace unsaved tab close', () => {
     editMonacoModel(ALICE_SEED_PROJECT_ID, POM, '<project then-clean />');
     await waitFor(() => expect(screen.getByRole('tab', { name: /pom.xml/ })).toHaveTextContent('*'));
 
-    await user.click(screen.getByRole('button', { name: 'Close pom.xml' }));
-    expect(await screen.findByRole('dialog', { name: 'Unsaved changes' })).toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: 'Save' }));
-    expect(await screen.findByRole('status', { name: 'Saved' })).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: "关闭 pom.xml" }));
+    expect(await screen.findByRole('dialog', { name: '有未保存的修改' })).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '保存' }));
+    expect(await screen.findByRole("status", { name: '已保存' })).toBeInTheDocument();
     expect(screen.getByRole('tab', { name: /pom.xml/ })).not.toHaveTextContent('*');
     expect(workspaceBufferRegistry.get(ALICE_SEED_PROJECT_ID, POM)?.isDirty()).toBe(false);
 
@@ -1550,7 +1550,7 @@ describe('EditorWorkspace run lock', () => {
     await waitFor(() => {
       expect(screen.getByRole('tab', { name: /pom.xml/ })).toHaveTextContent('*');
     });
-    expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: '保存' })).toBeEnabled();
 
     rerender(
       <AppProviders>
@@ -1564,7 +1564,7 @@ describe('EditorWorkspace run lock', () => {
       automaticLayout: true,
       scrollBeyondLastLine: false,
     });
-    expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: '保存' })).toBeDisabled();
     expect(monaco.editor.getModel(toProjectModelUri(ALICE_SEED_PROJECT_ID, POM))?.getValue()).toBe(
       '<project locked />',
     );
@@ -1572,7 +1572,7 @@ describe('EditorWorkspace run lock', () => {
 
     recordedEditor.saveHandler?.();
     await new Promise((resolve) => setTimeout(resolve, 30));
-    expect(screen.queryByRole('status', { name: 'Saved' })).not.toBeInTheDocument();
+    expect(screen.queryByRole("status", { name: '已保存' })).not.toBeInTheDocument();
     expect(workspaceBufferRegistry.get(ALICE_SEED_PROJECT_ID, POM)?.isDirty()).toBe(true);
   });
 
@@ -1604,8 +1604,8 @@ describe('EditorWorkspace run lock', () => {
       expect(screen.getByRole('tab', { name: /pom.xml/ })).toHaveTextContent('*');
     });
 
-    await user.click(screen.getByRole('button', { name: 'Close pom.xml' }));
-    expect(await screen.findByRole('dialog', { name: 'Unsaved changes' })).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: "关闭 pom.xml" }));
+    expect(await screen.findByRole('dialog', { name: '有未保存的修改' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: SAVE_AND_CLOSE_LABEL })).toBeEnabled();
 
     rerender(
@@ -1629,12 +1629,12 @@ describe('EditorWorkspace run lock', () => {
     renderWorkspace(ALICE_SEED_PROJECT_ID, true);
     openFile(POM);
     openFile(LOGO);
-    expect(await screen.findByRole('button', { name: 'Download' })).toBeEnabled();
-    expect(screen.queryByRole('button', { name: 'Save' })).not.toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: '下载' })).toBeEnabled();
+    expect(screen.queryByRole('button', { name: '保存' })).not.toBeInTheDocument();
 
     await user.click(screen.getByRole('tab', { name: /pom.xml/ }));
     expect(workspaceSessionStore.getState().activePath).toBe(POM);
     expect(await screen.findByTestId('mock-editor')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: '保存' })).toBeDisabled();
   });
 });

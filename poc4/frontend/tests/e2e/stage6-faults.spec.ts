@@ -100,13 +100,13 @@ test('channel disconnect fails closed then reconnects', async ({ page, resources
   expect(await awaitReady(page, project.id, token), 'channel test requires a READY project').toBe('READY');
   const run = await startRun(page, project.id, token);
   await resources.recordRun(project.id, run.id);
-  expect(await awaitRunState(page, project.id, run.id, token, ['RUNNING']), 'terminal requires a RUNNING run').toBe('RUNNING');
+  expect(await awaitRunState(page, project.id, run.id, token, ['RUNNING']), 'terminal requires a RUNNING run').toBe('正在执行');
 
   // UI login once, then open the project workbench (client-side navigation keeps the token).
   await login(page, ALICE);
-  await page.getByRole('article', { name: project.name }).getByRole('link', { name: 'Open' }).click();
+  await page.getByRole('article', { name: project.name }).getByRole('link', { name: '进入工作台' }).click();
   await expect(page).toHaveURL(new RegExp('/projects/' + encodeURIComponent(project.id) + '$'));
-  await page.getByRole('tab', { name: 'Terminal' }).click();
+  await page.getByRole('tab', { name: '终端' }).click();
 
   // Track terminal sockets created from here so we can force a mid-session disconnect.
   await page.evaluate(() => {
@@ -128,8 +128,8 @@ test('channel disconnect fails closed then reconnects', async ({ page, resources
     } as unknown as typeof WebSocket;
   });
 
-  await page.getByRole('button', { name: 'Open terminal' }).click({ timeout: 30_000 });
-  await expect(page.getByRole('status', { name: 'Terminal state' })).toHaveText('Ready', { timeout: 30_000 });
+  await page.getByRole('button', { name: '打开终端' }).click({ timeout: 30_000 });
+  await expect(page.getByRole('status', { name: '终端状态' })).toHaveText('已就绪', { timeout: 30_000 });
 
   // Fail closed: close the client WebSocket; the server treats the graceful close as a
   // connection loss (CONNECTION_LOST) and must surface a session error, not silently reconnect.
@@ -141,14 +141,14 @@ test('channel disconnect fails closed then reconnects', async ({ page, resources
     socket.close();
   });
 
-  await expect(page.getByRole('alert', { name: 'Terminal session error' })).toHaveText(
-    'Terminal session failed. Open a new session to retry.',
+  await expect(page.getByRole('alert', { name: '终端会话错误' })).toHaveText(
+    '终端会话异常，请打开新会话重试。',
     { timeout: 15_000 },
   );
 
   // Reconnect: a fresh reservation/ticket re-establishes the channel and receives frames again.
-  await page.getByRole('button', { name: 'Open terminal' }).click({ timeout: 30_000 });
-  await expect(page.getByRole('status', { name: 'Terminal state' })).toHaveText('Ready', { timeout: 30_000 });
+  await page.getByRole('button', { name: '打开终端' }).click({ timeout: 30_000 });
+  await expect(page.getByRole('status', { name: '终端状态' })).toHaveText('已就绪', { timeout: 30_000 });
 });
 
 test('parallel projects keep isolated dynamic bridges', async ({ page, resources }) => {

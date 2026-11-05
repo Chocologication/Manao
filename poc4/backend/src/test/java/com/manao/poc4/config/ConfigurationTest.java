@@ -162,20 +162,20 @@ class ConfigurationTest {
             // The new Python image config is required on its own; it never replaces the Java config.
             assertThat(context.getStartupFailure()).isNull();
             org.assertj.core.api.Assertions.assertThatThrownBy(() ->
-                    config.jobResourceFactory(properties, mavenDigest, ""))
+                    config.jobResourceFactory(properties, mavenDigest, "", "", null))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("MANAO_PYTHON_RUNNER_IMAGE");
             org.assertj.core.api.Assertions.assertThatThrownBy(() ->
-                    config.jobResourceFactory(properties, "", pythonDigest))
+                    config.jobResourceFactory(properties, "", pythonDigest, "", null))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("MANAO_MAVEN_RUNNER_IMAGE");
             // Both values must be immutable digest references, like every other runner image.
             org.assertj.core.api.Assertions.assertThatThrownBy(() ->
-                    config.jobResourceFactory(properties, mavenDigest, "manao/python-runner:latest"))
+                    config.jobResourceFactory(properties, mavenDigest, "manao/python-runner:latest", "", null))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("immutable digest");
             org.assertj.core.api.Assertions.assertThat(
-                    config.jobResourceFactory(properties, mavenDigest, pythonDigest))
+                    config.jobResourceFactory(properties, mavenDigest, pythonDigest, "", null))
                 .isNotNull();
         });
     }

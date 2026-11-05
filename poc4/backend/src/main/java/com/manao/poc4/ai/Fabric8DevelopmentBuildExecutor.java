@@ -798,7 +798,7 @@ public final class Fabric8DevelopmentBuildExecutor implements DevelopmentBuildEx
         List<AgentContracts.TestReport> reports = new ArrayList<>();
         for (String document : xmlDocuments(output.substring(begin + REPORT_BEGIN.length(), end))) {
             try {
-                reports.add(toReport(document));
+                reports.addAll(toReports(document));
             } catch (Exception ignored) {
                 // Unknown evidence stays unknown; the real exit code is reported unchanged.
             }
@@ -825,7 +825,7 @@ public final class Fabric8DevelopmentBuildExecutor implements DevelopmentBuildEx
         return documents;
     }
 
-    private static AgentContracts.TestReport toReport(String document) throws Exception {
+    private static List<AgentContracts.TestReport> toReports(String document) throws Exception {
         DocumentBuilderFactory builderFactory = DocumentBuilderFactory.newInstance();
         builderFactory.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);
         builderFactory.setFeature("http://xml.org/sax/features/external-general-entities", false);
@@ -835,9 +835,33 @@ public final class Fabric8DevelopmentBuildExecutor implements DevelopmentBuildEx
         builderFactory.setExpandEntityReferences(false);
         var root = builderFactory.newDocumentBuilder()
             .parse(new InputSource(new StringReader(document))).getDocumentElement();
-        if (!"testsuite".equals(root.getTagName())) {
-            throw new IllegalArgumentException("not a surefire testsuite document");
+        if ("testsuite".equals(root.getTagName())) {
+            return List.of(toReport(root, document));
         }
+        if (!"testsuites".equals(root.getTagName())) {
+            throw new IllegalArgumentException("not a JUnit report document");
+        }
+        // Node's JUnit reporter wraps individual suites; keep their real counts.
+        var reports = new ArrayList<AgentContracts.TestReport>();
+        var children = root.getChildNodes();
+        int tests = 0, failures = 0, errors = 0, skipped = 0;
+        for (int index = 0; index < children.getLength(); index++) {
+            if (!(children.item(index) instanceof org.w3c.dom.Element suite)) continue;
+            if ("testsuite".equals(suite.getTagName())) {
+                reports.add(toReport(suite, document));
+            } else if ("testcase".equals(suite.getTagName())) {
+                // Top-level node:test cases have no enclosing suite or aggregate attributes.
+                tests++;
+                failures += suite.getElementsByTagName("failure").getLength() > 0 ? 1 : 0;
+                errors += suite.getElementsByTagName("error").getLength() > 0 ? 1 : 0;
+                skipped += suite.getElementsByTagName("skipped").getLength() > 0 ? 1 : 0;
+            }
+        }
+        if (tests > 0) reports.add(new AgentContracts.TestReport("node:test", tests, failures, errors, skipped, sha256Hex(document)));
+        return List.copyOf(reports);
+    }
+
+    private static AgentContracts.TestReport toReport(org.w3c.dom.Element root, String document) {
         String testClass = root.getAttribute("name");
         if (testClass == null || testClass.isBlank()) {
             throw new IllegalArgumentException("surefire testsuite without a class name");

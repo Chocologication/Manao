@@ -54,6 +54,10 @@ class HttpErrorContractTest {
 
     @org.springframework.web.bind.annotation.RestController
     public static class ErrorProbeController {
+        @org.springframework.web.bind.annotation.GetMapping("/test/assistant/{code}")
+        String assistant(@org.springframework.web.bind.annotation.PathVariable String code) {
+            throw new ApiException(code, 503, "upstream-secret at /private/model-response");
+        }
         @org.springframework.web.bind.annotation.GetMapping("/test/error")
         String error() { throw new ApiException("VALIDATION_ERROR", 400, "path=/workspace/secret"); }
         @org.springframework.web.bind.annotation.GetMapping("/test/jwt")
@@ -62,5 +66,24 @@ class HttpErrorContractTest {
         String password() { throw new ApiException("FORBIDDEN", 403, "hunter2"); }
         @org.springframework.web.bind.annotation.GetMapping("/test/stack")
         String stack() { throw new ApiException("INTERNAL_ERROR", 500, "at com.internal.SecretService.run(SecretService.java:42)"); }
+    }
+
+    @Test
+    void assistantFailuresKeepTheirCodesWithoutExposingUpstreamResponses() throws Exception {
+        for (String code : java.util.List.of(
+                "AI_CREDENTIALS_UNAVAILABLE", "AI_VISION_UNSUPPORTED", "AI_APPLY_MISMATCH",
+                "AI_APPLY_INTERRUPTED", "AI_APPLY_CONFLICT", "AI_BUSY", "AI_MODEL_REJECTED",
+                "AI_MODEL_DISCONNECTED", "AI_MODEL_INCOMPLETE", "AI_MODEL_UNAVAILABLE", "AI_MODEL_PROTOCOL",
+                "AI_READ_ONLY", "AI_STOPPED", "AI_TOOL_BUDGET", "AI_REVIEW_ISOLATED", "WORKSPACE_CONFLICT", "PATH_FORBIDDEN",
+                "AI_ATTACHMENT_TOO_LARGE", "AI_ATTACHMENT_EXPIRED", "AI_ATTACHMENT_UNAVAILABLE",
+                "AI_ATTACHMENT_NOT_FOUND", "AI_ATTACHMENT_CONFLICT", "AI_IMAGE_INPUT_DISABLED")) {
+            String body = mockMvc.perform(get("/test/assistant/{code}", code))
+                .andExpect(status().isServiceUnavailable()).andReturn().getResponse().getContentAsString();
+            Map<String, Object> parsed = new com.fasterxml.jackson.databind.ObjectMapper().readValue(body, Map.class);
+            assertThat(parsed).containsOnlyKeys("code", "message", "traceId").containsEntry("code", code);
+            assertThat(parsed.get("message")).isNotEqualTo("Request failed");
+            assertThat(body).doesNotContain("upstream-secret", "/private/model-response");
+            assertThat(parsed.get("traceId")).asString().matches("[0-9a-f-]{36}");
+        }
     }
 }

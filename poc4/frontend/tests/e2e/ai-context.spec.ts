@@ -44,13 +44,13 @@ async function create(page: Page): Promise<View> {
 async function submit(page: Page, conversationId: string, prompt: string): Promise<Task> {
   await page.locator('#agent-task-goal').fill(prompt);
   const response = page.waitForResponse(r => new URL(r.url()).pathname === `${root}/conversations/${conversationId}/tasks` && r.request().method() === 'POST');
-  const start = page.getByRole('button', { name: 'Start task', exact: true });
+  const start = page.getByRole('button', { name: '启动任务', exact: true });
   await expect(start).toBeEnabled(); await start.click(); const accepted = await response;
   expect(accepted.ok()).toBeTruthy(); const task = await accepted.json() as Task;
   expect(task.conversationId).toBe(conversationId);
   let final = task;
   await expect.poll(async () => { final = await get<Task>(page, `${root}/agent-tasks/${task.taskId}`); return occupying.has(final.state); }, { timeout: 360_000, intervals: [2000] }).toBe(false);
-  expect(final.state).toBe('COMPLETED'); expect(final.writesLocked).toBe(false); return final;
+  expect(final.state).toBe('已完成'); expect(final.writesLocked).toBe(false); return final;
 }
 async function answer(page: Page, conversationId: string, taskId: string): Promise<string> {
   return (await history(page, conversationId)).filter(i => i.taskId === taskId && i.kind === 'assistant').map(i => i.text).join('');
@@ -113,7 +113,7 @@ test('A reads a bounded fixture and continues → isolated B → idle worker rec
   expect(current.status()).toBe(404);
   for (const id of [a.conversationId, b.conversationId]) {
     const view = await get<View>(page, `${root}/conversations/${id}`);
-    expect(view.activeTaskId).toBeNull(); expect(view.compactState).not.toBe('RUNNING');
+    expect(view.activeTaskId).toBeNull(); expect(view.compactState).not.toBe('正在执行');
   }
   const oldUid = await readyWorker();
   await kubectl(['rollout', 'restart', `deployment/${process.env.MANAO_AI_CONTEXT_WORKER_DEPLOYMENT}`]);
@@ -127,7 +127,7 @@ test('A reads a bounded fixture and continues → isolated B → idle worker rec
   const compactResponse = page.waitForResponse(r => new URL(r.url()).pathname === `${root}/conversations/${a.conversationId}/compact` && r.request().method() === 'POST');
   await page.getByRole('button', { name: '压缩上下文', exact: true }).click();
   const accepted = await compactResponse; expect(accepted.ok()).toBeTruthy(); const compact = await accepted.json() as View;
-  await expect.poll(async () => { const v = await get<View>(page, `${root}/conversations/${a.conversationId}`); expect(v.compactRequestId).toBe(compact.compactRequestId); return v.compactState; }, { timeout: 180_000, intervals: [2000] }).toBe('COMPLETED');
+  await expect.poll(async () => { const v = await get<View>(page, `${root}/conversations/${a.conversationId}`); expect(v.compactRequestId).toBe(compact.compactRequestId); return v.compactState; }, { timeout: 180_000, intervals: [2000] }).toBe('已完成');
   const after = await history(page, a.conversationId);
   for (const original of before) expect(after).toContainEqual(original);
   expect(after.some(i => i.kind === 'compaction')).toBe(true);

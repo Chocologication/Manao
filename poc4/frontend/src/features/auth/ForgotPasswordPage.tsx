@@ -7,7 +7,8 @@ import {
   requestEmailCode,
   resetPassword,
 } from '../../api/authApi';
-import { AuthField, AuthPageFrame, validateNewPassword } from './RegisterPage';
+import { AuthField, AuthPageFrame } from './AuthPageFrame';
+import { validateNewPassword } from './registrationValidation';
 import { CaptchaField } from './CaptchaField';
 
 export const UNIFORM_RECOVERY_NOTICE = '若该邮箱已绑定账号，将收到验证码';
@@ -192,7 +193,7 @@ export function ForgotPasswordPage() {
       <p>未绑定邮箱的历史账号无法通过邮箱找回密码，请在登录后使用「修改密码」。</p>
       <p>
         想起密码了？{' '}
-        <Link to="/login" className="text-[#dfff82] hover:underline">
+        <Link to="/login" className="entry__text-link">
           返回登录
         </Link>
       </p>
@@ -205,7 +206,7 @@ export function ForgotPasswordPage() {
       subtitle="通过已绑定邮箱的验证码重置密码；重置成功后返回登录。"
       footer={footer}
     >
-      <form onSubmit={onReset} noValidate className="space-y-4">
+      <form onSubmit={onReset} noValidate className="entry__fields">
         <AuthField
           id="forgot-email"
           label="邮箱"
@@ -218,7 +219,7 @@ export function ForgotPasswordPage() {
           disabled={sending || submitting}
         />
         {mailUnavailable ? (
-          <p role="status" className="rounded-md border border-amber-300/30 bg-amber-400/10 px-3 py-2 text-sm text-amber-100">
+          <p role="status" className="entry__notice">
             邮件服务未配置，暂时无法发送验证码。
           </p>
         ) : null}
@@ -230,20 +231,20 @@ export function ForgotPasswordPage() {
           disabled={sending || submitting || mailUnavailable}
         />
         {notice !== null ? (
-          <p role="status" className="rounded-md border border-[#dfff82]/30 bg-[#dfff82]/8 px-3 py-2 text-sm text-[#eaffb8]">
+          <p role="status" className="entry__notice">
             {notice}
           </p>
         ) : null}
         {error !== null ? (
-          <p role="alert" className="rounded-md border border-red-300/25 bg-red-400/10 px-3 py-2 text-sm text-red-100">
+          <p role="alert" className="entry__error">
             {error}
           </p>
         ) : null}
         {cooldownSeconds > 0 ? (
-          <p className="text-xs text-white/50">重新发送需等待 {cooldownSeconds} 秒</p>
+          <p className="entry__field-hint">重新发送需等待 {cooldownSeconds} 秒</p>
         ) : null}
         {stepTwo ? (
-          <div className="space-y-4 border-t border-white/10 pt-4">
+          <div className="entry__fields entry__verification">
             <AuthField
               id="forgot-email-code"
               label="邮箱验证码"
@@ -277,7 +278,7 @@ export function ForgotPasswordPage() {
             <button
               type="submit"
               disabled={submitting || sending || emailCode.trim().length === 0 || newPassword.length === 0}
-              className="h-11 w-full rounded-md border border-[#dfff82] bg-[#dfff82] px-4 text-sm font-semibold text-[#10140d] transition hover:bg-[#edffb2] disabled:cursor-default disabled:opacity-55"
+              className="entry__submit"
             >
               {submitting ? '正在重置…' : SUBMIT_LABEL}
             </button>
@@ -287,7 +288,7 @@ export function ForgotPasswordPage() {
           type="button"
           onClick={() => void onSendCode()}
           disabled={!canSend}
-          className="h-11 w-full rounded-md border border-white/20 bg-white/8 px-4 text-sm font-semibold text-white transition hover:bg-white/14 disabled:cursor-default disabled:opacity-50"
+          className="entry__secondary"
         >
           {sending ? '正在发送…' : stepTwo ? '重新发送验证码' : SEND_LABEL}
         </button>

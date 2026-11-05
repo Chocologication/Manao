@@ -259,7 +259,7 @@ describe('useEditorSaveCommand', () => {
     expect(result.current.feedback).toEqual({
       path: POM,
       kind: 'alert',
-      message: 'Unable to save file',
+      message: '无法保存文件',
     });
     expect(buffer.isDirty()).toBe(true);
     expect(buffer.snapshot()).toEqual(requestSnapshot);
@@ -293,7 +293,7 @@ describe('useEditorSaveCommand', () => {
     release();
 
     await waitFor(() =>
-      expect(result.current.feedback).toEqual({ path: POM, kind: 'status', message: 'Saved' }),
+      expect(result.current.feedback).toEqual({ path: POM, kind: 'status', message: '已保存' }),
     );
     expect(buffer.isDirty()).toBe(true);
     expect(buffer.snapshot().content).toBe('<project later />');
@@ -331,7 +331,7 @@ describe('useEditorSaveCommand', () => {
     release();
     await waitFor(() => expect(result.current.writePending).toBe(false));
     expect(puts).toBe(1);
-    expect(result.current.feedback).toEqual({ path: POM, kind: 'status', message: 'Saved' });
+    expect(result.current.feedback).toEqual({ path: POM, kind: 'status', message: '已保存' });
   });
 
   it('clears a Saved status after the brief delay', async () => {
@@ -346,7 +346,7 @@ describe('useEditorSaveCommand', () => {
 
     result.current.savePath(POM);
     await waitFor(() =>
-      expect(result.current.feedback).toEqual({ path: POM, kind: 'status', message: 'Saved' }),
+      expect(result.current.feedback).toEqual({ path: POM, kind: 'status', message: '已保存' }),
     );
     await waitFor(
       () => {

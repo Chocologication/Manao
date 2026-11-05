@@ -1,0 +1,19 @@
+{
+  "name": "manao-node-project",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.33.0",
+  "engines": {
+    "node": ">=24 <25"
+  },
+  "scripts": {
+    "build": "node --check src/app.js && node --check src/main.js && node --check src/app.test.js",
+    "start": "node src/main.js",
+    "test": "node --test --test-reporter=tap --test-reporter-destination=stdout --test-reporter=junit --test-reporter-destination=.manao-test-results.xml src/app.test.js"
+  },
+  "dependencies": {
+    "mysql2": "3.15.3",
+    "redis": "5.9.0"
+  }
+}

@@ -1,0 +1,7 @@
+#!/bin/sh
+set -eu
+case "${1:-}" in
+  copy) [ "$#" -eq 1 ]; exec node /opt/manao-node/copy.mjs ;;
+  run) [ "$#" -eq 2 ]; exec /usr/local/bin/manao-node build "$2" ;;
+  *) echo 'Usage: manao-dev-build copy | run <compile|test|package>' >&2; exit 2 ;;
+esac

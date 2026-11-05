@@ -223,23 +223,23 @@ test('streams at least 8 MiB with bounded terminal flow control and remains resp
   await page.goto('/login');
   const token = await signIn(page);
   await page.getByRole('article', { name: 'Alice Notebook' })
-    .getByRole('link', { name: 'Open' }).click();
+    .getByRole('link', { name: '进入工作台' }).click();
   await expect(page).toHaveURL(new RegExp(`/projects/${PROJECT_ID}$`));
   await expect(page.getByRole('treeitem', { name: '.gitignore', exact: true })).toBeVisible();
   await installStressHooks(page);
   await setScenario(page, token, 'run', 'disconnect');
   await setScenario(page, token, 'terminal', 'stress');
-  await page.getByRole('tab', { name: 'Run' }).click();
-  await page.getByRole('button', { name: 'Start run' }).click();
-  await expect(page.getByLabel('Run state')).toContainText('RUNNING');
-  await page.getByRole('tab', { name: 'Terminal' }).click();
-  await page.getByRole('button', { name: 'Open terminal' }).click();
-  await expect(page.getByRole('status', { name: 'Terminal state' })).toHaveText(/Ready|Input paused/);
+  await page.getByRole('tab', { name: '运行记录' }).click();
+  await page.getByRole('button', { name: '启动运行' }).click();
+  await expect(page.getByLabel('运行状态')).toContainText('正在执行');
+  await page.getByRole('tab', { name: '终端' }).click();
+  await page.getByRole('button', { name: '打开终端' }).click();
+  await expect(page.getByRole('status', { name: '终端状态' })).toHaveText(/Ready|已暂停输入/);
   await expect.poll(async () => {
     const current = await metrics(page);
     return { pauses: current.pauses, resumes: current.resumes };
   }).toEqual({ pauses: 1, resumes: 1 });
-  await expect(page.getByRole('status', { name: 'Terminal state' })).toHaveText('Ready');
+  await expect(page.getByRole('status', { name: '终端状态' })).toHaveText('已就绪');
 
   const burst = `stress-input-${'i'.repeat(128 * 1024)}`;
   await page.evaluate((queued) => {
@@ -297,8 +297,8 @@ test('streams at least 8 MiB with bounded terminal flow control and remains resp
   expect(notFoundPaths.filter((pathname) => !isBrowserChrome404(pathname))).toEqual([]);
   expect(consoleErrors).toEqual([]);
   expect(pageErrors).toEqual([]);
-  await page.getByRole('tab', { name: 'Run' }).click();
-  await expect(page.getByRole('region', { name: 'Run logs' })).not.toContainText(FINAL_MARKER);
+  await page.getByRole('tab', { name: '运行记录' }).click();
+  await expect(page.getByRole('region', { name: '运行日志' })).not.toContainText(FINAL_MARKER);
   console.log('STAGE5_TERMINAL_STRESS_METRICS', JSON.stringify({
     ...final,
     responsivenessMs,

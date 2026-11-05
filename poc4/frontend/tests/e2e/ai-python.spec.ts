@@ -123,7 +123,7 @@ async function history(page: Page, scene: Scene, id: string): Promise<History['i
 async function submit(page: Page, scene: Scene, conversation: Conversation, prompt: string) {
   await page.locator('#agent-task-goal').fill(prompt);
   const response = page.waitForResponse(r => new URL(r.url()).pathname === `${root(scene)}/conversations/${conversation.conversationId}/tasks` && r.request().method() === 'POST');
-  const start = page.getByRole('button', { name: 'Start task', exact: true }); await expect(start).toBeEnabled(); await start.click();
+  const start = page.getByRole('button', { name: /^(启动任务|继续任务)$/, exact: true }); await expect(start).toBeEnabled(); await start.click();
   const accepted = await response; expect(accepted.ok()).toBe(true); const task = await accepted.json() as Task;
   expect(task.conversationId).toBe(conversation.conversationId);
   let final = task;
@@ -175,6 +175,9 @@ test.describe.serial('real Python provider development loops', () => {
     const loginResponse = page.waitForResponse(r => new URL(r.url()).pathname === '/api/v1/auth/login' && r.request().method() === 'POST');
     await page.getByRole('button', { name: 'Sign in', exact: true }).click(); token = (await (await loginResponse).json() as { accessToken: string }).accessToken;
     await page.getByRole('tab', { name: 'AI', exact: true }).click();
+    // This acceptance suite exercises the persisted legacy task protocol and global model.
+    await page.getByRole('button', { name: '会话历史', exact: true }).click();
+    await page.getByRole('button', { name: '查看旧版会话', exact: true }).click();
     const created = page.waitForResponse(r => new URL(r.url()).pathname === `${root(scene)}/conversations` && r.request().method() === 'POST');
     await page.getByRole('button', { name: '新建会话', exact: true }).click(); const response = await created; expect(response.ok()).toBe(true);
     const conversation = await response.json() as Conversation;

@@ -8,10 +8,10 @@ import {
 } from 'react';
 import { Button } from '@/components/ui/button';
 
-export const CLOSE_TERMINAL_TITLE = 'Close terminal session';
+export const CLOSE_TERMINAL_TITLE = '关闭终端会话';
 export const CLOSE_TERMINAL_MESSAGE =
-  'This terminal session cannot be resumed after it is closed. The run continues independently.';
-export const CLOSE_TERMINAL_ERROR = 'Unable to close terminal session. Try again.';
+  '此终端会话关闭后无法恢复，项目运行将继续。';
+export const CLOSE_TERMINAL_ERROR = '无法关闭终端会话，请重试。';
 
 export type CloseTerminalDialogProps = {
   open: boolean;
@@ -203,7 +203,7 @@ export function CloseTerminalDialog({
           disabled={pending}
           onClick={cancelCurrentCycle}
         >
-          Cancel
+          取消
         </Button>
         <Button
           type="button"
@@ -212,7 +212,7 @@ export function CloseTerminalDialog({
           disabled={pending}
           onClick={handleConfirm}
         >
-          Close session
+          关闭会话
         </Button>
       </div>
     </dialog>

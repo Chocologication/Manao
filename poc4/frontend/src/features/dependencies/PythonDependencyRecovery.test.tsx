@@ -82,7 +82,7 @@ describe('PythonDependencyRecovery ready page', () => {
     const view = renderRecovery({ variant: 'ready', operationId: OPERATION_ID, onRecovered });
 
     expect(screen.getByText('依赖变更尚未确认')).toBeInTheDocument();
-    const check = screen.getByRole('button', { name: 'Check dependency change' });
+    const check = screen.getByRole('button', { name: '核对依赖变更' });
     expect(check).toBeEnabled();
     await user.click(check);
 
@@ -125,7 +125,7 @@ describe('PythonDependencyRecovery ready page', () => {
     const user = userEvent.setup();
     renderRecovery({ variant: 'ready', operationId: OPERATION_ID, onRecovered });
 
-    await user.click(screen.getByRole('button', { name: 'Check dependency change' }));
+    await user.click(screen.getByRole('button', { name: '核对依赖变更' }));
 
     await waitFor(() => {
       expect(onRecovered).toHaveBeenCalledTimes(1);
@@ -149,10 +149,10 @@ describe('PythonDependencyRecovery ready page', () => {
     const user = userEvent.setup();
     renderRecovery({ variant: 'ready', operationId: OPERATION_ID, onRecovered });
 
-    await user.click(screen.getByRole('button', { name: 'Check dependency change' }));
+    await user.click(screen.getByRole('button', { name: '核对依赖变更' }));
 
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: 'Check dependency change' })).toBeEnabled();
+      expect(screen.getByRole('button', { name: '核对依赖变更' })).toBeEnabled();
     });
     expect(onRecovered).not.toHaveBeenCalled();
     // Only the read-only GET ran; no POST of any kind was sent.
@@ -173,10 +173,10 @@ describe('PythonDependencyRecovery ready page', () => {
     const user = userEvent.setup();
     renderRecovery({ variant: 'ready', operationId: OPERATION_ID, onRecovered });
 
-    await user.click(screen.getByRole('button', { name: 'Check dependency change' }));
+    await user.click(screen.getByRole('button', { name: '核对依赖变更' }));
 
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: 'Check dependency change' })).toBeEnabled();
+      expect(screen.getByRole('button', { name: '核对依赖变更' })).toBeEnabled();
     });
     expect(onRecovered).not.toHaveBeenCalled();
     expect(screen.getByText('依赖变更尚未确认')).toBeInTheDocument();
@@ -200,8 +200,8 @@ describe('PythonDependencyRecovery failed page', () => {
     const user = userEvent.setup();
     renderRecovery({ variant: 'failed', onRecovered });
 
-    expect(screen.getByRole('button', { name: 'Check dependency change' })).toBeEnabled();
-    await user.click(screen.getByRole('button', { name: 'Check dependency change' }));
+    expect(screen.getByRole('button', { name: '核对依赖变更' })).toBeEnabled();
+    await user.click(screen.getByRole('button', { name: '核对依赖变更' }));
 
     await waitFor(() => {
       expect(onRecovered).toHaveBeenCalledTimes(1);
@@ -235,7 +235,7 @@ describe('PythonDependencyRecovery failed page', () => {
     const user = userEvent.setup();
     renderRecovery({ variant: 'failed', onRecovered });
 
-    await user.click(screen.getByRole('button', { name: 'Check dependency change' }));
+    await user.click(screen.getByRole('button', { name: '核对依赖变更' }));
 
     await waitFor(() => {
       expect(onRecovered).toHaveBeenCalledTimes(1);
@@ -267,9 +267,9 @@ describe('PythonDependencyRecovery failed page', () => {
     renderRecovery({ variant: 'failed', onRecovered });
 
     // First Check: discovery through the pending list, reconcile response lost.
-    await user.click(screen.getByRole('button', { name: 'Check dependency change' }));
+    await user.click(screen.getByRole('button', { name: '核对依赖变更' }));
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: 'Check dependency change' })).toBeEnabled();
+      expect(screen.getByRole('button', { name: '核对依赖变更' })).toBeEnabled();
     });
     expect(onRecovered).not.toHaveBeenCalled();
     // The discovered id was persisted before any status/reconcile request was issued.
@@ -288,7 +288,7 @@ describe('PythonDependencyRecovery failed page', () => {
         }),
       ),
     );
-    await user.click(screen.getByRole('button', { name: 'Check dependency change' }));
+    await user.click(screen.getByRole('button', { name: '核对依赖变更' }));
     await waitFor(() => {
       expect(onRecovered).toHaveBeenCalledTimes(1);
     });
@@ -319,9 +319,9 @@ describe('PythonDependencyRecovery failed page', () => {
     const user = userEvent.setup();
     renderRecovery({ variant: 'failed', onRecovered });
 
-    await user.click(screen.getByRole('button', { name: 'Check dependency change' }));
+    await user.click(screen.getByRole('button', { name: '核对依赖变更' }));
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: 'Check dependency change' })).toBeEnabled();
+      expect(screen.getByRole('button', { name: '核对依赖变更' })).toBeEnabled();
     });
     expect(onRecovered).not.toHaveBeenCalled();
     expect(recordedDependencyCalls(fetchSpy)).toEqual([
@@ -345,10 +345,10 @@ describe('PythonDependencyRecovery failed page', () => {
     const user = userEvent.setup();
     renderRecovery({ variant: 'failed', onRecovered });
 
-    await user.click(screen.getByRole('button', { name: 'Check dependency change' }));
+    await user.click(screen.getByRole('button', { name: '核对依赖变更' }));
 
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: 'Check dependency change' })).toBeEnabled();
+      expect(screen.getByRole('button', { name: '核对依赖变更' })).toBeEnabled();
     });
     expect(onRecovered).not.toHaveBeenCalled();
     expect(screen.getByText('依赖变更尚未确认')).toBeInTheDocument();
@@ -374,7 +374,7 @@ describe('PythonDependencyRecovery failed page', () => {
     const user = userEvent.setup();
     renderRecovery({ variant: 'failed', onRecovered });
 
-    await user.click(screen.getByRole('button', { name: 'Check dependency change' }));
+    await user.click(screen.getByRole('button', { name: '核对依赖变更' }));
     await waitFor(() => {
       expect(onRecovered).toHaveBeenCalledTimes(1);
     });
@@ -403,7 +403,7 @@ describe('PythonDependencyRecovery dirty ready page', () => {
     act(() => {
       useWorkspaceSession.getState().setDirty(parseProjectRelativePath('main.py'), true);
     });
-    const check = screen.getByRole('button', { name: 'Check dependency change' });
+    const check = screen.getByRole('button', { name: '核对依赖变更' });
     expect(check).toBeDisabled();
     expect(screen.getByText('请先保存或放弃文件修改')).toBeInTheDocument();
 
@@ -436,10 +436,10 @@ describe('PythonDependencyRecovery dirty ready page', () => {
     act(() => {
       useWorkspaceSession.getState().setDirty(parseProjectRelativePath('main.py'), true);
     });
-    expect(screen.getByRole('button', { name: 'Check dependency change' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: '核对依赖变更' })).toBeEnabled();
     expect(screen.queryByText('请先保存或放弃文件修改')).not.toBeInTheDocument();
 
-    await user.click(screen.getByRole('button', { name: 'Check dependency change' }));
+    await user.click(screen.getByRole('button', { name: '核对依赖变更' }));
     await waitFor(() => {
       expect(onRecovered).toHaveBeenCalledTimes(1);
     });

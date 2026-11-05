@@ -75,11 +75,11 @@ export function CaptchaField({
   }, [refresh]);
 
   return (
-    <div>
-      <label htmlFor={resolvedInputId} className="mb-2 block text-xs font-medium uppercase text-white/58">
+    <div className="entry__field">
+      <label htmlFor={resolvedInputId} >
         {label}
       </label>
-      <div className="flex items-center gap-2">
+      <div className="entry__captcha-row">
         <input
           id={resolvedInputId}
           name="captchaAnswer"
@@ -89,10 +89,10 @@ export function CaptchaField({
           value={answer}
           disabled={disabled || captcha === null}
           onChange={(event) => answerChangeRef.current(event.currentTarget.value)}
-          className="h-11 w-full min-w-0 rounded-md border border-white/18 bg-white/8 px-3 text-base text-white outline-none transition placeholder:text-white/30 focus:border-white/55 focus:bg-white/12"
+          className="entry__input entry__input--plain"
           placeholder="输入图中字符"
         />
-        <div className="flex h-11 w-28 shrink-0 items-center justify-center overflow-hidden rounded-md border border-white/18 bg-white/90">
+        <div className="entry__captcha-image">
           {captcha !== null ? (
             <img
               src={`data:image/png;base64,${captcha.imageBase64}`}
@@ -111,13 +111,13 @@ export function CaptchaField({
           title="刷新图形验证码"
           disabled={disabled || loading}
           onClick={() => void refresh()}
-          className="grid h-11 w-11 shrink-0 place-items-center rounded-md border border-white/18 text-white/70 transition hover:text-white disabled:cursor-default disabled:opacity-50"
+          className="entry__captcha-refresh"
         >
           <RefreshCw className="size-4" aria-hidden="true" />
         </button>
       </div>
       {error !== null ? (
-        <p role="alert" className="mt-2 text-sm text-red-200">
+        <p role="alert" className="entry__error">
           {error}
         </p>
       ) : null}

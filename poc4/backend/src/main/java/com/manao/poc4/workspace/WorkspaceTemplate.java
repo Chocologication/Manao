@@ -92,6 +92,7 @@ public final class WorkspaceTemplate {
             case JAVA_SPRING_BOOT_WEB -> WEB_DIRECTORIES;
             case PYTHON_CONSOLE -> PYTHON_CONSOLE_DIRECTORIES;
             case PYTHON_FASTAPI_WEB -> PYTHON_WEB_DIRECTORIES;
+            case NODE_JAVASCRIPT_CONSOLE, NODE_JAVASCRIPT_WEB, NODE_TYPESCRIPT_CONSOLE, NODE_TYPESCRIPT_WEB -> List.of("src");
         };
     }
 
@@ -102,6 +103,8 @@ public final class WorkspaceTemplate {
             case JAVA_SPRING_BOOT_WEB -> WEB_FILES;
             case PYTHON_CONSOLE -> PYTHON_CONSOLE_FILES;
             case PYTHON_FASTAPI_WEB -> PYTHON_WEB_FILES;
+            case NODE_JAVASCRIPT_CONSOLE, NODE_JAVASCRIPT_WEB, NODE_TYPESCRIPT_CONSOLE, NODE_TYPESCRIPT_WEB ->
+                nodeManifest(RuntimeTemplate.fromId(spec.templateId()));
         };
         Map<String, String> loaded = new LinkedHashMap<>();
         manifest.forEach((path, resource) -> {
@@ -113,6 +116,22 @@ public final class WorkspaceTemplate {
             loaded.put(path, content);
         });
         return loaded;
+    }
+
+    private static Map<String, String> nodeManifest(RuntimeTemplate template) {
+        String root = "workspace-template-" + template.id() + "/";
+        boolean typescript = "typescript".equals(template.language());
+        String extension = typescript ? ".ts" : ".js";
+        var manifest = new LinkedHashMap<String, String>();
+        for (String path : List.of("package.json", "pnpm-lock.yaml", ".npmrc", ".gitignore", "README.md")) {
+            manifest.put(path, root + path);
+        }
+        if (typescript) manifest.put("tsconfig.json", root + "tsconfig.json");
+        for (String file : List.of("app", "app.test", "main")) {
+            String path = "src/" + file + extension;
+            manifest.put(path, root + path);
+        }
+        return manifest;
     }
 
     /** Removes every conditional block whose flag is not selected; marker lines never survive. */

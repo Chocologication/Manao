@@ -87,7 +87,14 @@ public final class AgentContracts {
     /** One development build execution request; {@code commandId} is the stable display identity. */
     public record BuildRequest(String taskId, String toolCallId, String projectId,
                                String commandId, long sourceRevision, BuildGoal goal,
-                               AgentProjectEnvironment environment) {
+                               AgentProjectEnvironment environment, java.util.Map<String, String> overlay) {
+        public BuildRequest {
+            overlay = overlay == null ? java.util.Map.of() : java.util.Map.copyOf(overlay);
+        }
+        public BuildRequest(String taskId, String toolCallId, String projectId, String commandId,
+                            long sourceRevision, BuildGoal goal, AgentProjectEnvironment environment) {
+            this(taskId, toolCallId, projectId, commandId, sourceRevision, goal, environment, java.util.Map.of());
+        }
         /** Source compatibility only: new execution rejects this missing environment. */
         public BuildRequest(String taskId, String toolCallId, String projectId, String commandId,
                             long sourceRevision, BuildGoal goal) {
@@ -106,7 +113,7 @@ public final class AgentContracts {
         public void requireExecutableEnvironment() {
             if (environment == null || goal == null
                     || !environment.buildGoals().contains(goal.name().toLowerCase(java.util.Locale.ROOT))
-                    || !("python".equals(environment.language()) || "java".equals(environment.language()))) {
+                    || !List.of("python", "java", "javascript", "typescript").contains(environment.language())) {
                 throw new IllegalArgumentException("build environment or goal is unsupported");
             }
         }
@@ -130,9 +137,25 @@ public final class AgentContracts {
     }
 
     /** Backend-to-worker start command; carries no project owner. */
+    public record WorkerModel(String provider, String apiType, String baseUrl, String model, String apiKey, boolean vision) {
+        @Override public String toString() { return "WorkerModel[redacted]"; }
+    }
+    public record WorkerImage(String type, String data, String mimeType) {
+        @Override public String toString() { return "WorkerImage[redacted]"; }
+    }
     public record WorkerStart(String taskId, String prompt, String workspaceRevision,
                               String requestSha256, long workerEpoch, String conversationId, String reasoningEffort,
-                              AgentProjectEnvironment environment, String environmentSha256) {
+                              AgentProjectEnvironment environment, String environmentSha256,
+                              WorkerModel model, List<WorkerImage> images) {
+        public WorkerStart {
+            images = images == null ? List.of() : List.copyOf(images);
+        }
+        public WorkerStart(String taskId, String prompt, String workspaceRevision, String requestSha256,
+                           long workerEpoch, String conversationId, String reasoningEffort,
+                           AgentProjectEnvironment environment, String environmentSha256) {
+            this(taskId, prompt, workspaceRevision, requestSha256, workerEpoch, conversationId, reasoningEffort,
+                environment, environmentSha256, null, List.of());
+        }
         /** Legacy wire fixtures carry no environment; production starts must supply the persisted snapshot. */
         public WorkerStart(String taskId, String prompt, String workspaceRevision, String requestSha256,
                            long workerEpoch, String conversationId, String reasoningEffort) {
