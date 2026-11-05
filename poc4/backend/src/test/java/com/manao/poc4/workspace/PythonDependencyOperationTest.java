@@ -125,6 +125,64 @@ class PythonDependencyOperationTest {
     }
 
     @Test
+    void absentAndExplicitMainKeepProtocol1WhileOnlyTestGetsProtocol3() throws Exception {
+        var json = new com.fasterxml.jackson.databind.ObjectMapper();
+        assertThat(json.readValue("{\"action\":\"ADD\",\"packageName\":\"httpx\"}",
+            WorkspaceAgent.DependencyChange.class).group()).isEqualTo("main");
+        assertThat(new WorkspaceAgent.DependencyChange("ADD", "httpx", null).group()).isEqualTo("main");
+        assertThat(PythonDependencyService.requestDigest(PROJECT, "ADD", "httpx", "0.28.1", "main", 17))
+            .isEqualTo(ADD_HTTPX);
+        assertThat(PythonDependencyService.requestDigest(PROJECT, "ADD", "httpx", "0.28.1", null, 17))
+            .isEqualTo(ADD_HTTPX);
+        assertThat(PythonDependencyService.requestDigest(PROJECT, "REMOVE", "httpx", null, "test", 17))
+            .isNotEqualTo(REMOVE_HTTPX);
+        for (String group : List.of("", "dev", "Test", "test --index-url evil")) {
+            assertRejected(() -> dependencies.change(ALICE, PROJECT, OPERATION,
+                new WorkspaceAgent.DependencyChange("ADD", "pytest", null, group), "7"), "VALIDATION_ERROR", 422);
+        }
+        assertThat(agent.prepareCalls).isZero();
+        assertThat(store.records).isEmpty();
+    }
+
+    @Test
+    void removeTestGroupUsesTheSameCommitAndIncrementsOnlyOnce() {
+        String digest = PythonDependencyService.requestDigest(PROJECT, "REMOVE", "pytest", null, "test", 7);
+        agent.prepareResult = new WorkspaceAgent.PreparedPythonDependencies(OPERATION, digest,
+            "a".repeat(64), "b".repeat(64));
+        var change = new WorkspaceAgent.DependencyChange("REMOVE", "pytest", null, "test");
+        assertThat(dependencies.change(ALICE, PROJECT, OPERATION, change, "7").state()).isEqualTo("COMMITTED");
+        assertThat(dependencies.change(ALICE, PROJECT, OPERATION, change, "7").state()).isEqualTo("COMMITTED");
+        assertThat(agent.preparedChanges).containsExactly(change);
+        assertThat(agent.commitCalls).isEqualTo(1);
+        assertThat(store.revision.get(PROJECT)).isEqualTo(8L);
+    }
+
+    @Test
+    void testGroupSurvivesNormalizationAndUsesItsOwnDurableIntent() throws Exception {
+        var json = new com.fasterxml.jackson.databind.ObjectMapper()
+            .disable(com.fasterxml.jackson.databind.DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES);
+        WorkspaceAgent.DependencyChange change = json.readValue(
+            "{\"action\":\"ADD\",\"packageName\":\"HTTPX\",\"version\":\"0.28.1\",\"group\":\"test\"}",
+            WorkspaceAgent.DependencyChange.class);
+        String intent = "{\"protocol\":3,\"projectId\":\"prj-1\",\"action\":\"ADD\","
+            + "\"packageName\":\"httpx\",\"version\":\"0.28.1\",\"group\":\"test\",\"expectedRevision\":7}";
+        String expectedDigest = WorkspaceOperationService.sha256Hex(
+            intent.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        agent.prepareResult = new WorkspaceAgent.PreparedPythonDependencies(OPERATION, expectedDigest,
+            "a".repeat(64), "b".repeat(64));
+
+        org.assertj.core.api.Assertions.assertThatCode(
+            () -> dependencies.change(ALICE, PROJECT, OPERATION, change, "7")).doesNotThrowAnyException();
+        assertThat(store.records.get(OPERATION).requestSha256()).isEqualTo(expectedDigest);
+        assertThat(json.valueToTree(agent.preparedChanges.get(0)).path("group").asText()).isEqualTo("test");
+        assertRejected(() -> dependencies.change(ALICE, PROJECT, OPERATION,
+            new WorkspaceAgent.DependencyChange("ADD", "httpx", "0.28.1"), "7"),
+            "DEPENDENCY_REQUEST_MISMATCH", 409);
+        assertThat(agent.prepareCalls).isEqualTo(1);
+        assertThat(store.revision.get(PROJECT)).isEqualTo(8L);
+    }
+
+    @Test
     void committedSameIdShortCircuitsBeforeTheRevisionCanMisjudgeARetry() {
         String requestSha256 = PythonDependencyService.requestDigest(PROJECT, "ADD", "httpx", "0.28.1", 7);
         store.records.put(OPERATION, new WorkspaceStore.OperationRecord(OPERATION, PROJECT, 7,

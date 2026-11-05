@@ -78,6 +78,11 @@ class AgentAttachmentAssemblyTest {
                 web.registerBean(com.manao.poc4.kubernetes.JobResourceFactory.class,()->mock(com.manao.poc4.kubernetes.JobResourceFactory.class));
                 web.registerBean(BackendProperties.class,()->{var props=mock(BackendProperties.class,RETURNS_DEEP_STUBS);when(props.kubernetes().namespace()).thenReturn("isolated-test");return props;});
                 web.registerBean(com.manao.poc4.project.ProjectRuntimeStore.class,()->mock(com.manao.poc4.project.ProjectRuntimeStore.class));
+                web.registerBean(PythonDependencyService.class,()->new PythonDependencyService(
+                    web.getBean(WorkspaceStore.class),web.getBean(WorkspaceOperationService.class),agent,
+                    web.getBean(ProjectLifecycleGate.class),web.getBean(com.manao.poc4.project.ProjectRuntimeStore.class),
+                    web.getBean(AgentTaskStore.class)));
+                web.registerBean(com.manao.poc4.run.RunPolicy.class,AgentProjectEnvironmentTest::policy);
                 web.registerBean(com.manao.poc4.run.RunService.class,()->mock(com.manao.poc4.run.RunService.class));
                 web.registerBean(com.manao.poc4.run.RunStore.class,()->mock(com.manao.poc4.run.RunStore.class));
                 web.registerBean(com.manao.poc4.log.RunLogService.class,()->mock(com.manao.poc4.log.RunLogService.class));

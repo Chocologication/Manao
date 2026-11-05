@@ -454,7 +454,8 @@ class JobResourceFactoryTest {
     @Test
     void reviewOverlayOnlyMountsIsolatedBuildWorkspaceAndRejectsPrivatePaths() {
         var request = new com.manao.poc4.ai.AgentContracts.BuildRequest(RUN, "call", PROJECT, "command", 7,
-            com.manao.poc4.ai.AgentContracts.BuildGoal.TEST, Map.of("src/Demo.java", "class Demo { String s = \"$(false)\"; }\n"));
+            com.manao.poc4.ai.AgentContracts.BuildGoal.TEST, DevelopmentJobResourceFactoryTest.javaEnvironment(),
+            Map.of("src/Demo.java", "class Demo { String s = \"$(false)\"; }\n"));
         var source = new JobResourceFactory.DevelopmentSourceVolume("10.0.0.1", "/project");
         var pod = factory.createDevelopmentJob(request, source).getSpec().getTemplate().getSpec();
         var overlay = pod.getInitContainers().get(pod.getInitContainers().size() - 1);
@@ -464,7 +465,7 @@ class JobResourceFactoryTest {
         assertThat(pod.getVolumes().stream().filter(v -> v.getName().equals("workspace")).findFirst().orElseThrow().getEmptyDir()).isNotNull();
         assertThat(String.join(" ", overlay.getCommand())).contains("realpath", "/workspace/*").doesNotContain("$(false)");
         var unsafe = new com.manao.poc4.ai.AgentContracts.BuildRequest(RUN, "call", PROJECT, "command", 7,
-            com.manao.poc4.ai.AgentContracts.BuildGoal.TEST, Map.of("src/.env.production", "secret"));
+            com.manao.poc4.ai.AgentContracts.BuildGoal.TEST, DevelopmentJobResourceFactoryTest.javaEnvironment(), Map.of("src/.env.production", "secret"));
         assertThatThrownBy(() -> factory.createDevelopmentJob(unsafe, source)).isInstanceOf(IllegalArgumentException.class);
     }
 

@@ -132,6 +132,7 @@ class NodeRuntimeContractTest {
         for (var template : templates()) {
             var runtimes = mock(ProjectRuntimeStore.class); when(runtimes.loadSpec(PROJECT)).thenReturn(spec(template));
             var request = new BuildRequest("task", "call", PROJECT, RUN, 1, BuildGoal.TEST,
+                new com.manao.poc4.ai.AgentProjectEnvironmentService(runtimes, BASE).forProject(PROJECT),
                 Map.of("package.json", "{}", "src/app.ts", "export {};"));
             var job = factory(NODE_IMAGE, runtimes).createDevelopmentJob(request,
                 new JobResourceFactory.DevelopmentSourceVolume("nfs.example", "/export/workspaces"));

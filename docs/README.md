@@ -28,6 +28,7 @@
 - 阶段四暂停接管、同会话手动继续：[控制与恢复设计](superpowers/specs/2026-10-27-pi-stage4-control-recovery-design.md)，其末尾链接五任务实施计划和Agent交接；实现与已授权云端验证已完成，范围见[阶段四验收](../poc4/docs/evidence/ai-stage4/acceptance.md)。
 - 多轮会话与压缩：[会话上下文设计](superpowers/specs/2026-10-19-ai-conversation-context-design.md)。
 - 流式输出、思考强度与 Markdown：[输出设计](superpowers/specs/2026-10-20-ai-streaming-reasoning-markdown-design.md)。
+- 项目环境识别与普通 Python / FastAPI 开发闭环：[设计](superpowers/specs/2026-11-04-ai-python-environment-design.md)、[验收](../poc4/docs/evidence/ai-python-environment/acceptance.md)、[首轮云流程](../poc4/docs/evidence/ai-python-environment/cloud-20261104.md)、[依赖故障/回滚](../poc4/docs/evidence/ai-python-environment/cloud-followup-20261105.md)、[最终重启/自动压缩/图片/B2](../poc4/docs/evidence/ai-python-environment/final-verification-20261105.md)、[发布手册](../poc4/deploy/ai-python-environment/README.md)。AI_PYTHON_CLOSED_LOOP_PASS，历史失败与范围限制保留。
 
 只在执行对应任务时再读[AI 执行计划与交接目录](superpowers/plans/)中同主题、同日期的文档；该目录保留 AI 各阶段、会话上下文、流式输出、ThinkRail 及收尾修复等资料，不逐项增加导航。阶段验收、复审及实际发布证据由项目进度中的对应专题记录负责；已完成计划不作为默认待办队列。
 

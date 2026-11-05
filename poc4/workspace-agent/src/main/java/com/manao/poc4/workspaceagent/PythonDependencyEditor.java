@@ -6,6 +6,7 @@ import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
@@ -25,7 +26,15 @@ public final class PythonDependencyEditor {
     private static final Logger LOG = LoggerFactory.getLogger(PythonDependencyEditor.class);
 
     /** Wire record of the requested change; the backend normalizes the package name before sending. */
-    public record DependencyChange(String action, String packageName, String version) { }
+    public record DependencyChange(String action, String packageName, String version, String group) {
+        public DependencyChange {
+            group = group == null ? "main" : group;
+        }
+
+        public DependencyChange(String action, String packageName, String version) {
+            this(action, packageName, version, "main");
+        }
+    }
 
     /** Wire record of the prepare/commit summary: ids and digests only, never file contents. */
     public record PreparedPythonDependencies(String operationId, String requestSha256,
@@ -204,6 +213,9 @@ public final class PythonDependencyEditor {
         if (change.packageName() == null || !PACKAGE_NAME.matcher(change.packageName()).matches()) {
             throw new WorkspaceFileService.WorkspaceFileException("VALIDATION_ERROR", "unsupported package name");
         }
+        if (!"main".equals(change.group()) && !"test".equals(change.group())) {
+            throw new WorkspaceFileService.WorkspaceFileException("VALIDATION_ERROR", "unsupported dependency group");
+        }
         String version = change.version();
         if ("REMOVE".equals(change.action())) {
             if (version != null && !version.isBlank()) {
@@ -235,10 +247,13 @@ public final class PythonDependencyEditor {
      */
     static List<String> helperCommand(Path scratch, DependencyChange change,
                                       String pythonExecutable, String helperPath, long budgetSeconds) {
-        return List.of(pythonExecutable, "-I", helperPath, scratch.toString(), change.action(),
+        List<String> command = new ArrayList<>(List.of(pythonExecutable, "-I", helperPath,
+            scratch.toString(), change.action(),
             change.packageName(), change.version() == null || change.version().isBlank()
                 ? "" : change.version(),
-            Long.toString(budgetSeconds));
+            Long.toString(budgetSeconds)));
+        if ("test".equals(change.group())) command.add("test");
+        return List.copyOf(command);
     }
 
     /**

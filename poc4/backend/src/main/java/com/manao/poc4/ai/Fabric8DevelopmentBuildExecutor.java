@@ -73,6 +73,8 @@ public final class Fabric8DevelopmentBuildExecutor implements DevelopmentBuildEx
 
     private final BuildCreation creation;
     private final java.util.function.Predicate<AgentContracts.BuildRequest> stopRequested;
+    private final java.util.function.BiFunction<AgentContracts.BuildRequest, AgentContracts.BuildResult, AgentContracts.BuildResult> evidenceSink;
+    private final java.util.function.Function<AgentContracts.BuildRequest, AgentContracts.BuildResult> evidenceLoader;
 
     public Fabric8DevelopmentBuildExecutor(KubernetesClient client, JobResourceFactory factory, String namespace,
                                            BiConsumer<AgentContracts.BuildRequest, AgentContracts.BuildIdentity> identityListener,
@@ -99,12 +101,33 @@ public final class Fabric8DevelopmentBuildExecutor implements DevelopmentBuildEx
             BiConsumer<AgentContracts.BuildRequest, AgentContracts.BuildIdentity> identityListener,
             BuildCreation creation, java.util.function.Predicate<AgentContracts.BuildRequest> stopRequested,
             Clock clock, long pollMillis, long waitBudgetSeconds, long cleanupWaitSeconds) {
+        this(client, factory, namespace, identityListener, creation, stopRequested, (r, result) -> result, r -> null,
+            clock, pollMillis, waitBudgetSeconds, cleanupWaitSeconds);
+    }
+
+    public Fabric8DevelopmentBuildExecutor(KubernetesClient client, JobResourceFactory factory, String namespace,
+            BiConsumer<AgentContracts.BuildRequest, AgentContracts.BuildIdentity> identityListener,
+            BuildCreation creation, java.util.function.Predicate<AgentContracts.BuildRequest> stopRequested,
+            java.util.function.BiFunction<AgentContracts.BuildRequest, AgentContracts.BuildResult, AgentContracts.BuildResult> evidenceSink,
+            java.util.function.Function<AgentContracts.BuildRequest, AgentContracts.BuildResult> evidenceLoader) {
+        this(client, factory, namespace, identityListener, creation, stopRequested, evidenceSink, evidenceLoader,
+            Clock.systemUTC(), DEFAULT_POLL_MILLIS, DEFAULT_WAIT_BUDGET_SECONDS, DEFAULT_CLEANUP_WAIT_SECONDS);
+    }
+
+    Fabric8DevelopmentBuildExecutor(KubernetesClient client, JobResourceFactory factory, String namespace,
+            BiConsumer<AgentContracts.BuildRequest, AgentContracts.BuildIdentity> identityListener,
+            BuildCreation creation, java.util.function.Predicate<AgentContracts.BuildRequest> stopRequested,
+            java.util.function.BiFunction<AgentContracts.BuildRequest, AgentContracts.BuildResult, AgentContracts.BuildResult> evidenceSink,
+            java.util.function.Function<AgentContracts.BuildRequest, AgentContracts.BuildResult> evidenceLoader,
+            Clock clock, long pollMillis, long waitBudgetSeconds, long cleanupWaitSeconds) {
         this.client = Objects.requireNonNull(client, "client");
         this.factory = Objects.requireNonNull(factory, "factory");
         this.namespace = Objects.requireNonNull(namespace, "namespace");
         this.identityListener = identityListener;
         this.creation = Objects.requireNonNull(creation, "creation");
         this.stopRequested = Objects.requireNonNull(stopRequested, "stopRequested");
+        this.evidenceSink = Objects.requireNonNull(evidenceSink, "evidenceSink");
+        this.evidenceLoader = Objects.requireNonNull(evidenceLoader, "evidenceLoader");
         this.clock = clock == null ? Clock.systemUTC() : clock;
         this.pollMillis = pollMillis;
         this.waitBudgetSeconds = waitBudgetSeconds;
@@ -124,12 +147,13 @@ public final class Fabric8DevelopmentBuildExecutor implements DevelopmentBuildEx
     }
 
     @Override public AgentContracts.BuildResult build(AgentContracts.BuildRequest request) {
+        request.requireExecutableEnvironment();
         String jobName = JobResourceFactory.developmentJobName(request.commandId());
         Job job = verifiedJob(jobName, request);
         if (job == null && !buildPods(request.commandId()).isEmpty()) {
             // Lingering pod evidence without its job: the identity chain cannot be verified, so
             // no second job is created and the evidence stays in place for reconciliation.
-            return unresolved(jobName, null, null, "BUILD_IDENTITY_UNVERIFIABLE");
+            return unresolved(request, jobName, null, null, "BUILD_IDENTITY_UNVERIFIABLE");
         }
         if (job == null) {
             // The read-only source volume is resolved from the bound workspace PV before the
@@ -138,7 +162,7 @@ public final class Fabric8DevelopmentBuildExecutor implements DevelopmentBuildEx
             JobResourceFactory.DevelopmentSourceVolume source = developmentSourceVolume(request.projectId());
             job = creation.create(request, () -> createJob(request, source));
             if (job == null) {
-                return new AgentContracts.BuildResult(
+                return result(request,
                     new AgentContracts.BuildIdentity(jobName, null, null),
                     null, "BUILD_CLOSING_ABORTED", "", false, List.of(), true);
             }
@@ -151,16 +175,29 @@ public final class Fabric8DevelopmentBuildExecutor implements DevelopmentBuildEx
         String jobName = identity.jobName() == null
             ? JobResourceFactory.developmentJobName(request.commandId()) : identity.jobName();
         Job job = verifiedJob(jobName, request);
+        var saved = evidenceLoader.apply(request);
+        if (saved != null) {
+            if (!jobName.equals(saved.identity().jobName())
+                    || (identity.jobUid() != null && !identity.jobUid().equals(saved.identity().jobUid()))
+                    || (identity.podUid() != null && !identity.podUid().equals(saved.identity().podUid()))
+                    || (job != null && !uid(job).equals(saved.identity().jobUid())))
+                throw new IllegalStateException("saved build evidence uid mismatch");
+            // A persisted observation precedes the first destructive cleanup. Recovery resumes
+            // that cleanup even when its Job still exists after its Pod has already disappeared.
+            var evidence = closingEvidence(request, job, saved.identity());
+            evidence = evidenceSink.apply(request, evidence);
+            return withCleanup(evidence, cleanup(jobName, evidence.identity().jobUid(), request.commandId()));
+        }
         if (job == null) {
             // Recovery never rebuilds: a recorded build without any live evidence has an
             // unknowable outcome and stays unsettled, and pod evidence without its job can
             // never be verified at all.
             if (buildPods(request.commandId()).isEmpty()) {
-                return new AgentContracts.BuildResult(
+                return result(request,
                     new AgentContracts.BuildIdentity(jobName, identity.jobUid(), identity.podUid()),
                     null, "BUILD_EVIDENCE_UNAVAILABLE", "", false, List.of(), false);
             }
-            return unresolved(jobName, identity.jobUid(), identity.podUid(), "BUILD_IDENTITY_UNVERIFIABLE");
+            return unresolved(request, jobName, identity.jobUid(), identity.podUid(), "BUILD_IDENTITY_UNVERIFIABLE");
         }
         if (identity.jobUid() != null && !identity.jobUid().equals(uid(job))) {
             throw new IllegalStateException("the recorded build job was replaced by a different uid");
@@ -177,11 +214,10 @@ public final class Fabric8DevelopmentBuildExecutor implements DevelopmentBuildEx
             throw new IllegalStateException("the build job to close does not match the recorded uid");
         }
         String jobUid = job == null ? identity.jobUid() : uid(job);
-        BoundedText log = collectRemainingLog(request, jobName, jobUid, identity.podUid());
+        var evidence = closingEvidence(request, job, new AgentContracts.BuildIdentity(jobName, jobUid, identity.podUid()));
+        evidence = evidenceSink.apply(request, evidence);
         boolean cleanupConfirmed = cleanup(jobName, jobUid, request.commandId());
-        return new AgentContracts.BuildResult(
-            new AgentContracts.BuildIdentity(jobName, jobUid, identity.podUid()),
-            null, "BUILD_CLOSED", log.text(), log.truncated(), parseReports(log.text()), cleanupConfirmed);
+        return withCleanup(evidence, cleanupConfirmed);
     }
 
     /**
@@ -226,8 +262,10 @@ public final class Fabric8DevelopmentBuildExecutor implements DevelopmentBuildEx
             .withLabel(JobResourceFactory.LABEL_TOOL_CALL_ID,request.commandId()).list().getItems());
         if(pods==null) pods=List.of();
         boolean absent=job==null && pods.isEmpty();
+        var evidence = closingEvidence(request, job, new AgentContracts.BuildIdentity(name, jobUid, identity.podUid()), pods, bounded);
+        evidence = evidenceSink.apply(request, evidence);
         for(Pod pod:pods) {
-            if(jobUid==null || !ownedByJob(pod,jobUid)) return unresolved(name,jobUid,identity.podUid(),"BUILD_CLEANUP_UNKNOWN");
+            if(jobUid==null || !ownedByJob(pod,jobUid)) return unresolved(request, name,jobUid,identity.podUid(),"BUILD_CLEANUP_UNKNOWN");
             ReconcileWorkBudget.check();
             @SuppressWarnings({"unchecked","rawtypes"}) BaseOperation<Pod,?,?> operation=(BaseOperation)bounded.pods().inNamespace(namespace).withName(podName(pod));
             ReconcileWorkBudget.boundary(() -> operation.withResourceVersion(resourceVersion(pod)).delete());
@@ -236,13 +274,62 @@ public final class Fabric8DevelopmentBuildExecutor implements DevelopmentBuildEx
             @SuppressWarnings({"unchecked","rawtypes"}) BaseOperation<Job,?,?> operation=(BaseOperation)bounded.batch().v1().jobs().inNamespace(namespace).withName(name);
             ReconcileWorkBudget.boundary(() -> operation.withResourceVersion(resourceVersion(job)).delete());
         }
-        return new AgentContracts.BuildResult(new AgentContracts.BuildIdentity(name,jobUid,identity.podUid()),null,
-            "BUILD_CLOSED","",false,List.of(),absent);
+        absent = ReconcileWorkBudget.boundary(() -> bounded.batch().v1().jobs().inNamespace(namespace).withName(name).get()) == null
+            && ReconcileWorkBudget.boundary(() -> bounded.pods().inNamespace(namespace)
+                .withLabel(JobResourceFactory.LABEL_TOOL_CALL_ID, request.commandId()).list().getItems()).isEmpty();
+        return withCleanup(evidence, absent);
     }
 
-    private static AgentContracts.BuildResult unresolved(String jobName, String jobUid, String podUid,
+    private AgentContracts.BuildResult closingEvidence(AgentContracts.BuildRequest request, Job job, AgentContracts.BuildIdentity identity) {
+        return closingEvidence(request, job, identity, buildPods(request.commandId()), client);
+    }
+
+    private AgentContracts.BuildResult closingEvidence(AgentContracts.BuildRequest request, Job job,
+            AgentContracts.BuildIdentity identity, List<Pod> pods, KubernetesClient observer) {
+        var saved = evidenceLoader.apply(request);
+        if (saved != null && saved.identity().jobUid() != null && identity.jobUid() != null
+                && !saved.identity().jobUid().equals(identity.jobUid())) throw new IllegalStateException("saved build evidence uid mismatch");
+        if (saved != null && identity.podUid() != null && !identity.podUid().equals(saved.identity().podUid()))
+            throw new IllegalStateException("saved build evidence pod uid mismatch");
+        if (saved != null && pods.isEmpty()) return withCleanup(saved, false);
+        Pod pod = pods.isEmpty() ? null : claimedPod(pods, identity.jobUid(), identity.podUid());
+        if (pod != null) {
+            if (!ownedByJob(pod, identity.jobUid())) throw new IllegalStateException("build pod owner mismatch");
+            identity = new AgentContracts.BuildIdentity(identity.jobName(), identity.jobUid(), uid(pod));
+        }
+        // A cleanup retry may refine identity, but a later log read cannot replace saved
+        // terminal facts. Return the same facts the write-ahead store preserves.
+        if (saved == null || saved.exitCode() == null) {
+            Observation observed = job == null || pod == null ? null : terminalObservation(job, pod, observer);
+            if (observed != null) return result(request, identity,
+                request.environment() != null && "python".equals(request.environment().language()) ? observed.exitCode() : null,
+                "BUILD_CLOSED", observed.output(), observed.truncated(), observed.reports(), false);
+        }
+        if (saved != null) return new AgentContracts.BuildResult(identity, saved.exitCode(), saved.terminationReason(),
+            saved.output(), saved.truncated(), saved.testReports(), false, saved.evidence());
+        BoundedText log = new BoundedText("", false);
+        if (pod != null) {
+            try { log = ReconcileWorkBudget.boundary(() -> boundedLog(podName(pod), ResourceIdentityVerifier.APPLICATION_CONTAINER, observer)); }
+            catch (KubernetesClientException unavailable) { /* Cleanup still records unknown verification. */ }
+        }
+        return result(request, identity, null, "BUILD_CLOSED", log.text(), log.truncated(), parseReports(log.text()), false);
+    }
+
+    private static AgentContracts.BuildResult withCleanup(AgentContracts.BuildResult result, boolean confirmed) {
+        return new AgentContracts.BuildResult(result.identity(), result.exitCode(), result.terminationReason(), result.output(),
+            result.truncated(), result.testReports(), confirmed, result.evidence());
+    }
+
+    private static AgentContracts.BuildResult result(AgentContracts.BuildRequest request, AgentContracts.BuildIdentity identity,
+            Integer exitCode, String reason, String output, boolean truncated, List<AgentContracts.TestReport> reports, boolean cleanup) {
+        var evidence = request.environment() != null && "python".equals(request.environment().language())
+            ? PythonBuildEvidence.from(request.goal(), exitCode, output, truncated) : null;
+        return new AgentContracts.BuildResult(identity, exitCode, reason, output, truncated, reports, cleanup, evidence);
+    }
+
+    private static AgentContracts.BuildResult unresolved(AgentContracts.BuildRequest request, String jobName, String jobUid, String podUid,
                                                          String reason) {
-        return new AgentContracts.BuildResult(
+        return result(request,
             new AgentContracts.BuildIdentity(jobName, jobUid, podUid), null, reason, "", false,
             List.of(), false);
     }
@@ -261,20 +348,18 @@ public final class Fabric8DevelopmentBuildExecutor implements DevelopmentBuildEx
             Instant waitDeadline = clock.instant().plusSeconds(waitBudgetSeconds);
             while (true) {
                 if (stopRequested.test(request)) {
-                    boolean confirmed = cleanup(jobName, jobUid, request.commandId());
-                    return new AgentContracts.BuildResult(new AgentContracts.BuildIdentity(jobName, jobUid, podUid),
-                        null, "BUILD_CLOSED", "", false, List.of(), confirmed);
+                    return close(request, new AgentContracts.BuildIdentity(jobName, jobUid, podUid));
                 }
                 Job job = currentJob(jobName, jobUid, request);
                 if (job == null) {
                     // The verified job vanished mid-wait: the evidence is gone and can never be
                     // trusted again, so the outcome stays unsettled for reconciliation.
                     if (buildPods(request.commandId()).isEmpty()) {
-                        return new AgentContracts.BuildResult(
+                        return result(request,
                             new AgentContracts.BuildIdentity(jobName, jobUid, podUid), null,
                             "BUILD_EVIDENCE_UNAVAILABLE", "", false, List.of(), false);
                     }
-                    return unresolved(jobName, jobUid, podUid, "BUILD_IDENTITY_UNVERIFIABLE");
+                    return unresolved(request, jobName, jobUid, podUid, "BUILD_IDENTITY_UNVERIFIABLE");
                 }
                 Pod pod = claimedPod(buildPods(request.commandId()), jobUid, podUid);
                 if (pod != null) {
@@ -284,11 +369,11 @@ public final class Fabric8DevelopmentBuildExecutor implements DevelopmentBuildEx
                     }
                     Observation observed = terminalObservation(job, pod);
                     if (observed != null) {
+                        var evidence = result(request, new AgentContracts.BuildIdentity(jobName, jobUid, podUid),
+                            observed.exitCode(), observed.terminationReason(), observed.output(), observed.truncated(), observed.reports(), false);
+                        evidence = evidenceSink.apply(request, evidence);
                         boolean cleanupConfirmed = cleanup(jobName, jobUid, request.commandId());
-                        return new AgentContracts.BuildResult(
-                            new AgentContracts.BuildIdentity(jobName, jobUid, podUid),
-                            observed.exitCode(), observed.terminationReason(), observed.output(),
-                            observed.truncated(), observed.reports(), cleanupConfirmed);
+                        return withCleanup(evidence, cleanupConfirmed);
                     }
                 }
                 if (!clock.instant().isBefore(waitDeadline)) {
@@ -296,11 +381,11 @@ public final class Fabric8DevelopmentBuildExecutor implements DevelopmentBuildEx
                     // log, delete by the original identity, confirm everything is 404. No exit
                     // code is invented for a build whose termination was never observed.
                     BoundedText log = collectRemainingLog(request, jobName, jobUid, podUid);
+                    var evidence = result(request, new AgentContracts.BuildIdentity(jobName, jobUid, podUid), null,
+                        "BUILD_WAIT_BUDGET_EXCEEDED", log.text(), log.truncated(), parseReports(log.text()), false);
+                    evidence = evidenceSink.apply(request, evidence);
                     boolean cleanupConfirmed = cleanup(jobName, jobUid, request.commandId());
-                    return new AgentContracts.BuildResult(
-                        new AgentContracts.BuildIdentity(jobName, jobUid, podUid), null,
-                        "BUILD_WAIT_BUDGET_EXCEEDED", log.text(), log.truncated(),
-                        parseReports(log.text()), cleanupConfirmed);
+                    return withCleanup(evidence, cleanupConfirmed);
                 }
                 sleep();
             }
@@ -328,8 +413,7 @@ public final class Fabric8DevelopmentBuildExecutor implements DevelopmentBuildEx
                                       String jobUid, String podUid) {
         boolean pending = Thread.interrupted();
         try {
-            collectRemainingLog(request, jobName, jobUid, podUid);
-            cleanup(jobName, jobUid, request.commandId());
+            close(request, new AgentContracts.BuildIdentity(jobName, jobUid, podUid));
         } finally {
             if (pending) {
                 Thread.currentThread().interrupt();
@@ -436,15 +520,19 @@ public final class Fabric8DevelopmentBuildExecutor implements DevelopmentBuildEx
     }
 
     private Observation terminalObservation(Job job, Pod pod) {
+        return terminalObservation(job, pod, client);
+    }
+
+    private Observation terminalObservation(Job job, Pod pod, KubernetesClient observer) {
         Optional<ContainerStateTerminated> init = terminated(pod, true, SOURCE_COPY_CONTAINER);
         if (init.isPresent() && init.get().getExitCode() != null && init.get().getExitCode() != 0) {
-            BoundedText log = boundedLog(podName(pod), SOURCE_COPY_CONTAINER);
+            BoundedText log = ReconcileWorkBudget.boundary(() -> boundedLog(podName(pod), SOURCE_COPY_CONTAINER, observer));
             return new Observation(init.get().getExitCode(), "SourceCopyFailed",
                 log.text(), log.truncated(), List.of());
         }
         Optional<ContainerStateTerminated> main = terminated(pod, false, ResourceIdentityVerifier.APPLICATION_CONTAINER);
         if (main.isPresent()) {
-            BoundedText log = boundedLog(podName(pod), ResourceIdentityVerifier.APPLICATION_CONTAINER);
+            BoundedText log = ReconcileWorkBudget.boundary(() -> boundedLog(podName(pod), ResourceIdentityVerifier.APPLICATION_CONTAINER, observer));
             boolean deadlineExceeded = deadlineExceeded(job);
             String reason = deadlineExceeded ? "DeadlineExceeded"
                 : (main.get().getReason() == null || main.get().getReason().isBlank()
@@ -659,10 +747,14 @@ public final class Fabric8DevelopmentBuildExecutor implements DevelopmentBuildEx
     }
 
     private BoundedText boundedLog(String podName, String container) {
+        return boundedLog(podName, container, client);
+    }
+
+    private BoundedText boundedLog(String podName, String container, KubernetesClient observer) {
         // The transport read is byte-bounded (limitBytes) and the kept text is additionally
         // capped at the output limit in UTF-8 bytes: a huge Maven log can never reach the
         // backend unbounded, and the cut never splits a multi-byte character.
-        String log = client.pods().inNamespace(namespace).withName(podName)
+        String log = observer.pods().inNamespace(namespace).withName(podName)
             .inContainer(container)
             .limitBytes(LOG_FETCH_LIMIT_BYTES)
             .getLog();

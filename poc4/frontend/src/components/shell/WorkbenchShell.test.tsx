@@ -2666,7 +2666,7 @@ describe('WorkbenchShell agent task panel', () => {
     expect(closePosts).toBe(0);
   }, 15_000);
 
-  it('refreshes the workspace when the agent task writes files and unlocks after it settles', async () => {
+  it.each([0, 1])('refreshes the workspace after agent writes with %i transient busy reads and unlocks after settlement', async (busyReads) => {
     const user = userEvent.setup();
     const settledSnapshot = agentTask({
       state: 'COMPLETED',
@@ -2679,11 +2679,21 @@ describe('WorkbenchShell agent task panel', () => {
     let settled = false;
     let agentWrote = false;
     let agentRevision = 'mock-rev-0001';
+    let busyResponses = 0;
     server.use(
       http.get(`${AGENT_TASKS_URL}/current`, () =>
         occupying ? HttpResponse.json(agentTask({ workspaceRevision: agentRevision })) : agentCurrentNotFound()),
       http.get(`${AGENT_TASKS_URL}/${AGENT_TASK_ID}`, () =>
         HttpResponse.json(settled ? settledSnapshot : agentTask({ workspaceRevision: agentRevision }))),
+      http.get('/api/v1/projects/:projectId/files/tree', () => {
+        if (agentWrote && busyResponses < busyReads) {
+          busyResponses += 1;
+          return HttpResponse.json(
+            { code: 'PROJECT_BUSY', message: 'Project is busy', traceId: 'agent-reload-busy' }, { status: 409 },
+          );
+        }
+        return undefined;
+      }),
       http.get('/api/v1/projects/:projectId/files/content', ({ request }) => {
         const path = new URL(request.url).searchParams.get('path');
         if (!agentWrote || path !== 'pom.xml') {
@@ -2723,6 +2733,8 @@ describe('WorkbenchShell agent task panel', () => {
     occupying = false;
     await queryClient.invalidateQueries({ queryKey: agentTaskKeys.current(ALICE_SEED_PROJECT_ID) });
     await waitUntilWritesUnlocked();
+    expect(busyResponses).toBe(busyReads);
+    expect(screen.queryByText(/agent changed the workspace files, but reloading them failed/i)).not.toBeInTheDocument();
     expect(monaco.editor.getModel(uri)?.getValue()).toContain('<agent-edit />');
   }, 15_000);
 

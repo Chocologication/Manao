@@ -12,8 +12,8 @@ import org.junit.jupiter.api.Test;
 
 class StudioUpgradeMigrationTest {
     @Test
-    void version19UpgradePreservesAccountsProjectsConversationsAndAttachments() {
-        try (var database = JdbcStoreTestSupport.createAtVersion("19")) {
+    void version20UpgradePreservesAccountsProjectsConversationsAttachmentsAndEnvironment() throws Exception {
+        try (var database = JdbcStoreTestSupport.createAtVersion("20")) {
             var jdbc = database.jdbc();
             String owner = UUID.randomUUID().toString();
             String project = UUID.randomUUID().toString();
@@ -31,8 +31,13 @@ class StudioUpgradeMigrationTest {
             jdbc.update("INSERT INTO agent_attachment(id,project_id,conversation_id,file_name,mime_type,size_bytes,sha256,uploaded_at,expires_at,state) VALUES (?,?,?,'original.png','image/png',3,?,?,?,'READY')",
                 attachment, project, conversation, "a".repeat(64), now,
                 Timestamp.from(now.toInstant().plusSeconds(86400)));
+            var environment = com.manao.poc4.ai.AgentProjectEnvironment.fromJson(java.nio.file.Files.readString(
+                java.nio.file.Path.of("../fixtures/agent-project-environment/python-fastapi-web.json")));
+            jdbc.update("INSERT INTO agent_task(id,project_id,owner_id,request_sha256,prompt,state,worker_epoch,workspace_revision,created_at,updated_at,environment_json,environment_sha256) VALUES (?,?,?,?,?,'COMPLETED',1,7,?,?,?,?)",
+                UUID.randomUUID().toString(), project, owner, "b".repeat(64), "preserved task", now, now,
+                environment.canonicalJson(), environment.sha256());
 
-            var tables = List.of("app_user", "project", "agent_conversation", "agent_conversation_entry", "agent_attachment");
+            var tables = List.of("app_user", "project", "agent_conversation", "agent_conversation_entry", "agent_attachment", "agent_task");
             Map<String, List<Map<String, Object>>> before = new LinkedHashMap<>();
             for (String table : tables) before.put(table, jdbc.queryForList("SELECT * FROM " + table));
             var history = jdbc.queryForList("SELECT version,checksum,success FROM flyway_schema_history ORDER BY installed_rank");
@@ -40,9 +45,9 @@ class StudioUpgradeMigrationTest {
             database.migrateToLatest();
 
             for (String table : tables) assertThat(jdbc.queryForList("SELECT * FROM " + table)).isEqualTo(before.get(table));
-            assertThat(jdbc.queryForList("SELECT version,checksum,success FROM flyway_schema_history WHERE version <> '20' ORDER BY installed_rank"))
+            assertThat(jdbc.queryForList("SELECT version,checksum,success FROM flyway_schema_history WHERE version <> '21' ORDER BY installed_rank"))
                 .isEqualTo(history);
-            assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM flyway_schema_history WHERE version='20' AND success=1", Integer.class)).isEqualTo(1);
+            assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM flyway_schema_history WHERE version='21' AND success=1", Integer.class)).isEqualTo(1);
             for (String table : List.of("assistant_model", "assistant_conversation", "assistant_turn", "assistant_attachment", "assistant_task_options")) {
                 assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM " + table, Integer.class)).isZero();
             }

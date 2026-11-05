@@ -69,6 +69,27 @@ it('initializes effort per conversation and polling keeps a dirty selection', as
   await userEvent.click(screen.getByRole('button', { name: '会话 B' })); await screen.findByText('B 原文');
   expect(screen.getByRole('button', { name: /推理强度/ })).toHaveTextContent('推理强度 · 最高');
 });
+it('keeps dependency history scoped when switching conversation while its result is pending', async () => {
+  let release = () => {}, started = false;
+  const held = new Promise<void>(resolve => { release = resolve; });
+  server.use(
+    http.get(`${URL}/${A}/entries`, () => HttpResponse.json({ items: [{ seq: 1, taskId: T, kind: 'tool_result', text: 'python_dependencies dependency-1', toolCallId: 'dependency-1', textOffset: 0, contentIndex: 0, modelTruncated: false }], nextBeforeSeq: null, nextBeforeOffset: null })),
+    http.get(`/api/v1/projects/${P}/agent-tasks/${T}/tools/dependency-1`, async () => {
+      started = true; await held;
+      return HttpResponse.json({ toolCallId: 'dependency-1', toolName: 'python_dependencies', data: { kind: 'python_dependencies', operationId: 'op-1', action: 'add', packageName: 'pytest', group: 'test', state: 'COMMITTED', changedPaths: ['pyproject.toml', 'uv.lock'] } });
+    }),
+  );
+  panel(); await userEvent.click(await screen.findByRole('button', { name: '查看工具结果' }));
+  await waitFor(() => expect(started).toBe(true));
+  await userEvent.click(screen.getByRole('button', { name: '会话 B' })); await screen.findByText('B 原文');
+  await act(async () => { release(); await held; });
+  expect(screen.queryByText('包：pytest')).toBeNull();
+  expect(queryClient.getQueryData(fileKeys.revision(P))).toBe('7');
+  await userEvent.click(screen.getByRole('button', { name: '会话 A' }));
+  await userEvent.click(await screen.findByRole('button', { name: '查看工具结果' }));
+  expect(await screen.findByText('包：pytest')).toBeVisible();
+});
+
 function conversation(id = A, extra = {}) { return { conversationId: id, title: id === A ? '会话 A' : '会话 B', headSeq: 1, lastTaskId: null, activeTaskId: null, usage: null, compactRequestId: null, compactState: null, compactFailureCode: null, ...extra }; }
 it('keeps the current task end control while the selected historical conversation cannot load', async () => {
   sessionStorage.setItem(`manao.agent-conversation.${U}.${P}`, B);

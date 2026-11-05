@@ -1,3 +1,4 @@
+import { JAVA_ENVIRONMENT, PYTHON_ENVIRONMENT } from "./environment-fixtures.js";
 import { describe, expect, it, vi } from "vitest";
 import { SessionManager, SettingsManager, type AgentSession } from "@earendil-works/pi-coding-agent";
 import { getSystemMessageText, type TranscriptContext } from "@earendil-works/pi-ai";
@@ -30,7 +31,7 @@ function history() {
   return manager;
 }
 type Respond = NonNullable<Parameters<typeof scriptedSessionFactory>[2]>;
-async function fixture(manager: SessionManager, respond: Respond, seconds = 1800, fixedSdkConfig = false, now?: () => number) {
+async function fixture(manager: SessionManager, respond: Respond, seconds = 1800, fixedSdkConfig = false, now?: () => number, environment = JAVA_ENVIRONMENT) {
   const entries = structuredClone(manager.getEntries());
   const batches: ContextAppend[] = [];
   const requests: Array<{ summary: boolean; context: TranscriptContext }> = [];
@@ -47,7 +48,7 @@ async function fixture(manager: SessionManager, respond: Respond, seconds = 1800
       data: { content: "工具结果增长：" + "x".repeat(90_000) }, truncated: false })),
     progress: vi.fn(async () => ({ accepted: true })),
   };
-  const pi = await createPiSession({ model: MODEL_CONFIG, paths: privateDirs(), taskId: "task", conversationId: id, startRevision: "7",
+  const pi = await createPiSession({ environment, model: MODEL_CONFIG, paths: privateDirs(), taskId: "task", conversationId: id, startRevision: "7",
     budgets: { wallClockSeconds: seconds, toolCalls: 180, builds: 20 }, backend: backend as unknown as BackendClient,
     progress: new ProgressChain(backend as unknown as BackendClient, "task"),
     deps: { now, createSession: async (options) => {
@@ -65,6 +66,80 @@ async function fixture(manager: SessionManager, respond: Respond, seconds = 1800
 }
 
 describe("fixed-window native Pi compaction", () => {
+  const unusableSummaries = [{ text: "" }, { text: " \n\t " }, { thinking: "reasoning without a visible checkpoint" }];
+  it.each(unusableSummaries.flatMap(response => ["before-task", "sdk-auto", "after-final"].map(phase => ({ response, phase }))))(
+    "rejects unusable summary $response at $phase before changing the durable projection", async ({ response, phase }) => {
+      const manager = history();
+      if (phase === "before-task") {
+        manager.appendMessage(assistant("prior usage", 786_000));
+        manager.appendCustomMessageEntry("manao_user_request", "current goal" + "g".repeat(4000), true);
+      }
+      const original = structuredClone(manager.getEntries());
+      let ordinary = 0;
+      const f = await fixture(manager, (_context, session) => {
+        if (session.isCompacting) return response;
+        ordinary++;
+        return phase === "after-final" ? { text: "final answer", usageTokens: 786_432 }
+          : { usageTokens: 785_900, toolCalls: [{ id: "grow-empty", name: "read_file", args: { path: "app/main.py" } }] };
+      }, 1800, true, undefined, PYTHON_ENVIRONMENT);
+      try {
+        expect(await f.run()).toMatchObject({ state: "FAILED", failureCode: "AI_CONTEXT_COMPACTION_FAILED" });
+        expect(f.requests.filter(request => request.summary)).toHaveLength(1);
+        expect(ordinary).toBe(phase === "before-task" ? 0 : 1);
+        expect(f.entries.some(entry => entry.type === "compaction")).toBe(false);
+        expect(f.entries.slice(0, original.length)).toEqual(original);
+        const restored = SessionManager.inMemory("restored", { id }, [manager.getHeader(), ...structuredClone(f.entries)]);
+        expect(JSON.stringify(restored.buildSessionContext().messages)).toContain("字段必须保留 bookId");
+      } finally { f.pi.dispose(); }
+    });
+
+  it.each(unusableSummaries)("keeps the first good checkpoint when a second native summary is unusable: %j", async response => {
+    let ordinary = 0, failedSummaries = 0;
+    const f = await fixture(history(), (_context, session) => {
+      if (session.isCompacting) {
+        if (!session.sessionManager.getEntries().some(entry => entry.type === "compaction")) return { text: summary };
+        failedSummaries++;
+        return response;
+      }
+      return { usageTokens: 785_900, toolCalls: [{ id: `grow-${++ordinary}`, name: "read_file", args: { path: "app/main.py" } }] };
+    }, 1800, true, undefined, PYTHON_ENVIRONMENT);
+    try {
+      expect(await f.run()).toMatchObject({ state: "FAILED", failureCode: "AI_CONTEXT_COMPACTION_FAILED" });
+      expect(failedSummaries).toBe(1);
+      expect(ordinary).toBe(2);
+      const checkpoints = f.entries.filter(entry => entry.type === "compaction");
+      expect(checkpoints).toHaveLength(1);
+      expect(checkpoints[0]!.summary).toContain(summary);
+      const restored = SessionManager.inMemory("restored", { id }, [f.session.sessionManager.getHeader(), ...structuredClone(f.entries)]);
+      expect(JSON.stringify(restored.buildSessionContext().messages)).toContain(summary);
+      const next = await fixture(restored, (_context, session) => session.isCompacting ? { text: summary } : { text: "continued current Python goal" }, 1800, true, undefined, PYTHON_ENVIRONMENT);
+      try {
+        expect((await next.run()).state).toBe("COMPLETED");
+        const request = next.requests.find(item => !item.summary)!;
+        expect(JSON.stringify(request.context)).toContain(summary);
+        expect(JSON.stringify(request.context)).toContain("python-fastapi-web");
+      } finally { next.pi.dispose(); }
+    } finally { f.pi.dispose(); }
+  });
+
+  it.each(["before-task", "sdk-auto"])("retains current Python authority after %s compaction of old Java history", async phase => {
+    const manager = history();
+    if (phase === "before-task") manager.appendMessage(assistant("old Java usage", 786_000));
+    let ordinary = 0;
+    const f = await fixture(manager, (_context, session) => session.isCompacting
+      ? { text: "历史 Spring Boot Maven package 摘要，保留 bookId。" }
+      : (++ordinary === 1 && phase === "sdk-auto" ? { usageTokens: 785_900,
+        toolCalls: [{ id: "grow", name: "read_file", args: { path: "app/main.py" } }] } : { text: "done" }), 1800, true, undefined, PYTHON_ENVIRONMENT);
+    try {
+      expect((await f.run()).state).toBe("COMPLETED");
+      expect(f.requests.some(request => request.summary)).toBe(true);
+      for (const request of f.requests.filter(request => !request.summary)) {
+        expect(JSON.stringify(request.context)).toContain('python-fastapi-web');
+      }
+      expect(f.session.getActiveToolNames()).toEqual(PYTHON_ENVIRONMENT.tools);
+      expect(JSON.stringify(f.session.agent.state.tools.find(tool => tool.name === "build")!.parameters)).not.toContain("package");
+    } finally { f.pi.dispose(); }
+  });
   it.each([[786431, 0], [786432, 1], [786433, 1]])("compacts native assistant usage %i with inclusive 75 percent boundary", async (tokens, count) => {
     const f = await fixture(history(), (_context, session) => session.isCompacting ? { text: summary } : { text: "本轮完成", usageTokens: tokens });
     expect((await f.run()).state).toBe("COMPLETED");
@@ -100,7 +175,7 @@ describe("fixed-window native Pi compaction", () => {
     const programming = JSON.stringify(f.requests.find((request) => !request.summary)!.context);
     expect(programming).toContain(summary); expect(programming).toContain("新目标必须遵守 bookId。");
     expect(programming).toContain("最近目标：继续查询接口。");
-    expect(programming).toContain("seven mediated tools"); expect(programming).toContain("app_http_get");
+    expect(programming).toContain("environment-matched mediated tools"); expect(programming).toContain("app_http_get");
     expect(f.entries.slice(0, original.length)).toEqual(original);
     expect(f.backend.invoke).not.toHaveBeenCalled();
     f.pi.dispose();

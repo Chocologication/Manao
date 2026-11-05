@@ -66,7 +66,17 @@ class StudioCoreTest {
             when(builds.build(any())).thenReturn(new AgentContracts.BuildResult(new AgentContracts.BuildIdentity("job", "uid", "pod"), 0, "Completed", "BUILD SUCCESS", false, List.of(), true));
         }
         TurnInput input(String mode) { return new TurnInput(turn, "explain and improve the current project", mode, "REVIEW", modelId, "7", List.of(), List.of()); }
-        void prepare() { store.start(owner, project, conversation, input("TASK")); tasks.create(owner, project, new AgentContracts.TaskRequest(turn, "Improve the current project", 7)); proposals.prepare(owner, project, turn, modelId, "REVIEW", turn, 7); }
+        void prepare() {
+            var environment = new AgentProjectEnvironment(1, "java-console", "java", "none", "task", "com.example.app.App",
+                null, null, null, false, false, "java-v1", List.of("compile", "test", "package"), List.of(),
+                List.of("list_files", "read_file", "write_file", "build", "application", "read_image"));
+            prepare(environment);
+        }
+        void prepare(AgentProjectEnvironment environment) {
+            store.start(owner, project, conversation, input("TASK"));
+            tasks.createTask(owner, project, new AgentContracts.TaskRequest(turn, "Improve the current project", 7), null, () -> environment);
+            proposals.prepare(owner, project, turn, modelId, "REVIEW", turn, 7);
+        }
         AgentContracts.ToolResult write(String call, String path, String content, String sha) {
             var args = StudioStore.JSON.createObjectNode().put("path", path).put("content", content); if (sha != null) args.put("expectedSha256", sha);
             return tools.invoke(turn, new AgentContracts.ToolRequest(call, "write_file", 7, args));
@@ -163,6 +173,28 @@ class StudioCoreTest {
             verify(h.agent, never()).mutate(anyString(), any());
             var app = h.tools.invoke(h.turn, new AgentContracts.ToolRequest("app-1", "application", 7, StudioStore.JSON.createObjectNode().put("action", "start")));
             assertThat(app.data().path("error").path("code").asText()).isEqualTo("AI_REVIEW_ISOLATED");
+            var dependency = h.tools.invoke(h.turn, new AgentContracts.ToolRequest("dependency-1", "python_dependencies", 7,
+                StudioStore.JSON.createObjectNode().put("action", "add").put("packageName", "pytest").put("group", "test")));
+            assertThat(dependency.data().path("error").path("code").asText()).isEqualTo("AI_REVIEW_ISOLATED");
+        }
+    }
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.EnumSource(PythonBuildEvidence.VerificationStatus.class)
+    void pythonApplicationInheritsAuthorityAndRequiresActualPassingTests(PythonBuildEvidence.VerificationStatus status) throws Exception {
+        try (var h = new Harness()) {
+            var environment = AgentProjectEnvironment.fromJson(java.nio.file.Files.readString(
+                java.nio.file.Path.of("../fixtures/agent-project-environment/python-fastapi-web.json")));
+            h.prepare(environment); String before = h.files.get("README.md");
+            h.write("proposal", "README.md", "updated documentation\n", StudioStore.hash(before)); h.settle();
+            var evidence = new PythonBuildEvidence("python", "pytest", status, null, List.of(),
+                new PythonBuildEvidence.TestSummary(1, 0, 0, 0, true));
+            when(h.builds.build(any())).thenReturn(new AgentContracts.BuildResult(
+                new AgentContracts.BuildIdentity("job", "uid", "pod"), 0, "Completed", "controlled test evidence", false, List.of(), true, evidence));
+            var input = new ApplyInput(id(), List.of(h.proposals.changes(h.turn).get(0).hunks().get(0).id()), "7");
+            var result = h.apply.apply(h.owner, h.project, h.turn, input);
+            assertThat(result.path("state").asText()).isEqualTo(status == PythonBuildEvidence.VerificationStatus.PASS ? "COMPLETED" : "VALIDATION_FAILED");
+            assertThat(h.tasks.environmentOf(input.requestId())).isEqualTo(environment);
+            verify(h.builds).build(argThat(request -> environment.equals(request.environment()) && request.overlay().isEmpty()));
         }
     }
     @Test void selectedHunksApplyOnceAndValidateActualAcceptedVersion() {

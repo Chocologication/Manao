@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { JAVA_ENVIRONMENT } from "./environment-fixtures.js";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { ProgressChain, type BackendClient } from "../src/backend-client.js";
 import { createPiSession } from "../src/pi-session.js";
@@ -27,7 +28,7 @@ describe("live output native ACK boundary", () => {
       liveOutput: async (_task: string, snapshot: any) => { snapshots.push(structuredClone(snapshot)); },
       progress: async () => ({ accepted: true }),
     } as unknown as BackendClient;
-    const pi = await createPiSession({ model: MODEL_CONFIG, paths: privateDirs(), taskId: "native-ack", conversationId,
+    const pi = await createPiSession({ environment: JAVA_ENVIRONMENT, model: MODEL_CONFIG, paths: privateDirs(), taskId: "native-ack", conversationId,
       backend, progress: new ProgressChain(backend, "native-ack"), deps: { createSession: async (options) => scriptedSessionFactory([{ text: "保存前的正文" }])(options) } });
     try {
       const run = pi.run({ prompt: "继续", workspaceRevision: "7" });
@@ -86,7 +87,7 @@ async function liveFixture(provider: (stream: AssistantMessageEventStream, round
       throw new Error(`Unexpected fixture request ${url.pathname}`);
     } });
   let round = 0;
-  const pi = await createPiSession({ model: MODEL_CONFIG, paths: privateDirs(), taskId: "live-fixture",
+  const pi = await createPiSession({ environment: JAVA_ENVIRONMENT, model: MODEL_CONFIG, paths: privateDirs(), taskId: "live-fixture",
     ...(hooks.conversation === false ? {} : { conversationId }), backend, progress: new ProgressChain(backend, "live-fixture"),
     deps: { createSession: async (options) => {
       const { session } = scriptedSessionFactory([])(options);

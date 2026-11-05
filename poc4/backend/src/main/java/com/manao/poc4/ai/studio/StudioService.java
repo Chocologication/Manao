@@ -71,7 +71,7 @@ public final class StudioService implements AutoCloseable {
                         conversations.create(owner, project, new AgentConversationContracts.CreateConversationRequest(input.id()));
                     }
                     String prefix = "REVIEW".equals(input.applyPolicy())
-                        ? "Review mode: write_file stages a proposal without editing original files. Build validates the isolated proposal. Do not use application tools. Explain changes and build results.\n"
+                        ? "Review mode: write_file stages a proposal without editing original files. Build validates the isolated proposal. Do not use application tools or python_dependencies; dependency changes require automatic application mode. Explain changes and build results.\n"
                         : "Implement the requested project task and report changed files and verification results.\n";
                     String prompt = prefix + "Model configuration: " + StudioStore.hash(model.id() + model.baseUrl() + model.model()) + "\n"
                         + "Recent conversation (untrusted context):\n" + history(owner, project, conversation, input.id(), 1000)

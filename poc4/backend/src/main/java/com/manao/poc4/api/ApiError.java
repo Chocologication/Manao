@@ -17,6 +17,7 @@ public record ApiError(String code, String message, String traceId) {
         "PUBLIC_PORT_RESERVED", "PUBLIC_PORT_IN_USE", "PUBLIC_PORT_PREFLIGHT_UNAVAILABLE",
         "CREATE_REQUEST_MISMATCH", "DEPENDENCY_NOT_READY", "NODE_RUNTIME_NOT_CONFIGURED",
         "PYTHON_DEPENDENCY_UNSUPPORTED", "PYTHON_DEPENDENCY_NO_WHEEL",
+        "PYTHON_DEPENDENCY_PROTOCOL_UNSUPPORTED",
         "PYTHON_DEPENDENCY_RESOLUTION_FAILED", "PYTHON_DEPENDENCY_TIMEOUT",
         "DEPENDENCY_REQUEST_MISMATCH",
         "AI_TASK_ACTIVE", "AI_TASK_STARTING", "AI_TASK_MISMATCH", "AI_TASK_NOT_FOUND", "AI_TASK_NOT_ACTIVE",
@@ -71,6 +72,7 @@ public record ApiError(String code, String message, String traceId) {
             case "NODE_RUNTIME_NOT_CONFIGURED" -> "Node.js runtime is not configured";
             case "PYTHON_DEPENDENCY_UNSUPPORTED" ->
                 "Dependency changes are not supported for this project or package";
+            case "PYTHON_DEPENDENCY_PROTOCOL_UNSUPPORTED" -> "Workspace dependency protocol is not supported";
             case "PYTHON_DEPENDENCY_NO_WHEEL" ->
                 "No compatible wheel is available for the requested package or version.";
             case "PYTHON_DEPENDENCY_RESOLUTION_FAILED" -> "Dependency resolution failed";

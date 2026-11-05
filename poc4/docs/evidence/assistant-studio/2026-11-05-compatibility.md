@@ -1,5 +1,7 @@
 # 2026-11-05 本地兼容性检查
 
+本页是 `d0cf75f` 基线的历史快照，包含当时未提交及 Studio V20 的状态。当前 PR 基于 `6473e9a`，保留官方 V20、将 Studio 调整为 V21；最新范围和验证见[PR 整合验收](2026-11-05-pr-integration.md)。下文历史结果不改写。
+
 ## 结论与范围
 
 基线为本轮 fetch 得到的 `origin/master`：`d0cf75f71155553afe965bb7b39cabfd177c9960`。组合分支为 `codex/compatibility-20261105`，在该基线上保留新版 Studio、中文界面、Node.js runtime，并整合上游多账号、图片附件与上下文压缩实现。原开发分支保持原样，未 commit、push 或部署。

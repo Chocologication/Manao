@@ -1,3 +1,4 @@
+import { JAVA_ENVIRONMENT, JAVA_SHA256, PYTHON_ENVIRONMENT, PYTHON_SHA256 } from "./environment-fixtures.js";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { AddressInfo } from "node:net";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -406,6 +407,7 @@ describe("task server", () => {
 
   function startBody(taskId: string, epoch = 1): Record<string, unknown> {
     return {
+      environment: JAVA_ENVIRONMENT, environmentSha256: JAVA_SHA256,
       taskId,
       prompt: "fix the build",
       workspaceRevision: "7",
@@ -430,6 +432,31 @@ describe("task server", () => {
       expect(await status.text()).not.toContain('private-test-key');
       await vi.waitFor(() => expect(handle.activeTaskId()).toBeNull());
       expect((await post(`http://127.0.0.1:${port}/tasks/invalid/start`, { ...startBody('invalid'), reasoningEffort: 'high', model })).status).toBe(422);
+    } finally { await handle.close(); }
+  });
+  it.each([
+    { environment: undefined, environmentSha256: undefined },
+    { environment: PYTHON_ENVIRONMENT, environmentSha256: "0".repeat(64) },
+    { environment: { ...PYTHON_ENVIRONMENT, templateId: "python-unknown" }, environmentSha256: PYTHON_SHA256 },
+    { environment: { ...PYTHON_ENVIRONMENT, language: "java" }, environmentSha256: PYTHON_SHA256 },
+  ])("refuses invalid environment authority before runner creation %#", async invalid => {
+    let created = 0;
+    const handle = createTaskServer(workerConfig({ model: TEST_MODEL }), { createRunner: () => { created++; return stubRunner(); } });
+    const port = await handle.listen();
+    try {
+      const response = await post(`http://127.0.0.1:${port}/tasks/task/start`, { ...startBody("task"), ...invalid });
+      expect(response.status).toBe(422); expect(created).toBe(0);
+    } finally { await handle.close(); }
+  });
+  it("refuses changed environment for the same task, request and epoch", async () => {
+    let created = 0;
+    const handle = createTaskServer(workerConfig({ model: TEST_MODEL }), { createRunner: () => { created++; return stubRunner(); } });
+    const port = await handle.listen();
+    try {
+      const url = `http://127.0.0.1:${port}/tasks/task/start`;
+      expect((await post(url, startBody("task"))).status).toBe(200);
+      expect((await post(url, { ...startBody("task"), environment: PYTHON_ENVIRONMENT, environmentSha256: PYTHON_SHA256 })).status).toBe(409);
+      expect(created).toBe(1);
     } finally { await handle.close(); }
   });
   it.each([undefined, null, "medium", 1, ["max"]].map(reasoningEffort => ({ reasoningEffort })))("refuses invalid persisted effort $reasoningEffort before creating a runner", async ({ reasoningEffort }) => {

@@ -6,6 +6,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.manao.poc4.ai.AgentContracts.BuildGoal;
 import com.manao.poc4.ai.AgentContracts.BuildRequest;
+import com.manao.poc4.ai.AgentProjectEnvironment;
 import io.fabric8.kubernetes.api.model.batch.v1.Job;
 import org.junit.jupiter.api.Test;
 
@@ -40,12 +41,67 @@ class DevelopmentJobResourceFactoryTest {
     }
 
     private static BuildRequest request(BuildGoal goal) {
-        return new BuildRequest(TASK, CALL, PROJECT, COMMAND, 7L, goal);
+        return new BuildRequest(TASK, CALL, PROJECT, COMMAND, 7L, goal, javaEnvironment());
+    }
+
+    public static AgentProjectEnvironment javaEnvironment() {
+        return new AgentProjectEnvironment(1, "java-console", "java", "none", "task", "com.example.app.App",
+            null, null, null, false, false, "java-v1", java.util.List.of("compile", "test", "package"),
+            java.util.List.of(), java.util.List.of("list_files", "read_file", "write_file", "build", "application", "read_image"));
     }
 
     @Test
     void theBuildJobNameIsDeterministicFromTheCommandId() {
         assertThat(JobResourceFactory.developmentJobName(COMMAND)).isEqualTo("manao-dev-" + COMMAND);
+    }
+
+    @Test
+    void newBuildCannotSilentlyDefaultAMissingEnvironmentToJava() {
+        assertThatThrownBy(() -> factory.createDevelopmentJob(new BuildRequest(TASK, CALL, PROJECT, COMMAND, 7L, BuildGoal.TEST), SOURCE))
+            .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test void reviewOverlayCannotBypassThePersistedLanguageOrManagedFilePolicy() throws Exception {
+        var python = AgentProjectEnvironment.fromJson(java.nio.file.Files.readString(
+            java.nio.file.Path.of("../fixtures/agent-project-environment/python-fastapi-web.json")));
+        for (String path : java.util.List.of("pyproject.toml", "uv.lock", "pom.xml", "app/.env.local")) {
+            var request = new BuildRequest(TASK, CALL, PROJECT, COMMAND, 7, BuildGoal.TEST, python, java.util.Map.of(path, "unsafe"));
+            assertThatThrownBy(() -> factory.createDevelopmentJob(request, SOURCE)).isInstanceOf(IllegalArgumentException.class);
+        }
+        var javaRequest = new BuildRequest(TASK, CALL, PROJECT, COMMAND, 7, BuildGoal.TEST, javaEnvironment(), java.util.Map.of("main.py", "print('foreign')"));
+        assertThatThrownBy(() -> factory.createDevelopmentJob(javaRequest, SOURCE)).isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test void pythonUsesOnlyItsFixedImageCacheCommandsAndBooleanExtras() throws Exception {
+        String fixture = java.nio.file.Files.readString(java.nio.file.Path.of("../fixtures/agent-project-environment/python-fastapi-web.json"));
+        var environment = AgentProjectEnvironment.fromJson(fixture.replace("\"mysql\":false", "\"mysql\":true"));
+        for (BuildGoal goal : java.util.List.of(BuildGoal.COMPILE, BuildGoal.TEST)) {
+            Job job = factory.createDevelopmentJob(new BuildRequest(TASK, CALL, PROJECT, COMMAND, 7, goal, environment), SOURCE);
+            var spec = job.getSpec().getTemplate().getSpec();
+            var main = spec.getContainers().get(0);
+            assertThat(main.getImage()).isEqualTo(pythonImageDigest());
+            assertThat(main.getCommand()).containsExactly("/usr/local/bin/manao-python-dev-build", goal.name().toLowerCase(java.util.Locale.ROOT));
+            assertThat(main.getEnv()).anySatisfy(env -> { assertThat(env.getName()).isEqualTo("MANAO_PYTHON_MYSQL"); assertThat(env.getValue()).isEqualTo("true"); });
+            assertThat(main.getEnv()).anySatisfy(env -> { assertThat(env.getName()).isEqualTo("MANAO_PYTHON_REDIS"); assertThat(env.getValue()).isEqualTo("false"); });
+            assertThat(main.getEnv()).allSatisfy(env -> assertThat(env.getValueFrom()).isNull());
+            assertThat(main.getVolumeMounts()).extracting(m -> m.getMountPath()).containsExactlyInAnyOrder("/workspace", "/python-cache", "/tmp");
+            var copy = spec.getInitContainers().get(1);
+            assertThat(copy.getImage()).isEqualTo(pythonImageDigest());
+            assertThat(copy.getCommand()).containsExactly("/usr/local/bin/manao-python-dev-build", "copy");
+            assertThat(json.writeValueAsString(job)).doesNotContain("manao-dev-build", "/maven-cache", "prepare-maven-cache", IMAGE, "secretKeyRef");
+        }
+        assertThatThrownBy(() -> factory.createDevelopmentJob(new BuildRequest(TASK, CALL, PROJECT, COMMAND, 7, BuildGoal.PACKAGE, environment), SOURCE)).isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test void pythonConsoleAlsoUsesThePythonValidationLauncher() {
+        var console = new AgentProjectEnvironment(1, "python-console", "python", "none", "task", "main.py", "3.13",
+            null, null, false, false, "python-v1", java.util.List.of("compile", "test"), java.util.List.of("main", "test"),
+            java.util.List.of("list_files", "read_file", "write_file", "build", "application", "read_image", "python_dependencies"));
+        for (BuildGoal goal : java.util.List.of(BuildGoal.COMPILE, BuildGoal.TEST)) {
+            var job = factory.createDevelopmentJob(new BuildRequest(TASK, CALL, PROJECT, COMMAND, 7, goal, console), SOURCE);
+            assertThat(job.getSpec().getTemplate().getSpec().getContainers().get(0).getCommand())
+                .containsExactly("/usr/local/bin/manao-python-dev-build", goal.name().toLowerCase(java.util.Locale.ROOT));
+        }
     }
 
     @Test

@@ -105,7 +105,8 @@ public class AiConfig {
         return new Fabric8DevelopmentBuildExecutor(client, factory, properties.kubernetes().namespace(),
             (request, identity) -> tasks.bindToolCallIdentity(request.taskId(), request.toolCallId(),
                 identity.jobName(), identity.jobUid(), identity.podUid()),
-            tasks::createBuildIfAllowed, request -> AgentTaskStore.hasCloseIntent(tasks.settlementView(request.taskId())));
+            tasks::createBuildIfAllowed, request -> AgentTaskStore.hasCloseIntent(tasks.settlementView(request.taskId())),
+            tasks::savePendingBuildEvidence, tasks::loadPendingBuildEvidence);
     }
 
     @Bean
@@ -131,8 +132,10 @@ public class AiConfig {
                                         WorkspaceOperationService operations, ProjectLifecycleGate lifecycle,
                                         DevelopmentBuildExecutor builds, AgentApplicationTools application,
                                         org.springframework.beans.factory.ObjectProvider<com.manao.poc4.ai.studio.StudioProposals> studio,
-                                        com.manao.poc4.ai.AgentAttachmentService attachments) {
-        var tools = new AgentProjectTools(tasks, store, workspace, operations, lifecycle, builds, application, attachments);
+                                        com.manao.poc4.ai.AgentAttachmentService attachments,
+                                        com.manao.poc4.workspace.PythonDependencyService dependencies) {
+        var tools = new AgentProjectTools(tasks, store, workspace, operations, lifecycle, builds, application, attachments,
+            new com.manao.poc4.ai.AgentPythonDependencyTools(tasks, dependencies));
         tools.setStudio(studio.getIfAvailable());
         return tools;
     }
@@ -164,10 +167,18 @@ public class AiConfig {
 
     @Bean
     @Conditional(AiEnabledCondition.class)
+    com.manao.poc4.ai.AgentProjectEnvironmentService agentProjectEnvironmentService(
+            com.manao.poc4.project.ProjectRuntimeStore projects, com.manao.poc4.run.RunPolicy policy) {
+        return new com.manao.poc4.ai.AgentProjectEnvironmentService(projects, policy);
+    }
+
+    @Bean
+    @Conditional(AiEnabledCondition.class)
     AgentTaskService agentTaskService(AgentTaskStore tasks, ProjectLifecycleGate lifecycle,
                                       PiWorkerClient worker, AgentProjectTools tools, com.manao.poc4.ai.AgentConversationService conversations,
-                                      org.springframework.beans.factory.ObjectProvider<com.manao.poc4.ai.studio.StudioProposals> studio) {
-        var service = new AgentTaskService(tasks, lifecycle, worker, tools, conversations);
+                                      org.springframework.beans.factory.ObjectProvider<com.manao.poc4.ai.studio.StudioProposals> studio,
+                                      com.manao.poc4.ai.AgentProjectEnvironmentService environments) {
+        var service = new AgentTaskService(tasks, lifecycle, worker, tools, conversations, environments);
         service.setStudio(studio.getIfAvailable()); return service;
     }
 

@@ -67,7 +67,8 @@ public final class StudioApply {
             }
             if ("REJECTED".equals(journal.path("state").asText())) return publicJournal(journal);
             var request = new AgentContracts.TaskRequest(input.requestId(), "Apply selected assistant changes " + digest, journal.path("baseRevision").asLong(), "off");
-            var creation = tasks.createTask(owner, project, request);
+            // Application inherits the reviewed task's trusted environment, never browser input.
+            var creation = tasks.createTask(owner, project, request, null, () -> tasks.environmentOf(turnId));
             if (!creation.snapshot().writesLocked() && !"VALIDATING".equals(journal.path("state").asText()))
                 throw new ApiException("AI_APPLY_INTERRUPTED", 409, "The application task has closed; inspect applied files before starting another task");
         }
@@ -85,6 +86,13 @@ public final class StudioApply {
             journal.set("validation", result.data()); journal.put("workspaceRevision", result.workspaceRevision());
             boolean pass = !result.data().has("error") && result.data().path("exitCode").isInt() && result.data().path("exitCode").asInt() == 0
                 && result.data().path("cleanupConfirmed").asBoolean();
+            if ("python".equals(tasks.environmentOf(input.requestId()).language())) {
+                var data = result.data(); var summary = data.path("testSummary");
+                pass = pass && "pytest".equals(data.path("checkKind").asText())
+                    && "PASS".equals(data.path("verificationStatus").asText())
+                    && summary.path("reportComplete").asBoolean() && summary.path("tests").asInt() > 0
+                    && summary.path("failures").asInt() == 0 && summary.path("errors").asInt() == 0;
+            }
             try (var lease = acquire(project)) {
                 tasks.applyTerminal(input.requestId(), pass ? AgentContracts.TaskState.COMPLETED : AgentContracts.TaskState.FAILED,
                     pass ? "Selected changes applied and tests passed" : "Selected changes applied; validation did not pass", pass ? null : "AI_VALIDATION_FAILED");

@@ -221,13 +221,22 @@ public class JobResourceFactory {
      * at the same time, while the NFS volume + PVC cache combination starts normally.
      */
     public Job createDevelopmentJob(BuildRequest request, DevelopmentSourceVolume sourceVolume) {
+        request.requireExecutableEnvironment();
+        var template = RuntimeTemplate.fromId(request.environment().templateId());
+        boolean python = "python".equals(request.environment().language());
+        LanguageRuntime runtime = python ? LanguageRuntime.python(pythonImage, request.environment().templateId())
+            : template.isNode() ? LanguageRuntime.node(nodeImage, template.id()) : LanguageRuntime.maven(mavenImage);
+        String launcher = python ? "/usr/local/bin/manao-python-dev-build" : DEVELOPMENT_LAUNCHER_COMMAND;
+        List<String> command = python ? List.of(launcher, goalArgument(request.goal()))
+            : List.of(launcher, "run", goalArgument(request.goal()));
+        List<EnvVar> environment = new ArrayList<>();
+        if (python) {
+            environment.add(new EnvVar("MANAO_PYTHON_MYSQL", Boolean.toString(request.environment().mysql()), null));
+            environment.add(new EnvVar("MANAO_PYTHON_REDIS", Boolean.toString(request.environment().redis()), null));
+        }
         if (sourceVolume == null) {
             throw new IllegalArgumentException("sourceVolume is required");
         }
-        var template = projectRuntimes == null ? RuntimeTemplate.JAVA_CONSOLE
-            : RuntimeTemplate.fromId(projectRuntimes.loadSpec(request.projectId()).templateId());
-        LanguageRuntime runtime = template.isNode()
-            ? LanguageRuntime.node(nodeImage, template.id()) : LanguageRuntime.maven(mavenImage);
         String commandId = requireText(request.commandId(), "commandId");
         var labels = WorkspaceResourceFactory.projectIdentityLabels(request.projectId());
         labels.put(LABEL_COMPONENT, COMPONENT_DEVELOPMENT_BUILD);
@@ -285,7 +294,7 @@ public class JobResourceFactory {
                 new io.fabric8.kubernetes.api.model.ContainerBuilder()
                     .withName(SOURCE_COPY_CONTAINER)
                     .withImage(runtime.image())
-                    .withCommand(DEVELOPMENT_LAUNCHER_COMMAND, "copy")
+                    .withCommand(launcher, "copy")
                     .withVolumeMounts(
                         new io.fabric8.kubernetes.api.model.VolumeMountBuilder()
                             .withName("source")
@@ -310,9 +319,9 @@ public class JobResourceFactory {
             .withContainers(new io.fabric8.kubernetes.api.model.ContainerBuilder()
                 .withName(ResourceIdentityVerifier.APPLICATION_CONTAINER)
                 .withImage(runtime.image())
-                .withCommand(DEVELOPMENT_LAUNCHER_COMMAND, "run", goalArgument(request.goal()))
+                .withCommand(command)
                 .withWorkingDir("/workspace")
-                .withEnv(baseEnvironment(List.of()))
+                .withEnv(baseEnvironment(environment))
                 .withVolumeMounts(
                     new io.fabric8.kubernetes.api.model.VolumeMountBuilder()
                         .withName("workspace")
@@ -343,12 +352,13 @@ public class JobResourceFactory {
             .endTemplate()
             .endSpec()
             .build();
-        addReviewOverlay(job, request.overlay(), runtime.image());
+        addReviewOverlay(job, request.overlay(), runtime.image(), com.manao.poc4.ai.AgentFilePolicy.forEnvironment(request.environment()));
         return job;
     }
 
     /** Overlay is applied only to emptyDir, after the read-only source copy. */
-    private void addReviewOverlay(Job job, java.util.Map<String, String> overlay, String image) {
+    private void addReviewOverlay(Job job, java.util.Map<String, String> overlay, String image,
+                                  com.manao.poc4.ai.AgentFilePolicy policy) {
         if (overlay.isEmpty()) return;
         long bytes = overlay.values().stream().mapToLong(v -> v.getBytes(java.nio.charset.StandardCharsets.UTF_8).length).sum();
         if (overlay.size() > 64 || bytes > 512 * 1024) throw new IllegalArgumentException("Proposal exceeds build overlay limit");
@@ -357,7 +367,7 @@ public class JobResourceFactory {
         int index = 0;
         for (var entry : overlay.entrySet()) {
             String path = entry.getKey();
-            if (!com.manao.poc4.ai.AgentProjectTools.toolReadable(path)) throw new IllegalArgumentException("Invalid proposal path");
+            if (!policy.canWrite(path)) throw new IllegalArgumentException("Invalid proposal path");
             String name = "MANAO_PATH_" + index;
             env.add(new io.fabric8.kubernetes.api.model.EnvVarBuilder().withName(name).withValue(java.util.Base64.getEncoder().encodeToString(path.getBytes(java.nio.charset.StandardCharsets.UTF_8))).build());
             script.append("p=$(printenv ").append(name).append(" | base64 -d)\ndest=$(realpath -m -- \"/workspace/$p\")\ncase \"$dest\" in /workspace/*) ;; *) exit 42 ;; esac\n[ ! -L \"$dest\" ]\nmkdir -p -- \"$(dirname -- \"$dest\")\"\n");

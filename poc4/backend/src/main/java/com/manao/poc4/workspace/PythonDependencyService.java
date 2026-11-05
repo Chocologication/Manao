@@ -15,9 +15,9 @@ import java.util.Optional;
 import java.util.regex.Pattern;
 
 /**
- * Browser-facing Python dependency orchestration (design 6.1/6.2). This service owns the Python
+ * Browser and task-bound Python dependency orchestration (design 6.1/6.2). This service owns the Python
  * request rules — owner, template, revision, run-lock, pending checks, package normalization and
- * the request digests (protocol 1 single-package, protocol 2 batch import) — and the agent
+ * the request digests (protocol 1 main, protocol 2 batch import, protocol 3 test group) — and the agent
  * prepare/commit calls; {@link WorkspaceOperationService} owns the lifecycle lease, receipts,
  * durable operation state and revision. The call order is fixed: a registered operation id is
  * always answered before the current revision can misjudge a lost-response retry, and the durable
@@ -61,6 +61,81 @@ public final class PythonDependencyService {
 
     /** The status a browser polls: PENDING, COMMITTED (with its revision) or UNCONFIRMED. */
     public record Status(String operationId, String state, Long resultWorkspaceRevision) { }
+
+    public Status changeForAgent(String taskId, String toolCallId) {
+        var tasks = dependencyTasks();
+        var call = dependencyCall(taskId, toolCallId);
+        var owner = tasks.taskOwner(taskId);
+        String projectId = owner.projectId();
+        Request request = agentRequest(projectId, call);
+        var registered = store.findOperation(projectId, call.workspaceOperationId());
+        if (registered.isPresent()) return reconcileForAgent(taskId, toolCallId);
+        tasks.requireAgentDependencyExecution(taskId, projectId, toolCallId, call.workspaceOperationId());
+        requirePythonTemplate(projectId);
+        requireOwner(owner.ownerId(), projectId);
+        var project = store.findProject(projectId);
+        if (project.workspaceRevision() != request.expectedRevision()) throw new ApiException("WORKSPACE_REVISION_CONFLICT", 409, "The workspace revision does not match");
+        if (!"READY".equals(project.state()) || store.hasActiveRun(projectId)) throw new ApiException("PROJECT_LOCKED", 409, "Project is locked");
+        if (!store.pendingOperations(projectId).isEmpty()) throw new ApiException(RECONCILIATION_FAILURE, 409, "Workspace needs reconciliation");
+        tasks.requireTaskAcceptsNewCall(taskId, projectId);
+        var prepared = prepare(projectId, call.workspaceOperationId(), request.requestSha256(), request);
+        String receiptJson = WorkspaceOperationService.dependencyReceiptJson(prepared.operationId(), prepared.beforeSha256(), prepared.afterSha256());
+        var operation = new WorkspaceStore.OperationRecord(prepared.operationId(), projectId, request.expectedRevision(),
+            prepared.beforeSha256(), prepared.afterSha256(), WorkspaceOperationService.RECEIPT_PATH_PREFIX + prepared.operationId() + ".json",
+            WorkspaceOperationService.sha256Hex(receiptJson.getBytes(StandardCharsets.UTF_8)), "PENDING", OPERATION_KIND, request.requestSha256());
+        try (var lease = lifecycle.tryAcquire(projectId).orElseThrow(() -> new ApiException("PROJECT_BUSY", 409, "Project is busy"))) {
+            tasks.registerAgentDependencyPending(taskId, toolCallId, store, operation);
+        }
+        long revision = operations.commitNewPythonDependency(operation, receiptJson, request.requestSha256());
+        return new Status(operation.id(), "COMMITTED", revision);
+    }
+
+    public Status reconcileForAgent(String taskId, String toolCallId) {
+        var call = dependencyCall(taskId, toolCallId);
+        String projectId = dependencyTasks().taskOwner(taskId).projectId();
+        var operation = store.findOperation(projectId, call.workspaceOperationId()).orElse(null);
+        if (operation == null) return new Status(call.workspaceOperationId(), "UNCONFIRMED", null);
+        var request = agentRequest(projectId, call);
+        if (!OPERATION_KIND.equals(operation.operationKind()) || operation.expectedRevision() != call.expectedRevision()
+            || !request.requestSha256().equals(operation.requestSha256())) throw new ApiException(RECONCILIATION_FAILURE, 409, "Workspace needs reconciliation");
+        if ("COMMITTED".equals(operation.state())) return committed(operation);
+        return redrive(operation);
+    }
+
+    private com.manao.poc4.ai.AgentTaskStore dependencyTasks() {
+        if (agentTasks instanceof com.manao.poc4.ai.AgentTaskStore tasks) return tasks;
+        throw new ApiException("AI_TASK_NOT_ACTIVE", 409, "Task is not active");
+    }
+
+    private com.manao.poc4.ai.AgentTaskStore.ToolCallRow dependencyCall(String taskId, String toolCallId) {
+        var tasks = dependencyTasks();
+        var owner = tasks.taskOwner(taskId);
+        var call = tasks.findToolCall(taskId, toolCallId).orElseThrow(() -> new ApiException("AI_TASK_NOT_ACTIVE", 409, "Task is not active"));
+        agentTasks.requireAgentDependencyCall(taskId, owner.projectId(), toolCallId, call.workspaceOperationId());
+        var environment = tasks.environmentOf(taskId);
+        if (environment == null || !"python".equals(environment.language())) throw new ApiException("PYTHON_DEPENDENCY_UNSUPPORTED", 422, "Dependency changes are not supported");
+        return call;
+    }
+
+    private Request agentRequest(String projectId, com.manao.poc4.ai.AgentTaskStore.ToolCallRow call) {
+        try {
+            var args = JSON.readTree(call.argsJson());
+            if (args == null || !args.isObject() || !args.has("action") || !args.has("packageName") || !args.has("group")) throw validation();
+            var fields = args.fieldNames();
+            while (fields.hasNext()) {
+                String field = fields.next();
+                if (!List.of("action", "packageName", "version", "group").contains(field) || !args.get(field).isTextual()) throw validation();
+            }
+            String action = switch (args.path("action").asText()) {
+                case "add" -> "ADD";
+                case "remove" -> "REMOVE";
+                default -> throw validation();
+            };
+            if ("REMOVE".equals(action) && args.has("version")) throw validation();
+            return parseRequest(projectId, call.workspaceOperationId(), new WorkspaceAgent.DependencyChange(action,
+                args.path("packageName").asText(), args.has("version") ? args.path("version").asText() : null, args.path("group").asText()), Long.toString(call.expectedRevision()));
+        } catch (java.io.IOException ex) { throw validation(); }
+    }
 
     /** First POST: prepare and commit one dependency change under its browser-chosen identity. */
     public Status change(String ownerId, String projectId, String operationId,
@@ -255,6 +330,8 @@ public final class PythonDependencyService {
         return switch (ex.code()) {
             case "PYTHON_DEPENDENCY_UNSUPPORTED" -> new ApiException("PYTHON_DEPENDENCY_UNSUPPORTED", 422,
                 "Dependency changes are not supported for this project or package");
+            case "PYTHON_DEPENDENCY_PROTOCOL_UNSUPPORTED" -> new ApiException("PYTHON_DEPENDENCY_PROTOCOL_UNSUPPORTED", 503,
+                "Workspace dependency protocol is not supported");
             case "PYTHON_DEPENDENCY_NO_WHEEL" -> new ApiException("PYTHON_DEPENDENCY_NO_WHEEL", 422,
                 "No compatible wheel is available for the requested package or version.");
             case "PYTHON_DEPENDENCY_RESOLUTION_FAILED" -> new ApiException("PYTHON_DEPENDENCY_RESOLUTION_FAILED", 503,
@@ -284,9 +361,12 @@ public final class PythonDependencyService {
             throw validation();
         }
         String version = parseVersion(change);
+        if (!"main".equals(change.group()) && !"test".equals(change.group())) {
+            throw validation();
+        }
         long revision = parseRevision(expectedRevision);
-        return new SingleRequest(change.action(), packageName, version, revision,
-            requestDigest(projectId, change.action(), packageName, version, revision));
+        return new SingleRequest(change.action(), packageName, version, change.group(), revision,
+            requestDigest(projectId, change.action(), packageName, version, change.group(), revision));
     }
 
     /**
@@ -368,12 +448,21 @@ public final class PythonDependencyService {
      */
     public static String requestDigest(String projectId, String action, String packageName, String version,
                                        long expectedRevision) {
+        return requestDigest(projectId, action, packageName, version, "main", expectedRevision);
+    }
+
+    public static String requestDigest(String projectId, String action, String packageName, String version,
+                                       String group, long expectedRevision) {
+        if (group != null && !"main".equals(group) && !"test".equals(group)) {
+            throw validation();
+        }
         Map<String, Object> fields = new LinkedHashMap<>();
-        fields.put("protocol", 1);
+        fields.put("protocol", "test".equals(group) ? 3 : 1);
         fields.put("projectId", projectId);
         fields.put("action", action);
         fields.put("packageName", packageName);
         fields.put("version", version);
+        if ("test".equals(group)) fields.put("group", "test");
         fields.put("expectedRevision", expectedRevision);
         try {
             return WorkspaceOperationService.sha256Hex(JSON.writeValueAsBytes(fields));
@@ -424,8 +513,8 @@ public final class PythonDependencyService {
                                                           WorkspaceAgent agent);
     }
 
-    /** The single-package change: one normalized ADD/REMOVE item, digest protocol 1. */
-    private record SingleRequest(String action, String packageName, String version, long expectedRevision,
+    /** One normalized ADD/REMOVE item: main uses protocol 1; test uses protocol 3. */
+    private record SingleRequest(String action, String packageName, String version, String group, long expectedRevision,
                                  String requestSha256) implements Request {
         @Override public String faultLabel() {
             return packageName;
@@ -434,7 +523,7 @@ public final class PythonDependencyService {
         @Override public WorkspaceAgent.PreparedPythonDependencies prepare(String projectId, String operationId,
                                                                           WorkspaceAgent agent) {
             return agent.prepare(projectId, operationId, requestSha256,
-                new WorkspaceAgent.DependencyChange(action, packageName, version));
+                new WorkspaceAgent.DependencyChange(action, packageName, version, group));
         }
     }
 

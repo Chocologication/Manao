@@ -1,6 +1,6 @@
 import { cleanup, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it } from 'vitest';
-import type { AgentToolCallResult } from '@/contracts/agentTask';
+import { pythonBuildData, pythonDependencyData, type AgentToolCallResult } from '@/contracts/agentTask';
 import { ToolResultView } from './AgentTaskPanel';
 
 const SHA256 = 'a'.repeat(64);
@@ -8,6 +8,118 @@ function show(toolName: string, data: AgentToolCallResult['data']) {
   return render(<ToolResultView result={{ toolCallId: 'call_original', toolName, data }} />);
 }
 afterEach(cleanup);
+
+const dependency = {
+  kind: 'python_dependencies', operationId: 'operation-1', action: 'add', packageName: 'pytest',
+  group: 'test', state: 'COMMITTED', changedPaths: ['pyproject.toml', 'uv.lock'],
+};
+const pythonBuild = {
+  goal: 'test', sourceRevision: '9', exitCode: 0, terminationReason: 'Completed', output: 'bounded output',
+  cleanupConfirmed: true, language: 'python', checkKind: 'pytest', verificationStatus: 'PASS',
+  filesChecked: null, errors: [], testSummary: { tests: 3, failures: 0, errors: 0, skipped: 1, reportComplete: true },
+};
+const result = (toolName: string, data: Record<string, unknown>): AgentToolCallResult => ({ toolCallId: 'call', toolName, data });
+
+describe('Python dependency results', () => {
+  it.each(['main', 'test'])('shows the committed package, %s group and both managed paths', group => {
+    show('python_dependencies', { ...dependency, group, podName: 'PRIVATE_POD' });
+    expect(screen.getByText('依赖变更')).toBeVisible();
+    expect(screen.getByText('包：pytest')).toBeVisible();
+    expect(screen.getByText(`依赖组：${group}`)).toBeVisible();
+    expect(screen.getByText('操作：添加')).toBeVisible();
+    expect(screen.getByText('状态：已提交')).toBeVisible();
+    expect(screen.getByText('pyproject.toml')).toBeVisible();
+    expect(screen.getByText('uv.lock')).toBeVisible();
+    expect(screen.queryByText(/PRIVATE_POD/)).toBeNull();
+  });
+
+  it('shows removal and a settled refusal without inventing a commit', () => {
+    show('python_dependencies', { ...dependency, action: 'remove' });
+    expect(screen.getByText('操作：移除')).toBeVisible();
+    cleanup();
+    show('python_dependencies', { error: { code: 'DEPENDENCY_REJECTED', message: 'Dependency change was refused' } });
+    expect(screen.getByRole('alert')).toHaveTextContent('DEPENDENCY_REJECTED: Dependency change was refused');
+    expect(screen.queryByText('状态：已提交')).toBeNull();
+  });
+
+  it.each([
+    { state: 'PENDING' }, { action: 'ADD' }, { group: 'dev' }, { packageName: '' },
+    { changedPaths: ['pyproject.toml'] }, { changedPaths: ['uv.lock', 'uv.lock'] }, { operationId: undefined },
+  ])('rejects malformed dependency evidence: %j', invalid => {
+    const data = { ...dependency, ...invalid };
+    expect(pythonDependencyData(result('python_dependencies', data))).toBeNull();
+    show('python_dependencies', data);
+    expect(screen.getByRole('alert')).toHaveTextContent('工具结果格式不完整');
+    expect(screen.queryByText('状态：已提交')).toBeNull();
+  });
+});
+
+describe('Python verification results', () => {
+  it('shows real pytest counts, exit, report completeness and the checked revision', () => {
+    show('build', { ...pythonBuild, namespace: 'PRIVATE_NAMESPACE' });
+    expect(screen.getByText('Python 测试')).toBeVisible();
+    expect(screen.getByText('验证状态：PASS')).toBeVisible();
+    expect(screen.getByText('源码版本：9')).toBeVisible();
+    expect(screen.getByText('测试：3 · 失败：0 · 错误：0 · 跳过：1')).toBeVisible();
+    expect(screen.getByText('测试报告：完整')).toBeVisible();
+    expect(screen.getByText('退出码：').parentElement).toHaveTextContent('0');
+    expect(screen.queryByText(/PRIVATE_NAMESPACE/)).toBeNull();
+  });
+
+  it('shows syntax checking and literal diagnostics without executing markup', () => {
+    show('build', { ...pythonBuild, goal: 'compile', checkKind: 'syntax', verificationStatus: 'FAILED', exitCode: 1,
+      filesChecked: 2, testSummary: null, errors: [{ path: 'main.py', message: 'invalid <img src=x>' }] });
+    expect(screen.getByText('Python 语法检查')).toBeVisible();
+    expect(screen.getByText('验证状态：FAILED')).toBeVisible();
+    expect(screen.getByText('已检查文件：2')).toBeVisible();
+    expect(screen.getByText('main.py: invalid <img src=x>')).toBeVisible();
+    expect(document.querySelector('img')).toBeNull();
+  });
+
+  it.each([
+    ['NO_TESTS', '未发现测试', 'pytest', null, null],
+    ['SKIPPED', '全部测试跳过', 'pytest', null, { tests: 2, failures: 0, errors: 0, skipped: 2, reportComplete: true }],
+    ['UNKNOWN', '验证证据不完整', 'pytest', null, null],
+    ['NO_SOURCE', '未发现 Python 源文件', 'syntax', 0, null],
+  ])('never turns %s into a pass', (verificationStatus, label, checkKind, filesChecked, testSummary) => {
+    show('build', { ...pythonBuild, verificationStatus, checkKind, goal: checkKind === 'syntax' ? 'compile' : 'test',
+      exitCode: verificationStatus === 'NO_SOURCE' ? 1 : 0, filesChecked, testSummary });
+    expect(screen.getByText(`验证状态：${label}`)).toBeVisible();
+    expect(screen.queryByText(/PASS/)).toBeNull();
+    if (testSummary === null && checkKind === 'pytest') expect(screen.getByText('测试报告：未取得完整报告')).toBeVisible();
+  });
+
+  it.each([
+    { verificationStatus: undefined }, { verificationStatus: 'SUCCESS' }, { verificationStatus: { toString: (): string => 'PASS' } }, { filesChecked: undefined },
+    { errors: undefined }, { testSummary: undefined }, { filesChecked: -1 }, { exitCode: '0' },
+    { errors: [{ path: 'main.py', message: 4 }] }, { testSummary: { tests: 1, failures: 0, errors: 0, skipped: 0 } },
+    { testSummary: { tests: 1, failures: 0, errors: 0, skipped: 2, reportComplete: true } },
+    { testSummary: { tests: 1, failures: 0, errors: 0, skipped: 0, reportComplete: false } },
+    { testSummary: null }, { exitCode: 1 },
+  ])('rejects incomplete or contradictory Python evidence: %j', invalid => {
+    const data = { ...pythonBuild, ...invalid };
+    expect(pythonBuildData(result('build', data))).toBeNull();
+    show('build', data);
+    expect(screen.getByRole('alert')).toHaveTextContent('验证证据不完整');
+    expect(screen.queryByText(/验证状态：PASS/)).toBeNull();
+  });
+
+  it('keeps an unknown exit unknown and preserves the legacy Java build view', () => {
+    show('build', { ...pythonBuild, exitCode: null, verificationStatus: 'UNKNOWN', testSummary: null });
+    expect(screen.getByText('退出码：').parentElement).toHaveTextContent('未知');
+    cleanup();
+    show('build', { goal: 'test', exitCode: 1, terminationReason: 'Completed', output: 'Java build failed', cleanupConfirmed: true });
+    expect(screen.getByText('Java build failed')).toBeVisible();
+    expect(screen.getByText('退出码：').parentElement).toHaveTextContent('1');
+    expect(screen.queryByText(/Python/)).toBeNull();
+  });
+
+  it('shows a settled build refusal without inventing verification evidence', () => {
+    show('build', { error: { code: 'AI_BUILD_GOAL_UNSUPPORTED', message: 'Build goal is unsupported' } });
+    expect(screen.getByRole('alert')).toHaveTextContent('AI_BUILD_GOAL_UNSUPPORTED: Build goal is unsupported');
+    expect(screen.queryByText(/验证状态：PASS/)).toBeNull();
+  });
+});
 
 describe('file tool results', () => {
   it('renders read_file content and paths literally while omitting unknown fields', () => {

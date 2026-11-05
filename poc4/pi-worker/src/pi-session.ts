@@ -2,8 +2,8 @@
  * The minimal Pi assembly (stage one): one agent session per task, driven by the
  * SDK's own loop, with discovery explicitly disabled — no project extensions, no
  * Skills, no prompt templates, no themes, no AGENTS/context files, and no built-in
- * file/bash tools. The session sees exactly the seven backend-mediated project tools
- * and one fixed, server-owned system prompt. The model key lives only in the worker
+ * file/bash tools. The session sees only its environment's backend-mediated tools
+ * and a server-owned system prompt with current task facts. The model key lives only in the worker
  * environment and the private ModelRuntime; the session cwd is a worker-private
  * scratch directory, never a user project or the Manao repository.
  */
@@ -35,12 +35,13 @@ import "@earendil-works/pi-ai/compat";
 import { BackendHttpError, type BackendClient, type ProgressChain } from "./backend-client.js";
 import { PROGRESS_TEXT_MAX_BYTES } from "./backend-client.js";
 import { modelConfigProblems, type PiModelConfig, type WorkerBudgets, type WorkerPaths } from "./config.js";
-import { createProjectTools, TOOL_NAMES } from "./project-tools.js";
+import { createProjectTools } from "./project-tools.js";
 import { COMPACTION_SETTINGS, CONTEXT_WINDOW, ConversationContext, needsCompaction, type CompactStart, type CompactResult } from "./conversation-context.js";
 import { LiveOutput } from "./live-output.js";
 import { createModelTransport } from "./model-transport.js";
 import { installImageContext } from "./image-context.js";
-import { SYSTEM_PROMPT, installCompactionPrompt } from "./prompts.js";
+import { buildSystemPrompt, installCompactionPrompt } from "./prompts.js";
+import { parseProjectEnvironment, type ProjectEnvironment } from "./project-environment.js";
 
 /** Server-owned task budgets; tool/build limits raised by user instruction on 2026-10-18. */
 export const DEFAULT_BUDGETS: WorkerBudgets = { wallClockSeconds: 1800, toolCalls: 180, builds: 20 };
@@ -88,11 +89,12 @@ export class WorkerNotConfiguredError extends Error { }
 /**
  * Creates the session for one task. The model runtime is built (or reused from the
  * injected dependency), the model is resolved from the private models.json, the
- * controlled resource loader fixes the system prompt, and the six custom tools are
+ * controlled resource loader fixes the system prompt, and the applicable custom tools are
  * registered through an explicit allowlist with noTools "builtin". Sequential tool
  * execution is enforced twice: on the agent loop and per tool definition.
  */
 export async function createPiSession(options: {
+  environment: ProjectEnvironment;
   model: PiModelConfig;
   paths: WorkerPaths;
   budgets?: WorkerBudgets;
@@ -106,6 +108,7 @@ export async function createPiSession(options: {
   deps?: PiSessionDeps;
 }): Promise<PiTaskSession> {
   const { model, paths, backend, progress, taskId, deps } = options;
+  const environment = parseProjectEnvironment(options.environment);
   const budgets = options.budgets ?? DEFAULT_BUDGETS;
   const problems = modelConfigProblems(model);
   if (problems.length > 0) {
@@ -135,7 +138,7 @@ export async function createPiSession(options: {
     noPromptTemplates: true,
     noThemes: true,
     noContextFiles: true,
-    systemPrompt: SYSTEM_PROMPT,
+    systemPrompt: buildSystemPrompt(environment),
     appendSystemPrompt: [],
   });
   await loader.reload();
@@ -159,7 +162,7 @@ export async function createPiSession(options: {
       fatalToolCode ??= code;
       abortAfterFatal();
     },
-  });
+  }, environment);
 
   const createSession = deps?.createSession ?? createAgentSession;
   const { session } = await createSession({
@@ -171,16 +174,18 @@ export async function createPiSession(options: {
     sessionManager,
     resourceLoader: loader,
     noTools: "builtin",
-    tools: [...TOOL_NAMES],
+    tools: customTools.map(tool => tool.name),
     customTools,
   });
+  // Native restoration may carry an older loadout; this task's snapshot owns authority.
+  session.setActiveToolsByName(customTools.map(tool => tool.name));
   session.setThinkingLevel(options.reasoningEffort ?? "high", { persist: false });
   const transport = model.provider === 'manao-user' ? createModelTransport(model.baseUrl) : undefined;
   if (transport) {
     const stream = session.agent.streamFunction;
     session.agent.streamFunction = (model, transcript, streamOptions) => stream(model, transcript, { ...streamOptions, fetch: transport.fetch });
   }
-  installCompactionPrompt(session);
+  installCompactionPrompt(session, environment);
   session.agent.toolExecution = "sequential";
   abortAfterFatal = () => { session.abortCompaction(); session.agent.abort(); void session.abort().catch(() => {}); };
   let compactionFailed = false;

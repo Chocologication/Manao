@@ -1,7 +1,8 @@
+import { JAVA_ENVIRONMENT, PYTHON_ENVIRONMENT } from "./environment-fixtures.js";
 import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 import { BackendHttpError, type ToolResult } from "../src/backend-client.js";
-import { createProjectTools, TOOL_NAMES } from "../src/project-tools.js";
+import { createProjectTools as createEnvironmentTools, type ProjectToolDeps } from "../src/project-tools.js";
 
 interface BackendStub {
   invoke: ReturnType<typeof vi.fn>;
@@ -103,10 +104,10 @@ describe("worker project tools", () => {
     expect(result.details).toEqual(rejected);
     expect(JSON.parse(result.content[0]!.text)).toEqual(rejected);
   });
-  it("registers the six backend-mediated tools, each sequential", () => {
+  it("registers the current service project's backend-mediated tools, each sequential", () => {
     const backend = backendStub();
     const tools = createProjectTools({ backend: backend as never, taskId: "task-1", getRevision: () => "7" });
-    expect(tools.map((tool) => tool.name)).toEqual(["read_image", "list_files", "read_file", "write_file", "build", "application", "app_http_get"]);
+    expect(tools.map((tool) => tool.name)).toEqual(["list_files", "read_file", "write_file", "build", "application", "app_http_get", "read_image"]);
     for (const tool of tools) {
       expect(tool.executionMode).toBe("sequential");
     }
@@ -186,6 +187,45 @@ describe("worker project tools", () => {
     controller.abort();
     await expect(build.execute("call-9", { goal: "compile" }, controller.signal, undefined, {} as never))
       .rejects.toThrow(/aborted/i);
+    expect(backend.invoke).not.toHaveBeenCalled();
+  });
+});
+
+function createProjectTools(deps: ProjectToolDeps) { return createEnvironmentTools(deps, JAVA_ENVIRONMENT); }
+
+describe("Python dependency authority projection", () => {
+  it("forwards only dependency intent with the worker revision and preserves flat build evidence", async () => {
+    const evidence = { language: "python", checkKind: "pytest", verificationStatus: "FAILED", filesChecked: 2,
+      errors: [], testSummary: { tests: 2, failures: 1, errors: 0, skipped: 0, reportComplete: true } };
+    const backend = backendStub([toolResult("dependency", { state: "COMMITTED" }), toolResult("test", evidence)]);
+    const tools = createEnvironmentTools({ backend: backend as never, taskId: "python-task", getRevision: () => "19" }, PYTHON_ENVIRONMENT);
+    const args = { action: "add", packageName: "pytest", version: "8.4.2", group: "test" };
+    const dependency = tools.find(tool => tool.name === "python_dependencies")!;
+    expect(dependency).toBeDefined();
+    await dependency.execute("dependency", args, undefined, undefined, {} as never);
+    expect(backend.invoke).toHaveBeenCalledWith("python-task", { toolCallId: "dependency", name: "python_dependencies", expectedRevision: 19,
+      args: { action: "add", packageName: "pytest", version: "8.4.2", group: "test" } });
+    const result = await tools.find(tool => tool.name === "build")!.execute("test", { goal: "test" }, undefined, undefined, {} as never);
+    expect(JSON.parse(result.content[0]!.text).data).toEqual(evidence);
+  });
+  it.each([
+    { action: "ADD", packageName: "pytest", group: "test" },
+    { action: "add", packageName: "pytest", group: "dev" },
+    { action: "add", packageName: "pytest", group: "test", ownerId: "other" },
+    { action: "add", packageName: "pytest", group: "test", projectId: "other" },
+    { action: "add", packageName: "pytest", group: "test", expectedRevision: 99 },
+    { action: "add", packageName: "pytest", group: "test", operationId: "replacement" },
+    { action: "add", packageName: "pytest", group: "test", versionSpec: "8.4.2" },
+    { action: "add", packageName: "pytest", group: "test", version: ">=8" },
+    { action: "add", packageName: "pytest", group: "test", version: "https://example.invalid/pkg.whl" },
+    { action: "remove", packageName: "pytest", group: "test", version: "8.4.2" },
+    { action: "remove", packageName: "pytest", group: "test", version: "" },
+  ])("refuses invalid dependency intent without contacting the backend %#", async args => {
+    const backend = backendStub();
+    const dependency = createEnvironmentTools({ backend: backend as never, taskId: "python-task", getRevision: () => "19" }, PYTHON_ENVIRONMENT)
+      .find(tool => tool.name === "python_dependencies")!;
+    expect(dependency).toBeDefined();
+    await expect(dependency.execute("invalid", args, undefined, undefined, {} as never)).rejects.toThrow();
     expect(backend.invoke).not.toHaveBeenCalled();
   });
 });

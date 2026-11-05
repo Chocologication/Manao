@@ -874,6 +874,25 @@ describe('AgentTaskPanel build results (review fix I9)', () => {
   });
 });
 
+describe('AgentTaskPanel Python dependency progress', () => {
+  it('loads a committed dependency result through the existing tool result entry', async () => {
+    server.use(http.get(`${TASKS_URL}/${TASK_ID}/tools/dependency-1`, () => HttpResponse.json({
+      toolCallId: 'dependency-1', toolName: 'python_dependencies', data: {
+        kind: 'python_dependencies', operationId: 'op-1', action: 'add', packageName: 'pytest', group: 'test',
+        state: 'COMMITTED', changedPaths: ['pyproject.toml', 'uv.lock'],
+      },
+    })));
+    renderPanel({ task: occupyingTask({ workspaceRevision: '8', changedPaths: ['pyproject.toml', 'uv.lock'],
+      progress: [{ seq: 1, kind: 'tool_end', text: 'python_dependencies dependency-1', truncated: false }] }) });
+    await userEvent.click(screen.getByRole('button', { name: '查看依赖结果' }));
+    expect(await screen.findByText('包：pytest')).toBeVisible();
+    expect(screen.getByText('状态：已提交')).toBeVisible();
+    expect(screen.getAllByText('pyproject.toml')).toHaveLength(2);
+    expect(screen.getAllByText('uv.lock')).toHaveLength(2);
+    expect(queryClient.getQueryData(fileKeys.revision(PROJECT_ID))).toBe('7');
+  });
+});
+
 describe('AgentTaskPanel verified-write snapshot contract (review fix I1)', () => {
   it('renders the changed paths and the latest verified revision the backend snapshot carries', () => {
     // The backend persists the latest VERIFIED write revision and the deduped

@@ -46,3 +46,10 @@ poc4/frontend/tests/fixtures/ai-stage2/** text=auto eol=lf
 # Node launcher scripts and template lockfiles must retain their Linux build bytes.
 poc4/node-runner/** text=auto eol=lf
 poc4/backend/src/main/resources/workspace-template-node-*/** text=auto eol=lf
+
+# AI Python acceptance fixtures are copied byte-for-byte into Linux workspaces.
+poc4/frontend/tests/fixtures/ai-python/** text=auto eol=lf
+poc4/frontend/scripts/ai-python-fixture-check.py text=auto eol=lf
+
+# Backend and worker share canonical environment fixtures across operating systems.
+poc4/fixtures/agent-project-environment/** text=auto eol=lf

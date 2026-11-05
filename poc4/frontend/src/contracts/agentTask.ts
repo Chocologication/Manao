@@ -122,7 +122,7 @@ export function isAgentTaskOccupying(state: AgentTaskState): boolean {
 
 /** Result-bearing tool completion ID; shared by browser controls and acceptance collection. */
 export function buildToolCallId(progressText: string): string | null {
-  const match = /^(?:build|application|app_http_get) ([A-Za-z0-9_-]{1,64})$/.exec(progressText.trim());
+  const match = /^(?:build|application|app_http_get|python_dependencies) ([A-Za-z0-9_-]{1,64})$/.exec(progressText.trim());
   return match === null ? null : match[1]!;
 }
 
@@ -132,6 +132,67 @@ export type AgentToolCallResult = {
   toolName: string;
   data: Record<string, unknown>;
 };
+
+export type PythonDependencyData = {
+  kind: 'python_dependencies'; operationId: string; action: 'add' | 'remove'; packageName: string;
+  group: 'main' | 'test'; state: 'COMMITTED'; changedPaths: string[];
+};
+
+export type PythonBuildData = {
+  language: 'python'; checkKind: 'syntax' | 'pytest';
+  verificationStatus: 'PASS' | 'FAILED' | 'NO_TESTS' | 'SKIPPED' | 'UNKNOWN' | 'NO_SOURCE';
+  filesChecked: number | null; errors: { path: string | null; message: string }[];
+  testSummary: { tests: number; failures: number; errors: number; skipped: number; reportComplete: boolean } | null;
+  exitCode: number | null; sourceRevision: string;
+};
+
+/** Only the committed pair of managed files proves a dependency change. */
+export function pythonDependencyData(result: AgentToolCallResult): PythonDependencyData | null {
+  const d = result.data;
+  if (result.toolName !== 'python_dependencies' || d.kind !== 'python_dependencies' || d.state !== 'COMMITTED' ||
+      typeof d.operationId !== 'string' || d.operationId.length === 0 ||
+      (d.action !== 'add' && d.action !== 'remove') || (d.group !== 'main' && d.group !== 'test') ||
+      typeof d.packageName !== 'string' || !/^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$/.test(d.packageName) ||
+      !Array.isArray(d.changedPaths) || d.changedPaths.length !== 2 ||
+      !d.changedPaths.includes('pyproject.toml') || !d.changedPaths.includes('uv.lock')) return null;
+  return d as PythonDependencyData;
+}
+
+function nonnegativeInteger(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
+}
+
+/** Missing evidence stays unknown; contradictory evidence never becomes a pass. */
+export function pythonBuildData(result: AgentToolCallResult): PythonBuildData | null {
+  const d = result.data;
+  if (result.toolName !== 'build' || d.language !== 'python' ||
+      (d.checkKind !== 'syntax' && d.checkKind !== 'pytest') ||
+      typeof d.verificationStatus !== 'string' || !['PASS', 'FAILED', 'NO_TESTS', 'SKIPPED', 'UNKNOWN', 'NO_SOURCE'].includes(d.verificationStatus) ||
+      !(d.filesChecked === null || nonnegativeInteger(d.filesChecked)) ||
+      !(d.exitCode === null || typeof d.exitCode === 'number' && Number.isSafeInteger(d.exitCode)) ||
+      typeof d.sourceRevision !== 'string' || d.sourceRevision.length === 0 || !Array.isArray(d.errors) ||
+      !d.errors.every(value => {
+        const error = asRecord(value);
+        return error !== null && nullableString(error.path) && typeof error.message === 'string';
+      })) return null;
+  const summary = d.testSummary === null ? null : asRecord(d.testSummary);
+  if (d.testSummary !== null && (summary === null ||
+      ![summary.tests, summary.failures, summary.errors, summary.skipped].every(nonnegativeInteger) ||
+      typeof summary.reportComplete !== 'boolean')) return null;
+  const s = summary as PythonBuildData['testSummary'];
+  if (s !== null && s.failures + s.errors + s.skipped > s.tests) return null;
+  if (d.checkKind === 'syntax' && s !== null || d.checkKind === 'pytest' && d.filesChecked !== null) return null;
+  if (d.verificationStatus === 'PASS') {
+    if (d.exitCode !== 0 || d.errors.length !== 0 ||
+        (d.checkKind === 'syntax' ? !nonnegativeInteger(d.filesChecked) || d.filesChecked === 0
+          : s === null || !s.reportComplete || s.tests <= s.skipped || s.failures !== 0 || s.errors !== 0)) return null;
+  }
+  if (d.verificationStatus === 'SKIPPED' &&
+      (d.checkKind !== 'pytest' || d.exitCode !== 0 || s === null || !s.reportComplete || s.tests === 0 || s.skipped !== s.tests)) return null;
+  if (d.verificationStatus === 'NO_TESTS' && (d.checkKind !== 'pytest' || s !== null && s.tests !== 0)) return null;
+  if (d.verificationStatus === 'NO_SOURCE' && (d.checkKind !== 'syntax' || d.filesChecked !== 0 || d.errors.length !== 0)) return null;
+  return d as PythonBuildData;
+}
 
 export type ApplicationRunView = {
   id: string; state: string; requestedWorkspaceRevision: string;

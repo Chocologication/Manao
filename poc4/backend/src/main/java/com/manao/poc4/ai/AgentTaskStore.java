@@ -56,6 +56,10 @@ public final class AgentTaskStore implements AgentTaskOccupancy {
      * claim (never release) from a restart-leftover RUNNING row (close by identity).
      */
     private final java.util.Set<String> liveBuildClaims = new java.util.HashSet<>();
+    /** Only the initial REGISTERED -> RUNNING winner may prepare a new dependency journal. */
+    private enum DependencyClaim { EXECUTION, OBSERVATION, CLEANUP }
+    // Lock-free reads avoid taking the store monitor while PENDING registration holds the task row lock.
+    private final java.util.concurrent.ConcurrentMap<String, DependencyClaim> dependencyClaims = new java.util.concurrent.ConcurrentHashMap<>();
 
     public AgentTaskStore(JdbcTemplate jdbc, PlatformTransactionManager transactions, Clock clock) {
         this(jdbc,transactions,clock,null);
@@ -110,6 +114,13 @@ public final class AgentTaskStore implements AgentTaskOccupancy {
 
     public TaskCreation createTask(String ownerId, String projectId,
                                    AgentContracts.TaskRequest request, String conversationId) {
+        return createTask(ownerId, projectId, request, conversationId, null);
+    }
+
+    /** The supplier runs only for a first insert, under the project row lock and task transaction. */
+    public TaskCreation createTask(String ownerId, String projectId,
+                                   AgentContracts.TaskRequest request, String conversationId,
+                                   java.util.function.Supplier<AgentProjectEnvironment> environmentSupplier) {
         validate(request);
         if (!request.attachmentIds().isEmpty() && (conversationId == null || attachments == null)) throw validation();
         if (conversationId != null) AgentConversationStore.requireUuid(conversationId);
@@ -141,6 +152,7 @@ public final class AgentTaskStore implements AgentTaskOccupancy {
                     throw new ApiException("AI_TASK_MISMATCH", 409,
                         "This task id was already used for a different request");
                 }
+                environmentOf(request.taskId());
                 return new TaskCreation(snapshot(existing.get()), false, existing.get().workerEpoch());
             }
             if (imageAdmissionFailure != null) throw imageAdmissionFailure;
@@ -163,6 +175,10 @@ public final class AgentTaskStore implements AgentTaskOccupancy {
                 throw new ApiException("AI_TASK_ACTIVE", 409, "The project already has an active task");
             }
             AgentConversationStore.requireNoCompaction(jdbc, projectId);
+            // The old store-only creation API remains usable for historical settlement fixtures.
+            // The execution service always supplies a required, trusted environment provider.
+            AgentProjectEnvironment environment = environmentSupplier == null ? null : environmentSupplier.get();
+            if (environmentSupplier != null && environment == null) throw AgentProjectEnvironmentService.missing();
             if (conversationId != null) {
                 AgentConversationStore.bindTaskGoal(jdbc, clock, projectId, conversationId, request);
             }
@@ -177,11 +193,14 @@ public final class AgentTaskStore implements AgentTaskOccupancy {
                 jdbc.update("""
                     INSERT INTO agent_task(id, project_id, owner_id, request_sha256, prompt,
                         state, worker_epoch, workspace_revision, created_at, updated_at,
-                        conversation_id, reasoning_effort, deadline_at, next_reconcile_at)
-                    VALUES (?, ?, ?, ?, ?, 'QUEUED', 1, ?, ?, ?, ?, ?, ?, ?)
+                        conversation_id, reasoning_effort, deadline_at, next_reconcile_at,
+                        environment_json, environment_sha256)
+                    VALUES (?, ?, ?, ?, ?, 'QUEUED', 1, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     request.taskId(), projectId, ownerId, requestSha256, request.prompt(),
-                    request.expectedRevision(), now, now, conversationId, effort, deadline, now);
+                    request.expectedRevision(), now, now, conversationId, effort, deadline, now,
+                    environment == null ? null : environment.canonicalJson(),
+                    environment == null ? null : environment.sha256());
             } catch (DuplicateKeyException ex) {
                 // The unique index is the backstop behind the in-transaction pre-check.
                 throw new ApiException("AI_TASK_ACTIVE", 409, "The project already has an active task");
@@ -424,6 +443,8 @@ public final class AgentTaskStore implements AgentTaskOccupancy {
      * was already RUNNING or settled — the caller must then follow the recovery path instead.
      */
     public synchronized boolean markToolCallRunning(String taskId, String toolCallId) {
+        boolean dependencyCall = findToolCall(taskId, toolCallId)
+            .map(call -> "python_dependencies".equals(call.toolName())).orElse(false);
         boolean claimed = jdbc.update(
             "UPDATE agent_tool_call SET state = 'RUNNING', updated_at = ? "
                 + "WHERE task_id = ? AND tool_call_id = ? AND state = 'REGISTERED' "
@@ -431,6 +452,9 @@ public final class AgentTaskStore implements AgentTaskOccupancy {
             Timestamp.from(clock.instant()), taskId, toolCallId) > 0;
         if (claimed) {
             liveBuildClaims.add(taskId + "/" + toolCallId);
+            if (dependencyCall) {
+                dependencyClaims.put(taskId + "/" + toolCallId, DependencyClaim.EXECUTION);
+            }
         }
         return claimed;
     }
@@ -456,6 +480,60 @@ public final class AgentTaskStore implements AgentTaskOccupancy {
 
     public synchronized boolean claimBuildCleanup(String taskId, String toolCallId) {
         return claimToolCleanup(taskId, toolCallId, "build");
+    }
+
+    public synchronized boolean claimDependencyCleanup(String taskId, String toolCallId) {
+        boolean claimed = claimToolCleanup(taskId, toolCallId, "python_dependencies");
+        if (claimed) dependencyClaims.put(taskId + "/" + toolCallId, DependencyClaim.CLEANUP);
+        return claimed;
+    }
+
+    public synchronized boolean claimDependencyObservation(String taskId, String toolCallId) {
+        var call = findToolCall(taskId, toolCallId).orElse(null);
+        if (call == null || !"python_dependencies".equals(call.toolName()) || isBuildClaimLive(taskId, toolCallId)
+            || !List.of("RUNNING", "NEEDS_ATTENTION").contains(call.state())) return false;
+        boolean claimed = liveBuildClaims.add(taskId + "/" + toolCallId);
+        if (claimed) dependencyClaims.put(taskId + "/" + toolCallId, DependencyClaim.OBSERVATION);
+        return claimed;
+    }
+
+    public void completeDependencyCall(String taskId, String toolCallId, List<String> paths, long revision, String resultJson) {
+        transaction.executeWithoutResult(status -> {
+            recordVerifiedWrites(taskId, paths, revision);
+            completeToolCall(taskId, toolCallId, resultJson);
+        });
+    }
+
+    @Override public void requireAgentDependencyCall(String taskId, String projectId, String toolCallId, String operationId) {
+        var owner = taskOwner(taskId);
+        var call = findToolCall(taskId, toolCallId).orElseThrow(AgentTaskStore::unauthorizedRunCall);
+        if (!projectId.equals(owner.projectId()) || !"python_dependencies".equals(call.toolName())
+            || operationId == null || !operationId.equals(call.workspaceOperationId())
+            || !List.of("REGISTERED", "RUNNING", "NEEDS_ATTENTION", "COMPLETED").contains(call.state())
+            || !dependencyClaims.containsKey(taskId + "/" + toolCallId)) throw unauthorizedRunCall();
+        Integer authorized = jdbc.queryForObject("SELECT COUNT(*) FROM agent_task t JOIN project p ON p.id=t.project_id "
+            + "WHERE t.id=? AND t.owner_id=p.owner_id AND t.active_project=p.id", Integer.class, taskId);
+        if (authorized == null || authorized != 1) throw unauthorizedRunCall();
+    }
+
+    public void requireAgentDependencyExecution(String taskId, String projectId, String toolCallId, String operationId) {
+        requireAgentDependencyCall(taskId, projectId, toolCallId, operationId);
+        if (dependencyClaims.get(taskId + "/" + toolCallId) != DependencyClaim.EXECUTION) throw unauthorizedRunCall();
+    }
+
+    public void registerAgentDependencyPending(String taskId, String toolCallId,
+            com.manao.poc4.workspace.WorkspaceStore workspace,
+            com.manao.poc4.workspace.WorkspaceStore.OperationRecord operation) {
+        transaction.executeWithoutResult(status -> {
+            jdbc.queryForObject("SELECT id FROM agent_task WHERE id=? FOR UPDATE", String.class, taskId);
+            requireAgentDependencyExecution(taskId, operation.projectId(), toolCallId, operation.id());
+            requireTaskAcceptsNewCall(taskId, operation.projectId());
+            var call = findToolCall(taskId, toolCallId).orElseThrow(AgentTaskStore::unauthorizedRunCall);
+            if (!"RUNNING".equals(call.state()) || call.expectedRevision() != operation.expectedRevision()) throw unauthorizedRunCall();
+            var begin = workspace.beginPendingOperation(operation.projectId(), operation.expectedRevision(), operation);
+            if (begin.projectLocked()) throw new ApiException("PROJECT_LOCKED", 409, "Project is locked");
+            if (!begin.started()) throw new ApiException("WORKSPACE_REVISION_CONFLICT", 409, "The workspace revision does not match");
+        });
     }
 
     private boolean claimToolCleanup(String taskId, String toolCallId, String toolName) {
@@ -485,6 +563,7 @@ public final class AgentTaskStore implements AgentTaskOccupancy {
      */
     public synchronized void releaseBuildClaim(String taskId, String toolCallId) {
         liveBuildClaims.remove(taskId + "/" + toolCallId);
+        dependencyClaims.remove(taskId + "/" + toolCallId);
     }
 
     /**
@@ -492,11 +571,127 @@ public final class AgentTaskStore implements AgentTaskOccupancy {
      * stable identity (a restart leftover): the collected close evidence becomes the row's
      * durable answer. The caller holds the cleanup claim through this settlement.
      */
-    public synchronized void settleClosedBuildCall(String taskId, String toolCallId, String resultJson) {
+    public synchronized void settleClosedBuildCall(AgentContracts.BuildRequest request, AgentContracts.BuildResult result,
+            java.util.function.Function<AgentContracts.BuildResult, String> formatter) {
+        completeBuildCall(request, result, formatter);
+    }
+
+    /**
+     * Reconcile the latest durable facts and publish once under the same monitor as evidence saves.
+     * The formatter must be pure: it only fits/serializes the selected facts, with no external IO.
+     */
+    public synchronized ToolCallRow completeBuildCall(AgentContracts.BuildRequest request, AgentContracts.BuildResult result,
+            java.util.function.Function<AgentContracts.BuildResult, String> formatter) {
+        ToolCallRow row = requireBuildEvidenceIdentity(request);
+        if ("COMPLETED".equals(row.state())) return row;
+        if (!result.cleanupConfirmed()) throw new IllegalStateException("build cleanup was not confirmed");
+        var saved = loadPendingBuildEvidence(request);
+        if (saved != null && saved.exitCode() != null) {
+            if (!java.util.Objects.equals(saved.identity(), result.identity()))
+                throw new IllegalStateException("build completion identity mismatch");
+            // A weaker observation may have finished cleanup first. Its confirmed absence
+            // settles the current durable terminal facts, not its older in-memory snapshot.
+            result = new AgentContracts.BuildResult(saved.identity(), saved.exitCode(), saved.terminationReason(),
+                saved.output(), saved.truncated(), saved.testReports(), true, saved.evidence());
+        }
+        String resultJson = formatter.apply(result);
         jdbc.update(
             "UPDATE agent_tool_call SET state = 'COMPLETED', result_json = ?, updated_at = ? "
-                + "WHERE task_id = ? AND tool_call_id = ? AND state = 'RUNNING'",
-            resultJson, Timestamp.from(clock.instant()), taskId, toolCallId);
+                + "WHERE task_id = ? AND tool_call_id = ? AND tool_name = 'build' AND state IN ('RUNNING','NEEDS_ATTENTION')",
+            resultJson, Timestamp.from(clock.instant()), request.taskId(), request.toolCallId());
+        row = findToolCall(request.taskId(), request.toolCallId()).orElseThrow();
+        if (!"build".equals(row.toolName()) || !"COMPLETED".equals(row.state()) || row.resultJson() == null)
+            throw new IllegalStateException("build completion was not persisted");
+        return row;
+    }
+
+    private record PendingBuildEvidence(String commandId, long sourceRevision, String environmentSha256,
+                                         AgentContracts.BuildResult result) { }
+
+    /** Returns the canonical observation atomically; cleanup must still be confirmed by the caller. */
+    public synchronized AgentContracts.BuildResult savePendingBuildEvidence(AgentContracts.BuildRequest request, AgentContracts.BuildResult result) {
+        ToolCallRow row = requireBuildEvidenceIdentity(request);
+        if (result.identity() == null || result.identity().jobUid() == null)
+            return "COMPLETED".equals(row.state()) ? completedBuildEvidence(row) : result;
+        if (row.jobUid() != null && !row.jobUid().equals(result.identity().jobUid())) throw new IllegalStateException("build evidence uid mismatch");
+        if (row.podUid() != null && result.identity().podUid() != null && !row.podUid().equals(result.identity().podUid()))
+            throw new IllegalStateException("build evidence pod uid mismatch");
+        if ("COMPLETED".equals(row.state())) return completedBuildEvidence(row);
+        var previous = loadPendingBuildEvidence(request);
+        if (previous != null && previous.exitCode() != null) {
+            // Terminal facts are immutable across cleanup retries. A timeout/empty tail can
+            // enrich a formerly unknown Pod UID, but cannot erase the original exit/report.
+            var identity = new AgentContracts.BuildIdentity(previous.identity().jobName(), previous.identity().jobUid(),
+                previous.identity().podUid() != null ? previous.identity().podUid() : result.identity().podUid());
+            result = new AgentContracts.BuildResult(identity, previous.exitCode(), previous.terminationReason(), previous.output(),
+                previous.truncated(), previous.testReports(), false, previous.evidence());
+        }
+        try {
+            var wrapper = JSON.createObjectNode();
+            wrapper.set("pendingBuildEvidence", JSON.valueToTree(new PendingBuildEvidence(request.commandId(), request.sourceRevision(),
+                request.environment() == null ? null : request.environment().sha256(), result)));
+            String encoded = JSON.writeValueAsString(wrapper);
+            if (encoded.getBytes(StandardCharsets.UTF_8).length > 1024 * 1024) throw new IllegalStateException("build evidence exceeds budget");
+            int updated = jdbc.update("UPDATE agent_tool_call SET result_json=?,job_name=COALESCE(job_name,?),job_uid=COALESCE(job_uid,?),pod_uid=COALESCE(pod_uid,?),updated_at=? WHERE task_id=? AND tool_call_id=? AND state IN ('RUNNING','NEEDS_ATTENTION')",
+                encoded, result.identity().jobName(), result.identity().jobUid(), result.identity().podUid(), Timestamp.from(clock.instant()), request.taskId(), request.toolCallId());
+            if (updated != 1) throw new IllegalStateException("build observation was not persisted");
+            return result;
+        } catch (IOException ex) { throw new IllegalStateException("cannot persist build evidence", ex); }
+    }
+
+    public synchronized AgentContracts.BuildResult loadPendingBuildEvidence(AgentContracts.BuildRequest request) {
+        ToolCallRow row = requireBuildEvidenceIdentity(request);
+        if (row.resultJson() == null) return null;
+        if ("COMPLETED".equals(row.state())) return completedBuildEvidence(row);
+        try {
+            JsonNode pending = JSON.readTree(row.resultJson()).get("pendingBuildEvidence");
+            if (pending == null) return null;
+            var saved = JSON.treeToValue(pending, PendingBuildEvidence.class);
+            String environmentSha = request.environment() == null ? null : request.environment().sha256();
+            if (!request.commandId().equals(saved.commandId()) || request.sourceRevision() != saved.sourceRevision()
+                    || !java.util.Objects.equals(environmentSha, saved.environmentSha256()) || saved.result() == null
+                    || saved.result().identity() == null || !java.util.Objects.equals(row.jobUid(), saved.result().identity().jobUid())
+                    || !java.util.Objects.equals(row.podUid(), saved.result().identity().podUid()))
+                throw new IllegalStateException("saved build observation identity mismatch");
+            return saved.result();
+        } catch (IOException ex) { throw new IllegalStateException("cannot read saved build observation", ex); }
+    }
+
+    private ToolCallRow requireBuildEvidenceIdentity(AgentContracts.BuildRequest request) {
+        ToolCallRow row = findToolCall(request.taskId(), request.toolCallId()).orElseThrow();
+        if (!"build".equals(row.toolName()) || !request.commandId().equals(row.workspaceOperationId())
+                || request.sourceRevision() != row.expectedRevision() || !request.projectId().equals(taskOwner(request.taskId()).projectId()))
+            throw new IllegalStateException("build observation request identity mismatch");
+        var environment = environmentOf(request.taskId());
+        if (environment != null && !java.util.Objects.equals(environment.sha256(),
+                request.environment() == null ? null : request.environment().sha256()))
+            throw new IllegalStateException("build observation environment mismatch");
+        return row;
+    }
+
+    /** Decode the published facts, never re-parse a potentially fitted/truncated output tail. */
+    private AgentContracts.BuildResult completedBuildEvidence(ToolCallRow row) {
+        try {
+            var completed = JSON.readValue(row.resultJson(), AgentContracts.ToolResult.class);
+            JsonNode data = completed.data();
+            if (!row.toolCallId().equals(completed.toolCallId()) || data == null || !data.isObject()
+                    || !Long.toString(row.expectedRevision()).equals(data.path("sourceRevision").asText())
+                    || !data.has("exitCode") || !(data.path("exitCode").isNull() || data.path("exitCode").isIntegralNumber())
+                    || !data.path("testReports").isArray() || !data.path("cleanupConfirmed").asBoolean())
+                throw new IllegalStateException("completed build evidence is invalid");
+            var reports = JSON.readerForListOf(AgentContracts.TestReport.class)
+                .<List<AgentContracts.TestReport>>readValue(data.path("testReports"));
+            PythonBuildEvidence evidence = null;
+            if (data.has("language")) {
+                var fields = JSON.createObjectNode();
+                for (String name : List.of("language", "checkKind", "verificationStatus", "filesChecked", "errors", "testSummary"))
+                    if (data.has(name)) fields.set(name, data.get(name));
+                evidence = JSON.treeToValue(fields, PythonBuildEvidence.class);
+            }
+            return new AgentContracts.BuildResult(new AgentContracts.BuildIdentity(row.jobName(), row.jobUid(), row.podUid()),
+                data.path("exitCode").isNull() ? null : data.path("exitCode").intValue(), data.path("terminationReason").asText(),
+                data.path("output").asText(), completed.truncated(), reports, false, evidence);
+        } catch (IOException ex) { throw new IllegalStateException("cannot read completed build evidence", ex); }
     }
 
     /**
@@ -568,6 +763,22 @@ public final class AgentTaskStore implements AgentTaskOccupancy {
             throw new ApiException("AI_TASK_NOT_FOUND", 404, "Task not found");
         }
         return digests.get(0);
+    }
+
+    /** Reads the committed snapshot; MySQL JSON formatting never participates in the digest. */
+    public AgentProjectEnvironment environmentOf(String taskId) {
+        var rows = jdbc.query("SELECT environment_json, environment_sha256 FROM agent_task WHERE id=?",
+            (rs, row) -> {
+                String json = rs.getString(1);
+                String digest = rs.getString(2);
+                if (json == null && digest == null) return null;
+                if (json == null || digest == null) throw AgentProjectEnvironment.invalid();
+                var environment = AgentProjectEnvironment.fromJson(json);
+                if (!environment.sha256().equals(digest)) throw AgentProjectEnvironment.invalid();
+                return environment;
+            }, taskId);
+        if (rows.isEmpty()) throw new ApiException("AI_TASK_NOT_FOUND", 404, "Task not found");
+        return rows.get(0);
     }
 
     /**
@@ -1510,6 +1721,10 @@ public final class AgentTaskStore implements AgentTaskOccupancy {
      * turn a settled write into an undecided call.
      */
     public void recordVerifiedWrite(String taskId, String path, long revision) {
+        recordVerifiedWrites(taskId, List.of(path), revision);
+    }
+
+    public void recordVerifiedWrites(String taskId, List<String> changed, long revision) {
         transaction.executeWithoutResult(status -> {
             List<Long> settled = jdbc.query(
                 "SELECT settled_revision FROM agent_task WHERE id = ? FOR UPDATE",
@@ -1523,7 +1738,7 @@ public final class AgentTaskStore implements AgentTaskOccupancy {
             }
             List<String> paths = new ArrayList<>(changedPaths(jdbc.queryForObject(
                 "SELECT changed_paths_json FROM agent_task WHERE id = ?", String.class, taskId)));
-            if (!paths.contains(path)) {
+            for (String path : changed) if (!paths.contains(path)) {
                 paths.add(path);
                 while (paths.size() > MAX_CHANGED_PATHS) {
                     paths.remove(0);

@@ -1,4 +1,4 @@
--- V19 belongs to the released agent attachment migration; Studio is additive at V20.
+-- V20 belongs to the released task environment migration; Studio is additive at V21.
 CREATE TABLE assistant_model (
     id VARCHAR(36) NOT NULL PRIMARY KEY,
     owner_id VARCHAR(64) NOT NULL,
