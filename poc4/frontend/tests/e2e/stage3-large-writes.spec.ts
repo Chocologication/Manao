@@ -67,7 +67,7 @@ async function openAliceWorkbench(page: Page): Promise<{ accessToken: string; wo
   const accessToken = await signIn(page);
   await expect(page).toHaveURL(/\/projects$/);
   const rootTree = waitForFileApi(page, 'tree', '');
-  await projectCard(page, 'Alice Notebook').getByRole('link', { name: 'Open' }).click();
+  await projectCard(page, 'Alice Notebook').getByRole('link', { name: '进入工作台' }).click();
   const treeResponse = await rootTree;
   const treeBody = (await treeResponse.json()) as { workspaceRevision?: string };
   expect(typeof treeBody.workspaceRevision).toBe('string');
@@ -163,7 +163,7 @@ test('writes a real 20 MiB + 1 Markdown file through the plain-text editor', asy
   const getBytes = Number(getResponse.headers()['content-length'] ?? 0);
   const textarea = page.getByRole('textbox', { name: 'large-notes.md' });
   await expect(textarea).toBeVisible({ timeout: 90_000 });
-  await expect(page.getByText('Plain text')).toBeVisible();
+  await expect(page.getByText('纯文本')).toBeVisible();
   await expect(page.locator('[aria-label="Editor"] .monaco-editor')).toHaveCount(0);
   const opened = await textarea.evaluate((element) => {
     if (!(element instanceof HTMLTextAreaElement)) {
@@ -183,13 +183,13 @@ test('writes a real 20 MiB + 1 Markdown file through the plain-text editor', asy
 
   await appendPlainTextSuffix(page, SUFFIX);
   await expect(
-    page.getByRole('tablist', { name: 'Editor tabs' }).getByRole('tab', { name: /large-notes\.md/ }),
+    page.getByRole('tablist', { name: '已打开的文件' }).getByRole('tab', { name: /large-notes\.md/ }),
   ).toContainText('*');
-  await expect(page.getByRole('button', { name: 'Save', exact: true })).toBeEnabled();
+  await expect(page.getByRole('button', { name: '保存', exact: true })).toBeEnabled();
 
   await page.getByRole('treeitem', { name: 'pom.xml', exact: true }).click();
   await expect(page.locator('.monaco-editor')).toBeVisible({ timeout: 30_000 });
-  await page.getByRole('tablist', { name: 'Editor tabs' }).getByRole('tab', { name: /large-notes\.md/ }).click();
+  await page.getByRole('tablist', { name: '已打开的文件' }).getByRole('tab', { name: /large-notes\.md/ }).click();
   await expect(textarea).toBeVisible({ timeout: 90_000 });
   const afterSwitch = await textarea.evaluate((element, suffix) => {
     if (!(element instanceof HTMLTextAreaElement)) {
@@ -255,7 +255,7 @@ test('writes a real 20 MiB + 1 Markdown file through the plain-text editor', asy
     );
   });
   const saveStarted = Date.now();
-  await page.getByRole('button', { name: 'Save', exact: true }).click();
+  await page.getByRole('button', { name: '保存', exact: true }).click();
   const request = await putRequest;
   const response = await putResponse;
   const saveStartToResponseMs = Date.now() - saveStarted;
@@ -280,9 +280,9 @@ test('writes a real 20 MiB + 1 Markdown file through the plain-text editor', asy
   expect(putProbe?.requestUtf8Bytes).toBeGreaterThan(expectedContentBytes);
   const requestUtf8Bytes = putProbe?.requestUtf8Bytes ?? 0;
 
-  await expect(page.getByRole('status', { name: 'Saved' })).toBeVisible({ timeout: 90_000 });
+  await expect(page.getByRole('status', { name: '已保存' })).toBeVisible({ timeout: 90_000 });
   await expect(
-    page.getByRole('tablist', { name: 'Editor tabs' }).getByRole('tab', { name: /large-notes\.md/ }),
+    page.getByRole('tablist', { name: '已打开的文件' }).getByRole('tab', { name: /large-notes\.md/ }),
   ).not.toContainText('*');
 
   const persisted = await page.evaluate(

@@ -1,0 +1,19 @@
+{
+  "name": "manao-node-project",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.33.0",
+  "engines": {
+    "node": ">=24 <25"
+  },
+  "scripts": {
+    "build": "tsc --project tsconfig.json",
+    "start": "node dist/main.js",
+    "test": "node --test --test-reporter=tap --test-reporter-destination=stdout --test-reporter=junit --test-reporter-destination=.manao-test-results.xml dist/app.test.js"
+  },
+  "devDependencies": {
+    "typescript": "5.9.3",
+    "@types/node": "24.10.0"
+  }
+}

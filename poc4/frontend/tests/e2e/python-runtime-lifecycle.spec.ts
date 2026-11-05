@@ -237,7 +237,7 @@ test.describe.serial('python runtime cloud lifecycle', () => {
 
     await openCloudProjectCreation(page);
     await page.getByLabel('Project name').fill(SCENE.consoleProjectName);
-    await page.getByLabel('Template').selectOption({ label: 'Python console' });
+    await page.getByLabel('Template').selectOption({ label: 'Python 控制台' });
     // A console template offers no MySQL/Redis or public-port options at all.
     await expect(page.getByLabel('Public access')).toHaveCount(0);
     await page.getByRole('button', { name: 'Create project' }).click();
@@ -263,7 +263,7 @@ test.describe.serial('python runtime cloud lifecycle', () => {
       page,
       SCENE.consoleProjectId,
       runId,
-      /SUCCEEDED/,
+      /运行成功/,
       CONSOLE_RUN_TIMEOUT,
     );
     expect(finished.exitCode, 'the console run must exit 0').toBe(0);
@@ -298,7 +298,7 @@ test.describe.serial('python runtime cloud lifecycle', () => {
       page,
       SCENE.consoleProjectId,
       failedRunId,
-      /FAILED/,
+      /失败/,
       CONSOLE_RUN_TIMEOUT,
     );
     expect(failed.exitCode, 'sys.exit(3) must surface as the run exit code').toBe(3);
@@ -318,7 +318,7 @@ test.describe.serial('python runtime cloud lifecycle', () => {
       page,
       SCENE.consoleProjectId,
       fixedRunId,
-      /SUCCEEDED/,
+      /运行成功/,
       CONSOLE_RUN_TIMEOUT,
     );
     expect(fixed.exitCode, 'the fixed console run must exit 0').toBe(0);
@@ -342,7 +342,7 @@ test.describe.serial('python runtime cloud lifecycle', () => {
 
     await openCloudProjectCreation(page);
     await page.getByLabel('Project name').fill(SCENE.webProjectName);
-    await page.getByLabel('Template').selectOption({ label: 'Python FastAPI web' });
+    await page.getByLabel('Template').selectOption({ label: 'Python FastAPI 网站' });
     await page.getByLabel('Public access').check();
     // FastAPI defaults to container port 8000 with a blank public port; the operator's
     // two NodePorts map 8000 (template listener) and 8001 (added second listener).
@@ -392,13 +392,13 @@ test.describe.serial('python runtime cloud lifecycle', () => {
     // and the Start-run revision is current.
     await putFile(page, SCENE.webProjectId, WEB_ENTRY_PATH, SECOND_LISTENER_SOURCE);
     await openProject(page, SCENE.webProjectName);
-    await page.getByRole('tab', { name: 'Run' }).click();
-    const start = page.getByRole('button', { name: 'Start run' });
+    await page.getByRole('tab', { name: '运行记录' }).click();
+    const start = page.getByRole('button', { name: '启动运行' });
     await expect(start).toBeEnabled();
     await start.click();
-    const runState = page.getByRole('status', { name: 'Run state' });
+    const runState = page.getByRole('status', { name: '运行状态' });
     await expect(runState).toBeVisible();
-    await expect(runState).toContainText('RUNNING', { timeout: 780_000 });
+    await expect(runState).toContainText('正在执行', { timeout: 780_000 });
 
     // The toolbar reads the actual run policy of the selected web run.
     await expect(page.getByText('python -u -m uvicorn app.main:app')).toBeVisible();
@@ -448,13 +448,13 @@ test.describe.serial('python runtime cloud lifecycle', () => {
 
     // The Stop control lives in the Run panel: the workbench mounts on the File tab and
     // inactive panels are aria-hidden, so the tab must be selected before the lookup.
-    await page.getByRole('tab', { name: 'Run' }).click();
-    const stop = page.getByRole('button', { name: 'Stop run' });
+    await page.getByRole('tab', { name: '运行记录' }).click();
+    const stop = page.getByRole('button', { name: '停止运行' });
     await expect(stop).toBeEnabled();
     await stop.click();
-    const dialog = page.getByRole('dialog', { name: 'Stop run' });
+    const dialog = page.getByRole('dialog', { name: '停止运行' });
     await expect(dialog).toBeVisible();
-    await dialog.getByRole('button', { name: 'Stop', exact: true }).click();
+    await dialog.getByRole('button', { name: '停止', exact: true }).click();
 
     // The server, not the browser, ends the run: wait for the settled state, then for
     // the gateway route withdrawal on both public ports.
@@ -462,7 +462,7 @@ test.describe.serial('python runtime cloud lifecycle', () => {
       page,
       SCENE.webProjectId,
       SCENE.webRunId,
-      /CANCELLED/,
+      /已停止/,
       STOP_SETTLEMENT_TIMEOUT,
     );
     expect(stopped.terminationReason, 'a UI stop records USER_STOPPED').toBe('USER_STOPPED');
@@ -474,11 +474,11 @@ test.describe.serial('python runtime cloud lifecycle', () => {
     console.log(`[python-runtime] run ${SCENE.webRunId} stopped from the UI; ports withdrawn`);
 
     // Starting again must produce a NEW run that serves again with the same code.
-    const start = page.getByRole('button', { name: 'Start run' });
+    const start = page.getByRole('button', { name: '启动运行' });
     await expect(start).toBeEnabled({ timeout: 120_000 });
     await start.click();
-    const againState = page.getByRole('status', { name: 'Run state' });
-    await expect(againState).toContainText('RUNNING', { timeout: 780_000 });
+    const againState = page.getByRole('status', { name: '运行状态' });
+    await expect(againState).toContainText('正在执行', { timeout: 780_000 });
     const againRun = await pollForActiveReadyRun(page);
     expect(againRun.id, 'a manual re-run starts a new run id').not.toBe(SCENE.webRunId);
     await expectPortServesDemo(page, publicPortNumber1);
@@ -504,8 +504,8 @@ test.describe.serial('python runtime cloud lifecycle', () => {
 
     // ADD httpx through the workbench form; the committed files must list it.
     await openDependenciesPanel(page);
-    await page.getByLabel('Package name').fill('httpx');
-    await page.getByRole('button', { name: 'Add dependency' }).click();
+    await page.getByLabel('软件包名称').fill('httpx');
+    await page.getByRole('button', { name: '添加依赖' }).click();
     await expect
       .poll(async () => readPyproject(page), { timeout: 120_000, intervals: [2_000, 5_000] })
       .toContain('httpx');
@@ -525,15 +525,15 @@ test.describe.serial('python runtime cloud lifecycle', () => {
       page,
       SCENE.consoleProjectId,
       withHttpxRunId,
-      /SUCCEEDED/,
+      /运行成功/,
       CONSOLE_RUN_TIMEOUT,
     );
     expect(withHttpx.exitCode, 'importing httpx must work after the ADD').toBe(0);
 
     // REMOVE httpx through the same form; the committed files must drop it.
     await openDependenciesPanel(page);
-    await page.getByLabel('Package name').fill('httpx');
-    await page.getByRole('button', { name: 'Remove dependency' }).click();
+    await page.getByLabel('软件包名称').fill('httpx');
+    await page.getByRole('button', { name: '移除依赖' }).click();
     await expect
       .poll(async () => readPyproject(page), { timeout: 120_000, intervals: [2_000, 5_000] })
       .not.toContain('httpx');
@@ -548,7 +548,7 @@ test.describe.serial('python runtime cloud lifecycle', () => {
       page,
       SCENE.consoleProjectId,
       withoutHttpxRunId,
-      /FAILED/,
+      /失败/,
       CONSOLE_RUN_TIMEOUT,
     );
     expect(withoutHttpx.exitCode, 'a missing import must fail the run').not.toBe(0);
@@ -578,8 +578,8 @@ test.describe.serial('python runtime cloud lifecycle', () => {
       await route.abort('connectionreset');
     });
     await openDependenciesPanel(page);
-    await page.getByLabel('Package name').fill('requests');
-    await page.getByRole('button', { name: 'Add dependency' }).click();
+    await page.getByLabel('软件包名称').fill('requests');
+    await page.getByRole('button', { name: '添加依赖' }).click();
     expect(deliveredDependencyPost, 'the ADD was sent exactly once').toBe(1);
 
     // The unconfirmed entry appears and no automatic retry is sent.
@@ -594,7 +594,7 @@ test.describe.serial('python runtime cloud lifecycle', () => {
     } else {
       await expect(page.getByRole('heading', { name: SCENE.consoleProjectName })).toBeVisible();
     }
-    const check = page.getByRole('button', { name: 'Check dependency change' });
+    const check = page.getByRole('button', { name: '核对依赖变更' });
     await expect(unconfirmedDependencyAlert(page)).toBeVisible();
     await expect(check).toBeEnabled();
     expect(deliveredDependencyPost, 'the refresh must not resend the ADD').toBe(1);
@@ -615,8 +615,8 @@ test.describe.serial('python runtime cloud lifecycle', () => {
     // the response, re-enter the unconfirmed state and bump the counter to 2.
     await settleWorkbenchReload(page);
     await openDependenciesPanel(page);
-    await page.getByLabel('Package name').fill('requests');
-    await page.getByRole('button', { name: 'Remove dependency' }).click();
+    await page.getByLabel('软件包名称').fill('requests');
+    await page.getByRole('button', { name: '移除依赖' }).click();
     await expect(unconfirmedDependencyAlert(page)).toBeHidden({ timeout: 180_000 });
     await expect
       .poll(async () => readPyproject(page), { timeout: 120_000, intervals: [2_000, 5_000] })
@@ -689,12 +689,12 @@ test.describe.serial('python runtime cloud lifecycle', () => {
     // page, never the READY workbench.
     const failedCard = projectCard(page, SCENE.consoleProjectName);
     await expect(failedCard).toBeVisible();
-    await failedCard.getByRole('link', { name: 'Open' }).click();
+    await failedCard.getByRole('link', { name: '进入工作台' }).click();
     await expect(page).toHaveURL(/\/projects\/[^/]+$/);
 
     // The failure page must reach the recovery entry without the READY workbench.
     await expect(page.getByText('WORKSPACE_RECONCILIATION_REQUIRED')).toBeVisible();
-    const check = page.getByRole('button', { name: 'Check dependency change' });
+    const check = page.getByRole('button', { name: '核对依赖变更' });
     await expect(check).toBeEnabled();
     await check.click();
 
@@ -723,14 +723,14 @@ test.describe.serial('python runtime cloud lifecycle', () => {
           async () => (await fetchRun(page, SCENE.webProjectId, active.run.id)).state,
           { timeout: STOP_SETTLEMENT_TIMEOUT, intervals: [5_000, 10_000] },
         )
-        .toMatch(/SUCCEEDED|FAILED|STOPPED|TIMED_OUT|CANCELLED/);
+        .toMatch(/运行成功|运行失败|STOPPED|运行超时|已停止/);
       console.log(`[python-runtime] settled active run ${active.run.id} before deletion`);
     }
 
     for (const name of [SCENE.webProjectName, SCENE.consoleProjectName]) {
       const card = projectCard(page, name);
       await expect(card).toBeVisible();
-      await card.getByRole('button', { name: 'Delete project' }).click();
+      await card.getByRole('button', { name: '删除项目' }).click();
       const dialog = page.getByRole('alertdialog', { name: 'Delete project?' });
       await expect(dialog).toBeVisible();
       await dialog.getByRole('button', { name: 'Delete permanently' }).click();
@@ -796,11 +796,11 @@ async function openProject(page: Page, projectName: string): Promise<void> {
   // run). Auth state lives in memory only — a full page reload signs out — so the workbench
   // case navigates back through the app's own link instead of page.goto.
   if (/\/projects\/[^/]+$/.test(page.url())) {
-    await page.getByRole('link', { name: 'Back to projects' }).click();
+    await page.getByRole('link', { name: '返回项目列表' }).click();
   }
   const card = projectCard(page, projectName);
   await expect(card).toBeVisible();
-  await card.getByRole('link', { name: 'Open' }).click();
+  await card.getByRole('link', { name: '进入工作台' }).click();
   await expect(page).toHaveURL(/\/projects\/[^/]+$/);
   await expect(page.getByRole('heading', { name: projectName })).toBeVisible();
 }
@@ -812,8 +812,8 @@ async function openProject(page: Page, projectName: string): Promise<void> {
  * gate open: retry until the banner is gone.
  */
 async function settleWorkbenchReload(page: Page): Promise<void> {
-  const failedBanner = page.getByText('Workspace reload failed');
-  const retry = page.getByRole('button', { name: 'Retry workspace reload' });
+  const failedBanner = page.getByText('工作区重新加载失败');
+  const retry = page.getByRole('button', { name: '重试加载工作区' });
   await expect(async () => {
     if (await failedBanner.isVisible()) {
       await retry.click();
@@ -828,10 +828,10 @@ async function settleWorkbenchReload(page: Page): Promise<void> {
  * visible (the invisible panel keeps the input in the DOM for role queries).
  */
 async function openDependenciesPanel(page: Page): Promise<void> {
-  const packageInput = page.getByLabel('Package name');
+  const packageInput = page.getByLabel('软件包名称');
   await expect(async () => {
     if (!(await packageInput.isVisible())) {
-      await page.getByRole('tab', { name: 'Dependencies' }).click();
+      await page.getByRole('tab', { name: '依赖' }).click();
     }
     await expect(packageInput).toBeVisible();
   }).toPass({ timeout: 30_000, intervals: [1_000, 2_000] });
@@ -839,7 +839,7 @@ async function openDependenciesPanel(page: Page): Promise<void> {
 
 async function startRunFromToolbar(page: Page): Promise<void> {
   await settleWorkbenchReload(page);
-  await page.getByRole('tab', { name: 'Run' }).click();
+  await page.getByRole('tab', { name: '运行记录' }).click();
   // An API-side save between runs can leave the page's cached workspace revision stale
   // (the Start click would answer WORKSPACE_REVISION_CONFLICT and start nothing). The
   // file tree's Refresh is the app's own recovery; wait for its refetch response so the
@@ -848,12 +848,12 @@ async function startRunFromToolbar(page: Page): Promise<void> {
     (response) => response.url().includes('/files/tree') && response.ok(),
     { timeout: 15_000 },
   );
-  await page.getByRole('button', { name: 'Refresh', exact: true }).click();
+  await page.getByRole('button', { name: '刷新', exact: true }).click();
   await treeRefresh;
-  const start = page.getByRole('button', { name: 'Start run' });
+  const start = page.getByRole('button', { name: '启动运行' });
   await expect(start).toBeEnabled();
   await start.click();
-  const runState = page.getByRole('status', { name: 'Run state' });
+  const runState = page.getByRole('status', { name: '运行状态' });
   await expect(runState).toBeVisible();
 }
 

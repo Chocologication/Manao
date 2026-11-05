@@ -1,4 +1,4 @@
-import { act, cleanup, render, screen } from '@testing-library/react';
+import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
@@ -98,6 +98,11 @@ function renderAuthApp(options: {
 }
 
 beforeEach(() => {
+  // Animation is covered in Playwright; jsdom cannot measure animated transforms.
+  const matchMedia = window.matchMedia;
+  vi.spyOn(window, 'matchMedia').mockImplementation((query) => ({
+    ...matchMedia(query), matches: query === '(prefers-reduced-motion: reduce)',
+  }));
   vi.spyOn(HTMLMediaElement.prototype, 'play').mockResolvedValue();
   vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => {});
 });
@@ -147,11 +152,16 @@ describe('LoginPage', () => {
   });
 
   it('commits successful authentication when a browser transition is rejected', async () => {
+    const matchMedia = window.matchMedia;
+    vi.spyOn(window, 'matchMedia').mockImplementation((query) => ({ ...matchMedia(query), matches: false }));
     const transition = vi.fn(() => ({ finished: Promise.reject(new DOMException('Skipped', 'AbortError')) }));
     Object.defineProperty(document, 'startViewTransition', { configurable: true, value: transition });
     const session = createAuthSession();
     installClient(session, vi.fn<typeof fetch>(async () => jsonResponse(loginResponse)));
     renderAuthApp({ session });
+    await waitFor(() => {
+      expect(screen.getByLabelText('Username').closest<HTMLElement>('.entry__field')?.style.transform).toBe('');
+    }, { timeout: 3000 });
     const user = userEvent.setup();
     await user.type(screen.getByLabelText('Username'), 'alice');
     await user.type(screen.getByLabelText('Password'), 'demo-pass');
@@ -406,7 +416,7 @@ describe('LoginPage account lifecycle entries', () => {
   it('links to registration and recovery without a captcha or demo credentials', () => {
     renderAuthApp({});
 
-    expect(screen.getByRole('link', { name: '注册账号' })).toHaveAttribute('href', '/register');
+    expect(screen.getByRole('link', { name: '创建账号' })).toHaveAttribute('href', '/register');
     expect(screen.getByRole('link', { name: '忘记密码' })).toHaveAttribute(
       'href',
       '/forgot-password',

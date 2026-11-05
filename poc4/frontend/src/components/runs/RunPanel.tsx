@@ -29,6 +29,7 @@ import { RunHistory } from './RunHistory';
 import { RunLogView } from './RunLogView';
 import { RunToolbar } from './RunToolbar';
 import { StopRunDialog } from './StopRunDialog';
+import { runStateLabels } from '@/components/ui/labPresentation';
 import type { RunErrorLocation } from './runErrorLocator';
 
 export type RunPanelProps = {
@@ -49,13 +50,16 @@ export type RunPanelProps = {
 
 function runQueryFallback(error: unknown, fallback: string): string {
   if (error instanceof Error && /network request failed/i.test(error.message)) {
-    return 'Network request failed';
+    return '网络请求失败，请检查连接后重试';
   }
   return fallback;
 }
 
 /** Surfaces the backend hint when a run cannot start because a dependency is not ready. */
 function startRunErrorMessage(error: unknown): string {
+  if (error instanceof ApiRequestError && error.body?.code === 'NODE_RUNTIME_NOT_CONFIGURED') {
+    return 'Node.js 运行环境尚未配置，请联系管理员';
+  }
   if (
     error instanceof ApiRequestError &&
     (error.body?.code === 'DEPENDENCY_NOT_READY' ||
@@ -63,7 +67,7 @@ function startRunErrorMessage(error: unknown): string {
   ) {
     return error.body.message;
   }
-  return 'Unable to start run';
+  return '无法启动运行';
 }
 
 function statusText(options: {
@@ -75,24 +79,24 @@ function statusText(options: {
   stopWaiting: boolean;
 }): string {
   if (options.loadingAuthority) {
-    return 'Loading authority';
+    return '正在核对运行状态';
   }
   if (options.reloadFailed) {
-    return 'RELOAD_FAILED';
+    return '工作区重新加载失败';
   }
   if (options.reloading) {
-    return 'Reloading workspace';
+    return '正在重新加载工作区';
   }
   if (options.run !== null) {
     if (options.stopWaiting) {
-      return `${options.run.state} · Waiting`;
+      return `${runStateLabels[options.run.state]} · 等待服务端确认`;
     }
-    return options.run.state;
+    return runStateLabels[options.run.state];
   }
   if (options.idleEditable) {
-    return 'Idle';
+    return '空闲';
   }
-  return 'Idle';
+  return '空闲';
 }
 
 export function RunPanel({ projectId, projectTemplateId, coordinator, agentTaskActive, onOpenAgentTask, requestRunSelection, onLocateError }: RunPanelProps) {
@@ -258,7 +262,7 @@ export function RunPanel({ projectId, projectTemplateId, coordinator, agentTaskA
   }, [onSelect, requestRunSelection]);
 
   return (
-    <section aria-label="Run" className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-background">
+    <section aria-label="运行记录" className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-background">
       <RunToolbar
         run={selectedRun}
         projectTemplateId={projectTemplateId}
@@ -273,7 +277,7 @@ export function RunPanel({ projectId, projectTemplateId, coordinator, agentTaskA
         nowMs={nowMs}
         canStart={canStart}
         startTitle={
-          preconditions.canRequestRun ? 'Start run' : runPreconditionDescription(preconditions.reason)
+          preconditions.canRequestRun ? '启动运行' : runPreconditionDescription(preconditions.reason)
         }
         startPending={startPending}
         canStop={canStop}
@@ -282,10 +286,10 @@ export function RunPanel({ projectId, projectTemplateId, coordinator, agentTaskA
         stopWaiting={stopWaiting}
         stopPending={stopMutation.isPending}
         authorityError={
-          activeQuery.isError ? runQueryFallback(activeQuery.error, 'Unable to load run authority') : null
+          activeQuery.isError ? runQueryFallback(activeQuery.error, '无法读取运行状态') : null
         }
         startError={startMutation.isError ? startRunErrorMessage(startMutation.error) : null}
-        stopError={stopMutation.isError ? 'Unable to stop run' : null}
+        stopError={stopMutation.isError ? '无法停止运行' : null}
         reloadFailed={reloadFailed}
         onStart={onStart}
         onStop={() => {

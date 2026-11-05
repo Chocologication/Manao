@@ -1,3 +1,5 @@
+// Monaco 在模块初始化时注册菜单文案，语言包必须先于编辑器模块加载。
+import 'monaco-editor/esm/nls.messages.zh-cn.js';
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { AppProviders } from './app/AppProviders';

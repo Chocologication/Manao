@@ -34,8 +34,8 @@ import { projectFileWritePredicate } from './editorSaveCommand';
 import { FileMutationDialogs, type FileMutationDialogKind } from './FileMutationDialogs';
 import { FileTreeNode } from './FileTreeNode';
 
-const DIRTY_RENAME_REASON = 'Save or discard unsaved changes before renaming';
-const DIRTY_DELETE_REASON = 'Save or discard unsaved changes before deleting';
+const DIRTY_RENAME_REASON = '重命名前请先保存或放弃未保存的修改';
+const DIRTY_DELETE_REASON = '删除前请先保存或放弃未保存的修改';
 
 type MutationDialogState = {
   kind: FileMutationDialogKind;
@@ -246,8 +246,8 @@ export function FileTree({
   const dirtyBlock =
     selectedPath !== null && hasDirtySelfOrDescendant(dirtyPaths, selectedPath);
   const selectedKind = lookupSelectedKind(queryClient, projectId, selectedPath, expandedPaths);
-  const renameLabel = dirtyBlock ? DIRTY_RENAME_REASON : 'Rename';
-  const deleteLabel = dirtyBlock ? DIRTY_DELETE_REASON : 'Delete';
+  const renameLabel = dirtyBlock ? DIRTY_RENAME_REASON : '重命名';
+  const deleteLabel = dirtyBlock ? DIRTY_DELETE_REASON : '删除';
   const renameDeleteDisabled =
     selectedPath === null || dirtyBlock || writePending || unsavedOpen || writesLocked;
   const dialogPending =
@@ -509,8 +509,8 @@ export function FileTree({
       <div className="flex h-12 shrink-0 items-center justify-end gap-1 border-b bg-background px-2">
         <button
           type="button"
-          title="New file"
-          aria-label="New file"
+          title="新建文件"
+          aria-label="新建文件"
           className={iconButtonClassName}
           disabled={writePending || writesLocked}
           onClick={() => {
@@ -521,8 +521,8 @@ export function FileTree({
         </button>
         <button
           type="button"
-          title="New folder"
-          aria-label="New folder"
+          title="新建文件夹"
+          aria-label="新建文件夹"
           className={iconButtonClassName}
           disabled={writePending || writesLocked}
           onClick={() => {
@@ -557,8 +557,8 @@ export function FileTree({
         </button>
         <button
           type="button"
-          title="Refresh"
-          aria-label="Refresh"
+          title="刷新"
+          aria-label="刷新"
           className={iconButtonClassName}
           onClick={() => {
             void refreshProjectFiles(queryClient, projectId);
@@ -568,8 +568,8 @@ export function FileTree({
         </button>
         <button
           type="button"
-          title="Collapse all folders"
-          aria-label="Collapse all folders"
+          title="折叠所有文件夹"
+          aria-label="折叠所有文件夹"
           className={iconButtonClassName}
           onClick={() => {
             collapseAllDirectories();
@@ -580,24 +580,24 @@ export function FileTree({
       </div>
       <div className="min-h-0 flex-1 overflow-auto">
         {rootQuery.isPending ? (
-          <div role="status" aria-label="Loading files" className="flex justify-center p-3">
+          <div role="status" aria-label="正在加载文件列表" className="flex justify-center p-3">
             <Spinner />
           </div>
         ) : null}
         {rootQuery.isError ? (
           <div className="flex flex-col items-start gap-2 p-3">
             <InlineAlert>
-              {fileQueryErrorMessage(rootQuery.error, 'Unable to load files')}
+              {fileQueryErrorMessage(rootQuery.error, '无法加载文件列表')}
             </InlineAlert>
             <Button type="button" variant="outline" onClick={() => void rootQuery.refetch()}>
-              Retry
+              重试
             </Button>
           </div>
         ) : null}
         {rootQuery.data ? (
           <div
             role="tree"
-            aria-label="Files"
+            aria-label="文件列表"
             className="pb-4 outline-none"
             onKeyDown={onTreeKeyDown}
           >

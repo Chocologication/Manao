@@ -195,7 +195,7 @@ test.describe.serial('AI stage one coding and repair loop', () => {
         && response.request().method() === 'POST';
     });
     await page.locator('#agent-task-goal').fill(TASK_PROMPT);
-    await page.getByRole('button', { name: 'Start task' }).click();
+    await page.getByRole('button', { name: '启动任务' }).click();
     const submitted = (await (await submitResponse).json()) as TaskSnapshotLike;
     expect(OCCUPYING.has(submitted.state), 'the submitted task must occupy the project').toBe(true);
     SCENE.taskId = submitted.taskId;
@@ -253,7 +253,7 @@ test.describe.serial('AI stage one coding and repair loop', () => {
     // COMPLETED is the only passing verdict: it means the model finished AND every
     // registered tool settled (builds cleaned up, file receipts verified) on the
     // backend. FAILED or NEEDS_ATTENTION is a real acceptance failure.
-    expect(final.state, `the task must complete; failureCode=${final.failureCode}`).toBe('COMPLETED');
+    expect(final.state, `the task must complete; failureCode=${final.failureCode}`).toBe('已完成');
     expect(final.failureCode, 'a completed task carries no failure code').toBeNull();
     await testInfo.attach('ai-stage1-settled-task.json', {
       body: Buffer.from(JSON.stringify({
@@ -278,7 +278,7 @@ test.describe.serial('AI stage one coding and repair loop', () => {
   test('the repaired source, the untouched fixture and the loop shape', async ({ page }, testInfo) => {
     await signIn(page);
     const final = await taskById(page, SCENE.taskId); // settled tasks stay queryable
-    expect(final.state).toBe('COMPLETED');
+    expect(final.state).toBe('已完成');
 
     // Initial -> final revision moved forward under the task.
     expect(

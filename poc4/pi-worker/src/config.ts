@@ -19,6 +19,8 @@ export interface PiModelConfig {
   baseUrl: string;
   model: string;
   apiKey: string;
+  vision?: boolean;
+  reasoning?: boolean;
   imageInput?: boolean;
 }
 

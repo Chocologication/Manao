@@ -47,11 +47,11 @@ export function JobTerminalToolbar({
 }: JobTerminalToolbarProps) {
   return (
     <div className="flex min-h-10 shrink-0 min-w-0 flex-wrap items-center gap-x-2 gap-y-1 border-b px-2 py-1">
-      <div role="toolbar" aria-label="Terminal controls" className="flex shrink-0 items-center gap-1">
+      <div role="toolbar" aria-label="终端控制" className="flex shrink-0 items-center gap-1">
         <button
           type="button"
-          title="Open terminal"
-          aria-label="Open terminal"
+          title="打开终端"
+          aria-label="打开终端"
           aria-busy={openPending}
           className={ICON_BUTTON_CLASS}
           disabled={!canOpen || openPending}
@@ -61,8 +61,8 @@ export function JobTerminalToolbar({
         </button>
         <button
           type="button"
-          title="Close terminal"
-          aria-label="Close terminal"
+          title="关闭终端"
+          aria-label="关闭终端"
           className={ICON_BUTTON_CLASS}
           disabled={!canClose}
           onClick={onRequestClose}
@@ -71,8 +71,8 @@ export function JobTerminalToolbar({
         </button>
         <button
           type="button"
-          title="Clear terminal"
-          aria-label="Clear terminal"
+          title="清空终端"
+          aria-label="清空终端"
           className={ICON_BUTTON_CLASS}
           disabled={!canUseXtermTools}
           onClick={onClear}
@@ -81,8 +81,8 @@ export function JobTerminalToolbar({
         </button>
         <button
           type="button"
-          title="Search terminal"
-          aria-label="Search terminal"
+          title="搜索终端"
+          aria-label="搜索终端"
           className={ICON_BUTTON_CLASS}
           disabled={!canUseXtermTools}
           onClick={onSearch}
@@ -91,7 +91,7 @@ export function JobTerminalToolbar({
         </button>
       </div>
 
-      <div role="tablist" aria-label="Terminal views" className="flex h-8 shrink-0 items-center gap-1">
+      <div role="tablist" aria-label="终端视图" className="flex h-8 shrink-0 items-center gap-1">
         {(['session', 'audit'] as const).map((view) => (
           <button
             key={view}
@@ -109,14 +109,14 @@ export function JobTerminalToolbar({
             )}
             onClick={() => onViewChange(view)}
           >
-            {view === 'session' ? 'Session' : 'Audit'}
+            {view === 'session' ? '会话' : '命令记录'}
           </button>
         ))}
       </div>
 
       <div
         role="status"
-        aria-label="Terminal state"
+        aria-label="终端状态"
         aria-live="polite"
         data-phase={phase}
         className="ml-auto flex min-w-24 max-w-36 flex-1 items-center justify-end truncate text-sm"
@@ -125,11 +125,11 @@ export function JobTerminalToolbar({
       </div>
       <div
         role="status"
-        aria-label="Terminal renderer"
+        aria-label="终端渲染方式"
         aria-live="polite"
         className="w-24 shrink-0 truncate text-right text-xs text-muted-foreground"
       >
-        {renderer === 'webgl' ? 'WebGL' : 'DOM fallback'}
+        {renderer === 'webgl' ? 'WebGL' : '兼容渲染'}
       </div>
     </div>
   );

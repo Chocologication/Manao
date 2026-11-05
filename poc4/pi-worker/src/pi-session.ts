@@ -38,6 +38,7 @@ import { modelConfigProblems, type PiModelConfig, type WorkerBudgets, type Worke
 import { createProjectTools, TOOL_NAMES } from "./project-tools.js";
 import { COMPACTION_SETTINGS, CONTEXT_WINDOW, ConversationContext, needsCompaction, type CompactStart, type CompactResult } from "./conversation-context.js";
 import { LiveOutput } from "./live-output.js";
+import { createModelTransport } from "./model-transport.js";
 import { installImageContext } from "./image-context.js";
 import { SYSTEM_PROMPT, installCompactionPrompt } from "./prompts.js";
 
@@ -64,6 +65,7 @@ export interface PiSessionDeps {
 export interface PiTaskStart {
   prompt: string;
   workspaceRevision: string;
+  images?: { type: "image"; data: string; mimeType: string }[];
 }
 
 export interface PiTaskOutcome {
@@ -173,6 +175,11 @@ export async function createPiSession(options: {
     customTools,
   });
   session.setThinkingLevel(options.reasoningEffort ?? "high", { persist: false });
+  const transport = model.provider === 'manao-user' ? createModelTransport(model.baseUrl) : undefined;
+  if (transport) {
+    const stream = session.agent.streamFunction;
+    session.agent.streamFunction = (model, transcript, streamOptions) => stream(model, transcript, { ...streamOptions, fetch: transport.fetch });
+  }
   installCompactionPrompt(session);
   session.agent.toolExecution = "sequential";
   abortAfterFatal = () => { session.abortCompaction(); session.agent.abort(); void session.abort().catch(() => {}); };
@@ -241,9 +248,9 @@ export async function createPiSession(options: {
     return prepared || undefined;
   };
 
-  const images = context ? installImageContext(session,backend,taskId,() => deps?.now?.() ?? Date.now(),model.imageInput===true,code=>{fatalToolCode??=code;}) : undefined;
+  const images = context ? installImageContext(session,backend,taskId,() => deps?.now?.() ?? Date.now(),(model.vision ?? model.imageInput) === true,code=>{fatalToolCode??=code;}) : undefined;
   return new DefaultPiTaskSession(taskId, session, customTools, progress, budgets, () => deps?.now?.() ?? Date.now(), () => fatalToolCode,
-    context ? flush : undefined, saveFinal, beforePrompt, () => { if (compactionFailed) refuseOversizedContext(); }, live, () => { unsubscribeLive?.(); images?.dispose(); });
+    context ? flush : undefined, saveFinal, beforePrompt, () => { if (compactionFailed) refuseOversizedContext(); }, live, () => { unsubscribeLive?.(); images?.dispose(); transport?.close(); });
 }
 
 /** Idle-only native summary. This session has no prompt and no project tool authority. */
@@ -312,11 +319,11 @@ async function buildModelRuntime(model: PiModelConfig, agentDir: string): Promis
         models: [{
           id: model.model,
           name: model.model,
-          reasoning: true,
+          reasoning: model.reasoning ?? true,
           thinkingLevelMap: { minimal: null, low: "low", medium: null, high: "high", max: "max" },
           contextWindow: CONTEXT_WINDOW,
           maxTokens: 8192,
-          input: model.imageInput ? ["text","image"] : ["text"],
+          input: (model.vision ?? model.imageInput) ? ["text", "image"] : ["text"],
           cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
         }],
       },
@@ -388,7 +395,7 @@ class DefaultPiTaskSession implements PiTaskSession {
       await this.flush?.();
       const prompt = this.flush ? "Execute the user's most recent programming goal recorded above. Use the current workspace revision; re-read relevant files before changes." : start.prompt;
       if (!this.aborted) await this.beforePrompt?.(prompt);
-      if (!this.aborted) await this.session.prompt(prompt);
+      if (!this.aborted) await this.session.prompt(prompt, start.images?.length ? { images: start.images } : undefined);
       this.afterPrompt?.();
     } catch (error) {
       promptError = error;

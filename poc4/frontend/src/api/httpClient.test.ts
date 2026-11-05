@@ -189,6 +189,21 @@ describe('HttpClient', () => {
     });
   });
 
+  it('preserves assistant model, review and attachment failure codes', async () => {
+    for (const code of [
+      'AI_CREDENTIALS_UNAVAILABLE', 'AI_VISION_UNSUPPORTED', 'AI_APPLY_MISMATCH', 'AI_APPLY_INTERRUPTED',
+      'AI_APPLY_CONFLICT', 'AI_BUSY', 'AI_MODEL_REJECTED', 'AI_MODEL_DISCONNECTED', 'AI_MODEL_INCOMPLETE',
+      'AI_MODEL_UNAVAILABLE', 'AI_MODEL_PROTOCOL', 'AI_READ_ONLY', 'AI_STOPPED', 'AI_TOOL_BUDGET',
+      'AI_REVIEW_ISOLATED', 'WORKSPACE_CONFLICT', 'PATH_FORBIDDEN', 'AI_ATTACHMENT_TOO_LARGE',
+      'AI_ATTACHMENT_EXPIRED', 'AI_ATTACHMENT_UNAVAILABLE', 'AI_ATTACHMENT_NOT_FOUND',
+      'AI_ATTACHMENT_CONFLICT', 'AI_IMAGE_INPUT_DISABLED',
+    ]) {
+      const body = { code, message: 'Safe server message', traceId: `trace-${code}` };
+      const client = createClient(vi.fn<typeof fetch>(async () => jsonResponse(body, 503)));
+      await expect(client.request('/api/v1/assistant/models')).rejects.toMatchObject({ status: 503, body });
+    }
+  });
+
   it('invokes onUnauthorized exactly once per 401 response', async () => {
     const body = {
       code: 'UNAUTHENTICATED' as const,

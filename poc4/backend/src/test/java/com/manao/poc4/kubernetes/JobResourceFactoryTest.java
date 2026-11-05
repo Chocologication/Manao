@@ -451,6 +451,23 @@ class JobResourceFactoryTest {
             .hasMessageContaining("python runner image");
     }
 
+    @Test
+    void reviewOverlayOnlyMountsIsolatedBuildWorkspaceAndRejectsPrivatePaths() {
+        var request = new com.manao.poc4.ai.AgentContracts.BuildRequest(RUN, "call", PROJECT, "command", 7,
+            com.manao.poc4.ai.AgentContracts.BuildGoal.TEST, Map.of("src/Demo.java", "class Demo { String s = \"$(false)\"; }\n"));
+        var source = new JobResourceFactory.DevelopmentSourceVolume("10.0.0.1", "/project");
+        var pod = factory.createDevelopmentJob(request, source).getSpec().getTemplate().getSpec();
+        var overlay = pod.getInitContainers().get(pod.getInitContainers().size() - 1);
+        assertThat(overlay.getName()).isEqualTo("review-overlay");
+        assertThat(overlay.getVolumeMounts()).hasSize(1);
+        assertThat(overlay.getVolumeMounts().get(0).getName()).isEqualTo("workspace");
+        assertThat(pod.getVolumes().stream().filter(v -> v.getName().equals("workspace")).findFirst().orElseThrow().getEmptyDir()).isNotNull();
+        assertThat(String.join(" ", overlay.getCommand())).contains("realpath", "/workspace/*").doesNotContain("$(false)");
+        var unsafe = new com.manao.poc4.ai.AgentContracts.BuildRequest(RUN, "call", PROJECT, "command", 7,
+            com.manao.poc4.ai.AgentContracts.BuildGoal.TEST, Map.of("src/.env.production", "secret"));
+        assertThatThrownBy(() -> factory.createDevelopmentJob(unsafe, source)).isInstanceOf(IllegalArgumentException.class);
+    }
+
     private void assertThatNoBrowserPolicyFields(String serialized) {
         // The run API never echoes image/env to the browser; the Job manifest itself is server-owned.
         assertThat(serialized).doesNotContain("browser-command");

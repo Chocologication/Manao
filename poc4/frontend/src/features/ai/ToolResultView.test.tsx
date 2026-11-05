@@ -19,7 +19,7 @@ describe('file tool results', () => {
     expect(screen.getByText(`SHA-256: ${SHA256}`)).toBeInTheDocument();
     expect(screen.queryByText(/PRIVATE_WORKER_PATH/)).not.toBeInTheDocument();
     expect(document.querySelector('script, img, h1')).toBeNull();
-    expect(screen.queryByText('Result unavailable')).not.toBeInTheDocument();
+    expect(screen.queryByText('结果暂不可用')).not.toBeInTheDocument();
   });
 
   it('distinguishes an empty read_file from a missing result', () => {

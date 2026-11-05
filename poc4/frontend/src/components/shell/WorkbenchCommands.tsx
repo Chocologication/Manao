@@ -6,7 +6,7 @@ import { useWorkspaceSession } from '@/features/editor/workspaceSession';
 type WorkbenchPanel = 'file' | 'run' | 'dependencies';
 type WorkbenchCommand = { name: string; icon: LucideIcon; run: () => void };
 
-export function WorkbenchCommands({ python, onSelectPanel, onToggleFiles, onToggleInsights, insightsLabel = '项目洞察' }: {
+export function WorkbenchCommands({ python, onSelectPanel, onToggleFiles, onToggleInsights, insightsLabel = '运行概况' }: {
   python: boolean;
   insightsLabel?: string;
   onSelectPanel: (panel: WorkbenchPanel) => void;

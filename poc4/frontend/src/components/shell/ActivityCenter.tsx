@@ -127,7 +127,7 @@ export function ActivityCenter({
       >
         <header className="lab-activity-header">
           <div>
-            <p className="lab-eyebrow">RUN HISTORY</p>
+            <p className="lab-eyebrow">最近运行动态</p>
             <h2 id="lab-activity-title">运行活动</h2>
             <p>来自当前项目的真实运行记录</p>
           </div>

@@ -13,20 +13,26 @@ import { agentTaskStorageKey } from '@/api/agentTaskApi';
 import type { AgentTaskSnapshot } from '@/contracts/agentTask';
 import { AgentConversationPanel } from './AgentConversationPanel';
 import type { AgentTaskPanelProps } from './AgentTaskPanel';
+import * as conversationApi from '@/api/agentConversationApi';
 
 const P = ALICE_SEED_PROJECT_ID, U = 'user-alice';
 const A = '11111111-1111-4111-8111-111111111111', B = '22222222-2222-4222-8222-222222222222';
 const T = '33333333-3333-4333-8333-333333333333';
 it('shows actual live Markdown while locked, aborts on switching, and leaves explicit close untouched', async () => {
   let emit!: (value: unknown) => void; let aborted = false; const posts: string[] = [];
+  const openLiveOutput = conversationApi.getAgentLiveOutput;
+  vi.spyOn(conversationApi, 'getAgentLiveOutput').mockImplementation((project, task, signal, options) => {
+    signal.addEventListener('abort', () => { aborted = true; }, { once: true });
+    return openLiveOutput(project, task, signal, options);
+  });
   server.use(http.get('/api/v1/projects/:projectId/agent-tasks/:taskId/live-output', ({ request }) => {
     request.signal.addEventListener('abort', () => { aborted = true; });
-    return new HttpResponse(new ReadableStream({ start(controller) { emit = value => controller.enqueue(new TextEncoder().encode('event: snapshot\ndata: ' + JSON.stringify(value) + '\n\n')); } }), { headers: { 'Content-Type': 'text/event-stream' } });
+    return new HttpResponse(new ReadableStream({ start(controller) { emit = value => controller.enqueue(new TextEncoder().encode('event: snapshot\ndata: ' + JSON.stringify(value) + '\n\n')); }, cancel() { aborted = true; } }), { headers: { 'Content-Type': 'text/event-stream' } });
   }), http.post('/api/v1/projects/:projectId/agent-tasks/:taskId/close', ({ request }) => { posts.push(request.url); return HttpResponse.error(); }));
   const h = panel({ task: task({ conversationId: A }) }); await waitFor(() => expect(emit).toBeDefined());
   await act(async () => emit({ revision: 1, taskId: T, conversationId: A, durableHeadSeq: 1, current: { messageOrdinal: 0, phase: 'generating', blocks: [{ contentIndex: 0, kind: 'thinking', text: 'live reason' }, { contentIndex: 1, kind: 'text', text: '# live heading\n\n| a | b |\n| --- | --- |\n| 1 | 2 |\n\n~~~js\nhello();\n~~~' }], modelTruncated: false, displayTruncated: false }, unavailable: false }));
   expect(await screen.findByRole('heading', { name: 'live heading' })).toBeVisible(); expect(screen.getByRole('table')).toBeVisible(); expect(screen.getByText('hello();').tagName).toBe('CODE'); expect(screen.getByText('live reason')).toBeVisible();
-  expect(screen.getByRole('button', { name: 'Start task' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: '启动任务' })).toBeDisabled();
   await userEvent.click(screen.getByRole('button', { name: '会话 B' })); await screen.findByText('B 原文'); await waitFor(() => expect(aborted).toBe(true)); expect(screen.queryByText('live reason')).toBeNull(); expect(h.close).not.toHaveBeenCalled(); expect(posts).toEqual([]);
 });
 const URL = `/api/v1/projects/${P}/conversations`;
@@ -36,9 +42,9 @@ it('pauses project current while browsing another conversation', async () => {
   await screen.findByText('A 原文');
   await userEvent.click(screen.getByRole('button', { name: '会话 B' }));
   await screen.findByText('B 原文');
-  await userEvent.click(screen.getByRole('button', { name: 'Pause & take over' }));
+  await userEvent.click(screen.getByRole('button', { name: '暂停并接管' }));
   expect(pause).toHaveBeenCalledTimes(1);
-  expect(screen.queryByRole('button', { name: 'Continue task' })).toBeNull();
+  expect(screen.queryByRole('button', { name: '继续任务' })).toBeNull();
 });
 it('shows the selected conversation usage and clears a cached measurement when its refresh fails', async () => {
   server.use(http.get(URL + '/:id', ({ params }) => HttpResponse.json(conversation(String(params.id), {
@@ -69,9 +75,9 @@ it('keeps the current task end control while the selected historical conversatio
   server.use(http.get(`${URL}/${B}`, () => HttpResponse.json({ message: 'unavailable' }, { status: 503 })));
   const h = panel({ task: task({ conversationId: A }) });
   await screen.findByRole('alert');
-  await userEvent.click(screen.getByRole('button', { name: 'End task' }));
+  await userEvent.click(screen.getByRole('button', { name: '结束任务' }));
   expect(h.close).toHaveBeenCalledTimes(1);
-  expect(screen.getByRole('button', { name: 'Start task' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: '启动任务' })).toBeDisabled();
 });
 function task(extra = {}): AgentTaskSnapshot { return { taskId: T, state: 'RUNNING', workspaceRevision: '7', writesLocked: true, progress: [], changedPaths: [], summary: null, failureCode: null, ...extra }; }
 function panel(extra: Partial<AgentTaskPanelProps> & { historyTarget?: HTMLElement | null } = {}) {
@@ -128,13 +134,13 @@ it('restores selection and authoritative last round after remount', async () => 
   server.use(http.get(`${URL}/${B}`, () => HttpResponse.json(conversation(B, { lastTaskId: T }))), http.get(`/api/v1/projects/${P}/agent-tasks/${T}`, () => HttpResponse.json(task({ state: 'FAILED', writesLocked: false, conversationId: B, failureCode: 'AI_CONTEXT_UNAVAILABLE' }))));
   const first = panel(); await userEvent.click(await screen.findByRole('button', { name: '会话 B' })); first.unmount();
   panel(); expect(await screen.findByText('B 原文')).toBeInTheDocument();
-  expect(await screen.findByText('FAILED')).toBeInTheDocument(); expect(screen.getByText('AI_CONTEXT_UNAVAILABLE')).toBeInTheDocument();
+  expect(await screen.findByText('执行失败')).toBeInTheDocument(); expect(screen.getByText('AI_CONTEXT_UNAVAILABLE')).toBeInTheDocument();
 });
 it('submits the selected conversation with original task/conversation identity persisted before POST', async () => {
   let posted: Record<string, unknown> | null = null, stored: string | null = null;
   server.use(http.post(`${URL}/${B}/tasks`, async ({ request }) => { posted = await request.json() as Record<string, unknown>; stored = sessionStorage.getItem(agentTaskStorageKey(U, P)); return HttpResponse.json(task({ taskId: posted.taskId, conversationId: B })); }));
   const h = panel(); await userEvent.click(await screen.findByRole('button', { name: '会话 B' }));
-  await userEvent.type(screen.getByLabelText('Task goal'), '第二轮目标'); await userEvent.click(screen.getByRole('button', { name: 'Start task' }));
+  await userEvent.type(screen.getByLabelText('任务目标'), '第二轮目标'); await userEvent.click(screen.getByRole('button', { name: '启动任务' }));
   await waitFor(() => expect(h.accepted).toHaveBeenCalled());
   expect(posted).toMatchObject({ prompt: '第二轮目标', expectedWorkspaceRevision: '7' });
   expect(JSON.parse(stored!)).toEqual({ taskId: posted!.taskId, conversationId: B });
@@ -143,19 +149,19 @@ it.each([false, true])('settles the original A submission after switching B with
   let release = () => {}, postedId = '', posts = 0;
   const held = new Promise<void>(r => { release = r; });
   server.use(http.post(`${URL}/${A}/tasks`, async ({ request }) => { posts++; postedId = (await request.json() as { taskId: string }).taskId; await held; return lostResponse ? HttpResponse.error() : HttpResponse.json(task({ taskId: postedId, conversationId: A })); }), http.get(`/api/v1/projects/${P}/agent-tasks/:id`, ({ params }) => HttpResponse.json(task({ taskId: String(params.id), conversationId: A }))));
-  const h = panel(); await screen.findByText('A 原文'); await userEvent.type(screen.getByLabelText('Task goal'), 'A 目标'); await userEvent.click(screen.getByRole('button', { name: 'Start task' }));
+  const h = panel(); await screen.findByText('A 原文'); await userEvent.type(screen.getByLabelText('任务目标'), 'A 目标'); await userEvent.click(screen.getByRole('button', { name: '启动任务' }));
   await waitFor(() => expect(postedId).not.toBe('')); await userEvent.click(screen.getByRole('button', { name: '会话 B' }));
-  expect(screen.getByRole('button', { name: 'Start task' })).toBeDisabled();
-  await userEvent.type(screen.getByLabelText('Task goal'), 'B draft');
+  expect(screen.getByRole('button', { name: '启动任务' })).toBeDisabled();
+  await userEvent.type(screen.getByLabelText('任务目标'), 'B draft');
   release();
   await waitFor(() => expect(h.accepted).toHaveBeenCalledWith(expect.objectContaining({ taskId: postedId })));
   expect(screen.getByRole('button', { name: '会话 B' })).toHaveAttribute('aria-pressed', 'true'); expect(posts).toBe(1);
-  expect(screen.getByLabelText('Task goal')).toHaveValue('B draft');
+  expect(screen.getByLabelText('任务目标')).toHaveValue('B draft');
 });
 it('keeps global occupancy and explicit close when another conversation is selected', async () => {
   const h = panel({ task: task({ conversationId: A, state: 'NEEDS_ATTENTION' }) });
   await userEvent.click(await screen.findByRole('button', { name: '会话 B' }));
-  expect(screen.getByRole('button', { name: 'Start task' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: '启动任务' })).toBeDisabled();
   expect(screen.getByRole('button', { name: '压缩上下文' })).toBeDisabled();
   await userEvent.click(screen.getByRole('button', { name: '项目有任务运行中' }));
   expect(screen.getByRole('button', { name: '会话 A' })).toHaveAttribute('aria-pressed', 'true'); expect(h.close).not.toHaveBeenCalled();
@@ -164,16 +170,16 @@ it.each(['occupying', 'settled'])('retains old task-only progress and explicit c
   const snapshot = task({ state: state === 'occupying' ? 'RUNNING' : 'COMPLETED', writesLocked: state === 'occupying', progress: [{ seq: 1, kind: 'message', text: 'legacy progress', truncated: true }] });
   panel(state === 'occupying' ? { task: snapshot } : { settledTask: snapshot });
   expect(await screen.findByText(/legacy progress/)).toBeInTheDocument();
-  if (state === 'occupying') expect(screen.getByRole('button', { name: 'End task' })).toBeInTheDocument();
+  if (state === 'occupying') expect(screen.getByRole('button', { name: '结束任务' })).toBeInTheDocument();
 });
 it('does not replace the current conversation round with an older settled shell snapshot', async () => {
   server.use(http.get(`${URL}/${A}`, () => HttpResponse.json(conversation(A, { lastTaskId: B }))), http.get(`/api/v1/projects/${P}/agent-tasks/${B}`, () => HttpResponse.json(task({ taskId: B, conversationId: A, state: 'FAILED', writesLocked: false }))));
   panel({ settledTask: task({ taskId: T, conversationId: A, state: 'COMPLETED', writesLocked: false }) });
-  expect(await screen.findByText('FAILED')).toBeInTheDocument(); expect(screen.queryByText('COMPLETED')).not.toBeInTheDocument();
+  expect(await screen.findByText('执行失败')).toBeInTheDocument(); expect(screen.queryByText('已完成')).not.toBeInTheDocument();
 });
 it('keeps native history once, uses authoritative status, and displays unknown usage after compaction', async () => {
   server.use(http.get(`${URL}/${A}`, () => HttpResponse.json(conversation(A, { lastTaskId: T, compactState: 'COMPLETED', compactRequestId: B }))), http.get(`/api/v1/projects/${P}/agent-tasks/${T}`, () => HttpResponse.json(task({ state: 'COMPLETED', writesLocked: false, conversationId: A, summary: 'A 原文', progress: [{ seq: 1, kind: 'message', text: 'truncated duplicate', truncated: true }] }))));
-  panel(); expect(await screen.findByText('COMPLETED')).toBeInTheDocument(); expect(screen.getAllByText('A 原文')).toHaveLength(1); expect(screen.queryByText('truncated duplicate')).not.toBeInTheDocument(); expect(screen.getByText('占用暂不可用')).toBeInTheDocument();
+  panel(); expect(await screen.findByText('已完成')).toBeInTheDocument(); expect(screen.getAllByText('A 原文')).toHaveLength(1); expect(screen.queryByText('truncated duplicate')).not.toBeInTheDocument(); expect(screen.getByText('占用暂不可用')).toBeInTheDocument();
 });
 it('preserves an uncertain compact request and checks the original detail before a later click', async () => {
   let posted: { requestId: string; expectedHeadSeq: number } | null = null; let posts = 0;
@@ -203,13 +209,13 @@ it('explicitly retries an unregistered compact after remount with the byte-ident
   expect(JSON.parse(stored!)).toMatchObject({ conversationId: A, expectedHeadSeq: 1, requestId: JSON.parse(bodies[0]!).requestId });
   h.unmount(); panel(); await screen.findByText('A 原文');
   await userEvent.click(screen.getByRole('button', { name: '会话 B' })); await screen.findByText('B 原文');
-  await userEvent.type(screen.getByLabelText('Task goal'), 'B 下一轮');
+  await userEvent.type(screen.getByLabelText('任务目标'), 'B 下一轮');
   await userEvent.click(screen.getByRole('button', { name: '核对压缩状态' }));
   expect(sessionStorage.getItem(key)).toBe(stored); expect(bodies).toHaveLength(1);
-  expect(screen.getByRole('button', { name: 'Start task' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: '启动任务' })).toBeDisabled();
   expect(screen.getByRole('button', { name: '压缩上下文' })).toBeDisabled();
   await userEvent.click(screen.getByRole('button', { name: '重试原压缩请求' }));
-  await waitFor(() => expect(screen.getByRole('button', { name: 'Start task' })).toBeEnabled());
+  await waitFor(() => expect(screen.getByRole('button', { name: '启动任务' })).toBeEnabled());
   expect(bodies).toEqual([bodies[0], bodies[0]]); expect(paths).toEqual([A, A]);
   expect(sessionStorage.getItem(key)).toBeNull();
   expect(screen.getByRole('button', { name: '压缩上下文' })).toBeEnabled();
@@ -230,15 +236,15 @@ it.each([true, false])('reconciles a definite original retry refusal without lea
     }),
   );
   panel(); await userEvent.click(await screen.findByRole('button', { name: '会话 B' })); await screen.findByText('B 原文');
-  await userEvent.type(screen.getByLabelText('Task goal'), 'B 下一轮');
+  await userEvent.type(screen.getByLabelText('任务目标'), 'B 下一轮');
   await userEvent.click(screen.getByRole('button', { name: '重试原压缩请求' }));
   await waitFor(() => expect(posts).toBe(1));
   if (!available) await waitFor(() => expect(screen.getByRole('button', { name: '重试原压缩请求' })).toBeEnabled());
   await waitFor(() => expect(sessionStorage.getItem(key)).toBe(available ? null : JSON.stringify(intent)));
   expect(screen.getByRole('button', { name: '会话 B' })).toHaveAttribute('aria-pressed', 'true');
   expect(screen.queryByText('压缩请求被拒绝，请稍后重试')).not.toBeInTheDocument();
-  if (available) expect(screen.getByRole('button', { name: 'Start task' })).toBeEnabled();
-  else expect(screen.getByRole('button', { name: 'Start task' })).toBeDisabled();
+  if (available) expect(screen.getByRole('button', { name: '启动任务' })).toBeEnabled();
+  else expect(screen.getByRole('button', { name: '启动任务' })).toBeDisabled();
 });
 
 it.each([409, 403])('keeps the original pending identity after retry refusal %i while its unchanged base can still be admitted', async status => {
@@ -247,12 +253,12 @@ it.each([409, 403])('keeps the original pending identity after retry refusal %i 
   sessionStorage.setItem(key, stored); let posts = 0;
   server.use(http.post(`${URL}/${A}/compact`, () => { posts++; return HttpResponse.json({ code: 'AI_CONTEXT_BUSY', message: 'refused', traceId: 'refused' }, { status }); }));
   panel(); await screen.findByText('A 原文');
-  await userEvent.type(screen.getByLabelText('Task goal'), '下一轮');
+  await userEvent.type(screen.getByLabelText('任务目标'), '下一轮');
   await userEvent.click(screen.getByRole('button', { name: '重试原压缩请求' }));
   await waitFor(() => expect(posts).toBe(1));
   await waitFor(() => expect(screen.getByRole('button', { name: '重试原压缩请求' })).toBeEnabled());
   expect(sessionStorage.getItem(key)).toBe(stored);
-  expect(screen.getByRole('button', { name: 'Start task' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: '启动任务' })).toBeDisabled();
   expect(screen.getByRole('button', { name: '压缩上下文' })).toBeDisabled();
 });
 
@@ -283,8 +289,8 @@ it('keeps the original text after a completed manual compaction and never invent
 it('continues two settled programming rounds in one conversation with new task IDs', async () => {
   const ids: string[] = [];
   server.use(http.post(`${URL}/${A}/tasks`, async ({ request }) => { const id = (await request.json() as { taskId: string }).taskId; ids.push(id); return HttpResponse.json(task({ taskId: id, conversationId: A, state: 'COMPLETED', writesLocked: false })); }), http.get(`/api/v1/projects/${P}/agent-tasks/:id`, ({ params }) => HttpResponse.json(task({ taskId: String(params.id), conversationId: A, state: 'COMPLETED', writesLocked: false }))));
-  const h = panel(); await screen.findByText('A 原文'); await userEvent.type(screen.getByLabelText('Task goal'), '首轮'); await userEvent.click(screen.getByRole('button', { name: 'Start task' })); await waitFor(() => expect(h.accepted).toHaveBeenCalledTimes(1));
-  await userEvent.clear(screen.getByLabelText('Task goal')); await userEvent.type(screen.getByLabelText('Task goal'), '继续修改'); await userEvent.click(screen.getByRole('button', { name: 'Start task' })); await waitFor(() => expect(h.accepted).toHaveBeenCalledTimes(2));
+  const h = panel(); await screen.findByText('A 原文'); await userEvent.type(screen.getByLabelText('任务目标'), '首轮'); await userEvent.click(screen.getByRole('button', { name: '启动任务' })); await waitFor(() => expect(h.accepted).toHaveBeenCalledTimes(1));
+  await userEvent.clear(screen.getByLabelText('任务目标')); await userEvent.type(screen.getByLabelText('任务目标'), '继续修改'); await userEvent.click(screen.getByRole('button', { name: '启动任务' })); await waitFor(() => expect(h.accepted).toHaveBeenCalledTimes(2));
   expect(ids).toHaveLength(2); expect(ids[0]).not.toBe(ids[1]); expect(screen.getByRole('button', { name: '会话 A' })).toHaveAttribute('aria-pressed', 'true');
 });
 
@@ -292,13 +298,13 @@ it('keeps original task identity when reconciliation returns a mismatched conver
   sessionStorage.setItem(agentTaskStorageKey(U, P), JSON.stringify({ taskId: T, conversationId: A }));
   let posts = 0;
   server.use(http.get(`/api/v1/projects/${P}/agent-tasks/${T}`, () => HttpResponse.json(task({ conversationId: B }))), http.post(`${URL}/:id/tasks`, () => { posts++; return HttpResponse.error(); }));
-  const h = panel(); await screen.findByText('A 原文'); await userEvent.type(screen.getByLabelText('Task goal'), '核对原请求'); await userEvent.click(screen.getByRole('button', { name: 'Start task' }));
-  expect(await screen.findByText('Could not verify the previous task. Try again in a moment.')).toBeInTheDocument();
+  const h = panel(); await screen.findByText('A 原文'); await userEvent.type(screen.getByLabelText('任务目标'), '核对原请求'); await userEvent.click(screen.getByRole('button', { name: '启动任务' }));
+  expect(await screen.findByText('暂时无法核对上次任务，请稍后重试。')).toBeInTheDocument();
   expect(h.accepted).not.toHaveBeenCalled(); expect(posts).toBe(0); expect(JSON.parse(sessionStorage.getItem(agentTaskStorageKey(U, P))!)).toEqual({ taskId: T, conversationId: A });
 });
 
 it('shows the new conversation round after a legacy task-only result', async () => {
   server.use(http.get(`${URL}/${A}`, () => HttpResponse.json(conversation(A, { lastTaskId: B }))), http.get(`/api/v1/projects/${P}/agent-tasks/${B}`, () => HttpResponse.json(task({ taskId: B, conversationId: A, state: 'FAILED', writesLocked: false }))));
   panel({ settledTask: task({ state: 'COMPLETED', writesLocked: false, summary: 'old legacy' }) });
-  expect(await screen.findByText('FAILED')).toBeInTheDocument(); expect(screen.queryByText('old legacy')).not.toBeInTheDocument();
+  expect(await screen.findByText('执行失败')).toBeInTheDocument(); expect(screen.queryByText('old legacy')).not.toBeInTheDocument();
 });

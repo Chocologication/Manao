@@ -29,6 +29,9 @@ public interface WorkspaceStore {
      */
     boolean commitReconciledOperation(String operationId, String projectId, long expectedRevision);
 
+    /** Verified FILE receipt recovery; implementations must preserve kind, revision and active-run fences. */
+    default boolean commitReconciledFileOperation(String operationId, String projectId, long expectedRevision) { return false; }
+
     List<OperationRecord> pendingOperations(String projectId);
 
     /** The PENDING or COMMITTED operation row for this exact project and operation id. */

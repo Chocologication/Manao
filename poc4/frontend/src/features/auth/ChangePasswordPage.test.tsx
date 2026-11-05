@@ -76,6 +76,11 @@ async function fillForm(
 }
 
 beforeEach(() => {
+  // jsdom has no layout; exercise form behavior without GSAP transform measurement.
+  const matchMedia = window.matchMedia;
+  vi.spyOn(window, 'matchMedia').mockImplementation((query) => ({
+    ...matchMedia(query), matches: query === '(prefers-reduced-motion: reduce)',
+  }));
   setHttpClient(httpClient);
 });
 
@@ -241,10 +246,10 @@ describe('ChangePasswordPage', { timeout: 15_000 }, () => {
 
     // The protected route's anonymous redirect races the explicit navigate; the
     // one-shot in-memory notice must still surface the confirmation on /login.
-    expect(await screen.findByRole('status')).toHaveTextContent('密码已更新');
+    expect(await screen.findByRole("status")).toHaveTextContent('密码已更新');
     expect(readLocation().pathname).toBe('/login');
     expect(authSession.getSnapshot()).toEqual({ status: 'anonymous', reason: 'logout' });
-    expect(screen.getAllByRole('status')).toHaveLength(1);
+    expect(screen.getAllByRole("status")).toHaveLength(1);
     const stored = JSON.stringify({ ...localStorage, ...sessionStorage });
     expect(stored).not.toContain('passwordChanged');
     expect(window.location.href).not.toContain('passwordChanged');

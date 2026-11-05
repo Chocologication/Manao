@@ -2,6 +2,8 @@ package com.manao.poc4.kubernetes;
 
 import com.manao.poc4.ai.AgentContracts.BuildGoal;
 import com.manao.poc4.ai.AgentContracts.BuildRequest;
+import com.manao.poc4.project.ProjectRuntimeStore;
+import com.manao.poc4.project.RuntimeTemplate;
 import com.manao.poc4.run.RunPolicy;
 import com.manao.poc4.run.RunRecord;
 import io.fabric8.kubernetes.api.model.EnvVar;
@@ -40,6 +42,9 @@ public class JobResourceFactory {
     static final String SUPERVISOR_COMMAND = "/usr/local/bin/manao-run-supervisor";
     static final String MAVEN_WRAPPER_COMMAND = "/usr/local/bin/manao-maven";
     static final String PYTHON_LAUNCHER_COMMAND = "/usr/local/bin/manao-python";
+    static final String NODE_LAUNCHER_COMMAND = "/usr/local/bin/manao-node";
+    static final String NODE_CACHE_MOUNT = "/node-cache";
+    static final String NODE_CACHE_DIRECTORY = ".manao-cache/node";
     static final String MAVEN_CACHE_MOUNT = "/maven-cache";
     static final String PYTHON_CACHE_MOUNT = "/python-cache";
     static final String MAVEN_CACHE_DIRECTORY = WorkspaceResourceFactory.MAVEN_CACHE_DIRECTORY;
@@ -64,10 +69,19 @@ public class JobResourceFactory {
     private final RunResources limits;
     private final String mavenImage;
     private final String pythonImage;
+    private final String nodeImage;
+    private final ProjectRuntimeStore projectRuntimes;
 
     public JobResourceFactory(String namespace, long timeoutSeconds, String initializerImage,
                               RunResources requests, RunResources limits, String mavenImage,
                               String pythonImage) {
+        this(namespace, timeoutSeconds, initializerImage, requests, limits, mavenImage, pythonImage, null, null);
+    }
+
+    public JobResourceFactory(String namespace, long timeoutSeconds, String initializerImage,
+                              RunResources requests, RunResources limits, String mavenImage,
+                              String pythonImage, String nodeImage,
+                              ProjectRuntimeStore projectRuntimes) {
         this.namespace = requireText(namespace, "namespace");
         this.timeoutSeconds = timeoutSeconds;
         this.initializerImage = WorkspaceResourceFactory.requireDigest(initializerImage, "run initializer image");
@@ -75,6 +89,9 @@ public class JobResourceFactory {
         this.limits = limits;
         this.mavenImage = WorkspaceResourceFactory.requireDigest(mavenImage, "maven image");
         this.pythonImage = WorkspaceResourceFactory.requireDigest(pythonImage, "python runner image");
+        this.nodeImage = nodeImage == null || nodeImage.isBlank() ? null
+            : WorkspaceResourceFactory.requireDigest(nodeImage, "node runner image");
+        this.projectRuntimes = projectRuntimes;
     }
 
     public record RunResources(long cpuMillis, long memoryBytes, long ephemeralStorageBytes) { }
@@ -120,6 +137,14 @@ public class JobResourceFactory {
                 List.of(SUPERVISOR_COMMAND, "probe", serviceProfileId));
         }
 
+        static LanguageRuntime node(String image, String profileId) {
+            if (image == null) throw new com.manao.poc4.api.ApiException("NODE_RUNTIME_NOT_CONFIGURED", 503,
+                "Node.js runtime image is not configured");
+            return new LanguageRuntime(image, NODE_CACHE_MOUNT, NODE_CACHE_DIRECTORY, "prepare-node-cache", false,
+                List.of(NODE_LAUNCHER_COMMAND, "console"), List.of(SUPERVISOR_COMMAND, "run", profileId),
+                List.of(SUPERVISOR_COMMAND, "probe", profileId));
+        }
+
         /**
          * The exact cache-preparation script of one language: creates this language's cache
          * directory and hands it to the fixed workspace UID/GID. Only the Maven cache also
@@ -149,6 +174,8 @@ public class JobResourceFactory {
         LanguageRuntime runtime = switch (template) {
             case JAVA_CONSOLE, JAVA_SPRING_BOOT_WEB -> LanguageRuntime.maven(mavenImage);
             case PYTHON_CONSOLE, PYTHON_FASTAPI_WEB -> LanguageRuntime.python(pythonImage, template.id());
+            case NODE_JAVASCRIPT_CONSOLE, NODE_JAVASCRIPT_WEB, NODE_TYPESCRIPT_CONSOLE, NODE_TYPESCRIPT_WEB ->
+                LanguageRuntime.node(nodeImage, template.id());
         };
         if (policy.isService()) {
             return serviceJob(run.id(), projectId, run.createdAt().plusSeconds(policy.startupTimeoutSeconds()),
@@ -197,11 +224,15 @@ public class JobResourceFactory {
         if (sourceVolume == null) {
             throw new IllegalArgumentException("sourceVolume is required");
         }
+        var template = projectRuntimes == null ? RuntimeTemplate.JAVA_CONSOLE
+            : RuntimeTemplate.fromId(projectRuntimes.loadSpec(request.projectId()).templateId());
+        LanguageRuntime runtime = template.isNode()
+            ? LanguageRuntime.node(nodeImage, template.id()) : LanguageRuntime.maven(mavenImage);
         String commandId = requireText(request.commandId(), "commandId");
         var labels = WorkspaceResourceFactory.projectIdentityLabels(request.projectId());
         labels.put(LABEL_COMPONENT, COMPONENT_DEVELOPMENT_BUILD);
         labels.put(LABEL_TOOL_CALL_ID, commandId);
-        return new JobBuilder()
+        var job = new JobBuilder()
             .withNewMetadata()
             .withName(developmentJobName(commandId))
             .withNamespace(namespace)
@@ -250,10 +281,10 @@ public class JobResourceFactory {
                     .withNewEmptyDir().endEmptyDir()
                     .build())
             .withInitContainers(
-                developmentCachePreparationContainer(),
+                developmentCachePreparationContainer(runtime),
                 new io.fabric8.kubernetes.api.model.ContainerBuilder()
                     .withName(SOURCE_COPY_CONTAINER)
-                    .withImage(mavenImage)
+                    .withImage(runtime.image())
                     .withCommand(DEVELOPMENT_LAUNCHER_COMMAND, "copy")
                     .withVolumeMounts(
                         new io.fabric8.kubernetes.api.model.VolumeMountBuilder()
@@ -278,7 +309,7 @@ public class JobResourceFactory {
                     .build())
             .withContainers(new io.fabric8.kubernetes.api.model.ContainerBuilder()
                 .withName(ResourceIdentityVerifier.APPLICATION_CONTAINER)
-                .withImage(mavenImage)
+                .withImage(runtime.image())
                 .withCommand(DEVELOPMENT_LAUNCHER_COMMAND, "run", goalArgument(request.goal()))
                 .withWorkingDir("/workspace")
                 .withEnv(baseEnvironment(List.of()))
@@ -290,8 +321,8 @@ public class JobResourceFactory {
                         .build(),
                     new io.fabric8.kubernetes.api.model.VolumeMountBuilder()
                         .withName("cache")
-                        .withMountPath("/maven-cache")
-                        .withSubPath(MAVEN_CACHE_DIRECTORY)
+                        .withMountPath(runtime.cacheMountPath())
+                        .withSubPath(runtime.cacheSubPath())
                         .withReadOnly(false)
                         .build(),
                     new io.fabric8.kubernetes.api.model.VolumeMountBuilder()
@@ -312,6 +343,39 @@ public class JobResourceFactory {
             .endTemplate()
             .endSpec()
             .build();
+        addReviewOverlay(job, request.overlay(), runtime.image());
+        return job;
+    }
+
+    /** Overlay is applied only to emptyDir, after the read-only source copy. */
+    private void addReviewOverlay(Job job, java.util.Map<String, String> overlay, String image) {
+        if (overlay.isEmpty()) return;
+        long bytes = overlay.values().stream().mapToLong(v -> v.getBytes(java.nio.charset.StandardCharsets.UTF_8).length).sum();
+        if (overlay.size() > 64 || bytes > 512 * 1024) throw new IllegalArgumentException("Proposal exceeds build overlay limit");
+        var env = new java.util.ArrayList<EnvVar>();
+        var script = new StringBuilder("set -eu\n");
+        int index = 0;
+        for (var entry : overlay.entrySet()) {
+            String path = entry.getKey();
+            if (!com.manao.poc4.ai.AgentProjectTools.toolReadable(path)) throw new IllegalArgumentException("Invalid proposal path");
+            String name = "MANAO_PATH_" + index;
+            env.add(new io.fabric8.kubernetes.api.model.EnvVarBuilder().withName(name).withValue(java.util.Base64.getEncoder().encodeToString(path.getBytes(java.nio.charset.StandardCharsets.UTF_8))).build());
+            script.append("p=$(printenv ").append(name).append(" | base64 -d)\ndest=$(realpath -m -- \"/workspace/$p\")\ncase \"$dest\" in /workspace/*) ;; *) exit 42 ;; esac\n[ ! -L \"$dest\" ]\nmkdir -p -- \"$(dirname -- \"$dest\")\"\n");
+            String encoded = java.util.Base64.getEncoder().encodeToString(entry.getValue().getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            var names = new java.util.ArrayList<String>();
+            for (int start = 0, chunk = 0; start < encoded.length(); start += 48000, chunk++) {
+                String data = "MANAO_DATA_" + index + "_" + chunk; names.add(data);
+                env.add(new io.fabric8.kubernetes.api.model.EnvVarBuilder().withName(data).withValue(encoded.substring(start, Math.min(encoded.length(), start + 48000))).build());
+            }
+            if (names.isEmpty()) script.append(": > \"$dest\"\n");
+            else script.append("printenv ").append(String.join(" ", names)).append(" | base64 -d > \"$dest\"\n");
+            index++;
+        }
+        var container = new io.fabric8.kubernetes.api.model.ContainerBuilder().withName("review-overlay").withImage(image)
+            .withCommand("/bin/sh", "-ec", script.toString()).withEnv(env)
+            .withVolumeMounts(new io.fabric8.kubernetes.api.model.VolumeMountBuilder().withName("workspace").withMountPath("/workspace").build())
+            .withSecurityContext(containerSecurity()).build();
+        job.getSpec().getTemplate().getSpec().getInitContainers().add(container);
     }
 
     /** The fixed lowercase launcher argument of one build goal. */
@@ -328,8 +392,7 @@ public class JobResourceFactory {
      * preparation (root PVC mount, only this project's maven cache directory is created or
      * repaired), but mounted through the development job's writable {@code cache} volume.
      */
-    private io.fabric8.kubernetes.api.model.Container developmentCachePreparationContainer() {
-        LanguageRuntime runtime = LanguageRuntime.maven(mavenImage);
+    private io.fabric8.kubernetes.api.model.Container developmentCachePreparationContainer(LanguageRuntime runtime) {
         return new io.fabric8.kubernetes.api.model.ContainerBuilder()
             .withName(runtime.cachePreparationContainer())
             .withImage(initializerImage)
@@ -346,7 +409,8 @@ public class JobResourceFactory {
     }
 
     private Job taskJob(String runId, String projectId, List<EnvVar> applicationEnvironment,
-                        LanguageRuntime runtime) {        var labels = labels(projectId, runId);
+                        LanguageRuntime runtime) {
+        var labels = labels(projectId, runId);
         return new JobBuilder()
             .withNewMetadata()
             .withName(jobName(runId))

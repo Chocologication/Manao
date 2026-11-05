@@ -41,8 +41,8 @@ describe('TerminalAuditView states', () => {
   it('announces the initial loading state without rendering a blank surface', () => {
     render(<TerminalAuditView {...baseProps} isPending />);
 
-    expect(screen.getByRole('status', { name: 'Loading terminal audit' })).toHaveTextContent(
-      'Loading terminal audit',
+    expect(screen.getByRole("status", { name: '正在加载命令记录' })).toHaveTextContent(
+      '正在加载命令记录',
     );
     expect(screen.queryByRole('table')).not.toBeInTheDocument();
   });
@@ -54,21 +54,21 @@ describe('TerminalAuditView states', () => {
       <TerminalAuditView
         {...baseProps}
         isError
-        errorMessage="Unable to load terminal audit"
+        errorMessage="无法加载命令记录"
         onRetry={onRetry}
       />,
     );
 
-    expect(screen.getByRole('alert')).toHaveTextContent('Unable to load terminal audit');
-    await user.click(screen.getByRole('button', { name: 'Retry terminal audit' }));
+    expect(screen.getByRole('alert')).toHaveTextContent('无法加载命令记录');
+    await user.click(screen.getByRole('button', { name: '重试加载命令记录' }));
     expect(onRetry).toHaveBeenCalledOnce();
   });
 
   it('renders a clear empty state after a successful request', () => {
     render(<TerminalAuditView {...baseProps} />);
 
-    expect(screen.getByRole('status', { name: 'Terminal audit empty' })).toHaveTextContent(
-      'No commands recorded for this run',
+    expect(screen.getByRole("status", { name: '暂无命令记录' })).toHaveTextContent(
+      '本次运行暂无命令记录',
     );
   });
 });
@@ -89,18 +89,18 @@ describe('TerminalAuditView structured entries', () => {
     });
     render(<TerminalAuditView {...baseProps} items={[running, failed]} />);
 
-    const table = screen.getByRole('table', { name: 'Terminal command audit' });
+    const table = screen.getByRole('table', { name: '终端命令记录' });
     expect(table).toBeInTheDocument();
     expect(screen.getAllByRole('columnheader').map((cell) => cell.textContent)).toEqual([
-      'Command',
-      'State',
-      'Started',
-      'Finished',
-      'Exit code',
+      '命令',
+      '状态',
+      '开始时间',
+      '结束时间',
+      '退出码',
     ]);
     expect(screen.getByText('mvn -q test')).toBeInTheDocument();
-    expect(screen.getByText('RUNNING')).toBeInTheDocument();
-    expect(screen.getByText('FAILED')).toBeInTheDocument();
+    expect(screen.getByText('正在执行')).toBeInTheDocument();
+    expect(screen.getByText('执行失败')).toBeInTheDocument();
     expect(screen.getByText('1')).toBeInTheDocument();
     expect(table.querySelector('time[datetime="2026-08-25T02:00:00.000Z"]')).not.toBeNull();
   });
@@ -109,7 +109,7 @@ describe('TerminalAuditView structured entries', () => {
     const hostile = `<img src=x onerror=alert(1)>${'x'.repeat(600)}\n\t\u0000tail`;
     render(<TerminalAuditView {...baseProps} items={[audit('audit-hostile', { command: hostile })]} />);
 
-    const command = screen.getByLabelText(/^Command: <img src=x onerror=alert\(1\)>/);
+    const command = screen.getByLabelText(/^命令：<img src=x onerror=alert\(1\)>/);
     expect(command.tagName).toBe('CODE');
     expect(command).toHaveAttribute('title');
     const hasControlCharacter = [...(command.textContent ?? '')].some((character) => {
@@ -134,7 +134,7 @@ describe('TerminalAuditView structured entries', () => {
       />,
     );
 
-    const loadMore = screen.getByRole('button', { name: 'Load more terminal audit' });
+    const loadMore = screen.getByRole('button', { name: '加载更多命令记录' });
     await user.click(loadMore);
     expect(onLoadMore).toHaveBeenCalledOnce();
     expect(screen.getByRole('table')).toBeInTheDocument();
@@ -149,6 +149,6 @@ describe('TerminalAuditView structured entries', () => {
       />,
     );
     expect(loadMore).toBeDisabled();
-    expect(loadMore).toHaveTextContent('Loading more');
+    expect(loadMore).toHaveTextContent('正在加载更多');
   });
 });

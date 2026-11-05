@@ -12,7 +12,7 @@ import {
 import type { ReactNode } from 'react';
 import { runStateLabels } from '@/components/ui/labPresentation';
 import { InlineAlert } from '@/components/feedback/InlineAlert';
-import type { RuntimeTemplateId } from '@/contracts/project';
+import { RUNTIME_TEMPLATE_META, type RuntimeTemplateId } from '@/contracts/project';
 import {
   isRunTerminalState,
   resolveRunAvailability,
@@ -101,10 +101,10 @@ function clockLabel(run: RunSummary | null, nowMs: number): string | null {
     return null;
   }
   if (run.finishedAt !== null) {
-    return `Finished ${run.finishedAt}`;
+    return `结束于 ${run.finishedAt}`;
   }
   const origin = run.startedAt ?? run.createdAt;
-  return `Elapsed ${formatRunElapsed(origin, nowMs)}`;
+  return `已运行 ${formatRunElapsed(origin, nowMs)}`;
 }
 
 /**
@@ -116,20 +116,20 @@ function clockLabel(run: RunSummary | null, nowMs: number): string | null {
 function serviceLifetimeLabel(run: RunSummary, nowMs: number): string {
   if (run.state === 'TIMED_OUT') {
     return run.terminationReason === 'STARTUP_TIME_LIMIT_EXCEEDED'
-      ? 'Failed'
-      : 'Reached the two hour limit';
+      ? '失败'
+      : '已达到两小时运行上限';
   }
   if (isRunTerminalState(run.state)) {
-    return run.state === 'CANCELLED' || run.state === 'SUCCEEDED' ? 'Stopped' : 'Failed';
+    return run.state === 'CANCELLED' || run.state === 'SUCCEEDED' ? '已停止' : '失败';
   }
   const availability = resolveRunAvailability(run, nowMs);
   if (availability === 'STARTING') {
-    return 'Starting';
+    return '正在启动';
   }
   if (availability === 'READY' && run.expiresAt !== null) {
-    return `Accessible · ${formatRunElapsed(new Date(nowMs).toISOString(), Date.parse(run.expiresAt))} left`;
+    return `可访问 · 剩余 ${formatRunElapsed(new Date(nowMs).toISOString(), Date.parse(run.expiresAt))}`;
   }
-  return 'Unavailable';
+  return '暂不可用';
 }
 
 export function RunToolbar({
@@ -161,29 +161,29 @@ export function RunToolbar({
   const runtimeLabel = run !== null ? runRuntimeLabel(run.policy.runtime) : templateDisplay.runtimeLabel;
   const timeoutSeconds = run?.policy.timeoutSeconds ?? templateDisplay.timeoutSeconds;
   const servicePolicy = run?.policy.executionKind === 'SERVICE' ? run.policy : null;
-  const servicePreview = run === null && (projectTemplateId === 'java-spring-boot-web' || projectTemplateId === 'python-fastapi-web');
+  const servicePreview = run === null && RUNTIME_TEMPLATE_META[projectTemplateId].web;
   const policyLabel = servicePolicy !== null
-    ? `startup limit ${servicePolicy.startupTimeoutSeconds}s · after ready ${servicePolicy.serviceLifetimeSeconds}s`
-    : servicePreview ? `startup limit ${timeoutSeconds}s · after ready 7200s` : `timeout ${timeoutSeconds}s`;
+    ? `启动时限 ${servicePolicy.startupTimeoutSeconds} 秒 · 就绪后可运行 ${servicePolicy.serviceLifetimeSeconds} 秒`
+    : servicePreview ? `启动时限 ${timeoutSeconds} 秒 · 就绪后可运行 7200 秒` : `运行时限 ${timeoutSeconds} 秒`;
   const clock = clockLabel(run, nowMs);
   const serviceLifetime =
     run !== null && run.policy.executionKind === 'SERVICE'
       ? serviceLifetimeLabel(run, nowMs)
       : null;
-  const loading = /loading/i.test(statusText);
+  const loading = /正在核对|正在读取|正在.*加载|loading/i.test(statusText);
   const displayedStatus = run !== null && statusText === run.state
     ? runStateLabels[run.state]
-    : statusText === 'Ready' ? '可以运行' : statusText;
-  const stopTitle = stopBlockedByAgent ? 'AI task is controlling the application. End the AI task first.'
-    : stopWaiting ? 'Waiting for the server' : 'Stop run';
+    : statusText === '已就绪' ? '可以运行' : statusText;
+  const stopTitle = stopBlockedByAgent ? 'AI 任务正在管理应用，请先结束任务。'
+    : stopWaiting ? '正在等待服务端确认' : '停止运行';
 
   return (
     <div className="lab-run-toolbar flex shrink-0 flex-col gap-1 border-b">
-      <div role="toolbar" aria-label="Run controls" className="flex h-8 min-w-0 items-center gap-2">
+      <div role="toolbar" aria-label="运行控制" className="flex h-8 min-w-0 items-center gap-2">
         <button
           type="button"
           title={startTitle}
-          aria-label="Start run"
+          aria-label="启动运行"
           aria-busy={startPending}
           className={RUN_ICON_BUTTON_CLASS}
           disabled={!canStart || startPending}
@@ -194,7 +194,7 @@ export function RunToolbar({
         <button
           type="button"
           title={stopTitle}
-          aria-label="Stop run"
+          aria-label="停止运行"
           aria-busy={stopPending}
           className={RUN_ICON_BUTTON_CLASS}
           disabled={!canStop || stopPending || stopBlockedByAgent}
@@ -202,11 +202,10 @@ export function RunToolbar({
         >
           <Square className="h-4 w-4" aria-hidden />
         </button>
-        <div role="status" aria-label="Run state" className="flex min-w-0 items-center gap-1.5 text-sm">
+        <div role="status" aria-label="运行状态" className="flex min-w-0 items-center gap-1.5 text-sm">
           {stateIcon(run?.state ?? null, loading)}
           <span className="truncate" title={statusText}>{displayedStatus}</span>
-          {run && <code className="lab-machine-state">{run.state}</code>}
-          {stopWaiting && <span className="lab-machine-state">Waiting for server</span>}
+          {stopWaiting && <span className="lab-machine-state">正在等待服务端确认</span>}
         </div>
         <span className="font-mono truncate text-sm">{command}</span>
         {clock !== null ? (
@@ -215,7 +214,7 @@ export function RunToolbar({
         {serviceLifetime !== null ? (
           <span
             role="status"
-            aria-label="Run availability"
+            aria-label="服务可用状态"
             className="shrink-0 text-sm text-muted-foreground"
           >
             {serviceLifetime}
@@ -225,10 +224,10 @@ export function RunToolbar({
           {runtimeLabel} · {policyLabel}
         </span>
       </div>
-      {servicePolicy !== null && run?.expiresAt != null ? <span className="text-xs text-muted-foreground">Expires {run.expiresAt}</span> : null}
+      {servicePolicy !== null && run?.expiresAt != null ? <span className="text-xs text-muted-foreground">到期时间：{run.expiresAt}</span> : null}
       {stopBlockedByAgent ? <div className="flex items-center gap-2 pb-1 text-sm text-muted-foreground">
         <span>{stopTitle}</span>
-        {onOpenAgentTask ? <button type="button" className="h-8 shrink-0 rounded-md px-2 text-sm hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none" onClick={onOpenAgentTask}>Open AI task</button> : null}
+        {onOpenAgentTask ? <button type="button" className="h-8 shrink-0 rounded-md px-2 text-sm hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none" onClick={onOpenAgentTask}>查看 AI 任务</button> : null}
       </div> : null}
       {authorityError !== null ? (
         <div className="flex items-center gap-2 pb-1">
@@ -238,19 +237,19 @@ export function RunToolbar({
             className="h-8 shrink-0 rounded-md px-2 text-sm hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
             onClick={onRetryAuthority}
           >
-            Retry loading run authority
+            重试读取运行状态
           </button>
         </div>
       ) : null}
       {reloadFailed ? (
         <div className="flex items-center gap-2 pb-1">
-          <InlineAlert>Workspace reload failed</InlineAlert>
+          <InlineAlert>工作区重新加载失败</InlineAlert>
           <button
             type="button"
             className="h-8 shrink-0 rounded-md px-2 text-sm hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
             onClick={onRetryReload}
           >
-            Retry workspace reload
+            重试加载工作区
           </button>
         </div>
       ) : null}

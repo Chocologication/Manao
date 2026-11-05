@@ -65,7 +65,7 @@ public final class AgentProjectTools {
      * directory and credential files — fixed here in trusted code, never loaded from project
      * configuration or prompts, and never applied to the browser's own file features.
      */
-    private static final Set<String> DENIED_SEGMENTS = Set.of(".git", "target");
+    private static final Set<String> DENIED_SEGMENTS = Set.of(".git", "target", "node_modules", "dist", "coverage");
     private static final Set<String> CREDENTIAL_FILES = Set.of(
         ".env", ".npmrc", ".netrc", ".git-credentials", ".htpasswd", ".pgpass",
         "id_rsa", "id_dsa", "id_ecdsa", "id_ed25519", "credentials.json");
@@ -80,6 +80,8 @@ public final class AgentProjectTools {
     /** The isolated development build executor: read-only source copy, real exit, proven cleanup. */
     private final DevelopmentBuildExecutor builds;
     private final AgentApplicationTools application;
+    private com.manao.poc4.ai.studio.StudioProposals studio;
+    public void setStudio(com.manao.poc4.ai.studio.StudioProposals studio) { this.studio = studio; }
     private final AgentAttachmentService attachments;
 
     public AgentProjectTools(AgentTaskStore tasks, WorkspaceStore store, WorkspaceService workspace,
@@ -163,6 +165,10 @@ public final class AgentProjectTools {
                 if (SIDE_EFFECT_TOOLS.contains(request.name())) {
                     tasks.requireNoActiveRun(owner.projectId());
                 }
+                if (studio != null && studio.review(taskId)
+                    && ("application".equals(request.name()) || "app_http_get".equals(request.name()))) {
+                    throw new ApiException("AI_REVIEW_ISOLATED", 422, "Review mode only reads files and builds the isolated proposal; application tools are unavailable");
+                }
                 if (BUILD_TOOL.equals(request.name())) {
                     buildGoal = buildGoal(request);
                 } else if ("application".equals(request.name())) {
@@ -200,6 +206,25 @@ public final class AgentProjectTools {
         AgentContracts.ToolResult settled = boundedResult(result);
         tasks.completeToolCall(taskId, request.toolCallId(), jsonOf(settled));
         return settled;
+    }
+
+    /** Trusted review application resumes the SAME ledger/operation, including unknown receipts. */
+    public AgentContracts.ToolResult resumeStudioCall(String taskId, AgentContracts.ToolRequest request) {
+        var row = tasks.findToolCall(taskId, request.toolCallId()).orElse(null);
+        if (row == null || "REGISTERED".equals(row.state())) return invoke(taskId, request);
+        if (!row.requestSha256().equals(callDigest(taskId, request))) throw new ApiException("AI_TASK_MISMATCH", 409, "Original call differs");
+        if ("COMPLETED".equals(row.state())) return storedResult(row);
+        var owner = tasks.taskOwner(taskId);
+        try (var lease = lifecycle.tryAcquire(owner.projectId()).orElseThrow(() -> new ApiException("PROJECT_BUSY", 409, "Project is busy"))) {
+            tasks.requireTaskWritable(taskId, owner.projectId());
+            if (AgentTaskStore.hasCloseIntent(tasks.settlementView(taskId))) throw new ApiException("AI_APPLY_INTERRUPTED", 409, "Application task is closing");
+            if ("write_file".equals(request.name())) {
+                var result = boundedResult(writeFile(owner, row, request));
+                tasks.completeToolCall(taskId, row.toolCallId(), jsonOf(result)); return result;
+            }
+            if (!"build".equals(request.name())) throw new ApiException("VALIDATION_ERROR", 422, "Unsupported application call");
+        }
+        return runBuild(owner, row, request, buildGoal(request));
     }
 
     private static boolean isSideEffect(AgentContracts.ToolRequest request) {
@@ -432,8 +457,8 @@ public final class AgentProjectTools {
     private AgentContracts.ToolResult execute(AgentTaskStore.TaskOwner owner, AgentTaskStore.ToolCallRow row,
                                               AgentContracts.ToolRequest request) {
         return switch (request.name()) {
-            case "list_files" -> listFiles(owner, request);
-            case "read_file" -> readFile(owner, request);
+            case "list_files" -> listFiles(owner, row.taskId(), request);
+            case "read_file" -> readFile(owner, row.taskId(), request);
             case "write_file" -> writeFile(owner, row, request);
             case "read_image" -> readImage(row,request);
             default -> throw new IllegalStateException("unsupported tool: " + request.name());
@@ -454,7 +479,7 @@ public final class AgentProjectTools {
         return new AgentContracts.ToolResult(request.toolCallId(),Long.toString(store.findProject(attachments.taskScope(row.taskId()).projectId()).workspaceRevision()),data,false);
     }
 
-    private AgentContracts.ToolResult listFiles(AgentTaskStore.TaskOwner owner, AgentContracts.ToolRequest request) {
+    private AgentContracts.ToolResult listFiles(AgentTaskStore.TaskOwner owner, String taskId, AgentContracts.ToolRequest request) {
         String directory = toolDirectory(request.args().path("directory").asText(""));
         WorkspaceAgent.Tree tree = workspace.tree(owner.ownerId(), owner.projectId(), directory);
         // The listing may only show what a read of the same path would answer: every entry is
@@ -462,6 +487,20 @@ public final class AgentProjectTools {
         List<WorkspaceAgent.TreeEntry> visible = tree.entries().stream()
             .filter(entry -> toolReadable(entry.path()))
             .toList();
+        if (studio != null && studio.review(taskId)) {
+            var merged = new LinkedHashMap<String, WorkspaceAgent.TreeEntry>();
+            visible.forEach(e -> merged.put(e.path(), e));
+            String prefix = directory.isEmpty() ? "" : directory + "/";
+            studio.overlay(taskId).forEach((path, content) -> {
+                if (path.startsWith(prefix)) {
+                    String rest = path.substring(prefix.length()); int slash = rest.indexOf('/');
+                    String name = slash < 0 ? rest : rest.substring(0, slash);
+                    String entryPath = prefix + name;
+                    merged.putIfAbsent(entryPath, new WorkspaceAgent.TreeEntry(entryPath, name, slash < 0 ? "file" : "directory", name.startsWith("."), slash < 0 ? (long)content.getBytes(StandardCharsets.UTF_8).length : null, slash < 0 ? null : true));
+                }
+            });
+            visible = List.copyOf(merged.values());
+        }
         boolean hasMore = visible.size() > MAX_LIST_ENTRIES;
         ObjectNode data = JSON.createObjectNode();
         data.put("directory", directory);
@@ -485,8 +524,11 @@ public final class AgentProjectTools {
         return new AgentContracts.ToolResult(result.toolCallId(), result.workspaceRevision(), data, truncated);
     }
 
-    private AgentContracts.ToolResult readFile(AgentTaskStore.TaskOwner owner, AgentContracts.ToolRequest request) {
+    private AgentContracts.ToolResult readFile(AgentTaskStore.TaskOwner owner, String taskId, AgentContracts.ToolRequest request) {
         String path = toolPath(request);
+        var staged = studio == null ? null : studio.overlay(taskId, path);
+        if (staged != null) return new AgentContracts.ToolResult(request.toolCallId(), revisionOf(owner.projectId()),
+            JSON.createObjectNode().put("path", path).put("content", staged.content()).put("sha256", staged.sha256()).put("staged", true), false);
         WorkspaceAgent.FileMeta meta = workspace.meta(owner.ownerId(), owner.projectId(), path);
         if (meta == null) {
             throw new ApiException("ENTRY_NOT_FOUND", 404, "Entry does not exist");
@@ -523,6 +565,15 @@ public final class AgentProjectTools {
             throw new ApiException("FILE_TOO_LARGE", 422, "File content exceeds the 128 KiB tool limit");
         }
         ObjectNode data = JSON.createObjectNode().put("path", path).put("sha256", sha256Hex(bytes));
+        if (studio != null) {
+            if (studio.review(row.taskId())) {
+                studio.stage(row.taskId(), row.toolCallId(), path, contentNode.textValue(), expectedSha256(request.args()));
+                data.put("staged", true);
+                return new AgentContracts.ToolResult(request.toolCallId(), revisionOf(owner.projectId()), data, false);
+            }
+            studio.capture(row.taskId(), path);
+            studio.validateApplied(row.taskId(), path, contentNode.textValue());
+        }
         // The write result is fully determined by (path, sha256, post-write revision): the same
         // UTF-8 byte gate runs BEFORE the mutate, probed with the revision the success answer
         // will carry (current + 1 — under the project gate nothing else moves the revision), so
@@ -540,6 +591,7 @@ public final class AgentProjectTools {
         // revision and the deduped changed path (review fix I1), so a browser refresh
         // and the acceptance evidence can follow the real mutation.
         tasks.recordVerifiedWrite(row.taskId(), path, revision);
+        if (studio != null) studio.applied(row.taskId(), path, contentNode.textValue());
         return new AgentContracts.ToolResult(request.toolCallId(), Long.toString(revision), data, false);
     }
 
@@ -585,7 +637,7 @@ public final class AgentProjectTools {
         }
         AgentContracts.BuildRequest buildRequest = new AgentContracts.BuildRequest(row.taskId(),
             row.toolCallId(), owner.projectId(), row.workspaceOperationId(),
-            currentRevision(owner.projectId()), goal);
+            currentRevision(owner.projectId()), goal, studio == null ? Map.of() : studio.overlay(row.taskId()));
         boolean claimed = false;
         try {
             AgentContracts.BuildResult built;
@@ -843,7 +895,7 @@ public final class AgentProjectTools {
     }
 
     /** One gate for "may the tools access this project-relative path at all": policy + allowlist. */
-    static boolean toolReadable(String path) {
+    public static boolean toolReadable(String path) {
         try {
             WorkspacePathPolicy.validateRelativePath(path);
         } catch (WorkspacePathPolicy.InvalidPathException ex) {
@@ -864,13 +916,14 @@ public final class AgentProjectTools {
             if (DENIED_SEGMENTS.contains(lower) || lower.startsWith(".manao")) {
                 return false;
             }
-            if (CREDENTIAL_FILES.contains(lower)
+            if (CREDENTIAL_FILES.contains(lower) || lower.startsWith(".env.")
                 || CREDENTIAL_SUFFIXES.stream().anyMatch(lower::endsWith)) {
                 return false;
             }
         }
         String first = segments[0].toLowerCase(Locale.ROOT);
-        if (first.equals("pom.xml") || first.equals("src")) {
+        if (first.equals("pom.xml") || first.equals("src") || first.equals("package.json")
+            || first.equals("pnpm-lock.yaml") || first.equals("tsconfig.json")) {
             return true;
         }
         return segments.length == 1 && isTextDocument(first);

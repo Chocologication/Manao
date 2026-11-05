@@ -18,6 +18,7 @@
 | AI 界面、截图与发布附件 | [附件目录](evidence/ai-ui/)、[前端记录](../frontend/README.md) |
 | Java 运行时与 Maven 缓存 | [验收记录](evidence/java-runtime/acceptance.md) |
 | Python 运行时、恢复与依赖编辑 | [验收记录](evidence/python-runtime/acceptance.md) |
+| Node.js、JavaScript / TypeScript 运行环境 | [使用与配置](node-runtime.md)、[本地验收](evidence/node-runtime/2026-11-04.md) |
 | 6B 云工作台 | [验收记录](evidence/stage-6b/acceptance.md) |
 
 各专题记录中的 PASS、FAILED、SKIPPED、WAIVED_BY_USER、NOT_RUN 和 NOT_REVERIFIED 保留原有范围。附件的日期、镜像、Task/Run 身份与验收时点一起解读，不能把历史结果视为当前部署实测。

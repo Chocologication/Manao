@@ -46,11 +46,11 @@ function treeItem(page: Page, name: string): Locator {
 }
 
 function editorTab(page: Page, name: RegExp): Locator {
-  return page.getByRole('tablist', { name: 'Editor tabs' }).getByRole('tab', { name });
+  return page.getByRole('tablist', { name: '已打开的文件' }).getByRole('tab', { name });
 }
 
 function saveButton(page: Page): Locator {
-  return page.getByRole('button', { name: 'Save', exact: true });
+  return page.getByRole('button', { name: '保存', exact: true });
 }
 
 function pngSize(bytes: Uint8Array): { width: number; height: number } {
@@ -583,7 +583,7 @@ async function openAliceWorkbench(
   const accessToken = await signIn(page, ALICE);
   await expect(page).toHaveURL(/\/projects$/);
   const rootTree = waitForFileApi(page, 'tree', '');
-  await projectCard(page, 'Alice Notebook').getByRole('link', { name: 'Open' }).click();
+  await projectCard(page, 'Alice Notebook').getByRole('link', { name: '进入工作台' }).click();
   const treeResponse = await rootTree;
   const treeBody = (await treeResponse.json()) as { workspaceRevision?: string };
   expect(typeof treeBody.workspaceRevision).toBe('string');
@@ -612,7 +612,7 @@ async function openFile(page: Page, name: string): Promise<void> {
   await expect(item).toBeVisible();
   await item.click();
   await expect(
-    page.getByRole('tablist', { name: 'Editor tabs' }).getByRole('tab', { name }),
+    page.getByRole('tablist', { name: '已打开的文件' }).getByRole('tab', { name }),
   ).toBeVisible();
   await expect(page.locator('.monaco-editor').or(page.getByRole('textbox', { name }))).toBeVisible();
 }
@@ -702,11 +702,11 @@ async function setRunScenario(
 }
 
 async function waitUntilWritable(page: Page, timeout = 45_000): Promise<void> {
-  const newFile = page.getByRole('button', { name: 'New file' });
+  const newFile = page.getByRole('button', { name: '新建文件' });
   await expect(newFile).toBeDisabled({ timeout: 10_000 });
   await expect
     .poll(async () => {
-      const retry = page.getByRole('button', { name: 'Retry workspace reload' });
+      const retry = page.getByRole('button', { name: '重试加载工作区' });
       if ((await retry.count()) > 0) {
         try {
           await retry.click({ timeout: 1_000 });
@@ -720,14 +720,14 @@ async function waitUntilWritable(page: Page, timeout = 45_000): Promise<void> {
 }
 
 async function openRunPanel(page: Page): Promise<void> {
-  await page.getByRole('tab', { name: 'Run' }).click();
-  await expect(page.getByRole('tab', { name: 'Run' })).toHaveAttribute('aria-selected', 'true');
-  await expect(page.getByRole('toolbar', { name: 'Run controls' })).toBeVisible();
+  await page.getByRole('tab', { name: '运行记录' }).click();
+  await expect(page.getByRole('tab', { name: '运行记录' })).toHaveAttribute('aria-selected', 'true');
+  await expect(page.getByRole('toolbar', { name: '运行控制' })).toBeVisible();
 }
 
 async function openFilePanel(page: Page): Promise<void> {
-  await page.getByRole('tab', { name: 'File' }).click();
-  await expect(page.getByRole('tab', { name: 'File' })).toHaveAttribute('aria-selected', 'true');
+  await page.getByRole('tab', { name: '代码' }).click();
+  await expect(page.getByRole('tab', { name: '代码' })).toHaveAttribute('aria-selected', 'true');
 }
 
 async function prepareVisualCapture(page: Page): Promise<void> {
@@ -800,9 +800,9 @@ async function assertInsideViewport(locator: Locator): Promise<void> {
 
 async function assertRunGeometry(page: Page): Promise<void> {
   const headerBox = await page.locator('.workbench-shell > header').boundingBox();
-  const sidebarBox = await page.getByRole('complementary', { name: 'Project files' }).boundingBox();
-  const historyBox = await page.getByRole('complementary', { name: 'Recent runs' }).boundingBox();
-  const logBox = await page.getByRole('region', { name: 'Run logs' }).boundingBox();
+  const sidebarBox = await page.getByRole('complementary', { name: '项目文件' }).boundingBox();
+  const historyBox = await page.getByRole('complementary', { name: '最近运行' }).boundingBox();
+  const logBox = await page.getByRole('region', { name: '运行日志' }).boundingBox();
   expect(headerBox).not.toBeNull();
   expect(sidebarBox).not.toBeNull();
   expect(historyBox).not.toBeNull();
@@ -896,7 +896,7 @@ async function tabUntilFocused(page: Page, locator: Locator, maxTabs = 80): Prom
  * keyboard users reach the other panels with the arrow keys the tablist already handles.
  */
 async function focusPanelTab(page: Page, name: string): Promise<void> {
-  const tablist = page.getByRole('tablist', { name: 'Workbench panels' });
+  const tablist = page.getByRole('tablist', { name: '工作台面板' });
   const target = page.getByRole('tab', { name });
   // Arrive with real Tab presses so :focus-visible still matches, then move the roving
   // focus with the arrow keys the tablist handles itself.
@@ -1054,19 +1054,19 @@ test('loads active authority before File editing is available', async ({ page })
   const accessToken = await signIn(page, ALICE);
   await expect(page).toHaveURL(/\/projects$/);
   await patchClientHooks(page, { holdActive: true });
-  await projectCard(page, 'Alice Notebook').getByRole('link', { name: 'Open' }).click();
+  await projectCard(page, 'Alice Notebook').getByRole('link', { name: '进入工作台' }).click();
   await expect(page.getByRole('heading', { name: 'Alice Notebook' })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'New file' })).toBeDisabled();
+  await expect(page.getByRole('button', { name: '新建文件' })).toBeDisabled();
   await openRunPanel(page);
-  await expect(page.getByRole('button', { name: 'Start run' })).toBeDisabled();
-  await expect(page.getByRole('button', { name: 'Start run' })).toHaveAttribute(
+  await expect(page.getByRole('button', { name: '启动运行' })).toBeDisabled();
+  await expect(page.getByRole('button', { name: '启动运行' })).toHaveAttribute(
     'title',
     /AUTHORITY_LOADING/,
   );
   expect(guard.startPosts).toHaveLength(0);
   await patchClientHooks(page, { holdActive: false });
-  await expect(page.getByRole('button', { name: 'New file' })).toBeEnabled();
-  await expect(page.getByRole('button', { name: 'Start run' })).toBeEnabled();
+  await expect(page.getByRole('button', { name: '新建文件' })).toBeEnabled();
+  await expect(page.getByRole('button', { name: '启动运行' })).toBeEnabled();
   await assertGuard(page, guard, accessToken);
 });
 
@@ -1075,11 +1075,11 @@ test('blocks Start when dirty, write pending, or revision is missing', async ({ 
   await page.goto('/login');
   const accessToken = await signIn(page, ALICE);
   await patchClientHooks(page, { holdRootTree: true });
-  await projectCard(page, 'Alice Notebook').getByRole('link', { name: 'Open' }).click();
+  await projectCard(page, 'Alice Notebook').getByRole('link', { name: '进入工作台' }).click();
   await expect(page.getByRole('heading', { name: 'Alice Notebook' })).toBeVisible();
   await openRunPanel(page);
-  await expect(page.getByRole('button', { name: 'Start run' })).toBeDisabled();
-  await expect(page.getByRole('button', { name: 'Start run' })).toHaveAttribute(
+  await expect(page.getByRole('button', { name: '启动运行' })).toBeDisabled();
+  await expect(page.getByRole('button', { name: '启动运行' })).toHaveAttribute(
     'title',
     /REVISION_UNAVAILABLE|AUTHORITY_LOADING/,
   );
@@ -1088,26 +1088,26 @@ test('blocks Start when dirty, write pending, or revision is missing', async ({ 
   await patchClientHooks(page, { holdRootTree: false });
   const treeBody = (await (await treeResponse).json()) as { workspaceRevision?: string };
   await expect(treeItem(page, '.gitignore')).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Start run' })).toBeEnabled();
+  await expect(page.getByRole('button', { name: '启动运行' })).toBeEnabled();
 
   await openFilePanel(page);
   await openFile(page, 'pom.xml');
   await waitForMonacoText(page, 'artifactId');
   await typeInMonaco(page, 'STAGE4DIRTY');
   await openRunPanel(page);
-  await expect(page.getByRole('button', { name: 'Start run' })).toBeDisabled();
-  await expect(page.getByRole('button', { name: 'Start run' })).toHaveAttribute('title', /DIRTY_FILES/);
-  await page.getByRole('button', { name: 'Start run' }).click({ force: true });
+  await expect(page.getByRole('button', { name: '启动运行' })).toBeDisabled();
+  await expect(page.getByRole('button', { name: '启动运行' })).toHaveAttribute('title', /DIRTY_FILES/);
+  await page.getByRole('button', { name: '启动运行' }).click({ force: true });
   expect(guard.startPosts).toHaveLength(0);
 
   await openFilePanel(page);
   await setWriteScenario(page, accessToken, 'delayed');
-  const saved = page.getByRole('status', { name: 'Saved' });
+  const saved = page.getByRole('status', { name: '已保存' });
   await patchClientHooks(page, { holdContentPut: true });
   await saveButton(page).click();
   await openRunPanel(page);
-  await expect(page.getByRole('button', { name: 'Start run' })).toBeDisabled();
-  await expect(page.getByRole('button', { name: 'Start run' })).toHaveAttribute(
+  await expect(page.getByRole('button', { name: '启动运行' })).toBeDisabled();
+  await expect(page.getByRole('button', { name: '启动运行' })).toHaveAttribute(
     'title',
     /WRITE_PENDING|DIRTY_FILES/,
   );
@@ -1130,19 +1130,19 @@ test('starts with the exact revision, no command, and locks File', async ({ page
   const startResponse = page.waitForResponse(
     (response) => isStartRunPost(response.request()) && response.status() === 202,
   );
-  await page.getByRole('button', { name: 'Start run' }).click();
+  await page.getByRole('button', { name: '启动运行' }).click();
   const response = await startResponse;
   const body = JSON.parse(guard.startPosts[0]?.postData() ?? '{}') as Record<string, unknown>;
   assertStartBody(body, workspaceRevision);
   expect(response.status()).toBe(202);
-  await expect(page.getByLabel('Run state')).toHaveText(/STARTING|RUNNING/);
-  await expect(page.getByRole('button', { name: 'New file' })).toBeDisabled();
+  await expect(page.getByLabel('运行状态')).toHaveText(/准备运行环境|正在执行/);
+  await expect(page.getByRole('button', { name: '新建文件' })).toBeDisabled();
   await openFilePanel(page);
   await expect(saveButton(page)).toBeDisabled();
-  await expect(page.getByRole('button', { name: 'New folder' })).toBeDisabled();
+  await expect(page.getByRole('button', { name: '新建文件夹' })).toBeDisabled();
   await openRunPanel(page);
-  await expect(page.getByRole('region', { name: 'Run logs' })).toContainText(SEED_LOG_MARKER);
-  await expect(page.getByRole('tab', { name: 'Terminal' })).toBeEnabled();
+  await expect(page.getByRole('region', { name: '运行日志' })).toContainText(SEED_LOG_MARKER);
+  await expect(page.getByRole('tab', { name: '终端' })).toBeEnabled();
   await assertGuard(page, guard, accessToken);
   await expect.poll(() => guard.ticketUrls.length).toBeGreaterThan(0);
   expect(guard.ticketUrls.every((url) => !url.includes(accessToken))).toBe(true);
@@ -1164,9 +1164,9 @@ test('reconciles duplicate start and start network ambiguity to the active run',
   const { accessToken, workspaceRevision } = await openAliceWorkbench(page);
   await setRunScenario(page, accessToken, 'disconnect');
   await openRunPanel(page);
-  await page.getByRole('button', { name: 'Start run' }).click();
-  await expect(page.getByLabel('Run state')).toHaveText(/RUNNING/);
-  await expect(page.getByRole('button', { name: 'Start run' })).toBeDisabled();
+  await page.getByRole('button', { name: '启动运行' }).click();
+  await expect(page.getByLabel('运行状态')).toHaveText(/正在执行/);
+  await expect(page.getByRole('button', { name: '启动运行' })).toBeDisabled();
   const duplicate = await page.evaluate(async ({ token, projectId, revision }) => {
     const response = await fetch(`/api/v1/projects/${projectId}/runs`, {
       method: 'POST',
@@ -1186,17 +1186,17 @@ test('reconciles duplicate start and start network ambiguity to the active run',
   });
   expect(duplicate.status).toBe(409);
   expect(duplicate.code).toBe('RUN_ALREADY_ACTIVE');
-  await expect(page.getByLabel('Run state')).toHaveText(/RUNNING/);
-  await expect(page.getByRole('button', { name: 'New file' })).toBeDisabled();
+  await expect(page.getByLabel('运行状态')).toHaveText(/正在执行/);
+  await expect(page.getByRole('button', { name: '新建文件' })).toBeDisabled();
 
-  await page.getByRole('button', { name: 'Stop run' }).click();
-  await page.getByRole('dialog', { name: 'Stop run' }).getByRole('button', { name: 'Stop' }).click();
+  await page.getByRole('button', { name: '停止运行' }).click();
+  await page.getByRole('dialog', { name: '停止运行' }).getByRole('button', { name: '停止' }).click();
   await waitUntilWritable(page);
 
   await patchClientHooks(page, { abortNextStart: true });
-  await page.getByRole('button', { name: 'Start run' }).click();
-  await expect(page.getByRole('button', { name: 'New file' })).toBeDisabled();
-  await expect(page.getByLabel('Run state')).toHaveText(/STARTING|RUNNING/);
+  await page.getByRole('button', { name: '启动运行' }).click();
+  await expect(page.getByRole('button', { name: '新建文件' })).toBeDisabled();
+  await expect(page.getByLabel('运行状态')).toHaveText(/准备运行环境|正在执行/);
   await assertGuard(page, guard, accessToken);
 });
 
@@ -1207,22 +1207,22 @@ test('keeps dirty File buffers and log text when switching File and Run', async 
   await typeInMonaco(page, 'STAGE4SWITCH');
   await expect(editorTab(page, /pom\.xml/)).toContainText('*');
   await openRunPanel(page);
-  await expect(page.getByRole('button', { name: 'Start run' })).toBeDisabled();
+  await expect(page.getByRole('button', { name: '启动运行' })).toBeDisabled();
   await openFilePanel(page);
   expect(await monacoValue(page, 'pom.xml')).toContain('STAGE4SWITCH');
   await expect(editorTab(page, /pom\.xml/)).toContainText('*');
   await saveButton(page).click();
-  await expect(page.getByRole('status', { name: 'Saved' })).toBeVisible();
+  await expect(page.getByRole('status', { name: '已保存' })).toBeVisible();
   await expect(editorTab(page, /pom\.xml/)).not.toContainText('*');
   await setRunScenario(page, accessToken, 'disconnect');
   await openRunPanel(page);
-  await page.getByRole('button', { name: 'Start run' }).click();
-  await expect(page.getByRole('region', { name: 'Run logs' })).toContainText(SEED_LOG_MARKER);
+  await page.getByRole('button', { name: '启动运行' }).click();
+  await expect(page.getByRole('region', { name: '运行日志' })).toContainText(SEED_LOG_MARKER);
   await openFilePanel(page);
   await expect(editorTab(page, /pom\.xml/)).toBeVisible();
   await openRunPanel(page);
-  await expect(page.getByRole('region', { name: 'Run logs' })).toContainText(SEED_LOG_MARKER);
-  await expect(page.getByLabel('Run state')).toHaveText(/RUNNING/);
+  await expect(page.getByRole('region', { name: '运行日志' })).toContainText(SEED_LOG_MARKER);
+  await expect(page.getByLabel('运行状态')).toHaveText(/正在执行/);
 });
 
 test('replays then lives, and reconnect replay includes chunks persisted while disconnected', async ({
@@ -1232,8 +1232,8 @@ test('replays then lives, and reconnect replay includes chunks persisted while d
   const { accessToken } = await openAliceWorkbench(page);
   await setRunScenario(page, accessToken, 'disconnect');
   await openRunPanel(page);
-  await page.getByRole('button', { name: 'Start run' }).click();
-  const log = page.getByRole('region', { name: 'Run logs' });
+  await page.getByRole('button', { name: '启动运行' }).click();
+  const log = page.getByRole('region', { name: '运行日志' });
   await expect(log).toContainText(SEED_LOG_MARKER);
   await expect.poll(() => guard.ticketUrls.length, { timeout: 20_000 }).toBeGreaterThanOrEqual(2);
   await expect
@@ -1284,7 +1284,7 @@ test('replays then lives, and reconnect replay includes chunks persisted while d
     }, { timeout: 20_000 })
     .toBe(true);
   expect((await log.innerText()).split(SEED_LOG_MARKER).length - 1).toBe(1);
-  await expect(page.getByRole('button', { name: 'New file' })).toBeDisabled();
+  await expect(page.getByRole('button', { name: '新建文件' })).toBeDisabled();
   await assertGuard(page, guard, accessToken);
 });
 
@@ -1295,8 +1295,8 @@ test('gap skipped seq fetches a fresh ticket and replays the missing chunk; dupl
   const { accessToken } = await openAliceWorkbench(page);
   await setRunScenario(page, accessToken, 'gap');
   await openRunPanel(page);
-  await page.getByRole('button', { name: 'Start run' }).click();
-  const log = page.getByRole('region', { name: 'Run logs' });
+  await page.getByRole('button', { name: '启动运行' }).click();
+  const log = page.getByRole('region', { name: '运行日志' });
   await expect(log).toContainText(SEED_LOG_MARKER);
   await expect(log).toContainText(GAP_DUP_MARKER, { timeout: 20_000 });
   await expect(log).toContainText(GAP_VISIBLE_MARKER, { timeout: 20_000 });
@@ -1329,7 +1329,7 @@ test('gap skipped seq fetches a fresh ticket and replays the missing chunk; dupl
   expect(logText.split(GAP_DUP_MARKER).length - 1).toBe(1);
   expect(logText.split(GAP_VISIBLE_MARKER).length - 1).toBe(1);
   expect(logText.split(GAP_SKIPPED_MARKER).length - 1).toBe(1);
-  await expect(page.getByRole('button', { name: 'New file' })).toBeDisabled();
+  await expect(page.getByRole('button', { name: '新建文件' })).toBeDisabled();
   await assertGuard(page, guard, accessToken);
 });
 
@@ -1337,8 +1337,8 @@ test('ignores log frames from a stale socket generation', async ({ page }) => {
   const { accessToken } = await openAliceWorkbench(page);
   await setRunScenario(page, accessToken, 'disconnect');
   await openRunPanel(page);
-  await page.getByRole('button', { name: 'Start run' }).click();
-  const log = page.getByRole('region', { name: 'Run logs' });
+  await page.getByRole('button', { name: '启动运行' }).click();
+  const log = page.getByRole('region', { name: '运行日志' });
   await expect(log).toContainText(SEED_LOG_MARKER);
   await expect(log).toContainText(RECONNECT_LIVE_MARKER, { timeout: 20_000 });
   await expect
@@ -1393,7 +1393,7 @@ test('ignores log frames from a stale socket generation', async ({ page }) => {
     );
   expect(staleOnFirst).toBe(true);
   expect(secondFrames.some((raw) => raw.includes(STALE_SOCKET_MARKER))).toBe(false);
-  await expect(page.getByRole('button', { name: 'New file' })).toBeDisabled();
+  await expect(page.getByRole('button', { name: '新建文件' })).toBeDisabled();
 });
 
 test('Stop Cancel leaves the run; confirm is idempotent STOPPING then CANCELLED', async ({
@@ -1402,43 +1402,43 @@ test('Stop Cancel leaves the run; confirm is idempotent STOPPING then CANCELLED'
   const { accessToken } = await openAliceWorkbench(page);
   await setRunScenario(page, accessToken, 'disconnect');
   await openRunPanel(page);
-  await page.getByRole('button', { name: 'Start run' }).click();
-  await expect(page.getByLabel('Run state')).toHaveText(/RUNNING/);
-  const stop = page.getByRole('button', { name: 'Stop run' });
+  await page.getByRole('button', { name: '启动运行' }).click();
+  await expect(page.getByLabel('运行状态')).toHaveText(/正在执行/);
+  const stop = page.getByRole('button', { name: '停止运行' });
   await stop.click();
-  const dialog = page.getByRole('dialog', { name: 'Stop run' });
+  const dialog = page.getByRole('dialog', { name: '停止运行' });
   await expect(dialog).toBeVisible();
-  await expect(dialog.getByRole('button', { name: 'Cancel' })).toBeFocused();
-  await dialog.getByRole('button', { name: 'Cancel' }).click();
+  await expect(dialog.getByRole('button', { name: '取消' })).toBeFocused();
+  await dialog.getByRole('button', { name: '取消' }).click();
   await expect(dialog).toHaveCount(0);
   await expect(stop).toBeFocused();
-  await expect(page.getByLabel('Run state')).toHaveText(/RUNNING/);
-  await expect(page.getByRole('button', { name: 'New file' })).toBeDisabled();
+  await expect(page.getByLabel('运行状态')).toHaveText(/正在执行/);
+  await expect(page.getByRole('button', { name: '新建文件' })).toBeDisabled();
   await stop.click();
   await expect(dialog).toBeVisible();
-  await dialog.getByRole('button', { name: 'Stop' }).click();
-  await expect(page.getByLabel('Run state')).toHaveText(/STOPPING|CANCELLED|Reloading/);
+  await dialog.getByRole('button', { name: '停止' }).click();
+  await expect(page.getByLabel('运行状态')).toHaveText(/正在停止|已停止|Reloading/);
   await waitUntilWritable(page);
-  await expect(page.getByLabel('Run state')).toHaveText(/CANCELLED|Idle/);
+  await expect(page.getByLabel('运行状态')).toHaveText(/已停止|Idle/);
 });
 
 test('offline log transport does not unlock File', async ({ page }) => {
   const { accessToken } = await openAliceWorkbench(page);
   await setRunScenario(page, accessToken, 'disconnect');
   await openRunPanel(page);
-  await page.getByRole('button', { name: 'Start run' }).click();
-  await expect(page.getByRole('button', { name: 'New file' })).toBeDisabled();
-  await expect(page.getByLabel('Log connection')).toHaveText('Live');
+  await page.getByRole('button', { name: '启动运行' }).click();
+  await expect(page.getByRole('button', { name: '新建文件' })).toBeDisabled();
+  await expect(page.getByLabel('日志连接状态')).toHaveText('实时更新中');
   await page.evaluate(() => {
     window.dispatchEvent(new Event('offline'));
   });
-  await expect(page.getByLabel('Log connection')).toHaveText(/Reconnecting/);
-  await expect(page.getByRole('button', { name: 'New file' })).toBeDisabled();
-  await expect(page.getByLabel('Run state')).not.toHaveText(/Idle/);
+  await expect(page.getByLabel('日志连接状态')).toHaveText(/正在重新连接/);
+  await expect(page.getByRole('button', { name: '新建文件' })).toBeDisabled();
+  await expect(page.getByLabel('运行状态')).not.toHaveText(/空闲/);
   await page.evaluate(() => {
     window.dispatchEvent(new Event('online'));
   });
-  await expect(page.getByRole('button', { name: 'New file' })).toBeDisabled();
+  await expect(page.getByRole('button', { name: '新建文件' })).toBeDisabled();
 });
 
 test('success, failure and timeout each reload the workspace before unlocking edit', async ({
@@ -1453,18 +1453,18 @@ test('success, failure and timeout each reload the workspace before unlocking ed
   } as const;
   for (const scenario of ['success', 'failure', 'timeout'] as const) {
     await openFilePanel(page);
-    await expect(page.getByRole('button', { name: 'New file' })).toBeEnabled();
+    await expect(page.getByRole('button', { name: '新建文件' })).toBeEnabled();
     await setRunScenario(page, accessToken, scenario);
     await openRunPanel(page);
-    await expect(page.getByRole('button', { name: 'Start run' })).toBeEnabled();
-    await page.getByRole('button', { name: 'Start run' }).click();
-    await expect(page.getByRole('button', { name: 'New file' })).toBeDisabled();
+    await expect(page.getByRole('button', { name: '启动运行' })).toBeEnabled();
+    await page.getByRole('button', { name: '启动运行' }).click();
+    await expect(page.getByRole('button', { name: '新建文件' })).toBeDisabled();
     await waitUntilWritable(page);
     await expect(
-      page.getByRole('list', { name: 'Recent runs' }).getByRole('button').first(),
+      page.getByRole('list', { name: '最近运行' }).getByRole('button').first(),
     ).toHaveAttribute('aria-label', new RegExp(terminalByScenario[scenario]));
     await openFilePanel(page);
-    await expect(page.getByRole('button', { name: 'New file' })).toBeEnabled();
+    await expect(page.getByRole('button', { name: '新建文件' })).toBeEnabled();
   }
 });
 
@@ -1485,14 +1485,14 @@ test('reload-change updates files and Retry recovers a failed workspace reload',
   await setRunScenario(page, accessToken, 'success');
   await openRunPanel(page);
   await patchClientHooks(page, { failNextRootTree: true });
-  await page.getByRole('button', { name: 'Start run' }).click();
-  await expect(page.getByText('Workspace reload failed')).toBeVisible({ timeout: 20_000 });
-  await expect(page.getByRole('button', { name: 'New file' })).toBeDisabled();
-  await page.getByRole('button', { name: 'Retry workspace reload' }).click();
+  await page.getByRole('button', { name: '启动运行' }).click();
+  await expect(page.getByText('工作区重新加载失败')).toBeVisible({ timeout: 20_000 });
+  await expect(page.getByRole('button', { name: '新建文件' })).toBeDisabled();
+  await page.getByRole('button', { name: '重试加载工作区' }).click();
   await waitUntilWritable(page);
 
   await setRunScenario(page, accessToken, 'reload-change');
-  await page.getByRole('button', { name: 'Start run' }).click();
+  await page.getByRole('button', { name: '启动运行' }).click();
   await waitUntilWritable(page);
   await openFilePanel(page);
   await expect(editorTab(page, /README\.md/)).toBeVisible();
@@ -1507,29 +1507,29 @@ test('refresh restores the browser recovery lock and log cursor, not MySQL', asy
   const { accessToken } = await openAliceWorkbench(page);
   await setRunScenario(page, accessToken, 'disconnect');
   await openRunPanel(page);
-  await page.getByRole('button', { name: 'Start run' }).click();
-  await expect(page.getByRole('region', { name: 'Run logs' })).toContainText(SEED_LOG_MARKER);
-  await expect(page.getByLabel('Run state')).toHaveText(/RUNNING/);
+  await page.getByRole('button', { name: '启动运行' }).click();
+  await expect(page.getByRole('region', { name: '运行日志' })).toContainText(SEED_LOG_MARKER);
+  await expect(page.getByLabel('运行状态')).toHaveText(/正在执行/);
   const persisted = await page.evaluate(() => sessionStorage.getItem('ensoai.mock.run-scenario.v1'));
   expect(persisted).toContain('disconnect');
   expect(persisted).toContain(SEED_LOG_MARKER);
-  await page.getByRole('link', { name: 'Back to projects' }).click();
+  await page.getByRole('link', { name: '返回项目列表' }).click();
   await expect(page).toHaveURL(/\/projects$/);
-  await projectCard(page, 'Alice Notebook').getByRole('link', { name: 'Open' }).click();
+  await projectCard(page, 'Alice Notebook').getByRole('link', { name: '进入工作台' }).click();
   await expect(page.getByRole('heading', { name: 'Alice Notebook' })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'New file' })).toBeDisabled();
+  await expect(page.getByRole('button', { name: '新建文件' })).toBeDisabled();
   await openRunPanel(page);
-  await expect(page.getByLabel('Run state')).toHaveText(/RUNNING/);
-  await expect(page.getByRole('region', { name: 'Run logs' })).toContainText(SEED_LOG_MARKER);
+  await expect(page.getByLabel('运行状态')).toHaveText(/正在执行/);
+  await expect(page.getByRole('region', { name: '运行日志' })).toContainText(SEED_LOG_MARKER);
 
   await page.reload();
   await expect(page.getByLabel('Username')).toBeVisible();
   await signIn(page, ALICE);
   await expect(page.getByRole('heading', { name: 'Alice Notebook' })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'New file' })).toBeDisabled();
+  await expect(page.getByRole('button', { name: '新建文件' })).toBeDisabled();
   await openRunPanel(page);
-  await expect(page.getByLabel('Run state')).toHaveText(/RUNNING/);
-  await expect(page.getByRole('region', { name: 'Run logs' })).toContainText(SEED_LOG_MARKER);
+  await expect(page.getByLabel('运行状态')).toHaveText(/正在执行/);
+  await expect(page.getByRole('region', { name: '运行日志' })).toContainText(SEED_LOG_MARKER);
 });
 
 test('paginates history and isolates the selected run from the active log', async ({ page }) => {
@@ -1579,28 +1579,28 @@ test('paginates history and isolates the selected run from the active log', asyn
     revision: workspaceRevision,
   });
   const rootTree = waitForFileApi(page, 'tree', '');
-  await projectCard(page, 'Alice Notebook').getByRole('link', { name: 'Open' }).click();
+  await projectCard(page, 'Alice Notebook').getByRole('link', { name: '进入工作台' }).click();
   await rootTree;
   await expect(page.getByRole('heading', { name: 'Alice Notebook' })).toBeVisible();
   await openRunPanel(page);
-  const history = page.getByRole('list', { name: 'Recent runs' });
+  const history = page.getByRole('list', { name: '最近运行' });
   await expect(history.getByRole('button')).toHaveCount(20);
-  await page.getByRole('button', { name: 'Load more' }).click();
+  await page.getByRole('button', { name: '加载更多' }).click();
   await expect(history.getByRole('button')).toHaveCount(21);
-  await expect(page.getByRole('button', { name: 'Load more' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: '加载更多' })).toHaveCount(0);
 
   await setRunScenario(page, accessToken, 'disconnect');
-  await page.getByRole('button', { name: 'Start run' }).click();
-  await expect(page.getByLabel('Run state')).toHaveText(/RUNNING/);
+  await page.getByRole('button', { name: '启动运行' }).click();
+  await expect(page.getByLabel('运行状态')).toHaveText(/正在执行/);
   const historical = history.getByRole('button').nth(1);
   await historical.click();
-  await expect(page.getByLabel('Run state')).toHaveText(/SUCCEEDED/);
-  await expect(page.getByLabel('Log connection')).toHaveText(/Complete|Live|Idle/);
+  await expect(page.getByLabel('运行状态')).toHaveText(/运行成功/);
+  await expect(page.getByLabel('日志连接状态')).toHaveText(/Complete|Live|Idle/);
   await history.getByRole('button').first().click();
-  await expect(page.getByLabel('Run state')).toHaveText(/RUNNING/);
+  await expect(page.getByLabel('运行状态')).toHaveText(/正在执行/);
   await historical.click();
-  await expect(page.getByLabel('Run state')).toHaveText(/SUCCEEDED/);
-  await expect(page.getByLabel('Run state')).not.toHaveText(/RUNNING/);
+  await expect(page.getByLabel('运行状态')).toHaveText(/运行成功/);
+  await expect(page.getByLabel('运行状态')).not.toHaveText(/正在执行/);
 });
 
 test('logout and current 401 close the stream; stale 401 does not clear Bob', async ({ page }) => {
@@ -1612,9 +1612,9 @@ test('logout and current 401 close the stream; stale 401 does not clear Bob', as
   const { accessToken } = await openAliceWorkbench(page);
   await setRunScenario(page, accessToken, 'disconnect');
   await openRunPanel(page);
-  await page.getByRole('button', { name: 'Start run' }).click();
-  await expect(page.getByRole('region', { name: 'Run logs' })).toContainText(SEED_LOG_MARKER);
-  await page.getByRole('button', { name: 'Log out' }).click();
+  await page.getByRole('button', { name: '启动运行' }).click();
+  await expect(page.getByRole('region', { name: '运行日志' })).toContainText(SEED_LOG_MARKER);
+  await page.getByRole('button', { name: '退出登录' }).click();
   await expect(page).toHaveURL(/\/login$/);
   await expect.poll(() => sockets.filter((item) => item.url().includes('run-logs')).every((item) => item.isClosed())).toBe(
     true,
@@ -1624,12 +1624,12 @@ test('logout and current 401 close the stream; stale 401 does not clear Bob', as
   await expect(page.getByLabel('Username')).toHaveCount(0);
   const bobCard = projectCard(page, 'Bob Lab');
   if ((await bobCard.count()) === 0) {
-    await page.getByRole('link', { name: 'Back to projects' }).click();
+    await page.getByRole('link', { name: '返回项目列表' }).click();
   }
   await expect(page).toHaveURL(/\/projects$/);
   await expect(bobCard).toBeVisible();
   await expect(projectCard(page, 'Alice Notebook')).toHaveCount(0);
-  await bobCard.getByRole('link', { name: 'Open' }).click();
+  await bobCard.getByRole('link', { name: '进入工作台' }).click();
   await expect(page.getByRole('heading', { name: 'Bob Lab' })).toBeVisible();
   await expect(treeItem(page, 'lab-notes.md')).toBeVisible();
   const staleExpire = await page.evaluate(async (token) => {
@@ -1644,14 +1644,14 @@ test('logout and current 401 close the stream; stale 401 does not clear Bob', as
   await expect(page.getByRole('heading', { name: 'Bob Lab' })).toBeVisible();
   await expect(page).toHaveURL(new RegExp(`/projects/${BOB_SEED_PROJECT_ID}$`));
 
-  await page.getByRole('button', { name: 'Log out' }).click();
+  await page.getByRole('button', { name: '退出登录' }).click();
   const aliceToken = await signIn(page, ALICE);
   await expect(page.getByLabel('Username')).toHaveCount(0);
   const aliceCard = projectCard(page, 'Alice Notebook');
   if ((await aliceCard.count()) === 0) {
-    await page.getByRole('link', { name: 'Back to projects' }).click();
+    await page.getByRole('link', { name: '返回项目列表' }).click();
   }
-  await aliceCard.getByRole('link', { name: 'Open' }).click();
+  await aliceCard.getByRole('link', { name: '进入工作台' }).click();
   await expect(page.getByRole('heading', { name: 'Alice Notebook' })).toBeVisible();
   const unauthorized = page.waitForResponse((response) => response.status() === 401);
   const expireStatus = await page.evaluate(async (token) => {
@@ -1664,7 +1664,7 @@ test('logout and current 401 close the stream; stale 401 does not clear Bob', as
   expect(expireStatus).toBe(204);
   await triggerSessionRefetch(page);
   try {
-    await page.getByRole('button', { name: 'Refresh' }).click({ timeout: 2_000 });
+    await page.getByRole('button', { name: '刷新' }).click({ timeout: 2_000 });
   } catch {
     // Live log reconnect may already have consumed the 401 and landed on login.
   }
@@ -1677,13 +1677,13 @@ test('logout and current 401 close the stream; stale 401 does not clear Bob', as
 test('Terminal stays lazy and no terminal or echo-ws endpoint is used before Open', async ({ page }) => {
   const guard = installStage4Guard(page);
   const { accessToken } = await openAliceWorkbench(page);
-  await expect(page.getByRole('tab', { name: 'Terminal' })).toBeEnabled();
-  await page.getByRole('tab', { name: 'Terminal' }).click();
-  await expect(page.getByRole('region', { name: 'Job terminal' })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Open terminal' })).toBeDisabled();
+  await expect(page.getByRole('tab', { name: '终端' })).toBeEnabled();
+  await page.getByRole('tab', { name: '终端' }).click();
+  await expect(page.getByRole('region', { name: '运行终端' })).toBeVisible();
+  await expect(page.getByRole('button', { name: '打开终端' })).toBeDisabled();
   await setRunScenario(page, accessToken, 'success');
   await openRunPanel(page);
-  await page.getByRole('button', { name: 'Start run' }).click();
+  await page.getByRole('button', { name: '启动运行' }).click();
   await waitUntilWritable(page);
   expect(guard.forbidden).toEqual([]);
   const hooks = await readClientHooks(page);
@@ -1702,20 +1702,20 @@ test('completes File, Run, Start, history, log, New output and Stop from the key
   ).toBe(true);
   await setRunScenario(page, accessToken, 'disconnect');
   await focusPanelTab(page, 'File');
-  await assertFocusVisible(page.getByRole('tab', { name: 'File' }));
+  await assertFocusVisible(page.getByRole('tab', { name: '代码' }));
   await focusPanelTab(page, 'Run');
-  await assertFocusVisible(page.getByRole('tab', { name: 'Run' }));
+  await assertFocusVisible(page.getByRole('tab', { name: '运行记录' }));
   await page.keyboard.press('Enter');
-  await expect(page.getByRole('tab', { name: 'Run' })).toHaveAttribute('aria-selected', 'true');
-  await tabUntilFocused(page, page.getByRole('button', { name: 'Start run' }));
-  await assertFocusVisible(page.getByRole('button', { name: 'Start run' }));
+  await expect(page.getByRole('tab', { name: '运行记录' })).toHaveAttribute('aria-selected', 'true');
+  await tabUntilFocused(page, page.getByRole('button', { name: '启动运行' }));
+  await assertFocusVisible(page.getByRole('button', { name: '启动运行' }));
   await page.keyboard.press('Enter');
-  await expect(page.getByLabel('Run state')).toHaveText(/STARTING|RUNNING/);
-  await expect(page.getByLabel('Run state')).toHaveAttribute('role', 'status');
-  const historyButton = page.getByRole('list', { name: 'Recent runs' }).getByRole('button').first();
+  await expect(page.getByLabel('运行状态')).toHaveText(/准备运行环境|正在执行/);
+  await expect(page.getByLabel('运行状态')).toHaveAttribute('role', 'status');
+  const historyButton = page.getByRole('list', { name: '最近运行' }).getByRole('button').first();
   await tabUntilFocused(page, historyButton);
   await assertFocusVisible(historyButton);
-  const log = page.getByRole('region', { name: 'Run logs' });
+  const log = page.getByRole('region', { name: '运行日志' });
   await tabUntilFocused(page, log);
   await expect(log).toBeFocused();
   await expect(log).toContainText(SEED_LOG_MARKER);
@@ -1726,7 +1726,7 @@ test('completes File, Run, Start, history, log, New output and Stop from the key
     }
     element.scrollTop = element.scrollHeight;
   });
-  const newOutput = page.getByRole('button', { name: 'New output' });
+  const newOutput = page.getByRole('button', { name: '查看最新输出' });
   await expect
     .poll(async () => {
       await log.evaluate((element) => {
@@ -1739,14 +1739,14 @@ test('completes File, Run, Start, history, log, New output and Stop from the key
   await assertFocusVisible(newOutput);
   await page.keyboard.press('Enter');
   await expect(newOutput).toHaveCount(0);
-  await expect(page.getByLabel('Log connection')).toHaveText(/Live|Reconnecting|Replaying|Complete/);
-  const stop = page.getByRole('button', { name: 'Stop run' });
+  await expect(page.getByLabel('日志连接状态')).toHaveText(/Live|Reconnecting|Replaying|Complete/);
+  const stop = page.getByRole('button', { name: '停止运行' });
   await expect(stop).toBeEnabled();
   await tabUntilFocused(page, stop, 20);
   await page.keyboard.press('Enter');
-  const dialog = page.getByRole('dialog', { name: 'Stop run' });
+  const dialog = page.getByRole('dialog', { name: '停止运行' });
   await expect(dialog).toBeVisible();
-  await expect(dialog.getByRole('button', { name: 'Cancel' })).toBeFocused();
+  await expect(dialog.getByRole('button', { name: '取消' })).toBeFocused();
   await page.keyboard.press('Escape');
   await expect(dialog).toHaveCount(0);
   await expect(stop).toBeFocused();
@@ -1754,9 +1754,9 @@ test('completes File, Run, Start, history, log, New output and Stop from the key
   await page.keyboard.press('Enter');
   await expect(dialog).toBeVisible();
   await page.keyboard.press('Tab');
-  await expect(dialog.getByRole('button', { name: 'Stop' })).toBeFocused();
+  await expect(dialog.getByRole('button', { name: '停止' })).toBeFocused();
   await page.keyboard.press('Enter');
-  await expect(page.getByLabel('Run state')).toHaveText(/STOPPING|CANCELLED|Reloading|Idle/);
+  await expect(page.getByLabel('运行状态')).toHaveText(/正在停止|已停止|Reloading|Idle/);
 });
 
 for (const viewport of viewports) {
@@ -1768,20 +1768,20 @@ for (const viewport of viewports) {
     const { accessToken } = await openAliceWorkbench(page);
     await setRunScenario(page, accessToken, 'large-log');
     await openRunPanel(page);
-    await page.getByRole('button', { name: 'Start run' }).click();
-    await expect(page.getByLabel('Run state')).toHaveText(/RUNNING/);
-    await expect(page.getByRole('region', { name: 'Run logs' })).toContainText(SEED_LOG_MARKER, {
+    await page.getByRole('button', { name: '启动运行' }).click();
+    await expect(page.getByLabel('运行状态')).toHaveText(/正在执行/);
+    await expect(page.getByRole('region', { name: '运行日志' })).toContainText(SEED_LOG_MARKER, {
       timeout: 20_000,
     });
 
     await prepareVisualCapture(page);
     await assertNoHorizontalOverflow(page);
     await assertRunGeometry(page);
-    await assertReachable(page.getByRole('toolbar', { name: 'Run controls' }));
-    await assertReachable(page.getByRole('complementary', { name: 'Recent runs' }));
-    await assertReachable(page.getByRole('region', { name: 'Run logs' }));
-    await assertReachable(page.getByRole('button', { name: 'Stop run' }));
-    await assertReachable(page.getByRole('tab', { name: 'Terminal' }));
+    await assertReachable(page.getByRole('toolbar', { name: '运行控制' }));
+    await assertReachable(page.getByRole('complementary', { name: '最近运行' }));
+    await assertReachable(page.getByRole('region', { name: '运行日志' }));
+    await assertReachable(page.getByRole('button', { name: '停止运行' }));
+    await assertReachable(page.getByRole('tab', { name: '终端' }));
     if (viewport.width === 1280) {
       await assertNoHorizontalOverflow(page);
     }
@@ -1791,19 +1791,19 @@ for (const viewport of viewports) {
       viewport,
     );
 
-    const truncation = page.getByLabel('Log truncation');
+    const truncation = page.getByLabel('日志截断提示');
     await expect(truncation).toBeVisible({ timeout: 120_000 });
-    await expect(page.getByRole('region', { name: 'Run logs' })).toContainText(LATEST_MARKER);
-    await expect(page.getByRole('region', { name: 'Run logs' })).not.toContainText(HEAD_MARKER);
-    await expect(page.getByRole('region', { name: 'Run logs' })).not.toContainText(EVICTED_EARLY_MARKER);
+    await expect(page.getByRole('region', { name: '运行日志' })).toContainText(LATEST_MARKER);
+    await expect(page.getByRole('region', { name: '运行日志' })).not.toContainText(HEAD_MARKER);
+    await expect(page.getByRole('region', { name: '运行日志' })).not.toContainText(EVICTED_EARLY_MARKER);
     await prepareVisualCapture(page);
     await assertNoHorizontalOverflow(page);
     await assertRunGeometry(page);
     await assertInsideViewport(truncation);
     await assertReachable(truncation);
-    await assertReachable(page.getByRole('region', { name: 'Run logs' }));
-    await assertReachable(page.getByRole('toolbar', { name: 'Run controls' }));
-    const logPng = await page.getByRole('region', { name: 'Run logs' }).screenshot({
+    await assertReachable(page.getByRole('region', { name: '运行日志' }));
+    await assertReachable(page.getByRole('toolbar', { name: '运行控制' }));
+    const logPng = await page.getByRole('region', { name: '运行日志' }).screenshot({
       animations: 'disabled',
       caret: 'hide',
       scale: 'css',

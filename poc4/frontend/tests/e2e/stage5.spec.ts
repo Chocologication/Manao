@@ -481,9 +481,9 @@ async function assertTerminalGeometry(page: Page): Promise<void> {
   }));
   expect(overflow).toEqual({ root: false, body: false });
   const header = await page.locator('.workbench-shell > header').boundingBox();
-  const sidebar = await page.getByRole('complementary', { name: 'Project files' }).boundingBox();
-  const panelTabs = await page.getByRole('tablist', { name: 'Workbench panels' }).boundingBox();
-  const terminal = await page.getByRole('region', { name: 'Job terminal' }).boundingBox();
+  const sidebar = await page.getByRole('complementary', { name: '项目文件' }).boundingBox();
+  const panelTabs = await page.getByRole('tablist', { name: '工作台面板' }).boundingBox();
+  const terminal = await page.getByRole('region', { name: '运行终端' }).boundingBox();
   expect(header).not.toBeNull();
   expect(sidebar).not.toBeNull();
   expect(panelTabs).not.toBeNull();
@@ -508,7 +508,7 @@ async function openAliceWorkbench(page: Page): Promise<string> {
   await page.goto('/login');
   const accessToken = await signIn(page);
   await expect(page).toHaveURL(/\/projects$/);
-  await projectCard(page, 'Alice Notebook').getByRole('link', { name: 'Open' }).click();
+  await projectCard(page, 'Alice Notebook').getByRole('link', { name: '进入工作台' }).click();
   await expect(page).toHaveURL(new RegExp(`/projects/${ALICE_PROJECT_ID}$`));
   await expect(page.getByRole('heading', { name: 'Alice Notebook' })).toBeVisible();
   await expect(page.getByRole('treeitem', { name: '.gitignore', exact: true })).toBeVisible();
@@ -539,9 +539,9 @@ async function setScenario(
 
 async function startLongRunningRun(page: Page, accessToken: string): Promise<void> {
   await setScenario(page, accessToken, 'run', 'disconnect');
-  await page.getByRole('tab', { name: 'Run' }).click();
-  await page.getByRole('button', { name: 'Start run' }).click();
-  await expect(page.getByLabel('Run state')).toContainText('RUNNING');
+  await page.getByRole('tab', { name: '运行记录' }).click();
+  await page.getByRole('button', { name: '启动运行' }).click();
+  await expect(page.getByLabel('运行状态')).toContainText('正在执行');
 }
 
 async function openTerminal(page: Page) {
@@ -549,10 +549,10 @@ async function openTerminal(page: Page) {
     response.request().method() === 'POST' &&
     /\/terminal-sessions$/.test(new URL(response.url()).pathname),
   );
-  await page.getByRole('button', { name: 'Open terminal' }).click();
+  await page.getByRole('button', { name: '打开终端' }).click();
   const response = await responsePromise;
   expect(response.status()).toBe(201);
-  await expect(page.getByRole('status', { name: 'Terminal state' })).toHaveText('Ready');
+  await expect(page.getByRole('status', { name: '终端状态' })).toHaveText('已就绪');
   return response;
 }
 
@@ -562,15 +562,15 @@ test('lazy terminal open binds an exact single-use session and paginated audit c
   const requests = terminalRequests(page);
   const accessToken = await openAliceWorkbench(page);
 
-  await expect(page.getByRole('region', { name: 'Job terminal' })).toHaveCount(0);
+  await expect(page.getByRole('region', { name: '运行终端' })).toHaveCount(0);
   expect(requests).toHaveLength(0);
   const cssBeforeSelection = await terminalCssSnapshot(page);
   expect(cssBeforeSelection.xtermSelectors).toEqual([]);
   expect(cssBeforeSelection.resourceUrls.filter(isLazyJobTerminalJavaScriptUrl)).toEqual([]);
 
-  await page.getByRole('tab', { name: 'Terminal' }).click();
-  await expect(page.getByRole('region', { name: 'Job terminal' })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Open terminal' })).toBeDisabled();
+  await page.getByRole('tab', { name: '终端' }).click();
+  await expect(page.getByRole('region', { name: '运行终端' })).toBeVisible();
+  await expect(page.getByRole('button', { name: '打开终端' })).toBeDisabled();
   expect(requests).toHaveLength(0);
   await expect.poll(async () => (await terminalCssSnapshot(page)).xtermSelectors.length)
     .toBeGreaterThan(0);
@@ -606,7 +606,7 @@ test('lazy terminal open binds an exact single-use session and paginated audit c
 
   await startLongRunningRun(page, accessToken);
   await setScenario(page, accessToken, 'terminal', 'audit' satisfies TerminalScenario);
-  await page.getByRole('tab', { name: 'Terminal' }).click();
+  await page.getByRole('tab', { name: '终端' }).click();
   const response = await openTerminal(page);
   const reservation = (await response.json()) as {
     sessionId: string;
@@ -666,20 +666,20 @@ test('lazy terminal open binds an exact single-use session and paginated audit c
       auditUrls.push(request.url());
     }
   });
-  await page.getByRole('tab', { name: 'Audit' }).click();
-  await expect(page.getByRole('table', { name: 'Terminal command audit' })).toBeVisible();
-  const loadMore = page.getByRole('button', { name: 'Load more terminal audit' });
+  await page.getByRole('tab', { name: '命令记录' }).click();
+  await expect(page.getByRole('table', { name: '终端命令记录' })).toBeVisible();
+  const loadMore = page.getByRole('button', { name: '加载更多命令记录' });
   await expect(loadMore).toBeVisible();
   await expect.poll(() => auditUrls.length).toBe(1);
   expect(new URL(auditUrls[0]!).searchParams.get('limit')).toBe('50');
-  const rowsBefore = await page.getByRole('table', { name: 'Terminal command audit' })
+  const rowsBefore = await page.getByRole('table', { name: '终端命令记录' })
     .getByRole('row').count();
   expect(rowsBefore).toBe(51);
   await loadMore.click();
   await expect.poll(() => auditUrls.length).toBe(2);
   expect(new URL(auditUrls[1]!).searchParams.get('cursor')).toMatch(/^mock-terminal-audit-/);
   await expect.poll(async () =>
-    page.getByRole('table', { name: 'Terminal command audit' }).getByRole('row').count(),
+    page.getByRole('table', { name: '终端命令记录' }).getByRole('row').count(),
   ).toBeGreaterThan(rowsBefore);
 });
 
@@ -689,7 +689,7 @@ test('preserves Unicode, onBinary mouse bytes, resize dedupe and local search ac
   const accessToken = await openAliceWorkbench(page);
   await startLongRunningRun(page, accessToken);
   await setScenario(page, accessToken, 'terminal', 'normal' satisfies TerminalScenario);
-  await page.getByRole('tab', { name: 'Terminal' }).click();
+  await page.getByRole('tab', { name: '终端' }).click();
   await openTerminal(page);
 
   const input = xtermInput(page);
@@ -756,16 +756,16 @@ test('preserves Unicode, onBinary mouse bytes, resize dedupe and local search ac
   const socketCount = (await terminalSockets(page)).length;
   const resizeCount = parsedControls((await terminalSockets(page))[0]!, 'sent')
     .filter((frame) => frame.type === 'terminal.resize').length;
-  await page.getByRole('tab', { name: 'File' }).click();
+  await page.getByRole('tab', { name: '代码' }).click();
   await expect(page.locator('#workbench-terminal-panel')).toHaveAttribute('inert', '');
-  await page.getByRole('tab', { name: 'Terminal' }).click();
+  await page.getByRole('tab', { name: '终端' }).click();
   await settleAnimationFrames(page);
   expect((await terminalSockets(page)).length).toBe(socketCount);
   expect(parsedControls((await terminalSockets(page))[0]!, 'sent')
     .filter((frame) => frame.type === 'terminal.resize')).toHaveLength(resizeCount);
 
-  await page.getByRole('button', { name: 'Search terminal' }).click();
-  const search = page.getByRole('searchbox', { name: 'Search terminal output' });
+  await page.getByRole('button', { name: '搜索终端' }).click();
+  const search = page.getByRole('searchbox', { name: '搜索终端输出' });
   await expect(search).toBeFocused();
   await search.fill(marker);
   for (const option of ['Match case', 'Match whole word', 'Use regular expression']) {
@@ -774,19 +774,19 @@ test('preserves Unicode, onBinary mouse bytes, resize dedupe and local search ac
     await expect(toggle).toHaveAttribute('aria-pressed', 'true');
   }
   await search.fill('stage5-no-such-output');
-  await expect(page.getByRole('search', { name: 'Terminal output search' })
-    .getByRole('status')).toHaveText('No results');
+  await expect(page.getByRole('search', { name: '搜索终端输出' })
+    .getByRole('status')).toHaveText('没有匹配结果');
   await page.keyboard.press('Escape');
   await expect(input).toBeFocused();
 
   const framesBeforeClear = (await terminalSockets(page))[0]!.frames.length;
-  await page.getByRole('button', { name: 'Clear terminal' }).click();
+  await page.getByRole('button', { name: '清空终端' }).click();
   await settleAnimationFrames(page);
   expect((await terminalSockets(page))[0]!.frames).toHaveLength(framesBeforeClear);
-  await page.getByRole('button', { name: 'Search terminal' }).click();
-  await page.getByRole('searchbox', { name: 'Search terminal output' }).fill(marker);
-  await expect(page.getByRole('search', { name: 'Terminal output search' })
-    .getByRole('status')).toHaveText('No results');
+  await page.getByRole('button', { name: '搜索终端' }).click();
+  await page.getByRole('searchbox', { name: '搜索终端输出' }).fill(marker);
+  await expect(page.getByRole('search', { name: '搜索终端输出' })
+    .getByRole('status')).toHaveText('没有匹配结果');
 });
 
 test('honors server pause and browser bufferedAmount backpressure before draining input', async ({
@@ -795,11 +795,11 @@ test('honors server pause and browser bufferedAmount backpressure before drainin
   const accessToken = await openAliceWorkbench(page);
   await startLongRunningRun(page, accessToken);
   await setScenario(page, accessToken, 'terminal', 'server-pause' satisfies TerminalScenario);
-  await page.getByRole('tab', { name: 'Terminal' }).click();
+  await page.getByRole('tab', { name: '终端' }).click();
   await openTerminal(page);
 
-  const state = page.getByRole('status', { name: 'Terminal state' });
-  await expect(state).toHaveText('Ready');
+  const state = page.getByRole('status', { name: '终端状态' });
+  await expect(state).toHaveText('已就绪');
   await expect.poll(async () => {
     const socket = (await terminalSockets(page))[0];
     return socket === undefined
@@ -816,13 +816,13 @@ test('honors server pause and browser bufferedAmount backpressure before drainin
   const sentBefore = (await terminalSockets(page))[0]!.frames
     .filter((frame) => frame.direction === 'sent' && frame.kind === 'binary').length;
   await page.keyboard.insertText(burst);
-  await expect(state).toHaveText('Input paused');
+  await expect(state).toHaveText('已暂停输入');
   expect((await terminalSockets(page))[0]!.frames
     .filter((frame) => frame.direction === 'sent' && frame.kind === 'binary')).toHaveLength(sentBefore);
   expect((await browserHooks(page)).maxBufferedObserved).toBe(300 * 1024);
 
   await updateBrowserHooks(page, { forcedBufferedAmount: 0 });
-  await expect(state).toHaveText('Ready');
+  await expect(state).toHaveText('已就绪');
   await expect.poll(async () =>
     (await terminalSockets(page))[0]!.frames
       .filter((frame) => frame.direction === 'sent' && frame.kind === 'binary')
@@ -841,14 +841,14 @@ test('close is explicit and abnormal disconnect never reconnects without a fresh
   const accessToken = await openAliceWorkbench(page);
   await startLongRunningRun(page, accessToken);
   await setScenario(page, accessToken, 'terminal', 'normal' satisfies TerminalScenario);
-  await page.getByRole('tab', { name: 'Terminal' }).click();
+  await page.getByRole('tab', { name: '终端' }).click();
   const first = (await (await openTerminal(page)).json()) as { sessionId: string; ticket: string };
-  const close = page.getByRole('button', { name: 'Close terminal' });
+  const close = page.getByRole('button', { name: '关闭终端' });
 
   await close.click();
-  const dialog = page.getByRole('dialog', { name: 'Close terminal session' });
+  const dialog = page.getByRole('dialog', { name: '关闭终端会话' });
   await expect(dialog).toBeVisible();
-  const cancel = dialog.getByRole('button', { name: 'Cancel' });
+  const cancel = dialog.getByRole('button', { name: '取消' });
   await expect(cancel).toBeFocused();
   await cancel.click();
   await expect(close).toBeFocused();
@@ -860,8 +860,8 @@ test('close is explicit and abnormal disconnect never reconnects without a fresh
   await expect(close).toBeFocused();
 
   await close.click();
-  await dialog.getByRole('button', { name: 'Close session' }).click();
-  await expect(page.getByRole('status', { name: 'Terminal state' })).toHaveText('Closed');
+  await dialog.getByRole('button', { name: '关闭会话' }).click();
+  await expect(page.getByRole('status', { name: '终端状态' })).toHaveText('已关闭');
   const firstSocket = (await terminalSockets(page))[0]!;
   await expect.poll(async () => (await terminalSockets(page))[0]?.closeCode).toBe(1000);
   expect(parsedControls(firstSocket, 'sent')).toContainEqual({ type: 'terminal.close' });
@@ -873,18 +873,18 @@ test('close is explicit and abnormal disconnect never reconnects without a fresh
   expect(second.sessionId).not.toBe(first.sessionId);
   expect(second.ticket).not.toBe(first.ticket);
   await close.click();
-  await dialog.getByRole('button', { name: 'Close session' }).click();
-  await expect(page.getByRole('status', { name: 'Terminal state' })).toHaveText('Closed');
+  await dialog.getByRole('button', { name: '关闭会话' }).click();
+  await expect(page.getByRole('status', { name: '终端状态' })).toHaveText('已关闭');
 
   await setScenario(page, accessToken, 'terminal', 'disconnect' satisfies TerminalScenario);
   const failedResponse = page.waitForResponse((response) =>
     response.request().method() === 'POST' &&
     new URL(response.url()).pathname.endsWith('/terminal-sessions'),
   );
-  await page.getByRole('button', { name: 'Open terminal' }).click();
+  await page.getByRole('button', { name: '打开终端' }).click();
   const thirdResponse = await failedResponse;
   const third = (await thirdResponse.json()) as { sessionId: string; ticket: string };
-  await expect(page.getByRole('status', { name: 'Terminal state' })).toHaveText('Ready');
+  await expect(page.getByRole('status', { name: '终端状态' })).toHaveText('已就绪');
   const thirdXterm = page.locator('.xterm');
   await expect(thirdXterm).toHaveCount(1);
   await thirdXterm.evaluate((element, sessionId) => {
@@ -900,10 +900,10 @@ test('close is explicit and abnormal disconnect never reconnects without a fresh
       parsedControls(socket, 'sent').some((frame) => frame.type === 'terminal.resize') &&
       parsedControls(socket, 'sent').some((frame) => frame.type === 'terminal.output.credit');
   }).toBe(true);
-  await expect(page.getByRole('status', { name: 'Terminal state' })).toHaveText('Terminal error');
+  await expect(page.getByRole('status', { name: '终端状态' })).toHaveText('终端异常');
   await expect.poll(async () => (await terminalSockets(page))[thirdSocketIndex]?.closeCode)
     .toBe(1011);
-  await expect(page.getByLabel('Run state')).toContainText('RUNNING');
+  await expect(page.getByLabel('运行状态')).toContainText('正在执行');
   await expect(page.locator(`[data-stage5-terminal-generation="${third.sessionId}"]`))
     .toHaveCount(0);
   const createPath = new URL(thirdResponse.url()).pathname.split('/');
@@ -944,14 +944,14 @@ test('persisted pagehide closes the old session and allows a fresh explicit Open
   const accessToken = await openAliceWorkbench(page);
   await startLongRunningRun(page, accessToken);
   await setScenario(page, accessToken, 'terminal', 'normal' satisfies TerminalScenario);
-  await page.getByRole('tab', { name: 'Terminal' }).click();
+  await page.getByRole('tab', { name: '终端' }).click();
   const first = (await (await openTerminal(page)).json()) as { sessionId: string; ticket: string };
 
   await page.evaluate(() => {
     window.dispatchEvent(new PageTransitionEvent('pagehide', { persisted: true }));
   });
 
-  await expect(page.getByRole('status', { name: 'Terminal state' })).toHaveText('Closed');
+  await expect(page.getByRole('status', { name: '终端状态' })).toHaveText('已关闭');
   const socketCountAfterHide = (await terminalSockets(page)).length;
   await settleAnimationFrames(page, 5);
   expect((await terminalSockets(page)).length).toBe(socketCountAfterHide);
@@ -966,7 +966,7 @@ test('persisted pagehide closes the old session and allows a fresh explicit Open
   expect(second.sessionId).not.toBe(first.sessionId);
   expect(second.ticket).not.toBe(first.ticket);
   expect((await terminalSockets(page)).length).toBe(socketCountAfterHide + 1);
-  await expect(page.getByRole('status', { name: 'Terminal state' })).toHaveText('Ready');
+  await expect(page.getByRole('status', { name: '终端状态' })).toHaveText('已就绪');
 });
 
 test('Run STOPPING closes PTY before reload and keeps PTY, audit and Run log markers isolated', async ({
@@ -976,35 +976,35 @@ test('Run STOPPING closes PTY before reload and keeps PTY, audit and Run log mar
   const accessToken = await openAliceWorkbench(page);
   await startLongRunningRun(page, accessToken);
   await setScenario(page, accessToken, 'terminal', 'audit' satisfies TerminalScenario);
-  await page.getByRole('tab', { name: 'Terminal' }).click();
+  await page.getByRole('tab', { name: '终端' }).click();
   await openTerminal(page);
   const input = xtermInput(page);
   const ptyMarker = 'ensoai-stage5-pty-only-marker';
   await input.focus();
   await page.keyboard.insertText(ptyMarker);
 
-  await page.getByRole('tab', { name: 'Audit' }).click();
-  const audit = page.getByRole('table', { name: 'Terminal command audit' });
+  await page.getByRole('tab', { name: '命令记录' }).click();
+  const audit = page.getByRole('table', { name: '终端命令记录' });
   await expect(audit).toContainText('ensoai-stage5-audit-marker');
   await expect(audit).not.toContainText(ptyMarker);
-  await page.getByRole('tab', { name: 'Session' }).click();
-  await page.getByRole('button', { name: 'Search terminal' }).click();
-  await page.getByRole('searchbox', { name: 'Search terminal output' })
+  await page.getByRole('tab', { name: '会话' }).click();
+  await page.getByRole('button', { name: '搜索终端' }).click();
+  await page.getByRole('searchbox', { name: '搜索终端输出' })
     .fill('ensoai-stage4-seed-log');
-  await expect(page.getByRole('search', { name: 'Terminal output search' })
-    .getByRole('status')).toHaveText('No results');
+  await expect(page.getByRole('search', { name: '搜索终端输出' })
+    .getByRole('status')).toHaveText('没有匹配结果');
   await page.keyboard.press('Escape');
 
-  await page.getByRole('tab', { name: 'Run' }).click();
-  await expect(page.getByRole('region', { name: 'Run logs' }))
+  await page.getByRole('tab', { name: '运行记录' }).click();
+  await expect(page.getByRole('region', { name: '运行日志' }))
     .toContainText('ensoai-stage4-seed-log');
-  await expect(page.getByRole('region', { name: 'Run logs' })).not.toContainText(ptyMarker);
-  await page.getByRole('button', { name: 'Stop run' }).click();
-  const stopDialog = page.getByRole('dialog', { name: 'Stop run' });
-  await stopDialog.getByRole('button', { name: 'Stop' }).click();
-  await expect(page.getByLabel('Run state')).toHaveText(/STOPPING|CANCELLED|Reloading/);
+  await expect(page.getByRole('region', { name: '运行日志' })).not.toContainText(ptyMarker);
+  await page.getByRole('button', { name: '停止运行' }).click();
+  const stopDialog = page.getByRole('dialog', { name: '停止运行' });
+  await stopDialog.getByRole('button', { name: '停止' }).click();
+  await expect(page.getByLabel('运行状态')).toHaveText(/正在停止|已停止|Reloading/);
   await expect.poll(async () => (await terminalSockets(page))[0]?.closeCode).toBe(1000);
-  await expect(page.getByRole('button', { name: 'New file' })).toBeEnabled({ timeout: 30_000 });
+  await expect(page.getByRole('button', { name: '新建文件' })).toBeEnabled({ timeout: 30_000 });
 
   const events = (await browserHooks(page)).events;
   const closeAt = events.find((event) =>
@@ -1017,15 +1017,15 @@ test('Run STOPPING closes PTY before reload and keeps PTY, audit and Run log mar
   expect(reloadAt).toEqual(expect.any(Number));
   expect(closeAt!).toBeLessThanOrEqual(reloadAt!);
 
-  await page.getByRole('tab', { name: 'Terminal' }).click();
-  await expect(page.getByRole('status', { name: 'Terminal state' })).toHaveText('No active run');
-  await expect(page.getByRole('button', { name: 'Open terminal' })).toBeDisabled();
+  await page.getByRole('tab', { name: '终端' }).click();
+  await expect(page.getByRole('status', { name: '终端状态' })).toHaveText('当前没有运行中的任务');
+  await expect(page.getByRole('button', { name: '打开终端' })).toBeDisabled();
   await expect(xtermInput(page)).toHaveCount(0);
   expect(requests).toHaveLength(1);
-  await page.getByRole('tab', { name: 'Run' }).click();
-  await page.getByRole('list', { name: 'Recent runs' }).getByRole('button').first().click();
-  await page.getByRole('tab', { name: 'Terminal' }).click();
-  await expect(page.getByRole('button', { name: 'Open terminal' })).toBeDisabled();
+  await page.getByRole('tab', { name: '运行记录' }).click();
+  await page.getByRole('list', { name: '最近运行' }).getByRole('button').first().click();
+  await page.getByRole('tab', { name: '终端' }).click();
+  await expect(page.getByRole('button', { name: '打开终端' })).toBeDisabled();
   expect(requests).toHaveLength(1);
 });
 
@@ -1033,8 +1033,8 @@ test('RECOVERING and shell exit disable terminal input without hidden reconnect'
   const requests = terminalRequests(page);
   const accessToken = await openAliceWorkbench(page);
   await setScenario(page, accessToken, 'run', 'recovery');
-  await page.getByRole('tab', { name: 'Run' }).click();
-  await page.getByRole('button', { name: 'Start run' }).click();
+  await page.getByRole('tab', { name: '运行记录' }).click();
+  await page.getByRole('button', { name: '启动运行' }).click();
   await expect.poll(async () =>
     (await browserHooks(page)).sockets.some((socket) => socket.frames.some((frame) =>
       frame.direction === 'received' &&
@@ -1043,18 +1043,18 @@ test('RECOVERING and shell exit disable terminal input without hidden reconnect'
     )),
   ).toBe(true);
   expect(requests).toHaveLength(0);
-  await expect(page.getByRole('button', { name: 'New file' })).toBeEnabled({ timeout: 30_000 });
+  await expect(page.getByRole('button', { name: '新建文件' })).toBeEnabled({ timeout: 30_000 });
 
   await startLongRunningRun(page, accessToken);
   await setScenario(page, accessToken, 'terminal', 'shell-exit' satisfies TerminalScenario);
-  await page.getByRole('tab', { name: 'Terminal' }).click();
+  await page.getByRole('tab', { name: '终端' }).click();
   const responsePromise = page.waitForResponse((response) =>
     response.request().method() === 'POST' &&
     new URL(response.url()).pathname.endsWith('/terminal-sessions'),
   );
-  await page.getByRole('button', { name: 'Open terminal' }).click();
+  await page.getByRole('button', { name: '打开终端' }).click();
   await responsePromise;
-  await expect(page.getByRole('status', { name: 'Terminal state' })).toHaveText('Exited');
+  await expect(page.getByRole('status', { name: '终端状态' })).toHaveText('已退出');
   await expect(xtermInput(page)).toHaveCount(0);
   const socketCount = (await terminalSockets(page)).length;
   await settleAnimationFrames(page, 5);
@@ -1065,16 +1065,16 @@ test('project navigation and logout close terminal authority', async ({ page }) 
   const accessToken = await openAliceWorkbench(page);
   await startLongRunningRun(page, accessToken);
   await setScenario(page, accessToken, 'terminal', 'normal' satisfies TerminalScenario);
-  await page.getByRole('tab', { name: 'Terminal' }).click();
+  await page.getByRole('tab', { name: '终端' }).click();
   await openTerminal(page);
-  await page.getByRole('link', { name: 'Back to projects' }).click();
+  await page.getByRole('link', { name: '返回项目列表' }).click();
   await expect(page).toHaveURL(/\/projects$/);
   await expect.poll(async () => (await terminalSockets(page))[0]?.closeCode).toBe(1000);
 
-  await projectCard(page, 'Alice Notebook').getByRole('link', { name: 'Open' }).click();
-  await page.getByRole('tab', { name: 'Terminal' }).click();
+  await projectCard(page, 'Alice Notebook').getByRole('link', { name: '进入工作台' }).click();
+  await page.getByRole('tab', { name: '终端' }).click();
   await openTerminal(page);
-  await page.getByRole('button', { name: 'Log out' }).click();
+  await page.getByRole('button', { name: '退出登录' }).click();
   await expect(page).toHaveURL(/\/login$/);
   await expect.poll(async () => (await terminalSockets(page))[1]?.closeCode).toBe(1000);
 });
@@ -1102,8 +1102,8 @@ test('current terminal 401 expires the active login', async ({ page }) => {
       return originalFetch(input, init);
     };
   });
-  await page.getByRole('tab', { name: 'Terminal' }).click();
-  await page.getByRole('button', { name: 'Open terminal' }).click();
+  await page.getByRole('tab', { name: '终端' }).click();
+  await page.getByRole('button', { name: '打开终端' }).click();
   await expect(page).toHaveURL(/\/login$/);
   await expect(page.getByRole('main').getByRole('alert'))
     .toContainText('登录会话已过期，请重新登录');
@@ -1115,18 +1115,18 @@ test('ticket unavailable at handshake preserves the current login without reconn
   const accessToken = await openAliceWorkbench(page);
   await startLongRunningRun(page, accessToken);
   await setScenario(page, accessToken, 'terminal', 'ticket-unavailable' satisfies TerminalScenario);
-  await page.getByRole('tab', { name: 'Terminal' }).click();
+  await page.getByRole('tab', { name: '终端' }).click();
   const responsePromise = page.waitForResponse((response) =>
     response.request().method() === 'POST' &&
     new URL(response.url()).pathname.endsWith('/terminal-sessions'),
   );
 
-  await page.getByRole('button', { name: 'Open terminal' }).click();
+  await page.getByRole('button', { name: '打开终端' }).click();
   expect((await responsePromise).status()).toBe(201);
-  await expect(page.getByRole('status', { name: 'Terminal state' })).toHaveText('Terminal error');
+  await expect(page.getByRole('status', { name: '终端状态' })).toHaveText('终端异常');
   await expect.poll(async () => (await terminalSockets(page))[0]?.closeCode).toBe(4410);
   await expect(page.getByRole('heading', { name: 'Alice Notebook' })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Log out' })).toBeVisible();
+  await expect(page.getByRole('button', { name: '退出登录' })).toBeVisible();
   await expect(page.getByText('Your session has expired. Please sign in again.')).toHaveCount(0);
   const socketCount = (await terminalSockets(page)).length;
   await settleAnimationFrames(page, 5);
@@ -1136,7 +1136,7 @@ test('ticket unavailable at handshake preserves the current login without reconn
 test.fixme('a stale Alice terminal 401 cannot clear a newer Bob login', async ({ page }) => {
   const accessToken = await openAliceWorkbench(page);
   await startLongRunningRun(page, accessToken);
-  await page.getByRole('tab', { name: 'Terminal' }).click();
+  await page.getByRole('tab', { name: '终端' }).click();
   await page.evaluate(() => {
     type Host = Window & { __releaseStage5Terminal401?: () => void; __interceptedStage5Terminal401?: boolean };
     const host = window as Host;
@@ -1156,12 +1156,12 @@ test.fixme('a stale Alice terminal 401 cannot clear a newer Bob login', async ({
       });
     };
   });
-  await page.getByRole('button', { name: 'Open terminal' }).click();
+  await page.getByRole('button', { name: '打开终端' }).click();
   await expect.poll(() => page.evaluate(() =>
     (window as Window & { __interceptedStage5Terminal401?: boolean }).__interceptedStage5Terminal401,
   )).toBe(true);
-  await expect(page.getByRole('status', { name: 'Terminal state' })).toHaveText('Creating session');
-  await page.getByRole('button', { name: 'Log out' }).click();
+  await expect(page.getByRole('status', { name: '终端状态' })).toHaveText('正在创建会话');
+  await page.getByRole('button', { name: '退出登录' }).click();
   await expect(page).toHaveURL(/\/login$/);
   await signIn(page, BOB);
   await page.evaluate(() => {
@@ -1181,10 +1181,10 @@ test('WebGL creation failure and context loss retain fallback search and resize'
   await startLongRunningRun(page, accessToken);
   await setScenario(page, accessToken, 'terminal', 'webgl-fallback' satisfies TerminalScenario);
   await updateBrowserHooks(page, { forceWebglFailure: true });
-  await page.getByRole('tab', { name: 'Terminal' }).click();
+  await page.getByRole('tab', { name: '终端' }).click();
   await openTerminal(page);
-  const renderer = page.getByRole('status', { name: 'Terminal renderer' });
-  await expect(renderer).toHaveText('DOM fallback');
+  const renderer = page.getByRole('status', { name: '终端渲染方式' });
+  await expect(renderer).toHaveText('兼容渲染');
   const resizeBefore = parsedControls((await terminalSockets(page))[0]!, 'sent')
     .filter((frame) => frame.type === 'terminal.resize').length;
   await page.setViewportSize({ width: 1360, height: 780 });
@@ -1194,10 +1194,10 @@ test('WebGL creation failure and context loss retain fallback search and resize'
   ).toBeGreaterThan(resizeBefore);
   expect((await browserHooks(page)).resizeObserved).toBeGreaterThan(0);
 
-  await page.getByRole('button', { name: 'Close terminal' }).click();
-  await page.getByRole('dialog', { name: 'Close terminal session' })
-    .getByRole('button', { name: 'Close session' }).click();
-  await expect(page.getByRole('status', { name: 'Terminal state' })).toHaveText('Closed');
+  await page.getByRole('button', { name: '关闭终端' }).click();
+  await page.getByRole('dialog', { name: '关闭终端会话' })
+    .getByRole('button', { name: '关闭会话' }).click();
+  await expect(page.getByRole('status', { name: '终端状态' })).toHaveText('已关闭');
   await setScenario(page, accessToken, 'terminal', 'normal' satisfies TerminalScenario);
   await updateBrowserHooks(page, { forceWebglFailure: false });
   await openTerminal(page);
@@ -1207,15 +1207,15 @@ test('WebGL creation failure and context loss retain fallback search and resize'
   await canvas.evaluate((element) => {
     element.dispatchEvent(new Event('webglcontextlost', { bubbles: false, cancelable: true }));
   });
-  await expect(renderer).toHaveText('DOM fallback');
+  await expect(renderer).toHaveText('兼容渲染');
 
   const marker = 'stage5-fallback-still-live';
   await xtermInput(page).focus();
   await page.keyboard.insertText(marker);
-  await page.getByRole('button', { name: 'Search terminal' }).click();
-  const search = page.getByRole('searchbox', { name: 'Search terminal output' });
+  await page.getByRole('button', { name: '搜索终端' }).click();
+  const search = page.getByRole('searchbox', { name: '搜索终端输出' });
   await search.fill(marker);
-  await expect(page.getByRole('search', { name: 'Terminal output search' })
+  await expect(page.getByRole('search', { name: '搜索终端输出' })
     .getByRole('status')).toHaveText('');
   await page.keyboard.press('Escape');
   await expect(xtermInput(page)).toBeFocused();
@@ -1231,64 +1231,64 @@ test.fixme('keyboard-only terminal workflow and branded visual evidence stay acc
   await setScenario(page, accessToken, 'terminal', 'audit' satisfies TerminalScenario);
   expect(await page.evaluate(() => matchMedia('(prefers-reduced-motion: reduce)').matches)).toBe(true);
 
-  const fileTab = page.getByRole('tab', { name: 'File' });
-  const runTab = page.getByRole('tab', { name: 'Run' });
-  const terminalTab = page.getByRole('tab', { name: 'Terminal' });
+  const fileTab = page.getByRole('tab', { name: '代码' });
+  const runTab = page.getByRole('tab', { name: '运行记录' });
+  const terminalTab = page.getByRole('tab', { name: '终端' });
   await tabUntilFocused(page, fileTab);
   await assertFocusVisible(fileTab);
   await tabUntilFocused(page, runTab);
   await assertFocusVisible(runTab);
   await page.keyboard.press('Enter');
-  const start = page.getByRole('button', { name: 'Start run' });
+  const start = page.getByRole('button', { name: '启动运行' });
   await tabUntilFocused(page, start);
   await assertFocusVisible(start);
   await page.keyboard.press('Enter');
-  await expect(page.getByLabel('Run state')).toContainText('RUNNING');
+  await expect(page.getByLabel('运行状态')).toContainText('正在执行');
 
   await tabUntilFocused(page, terminalTab);
   await assertFocusVisible(terminalTab);
   await page.keyboard.press('Enter');
-  const open = page.getByRole('button', { name: 'Open terminal' });
+  const open = page.getByRole('button', { name: '打开终端' });
   await tabUntilFocused(page, open);
   await assertFocusVisible(open);
   await page.keyboard.press('Enter');
-  await expect(page.getByRole('status', { name: 'Terminal state' })).toHaveText('Ready');
-  await expect(page.getByRole('status', { name: 'Terminal state' })).toHaveAttribute('aria-live', 'polite');
+  await expect(page.getByRole('status', { name: '终端状态' })).toHaveText('已就绪');
+  await expect(page.getByRole('status', { name: '终端状态' })).toHaveAttribute('aria-live', 'polite');
   const input = xtermInput(page);
   await expect(input).toBeFocused();
   await page.keyboard.insertText('ensoai-stage5-visual-marker');
-  const searchButton = page.getByRole('button', { name: 'Search terminal' });
+  const searchButton = page.getByRole('button', { name: '搜索终端' });
   await shiftTabUntilFocused(page, searchButton);
   await assertFocusVisible(searchButton);
   await page.keyboard.press('Enter');
-  const search = page.getByRole('searchbox', { name: 'Search terminal output' });
+  const search = page.getByRole('searchbox', { name: '搜索终端输出' });
   await expect(search).toBeFocused();
   await search.fill('ensoai-stage5-visual-marker');
   await page.keyboard.press('Escape');
   await expect(input).toBeFocused();
-  const auditTab = page.getByRole('tab', { name: 'Audit' });
+  const auditTab = page.getByRole('tab', { name: '命令记录' });
   await shiftTabUntilFocused(page, auditTab);
   await assertFocusVisible(auditTab);
   await page.keyboard.press('Enter');
-  await expect(page.getByRole('table', { name: 'Terminal command audit' })).toBeVisible();
+  await expect(page.getByRole('table', { name: '终端命令记录' })).toBeVisible();
   await expect(page.locator('#job-terminal-session-view')).toHaveAttribute('inert', '');
-  const sessionTab = page.getByRole('tab', { name: 'Session' });
+  const sessionTab = page.getByRole('tab', { name: '会话' });
   await shiftTabUntilFocused(page, sessionTab);
   await page.keyboard.press('Enter');
-  const close = page.getByRole('button', { name: 'Close terminal' });
+  const close = page.getByRole('button', { name: '关闭终端' });
   await shiftTabUntilFocused(page, close);
   await assertFocusVisible(close);
   await page.keyboard.press('Enter');
-  const dialog = page.getByRole('dialog', { name: 'Close terminal session' });
-  const cancel = dialog.getByRole('button', { name: 'Cancel' });
+  const dialog = page.getByRole('dialog', { name: '关闭终端会话' });
+  const cancel = dialog.getByRole('button', { name: '取消' });
   await expect(cancel).toBeFocused();
   await page.keyboard.press('Escape');
   await expect(close).toBeFocused();
   await page.keyboard.press('Enter');
   await expect(cancel).toBeFocused();
   await page.keyboard.press('Tab');
-  await dialog.getByRole('button', { name: 'Close session' }).press('Enter');
-  await expect(page.getByRole('status', { name: 'Terminal state' })).toHaveText('Closed');
+  await dialog.getByRole('button', { name: '关闭会话' }).press('Enter');
+  await expect(page.getByRole('status', { name: '终端状态' })).toHaveText('已关闭');
 
   if (testInfo.project.name !== 'chrome' && testInfo.project.name !== 'edge') return;
   await openTerminal(page);
@@ -1304,9 +1304,9 @@ test.fixme('keyboard-only terminal workflow and branded visual evidence stay acc
     await settleAnimationFrames(page, 4);
     await assertTerminalGeometry(page);
     for (const locator of [
-      page.getByRole('toolbar', { name: 'Terminal controls' }),
-      page.getByRole('status', { name: 'Terminal state' }),
-      page.getByRole('status', { name: 'Terminal renderer' }),
+      page.getByRole('toolbar', { name: '终端控制' }),
+      page.getByRole('status', { name: '终端状态' }),
+      page.getByRole('status', { name: '终端渲染方式' }),
       page.getByTestId('job-terminal-viewport'),
     ]) await assertInsideViewport(locator);
     const xtermBytes = await page.getByTestId('job-terminal-viewport').screenshot({
@@ -1321,9 +1321,9 @@ test.fixme('keyboard-only terminal workflow and branded visual evidence stay acc
     expect(pngHasNonBackgroundPixels(terminalBytes)).toBe(true);
 
     await auditTab.click();
-    const auditTable = page.getByRole('table', { name: 'Terminal command audit' });
+    const auditTable = page.getByRole('table', { name: '终端命令记录' });
     await assertInsideViewport(auditTable.locator('xpath=..'));
-    await assertInsideViewport(auditTable.getByRole('columnheader', { name: 'Command' }));
+    await assertInsideViewport(auditTable.getByRole('columnheader', { name: '命令' }));
     const auditBytes = await page.screenshot({
       path: testInfo.outputPath(`${testInfo.project.name}-audit-${viewport.name}.png`),
       animations: 'disabled', caret: 'hide', scale: 'css', fullPage: false,
@@ -1345,14 +1345,14 @@ test('captures branded Terminal and Audit evidence with viewport and pixel asser
   const accessToken = await openAliceWorkbench(page);
   await startLongRunningRun(page, accessToken);
   await setScenario(page, accessToken, 'terminal', 'audit' satisfies TerminalScenario);
-  await page.getByRole('tab', { name: 'Terminal' }).click();
+  await page.getByRole('tab', { name: '终端' }).click();
   await openTerminal(page);
   await xtermInput(page).focus();
   await page.keyboard.insertText('ensoai-stage5-screenshot-marker');
   await prepareVisualCapture(page);
-  const auditTab = page.getByRole('tab', { name: 'Audit' });
-  const sessionTab = page.getByRole('tab', { name: 'Session' });
-  const searchOverlay = page.getByRole('search', { name: 'Terminal output search' });
+  const auditTab = page.getByRole('tab', { name: '命令记录' });
+  const sessionTab = page.getByRole('tab', { name: '会话' });
+  const searchOverlay = page.getByRole('search', { name: '搜索终端输出' });
   for (const viewport of [
     { name: '1280x720', width: 1280, height: 720 },
     { name: '1440x900', width: 1440, height: 900 },
@@ -1360,21 +1360,21 @@ test('captures branded Terminal and Audit evidence with viewport and pixel asser
   ]) {
     await page.setViewportSize({ width: viewport.width, height: viewport.height });
     await settleAnimationFrames(page, 4);
-    await page.getByRole('button', { name: 'Search terminal' }).click();
-    await page.getByRole('searchbox', { name: 'Search terminal output' }).fill('stage5-visual-query');
+    await page.getByRole('button', { name: '搜索终端' }).click();
+    await page.getByRole('searchbox', { name: '搜索终端输出' }).fill('stage5-visual-query');
     await assertTerminalGeometry(page);
     for (const locator of [
-      page.getByRole('toolbar', { name: 'Terminal controls' }),
-      page.getByRole('status', { name: 'Terminal state' }),
-      page.getByRole('status', { name: 'Terminal renderer' }),
+      page.getByRole('toolbar', { name: '终端控制' }),
+      page.getByRole('status', { name: '终端状态' }),
+      page.getByRole('status', { name: '终端渲染方式' }),
       page.getByTestId('job-terminal-viewport'),
       searchOverlay,
     ]) await assertInsideViewport(locator);
     const searchBox = await searchOverlay.boundingBox();
     const terminalBox = await page.getByTestId('job-terminal-viewport').boundingBox();
-    const toolbarBox = await page.getByRole('toolbar', { name: 'Terminal controls' }).boundingBox();
-    const stateBox = await page.getByRole('status', { name: 'Terminal state' }).boundingBox();
-    const rendererBox = await page.getByRole('status', { name: 'Terminal renderer' }).boundingBox();
+    const toolbarBox = await page.getByRole('toolbar', { name: '终端控制' }).boundingBox();
+    const stateBox = await page.getByRole('status', { name: '终端状态' }).boundingBox();
+    const rendererBox = await page.getByRole('status', { name: '终端渲染方式' }).boundingBox();
     expect(searchBox).not.toBeNull();
     expect(terminalBox).not.toBeNull();
     expect(toolbarBox).not.toBeNull();
@@ -1416,9 +1416,9 @@ test('captures branded Terminal and Audit evidence with viewport and pixel asser
     expect(pngHasNonBackgroundPixels(terminalBytes)).toBe(true);
 
     await auditTab.click();
-    const auditTable = page.getByRole('table', { name: 'Terminal command audit' });
+    const auditTable = page.getByRole('table', { name: '终端命令记录' });
     await assertInsideViewport(auditTable.locator('xpath=..'));
-    await assertInsideViewport(auditTable.getByRole('columnheader', { name: 'Command' }));
+    await assertInsideViewport(auditTable.getByRole('columnheader', { name: '命令' }));
     const auditBytes = await page.screenshot({
       path: testInfo.outputPath(`${testInfo.project.name}-audit-${viewport.name}.png`),
       animations: 'disabled', caret: 'hide', scale: 'css', fullPage: false,

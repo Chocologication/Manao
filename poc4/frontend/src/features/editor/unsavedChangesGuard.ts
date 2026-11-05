@@ -2,14 +2,14 @@ import { useCallback, useEffect, useSyncExternalStore } from 'react';
 import { useBlocker, type BlockerFunction } from 'react-router';
 import type { ProjectRelativePath } from '../../contracts/file';
 
-export const DIALOG_TITLE = 'Unsaved changes';
-export const CLOSE_TAB_MESSAGE = 'This file has unsaved changes.';
-export const LEAVE_MESSAGE = 'You have unsaved changes.';
-export const REMAINING_CHANGES_MESSAGE = 'This file still has unsaved changes.';
-export const SAVE_AND_CLOSE_LABEL = 'Save and close';
-export const DISCARD_LABEL = 'Discard';
-export const CANCEL_LABEL = 'Cancel';
-export const DISCARD_AND_LEAVE_LABEL = 'Discard and leave';
+export const DIALOG_TITLE = '有未保存的修改';
+export const CLOSE_TAB_MESSAGE = '此文件有未保存的修改。';
+export const LEAVE_MESSAGE = '你有尚未保存的修改。';
+export const REMAINING_CHANGES_MESSAGE = '此文件仍有未保存的修改。';
+export const SAVE_AND_CLOSE_LABEL = '保存并关闭';
+export const DISCARD_LABEL = '放弃修改';
+export const CANCEL_LABEL = '取消';
+export const DISCARD_AND_LEAVE_LABEL = '放弃修改并离开';
 
 export type UnsavedGuardAction =
   | { type: 'close-tab'; path: ProjectRelativePath }
@@ -99,7 +99,7 @@ export function applySaveAndCloseResult(options: {
       kind: 'keep-dialog',
       action,
       mode: 'close-tab',
-      message: options.saveErrorMessage ?? 'Unable to save file',
+      message: options.saveErrorMessage ?? '无法保存文件',
       consequences: {
         route: 'unchanged',
         auth: 'unchanged',

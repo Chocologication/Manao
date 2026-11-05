@@ -86,7 +86,12 @@ public final class AgentContracts {
 
     /** One development build execution request; {@code commandId} is the stable display identity. */
     public record BuildRequest(String taskId, String toolCallId, String projectId,
-                               String commandId, long sourceRevision, BuildGoal goal) { }
+                               String commandId, long sourceRevision, BuildGoal goal, java.util.Map<String, String> overlay) {
+        public BuildRequest(String taskId, String toolCallId, String projectId, String commandId, long sourceRevision, BuildGoal goal) {
+            this(taskId, toolCallId, projectId, commandId, sourceRevision, goal, java.util.Map.of());
+        }
+        public BuildRequest { overlay = overlay == null ? java.util.Map.of() : java.util.Map.copyOf(overlay); }
+    }
 
     /** The verified Kubernetes identity behind one build; never leaves the backend. */
     public record BuildIdentity(String jobName, String jobUid, String podUid) { }
@@ -101,8 +106,17 @@ public final class AgentContracts {
                               boolean cleanupConfirmed) { }
 
     /** Backend-to-worker start command; carries no project owner. */
+    public record WorkerModel(String provider, String apiType, String baseUrl, String model, String apiKey, boolean vision) {
+        @Override public String toString() { return "WorkerModel[redacted]"; }
+    }
+    public record WorkerImage(String type, String data, String mimeType) {
+        @Override public String toString() { return "WorkerImage[redacted]"; }
+    }
     public record WorkerStart(String taskId, String prompt, String workspaceRevision,
-                              String requestSha256, long workerEpoch, String conversationId, String reasoningEffort) {
+                              String requestSha256, long workerEpoch, String conversationId, String reasoningEffort, WorkerModel model, List<WorkerImage> images) {
+        public WorkerStart(String taskId, String prompt, String workspaceRevision, String requestSha256, long workerEpoch, String conversationId, String reasoningEffort) {
+            this(taskId, prompt, workspaceRevision, requestSha256, workerEpoch, conversationId, reasoningEffort, null, List.of());
+        }
         public WorkerStart(String taskId, String prompt, String workspaceRevision, String requestSha256, long workerEpoch, String conversationId) {
             this(taskId, prompt, workspaceRevision, requestSha256, workerEpoch, conversationId, "high");
         }

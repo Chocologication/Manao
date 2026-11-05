@@ -11,6 +11,7 @@ import { UnsavedChangesDialog } from '@/components/files/UnsavedChangesDialog';
 import { Button } from '@/components/ui/button';
 import type { ProjectSummary } from '@/contracts/project';
 import { Spinner } from '@/components/ui/spinner';
+import { StudioRecovery } from '@/features/ai/studio/StudioRecovery';
 import {
   isPythonDependencyRecoveryFailure,
   PythonDependencyRecovery,
@@ -126,15 +127,15 @@ export function ProjectRoutePage() {
 
   if (query.isPending) {
     return (
-      <AppChrome title="Project">
-        <LoadingState label="Loading project" />
+      <AppChrome title="项目">
+        <LoadingState label="正在加载项目" />
       </AppChrome>
     );
   }
 
   if (query.isError && isForbiddenError(query.error)) {
     return (
-      <AppChrome title="Project">
+      <AppChrome title="项目">
         <AccessDeniedPage />
       </AppChrome>
     );
@@ -144,14 +145,14 @@ export function ProjectRoutePage() {
   // still around; it must not be shown as a normal workbench.
   if (query.isError && isNotFoundError(query.error)) {
     return (
-      <AppChrome title="Project">
+      <AppChrome title="项目">
         <div className="flex flex-col items-start gap-2">
-          <InlineAlert>Project is no longer available</InlineAlert>
+          <InlineAlert>项目已不可用</InlineAlert>
           <Button type="button" variant="outline" onClick={() => void query.refetch()}>
-            Retry
+            重试
           </Button>
           <Link to="/projects" className="text-sm text-foreground underline-offset-4 hover:underline">
-            Back to projects
+            返回项目列表
           </Link>
         </div>
       </AppChrome>
@@ -161,15 +162,15 @@ export function ProjectRoutePage() {
   if (query.data === undefined) {
     if (query.isError) {
       const message = isNetworkError(query.error)
-        ? 'Network request failed'
-        : 'Unable to load project';
+        ? '网络请求失败，请检查连接后重试'
+        : '无法加载项目';
 
       return (
-        <AppChrome title="Project">
+        <AppChrome title="项目">
           <div className="flex flex-col items-start gap-2">
             <InlineAlert>{message}</InlineAlert>
             <Button type="button" variant="outline" onClick={() => void query.refetch()}>
-              Retry
+              重试
             </Button>
           </div>
         </AppChrome>
@@ -177,7 +178,7 @@ export function ProjectRoutePage() {
     }
 
     return (
-      <AppChrome title="Project">
+      <AppChrome title="项目">
         <AccessDeniedPage />
       </AppChrome>
     );
@@ -190,7 +191,7 @@ export function ProjectRoutePage() {
       <AppChrome title={project.name}>
         <div role="status" className="flex items-center gap-2 text-sm text-muted-foreground">
           <Spinner />
-          <p>Provisioning workspace</p>
+          <p>正在准备工作区</p>
         </div>
       </AppChrome>
     );
@@ -199,7 +200,8 @@ export function ProjectRoutePage() {
   if (project.state === 'FAILED') {
     return (
       <AppChrome title={project.name}>
-        <InlineAlert>{project.failureReason ?? 'Project creation failed'}</InlineAlert>
+        <InlineAlert>{project.failureReason ?? '项目创建失败'}</InlineAlert>
+        {import.meta.env.VITE_ENABLE_AI === 'true' && project.failureReason === 'WORKSPACE_RECONCILIATION_REQUIRED' && <StudioRecovery userId={userId} projectId={project.id} onRecovered={() => void query.refetch()} />}
         {isPythonDependencyRecoveryFailure(project) ? (
           <PythonDependencyRecovery
             projectId={project.id}
@@ -209,7 +211,7 @@ export function ProjectRoutePage() {
           />
         ) : null}
         <Link to="/projects" className="text-sm text-foreground underline-offset-4 hover:underline">
-          Back to projects
+          返回项目列表
         </Link>
       </AppChrome>
     );
@@ -219,10 +221,10 @@ export function ProjectRoutePage() {
     return (
       <AppChrome title={project.name}>
         <div role="status" className="text-sm text-muted-foreground">
-          Deletion has not completed. Return to projects to continue deletion.
+          项目尚未删除完成，请返回项目列表继续处理。
         </div>
         <Link to="/projects" className="text-sm text-foreground underline-offset-4 hover:underline">
-          Back to projects
+          返回项目列表
         </Link>
       </AppChrome>
     );
@@ -231,9 +233,9 @@ export function ProjectRoutePage() {
   if (project.state !== 'READY') {
     return (
       <AppChrome title={project.name}>
-        <InlineAlert>Project is unavailable</InlineAlert>
+        <InlineAlert>项目不可用</InlineAlert>
         <Link to="/projects" className="text-sm text-foreground underline-offset-4 hover:underline">
-          Back to projects
+          返回项目列表
         </Link>
       </AppChrome>
     );
@@ -252,15 +254,15 @@ export function ProjectRoutePage() {
     <>
       {query.isError && !query.isFetching ? (
         <div className="flex flex-col items-start gap-2 border-b bg-background px-4 py-2">
-          <InlineAlert>Project update failed</InlineAlert>
+          <InlineAlert>项目状态更新失败</InlineAlert>
           <Button type="button" variant="outline" onClick={() => void query.refetch()}>
-            Retry
+            重试
           </Button>
         </div>
       ) : null}
       <Suspense
         fallback={
-          <div role="status" aria-label="Loading workbench" className="flex h-full items-center justify-center">
+          <div role="status" aria-label="正在加载工作台" className="flex h-full items-center justify-center">
             <Spinner />
           </div>
         }

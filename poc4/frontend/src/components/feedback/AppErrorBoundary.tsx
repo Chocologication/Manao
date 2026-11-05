@@ -7,10 +7,10 @@ export function ErrorRecoveryView() {
   return (
     <main className="lab-feedback-page">
       <Brand /><CircleAlert size={38} />
-      <h1 className="text-lg font-medium">Something went wrong</h1>
-      <p className="text-sm text-muted-foreground">Reload the page to continue.</p>
+      <h1 className="text-lg font-medium">页面出现异常</h1>
+      <p className="text-sm text-muted-foreground">请刷新页面后继续。</p>
       <Button type="button" onClick={() => window.location.reload()}>
-        <RefreshCw />Reload
+        <RefreshCw />刷新页面
       </Button>
     </main>
   );

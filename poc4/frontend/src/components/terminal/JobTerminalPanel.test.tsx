@@ -120,17 +120,17 @@ afterEach(() => {
 
 describe('JobTerminalPanel authority and controller matrix', () => {
   it.each([
-    { authorityLoading: true, runState: null, expected: 'Loading run authority' },
-    { authorityLoading: false, runState: null, expected: 'No active run' },
-    { authorityLoading: false, runState: 'STARTING' as const, expected: 'Run starting' },
-    { authorityLoading: false, runState: 'STOPPING' as const, expected: 'Run stopping' },
-    { authorityLoading: false, runState: 'RECOVERING' as const, expected: 'Run recovering' },
-    { authorityLoading: false, runState: 'SUCCEEDED' as const, expected: 'Run succeeded' },
+    { authorityLoading: true, runState: null, expected: '正在读取运行状态' },
+    { authorityLoading: false, runState: null, expected: '当前没有运行中的任务' },
+    { authorityLoading: false, runState: 'STARTING' as const, expected: '运行正在启动' },
+    { authorityLoading: false, runState: 'STOPPING' as const, expected: '运行正在停止' },
+    { authorityLoading: false, runState: 'RECOVERING' as const, expected: '正在恢复运行状态' },
+    { authorityLoading: false, runState: 'SUCCEEDED' as const, expected: '运行成功' },
   ])('renders $expected without enabling Open', async ({ authorityLoading, runState, expected }) => {
     renderPanel({ authorityLoading, runState });
 
-    expect(await screen.findByRole('status', { name: 'Terminal state' })).toHaveTextContent(expected);
-    expect(screen.getByRole('button', { name: 'Open terminal' })).toBeDisabled();
+    expect(await screen.findByRole("status", { name: '终端状态' })).toHaveTextContent(expected);
+    expect(screen.getByRole('button', { name: '打开终端' })).toBeDisabled();
   });
 
   it.each(['available', 'closed', 'exited', 'error'] as const)(
@@ -142,7 +142,7 @@ describe('JobTerminalPanel authority and controller matrix', () => {
       await waitFor(() => expect(controller.setRun).toHaveBeenCalled());
       act(() => controller.setPhase(phase));
 
-      expect(screen.getByRole('button', { name: 'Open terminal' })).toBeEnabled();
+      expect(screen.getByRole('button', { name: '打开终端' })).toBeEnabled();
 
       rerender(
         <QueryClientProvider client={queryClient}>
@@ -156,7 +156,7 @@ describe('JobTerminalPanel authority and controller matrix', () => {
           />
         </QueryClientProvider>,
       );
-      expect(screen.getByRole('button', { name: 'Open terminal' })).toBeDisabled();
+      expect(screen.getByRole('button', { name: '打开终端' })).toBeDisabled();
     },
   );
 
@@ -175,7 +175,7 @@ describe('JobTerminalPanel authority and controller matrix', () => {
     await waitFor(() => expect(controller.setRun).toHaveBeenCalled());
     act(() => controller.setPhase(phase));
 
-    const close = screen.getByRole('button', { name: 'Close terminal' });
+    const close = screen.getByRole('button', { name: '关闭终端' });
     if (enabled) expect(close).toBeEnabled();
     else expect(close).toBeDisabled();
   });
@@ -183,8 +183,8 @@ describe('JobTerminalPanel authority and controller matrix', () => {
   it('shows authority failures as alerts and keeps paused state explicit in text', async () => {
     const controller = new FakeTerminalController();
     const factory = createFactory(controller);
-    const view = renderPanel({ controller, authorityError: 'Unable to load run authority' });
-    expect(await screen.findByRole('alert')).toHaveTextContent('Unable to load run authority');
+    const view = renderPanel({ controller, authorityError: "无法读取运行状态" });
+    expect(await screen.findByRole('alert')).toHaveTextContent('无法读取运行状态');
 
     view.rerender(
       <QueryClientProvider client={queryClient}>
@@ -199,7 +199,7 @@ describe('JobTerminalPanel authority and controller matrix', () => {
       </QueryClientProvider>,
     );
     act(() => controller.setPhase('paused'));
-    expect(screen.getByRole('status', { name: 'Terminal state' })).toHaveTextContent('Input paused');
+    expect(screen.getByRole("status", { name: '终端状态' })).toHaveTextContent('已暂停输入');
   });
 });
 
@@ -211,24 +211,24 @@ describe('JobTerminalPanel toolbar and views', () => {
     await waitFor(() => expect(controller.setRun).toHaveBeenCalled());
     act(() => controller.setPhase('ready'));
 
-    const sessionTab = screen.getByRole('tab', { name: 'Session' });
-    const auditTab = screen.getByRole('tab', { name: 'Audit' });
-    const session = screen.getByRole('tabpanel', { name: 'Session' });
+    const sessionTab = screen.getByRole('tab', { name: '会话' });
+    const auditTab = screen.getByRole('tab', { name: '命令记录' });
+    const session = screen.getByRole('tabpanel', { name: '会话' });
     const audit = document.getElementById('job-terminal-audit-view');
     expect(audit).not.toBeNull();
     expect(sessionTab).toHaveAttribute('aria-selected', 'true');
     expect(session).not.toHaveAttribute('inert');
     expect(audit).toHaveAttribute('inert');
-    expect(screen.getByRole('button', { name: 'Clear terminal' })).toBeEnabled();
-    expect(screen.getByRole('button', { name: 'Search terminal' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: '清空终端' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: '搜索终端' })).toBeEnabled();
 
     await user.click(auditTab);
 
     expect(auditTab).toHaveAttribute('aria-selected', 'true');
     expect(session).toHaveAttribute('inert');
     expect(audit).not.toHaveAttribute('inert');
-    expect(screen.getByRole('button', { name: 'Clear terminal' })).toBeDisabled();
-    expect(screen.getByRole('button', { name: 'Search terminal' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: '清空终端' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: '搜索终端' })).toBeDisabled();
   });
 
   it('keeps an inactive panel mounted and inert with every terminal control disabled', async () => {
@@ -237,11 +237,11 @@ describe('JobTerminalPanel toolbar and views', () => {
     await waitFor(() => expect(controller.setActive).toHaveBeenCalledWith(false));
     act(() => controller.setPhase('ready'));
 
-    const panel = document.querySelector('[aria-label="Job terminal"]');
+    const panel = document.querySelector('[aria-label="运行终端"]');
     expect(panel).toHaveAttribute('inert');
     expect(screen.getByTestId('job-terminal-viewport')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Clear terminal', hidden: true })).toBeDisabled();
-    expect(screen.getByRole('button', { name: 'Search terminal', hidden: true })).toBeDisabled();
+    expect(screen.getByRole('button', { name: '清空终端', hidden: true })).toBeDisabled();
+    expect(screen.getByRole('button', { name: '搜索终端', hidden: true })).toBeDisabled();
   });
 
   it('forwards pagehide to the current controller and removes the listener on cleanup', async () => {
@@ -271,21 +271,21 @@ describe('JobTerminalPanel toolbar and views', () => {
 
     act(() => controller.setFailure('input-overflow'));
 
-    expect(screen.getByRole('alert', { name: 'Terminal session error' })).toHaveTextContent(
-      'Input queue overflow. The session closed; part of the input may already have been sent.',
+    expect(screen.getByRole('alert', { name: '终端会话错误' })).toHaveTextContent(
+      '输入队列已满，会话已关闭，部分输入可能已经发送。',
     );
   });
 
   it.each([
     [
       'terminal-not-available',
-      'The terminal is no longer available. Run authority is being refreshed.',
+      "终端已不可用，正在重新核对运行状态。",
     ],
     [
       'terminal-session-already-active',
-      'A terminal session is already active. The old session must end before an explicit retry.',
+      "已有终端会话，请等待原会话结束后再重试。",
     ],
-    ['open-failed', 'Terminal session failed. Open a new session to retry.'],
+    ['open-failed', "终端会话异常，请打开新会话重试。"],
   ] as const)('renders a bounded safe alert for %s', async (failure, message) => {
     const controller = new FakeTerminalController();
     renderPanel({ controller });
@@ -293,7 +293,7 @@ describe('JobTerminalPanel toolbar and views', () => {
 
     act(() => controller.setFailure(failure));
 
-    const alert = screen.getByRole('alert', { name: 'Terminal session error' });
+    const alert = screen.getByRole('alert', { name: '终端会话错误' });
     expect(alert).toHaveTextContent(message);
     expect(alert).not.toHaveTextContent(/backend|trace/i);
   });
@@ -312,7 +312,7 @@ describe('JobTerminalPanel viewport and search', () => {
     renderPanel({ controller });
     await waitFor(() => expect(controller.setRun).toHaveBeenCalled());
 
-    const open = screen.getByRole('button', { name: 'Open terminal' });
+    const open = screen.getByRole('button', { name: '打开终端' });
     await user.click(open);
 
     expect(controller.open).toHaveBeenCalledOnce();
@@ -329,8 +329,8 @@ describe('JobTerminalPanel viewport and search', () => {
     renderPanel({ authorityLoading: true, runState: null });
 
     const viewport = screen.getByTestId('job-terminal-viewport');
-    const state = await screen.findByRole('status', { name: 'Terminal viewport state' });
-    expect(state).toHaveTextContent('Loading run authority');
+    const state = await screen.findByRole("status", { name: '终端显示状态' });
+    expect(state).toHaveTextContent('正在读取运行状态');
     expect(viewport.parentElement).toContainElement(state);
   });
 
@@ -342,11 +342,11 @@ describe('JobTerminalPanel viewport and search', () => {
 
     act(() => controller.setPhase('ready'));
     await waitFor(() => expect(controller.focus).toHaveBeenCalled());
-    await user.click(screen.getByRole('button', { name: 'Clear terminal' }));
+    await user.click(screen.getByRole('button', { name: '清空终端' }));
     expect(controller.clear).toHaveBeenCalledOnce();
 
-    await user.click(screen.getByRole('button', { name: 'Search terminal' }));
-    const searchbox = screen.getByRole('searchbox', { name: 'Search terminal output' });
+    await user.click(screen.getByRole('button', { name: '搜索终端' }));
+    const searchbox = screen.getByRole('searchbox', { name: '搜索终端输出' });
     expect(searchbox.closest('[role="tabpanel"]')).toHaveAttribute(
       'id',
       'job-terminal-session-view',
@@ -372,11 +372,11 @@ describe('JobTerminalPanel viewport and search', () => {
   });
 
   it.each([
-    ['paused', 'Input paused'],
-    ['closing', 'Closing'],
-    ['closed', 'Closed'],
-    ['exited', 'Exited'],
-    ['error', 'Terminal error'],
+    ['paused', "已暂停输入"],
+    ['closing', "正在关闭"],
+    ['closed', "已关闭"],
+    ['exited', "已退出"],
+    ['error', "终端异常"],
   ] as const)('keeps scrollback unobscured and reports %s in a compact status surface', async (phase, expected) => {
     const controller = new FakeTerminalController();
     renderPanel({ controller });
@@ -388,11 +388,11 @@ describe('JobTerminalPanel viewport and search', () => {
 
     act(() => controller.setPhase(phase));
 
-    expect(screen.queryByLabelText('Terminal viewport state')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('终端显示状态')).not.toBeInTheDocument();
     expect(viewport).toContainElement(scrollback);
-    expect(screen.getByRole('status', { name: 'Terminal state' })).toHaveTextContent(expected);
+    expect(screen.getByRole("status", { name: '终端状态' })).toHaveTextContent(expected);
     if (phase === 'error') {
-      expect(screen.getByRole('alert', { name: 'Terminal session error' })).toBeInTheDocument();
+      expect(screen.getByRole('alert', { name: '终端会话错误' })).toBeInTheDocument();
     }
   });
 
@@ -405,15 +405,15 @@ describe('JobTerminalPanel viewport and search', () => {
     });
     renderPanel({ controller, factory });
     await waitFor(() => expect(factoryOptions).toBeDefined());
-    const rendererStatus = screen.getByRole('status', { name: 'Terminal renderer' });
-    expect(rendererStatus).toHaveTextContent('DOM fallback');
+    const rendererStatus = screen.getByRole("status", { name: '终端渲染方式' });
+    expect(rendererStatus).toHaveTextContent('兼容渲染');
 
     act(() => factoryOptions?.onRendererChange('webgl'));
     expect(rendererStatus).toHaveTextContent('WebGL');
 
     act(() => factoryOptions?.onRendererChange('dom'));
-    expect(rendererStatus).toHaveTextContent('DOM fallback');
-    expect(screen.getByRole('status', { name: 'Terminal state' })).toBeInTheDocument();
+    expect(rendererStatus).toHaveTextContent('兼容渲染');
+    expect(screen.getByRole("status", { name: '终端状态' })).toBeInTheDocument();
   });
 
   it('invalidates and actively refetches only the current Run authority key', async () => {
@@ -455,17 +455,17 @@ describe('JobTerminalPanel viewport and search', () => {
     await waitFor(() => expect(factoryOptions).toBeDefined());
     act(() => controller.setPhase('ready'));
     act(() => factoryOptions?.onRendererChange('webgl'));
-    const rendererStatus = screen.getByRole('status', { name: 'Terminal renderer' });
+    const rendererStatus = screen.getByRole("status", { name: '终端渲染方式' });
     expect(rendererStatus).toHaveTextContent('WebGL');
 
-    await user.click(screen.getByRole('button', { name: 'Close terminal' }));
-    await user.click(screen.getByRole('button', { name: 'Close session' }));
+    await user.click(screen.getByRole('button', { name: '关闭终端' }));
+    await user.click(screen.getByRole('button', { name: '关闭会话' }));
     expect(rendererStatus).toHaveTextContent('WebGL');
 
-    await user.click(screen.getByRole('button', { name: 'Open terminal' }));
+    await user.click(screen.getByRole('button', { name: '打开终端' }));
 
     expect(controller.open).toHaveBeenCalledOnce();
-    expect(rendererStatus).toHaveTextContent('DOM fallback');
+    expect(rendererStatus).toHaveTextContent('兼容渲染');
   });
 });
 
@@ -520,9 +520,9 @@ describe('JobTerminalPanel audit query integration', () => {
     );
     renderPanel();
 
-    await user.click(screen.getByRole('tab', { name: 'Audit' }));
+    await user.click(screen.getByRole('tab', { name: '命令记录' }));
     expect(await screen.findByText('mvn -q -DskipTests compile exec:java')).toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: 'Load more terminal audit' }));
+    await user.click(screen.getByRole('button', { name: '加载更多命令记录' }));
     expect(await screen.findByText('mvn -q test')).toBeInTheDocument();
     expect(cursors).toEqual([null, 'cursor-older']);
   });
@@ -548,23 +548,23 @@ describe('JobTerminalPanel audit query integration', () => {
       }),
     );
     renderPanel();
-    await user.click(screen.getByRole('tab', { name: 'Audit' }));
+    await user.click(screen.getByRole('tab', { name: '命令记录' }));
     const command = await screen.findByText('mvn test -Dtest=MountedAudit');
-    const table = screen.getByRole('table', { name: 'Terminal command audit' });
+    const table = screen.getByRole('table', { name: '终端命令记录' });
     const scroller = table.parentElement;
     expect(scroller).not.toBeNull();
     if (scroller === null) throw new Error('Missing audit scroller');
     scroller.scrollTop = 73;
 
-    await user.click(screen.getByRole('tab', { name: 'Session' }));
+    await user.click(screen.getByRole('tab', { name: '会话' }));
 
     expect(document.querySelector('table')).toBe(table);
     expect(screen.getByText('mvn test -Dtest=MountedAudit')).toBe(command);
     expect(scroller.scrollTop).toBe(73);
     expect(requestCount).toBe(1);
 
-    await user.click(screen.getByRole('tab', { name: 'Audit' }));
-    expect(screen.getByRole('table', { name: 'Terminal command audit' })).toBe(table);
+    await user.click(screen.getByRole('tab', { name: '命令记录' }));
+    expect(screen.getByRole('table', { name: '终端命令记录' })).toBe(table);
     expect(scroller.scrollTop).toBe(73);
     expect(requestCount).toBe(1);
   });
@@ -590,7 +590,7 @@ describe('JobTerminalPanel audit query integration', () => {
     const controller = new FakeTerminalController();
     const factory = createFactory(controller);
     const view = renderPanel({ controller, factory });
-    await user.click(screen.getByRole('tab', { name: 'Audit' }));
+    await user.click(screen.getByRole('tab', { name: '命令记录' }));
     expect(await screen.findByText('mvn test -Dtest=LastSession')).toBeInTheDocument();
 
     view.rerender(
@@ -607,7 +607,7 @@ describe('JobTerminalPanel audit query integration', () => {
     );
 
     expect(screen.getByText('mvn test -Dtest=LastSession')).toBeInTheDocument();
-    expect(screen.getByRole('tab', { name: 'Audit' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('tab', { name: '命令记录' })).toHaveAttribute('aria-selected', 'true');
   });
 
   it('switches directly from Run A audit to Run B without retaining Run A content', async () => {
@@ -636,7 +636,7 @@ describe('JobTerminalPanel audit query integration', () => {
     const controller = new FakeTerminalController();
     const factory = createFactory(controller);
     const view = renderPanel({ controller, factory });
-    await user.click(screen.getByRole('tab', { name: 'Audit' }));
+    await user.click(screen.getByRole('tab', { name: '命令记录' }));
     expect(await screen.findByText('command-from-run-a')).toBeInTheDocument();
 
     view.rerender(
@@ -666,10 +666,10 @@ describe('CloseTerminalDialog', () => {
 
     await user.click(trigger);
 
-    expect(screen.getByRole('dialog', { name: 'Close terminal session' })).toHaveTextContent(
-      'cannot be resumed',
+    expect(screen.getByRole('dialog', { name: '关闭终端会话' })).toHaveTextContent(
+      "关闭后无法恢复",
     );
-    expect(screen.getByRole('button', { name: 'Cancel' })).toHaveFocus();
+    expect(screen.getByRole('button', { name: '取消' })).toHaveFocus();
 
     await user.keyboard('{Escape}');
 
@@ -688,8 +688,8 @@ describe('CloseTerminalDialog', () => {
     render(<CloseDialogHarness onConfirm={onConfirm} />);
     const trigger = screen.getByRole('button', { name: 'Show close dialog' });
     await user.click(trigger);
-    const cancel = screen.getByRole('button', { name: 'Cancel' });
-    const confirm = screen.getByRole('button', { name: 'Close session' });
+    const cancel = screen.getByRole('button', { name: '取消' });
+    const confirm = screen.getByRole('button', { name: '关闭会话' });
 
     await user.click(confirm);
 
@@ -716,14 +716,14 @@ describe('CloseTerminalDialog', () => {
         />,
       );
       await user.click(screen.getByRole('button', { name: 'Show close dialog' }));
-      await user.click(screen.getByRole('button', { name: 'Close session' }));
+      await user.click(screen.getByRole('button', { name: '关闭会话' }));
 
       expect(await screen.findByRole('alert')).toHaveTextContent(
-        'Unable to close terminal session',
+        "无法关闭终端会话",
       );
       expect(screen.getByRole('dialog')).toBeInTheDocument();
-      expect(screen.getByRole('button', { name: 'Cancel' })).toBeEnabled();
-      expect(screen.getByRole('button', { name: 'Close session' })).toBeEnabled();
+      expect(screen.getByRole('button', { name: '取消' })).toBeEnabled();
+      expect(screen.getByRole('button', { name: '关闭会话' })).toBeEnabled();
       await Promise.resolve();
       expect(unhandled).not.toHaveBeenCalled();
     } finally {
@@ -740,10 +740,10 @@ describe('CloseTerminalDialog', () => {
     );
     const trigger = screen.getByRole('button', { name: 'Show close dialog' });
     await user.click(trigger);
-    await user.click(screen.getByRole('button', { name: 'Close session' }));
+    await user.click(screen.getByRole('button', { name: '关闭会话' }));
     expect(await screen.findByRole('alert')).toBeInTheDocument();
 
-    await user.click(screen.getByRole('button', { name: 'Cancel' }));
+    await user.click(screen.getByRole('button', { name: '取消' }));
     await user.click(trigger);
 
     expect(screen.getByRole('dialog')).toBeInTheDocument();
@@ -759,9 +759,9 @@ describe('CloseTerminalDialog', () => {
     );
     const trigger = screen.getByRole('button', { name: 'Show close dialog' });
     await user.click(trigger);
-    await user.click(screen.getByRole('button', { name: 'Close session' }));
+    await user.click(screen.getByRole('button', { name: '关闭会话' }));
     expect(await screen.findByRole('alert')).toBeInTheDocument();
-    screen.getByRole('button', { name: 'Cancel' }).focus();
+    screen.getByRole('button', { name: '取消' }).focus();
 
     await user.keyboard('{Escape}');
     await user.click(trigger);
@@ -783,8 +783,8 @@ describe('CloseTerminalDialog', () => {
       const view = render(
         <CloseTerminalDialog open onConfirm={onConfirm} onCancel={onCancel} />,
       );
-      await user.click(screen.getByRole('button', { name: 'Close session' }));
-      expect(screen.getByRole('button', { name: 'Close session' })).toBeDisabled();
+      await user.click(screen.getByRole('button', { name: '关闭会话' }));
+      expect(screen.getByRole('button', { name: '关闭会话' })).toBeDisabled();
 
       view.rerender(
         <CloseTerminalDialog open={false} onConfirm={onConfirm} onCancel={onCancel} />,
@@ -794,8 +794,8 @@ describe('CloseTerminalDialog', () => {
       );
 
       expect(screen.queryByRole('alert')).not.toBeInTheDocument();
-      expect(screen.getByRole('button', { name: 'Cancel' })).toBeEnabled();
-      expect(screen.getByRole('button', { name: 'Close session' })).toBeEnabled();
+      expect(screen.getByRole('button', { name: '取消' })).toBeEnabled();
+      expect(screen.getByRole('button', { name: '关闭会话' })).toBeEnabled();
       await act(async () => {
         rejectClose?.(new Error('stale close failure'));
         await Promise.resolve();
@@ -817,17 +817,17 @@ describe('CloseTerminalDialog', () => {
     renderPanel({ controller });
     await waitFor(() => expect(controller.setRun).toHaveBeenCalled());
     act(() => controller.setPhase('ready'));
-    const closeTrigger = screen.getByRole('button', { name: 'Close terminal' });
+    const closeTrigger = screen.getByRole('button', { name: '关闭终端' });
 
     await user.click(closeTrigger);
     expect(controller.close).not.toHaveBeenCalled();
-    expect(screen.getByRole('button', { name: 'Cancel' })).toHaveFocus();
-    await user.click(screen.getByRole('button', { name: 'Close session' }));
+    expect(screen.getByRole('button', { name: '取消' })).toHaveFocus();
+    await user.click(screen.getByRole('button', { name: '关闭会话' }));
 
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
     expect(controller.close).toHaveBeenCalledOnce();
     expect(closeTrigger).toBeDisabled();
-    expect(screen.getByRole('tab', { name: 'Session' })).toHaveFocus();
+    expect(screen.getByRole('tab', { name: '会话' })).toHaveFocus();
     expect(document.activeElement).not.toBe(document.body);
   });
 });

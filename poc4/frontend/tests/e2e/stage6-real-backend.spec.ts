@@ -144,7 +144,7 @@ test('start run produces a policy-constrained run that progresses on the real cl
   expect(started.status()).toBe(202);
   const run = (await started.json()) as { id: string; state: string; policy: { command: string } };
   await resources.recordRun(project.id, run.id);
-  expect(run.state).toBe('STARTING');
+  expect(run.state).toBe('准备运行环境');
   expect(run.policy.command).toBe('mvn clean test');
 
   let finalState = run.state;
@@ -188,17 +188,17 @@ test('MVP core loop: failed revision, corrected revision, and persistent history
   const firstRun = (await firstRunResponse.json()) as { id: string; state: string };
   await resources.recordRun(project.id, firstRun.id);
   const firstFinal = await awaitTerminalRun(page, project.id, firstRun.id, token);
-  expect(firstFinal.state).toBe('FAILED');
+  expect(firstFinal.state).toBe('运行失败');
   expect(firstFinal.terminationReason).toBe('BUILD_FAILED');
   expect(firstFinal.exitCode).not.toBe(0);
 
   await login(page, ALICE);
   await openProjectFromList(page, project);
-  await page.getByRole('tab', { name: 'Run' }).click();
-  await expect(page.getByRole('status', { name: 'Run state' })).toContainText('FAILED');
+  await page.getByRole('tab', { name: '运行记录' }).click();
+  await expect(page.getByRole('status', { name: '运行状态' })).toContainText('运行失败');
   // The current runner uses mvn -q: assert the actual compiler feedback, not Maven's quieted banner.
-  await expect(page.getByRole('region', { name: 'Run logs' })).toContainText('cannot find symbol');
-  await expect(page.getByRole('region', { name: 'Run logs' })).toContainText('missingSymbol');
+  await expect(page.getByRole('region', { name: '运行日志' })).toContainText('cannot find symbol');
+  await expect(page.getByRole('region', { name: '运行日志' })).toContainText('missingSymbol');
 
   const correctedContent = originalContent.content;
   const currentTree = await page.request.get(treeUrl, { headers: authHeaders(token) });
@@ -219,22 +219,22 @@ test('MVP core loop: failed revision, corrected revision, and persistent history
   const secondRun = (await secondRunResponse.json()) as { id: string; state: string };
   await resources.recordRun(project.id, secondRun.id);
   const secondFinal = await awaitTerminalRun(page, project.id, secondRun.id, token);
-  expect(secondFinal.state).toBe('SUCCEEDED');
+  expect(secondFinal.state).toBe('运行成功');
   expect(secondFinal.exitCode).toBe(0);
 
   await login(page, ALICE);
   await openProjectFromList(page, project);
-  await page.getByRole('tab', { name: 'Run' }).click();
-  await expect(page.getByRole('status', { name: 'Run state' })).toContainText('SUCCEEDED');
-  await expect(page.getByRole('region', { name: 'Run logs' })).toContainText('Hello from Manao');
+  await page.getByRole('tab', { name: '运行记录' }).click();
+  await expect(page.getByRole('status', { name: '运行状态' })).toContainText('运行成功');
+  await expect(page.getByRole('region', { name: '运行日志' })).toContainText('Hello from Manao');
   const history = await page.request.get('/api/v1/projects/' + project.id + '/runs?limit=20', {
     headers: authHeaders(token),
   });
   expect(history.ok()).toBeTruthy();
   const historyBody = (await history.json()) as { items: { id: string; state: string }[] };
   expect(historyBody.items.map((run) => [run.id, run.state])).toEqual([
-    [secondRun.id, 'SUCCEEDED'],
-    [firstRun.id, 'FAILED'],
+    [secondRun.id, '运行成功'],
+    [firstRun.id, '运行失败'],
   ]);
 
   const savedAfterReload = await page.request.get(contentUrl, { headers: authHeaders(token) });
@@ -242,9 +242,9 @@ test('MVP core loop: failed revision, corrected revision, and persistent history
   expect((await savedAfterReload.json() as { content: string }).content).toBe(correctedContent);
 
   // This final step is user-driven; fixture teardown is not proof that the UI deletion succeeded.
-  await page.getByRole('link', { name: 'Back to projects' }).click();
+  await page.getByRole('link', { name: '返回项目列表' }).click();
   const card = page.getByRole('article', { name: project.name });
-  await card.getByRole('button', { name: 'Delete project' }).click();
+  await card.getByRole('button', { name: '删除项目' }).click();
   await page.getByRole('alertdialog').getByRole('button', { name: 'Delete permanently' }).click();
   await expect(page.getByText('Project deleted.', { exact: true })).toBeVisible({ timeout: 120_000 });
   await expect(card).toHaveCount(0);
@@ -277,7 +277,7 @@ async function openProjectFromList(
 ): Promise<void> {
   const card = page.getByRole('article', { name: project.name });
   await expect(card).toBeVisible();
-  await card.getByRole('link', { name: 'Open' }).click();
+  await card.getByRole('link', { name: '进入工作台' }).click();
   await expect(page).toHaveURL(new RegExp('/projects/' + project.id + '$'));
 }
 async function awaitTerminalRun(

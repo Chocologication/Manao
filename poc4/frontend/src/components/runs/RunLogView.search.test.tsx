@@ -21,7 +21,7 @@ describe('run log search and error actions', () => {
     const store = makeStore(text);
     const view = render(<RunLogView store={store} />);
     await user.type(screen.getByLabelText('搜索日志'), 'error');
-    const log = screen.getByRole('region', { name: 'Run logs' });
+    const log = screen.getByRole('region', { name: '运行日志' });
     expect(log.querySelector('pre')).toHaveTextContent('before Error: one between ERROR: two after');
     expect(log.querySelectorAll('mark')).toHaveLength(2);
     expect(log.querySelector('[data-active-match="true"]')).toHaveTextContent('Error');
@@ -39,7 +39,7 @@ describe('run log search and error actions', () => {
     const store = makeStore(text);
     const view = render(<RunLogView store={store} />);
     await userEvent.setup().type(screen.getByLabelText('搜索日志'), 'error');
-    const log = screen.getByRole('region', { name: 'Run logs' });
+    const log = screen.getByRole('region', { name: '运行日志' });
     expect(log.querySelectorAll('mark')).toHaveLength(2000);
     expect(log.querySelector('pre')?.textContent).toBe(text);
     expect(screen.getByText(/仅高亮前 2000 处/)).toBeInTheDocument();

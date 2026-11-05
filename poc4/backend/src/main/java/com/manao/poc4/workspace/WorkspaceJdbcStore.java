@@ -94,11 +94,15 @@ public final class WorkspaceJdbcStore implements WorkspaceStore {
     }
 
     @Override public boolean commitOperation(String operationId, String projectId, long expectedRevision) {
-        return commitInTransaction(operationId, projectId, expectedRevision, false);
+        return commitInTransaction(operationId, projectId, expectedRevision, null);
     }
 
     @Override public boolean commitReconciledOperation(String operationId, String projectId, long expectedRevision) {
-        return commitInTransaction(operationId, projectId, expectedRevision, true);
+        return commitInTransaction(operationId, projectId, expectedRevision, "PYTHON_DEPENDENCIES");
+    }
+
+    @Override public boolean commitReconciledFileOperation(String operationId, String projectId, long expectedRevision) {
+        return commitInTransaction(operationId, projectId, expectedRevision, "FILE");
     }
 
     /**
@@ -111,7 +115,8 @@ public final class WorkspaceJdbcStore implements WorkspaceStore {
      * WORKSPACE_RECONCILIATION_REQUIRED by clearing that failure in the same transaction.
      */
     private boolean commitInTransaction(String operationId, String projectId, long expectedRevision,
-                                        boolean reconciled) {
+                                        String reconciledKind) {
+        boolean reconciled = reconciledKind != null;
         Boolean committed = transaction.execute(status -> {
             List<Object[]> projects = jdbc.query(
                 "SELECT state, failure_reason FROM project WHERE id = ? FOR UPDATE",
@@ -140,7 +145,7 @@ public final class WorkspaceJdbcStore implements WorkspaceStore {
             int operation = jdbc.update(
                 "UPDATE workspace_operation SET state = 'COMMITTED', committed_at = ? "
                     + "WHERE id = ? AND project_id = ? AND expected_revision = ? AND state = 'PENDING'"
-                    + (reconciled ? " AND operation_kind = 'PYTHON_DEPENDENCIES'" : ""),
+                    + (reconciled ? " AND operation_kind = '" + reconciledKind + "'" : ""),
                 Timestamp.from(Instant.now()), operationId, projectId, expectedRevision);
             if (operation != 1) {
                 status.setRollbackOnly();

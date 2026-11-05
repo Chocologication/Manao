@@ -1,7 +1,7 @@
 import type { ProjectDirectoryPath, ProjectRelativePath } from '../../contracts/file';
 import { parseProjectRelativePath } from './pathPolicy';
 
-const ENTRY_NAME_REQUIRED = 'Entry name required';
+const ENTRY_NAME_REQUIRED = '请输入有效名称，不能包含路径分隔符或仅使用点号';
 
 export function parseEntryBasename(value: string): string {
   if (typeof value !== 'string' || value === '') {

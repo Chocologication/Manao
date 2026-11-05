@@ -41,11 +41,14 @@ export const JAVA_SPRING_BOOT_COMMAND = 'mvn -q -DskipTests spring-boot:run';
 export const PYTHON_CONSOLE_COMMAND = 'python -u main.py';
 export const PYTHON_FASTAPI_COMMAND = 'python -u -m uvicorn app.main:app';
 
+export const NODE_START_COMMAND = 'pnpm start';
+
 export type RunCommand =
   | typeof JAVA_CONSOLE_COMMAND
   | typeof JAVA_SPRING_BOOT_COMMAND
   | typeof PYTHON_CONSOLE_COMMAND
-  | typeof PYTHON_FASTAPI_COMMAND;
+  | typeof PYTHON_FASTAPI_COMMAND
+  | typeof NODE_START_COMMAND;
 
 /** The pinned toolchain of this stage; the launcher images and backend agree on it. */
 export const PYTHON_RUN_VERSION = '3.13';
@@ -61,7 +64,8 @@ export type PythonRunRuntime = {
   pythonVersion: typeof PYTHON_RUN_VERSION;
   packageManager: typeof PYTHON_RUN_PACKAGE_MANAGER;
 };
-export type RunRuntime = JavaRunRuntime | PythonRunRuntime;
+export type NodeRunRuntime = { language: 'javascript' | 'typescript'; nodeMajor: 24; packageManager: 'pnpm'; pnpmMajor: 10 };
+export type RunRuntime = JavaRunRuntime | PythonRunRuntime | NodeRunRuntime;
 /** Runtime node of a parsed snapshot: legacy Java rows omit the language discriminator. */
 export type RunPolicyRuntime = RunRuntime | LegacyJavaRunRuntime;
 
@@ -80,7 +84,7 @@ type RunPolicyBase = {
  * them. New-format rows name their console template; legacy rows omit templateId.
  */
 export type TaskRunPolicy = RunPolicyBase & {
-  templateId?: 'java-console' | 'python-console';
+  templateId?: 'java-console' | 'python-console' | 'node-javascript-console' | 'node-typescript-console';
   timeoutSeconds: number;
   executionKind?: 'TASK';
   startupTimeoutSeconds?: number;
@@ -93,7 +97,7 @@ export type TaskRunPolicy = RunPolicyBase & {
  * rows keep the historical console command; new-format rows name their web template.
  */
 export type ServiceRunPolicy = RunPolicyBase & {
-  templateId?: 'java-spring-boot-web' | 'python-fastapi-web';
+  templateId?: 'java-spring-boot-web' | 'python-fastapi-web' | 'node-javascript-web' | 'node-typescript-web';
   executionKind: 'SERVICE';
   timeoutSeconds: number;
   startupTimeoutSeconds: number;
@@ -117,6 +121,11 @@ const DEFAULT_RUN_TIMEOUT_SECONDS = 1800;
 /** The per-template no-run display; it must never default a Python project to Maven. */
 export function templateRunDisplay(templateId: RuntimeTemplateId): RunTemplateDisplay {
   switch (templateId) {
+    case 'node-javascript-console':
+    case 'node-javascript-web':
+    case 'node-typescript-console':
+    case 'node-typescript-web':
+      return { command: NODE_START_COMMAND, runtimeLabel: `Node.js 24 · ${templateId.includes('typescript') ? 'TypeScript' : 'JavaScript'} · pnpm 10`, timeoutSeconds: DEFAULT_RUN_TIMEOUT_SECONDS };
     case 'java-console':
       return {
         command: JAVA_CONSOLE_COMMAND,
@@ -146,6 +155,7 @@ export function templateRunDisplay(templateId: RuntimeTemplateId): RunTemplateDi
 
 /** Human-readable runtime identity of a parsed policy (toolbar version display). */
 export function runRuntimeLabel(runtime: RunPolicyRuntime): string {
+  if ('nodeMajor' in runtime) return `Node.js ${runtime.nodeMajor} · ${runtime.language === 'typescript' ? 'TypeScript' : 'JavaScript'} · pnpm ${runtime.pnpmMajor}`;
   if ('language' in runtime && runtime.language === 'python') {
     return `Python ${runtime.pythonVersion} · ${runtime.packageManager}`;
   }
@@ -375,15 +385,15 @@ function parseRunResourcesNode(
 type TemplatedPolicySpec =
   | {
       kind: 'TASK';
-      templateId: 'java-console' | 'python-console';
+      templateId: 'java-console' | 'python-console' | 'node-javascript-console' | 'node-typescript-console';
       command: RunCommand;
-      language: 'java' | 'python';
+      language: 'java' | 'python' | 'javascript' | 'typescript';
     }
   | {
       kind: 'SERVICE';
-      templateId: 'java-spring-boot-web' | 'python-fastapi-web';
+      templateId: 'java-spring-boot-web' | 'python-fastapi-web' | 'node-javascript-web' | 'node-typescript-web';
       command: RunCommand;
-      language: 'java' | 'python';
+      language: 'java' | 'python' | 'javascript' | 'typescript';
     };
 
 /** Mirror of the backend RuntimeTemplate enum; Record forces every id to stay covered. */
@@ -402,14 +412,13 @@ const TEMPLATED_POLICIES: Record<RuntimeTemplateId, TemplatedPolicySpec> = {
     command: PYTHON_FASTAPI_COMMAND,
     language: 'python',
   },
+  'node-javascript-console': { kind: 'TASK', templateId: 'node-javascript-console', command: NODE_START_COMMAND, language: 'javascript' },
+  'node-javascript-web': { kind: 'SERVICE', templateId: 'node-javascript-web', command: NODE_START_COMMAND, language: 'javascript' },
+  'node-typescript-console': { kind: 'TASK', templateId: 'node-typescript-console', command: NODE_START_COMMAND, language: 'typescript' },
+  'node-typescript-web': { kind: 'SERVICE', templateId: 'node-typescript-web', command: NODE_START_COMMAND, language: 'typescript' },
 };
 
-const RUNTIME_TEMPLATE_IDS: ReadonlySet<RuntimeTemplateId> = new Set([
-  'java-console',
-  'java-spring-boot-web',
-  'python-console',
-  'python-fastapi-web',
-] as const);
+const RUNTIME_TEMPLATE_IDS = new Set(Object.keys(TEMPLATED_POLICIES));
 
 /** A java runtime needs both pinned fields, the java language and no python fields. */
 function parseJavaRunRuntime(value: unknown): JavaRunRuntime {
@@ -417,7 +426,7 @@ function parseJavaRunRuntime(value: unknown): JavaRunRuntime {
   if (runtime.language !== 'java' || runtime.javaMajor !== 17 || runtime.mavenMajor !== 3) {
     invalidRunResponse();
   }
-  if ('pythonVersion' in runtime || 'packageManager' in runtime) {
+  if ('pythonVersion' in runtime || 'packageManager' in runtime || 'nodeMajor' in runtime || 'pnpmMajor' in runtime) {
     invalidRunResponse();
   }
   return { language: 'java', javaMajor: 17, mavenMajor: 3 };
@@ -433,7 +442,7 @@ function parsePythonRunRuntime(value: unknown): PythonRunRuntime {
   ) {
     invalidRunResponse();
   }
-  if ('javaMajor' in runtime || 'mavenMajor' in runtime) {
+  if ('javaMajor' in runtime || 'mavenMajor' in runtime || 'nodeMajor' in runtime || 'pnpmMajor' in runtime) {
     invalidRunResponse();
   }
   return {
@@ -441,6 +450,13 @@ function parsePythonRunRuntime(value: unknown): PythonRunRuntime {
     pythonVersion: PYTHON_RUN_VERSION,
     packageManager: PYTHON_RUN_PACKAGE_MANAGER,
   };
+}
+
+function parseNodeRunRuntime(value: unknown, language: 'javascript' | 'typescript'): NodeRunRuntime {
+  const runtime = asRecord(value);
+  if (runtime.language !== language || runtime.nodeMajor !== 24 || runtime.packageManager !== 'pnpm' || runtime.pnpmMajor !== 10
+    || 'javaMajor' in runtime || 'mavenMajor' in runtime || 'pythonVersion' in runtime) invalidRunResponse();
+  return { language, nodeMajor: 24, packageManager: 'pnpm', pnpmMajor: 10 };
 }
 
 function parseRunPolicy(value: unknown): RunPolicy {
@@ -535,7 +551,7 @@ function parseTemplatedRunPolicy(
     invalidRunResponse();
   }
   const runtime =
-    spec.language === 'java' ? parseJavaRunRuntime(record.runtime) : parsePythonRunRuntime(record.runtime);
+    spec.language === 'java' ? parseJavaRunRuntime(record.runtime) : spec.language === 'python' ? parsePythonRunRuntime(record.runtime) : parseNodeRunRuntime(record.runtime, spec.language);
   // The template fixes the execution kind; a present-but-different kind is a conflict.
   if (record.executionKind !== undefined && record.executionKind !== spec.kind) {
     invalidRunResponse();

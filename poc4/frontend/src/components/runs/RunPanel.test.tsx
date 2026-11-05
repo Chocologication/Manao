@@ -1,3 +1,4 @@
+import { runStateLabel } from '@/components/ui/labPresentation';
 import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
@@ -209,7 +210,7 @@ function renderWithCoordinator(
 }
 
 async function loadedIdle(): Promise<HTMLElement> {
-  const start = await screen.findByRole('button', { name: 'Start run' });
+  const start = await screen.findByRole('button', { name: '启动运行' });
   await waitFor(() => {
     expect(start).toBeEnabled();
   });
@@ -217,15 +218,15 @@ async function loadedIdle(): Promise<HTMLElement> {
 }
 
 function runStateStatus(): HTMLElement {
-  return screen.getByRole('status', { name: 'Run state' });
+  return screen.getByRole("status", { name: '运行状态' });
 }
 
 function logConnectionStatus(): HTMLElement {
-  return screen.getByRole('status', { name: 'Log connection' });
+  return screen.getByRole("status", { name: '日志连接状态' });
 }
 
 function logRegion(): HTMLElement {
-  return screen.getByRole('region', { name: 'Run logs' });
+  return screen.getByRole('region', { name: '运行日志' });
 }
 
 function documentOrder(earlier: HTMLElement, later: HTMLElement): void {
@@ -304,18 +305,18 @@ describe('RunPanel authority and start preconditions', () => {
     await authenticateAsAlice();
     renderPanel();
 
-    const start = await screen.findByRole('button', { name: 'Start run' });
+    const start = await screen.findByRole('button', { name: '启动运行' });
     expect(start).toBeDisabled();
     await waitFor(() => {
       expect(start).toHaveAttribute('title', runPreconditionDescription('AUTHORITY_LOADING'));
     });
-    expect(runStateStatus()).toHaveTextContent(/loading/i);
+    expect(runStateStatus()).toHaveTextContent(/正在核对运行状态/i);
     expect(runStateStatus().querySelector('svg')).not.toBeNull();
 
     release();
     await loadedIdle();
-    expect(start).toHaveAttribute('title', 'Start run');
-    expect(runStateStatus()).toHaveTextContent(/idle/i);
+    expect(start).toHaveAttribute('title', '启动运行');
+    expect(runStateStatus()).toHaveTextContent(/空闲/i);
   });
 
   it('shows an authority error alert with retry and keeps Start disabled', async () => {
@@ -336,11 +337,11 @@ describe('RunPanel authority and start preconditions', () => {
     renderPanel();
 
     const alert = await screen.findByRole('alert');
-    expect(alert).toHaveTextContent(/unable to load run authority/i);
+    expect(alert).toHaveTextContent(/无法读取运行状态/i);
     expect(alert).not.toHaveTextContent('trace-active-403');
-    expect(screen.getByRole('button', { name: 'Start run' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: '启动运行' })).toBeDisabled();
 
-    await userEvent.setup().click(screen.getByRole('button', { name: 'Retry loading run authority' }));
+    await userEvent.setup().click(screen.getByRole('button', { name: '重试读取运行状态' }));
     await loadedIdle();
     expect(attempts).toBeGreaterThan(1);
   });
@@ -362,7 +363,7 @@ describe('RunPanel authority and start preconditions', () => {
     expect(screen.getByText('mvn -q -DskipTests compile exec:java')).toBeInTheDocument();
     expect(screen.getByText(/Java 17/)).toBeInTheDocument();
     expect(screen.getByText(/Maven 3/)).toBeInTheDocument();
-    expect(screen.getByText(/timeout 1800s/)).toBeInTheDocument();
+    expect(screen.getByText(/运行时限 1800 秒/)).toBeInTheDocument();
 
     const current = queryClient.getQueryData(fileKeys.revision(ALICE_SEED_PROJECT_ID));
     expect(typeof current).toBe('string');
@@ -381,7 +382,7 @@ describe('RunPanel authority and start preconditions', () => {
     stubRuns({ active: null });
     await authenticateAsAlice();
     renderPanel(undefined, 'java-console', { agentTaskActive: true });
-    const start = await screen.findByRole('button', { name: 'Start run' });
+    const start = await screen.findByRole('button', { name: '启动运行' });
     await waitFor(() => {
       expect(start).toHaveAttribute('title', runPreconditionDescription('AGENT_TASK_ACTIVE'));
     });
@@ -394,7 +395,7 @@ describe('RunPanel authority and start preconditions', () => {
     workspaceSessionStore.getState().activateProject(ALICE_SEED_PROJECT_ID);
     workspaceSessionStore.getState().setDirty(parseProjectRelativePath('pom.xml'), true);
     renderPanel();
-    const start = await screen.findByRole('button', { name: 'Start run' });
+    const start = await screen.findByRole('button', { name: '启动运行' });
     await waitFor(() => {
       expect(start).toHaveAttribute('title', runPreconditionDescription('DIRTY_FILES'));
     });
@@ -444,7 +445,7 @@ describe('RunPanel authority and start preconditions', () => {
     expect(start).toBeDisabled();
     releaseStart();
     await waitFor(() => {
-      expect(runStateStatus()).toHaveTextContent(/STARTING|RUNNING/);
+      expect(runStateStatus()).toHaveTextContent(/准备运行环境|正在执行/);
     });
     expect(start).toHaveAttribute('title', runPreconditionDescription('RUN_ACTIVE'));
     expect(start).toBeDisabled();
@@ -472,7 +473,7 @@ describe('RunPanel run policy display', () => {
     renderPanel(undefined, 'java-spring-boot-web');
     const user = userEvent.setup();
     const historyButton = await screen.findByRole('button', {
-      name: `${pythonRun.createdAt} FAILED`,
+      name: `${pythonRun.createdAt} 运行失败`,
     });
     await user.click(historyButton);
     expect(screen.getByText('python -u main.py')).toBeInTheDocument();
@@ -489,25 +490,25 @@ describe('RunPanel run states and stop', () => {
     const coordinator = new RunAuthorityCoordinator({ projectId: ALICE_SEED_PROJECT_ID, fetchRun: id => getRun(ALICE_SEED_PROJECT_ID, id) });
     const props = { projectId: ALICE_SEED_PROJECT_ID, projectTemplateId: 'java-console' as const, coordinator };
     const view = render(<AppProviders><RunPanel {...props} agentTaskActive /></AppProviders>);
-    await waitFor(() => expect(runStateStatus()).toHaveTextContent(state));
-    expect(screen.getByRole('button', { name: 'Stop run' })).toBeDisabled();
-    if (state === 'RUNNING') expect(screen.getByRole('button', { name: 'Stop run' })).toHaveAttribute('title', 'AI task is controlling the application. End the AI task first.');
+    await waitFor(() => expect(runStateStatus()).toHaveTextContent(runStateLabel(state)));
+    expect(screen.getByRole('button', { name: '停止运行' })).toBeDisabled();
+    if (state === 'RUNNING') expect(screen.getByRole('button', { name: '停止运行' })).toHaveAttribute('title', 'AI 任务正在管理应用，请先结束任务。');
     view.rerender(<AppProviders><RunPanel {...props} agentTaskActive={false} /></AppProviders>);
     await waitFor(() => {
-      if (state === 'RUNNING') expect(screen.getByRole('button', { name: 'Stop run' })).toBeEnabled();
-      else expect(screen.getByRole('button', { name: 'Stop run' })).toBeDisabled();
+      if (state === 'RUNNING') expect(screen.getByRole('button', { name: '停止运行' })).toBeEnabled();
+      else expect(screen.getByRole('button', { name: '停止运行' })).toBeDisabled();
     });
-    expect(screen.queryByText(/AI task is controlling the application/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/AI 任务正在管理应用/)).not.toBeInTheDocument();
   });
 
   it('keeps start and stop locked during an Agent while retaining logs', async () => {
     stubRuns({ active: makeRun('run-owned', 'RUNNING') });
     await authenticateAsAlice();
     renderPanel(undefined, 'java-console', { agentTaskActive: true });
-    await waitFor(() => expect(runStateStatus()).toHaveTextContent('RUNNING'));
-    expect(screen.getByRole('button', { name: 'Start run' })).toBeDisabled();
-    expect(screen.getByRole('button', { name: 'Stop run' })).toBeDisabled();
-    expect(screen.getByRole('list', { name: 'Recent runs' })).toBeInTheDocument();
+    await waitFor(() => expect(runStateStatus()).toHaveTextContent('正在执行'));
+    expect(screen.getByRole('button', { name: '启动运行' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: '停止运行' })).toBeDisabled();
+    expect(screen.getByRole('list', { name: '最近运行' })).toBeInTheDocument();
   });
 
   it('rechecks Agent occupancy when an already open stop dialog is confirmed', async () => {
@@ -517,11 +518,11 @@ describe('RunPanel run states and stop', () => {
     const stop = vi.fn();
     server.use(http.post('/api/v1/projects/:projectId/runs/active/stop', () => { stop(); return HttpResponse.json({}); }));
     const view = render(<AppProviders><RunPanel projectId={ALICE_SEED_PROJECT_ID} projectTemplateId="java-console" coordinator={coordinator} agentTaskActive={false} /></AppProviders>);
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Stop run' })).toBeEnabled());
-    await userEvent.setup().click(screen.getByRole('button', { name: 'Stop run' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: '停止运行' })).toBeEnabled());
+    await userEvent.setup().click(screen.getByRole('button', { name: '停止运行' }));
     view.rerender(<AppProviders><RunPanel projectId={ALICE_SEED_PROJECT_ID} projectTemplateId="java-console" coordinator={coordinator} agentTaskActive /></AppProviders>);
     const fetchSpy = vi.spyOn(globalThis, 'fetch');
-    await userEvent.setup().click(screen.getByRole('button', { name: 'Stop' }));
+    await userEvent.setup().click(screen.getByRole('button', { name: '停止' }));
     expect(fetchSpy.mock.calls.filter(([, init]) => init?.method === 'POST')).toHaveLength(0);
   });
   it.each([
@@ -543,26 +544,26 @@ describe('RunPanel run states and stop', () => {
     renderPanel();
 
     await waitFor(() => {
-      expect(runStateStatus()).toHaveTextContent(state);
+      expect(runStateStatus()).toHaveTextContent(runStateLabel(state));
     });
     expect(runStateStatus().querySelector('svg')).not.toBeNull();
     expect(screen.getByText('mvn -q -DskipTests compile exec:java')).toBeInTheDocument();
-    const stop = screen.getByRole('button', { name: 'Stop run' });
+    const stop = screen.getByRole('button', { name: '停止运行' });
     if (stopEnabled) {
       expect(stop).toBeEnabled();
     } else {
       expect(stop).toBeDisabled();
     }
     if (waiting) {
-      expect(runStateStatus()).toHaveTextContent(/waiting/i);
-      expect(stop.getAttribute('title')).toMatch(/waiting/i);
+      expect(runStateStatus()).toHaveTextContent(/等待服务端确认/i);
+      expect(stop.getAttribute('title')).toMatch(/等待服务端确认/i);
     }
     if (state === 'TIMED_OUT') {
-      expect(runStateStatus()).toHaveTextContent('TIMED_OUT');
-      expect(screen.getByText(/Finished/)).toHaveTextContent(FINISHED_AT);
+      expect(runStateStatus()).toHaveTextContent('运行超时');
+      expect(screen.getByText(/结束于/)).toHaveTextContent(FINISHED_AT);
     }
     if (state === 'STARTING' || state === 'RUNNING' || state === 'STOPPING' || state === 'RECOVERING') {
-      expect(screen.getByText(/Elapsed/)).toBeInTheDocument();
+      expect(screen.getByText(/已运行/)).toBeInTheDocument();
     }
   });
 
@@ -571,17 +572,17 @@ describe('RunPanel run states and stop', () => {
     await authenticateAsAlice();
     renderPanel();
     await loadedIdle();
-    await userEvent.setup().click(screen.getByRole('button', { name: 'Start run' }));
+    await userEvent.setup().click(screen.getByRole('button', { name: '启动运行' }));
     await waitFor(() => {
-      expect(runStateStatus()).toHaveTextContent('RUNNING');
+      expect(runStateStatus()).toHaveTextContent('正在执行');
     });
-    expect(screen.getByText(/Elapsed/)).toBeInTheDocument();
+    expect(screen.getByText(/已运行/)).toBeInTheDocument();
     await new Promise((resolve) => {
       setTimeout(resolve, 1100);
     });
-    expect(runStateStatus()).toHaveTextContent('RUNNING');
-    expect(runStateStatus()).not.toHaveTextContent('TIMED_OUT');
-    expect(screen.getByRole('button', { name: 'Start run' })).toBeDisabled();
+    expect(runStateStatus()).toHaveTextContent('正在执行');
+    expect(runStateStatus()).not.toHaveTextContent('运行超时');
+    expect(screen.getByRole('button', { name: '启动运行' })).toBeDisabled();
     expect(isWorkspaceEditable).toBeTypeOf('function');
   });
 
@@ -591,31 +592,31 @@ describe('RunPanel run states and stop', () => {
     renderPanel();
     await loadedIdle();
     const user = userEvent.setup();
-    await user.click(screen.getByRole('button', { name: 'Start run' }));
-    const stop = await screen.findByRole('button', { name: 'Stop run' });
+    await user.click(screen.getByRole('button', { name: '启动运行' }));
+    const stop = await screen.findByRole('button', { name: '停止运行' });
     await waitFor(() => {
       expect(stop).toBeEnabled();
     });
 
     await user.click(stop);
-    expect(await screen.findByRole('dialog', { name: 'Stop run' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Cancel' })).toHaveFocus();
+    expect(await screen.findByRole('dialog', { name: '停止运行' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '取消' })).toHaveFocus();
     await user.keyboard('{Escape}');
     await waitFor(() => {
-      expect(screen.queryByRole('dialog', { name: 'Stop run' })).not.toBeInTheDocument();
+      expect(screen.queryByRole('dialog', { name: '停止运行' })).not.toBeInTheDocument();
     });
     expect(stop).toHaveFocus();
-    expect(runStateStatus()).toHaveTextContent(/STARTING|RUNNING/);
+    expect(runStateStatus()).toHaveTextContent(/准备运行环境|正在执行/);
 
     await user.click(stop);
-    expect(await screen.findByRole('dialog', { name: 'Stop run' })).toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: 'Cancel' }));
-    expect(runStateStatus()).toHaveTextContent(/STARTING|RUNNING/);
+    expect(await screen.findByRole('dialog', { name: '停止运行' })).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '取消' }));
+    expect(runStateStatus()).toHaveTextContent(/准备运行环境|正在执行/);
 
     await user.click(stop);
-    await user.click(screen.getByRole('button', { name: 'Stop' }));
+    await user.click(screen.getByRole('button', { name: '停止' }));
     await waitFor(() => {
-      expect(runStateStatus()).toHaveTextContent(/STOPPING|CANCELLED|Reloading/);
+      expect(runStateStatus()).toHaveTextContent(/正在停止|已停止|正在重新加载工作区/);
     });
   });
 });
@@ -673,7 +674,7 @@ describe('RunPanel service lifetime display', () => {
   }
 
   function availabilityStatus(): HTMLElement {
-    return screen.getByRole('status', { name: 'Run availability' });
+    return screen.getByRole("status", { name: '服务可用状态' });
   }
 
   it('shows Starting before verified readiness and does not count the lifetime yet', async () => {
@@ -682,45 +683,47 @@ describe('RunPanel service lifetime display', () => {
     renderPanel();
 
     await waitFor(() => {
-      expect(runStateStatus()).toHaveTextContent('RUNNING');
+      expect(runStateStatus()).toHaveTextContent('正在执行');
     });
-    expect(availabilityStatus()).toHaveTextContent('Starting');
-    expect(availabilityStatus()).not.toHaveTextContent(/left/);
-    expect(screen.getByText(/Elapsed/)).toBeInTheDocument();
+    expect(availabilityStatus()).toHaveTextContent('正在启动');
+    expect(availabilityStatus()).not.toHaveTextContent(/剩余/);
+    expect(screen.getByText(/已运行/)).toBeInTheDocument();
   });
 
   it('shows Accessible with the remaining verified lifetime', async () => {
+    const nowMs = Date.now();
     stubRuns({
       active: makeServiceRun('run-svc-ready', 'RUNNING', {
-        firstReadyAt: new Date(Date.now() - 7100_000).toISOString(),
-        expiresAt: new Date(Date.now() + 100_000).toISOString(),
+        firstReadyAt: new Date(nowMs - 7100_000).toISOString(),
+        expiresAt: new Date(nowMs + 100_000).toISOString(),
       }),
     });
     await authenticateAsAlice();
     renderPanel();
 
     await waitFor(() => {
-      expect(availabilityStatus()).toHaveTextContent(/Accessible/);
+      expect(availabilityStatus()).toHaveTextContent(/可访问/);
     });
-    expect(availabilityStatus()).toHaveTextContent(/left/);
+    expect(availabilityStatus()).toHaveTextContent(/剩余/);
   });
 
   it('shows Unavailable after the lifetime ends without inventing a terminal state', async () => {
+    const nowMs = Date.now();
     stubRuns({
       active: makeServiceRun('run-svc-expired', 'RUNNING', {
-        firstReadyAt: new Date(Date.now() - 7201_000).toISOString(),
-        expiresAt: new Date(Date.now() - 1000).toISOString(),
+        firstReadyAt: new Date(nowMs - 7201_000).toISOString(),
+        expiresAt: new Date(nowMs - 1000).toISOString(),
       }),
     });
     await authenticateAsAlice();
     renderPanel();
 
     await waitFor(() => {
-      expect(availabilityStatus()).toHaveTextContent('Unavailable');
+      expect(availabilityStatus()).toHaveTextContent('暂不可用');
     });
-    expect(runStateStatus()).toHaveTextContent('RUNNING');
-    expect(runStateStatus()).not.toHaveTextContent('TIMED_OUT');
-    expect(screen.getByRole('button', { name: 'Start run' })).toBeDisabled();
+    expect(runStateStatus()).toHaveTextContent('正在执行');
+    expect(runStateStatus()).not.toHaveTextContent('运行超时');
+    expect(screen.getByRole('button', { name: '启动运行' })).toBeDisabled();
   });
 
   it('marks a service run that reached the two hour limit', async () => {
@@ -742,9 +745,9 @@ describe('RunPanel service lifetime display', () => {
     renderPanel();
 
     await waitFor(() => {
-      expect(runStateStatus()).toHaveTextContent('TIMED_OUT');
+      expect(runStateStatus()).toHaveTextContent('运行超时');
     });
-    expect(availabilityStatus()).toHaveTextContent('Reached the two hour limit');
+    expect(availabilityStatus()).toHaveTextContent('已达到两小时运行上限');
   });
 
   it('shows Failed and Stopped for exited and user-stopped service runs', async () => {
@@ -760,9 +763,9 @@ describe('RunPanel service lifetime display', () => {
     renderPanel();
 
     await waitFor(() => {
-      expect(runStateStatus()).toHaveTextContent('FAILED');
+      expect(runStateStatus()).toHaveTextContent('运行失败');
     });
-    expect(availabilityStatus()).toHaveTextContent('Failed');
+    expect(availabilityStatus()).toHaveTextContent('失败');
 
     cleanup();
     resetAppRuntime();
@@ -777,9 +780,9 @@ describe('RunPanel service lifetime display', () => {
     });
     renderPanel();
     await waitFor(() => {
-      expect(runStateStatus()).toHaveTextContent('CANCELLED');
+      expect(runStateStatus()).toHaveTextContent('已停止');
     });
-    expect(availabilityStatus()).toHaveTextContent('Stopped');
+    expect(availabilityStatus()).toHaveTextContent('已停止');
   });
 
   it('shows no availability status for TASK runs', async () => {
@@ -788,9 +791,9 @@ describe('RunPanel service lifetime display', () => {
     renderPanel();
 
     await waitFor(() => {
-      expect(runStateStatus()).toHaveTextContent('RUNNING');
+      expect(runStateStatus()).toHaveTextContent('正在执行');
     });
-    expect(screen.queryByRole('status', { name: 'Run availability' })).toBeNull();
+    expect(screen.queryByRole("status", { name: '服务可用状态' })).toBeNull();
   });
 
   it('surfaces the dependency-not-ready hint from a rejected start', async () => {
@@ -847,9 +850,9 @@ describe('RunPanel history', () => {
     );
     await authenticateAsAlice();
     renderPanel();
-    expect(await screen.findByRole('status', { name: 'Loading recent runs' })).toBeInTheDocument();
+    expect(await screen.findByRole("status", { name: '正在加载运行历史' })).toBeInTheDocument();
     release();
-    expect(await screen.findByText('No recent runs')).toBeInTheDocument();
+    expect(await screen.findByText('暂无运行记录')).toBeInTheDocument();
     cleanup();
     resetAppRuntime();
     await authenticateAsAlice();
@@ -871,8 +874,8 @@ describe('RunPanel history', () => {
     const historyAlert = await screen.findByText('无法加载运行历史');
     expect(historyAlert).toHaveAttribute('role', 'alert');
     expect(historyAlert).not.toHaveTextContent('trace-history-403');
-    await userEvent.setup().click(screen.getByRole('button', { name: 'Retry loading run history' }));
-    expect(await screen.findByText('No recent runs')).toBeInTheDocument();
+    await userEvent.setup().click(screen.getByRole('button', { name: '重试加载运行历史' }));
+    expect(await screen.findByText('暂无运行记录')).toBeInTheDocument();
     cleanup();
     resetAppRuntime();
     await authenticateAsAlice();
@@ -890,15 +893,15 @@ describe('RunPanel history', () => {
       }),
     );
     renderPanel();
-    const history = await screen.findByRole('list', { name: 'Recent runs' });
-    expect(within(history).getByRole('button', { name: `${first.createdAt} SUCCEEDED` })).toBeInTheDocument();
-    const loadMore = screen.getByRole('button', { name: 'Load more' });
+    const history = await screen.findByRole('list', { name: '最近运行' });
+    expect(within(history).getByRole('button', { name: `${first.createdAt} 运行成功` })).toBeInTheDocument();
+    const loadMore = screen.getByRole('button', { name: '加载更多' });
     await userEvent.setup().click(loadMore);
     expect(
-      await within(history).findByRole('button', { name: `${second.createdAt} FAILED` }),
+      await within(history).findByRole('button', { name: `${second.createdAt} 运行失败` }),
     ).toBeInTheDocument();
     await waitFor(() => {
-      expect(screen.queryByRole('button', { name: 'Load more' })).not.toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: '加载更多' })).not.toBeInTheDocument();
     });
   });
 
@@ -913,18 +916,18 @@ describe('RunPanel history', () => {
 
     renderPanel();
     const historyButton = await screen.findByRole('button', {
-      name: `${finished.createdAt} ${finished.state}`,
+      name: `${finished.createdAt} ${runStateLabel(finished.state)}`,
     });
     expect(historyButton).toHaveAttribute('aria-current', 'true');
     const user = userEvent.setup();
     await user.click(historyButton);
     await loadedIdle();
-    await user.click(screen.getByRole('button', { name: 'Start run' }));
+    await user.click(screen.getByRole('button', { name: '启动运行' }));
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: 'Start run' })).toBeDisabled();
+      expect(screen.getByRole('button', { name: '启动运行' })).toBeDisabled();
     });
     expect(historyRunButton(finished.id)).toHaveAttribute('aria-current', 'true');
-    expect(runStateStatus()).toHaveTextContent(finished.state);
+    expect(runStateStatus()).toHaveTextContent(runStateLabel(finished.state));
 
     cleanup();
     resetAppRuntime();
@@ -934,11 +937,11 @@ describe('RunPanel history', () => {
     setRunScenario('disconnect');
     renderPanel();
     await loadedIdle();
-    await userEvent.setup().click(screen.getByRole('button', { name: 'Start run' }));
+    await userEvent.setup().click(screen.getByRole('button', { name: '启动运行' }));
     await waitFor(() => {
-      expect(runStateStatus()).toHaveTextContent(/STARTING|RUNNING/);
+      expect(runStateStatus()).toHaveTextContent(/准备运行环境|正在执行/);
     });
-    expect(runStateStatus()).not.toHaveTextContent(finished.state);
+    expect(runStateStatus()).not.toHaveTextContent(runStateLabel(finished.state));
   });
 });
 
@@ -1011,9 +1014,9 @@ describe('RunPanel logs', () => {
     await authenticateAsAlice();
     renderPanel();
     await loadedIdle();
-    await userEvent.setup().click(screen.getByRole('button', { name: 'Start run' }));
+    await userEvent.setup().click(screen.getByRole('button', { name: '启动运行' }));
     await waitFor(() => {
-      expect(logConnectionStatus()).toHaveTextContent(/live|replay|reconnect|connect|ticket/i);
+      expect(logConnectionStatus()).toHaveTextContent(/实时更新中|正在读取历史日志|正在重新连接|正在连接|正在获取日志访问权限/i);
     });
     expect(logConnectionStatus()).toHaveAttribute('role', 'status');
     expect(logRegion().getAttribute('aria-live')).toBeNull();
@@ -1049,16 +1052,16 @@ describe('RunPanel reload failure and keyboard', () => {
       expect(coordinator.getSnapshot().phase).toBe('RELOADING_WORKSPACE');
     });
     coordinator.markReloadFailed();
-    expect(await screen.findByText(/reload failed/i)).toBeInTheDocument();
-    expect(screen.getByText(/reload failed/i).closest('[role="alert"]')).not.toBeNull();
-    expect(screen.getByRole('button', { name: 'Start run' })).toBeDisabled();
-    expect(screen.getByRole('button', { name: 'Start run' })).toHaveAttribute(
+    expect((await screen.findByRole('button', { name: '重试加载工作区' })).parentElement).toHaveTextContent('工作区重新加载失败');
+    expect(screen.getByRole('button', { name: '重试加载工作区' }).parentElement?.querySelector('[role="alert"]')).not.toBeNull();
+    expect(screen.getByRole('button', { name: '启动运行' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: '启动运行' })).toHaveAttribute(
       'title',
       runPreconditionDescription('RELOAD_FAILED'),
     );
     expect(isWorkspaceEditable(coordinator.getSnapshot())).toBe(false);
 
-    await userEvent.setup().click(screen.getByRole('button', { name: 'Retry workspace reload' }));
+    await userEvent.setup().click(screen.getByRole('button', { name: '重试加载工作区' }));
     expect(coordinator.getSnapshot().phase).toBe('RELOADING_WORKSPACE');
     expect(isWorkspaceEditable(coordinator.getSnapshot())).toBe(false);
   });
@@ -1073,12 +1076,12 @@ describe('RunPanel reload failure and keyboard', () => {
     await waitFor(() => {
       expect(logRegion()).toHaveTextContent(SEED_LOG_MARKER);
     });
-    const stop = screen.getByRole('button', { name: 'Stop run' });
-    const historyButton = await screen.findByRole('button', { name: /RUNNING|STARTING/ });
+    const stop = screen.getByRole('button', { name: '停止运行' });
+    const historyButton = await screen.findByRole('button', { name: /正在执行|准备运行环境/ });
     const logs = logRegion();
     setScrollerMetrics(logs, { scrollTop: 0, clientHeight: 100, scrollHeight: 400 });
     fireScroll(logs);
-    const newOutput = await screen.findByRole('button', { name: 'New output' });
+    const newOutput = await screen.findByRole('button', { name: '查看最新输出' });
     documentOrder(start, stop);
     documentOrder(stop, historyButton);
     documentOrder(historyButton, logs);
@@ -1121,7 +1124,7 @@ describe('RunLogView auto-follow and truncation', () => {
     });
     appendText(store, scheduler, 1, 'line-one\n');
     render(<RunLogView store={store} />);
-    const scroller = screen.getByRole('region', { name: 'Run logs' });
+    const scroller = screen.getByRole('region', { name: '运行日志' });
     setScrollerMetrics(scroller, { scrollTop: 0, clientHeight: 100, scrollHeight: 400 });
     const calls = attachScrollModel(scroller);
     expect(logDistanceFromBottom(scroller)).toBeGreaterThan(48);
@@ -1129,7 +1132,7 @@ describe('RunLogView auto-follow and truncation', () => {
     act(() => {
       scheduler.flush();
     });
-    expect(await screen.findByRole('button', { name: 'New output' })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: '查看最新输出' })).toBeInTheDocument();
     expect(store.getSnapshot().pendingOutput).toBe(true);
     const callsAfterScroll = calls.length;
     const topAfterScroll = scroller.scrollTop;
@@ -1138,15 +1141,15 @@ describe('RunLogView auto-follow and truncation', () => {
     expect(scroller.scrollTop).toBe(topAfterScroll);
     expect(scroller.scrollTop).not.toBe(scroller.scrollHeight);
     expect(calls.length).toBe(callsAfterScroll);
-    expect(screen.getByRole('region', { name: 'Run logs' })).toHaveTextContent('line-two');
+    expect(screen.getByRole('region', { name: '运行日志' })).toHaveTextContent('line-two');
 
-    await userEvent.setup().click(screen.getByRole('button', { name: 'New output' }));
+    await userEvent.setup().click(screen.getByRole('button', { name: '查看最新输出' }));
     act(() => {
       scheduler.flush();
     });
     expect(store.getSnapshot().pendingOutput).toBe(false);
     expect(scroller.scrollTop).toBe(scroller.scrollHeight);
-    expect(screen.queryByRole('button', { name: 'New output' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '查看最新输出' })).not.toBeInTheDocument();
   });
 
   it('keeps following from near the bottom with instant scroll', () => {
@@ -1158,7 +1161,7 @@ describe('RunLogView auto-follow and truncation', () => {
     });
     appendText(store, scheduler, 1, 'line-one\n');
     render(<RunLogView store={store} />);
-    const scroller = screen.getByRole('region', { name: 'Run logs' });
+    const scroller = screen.getByRole('region', { name: '运行日志' });
     setScrollerMetrics(scroller, { scrollTop: 360, clientHeight: 100, scrollHeight: 400 });
     const calls = attachScrollModel(scroller);
     expect(logDistanceFromBottom(scroller)).toBeLessThanOrEqual(48);
@@ -1172,7 +1175,7 @@ describe('RunLogView auto-follow and truncation', () => {
     expect(scroller.scrollTop).toBe(scroller.scrollHeight);
     expect(calls.length).toBeGreaterThan(0);
     expect(calls.every((call) => call.behavior !== 'smooth')).toBe(true);
-    expect(screen.queryByRole('button', { name: 'New output' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '查看最新输出' })).not.toBeInTheDocument();
   });
 
   it('resets follow when the selected run store changes', () => {
@@ -1191,7 +1194,7 @@ describe('RunLogView auto-follow and truncation', () => {
     appendText(storeA, schedulerA, 1, 'alpha-one\n');
     appendText(storeB, schedulerB, 1, 'beta-one\n');
     const { rerender } = render(<RunLogView store={storeA} />);
-    const scroller = screen.getByRole('region', { name: 'Run logs' });
+    const scroller = screen.getByRole('region', { name: '运行日志' });
     setScrollerMetrics(scroller, { scrollTop: 0, clientHeight: 100, scrollHeight: 400 });
     attachScrollModel(scroller);
     fireScroll(scroller);
@@ -1203,14 +1206,14 @@ describe('RunLogView auto-follow and truncation', () => {
     expect(scroller.scrollTop).toBe(0);
 
     rerender(<RunLogView store={storeB} />);
-    const next = screen.getByRole('region', { name: 'Run logs' });
+    const next = screen.getByRole('region', { name: '运行日志' });
     setScrollerMetrics(next, { scrollTop: 0, clientHeight: 100, scrollHeight: 400 });
     attachScrollModel(next);
     appendText(storeB, schedulerB, 2, 'beta-two\n');
     expect(next.scrollTop).toBe(next.scrollHeight);
-    expect(screen.getByRole('region', { name: 'Run logs' })).toHaveTextContent('beta-two');
-    expect(screen.getByRole('region', { name: 'Run logs' })).not.toHaveTextContent('alpha-two');
-    expect(screen.queryByRole('button', { name: 'New output' })).not.toBeInTheDocument();
+    expect(screen.getByRole('region', { name: '运行日志' })).toHaveTextContent('beta-two');
+    expect(screen.getByRole('region', { name: '运行日志' })).not.toHaveTextContent('alpha-two');
+    expect(screen.queryByRole('button', { name: '查看最新输出' })).not.toBeInTheDocument();
   });
 
   it('keeps truncation and evicted bytes visible without covering log text', () => {
@@ -1237,10 +1240,10 @@ describe('RunLogView auto-follow and truncation', () => {
       evictedBytes: 2048,
     });
     render(<RunLogView store={store} />);
-    const banner = screen.getByRole('status', { name: 'Log truncation' });
+    const banner = screen.getByRole("status", { name: '日志截断提示' });
     expect(banner).toHaveTextContent('日志窗口已截断');
     expect(banner).toHaveTextContent('2048');
-    expect(screen.getByRole('region', { name: 'Run logs' })).toHaveTextContent('kept-window');
+    expect(screen.getByRole('region', { name: '运行日志' })).toHaveTextContent('kept-window');
     expect(banner.compareDocumentPosition(logRegion()) & Node.DOCUMENT_POSITION_FOLLOWING).toBe(
       Node.DOCUMENT_POSITION_FOLLOWING,
     );
@@ -1268,7 +1271,7 @@ describe('RunLogView auto-follow and truncation', () => {
     });
     appendText(store, scheduler, 1, 'motion\n');
     render(<RunLogView store={store} />);
-    const scroller = screen.getByRole('region', { name: 'Run logs' });
+    const scroller = screen.getByRole('region', { name: '运行日志' });
     setScrollerMetrics(scroller, { scrollTop: 360, clientHeight: 100, scrollHeight: 400 });
     const calls = attachScrollModel(scroller);
     fireScroll(scroller);
@@ -1293,11 +1296,11 @@ describe('StopRunDialog', () => {
     const { rerender } = render(
       <StopRunDialog open onCancel={onCancel} onConfirm={onConfirm} />,
     );
-    expect(screen.getByRole('button', { name: 'Cancel' })).toHaveFocus();
+    expect(screen.getByRole('button', { name: '取消' })).toHaveFocus();
     await user.tab();
-    expect(screen.getByRole('button', { name: 'Stop' })).toHaveFocus();
+    expect(screen.getByRole('button', { name: '停止' })).toHaveFocus();
     await user.tab();
-    expect(screen.getByRole('button', { name: 'Cancel' })).toHaveFocus();
+    expect(screen.getByRole('button', { name: '取消' })).toHaveFocus();
     await user.keyboard('{Escape}');
     expect(onCancel).toHaveBeenCalledTimes(1);
     expect(onConfirm).not.toHaveBeenCalled();
@@ -1311,18 +1314,18 @@ describe('StopRunDialog', () => {
 describe('Run dialog copy', () => {
   it('asks about the run generically without naming Maven', () => {
     render(<StopRunDialog open onCancel={vi.fn()} onConfirm={vi.fn()} />);
-    const message = screen.getByText(/remains the authority for run state/);
+    const message = screen.getByText(/运行状态将以服务端确认结果为准/);
     expect(message).toHaveTextContent(
-      'Stop the current run? The server remains the authority for run state.',
+      '确认停止当前运行？运行状态将以服务端确认结果为准。',
     );
     expect(message).not.toHaveTextContent(/Maven/i);
   });
 
   it('keeps the terminal close dialog on a generic run message', () => {
     render(<CloseTerminalDialog open onConfirm={vi.fn()} onCancel={vi.fn()} />);
-    const message = screen.getByText(/continues independently/);
+    const message = screen.getByText(/项目运行将继续/);
     expect(message).toHaveTextContent(
-      'This terminal session cannot be resumed after it is closed. The run continues independently.',
+      '此终端会话关闭后无法恢复，项目运行将继续。',
     );
     expect(message).not.toHaveTextContent(/Maven/i);
   });

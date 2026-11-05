@@ -48,7 +48,8 @@ public class SecurityConfig {
             .authorizeHttpRequests(a -> a.requestMatchers(request ->
                     (request.getDispatcherType() == jakarta.servlet.DispatcherType.ASYNC
                         || request.getDispatcherType() == jakarta.servlet.DispatcherType.ERROR)
-                    && request.getRequestURI().matches("/api/v1/projects/[^/]+/agent-tasks/[^/]+/live-output")).permitAll()
+                    && (request.getRequestURI().matches("/api/v1/projects/[^/]+/agent-tasks/[^/]+/live-output")
+                        || request.getRequestURI().matches("/api/v1/projects/[^/]+/assistant/turns/[^/]+/events"))).permitAll()
                 .requestMatchers(
                     // Anonymous account-lifecycle endpoints, listed per exact path (no /auth/**).
                     "/api/v1/auth/login",

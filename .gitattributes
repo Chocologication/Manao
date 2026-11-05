@@ -42,3 +42,7 @@ poc4/frontend/tests/fixtures/ai-stage1/** text=auto eol=lf
 
 # Stage-two bootstrap and independent verification pin these exact LF fixture bytes.
 poc4/frontend/tests/fixtures/ai-stage2/** text=auto eol=lf
+
+# Node launcher scripts and template lockfiles must retain their Linux build bytes.
+poc4/node-runner/** text=auto eol=lf
+poc4/backend/src/main/resources/workspace-template-node-*/** text=auto eol=lf

@@ -23,10 +23,10 @@ describe('Stage 0 TerminalPanel shared search', () => {
     });
     fireEvent(window, ctrlFind);
     expect(ctrlFind.defaultPrevented).toBe(true);
-    const searchbox = screen.getByRole('searchbox', { name: 'Search terminal output' });
+    const searchbox = screen.getByRole('searchbox', { name: '搜索终端输出' });
 
     fireEvent.keyDown(searchbox, { key: 'Escape' });
-    expect(screen.queryByRole('searchbox', { name: 'Search terminal output' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('searchbox', { name: '搜索终端输出' })).not.toBeInTheDocument();
 
     view.rerender(<TerminalPanel active={false} />);
     expect(removeListener).toHaveBeenCalledWith('keydown', firstListener);
@@ -48,7 +48,7 @@ describe('Stage 0 TerminalPanel shared search', () => {
     });
     fireEvent(window, activeMetaFind);
     expect(activeMetaFind.defaultPrevented).toBe(true);
-    expect(screen.getByRole('searchbox', { name: 'Search terminal output' })).toBeInTheDocument();
+    expect(screen.getByRole('searchbox', { name: '搜索终端输出' })).toBeInTheDocument();
 
     const activeListeners = addListener.mock.calls.filter((call) => call[0] === 'keydown');
     const latestListener = activeListeners.at(-1)?.[1];

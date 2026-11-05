@@ -91,31 +91,31 @@ export function runPreconditionDescription(reason: RunPreconditionReason | null)
     return '';
   }
   if (reason === 'DIRTY_FILES') {
-    return 'DIRTY_FILES: Save or discard unsaved changes before running';
+    return '运行前请先保存或放弃未保存的修改';
   }
   if (reason === 'WRITE_PENDING') {
-    return 'WRITE_PENDING: A file write is in progress';
+    return '文件正在保存，请稍后运行';
   }
   if (reason === 'REVISION_UNAVAILABLE') {
-    return 'REVISION_UNAVAILABLE: Workspace revision is unavailable';
+    return '暂时无法获取工作区版本';
   }
   if (reason === 'AUTHORITY_LOADING') {
-    return 'AUTHORITY_LOADING: Cannot verify run authority';
+    return '正在核对运行状态，请稍候';
   }
   if (reason === 'START_PENDING') {
-    return 'START_PENDING: A start request is in progress';
+    return '正在提交运行请求';
   }
   if (reason === 'RUN_ACTIVE') {
-    return 'RUN_ACTIVE: A run is already active';
+    return '项目正在运行，请先停止当前运行';
   }
   if (reason === 'RELOADING_WORKSPACE') {
-    return 'RELOADING_WORKSPACE: Workspace is reloading after a run';
+    return '正在重新加载运行后的工作区';
   }
   if (reason === 'RELOAD_FAILED') {
-    return 'RELOAD_FAILED: Workspace reload failed';
+    return '工作区重新加载失败，请重试';
   }
   if (reason === 'AGENT_TASK_ACTIVE') {
-    return 'AGENT_TASK_ACTIVE: An agent task owns the workspace';
+    return 'AI 任务正在使用工作区，请等待任务结束';
   }
-  return 'STAGE_4_UNAVAILABLE: Run is not available in this stage';
+  return '当前环境暂不支持运行';
 }

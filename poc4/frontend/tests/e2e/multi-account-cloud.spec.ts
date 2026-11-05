@@ -76,7 +76,7 @@ async function signIn(page: Page, account: Account): Promise<string> {
 
 /** Log out through the workbench UI and verify the anonymous login route. */
 async function signOut(page: Page): Promise<void> {
-  await page.getByRole('button', { name: 'Log out', exact: true }).click();
+  await page.getByRole('button', { name: '退出登录', exact: true }).click();
   await expect(page).toHaveURL(/\/login/);
 }
 

@@ -356,7 +356,7 @@ describe('CreateProjectForm creation key', () => {
     );
     await authenticateAsAlice();
     renderApp({ initialEntries: ['/projects'] });
-    await screen.findByText('你的第一个实验，从这里开始');
+    await screen.findByText('还没有项目');
     await user.type(screen.getByLabelText('Project name'), 'demo');
     await user.selectOptions(screen.getByLabelText('Template'), 'java-spring-boot-web');
     await user.click(screen.getByLabelText('Public access'));

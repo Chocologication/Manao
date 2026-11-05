@@ -1,3 +1,4 @@
+import { REGISTRATION_CAPTCHA_PNG } from './registrationCaptcha';
 import { DEFAULT_PROJECT_LIMIT } from '../contracts/project';
 import type {
   AuthOptionsResponse,
@@ -386,7 +387,7 @@ export function createOwnedProject(
   if (project.creationKey !== null) {
     creationKeys.set(`${userId}\0${project.creationKey}`, project.id);
   }
-  ensureWorkspace(project.id);
+  ensureWorkspace(project.id, runtime?.templateId);
   return { status: 'created', project: toSummary(project) };
 }
 
@@ -738,8 +739,7 @@ export function markMockProjectDependencyReconciliationFailed(
 // test double, never a source of a real answer or a real email.
 // ---------------------------------------------------------------------------
 
-const MOCK_CAPTCHA_PNG_BASE64 =
-  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+const MOCK_CAPTCHA_PNG_BASE64 = REGISTRATION_CAPTCHA_PNG;
 const MOCK_USERNAME_PATTERN = /^[a-z0-9_]{3,32}$/;
 const MOCK_EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 

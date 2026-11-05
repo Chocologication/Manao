@@ -6,7 +6,11 @@ export type RuntimeTemplateId =
   | 'java-console'
   | 'java-spring-boot-web'
   | 'python-console'
-  | 'python-fastapi-web';
+  | 'python-fastapi-web'
+  | 'node-javascript-console'
+  | 'node-javascript-web'
+  | 'node-typescript-console'
+  | 'node-typescript-web';
 
 /** The uv-managed python templates; the single authority for python-only surfaces. */
 export function isPythonRuntimeTemplate(templateId: RuntimeTemplateId | undefined): boolean {
@@ -22,10 +26,14 @@ export const RUNTIME_TEMPLATE_META: Record<
   RuntimeTemplateId,
   { label: string; web: boolean; defaultTargetPort: number }
 > = {
-  'java-console': { label: 'Java console', web: false, defaultTargetPort: 8080 },
-  'java-spring-boot-web': { label: 'Java Spring Boot web', web: true, defaultTargetPort: 8080 },
-  'python-console': { label: 'Python console', web: false, defaultTargetPort: 8000 },
-  'python-fastapi-web': { label: 'Python FastAPI web', web: true, defaultTargetPort: 8000 },
+  'java-console': { label: 'Java 控制台', web: false, defaultTargetPort: 8080 },
+  'java-spring-boot-web': { label: 'Java Spring Boot 网站', web: true, defaultTargetPort: 8080 },
+  'python-console': { label: 'Python 控制台', web: false, defaultTargetPort: 8000 },
+  'python-fastapi-web': { label: 'Python FastAPI 网站', web: true, defaultTargetPort: 8000 },
+  'node-javascript-console': { label: 'JavaScript 控制台 · Node.js', web: false, defaultTargetPort: 3000 },
+  'node-javascript-web': { label: 'JavaScript Web 服务 · Node.js', web: true, defaultTargetPort: 3000 },
+  'node-typescript-console': { label: 'TypeScript 控制台 · Node.js', web: false, defaultTargetPort: 3000 },
+  'node-typescript-web': { label: 'TypeScript Web 服务 · Node.js', web: true, defaultTargetPort: 3000 },
 };
 
 /** Non-sensitive public port declaration; the first entry decides the primary port. */

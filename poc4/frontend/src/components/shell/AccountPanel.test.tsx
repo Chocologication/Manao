@@ -3,7 +3,7 @@ import { cleanup, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes, useLocation, useNavigationType } from 'react-router';
 import { AccountPanel } from './AccountPanel';
-import { useThemePreferences } from '@/features/preferences/themePreferences';
+import { THEME_STORAGE_KEY, useThemePreferences } from '@/features/preferences/themePreferences';
 import { useEditorPreferences } from '@/features/editor/editorPreferences';
 
 const authMock = vi.hoisted(() => ({ email: 'alice@example.com' as string | null }));
@@ -91,7 +91,7 @@ describe('account and preferences panel', () => {
     expect(panel).toHaveTextContent('alice@example.com');
     await user.click(within(panel).getByRole('button', { name: '复制账户 ID' }));
     expect(copy).toHaveBeenCalledWith('actual-account-id');
-    expect(within(panel).getByRole('status')).toHaveTextContent('账户 ID 已复制');
+    expect(within(panel).getByRole("status")).toHaveTextContent('账户 ID 已复制');
     await user.click(within(panel).getByRole('button', { name: '关闭账户面板' }));
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     expect(trigger).toHaveFocus();
@@ -142,6 +142,19 @@ describe('account and preferences panel', () => {
     expect(useEditorPreferences.getState()).toMatchObject({ wordWrap: true, minimap: true });
     await user.click(screen.getByRole('button', { name: '恢复编辑器默认设置' }));
     expect(useEditorPreferences.getState()).toMatchObject({ fontSize: 14, wordWrap: false, minimap: false });
+  });
+
+  it('restores the light default and persists it after selecting a dark theme', async () => {
+    const user = userEvent.setup();
+    renderPanel({ onLogout: vi.fn() });
+    await user.click(screen.getByRole('button', { name: '账户与偏好' }));
+    await user.click(screen.getByRole('tab', { name: '外观' }));
+    await user.click(screen.getByRole('radio', { name: '石墨深色' }));
+    expect(useThemePreferences.getState().theme).toBe('graphite');
+    await user.click(screen.getByRole('button', { name: '恢复全部偏好' }));
+    expect(screen.getByRole('radio', { name: '日间浅色' })).toBeChecked();
+    expect(useThemePreferences.getState().theme).toBe('light');
+    expect(localStorage.getItem(THEME_STORAGE_KEY)).toBe('light');
   });
 
   it('closes the account panel before invoking the existing logout guard', async () => {

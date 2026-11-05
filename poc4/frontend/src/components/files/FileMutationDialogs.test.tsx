@@ -25,13 +25,13 @@ describe('FileMutationDialogs', () => {
       />,
     );
 
-    const dialog = screen.getByRole('dialog', { name: 'New file' });
-    const input = screen.getByLabelText('Name');
+    const dialog = screen.getByRole('dialog', { name: '新建文件' });
+    const input = screen.getByLabelText('名称');
     expect(dialog).toContainElement(input);
     expect(input).toHaveFocus();
     expect(input).not.toHaveAttribute('placeholder', expect.stringMatching(/src\//));
-    expect(screen.getByRole('button', { name: 'Create' })).toBeEnabled();
-    expect(screen.getByRole('button', { name: 'Cancel' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: '创建' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: '取消' })).toBeEnabled();
   });
 
   it('uses a New folder title for directory create', () => {
@@ -44,8 +44,8 @@ describe('FileMutationDialogs', () => {
       />,
     );
 
-    expect(screen.getByRole('dialog', { name: 'New folder' })).toBeInTheDocument();
-    expect(screen.getByLabelText('Name')).toHaveFocus();
+    expect(screen.getByRole('dialog', { name: '新建文件夹' })).toBeInTheDocument();
+    expect(screen.getByLabelText('名称')).toHaveFocus();
   });
 
   it('submits a valid basename with Enter and Create', async () => {
@@ -55,13 +55,13 @@ describe('FileMutationDialogs', () => {
       <FileMutationDialogs open kind="create-file" onSubmit={onSubmit} onCancel={() => {}} />,
     );
 
-    await user.type(screen.getByLabelText('Name'), '你好.java');
+    await user.type(screen.getByLabelText('名称'), '你好.java');
     await user.keyboard('{Enter}');
     expect(onSubmit).toHaveBeenCalledTimes(1);
     expect(onSubmit).toHaveBeenCalledWith('你好.java');
 
     onSubmit.mockClear();
-    await user.click(screen.getByRole('button', { name: 'Create' }));
+    await user.click(screen.getByRole('button', { name: '创建' }));
     expect(onSubmit).toHaveBeenCalledWith('你好.java');
   });
 
@@ -77,7 +77,7 @@ describe('FileMutationDialogs', () => {
     expect(onCancel).toHaveBeenCalledTimes(1);
     expect(onSubmit).not.toHaveBeenCalled();
 
-    await user.click(screen.getByRole('button', { name: 'Cancel' }));
+    await user.click(screen.getByRole('button', { name: '取消' }));
     expect(onCancel).toHaveBeenCalledTimes(2);
     expect(onSubmit).not.toHaveBeenCalled();
   });
@@ -91,15 +91,15 @@ describe('FileMutationDialogs', () => {
         <FileMutationDialogs open kind="create-folder" onSubmit={onSubmit} onCancel={() => {}} />,
       );
 
-      const input = screen.getByLabelText('Name');
+      const input = screen.getByLabelText('名称');
       if (value !== '') {
         await user.type(input, value);
       }
       await user.keyboard('{Enter}');
 
       expect(onSubmit).not.toHaveBeenCalled();
-      expect(screen.getByRole('alert')).toHaveTextContent('Entry name required');
-      expect(screen.getByRole('dialog', { name: 'New folder' })).toBeInTheDocument();
+      expect(screen.getByRole('alert')).toHaveTextContent('请输入有效名称，不能包含路径分隔符或仅使用点号');
+      expect(screen.getByRole('dialog', { name: '新建文件夹' })).toBeInTheDocument();
       expect(input).toHaveValue(value);
     },
   );
@@ -110,16 +110,16 @@ describe('FileMutationDialogs', () => {
       <FileMutationDialogs
         open
         kind="create-file"
-        errorMessage="An entry with this name already exists"
+        errorMessage="已存在同名文件或文件夹"
         onSubmit={() => {}}
         onCancel={() => {}}
       />,
     );
 
-    const input = screen.getByLabelText('Name');
+    const input = screen.getByLabelText('名称');
     await user.type(input, 'pom.xml');
-    expect(screen.getByRole('alert')).toHaveTextContent('An entry with this name already exists');
-    expect(screen.getByRole('dialog', { name: 'New file' })).toBeInTheDocument();
+    expect(screen.getByRole('alert')).toHaveTextContent('已存在同名文件或文件夹');
+    expect(screen.getByRole('dialog', { name: '新建文件' })).toBeInTheDocument();
     expect(input).toHaveValue('pom.xml');
   });
 
@@ -134,10 +134,10 @@ describe('FileMutationDialogs', () => {
       />,
     );
 
-    const create = screen.getByRole('button', { name: 'Create' });
+    const create = screen.getByRole('button', { name: '创建' });
     expect(create).toBeDisabled();
-    expect(screen.getByRole('button', { name: 'Cancel' })).toBeEnabled();
-    expect(screen.getByLabelText('Name')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '取消' })).toBeEnabled();
+    expect(screen.getByLabelText('名称')).toBeInTheDocument();
   });
 
   it('does not show a second native dialog while the unsaved modal is open', () => {
@@ -166,8 +166,8 @@ describe('FileMutationDialogs', () => {
     );
 
     expect(screen.getAllByRole('dialog')).toHaveLength(1);
-    expect(screen.getByRole('dialog', { name: 'Unsaved changes' })).toBeInTheDocument();
-    expect(screen.queryByRole('dialog', { name: 'New file' })).not.toBeInTheDocument();
+    expect(screen.getByRole('dialog', { name: '有未保存的修改' })).toBeInTheDocument();
+    expect(screen.queryByRole('dialog', { name: '新建文件' })).not.toBeInTheDocument();
   });
 
   it('prefills rename with the current basename selected', async () => {
@@ -181,16 +181,16 @@ describe('FileMutationDialogs', () => {
       />,
     );
 
-    const input = screen.getByLabelText('Name') as HTMLInputElement;
-    expect(screen.getByRole('dialog', { name: 'Rename' })).toContainElement(input);
+    const input = screen.getByLabelText('名称') as HTMLInputElement;
+    expect(screen.getByRole('dialog', { name: '重命名' })).toContainElement(input);
     expect(input).toHaveValue('App.java');
     expect(input).toHaveFocus();
     await waitFor(() => {
       expect(input.selectionStart).toBe(0);
       expect(input.selectionEnd).toBe('App.java'.length);
     });
-    expect(screen.getByRole('button', { name: 'Rename' })).toBeEnabled();
-    expect(screen.getByRole('button', { name: 'Cancel' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: '重命名' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: '取消' })).toBeEnabled();
   });
 
   it('submits the renamed basename with Enter and Rename', async () => {
@@ -206,13 +206,13 @@ describe('FileMutationDialogs', () => {
       />,
     );
 
-    const input = screen.getByLabelText('Name');
+    const input = screen.getByLabelText('名称');
     fireEvent.change(input, { target: { value: 'Main.java' } });
     await user.keyboard('{Enter}');
     expect(onSubmit).toHaveBeenCalledWith('Main.java');
 
     onSubmit.mockClear();
-    await user.click(screen.getByRole('button', { name: 'Rename' }));
+    await user.click(screen.getByRole('button', { name: '重命名' }));
     expect(onSubmit).toHaveBeenCalledWith('Main.java');
   });
 
@@ -228,12 +228,12 @@ describe('FileMutationDialogs', () => {
       />,
     );
 
-    const dialog = screen.getByRole('dialog', { name: 'Delete' });
+    const dialog = screen.getByRole('dialog', { name: '删除' });
     expect(dialog).toHaveTextContent('src/main/java/demo/App.java');
     expect(dialog.querySelector('svg')).not.toBeNull();
     expect(dialog).toHaveAttribute('data-entry-kind', 'file');
-    expect(screen.getByRole('button', { name: 'Cancel' })).toHaveFocus();
-    const confirm = screen.getByRole('button', { name: 'Delete' });
+    expect(screen.getByRole('button', { name: '取消' })).toHaveFocus();
+    const confirm = screen.getByRole('button', { name: '删除' });
     expect(confirm.className).toMatch(/bg-destructive/);
     expect(confirm.className).toMatch(/\bh-8\b|\bh-9\b/);
     expect(confirm).toBeEnabled();
@@ -251,11 +251,11 @@ describe('FileMutationDialogs', () => {
       />,
     );
 
-    const dialog = screen.getByRole('dialog', { name: 'Delete' });
+    const dialog = screen.getByRole('dialog', { name: '删除' });
     expect(dialog).toHaveAttribute('data-entry-kind', 'directory');
     expect(dialog).toHaveTextContent('src/main');
-    expect(dialog).toHaveTextContent(/cannot be undone/i);
-    expect(dialog).toHaveTextContent(/nested/i);
+    expect(dialog).toHaveTextContent(/此操作无法撤销/i);
+    expect(dialog).toHaveTextContent(/其他文件和子文件夹/i);
   });
 
   it('confirms delete without side effects on Cancel or Escape', async () => {
@@ -277,7 +277,7 @@ describe('FileMutationDialogs', () => {
     expect(onCancel).toHaveBeenCalledTimes(1);
     expect(onSubmit).not.toHaveBeenCalled();
 
-    await user.click(screen.getByRole('button', { name: 'Cancel' }));
+    await user.click(screen.getByRole('button', { name: '取消' }));
     expect(onCancel).toHaveBeenCalledTimes(2);
     expect(onSubmit).not.toHaveBeenCalled();
   });
@@ -296,7 +296,7 @@ describe('FileMutationDialogs', () => {
       />,
     );
 
-    await user.click(within(screen.getByRole('dialog', { name: 'Delete' })).getByRole('button', { name: 'Delete' }));
+    await user.click(within(screen.getByRole('dialog', { name: '删除' })).getByRole('button', { name: '删除' }));
     expect(onSubmit).toHaveBeenCalledTimes(1);
   });
 
@@ -313,10 +313,10 @@ describe('FileMutationDialogs', () => {
       />,
     );
 
-    const confirm = screen.getByRole('button', { name: 'Delete' });
+    const confirm = screen.getByRole('button', { name: '删除' });
     expect(confirm).toBeDisabled();
     expect(confirm.className).toMatch(/\bh-8\b|\bh-9\b/);
-    expect(screen.getByRole('button', { name: 'Cancel' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: '取消' })).toBeEnabled();
   });
 
   it('does not show rename or delete while the unsaved modal is open', () => {
@@ -347,7 +347,7 @@ describe('FileMutationDialogs', () => {
     );
 
     expect(screen.getAllByRole('dialog')).toHaveLength(1);
-    expect(screen.getByRole('dialog', { name: 'Unsaved changes' })).toBeInTheDocument();
-    expect(screen.queryByRole('dialog', { name: 'Delete' })).not.toBeInTheDocument();
+    expect(screen.getByRole('dialog', { name: '有未保存的修改' })).toBeInTheDocument();
+    expect(screen.queryByRole('dialog', { name: '删除' })).not.toBeInTheDocument();
   });
 });

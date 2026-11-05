@@ -123,7 +123,7 @@ public final class WorkspaceOperationService {
         if (receipt.isEmpty() || !receiptMatches(operation, receipt.get())) {
             throw failClosed(projectId, operation.id(), "RECONCILE", null);
         }
-        if (!store.commitOperation(operation.id(), projectId, operation.expectedRevision())) {
+        if (!store.commitReconciledFileOperation(operation.id(), projectId, operation.expectedRevision())) {
             throw failClosed(projectId, operation.id(), "COMMIT", null);
         }
         return operation.expectedRevision() + 1;
@@ -239,7 +239,7 @@ public final class WorkspaceOperationService {
             if(current==null) return false;
             if("COMMITTED".equals(current.state())) return true;
             if(!original.equals(current) || receipt.isEmpty() || !receiptMatches(current,receipt.get())) return false;
-            return store.commitOperation(current.id(),projectId,current.expectedRevision());
+            return store.commitReconciledFileOperation(current.id(),projectId,current.expectedRevision());
         }
     }
 

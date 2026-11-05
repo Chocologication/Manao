@@ -329,6 +329,19 @@ class AuthChallengeStoreTest {
     }
 
     @Test
+    void cleanupDefersWhileAComposedCallerTransactionIsActive() {
+        insertChallenge("deferred-expired", "CAPTCHA", null, null, null, "ACTIVE",
+            NOW.minusSeconds(1), 0, "AB23C", null, null, 0);
+        var reserved = store.inTransaction(status -> store.reserveEmailSend(
+            AuthContracts.EmailPurpose.REGISTER_EMAIL, "composed@example.com", "123456", null, null));
+        assertThat(reserved.outcome()).isEqualTo(AuthChallengeStore.ReserveOutcome.RESERVED);
+        assertThat(rowCount("deferred-expired")).isEqualTo(1);
+        // A later standalone allocation performs the deferred cleanup.
+        assertThat(store.createCaptcha("AB23C").outcome()).isEqualTo(AuthChallengeStore.CaptchaOutcome.ISSUED);
+        assertThat(rowCount("deferred-expired")).isZero();
+    }
+
+    @Test
     void opportunisticCleanupKeepsLiveAndRecentSendSlots() {
         // Expired CAPTCHA: deletable.
         insertChallenge("captcha-expired", "CAPTCHA", null, null, null, "ACTIVE",

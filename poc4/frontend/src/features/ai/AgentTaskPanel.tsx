@@ -28,7 +28,8 @@ import {
 import { getWorkspaceRevision, useWorkspaceRevision } from '@/features/files/fileQueries';
 import { useWorkspaceSession } from '@/features/editor/workspaceSession';
 import { InlineAlert } from '@/components/feedback/InlineAlert';
-import { resolveAgentTaskPreconditions } from './agentTaskPreconditions';
+import { agentTaskPreconditionLabels, resolveAgentTaskPreconditions } from './agentTaskPreconditions';
+import { agentTaskStateLabels, runStateLabel } from '@/components/ui/labPresentation';
 import { submitConversationTask } from '@/api/agentConversationApi';
 import { AssistantMarkdown } from './AssistantMarkdown';
 import type { ContextUsage } from '@/contracts/agentConversation';
@@ -93,14 +94,14 @@ const imageFailureMessages:Record<string,string>={
 function agentTaskStartErrorMessage(error: unknown): string {
   const messages:Record<string,string>={AI_ATTACHMENT_TOO_LARGE:'每张图片不得超过 10 MB',AI_ATTACHMENT_EXPIRED:'图片已失效，请重新上传',AI_ATTACHMENT_UNAVAILABLE:'图片暂不可用，请稍后重试',AI_ATTACHMENT_CONFLICT:'图片上传尚未确认或内容冲突，请重试确认',AI_IMAGE_INPUT_DISABLED:'当前模型未开启图片输入'};
   if (error instanceof ApiRequestError && error.body !== null) {
-    if(messages[error.body.code])return messages[error.body.code]!;
-    return `Could not start the task (${error.body.code})`;
+    if (messages[error.body.code]) return messages[error.body.code]!;
+    return `无法启动任务（${error.body.code}）`;
   }
   if(error instanceof Error&&['图片上传确认中，请重试','图片已失效，请重新上传','每张图片不得超过 10 MB'].includes(error.message))return error.message;
   if (error instanceof Error && /network request failed/i.test(error.message)) {
-    return 'Network request failed';
+    return '网络请求失败，请检查连接后重试';
   }
-  return 'Could not start the task';
+  return '无法启动任务';
 }
 
 export function AgentTaskPanel({
@@ -230,7 +231,7 @@ export function AgentTaskPanel({
       }
       const prompt = goal.trim() || (images.items.length ? '请分析上传的图片' : continuation ? CONTINUE_TASK_PROMPT : '');
       if (prompt === '') {
-        setStartError('Enter a goal for the task.');
+        setStartError('请输入任务目标。');
         return;
       }
       const revision = getWorkspaceRevision(queryClient, projectId);
@@ -275,7 +276,7 @@ export function AgentTaskPanel({
             clearAgentTaskId(userId, projectId, storedId);
             submissionScope.submitted=false;
           } else {
-            if(local())setStartError('Could not verify the previous task. Try again in a moment.');
+            if (local()) setStartError('暂时无法核对上次任务，请稍后重试。');
             return;
           }
         }
@@ -333,22 +334,22 @@ export function AgentTaskPanel({
     snapshot?.taskId === pendingIntent.taskId && (pendingIntent.conversationId === null || snapshot.conversationId === pendingIntent.conversationId));
 
   return (
-    <section aria-label="AI task" className="manao-ai-chat bg-background">
+    <section aria-label="AI 任务" className="manao-ai-chat bg-background">
       {conversationHeader}
       <div className="manao-ai-scroll flex flex-col gap-3">
         {conversationHistory}
         {pollFailed ? (
-          <InlineAlert>Could not load the agent task status.</InlineAlert>
+          <InlineAlert>无法读取 AI 任务状态。</InlineAlert>
         ) : null}
         {startError !== null ? <InlineAlert>{startError}</InlineAlert> : null}
 
         {displayTask !== null ? (
           <div className="flex flex-col gap-2 text-sm">
             <div className="flex items-center gap-2">
-              <span className="font-medium">Status</span>
-              <span>{displayTask.closeReasonCode === 'AI_PAUSED_BY_OWNER' ? displayTask.writesLocked ? 'Stopping and verifying' : 'Paused'
-                : displayTask.closeReasonCode === 'AI_WORKER_RESTARTED' ? displayTask.writesLocked ? 'Stopping and verifying' : 'Interrupted by service restart; verified'
-                : displayTask.state}</span>
+              <span className="font-medium">状态</span>
+              <span>{displayTask.closeReasonCode === 'AI_PAUSED_BY_OWNER' ? displayTask.writesLocked ? '正在停止并核对' : '已暂停'
+                : displayTask.closeReasonCode === 'AI_WORKER_RESTARTED' ? displayTask.writesLocked ? '正在停止并核对' : '服务重启导致中断，状态已核对'
+                : agentTaskStateLabels[displayTask.state]}</span>
             </div>
             <div>本轮推理强度：{displayTask.reasoningEffort ?? '未记录'}</div>
             {displayTask.failureCode === 'AI_LENGTH_LIMIT' ? <p className="text-destructive">模型响应达到输出上限，本条内容可能不完整</p> : null}
@@ -358,14 +359,14 @@ export function AgentTaskPanel({
             ) : null}
             {!fullHistory && displayTask.progress.length > 0 ? (
               <div>
-                <h3 className="text-sm font-medium">Progress</h3>
+                <h3 className="text-sm font-medium">执行进度</h3>
                 <ul className="mt-1 flex flex-col gap-1">
                   {displayTask.progress.map((item) => {
                     const buildCallId = item.kind === 'tool_end' ? buildToolCallId(item.text) : null;
                     return (
                       <li key={item.seq} className="whitespace-pre-wrap font-mono text-xs">
                         {item.text}
-                        {item.truncated ? ' (truncated)' : ''}
+                        {item.truncated ? '（内容已截断）' : ''}
                         {buildCallId !== null ? (
                           <span className="mt-1 block">
                             <Button
@@ -377,13 +378,13 @@ export function AgentTaskPanel({
                                 void handleViewBuildResult(buildCallId);
                               }}
                             >
-                              View {item.text.startsWith('application ') ? 'application result' : item.text.startsWith('app_http_get ') ? 'HTTP result' : 'build result'}
+                              查看{item.text.startsWith('application ') ? '应用操作结果' : item.text.startsWith('app_http_get ') ? 'HTTP 请求结果' : '构建结果'}
                             </Button>
                           </span>
                         ) : null}
                         {buildCallId !== null && buildResults[buildCallId] === 'error' ? (
                           <span className="mt-1 block text-destructive">
-                            Could not load the build result.
+                            无法读取构建结果。
                           </span>
                         ) : null}
                         {buildCallId !== null && buildResults[buildCallId] !== undefined
@@ -398,7 +399,7 @@ export function AgentTaskPanel({
             ) : null}
             {displayTask.changedPaths.length > 0 ? (
               <div>
-                <h3 className="text-sm font-medium">Changed paths</h3>
+                <h3 className="text-sm font-medium">修改的文件</h3>
                 <ul className="mt-1 flex flex-col gap-1">
                   {displayTask.changedPaths.map((path) => (
                     <li key={path} className="font-mono text-xs">
@@ -413,18 +414,18 @@ export function AgentTaskPanel({
       </div>
         <form onSubmit={handleStart} className="manao-ai-composer flex flex-col gap-2">
           {occupying ? <div className="flex flex-col gap-1 text-xs text-muted-foreground">
-            <p>Ending the AI task may stop applications it started.</p>
-            {task.state === 'NEEDS_ATTENTION' ? <p role="status" aria-label="Task settlement">
-              {task.failureCode === 'AI_CLOSING' ? 'Settling task. ' : ''}Waiting for confirmation; project controls stay locked. You can retry ending the task.
+            <p>结束 AI 任务可能会停止由该任务启动的应用。</p>
+            {task.state === 'NEEDS_ATTENTION' ? <p role="status" aria-label="任务结束确认">
+              {task.failureCode === 'AI_CLOSING' ? '正在结束任务。' : ''}正在等待结束确认，项目操作暂时锁定。可重试结束任务。
             </p> : null}
           </div> : null}
           {occupying && closeError ? <InlineAlert>{closeError}</InlineAlert> : null}
           {occupying && pauseError ? <InlineAlert>{pauseError}</InlineAlert> : null}
-          {task?.state === 'QUEUED' ? <p>Task is starting; pause will be available shortly.</p> : null}
-          {(continuation || continuationClosing) ? <p>Continue in this conversation with a new task and a fresh budget (up to 30 minutes).</p> : null}
-          {continuation && hasActiveRun ? <p>AI is paused. The application is still running; stop it before editing.</p> : null}
+          {task?.state === 'QUEUED' ? <p>任务正在启动，稍后可暂停。</p> : null}
+          {(continuation || continuationClosing) ? <p>在当前会话中新建任务继续执行，最长可运行 30 分钟。</p> : null}
+          {continuation && hasActiveRun ? <p>AI 已暂停，应用仍在运行，请先停止应用再编辑。</p> : null}
           <label htmlFor="agent-task-goal" className="text-sm font-medium">
-            Task goal
+            任务目标
           </label>
           <textarea
             id="agent-task-goal"
@@ -448,13 +449,13 @@ export function AgentTaskPanel({
               type="submit"
               size="sm"
               disabled={!canStart || continuationClosing}
-              title={canStart ? continuation ? 'Continue task' : 'Start task' : (preconditions.reason ?? 'Start task')}
+              title={canStart ? continuation ? '继续任务' : '启动任务' : (preconditions.reason ? agentTaskPreconditionLabels[preconditions.reason] : '启动任务')}
             >
-              {continuation || continuationClosing ? 'Continue task' : 'Start task'}
+              {continuation || continuationClosing ? '继续任务' : '启动任务'}
             </Button>
             {occupying ? <Button type="button" variant="outline" size="sm"
               disabled={task.state === 'QUEUED' || Boolean(task.closeReasonCode) || pausePending || closePending || !onPause}
-              onClick={onPause}>Pause &amp; take over</Button> : null}
+              onClick={onPause}>暂停并接管</Button> : null}
             {occupying ? (
               <Button
                 type="button"
@@ -463,14 +464,14 @@ export function AgentTaskPanel({
                 disabled={closePending}
                 onClick={onClose}
               >
-                {task.state === 'NEEDS_ATTENTION' ? 'Retry ending task' : 'End task'}
+                {task.state === 'NEEDS_ATTENTION' ? '重试结束任务' : '结束任务'}
               </Button>
             ) : null}
             </div>
           </div>
-            <span className="text-xs text-muted-foreground">AI task time budget is separate from application startup and ready lifetime limits.</span>
+            <span className="text-xs text-muted-foreground">AI 任务时限与应用启动、服务运行时限分别计算。</span>
             {!canStart && preconditions.reason !== null ? (
-              <span className="text-xs text-muted-foreground">{preconditions.reason}</span>
+              <span className="text-xs text-muted-foreground">{agentTaskPreconditionLabels[preconditions.reason]}</span>
             ) : null}
         </form>
     </section>
@@ -495,15 +496,15 @@ export function ToolResultView({ result, onViewRun }: { result: AgentToolCallRes
     const runId = app.run?.id ?? app.activeRunId;
     return (
       <div className="mt-1 flex flex-col gap-1 rounded border p-2">
-        <div>Application: {app.action}</div>
-        <div>Run: {runId ?? 'none'}</div>
-        <div>State: {app.run?.state ?? 'unknown'}</div>
-        <div>Revision: {app.run?.requestedWorkspaceRevision ?? 'unknown'}</div>
-        <div>Ready: {app.run === null ? 'unknown' : app.run.state === 'RUNNING' && app.run.firstReadyAt !== null ? 'yes' : 'no'}</div>
-        <div>Stopped confirmed: {app.stoppedConfirmed ? 'yes' : 'no'}</div>
-        {runId !== null && isNavigableRunId(runId) && onViewRun ? <Button type="button" size="sm" variant="outline" onClick={() => onViewRun(runId)}>View run</Button> : null}
+        <div>应用操作： {{ start: '启动', stop: '停止', status: '读取状态', logs: '读取日志' }[app.action]}</div>
+        <div>运行编号： {runId ?? '无'}</div>
+        <div>状态： {app.run ? runStateLabel(app.run.state) : '未知'}</div>
+        <div>工作区版本： {app.run?.requestedWorkspaceRevision ?? '未知'}</div>
+        <div>是否就绪： {app.run === null ? '未知' : app.run.state === 'RUNNING' && app.run.firstReadyAt !== null ? '是' : '否'}</div>
+        <div>停止已确认： {app.stoppedConfirmed ? '是' : '否'}</div>
+        {runId !== null && isNavigableRunId(runId) && onViewRun ? <Button type="button" size="sm" variant="outline" onClick={() => onViewRun(runId)}>查看运行</Button> : null}
         {app.logs !== null ? <>
-          <div>Log sequence: {app.logs.firstSeq ?? 'unknown'}–{app.logs.lastSeq ?? 'unknown'} · Complete: {app.logs.complete ? 'yes' : 'no'}{app.logs.truncated ? ' (truncated)' : ''}</div>
+          <div>日志序号： {app.logs.firstSeq ?? '未知'}–{app.logs.lastSeq ?? '未知'} · 是否完整： {app.logs.complete ? '是' : '否'}{app.logs.truncated ? '（内容已截断）' : ''}</div>
           <pre className="max-h-48 overflow-auto whitespace-pre-wrap font-mono text-xs">{app.logs.text}</pre>
         </> : null}
       </div>
@@ -512,19 +513,19 @@ export function ToolResultView({ result, onViewRun }: { result: AgentToolCallRes
   if (http !== null) {
     return (
       <div className="mt-1 flex flex-col gap-1 rounded border p-2">
-        <div>Run: {http.runId}</div>
+        <div>运行编号： {http.runId}</div>
         <div>HTTP GET {http.path}</div>
-        <div>Status: {http.statusCode ?? 'unknown'}</div>
-        <div>Content-Type: {http.contentType ?? 'unknown'}</div>
+        <div>状态码： {http.statusCode ?? '未知'}</div>
+        <div>内容类型： {http.contentType ?? '未知'}</div>
         {http.error !== null ? <div className="text-destructive">{http.error.code}: {http.error.message}</div> : null}
-        {http.truncated ? <div>(truncated)</div> : null}
+        {http.truncated ? <div>（内容已截断）</div> : null}
         <pre className="max-h-48 overflow-auto whitespace-pre-wrap font-mono text-xs">{http.body}</pre>
-        {isNavigableRunId(http.runId) && onViewRun ? <Button type="button" size="sm" variant="outline" onClick={() => onViewRun(http.runId)}>View run</Button> : null}
+        {isNavigableRunId(http.runId) && onViewRun ? <Button type="button" size="sm" variant="outline" onClick={() => onViewRun(http.runId)}>查看运行</Button> : null}
       </div>
     );
   }
   if (['read_file', 'list_files', 'write_file'].includes(result.toolName)) return <FileToolResultView result={result} />;
-  return result.toolName === 'build' ? <BuildResultView result={result} /> : <div>Result unavailable</div>;
+  return result.toolName === 'build' ? <BuildResultView result={result} /> : <div>结果暂不可用</div>;
 }
 
 /** Only explicit browser result fields are rendered; file content and paths stay literal text. */
@@ -581,20 +582,20 @@ function BuildResultView({ result }: { result: AgentToolCallResult }) {
   return (
     <div className="mt-1 flex flex-col gap-1 rounded border p-2">
       <div>
-        <span className="font-medium">Exit code: </span>
+        <span className="font-medium">退出码： </span>
         <span className={exitCode !== null && exitCode !== 0 ? 'text-destructive' : ''}>
-          {exitCode === null ? 'unknown' : exitCode}
+          {exitCode === null ? '未知' : exitCode}
         </span>
       </div>
       {terminationReason !== null ? (
         <div>
-          <span className="font-medium">Termination: </span>
+          <span className="font-medium">结束原因： </span>
           <span>{terminationReason}</span>
         </div>
       ) : null}
       <div>
-        <span className="font-medium">Cleanup confirmed: </span>
-        <span>{cleanupConfirmed === null ? 'unknown' : cleanupConfirmed ? 'yes' : 'no'}</span>
+        <span className="font-medium">清理已确认： </span>
+        <span>{cleanupConfirmed === null ? '未知' : cleanupConfirmed ? '是' : '否'}</span>
       </div>
       {output !== null ? (
         <pre className="max-h-48 overflow-auto whitespace-pre-wrap font-mono text-xs">{output}</pre>

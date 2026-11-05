@@ -133,7 +133,7 @@ export function PythonDependencyRecovery({
         disabled={checking || checkBlocked}
         title={checkBlocked ? '请先保存或放弃文件修改' : undefined}
         onClick={() => void check()}
-        aria-label="Check dependency change"
+        aria-label="核对依赖变更"
       >
         核对依赖变更
       </Button>

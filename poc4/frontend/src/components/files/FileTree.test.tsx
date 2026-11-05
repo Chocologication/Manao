@@ -84,7 +84,7 @@ function captureCreateBodies(): Array<{ kind: string; path: string }> {
 }
 
 async function submitBasename(user: ReturnType<typeof userEvent.setup>, name: string): Promise<void> {
-  const input = await screen.findByLabelText('Name');
+  const input = await screen.findByLabelText('名称');
   await user.clear(input);
   if (name !== '') {
     await user.type(input, name);
@@ -225,9 +225,9 @@ describe('FileTree scoped states', () => {
 
     await user.click(screen.getByRole('treeitem', { name: 'src' }));
     const src = await screen.findByRole('treeitem', { name: 'src' });
-    expect(within(groupAfter(src)).getByText(/^empty$/i)).toBeInTheDocument();
+    expect(within(groupAfter(src)).getByText(/^空文件夹$/i)).toBeInTheDocument();
     expect(screen.getByRole('treeitem', { name: 'pom.xml' })).toBeInTheDocument();
-    expect(screen.queryByText(/no files/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/否 files/i)).not.toBeInTheDocument();
   });
 
   it('scopes a directory error and retry to that node', async () => {
@@ -266,12 +266,12 @@ describe('FileTree scoped states', () => {
     await user.click(screen.getByRole('treeitem', { name: 'src' }));
     const src = await screen.findByRole('treeitem', { name: 'src' });
     const srcGroup = groupAfter(src);
-    expect(within(srcGroup).getByRole('alert')).toHaveTextContent(/unable to load directory/i);
+    expect(within(srcGroup).getByRole('alert')).toHaveTextContent(/无法加载目录/i);
     expect(screen.getByRole('treeitem', { name: 'docs' })).toBeInTheDocument();
     expect(screen.queryByRole('treeitem', { name: 'main' })).not.toBeInTheDocument();
 
     failSrc = false;
-    await user.click(within(srcGroup).getByRole('button', { name: 'Retry' }));
+    await user.click(within(srcGroup).getByRole('button', { name: '重试' }));
     expect(await screen.findByRole('treeitem', { name: 'main' })).toBeInTheDocument();
     expect(getFileRequestCount('tree', ALICE_SEED_PROJECT_ID, 'src')).toBe(2);
     expect(getFileRequestCount('tree', ALICE_SEED_PROJECT_ID, '')).toBe(rootCount);
@@ -286,12 +286,12 @@ describe('FileTree scoped states', () => {
     await authenticateAsAlice();
     renderTree();
 
-    expect(await screen.findByRole('alert')).toHaveTextContent(/unable to load files/i);
-    expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument();
+    expect(await screen.findByRole('alert')).toHaveTextContent(/无法加载文件列表/i);
+    expect(screen.getByRole('button', { name: '重试' })).toBeInTheDocument();
     expect(screen.queryByRole('tree')).not.toBeInTheDocument();
     expect(screen.queryByRole('treeitem')).not.toBeInTheDocument();
-    expect(screen.queryByText(/no files/i)).not.toBeInTheDocument();
-    expect(screen.queryByText(/^empty$/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/否 files/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/^空文件夹$/i)).not.toBeInTheDocument();
   });
 
   it('shows hidden .gitignore at the project root', async () => {
@@ -365,7 +365,7 @@ describe('FileTree selection and commands', () => {
     const cancel = vi.spyOn(queryClient, 'cancelQueries');
     const invalidate = vi.spyOn(queryClient, 'invalidateQueries');
     const refetch = vi.spyOn(queryClient, 'refetchQueries');
-    await user.click(screen.getByRole('button', { name: 'Refresh' }));
+    await user.click(screen.getByRole('button', { name: '刷新' }));
 
     await waitFor(() => {
       expect(cancel).toHaveBeenCalledWith({ queryKey: fileKeys.trees(ALICE_SEED_PROJECT_ID) });
@@ -395,7 +395,7 @@ describe('FileTree selection and commands', () => {
     ).toBeDefined();
 
     const remove = vi.spyOn(queryClient, 'removeQueries');
-    await user.click(screen.getByRole('button', { name: 'Collapse all folders' }));
+    await user.click(screen.getByRole('button', { name: '折叠所有文件夹' }));
 
     await waitFor(() => {
       expect(workspaceSessionStore.getState().expandedPaths.size).toBe(0);
@@ -416,13 +416,13 @@ describe('FileTree authorization and invalid payloads', () => {
     renderTree(BOB_SEED_PROJECT_ID);
 
     const alert = await screen.findByRole('alert');
-    expect(alert).toHaveTextContent(/access denied/i);
+    expect(alert).toHaveTextContent(/无权访问/i);
     expect(alert).not.toHaveTextContent(OWNER_OR_PHYSICAL_LEAK);
-    expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '重试' })).toBeInTheDocument();
     expect(screen.queryByRole('tree')).not.toBeInTheDocument();
     expect(screen.queryByRole('treeitem')).not.toBeInTheDocument();
-    expect(screen.queryByText(/no files/i)).not.toBeInTheDocument();
-    expect(screen.queryByText(/^empty$/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/否 files/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/^空文件夹$/i)).not.toBeInTheDocument();
     expect(document.body.textContent ?? '').not.toMatch(OWNER_OR_PHYSICAL_LEAK);
   });
 
@@ -481,15 +481,15 @@ describe('FileTree authorization and invalid payloads', () => {
     await user.click(screen.getByRole('treeitem', { name: 'src' }));
     const src = await screen.findByRole('treeitem', { name: 'src' });
     const srcGroup = groupAfter(src);
-    expect(within(srcGroup).getByRole('alert')).toHaveTextContent(/unable to load directory/i);
-    expect(within(srcGroup).getByRole('button', { name: 'Retry' })).toBeInTheDocument();
+    expect(within(srcGroup).getByRole('alert')).toHaveTextContent(/无法加载目录/i);
+    expect(within(srcGroup).getByRole('button', { name: '重试' })).toBeInTheDocument();
     expect(screen.queryByRole('treeitem', { name: 'main' })).not.toBeInTheDocument();
     expect(screen.getByRole('treeitem', { name: 'docs' })).toBeInTheDocument();
     expect(screen.getByRole('treeitem', { name: 'pom.xml' })).toBeInTheDocument();
     expect(document.body.textContent ?? '').not.toMatch(/C:\\|\/Users\/|\/etc\//);
 
     invalidSrc = false;
-    await user.click(within(srcGroup).getByRole('button', { name: 'Retry' }));
+    await user.click(within(srcGroup).getByRole('button', { name: '重试' }));
     expect(await screen.findByRole('treeitem', { name: 'main' })).toBeInTheDocument();
     expect(getFileRequestCount('tree', ALICE_SEED_PROJECT_ID, 'src')).toBe(2);
   });
@@ -537,10 +537,10 @@ describe('FileTree retry isolation', () => {
     await user.click(screen.getByRole('treeitem', { name: 'src' }));
     const src = await screen.findByRole('treeitem', { name: 'src' });
     const srcGroup = groupAfter(src);
-    expect(within(srcGroup).getByRole('alert')).toHaveTextContent(/unable to load directory/i);
+    expect(within(srcGroup).getByRole('alert')).toHaveTextContent(/无法加载目录/i);
 
     failSrc = false;
-    await user.click(within(srcGroup).getByRole('button', { name: 'Retry' }));
+    await user.click(within(srcGroup).getByRole('button', { name: '重试' }));
     expect(await screen.findByRole('treeitem', { name: 'main' })).toBeInTheDocument();
     expect(getFileRequestCount('tree', ALICE_SEED_PROJECT_ID, 'src')).toBe(2);
     expect(getFileRequestCount('tree', ALICE_SEED_PROJECT_ID, 'docs')).toBe(docsCount);
@@ -560,18 +560,18 @@ describe('FileTree accessibility', () => {
     expect(src).toHaveAttribute('aria-expanded', 'false');
     expect(screen.getByRole('treeitem', { name: 'pom.xml' })).toHaveAttribute('aria-selected', 'false');
 
-    const refresh = screen.getByRole('button', { name: 'Refresh' });
-    const collapse = screen.getByRole('button', { name: 'Collapse all folders' });
-    const newFile = screen.getByRole('button', { name: 'New file' });
-    const newFolder = screen.getByRole('button', { name: 'New folder' });
-    const rename = screen.getByRole('button', { name: 'Rename' });
-    const remove = screen.getByRole('button', { name: 'Delete' });
-    expect(refresh).toHaveAttribute('title', 'Refresh');
-    expect(collapse).toHaveAttribute('title', 'Collapse all folders');
-    expect(newFile).toHaveAttribute('title', 'New file');
-    expect(newFolder).toHaveAttribute('title', 'New folder');
-    expect(rename).toHaveAttribute('title', 'Rename');
-    expect(remove).toHaveAttribute('title', 'Delete');
+    const refresh = screen.getByRole('button', { name: '刷新' });
+    const collapse = screen.getByRole('button', { name: '折叠所有文件夹' });
+    const newFile = screen.getByRole('button', { name: '新建文件' });
+    const newFolder = screen.getByRole('button', { name: '新建文件夹' });
+    const rename = screen.getByRole('button', { name: '重命名' });
+    const remove = screen.getByRole('button', { name: '删除' });
+    expect(refresh).toHaveAttribute('title', '刷新');
+    expect(collapse).toHaveAttribute('title', '折叠所有文件夹');
+    expect(newFile).toHaveAttribute('title', '新建文件');
+    expect(newFolder).toHaveAttribute('title', '新建文件夹');
+    expect(rename).toHaveAttribute('title', '重命名');
+    expect(remove).toHaveAttribute('title', '删除');
     expect(rename).toBeDisabled();
     expect(remove).toBeDisabled();
     for (const button of [refresh, collapse, newFile, newFolder, rename, remove]) {
@@ -656,7 +656,7 @@ describe('FileTree accessibility', () => {
       parseProjectRelativePath('src/main/java/demo/App.java'),
     );
 
-    await user.click(screen.getByRole('button', { name: 'Collapse all folders' }));
+    await user.click(screen.getByRole('button', { name: '折叠所有文件夹' }));
     await waitFor(() => {
       expect(screen.queryByRole('treeitem', { name: 'App.java' })).not.toBeInTheDocument();
     });
@@ -708,7 +708,7 @@ describe('FileTree create commands', () => {
     const srcCount = getFileRequestCount('tree', ALICE_SEED_PROJECT_ID, 'src');
     const docsCount = getFileRequestCount('tree', ALICE_SEED_PROJECT_ID, 'docs');
 
-    await user.click(screen.getByRole('button', { name: 'New file' }));
+    await user.click(screen.getByRole('button', { name: '新建文件' }));
     await submitBasename(user, 'notes.md');
 
     expect(await screen.findByRole('treeitem', { name: 'notes.md' })).toBeInTheDocument();
@@ -741,7 +741,7 @@ describe('FileTree create commands', () => {
     await loadedRoot();
 
     await user.click(screen.getByRole('treeitem', { name: 'src' }));
-    await user.click(screen.getByRole('button', { name: 'New folder' }));
+    await user.click(screen.getByRole('button', { name: '新建文件夹' }));
     await submitBasename(user, 'lib');
 
     expect(await screen.findByRole('treeitem', { name: 'lib' })).toBeInTheDocument();
@@ -754,7 +754,7 @@ describe('FileTree create commands', () => {
 
     await expandToAppJava(user);
     await user.click(screen.getByRole('treeitem', { name: 'App.java' }));
-    await user.click(screen.getByRole('button', { name: 'New file' }));
+    await user.click(screen.getByRole('button', { name: '新建文件' }));
     await submitBasename(user, 'extra.java');
 
     expect(await screen.findByRole('treeitem', { name: 'extra.java' })).toBeInTheDocument();
@@ -776,12 +776,12 @@ describe('FileTree create commands', () => {
     await user.click(screen.getByRole('treeitem', { name: 'App.java' }));
     expect(workspaceSessionStore.getState().selectedPath).toBe(APP_JAVA);
 
-    await user.click(screen.getByRole('button', { name: 'Collapse all folders' }));
+    await user.click(screen.getByRole('button', { name: '折叠所有文件夹' }));
     await waitFor(() => {
       expect(screen.queryByRole('treeitem', { name: 'App.java' })).not.toBeInTheDocument();
     });
 
-    await user.click(screen.getByRole('button', { name: 'New file' }));
+    await user.click(screen.getByRole('button', { name: '新建文件' }));
     await submitBasename(user, 'extra.java');
 
     expect(await screen.findByRole('treeitem', { name: 'extra.java' })).toBeInTheDocument();
@@ -801,7 +801,7 @@ describe('FileTree create commands', () => {
     const docsCount = getFileRequestCount('tree', ALICE_SEED_PROJECT_ID, 'docs');
     const assetsCount = getFileRequestCount('tree', ALICE_SEED_PROJECT_ID, 'assets');
 
-    await user.click(screen.getByRole('button', { name: 'New folder' }));
+    await user.click(screen.getByRole('button', { name: '新建文件夹' }));
     await submitBasename(user, 'tmp');
 
     const tmp = parseProjectRelativePath('tmp');
@@ -815,7 +815,7 @@ describe('FileTree create commands', () => {
     expect(getFileRequestCount('tree', ALICE_SEED_PROJECT_ID, 'src')).toBe(srcCount);
     expect(getFileRequestCount('tree', ALICE_SEED_PROJECT_ID, 'docs')).toBe(docsCount);
     expect(getFileRequestCount('tree', ALICE_SEED_PROJECT_ID, 'assets')).toBe(assetsCount);
-    expect(within(groupAfter(screen.getByRole('treeitem', { name: 'tmp' }))).getByText(/^empty$/i)).toBeInTheDocument();
+    expect(within(groupAfter(screen.getByRole('treeitem', { name: 'tmp' }))).getByText(/^空文件夹$/i)).toBeInTheDocument();
   });
 
   it('does not send a create request for an invalid basename', async () => {
@@ -825,13 +825,13 @@ describe('FileTree create commands', () => {
     renderTree();
     await loadedRoot();
 
-    await user.click(screen.getByRole('button', { name: 'New file' }));
+    await user.click(screen.getByRole('button', { name: '新建文件' }));
     await submitBasename(user, 'src/bad.java');
 
     expect(bodies).toHaveLength(0);
-    expect(screen.getByRole('alert')).toHaveTextContent('Entry name required');
-    expect(screen.getByRole('dialog', { name: 'New file' })).toBeInTheDocument();
-    expect(screen.getByLabelText('Name')).toHaveValue('src/bad.java');
+    expect(screen.getByRole('alert')).toHaveTextContent('请输入有效名称，不能包含路径分隔符或仅使用点号');
+    expect(screen.getByRole('dialog', { name: '新建文件' })).toBeInTheDocument();
+    expect(screen.getByLabelText('名称')).toHaveValue('src/bad.java');
   });
 
   it('preserves dialog input, selection and revision on collision without mutating the tree', async () => {
@@ -844,22 +844,22 @@ describe('FileTree create commands', () => {
     const namesBefore = rootNames();
     const rev = revision();
 
-    await user.click(screen.getByRole('button', { name: 'New file' }));
+    await user.click(screen.getByRole('button', { name: '新建文件' }));
     await submitBasename(user, 'pom.xml');
 
-    expect(await screen.findByRole('alert')).toHaveTextContent(/already exists/i);
-    expect(screen.getByLabelText('Name')).toHaveValue('pom.xml');
-    expect(screen.getByRole('dialog', { name: 'New file' })).toBeInTheDocument();
+    expect(await screen.findByRole('alert')).toHaveTextContent(/已存在同名文件或文件夹/i);
+    expect(screen.getByLabelText('名称')).toHaveValue('pom.xml');
+    expect(screen.getByRole('dialog', { name: '新建文件' })).toBeInTheDocument();
     expect(workspaceSessionStore.getState().selectedPath).toBe(POM);
     expect(revision()).toBe(rev);
     expect(rootNames()).toEqual(namesBefore);
     expect(bodies).toHaveLength(1);
     await new Promise((resolve) => setTimeout(resolve, 80));
     expect(bodies).toHaveLength(1);
-    await user.click(screen.getByRole('button', { name: 'Create' }));
+    await user.click(screen.getByRole('button', { name: '创建' }));
     await waitFor(() => expect(bodies).toHaveLength(2));
-    expect(screen.getByRole('dialog', { name: 'New file' })).toBeInTheDocument();
-    expect(screen.getByLabelText('Name')).toHaveValue('pom.xml');
+    expect(screen.getByRole('dialog', { name: '新建文件' })).toBeInTheDocument();
+    expect(screen.getByLabelText('名称')).toHaveValue('pom.xml');
     expect(revision()).toBe(rev);
     expect(rootNames()).toEqual(namesBefore);
   });
@@ -874,11 +874,11 @@ describe('FileTree create commands', () => {
     const namesBefore = rootNames();
     const rev = revision();
 
-    await user.click(screen.getByRole('button', { name: 'New folder' }));
+    await user.click(screen.getByRole('button', { name: '新建文件夹' }));
     await submitBasename(user, 'locked-dir');
 
-    expect(await screen.findByRole('alert')).toHaveTextContent(/project is locked/i);
-    expect(screen.getByLabelText('Name')).toHaveValue('locked-dir');
+    expect(await screen.findByRole('alert')).toHaveTextContent(/项目暂时无法修改，请等待当前操作完成/i);
+    expect(screen.getByLabelText('名称')).toHaveValue('locked-dir');
     expect(workspaceSessionStore.getState().selectedPath).toBe(SRC);
     expect(revision()).toBe(rev);
     expect(rootNames()).toEqual(namesBefore);
@@ -895,11 +895,11 @@ describe('FileTree create commands', () => {
     const namesBefore = rootNames();
     const rev = revision();
 
-    await user.click(screen.getByRole('button', { name: 'New file' }));
+    await user.click(screen.getByRole('button', { name: '新建文件' }));
     await submitBasename(user, 'conflicted.md');
 
-    expect(await screen.findByRole('alert')).toHaveTextContent(/workspace revision conflict/i);
-    expect(screen.getByLabelText('Name')).toHaveValue('conflicted.md');
+    expect(await screen.findByRole('alert')).toHaveTextContent(/工作区已发生变化，请刷新后重试/i);
+    expect(screen.getByLabelText('名称')).toHaveValue('conflicted.md');
     expect(workspaceSessionStore.getState().selectedPath).toBe(POM);
     expect(revision()).toBe(rev);
     expect(rootNames()).toEqual(namesBefore);
@@ -922,19 +922,19 @@ describe('FileTree create commands', () => {
     renderTree();
     await loadedRoot();
 
-    await user.click(screen.getByRole('button', { name: 'New file' }));
+    await user.click(screen.getByRole('button', { name: '新建文件' }));
     await submitBasename(user, 'notes.md');
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: 'New file' })).toBeDisabled();
+      expect(screen.getByRole('button', { name: '新建文件' })).toBeDisabled();
     });
-    const newFile = screen.getByRole('button', { name: 'New file' });
-    const newFolder = screen.getByRole('button', { name: 'New folder' });
+    const newFile = screen.getByRole('button', { name: '新建文件' });
+    const newFolder = screen.getByRole('button', { name: '新建文件夹' });
     expect(newFile.className).toMatch(/\bh-8\b/);
     expect(newFile.className).toMatch(/\bw-8\b/);
     expect(newFolder.className).toMatch(/\bh-8\b/);
     expect(newFolder.className).toMatch(/\bw-8\b/);
     expect(newFolder).toBeDisabled();
-    expect(screen.getByRole('dialog', { name: 'New file' })).toBeInTheDocument();
+    expect(screen.getByRole('dialog', { name: '新建文件' })).toBeInTheDocument();
 
     release();
     expect(await screen.findByRole('treeitem', { name: 'notes.md' })).toBeInTheDocument();
@@ -946,8 +946,8 @@ const GUIDE = parseProjectRelativePath('GUIDE.md');
 const SRC_A = parseProjectRelativePath('src/a');
 const SRC_AB = parseProjectRelativePath('src/ab');
 const SRC_A_FOO = parseProjectRelativePath('src/a/foo.ts');
-const DIRTY_RENAME = 'Save or discard unsaved changes before renaming';
-const DIRTY_DELETE = 'Save or discard unsaved changes before deleting';
+const DIRTY_RENAME = '重命名前请先保存或放弃未保存的修改';
+const DIRTY_DELETE = '删除前请先保存或放弃未保存的修改';
 
 function captureRenameBodies(): Array<{ path: string; nextPath: string }> {
   const bodies: Array<{ path: string; nextPath: string }> = [];
@@ -979,7 +979,7 @@ async function submitRename(
   user: ReturnType<typeof userEvent.setup>,
   name: string,
 ): Promise<void> {
-  const input = await screen.findByLabelText('Name');
+  const input = await screen.findByLabelText('名称');
   fireEvent.change(input, { target: { value: name } });
   await user.keyboard('{Enter}');
 }
@@ -991,12 +991,12 @@ describe('FileTree rename and delete commands', () => {
     renderTree();
     await loadedRoot();
 
-    expect(screen.getByRole('button', { name: 'Rename' })).toBeDisabled();
-    expect(screen.getByRole('button', { name: 'Delete' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: '重命名' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: '删除' })).toBeDisabled();
 
     await user.click(screen.getByRole('treeitem', { name: 'pom.xml' }));
-    expect(screen.getByRole('button', { name: 'Rename' })).toBeEnabled();
-    expect(screen.getByRole('button', { name: 'Delete' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: '重命名' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: '删除' })).toBeEnabled();
   });
 
   it('renames a clean closed file in the same parent and selects the new path', async () => {
@@ -1010,8 +1010,8 @@ describe('FileTree rename and delete commands', () => {
     await user.click(screen.getByRole('treeitem', { name: 'README.md' }));
     workspaceSessionStore.getState().closeFile(README);
     expect(workspaceSessionStore.getState().openPaths).toEqual([]);
-    await user.click(screen.getByRole('button', { name: 'Rename' }));
-    const input = await screen.findByLabelText('Name');
+    await user.click(screen.getByRole('button', { name: '重命名' }));
+    const input = await screen.findByLabelText('名称');
     expect(input).toHaveValue('README.md');
     expect((input as HTMLInputElement).selectionEnd).toBe('README.md'.length);
     await submitRename(user, 'GUIDE.md');
@@ -1031,7 +1031,7 @@ describe('FileTree rename and delete commands', () => {
     await loadedRoot();
     workspaceSessionStore.getState().openFile(README);
     await user.click(screen.getByRole('treeitem', { name: 'README.md' }));
-    await user.click(screen.getByRole('button', { name: 'Rename' }));
+    await user.click(screen.getByRole('button', { name: '重命名' }));
     await submitRename(user, 'GUIDE.md');
 
     expect(await screen.findByRole('treeitem', { name: 'GUIDE.md' })).toBeInTheDocument();
@@ -1045,7 +1045,7 @@ describe('FileTree rename and delete commands', () => {
     await authenticateAsAlice();
     renderTree();
     await loadedRoot();
-    await user.click(screen.getByRole('button', { name: 'New file' }));
+    await user.click(screen.getByRole('button', { name: '新建文件' }));
     await submitBasename(user, 'src-notes.md');
     expect(await screen.findByRole('treeitem', { name: 'src-notes.md' })).toBeInTheDocument();
 
@@ -1057,7 +1057,7 @@ describe('FileTree rename and delete commands', () => {
     ]);
 
     workspaceSessionStore.getState().selectPath(SRC);
-    await user.click(screen.getByRole('button', { name: 'Rename' }));
+    await user.click(screen.getByRole('button', { name: '重命名' }));
     await submitRename(user, 'source');
 
     expect(await screen.findByRole('treeitem', { name: 'source' })).toBeInTheDocument();
@@ -1080,23 +1080,23 @@ describe('FileTree rename and delete commands', () => {
     renderTree();
     await loadedRoot();
     await user.click(screen.getByRole('treeitem', { name: 'src' }));
-    await user.click(screen.getByRole('button', { name: 'New folder' }));
+    await user.click(screen.getByRole('button', { name: '新建文件夹' }));
     await submitBasename(user, 'a');
     expect(await screen.findByRole('treeitem', { name: 'a' })).toBeInTheDocument();
     workspaceSessionStore.getState().selectPath(SRC);
-    await user.click(screen.getByRole('button', { name: 'New folder' }));
+    await user.click(screen.getByRole('button', { name: '新建文件夹' }));
     await submitBasename(user, 'ab');
     expect(await screen.findByRole('treeitem', { name: 'ab' })).toBeInTheDocument();
 
     workspaceSessionStore.getState().selectPath(SRC_A);
-    await user.click(screen.getByRole('button', { name: 'New file' }));
+    await user.click(screen.getByRole('button', { name: '新建文件' }));
     await submitBasename(user, 'foo.ts');
     expect(await screen.findByRole('treeitem', { name: 'foo.ts' })).toBeInTheDocument();
     expect(workspaceSessionStore.getState().openPaths).toContain(SRC_A_FOO);
     workspaceSessionStore.getState().setDirty(SRC_A_FOO, false);
 
     await user.click(screen.getByRole('treeitem', { name: 'a' }));
-    await user.click(screen.getByRole('button', { name: 'Rename' }));
+    await user.click(screen.getByRole('button', { name: '重命名' }));
     await submitRename(user, 'b');
 
     expect(await screen.findByRole('treeitem', { name: 'b' })).toBeInTheDocument();
@@ -1137,11 +1137,11 @@ describe('FileTree rename and delete commands', () => {
     renderTree();
     await loadedRoot();
     await user.click(screen.getByRole('treeitem', { name: 'src' }));
-    await user.click(screen.getByRole('button', { name: 'New folder' }));
+    await user.click(screen.getByRole('button', { name: '新建文件夹' }));
     await submitBasename(user, 'a');
     expect(await screen.findByRole('treeitem', { name: 'a' })).toBeInTheDocument();
     workspaceSessionStore.getState().selectPath(SRC);
-    await user.click(screen.getByRole('button', { name: 'New folder' }));
+    await user.click(screen.getByRole('button', { name: '新建文件夹' }));
     await submitBasename(user, 'ab');
     expect(await screen.findByRole('treeitem', { name: 'ab' })).toBeInTheDocument();
 
@@ -1151,8 +1151,8 @@ describe('FileTree rename and delete commands', () => {
     expect(screen.getByRole('button', { name: new RegExp(DIRTY_DELETE) })).toBeDisabled();
 
     await user.click(screen.getByRole('treeitem', { name: 'ab' }));
-    expect(screen.getByRole('button', { name: 'Rename' })).toBeEnabled();
-    expect(screen.getByRole('button', { name: 'Delete' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: '重命名' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: '删除' })).toBeEnabled();
     expect(SRC_A.startsWith('src/a')).toBe(true);
     expect(SRC_AB.startsWith(`${SRC_A}/`)).toBe(false);
   });
@@ -1167,13 +1167,13 @@ describe('FileTree rename and delete commands', () => {
     workspaceSessionStore.getState().openFile(README);
     const rev = revision();
 
-    await user.click(screen.getByRole('button', { name: 'Delete' }));
-    const dialog = await screen.findByRole('dialog', { name: 'Delete' });
+    await user.click(screen.getByRole('button', { name: '删除' }));
+    const dialog = await screen.findByRole('dialog', { name: '删除' });
     expect(dialog).toHaveTextContent('README.md');
-    expect(screen.getByRole('button', { name: 'Cancel' })).toHaveFocus();
-    await user.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(screen.getByRole('button', { name: '取消' })).toHaveFocus();
+    await user.click(screen.getByRole('button', { name: '取消' }));
 
-    expect(screen.queryByRole('dialog', { name: 'Delete' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('dialog', { name: '删除' })).not.toBeInTheDocument();
     expect(paths).toHaveLength(0);
     expect(screen.getByRole('treeitem', { name: 'README.md' })).toBeInTheDocument();
     expect(workspaceSessionStore.getState().openPaths).toEqual([README]);
@@ -1187,16 +1187,16 @@ describe('FileTree rename and delete commands', () => {
     await authenticateAsAlice();
     renderTree();
     await loadedRoot();
-    await user.click(screen.getByRole('button', { name: 'New folder' }));
+    await user.click(screen.getByRole('button', { name: '新建文件夹' }));
     await submitBasename(user, 'tmp');
     expect(await screen.findByRole('treeitem', { name: 'tmp' })).toBeInTheDocument();
 
     await user.click(screen.getByRole('treeitem', { name: 'README.md' }));
     workspaceSessionStore.getState().openFile(README);
-    await user.click(screen.getByRole('button', { name: 'Delete' }));
-    const fileDialog = await screen.findByRole('dialog', { name: 'Delete' });
+    await user.click(screen.getByRole('button', { name: '删除' }));
+    const fileDialog = await screen.findByRole('dialog', { name: '删除' });
     expect(fileDialog).toHaveTextContent('README.md');
-    await user.click(within(fileDialog).getByRole('button', { name: 'Delete' }));
+    await user.click(within(fileDialog).getByRole('button', { name: '删除' }));
 
     await waitFor(() => {
       expect(screen.queryByRole('treeitem', { name: 'README.md' })).not.toBeInTheDocument();
@@ -1205,11 +1205,11 @@ describe('FileTree rename and delete commands', () => {
     expect(paths).toContain('README.md');
 
     await user.click(screen.getByRole('treeitem', { name: 'tmp' }));
-    await user.click(screen.getByRole('button', { name: 'Delete' }));
-    const folderDialog = await screen.findByRole('dialog', { name: 'Delete' });
+    await user.click(screen.getByRole('button', { name: '删除' }));
+    const folderDialog = await screen.findByRole('dialog', { name: '删除' });
     expect(folderDialog).toHaveTextContent('tmp');
     expect(folderDialog).toHaveAttribute('data-entry-kind', 'directory');
-    await user.click(within(folderDialog).getByRole('button', { name: 'Delete' }));
+    await user.click(within(folderDialog).getByRole('button', { name: '删除' }));
     await waitFor(() => {
       expect(screen.queryByRole('treeitem', { name: 'tmp' })).not.toBeInTheDocument();
     });
@@ -1228,13 +1228,13 @@ describe('FileTree rename and delete commands', () => {
     workspaceSessionStore.getState().selectPath(SRC);
     const namesBefore = rootNames();
 
-    await user.click(screen.getByRole('button', { name: 'Delete' }));
-    const dialog = await screen.findByRole('dialog', { name: 'Delete' });
+    await user.click(screen.getByRole('button', { name: '删除' }));
+    const dialog = await screen.findByRole('dialog', { name: '删除' });
     expect(dialog).toHaveTextContent('src');
-    await user.click(within(dialog).getByRole('button', { name: 'Delete' }));
+    await user.click(within(dialog).getByRole('button', { name: '删除' }));
 
-    expect(await screen.findByRole('alert')).toHaveTextContent('Directory is not empty');
-    expect(screen.getByRole('dialog', { name: 'Delete' })).toBeInTheDocument();
+    expect(await screen.findByRole('alert')).toHaveTextContent('文件夹不为空');
+    expect(screen.getByRole('dialog', { name: '删除' })).toBeInTheDocument();
     expect(screen.getByRole('treeitem', { name: 'src' })).toBeInTheDocument();
     expect(workspaceSessionStore.getState().openPaths).toEqual([APP_JAVA]);
     expect(revision()).toBe(rev);
@@ -1251,12 +1251,12 @@ describe('FileTree rename and delete commands', () => {
     await user.click(screen.getByRole('treeitem', { name: 'README.md' }));
     const rev = revision();
 
-    await user.click(screen.getByRole('button', { name: 'Rename' }));
+    await user.click(screen.getByRole('button', { name: '重命名' }));
     await submitRename(user, 'GUIDE.md');
 
-    expect(await screen.findByRole('alert')).toHaveTextContent(/project is locked/i);
-    expect(screen.getByLabelText('Name')).toHaveValue('GUIDE.md');
-    expect(screen.getByRole('dialog', { name: 'Rename' })).toBeInTheDocument();
+    expect(await screen.findByRole('alert')).toHaveTextContent(/项目暂时无法修改，请等待当前操作完成/i);
+    expect(screen.getByLabelText('名称')).toHaveValue('GUIDE.md');
+    expect(screen.getByRole('dialog', { name: '重命名' })).toBeInTheDocument();
     expect(screen.getByRole('treeitem', { name: 'README.md' })).toBeInTheDocument();
     expect(revision()).toBe(rev);
   });
@@ -1270,15 +1270,15 @@ describe('FileTree rename and delete commands', () => {
     await user.click(screen.getByRole('treeitem', { name: 'README.md' }));
     const rev = revision();
 
-    await user.click(screen.getByRole('button', { name: 'Delete' }));
+    await user.click(screen.getByRole('button', { name: '删除' }));
     await user.click(
-      within(await screen.findByRole('dialog', { name: 'Delete' })).getByRole('button', {
-        name: 'Delete',
+      within(await screen.findByRole('dialog', { name: '删除' })).getByRole('button', {
+        name: '删除',
       }),
     );
 
-    expect(await screen.findByRole('alert')).toHaveTextContent(/workspace revision conflict/i);
-    expect(screen.getByRole('dialog', { name: 'Delete' })).toBeInTheDocument();
+    expect(await screen.findByRole('alert')).toHaveTextContent(/工作区已发生变化，请刷新后重试/i);
+    expect(screen.getByRole('dialog', { name: '删除' })).toBeInTheDocument();
     expect(screen.getByRole('treeitem', { name: 'README.md' })).toBeInTheDocument();
     expect(workspaceSessionStore.getState().selectedPath).toBe(README);
     expect(revision()).toBe(rev);
@@ -1300,20 +1300,20 @@ describe('FileTree rename and delete commands', () => {
     renderTree();
     await loadedRoot();
     await user.click(screen.getByRole('treeitem', { name: 'README.md' }));
-    await user.click(screen.getByRole('button', { name: 'Rename' }));
+    await user.click(screen.getByRole('button', { name: '重命名' }));
     await submitRename(user, 'GUIDE.md');
     await waitFor(() => {
-      expect(within(screen.getByRole('dialog', { name: 'Rename' })).getByRole('button', { name: 'Rename' })).toBeDisabled();
+      expect(within(screen.getByRole('dialog', { name: '重命名' })).getByRole('button', { name: '重命名' })).toBeDisabled();
     });
 
-    const rename = screen.getAllByRole('button', { name: 'Rename' })[0]!;
-    const remove = screen.getByRole('button', { name: 'Delete' });
+    const rename = screen.getAllByRole('button', { name: '重命名' })[0]!;
+    const remove = screen.getByRole('button', { name: '删除' });
     expect(rename.className).toMatch(/\bh-8\b/);
     expect(rename.className).toMatch(/\bw-8\b/);
     expect(remove.className).toMatch(/\bh-8\b/);
     expect(remove.className).toMatch(/\bw-8\b/);
     expect(remove).toBeDisabled();
-    expect(screen.getByRole('button', { name: 'New file' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: '新建文件' })).toBeDisabled();
 
     release();
     expect(await screen.findByRole('treeitem', { name: 'GUIDE.md' })).toBeInTheDocument();
@@ -1328,18 +1328,18 @@ describe('FileTree run lock', () => {
     renderTree(ALICE_SEED_PROJECT_ID, true);
     await loadedRoot();
 
-    const newFile = screen.getByRole('button', { name: 'New file' });
-    const newFolder = screen.getByRole('button', { name: 'New folder' });
+    const newFile = screen.getByRole('button', { name: '新建文件' });
+    const newFolder = screen.getByRole('button', { name: '新建文件夹' });
     expect(newFile).toBeDisabled();
     expect(newFolder).toBeDisabled();
-    expect(screen.getByRole('button', { name: 'Refresh' })).toBeEnabled();
-    expect(screen.getByRole('button', { name: 'Collapse all folders' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: '刷新' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: '折叠所有文件夹' })).toBeEnabled();
 
     await user.click(screen.getByRole('treeitem', { name: 'pom.xml' }));
     expect(workspaceSessionStore.getState().selectedPath).toBe(POM);
     expect(workspaceSessionStore.getState().openPaths).toEqual([POM]);
-    expect(screen.getByRole('button', { name: 'Rename' })).toBeDisabled();
-    expect(screen.getByRole('button', { name: 'Delete' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: '重命名' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: '删除' })).toBeDisabled();
 
     await user.click(newFile);
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
@@ -1350,7 +1350,7 @@ describe('FileTree run lock', () => {
     expect(await screen.findByRole('treeitem', { name: 'main' })).toBeInTheDocument();
     expect(getFileRequestCount('tree', ALICE_SEED_PROJECT_ID, 'src')).toBe(srcCount + 1);
 
-    await user.click(screen.getByRole('button', { name: 'Collapse all folders' }));
+    await user.click(screen.getByRole('button', { name: '折叠所有文件夹' }));
     expect(screen.queryByRole('treeitem', { name: 'main' })).not.toBeInTheDocument();
     expect(screen.getByRole('treeitem', { name: 'src' })).toHaveAttribute('aria-expanded', 'false');
   });

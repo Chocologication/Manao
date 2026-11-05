@@ -132,11 +132,11 @@ test('change password: success terminates the session and requires a re-login', 
   await expect(page.getByText('密码已更新，请重新登录')).toHaveCount(0);
 });
 
-test('login page offers registration and recovery entries and no captcha or demo credentials', async ({ page }) => {
+test('mock login page offers account entries and identifies the demo environment without a captcha', async ({ page }) => {
   await page.goto('/login');
   await expect(page.getByLabel('图形验证码', { exact: true })).toHaveCount(0);
-  await expect(page.getByRole('link', { name: '注册账号', exact: true })).toBeVisible();
+  await expect(page.getByRole('link', { name: '创建账号', exact: true })).toBeVisible();
   await expect(page.getByRole('link', { name: '忘记密码', exact: true })).toBeVisible();
-  await expect(page.getByText('演示账号')).toHaveCount(0);
-  await expect(page.getByText('demo-pass')).toHaveCount(0);
+  await expect(page.locator('.entry__demo-hint')).toContainText('演示环境');
+  await expect(page.locator('.entry__demo-hint')).toContainText('alice / demo-pass');
 });

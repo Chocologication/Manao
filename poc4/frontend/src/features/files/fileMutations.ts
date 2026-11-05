@@ -26,7 +26,7 @@ import {
 
 export class MissingWorkspaceRevisionError extends Error {
   constructor() {
-    super('Workspace revision is unavailable');
+    super('暂时无法获取工作区版本');
     this.name = 'MissingWorkspaceRevisionError';
   }
 }
@@ -335,37 +335,37 @@ export function useDeleteEntryMutation(projectId: string, callbacks?: FileMutati
 
 export function fileMutationErrorMessage(
   error: unknown,
-  fallback = 'Unable to update files',
+  fallback = '无法更新文件',
 ): string {
   if (error instanceof MissingWorkspaceRevisionError) {
-    return 'Workspace revision is unavailable';
+    return '暂时无法获取工作区版本';
   }
   if (error instanceof Error && /network request failed/i.test(error.message)) {
-    return 'Network request failed';
+    return '网络请求失败，请检查连接后重试';
   }
   if (!(error instanceof ApiRequestError)) {
     return fallback;
   }
   if (error.status === 403 || error.body?.code === 'FORBIDDEN') {
-    return 'Access denied';
+    return '无权访问';
   }
   if (error.body?.code === 'PROJECT_LOCKED') {
-    return 'Project is locked';
+    return '项目暂时无法修改，请等待当前操作完成';
   }
   if (error.body?.code === 'WORKSPACE_REVISION_CONFLICT') {
-    return 'Workspace revision conflict';
+    return '工作区已发生变化，请刷新后重试';
   }
   if (error.body?.code === 'ENTRY_ALREADY_EXISTS') {
-    return 'An entry with this name already exists';
+    return '已存在同名文件或文件夹';
   }
   if (error.body?.code === 'DIRECTORY_NOT_EMPTY') {
-    return 'Directory is not empty';
+    return '文件夹不为空';
   }
   if (error.status === 413 || error.body?.code === 'FILE_TOO_LARGE') {
-    return 'File is too large';
+    return '文件过大';
   }
   if (error.status === 415 || error.body?.code === 'BINARY_FILE') {
-    return 'This file type is not supported';
+    return '不支持此文件类型';
   }
   if (error.status >= 500) {
     return fallback;

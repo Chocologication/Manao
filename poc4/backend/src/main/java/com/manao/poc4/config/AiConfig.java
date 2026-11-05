@@ -27,8 +27,8 @@ import org.springframework.core.env.Environment;
 /**
  * Stage-one AI wiring. Everything here is conditional on {@code manao.poc4.ai.enabled}
  * (default false): with AI disabled none of these beans exist and no internal controller
- * is mapped. The backend never receives a model key — its configuration is only the Pi
- * worker route with its token and the internal token workers must present, following
+ * is mapped. Personal model credentials are encrypted by StudioSecrets; worker routes
+ * and internal authentication remain server-owned configuration, following
  * the small {@code @ConfigurationProperties}
  * precedent instead of the large BackendProperties constructor.
  */
@@ -130,8 +130,11 @@ public class AiConfig {
     AgentProjectTools agentProjectTools(AgentTaskStore tasks, WorkspaceStore store, WorkspaceService workspace,
                                         WorkspaceOperationService operations, ProjectLifecycleGate lifecycle,
                                         DevelopmentBuildExecutor builds, AgentApplicationTools application,
+                                        org.springframework.beans.factory.ObjectProvider<com.manao.poc4.ai.studio.StudioProposals> studio,
                                         com.manao.poc4.ai.AgentAttachmentService attachments) {
-        return new AgentProjectTools(tasks, store, workspace, operations, lifecycle, builds, application,attachments);
+        var tools = new AgentProjectTools(tasks, store, workspace, operations, lifecycle, builds, application, attachments);
+        tools.setStudio(studio.getIfAvailable());
+        return tools;
     }
 
     @Bean
@@ -162,8 +165,10 @@ public class AiConfig {
     @Bean
     @Conditional(AiEnabledCondition.class)
     AgentTaskService agentTaskService(AgentTaskStore tasks, ProjectLifecycleGate lifecycle,
-                                      PiWorkerClient worker, AgentProjectTools tools, com.manao.poc4.ai.AgentConversationService conversations) {
-        return new AgentTaskService(tasks, lifecycle, worker, tools, conversations);
+                                      PiWorkerClient worker, AgentProjectTools tools, com.manao.poc4.ai.AgentConversationService conversations,
+                                      org.springframework.beans.factory.ObjectProvider<com.manao.poc4.ai.studio.StudioProposals> studio) {
+        var service = new AgentTaskService(tasks, lifecycle, worker, tools, conversations);
+        service.setStudio(studio.getIfAvailable()); return service;
     }
 
     @Bean(initMethod = "start",destroyMethod = "close")

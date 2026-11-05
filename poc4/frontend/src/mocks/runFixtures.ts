@@ -129,6 +129,13 @@ export function clonePoc4RunPolicy(): RunPolicy {
  * Maven default. Legacy and unknown ids keep the historical POC4 Java policy.
  */
 export function cloneRunPolicyForTemplate(templateId: string | undefined): RunPolicy {
+  if (templateId === 'node-javascript-console' || templateId === 'node-typescript-console' || templateId === 'node-javascript-web' || templateId === 'node-typescript-web') {
+    const base = clonePoc4RunPolicy();
+    const common = { ...base, command: 'pnpm start' as const, runtime: { language: templateId.includes('typescript') ? 'typescript' as const : 'javascript' as const, nodeMajor: 24 as const, packageManager: 'pnpm' as const, pnpmMajor: 10 as const } };
+    return templateId === 'node-javascript-web' || templateId === 'node-typescript-web'
+      ? { ...common, templateId, executionKind: 'SERVICE', startupTimeoutSeconds: 1800, serviceLifetimeSeconds: 7200 }
+      : { ...common, templateId, executionKind: 'TASK', startupTimeoutSeconds: 1800, serviceLifetimeSeconds: 0 };
+  }
   if (templateId === 'python-console') {
     return clonePythonConsoleRunPolicy();
   }

@@ -121,14 +121,14 @@ export function useEditorSaveCommand(projectId: string) {
   }, []);
 
   useEffect(() => {
-    if (feedback?.kind !== 'status' || feedback.message !== 'Saved') {
+    if (feedback?.kind !== 'status' || feedback.message !== '已保存') {
       return undefined;
     }
     const timer = window.setTimeout(() => {
       setFeedback((current) => {
         if (
           current?.kind === 'status' &&
-          current.message === 'Saved' &&
+          current.message === '已保存' &&
           current.path === feedback.path
         ) {
           return null;
@@ -154,14 +154,14 @@ export function useEditorSaveCommand(projectId: string) {
           writePending,
           mutate: (variables) => {
             inFlightRef.current = true;
-            setFeedback({ path, kind: 'status', message: 'Saving' });
+            setFeedback({ path, kind: 'status', message: '正在保存' });
             mutation.mutate(variables, {
               onSuccess: () => {
-                setFeedback({ path, kind: 'status', message: 'Saved' });
+                setFeedback({ path, kind: 'status', message: '已保存' });
                 resolve({ status: 'saved' });
               },
               onError: (error) => {
-                const message = fileMutationErrorMessage(error, 'Unable to save file');
+                const message = fileMutationErrorMessage(error, '无法保存文件');
                 setFeedback({
                   path,
                   kind: 'alert',

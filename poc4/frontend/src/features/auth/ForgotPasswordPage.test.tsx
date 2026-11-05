@@ -2,7 +2,7 @@ import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import { MemoryRouter, Route, Routes, useLocation, useNavigationType } from 'react-router';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { setHttpClient } from '../../api/httpClient';
 import { authSession, httpClient } from '../../app/appRuntime';
 import { server } from '../../mocks/node';
@@ -72,6 +72,11 @@ async function refreshCaptchaAndAnswer(user: ReturnType<typeof userEvent.setup>,
 }
 
 beforeEach(() => {
+  // jsdom has no layout; exercise form behavior without GSAP transform measurement.
+  const matchMedia = window.matchMedia;
+  vi.spyOn(window, 'matchMedia').mockImplementation((query) => ({
+    ...matchMedia(query), matches: query === '(prefers-reduced-motion: reduce)',
+  }));
   setHttpClient(httpClient);
 });
 

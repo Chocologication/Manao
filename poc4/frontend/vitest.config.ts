@@ -18,6 +18,6 @@ export default defineConfig({
     },
     setupFiles: ['./src/test/setup.ts'],
     restoreMocks: true,
-    exclude: [...configDefaults.exclude, 'scripts/**', 'tests/e2e/**', 'tests/tools/**', 'tests/ui/**'],
+    exclude: [...configDefaults.exclude, 'scripts/**', 'tests/e2e/**', 'tests/tools/**', 'tests/ui/**', 'tests/visual/**'],
   },
 });

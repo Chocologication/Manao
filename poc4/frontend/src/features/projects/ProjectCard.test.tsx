@@ -24,7 +24,7 @@ describe('ProjectCard', () => {
       </MemoryRouter>,
     );
 
-    expect(screen.getByRole('link', { name: 'Open' })).toHaveAttribute(
+    expect(screen.getByRole('link', { name: '进入工作台' })).toHaveAttribute(
       'href',
       `/projects/${encodeURIComponent(ready.id)}`,
     );
@@ -42,8 +42,8 @@ describe('ProjectCard', () => {
       </MemoryRouter>,
     );
     expect(screen.getByText('正在删除')).toBeInTheDocument();
-    expect(screen.queryByRole('link', { name: 'Open' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Open' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: '进入工作台' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '进入工作台' })).not.toBeInTheDocument();
   });
 
   it('shows the non-sensitive runtime configuration when present', () => {
@@ -64,12 +64,12 @@ describe('ProjectCard', () => {
       </MemoryRouter>,
     );
 
-    const runtime = screen.getByText(/Spring Boot web/);
+    const runtime = screen.getByText(/Spring Boot 网站/);
     expect(runtime).toHaveTextContent('MySQL');
     expect(runtime).not.toHaveTextContent('Redis');
     expect(runtime).toHaveTextContent('8080→30081');
-    expect(screen.getByText('Public endpoint unconfirmed')).toBeInTheDocument();
-    expect(screen.queryByText(/MySQL READY/)).not.toBeInTheDocument();
+    expect(screen.getByText('外部访问地址尚未确认')).toBeInTheDocument();
+    expect(screen.queryByText(/MySQL 已就绪/)).not.toBeInTheDocument();
   });
 
   it('shows live dependency readiness and the assigned public endpoint', () => {
@@ -94,10 +94,10 @@ describe('ProjectCard', () => {
       </MemoryRouter>,
     );
 
-    expect(screen.getByText('MySQL READY')).toBeInTheDocument();
-    expect(screen.queryByText('Redis ABSENT')).not.toBeInTheDocument();
+    expect(screen.getByText('MySQL 已就绪')).toBeInTheDocument();
+    expect(screen.queryByText('Redis 未启用')).not.toBeInTheDocument();
     expect(screen.getByText('30081: http://entry.example:30081')).toBeInTheDocument();
-    expect(screen.queryByText('Public endpoint unconfirmed')).not.toBeInTheDocument();
+    expect(screen.queryByText('外部访问地址尚未确认')).not.toBeInTheDocument();
   });
 
   it('shows no runtime line for legacy summaries without runtime fields', () => {
@@ -107,8 +107,8 @@ describe('ProjectCard', () => {
       </MemoryRouter>,
     );
 
-    expect(screen.queryByText(/Spring Boot web/)).not.toBeInTheDocument();
-    expect(screen.queryByText('Public endpoint unconfirmed')).not.toBeInTheDocument();
+    expect(screen.queryByText(/Spring Boot 网站/)).not.toBeInTheDocument();
+    expect(screen.queryByText('外部访问地址尚未确认')).not.toBeInTheDocument();
   });
 
   it('shows python templates with their accurate language and shape', () => {
@@ -122,7 +122,7 @@ describe('ProjectCard', () => {
         <ProjectCard project={pythonConsole} />
       </MemoryRouter>,
     );
-    expect(screen.getByText('Python console')).toBeInTheDocument();
+    expect(screen.getByText('Python 控制台')).toBeInTheDocument();
 
     cleanup();
     const fastApi: ProjectSummary = {
@@ -140,7 +140,7 @@ describe('ProjectCard', () => {
         <ProjectCard project={fastApi} />
       </MemoryRouter>,
     );
-    const runtime = screen.getByText(/Python FastAPI web/);
+    const runtime = screen.getByText(/Python FastAPI 网站/);
     expect(runtime).toHaveTextContent('MySQL');
     expect(runtime).toHaveTextContent('8000→30082');
   });
@@ -160,9 +160,9 @@ describe('ProjectCard', () => {
     );
 
     // The recovery entry is a dedicated link into the status page; Open stays closed for FAILED.
-    const link = screen.getByRole('link', { name: 'Check dependency change' });
+    const link = screen.getByRole('link', { name: '查看依赖更新状态' });
     expect(link).toHaveAttribute('href', `/projects/${encodeURIComponent(failed.id)}`);
-    expect(screen.queryByRole('link', { name: 'Open' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: '进入工作台' })).not.toBeInTheDocument();
   });
 
   it('offers no dependency recovery entry for other failures or non-python runtimes', () => {
@@ -178,7 +178,7 @@ describe('ProjectCard', () => {
         <ProjectCard project={otherReason} />
       </MemoryRouter>,
     );
-    expect(screen.queryByRole('link', { name: 'Check dependency change' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: '查看依赖更新状态' })).not.toBeInTheDocument();
 
     cleanup();
     const java: ProjectSummary = {
@@ -193,7 +193,7 @@ describe('ProjectCard', () => {
         <ProjectCard project={java} />
       </MemoryRouter>,
     );
-    expect(screen.queryByRole('link', { name: 'Check dependency change' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: '查看依赖更新状态' })).not.toBeInTheDocument();
 
     cleanup();
     const deleting: ProjectSummary = {
@@ -208,6 +208,6 @@ describe('ProjectCard', () => {
         <ProjectCard project={deleting} />
       </MemoryRouter>,
     );
-    expect(screen.queryByRole('link', { name: 'Check dependency change' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: '查看依赖更新状态' })).not.toBeInTheDocument();
   });
 });

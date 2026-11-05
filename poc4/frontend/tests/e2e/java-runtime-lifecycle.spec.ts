@@ -207,7 +207,7 @@ test.describe.serial('java runtime cloud lifecycle', () => {
 
     await openCloudProjectCreation(page);
     await page.getByLabel('Project name').fill(SCENE.projectName);
-    await page.getByLabel('Template').selectOption({ label: 'Java Spring Boot web' });
+    await page.getByLabel('Template').selectOption({ label: 'Java Spring Boot 网站' });
     await page.getByLabel('Public access').check();
     await page.getByLabel('MySQL').check();
     await page.getByLabel('Redis').check();
@@ -236,7 +236,7 @@ test.describe.serial('java runtime cloud lifecycle', () => {
     await expect(card).toContainText(String(publicPortNumber1));
     await expect(card).toContainText(String(publicPortNumber2));
 
-    const open = card.getByRole('link', { name: 'Open' });
+    const open = card.getByRole('link', { name: '进入工作台' });
     await expect(open).toBeVisible();
     await open.click();
     await expect(page).toHaveURL(/\/projects\/[^/]+$/);
@@ -285,13 +285,13 @@ test.describe.serial('java runtime cloud lifecycle', () => {
     console.log(`[java-runtime] added ${SECOND_PORT_CONFIG_PATH} so the app listens on ${SECOND_CONTAINER_PORT}`);
 
     await openProject(page);
-    await page.getByRole('tab', { name: 'Run' }).click();
-    const start = page.getByRole('button', { name: 'Start run' });
+    await page.getByRole('tab', { name: '运行记录' }).click();
+    const start = page.getByRole('button', { name: '启动运行' });
     await expect(start).toBeEnabled();
     await start.click();
-    const runState = page.getByRole('status', { name: 'Run state' });
+    const runState = page.getByRole('status', { name: '运行状态' });
     await expect(runState).toBeVisible();
-    await expect(runState).toContainText('RUNNING', { timeout: 780_000 });
+    await expect(runState).toContainText('正在执行', { timeout: 780_000 });
 
     // Corroboration: this is a SERVICE run with a verified readiness lifetime, and the
     // deadline is armed at first verified readiness - never before.
@@ -419,13 +419,13 @@ test.describe.serial('java runtime cloud lifecycle', () => {
           async () => (await fetchRun(page, SCENE.projectId, active.run.id)).state,
           { timeout: 180_000, intervals: [5_000, 10_000] },
         )
-        .toMatch(/SUCCEEDED|FAILED|STOPPED|TIMED_OUT|CANCELLED/);
+        .toMatch(/运行成功|运行失败|STOPPED|运行超时|已停止/);
       console.log(`[java-runtime] settled active run ${active.run.id} before deletion`);
     }
 
     const card = projectCard(page, SCENE.projectName);
     await expect(card).toBeVisible();
-    await card.getByRole('button', { name: 'Delete project' }).click();
+    await card.getByRole('button', { name: '删除项目' }).click();
     const dialog = page.getByRole('alertdialog', { name: 'Delete project?' });
     await expect(dialog).toBeVisible();
     await dialog.getByRole('button', { name: 'Delete permanently' }).click();
@@ -478,7 +478,7 @@ async function signIn(page: Page): Promise<void> {
 async function openProject(page: Page): Promise<void> {
   const card = projectCard(page, SCENE.projectName);
   await expect(card).toBeVisible();
-  await card.getByRole('link', { name: 'Open' }).click();
+  await card.getByRole('link', { name: '进入工作台' }).click();
   await expect(page).toHaveURL(new RegExp(`/projects/${SCENE.projectId}$`));
   await expect(page.getByRole('heading', { name: SCENE.projectName })).toBeVisible();
 }

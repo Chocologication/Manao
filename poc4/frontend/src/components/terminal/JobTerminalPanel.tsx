@@ -106,21 +106,21 @@ function createDefaultController({
 function runStateText(state: RunState): string {
   switch (state) {
     case 'STARTING':
-      return 'Run starting';
+      return '运行正在启动';
     case 'RUNNING':
-      return 'Ready to open';
+      return '可以打开终端';
     case 'STOPPING':
-      return 'Run stopping';
+      return '运行正在停止';
     case 'RECOVERING':
-      return 'Run recovering';
+      return '正在恢复运行状态';
     case 'SUCCEEDED':
-      return 'Run succeeded';
+      return '运行成功';
     case 'FAILED':
-      return 'Run failed';
+      return '运行失败';
     case 'CANCELLED':
-      return 'Run cancelled';
+      return '运行已停止';
     case 'TIMED_OUT':
-      return 'Run timed out';
+      return '运行超时';
   }
 }
 
@@ -130,44 +130,44 @@ function terminalStatusText(options: {
   run: JobTerminalRunAuthority | null;
   snapshot: JobTerminalSnapshot;
 }): string {
-  if (options.authorityLoading) return 'Loading run authority';
-  if (options.authorityError !== null) return 'Authority unavailable';
-  if (options.run === null) return 'No active run';
+  if (options.authorityLoading) return '正在读取运行状态';
+  if (options.authorityError !== null) return '运行状态暂不可用';
+  if (options.run === null) return '当前没有运行中的任务';
   if (options.run.state !== 'RUNNING') return runStateText(options.run.state);
   switch (options.snapshot.phase) {
     case 'unavailable':
     case 'available':
-      return 'Ready to open';
+      return '可以打开终端';
     case 'creating':
-      return 'Creating session';
+      return '正在创建会话';
     case 'connecting':
-      return 'Connecting';
+      return '正在连接';
     case 'ready':
-      return 'Ready';
+      return '已就绪';
     case 'paused':
-      return 'Input paused';
+      return '已暂停输入';
     case 'closing':
-      return 'Closing';
+      return '正在关闭';
     case 'closed':
-      return 'Closed';
+      return '已关闭';
     case 'exited':
-      return 'Exited';
+      return '已退出';
     case 'error':
-      return 'Terminal error';
+      return '终端异常';
   }
 }
 
 function terminalFailureText(failure: JobTerminalSnapshot['failure']): string {
   if (failure === 'input-overflow') {
-    return 'Input queue overflow. The session closed; part of the input may already have been sent.';
+    return '输入队列已满，会话已关闭，部分输入可能已经发送。';
   }
   if (failure === 'terminal-not-available') {
-    return 'The terminal is no longer available. Run authority is being refreshed.';
+    return '终端已不可用，正在重新核对运行状态。';
   }
   if (failure === 'terminal-session-already-active') {
-    return 'A terminal session is already active. The old session must end before an explicit retry.';
+    return '已有终端会话，请等待原会话结束后再重试。';
   }
-  return 'Terminal session failed. Open a new session to retry.';
+  return '终端会话异常，请打开新会话重试。';
 }
 
 function isOpenable(phase: JobTerminalSnapshot['phase']): boolean {
@@ -317,7 +317,7 @@ export function JobTerminalPanel({
   return (
     <section
       role="region"
-      aria-label="Job terminal"
+      aria-label="运行终端"
       aria-hidden={!active}
       inert={!active ? true : undefined}
       className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-background"
@@ -346,7 +346,7 @@ export function JobTerminalPanel({
       {snapshot.phase === 'error' ? (
         <p
           role="alert"
-          aria-label="Terminal session error"
+          aria-label="终端会话错误"
           className="shrink-0 border-b px-3 py-1.5 text-sm text-destructive"
         >
           {terminalFailureText(snapshot.failure)}
@@ -381,7 +381,7 @@ export function JobTerminalPanel({
           {usesBlockingViewportStatus(snapshot.phase) ? (
             <p
               role="status"
-              aria-label="Terminal viewport state"
+              aria-label="终端显示状态"
               className="pointer-events-none absolute inset-0 flex items-center justify-center px-4 text-sm text-muted-foreground"
             >
               {statusText}
@@ -408,10 +408,10 @@ export function JobTerminalPanel({
           ) : auditCreated ? (
             <p
               role="status"
-              aria-label="Terminal audit unavailable"
+              aria-label="命令记录暂不可用"
               className="flex h-full items-center justify-center px-3 text-sm text-muted-foreground"
             >
-              No terminal session audit available
+              暂无终端命令记录
             </p>
           ) : null}
         </div>

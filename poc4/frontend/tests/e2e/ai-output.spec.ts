@@ -68,13 +68,13 @@ test('real read-only high → off → low → max with incremental DOM and resto
     const prompt = marker + ' ' + effort + ': Short read-only answer. ' + (effort === 'high' ? 'Call read_file exactly once with path README.md (the operator prepared this existing safe small file). No other tools.' : 'Use no tools.') + ' Never modify files, install dependencies, run shell/build/application, create or delete anything. Return under 250 words of Markdown with a heading, two bullets, a two-row table and a fenced code example; expose no secrets.';
     await page.locator('#agent-task-goal').fill(prompt);
     const accepting = page.waitForResponse(r => new URL(r.url()).pathname === root + '/conversations/' + conversation.conversationId + '/tasks' && r.request().method() === 'POST');
-    await page.getByRole('button', { name: 'Start task', exact: true }).click(); const accepted = await accepting; expect(accepted.ok()).toBeTruthy();
+    await page.getByRole('button', { name: '启动任务', exact: true }).click(); const accepted = await accepting; expect(accepted.ok()).toBeTruthy();
     let task = await accepted.json() as Task; expect(task.reasoningEffort).toBe(effort); expect(task.conversationId).toBe(conversation.conversationId);
     const acceptedAtUtc = new Date().toISOString();
     await expect.poll(async () => { task = await get<Task>(page, root + '/agent-tasks/' + task.taskId); return occupying.has(task.state); }, { timeout: 420_000, intervals: [1000] }).toBe(false);
     const terminalObservedAtUtc = new Date().toISOString();
     expect(task.reasoningEffort).toBe(effort); expect(task.writesLocked).toBe(false); expect(task.changedPaths).toEqual([]);
-    if (task.state === 'FAILED') { expect(task.failureCode).toBe('AI_LENGTH_LIMIT'); expect(effort).toBe('max'); } else expect(task.state).toBe('COMPLETED');
+    if (task.state === 'FAILED') { expect(task.failureCode).toBe('AI_LENGTH_LIMIT'); expect(effort).toBe('max'); } else expect(task.state).toBe('已完成');
     const rows = await history(page, conversation.conversationId); const readId = assertConversationTools(rows, task.taskId, effort === 'high' ? 'read_file' : null);
     if (readId) {
       const read = await get<{ toolCallId: string; toolName: string; data: { path: string; content: string; sha256: string; truncated?: boolean } }>(page, root + '/agent-tasks/' + task.taskId + '/tools/' + encodeURIComponent(readId));
@@ -94,7 +94,7 @@ test('real read-only high → off → low → max with incremental DOM and resto
       expect(timing.liveGets, 'UNVERIFIED: no second actual live GET before terminal reconciliation').toBeGreaterThanOrEqual(2);
       expect(timing.connections[1]?.taskId).toBe(task.taskId);
       expect(reconnectTask?.taskId).toBe(task.taskId);
-      expect(reconnectTask?.state, 'UNVERIFIED: reconnect was not observed while task RUNNING').toBe('RUNNING');
+      expect(reconnectTask?.state, 'UNVERIFIED: reconnect was not observed while task RUNNING').toBe('正在执行');
     }
     assertOutputAnswerTiming(timing, task.taskId, answerOrdinal, effort !== 'off');
     const answer = page.locator(outputAnswerSelector(task.taskId, answerSeq));
@@ -118,7 +118,7 @@ test('real read-only high → off → low → max with incremental DOM and resto
     await expect(restoredSlider).toHaveValue(String(index));
     await expect(restoredSlider).toHaveAttribute('aria-valuetext', ['关闭', '低', '高', '最高'][index]);
     await restoredSlider.press('Escape'); expect(posts, 'reconnect/reload must not resubmit').toBe(tasks.length);
-    expect(task.state, task.failureCode === 'AI_LENGTH_LIMIT' ? 'FAILED/AI_LENGTH_LIMIT: max must remain a failed acceptance result' : 'task must complete').toBe('COMPLETED');
+    expect(task.state, task.failureCode === 'AI_LENGTH_LIMIT' ? 'FAILED/AI_LENGTH_LIMIT: max must remain a failed acceptance result' : 'task must complete').toBe('已完成');
   }
   expect(tasks.map(task => task.reasoningEffort)).toEqual(['high', 'off', 'low', 'max']);
   await testInfo.attach('provider-wire-status', { body: JSON.stringify({ status: 'NOT_CAPTURED_BY_BROWSER', operatorWhitelist: ['thinking', 'reasoning_effort', 'stream', 'max_tokens'], evidence: 'controlled installed SDK local tests; real wire requires operator evidence' }), contentType: 'application/json' });

@@ -46,6 +46,7 @@ public record RunPolicy(String templateId, RuntimeInfo runtime, String command, 
             return switch (language) {
                 case "java" -> javaFromJson(runtimeNode);
                 case "python" -> pythonFromJson(runtimeNode);
+                case "javascript", "typescript" -> nodeFromJson(runtimeNode);
                 default -> throw new IllegalStateException("stored policy runtime language is unknown: " + language);
             };
         }
@@ -55,7 +56,8 @@ public record RunPolicy(String templateId, RuntimeInfo runtime, String command, 
             if (!runtimeNode.has("javaMajor") || !runtimeNode.has("mavenMajor")) {
                 throw new IllegalStateException("stored policy java runtime is missing required fields");
             }
-            if (runtimeNode.has("pythonVersion") || runtimeNode.has("packageManager")) {
+            if (runtimeNode.has("pythonVersion") || runtimeNode.has("packageManager")
+                || runtimeNode.has("nodeMajor") || runtimeNode.has("pnpmMajor")) {
                 throw new IllegalStateException("stored policy java runtime carries python fields");
             }
             return new Java(runtimeNode.path("javaMajor").asInt(), runtimeNode.path("mavenMajor").asInt());
@@ -68,7 +70,8 @@ public record RunPolicy(String templateId, RuntimeInfo runtime, String command, 
                 || runtimeNode.path("packageManager").asText("").isBlank()) {
                 throw new IllegalStateException("stored policy python runtime is missing required fields");
             }
-            if (runtimeNode.has("javaMajor") || runtimeNode.has("mavenMajor")) {
+            if (runtimeNode.has("javaMajor") || runtimeNode.has("mavenMajor")
+                || runtimeNode.has("nodeMajor") || runtimeNode.has("pnpmMajor")) {
                 throw new IllegalStateException("stored policy python runtime carries java fields");
             }
             return new Python(runtimeNode.path("pythonVersion").asText(),
@@ -81,6 +84,28 @@ public record RunPolicy(String templateId, RuntimeInfo runtime, String command, 
                 throw new IllegalStateException("stored policy snapshot has no runtime information");
             }
             return new Java(runtimeNode.path("javaMajor").asInt(), runtimeNode.path("mavenMajor").asInt());
+        }
+
+        static RuntimeInfo.Node nodeFromJson(JsonNode node) {
+            if (node.path("nodeMajor").asInt() != 24 || !"pnpm".equals(node.path("packageManager").asText())
+                || node.path("pnpmMajor").asInt() != 10 || node.has("javaMajor") || node.has("mavenMajor")
+                || node.has("pythonVersion")) {
+                throw new IllegalStateException("stored policy Node.js runtime is invalid");
+            }
+            return new Node(node.path("language").asText(), 24, "pnpm", 10);
+        }
+
+        record Node(String language, int nodeMajor, String packageManager, int pnpmMajor) implements RuntimeInfo {
+            public Node {
+                if ((!"javascript".equals(language) && !"typescript".equals(language)) || nodeMajor != 24
+                    || !"pnpm".equals(packageManager) || pnpmMajor != 10) {
+                    throw new IllegalArgumentException("unsupported Node.js toolchain");
+                }
+            }
+            @Override public void writeTo(ObjectNode node) {
+                node.put("language", language); node.put("nodeMajor", nodeMajor);
+                node.put("packageManager", packageManager); node.put("pnpmMajor", pnpmMajor);
+            }
         }
 
         record Java(int javaMajor, int mavenMajor) implements RuntimeInfo {
@@ -162,6 +187,8 @@ public record RunPolicy(String templateId, RuntimeInfo runtime, String command, 
         RuntimeInfo projectRuntime = switch (template) {
             case JAVA_CONSOLE, JAVA_SPRING_BOOT_WEB -> javaRuntime();
             case PYTHON_CONSOLE, PYTHON_FASTAPI_WEB -> RuntimeInfo.Python.DEFAULT;
+            case NODE_JAVASCRIPT_CONSOLE, NODE_JAVASCRIPT_WEB, NODE_TYPESCRIPT_CONSOLE, NODE_TYPESCRIPT_WEB ->
+                new RuntimeInfo.Node(template.language(), 24, "pnpm", 10);
         };
         return new RunPolicy(template.id(), projectRuntime, template.displayCommand(), timeoutSeconds,
             template.isService() ? EXECUTION_KIND_SERVICE : EXECUTION_KIND_TASK, startupTimeoutSeconds,

@@ -337,8 +337,8 @@ describe('XtermTerminalAdapter browser options', () => {
         fontSize: 14,
         scrollback: 5_000,
         theme: {
-          background: '#0b1110',
-          foreground: '#e0ebe4',
+          background: '#0c1220',
+          foreground: '#e8efff',
         },
       });
 
