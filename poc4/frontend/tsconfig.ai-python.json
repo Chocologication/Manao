@@ -1,0 +1,4 @@
+{
+  "extends": "./tsconfig.stage6.json",
+  "include": ["playwright.ai-python.config.ts", "tests/e2e/ai-python*.ts", "scripts/ai-python-contract.test.ts"]
+}

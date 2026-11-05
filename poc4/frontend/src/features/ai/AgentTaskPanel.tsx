@@ -21,6 +21,8 @@ import {
   applicationData,
   applicationError,
   appHttpGetData,
+  pythonBuildData,
+  pythonDependencyData,
   type AgentTaskSnapshot,
   type ReasoningEffort,
   type AgentToolCallResult,
@@ -377,13 +379,13 @@ export function AgentTaskPanel({
                                 void handleViewBuildResult(buildCallId);
                               }}
                             >
-                              View {item.text.startsWith('application ') ? 'application result' : item.text.startsWith('app_http_get ') ? 'HTTP result' : 'build result'}
+                              {item.text.startsWith('python_dependencies ') ? '查看依赖结果' : `View ${item.text.startsWith('application ') ? 'application result' : item.text.startsWith('app_http_get ') ? 'HTTP result' : 'build result'}`}
                             </Button>
                           </span>
                         ) : null}
                         {buildCallId !== null && buildResults[buildCallId] === 'error' ? (
                           <span className="mt-1 block text-destructive">
-                            Could not load the build result.
+                            {item.text.startsWith('python_dependencies ') ? '无法加载依赖结果' : 'Could not load the build result.'}
                           </span>
                         ) : null}
                         {buildCallId !== null && buildResults[buildCallId] !== undefined
@@ -487,6 +489,24 @@ function isNavigableRunId(runId: unknown): boolean {
 }
 
 export function ToolResultView({ result, onViewRun }: { result: AgentToolCallResult; onViewRun?: (runId: string) => void }) {
+  if (result.toolName === 'python_dependencies' || result.toolName === 'build') {
+    const error = result.data.error;
+    if (error !== null && typeof error === 'object' && 'code' in error && 'message' in error &&
+        typeof error.code === 'string' && typeof error.message === 'string')
+      return <div role="alert" className="text-destructive">{error.code}: {error.message}</div>;
+  }
+  if (result.toolName === 'python_dependencies') {
+    const dependency = pythonDependencyData(result);
+    if (dependency === null) return <div role="alert">工具结果格式不完整</div>;
+    return <div className="mt-1 flex flex-col gap-1 rounded border p-2">
+      <div className="font-medium">依赖变更</div>
+      <div>包：{dependency.packageName}</div>
+      <div>依赖组：{dependency.group}</div>
+      <div>操作：{dependency.action === 'add' ? '添加' : '移除'}</div>
+      <div>状态：已提交</div>
+      <ul>{dependency.changedPaths.map(path => <li key={path} className="font-mono text-xs">{path}</li>)}</ul>
+    </div>;
+  }
   const rejected = applicationError(result);
   if (rejected !== null) return <div className="text-destructive">{rejected.code}: {rejected.message}</div>;
   const app = applicationData(result);
@@ -573,6 +593,11 @@ function FileToolResultView({ result }: { result: AgentToolCallResult }) {
 
 /** The settled build evidence the backend serves the owner: real exit facts, bounded output. */
 function BuildResultView({ result }: { result: AgentToolCallResult }) {
+  const python = pythonBuildData(result);
+  const pythonLabel = python === null ? null : {
+    PASS: 'PASS', FAILED: 'FAILED', NO_TESTS: '未发现测试', SKIPPED: '全部测试跳过',
+    UNKNOWN: '验证证据不完整', NO_SOURCE: '未发现 Python 源文件',
+  }[python.verificationStatus];
   const exitCode = buildExitCode(result);
   const cleanupConfirmed = buildCleanupConfirmed(result);
   const output = typeof result.data['output'] === 'string' ? result.data['output'] : null;
@@ -580,6 +605,16 @@ function BuildResultView({ result }: { result: AgentToolCallResult }) {
     typeof result.data['terminationReason'] === 'string' ? result.data['terminationReason'] : null;
   return (
     <div className="mt-1 flex flex-col gap-1 rounded border p-2">
+      {result.data.language === 'python' ? python === null ? <div role="alert">验证证据不完整</div> : <>
+        <div className="font-medium">{python.checkKind === 'syntax' ? 'Python 语法检查' : 'Python 测试'}</div>
+        <div>验证状态：{pythonLabel}</div>
+        <div>源码版本：{python.sourceRevision}</div>
+        {python.checkKind === 'syntax' ? <div>已检查文件：{python.filesChecked ?? '未知'}</div> : <>
+          {python.testSummary === null ? null : <div>测试：{python.testSummary.tests} · 失败：{python.testSummary.failures} · 错误：{python.testSummary.errors} · 跳过：{python.testSummary.skipped}</div>}
+          <div>测试报告：{python.testSummary?.reportComplete ? '完整' : '未取得完整报告'}</div>
+        </>}
+        {python.errors.map((error, index) => <div key={index} className="text-destructive">{error.path === null ? '' : `${error.path}: `}{error.message}</div>)}
+      </> : null}
       <div>
         <span className="font-medium">Exit code: </span>
         <span className={exitCode !== null && exitCode !== 0 ? 'text-destructive' : ''}>

@@ -1,3 +1,4 @@
+import { JAVA_ENVIRONMENT } from "./environment-fixtures.js";
 import { describe, expect, it } from "vitest";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -15,7 +16,7 @@ async function runScriptedTask(
 ): Promise<{ outcome: PiTaskOutcome; backend: ReturnType<typeof backendStub>; tools: ToolDefinition[] }> {
   const backend = backendStub(results);
   const chain = new ProgressChain(backend as unknown as BackendClient, "task-1");
-  const pi = await createPiSession({
+  const pi = await createPiSession({ environment: JAVA_ENVIRONMENT,
     model: MODEL_CONFIG,
     paths: privateDirs(),
     budgets: overrides.budgets,
@@ -51,7 +52,7 @@ describe("pi session", () => {
     writeFileSync(join(paths.agentDir, "APPEND_SYSTEM.md"), diskInstruction, "utf8");
     const backend = backendStub([resultFor]);
     let sentSystem = "";
-    const pi = await createPiSession({ model: MODEL_CONFIG, paths, taskId: "task-prompt",
+    const pi = await createPiSession({ environment: JAVA_ENVIRONMENT, model: MODEL_CONFIG, paths, taskId: "task-prompt",
       backend: backend as never, progress: new ProgressChain(backend as never, "task-prompt"),
       deps: { createSession: async options => scriptedSessionFactory([{ text: "done" }], context => {
         const first = context.messages[0];
@@ -61,7 +62,7 @@ describe("pi session", () => {
     try {
       expect((await pi.run({ prompt: "Inspect the project", workspaceRevision: "7" })).state).toBe("COMPLETED");
       expect(sentSystem).not.toContain(diskInstruction);
-      expect(sentSystem).toContain("seven mediated tools");
+      expect(sentSystem).toContain("environment-matched mediated tools");
       expect(sentSystem).not.toContain("Manao continuation checkpoint rules");
     } finally { pi.dispose(); }
   });
@@ -112,9 +113,9 @@ describe("pi session", () => {
     expect(outcome.summary).toContain("Changed src/Demo.java");
   });
 
-  it("registers exactly the six project tools and nothing else", async () => {
+  it("registers exactly the current service project's tools and nothing else", async () => {
     const { tools } = await runScriptedTask([{ text: "done" }]);
-    expect(tools.map((tool) => tool.name)).toEqual(["read_image", "list_files", "read_file", "write_file", "build", "application", "app_http_get"]);
+    expect(tools.map((tool) => tool.name)).toEqual(["list_files", "read_file", "write_file", "build", "application", "app_http_get", "read_image"]);
   });
 
   it("persists complete messages only, never per-token deltas", async () => {
@@ -164,7 +165,7 @@ describe("pi session", () => {
   it("applies a stop requested before the run and never prompts afterwards", async () => {
     const backend = backendStub([resultFor]);
     const chain = new ProgressChain(backend as unknown as BackendClient, "task-1");
-    const pi = await createPiSession({
+    const pi = await createPiSession({ environment: JAVA_ENVIRONMENT,
       model: MODEL_CONFIG,
       paths: privateDirs(),
       backend: backend as never,

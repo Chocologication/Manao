@@ -86,7 +86,31 @@ public final class AgentContracts {
 
     /** One development build execution request; {@code commandId} is the stable display identity. */
     public record BuildRequest(String taskId, String toolCallId, String projectId,
-                               String commandId, long sourceRevision, BuildGoal goal) { }
+                               String commandId, long sourceRevision, BuildGoal goal,
+                               AgentProjectEnvironment environment) {
+        /** Source compatibility only: new execution rejects this missing environment. */
+        public BuildRequest(String taskId, String toolCallId, String projectId, String commandId,
+                            long sourceRevision, BuildGoal goal) {
+            this(taskId, toolCallId, projectId, commandId, sourceRevision, goal, null);
+        }
+
+        /** Explicit historical Maven description, used only to close pre-environment task rows. */
+        public static BuildRequest legacyBuildRequestForClose(String taskId, String toolCallId, String projectId,
+                String commandId, long sourceRevision, BuildGoal goal) {
+            var legacy = new AgentProjectEnvironment(1, "java-console", "java", "none", "task", "com.example.app.App",
+                null, null, null, false, false, "java-v1", List.of("compile", "test", "package"), List.of(),
+                List.of("list_files", "read_file", "write_file", "build", "application", "read_image"));
+            return new BuildRequest(taskId, toolCallId, projectId, commandId, sourceRevision, goal, legacy);
+        }
+
+        public void requireExecutableEnvironment() {
+            if (environment == null || goal == null
+                    || !environment.buildGoals().contains(goal.name().toLowerCase(java.util.Locale.ROOT))
+                    || !("python".equals(environment.language()) || "java".equals(environment.language()))) {
+                throw new IllegalArgumentException("build environment or goal is unsupported");
+            }
+        }
+    }
 
     /** The verified Kubernetes identity behind one build; never leaves the backend. */
     public record BuildIdentity(String jobName, String jobUid, String podUid) { }
@@ -98,11 +122,22 @@ public final class AgentContracts {
     /** The real build outcome: exit result, bounded output, parsed reports and cleanup proof. */
     public record BuildResult(BuildIdentity identity, Integer exitCode, String terminationReason,
                               String output, boolean truncated, List<TestReport> testReports,
-                              boolean cleanupConfirmed) { }
+                              boolean cleanupConfirmed, PythonBuildEvidence evidence) {
+        public BuildResult(BuildIdentity identity, Integer exitCode, String terminationReason,
+                           String output, boolean truncated, List<TestReport> testReports, boolean cleanupConfirmed) {
+            this(identity, exitCode, terminationReason, output, truncated, testReports, cleanupConfirmed, null);
+        }
+    }
 
     /** Backend-to-worker start command; carries no project owner. */
     public record WorkerStart(String taskId, String prompt, String workspaceRevision,
-                              String requestSha256, long workerEpoch, String conversationId, String reasoningEffort) {
+                              String requestSha256, long workerEpoch, String conversationId, String reasoningEffort,
+                              AgentProjectEnvironment environment, String environmentSha256) {
+        /** Legacy wire fixtures carry no environment; production starts must supply the persisted snapshot. */
+        public WorkerStart(String taskId, String prompt, String workspaceRevision, String requestSha256,
+                           long workerEpoch, String conversationId, String reasoningEffort) {
+            this(taskId, prompt, workspaceRevision, requestSha256, workerEpoch, conversationId, reasoningEffort, null, null);
+        }
         public WorkerStart(String taskId, String prompt, String workspaceRevision, String requestSha256, long workerEpoch, String conversationId) {
             this(taskId, prompt, workspaceRevision, requestSha256, workerEpoch, conversationId, "high");
         }

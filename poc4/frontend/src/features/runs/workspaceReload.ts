@@ -1,6 +1,7 @@
 import type { QueryClient } from '@tanstack/react-query';
 import { ApiRequestError } from '../../api/ApiRequestError';
 import { getFileContent, getFileMetadata, listDirectory } from '../../api/fileApi';
+import { readWithProjectBusyRetry } from '../../api/projectBusyRetry';
 import { workspaceBufferRegistry } from '../../app/appRuntime';
 import type { FileMetadata, FileRenderMode, ProjectRelativePath } from '../../contracts/file';
 import { useWorkspaceSession } from '../editor/workspaceSession';
@@ -42,10 +43,22 @@ function assertCurrentProject(projectId: string): void {
   }
 }
 
+// File reads share the backend's exclusive project lease with other reads.
+// Retry only its transient busy response, checking scope before every attempt
+// and after the response so a late read cannot overwrite a new workspace.
+function readCurrentProject<T>(projectId: string, read: () => Promise<T>): Promise<T> {
+  return readWithProjectBusyRetry(async () => {
+    assertCurrentProject(projectId);
+    const result = await read();
+    assertCurrentProject(projectId);
+    return result;
+  });
+}
+
 async function pathStillExists(projectId: string, path: ProjectRelativePath, queryClient: QueryClient): Promise<boolean> {
   try {
     // Directory metadata is not a FileMetadata response; check directories first.
-    const tree = await listDirectory(projectId, parseProjectDirectoryPath(path));
+    const tree = await readCurrentProject(projectId, () => listDirectory(projectId, parseProjectDirectoryPath(path)));
     assertCurrentProject(projectId);
     cacheDirectoryTree(queryClient, projectId, tree);
     return true;
@@ -55,7 +68,7 @@ async function pathStillExists(projectId: string, path: ProjectRelativePath, que
     }
   }
   try {
-    await getFileMetadata(projectId, path);
+    await readCurrentProject(projectId, () => getFileMetadata(projectId, path));
     return true;
   } catch (error) {
     if (isDeletedEntryError(error)) {
@@ -131,7 +144,7 @@ export async function reloadWorkspaceAfterTerminalRun(options: {
   });
   assertCurrentProject(projectId);
 
-  const tree = await listDirectory(projectId, parseProjectDirectoryPath(''));
+  const tree = await readCurrentProject(projectId, () => listDirectory(projectId, parseProjectDirectoryPath('')));
   assertCurrentProject(projectId);
   cacheDirectoryTree(queryClient, projectId, tree);
 
@@ -140,7 +153,7 @@ export async function reloadWorkspaceAfterTerminalRun(options: {
     assertCurrentProject(projectId);
     let meta: FileMetadata;
     try {
-      meta = await getFileMetadata(projectId, path);
+      meta = await readCurrentProject(projectId, () => getFileMetadata(projectId, path));
     } catch (error) {
       if (isDeletedEntryError(error)) {
         continue;
@@ -152,7 +165,7 @@ export async function reloadWorkspaceAfterTerminalRun(options: {
       surviving.push(path);
       continue;
     }
-    const content = await getFileContent(projectId, path);
+    const content = await readCurrentProject(projectId, () => getFileContent(projectId, path));
     assertCurrentProject(projectId);
     cacheFileContent(queryClient, projectId, content);
     surviving.push(path);

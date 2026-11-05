@@ -408,6 +408,41 @@ class PythonDependencyEditorTest {
     }
 
     @Test
+    void testGroupReachesTheIsolatedHelperWithoutChangingTheMainArgv(@TempDir Path root) throws Exception {
+        var json = new com.fasterxml.jackson.databind.ObjectMapper()
+            .disable(com.fasterxml.jackson.databind.DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES);
+        var change = json.readValue(
+            "{\"action\":\"ADD\",\"packageName\":\"pytest\",\"version\":null,\"group\":\"test\"}",
+            PythonDependencyEditor.DependencyChange.class);
+        assertThat(PythonDependencyEditor.helperCommand(root, change,
+            "/usr/local/bin/python3", "/opt/manao-python/dependency_helper.py", 20))
+            .containsExactly("/usr/local/bin/python3", "-I", "/opt/manao-python/dependency_helper.py",
+                root.toString(), "ADD", "pytest", "", "20", "test");
+    }
+
+    @Test
+    void invalidGroupsAndFailedTestResolutionNeverCreateAJournal(@TempDir Path root) throws Exception {
+        seedWorkspace(root);
+        CountingResolver resolver = new CountingResolver();
+        var editor = editor(root, resolver);
+        for (String group : List.of("", "dev", "Test", "test --index-url evil")) {
+            assertThatThrownBy(() -> editor.prepare(OPERATION_ID, REQUEST_SHA256,
+                new PythonDependencyEditor.DependencyChange("ADD", "pytest", null, group)))
+                .isInstanceOfSatisfying(WorkspaceFileService.WorkspaceFileException.class,
+                    ex -> assertThat(ex.code()).isEqualTo("VALIDATION_ERROR"));
+        }
+        assertThat(resolver.calls).isZero();
+        resolver.failure = new WorkspaceFileService.WorkspaceFileException("PYTHON_DEPENDENCY_NO_WHEEL", "no wheel");
+        assertThatThrownBy(() -> editor.prepare(OPERATION_ID, REQUEST_SHA256,
+            new PythonDependencyEditor.DependencyChange("ADD", "pytest", null, "test")))
+            .isInstanceOfSatisfying(WorkspaceFileService.WorkspaceFileException.class,
+                ex -> assertThat(ex.code()).isEqualTo("PYTHON_DEPENDENCY_NO_WHEEL"));
+        assertThat(Files.exists(root.resolve(".manao/python-dependencies/" + OPERATION_ID + "/manifest.json"))).isFalse();
+        assertThat(Files.readString(root.resolve("pyproject.toml"))).isEqualTo(BEFORE_PYPROJECT);
+        assertThat(Files.readString(root.resolve("uv.lock"))).isEqualTo(BEFORE_LOCK);
+    }
+
+    @Test
     void helperTokensMapToFixedSafeErrorCodes() {
         assertThat(PythonDependencyEditor.mapHelperOutcome(0, "")).isNull();
         assertThat(PythonDependencyEditor.mapHelperOutcome(3, "PYTHON_DEPENDENCY_UNSUPPORTED\n"))

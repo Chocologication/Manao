@@ -327,6 +327,30 @@ class WorkspaceFileServiceTest {
     @Nested
     class MutationsAndReceipts {
         @Test
+        void nestedPythonSaveCreatesParentsAndRequiresTheLatestDigest(@TempDir Path root) throws Exception {
+            WorkspaceFileService service = new WorkspaceFileService(root);
+            Files.writeString(root.resolve("pom.xml"), "existing mistake");
+            String path = "tests/test_main.py";
+            byte[] firstContent = "def test_total():\n    assert 1 + 1 == 2\n".getBytes(StandardCharsets.UTF_8);
+            var first = saveCommand(root, path, "python-first", firstContent);
+            service.save(first);
+            assertThat(Files.isDirectory(root.resolve("tests"))).isTrue();
+            assertThat(Files.readAllBytes(root.resolve(path))).isEqualTo(firstContent);
+            var update = saveCommand(root, path, "python-update", "updated".getBytes(StandardCharsets.UTF_8));
+            Files.writeString(root.resolve(path), "concurrent edit");
+            assertThatThrownBy(() -> service.save(update))
+                .isInstanceOfSatisfying(WorkspaceFileService.WorkspaceFileException.class,
+                    ex -> assertThat(ex.code()).isEqualTo("OPERATION_CONFLICT"));
+            assertThat(Files.readString(root.resolve(path))).isEqualTo("concurrent edit");
+            assertThat(service.receipt("python-update")).isEmpty();
+            var latest = saveCommand(root, path, "python-latest", "updated".getBytes(StandardCharsets.UTF_8));
+            var saved = service.save(latest);
+            assertThat(saved.beforeSha256()).isEqualTo(latest.expectedBeforeSha256());
+            assertThat(Files.readString(root.resolve(path))).isEqualTo("updated");
+            assertThat(Files.readString(root.resolve("pom.xml"))).isEqualTo("existing mistake");
+        }
+
+        @Test
         void saveWritesAtomicallyAndReturnsVerifiedReceipt(@TempDir Path root) throws Exception {
             WorkspaceFileService service = new WorkspaceFileService(root);
             Files.writeString(root.resolve("App.java"), "old");

@@ -1,3 +1,4 @@
+import { JAVA_ENVIRONMENT } from "./environment-fixtures.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { SessionManager, type SessionEntry } from "@earendil-works/pi-coding-agent";
 import { ProgressChain, type BackendClient } from "../src/backend-client.js";
@@ -51,7 +52,7 @@ describe("persisted reasoning effort through the installed Pi SDK", () => {
     for (const effort of ["high", "off", "low", "max"] as const) {
       if (effort === "max") f.length();
       const firstWire = f.payloads.length;
-      const task = await createPiSession({ model, paths: f.paths, taskId: effort, conversationId, startRevision: "7", reasoningEffort: effort, backend: f.backend, progress: new ProgressChain(f.backend, effort) });
+      const task = await createPiSession({ environment: JAVA_ENVIRONMENT, model, paths: f.paths, taskId: effort, conversationId, startRevision: "7", reasoningEffort: effort, backend: f.backend, progress: new ProgressChain(f.backend, effort) });
       try {
         const result = await task.run({ prompt: "read only fixture", workspaceRevision: "7" });
         expect(result).toMatchObject(effort === "max" ? { state: "FAILED", failureCode: "AI_LENGTH_LIMIT" } : { state: "COMPLETED", failureCode: null });
@@ -70,7 +71,7 @@ describe("persisted reasoning effort through the installed Pi SDK", () => {
   }, 20_000);
   it.each(["off", "low", "high", "max"])("sends %s in the actual DeepSeek request without lowering max", async effort => {
     const f = fixture();
-    const task = await createPiSession({ model, paths: f.paths, taskId: "task", reasoningEffort: effort, backend: f.backend, progress: new ProgressChain(f.backend, "task") } as Parameters<typeof createPiSession>[0]);
+    const task = await createPiSession({ environment: JAVA_ENVIRONMENT, model, paths: f.paths, taskId: "task", reasoningEffort: effort, backend: f.backend, progress: new ProgressChain(f.backend, "task") } as Parameters<typeof createPiSession>[0]);
     try {
       expect((await task.run({ prompt: "hello", workspaceRevision: "7" })).state).toBe("COMPLETED");
       expect(f.payloads.at(-1)).toMatchObject(effort === "off" ? { stream: true, max_tokens: 8192, thinking: { type: "disabled" } } : { stream: true, max_tokens: 8192, thinking: { type: "enabled" }, reasoning_effort: effort });
@@ -79,7 +80,7 @@ describe("persisted reasoning effort through the installed Pi SDK", () => {
   it("restores high to off to max as native changes, then manually compacts at max", async () => {
     const f = fixture();
     for (const effort of ["high", "off", "max"]) {
-      const task = await createPiSession({ model, paths: f.paths, taskId: effort, conversationId, startRevision: "7", reasoningEffort: effort, backend: f.backend, progress: new ProgressChain(f.backend, effort) } as Parameters<typeof createPiSession>[0]);
+      const task = await createPiSession({ environment: JAVA_ENVIRONMENT, model, paths: f.paths, taskId: effort, conversationId, startRevision: "7", reasoningEffort: effort, backend: f.backend, progress: new ProgressChain(f.backend, effort) } as Parameters<typeof createPiSession>[0]);
       try { expect((await task.run({ prompt: "hello", workspaceRevision: "7" })).state).toBe("COMPLETED"); } finally { task.dispose(); }
     }
     expect(f.entries.filter(e => e.type === "thinking_level_change").map(e => e.thinkingLevel)).toEqual(["high", "off", "max"]);
@@ -93,7 +94,7 @@ describe("persisted reasoning effort through the installed Pi SDK", () => {
   });
   it("preserves length as a failed final response", async () => {
     const f = fixture(); f.length();
-    const task = await createPiSession({ model, paths: f.paths, taskId: "task", reasoningEffort: "max", backend: f.backend, progress: new ProgressChain(f.backend, "task") } as Parameters<typeof createPiSession>[0]);
+    const task = await createPiSession({ environment: JAVA_ENVIRONMENT, model, paths: f.paths, taskId: "task", reasoningEffort: "max", backend: f.backend, progress: new ProgressChain(f.backend, "task") } as Parameters<typeof createPiSession>[0]);
     try { expect(await task.run({ prompt: "hello", workspaceRevision: "7" })).toMatchObject({ state: "FAILED", failureCode: "AI_LENGTH_LIMIT" }); } finally { task.dispose(); }
   });
   it("keeps max for real SDK tool continuation and automatic compaction requests", async () => {
@@ -102,7 +103,7 @@ describe("persisted reasoning effort through the installed Pi SDK", () => {
     seed.appendCustomMessageEntry("manao_user_request", "old" + "x".repeat(100_000), true);
     seed.appendCustomMessageEntry("manao_user_request", "recent" + "y".repeat(100_000), true);
     f.entries.push(...seed.getEntries());
-    const task = await createPiSession({ model, paths: f.paths, taskId: "task", conversationId, startRevision: "7", reasoningEffort: "max", backend: f.backend, progress: new ProgressChain(f.backend, "task") });
+    const task = await createPiSession({ environment: JAVA_ENVIRONMENT, model, paths: f.paths, taskId: "task", conversationId, startRevision: "7", reasoningEffort: "max", backend: f.backend, progress: new ProgressChain(f.backend, "task") });
     try {
       expect(await task.run({ prompt: "read file", workspaceRevision: "7" })).toEqual({ state: "COMPLETED", summary: "ok", failureCode: null, reason: "the model finished with a final answer" });
       expect(f.payloads.length).toBeGreaterThanOrEqual(3);

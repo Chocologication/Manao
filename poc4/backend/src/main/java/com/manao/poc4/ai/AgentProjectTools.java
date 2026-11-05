@@ -53,24 +53,12 @@ public final class AgentProjectTools {
     /** Key-sorted serialization: the canonical form the request digest is computed over. */
     private static final ObjectMapper CANONICAL = new ObjectMapper()
         .configure(SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS, true);
-    private static final Set<String> KNOWN_TOOLS = Set.of("list_files", "read_file", "write_file", "build", "application", "app_http_get", "read_image");
+    private static final Set<String> KNOWN_TOOLS = Set.of("list_files", "read_file", "write_file", "build", "application", "app_http_get", "read_image", "python_dependencies");
     /** Tools that register a durable side effect and are blocked while another call is unsettled. */
-    private static final Set<String> SIDE_EFFECT_TOOLS = Set.of("write_file", "build");
+    private static final Set<String> SIDE_EFFECT_TOOLS = Set.of("write_file", "build", "python_dependencies");
     private static final String BUILD_TOOL = "build";
     private static final Set<String> FILE_WRITES = Set.of("write_file");
     private static final Pattern SHA256 = Pattern.compile("[0-9a-f]{64}");
-
-    /**
-     * Stage-one tool allowlist denial set (design section 4): repository internals, any target
-     * directory and credential files — fixed here in trusted code, never loaded from project
-     * configuration or prompts, and never applied to the browser's own file features.
-     */
-    private static final Set<String> DENIED_SEGMENTS = Set.of(".git", "target");
-    private static final Set<String> CREDENTIAL_FILES = Set.of(
-        ".env", ".npmrc", ".netrc", ".git-credentials", ".htpasswd", ".pgpass",
-        "id_rsa", "id_dsa", "id_ecdsa", "id_ed25519", "credentials.json");
-    private static final List<String> CREDENTIAL_SUFFIXES = List.of(
-        ".pem", ".key", ".p12", ".jks", ".keystore", ".kdbx");
 
     private final AgentTaskStore tasks;
     private final WorkspaceStore store;
@@ -81,6 +69,7 @@ public final class AgentProjectTools {
     private final DevelopmentBuildExecutor builds;
     private final AgentApplicationTools application;
     private final AgentAttachmentService attachments;
+    private final AgentPythonDependencyTools dependencies;
 
     public AgentProjectTools(AgentTaskStore tasks, WorkspaceStore store, WorkspaceService workspace,
                              WorkspaceOperationService operations, ProjectLifecycleGate lifecycle,
@@ -96,6 +85,13 @@ public final class AgentProjectTools {
     public AgentProjectTools(AgentTaskStore tasks, WorkspaceStore store, WorkspaceService workspace,
                              WorkspaceOperationService operations, ProjectLifecycleGate lifecycle,
                              DevelopmentBuildExecutor builds, AgentApplicationTools application,AgentAttachmentService attachments) {
+        this(tasks, store, workspace, operations, lifecycle, builds, application, attachments, null);
+    }
+
+    public AgentProjectTools(AgentTaskStore tasks, WorkspaceStore store, WorkspaceService workspace,
+                             WorkspaceOperationService operations, ProjectLifecycleGate lifecycle,
+                             DevelopmentBuildExecutor builds, AgentApplicationTools application, AgentAttachmentService attachments,
+                             AgentPythonDependencyTools dependencies) {
         this.tasks = tasks;
         this.store = store;
         this.workspace = workspace;
@@ -104,6 +100,7 @@ public final class AgentProjectTools {
         this.builds = builds;
         this.application = application;
         this.attachments = attachments;
+        this.dependencies = dependencies;
     }
 
     /**
@@ -153,7 +150,7 @@ public final class AgentProjectTools {
             if ("COMPLETED".equals(row.state())) {
                 return storedResult(row);
             }
-            if ("NEEDS_ATTENTION".equals(row.state())) {
+            if ("NEEDS_ATTENTION".equals(row.state()) && !"python_dependencies".equals(row.toolName())) {
                 throw new ApiException("AI_CALL_NEEDS_ATTENTION", 409,
                     "The call outcome is unknown; it needs attention before further writes");
             }
@@ -163,8 +160,15 @@ public final class AgentProjectTools {
                 if (SIDE_EFFECT_TOOLS.contains(request.name())) {
                     tasks.requireNoActiveRun(owner.projectId());
                 }
-                if (BUILD_TOOL.equals(request.name())) {
-                    buildGoal = buildGoal(request);
+                if ("python_dependencies".equals(request.name())) {
+                    if (dependencies == null) throw new ApiException("PYTHON_DEPENDENCY_UNSUPPORTED", 422, "Dependency tools unavailable");
+                } else if (BUILD_TOOL.equals(request.name())) {
+                    var requestedGoal = buildGoal(request);
+                    var environment = tasks.environmentOf(taskId);
+                    if (environment == null) throw new ApiException("AI_ENVIRONMENT_INVALID", 409, "The task project environment is unavailable");
+                    if (!environment.buildGoals().contains(requestedGoal.name().toLowerCase(Locale.ROOT)))
+                        throw new ApiException("AI_BUILD_GOAL_UNSUPPORTED", 422, "The build goal is unsupported for this project environment");
+                    buildGoal = requestedGoal;
                 } else if ("application".equals(request.name())) {
                     AgentApplicationTools.validate(request.args());
                     applicationCall = true;
@@ -191,6 +195,7 @@ public final class AgentProjectTools {
             }
         }
         if (applicationCall) return runApplication(taskId, owner, row, request);
+        if ("python_dependencies".equals(request.name()) && result == null) return dependencies.invoke(taskId, row, request);
         if (buildGoal != null) {
             // The build path settles its own call row (and retires its live claim only
             // after that settlement) — a concurrent close must never see a half-finished
@@ -327,6 +332,10 @@ public final class AgentProjectTools {
         }
         for (AgentTaskStore.ToolCallRow row : unsettled) {
             ReconcileWorkBudget.check();
+            if ("python_dependencies".equals(row.toolName())) {
+                if (dependencies == null || !dependencies.finishForClose(taskId, row)) return false;
+                continue;
+            }
             if ("application".equals(row.toolName())) continue;
             if ("app_http_get".equals(row.toolName())) {
                 // Closing forbids new claims. A restart leftover has no live transport to
@@ -348,11 +357,11 @@ public final class AgentProjectTools {
                         AgentContracts.BuildResult closed = builds.closeStep(buildRequestOf(owner, row), new AgentContracts.BuildIdentity(
                             row.jobName(), row.jobUid(), row.podUid()));
                         if (closed == null || !closed.cleanupConfirmed()) return false;
-                        if ("RUNNING".equals(row.state())) {
-                            tasks.settleClosedBuildCall(taskId, row.toolCallId(), jsonOf(fittedBuildResult(
-                                new AgentContracts.ToolResult(row.toolCallId(),
-                                    Long.toString(currentRevision(owner.projectId())),
-                                    buildData(buildRequestOf(owner, row), closed), closed.truncated()))));
+                        if ("RUNNING".equals(row.state()) || "NEEDS_ATTENTION".equals(row.state())) {
+                            var buildRequest = buildRequestOf(owner, row);
+                            String revision = Long.toString(currentRevision(owner.projectId()));
+                            tasks.settleClosedBuildCall(buildRequest, closed,
+                                canonical -> completedBuildJson(buildRequest, canonical, revision));
                             continue;
                         }
                     } else if (ReconcileWorkBudget.boundary(() -> builds.hasRecordedSideEffect(buildRequestOf(owner, row)))) {
@@ -378,8 +387,11 @@ public final class AgentProjectTools {
         if (row.workspaceOperationId() == null) {
             throw new IllegalStateException("a build call row must carry its stable command id");
         }
+        var environment = tasks.environmentOf(row.taskId());
+        if (environment == null) return AgentContracts.BuildRequest.legacyBuildRequestForClose(row.taskId(),
+            row.toolCallId(), owner.projectId(), row.workspaceOperationId(), row.expectedRevision(), buildGoalOf(row));
         return new AgentContracts.BuildRequest(row.taskId(), row.toolCallId(), owner.projectId(),
-            row.workspaceOperationId(), currentRevision(owner.projectId()), buildGoalOf(row));
+            row.workspaceOperationId(), row.expectedRevision(), buildGoalOf(row), environment);
     }
 
     private AgentContracts.BuildGoal buildGoalOf(AgentTaskStore.ToolCallRow row) {
@@ -432,9 +444,9 @@ public final class AgentProjectTools {
     private AgentContracts.ToolResult execute(AgentTaskStore.TaskOwner owner, AgentTaskStore.ToolCallRow row,
                                               AgentContracts.ToolRequest request) {
         return switch (request.name()) {
-            case "list_files" -> listFiles(owner, request);
-            case "read_file" -> readFile(owner, request);
-            case "write_file" -> writeFile(owner, row, request);
+            case "list_files" -> listFiles(owner, request, AgentFilePolicy.forEnvironment(tasks.environmentOf(row.taskId())));
+            case "read_file" -> readFile(owner, request, AgentFilePolicy.forEnvironment(tasks.environmentOf(row.taskId())));
+            case "write_file" -> writeFile(owner, row, request, AgentFilePolicy.forEnvironment(tasks.environmentOf(row.taskId())));
             case "read_image" -> readImage(row,request);
             default -> throw new IllegalStateException("unsupported tool: " + request.name());
         };
@@ -454,13 +466,15 @@ public final class AgentProjectTools {
         return new AgentContracts.ToolResult(request.toolCallId(),Long.toString(store.findProject(attachments.taskScope(row.taskId()).projectId()).workspaceRevision()),data,false);
     }
 
-    private AgentContracts.ToolResult listFiles(AgentTaskStore.TaskOwner owner, AgentContracts.ToolRequest request) {
-        String directory = toolDirectory(request.args().path("directory").asText(""));
+    private AgentContracts.ToolResult listFiles(AgentTaskStore.TaskOwner owner, AgentContracts.ToolRequest request,
+                                               AgentFilePolicy policy) {
+        String directory = toolDirectory(request.args().path("directory").asText(""), policy);
         WorkspaceAgent.Tree tree = workspace.tree(owner.ownerId(), owner.projectId(), directory);
         // The listing may only show what a read of the same path would answer: every entry is
         // filtered through the policy + allowlist gate BEFORE the entry and byte caps apply.
         List<WorkspaceAgent.TreeEntry> visible = tree.entries().stream()
-            .filter(entry -> toolReadable(entry.path()))
+            .filter(entry -> "directory".equals(entry.kind()) ? policy.canList(entry.path())
+                : "file".equals(entry.kind()) && policy.canRead(entry.path()))
             .toList();
         boolean hasMore = visible.size() > MAX_LIST_ENTRIES;
         ObjectNode data = JSON.createObjectNode();
@@ -485,8 +499,9 @@ public final class AgentProjectTools {
         return new AgentContracts.ToolResult(result.toolCallId(), result.workspaceRevision(), data, truncated);
     }
 
-    private AgentContracts.ToolResult readFile(AgentTaskStore.TaskOwner owner, AgentContracts.ToolRequest request) {
-        String path = toolPath(request);
+    private AgentContracts.ToolResult readFile(AgentTaskStore.TaskOwner owner, AgentContracts.ToolRequest request,
+                                              AgentFilePolicy policy) {
+        String path = toolPath(request, policy, false);
         WorkspaceAgent.FileMeta meta = workspace.meta(owner.ownerId(), owner.projectId(), path);
         if (meta == null) {
             throw new ApiException("ENTRY_NOT_FOUND", 404, "Entry does not exist");
@@ -512,8 +527,8 @@ public final class AgentProjectTools {
     }
 
     private AgentContracts.ToolResult writeFile(AgentTaskStore.TaskOwner owner, AgentTaskStore.ToolCallRow row,
-                                                AgentContracts.ToolRequest request) {
-        String path = toolPath(request);
+                                                AgentContracts.ToolRequest request, AgentFilePolicy policy) {
+        String path = toolPath(request, policy, true);
         JsonNode contentNode = request.args().get("content");
         if (contentNode == null || !contentNode.isTextual()) {
             throw new ApiException("VALIDATION_ERROR", 422, "write_file requires textual content");
@@ -585,7 +600,7 @@ public final class AgentProjectTools {
         }
         AgentContracts.BuildRequest buildRequest = new AgentContracts.BuildRequest(row.taskId(),
             row.toolCallId(), owner.projectId(), row.workspaceOperationId(),
-            currentRevision(owner.projectId()), goal);
+            row.expectedRevision(), goal, tasks.environmentOf(row.taskId()));
         boolean claimed = false;
         try {
             AgentContracts.BuildResult built;
@@ -619,30 +634,21 @@ public final class AgentProjectTools {
                 tasks.markToolCallNeedsAttention(row.taskId(), row.toolCallId());
                 throw ex;
             }
-            AgentContracts.ToolResult settled;
-            if ("BUILD_CLOSING_ABORTED".equals(built.terminationReason())) {
-                // The closing fence aborted the create: settle the deterministic
-                // no-side-effect answer WITHOUT binding an identity for a Job that was
-                // never created — the abort is reported in the call's data.
-                settled = fittedBuildResult(new AgentContracts.ToolResult(request.toolCallId(),
-                    Long.toString(currentRevision(owner.projectId())), buildData(buildRequest, built),
-                    built.truncated()));
-            } else {
+            // A closing fence can abort creation; do not bind an identity for a Job
+            // that was never created. All other results require confirmed cleanup.
+            if (!"BUILD_CLOSING_ABORTED".equals(built.terminationReason())) {
                 tasks.bindToolCallIdentity(row.taskId(), row.toolCallId(), built.identity().jobName(),
                     built.identity().jobUid(), built.identity().podUid());
                 if (!built.cleanupConfirmed()) {
                     tasks.markToolCallNeedsAttention(row.taskId(), row.toolCallId());
                     throw new IllegalStateException("the build cleanup was not confirmed; the call stays needs-attention");
                 }
-                settled = fittedBuildResult(new AgentContracts.ToolResult(request.toolCallId(),
-                    Long.toString(currentRevision(owner.projectId())), buildData(buildRequest, built),
-                    built.truncated()));
             }
             // The row settles HERE, while this thread's live claim is still held: a
             // concurrent close sees the claim, never the half-finished settlement.
-            AgentContracts.ToolResult bounded = boundedResult(settled);
-            tasks.completeToolCall(row.taskId(), row.toolCallId(), jsonOf(bounded));
-            return bounded;
+            String revision = Long.toString(currentRevision(owner.projectId()));
+            return storedResult(tasks.completeBuildCall(buildRequest, built,
+                canonical -> completedBuildJson(buildRequest, canonical, revision)));
         } finally {
             if (claimed) {
                 // Retired only after the call row is fully settled (or the failure path
@@ -650,6 +656,12 @@ public final class AgentProjectTools {
                 tasks.releaseBuildClaim(row.taskId(), row.toolCallId());
             }
         }
+    }
+
+    /** Pure formatter used inside the store's atomic evidence/completion boundary. */
+    private String completedBuildJson(AgentContracts.BuildRequest request, AgentContracts.BuildResult built, String revision) {
+        return jsonOf(boundedResult(fittedBuildResult(new AgentContracts.ToolResult(request.toolCallId(), revision,
+            buildData(request, built), built.truncated()))));
     }
 
     /** The durable build answer: real exit facts, bounded output and parsed report summaries. */
@@ -666,6 +678,7 @@ public final class AgentProjectTools {
             data.put("exitCode", built.exitCode());
         }
         data.set("testReports", JSON.valueToTree(built.testReports()));
+        if (built.evidence() != null) data.setAll((ObjectNode) JSON.valueToTree(built.evidence()));
         return data;
     }
 
@@ -729,8 +742,44 @@ public final class AgentProjectTools {
                 return new AgentContracts.AgentToolCallView(row.toolCallId(), row.toolName(),
                     "app_http_get".equals(row.toolName()) ? httpBrowserData(result.data())
                         : "application".equals(row.toolName()) ? applicationBrowserData(result.data())
+                        : "python_dependencies".equals(row.toolName()) ? dependencyBrowserData(result.data())
+                        : "build".equals(row.toolName()) ? buildBrowserData(result.data())
                         : boundedBrowserData(result.data()));
             });
+    }
+
+    private static JsonNode dependencyBrowserData(JsonNode data) {
+        ObjectNode safe = JSON.createObjectNode();
+        copyFields(data, safe, List.of("kind", "operationId", "action", "packageName", "group", "state"));
+        if (data.path("changedPaths").isArray()) {
+            ArrayNode paths = safe.putArray("changedPaths");
+            data.path("changedPaths").forEach(path -> { if (path.isTextual()) paths.add(path); });
+        }
+        copyBrowserError(data, safe);
+        return safe;
+    }
+
+    private static JsonNode buildBrowserData(JsonNode data) {
+        ObjectNode safe = JSON.createObjectNode();
+        copyFields(data, safe, List.of("goal", "sourceRevision", "exitCode", "terminationReason", "output",
+            "cleanupConfirmed", "outputTruncated", "reportsDropped", "language", "checkKind", "verificationStatus", "filesChecked"));
+        copyBrowserError(data, safe);
+        if (data.path("testSummary").isObject()) {
+            copyFields(data.path("testSummary"), safe.putObject("testSummary"), List.of("tests", "failures", "errors", "skipped", "reportComplete"));
+        } else if (data.has("testSummary")) safe.putNull("testSummary");
+        if (data.path("errors").isArray()) {
+            ArrayNode errors = safe.putArray("errors");
+            data.path("errors").forEach(error -> copyFields(error, errors.addObject(), List.of("path", "message")));
+        }
+        if (data.path("testReports").isArray()) {
+            ArrayNode reports = safe.putArray("testReports");
+            data.path("testReports").forEach(report -> copyFields(report, reports.addObject(), List.of("testClass", "tests", "failures", "errors", "skipped", "sha256")));
+        }
+        return boundedBrowserData(safe);
+    }
+
+    private static void copyBrowserError(JsonNode data, ObjectNode safe) {
+        if (data.path("error").isObject()) copyFields(data.path("error"), safe.putObject("error"), List.of("code", "message"));
     }
 
     private static JsonNode httpBrowserData(JsonNode data) {
@@ -809,7 +858,7 @@ public final class AgentProjectTools {
     }
 
     /** Policy validation plus the fixed stage-one allowlist, applied to a file path argument. */
-    private static String toolPath(AgentContracts.ToolRequest request) {
+    private static String toolPath(AgentContracts.ToolRequest request, AgentFilePolicy policy, boolean write) {
         JsonNode node = request.args().get("path");
         if (node == null || !node.isTextual()) {
             throw new ApiException("VALIDATION_ERROR", 422, request.name() + " requires a textual path");
@@ -820,14 +869,18 @@ public final class AgentProjectTools {
         } catch (WorkspacePathPolicy.InvalidPathException ex) {
             throw new ApiException("INVALID_PATH", 422, "Invalid file path");
         }
-        if (!toolAllowlist(path)) {
+        if (write && policy.isManagedFile(path)) {
+            throw new ApiException("AI_MANAGED_FILE_WRITE_FORBIDDEN", 422,
+                "Managed project files are read-only; use python_dependencies to change dependencies");
+        }
+        if (!(write ? policy.canWrite(path) : policy.canRead(path))) {
             throw new ApiException("PATH_FORBIDDEN", 422, "Path is outside the agent tool allowlist");
         }
         return path;
     }
 
     /** Policy validation plus the fixed stage-one allowlist, applied to a directory argument. */
-    private static String toolDirectory(String directory) {
+    private static String toolDirectory(String directory, AgentFilePolicy policy) {
         if (directory.isEmpty()) {
             return "";
         }
@@ -836,49 +889,10 @@ public final class AgentProjectTools {
         } catch (WorkspacePathPolicy.InvalidPathException ex) {
             throw new ApiException("INVALID_PATH", 422, "Invalid file path");
         }
-        if (!toolAllowlist(directory)) {
+        if (!policy.canList(directory)) {
             throw new ApiException("PATH_FORBIDDEN", 422, "Path is outside the agent tool allowlist");
         }
         return directory;
-    }
-
-    /** One gate for "may the tools access this project-relative path at all": policy + allowlist. */
-    static boolean toolReadable(String path) {
-        try {
-            WorkspacePathPolicy.validateRelativePath(path);
-        } catch (WorkspacePathPolicy.InvalidPathException ex) {
-            return false;
-        }
-        return toolAllowlist(path);
-    }
-
-    /**
-     * The stage-one tool allowlist, fixed in trusted code (design section 4): build scripts,
-     * sources and ordinary top-level text documents. Beyond the allowlist it denies the
-     * repository internals and credential files the tools must never touch.
-     */
-    static boolean toolAllowlist(String path) {
-        String[] segments = path.split("/");
-        for (String segment : segments) {
-            String lower = segment.toLowerCase(Locale.ROOT);
-            if (DENIED_SEGMENTS.contains(lower) || lower.startsWith(".manao")) {
-                return false;
-            }
-            if (CREDENTIAL_FILES.contains(lower)
-                || CREDENTIAL_SUFFIXES.stream().anyMatch(lower::endsWith)) {
-                return false;
-            }
-        }
-        String first = segments[0].toLowerCase(Locale.ROOT);
-        if (first.equals("pom.xml") || first.equals("src")) {
-            return true;
-        }
-        return segments.length == 1 && isTextDocument(first);
-    }
-
-    private static boolean isTextDocument(String lowerName) {
-        return lowerName.endsWith(".md") || lowerName.endsWith(".txt")
-            || lowerName.endsWith(".adoc") || lowerName.endsWith(".rst");
     }
 
     /** null means "create a new file"; otherwise a sha-256 digest of the version being replaced. */

@@ -111,6 +111,17 @@ public final class WorkspaceAgentController {
     /** Prepare only: resolution happens in scratch and the summary carries ids and digests. */
     @PostMapping("/python-dependencies/prepare")
     public PythonDependencyEditor.PreparedPythonDependencies prepareDependency(@RequestBody PrepareDependencyRequest request) {
+        if (request.change() != null && !"main".equals(request.change().group())) {
+            throw new WorkspaceFileService.WorkspaceFileException("VALIDATION_ERROR", "unsupported dependency group");
+        }
+        return pythonDependencies.prepare(request.operationId(), request.requestSha256(), request.change());
+    }
+
+    @PostMapping("/python-dependencies/prepare-scoped")
+    public PythonDependencyEditor.PreparedPythonDependencies prepareScopedDependency(@RequestBody PrepareDependencyRequest request) {
+        if (request.change() == null || !"test".equals(request.change().group())) {
+            throw new WorkspaceFileService.WorkspaceFileException("VALIDATION_ERROR", "unsupported dependency group");
+        }
         return pythonDependencies.prepare(request.operationId(), request.requestSha256(), request.change());
     }
 

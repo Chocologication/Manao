@@ -1,0 +1,1347 @@
+{
+  "date": "2026-11-05",
+  "status": "PASS_WITH_EXPLICIT_CAPABILITY_LIMIT",
+  "scope": "Formal old Java maintenance-only rollback and restoration; Python/AI unavailable during old tuple",
+  "backup": {
+    "bytes": 4384124,
+    "sha256": "057c9f6e78bb9a82235ad30bfb3ea61d9257791a87a9a8c317a931ddf901a430"
+  },
+  "compatibility": {
+    "oldBackend": "sha256:c86fda5f9ba39387c2b408accae031c4d41869f9890c5aa8c9f2da4a7355d9a4",
+    "flywayVersion": "11.7.2",
+    "validate": "PASS",
+    "migrationsExecuted": 0,
+    "cloneDataBeforeAndAfterSha256": "391026757fac0359361ac934a3a6e2f2d0d1122641b1147e702804e0ac2a80ff",
+    "oldPythonConsoleRuntime": "PASS output10",
+    "oldFastapiRuntime": "PASS ready/demo200 total2,000",
+    "oldPytestBuild": "UNSUPPORTED exit127",
+    "oldScopedTestPrepare": "UNSUPPORTED HTTP404 with signed GET200 control",
+    "privateCompatibilityReportSha256": "1e4c8dd42d2a3adf95650d166a5d3a507e4fc13454bf6ffd3aad87e11e642a36",
+    "privateCompatibilityReportFile": "old-python-compatibility.json"
+  },
+  "maintenanceAdmission": [
+    {
+      "maintenanceText": true,
+      "url": "http://1.12.245.235:30080/",
+      "status": 200
+    },
+    {
+      "maintenanceText": false,
+      "url": "http://1.12.245.235:30080/api/v1/projects",
+      "status": 503
+    },
+    {
+      "maintenanceText": false,
+      "url": "http://1.12.245.235:30080/api/v1/projects/bf51c6ac-be04-4274-9c73-43a15ea9d470",
+      "status": 503
+    }
+  ],
+  "restoredMaintenanceMutations": [
+    {
+      "status": 503,
+      "path": "/api/v1/projects/bf51c6ac-be04-4274-9c73-43a15ea9d470/conversations/00000000-0000-0000-0000-000000000000/tasks",
+      "method": "POST"
+    },
+    {
+      "status": 503,
+      "path": "/api/v1/projects/bf51c6ac-be04-4274-9c73-43a15ea9d470/conversations/00000000-0000-0000-0000-000000000000/compact",
+      "method": "POST"
+    },
+    {
+      "status": 503,
+      "path": "/api/v1/projects/bf51c6ac-be04-4274-9c73-43a15ea9d470/python-dependencies",
+      "method": "POST"
+    },
+    {
+      "status": 503,
+      "path": "/api/v1/projects/bf51c6ac-be04-4274-9c73-43a15ea9d470/runs",
+      "method": "POST"
+    },
+    {
+      "status": 503,
+      "path": "/api/v1/projects/bf51c6ac-be04-4274-9c73-43a15ea9d470/files/content?path=README.md",
+      "method": "PUT"
+    }
+  ],
+  "rollbackPlatform": [
+    {
+      "pod": "backend-544dc99895-4kfhn",
+      "containers": [
+        {
+          "name": "backend",
+          "imageId": "docker.io/chocologic/manao_images_repository@sha256:c86fda5f9ba39387c2b408accae031c4d41869f9890c5aa8c9f2da4a7355d9a4",
+          "containerId": "containerd://08d327de9d6bddb8fa85510786592e969cb41a0038d9b68c449e92654c5da9f6",
+          "ready": true
+        }
+      ],
+      "podUid": "cdf3d4f2-0a8b-4511-a504-9c2513b429ac"
+    },
+    {
+      "pod": "frontend-648bc6474d-vkmrl",
+      "containers": [
+        {
+          "name": "frontend",
+          "imageId": "docker.io/chocologic/manao_images_repository@sha256:0275df40c76abd9a0fd8c3102018cd88341b8c2c26c0c19566f68b57b750e479",
+          "containerId": "containerd://0abc6187699df2beb9a33ab2b8e39443bb6f8126ff3cf43fa21c80cc4ac1750f",
+          "ready": true
+        }
+      ],
+      "podUid": "33475551-6cab-4a97-90ba-9cb9685522dd"
+    },
+    {
+      "pod": "manao-pi-worker-674457786d-6cwkz",
+      "containers": [
+        {
+          "name": "pi-worker",
+          "imageId": "docker.io/chocologic/manao_images_repository@sha256:5591d99fa38a85e1e304b80c52e669e1864da380e2838ac6128dea858ca54137",
+          "containerId": "containerd://0e3ae71e875d0d40ba250cef6d549aa39a99572aa31bf347b9e7226e973af7ca",
+          "ready": true
+        }
+      ],
+      "podUid": "1acaaeab-28b2-440d-a170-b41df96757e7"
+    }
+  ],
+  "rollbackWorkspaces": [
+    {
+      "afterContainerId": "containerd://27eee4738670b4d05cd932041ec95b57ac85d99be75b93d62b7a962b4413924c",
+      "podUid": "bc3d41a6-2587-4eac-92db-7c2033b8919e",
+      "imageId": "docker.io/chocologic/manao_images_repository@sha256:3fa3d472d86402f687ba97d93cce037bf4aeb115e57a0326a7d8593edbf1fc8d",
+      "projectId": "b0cf2926-1264-4777-a543-3c3230354528",
+      "beforeContainerId": "containerd://75e36ffdeea7b6b99a209672f0d04fd7170b2fa830a64f46fbfe4be56dc6f3e3"
+    },
+    {
+      "afterContainerId": "containerd://fdbe28dd8a19809d7ed8db1062007c920e0f8a127e2929a0391e32c1f28f1575",
+      "podUid": "9e37d68b-20a8-4b35-8535-e7557af7da54",
+      "imageId": "docker.io/chocologic/manao_images_repository@sha256:3fa3d472d86402f687ba97d93cce037bf4aeb115e57a0326a7d8593edbf1fc8d",
+      "projectId": "2bd14295-9ae0-4816-8508-80a9950816c6",
+      "beforeContainerId": "containerd://4209edd1821f8833076a411a0696b13fdb615872a111b2a563b6f6cc0ea36955"
+    },
+    {
+      "afterContainerId": "containerd://81a3254ac2f49ec90e47ded902a74c6b5c5da0773f98cef7b27c92ebe3dbd36e",
+      "podUid": "79d92347-a2fb-4fe0-b27d-98f7d9ad25e7",
+      "imageId": "docker.io/chocologic/manao_images_repository@sha256:3fa3d472d86402f687ba97d93cce037bf4aeb115e57a0326a7d8593edbf1fc8d",
+      "projectId": "57bf9834-3c2b-407f-be1e-d6e5409d0145",
+      "beforeContainerId": "containerd://af964e942418916fbed918797a4fd364cd93146601bc0080f95d1b0098ddcd67"
+    },
+    {
+      "afterContainerId": "containerd://3fdb77ce6ca72e365ea8e3efb671b12df60d963364c632b1592c58f1ebcb5722",
+      "podUid": "e3070ad0-e178-4daf-9c31-bbd403407978",
+      "imageId": "docker.io/chocologic/manao_images_repository@sha256:3fa3d472d86402f687ba97d93cce037bf4aeb115e57a0326a7d8593edbf1fc8d",
+      "projectId": "7a33d522-60cc-4f25-9a87-41c1146a7545",
+      "beforeContainerId": "containerd://b1377f9e210dd4375ef348fcba64a085d4dac1ff1894fe16273b4e1184cd5058"
+    },
+    {
+      "afterContainerId": "containerd://f2ad2f125fc3d58f9202af4cbf110d9bb0f0bee63a79fbd30b51e98e9e2d7fa3",
+      "podUid": "93ffaddf-ca53-4e68-ac7b-46f72c8000eb",
+      "imageId": "docker.io/chocologic/manao_images_repository@sha256:3fa3d472d86402f687ba97d93cce037bf4aeb115e57a0326a7d8593edbf1fc8d",
+      "projectId": "bf51c6ac-be04-4274-9c73-43a15ea9d470",
+      "beforeContainerId": "containerd://559940c3be219e97eb810c1548c886129f42a1986acfd710eb51181626b79186"
+    }
+  ],
+  "restoredPlatform": [
+    {
+      "containers": [
+        {
+          "containerId": "containerd://343bc79b0ec9ed01dd929ee9adf054bb980189353b2c56ed668fbdbaef27ba9f",
+          "ready": true,
+          "name": "backend",
+          "imageId": "docker.io/chocologic/manao_images_repository@sha256:3a847b0e9420ea6a0111fb116e9664583e6c43ec17f31a95b66a4fda199f56cb"
+        }
+      ],
+      "podUid": "e167198a-5692-4518-89e6-996dd1e65ee2",
+      "pod": "backend-65c75bf9c9-2kdm2"
+    },
+    {
+      "containers": [
+        {
+          "containerId": "containerd://d12af78e9b94c9bcdcc8f7dd6aee8302630586650b23f098ba32204cfdf7b0c5",
+          "ready": true,
+          "name": "frontend",
+          "imageId": "docker.io/chocologic/manao_images_repository@sha256:12f2f70f9bc94a43126bae09f3ac8ba262fb73fc8227950c8de2c550cd46445c"
+        }
+      ],
+      "podUid": "eb401a5f-39bb-4adc-abfd-8f658033c298",
+      "pod": "frontend-7d694774c7-whg7b"
+    },
+    {
+      "containers": [
+        {
+          "containerId": "containerd://40e890adbbd99a183873530eeb440ee2342ad4dc0f02acab52c3a737e226da61",
+          "ready": true,
+          "name": "pi-worker",
+          "imageId": "docker.io/chocologic/manao_images_repository@sha256:e5c42be404b2dfd80df4e599a3aa05e336d715081ecb822333e85e60f7200957"
+        }
+      ],
+      "podUid": "4beb91ce-2d72-41a1-a4ba-557e85f70eb3",
+      "pod": "manao-pi-worker-cd98d7b68-8qjvz"
+    }
+  ],
+  "restoredWorkspaces": [
+    {
+      "imageId": "docker.io/chocologic/manao_images_repository@sha256:65e4ba78fd0e078d64307fb72bff6017d173c7d933fd5533e7a5e3650728135c",
+      "afterContainerId": "containerd://c50b209295af61c3235a66eefd715888251f7ee976c5a1f1d88001d5ce42d55c",
+      "podUid": "bc3d41a6-2587-4eac-92db-7c2033b8919e",
+      "projectId": "b0cf2926-1264-4777-a543-3c3230354528",
+      "beforeContainerId": "containerd://27eee4738670b4d05cd932041ec95b57ac85d99be75b93d62b7a962b4413924c"
+    },
+    {
+      "imageId": "docker.io/chocologic/manao_images_repository@sha256:65e4ba78fd0e078d64307fb72bff6017d173c7d933fd5533e7a5e3650728135c",
+      "afterContainerId": "containerd://d8bf404d621d84446090eee8c93324fc6fdb2feaf8f928eba21dc55dcc51cd7b",
+      "podUid": "9e37d68b-20a8-4b35-8535-e7557af7da54",
+      "projectId": "2bd14295-9ae0-4816-8508-80a9950816c6",
+      "beforeContainerId": "containerd://fdbe28dd8a19809d7ed8db1062007c920e0f8a127e2929a0391e32c1f28f1575"
+    },
+    {
+      "imageId": "docker.io/chocologic/manao_images_repository@sha256:65e4ba78fd0e078d64307fb72bff6017d173c7d933fd5533e7a5e3650728135c",
+      "afterContainerId": "containerd://90b7582045138a25bc808cdabeb627c3fe45f23e2d539046947711d8cea5904e",
+      "podUid": "79d92347-a2fb-4fe0-b27d-98f7d9ad25e7",
+      "projectId": "57bf9834-3c2b-407f-be1e-d6e5409d0145",
+      "beforeContainerId": "containerd://81a3254ac2f49ec90e47ded902a74c6b5c5da0773f98cef7b27c92ebe3dbd36e"
+    },
+    {
+      "imageId": "docker.io/chocologic/manao_images_repository@sha256:65e4ba78fd0e078d64307fb72bff6017d173c7d933fd5533e7a5e3650728135c",
+      "afterContainerId": "containerd://83ca92dd89563229e534781874761253ab411267132b1f235e68316ff79110fc",
+      "podUid": "e3070ad0-e178-4daf-9c31-bbd403407978",
+      "projectId": "7a33d522-60cc-4f25-9a87-41c1146a7545",
+      "beforeContainerId": "containerd://3fdb77ce6ca72e365ea8e3efb671b12df60d963364c632b1592c58f1ebcb5722"
+    },
+    {
+      "imageId": "docker.io/chocologic/manao_images_repository@sha256:65e4ba78fd0e078d64307fb72bff6017d173c7d933fd5533e7a5e3650728135c",
+      "afterContainerId": "containerd://95cbc319c872b4b36b60795d7a2eee82741b753a4b8da480130bc4c10fa7a071",
+      "podUid": "93ffaddf-ca53-4e68-ac7b-46f72c8000eb",
+      "projectId": "bf51c6ac-be04-4274-9c73-43a15ea9d470",
+      "beforeContainerId": "containerd://f2ad2f125fc3d58f9202af4cbf110d9bb0f0bee63a79fbd30b51e98e9e2d7fa3"
+    }
+  ],
+  "oldJavaSmoke": {
+    "identity": {
+      "projectId": "c1afae86-fc51-4123-a417-492f93b3bfb3",
+      "taskId": "6f5f1476-0759-4195-9830-bf03ed8edd43",
+      "conversationId": "e6e27174-7921-4e0f-a4a2-86e5604dbfe4"
+    },
+    "task": {
+      "taskId": "6f5f1476-0759-4195-9830-bf03ed8edd43",
+      "state": "COMPLETED",
+      "workspaceRevision": "21",
+      "writesLocked": false,
+      "progress": [
+        {
+          "seq": 1,
+          "kind": "message",
+          "text": "I'll start by reading the project files to understand the structure.",
+          "truncated": false
+        },
+        {
+          "seq": 2,
+          "kind": "tool_start",
+          "text": "list_files call_00_ET_wPJdQFFUXVIJ1o1Y4yEp9885",
+          "truncated": false
+        },
+        {
+          "seq": 3,
+          "kind": "tool_end",
+          "text": "list_files call_00_ET_wPJdQFFUXVIJ1o1Y4yEp9885",
+          "truncated": false
+        },
+        {
+          "seq": 4,
+          "kind": "tool_start",
+          "text": "read_file call_01_ET_rzd8SlSnB2n0BPWyhcJF2279",
+          "truncated": false
+        },
+        {
+          "seq": 5,
+          "kind": "tool_end",
+          "text": "read_file call_01_ET_rzd8SlSnB2n0BPWyhcJF2279",
+          "truncated": false
+        },
+        {
+          "seq": 6,
+          "kind": "message",
+          "text": "",
+          "truncated": false
+        },
+        {
+          "seq": 7,
+          "kind": "tool_start",
+          "text": "list_files call_00_ET_9AgUXZb4GY0I7wgMmqTE8794",
+          "truncated": false
+        },
+        {
+          "seq": 8,
+          "kind": "tool_end",
+          "text": "list_files call_00_ET_9AgUXZb4GY0I7wgMmqTE8794",
+          "truncated": false
+        },
+        {
+          "seq": 9,
+          "kind": "tool_start",
+          "text": "read_file call_01_ET_Hb3QqLien1RNtHnJMRPw0599",
+          "truncated": false
+        },
+        {
+          "seq": 10,
+          "kind": "tool_end",
+          "text": "read_file call_01_ET_Hb3QqLien1RNtHnJMRPw0599",
+          "truncated": false
+        },
+        {
+          "seq": 11,
+          "kind": "message",
+          "text": "",
+          "truncated": false
+        },
+        {
+          "seq": 12,
+          "kind": "tool_start",
+          "text": "list_files call_00_ET_Ec3i2FL77wNeLkE2RNtQ1412",
+          "truncated": false
+        },
+        {
+          "seq": 13,
+          "kind": "tool_end",
+          "text": "list_files call_00_ET_Ec3i2FL77wNeLkE2RNtQ1412",
+          "truncated": false
+        },
+        {
+          "seq": 14,
+          "kind": "tool_start",
+          "text": "list_files call_01_ET_CL9BB6U6PbBkOkiwkQdo0623",
+          "truncated": false
+        },
+        {
+          "seq": 15,
+          "kind": "tool_end",
+          "text": "list_files call_01_ET_CL9BB6U6PbBkOkiwkQdo0623",
+          "truncated": false
+        },
+        {
+          "seq": 16,
+          "kind": "message",
+          "text": "",
+          "truncated": false
+        },
+        {
+          "seq": 17,
+          "kind": "tool_start",
+          "text": "list_files call_00_ET_mJrtkwjTSnT3JLTBe4UI5752",
+          "truncated": false
+        },
+        {
+          "seq": 18,
+          "kind": "tool_end",
+          "text": "list_files call_00_ET_mJrtkwjTSnT3JLTBe4UI5752",
+          "truncated": false
+        },
+        {
+          "seq": 19,
+          "kind": "tool_start",
+          "text": "list_files call_01_ET_WgkAPp3RZQq7HJLVOgJ33545",
+          "truncated": false
+        },
+        {
+          "seq": 20,
+          "kind": "tool_end",
+          "text": "list_files call_01_ET_WgkAPp3RZQq7HJLVOgJ33545",
+          "truncated": false
+        },
+        {
+          "seq": 21,
+          "kind": "message",
+          "text": "",
+          "truncated": false
+        },
+        {
+          "seq": 22,
+          "kind": "tool_start",
+          "text": "read_file call_00_ET_6jKc6t1O9t1FHv7jo4jv7751",
+          "truncated": false
+        },
+        {
+          "seq": 23,
+          "kind": "tool_end",
+          "text": "read_file call_00_ET_6jKc6t1O9t1FHv7jo4jv7751",
+          "truncated": false
+        },
+        {
+          "seq": 24,
+          "kind": "tool_start",
+          "text": "read_file call_01_ET_AYfBSxK4dAI1MFMicj1w1506",
+          "truncated": false
+        },
+        {
+          "seq": 25,
+          "kind": "tool_end",
+          "text": "read_file call_01_ET_AYfBSxK4dAI1MFMicj1w1506",
+          "truncated": false
+        },
+        {
+          "seq": 26,
+          "kind": "message",
+          "text": "Files read. Project is a Java 17 Maven app printing \"Hello from Manao\". Now running the build goals in order.",
+          "truncated": false
+        },
+        {
+          "seq": 27,
+          "kind": "tool_start",
+          "text": "build call_00_j6UuQCEAebuyclQr3nXw7032",
+          "truncated": false
+        },
+        {
+          "seq": 28,
+          "kind": "tool_end",
+          "text": "build call_00_j6UuQCEAebuyclQr3nXw7032",
+          "truncated": false
+        },
+        {
+          "seq": 29,
+          "kind": "message",
+          "text": "`build compile` → exitCode 0, cleanupConfirmed true. Now the test goal.",
+          "truncated": false
+        },
+        {
+          "seq": 30,
+          "kind": "tool_start",
+          "text": "build call_00_HpaL49UHzMe7Jjc8Qz9k0389",
+          "truncated": false
+        },
+        {
+          "seq": 31,
+          "kind": "tool_end",
+          "text": "build call_00_HpaL49UHzMe7Jjc8Qz9k0389",
+          "truncated": false
+        },
+        {
+          "seq": 32,
+          "kind": "message",
+          "text": "`build test` → exitCode 0, cleanupConfirmed true, 1 test passed. Now the package goal.",
+          "truncated": false
+        },
+        {
+          "seq": 33,
+          "kind": "tool_start",
+          "text": "build call_00_ET_fSD3x2VCur44evLXHQzB5612",
+          "truncated": false
+        },
+        {
+          "seq": 34,
+          "kind": "tool_end",
+          "text": "build call_00_ET_fSD3x2VCur44evLXHQzB5612",
+          "truncated": false
+        },
+        {
+          "seq": 35,
+          "kind": "message",
+          "text": "All three builds passed. Now starting the application.",
+          "truncated": false
+        },
+        {
+          "seq": 36,
+          "kind": "tool_start",
+          "text": "application call_00_ET_ftTEsd4cyWXtyqD7PiU59387",
+          "truncated": false
+        },
+        {
+          "seq": 37,
+          "kind": "tool_end",
+          "text": "application call_00_ET_ftTEsd4cyWXtyqD7PiU59387",
+          "truncated": false
+        },
+        {
+          "seq": 38,
+          "kind": "message",
+          "text": "",
+          "truncated": false
+        },
+        {
+          "seq": 39,
+          "kind": "tool_start",
+          "text": "application call_00_ET_N5ENOYIHC5BTpYGR7zSl7314",
+          "truncated": false
+        },
+        {
+          "seq": 40,
+          "kind": "tool_end",
+          "text": "application call_00_ET_N5ENOYIHC5BTpYGR7zSl7314",
+          "truncated": false
+        },
+        {
+          "seq": 41,
+          "kind": "message",
+          "text": "",
+          "truncated": false
+        },
+        {
+          "seq": 42,
+          "kind": "tool_start",
+          "text": "application call_00_FGFg4YEkOmOgsoQBhPY27529",
+          "truncated": false
+        },
+        {
+          "seq": 43,
+          "kind": "tool_end",
+          "text": "application call_00_FGFg4YEkOmOgsoQBhPY27529",
+          "truncated": false
+        },
+        {
+          "seq": 44,
+          "kind": "message",
+          "text": "",
+          "truncated": false
+        },
+        {
+          "seq": 45,
+          "kind": "tool_start",
+          "text": "application call_00_ET_BT0oFA1QzhHjBtgydGSo2395",
+          "truncated": false
+        },
+        {
+          "seq": 46,
+          "kind": "tool_end",
+          "text": "application call_00_ET_BT0oFA1QzhHjBtgydGSo2395",
+          "truncated": false
+        },
+        {
+          "seq": 47,
+          "kind": "message",
+          "text": "Smoke test complete — all checks passed, and no source/test/dependency files were modified.\n\n## Verification results (workspace revision 21)\n\n**Files read (unchanged):**\n- `pom.xml` — Java 17, jar packaging, JUnit 5.10.2 (test scope), surefire 3.2.5, exec plugin mainClass `com.example.app.App`\n- `src/main/java/com/example/app/App.java` — `greeting()` returns `\"Hello from Manao\"`, `main` prints it\n- `src/test/java/com/example/app/AppTest.java` — asserts `greeting()` equals `\"Hello from Manao\"`\n- `README.md`\n\n**Builds (sequential, in order):**\n\n| Goal | exitCode | cleanupConfirmed | Detail |\n|---|---|---|---|\n| `compile` | **0** | **true** | BUILD SUCCESS, 1 source file compiled (javac target 17) |\n| `test` | **0** | **true** | BUILD SUCCESS, `Tests run: 1, Failures: 0, Errors: 0, Skipped: 0` (`com.example.app.AppTest`) |\n| `package` | **0** | **true** | BUILD SUCCESS, tests re-run green, jar built: `target/manao-project-0.1.0-SNAPSHOT.jar` |\n\n**Application run** (`runId ae681769-6259-4a9a-a9d5-1a4facd86941`):\n- `start` → accepted, state `STARTING`\n- `status` → transitioned `STARTING` → `RUNNING` → **`SUCCEEDED`**\n- Final state: `SUCCEEDED`, `terminationReason: BUILD_SUCCEEDED`, **`exitCode: 0`**, `stoppedConfirmed: true`, finished at 2026-11-05T06:50:09Z\n- `logs` (persisted tail, complete, not truncated): program stdout is exactly\n  ```\n  Hello from Manao\n  ```\n\n**Notes:** the app is a console program, so it never reported `firstReadyAt` and there is no HTTP endpoint to GET — readiness/exit was confirmed via `SUCCEEDED` + `exitCode 0` + `stoppedConfirmed: true` plus the real captured stdout. No files were written, no dependencies changed, and no Python tooling was used.",
+          "truncated": false
+        }
+      ],
+      "changedPaths": [],
+      "summary": "Smoke test complete — all checks passed, and no source/test/dependency files were modified.\n\n## Verification results (workspace revision 21)\n\n**Files read (unchanged):**\n- `pom.xml` — Java 17, jar packaging, JUnit 5.10.2 (test scope), surefire 3.2.5, exec plugin mainClass `com.example.app.App`\n- `src/main/java/com/example/app/App.java` — `greeting()` returns `\"Hello from Manao\"`, `main` prints it\n- `src/test/java/com/example/app/AppTest.java` — asserts `greeting()` equals `\"Hello from Manao\"`\n- `README.md`\n\n**Builds (sequential, in order):**\n\n| Goal | exitCode | cleanupConfirmed | Detail |\n|---|---|---|---|\n| `compile` | **0** | **true** | BUILD SUCCESS, 1 source file compiled (javac target 17) |\n| `test` | **0** | **true** | BUILD SUCCESS, `Tests run: 1, Failures: 0, Errors: 0, Skipped: 0` (`com.example.app.AppTest`) |\n| `package` | **0** | **true** | BUILD SUCCESS, tests re-run green, jar built: `target/manao-project-0.1.0-SNAPSHOT.jar` |\n\n**Application run** (`runId ae681769-6259-4a9a-a9d5-1a4facd86941`):\n- `start` → accepted, state `STARTING`\n- `status` → transitioned `STARTING` → `RUNNING` → **`SUCCEEDED`**\n- Final state: `SUCCEEDED`, `terminationReason: BUILD_SUCCEEDED`, **`exitCode: 0`**, `stoppedConfirmed: true`, finished at 2026-11-05T06:50:09Z\n- `logs` (persisted tail, complete, not truncated): program stdout is exactly\n  ```\n  Hello from Manao\n  ```\n\n**Notes:** the app is a console program, so it never reported `firstReadyAt` and there is no HTTP endpoint to GET — readiness/exit was confirmed via `SUCCEEDED` + `exitCode 0` + `stoppedConfirmed: true` plus the real captured stdout. No files were written, no dependencies changed, and no Python tooling was used.",
+      "failureCode": null,
+      "conversationId": "e6e27174-7921-4e0f-a4a2-86e5604dbfe4",
+      "reasoningEffort": "high",
+      "closeReasonCode": null
+    },
+    "tools": [
+      {
+        "toolCallId": "call_00_ET_wPJdQFFUXVIJ1o1Y4yEp9885",
+        "toolName": "list_files",
+        "data": {
+          "entries": [
+            {
+              "kind": "file",
+              "name": "README.md",
+              "path": "README.md",
+              "hidden": false,
+              "sizeBytes": 271,
+              "hasChildren": null
+            },
+            {
+              "kind": "file",
+              "name": "pom.xml",
+              "path": "pom.xml",
+              "hidden": false,
+              "sizeBytes": 1623,
+              "hasChildren": null
+            },
+            {
+              "kind": "directory",
+              "name": "src",
+              "path": "src",
+              "hidden": false,
+              "sizeBytes": null,
+              "hasChildren": true
+            }
+          ],
+          "hasMore": false,
+          "directory": ""
+        }
+      },
+      {
+        "toolCallId": "call_01_ET_rzd8SlSnB2n0BPWyhcJF2279",
+        "toolName": "read_file",
+        "data": {
+          "path": "pom.xml",
+          "sha256": "d5f1a617ac4108259f319465d245452ecbff7b13b9bf29c1fbc4d0ebd9076a0c",
+          "content": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<project xmlns=\"http://maven.apache.org/POM/4.0.0\"\n         xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\"\n         xsi:schemaLocation=\"http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd\">\n    <modelVersion>4.0.0</modelVersion>\n    <groupId>com.example</groupId>\n    <artifactId>manao-project</artifactId>\n    <version>0.1.0-SNAPSHOT</version>\n    <packaging>jar</packaging>\n    <properties>\n        <maven.compiler.source>17</maven.compiler.source>\n        <maven.compiler.target>17</maven.compiler.target>\n        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>\n    </properties>\n    <dependencies>\n        <dependency>\n            <groupId>org.junit.jupiter</groupId>\n            <artifactId>junit-jupiter</artifactId>\n            <version>5.10.2</version>\n            <scope>test</scope>\n        </dependency>\n        <!-- Selected dependencies add their plain-Java clients; nothing else changes. -->\n    </dependencies>\n    <build>\n        <plugins>\n            <plugin>\n                <groupId>org.apache.maven.plugins</groupId>\n                <artifactId>maven-surefire-plugin</artifactId>\n                <version>3.2.5</version>\n            </plugin>\n            <plugin>\n                <groupId>org.codehaus.mojo</groupId>\n                <artifactId>exec-maven-plugin</artifactId>\n                <version>3.5.0</version>\n                <configuration>\n                    <mainClass>com.example.app.App</mainClass>\n                </configuration>\n            </plugin>\n        </plugins>\n    </build>\n</project>\n\n"
+        }
+      },
+      {
+        "toolCallId": "call_00_ET_9AgUXZb4GY0I7wgMmqTE8794",
+        "toolName": "list_files",
+        "data": {
+          "entries": [
+            {
+              "kind": "directory",
+              "name": "main",
+              "path": "src/main",
+              "hidden": false,
+              "sizeBytes": null,
+              "hasChildren": true
+            },
+            {
+              "kind": "directory",
+              "name": "test",
+              "path": "src/test",
+              "hidden": false,
+              "sizeBytes": null,
+              "hasChildren": true
+            }
+          ],
+          "hasMore": false,
+          "directory": "src"
+        }
+      },
+      {
+        "toolCallId": "call_01_ET_Hb3QqLien1RNtHnJMRPw0599",
+        "toolName": "read_file",
+        "data": {
+          "path": "README.md",
+          "sha256": "0d5124e3918c50bd24b4115742203983339dcc7e8a8c2a93def9ed1d81b832be",
+          "content": "# Manao Java 17 + Maven project\n\nThis project was created by the Manao workspace with a fixed Java 17 + Maven 3.9 template.\n\nRun the editor's Run action to compile and execute `com.example.app.App`; edit `src/main/java/com/example/app/App.java` to change the program.\n\n\n\n"
+        }
+      },
+      {
+        "toolCallId": "call_00_ET_Ec3i2FL77wNeLkE2RNtQ1412",
+        "toolName": "list_files",
+        "data": {
+          "entries": [
+            {
+              "kind": "directory",
+              "name": "java",
+              "path": "src/main/java",
+              "hidden": false,
+              "sizeBytes": null,
+              "hasChildren": true
+            }
+          ],
+          "hasMore": false,
+          "directory": "src/main"
+        }
+      },
+      {
+        "toolCallId": "call_01_ET_CL9BB6U6PbBkOkiwkQdo0623",
+        "toolName": "list_files",
+        "data": {
+          "entries": [
+            {
+              "kind": "directory",
+              "name": "java",
+              "path": "src/test/java",
+              "hidden": false,
+              "sizeBytes": null,
+              "hasChildren": true
+            }
+          ],
+          "hasMore": false,
+          "directory": "src/test"
+        }
+      },
+      {
+        "toolCallId": "call_00_ET_mJrtkwjTSnT3JLTBe4UI5752",
+        "toolName": "list_files",
+        "data": {
+          "entries": [
+            {
+              "kind": "file",
+              "name": "App.java",
+              "path": "src/main/java/com/example/app/App.java",
+              "hidden": false,
+              "sizeBytes": 228,
+              "hasChildren": null
+            }
+          ],
+          "hasMore": false,
+          "directory": "src/main/java/com/example/app"
+        }
+      },
+      {
+        "toolCallId": "call_01_ET_WgkAPp3RZQq7HJLVOgJ33545",
+        "toolName": "list_files",
+        "data": {
+          "entries": [
+            {
+              "kind": "file",
+              "name": "AppTest.java",
+              "path": "src/test/java/com/example/app/AppTest.java",
+              "hidden": false,
+              "sizeBytes": 265,
+              "hasChildren": null
+            }
+          ],
+          "hasMore": false,
+          "directory": "src/test/java/com/example/app"
+        }
+      },
+      {
+        "toolCallId": "call_00_ET_6jKc6t1O9t1FHv7jo4jv7751",
+        "toolName": "read_file",
+        "data": {
+          "path": "src/main/java/com/example/app/App.java",
+          "sha256": "859cabaeb4eb4ff29a0faa33490381dda521512aef71567fcb1a7afe1a475051",
+          "content": "package com.example.app;\n\npublic final class App {\n    public String greeting() {\n        return \"Hello from Manao\";\n    }\n\n    public static void main(String[] args) {\n        System.out.println(new App().greeting());\n    }\n}\n\n"
+        }
+      },
+      {
+        "toolCallId": "call_01_ET_AYfBSxK4dAI1MFMicj1w1506",
+        "toolName": "read_file",
+        "data": {
+          "path": "src/test/java/com/example/app/AppTest.java",
+          "sha256": "ee9cd3fcb1c8695a490df5b37dd52e4faa14bde502a0d24c48d8d1b4c404c321",
+          "content": "package com.example.app;\n\nimport static org.junit.jupiter.api.Assertions.assertEquals;\n\nimport org.junit.jupiter.api.Test;\n\nclass AppTest {\n    @Test\n    void greetsFromTheTemplateProject() {\n        assertEquals(\"Hello from Manao\", new App().greeting());\n    }\n}\n\n"
+        }
+      },
+      {
+        "toolCallId": "call_00_j6UuQCEAebuyclQr3nXw7032",
+        "toolName": "build",
+        "data": {
+          "goal": "compile",
+          "output": "[INFO] Scanning for projects...\n[INFO] \n[INFO] ---------------------< com.example:manao-project >----------------------\n[INFO] Building manao-project 0.1.0-SNAPSHOT\n[INFO]   from pom.xml\n[INFO] --------------------------------[ jar ]---------------------------------\n[INFO] \n[INFO] --- resources:3.3.1:resources (default-resources) @ manao-project ---\n[INFO] skip non existing resourceDirectory /workspace/src/main/resources\n[INFO] \n[INFO] --- compiler:3.13.0:compile (default-compile) @ manao-project ---\n[INFO] Recompiling the module because of changed source code.\n[INFO] Compiling 1 source file with javac [debug target 17] to target/classes\n[INFO] ------------------------------------------------------------------------\n[INFO] BUILD SUCCESS\n[INFO] ------------------------------------------------------------------------\n[INFO] Total time:  1.251 s\n[INFO] Finished at: 2026-11-05T06:49:27Z\n[INFO] ------------------------------------------------------------------------\nMANAO-SUREFIRE-REPORT-BEGIN\nMANAO-SUREFIRE-REPORT-END truncated=0 files=0 state=missing\n",
+          "exitCode": 0,
+          "testReports": [],
+          "sourceRevision": "21",
+          "cleanupConfirmed": true,
+          "terminationReason": "Completed"
+        }
+      },
+      {
+        "toolCallId": "call_00_HpaL49UHzMe7Jjc8Qz9k0389",
+        "toolName": "build",
+        "data": {
+          "goal": "test",
+          "output": "[INFO] Scanning for projects...\n[INFO] \n[INFO] ---------------------< com.example:manao-project >----------------------\n[INFO] Building manao-project 0.1.0-SNAPSHOT\n[INFO]   from pom.xml\n[INFO] --------------------------------[ jar ]---------------------------------\n[INFO] \n[INFO] --- resources:3.3.1:resources (default-resources) @ manao-project ---\n[INFO] skip non existing resourceDirectory /workspace/src/main/resources\n[INFO] \n[INFO] --- compiler:3.13.0:compile (default-compile) @ manao-project ---\n[INFO] Recompiling the module because of changed source code.\n[INFO] Compiling 1 source file with javac [debug target 17] to target/classes\n[INFO] \n[INFO] --- resources:3.3.1:testResources (default-testResources) @ manao-project ---\n[INFO] skip non existing resourceDirectory /workspace/src/test/resources\n[INFO] \n[INFO] --- compiler:3.13.0:testCompile (default-testCompile) @ manao-project ---\n[INFO] Recompiling the module because of changed dependency.\n[INFO] Compiling 1 source file with javac [debug target 17] to target/test-classes\n[INFO] \n[INFO] --- surefire:3.2.5:test (default-test) @ manao-project ---\n[INFO] Using auto detected provider org.apache.maven.surefire.junitplatform.JUnitPlatformProvider\n[INFO] \n[INFO] -------------------------------------------------------\n[INFO]  T E S T S\n[INFO] -------------------------------------------------------\n[INFO] Running com.example.app.AppTest\n[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.037 s -- in com.example.app.AppTest\n[INFO] \n[INFO] Results:\n[INFO] \n[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0\n[INFO] \n[INFO] ------------------------------------------------------------------------\n[INFO] BUILD SUCCESS\n[INFO] ------------------------------------------------------------------------\n[INFO] Total time:  2.213 s\n[INFO] Finished at: 2026-11-05T06:49:40Z\n[INFO] ------------------------------------------------------------------------\nMANAO-SUREFIRE-REPORT-BEGIN\n<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<testsuite xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" xsi:noNamespaceSchemaLocation=\"https://maven.apache.org/surefire/maven-surefire-plugin/xsd/surefire-test-report-3.0.xsd\" version=\"3.0\" name=\"com.example.app.AppTest\" time=\"0.037\" tests=\"1\" errors=\"0\" skipped=\"0\" failures=\"0\">\n  <properties>\n    <property name=\"java.specification.version\" value=\"17\"/>\n    <property name=\"sun.jnu.encoding\" value=\"UTF-8\"/>\n    <property name=\"java.class.path\" value=\"/workspace/target/test-classes:/workspace/target/classes:/maven-cache/repository/org/junit/jupiter/junit-jupiter/5.10.2/junit-jupiter-5.10.2.jar:/maven-cache/repository/org/junit/jupiter/junit-jupiter-api/5.10.2/junit-jupiter-api-5.10.2.jar:/maven-cache/repository/org/opentest4j/opentest4j/1.3.0/opentest4j-1.3.0.jar:/maven-cache/repository/org/junit/platform/junit-platform-commons/1.10.2/junit-platform-commons-1.10.2.jar:/maven-cache/repository/org/apiguardian/apiguardian-api/1.1.2/apiguardian-api-1.1.2.jar:/maven-cache/repository/org/junit/jupiter/junit-jupiter-params/5.10.2/junit-jupiter-params-5.10.2.jar:/maven-cache/repository/org/junit/jupiter/junit-jupiter-engine/5.10.2/junit-jupiter-engine-5.10.2.jar:/maven-cache/repository/org/junit/platform/junit-platform-engine/1.10.2/junit-platform-engine-1.10.2.jar:\"/>\n    <property name=\"java.vm.vendor\" value=\"Eclipse Adoptium\"/>\n    <property name=\"sun.arch.data.model\" value=\"64\"/>\n    <property name=\"java.vendor.url\" value=\"https://adoptium.net/\"/>\n    <property name=\"os.name\" value=\"Linux\"/>\n    <property name=\"java.vm.specification.version\" value=\"17\"/>\n    <property name=\"sun.java.launcher\" value=\"SUN_STANDARD\"/>\n    <property name=\"user.country\" value=\"US\"/>\n    <property name=\"sun.boot.library.path\" value=\"/opt/java/openjdk/lib\"/>\n    <property name=\"sun.java.command\" value=\"/workspace/target/surefire/surefirebooter-20261105064940203_3.jar /workspace/target/surefire 2026-11-05T06-49-40_052-jvmRun1 surefire-20261105064940203_1tmp surefire_0-20261105064940203_2tmp\"/>\n    <property name=\"jdk.debug\" value=\"release\"/>\n    <property name=\"surefire.test.class.path\" value=\"/workspace/target/test-classes:/workspace/target/classes:/maven-cache/repository/org/junit/jupiter/junit-jupiter/5.10.2/junit-jupiter-5.10.2.jar:/maven-cache/repository/org/junit/jupiter/junit-jupiter-api/5.10.2/junit-jupiter-api-5.10.2.jar:/maven-cache/repository/org/opentest4j/opentest4j/1.3.0/opentest4j-1.3.0.jar:/maven-cache/repository/org/junit/platform/junit-platform-commons/1.10.2/junit-platform-commons-1.10.2.jar:/maven-cache/repository/org/apiguardian/apiguardian-api/1.1.2/apiguardian-api-1.1.2.jar:/maven-cache/repository/org/junit/jupiter/junit-jupiter-params/5.10.2/junit-jupiter-params-5.10.2.jar:/maven-cache/repository/org/junit/jupiter/junit-jupiter-engine/5.10.2/junit-jupiter-engine-5.10.2.jar:/maven-cache/repository/org/junit/platform/junit-platform-engine/1.10.2/junit-platform-engine-1.10.2.jar:\"/>\n    <property name=\"sun.cpu.endian\" value=\"little\"/>\n    <property name=\"user.home\" value=\"?\"/>\n    <property name=\"user.language\" value=\"en\"/>\n    <property name=\"java.specification.vendor\" value=\"Oracle Corporation\"/>\n    <property name=\"java.version.date\" value=\"2025-04-15\"/>\n    <property name=\"java.home\" value=\"/opt/java/openjdk\"/>\n    <property name=\"file.separator\" value=\"/\"/>\n    <property name=\"basedir\" value=\"/workspace\"/>\n    <property name=\"java.vm.compressedOopsMode\" value=\"Zero based\"/>\n    <property name=\"line.separator\" value=\"&#10;\"/>\n    <property name=\"java.specification.name\" value=\"Java Platform API Specification\"/>\n    <property name=\"java.vm.specification.vendor\" value=\"Oracle Corporation\"/>\n    <property name=\"surefire.real.class.path\" value=\"/workspace/target/surefire/surefirebooter-20261105064940203_3.jar\"/>\n    <property name=\"sun.management.compiler\" value=\"HotSpot 64-Bit Tiered Compilers\"/>\n    <property name=\"java.runtime.version\" value=\"17.0.15+6\"/>\n    <property name=\"user.name\" value=\"?\"/>\n    <property name=\"path.separator\" value=\":\"/>\n    <property name=\"os.version\" value=\"4.18.0-348.7.1.el8_5.x86_64\"/>\n    <property name=\"java.runtime.name\" value=\"OpenJDK Runtime Environment\"/>\n    <property name=\"file.encoding\" value=\"UTF-8\"/>\n    <property name=\"java.vm.name\" value=\"OpenJDK 64-Bit Server VM\"/>\n    <property name=\"java.vendor.version\" value=\"Temurin-17.0.15+6\"/>\n    <property name=\"localRepository\" value=\"/maven-cache/repository\"/>\n    <property name=\"java.vendor.url.bug\" value=\"https://github.com/adoptium/adoptium-support/issues\"/>\n    <property name=\"java.io.tmpdir\" value=\"/tmp\"/>\n    <property name=\"java.version\" value=\"17.0.15\"/>\n    <property name=\"user.dir\" value=\"/workspace\"/>\n    <property name=\"os.arch\" value=\"amd64\"/>\n    <property name=\"java.vm.specification.name\" value=\"Java Virtual Machine Specification\"/>\n    <property name=\"native.encoding\" value=\"UTF-8\"/>\n    <property name=\"java.library.path\" value=\"/usr/java/packages/lib:/usr/lib64:/lib64:/lib:/usr/lib\"/>\n    <property name=\"java.vm.info\" value=\"mixed mode, sharing\"/>\n    <property name=\"java.vendor\" value=\"Eclipse Adoptium\"/>\n    <property name=\"java.vm.version\" value=\"17.0.15+6\"/>\n    <property name=\"java.specification.maintenance.version\" value=\"1\"/>\n    <property name=\"sun.io.unicode.encoding\" value=\"UnicodeLittle\"/>\n    <property name=\"maven.repo.local\" value=\"/maven-cache/repository\"/>\n    <property name=\"java.class.version\" value=\"61.0\"/>\n  </properties>\n  <testcase name=\"greetsFromTheTemplateProject\" classname=\"com.example.app.AppTest\" time=\"0.018\"/>\n</testsuite>MANAO-SUREFIRE-REPORT-END truncated=0 files=1 state=ok\n",
+          "exitCode": 0,
+          "testReports": [
+            {
+              "tests": 1,
+              "errors": 0,
+              "sha256": "bdee5789f34ac02db839e182f5c4ae665fd9d572810b704c429ea7e2244f4c26",
+              "skipped": 0,
+              "failures": 0,
+              "testClass": "com.example.app.AppTest"
+            }
+          ],
+          "sourceRevision": "21",
+          "cleanupConfirmed": true,
+          "terminationReason": "Completed"
+        }
+      },
+      {
+        "toolCallId": "call_00_ET_fSD3x2VCur44evLXHQzB5612",
+        "toolName": "build",
+        "data": {
+          "goal": "package",
+          "output": "[INFO] Scanning for projects...\n[INFO] \n[INFO] ---------------------< com.example:manao-project >----------------------\n[INFO] Building manao-project 0.1.0-SNAPSHOT\n[INFO]   from pom.xml\n[INFO] --------------------------------[ jar ]---------------------------------\n[INFO] \n[INFO] --- resources:3.3.1:resources (default-resources) @ manao-project ---\n[INFO] skip non existing resourceDirectory /workspace/src/main/resources\n[INFO] \n[INFO] --- compiler:3.13.0:compile (default-compile) @ manao-project ---\n[INFO] Recompiling the module because of changed source code.\n[INFO] Compiling 1 source file with javac [debug target 17] to target/classes\n[INFO] \n[INFO] --- resources:3.3.1:testResources (default-testResources) @ manao-project ---\n[INFO] skip non existing resourceDirectory /workspace/src/test/resources\n[INFO] \n[INFO] --- compiler:3.13.0:testCompile (default-testCompile) @ manao-project ---\n[INFO] Recompiling the module because of changed dependency.\n[INFO] Compiling 1 source file with javac [debug target 17] to target/test-classes\n[INFO] \n[INFO] --- surefire:3.2.5:test (default-test) @ manao-project ---\n[INFO] Using auto detected provider org.apache.maven.surefire.junitplatform.JUnitPlatformProvider\n[INFO] \n[INFO] -------------------------------------------------------\n[INFO]  T E S T S\n[INFO] -------------------------------------------------------\n[INFO] Running com.example.app.AppTest\n[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.036 s -- in com.example.app.AppTest\n[INFO] \n[INFO] Results:\n[INFO] \n[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0\n[INFO] \n[INFO] \n[INFO] --- jar:3.4.1:jar (default-jar) @ manao-project ---\n[INFO] Building jar: /workspace/target/manao-project-0.1.0-SNAPSHOT.jar\n[INFO] ------------------------------------------------------------------------\n[INFO] BUILD SUCCESS\n[INFO] ------------------------------------------------------------------------\n[INFO] Total time:  2.152 s\n[INFO] Finished at: 2026-11-05T06:49:53Z\n[INFO] ------------------------------------------------------------------------\nMANAO-SUREFIRE-REPORT-BEGIN\n<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<testsuite xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" xsi:noNamespaceSchemaLocation=\"https://maven.apache.org/surefire/maven-surefire-plugin/xsd/surefire-test-report-3.0.xsd\" version=\"3.0\" name=\"com.example.app.AppTest\" time=\"0.036\" tests=\"1\" errors=\"0\" skipped=\"0\" failures=\"0\">\n  <properties>\n    <property name=\"java.specification.version\" value=\"17\"/>\n    <property name=\"sun.jnu.encoding\" value=\"UTF-8\"/>\n    <property name=\"java.class.path\" value=\"/workspace/target/test-classes:/workspace/target/classes:/maven-cache/repository/org/junit/jupiter/junit-jupiter/5.10.2/junit-jupiter-5.10.2.jar:/maven-cache/repository/org/junit/jupiter/junit-jupiter-api/5.10.2/junit-jupiter-api-5.10.2.jar:/maven-cache/repository/org/opentest4j/opentest4j/1.3.0/opentest4j-1.3.0.jar:/maven-cache/repository/org/junit/platform/junit-platform-commons/1.10.2/junit-platform-commons-1.10.2.jar:/maven-cache/repository/org/apiguardian/apiguardian-api/1.1.2/apiguardian-api-1.1.2.jar:/maven-cache/repository/org/junit/jupiter/junit-jupiter-params/5.10.2/junit-jupiter-params-5.10.2.jar:/maven-cache/repository/org/junit/jupiter/junit-jupiter-engine/5.10.2/junit-jupiter-engine-5.10.2.jar:/maven-cache/repository/org/junit/platform/junit-platform-engine/1.10.2/junit-platform-engine-1.10.2.jar:\"/>\n    <property name=\"java.vm.vendor\" value=\"Eclipse Adoptium\"/>\n    <property name=\"sun.arch.data.model\" value=\"64\"/>\n    <property name=\"java.vendor.url\" value=\"https://adoptium.net/\"/>\n    <property name=\"os.name\" value=\"Linux\"/>\n    <property name=\"java.vm.specification.version\" value=\"17\"/>\n    <property name=\"sun.java.launcher\" value=\"SUN_STANDARD\"/>\n    <property name=\"user.country\" value=\"US\"/>\n    <property name=\"sun.boot.library.path\" value=\"/opt/java/openjdk/lib\"/>\n    <property name=\"sun.java.command\" value=\"/workspace/target/surefire/surefirebooter-20261105064952614_3.jar /workspace/target/surefire 2026-11-05T06-49-52_536-jvmRun1 surefire-20261105064952614_1tmp surefire_0-20261105064952614_2tmp\"/>\n    <property name=\"jdk.debug\" value=\"release\"/>\n    <property name=\"surefire.test.class.path\" value=\"/workspace/target/test-classes:/workspace/target/classes:/maven-cache/repository/org/junit/jupiter/junit-jupiter/5.10.2/junit-jupiter-5.10.2.jar:/maven-cache/repository/org/junit/jupiter/junit-jupiter-api/5.10.2/junit-jupiter-api-5.10.2.jar:/maven-cache/repository/org/opentest4j/opentest4j/1.3.0/opentest4j-1.3.0.jar:/maven-cache/repository/org/junit/platform/junit-platform-commons/1.10.2/junit-platform-commons-1.10.2.jar:/maven-cache/repository/org/apiguardian/apiguardian-api/1.1.2/apiguardian-api-1.1.2.jar:/maven-cache/repository/org/junit/jupiter/junit-jupiter-params/5.10.2/junit-jupiter-params-5.10.2.jar:/maven-cache/repository/org/junit/jupiter/junit-jupiter-engine/5.10.2/junit-jupiter-engine-5.10.2.jar:/maven-cache/repository/org/junit/platform/junit-platform-engine/1.10.2/junit-platform-engine-1.10.2.jar:\"/>\n    <property name=\"sun.cpu.endian\" value=\"little\"/>\n    <property name=\"user.home\" value=\"?\"/>\n    <property name=\"user.language\" value=\"en\"/>\n    <property name=\"java.specification.vendor\" value=\"Oracle Corporation\"/>\n    <property name=\"java.version.date\" value=\"2025-04-15\"/>\n    <property name=\"java.home\" value=\"/opt/java/openjdk\"/>\n    <property name=\"file.separator\" value=\"/\"/>\n    <property name=\"basedir\" value=\"/workspace\"/>\n    <property name=\"java.vm.compressedOopsMode\" value=\"Zero based\"/>\n    <property name=\"line.separator\" value=\"&#10;\"/>\n    <property name=\"java.specification.name\" value=\"Java Platform API Specification\"/>\n    <property name=\"java.vm.specification.vendor\" value=\"Oracle Corporation\"/>\n    <property name=\"surefire.real.class.path\" value=\"/workspace/target/surefire/surefirebooter-20261105064952614_3.jar\"/>\n    <property name=\"sun.management.compiler\" value=\"HotSpot 64-Bit Tiered Compilers\"/>\n    <property name=\"java.runtime.version\" value=\"17.0.15+6\"/>\n    <property name=\"user.name\" value=\"?\"/>\n    <property name=\"path.separator\" value=\":\"/>\n    <property name=\"os.version\" value=\"4.18.0-348.7.1.el8_5.x86_64\"/>\n    <property name=\"java.runtime.name\" value=\"OpenJDK Runtime Environment\"/>\n    <property name=\"file.encoding\" value=\"UTF-8\"/>\n    <property name=\"java.vm.name\" value=\"OpenJDK 64-Bit Server VM\"/>\n    <property name=\"java.vendor.version\" value=\"Temurin-17.0.15+6\"/>\n    <property name=\"localRepository\" value=\"/maven-cache/repository\"/>\n    <property name=\"java.vendor.url.bug\" value=\"https://github.com/adoptium/adoptium-support/issues\"/>\n    <property name=\"java.io.tmpdir\" value=\"/tmp\"/>\n    <property name=\"java.version\" value=\"17.0.15\"/>\n    <property name=\"user.dir\" value=\"/workspace\"/>\n    <property name=\"os.arch\" value=\"amd64\"/>\n    <property name=\"java.vm.specification.name\" value=\"Java Virtual Machine Specification\"/>\n    <property name=\"native.encoding\" value=\"UTF-8\"/>\n    <property name=\"java.library.path\" value=\"/usr/java/packages/lib:/usr/lib64:/lib64:/lib:/usr/lib\"/>\n    <property name=\"java.vm.info\" value=\"mixed mode, sharing\"/>\n    <property name=\"java.vendor\" value=\"Eclipse Adoptium\"/>\n    <property name=\"java.vm.version\" value=\"17.0.15+6\"/>\n    <property name=\"java.specification.maintenance.version\" value=\"1\"/>\n    <property name=\"sun.io.unicode.encoding\" value=\"UnicodeLittle\"/>\n    <property name=\"maven.repo.local\" value=\"/maven-cache/repository\"/>\n    <property name=\"java.class.version\" value=\"61.0\"/>\n  </properties>\n  <testcase name=\"greetsFromTheTemplateProject\" classname=\"com.example.app.AppTest\" time=\"0.018\"/>\n</testsuite>MANAO-SUREFIRE-REPORT-END truncated=0 files=1 state=ok\n",
+          "exitCode": 0,
+          "testReports": [
+            {
+              "tests": 1,
+              "errors": 0,
+              "sha256": "a3cbfccf33419b8d68981b2c64e067ce85071aa589902e28105c3eab14f18483",
+              "skipped": 0,
+              "failures": 0,
+              "testClass": "com.example.app.AppTest"
+            }
+          ],
+          "sourceRevision": "21",
+          "cleanupConfirmed": true,
+          "terminationReason": "Completed"
+        }
+      },
+      {
+        "toolCallId": "call_00_ET_ftTEsd4cyWXtyqD7PiU59387",
+        "toolName": "application",
+        "data": {
+          "kind": "application",
+          "action": "start",
+          "activeRunId": "ae681769-6259-4a9a-a9d5-1a4facd86941",
+          "stoppedConfirmed": false,
+          "run": {
+            "id": "ae681769-6259-4a9a-a9d5-1a4facd86941",
+            "state": "STARTING",
+            "requestedWorkspaceRevision": "21",
+            "firstReadyAt": null,
+            "expiresAt": null,
+            "finishedAt": null,
+            "exitCode": null,
+            "terminationReason": null
+          },
+          "logs": null
+        }
+      },
+      {
+        "toolCallId": "call_00_ET_N5ENOYIHC5BTpYGR7zSl7314",
+        "toolName": "application",
+        "data": {
+          "kind": "application",
+          "action": "status",
+          "activeRunId": "ae681769-6259-4a9a-a9d5-1a4facd86941",
+          "stoppedConfirmed": false,
+          "run": {
+            "id": "ae681769-6259-4a9a-a9d5-1a4facd86941",
+            "state": "RUNNING",
+            "requestedWorkspaceRevision": "21",
+            "firstReadyAt": null,
+            "expiresAt": null,
+            "finishedAt": null,
+            "exitCode": null,
+            "terminationReason": null
+          },
+          "logs": null
+        }
+      },
+      {
+        "toolCallId": "call_00_FGFg4YEkOmOgsoQBhPY27529",
+        "toolName": "application",
+        "data": {
+          "kind": "application",
+          "action": "status",
+          "activeRunId": null,
+          "stoppedConfirmed": true,
+          "run": {
+            "id": "ae681769-6259-4a9a-a9d5-1a4facd86941",
+            "state": "SUCCEEDED",
+            "requestedWorkspaceRevision": "21",
+            "firstReadyAt": null,
+            "expiresAt": null,
+            "finishedAt": "2026-11-05T06:50:09.481555Z",
+            "exitCode": 0,
+            "terminationReason": "BUILD_SUCCEEDED"
+          },
+          "logs": null
+        }
+      },
+      {
+        "toolCallId": "call_00_ET_BT0oFA1QzhHjBtgydGSo2395",
+        "toolName": "application",
+        "data": {
+          "kind": "application",
+          "action": "logs",
+          "activeRunId": null,
+          "stoppedConfirmed": true,
+          "run": {
+            "id": "ae681769-6259-4a9a-a9d5-1a4facd86941",
+            "state": "SUCCEEDED",
+            "requestedWorkspaceRevision": "21",
+            "firstReadyAt": null,
+            "expiresAt": null,
+            "finishedAt": "2026-11-05T06:50:09.481555Z",
+            "exitCode": 0,
+            "terminationReason": "BUILD_SUCCEEDED"
+          },
+          "logs": {
+            "text": "Hello from Manao\n",
+            "firstSeq": 1,
+            "lastSeq": 1,
+            "truncated": false,
+            "complete": false
+          }
+        }
+      }
+    ]
+  },
+  "comparison": {
+    "workspaces": [
+      {
+        "projectId": "2bd14295-9ae0-4816-8508-80a9950816c6",
+        "podUid": "9e37d68b-20a8-4b35-8535-e7557af7da54",
+        "pvcUid": "cd712d4b-538d-46a8-8370-8e0b1e10733d",
+        "paths": 91,
+        "allPathHashesUnchanged": true
+      },
+      {
+        "projectId": "57bf9834-3c2b-407f-be1e-d6e5409d0145",
+        "podUid": "79d92347-a2fb-4fe0-b27d-98f7d9ad25e7",
+        "pvcUid": "f015a95c-e323-421a-a8b4-42f2c774ab63",
+        "paths": 37,
+        "allPathHashesUnchanged": true
+      },
+      {
+        "projectId": "7a33d522-60cc-4f25-9a87-41c1146a7545",
+        "podUid": "e3070ad0-e178-4daf-9c31-bbd403407978",
+        "pvcUid": "e91ebeac-ffa8-4b6d-9c0e-41f1a0b139d4",
+        "paths": 51,
+        "allPathHashesUnchanged": true
+      },
+      {
+        "projectId": "97330613-4089-4174-92bf-2331611d6849",
+        "podUid": "fab20374-7dfe-41f2-a25c-26fbe6fe15d4",
+        "pvcUid": "aad0a8d1-d516-4adc-8973-c4d94877d74f",
+        "paths": 25,
+        "allPathHashesUnchanged": true
+      },
+      {
+        "projectId": "a6678c9e-b14a-4109-a7be-365f0082429c",
+        "podUid": "0f7d7d23-ec47-4014-bab3-fa70f9bdf259",
+        "pvcUid": "216bb09e-d5db-4b8f-91e4-4e052494636e",
+        "paths": 33,
+        "allPathHashesUnchanged": true
+      },
+      {
+        "projectId": "b0cf2926-1264-4777-a543-3c3230354528",
+        "podUid": "bc3d41a6-2587-4eac-92db-7c2033b8919e",
+        "pvcUid": "615d76aa-a6d0-43b0-9e9e-4c060904ae0b",
+        "paths": 39,
+        "allPathHashesUnchanged": true
+      },
+      {
+        "projectId": "bf51c6ac-be04-4274-9c73-43a15ea9d470",
+        "podUid": "93ffaddf-ca53-4e68-ac7b-46f72c8000eb",
+        "pvcUid": "f8c4f418-380a-4457-ac72-7ec9b0ec9157",
+        "paths": 89,
+        "allPathHashesUnchanged": true
+      },
+      {
+        "projectId": "c1afae86-fc51-4123-a417-492f93b3bfb3",
+        "podUid": "742b96e6-d091-446a-bb42-495f119f4d6a",
+        "pvcUid": "880a4afa-cff2-40d8-92ee-52a6cfc7ba19",
+        "paths": 29,
+        "allPathHashesUnchanged": true
+      }
+    ],
+    "allPvcs": [
+      {
+        "name": "data-mysql-0",
+        "uid": "d6b6bc54-6e34-4bac-9897-436cf9e84cb3"
+      },
+      {
+        "name": "manao-pvc-0aa40631-204b-4758-b84a-c35bfb6a673c",
+        "uid": "b2e52484-4240-4b32-8325-bea3766bd64e"
+      },
+      {
+        "name": "manao-pvc-2bd14295-9ae0-4816-8508-80a9950816c6",
+        "uid": "cd712d4b-538d-46a8-8370-8e0b1e10733d"
+      },
+      {
+        "name": "manao-pvc-3a382725-5ce4-4200-8bfe-8c9e16e802ab",
+        "uid": "75e1f0b1-b3ba-4d4c-a79f-f9e6551a9267"
+      },
+      {
+        "name": "manao-pvc-57bf9834-3c2b-407f-be1e-d6e5409d0145",
+        "uid": "f015a95c-e323-421a-a8b4-42f2c774ab63"
+      },
+      {
+        "name": "manao-pvc-7a33d522-60cc-4f25-9a87-41c1146a7545",
+        "uid": "e91ebeac-ffa8-4b6d-9c0e-41f1a0b139d4"
+      },
+      {
+        "name": "manao-pvc-97330613-4089-4174-92bf-2331611d6849",
+        "uid": "aad0a8d1-d516-4adc-8973-c4d94877d74f"
+      },
+      {
+        "name": "manao-pvc-a6678c9e-b14a-4109-a7be-365f0082429c",
+        "uid": "216bb09e-d5db-4b8f-91e4-4e052494636e"
+      },
+      {
+        "name": "manao-pvc-b0cf2926-1264-4777-a543-3c3230354528",
+        "uid": "615d76aa-a6d0-43b0-9e9e-4c060904ae0b"
+      },
+      {
+        "name": "manao-pvc-bf51c6ac-be04-4274-9c73-43a15ea9d470",
+        "uid": "f8c4f418-380a-4457-ac72-7ec9b0ec9157"
+      },
+      {
+        "name": "manao-pvc-c1afae86-fc51-4123-a417-492f93b3bfb3",
+        "uid": "880a4afa-cff2-40d8-92ee-52a6cfc7ba19"
+      },
+      {
+        "name": "manao-pvc-cccebb1d-2965-4e10-8f6b-2259d617de63",
+        "uid": "abd66671-225f-4633-ad08-7672e12045cc"
+      }
+    ],
+    "existingDurableRows": {
+      "tasks": {
+        "before": 28,
+        "after": 29,
+        "allPreexistingRowsUnchanged": true
+      },
+      "operations": {
+        "before": 256,
+        "after": 256,
+        "allPreexistingRowsUnchanged": true
+      },
+      "tools": {
+        "before": 248,
+        "after": 265,
+        "allPreexistingRowsUnchanged": true
+      }
+    },
+    "flywayUnchanged": true,
+    "projectRowsUnchanged": true,
+    "limits": "Task/operation/tool rows and workspace regular-file hashes were compared. Conversation/Run/ACK full rows and symlink metadata were not separately baselined. Stable Pod and PVC UIDs support immutable mount/binding preservation; current mapping recorded below."
+  },
+  "restoredStorage": [
+    {
+      "pvcUid": "cd712d4b-538d-46a8-8370-8e0b1e10733d",
+      "projectId": "2bd14295-9ae0-4816-8508-80a9950816c6",
+      "podUid": "9e37d68b-20a8-4b35-8535-e7557af7da54",
+      "mountPath": "/workspace",
+      "pvUid": "0b52f0d7-b9a1-42c5-9f7b-bae442b5d5a5",
+      "pvName": "pvc-cd712d4b-538d-46a8-8370-8e0b1e10733d",
+      "subPath": "project-2bd14295-9ae0-4816-8508-80a9950816c6",
+      "claim": "manao-pvc-2bd14295-9ae0-4816-8508-80a9950816c6"
+    },
+    {
+      "pvcUid": "f015a95c-e323-421a-a8b4-42f2c774ab63",
+      "projectId": "57bf9834-3c2b-407f-be1e-d6e5409d0145",
+      "podUid": "79d92347-a2fb-4fe0-b27d-98f7d9ad25e7",
+      "mountPath": "/workspace",
+      "pvUid": "88e52081-ebd8-41d6-9d03-3214d6765415",
+      "pvName": "pvc-f015a95c-e323-421a-a8b4-42f2c774ab63",
+      "subPath": "project-57bf9834-3c2b-407f-be1e-d6e5409d0145",
+      "claim": "manao-pvc-57bf9834-3c2b-407f-be1e-d6e5409d0145"
+    },
+    {
+      "pvcUid": "e91ebeac-ffa8-4b6d-9c0e-41f1a0b139d4",
+      "projectId": "7a33d522-60cc-4f25-9a87-41c1146a7545",
+      "podUid": "e3070ad0-e178-4daf-9c31-bbd403407978",
+      "mountPath": "/workspace",
+      "pvUid": "0ba5f33b-0b78-4e5f-a7ca-6f66678d6d36",
+      "pvName": "pvc-e91ebeac-ffa8-4b6d-9c0e-41f1a0b139d4",
+      "subPath": "project-7a33d522-60cc-4f25-9a87-41c1146a7545",
+      "claim": "manao-pvc-7a33d522-60cc-4f25-9a87-41c1146a7545"
+    },
+    {
+      "pvcUid": "aad0a8d1-d516-4adc-8973-c4d94877d74f",
+      "projectId": "97330613-4089-4174-92bf-2331611d6849",
+      "podUid": "fab20374-7dfe-41f2-a25c-26fbe6fe15d4",
+      "mountPath": "/workspace",
+      "pvUid": "9a6dd165-7b82-4d1e-9603-28970da4c87d",
+      "pvName": "pvc-aad0a8d1-d516-4adc-8973-c4d94877d74f",
+      "subPath": "project-97330613-4089-4174-92bf-2331611d6849",
+      "claim": "manao-pvc-97330613-4089-4174-92bf-2331611d6849"
+    },
+    {
+      "pvcUid": "216bb09e-d5db-4b8f-91e4-4e052494636e",
+      "projectId": "a6678c9e-b14a-4109-a7be-365f0082429c",
+      "podUid": "0f7d7d23-ec47-4014-bab3-fa70f9bdf259",
+      "mountPath": "/workspace",
+      "pvUid": "c6b1c66d-3845-45b8-a3a4-9127c4d602bd",
+      "pvName": "pvc-216bb09e-d5db-4b8f-91e4-4e052494636e",
+      "subPath": "project-a6678c9e-b14a-4109-a7be-365f0082429c",
+      "claim": "manao-pvc-a6678c9e-b14a-4109-a7be-365f0082429c"
+    },
+    {
+      "pvcUid": "615d76aa-a6d0-43b0-9e9e-4c060904ae0b",
+      "projectId": "b0cf2926-1264-4777-a543-3c3230354528",
+      "podUid": "bc3d41a6-2587-4eac-92db-7c2033b8919e",
+      "mountPath": "/workspace",
+      "pvUid": "7426b030-e56a-48db-af66-cb177a154a24",
+      "pvName": "pvc-615d76aa-a6d0-43b0-9e9e-4c060904ae0b",
+      "subPath": "project-b0cf2926-1264-4777-a543-3c3230354528",
+      "claim": "manao-pvc-b0cf2926-1264-4777-a543-3c3230354528"
+    },
+    {
+      "pvcUid": "f8c4f418-380a-4457-ac72-7ec9b0ec9157",
+      "projectId": "bf51c6ac-be04-4274-9c73-43a15ea9d470",
+      "podUid": "93ffaddf-ca53-4e68-ac7b-46f72c8000eb",
+      "mountPath": "/workspace",
+      "pvUid": "0c9589d0-58cb-451f-a60c-d1a7d76b3e46",
+      "pvName": "pvc-f8c4f418-380a-4457-ac72-7ec9b0ec9157",
+      "subPath": "project-bf51c6ac-be04-4274-9c73-43a15ea9d470",
+      "claim": "manao-pvc-bf51c6ac-be04-4274-9c73-43a15ea9d470"
+    },
+    {
+      "pvcUid": "880a4afa-cff2-40d8-92ee-52a6cfc7ba19",
+      "projectId": "c1afae86-fc51-4123-a417-492f93b3bfb3",
+      "podUid": "742b96e6-d091-446a-bb42-495f119f4d6a",
+      "mountPath": "/workspace",
+      "pvUid": "ae0b5185-a323-465b-aaae-69d669cd6c8d",
+      "pvName": "pvc-880a4afa-cff2-40d8-92ee-52a6cfc7ba19",
+      "subPath": "project-c1afae86-fc51-4123-a417-492f93b3bfb3",
+      "claim": "manao-pvc-c1afae86-fc51-4123-a417-492f93b3bfb3"
+    }
+  ],
+  "restoredConfig": {
+    "normalFrontendImage": "chocologic/manao_images_repository@sha256:12f2f70f9bc94a43126bae09f3ac8ba262fb73fc8227950c8de2c550cd46445c",
+    "imageConfigExactMatch": true,
+    "maintenanceVolumePresent": false,
+    "maintenanceConfigPresent": false
+  },
+  "restoredImageConfig": {
+    "MANAO_WORKSPACE_AGENT_IMAGE": "chocologic/manao_images_repository@sha256:65e4ba78fd0e078d64307fb72bff6017d173c7d933fd5533e7a5e3650728135c",
+    "MANAO_PYTHON_RUNNER_IMAGE": "chocologic/manao_images_repository@sha256:2517aec1ad79e592315a8a786dc6a462a002708441ed68efbb50efda3188cec6",
+    "MANAO_WORKSPACE_INITIALIZER_IMAGE": "busybox@sha256:73aaf090f3d85aa34ee199857f03fa3a95c8ede2ffd4cc2cdb5b94e566b11662",
+    "MANAO_MAVEN_RUNNER_IMAGE": "chocologic/manao_images_repository@sha256:59a83cb94ac271b24b837f6fe55a27a308cc6f67fee43a46ca628d03fdf85e98"
+  },
+  "restoredPythonCheck": {
+    "identity": {
+      "projectId": "bf51c6ac-be04-4274-9c73-43a15ea9d470",
+      "taskId": "2c1fab9e-4833-410d-ba91-5bd325a07e52",
+      "conversationId": "9a5027e0-e9c9-4efa-9606-376307c44bff"
+    },
+    "task": {
+      "taskId": "2c1fab9e-4833-410d-ba91-5bd325a07e52",
+      "state": "COMPLETED",
+      "workspaceRevision": "26",
+      "writesLocked": false,
+      "progress": [
+        {
+          "seq": 1,
+          "kind": "message",
+          "text": "我将先检查当前项目结构和相关文件，再执行只读的 compile 与 test 验证。",
+          "truncated": false
+        },
+        {
+          "seq": 2,
+          "kind": "tool_start",
+          "text": "list_files call_00_ET_9T5FltbEqDWaulRX0nr91820",
+          "truncated": false
+        },
+        {
+          "seq": 3,
+          "kind": "tool_end",
+          "text": "list_files call_00_ET_9T5FltbEqDWaulRX0nr91820",
+          "truncated": false
+        },
+        {
+          "seq": 4,
+          "kind": "tool_start",
+          "text": "application call_01_ET_JTO2z6pAVYVOApPPi9VG7068",
+          "truncated": false
+        },
+        {
+          "seq": 5,
+          "kind": "tool_end",
+          "text": "application call_01_ET_JTO2z6pAVYVOApPPi9VG7068",
+          "truncated": false
+        },
+        {
+          "seq": 6,
+          "kind": "message",
+          "text": "当前没有活动 Run。接下来读取 `pyproject.toml`、`main.py` 和测试目录。",
+          "truncated": false
+        },
+        {
+          "seq": 7,
+          "kind": "tool_start",
+          "text": "read_file call_00_1DFNtgshgaaeCGdvCN7s6461",
+          "truncated": false
+        },
+        {
+          "seq": 8,
+          "kind": "tool_end",
+          "text": "read_file call_00_1DFNtgshgaaeCGdvCN7s6461",
+          "truncated": false
+        },
+        {
+          "seq": 9,
+          "kind": "tool_start",
+          "text": "read_file call_01_bz4WJ6OGhdoyTgYvDgfZ8066",
+          "truncated": false
+        },
+        {
+          "seq": 10,
+          "kind": "tool_end",
+          "text": "read_file call_01_bz4WJ6OGhdoyTgYvDgfZ8066",
+          "truncated": false
+        },
+        {
+          "seq": 11,
+          "kind": "tool_start",
+          "text": "list_files call_02_0UDOeGbfnWSJqrbm79ZH0971",
+          "truncated": false
+        },
+        {
+          "seq": 12,
+          "kind": "tool_end",
+          "text": "list_files call_02_0UDOeGbfnWSJqrbm79ZH0971",
+          "truncated": false
+        },
+        {
+          "seq": 13,
+          "kind": "message",
+          "text": "",
+          "truncated": false
+        },
+        {
+          "seq": 14,
+          "kind": "tool_start",
+          "text": "read_file call_00_q9bgx8X9MTp8RtWMA08f5678",
+          "truncated": false
+        },
+        {
+          "seq": 15,
+          "kind": "tool_end",
+          "text": "read_file call_00_q9bgx8X9MTp8RtWMA08f5678",
+          "truncated": false
+        },
+        {
+          "seq": 16,
+          "kind": "message",
+          "text": "已确认项目为 Python 3.13 console 模板，`test` 组包含 `pytest>=9.2.0`，测试文件内容正常。现在执行 compile 与 test 验证（不修改文件、不启动应用）。",
+          "truncated": false
+        },
+        {
+          "seq": 17,
+          "kind": "tool_start",
+          "text": "build call_00_p4z34NCXrA9oTv9rYVwx3095",
+          "truncated": false
+        },
+        {
+          "seq": 18,
+          "kind": "tool_end",
+          "text": "build call_00_p4z34NCXrA9oTv9rYVwx3095",
+          "truncated": false
+        },
+        {
+          "seq": 19,
+          "kind": "tool_start",
+          "text": "build call_01_eyvlCjbOHqIK9My0VAhl0166",
+          "truncated": false
+        },
+        {
+          "seq": 20,
+          "kind": "tool_end",
+          "text": "build call_01_eyvlCjbOHqIK9My0VAhl0166",
+          "truncated": false
+        },
+        {
+          "seq": 21,
+          "kind": "message",
+          "text": "验证完成，两项检查均真实通过。\n\n**项目现状（workspace revision 26，仅读取）**\n- `pyproject.toml`：Python 项目，`requires-python = \">=3.13,<3.14\"`，`test` 组包含 `pytest>=9.2.0`（及 certifi、colorama、idna、packaging、six、sniffio、termcolor）。\n- `tests/test_pause.py`：单个测试 `test_pause`，断言 `1 + 1 == 2`。\n- 未修改任何项目文件，未新增/移除依赖，未创建 `pom.xml`，未调用 Maven，未启动应用（此前 `application.status` 显示无活动 Run）。\n\n**build compile**\n- `checkKind = syntax`，`verificationStatus = PASS`，`filesChecked = 2`，`errors = []`，`exitCode = 0`，`cleanupConfirmed = true`。\n- 这只证明语法检查通过，不作为 pytest 结果。\n\n**build test**\n- `checkKind = pytest`，`verificationStatus = PASS`，`exitCode = 0`。\n- `testSummary`：`tests = 1`，`failures = 0`，`errors = 0`，`skipped = 0`，`reportComplete = true`。\n- 日志：`1 passed in 0.01s`，`state=complete`；实际安装并运行的是 `pytest==9.2.0`，说明 `test` 组现有 pytest 可用。\n- `cleanupConfirmed = true`，`terminationReason = Completed`。\n\n**过程旁注（不影响结论）**\n- 首次离线缓存准备因 `certifi==2026.10.23` 未命中缓存而失败，平台自动“retrying with network”后成功完成解析、安装与测试；最终测试结果为真实通过。\n\n结论：Python 语法检查与 pytest 均通过，测试依赖可用，cleanup 已确认，无遗留失败或待处理阻塞项。",
+          "truncated": false
+        }
+      ],
+      "changedPaths": [],
+      "summary": "验证完成，两项检查均真实通过。\n\n**项目现状（workspace revision 26，仅读取）**\n- `pyproject.toml`：Python 项目，`requires-python = \">=3.13,<3.14\"`，`test` 组包含 `pytest>=9.2.0`（及 certifi、colorama、idna、packaging、six、sniffio、termcolor）。\n- `tests/test_pause.py`：单个测试 `test_pause`，断言 `1 + 1 == 2`。\n- 未修改任何项目文件，未新增/移除依赖，未创建 `pom.xml`，未调用 Maven，未启动应用（此前 `application.status` 显示无活动 Run）。\n\n**build compile**\n- `checkKind = syntax`，`verificationStatus = PASS`，`filesChecked = 2`，`errors = []`，`exitCode = 0`，`cleanupConfirmed = true`。\n- 这只证明语法检查通过，不作为 pytest 结果。\n\n**build test**\n- `checkKind = pytest`，`verificationStatus = PASS`，`exitCode = 0`。\n- `testSummary`：`tests = 1`，`failures = 0`，`errors = 0`，`skipped = 0`，`reportComplete = true`。\n- 日志：`1 passed in 0.01s`，`state=complete`；实际安装并运行的是 `pytest==9.2.0`，说明 `test` 组现有 pytest 可用。\n- `cleanupConfirmed = true`，`terminationReason = Completed`。\n\n**过程旁注（不影响结论）**\n- 首次离线缓存准备因 `certifi==2026.10.23` 未命中缓存而失败，平台自动“retrying with network”后成功完成解析、安装与测试；最终测试结果为真实通过。\n\n结论：Python 语法检查与 pytest 均通过，测试依赖可用，cleanup 已确认，无遗留失败或待处理阻塞项。",
+      "failureCode": null,
+      "conversationId": "9a5027e0-e9c9-4efa-9606-376307c44bff",
+      "reasoningEffort": "high",
+      "closeReasonCode": null
+    },
+    "tools": [
+      {
+        "toolCallId": "call_00_p4z34NCXrA9oTv9rYVwx3095",
+        "toolName": "build",
+        "data": {
+          "goal": "compile",
+          "sourceRevision": "26",
+          "exitCode": 0,
+          "terminationReason": "Completed",
+          "output": "{\"language\":\"python\",\"checkKind\":\"syntax\",\"verificationStatus\":\"PASS\",\"filesChecked\":2,\"errors\":[]}\n",
+          "cleanupConfirmed": true,
+          "language": "python",
+          "checkKind": "syntax",
+          "verificationStatus": "PASS",
+          "filesChecked": 2,
+          "testSummary": null,
+          "errors": [],
+          "testReports": []
+        }
+      },
+      {
+        "toolCallId": "call_01_eyvlCjbOHqIK9My0VAhl0166",
+        "toolName": "build",
+        "data": {
+          "goal": "test",
+          "sourceRevision": "26",
+          "exitCode": 0,
+          "terminationReason": "Completed",
+          "output": "Using CPython 3.13.15 interpreter at: /usr/local/bin/python3\nCreating virtual environment at: /tmp/manao-python/.venv\nResolved 12 packages in 0.83ms\n  × Failed to download `certifi==2026.10.23`\n  ╰─▶ Network connectivity is disabled, but the\n      requested data wasn't found in the cache for:\n      `https://mirrors.aliyun.com/pypi/packages/32/d1/a3652fe2c19134d0d15922177821d863cbd7e842d53a21bbe7e8e3a1b5ac/certifi-2026.10.23-py3-none-any.whl`\n  help: `certifi` (v2026.10.23) was included because\n        `manao-python-console:test` (v0.1.0) depends on `certifi`\nmanao-python: offline package preparation failed; retrying with network\nResolved 12 packages in 0.72ms\nPrepared 11 packages in 335ms\nInstalled 11 packages in 641ms\n + certifi==2026.10.23\n + colorama==0.4.6\n + idna==3.20\n + iniconfig==2.3.1\n + packaging==26.3\n + pluggy==1.7.0\n + pygments==2.21.0\n + pytest==9.2.0\n + six==1.17.0\n + sniffio==1.3.1\n + termcolor==3.3.0\n.                                                                        [100%]\n1 passed in 0.01s\n\nMANAO-PYTEST-REPORT-BEGIN\n<?xml version=\"1.0\" encoding=\"utf-8\"?><testsuites name=\"pytest tests\"><testsuite name=\"pytest\" errors=\"0\" failures=\"0\" skipped=\"0\" tests=\"1\" time=\"0.019\" timestamp=\"2026-11-05T06:55:43.276399+00:00\" hostname=\"manao-dev-11f14780-0cb5-4943-89b1-d716de2a94ba-vgjjh\"><testcase classname=\"tests.test_pause\" name=\"test_pause\" time=\"0.000\" /></testsuite></testsuites>\nMANAO-PYTEST-REPORT-END state=complete bytes=360\n",
+          "cleanupConfirmed": true,
+          "language": "python",
+          "checkKind": "pytest",
+          "verificationStatus": "PASS",
+          "filesChecked": null,
+          "testSummary": {
+            "tests": 1,
+            "failures": 0,
+            "errors": 0,
+            "skipped": 0,
+            "reportComplete": true
+          },
+          "errors": [],
+          "testReports": []
+        }
+      }
+    ]
+  },
+  "restoredFastapiRun": {
+    "projectId": "2bd14295-9ae0-4816-8508-80a9950816c6",
+    "run": {
+      "id": "13d9275b-7fe7-4c9e-8cb7-7570490198a6",
+      "state": "RUNNING",
+      "requestedWorkspaceRevision": "38",
+      "policy": {
+        "command": "python -u -m uvicorn app.main:app",
+        "runtime": {
+          "language": "python",
+          "pythonVersion": "3.13",
+          "packageManager": "uv"
+        },
+        "resources": {
+          "limits": {
+            "cpuMillis": 8000,
+            "memoryBytes": 17179869184,
+            "ephemeralStorageBytes": 10737418240
+          },
+          "requests": {
+            "cpuMillis": 1000,
+            "memoryBytes": 1073741824,
+            "ephemeralStorageBytes": 1073741824
+          }
+        },
+        "templateId": "python-fastapi-web",
+        "executionKind": "SERVICE",
+        "timeoutSeconds": 1800,
+        "startupTimeoutSeconds": 1800,
+        "serviceLifetimeSeconds": 7200
+      },
+      "createdAt": "2026-11-05T06:57:59.706581Z",
+      "startedAt": "2026-11-05T06:58:04.372424Z",
+      "finishedAt": null,
+      "terminationReason": null,
+      "exitCode": null,
+      "logTruncated": false,
+      "logEvictedBytes": 0,
+      "lastLogSeq": null,
+      "firstReadyAt": "2026-11-05T06:58:04Z",
+      "expiresAt": "2026-11-05T08:58:04Z"
+    },
+    "publicResponse": {
+      "status": 200,
+      "body": {
+        "message": "Hello from Manao",
+        "total": "2,000"
+      }
+    },
+    "retained": true
+  },
+  "startupOrder": "Backend and worker replicas were restored together only after global drain and closed admission; both became Ready. Not a pending-operation restart scenario.",
+  "normalPage": {
+    "maintenanceText": false,
+    "html": true,
+    "status": 200
+  },
+  "finalCluster": {
+    "deletedProjects": 0,
+    "developmentJobs": 0,
+    "deletedPvcs": 0,
+    "counts": "occupyingTask\t0\npendingOperation\t0\nrunningCompact\t0\nactiveRun\t1\nv20\t1\t1710106007\t1\ndisposableRollbackSchemas\t0",
+    "ownForwardListeners": 0,
+    "developmentPods": 0,
+    "deployments": [
+      {
+        "desired": 1,
+        "ready": 1,
+        "image": "chocologic/manao_images_repository@sha256:3a847b0e9420ea6a0111fb116e9664583e6c43ec17f31a95b66a4fda199f56cb",
+        "name": "backend"
+      },
+      {
+        "desired": 1,
+        "ready": 1,
+        "image": "chocologic/manao_images_repository@sha256:12f2f70f9bc94a43126bae09f3ac8ba262fb73fc8227950c8de2c550cd46445c",
+        "name": "frontend"
+      },
+      {
+        "desired": 1,
+        "ready": 1,
+        "image": "chocologic/manao_images_repository@sha256:e5c42be404b2dfd80df4e599a3aa05e336d715081ecb822333e85e60f7200957",
+        "name": "manao-pi-worker"
+      }
+    ],
+    "debugEnvironmentPods": 0,
+    "publicFastapi": {
+      "body": {
+        "message": "Hello from Manao",
+        "total": "2,000"
+      },
+      "status": 200
+    },
+    "capturedAt": "2026-11-05T07:07:12.4067454Z"
+  }
+}

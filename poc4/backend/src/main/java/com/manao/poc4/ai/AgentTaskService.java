@@ -39,6 +39,7 @@ public final class AgentTaskService {
     private final PiWorkerClient worker;
     private final AgentProjectTools tools;
     private final AgentConversationService conversations;
+    private final AgentProjectEnvironmentService environments;
     /** The unified settlement driver: receipts, user closes and budget closes all settle here. */
     private final AgentTaskSettlementService settlement;
 
@@ -48,11 +49,18 @@ public final class AgentTaskService {
     }
     public AgentTaskService(AgentTaskStore tasks, ProjectLifecycleGate lifecycle, PiWorkerClient worker,
                             AgentProjectTools tools, AgentConversationService conversations) {
+        this(tasks, lifecycle, worker, tools, conversations, null);
+    }
+
+    public AgentTaskService(AgentTaskStore tasks, ProjectLifecycleGate lifecycle, PiWorkerClient worker,
+                            AgentProjectTools tools, AgentConversationService conversations,
+                            AgentProjectEnvironmentService environments) {
         this.tasks = tasks;
         this.lifecycle = lifecycle;
         this.worker = worker;
         this.tools = tools;
         this.conversations = conversations;
+        this.environments = environments;
         this.settlement = new AgentTaskSettlementService(tasks, lifecycle, worker, tools);
     }
 
@@ -73,7 +81,10 @@ public final class AgentTaskService {
         AgentTaskStore.TaskCreation creation;
         try (ProjectLifecycleGate.Lease lease = lifecycle.tryAcquire(projectId).orElseThrow(
                 () -> new ApiException("PROJECT_BUSY", 409, "Project is busy"))) {
-            creation = tasks.createTask(ownerId, projectId, request, conversationId);
+            creation = tasks.createTask(ownerId, projectId, request, conversationId, () -> {
+                if (environments == null) throw AgentProjectEnvironmentService.missing();
+                return environments.forProject(projectId);
+            });
         }
         if (!creation.created()) {
             // The original task is the whole answer: its start was driven (or reconciled)
@@ -105,8 +116,11 @@ public final class AgentTaskService {
      * the worker may already be running a session nobody bound.
      */
     private void driveStart(String taskId, String prompt, String workspaceRevision, long epoch, String conversationId, String reasoningEffort) {
+        AgentProjectEnvironment environment = tasks.environmentOf(taskId);
+        if (environment == null) throw AgentProjectEnvironmentService.missing();
         WorkerStart start = new WorkerStart(taskId, prompt, workspaceRevision,
-            tasks.requestSha256Of(taskId), epoch, conversationId, reasoningEffort);
+            tasks.requestSha256Of(taskId), epoch, conversationId, reasoningEffort,
+            environment, environment.sha256());
         try {
             WorkerStatus ack = worker.start(start);
             onStartAck(taskId, epoch, ack);

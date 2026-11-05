@@ -1,3 +1,4 @@
+import { JAVA_ENVIRONMENT } from "./environment-fixtures.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
 afterEach(()=>vi.unstubAllGlobals());
 import { SessionManager, SettingsManager, createAgentSession, type AgentSession, type SessionEntry } from "@earendil-works/pi-coding-agent";
@@ -25,7 +26,7 @@ describe("image context through real Pi session", () => {
       progress: vi.fn(async () => ({ accepted: true })),
     } as unknown as BackendClient;
     let seen = "";
-    const task = await createPiSession({ model: { ...MODEL_CONFIG, imageInput: true }, paths: privateDirs(), backend,
+    const task = await createPiSession({ environment: JAVA_ENVIRONMENT, model: { ...MODEL_CONFIG, imageInput: true }, paths: privateDirs(), backend,
       taskId: "task", conversationId: "conversation", progress: new ProgressChain(backend, "task"),
       deps: { now: () => Date.parse("2026-11-02T01:00:00Z"), createSession: async options => {
         const made=scriptedSessionFactory([{ text: "saw image" }], context => {order.push("provider");seen=JSON.stringify(context);})(options);
@@ -69,7 +70,7 @@ it("uses the production session and ModelRuntime request path with only network 
   manager.appendCustomMessageEntry("manao_user_request","inspect",true,{taskId:"task",attachments:[image]});
   const fixture=backendHistory(manager),payloads:string[]=[];
   vi.stubGlobal("fetch",async(_input:RequestInfo|URL,init?:RequestInit)=>{payloads.push(String(init?.body));return sse("actual runtime received image");});
-  const task=await createPiSession({model:{...MODEL_CONFIG,imageInput:true},paths:privateDirs(),taskId:"task",conversationId:"conversation",
+  const task=await createPiSession({ environment: JAVA_ENVIRONMENT,model:{...MODEL_CONFIG,imageInput:true},paths:privateDirs(),taskId:"task",conversationId:"conversation",
     backend:fixture.backend as unknown as BackendClient,progress:new ProgressChain(fixture.backend as unknown as BackendClient,"task"),
     deps:{now:()=>Date.parse("2026-11-02T01:00:00Z")}});
   const result=await task.run({prompt:"inspect",workspaceRevision:"0"});
@@ -93,7 +94,7 @@ it("sends real image_url payload, compacts without binary reads, then restores a
     return sse(phase==="compact"?"Conversation summary without image details":"offline answer",phase==="reread"&&rereadRound++===0);
   };
   vi.stubGlobal("fetch",transport);
-  const options={model:{...MODEL_CONFIG,imageInput:true},paths:privateDirs(),backend:fixture.backend as unknown as BackendClient,
+  const options={environment: JAVA_ENVIRONMENT, model:{...MODEL_CONFIG,imageInput:true},paths:privateDirs(),backend:fixture.backend as unknown as BackendClient,
     taskId:"task",conversationId:"conversation",progress:new ProgressChain(fixture.backend as unknown as BackendClient,"task"),
     deps:{now:()=>Date.parse("2026-11-02T01:00:00Z"),settingsManager:SettingsManager.inMemory({compaction:{enabled:true,keepRecentTokens:20,reserveTokens:100}}),
       createSession:async(options:Parameters<typeof createAgentSession>[0])=>{
@@ -109,7 +110,7 @@ it("sends real image_url payload, compacts without binary reads, then restores a
   // Restore into a fresh worker, then call the real Pi compact implementation before its prompt.
   first.dispose();
   phase="compact";
-  const restored=await createPiSession({...options,paths:privateDirs()});
+  const restored=await createPiSession({ environment: JAVA_ENVIRONMENT,...options,paths:privateDirs()});
   const before=fixture.backend.imageContent.mock.calls.length;
   await session.compact();
   for(let n=0;n<3;n++)session.sessionManager.appendMessage({role:"user",content:"another saved turn "+n+"x".repeat(1000),timestamp:n+20});
@@ -131,7 +132,7 @@ it.each(["missing","unavailable","corrupt"])("fails explicitly for %s live origi
   const fixture=backendHistory(manager);let providerCalls=0;
   if(mode==="corrupt")fixture.backend.imageContent.mockResolvedValue({bytes:new Uint8Array([1]),mimeType:"image/png"});
   else fixture.backend.imageMetadata.mockRejectedValue(new BackendHttpError(mode==="missing"?404:503,mode==="missing"?"AI_ATTACHMENT_NOT_FOUND":"AI_ATTACHMENT_UNAVAILABLE","safe image error"));
-  const task=await createPiSession({model:{...MODEL_CONFIG,imageInput:true},paths:privateDirs(),taskId:"task",conversationId:"conversation",
+  const task=await createPiSession({ environment: JAVA_ENVIRONMENT,model:{...MODEL_CONFIG,imageInput:true},paths:privateDirs(),taskId:"task",conversationId:"conversation",
     backend:fixture.backend as unknown as BackendClient,progress:new ProgressChain(fixture.backend as unknown as BackendClient,"task"),
     deps:{now:()=>Date.parse("2026-11-02T01:00:00Z"),createSession:async options=>scriptedSessionFactory([{text:"must not answer"}],()=>{providerCalls++;})(options)}});
   const result=await task.run({prompt:"inspect",workspaceRevision:"0"});
@@ -146,7 +147,7 @@ it("aborts a pending binary read and never enters the provider after stop",async
   fixture.backend.imageContent.mockImplementation(async(_task,_id,signal)=>new Promise((resolve,reject)=>{
     observed=signal;started();signal?.addEventListener("abort",()=>reject(signal.reason),{once:true});
   }));
-  const task=await createPiSession({model:{...MODEL_CONFIG,imageInput:true},paths:privateDirs(),taskId:"task",conversationId:"conversation",
+  const task=await createPiSession({ environment: JAVA_ENVIRONMENT,model:{...MODEL_CONFIG,imageInput:true},paths:privateDirs(),taskId:"task",conversationId:"conversation",
     backend:fixture.backend as unknown as BackendClient,progress:new ProgressChain(fixture.backend as unknown as BackendClient,"task"),
     deps:{now:()=>Date.parse("2026-11-02T01:00:00Z"),createSession:async options=>scriptedSessionFactory([{text:"must not answer"}],()=>{providerCalls++;})(options)}});
   const running=task.run({prompt:"inspect",workspaceRevision:"0"});await entered;task.stop();
@@ -159,7 +160,7 @@ it("rejects cumulative legal uploads before reading any binary and never silentl
   manager.appendCustomMessageEntry("manao_user_request","all four",true,{taskId:"task",attachments:refs});
   const fixture=backendHistory(manager);
   fixture.backend.imageMetadata.mockImplementation(async(_task,id)=>refs.find(ref=>ref.attachmentId===id)!);
-  const task=await createPiSession({model:{...MODEL_CONFIG,imageInput:true},paths:privateDirs(),taskId:"task",conversationId:"conversation",
+  const task=await createPiSession({ environment: JAVA_ENVIRONMENT,model:{...MODEL_CONFIG,imageInput:true},paths:privateDirs(),taskId:"task",conversationId:"conversation",
     backend:fixture.backend as unknown as BackendClient,progress:new ProgressChain(fixture.backend as unknown as BackendClient,"task"),
     deps:{now:()=>Date.parse("2026-11-02T01:00:00Z"),createSession:async options=>scriptedSessionFactory([{text:"should not answer"}])(options)}});
   const result=await task.run({prompt:"all",workspaceRevision:"0"});
@@ -180,7 +181,7 @@ it("rechecks an old successful read_image receipt after expiry and does not rese
   const fixture=backendHistory(manager);
   fixture.backend.imageMetadata.mockResolvedValue({...image,availability:"EXPIRED"});
   let seen="";
-  const task=await createPiSession({model:{...MODEL_CONFIG,imageInput:true},paths:privateDirs(),taskId:"task",conversationId:"conversation",
+  const task=await createPiSession({ environment: JAVA_ENVIRONMENT,model:{...MODEL_CONFIG,imageInput:true},paths:privateDirs(),taskId:"task",conversationId:"conversation",
     backend:fixture.backend as unknown as BackendClient,progress:new ProgressChain(fixture.backend as unknown as BackendClient,"task"),
     deps:{now:()=>Date.parse("2026-11-03T00:00:00Z"),createSession:async options=>scriptedSessionFactory([{text:"expired"}],context=>{seen=JSON.stringify(context);})(options)}});
   expect((await task.run({prompt:"again",workspaceRevision:"0"})).state).toBe("COMPLETED");
@@ -203,7 +204,7 @@ it("counts projected images before automatic native compaction and never reads t
   manager.appendCustomMessageEntry("manao_user_request","inspect all current images",true,{taskId:"task",attachments:refs});
   const fixture=backendHistory(manager),requests:{summary:boolean;content:string}[]=[];
   fixture.backend.imageMetadata.mockImplementation(async(_task,id)=>refs.find(ref=>ref.attachmentId===id)!);
-  const task=await createPiSession({model:{...MODEL_CONFIG,imageInput:true},paths:privateDirs(),taskId:"task",conversationId:"conversation",
+  const task=await createPiSession({ environment: JAVA_ENVIRONMENT,model:{...MODEL_CONFIG,imageInput:true},paths:privateDirs(),taskId:"task",conversationId:"conversation",
     backend:fixture.backend as unknown as BackendClient,progress:new ProgressChain(fixture.backend as unknown as BackendClient,"task"),
     deps:{now:()=>Date.parse("2026-11-02T01:00:00Z"),
       createSession:async options=>scriptedSessionFactory([], (context,session)=>{requests.push({summary:session.isCompacting,content:JSON.stringify(context)});
@@ -228,7 +229,7 @@ it("provider retries cannot resend the encoded image payload after the deadline"
     return new Response('{"error":{"message":"retry"}}',{status:503,headers:{"Content-Type":"application/json","retry-after":"0"}});
   };
   vi.stubGlobal("fetch",transport);
-  const task=await createPiSession({model:{...MODEL_CONFIG,imageInput:true},paths:privateDirs(),taskId:"task",conversationId:"conversation",
+  const task=await createPiSession({ environment: JAVA_ENVIRONMENT,model:{...MODEL_CONFIG,imageInput:true},paths:privateDirs(),taskId:"task",conversationId:"conversation",
     backend:fixture.backend as unknown as BackendClient,progress:new ProgressChain(fixture.backend as unknown as BackendClient,"task"),
     deps:{now:()=>now,settingsManager:SettingsManager.inMemory({retry:{enabled:false}}),
       createSession:async options=>{const created=await createAgentSession(options);created.session.agent.streamFunction=(model,context,opts)=>streamSimple(model,context,{...opts,maxRetries:1,apiKey:"offline-test-key",fetch:opts?.fetch??transport});return created;}}});
@@ -242,7 +243,7 @@ it("refuses active image references explicitly after model image capability is d
   const manager=SessionManager.inMemory("manao-project",{id:"conversation"});
   manager.appendCustomMessageEntry("manao_user_request","old image",true,{taskId:"task",attachments:[image]});
   const fixture=backendHistory(manager);
-  const task=await createPiSession({model:{...MODEL_CONFIG,imageInput:false},paths:privateDirs(),taskId:"task",conversationId:"conversation",
+  const task=await createPiSession({ environment: JAVA_ENVIRONMENT,model:{...MODEL_CONFIG,imageInput:false},paths:privateDirs(),taskId:"task",conversationId:"conversation",
     backend:fixture.backend as unknown as BackendClient,progress:new ProgressChain(fixture.backend as unknown as BackendClient,"task"),
     deps:{now:()=>Date.parse("2026-11-02T01:00:00Z"),createSession:async options=>scriptedSessionFactory([{text:"should not claim to see image"}])(options)}});
   const result=await task.run({prompt:"look again",workspaceRevision:"0"});
@@ -259,7 +260,7 @@ it("rechecks all deadlines after the last asynchronous authorization before a mu
   });
   const transport:typeof fetch=async()=>{sent++;return sse("should not receive expired first image");};
   vi.stubGlobal("fetch",transport);
-  const task=await createPiSession({model:{...MODEL_CONFIG,imageInput:true},paths:privateDirs(),taskId:"task",conversationId:"conversation",
+  const task=await createPiSession({ environment: JAVA_ENVIRONMENT,model:{...MODEL_CONFIG,imageInput:true},paths:privateDirs(),taskId:"task",conversationId:"conversation",
     backend:fixture.backend as unknown as BackendClient,progress:new ProgressChain(fixture.backend as unknown as BackendClient,"task"),
     deps:{now:()=>now,settingsManager:SettingsManager.inMemory({retry:{enabled:false}}),
       createSession:async options=>{const created=await createAgentSession(options);created.session.agent.streamFunction=(model,context,opts)=>streamSimple(model,context,{...opts,apiKey:"offline-test-key",fetch:opts?.fetch??transport});return created;}}});

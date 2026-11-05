@@ -1,0 +1,2432 @@
+{
+  "date": "2026-11-05",
+  "scope": "Dependency-specific cloud fault matrix; separate restart/image/automatic compaction regressions excluded",
+  "productSource": "55f206752a392e328cdf8239cd3c57fb2a71310d",
+  "frontendSource": "f58581a897af239fad66aebffcbe20c7abda0e09",
+  "operatorCommits": [
+    "0074355",
+    "311ca5e"
+  ],
+  "transport": "Actual java.net.http.HttpClient.send interruption after durable receipt, IO_ERROR/INTERRUPTED; not TCP RESET",
+  "scenarios": [
+    {
+      "name": "c-prepared",
+      "status": "PASS",
+      "operationId": "0b236f66-4c3c-4475-ba66-3d210d7c3c79",
+      "taskId": "6c14fd05-1713-41ca-904b-98b02ffb9f9b",
+      "beforeRevision": 19,
+      "afterRevision": 19,
+      "snapshots": {
+        "held": {
+          "capturedAt": "2026-11-05T06:11:38.647Z",
+          "operationId": "0b236f66-4c3c-4475-ba66-3d210d7c3c79",
+          "taskId": "6c14fd05-1713-41ca-904b-98b02ffb9f9b",
+          "fs": {
+            "pyproject.toml": {
+              "sha256": "c738a1cef87fd02f74a2c3d6ad01524ef2b340f1bc529d0d75d8eae1e00607a3",
+              "bytes": 290,
+              "mtimeNs": 1793807752704247800
+            },
+            "uv.lock": {
+              "sha256": "87b756eb71dd55830cbc618553186bd5451a76ef702d56e4f1e5ef8bc9956c6a",
+              "bytes": 4093,
+              "mtimeNs": 1793807752713248000
+            },
+            ".manao/receipts/0b236f66-4c3c-4475-ba66-3d210d7c3c79.json": null,
+            ".manao/python-dependencies/0b236f66-4c3c-4475-ba66-3d210d7c3c79/pyproject.toml": {
+              "sha256": "527c3d86b76a6a99d6ba826ed3d3aeaaaf628cb92f8a053b2ee68da32256d05e",
+              "bytes": 314,
+              "mtimeNs": 1793859092294539000
+            },
+            ".manao/python-dependencies/0b236f66-4c3c-4475-ba66-3d210d7c3c79/manifest.json": {
+              "sha256": "94af7aa62a7c19b9295bfce2dd0d4b0bd78cf02746fb7a772b70b9011a16f9dd",
+              "bytes": 646,
+              "mtimeNs": 1793859092312539100
+            },
+            ".manao/python-dependencies/0b236f66-4c3c-4475-ba66-3d210d7c3c79/uv.lock": {
+              "sha256": "33ce43937d195c6e6a1942ba0671f6b008cb6ae2c86adab8f3bbb0246f5c8f45",
+              "bytes": 4781,
+              "mtimeNs": 1793859092304539100
+            },
+            "manifestFields": {
+              "operationId": "0b236f66-4c3c-4475-ba66-3d210d7c3c79",
+              "requestSha256": "3fd65df82c7624d3a75d7e7e640cafabc30a3c2160e4261302ae8e301034dfa5",
+              "state": "PREPARED",
+              "beforeSha256": "cdcbf22d18edfe4ca6a0252d02db3fc9ffbe48335e2f2bf641df4dc14f6acd83",
+              "afterSha256": "220f703ee616a293e5c3f4d2bc0b73c5af9dd5b43d3df4d13e3eff9ea5952171",
+              "pyproject": {
+                "before": "c738a1cef87fd02f74a2c3d6ad01524ef2b340f1bc529d0d75d8eae1e00607a3",
+                "after": "527c3d86b76a6a99d6ba826ed3d3aeaaaf628cb92f8a053b2ee68da32256d05e"
+              },
+              "uvLock": {
+                "before": "87b756eb71dd55830cbc618553186bd5451a76ef702d56e4f1e5ef8bc9956c6a",
+                "after": "33ce43937d195c6e6a1942ba0671f6b008cb6ae2c86adab8f3bbb0246f5c8f45"
+              }
+            }
+          },
+          "db": "6c14fd05-1713-41ca-904b-98b02ffb9f9b\tRUNNING\t19\tNULL\tNULL\tbf51c6ac-be04-4274-9c73-43a15ea9d470\ncall_00_LoMBWlivMjv23Dkd9Zm47735\tRUNNING\t0b236f66-4c3c-4475-ba66-3d210d7c3c79\t19\n19"
+        },
+        "paused-held": {
+          "capturedAt": "2026-11-05T06:11:39.404Z",
+          "operationId": "0b236f66-4c3c-4475-ba66-3d210d7c3c79",
+          "taskId": "6c14fd05-1713-41ca-904b-98b02ffb9f9b",
+          "fs": {
+            "pyproject.toml": {
+              "sha256": "c738a1cef87fd02f74a2c3d6ad01524ef2b340f1bc529d0d75d8eae1e00607a3",
+              "bytes": 290,
+              "mtimeNs": 1793807752704247800
+            },
+            "uv.lock": {
+              "sha256": "87b756eb71dd55830cbc618553186bd5451a76ef702d56e4f1e5ef8bc9956c6a",
+              "bytes": 4093,
+              "mtimeNs": 1793807752713248000
+            },
+            ".manao/receipts/0b236f66-4c3c-4475-ba66-3d210d7c3c79.json": null,
+            ".manao/python-dependencies/0b236f66-4c3c-4475-ba66-3d210d7c3c79/pyproject.toml": {
+              "sha256": "527c3d86b76a6a99d6ba826ed3d3aeaaaf628cb92f8a053b2ee68da32256d05e",
+              "bytes": 314,
+              "mtimeNs": 1793859092294539000
+            },
+            ".manao/python-dependencies/0b236f66-4c3c-4475-ba66-3d210d7c3c79/manifest.json": {
+              "sha256": "94af7aa62a7c19b9295bfce2dd0d4b0bd78cf02746fb7a772b70b9011a16f9dd",
+              "bytes": 646,
+              "mtimeNs": 1793859092312539100
+            },
+            ".manao/python-dependencies/0b236f66-4c3c-4475-ba66-3d210d7c3c79/uv.lock": {
+              "sha256": "33ce43937d195c6e6a1942ba0671f6b008cb6ae2c86adab8f3bbb0246f5c8f45",
+              "bytes": 4781,
+              "mtimeNs": 1793859092304539100
+            },
+            "manifestFields": {
+              "operationId": "0b236f66-4c3c-4475-ba66-3d210d7c3c79",
+              "requestSha256": "3fd65df82c7624d3a75d7e7e640cafabc30a3c2160e4261302ae8e301034dfa5",
+              "state": "PREPARED",
+              "beforeSha256": "cdcbf22d18edfe4ca6a0252d02db3fc9ffbe48335e2f2bf641df4dc14f6acd83",
+              "afterSha256": "220f703ee616a293e5c3f4d2bc0b73c5af9dd5b43d3df4d13e3eff9ea5952171",
+              "pyproject": {
+                "before": "c738a1cef87fd02f74a2c3d6ad01524ef2b340f1bc529d0d75d8eae1e00607a3",
+                "after": "527c3d86b76a6a99d6ba826ed3d3aeaaaf628cb92f8a053b2ee68da32256d05e"
+              },
+              "uvLock": {
+                "before": "87b756eb71dd55830cbc618553186bd5451a76ef702d56e4f1e5ef8bc9956c6a",
+                "after": "33ce43937d195c6e6a1942ba0671f6b008cb6ae2c86adab8f3bbb0246f5c8f45"
+              }
+            }
+          },
+          "db": "6c14fd05-1713-41ca-904b-98b02ffb9f9b\tNEEDS_ATTENTION\t19\tNULL\tAI_PAUSED_BY_OWNER\tbf51c6ac-be04-4274-9c73-43a15ea9d470\ncall_00_LoMBWlivMjv23Dkd9Zm47735\tRUNNING\t0b236f66-4c3c-4475-ba66-3d210d7c3c79\t19\n19"
+        },
+        "settled": {
+          "capturedAt": "2026-11-05T06:12:00.776Z",
+          "operationId": "0b236f66-4c3c-4475-ba66-3d210d7c3c79",
+          "taskId": "6c14fd05-1713-41ca-904b-98b02ffb9f9b",
+          "fs": {
+            "pyproject.toml": {
+              "sha256": "c738a1cef87fd02f74a2c3d6ad01524ef2b340f1bc529d0d75d8eae1e00607a3",
+              "bytes": 290,
+              "mtimeNs": 1793807752704247800
+            },
+            "uv.lock": {
+              "sha256": "87b756eb71dd55830cbc618553186bd5451a76ef702d56e4f1e5ef8bc9956c6a",
+              "bytes": 4093,
+              "mtimeNs": 1793807752713248000
+            },
+            ".manao/receipts/0b236f66-4c3c-4475-ba66-3d210d7c3c79.json": null,
+            ".manao/python-dependencies/0b236f66-4c3c-4475-ba66-3d210d7c3c79/pyproject.toml": {
+              "sha256": "527c3d86b76a6a99d6ba826ed3d3aeaaaf628cb92f8a053b2ee68da32256d05e",
+              "bytes": 314,
+              "mtimeNs": 1793859092294539000
+            },
+            ".manao/python-dependencies/0b236f66-4c3c-4475-ba66-3d210d7c3c79/manifest.json": {
+              "sha256": "94af7aa62a7c19b9295bfce2dd0d4b0bd78cf02746fb7a772b70b9011a16f9dd",
+              "bytes": 646,
+              "mtimeNs": 1793859092312539100
+            },
+            ".manao/python-dependencies/0b236f66-4c3c-4475-ba66-3d210d7c3c79/uv.lock": {
+              "sha256": "33ce43937d195c6e6a1942ba0671f6b008cb6ae2c86adab8f3bbb0246f5c8f45",
+              "bytes": 4781,
+              "mtimeNs": 1793859092304539100
+            },
+            "manifestFields": {
+              "operationId": "0b236f66-4c3c-4475-ba66-3d210d7c3c79",
+              "requestSha256": "3fd65df82c7624d3a75d7e7e640cafabc30a3c2160e4261302ae8e301034dfa5",
+              "state": "PREPARED",
+              "beforeSha256": "cdcbf22d18edfe4ca6a0252d02db3fc9ffbe48335e2f2bf641df4dc14f6acd83",
+              "afterSha256": "220f703ee616a293e5c3f4d2bc0b73c5af9dd5b43d3df4d13e3eff9ea5952171",
+              "pyproject": {
+                "before": "c738a1cef87fd02f74a2c3d6ad01524ef2b340f1bc529d0d75d8eae1e00607a3",
+                "after": "527c3d86b76a6a99d6ba826ed3d3aeaaaf628cb92f8a053b2ee68da32256d05e"
+              },
+              "uvLock": {
+                "before": "87b756eb71dd55830cbc618553186bd5451a76ef702d56e4f1e5ef8bc9956c6a",
+                "after": "33ce43937d195c6e6a1942ba0671f6b008cb6ae2c86adab8f3bbb0246f5c8f45"
+              }
+            }
+          },
+          "db": "6c14fd05-1713-41ca-904b-98b02ffb9f9b\tFAILED\t19\tNULL\tAI_PAUSED_BY_OWNER\tNULL\ncall_00_LoMBWlivMjv23Dkd9Zm47735\tCOMPLETED\t0b236f66-4c3c-4475-ba66-3d210d7c3c79\t19\n19"
+        }
+      },
+      "traces": {
+        "main": [
+          {
+            "event": "BOUND",
+            "class": "com.manao.poc4.workspace.PythonDependencyService",
+            "method": "changeForAgent",
+            "line": 81,
+            "kind": "trace"
+          },
+          {
+            "event": "BOUND",
+            "class": "com.manao.poc4.workspace.PythonDependencyService",
+            "method": "changeForAgent",
+            "line": 82,
+            "kind": "gate"
+          },
+          {
+            "event": "ARMED",
+            "projectId": "bf51c6ac-be04-4274-9c73-43a15ea9d470",
+            "class": "com.manao.poc4.workspace.PythonDependencyService",
+            "line": 82
+          },
+          {
+            "event": "TRACE",
+            "projectId": "bf51c6ac-be04-4274-9c73-43a15ea9d470",
+            "operationId": "0b236f66-4c3c-4475-ba66-3d210d7c3c79",
+            "threadId": 431,
+            "class": "com.manao.poc4.workspace.PythonDependencyService",
+            "method": "changeForAgent",
+            "line": 81
+          },
+          {
+            "event": "HIT",
+            "projectId": "bf51c6ac-be04-4274-9c73-43a15ea9d470",
+            "operationId": "0b236f66-4c3c-4475-ba66-3d210d7c3c79",
+            "threadId": 431,
+            "class": "com.manao.poc4.workspace.PythonDependencyService",
+            "method": "changeForAgent",
+            "line": 82
+          },
+          {
+            "event": "RESUMED",
+            "projectId": "bf51c6ac-be04-4274-9c73-43a15ea9d470"
+          },
+          {
+            "event": "TRACE_COMPLETE",
+            "projectId": "bf51c6ac-be04-4274-9c73-43a15ea9d470",
+            "operationId": "0b236f66-4c3c-4475-ba66-3d210d7c3c79"
+          }
+        ],
+        "prepareObserver": null,
+        "helperObserver": null,
+        "caller": null
+      },
+      "task": {
+        "taskId": "6c14fd05-1713-41ca-904b-98b02ffb9f9b",
+        "state": "FAILED",
+        "workspaceRevision": "19",
+        "writesLocked": false,
+        "progress": [
+          {
+            "seq": 1,
+            "kind": "message",
+            "text": "",
+            "truncated": false
+          },
+          {
+            "seq": 2,
+            "kind": "tool_start",
+            "text": "python_dependencies call_00_LoMBWlivMjv23Dkd9Zm47735",
+            "truncated": false
+          }
+        ],
+        "changedPaths": [],
+        "summary": "",
+        "failureCode": "AI_CONTEXT_UNAVAILABLE",
+        "conversationId": "18b54fe6-308f-4a02-8738-3fc327ffad36",
+        "reasoningEffort": "high",
+        "closeReasonCode": "AI_PAUSED_BY_OWNER"
+      },
+      "tools": [
+        {
+          "toolCallId": "call_00_LoMBWlivMjv23Dkd9Zm47735",
+          "toolName": "python_dependencies",
+          "data": {
+            "error": {
+              "code": "AI_TASK_NOT_ACTIVE",
+              "message": "Dependency change was refused"
+            }
+          }
+        }
+      ],
+      "buildCalls": 0,
+      "restart": null,
+      "traceTiming": {
+        "main": {
+          "createdUtc": "2026-11-05T06:11:15.836Z",
+          "lastAppendUtc": "2026-11-05T06:11:59.494Z",
+          "source": "Operator append-only JSONL file creation/last-write metadata; events themselves do not carry timestamps"
+        }
+      },
+      "durableCompletionUtc": "2026-11-05T06:11:39.940091Z\t2026-11-05T06:11:42.576204Z",
+      "claimEvidence": "Indirect: while held the original active_project/writesLocked remains; original call completes and production close/finishForClose passes the hasLiveCalls gate before task unlock. No direct in-memory claim counter captured.",
+      "counterLimit": "Exact scoped prepare/helper entry observed once during bounded trace covering durable completion; journal bytes/mtime unchanged. Not a lifetime profiler."
+    },
+    {
+      "name": "c-prepare-inflight",
+      "status": "PASS",
+      "operationId": "6913cd17-cf9f-42c2-b3ed-cb900a79604d",
+      "taskId": "192833d5-591e-4aca-9b55-fb98d7ce29ba",
+      "beforeRevision": 21,
+      "afterRevision": 21,
+      "snapshots": {
+        "held": {
+          "capturedAt": "2026-11-05T06:19:20.085Z",
+          "operationId": "6913cd17-cf9f-42c2-b3ed-cb900a79604d",
+          "taskId": "192833d5-591e-4aca-9b55-fb98d7ce29ba",
+          "fs": {
+            "pyproject.toml": {
+              "sha256": "57ec2240eafb543be08e645180f96fb2dec57633c7c4d1634c60a95d85115089",
+              "bytes": 337,
+              "mtimeNs": 1793859380206665700
+            },
+            "uv.lock": {
+              "sha256": "0d271b932cf8015e21e77bdf54815d85bbf32a759bb7e7e3dac2163ab9431102",
+              "bytes": 4858,
+              "mtimeNs": 1793859384613697500
+            },
+            ".manao/receipts/6913cd17-cf9f-42c2-b3ed-cb900a79604d.json": null,
+            "manifestFields": null
+          },
+          "db": "192833d5-591e-4aca-9b55-fb98d7ce29ba\tRUNNING\t21\tNULL\tNULL\tbf51c6ac-be04-4274-9c73-43a15ea9d470\ncall_00_kOsshUshUV8ejekwrQ2r1210\tRUNNING\t6913cd17-cf9f-42c2-b3ed-cb900a79604d\t21\n21"
+        },
+        "paused-held": {
+          "capturedAt": "2026-11-05T06:19:20.756Z",
+          "operationId": "6913cd17-cf9f-42c2-b3ed-cb900a79604d",
+          "taskId": "192833d5-591e-4aca-9b55-fb98d7ce29ba",
+          "fs": {
+            "pyproject.toml": {
+              "sha256": "57ec2240eafb543be08e645180f96fb2dec57633c7c4d1634c60a95d85115089",
+              "bytes": 337,
+              "mtimeNs": 1793859380206665700
+            },
+            "uv.lock": {
+              "sha256": "0d271b932cf8015e21e77bdf54815d85bbf32a759bb7e7e3dac2163ab9431102",
+              "bytes": 4858,
+              "mtimeNs": 1793859384613697500
+            },
+            ".manao/receipts/6913cd17-cf9f-42c2-b3ed-cb900a79604d.json": null,
+            "manifestFields": null
+          },
+          "db": "192833d5-591e-4aca-9b55-fb98d7ce29ba\tNEEDS_ATTENTION\t21\tNULL\tAI_PAUSED_BY_OWNER\tbf51c6ac-be04-4274-9c73-43a15ea9d470\ncall_00_kOsshUshUV8ejekwrQ2r1210\tRUNNING\t6913cd17-cf9f-42c2-b3ed-cb900a79604d\t21\n21"
+        },
+        "settled": {
+          "capturedAt": "2026-11-05T06:19:42.020Z",
+          "operationId": "6913cd17-cf9f-42c2-b3ed-cb900a79604d",
+          "taskId": "192833d5-591e-4aca-9b55-fb98d7ce29ba",
+          "fs": {
+            "pyproject.toml": {
+              "sha256": "57ec2240eafb543be08e645180f96fb2dec57633c7c4d1634c60a95d85115089",
+              "bytes": 337,
+              "mtimeNs": 1793859380206665700
+            },
+            "uv.lock": {
+              "sha256": "0d271b932cf8015e21e77bdf54815d85bbf32a759bb7e7e3dac2163ab9431102",
+              "bytes": 4858,
+              "mtimeNs": 1793859384613697500
+            },
+            ".manao/receipts/6913cd17-cf9f-42c2-b3ed-cb900a79604d.json": null,
+            ".manao/python-dependencies/6913cd17-cf9f-42c2-b3ed-cb900a79604d/pyproject.toml": {
+              "sha256": "1585d303c61396c51894e5c16d19c771a80c590b7fe81e64e0c977f9471c902f",
+              "bytes": 358,
+              "mtimeNs": 1793859561250979800
+            },
+            ".manao/python-dependencies/6913cd17-cf9f-42c2-b3ed-cb900a79604d/manifest.json": {
+              "sha256": "c8c1d053748da89e7bc8457eb279216e7df8d8cd53413ee6480f239a79025594",
+              "bytes": 646,
+              "mtimeNs": 1793859561268980000
+            },
+            ".manao/python-dependencies/6913cd17-cf9f-42c2-b3ed-cb900a79604d/uv.lock": {
+              "sha256": "bec37af542499544fdb0931ab7f028f93fcff0f1aefae2d8e4b78aefc9bbb183",
+              "bytes": 5523,
+              "mtimeNs": 1793859561259980000
+            },
+            "manifestFields": {
+              "operationId": "6913cd17-cf9f-42c2-b3ed-cb900a79604d",
+              "requestSha256": "63825b81f147d2262d2fe652ee80825e2d7facc81f53398cc85ab4ca34dd8e1e",
+              "state": "PREPARED",
+              "beforeSha256": "a9405dfbfbe063337517f7d9e6fb9e01a4fc3b7477b1a737966ddb492e35da63",
+              "afterSha256": "de038ebda82e5e4bd522c52d978c118d691b92d694fb473e429ef569468b9c8f",
+              "pyproject": {
+                "before": "57ec2240eafb543be08e645180f96fb2dec57633c7c4d1634c60a95d85115089",
+                "after": "1585d303c61396c51894e5c16d19c771a80c590b7fe81e64e0c977f9471c902f"
+              },
+              "uvLock": {
+                "before": "0d271b932cf8015e21e77bdf54815d85bbf32a759bb7e7e3dac2163ab9431102",
+                "after": "bec37af542499544fdb0931ab7f028f93fcff0f1aefae2d8e4b78aefc9bbb183"
+              }
+            }
+          },
+          "db": "192833d5-591e-4aca-9b55-fb98d7ce29ba\tFAILED\t21\tNULL\tAI_PAUSED_BY_OWNER\tNULL\ncall_00_kOsshUshUV8ejekwrQ2r1210\tCOMPLETED\t6913cd17-cf9f-42c2-b3ed-cb900a79604d\t21\n21"
+        }
+      },
+      "traces": {
+        "main": [
+          {
+            "event": "BOUND",
+            "class": "com.manao.poc4.workspaceagent.PythonDependencyEditor$HelperResolver",
+            "method": "runHelper",
+            "line": 458,
+            "kind": "trace"
+          },
+          {
+            "event": "BOUND",
+            "class": "com.manao.poc4.workspaceagent.PythonDependencyEditor$HelperResolver",
+            "method": "runHelper",
+            "line": 458,
+            "kind": "gate"
+          },
+          {
+            "event": "ARMED",
+            "projectId": "bf51c6ac-be04-4274-9c73-43a15ea9d470",
+            "class": "com.manao.poc4.workspaceagent.PythonDependencyEditor$HelperResolver",
+            "line": 458
+          },
+          {
+            "event": "TRACE",
+            "projectId": "bf51c6ac-be04-4274-9c73-43a15ea9d470",
+            "operationId": "6913cd17-cf9f-42c2-b3ed-cb900a79604d",
+            "threadId": 2,
+            "class": "com.manao.poc4.workspaceagent.PythonDependencyEditor$HelperResolver",
+            "method": "runHelper",
+            "line": 458
+          },
+          {
+            "event": "HIT",
+            "projectId": "bf51c6ac-be04-4274-9c73-43a15ea9d470",
+            "operationId": "6913cd17-cf9f-42c2-b3ed-cb900a79604d",
+            "threadId": 2,
+            "class": "com.manao.poc4.workspaceagent.PythonDependencyEditor$HelperResolver",
+            "method": "runHelper",
+            "line": 458
+          },
+          {
+            "event": "RESUMED",
+            "projectId": "bf51c6ac-be04-4274-9c73-43a15ea9d470"
+          },
+          {
+            "event": "TRACE_COMPLETE",
+            "projectId": "bf51c6ac-be04-4274-9c73-43a15ea9d470",
+            "operationId": "6913cd17-cf9f-42c2-b3ed-cb900a79604d"
+          }
+        ],
+        "prepareObserver": null,
+        "helperObserver": null,
+        "caller": null
+      },
+      "task": {
+        "taskId": "192833d5-591e-4aca-9b55-fb98d7ce29ba",
+        "state": "FAILED",
+        "workspaceRevision": "21",
+        "writesLocked": false,
+        "progress": [
+          {
+            "seq": 1,
+            "kind": "message",
+            "text": "",
+            "truncated": false
+          },
+          {
+            "seq": 2,
+            "kind": "tool_start",
+            "text": "python_dependencies call_00_kOsshUshUV8ejekwrQ2r1210",
+            "truncated": false
+          }
+        ],
+        "changedPaths": [],
+        "summary": "",
+        "failureCode": "AI_CONTEXT_UNAVAILABLE",
+        "conversationId": "8f7191be-769e-4028-bf3a-3383bbd2a4a5",
+        "reasoningEffort": "high",
+        "closeReasonCode": "AI_PAUSED_BY_OWNER"
+      },
+      "tools": [
+        {
+          "toolCallId": "call_00_kOsshUshUV8ejekwrQ2r1210",
+          "toolName": "python_dependencies",
+          "data": {
+            "error": {
+              "code": "AI_TASK_NOT_ACTIVE",
+              "message": "Dependency change was refused"
+            }
+          }
+        }
+      ],
+      "buildCalls": 0,
+      "restart": null,
+      "traceTiming": {
+        "main": {
+          "createdUtc": "2026-11-05T06:19:08.378Z",
+          "lastAppendUtc": "2026-11-05T06:19:40.788Z",
+          "source": "Operator append-only JSONL file creation/last-write metadata; events themselves do not carry timestamps"
+        }
+      },
+      "durableCompletionUtc": "2026-11-05T06:19:21.286370Z\t2026-11-05T06:19:22.851690Z",
+      "claimEvidence": "Indirect: while held the original active_project/writesLocked remains; original call completes and production close/finishForClose passes the hasLiveCalls gate before task unlock. No direct in-memory claim counter captured.",
+      "counterLimit": "Exact scoped prepare/helper entry observed once during bounded trace covering durable completion; journal bytes/mtime unchanged. Not a lifetime profiler."
+    },
+    {
+      "name": "c-pending",
+      "status": "PASS",
+      "operationId": "a5c04ef1-a47a-4fcc-a201-2b30a5570b1a",
+      "taskId": "1a365f77-30ce-452a-9052-ca1648838d64",
+      "beforeRevision": 19,
+      "afterRevision": 20,
+      "snapshots": {
+        "held": {
+          "capturedAt": "2026-11-05T06:13:27.693Z",
+          "operationId": "a5c04ef1-a47a-4fcc-a201-2b30a5570b1a",
+          "taskId": "1a365f77-30ce-452a-9052-ca1648838d64",
+          "fs": {
+            "pyproject.toml": {
+              "sha256": "c738a1cef87fd02f74a2c3d6ad01524ef2b340f1bc529d0d75d8eae1e00607a3",
+              "bytes": 290,
+              "mtimeNs": 1793807752704247800
+            },
+            "uv.lock": {
+              "sha256": "87b756eb71dd55830cbc618553186bd5451a76ef702d56e4f1e5ef8bc9956c6a",
+              "bytes": 4093,
+              "mtimeNs": 1793807752713248000
+            },
+            ".manao/receipts/a5c04ef1-a47a-4fcc-a201-2b30a5570b1a.json": null,
+            ".manao/python-dependencies/a5c04ef1-a47a-4fcc-a201-2b30a5570b1a/pyproject.toml": {
+              "sha256": "527c3d86b76a6a99d6ba826ed3d3aeaaaf628cb92f8a053b2ee68da32256d05e",
+              "bytes": 314,
+              "mtimeNs": 1793859201444353300
+            },
+            ".manao/python-dependencies/a5c04ef1-a47a-4fcc-a201-2b30a5570b1a/manifest.json": {
+              "sha256": "ba5fb8626c14e83ad2ff27250acbeb35b53f17529a85f44eeaf8bea5c996a4ec",
+              "bytes": 646,
+              "mtimeNs": 1793859201458353400
+            },
+            ".manao/python-dependencies/a5c04ef1-a47a-4fcc-a201-2b30a5570b1a/uv.lock": {
+              "sha256": "33ce43937d195c6e6a1942ba0671f6b008cb6ae2c86adab8f3bbb0246f5c8f45",
+              "bytes": 4781,
+              "mtimeNs": 1793859201451353300
+            },
+            "manifestFields": {
+              "operationId": "a5c04ef1-a47a-4fcc-a201-2b30a5570b1a",
+              "requestSha256": "3fd65df82c7624d3a75d7e7e640cafabc30a3c2160e4261302ae8e301034dfa5",
+              "state": "PREPARED",
+              "beforeSha256": "cdcbf22d18edfe4ca6a0252d02db3fc9ffbe48335e2f2bf641df4dc14f6acd83",
+              "afterSha256": "220f703ee616a293e5c3f4d2bc0b73c5af9dd5b43d3df4d13e3eff9ea5952171",
+              "pyproject": {
+                "before": "c738a1cef87fd02f74a2c3d6ad01524ef2b340f1bc529d0d75d8eae1e00607a3",
+                "after": "527c3d86b76a6a99d6ba826ed3d3aeaaaf628cb92f8a053b2ee68da32256d05e"
+              },
+              "uvLock": {
+                "before": "87b756eb71dd55830cbc618553186bd5451a76ef702d56e4f1e5ef8bc9956c6a",
+                "after": "33ce43937d195c6e6a1942ba0671f6b008cb6ae2c86adab8f3bbb0246f5c8f45"
+              }
+            }
+          },
+          "db": "a5c04ef1-a47a-4fcc-a201-2b30a5570b1a\tPENDING\t19\tcdcbf22d18edfe4ca6a0252d02db3fc9ffbe48335e2f2bf641df4dc14f6acd83\t220f703ee616a293e5c3f4d2bc0b73c5af9dd5b43d3df4d13e3eff9ea5952171\tc3d1e9d4f976c546ab8a705f6acc23c51431f2bc3cdbec1a28f76a60617adced\t3fd65df82c7624d3a75d7e7e640cafabc30a3c2160e4261302ae8e301034dfa5\n1a365f77-30ce-452a-9052-ca1648838d64\tRUNNING\t19\tNULL\tNULL\tbf51c6ac-be04-4274-9c73-43a15ea9d470\ncall_00_ET_sxR1OMYM2GO8SIzjOG4f1498\tRUNNING\ta5c04ef1-a47a-4fcc-a201-2b30a5570b1a\t19\n19"
+        },
+        "paused-held": {
+          "capturedAt": "2026-11-05T06:13:28.409Z",
+          "operationId": "a5c04ef1-a47a-4fcc-a201-2b30a5570b1a",
+          "taskId": "1a365f77-30ce-452a-9052-ca1648838d64",
+          "fs": {
+            "pyproject.toml": {
+              "sha256": "c738a1cef87fd02f74a2c3d6ad01524ef2b340f1bc529d0d75d8eae1e00607a3",
+              "bytes": 290,
+              "mtimeNs": 1793807752704247800
+            },
+            "uv.lock": {
+              "sha256": "87b756eb71dd55830cbc618553186bd5451a76ef702d56e4f1e5ef8bc9956c6a",
+              "bytes": 4093,
+              "mtimeNs": 1793807752713248000
+            },
+            ".manao/receipts/a5c04ef1-a47a-4fcc-a201-2b30a5570b1a.json": null,
+            ".manao/python-dependencies/a5c04ef1-a47a-4fcc-a201-2b30a5570b1a/pyproject.toml": {
+              "sha256": "527c3d86b76a6a99d6ba826ed3d3aeaaaf628cb92f8a053b2ee68da32256d05e",
+              "bytes": 314,
+              "mtimeNs": 1793859201444353300
+            },
+            ".manao/python-dependencies/a5c04ef1-a47a-4fcc-a201-2b30a5570b1a/manifest.json": {
+              "sha256": "ba5fb8626c14e83ad2ff27250acbeb35b53f17529a85f44eeaf8bea5c996a4ec",
+              "bytes": 646,
+              "mtimeNs": 1793859201458353400
+            },
+            ".manao/python-dependencies/a5c04ef1-a47a-4fcc-a201-2b30a5570b1a/uv.lock": {
+              "sha256": "33ce43937d195c6e6a1942ba0671f6b008cb6ae2c86adab8f3bbb0246f5c8f45",
+              "bytes": 4781,
+              "mtimeNs": 1793859201451353300
+            },
+            "manifestFields": {
+              "operationId": "a5c04ef1-a47a-4fcc-a201-2b30a5570b1a",
+              "requestSha256": "3fd65df82c7624d3a75d7e7e640cafabc30a3c2160e4261302ae8e301034dfa5",
+              "state": "PREPARED",
+              "beforeSha256": "cdcbf22d18edfe4ca6a0252d02db3fc9ffbe48335e2f2bf641df4dc14f6acd83",
+              "afterSha256": "220f703ee616a293e5c3f4d2bc0b73c5af9dd5b43d3df4d13e3eff9ea5952171",
+              "pyproject": {
+                "before": "c738a1cef87fd02f74a2c3d6ad01524ef2b340f1bc529d0d75d8eae1e00607a3",
+                "after": "527c3d86b76a6a99d6ba826ed3d3aeaaaf628cb92f8a053b2ee68da32256d05e"
+              },
+              "uvLock": {
+                "before": "87b756eb71dd55830cbc618553186bd5451a76ef702d56e4f1e5ef8bc9956c6a",
+                "after": "33ce43937d195c6e6a1942ba0671f6b008cb6ae2c86adab8f3bbb0246f5c8f45"
+              }
+            }
+          },
+          "db": "a5c04ef1-a47a-4fcc-a201-2b30a5570b1a\tPENDING\t19\tcdcbf22d18edfe4ca6a0252d02db3fc9ffbe48335e2f2bf641df4dc14f6acd83\t220f703ee616a293e5c3f4d2bc0b73c5af9dd5b43d3df4d13e3eff9ea5952171\tc3d1e9d4f976c546ab8a705f6acc23c51431f2bc3cdbec1a28f76a60617adced\t3fd65df82c7624d3a75d7e7e640cafabc30a3c2160e4261302ae8e301034dfa5\n1a365f77-30ce-452a-9052-ca1648838d64\tNEEDS_ATTENTION\t19\tNULL\tAI_PAUSED_BY_OWNER\tbf51c6ac-be04-4274-9c73-43a15ea9d470\ncall_00_ET_sxR1OMYM2GO8SIzjOG4f1498\tRUNNING\ta5c04ef1-a47a-4fcc-a201-2b30a5570b1a\t19\n19"
+        },
+        "settled": {
+          "capturedAt": "2026-11-05T06:13:49.766Z",
+          "operationId": "a5c04ef1-a47a-4fcc-a201-2b30a5570b1a",
+          "taskId": "1a365f77-30ce-452a-9052-ca1648838d64",
+          "fs": {
+            "pyproject.toml": {
+              "sha256": "527c3d86b76a6a99d6ba826ed3d3aeaaaf628cb92f8a053b2ee68da32256d05e",
+              "bytes": 314,
+              "mtimeNs": 1793859208972409600
+            },
+            "uv.lock": {
+              "sha256": "33ce43937d195c6e6a1942ba0671f6b008cb6ae2c86adab8f3bbb0246f5c8f45",
+              "bytes": 4781,
+              "mtimeNs": 1793859208979409700
+            },
+            ".manao/receipts/a5c04ef1-a47a-4fcc-a201-2b30a5570b1a.json": {
+              "sha256": "c3d1e9d4f976c546ab8a705f6acc23c51431f2bc3cdbec1a28f76a60617adced",
+              "bytes": 291,
+              "mtimeNs": 1793859208989409800
+            },
+            ".manao/python-dependencies/a5c04ef1-a47a-4fcc-a201-2b30a5570b1a/pyproject.toml": {
+              "sha256": "527c3d86b76a6a99d6ba826ed3d3aeaaaf628cb92f8a053b2ee68da32256d05e",
+              "bytes": 314,
+              "mtimeNs": 1793859201444353300
+            },
+            ".manao/python-dependencies/a5c04ef1-a47a-4fcc-a201-2b30a5570b1a/manifest.json": {
+              "sha256": "ba5fb8626c14e83ad2ff27250acbeb35b53f17529a85f44eeaf8bea5c996a4ec",
+              "bytes": 646,
+              "mtimeNs": 1793859201458353400
+            },
+            ".manao/python-dependencies/a5c04ef1-a47a-4fcc-a201-2b30a5570b1a/uv.lock": {
+              "sha256": "33ce43937d195c6e6a1942ba0671f6b008cb6ae2c86adab8f3bbb0246f5c8f45",
+              "bytes": 4781,
+              "mtimeNs": 1793859201451353300
+            },
+            "manifestFields": {
+              "operationId": "a5c04ef1-a47a-4fcc-a201-2b30a5570b1a",
+              "requestSha256": "3fd65df82c7624d3a75d7e7e640cafabc30a3c2160e4261302ae8e301034dfa5",
+              "state": "PREPARED",
+              "beforeSha256": "cdcbf22d18edfe4ca6a0252d02db3fc9ffbe48335e2f2bf641df4dc14f6acd83",
+              "afterSha256": "220f703ee616a293e5c3f4d2bc0b73c5af9dd5b43d3df4d13e3eff9ea5952171",
+              "pyproject": {
+                "before": "c738a1cef87fd02f74a2c3d6ad01524ef2b340f1bc529d0d75d8eae1e00607a3",
+                "after": "527c3d86b76a6a99d6ba826ed3d3aeaaaf628cb92f8a053b2ee68da32256d05e"
+              },
+              "uvLock": {
+                "before": "87b756eb71dd55830cbc618553186bd5451a76ef702d56e4f1e5ef8bc9956c6a",
+                "after": "33ce43937d195c6e6a1942ba0671f6b008cb6ae2c86adab8f3bbb0246f5c8f45"
+              }
+            }
+          },
+          "db": "a5c04ef1-a47a-4fcc-a201-2b30a5570b1a\tCOMMITTED\t19\tcdcbf22d18edfe4ca6a0252d02db3fc9ffbe48335e2f2bf641df4dc14f6acd83\t220f703ee616a293e5c3f4d2bc0b73c5af9dd5b43d3df4d13e3eff9ea5952171\tc3d1e9d4f976c546ab8a705f6acc23c51431f2bc3cdbec1a28f76a60617adced\t3fd65df82c7624d3a75d7e7e640cafabc30a3c2160e4261302ae8e301034dfa5\n1a365f77-30ce-452a-9052-ca1648838d64\tFAILED\t19\t20\tAI_PAUSED_BY_OWNER\tNULL\ncall_00_ET_sxR1OMYM2GO8SIzjOG4f1498\tCOMPLETED\ta5c04ef1-a47a-4fcc-a201-2b30a5570b1a\t19\n20"
+        }
+      },
+      "traces": {
+        "main": [
+          {
+            "event": "BOUND",
+            "class": "com.manao.poc4.workspace.PythonDependencyService",
+            "method": "changeForAgent",
+            "line": 81,
+            "kind": "trace"
+          },
+          {
+            "event": "BOUND",
+            "class": "com.manao.poc4.workspace.WorkspaceOperationService",
+            "method": "commitNewPythonDependency",
+            "line": 305,
+            "kind": "gate"
+          },
+          {
+            "event": "ARMED",
+            "projectId": "bf51c6ac-be04-4274-9c73-43a15ea9d470",
+            "class": "com.manao.poc4.workspace.WorkspaceOperationService",
+            "line": 305
+          },
+          {
+            "event": "TRACE",
+            "projectId": "bf51c6ac-be04-4274-9c73-43a15ea9d470",
+            "operationId": "a5c04ef1-a47a-4fcc-a201-2b30a5570b1a",
+            "threadId": 6,
+            "class": "com.manao.poc4.workspace.PythonDependencyService",
+            "method": "changeForAgent",
+            "line": 81
+          },
+          {
+            "event": "HIT",
+            "projectId": "bf51c6ac-be04-4274-9c73-43a15ea9d470",
+            "operationId": "a5c04ef1-a47a-4fcc-a201-2b30a5570b1a",
+            "threadId": 6,
+            "class": "com.manao.poc4.workspace.WorkspaceOperationService",
+            "method": "commitNewPythonDependency",
+            "line": 305
+          },
+          {
+            "event": "RESUMED",
+            "projectId": "bf51c6ac-be04-4274-9c73-43a15ea9d470"
+          },
+          {
+            "event": "TRACE_COMPLETE",
+            "projectId": "bf51c6ac-be04-4274-9c73-43a15ea9d470",
+            "operationId": "a5c04ef1-a47a-4fcc-a201-2b30a5570b1a"
+          }
+        ],
+        "prepareObserver": null,
+        "helperObserver": null,
+        "caller": null
+      },
+      "task": {
+        "taskId": "1a365f77-30ce-452a-9052-ca1648838d64",
+        "state": "FAILED",
+        "workspaceRevision": "20",
+        "writesLocked": false,
+        "progress": [
+          {
+            "seq": 1,
+            "kind": "message",
+            "text": "I'll make the single requested dependency call to the test group.",
+            "truncated": false
+          },
+          {
+            "seq": 2,
+            "kind": "tool_start",
+            "text": "python_dependencies call_00_ET_sxR1OMYM2GO8SIzjOG4f1498",
+            "truncated": false
+          }
+        ],
+        "changedPaths": [
+          "pyproject.toml",
+          "uv.lock"
+        ],
+        "summary": "",
+        "failureCode": "AI_CONTEXT_UNAVAILABLE",
+        "conversationId": "75c053ea-020c-45eb-b06b-a071d800c0a7",
+        "reasoningEffort": "high",
+        "closeReasonCode": "AI_PAUSED_BY_OWNER"
+      },
+      "tools": [
+        {
+          "toolCallId": "call_00_ET_sxR1OMYM2GO8SIzjOG4f1498",
+          "toolName": "python_dependencies",
+          "data": {
+            "kind": "python_dependencies",
+            "operationId": "a5c04ef1-a47a-4fcc-a201-2b30a5570b1a",
+            "action": "add",
+            "packageName": "termcolor",
+            "group": "test",
+            "state": "COMMITTED",
+            "changedPaths": [
+              "pyproject.toml",
+              "uv.lock"
+            ]
+          }
+        }
+      ],
+      "buildCalls": 0,
+      "restart": null,
+      "traceTiming": {
+        "main": {
+          "createdUtc": "2026-11-05T06:13:05.853Z",
+          "lastAppendUtc": "2026-11-05T06:13:48.567Z",
+          "source": "Operator append-only JSONL file creation/last-write metadata; events themselves do not carry timestamps"
+        }
+      },
+      "durableCompletionUtc": "2026-11-05T06:13:29.041938Z\t2026-11-05T06:13:32.669585Z",
+      "claimEvidence": "Indirect: while held the original active_project/writesLocked remains; original call completes and production close/finishForClose passes the hasLiveCalls gate before task unlock. No direct in-memory claim counter captured.",
+      "counterLimit": "Exact scoped prepare/helper entry observed once during bounded trace covering durable completion; journal bytes/mtime unchanged. Not a lifetime profiler."
+    },
+    {
+      "name": "c-commit",
+      "status": "PASS",
+      "operationId": "eaec5850-ef3f-4d7b-bca4-cdbade8eb4b3",
+      "taskId": "a8dc2f49-f6fe-46ba-8e5c-c3aa6022efa0",
+      "beforeRevision": 20,
+      "afterRevision": 21,
+      "snapshots": {
+        "held": {
+          "capturedAt": "2026-11-05T06:16:23.348Z",
+          "operationId": "eaec5850-ef3f-4d7b-bca4-cdbade8eb4b3",
+          "taskId": "a8dc2f49-f6fe-46ba-8e5c-c3aa6022efa0",
+          "fs": {
+            "pyproject.toml": {
+              "sha256": "57ec2240eafb543be08e645180f96fb2dec57633c7c4d1634c60a95d85115089",
+              "bytes": 337,
+              "mtimeNs": 1793859380206665700
+            },
+            "uv.lock": {
+              "sha256": "33ce43937d195c6e6a1942ba0671f6b008cb6ae2c86adab8f3bbb0246f5c8f45",
+              "bytes": 4781,
+              "mtimeNs": 1793859208979409700
+            },
+            ".manao/receipts/eaec5850-ef3f-4d7b-bca4-cdbade8eb4b3.json": null,
+            ".manao/python-dependencies/eaec5850-ef3f-4d7b-bca4-cdbade8eb4b3/pyproject.toml": {
+              "sha256": "57ec2240eafb543be08e645180f96fb2dec57633c7c4d1634c60a95d85115089",
+              "bytes": 337,
+              "mtimeNs": 1793859380159665400
+            },
+            ".manao/python-dependencies/eaec5850-ef3f-4d7b-bca4-cdbade8eb4b3/manifest.json": {
+              "sha256": "cf2804696cf8926047669bf04b52753dd32ee1f60e790c8a8b2dc3ae345012bb",
+              "bytes": 646,
+              "mtimeNs": 1793859380173665500
+            },
+            ".manao/python-dependencies/eaec5850-ef3f-4d7b-bca4-cdbade8eb4b3/uv.lock": {
+              "sha256": "0d271b932cf8015e21e77bdf54815d85bbf32a759bb7e7e3dac2163ab9431102",
+              "bytes": 4858,
+              "mtimeNs": 1793859380166665500
+            },
+            "manifestFields": {
+              "operationId": "eaec5850-ef3f-4d7b-bca4-cdbade8eb4b3",
+              "requestSha256": "6e0690a487db48a58ab4546895e360c3db0445da08e5002fefd9c07e71a88b25",
+              "state": "PREPARED",
+              "beforeSha256": "220f703ee616a293e5c3f4d2bc0b73c5af9dd5b43d3df4d13e3eff9ea5952171",
+              "afterSha256": "a9405dfbfbe063337517f7d9e6fb9e01a4fc3b7477b1a737966ddb492e35da63",
+              "pyproject": {
+                "before": "527c3d86b76a6a99d6ba826ed3d3aeaaaf628cb92f8a053b2ee68da32256d05e",
+                "after": "57ec2240eafb543be08e645180f96fb2dec57633c7c4d1634c60a95d85115089"
+              },
+              "uvLock": {
+                "before": "33ce43937d195c6e6a1942ba0671f6b008cb6ae2c86adab8f3bbb0246f5c8f45",
+                "after": "0d271b932cf8015e21e77bdf54815d85bbf32a759bb7e7e3dac2163ab9431102"
+              }
+            }
+          },
+          "db": "eaec5850-ef3f-4d7b-bca4-cdbade8eb4b3\tPENDING\t20\t220f703ee616a293e5c3f4d2bc0b73c5af9dd5b43d3df4d13e3eff9ea5952171\ta9405dfbfbe063337517f7d9e6fb9e01a4fc3b7477b1a737966ddb492e35da63\t1f8c83e40b5393e76eb0da94309d4b8c22e456dc384b49adb3ee5a00f6fa23c6\t6e0690a487db48a58ab4546895e360c3db0445da08e5002fefd9c07e71a88b25\na8dc2f49-f6fe-46ba-8e5c-c3aa6022efa0\tRUNNING\t20\tNULL\tNULL\tbf51c6ac-be04-4274-9c73-43a15ea9d470\ncall_00_er4OKGJh4jhb7XF2vbAC4383\tRUNNING\teaec5850-ef3f-4d7b-bca4-cdbade8eb4b3\t20\n20"
+        },
+        "paused-held": {
+          "capturedAt": "2026-11-05T06:16:24.065Z",
+          "operationId": "eaec5850-ef3f-4d7b-bca4-cdbade8eb4b3",
+          "taskId": "a8dc2f49-f6fe-46ba-8e5c-c3aa6022efa0",
+          "fs": {
+            "pyproject.toml": {
+              "sha256": "57ec2240eafb543be08e645180f96fb2dec57633c7c4d1634c60a95d85115089",
+              "bytes": 337,
+              "mtimeNs": 1793859380206665700
+            },
+            "uv.lock": {
+              "sha256": "33ce43937d195c6e6a1942ba0671f6b008cb6ae2c86adab8f3bbb0246f5c8f45",
+              "bytes": 4781,
+              "mtimeNs": 1793859208979409700
+            },
+            ".manao/receipts/eaec5850-ef3f-4d7b-bca4-cdbade8eb4b3.json": null,
+            ".manao/python-dependencies/eaec5850-ef3f-4d7b-bca4-cdbade8eb4b3/pyproject.toml": {
+              "sha256": "57ec2240eafb543be08e645180f96fb2dec57633c7c4d1634c60a95d85115089",
+              "bytes": 337,
+              "mtimeNs": 1793859380159665400
+            },
+            ".manao/python-dependencies/eaec5850-ef3f-4d7b-bca4-cdbade8eb4b3/manifest.json": {
+              "sha256": "cf2804696cf8926047669bf04b52753dd32ee1f60e790c8a8b2dc3ae345012bb",
+              "bytes": 646,
+              "mtimeNs": 1793859380173665500
+            },
+            ".manao/python-dependencies/eaec5850-ef3f-4d7b-bca4-cdbade8eb4b3/uv.lock": {
+              "sha256": "0d271b932cf8015e21e77bdf54815d85bbf32a759bb7e7e3dac2163ab9431102",
+              "bytes": 4858,
+              "mtimeNs": 1793859380166665500
+            },
+            "manifestFields": {
+              "operationId": "eaec5850-ef3f-4d7b-bca4-cdbade8eb4b3",
+              "requestSha256": "6e0690a487db48a58ab4546895e360c3db0445da08e5002fefd9c07e71a88b25",
+              "state": "PREPARED",
+              "beforeSha256": "220f703ee616a293e5c3f4d2bc0b73c5af9dd5b43d3df4d13e3eff9ea5952171",
+              "afterSha256": "a9405dfbfbe063337517f7d9e6fb9e01a4fc3b7477b1a737966ddb492e35da63",
+              "pyproject": {
+                "before": "527c3d86b76a6a99d6ba826ed3d3aeaaaf628cb92f8a053b2ee68da32256d05e",
+                "after": "57ec2240eafb543be08e645180f96fb2dec57633c7c4d1634c60a95d85115089"
+              },
+              "uvLock": {
+                "before": "33ce43937d195c6e6a1942ba0671f6b008cb6ae2c86adab8f3bbb0246f5c8f45",
+                "after": "0d271b932cf8015e21e77bdf54815d85bbf32a759bb7e7e3dac2163ab9431102"
+              }
+            }
+          },
+          "db": "eaec5850-ef3f-4d7b-bca4-cdbade8eb4b3\tPENDING\t20\t220f703ee616a293e5c3f4d2bc0b73c5af9dd5b43d3df4d13e3eff9ea5952171\ta9405dfbfbe063337517f7d9e6fb9e01a4fc3b7477b1a737966ddb492e35da63\t1f8c83e40b5393e76eb0da94309d4b8c22e456dc384b49adb3ee5a00f6fa23c6\t6e0690a487db48a58ab4546895e360c3db0445da08e5002fefd9c07e71a88b25\na8dc2f49-f6fe-46ba-8e5c-c3aa6022efa0\tNEEDS_ATTENTION\t20\tNULL\tAI_PAUSED_BY_OWNER\tbf51c6ac-be04-4274-9c73-43a15ea9d470\ncall_00_er4OKGJh4jhb7XF2vbAC4383\tRUNNING\teaec5850-ef3f-4d7b-bca4-cdbade8eb4b3\t20\n20"
+        },
+        "settled": {
+          "capturedAt": "2026-11-05T06:16:45.477Z",
+          "operationId": "eaec5850-ef3f-4d7b-bca4-cdbade8eb4b3",
+          "taskId": "a8dc2f49-f6fe-46ba-8e5c-c3aa6022efa0",
+          "fs": {
+            "pyproject.toml": {
+              "sha256": "57ec2240eafb543be08e645180f96fb2dec57633c7c4d1634c60a95d85115089",
+              "bytes": 337,
+              "mtimeNs": 1793859380206665700
+            },
+            "uv.lock": {
+              "sha256": "0d271b932cf8015e21e77bdf54815d85bbf32a759bb7e7e3dac2163ab9431102",
+              "bytes": 4858,
+              "mtimeNs": 1793859384613697500
+            },
+            ".manao/receipts/eaec5850-ef3f-4d7b-bca4-cdbade8eb4b3.json": {
+              "sha256": "1f8c83e40b5393e76eb0da94309d4b8c22e456dc384b49adb3ee5a00f6fa23c6",
+              "bytes": 291,
+              "mtimeNs": 1793859384624697900
+            },
+            ".manao/python-dependencies/eaec5850-ef3f-4d7b-bca4-cdbade8eb4b3/pyproject.toml": {
+              "sha256": "57ec2240eafb543be08e645180f96fb2dec57633c7c4d1634c60a95d85115089",
+              "bytes": 337,
+              "mtimeNs": 1793859380159665400
+            },
+            ".manao/python-dependencies/eaec5850-ef3f-4d7b-bca4-cdbade8eb4b3/manifest.json": {
+              "sha256": "cf2804696cf8926047669bf04b52753dd32ee1f60e790c8a8b2dc3ae345012bb",
+              "bytes": 646,
+              "mtimeNs": 1793859380173665500
+            },
+            ".manao/python-dependencies/eaec5850-ef3f-4d7b-bca4-cdbade8eb4b3/uv.lock": {
+              "sha256": "0d271b932cf8015e21e77bdf54815d85bbf32a759bb7e7e3dac2163ab9431102",
+              "bytes": 4858,
+              "mtimeNs": 1793859380166665500
+            },
+            "manifestFields": {
+              "operationId": "eaec5850-ef3f-4d7b-bca4-cdbade8eb4b3",
+              "requestSha256": "6e0690a487db48a58ab4546895e360c3db0445da08e5002fefd9c07e71a88b25",
+              "state": "PREPARED",
+              "beforeSha256": "220f703ee616a293e5c3f4d2bc0b73c5af9dd5b43d3df4d13e3eff9ea5952171",
+              "afterSha256": "a9405dfbfbe063337517f7d9e6fb9e01a4fc3b7477b1a737966ddb492e35da63",
+              "pyproject": {
+                "before": "527c3d86b76a6a99d6ba826ed3d3aeaaaf628cb92f8a053b2ee68da32256d05e",
+                "after": "57ec2240eafb543be08e645180f96fb2dec57633c7c4d1634c60a95d85115089"
+              },
+              "uvLock": {
+                "before": "33ce43937d195c6e6a1942ba0671f6b008cb6ae2c86adab8f3bbb0246f5c8f45",
+                "after": "0d271b932cf8015e21e77bdf54815d85bbf32a759bb7e7e3dac2163ab9431102"
+              }
+            }
+          },
+          "db": "eaec5850-ef3f-4d7b-bca4-cdbade8eb4b3\tCOMMITTED\t20\t220f703ee616a293e5c3f4d2bc0b73c5af9dd5b43d3df4d13e3eff9ea5952171\ta9405dfbfbe063337517f7d9e6fb9e01a4fc3b7477b1a737966ddb492e35da63\t1f8c83e40b5393e76eb0da94309d4b8c22e456dc384b49adb3ee5a00f6fa23c6\t6e0690a487db48a58ab4546895e360c3db0445da08e5002fefd9c07e71a88b25\na8dc2f49-f6fe-46ba-8e5c-c3aa6022efa0\tFAILED\t20\t21\tAI_PAUSED_BY_OWNER\tNULL\ncall_00_er4OKGJh4jhb7XF2vbAC4383\tCOMPLETED\teaec5850-ef3f-4d7b-bca4-cdbade8eb4b3\t20\n21"
+        }
+      },
+      "traces": {
+        "main": [
+          {
+            "event": "BOUND",
+            "class": "com.manao.poc4.workspaceagent.PythonDependencyEditor$HelperResolver",
+            "method": "runHelper",
+            "line": 458,
+            "kind": "trace"
+          },
+          {
+            "event": "BOUND",
+            "class": "com.manao.poc4.workspaceagent.PythonDependencyTransaction",
+            "method": "applyPreparedFile",
+            "line": 257,
+            "kind": "gate"
+          },
+          {
+            "event": "ARMED",
+            "projectId": "bf51c6ac-be04-4274-9c73-43a15ea9d470",
+            "class": "com.manao.poc4.workspaceagent.PythonDependencyTransaction",
+            "line": 257
+          },
+          {
+            "event": "TRACE",
+            "projectId": "bf51c6ac-be04-4274-9c73-43a15ea9d470",
+            "operationId": "eaec5850-ef3f-4d7b-bca4-cdbade8eb4b3",
+            "threadId": 4,
+            "class": "com.manao.poc4.workspaceagent.PythonDependencyEditor$HelperResolver",
+            "method": "runHelper",
+            "line": 458
+          },
+          {
+            "event": "HIT",
+            "projectId": "bf51c6ac-be04-4274-9c73-43a15ea9d470",
+            "operationId": "eaec5850-ef3f-4d7b-bca4-cdbade8eb4b3",
+            "threadId": 184,
+            "class": "com.manao.poc4.workspaceagent.PythonDependencyTransaction",
+            "method": "applyPreparedFile",
+            "line": 257
+          },
+          {
+            "event": "RESUMED",
+            "projectId": "bf51c6ac-be04-4274-9c73-43a15ea9d470"
+          },
+          {
+            "event": "TRACE_COMPLETE",
+            "projectId": "bf51c6ac-be04-4274-9c73-43a15ea9d470",
+            "operationId": "eaec5850-ef3f-4d7b-bca4-cdbade8eb4b3"
+          }
+        ],
+        "prepareObserver": null,
+        "helperObserver": null,
+        "caller": null
+      },
+      "task": {
+        "taskId": "a8dc2f49-f6fe-46ba-8e5c-c3aa6022efa0",
+        "state": "FAILED",
+        "workspaceRevision": "21",
+        "writesLocked": false,
+        "progress": [
+          {
+            "seq": 1,
+            "kind": "message",
+            "text": "",
+            "truncated": false
+          },
+          {
+            "seq": 2,
+            "kind": "tool_start",
+            "text": "python_dependencies call_00_er4OKGJh4jhb7XF2vbAC4383",
+            "truncated": false
+          }
+        ],
+        "changedPaths": [
+          "pyproject.toml",
+          "uv.lock"
+        ],
+        "summary": "",
+        "failureCode": "AI_CONTEXT_UNAVAILABLE",
+        "conversationId": "ee23329a-7295-4319-8e81-55bc043e38bb",
+        "reasoningEffort": "high",
+        "closeReasonCode": "AI_PAUSED_BY_OWNER"
+      },
+      "tools": [
+        {
+          "toolCallId": "call_00_er4OKGJh4jhb7XF2vbAC4383",
+          "toolName": "python_dependencies",
+          "data": {
+            "kind": "python_dependencies",
+            "operationId": "eaec5850-ef3f-4d7b-bca4-cdbade8eb4b3",
+            "action": "add",
+            "packageName": "colorama",
+            "group": "test",
+            "state": "COMMITTED",
+            "changedPaths": [
+              "pyproject.toml",
+              "uv.lock"
+            ]
+          }
+        }
+      ],
+      "buildCalls": 0,
+      "restart": null,
+      "traceTiming": {
+        "main": {
+          "createdUtc": "2026-11-05T06:16:10.077Z",
+          "lastAppendUtc": "2026-11-05T06:16:44.165Z",
+          "source": "Operator append-only JSONL file creation/last-write metadata; events themselves do not carry timestamps"
+        }
+      },
+      "durableCompletionUtc": "2026-11-05T06:16:24.670673Z\t2026-11-05T06:16:27.766546Z",
+      "claimEvidence": "Indirect: while held the original active_project/writesLocked remains; original call completes and production close/finishForClose passes the hasLiveCalls gate before task unlock. No direct in-memory claim counter captured.",
+      "counterLimit": "Exact scoped prepare/helper entry observed once during bounded trace covering durable completion; journal bytes/mtime unchanged. Not a lifetime profiler."
+    },
+    {
+      "name": "d-partial-restart",
+      "status": "PASS",
+      "operationId": "2ef4341f-a7b6-42c4-9c49-009f13723248",
+      "taskId": "e5d69a22-1c94-4046-9cbf-845648d25fbf",
+      "beforeRevision": 22,
+      "afterRevision": 23,
+      "snapshots": {
+        "held": {
+          "capturedAt": "2026-11-05T06:25:04.182Z",
+          "operationId": "2ef4341f-a7b6-42c4-9c49-009f13723248",
+          "taskId": "e5d69a22-1c94-4046-9cbf-845648d25fbf",
+          "fs": {
+            "pyproject.toml": {
+              "sha256": "a315b49bf0e90708405b8f93933c9c5509abc203326fb0f337fa998db965e3cb",
+              "bytes": 378,
+              "mtimeNs": 1793859900901448200
+            },
+            "uv.lock": {
+              "sha256": "3a13f17752e71fff2af4b4c73da9e96b9207d0b4cb1b77285b908bc981cb70b0",
+              "bytes": 4936,
+              "mtimeNs": 1793859712126075100
+            },
+            ".manao/receipts/2ef4341f-a7b6-42c4-9c49-009f13723248.json": null,
+            ".manao/python-dependencies/2ef4341f-a7b6-42c4-9c49-009f13723248/pyproject.toml": {
+              "sha256": "a315b49bf0e90708405b8f93933c9c5509abc203326fb0f337fa998db965e3cb",
+              "bytes": 378,
+              "mtimeNs": 1793859900838447900
+            },
+            ".manao/python-dependencies/2ef4341f-a7b6-42c4-9c49-009f13723248/manifest.json": {
+              "sha256": "1cbea7190fd038c9d40b11f48adb90c8cef12acd55f29ae37bf1a1e5f9ed26b7",
+              "bytes": 646,
+              "mtimeNs": 1793859900860448000
+            },
+            ".manao/python-dependencies/2ef4341f-a7b6-42c4-9c49-009f13723248/uv.lock": {
+              "sha256": "b5e0d1b00fbfa9864dd226b8f2b58149e8d521e18098e3f7547c2cc0cd888c98",
+              "bytes": 5588,
+              "mtimeNs": 1793859900849448000
+            },
+            "manifestFields": {
+              "operationId": "2ef4341f-a7b6-42c4-9c49-009f13723248",
+              "requestSha256": "8372b8b6fb8f646cbf0b3a0a8b8758ff62e35e4c1f10d482c43ea9ca2eb19f80",
+              "state": "PREPARED",
+              "beforeSha256": "ed4a55619042d75c142cfad94485b7d67713c5a6803965c4392326fb2a3a6c67",
+              "afterSha256": "1d53a4759cb8bc07fb995d324094097d1053c388a32ca47f76bba1482b7d9e53",
+              "pyproject": {
+                "before": "4648d0907608006a90e65e724e0c78a94643301a917afbc32cdfab27aacc8c82",
+                "after": "a315b49bf0e90708405b8f93933c9c5509abc203326fb0f337fa998db965e3cb"
+              },
+              "uvLock": {
+                "before": "3a13f17752e71fff2af4b4c73da9e96b9207d0b4cb1b77285b908bc981cb70b0",
+                "after": "b5e0d1b00fbfa9864dd226b8f2b58149e8d521e18098e3f7547c2cc0cd888c98"
+              }
+            }
+          },
+          "db": "2ef4341f-a7b6-42c4-9c49-009f13723248\tPENDING\t22\ted4a55619042d75c142cfad94485b7d67713c5a6803965c4392326fb2a3a6c67\t1d53a4759cb8bc07fb995d324094097d1053c388a32ca47f76bba1482b7d9e53\t0f4a3194e77cb621fec9c2c32fcfa350a373fe1372d41f6a7c332fe010beea8e\t8372b8b6fb8f646cbf0b3a0a8b8758ff62e35e4c1f10d482c43ea9ca2eb19f80\ne5d69a22-1c94-4046-9cbf-845648d25fbf\tRUNNING\t22\tNULL\tNULL\tbf51c6ac-be04-4274-9c73-43a15ea9d470\ncall_00_D8wmTjV88k40HGpy5RkQ9461\tRUNNING\t2ef4341f-a7b6-42c4-9c49-009f13723248\t22\n22"
+        },
+        "restarted": {
+          "capturedAt": "2026-11-05T06:25:18.008Z",
+          "operationId": "2ef4341f-a7b6-42c4-9c49-009f13723248",
+          "taskId": "e5d69a22-1c94-4046-9cbf-845648d25fbf",
+          "fs": {
+            "pyproject.toml": {
+              "sha256": "a315b49bf0e90708405b8f93933c9c5509abc203326fb0f337fa998db965e3cb",
+              "bytes": 378,
+              "mtimeNs": 1793859900901448200
+            },
+            "uv.lock": {
+              "sha256": "3a13f17752e71fff2af4b4c73da9e96b9207d0b4cb1b77285b908bc981cb70b0",
+              "bytes": 4936,
+              "mtimeNs": 1793859712126075100
+            },
+            ".manao/receipts/2ef4341f-a7b6-42c4-9c49-009f13723248.json": null,
+            ".manao/python-dependencies/2ef4341f-a7b6-42c4-9c49-009f13723248/pyproject.toml": {
+              "sha256": "a315b49bf0e90708405b8f93933c9c5509abc203326fb0f337fa998db965e3cb",
+              "bytes": 378,
+              "mtimeNs": 1793859900838447900
+            },
+            ".manao/python-dependencies/2ef4341f-a7b6-42c4-9c49-009f13723248/manifest.json": {
+              "sha256": "1cbea7190fd038c9d40b11f48adb90c8cef12acd55f29ae37bf1a1e5f9ed26b7",
+              "bytes": 646,
+              "mtimeNs": 1793859900860448000
+            },
+            ".manao/python-dependencies/2ef4341f-a7b6-42c4-9c49-009f13723248/uv.lock": {
+              "sha256": "b5e0d1b00fbfa9864dd226b8f2b58149e8d521e18098e3f7547c2cc0cd888c98",
+              "bytes": 5588,
+              "mtimeNs": 1793859900849448000
+            },
+            "manifestFields": {
+              "operationId": "2ef4341f-a7b6-42c4-9c49-009f13723248",
+              "requestSha256": "8372b8b6fb8f646cbf0b3a0a8b8758ff62e35e4c1f10d482c43ea9ca2eb19f80",
+              "state": "PREPARED",
+              "beforeSha256": "ed4a55619042d75c142cfad94485b7d67713c5a6803965c4392326fb2a3a6c67",
+              "afterSha256": "1d53a4759cb8bc07fb995d324094097d1053c388a32ca47f76bba1482b7d9e53",
+              "pyproject": {
+                "before": "4648d0907608006a90e65e724e0c78a94643301a917afbc32cdfab27aacc8c82",
+                "after": "a315b49bf0e90708405b8f93933c9c5509abc203326fb0f337fa998db965e3cb"
+              },
+              "uvLock": {
+                "before": "3a13f17752e71fff2af4b4c73da9e96b9207d0b4cb1b77285b908bc981cb70b0",
+                "after": "b5e0d1b00fbfa9864dd226b8f2b58149e8d521e18098e3f7547c2cc0cd888c98"
+              }
+            }
+          },
+          "db": "2ef4341f-a7b6-42c4-9c49-009f13723248\tPENDING\t22\ted4a55619042d75c142cfad94485b7d67713c5a6803965c4392326fb2a3a6c67\t1d53a4759cb8bc07fb995d324094097d1053c388a32ca47f76bba1482b7d9e53\t0f4a3194e77cb621fec9c2c32fcfa350a373fe1372d41f6a7c332fe010beea8e\t8372b8b6fb8f646cbf0b3a0a8b8758ff62e35e4c1f10d482c43ea9ca2eb19f80\ne5d69a22-1c94-4046-9cbf-845648d25fbf\tNEEDS_ATTENTION\t22\tNULL\tAI_CALL_NEEDS_ATTENTION\tbf51c6ac-be04-4274-9c73-43a15ea9d470\ncall_00_D8wmTjV88k40HGpy5RkQ9461\tNEEDS_ATTENTION\t2ef4341f-a7b6-42c4-9c49-009f13723248\t22\n22"
+        },
+        "settled": {
+          "capturedAt": "2026-11-05T06:25:19.487Z",
+          "operationId": "2ef4341f-a7b6-42c4-9c49-009f13723248",
+          "taskId": "e5d69a22-1c94-4046-9cbf-845648d25fbf",
+          "fs": {
+            "pyproject.toml": {
+              "sha256": "a315b49bf0e90708405b8f93933c9c5509abc203326fb0f337fa998db965e3cb",
+              "bytes": 378,
+              "mtimeNs": 1793859900901448200
+            },
+            "uv.lock": {
+              "sha256": "b5e0d1b00fbfa9864dd226b8f2b58149e8d521e18098e3f7547c2cc0cd888c98",
+              "bytes": 5588,
+              "mtimeNs": 1793859918650577400
+            },
+            ".manao/receipts/2ef4341f-a7b6-42c4-9c49-009f13723248.json": {
+              "sha256": "0f4a3194e77cb621fec9c2c32fcfa350a373fe1372d41f6a7c332fe010beea8e",
+              "bytes": 291,
+              "mtimeNs": 1793859918660577500
+            },
+            ".manao/python-dependencies/2ef4341f-a7b6-42c4-9c49-009f13723248/pyproject.toml": {
+              "sha256": "a315b49bf0e90708405b8f93933c9c5509abc203326fb0f337fa998db965e3cb",
+              "bytes": 378,
+              "mtimeNs": 1793859900838447900
+            },
+            ".manao/python-dependencies/2ef4341f-a7b6-42c4-9c49-009f13723248/manifest.json": {
+              "sha256": "1cbea7190fd038c9d40b11f48adb90c8cef12acd55f29ae37bf1a1e5f9ed26b7",
+              "bytes": 646,
+              "mtimeNs": 1793859900860448000
+            },
+            ".manao/python-dependencies/2ef4341f-a7b6-42c4-9c49-009f13723248/uv.lock": {
+              "sha256": "b5e0d1b00fbfa9864dd226b8f2b58149e8d521e18098e3f7547c2cc0cd888c98",
+              "bytes": 5588,
+              "mtimeNs": 1793859900849448000
+            },
+            "manifestFields": {
+              "operationId": "2ef4341f-a7b6-42c4-9c49-009f13723248",
+              "requestSha256": "8372b8b6fb8f646cbf0b3a0a8b8758ff62e35e4c1f10d482c43ea9ca2eb19f80",
+              "state": "PREPARED",
+              "beforeSha256": "ed4a55619042d75c142cfad94485b7d67713c5a6803965c4392326fb2a3a6c67",
+              "afterSha256": "1d53a4759cb8bc07fb995d324094097d1053c388a32ca47f76bba1482b7d9e53",
+              "pyproject": {
+                "before": "4648d0907608006a90e65e724e0c78a94643301a917afbc32cdfab27aacc8c82",
+                "after": "a315b49bf0e90708405b8f93933c9c5509abc203326fb0f337fa998db965e3cb"
+              },
+              "uvLock": {
+                "before": "3a13f17752e71fff2af4b4c73da9e96b9207d0b4cb1b77285b908bc981cb70b0",
+                "after": "b5e0d1b00fbfa9864dd226b8f2b58149e8d521e18098e3f7547c2cc0cd888c98"
+              }
+            }
+          },
+          "db": "2ef4341f-a7b6-42c4-9c49-009f13723248\tCOMMITTED\t22\ted4a55619042d75c142cfad94485b7d67713c5a6803965c4392326fb2a3a6c67\t1d53a4759cb8bc07fb995d324094097d1053c388a32ca47f76bba1482b7d9e53\t0f4a3194e77cb621fec9c2c32fcfa350a373fe1372d41f6a7c332fe010beea8e\t8372b8b6fb8f646cbf0b3a0a8b8758ff62e35e4c1f10d482c43ea9ca2eb19f80\ne5d69a22-1c94-4046-9cbf-845648d25fbf\tFAILED\t22\t23\tAI_CALL_NEEDS_ATTENTION\tNULL\ncall_00_D8wmTjV88k40HGpy5RkQ9461\tCOMPLETED\t2ef4341f-a7b6-42c4-9c49-009f13723248\t22\n23"
+        }
+      },
+      "traces": {
+        "main": [
+          {
+            "event": "BOUND",
+            "class": "com.manao.poc4.workspaceagent.PythonDependencyEditor$HelperResolver",
+            "method": "runHelper",
+            "line": 458,
+            "kind": "trace"
+          },
+          {
+            "event": "BOUND",
+            "class": "com.manao.poc4.workspaceagent.PythonDependencyTransaction",
+            "method": "applyPreparedFile",
+            "line": 257,
+            "kind": "gate"
+          },
+          {
+            "event": "ARMED",
+            "projectId": "bf51c6ac-be04-4274-9c73-43a15ea9d470",
+            "class": "com.manao.poc4.workspaceagent.PythonDependencyTransaction",
+            "line": 257
+          },
+          {
+            "event": "TRACE",
+            "projectId": "bf51c6ac-be04-4274-9c73-43a15ea9d470",
+            "operationId": "2ef4341f-a7b6-42c4-9c49-009f13723248",
+            "threadId": 3,
+            "class": "com.manao.poc4.workspaceagent.PythonDependencyEditor$HelperResolver",
+            "method": "runHelper",
+            "line": 458
+          },
+          {
+            "event": "HIT",
+            "projectId": "bf51c6ac-be04-4274-9c73-43a15ea9d470",
+            "operationId": "2ef4341f-a7b6-42c4-9c49-009f13723248",
+            "threadId": 181,
+            "class": "com.manao.poc4.workspaceagent.PythonDependencyTransaction",
+            "method": "applyPreparedFile",
+            "line": 257
+          },
+          {
+            "event": "VM_EXIT_REQUESTED",
+            "projectId": "bf51c6ac-be04-4274-9c73-43a15ea9d470",
+            "operationId": "2ef4341f-a7b6-42c4-9c49-009f13723248"
+          }
+        ],
+        "prepareObserver": [
+          {
+            "event": "BOUND",
+            "class": "com.manao.poc4.workspace.PythonDependencyService",
+            "method": "changeForAgent",
+            "line": 81,
+            "kind": "trace"
+          },
+          {
+            "event": "BOUND",
+            "class": "com.manao.poc4.workspace.PythonDependencyService",
+            "method": "changeForAgent",
+            "line": 81,
+            "kind": "gate"
+          },
+          {
+            "event": "ARMED",
+            "projectId": "bf51c6ac-be04-4274-9c73-43a15ea9d470",
+            "class": "com.manao.poc4.workspace.PythonDependencyService",
+            "line": 81
+          },
+          {
+            "event": "TRACE",
+            "projectId": "bf51c6ac-be04-4274-9c73-43a15ea9d470",
+            "operationId": "2ef4341f-a7b6-42c4-9c49-009f13723248",
+            "threadId": 12,
+            "class": "com.manao.poc4.workspace.PythonDependencyService",
+            "method": "changeForAgent",
+            "line": 81
+          },
+          {
+            "event": "HIT",
+            "projectId": "bf51c6ac-be04-4274-9c73-43a15ea9d470",
+            "operationId": "2ef4341f-a7b6-42c4-9c49-009f13723248",
+            "threadId": 12,
+            "class": "com.manao.poc4.workspace.PythonDependencyService",
+            "method": "changeForAgent",
+            "line": 81
+          },
+          {
+            "event": "RESUMED",
+            "projectId": "bf51c6ac-be04-4274-9c73-43a15ea9d470"
+          },
+          {
+            "event": "TRACE_COMPLETE",
+            "projectId": "bf51c6ac-be04-4274-9c73-43a15ea9d470",
+            "operationId": "2ef4341f-a7b6-42c4-9c49-009f13723248"
+          }
+        ],
+        "helperObserver": null,
+        "caller": null
+      },
+      "task": {
+        "taskId": "e5d69a22-1c94-4046-9cbf-845648d25fbf",
+        "state": "FAILED",
+        "workspaceRevision": "23",
+        "writesLocked": false,
+        "progress": [
+          {
+            "seq": 1,
+            "kind": "message",
+            "text": "",
+            "truncated": false
+          },
+          {
+            "seq": 2,
+            "kind": "tool_start",
+            "text": "python_dependencies call_00_D8wmTjV88k40HGpy5RkQ9461",
+            "truncated": false
+          },
+          {
+            "seq": 3,
+            "kind": "tool_end",
+            "text": "python_dependencies call_00_D8wmTjV88k40HGpy5RkQ9461",
+            "truncated": false
+          },
+          {
+            "seq": 4,
+            "kind": "message",
+            "text": "",
+            "truncated": false
+          }
+        ],
+        "changedPaths": [
+          "pyproject.toml",
+          "uv.lock"
+        ],
+        "summary": "",
+        "failureCode": "AI_CALL_NEEDS_ATTENTION",
+        "conversationId": "d6c7940d-060c-4619-a924-63959124a773",
+        "reasoningEffort": "high",
+        "closeReasonCode": "AI_CALL_NEEDS_ATTENTION"
+      },
+      "tools": [
+        {
+          "toolCallId": "call_00_D8wmTjV88k40HGpy5RkQ9461",
+          "toolName": "python_dependencies",
+          "data": {
+            "kind": "python_dependencies",
+            "operationId": "2ef4341f-a7b6-42c4-9c49-009f13723248",
+            "action": "add",
+            "packageName": "idna",
+            "group": "test",
+            "state": "COMMITTED",
+            "changedPaths": [
+              "pyproject.toml",
+              "uv.lock"
+            ]
+          }
+        }
+      ],
+      "buildCalls": 0,
+      "restart": {
+        "before": {
+          "name": "manao-ws-bf51c6ac-be04-4274-9c73-43a15ea9d470",
+          "uid": "67e08e62-f1d3-458f-97d2-a7cbee851476",
+          "containerId": "containerd://b7619fb2e9e679dc34f13d4901b2cafce1b9d1020b327bc173f4d047d55b80df",
+          "restartCount": 0,
+          "ready": true,
+          "imageId": "docker.io/chocologic/manao_images_repository@sha256:65e4ba78fd0e078d64307fb72bff6017d173c7d933fd5533e7a5e3650728135c",
+          "pvc": [
+            {
+              "name": "manao-pvc-bf51c6ac-be04-4274-9c73-43a15ea9d470",
+              "uid": "f8c4f418-380a-4457-ac72-7ec9b0ec9157"
+            }
+          ]
+        },
+        "after": {
+          "name": "manao-ws-bf51c6ac-be04-4274-9c73-43a15ea9d470",
+          "uid": "67e08e62-f1d3-458f-97d2-a7cbee851476",
+          "containerId": "containerd://151d5cff0d1cd65c610362dc65789fc40b2543a8384ee498c17ac5a3fa585b0f",
+          "restartCount": 1,
+          "ready": true,
+          "imageId": "docker.io/chocologic/manao_images_repository@sha256:65e4ba78fd0e078d64307fb72bff6017d173c7d933fd5533e7a5e3650728135c",
+          "pvc": [
+            {
+              "name": "manao-pvc-bf51c6ac-be04-4274-9c73-43a15ea9d470",
+              "uid": "f8c4f418-380a-4457-ac72-7ec9b0ec9157"
+            }
+          ]
+        }
+      },
+      "traceTiming": {
+        "main": {
+          "createdUtc": "2026-11-05T06:24:34.950Z",
+          "lastAppendUtc": "2026-11-05T06:25:05.109Z",
+          "source": "Operator append-only JSONL file creation/last-write metadata; events themselves do not carry timestamps"
+        },
+        "prepareObserver": {
+          "createdUtc": "2026-11-05T06:24:34.473Z",
+          "lastAppendUtc": "2026-11-05T06:25:53.426Z",
+          "source": "Operator append-only JSONL file creation/last-write metadata; events themselves do not carry timestamps"
+        }
+      },
+      "durableCompletionUtc": "2026-11-05T06:25:18.753318Z\t2026-11-05T06:25:18.770724Z",
+      "claimEvidence": "Indirect: while held the original active_project/writesLocked remains; original call completes and production close/finishForClose passes the hasLiveCalls gate before task unlock. No direct in-memory claim counter captured.",
+      "counterLimit": "Surviving backend prepare trace covers durable completion and records one prepare; agent helper was observed once before restart, no post-restart helper trace. Original journal digest/mtime unchanged."
+    },
+    {
+      "name": "r-agent-pending",
+      "status": "PASS",
+      "operationId": "24afd82d-68b4-455e-a7aa-5cedfee66e60",
+      "taskId": "076d7797-7f83-418f-9347-3d9ae02dc60b",
+      "beforeRevision": 23,
+      "afterRevision": 24,
+      "snapshots": {
+        "held": {
+          "capturedAt": "2026-11-05T06:27:14.509Z",
+          "operationId": "24afd82d-68b4-455e-a7aa-5cedfee66e60",
+          "taskId": "076d7797-7f83-418f-9347-3d9ae02dc60b",
+          "fs": {
+            "pyproject.toml": {
+              "sha256": "a315b49bf0e90708405b8f93933c9c5509abc203326fb0f337fa998db965e3cb",
+              "bytes": 378,
+              "mtimeNs": 1793859900901448200
+            },
+            "uv.lock": {
+              "sha256": "b5e0d1b00fbfa9864dd226b8f2b58149e8d521e18098e3f7547c2cc0cd888c98",
+              "bytes": 5588,
+              "mtimeNs": 1793859918650577400
+            },
+            ".manao/receipts/24afd82d-68b4-455e-a7aa-5cedfee66e60.json": null,
+            ".manao/python-dependencies/24afd82d-68b4-455e-a7aa-5cedfee66e60/pyproject.toml": {
+              "sha256": "05165902b30f42c03d52a7b0b720ec89d146e44ec5255f05ebb484f2c7df6747",
+              "bytes": 397,
+              "mtimeNs": 1793860028257376000
+            },
+            ".manao/python-dependencies/24afd82d-68b4-455e-a7aa-5cedfee66e60/manifest.json": {
+              "sha256": "fc298920ed56ad461fe5c8a77f4e48ef88a2e5ef684aedaf9cd3e9b17dc8ab27",
+              "bytes": 646,
+              "mtimeNs": 1793860028322376400
+            },
+            ".manao/python-dependencies/24afd82d-68b4-455e-a7aa-5cedfee66e60/uv.lock": {
+              "sha256": "f89a3bd0fce3e78d98d309236e8ca7e534a0b43fef7872e49cf170e4364260ef",
+              "bytes": 6247,
+              "mtimeNs": 1793860028264375800
+            },
+            "manifestFields": {
+              "operationId": "24afd82d-68b4-455e-a7aa-5cedfee66e60",
+              "requestSha256": "17b27aee312f804508bd020f41dc4750bffd38245bae5fad84c64d743c208cc6",
+              "state": "PREPARED",
+              "beforeSha256": "1d53a4759cb8bc07fb995d324094097d1053c388a32ca47f76bba1482b7d9e53",
+              "afterSha256": "32fce6b7dad88842505b227927ab0bd36150a05410886bf5760812d43771455f",
+              "pyproject": {
+                "before": "a315b49bf0e90708405b8f93933c9c5509abc203326fb0f337fa998db965e3cb",
+                "after": "05165902b30f42c03d52a7b0b720ec89d146e44ec5255f05ebb484f2c7df6747"
+              },
+              "uvLock": {
+                "before": "b5e0d1b00fbfa9864dd226b8f2b58149e8d521e18098e3f7547c2cc0cd888c98",
+                "after": "f89a3bd0fce3e78d98d309236e8ca7e534a0b43fef7872e49cf170e4364260ef"
+              }
+            }
+          },
+          "db": "24afd82d-68b4-455e-a7aa-5cedfee66e60\tPENDING\t23\t1d53a4759cb8bc07fb995d324094097d1053c388a32ca47f76bba1482b7d9e53\t32fce6b7dad88842505b227927ab0bd36150a05410886bf5760812d43771455f\t13f3587c15b7f8bd52e9c5abfcd1fabff11b50e10f8ba764cd71804b0490d858\t17b27aee312f804508bd020f41dc4750bffd38245bae5fad84c64d743c208cc6\n076d7797-7f83-418f-9347-3d9ae02dc60b\tRUNNING\t23\tNULL\tNULL\tbf51c6ac-be04-4274-9c73-43a15ea9d470\ncall_00_YXjPpJzvePQkFUichotw7996\tRUNNING\t24afd82d-68b4-455e-a7aa-5cedfee66e60\t23\n23"
+        },
+        "agent-restarted-held": {
+          "capturedAt": "2026-11-05T06:27:36.752Z",
+          "operationId": "24afd82d-68b4-455e-a7aa-5cedfee66e60",
+          "taskId": "076d7797-7f83-418f-9347-3d9ae02dc60b",
+          "fs": {
+            "pyproject.toml": {
+              "sha256": "a315b49bf0e90708405b8f93933c9c5509abc203326fb0f337fa998db965e3cb",
+              "bytes": 378,
+              "mtimeNs": 1793859900901448200
+            },
+            "uv.lock": {
+              "sha256": "b5e0d1b00fbfa9864dd226b8f2b58149e8d521e18098e3f7547c2cc0cd888c98",
+              "bytes": 5588,
+              "mtimeNs": 1793859918650577400
+            },
+            ".manao/receipts/24afd82d-68b4-455e-a7aa-5cedfee66e60.json": null,
+            ".manao/python-dependencies/24afd82d-68b4-455e-a7aa-5cedfee66e60/pyproject.toml": {
+              "sha256": "05165902b30f42c03d52a7b0b720ec89d146e44ec5255f05ebb484f2c7df6747",
+              "bytes": 397,
+              "mtimeNs": 1793860028257376000
+            },
+            ".manao/python-dependencies/24afd82d-68b4-455e-a7aa-5cedfee66e60/manifest.json": {
+              "sha256": "fc298920ed56ad461fe5c8a77f4e48ef88a2e5ef684aedaf9cd3e9b17dc8ab27",
+              "bytes": 646,
+              "mtimeNs": 1793860028322376400
+            },
+            ".manao/python-dependencies/24afd82d-68b4-455e-a7aa-5cedfee66e60/uv.lock": {
+              "sha256": "f89a3bd0fce3e78d98d309236e8ca7e534a0b43fef7872e49cf170e4364260ef",
+              "bytes": 6247,
+              "mtimeNs": 1793860028264375800
+            },
+            "manifestFields": {
+              "operationId": "24afd82d-68b4-455e-a7aa-5cedfee66e60",
+              "requestSha256": "17b27aee312f804508bd020f41dc4750bffd38245bae5fad84c64d743c208cc6",
+              "state": "PREPARED",
+              "beforeSha256": "1d53a4759cb8bc07fb995d324094097d1053c388a32ca47f76bba1482b7d9e53",
+              "afterSha256": "32fce6b7dad88842505b227927ab0bd36150a05410886bf5760812d43771455f",
+              "pyproject": {
+                "before": "a315b49bf0e90708405b8f93933c9c5509abc203326fb0f337fa998db965e3cb",
+                "after": "05165902b30f42c03d52a7b0b720ec89d146e44ec5255f05ebb484f2c7df6747"
+              },
+              "uvLock": {
+                "before": "b5e0d1b00fbfa9864dd226b8f2b58149e8d521e18098e3f7547c2cc0cd888c98",
+                "after": "f89a3bd0fce3e78d98d309236e8ca7e534a0b43fef7872e49cf170e4364260ef"
+              }
+            }
+          },
+          "db": "24afd82d-68b4-455e-a7aa-5cedfee66e60\tPENDING\t23\t1d53a4759cb8bc07fb995d324094097d1053c388a32ca47f76bba1482b7d9e53\t32fce6b7dad88842505b227927ab0bd36150a05410886bf5760812d43771455f\t13f3587c15b7f8bd52e9c5abfcd1fabff11b50e10f8ba764cd71804b0490d858\t17b27aee312f804508bd020f41dc4750bffd38245bae5fad84c64d743c208cc6\n076d7797-7f83-418f-9347-3d9ae02dc60b\tRUNNING\t23\tNULL\tNULL\tbf51c6ac-be04-4274-9c73-43a15ea9d470\ncall_00_YXjPpJzvePQkFUichotw7996\tRUNNING\t24afd82d-68b4-455e-a7aa-5cedfee66e60\t23\n23"
+        },
+        "settled": {
+          "capturedAt": "2026-11-05T06:27:53.108Z",
+          "operationId": "24afd82d-68b4-455e-a7aa-5cedfee66e60",
+          "taskId": "076d7797-7f83-418f-9347-3d9ae02dc60b",
+          "fs": {
+            "pyproject.toml": {
+              "sha256": "05165902b30f42c03d52a7b0b720ec89d146e44ec5255f05ebb484f2c7df6747",
+              "bytes": 397,
+              "mtimeNs": 1793860057354588000
+            },
+            "uv.lock": {
+              "sha256": "f89a3bd0fce3e78d98d309236e8ca7e534a0b43fef7872e49cf170e4364260ef",
+              "bytes": 6247,
+              "mtimeNs": 1793860057362588000
+            },
+            ".manao/receipts/24afd82d-68b4-455e-a7aa-5cedfee66e60.json": {
+              "sha256": "13f3587c15b7f8bd52e9c5abfcd1fabff11b50e10f8ba764cd71804b0490d858",
+              "bytes": 291,
+              "mtimeNs": 1793860057422588400
+            },
+            ".manao/python-dependencies/24afd82d-68b4-455e-a7aa-5cedfee66e60/pyproject.toml": {
+              "sha256": "05165902b30f42c03d52a7b0b720ec89d146e44ec5255f05ebb484f2c7df6747",
+              "bytes": 397,
+              "mtimeNs": 1793860028257376000
+            },
+            ".manao/python-dependencies/24afd82d-68b4-455e-a7aa-5cedfee66e60/manifest.json": {
+              "sha256": "fc298920ed56ad461fe5c8a77f4e48ef88a2e5ef684aedaf9cd3e9b17dc8ab27",
+              "bytes": 646,
+              "mtimeNs": 1793860028322376400
+            },
+            ".manao/python-dependencies/24afd82d-68b4-455e-a7aa-5cedfee66e60/uv.lock": {
+              "sha256": "f89a3bd0fce3e78d98d309236e8ca7e534a0b43fef7872e49cf170e4364260ef",
+              "bytes": 6247,
+              "mtimeNs": 1793860028264375800
+            },
+            "manifestFields": {
+              "operationId": "24afd82d-68b4-455e-a7aa-5cedfee66e60",
+              "requestSha256": "17b27aee312f804508bd020f41dc4750bffd38245bae5fad84c64d743c208cc6",
+              "state": "PREPARED",
+              "beforeSha256": "1d53a4759cb8bc07fb995d324094097d1053c388a32ca47f76bba1482b7d9e53",
+              "afterSha256": "32fce6b7dad88842505b227927ab0bd36150a05410886bf5760812d43771455f",
+              "pyproject": {
+                "before": "a315b49bf0e90708405b8f93933c9c5509abc203326fb0f337fa998db965e3cb",
+                "after": "05165902b30f42c03d52a7b0b720ec89d146e44ec5255f05ebb484f2c7df6747"
+              },
+              "uvLock": {
+                "before": "b5e0d1b00fbfa9864dd226b8f2b58149e8d521e18098e3f7547c2cc0cd888c98",
+                "after": "f89a3bd0fce3e78d98d309236e8ca7e534a0b43fef7872e49cf170e4364260ef"
+              }
+            }
+          },
+          "db": "24afd82d-68b4-455e-a7aa-5cedfee66e60\tCOMMITTED\t23\t1d53a4759cb8bc07fb995d324094097d1053c388a32ca47f76bba1482b7d9e53\t32fce6b7dad88842505b227927ab0bd36150a05410886bf5760812d43771455f\t13f3587c15b7f8bd52e9c5abfcd1fabff11b50e10f8ba764cd71804b0490d858\t17b27aee312f804508bd020f41dc4750bffd38245bae5fad84c64d743c208cc6\n076d7797-7f83-418f-9347-3d9ae02dc60b\tCOMPLETED\t23\t24\tNULL\tNULL\ncall_00_YXjPpJzvePQkFUichotw7996\tCOMPLETED\t24afd82d-68b4-455e-a7aa-5cedfee66e60\t23\n24"
+        }
+      },
+      "traces": {
+        "main": [
+          {
+            "event": "BOUND",
+            "class": "com.manao.poc4.workspace.PythonDependencyService",
+            "method": "changeForAgent",
+            "line": 81,
+            "kind": "trace"
+          },
+          {
+            "event": "BOUND",
+            "class": "com.manao.poc4.workspace.WorkspaceOperationService",
+            "method": "commitNewPythonDependency",
+            "line": 305,
+            "kind": "gate"
+          },
+          {
+            "event": "ARMED",
+            "projectId": "bf51c6ac-be04-4274-9c73-43a15ea9d470",
+            "class": "com.manao.poc4.workspace.WorkspaceOperationService",
+            "line": 305
+          },
+          {
+            "event": "TRACE",
+            "projectId": "bf51c6ac-be04-4274-9c73-43a15ea9d470",
+            "operationId": "24afd82d-68b4-455e-a7aa-5cedfee66e60",
+            "threadId": 5,
+            "class": "com.manao.poc4.workspace.PythonDependencyService",
+            "method": "changeForAgent",
+            "line": 81
+          },
+          {
+            "event": "HIT",
+            "projectId": "bf51c6ac-be04-4274-9c73-43a15ea9d470",
+            "operationId": "24afd82d-68b4-455e-a7aa-5cedfee66e60",
+            "threadId": 5,
+            "class": "com.manao.poc4.workspace.WorkspaceOperationService",
+            "method": "commitNewPythonDependency",
+            "line": 305
+          },
+          {
+            "event": "RESUMED",
+            "projectId": "bf51c6ac-be04-4274-9c73-43a15ea9d470"
+          },
+          {
+            "event": "TRACE_COMPLETE",
+            "projectId": "bf51c6ac-be04-4274-9c73-43a15ea9d470",
+            "operationId": "24afd82d-68b4-455e-a7aa-5cedfee66e60"
+          }
+        ],
+        "prepareObserver": null,
+        "helperObserver": null,
+        "caller": null
+      },
+      "task": {
+        "taskId": "076d7797-7f83-418f-9347-3d9ae02dc60b",
+        "state": "COMPLETED",
+        "workspaceRevision": "24",
+        "writesLocked": false,
+        "progress": [
+          {
+            "seq": 1,
+            "kind": "message",
+            "text": "",
+            "truncated": false
+          },
+          {
+            "seq": 2,
+            "kind": "tool_start",
+            "text": "python_dependencies call_00_YXjPpJzvePQkFUichotw7996",
+            "truncated": false
+          },
+          {
+            "seq": 3,
+            "kind": "tool_end",
+            "text": "python_dependencies call_00_YXjPpJzvePQkFUichotw7996",
+            "truncated": false
+          },
+          {
+            "seq": 4,
+            "kind": "message",
+            "text": "依赖操作已按约束执行完毕，仅调用了一次 `python_dependencies`，之后未做任何其他操作。\n\n结果（工具实际返回）：\n- 工具调用 ID：`call_00_YXjPpJzvePQkFUichotw7996`\n- 操作：`add` six → group `test`\n- 状态：`COMMITTED`（已提交，非取消/未知/失败）\n- `operationId`：`24afd82d-68b4-455e-a7aa-5cedfee66e60`\n- 变更文件：`pyproject.toml`、`uv.lock`\n- 工作区版本：23 → 24\n\n说明：\n- 未修改任何源码或测试文件。\n- 未调用 `build` 或 `application`，因此本次没有编译检查、测试或运行验证结果（属未验证状态）。\n- 未进行额外依赖操作，也未重试。",
+            "truncated": false
+          }
+        ],
+        "changedPaths": [
+          "pyproject.toml",
+          "uv.lock"
+        ],
+        "summary": "依赖操作已按约束执行完毕，仅调用了一次 `python_dependencies`，之后未做任何其他操作。\n\n结果（工具实际返回）：\n- 工具调用 ID：`call_00_YXjPpJzvePQkFUichotw7996`\n- 操作：`add` six → group `test`\n- 状态：`COMMITTED`（已提交，非取消/未知/失败）\n- `operationId`：`24afd82d-68b4-455e-a7aa-5cedfee66e60`\n- 变更文件：`pyproject.toml`、`uv.lock`\n- 工作区版本：23 → 24\n\n说明：\n- 未修改任何源码或测试文件。\n- 未调用 `build` 或 `application`，因此本次没有编译检查、测试或运行验证结果（属未验证状态）。\n- 未进行额外依赖操作，也未重试。",
+        "failureCode": null,
+        "conversationId": "79a99f70-d53b-42a2-9db8-49fc0f1f1f9b",
+        "reasoningEffort": "high",
+        "closeReasonCode": null
+      },
+      "tools": [
+        {
+          "toolCallId": "call_00_YXjPpJzvePQkFUichotw7996",
+          "toolName": "python_dependencies",
+          "data": {
+            "kind": "python_dependencies",
+            "operationId": "24afd82d-68b4-455e-a7aa-5cedfee66e60",
+            "action": "add",
+            "packageName": "six",
+            "group": "test",
+            "state": "COMMITTED",
+            "changedPaths": [
+              "pyproject.toml",
+              "uv.lock"
+            ]
+          }
+        }
+      ],
+      "buildCalls": 0,
+      "restart": {
+        "before": {
+          "name": "manao-ws-bf51c6ac-be04-4274-9c73-43a15ea9d470",
+          "uid": "67e08e62-f1d3-458f-97d2-a7cbee851476",
+          "containerId": "containerd://151d5cff0d1cd65c610362dc65789fc40b2543a8384ee498c17ac5a3fa585b0f",
+          "restartCount": 1,
+          "ready": true,
+          "imageId": "docker.io/chocologic/manao_images_repository@sha256:65e4ba78fd0e078d64307fb72bff6017d173c7d933fd5533e7a5e3650728135c",
+          "pvc": [
+            {
+              "name": "manao-pvc-bf51c6ac-be04-4274-9c73-43a15ea9d470",
+              "uid": "f8c4f418-380a-4457-ac72-7ec9b0ec9157"
+            }
+          ]
+        },
+        "after": {
+          "name": "manao-ws-bf51c6ac-be04-4274-9c73-43a15ea9d470",
+          "uid": "67e08e62-f1d3-458f-97d2-a7cbee851476",
+          "containerId": "containerd://fe9637683f8720ac7d8ce795bde918e8bb79063a1bfa740cbcbb2fdd0150e18e",
+          "restartCount": 2,
+          "ready": true,
+          "imageId": "docker.io/chocologic/manao_images_repository@sha256:65e4ba78fd0e078d64307fb72bff6017d173c7d933fd5533e7a5e3650728135c",
+          "pvc": [
+            {
+              "name": "manao-pvc-bf51c6ac-be04-4274-9c73-43a15ea9d470",
+              "uid": "f8c4f418-380a-4457-ac72-7ec9b0ec9157"
+            }
+          ]
+        }
+      },
+      "traceTiming": {
+        "main": {
+          "createdUtc": "2026-11-05T06:26:53.141Z",
+          "lastAppendUtc": "2026-11-05T06:27:51.864Z",
+          "source": "Operator append-only JSONL file creation/last-write metadata; events themselves do not carry timestamps"
+        }
+      },
+      "durableCompletionUtc": "2026-11-05T06:27:37.495862Z\t2026-11-05T06:27:40.372102Z",
+      "claimEvidence": "Indirect: while held the original active_project/writesLocked remains; original call completes and production close/finishForClose passes the hasLiveCalls gate before task unlock. No direct in-memory claim counter captured.",
+      "counterLimit": "Exact scoped prepare/helper entry observed once during bounded trace covering durable completion; journal bytes/mtime unchanged. Not a lifetime profiler."
+    },
+    {
+      "name": "r-backend-pending",
+      "status": "PASS",
+      "operationId": "a6c887f2-41fd-46d4-af73-44feffd07506",
+      "taskId": "f3058a30-612e-47d0-92a6-c51b69b8f0fc",
+      "beforeRevision": 24,
+      "afterRevision": 25,
+      "snapshots": {
+        "held": {
+          "capturedAt": "2026-11-05T06:28:36.557Z",
+          "operationId": "a6c887f2-41fd-46d4-af73-44feffd07506",
+          "taskId": "f3058a30-612e-47d0-92a6-c51b69b8f0fc",
+          "fs": {
+            "pyproject.toml": {
+              "sha256": "05165902b30f42c03d52a7b0b720ec89d146e44ec5255f05ebb484f2c7df6747",
+              "bytes": 397,
+              "mtimeNs": 1793860057354588000
+            },
+            "uv.lock": {
+              "sha256": "f89a3bd0fce3e78d98d309236e8ca7e534a0b43fef7872e49cf170e4364260ef",
+              "bytes": 6247,
+              "mtimeNs": 1793860057362588000
+            },
+            ".manao/receipts/a6c887f2-41fd-46d4-af73-44feffd07506.json": null,
+            ".manao/python-dependencies/a6c887f2-41fd-46d4-af73-44feffd07506/pyproject.toml": {
+              "sha256": "810fe47918b7326dab9ce322e184367fc45f138a481e43f6781f811fb3d42751",
+              "bytes": 419,
+              "mtimeNs": 1793860110259973000
+            },
+            ".manao/python-dependencies/a6c887f2-41fd-46d4-af73-44feffd07506/manifest.json": {
+              "sha256": "ac44d8f92957640a7ffad5c72794c1aee75e10d592ab2a38b750db1667e77691",
+              "bytes": 646,
+              "mtimeNs": 1793860110276973300
+            },
+            ".manao/python-dependencies/a6c887f2-41fd-46d4-af73-44feffd07506/uv.lock": {
+              "sha256": "67810136dea98a90038c83a3f32c1c8c922ff620e545a89491977e2b17b5c7d5",
+              "bytes": 6918,
+              "mtimeNs": 1793860110267973000
+            },
+            "manifestFields": {
+              "operationId": "a6c887f2-41fd-46d4-af73-44feffd07506",
+              "requestSha256": "b08a766703260e7d5175565c7901ac27f57b2fa47d1433a94d8c190fe993a00b",
+              "state": "PREPARED",
+              "beforeSha256": "32fce6b7dad88842505b227927ab0bd36150a05410886bf5760812d43771455f",
+              "afterSha256": "46aa0e0a1a7ae2898631a3f0300d0562f9d045c90b458f6dcfe32907a3cf8eb2",
+              "pyproject": {
+                "before": "05165902b30f42c03d52a7b0b720ec89d146e44ec5255f05ebb484f2c7df6747",
+                "after": "810fe47918b7326dab9ce322e184367fc45f138a481e43f6781f811fb3d42751"
+              },
+              "uvLock": {
+                "before": "f89a3bd0fce3e78d98d309236e8ca7e534a0b43fef7872e49cf170e4364260ef",
+                "after": "67810136dea98a90038c83a3f32c1c8c922ff620e545a89491977e2b17b5c7d5"
+              }
+            }
+          },
+          "db": "a6c887f2-41fd-46d4-af73-44feffd07506\tPENDING\t24\t32fce6b7dad88842505b227927ab0bd36150a05410886bf5760812d43771455f\t46aa0e0a1a7ae2898631a3f0300d0562f9d045c90b458f6dcfe32907a3cf8eb2\tc9efcf12fe3d8c1aac8aab960b84a2d398aacf06129cca66b16ae2544ff62131\tb08a766703260e7d5175565c7901ac27f57b2fa47d1433a94d8c190fe993a00b\nf3058a30-612e-47d0-92a6-c51b69b8f0fc\tRUNNING\t24\tNULL\tNULL\tbf51c6ac-be04-4274-9c73-43a15ea9d470\ncall_00_yN4WzkPWbSbHIr4WMDtn4810\tRUNNING\ta6c887f2-41fd-46d4-af73-44feffd07506\t24\n24"
+        },
+        "restarted": {
+          "capturedAt": "2026-11-05T06:29:07.479Z",
+          "operationId": "a6c887f2-41fd-46d4-af73-44feffd07506",
+          "taskId": "f3058a30-612e-47d0-92a6-c51b69b8f0fc",
+          "fs": {
+            "pyproject.toml": {
+              "sha256": "05165902b30f42c03d52a7b0b720ec89d146e44ec5255f05ebb484f2c7df6747",
+              "bytes": 397,
+              "mtimeNs": 1793860057354588000
+            },
+            "uv.lock": {
+              "sha256": "f89a3bd0fce3e78d98d309236e8ca7e534a0b43fef7872e49cf170e4364260ef",
+              "bytes": 6247,
+              "mtimeNs": 1793860057362588000
+            },
+            ".manao/receipts/a6c887f2-41fd-46d4-af73-44feffd07506.json": null,
+            ".manao/python-dependencies/a6c887f2-41fd-46d4-af73-44feffd07506/pyproject.toml": {
+              "sha256": "810fe47918b7326dab9ce322e184367fc45f138a481e43f6781f811fb3d42751",
+              "bytes": 419,
+              "mtimeNs": 1793860110259973000
+            },
+            ".manao/python-dependencies/a6c887f2-41fd-46d4-af73-44feffd07506/manifest.json": {
+              "sha256": "ac44d8f92957640a7ffad5c72794c1aee75e10d592ab2a38b750db1667e77691",
+              "bytes": 646,
+              "mtimeNs": 1793860110276973300
+            },
+            ".manao/python-dependencies/a6c887f2-41fd-46d4-af73-44feffd07506/uv.lock": {
+              "sha256": "67810136dea98a90038c83a3f32c1c8c922ff620e545a89491977e2b17b5c7d5",
+              "bytes": 6918,
+              "mtimeNs": 1793860110267973000
+            },
+            "manifestFields": {
+              "operationId": "a6c887f2-41fd-46d4-af73-44feffd07506",
+              "requestSha256": "b08a766703260e7d5175565c7901ac27f57b2fa47d1433a94d8c190fe993a00b",
+              "state": "PREPARED",
+              "beforeSha256": "32fce6b7dad88842505b227927ab0bd36150a05410886bf5760812d43771455f",
+              "afterSha256": "46aa0e0a1a7ae2898631a3f0300d0562f9d045c90b458f6dcfe32907a3cf8eb2",
+              "pyproject": {
+                "before": "05165902b30f42c03d52a7b0b720ec89d146e44ec5255f05ebb484f2c7df6747",
+                "after": "810fe47918b7326dab9ce322e184367fc45f138a481e43f6781f811fb3d42751"
+              },
+              "uvLock": {
+                "before": "f89a3bd0fce3e78d98d309236e8ca7e534a0b43fef7872e49cf170e4364260ef",
+                "after": "67810136dea98a90038c83a3f32c1c8c922ff620e545a89491977e2b17b5c7d5"
+              }
+            }
+          },
+          "db": "a6c887f2-41fd-46d4-af73-44feffd07506\tPENDING\t24\t32fce6b7dad88842505b227927ab0bd36150a05410886bf5760812d43771455f\t46aa0e0a1a7ae2898631a3f0300d0562f9d045c90b458f6dcfe32907a3cf8eb2\tc9efcf12fe3d8c1aac8aab960b84a2d398aacf06129cca66b16ae2544ff62131\tb08a766703260e7d5175565c7901ac27f57b2fa47d1433a94d8c190fe993a00b\nf3058a30-612e-47d0-92a6-c51b69b8f0fc\tRUNNING\t24\tNULL\tNULL\tbf51c6ac-be04-4274-9c73-43a15ea9d470\ncall_00_yN4WzkPWbSbHIr4WMDtn4810\tRUNNING\ta6c887f2-41fd-46d4-af73-44feffd07506\t24\n24"
+        },
+        "settled": {
+          "capturedAt": "2026-11-05T06:29:09.489Z",
+          "operationId": "a6c887f2-41fd-46d4-af73-44feffd07506",
+          "taskId": "f3058a30-612e-47d0-92a6-c51b69b8f0fc",
+          "fs": {
+            "pyproject.toml": {
+              "sha256": "810fe47918b7326dab9ce322e184367fc45f138a481e43f6781f811fb3d42751",
+              "bytes": 419,
+              "mtimeNs": 1793860148171249400
+            },
+            "uv.lock": {
+              "sha256": "67810136dea98a90038c83a3f32c1c8c922ff620e545a89491977e2b17b5c7d5",
+              "bytes": 6918,
+              "mtimeNs": 1793860148178249500
+            },
+            ".manao/receipts/a6c887f2-41fd-46d4-af73-44feffd07506.json": {
+              "sha256": "c9efcf12fe3d8c1aac8aab960b84a2d398aacf06129cca66b16ae2544ff62131",
+              "bytes": 291,
+              "mtimeNs": 1793860148188249300
+            },
+            ".manao/python-dependencies/a6c887f2-41fd-46d4-af73-44feffd07506/pyproject.toml": {
+              "sha256": "810fe47918b7326dab9ce322e184367fc45f138a481e43f6781f811fb3d42751",
+              "bytes": 419,
+              "mtimeNs": 1793860110259973000
+            },
+            ".manao/python-dependencies/a6c887f2-41fd-46d4-af73-44feffd07506/manifest.json": {
+              "sha256": "ac44d8f92957640a7ffad5c72794c1aee75e10d592ab2a38b750db1667e77691",
+              "bytes": 646,
+              "mtimeNs": 1793860110276973300
+            },
+            ".manao/python-dependencies/a6c887f2-41fd-46d4-af73-44feffd07506/uv.lock": {
+              "sha256": "67810136dea98a90038c83a3f32c1c8c922ff620e545a89491977e2b17b5c7d5",
+              "bytes": 6918,
+              "mtimeNs": 1793860110267973000
+            },
+            "manifestFields": {
+              "operationId": "a6c887f2-41fd-46d4-af73-44feffd07506",
+              "requestSha256": "b08a766703260e7d5175565c7901ac27f57b2fa47d1433a94d8c190fe993a00b",
+              "state": "PREPARED",
+              "beforeSha256": "32fce6b7dad88842505b227927ab0bd36150a05410886bf5760812d43771455f",
+              "afterSha256": "46aa0e0a1a7ae2898631a3f0300d0562f9d045c90b458f6dcfe32907a3cf8eb2",
+              "pyproject": {
+                "before": "05165902b30f42c03d52a7b0b720ec89d146e44ec5255f05ebb484f2c7df6747",
+                "after": "810fe47918b7326dab9ce322e184367fc45f138a481e43f6781f811fb3d42751"
+              },
+              "uvLock": {
+                "before": "f89a3bd0fce3e78d98d309236e8ca7e534a0b43fef7872e49cf170e4364260ef",
+                "after": "67810136dea98a90038c83a3f32c1c8c922ff620e545a89491977e2b17b5c7d5"
+              }
+            }
+          },
+          "db": "a6c887f2-41fd-46d4-af73-44feffd07506\tCOMMITTED\t24\t32fce6b7dad88842505b227927ab0bd36150a05410886bf5760812d43771455f\t46aa0e0a1a7ae2898631a3f0300d0562f9d045c90b458f6dcfe32907a3cf8eb2\tc9efcf12fe3d8c1aac8aab960b84a2d398aacf06129cca66b16ae2544ff62131\tb08a766703260e7d5175565c7901ac27f57b2fa47d1433a94d8c190fe993a00b\nf3058a30-612e-47d0-92a6-c51b69b8f0fc\tFAILED\t24\t25\tAI_CLOSED\tNULL\ncall_00_yN4WzkPWbSbHIr4WMDtn4810\tCOMPLETED\ta6c887f2-41fd-46d4-af73-44feffd07506\t24\n25"
+        }
+      },
+      "traces": {
+        "main": [
+          {
+            "event": "BOUND",
+            "class": "com.manao.poc4.workspace.PythonDependencyService",
+            "method": "changeForAgent",
+            "line": 81,
+            "kind": "trace"
+          },
+          {
+            "event": "BOUND",
+            "class": "com.manao.poc4.workspace.WorkspaceOperationService",
+            "method": "commitNewPythonDependency",
+            "line": 305,
+            "kind": "gate"
+          },
+          {
+            "event": "ARMED",
+            "projectId": "bf51c6ac-be04-4274-9c73-43a15ea9d470",
+            "class": "com.manao.poc4.workspace.WorkspaceOperationService",
+            "line": 305
+          },
+          {
+            "event": "TRACE",
+            "projectId": "bf51c6ac-be04-4274-9c73-43a15ea9d470",
+            "operationId": "a6c887f2-41fd-46d4-af73-44feffd07506",
+            "threadId": 12,
+            "class": "com.manao.poc4.workspace.PythonDependencyService",
+            "method": "changeForAgent",
+            "line": 81
+          },
+          {
+            "event": "HIT",
+            "projectId": "bf51c6ac-be04-4274-9c73-43a15ea9d470",
+            "operationId": "a6c887f2-41fd-46d4-af73-44feffd07506",
+            "threadId": 12,
+            "class": "com.manao.poc4.workspace.WorkspaceOperationService",
+            "method": "commitNewPythonDependency",
+            "line": 305
+          },
+          {
+            "event": "VM_EXIT_REQUESTED",
+            "projectId": "bf51c6ac-be04-4274-9c73-43a15ea9d470",
+            "operationId": "a6c887f2-41fd-46d4-af73-44feffd07506"
+          }
+        ],
+        "prepareObserver": null,
+        "helperObserver": [
+          {
+            "event": "BOUND",
+            "class": "com.manao.poc4.workspaceagent.PythonDependencyEditor$HelperResolver",
+            "method": "runHelper",
+            "line": 458,
+            "kind": "trace"
+          },
+          {
+            "event": "BOUND",
+            "class": "com.manao.poc4.workspaceagent.PythonDependencyEditor$HelperResolver",
+            "method": "runHelper",
+            "line": 458,
+            "kind": "gate"
+          },
+          {
+            "event": "ARMED",
+            "projectId": "bf51c6ac-be04-4274-9c73-43a15ea9d470",
+            "class": "com.manao.poc4.workspaceagent.PythonDependencyEditor$HelperResolver",
+            "line": 458
+          },
+          {
+            "event": "TRACE",
+            "projectId": "bf51c6ac-be04-4274-9c73-43a15ea9d470",
+            "operationId": "a6c887f2-41fd-46d4-af73-44feffd07506",
+            "threadId": 31,
+            "class": "com.manao.poc4.workspaceagent.PythonDependencyEditor$HelperResolver",
+            "method": "runHelper",
+            "line": 458
+          },
+          {
+            "event": "HIT",
+            "projectId": "bf51c6ac-be04-4274-9c73-43a15ea9d470",
+            "operationId": "a6c887f2-41fd-46d4-af73-44feffd07506",
+            "threadId": 31,
+            "class": "com.manao.poc4.workspaceagent.PythonDependencyEditor$HelperResolver",
+            "method": "runHelper",
+            "line": 458
+          },
+          {
+            "event": "RESUMED",
+            "projectId": "bf51c6ac-be04-4274-9c73-43a15ea9d470"
+          },
+          {
+            "event": "TRACE_COMPLETE",
+            "projectId": "bf51c6ac-be04-4274-9c73-43a15ea9d470",
+            "operationId": "a6c887f2-41fd-46d4-af73-44feffd07506"
+          }
+        ],
+        "caller": null
+      },
+      "task": {
+        "taskId": "f3058a30-612e-47d0-92a6-c51b69b8f0fc",
+        "state": "FAILED",
+        "workspaceRevision": "25",
+        "writesLocked": false,
+        "progress": [
+          {
+            "seq": 1,
+            "kind": "message",
+            "text": "",
+            "truncated": false
+          },
+          {
+            "seq": 2,
+            "kind": "tool_start",
+            "text": "python_dependencies call_00_yN4WzkPWbSbHIr4WMDtn4810",
+            "truncated": false
+          }
+        ],
+        "changedPaths": [
+          "pyproject.toml",
+          "uv.lock"
+        ],
+        "summary": "closed by the owner",
+        "failureCode": "AI_CLOSED",
+        "conversationId": "b8eab443-5507-4f3c-8670-2b1eb2453cc9",
+        "reasoningEffort": "high",
+        "closeReasonCode": "AI_CLOSED"
+      },
+      "tools": [
+        {
+          "toolCallId": "call_00_yN4WzkPWbSbHIr4WMDtn4810",
+          "toolName": "python_dependencies",
+          "data": {
+            "kind": "python_dependencies",
+            "operationId": "a6c887f2-41fd-46d4-af73-44feffd07506",
+            "action": "add",
+            "packageName": "sniffio",
+            "group": "test",
+            "state": "COMMITTED",
+            "changedPaths": [
+              "pyproject.toml",
+              "uv.lock"
+            ]
+          }
+        }
+      ],
+      "buildCalls": 0,
+      "restart": {
+        "before": {
+          "name": "backend-5d9986d6fb-zk7z4",
+          "uid": "93aab02c-e7e8-4552-85be-dba970331a8f",
+          "containerId": "containerd://6ea24cc9156f1d27052970e056eb991364311b98d79d7a7258dd176ce0f17802",
+          "restartCount": 0,
+          "ready": true,
+          "imageId": "docker.io/chocologic/manao_images_repository@sha256:3a847b0e9420ea6a0111fb116e9664583e6c43ec17f31a95b66a4fda199f56cb",
+          "pvc": []
+        },
+        "after": {
+          "name": "backend-5d9986d6fb-zk7z4",
+          "uid": "93aab02c-e7e8-4552-85be-dba970331a8f",
+          "containerId": "containerd://8d0eff4db0f5ebd1cd982a581ee5edf84337bb9beccdd328e88064f9b3290c87",
+          "restartCount": 1,
+          "ready": true,
+          "imageId": "docker.io/chocologic/manao_images_repository@sha256:3a847b0e9420ea6a0111fb116e9664583e6c43ec17f31a95b66a4fda199f56cb",
+          "pvc": []
+        }
+      },
+      "traceTiming": {
+        "main": {
+          "createdUtc": "2026-11-05T06:28:06.045Z",
+          "lastAppendUtc": "2026-11-05T06:28:37.137Z",
+          "source": "Operator append-only JSONL file creation/last-write metadata; events themselves do not carry timestamps"
+        },
+        "helperObserver": {
+          "createdUtc": "2026-11-05T06:28:05.083Z",
+          "lastAppendUtc": "2026-11-05T06:29:29.878Z",
+          "source": "Operator append-only JSONL file creation/last-write metadata; events themselves do not carry timestamps"
+        }
+      },
+      "durableCompletionUtc": "2026-11-05T06:29:08.297192Z\t2026-11-05T06:29:09.786870Z",
+      "claimEvidence": "Indirect: while held the original active_project/writesLocked remains; original call completes and production close/finishForClose passes the hasLiveCalls gate before task unlock. No direct in-memory claim counter captured.",
+      "counterLimit": "Surviving agent helper trace covers durable completion and records one start; restarted backend prepare entry count was not directly recorded. Original journal digest/mtime unchanged."
+    },
+    {
+      "name": "d-lost-response-repeat",
+      "status": "PASS",
+      "operationId": "7eb5f504-35d1-4a2b-8966-e2af2e1f7ed1",
+      "taskId": "5e1da57a-4763-4ad3-aebc-e10e84ff3ba9",
+      "beforeRevision": 25,
+      "afterRevision": 26,
+      "snapshots": {
+        "held": {
+          "capturedAt": "2026-11-05T06:34:29.277Z",
+          "operationId": "7eb5f504-35d1-4a2b-8966-e2af2e1f7ed1",
+          "taskId": "5e1da57a-4763-4ad3-aebc-e10e84ff3ba9",
+          "fs": {
+            "pyproject.toml": {
+              "sha256": "f73ab419fe585c50cb88125643ccc8dcc16b7616f5b914d4594e7e221295c5e3",
+              "bytes": 446,
+              "mtimeNs": 1793860466183633000
+            },
+            "uv.lock": {
+              "sha256": "5cd2eea231a91056fc99db18001f93684896214b7607c0cf3a5d7d3bfa31dd11",
+              "bytes": 7609,
+              "mtimeNs": 1793860466189633000
+            },
+            ".manao/receipts/7eb5f504-35d1-4a2b-8966-e2af2e1f7ed1.json": {
+              "sha256": "ec935d5a320dcd4717412cee2f3222b284e10b6e62730e0a7769d80d8cbe2cdc",
+              "bytes": 291,
+              "mtimeNs": 1793860466203633200
+            },
+            ".manao/python-dependencies/7eb5f504-35d1-4a2b-8966-e2af2e1f7ed1/pyproject.toml": {
+              "sha256": "f73ab419fe585c50cb88125643ccc8dcc16b7616f5b914d4594e7e221295c5e3",
+              "bytes": 446,
+              "mtimeNs": 1793860460229587000
+            },
+            ".manao/python-dependencies/7eb5f504-35d1-4a2b-8966-e2af2e1f7ed1/manifest.json": {
+              "sha256": "75e26c4538e5e10e52c068a9c341cf5b878286662e91403c067140b822f7c01d",
+              "bytes": 646,
+              "mtimeNs": 1793860460243587000
+            },
+            ".manao/python-dependencies/7eb5f504-35d1-4a2b-8966-e2af2e1f7ed1/uv.lock": {
+              "sha256": "5cd2eea231a91056fc99db18001f93684896214b7607c0cf3a5d7d3bfa31dd11",
+              "bytes": 7609,
+              "mtimeNs": 1793860460236587000
+            },
+            "manifestFields": {
+              "operationId": "7eb5f504-35d1-4a2b-8966-e2af2e1f7ed1",
+              "requestSha256": "fda89b7e45c76071f53d756eff27b6f885123c3c417ab802380151999a73f560",
+              "state": "PREPARED",
+              "beforeSha256": "46aa0e0a1a7ae2898631a3f0300d0562f9d045c90b458f6dcfe32907a3cf8eb2",
+              "afterSha256": "17342ebe7fb9ebbd533841dfebc0d920ec42e6fe2599720e5a3285c2a11c0682",
+              "pyproject": {
+                "before": "810fe47918b7326dab9ce322e184367fc45f138a481e43f6781f811fb3d42751",
+                "after": "f73ab419fe585c50cb88125643ccc8dcc16b7616f5b914d4594e7e221295c5e3"
+              },
+              "uvLock": {
+                "before": "67810136dea98a90038c83a3f32c1c8c922ff620e545a89491977e2b17b5c7d5",
+                "after": "5cd2eea231a91056fc99db18001f93684896214b7607c0cf3a5d7d3bfa31dd11"
+              }
+            }
+          },
+          "db": "7eb5f504-35d1-4a2b-8966-e2af2e1f7ed1\tPENDING\t25\t46aa0e0a1a7ae2898631a3f0300d0562f9d045c90b458f6dcfe32907a3cf8eb2\t17342ebe7fb9ebbd533841dfebc0d920ec42e6fe2599720e5a3285c2a11c0682\tec935d5a320dcd4717412cee2f3222b284e10b6e62730e0a7769d80d8cbe2cdc\tfda89b7e45c76071f53d756eff27b6f885123c3c417ab802380151999a73f560\n5e1da57a-4763-4ad3-aebc-e10e84ff3ba9\tRUNNING\t25\tNULL\tNULL\tbf51c6ac-be04-4274-9c73-43a15ea9d470\ncall_00_V9ysQIa2AYp7LK4JhIAX6406\tRUNNING\t7eb5f504-35d1-4a2b-8966-e2af2e1f7ed1\t25\n25"
+        },
+        "caller-interrupted": {
+          "capturedAt": "2026-11-05T06:34:38.057Z",
+          "operationId": "7eb5f504-35d1-4a2b-8966-e2af2e1f7ed1",
+          "taskId": "5e1da57a-4763-4ad3-aebc-e10e84ff3ba9",
+          "fs": {
+            "pyproject.toml": {
+              "sha256": "f73ab419fe585c50cb88125643ccc8dcc16b7616f5b914d4594e7e221295c5e3",
+              "bytes": 446,
+              "mtimeNs": 1793860466183633000
+            },
+            "uv.lock": {
+              "sha256": "5cd2eea231a91056fc99db18001f93684896214b7607c0cf3a5d7d3bfa31dd11",
+              "bytes": 7609,
+              "mtimeNs": 1793860466189633000
+            },
+            ".manao/receipts/7eb5f504-35d1-4a2b-8966-e2af2e1f7ed1.json": {
+              "sha256": "ec935d5a320dcd4717412cee2f3222b284e10b6e62730e0a7769d80d8cbe2cdc",
+              "bytes": 291,
+              "mtimeNs": 1793860466203633200
+            },
+            ".manao/python-dependencies/7eb5f504-35d1-4a2b-8966-e2af2e1f7ed1/pyproject.toml": {
+              "sha256": "f73ab419fe585c50cb88125643ccc8dcc16b7616f5b914d4594e7e221295c5e3",
+              "bytes": 446,
+              "mtimeNs": 1793860460229587000
+            },
+            ".manao/python-dependencies/7eb5f504-35d1-4a2b-8966-e2af2e1f7ed1/manifest.json": {
+              "sha256": "75e26c4538e5e10e52c068a9c341cf5b878286662e91403c067140b822f7c01d",
+              "bytes": 646,
+              "mtimeNs": 1793860460243587000
+            },
+            ".manao/python-dependencies/7eb5f504-35d1-4a2b-8966-e2af2e1f7ed1/uv.lock": {
+              "sha256": "5cd2eea231a91056fc99db18001f93684896214b7607c0cf3a5d7d3bfa31dd11",
+              "bytes": 7609,
+              "mtimeNs": 1793860460236587000
+            },
+            "manifestFields": {
+              "operationId": "7eb5f504-35d1-4a2b-8966-e2af2e1f7ed1",
+              "requestSha256": "fda89b7e45c76071f53d756eff27b6f885123c3c417ab802380151999a73f560",
+              "state": "PREPARED",
+              "beforeSha256": "46aa0e0a1a7ae2898631a3f0300d0562f9d045c90b458f6dcfe32907a3cf8eb2",
+              "afterSha256": "17342ebe7fb9ebbd533841dfebc0d920ec42e6fe2599720e5a3285c2a11c0682",
+              "pyproject": {
+                "before": "810fe47918b7326dab9ce322e184367fc45f138a481e43f6781f811fb3d42751",
+                "after": "f73ab419fe585c50cb88125643ccc8dcc16b7616f5b914d4594e7e221295c5e3"
+              },
+              "uvLock": {
+                "before": "67810136dea98a90038c83a3f32c1c8c922ff620e545a89491977e2b17b5c7d5",
+                "after": "5cd2eea231a91056fc99db18001f93684896214b7607c0cf3a5d7d3bfa31dd11"
+              }
+            }
+          },
+          "db": "7eb5f504-35d1-4a2b-8966-e2af2e1f7ed1\tPENDING\t25\t46aa0e0a1a7ae2898631a3f0300d0562f9d045c90b458f6dcfe32907a3cf8eb2\t17342ebe7fb9ebbd533841dfebc0d920ec42e6fe2599720e5a3285c2a11c0682\tec935d5a320dcd4717412cee2f3222b284e10b6e62730e0a7769d80d8cbe2cdc\tfda89b7e45c76071f53d756eff27b6f885123c3c417ab802380151999a73f560\n5e1da57a-4763-4ad3-aebc-e10e84ff3ba9\tNEEDS_ATTENTION\t25\tNULL\tNULL\tbf51c6ac-be04-4274-9c73-43a15ea9d470\ncall_00_V9ysQIa2AYp7LK4JhIAX6406\tNEEDS_ATTENTION\t7eb5f504-35d1-4a2b-8966-e2af2e1f7ed1\t25\n25"
+        },
+        "settled": {
+          "capturedAt": "2026-11-05T06:34:54.444Z",
+          "operationId": "7eb5f504-35d1-4a2b-8966-e2af2e1f7ed1",
+          "taskId": "5e1da57a-4763-4ad3-aebc-e10e84ff3ba9",
+          "fs": {
+            "pyproject.toml": {
+              "sha256": "f73ab419fe585c50cb88125643ccc8dcc16b7616f5b914d4594e7e221295c5e3",
+              "bytes": 446,
+              "mtimeNs": 1793860466183633000
+            },
+            "uv.lock": {
+              "sha256": "5cd2eea231a91056fc99db18001f93684896214b7607c0cf3a5d7d3bfa31dd11",
+              "bytes": 7609,
+              "mtimeNs": 1793860466189633000
+            },
+            ".manao/receipts/7eb5f504-35d1-4a2b-8966-e2af2e1f7ed1.json": {
+              "sha256": "ec935d5a320dcd4717412cee2f3222b284e10b6e62730e0a7769d80d8cbe2cdc",
+              "bytes": 291,
+              "mtimeNs": 1793860466203633200
+            },
+            ".manao/python-dependencies/7eb5f504-35d1-4a2b-8966-e2af2e1f7ed1/pyproject.toml": {
+              "sha256": "f73ab419fe585c50cb88125643ccc8dcc16b7616f5b914d4594e7e221295c5e3",
+              "bytes": 446,
+              "mtimeNs": 1793860460229587000
+            },
+            ".manao/python-dependencies/7eb5f504-35d1-4a2b-8966-e2af2e1f7ed1/manifest.json": {
+              "sha256": "75e26c4538e5e10e52c068a9c341cf5b878286662e91403c067140b822f7c01d",
+              "bytes": 646,
+              "mtimeNs": 1793860460243587000
+            },
+            ".manao/python-dependencies/7eb5f504-35d1-4a2b-8966-e2af2e1f7ed1/uv.lock": {
+              "sha256": "5cd2eea231a91056fc99db18001f93684896214b7607c0cf3a5d7d3bfa31dd11",
+              "bytes": 7609,
+              "mtimeNs": 1793860460236587000
+            },
+            "manifestFields": {
+              "operationId": "7eb5f504-35d1-4a2b-8966-e2af2e1f7ed1",
+              "requestSha256": "fda89b7e45c76071f53d756eff27b6f885123c3c417ab802380151999a73f560",
+              "state": "PREPARED",
+              "beforeSha256": "46aa0e0a1a7ae2898631a3f0300d0562f9d045c90b458f6dcfe32907a3cf8eb2",
+              "afterSha256": "17342ebe7fb9ebbd533841dfebc0d920ec42e6fe2599720e5a3285c2a11c0682",
+              "pyproject": {
+                "before": "810fe47918b7326dab9ce322e184367fc45f138a481e43f6781f811fb3d42751",
+                "after": "f73ab419fe585c50cb88125643ccc8dcc16b7616f5b914d4594e7e221295c5e3"
+              },
+              "uvLock": {
+                "before": "67810136dea98a90038c83a3f32c1c8c922ff620e545a89491977e2b17b5c7d5",
+                "after": "5cd2eea231a91056fc99db18001f93684896214b7607c0cf3a5d7d3bfa31dd11"
+              }
+            }
+          },
+          "db": "7eb5f504-35d1-4a2b-8966-e2af2e1f7ed1\tCOMMITTED\t25\t46aa0e0a1a7ae2898631a3f0300d0562f9d045c90b458f6dcfe32907a3cf8eb2\t17342ebe7fb9ebbd533841dfebc0d920ec42e6fe2599720e5a3285c2a11c0682\tec935d5a320dcd4717412cee2f3222b284e10b6e62730e0a7769d80d8cbe2cdc\tfda89b7e45c76071f53d756eff27b6f885123c3c417ab802380151999a73f560\n5e1da57a-4763-4ad3-aebc-e10e84ff3ba9\tFAILED\t25\t26\tAI_CALL_NEEDS_ATTENTION\tNULL\ncall_00_V9ysQIa2AYp7LK4JhIAX6406\tCOMPLETED\t7eb5f504-35d1-4a2b-8966-e2af2e1f7ed1\t25\n26"
+        }
+      },
+      "traces": {
+        "main": [
+          {
+            "event": "BOUND",
+            "class": "com.manao.poc4.workspaceagent.PythonDependencyEditor$HelperResolver",
+            "method": "runHelper",
+            "line": 458,
+            "kind": "trace"
+          },
+          {
+            "event": "BOUND",
+            "class": "com.manao.poc4.workspaceagent.PythonDependencyTransaction",
+            "method": "lambda$commit$1",
+            "line": 206,
+            "kind": "gate"
+          },
+          {
+            "event": "BOUND",
+            "class": "com.manao.poc4.workspaceagent.PythonDependencyTransaction",
+            "method": "lambda$commit$1",
+            "line": 206,
+            "kind": "gate"
+          },
+          {
+            "event": "ARMED",
+            "projectId": "bf51c6ac-be04-4274-9c73-43a15ea9d470",
+            "class": "com.manao.poc4.workspaceagent.PythonDependencyTransaction",
+            "line": 206
+          },
+          {
+            "event": "TRACE",
+            "projectId": "bf51c6ac-be04-4274-9c73-43a15ea9d470",
+            "operationId": "7eb5f504-35d1-4a2b-8966-e2af2e1f7ed1",
+            "threadId": 3,
+            "class": "com.manao.poc4.workspaceagent.PythonDependencyEditor$HelperResolver",
+            "method": "runHelper",
+            "line": 458
+          },
+          {
+            "event": "HIT",
+            "projectId": "bf51c6ac-be04-4274-9c73-43a15ea9d470",
+            "operationId": "7eb5f504-35d1-4a2b-8966-e2af2e1f7ed1",
+            "threadId": 181,
+            "class": "com.manao.poc4.workspaceagent.PythonDependencyTransaction",
+            "method": "lambda$commit$1",
+            "line": 206
+          },
+          {
+            "event": "RESUMED",
+            "projectId": "bf51c6ac-be04-4274-9c73-43a15ea9d470"
+          },
+          {
+            "event": "TRACE_COMPLETE",
+            "projectId": "bf51c6ac-be04-4274-9c73-43a15ea9d470",
+            "operationId": "7eb5f504-35d1-4a2b-8966-e2af2e1f7ed1"
+          }
+        ],
+        "prepareObserver": null,
+        "helperObserver": null,
+        "caller": [
+          {
+            "event": "BOUND",
+            "class": "com.manao.poc4.workspace.PythonDependencyService",
+            "method": "changeForAgent",
+            "line": 81,
+            "kind": "trace"
+          },
+          {
+            "event": "BOUND",
+            "class": "com.manao.poc4.workspace.PythonDependencyService",
+            "method": "changeForAgent",
+            "line": 82,
+            "kind": "gate"
+          },
+          {
+            "event": "ARMED",
+            "projectId": "bf51c6ac-be04-4274-9c73-43a15ea9d470",
+            "class": "com.manao.poc4.workspace.PythonDependencyService",
+            "line": 82
+          },
+          {
+            "event": "TRACE",
+            "projectId": "bf51c6ac-be04-4274-9c73-43a15ea9d470",
+            "operationId": "7eb5f504-35d1-4a2b-8966-e2af2e1f7ed1",
+            "threadId": 41,
+            "class": "com.manao.poc4.workspace.PythonDependencyService",
+            "method": "changeForAgent",
+            "line": 81
+          },
+          {
+            "event": "HIT",
+            "projectId": "bf51c6ac-be04-4274-9c73-43a15ea9d470",
+            "operationId": "7eb5f504-35d1-4a2b-8966-e2af2e1f7ed1",
+            "threadId": 41,
+            "class": "com.manao.poc4.workspace.PythonDependencyService",
+            "method": "changeForAgent",
+            "line": 82
+          },
+          {
+            "event": "RESUMED",
+            "projectId": "bf51c6ac-be04-4274-9c73-43a15ea9d470"
+          },
+          {
+            "event": "INTERRUPTED",
+            "projectId": "bf51c6ac-be04-4274-9c73-43a15ea9d470",
+            "operationId": "7eb5f504-35d1-4a2b-8966-e2af2e1f7ed1",
+            "threadId": 41
+          },
+          {
+            "event": "TRACE_COMPLETE",
+            "projectId": "bf51c6ac-be04-4274-9c73-43a15ea9d470",
+            "operationId": "7eb5f504-35d1-4a2b-8966-e2af2e1f7ed1"
+          }
+        ]
+      },
+      "task": {
+        "taskId": "5e1da57a-4763-4ad3-aebc-e10e84ff3ba9",
+        "state": "FAILED",
+        "workspaceRevision": "26",
+        "writesLocked": false,
+        "progress": [
+          {
+            "seq": 1,
+            "kind": "message",
+            "text": "我将按你的要求只执行一次 `python_dependencies` 调用，然后等待结果。",
+            "truncated": false
+          },
+          {
+            "seq": 2,
+            "kind": "tool_start",
+            "text": "python_dependencies call_00_V9ysQIa2AYp7LK4JhIAX6406",
+            "truncated": false
+          },
+          {
+            "seq": 3,
+            "kind": "tool_end",
+            "text": "python_dependencies call_00_V9ysQIa2AYp7LK4JhIAX6406",
+            "truncated": false
+          },
+          {
+            "seq": 4,
+            "kind": "message",
+            "text": "",
+            "truncated": false
+          }
+        ],
+        "changedPaths": [
+          "pyproject.toml",
+          "uv.lock"
+        ],
+        "summary": "",
+        "failureCode": "AI_CALL_NEEDS_ATTENTION",
+        "conversationId": "52be45d9-7f63-4028-a133-81f0cbf03a08",
+        "reasoningEffort": "high",
+        "closeReasonCode": "AI_CALL_NEEDS_ATTENTION"
+      },
+      "tools": [
+        {
+          "toolCallId": "call_00_V9ysQIa2AYp7LK4JhIAX6406",
+          "toolName": "python_dependencies",
+          "data": {
+            "kind": "python_dependencies",
+            "operationId": "7eb5f504-35d1-4a2b-8966-e2af2e1f7ed1",
+            "action": "add",
+            "packageName": "certifi",
+            "group": "test",
+            "state": "COMMITTED",
+            "changedPaths": [
+              "pyproject.toml",
+              "uv.lock"
+            ]
+          }
+        }
+      ],
+      "buildCalls": 0,
+      "restart": null,
+      "traceTiming": {
+        "main": {
+          "createdUtc": "2026-11-05T06:33:57.821Z",
+          "lastAppendUtc": "2026-11-05T06:34:53.184Z",
+          "source": "Operator append-only JSONL file creation/last-write metadata; events themselves do not carry timestamps"
+        },
+        "caller": {
+          "createdUtc": "2026-11-05T06:33:57.313Z",
+          "lastAppendUtc": "2026-11-05T06:36:05.797Z",
+          "source": "Operator append-only JSONL file creation/last-write metadata; events themselves do not carry timestamps"
+        }
+      },
+      "durableCompletionUtc": "2026-11-05T06:34:38.826447Z\t2026-11-05T06:34:38.839214Z",
+      "claimEvidence": "Indirect: while held the original active_project/writesLocked remains; original call completes and production close/finishForClose passes the hasLiveCalls gate before task unlock. No direct in-memory claim counter captured.",
+      "counterLimit": "Exact scoped prepare/helper entry observed once during bounded trace covering durable completion; journal bytes/mtime unchanged. Not a lifetime profiler."
+    }
+  ],
+  "failedAttempts": [
+    {
+      "name": "d-lost-response",
+      "status": "FAILED_INJECTION",
+      "operationId": "71158090-2c1e-4cfe-8960-c00fa87bbfdf",
+      "taskId": "4f5c45ce-9efd-4d37-82ee-3964e8088c5b",
+      "reason": "Standalone backend debugger exceeded 15s external budget; gate safely resumed and original operation completed. No mutation replay.",
+      "final": "71158090-2c1e-4cfe-8960-c00fa87bbfdf\tCOMMITTED\t21"
+    }
+  ],
+  "finalCounts": "occupying\t0\npending\t0",
+  "lostResponseBackendEvent": {
+    "source": "Captured exec tool response before the backend debug configuration was restored; current Pod logs do not retain the deleted Pod output",
+    "capturedEvent": {
+      "timestamp": "2026-11-05T06:34:37.339Z",
+      "logger": "WorkspaceOperationService",
+      "message": "workspace operation failed closed",
+      "projectId": "bf51c6ac-be04-4274-9c73-43a15ea9d470",
+      "operationId": "7eb5f504-35d1-4a2b-8966-e2af2e1f7ed1",
+      "phase": "COMMIT",
+      "httpStatus": 503,
+      "agentCode": "IO_ERROR",
+      "transportFailure": "INTERRUPTED"
+    }
+  },
+  "timeBasis": "SYSTEM\t2026-11-05 06:42:41.402306\t2026-11-05 06:42:41.402306"
+}

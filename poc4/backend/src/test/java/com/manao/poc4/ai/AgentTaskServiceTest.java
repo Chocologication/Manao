@@ -193,6 +193,69 @@ class AgentTaskServiceTest {
             assertThat(JSON.valueToTree(h.worker.starts.get(0)).path("reasoningEffort").asText()).isEqualTo("high");
         }
     }
+
+    @Test void startsWithTrustedEnvironmentAndItsSeparateDigest() {
+        try (var h = new Harness()) {
+            h.submit();
+            var start = JSON.valueToTree(h.worker.starts.get(0));
+            assertThat(start.path("environment").path("templateId").asText()).isEqualTo("java-console");
+            assertThat(start.path("environmentSha256").asText()).matches("[0-9a-f]{64}");
+        }
+    }
+
+    @Test void retryAndReconstructionKeepTheOriginalEnvironmentAfterProjectConfigurationChanges() {
+        try (var h = new Harness()) {
+            org.mockito.Mockito.when(h.runtime.loadSpec(PROJECT)).thenReturn(new com.manao.poc4.project.ProjectRuntimeSpec(
+                "python-fastapi-web", true, false,
+                List.of(new com.manao.poc4.project.ProjectRuntimeSpec.Port("http", 8123, 30234))));
+            h.submit();
+            String requestSha = h.tasks.requestSha256Of(h.taskId);
+            String terminalId = AgentTaskStore.terminalReportId(h.taskId, 1, requestSha);
+            var original = h.tasks.environmentOf(h.taskId);
+            assertThat(original.templateId()).isEqualTo("python-fastapi-web");
+            assertThat(original.primaryPort()).isEqualTo(8123);
+            assertThat(h.worker.starts.get(0).environment()).isEqualTo(original);
+            assertThat(h.worker.starts.get(0).environmentSha256()).isEqualTo(original.sha256());
+
+            org.mockito.Mockito.when(h.runtime.loadSpec(PROJECT)).thenThrow(new IllegalStateException("config changed"));
+            var rebuilt = new AgentTaskStore(h.jdbc, new DataSourceTransactionManager(h.jdbc.getDataSource()), Clock.systemUTC());
+            var service = new AgentTaskService(rebuilt, h.gate, h.worker, h.tools, null, h.environments);
+            assertThat(service.submit(OWNER, PROJECT, h.request()).taskId()).isEqualTo(h.taskId);
+            assertThat(rebuilt.environmentOf(h.taskId)).isEqualTo(original);
+            assertThat(rebuilt.requestSha256Of(h.taskId)).isEqualTo(requestSha);
+            assertThat(AgentTaskStore.terminalReportId(h.taskId, 1, requestSha)).isEqualTo(terminalId);
+            assertThat(h.worker.starts).hasSize(1);
+        }
+    }
+
+    @Test void legacyNullEnvironmentCanCloseWithoutStartingAnotherExecution() {
+        try (var h = new Harness()) {
+            h.tasks.create(OWNER, PROJECT, h.request());
+            assertThat(h.tasks.environmentOf(h.taskId)).isNull();
+            new AgentTaskService(h.tasks, h.gate, h.worker, h.tools).close(h.taskId, "AI_CLOSED", "legacy close");
+            assertThat(h.rowState()).isEqualTo("FAILED");
+            assertThat(h.worker.starts).isEmpty();
+        }
+    }
+
+    @Test void missingEnvironmentProviderRefusesNewExecutionAndRollsBackTaskCreation() {
+        try (var h = new Harness()) {
+            var legacy = new AgentTaskService(h.tasks, h.gate, h.worker, h.tools);
+            assertThatThrownBy(() -> legacy.submit(OWNER, PROJECT, h.request()))
+                .isInstanceOfSatisfying(ApiException.class, ex -> assertThat(ex.code()).isEqualTo("AI_ENVIRONMENT_MISSING"));
+            assertThat(h.tasks.findForOwner(OWNER, PROJECT, h.taskId)).isEmpty();
+            assertThat(h.worker.starts).isEmpty();
+        }
+    }
+
+    @Test void aCorruptStoredEnvironmentDigestIsRejectedOnRecovery() {
+        try (var h = new Harness()) {
+            h.submit();
+            h.jdbc.update("UPDATE agent_task SET environment_sha256=? WHERE id=?", "0".repeat(64), h.taskId);
+            assertThatThrownBy(() -> h.tasks.environmentOf(h.taskId))
+                .isInstanceOfSatisfying(ApiException.class, ex -> assertThat(ex.code()).isEqualTo("AI_ENVIRONMENT_INVALID"));
+        }
+    }
     private static final ObjectMapper JSON = new ObjectMapper();
     private static final String OWNER = "ai-owner";
     private static final String PROJECT = "ai-project";
@@ -261,6 +324,8 @@ class AgentTaskServiceTest {
         final ProjectApplicationProbe probe = org.mockito.Mockito.mock(ProjectApplicationProbe.class);
         final AgentProjectTools tools;
         final AgentTaskService service;
+        final com.manao.poc4.project.ProjectRuntimeStore runtime = org.mockito.Mockito.mock(com.manao.poc4.project.ProjectRuntimeStore.class);
+        final AgentProjectEnvironmentService environments = new AgentProjectEnvironmentService(runtime, AgentProjectEnvironmentTest.policy());
 
         Harness() {
             Timestamp now = new Timestamp(System.currentTimeMillis());
@@ -278,7 +343,8 @@ class AgentTaskServiceTest {
             tools = new AgentProjectTools(tasks, store, workspace, operations, gate, builds,
                 new AgentApplicationTools(tasks, runs, runStore,
                     org.mockito.Mockito.mock(com.manao.poc4.log.RunLogService.class), probe, gate));
-            service = new AgentTaskService(tasks, gate, worker, tools);
+            org.mockito.Mockito.when(runtime.loadSpec(PROJECT)).thenReturn(com.manao.poc4.project.ProjectRuntimeSpec.console());
+            service = new AgentTaskService(tasks, gate, worker, tools, null, environments);
         }
 
         void completedStart(String call, String runId) {
@@ -808,6 +874,8 @@ class AgentTaskServiceTest {
             Timestamp now = new Timestamp(System.currentTimeMillis());
             h.jdbc.update("INSERT INTO project(id, owner_id, name, state, workspace_revision, created_at, updated_at)"
                     + " VALUES ('other-project', ?, 'other-project', 'READY', 7, ?, ?)", OWNER, now, now);
+            org.mockito.Mockito.when(h.runtime.loadSpec("other-project"))
+                .thenReturn(com.manao.poc4.project.ProjectRuntimeSpec.console());
 
             assertThatCode(() -> h.service.submit(OWNER, "other-project", h.request()))
                 .doesNotThrowAnyException();

@@ -1,9 +1,10 @@
 # 项目进度
 
-更新：2026-10-31。按用户要求，将 `codex/ai-integration@e1da794` 的实现、验收记录及文档归档以单父提交同步到 `master`，保留 master 原有 IDEA 配置；不创建 merge 提交，AI 分支和工作树继续保留。以下是已记录的交付结论，不是本次重新执行的集群检查。
+更新：2026-11-05。2026-10-31 曾按用户要求，将 `codex/ai-integration@e1da794` 的实现、验收记录及文档归档以单父提交同步到 `master`，保留 master 原有 IDEA 配置；不创建 merge 提交，AI 分支和工作树继续保留。本轮 Python 后续变更仍在独立分支，未合并到 master；各项真实检查范围见对应记录。
 
 ## 当前结论
 
+- AI四模板环境与Python工具链取得 **AI_PYTHON_CLOSED_LOOP_PASS（原设计E1–R1范围）**：两类Python真实闭环、依赖故障/回滚、独立重启、自动/手动压缩、图片和B2负面/真实UI全部闭合，独立审查APPROVE。自动压缩中发现空摘要丢目标已TDD修复并发布worker66d5968；历史失败不改写。详见[最终验收](../poc4/docs/evidence/ai-python-environment/final-verification-20261105.md)，不授予全平台压力/故障/预算耗尽保证。
 - 云工作台、Java 和 Python 已按各自验收范围交付；旧 6A/6B gate 和已完成计划不再是默认待办。
 - AI 已交付代码修改/构建测试、应用反馈、多轮会话、上下文压缩及展示改进。阶段一已通过；阶段二工程验收仍为 **PAUSED / NOT_GRANTED**；阶段三由用户确认实际 CRUD 使用已完成使命。
 - 2026-10-26 收尾修复已本地审查、实际部署并完成一次最小真实模型/浏览器验证：**LOCAL_REPAIR_VERIFIED / DEPLOYED_SMOKE_VERIFIED**。修复分支先合回 AI 分支，现随 AI 集成内容同步到 master；原发布和验证边界保持不变。

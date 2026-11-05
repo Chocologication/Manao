@@ -194,6 +194,18 @@ public class JobResourceFactory {
      * at the same time, while the NFS volume + PVC cache combination starts normally.
      */
     public Job createDevelopmentJob(BuildRequest request, DevelopmentSourceVolume sourceVolume) {
+        request.requireExecutableEnvironment();
+        boolean python = "python".equals(request.environment().language());
+        LanguageRuntime runtime = python ? LanguageRuntime.python(pythonImage, request.environment().templateId())
+            : LanguageRuntime.maven(mavenImage);
+        String launcher = python ? "/usr/local/bin/manao-python-dev-build" : DEVELOPMENT_LAUNCHER_COMMAND;
+        List<String> command = python ? List.of(launcher, goalArgument(request.goal()))
+            : List.of(launcher, "run", goalArgument(request.goal()));
+        List<EnvVar> environment = new ArrayList<>();
+        if (python) {
+            environment.add(new EnvVar("MANAO_PYTHON_MYSQL", Boolean.toString(request.environment().mysql()), null));
+            environment.add(new EnvVar("MANAO_PYTHON_REDIS", Boolean.toString(request.environment().redis()), null));
+        }
         if (sourceVolume == null) {
             throw new IllegalArgumentException("sourceVolume is required");
         }
@@ -250,11 +262,11 @@ public class JobResourceFactory {
                     .withNewEmptyDir().endEmptyDir()
                     .build())
             .withInitContainers(
-                developmentCachePreparationContainer(),
+                developmentCachePreparationContainer(runtime),
                 new io.fabric8.kubernetes.api.model.ContainerBuilder()
                     .withName(SOURCE_COPY_CONTAINER)
-                    .withImage(mavenImage)
-                    .withCommand(DEVELOPMENT_LAUNCHER_COMMAND, "copy")
+                    .withImage(runtime.image())
+                    .withCommand(launcher, "copy")
                     .withVolumeMounts(
                         new io.fabric8.kubernetes.api.model.VolumeMountBuilder()
                             .withName("source")
@@ -278,10 +290,10 @@ public class JobResourceFactory {
                     .build())
             .withContainers(new io.fabric8.kubernetes.api.model.ContainerBuilder()
                 .withName(ResourceIdentityVerifier.APPLICATION_CONTAINER)
-                .withImage(mavenImage)
-                .withCommand(DEVELOPMENT_LAUNCHER_COMMAND, "run", goalArgument(request.goal()))
+                .withImage(runtime.image())
+                .withCommand(command)
                 .withWorkingDir("/workspace")
-                .withEnv(baseEnvironment(List.of()))
+                .withEnv(baseEnvironment(environment))
                 .withVolumeMounts(
                     new io.fabric8.kubernetes.api.model.VolumeMountBuilder()
                         .withName("workspace")
@@ -290,8 +302,8 @@ public class JobResourceFactory {
                         .build(),
                     new io.fabric8.kubernetes.api.model.VolumeMountBuilder()
                         .withName("cache")
-                        .withMountPath("/maven-cache")
-                        .withSubPath(MAVEN_CACHE_DIRECTORY)
+                        .withMountPath(runtime.cacheMountPath())
+                        .withSubPath(runtime.cacheSubPath())
                         .withReadOnly(false)
                         .build(),
                     new io.fabric8.kubernetes.api.model.VolumeMountBuilder()
@@ -328,8 +340,7 @@ public class JobResourceFactory {
      * preparation (root PVC mount, only this project's maven cache directory is created or
      * repaired), but mounted through the development job's writable {@code cache} volume.
      */
-    private io.fabric8.kubernetes.api.model.Container developmentCachePreparationContainer() {
-        LanguageRuntime runtime = LanguageRuntime.maven(mavenImage);
+    private io.fabric8.kubernetes.api.model.Container developmentCachePreparationContainer(LanguageRuntime runtime) {
         return new io.fabric8.kubernetes.api.model.ContainerBuilder()
             .withName(runtime.cachePreparationContainer())
             .withImage(initializerImage)

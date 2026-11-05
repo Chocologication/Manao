@@ -159,9 +159,21 @@ public final class WorkspaceApiClient implements WorkspaceAgent {
             + ",\"requestSha256\":" + JSON.valueToTree(requestSha256)
             + ",\"change\":{\"action\":" + JSON.valueToTree(change == null ? null : change.action())
             + ",\"packageName\":" + JSON.valueToTree(change == null ? null : change.packageName())
-            + ",\"version\":" + JSON.valueToTree(change == null ? null : change.version()) + "}}";
-        return preparedFrom(sendJson(projectId, "POST", "/agent/v1/python-dependencies/prepare",
-            body.getBytes(StandardCharsets.UTF_8), dependencyTimeout));
+            + ",\"version\":" + JSON.valueToTree(change == null ? null : change.version())
+            + ",\"group\":" + JSON.valueToTree(change == null ? null : change.group()) + "}}";
+        boolean scoped = change != null && "test".equals(change.group());
+        String path = scoped ? "/agent/v1/python-dependencies/prepare-scoped"
+            : "/agent/v1/python-dependencies/prepare";
+        try {
+            return preparedFrom(sendJson(projectId, "POST", path,
+                body.getBytes(StandardCharsets.UTF_8), dependencyTimeout));
+        } catch (WorkspaceAgentException ex) {
+            if (scoped && ex.status() == 404) {
+                throw new WorkspaceAgentException(503, "PYTHON_DEPENDENCY_PROTOCOL_UNSUPPORTED",
+                    "Workspace dependency protocol is not supported");
+            }
+            throw ex;
+        }
     }
 
     @Override

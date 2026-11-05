@@ -322,17 +322,17 @@ public final class WorkspaceOperationService {
                                         String requestSha256, boolean reconciled) {
         String phase = "COMMIT";
         try {
-            WorkspaceAgent.PreparedPythonDependencies result = agent.commit(operation.projectId(),
+            WorkspaceAgent.PreparedPythonDependencies result = com.manao.poc4.ai.ReconcileWorkBudget.boundary(() -> agent.commit(operation.projectId(),
                 new WorkspaceAgent.PythonDependencyCommit(
                     new WorkspaceAgent.PreparedPythonDependencies(operation.id(), requestSha256,
                         operation.beforeSha256(), operation.afterSha256()),
-                    receiptJson, operation.receiptSha256()));
+                    receiptJson, operation.receiptSha256())));
             phase = "VERIFY_RESULT";
             verifyDependencyResult(operation, result, requestSha256);
             phase = "VERIFY_RECEIPT";
             // The commit response alone is not authority: the agent's final durable receipt must
             // exist and match the registered identity and digests before the database commits.
-            Optional<WorkspaceAgent.FetchedReceipt> receipt = agent.receipt(operation.projectId(), operation.id());
+            Optional<WorkspaceAgent.FetchedReceipt> receipt = com.manao.poc4.ai.ReconcileWorkBudget.boundary(() -> agent.receipt(operation.projectId(), operation.id()));
             if (receipt.isEmpty() || !receiptMatches(operation, receipt.get())) {
                 throw new IllegalStateException("workspace receipt does not match the pending operation");
             }
