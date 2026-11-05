@@ -1,12 +1,14 @@
 # AI Python 环境与开发闭环验收
 
-本地交付快照（2026-11-04）：分支 `codex/ai-python-environment`，最终实现提交 `b5b02fe`。本地实现、分层验证与全分支审查完成，授予范围限定的 **AI_PYTHON_LOCAL_PASS**。并发构建证据覆盖及反向时序残留已修复并独立复审批准，受影响回归 149 项通过。**当时**云端发布、运行库迁移、真实 provider/model 与两类 Python 浏览器闭环均 NOT_RUN；后续授权执行的当前结果见下段。`AI_PYTHON_CLOSED_LOOP_PASS` 仍未授予。完整本地提交清单见[交付记录](delivery.md)。
+**当前结论（2026-11-05）：AI_PYTHON_CLOSED_LOOP_PASS。** 原设计E1–R1已由本地分层验证、两类Python真实模型闭环、八项依赖故障、回滚恢复，以及最后一组独立重启/真实自动压缩/图片/B2负面验证闭合，独立gate审查APPROVE。最新worker66d5968已部署，backend/agent/runner保持55f2067、UI保持f58581a；各组件身份和历史失败见[最终验证](final-verification-20261105.md)及[脱敏JSON](final-verification-20261105.json)。本标签限定本设计范围，不代表全平台压力/故障/全预算耗尽；下文日期明确的本地/首轮快照保留历史原意。
+
+本地交付快照（2026-11-04）：分支 `codex/ai-python-environment`，最终实现提交 `b5b02fe`。本地实现、分层验证与全分支审查完成，授予范围限定的 **AI_PYTHON_LOCAL_PASS**。并发构建证据覆盖及反向时序残留已修复并独立复审批准，受影响回归149项通过。**当时**云端发布、迁移、真实模型与浏览器闭环均NOT_RUN、完整标签未授予；当前结论以上方最终更新为准。完整本地提交清单见[交付记录](delivery.md)。
 
 设计合同：[设计 §9–10](../../../../docs/superpowers/specs/2026-11-04-ai-python-environment-design.md#9-验收与交付边界)；实施：[九任务计划](../../../../docs/superpowers/plans/2026-11-04-ai-python-environment-implementation-plan.md)；发布：[操作与回滚手册](../../../deploy/ai-python-environment/README.md)。
 
-**后续授权更新（2026-11-04）**：上述 NOT_RUN 是本地交付时状态。用户随后授权集群部署与真实模型，实际已完成五项发布、V20、普通 Python 两轮、FastAPI 分段继续的两轮、Java 两模板烟测和真实 pytest 暂停/继续，见[云端记录](cloud-20261104.md)及[脱敏 JSON](cloud-20261104.json)。本页下表保留历史本地证据；当前完整云故障矩阵仍未闭合，`AI_PYTHON_CLOSED_LOOP_PASS` 仍未授予，不能把下表全部 NOT_RUN 自动改成 PASS。
+**首轮授权更新（2026-11-04）**：本地NOT_RUN之后，实际完成五项发布、V20、普通Python两轮、FastAPI分段继续、Java两模板及pytest暂停/继续，见[首轮记录](cloud-20261104.md)及[JSON](cloud-20261104.json)。该轮完整矩阵尚未闭合、未授予完整标签；本页旧表保留历史证据，不将其倒填为首轮全部PASS。
 
-**2026-11-05 后续范围已完成**：UI reload 修复及完整 FastAPI 连续两轮 PASS；八个依赖故障样本及原身份对账 PASS；旧 Java 维护窗口正式回滚/恢复 PASS（旧 Python 新 build/protocol 不支持已明确）。见[后续记录](cloud-followup-20261105.md)、[故障证据](dependency-faults-20261105.json)及[回滚证据](rollback-20261105.json)。独立意外重启、自动压缩、图片与其余兼容专项为用户暂缓的 NOT_RUN，完整闭环标签保持未授予。
+**2026-11-05中间交付**：UI reload修复/完整FastAPI、八项依赖故障及旧Java维护窗口回滚/恢复PASS，见[后续记录](cloud-followup-20261105.md)、[故障](dependency-faults-20261105.json)、[回滚](rollback-20261105.json)。当时用户暂缓的独立重启/自动压缩/图片等仍NOT_RUN，未授予完整标签；这些专项现已按最后授权完成。
 
 ## 1. 本地证据与范围
 
@@ -38,7 +40,25 @@ Task 8 的实际本地浏览器截图：[syntax](ui/syntax.png)、[pytest](ui/py
 
 ## 2. 设计验收矩阵
 
-| 编号 | 本地已证明 | 真实部署/模型仍需证明 | 当前真实状态 |
+当前逐项结论如下；再下方旧表是本地交付快照，不用旧NOT_RUN覆盖本轮已取得的证据。
+
+| 编号 | 当前结论与定位 |
+| --- | --- |
+| E1 | PASS：四模板可信快照/权限/重试合同本地回归；四模板真实工具链及新任务环境实测 |
+| E2 | PASS：新旧会话、手动compact、最新worker真实SDK threshold832959→34947后同task及新task继续 |
+| F1 | PASS：两Python根/包/测试真实读改；托管文件及禁止路径后端策略回归，内部路径实测拒绝 |
+| D1 | PASS：两闭环main/test依赖及增删往返，原操作两文件/revision/receipt对齐 |
+| D2 | PASS：[八个限定依赖故障样本](dependency-faults-20261105.json)，保留计数窗口/claim间接证据限制 |
+| B1 | PASS：真实Python固定launcher/image/cache/source只读；40源文件/fixture前后SHA、revision88不变 |
+| B2 | PASS：真实语法失败/断言失败/NO_TESTS/SKIPPED/缺pytest/坏缺截断报告/自然601秒DeadlineExceeded/取消；UNKNOWN保持未知 |
+| L1 | PASS：普通Python真实fail-first/修复/依赖/pytest/exit0输出6→10及再次运行 |
+| L2 | PASS：FastAPI修复后完整连续两轮、READY/日志/同Run业务GET，当前保留Run公网200 |
+| L3 | PASS：两场景main/test COMMITTED，验证sourceRevision与Run revision/锁摘要对齐 |
+| R1 | PASS：最新Java两模板/图片上传重读/历史/接管继续/结束/receipt及资源闭合；预算完整耗尽未承诺 |
+
+以下旧表为2026-11-04本地交付时的历史待办快照，当前状态见上表及最终证据。
+
+| 编号 | 本地已证明 | 当时真实部署/模型仍需证明 | 当时真实状态 |
 | --- | --- | --- | --- |
 | E1 | 四模板事实、摘要/快照/重试、错误环境拒绝、可信工具权限 | 同一发布下新任务与旧历史的实际环境，记录 digest/source SHA | NOT_RUN |
 | E2 | 实际 Pi SDK 请求边界含当前环境，历史 Java 和压缩不恢复旧 loadout | 两场景新会话、已有会话、一次实际 compact 后继续；自动压缩若未触发保持 NOT_RUN | NOT_RUN |
@@ -52,7 +72,7 @@ Task 8 的实际本地浏览器截图：[syntax](ui/syntax.png)、[pytest](ui/py
 | L3 | scoped uv 与 locked test/runtime 的本地真实证据 | 两场景各 main/test operation IDs、前后 TOML/lock摘要、验证 revision=Run revision | NOT_RUN |
 | R1 | 本地 Java 兼容与 worker 图片/历史/预算/控制/receipt 回归，范围由各任务报告限定 | 同一发布 Java console/Spring Boot 的真实 smoke、图片与暂停/接管/结束、资源闭合 | NOT_RUN |
 
-`PASS` 只在对应层级和场景内有效；未触发条件为 `SKIPPED` 或 `NOT_RUN`，不补成 PASS。`--list` 只证明测试发现，tsc 只证明类型，模型回复“完成”不证明运行成功。当前没有云端 build SHA、发布 digest、provider/model、project/task/tool/operation/Run 身份；均不得捏造或借历史结果补齐。
+`PASS`只在对应层级和场景内有效；SKIPPED/NOT_RUN不补成PASS。`--list`只证明发现、tsc只证明类型、模型“完成”不证明运行成功。上述旧表记录时没有云端身份；当前真实release tuple、provider/model及task/tool/operation/Run身份在各轮JSON，不能倒填或捏造。
 
 Task 9 复审修正：FastAPI 必须同时具备 start/status 的 ready Run、同 Run/同验证 revision 的成功 `application.logs`，以及该 Run 的业务 GET。日志文本非空且不超过 native 64 KiB，有效 first/last sequence，truncated 必须为明确布尔值；允许真实有界 tail 的 `truncated=true`，不把它说成完整历史。RUNNING 日志的 `complete=false` 是实际工具合同，不能要求终态完整日志。缺日志、错误 Run/revision、工具 error、失去源、坏游标/标志或超长文本均失败。部署手册的 image guard 同时允许 `registry.example:5000/repo@sha256:<64hex>`；本地 literal PowerShell 校验 3 个合法引用接受、4 个 URL/凭据/空白/浮动引用拒绝，未执行 rollout。
 

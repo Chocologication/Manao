@@ -6,6 +6,8 @@
 
 2026-11-05 选择性后续范围完成：UI reload 修复及完整 FastAPI 连续流程、八个依赖故障样本、正式旧 Java 维护窗口回滚/恢复，见[后续计划](2026-11-05-ai-python-cloud-followup-plan.md)和[后续证据](../../../poc4/docs/evidence/ai-python-environment/cloud-followup-20261105.md)。独立意外重启、自动压缩、图片与其余兼容专项暂缓，原全范围 Step 3/6 不因部分完成而勾选。
 
+最终授权更新：此前暂缓的专项已按[最后一组计划](2026-11-05-ai-python-final-verification-plan.md)实际完成，空摘要缺陷已修复/发布，E1–R1独立gate APPROVE，AI_PYTHON_CLOSED_LOOP_PASS已授予；[最终证据](../../../poc4/docs/evidence/ai-python-environment/final-verification-20261105.md)为当前权威。上段暂缓和旧NOT_RUN保留历史时间边界，不代表当前待办。
+
 **Goal:** 让 Agent 根据四类项目的可信环境调用适用工具，并对普通 Python 与 FastAPI 完成源码编辑、自动依赖管理、语法/pytest 验证、运行反馈与再次修复。
 
 **Architecture:** 后端将项目环境快照与摘要绑定到 AgentTask，worker 用现有 Pi resource loader 构造系统上下文和适用工具。Python 文件策略、test 组依赖及 Python build 分支复用 workspace receipt、构建 Job 与 Run 生命周期。新增依赖工具必须完整接入任务暂停、取消、重启和收尾。
@@ -481,17 +483,17 @@ def test_total():
 ```
 
 - [x] **Step 2 — 编写真实验收，先验证能抓住失败。** Playwright 配置直接指向外部 baseURL，无 fixture webServer、无模型 mock。任务要求 Agent 先记录失败、修复、添加所需 main/test 依赖、验证、运行，再响应用户第二轮小修改完成重跑。console 最终核对输出与 exit=0；FastAPI 核对 firstReadyAt 和业务 GET 状态/内容。增删依赖两方向由 D1 集成测试覆盖，真实模型两场景各需发生 main/test 变更。验收合同本地 RED 5 failed → GREEN 5 passed，独立 tsc 通过；真实配置未执行，包括未运行 `--list`。
-- [ ] **Step 3 — 验证非 happy-path。** 在 disposable 项目验证 dependency commit 响应丢失、PENDING 重启、prepare/commit 边界取消、pytest 超时取消；保留原身份和失败证据，最终确认该任务无未决操作、无构建 Job/Pod。已有会话继续与一次压缩后继续要看到当前环境；图片回归用已有图片测试，不要求模型在每个 Python 场景上传图片。
-  本地实际组合、取消/重启/UID fixture 已收录；真实 pytest pause/安全收尾/同会话新任务已 PASS。2026-11-05 八个依赖专项样本已 PASS，涵盖回包丢失、PENDING 重启、部分提交与取消边界；图片及其余兼容专项为用户暂缓的 NOT_RUN，本项按原完整范围保持未勾选。
+- [x] **Step 3 — 验证非 happy-path。** 在 disposable 项目验证 dependency commit 响应丢失、PENDING 重启、prepare/commit 边界取消、pytest 超时取消；保留原身份和失败证据，最终确认该任务无未决操作、无构建 Job/Pod。已有会话继续与一次压缩后继续要看到当前环境；图片回归用已有图片测试，不要求模型在每个 Python 场景上传图片。
+  本地实际组合、取消/重启/UID fixture、真实pytest pause/安全收尾/同会话新任务已PASS。2026-11-05八个依赖故障样本后，用户曾暂缓其余专项；最终授权已补齐独立重启、自动/手动压缩、图片、B2负面/自然超时与UI，当前勾选完成，历史失败仍保留。
 - [x] **Step 4 — 本地联合回归。** backend/workspace-agent 相关套件、worker 全量、前端相关套件、Python 容器套件和全分支最终复审已完成，授予范围限定的 AI_PYTHON_LOCAL_PASS。最新构建结算 149/149、兼容组 86/86、worker 266 PASS / 1 SKIPPED、前端 155 PASS；各次验证源码边界、容器证据与未执行项见[验收记录](../../../poc4/docs/evidence/ai-python-environment/acceptance.md)，不合并重复用例总数。
 - [x] **Step 5 — 完成可审阅部署手册。** 写明四运行产物及配套 frontend 的构建/digest、V20 迁移、旧 task 排空、旧 Python workspace Pod 更新、已有 PVC 保留、兼容顺序和回滚；从实际配置读取目标 namespace/schema，用户授权发布时再执行。不能只更新模板镜像而忽略已有 workspace Pod。
-- [ ] **Step 6 — 获得对应授权后执行真实发布与闭环。** 记录同一构建 SHA、真实模型/provider 配置标识（无密钥）及工具/operation/Run 证据；运行：
+- [x] **Step 6 — 获得对应授权后执行真实发布与闭环。** 记录实际配套release tuple、真实模型/provider配置标识（无密钥）及工具/operation/Run证据；首次五项同source55f2067，后续UI f58581a/worker66d5968局部修复独立记录，不称全部同SHA重建；运行：
 
 ```powershell
 pnpm -C poc4/frontend exec playwright test --config playwright.ai-python.config.ts
 ```
 
-后续已执行五项发布、V20、两个 Python 两轮核心流程、Java 两模板、main/test 增删往返与 pytest pause/继续。FastAPI 首轮完整脚本曾因 reload 失败停止；2026-11-05 修复后完整连续重跑 PASS，并完成依赖故障矩阵与旧 Java 维护窗口回滚/恢复。其余专项暂缓，本项按原完整范围保持未勾选，不授予 AI_PYTHON_CLOSED_LOOP_PASS；历史失败及后续结果均保留。
+后续已执行五项发布、V20、两类Python两轮核心流程、Java两模板、main/test往返与pytest pause/继续。FastAPI首轮reload失败经修复后完整连续重跑PASS，依赖故障矩阵及回滚/恢复也完成；最后专项发现空summary后修复worker66d5968，真实threshold/图片/B2等复验闭合，当前勾选完成并授予设计范围AI_PYTHON_CLOSED_LOOP_PASS，历史失败不改写。
 - [x] **Step 7 — 文档自审与本地提交。** README 链接可解析、没有私有 worktree 路径或凭据；`git diff --check` 和编码检查通过；本次临时产物已清理，必要证据保留。产物提交 `0f80538` 及验收合同修复 `67feff6` 已完成；全分支最终复审批准，提交清单见[交付记录](../../../poc4/docs/evidence/ai-python-environment/delivery.md)。代码合并/push 不在当前授权内。
 
 ## 2. 需求到任务的覆盖检查
@@ -516,5 +518,5 @@ pnpm -C poc4/frontend exec playwright test --config playwright.ai-python.config.
 - 已完成：设计与计划、Tasks 1–8 本地实现/分层验证、Task 4 真实依赖双文件故障组合、Task 9 失败 fixture/真实验收脚本/部署手册与证据导航。具体局部结果、修复后的重跑边界及 Task 9 检查见 [验收记录](../../../poc4/docs/evidence/ai-python-environment/acceptance.md)。
 - 本地最终核对：Task 9 联合回归与全分支复审完成，`AI_PYTHON_LOCAL_PASS` 保持；后续授权的发布、V20、Python/FastAPI 两轮核心流程、Java 与 pause/继续已执行。
 - 已补齐：UI 重载修复与完整 FastAPI 连续重跑、八个依赖专项故障样本、五个 Python workspace 的真实旧镜像回滚及新版恢复、旧 Java 烟测与新版 Python canary。首轮发布无旧 Python 项目的 SKIPPED 保持其历史含义。
-- 用户暂缓：独立 backend/worker 意外重启、真实自动压缩、新图片模型输入及其余兼容专项；均为 NOT_RUN。Step 3/6 按原全范围保持未勾选，`AI_PYTHON_CLOSED_LOOP_PASS` 未授予。Git push/merge、共享资源删除均未执行。
+- 最终完成：原暂缓的独立重启、真实自动/手动压缩、新图片、B2八项负面/自然超时及真实UI已经关闭，Step3/6完成，原E1–R1设计范围授予AI_PYTHON_CLOSED_LOOP_PASS。Git push/merge及共享资源删除未执行，历史失败不改写；局限见最终证据。
 - 技术边界已给出明确方案，无占位实施任务；设计评审如调整边界，应同步本文后再执行。

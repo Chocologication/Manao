@@ -1,15 +1,15 @@
 # AI Python 环境：发布、验收与回滚
 
-2026-11-05：五项发布、V20、核心 Python 流程已取得[首轮证据](../../docs/evidence/ai-python-environment/cloud-20261104.md)；后续已修复 UI 重载、连续重跑 FastAPI、完成八个依赖故障样本，以及旧 Java 维护窗口正式回滚/恢复，见[后续记录](../../docs/evidence/ai-python-environment/cloud-followup-20261105.md)。独立意外重启、自动压缩、图片与其余兼容专项按用户要求暂缓；完整闭环标签仍未授予。后续再次发布仍需核对该轮源码、目标与任务状态。
+2026-11-05：首轮发布、后续UI/依赖故障/回滚及[最后一组真实验证](../../docs/evidence/ai-python-environment/final-verification-20261105.md)已完成，独立gate审查APPROVE，授予设计范围内AI_PYTHON_CLOSED_LOOP_PASS。真实自动压缩暴露空摘要问题后已修复并只更新worker66d5968；历史失败和分组件tuple继续保留。后续再次发布仍需核对该轮源码、目标与任务状态。
 
 ## 1. 构建与不可变身份
 
-四项运行时产物必须来自同一已审查源码：backend、pi-worker、workspace-agent、python-runner。Task 8 前端展示也需要单独构建/发布 frontend；它是配套 UI 产物，不能因“四产物”而遗漏。Java runner、initializer 和平台 MySQL 镜像保留原身份。
+首次发布四项运行时产物来自同一已审查源码：backend、pi-worker、workspace-agent、python-runner，Task8前端配套发布。后续局部修复允许仅更新受影响组件，但必须记录整套release tuple及影响回归，不能声称全部同SHA重建。当前backend/agent/runner为55f2067、worker为66d5968、UI为f58581a；Java runner、initializer和平台MySQL身份保留。
 
 | 产物 | 构建入口 | 当前实际身份与边界 |
 | --- | --- | --- |
 | backend | `poc4/backend/Dockerfile` | source 55f2067 已发布；additive V20；完整 digest 见首轮证据 |
-| pi-worker | `poc4/pi-worker/Dockerfile` | source 55f2067 已发布；Pi 1.2.0，可信 environment 与精确 `version` 合同 |
+| pi-worker | `poc4/pi-worker/Dockerfile` | source66d5968已发布；platform sha256:3da11752e6d70f64737fe27bb8057230eeb01259531b1ceb9f1b353ad4da8cf3；空summary拒绝/真实threshold/图片/Java回归通过 |
 | workspace-agent | `poc4/workspace-agent/Dockerfile` | source 55f2067 已发布；五个专用 Python workspace 回滚/恢复已核对实际 imageID |
 | python-runner | `poc4/python-runner/Dockerfile`，仓库根 context + seed named context | source 55f2067 已发布；恢复后真实 syntax/pytest 通过 |
 | frontend | `poc4/frontend/Dockerfile` | `VITE_ENABLE_AI=true`；source f58581a 修复已发布，digest 见后续证据 |
