@@ -18,10 +18,10 @@
 
 ## Task 3: 正式回滚及恢复演练
 
-- [ ] 核对原 rollback tuple，备份当前库；在 disposable schema 用真实旧产物验证 V20 兼容及新依赖文件兼容。
-- [ ] 检查全局空闲，关闭新入口，按手册回退配套镜像/config，保留 additive schema、文件、receipt 和 PVC。
-- [ ] 用专用 Java 项目验证旧工具链；恢复最新发布，再检查健康和数据/文件/receipt 保留。
-- [ ] 记录每个阶段真实 digest、状态与保留资源，独立审查并提交。
+- [x] 核对原 rollback tuple，备份当前库；在 disposable schema 用真实旧产物验证 V20 兼容及新依赖文件兼容。最新旧 Flyway validate/migrate0及数据摘要不变；旧 Python runtime PASS，新增 build/protocol 不支持已明确。
+- [x] 检查全局空闲，关闭新入口，按手册回退配套镜像/config，保留 additive schema、文件、receipt 和 PVC。三个平台及五个专用 Python workspace 实际回退，维护只允许指定 Java 项目。
+- [x] 用专用 Java 项目验证旧工具链；恢复最新发布，再检查健康和数据/文件/receipt 保留。旧 Java compile/test/package/Run PASS，恢复后八工作区及原 durable 摘要、12PVC保持；新版Python syntax/pytest和FastAPI GET PASS。
+- [x] 记录每个阶段真实 digest、状态与保留资源，独立审查并提交。回滚/恢复实际imageID、旧能力限制、维护入口和比较范围见 cloud-followup/rollback-20261105；独立只读审查通过。
 
 回滚兼容实测补充：真实旧 backend Flyway 11.7.2 在当前库的 disposable 副本上 validate/migrate PASS，执行迁移 0、全表摘要不变。旧 runner 对新锁文件的 console/FastAPI runtime PASS；旧 pytest build 入口缺失(exit 127)，旧 agent scoped test prepare 404。因此正式演练限定旧 Java 能力维护窗口，Python/AI 准入保持关闭，不将旧版本描述为支持新能力；结束恢复新版并验证。
 

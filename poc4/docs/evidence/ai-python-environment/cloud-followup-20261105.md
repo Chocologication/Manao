@@ -37,6 +37,20 @@
 
 ## 回滚
 
-兼容门禁已执行，正式集群切换待故障矩阵收尾。私有当前库备份 3567603 bytes，SHA256 4AEFE09C0E1F29292242C8E0A5429AE6E55F7FB16BADEDD761649D70B2A3F2CF，恢复至独立 schema。真实旧 backend c86fda5f… 自带 Flyway 11.7.2 接受 V20，validate/migrate PASS、migrations=0、全表前后 SHA256 00d26e63886f8df3888a44aa498f57704ace0d1087f97c853fc426dfd3484e0d。
+正式回滚和恢复演练已完成，结果为 **PASS（旧 Java 维护窗口范围）**，详见[回滚 JSON](rollback-20261105.json)。初次备份兼容门禁通过后，在关闭新准入且全局 task/operation/compact/Run 均空闲时再次备份当前库：4384124 bytes，SHA256 057c9f6e78bb9a82235ad30bfb3ea61d9257791a87a9a8c317a931ddf901a430。最新备份恢复至独立 schema；真实旧 backend c86fda5f… 自带 Flyway 11.7.2 接受 V20，validate/migrate PASS、migrations=0、全表前后 SHA256 391026757fac0359361ac934a3a6e2f2d0d1122641b1147e702804e0ac2a80ff。未恢复覆盖运行库。
 
 旧 runner 对真实新 main/test 锁文件副本：console exit 0 输出 10、FastAPI readiness/demo 200 且 total=2,000，全部源/依赖文件摘要不变。旧镜像 pytest build 入口不存在(exit127)；旧 agent 合法签名 GET 200、prepare-scoped test 404。正式演练因此限定旧 Java 功能维护窗口，Python/AI 不开放，随后恢复新版；不能记成旧 Python AI/test 全能力兼容。
+
+公网维护配置仅允许登录及一个专用 Java 项目，其他准入返回 503；三个平台真实切旧 digest、五个专用 Python workspace 同 Pod 更新旧 agent 并确认新 containerID，配置切回旧 runner/agent。旧 Java 真实模型 task 6f5f1476-0759-4195-9830-bf03ed8edd43 COMPLETED，changedPaths=[]；原 Maven compile/test/package exit0 且 cleanupConfirmed，应用 SUCCEEDED/exit0/真实 Hello from Manao 日志。
+
+随后平台恢复 backend/worker/runner/agent 的上一轮正式 digest，以及本轮修复前端 12f2f70f…；五个 workspace 恢复当前 agent，Pod/PVC UID 均不变。backend/worker 在确认排空及维护准入关闭后同时启动，均 Ready；不描述成未决操作恢复或独立意外重启验收。恢复后再实测 Python task/compact/dependency/Run/file PUT 五类公网入口均503，完成核对后撤除维护配置。
+
+独立逐项比较：八个专用工作区所有常规文件路径及摘要完全相同，原 task28/operation256/tool248 行的身份与摘要全部保留；旧 Java 烟测仅新增一个 task及其17个tool。Flyway/project 行不变，12个 PVC 身份保留，平台 image Secret 所有键精确恢复。当前 claim/subPath/PV 映射已记录；挂载不变同时依据 workspace 同 Pod UID、PVC 同 UID 的不可变性。conversation/Run/ACK 全行及 symlink 元信息未单独制作 baseline，不声称这些表做过全量逐列比较。
+
+撤维护后页面200正常 HTML；新 Python task 2c1fab9e-4833-410d-ba91-5bd325a07e52 在 revision26 完成 syntax/pytest（1 test、0 skipped）并确认 cleanup，无源码改动。FastAPI 新 Run 13d9275b-7fe7-4c9e-8cb7-7570490198a6 使用 revision38、已 READY，公网30081返回200/total=2,000，按约保留。
+
+## 收尾
+
+最终核对：backend/frontend/worker 均1/1 Ready；占用task、未决operation、运行中compact、development Job/Pod均0；一个活动Run为上述保留FastAPI。V20仍唯一成功、checksum1710106007；两个本轮disposable schema已DROP，未重置运行库。JDWP环境参数和维护ConfigMap/mount均已撤除，自有13306/15005/15006转发均停止且无监听。共享6443连接未动。项目/PVC删除均0，主目录既有.gitignore与.zcode配置修改保留。
+
+原始凭据、备份、失败注入与操作者日志保存在仓库外；临时重复Playwright文件已按hash归档后移除。当前分支本地提交保留，Git push/merge未执行。本轮三项选定范围完成；用户暂缓的第二类专项保持NOT_RUN，AI_PYTHON_CLOSED_LOOP_PASS仍未授予。

@@ -15,7 +15,7 @@
 | AI 流式输出、思考强度与 Markdown | [验收记录](evidence/ai-output/acceptance.md) |
 | AI 项目准入 | [验收记录](evidence/ai-project-access/acceptance.md) |
 | AI 工具与构建预算 | [验收记录](evidence/ai-task-budget/acceptance.md) |
-| AI 四模板环境与 Python / FastAPI 开发闭环 | [本地证据](evidence/ai-python-environment/acceptance.md)、[云端发布与核心流程](evidence/ai-python-environment/cloud-20261104.md)、[发布与回滚](../deploy/ai-python-environment/README.md) |
+| AI 四模板环境与 Python / FastAPI 开发闭环 | [本地证据](evidence/ai-python-environment/acceptance.md)、[首轮云流程](evidence/ai-python-environment/cloud-20261104.md)、[UI/依赖故障/回滚恢复](evidence/ai-python-environment/cloud-followup-20261105.md)、[发布与回滚](../deploy/ai-python-environment/README.md) |
 | AI 界面、截图与发布附件 | [附件目录](evidence/ai-ui/)、[前端记录](../frontend/README.md) |
 | Java 运行时与 Maven 缓存 | [验收记录](evidence/java-runtime/acceptance.md) |
 | Python 运行时、恢复与依赖编辑 | [验收记录](evidence/python-runtime/acceptance.md) |

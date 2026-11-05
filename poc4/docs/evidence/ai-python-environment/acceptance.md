@@ -6,6 +6,8 @@
 
 **后续授权更新（2026-11-04）**：上述 NOT_RUN 是本地交付时状态。用户随后授权集群部署与真实模型，实际已完成五项发布、V20、普通 Python 两轮、FastAPI 分段继续的两轮、Java 两模板烟测和真实 pytest 暂停/继续，见[云端记录](cloud-20261104.md)及[脱敏 JSON](cloud-20261104.json)。本页下表保留历史本地证据；当前完整云故障矩阵仍未闭合，`AI_PYTHON_CLOSED_LOOP_PASS` 仍未授予，不能把下表全部 NOT_RUN 自动改成 PASS。
 
+**2026-11-05 后续范围已完成**：UI reload 修复及完整 FastAPI 连续两轮 PASS；八个依赖故障样本及原身份对账 PASS；旧 Java 维护窗口正式回滚/恢复 PASS（旧 Python 新 build/protocol 不支持已明确）。见[后续记录](cloud-followup-20261105.md)、[故障证据](dependency-faults-20261105.json)及[回滚证据](rollback-20261105.json)。独立意外重启、自动压缩、图片与其余兼容专项为用户暂缓的 NOT_RUN，完整闭环标签保持未授予。
+
 ## 1. 本地证据与范围
 
 以下为本次各任务实际记录，保留不同提交/修复后定向重跑的边界；不是把重叠用例相加的总数，也不是 Task 9 重新全量运行。原始开发日志/报告保留在本地 `.superpowers/sdd/2026-11-04-ai-python-environment-implementation-plan/`；长期源码入口如下。

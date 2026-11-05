@@ -1,6 +1,6 @@
 # AI Python 环境：发布、验收与回滚
 
-2026-11-04：用户在本地交付后授权集群发布与真实模型验证；五项产物已发布，V20 已执行，两个 Python 核心流程及 Java 烟测、pytest 暂停/继续取得真实证据，见[本次云端记录](../../docs/evidence/ai-python-environment/cloud-20261104.md)。本页下文保留可复现操作与回滚约束；完整云故障矩阵和正式回滚仍 NOT_RUN，不把核心流程成功升级为全部验收通过。后续再次发布仍需核对该轮源码、目标与任务状态。
+2026-11-05：五项发布、V20、核心 Python 流程已取得[首轮证据](../../docs/evidence/ai-python-environment/cloud-20261104.md)；后续已修复 UI 重载、连续重跑 FastAPI、完成八个依赖故障样本，以及旧 Java 维护窗口正式回滚/恢复，见[后续记录](../../docs/evidence/ai-python-environment/cloud-followup-20261105.md)。独立意外重启、自动压缩、图片与其余兼容专项按用户要求暂缓；完整闭环标签仍未授予。后续再次发布仍需核对该轮源码、目标与任务状态。
 
 ## 1. 构建与不可变身份
 
@@ -8,11 +8,11 @@
 
 | 产物 | 构建入口 | 当前实际身份与边界 |
 | --- | --- | --- |
-| backend | `poc4/backend/Dockerfile` | 发布构建/digest NOT_RUN；含 additive V20 |
-| pi-worker | `poc4/pi-worker/Dockerfile` | 发布构建/digest NOT_RUN；Pi 1.2.0，可信 environment 与精确 `version` 合同 |
-| workspace-agent | `poc4/workspace-agent/Dockerfile` | 本地协议测试 image ID `sha256:89fce304654dd4a2cb1988c0ea89b9b4d29cfc51542e582661bf289d9f160810`，不是 registry RepoDigest；发布 NOT_RUN |
-| python-runner | `poc4/python-runner/Dockerfile`，仓库根 context + seed named context | 本地最终测试 image ID `sha256:ba7752aab64e25edc8ae6d3541963f983dc1024a85fad90e54ad9c8799013879`，不是 registry RepoDigest；发布 NOT_RUN |
-| frontend | `poc4/frontend/Dockerfile` | `VITE_ENABLE_AI=true`；发布构建/digest NOT_RUN |
+| backend | `poc4/backend/Dockerfile` | source 55f2067 已发布；additive V20；完整 digest 见首轮证据 |
+| pi-worker | `poc4/pi-worker/Dockerfile` | source 55f2067 已发布；Pi 1.2.0，可信 environment 与精确 `version` 合同 |
+| workspace-agent | `poc4/workspace-agent/Dockerfile` | source 55f2067 已发布；五个专用 Python workspace 回滚/恢复已核对实际 imageID |
+| python-runner | `poc4/python-runner/Dockerfile`，仓库根 context + seed named context | source 55f2067 已发布；恢复后真实 syntax/pytest 通过 |
+| frontend | `poc4/frontend/Dockerfile` | `VITE_ENABLE_AI=true`；source f58581a 修复已发布，digest 见后续证据 |
 
 获发布授权后从仓库根执行。`MANAO_RELEASE_REGISTRY` 和 `MANAO_RELEASE_ID` 必须由操作者设置，命令不回退到历史仓库或 release。先确认 checkout 干净且 HEAD 是该轮最终审查提交；保留 tag→source SHA→OCI index digest→平台 child digest→实际 Pod imageID 的完整映射。`docker image inspect .Id` 不能替代发布 RepoDigest。
 
@@ -105,4 +105,6 @@ pnpm -C poc4/frontend exec playwright test --config playwright.ai-python.config.
 
 先关闭新能力准入，收尾并对账所有新增 dependency/build/Run 操作；不能让旧 worker/agent 接管未决新协议调用。保存最终 receipt 与原 operation/task identity，未知结果保持占用直到证据闭合。确认全局空闲后恢复配套旧 backend/worker/frontend digest、runner 配置及已更新 Python workspace 的旧 agent digest；每个旧 workspace 仍核对 PVC UID/subPath、文件摘要和新 containerID。新 test-group 项目回退前须验证旧 runner 对其 lock/groups 的兼容，不假设旧镜像可运行。
 
-保留 additive V20、历史 NULL、新 task 快照、锁文件、journal/receipt 和所有 PVC；不删除列、不重置 schema、不删平台 MySQL PVC。旧版本 Flyway 的 future migration/validate 行为必须在 disposable schema 用真实旧产物验证，不能现场关闭 validate 掩盖不兼容。回退后只在专用 disposable 项目验证旧 Java 路径，恢复用户入口前记录真实结果。当前发布、旧产物兼容演练、备份恢复、正式回滚均 **NOT_RUN**。
+保留 additive V20、历史 NULL、新 task 快照、锁文件、journal/receipt 和所有 PVC；不删除列、不重置 schema、不删平台 MySQL PVC。旧版本 Flyway 的 future migration/validate 行为必须在 disposable schema 用真实旧产物验证，不能现场关闭 validate 掩盖不兼容。回退后只在专用 disposable 项目验证旧 Java 路径，恢复用户入口前记录真实结果。
+
+本轮真实演练见[回滚证据](../../docs/evidence/ai-python-environment/rollback-20261105.json)：旧 backend Flyway 接受 V20、旧 runner 能运行新 lock；但旧 pytest build 入口与 agent test-group 协议不存在。因此回滚只能在关闭 Python/AI 准入的维护窗口验证旧 Java 能力，不能将新功能流量交给旧版。恢复后核对当前 image 配置、同 Pod/PVC、源文件与 durable 摘要，再撤维护；新 Python syntax/pytest 和 FastAPI GET 已通过。操作者[精确故障工具](operators/README.md)与 [Flyway 探针](operators/RollbackFlywayProbe.java)不链接到产品；详细目标/凭据留在仓库外。
