@@ -127,6 +127,21 @@ describe("manual compact HTTP admission", () => {
 });
 
 describe("native idle summary outcomes", () => {
+  it.each([{ text: "" }, { text: " \n\t " }, { thinking: "reasoning with no visible summary" }])(
+    "rejects unusable manual summary without persisting a checkpoint: %j", async response => {
+      const manager = SessionManager.inMemory("manao-project", { id: conversationId });
+      manager.appendCustomMessageEntry("manao_user_request", "original goal bookId" + "x".repeat(100_000), true);
+      manager.appendCustomMessageEntry("manao_user_request", "recent work" + "y".repeat(100_000), true);
+      const original = structuredClone(manager.getEntries());
+      let native!: AgentSession;
+      const respond = vi.fn(() => response);
+      await expect(run(manager, respond, session => { native = session; })).rejects.toThrow();
+      expect(respond).toHaveBeenCalledTimes(1);
+      expect(native.sessionManager.getEntries().filter(entry => entry.type === "compaction")).toHaveLength(0);
+      expect(manager.getEntries()).toEqual(original);
+      expect(JSON.stringify(native.sessionManager.buildSessionContext().messages)).toContain("original goal bookId");
+    });
+
   it("reinjects current Python environment and tools in the next task after a manual old-Java summary", async () => {
     const manager = SessionManager.inMemory("manao-project", { id: conversationId });
     manager.appendCustomMessageEntry("manao_user_request", "历史 Java Spring Boot Maven package" + "x".repeat(100_000), true);

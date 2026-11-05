@@ -9,6 +9,7 @@ import {
   type Model,
   type StopReason,
   type TextContent,
+  type ThinkingContent,
   type ToolCall,
   type TranscriptContext,
   type Usage,
@@ -31,6 +32,7 @@ import type { WorkerBudgets } from "../src/config.js";
 
 export interface ScriptedResponse {
   text?: string;
+  thinking?: string;
   toolCalls?: Array<{ id: string; name: string; args: Record<string, unknown> }>;
   stopReason?: StopReason;
   errorMessage?: string;
@@ -43,7 +45,8 @@ const USAGE: Usage = {
 };
 
 function scriptedMessage(response: ScriptedResponse): AssistantMessage {
-  const content: Array<TextContent | ToolCall> = [];
+  const content: Array<TextContent | ThinkingContent | ToolCall> = [];
+  if (response.thinking !== undefined) content.push({ type: "thinking", thinking: response.thinking });
   if (response.text !== undefined) content.push({ type: "text", text: response.text });
   for (const call of response.toolCalls ?? []) {
     content.push({ type: "toolCall", id: call.id, name: call.name, arguments: call.args });
@@ -73,6 +76,11 @@ function emitScriptedStream(stream: AssistantMessageEventStream, message: Assist
       stream.push({ type: "text_start", contentIndex: index, partial: { ...partial } });
       stream.push({ type: "text_delta", contentIndex: index, delta: block.text, partial: { ...partial } });
       stream.push({ type: "text_end", contentIndex: index, content: block.text, partial: { ...partial } });
+    } else if (block.type === "thinking") {
+      partial.content = [...partial.content, { type: "thinking", thinking: "" }];
+      stream.push({ type: "thinking_start", contentIndex: index, partial: { ...partial } });
+      stream.push({ type: "thinking_delta", contentIndex: index, delta: block.thinking, partial: { ...partial } });
+      stream.push({ type: "thinking_end", contentIndex: index, content: block.thinking, partial: { ...partial } });
     } else {
       partial.content = [...partial.content, { type: "toolCall", id: block.id, name: block.name, arguments: {} }];
       stream.push({ type: "toolcall_start", contentIndex: index, partial: { ...partial } });

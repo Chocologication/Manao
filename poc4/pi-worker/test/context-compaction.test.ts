@@ -66,6 +66,62 @@ async function fixture(manager: SessionManager, respond: Respond, seconds = 1800
 }
 
 describe("fixed-window native Pi compaction", () => {
+  const unusableSummaries = [{ text: "" }, { text: " \n\t " }, { thinking: "reasoning without a visible checkpoint" }];
+  it.each(unusableSummaries.flatMap(response => ["before-task", "sdk-auto", "after-final"].map(phase => ({ response, phase }))))(
+    "rejects unusable summary $response at $phase before changing the durable projection", async ({ response, phase }) => {
+      const manager = history();
+      if (phase === "before-task") {
+        manager.appendMessage(assistant("prior usage", 786_000));
+        manager.appendCustomMessageEntry("manao_user_request", "current goal" + "g".repeat(4000), true);
+      }
+      const original = structuredClone(manager.getEntries());
+      let ordinary = 0;
+      const f = await fixture(manager, (_context, session) => {
+        if (session.isCompacting) return response;
+        ordinary++;
+        return phase === "after-final" ? { text: "final answer", usageTokens: 786_432 }
+          : { usageTokens: 785_900, toolCalls: [{ id: "grow-empty", name: "read_file", args: { path: "app/main.py" } }] };
+      }, 1800, true, undefined, PYTHON_ENVIRONMENT);
+      try {
+        expect(await f.run()).toMatchObject({ state: "FAILED", failureCode: "AI_CONTEXT_COMPACTION_FAILED" });
+        expect(f.requests.filter(request => request.summary)).toHaveLength(1);
+        expect(ordinary).toBe(phase === "before-task" ? 0 : 1);
+        expect(f.entries.some(entry => entry.type === "compaction")).toBe(false);
+        expect(f.entries.slice(0, original.length)).toEqual(original);
+        const restored = SessionManager.inMemory("restored", { id }, [manager.getHeader(), ...structuredClone(f.entries)]);
+        expect(JSON.stringify(restored.buildSessionContext().messages)).toContain("字段必须保留 bookId");
+      } finally { f.pi.dispose(); }
+    });
+
+  it.each(unusableSummaries)("keeps the first good checkpoint when a second native summary is unusable: %j", async response => {
+    let ordinary = 0, failedSummaries = 0;
+    const f = await fixture(history(), (_context, session) => {
+      if (session.isCompacting) {
+        if (!session.sessionManager.getEntries().some(entry => entry.type === "compaction")) return { text: summary };
+        failedSummaries++;
+        return response;
+      }
+      return { usageTokens: 785_900, toolCalls: [{ id: `grow-${++ordinary}`, name: "read_file", args: { path: "app/main.py" } }] };
+    }, 1800, true, undefined, PYTHON_ENVIRONMENT);
+    try {
+      expect(await f.run()).toMatchObject({ state: "FAILED", failureCode: "AI_CONTEXT_COMPACTION_FAILED" });
+      expect(failedSummaries).toBe(1);
+      expect(ordinary).toBe(2);
+      const checkpoints = f.entries.filter(entry => entry.type === "compaction");
+      expect(checkpoints).toHaveLength(1);
+      expect(checkpoints[0]!.summary).toContain(summary);
+      const restored = SessionManager.inMemory("restored", { id }, [f.session.sessionManager.getHeader(), ...structuredClone(f.entries)]);
+      expect(JSON.stringify(restored.buildSessionContext().messages)).toContain(summary);
+      const next = await fixture(restored, (_context, session) => session.isCompacting ? { text: summary } : { text: "continued current Python goal" }, 1800, true, undefined, PYTHON_ENVIRONMENT);
+      try {
+        expect((await next.run()).state).toBe("COMPLETED");
+        const request = next.requests.find(item => !item.summary)!;
+        expect(JSON.stringify(request.context)).toContain(summary);
+        expect(JSON.stringify(request.context)).toContain("python-fastapi-web");
+      } finally { next.pi.dispose(); }
+    } finally { f.pi.dispose(); }
+  });
+
   it.each(["before-task", "sdk-auto"])("retains current Python authority after %s compaction of old Java history", async phase => {
     const manager = history();
     if (phase === "before-task") manager.appendMessage(assistant("old Java usage", 786_000));

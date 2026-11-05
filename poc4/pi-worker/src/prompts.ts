@@ -1,5 +1,5 @@
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
-import { getSystemMessageText } from "@earendil-works/pi-ai";
+import { contentText, getSystemMessageText } from "@earendil-works/pi-ai";
 import { parseProjectEnvironment, type ProjectEnvironment } from "./project-environment.js";
 
 /** Trusted task instructions; capabilities describe the backend's current allowlist. */
@@ -67,17 +67,27 @@ Never include credentials or secret values; retain only the relevant restriction
 
 /**
  * Pi 1.2 sends manual, automatic and turn-prefix summaries through this same stream.
- * Only the request projection changes; native history, cut points, usage, retries,
- * cancellation and the caller's ACK wrapper remain owned by their existing layers.
+ * Validate each summary response before the SDK can replace the active checkpoint.
+ * History, cut points, usage, retries, cancellation and ACK keep their existing owners.
  */
 export function installCompactionPrompt(session: AgentSession, environment?: ProjectEnvironment): void {
   const stream = session.agent.streamFunction;
-  session.agent.streamFunction = (model, context, options) => {
+  session.agent.streamFunction = async (model, context, options) => {
     const first = context.messages[0];
     if (!session.isCompacting || first?.role !== "system") return stream(model, context, options);
-    return stream(model, { ...context, messages: [
+    const response = await stream(model, { ...context, messages: [
       { ...first, content: `${getSystemMessageText(first)}\n\n${COMPACTION_INSTRUCTIONS}${environment ? `\nTrusted current task environment (supersedes historical environment facts): ${JSON.stringify(environment)}` : ""}`, sections: undefined },
       ...context.messages.slice(1),
     ] }, options);
+    const result = response.result.bind(response);
+    response.result = async () => {
+      const message = await result();
+      // Error/length/abort retain the SDK's existing handling. A successful but
+      // textless response (including thinking-only) is never a usable checkpoint.
+      if (message.stopReason !== "error" && message.stopReason !== "length" && message.stopReason !== "aborted"
+          && !contentText(message.content).trim()) throw new Error("Compaction summary has no visible text");
+      return message;
+    };
+    return response;
   };
 }
