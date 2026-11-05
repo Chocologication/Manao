@@ -4,10 +4,10 @@
 
 ## Task 1: UI 文件重载修复与 FastAPI 连续验收
 
-- [ ] 追踪真实错误、重载调用链和并发读取合同，确定根因。
-- [ ] 先添加有意义的失败回归，再做最小修复；保留 scope、接管和写锁保护。
-- [ ] 运行受影响测试和类型检查，独立审查并本地提交。
-- [ ] 发布配套产物，在专用项目连续完成 FastAPI 原完整脚本，保留失败尝试和真实模型/operation/Run 身份。
+- [x] 追踪真实错误、重载调用链和并发读取合同，确定根因。直接重载 GET 缺少已有的 PROJECT_BUSY 有界重试；历史失败 HTTP 未留 trace，具体历史请求归因仍为推断。
+- [x] 先添加有意义的失败回归，再做最小修复；保留 scope、接管和写锁保护。RED 8 failed，GREEN 114 passed。
+- [x] 运行受影响测试和类型检查，独立审查并本地提交。实现 f58581a，独立复审 APPROVE。
+- [x] 发布配套产物，在专用项目连续完成 FastAPI 全部原场景断言，保留失败尝试和真实模型/operation/Run 身份。复用已归档的专用项目，经受控 remove 准备失败 fixture，以完整文件摘要准入替代初次 pristine seed；核心场景断言原样保留，连续两轮 1/1 PASS，156856ms。
 
 ## Task 2: 依赖操作真实集群故障矩阵
 
@@ -22,6 +22,8 @@
 - [ ] 检查全局空闲，关闭新入口，按手册回退配套镜像/config，保留 additive schema、文件、receipt 和 PVC。
 - [ ] 用专用 Java 项目验证旧工具链；恢复最新发布，再检查健康和数据/文件/receipt 保留。
 - [ ] 记录每个阶段真实 digest、状态与保留资源，独立审查并提交。
+
+回滚兼容实测补充：真实旧 backend Flyway 11.7.2 在当前库的 disposable 副本上 validate/migrate PASS，执行迁移 0、全表摘要不变。旧 runner 对新锁文件的 console/FastAPI runtime PASS；旧 pytest build 入口缺失(exit 127)，旧 agent scoped test prepare 404。因此正式演练限定旧 Java 能力维护窗口，Python/AI 准入保持关闭，不将旧版本描述为支持新能力；结束恢复新版并验证。
 
 ## 验证边界
 
