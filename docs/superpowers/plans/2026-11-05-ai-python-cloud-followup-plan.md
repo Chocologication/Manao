@@ -11,10 +11,10 @@
 
 ## Task 2: 依赖操作真实集群故障矩阵
 
-- [ ] 设计可审阅、限定 project/task/operation 的注入脚本；测试控制仅在操作者侧，不加入生产默认开关。
-- [ ] 覆盖 commit 回包丢失、双文件部分提交、prepare/PENDING/commit 边界取消、PENDING backend/workspace-agent 重启。
-- [ ] 逐项核对原身份、digest、receipt、解析次数、revision、文件对及锁；禁止重放不确定 mutation。
-- [ ] 确认最终无未决操作、占用及该任务 build Job/Pod，独立审查证据并提交。
+- [x] 设计可审阅、限定 project/task/operation 的注入脚本；测试控制仅在操作者侧，不加入生产默认开关。0074355/311ca5e；JDI 真实 JVM 自测 11 组和独立复审通过。
+- [x] 覆盖 commit 回包丢失、双文件部分提交、prepare/PENDING/commit 边界取消、PENDING backend/workspace-agent 重启。八个限定集群样本通过，保留首次失败注入；回包丢失传输类别为 INTERRUPTED，不声称 RESET。
+- [x] 逐项核对原身份、digest、receipt、解析次数、revision、文件对及锁；禁止重放不确定 mutation。计数限定实际有界 prepare/helper 观察窗口；原 journal 摘要/mtime 保持，claim 为真实收尾门禁间接证据。
+- [x] 确认最终无未决操作、占用及该任务 build Job/Pod，独立审查证据并提交。全局 occupying/PENDING=0、development Job/Pod=0；依赖任务未调用 build，不能当构建 cleanup 故障通过。
 
 ## Task 3: 正式回滚及恢复演练
 

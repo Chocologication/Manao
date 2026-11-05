@@ -16,7 +16,24 @@
 
 ## 依赖故障矩阵
 
-进行中。仅 fault project bf51c6ac-be04-4274-9c73-43a15ea9d470；使用与实际 JAR LineNumberTable 对齐的操作者 JDI 单线程门闩，不改产品 class、数据库结果或生产默认测试开关。临时调试仅 Pod loopback，通过本机 port-forward 连接，结束恢复。场景逐项结果待补齐。
+八个限定样本 PASS，独立离线审查 APPROVE；结构化原身份、文件对、journal、receipt、真实时间与证据限制见[故障 JSON](dependency-faults-20261105.json)。仅 fault project bf51c6ac-be04-4274-9c73-43a15ea9d470；使用与实际 JAR LineNumberTable 对齐的操作者 JDI 单线程门闩，不改产品 class、数据库结果或生产默认测试开关。临时调试仅 Pod loopback，通过本机 port-forward 连接；矩阵结束已恢复 backend 和该 agent 的生产参数。
+
+| 样本 | 真实边界和结果 | Revision |
+| --- | --- | --- |
+| c-prepared | prepare 已生成完整 journal、PENDING 前 pause；原文件不动、无登记/receipt，安全释放 | 19→19 |
+| c-prepare-inflight | 真实 helper 已启动时 pause；未登记、不提交，原文件不动 | 21→21 |
+| c-pending | PENDING 登记后、commit 前 pause；保持占用，原操作提交后终结 | 19→20 |
+| c-commit | pyproject 已 durable rename、lock 尚 before 时 pause；不提前解锁、原操作完成 | 20→21 |
+| d-partial-restart | 同一真实部分提交点退出 agent JVM；同 Pod/PVC 新 container 从原 journal 恢复，第一文件 mtime 不变 | 22→23 |
+| r-agent-pending | PENDING、源文件 before 时退出该 agent；同 Pod/PVC 重启，原操作正常完成 | 23→24 |
+| r-backend-pending | PENDING 后退出 backend JVM；同 Pod 新 container，owner close 沿原 operation 收尾 | 24→25 |
+| d-lost-response-repeat | 两文件及 receipt 持久后中断原 backend HTTP 请求；实际 IO_ERROR/INTERRUPTED、仍 PENDING/占用，receipt replay 后释放 | 25→26 |
+
+已核对原 request/operation/digest、receipt SHA、源两文件的 before/after、journal bytes/mtime 未变、登记后 revision 只 +1、登记前取消不变；各任务最终释放、无未决 workspace operation。每个 scoped prepare 或 helper 断点在覆盖 durable call completion 的有界观察窗口内记录一次。重启样本的存活端观察器分别证明未重新 prepare（agent 部分提交重启）或未再启动 helper（backend 重启）；不声称已直接计数重启后全部入口。live claim 释放由真实收尾通过生产 hasLiveCalls 门禁间接证明，没有内存计数 dump。
+
+首次 lost-response 注入尝试保留 FAILED_INJECTION：standalone debugger 全线程读取超出外部 15s 预算，门闩自动恢复、原 task/operation 正常完成，未重放。操作者工具 311ca5e 以同连接原 HIT 线程绑定修正；先 RED 后 11 组真实 JVM 自测 PASS，并独立复审，再以新 task 执行成功样本。此为真实 HTTP INTERRUPTED，不是 TCP RESET。实际 backend failed-closed 日志在旧 Pod 删除前由工具输出捕获，JSON 明确标记该 provenance，没有冒充新 Pod 日志。
+
+这些依赖专用任务均未调用 build（各 buildCalls=0），不把 Job 缺席说成构建 cleanup 故障验收。矩阵结束全局 occupying=0、PENDING=0，development Job/Pod=0。项目/PVC/journal/receipt 均保留。独立 backend/worker 意外重启、自动压缩与图片专项仍按用户要求 NOT_RUN。
 
 ## 回滚
 
