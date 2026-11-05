@@ -506,6 +506,91 @@ describe('dependency commit workspace refresh', () => {
   });
 });
 
+describe('reloadWorkspaceAfterTerminalRun project contention', () => {
+  it.each([
+    { branch: 'root tree', resource: 'tree', path: '', selected: null, expanded: null },
+    { branch: 'open metadata', resource: 'meta', path: 'README.md', selected: null, expanded: null },
+    { branch: 'open content', resource: 'content', path: 'README.md', selected: null, expanded: null },
+    { branch: 'selected directory', resource: 'tree', path: 'src', selected: SRC, expanded: null },
+    { branch: 'expanded directory', resource: 'tree', path: 'src', selected: null, expanded: SRC },
+    { branch: 'selected file metadata', resource: 'meta', path: 'pom.xml', selected: POM, expanded: null },
+  ])('recovers $branch after a transient PROJECT_BUSY without losing the session', async ({ resource, path, selected, expanded }) => {
+    await authenticateAsAlice();
+    activateAndOpen([README], README);
+    useWorkspaceSession.getState().selectPath(selected);
+    if (expanded !== null) useWorkspaceSession.getState().toggleDirectory(expanded);
+    let attempts = 0;
+    server.use(http.get(`/api/v1/projects/:projectId/files/${resource}`, ({ request }) => {
+      if (new URL(request.url).searchParams.get('path') !== path) return undefined;
+      attempts += 1;
+      if (attempts === 1) return HttpResponse.json(
+        { code: 'PROJECT_BUSY', message: 'Project is busy', traceId: 'reload-contention' },
+        { status: 409 },
+      );
+      return undefined;
+    }));
+
+    await reloadWorkspaceAfterTerminalRun({ projectId: ALICE_SEED_PROJECT_ID, queryClient });
+
+    expect(attempts).toBe(2);
+    expect(useWorkspaceSession.getState().openPaths).toEqual([README]);
+    expect(useWorkspaceSession.getState().activePath).toBe(README);
+    expect(useWorkspaceSession.getState().selectedPath).toBe(selected);
+    if (expanded !== null) expect(useWorkspaceSession.getState().expandedPaths.has(expanded)).toBe(true);
+    expect(queryClient.getQueryData(fileKeys.content(ALICE_SEED_PROJECT_ID, README))).toEqual(
+      expect.objectContaining({ path: README, content: '# Alice Notebook\n\nRead-only Maven demo.\n' }),
+    );
+    expect(queryClient.getQueryData(fileKeys.revision(ALICE_SEED_PROJECT_ID))).toBe(getMockWorkspaceRevision(ALICE_SEED_PROJECT_ID));
+  });
+
+  it.each([
+    { code: 'PROJECT_BUSY', status: 409, expectedAttempts: 4 },
+    { code: 'PROJECT_LOCKED', status: 409, expectedAttempts: 1 },
+    { code: 'INTERNAL_ERROR', status: 500, expectedAttempts: 1 },
+  ])('fails closed on $code with a bounded read budget', async ({ code, status, expectedAttempts }) => {
+    await authenticateAsAlice();
+    activateAndOpen([README], README);
+    let attempts = 0;
+    server.use(http.get('/api/v1/projects/:projectId/files/tree', () => {
+      attempts += 1;
+      return HttpResponse.json({ code, message: 'Reload rejected', traceId: 'reload-rejected' }, { status });
+    }));
+
+    await expect(reloadWorkspaceAfterTerminalRun({ projectId: ALICE_SEED_PROJECT_ID, queryClient }))
+      .rejects.toMatchObject({ status, body: expect.objectContaining({ code }) });
+
+    expect(attempts).toBe(expectedAttempts);
+    expect(useWorkspaceSession.getState().openPaths).toEqual([README]);
+    expect(queryClient.getQueryData(fileKeys.content(ALICE_SEED_PROJECT_ID, README))).toBeUndefined();
+  });
+
+  it('stops retrying the old project when the owner switches projects during backoff', async () => {
+    await authenticateAsAlice();
+    activateAndOpen([README], README);
+    let attempts = 0;
+    server.use(http.get('/api/v1/projects/:projectId/files/tree', () => {
+      attempts += 1;
+      return HttpResponse.json(
+        { code: 'PROJECT_BUSY', message: 'Project is busy', traceId: 'reload-switch' }, { status: 409 },
+      );
+    }));
+    const pending = reloadWorkspaceAfterTerminalRun({ projectId: ALICE_SEED_PROJECT_ID, queryClient })
+      .catch(error => error as Error);
+    await waitFor(() => expect(attempts).toBe(1));
+    useWorkspaceSession.getState().activateProject('other-project');
+    useWorkspaceSession.getState().openFile(README);
+    workspaceBufferRegistry.register({ projectId: 'other-project', path: README, kind: 'plain-text', content: 'owner edit' });
+    queryClient.setQueryData(fileKeys.revision('other-project'), '42');
+
+    expect((await pending as Error).message).toBe('Workspace project changed during reload');
+    expect(attempts).toBe(1);
+    expect(useWorkspaceSession.getState().openPaths).toEqual([README]);
+    expect(workspaceBufferRegistry.get('other-project', README)?.snapshot().content).toBe('owner edit');
+    expect(queryClient.getQueryData(fileKeys.revision('other-project'))).toBe('42');
+    expect(queryClient.getQueryData(fileKeys.tree(ALICE_SEED_PROJECT_ID, ROOT))).toBeUndefined();
+  });
+});
+
 describe('reloadWorkspaceAfterTerminalRun isolation', () => {
   it('does not import a coordinator or call completeReload', () => {
     const source = readFileSync('src/features/runs/workspaceReload.ts', 'utf8');
