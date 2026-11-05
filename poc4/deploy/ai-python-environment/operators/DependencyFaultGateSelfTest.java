@@ -124,6 +124,23 @@ public final class DependencyFaultGateSelfTest {
             require(h.operator.waitFor(5, TimeUnit.SECONDS) && h.operator.exitValue() == 0, "planned VM exit entered disconnected trace tail");
         }
         System.out.println("PASS planned VM exit skips trace tail");
+        try (Harness h = new Harness(line, 6, true, OPERATION, true)) {
+            // These unrelated request seats deliberately share identity. Only the original
+            // HIT thread may be interrupted; re-scanning every thread is ambiguous and slow.
+            for (int i = 0; i < 64; i++) h.send(PROJECT + " " + OPERATION + " pyproject.toml block");
+            h.target.awaitCount("BLOCKED " + OPERATION, 64, Duration.ofSeconds(5));
+            h.send(PROJECT + " " + OPERATION + " pyproject.toml tail");
+            h.gate.await("\"event\":\"HIT\"", Duration.ofSeconds(4));
+            Files.writeString(h.control, "resume", StandardCharsets.UTF_8);
+            h.target.await("TAIL_BLOCKED " + OPERATION, Duration.ofSeconds(4));
+            long start = System.nanoTime();
+            Files.writeString(h.control, "interruptCall", StandardCharsets.UTF_8);
+            h.target.await("TAIL_INTERRUPTED " + OPERATION, Duration.ofSeconds(3));
+            require(h.target.count("BLOCK_INTERRUPTED " + OPERATION) == 0, "another request seat was interrupted");
+            require(h.gate.lines.stream().noneMatch(s -> s.contains("SCOPE_NOT_UNIQUE")), "tail lost original request thread binding");
+            System.out.println("PERF bound request interrupt milliseconds=" + TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - start));
+        }
+        System.out.println("PASS trace tail targets original HIT thread among 64 same-identity blocked peers");
         System.out.println("SELF_TEST_PASS");
     }
 
@@ -133,7 +150,8 @@ public final class DependencyFaultGateSelfTest {
         for (String line; (line = input.readLine()) != null;) {
             String[] p = line.split(" ");
             new Thread(() -> {
-                if (p.length > 3 && p[3].equals("http")) httpBlocking(p[0], p[1]);
+                if (p.length > 3 && p[3].equals("tail")) tailRequest(p[0], p[1], p[2]);
+                else if (p.length > 3 && p[3].equals("http")) httpBlocking(p[0], p[1]);
                 else if (p.length > 3) blocking(p[0], p[1], p[2]);
                 else boundary(p[0], p[1], p[2]);
             }, "fixture-request").start();
@@ -147,6 +165,13 @@ public final class DependencyFaultGateSelfTest {
         if (Thread.currentThread().isInterrupted()) System.out.println("AFTER_INTERRUPTED " + operationId);
         else System.out.println("AFTER " + operationId);
         if (boundary == 0 && secret.isEmpty()) throw new AssertionError();
+    }
+
+    private static void tailRequest(String projectId, String operationId, String name) {
+        boundary(projectId, operationId, name);
+        System.out.println("TAIL_BLOCKED " + operationId);
+        try { Thread.sleep(120_000); }
+        catch (InterruptedException ex) { System.out.println("TAIL_INTERRUPTED " + operationId); }
     }
 
     private static int markerLine(Path path) throws IOException {

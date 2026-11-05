@@ -72,9 +72,11 @@ java --add-modules jdk.jdi -cp $gateBuild DependencyFaultGate gate `
 
 以上trace行必须替换为部署class验证过的数字，不能原样执行占位符。`BOUND.kind=trace`和`TRACE`按class/method/line聚合；同一行若映射多个字节码位置/方法可能不等于一次逻辑调用，必须核对`javap`和BOUND输出，选无循环且入口唯一的行。完全重复的trace定义会去重。
 
-HIT后trace保持启用，resume或interruptCall成功后继续指定tail时间，结束打印`TRACE_COMPLETE`。tail期间可以把同一控制文件由resume改为`interruptCall`，在既有连接内扫描并中断唯一原请求，无需第二个debugger；`exit`同理。只执行变化后的控制动作一次，失败即非零退出。原来的控制内容不会被tail重复执行。VM退出/重启会断开trace，不能把重启前后的计数自动当作完整区间，需重连并合并外部证据。
+HIT后trace保持启用，resume或interruptCall成功后继续指定tail时间，结束打印`TRACE_COMPLETE`。**HIT时自动绑定该线程ID，tail控制命令只重新核对这一个原线程的project/operation，不扫描其余请求线程。** tail期间可以把同一控制文件由resume改为`interruptCall`，在既有连接内中断原请求，无需第二个debugger；`exit`同理。原线程已经退出或身份不再匹配时拒绝，不能自动切换到另一个相同身份线程。只执行变化后的控制动作一次，失败即非零退出。原来的控制内容不会被tail重复执行。VM退出/重启会断开trace，不能把重启前后的计数自动当作完整区间，需重连并合并外部证据。
 
-自测还覆盖同连接多个trace边界、外project不输出TRACE、gate恢复后相同operation再次执行仍持续TRACE且不再hold。
+自测还覆盖同连接多个trace边界、外project不输出TRACE、gate恢复后相同operation再次执行仍持续TRACE且不再hold；64条相同身份阻塞peer并存时，tail只中断原HIT线程且其他peer保持运行。该回归实测本机中断约93ms，是本地样本，不是跨port-forward延迟保证。
+
+真实回包丢失建议同时保持backend和agent各一个debug连接：backend在prepare前或返回后gate，配置至少一个trace和充足tail；backend HIT后resume，等agent receipt落盘前返回处HIT，独立对账后把backend控制文件改为interruptCall；确认原HTTP失败/live claim释放，再resume agent。两个连接属于不同JVM。不要在backend gate连接仍存在时启动standalone attach。
 
 ## 单独attach中断或退出
 
@@ -85,7 +87,9 @@ java --add-modules jdk.jdi -cp $gateBuild DependencyFaultGate interruptCall `
   --host 127.0.0.1 --port 15005 --project '<projectId>' --operation '<operationId>'
 ```
 
-命令短暂停各候选线程读取stack，只在唯一线程同时匹配原project和operation时中断；原有其他suspend计数不被消除。可追加`--thread-id <previouslyVerifiedJdiId>`进一步限定。无匹配或多个匹配时`SCOPE_NOT_UNIQUE`、退出码5，所有自己暂停的线程恢复。不凭线程名猜测。native frame会跳过，读取上层Java业务参数。
+命令短暂停各候选线程读取stack，只在唯一线程同时匹配原project和operation时中断；原有其他suspend计数不被消除。可追加`--thread-id <previouslyVerifiedJdiId>`进一步限定，但**JDI uniqueID只应在原调试连接内使用，不能假定断开重连仍稳定**；重新attach使用旧ID只会作为待验证提示，仍须真实scope复核。无匹配或多个匹配时`SCOPE_NOT_UNIQUE`、退出码5，所有自己暂停的线程恢复。不凭线程名猜测。native frame会跳过，读取上层Java业务参数。
+
+未指定threadId的standalone命令会对全部线程的frames/locals/record fields执行串行JDWP查询；跨port-forward往返数可远大于实际业务请求数，不适合短hold内临时启动后全扫描。外部进程超时且stdout为空不能判断是否已发送中断；应保存spawnSync.error/退出状态、先对账原任务并停止重放。推荐已绑定HIT线程的同连接tail控制。
 
 `exit`命令语法相同，只在唯一原请求匹配时退出整个目标JVM（非零97）。**project筛选保证命中正确请求，不使backend JVM退出变成只影响一个project的操作**；backend退出必须在已授权全局维护窗口。空闲VM没有身份可验证时单独exit会拒绝；不要绕过此限制。
 

@@ -84,7 +84,7 @@ public final class DependencyFaultGate {
                     for (BreakpointRequest breakpoint : manager.breakpointRequests()) {
                         if (!Boolean.TRUE.equals(breakpoint.getProperty("trace"))) breakpoint.disable();
                     }
-                    Options bound = scoped.bind(matchedScope);
+                    Options bound = scoped.bind(matchedScope).withThread(match.thread().uniqueID());
                     emitHit("HIT", match.thread(), match.location(), bound);
                     int outcome = hold(vm, set, match.thread(), bound, installed);
                     if (outcome == 10) return 0; // Explicit VM exit has no remaining trace interval.
@@ -324,6 +324,9 @@ public final class DependencyFaultGate {
         }
         Options withMode(String action) {
             return new Options(action, port, project, operation, className, line, null, control, holdTime, waitTime, threadId, traces, traceAfter);
+        }
+        Options withThread(long id) {
+            return new Options(mode, port, project, operation, className, line, filename, control, holdTime, waitTime, id, traces, traceAfter);
         }
         static Options parse(String[] args) {
             if (args.length < 1 || !Set.of("gate", "exit", "interruptCall").contains(args[0])) throw new IllegalArgumentException("mode");
