@@ -265,7 +265,7 @@ test('fail- project reaches FAILED and displays the deterministic reason', async
 
   const card = await createProject(page, 'fail-workspace');
   await expect(card.locator('p[data-state]')).toHaveAttribute('data-state', 'CREATING');
-  await expect(card.locator('p[data-state]')).toHaveAttribute('data-state', '运行失败');
+  await expect(card.locator('p[data-state]')).toHaveAttribute('data-state', 'FAILED');
   await expect(card.getByText(MOCK_FAILURE_REASON)).toBeVisible();
   await expect(card.getByRole('link', { name: '进入工作台' })).toHaveCount(0);
   await expect(card.getByRole('button', { name: '进入工作台' })).toHaveCount(0);

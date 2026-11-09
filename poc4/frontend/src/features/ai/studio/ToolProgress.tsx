@@ -1,12 +1,44 @@
 import { useState } from 'react';
 import { CheckCircle2, ChevronRight, LoaderCircle, Terminal, AlertCircle } from 'lucide-react';
 import { getAgentToolCallResult } from '@/api/agentTaskApi';
+import { pythonBuildData } from '@/contracts/agentTask';
 import { type Turn, type Validation, isActive } from './types';
 const names: Record<string, string> = { read_file: '读取文件', list_files: '查看目录', write_file: '生成代码', build: '构建与测试', application: '管理应用', app_http_get: '检查应用', read_logs: '读取日志' };
 const goals: Record<string, string> = { test: '运行测试', compile: '编译项目', package: '打包项目', build: '构建项目', verify: '验证项目' };
 export function ValidationResult({ title, data }: { title: string; data: Validation }) {
-  const pass = data.exitCode === 0 && data.cleanupConfirmed === true && !data.error;
-  return <details className={`studio-validation ${pass ? 'is-pass' : 'is-fail'}`}><summary>{pass ? <CheckCircle2 size={15} /> : <AlertCircle size={15} />}<strong>{title}</strong><span>{pass ? '通过' : data.exitCode === undefined || data.exitCode === null ? '未确认' : `未通过 · 退出码 ${data.exitCode}`}</span><ChevronRight size={13} /></summary><div><p>{goals[data.goal ?? 'test'] ?? data.goal} · {data.cleanupConfirmed ? '临时执行资源已清理' : '临时执行资源是否清理尚未确认'}</p>{data.testReports?.map(report => <p key={report.testClass}>{report.testClass}：{report.tests} 项，失败 {report.failures + report.errors}，跳过 {report.skipped}</p>)}{!!data.error && <p>工具返回错误，请查看执行详情。</p>}<pre>{data.output || '没有输出记录。'}</pre></div></details>;
+  const isPython = data.language === 'python' || data.checkKind !== undefined || data.verificationStatus !== undefined;
+  const python = isPython ? pythonBuildData({ toolCallId: '', toolName: 'build', data: { ...data } }) : null;
+  const pass = data.exitCode === 0 && data.cleanupConfirmed === true && !data.error
+    && (!isPython || python?.verificationStatus === 'PASS');
+  let label = pass ? '通过' : data.exitCode == null ? '未确认' : `未通过 · 退出码 ${data.exitCode}`;
+  if (isPython) {
+    // Reuse the legacy result contract: missing or contradictory evidence cannot pass.
+    if (!python) label = '验证证据不完整';
+    else if (python.verificationStatus !== 'PASS') label = {
+      FAILED: '未通过', UNKNOWN: '验证证据不完整', SKIPPED: '全部测试跳过',
+      NO_TESTS: '未发现测试', NO_SOURCE: '未发现 Python 源文件',
+    }[python.verificationStatus];
+    else if (data.error) label = '验证工具返回错误';
+    else if (data.cleanupConfirmed !== true) label = '清理尚未确认';
+    else if (python.checkKind === 'syntax') label = '语法检查通过';
+  }
+  return <details className={`studio-validation ${pass ? 'is-pass' : 'is-fail'}`}>
+    <summary>{pass ? <CheckCircle2 size={15} /> : <AlertCircle size={15} />}<strong>{title}</strong><span>{label}</span><ChevronRight size={13} /></summary>
+    <div>
+      <p>{goals[data.goal ?? 'test'] ?? data.goal} · {data.cleanupConfirmed ? '临时执行资源已清理' : '临时执行资源是否清理尚未确认'}</p>
+      {python && <>
+        <p>源码版本：{python.sourceRevision}</p>
+        {python.checkKind === 'syntax' ? <p>已检查文件：{python.filesChecked ?? '未知'}</p> : <>
+          {python.testSummary && <p>测试：{python.testSummary.tests} · 失败：{python.testSummary.failures} · 错误：{python.testSummary.errors} · 跳过：{python.testSummary.skipped}</p>}
+          <p>测试报告：{python.testSummary?.reportComplete ? '完整' : '未取得完整报告'}</p>
+        </>}
+        {python.errors.map((error, index) => <p key={index}>{error.path ? `${error.path}: ` : ''}{error.message}</p>)}
+      </>}
+      {data.testReports?.map(report => <p key={report.testClass}>{report.testClass}：{report.tests} 项，失败 {report.failures + report.errors}，跳过 {report.skipped}</p>)}
+      {!!data.error && <p>工具返回错误，请查看执行详情。</p>}
+      <pre>{data.output || '没有输出记录。'}</pre>
+    </div>
+  </details>;
 }
 function TaskTool({ projectId, taskId, name, id, completed, proposal }: { projectId: string; taskId: string; name: string; id: string; completed: boolean; proposal: boolean }) {
   const [data, setData] = useState<Validation | null>(null), [error, setError] = useState(false), [pending, setPending] = useState(false);

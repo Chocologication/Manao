@@ -36,6 +36,11 @@ public final class AgentFilePolicy {
             || new AgentFilePolicy("javascript").canRead(path);
     }
 
+    public static boolean canListAnyLanguage(String path) {
+        return path != null && (new AgentFilePolicy("java").canList(path) || new AgentFilePolicy("python").canList(path)
+            || new AgentFilePolicy("javascript").canList(path));
+    }
+
     public boolean canList(String path) {
         if (path == null || path.isEmpty()) return true;
         return allowedPath(path) && (python || (node ? nodePath(path) : javaPath(path)));

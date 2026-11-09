@@ -19,6 +19,45 @@ async function send(page: Page, text: string): Promise<Turn> {
   await page.getByRole('button', { name: '发送消息', exact: true }).click();
   const result = await response; expect(result.ok()).toBeTruthy(); return result.json() as Promise<Turn>;
 }
+for (const [status, expected] of [
+  ['FAILED', '未通过'], ['UNKNOWN', '验证证据不完整'], ['SKIPPED', '全部测试跳过'], ['NO_TESTS', '未发现测试'],
+] as const) {
+  test(`Python ${status} never displays a passing validation when the process exits zero`, async ({ page }, info) => {
+    await enter(page);
+    // Substitute only the build evidence; exercise the actual workspace, task and renderer.
+    await page.evaluate(verificationStatus => {
+      const fetch = window.fetch.bind(window);
+      window.fetch = async (...args: Parameters<typeof window.fetch>) => {
+        const input = args[0];
+        const url = new URL(input instanceof Request ? input.url : String(input), location.href);
+        if (/\/agent-tasks\/[^/]+\/tools\/[^/]+-build$/.test(url.pathname)) {
+          return Response.json({ toolCallId: url.pathname.split('/').at(-1), toolName: 'build', data: {
+            goal: 'test', language: 'python', checkKind: 'pytest', verificationStatus,
+            exitCode: 0, cleanupConfirmed: true, sourceRevision: '7', filesChecked: null, errors: [],
+            testSummary: verificationStatus === 'UNKNOWN' ? null : {
+              tests: verificationStatus === 'NO_TESTS' ? 0 : 3, failures: verificationStatus === 'FAILED' ? 1 : 0,
+              errors: 0, skipped: verificationStatus === 'SKIPPED' ? 3 : 0, reportComplete: true,
+            }, output: '[Controlled browser fixture] Python verification evidence',
+          } });
+        }
+        return fetch(...args);
+      };
+    }, status);
+    await page.getByRole('button', { name: '任务', exact: true }).click();
+    const turn = await send(page, '检查 Python 验证结果');
+    const article = page.locator(`[data-turn-id="${turn.id}"]`);
+    const validation = article.locator('.studio-validation').filter({ hasText: '应用前验证' }).first();
+    await expect(validation).toBeVisible();
+    await expect(validation.locator('summary > span')).toHaveText(expected);
+    await expect(validation).not.toHaveClass(/is-pass/);
+    if (status === 'FAILED') {
+      await validation.locator('summary').click();
+      await expect(validation.getByText('测试：3 · 失败：1 · 错误：0 · 跳过：0')).toBeVisible();
+      await page.screenshot({ path: info.outputPath('python-failed-validation.png'), fullPage: true });
+    }
+  });
+}
+
 test('chat streams incrementally, keeps draft through both layouts and renders markdown', async ({ page }, info) => {
   const errors: string[] = []; page.on('pageerror', e => errors.push(e.message)); await enter(page);
   await page.getByLabel('消息输入').fill('切换布局时保留的草稿');

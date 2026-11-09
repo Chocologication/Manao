@@ -824,8 +824,8 @@ describe('project query focus and PROJECT_BUSY reads', () => {
     vi.useFakeTimers();
     try {
       renderApp({ initialEntries: [`/projects/${ALICE_SEED_PROJECT_ID}`] });
-      await advanceFakeTimersUntil(() => detailCount >= 4);
-      await vi.advanceTimersByTimeAsync(0);
+      // The final handler starts before its response and React Query's render settle.
+      await advanceFakeTimersUntil(() => screen.queryByRole('alert') !== null);
 
       const alert = screen.getByRole('alert');
       expect(alert).toHaveTextContent("无法加载项目");

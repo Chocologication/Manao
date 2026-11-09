@@ -1,4 +1,4 @@
-import { parseAgentTaskSnapshot, type AgentTaskSnapshot } from '@/contracts/agentTask';
+import { parseAgentTaskSnapshot, type AgentTaskSnapshot, type PythonBuildData } from '@/contracts/agentTask';
 
 export type StudioModel = { id: string; label: string; baseUrl: string; model: string; vision: boolean; tools: boolean; keyConfigured: boolean };
 export type ModelInput = Omit<StudioModel, 'keyConfigured'> & { apiKey: string };
@@ -8,7 +8,7 @@ export type Reference = { kind: 'file' | 'code' | 'logs'; path: string; text?: s
 export type Hunk = { id: string; start: number; before: string[]; after: string[] };
 export type FileChange = { path: string; before: string | null; after: string; beforeSha256: string | null; hunks: Hunk[] };
 export type ApplyInput = { requestId: string; hunkIds: string[]; expectedRevision: string };
-export type Validation = { goal?: string; exitCode?: number | null; output?: string; cleanupConfirmed?: boolean; testReports?: { testClass: string; tests: number; failures: number; errors: number; skipped: number }[]; error?: unknown };
+export type Validation = Partial<PythonBuildData> & { goal?: string; output?: string; cleanupConfirmed?: boolean; testReports?: { testClass: string; tests: number; failures: number; errors: number; skipped: number }[]; error?: unknown };
 export type Application = { state?: 'APPLYING' | 'VALIDATING' | 'COMPLETED' | 'REJECTED' | 'VALIDATION_FAILED'; requestId?: string; hunkIds?: string[]; baseRevision?: number; workspaceRevision?: string; taskId?: string; error?: string; validation?: Validation };
 export type Turn = {
   id: string; conversationId: string; version: number; mode: 'CHAT' | 'TASK'; applyPolicy: 'AUTO' | 'REVIEW'; modelId: string;

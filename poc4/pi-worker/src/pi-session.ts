@@ -39,7 +39,7 @@ import { createProjectTools } from "./project-tools.js";
 import { COMPACTION_SETTINGS, CONTEXT_WINDOW, ConversationContext, needsCompaction, type CompactStart, type CompactResult } from "./conversation-context.js";
 import { LiveOutput } from "./live-output.js";
 import { createModelTransport } from "./model-transport.js";
-import { installImageContext } from "./image-context.js";
+import { installImageContext, installTaskImageContext } from "./image-context.js";
 import { buildSystemPrompt, installCompactionPrompt } from "./prompts.js";
 import { parseProjectEnvironment, type ProjectEnvironment } from "./project-environment.js";
 
@@ -203,10 +203,11 @@ export async function createPiSession(options: {
     abortAfterFatal();
     throw new Error("active context could not be compacted below the fixed threshold");
   };
-  const beforePrompt = async (prompt: string) => {
+  const beforePrompt = async (prompt: string, taskImageTokens = 0) => {
     // _prepareRun checks the old assistant usage before it inserts the new prompt.
     // Account for the pending trigger and initial system/tool declaration while idle.
-    let pending = estimateTokens({ role: "user", content: prompt, timestamp: Date.now() }) + (images ? await images.pendingTokens() : 0);
+    let pending = estimateTokens({ role: "user", content: prompt, timestamp: Date.now() })
+      + taskImageTokens + (images ? await images.pendingTokens() : 0);
     if (!session.sessionManager.buildSessionContext().messages.some((message) => message.role === "system")) {
       pending += estimateTokens({ role: "system", content: session.systemPrompt, timestamp: Date.now(),
         toolsAdded: session.agent.state.tools.map(({ name, description, parameters }) => ({ name, description, parameters })) });
@@ -363,7 +364,7 @@ class DefaultPiTaskSession implements PiTaskSession {
     private readonly fatalToolCode: () => string | null,
     private readonly flush?: () => Promise<void>,
     private readonly saveFinal?: () => Promise<void>,
-    private readonly beforePrompt?: (prompt: string) => Promise<void>,
+    private readonly beforePrompt?: (prompt: string, taskImageTokens: number) => Promise<void>,
     private readonly afterPrompt?: () => void,
     private readonly live?: LiveOutput,
     private readonly unsubscribeLive?: () => void,
@@ -396,16 +397,19 @@ class DefaultPiTaskSession implements PiTaskSession {
       this.stop();
     }, this.budgets.wallClockSeconds * 1000);
     let promptError: unknown = null;
+    let taskImages: Awaited<ReturnType<typeof installTaskImageContext>> | undefined;
     try {
+      if (!this.aborted && start.images?.length) taskImages = await installTaskImageContext(this.session, this.taskId, start.images);
       await this.flush?.();
       const prompt = this.flush ? "Execute the user's most recent programming goal recorded above. Use the current workspace revision; re-read relevant files before changes." : start.prompt;
-      if (!this.aborted) await this.beforePrompt?.(prompt);
-      if (!this.aborted) await this.session.prompt(prompt, start.images?.length ? { images: start.images } : undefined);
+      if (!this.aborted) await this.beforePrompt?.(prompt, taskImages?.pendingTokens ?? 0);
+      if (!this.aborted) await this.session.prompt(prompt);
       this.afterPrompt?.();
     } catch (error) {
       promptError = error;
     } finally {
       clearTimeout(deadline);
+      taskImages?.dispose();
     }
     try { await this.saveFinal?.(); } catch (error) { promptError ??= error; }
     // The final Context was persisted (or its failure recorded) BEFORE the outcome is

@@ -1,7 +1,7 @@
 package com.manao.poc4.ai.studio;
 
 import com.fasterxml.jackson.databind.JsonNode;
-import com.manao.poc4.ai.AgentProjectTools;
+import com.manao.poc4.ai.AgentFilePolicy;
 import com.manao.poc4.api.ApiException;
 import com.manao.poc4.workspace.WorkspaceService;
 import com.manao.poc4.log.RunLogService;
@@ -19,9 +19,11 @@ public final class StudioReadTools {
         return switch (name) {
             case "list_files" -> {
                 String directory = args.path("directory").asText("");
-                if (!directory.isEmpty()) requirePath(directory);
+                if (!AgentFilePolicy.canListAnyLanguage(directory)) throw forbiddenPath();
                 var entries = workspace.tree(owner, project, directory).entries().stream()
-                    .filter(e -> AgentProjectTools.toolReadable(e.path())).limit(200).toList();
+                    .filter(e -> "directory".equals(e.kind()) ? AgentFilePolicy.canListAnyLanguage(e.path())
+                        : "file".equals(e.kind()) && AgentFilePolicy.canReadAnyLanguage(e.path()))
+                    .limit(200).toList();
                 yield StudioStore.JSON.valueToTree(entries);
             }
             case "read_file" -> {
@@ -45,7 +47,10 @@ public final class StudioReadTools {
         };
     }
     public static void requirePath(String path) {
-        if (path == null || !AgentProjectTools.toolReadable(path)) throw new ApiException("PATH_FORBIDDEN", 422, "Path is outside the assistant read policy");
+        if (!AgentFilePolicy.canReadAnyLanguage(path)) throw forbiddenPath();
+    }
+    private static ApiException forbiddenPath() {
+        return new ApiException("PATH_FORBIDDEN", 422, "Path is outside the assistant read policy");
     }
     public static String bounded(String text, int limit) { return text.length() > limit ? text.substring(0, limit) : text; }
 }

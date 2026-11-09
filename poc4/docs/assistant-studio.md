@@ -35,4 +35,4 @@ pnpm dev:mock --host 127.0.0.1 --port 4183 --strictPort
 
 打开 <http://127.0.0.1:4183/>，使用 mock 账号 `alice` / `demo-pass` 登录后进入项目列表，点击项目的“进入工作台”，再选择 **AI** 标签。可以体验流式聊天、主区域/右侧面板切换、任务执行、同文件逐块审阅，以及模型设置和附件入口。刷新页面会重置 mock 数据；此入口使用模拟响应，不会调用真实模型。
 
-实现与测试结论见[2026-11-03 本地验收记录](evidence/assistant-studio/2026-11-03.md)、[2026-11-04 中文化验收记录](evidence/assistant-studio/2026-11-04.md)及[2026-11-05 兼容性检查](evidence/assistant-studio/2026-11-05-compatibility.md)。
+实现与测试结论见[2026-11-03 本地验收记录](evidence/assistant-studio/2026-11-03.md)、[2026-11-04 中文化验收记录](evidence/assistant-studio/2026-11-04.md)、[2026-11-05 兼容性检查](evidence/assistant-studio/2026-11-05-compatibility.md)及[2026-11-06 GitHub 反馈修复](evidence/assistant-studio/2026-11-06-review.md)。

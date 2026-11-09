@@ -265,6 +265,27 @@ class StudioCoreTest {
         assertThatThrownBy(() -> reads.invoke("o", "p", "write_file", StudioStore.JSON.createObjectNode())).isInstanceOf(ApiException.class);
         for (String path : List.of("../secret", "/etc/passwd", ".git/config", "src/.env", "src/.env.production", "target/test.txt")) assertThatThrownBy(() -> StudioReadTools.requirePath(path)).isInstanceOf(ApiException.class);
     }
+    @Test void chatExploresFastApiSourceThroughWorkspaceOwnerChecks() {
+        try (var h = new Harness()) {
+            h.files.put("app/main.py", "print('FastAPI source')");
+            when(h.agent.tree(h.project, "")).thenReturn(new WorkspaceAgent.Tree("", List.of(
+                new WorkspaceAgent.TreeEntry("app", "app", "directory", false, null, null),
+                new WorkspaceAgent.TreeEntry("tests", "tests", "directory", false, null, null))));
+            when(h.agent.tree(h.project, "app")).thenReturn(new WorkspaceAgent.Tree("app", List.of(
+                new WorkspaceAgent.TreeEntry("app/main.py", "main.py", "file", false, 23L, null))));
+            var reads = new StudioReadTools(h.workspace, mock(com.manao.poc4.run.RunStore.class), mock(com.manao.poc4.log.RunLogService.class));
+            assertThat(reads.invoke(h.owner, h.project, "list_files", StudioStore.JSON.createObjectNode()).findValuesAsText("path"))
+                .containsExactly("app", "tests");
+            assertThat(reads.invoke(h.owner, h.project, "list_files", StudioStore.JSON.createObjectNode().put("directory", "app")).findValuesAsText("path"))
+                .containsExactly("app/main.py");
+            assertThat(reads.invoke(h.owner, h.project, "read_file", StudioStore.JSON.createObjectNode().put("path", "app/main.py"))
+                .path("content").asText()).isEqualTo("print('FastAPI source')");
+            assertThatThrownBy(() -> reads.invoke(h.other, h.project, "list_files", StudioStore.JSON.createObjectNode().put("directory", "app")))
+                .isInstanceOf(ApiException.class);
+            verify(h.agent, times(1)).tree(h.project, "app");
+            verify(h.agent, never()).mutate(anyString(), any());
+        }
+    }
     @Test void extractsTextPdfAndDocxWithoutTrustingMimeAndIsolatesAttachments() throws Exception {
         try (var h = new Harness()) {
             var text = h.attachments.upload(h.owner, h.project, new Upload("log.txt", "image/png", Base64.getEncoder().encodeToString("错误日志".getBytes(StandardCharsets.UTF_8))));

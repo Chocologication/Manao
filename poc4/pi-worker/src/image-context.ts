@@ -30,6 +30,42 @@ function references(message: AgentMessage): AttachmentRef[] {
   return [];
 }
 
+/** Studio already stores attachments by turn; keep only their task/index references in Pi history. */
+export async function installTaskImageContext(session: AgentSession, taskId: string,
+  images: readonly { type: "image"; data: string; mimeType: string }[]): Promise<{ dispose(): void; pendingTokens: number }> {
+  if (!session.model?.input.includes("image")) throw failure("AI_IMAGE_INPUT_DISABLED");
+  if (Buffer.byteLength(JSON.stringify(images), "utf8") > IMAGE_REQUEST_BYTES) throw failure("AI_IMAGE_REQUEST_TOO_LARGE");
+  const content = `Image attachments for the current task ${taskId}.`;
+  const taskImages = images.map(image => ({ ...image }));
+  const pendingTokens = estimateTokens({ role: "user", content: taskImages, timestamp: Date.now() });
+  await session.sendCustomMessage({ customType: "manao_task_images", content, display: false,
+    details: { taskId, attachments: images.map((image, index) => ({ index, mimeType: image.mimeType })) } }, { triggerTurn: false });
+  const transform = session.agent.transformContext;
+  let compacting = false;
+  const unsubscribe = session.subscribe(event => {
+    if (event.type === "compaction_start") compacting = true;
+    if (event.type === "compaction_end") compacting = false;
+  });
+  session.agent.transformContext = async (messages, signal) => {
+    const original = transform ? await transform(messages, signal) : messages;
+    signal?.throwIfAborted();
+    if (compacting || taskImages.length === 0) return original;
+    let attached = false;
+    const projected = original.map(message => {
+      if (message.role !== "custom" || message.customType !== "manao_task_images"
+          || record(message.details)?.taskId !== taskId) return message;
+      attached = true;
+      return { ...message, content: [{ type: "text" as const, text: content }, ...taskImages] };
+    });
+    // Native compaction may remove the marker; the live task still owns its attachments.
+    if (!attached) projected.push({ role: "user", content: [{ type: "text", text: content }, ...taskImages], timestamp: Date.now() });
+    if (Buffer.byteLength(JSON.stringify(projected), "utf8") > IMAGE_REQUEST_BYTES) throw failure("AI_IMAGE_REQUEST_TOO_LARGE");
+    if (projected.reduce((sum, message) => sum + estimateTokens(message), 0) > 786_432) throw failure("AI_IMAGE_CONTEXT_TOO_LARGE");
+    return projected;
+  };
+  return { pendingTokens, dispose() { taskImages.length = 0; unsubscribe(); session.agent.transformContext = transform; } };
+}
+
 /** Install once; all bytes exist only in the projected request, never in session state/history. */
 export function installImageContext(session: AgentSession, backend: BackendClient, taskId: string,
   now: () => number = Date.now, enabled = true, onFailure?: (code:string)=>void): { dispose(): void; pendingTokens(): Promise<number> } {
