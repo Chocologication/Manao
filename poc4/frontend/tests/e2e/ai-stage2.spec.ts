@@ -50,7 +50,7 @@ async function login(page: Page) {
   await expect(page).toHaveURL(new RegExp(`/projects/${PROJECT}$`));
 }
 async function reveal(page: Page, path: string) {
-  await page.getByRole('tab', { name: 'File', exact: true }).click();
+  await page.getByRole('tab', { name: '代码', exact: true }).click();
   const parts = path.split('/');
   for (let depth = 1; depth < parts.length; depth++) {
     const item = page.getByRole('treeitem', { name: parts[depth - 1], exact: true });
@@ -63,8 +63,8 @@ async function submit(page: Page, prompt: string): Promise<Task> {
   await page.getByRole('tab', { name: 'AI', exact: true }).click();
   await page.locator('#agent-task-goal').fill(prompt);
   const response = page.waitForResponse((r) => new URL(r.url()).pathname === `${ROOT}/agent-tasks` && r.request().method() === 'POST');
-  await expect(page.getByRole('button', { name: 'Start task', exact: true })).toBeEnabled();
-  await page.getByRole('button', { name: 'Start task', exact: true }).click();
+  await expect(page.getByRole('button', { name: '启动任务', exact: true })).toBeEnabled();
+  await page.getByRole('button', { name: '启动任务', exact: true }).click();
   const accepted = await response;
   expect(accepted.ok()).toBeTruthy();
   const task = await accepted.json() as Task;
@@ -116,7 +116,7 @@ test.describe.serial('Stage 2 real application feedback acceptance', () => {
     await login(page);
     const initial = await json<{ run: Run | null }>(page, `${ROOT}/runs/active`);
     expect(initial.run?.id).toBe(R0);
-    expect(initial.run?.state).toBe('RUNNING');
+    expect(initial.run?.state).toBe('正在执行');
     expect(initial.run?.firstReadyAt).not.toBeNull();
     expect(initial.run?.requestedWorkspaceRevision).toBe(INITIAL);
     await fixtureUnchanged(page);
@@ -134,11 +134,11 @@ test.describe.serial('Stage 2 real application feedback acceptance', () => {
     await page.getByRole('tab', { name: 'AI', exact: true }).click();
     expect((await json<Task>(page, `${ROOT}/agent-tasks/${mainTaskId}`)).taskId).toBe(mainTaskId);
     const final = await settled(page, mainTaskId, 2_400_000);
-    expect(final.state).toBe('COMPLETED');
+    expect(final.state).toBe('已完成');
     expect(final.changedPaths).toContain(DEMO);
     await fixtureUnchanged(page);
     const active = await json<{ run: Run | null }>(page, `${ROOT}/runs/active`);
-    expect(active.run?.state).toBe('RUNNING');
+    expect(active.run?.state).toBe('正在执行');
     expect(active.run?.firstReadyAt).not.toBeNull();
     expect(active.run?.id).not.toBe(R0);
     expect(active.run?.requestedWorkspaceRevision).toBe(final.workspaceRevision);
@@ -148,12 +148,12 @@ test.describe.serial('Stage 2 real application feedback acceptance', () => {
     expect(results.some((entry) => entry.toolName === 'app_http_get' && entry.data.statusCode === 500)).toBeTruthy();
     expect(results.some((entry) => entry.toolName === 'app_http_get' && entry.data.statusCode === 200 && entry.data.runId === finalRunId)).toBeTruthy();
     // Actual result UI, including safe text rendering and the existing Run navigation.
-    await page.getByRole('button', { name: 'View HTTP result', exact: true }).last().click();
-    const agent = page.getByRole('region', { name: 'AI task', exact: true });
-    await expect(agent).toContainText('Status: 200');
+    await page.getByRole('button', { name: '查看HTTP 请求结果', exact: true }).last().click();
+    const agent = page.getByRole('region', { name: 'AI 任务', exact: true });
+    await expect(agent).toContainText('状态码： 200');
     await expect(agent).toContainText('Hello Pi');
-    await agent.getByRole('button', { name: 'View run', exact: true }).last().click();
-    await expect(page.getByRole('region', { name: 'Run', exact: true })).toContainText('Accessible');
+    await agent.getByRole('button', { name: '查看运行', exact: true }).last().click();
+    await expect(page.getByRole('region', { name: '运行记录', exact: true })).toContainText('可访问');
     // The operator process independently reads ledger/route and issues the public GET
     // while R2 is still active. A missing operator environment fails, never skips.
     const verdict = await operatorVerdict(mainTaskId);
@@ -172,28 +172,28 @@ test.describe.serial('Stage 2 real application feedback acceptance', () => {
     await lockedEditor.press('Enter');
     await lockedEditor.type('//stage2-readonly-check');
     await expect(page.locator('.monaco-editor .view-lines')).not.toContainText('stage2-readonly-check');
-    await expect(page.getByRole('button', { name: 'Save', exact: true })).toBeDisabled();
+    await expect(page.getByRole('button', { name: '保存', exact: true })).toBeDisabled();
     const writeDenied = await api(page, `${ROOT}/files/content?path=${encodeURIComponent(DEMO)}`, 'PUT', { content: source.content, expectedWorkspaceRevision: source.workspaceRevision });
     expect(writeDenied.status()).toBe(409);
     expect((await writeDenied.json() as { code: string }).code).toBe('PROJECT_LOCKED');
     // Normal owner stop, then prove the editor really permits a harmless buffer edit.
-    await page.getByRole('tab', { name: 'Run', exact: true }).click();
-    await page.getByRole('button', { name: 'Stop run', exact: true }).click();
-    await page.getByRole('dialog', { name: 'Stop run', exact: true }).getByRole('button', { name: 'Stop', exact: true }).click();
+    await page.getByRole('tab', { name: '运行记录', exact: true }).click();
+    await page.getByRole('button', { name: '停止运行', exact: true }).click();
+    await page.getByRole('dialog', { name: '停止运行', exact: true }).getByRole('button', { name: '停止', exact: true }).click();
     await expect.poll(async () => {
       const run = await json<Run>(page, `${ROOT}/runs/${finalRunId}`);
       return TERMINAL.has(run.state) && run.finishedAt !== null;
     }, { timeout: 180_000, intervals: [2000] }).toBe(true);
     await expect.poll(async () => (await json<{ run: Run | null }>(page, `${ROOT}/runs/active`)).run, { timeout: 60_000 }).toBeNull();
     await reveal(page, DEMO);
-    await expect(page.getByRole('button', { name: 'Save', exact: true })).toBeDisabled();
+    await expect(page.getByRole('button', { name: '保存', exact: true })).toBeDisabled();
     const editor = page.locator('.monaco-editor textarea').first();
     await editor.focus();
     await editor.press('Control+End');
     await editor.press('Enter');
     await editor.press('Slash');
     await editor.press('Slash');
-    await expect(page.getByRole('button', { name: 'Save', exact: true })).toBeEnabled();
+    await expect(page.getByRole('button', { name: '保存', exact: true })).toBeEnabled();
     // Reload discards only this unsaved characterization; no source mutation is sent.
     page.once('dialog', (dialog) => dialog.accept());
     await page.reload();
@@ -222,9 +222,9 @@ test.describe.serial('Stage 2 real application feedback acceptance', () => {
     await info.attach('close-live-tool-details-unavailable', { body: JSON.stringify({ taskId: task.taskId, missingIds: liveTools.missingIds, count: liveTools.missingIds.length, ledgerReview: 'OPERATOR_REQUIRED' }), contentType: 'application/json' });
     const starts = liveTools.results.filter((entry) => entry.toolName === 'application' && entry.data.action === 'start');
     expect(starts.some((entry) => (entry.data.run as { id?: string } | null)?.id === startedId)).toBeTruthy();
-    await page.getByRole('button', { name: 'End task', exact: true }).click();
+    await page.getByRole('button', { name: '结束任务', exact: true }).click();
     const final = await settled(page, task.taskId, 180_000);
-    expect(final.state).toBe('FAILED');
+    expect(final.state).toBe('运行失败');
     expect(final.writesLocked).toBe(false);
     const stopped = await json<Run>(page, `${ROOT}/runs/${startedId}`);
     expect(TERMINAL.has(stopped.state)).toBeTruthy();

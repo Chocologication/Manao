@@ -46,27 +46,27 @@ export function logDistanceFromBottom(element: {
 
 function connectionLabel(connection: RunLogConnection): string {
   if (connection === 'ticketing') {
-    return 'Requesting log access';
+    return '正在获取日志访问权限';
   }
   if (connection === 'connecting') {
-    return 'Connecting';
+    return '正在连接';
   }
   if (connection === 'replaying') {
-    return 'Replaying';
+    return '正在读取历史日志';
   }
   if (connection === 'live') {
-    return 'Live';
+    return '实时更新中';
   }
   if (connection === 'reconnecting') {
-    return 'Reconnecting';
+    return '正在重新连接';
   }
   if (connection === 'complete') {
-    return 'Complete';
+    return '已完成';
   }
   if (connection === 'failed') {
-    return 'Failed';
+    return '失败';
   }
-  return 'Idle';
+  return '空闲';
 }
 
 export type RunLogViewProps = {
@@ -216,7 +216,7 @@ export function RunLogView({ store, onLocateError, run, projectId }: RunLogViewP
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
       <div className="lab-log-heading">
-      <div role="status" aria-label="Log connection" className="shrink-0 text-sm text-muted-foreground">
+      <div role="status" aria-label="日志连接状态" className="shrink-0 text-sm text-muted-foreground">
         {connectionLabel(snapshot.connection)}
       </div>
       <label className="lab-log-search"><Search size={14} /><input value={search} placeholder="搜索日志…" aria-label="搜索日志" onChange={(event) => { setSearch(event.target.value); setMatchIndex(0); }} /></label>
@@ -232,24 +232,27 @@ export function RunLogView({ store, onLocateError, run, projectId }: RunLogViewP
       {snapshot.window.truncated ? (
         <div
           role="status"
-          aria-label="Log truncation"
+          aria-label="日志截断提示"
           className="shrink-0 border-b px-2 py-1 text-sm text-muted-foreground"
         >
-          日志窗口已截断：早期 {snapshot.window.evictedBytes} bytes 未保留，导出仅包含当前窗口
+          日志窗口已截断：早期 {snapshot.window.evictedBytes} 字节未保留，导出仅包含当前窗口
         </div>
       ) : null}
       {snapshot.connection === 'failed' && snapshot.error !== null ? (
-        <InlineAlert className="shrink-0 px-2">{snapshot.error}</InlineAlert>
+        <InlineAlert className="shrink-0 px-2">{{
+          UNAUTHENTICATED: '登录状态已失效，请重新登录', FORBIDDEN: '无权读取此运行的日志',
+          PROTOCOL_ERROR: '日志数据异常，请重新打开运行记录', STREAM_UNAVAILABLE: '日志连接暂不可用',
+        }[snapshot.error] ?? '日志读取中断，请检查网络后重新打开运行记录'}</InlineAlert>
       ) : null}
       <div
         ref={scrollerRef}
         role="region"
-        aria-label="Run logs"
+        aria-label="运行日志"
         tabIndex={0}
         className="run-log-scroller min-h-0 flex-1 overflow-auto px-2 py-1 text-sm outline-none select-text focus-visible:ring-2 focus-visible:ring-ring"
       >
         <pre className="m-0 font-inherit whitespace-pre-wrap break-all">{highlightedLog}</pre>
-        {!logText && <div className="lab-log-empty"><span>OUTPUT / RUN LOGS</span><p>{store === null ? '启动项目后，运行输出将显示在这里。' : '等待运行输出…'}</p></div>}
+        {!logText && <div className="lab-log-empty"><span>运行输出</span><p>{store === null ? '启动项目后，运行输出将显示在这里。' : '等待运行输出…'}</p></div>}
         {search && logText && matches.length === 0 && <p className="text-xs text-muted-foreground">没有匹配的日志。</p>}
       </div>
       {errorLocations.length > 0 ? <div className="lab-error-locations"><div className="mb-1 flex items-center gap-1 font-medium text-foreground"><LocateFixed size={13} />规则解析到 {errorLocations.length}{errorLocations.length >= 100 ? '+' : ''} 个错误位置</div><div className="flex flex-wrap gap-1">{errorLocations.slice(0, showAllLocations ? 100 : 5).map((location, index) => <button key={`${location.path}:${location.line}:${index}`} type="button" title={`${location.path}:${location.line}`} disabled={!onLocateError} className="rounded border px-2 py-1 hover:bg-accent" onClick={() => onLocateError?.(location)}>{location.path}:{location.line}</button>)}</div>{errorLocations.length > 5 && <button type="button" className="lab-text-action" onClick={() => setShowAllLocations(!showAllLocations)}>{showAllLocations ? '收起位置' : '查看其余位置'}</button>}</div> : null}
@@ -263,7 +266,7 @@ export function RunLogView({ store, onLocateError, run, projectId }: RunLogViewP
             scrollToBottom();
           }}
         >
-          New output
+          查看最新输出
         </button>
       ) : null}
     </div>

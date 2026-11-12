@@ -1,4 +1,5 @@
 import { useMemo } from 'react';
+import { terminalAuditStateLabels } from '@/components/ui/labPresentation';
 import type { RunId } from '@/contracts/run';
 import type { TerminalAuditEntry } from '@/contracts/terminal';
 import type { JobTerminalPhase } from '@/features/terminal/JobTerminalController';
@@ -30,8 +31,8 @@ function formatAuditTime(iso: string): string {
 
 function terminalAuditError(error: unknown): string {
   return error instanceof Error && /network request failed/i.test(error.message)
-    ? 'Network request failed'
-    : 'Unable to load terminal audit';
+    ? '网络请求失败，请检查连接后重试'
+    : '无法加载命令记录';
 }
 
 export function TerminalAuditQueryView({
@@ -80,10 +81,10 @@ export function TerminalAuditView({
     return (
       <div
         role="status"
-        aria-label="Loading terminal audit"
+        aria-label="正在加载命令记录"
         className="flex h-full min-h-32 items-center justify-center px-3 text-sm text-muted-foreground"
       >
-        Loading terminal audit
+        正在加载命令记录
       </div>
     );
   }
@@ -92,14 +93,14 @@ export function TerminalAuditView({
     return (
       <div className="flex h-full min-h-32 flex-col items-center justify-center gap-2 px-3">
         <p role="alert" className="text-sm text-destructive">
-          {errorMessage ?? 'Unable to load terminal audit'}
+          {errorMessage ?? '无法加载命令记录'}
         </p>
         <button
           type="button"
           className="h-8 rounded-md border px-2 text-sm hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
           onClick={onRetry}
         >
-          Retry terminal audit
+          重试加载命令记录
         </button>
       </div>
     );
@@ -109,10 +110,10 @@ export function TerminalAuditView({
     return (
       <p
         role="status"
-        aria-label="Terminal audit empty"
+        aria-label="暂无命令记录"
         className="flex h-full min-h-32 items-center justify-center px-3 text-sm text-muted-foreground"
       >
-        No commands recorded for this run
+        本次运行暂无命令记录
       </p>
     );
   }
@@ -122,26 +123,26 @@ export function TerminalAuditView({
       {isError ? (
         <div className="flex shrink-0 items-center gap-2 border-b px-3 py-2">
           <p role="alert" className="min-w-0 flex-1 truncate text-sm text-destructive">
-            {errorMessage ?? 'Unable to refresh terminal audit'}
+            {errorMessage ?? '无法更新命令记录'}
           </p>
           <button
             type="button"
             className="h-8 shrink-0 rounded-md border px-2 text-sm hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
             onClick={onRetry}
           >
-            Retry terminal audit
+            重试加载命令记录
           </button>
         </div>
       ) : null}
       <div className="min-h-0 min-w-0 flex-1 overflow-auto">
-        <table aria-label="Terminal command audit" className="w-full min-w-[760px] table-fixed border-collapse text-left text-sm">
+        <table aria-label="终端命令记录" className="w-full min-w-[760px] table-fixed border-collapse text-left text-sm">
           <thead className="sticky top-0 z-[1] bg-background text-muted-foreground">
             <tr className="border-b">
-              <th scope="col" className="w-[42%] px-3 py-2 font-medium">Command</th>
-              <th scope="col" className="w-[12%] px-3 py-2 font-medium">State</th>
-              <th scope="col" className="w-[18%] px-3 py-2 font-medium">Started</th>
-              <th scope="col" className="w-[18%] px-3 py-2 font-medium">Finished</th>
-              <th scope="col" className="w-[10%] px-3 py-2 font-medium">Exit code</th>
+              <th scope="col" className="w-[42%] px-3 py-2 font-medium">命令</th>
+              <th scope="col" className="w-[12%] px-3 py-2 font-medium">状态</th>
+              <th scope="col" className="w-[18%] px-3 py-2 font-medium">开始时间</th>
+              <th scope="col" className="w-[18%] px-3 py-2 font-medium">结束时间</th>
+              <th scope="col" className="w-[10%] px-3 py-2 font-medium">退出码</th>
             </tr>
           </thead>
           <tbody>
@@ -152,25 +153,25 @@ export function TerminalAuditView({
                   <td className="max-w-0 px-3 py-2">
                     <code
                       title={command}
-                      aria-label={`Command: ${command}`}
+                      aria-label={`命令：${command}`}
                       className="block max-h-24 overflow-auto whitespace-pre-wrap break-all font-mono text-xs leading-5"
                     >
                       {command}
                     </code>
                   </td>
-                  <td className="px-3 py-2 font-medium">{item.state}</td>
+                  <td className="px-3 py-2 font-medium">{terminalAuditStateLabels[item.state]}</td>
                   <td className="px-3 py-2 text-muted-foreground">
                     <time dateTime={item.startedAt}>{formatAuditTime(item.startedAt)}</time>
                   </td>
                   <td className="px-3 py-2 text-muted-foreground">
                     {item.finishedAt === null ? (
-                      <span aria-label="Not finished">-</span>
+                      <span aria-label="尚未结束">-</span>
                     ) : (
                       <time dateTime={item.finishedAt}>{formatAuditTime(item.finishedAt)}</time>
                     )}
                   </td>
                   <td className="px-3 py-2 font-mono">
-                    {item.exitCode === null ? <span aria-label="No exit code">-</span> : item.exitCode}
+                    {item.exitCode === null ? <span aria-label="暂无退出码">-</span> : item.exitCode}
                   </td>
                 </tr>
               );
@@ -182,11 +183,11 @@ export function TerminalAuditView({
         <button
           type="button"
           className="h-9 shrink-0 border-t px-3 text-sm hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none disabled:opacity-64"
-          aria-label="Load more terminal audit"
+          aria-label="加载更多命令记录"
           disabled={isFetchingNextPage}
           onClick={onLoadMore}
         >
-          {isFetchingNextPage ? 'Loading more' : 'Load more'}
+          {isFetchingNextPage ? '正在加载更多' : '加载更多'}
         </button>
       ) : null}
     </div>

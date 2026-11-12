@@ -11,6 +11,27 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 
 class AgentFilePolicyTest {
+    @ParameterizedTest
+    @ValueSource(strings = {"node-javascript-console", "node-javascript-web", "node-typescript-console", "node-typescript-web"})
+    void nodeToolsCanEditBuildFilesWhileChatAndTasksKeepCredentialsAndOutputsPrivate(String template) {
+        var policy = policy(template);
+        for (String path : List.of("package.json", "pnpm-lock.yaml", "tsconfig.json", "src/main.ts", "src/app.js", "README.md")) {
+            assertThat(policy.canRead(path)).as(path).isTrue();
+            assertThat(policy.canWrite(path)).as(path).isTrue();
+        }
+        for (String path : List.of(".npmrc", "src/.env.local", "src/credentials.json", "src/server.pem",
+                "src/node_modules/x.js", "src/dist/x.js", "src/coverage/result.json", "../package.json", "pom.xml", "main.py")) {
+            assertThat(policy.canRead(path)).as(path).isFalse();
+            assertThat(policy.canWrite(path)).as(path).isFalse();
+        }
+        for (String path : List.of(".npmrc", "src/.env.local", "src/credentials.json", "src/dist/x.js")) {
+            assertThat(AgentProjectTools.toolReadable(path)).as(path).isFalse();
+        }
+        for (String path : List.of("main.py", "pyproject.toml", "package.json", "src/main.ts", "pom.xml")) {
+            assertThat(AgentProjectTools.toolReadable(path)).as(path).isTrue();
+        }
+    }
+
     private AgentFilePolicy policy(String template) {
         var projects = mock(ProjectRuntimeStore.class);
         boolean service = template.endsWith("web");

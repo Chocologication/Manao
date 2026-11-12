@@ -38,7 +38,7 @@ public record ProjectRuntimeSpec(String templateId, boolean mysql, boolean redis
     /** Web-style template with a long-lived service run; console stays a bounded task. */
     public boolean isService() { return RuntimeTemplate.fromId(templateId).isService(); }
 
-    /** First public mapping decides the primary port; without public ports it stays 8080. */
+    /** First public mapping decides the primary port; otherwise use the template default. */
     public int primaryPort() {
         return publicPorts.isEmpty() ? RuntimeTemplate.fromId(templateId).defaultPort()
             : publicPorts.get(0).targetPort();
@@ -53,8 +53,8 @@ public record ProjectRuntimeSpec(String templateId, boolean mysql, boolean redis
         if (!template.isService() && !publicPorts.isEmpty()) {
             throw new ApiException("VALIDATION_ERROR", 422, "Request validation failed");
         }
-        // Python console tasks stay dependency-free; the Java console keeps its legacy allowance.
-        if (template == RuntimeTemplate.PYTHON_CONSOLE && (mysql || redis)) {
+        // Python and Node console tasks stay dependency-free; Java keeps its legacy allowance.
+        if ((template == RuntimeTemplate.PYTHON_CONSOLE || template.isNode() && !template.isService()) && (mysql || redis)) {
             throw new ApiException("VALIDATION_ERROR", 422, "Request validation failed");
         }
         Set<String> names = new HashSet<>();

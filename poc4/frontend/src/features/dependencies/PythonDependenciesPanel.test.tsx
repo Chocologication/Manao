@@ -154,9 +154,9 @@ async function fillForm(
   packageName: string,
   version?: string,
 ): Promise<void> {
-  await user.type(screen.getByLabelText('Package name'), packageName);
+  await user.type(screen.getByLabelText('软件包名称'), packageName);
   if (version !== undefined) {
-    await user.type(screen.getByLabelText('Version (optional)'), version);
+    await user.type(screen.getByLabelText('版本（可选）'), version);
   }
 }
 
@@ -178,10 +178,10 @@ describe('PythonDependenciesPanel form', () => {
     primeRevision(project.id);
     renderPanel({ project });
 
-    expect(screen.getByLabelText('Package name')).toBeEnabled();
-    expect(screen.getByLabelText('Version (optional)')).toBeEnabled();
-    expect(screen.getByRole('button', { name: 'Add dependency' })).toBeEnabled();
-    expect(screen.getByRole('button', { name: 'Remove dependency' })).toBeEnabled();
+    expect(screen.getByLabelText('软件包名称')).toBeEnabled();
+    expect(screen.getByLabelText('版本（可选）')).toBeEnabled();
+    expect(screen.getByRole('button', { name: '添加依赖' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: '移除依赖' })).toBeEnabled();
   });
 
   it('disables both actions while the workspace write gate is locked (active Run)', async () => {
@@ -190,8 +190,8 @@ describe('PythonDependenciesPanel form', () => {
     primeRevision(project.id);
     renderPanel({ project, workspaceLocked: true });
 
-    expect(screen.getByRole('button', { name: 'Add dependency' })).toBeDisabled();
-    expect(screen.getByRole('button', { name: 'Remove dependency' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: '添加依赖' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: '移除依赖' })).toBeDisabled();
   });
 
   it('disables both actions while unsaved file changes exist', async () => {
@@ -203,8 +203,8 @@ describe('PythonDependenciesPanel form', () => {
       useWorkspaceSession.getState().setDirty(parseProjectRelativePath('main.py'), true);
     });
 
-    expect(screen.getByRole('button', { name: 'Add dependency' })).toBeDisabled();
-    expect(screen.getByRole('button', { name: 'Remove dependency' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: '添加依赖' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: '移除依赖' })).toBeDisabled();
   });
 
   it('disables both actions while another operation result is unconfirmed', async () => {
@@ -216,8 +216,8 @@ describe('PythonDependenciesPanel form', () => {
       unconfirmedOperationId: generateOperationId(),
     });
 
-    expect(screen.getByRole('button', { name: 'Add dependency' })).toBeDisabled();
-    expect(screen.getByRole('button', { name: 'Remove dependency' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: '添加依赖' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: '移除依赖' })).toBeDisabled();
   });
 });
 
@@ -233,10 +233,10 @@ describe('PythonDependenciesPanel committed changes', () => {
     // The change must carry the revision the browser saw BEFORE the commit.
     const revisionBeforeChange = mockWorkspaceRevision(project.id);
     await fillForm(user, 'httpx', '0.28.1');
-    await user.click(screen.getByRole('button', { name: 'Add dependency' }));
+    await user.click(screen.getByRole('button', { name: '添加依赖' }));
 
     expect(
-      await screen.findByRole('status', { name: 'Dependency change result' }),
+      await screen.findByRole("status", { name: '依赖变更结果' }),
     ).toHaveTextContent('依赖变更已保存。');
     const posts = dependencyPosts(fetchSpy);
     expect(posts).toHaveLength(1);
@@ -263,10 +263,10 @@ describe('PythonDependenciesPanel committed changes', () => {
     renderPanel({ project });
 
     await fillForm(user, 'HTTPX', '0.28.1');
-    await user.click(screen.getByRole('button', { name: 'Remove dependency' }));
+    await user.click(screen.getByRole('button', { name: '移除依赖' }));
 
     expect(
-      await screen.findByRole('status', { name: 'Dependency change result' }),
+      await screen.findByRole("status", { name: '依赖变更结果' }),
     ).toHaveTextContent('依赖变更已保存。');
     const posts = dependencyPosts(fetchSpy);
     expect(posts).toHaveLength(1);
@@ -300,7 +300,7 @@ describe('PythonDependenciesPanel rejected changes', () => {
     renderPanel({ project, onResponseLost });
 
     await fillForm(user, 'httpx');
-    await user.click(screen.getByRole('button', { name: 'Add dependency' }));
+    await user.click(screen.getByRole('button', { name: '添加依赖' }));
 
     const alert = await screen.findByRole('alert');
     expect(alert).toHaveTextContent('请先完成或停止当前 Run，再修改依赖。');
@@ -308,7 +308,7 @@ describe('PythonDependenciesPanel rejected changes', () => {
     // the stored id, so a corrected change may start a NEW operation.
     expect(onResponseLost).not.toHaveBeenCalled();
     expect(readPythonDependencyOperationId(ALICE_USER_ID, project.id)).toBeNull();
-    expect(screen.getByRole('button', { name: 'Add dependency' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: '添加依赖' })).toBeEnabled();
 
     fetchSpy.mockRestore();
   });
@@ -338,7 +338,7 @@ describe('PythonDependenciesPanel rejected changes', () => {
     renderPanel({ project, onResponseLost });
 
     await fillForm(user, 'pywin32', '312');
-    await user.click(screen.getByRole('button', { name: 'Add dependency' }));
+    await user.click(screen.getByRole('button', { name: '添加依赖' }));
 
     const alert = await screen.findByRole('alert');
     expect(alert).toHaveTextContent(
@@ -346,7 +346,7 @@ describe('PythonDependenciesPanel rejected changes', () => {
     );
     expect(onResponseLost).not.toHaveBeenCalled();
     expect(readPythonDependencyOperationId(ALICE_USER_ID, project.id)).toBeNull();
-    expect(screen.getByRole('button', { name: 'Add dependency' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: '添加依赖' })).toBeEnabled();
 
     fetchSpy.mockRestore();
   });
@@ -361,7 +361,7 @@ describe('PythonDependenciesPanel rejected changes', () => {
     renderPanel({ project });
 
     await fillForm(user, 'left-pad');
-    await user.click(screen.getByRole('button', { name: 'Add dependency' }));
+    await user.click(screen.getByRole('button', { name: '添加依赖' }));
 
     const alert = await screen.findByRole('alert');
     expect(alert).toHaveTextContent(/依赖解析失败/);
@@ -369,11 +369,11 @@ describe('PythonDependenciesPanel rejected changes', () => {
     // An explicitly rejected POST has no side effects: the stored id is gone and a
     // corrected resubmission starts a NEW operation id.
     expect(readPythonDependencyOperationId(ALICE_USER_ID, project.id)).toBeNull();
-    expect(screen.getByRole('button', { name: 'Add dependency' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: '添加依赖' })).toBeEnabled();
 
-    await user.clear(screen.getByLabelText('Package name'));
-    await user.type(screen.getByLabelText('Package name'), 'left-pad');
-    await user.click(screen.getByRole('button', { name: 'Add dependency' }));
+    await user.clear(screen.getByLabelText('软件包名称'));
+    await user.type(screen.getByLabelText('软件包名称'), 'left-pad');
+    await user.click(screen.getByRole('button', { name: '添加依赖' }));
     await screen.findByRole('alert');
 
     const posts = dependencyPosts(fetchSpy);
@@ -399,7 +399,7 @@ describe('PythonDependenciesPanel lost responses', () => {
     renderPanel({ project, onResponseLost });
 
     await fillForm(user, 'httpx');
-    await user.click(screen.getByRole('button', { name: 'Add dependency' }));
+    await user.click(screen.getByRole('button', { name: '添加依赖' }));
 
     await waitFor(() => {
       expect(onResponseLost).toHaveBeenCalledTimes(1);
@@ -430,7 +430,7 @@ describe('PythonDependenciesPanel lost responses', () => {
     renderPanel({ project, onResponseLost });
 
     await fillForm(user, 'httpx');
-    await user.click(screen.getByRole('button', { name: 'Add dependency' }));
+    await user.click(screen.getByRole('button', { name: '添加依赖' }));
 
     // The result is unknown: the recovery entry engages and the message never
     // tells the user to stop a Run.
@@ -474,7 +474,7 @@ describe('PythonDependenciesPanel busy reporting', () => {
     renderPanel({ project, onBusyChange });
 
     await fillForm(user, 'left-pad');
-    await user.click(screen.getByRole('button', { name: 'Add dependency' }));
+    await user.click(screen.getByRole('button', { name: '添加依赖' }));
 
     await waitFor(() => {
       expect(onBusyChange).toHaveBeenLastCalledWith(true);
@@ -515,7 +515,7 @@ describe('PythonDependenciesPanel busy reporting', () => {
 
     holdTree = true;
     await fillForm(user, 'httpx');
-    await user.click(screen.getByRole('button', { name: 'Add dependency' }));
+    await user.click(screen.getByRole('button', { name: '添加依赖' }));
 
     // The commit succeeded; the reload of the workspace is still in flight.
     await screen.findByText('正在重新加载工作区');
@@ -523,7 +523,7 @@ describe('PythonDependenciesPanel busy reporting', () => {
 
     releaseTree();
     expect(
-      await screen.findByRole('status', { name: 'Dependency change result' }),
+      await screen.findByRole("status", { name: '依赖变更结果' }),
     ).toHaveTextContent('依赖变更已保存。');
     await waitFor(() => {
       expect(onBusyChange).toHaveBeenLastCalledWith(false);
@@ -544,10 +544,10 @@ describe('PythonDependenciesPanel requirements.txt import', () => {
 
     // The change must carry the revision the file read saw BEFORE the commit.
     const revisionBeforeImport = mockWorkspaceRevision(project.id);
-    await user.click(screen.getByRole('button', { name: 'Import requirements.txt' }));
+    await user.click(screen.getByRole('button', { name: '导入 requirements.txt' }));
 
     expect(
-      await screen.findByRole('status', { name: 'Dependency change result' }),
+      await screen.findByRole("status", { name: '依赖变更结果' }),
     ).toHaveTextContent('依赖变更已保存。');
     const posts = batchDependencyPosts(fetchSpy);
     expect(posts).toHaveLength(1);
@@ -572,10 +572,10 @@ describe('PythonDependenciesPanel requirements.txt import', () => {
     primeRevision(project.id);
     renderPanel({ project });
 
-    await user.click(screen.getByRole('button', { name: 'Import requirements.txt' }));
+    await user.click(screen.getByRole('button', { name: '导入 requirements.txt' }));
 
     expect(
-      await screen.findByRole('status', { name: 'Dependency change result' }),
+      await screen.findByRole("status", { name: '依赖变更结果' }),
     ).toHaveTextContent('依赖变更已保存。');
     expect(batchDependencyPosts(fetchSpy)).toHaveLength(1);
     expect(singleDependencyPosts(fetchSpy)).toHaveLength(0);
@@ -593,10 +593,10 @@ describe('PythonDependenciesPanel requirements.txt import', () => {
     renderPanel({ project });
     const treeCallsBefore = treeGetCount(fetchSpy);
 
-    await user.click(screen.getByRole('button', { name: 'Import requirements.txt' }));
+    await user.click(screen.getByRole('button', { name: '导入 requirements.txt' }));
 
     expect(
-      await screen.findByRole('status', { name: 'Dependency change result' }),
+      await screen.findByRole("status", { name: '依赖变更结果' }),
     ).toHaveTextContent('依赖变更已保存。');
     // One committed batch means ONE managed workspace reload.
     expect(treeGetCount(fetchSpy) - treeCallsBefore).toBe(1);
@@ -616,7 +616,7 @@ describe('PythonDependenciesPanel requirements.txt import', () => {
     const onResponseLost = vi.fn();
     renderPanel({ project, onResponseLost });
 
-    await user.click(screen.getByRole('button', { name: 'Import requirements.txt' }));
+    await user.click(screen.getByRole('button', { name: '导入 requirements.txt' }));
 
     await waitFor(() => {
       expect(onResponseLost).toHaveBeenCalledTimes(1);
@@ -645,9 +645,9 @@ describe('PythonDependenciesPanel requirements.txt import', () => {
     renderPanel({ project });
 
     const revisionBeforeImport = mockWorkspaceRevision(project.id);
-    await user.click(screen.getByRole('button', { name: 'Import requirements.txt' }));
+    await user.click(screen.getByRole('button', { name: '导入 requirements.txt' }));
     expect(
-      await screen.findByRole('status', { name: 'Dependency change result' }),
+      await screen.findByRole("status", { name: '依赖变更结果' }),
     ).toHaveTextContent('依赖变更已保存。');
     // The commit advanced the workspace revision...
     const revisionAfterCommit = mockWorkspaceRevision(project.id);
@@ -694,7 +694,7 @@ describe('PythonDependenciesPanel requirements.txt import', () => {
     const onResponseLost = vi.fn();
     renderPanel({ project, onResponseLost });
 
-    await user.click(screen.getByRole('button', { name: 'Import requirements.txt' }));
+    await user.click(screen.getByRole('button', { name: '导入 requirements.txt' }));
 
     const alert = await screen.findByRole('alert');
     expect(alert).toHaveTextContent(
@@ -702,7 +702,7 @@ describe('PythonDependenciesPanel requirements.txt import', () => {
     );
     expect(onResponseLost).not.toHaveBeenCalled();
     expect(readPythonDependencyOperationId(ALICE_USER_ID, project.id)).toBeNull();
-    expect(screen.getByRole('button', { name: 'Import requirements.txt' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: '导入 requirements.txt' })).toBeEnabled();
 
     fetchSpy.mockRestore();
   });
@@ -720,7 +720,7 @@ describe('PythonDependenciesPanel requirements.txt import', () => {
     const onResponseLost = vi.fn();
     renderPanel({ project, onResponseLost });
 
-    await user.click(screen.getByRole('button', { name: 'Import requirements.txt' }));
+    await user.click(screen.getByRole('button', { name: '导入 requirements.txt' }));
 
     const alert = await screen.findByRole('alert');
     expect(alert).toHaveTextContent(
@@ -748,7 +748,7 @@ describe('PythonDependenciesPanel requirements.txt import', () => {
         onRecovered={onRecovered}
       />,
     );
-    await user.click(screen.getByRole('button', { name: 'Check dependency change' }));
+    await user.click(screen.getByRole('button', { name: '核对依赖变更' }));
 
     await waitFor(() => {
       expect(onRecovered).toHaveBeenCalledTimes(1);
@@ -786,7 +786,7 @@ describe('PythonDependenciesPanel requirements.txt import', () => {
     primeRevision(project.id);
     renderPanel({ project });
 
-    await user.click(screen.getByRole('button', { name: 'Import requirements.txt' }));
+    await user.click(screen.getByRole('button', { name: '导入 requirements.txt' }));
 
     const alert = await screen.findByRole('alert');
     expect(alert).toHaveTextContent(
@@ -794,7 +794,7 @@ describe('PythonDependenciesPanel requirements.txt import', () => {
     );
     // The rejection is explicit: no fabricated success message.
     expect(
-      screen.queryByRole('status', { name: 'Dependency change result' }),
+      screen.queryByRole("status", { name: '依赖变更结果' }),
     ).not.toHaveTextContent('依赖变更已保存。');
     // A proven no-side-effect rejection clears the stored id.
     expect(readPythonDependencyOperationId(ALICE_USER_ID, project.id)).toBeNull();
@@ -815,14 +815,14 @@ describe('PythonDependenciesPanel requirements.txt import', () => {
     primeRevision(project.id);
     renderPanel({ project });
 
-    await user.click(screen.getByRole('button', { name: 'Import requirements.txt' }));
+    await user.click(screen.getByRole('button', { name: '导入 requirements.txt' }));
 
     const alert = await screen.findByRole('alert');
     expect(alert).toHaveTextContent(
       'Dependency changes are not supported for this project or package',
     );
     expect(
-      screen.queryByRole('status', { name: 'Dependency change result' }),
+      screen.queryByRole("status", { name: '依赖变更结果' }),
     ).not.toHaveTextContent('依赖变更已保存。');
     expect(readPythonDependencyOperationId(ALICE_USER_ID, project.id)).toBeNull();
     expect(batchDependencyPosts(fetchSpy)).toHaveLength(1);
@@ -841,14 +841,14 @@ describe('PythonDependenciesPanel requirements.txt import', () => {
     primeRevision(project.id);
     renderPanel({ project });
 
-    await user.click(screen.getByRole('button', { name: 'Import requirements.txt' }));
+    await user.click(screen.getByRole('button', { name: '导入 requirements.txt' }));
 
     const alert = await screen.findByRole('alert');
     expect(alert).toHaveTextContent(
       'requirements.txt 仅支持大小和数量限制内的公开 PyPI 依赖行。',
     );
     expect(readPythonDependencyOperationId(ALICE_USER_ID, project.id)).toBeNull();
-    expect(screen.getByRole('button', { name: 'Import requirements.txt' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: '导入 requirements.txt' })).toBeEnabled();
     expect(batchDependencyPosts(fetchSpy)).toHaveLength(1);
 
     fetchSpy.mockRestore();
@@ -872,7 +872,7 @@ describe('PythonDependenciesPanel requirements.txt import', () => {
     primeRevision(ready.id);
     renderPanel({ project: ready });
 
-    await user.click(screen.getByRole('button', { name: 'Import requirements.txt' }));
+    await user.click(screen.getByRole('button', { name: '导入 requirements.txt' }));
 
     const alert = await screen.findByRole('alert');
     expect(alert).toHaveTextContent(
@@ -910,7 +910,7 @@ describe('PythonDependenciesPanel requirements.txt import', () => {
     );
     renderPanel({ project });
 
-    await user.click(screen.getByRole('button', { name: 'Import requirements.txt' }));
+    await user.click(screen.getByRole('button', { name: '导入 requirements.txt' }));
 
     const alert = await screen.findByRole('alert');
     expect(alert).toHaveTextContent('requirements.txt 未找到，请确认它位于项目根目录。');

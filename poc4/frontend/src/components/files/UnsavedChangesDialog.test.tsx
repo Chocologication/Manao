@@ -33,7 +33,7 @@ describe('UnsavedChangesDialog', () => {
       />,
     );
 
-    const dialog = screen.getByRole('dialog', { name: 'Unsaved changes' });
+    const dialog = screen.getByRole('dialog', { name: '有未保存的修改' });
     expect(dialog).toHaveTextContent(CLOSE_TAB_MESSAGE);
     expect(screen.getByRole('button', { name: SAVE_AND_CLOSE_LABEL })).toBeEnabled();
     expect(screen.getByRole('button', { name: DISCARD_LABEL })).toBeEnabled();
@@ -61,7 +61,7 @@ describe('UnsavedChangesDialog', () => {
       />,
     );
 
-    expect(screen.getByRole('dialog', { name: 'Unsaved changes' })).toHaveTextContent(LEAVE_MESSAGE);
+    expect(screen.getByRole('dialog', { name: '有未保存的修改' })).toHaveTextContent(LEAVE_MESSAGE);
     expect(screen.getByRole('button', { name: DISCARD_AND_LEAVE_LABEL })).toBeEnabled();
     expect(screen.getByRole('button', { name: CANCEL_LABEL })).toBeEnabled();
     expect(screen.queryByRole('button', { name: SAVE_AND_CLOSE_LABEL })).not.toBeInTheDocument();

@@ -13,7 +13,7 @@ describe('parseEntryBasename', () => {
   it.each(['', '/', 'src/App.java', 'App\\java', 'dir\\file', '\0', '.\0hidden', '.', '..'])(
     'rejects %s',
     (value) => {
-      expect(() => parseEntryBasename(value)).toThrow('Entry name required');
+      expect(() => parseEntryBasename(value)).toThrow('请输入有效名称，不能包含路径分隔符或仅使用点号');
     },
   );
 });
@@ -33,7 +33,7 @@ describe('joinProjectPath', () => {
     'does not compose an invalid basename %s',
     (basename) => {
       expect(() => joinProjectPath(parseProjectDirectoryPath('src'), basename)).toThrow(
-        'Entry name required',
+        '请输入有效名称，不能包含路径分隔符或仅使用点号',
       );
     },
   );

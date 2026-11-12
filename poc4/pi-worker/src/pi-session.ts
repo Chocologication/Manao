@@ -38,7 +38,8 @@ import { modelConfigProblems, type PiModelConfig, type WorkerBudgets, type Worke
 import { createProjectTools } from "./project-tools.js";
 import { COMPACTION_SETTINGS, CONTEXT_WINDOW, ConversationContext, needsCompaction, type CompactStart, type CompactResult } from "./conversation-context.js";
 import { LiveOutput } from "./live-output.js";
-import { installImageContext } from "./image-context.js";
+import { createModelTransport } from "./model-transport.js";
+import { installImageContext, installTaskImageContext } from "./image-context.js";
 import { buildSystemPrompt, installCompactionPrompt } from "./prompts.js";
 import { parseProjectEnvironment, type ProjectEnvironment } from "./project-environment.js";
 
@@ -65,6 +66,7 @@ export interface PiSessionDeps {
 export interface PiTaskStart {
   prompt: string;
   workspaceRevision: string;
+  images?: { type: "image"; data: string; mimeType: string }[];
 }
 
 export interface PiTaskOutcome {
@@ -178,6 +180,11 @@ export async function createPiSession(options: {
   // Native restoration may carry an older loadout; this task's snapshot owns authority.
   session.setActiveToolsByName(customTools.map(tool => tool.name));
   session.setThinkingLevel(options.reasoningEffort ?? "high", { persist: false });
+  const transport = model.provider === 'manao-user' ? createModelTransport(model.baseUrl) : undefined;
+  if (transport) {
+    const stream = session.agent.streamFunction;
+    session.agent.streamFunction = (model, transcript, streamOptions) => stream(model, transcript, { ...streamOptions, fetch: transport.fetch });
+  }
   installCompactionPrompt(session, environment);
   session.agent.toolExecution = "sequential";
   abortAfterFatal = () => { session.abortCompaction(); session.agent.abort(); void session.abort().catch(() => {}); };
@@ -196,10 +203,11 @@ export async function createPiSession(options: {
     abortAfterFatal();
     throw new Error("active context could not be compacted below the fixed threshold");
   };
-  const beforePrompt = async (prompt: string) => {
+  const beforePrompt = async (prompt: string, taskImageTokens = 0) => {
     // _prepareRun checks the old assistant usage before it inserts the new prompt.
     // Account for the pending trigger and initial system/tool declaration while idle.
-    let pending = estimateTokens({ role: "user", content: prompt, timestamp: Date.now() }) + (images ? await images.pendingTokens() : 0);
+    let pending = estimateTokens({ role: "user", content: prompt, timestamp: Date.now() })
+      + taskImageTokens + (images ? await images.pendingTokens() : 0);
     if (!session.sessionManager.buildSessionContext().messages.some((message) => message.role === "system")) {
       pending += estimateTokens({ role: "system", content: session.systemPrompt, timestamp: Date.now(),
         toolsAdded: session.agent.state.tools.map(({ name, description, parameters }) => ({ name, description, parameters })) });
@@ -246,9 +254,9 @@ export async function createPiSession(options: {
     return prepared || undefined;
   };
 
-  const images = context ? installImageContext(session,backend,taskId,() => deps?.now?.() ?? Date.now(),model.imageInput===true,code=>{fatalToolCode??=code;}) : undefined;
+  const images = context ? installImageContext(session,backend,taskId,() => deps?.now?.() ?? Date.now(),(model.vision ?? model.imageInput) === true,code=>{fatalToolCode??=code;}) : undefined;
   return new DefaultPiTaskSession(taskId, session, customTools, progress, budgets, () => deps?.now?.() ?? Date.now(), () => fatalToolCode,
-    context ? flush : undefined, saveFinal, beforePrompt, () => { if (compactionFailed) refuseOversizedContext(); }, live, () => { unsubscribeLive?.(); images?.dispose(); });
+    context ? flush : undefined, saveFinal, beforePrompt, () => { if (compactionFailed) refuseOversizedContext(); }, live, () => { unsubscribeLive?.(); images?.dispose(); transport?.close(); });
 }
 
 /** Idle-only native summary. This session has no prompt and no project tool authority. */
@@ -317,11 +325,11 @@ async function buildModelRuntime(model: PiModelConfig, agentDir: string): Promis
         models: [{
           id: model.model,
           name: model.model,
-          reasoning: true,
+          reasoning: model.reasoning ?? true,
           thinkingLevelMap: { minimal: null, low: "low", medium: null, high: "high", max: "max" },
           contextWindow: CONTEXT_WINDOW,
           maxTokens: 8192,
-          input: model.imageInput ? ["text","image"] : ["text"],
+          input: (model.vision ?? model.imageInput) ? ["text", "image"] : ["text"],
           cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
         }],
       },
@@ -356,7 +364,7 @@ class DefaultPiTaskSession implements PiTaskSession {
     private readonly fatalToolCode: () => string | null,
     private readonly flush?: () => Promise<void>,
     private readonly saveFinal?: () => Promise<void>,
-    private readonly beforePrompt?: (prompt: string) => Promise<void>,
+    private readonly beforePrompt?: (prompt: string, taskImageTokens: number) => Promise<void>,
     private readonly afterPrompt?: () => void,
     private readonly live?: LiveOutput,
     private readonly unsubscribeLive?: () => void,
@@ -389,16 +397,19 @@ class DefaultPiTaskSession implements PiTaskSession {
       this.stop();
     }, this.budgets.wallClockSeconds * 1000);
     let promptError: unknown = null;
+    let taskImages: Awaited<ReturnType<typeof installTaskImageContext>> | undefined;
     try {
+      if (!this.aborted && start.images?.length) taskImages = await installTaskImageContext(this.session, this.taskId, start.images);
       await this.flush?.();
       const prompt = this.flush ? "Execute the user's most recent programming goal recorded above. Use the current workspace revision; re-read relevant files before changes." : start.prompt;
-      if (!this.aborted) await this.beforePrompt?.(prompt);
+      if (!this.aborted) await this.beforePrompt?.(prompt, taskImages?.pendingTokens ?? 0);
       if (!this.aborted) await this.session.prompt(prompt);
       this.afterPrompt?.();
     } catch (error) {
       promptError = error;
     } finally {
       clearTimeout(deadline);
+      taskImages?.dispose();
     }
     try { await this.saveFinal?.(); } catch (error) { promptError ??= error; }
     // The final Context was persisted (or its failure recorded) BEFORE the outcome is

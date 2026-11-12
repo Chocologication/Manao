@@ -7,7 +7,7 @@ import type {
   ProjectRuntimeConfig,
   RuntimeTemplateId,
 } from '../contracts/project';
-import { isPythonRuntimeTemplate } from '../contracts/project';
+import { RUNTIME_TEMPLATE_META, isPythonRuntimeTemplate } from '../contracts/project';
 import {
   parseProjectDirectoryPath,
   parseProjectRelativePath,
@@ -28,6 +28,7 @@ import {
   type MockMutationError,
 } from './fileFixtures';
 import { runHandlers } from './runHandlers';
+import { studioHandlers } from './studioHandlers';
 import { hasActiveRun, isRunScenario, setRunScenario } from './runState';
 import { terminalHandlers } from './terminalHandlers';
 import {
@@ -438,15 +439,8 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   return value as Record<string, unknown>;
 }
 
-const RUNTIME_TEMPLATES: ReadonlySet<RuntimeTemplateId> = new Set([
-  'java-console',
-  'java-spring-boot-web',
-  'python-console',
-  'python-fastapi-web',
-]);
-
-/** Console templates never expose public ports (python-console also stays dependency-free). */
-const CONSOLE_TEMPLATES: ReadonlySet<RuntimeTemplateId> = new Set(['java-console', 'python-console']);
+const RUNTIME_TEMPLATES = new Set(Object.keys(RUNTIME_TEMPLATE_META));
+const CONSOLE_TEMPLATES = new Set(Object.entries(RUNTIME_TEMPLATE_META).filter(([, meta]) => !meta.web).map(([id]) => id));
 
 /**
  * Reads the runtime configuration of a create body. A legacy name-only body yields null;
@@ -495,7 +489,7 @@ function parseRuntimeFromBody(
   if (CONSOLE_TEMPLATES.has(templateId as RuntimeTemplateId) && publicPorts.length > 0) {
     return { ok: false };
   }
-  if (templateId === 'python-console' && (record.mysql === true || record.redis === true)) {
+  if ((templateId === 'python-console' || templateId.startsWith('node-') && !RUNTIME_TEMPLATE_META[templateId as RuntimeTemplateId].web) && (record.mysql === true || record.redis === true)) {
     return { ok: false };
   }
   return {
@@ -884,6 +878,7 @@ export const dependencyHandlers = [
 ];
 
 export const handlers = [
+  ...studioHandlers,
   http.get('/api/v1/projects/:projectId/ai-capabilities',()=>HttpResponse.json({imageInput:false})),
   http.get('/api/v1/auth/options', () =>
     HttpResponse.json(getMockAuthOptions(), {

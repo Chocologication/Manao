@@ -80,7 +80,7 @@ export function EditorTabs({
   return (
     <div className="lab-editor-tabs flex h-[36px] shrink-0 items-center">
       <div className="h-[36px] min-w-0 flex-1 overflow-x-auto overflow-y-hidden">
-        <div role="tablist" aria-label="Editor tabs" className="flex h-[36px] w-max">
+        <div role="tablist" aria-label="已打开的文件" className="flex h-[36px] w-max">
           {tabs.map((tab, index) => {
             const isActive = tab.path === activePath;
             const Icon = getFileIcon(tab.title, false);
@@ -135,7 +135,7 @@ export function EditorTabs({
 
                 <button
                   type="button"
-                  aria-label={`Close ${tab.title}`}
+                  aria-label={`关闭 ${tab.title}`}
                   onClick={(e) => {
                     e.stopPropagation();
                     onClose(tab.path);
@@ -159,8 +159,8 @@ export function EditorTabs({
       {onSave !== undefined ? (
         <button
           type="button"
-          title="Save"
-          aria-label="Save"
+          title="保存"
+          aria-label="保存"
           disabled={saveDisabled}
           onClick={onSave}
           className="mr-1 inline-flex size-8 shrink-0 items-center justify-center rounded-md outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-64"

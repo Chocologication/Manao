@@ -126,7 +126,7 @@ function DirectoryTreeNode({
               style={{ paddingLeft: `${(depth + 1) * 12 + 8}px` }}
             >
               <InlineAlert>
-                {fileQueryErrorMessage(query.error, 'Unable to load directory')}
+                {fileQueryErrorMessage(query.error, '无法加载目录')}
               </InlineAlert>
               <Button
                 type="button"
@@ -136,7 +136,7 @@ function DirectoryTreeNode({
                   void query.refetch();
                 }}
               >
-                Retry
+                重试
               </Button>
             </div>
           ) : null}
@@ -145,7 +145,7 @@ function DirectoryTreeNode({
               className="py-1 text-xs text-muted-foreground"
               style={{ paddingLeft: `${(depth + 1) * 12 + 8}px` }}
             >
-              Empty
+              空文件夹
             </p>
           ) : null}
           {children.map((child) => (

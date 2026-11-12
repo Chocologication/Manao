@@ -359,6 +359,8 @@ public final class AuthChallengeStore {
      * request or be used as mutual exclusion.
      */
     private void cleanupExpiredBestEffort(Instant now) {
+        // A suspended caller can hold rows this new transaction would wait on itself.
+        if (org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive()) return;
         try {
             cleanupTransactions.executeWithoutResult(status -> jdbc.update(
                 "DELETE FROM auth_challenge WHERE expires_at < ? AND (purpose = ? "

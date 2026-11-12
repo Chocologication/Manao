@@ -43,7 +43,7 @@ afterEach(async () => {
 async function openDelete() {
   const user = userEvent.setup();
   const card = await screen.findByRole('article', { name: 'Delete me' });
-  await user.click(within(card).getByRole('button', { name: 'Delete project' }));
+  await user.click(within(card).getByRole('button', { name: '删除项目' }));
   return user;
 }
 async function confirmDelete() {
@@ -103,7 +103,7 @@ describe('user project deletion', () => {
     items[0] = { ...project, state: 'CREATING' };
     renderApp();
     const card = await screen.findByRole('article', { name: 'Delete me' });
-    expect(within(card).getByRole('button', { name: 'Delete project' })).toBeDisabled();
+    expect(within(card).getByRole('button', { name: '删除项目' })).toBeDisabled();
     expect(deletes).toBe(0);
   });
 
@@ -132,7 +132,7 @@ describe('user project deletion', () => {
     }));
     renderApp();
     const user = await confirmDelete();
-    const resume = await screen.findByRole('button', { name: 'Continue deletion' });
+    const resume = await screen.findByRole('button', { name: '继续删除' });
     expect(screen.getByRole('article', { name: 'Delete me' })).toBeVisible();
     expect(deletes).toBe(1);
     expect(screen.queryByText('Project deleted.')).not.toBeInTheDocument();
@@ -144,9 +144,9 @@ describe('user project deletion', () => {
   it('offers explicit continuation for a DELETING project after a page reload', async () => {
     items[0] = { ...project, state: 'DELETING' };
     renderApp();
-    const resume = await screen.findByRole('button', { name: 'Continue deletion' });
+    const resume = await screen.findByRole('button', { name: '继续删除' });
     expect(resume).toBeEnabled();
-    expect(screen.getByText(/deletion has not completed/i)).toBeVisible();
+    expect(screen.getByText(/项目尚未删除完成/)).toBeVisible();
     expect(deletes).toBe(0);
   });
 
@@ -200,7 +200,7 @@ describe('user project deletion', () => {
     renderApp();
     const card = await screen.findByRole('article', { name: 'Alice Notebook' });
     const user = userEvent.setup();
-    await user.click(within(card).getByRole('button', { name: 'Delete project' }));
+    await user.click(within(card).getByRole('button', { name: '删除项目' }));
     await user.click(within(screen.getByRole('alertdialog')).getByRole('button', { name: 'Delete permanently' }));
     expect(await screen.findByText('Project deleted.')).toBeVisible();
     expect(screen.queryByRole('article', { name: 'Alice Notebook' })).not.toBeInTheDocument();

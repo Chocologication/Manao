@@ -418,6 +418,22 @@ describe("task server", () => {
   }
 
   const TEST_MODEL = { provider: "deepseek", apiType: "openai-completions", baseUrl: "https://api.deepseek.com", model: "deepseek-chat", apiKey: "k" };
+  it('accepts an owner model and images with no global model, without exposing credentials in status', async () => {
+    const starts: Record<string, unknown>[] = [];
+    const handle = createTaskServer(workerConfig(), { createRunner: deps => { starts.push(deps.start as unknown as Record<string, unknown>); return stubRunner(); } });
+    const port = await handle.listen();
+    const model = { provider: 'manao-user', apiType: 'openai-completions', baseUrl: 'https://provider.invalid/v1', model: 'custom-chat', apiKey: 'private-test-key', vision: true };
+    const images = [{ type: 'image', mimeType: 'image/png', data: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB' }];
+    try {
+      const response = await post(`http://127.0.0.1:${port}/tasks/personal/start`, { ...startBody('personal'), reasoningEffort: 'off', model, images });
+      expect(response.status).toBe(200);
+      expect(starts[0]).toMatchObject({ model: { ...model, reasoning: false }, images });
+      const status = await fetch(`http://127.0.0.1:${port}/status`, { headers: { Authorization: 'Bearer worker-token' } });
+      expect(await status.text()).not.toContain('private-test-key');
+      await vi.waitFor(() => expect(handle.activeTaskId()).toBeNull());
+      expect((await post(`http://127.0.0.1:${port}/tasks/invalid/start`, { ...startBody('invalid'), reasoningEffort: 'high', model })).status).toBe(422);
+    } finally { await handle.close(); }
+  });
   it.each([
     { environment: undefined, environmentSha256: undefined },
     { environment: PYTHON_ENVIRONMENT, environmentSha256: "0".repeat(64) },

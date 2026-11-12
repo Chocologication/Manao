@@ -31,8 +31,8 @@ public final class AgentProjectEnvironmentService {
             AgentProjectEnvironment.frameworkFor(template), runtime.isService() ? "service" : "task",
             AgentProjectEnvironment.entrypointFor(template), pythonVersion,
             runtime.isService() ? spec.primaryPort() : null,
-            runtime.isService() ? python ? "/health/ready" : "/actuator/health" : null,
-            spec.mysql(), spec.redis(), python ? "python-v1" : "java-v1",
+            runtime.isService() ? AgentProjectEnvironment.readinessPathFor(template) : null,
+            spec.mysql(), spec.redis(), AgentProjectEnvironment.filePolicyFor(template),
             AgentProjectEnvironment.goalsFor(template), python ? List.of("main", "test") : List.of(),
             AgentProjectEnvironment.toolsFor(template));
     }

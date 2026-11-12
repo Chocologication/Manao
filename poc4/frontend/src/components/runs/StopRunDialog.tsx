@@ -1,11 +1,11 @@
 import { useEffect, useRef } from 'react';
 import { Button } from '@/components/ui/button';
 
-export const STOP_DIALOG_TITLE = 'Stop run';
+export const STOP_DIALOG_TITLE = '停止运行';
 export const STOP_DIALOG_MESSAGE =
-  'Stop the current run? The server remains the authority for run state.';
-export const STOP_CONFIRM_LABEL = 'Stop';
-export const STOP_CANCEL_LABEL = 'Cancel';
+  '确认停止当前运行？运行状态将以服务端确认结果为准。';
+export const STOP_CONFIRM_LABEL = '停止';
+export const STOP_CANCEL_LABEL = '取消';
 
 export type StopRunDialogProps = {
   open: boolean;

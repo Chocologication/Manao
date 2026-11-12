@@ -418,6 +418,10 @@ public final class WorkspaceFileService {
     }
 
     private static String languageFor(String name) {
+        if (name.endsWith(".js") || name.endsWith(".mjs") || name.endsWith(".cjs")) return "javascript";
+        if (name.endsWith(".ts") || name.endsWith(".mts") || name.endsWith(".cts")) return "typescript";
+        if (name.endsWith(".json")) return "json";
+        if (name.endsWith(".yaml") || name.endsWith(".yml")) return "yaml";
         if (name.endsWith(".java")) return "java";
         if (name.endsWith(".py")) return "python";
         if (name.endsWith(".xml")) return "xml";

@@ -68,7 +68,7 @@ async function openAliceWorkbench(page: Page): Promise<string> {
   const accessToken = await signIn(page);
   await expect(page).toHaveURL(/\/projects$/);
   const rootTree = waitForFileApi(page, 'tree', '');
-  await projectCard(page, 'Alice Notebook').getByRole('link', { name: 'Open' }).click();
+  await projectCard(page, 'Alice Notebook').getByRole('link', { name: '进入工作台' }).click();
   await rootTree;
   await expect(page).toHaveURL(new RegExp(`/projects/${ALICE_SEED_PROJECT_ID}$`));
   await expect(treeItem(page, '.gitignore')).toBeVisible();
@@ -207,7 +207,7 @@ test('loads a real 20 MiB - 1 Java file into writable Monaco', async ({ page }) 
   expect(afterType.length).toBe(NEAR_LIMIT_BYTES + 1);
   expect(afterType.length).toBeGreaterThan(model.length);
   await expect(
-    page.getByRole('tablist', { name: 'Editor tabs' }).getByRole('tab', { name: /NearLimit\.java/ }),
+    page.getByRole('tablist', { name: '已打开的文件' }).getByRole('tab', { name: /NearLimit\.java/ }),
   ).toContainText('*');
 
   await recordMeasurement('NearLimit.java', {
@@ -238,7 +238,7 @@ test('loads a real 20 MiB + 1 Markdown file into the writable plain-text editor'
   const responseBytes = Number(response.headers()['content-length'] ?? 0);
   const textarea = page.getByRole('textbox', { name: 'large-notes.md' });
   await expect(textarea).toBeVisible({ timeout: 90_000 });
-  await expect(page.getByText('Plain text')).toBeVisible();
+  await expect(page.getByText('纯文本')).toBeVisible();
   await expect(page.locator('[aria-label="Editor"] .monaco-editor')).toHaveCount(0);
   const snapshot = await textarea.evaluate((element) => {
     if (!(element instanceof HTMLTextAreaElement)) {
@@ -269,7 +269,7 @@ test('loads a real 20 MiB + 1 Markdown file into the writable plain-text editor'
   expect(afterType.length).toBe(LARGE_NOTES_BYTES + 1);
   expect(afterType.prefix).not.toBe(snapshot.prefix);
   await expect(
-    page.getByRole('tablist', { name: 'Editor tabs' }).getByRole('tab', { name: /large-notes\.md/ }),
+    page.getByRole('tablist', { name: '已打开的文件' }).getByRole('tab', { name: /large-notes\.md/ }),
   ).toContainText('*');
 
   await recordMeasurement('large-notes.md', {

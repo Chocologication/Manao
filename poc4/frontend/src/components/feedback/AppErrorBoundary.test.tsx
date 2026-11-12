@@ -20,8 +20,8 @@ describe('AppErrorBoundary', () => {
       </AppErrorBoundary>,
     );
 
-    expect(screen.getByRole('heading', { name: /something went wrong/i })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /reload/i })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: /页面出现异常/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /刷新页面/i })).toBeInTheDocument();
 
     const text = document.body.textContent ?? '';
     expect(text).not.toContain(SECRET_ERROR);

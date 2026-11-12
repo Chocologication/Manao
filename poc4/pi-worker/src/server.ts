@@ -19,7 +19,8 @@ import { createHash, timingSafeEqual } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { pathToFileURL } from "node:url";
 import { BackendClient, BackendHttpError, ProgressChain } from "./backend-client.js";
-import { ConfigError, loadWorkerConfig, modelConfigProblems, type WorkerConfig } from "./config.js";
+import { ConfigError, loadWorkerConfig, modelConfigProblems, type WorkerConfig, type PiModelConfig } from "./config.js";
+import { join } from "node:path";
 import { compactIdleConversation, createPiSession, type PiSessionDeps, type PiTaskOutcome, type PiTaskSession } from "./pi-session.js";
 import { TerminalDelivery, selectConfirmedEvictions, type DeliveryState } from "./terminal-delivery.js";
 import { terminalContentSha256, terminalReportId } from "./report-identity.js";
@@ -36,6 +37,8 @@ export interface WorkerStartBody {
   workerEpoch: number;
   reasoningEffort: "off" | "low" | "high" | "max";
   conversationId?: string | null;
+  model?: PiModelConfig | null;
+  images?: { type: "image"; data: string; mimeType: string }[];
 }
 
 export interface TaskRunner {
@@ -83,7 +86,7 @@ const SHA256 = /^[0-9a-f]{64}$/;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 type ActiveWork = { kind: "task"; taskId: string } | { kind: "compact"; conversationId: string; requestId: string };
 interface CompactRecord { start: CompactStart; backend: BackendClient; result: CompactResult | null; confirmed: boolean; rejected: boolean; delivery: Promise<void> | null }
-const MAX_BODY_BYTES = 64 * 1024;
+const MAX_BODY_BYTES = 24 * 1024 * 1024;
 
 export interface TaskServerHandle {
   server: Server;
@@ -161,7 +164,7 @@ export function createTaskServer(config: WorkerConfig, deps: ServerDeps = {}): T
     // The model gate answers BEFORE any runner or session exists: a worker without a
     // complete model configuration refuses every start with a fixed 503, which the
     // backend turns into an explicit pre-start task failure.
-    if (modelConfigProblems(config.model).length > 0) {
+    if (modelConfigProblems(start.model ?? config.model).length > 0) {
       writeJson(response, 503, { error: "AI_WORKER_NOT_CONFIGURED" });
       return;
     }
@@ -195,7 +198,7 @@ export function createTaskServer(config: WorkerConfig, deps: ServerDeps = {}): T
     let deepSeek = false;
     try { deepSeek = new URL(config.model!.baseUrl).hostname === "api.deepseek.com"
       && ["openai", "openai-completions"].includes(config.model!.apiType); } catch { /* Refuse unsupported server configuration. */ }
-    if (!deepSeek) { writeJson(response, 422, { error: "AI_REASONING_UNSUPPORTED" }); return; }
+    if (start.model ? start.reasoningEffort !== "off" : !deepSeek) { writeJson(response, 422, { error: "AI_REASONING_UNSUPPORTED" }); return; }
     // Confirmed records are pruned before a new one is admitted, so the retention
     // bounds (100 / 24h) hold without a background sweeper.
     pruneConfirmed();
@@ -355,9 +358,10 @@ export function createTaskServer(config: WorkerConfig, deps: ServerDeps = {}): T
   }
 
   const defaultRunner = (runnerDeps: RunnerDeps): TaskRunner => {
+    const taskModel = runnerDeps.start.model ?? config.model;
     // The model gate already refused unconfigured starts in handleStart; this remains
     // as defense in depth for a record created before the gate.
-    if (config.model === null || modelConfigProblems(config.model).length > 0) {
+    if (taskModel === null || modelConfigProblems(taskModel).length > 0) {
       throw new WorkerStartRefusedError("the worker has no model configuration");
     }
     let session: PiTaskSession | null = null;
@@ -369,8 +373,8 @@ export function createTaskServer(config: WorkerConfig, deps: ServerDeps = {}): T
       state: () => stopped ? "STOPPING" : "RUNNING",
       async start(): Promise<void> {
         session = await createPiSession({
-          model: config.model!,
-          paths: config.paths,
+          model: taskModel,
+          paths: runnerDeps.start.model ? { ...config.paths, agentDir: join(config.paths.agentDir, "tasks", runnerDeps.taskId) } : config.paths,
           budgets: config.budgets,
           backend: runnerDeps.backend,
           progress: runnerDeps.progress,
@@ -389,6 +393,7 @@ export function createTaskServer(config: WorkerConfig, deps: ServerDeps = {}): T
         try { outcome = await runningSession.run({
           prompt: runnerDeps.start.prompt,
           workspaceRevision: runnerDeps.start.workspaceRevision,
+          images: runnerDeps.start.images,
         }); } catch (error) { runningSession.dispose(); throw error; }
         runnerDeps.settle(outcome);
       },
@@ -501,6 +506,21 @@ export function createTaskServer(config: WorkerConfig, deps: ServerDeps = {}): T
       && (typeof candidate["conversationId"] !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(candidate["conversationId"]))) {
       return "conversationId must be a UUID or null";
     }
+    const images = candidate["images"] ?? [];
+    if (!Array.isArray(images) || images.length > 8 || images.some(image => !image || image.type !== "image" || typeof image.data !== "string" || image.data.length > 12 * 1024 * 1024
+      || !/^[A-Za-z0-9+/]*={0,2}$/.test(image.data) || !["image/png", "image/jpeg", "image/webp"].includes(image.mimeType))) return "Invalid image attachments";
+    if (typeof candidate["prompt"] === "string" && candidate["prompt"].length > 16000) return "prompt is too large";
+    let model: PiModelConfig | null = null;
+    if (candidate["model"] != null) {
+      const value = candidate["model"] as Record<string, unknown>;
+      if (typeof value !== "object" || Array.isArray(value)
+        || ["provider", "apiType", "baseUrl", "model", "apiKey"].some(key => typeof value[key] !== "string" || (value[key] as string).length > 4096)
+        || value["provider"] !== "manao-user" || value["apiType"] !== "openai-completions") return "Invalid model override";
+      try { const address = new URL(value["baseUrl"] as string); if (address.protocol !== "https:" || address.username || address.password || address.search || address.hash) return "Invalid model address"; }
+      catch { return "Invalid model address"; }
+      model = { provider: value["provider"] as string, apiType: value["apiType"] as string, baseUrl: value["baseUrl"] as string,
+        model: value["model"] as string, apiKey: value["apiKey"] as string, vision: value["vision"] === true, reasoning: false };
+    }
     return {
       environment,
       environmentSha256: candidate["environmentSha256"] as string,
@@ -511,6 +531,8 @@ export function createTaskServer(config: WorkerConfig, deps: ServerDeps = {}): T
       workerEpoch: candidate["workerEpoch"],
       reasoningEffort: candidate["reasoningEffort"] as WorkerStartBody["reasoningEffort"],
       conversationId: candidate["conversationId"] as string | null | undefined,
+      model,
+      images,
     };
   }
 

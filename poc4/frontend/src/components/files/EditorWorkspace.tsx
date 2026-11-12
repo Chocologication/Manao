@@ -59,7 +59,7 @@ function FileRequestError({ message, onRetry }: { message: string; onRetry: () =
     <div className="flex flex-col items-start gap-2 p-3">
       <InlineAlert>{message}</InlineAlert>
       <Button type="button" variant="outline" onClick={onRetry}>
-        Retry
+        重试
       </Button>
     </div>
   );
@@ -92,12 +92,12 @@ function ActiveFileSurface({
   const content = useFileContentQuery(projectId, path, meta.data?.renderMode);
 
   if (meta.isPending) {
-    return <FileStatus label="Loading file metadata" />;
+    return <FileStatus label="正在读取文件信息" />;
   }
   if (meta.isError) {
     return (
       <FileRequestError
-        message={fileQueryErrorMessage(meta.error, 'Unable to load file metadata')}
+        message={fileQueryErrorMessage(meta.error, '无法读取文件信息')}
         onRetry={() => {
           void meta.refetch();
         }}
@@ -113,12 +113,12 @@ function ActiveFileSurface({
   }
 
   if (content.isPending) {
-    return <FileStatus label="Loading file content" />;
+    return <FileStatus label="正在读取文件内容" />;
   }
   if (content.isError) {
     return (
       <FileRequestError
-        message={fileQueryErrorMessage(content.error, 'Unable to load file content')}
+        message={fileQueryErrorMessage(content.error, '无法读取文件内容')}
         onRetry={() => {
           void content.refetch();
         }}
@@ -306,7 +306,7 @@ export function EditorWorkspace({
   useEffect(() => {
     if (
       save.feedback?.kind === 'status' &&
-      save.feedback.message === 'Saved' &&
+      save.feedback.message === '已保存' &&
       dirtyPaths.has(save.feedback.path)
     ) {
       save.clearFeedback();
@@ -355,7 +355,7 @@ export function EditorWorkspace({
         <div className="flex items-center gap-2 border-b px-3 py-2">
           <InlineAlert>{save.feedback.message}</InlineAlert>
           <Button type="button" variant="outline" onClick={handleRetry}>
-            Retry
+            重试
           </Button>
         </div>
       ) : null}
@@ -387,7 +387,7 @@ export function EditorWorkspace({
               void save.savePath(visibleActivePath);
             }}
           />
-        ) : <div className="lab-editor-empty"><Code2 size={48} /><h2>你的代码工作空间</h2><p>尚未打开文件</p><span className="lab-eyebrow">MANAO / CLOUD LAB</span></div>}
+        ) : <div className="lab-editor-empty"><Code2 size={48} /><h2>你的代码工作空间</h2><p>尚未打开文件</p><span className="lab-eyebrow">码瑙 · 云端实验室</span></div>}
       </div>
       <UnsavedChangesDialog
         open={closeGuard.open && closeGuard.mode === 'close-tab'}

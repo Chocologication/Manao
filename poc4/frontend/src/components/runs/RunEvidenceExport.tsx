@@ -19,5 +19,5 @@ export function RunEvidenceExport({ projectId, run, snapshot }: { projectId: str
       setFeedback('已导出运行记录与已读取日志');
     } catch { setFeedback('导出失败，请重试'); }
   }
-  return <><button type="button" className={RUN_ICON_BUTTON_CLASS} aria-label="导出运行证据" title="导出运行证据 JSON（已读取日志）" onClick={download}><Download size={16} /></button><span role="status" className="sr-only">{feedback}</span></>;
+  return <><button type="button" className={RUN_ICON_BUTTON_CLASS} aria-label="导出运行记录" title="导出运行记录 JSON（已读取日志）" onClick={download}><Download size={16} /></button><span role="status" className="sr-only">{feedback}</span></>;
 }

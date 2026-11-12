@@ -47,10 +47,10 @@ describe('appearance preferences', () => {
     for (const event of [{ key: 'unrelated', newValue: 'light' }, { key: THEME_STORAGE_KEY, newValue: 'invalid' }]) window.dispatchEvent(new StorageEvent('storage', event));
     expect(useThemePreferences.getState().theme).toBe('graphite');
     window.dispatchEvent(new StorageEvent('storage', { key: THEME_STORAGE_KEY, newValue: null }));
-    expect(useThemePreferences.getState().theme).toBe('lab');
+    expect(useThemePreferences.getState().theme).toBe('light');
     stop();
     window.dispatchEvent(new StorageEvent('storage', { key: THEME_STORAGE_KEY, newValue: 'light' }));
-    expect(useThemePreferences.getState().theme).toBe('lab');
+    expect(useThemePreferences.getState().theme).toBe('light');
   });
 
   it('remains usable when localStorage is unavailable', () => {

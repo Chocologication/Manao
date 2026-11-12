@@ -32,19 +32,19 @@ function treeItem(page: Page, name: string): Locator {
 }
 
 function editorTab(page: Page, name: RegExp): Locator {
-  return page.getByRole('tablist', { name: 'Editor tabs' }).getByRole('tab', { name });
+  return page.getByRole('tablist', { name: '已打开的文件' }).getByRole('tab', { name });
 }
 
 function saveButton(page: Page): Locator {
-  return page.getByRole('button', { name: 'Save', exact: true });
+  return page.getByRole('button', { name: '保存', exact: true });
 }
 
 function discardButton(page: Page): Locator {
-  return page.getByRole('button', { name: 'Discard', exact: true });
+  return page.getByRole('button', { name: '放弃修改', exact: true });
 }
 
 function nameField(page: Page): Locator {
-  return page.getByRole('textbox', { name: 'Name' });
+  return page.getByRole('textbox', { name: '名称' });
 }
 
 function appAlert(page: Page): Locator {
@@ -186,7 +186,7 @@ async function openAliceWorkbench(
   const accessToken = await signIn(page, ALICE);
   await expect(page).toHaveURL(/\/projects$/);
   const rootTree = waitForFileApi(page, 'tree', '');
-  await projectCard(page, 'Alice Notebook').getByRole('link', { name: 'Open' }).click();
+  await projectCard(page, 'Alice Notebook').getByRole('link', { name: '进入工作台' }).click();
   const treeResponse = await rootTree;
   const treeBody = (await treeResponse.json()) as { workspaceRevision?: string };
   expect(typeof treeBody.workspaceRevision).toBe('string');
@@ -228,7 +228,7 @@ async function openFile(
   await expect(item).toBeVisible();
   await item.click();
   await expect(
-    page.getByRole('tablist', { name: 'Editor tabs' }).getByRole('tab', { name }),
+    page.getByRole('tablist', { name: '已打开的文件' }).getByRole('tab', { name }),
   ).toBeVisible();
   if (expectContent) {
     await expect(
@@ -390,15 +390,15 @@ async function submitCreateBasename(page: Page, name: string): Promise<void> {
   const input = nameField(page);
   await expect(input).toBeVisible();
   await input.fill(name);
-  await page.getByRole('dialog', { name: 'New file' }).or(page.getByRole('dialog', { name: 'New folder' })).getByRole('button', { name: 'Create' }).click();
+  await page.getByRole('dialog', { name: '新建文件' }).or(page.getByRole('dialog', { name: '新建文件夹' })).getByRole('button', { name: '创建' }).click();
 }
 
 async function submitRenameBasename(page: Page, name: string): Promise<void> {
-  const dialog = page.getByRole('dialog', { name: 'Rename' });
+  const dialog = page.getByRole('dialog', { name: '重命名' });
   const input = nameField(page);
   await expect(input).toBeVisible();
   await input.fill(name);
-  await dialog.getByRole('button', { name: 'Rename' }).click();
+  await dialog.getByRole('button', { name: '重命名' }).click();
 }
 
 async function prepareVisualCapture(page: Page): Promise<void> {
@@ -436,8 +436,8 @@ async function assertNoHorizontalOverflow(page: Page): Promise<void> {
 
 async function assertWorkbenchPanelsDoNotOverlap(page: Page): Promise<void> {
   const headerBox = await page.locator('.workbench-shell > header').boundingBox();
-  const sidebarBox = await page.getByRole('complementary', { name: 'Project files' }).boundingBox();
-  const editorBox = await page.getByLabel('Editor', { exact: true }).boundingBox();
+  const sidebarBox = await page.getByRole('complementary', { name: '项目文件' }).boundingBox();
+  const editorBox = await page.getByLabel('代码编辑器', { exact: true }).boundingBox();
   expect(headerBox).not.toBeNull();
   expect(sidebarBox).not.toBeNull();
   expect(editorBox).not.toBeNull();
@@ -704,7 +704,7 @@ test('saves with Ctrl+S using a relative PUT, Bearer token and expected revision
   const payload = (await response.json()) as { workspaceRevision?: string };
   expect(typeof payload.workspaceRevision).toBe('string');
   expect(payload.workspaceRevision).not.toBe(workspaceRevision);
-  await expect(page.getByRole('status', { name: 'Saved' })).toBeVisible();
+  await expect(page.getByRole('status', { name: '已保存' })).toBeVisible();
   await expect(editorTab(page, /pom\.xml/)).not.toContainText('*');
   expect(await monacoValue(page, 'pom.xml')).toContain('STAGE3SAVE');
 });
@@ -747,25 +747,25 @@ test('preserves dirty content after network, locked, conflict and 413 save failu
 
   await setWriteScenario(page, accessToken, 'locked');
   await saveButton(page).click();
-  await expect(appAlert(page)).toHaveText(/project is locked/i);
+  await expect(appAlert(page)).toHaveText(/项目暂时无法修改，请等待当前操作完成/i);
   expect(await monacoValue(page, 'pom.xml')).toContain('STAGE3KEEP');
   await expect(editorTab(page, /pom\.xml/)).toContainText('*');
 
   await setWriteScenario(page, accessToken, 'conflict');
-  await page.getByRole('button', { name: 'Retry' }).click();
-  await expect(appAlert(page)).toHaveText(/workspace revision conflict/i);
+  await page.getByRole('button', { name: '重试' }).click();
+  await expect(appAlert(page)).toHaveText(/工作区已发生变化，请刷新后重试/i);
   expect(await monacoValue(page, 'pom.xml')).toContain('STAGE3KEEP');
   await expect(editorTab(page, /pom\.xml/)).toContainText('*');
 
   await setWriteScenario(page, accessToken, 'normal');
   await interceptNextContentPut(page, 'too-large');
-  await page.getByRole('button', { name: 'Retry' }).click();
-  await expect(appAlert(page)).toHaveText(/file is too large/i);
+  await page.getByRole('button', { name: '重试' }).click();
+  await expect(appAlert(page)).toHaveText(/文件过大/i);
   expect(await monacoValue(page, 'pom.xml')).toContain('STAGE3KEEP');
 
   await interceptNextContentPut(page, 'network');
-  await page.getByRole('button', { name: 'Retry' }).click();
-  await expect(appAlert(page)).toHaveText(/network request failed/i);
+  await page.getByRole('button', { name: '重试' }).click();
+  await expect(appAlert(page)).toHaveText(/网络请求失败，请检查连接后重试/i);
   expect(await monacoValue(page, 'pom.xml')).toContain('STAGE3KEEP');
   await expect(editorTab(page, /pom\.xml/)).toContainText('*');
 });
@@ -778,9 +778,9 @@ test('dirty close supports Cancel, Discard and Save-and-close', async ({ page })
   await expect(editorTab(page, /pom\.xml/)).toContainText('*');
 
   await page.getByRole('button', { name: 'Close pom.xml' }).click();
-  const closeDialog = page.getByRole('dialog', { name: 'Unsaved changes' });
+  const closeDialog = page.getByRole('dialog', { name: '有未保存的修改' });
   await expect(closeDialog).toBeVisible();
-  await page.getByRole('button', { name: 'Cancel' }).click();
+  await page.getByRole('button', { name: '取消' }).click();
   await expect(closeDialog).toHaveCount(0);
   await expect(editorTab(page, /pom\.xml/)).toBeVisible();
   await expect(editorTab(page, /pom\.xml/)).toContainText('*');
@@ -801,7 +801,7 @@ test('dirty close supports Cancel, Discard and Save-and-close', async ({ page })
   const putResponse = page.waitForResponse((response) => {
     return isRelativeContentPut(response.request(), 'pom.xml') && response.status() === 200;
   });
-  await page.getByRole('button', { name: 'Save and close' }).click();
+  await page.getByRole('button', { name: '保存并关闭' }).click();
   await putResponse;
   await expect(editorTab(page, /pom\.xml/)).toHaveCount(0);
   await expect(closeDialog).toHaveCount(0);
@@ -819,24 +819,24 @@ test('back and logout guards support Cancel and Discard', async ({ page }) => {
   await typeInMonaco(page, 'STAGE3LEAVE');
   await expect(editorTab(page, /pom\.xml/)).toContainText('*');
 
-  await page.getByRole('link', { name: 'Back to projects' }).click();
-  const leaveDialog = page.getByRole('dialog', { name: 'Unsaved changes' });
+  await page.getByRole('link', { name: '返回项目列表' }).click();
+  const leaveDialog = page.getByRole('dialog', { name: '有未保存的修改' });
   await expect(leaveDialog).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Discard and leave' })).toBeVisible();
-  await page.getByRole('button', { name: 'Cancel' }).click();
+  await expect(page.getByRole('button', { name: '放弃修改并离开' })).toBeVisible();
+  await page.getByRole('button', { name: '取消' }).click();
   await expect(leaveDialog).toHaveCount(0);
   await expect(page).toHaveURL(new RegExp(`/projects/${ALICE_SEED_PROJECT_ID}$`));
   await expect(editorTab(page, /pom\.xml/)).toContainText('*');
   expect(await monacoValue(page, 'pom.xml')).toContain('STAGE3LEAVE');
 
-  await page.getByRole('link', { name: 'Back to projects' }).click();
+  await page.getByRole('link', { name: '返回项目列表' }).click();
   await expect(leaveDialog).toBeVisible();
-  await page.getByRole('button', { name: 'Discard and leave' }).click();
+  await page.getByRole('button', { name: '放弃修改并离开' }).click();
   await expect(page).toHaveURL(/\/projects$/);
   await expect(editorTab(page, /pom\.xml/)).toHaveCount(0);
   await expect(projectCard(page, 'Alice Notebook')).toBeVisible();
 
-  await projectCard(page, 'Alice Notebook').getByRole('link', { name: 'Open' }).click();
+  await projectCard(page, 'Alice Notebook').getByRole('link', { name: '进入工作台' }).click();
   await expect(page.getByRole('heading', { name: 'Alice Notebook' })).toBeVisible();
   await expect(treeItem(page, '.gitignore')).toBeVisible();
   await openFile(page, 'pom.xml', 'pom.xml');
@@ -844,17 +844,17 @@ test('back and logout guards support Cancel and Discard', async ({ page }) => {
   expect(await monacoValue(page, 'pom.xml')).not.toContain('STAGE3LEAVE');
   await typeInMonaco(page, 'STAGE3LOGOUT');
 
-  await page.getByRole('button', { name: 'Log out' }).click();
-  const logoutDialog = page.getByRole('dialog', { name: 'Unsaved changes' });
+  await page.getByRole('button', { name: '退出登录' }).click();
+  const logoutDialog = page.getByRole('dialog', { name: '有未保存的修改' });
   await expect(logoutDialog).toBeVisible();
-  await page.getByRole('button', { name: 'Cancel' }).click();
+  await page.getByRole('button', { name: '取消' }).click();
   await expect(logoutDialog).toHaveCount(0);
   await expect(page).toHaveURL(new RegExp(`/projects/${ALICE_SEED_PROJECT_ID}$`));
   expect(await monacoValue(page, 'pom.xml')).toContain('STAGE3LOGOUT');
 
-  await page.getByRole('button', { name: 'Log out' }).click();
+  await page.getByRole('button', { name: '退出登录' }).click();
   await expect(logoutDialog).toBeVisible();
-  await page.getByRole('button', { name: 'Discard and leave' }).click();
+  await page.getByRole('button', { name: '放弃修改并离开' }).click();
   await expect(page).toHaveURL(/\/login$/);
   await expect(page.getByLabel('Username')).toBeVisible();
   await expect(page.getByText('Alice Notebook')).toHaveCount(0);
@@ -867,7 +867,7 @@ test('creates root and nested files and directories with lazy tree counts', asyn
   expect(observer.count('tree', 'src')).toBe(0);
   expect(observer.count('tree', 'docs')).toBe(0);
 
-  await page.getByRole('button', { name: 'New file' }).click();
+  await page.getByRole('button', { name: '新建文件' }).click();
   await submitCreateBasename(page, 'notes.md');
   await expect(treeItem(page, 'notes.md')).toBeVisible();
   await expect(editorTab(page, /notes\.md/)).toBeVisible();
@@ -878,7 +878,7 @@ test('creates root and nested files and directories with lazy tree counts', asyn
   await treeItem(page, 'src').click();
   await expect(treeItem(page, 'src')).toHaveAttribute('aria-selected', 'true');
   const srcBeforeCreate = observer.count('tree', 'src');
-  await page.getByRole('button', { name: 'New folder' }).click();
+  await page.getByRole('button', { name: '新建文件夹' }).click();
   await submitCreateBasename(page, 'lib');
   await expect(treeItem(page, 'lib')).toBeVisible();
   await expect.poll(() => observer.count('tree', 'src')).toBeGreaterThan(srcBeforeCreate);
@@ -887,7 +887,7 @@ test('creates root and nested files and directories with lazy tree counts', asyn
   await expandToAliceDemo(page);
   await treeItem(page, 'App.java').click();
   const demoBefore = observer.count('tree', 'src/main/java/demo');
-  await page.getByRole('button', { name: 'New file' }).click();
+  await page.getByRole('button', { name: '新建文件' }).click();
   await submitCreateBasename(page, 'extra.java');
   await expect(treeItem(page, 'extra.java')).toBeVisible();
   await expect(editorTab(page, /extra\.java/)).toBeVisible();
@@ -903,7 +903,7 @@ test('renames an open file and directory descendants without stale old paths', a
   await waitForMonacoText(page, 'Hello, POC4');
 
   await treeItem(page, 'pom.xml').click();
-  await page.getByRole('button', { name: 'Rename', exact: true }).click();
+  await page.getByRole('button', { name: '重命名', exact: true }).click();
   await submitRenameBasename(page, 'project.xml');
   await expect(treeItem(page, 'project.xml')).toBeVisible();
   await expect(treeItem(page, 'pom.xml')).toHaveCount(0);
@@ -913,7 +913,7 @@ test('renames an open file and directory descendants without stale old paths', a
 
   await treeItem(page, 'src').click();
   await expect(treeItem(page, 'src')).toHaveAttribute('aria-selected', 'true');
-  await page.getByRole('button', { name: 'Rename', exact: true }).click();
+  await page.getByRole('button', { name: '重命名', exact: true }).click();
   await submitRenameBasename(page, 'source');
   await expect(treeItem(page, 'source')).toBeVisible();
   await expect(treeItem(page, 'src')).toHaveCount(0);
@@ -931,33 +931,33 @@ test('delete cancel, non-empty rejection and confirmed cleanup', async ({ page }
   await openFile(page, 'README.md', 'README.md');
   await waitForMonacoText(page, 'Alice Notebook');
 
-  await page.getByRole('button', { name: 'Delete' }).click();
-  const dialog = page.getByRole('dialog', { name: 'Delete' });
+  await page.getByRole('button', { name: '删除' }).click();
+  const dialog = page.getByRole('dialog', { name: '删除' });
   await expect(dialog).toBeVisible();
   await expect(dialog).toContainText('README.md');
-  await page.getByRole('button', { name: 'Cancel' }).click();
+  await page.getByRole('button', { name: '取消' }).click();
   await expect(dialog).toHaveCount(0);
   await expect(treeItem(page, 'README.md')).toBeVisible();
   await expect(editorTab(page, /README\.md/)).toBeVisible();
 
   await treeItem(page, 'src').click();
   await expect(treeItem(page, 'src')).toHaveAttribute('aria-selected', 'true');
-  await page.getByRole('button', { name: 'Delete', exact: true }).click();
+  await page.getByRole('button', { name: '删除', exact: true }).click();
   await expect(dialog).toBeVisible();
   await expect(dialog).toContainText('src');
-  await dialog.getByRole('button', { name: 'Delete' }).click();
-  await expect(dialog.locator('p[role="alert"]')).toHaveText('Directory is not empty');
+  await dialog.getByRole('button', { name: '删除' }).click();
+  await expect(dialog.locator('p[role="alert"]')).toHaveText('文件夹不为空');
   await expect(dialog).toBeVisible();
   await expect(treeItem(page, 'src')).toBeVisible();
-  await page.getByRole('button', { name: 'Cancel' }).click();
+  await page.getByRole('button', { name: '取消' }).click();
 
-  await page.getByRole('button', { name: 'New folder' }).click();
+  await page.getByRole('button', { name: '新建文件夹' }).click();
   await submitCreateBasename(page, 'tmp');
   await expect(treeItem(page, 'tmp')).toBeVisible();
   await treeItem(page, 'tmp').click();
-  await page.getByRole('button', { name: 'Delete' }).click();
+  await page.getByRole('button', { name: '删除' }).click();
   await expect(dialog).toBeVisible();
-  await dialog.getByRole('button', { name: 'Delete' }).click();
+  await dialog.getByRole('button', { name: '删除' }).click();
   await expect(treeItem(page, 'tmp')).toHaveCount(0);
   await expect(dialog).toHaveCount(0);
 });
@@ -972,7 +972,7 @@ test('refresh while dirty does not replace the editor buffer', async ({ page }) 
   const treeGets = observer.count('tree', '');
 
   const treeRefresh = waitForFileApi(page, 'tree', '');
-  await page.getByRole('button', { name: 'Refresh' }).click();
+  await page.getByRole('button', { name: '刷新' }).click();
   await treeRefresh;
   await expect.poll(() => observer.count('tree', '')).toBeGreaterThan(treeGets);
   expect(observer.count('content', 'pom.xml')).toBe(contentGets);
@@ -986,7 +986,7 @@ test('blocked files stay at zero content GETs and reject content PUT bypass', as
   const { accessToken, workspaceRevision } = await openAliceWorkbench(page);
   await expandDirectory(page, 'assets', 'assets');
   await openFile(page, 'logo.png', 'assets/logo.png', { content: false });
-  await expect(page.getByText('This file is binary and cannot be previewed')).toBeVisible();
+  await expect(page.getByText('二进制文件无法预览')).toBeVisible();
   await expect(saveButton(page)).toHaveCount(0);
   expect(observer.count('content', 'assets/logo.png')).toBe(0);
   expect(observer.count('content', 'assets/logo.png', 'PUT')).toBe(0);
@@ -1028,10 +1028,10 @@ test('isolates Alice and Bob projects and stale 401 cleanup', async ({ page }) =
   await openFile(page, 'pom.xml', 'pom.xml');
   await waitForMonacoText(page, 'artifactId');
   await typeInMonaco(page, 'ALICEONLY');
-  await page.getByRole('link', { name: 'Back to projects' }).click();
-  await page.getByRole('button', { name: 'Discard and leave' }).click();
+  await page.getByRole('link', { name: '返回项目列表' }).click();
+  await page.getByRole('button', { name: '放弃修改并离开' }).click();
   await expect(page).toHaveURL(/\/projects$/);
-  await page.getByRole('button', { name: 'Log out' }).click();
+  await page.getByRole('button', { name: '退出登录' }).click();
   await expect(page).toHaveURL(/\/login$/);
 
   await signIn(page, BOB);
@@ -1039,7 +1039,7 @@ test('isolates Alice and Bob projects and stale 401 cleanup', async ({ page }) =
   await expect(projectCard(page, 'Bob Lab')).toBeVisible();
   await expect(projectCard(page, 'Alice Notebook')).toHaveCount(0);
   const bobTree = waitForFileApi(page, 'tree', '');
-  await projectCard(page, 'Bob Lab').getByRole('link', { name: 'Open' }).click();
+  await projectCard(page, 'Bob Lab').getByRole('link', { name: '进入工作台' }).click();
   await bobTree;
   await expect(page).toHaveURL(new RegExp(`/projects/${BOB_SEED_PROJECT_ID}$`));
   await expect(treeItem(page, 'lab-notes.md')).toBeVisible();
@@ -1047,14 +1047,14 @@ test('isolates Alice and Bob projects and stale 401 cleanup', async ({ page }) =
   await expect(page.getByText('ALICEONLY')).toHaveCount(0);
   await expect(page.getByText('alice', { exact: true })).toHaveCount(0);
 
-  await page.getByRole('link', { name: 'Back to projects' }).click();
+  await page.getByRole('link', { name: '返回项目列表' }).click();
   await expect(page).toHaveURL(/\/projects$/);
-  await page.getByRole('button', { name: 'Log out' }).click();
+  await page.getByRole('button', { name: '退出登录' }).click();
   const accessToken = await signIn(page, ALICE);
   await expect(page).toHaveURL(/\/projects$/);
   await expect(projectCard(page, 'Alice Notebook')).toBeVisible();
   const aliceTree = waitForFileApi(page, 'tree', '');
-  await projectCard(page, 'Alice Notebook').getByRole('link', { name: 'Open' }).click();
+  await projectCard(page, 'Alice Notebook').getByRole('link', { name: '进入工作台' }).click();
   await aliceTree;
   await openFile(page, 'pom.xml', 'pom.xml');
   await waitForMonacoText(page, 'artifactId');
@@ -1079,31 +1079,31 @@ test('isolates Alice and Bob projects and stale 401 cleanup', async ({ page }) =
     return response.status;
   }, accessToken);
   expect(expireStatus).toBe(204);
-  await page.getByRole('button', { name: 'Refresh' }).click();
+  await page.getByRole('button', { name: '刷新' }).click();
   await triggerSessionRefetch(page);
   expect((await unauthorized).status()).toBe(401);
   await expect(page.getByLabel('Username')).toBeVisible();
   await expect(page).toHaveURL(/\/login$/);
   await expect(page.getByRole('main').getByRole('alert')).toContainText(SESSION_EXPIRED);
   await expect(editorTab(page, /pom\.xml/)).toHaveCount(0);
-  await expect(page.getByRole('dialog', { name: 'Unsaved changes' })).toHaveCount(0);
+  await expect(page.getByRole('dialog', { name: '有未保存的修改' })).toHaveCount(0);
 });
 
 test('does not send terminal or echo-ws requests before Terminal Open', async ({ page }) => {
   const forbidden = installProductionRequestGuard(page);
   await openAliceWorkbench(page);
-  await expect(page.getByRole('tab', { name: 'Run' })).toBeEnabled();
-  await expect(page.getByRole('tab', { name: 'Terminal' })).toBeEnabled();
+  await expect(page.getByRole('tab', { name: '运行记录' })).toBeEnabled();
+  await expect(page.getByRole('tab', { name: '终端' })).toBeEnabled();
 
   await openFile(page, 'pom.xml', 'pom.xml');
   await waitForMonacoText(page, 'artifactId');
   await typeInMonaco(page, 'STAGE3NORUN');
-  await page.getByRole('tab', { name: 'Terminal' }).click();
-  await expect(page.getByRole('region', { name: 'Job terminal' })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Open terminal' })).toBeDisabled();
-  await page.getByRole('tab', { name: 'File' }).click();
+  await page.getByRole('tab', { name: '终端' }).click();
+  await expect(page.getByRole('region', { name: '运行终端' })).toBeVisible();
+  await expect(page.getByRole('button', { name: '打开终端' })).toBeDisabled();
+  await page.getByRole('tab', { name: '代码' }).click();
   await saveButton(page).click();
-  await expect(page.getByRole('status', { name: 'Saved' })).toBeVisible();
+  await expect(page.getByRole('status', { name: '已保存' })).toBeVisible();
   expect(forbidden).toEqual([]);
 });
 
@@ -1116,19 +1116,19 @@ test('completes toolbar, dialogs, editor, Save and delete from the keyboard', as
   ).toBe(true);
   await assertNoHorizontalOverflow(page);
 
-  const skip = page.getByRole('link', { name: 'Skip to editor' });
+  const skip = page.getByRole('link', { name: '跳转到编辑器' });
   await tabUntilFocused(page, skip);
   await assertFocusVisible(skip);
 
-  const newFile = page.getByRole('button', { name: 'New file' });
+  const newFile = page.getByRole('button', { name: '新建文件' });
   await tabUntilFocused(page, newFile);
   await assertFocusVisible(newFile);
   await page.keyboard.press('Enter');
-  const createDialog = page.getByRole('dialog', { name: 'New file' });
+  const createDialog = page.getByRole('dialog', { name: '新建文件' });
   await expect(createDialog).toBeVisible();
   await expect(nameField(page)).toBeFocused();
   await page.keyboard.press('Shift+Tab');
-  await expect(createDialog.getByRole('button', { name: 'Cancel' })).toBeFocused();
+  await expect(createDialog.getByRole('button', { name: '取消' })).toBeFocused();
   await page.keyboard.press('Tab');
   await expect(nameField(page)).toBeFocused();
   await page.keyboard.type('pom.xml');
@@ -1152,16 +1152,16 @@ test('completes toolbar, dialogs, editor, Save and delete from the keyboard', as
   await tabUntilFocused(page, saveButton(page));
   await assertFocusVisible(saveButton(page));
   await page.keyboard.press('Enter');
-  await expect(page.getByRole('status', { name: 'Saved' })).toBeVisible();
+  await expect(page.getByRole('status', { name: '已保存' })).toBeVisible();
   await expect(editorTab(page, /pom\.xml/)).not.toContainText('*');
 
   await typeInMonaco(page, 'STAGE3A11Y2');
   await editorTab(page, /pom\.xml/).focus();
   await tabUntilFocused(page, page.getByRole('button', { name: 'Close pom.xml' }));
   await page.keyboard.press('Enter');
-  const unsaved = page.getByRole('dialog', { name: 'Unsaved changes' });
+  const unsaved = page.getByRole('dialog', { name: '有未保存的修改' });
   await expect(unsaved).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Save and close' })).toBeFocused();
+  await expect(page.getByRole('button', { name: '保存并关闭' })).toBeFocused();
   await page.keyboard.press('Tab');
   await expect(discardButton(page)).toBeFocused();
   await page.keyboard.press('Escape');
@@ -1175,16 +1175,16 @@ test('completes toolbar, dialogs, editor, Save and delete from the keyboard', as
   await page.keyboard.press('Shift+Tab');
   await page.keyboard.press('Shift+Tab');
   await page.keyboard.press('Shift+Tab');
-  await expect(page.getByRole('button', { name: 'Delete', exact: true })).toBeFocused();
+  await expect(page.getByRole('button', { name: '删除', exact: true })).toBeFocused();
   await page.keyboard.press('Enter');
-  const deleteDialog = page.getByRole('dialog', { name: 'Delete' });
+  const deleteDialog = page.getByRole('dialog', { name: '删除' });
   await expect(deleteDialog).toBeVisible();
-  await expect(deleteDialog.getByRole('button', { name: 'Cancel' })).toBeFocused();
+  await expect(deleteDialog.getByRole('button', { name: '取消' })).toBeFocused();
   await page.keyboard.press('Tab');
-  await expect(deleteDialog.getByRole('button', { name: 'Delete' })).toBeFocused();
+  await expect(deleteDialog.getByRole('button', { name: '删除' })).toBeFocused();
   await page.keyboard.press('Escape');
   await expect(deleteDialog).toHaveCount(0);
-  await expect(page.getByRole('button', { name: 'Delete' })).toBeFocused();
+  await expect(page.getByRole('button', { name: '删除' })).toBeFocused();
   await expect(treeItem(page, 'README.md')).toBeVisible();
 });
 
@@ -1213,8 +1213,8 @@ for (const viewport of viewports) {
     await prepareVisualCapture(page);
     await assertNoHorizontalOverflow(page);
     await assertWorkbenchPanelsDoNotOverlap(page);
-    await assertReachable(page.getByRole('button', { name: 'Refresh' }));
-    await assertReachable(page.getByRole('button', { name: 'New file' }));
+    await assertReachable(page.getByRole('button', { name: '刷新' }));
+    await assertReachable(page.getByRole('button', { name: '新建文件' }));
     await assertReachable(saveButton(page));
     await assertReachable(appTab);
     await assertReachable(page.getByRole('button', { name: 'Close App.java' }));
@@ -1229,15 +1229,15 @@ for (const viewport of viewports) {
     );
 
     await treeItem(page, 'README.md').click();
-    await page.getByRole('button', { name: 'Delete' }).click();
-    const dialog = page.getByRole('dialog', { name: 'Delete' });
+    await page.getByRole('button', { name: '删除' }).click();
+    const dialog = page.getByRole('dialog', { name: '删除' });
     await expect(dialog).toBeVisible();
     await prepareVisualCapture(page);
     await assertNoHorizontalOverflow(page);
     await assertInsideViewport(dialog);
-    await assertReachable(dialog.getByRole('button', { name: 'Delete' }));
-    await assertReachable(dialog.getByRole('button', { name: 'Cancel' }));
-    await assertReachable(page.getByRole('button', { name: 'Refresh' }));
+    await assertReachable(dialog.getByRole('button', { name: '删除' }));
+    await assertReachable(dialog.getByRole('button', { name: '取消' }));
+    await assertReachable(page.getByRole('button', { name: '刷新' }));
 
     await captureViewport(
       page,

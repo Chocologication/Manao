@@ -18,14 +18,14 @@ function projectCard(page: Page, name: string): Locator {
   return page.getByRole('article', { name });
 }
 
-/** The card keeps the machine state next to the localized label (READY -> 环境就绪). */
+/** The card keeps the machine state next to the localized label (READY -> 已就绪). */
 function projectState(page: Page, name: string): Locator {
   return projectCard(page, name).locator('p[data-state]');
 }
 
 /** A READY project route mounts the workbench shell instead of printing a state label. */
 async function expectWorkbenchMounted(page: Page): Promise<void> {
-  await expect(page.getByRole('tablist', { name: 'Workbench panels' })).toBeVisible();
+  await expect(page.getByRole('tablist', { name: '工作台面板' })).toBeVisible();
 }
 
 function pngSize(bytes: Uint8Array): { width: number; height: number } {
@@ -224,10 +224,10 @@ test('valid login returns to the original protected path or /projects', async ({
   await page.goto('/login');
   await signIn(page, ALICE);
   await expect(page).toHaveURL(/\/projects$/);
-  await expect(page.getByRole('heading', { name: '我的实验项目' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: '我的项目' })).toBeVisible();
   await expect(projectCard(page, 'Alice Notebook')).toBeVisible();
 
-  await page.getByRole('button', { name: 'Log out' }).click();
+  await page.getByRole('button', { name: '退出登录' }).click();
   await expect(page).toHaveURL(/\/login$/);
   await expect(page.getByLabel('Username')).toBeVisible();
   await expect(page.getByRole('alert')).toHaveCount(0);
@@ -247,10 +247,10 @@ test('create project shows CREATING then READY and allows project route navigati
 
   const card = await createProject(page, 'Workspace Alpha');
   await expect(card.locator('p[data-state]')).toHaveAttribute('data-state', 'CREATING');
-  await expect(card.getByRole('button', { name: 'Open' })).toBeDisabled();
+  await expect(card.getByRole('button', { name: '进入工作台' })).toBeDisabled();
 
   await expect(card.locator('p[data-state]')).toHaveAttribute('data-state', 'READY');
-  const open = card.getByRole('link', { name: 'Open' });
+  const open = card.getByRole('link', { name: '进入工作台' });
   await expect(open).toBeVisible();
   await open.click();
 
@@ -267,8 +267,8 @@ test('fail- project reaches FAILED and displays the deterministic reason', async
   await expect(card.locator('p[data-state]')).toHaveAttribute('data-state', 'CREATING');
   await expect(card.locator('p[data-state]')).toHaveAttribute('data-state', 'FAILED');
   await expect(card.getByText(MOCK_FAILURE_REASON)).toBeVisible();
-  await expect(card.getByRole('link', { name: 'Open' })).toHaveCount(0);
-  await expect(card.getByRole('button', { name: 'Open' })).toHaveCount(0);
+  await expect(card.getByRole('link', { name: '进入工作台' })).toHaveCount(0);
+  await expect(card.getByRole('button', { name: '进入工作台' })).toHaveCount(0);
 });
 
 test('eight projects disable creation and a bypassed ninth request returns the limit error', async ({
@@ -370,9 +370,9 @@ test("Bob's project produces generic access denied for Alice", async ({ page }) 
   await expect(page).toHaveURL(new RegExp(`/projects/${BOB_SEED_PROJECT_ID}$`));
 
   const alert = page.getByRole('alert');
-  await expect(alert).toHaveText('Access denied');
+  await expect(alert).toHaveText('无权访问');
   await expect(alert).not.toContainText(ACCESS_DENIED_LEAK);
-  await expect(page.getByRole('link', { name: 'Back to projects' })).toBeVisible();
+  await expect(page.getByRole('link', { name: '返回项目列表' })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Bob Lab' })).toHaveCount(0);
   await expect(page.locator('[data-state="READY"]')).toHaveCount(0);
 });
@@ -381,7 +381,7 @@ test("logout followed by Bob login never shows Alice's cached projects", async (
   await signInAsAliceOnProjects(page);
   await expect(projectCard(page, 'Bob Lab')).toHaveCount(0);
 
-  await page.getByRole('button', { name: 'Log out' }).click();
+  await page.getByRole('button', { name: '退出登录' }).click();
   await expect(page).toHaveURL(/\/login$/);
   await expect(page.getByLabel('Username')).toBeVisible();
   await expect(page.getByRole('alert')).toHaveCount(0);
@@ -414,11 +414,11 @@ for (const viewport of viewports) {
     );
 
     await signIn(page, ALICE);
-    await expect(page.getByRole('heading', { name: '我的实验项目' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: '我的项目' })).toBeVisible();
     await expect(projectCard(page, 'Alice Notebook')).toBeVisible();
     await expect(projectState(page, 'Alice Notebook')).toHaveAttribute('data-state', 'READY');
     await expect(page.getByRole('button', { name: '新建项目' })).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Log out' })).toBeVisible();
+    await expect(page.getByRole('button', { name: '退出登录' })).toBeVisible();
     await prepareVisualCapture(page);
     await assertNoHorizontalOverflow(page);
     await assertNoPanelOverlap(page);

@@ -47,15 +47,15 @@ function focusableElements(root: HTMLElement): HTMLElement[] {
 
 function dialogTitle(kind: FileMutationDialogKind): string {
   if (kind === 'create-folder') {
-    return 'New folder';
+    return '新建文件夹';
   }
   if (kind === 'rename') {
-    return 'Rename';
+    return '重命名';
   }
   if (kind === 'delete') {
-    return 'Delete';
+    return '删除';
   }
-  return 'New file';
+  return '新建文件';
 }
 
 function entryBasename(path: string): string {
@@ -191,9 +191,9 @@ export function FileMutationDialogs({
             </p>
           </div>
           <p id="file-mutation-delete-warning" className="mt-2 text-sm text-muted-foreground">
-            This cannot be undone.
+            此操作无法撤销。
             {targetKind === 'directory'
-              ? ' This folder may contain nested files and folders.'
+              ? '文件夹中可能包含其他文件和子文件夹。'
               : null}
           </p>
           {alertMessage !== null ? (
@@ -214,10 +214,10 @@ export function FileMutationDialogs({
                 onSubmit(entryBasename(targetPath));
               }}
             >
-              Delete
+              删除
             </Button>
             <Button ref={cancelRef} type="button" variant="ghost" onClick={onCancel}>
-              Cancel
+              取消
             </Button>
           </div>
         </div>
@@ -234,12 +234,12 @@ export function FileMutationDialogs({
               setLocalError(null);
               onSubmit(basename);
             } catch (error) {
-              setLocalError(error instanceof Error ? error.message : 'Entry name required');
+              setLocalError(error instanceof Error ? error.message : '请输入有效名称，不能包含路径分隔符或仅使用点号');
             }
           }}
         >
           <label htmlFor="file-mutation-name" className="text-sm">
-            Name
+            名称
           </label>
           <Input
             ref={inputRef}
@@ -263,10 +263,10 @@ export function FileMutationDialogs({
           ) : null}
           <div className="mt-4 flex flex-wrap justify-end gap-2">
             <Button type="submit" disabled={pending}>
-              {kind === 'rename' ? 'Rename' : 'Create'}
+              {kind === 'rename' ? '重命名' : '创建'}
             </Button>
             <Button ref={cancelRef} type="button" variant="ghost" onClick={onCancel}>
-              Cancel
+              取消
             </Button>
           </div>
         </form>

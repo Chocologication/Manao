@@ -59,14 +59,14 @@ function expectNoFileApi(projectId: string): void {
 
 function expectNoWorkbench(): void {
   expect(screen.queryByRole('tree')).not.toBeInTheDocument();
-  expect(screen.queryByRole('tab', { name: 'File' })).not.toBeInTheDocument();
-  expect(screen.queryByRole('tab', { name: 'Run' })).not.toBeInTheDocument();
-  expect(screen.queryByRole('tab', { name: 'Terminal' })).not.toBeInTheDocument();
-  expect(screen.queryByLabelText('Editor')).not.toBeInTheDocument();
+  expect(screen.queryByRole('tab', { name: "代码" })).not.toBeInTheDocument();
+  expect(screen.queryByRole('tab', { name: "运行记录" })).not.toBeInTheDocument();
+  expect(screen.queryByRole('tab', { name: "终端" })).not.toBeInTheDocument();
+  expect(screen.queryByLabelText("代码编辑器")).not.toBeInTheDocument();
 }
 
 async function waitForWorkbench(): Promise<void> {
-  expect(await screen.findByRole('tree', { name: 'Files' }, { timeout: 10_000 })).toBeInTheDocument();
+  expect(await screen.findByRole('tree', { name: "文件列表" }, { timeout: 10_000 })).toBeInTheDocument();
 }
 
 function readyProject(overrides: Partial<ProjectSummary>): ProjectSummary {
@@ -183,7 +183,7 @@ describe('ProjectsPage', () => {
     await authenticateAsAlice();
     renderApp();
 
-    expect(await screen.findByText('你的第一个实验，从这里开始')).toBeInTheDocument();
+    expect(await screen.findByText('还没有项目')).toBeInTheDocument();
     expect(screen.getByLabelText('Project name')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /create project/i })).toBeDisabled();
   });
@@ -200,7 +200,7 @@ describe('ProjectsPage', () => {
     const card = await screen.findByRole('article', { name: 'Workspace Alpha' });
     expect(within(card).getByText('正在创建')).toBeInTheDocument();
     expect(within(card).getByTestId('spinner')).toBeInTheDocument();
-    expect(within(card).getByRole('button', { name: 'Open' })).toBeDisabled();
+    expect(within(card).getByRole('button', { name: '进入工作台' })).toBeDisabled();
     expect(card.parentElement?.closest('article')).toBeNull();
   });
 
@@ -209,8 +209,8 @@ describe('ProjectsPage', () => {
     renderApp();
 
     const card = await screen.findByRole('article', { name: 'Alice Notebook' });
-    expect(within(card).getByText('环境就绪')).toBeInTheDocument();
-    const open = within(card).getByRole('link', { name: 'Open' });
+    expect(within(card).getByText('已就绪')).toBeInTheDocument();
+    const open = within(card).getByRole('link', { name: '进入工作台' });
     expect(open).toBeEnabled();
     expect(open).toHaveAttribute('href', `/projects/${ALICE_SEED_PROJECT_ID}`);
     expect(card.parentElement?.closest('article')).toBeNull();
@@ -250,8 +250,8 @@ describe('ProjectsPage', () => {
     renderApp();
 
     const card = await screen.findByRole('article', { name: 'Runtime view' });
-    expect(within(card).getByText(/Spring Boot web/)).toHaveTextContent('8080→30081');
-    expect(within(card).getByText('MySQL READY')).toBeInTheDocument();
+    expect(within(card).getByText(/Spring Boot 网站/)).toHaveTextContent('8080→30081');
+    expect(within(card).getByText('MySQL 已就绪')).toBeInTheDocument();
     expect(within(card).getByText('30081: http://entry.example:30081')).toBeInTheDocument();
   });
 
@@ -271,9 +271,9 @@ describe('ProjectsPage', () => {
       },
       { timeout: 4000 },
     );
-    expect(within(card).getByText('创建失败')).toBeInTheDocument();
-    expect(within(card).queryByRole('link', { name: 'Open' })).not.toBeInTheDocument();
-    expect(within(card).queryByRole('button', { name: 'Open' })).not.toBeInTheDocument();
+    expect(within(card).getByText('项目异常')).toBeInTheDocument();
+    expect(within(card).queryByRole('link', { name: '进入工作台' })).not.toBeInTheDocument();
+    expect(within(card).queryByRole('button', { name: '进入工作台' })).not.toBeInTheDocument();
   });
 
   it('shows a DELETING card without an open action', async () => {
@@ -290,8 +290,8 @@ describe('ProjectsPage', () => {
 
     const card = await screen.findByRole('article', { name: 'Deleting project' });
     expect(within(card).getByText('正在删除')).toBeInTheDocument();
-    expect(within(card).queryByRole('link', { name: 'Open' })).not.toBeInTheDocument();
-    expect(within(card).queryByRole('button', { name: 'Open' })).not.toBeInTheDocument();
+    expect(within(card).queryByRole('link', { name: '进入工作台' })).not.toBeInTheDocument();
+    expect(within(card).queryByRole('button', { name: '进入工作台' })).not.toBeInTheDocument();
   });
 
   it('allows creating the eighth project while seven are already listed', async () => {
@@ -427,7 +427,7 @@ describe('ProjectRoutePage', () => {
     );
     renderApp({ initialEntries: [`/projects/${created.id}`] });
 
-    expect(await screen.findByText(/provisioning/i)).toBeInTheDocument();
+    expect(await screen.findByText(/正在准备工作区/i)).toBeInTheDocument();
     expect(screen.getByTestId('spinner')).toBeInTheDocument();
     expectNoFileApi(created.id);
     expectNoWorkbench();
@@ -443,7 +443,7 @@ describe('ProjectRoutePage', () => {
     renderApp({ initialEntries: [`/projects/${created.id}`] });
 
     expect(await screen.findByText(MOCK_FAILURE_REASON)).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: /back to projects/i })).toHaveAttribute(
+    expect(screen.getByRole('link', { name: /返回项目列表/i })).toHaveAttribute(
       'href',
       '/projects',
     );
@@ -465,9 +465,9 @@ describe('ProjectRoutePage', () => {
     );
     renderApp({ initialEntries: [`/projects/${created.id}`] });
 
-    expect(await screen.findByText(/deletion has not completed/i)).toBeInTheDocument();
-    expect(screen.getByRole('status')).toHaveTextContent(/deletion has not completed/i);
-    expect(screen.getByRole('link', { name: /back to projects/i })).toHaveAttribute(
+    expect(await screen.findByText(/项目尚未删除完成/i)).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent(/项目尚未删除完成/i);
+    expect(screen.getByRole('link', { name: /返回项目列表/i })).toHaveAttribute(
       'href',
       '/projects',
     );
@@ -482,7 +482,7 @@ describe('ProjectRoutePage', () => {
     await waitForWorkbench();
     expect(await screen.findByRole('heading', { name: 'Alice Notebook' })).toBeInTheDocument();
     expect(screen.getByText('无未保存修改')).toBeInTheDocument();
-    expect(screen.getByRole('tab', { name: 'File' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('tab', { name: "代码" })).toHaveAttribute('aria-selected', 'true');
     expect(getFileRequestCount('tree', ALICE_SEED_PROJECT_ID, '')).toBeGreaterThan(0);
     expect(screen.queryByTestId('terminal-spike-panel')).not.toBeInTheDocument();
     expect(screen.queryByText(/mock file tree/i)).not.toBeInTheDocument();
@@ -494,9 +494,9 @@ describe('ProjectRoutePage', () => {
     renderApp({ initialEntries: [`/projects/${BOB_SEED_PROJECT_ID}`] });
 
     const foreignAlert = await screen.findByRole('alert');
-    expect(foreignAlert).toHaveTextContent(/access denied/i);
+    expect(foreignAlert).toHaveTextContent(/无权访问/i);
     expect(foreignAlert).not.toHaveTextContent(ACCESS_DENIED_LEAK);
-    expect(screen.getByRole('link', { name: /back to projects/i })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /返回项目列表/i })).toBeInTheDocument();
     expectNoFileApi(BOB_SEED_PROJECT_ID);
     expectNoWorkbench();
     const foreignCopy = foreignAlert.textContent;
@@ -507,7 +507,7 @@ describe('ProjectRoutePage', () => {
     renderApp({ initialEntries: ['/projects/prj-does-not-exist'] });
 
     const unknownAlert = await screen.findByRole('alert');
-    expect(unknownAlert).toHaveTextContent(/access denied/i);
+    expect(unknownAlert).toHaveTextContent(/无权访问/i);
     expect(unknownAlert).not.toHaveTextContent(ACCESS_DENIED_LEAK);
     expect(unknownAlert.textContent).toBe(foreignCopy);
     expectNoFileApi('prj-does-not-exist');
@@ -521,16 +521,16 @@ describe('ProjectRoutePage', () => {
     renderApp({ initialEntries: [`/projects/${ALICE_SEED_PROJECT_ID}`] });
 
     const alert = await screen.findByRole('alert');
-    expect(alert).toHaveTextContent(/network request failed/i);
-    expect(alert).not.toHaveTextContent(/access denied/i);
-    expect(screen.getByRole('button', { name: /retry/i })).toBeInTheDocument();
-    expect(screen.queryByRole('heading', { name: /something went wrong/i })).not.toBeInTheDocument();
+    expect(alert).toHaveTextContent(/网络请求失败，请检查连接后重试/i);
+    expect(alert).not.toHaveTextContent(/无权访问/i);
+    expect(screen.getByRole('button', { name: /重试/i })).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: /页面出现异常/i })).not.toBeInTheDocument();
     expect(authSession.getSnapshot().status).toBe('authenticated');
     expectNoFileApi(ALICE_SEED_PROJECT_ID);
     expectNoWorkbench();
 
     server.resetHandlers();
-    await user.click(screen.getByRole('button', { name: /retry/i }));
+    await user.click(screen.getByRole('button', { name: /重试/i }));
 
     await waitForWorkbench();
     expect(await screen.findByRole('heading', { name: 'Alice Notebook' })).toBeInTheDocument();
@@ -554,11 +554,11 @@ describe('ProjectRoutePage', () => {
     renderApp({ initialEntries: [`/projects/${ALICE_SEED_PROJECT_ID}`] });
 
     const alert = await screen.findByRole('alert');
-    expect(alert).not.toHaveTextContent(/access denied/i);
+    expect(alert).not.toHaveTextContent(/无权访问/i);
     expect(alert).not.toHaveTextContent('stack-trace-should-not-leak');
     expect(alert).not.toHaveTextContent('mock-trace-internal');
-    expect(screen.getByRole('button', { name: /retry/i })).toBeInTheDocument();
-    expect(screen.queryByRole('heading', { name: /something went wrong/i })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /重试/i })).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: /页面出现异常/i })).not.toBeInTheDocument();
     expect(authSession.getSnapshot().status).toBe('authenticated');
     expectNoFileApi(ALICE_SEED_PROJECT_ID);
     expectNoWorkbench();
@@ -759,10 +759,10 @@ describe('project query focus and PROJECT_BUSY reads', () => {
       await vi.advanceTimersByTimeAsync(0);
 
       expect(screen.getByRole('heading', { name: 'Alice Notebook' })).toBeInTheDocument();
-      expect(screen.getByRole('tree', { name: 'Files' })).toBeInTheDocument();
-      expect(screen.getByText('Project update failed')).toBeVisible();
-      expect(screen.getByRole('button', { name: /retry/i })).toBeInTheDocument();
-      expect(screen.queryByText('Unable to load project')).not.toBeInTheDocument();
+      expect(screen.getByRole('tree', { name: "文件列表" })).toBeInTheDocument();
+      expect(screen.getByText("项目状态更新失败")).toBeVisible();
+      expect(screen.getByRole('button', { name: /重试/i })).toBeInTheDocument();
+      expect(screen.queryByText("无法加载项目")).not.toBeInTheDocument();
       expect(buffer.isDirty()).toBe(true);
       expect(buffer.snapshot()).toEqual(dirtySnapshot);
       expect(useWorkspaceSession.getState().openPaths).toEqual([]);
@@ -786,10 +786,10 @@ describe('project query focus and PROJECT_BUSY reads', () => {
     );
     await queryClient.refetchQueries({ queryKey: projectKeys.detail(ALICE_SEED_PROJECT_ID) });
 
-    expect(await screen.findByText('Project is no longer available')).toBeVisible();
-    expect(screen.getByRole('button', { name: /retry/i })).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: /back to projects/i })).toBeInTheDocument();
-    expect(screen.queryByRole('tree', { name: 'Files' })).not.toBeInTheDocument();
+    expect(await screen.findByText("项目已不可用")).toBeVisible();
+    expect(screen.getByRole('button', { name: /重试/i })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /返回项目列表/i })).toBeInTheDocument();
+    expect(screen.queryByRole('tree', { name: "文件列表" })).not.toBeInTheDocument();
     expect(notFoundCount).toBe(1);
   }, 15_000);
 
@@ -804,9 +804,9 @@ describe('project query focus and PROJECT_BUSY reads', () => {
     await authenticateAsAlice();
     renderApp({ initialEntries: [`/projects/${ALICE_SEED_PROJECT_ID}`] });
 
-    expect(await screen.findByText('Project is no longer available')).toBeVisible();
-    expect(screen.getByRole('button', { name: /retry/i })).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: /back to projects/i })).toBeInTheDocument();
+    expect(await screen.findByText("项目已不可用")).toBeVisible();
+    expect(screen.getByRole('button', { name: /重试/i })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /返回项目列表/i })).toBeInTheDocument();
     expectNoWorkbench();
     expect(notFoundCount).toBe(1);
   }, 15_000);
@@ -824,12 +824,12 @@ describe('project query focus and PROJECT_BUSY reads', () => {
     vi.useFakeTimers();
     try {
       renderApp({ initialEntries: [`/projects/${ALICE_SEED_PROJECT_ID}`] });
-      await advanceFakeTimersUntil(() => detailCount >= 4);
-      await vi.advanceTimersByTimeAsync(0);
+      // The final handler starts before its response and React Query's render settle.
+      await advanceFakeTimersUntil(() => screen.queryByRole('alert') !== null);
 
       const alert = screen.getByRole('alert');
-      expect(alert).toHaveTextContent('Unable to load project');
-      expect(screen.getByRole('button', { name: /retry/i })).toBeInTheDocument();
+      expect(alert).toHaveTextContent("无法加载项目");
+      expect(screen.getByRole('button', { name: /重试/i })).toBeInTheDocument();
       expectNoWorkbench();
       expect(detailCount).toBe(4);
     } finally {

@@ -62,6 +62,6 @@ describe('Run evidence surfaces', () => {
     expect(screen.getByText(run.policy.command)).toBeInTheDocument();
     expect(screen.getByText(run.requestedWorkspaceRevision)).toBeInTheDocument();
     expect(screen.queryByLabelText('AI 诊断预览')).not.toBeInTheDocument();
-    expect(screen.getByText(/不代表后端实时阶段事件/)).toBeInTheDocument();
+    expect(screen.getByText(/以下是项目和最近一次运行的状态摘要/)).toBeInTheDocument();
   });
 });

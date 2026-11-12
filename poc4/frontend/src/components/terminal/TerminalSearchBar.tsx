@@ -126,7 +126,7 @@ export const TerminalSearchBar = forwardRef<TerminalSearchBarRef, TerminalSearch
     return (
       <div
         role="search"
-        aria-label="Terminal output search"
+        aria-label="搜索终端输出"
         onKeyDown={handleOverlayKeyDown}
         className="absolute right-2 top-2 z-10 flex items-center gap-1 rounded-md border px-2 py-1 shadow-lg"
         style={{
@@ -135,7 +135,7 @@ export const TerminalSearchBar = forwardRef<TerminalSearchBarRef, TerminalSearch
         }}
       >
         <label htmlFor={inputId} className="sr-only">
-          Search terminal output
+          搜索终端输出
         </label>
         <input
           id={inputId}
@@ -144,7 +144,7 @@ export const TerminalSearchBar = forwardRef<TerminalSearchBarRef, TerminalSearch
           value={searchTerm}
           onChange={handleInputChange}
           onKeyDown={handleInputKeyDown}
-          placeholder="Search..."
+          placeholder="搜索…"
           className={cn(
             'w-40 bg-transparent text-sm outline-none placeholder:opacity-50 focus-visible:ring-1 focus-visible:ring-white/60',
             hasResults === false && searchTerm && 'text-red-400'
@@ -154,7 +154,7 @@ export const TerminalSearchBar = forwardRef<TerminalSearchBarRef, TerminalSearch
 
         <button
           type="button"
-          aria-label="Match case"
+          aria-label="区分大小写"
           aria-pressed={caseSensitive}
           onClick={() => setCaseSensitive(!caseSensitive)}
           className={cn(
@@ -162,14 +162,14 @@ export const TerminalSearchBar = forwardRef<TerminalSearchBarRef, TerminalSearch
             caseSensitive ? 'bg-white/20' : 'opacity-50 hover:opacity-100'
           )}
           style={{ color: fgColor }}
-          title="Case Sensitive (Aa)"
+          title="区分大小写"
         >
           Aa
         </button>
 
         <button
           type="button"
-          aria-label="Match whole word"
+          aria-label="全字匹配"
           aria-pressed={wholeWord}
           onClick={() => setWholeWord(!wholeWord)}
           className={cn(
@@ -177,14 +177,14 @@ export const TerminalSearchBar = forwardRef<TerminalSearchBarRef, TerminalSearch
             wholeWord ? 'bg-white/20' : 'opacity-50 hover:opacity-100'
           )}
           style={{ color: fgColor }}
-          title="Whole Word"
+          title="全字匹配"
         >
           W
         </button>
 
         <button
           type="button"
-          aria-label="Use regular expression"
+          aria-label="使用正则表达式"
           aria-pressed={regex}
           onClick={() => setRegex(!regex)}
           className={cn(
@@ -192,7 +192,7 @@ export const TerminalSearchBar = forwardRef<TerminalSearchBarRef, TerminalSearch
             regex ? 'bg-white/20' : 'opacity-50 hover:opacity-100'
           )}
           style={{ color: fgColor }}
-          title="Regular Expression"
+          title="使用正则表达式"
         >
           .*
         </button>
@@ -201,38 +201,38 @@ export const TerminalSearchBar = forwardRef<TerminalSearchBarRef, TerminalSearch
 
         <button
           type="button"
-          aria-label="Previous result"
+          aria-label="上一个结果"
           onClick={() => handleSearch('prev')}
           className="flex h-6 w-6 items-center justify-center rounded opacity-70 transition-opacity hover:opacity-100"
           style={{ color: fgColor }}
-          title="Previous (Shift+Enter)"
+          title="上一个结果（Shift+Enter）"
         >
           <ChevronUp aria-hidden="true" className="h-4 w-4" />
         </button>
 
         <button
           type="button"
-          aria-label="Next result"
+          aria-label="下一个结果"
           onClick={() => handleSearch('next')}
           className="flex h-6 w-6 items-center justify-center rounded opacity-70 transition-opacity hover:opacity-100"
           style={{ color: fgColor }}
-          title="Next (Enter)"
+          title="下一个结果（Enter）"
         >
           <ChevronDown aria-hidden="true" className="h-4 w-4" />
         </button>
 
         <button
           type="button"
-          aria-label="Close terminal search"
+          aria-label="关闭终端搜索"
           onClick={onClose}
           className="flex h-6 w-6 items-center justify-center rounded opacity-70 transition-opacity hover:opacity-100"
           style={{ color: fgColor }}
-          title="Close (Esc)"
+          title="关闭搜索（Esc）"
         >
           <X aria-hidden="true" className="h-4 w-4" />
         </button>
         <span role="status" aria-live="polite" className="w-16 whitespace-nowrap text-xs text-red-400">
-          {hasResults === false && searchTerm ? 'No results' : ''}
+          {hasResults === false && searchTerm ? '没有匹配结果' : ''}
         </span>
       </div>
     );

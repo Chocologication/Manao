@@ -337,13 +337,13 @@ export function PythonDependenciesPanel({
   }
 
   return (
-    <section aria-label="Python dependencies" className="lab-dependencies flex h-full min-h-0 flex-col gap-3 overflow-auto">
-      <div className="lab-dependency-header"><Package size={28} /><p className="lab-eyebrow">PYTHON / UV</p><h2>项目依赖管理</h2><p>公开 PyPI package · 精确版本可选</p></div>
+    <section aria-label="Python 依赖管理" className="lab-dependencies flex h-full min-h-0 flex-col gap-3 overflow-auto">
+      <div className="lab-dependency-header"><Package size={28} /><p className="lab-eyebrow">Python 依赖</p><h2>项目依赖管理</h2><p>支持公开 PyPI 软件包，可指定版本</p></div>
       <form className="flex flex-col items-start gap-3" onSubmit={(event) => event.preventDefault()}>
         <label className="flex flex-col gap-1 text-sm">
-          package 名称
+          软件包名称
           <input
-            aria-label="Package name"
+            aria-label="软件包名称"
             className="h-8 w-64 rounded-md border bg-background px-2 text-sm"
             value={packageName}
             onChange={(event) => setPackageName(event.target.value)}
@@ -354,11 +354,11 @@ export function PythonDependenciesPanel({
         <label className="flex flex-col gap-1 text-sm">
           版本（可选）
           <input
-            aria-label="Version (optional)"
+            aria-label="版本（可选）"
             className="h-8 w-64 rounded-md border bg-background px-2 text-sm"
             value={version}
             onChange={(event) => setVersion(event.target.value)}
-            placeholder="e.g. 0.28.1"
+            placeholder="例如：0.28.1"
             autoComplete="off"
             spellCheck={false}
           />
@@ -366,7 +366,7 @@ export function PythonDependenciesPanel({
         <div className="flex items-center gap-2">
           <Button
             type="button"
-            aria-label="Add dependency"
+            aria-label="添加依赖"
             disabled={disabledReason !== null}
             title={disabledReason ?? '添加依赖'}
             onClick={() => void submit('ADD')}
@@ -375,7 +375,7 @@ export function PythonDependenciesPanel({
           </Button>
           <Button
             type="button"
-            aria-label="Remove dependency"
+            aria-label="移除依赖"
             variant="outline"
             disabled={disabledReason !== null}
             title={disabledReason ?? '移除依赖'}
@@ -385,7 +385,7 @@ export function PythonDependenciesPanel({
           </Button>
           <Button
             type="button"
-            aria-label="Import requirements.txt"
+            aria-label="导入 requirements.txt"
             variant="outline"
             disabled={disabledReason !== null}
             title={disabledReason ?? '从 requirements.txt 导入依赖'}
@@ -398,7 +398,7 @@ export function PythonDependenciesPanel({
       <p className="lab-dependency-notice">批量导入读取项目根目录的 requirements.txt。</p>
       {disabledReason && <p className="lab-warning" role="status">{disabledReason}</p>}
       {rejection !== null ? <InlineAlert>{rejection}</InlineAlert> : null}
-      <p role="status" aria-label="Dependency change result" className="min-h-5 text-sm text-muted-foreground">
+      <p role="status" aria-label="依赖变更结果" className="min-h-5 text-sm text-muted-foreground">
         {phase === 'submitting' ? '正在提交依赖变更' : null}
         {phase === 'reloading' ? '正在重新加载工作区' : null}
         {phase === 'idle' && saved ? '依赖变更已保存。' : null}

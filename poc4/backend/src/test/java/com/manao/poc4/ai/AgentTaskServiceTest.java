@@ -1455,8 +1455,11 @@ class AgentTaskServiceTest {
                     first.get(5, TimeUnit.SECONDS);
                     assertThat(h.tasks.hasLiveToolClaims(h.taskId)).isFalse();
                     assertThat(h.rowState()).isEqualTo("FAILED");
-                    assertThat(h.callRowState("call-build")).isEqualTo("NEEDS_ATTENTION".equals(state)
-                        ? "NEEDS_ATTENTION" : "COMPLETED");
+                    // Confirmed cleanup settles the ledger even when the build exit remains unknown.
+                    assertThat(h.callRowState("call-build")).isEqualTo("COMPLETED");
+                    var evidence = h.tools.browserToolCall(h.taskId, "call-build").orElseThrow().data();
+                    assertThat(evidence.path("cleanupConfirmed").asBoolean()).isTrue();
+                    assertThat(evidence.path("exitCode").isNull()).isTrue();
                     h.tasks.requireBrowserWritable(PROJECT);
                 } finally { release.countDown(); pool.shutdownNow(); }
             }

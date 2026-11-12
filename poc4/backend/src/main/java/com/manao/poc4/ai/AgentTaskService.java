@@ -39,6 +39,8 @@ public final class AgentTaskService {
     private final PiWorkerClient worker;
     private final AgentProjectTools tools;
     private final AgentConversationService conversations;
+    private com.manao.poc4.ai.studio.StudioProposals studio;
+    public void setStudio(com.manao.poc4.ai.studio.StudioProposals studio) { this.studio = studio; }
     private final AgentProjectEnvironmentService environments;
     /** The unified settlement driver: receipts, user closes and budget closes all settle here. */
     private final AgentTaskSettlementService settlement;
@@ -118,9 +120,15 @@ public final class AgentTaskService {
     private void driveStart(String taskId, String prompt, String workspaceRevision, long epoch, String conversationId, String reasoningEffort) {
         AgentProjectEnvironment environment = tasks.environmentOf(taskId);
         if (environment == null) throw AgentProjectEnvironmentService.missing();
-        WorkerStart start = new WorkerStart(taskId, prompt, workspaceRevision,
-            tasks.requestSha256Of(taskId), epoch, conversationId, reasoningEffort,
-            environment, environment.sha256());
+        WorkerStart start;
+        try {
+            start = new WorkerStart(taskId, prompt, workspaceRevision,
+                tasks.requestSha256Of(taskId), epoch, conversationId, reasoningEffort,
+                environment, environment.sha256(),
+                studio == null ? null : studio.workerModel(taskId), studio == null ? List.of() : studio.workerImages(taskId));
+        } catch (RuntimeException unavailable) {
+            close(taskId, "AI_MODEL_UNAVAILABLE", "model configuration became unavailable before the worker started"); return;
+        }
         try {
             WorkerStatus ack = worker.start(start);
             onStartAck(taskId, epoch, ack);

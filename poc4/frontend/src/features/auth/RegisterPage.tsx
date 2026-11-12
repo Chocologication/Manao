@@ -1,100 +1,10 @@
-import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
+import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import { Link, useNavigate } from 'react-router';
 import { authErrorCode, getAuthOptions, isNetworkError, register, requestEmailCode } from '../../api/authApi';
 import type { AuthOptionsResponse } from '../../contracts/auth';
 import { CaptchaField } from './CaptchaField';
-
-export const PASSWORD_MIN_LENGTH = 8;
-export const PASSWORD_MAX_LENGTH = 64;
-const PASSWORD_MAX_UTF8_BYTES = 72;
-
-export function validateNewPassword(password: string): string | null {
-  const length = Array.from(password).length;
-  if (length < PASSWORD_MIN_LENGTH || length > PASSWORD_MAX_LENGTH) {
-    return '密码需为 8–64 个字符。';
-  }
-  if (new TextEncoder().encode(password).length > PASSWORD_MAX_UTF8_BYTES) {
-    return '密码过长，请缩短后重试。';
-  }
-  return null;
-}
-
-type AuthPageFrameProps = {
-  eyebrow?: string;
-  title: string;
-  subtitle?: string;
-  children: ReactNode;
-  footer?: ReactNode;
-};
-
-/** Shared account-page frame; keeps the three lifecycle pages visually consistent. */
-export function AuthPageFrame({ eyebrow, title, subtitle, children, footer }: AuthPageFrameProps) {
-  return (
-    <main className="relative isolate flex min-h-[100svh] items-center justify-center overflow-hidden bg-[#070a09] px-5 py-10 text-white">
-      <div
-        className="pointer-events-none absolute inset-0 -z-10 bg-[radial-gradient(circle_at_20%_10%,rgba(223,255,130,0.08),transparent_40%),linear-gradient(180deg,#0a0f0c,#050807)]"
-        aria-hidden="true"
-      />
-      <section
-        aria-label={title}
-        className="w-full max-w-xl rounded-xl border border-white/15 bg-black/55 p-6 shadow-[0_32px_80px_rgba(0,0,0,0.45)] backdrop-blur-xl sm:p-8"
-      >
-        <p className="font-mono text-[11px] uppercase text-[#dfff82]">{eyebrow ?? 'MANAO / ACCOUNT'}</p>
-        <h1 className="mt-2 text-2xl font-semibold text-white">{title}</h1>
-        {subtitle !== undefined ? <p className="mt-2 text-sm leading-6 text-white/60">{subtitle}</p> : null}
-        <div className="mt-6 space-y-4">{children}</div>
-        {footer !== undefined ? (
-          <div className="mt-6 border-t border-white/10 pt-4 text-xs text-white/50">{footer}</div>
-        ) : null}
-      </section>
-    </main>
-  );
-}
-
-type AuthFieldProps = {
-  id: string;
-  label: string;
-  value: string;
-  onChange: (value: string) => void;
-  type?: 'text' | 'email' | 'password';
-  autoComplete?: string;
-  placeholder?: string;
-  inputMode?: 'text' | 'email' | 'numeric';
-  disabled?: boolean;
-};
-
-export function AuthField({
-  id,
-  label,
-  value,
-  onChange,
-  type = 'text',
-  autoComplete,
-  placeholder,
-  inputMode,
-  disabled = false,
-}: AuthFieldProps) {
-  return (
-    <div>
-      <label htmlFor={id} className="mb-2 block text-xs font-medium uppercase text-white/58">
-        {label}
-      </label>
-      <input
-        id={id}
-        name={id}
-        aria-label={label}
-        type={type}
-        autoComplete={autoComplete}
-        inputMode={inputMode}
-        value={value}
-        disabled={disabled}
-        placeholder={placeholder}
-        onChange={(event) => onChange(event.currentTarget.value)}
-        className="h-11 w-full rounded-md border border-white/18 bg-white/8 px-3 text-base text-white outline-none transition placeholder:text-white/30 focus:border-white/55 focus:bg-white/12 disabled:opacity-60"
-      />
-    </div>
-  );
-}
+import { AuthField, AuthPageFrame } from './AuthPageFrame';
+import { validateNewPassword } from './registrationValidation';
 
 const SEND_LABEL = '发送邮箱验证码';
 const RESEND_LABEL = '重新发送验证码';
@@ -156,6 +66,7 @@ export function RegisterPage() {
   const usernameReady = username.trim().length > 0;
   const emailReady = email.trim().length > 0;
   const canSend =
+    options !== null &&
     !sending &&
     !submitting &&
     !registrationClosed &&
@@ -242,6 +153,11 @@ export function RegisterPage() {
       setError('两次输入的密码不一致。');
       return;
     }
+    const passwordError = validateNewPassword(password);
+    if (passwordError) {
+      setError(passwordError);
+      return;
+    }
     const trimmedCode = emailCode.trim();
     if (!/^\d{6}$/.test(trimmedCode)) {
       setError('请输入 6 位数字邮箱验证码。');
@@ -286,7 +202,7 @@ export function RegisterPage() {
   const footer = (
     <span>
       已有账号？{' '}
-      <Link to="/login" className="text-[#dfff82] hover:underline">
+      <Link to="/login" className="entry__text-link">
         返回登录
       </Link>
     </span>
@@ -295,7 +211,7 @@ export function RegisterPage() {
   if (registrationClosed) {
     return (
       <AuthPageFrame title="注册账号" subtitle="创建独立的 Manao 账号。" footer={footer}>
-        <p role="status" className="rounded-md border border-amber-300/30 bg-amber-400/10 px-3 py-2 text-sm text-amber-100">
+        <p role="status" className="entry__notice">
           注册暂未开放，请联系管理员或稍后再试。
         </p>
       </AuthPageFrame>
@@ -305,7 +221,7 @@ export function RegisterPage() {
   if (options === null && optionsFailed) {
     return (
       <AuthPageFrame title="注册账号" subtitle="创建独立的 Manao 账号。" footer={footer}>
-        <p role="alert" className="rounded-md border border-red-300/25 bg-red-400/10 px-3 py-2 text-sm text-red-100">
+        <p role="alert" className="entry__error">
           无法确认注册状态，请稍后刷新页面重试。
         </p>
       </AuthPageFrame>
@@ -318,13 +234,13 @@ export function RegisterPage() {
       subtitle="使用用户名、密码和已验证邮箱创建账号；注册成功后返回登录，不会自动登录。"
       footer={footer}
     >
-      <form onSubmit={onRegister} noValidate className="space-y-4">
+      <form onSubmit={onRegister} noValidate className="entry__fields">
         <AuthField id="register-username" label="用户名" value={username} onChange={setUsername} autoComplete="username" placeholder="3–32 位小写字母、数字或下划线" disabled={sending || submitting} />
         <AuthField id="register-email" label="邮箱" type="email" inputMode="email" value={email} onChange={onEmailChanged} autoComplete="email" placeholder="用于接收验证码" disabled={sending || submitting} />
         <AuthField id="register-password" label="密码" type="password" value={password} onChange={setPassword} autoComplete="new-password" placeholder="8–64 个字符" disabled={sending || submitting} />
         <AuthField id="register-confirm-password" label="确认密码" type="password" value={confirmPassword} onChange={setConfirmPassword} autoComplete="new-password" placeholder="再次输入密码" disabled={sending || submitting} />
         {mailUnavailable ? (
-          <p role="status" className="rounded-md border border-amber-300/30 bg-amber-400/10 px-3 py-2 text-sm text-amber-100">
+          <p role="status" className="entry__notice">
             邮件服务未配置，暂时无法发送验证码。
           </p>
         ) : null}
@@ -336,25 +252,25 @@ export function RegisterPage() {
           disabled={sending || submitting || mailUnavailable}
         />
         {notice !== null ? (
-          <p role="status" className="rounded-md border border-[#dfff82]/30 bg-[#dfff82]/8 px-3 py-2 text-sm text-[#eaffb8]">
+          <p role="status" className="entry__notice">
             {notice}
           </p>
         ) : null}
         {error !== null ? (
-          <p role="alert" className="rounded-md border border-red-300/25 bg-red-400/10 px-3 py-2 text-sm text-red-100">
+          <p role="alert" className="entry__error">
             {error}
           </p>
         ) : null}
         {cooldownSeconds > 0 ? (
-          <p className="text-xs text-white/50">重新发送需等待 {cooldownSeconds} 秒</p>
+          <p className="entry__field-hint">重新发送需等待 {cooldownSeconds} 秒</p>
         ) : null}
         {stepTwo ? (
-          <div className="space-y-4 border-t border-white/10 pt-4">
+          <div className="entry__fields entry__verification">
             <AuthField id="register-email-code" label="邮箱验证码" inputMode="numeric" value={emailCode} onChange={setEmailCode} autoComplete="one-time-code" placeholder="6 位数字" disabled={submitting} />
             <button
               type="submit"
               disabled={submitting || sending || emailCode.trim().length === 0}
-              className="h-11 w-full rounded-md border border-[#dfff82] bg-[#dfff82] px-4 text-sm font-semibold text-[#10140d] transition hover:bg-[#edffb2] disabled:cursor-default disabled:opacity-55"
+              className="entry__submit"
             >
               {submitting ? '正在注册…' : SUBMIT_LABEL}
             </button>
@@ -364,7 +280,7 @@ export function RegisterPage() {
           type="button"
           onClick={() => void onSendCode()}
           disabled={!canSend}
-          className="h-11 w-full rounded-md border border-white/20 bg-white/8 px-4 text-sm font-semibold text-white transition hover:bg-white/14 disabled:cursor-default disabled:opacity-50"
+          className="entry__secondary"
         >
           {sending ? '正在发送…' : stepTwo ? RESEND_LABEL : SEND_LABEL}
         </button>

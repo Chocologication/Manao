@@ -15,7 +15,7 @@ public record ApiError(String code, String message, String traceId) {
         "PROJECT_CREATING", "PROJECT_BUSY", "CLEANUP_INCOMPLETE", "PROJECT_CLEANUP_INCOMPLETE",
         "WORKSPACE_RECONCILIATION_REQUIRED",
         "PUBLIC_PORT_RESERVED", "PUBLIC_PORT_IN_USE", "PUBLIC_PORT_PREFLIGHT_UNAVAILABLE",
-        "CREATE_REQUEST_MISMATCH", "DEPENDENCY_NOT_READY",
+        "CREATE_REQUEST_MISMATCH", "DEPENDENCY_NOT_READY", "NODE_RUNTIME_NOT_CONFIGURED",
         "PYTHON_DEPENDENCY_UNSUPPORTED", "PYTHON_DEPENDENCY_NO_WHEEL",
         "PYTHON_DEPENDENCY_PROTOCOL_UNSUPPORTED",
         "PYTHON_DEPENDENCY_RESOLUTION_FAILED", "PYTHON_DEPENDENCY_TIMEOUT",
@@ -30,6 +30,12 @@ public record ApiError(String code, String message, String traceId) {
         "AI_CONTEXT_COMPACTION_FAILED", "AI_CONTEXT_BUSY",
         "AI_WORKER_NOT_CONFIGURED", "AI_WORKER_CONFLICT", "AI_WORKER_UNREACHABLE",
         "AI_WORKER_BAD_RESPONSE", "AI_WORKER_ERROR",
+        "AI_CREDENTIALS_UNAVAILABLE", "AI_VISION_UNSUPPORTED",
+        "AI_APPLY_MISMATCH", "AI_APPLY_INTERRUPTED", "AI_APPLY_CONFLICT", "AI_BUSY",
+        "AI_MODEL_REJECTED", "AI_MODEL_DISCONNECTED", "AI_MODEL_INCOMPLETE", "AI_MODEL_UNAVAILABLE", "AI_MODEL_PROTOCOL",
+        "AI_READ_ONLY", "AI_STOPPED", "AI_TOOL_BUDGET", "AI_REVIEW_ISOLATED", "WORKSPACE_CONFLICT", "PATH_FORBIDDEN",
+        "AI_ATTACHMENT_TOO_LARGE", "AI_ATTACHMENT_EXPIRED", "AI_ATTACHMENT_UNAVAILABLE",
+        "AI_ATTACHMENT_NOT_FOUND", "AI_ATTACHMENT_CONFLICT", "AI_IMAGE_INPUT_DISABLED",
         "CAPTCHA_INVALID", "EMAIL_CODE_INVALID", "AUTH_RATE_LIMITED", "USERNAME_TAKEN", "EMAIL_TAKEN",
         "REGISTRATION_CLOSED", "MAIL_NOT_CONFIGURED", "MAIL_SEND_FAILED", "CURRENT_PASSWORD_INVALID");
 
@@ -63,6 +69,7 @@ public record ApiError(String code, String message, String traceId) {
                 "Public port availability cannot be verified right now. Try again later.";
             case "CREATE_REQUEST_MISMATCH" -> "Creation request does not match the original request";
             case "DEPENDENCY_NOT_READY" -> "Selected dependencies are not ready yet. Try again once they are ready.";
+            case "NODE_RUNTIME_NOT_CONFIGURED" -> "Node.js runtime is not configured";
             case "PYTHON_DEPENDENCY_UNSUPPORTED" ->
                 "Dependency changes are not supported for this project or package";
             case "PYTHON_DEPENDENCY_PROTOCOL_UNSUPPORTED" -> "Workspace dependency protocol is not supported";
@@ -97,6 +104,28 @@ public record ApiError(String code, String message, String traceId) {
             case "AI_WORKER_UNREACHABLE" -> "The worker could not be reached";
             case "AI_WORKER_BAD_RESPONSE" -> "The worker answer was unreadable";
             case "AI_WORKER_ERROR" -> "The worker refused the request";
+            case "AI_CREDENTIALS_UNAVAILABLE" -> "Model credentials are unavailable";
+            case "AI_VISION_UNSUPPORTED" -> "The model does not support image input";
+            case "AI_APPLY_MISMATCH" -> "This application id was already used for different changes";
+            case "AI_APPLY_INTERRUPTED" -> "Change application was interrupted; check its saved result";
+            case "AI_APPLY_CONFLICT", "WORKSPACE_CONFLICT" -> "Project files changed; review the changes again";
+            case "AI_BUSY" -> "The assistant is busy; try again later";
+            case "AI_MODEL_REJECTED" -> "The model service refused the request";
+            case "AI_MODEL_DISCONNECTED" -> "The model connection was interrupted";
+            case "AI_MODEL_INCOMPLETE" -> "The model response is incomplete";
+            case "AI_MODEL_UNAVAILABLE" -> "The model service is unavailable";
+            case "AI_MODEL_PROTOCOL" -> "The model response format is unsupported";
+            case "AI_READ_ONLY" -> "Chat mode only supports reading project context";
+            case "AI_STOPPED" -> "The assistant request was stopped";
+            case "AI_TOOL_BUDGET" -> "The assistant reached its tool call limit";
+            case "AI_REVIEW_ISOLATED" -> "Review mode only supports file reads and isolated builds";
+            case "PATH_FORBIDDEN" -> "The file is outside the assistant's allowed scope";
+            case "AI_ATTACHMENT_TOO_LARGE" -> "The image attachment exceeds the size limit";
+            case "AI_ATTACHMENT_EXPIRED" -> "The image attachment expired";
+            case "AI_ATTACHMENT_UNAVAILABLE" -> "The image attachment is unavailable";
+            case "AI_ATTACHMENT_NOT_FOUND" -> "The image attachment was not found";
+            case "AI_ATTACHMENT_CONFLICT" -> "The image attachment changed";
+            case "AI_IMAGE_INPUT_DISABLED" -> "Image input is not enabled";
             case "CAPTCHA_INVALID" -> "Captcha answer is invalid or expired";
             case "EMAIL_CODE_INVALID" -> "Email verification code is invalid or expired";
             case "AUTH_RATE_LIMITED" -> "Too many attempts; try again later";

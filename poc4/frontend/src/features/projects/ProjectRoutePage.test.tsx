@@ -107,27 +107,27 @@ describe('ProjectRoutePage dependency recovery after refresh', () => {
     setDependencyScenario('lost-response');
     const first = renderApp({ initialEntries: [`/projects/${project.id}`] });
     // The first workbench mount in this worker pays the lazy editor chunk cost.
-    await user.click(await screen.findByRole('tab', { name: 'Dependencies' }, { timeout: 30_000 }));
-    await user.type(screen.getByLabelText('Package name'), 'httpx');
-    await user.click(screen.getByRole('button', { name: 'Add dependency' }));
+    await user.click(await screen.findByRole('tab', { name: '依赖' }, { timeout: 30_000 }));
+    await user.type(screen.getByLabelText('软件包名称'), 'httpx');
+    await user.click(screen.getByRole('button', { name: '添加依赖' }));
 
     // The response is lost: the entry appears and the original id is kept in the session.
     expect(await screen.findByText('依赖变更尚未确认')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Check dependency change' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: '核对依赖变更' })).toBeEnabled();
     const posts = dependencyChangePosts(fetchSpy);
     expect(posts).toHaveLength(1);
     const originalOperationId = (posts[0]!.body as Record<string, unknown>).operationId;
     expect(sessionStorage.getItem(pythonDependencyStorageKey(ALICE_USER_ID, project.id))).toBe(
       originalOperationId,
     );
-    expect(screen.getByRole('button', { name: 'Add dependency' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: '添加依赖' })).toBeDisabled();
 
     // Refresh = a full route remount, not an isolated recovery component render.
     first.unmount();
     setDependencyScenario('normal');
     renderApp({ initialEntries: [`/projects/${project.id}`] });
 
-    const check = await screen.findByRole('button', { name: 'Check dependency change' });
+    const check = await screen.findByRole('button', { name: '核对依赖变更' });
     expect(check).toBeEnabled();
     const treeCountBeforeCheck = getFileRequestCount('tree', project.id, '');
     await user.click(check);
@@ -165,13 +165,13 @@ describe('ProjectRoutePage dependency recovery after refresh', () => {
     renderApp({ initialEntries: [`/projects/${project.id}`] });
 
     expect(await screen.findByText('WORKSPACE_RECONCILIATION_REQUIRED')).toBeInTheDocument();
-    const check = screen.getByRole('button', { name: 'Check dependency change' });
+    const check = screen.getByRole('button', { name: '核对依赖变更' });
     expect(check).toBeEnabled();
     await user.click(check);
 
     // Reconciling the PENDING operation lifts exactly this failure and reopens the workbench.
     expect(await screen.findByRole('heading', { name: project.name }, { timeout: 10_000 })).toBeInTheDocument();
-    expect(screen.getByRole('tabpanel', { name: 'Editor' })).toBeInTheDocument();
+    expect(screen.getByRole('tabpanel', { name: '代码编辑器' })).toBeInTheDocument();
     expect(dependencyChangePosts(fetchSpy)).toHaveLength(0);
     expect(dependencyStatusGets(fetchSpy).map((call) => call.path)).toEqual([
       `/api/v1/projects/${project.id}/python-dependencies/${FAILED_OPERATION_ID}`,
@@ -194,10 +194,10 @@ describe('ProjectRoutePage dependency recovery after refresh', () => {
     renderApp({ initialEntries: [`/projects/${project.id}`] });
 
     expect(await screen.findByText('WORKSPACE_RECONCILIATION_REQUIRED')).toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: 'Check dependency change' }));
+    await user.click(screen.getByRole('button', { name: '核对依赖变更' }));
 
     expect(await screen.findByRole('heading', { name: project.name }, { timeout: 10_000 })).toBeInTheDocument();
-    expect(screen.getByRole('tabpanel', { name: 'Editor' })).toBeInTheDocument();
+    expect(screen.getByRole('tabpanel', { name: '代码编辑器' })).toBeInTheDocument();
     expect(dependencyStatusGets(fetchSpy).map((call) => call.path)).toEqual([
       `/api/v1/projects/${project.id}/python-dependencies/${FAILED_OPERATION_ID}`,
     ]);
@@ -217,12 +217,12 @@ describe('ProjectRoutePage recovery entry eligibility', () => {
     const failing = await createProject({ name: 'fail-dep-other' });
     await getProject(failing.id);
     const failed = await getProject(failing.id);
-    expect(failed.state).toBe('FAILED');
+    expect(failed.state).toBe("FAILED");
     expect(failed.failureReason).toBe(MOCK_FAILURE_REASON);
 
     renderApp({ initialEntries: [`/projects/${failing.id}`] });
     expect(await screen.findByText(MOCK_FAILURE_REASON)).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Check dependency change' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '核对依赖变更' })).not.toBeInTheDocument();
     expect(screen.queryByText('依赖变更尚未确认')).not.toBeInTheDocument();
   });
 
@@ -234,6 +234,6 @@ describe('ProjectRoutePage recovery entry eligibility', () => {
     renderApp({ initialEntries: [`/projects/${project.id}`] });
 
     expect(await screen.findByText('WORKSPACE_RECONCILIATION_REQUIRED')).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Check dependency change' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '核对依赖变更' })).not.toBeInTheDocument();
   });
 });

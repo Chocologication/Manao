@@ -23,14 +23,14 @@ monaco.editor.defineTheme('manao-lab', {
   rules: [
     { token: 'comment', foreground: '82978B' },
     { token: 'keyword', foreground: '65B9FF' },
-    { token: 'string', foreground: 'D8FF72' },
+    { token: 'string', foreground: '8FB7FF' },
     { token: 'number', foreground: 'F1BD68' },
   ],
   colors: {
-    'editor.background': '#0B1110', 'editor.foreground': '#E0EBE4',
-    'editorLineNumber.foreground': '#657D6D', 'editorLineNumber.activeForeground': '#D8FF72',
-    'editor.lineHighlightBackground': '#17211F', 'editor.selectionBackground': '#304B3B',
-    'editorCursor.foreground': '#D8FF72', 'editorWidget.background': '#17211F',
+    'editor.background': '#0C1220', 'editor.foreground': '#E8EFFF',
+    'editorLineNumber.foreground': '#7183A0', 'editorLineNumber.activeForeground': '#78A6FF',
+    'editor.lineHighlightBackground': '#17233A', 'editor.selectionBackground': '#30466D',
+    'editorCursor.foreground': '#78A6FF', 'editorWidget.background': '#17233A',
   },
 });
 
@@ -55,14 +55,14 @@ monaco.editor.defineTheme('manao-light', {
   rules: [
     { token: 'comment', foreground: '5E6D77' },
     { token: 'keyword', foreground: '2466A4' },
-    { token: 'string', foreground: '356619' },
+    { token: 'string', foreground: '2458D6' },
     { token: 'number', foreground: '946214' },
   ],
   colors: {
     'editor.background': '#F7F9FA', 'editor.foreground': '#202A32',
-    'editorLineNumber.foreground': '#5E6D77', 'editorLineNumber.activeForeground': '#356619',
+    'editorLineNumber.foreground': '#5E6D77', 'editorLineNumber.activeForeground': '#2458D6',
     'editor.lineHighlightBackground': '#ECF1F4', 'editor.selectionBackground': '#D7E8EE',
-    'editorCursor.foreground': '#356619', 'editorWidget.background': '#FFFFFF',
+    'editorCursor.foreground': '#2458D6', 'editorWidget.background': '#FFFFFF',
   },
 });
 

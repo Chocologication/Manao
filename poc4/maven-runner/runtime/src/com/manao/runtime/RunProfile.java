@@ -35,7 +35,11 @@ public enum RunProfile {
     PYTHON_FASTAPI_WEB(
             "python-fastapi-web",
             List.of("/usr/local/bin/manao-python", "web"),
-            "/health/ready");
+            "/health/ready"),
+    NODE_JAVASCRIPT_WEB("node-javascript-web",
+            List.of("/usr/local/bin/manao-node", "web"), "/health/ready"),
+    NODE_TYPESCRIPT_WEB("node-typescript-web",
+            List.of("/usr/local/bin/manao-node", "web"), "/health/ready");
 
     private final String id;
     private final List<String> command;

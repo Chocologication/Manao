@@ -28,7 +28,11 @@ class AgentProjectEnvironmentTest {
         "java-console,java,none,task,com.example.app.App,java-v1",
         "java-spring-boot-web,java,spring-boot,service,com.example.app.App,java-v1",
         "python-console,python,none,task,main.py,python-v1",
-        "python-fastapi-web,python,fastapi,service,app.main:app,python-v1"
+        "python-fastapi-web,python,fastapi,service,app.main:app,python-v1",
+        "node-javascript-console,javascript,none,task,src/main.js,node-v1",
+        "node-javascript-web,javascript,none,service,src/main.js,node-v1",
+        "node-typescript-console,typescript,none,task,src/main.ts,node-v1",
+        "node-typescript-web,typescript,none,service,src/main.ts,node-v1"
     })
     void derivesCapabilitiesFromTheTrustedTemplate(String template, String language, String framework,
             String kind, String entrypoint, String filePolicy) {
@@ -49,7 +53,7 @@ class AgentProjectEnvironmentTest {
         assertThat(environment.filePolicy()).isEqualTo(filePolicy);
         assertThat(environment.primaryPort()).isEqualTo(service ? 8123 : null);
         assertThat(environment.readinessPath()).isEqualTo(!service ? null
-            : "python".equals(language) ? "/health/ready" : "/actuator/health");
+            : "java".equals(language) ? "/actuator/health" : "/health/ready");
         assertThat(environment.pythonVersion()).isEqualTo("python".equals(language) ? "3.13" : null);
         assertThat(environment.mysql()).isEqualTo(service);
         assertThat(environment.redis()).isEqualTo(service);
@@ -65,14 +69,17 @@ class AgentProjectEnvironmentTest {
         assertThat(environment.canonicalJson()).doesNotContain("password", "Secret", "kubeconfig", "jdbc:", "/workspace");
     }
 
-    @Test void sharesCanonicalJsonAndHashWithTheWorkerGoldenFixture() throws Exception {
+    @ParameterizedTest
+    @CsvSource({"python-fastapi-web,b01fa3652c6ce9af1b816a24b783f6c6e12fbfe0716c1de6b05be43772899ea0",
+        "node-typescript-web,426df595096c2e3e74c9e1fd09ff775731c847c67dce83f5354e5f3281746759"})
+    void sharesCanonicalJsonAndHashWithTheWorkerGoldenFixture(String template, String sha256) throws Exception {
         var runtime = org.mockito.Mockito.mock(ProjectRuntimeStore.class);
         org.mockito.Mockito.when(runtime.loadSpec("project-a")).thenReturn(new ProjectRuntimeSpec(
-            "python-fastapi-web", false, false, List.of()));
+            template, false, false, List.of()));
         var environment = new AgentProjectEnvironmentService(runtime, policy()).forProject("project-a");
-        var fixture = Files.readString(Path.of("../fixtures/agent-project-environment/python-fastapi-web.json")).strip();
+        var fixture = Files.readString(Path.of("../fixtures/agent-project-environment/" + template + ".json")).strip();
         assertThat(environment.canonicalJson()).isEqualTo(fixture);
-        assertThat(environment.sha256()).isEqualTo("b01fa3652c6ce9af1b816a24b783f6c6e12fbfe0716c1de6b05be43772899ea0");
+        assertThat(environment.sha256()).isEqualTo(sha256);
         assertThat(AgentProjectEnvironment.fromJson(fixture)).isEqualTo(environment);
         assertThat(JSON.writeValueAsString(environment)).isEqualTo(fixture);
     }

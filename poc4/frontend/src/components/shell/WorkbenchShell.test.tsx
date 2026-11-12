@@ -65,13 +65,13 @@ it('moves AI history to the right and retains the draft through panel and histor
   await user.click(screen.getByRole('tab', { name: 'AI' }));
   const history = await screen.findByRole('complementary', { name: '对话历史' });
   expect(within(history).getByRole('button', { name: '新建会话' })).toBeInTheDocument();
-  await user.type(screen.getByLabelText('Task goal'), '保留草稿');
+  await user.type(screen.getByLabelText('任务目标'), '保留草稿');
   await user.click(screen.getByRole('button', { name: '切换对话历史' }));
   expect(history).toHaveAttribute('hidden'); expect(history).toHaveAttribute('inert');
-  await user.click(screen.getByRole('tab', { name: 'File' }));
-  expect(screen.getByRole('button', { name: '切换项目洞察' })).toBeInTheDocument();
+  await user.click(screen.getByRole('tab', { name: '代码' }));
+  expect(screen.getByRole('button', { name: '显示或隐藏运行概况' })).toBeInTheDocument();
   await user.click(screen.getByRole('tab', { name: 'AI' }));
-  expect(screen.getByLabelText('Task goal')).toHaveValue('保留草稿');
+  expect(screen.getByLabelText('任务目标')).toHaveValue('保留草稿');
   await user.click(screen.getByRole('button', { name: '切换对话历史' }));
   expect(screen.getByRole('complementary', { name: '对话历史' })).toBe(history);
   } finally { media.mockRestore(); }
@@ -90,8 +90,8 @@ it('traps narrow history focus and restores keyboard access to the composer on E
   expect(drawer.closest('[inert]')).toBeNull();
   await user.keyboard('{Escape}'); expect(toggle).toHaveFocus();
   expect(drawer).toHaveAttribute('hidden'); expect(drawer).toHaveAttribute('inert');
-  screen.getByLabelText('Task goal').focus();
-  await user.keyboard('继续输入'); expect(screen.getByLabelText('Task goal')).toHaveValue('继续输入');
+  screen.getByLabelText('任务目标').focus();
+  await user.keyboard('继续输入'); expect(screen.getByLabelText('任务目标')).toHaveValue('继续输入');
 });
 const POM = parseProjectRelativePath('pom.xml');
 const README = parseProjectRelativePath('README.md');
@@ -110,7 +110,7 @@ it('discovers the original uncertain project task after refresh before unlocking
   sessionStorage.setItem(`manao.agent-task.id.usr-alice.${ALICE_SEED_PROJECT_ID}`, JSON.stringify({ taskId, conversationId: '11111111-1111-4111-8111-111111111111' }));
   renderShell(); await loadedRoot();
   await waitFor(() => expect(originalReads).toBeGreaterThan(0));
-  expect(screen.getByRole('button', { name: 'New file' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: '新建文件' })).toBeDisabled();
 });
 
 it('keeps the shell project write lock and original pending task while switching conversations', async () => {
@@ -133,8 +133,8 @@ it('keeps the shell project write lock and original pending task while switching
   await userEvent.click(screen.getByRole('button', { name: '切换对话历史' }));
   await userEvent.click(await screen.findByRole('button', { name: '会话 B' }));
   await userEvent.keyboard('{Escape}');
-  expect(screen.getByRole('button', { name: 'New file' })).toBeDisabled();
-  expect(screen.getByRole('button', { name: 'Start task' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: '新建文件' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: '启动任务' })).toBeDisabled();
   expect(JSON.parse(sessionStorage.getItem(`manao.agent-task.id.usr-alice.${ALICE_SEED_PROJECT_ID}`)!)).toEqual({ taskId, conversationId: a });
   expect(closes).toBe(0);
 });
@@ -153,6 +153,9 @@ async function authenticateAsAlice(): Promise<void> {
 }
 
 function renderShell(project: ProjectSummary = ALICE_PROJECT) {
+  // Existing fencing/control regression scenarios exercise the retained legacy conversation UI.
+  // The default Studio layouts and interactions are covered by assistant-studio.spec.ts.
+  sessionStorage.setItem(`manao.studio.legacy.usr-alice.${project.id}`, 'true');
   workspaceSessionStore.getState().activateProject(project.id);
   return render(
     <AppProviders>
@@ -169,7 +172,7 @@ async function loadedRoot(): Promise<void> {
 
 async function waitUntilWritesUnlocked(): Promise<void> {
   await waitFor(() => {
-    expect(screen.getByRole('button', { name: 'New file' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: '新建文件' })).toBeEnabled();
   });
 }
 
@@ -329,7 +332,7 @@ describe('WorkbenchShell layout', () => {
     await user.keyboard('{ArrowDown}{Enter}');
 
     await waitFor(() => expect(search.closest('dialog')).not.toHaveAttribute('open'));
-    expect(screen.getByRole('tab', { name: 'Run' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('tab', { name: '运行记录' })).toHaveAttribute('aria-selected', 'true');
   });
 
   it('renders the branded header with navigation, name and logout', async () => {
@@ -339,13 +342,13 @@ describe('WorkbenchShell layout', () => {
 
     const header = screen.getByRole('banner');
     expect(header).toHaveClass('lab-workbench-header');
-    expect(within(header).getByRole('link', { name: 'Back to projects' })).toHaveAttribute(
+    expect(within(header).getByRole('link', { name: '返回项目列表' })).toHaveAttribute(
       'href',
       '/projects',
     );
     expect(within(header).getByRole('heading', { name: 'Alice Notebook' })).toBeInTheDocument();
     expect(within(header).getByText('无未保存修改')).toBeInTheDocument();
-    expect(within(header).getByRole('button', { name: 'Log out' })).toBeInTheDocument();
+    expect(within(header).getByRole('button', { name: '退出登录' })).toBeInTheDocument();
   });
 
   it('renders the responsive explorer with refresh and collapse-all', async () => {
@@ -353,11 +356,11 @@ describe('WorkbenchShell layout', () => {
     renderShell();
     await loadedRoot();
 
-    const sidebar = screen.getByRole('complementary', { name: 'Project files' });
+    const sidebar = screen.getByRole('complementary', { name: '项目文件' });
     expect(sidebar).toHaveClass('lab-file-sidebar');
-    expect(within(sidebar).getByText('EXPLORER')).toBeInTheDocument();
-    expect(within(sidebar).getByRole('button', { name: 'Refresh' })).toBeInTheDocument();
-    expect(within(sidebar).getByRole('button', { name: 'Collapse all folders' })).toBeInTheDocument();
+    expect(within(sidebar).getByText('文件资源管理器')).toBeInTheDocument();
+    expect(within(sidebar).getByRole('button', { name: '刷新' })).toBeInTheDocument();
+    expect(within(sidebar).getByRole('button', { name: '折叠所有文件夹' })).toBeInTheDocument();
   });
 
   it('keeps Terminal unloaded until first selection and never opens a session automatically', async () => {
@@ -367,10 +370,10 @@ describe('WorkbenchShell layout', () => {
     renderShell();
     await loadedEditable();
 
-    const panels = screen.getByRole('tablist', { name: 'Workbench panels' });
-    expect(within(panels).getByRole('tab', { name: 'File' })).toHaveAttribute('aria-selected', 'true');
-    const run = within(panels).getByRole('tab', { name: 'Run' });
-    const terminal = within(panels).getByRole('tab', { name: 'Terminal' });
+    const panels = screen.getByRole('tablist', { name: '工作台面板' });
+    expect(within(panels).getByRole('tab', { name: '代码' })).toHaveAttribute('aria-selected', 'true');
+    const run = within(panels).getByRole('tab', { name: '运行记录' });
+    const terminal = within(panels).getByRole('tab', { name: '终端' });
     expect(run).toBeEnabled();
     expect(run).toHaveAttribute('aria-selected', 'false');
     expect(terminal).toBeEnabled();
@@ -385,7 +388,7 @@ describe('WorkbenchShell layout', () => {
 
     await user.click(terminal);
 
-    expect(await screen.findByRole('region', { name: 'Job terminal' })).toBeInTheDocument();
+    expect(await screen.findByRole('region', { name: '运行终端' })).toBeInTheDocument();
     expect(terminal).toHaveAttribute('aria-selected', 'true');
     expectPanelInteractive(terminalPanel(), true);
     expect(document.querySelector('.xterm')).toBeNull();
@@ -400,8 +403,8 @@ describe('WorkbenchShell layout', () => {
     const shell = container.querySelector('.workbench-shell');
     expect(shell).not.toBeNull();
     expect(shell).toHaveClass('overflow-hidden');
-    expect(screen.getByRole('complementary', { name: 'Project files' })).toHaveClass('lab-file-sidebar');
-    expect(screen.getByLabelText('Editor')).toHaveClass('min-w-0');
+    expect(screen.getByRole('complementary', { name: '项目文件' })).toHaveClass('lab-file-sidebar');
+    expect(screen.getByLabelText('代码编辑器')).toHaveClass('min-w-0');
 
     document.documentElement.style.width = '1280px';
     document.body.style.width = '1280px';
@@ -421,15 +424,15 @@ describe('WorkbenchShell skip link', () => {
     expect(await screen.findByRole('tab', { name: /pom.xml/ })).toBeInTheDocument();
     expect(workspaceSessionStore.getState().selectedPath).toBe('pom.xml');
 
-    const skip = screen.getByRole('link', { name: 'Skip to editor' });
-    const tree = screen.getByRole('tree', { name: 'Files' });
-    const panels = screen.getByRole('tablist', { name: 'Workbench panels' });
+    const skip = screen.getByRole('link', { name: '跳转到编辑器' });
+    const tree = screen.getByRole('tree', { name: '文件列表' });
+    const panels = screen.getByRole('tablist', { name: '工作台面板' });
     expect(skip).toHaveClass('skip-to-editor');
     expect(skip.compareDocumentPosition(tree) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
     expect(skip.compareDocumentPosition(panels) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
 
     await user.click(skip);
-    expect(screen.getByLabelText('Editor')).toHaveFocus();
+    expect(screen.getByLabelText('代码编辑器')).toHaveFocus();
     expect(workspaceSessionStore.getState().selectedPath).toBe('pom.xml');
   });
 });
@@ -483,16 +486,16 @@ describe('WorkbenchShell tree and editor', () => {
 
     await user.click(screen.getByRole('treeitem', { name: 'pom.xml' }));
     expect(await screen.findByRole('tab', { name: /pom.xml/ })).toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: 'Close pom.xml' }));
+    await user.click(screen.getByRole('button', { name: "关闭 pom.xml" }));
 
     await waitFor(() => {
       expect(screen.queryByRole('tab', { name: /pom.xml/ })).not.toBeInTheDocument();
     });
-    expect(screen.getByLabelText('Editor')).toBeInTheDocument();
+    expect(screen.getByLabelText('代码编辑器')).toBeInTheDocument();
     expect(screen.queryByRole('heading', { name: /welcome/i })).not.toBeInTheDocument();
     expect(screen.queryByText(/get started/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/open a file/i)).not.toBeInTheDocument();
-    expect(screen.queryByText(/no file selected/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/否 file selected/i)).not.toBeInTheDocument();
   });
 
   it('does not register disposeAllProjectModels on the shell itself', async () => {
@@ -529,9 +532,9 @@ describe('WorkbenchPage project transitions', () => {
     });
     const resetSession = vi.spyOn(useWorkspaceSession.getState(), 'reset');
 
-    await user.click(screen.getByRole('link', { name: 'Back to projects' }));
+    await user.click(screen.getByRole('link', { name: '返回项目列表' }));
     const card = await screen.findByRole('article', { name: 'Second Lab' });
-    await user.click(within(card).getByRole('link', { name: /open/i }));
+    await user.click(within(card).getByRole('link', { name: '进入工作台' }));
 
     await waitFor(() => {
       expect(workspaceSessionStore.getState().projectId).toBe(created.id);
@@ -581,8 +584,8 @@ describe('WorkbenchPage project transitions', () => {
       </AppProviders>,
     );
     await loadedEditable();
-    await user.click(screen.getByRole('tab', { name: 'Terminal' }));
-    expect(await screen.findByRole('region', { name: 'Job terminal' })).toBeInTheDocument();
+    await user.click(screen.getByRole('tab', { name: '终端' }));
+    expect(await screen.findByRole('region', { name: '运行终端' })).toBeInTheDocument();
     const { JobTerminalController } = await import('../../features/terminal/JobTerminalController');
     const dispose = vi.spyOn(JobTerminalController.prototype, 'dispose');
     const resetSession = vi.spyOn(useWorkspaceSession.getState(), 'reset');
@@ -660,8 +663,8 @@ describe('WorkbenchShell unsaved leave and logout', () => {
     renderApp({ initialEntries: [`/projects/${ALICE_SEED_PROJECT_ID}`] });
     await dirtyPomFromWorkbench(user);
 
-    await user.click(screen.getByRole('link', { name: 'Back to projects' }));
-    expect(await screen.findByRole('dialog', { name: 'Unsaved changes' })).toBeInTheDocument();
+    await user.click(screen.getByRole('link', { name: '返回项目列表' }));
+    expect(await screen.findByRole('dialog', { name: '有未保存的修改' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /save all/i })).not.toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: CANCEL_LABEL }));
 
@@ -689,7 +692,7 @@ describe('WorkbenchShell unsaved leave and logout', () => {
     renderApp({ initialEntries: [`/projects/${ALICE_SEED_PROJECT_ID}`] });
     await dirtyPomFromWorkbench(user);
 
-    await user.click(screen.getByRole('link', { name: 'Back to projects' }));
+    await user.click(screen.getByRole('link', { name: '返回项目列表' }));
     await user.click(await screen.findByRole('button', { name: DISCARD_AND_LEAVE_LABEL }));
 
     await waitFor(() => {
@@ -712,7 +715,7 @@ describe('WorkbenchShell unsaved leave and logout', () => {
     await dirtyPomFromWorkbench(user);
 
     await view.router.navigate(-1);
-    expect(await screen.findByRole('dialog', { name: 'Unsaved changes' })).toBeInTheDocument();
+    expect(await screen.findByRole('dialog', { name: '有未保存的修改' })).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: CANCEL_LABEL }));
 
     expect(screen.getByTestId('location-echo')).toHaveAttribute(
@@ -750,8 +753,8 @@ describe('WorkbenchShell unsaved leave and logout', () => {
     renderApp({ initialEntries: [`/projects/${ALICE_SEED_PROJECT_ID}`] });
     await dirtyPomFromWorkbench(user);
 
-    await user.click(screen.getByRole('button', { name: 'Log out' }));
-    expect(await screen.findByRole('dialog', { name: 'Unsaved changes' })).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '退出登录' }));
+    expect(await screen.findByRole('dialog', { name: '有未保存的修改' })).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: CANCEL_LABEL }));
 
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
@@ -773,7 +776,7 @@ describe('WorkbenchShell unsaved leave and logout', () => {
     await dirtyPomFromWorkbench(user);
     const pomUri = toProjectModelUri(ALICE_SEED_PROJECT_ID, POM);
 
-    await user.click(screen.getByRole('button', { name: 'Log out' }));
+    await user.click(screen.getByRole('button', { name: '退出登录' }));
     await user.click(await screen.findByRole('button', { name: DISCARD_AND_LEAVE_LABEL }));
 
     expect(await screen.findByLabelText('Username')).toBeInTheDocument();
@@ -799,7 +802,7 @@ describe('WorkbenchShell unsaved leave and logout', () => {
     await waitFor(() => {
       expect(screen.getByLabelText('Username')).toBeInTheDocument();
     });
-    expect(screen.queryByRole('dialog', { name: 'Unsaved changes' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('dialog', { name: '有未保存的修改' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: CANCEL_LABEL })).not.toBeInTheDocument();
     expect(screen.getByTestId('location-echo')).toHaveAttribute('data-pathname', '/login');
     expect(authSession.getSnapshot()).toEqual({ status: 'anonymous', reason: 'unauthorized' });
@@ -821,7 +824,7 @@ describe('WorkbenchShell unsaved leave and logout', () => {
     const installed = add.mock.calls.filter((call) => call[0] === 'beforeunload');
     expect(installed).toHaveLength(1);
 
-    await user.click(screen.getByRole('button', { name: 'Log out' }));
+    await user.click(screen.getByRole('button', { name: '退出登录' }));
     await user.click(await screen.findByRole('button', { name: DISCARD_AND_LEAVE_LABEL }));
     await waitFor(() => {
       const removed = remove.mock.calls.filter((call) => call[0] === 'beforeunload');
@@ -837,13 +840,13 @@ describe('WorkbenchShell unsaved leave and logout', () => {
     renderApp({ initialEntries: [`/projects/${ALICE_SEED_PROJECT_ID}`] });
     await dirtyPomFromWorkbench(user);
 
-    await user.click(screen.getByRole('button', { name: 'Close pom.xml' }));
-    expect(await screen.findByRole('dialog', { name: 'Unsaved changes' })).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: "关闭 pom.xml" }));
+    expect(await screen.findByRole('dialog', { name: '有未保存的修改' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: SAVE_AND_CLOSE_LABEL })).toBeInTheDocument();
 
-    await user.click(screen.getByRole('link', { name: 'Back to projects' }));
+    await user.click(screen.getByRole('link', { name: '返回项目列表' }));
 
-    expect(screen.getAllByRole('dialog', { name: 'Unsaved changes' })).toHaveLength(1);
+    expect(screen.getAllByRole('dialog', { name: '有未保存的修改' })).toHaveLength(1);
     expect(screen.getByRole('button', { name: SAVE_AND_CLOSE_LABEL })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: DISCARD_AND_LEAVE_LABEL })).not.toBeInTheDocument();
     expect(screen.getByTestId('location-echo')).toHaveAttribute(
@@ -864,20 +867,20 @@ describe('WorkbenchShell run preconditions', () => {
     renderApp({ initialEntries: [`/projects/${ALICE_SEED_PROJECT_ID}`] });
     await dirtyPomFromWorkbench(user);
 
-    const run = screen.getByRole('tab', { name: 'Run' });
-    const terminal = screen.getByRole('tab', { name: 'Terminal' });
+    const run = screen.getByRole('tab', { name: '运行记录' });
+    const terminal = screen.getByRole('tab', { name: '终端' });
     expect(run).toBeEnabled();
     expect(terminal).toBeEnabled();
     expect(terminal).not.toHaveAccessibleDescription(/DIRTY_FILES/);
     await user.click(run);
-    const start = await screen.findByRole('button', { name: 'Start run' });
+    const start = await screen.findByRole('button', { name: '启动运行' });
     expect(start).toBeDisabled();
     expect(start).toHaveAttribute('title', runPreconditionDescription('DIRTY_FILES'));
 
     await seedLockingRun();
     await queryClient.invalidateQueries({ queryKey: runKeys.active(ALICE_SEED_PROJECT_ID) });
     await user.click(terminal);
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Open terminal' })).toBeEnabled());
+    await waitFor(() => expect(screen.getByRole('button', { name: '打开终端' })).toBeEnabled());
     expect(workspaceBufferRegistry.get(ALICE_SEED_PROJECT_ID, POM)?.isDirty()).toBe(true);
     expect(runStartPostCount(fetchSpy)).toBe(0);
   }, 15_000);
@@ -900,20 +903,20 @@ describe('WorkbenchShell run preconditions', () => {
     expect(await screen.findByRole('treeitem', { name: 'pom.xml' }, { timeout: 10_000 })).toBeInTheDocument();
     await waitUntilWritesUnlocked();
 
-    await user.click(screen.getByRole('button', { name: 'New file' }));
-    const name = await screen.findByLabelText('Name');
+    await user.click(screen.getByRole('button', { name: '新建文件' }));
+    const name = await screen.findByLabelText('名称');
     await user.clear(name);
     await user.type(name, 'pending.md');
     await user.keyboard('{Enter}');
 
-    await user.click(screen.getByRole('tab', { name: 'Run' }));
+    await user.click(screen.getByRole('tab', { name: '运行记录' }));
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: 'Start run' })).toHaveAttribute(
+      expect(screen.getByRole('button', { name: '启动运行' })).toHaveAttribute(
         'title',
         runPreconditionDescription('WRITE_PENDING'),
       );
     });
-    expect(screen.getByRole('button', { name: 'Start run' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: '启动运行' })).toBeDisabled();
     expect(workspaceSessionStore.getState().dirtyPaths.size).toBe(0);
     expect(runStartPostCount(fetchSpy)).toBe(0);
     release();
@@ -939,21 +942,21 @@ describe('WorkbenchShell run preconditions', () => {
     await authenticateAsAlice();
     queryClient.removeQueries({ queryKey: fileKeys.all(ALICE_SEED_PROJECT_ID) });
     renderApp({ initialEntries: [`/projects/${ALICE_SEED_PROJECT_ID}`] });
-    expect(await screen.findByRole('tab', { name: 'Run' })).toBeEnabled();
+    expect(await screen.findByRole('tab', { name: '运行记录' })).toBeEnabled();
     await waitFor(()=>expect(entered).toBe(true));
     expect(queryClient.getQueryData(fileKeys.revision(ALICE_SEED_PROJECT_ID))).toBeUndefined();
-    const start = screen.getByRole('button', { name: 'Start run', hidden: true });
+    const start = screen.getByRole('button', { name: '启动运行', hidden: true });
     expect(start).toBeDisabled();
-    expect(start.getAttribute('title')).toMatch(/REVISION_UNAVAILABLE|AUTHORITY_LOADING/);
+    expect(start.getAttribute('title')).toMatch(/暂时无法获取工作区版本|正在核对运行状态/);
     expect(screen.queryByRole('treeitem', { name: 'pom.xml' })).not.toBeInTheDocument();
     expect(runStartPostCount(fetchSpy)).toBe(0);
 
     release();
     expect(await screen.findByRole('treeitem', { name: 'pom.xml' }, { timeout: 10_000 })).toBeInTheDocument();
     await waitUntilWritesUnlocked();
-    await user.click(screen.getByRole('tab', { name: 'Run' }));
+    await user.click(screen.getByRole('tab', { name: '运行记录' }));
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: 'Start run' })).toBeEnabled();
+      expect(screen.getByRole('button', { name: '启动运行' })).toBeEnabled();
     });
     expect(runStartPostCount(fetchSpy)).toBe(0);
   }, 15_000);
@@ -970,9 +973,9 @@ describe('WorkbenchShell lock and conflict honesty', () => {
     const contentBefore = workspaceBufferRegistry.get(ALICE_SEED_PROJECT_ID, POM)?.snapshot().content;
     const contentCount = getFileRequestCount('content', ALICE_SEED_PROJECT_ID, 'pom.xml');
 
-    await user.click(screen.getByRole('button', { name: 'Save' }));
+    await user.click(screen.getByRole('button', { name: '保存' }));
     const alert = await screen.findByRole('alert');
-    expect(alert).toHaveTextContent(/project is locked/i);
+    expect(alert).toHaveTextContent(/项目暂时无法修改，请等待当前操作完成/i);
     expect(alert).not.toHaveTextContent(HONEST_LOCK_LEAK);
     expect(document.body.textContent ?? '').not.toMatch(HONEST_LOCK_LEAK);
     expect(screen.getByRole('tab', { name: /pom.xml/ })).toHaveTextContent('*');
@@ -983,8 +986,8 @@ describe('WorkbenchShell lock and conflict honesty', () => {
     expect(monaco.editor.getModel(toProjectModelUri(ALICE_SEED_PROJECT_ID, POM))?.getValue()).toBe(
       contentBefore,
     );
-    expect(screen.getByRole('link', { name: 'Back to projects' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: '返回项目列表' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '重试' })).toBeInTheDocument();
     expect(getFileRequestCount('content', ALICE_SEED_PROJECT_ID, 'pom.xml')).toBe(contentCount);
     expect(runStartPostCount(fetchSpy)).toBe(0);
   }, 15_000);
@@ -999,9 +1002,9 @@ describe('WorkbenchShell lock and conflict honesty', () => {
     const contentBefore = workspaceBufferRegistry.get(ALICE_SEED_PROJECT_ID, POM)?.snapshot().content;
     const contentCount = getFileRequestCount('content', ALICE_SEED_PROJECT_ID, 'pom.xml');
 
-    await user.click(screen.getByRole('button', { name: 'Save' }));
+    await user.click(screen.getByRole('button', { name: '保存' }));
     const alert = await screen.findByRole('alert');
-    expect(alert).toHaveTextContent(/workspace revision conflict/i);
+    expect(alert).toHaveTextContent(/工作区已发生变化，请刷新后重试/i);
     expect(alert).not.toHaveTextContent(HONEST_LOCK_LEAK);
     expect(document.body.textContent ?? '').not.toMatch(HONEST_LOCK_LEAK);
     expect(screen.getByRole('tab', { name: /pom.xml/ })).toHaveTextContent('*');
@@ -1092,17 +1095,17 @@ describe('WorkbenchShell panel persistence', () => {
     expectPanelInteractive(file, true);
     expectPanelInteractive(run, false);
 
-    await user.click(screen.getByRole('tab', { name: 'Run' }));
-    expect(screen.getByRole('tab', { name: 'Run' })).toHaveAttribute('aria-selected', 'true');
-    expect(screen.getByRole('tab', { name: 'File' })).toHaveAttribute('aria-selected', 'false');
+    await user.click(screen.getByRole('tab', { name: '运行记录' }));
+    expect(screen.getByRole('tab', { name: '运行记录' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('tab', { name: '代码' })).toHaveAttribute('aria-selected', 'false');
     expectPanelInteractive(filePanel(), false);
     expectPanelInteractive(runPanel(), true);
-    expect(await screen.findByRole('button', { name: 'Start run' })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: '启动运行' })).toBeInTheDocument();
     expect(screen.queryByRole('tab', { name: /pom.xml/ })).not.toBeInTheDocument();
     expect(document.querySelector('.xterm')).toBeNull();
 
-    await user.click(screen.getByRole('tab', { name: 'Terminal' }));
-    expect(await screen.findByRole('region', { name: 'Job terminal' })).toBeInTheDocument();
+    await user.click(screen.getByRole('tab', { name: '终端' }));
+    expect(await screen.findByRole('region', { name: '运行终端' })).toBeInTheDocument();
     const terminal = terminalPanel();
     expect(file.parentElement).toBe(terminal.parentElement);
     expect(run.parentElement).toBe(terminal.parentElement);
@@ -1110,12 +1113,12 @@ describe('WorkbenchShell panel persistence', () => {
     expectPanelInteractive(run, false);
     expectPanelInteractive(terminal, true);
 
-    await user.click(screen.getByRole('tab', { name: 'Run' }));
+    await user.click(screen.getByRole('tab', { name: '运行记录' }));
     expect(terminalPanel()).toBe(terminal);
     expectPanelInteractive(terminal, false);
     expectPanelInteractive(run, true);
 
-    await user.click(screen.getByRole('tab', { name: 'File' }));
+    await user.click(screen.getByRole('tab', { name: '代码' }));
     expect(terminalPanel()).toBe(terminal);
     expectPanelInteractive(filePanel(), true);
     expectPanelInteractive(runPanel(), false);
@@ -1143,17 +1146,17 @@ describe('WorkbenchShell authority gate', () => {
     renderShell();
     await loadedRoot();
 
-    expect(screen.getByRole('button', { name: 'New file' })).toBeDisabled();
-    expect(screen.getByRole('button', { name: 'New folder' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: '新建文件' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: '新建文件夹' })).toBeDisabled();
     await user.click(screen.getByRole('treeitem', { name: 'pom.xml' }));
     expect(await screen.findByRole('tab', { name: /pom.xml/ })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
-    expect(screen.getByRole('button', { name: 'Refresh' })).toBeEnabled();
-    expect(screen.getByRole('link', { name: 'Back to projects' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '保存' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: '刷新' })).toBeEnabled();
+    expect(screen.getByRole('link', { name: '返回项目列表' })).toBeInTheDocument();
 
     release();
     await waitUntilWritesUnlocked();
-    expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: '保存' })).toBeDisabled();
     expect(screen.getByRole('tab', { name: /pom.xml/ })).toBeInTheDocument();
   }, 15_000);
 
@@ -1177,16 +1180,16 @@ describe('WorkbenchShell authority gate', () => {
     await loadedRoot();
 
     const alert = await screen.findByRole('alert');
-    expect(alert).toHaveTextContent(/unable to load run authority/i);
+    expect(alert).toHaveTextContent(/无法读取运行状态/i);
     expect(alert).not.toHaveTextContent('trace-active-403');
-    expect(screen.getByRole('button', { name: 'New file' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: '新建文件' })).toBeDisabled();
     await user.click(screen.getByRole('treeitem', { name: 'src' }));
     expect(await screen.findByRole('treeitem', { name: 'main' })).toBeInTheDocument();
 
-    await user.click(screen.getByRole('button', { name: 'Retry loading run authority' }));
+    await user.click(screen.getByRole('button', { name: '重试读取运行状态' }));
     await waitUntilWritesUnlocked();
     expect(attempts).toBeGreaterThan(1);
-    expect(screen.queryByText(/unable to load run authority/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/无法读取运行状态/i)).not.toBeInTheDocument();
   }, 15_000);
 
   it('relocks New file and Start after an authority refetch error from idle', async () => {
@@ -1194,7 +1197,7 @@ describe('WorkbenchShell authority gate', () => {
     await authenticateAsAlice();
     renderShell();
     await loadedEditable();
-    expect(screen.getByRole('button', { name: 'New file' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: '新建文件' })).toBeEnabled();
 
     server.use(
       http.get('/api/v1/projects/:projectId/runs/active', () =>
@@ -1206,10 +1209,10 @@ describe('WorkbenchShell authority gate', () => {
     );
     await queryClient.refetchQueries({ queryKey: runKeys.active(ALICE_SEED_PROJECT_ID) });
 
-    expect(await screen.findByRole('alert')).toHaveTextContent(/unable to load run authority/i);
-    expect(screen.getByRole('button', { name: 'New file' })).toBeDisabled();
-    await user.click(screen.getByRole('tab', { name: 'Run' }));
-    const start = await screen.findByRole('button', { name: 'Start run' });
+    expect(await screen.findByRole('alert')).toHaveTextContent(/无法读取运行状态/i);
+    expect(screen.getByRole('button', { name: '新建文件' })).toBeDisabled();
+    await user.click(screen.getByRole('tab', { name: '运行记录' }));
+    const start = await screen.findByRole('button', { name: '启动运行' });
     expect(start).toBeDisabled();
   }, 15_000);
 });
@@ -1222,19 +1225,19 @@ describe('WorkbenchShell run lock', () => {
     renderShell();
     await loadedRoot();
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: 'New file' })).toBeDisabled();
+      expect(screen.getByRole('button', { name: '新建文件' })).toBeDisabled();
     });
 
     await user.click(screen.getByRole('treeitem', { name: 'pom.xml' }));
     expect(await screen.findByRole('tab', { name: /pom.xml/ })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
-    expect(screen.getByRole('button', { name: 'New folder' })).toBeDisabled();
-    expect(screen.getByRole('button', { name: 'Rename' })).toBeDisabled();
-    expect(screen.getByRole('button', { name: 'Delete' })).toBeDisabled();
-    expect(screen.getByRole('button', { name: 'Refresh' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: '保存' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: '新建文件夹' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: '重命名' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: '删除' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: '刷新' })).toBeEnabled();
 
-    await user.click(screen.getByRole('tab', { name: 'Run' }));
-    const start = await screen.findByRole('button', { name: 'Start run' });
+    await user.click(screen.getByRole('tab', { name: '运行记录' }));
+    const start = await screen.findByRole('button', { name: '启动运行' });
     await waitFor(() => {
       expect(start).toHaveAttribute('title', runPreconditionDescription('RUN_ACTIVE'));
     });
@@ -1250,21 +1253,21 @@ describe('WorkbenchShell run lock', () => {
     renderApp({ initialEntries: [`/projects/${ALICE_SEED_PROJECT_ID}`] });
     expect(await screen.findByRole('treeitem', { name: 'pom.xml' }, { timeout: 10_000 })).toBeInTheDocument();
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: 'New file' })).toBeDisabled();
+      expect(screen.getByRole('button', { name: '新建文件' })).toBeDisabled();
     });
 
-    await user.click(screen.getByRole('link', { name: 'Back to projects' }));
+    await user.click(screen.getByRole('link', { name: '返回项目列表' }));
     expect(await screen.findByRole('article', { name: 'Alice Notebook' })).toBeInTheDocument();
     expect(runStopPostCount(fetchSpy)).toBe(0);
 
-    await user.click(within(screen.getByRole('article', { name: 'Alice Notebook' })).getByRole('link', { name: /open/i }));
+    await user.click(within(screen.getByRole('article', { name: 'Alice Notebook' })).getByRole('link', { name: '进入工作台' }));
     expect(await screen.findByRole('treeitem', { name: 'pom.xml' }, { timeout: 10_000 })).toBeInTheDocument();
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: 'New file' })).toBeDisabled();
+      expect(screen.getByRole('button', { name: '新建文件' })).toBeDisabled();
     });
 
     closeAll.mockClear();
-    await user.click(screen.getByRole('button', { name: 'Log out' }));
+    await user.click(screen.getByRole('button', { name: '退出登录' }));
     expect(await screen.findByLabelText('Username')).toBeInTheDocument();
     expect(runStopPostCount(fetchSpy)).toBe(0);
     expect(closeAll).toHaveBeenCalled();
@@ -1303,7 +1306,7 @@ describe('WorkbenchShell run lock', () => {
 describe('WorkbenchShell workspace reload', () => {
   async function waitUntilRunning(): Promise<NonNullable<ReturnType<typeof getActiveRun>>> {
     await waitFor(() => {
-      expect(getActiveRun(ALICE_SEED_PROJECT_ID)?.state).toBe('RUNNING');
+      expect(getActiveRun(ALICE_SEED_PROJECT_ID)?.state).toBe("RUNNING");
     });
     const run = getActiveRun(ALICE_SEED_PROJECT_ID);
     expect(run).not.toBeNull();
@@ -1314,7 +1317,7 @@ describe('WorkbenchShell workspace reload', () => {
     await seedLockingRun();
     await queryClient.invalidateQueries({ queryKey: runKeys.active(ALICE_SEED_PROJECT_ID) });
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: 'New file' })).toBeDisabled();
+      expect(screen.getByRole('button', { name: '新建文件' })).toBeDisabled();
     });
     return waitUntilRunning();
   }
@@ -1368,8 +1371,8 @@ describe('WorkbenchShell workspace reload', () => {
     renderShell();
     await loadedEditable();
     const run = await lockShellWithActiveRun();
-    await user.click(screen.getByRole('tab', { name: 'Terminal' }));
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Open terminal' })).toBeEnabled());
+    await user.click(screen.getByRole('tab', { name: '终端' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: '打开终端' })).toBeEnabled());
 
     const { JobTerminalController } = await import('../../features/terminal/JobTerminalController');
     const originalSetRun = JobTerminalController.prototype.setRun;
@@ -1396,9 +1399,9 @@ describe('WorkbenchShell workspace reload', () => {
     await confirmStarted.promise;
 
     await waitFor(() => expect(setRun).toHaveBeenCalledWith(null));
-    expect(screen.getByRole('button', { name: 'Open terminal' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: '打开终端' })).toBeDisabled();
     expect(trace).toEqual(['terminal:null']);
-    expect(screen.queryByText('Reloading workspace')).not.toBeInTheDocument();
+    expect(screen.queryByText('正在重新加载工作区')).not.toBeInTheDocument();
 
     confirmHeld.resolve();
     await waitFor(() => expect(trace).toContain('reload'));
@@ -1435,23 +1438,23 @@ describe('WorkbenchShell workspace reload', () => {
     holdReloads = true;
     await terminalizeRun(run);
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: 'New file' })).toBeDisabled();
-      expect(screen.getAllByText('Reloading workspace').length).toBeGreaterThan(0);
+      expect(screen.getByRole('button', { name: '新建文件' })).toBeDisabled();
+      expect(screen.getAllByText('正在重新加载工作区').length).toBeGreaterThan(0);
     });
-    expect(screen.getByRole('button', { name: 'New folder' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: '新建文件夹' })).toBeDisabled();
     expect(workspaceSessionStore.getState().openPaths).toContain(README);
 
     held.resolve();
     await waitUntilWritesUnlocked();
-    expect(screen.queryAllByText('Reloading workspace')).toHaveLength(0);
+    expect(screen.queryAllByText('正在重新加载工作区')).toHaveLength(0);
     expect(screen.getByRole('tab', { name: /README.md/ })).toBeInTheDocument();
     await waitFor(() => {
-      expect(screen.getByRole('status', { name: 'Run state', hidden: true })).not.toHaveTextContent(
-        'RUNNING',
+      expect(screen.getByRole("status", { name: '运行状态', hidden: true })).not.toHaveTextContent(
+        '正在执行',
       );
     });
-    expect(screen.getByRole('status', { name: 'Run state', hidden: true })).toHaveTextContent(
-      /SUCCEEDED|Idle/,
+    expect(screen.getByRole("status", { name: '运行状态', hidden: true })).toHaveTextContent(
+      /运行成功|空闲/,
     );
   }, 15_000);
 
@@ -1513,22 +1516,22 @@ describe('WorkbenchShell workspace reload', () => {
     expect(result.ok).toBe(true);
     await queryClient.invalidateQueries({ queryKey: runKeys.active(ALICE_SEED_PROJECT_ID) });
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: 'New file' })).toBeDisabled();
+      expect(screen.getByRole('button', { name: '新建文件' })).toBeDisabled();
     });
-    await user.click(screen.getByRole('tab', { name: 'Run' }));
-    expect(await screen.findByText(/workspace reload failed/i)).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Start run' })).toBeDisabled();
+    await user.click(screen.getByRole('tab', { name: '运行记录' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('工作区重新加载失败');
+    expect(screen.getByRole('button', { name: '启动运行' })).toBeDisabled();
 
     failReloads = false;
     checkConcurrentReads = true;
-    await user.click(screen.getByRole('button', { name: 'Retry workspace reload' }));
-    await user.click(screen.getByRole('tab', { name: 'File' }));
+    await user.click(screen.getByRole('button', { name: '重试加载工作区' }));
+    await user.click(screen.getByRole('tab', { name: '代码' }));
     await waitUntilWritesUnlocked();
     expect(concurrentReads).toBe(0);
     expect(await screen.findByTestId('mock-editor')).toBeInTheDocument();
     expect(workspaceSessionStore.getState().activePath).toBe(POM);
     expect(workspaceSessionStore.getState().expandedPaths.has(parseProjectRelativePath('src'))).toBe(true);
-    expect(screen.queryByText(/workspace reload failed/i)).not.toBeInTheDocument();
+    expect(screen.queryAllByText(/工作区重新加载失败/i)).toHaveLength(0);
   }, 15_000);
 
   it('does not completeReload on back or logout while reload is failed', async () => {
@@ -1554,18 +1557,18 @@ describe('WorkbenchShell workspace reload', () => {
     const run = await lockShellWithActiveRun();
     failReloads = true;
     await terminalizeRun(run);
-    await user.click(screen.getByRole('tab', { name: 'Run' }));
-    expect(await screen.findByRole('button', { name: 'Retry workspace reload' })).toBeInTheDocument();
+    await user.click(screen.getByRole('tab', { name: '运行记录' }));
+    expect(await screen.findByRole('button', { name: '重试加载工作区' })).toBeInTheDocument();
     expect(complete).not.toHaveBeenCalled();
 
     failReloads = false;
-    await user.click(screen.getByRole('link', { name: 'Back to projects' }));
+    await user.click(screen.getByRole('link', { name: '返回项目列表' }));
     expect(await screen.findByRole('article', { name: 'Alice Notebook' })).toBeInTheDocument();
     expect(complete).not.toHaveBeenCalled();
 
-    await user.click(within(screen.getByRole('article', { name: 'Alice Notebook' })).getByRole('link', { name: /open/i }));
+    await user.click(within(screen.getByRole('article', { name: 'Alice Notebook' })).getByRole('link', { name: '进入工作台' }));
     expect(await screen.findByRole('treeitem', { name: 'pom.xml' }, { timeout: 10_000 })).toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: 'Log out' }));
+    await user.click(screen.getByRole('button', { name: '退出登录' }));
     expect(await screen.findByLabelText('Username')).toBeInTheDocument();
     expect(complete).not.toHaveBeenCalled();
   }, 15_000);
@@ -1690,17 +1693,17 @@ describe('WorkbenchShell python dependencies', () => {
     await authenticateAsAlice();
     await renderEditablePythonShell();
 
-    const dependencies = screen.getByRole('tab', { name: 'Dependencies' });
+    const dependencies = screen.getByRole('tab', { name: '依赖' });
     expect(dependencies).toBeEnabled();
     await user.click(dependencies);
-    expect(await screen.findByLabelText('Package name')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Add dependency' })).toBeEnabled();
+    expect(await screen.findByLabelText('软件包名称')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '添加依赖' })).toBeEnabled();
 
     cleanup();
     await authenticateAsAlice();
     renderShell();
     await loadedRoot();
-    expect(screen.queryByRole('tab', { name: 'Dependencies' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('tab', { name: '依赖' })).not.toBeInTheDocument();
   }, 15_000);
 
   it('locks the form behind the recovery entry after a lost response; checking reloads and unlocks', async () => {
@@ -1709,22 +1712,22 @@ describe('WorkbenchShell python dependencies', () => {
     const project = await renderEditablePythonShell();
     setDependencyScenario('lost-response');
 
-    await user.click(screen.getByRole('tab', { name: 'Dependencies' }));
-    await user.type(screen.getByLabelText('Package name'), 'httpx');
-    await user.click(screen.getByRole('button', { name: 'Add dependency' }));
+    await user.click(screen.getByRole('tab', { name: '依赖' }));
+    await user.type(screen.getByLabelText('软件包名称'), 'httpx');
+    await user.click(screen.getByRole('button', { name: '添加依赖' }));
 
     // The result is unknown: the entry appears and no further change may start.
     expect(await screen.findByText('依赖变更尚未确认')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Check dependency change' })).toBeEnabled();
-    expect(screen.getByRole('button', { name: 'Add dependency' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: '核对依赖变更' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: '添加依赖' })).toBeDisabled();
 
     setDependencyScenario('normal');
-    await user.click(screen.getByRole('button', { name: 'Check dependency change' }));
+    await user.click(screen.getByRole('button', { name: '核对依赖变更' }));
 
     await waitFor(() => {
       expect(screen.queryByText('依赖变更尚未确认')).not.toBeInTheDocument();
     });
-    expect(screen.getByRole('button', { name: 'Add dependency' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: '添加依赖' })).toBeEnabled();
     // The recovered reload re-read the workspace with the committed dependency files.
     expect(await screen.findByRole('treeitem', { name: 'pyproject.toml' }, { timeout: 10_000 })).toBeInTheDocument();
     expect(sessionStorage.getItem(pythonDependencyStorageKey('usr-alice', project.id))).toBeNull();
@@ -1748,13 +1751,13 @@ describe('WorkbenchShell python dependencies', () => {
     await waitUntilWritesUnlocked();
     setDependencyScenario('lost-response');
 
-    await user.click(screen.getByRole('tab', { name: 'Dependencies' }));
-    await user.type(screen.getByLabelText('Package name'), 'httpx');
-    await user.click(screen.getByRole('button', { name: 'Add dependency' }));
+    await user.click(screen.getByRole('tab', { name: '依赖' }));
+    await user.type(screen.getByLabelText('软件包名称'), 'httpx');
+    await user.click(screen.getByRole('button', { name: '添加依赖' }));
     expect(await screen.findByText('依赖变更尚未确认')).toBeInTheDocument();
     expect(sessionStorage.getItem(pythonDependencyStorageKey('usr-alice', ready.id))).not.toBeNull();
 
-    await user.click(screen.getByRole('button', { name: 'Log out' }));
+    await user.click(screen.getByRole('button', { name: '退出登录' }));
     expect(await screen.findByLabelText('Username')).toBeInTheDocument();
     expect(sessionStorage.getItem(pythonDependencyStorageKey('usr-alice', ready.id))).toBeNull();
 
@@ -1782,13 +1785,13 @@ describe('WorkbenchShell python dependencies', () => {
       }),
     );
 
-    await user.click(screen.getByRole('tab', { name: 'Dependencies' }));
-    await user.type(screen.getByLabelText('Package name'), 'httpx');
-    await user.click(screen.getByRole('button', { name: 'Add dependency' }));
+    await user.click(screen.getByRole('tab', { name: '依赖' }));
+    await user.type(screen.getByLabelText('软件包名称'), 'httpx');
+    await user.click(screen.getByRole('button', { name: '添加依赖' }));
     expect(await screen.findByText('依赖变更尚未确认')).toBeInTheDocument();
 
     failRootTree = true;
-    await user.click(screen.getByRole('button', { name: 'Check dependency change' }));
+    await user.click(screen.getByRole('button', { name: '核对依赖变更' }));
 
     // The change is committed but the surface is stale: the shell must say so.
     await waitFor(() => {
@@ -1799,7 +1802,7 @@ describe('WorkbenchShell python dependencies', () => {
     ).toBeInTheDocument();
 
     failRootTree = false;
-    await user.click(screen.getByRole('button', { name: 'Reload workspace' }));
+    await user.click(screen.getByRole('button', { name: '重新加载工作区' }));
     await waitFor(() => {
       expect(
         screen.queryByText('依赖变更已确认，但工作区重新加载失败。'),
@@ -1832,19 +1835,19 @@ describe('WorkbenchShell python dependencies', () => {
     await user.click(screen.getByRole('treeitem', { name: 'notes.md' }));
     expect(await screen.findByRole('tab', { name: /notes.md/ })).toBeInTheDocument();
 
-    await user.click(screen.getByRole('tab', { name: 'Dependencies' }));
-    await user.type(screen.getByLabelText('Package name'), 'httpx');
-    await user.click(screen.getByRole('button', { name: 'Add dependency' }));
+    await user.click(screen.getByRole('tab', { name: '依赖' }));
+    await user.type(screen.getByLabelText('软件包名称'), 'httpx');
+    await user.click(screen.getByRole('button', { name: '添加依赖' }));
 
     // The same write surfaces the active-Run lock closes are closed mid-request.
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: 'New file' })).toBeDisabled();
+      expect(screen.getByRole('button', { name: '新建文件' })).toBeDisabled();
     });
-    expect(screen.getByRole('button', { name: 'New folder' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: '新建文件夹' })).toBeDisabled();
 
     // The editor itself is read-only while the request is held, also after
     // switching back to the File tab.
-    await user.click(screen.getByRole('tab', { name: 'File' }));
+    await user.click(screen.getByRole('tab', { name: '代码' }));
     expect(screen.getByTestId('mock-editor')).toHaveAttribute('data-readonly', 'true');
 
     setDependencyScenario('resolution-failed');
@@ -1885,14 +1888,14 @@ describe('WorkbenchShell python dependencies', () => {
     expect(await screen.findByRole('tab', { name: /notes.md/ })).toBeInTheDocument();
     holdTree = true;
 
-    await user.click(screen.getByRole('tab', { name: 'Dependencies' }));
-    await user.type(screen.getByLabelText('Package name'), 'httpx');
-    await user.click(screen.getByRole('button', { name: 'Add dependency' }));
+    await user.click(screen.getByRole('tab', { name: '依赖' }));
+    await user.type(screen.getByLabelText('软件包名称'), 'httpx');
+    await user.click(screen.getByRole('button', { name: '添加依赖' }));
 
     // Committed: the panel reloads the workspace and the gate stays closed.
     await screen.findByText('正在重新加载工作区');
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: 'New file' })).toBeDisabled();
+      expect(screen.getByRole('button', { name: '新建文件' })).toBeDisabled();
     });
 
     releaseTree();
@@ -1913,13 +1916,13 @@ describe('WorkbenchShell python dependencies', () => {
     expect(await screen.findByText('依赖变更尚未确认')).toBeInTheDocument();
 
     // The run authority itself resolves (Start run enables) but the gate stays closed.
-    await user.click(screen.getByRole('tab', { name: 'Run' }));
+    await user.click(screen.getByRole('tab', { name: '运行记录' }));
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: 'Start run' })).toBeEnabled();
+      expect(screen.getByRole('button', { name: '启动运行' })).toBeEnabled();
     });
-    await user.click(screen.getByRole('tab', { name: 'File' }));
-    expect(screen.getByRole('button', { name: 'New file' })).toBeDisabled();
-    expect(screen.getByRole('button', { name: 'New folder' })).toBeDisabled();
+    await user.click(screen.getByRole('tab', { name: '代码' }));
+    expect(screen.getByRole('button', { name: '新建文件' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: '新建文件夹' })).toBeDisabled();
   }, 15_000);
 
   it('never starts a dependency change from a dirty workspace, so the success reload cannot run', async () => {
@@ -1937,8 +1940,8 @@ describe('WorkbenchShell python dependencies', () => {
       workspaceBufferRegistry.get(project.id, notesPath)?.snapshot().content,
     ).toBe('# dirty notes');
 
-    await user.click(screen.getByRole('tab', { name: 'Dependencies' }));
-    const add = screen.getByRole('button', { name: 'Add dependency' });
+    await user.click(screen.getByRole('tab', { name: '依赖' }));
+    const add = screen.getByRole('button', { name: '添加依赖' });
     expect(add).toBeDisabled();
     expect(add).toHaveAttribute('title', '请先保存或放弃文件修改');
     await user.click(add);
@@ -1974,14 +1977,14 @@ describe('WorkbenchShell python dependencies', () => {
     await waitUntilWritesUnlocked();
     setDependencyScenario('lost-response');
 
-    await user.click(screen.getByRole('tab', { name: 'Dependencies' }));
-    await user.type(screen.getByLabelText('Package name'), 'httpx');
-    await user.click(screen.getByRole('button', { name: 'Add dependency' }));
+    await user.click(screen.getByRole('tab', { name: '依赖' }));
+    await user.type(screen.getByLabelText('软件包名称'), 'httpx');
+    await user.click(screen.getByRole('button', { name: '添加依赖' }));
     expect(await screen.findByText('依赖变更尚未确认')).toBeInTheDocument();
 
     setDependencyScenario('normal');
     holdTree = true;
-    await user.click(screen.getByRole('button', { name: 'Check dependency change' }));
+    await user.click(screen.getByRole('button', { name: '核对依赖变更' }));
 
     // The unconfirmed entry is resolved, but the authoritative reload is still in
     // flight: the write gate must stay closed (delayed recovery).
@@ -1989,7 +1992,7 @@ describe('WorkbenchShell python dependencies', () => {
       expect(screen.queryByText('依赖变更尚未确认')).not.toBeInTheDocument();
     });
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: 'New file' })).toBeDisabled();
+      expect(screen.getByRole('button', { name: '新建文件' })).toBeDisabled();
     });
 
     releaseTree();
@@ -2030,29 +2033,29 @@ describe('WorkbenchShell python dependencies', () => {
     expect(await screen.findByRole('tab', { name: /notes.md/ })).toBeInTheDocument();
     setDependencyScenario('lost-response');
 
-    await user.click(screen.getByRole('tab', { name: 'Dependencies' }));
-    await user.type(screen.getByLabelText('Package name'), 'httpx');
-    await user.click(screen.getByRole('button', { name: 'Add dependency' }));
+    await user.click(screen.getByRole('tab', { name: '依赖' }));
+    await user.type(screen.getByLabelText('软件包名称'), 'httpx');
+    await user.click(screen.getByRole('button', { name: '添加依赖' }));
     expect(await screen.findByText('依赖变更尚未确认')).toBeInTheDocument();
 
     setDependencyScenario('normal');
     failRootTree = true;
-    await user.click(screen.getByRole('button', { name: 'Check dependency change' }));
+    await user.click(screen.getByRole('button', { name: '核对依赖变更' }));
 
     // The reload failed, but its Retry affordance exists: the gate must stay closed
     // so no dirty buffer can reach the retry (dirty-retry regression).
     expect(
       await screen.findByText('依赖变更已确认，但工作区重新加载失败。'),
     ).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'New file' })).toBeDisabled();
-    await user.click(screen.getByRole('tab', { name: 'File' }));
+    expect(screen.getByRole('button', { name: '新建文件' })).toBeDisabled();
+    await user.click(screen.getByRole('tab', { name: '代码' }));
     expect(await screen.findByTestId('mock-editor')).toHaveAttribute('data-readonly', 'true');
 
     // The retry runs against a clean workspace and only then releases the gate.
     failRootTree = false;
     holdTree = true;
-    await user.click(screen.getByRole('button', { name: 'Reload workspace' }));
-    expect(screen.getByRole('button', { name: 'New file' })).toBeDisabled();
+    await user.click(screen.getByRole('button', { name: '重新加载工作区' }));
+    expect(screen.getByRole('button', { name: '新建文件' })).toBeDisabled();
     releaseTree();
     await waitUntilWritesUnlocked();
     expect(screen.getByTestId('mock-editor')).toHaveAttribute('data-readonly', 'false');
@@ -2123,16 +2126,16 @@ describe('WorkbenchShell python dependencies', () => {
     );
 
     releaseAuthority();
-    await user.click(screen.getByRole('tab', { name: 'Run' }));
+    await user.click(screen.getByRole('tab', { name: '运行记录' }));
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: 'Start run' })).toBeEnabled();
+      expect(screen.getByRole('button', { name: '启动运行' })).toBeEnabled();
     });
-    await user.click(screen.getByRole('tab', { name: 'File' }));
-    expect(screen.getByRole('button', { name: 'New file' })).toBeDisabled();
-    expect(screen.getByRole('button', { name: 'New folder' })).toBeDisabled();
+    await user.click(screen.getByRole('tab', { name: '代码' }));
+    expect(screen.getByRole('button', { name: '新建文件' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: '新建文件夹' })).toBeDisabled();
 
     // Checking the discovered operation recovers the dead end end to end.
-    await user.click(screen.getByRole('button', { name: 'Check dependency change' }));
+    await user.click(screen.getByRole('button', { name: '核对依赖变更' }));
     await waitFor(() => {
       expect(screen.queryByText('依赖变更尚未确认')).not.toBeInTheDocument();
     });
@@ -2156,7 +2159,7 @@ describe('WorkbenchShell python dependencies', () => {
     });
     expect(screen.queryByText('依赖变更尚未确认')).not.toBeInTheDocument();
     expect(
-      screen.queryByText('无法核对待确认的依赖变更。'),
+      screen.queryByText('暂时无法检查依赖更新是否完成。'),
     ).not.toBeInTheDocument();
     fetchSpy.mockRestore();
   }, 15_000);
@@ -2185,21 +2188,21 @@ describe('WorkbenchShell python dependencies', () => {
     // A failed discovery must not fabricate absence: the shell says so and offers a
     // retry, but only after the shared PROJECT_BUSY read budget is exhausted.
     expect(
-      await screen.findByText('无法核对待确认的依赖变更。', {}, { timeout: 10_000 }),
+      await screen.findByText('暂时无法检查依赖更新是否完成。', {}, { timeout: 10_000 }),
     ).toBeInTheDocument();
     expect(pendingDiscoveryGetCount(fetchSpy)).toBe(PROJECT_BUSY_READ_MAX_RETRIES + 1);
 
     failPending = false;
-    await user.click(screen.getByRole('button', { name: 'Retry pending dependency check' }));
+    await user.click(screen.getByRole('button', { name: '重新检查依赖更新结果' }));
 
     // The retry found nothing: the affordance disappears and nothing is rendered.
     await waitFor(() => {
       expect(
-        screen.queryByRole('button', { name: 'Retry pending dependency check' }),
+        screen.queryByRole('button', { name: '重新检查依赖更新结果' }),
       ).not.toBeInTheDocument();
     });
     expect(
-      screen.queryByText('无法核对待确认的依赖变更。'),
+      screen.queryByText('暂时无法检查依赖更新是否完成。'),
     ).not.toBeInTheDocument();
     expect(screen.queryByText('依赖变更尚未确认')).not.toBeInTheDocument();
     fetchSpy.mockRestore();
@@ -2226,7 +2229,7 @@ describe('WorkbenchShell python dependencies', () => {
     renderPythonShell(project);
     await waitUntilWritesUnlocked();
     expect(
-      await screen.findByText('无法核对待确认的依赖变更。', {}, { timeout: 10_000 }),
+      await screen.findByText('暂时无法检查依赖更新是否完成。', {}, { timeout: 10_000 }),
     ).toBeInTheDocument();
     expect(pendingDiscoveryGetCount(fetchSpy)).toBe(PROJECT_BUSY_READ_MAX_RETRIES + 1);
 
@@ -2235,7 +2238,7 @@ describe('WorkbenchShell python dependencies', () => {
     // absence — exactly the dead end the discovery exists to prevent.
     await registerPendingMockOperation(project, SERVER_PENDING_OPERATION_ID);
     failPending = false;
-    await user.click(screen.getByRole('button', { name: 'Retry pending dependency check' }));
+    await user.click(screen.getByRole('button', { name: '重新检查依赖更新结果' }));
 
     // The retry re-queried (GET count 4 -> 5, succeeded on its first attempt) and
     // the discovered operation engages the recovery entry from a previously empty
@@ -2246,7 +2249,7 @@ describe('WorkbenchShell python dependencies', () => {
       SERVER_PENDING_OPERATION_ID,
     );
     expect(
-      screen.queryByText('无法核对待确认的依赖变更。'),
+      screen.queryByText('暂时无法检查依赖更新是否完成。'),
     ).not.toBeInTheDocument();
     fetchSpy.mockRestore();
   }, 15_000);
@@ -2278,7 +2281,7 @@ describe('WorkbenchShell python dependencies', () => {
       await screen.findByText('依赖变更尚未确认', {}, { timeout: 10_000 }),
     ).toBeInTheDocument();
     expect(
-      screen.queryByText('无法核对待确认的依赖变更。'),
+      screen.queryByText('暂时无法检查依赖更新是否完成。'),
     ).not.toBeInTheDocument();
     expect(pendingDiscoveryGetCount(fetchSpy)).toBe(2);
     fetchSpy.mockRestore();
@@ -2302,10 +2305,10 @@ describe('WorkbenchShell python dependencies', () => {
     // A non-PROJECT_BUSY failure is a real error: no busy retry, the banner and its
     // Retry affordance appear after the single attempt.
     expect(
-      await screen.findByText('无法核对待确认的依赖变更。'),
+      await screen.findByText('暂时无法检查依赖更新是否完成。'),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole('button', { name: 'Retry pending dependency check' }),
+      screen.getByRole('button', { name: '重新检查依赖更新结果' }),
     ).toBeInTheDocument();
     expect(pendingDiscoveryGetCount(fetchSpy)).toBe(1);
     fetchSpy.mockRestore();
@@ -2349,7 +2352,7 @@ describe('WorkbenchShell python dependencies', () => {
       MIDFLIGHT_CLIENT_OPERATION_ID,
     );
     releasePending();
-    await user.click(screen.getByRole('tab', { name: 'Run' }));
+    await user.click(screen.getByRole('tab', { name: '运行记录' }));
     releaseAuthority();
 
     // If the discovery result were (wrongly) adopted, the write gate would stay
@@ -2421,7 +2424,7 @@ describe('WorkbenchShell agent task panel', () => {
   async function occupyWorkspace(): Promise<void> {
     await queryClient.invalidateQueries({ queryKey: agentTaskKeys.current(ALICE_SEED_PROJECT_ID) });
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: 'New file' })).toBeDisabled();
+      expect(screen.getByRole('button', { name: '新建文件' })).toBeDisabled();
     });
   }
 
@@ -2441,10 +2444,10 @@ describe('WorkbenchShell agent task panel', () => {
     );
     await authenticateAsAlice(); renderShell(); await loadedRoot();
     await userEvent.click(screen.getByRole('tab', { name: 'AI' }));
-    await userEvent.click(await screen.findByRole('button', { name: 'Pause & take over' }));
+    await userEvent.click(await screen.findByRole('button', { name: '暂停并接管' }));
     expect(pausedIds).toEqual([AGENT_TASK_ID]);
-    await screen.findByText('Stopping and verifying');
-    expect(screen.getByRole('button', { name: 'New file' })).toBeDisabled();
+    await screen.findByText('正在停止并核对');
+    expect(screen.getByRole('button', { name: '新建文件' })).toBeDisabled();
     const before = treeReads;
     current = agentTask({ state: 'FAILED', writesLocked: false, closeReasonCode: 'AI_PAUSED_BY_OWNER' }); occupied = false;
     await act(async () => { await queryClient.invalidateQueries({ queryKey: agentTaskKeys.current(ALICE_SEED_PROJECT_ID) }); });
@@ -2456,8 +2459,8 @@ describe('WorkbenchShell agent task panel', () => {
     server.use(http.get(`${AGENT_TASKS_URL}/current`,()=>HttpResponse.json({code:'INTERNAL_ERROR',message:'unavailable',traceId:'test'},{status:503})));
     await authenticateAsAlice(); renderShell(); await loadedRoot();
     await userEvent.click(screen.getByRole('tab',{name:'AI'}));
-    await screen.findByText('Could not load the agent task status.');
-    expect(screen.getByRole('button',{name:'New file'})).toBeDisabled();
+    await screen.findByText('无法读取 AI 任务状态。');
+    expect(screen.getByRole('button',{name:'新建文件'})).toBeDisabled();
   });
 
   it('reloads a latest paused conversation after re-entry without a retained current task', async () => {
@@ -2473,9 +2476,9 @@ describe('WorkbenchShell agent task panel', () => {
       http.get('/api/v1/projects/:projectId/files/tree',()=>{treeReads++;return undefined;}));
     await authenticateAsAlice(); renderShell(); await loadedRoot();
     await userEvent.click(screen.getByRole('tab',{name:'AI'}));
-    await screen.findByText('Paused');
+    await screen.findByText('已暂停');
     await waitFor(()=>expect(treeReads).toBeGreaterThan(1));
-    await expect(screen.findByRole('button',{name:'Continue task'})).resolves.toBeEnabled();
+    await expect(screen.findByRole('button',{name:'继续任务'})).resolves.toBeEnabled();
   },15000);
 
   it('ends the current occupying task from history, retries safely and unlocks only after real settlement', async () => {
@@ -2507,25 +2510,25 @@ describe('WorkbenchShell agent task panel', () => {
     const user = userEvent.setup();
     await user.click(screen.getByRole('tab', { name: 'AI' }));
     await screen.findByRole('heading', { name: '历史会话' });
-    await user.click(screen.getByRole('button', { name: 'End task' }));
+    await user.click(screen.getByRole('button', { name: '结束任务' }));
     await waitFor(() => expect(closedIds).toEqual([AGENT_TASK_ID]));
-    expect(screen.getByRole('button', { name: 'End task' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: '结束任务' })).toBeDisabled();
     releaseError();
-    expect(await screen.findByText(/Could not end the task/)).toHaveTextContent('INTERNAL_ERROR');
+    expect(await screen.findByText(/无法结束任务/)).toHaveTextContent('INTERNAL_ERROR');
     expect(screen.queryByText(/private-token-do-not-show/)).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'End task' })).toBeEnabled();
-    await user.click(screen.getByRole('button', { name: 'End task' }));
-    expect(await screen.findByRole('button', { name: 'Retry ending task' })).toBeEnabled();
-    expect(screen.getByRole('status', { name: 'Task settlement' })).toHaveTextContent(/Waiting for confirmation/);
+    expect(screen.getByRole('button', { name: '结束任务' })).toBeEnabled();
+    await user.click(screen.getByRole('button', { name: '结束任务' }));
+    expect(await screen.findByRole('button', { name: '重试结束任务' })).toBeEnabled();
+    expect(screen.getByRole("status", { name: '任务结束确认' })).toHaveTextContent(/正在等待结束确认/);
     expect(closedIds).toEqual([AGENT_TASK_ID, AGENT_TASK_ID]);
-    expect(screen.getByRole('button', { name: 'New file' })).toBeDisabled();
-    expect(screen.getByRole('button', { name: 'Start task' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: '新建文件' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: '启动任务' })).toBeDisabled();
     expect(sessionStorage.getItem(`manao.agent-task.id.usr-alice.${ALICE_SEED_PROJECT_ID}`)).not.toBeNull();
     current = agentTask({ conversationId: a, state: 'FAILED', writesLocked: false, failureCode: 'AI_CLOSED' });
     await act(async () => { await queryClient.invalidateQueries({ queryKey: agentTaskKeys.current(ALICE_SEED_PROJECT_ID) }); });
-    await waitFor(() => expect(screen.getByRole('button', { name: 'New file' })).toBeEnabled());
-    expect(screen.getByRole('button', { name: 'Start task' })).toBeEnabled();
-    expect(screen.queryByRole('button', { name: 'Retry ending task' })).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole('button', { name: '新建文件' })).toBeEnabled());
+    expect(screen.getByRole('button', { name: '启动任务' })).toBeEnabled();
+    expect(screen.queryByRole('button', { name: '重试结束任务' })).not.toBeInTheDocument();
     expect(sessionStorage.getItem(`manao.agent-task.id.usr-alice.${ALICE_SEED_PROJECT_ID}`)).toBeNull();
   }, 15_000);
 
@@ -2535,16 +2538,16 @@ describe('WorkbenchShell agent task panel', () => {
     server.use(http.get(`${AGENT_TASKS_URL}/current`, () => HttpResponse.json(current)));
     renderShell(); await loadedRoot();
     const user = userEvent.setup();
-    await user.click(screen.getByRole('tab', { name: 'Run' }));
-    expect(screen.getByRole('button', { name: 'Stop run' })).toBeDisabled();
-    expect(screen.getByText(/AI task is controlling the application/)).toBeVisible();
-    await user.click(screen.getByRole('button', { name: 'Open AI task' }));
+    await user.click(screen.getByRole('tab', { name: '运行记录' }));
+    expect(screen.getByRole('button', { name: '停止运行' })).toBeDisabled();
+    expect(screen.getByText(/AI 任务正在管理应用/)).toBeVisible();
+    await user.click(screen.getByRole('button', { name: '查看 AI 任务' }));
     expect(screen.getByRole('tab', { name: 'AI' })).toHaveAttribute('aria-selected', 'true');
     current = agentTask({ state: 'FAILED', writesLocked: false, failureCode: 'AI_CLOSED' });
     await act(async () => { await queryClient.invalidateQueries({ queryKey: agentTaskKeys.current(ALICE_SEED_PROJECT_ID) }); });
-    await user.click(screen.getByRole('tab', { name: 'Run' }));
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Stop run' })).toBeEnabled());
-    expect(screen.queryByRole('button', { name: 'Open AI task' })).not.toBeInTheDocument();
+    await user.click(screen.getByRole('tab', { name: '运行记录' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: '停止运行' })).toBeEnabled());
+    expect(screen.queryByRole('button', { name: '查看 AI 任务' })).not.toBeInTheDocument();
   }, 15_000);
 
   it('shows the AI tab and keeps the workspace editable while no task occupies the project', async () => {
@@ -2554,7 +2557,7 @@ describe('WorkbenchShell agent task panel', () => {
     await loadedEditable();
 
     expect(screen.getByRole('tab', { name: 'AI' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'New file' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: '新建文件' })).toBeEnabled();
   });
 
   it('keeps AI start blocked while Run authority is unavailable', async () => {
@@ -2566,8 +2569,8 @@ describe('WorkbenchShell agent task panel', () => {
     renderShell();
     await loadedRoot();
     await userEvent.setup().click(screen.getByRole('tab', { name: 'AI' }));
-    expect(screen.getByRole('button', { name: 'Start task' })).toBeDisabled();
-    expect(await screen.findByText('RUN_AUTHORITY_UNKNOWN')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '启动任务' })).toBeDisabled();
+    expect(await screen.findByText("正在核对运行状态，请稍候")).toBeInTheDocument();
   });
 
   it('keeps a structured HTTP validation error with no Run ID visible without invalid navigation', async () => {
@@ -2587,9 +2590,9 @@ describe('WorkbenchShell agent task panel', () => {
     await loadedRoot();
     const user = userEvent.setup();
     await user.click(screen.getByRole('tab', { name: 'AI' }));
-    await user.click(screen.getByRole('button', { name: 'View HTTP result' }));
+    await user.click(screen.getByRole('button', { name: '查看HTTP 请求结果' }));
     expect(await screen.findByText(/VALIDATION_ERROR/)).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'View run' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '查看运行' })).not.toBeInTheDocument();
     expect(screen.getByRole('tab', { name: 'AI' })).toHaveAttribute('aria-selected', 'true');
   });
 
@@ -2611,12 +2614,12 @@ describe('WorkbenchShell agent task panel', () => {
     );
     renderShell();
     await loadedRoot();
-    expect(screen.getByRole('button', { name: 'New file' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: '新建文件' })).toBeDisabled();
     const user = userEvent.setup();
     await user.click(screen.getByRole('tab', { name: 'AI' }));
-    await user.click(screen.getByRole('button', { name: 'View application result' }));
-    await user.click(await screen.findByRole('button', { name: 'View run' }));
-    expect(screen.getByRole('tab', { name: 'Run' })).toHaveAttribute('aria-selected', 'true');
+    await user.click(screen.getByRole('button', { name: '查看应用操作结果' }));
+    await user.click(await screen.findByRole('button', { name: '查看运行' }));
+    expect(screen.getByRole('tab', { name: '运行记录' })).toHaveAttribute('aria-selected', 'true');
   }, 15000);
 
   it('locks the editor, file tree and Run start while an agent task occupies the workspace', async () => {
@@ -2636,8 +2639,8 @@ describe('WorkbenchShell agent task panel', () => {
     await user.click(screen.getByRole('treeitem', { name: 'pom.xml' }));
     expect(await screen.findByTestId('mock-editor')).toHaveAttribute('data-readonly', 'true');
 
-    await user.click(screen.getByRole('tab', { name: 'Run' }));
-    const start = await screen.findByRole('button', { name: 'Start run' });
+    await user.click(screen.getByRole('tab', { name: '运行记录' }));
+    const start = await screen.findByRole('button', { name: '启动运行' });
     expect(start).toBeDisabled();
     expect(start).toHaveAttribute('title', runPreconditionDescription('AGENT_TASK_ACTIVE'));
   }, 15_000);
@@ -2724,7 +2727,7 @@ describe('WorkbenchShell agent task panel', () => {
       expect(monaco.editor.getModel(uri)?.getValue()).toContain('<agent-edit />');
     });
     // Still occupying: the agent owns every write until it settles.
-    expect(screen.getByRole('button', { name: 'New file' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: '新建文件' })).toBeDisabled();
 
     settled = true;
     occupying = false;
@@ -2769,7 +2772,7 @@ describe('WorkbenchShell agent task panel', () => {
     failReloadTrees = true;
     await queryClient.invalidateQueries({ queryKey: agentTaskKeys.current(ALICE_SEED_PROJECT_ID) });
     expect(
-      await screen.findByText(/agent changed the workspace files, but reloading them failed/i),
+      await screen.findByText(/AI 已修改项目文件，但工作区重新加载失败/i),
     ).toBeInTheDocument();
 
     // The task settles while the reload is still failed: the workspace stays locked.
@@ -2777,19 +2780,19 @@ describe('WorkbenchShell agent task panel', () => {
     occupying = false;
     await queryClient.invalidateQueries({ queryKey: agentTaskKeys.current(ALICE_SEED_PROJECT_ID) });
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: 'New file' })).toBeDisabled();
+      expect(screen.getByRole('button', { name: '新建文件' })).toBeDisabled();
     });
-    expect(screen.getByRole('button', { name: 'Reload workspace' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: '重新加载工作区' })).toBeEnabled();
 
     // The AI panel shares the lock: Start stays disabled while the reload is
     // failed, so the panel cannot bypass the read-only workspace.
     await user.click(screen.getByRole('tab', { name: 'AI' }));
-    expect(screen.getByRole('button', { name: 'Start task' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: '启动任务' })).toBeDisabled();
 
     failReloadTrees = false;
-    await user.click(screen.getByRole('button', { name: 'Reload workspace' }));
+    await user.click(screen.getByRole('button', { name: '重新加载工作区' }));
     await waitUntilWritesUnlocked();
-    expect(screen.queryByRole('button', { name: 'Reload workspace' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '重新加载工作区' })).not.toBeInTheDocument();
   }, 15_000);
 
   it('does not replace dirty buffers when the agent changes files and surfaces the conflict', async () => {
@@ -2836,7 +2839,7 @@ describe('WorkbenchShell agent task panel', () => {
     agentRevision = 'mock-rev-0002';
     await queryClient.invalidateQueries({ queryKey: agentTaskKeys.current(ALICE_SEED_PROJECT_ID) });
 
-    expect(await screen.findByText(/save or discard your unsaved changes/i)).toBeInTheDocument();
+    expect(await screen.findByText(/请先保存或放弃编辑器中的修改/i)).toBeInTheDocument();
     expect(monaco.editor.getModel(uri)?.getValue()).toBe(dirtyContent);
     expect(workspaceSessionStore.getState().dirtyPaths.has(POM)).toBe(true);
     // No reload ran into the dirty buffer.
@@ -2845,7 +2848,7 @@ describe('WorkbenchShell agent task panel', () => {
     act(() => {
       workspaceSessionStore.getState().setDirty(POM, false);
     });
-    await user.click(screen.getByRole('button', { name: 'Reload workspace' }));
+    await user.click(screen.getByRole('button', { name: '重新加载工作区' }));
     await waitFor(() => {
       expect(monaco.editor.getModel(uri)?.getValue()).toContain('<agent-edit />');
     });
@@ -2877,7 +2880,7 @@ describe('WorkbenchShell agent task panel', () => {
     await queryClient.invalidateQueries({ queryKey: agentTaskKeys.current(ALICE_SEED_PROJECT_ID) });
 
     // The occupying task released but the final revision is not confirmed yet.
-    expect(screen.getByRole('button', { name: 'New file' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: '新建文件' })).toBeDisabled();
 
     act(() => {
       releaseSettled();
@@ -2913,12 +2916,12 @@ describe('WorkbenchShell agent task panel', () => {
     await queryClient.invalidateQueries({ queryKey: agentTaskKeys.current(ALICE_SEED_PROJECT_ID) });
 
     // The failed final-snapshot read stays user-visible and keeps the gate closed.
-    expect(await screen.findByText(/final result could not be loaded/i)).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'New file' })).toBeDisabled();
+    expect(await screen.findByText(/暂时无法读取最终结果/i)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '新建文件' })).toBeDisabled();
 
     settledFails = false;
-    await user.click(screen.getByRole('button', { name: 'Retry loading the result' }));
+    await user.click(screen.getByRole('button', { name: '重试读取结果' }));
     await waitUntilWritesUnlocked();
-    expect(screen.queryByRole('button', { name: 'Retry loading the result' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '重试读取结果' })).not.toBeInTheDocument();
   }, 15_000);
 });

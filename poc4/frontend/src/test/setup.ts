@@ -3,6 +3,7 @@ import { afterAll, afterEach, beforeAll, vi } from 'vitest';
 import { server } from '../mocks/node';
 import { resetLogTickets } from '../mocks/runSocket';
 import { resetMockState } from '../mocks/state';
+import { resetStudioMock } from '../mocks/studioHandlers';
 import { resetTerminalSockets } from '../mocks/terminalSocket';
 
 if (typeof document.queryCommandSupported !== 'function') {
@@ -97,6 +98,7 @@ afterEach(() => {
   server.resetHandlers();
   resetTerminalSockets();
   resetMockState();
+  resetStudioMock();
   resetLogTickets();
 });
 afterAll(() => server.close());

@@ -32,7 +32,7 @@ function treeItem(page: Page, name: string): Locator {
 }
 
 function editorTab(page: Page, name: RegExp): Locator {
-  return page.getByRole('tablist', { name: 'Editor tabs' }).getByRole('tab', { name });
+  return page.getByRole('tablist', { name: '已打开的文件' }).getByRole('tab', { name });
 }
 
 function pngSize(bytes: Uint8Array): { width: number; height: number } {
@@ -132,7 +132,7 @@ async function openAliceWorkbench(page: Page): Promise<string> {
   const accessToken = await signIn(page, ALICE);
   await expect(page).toHaveURL(/\/projects$/);
   const rootTree = waitForFileApi(page, 'tree', '');
-  await projectCard(page, 'Alice Notebook').getByRole('link', { name: 'Open' }).click();
+  await projectCard(page, 'Alice Notebook').getByRole('link', { name: '进入工作台' }).click();
   await rootTree;
   await expect(page).toHaveURL(new RegExp(`/projects/${ALICE_SEED_PROJECT_ID}$`));
   await expect(page.getByRole('heading', { name: 'Alice Notebook' })).toBeVisible();
@@ -177,7 +177,7 @@ async function openFile(
     await content;
   }
   await expect(
-    page.getByRole('tablist', { name: 'Editor tabs' }).getByRole('tab', { name }),
+    page.getByRole('tablist', { name: '已打开的文件' }).getByRole('tab', { name }),
   ).toBeVisible();
 }
 
@@ -239,8 +239,8 @@ async function assertNoHorizontalOverflow(page: Page): Promise<void> {
 
 async function assertWorkbenchPanelsDoNotOverlap(page: Page): Promise<void> {
   const headerBox = await page.locator('.workbench-shell > header').boundingBox();
-  const sidebarBox = await page.getByRole('complementary', { name: 'Project files' }).boundingBox();
-  const editorBox = await page.getByLabel('Editor', { exact: true }).boundingBox();
+  const sidebarBox = await page.getByRole('complementary', { name: '项目文件' }).boundingBox();
+  const editorBox = await page.getByLabel('代码编辑器', { exact: true }).boundingBox();
   expect(headerBox).not.toBeNull();
   expect(sidebarBox).not.toBeNull();
   expect(editorBox).not.toBeNull();
@@ -439,11 +439,11 @@ async function triggerSessionRefetch(page: Page): Promise<void> {
 
 test('logs in and opens Alice\'s ready project', async ({ page }) => {
   await openAliceWorkbench(page);
-  await expect(page.getByRole('tablist', { name: 'Workbench panels' })).toBeVisible();
-  await expect(page.getByRole('tab', { name: 'File' })).toHaveAttribute('aria-selected', 'true');
-  await expect(page.getByRole('tab', { name: 'Run' })).toBeEnabled();
-  await expect(page.getByRole('tab', { name: 'Terminal' })).toBeEnabled();
-  await expect(page.getByRole('tree', { name: 'Files' })).toBeVisible();
+  await expect(page.getByRole('tablist', { name: '工作台面板' })).toBeVisible();
+  await expect(page.getByRole('tab', { name: '代码' })).toHaveAttribute('aria-selected', 'true');
+  await expect(page.getByRole('tab', { name: '运行记录' })).toBeEnabled();
+  await expect(page.getByRole('tab', { name: '终端' })).toBeEnabled();
+  await expect(page.getByRole('tree', { name: '文件列表' })).toBeVisible();
 });
 
 test('requests only the root tree on first load and shows .gitignore', async ({ page }) => {
@@ -555,18 +555,18 @@ test('opens binary, non-UTF-8 and oversized files without content requests', asy
 
   await expandDirectory(page, 'assets', 'assets');
   await openFile(page, 'logo.png', 'assets/logo.png', { content: false });
-  await expect(page.getByText('This file is binary and cannot be previewed')).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Download' })).toBeEnabled();
+  await expect(page.getByText('二进制文件无法预览')).toBeVisible();
+  await expect(page.getByRole('button', { name: '下载' })).toBeEnabled();
   await expect(page.locator('[aria-label="Editor"] .monaco-editor')).toHaveCount(0);
 
   await expandDirectory(page, 'docs', 'docs');
   await openFile(page, 'latin1.txt', 'docs/latin1.txt', { content: false });
-  await expect(page.getByText('This file is not UTF-8 encoded and cannot be previewed')).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Download' })).toBeEnabled();
+  await expect(page.getByText('文件不是 UTF-8 编码，无法预览')).toBeVisible();
+  await expect(page.getByRole('button', { name: '下载' })).toBeEnabled();
 
   await openFile(page, 'too-large.md', 'docs/too-large.md', { content: false });
-  await expect(page.getByText('This file is too large to preview')).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Download' })).toBeEnabled();
+  await expect(page.getByText('文件过大，无法预览')).toBeVisible();
+  await expect(page.getByRole('button', { name: '下载' })).toBeEnabled();
 
   expect(observer.count('content', 'assets/logo.png')).toBe(0);
   expect(observer.count('content', 'docs/latin1.txt')).toBe(0);
@@ -584,7 +584,7 @@ test('opens 20–50 MiB Markdown in the plain viewer without Monaco', async ({ p
   const textarea = page.getByRole('textbox', { name: 'large-notes.md' });
   await expect(textarea).toBeVisible();
   await expect(textarea).not.toHaveAttribute('readonly');
-  await expect(page.getByText('Plain text')).toBeVisible();
+  await expect(page.getByText('纯文本')).toBeVisible();
   await expect(page.locator('[aria-label="Editor"] .monaco-editor')).toHaveCount(0);
   await expect(textarea).toHaveValue(/# Large notes/);
 });
@@ -596,16 +596,16 @@ test('does not leak tabs, expanded paths or file cache after logout', async ({ p
   await waitForMonacoText(page, 'artifactId');
   await expect(treeItem(page, 'App.java')).toBeVisible();
 
-  await page.getByRole('link', { name: 'Back to projects' }).click();
+  await page.getByRole('link', { name: '返回项目列表' }).click();
   await expect(page).toHaveURL(/\/projects$/);
-  await expect(page.getByRole('tablist', { name: 'Editor tabs' })).toHaveCount(0);
+  await expect(page.getByRole('tablist', { name: '已打开的文件' })).toHaveCount(0);
   await expect(treeItem(page, 'App.java')).toHaveCount(0);
 
-  await page.getByRole('button', { name: 'Log out' }).click();
+  await page.getByRole('button', { name: '退出登录' }).click();
   await expect(page).toHaveURL(/\/login$/);
   await expect(page.getByLabel('Username')).toBeVisible();
   await expect(page.getByText('Alice Notebook')).toHaveCount(0);
-  await expect(page.getByRole('tablist', { name: 'Editor tabs' })).toHaveCount(0);
+  await expect(page.getByRole('tablist', { name: '已打开的文件' })).toHaveCount(0);
 
   await signIn(page, BOB);
   await expect(page).toHaveURL(/\/projects$/);
@@ -613,7 +613,7 @@ test('does not leak tabs, expanded paths or file cache after logout', async ({ p
   await expect(projectCard(page, 'Alice Notebook')).toHaveCount(0);
 
   const rootTree = waitForFileApi(page, 'tree', '');
-  await projectCard(page, 'Bob Lab').getByRole('link', { name: 'Open' }).click();
+  await projectCard(page, 'Bob Lab').getByRole('link', { name: '进入工作台' }).click();
   await rootTree;
   await expect(page).toHaveURL(new RegExp(`/projects/${BOB_SEED_PROJECT_ID}$`));
   await expect(page.getByRole('heading', { name: 'Bob Lab' })).toBeVisible();
@@ -657,7 +657,7 @@ test('forces current-token 401 with an open file and returns to login', async ({
   }, accessToken);
   expect(expireStatus).toBe(204);
 
-  await page.getByRole('button', { name: 'Refresh' }).click();
+  await page.getByRole('button', { name: '刷新' }).click();
   await triggerSessionRefetch(page);
   expect((await unauthorized).status()).toBe(401);
 
@@ -668,13 +668,13 @@ test('forces current-token 401 with an open file and returns to login', async ({
   await expect(alerts).toContainText(SESSION_EXPIRED);
   await expect(page.getByText('Alice Notebook')).toHaveCount(0);
   await expect(editorTab(page, /pom\.xml/)).toHaveCount(0);
-  await expect(page.getByRole('tree', { name: 'Files' })).toHaveCount(0);
+  await expect(page.getByRole('tree', { name: '文件列表' })).toHaveCount(0);
 });
 
 test('completes tree, tabs, viewer and Download from the keyboard', async ({ page }) => {
   await openAliceWorkbench(page);
 
-  const skip = page.getByRole('link', { name: 'Skip to editor' });
+  const skip = page.getByRole('link', { name: '跳转到编辑器' });
   await tabUntilFocused(page, skip);
   await assertFocusVisible(skip);
 
@@ -762,10 +762,10 @@ test('completes tree, tabs, viewer and Download from the keyboard', async ({ pag
   const logoMeta = waitForFileApi(page, 'meta', 'assets/logo.png');
   await page.keyboard.press('Enter');
   await logoMeta;
-  await expect(page.getByRole('button', { name: 'Download' })).toBeVisible();
+  await expect(page.getByRole('button', { name: '下载' })).toBeVisible();
 
-  await tabUntilFocused(page, page.getByRole('button', { name: 'Download' }));
-  await assertFocusVisible(page.getByRole('button', { name: 'Download' }));
+  await tabUntilFocused(page, page.getByRole('button', { name: '下载' }));
+  await assertFocusVisible(page.getByRole('button', { name: '下载' }));
   const download = page.waitForEvent('download');
   await page.keyboard.press('Enter');
   expect((await download).suggestedFilename()).toBe('logo.png');
@@ -791,8 +791,8 @@ for (const viewport of viewports) {
     await prepareVisualCapture(page);
     await assertNoHorizontalOverflow(page);
     await assertWorkbenchPanelsDoNotOverlap(page);
-    await assertReachable(page.getByRole('button', { name: 'Refresh' }));
-    await assertReachable(page.getByRole('button', { name: 'Collapse all folders' }));
+    await assertReachable(page.getByRole('button', { name: '刷新' }));
+    await assertReachable(page.getByRole('button', { name: '折叠所有文件夹' }));
     await assertReachable(appTab);
     await assertReachable(page.getByRole('button', { name: 'Close App.java' }));
 
@@ -804,13 +804,13 @@ for (const viewport of viewports) {
 
     await expandDirectory(page, 'assets', 'assets');
     await openFile(page, 'logo.png', 'assets/logo.png', { content: false });
-    await expect(page.getByRole('button', { name: 'Download' })).toBeVisible();
-    await expect(page.getByText('This file is binary and cannot be previewed')).toBeVisible();
+    await expect(page.getByRole('button', { name: '下载' })).toBeVisible();
+    await expect(page.getByText('二进制文件无法预览')).toBeVisible();
     await prepareVisualCapture(page);
     await assertNoHorizontalOverflow(page);
     await assertWorkbenchPanelsDoNotOverlap(page);
-    await assertReachable(page.getByRole('button', { name: 'Download' }));
-    await assertReachable(page.getByRole('button', { name: 'Refresh' }));
+    await assertReachable(page.getByRole('button', { name: '下载' }));
+    await assertReachable(page.getByRole('button', { name: '刷新' }));
     await assertReachable(editorTab(page, /logo\.png/));
     await assertReachable(page.getByRole('button', { name: 'Close logo.png' }));
 

@@ -11,12 +11,12 @@ function isNetworkError(error: unknown): boolean {
 
 function blockReasonMessage(reason: FileBlockReason): string {
   if (reason === 'BINARY_FILE') {
-    return 'This file is binary and cannot be previewed';
+    return '二进制文件无法预览';
   }
   if (reason === 'FILE_TOO_LARGE') {
-    return 'This file is too large to preview';
+    return '文件过大，无法预览';
   }
-  return 'This file is not UTF-8 encoded and cannot be previewed';
+  return '文件不是 UTF-8 编码，无法预览';
 }
 
 export function BlockedFileView({
@@ -36,7 +36,7 @@ export function BlockedFileView({
     try {
       await downloadFile(projectId, metadata.path, metadata.name);
     } catch (caught) {
-      setError(isNetworkError(caught) ? 'Network request failed' : 'Unable to download file');
+      setError(isNetworkError(caught) ? '网络请求失败，请检查连接后重试' : '无法下载文件');
     } finally {
       setDownloading(false);
     }
@@ -50,7 +50,7 @@ export function BlockedFileView({
       {reason !== null ? <p className="text-sm">{blockReasonMessage(reason)}</p> : null}
       <div className="flex items-center gap-2">
         <Button type="button" onClick={() => void runDownload()} disabled={downloading}>
-          Download
+          下载
         </Button>
       </div>
       {error !== null ? (
@@ -62,7 +62,7 @@ export function BlockedFileView({
             onClick={() => void runDownload()}
             disabled={downloading}
           >
-            Retry
+            重试
           </Button>
         </div>
       ) : null}

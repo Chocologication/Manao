@@ -112,7 +112,7 @@ test('PTY 8 MiB output in <=32 KiB frames conserves 256 KiB credit', async ({ pa
   expect(await awaitReady(page, project.id, token), 'stress requires a READY project').toBe('READY');
   const run = await startRun(page, project.id, token);
   await resources.recordRun(project.id, run.id);
-  expect(await awaitRunState(page, project.id, run.id, token, ['RUNNING']), 'terminal requires a RUNNING run').toBe('RUNNING');
+  expect(await awaitRunState(page, project.id, run.id, token, ['RUNNING']), 'terminal requires a RUNNING run').toBe('正在执行');
   const session = await createTerminalSession(page, project.id, run.id, token);
 
   const metrics = await page.evaluate(async ({ ticket }) => {
