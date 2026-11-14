@@ -19,6 +19,52 @@ async function send(page: Page, text: string): Promise<Turn> {
   await page.getByRole('button', { name: '发送消息', exact: true }).click();
   const result = await response; expect(result.ok()).toBeTruthy(); return result.json() as Promise<Turn>;
 }
+for (const nativeUuid of [true, false]) {
+  test(`Studio identities work with randomUUID ${nativeUuid ? 'available' : 'unavailable (HTTP)'}`, async ({ page }) => {
+    const errors: string[] = [];
+    page.on('pageerror', error => errors.push(error.message));
+    if (!nativeUuid) await page.addInitScript(() => {
+      Object.defineProperty(crypto, 'randomUUID', { value: undefined, configurable: true });
+    });
+    await enter(page);
+    const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+    await page.getByRole('button', { name: '模型设置', exact: true }).click();
+    const dialog = page.getByRole('dialog', { name: '模型设置' });
+    await dialog.getByRole('button', { name: '添加模型', exact: true }).click();
+    await dialog.getByLabel('显示名称', { exact: true }).fill('UUID regression model');
+    await dialog.getByLabel('API 密钥', { exact: true }).fill('test-only-not-a-real-key');
+    const saved = page.waitForResponse(r => r.url().endsWith('/assistant/models') && r.request().method() === 'POST');
+    await dialog.getByRole('button', { name: '保存配置' }).click();
+    expect((await saved).request().postDataJSON().id).toMatch(uuid);
+    await expect(dialog).not.toBeVisible();
+
+    // The first message creates its conversation implicitly.
+    const chat = await send(page, '帮我了解项目结构');
+    expect(chat.id).toMatch(uuid);
+    expect(chat.conversationId).toMatch(uuid);
+    await expect(page.locator(`[data-turn-id="${chat.id}"]`).getByRole('heading', { name: '项目概览' })).toBeVisible();
+    await expect(page.locator(`[data-turn-id="${chat.id}"]`).locator('.studio-assistant-meta').getByText('已完成', { exact: true })).toBeVisible();
+
+    const created = page.waitForResponse(r => /\/assistant\/conversations\/[^/]+$/.test(r.url()) && r.request().method() === 'POST');
+    await page.getByRole('region', { name: 'Manao AI 对话' }).getByRole('button', { name: '新建会话', exact: true }).click();
+    const conversation = await (await created).json() as { id: string };
+    expect(conversation.id).toMatch(uuid);
+    expect(conversation.id).not.toBe(chat.conversationId);
+    await expect(page.locator('.studio-turn')).toHaveCount(0);
+    await page.getByRole('button', { name: '任务', exact: true }).click();
+    const task = await send(page, '更新项目说明并运行测试');
+    expect(task.id).toMatch(uuid);
+    expect(task.conversationId).toBe(conversation.id);
+    const article = page.locator(`[data-turn-id="${task.id}"]`);
+    await article.getByRole('button', { name: '接受文件 README.md', exact: true }).click();
+    const applied = page.waitForResponse(r => r.url().endsWith(`/turns/${task.id}/apply`) && r.request().method() === 'POST');
+    await article.getByRole('button', { name: '应用所选变更', exact: true }).click();
+    expect((await applied).request().postDataJSON().requestId).toMatch(uuid);
+    await expect(article.getByText('变更已应用 · 验证通过')).toBeVisible();
+    expect(errors).toEqual([]);
+  });
+}
+
 for (const [status, expected] of [
   ['FAILED', '未通过'], ['UNKNOWN', '验证证据不完整'], ['SKIPPED', '全部测试跳过'], ['NO_TESTS', '未发现测试'],
 ] as const) {

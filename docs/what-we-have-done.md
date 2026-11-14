@@ -1,12 +1,12 @@
 # 项目进度
 
-更新：2026-11-12。PR #5 已合并并发布到集群，Node 四模板及 Studio 局部真实链路通过；HTTP 入口的 UUID 兼容问题导致完整浏览器验收 FAILED，见[云端发布与验证](../poc4/docs/evidence/assistant-studio/cloud-20261112.md)。历史验收范围由对应记录负责。
+更新：2026-11-14。Studio HTTP UUID 最小修复已发布 frontend，真实配置弹窗、添加模型入口和新建会话冒烟通过；当前账号没有个人模型，本轮真实聊天与任务审阅 NOT_RUN，见[修复发布与验证](../poc4/docs/evidence/assistant-studio/cloud-20261114-http-uuid.md)。PR #5 的 Node 四模板及此前局部真实链路见[2026-11-12 记录](../poc4/docs/evidence/assistant-studio/cloud-20261112.md)，原完整浏览器验收 FAILED 保留为历史结论。
 
 2026-10-31 历史整合：按用户要求，将 `codex/ai-integration@e1da794` 的实现、验收记录及文档归档以单父提交同步到 `master`，保留 master 原有 IDEA 配置；不创建 merge 提交，AI 分支和工作树继续保留。以下历史云端结论不是本次重新执行的集群检查。
 
 ## 当前结论
 
-- 新版 AI 对话工作台已部署：真实只读聊天、Node 审阅应用、大图片、Python 目录和配置测试依赖后的 pytest 验证通过；HTTP 页面新建会话/添加模型因 `crypto.randomUUID` 不可用失败，尚未获得完整浏览器 PASS。实际范围见[2026-11-12 记录](../poc4/docs/evidence/assistant-studio/cloud-20261112.md)，本地历史结果保留于[PR 整合验收](../poc4/docs/evidence/assistant-studio/2026-11-05-pr-integration.md)。
+- 新版 AI 对话工作台已部署：2026-11-14 修复普通 HTTP 的 UUID 兼容问题，真实配置弹窗与新建会话取得 `HTTP_UUID_BROWSER_SMOKE_PASS`，见[修复记录](../poc4/docs/evidence/assistant-studio/cloud-20261114-http-uuid.md)；真实模型聊天与任务审阅本轮 NOT_RUN。此前只读聊天、Node 审阅应用、大图片、Python 目录及 pytest 的局部验证见[2026-11-12 记录](../poc4/docs/evidence/assistant-studio/cloud-20261112.md)，不合并推断完整浏览器 PASS。本地历史结果见[PR 整合验收](../poc4/docs/evidence/assistant-studio/2026-11-05-pr-integration.md)。
 - AI四模板环境与Python工具链取得 **AI_PYTHON_CLOSED_LOOP_PASS（原设计E1–R1范围）**：两类Python真实闭环、依赖故障/回滚、独立重启、自动/手动压缩、图片和B2负面/真实UI全部闭合，独立审查APPROVE。自动压缩中发现空摘要丢目标已TDD修复并发布worker66d5968；历史失败不改写。详见[最终验收](../poc4/docs/evidence/ai-python-environment/final-verification-20261105.md)，不授予全平台压力/故障/预算耗尽保证。
 - 云工作台、Java 和 Python 已按各自验收范围交付；旧 6A/6B gate 和已完成计划不再是默认待办。
 - AI 已交付代码修改/构建测试、应用反馈、多轮会话、上下文压缩及展示改进。阶段一已通过；阶段二工程验收仍为 **PAUSED / NOT_GRANTED**；阶段三由用户确认实际 CRUD 使用已完成使命。

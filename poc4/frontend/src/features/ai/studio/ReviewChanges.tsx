@@ -6,6 +6,7 @@ import { useWorkspaceSession } from '@/features/editor/workspaceSession';
 import { useQueryClient } from '@tanstack/react-query';
 import { projectKeys } from '@/features/projects/projectQueries';
 import { ValidationResult } from './ToolProgress';
+import { createUuid } from '@/lib/uuid';
 
 function ReviewFile({ file, decisions, review, finalized, editable, onChoose }: {
   file: FileChange; decisions: Record<string, boolean>; review: boolean; finalized: boolean; editable: boolean;
@@ -67,7 +68,7 @@ export function ReviewChanges({ userId, projectId, turn, blocked, onUpdate, onBu
     const intentKey = `${key}.apply`;
     let input: ApplyInput;
     try { input = JSON.parse(sessionStorage.getItem(intentKey) ?? 'null') as ApplyInput; } catch { input = null as unknown as ApplyInput; }
-    input ??= { requestId: application?.requestId ?? crypto.randomUUID(), hunkIds: application?.hunkIds ?? selected.map(h => h.id), expectedRevision: String(application?.baseRevision ?? turn.expectedRevision) };
+    input ??= { requestId: application?.requestId ?? createUuid(), hunkIds: application?.hunkIds ?? selected.map(h => h.id), expectedRevision: String(application?.baseRevision ?? turn.expectedRevision) };
     try { sessionStorage.setItem(intentKey, JSON.stringify(input)); } catch { setError('浏览器无法记录本次修改操作，请允许使用会话存储后重试。'); return; }
     setPending(true); setError(''); onBusy(true);
     let confirmed = false;

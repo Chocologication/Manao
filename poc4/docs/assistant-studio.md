@@ -1,6 +1,6 @@
 # AI 对话工作台
 
-范围：桌面主区域/右侧面板切换；同一会话手动选择聊天或任务；结果优先的工具摘要；自动应用或按文件审阅；个人 OpenAI 兼容模型；代码、文件、日志、图片、PDF、Word 附件。初始交付只做本地与 mock 验收；2026-11-12 已完成合并版本的集群发布与局部真实验证，但 HTTP 入口的 UUID 兼容问题阻断完整浏览器验收，见[云端发布与验证记录](evidence/assistant-studio/cloud-20261112.md)。
+范围：桌面主区域/右侧面板切换；同一会话手动选择聊天或任务；结果优先的工具摘要；自动应用或按文件审阅；个人 OpenAI 兼容模型；代码、文件、日志、图片、PDF、Word 附件。2026-11-12 的集群发布已完成局部真实验证，HTTP 入口的 UUID 兼容问题阻断了该次完整浏览器验收，见[原发布记录](evidence/assistant-studio/cloud-20261112.md)。2026-11-14 已发布最小修复，真实 HTTP 的配置弹窗和新建会话冒烟通过；本轮未验证真实模型聊天与任务审阅，见[修复发布与验证](evidence/assistant-studio/cloud-20261114-http-uuid.md)。
 
 聊天由独立只读服务执行，服务端只开放目录、文件与日志读取。项目任务沿用 AgentTask 的占用、工具账本、Worker fencing 和收尾协议。新会话保存每轮 mode/model/applyPolicy，任务请求与幂等 ID 绑定。既有任务和会话 API 继续兼容。
 
@@ -12,7 +12,30 @@
 
 附件按账号/项目隔离，限制文件大小及解析结果。图片按模型能力发送，PDF/Word 在服务端抽取文本。页面和模型不能选择跨账号资源，附件内容视为用户数据。
 
-本地验收覆盖：后端权限与凭据、假模型流、只读工具、提案 hunk/冲突/幂等、Worker、前端与桌面浏览器流程、类型检查和生产边界。其历史 NOT_RUN 不代表当前云端状态；本次已运行与未运行的真实场景以[2026-11-12 记录](evidence/assistant-studio/cloud-20261112.md)为准，不能将局部通过视为完整浏览器 PASS。
+本地验收覆盖：后端权限与凭据、假模型流、只读工具、提案 hunk/冲突/幂等、Worker、前端与桌面浏览器流程、类型检查和生产边界。其历史 NOT_RUN 不代表当前云端状态；真实场景分别以[2026-11-12 记录](evidence/assistant-studio/cloud-20261112.md)和[2026-11-14 修复记录](evidence/assistant-studio/cloud-20261114-http-uuid.md)为准，不能将局部通过视为完整浏览器 PASS。
+
+## HTTP UUID 兼容修复（2026-11-14）
+
+模型设置、新建会话（按钮及首次发送）、消息和审阅应用的五处 ID 生成统一使用 `createUuid()`。HTTPS 下优先使用原生 `crypto.randomUUID()`；普通 HTTP 缺少该方法时，沿用已有模块的 `crypto.getRandomValues()` 算法生成标准 v4 UUID。请求持久化、幂等与重试规则保持原样。
+
+本地结果：无模型时打开并保存配置的测试先复现 `crypto.randomUUID is not a function`，修复后相关单元测试 24/24 PASS；既有 Chromium mock 场景 11/11 PASS；新增的原生 API 可用/缺失两场景定向重跑 2/2 PASS，覆盖添加模型、首次发送隐式创建会话、手动新建会话、发送任务和审阅应用，并检查请求中的 UUID 与页面异常。缺失 API 由浏览器初始化脚本模拟，不代表真实公网或模型验收。
+
+类型检查、启用 AI 且关闭 mock 的生产构建、浏览器边界检查（36 项脚本测试及生产包）PASS；本次修改涉及文件的 lint 为 0 error / 5 条已有 Hook warning。浏览器首轮因未启用 AI 无法找到入口；启用后，新增测试因两个同名“新建会话”按钮定位歧义失败，限定对话区域并等待会话切换后通过。上述执行问题不记为一次全绿。
+
+从 `poc4/frontend` 复现：
+
+```powershell
+pnpm install --frozen-lockfile
+pnpm test src/lib/uuid.test.ts src/features/ai/studio/ModelSettings.test.tsx src/features/ai/studio/api.test.ts src/features/ai/studio/ValidationResult.test.tsx
+$env:VITE_ENABLE_AI = 'true'
+pnpm exec playwright test tests/e2e/assistant-studio.spec.ts --project=chromium
+$env:VITE_ENABLE_MOCK_API = 'false'
+$env:VITE_ENABLE_STAGE0_PAGE = 'false'
+pnpm build
+pnpm test:boundary
+```
+
+后续经用户授权，仅更新 frontend 镜像完成集群发布，取得 `HTTP_UUID_BROWSER_SMOKE_PASS`。真实模型配置保存、聊天与任务审阅因当前账号没有个人模型而 NOT_RUN；精确镜像、回滚与实测范围见[发布记录](evidence/assistant-studio/cloud-20261114-http-uuid.md)。2026-11-12 的 `BROWSER_ACCEPTANCE_FAILED` 保留为原部署结论。
 
 ## 工作台中文文案
 

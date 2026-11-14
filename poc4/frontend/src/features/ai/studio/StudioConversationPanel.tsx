@@ -5,6 +5,7 @@ import { ArrowDown, ArrowUp, Check, Clock3, Copy, FileCode2, History, ImagePlus,
 import { AgentConversationPanel, type AgentConversationPanelProps } from '../AgentConversationPanel';
 import { getAgentToolCallResult } from '@/api/agentTaskApi';
 import { getMe } from '@/api/authApi';
+import { createUuid } from '@/lib/uuid';
 import { authSession, connectionRegistry, handleSessionRevoked } from '@/app/appRuntime';
 import { ApiRequestError } from '@/api/ApiRequestError';
 import { useWorkspaceSession } from '@/features/editor/workspaceSession';
@@ -136,7 +137,7 @@ function StudioPanel(props: Props & { onLegacy(): void }) {
   const create = async () => {
     if (creating || sending || uploading) return;
     setCreating(true); setError('');
-    try { const conversation = await api.createConversation(projectId, crypto.randomUUID()); if (!scope.current.alive) return; await client.invalidateQueries({ queryKey: api.studioKeys.conversations(userId, projectId) }); choose(conversation.id); }
+    try { const conversation = await api.createConversation(projectId, createUuid()); if (!scope.current.alive) return; await client.invalidateQueries({ queryKey: api.studioKeys.conversations(userId, projectId) }); choose(conversation.id); }
     catch (failure) { if (scope.current.alive) setError(errorText(failure)); } finally { if (scope.current.alive) setCreating(false); }
   };
   const updateDraft = (next: Partial<Draft>) => setDraft(old => ({ ...old, ...next }));
@@ -148,8 +149,8 @@ function StudioPanel(props: Props & { onLegacy(): void }) {
     if (mode === 'TASK') props.onSubmissionPendingChange?.(true);
     let conversationId = selected;
     try {
-      if (!conversationId) { const created = await api.createConversation(projectId, crypto.randomUUID()); conversationId = created.id; scope.current.selected = conversationId; write(`${prefix}.selected`, conversationId); setSelected(conversationId); }
-      const input: TurnInput = retry ?? { id: crypto.randomUUID(), prompt: draft.text.trim(), mode, applyPolicy: draft.policy, modelId: model!.id,
+      if (!conversationId) { const created = await api.createConversation(projectId, createUuid()); conversationId = created.id; scope.current.selected = conversationId; write(`${prefix}.selected`, conversationId); setSelected(conversationId); }
+      const input: TurnInput = retry ?? { id: createUuid(), prompt: draft.text.trim(), mode, applyPolicy: draft.policy, modelId: model!.id,
         expectedRevision: getWorkspaceRevision(client, projectId) ?? revision ?? '0', attachmentIds: draft.attachments.map(a => a.id), references: draft.references };
       // Lost responses are reconciled against this exact request, including its original revision.
       sessionStorage.setItem(`${prefix}.intent.${conversationId}`, JSON.stringify(input)); setPendingIntent(input);

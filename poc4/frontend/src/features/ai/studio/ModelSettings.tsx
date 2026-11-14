@@ -2,8 +2,9 @@ import { useEffect, useRef, useState } from 'react';
 import { Plus, Trash2, X, KeyRound, Server } from 'lucide-react';
 import { deleteModel, saveModel } from './api';
 import { errorText, type ModelInput, type StudioModel } from './types';
+import { createUuid } from '@/lib/uuid';
 
-const empty = (): ModelInput => ({ id: crypto.randomUUID(), label: '', baseUrl: 'https://api.deepseek.com/v1', model: 'deepseek-chat', apiKey: '', vision: false, tools: true });
+const empty = (): ModelInput => ({ id: createUuid(), label: '', baseUrl: 'https://api.deepseek.com/v1', model: 'deepseek-chat', apiKey: '', vision: false, tools: true });
 export function ModelSettings({ models, onClose, onSaved }: { models: StudioModel[]; onClose(): void; onSaved(model?: StudioModel): void }) {
   const dialog = useRef<HTMLDialogElement>(null);
   const [input, setInput] = useState<ModelInput>(() => models[0] ? { ...models[0], apiKey: '' } : empty());
