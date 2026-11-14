@@ -52,3 +52,4 @@ build/
 /.zcodeignore
 /innovations
 /skills-lock.json
+.codex/environments/environment.toml

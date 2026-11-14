@@ -1,6 +1,6 @@
 # Node.js 项目运行环境
 
-本次增加 JavaScript / TypeScript 的控制台和 Web 服务模板。保留 Java、Python 环境；新模板只影响新建项目，不转换已有项目。实际验证结果见[本地验收记录](evidence/node-runtime/2026-11-04.md)。
+本次增加 JavaScript / TypeScript 的控制台和 Web 服务模板。保留 Java、Python 环境；新模板只影响新建项目，不转换已有项目。实际验证结果见[本地验收记录](evidence/node-runtime/2026-11-04.md)；2026-11-12 四模板已在真实集群完成控制台运行、Web 就绪及停止验证，范围和限制见[合并后发布记录](evidence/assistant-studio/cloud-20261112.md)。
 
 ## 使用入口
 
@@ -58,7 +58,7 @@ docker build -f poc4/node-runner/Dockerfile -t manao-node-runner:local .
 
 镜像包含 Node 24.15.0、pnpm 10.33.0、预置依赖 store 和共享 Java Web supervisor。运行用户为 UID 1001，沿用现有 Job 的只读根文件系统、无 ServiceAccount token 和资源限制。
 
-发布环境由管理员配置 `MANAO_NODE_RUNNER_IMAGE`，值必须为带 `@sha256:` 的不可变镜像引用。未配置时旧环境可继续启动，Node 运行明确返回 `NODE_RUNTIME_NOT_CONFIGURED`。本轮不发布镜像、不修改集群配置，也不推送仓库。
+发布环境由管理员配置 `MANAO_NODE_RUNNER_IMAGE`，值必须为带 `@sha256:` 的不可变镜像引用。未配置时旧环境可继续启动，Node 运行明确返回 `NODE_RUNTIME_NOT_CONFIGURED`。初始本地交付未发布镜像；2026-11-12 已配置真实 runner digest 并完成四模板集群验证，实际发布身份见[云端记录](evidence/assistant-studio/cloud-20261112.md)。
 
 ## 验证入口
 
