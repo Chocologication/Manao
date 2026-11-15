@@ -35,6 +35,7 @@ import { resetAppRuntime } from '../../test/renderApp';
 import { EditorWorkspace } from './EditorWorkspace';
 
 const ALICE = { username: 'alice', password: 'demo-pass' };
+vi.mock('../../features/editor/tabCompletion', () => ({ registerTabCompletion: vi.fn(() => vi.fn()) }));
 const POM = parseProjectRelativePath('pom.xml');
 const APP = parseProjectRelativePath('src/main/java/demo/App.java');
 const LARGE_NOTES = parseProjectRelativePath('docs/large-notes.md');

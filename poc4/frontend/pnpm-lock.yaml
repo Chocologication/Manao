@@ -59,6 +59,9 @@ importers:
       monaco-editor:
         specifier: ^0.55.1
         version: 0.55.1
+      monacopilot:
+        specifier: 1.2.12
+        version: 1.2.12(monaco-editor@0.55.1)
       react:
         specifier: ^19.2.8
         version: 19.2.8
@@ -672,6 +675,9 @@ packages:
       monaco-editor: '>= 0.25.0 < 1'
       react: ^16.8.0 || ^17.0.0 || ^18.0.0 || ^19.0.0
       react-dom: ^16.8.0 || ^17.0.0 || ^18.0.0 || ^19.0.0
+
+  '@monacopilot/core@1.2.12':
+    resolution: {integrity: sha512-x+CNsZMGf/Wv5qekhQqeCBtLxB+XartKOcBPY9OIIGtDnkgGvu+K59IO7ux9cpQ/mW0seunZB2tcvvspgK7WOw==}
 
   '@mswjs/interceptors@0.41.9':
     resolution: {integrity: sha512-VVPPgHyQ6ShqnrmDWuxjmUIsO9gWyOZFmuOfLd9LfBGQJwZfy0gvv9pbHSJuoFNIYC7ZDX9aoFwowjcdSC4E8w==}
@@ -2347,6 +2353,11 @@ packages:
   monaco-editor@0.55.1:
     resolution: {integrity: sha512-jz4x+TJNFHwHtwuV9vA9rMujcZRb0CEilTEwG2rRSpe/A7Jdkuj8xPKttCgOh+v/lkHy7HsZ64oj+q3xoAFl9A==}
 
+  monacopilot@1.2.12:
+    resolution: {integrity: sha512-FyFs8cFw/PnmmhkVPTbfTOGgGhxxBD3r0HoeDNFSjdDuA2bBl/vOMN2Vb6aPU8nO8pglRHyeLz8igiskRWKXug==}
+    peerDependencies:
+      monaco-editor: '>=0.41.0'
+
   motion-dom@12.43.0:
     resolution: {integrity: sha512-azKON4d9S65PEoFUiQTMTgPheEmzf2QngdRc50AKfJp9Q9mmcBVw22c8eMq9k8kxOFHdL7+WZY7N/5F/lwiDag==}
 
@@ -3427,6 +3438,8 @@ snapshots:
       monaco-editor: 0.55.1
       react: 19.2.8
       react-dom: 19.2.8(react@19.2.8)
+
+  '@monacopilot/core@1.2.12': {}
 
   '@mswjs/interceptors@0.41.9':
     dependencies:
@@ -5337,6 +5350,11 @@ snapshots:
     dependencies:
       dompurify: 3.2.7
       marked: 14.0.0
+
+  monacopilot@1.2.12(monaco-editor@0.55.1):
+    dependencies:
+      '@monacopilot/core': 1.2.12
+      monaco-editor: 0.55.1
 
   motion-dom@12.43.0:
     dependencies:
