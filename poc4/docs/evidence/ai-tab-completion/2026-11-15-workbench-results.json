@@ -1,0 +1,106 @@
+{
+  "scope": "Actual Manao workbench + Monaco 0.55.1 + Monacopilot 1.2.12 + fixed MSW responses. No live DeepSeek or cloud deployment.",
+  "command": "pnpm -C poc4/frontend exec playwright test tests/e2e/ai-tab-completion.spec.ts --project=chromium --workers=1 '--reporter=list,json'",
+  "planningCommit": "c9ceb1b883d08747b8ccbf5c62f10de5702fc960",
+  "implementationCommit": "07cd1b5d4a0df6eb965a2d1a9a960e7b1d5ea63a",
+  "e2eSha256": "70c5ebf59419be01577d2cc837236eaad43eef3b7952c17ef6c8796a27205844",
+  "mockHandlersSha256": "89216da0b7dd260db8fd1324e3f98db94a152ae819ec08486959f66c6e6cde3c",
+  "stats": {
+    "startTime": "2026-11-15T08:17:26.705Z",
+    "duration": 143045.294,
+    "expected": 8,
+    "skipped": 0,
+    "unexpected": 0,
+    "flaky": 0
+  },
+  "tests": [
+    {
+      "name": "Add.java: automatic idle suggestion, Tab, Undo, dirty, save and reopen",
+      "status": "PASS",
+      "durationMs": 7256,
+      "pageErrors": []
+    },
+    {
+      "name": "add.py: automatic idle suggestion, Tab, Undo, dirty, save and reopen",
+      "status": "PASS",
+      "durationMs": 7217,
+      "pageErrors": []
+    },
+    {
+      "name": "add.ts: automatic idle suggestion, Tab, Undo, dirty, save and reopen",
+      "status": "PASS",
+      "durationMs": 8873,
+      "pageErrors": [
+        {
+          "message": "Canceled",
+          "stack": "Canceled: Canceled\n    at LT.value (http://127.0.0.1:4173/assets/EditorTabs-DxYGS5iW.js:18:10848)\n    at O._deliver (http://127.0.0.1:4173/assets/EditorTabs-DxYGS5iW.js:18:2719)\n    at O.fire (http://127.0.0.1:4173/assets/EditorTabs-DxYGS5iW.js:18:3039)\n    at jS.cancel (http://127.0.0.1:4173/assets/EditorTabs-DxYGS5iW.js:18:6947)\n    at ti.cancel (http://127.0.0.1:4173/assets/EditorTabs-DxYGS5iW.js:18:7488)\n    at Object.dispose (http://127.0.0.1:4173/assets/EditorTabs-DxYGS5iW.js:18:7724)\n    at yt (http://127.0.0.1:4173/assets/EditorTabs-DxYGS5iW.js:16:24629)\n    at eG.clear (http://127.0.0.1:4173/assets/EditorTabs-DxYGS5iW.js:16:25403)\n    at http://127.0.0.1:4173/assets/EditorTabs-DxYGS5iW.js:129:6132\n    at http://127.0.0.1:4173/assets/EditorTabs-DxYGS5iW.js:129:6049",
+          "sources": [
+            "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/common/async.js:300",
+            "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/common/event.js:866",
+            "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/common/event.js:893",
+            "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/common/cancellation.js:45",
+            "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/common/cancellation.js:92",
+            "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/common/cancellation.js:112",
+            "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/common/lifecycle.js:24",
+            "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/common/lifecycle.js:114",
+            "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/common/observableInternal/utils/runOnChange.js:45",
+            "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/common/observableInternal/utils/runOnChange.js:34"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Esc cancels displayed and in-flight suggestions; typing, Tab indentation and saving still work",
+      "status": "PASS",
+      "durationMs": 8073,
+      "pageErrors": []
+    },
+    {
+      "name": "late responses cannot cross file/language switches and writable restoration works",
+      "status": "PASS",
+      "durationMs": 10202,
+      "pageErrors": []
+    },
+    {
+      "name": "keeps valid multiline suggestions and coexists with the local suggestions menu",
+      "status": "PASS",
+      "durationMs": 6792,
+      "pageErrors": [
+        {
+          "message": "Canceled",
+          "stack": "Canceled: Canceled\n    at LT.value (http://127.0.0.1:4173/assets/EditorTabs-DxYGS5iW.js:18:10848)\n    at O._deliver (http://127.0.0.1:4173/assets/EditorTabs-DxYGS5iW.js:18:2719)\n    at O.fire (http://127.0.0.1:4173/assets/EditorTabs-DxYGS5iW.js:18:3039)\n    at jS.cancel (http://127.0.0.1:4173/assets/EditorTabs-DxYGS5iW.js:18:6947)\n    at ti.cancel (http://127.0.0.1:4173/assets/EditorTabs-DxYGS5iW.js:18:7488)\n    at Object.dispose (http://127.0.0.1:4173/assets/EditorTabs-DxYGS5iW.js:18:7724)\n    at yt (http://127.0.0.1:4173/assets/EditorTabs-DxYGS5iW.js:16:24629)\n    at eG.clear (http://127.0.0.1:4173/assets/EditorTabs-DxYGS5iW.js:16:25403)\n    at http://127.0.0.1:4173/assets/EditorTabs-DxYGS5iW.js:129:6132\n    at http://127.0.0.1:4173/assets/EditorTabs-DxYGS5iW.js:129:6049",
+          "sources": [
+            "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/common/async.js:300",
+            "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/common/event.js:866",
+            "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/common/event.js:893",
+            "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/common/cancellation.js:45",
+            "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/common/cancellation.js:92",
+            "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/common/cancellation.js:112",
+            "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/common/lifecycle.js:24",
+            "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/common/lifecycle.js:114",
+            "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/common/observableInternal/utils/runOnChange.js:45",
+            "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/common/observableInternal/utils/runOnChange.js:34"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "logout disposes pending completion and leaves no suggestion on the login page",
+      "status": "PASS",
+      "durationMs": 6360,
+      "pageErrors": []
+    },
+    {
+      "name": "the same prefix in another project makes a new scoped request without a cached suggestion",
+      "status": "PASS",
+      "durationMs": 6317,
+      "pageErrors": []
+    }
+  ],
+  "liveJavaDeepSeek": "NOT_RUN",
+  "cloudAcceptance": "NOT_RUN",
+  "pageErrorFree": "FAILED",
+  "canceledRootCause": "NOT_REVERIFIED",
+  "pythonMultilineHistory": "FAILED",
+  "pythonMultilineFix": "WAIVED_BY_USER"
+}

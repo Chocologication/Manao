@@ -1,5 +1,5 @@
 import { DEFAULT_PROJECT_LIMIT } from '../contracts/project';
-import { http, HttpResponse } from 'msw';
+import { delay, http, HttpResponse } from 'msw';
 import type { ApiErrorBody } from '../contracts/api';
 import type { AuthUser, LoginRequest } from '../contracts/auth';
 import type {
@@ -879,6 +879,25 @@ export const dependencyHandlers = [
 
 export const handlers = [
   ...studioHandlers,
+  // Fixed completions exist only in the mock build and use synthetic buffers.
+  http.post('/api/v1/projects/:projectId/code-completions', async ({ request, params }) => {
+    const auth = authorize(request);
+    if ('response' in auth) return auth.response;
+    const project = readOwnedProjectSummary(auth.user.id, String(params.projectId));
+    if (!project) return jsonError(404, ENTRY_NOT_FOUND);
+    if (project.state !== 'READY') return HttpResponse.json({ completion: null });
+    const body = asRecord(await readJsonBody(request));
+    if (typeof body?.prefix !== 'string' || typeof body.suffix !== 'string'
+      || body.prefix.length > 16000 || body.suffix.length > 16000) return jsonError(422, VALIDATION_ERROR);
+    const prefix = body.prefix;
+    if (prefix.includes('__manao_tab_error__')) {
+      return HttpResponse.json({ code: 'AI_MODEL_UNAVAILABLE', message: 'Completion unavailable' }, { status: 503 });
+    }
+    if (prefix.includes('__manao_tab_slow__')) await delay(700);
+    const short = /__manao_tab_(fixture|slow)__/.test(prefix) && prefix.endsWith('return ');
+    const multiline = prefix.includes('__manao_tab_multiline__') && !prefix.includes('const total');
+    return HttpResponse.json({ completion: short ? 'a + b' : multiline ? 'const total = a + b;\nreturn total;' : null });
+  }),
   http.get('/api/v1/projects/:projectId/ai-capabilities',()=>HttpResponse.json({imageInput:false})),
   http.get('/api/v1/auth/options', () =>
     HttpResponse.json(getMockAuthOptions(), {

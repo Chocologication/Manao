@@ -10,7 +10,7 @@
 
 **Spec:** [最小适配设计](../specs/2026-11-15-ai-tab-completion-design.md)，执行前与本文一起读取。
 
-**Status:** 2026-11-15 完成规划自检；所有实施步骤 `NOT_RUN`。目标工作树为仓库下 `.worktree/ai-tab-completion`，分支 `codex/ai-tab-completion`；执行时以实际 checkout 为准。
+**Status:** 2026-11-15 已按用户后续明确授权实施 Task 1、Task 2 与 Task 3 本地范围。后端 22/22、前端 69/69、正式工作台固定响应 8/8、生产构建和边界 PASS；真实 Java + DeepSeek 与云端均 NOT_RUN，须独立授权。详见[分层验收](../../../poc4/docs/evidence/ai-tab-completion/acceptance.md)。以下“仅规划”表述保留编写时授权边界，以后续用户明确指令和本状态为准。
 
 ## Global Constraints
 
@@ -68,7 +68,7 @@ String complete(String prefix, String suffix)
 Response complete(Authentication authentication, String projectId, Request request)
 ```
 
-- [ ] **1. 先写并运行失败合同测试。** 用本机 `com.sun.net.httpserver.HttpServer` 捕获上游请求，不访问真实 DeepSeek；Controller 用 Mockito 的 ProjectService/client 和 standalone MockMvc。安全测试复用现有 JWT filter + mock UserStore 的方式，真正经过生产 SecurityFilterChain，不以手工 principal 伪造未登录测试。下表每行均对应明确断言。
+- [x] **1. 先写并运行失败合同测试。** 用本机 `com.sun.net.httpserver.HttpServer` 捕获上游请求，不访问真实 DeepSeek；Controller 用 Mockito 的 ProjectService/client 和 standalone MockMvc。安全测试复用现有 JWT filter + mock UserStore 的方式，真正经过生产 SecurityFilterChain，不以手工 principal 伪造未登录测试。下表每行均对应明确断言。
 
 | 用例 | 断言 |
 | --- | --- |
@@ -100,7 +100,7 @@ mvn -f poc4/backend/pom.xml '-Dtest=DeepSeekFimClientTest,CodeCompletionControll
 
 预期先因待实现合同失败；不要把环境无法启动或零测试当作有效失败。
 
-- [ ] **2. 实现 client 与配置。** Config 受 `SecurityConfig.BackendAuthCondition` 约束，通过 `@Value("${MANAO_FIM_API_KEY:}")` 和 `@Value("${MANAO_FIM_MODEL:deepseek-flash}")` 读取配置。复用一个连接超时 2 秒的 JDK HttpClient；请求 timeout 固定 5 秒。构造生产 URI 为 `https://api.deepseek.com/beta/completions`，不跟随重定向，不增加 HTTP/LLM 依赖。
+- [x] **2. 实现 client 与配置。** Config 受 `SecurityConfig.BackendAuthCondition` 约束，通过 `@Value("${MANAO_FIM_API_KEY:}")` 和 `@Value("${MANAO_FIM_MODEL:deepseek-flash}")` 读取配置。复用一个连接超时 2 秒的 JDK HttpClient；请求 timeout 固定 5 秒。构造生产 URI 为 `https://api.deepseek.com/beta/completions`，不跟随重定向，不增加 HTTP/LLM 依赖。
 
 模型 payload 的最小实现形状：
 
@@ -122,9 +122,9 @@ var request = HttpRequest.newBuilder(endpoint)
 
 缺 Key 在出网前返回 null；读取 JSON 后只接受字符串 text，空结果返回 null。JSON/字段形态错误抛固定 `ApiException("AI_MODEL_PROTOCOL", 502, "Completion response invalid")`；超时、网络、非 2xx 抛固定 `ApiException("AI_MODEL_UNAVAILABLE", 503, "Completion unavailable")`。捕获 InterruptedException 后恢复 interrupt 标记；异常不携带供应商正文。只记录固定类别与耗时，成功调用无需保存正文或另建日志/指标框架。
 
-- [ ] **3. 实现 Controller。** `@RestController` + 同一 BackendAuthCondition；`@RequestMapping("/api/v1/projects/{projectId}/code-completions")` + `@PostMapping`。方法使用 Authentication、`@PathVariable`、`@Valid @RequestBody Request`。先查 owner，再查 READY，再调用 client。找不到本人项目用既有 `ENTRY_NOT_FOUND` 404；禁止通过调用文件内容接口间接校验、读取磁盘或获取项目锁。
-- [ ] **4. 重跑本任务三组测试。** 必须全部通过；测试不依赖 MySQL/Kubernetes 或付费模型，测试结束关闭假服务与其线程。若安全测试会创建数据库，改用现有 mock UserStore 模式，而不是新增数据库夹具。
-- [ ] **5. 检查 diff 并形成后端任务提交。** 建议提交信息 `feat(completion): add platform DeepSeek FIM endpoint`；只暂存本任务文件。
+- [x] **3. 实现 Controller。** `@RestController` + 同一 BackendAuthCondition；`@RequestMapping("/api/v1/projects/{projectId}/code-completions")` + `@PostMapping`。方法使用 Authentication、`@PathVariable`、`@Valid @RequestBody Request`。先查 owner，再查 READY，再调用 client。找不到本人项目用既有 `ENTRY_NOT_FOUND` 404；禁止通过调用文件内容接口间接校验、读取磁盘或获取项目锁。
+- [x] **4. 重跑本任务三组测试。** 必须全部通过；测试不依赖 MySQL/Kubernetes 或付费模型，测试结束关闭假服务与其线程。若安全测试会创建数据库，改用现有 mock UserStore 模式，而不是新增数据库夹具。
+- [x] **5. 检查 diff 并形成后端任务提交。** 建议提交信息 `feat(completion): add platform DeepSeek FIM endpoint`；只暂存本任务文件。
 
 **交付：** 一个经过身份与项目归属验证、可被假上游独立测试的接口。此时编辑器功能仍未交付。
 
@@ -157,7 +157,7 @@ export function registerTabCompletion(options: {
 }): () => void;
 ```
 
-- [ ] **1. 写失败测试并运行。** API 测试使用项目既有 `setHttpClient(new HttpClient(...))` 和 fetch stub，断言相对路由、Bearer、两个字段及 signal。适配测试 mock `registerCompletion` 捕获 requestHandler，用可控 Promise 模拟旧响应晚到。按下表测试行为，不复制函数实现来“证明自身”。
+- [x] **1. 写失败测试并运行。** API 测试使用项目既有 `setHttpClient(new HttpClient(...))` 和 fetch stub，断言相对路由、Bearer、两个字段及 signal。适配测试 mock `registerCompletion` 捕获 requestHandler，用可控 Promise 模拟旧响应晚到。按下表测试行为，不复制函数实现来“证明自身”。
 
 | 场景 | 必须断言 |
 | --- | --- |
@@ -174,7 +174,7 @@ export function registerTabCompletion(options: {
 pnpm -C poc4/frontend exec vitest run src/api/codeCompletionApi.test.ts src/features/editor/tabCompletion.test.ts
 ```
 
-- [ ] **2. 锁定依赖并实现 API 文件。**
+- [x] **2. 锁定依赖并实现 API 文件。**
 
 ```powershell
 pnpm -C poc4/frontend add --save-exact monacopilot@1.2.12
@@ -190,7 +190,7 @@ return getHttpClient().request<FimCompletion>(
 
 不把整个 body.completionMetadata 透传后端；不修改全局 HttpClient 或 ApiErrorCode，沿用已有 AI_MODEL_* 错误码。
 
-- [ ] **3. 实现适配函数。** 注册的核心选项如下，检查条件使用实际 editor 状态，不只用 React 闭包中的旧 readOnly 值：
+- [x] **3. 实现适配函数。** 注册的核心选项如下，检查条件使用实际 editor 状态，不只用 React 闭包中的旧 readOnly 值：
 
 ```ts
 const registration = registerCompletion(monaco, editor, {
@@ -218,8 +218,8 @@ const registration = registerCompletion(monaco, editor, {
 
 在本模块定义 `syncRegistration()`，只负责一个活动注册：先注销旧 provider，比较 `toProjectModelUri(projectId, path)` 与实际 model.uri，并确认实际 model.getLanguageId() 等于传入 language；一致且可写才按上述选项注册，否则保持未注册。初始化和 model/语言事件调用它，事件调用前先使旧请求失效。组件 effect 在 props 身份变化时清理整个适配器并创建新的适配器；由此处理 React props 与 Monaco model 切换顺序不一致的窗口。不建立跨编辑器注册表。
 
-- [ ] **4. 挂到 WritableMonacoEditor。** onMount 将 editor 放入 state 触发 effect；保留现有 editorRef、revealTarget、Ctrl+S。effect 依赖 editor、projectId、path、language、readOnly，readonly 时立即清理，不销毁 model。不要改动 buffer registry、EditorWorkspace 写锁计算或保存 API。
-- [ ] **5. 运行定向回归与构建。**
+- [x] **4. 挂到 WritableMonacoEditor。** onMount 将 editor 放入 state 触发 effect；保留现有 editorRef、revealTarget、Ctrl+S。effect 依赖 editor、projectId、path、language、readOnly，readonly 时立即清理，不销毁 model。不要改动 buffer registry、EditorWorkspace 写锁计算或保存 API。
+- [x] **5. 运行定向回归与构建。**
 
 ```powershell
 pnpm -C poc4/frontend exec vitest run src/api/codeCompletionApi.test.ts src/features/editor/tabCompletion.test.ts src/components/files/EditorWorkspace.test.tsx
@@ -228,7 +228,7 @@ pnpm -C poc4/frontend test:boundary
 ```
 
 确认生产 bundle 未引入 Node-only 执行代码、模型 Key 或参考仓库本机路径。失败先定位是不是新依赖/adapter 导致；不借机升级 Monaco 或重构其他编辑器。
-- [ ] **6. 检查 diff 并形成前端任务提交。** 建议 `feat(editor): integrate monacopilot tab completion`；只提交本任务文件和锁文件。
+- [x] **6. 检查 diff 并形成前端任务提交。** 建议 `feat(editor): integrate monacopilot tab completion`；只提交本任务文件和锁文件。
 
 **交付：** 正式编辑器生命周期已接入、测试与构建通过；真实浏览器和真实模型状态仍需 Task 3。
 
@@ -244,7 +244,7 @@ pnpm -C poc4/frontend test:boundary
 
 **Interfaces:** 使用 Task 1 的路由和 Task 2 的实际编辑器；不创建第二套代理/浏览器演示页面。参考 `tests/e2e/stage3.spec.ts` 现有登录、文件创建、保存与重开流程，不扩建通用测试平台。
 
-- [ ] **1. 写正式工作台浏览器回归。** 增加的 MSW 路由默认返回 null，避免改变其他测试；仅合成上下文含 `__manao_tab_fixture__` 时返回固定候选，含 `__manao_tab_slow__` 时延迟 700 ms，含 `__manao_tab_error__` 时返回 503。这些分支只在 mocks 目录，禁止出现在生产功能模块。用实际登录、文件树和 Monaco 验证，不复用独立 browser-spike 页面作为通过依据。
+- [x] **1. 写正式工作台浏览器回归。** 增加的 MSW 路由默认返回 null，避免改变其他测试；仅合成上下文含 `__manao_tab_fixture__` 时返回固定候选，含 `__manao_tab_slow__` 时延迟 700 ms，含 `__manao_tab_error__` 时返回 503。这些分支只在 mocks 目录，禁止出现在生产功能模块。用实际登录、文件树和 Monaco 验证，不复用独立 browser-spike 页面作为通过依据。
 
 固定返回内容以 Java/Python/TypeScript 的 `a + b` 短表达式为主，另加一个已知可拼接的多行样本。后续 follow-up 返回 null 即可，通过请求计数确认接受后仍发起请求。不得由测试调用 registration.trigger() 代替默认 onIdle 主流程。
 
@@ -263,7 +263,7 @@ pnpm -C poc4/frontend test:boundary
 
 回归记录 `pageerror`，不得用 catch 全部吞掉。既有 Canceled 符合设计中的例外才单列；新增异常让用例失败。换行失败复用原证据，不新增一个永远失败的阻断测试。
 
-- [ ] **2. 运行定向浏览器检查并重建生产包。**
+- [x] **2. 运行定向浏览器检查并重建生产包。**
 
 ```powershell
 pnpm -C poc4/frontend exec playwright test tests/e2e/ai-tab-completion.spec.ts --project=chromium
@@ -279,7 +279,7 @@ pnpm -C poc4/frontend test:boundary
 
 - [ ] **4. 云端交付与冒烟（独立发布授权后）。** 对同一候选构建增量更新已有 frontend/backend，不创建新服务/PVC；后端现有部署环境配置两个 FIM 变量。关闭本地 Vite/backend/隧道，通过已部署浏览器完成一次自动建议、Tab、保存重开和切文件；验证浏览器网络只连码瑙 API，Key 留在后端。记录构建/镜像身份、目标环境和结果；没有执行就明确云端 `NOT_RUN`，不声称目标已云端交付。移除 Key 可停用模型请求，完整回滚沿用已有前后端镜像回滚流程。
 
-- [ ] **5. 完成文档、范围自检与提交。** acceptance 按下表记录实际值，不以单一全绿结论掩盖例外；功能文档说明配置与行为，进度页只链接对应验收。保留旧的 `2026-11-15-validation.md` 及 JSON，不把历史失败重写成成功。建议提交信息 `test(completion): verify workbench tab completion flow`。
+- [x] **5. 完成文档、范围自检与提交。** acceptance 按下表记录实际值，不以单一全绿结论掩盖例外；功能文档说明配置与行为，进度页只链接对应验收。保留旧的 `2026-11-15-validation.md` 及 JSON，不把历史失败重写成成功。建议提交信息 `test(completion): verify workbench tab completion flow`。
 
 | 验收栏目 | 规划时状态 | 更新依据 |
 | --- | --- | --- |
