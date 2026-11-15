@@ -45,8 +45,10 @@ pnpm -C poc4/frontend test:boundary
 
 浏览器回归运行实际工作台与实际 Monaco/Monacopilot，使用 mock 构建中的合成固定响应。其他缓冲区默认空建议；fixture、延迟和失败分支仅存在于 mocks。回归后重新 build 生产包，避免把 mock dist 用于交付。真实 Java + DeepSeek 与云端发布按独立授权执行；回滚可移除后端 Key 停用请求，镜像回滚沿用既有前后端流程。
 
+2026-11-15 已按后续授权完成[真实联调与云端发布](evidence/ai-tab-completion/2026-11-15-cloud.md)。真实环境复验使用 `pnpm -C poc4/frontend exec playwright test --config playwright.ai-tab-completion.config.ts`；通过私有环境输入 `MANAO_TAB_BASE_URL`、`MANAO_TAB_USERNAME`、`MANAO_TAB_PASSWORD`、`MANAO_TAB_PROJECT_ID` 和 `MANAO_TAB_PHASE`（`local` / `cloud`）。该配置不启动服务、不 mock、不自动重试，关闭 trace/录像/截图。source map 可用 `MANAO_TAB_SOURCE_MAP_ROOT` 指向同一候选镜像提取的 dist，证据输出使用 `MANAO_TAB_EVIDENCE_FILE`。
+
 ## 已知边界
 
 - Python 多行换行/插入范围缺陷仍保留[历史 FAILED](evidence/ai-tab-completion/2026-11-15-validation.md)，本次修复为 `WAIVED_BY_USER`。多行建议继续启用，不保证每个候选可直接编译。
-- 历史 `Canceled` 在正式工作台也可复现。测试保留原始栈，通过 source map 仅识别相同的 Monaco `async.js:300 → cancellation.js:45 → runOnChange.js:45` 路径；新增异常或功能阻断继续失败，生产错误处理没有被屏蔽。
+- 历史 `Canceled` 在正式工作台也可复现。测试保留原始栈，通过 source map 仅识别相同的 Monaco `async.js:300 → cancellation.js:45 → runOnChange.js:45`，以及历史已有的 `Delayer.cancel async.js:251 → WordHighlighter.dispose wordHighlighter.js:652` 路径；新增异常或功能阻断继续失败，生产错误处理没有被屏蔽。
 - 浏览器取消不保证上游立即停算或停止计费；后端通过 5 秒截止收束等待。不增加限流、全局并发、配额或缓存，也不声明可靠 p95 或复杂代码质量。

@@ -10,7 +10,7 @@
 
 **Spec:** [最小适配设计](../specs/2026-11-15-ai-tab-completion-design.md)，执行前与本文一起读取。
 
-**Status:** 2026-11-15 已按用户后续明确授权实施 Task 1、Task 2 与 Task 3 本地范围。后端 22/22、前端 69/69、正式工作台固定响应 8/8、生产构建和边界 PASS；真实 Java + DeepSeek 与云端均 NOT_RUN，须独立授权。详见[分层验收](../../../poc4/docs/evidence/ai-tab-completion/acceptance.md)。以下“仅规划”表述保留编写时授权边界，以后续用户明确指令和本状态为准。
+**Status:** 2026-11-15 三个任务已完成。后端 22/22、前端 69/69、固定响应工作台 8/8、生产构建与边界 PASS；用户后续明确授权的真实 Java + DeepSeek 及同一候选镜像云端三语言冒烟亦 PASS。详见[分层验收](../../../poc4/docs/evidence/ai-tab-completion/acceptance.md)及[发布记录](../../../poc4/docs/evidence/ai-tab-completion/2026-11-15-cloud.md)。以下“仅规划/另行授权”表述保留编写时边界，以后续用户明确指令和本状态为准；原失败和豁免不改写。
 
 ## Global Constraints
 
@@ -273,11 +273,11 @@ pnpm -C poc4/frontend test:boundary
 
 现有 playwright.config.ts 会启动 mock 构建；后两条检查最终生产构建，避免拿被 mock 覆盖的 dist 做交付。通过后不自动扩跑完整阶段矩阵。
 
-- [ ] **3. 真实 Java + DeepSeek 联调。** 在另行授权执行与模型调用后，使用本次工作树构建、真实 Java 接口和工作台。仓库外加载 Key 到 `MANAO_FIM_API_KEY`，不将私人路径或 Key 固化进脚本。使用专用测试项目的合成 Java/Python/TypeScript 文件，各一次自动短补全 → Tab → 保存 → 重开；观察 follow-up、切文件与错误退化。记录触发到灰字的时间（含 400 ms）、接口耗时、接受文本、保存结果与实际模型名；不声称得到可靠 p95。
+- [x] **3. 真实 Java + DeepSeek 联调。** 在另行授权执行与模型调用后，使用本次工作树构建、真实 Java 接口和工作台。仓库外加载 Key 到 `MANAO_FIM_API_KEY`，不将私人路径或 Key 固化进脚本。使用专用测试项目的合成 Java/Python/TypeScript 文件，各一次自动短补全 → Tab → 保存 → 重开；观察 follow-up、切文件与错误退化。记录触发到灰字的时间（含 400 ms）、接口耗时、接受文本、保存结果与实际模型名；不声称得到可靠 p95。
 
 不要把上一轮临时 Node 代理接入本次链路。未运行标记 `NOT_RUN`，不能把固定响应 PASS 升格为真实模型 PASS；真实项目仅保存合成测试内容，沿用既有 disposable 资源和 owner 范围要求。
 
-- [ ] **4. 云端交付与冒烟（独立发布授权后）。** 对同一候选构建增量更新已有 frontend/backend，不创建新服务/PVC；后端现有部署环境配置两个 FIM 变量。关闭本地 Vite/backend/隧道，通过已部署浏览器完成一次自动建议、Tab、保存重开和切文件；验证浏览器网络只连码瑙 API，Key 留在后端。记录构建/镜像身份、目标环境和结果；没有执行就明确云端 `NOT_RUN`，不声称目标已云端交付。移除 Key 可停用模型请求，完整回滚沿用已有前后端镜像回滚流程。
+- [x] **4. 云端交付与冒烟（独立发布授权后）。** 对同一候选构建增量更新已有 frontend/backend，不创建新服务/PVC；后端现有部署环境配置两个 FIM 变量。关闭本地 Vite/backend/隧道，通过已部署浏览器完成一次自动建议、Tab、保存重开和切文件；验证浏览器网络只连码瑙 API，Key 留在后端。记录构建/镜像身份、目标环境和结果；没有执行就明确云端 `NOT_RUN`，不声称目标已云端交付。移除 Key 可停用模型请求，完整回滚沿用已有前后端镜像回滚流程。
 
 - [x] **5. 完成文档、范围自检与提交。** acceptance 按下表记录实际值，不以单一全绿结论掩盖例外；功能文档说明配置与行为，进度页只链接对应验收。保留旧的 `2026-11-15-validation.md` 及 JSON，不把历史失败重写成成功。建议提交信息 `test(completion): verify workbench tab completion flow`。
 

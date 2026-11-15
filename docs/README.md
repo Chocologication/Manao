@@ -24,7 +24,7 @@
 <summary>AI 设计与后续修改</summary>
 
 - 选型、已确认需求与原始分期：[AI 方案评估](research/2026-10-13-ai-integration-framework-evaluation.md)。这是设计来源，当前交付状态看项目进度。
-- Monaco AI Tab 补全：[使用与配置](../poc4/docs/ai-tab-completion.md)、[本地验收](../poc4/docs/evidence/ai-tab-completion/acceptance.md)、[设计](superpowers/specs/2026-11-15-ai-tab-completion-design.md)、[计划](superpowers/plans/2026-11-15-ai-tab-completion.md)。正式接入与本地固定响应闭环已验证；真实模型及云端 NOT_RUN，Python 换行修复 WAIVED_BY_USER。
+- Monaco AI Tab 补全：[使用与配置](../poc4/docs/ai-tab-completion.md)、[分层验收](../poc4/docs/evidence/ai-tab-completion/acceptance.md)、[真实联调与云端发布](../poc4/docs/evidence/ai-tab-completion/2026-11-15-cloud.md)、[设计](superpowers/specs/2026-11-15-ai-tab-completion-design.md)、[计划](superpowers/plans/2026-11-15-ai-tab-completion.md)。本地固定响应、真实 Java + DeepSeek 与云端三语言冒烟 PASS；Python 换行修复 WAIVED_BY_USER。
 - 任务收尾、持久化回执、Run 恢复与用户结束控制：[收尾修复设计](superpowers/specs/2026-10-25-ai-terminal-settlement-design.md)。
 - 阶段四暂停接管、同会话手动继续：[控制与恢复设计](superpowers/specs/2026-10-27-pi-stage4-control-recovery-design.md)，其末尾链接五任务实施计划和Agent交接；实现与已授权云端验证已完成，范围见[阶段四验收](../poc4/docs/evidence/ai-stage4/acceptance.md)。
 - 多轮会话与压缩：[会话上下文设计](superpowers/specs/2026-10-19-ai-conversation-context-design.md)。

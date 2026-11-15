@@ -6,7 +6,7 @@
 
 ## 当前结论
 
-- 2026-11-15 AI Tab 补全已在 `codex/ai-tab-completion` 本地接入 Monacopilot 与 Java FIM API，固定响应工作台闭环 PASS；真实 Java + DeepSeek 及云端发布/验收 NOT_RUN，Python 换行修复 WAIVED_BY_USER，既有 Canceled 单列保留。见[分层验收](../poc4/docs/evidence/ai-tab-completion/acceptance.md)。
+- 2026-11-15 AI Tab 补全已接入并增量发布 frontend/backend：固定响应、本地真实 Java + DeepSeek、云端三语言自动补全/Tab/Undo/保存重开均 PASS；Python 换行修复 WAIVED_BY_USER，既有 Canceled 单列保留。见[分层验收](../poc4/docs/evidence/ai-tab-completion/acceptance.md)与[发布记录](../poc4/docs/evidence/ai-tab-completion/2026-11-15-cloud.md)。
 - 新版 AI 对话工作台已部署：2026-11-14 修复普通 HTTP 的 UUID 兼容问题，真实配置弹窗与新建会话取得 `HTTP_UUID_BROWSER_SMOKE_PASS`，见[修复记录](../poc4/docs/evidence/assistant-studio/cloud-20261114-http-uuid.md)；真实模型聊天与任务审阅本轮 NOT_RUN。此前只读聊天、Node 审阅应用、大图片、Python 目录及 pytest 的局部验证见[2026-11-12 记录](../poc4/docs/evidence/assistant-studio/cloud-20261112.md)，不合并推断完整浏览器 PASS。本地历史结果见[PR 整合验收](../poc4/docs/evidence/assistant-studio/2026-11-05-pr-integration.md)。
 - AI四模板环境与Python工具链取得 **AI_PYTHON_CLOSED_LOOP_PASS（原设计E1–R1范围）**：两类Python真实闭环、依赖故障/回滚、独立重启、自动/手动压缩、图片和B2负面/真实UI全部闭合，独立审查APPROVE。自动压缩中发现空摘要丢目标已TDD修复并发布worker66d5968；历史失败不改写。详见[最终验收](../poc4/docs/evidence/ai-python-environment/final-verification-20261105.md)，不授予全平台压力/故障/预算耗尽保证。
 - 云工作台、Java 和 Python 已按各自验收范围交付；旧 6A/6B gate 和已完成计划不再是默认待办。

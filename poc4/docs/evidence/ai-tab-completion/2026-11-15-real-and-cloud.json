@@ -1,0 +1,589 @@
+{
+  "validatedAt": "2026-11-15T09:40:10.409Z",
+  "release": {
+    "source": "1e368245a965f89d270c388baa956a383ce9152e",
+    "backend": {
+      "tag": "ai-tab-backend-20261115-1e368245",
+      "indexDigest": "sha256:10b5da3a5cfc834400d012e6d2d78488e994334d25dc0538b5bbf0e77708f363",
+      "platformDigest": "sha256:b4e813aef1ac4cb5bcd6407b7e0d0c8d1b8156c203c940fb958d72ce52f7e943",
+      "jarSha256": "c7e475588d47ac7cd53bd8201d8c0c0896cd4e0196b148c096741ed242a94a2d"
+    },
+    "frontend": {
+      "tag": "ai-tab-frontend-20261115-1e368245",
+      "indexDigest": "sha256:1968da53b29e3467acdf7ad935150d3c9e839cf62fc1dfa4a30ec7d57f1da783",
+      "platformDigest": "sha256:c13d9ed46aa62b5fe4c261cf5a5e9bee2b9882831b6438fb118e50e445b0e2aa",
+      "boundary": "PASS",
+      "javascriptAssets": 155
+    },
+    "namespace": "manao-stage6b",
+    "context": "kubernetes-admin@learn",
+    "origin": "http://1.12.245.235:30080"
+  },
+  "deployed": {
+    "checkedAt": "2026-11-15T09:23:31.182Z",
+    "deployments": [
+      {
+        "name": "backend",
+        "generation": 72,
+        "ready": 1,
+        "image": "chocologic/manao_images_repository@sha256:10b5da3a5cfc834400d012e6d2d78488e994334d25dc0538b5bbf0e77708f363"
+      },
+      {
+        "name": "frontend",
+        "generation": 47,
+        "ready": 1,
+        "image": "chocologic/manao_images_repository@sha256:1968da53b29e3467acdf7ad935150d3c9e839cf62fc1dfa4a30ec7d57f1da783"
+      },
+      {
+        "name": "manao-pi-worker",
+        "generation": 51,
+        "ready": 1,
+        "image": "chocologic/manao_images_repository@sha256:84ff2ed7b916fb32df96a4f78d80ef9b99de6187ad9048c546e891f19f605997"
+      }
+    ],
+    "mysqlPVC": {
+      "uid": "d6b6bc54-6e34-4bac-9897-436cf9e84cb3",
+      "phase": "Bound"
+    },
+    "migrations": "21\t-2133034828\t1\n20\t1710106007\t1\n19\t-2141216164\t1",
+    "workerUnchanged": true
+  },
+  "runtimePods": [
+    {
+      "name": "backend-65cbfbbcf6-jxrdl",
+      "uid": "2fcb659e-cd24-4af1-9e9a-021b1930f21c",
+      "containers": [
+        {
+          "name": "backend",
+          "ready": true,
+          "restartCount": 0,
+          "imageID": "docker.io/chocologic/manao_images_repository@sha256:10b5da3a5cfc834400d012e6d2d78488e994334d25dc0538b5bbf0e77708f363"
+        }
+      ]
+    },
+    {
+      "name": "frontend-85fc6dd64b-hscs6",
+      "uid": "d0ef7692-8bd5-4796-a4b6-3d6ad9304cd1",
+      "containers": [
+        {
+          "name": "frontend",
+          "ready": true,
+          "restartCount": 0,
+          "imageID": "docker.io/chocologic/manao_images_repository@sha256:1968da53b29e3467acdf7ad935150d3c9e839cf62fc1dfa4a30ec7d57f1da783"
+        }
+      ]
+    }
+  ],
+  "local": {
+    "phase": "local",
+    "origin": "http://127.0.0.1:4173",
+    "projectId": "424471b1-5033-45c3-b02f-f865f33ee7b5",
+    "model": "deepseek-flash",
+    "modelEvidence": "Configured/requested model; product endpoint does not forward upstream model metadata",
+    "rows": [
+      {
+        "file": "TabCompletionSample.java",
+        "status": "PASS",
+        "requestMillis": 1501,
+        "ghostMillis": 1523,
+        "completion": "a + b",
+        "accepted": "class TabCompletionSample {\n    static int add(int a, int b) {\n        return a + b;\n    }\n}\n",
+        "persisted": true,
+        "followUpObserved": true
+      },
+      {
+        "file": "tab_completion_sample.py",
+        "status": "PASS",
+        "requestMillis": 1195,
+        "ghostMillis": 1201,
+        "completion": "a + b",
+        "accepted": "def add(a, b):\n    return a + b\n",
+        "persisted": true,
+        "followUpObserved": true
+      },
+      {
+        "file": "tab_completion_sample.ts",
+        "status": "PASS",
+        "requestMillis": 1178,
+        "ghostMillis": 1189,
+        "completion": "a + b",
+        "accepted": "function add(a: number, b: number): number {\n    return a + b;\n}\n",
+        "persisted": true,
+        "followUpObserved": true
+      }
+    ],
+    "requests": [
+      {
+        "path": "/api/v1/projects/424471b1-5033-45c3-b02f-f865f33ee7b5/code-completions",
+        "started": 1794734202035,
+        "prefix": "class TabCompletionSample {\n    static int add(int a, int b) {\n        return ",
+        "suffix": ";\n    }\n}\n"
+      },
+      {
+        "path": "/api/v1/projects/424471b1-5033-45c3-b02f-f865f33ee7b5/code-completions",
+        "started": 1794734203551,
+        "prefix": "class TabCompletionSample {\n    static int add(int a, int b) {\n        return a + b",
+        "suffix": ";\n    }\n}\n"
+      },
+      {
+        "path": "/api/v1/projects/424471b1-5033-45c3-b02f-f865f33ee7b5/code-completions",
+        "started": 1794734204953,
+        "prefix": "def add(a, b):\n    return ",
+        "suffix": "\n"
+      },
+      {
+        "path": "/api/v1/projects/424471b1-5033-45c3-b02f-f865f33ee7b5/code-completions",
+        "started": 1794734206147,
+        "prefix": "def add(a, b):\n    return a + b",
+        "suffix": "\n"
+      },
+      {
+        "path": "/api/v1/projects/424471b1-5033-45c3-b02f-f865f33ee7b5/code-completions",
+        "started": 1794734207509,
+        "prefix": "function add(a: number, b: number): number {\n    return ",
+        "suffix": ";\n}\n"
+      },
+      {
+        "path": "/api/v1/projects/424471b1-5033-45c3-b02f-f865f33ee7b5/code-completions",
+        "started": 1794734208698,
+        "prefix": "function add(a: number, b: number): number {\n    return a + b",
+        "suffix": ";\n}\n"
+      }
+    ],
+    "pageErrors": [
+      {
+        "message": "Canceled",
+        "stack": "Canceled: Canceled\n    at FO.value (http://127.0.0.1:4173/assets/WorkbenchPage-kdEpTMCi.js:8:10859)\n    at X._deliver (http://127.0.0.1:4173/assets/WorkbenchPage-kdEpTMCi.js:8:2721)\n    at X.fire (http://127.0.0.1:4173/assets/WorkbenchPage-kdEpTMCi.js:8:3041)\n    at UI.cancel (http://127.0.0.1:4173/assets/WorkbenchPage-kdEpTMCi.js:8:6954)\n    at Vn.cancel (http://127.0.0.1:4173/assets/WorkbenchPage-kdEpTMCi.js:8:7496)\n    at Object.dispose (http://127.0.0.1:4173/assets/WorkbenchPage-kdEpTMCi.js:8:7732)\n    at qi (http://127.0.0.1:4173/assets/WorkbenchPage-kdEpTMCi.js:6:24641)\n    at qce.clear (http://127.0.0.1:4173/assets/WorkbenchPage-kdEpTMCi.js:6:25417)\n    at http://127.0.0.1:4173/assets/WorkbenchPage-kdEpTMCi.js:119:6135\n    at http://127.0.0.1:4173/assets/WorkbenchPage-kdEpTMCi.js:119:6050",
+        "sources": [
+          "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/common/async.js:300",
+          "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/common/event.js:866",
+          "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/common/event.js:893",
+          "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/common/cancellation.js:45",
+          "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/common/cancellation.js:92",
+          "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/common/cancellation.js:112",
+          "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/common/lifecycle.js:24",
+          "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/common/lifecycle.js:114",
+          "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/common/observableInternal/utils/runOnChange.js:45",
+          "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/common/observableInternal/utils/runOnChange.js:34"
+        ]
+      },
+      {
+        "message": "Canceled",
+        "stack": "Canceled: Canceled\n    at FO.value (http://127.0.0.1:4173/assets/WorkbenchPage-kdEpTMCi.js:8:10859)\n    at X._deliver (http://127.0.0.1:4173/assets/WorkbenchPage-kdEpTMCi.js:8:2721)\n    at X.fire (http://127.0.0.1:4173/assets/WorkbenchPage-kdEpTMCi.js:8:3041)\n    at UI.cancel (http://127.0.0.1:4173/assets/WorkbenchPage-kdEpTMCi.js:8:6954)\n    at Vn.cancel (http://127.0.0.1:4173/assets/WorkbenchPage-kdEpTMCi.js:8:7496)\n    at Object.dispose (http://127.0.0.1:4173/assets/WorkbenchPage-kdEpTMCi.js:8:7732)\n    at qi (http://127.0.0.1:4173/assets/WorkbenchPage-kdEpTMCi.js:6:24641)\n    at qce.clear (http://127.0.0.1:4173/assets/WorkbenchPage-kdEpTMCi.js:6:25417)\n    at http://127.0.0.1:4173/assets/WorkbenchPage-kdEpTMCi.js:119:6135\n    at http://127.0.0.1:4173/assets/WorkbenchPage-kdEpTMCi.js:119:6050",
+        "sources": [
+          "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/common/async.js:300",
+          "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/common/event.js:866",
+          "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/common/event.js:893",
+          "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/common/cancellation.js:45",
+          "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/common/cancellation.js:92",
+          "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/common/cancellation.js:112",
+          "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/common/lifecycle.js:24",
+          "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/common/lifecycle.js:114",
+          "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/common/observableInternal/utils/runOnChange.js:45",
+          "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/common/observableInternal/utils/runOnChange.js:34"
+        ]
+      },
+      {
+        "message": "Canceled",
+        "stack": "Canceled: Canceled\n    at FO.value (http://127.0.0.1:4173/assets/WorkbenchPage-kdEpTMCi.js:8:10859)\n    at X._deliver (http://127.0.0.1:4173/assets/WorkbenchPage-kdEpTMCi.js:8:2721)\n    at X.fire (http://127.0.0.1:4173/assets/WorkbenchPage-kdEpTMCi.js:8:3041)\n    at UI.cancel (http://127.0.0.1:4173/assets/WorkbenchPage-kdEpTMCi.js:8:6954)\n    at Vn.cancel (http://127.0.0.1:4173/assets/WorkbenchPage-kdEpTMCi.js:8:7496)\n    at Object.dispose (http://127.0.0.1:4173/assets/WorkbenchPage-kdEpTMCi.js:8:7732)\n    at qi (http://127.0.0.1:4173/assets/WorkbenchPage-kdEpTMCi.js:6:24641)\n    at qce.clear (http://127.0.0.1:4173/assets/WorkbenchPage-kdEpTMCi.js:6:25417)\n    at http://127.0.0.1:4173/assets/WorkbenchPage-kdEpTMCi.js:119:6135\n    at http://127.0.0.1:4173/assets/WorkbenchPage-kdEpTMCi.js:119:6050",
+        "sources": [
+          "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/common/async.js:300",
+          "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/common/event.js:866",
+          "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/common/event.js:893",
+          "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/common/cancellation.js:45",
+          "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/common/cancellation.js:92",
+          "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/common/cancellation.js:112",
+          "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/common/lifecycle.js:24",
+          "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/common/lifecycle.js:114",
+          "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/common/observableInternal/utils/runOnChange.js:45",
+          "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/common/observableInternal/utils/runOnChange.js:34"
+        ]
+      },
+      {
+        "message": "Canceled",
+        "stack": "Canceled: Canceled\n    at ad.cancel (http://127.0.0.1:4173/assets/WorkbenchPage-kdEpTMCi.js:8:10351)\n    at ad.dispose (http://127.0.0.1:4173/assets/WorkbenchPage-kdEpTMCi.js:8:10463)\n    at qi (http://127.0.0.1:4173/assets/WorkbenchPage-kdEpTMCi.js:6:24641)\n    at qce.clear (http://127.0.0.1:4173/assets/WorkbenchPage-kdEpTMCi.js:6:25417)\n    at qce.dispose (http://127.0.0.1:4173/assets/WorkbenchPage-kdEpTMCi.js:6:25327)\n    at TW.dispose (http://127.0.0.1:4173/assets/WorkbenchPage-kdEpTMCi.js:460:25897)\n    at Xm.dispose (http://127.0.0.1:4173/assets/WorkbenchPage-kdEpTMCi.js:460:26967)\n    at qi (http://127.0.0.1:4173/assets/WorkbenchPage-kdEpTMCi.js:6:24641)\n    at LA.clearAndDisposeAll (http://127.0.0.1:4173/assets/WorkbenchPage-kdEpTMCi.js:6:26840)\n    at LA.dispose (http://127.0.0.1:4173/assets/WorkbenchPage-kdEpTMCi.js:6:26774)",
+        "sources": [
+          "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/common/async.js:251",
+          "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/common/async.js:260",
+          "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/common/lifecycle.js:24",
+          "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/common/lifecycle.js:114",
+          "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/common/lifecycle.js:98",
+          "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/editor/contrib/wordHighlighter/browser/wordHighlighter.js:652",
+          "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/editor/contrib/wordHighlighter/browser/wordHighlighter.js:709",
+          "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/common/lifecycle.js:24",
+          "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/common/lifecycle.js:278",
+          "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/common/lifecycle.js:268"
+        ]
+      }
+    ],
+    "unexpectedPageErrors": 0,
+    "status": "PASS"
+  },
+  "cloud": {
+    "phase": "cloud",
+    "origin": "http://1.12.245.235:30080",
+    "projectId": "ee2abadd-cff1-4a5a-9984-3321d1197193",
+    "model": "deepseek-flash",
+    "modelEvidence": "Configured/requested model; product endpoint does not forward upstream model metadata",
+    "rows": [
+      {
+        "file": "TabCompletionSample.java",
+        "status": "PASS",
+        "requestMillis": 1276,
+        "ghostMillis": 1302,
+        "completion": "a + b",
+        "accepted": "class TabCompletionSample {\n    static int add(int a, int b) {\n        return a + b;\n    }\n}\n",
+        "persisted": true,
+        "followUpObserved": true
+      },
+      {
+        "file": "tab_completion_sample.py",
+        "status": "PASS",
+        "requestMillis": 1316,
+        "ghostMillis": 1324,
+        "completion": "a + b",
+        "accepted": "def add(a, b):\n    return a + b\n",
+        "persisted": true,
+        "followUpObserved": true
+      },
+      {
+        "file": "tab_completion_sample.ts",
+        "status": "PASS",
+        "requestMillis": 1615,
+        "ghostMillis": 1625,
+        "completion": "a + b",
+        "accepted": "function add(a: number, b: number): number {\n    return a + b;\n}\n",
+        "persisted": true,
+        "followUpObserved": true
+      }
+    ],
+    "requests": [
+      {
+        "path": "/api/v1/projects/ee2abadd-cff1-4a5a-9984-3321d1197193/code-completions",
+        "started": 1794735486734,
+        "prefix": "class TabCompletionSample {\n    static int add(int a, int b) {\n        return ",
+        "suffix": ";\n    }\n}\n"
+      },
+      {
+        "path": "/api/v1/projects/ee2abadd-cff1-4a5a-9984-3321d1197193/code-completions",
+        "started": 1794735488014,
+        "prefix": "class TabCompletionSample {\n    static int add(int a, int b) {\n        return a + b",
+        "suffix": ";\n    }\n}\n"
+      },
+      {
+        "path": "/api/v1/projects/ee2abadd-cff1-4a5a-9984-3321d1197193/code-completions",
+        "started": 1794735489324,
+        "prefix": "def add(a, b):\n    return ",
+        "suffix": "\n"
+      },
+      {
+        "path": "/api/v1/projects/ee2abadd-cff1-4a5a-9984-3321d1197193/code-completions",
+        "started": 1794735490648,
+        "prefix": "def add(a, b):\n    return a + b",
+        "suffix": "\n"
+      },
+      {
+        "path": "/api/v1/projects/ee2abadd-cff1-4a5a-9984-3321d1197193/code-completions",
+        "started": 1794735491958,
+        "prefix": "function add(a: number, b: number): number {\n    return ",
+        "suffix": ";\n}\n"
+      },
+      {
+        "path": "/api/v1/projects/ee2abadd-cff1-4a5a-9984-3321d1197193/code-completions",
+        "started": 1794735493586,
+        "prefix": "function add(a: number, b: number): number {\n    return a + b",
+        "suffix": ";\n}\n"
+      }
+    ],
+    "pageErrors": [
+      {
+        "message": "Canceled",
+        "stack": "Canceled: Canceled\n    at FO.value (http://1.12.245.235:30080/assets/WorkbenchPage-kdEpTMCi.js:8:10859)\n    at X._deliver (http://1.12.245.235:30080/assets/WorkbenchPage-kdEpTMCi.js:8:2721)\n    at X.fire (http://1.12.245.235:30080/assets/WorkbenchPage-kdEpTMCi.js:8:3041)\n    at UI.cancel (http://1.12.245.235:30080/assets/WorkbenchPage-kdEpTMCi.js:8:6954)\n    at Vn.cancel (http://1.12.245.235:30080/assets/WorkbenchPage-kdEpTMCi.js:8:7496)\n    at Object.dispose (http://1.12.245.235:30080/assets/WorkbenchPage-kdEpTMCi.js:8:7732)\n    at qi (http://1.12.245.235:30080/assets/WorkbenchPage-kdEpTMCi.js:6:24641)\n    at qce.clear (http://1.12.245.235:30080/assets/WorkbenchPage-kdEpTMCi.js:6:25417)\n    at http://1.12.245.235:30080/assets/WorkbenchPage-kdEpTMCi.js:119:6135\n    at http://1.12.245.235:30080/assets/WorkbenchPage-kdEpTMCi.js:119:6050",
+        "sources": [
+          "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/common/async.js:300",
+          "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/common/event.js:866",
+          "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/common/event.js:893",
+          "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/common/cancellation.js:45",
+          "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/common/cancellation.js:92",
+          "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/common/cancellation.js:112",
+          "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/common/lifecycle.js:24",
+          "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/common/lifecycle.js:114",
+          "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/common/observableInternal/utils/runOnChange.js:45",
+          "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/common/observableInternal/utils/runOnChange.js:34"
+        ]
+      },
+      {
+        "message": "Canceled",
+        "stack": "Canceled: Canceled\n    at FO.value (http://1.12.245.235:30080/assets/WorkbenchPage-kdEpTMCi.js:8:10859)\n    at X._deliver (http://1.12.245.235:30080/assets/WorkbenchPage-kdEpTMCi.js:8:2721)\n    at X.fire (http://1.12.245.235:30080/assets/WorkbenchPage-kdEpTMCi.js:8:3041)\n    at UI.cancel (http://1.12.245.235:30080/assets/WorkbenchPage-kdEpTMCi.js:8:6954)\n    at Vn.cancel (http://1.12.245.235:30080/assets/WorkbenchPage-kdEpTMCi.js:8:7496)\n    at Object.dispose (http://1.12.245.235:30080/assets/WorkbenchPage-kdEpTMCi.js:8:7732)\n    at qi (http://1.12.245.235:30080/assets/WorkbenchPage-kdEpTMCi.js:6:24641)\n    at qce.clear (http://1.12.245.235:30080/assets/WorkbenchPage-kdEpTMCi.js:6:25417)\n    at http://1.12.245.235:30080/assets/WorkbenchPage-kdEpTMCi.js:119:6135\n    at http://1.12.245.235:30080/assets/WorkbenchPage-kdEpTMCi.js:119:6050",
+        "sources": [
+          "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/common/async.js:300",
+          "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/common/event.js:866",
+          "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/common/event.js:893",
+          "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/common/cancellation.js:45",
+          "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/common/cancellation.js:92",
+          "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/common/cancellation.js:112",
+          "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/common/lifecycle.js:24",
+          "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/common/lifecycle.js:114",
+          "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/common/observableInternal/utils/runOnChange.js:45",
+          "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/common/observableInternal/utils/runOnChange.js:34"
+        ]
+      },
+      {
+        "message": "Canceled",
+        "stack": "Canceled: Canceled\n    at ad.cancel (http://1.12.245.235:30080/assets/WorkbenchPage-kdEpTMCi.js:8:10351)\n    at ad.dispose (http://1.12.245.235:30080/assets/WorkbenchPage-kdEpTMCi.js:8:10463)\n    at qi (http://1.12.245.235:30080/assets/WorkbenchPage-kdEpTMCi.js:6:24641)\n    at qce.clear (http://1.12.245.235:30080/assets/WorkbenchPage-kdEpTMCi.js:6:25417)\n    at qce.dispose (http://1.12.245.235:30080/assets/WorkbenchPage-kdEpTMCi.js:6:25327)\n    at TW.dispose (http://1.12.245.235:30080/assets/WorkbenchPage-kdEpTMCi.js:460:25897)\n    at Xm.dispose (http://1.12.245.235:30080/assets/WorkbenchPage-kdEpTMCi.js:460:26967)\n    at qi (http://1.12.245.235:30080/assets/WorkbenchPage-kdEpTMCi.js:6:24641)\n    at LA.clearAndDisposeAll (http://1.12.245.235:30080/assets/WorkbenchPage-kdEpTMCi.js:6:26840)\n    at LA.dispose (http://1.12.245.235:30080/assets/WorkbenchPage-kdEpTMCi.js:6:26774)",
+        "sources": [
+          "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/common/async.js:251",
+          "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/common/async.js:260",
+          "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/common/lifecycle.js:24",
+          "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/common/lifecycle.js:114",
+          "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/common/lifecycle.js:98",
+          "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/editor/contrib/wordHighlighter/browser/wordHighlighter.js:652",
+          "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/editor/contrib/wordHighlighter/browser/wordHighlighter.js:709",
+          "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/common/lifecycle.js:24",
+          "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/common/lifecycle.js:278",
+          "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/common/lifecycle.js:268"
+        ]
+      },
+      {
+        "message": "Canceled",
+        "stack": "Canceled: Canceled\n    at FO.value (http://1.12.245.235:30080/assets/WorkbenchPage-kdEpTMCi.js:8:10859)\n    at X._deliver (http://1.12.245.235:30080/assets/WorkbenchPage-kdEpTMCi.js:8:2721)\n    at X.fire (http://1.12.245.235:30080/assets/WorkbenchPage-kdEpTMCi.js:8:3041)\n    at UI.cancel (http://1.12.245.235:30080/assets/WorkbenchPage-kdEpTMCi.js:8:6954)\n    at Vn.cancel (http://1.12.245.235:30080/assets/WorkbenchPage-kdEpTMCi.js:8:7496)\n    at Object.dispose (http://1.12.245.235:30080/assets/WorkbenchPage-kdEpTMCi.js:8:7732)\n    at qi (http://1.12.245.235:30080/assets/WorkbenchPage-kdEpTMCi.js:6:24641)\n    at qce.clear (http://1.12.245.235:30080/assets/WorkbenchPage-kdEpTMCi.js:6:25417)\n    at http://1.12.245.235:30080/assets/WorkbenchPage-kdEpTMCi.js:119:6135\n    at http://1.12.245.235:30080/assets/WorkbenchPage-kdEpTMCi.js:119:6050",
+        "sources": [
+          "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/common/async.js:300",
+          "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/common/event.js:866",
+          "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/common/event.js:893",
+          "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/common/cancellation.js:45",
+          "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/common/cancellation.js:92",
+          "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/common/cancellation.js:112",
+          "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/common/lifecycle.js:24",
+          "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/common/lifecycle.js:114",
+          "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/common/observableInternal/utils/runOnChange.js:45",
+          "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/common/observableInternal/utils/runOnChange.js:34"
+        ]
+      },
+      {
+        "message": "Canceled",
+        "stack": "Canceled: Canceled\n    at ad.cancel (http://1.12.245.235:30080/assets/WorkbenchPage-kdEpTMCi.js:8:10351)\n    at ad.dispose (http://1.12.245.235:30080/assets/WorkbenchPage-kdEpTMCi.js:8:10463)\n    at qi (http://1.12.245.235:30080/assets/WorkbenchPage-kdEpTMCi.js:6:24641)\n    at qce.clear (http://1.12.245.235:30080/assets/WorkbenchPage-kdEpTMCi.js:6:25417)\n    at qce.dispose (http://1.12.245.235:30080/assets/WorkbenchPage-kdEpTMCi.js:6:25327)\n    at TW.dispose (http://1.12.245.235:30080/assets/WorkbenchPage-kdEpTMCi.js:460:25897)\n    at Xm.dispose (http://1.12.245.235:30080/assets/WorkbenchPage-kdEpTMCi.js:460:26967)\n    at qi (http://1.12.245.235:30080/assets/WorkbenchPage-kdEpTMCi.js:6:24641)\n    at LA.clearAndDisposeAll (http://1.12.245.235:30080/assets/WorkbenchPage-kdEpTMCi.js:6:26840)\n    at LA.dispose (http://1.12.245.235:30080/assets/WorkbenchPage-kdEpTMCi.js:6:26774)",
+        "sources": [
+          "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/common/async.js:251",
+          "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/common/async.js:260",
+          "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/common/lifecycle.js:24",
+          "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/common/lifecycle.js:114",
+          "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/common/lifecycle.js:98",
+          "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/editor/contrib/wordHighlighter/browser/wordHighlighter.js:652",
+          "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/editor/contrib/wordHighlighter/browser/wordHighlighter.js:709",
+          "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/common/lifecycle.js:24",
+          "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/common/lifecycle.js:278",
+          "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/common/lifecycle.js:268"
+        ]
+      }
+    ],
+    "unexpectedPageErrors": 0,
+    "status": "PASS"
+  },
+  "cloudProjectRetention": "Dedicated synthetic project retained for user review; no Run or AgentTask created",
+  "limitations": {
+    "pythonMultilineFix": "WAIVED_BY_USER",
+    "pythonMultilineHistorical": "FAILED",
+    "pageErrorFree": "FAILED",
+    "canceledRootCause": "NOT_REVERIFIED"
+  },
+  "localCleanup": {
+    "projectId": "424471b1-5033-45c3-b02f-f865f33ee7b5",
+    "apiDeletion": {
+      "status": "FAILED",
+      "httpStatus": 503,
+      "code": "PROJECT_CLEANUP_INCOMPLETE"
+    },
+    "restrictedListsDenied": [
+      "secrets",
+      "statefulsets.apps",
+      "deployments.apps"
+    ],
+    "operatorDeletion": {
+      "status": "PASS",
+      "resourcesDeleted": 3,
+      "remaining": [],
+      "pvs": []
+    },
+    "cloudProjectRetained": "ee2abadd-cff1-4a5a-9984-3321d1197193",
+    "disposableSchemaDrop": "PASS",
+    "localApplicationsStopped": true,
+    "ownedBridgesStopped": 3
+  },
+  "temporaryCleanup": {
+    "status": "PASS",
+    "removedFiles": [
+      "poc4/frontend/.ai-tab-local.config.ts",
+      "poc4/frontend/.ai-tab-results.json",
+      "poc4/frontend/test-results/.last-run.json",
+      "candidate.tar",
+      "frontend-static.tar"
+    ],
+    "removedEmptyDirectories": [
+      "poc4/frontend/test-results/ai-tab-completion-real-rea-caf31-save-reopen-and-file-switch",
+      "poc4/frontend/test-results"
+    ],
+    "method": "Exact literal paths after reading directory contents; earlier computed directory cleanup was rejected"
+  },
+  "cloudInitial": {
+    "phase": "cloud",
+    "origin": "http://1.12.245.235:30080",
+    "projectId": "ee2abadd-cff1-4a5a-9984-3321d1197193",
+    "model": "deepseek-flash",
+    "modelEvidence": "Configured/requested model; product endpoint does not forward upstream model metadata",
+    "rows": [
+      {
+        "file": "TabCompletionSample.java",
+        "status": "PASS",
+        "requestMillis": 1138,
+        "ghostMillis": 1158,
+        "completion": "a + b",
+        "accepted": "class TabCompletionSample {\n    static int add(int a, int b) {\n        return a + b;\n    }\n}\n",
+        "persisted": true,
+        "followUpObserved": true
+      },
+      {
+        "file": "tab_completion_sample.py",
+        "status": "PASS",
+        "requestMillis": 1130,
+        "ghostMillis": 1142,
+        "completion": "a + b",
+        "accepted": "def add(a, b):\n    return a + b\n",
+        "persisted": true,
+        "followUpObserved": true
+      },
+      {
+        "file": "tab_completion_sample.ts",
+        "status": "PASS",
+        "requestMillis": 1673,
+        "ghostMillis": 1680,
+        "completion": "a + b",
+        "accepted": "function add(a: number, b: number): number {\n    return a + b;\n}\n",
+        "persisted": true,
+        "followUpObserved": true
+      }
+    ],
+    "requests": [
+      {
+        "path": "/api/v1/projects/ee2abadd-cff1-4a5a-9984-3321d1197193/code-completions",
+        "started": 1794734546892,
+        "prefix": "class TabCompletionSample {\n    static int add(int a, int b) {\n        return ",
+        "suffix": ";\n    }\n}\n"
+      },
+      {
+        "path": "/api/v1/projects/ee2abadd-cff1-4a5a-9984-3321d1197193/code-completions",
+        "started": 1794734548043,
+        "prefix": "class TabCompletionSample {\n    static int add(int a, int b) {\n        return a + b",
+        "suffix": ";\n    }\n}\n"
+      },
+      {
+        "path": "/api/v1/projects/ee2abadd-cff1-4a5a-9984-3321d1197193/code-completions",
+        "started": 1794734549360,
+        "prefix": "def add(a, b):\n    return ",
+        "suffix": "\n"
+      },
+      {
+        "path": "/api/v1/projects/ee2abadd-cff1-4a5a-9984-3321d1197193/code-completions",
+        "started": 1794734550503,
+        "prefix": "def add(a, b):\n    return a + b",
+        "suffix": "\n"
+      },
+      {
+        "path": "/api/v1/projects/ee2abadd-cff1-4a5a-9984-3321d1197193/code-completions",
+        "started": 1794734551811,
+        "prefix": "function add(a: number, b: number): number {\n    return ",
+        "suffix": ";\n}\n"
+      },
+      {
+        "path": "/api/v1/projects/ee2abadd-cff1-4a5a-9984-3321d1197193/code-completions",
+        "started": 1794734553497,
+        "prefix": "function add(a: number, b: number): number {\n    return a + b",
+        "suffix": ";\n}\n"
+      }
+    ],
+    "pageErrors": [
+      {
+        "message": "Canceled",
+        "stack": "Canceled: Canceled\n    at FO.value (http://1.12.245.235:30080/assets/WorkbenchPage-kdEpTMCi.js:8:10859)\n    at X._deliver (http://1.12.245.235:30080/assets/WorkbenchPage-kdEpTMCi.js:8:2721)\n    at X.fire (http://1.12.245.235:30080/assets/WorkbenchPage-kdEpTMCi.js:8:3041)\n    at UI.cancel (http://1.12.245.235:30080/assets/WorkbenchPage-kdEpTMCi.js:8:6954)\n    at Vn.cancel (http://1.12.245.235:30080/assets/WorkbenchPage-kdEpTMCi.js:8:7496)\n    at Object.dispose (http://1.12.245.235:30080/assets/WorkbenchPage-kdEpTMCi.js:8:7732)\n    at qi (http://1.12.245.235:30080/assets/WorkbenchPage-kdEpTMCi.js:6:24641)\n    at qce.clear (http://1.12.245.235:30080/assets/WorkbenchPage-kdEpTMCi.js:6:25417)\n    at http://1.12.245.235:30080/assets/WorkbenchPage-kdEpTMCi.js:119:6135\n    at http://1.12.245.235:30080/assets/WorkbenchPage-kdEpTMCi.js:119:6050",
+        "sources": [
+          "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/common/async.js:300",
+          "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/common/event.js:866",
+          "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/common/event.js:893",
+          "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/common/cancellation.js:45",
+          "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/common/cancellation.js:92",
+          "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/common/cancellation.js:112",
+          "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/common/lifecycle.js:24",
+          "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/common/lifecycle.js:114",
+          "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/common/observableInternal/utils/runOnChange.js:45",
+          "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/common/observableInternal/utils/runOnChange.js:34"
+        ]
+      },
+      {
+        "message": "Canceled",
+        "stack": "Canceled: Canceled\n    at FO.value (http://1.12.245.235:30080/assets/WorkbenchPage-kdEpTMCi.js:8:10859)\n    at X._deliver (http://1.12.245.235:30080/assets/WorkbenchPage-kdEpTMCi.js:8:2721)\n    at X.fire (http://1.12.245.235:30080/assets/WorkbenchPage-kdEpTMCi.js:8:3041)\n    at UI.cancel (http://1.12.245.235:30080/assets/WorkbenchPage-kdEpTMCi.js:8:6954)\n    at Vn.cancel (http://1.12.245.235:30080/assets/WorkbenchPage-kdEpTMCi.js:8:7496)\n    at Object.dispose (http://1.12.245.235:30080/assets/WorkbenchPage-kdEpTMCi.js:8:7732)\n    at qi (http://1.12.245.235:30080/assets/WorkbenchPage-kdEpTMCi.js:6:24641)\n    at qce.clear (http://1.12.245.235:30080/assets/WorkbenchPage-kdEpTMCi.js:6:25417)\n    at http://1.12.245.235:30080/assets/WorkbenchPage-kdEpTMCi.js:119:6135\n    at http://1.12.245.235:30080/assets/WorkbenchPage-kdEpTMCi.js:119:6050",
+        "sources": [
+          "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/common/async.js:300",
+          "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/common/event.js:866",
+          "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/common/event.js:893",
+          "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/common/cancellation.js:45",
+          "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/common/cancellation.js:92",
+          "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/common/cancellation.js:112",
+          "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/common/lifecycle.js:24",
+          "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/common/lifecycle.js:114",
+          "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/common/observableInternal/utils/runOnChange.js:45",
+          "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/common/observableInternal/utils/runOnChange.js:34"
+        ]
+      },
+      {
+        "message": "Canceled",
+        "stack": "Canceled: Canceled\n    at ad.cancel (http://1.12.245.235:30080/assets/WorkbenchPage-kdEpTMCi.js:8:10351)\n    at ad.dispose (http://1.12.245.235:30080/assets/WorkbenchPage-kdEpTMCi.js:8:10463)\n    at qi (http://1.12.245.235:30080/assets/WorkbenchPage-kdEpTMCi.js:6:24641)\n    at qce.clear (http://1.12.245.235:30080/assets/WorkbenchPage-kdEpTMCi.js:6:25417)\n    at qce.dispose (http://1.12.245.235:30080/assets/WorkbenchPage-kdEpTMCi.js:6:25327)\n    at TW.dispose (http://1.12.245.235:30080/assets/WorkbenchPage-kdEpTMCi.js:460:25897)\n    at Xm.dispose (http://1.12.245.235:30080/assets/WorkbenchPage-kdEpTMCi.js:460:26967)\n    at qi (http://1.12.245.235:30080/assets/WorkbenchPage-kdEpTMCi.js:6:24641)\n    at LA.clearAndDisposeAll (http://1.12.245.235:30080/assets/WorkbenchPage-kdEpTMCi.js:6:26840)\n    at LA.dispose (http://1.12.245.235:30080/assets/WorkbenchPage-kdEpTMCi.js:6:26774)",
+        "sources": [
+          "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/common/async.js:251",
+          "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/common/async.js:260",
+          "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/common/lifecycle.js:24",
+          "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/common/lifecycle.js:114",
+          "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/common/lifecycle.js:98",
+          "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/editor/contrib/wordHighlighter/browser/wordHighlighter.js:652",
+          "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/editor/contrib/wordHighlighter/browser/wordHighlighter.js:709",
+          "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/common/lifecycle.js:24",
+          "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/common/lifecycle.js:278",
+          "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/common/lifecycle.js:268"
+        ]
+      },
+      {
+        "message": "Canceled",
+        "stack": "Canceled: Canceled\n    at FO.value (http://1.12.245.235:30080/assets/WorkbenchPage-kdEpTMCi.js:8:10859)\n    at X._deliver (http://1.12.245.235:30080/assets/WorkbenchPage-kdEpTMCi.js:8:2721)\n    at X.fire (http://1.12.245.235:30080/assets/WorkbenchPage-kdEpTMCi.js:8:3041)\n    at UI.cancel (http://1.12.245.235:30080/assets/WorkbenchPage-kdEpTMCi.js:8:6954)\n    at Vn.cancel (http://1.12.245.235:30080/assets/WorkbenchPage-kdEpTMCi.js:8:7496)\n    at Object.dispose (http://1.12.245.235:30080/assets/WorkbenchPage-kdEpTMCi.js:8:7732)\n    at qi (http://1.12.245.235:30080/assets/WorkbenchPage-kdEpTMCi.js:6:24641)\n    at qce.clear (http://1.12.245.235:30080/assets/WorkbenchPage-kdEpTMCi.js:6:25417)\n    at http://1.12.245.235:30080/assets/WorkbenchPage-kdEpTMCi.js:119:6135\n    at http://1.12.245.235:30080/assets/WorkbenchPage-kdEpTMCi.js:119:6050",
+        "sources": [
+          "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/common/async.js:300",
+          "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/common/event.js:866",
+          "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/common/event.js:893",
+          "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/common/cancellation.js:45",
+          "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/common/cancellation.js:92",
+          "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/common/cancellation.js:112",
+          "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/common/lifecycle.js:24",
+          "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/common/lifecycle.js:114",
+          "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/common/observableInternal/utils/runOnChange.js:45",
+          "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/common/observableInternal/utils/runOnChange.js:34"
+        ]
+      },
+      {
+        "message": "Canceled",
+        "stack": "Canceled: Canceled\n    at ad.cancel (http://1.12.245.235:30080/assets/WorkbenchPage-kdEpTMCi.js:8:10351)\n    at ad.dispose (http://1.12.245.235:30080/assets/WorkbenchPage-kdEpTMCi.js:8:10463)\n    at qi (http://1.12.245.235:30080/assets/WorkbenchPage-kdEpTMCi.js:6:24641)\n    at qce.clear (http://1.12.245.235:30080/assets/WorkbenchPage-kdEpTMCi.js:6:25417)\n    at qce.dispose (http://1.12.245.235:30080/assets/WorkbenchPage-kdEpTMCi.js:6:25327)\n    at TW.dispose (http://1.12.245.235:30080/assets/WorkbenchPage-kdEpTMCi.js:460:25897)\n    at Xm.dispose (http://1.12.245.235:30080/assets/WorkbenchPage-kdEpTMCi.js:460:26967)\n    at qi (http://1.12.245.235:30080/assets/WorkbenchPage-kdEpTMCi.js:6:24641)\n    at LA.clearAndDisposeAll (http://1.12.245.235:30080/assets/WorkbenchPage-kdEpTMCi.js:6:26840)\n    at LA.dispose (http://1.12.245.235:30080/assets/WorkbenchPage-kdEpTMCi.js:6:26774)",
+        "sources": [
+          "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/common/async.js:251",
+          "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/common/async.js:260",
+          "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/common/lifecycle.js:24",
+          "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/common/lifecycle.js:114",
+          "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/common/lifecycle.js:98",
+          "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/editor/contrib/wordHighlighter/browser/wordHighlighter.js:652",
+          "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/editor/contrib/wordHighlighter/browser/wordHighlighter.js:709",
+          "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/common/lifecycle.js:24",
+          "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/common/lifecycle.js:278",
+          "../../node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/common/lifecycle.js:268"
+        ]
+      }
+    ],
+    "unexpectedPageErrors": 0,
+    "status": "PASS"
+  }
+}
