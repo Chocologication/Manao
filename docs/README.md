@@ -24,6 +24,7 @@
 <summary>AI 设计与后续修改</summary>
 
 - 选型、已确认需求与原始分期：[AI 方案评估](research/2026-10-13-ai-integration-framework-evaluation.md)。这是设计来源，当前交付状态看项目进度。
+- Monaco AI Tab 补全：[最小适配设计](superpowers/specs/2026-11-15-ai-tab-completion-design.md)、[三任务实施计划](superpowers/plans/2026-11-15-ai-tab-completion.md)。当前仅完成规划；正式接入与部署为 NOT_RUN，换行修复按用户要求暂缓。
 - 任务收尾、持久化回执、Run 恢复与用户结束控制：[收尾修复设计](superpowers/specs/2026-10-25-ai-terminal-settlement-design.md)。
 - 阶段四暂停接管、同会话手动继续：[控制与恢复设计](superpowers/specs/2026-10-27-pi-stage4-control-recovery-design.md)，其末尾链接五任务实施计划和Agent交接；实现与已授权云端验证已完成，范围见[阶段四验收](../poc4/docs/evidence/ai-stage4/acceptance.md)。
 - 多轮会话与压缩：[会话上下文设计](superpowers/specs/2026-10-19-ai-conversation-context-design.md)。
