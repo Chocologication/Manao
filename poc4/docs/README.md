@@ -6,6 +6,7 @@
 
 | 主题 | 入口 |
 | --- | --- |
+| AI Tab 补全 | [使用与配置](ai-tab-completion.md)、[分层验收](evidence/ai-tab-completion/acceptance.md) |
 | AI 阶段一：代码修改与构建测试 | [验收记录](evidence/ai-stage1/acceptance.md) |
 | AI 阶段二：应用反馈及失败诊断 | [验收记录](evidence/ai-stage2/acceptance.md)、[既有诊断归档](evidence/ai-stage2/archive-20261016/README.md) |
 | AI 阶段三：实际 CRUD 使命确认 | [用户确认](evidence/ai-stage3/acceptance.md) |

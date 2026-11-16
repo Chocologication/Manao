@@ -94,6 +94,14 @@ spec:
                 secretKeyRef:
                   name: manao-backend-auth
                   key: JWT_SECRET
+            - name: MANAO_FIM_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: manao-backend-auth
+                  key: FIM_API_KEY
+                  optional: true
+            - name: MANAO_FIM_MODEL
+              value: deepseek-flash
             # Multi-account auth: the challenge HMAC secret and the 126 client
             # authorization code are credentials; both come from Secret
             # manao-backend-auth at deploy time and are never committed here.

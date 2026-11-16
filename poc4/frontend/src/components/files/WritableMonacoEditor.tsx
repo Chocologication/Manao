@@ -1,7 +1,7 @@
 import '@/lib/monacoSetup';
 import Editor from '@monaco-editor/react';
 import * as monaco from 'monaco-editor';
-import { useCallback, useEffect, useLayoutEffect, useRef } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { workspaceBufferRegistry } from '@/app/appRuntime';
 import type { ProjectRelativePath } from '@/contracts/file';
 import { toProjectModelUri } from '@/lib/projectMonacoModels';
@@ -9,6 +9,7 @@ import { ensureWorkspaceBuffer } from './editorSaveCommand';
 import { useEditorPreferences } from '@/features/editor/editorPreferences';
 import { useThemePreferences } from '@/features/preferences/themePreferences';
 import { useEditorNavigation } from '@/features/editor/editorNavigation';
+import { registerTabCompletion } from '@/features/editor/tabCompletion';
 
 export function WritableMonacoEditor({
   projectId,
@@ -30,6 +31,7 @@ export function WritableMonacoEditor({
   const uri = toProjectModelUri(projectId, path);
   const onSaveRef = useRef(onSave);
   const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
+  const [editor, setEditor] = useState<monaco.editor.IStandaloneCodeEditor | null>(null);
   const target = useEditorNavigation((state) => state.target);
   onSaveRef.current = onSave;
 
@@ -48,6 +50,20 @@ export function WritableMonacoEditor({
   useEffect(() => {
     revealTarget();
   }, [target, revealTarget]);
+
+  useEffect(() => {
+    if (!editor || readOnly) return;
+    return registerTabCompletion({ monaco, editor, projectId, path, language });
+  }, [editor, projectId, path, language, readOnly]);
+
+  const handleMount = useCallback((mounted: monaco.editor.IStandaloneCodeEditor) => {
+    editorRef.current = mounted;
+    setEditor(mounted);
+    revealTarget();
+    mounted.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
+      onSaveRef.current();
+    });
+  }, [revealTarget]);
 
   useLayoutEffect(() => {
     const existing = workspaceBufferRegistry.get(projectId, path);
@@ -76,13 +92,7 @@ export function WritableMonacoEditor({
       theme={`manao-${theme}`}
       keepCurrentModel
       saveViewState
-      onMount={(editor) => {
-        editorRef.current = editor;
-        revealTarget();
-        editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
-          onSaveRef.current();
-        });
-      }}
+      onMount={handleMount}
       options={{
         readOnly,
         domReadOnly: readOnly,
