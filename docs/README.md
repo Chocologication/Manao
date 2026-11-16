@@ -7,6 +7,7 @@
 | 要解决的问题 | 从这里开始 |
 | --- | --- |
 | 当前交付到哪一步、还有哪些未完成或暂停项 | [项目进度](what-we-have-done.md) |
+| 已结束运行的匿名日志分享、撤销与 72 小时生命周期 | [运行结果分享](../poc4/docs/run-result-sharing.md) |
 | 多账号与账号生命周期的本地实现/验收状态、真实环境 NOT_RUN 边界 | [多账号验收记录](../poc4/docs/evidence/multi-account/acceptance.md) |
 | 新版 AI 对话、逐块审阅与本地演示 | [AI 对话工作台](../poc4/docs/assistant-studio.md) |
 | JavaScript / TypeScript 模板、Node.js 运行器与本地验证 | [Node.js 运行环境](../poc4/docs/node-runtime.md) |
