@@ -10,7 +10,7 @@
 
 到期立即拒绝服务端读取，后台每 2 小时回收一次到期正文；撤销同步清空正文。管理摘要与请求收据保留，旧请求重试不能让失效链接复活。撤销或到期后，若源项目和运行还存在且可读，可以生成新的 72 小时链接。
 
-2026-11-16 已完成本地真实服务闭环：生成、匿名读取、源项目删除后原文保持、账户撤销及匿名失效。容量、权限、历史失败和测试环境差异见[验收记录](evidence/run-result-sharing/acceptance.md)及[安全收据](evidence/run-result-sharing/verification-2026-11-16.json)。本功能的云端发布尚未执行。
+2026-11-16 已完成本地真实服务闭环：生成、匿名读取、源项目删除后原文保持、账户撤销及匿名失效。容量、权限、历史失败和测试环境差异见[验收记录](evidence/run-result-sharing/acceptance.md)及[安全收据](evidence/run-result-sharing/verification-2026-11-16.json)。2026-11-17 云端 V22、前后端发布与只读冒烟已验证；真实 E2E 因运行所需 CPU 无法调度而 FAILED，尚未进入分享链，云端功能验收仍阻塞。测试项目及资源已精确清理；见[云端发布记录](evidence/run-result-sharing/cloud-2026-11-17.md)。
 
 ## 运行专用验收
 

@@ -28,7 +28,7 @@
 
 ## 执行说明与文件边界
 
-本计划在 2026-11-16 的 `master` / `16022d2` 上调研，保存在 `codex/run-result-sharing-plan` 工作树。**Task 1–5 独立审查 PASS，最终整分支 READY、零未关闭发现；第三轮本地真实闭环及独立资源/服务/测试schema收尾 PASS。默认标题修正后的真实E2E NOT_RERUN，旧通过快照及前两轮失败保留，云端发布 NOT_RUN。** 当前迁移为加法 V22，历史 V1–V21 未修改。状态与证据以[验收记录](../../../poc4/docs/evidence/run-result-sharing/acceptance.md)为准。
+本计划在 2026-11-16 的 `master` / `16022d2` 上调研，保存在 `codex/run-result-sharing-plan` 工作树。**Task 1–5 独立审查 PASS，最终本地整分支 READY、零未关闭发现；第三轮本地真实闭环及独立资源/服务/测试schema收尾 PASS。默认标题修正后的本地真实E2E NOT_RERUN，旧通过快照及前两轮失败保留。** 当日本地交付时云端发布 NOT_RUN；后续授权的 2026-11-17 云端 V22/前后端/只读冒烟已验证，首轮真实 E2E 因 CPU 容量 FAILED、分享生命周期 NOT_RUN，精确测试资源清理 PASS。结论为 DEPLOYMENT_VERIFIED / CLOUD_FEATURE_ACCEPTANCE_BLOCKED，见[云端发布记录](../../../poc4/docs/evidence/run-result-sharing/cloud-2026-11-17.md)。历史 V1–V21 未修改。状态与证据以[验收记录](../../../poc4/docs/evidence/run-result-sharing/acceptance.md)为准。
 
 只设五个任务，按 1 → 2 → 3 → 4 → 5 验收。任务 3 的接口冻结后，前端可与后端独立完成；不要为了并行提前扩充通用框架。
 
@@ -427,4 +427,4 @@ pnpm --dir poc4/frontend exec playwright test --config playwright.run-sharing.co
 - 用户已确认的资格、日志范围、空日志、独立生命周期、单有效链接和失效/回收语义均已映射到任务及验收项。
 - 核心接口在 Task 1/2/3 固定，Task 4 只消费该合同；不存在草稿、实时推送或额外存储依赖。
 - 迁移只增加新表；发现的旧 Studio 升级测试假设已纳入 Task 1。
-- 实现、针对性 MySQL/HTTP/前端验证和第三轮本地真实闭环已有 PASS；前两轮失败及环境差异保留，未执行的云端部署保持 `NOT_RUN`，不从本次功能验收推导整个平台重新验收。
+- 实现、针对性 MySQL/HTTP/前端验证和第三轮本地真实闭环已有 PASS；前两轮失败及环境差异保留，云端续作以其独立发布记录为准，不从本次功能验收推导整个平台重新验收。

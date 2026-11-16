@@ -1,6 +1,6 @@
 # 运行结果分享验收
 
-日期：2026-11-16。分支：`codex/run-result-sharing-plan`。Task 1–5 独立审查 PASS，最终整分支审查 **READY，零未关闭发现**。Task 5 第三轮真实闭环 **PASS：1 passed / 2.1m**，产品快照为 `5903eb5`；后续标题默认值修正 `f7b8227` 的相关12项与构建 PASS，真实 E2E **NOT_RERUN**。第一轮 FAILED / INTERRUPTED 和第二轮 FAILED 保留。云端部署及运行库迁移 **NOT_RUN**，默认 Vert.x transport 未修复。不授予整个平台重新验收通过。
+本地验收日期：2026-11-16；云端续作：2026-11-17。分支：`codex/run-result-sharing-plan`。Task 1–5 独立审查 PASS，最终本地整分支审查 **READY，零未关闭发现**。Task 5 第三轮本地真实闭环 **PASS：1 passed / 2.1m**，产品快照为 `5903eb5`；后续标题默认值修正 `f7b8227` 的相关12项与构建 PASS，本地真实 E2E **NOT_RERUN**。第一轮 FAILED / INTERRUPTED 和第二轮 FAILED 保留。后续授权的云端 V22、前后端发布与公网只读冒烟已验证，结论 **DEPLOYMENT_VERIFIED / CLOUD_FEATURE_ACCEPTANCE_BLOCKED**：首轮 E2E 因 Run 的 1000m CPU 无法调度而 FAILED，分享生命周期 **NOT_RUN**，精确测试资源清理 PASS。详见[云端发布记录](cloud-2026-11-17.md)，其中保留 Config/Secret 区间未复核和历史迁移收据时间标志限制。此前本地默认 Vert.x transport 问题未修复；云端沿用默认 cluster transport。不授予整个平台重新验收通过。
 
 ## 源码与已经执行的验证
 
@@ -14,7 +14,8 @@
 | Task 5 专用 runner 类型检查 | 基于 Task 3 + Task 4 工作区 | 定向 TypeScript 检查 PASS；仅证明 runner 编译 |
 | Task 5 真实服务闭环、入口直开/刷新 | 产品 `5903eb549e7f24e9c0cca6bcaf3eaeb7f7a90417`；runner blob `b794988f79a71eb69c665a811cdae9fa404fb9b4` | 第三轮 1 passed / 2.1m，exit0；前两轮失败不改写 |
 | 最终 P3 标题预填修正 | `f7b822755e988fec75fa085217a6dc794401cc6c` | 默认“运行结果”的组件→HTTP回归 RED1 → dialog12 PASS，build PASS；定点复审 PASS |
-| 云端部署、运行库迁移 | 未执行 | NOT_RUN |
+| 2026-11-16 本地验收结束时的云端部署、运行库迁移 | 当时未执行 | NOT_RUN（历史）；2026-11-17 续作见[发布记录](cloud-2026-11-17.md) |
+| 2026-11-17 云端增量发布 | `c9eebe908dd816904abf62401f133b5071ff8258` | V22/新前后端/只读公网冒烟已验证；真实 E2E FAILED（CPU容量），分享生命周期 NOT_RUN；本 invocation 精确清理 PASS |
 
 后端测试均使用 `JdbcStoreTestSupport` 创建/迁移/删除的 UUID disposable schema；未重置 `manao_poc4` / `manao_poc4_6b`。上述 selector 有重叠，不相加为独立用例总数。必要的可审查证据归档在[安全执行收据](verification-2026-11-16.json)，本页保留源码身份、命令和实际输出数量；不能将单元/组件结果当成真实 E2E。
 
@@ -90,4 +91,4 @@ pnpm --dir poc4/frontend exec tsc --noEmit --target es2023 --module esnext --mod
 
 ## 发布边界
 
-本轮无 cloud deploy、生产迁移、push 或 merge。发布顺序为加法迁移 → 后端 → 前端；回滚保留新表与分享收据。操作说明见[功能与部署路径](../../run-result-sharing.md)，设计与任务状态见[设计](../../../../docs/superpowers/specs/2026-11-16-run-result-sharing-design.md)及[计划](../../../../docs/superpowers/plans/2026-11-16-run-result-sharing.md)。
+2026-11-16 本地实现验收轮没有执行 cloud deploy、生产迁移、push 或 merge。2026-11-17 已按后续授权完成 V22 和前后端增量发布；首轮功能验收被 CPU 容量阻塞，用户容量方案待选择。实际结果及未闭合项单列在[云端发布记录](cloud-2026-11-17.md)，不改写旧本地测试结果。发布顺序为加法迁移 → 后端 → 前端；回滚保留新表与分享收据。操作说明见[功能与部署路径](../../run-result-sharing.md)，设计与任务状态见[设计](../../../../docs/superpowers/specs/2026-11-16-run-result-sharing-design.md)及[计划](../../../../docs/superpowers/plans/2026-11-16-run-result-sharing.md)。
