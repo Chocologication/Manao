@@ -22,7 +22,7 @@
 | 空日志 | 允许分享；显示“暂无可分享的日志”，不推断是没有输出还是已清理 |
 | 链接数量 | 每个 Run 最多一个仍有效的链接；再次打开管理已有链接 |
 | 再次生成 | 撤销或到期后，源项目和 Run 仍存在且可读取时，可以重新生成；新链接有自己的 72 小时 |
-| 失效与回收 | 到期立即禁止服务端读取；每分钟清理到期正文，允许物理回收有调度延迟；撤销时同步清空正文 |
+| 失效与回收 | 到期立即禁止服务端读取；每 2 小时清理一次到期正文，允许物理回收有调度延迟；撤销时同步清空正文 |
 | 操作体验 | 运行记录中有“分享结果”；预览、标题、可选说明、复制链接、本地二维码、撤销、明确失效提示 |
 
 以下采用最小产品默认，不需要新增子系统：标题必填、预填“运行结果”、去首尾空白后 1–100 个 UTF-16 code units；说明可选、最多 2000 个 UTF-16 code units。发布后不编辑，修改内容通过撤销后重新生成。前后端使用同一长度定义。
@@ -65,7 +65,7 @@ flowchart LR
 | [RunObservationService.java](../../../poc4/backend/src/main/java/com/manao/poc4/run/RunObservationService.java) | 正常收尾先补采日志再落终态；本功能不强化为“采集绝对完整”合同 |
 | [RunStore.java](../../../poc4/backend/src/main/java/com/manao/poc4/run/RunStore.java)、[RunPolicy.java](../../../poc4/backend/src/main/java/com/manao/poc4/run/RunPolicy.java) | `findRunForOwner` 和持久化 `policyJson` 提供运行事实；环境使用该次运行的快照 |
 | [WorkspaceJdbcStore.java](../../../poc4/backend/src/main/java/com/manao/poc4/workspace/WorkspaceJdbcStore.java)、[ProjectDeletionRepository.java](../../../poc4/backend/src/main/java/com/manao/poc4/project/ProjectDeletionRepository.java) | 项目删除使用 project 行锁，并删除源 Run/日志；分享创建沿用该锁顺序，分享表不参与源数据删除 |
-| [RuntimeMaintenanceLoop.java](../../../poc4/backend/src/main/java/com/manao/poc4/config/RuntimeMaintenanceLoop.java) | 已有独立保护的维护调度；增加分钟级分享回收，不改变源日志七天规则 |
+| [RuntimeMaintenanceLoop.java](../../../poc4/backend/src/main/java/com/manao/poc4/config/RuntimeMaintenanceLoop.java) | 已有独立保护的维护调度；增加每 2 小时一次的分享回收，不改变源日志七天规则 |
 | [AppRouter.tsx](../../../poc4/frontend/src/app/AppRouter.tsx)、[httpClient.ts](../../../poc4/frontend/src/api/httpClient.ts) | 有保护路由和 `auth:false`；公共页面放在 `RequireAuth` 外，公开请求不携带登录令牌 |
 | [AccountPanel.tsx](../../../poc4/frontend/src/components/shell/AccountPanel.tsx) | 项目列表与工作台复用的账户入口，适合新增“我的分享” |
 | [nginx.conf](../../../poc4/frontend/deploy/nginx.conf) | 已有 SPA fallback；无需为 `/shares/:token` 新增独立部署服务 |
@@ -137,7 +137,7 @@ flowchart LR
 
 ACTIVE 定义为 `revoked_at IS NULL AND databaseNow < expires_at`。到期相等时已经无权读；缺失正文的“有效记录”属于数据错误，不能伪装成合法空日志。合法空日志存储为 `''`，回收后使用 `NULL`。
 
-公开读取在一个数据库语句中判定状态，只有 ACTIVE 才选择快照大字段；过期/撤销响应不返回正文。清理停摆也不会延长访问。正常分钟维护使用一个独立、可重入的 UPDATE；与现有七天源日志清理分别调度。
+公开读取在一个数据库语句中判定状态，只有 ACTIVE 才选择快照大字段；过期/撤销响应不返回正文。清理停摆也不会延长访问。定期回收每 2 小时执行一次，使用一个独立、可重入的 UPDATE；与现有七天源日志清理分别调度。正常运行时，到期正文通常额外保留 0～2 小时，任务耗时或故障可能延长回收等待，但不会延长 72 小时的访问有效期。
 
 前端范围：
 

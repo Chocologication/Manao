@@ -20,7 +20,7 @@
 - 源日志清理、删除原项目均不影响已经生成的分享。
 - 空日志允许分享，显示“暂无可分享的日志”。
 - 每个 Run 最多一个仍有效的链接；再次打开管理已有链接。
-- 到期立即禁止服务端读取；每分钟清理到期正文，允许物理回收有调度延迟；撤销时同步清空正文。
+- 到期立即禁止服务端读取；每 2 小时清理一次到期正文，允许物理回收有调度延迟；撤销时同步清空正文。
 - UTF-8 无 BOM；前端 pnpm；业务实现只在隔离工作树中进行，保留无关修改。
 - MySQL 集成测试只能使用 disposable schema；禁止重置 `manao_poc4` / `manao_poc4_6b`。
 
@@ -39,7 +39,7 @@
 | 用例 | `share/RunShareService.java`：终态资格、快照、摘要、创建幂等、单有效链接、访问生命周期 |
 | HTTP | `share/RunShareController.java` 与 `share/PublicRunShareController.java`：分别管理 owner 与匿名访问 |
 | 装配 | `config/RunShareConfig.java`：复用现有 JdbcTemplate / RunStore，注册分享 bean；遵循现有 BackendAuthCondition |
-| 维护与权限 | 现有 `RuntimeMaintenanceLoop.java` 增加分钟回收；`SecurityConfig.java` 只开放专用 public GET |
+| 维护与权限 | 现有 `RuntimeMaintenanceLoop.java` 增加每 2 小时一次的回收；`SecurityConfig.java` 只开放专用 public GET |
 | 前端 | `contracts/runShare.ts`、`api/runShareApi.ts`、`features/shares/`；现有 RunPanel / AccountPanel / AppRouter 只接入口 |
 
 上表后端路径以 `poc4/backend/src/main/java/com/manao/poc4/` 为根，前端以 `poc4/frontend/src/` 为根。后续任务列出其余文件的完整仓库相对路径。
@@ -263,7 +263,7 @@ assertThat(jdbc.queryForObject("SELECT log_text FROM run_share WHERE id = ?", St
 
 owner 列表用 `(created_at,id)` 游标、默认 20/最多 50，查询只 SELECT 摘要字段；sharePath 仅 ACTIVE 返回。游标编码固定字段并校验格式，owner 条件不来自游标。撤销按 id+owner 获取记录，在同一事务清正文；已撤销重复操作 204，已过期也清正文但不改为“已撤销”。原项目无需存在。
 
-- [ ] **3.3 接入每分钟正文回收。** 在 RuntimeMaintenanceLoop 增加 `@Scheduled(fixedDelay = 60000)`，沿用 `safe(...)` 隔离失败；调用 `purgeExpiredContent()`。回收 SQL 保留请求收据：
+- [ ] **3.3 接入每 2 小时一次的正文回收。** 在 RuntimeMaintenanceLoop 增加 `@Scheduled(fixedDelay = 7200000)`，沿用 `safe(...)` 隔离失败；调用 `purgeExpiredContent()`。固定延迟从上次执行完成后计算，72 小时到期拒读不等待该任务。回收 SQL 保留请求收据：
 
 ```sql
 UPDATE run_share
@@ -272,7 +272,7 @@ WHERE expires_at <= UTC_TIMESTAMP(6)
   AND (log_text IS NOT NULL OR description IS NOT NULL OR run_snapshot_json IS NOT NULL);
 ```
 
-撤销立即运行同类清空操作并记录 revoked_at；到期记录撤销时仍清空正文。测试维护失败不阻断其他维护循环、重启后继续回收；不引入新 worker/队列。`RuntimeMaintenanceLoopTest` 如构造参数增加，更新其 provider fixture。
+撤销立即运行同类清空操作并记录 revoked_at；到期记录撤销时仍清空正文。验证回收调度间隔为 7200000 ms，并直接调用回收方法测试内容清空，不实际等待 2 小时。测试维护失败不阻断其他维护循环、重启后继续回收；不引入新 worker/队列。`RuntimeMaintenanceLoopTest` 如构造参数增加，更新其 provider fixture。
 
 - [ ] **3.4 运行针对性回归并提交。** 特别验证“服务重建 + 源项目删除 + 后续撤销”和“过期但清理未执行仍拒读”。
 
@@ -415,7 +415,7 @@ pnpm --dir poc4/frontend exec playwright test --config playwright.run-sharing.co
 | 内容 | 服务端当前保留全部 chunks 原样复制；空日志合法；无截断提示；摘要变化拒绝发布 |
 | 唯一与重试 | 每 Run 最多一个 ACTIVE；同键返回同结果；过期/撤销后的旧请求不复活 |
 | 独立性 | 源日志清理、项目删除、后端服务重建后仍可访问原快照 |
-| 生命周期 | createdAt +72h；到期拒读不依赖维护；撤销和回收清正文但保留重试收据 |
+| 生命周期 | createdAt +72h；到期立即拒读；到期正文每 2 小时回收一次，撤销同步清正文；保留重试收据 |
 | 权限与展示 | 匿名只读、非 owner 不可管理；HTML 原样；响应无缓存；公开字段白名单 |
 | 真实闭环 | 登录生成 → 匿名看 → 删除源项目后仍可看 → 账户撤销 → 匿名失效 |
 
