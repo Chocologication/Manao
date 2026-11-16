@@ -1,6 +1,6 @@
 # 运行结果分享验收
 
-日期：2026-11-16。分支：`codex/run-result-sharing-plan`。Task 1–4 实现、目标测试及独立审查 PASS；Task 5 第三轮真实闭环 **PASS：1 passed / 2.1m**。第一轮 FAILED / INTERRUPTED 和第二轮 FAILED 保留于下文。云端部署及运行库迁移 **NOT_RUN**，默认 Vert.x transport 未修复。不授予整个平台重新验收通过。
+日期：2026-11-16。分支：`codex/run-result-sharing-plan`。Task 1–5 独立审查 PASS，最终整分支审查 **READY，零未关闭发现**。Task 5 第三轮真实闭环 **PASS：1 passed / 2.1m**，产品快照为 `5903eb5`；后续标题默认值修正 `f7b8227` 的相关12项与构建 PASS，真实 E2E **NOT_RERUN**。第一轮 FAILED / INTERRUPTED 和第二轮 FAILED 保留。云端部署及运行库迁移 **NOT_RUN**，默认 Vert.x transport 未修复。不授予整个平台重新验收通过。
 
 ## 源码与已经执行的验证
 
@@ -13,9 +13,12 @@
 | Task 4 前端目标回归、5 MiB 展示、构建与手机宽度 | `5903eb549e7f24e9c0cca6bcaf3eaeb7f7a90417` | 7 files / 100 tests PASS，build PASS；390px 手机 fixture 与 Chromium 5,242,880 字符原样展示 PASS，非真实后端证据 |
 | Task 5 专用 runner 类型检查 | 基于 Task 3 + Task 4 工作区 | 定向 TypeScript 检查 PASS；仅证明 runner 编译 |
 | Task 5 真实服务闭环、入口直开/刷新 | 产品 `5903eb549e7f24e9c0cca6bcaf3eaeb7f7a90417`；runner blob `b794988f79a71eb69c665a811cdae9fa404fb9b4` | 第三轮 1 passed / 2.1m，exit0；前两轮失败不改写 |
+| 最终 P3 标题预填修正 | `f7b822755e988fec75fa085217a6dc794401cc6c` | 默认“运行结果”的组件→HTTP回归 RED1 → dialog12 PASS，build PASS；定点复审 PASS |
 | 云端部署、运行库迁移 | 未执行 | NOT_RUN |
 
 后端测试均使用 `JdbcStoreTestSupport` 创建/迁移/删除的 UUID disposable schema；未重置 `manao_poc4` / `manao_poc4_6b`。上述 selector 有重叠，不相加为独立用例总数。必要的可审查证据归档在[安全执行收据](verification-2026-11-16.json)，本页保留源码身份、命令和实际输出数量；不能将单元/组件结果当成真实 E2E。
+
+最终整分支审查覆盖事务/删除竞态、快照与生命周期、HTTP权限、前端不确定提交/会话隔离及证据边界，仅发现标题未按设计预填的 P3。`f7b8227` 只改表单初始标题并补交互回归；复审确认 P3 ADDRESSED、没有新发现。真实 runner 明确 `.fill(title)` 覆盖输入，因此旧自定义标题闭环的适用范围保持；不能把旧 E2E 宣称为修正后 HEAD 重跑。Task 5 独立规格/质量审查 PASS / APPROVE，未发现需修改的 P1–P3 问题。
 
 ```powershell
 mvn -f poc4/backend/pom.xml '-Dtest=RunShareUpgradeMigrationTest,JdbcRunShareStoreTest,StudioUpgradeMigrationTest' test
@@ -66,6 +69,7 @@ Task4 已执行的命令及 Task5 runner 定向检查如下；已通过且没有
 
 ```powershell
 pnpm --dir poc4/frontend exec vitest run src/contracts/runShare.test.ts src/api/runShareApi.test.ts src/features/shares src/components/runs/RunPanel.test.tsx src/components/shell/AccountPanel.test.tsx --reporter=dot
+pnpm --dir poc4/frontend exec vitest run src/features/shares/RunShareDialog.test.tsx --reporter=dot
 pnpm --dir poc4/frontend build
 pnpm --dir poc4/frontend exec tsc --noEmit --target es2023 --module esnext --moduleResolution bundler --skipLibCheck --strict --noUnusedLocals --types node playwright.run-sharing.config.ts tests/e2e/run-sharing.spec.ts
 ```
@@ -76,7 +80,9 @@ pnpm --dir poc4/frontend exec tsc --noEmit --target es2023 --module esnext --mod
 | 同 project label 下 Pod/Job/Service/PVC；适用 PV | PASS：runner及独立精确labels0，事前记账PV404/无claimRef，原/指定archive NFS leaf实核不存在，只读helper404 |
 | fresh schema 内本次 project/run/log 关联行 | PASS：独立JDBC project/operation/storage_binding/run/ticket/session/audit全部0、exactRun chunks0 |
 | 本次 share 的撤销与正文清空、收据保留 | PASS：UI撤销204/匿名410，独立DB同owner/source/run/request，REVOKED、三正文列NULL，收据保留；token仅核对长度未输出值 |
-| 本地测试站点关闭、fresh schema 清理 | NOT_RUN；由 runtime operator 管理 |
+| 本地测试站点关闭、fresh schema 清理 | PASS：仅本次owned进程核对启动时间/命令后停止，18090/4174无监听；仅本次fresh schema DROPPED，information_schema计数0 |
+
+最终收尾于 `2026-11-16T14:46:46.7557734Z` 完成：drop前再次核对源project/run0、三项目集群零残留/helper不存在、已撤销分享正文NULL且收据保留。随后仅删除本次 disposable schema；这会一并删除其测试分享收据，不能误读为产品回收策略删行。平台运行库未触及，用户隧道和其他服务保留。精确runtime scratch删除27文件/145,755 bytes，临时Vite配置删除1文件/331 bytes，共 **28文件/146,086 bytes**。安全执行与审查摘要已进入仓库收据，不依赖ignored诊断路径；SDD及测试输出由协调者后续单独处理，不计入上述已删除数量。
 
 项目 API 404不能单独证明资源零残留，RBAC/网络读取失败也不能当空列表。只允许按本次 owner/project/记录的 run/share 精确清理，不扫旧项目或平台 MySQL PVC。清理失败保留安全账本，且不覆盖主失败所在阶段。
 

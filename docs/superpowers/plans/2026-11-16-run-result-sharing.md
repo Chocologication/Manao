@@ -28,7 +28,7 @@
 
 ## 执行说明与文件边界
 
-本计划在 2026-11-16 的 `master` / `16022d2` 上调研，保存在 `codex/run-result-sharing-plan` 工作树。**Task 1–4 实现、目标测试及独立审查 PASS；Task 5 第三轮本地真实闭环及独立资源/DB清理核查 PASS，交付按本提交记录；前两轮失败保留，云端发布 NOT_RUN。** 当前迁移为加法 V22，历史 V1–V21 未修改。状态与证据以[验收记录](../../../poc4/docs/evidence/run-result-sharing/acceptance.md)为准。
+本计划在 2026-11-16 的 `master` / `16022d2` 上调研，保存在 `codex/run-result-sharing-plan` 工作树。**Task 1–5 独立审查 PASS，最终整分支 READY、零未关闭发现；第三轮本地真实闭环及独立资源/服务/测试schema收尾 PASS。默认标题修正后的真实E2E NOT_RERUN，旧通过快照及前两轮失败保留，云端发布 NOT_RUN。** 当前迁移为加法 V22，历史 V1–V21 未修改。状态与证据以[验收记录](../../../poc4/docs/evidence/run-result-sharing/acceptance.md)为准。
 
 只设五个任务，按 1 → 2 → 3 → 4 → 5 验收。任务 3 的接口冻结后，前端可与后端独立完成；不要为了并行提前扩充通用框架。
 

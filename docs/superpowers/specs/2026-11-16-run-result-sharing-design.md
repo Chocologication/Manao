@@ -1,6 +1,6 @@
 # 运行结果分享设计
 
-日期：2026-11-16。状态：Task 1–4 实现、目标测试及独立审查 PASS；Task 5 第三轮本地真实分享闭环 PASS，前两轮失败原因与收尾证据保留，云端发布 `NOT_RUN`。当前证据和环境限制见[验收记录](../../../poc4/docs/evidence/run-result-sharing/acceptance.md)。
+日期：2026-11-16。状态：Task 1–5 独立审查 PASS，最终整分支 READY、零未关闭发现；本地真实闭环及精确资源/服务/测试schema收尾 PASS。默认标题修正后的真实E2E NOT_RERUN，旧通过快照与前两轮失败保留，云端发布 `NOT_RUN`。当前证据和环境限制见[验收记录](../../../poc4/docs/evidence/run-result-sharing/acceptance.md)。
 
 调研基线：主 checkout 的 `master` / `16022d2`。文档分支：`codex/run-result-sharing-plan`。后续实施以实际 checkout 为准，重新核对迁移序号，不把此 SHA 作为永久基线。
 

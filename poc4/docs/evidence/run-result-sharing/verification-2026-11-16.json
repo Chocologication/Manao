@@ -5,12 +5,26 @@
     "backendCommit": "f8075ef4f688ecbb253d7cc7730d7c6360062cdc",
     "productCommit": "5903eb549e7f24e9c0cca6bcaf3eaeb7f7a90417",
     "runnerGitBlob": "b794988f79a71eb69c665a811cdae9fa404fb9b4",
-    "configGitBlob": "0ba05d9cfbabf7e9b9ad848ad6fc3a3c72d9997c"
+    "configGitBlob": "0ba05d9cfbabf7e9b9ad848ad6fc3a3c72d9997c",
+    "finalProductCommit": "f7b822755e988fec75fa085217a6dc794401cc6c",
+    "realE2EAfterFinalTitleFix": "NOT_RERUN"
+  },
+  "finalReview": {
+    "tasks1Through5IndependentReviews": "PASS",
+    "task5Quality": "APPROVE",
+    "wholeBranch": "READY",
+    "openFindings": 0,
+    "titlePrefillP3": "ADDRESSED",
+    "titleFixTarget": { "tests": 12, "files": 1, "status": "PASS" },
+    "titleFixBuild": "PASS",
+    "titleFixScopedRereview": "PASS",
+    "realE2EApplicability": "Recorded 5903eb5 custom-title path uses fill(title); title initial-value-only change covered by new component-to-HTTP test; no claim of exact-final-HEAD real rerun"
   },
   "commands": {
     "realE2E": "pnpm --dir poc4/frontend exec playwright test --config playwright.run-sharing.config.ts",
     "runnerTypes": "pnpm --dir poc4/frontend exec tsc --noEmit --target es2023 --module esnext --moduleResolution bundler --skipLibCheck --strict --noUnusedLocals --types node playwright.run-sharing.config.ts tests/e2e/run-sharing.spec.ts",
     "frontend": "pnpm --dir poc4/frontend exec vitest run src/contracts/runShare.test.ts src/api/runShareApi.test.ts src/features/shares src/components/runs/RunPanel.test.tsx src/components/shell/AccountPanel.test.tsx --reporter=dot",
+    "titleFixTarget": "pnpm --dir poc4/frontend exec vitest run src/features/shares/RunShareDialog.test.tsx --reporter=dot",
     "build": "pnpm --dir poc4/frontend build"
   },
   "reusedResults": {
@@ -120,6 +134,29 @@
   "artifacts": {
     "credentialsAccessTokensPublicTokensFullShareUrlsOrRawTracesIncluded": false,
     "rawLogBodyIncluded": false,
-    "servicesAndDisposableSchema": "RETAINED_PENDING_CONTROLLER_REVIEW"
+    "servicesAndDisposableSchema": "CLEANUP_COMPLETE",
+    "runtimeCleanup": {
+      "status": "PASS",
+      "completedAt": "2026-11-16T14:46:46.7557734Z",
+      "ownedProcessesStartTimeAndCommandMatchedBeforeStop": true,
+      "frontendBackendAndWrappersStopped": true,
+      "ownedEsbuildExitedWithParent": true,
+      "frontend4174": "NO_LISTENER",
+      "backend18090": "NO_LISTENER",
+      "sourceRowsAndThreeProjectClusterResourcesVerifiedZeroBeforeDrop": true,
+      "revokedShareBodiesNullAndReceiptRetainedBeforeDrop": true,
+      "freshDisposableSchema": "DROPPED",
+      "informationSchemaCountAfter": 0,
+      "runtimeSchemasTouched": false,
+      "userTunnelsOrOtherServicesStopped": false,
+      "runtimeScratchFilesRemoved": 27,
+      "runtimeScratchBytesRemoved": 145755,
+      "temporaryViteConfigFilesRemoved": 1,
+      "temporaryViteConfigBytesRemoved": 331,
+      "totalFilesRemoved": 28,
+      "totalBytesRemoved": 146086,
+      "sddAndTestOutputs": "LEFT_FOR_CONTROLLER_SEPARATE_CLEANUP_NOT_COUNTED_HERE",
+      "receiptNote": "The revoked receipt was retained and verified before dropping the entire dedicated test schema; schema disposal is not product expiry or revocation row deletion"
+    }
   }
 }
