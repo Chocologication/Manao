@@ -27,6 +27,8 @@ import org.springframework.dao.DuplicateKeyException;
 
 /** Creates immutable, independent snapshots from the selected terminal Run and current database logs. */
 public final class RunShareService {
+    private static final Instant MIN_CURSOR_TIME = Instant.parse("1000-01-01T00:00:00Z");
+    private static final Instant MAX_CURSOR_TIME = Instant.parse("9999-12-31T23:59:59.999999Z");
     private final JdbcRunShareStore shares;
     private final RunStore runs;
     private final JdbcLogStore logs;
@@ -181,7 +183,10 @@ public final class RunShareService {
         try {
             var fields = new String(Base64.getUrlDecoder().decode(encoded), StandardCharsets.UTF_8).split("\n", -1);
             if (fields.length != 2 || !fields[1].matches("[A-Za-z0-9_-]{1,36}")) throw validationError();
-            return new Cursor(Instant.parse(fields[0]), fields[1]);
+            Instant createdAt = Instant.parse(fields[0]);
+            // The cursor is bound as UTC DATETIME(6), whose range is narrower than Instant's.
+            if (createdAt.isBefore(MIN_CURSOR_TIME) || createdAt.isAfter(MAX_CURSOR_TIME)) throw validationError();
+            return new Cursor(createdAt, fields[1]);
         } catch (IllegalArgumentException | java.time.DateTimeException invalidCursor) { throw validationError(); }
     }
 

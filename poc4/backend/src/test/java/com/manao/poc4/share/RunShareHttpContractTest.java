@@ -170,6 +170,38 @@ class RunShareHttpContractTest {
         });
     }
 
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {
+        "+1000000000-01-01T00:00:00Z", "+10000-01-01T00:00:00Z",
+        "0999-12-31T23:59:59Z", "9999-12-31T23:59:59.999999999Z"
+    })
+    void cursorInstantsOutsideMysqlDatetimeRangeReturnValidationError(String timestamp) {
+        withHttp((jdbc,mvc,json,jwt,service) -> {
+            // All values parse as Instant, but cannot represent a DATETIME(6) cursor.
+            java.time.Instant.parse(timestamp);
+            String cursor=java.util.Base64.getUrlEncoder().withoutPadding().encodeToString(
+                (timestamp+"\n00000000-0000-0000-0000-000000000000").getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            var response=mvc.perform(get("/api/v1/run-shares").param("before",cursor)
+                .header("Authorization",jwt)).andReturn().getResponse();
+            assertThat(response.getStatus()).isEqualTo(422);
+            assertThat(json.readTree(response.getContentAsByteArray()).path("code").asText()).isEqualTo("VALIDATION_ERROR");
+            noStore(response);
+        });
+    }
+
+    @Test
+    void cursorMysqlDatetimeBoundsRemainValid() {
+        withHttp((jdbc,mvc,json,jwt,service) -> {
+            for(String timestamp : java.util.List.of("1000-01-01T00:00:00Z","9999-12-31T23:59:59.999999Z")) {
+                String cursor=java.util.Base64.getUrlEncoder().withoutPadding().encodeToString(
+                    (timestamp+"\n00000000-0000-0000-0000-000000000000").getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                var response=mvc.perform(get("/api/v1/run-shares").param("before",cursor)
+                    .header("Authorization",jwt)).andReturn().getResponse();
+                assertThat(response.getStatus()).isEqualTo(200);
+            }
+        });
+    }
+
     private static void noStore(org.springframework.mock.web.MockHttpServletResponse response) {
         assertThat(response.getHeader("Cache-Control")).contains("no-store");
     }
