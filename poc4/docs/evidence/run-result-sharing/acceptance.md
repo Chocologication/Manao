@@ -82,7 +82,9 @@ pnpm --dir poc4/frontend exec tsc --noEmit --target es2023 --module esnext --mod
 | 本次 share 的撤销与正文清空、收据保留 | PASS：UI撤销204/匿名410，独立DB同owner/source/run/request，REVOKED、三正文列NULL，收据保留；token仅核对长度未输出值 |
 | 本地测试站点关闭、fresh schema 清理 | PASS：仅本次owned进程核对启动时间/命令后停止，18090/4174无监听；仅本次fresh schema DROPPED，information_schema计数0 |
 
-最终收尾于 `2026-11-16T14:46:46.7557734Z` 完成：drop前再次核对源project/run0、三项目集群零残留/helper不存在、已撤销分享正文NULL且收据保留。随后仅删除本次 disposable schema；这会一并删除其测试分享收据，不能误读为产品回收策略删行。平台运行库未触及，用户隧道和其他服务保留。精确runtime scratch删除27文件/145,755 bytes，临时Vite配置删除1文件/331 bytes，共 **28文件/146,086 bytes**。安全执行与审查摘要已进入仓库收据，不依赖ignored诊断路径；SDD及测试输出由协调者后续单独处理，不计入上述已删除数量。
+运行资源收尾于 `2026-11-16T14:46:46.7557734Z` 完成：drop前再次核对源project/run0、三项目集群零残留/helper不存在、已撤销分享正文NULL且收据保留。随后仅删除本次 disposable schema；这会一并删除其测试分享收据，不能误读为产品回收策略删行。平台运行库未触及，用户隧道和其他服务保留。精确runtime scratch删除27文件/145,755 bytes，临时Vite配置删除1文件/331 bytes，共 **28文件/146,086 bytes**。安全执行与审查摘要已进入仓库收据，不依赖ignored诊断路径。
+
+剩余本地临时文件清理未完成：自动审批审查拒绝删除本计划的 `.superpowers/sdd/2026-11-16-run-result-sharing/` 和 `poc4/frontend/test-results/run-sharing/`，返回 `blocked by policy`。已预检两目录均位于当前工作树、无 tracked 文件或 reparse point；分别为63文件/1,897,192 bytes和2文件/1,579 bytes。拒绝后额外删除实际为0，未换用其他删除方式；保留65文件/1,898,771 bytes，不将其记为已清理。此项不影响已完成的功能测试和运行资源清理。
 
 项目 API 404不能单独证明资源零残留，RBAC/网络读取失败也不能当空列表。只允许按本次 owner/project/记录的 run/share 精确清理，不扫旧项目或平台 MySQL PVC。清理失败保留安全账本，且不覆盖主失败所在阶段。
 

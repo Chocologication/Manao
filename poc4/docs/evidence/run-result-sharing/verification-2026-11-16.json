@@ -155,7 +155,18 @@
       "temporaryViteConfigBytesRemoved": 331,
       "totalFilesRemoved": 28,
       "totalBytesRemoved": 146086,
-      "sddAndTestOutputs": "LEFT_FOR_CONTROLLER_SEPARATE_CLEANUP_NOT_COUNTED_HERE",
+      "sddAndTestOutputs": "BLOCKED_BY_AUTOMATIC_APPROVAL_REVIEW",
+      "remainingTemporaryCleanup": {
+        "status": "BLOCKED",
+        "reason": "blocked by policy",
+        "sddFiles": 63,
+        "sddBytes": 1897192,
+        "testOutputFiles": 2,
+        "testOutputBytes": 1579,
+        "additionalFilesActuallyRemoved": 0,
+        "reparsePointsOrTrackedFilesFound": false,
+        "alternateDeletionAttempted": false
+      },
       "receiptNote": "The revoked receipt was retained and verified before dropping the entire dedicated test schema; schema disposal is not product expiry or revocation row deletion"
     }
   }
