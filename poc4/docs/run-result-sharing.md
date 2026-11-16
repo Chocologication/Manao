@@ -10,7 +10,9 @@
 
 到期立即拒绝服务端读取，后台每 2 小时回收一次到期正文；撤销同步清空正文。管理摘要与请求收据保留，旧请求重试不能让失效链接复活。撤销或到期后，若源项目和运行还存在且可读，可以生成新的 72 小时链接。
 
-2026-11-16 已完成本地真实服务闭环：生成、匿名读取、源项目删除后原文保持、账户撤销及匿名失效。容量、权限、历史失败和测试环境差异见[验收记录](evidence/run-result-sharing/acceptance.md)及[安全收据](evidence/run-result-sharing/verification-2026-11-16.json)。2026-11-17 云端 V22、前后端发布与只读冒烟已验证；真实 E2E 因运行所需 CPU 无法调度而 FAILED，尚未进入分享链，云端功能验收仍阻塞。测试项目及资源已精确清理；见[云端发布记录](evidence/run-result-sharing/cloud-2026-11-17.md)。
+2026-11-16 已完成本地真实服务闭环。2026-11-17 云端发布及 HTTP UUID 修复后，第三轮真实浏览器完成生成、匿名读取、源项目删除后原文保持、账户撤销及匿名410，取得 DEPLOYED_CLOUD_RUN_SHARE_PASS；独立资源清理和临停 AI worker 恢复均 PASS。前两轮云端失败、容量条件与证据边界见[云端发布记录](evidence/run-result-sharing/cloud-2026-11-17.md)，本地记录及容量/权限验证见[总验收](evidence/run-result-sharing/acceptance.md)。
+
+现有集群容量仍可能使新运行等待调度；本次临停空闲 AI worker 完成验收后已恢复，未增加长期运行容量。
 
 ## 运行专用验收
 

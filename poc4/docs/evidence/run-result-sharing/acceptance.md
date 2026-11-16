@@ -1,6 +1,6 @@
 # 运行结果分享验收
 
-本地验收日期：2026-11-16；云端续作：2026-11-17。分支：`codex/run-result-sharing-plan`。Task 1–5 独立审查 PASS，最终本地整分支审查 **READY，零未关闭发现**。Task 5 第三轮本地真实闭环 **PASS：1 passed / 2.1m**，产品快照为 `5903eb5`；后续标题默认值修正 `f7b8227` 的相关12项与构建 PASS，本地真实 E2E **NOT_RERUN**。第一轮 FAILED / INTERRUPTED 和第二轮 FAILED 保留。后续授权的云端 V22、前后端发布与公网只读冒烟已验证，结论 **DEPLOYMENT_VERIFIED / CLOUD_FEATURE_ACCEPTANCE_BLOCKED**：首轮 E2E 因 Run 的 1000m CPU 无法调度而 FAILED，分享生命周期 **NOT_RUN**，精确测试资源清理 PASS。详见[云端发布记录](cloud-2026-11-17.md)，其中保留 Config/Secret 区间未复核和历史迁移收据时间标志限制。此前本地默认 Vert.x transport 问题未修复；云端沿用默认 cluster transport。不授予整个平台重新验收通过。
+本地验收日期：2026-11-16；云端续作：2026-11-17。分支：`codex/run-result-sharing-plan`。Task 1–5 独立审查 PASS，最终本地整分支审查 **READY，零未关闭发现**。Task 5 第三轮本地真实闭环 **PASS：1 passed / 2.1m**，产品快照 `5903eb5`；标题修正 `f7b8227` 的相关12项与构建 PASS，其当日本地真实 E2E NOT_RERUN。本地前两轮失败保留。后续云端完成 V22 与发布，第二轮暴露的 HTTP UUID 缺陷经 `4c7902e` 修复、frontend-only 发布后，第三轮真实闭环 **1 passed / 2.0m**，独立清理与 AI worker 恢复 PASS，结论 **DEPLOYED_CLOUD_RUN_SHARE_PASS**。云端前两轮 FAILED、Config/Secret 初次区间 NOT_REVERIFIED 和迁移历史收据时间标志限制见[云端发布记录](cloud-2026-11-17.md)。此前本地 public kubeconfig 的默认 Vert.x transport 问题未修复；云端沿用默认 cluster transport。本结论不授予整个平台重新验收通过。
 
 ## 源码与已经执行的验证
 
@@ -15,7 +15,8 @@
 | Task 5 真实服务闭环、入口直开/刷新 | 产品 `5903eb549e7f24e9c0cca6bcaf3eaeb7f7a90417`；runner blob `b794988f79a71eb69c665a811cdae9fa404fb9b4` | 第三轮 1 passed / 2.1m，exit0；前两轮失败不改写 |
 | 最终 P3 标题预填修正 | `f7b822755e988fec75fa085217a6dc794401cc6c` | 默认“运行结果”的组件→HTTP回归 RED1 → dialog12 PASS，build PASS；定点复审 PASS |
 | 2026-11-16 本地验收结束时的云端部署、运行库迁移 | 当时未执行 | NOT_RUN（历史）；2026-11-17 续作见[发布记录](cloud-2026-11-17.md) |
-| 2026-11-17 云端增量发布 | `c9eebe908dd816904abf62401f133b5071ff8258` | V22/新前后端/只读公网冒烟已验证；真实 E2E FAILED（CPU容量），分享生命周期 NOT_RUN；本 invocation 精确清理 PASS |
+| 2026-11-17 HTTP UUID 修复 | frontend `4c7902e7b7c428b28160f0d4d18b7261a9ffe3a4` | 复用既有 createUuid，RED2→GREEN16、build PASS、独立审查 READY |
+| 2026-11-17 云端增量发布与真实闭环 | backend `c9eebe9` / frontend `4c7902e` / runner unchanged | 第三轮1 passed / 2.0m；生成→匿名→删源后原文保持→账户撤销→匿名410；独立清理/worker恢复 PASS；云端前两轮FAILED保留 |
 
 后端测试均使用 `JdbcStoreTestSupport` 创建/迁移/删除的 UUID disposable schema；未重置 `manao_poc4` / `manao_poc4_6b`。上述 selector 有重叠，不相加为独立用例总数。必要的可审查证据归档在[安全执行收据](verification-2026-11-16.json)，本页保留源码身份、命令和实际输出数量；不能将单元/组件结果当成真实 E2E。
 
@@ -39,8 +40,8 @@ mvn -f poc4/backend/pom.xml '-Dtest=RunShareHttpContractTest#cursorInstantsOutsi
 | 独立性 | 源日志清理、真实 WorkspaceJdbcStore.deleteProject、service 重建后快照保持；真实浏览器在源项目404后重新请求仍逐字一致 | PASS（MySQL lifecycle + 真实浏览器）；重建服务由前者证明 |
 | 生命周期 | 固定 72h、边界即时拒读、两小时 fixedDelay、到期清正文、撤销同步清正文并保留收据 | PASS（HTTP/lifecycle/maintenance）；未等待 72h 或真实两小时调度 |
 | 权限与展示 | 匿名 GET、owner 权限、公开字段白名单、真实安全链 no-store、opaque error；HTML 文本/空/null/到期与 token 切换；真实匿名 context 无 bearer | PASS（后端/前端组件 + 真实匿名访问） |
-| 真实闭环 | 登录生成 → 匿名看 → 源项目 404 后仍原样看 → 账户 UI 撤销 → 匿名 410 | PASS（第三轮真实服务） |
-| 入口路径 | 本地真实站点直接打开/刷新 `/shares/:token`，public API 与 UI 链接同 origin；二维码相同 URL 由组件/手机 fixture 核对 | PASS（本地站点）；云端入口 NOT_RUN |
+| 真实闭环 | 登录生成 → 匿名看 → 源项目 404 后仍原样看 → 账户 UI 撤销 → 匿名 410 | PASS（本地第三轮及后续云端第三轮，分别记录） |
+| 入口路径 | 本地/云端真实站点直接打开和刷新 `/shares/:token`，public API 与 UI 链接同 origin；二维码相同 URL 由组件/手机 fixture 核对 | PASS（本地与云端站点）；手机 fixture 不代表云端手机实测 |
 
 ## 真实服务执行与精确清理
 
@@ -91,4 +92,4 @@ pnpm --dir poc4/frontend exec tsc --noEmit --target es2023 --module esnext --mod
 
 ## 发布边界
 
-2026-11-16 本地实现验收轮没有执行 cloud deploy、生产迁移、push 或 merge。2026-11-17 已按后续授权完成 V22 和前后端增量发布；首轮功能验收被 CPU 容量阻塞，用户容量方案待选择。实际结果及未闭合项单列在[云端发布记录](cloud-2026-11-17.md)，不改写旧本地测试结果。发布顺序为加法迁移 → 后端 → 前端；回滚保留新表与分享收据。操作说明见[功能与部署路径](../../run-result-sharing.md)，设计与任务状态见[设计](../../../../docs/superpowers/specs/2026-11-16-run-result-sharing-design.md)及[计划](../../../../docs/superpowers/plans/2026-11-16-run-result-sharing.md)。
+2026-11-16 本地实现验收轮没有执行 cloud deploy、生产迁移、push 或 merge。2026-11-17 已按后续授权完成 V22、初次发布、HTTP UUID 修复的 frontend-only 发布与第三轮真实闭环。用户授权的两次临停空闲 AI worker 均已恢复，专属项目资源精确清理完成；临时文件策略拒绝和其他证据限制见[云端发布记录](cloud-2026-11-17.md)。旧本地/云端失败不改写。发布顺序为加法迁移 → 后端 → 前端；回滚保留新表与分享收据。操作说明见[功能与部署路径](../../run-result-sharing.md)，设计与任务状态见[设计](../../../../docs/superpowers/specs/2026-11-16-run-result-sharing-design.md)及[计划](../../../../docs/superpowers/plans/2026-11-16-run-result-sharing.md)。

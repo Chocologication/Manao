@@ -28,7 +28,7 @@
 
 ## 执行说明与文件边界
 
-本计划在 2026-11-16 的 `master` / `16022d2` 上调研，保存在 `codex/run-result-sharing-plan` 工作树。**Task 1–5 独立审查 PASS，最终本地整分支 READY、零未关闭发现；第三轮本地真实闭环及独立资源/服务/测试schema收尾 PASS。默认标题修正后的本地真实E2E NOT_RERUN，旧通过快照及前两轮失败保留。** 当日本地交付时云端发布 NOT_RUN；后续授权的 2026-11-17 云端 V22/前后端/只读冒烟已验证，首轮真实 E2E 因 CPU 容量 FAILED、分享生命周期 NOT_RUN，精确测试资源清理 PASS。结论为 DEPLOYMENT_VERIFIED / CLOUD_FEATURE_ACCEPTANCE_BLOCKED，见[云端发布记录](../../../poc4/docs/evidence/run-result-sharing/cloud-2026-11-17.md)。历史 V1–V21 未修改。状态与证据以[验收记录](../../../poc4/docs/evidence/run-result-sharing/acceptance.md)为准。
+本计划在 2026-11-16 的 `master` / `16022d2` 上调研，保存在 `codex/run-result-sharing-plan` 工作树。**Task 1–5 独立审查 PASS，最终本地整分支 READY、零未关闭发现；第三轮本地真实闭环及独立资源/服务/测试schema收尾 PASS。默认标题修正后的当日本地真实E2E NOT_RERUN，旧通过快照及前两轮失败保留。** 后续授权的 2026-11-17 云端 V22/初次发布已完成；HTTP UUID 缺陷经 frontend `4c7902e` 修复并单独发布后，第三轮真实闭环、独立清理及 AI worker 恢复 PASS，结论 DEPLOYED_CLOUD_RUN_SHARE_PASS。云端前两轮FAILED和证据限制见[发布记录](../../../poc4/docs/evidence/run-result-sharing/cloud-2026-11-17.md)。历史 V1–V21 未修改，状态以[验收记录](../../../poc4/docs/evidence/run-result-sharing/acceptance.md)为准。
 
 只设五个任务，按 1 → 2 → 3 → 4 → 5 验收。任务 3 的接口冻结后，前端可与后端独立完成；不要为了并行提前扩充通用框架。
 
