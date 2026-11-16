@@ -38,6 +38,26 @@ describe('RunShareDialog', () => {
     expect(bodies).toHaveLength(0); await user.click(screen.getByRole('button', { name: '生成分享链接' })); await screen.findByRole('button', { name: '复制链接' });
     expect(Object.keys(bodies[0] as object).sort()).toEqual(['description', 'requestId', 'snapshotDigest', 'title']); expect(bodies[0]).toMatchObject({ title: '我的结果', description: '运行说明', snapshotDigest: 'a'.repeat(64) });
   });
+  it('publishes a valid v4 request and opens link management without crypto.randomUUID', async () => {
+    const getRandomValues = crypto.getRandomValues.bind(crypto);
+    vi.stubGlobal('crypto', { getRandomValues });
+    try {
+      const bodies: Record<string, string>[] = [];
+      server.use(http.post('/api/v1/projects/p/runs/r/shares', async ({ request }) => { bodies.push(await request.json() as Record<string, string>); return HttpResponse.json(owner, { status: 201 }); }));
+      show(); const user = await fill();
+      expect(bodies).toHaveLength(0);
+      await user.click(screen.getByRole('button', { name: '生成分享链接' }));
+      await waitFor(() => expect(bodies).toHaveLength(1));
+      expect(Object.keys(bodies[0]!).sort()).toEqual(['description', 'requestId', 'snapshotDigest', 'title']);
+      expect(bodies[0]).toMatchObject({ title: '我的结果', description: '运行说明', snapshotDigest: 'a'.repeat(64) });
+      expect(bodies[0]!.requestId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+      await screen.findByRole('button', { name: '复制链接' });
+      expect(screen.getByRole('button', { name: '撤销分享' })).toBeEnabled();
+      expect(screen.queryByLabelText('分享标题')).toBeNull();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
   it('opens an existing link directly in management and revokes it', async () => {
     let deleted = false; server.use(http.get('/api/v1/projects/p/runs/r/share-preview', () => HttpResponse.json({ kind: 'EXISTING', snapshot: null, snapshotDigest: null, share: owner })), http.delete('/api/v1/run-shares/share-1', () => { deleted = true; return new HttpResponse(null, { status: 204 }); }));
     show(); await screen.findByText('原有标题'); expect(screen.queryByLabelText('分享标题')).toBeNull(); await userEvent.setup().click(screen.getByRole('button', { name: '撤销分享' })); await screen.findByText('已撤销'); expect(deleted).toBe(true);
@@ -49,10 +69,17 @@ describe('RunShareDialog', () => {
     expect(screen.getByLabelText('分享标题')).toHaveValue('我的结果'); expect(screen.getByLabelText('分享说明')).toHaveValue('运行说明'); expect(bodies).toHaveLength(1);
     await user.click(screen.getByRole('button', { name: '生成分享链接' })); await screen.findByRole('button', { name: '复制链接' }); expect(bodies[1]?.snapshotDigest).toBe('b'.repeat(64)); expect(bodies[1]?.requestId).not.toBe(bodies[0]?.requestId);
   });
-  it('manually recovers an uncertain response with the identical immutable body and fixed endpoint', async () => {
-    const bodies: unknown[] = []; server.use(http.post('/api/v1/projects/p/runs/r/shares', async ({ request }) => { bodies.push(await request.json()); return bodies.length === 1 ? HttpResponse.error() : HttpResponse.json(owner); }));
-    show(); const user = await fill(); await user.click(screen.getByRole('button', { name: '生成分享链接' })); await screen.findByRole('button', { name: '找回原结果' }); expect(bodies).toHaveLength(1);
-    expect(screen.getByLabelText('分享标题')).toBeDisabled(); await user.click(screen.getByRole('button', { name: '找回原结果' })); await screen.findByRole('button', { name: '复制链接' }); expect(bodies).toHaveLength(2); expect(bodies[1]).toEqual(bodies[0]);
+  it('manually recovers an uncertain response with the identical immutable body and fixed endpoint without crypto.randomUUID', async () => {
+    const getRandomValues = crypto.getRandomValues.bind(crypto);
+    vi.stubGlobal('crypto', { getRandomValues });
+    try {
+      const bodies: Record<string, string>[] = []; server.use(http.post('/api/v1/projects/p/runs/r/shares', async ({ request }) => { bodies.push(await request.json() as Record<string, string>); return bodies.length === 1 ? HttpResponse.error() : HttpResponse.json(owner); }));
+      show(); const user = await fill(); await user.click(screen.getByRole('button', { name: '生成分享链接' })); await screen.findByRole('button', { name: '找回原结果' }); expect(bodies).toHaveLength(1);
+      expect(bodies[0]!.requestId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+      expect(screen.getByLabelText('分享标题')).toBeDisabled(); await user.click(screen.getByRole('button', { name: '找回原结果' })); await screen.findByRole('button', { name: '复制链接' }); expect(bodies).toHaveLength(2); expect(bodies[1]).toEqual(bodies[0]); expect(bodies[1]!.requestId).toBe(bodies[0]!.requestId);
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
   it('does not display a late publish response after the same owner signs in again', async () => {
     let release = () => { }; const gate = new Promise<void>(resolve => { release = resolve; }); let entered = false;

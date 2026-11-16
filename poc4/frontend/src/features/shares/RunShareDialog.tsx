@@ -5,6 +5,7 @@ import { ApiRequestError } from '../../api/ApiRequestError';
 import { authSession } from '../../app/appRuntime';
 import { Button } from '../../components/ui/button';
 import { shareUrl, type OwnerShare, type PublishRequest } from '../../contracts/runShare';
+import { createUuid } from '../../lib/uuid';
 import { useAuth } from '../auth/AuthProvider';
 import { RunShareContent } from './RunShareContent';
 import { ShareLinkPanel } from './ShareLinkPanel';
@@ -59,7 +60,7 @@ function ShareDialogSession({ projectId, runId, onClose }: RunShareDialogProps) 
   }
   async function submit() {
     if (submitting.current || pending || preview.data?.kind !== 'PREVIEW') return;
-    const request = captured ?? Object.freeze({ requestId: crypto.randomUUID(), snapshotDigest: preview.data.snapshotDigest, title, description });
+    const request = captured ?? Object.freeze({ requestId: createUuid(), snapshotDigest: preview.data.snapshotDigest, title, description });
     submitting.current = true; setCaptured(request); setMessage('');
     try {
       const result = await publish.mutateAsync(request); if (!current()) return;
