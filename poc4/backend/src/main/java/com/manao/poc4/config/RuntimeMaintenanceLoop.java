@@ -31,6 +31,7 @@ public class RuntimeMaintenanceLoop {
     private final ObjectProvider<WorkspacePortForwardManager> bridges;
     private final ObjectProvider<RunLogIngestor> logIngestor;
     private final ObjectProvider<com.manao.poc4.terminal.TerminalWebSocketHandler> terminalHandler;
+    private final ObjectProvider<com.manao.poc4.share.RunShareService> runShares;
 
     public RuntimeMaintenanceLoop(ObjectProvider<RunObservationService> runObservation,
                                   ObjectProvider<RunRecoveryService> runRecovery,
@@ -38,7 +39,8 @@ public class RuntimeMaintenanceLoop {
                                   ObjectProvider<RetentionCleanupJob> retention,
                                   ObjectProvider<WorkspacePortForwardManager> bridges,
                                   ObjectProvider<RunLogIngestor> logIngestor,
-                                  ObjectProvider<com.manao.poc4.terminal.TerminalWebSocketHandler> terminalHandler) {
+                                  ObjectProvider<com.manao.poc4.terminal.TerminalWebSocketHandler> terminalHandler,
+                                  ObjectProvider<com.manao.poc4.share.RunShareService> runShares) {
         this.runObservation = runObservation;
         this.runRecovery = runRecovery;
         this.projectRecovery = projectRecovery;
@@ -46,6 +48,7 @@ public class RuntimeMaintenanceLoop {
         this.bridges = bridges;
         this.logIngestor = logIngestor;
         this.terminalHandler = terminalHandler;
+        this.runShares = runShares;
     }
 
     @Scheduled(fixedDelay = 3000)
@@ -79,6 +82,11 @@ public class RuntimeMaintenanceLoop {
     public void maintainBridgesAndTerminal() {
         safe("bridge child check", () -> { var manager = bridges.getIfAvailable(); if (manager != null) manager.checkChildren(); });
         safe("terminal input deadlines", () -> { var handler = terminalHandler.getIfAvailable(); if (handler != null) handler.enforceInputDeadlines(); });
+    }
+
+    @Scheduled(fixedDelay = 7200000)
+    public void purgeExpiredRunShares() {
+        safe("run share content purge", () -> { var service = runShares.getIfAvailable(); if (service != null) service.purgeExpiredContent(); });
     }
 
     @PreDestroy

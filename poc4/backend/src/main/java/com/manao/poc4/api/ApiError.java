@@ -9,6 +9,8 @@ public record ApiError(String code, String message, String traceId) {
     private static final Set<String> CODES = Set.of(
         "UNAUTHENTICATED", "FORBIDDEN", "PROJECT_LIMIT_REACHED", "VALIDATION_ERROR", "INTERNAL_ERROR",
         "INVALID_PATH", "FILE_TOO_LARGE", "BINARY_FILE", "PROJECT_LOCKED", "WORKSPACE_REVISION_CONFLICT",
+        "RUN_SHARE_NOT_TERMINAL", "RUN_SHARE_PREVIEW_CHANGED", "RUN_SHARE_ALREADY_ACTIVE", "RUN_SHARE_REQUEST_MISMATCH",
+        "RUN_SHARE_EXPIRED", "RUN_SHARE_REVOKED", "RUN_SHARE_NOT_FOUND",
         "ENTRY_ALREADY_EXISTS", "ENTRY_NOT_FOUND", "DIRECTORY_NOT_EMPTY", "RUN_ALREADY_ACTIVE",
         "RUN_STATE_CONFLICT", "RUN_NOT_FOUND", "LOG_TICKET_NOT_AVAILABLE", "TERMINAL_NOT_AVAILABLE",
         "TERMINAL_SESSION_ALREADY_ACTIVE", "TERMINAL_TICKET_NOT_AVAILABLE",
@@ -53,6 +55,13 @@ public record ApiError(String code, String message, String traceId) {
         return switch (code) {
             case "UNAUTHENTICATED" -> "Authentication required";
             case "FORBIDDEN" -> "Access denied";
+            case "RUN_SHARE_NOT_TERMINAL" -> "Only terminal runs can be shared";
+            case "RUN_SHARE_PREVIEW_CHANGED" -> "Run share preview changed";
+            case "RUN_SHARE_ALREADY_ACTIVE" -> "An active run share already exists";
+            case "RUN_SHARE_REQUEST_MISMATCH" -> "Run share request does not match the original request";
+            case "RUN_SHARE_EXPIRED" -> "Run share has expired";
+            case "RUN_SHARE_REVOKED" -> "Run share has been revoked";
+            case "RUN_SHARE_NOT_FOUND" -> "Run share not found";
             case "PROJECT_LIMIT_REACHED" -> "Project limit reached";
             case "VALIDATION_ERROR" -> "Request validation failed";
             case "ENTRY_NOT_FOUND" -> "Project not found";

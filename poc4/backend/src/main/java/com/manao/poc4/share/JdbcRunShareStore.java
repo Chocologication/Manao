@@ -6,6 +6,7 @@ import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.Objects;
+import java.util.List;
 import java.util.Optional;
 import java.util.function.Function;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -97,6 +98,53 @@ public final class JdbcRunShareStore {
                 rs.getString("request_id"), rs.getString("request_digest")),
             ownerId, requestId);
         return rows.stream().findFirst();
+    }
+
+    /** One statement supplies both the permission clock and only the permitted body. */
+    public Optional<PublicRow> findPublic(String token) {
+        String active = "revoked_at IS NULL AND expires_at>UTC_TIMESTAMP(6)";
+        return jdbc.query("SELECT title,created_at,expires_at,revoked_at,UTC_TIMESTAMP(6) AS database_now,"
+                + "CASE WHEN " + active + " THEN description END AS description,"
+                + "CASE WHEN " + active + " THEN run_snapshot_json END AS run_snapshot_json,"
+                + "CASE WHEN " + active + " THEN log_text END AS log_text FROM run_share WHERE token=?",
+            (rs, row) -> new PublicRow(rs.getString("title"), rs.getString("description"),
+                utcInstant(rs, "created_at"), utcInstant(rs, "expires_at"), utcInstant(rs, "revoked_at"),
+                utcInstant(rs, "database_now"), rs.getString("run_snapshot_json"), rs.getString("log_text")), token)
+            .stream().findFirst();
+    }
+
+    public record PublicRow(String title, String description, Instant createdAt, Instant expiresAt,
+        Instant revokedAt, Instant databaseNow, String runSnapshotJson, String logText) {}
+
+    public List<ShareReceipt> listMine(String ownerId, int limit, Instant beforeTime, String beforeId) {
+        // No snapshot or request digest is loaded for owner pagination.
+        String select = "SELECT id,title,source_project_name,token,created_at,expires_at,"
+            + "CASE WHEN revoked_at IS NOT NULL THEN 'REVOKED' WHEN expires_at<=UTC_TIMESTAMP(6) "
+            + "THEN 'EXPIRED' ELSE 'ACTIVE' END AS status FROM run_share WHERE owner_id=? ";
+        org.springframework.jdbc.core.RowMapper<ShareReceipt> mapper = (rs, row) -> new ShareReceipt(
+            rs.getString("id"), rs.getString("title"), rs.getString("source_project_name"), rs.getString("token"),
+            utcInstant(rs, "created_at"), utcInstant(rs, "expires_at"), rs.getString("status"), null);
+        if (beforeTime == null) return jdbc.query(select + "ORDER BY created_at DESC,id DESC LIMIT ?", mapper, ownerId, limit);
+        LocalDateTime time = LocalDateTime.ofInstant(beforeTime, ZoneOffset.UTC);
+        return jdbc.query(select + "AND (created_at<? OR (created_at=? AND id<?)) ORDER BY created_at DESC,id DESC LIMIT ?",
+            mapper, ownerId, time, time, beforeId, limit);
+    }
+
+    public boolean revoke(String ownerId, String shareId) {
+        return Boolean.TRUE.equals(transaction.execute(status -> {
+            var owned = jdbc.query("SELECT id FROM run_share WHERE id=? AND owner_id=? FOR UPDATE",
+                (rs, row) -> rs.getString(1), shareId, ownerId);
+            if (owned.isEmpty()) return false;
+            jdbc.update("UPDATE run_share SET revoked_at=CASE WHEN revoked_at IS NULL AND expires_at>UTC_TIMESTAMP(6) "
+                + "THEN UTC_TIMESTAMP(6) ELSE revoked_at END,log_text=NULL,description=NULL,run_snapshot_json=NULL WHERE id=? AND owner_id=?",
+                shareId, ownerId);
+            return true;
+        }));
+    }
+
+    public int purgeExpiredContent() {
+        return jdbc.update("UPDATE run_share SET log_text=NULL,description=NULL,run_snapshot_json=NULL "
+            + "WHERE expires_at<=UTC_TIMESTAMP(6) AND (log_text IS NOT NULL OR description IS NOT NULL OR run_snapshot_json IS NOT NULL)");
     }
 
     private static Instant utcInstant(ResultSet rs, String column) throws SQLException {

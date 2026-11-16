@@ -16,6 +16,8 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.security.SecureRandom;
 import java.sql.SQLException;
+import java.time.Instant;
+import java.nio.charset.StandardCharsets;
 import java.util.Base64;
 import java.util.HexFormat;
 import java.util.Optional;
@@ -141,6 +143,54 @@ public final class RunShareService {
         return new OwnerShare(receipt.id(), receipt.title(), receipt.sourceProjectName(), receipt.createdAt(),
             receipt.expiresAt(), receipt.status(), "ACTIVE".equals(receipt.status()) ? "/shares/" + receipt.token() : null);
     }
+
+    public PublicShare readPublic(String token) {
+        var row = shares.findPublic(token).orElseThrow(() -> new ApiException("RUN_SHARE_NOT_FOUND", 404, "Run share not found"));
+        String status = statusAt(row.databaseNow(), row.expiresAt(), row.revokedAt());
+        if (!"ACTIVE".equals(status)) throw new ApiException("RUN_SHARE_" + status, 410, "Run share unavailable");
+        if (row.logText() == null || row.description() == null || row.runSnapshotJson() == null) throw internalError();
+        try {
+            var run = json.readValue(row.runSnapshotJson(), RunSnapshot.class);
+            if (run == null || run.state() == null || !java.util.Set.of("SUCCEEDED", "FAILED", "CANCELLED", "TIMED_OUT").contains(run.state())
+                || run.createdAt() == null || run.language() == null || run.runtimeLabel() == null) throw internalError();
+            return new PublicShare(row.title(), row.description(), row.createdAt(), row.expiresAt(), new SnapshotContent(run, row.logText()));
+        } catch (JsonProcessingException corruptSnapshot) { throw internalError(); }
+    }
+
+    static String statusAt(Instant now, Instant expiresAt, Instant revokedAt) {
+        return revokedAt != null ? "REVOKED" : !now.isBefore(expiresAt) ? "EXPIRED" : "ACTIVE";
+    }
+
+    public SharePage listMine(String ownerId, int limit, String before) {
+        if (limit < 1 || limit > 50) throw validationError();
+        Cursor cursor = before == null ? null : decodeCursor(before);
+        var rows = shares.listMine(ownerId, limit + 1, cursor == null ? null : cursor.createdAt(), cursor == null ? null : cursor.id());
+        boolean more = rows.size() > limit;
+        var visible = rows.subList(0, Math.min(rows.size(), limit));
+        String next = null;
+        if (more) {
+            var last = visible.get(visible.size() - 1);
+            next = Base64.getUrlEncoder().withoutPadding().encodeToString(
+                (last.createdAt() + "\n" + last.id()).getBytes(StandardCharsets.UTF_8));
+        }
+        return new SharePage(visible.stream().map(RunShareService::ownerShare).toList(), next);
+    }
+
+    private static Cursor decodeCursor(String encoded) {
+        if (encoded.length() > 256 || !encoded.matches("[A-Za-z0-9_-]+")) throw validationError();
+        try {
+            var fields = new String(Base64.getUrlDecoder().decode(encoded), StandardCharsets.UTF_8).split("\n", -1);
+            if (fields.length != 2 || !fields[1].matches("[A-Za-z0-9_-]{1,36}")) throw validationError();
+            return new Cursor(Instant.parse(fields[0]), fields[1]);
+        } catch (IllegalArgumentException | java.time.DateTimeException invalidCursor) { throw validationError(); }
+    }
+
+    public void revoke(String ownerId, String shareId) {
+        if (!shares.revoke(ownerId, shareId)) throw new ApiException("RUN_SHARE_NOT_FOUND", 404, "Run share not found");
+    }
+
+    public int purgeExpiredContent() { return shares.purgeExpiredContent(); }
+    private record Cursor(Instant createdAt, String id) {}
 
     private String digest(Object envelope) {
         try {

@@ -19,5 +19,7 @@ public final class RunShareContracts {
     public record PublishOutcome(boolean created, OwnerShare share) {}
     public record PublicShare(String title, String description,
         Instant createdAt, Instant expiresAt, SnapshotContent snapshot) {}
-    public record SharePage(List<OwnerShare> items, String nextCursor) {}
+    public record SharePage(List<OwnerShare> items, String nextCursor) {
+        public SharePage { items = List.copyOf(items); }
+    }
 }

@@ -61,6 +61,7 @@ public class SecurityConfig {
                     // Existing ticket-authenticated WebSocket handshakes.
                     "/api/v1/ws/run-logs",
                     "/api/v1/ws/terminals").permitAll()
+                .requestMatchers(org.springframework.http.HttpMethod.GET, "/api/v1/public/run-shares/*").permitAll()
                 .anyRequest().authenticated())
             .exceptionHandling(e -> e.authenticationEntryPoint((request, response, exception) -> {
                 writeError(response, HttpServletResponse.SC_UNAUTHORIZED, new ApiError("UNAUTHENTICATED", "Authentication required", null));
