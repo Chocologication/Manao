@@ -17,9 +17,20 @@ function authenticate() { authSession.authenticate({ accessToken: crypto.randomU
 function show() { return render(<AppProviders><RunShareDialog projectId="p" runId="r" onClose={() => { }} /></AppProviders>); }
 beforeEach(() => { resetAppRuntime(); authenticate(); server.use(http.get('/api/v1/projects/p/runs/r/share-preview', () => HttpResponse.json(preview))); });
 afterEach(() => { cleanup(); resetAppRuntime(); vi.restoreAllMocks(); });
-async function fill() { const user = userEvent.setup(); await user.type(await screen.findByLabelText('分享标题'), '我的结果'); await user.type(screen.getByLabelText('分享说明'), '运行说明'); return user; }
+async function fill() { const user = userEvent.setup(); const title = await screen.findByLabelText('分享标题'); await user.clear(title); await user.type(title, '我的结果'); await user.type(screen.getByLabelText('分享说明'), '运行说明'); return user; }
 
 describe('RunShareDialog', () => {
+  it('prefills the default title and permits publishing without editing it', async () => {
+    const bodies: unknown[] = [];
+    server.use(http.post('/api/v1/projects/p/runs/r/shares', async ({ request }) => { bodies.push(await request.json()); return HttpResponse.json(owner, { status: 201 }); }));
+    show();
+    expect(await screen.findByLabelText('分享标题')).toHaveValue('运行结果');
+    expect(screen.getByRole('button', { name: '生成分享链接' })).toBeEnabled();
+    await userEvent.setup().click(screen.getByRole('button', { name: '生成分享链接' }));
+    await screen.findByRole('button', { name: '复制链接' });
+    expect(bodies).toHaveLength(1);
+    expect(bodies[0]).toMatchObject({ title: '运行结果', description: '' });
+  });
   it('previews plaintext and null exit, then publishes only after explicit confirmation', async () => {
     const bodies: unknown[] = []; server.use(http.post('/api/v1/projects/p/runs/r/shares', async ({ request }) => { bodies.push(await request.json()); return HttpResponse.json(owner, { status: 201 }); }));
     show(); const user = await fill();

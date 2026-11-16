@@ -22,7 +22,7 @@ function ShareDialogSession({ projectId, runId, onClose }: RunShareDialogProps) 
   const preview = useRunSharePreview(projectId, runId);
   const revoke = useRevokeRunShare();
   const publish = useMutation({ retry: false, mutationFn: (request: PublishRequest) => createRunShare(projectId, runId, request) });
-  const [title, setTitle] = useState(''); const [description, setDescription] = useState('');
+  const [title, setTitle] = useState('运行结果'); const [description, setDescription] = useState('');
   const [published, setPublished] = useState<OwnerShare | null>(null);
   const [captured, setCaptured] = useState<PublishRequest | null>(null);
   const [message, setMessage] = useState('');
