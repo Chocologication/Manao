@@ -6,6 +6,7 @@
 
 | 主题 | 入口 |
 | --- | --- |
+| 运行结果分享 | [使用说明](run-result-sharing.md)、[验收记录](evidence/run-result-sharing/acceptance.md)、[云端发布](evidence/run-result-sharing/cloud-2026-11-17.md)与[安全收据](evidence/run-result-sharing/cloud-2026-11-17.json) |
 | AI Tab 补全 | [使用与配置](ai-tab-completion.md)、[分层验收](evidence/ai-tab-completion/acceptance.md) |
 | AI 阶段一：代码修改与构建测试 | [验收记录](evidence/ai-stage1/acceptance.md) |
 | AI 阶段二：应用反馈及失败诊断 | [验收记录](evidence/ai-stage2/acceptance.md)、[既有诊断归档](evidence/ai-stage2/archive-20261016/README.md) |

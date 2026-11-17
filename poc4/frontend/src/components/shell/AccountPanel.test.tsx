@@ -59,6 +59,7 @@ function renderPanel(props: { compact?: boolean; onLogout: () => void }) {
             </>
           }
         />
+        <Route path="/account/shares" element={<><LocationEcho /><main>MY_RUN_SHARES_PAGE</main></>} />
       </Routes>
     </MemoryRouter>,
   );
@@ -165,5 +166,12 @@ describe('account and preferences panel', () => {
     await user.click(screen.getByRole('button', { name: '退出登录' }));
     expect(logout).toHaveBeenCalledOnce();
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  });
+
+  it('opens my shares from the account menu and closes the dialog', async () => {
+    renderPanel({ onLogout: vi.fn() });
+    const user=userEvent.setup(); await user.click(screen.getByRole('button',{name:'账户与偏好'}));
+    await user.click(screen.getByRole('link',{name:'我的分享'}));
+    expect(readPathname()).toBe('/account/shares'); expect(screen.getByText('MY_RUN_SHARES_PAGE')).toBeInTheDocument(); expect(screen.queryByRole('dialog')).toBeNull();
   });
 });

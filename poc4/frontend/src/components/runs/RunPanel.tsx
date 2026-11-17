@@ -5,6 +5,8 @@ import { ApiRequestError } from '@/api/ApiRequestError';
 import { projectFileWritePredicate } from '@/components/files/editorSaveCommand';
 import type { RuntimeTemplateId } from '@/contracts/project';
 import type { RunId, RunSummary } from '@/contracts/run';
+import { isRunTerminalState } from '@/contracts/run';
+import { RunShareDialog } from '@/features/shares/RunShareDialog';
 import {
   resolveRunPreconditions,
   runPreconditionDescription,
@@ -100,6 +102,7 @@ function statusText(options: {
 }
 
 export function RunPanel({ projectId, projectTemplateId, coordinator, agentTaskActive, onOpenAgentTask, requestRunSelection, onLocateError }: RunPanelProps) {
+  const [shareContext, setShareContext] = useState<{ projectId: string; runId: string } | null>(null);
   const queryClient = useQueryClient();
   const snapshot = useSyncExternalStore(
     coordinator.subscribe,
@@ -306,6 +309,7 @@ export function RunPanel({ projectId, projectTemplateId, coordinator, agentTaskA
         }}
       />
       <div className="lab-selected-run" role="status"><span>{selectedRunId && selectedRunId === activeRun?.id ? '当前运行' : selectedRunId ? '历史运行' : '尚未选择运行'}</span><code title={selectedRunId ?? ''}>{selectedRunId ?? '等待首次运行'}</code>{activeRun && selectedRunId !== activeRun.id && <button type="button" onClick={() => onSelect(activeRun.id)}>返回当前运行</button>}</div>
+      <div className="flex shrink-0 justify-end px-3 py-1"><button type="button" className="min-h-9 rounded px-2 text-sm text-primary hover:bg-accent disabled:opacity-50" disabled={!selectedRun || !isRunTerminalState(selectedRun.state)} onClick={() => { if (selectedRun && isRunTerminalState(selectedRun.state)) setShareContext({ projectId, runId: selectedRun.id }); }}>分享运行结果</button></div>
       <div className="lab-run-body flex min-h-0 min-w-0 flex-1 overflow-hidden">
         <RunHistory
           items={historyItems}
@@ -336,6 +340,7 @@ export function RunPanel({ projectId, projectTemplateId, coordinator, agentTaskA
           stopMutation.mutate();
         }}
       />
+      {shareContext && <RunShareDialog {...shareContext} onClose={() => setShareContext(null)} />}
     </section>
   );
 }

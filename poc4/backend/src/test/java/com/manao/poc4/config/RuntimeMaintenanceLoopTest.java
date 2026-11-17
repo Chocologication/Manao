@@ -17,6 +17,24 @@ import org.springframework.beans.factory.support.DefaultListableBeanFactory;
 
 class RuntimeMaintenanceLoopTest {
     @Test
+    void sharePurgeUsesTwoHourFixedDelayAndFailureDoesNotBlockTheNextTickOrOtherTasks() throws Exception {
+        var scheduled = RuntimeMaintenanceLoop.class.getMethod("purgeExpiredRunShares")
+            .getAnnotation(org.springframework.scheduling.annotation.Scheduled.class);
+        assertThat(scheduled.fixedDelay()).isEqualTo(7200000L);
+        var shares=org.mockito.Mockito.mock(com.manao.poc4.share.RunShareService.class);
+        org.mockito.Mockito.when(shares.purgeExpiredContent()).thenThrow(new IllegalStateException("unavailable")).thenReturn(1);
+        var beans=new DefaultListableBeanFactory();beans.registerSingleton("shares",shares);
+        var loop=new RuntimeMaintenanceLoop(beans.getBeanProvider(RunObservationService.class),
+            beans.getBeanProvider(RunRecoveryService.class),beans.getBeanProvider(com.manao.poc4.recovery.ProjectRecoveryService.class),
+            beans.getBeanProvider(com.manao.poc4.audit.RetentionCleanupJob.class),
+            beans.getBeanProvider(com.manao.poc4.kubernetes.WorkspacePortForwardManager.class),
+            beans.getBeanProvider(RunLogIngestor.class),beans.getBeanProvider(com.manao.poc4.terminal.TerminalWebSocketHandler.class),
+            beans.getBeanProvider(com.manao.poc4.share.RunShareService.class));
+        loop.purgeExpiredRunShares();loop.observeRuns();loop.recoverRuns();loop.cleanupExpired();loop.purgeExpiredRunShares();
+        org.mockito.Mockito.verify(shares,org.mockito.Mockito.times(2)).purgeExpiredContent();
+    }
+
+    @Test
     void recurringRecoveryLeavesHealthyRunsForTheObservationLoop() {
         var store = seededStore();
         var coordinator = new StubCoordinator();
@@ -75,6 +93,7 @@ class RuntimeMaintenanceLoopTest {
             beans.getBeanProvider(com.manao.poc4.audit.RetentionCleanupJob.class),
             beans.getBeanProvider(com.manao.poc4.kubernetes.WorkspacePortForwardManager.class),
             beans.getBeanProvider(RunLogIngestor.class),
-            beans.getBeanProvider(com.manao.poc4.terminal.TerminalWebSocketHandler.class));
+            beans.getBeanProvider(com.manao.poc4.terminal.TerminalWebSocketHandler.class),
+            beans.getBeanProvider(com.manao.poc4.share.RunShareService.class));
     }
 }

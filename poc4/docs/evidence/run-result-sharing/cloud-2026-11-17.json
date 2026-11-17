@@ -1,0 +1,667 @@
+{
+  "recordVersion": 2,
+  "date": "2026-11-17",
+  "timezone": "Asia/Shanghai",
+  "status": "DEPLOYED_CLOUD_RUN_SHARE_PASS",
+  "sourceSha": "c9eebe908dd816904abf62401f133b5071ff8258",
+  "archiveSha256": "6d927ac6f86570579f309d2a72bfa3e0f8b325c7649ac2ae855bf712064a4e52",
+  "target": {
+    "context": "kubernetes-admin@learn",
+    "namespace": "manao-stage6b",
+    "schema": "manao_poc4_6b",
+    "profile": "cluster",
+    "transport": "default Vert.x"
+  },
+  "build": {
+    "status": "PASS",
+    "registryPushPullAndArtifactVerification": "PASS",
+    "imageRepository": "chocologic/manao_images_repository",
+    "backend": {
+      "indexDigest": "sha256:0608785c48e9ce6aecfa6783c84a81b2422f2f30070d10b369ffe7977fab7f1a",
+      "amd64Manifest": "sha256:9c9cc79d043705bca515c67dbb8557eb47c14282637d4ffb95021a915076c1f6",
+      "jarSha256": "6b5196ee21e552e55a2be4d66dbaf46d08747b4bf6d03b652fd050d708b0892f",
+      "v22Present": true
+    },
+    "frontend": {
+      "experimentalTerminal": false,
+      "publicBundleBytes": 736045,
+      "publicBundleSha256": "ef3844609b3fbc36dee91de3b284371814e4c1f40b4b9e5a5ca245dd664021df",
+      "runtimeConfigId": "sha256:43d6c0e259c03fcc344bb4fe3a8fffb39f081ca82abe30a0ac55e37bec4f2e99",
+      "indexDigest": "sha256:2c995cf3df4d8f0319542a6d996fe9ebc9de049b42deb966a30520d8f0d30631",
+      "ai": true,
+      "typecheckAndBuild": "PASS",
+      "mock": false,
+      "sourceSha": "4c7902e7b7c428b28160f0d4d18b7261a9ffe3a4",
+      "amd64Manifest": "sha256:8292586e32df1d277dc411f7af450dbd2a9eb5ef7c3ab59f5491d83e7d328839",
+      "publicBundleCandidateBytesEqual": true,
+      "archiveSha256": "cb574b9d052464185d31d52d3b20084442ddb05ab263ebd32e1c8ba00ef1e1c7",
+      "compiledCryptographicUuidFallbackVerified": true
+    },
+    "initialFrontend": {
+      "indexDigest": "sha256:5efbed682d4c98dc9f255bdf6770ed626dfc92c9341fa784b1337da4089d5aa0",
+      "amd64Manifest": "sha256:9040cddb5c794792005ce2b4fb471f5fae3fe19725b6dce31dd3d8f0026a2908",
+      "typecheckAndBuild": "PASS",
+      "ai": true,
+      "mock": false,
+      "experimentalTerminal": false,
+      "mockWorkerAndFixtureMarkersAbsent": true
+    }
+  },
+  "migration": {
+    "status": "PASS",
+    "freezeStartedAt": "2026-11-17T00:35:34.3390312+08:00",
+    "handoffAt": "2026-11-17T00:39:19.026413+08:00",
+    "migrationHandoffSeconds": 224.6873818,
+    "backup": {
+      "bytes": 23296660,
+      "sha256": "59a4b829cd7487d232bbbd8f752ebcc9707035aa855140ff92e4f3de3c4f9878",
+      "serverLocalHashEqual": true,
+      "restoreVerified": true,
+      "remoteTempDeleted": true,
+      "privateBackupDisposition": "RETAINED_PRIVATE_ACL_PROTECTED",
+      "restoreVerifiedAt": "2026-11-17T00:37:54.4481255+08:00"
+    },
+    "freshCloneRestoreAndBaselineCompare": "PASS",
+    "newArtifactCloneV22": "PASS",
+    "actualOldArtifactValidateAndMigrate": "PASS",
+    "oldArtifactMigrationsExecuted": 0,
+    "legacyTableCount": 23,
+    "legacyDataDdlAndHistory": "UNCHANGED",
+    "legacyHistorySha256": "d115763b2e2ef0a5d0a05167b7eb4f4925aa395c132696200ef2f00a30f0b82c",
+    "historySuccessCount": 22,
+    "historyFailedCount": 0,
+    "v22Count": 1,
+    "v22Checksum": 629477423,
+    "runShareRowsAtHandoff": 0,
+    "runShareColumns": 15,
+    "runShareIndexes": 6,
+    "evidenceLimit": {
+      "historicalStep": "PRIVATE_BACKUP_WRITTEN",
+      "code": "P2_HISTORICAL_STEP_MUTABLE_FACTS_ALIAS",
+      "historicalStepAt": "2026-11-17T00:36:07.108306+08:00",
+      "note": "restoreVerified in this historical step reflects a later mutation of the shared Facts object; it is not a frozen event-time snapshot. Restore/old-artifact verification is proved by subsequent ordered steps at 00:37:54+08:00. Raw receipt was not rewritten."
+    }
+  },
+  "rollout": {
+    "status": "DEPLOYMENT_VERIFIED",
+    "lastReceiptStage": "FRONTEND_ONLY_DEPLOYED_READONLY_SMOKE_PASS",
+    "finalBackend": "PASS",
+    "finalFrontend": "PASS",
+    "preservationAtFailedAttempt": {
+      "worker": "PASS",
+      "platformMysqlPvc": "PASS",
+      "referencedConfigAndSecrets": "PASS"
+    },
+    "preservationAcrossEntireRelease": "NOT_REVERIFIED_INTERVAL",
+    "rollbackPerformed": false,
+    "rollbackBackendIndex": "sha256:10b5da3a5cfc834400d012e6d2d78488e994334d25dc0538b5bbf0e77708f363",
+    "rollbackFrontendIndex": "sha256:1968da53b29e3467acdf7ad935150d3c9e839cf62fc1dfa4a30ec7d57f1da783",
+    "completedAt": "2026-11-17T02:02:29.3308059+08:00",
+    "backendReadiness": "UP",
+    "priorAttempt": {
+      "status": "FAILED_NEEDS_CONTROLLER_RECONCILIATION",
+      "category": "operator OCI index versus amd64 child-only imageID comparison",
+      "continuation": "Frontend-only resume; backend not mutated",
+      "failure": "POD_IMAGE_READY_RESTART_GUARD_FAILED"
+    },
+    "components": {
+      "frontend": {
+        "architecture": "amd64",
+        "normalizedDeploymentUnchanged": true,
+        "restartCount": 0,
+        "ready": true,
+        "runtimeConfigId": "sha256:43d6c0e259c03fcc344bb4fe3a8fffb39f081ca82abe30a0ac55e37bec4f2e99",
+        "podUid": "4fdca834-8ec0-4f53-9f26-30abde071d8a",
+        "deploymentUid": "f084648f-cd49-4225-bd66-dd8976eeabcd",
+        "generation": 49,
+        "replicas": 1,
+        "imageID": "docker.io/chocologic/manao_images_repository@sha256:2c995cf3df4d8f0319542a6d996fe9ebc9de049b42deb966a30520d8f0d30631"
+      },
+      "backend": {
+        "architecture": "amd64",
+        "normalizedDeploymentUnchanged": true,
+        "restartCount": 0,
+        "ready": true,
+        "runtimeConfigId": "sha256:f8b309a6dfaf1fc3a6eb049deeede069c6803ce49bfbd95065c5cad79d777dc7",
+        "podUid": "11a8e022-bb43-493b-ab8e-d0687335a20f",
+        "deploymentUid": "ad3ff48e-5406-4551-8262-dec72e4d9a54",
+        "generation": 79,
+        "replicas": 1,
+        "imageID": "docker.io/chocologic/manao_images_repository@sha256:0608785c48e9ce6aecfa6783c84a81b2422f2f30070d10b369ffe7977fab7f1a"
+      }
+    },
+    "publicReadonly": {
+      "status": "PASS",
+      "syntheticShareSpaHttp": 200,
+      "realShareVerified": false,
+      "ownerUnauthenticatedHttp": 401,
+      "syntheticUnknownTokenPublicHttp": 404,
+      "apiNoStore": true
+    },
+    "anonymousPublicPageSmoke": {
+      "checkedAt": "2026-11-17T01:16:47+08:00",
+      "status": "PASS_PUBLIC_UI_ROUTE_AND_NOT_FOUND_STATE_ONLY",
+      "pageTitle": "Manao 码瑙 · 云端代码实验室",
+      "heading": "运行结果",
+      "alert": "分享不存在",
+      "browserClosed": true,
+      "credentialsOrActualShareTokenUsed": false,
+      "realShareLifecycleProven": false,
+      "console": "one network error for expected nonexistent-share 404; no zero-error claim"
+    },
+    "preservationResumeStartToFinish": {
+      "worker": "PASS",
+      "platformMysqlPvc": "PASS",
+      "referencedConfigAndSecrets": "PASS"
+    },
+    "preservationIntervalLimit": "Original in-process config/secret hashes were not persisted; separate original and resume comparisons do not establish unchanged contents across the process gap.",
+    "initialCompletedAt": "2026-11-17T00:56:44.3540125+08:00",
+    "frontendFixExecutionPreservation": {
+      "backend": "PASS_UNCHANGED",
+      "worker": "PASS_UNCHANGED_DURING_FRONTEND_ONLY_EXECUTION",
+      "platformMysqlPvc": "PASS",
+      "referencedConfigAndSecrets": "PASS_THIS_FRONTEND_ONLY_EXECUTION"
+    },
+    "rollbackFrontendBeforeUuidFixIndex": "sha256:5efbed682d4c98dc9f255bdf6770ed626dfc92c9341fa784b1337da4089d5aa0"
+  },
+  "cloudE2e": {
+    "run": {
+      "id": "c69a44a6-5f6c-4253-8964-29f9c4295c96",
+      "state": "SUCCEEDED",
+      "exitCode": 0,
+      "terminationReason": "BUILD_SUCCEEDED"
+    },
+    "anonymousNoStore": true,
+    "shareId": "f171725b-51ba-4a02-84f7-3332e0e41af9",
+    "projectId": "707b24f2-b518-44ee-9652-8a8ffeabf13a",
+    "exitCode": 0,
+    "anonymousAfterRevokeCode": "RUN_SHARE_REVOKED",
+    "realTwoHourMaintenanceSchedule": "NOT_RUN",
+    "publishHttp": 201,
+    "anonymousNoBearer": true,
+    "cloudOnlyBrowserPreflight": "PASS_LAUNCHER_GUARD",
+    "actualPlaywrightOutput": "1 passed (2.0m)",
+    "launcherId": "a336441b20fd4742b33ab0e873e4560d",
+    "cloudFiveMiBAndPhoneE2e": "NOT_RUN",
+    "attempt": 3,
+    "status": "PASS",
+    "sourceGetHttp": 404,
+    "invocationId": "0f88f68f-1343-4908-ba5c-26eee8f777c1",
+    "contentSha256": "872699147d6e938e767a6103b76b1acab8b51d0db4eb5ec13f863ed9e654f7e0",
+    "entirePublicDtoAndLogUnchanged": true,
+    "checks": [
+      "ANONYMOUS_DIRECT_OPEN_EXACT_LOG_PASS",
+      "SOURCE_404_ANONYMOUS_REFRESH_EXACT_SNAPSHOT_PASS",
+      "MY_SHARES_UI_REVOKE_ANONYMOUS_410_PASS"
+    ],
+    "independentCleanup": "PASS",
+    "real72HourWait": "NOT_RUN",
+    "independentReconciledAtUtc": "2026-11-16T18:09:33.620822Z",
+    "independentShareReceipt": {
+      "descriptionNull": true,
+      "ttlMicros": 259200000000,
+      "snapshotNull": true,
+      "expiresAtUtc": "2026-11-19T18:07:04.438915Z",
+      "id": "f171725b-51ba-4a02-84f7-3332e0e41af9",
+      "requestDigest": "48e2ec22db64d94433c86f6d47d3021b7f7f00fe02e80dc023c22ec4f568d234",
+      "requestId": "f2428c6e-a382-42ba-b682-0636c708c0ca",
+      "logNull": true,
+      "status": "REVOKED",
+      "createdAtUtc": "2026-11-16T18:07:04.438915Z",
+      "receiptRetained": true
+    },
+    "shareRequestId": "f2428c6e-a382-42ba-b682-0636c708c0ca",
+    "shareLifecycle": "PASS_REAL_BROWSER_AND_INDEPENDENT_DB",
+    "featureAcceptance": "DEPLOYED_CLOUD_RUN_SHARE_PASS",
+    "mySharesUiRevokeHttp": 204,
+    "anonymousRefreshAfterDeleteHttp": 200,
+    "anonymousAfterRevokeHttp": 410,
+    "anonymousDirectOpenHttp": 200,
+    "sourceDeleteHttp": 204,
+    "contentUtf8Bytes": 17
+  },
+  "cleanup": {
+    "cloudInvocationResources": "PASS_ALL_THREE_EXACT_INVOCATIONS",
+    "disposableMigrationClones": "PASS_TWO_EXACT_CLONES_DELETED_CONFIRMED",
+    "ownedMysqlPortForward": "PASS_STOPPED_OWNED_PROCESS_LISTENER_ABSENT",
+    "previousLocalTemporaryFiles": {
+      "status": "BLOCKED_BY_AUTOMATIC_APPROVAL_REVIEW",
+      "filesRemaining": 65,
+      "bytesRemaining": 1898771,
+      "reason": "blocked by policy"
+    },
+    "releaseBuildTemporaryFiles": {
+      "status": "BLOCKED_BY_AUTOMATIC_APPROVAL_REVIEW",
+      "filesRemaining": 4,
+      "deletedFiles": 0,
+      "deletedBytes": 0,
+      "reason": "blocked by policy",
+      "retriedWithOtherMethod": false
+    },
+    "migrationCleanupAt": "2026-11-17T01:09:53.5120445+08:00",
+    "invocation": {
+      "archiveNfsLeafAbsent": true,
+      "platformDirectoryPositiveControl": true,
+      "sourceShareRows": 1,
+      "helperUid": "79936fb6-c323-48b8-82d0-da7600cb0781",
+      "exactProjectLabelResourcesRemaining": 0,
+      "pvUid": "3531cdfd-fc7d-4198-adde-15ff350270cb",
+      "originalNfsLeafAbsent": true,
+      "pvcUid": "d7e74bc3-edae-4501-97d4-651ca8d3c847",
+      "invocationId": "0f88f68f-1343-4908-ba5c-26eee8f777c1",
+      "claimRefsRemaining": 0,
+      "projectDeleteHttp": 204,
+      "shareBodyNullVerification": "PASS_REVOKED_THREE_NULL_RETAINED_RECEIPT",
+      "fkScopedTables": [
+        {
+          "count": 0,
+          "table": "log_ticket"
+        },
+        {
+          "count": 0,
+          "table": "run_log_chunk"
+        },
+        {
+          "count": 0,
+          "table": "terminal_audit"
+        },
+        {
+          "count": 0,
+          "table": "assistant_task_options"
+        },
+        {
+          "count": 0,
+          "table": "project_storage_binding"
+        },
+        {
+          "count": 0,
+          "table": "agent_task"
+        },
+        {
+          "count": 0,
+          "table": "run"
+        },
+        {
+          "count": 0,
+          "table": "workspace_operation"
+        },
+        {
+          "count": 0,
+          "table": "agent_attachment"
+        },
+        {
+          "count": 0,
+          "table": "assistant_turn"
+        },
+        {
+          "count": 0,
+          "table": "agent_conversation"
+        },
+        {
+          "count": 0,
+          "table": "agent_conversation_entry"
+        },
+        {
+          "count": 0,
+          "table": "project"
+        },
+        {
+          "count": 0,
+          "table": "agent_tool_call"
+        },
+        {
+          "count": 0,
+          "table": "terminal_session"
+        },
+        {
+          "count": 0,
+          "table": "assistant_conversation"
+        },
+        {
+          "count": 0,
+          "table": "assistant_attachment"
+        }
+      ],
+      "cleanupResult": "PASS",
+      "helperDeletedConfirmedAtUtc": "2026-11-16T18:09:30.9682814Z",
+      "helperExitCode": 0,
+      "exactPvGetAbsent": true,
+      "helperDeleted404": true,
+      "sourceGetHttp": 404
+    },
+    "runtimePreserved": {
+      "historySuccessCount": 22,
+      "v22Checksum": 629477423,
+      "platformMysqlPvUidUnchanged": true,
+      "users": 5,
+      "flywayVersion": 22,
+      "platformMysqlPvcUid": "d6b6bc54-6e34-4bac-9897-436cf9e84cb3",
+      "platformMysqlPvcPhase": "Bound",
+      "runShareTableExists": true,
+      "historyFailedCount": 0,
+      "runShareRowScope": "One independent REVOKED management/request receipt retained; source tables zero",
+      "exactThirdInvocationShareReceiptsRetained": 1
+    },
+    "initialRuntimePreserved": {
+      "historySuccessCount": 22,
+      "v22Checksum": 629477423,
+      "runShareRows": 0,
+      "platformMysqlPvUidUnchanged": true,
+      "users": 5,
+      "flywayVersion": 22,
+      "platformMysqlPvcUid": "d6b6bc54-6e34-4bac-9897-436cf9e84cb3",
+      "platformMysqlPvcPhase": "Bound",
+      "runShareTableExists": true,
+      "historyFailedCount": 0,
+      "scope": "Migration cleanup snapshot before share publication"
+    }
+  },
+  "gitPushPerformed": false,
+  "gitMergePerformed": false,
+  "independentReview": {
+    "featureAcceptance": "FINALCLOUD_RUN_SHARE_PASS",
+    "cleanup": "PASS_THIRD_NFS_AND_SOURCE_DB_RECONCILED",
+    "unresolvedEvidenceLimits": [
+      "Initial config/secret process gap remains NOT_REVERIFIED_INTERVAL",
+      "P2 historical mutable Facts alias documented",
+      "temporary-file cleanup blocked by automatic approval review",
+      "72h elapsed wait/two-hour scheduler/cloud large-content acceptance not run"
+    ],
+    "deployment": "DEPLOYMENT_VERIFIED",
+    "scope": "Specified third-invocation run-sharing browser lifecycle, exact cleanup and worker restoration",
+    "openProductFindings": 0,
+    "reviewMethod": "Read existing actual receipts, raw invocation ledger and artifact identity; no new cloud calls or tests"
+  },
+  "componentSources": {
+    "frontend": "4c7902e7b7c428b28160f0d4d18b7261a9ffe3a4",
+    "runner": "c9eebe908dd816904abf62401f133b5071ff8258",
+    "backend": "c9eebe908dd816904abf62401f133b5071ff8258"
+  },
+  "sourceShaScope": "Initial backend/build source; final componentSources are authoritative",
+  "productFix": {
+    "productionBuild": "PASS",
+    "redFailingTests": 2,
+    "scope": "RunShareDialog.tsx and RunShareDialog.test.tsx only; reuse existing createUuid()",
+    "originalE2ePageErrorCaptured": false,
+    "commit": "4c7902e7b7c428b28160f0d4d18b7261a9ffe3a4",
+    "independentReview": "READY",
+    "independentBrowserCapabilityReproduction": "PASS",
+    "greenPassingTests": 16,
+    "cause": "HTTP origin has no crypto.randomUUID; original call occurred before try/catch and POST"
+  },
+  "cloudAttempts": [
+    {
+      "status": "FAILED",
+      "invocationId": "12bd333d-7202-4611-b369-ec5aceba4e8d",
+      "cloudOnlyBrowserPreflight": "PASS_LAUNCHER_GUARD",
+      "contentUtf8Bytes": null,
+      "contentSha256": null,
+      "real72HourWait": "NOT_RUN",
+      "realTwoHourMaintenanceSchedule": "NOT_RUN",
+      "cloudFiveMiBAndPhoneE2e": "NOT_RUN",
+      "featureAcceptance": "BLOCKED_CPU",
+      "launcherId": "a014bf99cf274336b80932b480e24888",
+      "projectId": "e9ed337d-1cc1-4869-b3a0-0c9b616ca943",
+      "runId": "54466234-31ac-4c60-a8c2-e9290bd5829c",
+      "stage": "run-start-and-terminal",
+      "exitCode": 1,
+      "publicOrigin": "http://1.12.245.235:30080",
+      "blocker": {
+        "code": "RUN_POD_UNSCHEDULABLE_INSUFFICIENT_CPU",
+        "workerSpareCpuRequestMillis": [
+          998,
+          818
+        ],
+        "controlPlaneUnavailable": "untolerated NoSchedule taint",
+        "runCpuRequestMillis": 1000,
+        "workerPausePerformed": false,
+        "workerPauseAuthorization": "PENDING_USER_CHOICE",
+        "capacityBasis": "scheduler request accounting; not measured utilization"
+      },
+      "exactRunStop": {
+        "terminationReason": "USER_STOPPED",
+        "observedState": "CANCELLED",
+        "expectedState": "SUCCEEDED",
+        "http": 200
+      },
+      "shareId": null,
+      "shareLifecycle": "NOT_RUN_NO_SHARE_CREATED",
+      "attempt": 1,
+      "historyScope": "First invocation state at execution time; later user worker-pause authorization recorded separately",
+      "cleanup": {
+        "fkScopedTables": [
+          {
+            "count": 0,
+            "table": "workspace_operation"
+          },
+          {
+            "count": 0,
+            "table": "terminal_session"
+          },
+          {
+            "count": 0,
+            "table": "agent_conversation"
+          },
+          {
+            "count": 0,
+            "table": "project"
+          },
+          {
+            "count": 0,
+            "table": "agent_tool_call"
+          },
+          {
+            "count": 0,
+            "table": "log_ticket"
+          },
+          {
+            "count": 0,
+            "table": "terminal_audit"
+          },
+          {
+            "count": 0,
+            "table": "assistant_conversation"
+          },
+          {
+            "count": 0,
+            "table": "agent_attachment"
+          },
+          {
+            "count": 0,
+            "table": "assistant_attachment"
+          },
+          {
+            "count": 0,
+            "table": "project_storage_binding"
+          },
+          {
+            "count": 0,
+            "table": "run"
+          },
+          {
+            "count": 0,
+            "table": "run_log_chunk"
+          },
+          {
+            "count": 0,
+            "table": "assistant_turn"
+          },
+          {
+            "count": 0,
+            "table": "assistant_task_options"
+          },
+          {
+            "count": 0,
+            "table": "agent_task"
+          },
+          {
+            "count": 0,
+            "table": "agent_conversation_entry"
+          }
+        ],
+        "projectDeleteHttp": 204,
+        "pvUid": "b740fe11-a624-417c-94ef-ae673712ba2d",
+        "sourceShareRows": 0,
+        "pvcUid": "641a359c-dc24-45d6-8592-a1f600d4e505",
+        "sourceGetHttp": 404,
+        "shareBodyNullVerification": "NOT_RUN_NO_SHARE_CREATED",
+        "claimRefsRemaining": 0,
+        "helperExitCode": 0,
+        "exactPvGetAbsent": true,
+        "archiveNfsLeafAbsent": true,
+        "exactProjectLabelResourcesRemaining": 0,
+        "helperUid": "ea61eec6-b66c-456d-8dd1-cf7f3b168072",
+        "originalNfsLeafAbsent": true,
+        "platformDirectoryPositiveControl": true,
+        "helperDeleted404": true
+      }
+    },
+    {
+      "runState": "SUCCEEDED",
+      "sourceShareRows": 0,
+      "actualPlaywrightOutput": "failed (2.1m)",
+      "attempt": 2,
+      "manualProjectGetHttp": 404,
+      "stage": "share-preview-and-ui-publish",
+      "runId": "3ed09760-d9c0-4678-8b46-4eb2c49e3b4f",
+      "nfsHelperDeleted404": true,
+      "failure": "publish POST absent; HTTP crypto.randomUUID unavailable confirmed independently",
+      "invocationId": "40bdbda0-0e56-422b-8565-42e4a3a4a331",
+      "projectId": "5f63fede-de1d-4341-afc7-48320173c3f7",
+      "nfsOriginalAndArchiveAbsent": true,
+      "independentCleanup": "PASS",
+      "manualProjectDeleteHttp": 204,
+      "status": "FAILED",
+      "exitCode": 1,
+      "runExitCode": 0,
+      "shareLifecycle": "NOT_RUN_NO_SHARE_CREATED",
+      "originalFinally": "UNRESOLVED_PRESERVED",
+      "shareId": null
+    },
+    {
+      "run": {
+        "id": "c69a44a6-5f6c-4253-8964-29f9c4295c96",
+        "state": "SUCCEEDED",
+        "exitCode": 0,
+        "terminationReason": "BUILD_SUCCEEDED"
+      },
+      "anonymousNoStore": true,
+      "shareId": "f171725b-51ba-4a02-84f7-3332e0e41af9",
+      "projectId": "707b24f2-b518-44ee-9652-8a8ffeabf13a",
+      "exitCode": 0,
+      "anonymousAfterRevokeCode": "RUN_SHARE_REVOKED",
+      "realTwoHourMaintenanceSchedule": "NOT_RUN",
+      "publishHttp": 201,
+      "anonymousNoBearer": true,
+      "cloudOnlyBrowserPreflight": "PASS_LAUNCHER_GUARD",
+      "actualPlaywrightOutput": "1 passed (2.0m)",
+      "launcherId": "a336441b20fd4742b33ab0e873e4560d",
+      "cloudFiveMiBAndPhoneE2e": "NOT_RUN",
+      "attempt": 3,
+      "status": "PASS",
+      "sourceGetHttp": 404,
+      "invocationId": "0f88f68f-1343-4908-ba5c-26eee8f777c1",
+      "contentSha256": "872699147d6e938e767a6103b76b1acab8b51d0db4eb5ec13f863ed9e654f7e0",
+      "entirePublicDtoAndLogUnchanged": true,
+      "checks": [
+        "ANONYMOUS_DIRECT_OPEN_EXACT_LOG_PASS",
+        "SOURCE_404_ANONYMOUS_REFRESH_EXACT_SNAPSHOT_PASS",
+        "MY_SHARES_UI_REVOKE_ANONYMOUS_410_PASS"
+      ],
+      "independentCleanup": "PASS",
+      "real72HourWait": "NOT_RUN",
+      "independentReconciledAtUtc": "2026-11-16T18:09:33.620822Z",
+      "independentShareReceipt": {
+        "descriptionNull": true,
+        "ttlMicros": 259200000000,
+        "snapshotNull": true,
+        "expiresAtUtc": "2026-11-19T18:07:04.438915Z",
+        "id": "f171725b-51ba-4a02-84f7-3332e0e41af9",
+        "requestDigest": "48e2ec22db64d94433c86f6d47d3021b7f7f00fe02e80dc023c22ec4f568d234",
+        "requestId": "f2428c6e-a382-42ba-b682-0636c708c0ca",
+        "logNull": true,
+        "status": "REVOKED",
+        "createdAtUtc": "2026-11-16T18:07:04.438915Z",
+        "receiptRetained": true
+      },
+      "shareRequestId": "f2428c6e-a382-42ba-b682-0636c708c0ca",
+      "shareLifecycle": "PASS_REAL_BROWSER_AND_INDEPENDENT_DB",
+      "featureAcceptance": "DEPLOYED_CLOUD_RUN_SHARE_PASS",
+      "mySharesUiRevokeHttp": 204,
+      "anonymousRefreshAfterDeleteHttp": 200,
+      "anonymousAfterRevokeHttp": 410,
+      "anonymousDirectOpenHttp": 200,
+      "sourceDeleteHttp": 204,
+      "contentUtf8Bytes": 17
+    }
+  ],
+  "workerCapacityWindows": [
+    {
+      "releasedCpuRequestMillis": 250,
+      "userAuthorized": true,
+      "pauseSeconds": 274.3857534,
+      "modelCalls": "NOT_RUN",
+      "imageID": "docker.io/chocologic/manao_images_repository@sha256:84ff2ed7b916fb32df96a4f78d80ef9b99de6187ad9048c546e891f19f605997",
+      "oldTaskReplay": "NOT_RUN",
+      "newPodExpected": true,
+      "replicas": 1,
+      "restoredAtUtc": "2026-11-16T17:40:28.6856403Z",
+      "pausedAtUtc": "2026-11-16T17:35:54.2998869Z",
+      "restoredReady": true,
+      "operatorFailure": "RESTORE_SIGNAL_NOT_CLEARED",
+      "status": "RESTORED",
+      "httpUnauthenticatedStatus": 401,
+      "specUnchangedExceptReplicas": true,
+      "serviceSpecUnchanged": true,
+      "restartCount": 0,
+      "configSecretUnchanged": true
+    },
+    {
+      "releasedCpuRequestMillis": 250,
+      "userAuthorized": true,
+      "pauseSeconds": 279.9884874,
+      "modelCalls": "NOT_RUN",
+      "imageID": "docker.io/chocologic/manao_images_repository@sha256:84ff2ed7b916fb32df96a4f78d80ef9b99de6187ad9048c546e891f19f605997",
+      "oldTaskReplay": "NOT_RUN",
+      "newPodExpected": true,
+      "replicas": 1,
+      "restoredAtUtc": "2026-11-16T18:08:39.0036469Z",
+      "pausedAtUtc": "2026-11-16T18:03:59.0151595Z",
+      "restoredReady": true,
+      "operatorFailure": null,
+      "status": "RESTORED",
+      "httpUnauthenticatedStatus": 401,
+      "specUnchangedExceptReplicas": true,
+      "serviceSpecUnchanged": true,
+      "restartCount": 0,
+      "configSecretUnchanged": true
+    }
+  ],
+  "finalRuntimeStatus": {
+    "backendFrontendWorkerReady": true,
+    "publicAuthOptionsHttp": 200,
+    "platformMysqlPvcUidUnchanged": true,
+    "cloudMutation": "NOT_RUN",
+    "v22Checksum": 629477423,
+    "runShareBodyCleared": 1,
+    "restartCounts": 0,
+    "platformMysqlPvcBound": true,
+    "expectedImagesAndPodUids": true,
+    "backendReadiness": "UP",
+    "checkedAtUtc": "2026-11-16T18:14:37.3842894Z",
+    "runShareRows": 1,
+    "v22Count": 1,
+    "runShareRevoked": 1,
+    "historyFailed": 0
+  },
+  "capacityLimitation": {
+    "nextStep": "Capacity planning required for normal concurrent workspace and application Run availability",
+    "futureWorkspaceCanMakeRunUnschedulable": true,
+    "acceptanceUsedUserAuthorizedTemporaryWorkerPause": true,
+    "futureRunRequestMillis": 1000,
+    "runRequestReduced": false,
+    "status": "NOT_PERMANENTLY_RESOLVED",
+    "workerOriginalCpuRequestRestoredMillis": 250,
+    "permanentCapacityAdded": false
+  }
+}

@@ -1,0 +1,22 @@
+CREATE TABLE run_share (
+    id CHAR(36) PRIMARY KEY,
+    owner_id VARCHAR(64) NOT NULL,
+    source_project_id VARCHAR(64) NOT NULL,
+    source_run_id VARCHAR(64) NOT NULL,
+    source_project_name VARCHAR(255) NOT NULL,
+    token CHAR(43) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+    title VARCHAR(100) NOT NULL,
+    description TEXT NULL,
+    run_snapshot_json JSON NULL,
+    log_text LONGTEXT NULL,
+    created_at DATETIME(6) NOT NULL,
+    expires_at DATETIME(6) NOT NULL,
+    revoked_at DATETIME(6) NULL,
+    request_id CHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+    request_digest CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+    UNIQUE KEY uq_run_share_token (token),
+    UNIQUE KEY uq_run_share_request (owner_id, request_id),
+    KEY ix_run_share_owner (owner_id, created_at, id),
+    KEY ix_run_share_source (owner_id, source_run_id, expires_at),
+    KEY ix_run_share_expiry (expires_at)
+) CHARACTER SET utf8mb4;

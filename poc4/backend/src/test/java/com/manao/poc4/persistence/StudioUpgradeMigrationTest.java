@@ -45,7 +45,7 @@ class StudioUpgradeMigrationTest {
             database.migrateToLatest();
 
             for (String table : tables) assertThat(jdbc.queryForList("SELECT * FROM " + table)).isEqualTo(before.get(table));
-            assertThat(jdbc.queryForList("SELECT version,checksum,success FROM flyway_schema_history WHERE version <> '21' ORDER BY installed_rank"))
+            assertThat(jdbc.queryForList("SELECT version,checksum,success FROM flyway_schema_history WHERE CAST(version AS UNSIGNED) <= 20 ORDER BY installed_rank"))
                 .isEqualTo(history);
             assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM flyway_schema_history WHERE version='21' AND success=1", Integer.class)).isEqualTo(1);
             for (String table : List.of("assistant_model", "assistant_conversation", "assistant_turn", "assistant_attachment", "assistant_task_options")) {

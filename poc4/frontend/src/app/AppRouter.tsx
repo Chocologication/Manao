@@ -9,6 +9,8 @@ import { RegisterPage } from '../features/auth/RegisterPage';
 import { RequireAuth } from '../features/auth/RequireAuth';
 import { ProjectRoutePage } from '../features/projects/ProjectRoutePage';
 import { ProjectsPage } from '../features/projects/ProjectsPage';
+import { PublicRunSharePage } from '../features/shares/PublicRunSharePage';
+import { MyRunSharesPage } from '../features/shares/MyRunSharesPage';
 
 const router = createBrowserRouter([
   {
@@ -34,8 +36,9 @@ const router = createBrowserRouter([
       {
         path: '/account',
         element: <RequireAuth />,
-        children: [{ path: 'password', element: <ChangePasswordPage /> }],
+        children: [{ path: 'password', element: <ChangePasswordPage /> }, { path: 'shares', element: <MyRunSharesPage /> }],
       },
+      { path: '/shares/:token', element: <PublicRunSharePage /> },
       {
         path: '/projects',
         element: <RequireAuth />,

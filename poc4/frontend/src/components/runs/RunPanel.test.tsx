@@ -48,6 +48,30 @@ const CREATED_AT = '2026-08-24T10:00:00.000Z';
 const FINISHED_AT = '2026-08-24T10:00:05.000Z';
 const PERSISTED_AT = '2026-08-24T10:00:02.000Z';
 
+describe('selected Run sharing entry', () => {
+  afterEach(() => { cleanup(); resetAppRuntime(); });
+  it('shares a terminal historical run while another run is active and fixes dialog context', async () => {
+    resetAppRuntime(); await authenticateAsAlice();
+    const active = makeRun('active-share-run', 'RUNNING');
+    const historical = makeRun('historical-share-run', 'FAILED');
+    stubRuns({ active, history: [active, historical] });
+    const readIds: string[] = [];
+    server.use(http.get('/api/v1/projects/:projectId/runs/:runId/share-preview', ({ params }) => {
+      readIds.push(String(params.runId));
+      return HttpResponse.json({ kind:'PREVIEW', snapshot:{run:{state:'FAILED',exitCode:null,createdAt:CREATED_AT,startedAt:null,finishedAt:FINISHED_AT,language:'java',runtimeLabel:'Java 17 / Maven 3'},logText:'selected history log'},snapshotDigest:'d'.repeat(64),share:null });
+    }));
+    renderPanel();
+    await screen.findByRole('button', { name: '分享运行结果' });
+    expect(screen.getByRole('button', { name: '分享运行结果' })).toBeDisabled();
+    await waitFor(()=>expect(historyRunButton(historical.id)).toBeInTheDocument());
+    const user=userEvent.setup(); await user.click(historyRunButton(historical.id));
+    await waitFor(()=>expect(screen.getByRole('button',{name:'分享运行结果'})).toBeEnabled());
+    await user.click(screen.getByRole('button',{name:'分享运行结果'})); await screen.findByText('selected history log');
+    await user.click(historyRunButton(active.id));
+    expect(screen.getByText('selected history log')).toBeInTheDocument(); expect(readIds).toEqual(['historical-share-run']);
+  });
+});
+
 async function authenticateAsAlice(): Promise<void> {
   const response = await login(ALICE);
   authSession.authenticate(response);
