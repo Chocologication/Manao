@@ -61,11 +61,11 @@ document 隐藏时暂停 timeline、代码切换、核心光晕、模块浮动�
 
 ```powershell
 pnpm dev:mock --host 127.0.0.1 --port 4183 --strictPort
-pnpm exec playwright test --config playwright.entry.config.ts
+pnpm exec playwright test --config playwright.login-entry.config.ts
 ```
 
-独立 E2E config 使用 4185，自动启动并回收 mock 服务；默认 Chromium。本机 Edge 可设置 MANAO_ENTRY_BROWSER=msedge。账号 alice / demo-pass 仅为 mock 数据，真实邮箱和后端需单独验证。
+独立 E2E config 使用 4184，自动启动并回收 mock 服务；默认 Chromium。本机 Edge 可设置 MANAO_ENTRY_BROWSER=msedge。账号 alice / demo-pass 仅为 mock 数据，真实邮箱和后端需单独验证。
 
 测试覆盖完整播放、跳过、重试、认证路由切换、代码预览轮换、鼠标与稳定表单、注册/找回密码 mock 闭环、桌面尺寸、reduced-motion、隐藏暂停、低性能模拟、Canvas fallback、context loss/restore、卸载及主题隔离。
 
-本轮结果见 [立体云端实验室验收](../../../../docs/evidence/entry-compute-lab-20261117.md)。此前记录：[光影与纵深增强](../../../../docs/evidence/entry-aurora-depth-20261117.md)、[凌晨版本](../../../../docs/evidence/entry-aurora-20261117.md)。
+验证结果以 PR 检查和本地 E2E 日志为准；本文件只记录实现约定，不依赖仓库外的验收记录文件。
