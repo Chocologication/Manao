@@ -18,7 +18,7 @@ export function AuthPageFrame({ eyebrow, title, subtitle, children, footer }: Au
         <div><h2 id="account-page-title">{title}</h2>{subtitle && <p>{subtitle}</p>}</div>
         <span className="entry__security-mark"><ShieldCheck size={20} aria-hidden="true" /></span>
       </div>
-      <div className="entry__form-meta"><span>{eyebrow ?? 'MANAO / ACCOUNT'}</span><span>安全验证</span></div>
+      <div className="entry__form-meta"><span>{eyebrow ?? '账号管理'}</span><span>安全验证</span></div>
       <div className="entry__account-content">{children}</div>
       {footer && <div className="entry__account-link">{footer}</div>}
       {import.meta.env.MODE === 'mock' && <div className="entry__demo-hint"><span>演示环境不发送真实邮件，输入任意图形字符和 6 位邮箱验证码。</span></div>}

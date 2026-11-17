@@ -1,7 +1,7 @@
 import { cleanup, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { login } from '../../api/authApi';
 import { authSession, queryClient } from '../../app/appRuntime';
 import type { ProjectSummary } from '../../contracts/project';
@@ -17,6 +17,11 @@ let deletes: number;
 let listFails: boolean;
 
 beforeEach(async () => {
+  // Assert authentication recovery without waiting for the decorative entry animation.
+  const matchMedia = window.matchMedia;
+  vi.spyOn(window, 'matchMedia').mockImplementation((query) => ({
+    ...matchMedia(query), matches: query === '(prefers-reduced-motion: reduce)',
+  }));
   resetAppRuntime();
   items = [project, { ...project, id: 'keep', name: 'Keep me' }];
   deletes = 0;

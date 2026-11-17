@@ -7,6 +7,7 @@ import { ForgotPasswordPage } from '../features/auth/ForgotPasswordPage';
 import { LoginPage } from '../features/auth/LoginPage';
 import { RegisterPage } from '../features/auth/RegisterPage';
 import { RequireAuth } from '../features/auth/RequireAuth';
+import { EntryRouteLayout } from '../features/auth/EntryLayout';
 import { ProjectRoutePage } from '../features/projects/ProjectRoutePage';
 import { ProjectsPage } from '../features/projects/ProjectsPage';
 import { PublicRunSharePage } from '../features/shares/PublicRunSharePage';
@@ -22,16 +23,12 @@ const router = createBrowserRouter([
         element: <Navigate to="/projects" replace />,
       },
       {
-        path: '/login',
-        element: <LoginPage />,
-      },
-      {
-        path: '/register',
-        element: <RegisterPage />,
-      },
-      {
-        path: '/forgot-password',
-        element: <ForgotPasswordPage />,
+        element: <EntryRouteLayout />,
+        children: [
+          { path: '/login', element: <LoginPage /> },
+          { path: '/register', element: <RegisterPage /> },
+          { path: '/forgot-password', element: <ForgotPasswordPage /> },
+        ],
       },
       {
         path: '/account',

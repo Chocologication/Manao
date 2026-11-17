@@ -7,7 +7,7 @@ test('registration completes from the login entry and the new account can sign i
   await page.goto('/login');
   await page.getByRole('link', { name: '创建账号' }).click();
   await expect(page).toHaveURL(/\/register$/);
-  await expect(page).toHaveTitle('注册账号 | 码瑙');
+  await expect(page).toHaveTitle('创建账号 | Manao 云端开发实验室');
   await expect(page.getByLabel('图形验证码', { exact: true })).toBeEnabled();
   await expect(page.getByRole('img', { name: '图形验证码', exact: true })).toBeVisible();
   await expect(page.locator('.entry__feature').last()).toHaveCSS('opacity', '1');

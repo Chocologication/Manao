@@ -2,6 +2,7 @@ import { useGSAP } from '@gsap/react';
 import gsap from 'gsap';
 import { ArrowUpRight, Eye, EyeOff, LoaderCircle, ShieldCheck, UserRound } from 'lucide-react';
 import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { createPortal } from 'react-dom';
 import { Link, Navigate, useLocation, useNavigate } from 'react-router';
 import { login } from '../../api/authApi';
 import { EntryLayout } from './EntryLayout';
@@ -254,7 +255,7 @@ export function LoginPage() {
             <div className="entry__form-heading">
               <div>
                 <h2 id="access-title">登录开发实验室</h2>
-                <p>进入你的云端项目、文件与运行记录。</p>
+                <p>登录后继续你的项目与 AI 对话。</p>
               </div>
               <span className="entry__security-mark">
                 <ShieldCheck size={20} aria-hidden="true" />
@@ -329,7 +330,7 @@ export function LoginPage() {
                   </>
                 ) : (
                   <>
-                    进入实验工作台
+                    登录并进入工作台
                     <ArrowUpRight
                       className="size-4 transition-transform group-hover:-translate-y-0.5 group-hover:translate-x-0.5"
                       aria-hidden="true"
@@ -353,7 +354,7 @@ export function LoginPage() {
             )}
           </section>
       </EntryLayout>
-      {transitioning ? <LoginTransition onComplete={completeTransition} /> : null}
+      {transitioning ? createPortal(<LoginTransition onComplete={completeTransition} />, document.body) : null}
     </>
   );
 }

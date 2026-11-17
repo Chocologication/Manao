@@ -1,62 +1,71 @@
-# 入场页：Execution Atlas / 执行印刷场
+# 入场页：立体云端实验室
 
-## 项目与设计
+## 设计与范围
 
-实际入口为 `/login`，React 19 + TypeScript + Vite；入口组件 `LoginPage.tsx`，GSAP 与 `@gsap/react` 已存在。项目 README、登录文案和 Run/Terminal 合同表明，码瑙围绕云端文件编辑、Java/Python 运行、日志与历史证据、AI 诊断工作，面向需要复现实验的开发者和学习者。
+桌面认证入口采用立体云端实验室：远处计算节点阵列、中景悬浮开发模块、透视数据光路与近处代码流。极光降为淡淡的蓝白环境光，前景用分层工作平台和脉冲光路连接代码、创意核心、AI 协作及云端环境；右侧保留深蓝外壳与白色表单。左侧显示 Manao / 云端开发实验室。无声音、外部图片、视频、字体下载或新增依赖。
 
-因此背景表达的是“源码经过执行，留下可核对的证据”，而不是泛用的 AI 宇宙。暖纸色底、深墨结构、钴蓝执行层、橙色扫描标记共同构成斜向贯穿全屏的执行印刷场。源码与证据纸页是前景，展开的执行层为中景，浅色工作底版为背景。阅读区不使用白色遮罩洗淡画面。
+四份代码预览分别使用 Python、Java、JavaScript、TypeScript，标注「视觉示意」。背景不读取项目、调用模型或伪造服务状态。
 
-画面中的 Python 示例为 `values = [3, 1, 4, 1, 5]; total = sum(values); print(total)`，输出对应 `14`。明确标注“工作流动态示意 / EXAMPLE”，不是后台实时数据，不捏造运行时长、地域或线上状态。
+## 动画与交互
 
-## 实际运行的参考与三种方向
+首次进入认证区域的 GSAP timeline 为 4.5 秒：
 
-2026-10-31 使用 Chromium 打开在线页面、等待运行并保存前后帧；截图与 HTTP 结果见 `E:/测试/manao-entry-atlas/`。Stars/Forks 是当天 GitHub API 快照，不能视为永久数字。
+| 时间 | 内容 |
+| --- | --- |
+| 0–1.2 s | 云端节点、数据光路与环境光展开 |
+| 0–4.5 s | 镜头穿过计算空间、分层代码流和光点，逐渐减速至停止 |
+| 0.4–3.1 s | 代码面板、核心与分层平台从远处进入 |
+| 2.1–3.1 s | 品牌与中文主题出现 |
+| 2.7–3.9 s | 场景移至左侧 |
+| 3.4–4.5 s | 右侧控制台展开，表单可操作 |
 
-| 方向 / 项目 | 实际 Demo | Stars / Forks | 技术与 License | 观察、取舍与性能成本 |
-| --- | --- | --- | --- | --- |
-| 空间数据地形 / [Three.js](https://github.com/mrdoob/three.js) | [Dynamic instancing](https://threejs.org/examples/webgl_instancing_dynamic.html)，HTTP 200，实际看到连续起伏的青紫色方块地形 | 117273 / 36835 | WebGL / InstancedMesh，[MIT](https://github.com/mrdoob/three.js/blob/dev/LICENSE) | 空间规模感强，适合数据地形；大量实例、持续矩阵更新和 WebGL 初始化有成本，且不能直接表达源码与证据关系，未引入。 |
-| 连续材质流动 / [WebGL Fluid Simulation](https://github.com/PavelDoGreat/WebGL-Fluid-Simulation) | [在线流体](https://paveldogreat.github.io/WebGL-Fluid-Simulation/)，HTTP 200，运行并移动鼠标观察彩色涡流 | 16781 / 1920 | 多 pass WebGL 流体，[MIT](https://github.com/PavelDoGreat/WebGL-Fluid-Simulation/blob/master/LICENSE) | 动态丰富，但显著偏向流体实验、鼠标反馈与高光；计算依赖纹理、分辨率和 GPU，与本次业务叙事不符，未复用。 |
-| 编辑式排版与分阶段流程 / [GSAP](https://github.com/greensock/GSAP) | [实际官网](https://gsap.com/)，HTTP 200，观察 `Animate Anything` 字形、图形错位组织和滚动衔接 | 29964 / 2319 | DOM/SVG/JS timeline；[GSAP Standard License](https://gsap.com/standard-license/)，不是 MIT | 选择其“内容与运动统一编排”的原则；保留既有 GSAP，背景原创 Canvas2D 执行印刷场，避免新增 3D 引擎和素材。 |
-| 额外排除 / [Anime.js](https://github.com/juliangarnier/anime) | [实际官网](https://animejs.com/)，HTTP 200，观察首屏与后续动效 | 74101 / 5023 | JS/SVG/WebGL 编排，[MIT](https://github.com/juliangarnier/anime/blob/master/LICENSE.md) | 序列设计可借鉴；实际首屏的环形视觉违反本任务限制，不采用，也不新增重复动画库。 |
+开场期间「跳过动画」始终可用，表单使用 inert 避免焦点进入不可见区域。跳过后将键盘焦点移至首个输入框。镜头进度由 GSAP 与背景共享，不通过每帧 React state 更新。完整播放或跳过后，只停止镜头推进；模块浮动、光路脉冲、环境光、粒子与代码流保持原有环境动画速度和数量，不因表单出现而弱化。代码示例每 5 秒交替，全部四种语言为一个 20 秒周期。
 
-三个主要方向分别是空间地形、连续流体、编辑式执行叙事；它们的构图和运动机制不同，不是更换粒子密度或中心物体。
+鼠标产生柔和局部光晕，照亮 300px 内的节点及连线，并轻微改变左侧场景的倾角与位置。使用 quickTo 复用 tween；登录表单不参与鼠标位移。三层背景代码使用不同尺寸、透明度和速度；标题和表单附近降低背景细节对比度，保持可读性。布局和元素尺寸沿用凌晨版本。
 
-另检查了 [Codrops OnScrollTypographyAnimations](https://github.com/codrops/OnScrollTypographyAnimations) 源码介绍与 MIT License。其 [Demo](https://tympanus.net/Development/OnScrollTypographyAnimations/) 在当前环境返回 HTTP 403 检查页，未把它写成已观看的演示。Pudding 参考页超时，同样未采用。
+计算节点、悬浮模块和地面数据光路共用透视投影。节点使用前 / 顶 / 侧面表现体积，按深度绘制；底层不透明表面遮挡远处节点。背景模块附近鼠标高亮半径为 280px。前景模块仅上下浮动 5px，光路沿 SVG path 流动，均复用 GSAP 的生命周期与暂停逻辑。
 
-参考网站的视觉不等于可以复制网站素材。上述视频、截图、字体、网页源码均未进入产品。Canvas 几何、纸页面板、扫描和颜色由本项目重新实现。实际继续使用的 GSAP Standard License 允许此类网站/应用使用，限制竞争性可视化动画编辑工具；保留依赖自带版权声明。
+系统 reduced-motion 或应用关闭动态效果时，直接显示完整布局，背景静止、不跟随鼠标。运行中开启 reduced-motion 会结束开场；重新允许动画只恢复环境动效，不重播开场。
 
-## 实现、作用域与资源
+## 路由与认证兼容
 
-- `entryFlowField.ts`：原创 Canvas2D 场景。只有一个渲染循环，不使用 WebGL、视频、粒子或鼠标监听。
-- `EntryAtmosphere.tsx`：页面级挂载、静态 fallback 和场景标注；移除光标、光晕、网格覆盖层等旧 DOM。
-- `LoginPage.module.css`：清理旧背景和鼠标效果；暖纸底、通栏导航、稳定阅读区、实色表单；只使用页面作用域变量与选择器。
-- `LoginPage.tsx`：仅调整入场 tween，表单从可见明度开始，不在认证回退时被 opacity:0 隐藏；未修改认证、路由或请求逻辑。保留已有 scoped useGSAP 时间轴和 cleanup。
-- `tests/e2e/login-entry.spec.ts`：桌面尺寸、登录、focus、reduced-motion、隐藏暂停、低性能、context/fallback、卸载释放与主题隔离验证。
-- `EntryBackground.md`：本说明。
+- AppRouter 的 EntryRouteLayout 持久挂载于 /login、/register、/forgot-password 的共同父路由；切换表单、登录失败及重试不会重播开场。
+- 离开认证区域时释放场景；重新进入或刷新页面重播。没有使用 localStorage 或 sessionStorage 保存播放状态。
+- EntryLayout 在共同布局内只输出表单；独立账号页（如修改密码）仍能复用同一视觉。
+- 登录成功过渡使用 portal，避免受控制台的 perspective 包含块影响。
+- 认证 API、字段、token 生命周期、密码校验、后端配置和数据库均不变。
 
-本轮新增视频/图片/字体资源 **0 bytes**，新增依赖 **0**。截图与录屏只在外部验收目录，不进入首屏下载。
+## 实现与降级
 
-动画的单一周期为 18 秒：0–3 s 源码显影；3–7 s 执行层展开；7–11 s 扫描逐层推进；11–15 s 结果与证据打印；15–18 s 回收复位。所有过渡在周期两端归零，避免不相干 sine 频率造成假循环。首次页面无需等待完整周期即可操作。
+| 文件 | 职责 |
+| --- | --- |
+| EntryLayout.tsx | 共享认证路由、4.5 秒 timeline、跳过与焦点 |
+| EntryLab.tsx | 四语言代码示例、SVG 核心、模块浮动、光路与鼠标倾斜 |
+| EntryAtmosphere.tsx | 两层 Canvas 挂载与 CSS fallback |
+| entryFlowField.ts | 统一绘制时钟、镜头投影、粒子、代码流、节点、降级极光 |
+| entryComputeSpace.ts | 无独立时钟的计算节点、空间框架、悬浮模块与数据光路绘制 |
+| entryAurora.ts | 可选 WebGL 环境光、淡极光与 GPU 资源管理 |
+| LoginPage.module.css | 认证页独立配色、控制台与桌面布局 |
 
-普通设备 Canvas 上限约 1.65M 像素；低性能/省流设备约 0.9M、7 层和 30 fps 目标，高档最多 10 层、60 fps 目标。目标频率不是实测保证。持续绘制成本偏高时自动降档。页面隐藏、离开可视区域、context loss 时停止 rAF；卸载释放监听器、observer、帧和 Canvas backing store。
+Canvas2D 高档最多 260 粒子、15 条背景代码、1.65M 像素和 60 fps 目标；低性能 / 省流设备为 85 粒子、9 条代码、0.9M 像素和 30 fps 目标。WebGL 极光单独限制为高档约 0.48M / 低档约 0.23M 像素，两者共用一个 rAF。连续慢帧自动降档；目标频率不是所有硬件的实测保证。每帧无网络请求、无 React state 更新。
 
-reduced-motion 显示经过设计的 12 s 证据阶段静帧；Canvas 不可用时切换纯 CSS 纸页与执行层静态构图。保留系统光标和原有键盘操作。只针对桌面构图，没有移动端改造。
+计算空间高档为 24 个阵列节点及 4 个悬浮模块，低档为 12 个阵列节点及 4 个悬浮模块；不增加 Canvas、rAF、事件监听器或第三方依赖。
 
-## 启动
+document 隐藏时暂停 timeline、代码切换、核心光晕、模块浮动、SVG 光路和两层 Canvas；Canvas 离开可视区域时暂停绘制。WebGL 不可用或 context loss 时保留完整 Canvas2D 计算空间与简化环境光；Canvas2D 不可用时使用 CSS 静态背景。恢复 context 后重新准备资源并绘制，包括 reduced-motion 下的静态画面。卸载清理 observer、事件、tween、rAF、GPU buffer / shader / program 与两层 backing store；仅在 Canvas 脱离 DOM 后释放 WebGL context，避免影响 StrictMode 和动态偏好切换。
+
+桌面布局覆盖 1280×720 至超宽屏；短窗口压缩登录间距，注册长表单允许滚动。窄窗口仅提供基础可达布局，未进行手机视觉设计。
+
+## 运行与验证
+
+在 poc4/frontend 目录运行：
 
 ```powershell
-cd C:\Users\Y\AppData\Local\Temp\Manao-preview\poc4\frontend
-pnpm dev:mock --host 127.0.0.1 --port 4175
+pnpm dev:mock --host 127.0.0.1 --port 4183 --strictPort
+pnpm exec playwright test --config playwright.login-entry.config.ts
 ```
 
-预览：<http://127.0.0.1:4175/login>。`alice / demo-pass` 为 README 中已有的 mock 凭据，不是真实生产账号。
+独立 E2E config 使用 4184，自动启动并回收 mock 服务；默认 Chromium。本机 Edge 可设置 MANAO_ENTRY_BROWSER=msedge。账号 alice / demo-pass 仅为 mock 数据，真实邮箱和后端需单独验证。
 
-## 验收记录
+测试覆盖完整播放、跳过、重试、认证路由切换、代码预览轮换、鼠标与稳定表单、注册/找回密码 mock 闭环、桌面尺寸、reduced-motion、隐藏暂停、低性能模拟、Canvas fallback、context loss/restore、卸载及主题隔离。
 
-2026-11-01 在 Chromium 桌面环境复测：`pnpm exec eslint src/features/auth/entryFlowField.ts src/features/auth/EntryAtmosphere.tsx src/features/auth/LoginPage.tsx tests/e2e/login-entry.spec.ts` 与 `pnpm typecheck` 通过；生产构建通过（84 秒）。项目边界检查 36/36 通过，Browser boundary check 通过。认证/路由回归 32/32 通过，登录单测 16/16 通过。
-
-Playwright 入场 E2E 9/9 通过，覆盖 1280×720、1280×800、1920×1080、2560×1440、3440×1440，无横向溢出；检查登录失败/成功、密码显示、按钮 hover、键盘 focus、reduced-motion 切换与初始设置、页面隐藏暂停、低性能模拟、Canvas 不可用 fallback、context loss/restore、离开登录页后 backing store 释放和样式隔离。低性能用例首次与构建/全量测试并行时超过点击等待上限；停止竞争负载后单项与完整 E2E 均复测通过。
-
-另以 Chromium 录制完整 37 秒，覆盖两个 18 秒循环：共采样 2212 帧，rAF 间隔中位数与 P95 均为 16.7 ms；循环边界抽样红通道均值差为 0，阶段顺序在两轮一致。它是该次 Chromium 录制的间隔/接缝测量，不代表不同设备上的稳定 FPS 或 GPU 性能保证。浏览器 Console 错误与资源加载失败均为 0。录屏 4,156,190 bytes（约 3.96 MiB），未进入项目资源；截图和探针报告位于外部验收目录。
-
-完整 `pnpm test --maxWorkers=2` 收集到并运行的 1632 项测试全部通过，但命令因现存 `tests/visual/ai-ui.spec.ts` 被 Vitest 收集后调用 Playwright `test()` 而以失败结束。完整 lint 仍报告仓库其他目录的 35 个错误、9 个警告；本次触及的页面文件定向 ESLint 通过。生产构建有既有大 chunk 提示（WorkbenchPage 约 4.03 MB，未在本次范围内拆包）。真实后端、实体 GPU 占用和长期内存稳定性未验证；登录验证使用项目现有 mock 服务。
+验证结果以 PR 检查和本地 E2E 日志为准；本文件只记录实现约定，不依赖仓库外的验收记录文件。

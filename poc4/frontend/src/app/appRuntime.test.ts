@@ -318,6 +318,11 @@ function trackCleanupOrder(socket: TestLogSocket): {
 const originalClipboardItem = globalThis.ClipboardItem;
 
 beforeEach(() => {
+  // Session recovery assertions are immediate; cinematic timing is covered in Playwright.
+  const matchMedia = window.matchMedia;
+  vi.spyOn(window, 'matchMedia').mockImplementation((query) => ({
+    ...matchMedia(query), matches: query === '(prefers-reduced-motion: reduce)',
+  }));
   resetAppRuntime();
   globalThis.ClipboardItem = class {
     constructor(items: Record<string, Blob | string | Promise<Blob | string>> = {}) {

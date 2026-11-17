@@ -1,6 +1,6 @@
 # 账号入口
 
-`/login`、`/register`、`/forgot-password` 和 `/account/password` 共用新的入口视觉。`EntryLayout.tsx` 管理背景和入场动画；`AuthPageFrame.tsx` 为注册、找回密码和修改密码提供统一表单。入口页配色独立于工作台主题，支持 reduced-motion，账号表单支持窄屏。
+`/login`、`/register`、`/forgot-password` 和 `/account/password` 共用入口视觉。`EntryLayout.tsx` 管理背景和入场动画；前三个页面由 `EntryRouteLayout` 保持场景挂载，切换时不重播开场；`AuthPageFrame.tsx` 为注册、找回密码和修改密码提供统一表单。入口页配色独立于工作台主题，支持 reduced-motion；长表单可滚动，窄窗口保留基础操作布局。动效说明见 [入场页](EntryBackground.md)。
 
 ## 页面流程
 
