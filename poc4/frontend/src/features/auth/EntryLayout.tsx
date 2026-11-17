@@ -1,152 +1,132 @@
 import { useGSAP } from '@gsap/react';
 import gsap from 'gsap';
-import { Check } from 'lucide-react';
-import { useEffect, useRef, type ReactNode } from 'react';
+import { ArrowRight, Box, Code2, Sparkles } from 'lucide-react';
+import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
+import { Link, Outlet, useLocation } from 'react-router';
 import { useReducedMotion } from '@/features/preferences/motionPreferences';
 import { EntryAtmosphere } from './EntryAtmosphere';
+import { EntryLab } from './EntryLab';
 import styles from './LoginPage.module.css';
 
 gsap.registerPlugin(useGSAP);
+const SharedEntry = createContext(false);
+type EntryProps = { children: ReactNode; mode?: 'login' | 'register'; title?: string };
+const features = [
+  { Icon: Code2, title: '多语言开发', detail: 'Java · Python · Node.js' },
+  { Icon: Box, title: '独立运行环境', detail: '代码、依赖与日志集中管理' },
+  { Icon: Sparkles, title: 'AI 协作', detail: '从理解代码到执行任务' },
+];
 
-export function EntryLayout({ children, mode = 'login', title }: { children: ReactNode; mode?: 'login' | 'register'; title?: string }) {
+/** Keep the scene mounted across account routes; re-entering the area replays the intro. */
+export function EntryRouteLayout() {
+  const { pathname } = useLocation();
+  const title = pathname === '/register' ? '创建账号' : pathname === '/forgot-password' ? '找回密码' : '登录';
+  return <SharedEntry.Provider value={true}>
+    <EntryScene mode={pathname === '/login' ? 'login' : 'register'} title={title}><Outlet /></EntryScene>
+  </SharedEntry.Provider>;
+}
+
+export function EntryLayout(props: EntryProps) {
+  const shared = useContext(SharedEntry);
+  return shared ? props.children : <EntryScene {...props} />;
+}
+
+function EntryScene({ children, mode = 'login', title = '登录' }: EntryProps) {
   const containerRef = useRef<HTMLElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+  const timelineRef = useRef<gsap.core.Timeline | null>(null);
+  const focusFrameRef = useRef<number | null>(null);
+  const completedRef = useRef(false);
+  const introRef = useRef({ progress: 0 });
   const reducedMotion = useReducedMotion();
+  const [ready, setReady] = useState(reducedMotion);
+
+  useEffect(() => () => {
+    if (focusFrameRef.current !== null) cancelAnimationFrame(focusFrameRef.current);
+  }, []);
 
   useEffect(() => {
-    const previousTitle = document.title;
-    document.title = title ? `${title} | 码瑙` : mode === 'register' ? '注册账号 | 码瑙' : '码瑙 | 可复现云端实验平台';
-    return () => {
-      document.title = previousTitle;
+    const previous = document.title;
+    document.title = `${title} | Manao 云端开发实验室`;
+    return () => { document.title = previous; };
+  }, [title]);
+
+  useGSAP(() => {
+    const root = containerRef.current;
+    if (!root) return;
+    const finish = () => {
+      introRef.current.progress = 1;
+      completedRef.current = true;
+      setReady(true);
     };
-  }, [mode, title]);
+    if (reducedMotion || completedRef.current) {
+      finish();
+      return;
+    }
+    const timeline = gsap.timeline({ defaults: { ease: 'power3.inOut' }, onComplete: finish });
+    timelineRef.current = timeline;
+    timeline
+      .fromTo(introRef.current, { progress: 0 }, { progress: 1, duration: 4.5, ease: 'none' }, 0)
+      .fromTo('.entry__atmosphere', { opacity: 0 }, { opacity: 1, duration: 1.2 }, 0)
+      .fromTo('.entry__lab', { opacity: 0, scale: .65, y: -30 }, { opacity: 1, scale: 1, y: 0, duration: 2.7 }, .4)
+      .fromTo('.entry__intro', { x: () => root.clientWidth * .18 }, { x: 0, duration: 1.2 }, 2.7)
+      .fromTo('.entry__identity', { opacity: 0, y: 26 }, { opacity: 1, y: 0, duration: 1 }, 2.1)
+      .fromTo('.entry__features, .entry__footer', { opacity: 0, y: 12 }, { opacity: 1, y: 0, duration: .8 }, 3.5)
+      .fromTo('.entry__console', { autoAlpha: 0, x: 70, rotationY: -16, scale: .95 },
+        { autoAlpha: 1, x: 0, rotationY: 0, scale: 1, duration: 1.1, clearProps: 'transform' }, 3.4);
+    const onVisibility = () => { if (!completedRef.current) timeline.paused(document.hidden); };
+    document.addEventListener('visibilitychange', onVisibility);
+    onVisibility();
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibility);
+      timelineRef.current = null;
+    };
+  }, { scope: containerRef, dependencies: [reducedMotion], revertOnUpdate: true });
 
-  useGSAP(
-    () => {
-      const root = containerRef.current;
-      if (!root) return;
+  function skipIntro() {
+    timelineRef.current?.progress(1);
+    introRef.current.progress = 1;
+    completedRef.current = true;
+    setReady(true);
+    // Focus after React removes inert, so keyboard users can immediately sign in.
+    focusFrameRef.current = requestAnimationFrame(() => {
+      focusFrameRef.current = null;
+      panelRef.current?.querySelector<HTMLInputElement>('input')?.focus({ preventScroll: true });
+    });
+  }
 
-      if (reducedMotion) return;
-
-      root.dataset.motionReady = 'true';
-      const timeline = gsap.timeline({
-        // Release inline styles so CSS can handle disabled, hover and active states.
-        defaults: { ease: 'power3.out', clearProps: 'opacity,transform' },
-      });
-
-      timeline
-        .addLabel('field', 0)
-        .addLabel('identity', 0.22)
-        .addLabel('details', 0.44)
-        .addLabel('access', 0.58)
-        .fromTo(root, { opacity: 0.98 }, { opacity: 1, duration: 0.24 }, 0)
-        .fromTo(
-          '.entry__brand, .entry__nav-status',
-          { opacity: 0, y: -8 },
-          { opacity: 1, y: 0, duration: 0.48, stagger: 0.08 },
-          'field',
-        )
-        .fromTo('.entry__instrument', { opacity: 0, scale: 0.94, y: 12 },
-          { opacity: 1, scale: 1, y: 0, duration: 0.72 }, 'field+=0.12')
-        .fromTo(
-          '.entry__title-line',
-          { opacity: 0, y: 32 },
-          { opacity: 1, y: 0, duration: 0.68, stagger: 0.12 },
-          'identity',
-        )
-        .fromTo(
-          '.entry__copy, .entry__feature',
-          { opacity: 0, y: 18 },
-          { opacity: 1, y: 0, duration: 0.48, stagger: 0.06 },
-          'details',
-        )
-        .fromTo(
-          '.entry__form',
-          { opacity: 0.92, y: 16 },
-          { opacity: 1, y: 0, duration: 0.54 },
-          'identity+=0.1',
-        )
-        .fromTo('.entry__form-heading, .entry__form-meta, .entry__field',
-          { opacity: 0.92, y: 8 },
-          { opacity: 1, y: 0, duration: 0.38, stagger: 0.055 }, 'access')
-        .fromTo('.entry__submit, .entry__demo-hint', { opacity: 0.92, y: 6 },
-          { opacity: 1, y: 0, duration: 0.32, stagger: 0.06 }, 'access+=0.22')
-        .fromTo('.entry__footer', { opacity: 0 }, { opacity: 1, duration: 0.4 }, 'details');
-
-      return () => { delete root.dataset.motionReady; };
-    },
-    { scope: containerRef, dependencies: [reducedMotion], revertOnUpdate: true },
-  );
-
-  return (
-    <main
-      ref={containerRef}
-      className={`manao-entry ${styles.page}${mode === 'register' ? ' entry--register' : ''}`}
-    >
-      <EntryAtmosphere reducedMotion={reducedMotion} />
-      <div className="entry__layout">
-        <header className="entry__header">
-          <a
-            href="/login"
-            className="entry__brand"
-            aria-label="码瑙首页"
-          >
-            <span className="entry__brand-mark">
-              <svg viewBox="0 0 24 24" aria-hidden="true">
-                <path d="M3 21V5l9 6 9-6v16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="miter" />
-                <circle cx="12" cy="13" r="1.6" fill="currentColor" />
-              </svg>
-            </span>
-            <span className="entry__brand-name">
-              <strong>码瑙</strong>
-              <span>MANAO · CLOUD LAB</span>
-            </span>
-          </a>
-          <div className="entry__nav-links" aria-label="平台能力">
-            <span>实验环境</span>
-            <span>运行记录</span>
+  return <main ref={containerRef} className={`manao-entry ${styles.page}${mode === 'register' ? ' entry--register' : ''}`}
+    data-entry-phase={ready ? 'ready' : 'intro'} data-reduced-motion={reducedMotion}>
+    <EntryAtmosphere reducedMotion={reducedMotion} ready={ready} intro={introRef.current} />
+    <div className="entry__layout">
+      <header className="entry__header">
+        <Link to="/login" className="entry__brand" aria-label="码瑙首页">
+          <span className="entry__brand-mark"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 20V4l9 7 9-7v16M8 20v-6l4 3 4-3v6" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" /></svg></span>
+          <span className="entry__brand-name"><strong>Manao<span>码瑙</span></strong><span>云端开发实验室</span></span>
+        </Link>
+        <div className="entry__header-note">让灵感，在云端运行。</div>
+        {!ready && <button type="button" className="entry__skip" onClick={skipIntro}>跳过动画 <ArrowRight size={15} /></button>}
+        {ready && <span className="entry__nav-status"><span />代码 · 环境 · AI</span>}
+      </header>
+      <div className="entry__content">
+        <section className="entry__intro" aria-labelledby="entry-title">
+          <div className="entry__identity">
+            <p className="entry__eyebrow"><span /> 从一行代码，到无限可能</p>
+            <h1 id="entry-title" className="entry__title"><span className="entry__title-brand">Manao<span className="entry__title-dot">.</span></span><span className="entry__title-line--accent">云端开发实验室</span></h1>
+            <p className="entry__copy">编写、运行、探索。<br />与 AI 一起，把想法变成下一次突破。</p>
           </div>
-          <span className="entry__nav-status">
-            <span aria-hidden="true" /> 云端代码实验室
-          </span>
-        </header>
-
-        <div className="entry__content">
-          <section className="entry__intro" aria-labelledby="entry-title">
-            <h1 id="entry-title" className="entry__title">
-              <span className="entry__title-line">Manao 码瑙</span>
-              <span className="entry__title-line entry__title-line--accent">云端代码实验室</span>
-            </h1>
-            <p className="entry__copy">
-              集中管理项目代码、运行环境与执行记录，在工作台中完成 AI 辅助开发。
-            </p>
-
-            <div className="entry__features" aria-label="平台功能">
-              {[
-                ['Java / Python / Node.js', '支持 JavaScript 与 TypeScript 项目'],
-                ['AI 诊断', '协助理解运行问题'],
-                ['运行记录', '查看执行结果与日志'],
-              ].map(([title, description]) => (
-                <div className="entry__feature" key={title}>
-                  <span className="entry__feature-mark"><Check size={14} aria-hidden="true" /></span>
-                  <span><strong>{title}</strong><small>{description}</small></span>
-                </div>
-              ))}
-            </div>
-          </section>
-
+          <EntryLab reducedMotion={reducedMotion} />
+          <div className="entry__features" aria-label="平台功能">
+            {features.map(({ Icon, title: label, detail }) => <div className="entry__feature" key={label}><Icon size={17} aria-hidden="true" /><span><strong>{label}</strong><small>{detail}</small></span></div>)}
+          </div>
+        </section>
+        <div ref={panelRef} className="entry__console" inert={!ready}>
+          <div className="entry__console-bar"><span><i />开发控制台</span><span aria-hidden="true">01 / MANAO</span></div>
           {children}
+          <div className="entry__console-bottom"><span>你的下一次创造，从这里开始</span><span aria-hidden="true">↗</span></div>
         </div>
-        <footer className="entry__footer">
-          <div className="entry__footer-brand">
-            <span className="entry__footer-mark" aria-hidden="true">M</span>
-            <span>
-              <strong>码瑙</strong>
-              <small>可复现云端实验平台</small>
-            </span>
-          </div>
-          <span className="entry__footer-capabilities">代码 <i /> 运行 <i /> 记录 <i /> AI</span>
-        </footer>
       </div>
-    </main>
-  );
+      <footer className="entry__footer"><span>Manao 码瑙 <i /> 为探索而构建</span><span>Java / Python / JavaScript / TypeScript</span></footer>
+    </div>
+  </main>;
 }

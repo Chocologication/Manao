@@ -1,4 +1,4 @@
-import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
@@ -159,10 +159,8 @@ describe('LoginPage', () => {
     const session = createAuthSession();
     installClient(session, vi.fn<typeof fetch>(async () => jsonResponse(loginResponse)));
     renderAuthApp({ session });
-    await waitFor(() => {
-      expect(screen.getByLabelText('Username').closest<HTMLElement>('.entry__field')?.style.transform).toBe('');
-    }, { timeout: 3000 });
     const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: '跳过动画' }));
     await user.type(screen.getByLabelText('Username'), 'alice');
     await user.type(screen.getByLabelText('Password'), 'demo-pass');
     await user.click(screen.getByRole('button', { name: /sign in/i }));
